@@ -10,21 +10,24 @@
  *   3) 주입 시점에 실행 중이던 tool call 이 살아남는가
  *   4) 주입한 nonce 가 실제 모델 출력에 도달하며, 어느 turn 에서 회수되는가
  *
- * 🔴 vacuous green 방지:
- *   - "에러가 없었다"로는 통과하지 않는다. 매 run 고유 nonce 를 만들고 assistant/result 출력에서
- *     회수 여부와 turn 을 기록한다. **미회수 자체는 SDK의 답일 수 있으므로 실패 조건이 아니다.**
- *   - 첫 result 뒤 같은 session 에 nonce 를 언급하지 않는 neutral follow-up 을 보내고, 별도 fixed token 을
- *     회수해야 한다. 그래야 nonce 미회수를 "다음 turn 이 없었다"와 혼동하지 않는다(m0-15 F1 교훈).
+ * 🔴 vacuous green / confound 방지:
+ *   - "에러가 없었다"나 "nonce 를 출력하지 않았다"로는 delivery/drop 을 판정하지 않는다. 모델이 전달된
+ *     지시를 따르지 않을 수 있기 때문이다. text 와 thinking 의 nonce 회수를 분리해 turn 별로 기록한다.
+ *   - 첫 result 뒤 QUEUED_TURN_GAP_MS 동안 아무 input 도 더 넣지 않는다. 이미 queue 된 injection 만으로
+ *     다음 turn 이 시작/출력되는지 기록한 뒤에야 nonce 를 언급하지 않는 neutral follow-up 을 보낸다.
+ *   - neutral follow-up 완료 뒤 nonce 를 알려주지 않는 3차 probe 로 이전 special token 기억을 묻는다.
+ *     nonce echo 는 delivery 의 양성 증거이고 NONE 은 transcript에 delivery node가 없다는 증거와 함께만
+ *     discard 판정에 쓴다.
+ *   - SDK stream 밖의 Claude CLI transcript 도 읽어 injected UUID enqueue/queued_command/assistant ancestry 를
+ *     기록한다. transcript unavailable 을 절대로 discarded 로 취급하지 않는다.
  *   - 한 번에 끝나는 텍스트 turn 을 재지 않는다. 제품 모양처럼 MCP tool 을 3회 호출시키고,
  *     첫 tool body 를 test-owned promise 로 붙잡은 동안 두 번째 user message 를 write 한다.
  *   - write 뒤에도 750ms 동안 body 를 붙잡아, 주입과 in-flight tool window 가 실제로 겹치게 한다.
  *
- * `injectionFate` 는 SDK 답을 PASS/FAIL 로 만들지 않고 first-class observation 으로 남긴다:
- *   joined-in-flight = nonce 가 원래 turn 에 나타남
- *   queued-next-turn = nonce 가 뒤 turn 에 나타남
- *   dropped          = 원래 3-step turn 과 neutral 후속 turn 은 완주했지만 nonce 는 끝내 안 나타남
- *   preempted-turn   = 주입 뒤 첫 result 가 outstanding tool body 종료보다 먼저 와 원래 turn 을 절단함
- *   undetermined     = 위 판정에 필요한 관측 장치가 닫히지 않음 (이 경우만 red)
+ * 서로 독립인 두 축을 first-class observation 으로 남긴다:
+ *   originalTurnFate: completed | preempted | ended-incomplete | undetermined
+ *   injectedMessageFate: joined-in-flight | delivered-next-turn | discarded | undetermined
+ * 원래 turn preemption 은 injected message delivery 판정을 short-circuit 하지 않는다.
  *
  * `priority` 를 생략한 일반 streaming input 과 SDKUserMessage 가 노출하는 `priority:'now'` 를
  * 같은 조건에서 각각 잰다. 둘 중 하나를 제품 설계로 선택하는 것은 이 스파이크의 일이 아니다.
@@ -38,14 +41,18 @@
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { z } from 'zod'
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 
 const RESULT_DIR = 'docs/superpowers/specs'
 const RAW = `${RESULT_DIR}/m0-16-raw.jsonl`
 const TOOL_NAME = 'mcp__m0-16-steer__sequence_step'
+const QUEUED_TURN_GAP_MS = 5_000
+const TRANSCRIPT_SETTLE_MS = 250
 const SDK_DTS = readFileSync(
   new URL('../../node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts', import.meta.url),
   'utf-8',
@@ -87,6 +94,99 @@ const textOf = (blocks) => (Array.isArray(blocks) ? blocks : [])
   .map((block) => block.text)
   .join('')
 
+const thinkingOf = (blocks) => (Array.isArray(blocks) ? blocks : [])
+  .filter((block) => block?.type === 'thinking')
+  .map((block) => block.thinking ?? block.text ?? '')
+  .join('')
+
+function readTranscriptEvidence({ sessionId, injectedMessageUuid, nonce, assistants }) {
+  if (!sessionId) {
+    return { status: 'unavailable', reason: 'SDK stream exposed no session_id', path: null }
+  }
+
+  const projectSlug = process.cwd().replace(/[^A-Za-z0-9]/g, '-')
+  const path = join(homedir(), '.claude', 'projects', projectSlug, `${sessionId}.jsonl`)
+  if (!existsSync(path)) {
+    return { status: 'unavailable', reason: 'session transcript file not found', path }
+  }
+
+  try {
+    const rows = readFileSync(path, 'utf-8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+    const assistantTurnByUuid = new Map(assistants.map((message) => [message.uuid, message.turn]))
+    const directMessageIndex = rows.findIndex((row) => row.uuid === injectedMessageUuid)
+    const queuedCommandAttachmentIndex = rows.findIndex((row) => (
+      row.type === 'attachment'
+      && row.attachment?.type === 'queued_command'
+      && row.attachment?.source_uuid === injectedMessageUuid
+    ))
+    const deliveryRootIndex = queuedCommandAttachmentIndex >= 0
+      ? queuedCommandAttachmentIndex
+      : directMessageIndex
+    const deliveryRoot = deliveryRootIndex >= 0 ? rows[deliveryRootIndex] : null
+    const byUuid = new Map(rows.filter((row) => row.uuid).map((row) => [row.uuid, row]))
+
+    const ancestryFrom = (row, ancestorUuid) => {
+      const reversed = []
+      const seen = new Set()
+      let cursor = row
+      while (cursor?.uuid && !seen.has(cursor.uuid)) {
+        seen.add(cursor.uuid)
+        reversed.push(cursor.uuid)
+        if (cursor.uuid === ancestorUuid) return reversed.reverse()
+        cursor = cursor.parentUuid ? byUuid.get(cursor.parentUuid) : null
+      }
+      return null
+    }
+
+    let followingAssistant = null
+    if (deliveryRoot?.uuid) {
+      for (let index = deliveryRootIndex + 1; index < rows.length; index += 1) {
+        const row = rows[index]
+        if (row.type !== 'assistant' || !row.uuid) continue
+        const ancestry = ancestryFrom(row, deliveryRoot.uuid)
+        if (!ancestry) continue
+        followingAssistant = {
+          index,
+          uuid: row.uuid,
+          parentUuid: row.parentUuid ?? null,
+          sdkTurn: assistantTurnByUuid.get(row.uuid) ?? null,
+          directChild: row.parentUuid === deliveryRoot.uuid,
+          ancestry,
+        }
+        break
+      }
+    }
+
+    return {
+      status: 'available',
+      path,
+      parsedRowCount: rows.length,
+      injectedMessageAppears: directMessageIndex >= 0 || queuedCommandAttachmentIndex >= 0,
+      directMessageIndex: directMessageIndex >= 0 ? directMessageIndex : null,
+      queuedCommandAttachment: queuedCommandAttachmentIndex >= 0,
+      queuedCommandAttachmentIndex: queuedCommandAttachmentIndex >= 0
+        ? queuedCommandAttachmentIndex
+        : null,
+      deliveryRoot: deliveryRoot
+        ? {
+            kind: queuedCommandAttachmentIndex >= 0 ? 'queued_command' : 'direct-user-message',
+            index: deliveryRootIndex,
+            uuid: deliveryRoot.uuid ?? null,
+            parentUuid: deliveryRoot.parentUuid ?? null,
+            sourceUuid: deliveryRoot.attachment?.source_uuid ?? injectedMessageUuid,
+          }
+        : null,
+      followingAssistant,
+      transcriptContainsNonce: rows.some((row) => JSON.stringify(row).includes(nonce)),
+    }
+  } catch (error) {
+    return { status: 'unavailable', reason: String(error?.message || error), path }
+  }
+}
+
 async function measureMidTurnInjection({ priority }) {
   const startedAt = Date.now()
   const at = () => Date.now() - startedAt
@@ -96,6 +196,7 @@ async function measureMidTurnInjection({ priority }) {
   const initialMessageUuid = randomUUID()
   const injectedMessageUuid = randomUUID()
   const followUpMessageUuid = randomUUID()
+  const probeMessageUuid = randomUUID()
   const toolCalls = []
   const terminalToolResults = []
   const assistants = []
@@ -105,8 +206,16 @@ async function measureMidTurnInjection({ priority }) {
   let injectionWrittenAt = null
   let firstToolStartedAt = null
   let firstToolReleasedAt = null
+  let gapStartedAt = null
+  let gapEndedAt = null
   let followUpYieldedAt = null
   let followUpWrittenAt = null
+  let neutralFollowUpResultAt = null
+  let neutralFollowUpResultTurn = null
+  let probeYieldedAt = null
+  let probeWrittenAt = null
+  let sessionId = null
+  let followUpTokenSeenInText = false
   let streamError = null
   let timedOut = false
 
@@ -118,6 +227,8 @@ async function measureMidTurnInjection({ priority }) {
   const firstToolGate = new Promise((resolve) => { releaseFirstTool = resolve })
   let signalFirstTurnEnded
   const firstTurnEnded = new Promise((resolve) => { signalFirstTurnEnded = resolve })
+  let signalNeutralFollowUpEnded
+  const neutralFollowUpEnded = new Promise((resolve) => { signalNeutralFollowUpEnded = resolve })
 
   const server = createSdkMcpServer({
     name: 'm0-16-steer',
@@ -183,12 +294,21 @@ async function measureMidTurnInjection({ priority }) {
     firstToolReleasedAt = at()
     releaseFirstTool()
 
-    // 첫 result 가 곧 제품의 turn 경계다. 같은 Query/session 을 닫지 않고 neutral 후속 turn 을 민다.
+    // 첫 result 가 곧 제품의 turn 경계다. 이 직후에는 이미 write 된 injection 외에는 아무것도 넣지 않는다.
+    // queued message 라면 이 gap 에서 그 message 단독으로 다음 turn 을 시작할 기회를 얻는다.
     const followUpOutcome = await Promise.race([
       firstTurnEnded.then(() => 'first-turn-ended'),
       promptInputStopped.then(() => 'input-stopped'),
     ])
     if (followUpOutcome === 'input-stopped') return
+    gapStartedAt = at()
+    const gapOutcome = await Promise.race([
+      sleep(QUEUED_TURN_GAP_MS).then(() => 'gap-elapsed'),
+      promptInputStopped.then(() => 'input-stopped'),
+    ])
+    if (gapOutcome === 'input-stopped') return
+    gapEndedAt = at()
+
     followUpYieldedAt = at()
     yield {
       type: 'user',
@@ -200,6 +320,25 @@ async function measureMidTurnInjection({ priority }) {
       },
     }
     followUpWrittenAt = at()
+
+    // neutral turn 이 fixed token 을 낸 result 경계까지 닫힌 뒤, nonce 를 prompt 에 유출하지 않는 독립 probe.
+    const probeOutcome = await Promise.race([
+      neutralFollowUpEnded.then(() => 'neutral-ended'),
+      promptInputStopped.then(() => 'input-stopped'),
+    ])
+    if (probeOutcome === 'input-stopped') return
+    probeYieldedAt = at()
+    yield {
+      type: 'user',
+      uuid: probeMessageUuid,
+      message: {
+        role: 'user',
+        content:
+          'If an earlier live correction instructed you to output a special token, output that exact token now. '
+          + 'If you never received such a live correction, output exactly NONE.',
+      },
+    }
+    probeWrittenAt = at()
   }
 
   const q = query({
@@ -210,7 +349,7 @@ async function measureMidTurnInjection({ priority }) {
       allowedTools: [TOOL_NAME],
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
-      maxTurns: 12,
+      maxTurns: 18,
       model: 'sonnet',
     },
   })
@@ -232,6 +371,7 @@ async function measureMidTurnInjection({ priority }) {
   let turn = 1
   try {
     for await (const msg of q) {
+      sessionId ??= msg.session_id ?? null
       const event = {
         at: at(),
         turn,
@@ -249,12 +389,17 @@ async function measureMidTurnInjection({ priority }) {
           uuid: msg.uuid ?? null,
           model: msg.message?.model ?? null,
           text: textOf(blocks),
+          thinking: thinkingOf(blocks),
           toolUses: blocks
             .filter((block) => block?.type === 'tool_use')
             .map((block) => ({ id: block.id, name: block.name, input: block.input })),
         }
         assistants.push(assistant)
+        if (followUpWrittenAt != null && assistant.text.includes(followUpToken)) {
+          followUpTokenSeenInText = true
+        }
         event.text = assistant.text
+        event.thinking = assistant.thinking
         event.toolUses = assistant.toolUses
       }
 
@@ -267,7 +412,7 @@ async function measureMidTurnInjection({ priority }) {
             turn,
             toolUseId: block.tool_use_id ?? null,
             isError: block.is_error === true,
-            text: JSON.stringify(block.content),
+            text: JSON.stringify(block.content) ?? '',
           }
           terminalToolResults.push(terminal)
           event.toolResult = terminal
@@ -281,12 +426,27 @@ async function measureMidTurnInjection({ priority }) {
           turn,
           subtype: msg.subtype,
           isError: msg.is_error,
+          is_error: msg.is_error,
           result: msg.result ?? null,
+          numTurns: msg.num_turns ?? null,
+          num_turns: msg.num_turns ?? null,
+          stopReason: msg.stop_reason ?? null,
+          stop_reason: msg.stop_reason ?? null,
           uuid: msg.uuid ?? null,
           identifierKeys: Object.keys(msg).filter((key) => /(?:id|uuid|turn)/i.test(key)),
         }
         results.push(result)
         if (turn === 1 && firstToolStartedAt != null) signalFirstTurnEnded()
+        const resultText = typeof result.result === 'string' ? result.result : ''
+        if (
+          followUpWrittenAt != null
+          && probeWrittenAt == null
+          && (resultText.includes(followUpToken) || followUpTokenSeenInText)
+        ) {
+          neutralFollowUpResultAt = result.at
+          neutralFollowUpResultTurn = result.turn
+          signalNeutralFollowUpEnded()
+        }
         event.result = msg.result ?? null
         events.push(event)
         turn += 1
@@ -304,13 +464,21 @@ async function measureMidTurnInjection({ priority }) {
     q.close()
   }
 
-  const turnsContaining = (token) => [...new Set([
+  await sleep(TRANSCRIPT_SETTLE_MS)
+
+  const textTurnsContaining = (token) => [...new Set([
     ...assistants.filter((message) => message.text.includes(token)).map((message) => message.turn),
-    ...results.filter((message) => message.result?.includes(token)).map((message) => message.turn),
+    ...results
+      .filter((message) => typeof message.result === 'string' && message.result.includes(token))
+      .map((message) => message.turn),
   ])]
-  const recoveredTurns = turnsContaining(nonce)
-  const originalTurns = turnsContaining(original)
-  const followUpRecoveredTurns = turnsContaining(followUpToken)
+  const thinkingTurnsContaining = (token) => [...new Set(
+    assistants.filter((message) => message.thinking.includes(token)).map((message) => message.turn),
+  )]
+  const nonceInTextTurns = textTurnsContaining(nonce)
+  const nonceInThinkingTurns = thinkingTurnsContaining(nonce)
+  const originalTurns = textTurnsContaining(original)
+  const followUpRecoveredTurns = textTurnsContaining(followUpToken)
   const firstCall = toolCalls[0] ?? null
   const injectionOverlappedFirstTool = Boolean(
     firstCall
@@ -343,27 +511,159 @@ async function measureMidTurnInjection({ priority }) {
   )
   const followUpObserved = followUpRecoveredTurns.some((recoveredTurn) => recoveredTurn > 1)
 
-  let injectionFate = 'undetermined'
-  if (injectionOverlappedFirstTool && followUpObserved && results.length >= 2) {
-    if (originalTurnEndedWhileFirstToolOutstanding) injectionFate = 'preempted-turn'
-    else if (recoveredTurns.includes(1)) injectionFate = 'joined-in-flight'
-    else if (recoveredTurns.some((recoveredTurn) => recoveredTurn > 1)) injectionFate = 'queued-next-turn'
-    else if (originalToolSequenceCompleted) injectionFate = 'dropped'
+  const gapEvents = gapStartedAt == null || gapEndedAt == null
+    ? []
+    : events.filter((event) => event.at >= gapStartedAt && event.at <= gapEndedAt && event.turn > 1)
+  const gapAssistants = assistants.filter((message) => (
+    gapStartedAt != null
+    && gapEndedAt != null
+    && message.at >= gapStartedAt
+    && message.at <= gapEndedAt
+    && message.turn > 1
+  ))
+  const gapResults = results.filter((message) => (
+    gapStartedAt != null
+    && gapEndedAt != null
+    && message.at >= gapStartedAt
+    && message.at <= gapEndedAt
+    && message.turn > 1
+  ))
+  const gapTurnStarted = gapEvents.some((event) => (
+    event.type === 'assistant'
+    || event.type === 'result'
+    || event.type === 'user'
+    || event.type === 'system'
+  ))
+  const gapActivityObserved = gapEvents.length > 0
+  const gapTurnOutput = {
+    assistantText: gapAssistants.map((message) => ({ turn: message.turn, at: message.at, text: message.text })),
+    assistantThinking: gapAssistants.map((message) => ({ turn: message.turn, at: message.at, thinking: message.thinking })),
+    results: gapResults.map((message) => ({ turn: message.turn, at: message.at, result: message.result })),
+    eventTypes: gapEvents.map((event) => ({ turn: event.turn, at: event.at, type: event.type, subtype: event.subtype })),
+  }
+  const nonceInGapText = gapAssistants.some((message) => message.text.includes(nonce))
+    || gapResults.some((message) => typeof message.result === 'string' && message.result.includes(nonce))
+  const nonceInGapThinking = gapAssistants.some((message) => message.thinking.includes(nonce))
+
+  // millisecond timestamp 동률로 neutral result 를 probe result 로 잘못 세지 않도록 turn 경계를 쓴다.
+  const probeAssistants = assistants.filter((message) => (
+    neutralFollowUpResultTurn != null && message.turn > neutralFollowUpResultTurn
+  ))
+  const probeResults = results.filter((message) => (
+    neutralFollowUpResultTurn != null && message.turn > neutralFollowUpResultTurn
+  ))
+  const probeOutput = {
+    assistantText: probeAssistants.map((message) => ({ turn: message.turn, at: message.at, text: message.text })),
+    assistantThinking: probeAssistants.map((message) => ({ turn: message.turn, at: message.at, thinking: message.thinking })),
+    results: probeResults.map((message) => ({
+      turn: message.turn,
+      at: message.at,
+      result: message.result,
+      num_turns: message.num_turns,
+    })),
+  }
+  const probeTurnObserved = probeResults.length > 0
+  const probeNonceInText = probeAssistants.some((message) => message.text.includes(nonce))
+    || probeResults.some((message) => typeof message.result === 'string' && message.result.includes(nonce))
+  const probeNonceInThinking = probeAssistants.some((message) => message.thinking.includes(nonce))
+  const probeReturnedNone = [
+    ...probeAssistants.map((message) => message.text.trim()),
+    ...probeResults.map((message) => typeof message.result === 'string' ? message.result.trim() : ''),
+  ].includes('NONE')
+
+  const transcript = readTranscriptEvidence({ sessionId, injectedMessageUuid, nonce, assistants })
+  const transcriptDeliveryTurn = transcript.status === 'available'
+    ? transcript.followingAssistant?.sdkTurn ?? null
+    : null
+
+  let originalTurnFate = 'undetermined'
+  if (originalTurnEndedWhileFirstToolOutstanding) originalTurnFate = 'preempted'
+  else if (firstResult && originalToolSequenceCompleted) originalTurnFate = 'completed'
+  else if (firstResult) originalTurnFate = 'ended-incomplete'
+
+  // Delivery timing is independent of original turn survival. Transcript ancestry is stronger than model obedience:
+  // a delivered instruction may be ignored and therefore never echo its nonce.
+  let injectedMessageFate = 'undetermined'
+  if (transcriptDeliveryTurn === 1 || nonceInTextTurns.includes(1) || nonceInThinkingTurns.includes(1)) {
+    injectedMessageFate = 'joined-in-flight'
+  } else if (
+    (transcriptDeliveryTurn != null && transcriptDeliveryTurn > 1)
+    || nonceInGapText
+    || nonceInGapThinking
+  ) {
+    injectedMessageFate = 'delivered-next-turn'
+  } else if (
+    transcript.status === 'available'
+    && transcript.injectedMessageAppears === false
+    && probeTurnObserved
+    && probeReturnedNone
+    && !probeNonceInText
+    && !probeNonceInThinking
+    && nonceInTextTurns.length === 0
+    && nonceInThinkingTurns.length === 0
+  ) {
+    injectedMessageFate = 'discarded'
   }
 
-  const fateEvidence = {
-    nonceRecovered: recoveredTurns.length > 0,
-    recoveredTurns,
-    originalTurns,
-    followUpObserved,
-    followUpRecoveredTurns,
+  const turn2ToolUses = assistants
+    .filter((message) => message.turn === 2)
+    .flatMap((message) => message.toolUses)
+    .filter((use) => use.name === TOOL_NAME)
+  const turn2ToolResults = terminalToolResults.filter((result) => result.turn === 2)
+  const turn2StreamClosedToolResults = turn2ToolResults.filter((result) => (
+    result.isError && result.text.includes('Stream closed')
+  ))
+  const preemptedResultSurface = originalTurnFate === 'preempted' && firstResult
+    ? {
+        subtype: firstResult.subtype,
+        is_error: firstResult.is_error,
+        result: firstResult.result,
+        num_turns: firstResult.num_turns,
+        stop_reason: firstResult.stop_reason,
+      }
+    : null
+  const postPreemptionMcpBridge = {
+    applicable: originalTurnFate === 'preempted',
+    turn2ToolUseSteps: turn2ToolUses.map((use) => use.input?.step ?? null),
+    turn2ToolResultCount: turn2ToolResults.length,
+    turn2StreamClosedCount: turn2StreamClosedToolResults.length,
+    allObservedTurn2ToolResultsWereStreamClosed: turn2ToolResults.length > 0
+      && turn2StreamClosedToolResults.length === turn2ToolResults.length,
+    confound:
+      'The test held the first in-process MCP body across preemption; Stream closed may be caused by that gate/stream lifecycle, so this is record-only and not a dead-bridge conclusion.',
+  }
+
+  const originalTurnFateEvidence = {
     originalToolSequenceCompleted,
     originalTurnEndedWhileFirstToolOutstanding,
     firstInFlightToolSurvived,
     toolSteps,
     successfulSequenceToolResultCount: successfulSequenceToolResults.length,
-    turnCount: results.length,
-    resultTurns: results.map((result) => ({ turn: result.turn, at: result.at, subtype: result.subtype, isError: result.isError })),
+    firstResult: firstResult
+      ? { turn: firstResult.turn, at: firstResult.at, subtype: firstResult.subtype, isError: firstResult.isError }
+      : null,
+  }
+  const injectedMessageFateEvidence = {
+    nonceInText: nonceInTextTurns.length > 0,
+    nonceInTextTurns,
+    nonceInThinking: nonceInThinkingTurns.length > 0,
+    nonceInThinkingTurns,
+    gapTurnStarted,
+    gapActivityObserved,
+    nonceInGapText,
+    nonceInGapThinking,
+    probeNonceInText,
+    probeNonceInThinking,
+    probeProvesDelivery: probeNonceInText || probeNonceInThinking,
+    probeReturnedNone,
+    transcriptEvidence: transcript.status,
+    transcriptDeliveryTurn,
+    transcriptInjectedMessageAppears: transcript.status === 'available'
+      ? transcript.injectedMessageAppears
+      : null,
+    transcriptQueuedCommandAttachment: transcript.status === 'available'
+      ? transcript.queuedCommandAttachment
+      : null,
   }
 
   return {
@@ -374,6 +674,9 @@ async function measureMidTurnInjection({ priority }) {
     initialMessageUuid,
     injectedMessageUuid,
     followUpMessageUuid,
+    probeMessageUuid,
+    sessionId,
+    session_id: sessionId,
     querySurface,
     sdkExposesExpectedTurnIdGuard: querySurface.steer === 'function',
     resultIdentifierKeys: [...new Set(results.flatMap((result) => result.identifierKeys))],
@@ -384,23 +687,49 @@ async function measureMidTurnInjection({ priority }) {
       firstToolReleasedAt,
       firstToolEndedAt: firstCall?.endedAt ?? null,
       firstResultAt: firstResult?.at ?? null,
+      queuedTurnGapMs: QUEUED_TURN_GAP_MS,
+      gapStartedAt,
+      gapEndedAt,
       followUpYieldedAt,
       followUpWrittenAt,
+      neutralFollowUpResultAt,
+      neutralFollowUpResultTurn,
+      probeYieldedAt,
+      probeWrittenAt,
     },
     injectionOverlappedFirstTool,
-    injectionFate,
-    fateEvidence,
-    recoveredTurns,
+    originalTurnFate,
+    injectedMessageFate,
+    originalTurnFateEvidence,
+    injectedMessageFateEvidence,
+    gapTurnStarted,
+    gapActivityObserved,
+    gapTurnOutput,
+    probeTurnObserved,
+    probeOutput,
+    probeNonceInText,
+    probeNonceInThinking,
+    probeProvesDelivery: probeNonceInText || probeNonceInThinking,
+    probeReturnedNone,
+    transcriptEvidence: transcript.status,
+    transcript,
+    nonceInText: nonceInTextTurns.length > 0,
+    nonceInTextTurns,
+    nonceInThinking: nonceInThinkingTurns.length > 0,
+    nonceInThinkingTurns,
     originalTurns,
     followUpRecoveredTurns,
-    nonceRecovered: recoveredTurns.length > 0,
     followUpObserved,
     originalToolSequenceCompleted,
     toolCalls,
     terminalToolResults,
     firstInFlightToolSurvived,
+    preemptedResultSurface,
+    postPreemptionMcpBridge,
     turnCount: results.length,
     resultCount: results.length,
+    resultNumTurns: results.map((result) => ({ turn: result.turn, num_turns: result.num_turns })),
+    resultNumTurnValues: results.map((result) => result.num_turns),
     executionErrors: results.filter((result) => result.isError).map((result) => result.result),
     results,
     assistants,
@@ -461,10 +790,19 @@ describe('M0-16 — Claude Agent SDK steer 계약 (Q7)', () => {
       expect(observation.timing.firstToolStartedAt, '실제 tool body 가 한 번도 시작되지 않았다').not.toBeNull()
       expect(observation.timing.injectionWrittenAt, '주입 message 의 transport.write 완료를 관측하지 못했다').not.toBeNull()
       expect(observation.injectionOverlappedFirstTool, '주입 write 와 in-flight tool 실행이 겹치지 않았다').toBe(true)
+      expect(observation.timing.firstResultAt, '원래 turn 의 result 경계를 관측하지 못했다').not.toBeNull()
+      expect(observation.timing.gapStartedAt, 'queued-message 관측 gap 을 시작하지 못했다').not.toBeNull()
+      expect(observation.timing.gapEndedAt, 'queued-message 관측 gap 을 닫지 못했다').not.toBeNull()
+      expect(
+        observation.timing.gapEndedAt - observation.timing.gapStartedAt,
+        'neutral follow-up 전 독립 관측 gap 이 너무 짧았다',
+      ).toBeGreaterThanOrEqual(QUEUED_TURN_GAP_MS)
       expect(observation.timing.followUpWrittenAt, '첫 result 뒤 neutral follow-up 을 write 하지 못했다').not.toBeNull()
       expect(observation.followUpObserved, 'neutral follow-up token 을 뒤 turn 에서 회수하지 못했다').toBe(true)
-      expect(observation.turnCount, '후속 turn 경계를 관측하지 못했다').toBeGreaterThanOrEqual(2)
-      expect(observation.injectionFate, '주입 의미론을 판정하지 못했다').not.toBe('undetermined')
+      expect(observation.timing.probeWrittenAt, 'neutral 완료 뒤 독립 probe 를 write 하지 못했다').not.toBeNull()
+      expect(observation.probeTurnObserved, '독립 probe 의 result 경계를 관측하지 못했다').toBe(true)
+      expect(observation.turnCount, '원래/neutral/probe turn 경계를 모두 관측하지 못했다').toBeGreaterThanOrEqual(3)
+      expect(['available', 'unavailable']).toContain(observation.transcriptEvidence)
     }, 8 * 60 * 1000)
   }
 })
