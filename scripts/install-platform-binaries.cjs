@@ -12,11 +12,46 @@ const http = require('http')
 const https = require('https')
 const os = require('os')
 const path = require('path')
-const zlib = require('zlib')
 const { execFileSync } = require('child_process')
 const { verifyBinaryArch } = require('./verifyBinaryArch.cjs')
 
 const rootDir = path.resolve(__dirname, '..')
+
+// The SHA-256 is for the downloaded archive, not the extracted executable.
+// Distribution builds must replace TODO_FILL_SHA (or inject the matching
+// AFC_FFMPEG_<TARGET>_SHA256 value) before acquisition is allowed.
+const FFMPEG_BUILD_MANIFEST = Object.freeze({
+  'darwin-arm64': Object.freeze({
+    source: 'osxexperts',
+    url: 'https://www.osxexperts.net/ffmpeg7arm.zip',
+    sha256: '563111a239fe70d2e5c84a5382204a7d0bf0a332385a92a44baff36d313e27f2',
+    archive: 'zip',
+    binaryPathPattern: '(^|/)ffmpeg$',
+  }),
+  'darwin-x64': Object.freeze({
+    source: 'evermeet',
+    url: 'https://evermeet.cx/ffmpeg/ffmpeg-7.1.1.zip',
+    sha256: '8d7917c1cebd7a29e68c0a0a6cc4ecc3fe05c7fffed958636c7018b319afdda4',
+    archive: 'zip',
+    binaryPathPattern: '(^|/)ffmpeg$',
+  }),
+  // BtbN's "latest" and johnvansickle's "release" URLs are rolling artifacts,
+  // so their bytes/SHA can drift. Release builds should pin a versioned tag URL.
+  'win32-x64': Object.freeze({
+    source: 'BtbN',
+    url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+    sha256: '09dba4ed6fd991af90ac6ce852d6eaa2cea3446e6ffc86b276bcb18b1f794e3c',
+    archive: 'zip',
+    binaryPathPattern: '(^|/)bin/ffmpeg\\.exe$',
+  }),
+  'linux-x64': Object.freeze({
+    source: 'johnvansickle',
+    url: 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz',
+    sha256: 'abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67',
+    archive: 'tar.xz',
+    binaryPathPattern: '(^|/)ffmpeg$',
+  }),
+})
 
 // codex 의 arch 패키지는 독립 패키지가 아니라 codex 자신의 버전 태그 별칭이다:
 //   "@openai/codex-darwin-x64": "npm:@openai/codex@0.142.5-darwin-x64"
@@ -60,6 +95,62 @@ function verifyFfmpegCapabilities(binaryPath, deps = {}) {
   }
 }
 
+function verifySelfContainedFfmpeg(binaryPath, deps = {}) {
+  const platform = deps.platform || process.platform
+  const run = deps.execFileSync || execFileSync
+
+  if (platform === 'darwin') {
+    const output = String(run('otool', ['-L', binaryPath], { encoding: 'utf8' }))
+    const dependencies = output.split(/\r?\n/).slice(1)
+      .map(line => line.trim().split(/\s+\(/)[0])
+      .filter(Boolean)
+    const external = dependencies.filter(dependency => (
+      !dependency.startsWith('/System/Library/')
+      && !dependency.startsWith('/usr/lib/')
+    ))
+    if (external.length > 0) {
+      throw new Error(
+        `[platform-binaries] ffmpeg is not self-contained; non-system dylibs: ${external.join(', ')}`
+      )
+    }
+    return true
+  }
+
+  if (platform === 'linux') {
+    let output = ''
+    try {
+      output = String(run('ldd', [binaryPath], { encoding: 'utf8' }))
+    } catch (error) {
+      output = `${error?.stdout || ''}\n${error?.stderr || ''}\n${error?.message || ''}`
+    }
+    if (/not a dynamic executable|statically linked/i.test(output)) return true
+    throw new Error(`[platform-binaries] ffmpeg ELF is not static: ${output.trim()}`)
+  }
+
+  if (platform === 'win32') {
+    // The BtbN "win64-gpl" artifact statically links FFmpeg/codec libraries.
+    // We stage only ffmpeg.exe (no adjacent av*.dll/lib*.dll), then execute its
+    // filters/encoders in verifyFfmpegCapabilities. For release auditing, the
+    // equivalent PE check is `dumpbin /dependents ffmpeg.exe`; only Windows
+    // system DLLs may be listed.
+    const siblings = fs.existsSync(path.dirname(binaryPath))
+      ? fs.readdirSync(path.dirname(binaryPath))
+      : []
+    const bundledRuntimeDlls = siblings.filter(name => (
+      /^(?:avcodec|avdevice|avfilter|avformat|avutil|postproc|swresample|swscale|libass|x26[45]|lib).*\.dll$/i
+        .test(name)
+    ))
+    if (bundledRuntimeDlls.length > 0) {
+      throw new Error(
+        `[platform-binaries] ffmpeg PE is not self-contained; runtime DLLs present: ${bundledRuntimeDlls.join(', ')}`
+      )
+    }
+    return true
+  }
+
+  throw new Error(`[platform-binaries] unsupported ffmpeg platform: ${platform}`)
+}
+
 function sha256(bufferOrPath) {
   const data = Buffer.isBuffer(bufferOrPath) ? bufferOrPath : fs.readFileSync(bufferOrPath)
   return crypto.createHash('sha256').update(data).digest('hex')
@@ -90,25 +181,30 @@ function verifyStagedFfmpeg(binaryPath, target) {
   const expected = fs.readFileSync(checksumPath, 'utf8').trim().split(/\s+/)[0]
   if (!/^[a-f0-9]{64}$/i.test(expected) || sha256(binaryPath) !== expected.toLowerCase()) return false
   if (!verifyBinaryArch(binaryPath, { platform, arch })) return false
-  verifyFfmpegCapabilities(binaryPath)
-  return true
+  try {
+    verifySelfContainedFfmpeg(binaryPath, { platform })
+    verifyFfmpegCapabilities(binaryPath)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function preserveFfmpegLicenses(sourcePath, target, explicitLicenseDir) {
   const realSource = fs.realpathSync(sourcePath)
+  const bundledFfmpegLicenses = path.join(rootDir, 'LICENSES', 'ffmpeg', 'darwin-arm64')
   const sourceDirectories = [
     explicitLicenseDir,
     path.dirname(realSource),
     path.dirname(path.dirname(realSource)),
+    // Generic FFmpeg GPL/LGPL texts are already bundled for offline builds;
+    // use them when an upstream binary-only archive omits license files.
+    bundledFfmpegLicenses,
   ].filter(Boolean)
   const licenseFiles = []
   for (const directory of sourceDirectories) {
     if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) continue
-    for (const name of fs.readdirSync(directory)) {
-      if (!/^(?:COPYING|LICENSE|README)/i.test(name)) continue
-      const source = path.join(directory, name)
-      if (fs.statSync(source).isFile()) licenseFiles.push({ source, name })
-    }
+    collectLicenseFiles(directory, licenseFiles)
     if (licenseFiles.length > 0) break
   }
   if (licenseFiles.length === 0) {
@@ -120,7 +216,22 @@ function preserveFfmpegLicenses(sourcePath, target, explicitLicenseDir) {
 
   const destination = path.join(rootDir, 'LICENSES', 'ffmpeg', target)
   fs.mkdirSync(destination, { recursive: true })
-  for (const file of licenseFiles) fs.copyFileSync(file.source, path.join(destination, file.name))
+  for (const file of licenseFiles) {
+    const output = path.join(destination, file.name)
+    if (path.resolve(file.source) !== path.resolve(output)) fs.copyFileSync(file.source, output)
+  }
+}
+
+function collectLicenseFiles(directory, output, depth = 0) {
+  if (depth > 3) return
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const source = path.join(directory, entry.name)
+    if (entry.isDirectory()) {
+      collectLicenseFiles(source, output, depth + 1)
+    } else if (/^(?:COPYING|LICENSE|README|GPL|LGPL)/i.test(entry.name)) {
+      output.push({ source, name: entry.name })
+    }
+  }
 }
 
 function stageLocalFfmpeg({ sourcePath, target, expectedSha256, licenseDir }) {
@@ -135,29 +246,16 @@ function stageLocalFfmpeg({ sourcePath, target, expectedSha256, licenseDir }) {
   if (!verifyBinaryArch(sourcePath, { platform, arch })) {
     throw new Error(`[platform-binaries] ffmpeg architecture mismatch for ${target}: ${sourcePath}`)
   }
+  verifySelfContainedFfmpeg(sourcePath, { platform })
 
   fs.mkdirSync(destinationDirectory, { recursive: true })
   fs.copyFileSync(sourcePath, destination)
   if (platform !== 'win32') fs.chmodSync(destination, 0o755)
   fs.writeFileSync(`${destination}.sha256`, `${actualChecksum}  ${path.basename(destination)}\n`)
+  verifySelfContainedFfmpeg(destination, { platform })
   verifyFfmpegCapabilities(destination)
   preserveFfmpegLicenses(sourcePath, target, licenseDir)
   return destination
-}
-
-function findSystemFfmpeg(platform) {
-  const candidates = platform === 'win32'
-    ? []
-    : ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate
-  }
-  try {
-    const command = platform === 'win32' ? 'where' : 'which'
-    return execFileSync(command, ['ffmpeg'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]
-  } catch {
-    return ''
-  }
 }
 
 function downloadBuffer(url, redirects = 0) {
@@ -183,36 +281,141 @@ function downloadBuffer(url, redirects = 0) {
   })
 }
 
-async function downloadFfmpeg({ url, expectedSha256, target, licenseDir }) {
-  if (!expectedSha256) {
-    throw new Error(`[platform-binaries] ${checksumEnvKey(target)} is required for downloaded ffmpeg`)
+function normalizePlatform(platform) {
+  if (platform === 'win' || platform === 'windows') return 'win32'
+  if (platform === 'mac' || platform === 'macos' || platform === 'osx') return 'darwin'
+  return platform
+}
+
+function normalizeArch(arch) {
+  if (arch === 'amd64' || arch === 'x86_64') return 'x64'
+  if (arch === 'aarch64') return 'arm64'
+  return arch
+}
+
+function splitTargets(value) {
+  return String(value || '').split(',').map(target => target.trim()).filter(Boolean)
+}
+
+function resolveRequestedFfmpegTargets({
+  argv = process.argv.slice(2),
+  env = process.env,
+  platform = process.platform,
+  arch = process.arch,
+} = {}) {
+  const cliTargets = []
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]
+    if (argument === '--target' || argument === '--targets') {
+      cliTargets.push(...splitTargets(argv[index + 1]))
+      index += 1
+    } else if (argument.startsWith('--target=')) {
+      cliTargets.push(...splitTargets(argument.slice('--target='.length)))
+    } else if (argument.startsWith('--targets=')) {
+      cliTargets.push(...splitTargets(argument.slice('--targets='.length)))
+    }
   }
-  const downloaded = await downloadBuffer(url)
-  const binary = url.endsWith('.gz') ? zlib.gunzipSync(downloaded) : downloaded
-  const actualChecksum = sha256(binary)
-  if (actualChecksum !== expectedSha256.toLowerCase()) {
-    throw new Error(`[platform-binaries] downloaded ffmpeg checksum mismatch for ${target}`)
+  if (cliTargets.length > 0) return [...new Set(cliTargets)]
+
+  const configured = splitTargets(env.AFC_FFMPEG_TARGETS)
+  if (configured.length > 0) return [...new Set(configured)]
+
+  const targetPlatform = normalizePlatform(env.npm_config_platform || platform)
+  const targetArch = normalizeArch(env.npm_config_arch || arch)
+  return [`${targetPlatform}-${targetArch}`]
+}
+
+function resolvedManifestBuild(target, env = process.env, manifest = FFMPEG_BUILD_MANIFEST) {
+  const manifestBuild = manifest[target]
+  if (!manifestBuild) {
+    throw new Error(`[platform-binaries] no static ffmpeg manifest entry for ${target}`)
+  }
+  return {
+    ...manifestBuild,
+    url: env[targetEnvKey(target, 'URL')] || manifestBuild.url,
+    sha256: env[checksumEnvKey(target)] || manifestBuild.sha256,
+    licenseDir: env[targetEnvKey(target, 'LICENSE_DIR')],
+  }
+}
+
+function walkFiles(directory, base = directory, output = []) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name)
+    if (entry.isDirectory()) walkFiles(absolute, base, output)
+    else output.push({ absolute, relative: path.relative(base, absolute).split(path.sep).join('/') })
+  }
+  return output
+}
+
+function extractFfmpegArchive(archivePath, destination, build, deps = {}) {
+  const run = deps.execFileSync || execFileSync
+  const hostPlatform = deps.hostPlatform || process.platform
+  fs.mkdirSync(destination, { recursive: true })
+
+  if (build.archive === 'raw') {
+    const output = path.join(destination, build.binaryName || 'ffmpeg')
+    fs.copyFileSync(archivePath, output)
+  } else if (build.archive === 'zip') {
+    if (hostPlatform === 'win32') {
+      run('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force',
+        archivePath, destination,
+      ], { stdio: 'pipe' })
+    } else {
+      run('unzip', ['-q', archivePath, '-d', destination], { stdio: 'pipe' })
+    }
+  } else if (build.archive === 'tar.xz') {
+    run('tar', ['-xJf', archivePath, '-C', destination], { stdio: 'pipe' })
+  } else {
+    throw new Error(`[platform-binaries] unsupported ffmpeg archive type: ${build.archive}`)
+  }
+
+  const pattern = new RegExp(build.binaryPathPattern, 'i')
+  const matches = walkFiles(destination).filter(file => pattern.test(file.relative))
+  if (matches.length !== 1) {
+    throw new Error(
+      `[platform-binaries] expected one ffmpeg binary matching ${build.binaryPathPattern}, found ${matches.length}`
+    )
+  }
+  return matches[0].absolute
+}
+
+async function acquireFfmpegBuild(target, deps = {}) {
+  const env = deps.env || process.env
+  const build = resolvedManifestBuild(target, env, deps.manifest || FFMPEG_BUILD_MANIFEST)
+  if (!/^[a-f0-9]{64}$/i.test(build.sha256)) {
+    throw new Error(
+      `[platform-binaries] ${target} has ${build.sha256}; fill the manifest SHA-256 ` +
+      `or set ${checksumEnvKey(target)} before downloading ${build.url}`
+    )
   }
 
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'afc-ffmpeg-'))
-  const { platform } = parseTarget(target)
-  const temporaryBinary = path.join(temporaryDirectory, executableName(platform))
+  const archivePath = path.join(temporaryDirectory, `download.${build.archive.replace(/[^a-z0-9.]/gi, '_')}`)
+  const extractionDirectory = path.join(temporaryDirectory, 'extracted')
   try {
-    fs.writeFileSync(temporaryBinary, binary, { mode: 0o755 })
-    return stageLocalFfmpeg({ sourcePath: temporaryBinary, target, expectedSha256, licenseDir })
+    const downloaded = await (deps.downloadBuffer || downloadBuffer)(build.url)
+    fs.writeFileSync(archivePath, downloaded)
+    const actualChecksum = sha256(downloaded)
+    if (actualChecksum !== build.sha256.toLowerCase()) {
+      throw new Error(`[platform-binaries] downloaded archive checksum mismatch for ${target}`)
+    }
+    const sourcePath = extractFfmpegArchive(archivePath, extractionDirectory, build, deps)
+    return stageLocalFfmpeg({
+      sourcePath,
+      target,
+      licenseDir: build.licenseDir || extractionDirectory,
+    })
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true })
   }
 }
 
-function requestedFfmpegTargets() {
-  const configured = process.env.AFC_FFMPEG_TARGETS
-  if (configured) return configured.split(',').map(value => value.trim()).filter(Boolean)
-  return [`${process.platform}-${process.arch}`]
-}
-
-async function stageFfmpegTargets() {
-  for (const target of requestedFfmpegTargets()) {
+async function stageFfmpegTargets(options = {}) {
+  const env = options.env || process.env
+  const targets = options.targets || resolveRequestedFfmpegTargets({ env })
+  for (const target of targets) {
     const { platform, arch } = parseTarget(target)
     const destination = path.join(rootDir, 'vendor', 'ffmpeg', target, executableName(platform))
     if (verifyStagedFfmpeg(destination, target)) {
@@ -220,41 +423,40 @@ async function stageFfmpegTargets() {
       continue
     }
 
-    const pathEnv = process.env[targetEnvKey(target, 'PATH')]
-    const url = process.env[targetEnvKey(target, 'URL')]
-    const expectedSha256 = process.env[checksumEnvKey(target)]
-    const licenseDir = process.env[targetEnvKey(target, 'LICENSE_DIR')]
-    const isHostTarget = platform === process.platform && arch === process.arch
-    const sourcePath = pathEnv || (isHostTarget ? process.env.AFC_FFMPEG_PATH || findSystemFfmpeg(platform) : '')
+    const sourcePath = env[targetEnvKey(target, 'PATH')]
+    const expectedSha256 = env[checksumEnvKey(target)]
+    const licenseDir = env[targetEnvKey(target, 'LICENSE_DIR')]
 
     if (sourcePath) {
       const staged = stageLocalFfmpeg({ sourcePath, target, expectedSha256, licenseDir })
-      console.log(`[platform-binaries] staged local ffmpeg for ${target}: ${staged}`)
+      console.log(`[platform-binaries] staged verified static ffmpeg for ${target}: ${staged}`)
       continue
     }
-    if (url) {
-      // Distribution CI supplies a target-specific URL + pinned SHA-256. This is
-      // how real cross-arch binaries are downloaded; host binaries are never reused.
-      const staged = await downloadFfmpeg({ url, expectedSha256, target, licenseDir })
-      console.log(`[platform-binaries] downloaded ffmpeg for ${target}: ${staged}`)
-      continue
-    }
-    throw new Error(
-      `[platform-binaries] no ffmpeg source for ${target}. Set ${targetEnvKey(target, 'PATH')} ` +
-      `or ${targetEnvKey(target, 'URL')} with ${checksumEnvKey(target)}.`
-    )
+
+    // Automatic dev and dist staging always acquires the target-specific static
+    // artifact. A host Homebrew/system binary is never copied into vendor/.
+    const staged = await acquireFfmpegBuild(target, { ...options, env })
+    console.log(`[platform-binaries] acquired static ffmpeg for ${target}: ${staged}`)
   }
 }
 
 async function main() {
+  const argv = process.argv.slice(2)
+  const targets = resolveRequestedFfmpegTargets({ argv })
+  const ffmpegOnly = argv.includes('--ffmpeg-only')
+
+  if (ffmpegOnly) {
+    await stageFfmpegTargets({ targets })
+    return
+  }
+
   const versions = {
     codex: installedVersion('@openai/codex'),
     agentSdk: installedVersion('@anthropic-ai/claude-agent-sdk'),
   }
 
-  // mac universal build는 두 arch를 함께 굽고, win/linux는 현재 타깃 arch만 설치한다.
-  const nativeArches = process.platform === 'darwin' ? ['x64', 'arm64'] : [process.arch]
-  const specs = nativeArches.flatMap((arch) => resolveSpecs({ platform: process.platform, arch, versions }))
+  const nativeTargets = targets.map(parseTarget)
+  const specs = nativeTargets.flatMap(({ platform, arch }) => resolveSpecs({ platform, arch, versions }))
   const missing = specs.filter(({ name }) => !fs.existsSync(path.join(rootDir, 'node_modules', name)))
 
   if (missing.length > 0) {
@@ -271,13 +473,19 @@ async function main() {
     console.log('[platform-binaries] native arch packages already present')
   }
 
-  await stageFfmpegTargets()
+  await stageFfmpegTargets({ targets })
 }
 
+exports.FFMPEG_BUILD_MANIFEST = FFMPEG_BUILD_MANIFEST
+exports.acquireFfmpegBuild = acquireFfmpegBuild
+exports.extractFfmpegArchive = extractFfmpegArchive
+exports.resolveRequestedFfmpegTargets = resolveRequestedFfmpegTargets
 exports.resolveSpecs = resolveSpecs
 exports.sha256 = sha256
 exports.stageLocalFfmpeg = stageLocalFfmpeg
+exports.stageFfmpegTargets = stageFfmpegTargets
 exports.verifyFfmpegCapabilities = verifyFfmpegCapabilities
+exports.verifySelfContainedFfmpeg = verifySelfContainedFfmpeg
 exports.verifyStagedFfmpeg = verifyStagedFfmpeg
 if (require.main === module) {
   main().catch(error => {

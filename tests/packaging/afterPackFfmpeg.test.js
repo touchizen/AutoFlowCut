@@ -6,7 +6,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { stageFfmpegForPack } from '../../scripts/afterPack.cjs'
-import { verifyBinaryArch } from '../../scripts/verifyBinaryArch.cjs'
+import { FFMPEG_BUILD_MANIFEST } from '../../scripts/install-platform-binaries.cjs'
 
 const tempDirs = []
 
@@ -87,18 +87,25 @@ describe('afterPack ffmpeg staging', () => {
     expect(packageJson.scripts['dist:linux']).toContain('install:platform-binaries')
   })
 
-  it('ships a Korean font, its license, and a verified darwin-arm64 development ffmpeg', () => {
+  it('ships a Korean font and defines a static acquisition for the development host', () => {
     const rootDir = path.resolve(__dirname, '..', '..')
     const fontPath = path.join(rootDir, 'assets', 'fonts', 'NanumGothic.ttc')
     const fontLicense = path.join(rootDir, 'LICENSES', 'NanumGothic-OFL.txt')
-    const binaryPath = path.join(rootDir, 'vendor', 'ffmpeg', 'darwin-arm64', 'ffmpeg')
-    const checksumPath = `${binaryPath}.sha256`
 
     expect(fs.statSync(fontPath).size).toBeGreaterThan(100_000)
     expect(fs.readFileSync(fontLicense, 'utf8')).toContain('SIL OPEN FONT LICENSE')
-    expect(verifyBinaryArch(binaryPath, { platform: 'darwin', arch: 'arm64' })).toBe(true)
-    expect(fs.readFileSync(checksumPath, 'utf8')).toMatch(/^[a-f0-9]{64}\s+ffmpeg\s*$/i)
-    expect(fs.readdirSync(path.join(rootDir, 'LICENSES', 'ffmpeg', 'darwin-arm64')).length)
-      .toBeGreaterThan(0)
+    expect(FFMPEG_BUILD_MANIFEST['darwin-arm64']).toMatchObject({ archive: expect.any(String) })
+  })
+
+  it('stages ffmpeg before dev and passes explicit target arches from cross-dist scripts', () => {
+    const rootDir = path.resolve(__dirname, '..', '..')
+    const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'))
+
+    expect(packageJson.scripts['stage:ffmpeg']).toContain('--ffmpeg-only')
+    expect(packageJson.scripts.predev).toContain('stage:ffmpeg')
+    expect(packageJson.scripts['dist:win']).toContain('--target=win32-x64')
+    expect(packageJson.scripts['dist:test:win']).toContain('--target=win32-x64')
+    expect(packageJson.scripts['dist:linux']).toContain('--target=linux-x64')
+    expect(packageJson.scripts['dist:mac:prod']).toContain('--targets=darwin-x64,darwin-arm64')
   })
 })

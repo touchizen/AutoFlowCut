@@ -377,13 +377,20 @@ function codecArgs(stage, graph) {
 
   const crf = String(spec.crf ?? 20)
   const preset = String(spec.preset ?? 'medium')
+  const outputFrameRateArgs = ['-r', String(spec.fps ?? 30)]
   if (stage.kind === 'video') {
-    return ['-c:v', 'libx264', '-preset', preset, '-crf', crf, '-pix_fmt', 'yuv420p', '-an']
+    return [
+      '-c:v', 'libx264', '-preset', preset, '-crf', crf,
+      '-pix_fmt', 'yuv420p', ...outputFrameRateArgs, '-an',
+    ]
   }
 
   const audioBitrate = String(spec.audioBitrate ?? '192k')
   const videoArgs = graph.includes('[vout]')
-    ? ['-c:v', 'libx264', '-preset', preset, '-crf', crf, '-pix_fmt', 'yuv420p']
+    ? [
+        '-c:v', 'libx264', '-preset', preset, '-crf', crf,
+        '-pix_fmt', 'yuv420p', ...outputFrameRateArgs,
+      ]
     : ['-c:v', 'copy']
   return [
     ...videoArgs,

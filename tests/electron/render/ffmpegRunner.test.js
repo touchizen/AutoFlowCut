@@ -431,13 +431,43 @@ describe('runFfmpegRender staged execution', () => {
     await waitForSpawn(deps.spawn)
     const args = deps.spawn.mock.calls[0][1]
     expect(renderPlan.stages.at(-1).outputSpec).toMatchObject({
+      fps: 24,
       crf: 26,
       preset: 'veryfast',
       audioBitrate: '128k',
     })
     expect(args).toEqual(expect.arrayContaining([
+      '-r', '24',
       '-c:v', 'libx264', '-crf', '26', '-preset', 'veryfast',
       '-c:a', 'aac', '-b:a', '128k',
+    ]))
+
+    child.emit('close', 0)
+    await promise
+  })
+
+  it('pins video segment encoder output to the stage fps', async () => {
+    const child = fakeChild()
+    const deps = makeDeps({ spawn: vi.fn(() => child) })
+    const segmentPlan = { stages: [{
+      kind: 'video',
+      inputs: ['/image.png'],
+      filtergraphScript: '[0:v]null[vout]',
+      output: 'segment.mp4',
+      dependsOn: [],
+      subtitleAss: null,
+      outputSpec: { fps: 24, crf: 26, preset: 'veryfast' },
+    }] }
+    const promise = runFfmpegRender(
+      segmentPlan,
+      { jobId: 'segment-fps', cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )
+
+    await waitForSpawn(deps.spawn)
+    expect(deps.spawn.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      '-r', '24', '-c:v', 'libx264', '-crf', '26', '-preset', 'veryfast',
     ]))
 
     child.emit('close', 0)
