@@ -231,6 +231,7 @@ export function createClaudeOrchestrator({
   elicitationResponder,
   toolCore,
   grantLedger,
+  runState = undefined,
   model: initialModel,
   onDelta,
   onEvent,
@@ -262,11 +263,15 @@ export function createClaudeOrchestrator({
   if (typeof toolFactory !== 'function') throw new TypeError('toolFactory must be a function')
 
   const inputQueue = createInputQueue()
-  let state = { kind: 'idle' }
+  if (runState === undefined) {
+    runState = { state: { kind: 'idle' }, turnEpoch: 0, toolEpoch: 0 }
+  } else {
+    if (runState.state === undefined) runState.state = { kind: 'idle' }
+    if (runState.turnEpoch === undefined) runState.turnEpoch = 0
+    if (runState.toolEpoch === undefined) runState.toolEpoch = 0
+  }
   let currentModel = initialModel
   let turnCounter = 0
-  let turnEpoch = 0
-  let toolEpoch = 0
   let query = null
   let readerPromise = null
   let openPromise = null
@@ -279,7 +284,7 @@ export function createClaudeOrchestrator({
   const authorizedCalls = new Map()
 
   function invalidateToolAuthorizations() {
-    toolEpoch += 1
+    runState.toolEpoch += 1
     authorizedCalls.clear()
     grantLedger.closeSession(sessionId)
   }
@@ -314,9 +319,9 @@ export function createClaudeOrchestrator({
     transaction.settled = true
     clearAbortTimer(transaction)
     currentAbort = null
-    state = { kind: nextState }
+    runState.state = { kind: nextState }
     if (closeSession) {
-      inputQueue.end(steerRefusal(state))
+      inputQueue.end(steerRefusal(runState.state))
       // abort always resolves after attempting the close; a throwing close stays retryable
       // (closeQueryOnce marks closed only on success) so a later close() can finish teardown.
       try { closeQueryOnce() } catch { /* resolve regardless; retry happens via a later close() */ }
@@ -365,7 +370,7 @@ export function createClaudeOrchestrator({
     transaction.promise = new Promise((settle) => { resolve = settle })
     transaction.resolve = resolve
     currentAbort = transaction
-    state = transaction
+    runState.state = transaction
     transaction.timer = setTimeout(() => {
       failAbort(transaction, 'agent-abort-timeout')
     }, abortBoundaryTimeoutMs)
@@ -405,14 +410,14 @@ export function createClaudeOrchestrator({
   }
 
   function enterOrphanDrain() {
-    if (state.kind === 'orphanDrain' || state.kind === 'closing') return
-    if (state.kind === 'pendingStart') cancelPendingStart(state)
+    if (runState.state.kind === 'orphanDrain' || runState.state.kind === 'closing') return
+    if (runState.state.kind === 'pendingStart') cancelPendingStart(runState.state)
     invalidateToolAuthorizations()
-    state = { kind: 'orphanDrain' }
+    runState.state = { kind: 'orphanDrain' }
     orphanTimer = setTimeout(() => {
-      if (state.kind !== 'orphanDrain') return
-      state = { kind: 'closing' }
-      inputQueue.end(steerRefusal(state))
+      if (runState.state.kind !== 'orphanDrain') return
+      runState.state = { kind: 'closing' }
+      inputQueue.end(steerRefusal(runState.state))
       closeQueryOnce()
       onExit?.({
         provider: 'claude',
@@ -426,10 +431,10 @@ export function createClaudeOrchestrator({
   }
 
   function closeOrphanDrain() {
-    if (state.kind !== 'orphanDrain') return
+    if (runState.state.kind !== 'orphanDrain') return
     clearOrphanTimer()
-    state = { kind: 'closing' }
-    inputQueue.end(steerRefusal(state))
+    runState.state = { kind: 'closing' }
+    inputQueue.end(steerRefusal(runState.state))
     closeQueryOnce()
   }
 
@@ -450,10 +455,10 @@ export function createClaudeOrchestrator({
   }
 
   function closeInvalidRemoteStartState() {
-    if (state.kind === 'pendingStart') cancelPendingStart(state)
+    if (runState.state.kind === 'pendingStart') cancelPendingStart(runState.state)
     invalidateToolAuthorizations()
-    state = { kind: 'closing' }
-    inputQueue.end(steerRefusal(state))
+    runState.state = { kind: 'closing' }
+    inputQueue.end(steerRefusal(runState.state))
     closeQueryOnce()
     onExit?.({
       provider: 'claude',
@@ -696,9 +701,9 @@ export function createClaudeOrchestrator({
     const turn = error
       ? { id: active.turnId, status: 'failed', error }
       : { id: active.turnId, status: 'completed' }
-    if (state !== active) return
-    state = { kind: 'idle' }
-    turnEpoch += 1
+    if (runState.state !== active) return
+    runState.state = { kind: 'idle' }
+    runState.turnEpoch += 1
     invalidateToolAuthorizations()
     if (error) closeOpenToolsAsFailed(active)
     onEvent?.({ method: 'turn/completed', params: { turn } })
@@ -706,25 +711,25 @@ export function createClaudeOrchestrator({
 
   function mapSdkMessage(message) {
     // State/epoch ownership is checked before parsing.
-    if (state.kind === 'closing') return
-    if (state.kind === 'aborting') {
-      if (state.phase === 'active'
-        && state.remoteStarted
+    if (runState.state.kind === 'closing') return
+    if (runState.state.kind === 'aborting') {
+      if (runState.state.phase === 'active'
+        && runState.state.remoteStarted
         && message?.type === 'result') {
-        state.opaqueBoundarySeen = true
-        settleActiveAbortBoundary(state)
+        runState.state.opaqueBoundarySeen = true
+        settleActiveAbortBoundary(runState.state)
       }
       return
     }
-    if (state.kind !== 'active' && Object.hasOwn(state, 'remoteStarted')) {
+    if (runState.state.kind !== 'active' && Object.hasOwn(runState.state, 'remoteStarted')) {
       closeInvalidRemoteStartState()
       return
     }
-    if (state.kind === 'orphanDrain') {
+    if (runState.state.kind === 'orphanDrain') {
       if (message?.type === 'result') closeOrphanDrain()
       return
     }
-    if (state.kind !== 'active') {
+    if (runState.state.kind !== 'active') {
       if (isOrphanOutput(message)) {
         enterOrphanDrain()
         if (message?.type === 'result') closeOrphanDrain()
@@ -732,7 +737,7 @@ export function createClaudeOrchestrator({
       return
     }
 
-    const active = state
+    const active = runState.state
     // M4 reads this bit; it is set only by the first owned T frame, never by pendingStart.
     if (isRemoteStartFrame(message)) active.remoteStarted = true
 
@@ -746,8 +751,8 @@ export function createClaudeOrchestrator({
   async function readQuery() {
     try {
       for await (const message of query) mapSdkMessage(message)
-      if (state.kind === 'aborting') {
-        failAbort(state)
+      if (runState.state.kind === 'aborting') {
+        failAbort(runState.state)
         onExit?.({
           provider: 'claude',
           code: null,
@@ -757,13 +762,13 @@ export function createClaudeOrchestrator({
         })
         return
       }
-      if (state.kind !== 'closing') {
+      if (runState.state.kind !== 'closing') {
         clearOrphanTimer()
         // §5.4 step 6: a terminal transition must invalidate live tool authorizations before
         // any late handler can run, otherwise the handler's turn/epoch check is the sole defense.
         invalidateToolAuthorizations()
-        state = { kind: 'closing' }
-        inputQueue.end(steerRefusal(state))
+        runState.state = { kind: 'closing' }
+        inputQueue.end(steerRefusal(runState.state))
         onExit?.({
           provider: 'claude',
           code: null,
@@ -773,16 +778,16 @@ export function createClaudeOrchestrator({
         })
       }
     } catch (error) {
-      if (state.kind === 'aborting') {
-        failAbort(state)
+      if (runState.state.kind === 'aborting') {
+        failAbort(runState.state)
         onExit?.({ provider: 'claude', code: null, signal: null, error, reason: 'stream-error' })
         return
       }
-      if (state.kind !== 'closing') {
+      if (runState.state.kind !== 'closing') {
         clearOrphanTimer()
         invalidateToolAuthorizations()
-        state = { kind: 'closing' }
-        inputQueue.end(steerRefusal(state))
+        runState.state = { kind: 'closing' }
+        inputQueue.end(steerRefusal(runState.state))
         // A throw inside mapSdkMessage (e.g. a renderer callback) leaves the SDK query alive.
         // Guard the close so a throwing query.close() cannot suppress the onExit settlement.
         try { closeQueryOnce() } catch { /* still report the terminal below */ }
@@ -792,7 +797,7 @@ export function createClaudeOrchestrator({
   }
 
   async function doOpen() {
-    if (state.kind === 'closing') throw new Error('Claude orchestrator is closed')
+    if (runState.state.kind === 'closing') throw new Error('Claude orchestrator is closed')
     const appTools = toolCore.list()
     const registeredTools = appTools.map((record) => {
       const validator = record.inputSchema ? zodFromJson(record.inputSchema) : null
@@ -808,9 +813,9 @@ export function createClaudeOrchestrator({
 
     const deny = (message = '도구 사용이 거부되었습니다.') => ({ behavior: 'deny', message })
     const activeMatches = (turnId, expectedToolEpoch) => (
-      state.kind === 'active'
-      && state.turnId === turnId
-      && state.toolEpoch === expectedToolEpoch
+      runState.state.kind === 'active'
+      && runState.state.turnId === turnId
+      && runState.state.toolEpoch === expectedToolEpoch
     )
     const cleanHandlerInput = (input) => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -880,9 +885,9 @@ export function createClaudeOrchestrator({
     })
     const claudeToolPermissionGate = async (sdkToolName, input, permissionContext = {}) => {
       // The SDK callback carries no turn id. Only the synchronously observed active owner is valid.
-      if (state.kind !== 'active') return deny('진행 중인 턴이 없어 도구 요청을 처리할 수 없습니다.')
-      const turnId = state.turnId
-      const expectedToolEpoch = state.toolEpoch
+      if (runState.state.kind !== 'active') return deny('진행 중인 턴이 없어 도구 요청을 처리할 수 없습니다.')
+      const turnId = runState.state.turnId
+      const expectedToolEpoch = runState.state.toolEpoch
       const callToken = randomUuid()
       const canonicalName = nonEmptyString(sdkToolName) && sdkToolName.startsWith(SDK_TOOL_PREFIX)
         ? sdkToolName.slice(SDK_TOOL_PREFIX.length)
@@ -984,7 +989,7 @@ export function createClaudeOrchestrator({
   }
 
   function open() {
-    if (state.kind === 'closing') return Promise.reject(new Error('Claude orchestrator is closed'))
+    if (runState.state.kind === 'closing') return Promise.reject(new Error('Claude orchestrator is closed'))
     if (!openPromise) openPromise = doOpen()
     return openPromise
   }
@@ -995,7 +1000,7 @@ export function createClaudeOrchestrator({
     if (typeof nextModel !== 'string' || !nextModel) {
       throw new TypeError('Claude sdkModel must be a non-empty string')
     }
-    if (state.kind !== 'idle') throw new Error('Claude orchestrator is busy')
+    if (runState.state.kind !== 'idle') throw new Error('Claude orchestrator is busy')
 
     let resolveCancellation
     const cancellation = new Promise((resolve) => { resolveCancellation = resolve })
@@ -1006,19 +1011,19 @@ export function createClaudeOrchestrator({
       cancellation,
       resolveCancellation,
     }
-    state = pending
+    runState.state = pending
     try {
       if (nextModel !== currentModel) {
         const modelOutcome = await Promise.race([
           Promise.resolve(query.setModel(nextModel)).then(() => 'applied'),
           pending.cancellation.then(() => 'cancelled'),
         ])
-        if (modelOutcome === 'cancelled' || state !== pending || pending.cancelled) {
+        if (modelOutcome === 'cancelled' || runState.state !== pending || pending.cancelled) {
           return { error: 'agent-send-cancelled', message: '전송이 중단되었습니다.', turnId: pending.turnId }
         }
         currentModel = nextModel
       }
-      if (state !== pending || pending.cancelled) {
+      if (runState.state !== pending || pending.cancelled) {
         return { error: 'agent-send-cancelled', message: '전송이 중단되었습니다.', turnId: pending.turnId }
       }
 
@@ -1037,7 +1042,7 @@ export function createClaudeOrchestrator({
           turnId: pending.turnId,
         },
         guard: () => {
-          if (state !== pending || pending.cancelled) {
+          if (runState.state !== pending || pending.cancelled) {
             return {
               error: 'agent-send-cancelled',
               message: '전송이 중단되었습니다.',
@@ -1045,20 +1050,21 @@ export function createClaudeOrchestrator({
             }
           }
           // No await between ownership transfer and yield: pre-yield output still belongs to orphan drain.
-          active.epoch = ++turnEpoch
-          active.toolEpoch = ++toolEpoch
-          state = active
+          active.epoch = ++runState.turnEpoch
+          active.toolEpoch = ++runState.toolEpoch
+          runState.state = active
           return null
         },
       })
       if (!receipt.written) return receipt.refusal
       return { turn: { id: pending.turnId, status: 'inProgress' } }
     } catch (error) {
-      if (pending.cancelled || state.kind === 'closing' || state.kind === 'orphanDrain') {
+      if (pending.cancelled || runState.state.kind === 'closing' || runState.state.kind === 'orphanDrain') {
         return { error: 'agent-send-cancelled', message: '전송이 중단되었습니다.', turnId: pending.turnId }
       }
-      if (state === pending || (state.kind === 'active' && state.turnId === pending.turnId)) {
-        state = { kind: 'idle' }
+      if (runState.state === pending
+        || (runState.state.kind === 'active' && runState.state.turnId === pending.turnId)) {
+        runState.state = { kind: 'idle' }
       }
       throw error
     } finally {
@@ -1068,17 +1074,17 @@ export function createClaudeOrchestrator({
 
   async function steer(text) {
     await open()
-    if (state.kind !== 'active') return steerRefusal(state)
-    const active = state
+    if (runState.state.kind !== 'active') return steerRefusal(runState.state)
+    const active = runState.state
     const expectedTurnId = active.turnId
     const expectedEpoch = active.epoch
     const receipt = await inputQueue.write(userEnvelope(text, randomUuid()), {
       guard: () => (
-        state.kind === 'active'
-        && state.turnId === expectedTurnId
-        && state.epoch === expectedEpoch
+        runState.state.kind === 'active'
+        && runState.state.turnId === expectedTurnId
+        && runState.state.epoch === expectedEpoch
           ? null
-          : steerRefusal(state, expectedTurnId)
+          : steerRefusal(runState.state, expectedTurnId)
       ),
     })
     if (!receipt.written) return receipt.refusal
@@ -1093,7 +1099,7 @@ export function createClaudeOrchestrator({
         priority: 'now',
         message: { role: 'user', content: AGENT_CLAUDE_ABORT_PAYLOAD },
       }, {
-        guard: () => (state === transaction ? null : steerRefusal(state)),
+        guard: () => (runState.state === transaction ? null : steerRefusal(runState.state)),
       })
       if (currentAbort !== transaction) return
       if (!receipt.written) {
@@ -1123,13 +1129,13 @@ export function createClaudeOrchestrator({
   }
 
   function abort() {
-    if (state.kind === 'aborting') return state.promise
-    if (state.kind === 'idle') return Promise.resolve({ aborted: false, reason: 'idle' })
-    if (state.kind === 'orphanDrain') {
+    if (runState.state.kind === 'aborting') return runState.state.promise
+    if (runState.state.kind === 'idle') return Promise.resolve({ aborted: false, reason: 'idle' })
+    if (runState.state.kind === 'orphanDrain') {
       clearOrphanTimer()
-      state = { kind: 'closing' }
-      turnEpoch += 1
-      inputQueue.end(steerRefusal(state))
+      runState.state = { kind: 'closing' }
+      runState.turnEpoch += 1
+      inputQueue.end(steerRefusal(runState.state))
       try { closeQueryOnce() } catch { /* abort never rejects */ }
       return Promise.resolve({
         aborted: true,
@@ -1140,15 +1146,15 @@ export function createClaudeOrchestrator({
         reason: 'orphan-drain-close',
       })
     }
-    if (state.kind === 'pendingStart') {
-      const pending = state
+    if (runState.state.kind === 'pendingStart') {
+      const pending = runState.state
       const transaction = createAbortTransaction({
         phase: 'pendingStart',
         turnId: pending.turnId,
         pending,
       })
       cancelPendingStart(pending)
-      turnEpoch += 1
+      runState.turnEpoch += 1
       try {
         invalidateToolAuthorizations()
       } catch {
@@ -1156,20 +1162,20 @@ export function createClaudeOrchestrator({
       }
       return transaction.promise
     }
-    if (state.kind === 'closing') {
+    if (runState.state.kind === 'closing') {
       return Promise.resolve({ aborted: false, reason: 'closing' })
     }
-    if (state.kind !== 'active') {
+    if (runState.state.kind !== 'active') {
       return Promise.resolve({ aborted: false, reason: 'idle' })
     }
 
-    const active = state
+    const active = runState.state
     const transaction = createAbortTransaction({
       phase: 'active',
       turnId: active.turnId,
       active,
     })
-    turnEpoch += 1
+    runState.turnEpoch += 1
 
     let setupFailed = false
     try {
@@ -1244,11 +1250,11 @@ export function createClaudeOrchestrator({
     if (closePromise) return closePromise
     let resolveClose, rejectClose
     closePromise = new Promise((resolve, reject) => { resolveClose = resolve; rejectClose = reject })
-    const previous = state
+    const previous = runState.state
     let closeError = null
     if (previous.kind === 'pendingStart') cancelPendingStart(previous)
-    state = { kind: 'closing' }
-    turnEpoch += 1
+    runState.state = { kind: 'closing' }
+    runState.turnEpoch += 1
     try {
       invalidateToolAuthorizations()
     } catch (error) {
@@ -1266,7 +1272,7 @@ export function createClaudeOrchestrator({
       }, { nextState: 'closing' })
     }
     try {
-      inputQueue.end(steerRefusal(state))
+      inputQueue.end(steerRefusal(runState.state))
     } catch (error) {
       closeError ||= error
     }

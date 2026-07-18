@@ -153,6 +153,30 @@ describe('Claude orchestrator capability ceiling', () => {
 })
 
 describe('createClaudeOrchestrator — persistent Query lifecycle', () => {
+  it('injected runState를 authority로 쓰고 기본 runState는 인스턴스마다 격리한다', async () => {
+    const runState = {}
+    const injected = createHarness({ runState })
+
+    expect(runState).toEqual({ state: { kind: 'idle' }, turnEpoch: 0, toolEpoch: 0 })
+    await injected.orchestrator.send('주입된 상태')
+    expect(runState.state.kind).toBe('active')
+    expect(runState.turnEpoch).toBe(1)
+    expect(runState.toolEpoch).toBe(1)
+
+    const first = createHarness()
+    const second = createHarness()
+    await first.orchestrator.send('첫 인스턴스')
+    await expect(second.orchestrator.send('둘째 인스턴스')).resolves.toEqual({
+      turn: { id: 'claude:session-1:1', status: 'inProgress' },
+    })
+
+    await Promise.all([
+      injected.orchestrator.close(),
+      first.orchestrator.close(),
+      second.orchestrator.close(),
+    ])
+  })
+
   it('open은 격리 options를 뒤 spread 없이 고정하고 같은 promise를 재사용한다', async () => {
     const inheritedEnv = { PATH: '/custom/bin', KEEP_ME: 'yes' }
     const h = createHarness({ env: inheritedEnv })
