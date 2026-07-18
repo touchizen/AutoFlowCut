@@ -1,0 +1,12 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildRenderPlan > matches golden filtergraph snapshot 1`] = `
+[
+  "[0:v]scale=w=2160:h=3840:force_original_aspect_ratio=increase:flags=lanczos,crop=w=2160:h=3840:x=(iw-ow)/2:y=(ih-oh)/2,zoompan=z='(1.3+(1-1.3)*on/89)':x='max(0,min(iw-iw/zoom,(iw-iw/zoom)*(0.5+(1-0.5)*on/89)))':y='max(0,min(ih-ih/zoom,(ih-ih/zoom)*(0.5+(0-0.5)*on/89)))':d=90:s=1080x1920:fps=30,setsar=1[v0];
+[1:v]scale=w=2160:h=3840:force_original_aspect_ratio=increase:flags=lanczos,crop=w=2160:h=3840:x=(iw-ow)/2:y=(ih-oh)/2,zoompan=z='(1.3+(1-1.3)*on/119)':x='max(0,min(iw-iw/zoom,(iw-iw/zoom)*(0+(0-0)*on/119)))':y='max(0,min(ih-ih/zoom,(ih-ih/zoom)*(0+(0-0)*on/119)))':d=120:s=1080x1920:fps=30,setsar=1[v1];
+[v0][v1]concat=n=2:v=1:a=0[vconcat];
+[vconcat]trim=duration=7,setpts=PTS-STARTPTS,format=yuv420p,setsar=1[vout];
+[2:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=duration=7,asetpts=PTS-STARTPTS,volume=1,adelay=0:all=1[a0];
+[a0]amix=inputs=1:normalize=0:dropout_transition=0,alimiter=level=false:latency=1,apad,atrim=duration=7,asetpts=PTS-STARTPTS[aout]",
+]
+`;
