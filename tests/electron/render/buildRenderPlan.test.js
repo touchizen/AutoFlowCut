@@ -48,15 +48,9 @@ describe('allocateFrames (cumulative boundaries, no per-scene rounding drift)', 
     const total = durs.reduce((a, b) => a + b, 0)
     expect(frames.reduce((a, b) => a + b, 0)).toBe(Math.round(total * 30))
   })
-  it('gives each scene ≥1 frame', () => {
-    for (const f of allocateFrames([0.01, 0.01], 24)) expect(f).toBeGreaterThanOrEqual(1)
-  })
-  it('preserves the rounded total after clamping sub-frame scenes', () => {
-    const durations = [0.01, 0.01, 3]
-    const frames = allocateFrames(durations, 24)
-    expect(frames).toEqual([1, 1, 70])
-    expect(frames.reduce((sum, frame) => sum + frame, 0))
-      .toBe(Math.round(durations.reduce((sum, duration) => sum + duration, 0) * 24))
+  it('rejects a duration shorter than one output frame', () => {
+    expect(() => allocateFrames([1, 0.01], 24))
+      .toThrow(/scene 2.*0\.01.*one frame.*24 fps/i)
   })
 })
 
@@ -128,6 +122,14 @@ describe('buildRenderPlan', () => {
     const plan = buildRenderPlan(resolved, options)
     expect(plan.stages.map(s => s.filtergraphScript)).toMatchSnapshot()
   })
+
+  it('rejects an all-sub-frame project with the offending scene id', () => {
+    const scenes = makeScenes(1000, 0.01)
+    expect(() => buildRenderPlan(
+      makeResolved(scenes),
+      makeOptions(scenes, {}, { renderMode: 'preview' }),
+    )).toThrow(/scene_1.*0\.01.*one frame.*24 fps/i)
+  })
 })
 
 describe('buildRenderPlan staged audio', () => {
@@ -171,6 +173,37 @@ describe('buildRenderPlan staged audio', () => {
     const plan = buildRenderPlan(makeResolved(scenes, clips), makeOptions(scenes))
     const finalGraph = plan.stages.find(stage => stage.kind === 'final').filtergraphScript
     expect(finalGraph).toContain('adelay=20000:all=1[a0]')
+  })
+
+  it('stages audio when image and audio inputs only exceed the argv budget together', () => {
+    const scenes = makeScenes(64, 1)
+    const imagePath = scene => `/${scene.id}-${'i'.repeat(340)}.png`
+    const clips = makeAudioClips(32).map((clip, index) => ({
+      ...clip,
+      path: `/audio-${index}-${'a'.repeat(340)}.wav`,
+    }))
+    const plan = buildRenderPlan(makeResolved(scenes, clips, imagePath), makeOptions(scenes))
+    const audioStages = plan.stages.filter(stage => stage.kind === 'audio')
+    const final = plan.stages.at(-1)
+
+    expect(audioStages).toHaveLength(1)
+    expect(final.inputs).toContain(audioStages[0].output)
+    expect(final.inputs).not.toContain(clips[0].path)
+  })
+
+  it('chunks 32 audio clips by UTF-16 argv length even when the count limit is not exceeded', () => {
+    const clips = makeAudioClips(32).map((clip, index) => ({
+      ...clip,
+      path: `/audio-${index}-${'긴'.repeat(900)}.wav`,
+    }))
+    const plan = buildRenderPlan(makeResolved(scenes, clips), makeOptions(scenes))
+    const leaves = plan.stages.filter(stage => stage.kind === 'audio' && stage.dependsOn.length === 0)
+
+    expect(leaves.length).toBeGreaterThan(1)
+    for (const leaf of leaves) {
+      const inputChars = leaf.inputs.reduce((sum, input) => sum + input.length + 7, 0)
+      expect(inputChars + 8192).toBeLessThanOrEqual(32767)
+    }
   })
 })
 
@@ -257,9 +290,17 @@ describe('buildRenderPlan scale modes', () => {
   it('uses crop and padding without aspect scaling for none mode', () => {
     const options = makeOptions(scenes, { format: 'landscape', scaleMode: 'none' }, { renderMode: 'preview' })
     const graph = buildRenderPlan(makeResolved(scenes), options).stages.at(-1).filtergraphScript
+    expect(graph).toContain('scale=iw*1.5:ih*1.5:flags=lanczos')
     expect(graph).toContain("crop=w='min(iw,1920)':h='min(ih,1080)'")
     expect(graph).toContain('pad=w=1920:h=1080:x=(ow-iw)/2:y=(oh-ih)/2:color=black')
     expect(graph).not.toContain('force_original_aspect_ratio')
+  })
+
+  it('uses the 2x source upscale for none mode in the default final render path', () => {
+    const options = makeOptions(scenes, { format: 'landscape', scaleMode: 'none' })
+    const graph = buildRenderPlan(makeResolved(scenes), options).stages.at(-1).filtergraphScript
+    expect(graph).toContain('scale=iw*2:ih*2:flags=lanczos')
+    expect(graph).toContain("crop=w='min(iw,3840)':h='min(ih,2160)'")
   })
 
   it('uses a static zoom and centered anchor when Ken Burns is disabled', () => {

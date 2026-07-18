@@ -9,7 +9,9 @@
 //    filenames, signature verification fails inside the DMG).
 
 const fs = require('fs')
+const crypto = require('crypto')
 const path = require('path')
+const { verifyBinaryArch } = require('./verifyBinaryArch.cjs')
 
 // codex / claude-agent-sdk 는 네이티브 바이너리를 arch 별 패키지로 쪼개 배포한다.
 // npm 은 호스트에 맞는 것만 설치하므로 --x64 --arm64 를 함께 구우려면 둘 다 설치해야 하고
@@ -49,6 +51,52 @@ function pruneForeignPlatformPackages(nodeModulesDir, { platform, arch }) {
 }
 
 exports.pruneForeignPlatformPackages = pruneForeignPlatformPackages
+
+function stageFfmpegForPack({ projectDir, resourcesDir, platform, arch }) {
+  const executableName = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+  const source = path.join(projectDir, 'vendor', 'ffmpeg', `${platform}-${arch}`, executableName)
+  const checksumPath = `${source}.sha256`
+
+  if (!fs.existsSync(source)) {
+    throw new Error(
+      `[afterPack] ffmpeg not staged for ${platform}/${arch}: ${source}. ` +
+      'Run "npm run install:platform-binaries" before packaging.'
+    )
+  }
+  verifyChecksumFile(source, checksumPath)
+  if (!verifyBinaryArch(source, { platform, arch })) {
+    throw new Error(`[afterPack] ffmpeg architecture mismatch: expected ${platform}/${arch} at ${source}`)
+  }
+
+  const destinationDirectory = path.join(resourcesDir, 'ffmpeg')
+  const destination = path.join(destinationDirectory, executableName)
+  fs.mkdirSync(destinationDirectory, { recursive: true })
+  fs.copyFileSync(source, destination)
+  if (platform !== 'win32') fs.chmodSync(destination, 0o755)
+
+  if (!verifyBinaryArch(destination, { platform, arch })) {
+    fs.rmSync(destination, { force: true })
+    throw new Error(`[afterPack] copied ffmpeg architecture mismatch: expected ${platform}/${arch}`)
+  }
+  return destination
+}
+
+function verifyChecksumFile(binaryPath, checksumPath) {
+  if (!fs.existsSync(checksumPath)) {
+    throw new Error(`[afterPack] ffmpeg checksum missing: ${checksumPath}`)
+  }
+  const expected = fs.readFileSync(checksumPath, 'utf8').trim().split(/\s+/)[0]?.toLowerCase()
+  if (!/^[a-f0-9]{64}$/.test(expected)) {
+    throw new Error(`[afterPack] invalid ffmpeg checksum file: ${checksumPath}`)
+  }
+  const actual = crypto.createHash('sha256').update(fs.readFileSync(binaryPath)).digest('hex')
+  if (actual !== expected) {
+    throw new Error(`[afterPack] ffmpeg checksum mismatch: ${binaryPath}`)
+  }
+}
+
+exports.stageFfmpegForPack = stageFfmpegForPack
+exports.verifyChecksumFile = verifyChecksumFile
 
 function copyRecursive(src, dest) {
   const stat = fs.statSync(src)
@@ -100,9 +148,17 @@ exports.default = async function (context) {
 
   // Drop the native binaries that don't belong to this arch (~460MB per app).
   const { Arch } = require('electron-builder')
-  const archName = Arch[context.arch]
+  const archName = typeof context.arch === 'string' ? context.arch : Arch[context.arch]
+  const resourcesDir = context.packager.getResourcesDir(appOutDir)
+  const ffmpegPath = stageFfmpegForPack({
+    projectDir: context.packager.projectDir,
+    resourcesDir,
+    platform: context.electronPlatformName,
+    arch: archName,
+  })
+  console.log(`[afterPack] Staged ffmpeg: ${ffmpegPath}`)
   const unpackedNodeModules = path.join(
-    context.packager.getResourcesDir(appOutDir), 'app.asar.unpacked', 'node_modules'
+    resourcesDir, 'app.asar.unpacked', 'node_modules'
   )
   const removed = pruneForeignPlatformPackages(unpackedNodeModules, {
     platform: context.electronPlatformName,
@@ -115,7 +171,6 @@ exports.default = async function (context) {
 
   // macOS: normalize non-ASCII filenames to NFD before code signing.
   if (context.electronPlatformName === 'darwin') {
-    const resourcesDir = path.join(appOutDir, 'AutoFlowCut.app', 'Contents', 'Resources')
     if (fs.existsSync(resourcesDir)) {
       console.log('[afterPack] Normalizing non-ASCII filenames to NFD (HFS+ DMG compatibility)...')
       const count = normalizeFilenamesToNFD(resourcesDir)

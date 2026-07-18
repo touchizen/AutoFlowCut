@@ -3,7 +3,9 @@ import { buildAss } from './subtitleAss.js'
 
 const K_AUDIO = 32
 const K_VIDEO = 64
-const MAX_VIDEO_INPUT_CHARS = 24000
+const WINDOWS_ARGV_LIMIT_CHARS = 32767
+const ARGV_FIXED_RESERVE_CHARS = 8192
+const MAX_STAGE_INPUT_ARG_CHARS = WINDOWS_ARGV_LIMIT_CHARS - ARGV_FIXED_RESERVE_CHARS
 const INPUT_ARG_OVERHEAD_CHARS = 7 // Approximate characters for ` -i "<path>" ` around each path.
 const ASS_PATH_TOKEN = '__ASS_PATH__'
 const FONTS_DIR_TOKEN = '__FONTS_DIR__'
@@ -24,6 +26,7 @@ export function outputSpec(format, renderMode) {
 }
 
 export function allocateFrames(durationsSec, fps) {
+  assertFrameDurations(durationsSec, fps)
   const frames = []
   let cumulativeSec = 0
   let previousBoundary = 0
@@ -31,10 +34,8 @@ export function allocateFrames(durationsSec, fps) {
   for (const durationSec of durationsSec) {
     cumulativeSec += durationSec
     const cumulativeBoundary = Math.round(cumulativeSec * fps)
-    // A clamped sub-frame scene advances the boundary so later scenes repay that frame.
-    const boundary = Math.max(previousBoundary + 1, cumulativeBoundary)
-    frames.push(boundary - previousBoundary)
-    previousBoundary = boundary
+    frames.push(cumulativeBoundary - previousBoundary)
+    previousBoundary = cumulativeBoundary
   }
 
   return frames
@@ -63,6 +64,7 @@ export function buildRenderPlan(resolved, options) {
   const spec = outputSpec(cloudRequest.format, options.renderMode)
   const scenes = cloudRequest.scenes || []
   const durationsSec = scenes.map(sceneDurationSec)
+  assertFrameDurations(durationsSec, spec.fps, scenes.map((scene, index) => scene.id || index + 1))
   const frames = allocateFrames(durationsSec, spec.fps)
   const sceneEndMs = Math.round(durationsSec.reduce((sum, duration) => sum + duration, 0) * 1000)
   const audioClips = resolved.audioClips || []
@@ -93,10 +95,17 @@ export function buildRenderPlan(resolved, options) {
   }))
 
   const stages = []
-  const stagedAudio = audioClips.length > K_AUDIO ? buildAudioStages(audioClips) : null
+  const imageInputPaths = sceneContexts.map(context => context.imagePath)
+  const audioInputPaths = audioClips.map(clip => clip.path)
+  const stagedAudio = audioClips.length > 0 && (
+    audioClips.length > K_AUDIO
+    || exceedsArgvBudget(audioInputPaths)
+    || exceedsArgvBudget([...imageInputPaths, ...audioInputPaths])
+  ) ? buildAudioStages(audioClips) : null
   if (stagedAudio) stages.push(...stagedAudio.stages)
 
-  const stagedVideo = needsVideoStages(sceneContexts)
+  const finalAudioInputPaths = stagedAudio ? [stagedAudio.output] : audioInputPaths
+  const stagedVideo = needsVideoStages(sceneContexts, finalAudioInputPaths)
     ? buildVideoStages({
         sceneContexts,
         spec,
@@ -203,6 +212,7 @@ function buildFinalStage({
     dependsOn,
     subtitleAss,
     outputSpec: spec,
+    estimatedDurationMs: totalDurationMs,
   }
 }
 
@@ -217,7 +227,7 @@ function buildSceneChain({ context, inputIndex, spec, scaleMode }) {
   const anchorY = linearExpression(startAnchor.y, endAnchor.y, progress)
   const x = `max(0,min(iw-iw/zoom,(iw-iw/zoom)*${anchorX}))`
   const y = `max(0,min(ih-ih/zoom,(ih-ih/zoom)*${anchorY}))`
-  const baseTransform = scaleTransform(scaleMode, canvasWidth, canvasHeight)
+  const baseTransform = scaleTransform(scaleMode, canvasWidth, canvasHeight, spec.upscale)
   const label = `v${context.index}`
   const filter = [
     `[${inputIndex}:v]${baseTransform}`,
@@ -250,7 +260,7 @@ function buildVideoGraph({ videoChains, sceneDurationMs, targetDurationMs, subti
   return lines
 }
 
-function scaleTransform(scaleMode, width, height) {
+function scaleTransform(scaleMode, width, height, upscale) {
   if (scaleMode === 'fit') {
     return [
       `scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:flags=lanczos`,
@@ -260,6 +270,7 @@ function scaleTransform(scaleMode, width, height) {
 
   if (scaleMode === 'none') {
     return [
+      `scale=iw*${formatNumber(upscale)}:ih*${formatNumber(upscale)}:flags=lanczos`,
       `crop=w='min(iw,${width})':h='min(ih,${height})':x=(iw-ow)/2:y=(ih-oh)/2`,
       `pad=w=${width}:h=${height}:x=(ow-iw)/2:y=(oh-ih)/2:color=black`,
     ].join(',')
@@ -274,7 +285,7 @@ function scaleTransform(scaleMode, width, height) {
 function buildAudioStages(audioClips) {
   const orderedClips = sortAudioClips(audioClips)
   const stages = []
-  let nodes = chunk(orderedClips, K_AUDIO).map((clips, batchIndex) => {
+  let nodes = chunkByArgvBudget(orderedClips, clip => clip.path, K_AUDIO).map((clips, batchIndex) => {
     const baseStartMs = clips[0].startMs
     const endMs = clips.reduce(
       (maxEnd, clip) => Math.max(maxEnd, clip.startMs + clip.durationMs),
@@ -288,13 +299,14 @@ function buildAudioStages(audioClips) {
       output,
       dependsOn: [],
       subtitleAss: null,
+      estimatedDurationMs: endMs - baseStartMs,
     })
     return { path: output, output, baseStartMs, endMs }
   })
 
   let level = 1
   while (nodes.length > 1) {
-    nodes = chunk(nodes, K_AUDIO).map((children, batchIndex) => {
+    nodes = chunkByArgvBudget(nodes, node => node.output, K_AUDIO).map((children, batchIndex) => {
       const baseStartMs = children[0].baseStartMs
       const endMs = children.reduce((maxEnd, child) => Math.max(maxEnd, child.endMs), baseStartMs)
       const clips = children.map(child => ({
@@ -311,6 +323,7 @@ function buildAudioStages(audioClips) {
         output,
         dependsOn: children.map(child => child.output),
         subtitleAss: null,
+        estimatedDurationMs: endMs - baseStartMs,
       })
       return { path: output, output, baseStartMs, endMs }
     })
@@ -358,13 +371,12 @@ function buildAudioGraph({ clips, inputOffset, baseStartMs, applyLimiter = false
   return lines
 }
 
-function needsVideoStages(sceneContexts) {
+function needsVideoStages(sceneContexts, finalAudioInputPaths = []) {
   if (sceneContexts.length > K_VIDEO) return true
-  const inputChars = sceneContexts.reduce(
-    (total, context) => total + String(context.imagePath).length + INPUT_ARG_OVERHEAD_CHARS,
-    0,
-  )
-  return inputChars > MAX_VIDEO_INPUT_CHARS
+  return exceedsArgvBudget([
+    ...sceneContexts.map(context => context.imagePath),
+    ...finalAudioInputPaths,
+  ])
 }
 
 function buildVideoStages({ sceneContexts, spec, scaleMode, subtitleEntries, subtitleFontSize, sceneEndMs, totalDurationMs }) {
@@ -407,6 +419,7 @@ function buildVideoStages({ sceneContexts, spec, scaleMode, subtitleEntries, sub
       dependsOn: [],
       subtitleAss,
       outputSpec: spec,
+      estimatedDurationMs: segmentTargetMs,
     }
   })
 
@@ -422,28 +435,51 @@ function buildVideoStages({ sceneContexts, spec, scaleMode, subtitleEntries, sub
     output: 'VIDEO_CONCAT.mp4',
     dependsOn: segmentStages.map(stage => stage.output),
     subtitleAss: null,
+    estimatedDurationMs: totalDurationMs,
   }
   return { stages: [...segmentStages, concatStage], output: concatStage.output }
 }
 
 function chunkVideoContexts(contexts) {
+  return chunkByArgvBudget(contexts, context => context.imagePath, K_VIDEO)
+}
+
+function chunkByArgvBudget(items, pathFor, maxCount) {
   const groups = []
   let current = []
-  let currentChars = 0
+  let currentInputChars = 0
 
-  for (const context of contexts) {
-    const inputChars = String(context.imagePath).length + INPUT_ARG_OVERHEAD_CHARS
-    if (current.length > 0 && (current.length >= K_VIDEO || currentChars + inputChars > MAX_VIDEO_INPUT_CHARS)) {
+  for (const item of items) {
+    const inputPath = String(pathFor(item))
+    const inputChars = inputArgChars(inputPath)
+    if (inputChars > MAX_STAGE_INPUT_ARG_CHARS) {
+      throw new Error(`ffmpeg input path exceeds the argv budget: ${inputPath}`)
+    }
+    if (current.length > 0 && (
+      current.length >= maxCount
+      || currentInputChars + inputChars > MAX_STAGE_INPUT_ARG_CHARS
+    )) {
       groups.push(current)
       current = []
-      currentChars = 0
+      currentInputChars = 0
     }
-    current.push(context)
-    currentChars += inputChars
+    current.push(item)
+    currentInputChars += inputChars
   }
-  if (current.length > 0) groups.push(current)
 
+  if (current.length > 0) groups.push(current)
   return groups
+}
+
+function exceedsArgvBudget(inputPaths) {
+  return ARGV_FIXED_RESERVE_CHARS
+    + inputPaths.reduce((total, inputPath) => total + inputArgChars(inputPath), 0)
+    > WINDOWS_ARGV_LIMIT_CHARS
+}
+
+function inputArgChars(inputPath) {
+  // JS string length is UTF-16 code units, matching CreateProcessW's command-line limit.
+  return String(inputPath).length + INPUT_ARG_OVERHEAD_CHARS
 }
 
 function effectiveSubtitleEntries(cloudRequest, durationsSec) {
@@ -491,6 +527,16 @@ function sceneDurationSec(scene) {
   return Number.isFinite(duration) && duration > 0 ? duration : 3
 }
 
+function assertFrameDurations(durationsSec, fps, sceneLabels = []) {
+  durationsSec.forEach((durationSec, index) => {
+    if (Number(durationSec) * fps >= 1) return
+    const label = sceneLabels[index] ?? index + 1
+    throw new Error(
+      `scene ${label} duration ${formatNumber(durationSec)}s is shorter than one frame at ${fps} fps`,
+    )
+  })
+}
+
 function staticKenBurns() {
   return {
     startScale: 1,
@@ -520,10 +566,4 @@ function finiteNumber(value, fallback) {
 
 function hasAssDialogue(assText) {
   return typeof assText === 'string' && assText.includes('\nDialogue:')
-}
-
-function chunk(items, size) {
-  const groups = []
-  for (let index = 0; index < items.length; index += size) groups.push(items.slice(index, index + size))
-  return groups
 }

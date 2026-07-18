@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { EventEmitter } from 'events'
-import { escapeFilterOptionValue, runFfmpegRender } from '../../../electron/render/ffmpegRunner.js'
+import { tmpdir } from 'node:os'
+import {
+  escapeFilterOptionValue,
+  estimatePeakDiskBytes,
+  runFfmpegRender,
+} from '../../../electron/render/ffmpegRunner.js'
 import { buildRenderPlan } from '../../../electron/render/buildRenderPlan.js'
 
 function fakeChild() {
@@ -22,6 +27,7 @@ function makeDeps(overrides = {}) {
     writeFile: vi.fn(async () => {}),
     mkdtemp: vi.fn(async () => '/tmp/render-job'),
     rmdir: vi.fn(async () => {}),
+    statfs: vi.fn(async () => ({ bavail: 10_000_000, bsize: 4096 })),
     ...overrides,
   }
 }
@@ -74,6 +80,21 @@ describe('runFfmpegRender base lifecycle', () => {
     await expect(runFfmpegRender(plan, ctx, () => {}, deps)).rejects.toThrow(/cancel/i)
     expect(spawn).not.toHaveBeenCalled()
     expect(unlink).toHaveBeenCalledWith('/tmp/out.tmp.mp4')
+  })
+
+  it('short-circuits an already-aborted external signal before preflight or spawn', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const deps = makeDeps()
+
+    await expect(runFfmpegRender(
+      plan,
+      { signal: controller.signal, cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )).rejects.toThrow('render cancelled')
+    expect(deps.statfs).not.toHaveBeenCalled()
+    expect(deps.spawn).not.toHaveBeenCalled()
   })
 
   it('rejects with stderr tail on non-zero exit and never renames destination', async () => {
@@ -149,6 +170,91 @@ describe('runFfmpegRender base lifecycle', () => {
     child.emit('close', 0)
     await promise
     expect(rename).toHaveBeenCalledWith('/exports/final.tmp-atomic-1.mp4', '/exports/final.mp4')
+  })
+})
+
+describe('runFfmpegRender disk preflight and cleanup', () => {
+  it('refuses before spawning when estimated intermediates exceed free disk space', async () => {
+    const deps = makeDeps({
+      outPath: '/exports/final.mp4',
+      statfs: vi.fn(async () => ({ bavail: 1, bsize: 1024 })),
+    })
+
+    await expect(runFfmpegRender(
+      plan,
+      { jobId: 'disk-full', cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )).rejects.toThrow(/insufficient disk space.*required.*available/i)
+    expect(deps.statfs).toHaveBeenCalledWith('/exports')
+    expect(deps.spawn).not.toHaveBeenCalled()
+  })
+
+  it('checks the OS temp volume separately from the destination volume', async () => {
+    const statfs = vi.fn(async directory => directory === '/exports'
+      ? { bavail: 10_000_000, bsize: 4096 }
+      : { bavail: 1, bsize: 1024 })
+    const spawn = vi.fn(() => { throw new Error('spawned before temp-volume preflight') })
+
+    await expect(runFfmpegRender(
+      plan,
+      { jobId: 'temp-disk-full', cancelled: false, tempFiles: [] },
+      () => {},
+      makeDeps({ outPath: '/exports/final.mp4', statfs, spawn }),
+    )).rejects.toThrow(/insufficient disk space.*available/i)
+    expect(statfs).toHaveBeenCalledWith('/exports')
+    expect(statfs).toHaveBeenCalledWith(tmpdir())
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('estimates multi-gigabyte peak space for a 1000-clip staged render', () => {
+    const scenes = [{ id: 'scene_1', duration: 3000 }]
+    const audioClips = Array.from({ length: 1000 }, (_, index) => ({
+      filename: `clip_${index}.wav`,
+      path: `/clip_${index}.wav`,
+      startMs: index * 3000,
+      durationMs: 3000,
+      gain: 1,
+    }))
+    const renderPlan = buildRenderPlan({
+      images: new Map([['scene_1', '/image.png']]),
+      sfx: new Map(),
+      audioClips,
+    }, {
+      renderMode: 'final',
+      renderBurnSubtitle: false,
+      cloudRequest: {
+        format: 'landscape',
+        scaleMode: 'fill',
+        kenBurns: { enabled: false },
+        scenes,
+        audioTracks: [],
+        sfxItems: [],
+        srtEntries: null,
+      },
+    })
+
+    expect(estimatePeakDiskBytes(renderPlan)).toBeGreaterThan(4 * 1024 ** 3)
+  })
+
+  it('keeps a temp file tracked when unlink fails with a retryable error', async () => {
+    const unlinkError = Object.assign(new Error('locked'), { code: 'EACCES' })
+    const unlink = vi.fn(async () => { throw unlinkError })
+    const ctx = { cancelled: true, tempFiles: ['/tmp/locked.wav'] }
+
+    await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink })))
+      .rejects.toThrow('render cancelled')
+    expect(ctx.tempFiles).toContain('/tmp/locked.wav')
+  })
+
+  it('untracks a temp file that was already absent', async () => {
+    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+    const unlink = vi.fn(async () => { throw missing })
+    const ctx = { cancelled: true, tempFiles: ['/tmp/gone.wav'] }
+
+    await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink })))
+      .rejects.toThrow('render cancelled')
+    expect(ctx.tempFiles).toEqual([])
   })
 })
 

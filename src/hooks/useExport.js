@@ -102,7 +102,7 @@ export function useExport({
   // M2a-4 IP-A2: story 프로젝트면 export 직전에 최신 manifest+lastPushedRevision 을 로드한다.
   // (App state 에 미리 담으면 stale — export 시점 디스크가 source of truth.) 정합 판단은
   // prepareCloudRequest 가 하고, manifest 없으면(audio 미실행) null → 오디오 없이 export.
-  // CapCut/Premiere 전용 — Vrew 는 오디오 미배치라 호출하지 않는다(IP-A3).
+  // CapCut/Premiere/Render 전용 — Vrew 는 오디오 미배치라 호출하지 않는다(IP-A3).
   //   - storyProjectPath 를 넘겨 교차 프로젝트 주입을 막는다(Codex finding 1, main 에서 대조).
   //   - 손상 manifest 는 IPC 가 reject → 삼키지 않고 상위 export 핸들러로 전파해 export 를
   //     차단한다(Codex finding 3, fail-fast). IPC 자체가 없으면(테스트 등) optional chain → null.
@@ -515,7 +515,12 @@ export function useExport({
         storyAudio,
         renderMode,
         renderBurnSubtitle
-      }, { makeJobId: () => jobId })
+      }, {
+        makeJobId: () => jobId,
+        confirmOverlays: (count) => (typeof window !== 'undefined' && typeof window.confirm === 'function')
+          ? window.confirm(t('toast.renderVideoOverlayWarning', { count }))
+          : true
+      })
 
       if (result?.cancelled) {
         toast.info(t('toast.renderCancelled'), 4000)

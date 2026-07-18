@@ -1,23 +1,62 @@
 // effectful: filename→절대경로 해석(컬렉션별 키), 존재 검증, narration 길이 probe. 스펙 §3.
 import fs from 'fs'
+import { writeFile } from 'fs/promises'
+import os from 'os'
+import path from 'path'
 import { probeDurationMs as realProbe } from '../story/audioProbe.js'
+
+// data: URL 또는 raw base64 문자열을 임시 파일로 decode(main 소유). 파일 경로/http 는 null.
+function pickDataSpec(value) {
+  if (typeof value !== 'string' || !value) return null
+  if (value.startsWith('data:')) return value
+  if (value.startsWith('http://') || value.startsWith('https://')) return null
+  // 절대/상대 경로가 아니고 base64 문자셋이면 raw base64 로 간주.
+  if (/[/\\]/.test(value) || value.startsWith('.')) return null
+  if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.length > 64) return value
+  return null
+}
+
+async function defaultDecodeDataUrl(spec, name) {
+  const m = /^data:image\/([a-zA-Z0-9.+-]+);base64,(.*)$/s.exec(spec)
+  const ext = m ? m[1].replace(/[^a-z0-9]/gi, '') || 'png' : 'png'
+  const b64 = m ? m[2] : spec
+  const buf = Buffer.from(b64, 'base64')
+  const out = path.join(os.tmpdir(), `render_${name}.${ext}`)
+  await writeFile(out, buf)
+  return out
+}
 
 const defaultDeps = {
   existsSync: (p) => fs.existsSync(p),
   probeDurationMs: (p) => realProbe(p),
+  decodeDataUrl: defaultDecodeDataUrl,
 }
 
 export async function resolveAndValidateInputs(prepared, deps = {}) {
-  const { existsSync, probeDurationMs } = { ...defaultDeps, ...deps }
+  const { existsSync, probeDurationMs, decodeDataUrl } = { ...defaultDeps, ...deps }
   const cr = prepared.cloudRequest || {}
   const images = new Map()
   const sfx = new Map()
   const audio = new Map()
+  const tempFiles = []
 
   for (const m of (prepared.mediaFiles || [])) {
     if (m.type === 'video') continue                    // v1 미지원 (§4.9)
-    if (!existsSync(m.path)) throw new Error(`render: missing image for ${m.sceneId} (${m.filename})`)
-    images.set(m.sceneId, m.path)                        // 이미지 1/씬 → sceneId 키로 충분
+    // 1) 실제 파일 경로면 존재 확인
+    if (typeof m.path === 'string' && !m.path.startsWith('data:') && existsSync(m.path)) {
+      images.set(m.sceneId, m.path)                      // 이미지 1/씬 → sceneId 키로 충분
+      continue
+    }
+    // 2) data:/base64 (path 또는 fallback) → 임시 파일 decode (다른 exporter 와 동일한 fallback 지원)
+    const dataSpec = pickDataSpec(m.path) || pickDataSpec(m.fallback) || pickDataSpec(m.image)
+    if (dataSpec) {
+      const safe = String(m.sceneId || 'scene').replace(/\W+/g, '_')
+      const tmp = await decodeDataUrl(dataSpec, `${safe}_${String(m.filename || 'img').replace(/\W+/g, '_')}`)
+      images.set(m.sceneId, tmp)
+      tempFiles.push(tmp)
+      continue
+    }
+    throw new Error(`render: missing image for ${m.sceneId} (${m.filename})`)
   }
   for (const s of (prepared.sfxFiles || [])) {
     if (!existsSync(s.path)) throw new Error(`render: missing sfx for ${s.sceneId} (${s.filename})`)
@@ -39,5 +78,5 @@ export async function resolveAndValidateInputs(prepared, deps = {}) {
     if (!Number.isFinite(ms) || ms <= 0) throw new Error(`render: cannot probe narration length ${filename}`)
     return ms
   }
-  return { images, sfx, audio, narrationDurationMs }
+  return { images, sfx, audio, narrationDurationMs, tempFiles }
 }

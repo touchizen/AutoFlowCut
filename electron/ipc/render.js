@@ -40,7 +40,10 @@ export function registerRenderIPC(ipcMain, deps = {}) {
     if (running.has(jobId)) return { ok: false, error: `job ${jobId} already running` }
 
     // jobId 를 먼저 예약해 dialog 대기 중에도 중복 진입을 막는다.
-    const jobCtx = { cancelled: false, tempFiles: [], phase: null }
+    // AbortController 로 취소 시 실행 중 ffmpeg 프로세스를 즉시 kill (runner 가 signal 을 감시).
+    const controller = new AbortController()
+    const jobCtx = { jobId, cancelled: false, tempFiles: [], phase: null, signal: controller.signal }
+    jobCtx.abort = () => controller.abort()
     running.set(jobId, jobCtx)
     try {
       const outPath = await pickOutPath()
@@ -48,6 +51,7 @@ export function registerRenderIPC(ipcMain, deps = {}) {
 
       const cr = prepared.cloudRequest
       const resolved = await resolve(prepared)
+      if (Array.isArray(resolved.tempFiles)) jobCtx.tempFiles.push(...resolved.tempFiles) // decode된 base64 이미지 정리 위임
       const sceneStartsMs = computeSceneStartsMs(cr.scenes)
       resolved.audioClips = await adapt(cr, resolved, sceneStartsMs)
 
@@ -56,7 +60,8 @@ export function registerRenderIPC(ipcMain, deps = {}) {
 
       const onProgress = (p) => {
         const win = getMainWindow?.()
-        win?.webContents?.send?.('render:progress', { jobId, ...p })
+        // jobId 를 스프레드 뒤에 둬 runner 가 실은 jobCtx.jobId(=이 jobId)로 덮어써도 안전.
+        win?.webContents?.send?.('render:progress', { ...p, jobId })
       }
 
       await run(plan, jobCtx, onProgress, {
@@ -77,6 +82,15 @@ export function registerRenderIPC(ipcMain, deps = {}) {
     const jobCtx = running.get(jobId)
     if (!jobCtx) return { ok: false, error: 'no such job' }
     jobCtx.cancelled = true
+    jobCtx.abort?.()   // 실행 중 ffmpeg 프로세스 즉시 SIGKILL (runner onAbort)
     return { ok: true }
   })
+
+  // 앱 종료 시 렌더 중이면 전부 취소해 orphan ffmpeg/temp 를 남기지 않는다(§4.8 before-quit).
+  return function cleanupRunningRenders() {
+    for (const jobCtx of running.values()) {
+      jobCtx.cancelled = true
+      jobCtx.abort?.()
+    }
+  }
 }

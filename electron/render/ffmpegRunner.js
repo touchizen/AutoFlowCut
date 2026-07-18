@@ -3,6 +3,7 @@ import {
   mkdtemp as nodeMkdtemp,
   rename as nodeRename,
   rmdir as nodeRmdir,
+  statfs as nodeStatfs,
   unlink as nodeUnlink,
   writeFile as nodeWriteFile,
 } from 'node:fs/promises'
@@ -12,6 +13,10 @@ import path from 'node:path'
 const STDERR_TAIL_LINES = 20
 const ASS_PATH_TOKEN = '__ASS_PATH__'
 const FONTS_DIR_TOKEN = '__FONTS_DIR__'
+const PCM_F32LE_BYTES_PER_SECOND = 48000 * 2 * 4
+const VIDEO_BYTES_PER_PIXEL_FRAME = 0.08
+const DISK_SAFETY_FACTOR = 1.25
+const MIN_FREE_RESERVE_BYTES = 256 * 1024 * 1024
 
 export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, deps = {}) {
   const stages = jobPlan.stages || []
@@ -21,6 +26,7 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   const rename = deps.rename || nodeRename
   const unlink = deps.unlink || nodeUnlink
   const rmdir = deps.rmdir || nodeRmdir
+  const statfs = deps.statfs || nodeStatfs
   const writeFile = deps.writeFile || nodeWriteFile
   const mkdtemp = deps.mkdtemp || nodeMkdtemp
   const ffmpegPath = deps.ffmpegPath
@@ -36,6 +42,8 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   jobCtx.tempFiles ||= []
 
   try {
+    await assertNotCancelled()
+    await preflightDiskSpace()
     for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
       await assertNotCancelled()
       const stage = stages[stageIndex]
@@ -110,6 +118,28 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
         '-progress', 'pipe:2',
         output,
       ],
+    }
+  }
+
+  async function preflightDiskSpace() {
+    const peakBytes = estimatePeakDiskBytes(jobPlan, totalDurationMs)
+    const requiredBytes = Math.ceil(peakBytes * DISK_SAFETY_FACTOR) + MIN_FREE_RESERVE_BYTES
+    const directories = [...new Set([path.dirname(outPath), tmpdir()])]
+
+    for (const targetDirectory of directories) {
+      let filesystem
+      try {
+        filesystem = await statfs(targetDirectory)
+      } catch (error) {
+        throw new Error(`disk space preflight failed for ${targetDirectory}: ${error.message}`)
+      }
+
+      const availableBytes = statfsAvailableBytes(filesystem)
+      if (availableBytes < requiredBytes) {
+        throw new Error(
+          `insufficient disk space on ${targetDirectory}: required ${formatBytes(requiredBytes)}, available ${formatBytes(availableBytes)}`,
+        )
+      }
     }
   }
 
@@ -260,8 +290,17 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   }
 
   async function unlinkTemp(file) {
-    try { await unlink(file) } catch {}
-    untrackTemp(file)
+    try {
+      await unlink(file)
+      untrackTemp(file)
+      return true
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        untrackTemp(file)
+        return true
+      }
+      return false
+    }
   }
 
   async function cleanupTempFiles() {
@@ -274,6 +313,42 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
     tempDirRemoved = true
     try { await rmdir(await tempDirPromise) } catch {}
   }
+}
+
+export function estimatePeakDiskBytes(jobPlan, fallbackDurationMs = jobPlan?.totalDurationMs) {
+  const outputSizes = new Map()
+  const fallbackMs = positiveNumber(fallbackDurationMs, 1000)
+  let liveBytes = 0
+  let peakBytes = 0
+
+  for (const stage of (jobPlan?.stages || [])) {
+    const outputBytes = estimateStageOutputBytes(stage, fallbackMs)
+    outputSizes.set(stage.output, outputBytes)
+    liveBytes += outputBytes
+    peakBytes = Math.max(peakBytes, liveBytes)
+
+    for (const dependency of (stage.dependsOn || [])) {
+      const dependencyBytes = outputSizes.get(dependency)
+      if (dependencyBytes == null) continue
+      liveBytes = Math.max(0, liveBytes - dependencyBytes)
+      outputSizes.delete(dependency)
+    }
+  }
+
+  return Math.ceil(peakBytes)
+}
+
+function estimateStageOutputBytes(stage, fallbackDurationMs) {
+  const durationSec = positiveNumber(stage?.estimatedDurationMs, fallbackDurationMs) / 1000
+  if (stage?.kind === 'audio') return durationSec * PCM_F32LE_BYTES_PER_SECOND + 4096
+
+  const spec = stage?.outputSpec || stage?.spec || {}
+  const width = positiveNumber(spec.width, 1920)
+  const height = positiveNumber(spec.height, 1080)
+  const fps = positiveNumber(spec.fps, 30)
+  const videoBytes = durationSec * width * height * fps * VIDEO_BYTES_PER_PIXEL_FRAME
+  const audioBytes = stage?.kind === 'final' ? durationSec * 32000 : 0
+  return videoBytes + audioBytes + 1024 * 1024
 }
 
 export function escapeFilterOptionValue(value) {
@@ -333,6 +408,20 @@ function siblingTempPath(outPath, jobId) {
     return `${value.slice(0, extensionIndex)}.tmp-${jobId}${value.slice(extensionIndex)}`
   }
   return `${value}.tmp-${jobId}`
+}
+
+function statfsAvailableBytes(filesystem) {
+  const availableBlocks = filesystem?.bavail ?? filesystem?.bfree
+  const blockSize = filesystem?.bsize
+  if (availableBlocks == null || blockSize == null) {
+    throw new Error('statfs did not return bavail/bfree and bsize')
+  }
+  return Number(BigInt(availableBlocks) * BigInt(blockSize))
+}
+
+function formatBytes(bytes) {
+  const gib = Number(bytes) / (1024 ** 3)
+  return `${gib.toFixed(2)} GiB`
 }
 
 function replaceAll(value, token, replacement) {

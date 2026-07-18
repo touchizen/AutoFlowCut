@@ -43,4 +43,22 @@ describe('resolveAndValidateInputs', () => {
     const r = await resolveAndValidateInputs(p, { ...deps(), probeDurationMs: async () => 0 })
     expect(await r.narrationDurationMs('nar.mp3')).toBe(12500)
   })
+
+  it('decodes a data: URL image to a temp file and tracks it for cleanup', async () => {
+    const p = prepared()
+    p.mediaFiles[0] = { sceneId: 'scene_1', type: 'image', filename: 's1.png', path: 'data:image/png;base64,AAAA' }
+    const decodeDataUrl = async (spec, name) => `/tmp/decoded_${name}.png`
+    const r = await resolveAndValidateInputs(p, { ...deps(['/sfx1.wav', '/nar.mp3']), decodeDataUrl })
+    expect(r.images.get('scene_1')).toBe('/tmp/decoded_scene_1_s1_png.png')
+    expect(r.tempFiles).toContain('/tmp/decoded_scene_1_s1_png.png')
+  })
+
+  it('decodes from base64 fallback when path is absent (parity with other exporters)', async () => {
+    const p = prepared()
+    p.mediaFiles[0] = { sceneId: 'scene_1', type: 'image', filename: 's1.png', path: undefined, fallback: 'data:image/jpeg;base64,BBBB' }
+    const decodeDataUrl = async () => '/tmp/fb.jpg'
+    const r = await resolveAndValidateInputs(p, { ...deps(['/sfx1.wav', '/nar.mp3']), decodeDataUrl })
+    expect(r.images.get('scene_1')).toBe('/tmp/fb.jpg')
+    expect(r.tempFiles).toContain('/tmp/fb.jpg')
+  })
 })

@@ -712,18 +712,20 @@ export const ExportModal = ({
                     <option value="random">🎲 {t('exportModal.kenBurnsModeRandom')}</option>
                     <option value="pattern">🎯 {t('exportModal.kenBurnsModePattern')}</option>
                   </select>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }} title={t('exportModal.kenBurnsCycleTooltip')}>
-                    <span>{t('exportModal.kenBurnsCycle')}</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="30"
-                      value={kenBurnsCycle}
-                      onChange={(e) => setKenBurnsCycle(e.target.value)}
-                      style={{ width: '50px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc' }}
-                    />
-                    <span>{t('exportModal.kenBurnsCycleUnit')}</span>
-                  </div>
+                  {format !== 'render' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }} title={t('exportModal.kenBurnsCycleTooltip')}>
+                      <span>{t('exportModal.kenBurnsCycle')}</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="30"
+                        value={kenBurnsCycle}
+                        onChange={(e) => setKenBurnsCycle(e.target.value)}
+                        style={{ width: '50px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc' }}
+                      />
+                      <span>{t('exportModal.kenBurnsCycleUnit')}</span>
+                    </div>
+                  )}
                 </div>
                 {/* 스케일 범위 입력 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }} title={t('exportModal.kenBurnsScaleTooltip')}>

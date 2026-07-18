@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest'
 
-import { resolveSpecs } from '../../scripts/install-platform-binaries.cjs'
+import {
+  resolveSpecs,
+  verifyFfmpegCapabilities,
+} from '../../scripts/install-platform-binaries.cjs'
 
 // @openai/codex 의 arch 패키지는 독립 패키지가 아니라 codex 자신의 버전 태그 별칭이다
 //   "@openai/codex-darwin-x64": "npm:@openai/codex@0.142.5-darwin-x64"
@@ -33,5 +36,28 @@ describe('resolveSpecs', () => {
   test('버전이 비면 던진다 — 잘못된 버전이 조용히 깔리는 것보다 낫다', () => {
     expect(() => resolveSpecs({ platform: 'darwin', arch: 'x64', versions: { codex: '', agentSdk: '0.3.199' } }))
       .toThrow(/codex/i)
+  })
+})
+
+describe('verifyFfmpegCapabilities', () => {
+  test('requires libass subtitle filters plus libx264 and aac encoders', () => {
+    const execFileSync = (_binary, args) => args.includes('-filters')
+      ? ' ... ass V->V\n ... subtitles V->V\n ... zoompan V->V\n'
+      : ' V....D libx264\n A....D aac\n'
+    expect(() => verifyFfmpegCapabilities('/ffmpeg', { execFileSync })).not.toThrow()
+  })
+
+  test('rejects a binary without libass', () => {
+    const execFileSync = (_binary, args) => args.includes('-filters')
+      ? ' ... zoompan V->V\n'
+      : ' V....D libx264\n A....D aac\n'
+    expect(() => verifyFfmpegCapabilities('/ffmpeg', { execFileSync })).toThrow(/libass/i)
+  })
+
+  test('rejects a binary without libx264 or aac', () => {
+    const execFileSync = (_binary, args) => args.includes('-filters')
+      ? ' ... ass V->V\n ... subtitles V->V\n ... zoompan V->V\n'
+      : ' V....D libx265\n A....D flac\n'
+    expect(() => verifyFfmpegCapabilities('/ffmpeg', { execFileSync })).toThrow(/libx264.*aac/i)
   })
 })

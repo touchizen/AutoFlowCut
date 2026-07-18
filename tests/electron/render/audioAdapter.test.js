@@ -29,4 +29,14 @@ describe('adaptAudioClips', () => {
     const [c] = await adaptAudioClips(cr, resolved, sceneStartsMs)
     expect(c).toMatchObject({ path: '/scene2sfx.wav', startMs: 3000, durationMs: 3000, gain: 0.7 })
   })
+
+  it('throws (fail-closed) when an audio track has no resolved file — no silent skip', async () => {
+    const cr = { audioTracks: [{ type: 'story_narration', filename: 'missing.wav', timecodeMs: 0, durationMs: 1000 }], sfxItems: [] }
+    await expect(adaptAudioClips(cr, resolved, sceneStartsMs)).rejects.toThrow(/missing\.wav|fail-closed/)
+  })
+
+  it('throws (fail-closed) when an sfx scene has no resolved file', async () => {
+    const cr = { audioTracks: [], sfxItems: [{ sceneId: 'scene_9', filename: 'y', duration: 1 }] }
+    await expect(adaptAudioClips(cr, resolved, sceneStartsMs)).rejects.toThrow(/scene_9|fail-closed/)
+  })
 })

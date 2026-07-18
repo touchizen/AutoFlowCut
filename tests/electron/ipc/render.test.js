@@ -96,4 +96,35 @@ describe('registerRenderIPC', () => {
     await ipc._h['render:export-mp4']({}, baseRequest())
     expect(send).toHaveBeenCalledWith('render:progress', expect.objectContaining({ jobId: 'job_1', percent: 42 }))
   })
+
+  it('stamps the correct jobId even when the runner emits jobId:undefined (regression)', async () => {
+    // Real bug: runner emits { jobId: jobCtx.jobId } which was undefined, and a
+    // `{ jobId, ...p }` relay let it overwrite the valid id → UI dropped every event.
+    const ipc = fakeIpc()
+    const send = vi.fn()
+    registerRenderIPC(ipc, okDeps({
+      getMainWindow: () => ({ webContents: { send } }),
+      run: async (plan, jobCtx, onProgress) => { onProgress({ jobId: undefined, percent: 55 }); return { outPath: '/out.mp4' } },
+    }))
+    await ipc._h['render:export-mp4']({}, baseRequest())
+    const call = send.mock.calls.find(c => c[0] === 'render:progress')
+    expect(call[1].jobId).toBe('job_1')
+    expect(call[1].percent).toBe(55)
+  })
+
+  it('passes a jobId and an AbortSignal to the runner, and cancel aborts it', async () => {
+    const ipc = fakeIpc()
+    let captured = null
+    registerRenderIPC(ipc, okDeps({
+      run: (plan, jobCtx) => { captured = jobCtx; return new Promise(() => {}) },
+    }))
+    ipc._h['render:export-mp4']({}, baseRequest())
+    await vi.waitFor(() => expect(captured).not.toBeNull())
+    expect(captured.jobId).toBe('job_1')
+    expect(captured.signal).toBeInstanceOf(AbortSignal)
+    expect(captured.signal.aborted).toBe(false)
+    await ipc._h['render:cancel']({}, { jobId: 'job_1' })
+    expect(captured.cancelled).toBe(true)
+    expect(captured.signal.aborted).toBe(true)
+  })
 })

@@ -320,7 +320,7 @@ ipcMain.handle('render:reveal', (_e, { path: filePath } = {}) => {
 })
 
 // Render IPC (self-render to MP4 — fully local ffmpeg)
-registerRenderIPC(ipcMain, {
+const cleanupRunningRenders = registerRenderIPC(ipcMain, {
   getMainWindow: () => mainWindow,
   pickOutPath: async () => {
     const result = await dialog.showSaveDialog(mainWindow, {
@@ -340,6 +340,7 @@ registerRenderIPC(ipcMain, {
     ? path.join(process.resourcesPath, 'fonts')
     : path.join(app.getAppPath(), 'assets', 'fonts'),
 })
+app.on('before-quit', () => { try { cleanupRunningRenders?.() } catch { /* best-effort */ } })
 
 // Flow WebContentsView factory — only called when mode:set('flow') is invoked.
 // Lazy creation ensures API mode startup is unaffected.

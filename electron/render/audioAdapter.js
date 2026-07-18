@@ -8,7 +8,7 @@ export async function adaptAudioClips(cloudRequest, resolved, sceneStartsMs) {
 
   for (const t of (cloudRequest.audioTracks || [])) {
     const path = resolved.audio.get(t.filename)
-    if (!path) continue
+    if (!path) throw new Error(`render: audio track "${t.filename}" (${t.type}) has no resolved file — fail-closed`)
     if (t.type === 'narration') {
       // 레거시: 타임코드 없음 → start 0, 길이는 probe/audioDurationSec
       const durationMs = await resolved.narrationDurationMs(t.filename)
@@ -22,9 +22,9 @@ export async function adaptAudioClips(cloudRequest, resolved, sceneStartsMs) {
 
   for (const sfx of (cloudRequest.sfxItems || [])) {
     const path = resolved.sfx.get(sfx.sceneId)
-    if (!path) continue
+    if (!path) throw new Error(`render: sfx for scene "${sfx.sceneId}" (${sfx.filename}) has no resolved file — fail-closed`)
     const startMs = sceneStartsMs[sfx.sceneId]
-    if (startMs == null) continue
+    if (startMs == null) throw new Error(`render: sfx scene "${sfx.sceneId}" has no timeline start — fail-closed`)
     clips.push({ filename: sfx.filename, path, startMs, durationMs: Math.round(sfx.duration * 1000), gain: SFX_GAIN })
   }
 
