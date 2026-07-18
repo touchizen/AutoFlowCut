@@ -19,17 +19,21 @@ export const FLOW_PRICING_URL = 'https://one.google.com/about/google-ai-plans/'
 
 // cost 는 가격만(ASCII), 단위(장/sec 등)는 unit 필드 → ModelSelector 가 locale 로 표시.
 export const IMAGE_MODELS = [
-  { id: 'gemini-2.5-flash-image', label: 'Nano Banana', cost: '$0.039', unit: 'image', descKey: 'settings.modelImgNb', url: IMAGE_DOCS_URL },
-  { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.067~', unit: 'image', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
-  { id: 'gemini-3-pro-image', label: 'Nano Banana Pro', cost: '$0.134~', unit: 'image', descKey: 'settings.modelImgNbPro', url: IMAGE_DOCS_URL },
+  { id: 'gemini-2.5-flash-image', label: 'Nano Banana', cost: '$0.039', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNb', url: IMAGE_DOCS_URL },
+  { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.067~', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
+  { id: 'gemini-3-pro-image', label: 'Nano Banana Pro', cost: '$0.134~', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNbPro', url: IMAGE_DOCS_URL },
+  // ⚠ openai gpt-image-1 카탈로그 항목은 T5b(provider-필터 드롭다운 + locale)와 함께 추가한다.
+  // 여기 aggregate IMAGE_MODELS 에 미리 넣으면 provider 필터 없는 현재 UI 의 google 드롭다운에
+  // 노출돼 Gemini 엔진으로 잘못 라우팅된다(Fable M1-T5a 리뷰 실증). 지금은 provider 메타데이터 +
+  // heal 경계만 도입한다.
 ]
 
 // allowedResolutions: 낮은→높은 순. 공식 Veo 3.1 Lite 는 4K 미지원(720p/1080p),
 // Fast/Quality 는 4K 지원. coerceResolution 이 미허용 해상도를 허용 최대로 강등.
 export const VIDEO_MODELS = [
-  { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite', cost: '$0.05~', unit: 'sec', descKey: 'settings.modelVidLite', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD },
-  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast', cost: '$0.10~', unit: 'sec', descKey: 'settings.modelVidFast', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
-  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality', cost: '$0.40~', unit: 'sec', descKey: 'settings.modelVidQuality', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
+  { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite', cost: '$0.05~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidLite', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD },
+  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast', cost: '$0.10~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidFast', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
+  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality', cost: '$0.40~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidQuality', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
 ]
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2
@@ -130,9 +134,14 @@ export function computeModelHeal(availableModels, settings, mode) {
   const flowStaticAuthoritative = source === 'flow-static' && mode === 'flow'
   if (source && source !== 'dynamic' && !flowStaticAuthoritative) return {}
 
+  // §5.12 heal 경계: 선택된 image provider 목록으로만 그 provider 모델을 heal.
+  // Google 동적 /models 는 google 모델만 권위 — 비-google(openai) 선택 시 image heal 스킵(카탈로그 권위).
+  // 단 Flow 모드는 google 전용이라 provider 설정과 무관하게 heal 유지(mode 우선).
+  const imageProvider = settings?.generation?.image?.provider ?? 'google'
+  const healImageModel = mode === 'flow' || imageProvider === 'google'
   const out = {}
   const { imageModels, videoModels } = availableModels || {}
-  if (imageModels && imageModels !== IMAGE_MODELS) {
+  if (healImageModel && imageModels && imageModels !== IMAGE_MODELS) {
     // Flow 모드 이미지 기본값 = 'Nano Banana 2' (라벨 매칭 — 스크랩 id 'Nano Banana 2'/정적
     //   id 'flow_image_generate' 둘 다 라벨로 잡힌다). 목록에 없으면 API 기본/첫 항목으로 수렴.
     let imgDefaultId = DEFAULT_IMAGE_MODEL_ID

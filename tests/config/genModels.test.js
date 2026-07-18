@@ -33,6 +33,27 @@ describe('genModels — modelLabel', () => {
   })
 })
 
+describe('genModels — provider-aware catalog (§5.12)', () => {
+  it('기존 Gemini 이미지 모델은 google/exact 메타데이터 유지', () => {
+    const geminiModels = IMAGE_MODELS.filter(m => m.id.startsWith('gemini-'))
+    expect(geminiModels).toHaveLength(3)
+    for (const model of geminiModels) {
+      expect(model.provider).toBe('google')
+      expect(model.aspectCapability).toBe('exact')
+    }
+  })
+
+  it('기존 Veo 비디오 모델은 google provider 메타데이터 유지', () => {
+    expect(VIDEO_MODELS).toHaveLength(3)
+    for (const model of VIDEO_MODELS) expect(model.provider).toBe('google')
+  })
+
+  it('aggregate IMAGE_MODELS 에는 아직 openai 항목 없음 (T5b 에서 드롭다운 필터와 함께 추가)', () => {
+    // provider 필터 없는 현재 드롭다운에 노출되면 Gemini 로 오라우팅되므로 여기 미노출이 정상.
+    expect(IMAGE_MODELS.some(m => m.provider === 'openai')).toBe(false)
+  })
+})
+
 describe('genModels — coerceResolution (모델별 해상도 가드)', () => {
   // 공식: Veo 3.1 Lite 는 4K 미지원(720p/1080p). Fast/Quality 는 4K 지원.
   // 전역 resolution + 타입별 모델 조합에서 Lite+4K 가 API 로 새어나가 실패하는 걸 막는다.
@@ -202,5 +223,59 @@ describe('genModels — computeModelHeal (권위 있는 목록으로 stale 저�
       { imageModel: 'gemini-9', videoModelT2V: 'x', videoModelF2V: 'y' },
     )
     expect(out).toEqual({})
+  })
+
+  it('OpenAI 이미지 provider는 Google 동적 목록으로 imageModel을 heal하지 않음', () => {
+    const googleImageModels = [
+      { id: 'gemini-2.5-flash-image' },
+      { id: DEFAULT_IMAGE_MODEL_ID },
+    ]
+    const out = computeModelHeal(
+      { imageModels: googleImageModels, videoModels: VIDEO_MODELS, source: 'dynamic' },
+      {
+        generation: { image: { provider: 'openai', model: 'gpt-image-1' } },
+        imageModel: 'gpt-image-1',
+        videoModelT2V: 'veo-3.1-fast-generate-preview',
+        videoModelF2V: 'veo-3.1-fast-generate-preview',
+      },
+    )
+
+    expect(out).not.toHaveProperty('imageModel')
+  })
+
+  it('generation 설정이 없으면 google provider로 간주해 기존 imageModel heal 유지', () => {
+    const googleImageModels = [
+      { id: 'gemini-2.5-flash-image' },
+      { id: DEFAULT_IMAGE_MODEL_ID },
+    ]
+    const out = computeModelHeal(
+      { imageModels: googleImageModels, videoModels: VIDEO_MODELS, source: 'dynamic' },
+      {
+        imageModel: 'stale-image-model',
+        videoModelT2V: 'veo-3.1-fast-generate-preview',
+        videoModelF2V: 'veo-3.1-fast-generate-preview',
+      },
+    )
+
+    expect(out.imageModel).toBe(DEFAULT_IMAGE_MODEL_ID)
+  })
+
+  it('Flow 모드는 google 전용 — openai provider 설정이 남아있어도 image heal 유지', () => {
+    // Flow 는 google 전용이라 provider 설정과 무관하게 heal(mode 우선, Fable F3 forward-guard)
+    const flowImageModels = [
+      { id: 'flow_nb2', label: 'Nano Banana 2' },
+      { id: 'flow_pro', label: 'Nano Banana Pro' },
+    ]
+    const out = computeModelHeal(
+      { imageModels: flowImageModels, videoModels: VIDEO_MODELS, source: 'flow-static' },
+      {
+        generation: { image: { provider: 'openai', model: 'gpt-image-1' } },
+        imageModel: 'stale-flow-image',
+        videoModelT2V: 'veo-3.1-fast-generate-preview',
+        videoModelF2V: 'veo-3.1-fast-generate-preview',
+      },
+      'flow',
+    )
+    expect(out.imageModel).toBe('flow_nb2') // Flow NB2 기본으로 heal (스킵 안 함)
   })
 })
