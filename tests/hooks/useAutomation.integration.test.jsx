@@ -168,6 +168,45 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
     // M4 T7: imageModel → model (engineApi 정규화 후 genAPI로 전달되는 키)
     expect(submitOptions.model).toBe('gemini-3.1-flash-image')
   })
+
+  // M1: 전역 image provider 가 배치 제출 옵션까지 전달돼야 dispatcher 가 openai 로 라우팅한다.
+  it('start({imageProvider:openai}) 을 submitGeneration provider 로 전달', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration } = setupHook({
+      scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
+    })
+    submitGeneration.mockResolvedValue({ success: true, generationId: 'gen-1' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory', imageProvider: 'openai', imageModel: 'gpt-image-1' })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    const submitOptions = submitGeneration.mock.calls[0][2]
+    expect(submitOptions.provider).toBe('openai')
+    expect(submitOptions.model).toBe('gpt-image-1')
+  })
+
+  it('imageProvider 미지정 → submitGeneration provider=google (하위호환)', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration } = setupHook({
+      scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
+    })
+    submitGeneration.mockResolvedValue({ success: true, generationId: 'gen-1' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory' })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    expect(submitGeneration.mock.calls[0][2].provider).toBe('google')
+  })
 })
 
 describe('useAutomation — force regenerate status reset ordering', () => {

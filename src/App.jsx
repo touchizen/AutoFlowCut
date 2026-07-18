@@ -1520,6 +1520,7 @@ function App() {
           imageUpscale: settings.imageUpscale || 'off',
           aspectRatio: settings.aspectRatio,
           imageModel: settings.imageModel,
+          imageProvider: settings.generation?.image?.provider ?? 'google',
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
           force,
@@ -2473,6 +2474,7 @@ function App() {
                   imageUpscale: settings.imageUpscale || 'off',
                   aspectRatio: settings.aspectRatio,
                   imageModel: settings.imageModel,
+                  imageProvider: settings.generation?.image?.provider ?? 'google',
                   selectedStyleRefId,
                   seed: effectiveSeed,
                 }).finally(() => setHasPendingBatch(false))
@@ -2584,6 +2586,7 @@ function App() {
                   imageUpscale: settings.imageUpscale || 'off',
                   aspectRatio: settings.aspectRatio,
                   imageModel: settings.imageModel,
+                  imageProvider: settings.generation?.image?.provider ?? 'google',
                   selectedStyleRefId,
                   seed: effectiveSeed,
                 }).finally(() => setHasPendingBatch(false))
@@ -2684,6 +2687,7 @@ function App() {
                 imageUpscale: settings.imageUpscale || 'off',
                 aspectRatio: settings.aspectRatio,
                 imageModel: settings.imageModel,
+                imageProvider: settings.generation?.image?.provider ?? 'google',
                 selectedStyleRefId,
                 seed: effectiveSeed,
               }).finally(() => setHasPendingBatch(false))

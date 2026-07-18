@@ -91,6 +91,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       imageUpscale,
       aspectRatio,
       imageModel,
+      imageProvider = 'google',
       selectedStyleRefId,
       seed = null,
       concurrency: rawConcurrency,
@@ -308,7 +309,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, references: effectiveRefs })
+      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, provider: imageProvider, references: effectiveRefs })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })
@@ -463,6 +464,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       imageUpscale = 'off',
       aspectRatio = '16:9',
       imageModel = undefined,
+      imageProvider = 'google', // 전역 image provider(§5.8) — 미지정→google
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
       concurrency = undefined,
@@ -757,6 +759,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       imageUpscale,
       aspectRatio,
       imageModel,
+      imageProvider,
       selectedStyleRefId,
       seed,
       concurrency,

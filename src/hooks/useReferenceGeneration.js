@@ -415,7 +415,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           : ref
         // #R32-2: 선택된 이미지 모델(settings.imageModel)을 전달 — 안 넘기면 useGenAPI 가 DEFAULT 로
         //   폴백해 비-기본 BYOK 모델 선택이 ref 생성에 반영되지 않는다(씬 생성과 동일하게 model 전달).
-        const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId } })
+        const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, provider: settings.generation?.image?.provider ?? 'google', purpose: 'reference', ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId } })
 
         if (result.success && result.images?.length > 0) {
           return await _processAndSaveImage(
@@ -980,7 +980,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             continue
           }
           ;({ index, ref } = currentTarget)
-          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
+          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, provider: settings.generation?.image?.provider ?? 'google', purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
 
           if (submitResult?.success && submitResult.generationId) {
             attemptedKeys.add(target.key)
