@@ -38,17 +38,18 @@ export function useApiKey() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  const validateKey = useCallback(async (apiKey) => {
+  // provider 미지정 → google (기존 호출 하위호환, §5.7). openai 등은 명시.
+  const validateKey = useCallback(async (apiKey, provider = 'google') => {
     try {
-      return await window.electronAPI.genaiValidateKey({ apiKey })
+      return await window.electronAPI.genaiValidateKey({ apiKey, provider })
     } catch (e) {
       return { valid: false, error: e?.message || String(e) }
     }
   }, [])
 
-  const saveKey = useCallback(async (apiKey) => {
+  const saveKey = useCallback(async (apiKey, provider = 'google') => {
     try {
-      const res = await window.electronAPI.genaiSetKey({ apiKey })
+      const res = await window.electronAPI.genaiSetKey({ apiKey, provider })
       if (res?.success) {
         await refresh()
         // 키가 앱 내에서 바뀌었음을 전역 통지 — Header/Welcome 인증 게이트가 폴링 없이
@@ -61,9 +62,9 @@ export function useApiKey() {
     }
   }, [refresh])
 
-  const clearKey = useCallback(async () => {
+  const clearKey = useCallback(async (provider = 'google') => {
     try {
-      const res = await window.electronAPI.genaiClearKey()
+      const res = await window.electronAPI.genaiClearKey({ provider })
       await refresh()
       window.dispatchEvent(new CustomEvent('byok-key-changed'))
       return res

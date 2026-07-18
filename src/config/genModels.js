@@ -66,6 +66,12 @@ export function imageModelsForProvider(providerId, availableImageModels) {
   return IMAGE_MODELS.filter((m) => m.provider === provider)
 }
 
+/** 선택 provider 의 기본 이미지 모델 id. google=DEFAULT, 그 외=카탈로그 첫 항목(없으면 null). */
+export function defaultImageModelForProvider(providerId) {
+  if (!providerId || providerId === 'google') return DEFAULT_IMAGE_MODEL_ID
+  return IMAGE_MODELS.find((m) => m.provider === providerId)?.id ?? null
+}
+
 /** API 모델 id → 사람이 읽는 라벨. 카탈로그에 없으면 id 그대로, falsy 면 null.
  *  ResultsTable / 상세 모달의 모델 표시에 사용. */
 export function modelLabel(id) {

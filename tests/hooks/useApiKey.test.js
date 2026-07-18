@@ -40,7 +40,7 @@ describe('useApiKey', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     let r
     await act(async () => { r = await result.current.validateKey('CANDIDATE') })
-    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'CANDIDATE' })
+    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'CANDIDATE', provider: 'google' })
     expect(r).toEqual({ valid: false, error: 'nope' })
   })
 
@@ -52,7 +52,7 @@ describe('useApiKey', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.hasKey).toBe(false)
     await act(async () => { await result.current.saveKey('K') })
-    expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'K' })
+    expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'K', provider: 'google' })
     await waitFor(() => expect(result.current.hasKey).toBe(true))
   })
 

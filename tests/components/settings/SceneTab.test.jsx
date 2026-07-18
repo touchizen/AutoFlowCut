@@ -56,6 +56,45 @@ describe('SceneTab — aspect ratio', () => {
   })
 })
 
+describe('SceneTab — image provider 선택 (M1 §5.8)', () => {
+  const provSettings = {
+    ...baseSettings,
+    imageModel: 'gemini-3.1-flash-image',
+    generation: { image: { provider: 'google' } },
+    modelsByProvider: { google: 'gemini-3.1-flash-image' },
+  }
+
+  it('현재 provider(google) 버튼이 active', () => {
+    render(<SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} />)
+    expect(screen.getByRole('button', { name: 'settings.imageProvider_google' }).className).toContain('active')
+    expect(screen.getByRole('button', { name: 'settings.imageProvider_openai' }).className).not.toContain('active')
+  })
+
+  it('OpenAI 클릭 → provider 전환 + gpt-image-1 모델 복원(현재 google 모델 기억)', () => {
+    const setLocalSettings = vi.fn()
+    render(<SceneTab localSettings={provSettings} setLocalSettings={setLocalSettings} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: 'settings.imageProvider_openai' }))
+    const updater = setLocalSettings.mock.calls[0][0]
+    const next = updater(provSettings)
+    expect(next.generation.image.provider).toBe('openai')
+    expect(next.imageModel).toBe('gpt-image-1')
+    expect(next.modelsByProvider.google).toBe('gemini-3.1-flash-image')
+  })
+
+  it('모델 변경 → modelsByProvider 를 현재 provider 슬롯에 갱신', () => {
+    const setLocalSettings = vi.fn()
+    render(<SceneTab localSettings={provSettings} setLocalSettings={setLocalSettings} t={t} />)
+    // ModelSelector 의 첫 옵션 변경을 직접 트리거하긴 어려우니 onChange updater 계약만 확인:
+    // 이미지 섹션의 select 를 찾아 변경 이벤트 발생
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[0], { target: { value: 'gemini-3-pro-image' } })
+    const updater = setLocalSettings.mock.calls.at(-1)[0]
+    const next = updater(provSettings)
+    expect(next.imageModel).toBe('gemini-3-pro-image')
+    expect(next.modelsByProvider.google).toBe('gemini-3-pro-image')
+  })
+})
+
 describe('SceneTab — model selectors (T2I/T2V/F2V)', () => {
   it('3개 모델 섹션(T2I/T2V/F2V) 렌더', () => {
     render(<SceneTab localSettings={baseSettings} setLocalSettings={vi.fn()} t={t} />)

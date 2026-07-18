@@ -5,6 +5,10 @@
 import AspectRatioSelector from './AspectRatioSelector'
 import ModelSelector from './ModelSelector'
 import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL } from '../../config/genModels'
+import { computeImageProviderSwitch } from '../../utils/imageProviderSwitch'
+
+// 전역 image provider 선택지(§5.8). video provider(grok 등)는 M2, 씬별 override 는 M3.
+const IMAGE_PROVIDERS = ['google', 'openai']
 
 // Flow 배치 카운트 옵션(x1~x4). Flow 컴포즈가 한 요청에 여러 장/개를 생성한다.
 const BATCH_OPTIONS = [1, 2, 3, 4]
@@ -194,11 +198,32 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       {/* 생성 모델 선택 — T2I / T2V / F2V 각각 (옵션마다 특징·비용 표시) */}
       <div className="settings-section">
         <h3>{t('settings.modelImageTitle')} {modeBadge}</h3>
+        {/* 전역 image provider 선택(§5.8) — 전환 시 provider별 기억 모델 복원 */}
+        <div className="batch-count-buttons" role="group" aria-label={t('settings.imageProviderTitle')}>
+          {IMAGE_PROVIDERS.map((p) => {
+            const active = (localSettings.generation?.image?.provider ?? 'google') === p
+            return (
+              <button
+                key={p}
+                type="button"
+                className={`batch-btn ${active ? 'active' : ''}`}
+                onClick={() => setLocalSettings(s => ({ ...s, ...computeImageProviderSwitch(s, p) }))}
+              >
+                {t(`settings.imageProvider_${p}`)}
+              </button>
+            )
+          })}
+        </div>
         <ModelSelector
           options={imageModels}
           value={localSettings.imageModel}
           defaultValue={DEFAULT_IMAGE_MODEL_ID}
-          onChange={(id) => setLocalSettings(s => ({ ...s, imageModel: id }))}
+          onChange={(id) => setLocalSettings(s => ({
+            ...s,
+            imageModel: id,
+            // provider별 모델 기억을 항상 최신으로 (전환 시 복원용)
+            modelsByProvider: { ...s.modelsByProvider, [s.generation?.image?.provider ?? 'google']: id },
+          }))}
           t={t}
           priceUrl={priceUrl}
         />

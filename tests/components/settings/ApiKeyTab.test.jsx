@@ -48,8 +48,8 @@ describe('ApiKeyTab', () => {
     fireEvent.change(input, { target: { value: 'AIza-good' } })
     fireEvent.click(screen.getByText('settings.apiKeyVerifySave'))
 
-    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'AIza-good' }))
-    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'AIza-good' })
+    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'AIza-good', provider: 'google' }))
+    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'AIza-good', provider: 'google' })
     expect(toast.success).toHaveBeenCalled()
     expect(input.value).toBe('')
   })
@@ -80,5 +80,31 @@ describe('ApiKeyTab', () => {
     await waitFor(() => expect(screen.getByText('settings.apiKeyEncUnavailable')).toBeInTheDocument())
     expect(screen.getByPlaceholderText('settings.apiKeyPlaceholder')).toBeDisabled()
     expect(screen.getByText('settings.apiKeyVerifySave')).toBeDisabled()
+  })
+
+  it('OpenAI 키: 검증→저장이 provider:openai 로 위임', async () => {
+    render(<ApiKeyTab t={t} />)
+    await waitFor(() => screen.getByText('settings.openaiKeyTitle'))
+
+    const input = screen.getByPlaceholderText('settings.openaiKeyPlaceholder')
+    fireEvent.change(input, { target: { value: 'sk-openai' } })
+    fireEvent.click(screen.getByText('settings.openaiKeyVerifySave'))
+
+    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'sk-openai', provider: 'openai' }))
+    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'sk-openai', provider: 'openai' })
+    expect(toast.success).toHaveBeenCalled()
+    expect(input.value).toBe('')
+  })
+
+  it('OpenAI 키 있음 → openai 상태 표시 + openai 삭제 버튼 (byProvider.openai)', async () => {
+    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({
+      hasKey: false, encryptionAvailable: true,
+      byProvider: { google: false, openai: true, grok: false, fal: false, wavespeed: false, higgsfield: false },
+    })
+    render(<ApiKeyTab t={t} />)
+    await waitFor(() => expect(screen.getByText('settings.openaiKeySet')).toBeInTheDocument())
+    expect(screen.getByText('settings.openaiKeyRemove')).toBeInTheDocument()
+    // google 은 미설정
+    expect(screen.getByText('settings.apiKeyNotSet')).toBeInTheDocument()
   })
 })
