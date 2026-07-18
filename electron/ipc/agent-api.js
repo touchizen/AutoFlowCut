@@ -7,13 +7,164 @@
  */
 
 import { listCodexModels } from '../api/llm/codexAppServer.js'
+import { listClaudeModels } from '../api/llm/llmClaude.js'
+import {
+  CLAUDE_AGENT_DEFAULT_SDK_MODEL,
+  COLD_DEFAULT_MODEL_ID,
+} from '../agent/constants.js'
 
-export function createAgentModelCatalog({ listModels = listCodexModels } = {}) {
+const CODEX_FALLBACK_SDK_MODEL = 'gpt-5.5'
+const DEFAULT_FALLBACK_FROM = 'claude-opus-4-8'
+const AGENT_MODEL_PROVIDERS = new Set(['codex', 'claude'])
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function capabilityMetadataOf(row) {
+  const source = row ?? {}
+  const {
+    id: _id,
+    value: _value,
+    sourceKey: _sourceKey,
+    provider: _provider,
+    sdkModel: _sdkModel,
+    isDefault: _isDefault,
+    providerDefault: _providerDefault,
+    defaultCandidate: _defaultCandidate,
+    hidden: _hidden,
+    defaultFallbackFrom: _defaultFallbackFrom,
+    ...metadata
+  } = source
+  return metadata
+}
+
+function normalizeCodexModel(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  if (raw.provider != null && raw.provider !== 'codex') return null
+  const sourceKey = raw.id
+  if (!isNonEmptyString(sourceKey)) return null
+  return {
+    ...capabilityMetadataOf(raw),
+    id: `codex:${sourceKey}`,
+    sourceKey,
+    provider: 'codex',
+    sdkModel: sourceKey,
+    displayName: typeof raw.displayName === 'string' ? raw.displayName : sourceKey,
+    description: typeof raw.description === 'string' ? raw.description : '',
+    isDefault: false,
+    providerDefault: raw.isDefault === true,
+    hidden: raw.hidden === true,
+  }
+}
+
+function normalizeClaudeModel(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  if (raw.provider != null && raw.provider !== 'claude') return null
+  const sourceKey = raw.value
+  if (!isNonEmptyString(sourceKey)) return null
+  const row = {
+    ...capabilityMetadataOf(raw),
+    id: `claude:${sourceKey}`,
+    sourceKey,
+    provider: 'claude',
+    sdkModel: sourceKey,
+    displayName: typeof raw.displayName === 'string' ? raw.displayName : sourceKey,
+    description: typeof raw.description === 'string' ? raw.description : '',
+    isDefault: false,
+    providerDefault: false,
+    hidden: false,
+  }
+  if (sourceKey !== 'default') return row
+  return {
+    ...row,
+    sdkModel: null,
+    providerDefault: true,
+    defaultCandidate: true,
+    hidden: true,
+  }
+}
+
+function isValidAgentModelRow(row) {
+  return row
+    && typeof row === 'object'
+    && isNonEmptyString(row.id)
+    && isNonEmptyString(row.sourceKey)
+    && AGENT_MODEL_PROVIDERS.has(row.provider)
+    && (row.sdkModel === null || isNonEmptyString(row.sdkModel))
+}
+
+function uniqueRows(rows) {
+  const seen = new Set()
+  const unique = []
+  for (const row of rows) {
+    if (!isValidAgentModelRow(row) || seen.has(row.id)) continue
+    seen.add(row.id)
+    unique.push(row)
+  }
+  return unique
+}
+
+function normalizeRows(rawModels, normalize) {
+  if (!Array.isArray(rawModels)) return []
+  return uniqueRows(rawModels.map(normalize).filter(Boolean))
+}
+
+function createFallbackRow(fetchedRow, promoted) {
+  const row = {
+    ...capabilityMetadataOf(fetchedRow),
+    id: COLD_DEFAULT_MODEL_ID,
+    sourceKey: CODEX_FALLBACK_SDK_MODEL,
+    provider: 'codex',
+    sdkModel: CODEX_FALLBACK_SDK_MODEL,
+    displayName: typeof fetchedRow?.displayName === 'string' ? fetchedRow.displayName : 'GPT-5.5',
+    description: typeof fetchedRow?.description === 'string' ? fetchedRow.description : '',
+    isDefault: !promoted,
+    providerDefault: fetchedRow?.providerDefault === true,
+    hidden: false,
+  }
+  if (!promoted) row.defaultFallbackFrom = DEFAULT_FALLBACK_FROM
+  return row
+}
+
+function finalizeCatalogRows(sourceRows) {
+  const rows = uniqueRows(sourceRows).map((row) => {
+    const normalized = { ...row, isDefault: false }
+    delete normalized.defaultFallbackFrom
+    return normalized
+  })
+  const candidateIndex = rows.findIndex((row) => row.provider === 'claude' && row.defaultCandidate === true)
+  const promoted = candidateIndex >= 0 && isNonEmptyString(CLAUDE_AGENT_DEFAULT_SDK_MODEL)
+  const fallbackIndex = rows.findIndex((row) => row.id === COLD_DEFAULT_MODEL_ID)
+  const fallback = createFallbackRow(fallbackIndex >= 0 ? rows[fallbackIndex] : null, promoted)
+  if (fallbackIndex >= 0) rows[fallbackIndex] = fallback
+  else rows.push(fallback)
+  if (promoted) {
+    const candidate = rows.find((row) => row.provider === 'claude' && row.defaultCandidate === true)
+    candidate.sdkModel = CLAUDE_AGENT_DEFAULT_SDK_MODEL
+    candidate.isDefault = true
+  }
+  return rows
+}
+
+function defaultIdOf(rows) {
+  return rows.find((row) => row.isDefault === true)?.id ?? COLD_DEFAULT_MODEL_ID
+}
+
+function visibleAgentModels(models) {
+  if (!Array.isArray(models)) return []
+  return models.filter((model) => model && typeof model.id === 'string' && model.hidden !== true)
+}
+
+export function createAgentModelCatalog({
+  listCodexModels: listCodexModelsImpl = listCodexModels,
+  listClaudeModels: listClaudeModelsImpl = listClaudeModels,
+} = {}) {
+  const coldRows = finalizeCatalogRows([])
   let cached = null
-  let cachedDefaultId = null
   let inFlight = null
 
-  const fetchModels = async () => {
+  const fetchModels = async (listModels) => {
     try {
       const models = await listModels()
       return Array.isArray(models) ? models : []
@@ -21,45 +172,31 @@ export function createAgentModelCatalog({ listModels = listCodexModels } = {}) {
       return []
     }
   }
-  const visibleOf = (models) => models.filter((model) => model && typeof model.id === 'string' && model.hidden !== true)
-  /**
-   * 🔴 기본 모델 id 는 **hidden 필터 전 원본**에서 뽑는다.
-   *    `hidden` 은 *"선택지에 보이지 않는다"* 이지 *"서버 기본이 아니다"* 가 아니다.
-   *    필터 뒤에서 찾으면 **hidden 인 기본 모델**을 놓치고 → `defaultModelId()` 가 null →
-   *    '기본' send 가 다시 생략으로 떨어져 **sticky 버그가 조용히 부활한다**
-   *    (적대 리뷰가 잡은 구멍: 카탈로그는 안 비었는데 기본만 없는 부분집합).
-   */
-  const defaultIdOf = (models) => models.find((model) => model?.isDefault === true && typeof model?.id === 'string')?.id ?? null
-
+  const fetchSource = async (listModels, normalize) => {
+    const first = normalizeRows(await fetchModels(listModels), normalize)
+    if (first.some((row) => row.hidden !== true)) return first
+    return normalizeRows(await fetchModels(listModels), normalize)
+  }
   return {
     /**
-     * 캐시된 **기본 모델 id** (`model/list` 의 `isDefault:true`). 없으면 null.
-     *
-     * 🔴 **동기이고 fetch 를 유발하지 않는다.** `list()` 를 기다리면 cold send 가 최대
-     *    20s(app-server timeout) × 2회(1-retry) 블로킹된다 — Send 를 그렇게 막을 수 없다.
-     *
-     * null 이면 호출측이 **생략으로 폴백**한다. 그 안전성의 범위는 정확히 이렇다:
-     *  - ✅ **카탈로그가 아직/영영 안 뜬 경우**: 사용자가 비-기본 모델을 고를 수도 없었으므로
-     *       thread 는 서버 기본에 있다 → 생략이 안전하다.
-     *       (실측: 생략한 thread/start + 생략한 turn → 서버 기본으로 시작한다. m0-14 `omitted-thread-start`.)
-     *  - ⚠️ **카탈로그는 떴는데 `isDefault` 가 하나도 없는 경우**(서버 이상): 사용자는 모델을 고를 수
-     *       **있으므로** '기본' 이 생략으로 떨어져 **sticky 버그가 부활한다.** 현재 실측된 codex 는
-     *       늘 `isDefault` 를 주므로 잠복 상태다. 이 불변식을 "카탈로그 없으면 안전" 으로 **넓게 말하지 마라**
-     *       — 그 서술은 이 부분집합에서 거짓이다.
+     * Cache-only 동기 lookup. cold에서도 built-in 행을 찾아 항상 opaque id 문자열을 준다.
+     * `list()`를 부르지 않으므로 provider 조회 타임아웃이 Send를 막지 않는다.
      */
     defaultModelId() {
-      return cachedDefaultId
+      return defaultIdOf(cached ?? coldRows)
     },
     list() {
       if (cached) return Promise.resolve(cached.map((model) => ({ ...model })))
       if (inFlight) return inFlight
       inFlight = (async () => {
-        const firstRaw = await fetchModels()
-        const raw = visibleOf(firstRaw).length > 0 ? firstRaw : await fetchModels()
-        const models = visibleOf(raw)
-        if (models.length > 0) {
+        const [codexRows, claudeRows] = await Promise.all([
+          fetchSource(listCodexModelsImpl, normalizeCodexModel),
+          fetchSource(listClaudeModelsImpl, normalizeClaudeModel),
+        ])
+        const sourceRows = uniqueRows([...codexRows, ...claudeRows])
+        const models = finalizeCatalogRows(sourceRows)
+        if (sourceRows.some((model) => model.hidden !== true)) {
           cached = models.map((model) => ({ ...model }))
-          cachedDefaultId = defaultIdOf(raw)   // ← 필터 전 원본에서
         }
         return models.map((model) => ({ ...model }))
       })().finally(() => { inFlight = null })
@@ -218,7 +355,7 @@ export function registerAgentIPC(ipcMain, {
   const channels = registrations.map(([channel]) => channel)
   channels.push('agent:list-models')
 
-  ipcMain.handle('agent:list-models', async () => modelCatalog.list())
+  ipcMain.handle('agent:list-models', async () => visibleAgentModels(await modelCatalog.list()))
 
   for (const [channel, method, argsFor] of registrations) {
     if (typeof sessionManager[method] !== 'function') {

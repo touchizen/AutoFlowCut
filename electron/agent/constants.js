@@ -11,3 +11,8 @@ export const AGENT_ADAPTER_APPROVAL_TIMEOUT_MS =
 export const AGENT_SESSION_MAX_MS = 2 * 60 * 60 * 1000
 export const AGENT_SESSION_MAX_TURNS = 64
 export const AGENT_SESSION_MAX_TOOL_CALLS = 256
+
+// §5.1: cold catalog에서도 Default는 동기적으로 이 built-in 행에 resolve된다.
+export const COLD_DEFAULT_MODEL_ID = 'codex:gpt-5.5'
+// §6 setModel 실측이 정확한 문자열을 확정하기 전에는 Claude candidate를 승격하지 않는다.
+export const CLAUDE_AGENT_DEFAULT_SDK_MODEL = null

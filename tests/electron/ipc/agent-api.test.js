@@ -5,6 +5,19 @@
 // 다시 등록하지 않는다. 이 테스트는 handler 모양이 아니라 renderer까지 도달하는 효과를 검증한다.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// RED 단계의 구 구현이 새 DI 이름을 무시해도 실제 provider 프로세스를 띄우지 못하게 막는다.
+const providerSourceDoubles = vi.hoisted(() => ({
+  codex: vi.fn(async () => []),
+  claude: vi.fn(async () => []),
+}))
+
+vi.mock('../../../electron/api/llm/codexAppServer.js', () => ({
+  listCodexModels: providerSourceDoubles.codex,
+}))
+vi.mock('../../../electron/api/llm/llmClaude.js', () => ({
+  listClaudeModels: providerSourceDoubles.claude,
+}))
+
 async function loadSubject() {
   return import('../../../electron/ipc/agent-api.js').catch(() => ({}))
 }
@@ -50,8 +63,8 @@ function fullModelCatalogDouble() {
   return {
     list: vi.fn(async () => [{ id: 'gpt-visible', displayName: 'GPT Visible', hidden: false }]),
     // `agent:send` 계약이 이걸 요구한다 (registerAgentIPC 가 가드한다).
-    // 기본은 "아직 캐시 없음" = null → 생략 폴백. 개별 테스트가 필요하면 덮어쓴다.
-    defaultModelId: vi.fn(() => null),
+    // production catalog처럼 cold에서도 동기 문자열을 준다.
+    defaultModelId: vi.fn(() => 'codex:gpt-5.5'),
   }
 }
 
@@ -77,7 +90,7 @@ describe('registerAgentIPC — session command 효과', () => {
 
     const result = await ipcMain.invoke('agent:send', { text: '계속해' })
 
-    expect(sessionManager.send).toHaveBeenCalledWith('계속해')
+    expect(sessionManager.send).toHaveBeenCalledWith('계속해', 'codex:gpt-5.5')
     expect(result).toEqual({ turn: { id: 'turn-1' } })
     expect(win.webContents.send).toHaveBeenCalledWith('agent:delta', { delta: '응답:계속해' })
   })
@@ -115,36 +128,86 @@ describe('registerAgentIPC — session command 효과', () => {
 })
 
 describe('agent:list-models catalog', () => {
-  it('첫 실패를 한 번 재시도하고 hidden을 제외한 성공 결과를 앱 수명 동안 캐시한다', async () => {
+  it('두 provider를 별도로 재시도하고 정규화한 성공 결과를 앱 수명 동안 캐시한다', async () => {
     const { createAgentModelCatalog } = await loadSubject()
-    const listModels = vi.fn()
+    const listCodexModels = vi.fn()
       .mockRejectedValueOnce(new Error('auth not ready'))
       .mockResolvedValueOnce([
         { id: 'gpt-hidden', displayName: 'Hidden', hidden: true },
         { id: 'gpt-visible', displayName: 'Visible', hidden: false },
       ])
-    const catalog = createAgentModelCatalog({ listModels })
+    const listClaudeModels = vi.fn().mockResolvedValue([
+      { value: 'sonnet-edge', resolvedModel: 'claude-sonnet-edge', displayName: 'Sonnet Edge' },
+    ])
+    const catalog = createAgentModelCatalog({ listCodexModels, listClaudeModels })
 
-    await expect(catalog.list()).resolves.toEqual([
-      { id: 'gpt-visible', displayName: 'Visible', hidden: false },
-    ])
-    await expect(catalog.list()).resolves.toEqual([
-      { id: 'gpt-visible', displayName: 'Visible', hidden: false },
-    ])
-    expect(listModels).toHaveBeenCalledTimes(2)
+    const first = await catalog.list()
+    const second = await catalog.list()
+
+    expect(first).toEqual(second)
+    expect(first).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'codex:gpt-hidden', provider: 'codex', hidden: true }),
+      expect.objectContaining({ id: 'codex:gpt-visible', provider: 'codex', hidden: false }),
+      expect.objectContaining({ id: 'claude:sonnet-edge', provider: 'claude', hidden: false }),
+    ]))
+    expect(listCodexModels).toHaveBeenCalledTimes(2)
+    expect(listClaudeModels).toHaveBeenCalledOnce()
   })
 
-  it('두 시도 모두 실패하거나 visible 결과가 없으면 []를 반환하고 실패를 캐시하지 않는다', async () => {
+  it('provider:sourceKey id와 sdkModel을 보존하고 앱 기본은 두 번째가 아닌 built-in fallback 하나로 고정한다', async () => {
     const { createAgentModelCatalog } = await loadSubject()
-    const listModels = vi.fn()
-      .mockResolvedValueOnce([{ id: 'hidden-a', hidden: true }])
-      .mockRejectedValueOnce(new Error('spawn failed'))
-      .mockResolvedValueOnce([{ id: 'visible-b', displayName: 'Visible B' }])
-    const catalog = createAgentModelCatalog({ listModels })
+    const listCodexModels = vi.fn().mockResolvedValue([
+      { id: 'vendor-alpha', displayName: 'Alpha', isDefault: false },
+      {
+        id: 'vendor-beta',
+        displayName: 'Beta',
+        description: 'provider default in the second slot',
+        isDefault: true,
+        supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }],
+      },
+      {
+        id: 'gpt-5.5',
+        displayName: 'Fetched GPT',
+        hidden: true,
+        contextWindow: 272000,
+      },
+      { id: 'vendor-beta', displayName: 'duplicate must be dropped' },
+      { id: 'unknown-provider', provider: 'mystery' },
+      { id: '' },
+      null,
+    ])
+    const listClaudeModels = vi.fn().mockResolvedValue([
+      { value: 'sonnet-edge', resolvedModel: 'claude-sonnet-edge', displayName: 'Sonnet Edge' },
+    ])
+    const catalog = createAgentModelCatalog({ listCodexModels, listClaudeModels })
 
-    await expect(catalog.list()).resolves.toEqual([])
-    await expect(catalog.list()).resolves.toEqual([{ id: 'visible-b', displayName: 'Visible B' }])
-    expect(listModels).toHaveBeenCalledTimes(3)
+    const rows = await catalog.list()
+    const beta = rows.find(({ id }) => id === 'codex:vendor-beta')
+    const fallback = rows.find(({ id }) => id === 'codex:gpt-5.5')
+
+    expect(beta).toMatchObject({
+      sourceKey: 'vendor-beta',
+      provider: 'codex',
+      sdkModel: 'vendor-beta',
+      providerDefault: true,
+      isDefault: false,
+      description: 'provider default in the second slot',
+      supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }],
+    })
+    expect(fallback).toMatchObject({
+      provider: 'codex',
+      sourceKey: 'gpt-5.5',
+      sdkModel: 'gpt-5.5',
+      displayName: 'Fetched GPT',
+      contextWindow: 272000,
+      hidden: false,
+      isDefault: true,
+      defaultFallbackFrom: 'claude-opus-4-8',
+    })
+    expect(rows.filter(({ isDefault }) => isDefault)).toEqual([fallback])
+    expect(rows.filter(({ id }) => id === 'codex:vendor-beta')).toHaveLength(1)
+    expect(rows.some(({ id }) => id === 'codex:unknown-provider')).toBe(false)
+    expect(catalog.defaultModelId()).toBe('codex:gpt-5.5')
   })
 
   /**
@@ -168,72 +231,132 @@ describe('agent:list-models catalog', () => {
     })).toThrow(/defaultModelId/)
   })
 
-  it('defaultModelId가 isDefault 모델을 고른다 (첫 번째도, 하드코딩도 아니다)', async () => {
+  it('Claude default candidate는 두 번째 raw value로 식별하고 sdkModel:null과 [1m] resolvedModel을 그대로 보존한다', async () => {
     const { createAgentModelCatalog } = await loadSubject()
-    // ⚠️ 기본을 **첫 번째가 아닌 자리**에 두고 id 도 실제 codex id 를 안 쓴다 →
-    //    `models[0]` / `'gpt-5.5'` 하드코딩 뮤턴트가 여기서 죽는다.
-    const listModels = vi.fn().mockResolvedValue([
-      { id: 'alpha-not-default' },
-      { id: 'beta-is-default', isDefault: true },
+    const listCodexModels = vi.fn().mockResolvedValue([{ id: 'vendor-alpha' }])
+    // ⚠️ candidate를 첫 번째가 아닌 자리 + non-Codex sourceKey에 둔다.
+    // `models[0]` / Codex id 하드코딩 / value↔resolvedModel 교환 뮤턴트를 같이 죽인다.
+    const listClaudeModels = vi.fn().mockResolvedValue([
+      {
+        value: 'opus[1m]',
+        resolvedModel: 'claude-opus-4-8[1m]',
+        displayName: 'Opus 1M',
+        supportsAdaptiveThinking: true,
+      },
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-4-8[1m]',
+        displayName: 'Default',
+        description: 'Provider default alias',
+      },
     ])
-    const catalog = createAgentModelCatalog({ listModels })
+    const catalog = createAgentModelCatalog({ listCodexModels, listClaudeModels })
 
-    // 캐시되기 전에는 null 이어야 한다 — fetch 를 유발하면 cold send 가 블로킹된다.
-    expect(catalog.defaultModelId()).toBeNull()
-    await catalog.list()
-    expect(catalog.defaultModelId()).toBe('beta-is-default')
+    const rows = await catalog.list()
+    expect(rows.find(({ id }) => id === 'claude:opus[1m]')).toMatchObject({
+      sourceKey: 'opus[1m]',
+      provider: 'claude',
+      sdkModel: 'opus[1m]',
+      resolvedModel: 'claude-opus-4-8[1m]',
+      hidden: false,
+      isDefault: false,
+      supportsAdaptiveThinking: true,
+    })
+    expect(rows.find(({ id }) => id === 'claude:default')).toMatchObject({
+      sourceKey: 'default',
+      provider: 'claude',
+      sdkModel: null,
+      resolvedModel: 'claude-opus-4-8[1m]',
+      providerDefault: true,
+      defaultCandidate: true,
+      hidden: true,
+      isDefault: false,
+    })
+    expect(catalog.defaultModelId()).toBe('codex:gpt-5.5')
   })
 
-  it('defaultModelId는 fetch를 유발하지 않는다 (cold send를 블로킹하면 안 된다)', async () => {
-    const { createAgentModelCatalog } = await loadSubject()
-    const listModels = vi.fn().mockResolvedValue([{ id: 'x', isDefault: true }])
-    const catalog = createAgentModelCatalog({ listModels })
+  it('실측 상수가 채워진 분기에서만 Claude candidate를 승격하고 Codex fallback 신호를 비운다', async () => {
+    vi.resetModules()
+    vi.doMock('../../../electron/agent/constants.js', () => ({
+      COLD_DEFAULT_MODEL_ID: 'codex:gpt-5.5',
+      CLAUDE_AGENT_DEFAULT_SDK_MODEL: 'measured-opus-sdk-value',
+    }))
+    try {
+      const { createAgentModelCatalog } = await import('../../../electron/ipc/agent-api.js?promoted-claude-default')
+      const listCodexModels = vi.fn().mockResolvedValue([
+        { id: 'vendor-alpha' },
+        { id: 'gpt-5.5', displayName: 'Fetched GPT', isDefault: true },
+      ])
+      const listClaudeModels = vi.fn().mockResolvedValue([
+        { value: 'sonnet-edge', resolvedModel: 'claude-sonnet-edge' },
+        { value: 'default', resolvedModel: 'claude-opus-4-8[1m]' },
+      ])
+      const catalog = createAgentModelCatalog({ listCodexModels, listClaudeModels })
 
-    expect(catalog.defaultModelId()).toBeNull()
-    expect(listModels).not.toHaveBeenCalled()   // ← 급소: list() 를 몰래 부르면 20s×2 로 Send 가 멈춘다
+      const rows = await catalog.list()
+      const candidate = rows.find(({ id }) => id === 'claude:default')
+      const fallback = rows.find(({ id }) => id === 'codex:gpt-5.5')
+
+      expect(candidate).toMatchObject({
+        provider: 'claude',
+        sdkModel: 'measured-opus-sdk-value',
+        resolvedModel: 'claude-opus-4-8[1m]',
+        isDefault: true,
+      })
+      expect(fallback).toMatchObject({ provider: 'codex', sdkModel: 'gpt-5.5', isDefault: false })
+      expect(fallback).not.toHaveProperty('defaultFallbackFrom')
+      expect(rows.filter(({ isDefault }) => isDefault)).toEqual([candidate])
+      expect(catalog.defaultModelId()).toBe('claude:default')
+    } finally {
+      vi.doUnmock('../../../electron/agent/constants.js')
+      vi.resetModules()
+    }
   })
 
-  it('isDefault가 하나도 없으면(서버 이상) null → 호출측이 생략으로 폴백한다', async () => {
+  it('defaultModelId는 cold cache에서도 항상 id 문자열이고 두 provider fetch를 유발하지 않는다', async () => {
     const { createAgentModelCatalog } = await loadSubject()
-    const listModels = vi.fn().mockResolvedValue([{ id: 'a' }, { id: 'b' }])
-    const catalog = createAgentModelCatalog({ listModels })
+    const listCodexModels = vi.fn(async () => { throw new Error('must stay cold') })
+    const listClaudeModels = vi.fn(async () => { throw new Error('must stay cold') })
+    const catalog = createAgentModelCatalog({ listCodexModels, listClaudeModels })
 
-    await catalog.list()
-    expect(catalog.defaultModelId()).toBeNull()
-  })
+    expect(catalog.defaultModelId()).toBe('codex:gpt-5.5')
+    expect(typeof catalog.defaultModelId()).toBe('string')
+    expect(listCodexModels).not.toHaveBeenCalled()
+    expect(listClaudeModels).not.toHaveBeenCalled()
 
-  /**
-   * 🔴 이 테스트는 **뒤집힌 것**이다. 원래 나는 "hidden 모델은 기본이 될 수 없다" 를 의도로 핀했는데,
-   *    적대 리뷰가 그게 **구멍**임을 보였다: `hidden` 은 *"선택지에 안 보인다"* 이지
-   *    *"서버 기본이 아니다"* 가 아니다. 기본이 hidden 이면 카탈로그는 **안 비어 있는데**
-   *    defaultModelId 만 null → 사용자는 다른 모델을 고를 수 **있고** → '기본' → 생략 →
-   *    **sticky 버그 부활**. ("카탈로그 없으면 sticky 불가" 불변식이 이 부분집합을 커버 못 했다.)
-   */
-  it('기본 모델이 hidden 이어도 기본으로 쓴다 (선택지에서 감춘 것 ≠ 서버 기본이 아닌 것)', async () => {
-    const { createAgentModelCatalog } = await loadSubject()
-    const listModels = vi.fn().mockResolvedValue([
-      { id: 'hidden-default', isDefault: true, hidden: true },
-      { id: 'visible', isDefault: false },
+    const rows = await catalog.list()
+    expect(rows.filter(({ isDefault }) => isDefault)).toEqual([
+      expect.objectContaining({
+        id: 'codex:gpt-5.5',
+        provider: 'codex',
+        sdkModel: 'gpt-5.5',
+        defaultFallbackFrom: 'claude-opus-4-8',
+      }),
     ])
-    const catalog = createAgentModelCatalog({ listModels })
-
-    await catalog.list()
-    // 목록(선택지)에는 안 나오지만
-    await expect(catalog.list()).resolves.toEqual([{ id: 'visible', isDefault: false }])
-    // 와이어에는 명시된다 → 생략으로 떨어지지 않는다
-    expect(catalog.defaultModelId()).toBe('hidden-default')
+    expect(listCodexModels).toHaveBeenCalledTimes(2)
+    expect(listClaudeModels).toHaveBeenCalledTimes(2)
   })
 
-  it('agent:list-models handler가 catalog 값을 그대로 renderer에 돌려준다', async () => {
+  it('기본 상수는 cold fallback id를 핀하고 Claude 승격 문자열은 미확정 null이다', async () => {
+    const constants = await import('../../../electron/agent/constants.js')
+    expect(constants.COLD_DEFAULT_MODEL_ID).toBe('codex:gpt-5.5')
+    expect(constants.CLAUDE_AGENT_DEFAULT_SDK_MODEL).toBeNull()
+  })
+
+  it('agent:list-models handler가 내부 default resolve 뒤 renderer 반환 경계에서만 hidden을 거른다', async () => {
     const { registerAgentIPC } = await loadSubject()
     const ipcMain = fakeIpcMain()
     const win = fakeWindow()
     const sessionManager = fullSessionManagerDouble()
     const modelCatalog = fullModelCatalogDouble()
+    modelCatalog.list.mockResolvedValue([
+      { id: 'claude:default', provider: 'claude', sdkModel: null, isDefault: false, hidden: true },
+      { id: 'codex:gpt-visible', provider: 'codex', sdkModel: 'gpt-visible', isDefault: true, hidden: false },
+    ])
     registerAgentIPC(ipcMain, { sessionManager, modelCatalog, getWindow: () => win })
 
     await expect(ipcMain.invoke('agent:list-models')).resolves.toEqual([
-      { id: 'gpt-visible', displayName: 'GPT Visible', hidden: false },
+      { id: 'codex:gpt-visible', provider: 'codex', sdkModel: 'gpt-visible', isDefault: true, hidden: false },
     ])
     expect(modelCatalog.list).toHaveBeenCalledOnce()
   })
