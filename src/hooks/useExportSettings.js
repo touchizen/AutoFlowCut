@@ -17,7 +17,9 @@ const DEFAULT_SETTINGS = {
   kenBurnsScaleMin: 100,
   kenBurnsScaleMax: 130,
   selectedOS: null,  // null이면 자동 감지
-  includeSubtitle: true
+  includeSubtitle: true,
+  renderMode: 'final',        // 'preview' | 'final' (self-render)
+  renderBurnSubtitle: true    // self-render 자막 번인 토글
 }
 
 export function useExportSettings() {
