@@ -13,7 +13,7 @@ const https = require('https')
 const os = require('os')
 const path = require('path')
 const { execFileSync } = require('child_process')
-const { verifyBinaryArch } = require('./verifyBinaryArch.cjs')
+const { normalizeArch, verifyBinaryArch } = require('./verifyBinaryArch.cjs')
 
 const rootDir = path.resolve(__dirname, '..')
 
@@ -310,7 +310,15 @@ function verifyStagedFfmpeg(binaryPath, target, deps = {}) {
     verifySelfContained(binaryPath, { platform, execFileSync: deps.execFileSync })
     verifyCapabilities(binaryPath, { execFileSync: deps.execFileSync })
     return true
-  } catch {
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      const warn = deps.warn || console.warn
+      const code = error?.code || error?.name || 'UNKNOWN'
+      warn(
+        `[platform-binaries] verify staged ffmpeg failed for ${binaryPath} (${code}): ` +
+        `${error?.message || error}`,
+      )
+    }
     return false
   }
 }
@@ -442,12 +450,6 @@ function normalizePlatform(platform) {
   return platform
 }
 
-function normalizeArch(arch) {
-  if (arch === 'amd64' || arch === 'x86_64') return 'x64'
-  if (arch === 'aarch64') return 'arm64'
-  return arch
-}
-
 function splitTargets(value) {
   return String(value || '').split(',').map(target => target.trim()).filter(Boolean)
 }
@@ -507,10 +509,7 @@ function extractFfmpegArchive(archivePath, destination, build, deps = {}) {
   const hostPlatform = deps.hostPlatform || process.platform
   fs.mkdirSync(destination, { recursive: true })
 
-  if (build.archive === 'raw') {
-    const output = path.join(destination, build.binaryName || 'ffmpeg')
-    fs.copyFileSync(archivePath, output)
-  } else if (build.archive === 'zip') {
+  if (build.archive === 'zip') {
     if (hostPlatform === 'win32') {
       run('powershell.exe', [
         '-NoProfile', '-NonInteractive', '-Command',

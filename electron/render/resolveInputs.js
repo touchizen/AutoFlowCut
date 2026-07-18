@@ -5,6 +5,9 @@ import os from 'os'
 import path from 'path'
 import { probeDurationMs as realProbe } from '../story/audioProbe.js'
 
+// 파일명 안전화 — 한 곳에서만 정의(중복 방지).
+const sanitizeName = (s) => String(s).replace(/\W+/g, '_')
+
 // data: URL 또는 raw base64 문자열을 임시 파일로 decode(main 소유). 파일 경로/http 는 null.
 function pickDataSpec(value) {
   if (typeof value !== 'string' || !value) return null
@@ -35,7 +38,7 @@ const defaultDeps = {
 
 export async function resolveAndValidateInputs(prepared, deps = {}) {
   const { existsSync, probeDurationMs, decodeDataUrl } = { ...defaultDeps, ...deps }
-  const jobPrefix = deps.jobId ? `${String(deps.jobId).replace(/\W+/g, '_')}_` : ''
+  const jobPrefix = deps.jobId ? `${sanitizeName(deps.jobId)}_` : ''
   const cr = prepared.cloudRequest || {}
   const images = new Map()
   const sfx = new Map()
@@ -53,8 +56,8 @@ export async function resolveAndValidateInputs(prepared, deps = {}) {
     // 2) data:/base64 (path 또는 fallback) → 임시 파일 decode (다른 exporter 와 동일한 fallback 지원)
     const dataSpec = pickDataSpec(m.path) || pickDataSpec(m.fallback) || pickDataSpec(m.image)
     if (dataSpec) {
-      const safe = String(m.sceneId || 'scene').replace(/\W+/g, '_')
-      const tmp = await decodeDataUrl(dataSpec, `${jobPrefix}${safe}_${String(m.filename || 'img').replace(/\W+/g, '_')}`)
+      const safe = sanitizeName(m.sceneId || 'scene')
+      const tmp = await decodeDataUrl(dataSpec, `${jobPrefix}${safe}_${sanitizeName(m.filename || 'img')}`)
       images.set(m.sceneId, tmp)
       tempFiles.push(tmp)
       continue
@@ -85,7 +88,10 @@ export async function resolveAndValidateInputs(prepared, deps = {}) {
   } catch (err) {
     // 부분 decode 후 이후 입력에서 throw 하면 tempFiles 가 호출자(ipc)에게 반환되지 않아
     // 고아가 된다 — 여기서 트랜잭션 정리 후 rethrow.
-    for (const f of tempFiles) { try { await unlink(f) } catch { /* already gone */ } }
+    for (const f of tempFiles) {
+      try { await unlink(f) }
+      catch (e) { if (e?.code !== 'ENOENT') console.warn(`[render] decode temp cleanup failed: ${f} (${e?.code || e?.message})`) }
+    }
     throw err
   }
 }

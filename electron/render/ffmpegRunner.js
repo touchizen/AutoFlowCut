@@ -10,11 +10,13 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { ASS_PATH_TOKEN, FONTS_DIR_TOKEN } from './filtergraphTokens.js'
 
 const STDERR_TAIL_LINES = 20
-const ASS_PATH_TOKEN = '__ASS_PATH__'
-const FONTS_DIR_TOKEN = '__FONTS_DIR__'
 const PCM_F32LE_BYTES_PER_SECOND = 48000 * 2 * 4
+const WAV_HEADER_SLACK_BYTES = 4096
+const AAC_BYTES_PER_SECOND = 32000
+const CONTAINER_OVERHEAD_BYTES = 1024 * 1024
 // About 10 Mbps at 1080p30 before the separate safety factor is applied.
 const VIDEO_BYTES_PER_PIXEL_FRAME = 0.02
 const DISK_SAFETY_FACTOR = 1.25
@@ -32,6 +34,7 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   const statfs = deps.statfs || nodeStatfs
   const writeFile = deps.writeFile || nodeWriteFile
   const mkdtemp = deps.mkdtemp || nodeMkdtemp
+  const warn = deps.warn || console.warn
   const ffmpegPath = deps.ffmpegPath
   const outPath = deps.outPath
   const fontsDir = deps.fontsDir
@@ -41,6 +44,7 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   let tempDirPromise
   let tempDirRemoved = false
   let lastPercent = 0
+  const warnedCleanupFailures = new Set()
 
   jobCtx.tempFiles ||= []
 
@@ -195,7 +199,6 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
       }
 
       jobCtx.currentChild = child
-      jobCtx.phase = stage.kind
       let lineBuffer = ''
       let tailLines = []
       let settled = false
@@ -247,7 +250,12 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
           finish(null)
           return
         }
-        finish(new Error(`ffmpeg exit ${code}: ${tailLines.join('\n')}`))
+        const stderrTail = tailLines.join('\n')
+        const error = new Error(`ffmpeg exit ${code}: ${stderrTail}`)
+        error.stderrTail = stderrTail
+        error.phase = stage.kind
+        error.code = code
+        finish(error)
       })
 
       if (jobCtx.signal?.aborted) onAbort()
@@ -340,6 +348,7 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
         untrackTemp(file)
         return true
       }
+      warnCleanupFailure('unlink', file, error)
       return false
     }
   }
@@ -352,7 +361,20 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
     await cleanupTempFiles()
     if (!tempDirPromise || tempDirRemoved) return
     tempDirRemoved = true
-    try { await rmdir(await tempDirPromise) } catch {}
+    const directory = await tempDirPromise
+    try {
+      await rmdir(directory)
+    } catch (error) {
+      if (error?.code !== 'ENOENT') warnCleanupFailure('rmdir', directory, error)
+    }
+  }
+
+  function warnCleanupFailure(operation, targetPath, error) {
+    const code = error?.code || error?.name || 'UNKNOWN'
+    const key = `${operation}:${targetPath}:${code}`
+    if (warnedCleanupFailures.has(key)) return
+    warnedCleanupFailures.add(key)
+    warn(`[ffmpegRunner] ${operation} failed for ${targetPath} (${code}): ${error?.message || error}`)
   }
 }
 
@@ -387,22 +409,19 @@ export function estimateDiskSpaceBytes(jobPlan, fallbackDurationMs = jobPlan?.to
   }
 }
 
-export function estimatePeakDiskBytes(jobPlan, fallbackDurationMs = jobPlan?.totalDurationMs) {
-  const estimates = estimateDiskSpaceBytes(jobPlan, fallbackDurationMs)
-  return estimates.tempBytes + estimates.destinationBytes
-}
-
 function estimateStageOutputBytes(stage, fallbackDurationMs) {
   const durationSec = positiveNumber(stage?.estimatedDurationMs, fallbackDurationMs) / 1000
-  if (stage?.kind === 'audio') return durationSec * PCM_F32LE_BYTES_PER_SECOND + 4096
+  if (stage?.kind === 'audio') {
+    return durationSec * PCM_F32LE_BYTES_PER_SECOND + WAV_HEADER_SLACK_BYTES
+  }
 
-  const spec = stage?.outputSpec || stage?.spec || {}
+  const spec = stage?.outputSpec || {}
   const width = positiveNumber(spec.width, 1920)
   const height = positiveNumber(spec.height, 1080)
   const fps = positiveNumber(spec.fps, 30)
   const videoBytes = durationSec * width * height * fps * VIDEO_BYTES_PER_PIXEL_FRAME
-  const audioBytes = stage?.kind === 'final' ? durationSec * 32000 : 0
-  return videoBytes + audioBytes + 1024 * 1024
+  const audioBytes = stage?.kind === 'final' ? durationSec * AAC_BYTES_PER_SECOND : 0
+  return videoBytes + audioBytes + CONTAINER_OVERHEAD_BYTES
 }
 
 export function escapeFilterOptionValue(value) {
@@ -423,10 +442,11 @@ function mapArgs(stage, graph, inputs) {
 }
 
 function codecArgs(stage, graph) {
-  const spec = stage.outputSpec || stage.spec || {}
   if (stage.kind === 'audio') {
     return ['-c:a', 'pcm_f32le', '-ar', '48000', '-ac', '2']
   }
+  const spec = stage.outputSpec
+  if (!spec) throw new Error(`render ${stage.kind} stage is missing outputSpec`)
 
   const crf = String(spec.crf ?? 20)
   const preset = String(spec.preset ?? 'medium')

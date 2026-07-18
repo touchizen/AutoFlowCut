@@ -141,7 +141,7 @@ describe('static ffmpeg acquisition manifest', () => {
 
     for (const build of Object.values(FFMPEG_BUILD_MANIFEST)) {
       expect(build.url).toMatch(/^https:\/\//)
-      expect(['raw', 'zip', 'tar.xz']).toContain(build.archive)
+      expect(['zip', 'tar.xz']).toContain(build.archive)
       expect(build.sha256).toMatch(/^(?:[a-f0-9]{64}|TODO_FILL_SHA)$/i)
       expect(build.binaryPathPattern).toBeTruthy()
     }
@@ -164,6 +164,10 @@ describe('static ffmpeg acquisition manifest', () => {
     })).toEqual(['linux-x64'])
     expect(resolveRequestedFfmpegTargets({ argv: [], env: {}, platform: 'darwin', arch: 'arm64' }))
       .toEqual(['darwin-arm64'])
+    expect(resolveRequestedFfmpegTargets({
+      argv: [], env: { npm_config_platform: 'linux', npm_config_arch: 'x86_64' },
+      platform: 'darwin', arch: 'arm64',
+    })).toEqual(['linux-x64'])
   })
 
   test('refuses a TODO checksum before attempting a download', async () => {
@@ -187,17 +191,10 @@ describe('static ffmpeg acquisition manifest', () => {
     })).rejects.toThrow(/archive checksum mismatch.*darwin-arm64/i)
   })
 
-  test('extracts raw, zip, and tar.xz recipes and locates exactly one manifest member', () => {
+  test('extracts zip and tar.xz recipes and locates exactly one manifest member', () => {
     const root = tempDir()
     const archive = path.join(root, 'archive')
     fs.writeFileSync(archive, 'fixture')
-
-    const rawOut = path.join(root, 'raw')
-    expect(extractFfmpegArchive(archive, rawOut, {
-      archive: 'raw',
-      binaryPathPattern: '(^|/)ffmpeg$',
-    })).toBe(path.join(rawOut, 'ffmpeg'))
-    expect(fs.readFileSync(path.join(rawOut, 'ffmpeg'), 'utf8')).toBe('fixture')
 
     const zipOut = path.join(root, 'zip')
     const zipRun = vi.fn((command, args) => {
@@ -313,6 +310,28 @@ describe('cross-arch ffmpeg staging verification', () => {
     expect(fixture.calls.verifyBinaryArch).toHaveBeenCalled()
     expect(fixture.calls.verifySelfContainedFfmpeg).not.toHaveBeenCalled()
     expect(fixture.calls.verifyFfmpegCapabilities).not.toHaveBeenCalled()
+  })
+
+  test('warns once when host-native staged verification swallows an execution failure', () => {
+    const fixture = stagingCase()
+    const failure = Object.assign(new Error('blocked executable'), { code: 'EACCES' })
+    const warn = vi.fn()
+    fs.writeFileSync(
+      `${fixture.sourcePath}.sha256`,
+      `${fixture.expectedSha256}  downloaded-ffmpeg\n`,
+    )
+
+    expect(verifyStagedFfmpeg(fixture.sourcePath, 'darwin-arm64', {
+      ...fixture.calls,
+      hostPlatform: 'darwin',
+      hostArch: 'arm64',
+      verifySelfContainedFfmpeg: vi.fn(() => { throw failure }),
+      warn,
+    })).toBe(false)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(
+      /verify staged ffmpeg.*downloaded-ffmpeg.*EACCES/i,
+    ))
   })
 })
 

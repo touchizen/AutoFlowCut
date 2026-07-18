@@ -1,4 +1,5 @@
 // audioTracks 4형태 + sfxItems → 렌더 클립 정규화. 스펙 §2.2/§4.6.
+// 이 경계 뒤의 buildRenderPlan은 아래 shape을 재정규화하지 않고 그대로 소비한다.
 // 반환: [{ filename, path, startMs, durationMs, gain }]
 const NARRATION_GAIN = 1.0
 const SFX_GAIN = 0.7

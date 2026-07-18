@@ -22,7 +22,7 @@ const ELF_MACHINE_ARCH = new Map([
 ])
 
 function normalizeArch(arch) {
-  if (arch === 'amd64') return 'x64'
+  if (arch === 'amd64' || arch === 'x86_64') return 'x64'
   if (arch === 'aarch64') return 'arm64'
   return arch
 }
@@ -32,7 +32,13 @@ function verifyBinaryArch(filePath, { platform, arch }) {
     const buffer = readHeader(filePath)
     const architectures = parseArchitectures(buffer, platform)
     return architectures.includes(normalizeArch(arch))
-  } catch {
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      const code = error?.code || error?.name || 'UNKNOWN'
+      console.warn(
+        `[verifyBinaryArch] failed to read ${filePath} (${code}): ${error?.message || error}`,
+      )
+    }
     return false
   }
 }
@@ -118,6 +124,7 @@ function machCpuArch(cpuType) {
 }
 
 module.exports = {
+  normalizeArch,
   parseArchitectures,
   verifyBinaryArch,
 }

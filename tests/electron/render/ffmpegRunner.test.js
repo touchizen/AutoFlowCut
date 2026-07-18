@@ -3,7 +3,7 @@ import { EventEmitter } from 'events'
 import { tmpdir } from 'node:os'
 import {
   escapeFilterOptionValue,
-  estimatePeakDiskBytes,
+  estimateDiskSpaceBytes,
   runFfmpegRender,
 } from '../../../electron/render/ffmpegRunner.js'
 import { buildRenderPlan } from '../../../electron/render/buildRenderPlan.js'
@@ -27,6 +27,7 @@ function makeDeps(overrides = {}) {
     writeFile: vi.fn(async () => {}),
     mkdtemp: vi.fn(async () => '/tmp/render-job'),
     rmdir: vi.fn(async () => {}),
+    warn: vi.fn(),
     stat: vi.fn(async directory => ({ dev: directory === tmpdir() ? 2 : 1 })),
     statfs: vi.fn(async () => ({ bavail: 10_000_000, bsize: 4096 })),
     ...overrides,
@@ -45,6 +46,14 @@ const plan = {
     output: '/tmp/out.tmp.mp4',
     dependsOn: [],
     subtitleAss: null,
+    outputSpec: {
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      crf: 20,
+      preset: 'medium',
+      audioBitrate: '192k',
+    },
   }],
 }
 
@@ -110,7 +119,12 @@ describe('runFfmpegRender base lifecycle', () => {
     child.stderr.emit('data', Buffer.from('boom error\n'))
     child.emit('close', 1)
 
-    await expect(promise).rejects.toThrow(/ffmpeg exit 1:.*boom error/s)
+    let error
+    try { await promise } catch (caught) { error = caught }
+    expect(error.message).toMatch(/ffmpeg exit 1:.*boom error/s)
+    expect(error.stderrTail).toBe('boom error')
+    expect(error.phase).toBe('final')
+    expect(error.code).toBe(1)
     expect(rename).not.toHaveBeenCalled()
   })
 
@@ -324,19 +338,10 @@ describe('runFfmpegRender disk preflight and cleanup', () => {
       },
     })
 
-    const estimate = estimatePeakDiskBytes(renderPlan)
+    const estimates = estimateDiskSpaceBytes(renderPlan)
+    const estimate = estimates.tempBytes + estimates.destinationBytes
     expect(estimate).toBeGreaterThan(3 * 1024 ** 3)
     expect(estimate).toBeLessThan(8 * 1024 ** 3)
-  })
-
-  it('keeps a temp file tracked when unlink fails with a retryable error', async () => {
-    const unlinkError = Object.assign(new Error('locked'), { code: 'EACCES' })
-    const unlink = vi.fn(async () => { throw unlinkError })
-    const ctx = { cancelled: true, tempFiles: ['/tmp/locked.wav'] }
-
-    await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink })))
-      .rejects.toThrow('render cancelled')
-    expect(ctx.tempFiles).toContain('/tmp/locked.wav')
   })
 
   it('untracks a temp file that was already absent', async () => {
@@ -347,6 +352,42 @@ describe('runFfmpegRender disk preflight and cleanup', () => {
     await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink })))
       .rejects.toThrow('render cancelled')
     expect(ctx.tempFiles).toEqual([])
+  })
+
+  it('warns once for a non-ENOENT unlink failure and keeps the file retryable', async () => {
+    const unlinkError = Object.assign(new Error('locked'), { code: 'EACCES' })
+    const unlink = vi.fn(async () => { throw unlinkError })
+    const warn = vi.fn()
+    const ctx = { cancelled: true, tempFiles: ['/tmp/locked.wav'] }
+
+    await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink, warn })))
+      .rejects.toThrow('render cancelled')
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/unlink.*\/tmp\/locked\.wav.*EACCES/i))
+    expect(ctx.tempFiles).toContain('/tmp/locked.wav')
+  })
+
+  it('warns when removing the controlled temp directory fails', async () => {
+    const child = fakeChild()
+    const rmdirError = Object.assign(new Error('directory busy'), { code: 'EBUSY' })
+    const warn = vi.fn()
+    const deps = makeDeps({
+      spawn: vi.fn(() => child),
+      rmdir: vi.fn(async () => { throw rmdirError }),
+      warn,
+    })
+    const render = runFfmpegRender(
+      plan,
+      { jobId: 'rmdir-warning', cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )
+
+    await waitForSpawn(deps.spawn)
+    child.emit('close', 0)
+    await render
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/rmdir.*\/tmp\/render-job.*EBUSY/i))
   })
 })
 
@@ -376,6 +417,7 @@ describe('runFfmpegRender Task 5 seams', () => {
       output: 'out.mp4',
       dependsOn: [],
       subtitleAss: '[Script Info]\n',
+      outputSpec: { width: 1920, height: 1080, fps: 30, crf: 20, preset: 'medium', audioBitrate: '192k' },
     }] }
     const ctx = { jobId: 'sub', cancelled: false, tempFiles: [] }
     const promise = runFfmpegRender(subtitlePlan, ctx, () => {}, deps)
@@ -463,6 +505,27 @@ describe('runFfmpegRender staged execution', () => {
     expect(percents).toEqual([...percents].sort((a, b) => a - b))
     expect(percents.at(-1)).toBe(100)
     expect(onProgress.mock.calls.map(([event]) => event.stage)).toEqual(expect.arrayContaining(['audio', 'final']))
+  })
+
+  it('fails loudly when an encoding stage only supplies the removed stage.spec seam', async () => {
+    const deps = makeDeps()
+    const obsoletePlan = { stages: [{
+      kind: 'final',
+      inputs: [],
+      filtergraphScript: '[vout]',
+      output: 'out.mp4',
+      dependsOn: [],
+      subtitleAss: null,
+      spec: { fps: 24, crf: 26, preset: 'veryfast', audioBitrate: '128k' },
+    }] }
+
+    await expect(runFfmpegRender(
+      obsoletePlan,
+      { jobId: 'obsolete-spec', cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )).rejects.toThrow(/missing outputSpec/i)
+    expect(deps.spawn).not.toHaveBeenCalled()
   })
 
   it('uses preview encoding settings from a genuine buildRenderPlan output', async () => {
@@ -580,7 +643,11 @@ describe('runFfmpegRender staged execution', () => {
     const deps = makeDeps({ spawn, unlink })
     const twoStages = { stages: [
       { kind: 'audio', inputs: [], filtergraphScript: 'a', output: 'a.wav', dependsOn: [], subtitleAss: null },
-      { kind: 'final', inputs: ['a.wav'], filtergraphScript: 'v', output: 'out.mp4', dependsOn: ['a.wav'], subtitleAss: null },
+      {
+        kind: 'final', inputs: ['a.wav'], filtergraphScript: 'v', output: 'out.mp4',
+        dependsOn: ['a.wav'], subtitleAss: null,
+        outputSpec: { width: 1920, height: 1080, fps: 30, crf: 20, preset: 'medium', audioBitrate: '192k' },
+      },
     ] }
     const ctx = { jobId: 'cancel-next', cancelled: false, tempFiles: [] }
     const promise = runFfmpegRender(twoStages, ctx, () => {}, deps)

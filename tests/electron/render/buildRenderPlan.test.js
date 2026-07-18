@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { buildRenderPlan, allocateFrames, outputSpec, computeTotalDurationMs } from '../../../electron/render/buildRenderPlan.js'
+import {
+  DEFAULT_SCENE_DURATION_SEC,
+  allocateFrames,
+  buildRenderPlan,
+  buildSceneStartsMs,
+  computeTotalDurationMs,
+  outputSpec,
+  sceneDurationSec,
+} from '../../../electron/render/buildRenderPlan.js'
 
 function makeScenes(count, duration = 1) {
   return Array.from({ length: count }, (_, index) => ({ id: `scene_${index + 1}`, duration }))
@@ -67,13 +75,33 @@ describe('outputSpec', () => {
   })
 })
 
+describe('canonical scene timeline', () => {
+  it('uses one three-second fallback and returns scene-id keyed start milliseconds', () => {
+    const scenes = [
+      { id: 'first', duration: 1.25 },
+      { id: 'zero', duration: 0 },
+      { id: 'missing' },
+    ]
+
+    expect(DEFAULT_SCENE_DURATION_SEC).toBe(3)
+    expect(sceneDurationSec(scenes[0])).toBe(1.25)
+    expect(sceneDurationSec(scenes[1])).toBe(DEFAULT_SCENE_DURATION_SEC)
+    expect(sceneDurationSec(scenes[2])).toBe(DEFAULT_SCENE_DURATION_SEC)
+    expect(buildSceneStartsMs(scenes)).toEqual({
+      first: 0,
+      zero: 1250,
+      missing: 4250,
+    })
+  })
+})
+
 describe('computeTotalDurationMs (max of all endpoints)', () => {
   it('takes subtitle endMs when it exceeds video/audio', () => {
-    const t = computeTotalDurationMs({ sceneEndMs: 5000, audioTracks: [{ timecodeMs: 0, durationMs: 4000 }], sfxStarts: [], subtitleEndMs: 8000 })
+    const t = computeTotalDurationMs({ sceneEndMs: 5000, audioTracks: [{ startMs: 0, durationMs: 4000 }], subtitleEndMs: 8000 })
     expect(t).toBe(8000)
   })
-  it('ignores null audioDuration and uses clip ends', () => {
-    const t = computeTotalDurationMs({ sceneEndMs: 3000, audioTracks: [{ timecodeMs: 20000, durationMs: 2000 }], sfxStarts: [], subtitleEndMs: 0 })
+  it('uses normalized clip ends', () => {
+    const t = computeTotalDurationMs({ sceneEndMs: 3000, audioTracks: [{ startMs: 20000, durationMs: 2000 }], subtitleEndMs: 0 })
     expect(t).toBe(22000)
   })
 })
@@ -276,6 +304,20 @@ describe('buildRenderPlan subtitles and normalized SFX', () => {
 
     expect(final.subtitleAss).toContain('Dialogue:')
     expect(final.subtitleAss).toContain('English fallback')
+  })
+
+  it('uses the canonical fallback duration when timing scene-derived subtitles', () => {
+    const scenes = [
+      { id: 'scene_1', duration: 0, subtitleKo: 'fallback duration' },
+      { id: 'scene_2', duration: 1, subtitleKo: 'next scene' },
+    ]
+    const plan = buildRenderPlan(
+      makeResolved(scenes),
+      makeOptions(scenes, { srtEntries: null }, { renderBurnSubtitle: true }),
+    )
+
+    expect(plan.stages.at(-1).subtitleAss).toContain('0:00:00.00,0:00:03.00')
+    expect(plan.stages.at(-1).subtitleAss).toContain('0:00:03.00,0:00:04.00')
   })
 
   it('uses normalized audioClips as the only SFX timing source', () => {

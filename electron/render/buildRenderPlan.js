@@ -1,5 +1,6 @@
 import { computeKenBurns } from './kenBurns.js'
 import { buildAss } from './subtitleAss.js'
+import { ASS_PATH_TOKEN, FONTS_DIR_TOKEN } from './filtergraphTokens.js'
 
 const K_AUDIO = 32
 const K_VIDEO = 64
@@ -7,8 +8,7 @@ const WINDOWS_ARGV_LIMIT_CHARS = 32767
 const ARGV_FIXED_RESERVE_CHARS = 8192
 const MAX_STAGE_INPUT_ARG_CHARS = WINDOWS_ARGV_LIMIT_CHARS - ARGV_FIXED_RESERVE_CHARS
 const INPUT_ARG_OVERHEAD_CHARS = 7 // Approximate characters for ` -i "<path>" ` around each path.
-const ASS_PATH_TOKEN = '__ASS_PATH__'
-const FONTS_DIR_TOKEN = '__FONTS_DIR__'
+export const DEFAULT_SCENE_DURATION_SEC = 3
 
 const SPECS = {
   portrait: {
@@ -41,19 +41,11 @@ export function allocateFrames(durationsSec, fps) {
   return frames
 }
 
-export function computeTotalDurationMs({ sceneEndMs, audioTracks = [], sfxStarts = [], subtitleEndMs = 0 }) {
+export function computeTotalDurationMs({ sceneEndMs, audioTracks = [], subtitleEndMs = 0 }) {
   let maxEndMs = finiteNumber(sceneEndMs, 0)
 
   for (const track of audioTracks) {
-    const startMs = finiteNumber(track.startMs, finiteNumber(track.timecodeMs, 0))
-    const durationMs = finiteNumber(track.durationMs, 0)
-    maxEndMs = Math.max(maxEndMs, startMs + durationMs)
-  }
-
-  for (const sfx of sfxStarts) {
-    const startMs = finiteNumber(sfx.startMs, 0)
-    const durationMs = finiteNumber(sfx.durationMs, 0)
-    maxEndMs = Math.max(maxEndMs, startMs + durationMs)
+    maxEndMs = Math.max(maxEndMs, track.startMs + track.durationMs)
   }
 
   return Math.max(maxEndMs, finiteNumber(subtitleEndMs, 0))
@@ -68,13 +60,15 @@ export function buildRenderPlan(resolved, options) {
   const frames = allocateFrames(durationsSec, spec.fps)
   const sceneEndMs = Math.round(durationsSec.reduce((sum, duration) => sum + duration, 0) * 1000)
   const audioClips = resolved.audioClips || []
-  const subtitleEntries = options.renderBurnSubtitle ? effectiveSubtitleEntries(cloudRequest, durationsSec) : []
+  const sceneStartsMs = buildSceneStartsMs(scenes)
+  const subtitleEntries = options.renderBurnSubtitle
+    ? effectiveSubtitleEntries(cloudRequest, sceneStartsMs, sceneEndMs)
+    : []
   const subtitleEndMs = subtitleEntries.reduce((endMs, entry) => {
     const start = Number(entry.startMs)
     const end = Number(entry.endMs)
     return Number.isFinite(start) && Number.isFinite(end) && end > start ? Math.max(endMs, end) : endMs
   }, 0)
-  const sceneStartsMs = buildSceneStartsMs(scenes, durationsSec)
   const totalDurationMs = computeTotalDurationMs({
     sceneEndMs,
     audioTracks: audioClips,
@@ -86,8 +80,8 @@ export function buildRenderPlan(resolved, options) {
     index,
     frames: frames[index],
     durationSec: durationsSec[index],
-    startMs: sceneStartsMs.get(scene.id),
-    endMs: index + 1 < scenes.length ? sceneStartsMs.get(scenes[index + 1].id) : sceneEndMs,
+    startMs: sceneStartsMs[scene.id],
+    endMs: index + 1 < scenes.length ? sceneStartsMs[scenes[index + 1].id] : sceneEndMs,
     imagePath: resolved.images.get(scene.id),
     kenBurns: cloudRequest.kenBurns?.enabled
       ? computeKenBurns(scene, index, cloudRequest.kenBurns)
@@ -343,9 +337,9 @@ function buildAudioGraph({ clips, inputOffset, baseStartMs, applyLimiter = false
   if (clips.length === 0) return []
 
   const lines = clips.map((clip, index) => {
-    const durationMs = Math.max(0, finiteNumber(clip.durationMs, 0))
-    const delayMs = Math.max(0, Math.round(finiteNumber(clip.startMs, 0) - baseStartMs))
-    const gain = finiteNumber(clip.gain, 1)
+    const durationMs = Math.max(0, clip.durationMs)
+    const delayMs = Math.max(0, Math.round(clip.startMs - baseStartMs))
+    const gain = clip.gain
     return [
       `[${inputOffset + index}:a]aresample=48000`,
       'aformat=sample_fmts=fltp:channel_layouts=stereo',
@@ -482,14 +476,13 @@ function inputArgChars(inputPath) {
   return String(inputPath).length + INPUT_ARG_OVERHEAD_CHARS
 }
 
-function effectiveSubtitleEntries(cloudRequest, durationsSec) {
+function effectiveSubtitleEntries(cloudRequest, sceneStartsMs, sceneEndMs) {
   if (Array.isArray(cloudRequest.srtEntries)) return cloudRequest.srtEntries
 
-  let cumulativeSec = 0
   return (cloudRequest.scenes || []).flatMap((scene, index) => {
-    const startMs = Math.round(cumulativeSec * 1000)
-    cumulativeSec += durationsSec[index]
-    const endMs = Math.round(cumulativeSec * 1000)
+    const startMs = sceneStartsMs[scene.id]
+    const nextScene = cloudRequest.scenes[index + 1]
+    const endMs = nextScene ? sceneStartsMs[nextScene.id] : sceneEndMs
     const text = [scene.subtitleKo, scene.subtitleEn]
       .find(value => typeof value === 'string' && value.trim())
       ?.trim() || ''
@@ -498,35 +491,27 @@ function effectiveSubtitleEntries(cloudRequest, durationsSec) {
   })
 }
 
-function buildSceneStartsMs(scenes, durationsSec) {
-  const starts = new Map()
+export function buildSceneStartsMs(scenes) {
+  const starts = {}
   let cumulativeSec = 0
-  scenes.forEach((scene, index) => {
-    starts.set(scene.id, Math.round(cumulativeSec * 1000))
-    cumulativeSec += durationsSec[index]
+  scenes.forEach((scene) => {
+    starts[scene.id] = Math.round(cumulativeSec * 1000)
+    cumulativeSec += sceneDurationSec(scene)
   })
   return starts
 }
 
 function sortAudioClips(audioClips) {
-  return audioClips
-    .map((clip, index) => ({
-      ...clip,
-      startMs: finiteNumber(clip.startMs, 0),
-      durationMs: finiteNumber(clip.durationMs, 0),
-      gain: finiteNumber(clip.gain, 1),
-      _inputOrder: index,
-    }))
-    .sort((a, b) => a.startMs - b.startMs || a._inputOrder - b._inputOrder)
+  return [...audioClips].sort((a, b) => a.startMs - b.startMs)
 }
 
 function audioOutputName(level, batchIndex) {
   return `AUDIO_LEVEL_${String(level).padStart(2, '0')}_BATCH_${String(batchIndex).padStart(4, '0')}.wav`
 }
 
-function sceneDurationSec(scene) {
+export function sceneDurationSec(scene) {
   const duration = Number(scene.duration)
-  return Number.isFinite(duration) && duration > 0 ? duration : 3
+  return Number.isFinite(duration) && duration > 0 ? duration : DEFAULT_SCENE_DURATION_SEC
 }
 
 function assertFrameDurations(durationsSec, fps, sceneLabels = []) {

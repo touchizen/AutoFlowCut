@@ -3,20 +3,9 @@
 import { validateRenderRequest } from '../render/validateRequest.js'
 import { resolveAndValidateInputs } from '../render/resolveInputs.js'
 import { adaptAudioClips } from '../render/audioAdapter.js'
-import { buildRenderPlan, outputSpec } from '../render/buildRenderPlan.js'
+import { buildRenderPlan, outputSpec, buildSceneStartsMs } from '../render/buildRenderPlan.js'
 import { runFfmpegRender } from '../render/ffmpegRunner.js'
 import { unlink } from 'node:fs/promises'
-
-// 씬 누적 시작(ms) — sfxItems 배치용(§4.6).
-function computeSceneStartsMs(scenes) {
-  const starts = {}
-  let accSec = 0
-  for (const s of (scenes || [])) {
-    starts[s.id] = Math.round(accSec * 1000)
-    accSec += Number(s.duration) || 0
-  }
-  return starts
-}
 
 export function registerRenderIPC(ipcMain, deps = {}) {
   const {
@@ -56,7 +45,7 @@ export function registerRenderIPC(ipcMain, deps = {}) {
       const cr = prepared.cloudRequest
       const resolved = await resolve(prepared, { jobId })
       if (Array.isArray(resolved.tempFiles)) jobCtx.tempFiles.push(...resolved.tempFiles) // decode된 base64 이미지 정리 위임
-      const sceneStartsMs = computeSceneStartsMs(cr.scenes)
+      const sceneStartsMs = buildSceneStartsMs(cr.scenes)  // plan 과 동일 소스(중복 제거, fallback 통일)
       resolved.audioClips = await adapt(cr, resolved, sceneStartsMs)
 
       const plan = build(resolved, { renderMode: options.renderMode, renderBurnSubtitle: options.renderBurnSubtitle, cloudRequest: cr })
@@ -81,7 +70,10 @@ export function registerRenderIPC(ipcMain, deps = {}) {
       // runner 가 돌지 못한 pre-run 실패(resolve/adapt/build throw) 시 decode 임시파일이 고아로
       // 남는다 — runner 는 성공/실패 경로에서 자기 것을 지우지만 pre-run 은 못 지운다. 여기서 정리
       // (runner 가 이미 지운 건 ENOENT 로 무시).
-      for (const f of jobCtx.tempFiles) { try { await unlink(f) } catch { /* already gone */ } }
+      for (const f of jobCtx.tempFiles) {
+        try { await unlink(f) }
+        catch (e) { if (e?.code !== 'ENOENT') console.warn(`[render] temp cleanup failed: ${f} (${e?.code || e?.message})`) }
+      }
       running.delete(jobId)
       markDone()
     }
