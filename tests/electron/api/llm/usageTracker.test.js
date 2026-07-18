@@ -71,6 +71,14 @@ describe('createUsageTracker', () => {
     expect(t.snapshot()).toEqual({ input: 0, output: 0 })
   })
 
+  // clear 라우팅 회귀 방어: clear 페이로드가 setPending 으로 흘러도 진행중 추정치를 0 으로 덮지 않는다.
+  it('setPending 은 clear-shaped 객체를 무시한다 — 유령 {0,0} 엔트리를 안 만든다', () => {
+    const t = createUsageTracker()
+    t.setPending('q1', { input: 100, output: 100 }) // 진행중 추정
+    t.setPending('q1', { pendingKey: 'q1', clear: true }) // 잘못 흘러온 clear — 덮으면 안 된다
+    expect(t.snapshot()).toEqual({ input: 100, output: 100 }) // 0/0 이 아니다
+  })
+
   it('null/빈 기록은 무시한다', () => {
     const t = createUsageTracker()
     t.addDelta(null)

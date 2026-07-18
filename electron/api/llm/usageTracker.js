@@ -40,7 +40,9 @@ export function createUsageTracker() {
     },
 
     setPending(key, u) {
-      if (!key || !u) return
+      // clear-shaped 페이로드({clear:true})는 저장하지 않는다 — 배선이 clear 를 setPending 으로
+      // 잘못 흘려도(라우팅 회귀) {0,0} 유령 엔트리를 만들지 않는다(진짜 pending 은 input/output 을 가짐).
+      if (!key || !u || u.clear) return
       pending.set(key, { input: u.input || 0, output: u.output || 0 })
     },
 

@@ -62,11 +62,11 @@ function withClaudePath(args) {
 }
 
 // --- token usage tap --------------------------------------------------------
-// 이 파일에는 `for await (const m of queryImpl(...))` 루프가 11개 있다(122,151,160,185,201,
-// 255,272,310,337 …). result 파서를 찌르면 11곳을 봐야 하고 12번째 루프가 추가되면 조용히
-// 샌다 — 조용히 틀린 합계가 이 기능의 유일한 실패 모드다. 그 11개가 전부 여기를 지난다.
-// structuredClaudeCall 의 1차/폴백도 둘 다 지나므로 재시도 양쪽 과금이 자동 포함되고,
-// 실패 result 도 파서가 throw 하기 전에 지나간다.
+// 이 파일의 모든 `for await (const m of queryImpl(...))` 루프(대본/시놉/이어쓰기 스트리밍,
+// structuredClaudeCall 1차·폴백, 제목/재작성 등)는 전부 이 tap 하나(defaultQuery)를 지난다 —
+// 각 루프에 usage 파싱을 흩뿌리면 새 루프가 생길 때 조용히 샌다(조용히 틀린 합계가 이 기능의
+// 유일한 실패 모드다). structuredClaudeCall 재시도는 1차·폴백 양쪽이 지나 둘 다 과금되고,
+// 실패 result 도 파서가 throw 하기 전에 여기를 지난다.
 let claudeUsageSink = null
 
 /** main 이 tracker 를 물린다. null 로 해제. */
