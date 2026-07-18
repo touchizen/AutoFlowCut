@@ -8,103 +8,56 @@
  * 노출하고 평문 키는 절대 반환하지 않는다. 생성 호출 시 main 이 keyStore 에서
  * 키를 꺼내 직접 Google API 로 보낸다 — 키가 renderer 를 거치지 않는다.
  */
-import {
-  validateApiKey,
-  listModels,
-  generateImage as genImage,
-  submitVideo,
-  checkVideoOperation,
-  fetchVideoBase64,
-} from '../api/genai.js'
+import { createDispatcher } from '../api/providers/dispatcher.js'
 
 /**
  * @param {Electron.IpcMain} ipcMain
  * @param {object} deps
- * @param {ReturnType<import('../api/keyStore.js').createKeyStore>} deps.keyStore
+ * @param {ReturnType<import('../api/keyStore.js').createKeyStore>} deps.genaiKeyStore
+ * @param {ReturnType<import('../api/keyStoreMulti.js').createMultiKeyStore>} deps.multiKeyStore
  * @param {Function} [deps.fetchImpl] - 주입용 fetch (테스트). 없으면 엔진이 global fetch 사용.
  */
-export function registerGenaiIPC(ipcMain, deps) {
-  const { keyStore, fetchImpl } = deps
+export function registerGenaiIPC(ipcMain, { genaiKeyStore, multiKeyStore, fetchImpl }) {
   // 엔진에 넘길 deps. fetchImpl 없으면 {} → 엔진이 기본 global fetch 사용.
   const engineDeps = fetchImpl ? { fetchImpl } : {}
+  const dispatcher = createDispatcher({ genaiKeyStore, multiKeyStore, engineDeps })
 
   // --- 키 관리 ---------------------------------------------------------------
 
   // 키 존재 여부 + 암호화 가용성. 평문 키는 반환 안 함.
-  ipcMain.handle('genai:get-key-status', () => ({
-    hasKey: keyStore.hasKey(),
-    encryptionAvailable: keyStore.isEncryptionAvailable(),
-  }))
+  ipcMain.handle('genai:get-key-status', () => dispatcher.getKeyStatus())
 
   // 키 저장 (암호화).
-  ipcMain.handle('genai:set-key', async (_e, { apiKey } = {}) => keyStore.setKey(apiKey))
+  ipcMain.handle('genai:set-key', (_e, params) => dispatcher.setKey(params))
 
   // 키 삭제.
-  ipcMain.handle('genai:clear-key', () => keyStore.clearKey())
+  ipcMain.handle('genai:clear-key', (_e, params) => dispatcher.clearKey(params || {}))
 
   // 키 유효성 검증. apiKey 가 주어지면 그 후보를, 없으면 저장된 키를 검증.
   // 생성 quota 를 소비하지 않는 가벼운 호출.
-  ipcMain.handle('genai:validate-key', async (_e, { apiKey } = {}) => {
-    const key = apiKey || keyStore.getKey()
-    if (!key) return { valid: false, error: 'No API key' }
-    return validateApiKey({ apiKey: key }, engineDeps)
-  })
+  ipcMain.handle('genai:validate-key', (_e, params) => dispatcher.validateKey(params || {}))
 
   // 사용 가능한 모델 목록(raw). 모델 선택 드롭다운을 라이브 /models 로 채우는 데 사용.
   // 생성 quota 미소비. 카테고리 분류는 renderer(categorizeApiModels) 담당.
-  ipcMain.handle('genai:list-models', async () => {
-    const key = keyStore.getKey()
-    if (!key) return { success: false, error: 'No API key' }
-    return listModels({ apiKey: key }, engineDeps)
-  })
+  ipcMain.handle('genai:list-models', (_e, params) => dispatcher.listModels(params || {}))
 
   // --- 생성 (이미지) ---------------------------------------------------------
   //
   // 출력 계약은 기존 flow:generate-image 와 동일하게 유지:
   //   { success, images: [{ base64, mimeType, dataUrl }], error }
   // 단, 키는 renderer 에서 받지 않고 main 의 keyStore 에서 꺼낸다.
-  ipcMain.handle('genai:generate-image', async (_e, params = {}) => {
-    const apiKey = keyStore.getKey()
-    if (!apiKey) return { success: false, error: 'No API key' }
-    const { prompt, referenceImages = [], aspectRatio, model } = params
-    return genImage({ apiKey, prompt, referenceImages, aspectRatio, model }, engineDeps)
-  })
+  ipcMain.handle('genai:generate-image', (_e, params) => dispatcher.generateImage(params || {}))
 
   // --- 생성 (비디오) ---------------------------------------------------------
   //
   // 앱의 async 3-phase 파이프라인과 매칭: 제출 → 상태폴링 → 다운로드 분리.
 
   // 제출 (T2V / I2V). image 가 있으면 I2V.
-  ipcMain.handle('genai:generate-video', async (_e, params = {}) => {
-    const apiKey = keyStore.getKey()
-    if (!apiKey) return { success: false, error: 'No API key' }
-    const { prompt, image = null, endImage = null, referenceImages = [], aspectRatio, durationSeconds, model, seed, resolution } = params
-    const res = await submitVideo({ apiKey, prompt, image, endImage, referenceImages, aspectRatio, durationSeconds, model, seed, resolution }, engineDeps)
-    // 기존 contract 와 호환되게 operationName → generationId 로도 노출
-    if (res.success) return { success: true, generationId: res.operationName, operationName: res.operationName }
-    return res
-  })
+  ipcMain.handle('genai:generate-video', (_e, params) => dispatcher.submitVideo(params || {}))
 
   // 상태 폴링 (operationName 배열). 기존 checkVideoStatus 의 statuses[] 형태로 매핑.
-  ipcMain.handle('genai:check-video-status', async (_e, { generationIds = [] } = {}) => {
-    const apiKey = keyStore.getKey()
-    if (!apiKey) return { success: false, error: 'No API key' }
-
-    const statuses = await Promise.all(
-      generationIds.map(async (operationName) => {
-        const r = await checkVideoOperation({ apiKey, operationName }, engineDeps)
-        if (!r.success) return { generationId: operationName, status: 'failed', error: r.error }
-        if (!r.done) return { generationId: operationName, status: 'pending' }
-        return { generationId: operationName, status: 'completed', videoUri: r.videoUri }
-      })
-    )
-    return { success: true, statuses }
-  })
+  ipcMain.handle('genai:check-video-status', (_e, params) => dispatcher.checkVideoStatus(params || {}))
 
   // 완료된 비디오 다운로드 (videoUri → base64).
-  ipcMain.handle('genai:download-video', async (_e, { videoUri } = {}) => {
-    const apiKey = keyStore.getKey()
-    if (!apiKey) return { success: false, error: 'No API key' }
-    return fetchVideoBase64({ apiKey, videoUri }, engineDeps)
-  })
+  ipcMain.handle('genai:download-video', (_e, params) => dispatcher.downloadVideo(params || {}))
 }

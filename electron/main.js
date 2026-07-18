@@ -215,7 +215,6 @@ const genaiKeyStore = createKeyStore({
   filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
   fs: fsSync,
 })
-registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
 
 // TTS provider 멀티 키 저장소 (스펙 §6, M2a-3b) — genai|elevenlabs|typecast|anthropic.
 const multiKeyStore = createMultiKeyStore({
@@ -224,6 +223,7 @@ const multiKeyStore = createMultiKeyStore({
   fs: fsSync,
   path,
 })
+registerGenaiIPC(ipcMain, { genaiKeyStore, multiKeyStore })
 // TTS 어댑터 라우팅(화자별 엔진). provider별 키 소스:
 //  - typecast: multiKeyStore 우선, 없으면 env/~/.typecast/credentials 폴백
 //  - elevenlabs/googletts: multiKeyStore 우선, 없으면 env/~/.{service}/credentials 폴백
