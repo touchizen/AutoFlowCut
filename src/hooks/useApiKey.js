@@ -16,8 +16,10 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 
+const EMPTY_BY_PROVIDER = { google: false, openai: false, grok: false, fal: false, wavespeed: false, higgsfield: false }
+
 export function useApiKey() {
-  const [status, setStatus] = useState({ hasKey: false, encryptionAvailable: true, loading: true })
+  const [status, setStatus] = useState({ hasKey: false, encryptionAvailable: true, byProvider: EMPTY_BY_PROVIDER, loading: true })
 
   const refresh = useCallback(async () => {
     try {
@@ -25,10 +27,12 @@ export function useApiKey() {
       setStatus({
         hasKey: !!s?.hasKey,
         encryptionAvailable: s?.encryptionAvailable !== false,
+        // §5.7: provider별 키 존재 map — 멀티 provider 배치 시작 게이트/설정 UI 가 소비.
+        byProvider: s?.byProvider || EMPTY_BY_PROVIDER,
         loading: false,
       })
     } catch {
-      setStatus({ hasKey: false, encryptionAvailable: true, loading: false })
+      setStatus({ hasKey: false, encryptionAvailable: true, byProvider: EMPTY_BY_PROVIDER, loading: false })
     }
   }, [])
 

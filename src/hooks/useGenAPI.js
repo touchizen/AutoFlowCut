@@ -136,20 +136,23 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
    * @returns {{success, images:[{base64, mimeType, mediaId}], error}}
    *   base64 필드는 data URL — downstream 은 cleanBase64 로 저장, 그대로 표시.
    */
-  const generateImage = useCallback(async (prompt, referenceImages = [], { aspectRatio, model } = {}) => {
+  const generateImage = useCallback(async (prompt, referenceImages = [], { aspectRatio, model, provider } = {}) => {
     // 선택 모델(없으면 기본). API 호출에 쓰고, 결과에도 실어 finalize 가 item.model 로
     // 기록하게 한다 — 그래야 ResultsTable/상세 모달의 모델 표시가 'flow' 가 아닌 실제 모델이 됨.
-    const effectiveModel = model || DEFAULT_IMAGE_MODEL_ID
+    // 비-google provider(openai 등)는 gemini 기본을 강제하지 않는다 — model 미지정이면
+    // adapter 가 자기 기본(gpt-image-1)으로 채우게 undefined 로 넘긴다(§5.8).
+    const effectiveModel = model || (provider && provider !== 'google' ? undefined : DEFAULT_IMAGE_MODEL_ID)
     try {
       const refs = await resolveReferenceImages(referenceImages, { projectName: projectName() })
-      const result = await window.electronAPI.genaiGenerateImage({ prompt, referenceImages: refs, aspectRatio, model: effectiveModel })
+      const result = await window.electronAPI.genaiGenerateImage({ prompt, referenceImages: refs, aspectRatio, model: effectiveModel, provider })
       if (!result?.success) return markAuthFailure(result || { success: false, error: 'Unknown error' })
       const images = (result.images || []).map((im) => ({
         base64: im.dataUrl || im.base64,
         mimeType: im.mimeType,
         mediaId: null, // 공식 API 는 Flow mediaId 가 없음 → 업스케일/I2V 자동 skip
+        actualAspectRatio: im.actualAspectRatio ?? result.actualAspectRatio ?? null,
       }))
-      return { success: true, images, model: effectiveModel }
+      return { success: true, images, model: effectiveModel, provider, actualAspectRatio: result.actualAspectRatio ?? null }
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
     }
@@ -161,7 +164,8 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     inflightRef.current.set(id, { status: 'pending', result: null })
     // 의도적으로 await 안 함 (fire-and-forget)
     // 배치 경로는 options.imageModel 로 모델을 넘긴다 → generateImage 의 model 로 매핑.
-    generateImage(prompt, referenceImages, { aspectRatio: options.aspectRatio, model: options.imageModel ?? options.model })
+    // options.provider(전역 image provider) 도 관통 — 미지정이면 undefined→google.
+    generateImage(prompt, referenceImages, { aspectRatio: options.aspectRatio, model: options.imageModel ?? options.model, provider: options.provider })
       .then((result) => inflightRef.current.set(id, { status: 'done', result }))
       .catch((e) => inflightRef.current.set(id, { status: 'done', result: { success: false, error: e?.message || String(e) } }))
     return { success: true, generationId: id }

@@ -52,8 +52,42 @@ describe('useGenAPI — 이미지', () => {
       aspectRatio: '16:9',
       model: DEFAULT_IMAGE_MODEL_ID,
     })
-    // base64 필드는 data URL, mediaId 는 null (업스케일 자동 skip)
-    expect(r.images[0]).toEqual({ base64: 'data:image/png;base64,ABC', mimeType: 'image/png', mediaId: null })
+    // base64 필드는 data URL, mediaId 는 null (업스케일 자동 skip), actualAspectRatio 표면화(§2.4)
+    expect(r.images[0]).toEqual({ base64: 'data:image/png;base64,ABC', mimeType: 'image/png', mediaId: null, actualAspectRatio: null })
+  })
+
+  it('generateImage: provider 를 IPC 로 관통 + 비-google 은 gemini 기본 강제 안 함', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    await act(async () => {
+      await result.current.generateImage('a cat', [], { aspectRatio: '16:9', provider: 'openai' })
+    })
+    const call = window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0]
+    expect(call.provider).toBe('openai')
+    // model 미지정 + 비-google → undefined(어댑터가 gpt-image-1 기본), gemini 강제 아님
+    expect(call.model).toBeUndefined()
+  })
+
+  it('generateImage: openai + 명시 모델은 그대로 전달', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    await act(async () => {
+      await result.current.generateImage('a cat', [], { provider: 'openai', model: 'gpt-image-1' })
+    })
+    const call = window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0]
+    expect(call).toMatchObject({ provider: 'openai', model: 'gpt-image-1' })
+  })
+
+  it('generateImage: actualAspectRatio 를 결과에 표면화(근사 provider)', async () => {
+    window.electronAPI.genaiGenerateImage.mockResolvedValueOnce({
+      success: true,
+      images: [{ base64: 'B64', mimeType: 'image/png', dataUrl: 'data:image/png;base64,B64' }],
+      actualAspectRatio: '3:2',
+    })
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => { r = await result.current.generateImage('a cat', [], { provider: 'openai', aspectRatio: '16:9' }) })
+    expect(r.actualAspectRatio).toBe('3:2')
+    expect(r.images[0].actualAspectRatio).toBe('3:2')
+    expect(r.provider).toBe('openai')
   })
 
   it('generateImage: 선택 모델을 IPC 로 전달 + 결과에 model 기록', async () => {
