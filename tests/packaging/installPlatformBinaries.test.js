@@ -1,4 +1,5 @@
 // @vitest-environment node
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -10,6 +11,8 @@ import {
   FFMPEG_BUILD_MANIFEST,
   resolveRequestedFfmpegTargets,
   resolveSpecs,
+  stageLocalFfmpeg,
+  verifyStagedFfmpeg,
   verifySelfContainedFfmpeg,
   verifyFfmpegCapabilities,
 } from '../../scripts/install-platform-binaries.cjs'
@@ -57,6 +60,13 @@ function peImportFixture(importedDlls) {
     nameOffset += Buffer.byteLength(dll, 'ascii') + 1
   })
   return buffer.subarray(0, nameOffset)
+}
+
+function machFixture(cpuType) {
+  const buffer = Buffer.alloc(32)
+  buffer.writeUInt32LE(0xfeedfacf, 0)
+  buffer.writeUInt32LE(cpuType, 4)
+  return buffer
 }
 
 afterEach(() => {
@@ -215,6 +225,94 @@ describe('static ffmpeg acquisition manifest', () => {
       binaryPathPattern: '(^|/)ffmpeg$',
     }, { hostPlatform: 'linux', execFileSync: tarRun }))
       .toBe(path.join(tarOut, 'ffmpeg-static', 'ffmpeg'))
+  })
+})
+
+describe('cross-arch ffmpeg staging verification', () => {
+  function stagingCase(cpuType = 0x0100000c) {
+    const directory = tempDir()
+    const sourcePath = path.join(directory, 'downloaded-ffmpeg')
+    const binary = machFixture(cpuType)
+    fs.writeFileSync(sourcePath, binary)
+    const calls = {
+      verifyBinaryArch: vi.fn(() => true),
+      verifySelfContainedFfmpeg: vi.fn(),
+      verifyFfmpegCapabilities: vi.fn(),
+      preserveFfmpegLicenses: vi.fn(),
+      log: vi.fn(),
+    }
+    return {
+      directory,
+      sourcePath,
+      expectedSha256: crypto.createHash('sha256').update(binary).digest('hex'),
+      calls,
+    }
+  }
+
+  test('host-native staging runs self-containment and capability execution checks', () => {
+    const fixture = stagingCase()
+    const output = stageLocalFfmpeg({
+      sourcePath: fixture.sourcePath,
+      target: 'darwin-arm64',
+      expectedSha256: fixture.expectedSha256,
+    }, {
+      ...fixture.calls,
+      hostPlatform: 'darwin',
+      hostArch: 'arm64',
+      vendorRoot: path.join(fixture.directory, 'vendor'),
+    })
+
+    expect(fs.existsSync(output)).toBe(true)
+    expect(fixture.calls.verifyBinaryArch).toHaveBeenCalledWith(
+      fixture.sourcePath,
+      { platform: 'darwin', arch: 'arm64' },
+    )
+    expect(fixture.calls.verifySelfContainedFfmpeg).toHaveBeenCalledTimes(2)
+    expect(fixture.calls.verifyFfmpegCapabilities).toHaveBeenCalledTimes(1)
+    expect(fixture.calls.log).not.toHaveBeenCalledWith(expect.stringMatching(/deferred/i))
+  })
+
+  test('non-native staging keeps checksum and arch checks but never executes the target binary', () => {
+    const fixture = stagingCase(0x01000007)
+    const output = stageLocalFfmpeg({
+      sourcePath: fixture.sourcePath,
+      target: 'darwin-x64',
+      expectedSha256: fixture.expectedSha256,
+    }, {
+      ...fixture.calls,
+      hostPlatform: 'darwin',
+      hostArch: 'arm64',
+      vendorRoot: path.join(fixture.directory, 'vendor'),
+    })
+
+    expect(fs.existsSync(output)).toBe(true)
+    expect(fs.readFileSync(`${output}.sha256`, 'utf8')).toContain(fixture.expectedSha256)
+    expect(fixture.calls.verifyBinaryArch).toHaveBeenCalledWith(
+      fixture.sourcePath,
+      { platform: 'darwin', arch: 'x64' },
+    )
+    expect(fixture.calls.verifySelfContainedFfmpeg).not.toHaveBeenCalled()
+    expect(fixture.calls.verifyFfmpegCapabilities).not.toHaveBeenCalled()
+    expect(fixture.calls.log).toHaveBeenCalledWith(expect.stringMatching(
+      /verification deferred.*darwin-x64.*target-native CI/is,
+    ))
+  })
+
+  test('cached non-native verification also avoids execution checks', () => {
+    const fixture = stagingCase(0x01000007)
+    fs.writeFileSync(
+      `${fixture.sourcePath}.sha256`,
+      `${fixture.expectedSha256}  downloaded-ffmpeg\n`,
+    )
+
+    expect(verifyStagedFfmpeg(fixture.sourcePath, 'darwin-x64', {
+      ...fixture.calls,
+      hostPlatform: 'darwin',
+      hostArch: 'arm64',
+    })).toBe(true)
+    expect(fixture.calls.verifyBinaryArch).toHaveBeenCalled()
+    expect(fixture.calls.verifySelfContainedFfmpeg).not.toHaveBeenCalled()
+    expect(fixture.calls.verifyFfmpegCapabilities).not.toHaveBeenCalled()
   })
 })
 

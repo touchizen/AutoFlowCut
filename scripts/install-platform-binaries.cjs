@@ -292,16 +292,23 @@ function parseTarget(target) {
   return { platform: target.slice(0, separator), arch: target.slice(separator + 1) }
 }
 
-function verifyStagedFfmpeg(binaryPath, target) {
+function verifyStagedFfmpeg(binaryPath, target, deps = {}) {
   const { platform, arch } = parseTarget(target)
+  const verifyArch = deps.verifyBinaryArch || verifyBinaryArch
+  const verifySelfContained = deps.verifySelfContainedFfmpeg || verifySelfContainedFfmpeg
+  const verifyCapabilities = deps.verifyFfmpegCapabilities || verifyFfmpegCapabilities
   const checksumPath = `${binaryPath}.sha256`
   if (!fs.existsSync(binaryPath) || !fs.existsSync(checksumPath)) return false
   const expected = fs.readFileSync(checksumPath, 'utf8').trim().split(/\s+/)[0]
   if (!/^[a-f0-9]{64}$/i.test(expected) || sha256(binaryPath) !== expected.toLowerCase()) return false
-  if (!verifyBinaryArch(binaryPath, { platform, arch })) return false
+  if (!verifyArch(binaryPath, { platform, arch })) return false
+  if (!isHostNativeTarget({ platform, arch }, deps)) {
+    logDeferredVerification(target, deps)
+    return true
+  }
   try {
-    verifySelfContainedFfmpeg(binaryPath, { platform })
-    verifyFfmpegCapabilities(binaryPath)
+    verifySelfContained(binaryPath, { platform, execFileSync: deps.execFileSync })
+    verifyCapabilities(binaryPath, { execFileSync: deps.execFileSync })
     return true
   } catch {
     return false
@@ -352,28 +359,58 @@ function collectLicenseFiles(directory, output, depth = 0) {
   }
 }
 
-function stageLocalFfmpeg({ sourcePath, target, expectedSha256, licenseDir }) {
+function stageLocalFfmpeg({ sourcePath, target, expectedSha256, licenseDir }, deps = {}) {
   const { platform, arch } = parseTarget(target)
-  const destinationDirectory = path.join(rootDir, 'vendor', 'ffmpeg', target)
+  const verifyArch = deps.verifyBinaryArch || verifyBinaryArch
+  const verifySelfContained = deps.verifySelfContainedFfmpeg || verifySelfContainedFfmpeg
+  const verifyCapabilities = deps.verifyFfmpegCapabilities || verifyFfmpegCapabilities
+  const preserveLicenses = deps.preserveFfmpegLicenses || preserveFfmpegLicenses
+  const destinationDirectory = path.join(
+    deps.vendorRoot || path.join(rootDir, 'vendor', 'ffmpeg'),
+    target,
+  )
   const destination = path.join(destinationDirectory, executableName(platform))
   const actualChecksum = sha256(sourcePath)
+  const hostNative = isHostNativeTarget({ platform, arch }, deps)
 
   if (expectedSha256 && actualChecksum !== expectedSha256.toLowerCase()) {
     throw new Error(`[platform-binaries] ffmpeg checksum mismatch for ${target}`)
   }
-  if (!verifyBinaryArch(sourcePath, { platform, arch })) {
+  if (!verifyArch(sourcePath, { platform, arch })) {
     throw new Error(`[platform-binaries] ffmpeg architecture mismatch for ${target}: ${sourcePath}`)
   }
-  verifySelfContainedFfmpeg(sourcePath, { platform })
+  if (hostNative) {
+    verifySelfContained(sourcePath, { platform, execFileSync: deps.execFileSync })
+  }
 
   fs.mkdirSync(destinationDirectory, { recursive: true })
   fs.copyFileSync(sourcePath, destination)
   if (platform !== 'win32') fs.chmodSync(destination, 0o755)
   fs.writeFileSync(`${destination}.sha256`, `${actualChecksum}  ${path.basename(destination)}\n`)
-  verifySelfContainedFfmpeg(destination, { platform })
-  verifyFfmpegCapabilities(destination)
-  preserveFfmpegLicenses(sourcePath, target, licenseDir)
+  if (hostNative) {
+    verifySelfContained(destination, { platform, execFileSync: deps.execFileSync })
+    verifyCapabilities(destination, { execFileSync: deps.execFileSync })
+  } else {
+    logDeferredVerification(target, deps)
+  }
+  preserveLicenses(sourcePath, target, licenseDir)
   return destination
+}
+
+function isHostNativeTarget({ platform, arch }, deps = {}) {
+  const hostPlatform = deps.hostPlatform ?? process.platform
+  const hostArch = deps.hostArch ?? process.arch
+  return hostPlatform === platform && hostArch === arch
+}
+
+function logDeferredVerification(target, deps = {}) {
+  const hostPlatform = deps.hostPlatform ?? process.platform
+  const hostArch = deps.hostArch ?? process.arch
+  const log = deps.log || console.log
+  log(
+    `[platform-binaries] capability/self-containment verification deferred for ${target}; ` +
+    `target-native CI required (host: ${hostPlatform}-${hostArch})`
+  )
 }
 
 function downloadBuffer(url, redirects = 0) {
@@ -524,7 +561,7 @@ async function acquireFfmpegBuild(target, deps = {}) {
       sourcePath,
       target,
       licenseDir: build.licenseDir || extractionDirectory,
-    })
+    }, deps)
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true })
   }
@@ -536,7 +573,7 @@ async function stageFfmpegTargets(options = {}) {
   for (const target of targets) {
     const { platform, arch } = parseTarget(target)
     const destination = path.join(rootDir, 'vendor', 'ffmpeg', target, executableName(platform))
-    if (verifyStagedFfmpeg(destination, target)) {
+    if (verifyStagedFfmpeg(destination, target, options)) {
       console.log(`[platform-binaries] ffmpeg already verified: ${target}`)
       continue
     }
@@ -546,7 +583,10 @@ async function stageFfmpegTargets(options = {}) {
     const licenseDir = env[targetEnvKey(target, 'LICENSE_DIR')]
 
     if (sourcePath) {
-      const staged = stageLocalFfmpeg({ sourcePath, target, expectedSha256, licenseDir })
+      const staged = stageLocalFfmpeg(
+        { sourcePath, target, expectedSha256, licenseDir },
+        options,
+      )
       console.log(`[platform-binaries] staged verified static ffmpeg for ${target}: ${staged}`)
       continue
     }
