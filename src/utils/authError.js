@@ -18,6 +18,7 @@ export function isAuthError(result) {
   if (err.includes('unauthenticated')) return true
   if (err.includes('invalid authentication')) return true
   // BYOK Gemini 키 거부
+  if (err === 'no api key') return true
   if (err.includes('api key not valid')) return true
   if (err.includes('api_key_invalid')) return true
   if (err.includes('permission_denied')) return true
