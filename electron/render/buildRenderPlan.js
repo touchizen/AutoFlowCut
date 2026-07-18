@@ -10,12 +10,12 @@ const FONTS_DIR_TOKEN = '__FONTS_DIR__'
 
 const SPECS = {
   portrait: {
-    final: { width: 1080, height: 1920, fps: 30, crf: 20, preset: 'medium', upscale: 2 },
-    preview: { width: 720, height: 1280, fps: 24, crf: 26, preset: 'veryfast', upscale: 1.5 },
+    final: { width: 1080, height: 1920, fps: 30, crf: 20, preset: 'medium', upscale: 2, audioBitrate: '192k' },
+    preview: { width: 720, height: 1280, fps: 24, crf: 26, preset: 'veryfast', upscale: 1.5, audioBitrate: '128k' },
   },
   landscape: {
-    final: { width: 1920, height: 1080, fps: 30, crf: 20, preset: 'medium', upscale: 2 },
-    preview: { width: 1280, height: 720, fps: 24, crf: 26, preset: 'veryfast', upscale: 1.5 },
+    final: { width: 1920, height: 1080, fps: 30, crf: 20, preset: 'medium', upscale: 2, audioBitrate: '192k' },
+    preview: { width: 1280, height: 720, fps: 24, crf: 26, preset: 'veryfast', upscale: 1.5, audioBitrate: '128k' },
   },
 }
 
@@ -202,6 +202,7 @@ function buildFinalStage({
     output: 'OUT.mp4',
     dependsOn,
     subtitleAss,
+    outputSpec: spec,
   }
 }
 
@@ -405,6 +406,7 @@ function buildVideoStages({ sceneContexts, spec, scaleMode, subtitleEntries, sub
       output,
       dependsOn: [],
       subtitleAss,
+      outputSpec: spec,
     }
   })
 

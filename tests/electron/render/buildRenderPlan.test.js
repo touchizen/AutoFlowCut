@@ -62,10 +62,14 @@ describe('allocateFrames (cumulative boundaries, no per-scene rounding drift)', 
 
 describe('outputSpec', () => {
   it('portrait final is 1080x1920@30', () => {
-    expect(outputSpec('portrait', 'final')).toMatchObject({ width: 1080, height: 1920, fps: 30, upscale: 2 })
+    expect(outputSpec('portrait', 'final')).toMatchObject({
+      width: 1080, height: 1920, fps: 30, upscale: 2, audioBitrate: '192k',
+    })
   })
   it('landscape preview is 1280x720@24', () => {
-    expect(outputSpec('landscape', 'preview')).toMatchObject({ width: 1280, height: 720, fps: 24, upscale: 1.5 })
+    expect(outputSpec('landscape', 'preview')).toMatchObject({
+      width: 1280, height: 720, fps: 24, upscale: 1.5, audioBitrate: '128k',
+    })
   })
 })
 
@@ -100,7 +104,9 @@ describe('buildRenderPlan', () => {
   })
   it('produces at least a final stage', () => {
     const plan = buildRenderPlan(resolved, options)
-    expect(plan.stages.some(s => s.kind === 'final')).toBe(true)
+    const final = plan.stages.find(stage => stage.kind === 'final')
+    expect(final).toBeDefined()
+    expect(final.outputSpec).toEqual(outputSpec('portrait', 'final'))
   })
   it('total duration covers the 7s narration past the 7s of scenes', () => {
     const plan = buildRenderPlan(resolved, options)
@@ -189,8 +195,10 @@ describe('buildRenderPlan staged video', () => {
     for (const segment of segments) {
       expect(segment.filtergraphScript)
         .toContain("subtitles=filename='__ASS_PATH__':fontsdir='__FONTS_DIR__'")
+      expect(segment.outputSpec).toEqual(outputSpec('landscape', 'final'))
     }
     expect(concat).toMatchObject({ kind: 'video', concatDemuxer: true, filtergraphScript: '' })
+    expect(concat.outputSpec).toBeUndefined()
     expect(concat.dependsOn).toEqual(segments.map(stage => stage.output))
   })
 
