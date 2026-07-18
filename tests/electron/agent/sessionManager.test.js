@@ -553,6 +553,171 @@ describe('AgentSessionManager M5 send reservation', () => {
     await h.manager.close()
   })
 
+  it.each([
+    {
+      name: '동기 throw',
+      abortImpl: () => { throw new Error('sync abort failed') },
+    },
+    {
+      name: '비동기 reject',
+      abortImpl: async () => { throw new Error('async abort failed') },
+    },
+  ])('active abort delegate $name는 public promise를 reject하지 않고 closing에서 세션을 닫는다', async ({ abortImpl }) => {
+    const closeGate = deferred()
+    const h = lifecycleHarness({
+      autoComplete: false,
+      orchestratorAbortImpl: abortImpl,
+    })
+    await h.manager.open()
+    await h.manager.send('abort 실패 active', DEFAULT_MODEL_ID)
+    h.orchestrators[0].close.mockImplementationOnce(() => closeGate.promise)
+
+    const aborting = h.manager.abort()
+
+    await expect(aborting).resolves.toEqual({
+      error: 'agent-abort-failed',
+      message: '중단을 완료하지 못해 세션을 닫았습니다.',
+      aborted: true,
+      phase: 'active',
+      turnId: 'turn-abort 실패 active',
+      abortInputId: null,
+      contextPreserved: false,
+      sessionClosed: true,
+    })
+    await expect(h.manager.send('실패 뒤 재전송', DEFAULT_MODEL_ID)).resolves.toEqual({
+      error: 'agent-session-closing',
+      message: '세션을 닫는 중입니다.',
+      turnId: null,
+    })
+    expect(h.orchestrators[0].close).toHaveBeenCalledOnce()
+
+    closeGate.resolve()
+    await h.manager.close()
+    expect(h.manager.status()).toEqual({ state: 'idle', sessionId: null })
+  })
+
+  it('active abort watchdog는 30초에 timeout으로 abort를 정산하고 세션을 제거한다', async () => {
+    vi.useFakeTimers()
+    try {
+      const abortGate = deferred()
+      const h = lifecycleHarness({
+        autoComplete: false,
+        orchestratorAbortImpl: () => abortGate.promise,
+      })
+      await h.manager.open()
+      await h.manager.send('watchdog active', DEFAULT_MODEL_ID)
+      const observed = vi.fn()
+      h.manager.abort().then(observed)
+
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(observed).toHaveBeenCalledOnce()
+      expect(observed).toHaveBeenCalledWith({
+        error: 'agent-abort-timeout',
+        message: '중단을 완료하지 못해 세션을 닫았습니다.',
+        aborted: true,
+        phase: 'active',
+        turnId: 'turn-watchdog active',
+        abortInputId: null,
+        contextPreserved: false,
+        sessionClosed: true,
+      })
+      expect(h.orchestrators[0].close).toHaveBeenCalledOnce()
+      expect(h.privateRpcs[0].close).toHaveBeenCalledOnce()
+      expect(h.manager.status()).toEqual({ state: 'idle', sessionId: null })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('active abort 중 direct close는 cleanup이 멈춰도 abort를 session-close로 동기 정산한다', async () => {
+    vi.useFakeTimers()
+    try {
+      const abortGate = deferred()
+      const closeGate = deferred()
+      const h = lifecycleHarness({
+        autoComplete: false,
+        orchestratorAbortImpl: () => abortGate.promise,
+      })
+      await h.manager.open()
+      await h.manager.send('direct close active', DEFAULT_MODEL_ID)
+      h.orchestrators[0].close.mockImplementationOnce(() => closeGate.promise)
+      const observed = vi.fn()
+      h.manager.abort().then(observed)
+
+      const closing = h.manager.close()
+      await Promise.resolve()
+
+      expect(observed).toHaveBeenCalledOnce()
+      expect(observed).toHaveBeenCalledWith({
+        aborted: true,
+        phase: 'active',
+        turnId: 'turn-direct close active',
+        abortInputId: null,
+        sessionClosed: true,
+        reason: 'session-close',
+      })
+      expect(h.manager.status()).toMatchObject({ state: 'closing' })
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(observed).toHaveBeenCalledOnce()
+
+      closeGate.resolve()
+      await closing
+      expect(observed).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stale abort watchdog는 같은 runState cell의 다음 abort transaction을 닫지 않는다', async () => {
+    vi.useFakeTimers()
+    let clearTimeoutSpy
+    try {
+      const secondAbortGate = deferred()
+      let abortCalls = 0
+      const h = lifecycleHarness({
+        autoComplete: false,
+        orchestratorAbortImpl: () => {
+          abortCalls += 1
+          return abortCalls === 1 ? Promise.resolve({ aborted: true }) : secondAbortGate.promise
+        },
+      })
+      await h.manager.open()
+      await h.manager.send('첫 abort transaction', DEFAULT_MODEL_ID)
+
+      // 이미 정산된 첫 watchdog을 의도적으로 남겨 stale callback guard 자체를 검증한다.
+      clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(() => {})
+      await expect(h.manager.abort()).resolves.toEqual({ aborted: true })
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      await h.manager.send('둘째 abort transaction', DEFAULT_MODEL_ID)
+      const secondObserved = vi.fn()
+      h.manager.abort().then(secondObserved)
+
+      // 첫 transaction의 t=30s watchdog만 발화한다. 둘째 watchdog deadline은 t=40s다.
+      await vi.advanceTimersByTimeAsync(20_000)
+
+      expect(h.orchestrators[0].close).not.toHaveBeenCalled()
+      expect(h.manager.status()).toMatchObject({ state: 'open' })
+      expect(secondObserved).not.toHaveBeenCalled()
+
+      secondAbortGate.resolve({ aborted: true })
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(secondObserved).toHaveBeenCalledOnce()
+      expect(secondObserved).toHaveBeenCalledWith({ aborted: true })
+
+      clearTimeoutSpy.mockRestore()
+      clearTimeoutSpy = null
+      vi.clearAllTimers()
+      await h.manager.close()
+    } finally {
+      clearTimeoutSpy?.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('close 정산 중 send를 throw 대신 agent-session-closing exact 값으로 거부한다', async () => {
     const closeGate = deferred()
     const h = lifecycleHarness()
@@ -583,6 +748,24 @@ describe('AgentSessionManager M5 send reservation', () => {
     expect(catalog.list).toHaveBeenCalledOnce()
     expect(h.orchestrators[0].send).toHaveBeenCalledWith('모델 변환', 'gpt-5.5')
     expect(h.orchestrators[0].send).not.toHaveBeenCalledWith('모델 변환', DEFAULT_MODEL_ID)
+    await h.manager.close()
+  })
+
+  it.each([
+    { name: 'missing', ack: {} },
+    { name: 'empty string', ack: { turn: { id: '' } } },
+    { name: 'whitespace', ack: { turn: { id: '   ' } } },
+    { name: 'non-string', ack: { turn: { id: 42 } } },
+  ])('send ack의 turn.id가 unusable($name)이면 active를 풀어 다음 send를 admit한다', async ({ ack }) => {
+    const h = lifecycleHarness({ autoComplete: false })
+    await h.manager.open()
+    h.orchestrators[0].send.mockResolvedValueOnce(ack)
+
+    await expect(h.manager.send('turn id 없는 ack', DEFAULT_MODEL_ID)).resolves.toEqual(ack)
+    await expect(h.manager.send('다음 정상 작업', DEFAULT_MODEL_ID)).resolves.toEqual({
+      turn: { id: 'turn-다음 정상 작업' },
+    })
+    expect(h.orchestrators[0].send).toHaveBeenCalledTimes(2)
     await h.manager.close()
   })
 

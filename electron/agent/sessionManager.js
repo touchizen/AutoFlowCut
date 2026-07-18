@@ -115,7 +115,6 @@ export function createAgentSessionManager({
       token: Symbol(turnId),
       sessionToken: session.sessionToken,
       cancelled: false,
-      delegated: false,
       sdkTurnId: null,
       completedTurnIds: new Set(),
       cancellation: new Promise((resolve) => { resolveCancellation = resolve }),
@@ -177,18 +176,12 @@ export function createAgentSessionManager({
       return result
     }
     if (ownsReservation(session, reservation, 'aborting')) {
-      const transaction = {
-        timer: session.runState.timer,
-        resolve: session.runState.resolveAbort,
-      }
-      clearTimeout(transaction.timer)
-      replaceRunState(session, 'idle')
-      transaction.resolve({
+      settleAbort(session, session.runState.abortToken, {
         aborted: true,
         phase: 'pendingStart',
         turnId: reservation.turnId,
         abortInputId: null,
-      })
+      }, 'idle')
     }
     return result
   }
@@ -381,6 +374,16 @@ export function createAgentSessionManager({
     replaceRunState(session, 'closing', {
       reservation: previousRunState.reservation ?? null,
     })
+    if (previousRunState.kind === 'aborting') {
+      previousRunState.resolveAbort?.({
+        aborted: true,
+        phase: previousRunState.phase,
+        turnId: previousRunState.turnId,
+        abortInputId: null,
+        sessionClosed: true,
+        reason: 'session-close',
+      })
+    }
     session.closePromise = (async () => {
       // app-scoped prompt 자체를 close하면 다음 세션도 영구 decline된다. 현재 세션 pending만 닫는다.
       approvalPrompt?.closeSession?.(session.sessionId)
@@ -393,16 +396,6 @@ export function createAgentSessionManager({
       toolBridge?.clearOperations?.()
       grantLedger?.closeSession?.(session.sessionId)
       if (current === session) current = null
-      if (previousRunState.kind === 'aborting') {
-        previousRunState.resolveAbort?.({
-          aborted: true,
-          phase: previousRunState.phase,
-          turnId: previousRunState.turnId,
-          abortInputId: null,
-          sessionClosed: true,
-          reason: 'session-close',
-        })
-      }
       const failed = results.find((result) => result.status === 'rejected')
       if (failed) throw failed.reason
       return { sessionId: session.sessionId }
@@ -487,12 +480,11 @@ export function createAgentSessionManager({
         remoteStarted: false,
       })
       settleStart(reservation)
-      reservation.delegated = true
 
       try {
         const result = await session.orchestrator.send(text, row.sdkModel)
         const sdkTurnId = result?.turn?.id
-        if (typeof sdkTurnId === 'string' && sdkTurnId) {
+        if (typeof sdkTurnId === 'string' && sdkTurnId.trim().length > 0) {
           reservation.sdkTurnId = sdkTurnId
           if (ownsReservation(session, reservation, 'active')) {
             session.runState.turnId = sdkTurnId
@@ -500,6 +492,8 @@ export function createAgentSessionManager({
           } else if (ownsReservation(session, reservation, 'aborting')) {
             session.runState.turnId = sdkTurnId
           }
+        } else {
+          releaseActive(session, reservation)
         }
         return result
       } catch (error) {
@@ -518,10 +512,68 @@ export function createAgentSessionManager({
     })
   }
 
+  function abortFailureValue(runState, error) {
+    return {
+      error,
+      message: '중단을 완료하지 못해 세션을 닫았습니다.',
+      aborted: true,
+      phase: runState.phase,
+      turnId: runState.turnId,
+      abortInputId: null,
+      contextPreserved: false,
+      sessionClosed: true,
+    }
+  }
+
+  function settleAbort(session, abortToken, value, nextKind) {
+    const runState = session.runState
+    if (current !== session
+      || runState.kind !== 'aborting'
+      || runState.abortToken !== abortToken) return false
+
+    const { timer, resolveAbort, reservation } = runState
+    clearTimeout(timer)
+    if (nextKind === 'closing') {
+      replaceRunState(session, 'closing', { reservation: reservation ?? null })
+    } else {
+      replaceRunState(session, nextKind)
+    }
+    resolveAbort(value)
+    return true
+  }
+
+  function driveCloseSession(session) {
+    try {
+      Promise.resolve(closeSession(session)).catch(() => {})
+    } catch {
+      // abort public promise는 cleanup 실패와 무관하게 이미 structured value로 정산됐다.
+    }
+  }
+
+  function failAbort(session, abortToken, error = 'agent-abort-failed') {
+    const runState = session.runState
+    if (current !== session
+      || runState.kind !== 'aborting'
+      || runState.abortToken !== abortToken) return false
+
+    const settled = settleAbort(
+      session,
+      abortToken,
+      abortFailureValue(runState, error),
+      'closing',
+    )
+    if (settled) driveCloseSession(session)
+    return settled
+  }
+
   function startAbortTimer(session, abortState) {
+    const abortToken = abortState.abortToken
     abortState.timer = setTimeout(() => {
-      if (current !== session || session.runState !== abortState || abortState.kind !== 'aborting') return
-      closeSession(session).catch(() => {})
+      const runState = session.runState
+      if (current !== session
+        || runState.kind !== 'aborting'
+        || runState.abortToken !== abortToken) return
+      failAbort(session, abortToken, 'agent-abort-timeout')
     }, AGENT_CLAUDE_ABORT_BOUNDARY_TIMEOUT_MS)
   }
 
@@ -539,10 +591,12 @@ export function createAgentSessionManager({
       cancelReservation(reservation)
       let resolveAbort
       const abortPromise = new Promise((resolve) => { resolveAbort = resolve })
+      const abortToken = Symbol('agent-abort')
       const abortState = replaceRunState(session, 'aborting', {
         turnId: reservation.turnId,
         reservation,
         phase: 'pendingStart',
+        abortToken,
         abortPromise,
         resolveAbort,
         timer: null,
@@ -559,18 +613,15 @@ export function createAgentSessionManager({
 
     const reservation = runState.reservation ?? null
     let resolveAbort
-    let rejectAbort
-    const abortPromise = new Promise((resolve, reject) => {
-      resolveAbort = resolve
-      rejectAbort = reject
-    })
+    const abortPromise = new Promise((resolve) => { resolveAbort = resolve })
+    const abortToken = Symbol('agent-abort')
     const abortState = replaceRunState(session, 'aborting', {
       turnId: runState.turnId,
       reservation,
       phase: runState.kind,
+      abortToken,
       abortPromise,
       resolveAbort,
-      rejectAbort,
       timer: null,
       steerEpoch: runState.steerEpoch + 1,
       toolEpoch: runState.toolEpoch + 1,
@@ -581,24 +632,16 @@ export function createAgentSessionManager({
     try {
       // Codex의 inner turnStartPending는 transport guard로 남고 public busy authority는 이 wrapper다.
       delegated = session.orchestrator.abort()
-    } catch (error) {
-      clearTimeout(abortState.timer)
-      if (current === session && session.runState.kind === 'aborting') replaceRunState(session, 'idle')
-      rejectAbort(error)
+    } catch {
+      failAbort(session, abortToken)
       return abortPromise
     }
     Promise.resolve(delegated).then(
       (result) => {
-        if (current !== session || session.runState.kind !== 'aborting') return
-        clearTimeout(abortState.timer)
-        replaceRunState(session, 'idle')
-        resolveAbort(result)
+        settleAbort(session, abortToken, result, 'idle')
       },
-      (error) => {
-        if (current !== session || session.runState.kind !== 'aborting') return
-        clearTimeout(abortState.timer)
-        replaceRunState(session, 'idle')
-        rejectAbort(error)
+      () => {
+        failAbort(session, abortToken)
       },
     )
     return abortPromise
