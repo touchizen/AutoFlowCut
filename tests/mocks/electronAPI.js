@@ -52,6 +52,7 @@ export const mockElectronAPI = {
   genaiClearKey: vi.fn(),
   genaiValidateKey: vi.fn(),
   genaiListModels: vi.fn(),
+  genaiListProviders: vi.fn(),
   genaiGenerateImage: vi.fn(),
   genaiGenerateVideo: vi.fn(),
   genaiCheckVideoStatus: vi.fn(),

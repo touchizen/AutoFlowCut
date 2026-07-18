@@ -60,4 +60,7 @@ export function registerGenaiIPC(ipcMain, { genaiKeyStore, multiKeyStore, fetchI
 
   // 완료된 비디오 다운로드 (videoUri → base64).
   ipcMain.handle('genai:download-video', (_e, params) => dispatcher.downloadVideo(params || {}))
+
+  // 등록된 provider 목록(§5.7) — 설정 UI 의 provider 선택 소스.
+  ipcMain.handle('genai:list-providers', () => dispatcher.listProviders())
 }

@@ -59,8 +59,19 @@ describe('genai-api — 채널 등록', () => {
       expect.arrayContaining([
         'genai:get-key-status', 'genai:set-key', 'genai:clear-key', 'genai:validate-key',
         'genai:generate-image', 'genai:generate-video', 'genai:check-video-status', 'genai:download-video',
+        'genai:list-providers',
       ])
     )
+  })
+
+  it('list-providers: 등록된 provider 목록 반환 (M1: image=google+openai, video=google)', async () => {
+    const ipc = makeIpcMain()
+    registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
+    const res = await ipc.invoke('genai:list-providers')
+    expect(res).toEqual({
+      image: [{ id: 'google' }, { id: 'openai' }],
+      video: [{ id: 'google' }],
+    })
   })
 })
 

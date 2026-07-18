@@ -102,9 +102,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Key management exposes only existence/validity to the renderer — never the key itself.
   genaiGetKeyStatus: () => ipcRenderer.invoke('genai:get-key-status'),
   genaiSetKey: (params) => ipcRenderer.invoke('genai:set-key', params),
-  genaiClearKey: () => ipcRenderer.invoke('genai:clear-key'),
+  genaiClearKey: (params) => ipcRenderer.invoke('genai:clear-key', params),
   genaiValidateKey: (params) => ipcRenderer.invoke('genai:validate-key', params),
-  genaiListModels: () => ipcRenderer.invoke('genai:list-models'),
+  genaiListModels: (params) => ipcRenderer.invoke('genai:list-models', params),
+  genaiListProviders: () => ipcRenderer.invoke('genai:list-providers'),
   genaiGenerateImage: (params) => ipcRenderer.invoke('genai:generate-image', params),
   genaiGenerateVideo: (params) => ipcRenderer.invoke('genai:generate-video', params),
   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
