@@ -26,7 +26,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveCodexExecutablePath } from '../../electron/api/llm/codexSdk.js'
 import { decodeApprovalPayload } from '../../electron/agent/approvalPayload.js'
 import { createApprovalPrompt } from '../../electron/agent/approvalPrompt.js'
@@ -268,7 +268,7 @@ async function runExpectedToolTurn({
   const permissionStart = permissionRequests.length
   setPolicy({ label, action, switchToProjectB })
   try {
-    const ack = await manager.send(prompt)
+    const ack = await manager.send(prompt, 'codex:gpt-5.5')
     const turnId = ack?.turn?.id ?? ack?.turnId ?? null
     expect(measured(`${label} turn/start id`, turnId),
       `${label}: turn/start가 id를 주지 않았다. 실제 응답=${JSON.stringify(ack)} raw=${RAW_PATH}`).toBeTruthy()
@@ -643,6 +643,26 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
       approvalPrompt,
       toolBridge,
       storyCommands,
+      modelCatalog: {
+        list: vi.fn(async () => [{
+          id: 'codex:gpt-5.5',
+          provider: 'codex',
+          sdkModel: 'gpt-5.5',
+          isDefault: true,
+          defaultFallbackFrom: 'claude-opus-4-8',
+        }]),
+        snapshot: vi.fn(() => ({
+          cacheReady: false,
+          rows: [{
+            id: 'codex:gpt-5.5',
+            provider: 'codex',
+            sdkModel: 'gpt-5.5',
+            isDefault: true,
+            defaultFallbackFrom: 'claude-opus-4-8',
+          }],
+          defaultId: 'codex:gpt-5.5',
+        })),
+      },
       onEvent: collector.onEvent,
       createToolCoreImpl: (options) => {
         factoryCounts.toolCore += 1

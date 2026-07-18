@@ -178,6 +178,14 @@ export function createAgentModelCatalog({
     return normalizeRows(await fetchModels(listModels), normalize)
   }
   return {
+    snapshot() {
+      const rows = (cached ?? coldRows).map((model) => ({ ...model }))
+      return {
+        cacheReady: cached !== null,
+        rows,
+        defaultId: defaultIdOf(rows),
+      }
+    },
     /**
      * Cache-only 동기 lookup. cold에서도 built-in 행을 찾아 항상 opaque id 문자열을 준다.
      * `list()`를 부르지 않으므로 provider 조회 타임아웃이 Send를 막지 않는다.

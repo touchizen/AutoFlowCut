@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { createClaudeOrchestrator } from './claudeOrchestrator.js'
 import { createCodexOrchestrator } from './codexOrchestrator.js'
 import { createElicitationResponder } from './elicitationResponder.js'
 import { createPrivateRpc } from './privateRpc.js'
@@ -15,7 +16,7 @@ import {
  * 앱 수명 controller. 실행 자원은 `open()` 전에는 만들지 않아 agent를 쓰지 않는 부팅에
  * loopback port나 child가 생기지 않게 한다.
  *
- * 🔴 grantLedger/approvalPrompt/toolBridge/storyCommands는 앱 범위지만 sessionId/toolCore/RPC/
+ * 🔴 grantLedger/approvalPrompt/toolBridge/storyCommands는 앱 범위지만 sessionId/toolCore/provider 자원/
  * responder/orchestrator는 세션 범위다. RPC의 `close()`는 되돌릴 수 없고 Tool Core와 responder는
  * sessionId를 생성 시 고정하므로, 이 묶음을 재사용하면 두 번째 open이 죽거나 이전 grant identity를
  * 공유한다. 그래서 매 open마다 묶음을 새로 만들고 이 manager가 private RPC를 직접 닫는다.
@@ -46,10 +47,12 @@ export function createAgentSessionManager({
   createToolCoreImpl = createToolCore,
   createPrivateRpcImpl = createPrivateRpc,
   createElicitationResponderImpl = createElicitationResponder,
+  createClaudeOrchestratorImpl = createClaudeOrchestrator,
   createCodexOrchestratorImpl = createCodexOrchestrator,
   orchestratorOptions = {},
 } = {}) {
   if (typeof modelCatalog?.list !== 'function') throw new TypeError('modelCatalog.list is required')
+  if (typeof modelCatalog?.snapshot !== 'function') throw new TypeError('modelCatalog.snapshot is required')
 
   let current = null
   let reservationSequence = 0
@@ -62,8 +65,7 @@ export function createAgentSessionManager({
   }
 
   function replaceRunState(session, kind, fields = {}) {
-    // M6에서 Claude에 이 manager-owned cell 자체를 주입하므로 identity를 유지한다.
-    // M5 Codex는 주입하지 않고 manager onEvent wrapper가 바깥 권위로 완료를 관측한다.
+    // Codex flat cell 전용이다. Claude nested cell은 orchestrator가 authority라 이 함수에 넘기지 않는다.
     const runState = session.runState
     const steerEpoch = fields.steerEpoch ?? runState.steerEpoch ?? 0
     const toolEpoch = fields.toolEpoch ?? runState.toolEpoch ?? 0
@@ -294,6 +296,27 @@ export function createAgentSessionManager({
     if (current?.closePromise) await current.closePromise.catch(() => {})
     if (current) return current.openPromise
 
+    const snap = modelCatalog.snapshot()
+    const defaultRow = snap.rows.find((row) => row.id === snap.defaultId)
+    if (!defaultRow) throw new Error('agent-model-unavailable')
+    const initialRow = model
+      ? snap.rows.find((row) => row.id === model)
+      : defaultRow
+    if (!initialRow) throw new Error('agent-model-unavailable')
+    if (initialRow.provider !== 'codex' && initialRow.provider !== 'claude') {
+      throw new Error('agent-model-unavailable')
+    }
+    if (typeof initialRow.sdkModel !== 'string' || initialRow.sdkModel.trim().length === 0) {
+      throw new Error('agent-model-unavailable')
+    }
+    const defaultPin = {
+      id: defaultRow.id,
+      provider: defaultRow.provider,
+      sdkModel: defaultRow.sdkModel,
+      defaultFallbackFrom: defaultRow.defaultFallbackFrom ?? null,
+    }
+    if (!snap.cacheReady) defaultPin.fallbackReason = 'catalog-cold'
+
     const sessionId = randomUUIDImpl()
     // renderer의 abort/close보다 story:open이 먼저 끝나는 전환 창이 있다. 세션이 시작된 프로젝트를
     // 여기서 값으로 고정해야 이후 machine 교체가 같은 Tool Core의 실행 대상을 몰래 바꾸지 못한다.
@@ -301,7 +324,8 @@ export function createAgentSessionManager({
     const session = {
       sessionId,
       sessionToken: Symbol(sessionId),
-      provider: 'codex',
+      provider: initialRow.provider,
+      defaultPin,
       projectToken,
       startedAt: now(),
       turns: 0,
@@ -315,6 +339,9 @@ export function createAgentSessionManager({
       openPromise: null,
       closePromise: null,
     }
+    if (initialRow.provider === 'claude') {
+      session.runState = { state: { kind: 'idle' }, turnEpoch: 0, toolEpoch: 0 }
+    }
     const toolCore = createToolCoreImpl({
       toolBridge,
       grantLedger,
@@ -325,7 +352,9 @@ export function createAgentSessionManager({
       admitToolCall: () => admitToolCall(session),
     })
     toolCore.use(storyCommands)
-    const privateRpc = createPrivateRpcImpl({ toolCore, sessionId })
+    const privateRpc = initialRow.provider === 'codex'
+      ? createPrivateRpcImpl({ toolCore, sessionId })
+      : null
     const elicitationResponder = createElicitationResponderImpl({
       grantLedger,
       sessionId,
@@ -333,14 +362,7 @@ export function createAgentSessionManager({
       adapterServerName: AGENT_MCP_SERVER_NAME,
       askUser: (params, ctx) => approvalPrompt.ask(params, ctx),
     })
-    const orchestrator = createCodexOrchestratorImpl({
-      ...orchestratorOptions,
-      ...(model ? { model } : {}),
-      elicitationResponder,
-      privateRpc,
-      toolCore,
-      isPackaged,
-      resourcesPath,
+    const lifecycleCallbacks = {
       onDelta: (delta) => onDelta?.(delta),
       onEvent: (event) => observeEvent(session, event),
       onExit: (details) => {
@@ -349,14 +371,36 @@ export function createAgentSessionManager({
         const exitedSession = current?.sessionId === sessionId ? current : null
         if (exitedSession) closeSession(exitedSession).catch(() => {})
       },
-    })
+    }
+    const orchestrator = initialRow.provider === 'codex'
+      ? createCodexOrchestratorImpl({
+          ...orchestratorOptions,
+          model: initialRow.sdkModel,
+          elicitationResponder,
+          privateRpc,
+          toolCore,
+          isPackaged,
+          resourcesPath,
+          ...lifecycleCallbacks,
+        })
+      : createClaudeOrchestratorImpl({
+          sessionId,
+          projectToken,
+          elicitationResponder,
+          toolCore,
+          grantLedger,
+          model: initialRow.sdkModel,
+          runState: session.runState,
+          approvalPrompt,
+          ...lifecycleCallbacks,
+        })
     Object.assign(session, { toolCore, privateRpc, elicitationResponder, orchestrator })
     current = session
     session.openPromise = (async () => {
       try {
         const opened = await orchestrator.open()
         session.state = 'open'
-        return { sessionId, ...opened }
+        return { sessionId, ...opened, defaultPin: session.defaultPin }
       } catch (error) {
         await closeSession(session)
         throw error
@@ -368,29 +412,31 @@ export function createAgentSessionManager({
   function closeSession(session) {
     if (session.closePromise) return session.closePromise
     session.state = 'closing'
-    const previousRunState = { ...session.runState }
-    if (previousRunState.reservation) cancelReservation(previousRunState.reservation)
-    clearTimeout(previousRunState.timer)
-    replaceRunState(session, 'closing', {
-      reservation: previousRunState.reservation ?? null,
-    })
-    if (previousRunState.kind === 'aborting') {
-      previousRunState.resolveAbort?.({
-        aborted: true,
-        phase: previousRunState.phase,
-        turnId: previousRunState.turnId,
-        abortInputId: null,
-        sessionClosed: true,
-        reason: 'session-close',
+    if (session.provider === 'codex') {
+      const previousRunState = { ...session.runState }
+      if (previousRunState.reservation) cancelReservation(previousRunState.reservation)
+      clearTimeout(previousRunState.timer)
+      replaceRunState(session, 'closing', {
+        reservation: previousRunState.reservation ?? null,
       })
+      if (previousRunState.kind === 'aborting') {
+        previousRunState.resolveAbort?.({
+          aborted: true,
+          phase: previousRunState.phase,
+          turnId: previousRunState.turnId,
+          abortInputId: null,
+          sessionClosed: true,
+          reason: 'session-close',
+        })
+      }
     }
     session.closePromise = (async () => {
       // app-scoped prompt 자체를 close하면 다음 세션도 영구 decline된다. 현재 세션 pending만 닫는다.
       approvalPrompt?.closeSession?.(session.sessionId)
       const results = await Promise.allSettled([
         session.orchestrator.close(),
-        // orchestrator가 빌린 RPC를 닫지 않는 계약이므로 owner인 manager가 반드시 닫는다.
-        session.privateRpc.close(),
+        // Codex orchestrator가 빌린 RPC를 닫지 않는 계약이므로 owner인 manager가 반드시 닫는다.
+        ...(session.privateRpc ? [session.privateRpc.close()] : []),
       ])
       // toolBridge는 app-scoped라 close할 수 없지만, operation snapshot은 session 경계를 넘기지 않는다.
       toolBridge?.clearOperations?.()

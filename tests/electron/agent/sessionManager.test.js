@@ -14,6 +14,13 @@ const DEFAULT_MODEL_ROW = {
   provider: 'codex',
   sdkModel: 'gpt-5.5',
   isDefault: true,
+  defaultFallbackFrom: 'claude-opus-4-8',
+}
+const CLAUDE_MODEL_ROW = {
+  id: 'claude:opus[1m]',
+  provider: 'claude',
+  sdkModel: 'opus[1m]',
+  isDefault: false,
 }
 
 function deferred() {
@@ -26,10 +33,23 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
-function modelCatalogDouble(rows = [DEFAULT_MODEL_ROW]) {
+function modelCatalogDouble(rows = [DEFAULT_MODEL_ROW], { cacheReady = true } = {}) {
+  const snapshotRows = rows.map((row) => ({ ...row }))
+  if (!snapshotRows.some((row) => row.id === DEFAULT_MODEL_ID)) {
+    snapshotRows.push({
+      ...DEFAULT_MODEL_ROW,
+      isDefault: !snapshotRows.some((row) => row.isDefault === true),
+    })
+  }
+  const defaultId = snapshotRows.find((row) => row.isDefault === true)?.id ?? DEFAULT_MODEL_ID
   return {
-    list: vi.fn(async () => rows.map((row) => ({ ...row }))),
-    defaultModelId: vi.fn(() => rows.find((row) => row.isDefault)?.id ?? null),
+    list: vi.fn(async () => snapshotRows.map((row) => ({ ...row }))),
+    defaultModelId: vi.fn(() => defaultId),
+    snapshot: vi.fn(() => ({
+      cacheReady,
+      rows: snapshotRows.map((row) => ({ ...row })),
+      defaultId,
+    })),
   }
 }
 
@@ -187,6 +207,204 @@ describe('AgentSessionManager boot lifecycle', () => {
     } finally {
       await h.manager.close()
     }
+  })
+})
+
+describe('AgentSessionManager M6b-2a open provider factory', () => {
+  it('modelCatalog.snapshot 계약을 생성 시 필수로 검증한다', () => {
+    expect(() => createAgentSessionManager({
+      ...appDeps(),
+      modelCatalog: {
+        list: vi.fn(async () => [DEFAULT_MODEL_ROW]),
+        defaultModelId: vi.fn(() => DEFAULT_MODEL_ID),
+      },
+    })).toThrow('modelCatalog.snapshot is required')
+  })
+
+  it('prefixed open id를 exact row로 resolve해 Codex 생성자에는 sdkModel만 넘긴다', async () => {
+    const selectedRow = {
+      id: 'codex:gpt-selected',
+      provider: 'codex',
+      sdkModel: 'gpt-selected',
+      isDefault: false,
+    }
+    const catalog = modelCatalogDouble([DEFAULT_MODEL_ROW, selectedRow])
+    const h = lifecycleHarness({ modelCatalog: catalog })
+
+    const opened = await h.manager.open(selectedRow.id)
+
+    expect(catalog.snapshot).toHaveBeenCalledOnce()
+    expect(catalog.list).not.toHaveBeenCalled()
+    expect(h.createCodexOrchestratorImpl).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gpt-selected',
+      privateRpc: h.privateRpcs[0],
+    }))
+    expect(h.createCodexOrchestratorImpl).not.toHaveBeenCalledWith(expect.objectContaining({
+      model: selectedRow.id,
+    }))
+    expect(opened.defaultPin).toEqual({
+      id: DEFAULT_MODEL_ID,
+      provider: 'codex',
+      sdkModel: 'gpt-5.5',
+      defaultFallbackFrom: 'claude-opus-4-8',
+    })
+    await h.manager.close()
+  })
+
+  it.each([
+    {
+      name: 'cold',
+      cacheReady: false,
+      expectedPin: {
+        id: DEFAULT_MODEL_ID,
+        provider: 'codex',
+        sdkModel: 'gpt-5.5',
+        defaultFallbackFrom: 'claude-opus-4-8',
+        fallbackReason: 'catalog-cold',
+      },
+    },
+    {
+      name: 'warm',
+      cacheReady: true,
+      expectedPin: {
+        id: DEFAULT_MODEL_ID,
+        provider: 'codex',
+        sdkModel: 'gpt-5.5',
+        defaultFallbackFrom: 'claude-opus-4-8',
+      },
+    },
+  ])('$name snapshot의 default row를 open 응답 defaultPin에 고정한다', async ({ cacheReady, expectedPin }) => {
+    const catalog = modelCatalogDouble([DEFAULT_MODEL_ROW], { cacheReady })
+    const h = lifecycleHarness({ modelCatalog: catalog })
+
+    const opened = await h.manager.open()
+
+    expect(opened.defaultPin).toEqual(expectedPin)
+    expect(h.createCodexOrchestratorImpl).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.5' }))
+    expect(catalog.list).not.toHaveBeenCalled()
+    await h.manager.close()
+  })
+
+  it('snapshot defaultId 행이 없으면 세션 자원을 만들기 전에 fail-closed한다', async () => {
+    const h = lifecycleHarness({
+      modelCatalog: {
+        list: vi.fn(async () => []),
+        defaultModelId: vi.fn(() => DEFAULT_MODEL_ID),
+        snapshot: vi.fn(() => ({
+          cacheReady: true,
+          rows: [{ id: 'codex:other', provider: 'codex', sdkModel: 'other' }],
+          defaultId: DEFAULT_MODEL_ID,
+        })),
+      },
+    })
+
+    await expect(h.manager.open('codex:other')).rejects.toThrow('agent-model-unavailable')
+    expect(h.createPrivateRpcImpl).not.toHaveBeenCalled()
+    expect(h.createCodexOrchestratorImpl).not.toHaveBeenCalled()
+  })
+
+  it('명시 id가 snapshot에 없으면 세션 자원을 만들기 전에 fail-closed한다', async () => {
+    const h = lifecycleHarness()
+
+    await expect(h.manager.open('codex:missing')).rejects.toThrow('agent-model-unavailable')
+    expect(h.createPrivateRpcImpl).not.toHaveBeenCalled()
+    expect(h.createCodexOrchestratorImpl).not.toHaveBeenCalled()
+  })
+
+  it('initial row sdkModel이 null이면 provider factory 전에 fail-closed한다', async () => {
+    const unresolved = {
+      id: 'claude:default',
+      provider: 'claude',
+      sdkModel: null,
+      isDefault: false,
+    }
+    const createClaudeOrchestratorImpl = vi.fn()
+    const h = lifecycleHarness({
+      modelCatalog: modelCatalogDouble([DEFAULT_MODEL_ROW, unresolved]),
+      createClaudeOrchestratorImpl,
+    })
+
+    await expect(h.manager.open(unresolved.id)).rejects.toThrow('agent-model-unavailable')
+    expect(h.createPrivateRpcImpl).not.toHaveBeenCalled()
+    expect(h.createCodexOrchestratorImpl).not.toHaveBeenCalled()
+    expect(createClaudeOrchestratorImpl).not.toHaveBeenCalled()
+  })
+
+  it('Claude row는 nested authority cell과 Claude 전용 DI로 열고 private RPC 없이 닫는다', async () => {
+    const grantLedger = {
+      grant: vi.fn(),
+      consume: vi.fn(() => false),
+      closeSession: vi.fn(),
+    }
+    const approvalPrompt = {
+      ask: vi.fn(async () => ({ action: 'decline' })),
+      closeSession: vi.fn(),
+    }
+    let claudeOptions
+    const claudeOrchestrator = {
+      open: vi.fn(async () => ({ provider: 'claude', model: CLAUDE_MODEL_ROW.sdkModel })),
+      send: vi.fn(),
+      steer: vi.fn(),
+      abort: vi.fn(),
+      close: vi.fn(async () => {
+        expect(claudeOptions.runState).toEqual({
+          state: { kind: 'idle' },
+          turnEpoch: 0,
+          toolEpoch: 0,
+        })
+      }),
+    }
+    const createClaudeOrchestratorImpl = vi.fn((options) => {
+      claudeOptions = options
+      return claudeOrchestrator
+    })
+    const h = lifecycleHarness({
+      grantLedger,
+      approvalPrompt,
+      modelCatalog: modelCatalogDouble([DEFAULT_MODEL_ROW, CLAUDE_MODEL_ROW]),
+      createClaudeOrchestratorImpl,
+      orchestratorOptions: { adapterPath: '/codex-only/adapter.mjs' },
+    })
+
+    const opened = await h.manager.open(CLAUDE_MODEL_ROW.id)
+
+    expect(h.createCodexOrchestratorImpl).not.toHaveBeenCalled()
+    expect(h.createPrivateRpcImpl).not.toHaveBeenCalled()
+    expect(createClaudeOrchestratorImpl).toHaveBeenCalledOnce()
+    expect(claudeOptions).toEqual(expect.objectContaining({
+      sessionId: opened.sessionId,
+      projectToken: 'project-token',
+      grantLedger,
+      approvalPrompt,
+      model: CLAUDE_MODEL_ROW.sdkModel,
+      runState: {
+        state: { kind: 'idle' },
+        turnEpoch: 0,
+        toolEpoch: 0,
+      },
+      elicitationResponder: expect.objectContaining({ handle: expect.any(Function) }),
+      toolCore: expect.objectContaining({ list: expect.any(Function), call: expect.any(Function) }),
+      onDelta: expect.any(Function),
+      onEvent: expect.any(Function),
+      onExit: expect.any(Function),
+    }))
+    expect(claudeOptions).not.toHaveProperty('privateRpc')
+    expect(claudeOptions).not.toHaveProperty('adapterPath')
+    expect(opened).toEqual({
+      sessionId: expect.any(String),
+      provider: 'claude',
+      model: CLAUDE_MODEL_ROW.sdkModel,
+      defaultPin: {
+        id: DEFAULT_MODEL_ID,
+        provider: 'codex',
+        sdkModel: 'gpt-5.5',
+        defaultFallbackFrom: 'claude-opus-4-8',
+      },
+    })
+
+    await expect(h.manager.close()).resolves.toEqual({ sessionId: opened.sessionId })
+    expect(claudeOrchestrator.close).toHaveBeenCalledOnce()
+    expect(grantLedger.closeSession).toHaveBeenCalledWith(opened.sessionId)
   })
 })
 
@@ -836,6 +1054,11 @@ describe('AgentSessionManager M5 send reservation', () => {
     const catalog = {
       list: vi.fn(() => catalogGate.promise),
       defaultModelId: vi.fn(() => DEFAULT_MODEL_ID),
+      snapshot: vi.fn(() => ({
+        cacheReady: true,
+        rows: [{ ...DEFAULT_MODEL_ROW }],
+        defaultId: DEFAULT_MODEL_ID,
+      })),
     }
     const h = lifecycleHarness({ modelCatalog: catalog })
     await h.manager.open()

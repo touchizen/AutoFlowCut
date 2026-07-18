@@ -46,6 +46,7 @@ function createHarness({
   models = [
     { id: 'codex:alt-model', provider: 'codex', sdkModel: 'alt-model' },
     { id: 'codex:the-default', provider: 'codex', sdkModel: 'the-default', isDefault: true },
+    { id: 'codex:gpt-thread', provider: 'codex', sdkModel: 'gpt-thread' },
     { id: 'codex:gpt-turn', provider: 'codex', sdkModel: 'gpt-turn' },
   ],
 } = {}) {
@@ -70,6 +71,22 @@ function createHarness({
   const modelCatalog = {
     list: vi.fn(async () => (cached ? cached.map((m) => ({ ...m })) : [])),
     defaultModelId: vi.fn(() => cached?.find((m) => m?.isDefault === true)?.id ?? 'codex:gpt-5.5'),
+    snapshot: vi.fn(() => {
+      const rows = cached
+        ? cached.map((model) => ({ ...model }))
+        : [{
+            id: 'codex:gpt-5.5',
+            provider: 'codex',
+            sdkModel: 'gpt-5.5',
+            isDefault: true,
+            defaultFallbackFrom: 'claude-opus-4-8',
+          }]
+      return {
+        cacheReady: cached !== null,
+        rows,
+        defaultId: rows.find((model) => model.isDefault === true)?.id ?? 'codex:gpt-5.5',
+      }
+    }),
   }
   const manager = createAgentSessionManager({
     grantLedger: { closeSession: vi.fn() },
@@ -114,7 +131,7 @@ describe('agent model runtime wiring', () => {
   it('preload open/send model이 실제 thread/start와 turn/start에 도달한다', async () => {
     const { manager, sent } = createHarness()
 
-    await electronDouble.exposed.agentSessionOpen({ model: 'gpt-thread' })
+    await electronDouble.exposed.agentSessionOpen({ model: 'codex:gpt-thread' })
     await electronDouble.exposed.agentSend({ text: '다음 턴', model: 'codex:gpt-turn' })
 
     expect(sent.find(({ method }) => method === 'thread/start')?.params.model).toBe('gpt-thread')
@@ -136,8 +153,8 @@ describe('agent model runtime wiring', () => {
    * 즉 생략은 "기본으로 돌아가라"가 아니라 "직전 모델을 물려받아라"다.
    * → 사용자가 '기본' 을 골라도 안 돌아온다. **라벨이 거짓말을 한다.**
    *
-   * 그래서 계약을 뒤집는다: **turn/start 에는 항상 명시 model 이 실려야 한다.**
-   * (thread/start 생략은 실측상 안전하다 — 새 thread 는 서버 기본으로 시작한다. turn1 이 그 증거.)
+   * 그래서 계약을 뒤집는다: open row를 resolve한 **thread/start**와 각 **turn/start**에는
+   * 항상 SDK model 문자열이 명시돼야 한다.
    */
   it('🔴 회귀: 다른 모델을 쓴 뒤 기본으로 돌아오면 turn/start에 **기본 모델 id가 명시**된다 (생략 = sticky 버그)', async () => {
     const { manager, sent } = createHarness()
@@ -163,8 +180,7 @@ describe('agent model runtime wiring', () => {
     await electronDouble.exposed.agentSessionOpen()
     await electronDouble.exposed.agentSend({ text: '기본 모델' })
 
-    // thread/start 는 생략해도 안전하다(새 thread = 서버 기본). 계약을 넓히지 않는다.
-    expect(sent.find(({ method }) => method === 'thread/start')?.params).not.toHaveProperty('model')
+    expect(sent.find(({ method }) => method === 'thread/start')?.params).toHaveProperty('model', 'the-default')
     expect(sent.find(({ method }) => method === 'turn/start')?.params).toHaveProperty('model', 'the-default')
     await manager.close()
   })

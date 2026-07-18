@@ -60,8 +60,14 @@ function fullSessionManagerDouble() {
 }
 
 function fullModelCatalogDouble() {
+  const rows = [{ id: 'gpt-visible', displayName: 'GPT Visible', hidden: false }]
   return {
-    list: vi.fn(async () => [{ id: 'gpt-visible', displayName: 'GPT Visible', hidden: false }]),
+    list: vi.fn(async () => rows.map((row) => ({ ...row }))),
+    snapshot: vi.fn(() => ({
+      cacheReady: true,
+      rows: rows.map((row) => ({ ...row })),
+      defaultId: 'codex:gpt-5.5',
+    })),
     // `agent:send` 계약이 이걸 요구한다 (registerAgentIPC 가 가드한다).
     // production catalog처럼 cold에서도 동기 문자열을 준다.
     defaultModelId: vi.fn(() => 'codex:gpt-5.5'),
@@ -335,6 +341,71 @@ describe('agent:list-models catalog', () => {
     ])
     expect(listCodexModels).toHaveBeenCalledTimes(2)
     expect(listClaudeModels).toHaveBeenCalledTimes(2)
+  })
+
+  it('snapshot은 cold cache에서 fetch 없이 built-in 기본 행과 readiness를 동기로 반환한다', async () => {
+    const { createAgentModelCatalog } = await loadSubject()
+    const listCodexModels = vi.fn(async () => { throw new Error('must stay cold') })
+    const listClaudeModels = vi.fn(async () => { throw new Error('must stay cold') })
+    const catalog = createAgentModelCatalog({ listCodexModels, listClaudeModels })
+
+    expect(catalog.snapshot()).toEqual({
+      cacheReady: false,
+      rows: [expect.objectContaining({
+        id: 'codex:gpt-5.5',
+        provider: 'codex',
+        sdkModel: 'gpt-5.5',
+        isDefault: true,
+        defaultFallbackFrom: 'claude-opus-4-8',
+      })],
+      defaultId: 'codex:gpt-5.5',
+    })
+    expect(listCodexModels).not.toHaveBeenCalled()
+    expect(listClaudeModels).not.toHaveBeenCalled()
+  })
+
+  it('snapshot은 warm cache에서 fetched 행과 현재 기본 id를 cache-only로 반환한다', async () => {
+    const { createAgentModelCatalog } = await loadSubject()
+    const listCodexModels = vi.fn(async () => [{ id: 'warm-codex', displayName: 'Warm Codex' }])
+    const listClaudeModels = vi.fn(async () => [{ value: 'warm-claude', displayName: 'Warm Claude' }])
+    const catalog = createAgentModelCatalog({ listCodexModels, listClaudeModels })
+    await catalog.list()
+    listCodexModels.mockClear()
+    listClaudeModels.mockClear()
+
+    const snapshot = catalog.snapshot()
+
+    expect(snapshot.cacheReady).toBe(true)
+    expect(snapshot.defaultId).toBe('codex:gpt-5.5')
+    expect(snapshot.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'codex:warm-codex', provider: 'codex', sdkModel: 'warm-codex' }),
+      expect.objectContaining({ id: 'claude:warm-claude', provider: 'claude', sdkModel: 'warm-claude' }),
+    ]))
+    expect(listCodexModels).not.toHaveBeenCalled()
+    expect(listClaudeModels).not.toHaveBeenCalled()
+  })
+
+  it('snapshot 반환 행을 호출자가 바꿔도 catalog 내부 cache는 변하지 않는다', async () => {
+    const { createAgentModelCatalog } = await loadSubject()
+    const catalog = createAgentModelCatalog({
+      listCodexModels: vi.fn(async () => [{ id: 'immutable-model', displayName: 'Immutable' }]),
+      listClaudeModels: vi.fn(async () => [{ value: 'sonnet', displayName: 'Sonnet' }]),
+    })
+    await catalog.list()
+
+    const first = catalog.snapshot()
+    const target = first.rows.find((row) => row.id === 'codex:immutable-model')
+    target.sdkModel = 'tampered'
+    target.isDefault = true
+    first.rows.push({ id: 'caller-only' })
+
+    const second = catalog.snapshot()
+    expect(second.rows.find((row) => row.id === 'codex:immutable-model')).toMatchObject({
+      sdkModel: 'immutable-model',
+      isDefault: false,
+    })
+    expect(second.rows.some((row) => row.id === 'caller-only')).toBe(false)
+    expect(second.defaultId).toBe('codex:gpt-5.5')
   })
 
   it('기본 상수는 cold fallback id를 핀하고 Claude 승격 문자열은 미확정 null이다', async () => {

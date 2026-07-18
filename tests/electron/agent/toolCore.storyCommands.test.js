@@ -158,7 +158,20 @@ describe('D15 — agent session의 프로젝트 경계', () => {
 
     const manager = createAgentSessionManager({
       grantLedger: ledger,
-      modelCatalog: { list: vi.fn(async () => []) },
+      modelCatalog: {
+        list: vi.fn(async () => []),
+        snapshot: vi.fn(() => ({
+          cacheReady: false,
+          rows: [{
+            id: 'codex:gpt-5.5',
+            provider: 'codex',
+            sdkModel: 'gpt-5.5',
+            isDefault: true,
+            defaultFallbackFrom: 'claude-opus-4-8',
+          }],
+          defaultId: 'codex:gpt-5.5',
+        })),
+      },
       approvalPrompt: {
         ask: vi.fn(async () => ({ action: 'decline' })),
         closeSession: vi.fn(),
