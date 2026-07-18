@@ -32,7 +32,7 @@ function assHeader({ outputWidth, outputHeight, subtitleFontSize }) {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,Noto Sans KR,${fs},&H00FFFFFF,&H00000000,&H80000000,0,2,1,2,40,40,60,1`,
+    `Style: Default,NanumGothic,${fs},&H00FFFFFF,&H00000000,&H80000000,0,2,1,2,40,40,60,1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',

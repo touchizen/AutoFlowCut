@@ -61,4 +61,22 @@ describe('resolveAndValidateInputs', () => {
     expect(r.images.get('scene_1')).toBe('/tmp/fb.jpg')
     expect(r.tempFiles).toContain('/tmp/fb.jpg')
   })
+
+  it('accepts raw base64 that contains / (a valid base64 char, not a path)', async () => {
+    const p = prepared()
+    // Real PNG base64 starts with iVBOR..., contains '/' mid-string, never starts with '/'.
+    p.mediaFiles[0] = { sceneId: 'scene_1', type: 'image', filename: 's1.png', path: 'iVBORw0KGgoAAA/NSUhEUgAAAAEAAA/AB+w0CAAAAB'.repeat(2) }
+    const decodeDataUrl = async () => '/tmp/raw.png'
+    const r = await resolveAndValidateInputs(p, { ...deps(['/sfx1.wav', '/nar.mp3']), decodeDataUrl })
+    expect(r.images.get('scene_1')).toBe('/tmp/raw.png')
+  })
+
+  it('prefixes decoded temp names with jobId to avoid cross-project collisions', async () => {
+    const p = prepared()
+    p.mediaFiles[0] = { sceneId: 'scene_1', type: 'image', filename: 's1.png', path: 'data:image/png;base64,AAAA' }
+    const seen = []
+    const decodeDataUrl = async (_spec, name) => { seen.push(name); return `/tmp/${name}.png` }
+    await resolveAndValidateInputs(p, { ...deps(['/sfx1.wav', '/nar.mp3']), decodeDataUrl, jobId: 'render_Proj_7' })
+    expect(seen[0]).toMatch(/^render_Proj_7_/)
+  })
 })

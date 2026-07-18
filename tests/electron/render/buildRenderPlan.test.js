@@ -266,6 +266,18 @@ describe('buildRenderPlan subtitles and normalized SFX', () => {
     expect(final.filtergraphScript).not.toContain('data\\:text/plain;base64')
   })
 
+  it('falls back to subtitleEn when srtEntries and a usable subtitleKo are absent', () => {
+    const scenes = [{ id: 'scene_1', duration: 3, subtitleKo: '   ', subtitleEn: 'English fallback' }]
+    const plan = buildRenderPlan(
+      makeResolved(scenes),
+      makeOptions(scenes, { srtEntries: null }, { renderBurnSubtitle: true }),
+    )
+    const final = plan.stages.find(stage => stage.kind === 'final')
+
+    expect(final.subtitleAss).toContain('Dialogue:')
+    expect(final.subtitleAss).toContain('English fallback')
+  })
+
   it('uses normalized audioClips as the only SFX timing source', () => {
     const scenes = makeScenes(1, 1)
     const sfxClip = { filename: 'sfx.wav', path: '/sfx.wav', startMs: 1000, durationMs: 3000, gain: 0.7 }

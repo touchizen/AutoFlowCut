@@ -41,4 +41,24 @@ describe('validateRenderRequest', () => {
     const r = good(); r.prepared.cloudRequest.subtitleFontSize = 0
     expect(validateRenderRequest(r).ok).toBe(false)
   })
+
+  it('rejects a timed voice track missing timecodeMs/durationMs (silent-audio guard)', () => {
+    const r = good(); r.prepared.cloudRequest.audioTracks = [{ type: 'voice', filename: 'v.wav' }]
+    expect(validateRenderRequest(r).ok).toBe(false)
+  })
+
+  it('rejects a story_narration track with invalid durationMs', () => {
+    const r = good(); r.prepared.cloudRequest.audioTracks = [{ type: 'story_narration', filename: 'n.wav', timecodeMs: 0, durationMs: 0 }]
+    expect(validateRenderRequest(r).ok).toBe(false)
+  })
+
+  it('rejects an unknown audioTrack type', () => {
+    const r = good(); r.prepared.cloudRequest.audioTracks = [{ type: 'bogus', filename: 'x' }]
+    expect(validateRenderRequest(r).ok).toBe(false)
+  })
+
+  it('accepts a legacy narration track without timecode (whole-length)', () => {
+    const r = good(); r.prepared.cloudRequest.audioTracks = [{ type: 'narration', filename: 'n.wav', path: '/n.wav' }]
+    expect(validateRenderRequest(r)).toEqual({ ok: true })
+  })
 })

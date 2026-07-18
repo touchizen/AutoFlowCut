@@ -5,6 +5,7 @@ import { resolveAndValidateInputs } from '../render/resolveInputs.js'
 import { adaptAudioClips } from '../render/audioAdapter.js'
 import { buildRenderPlan, outputSpec } from '../render/buildRenderPlan.js'
 import { runFfmpegRender } from '../render/ffmpegRunner.js'
+import { unlink } from 'node:fs/promises'
 
 // 씬 누적 시작(ms) — sfxItems 배치용(§4.6).
 function computeSceneStartsMs(scenes) {
@@ -44,13 +45,16 @@ export function registerRenderIPC(ipcMain, deps = {}) {
     const controller = new AbortController()
     const jobCtx = { jobId, cancelled: false, tempFiles: [], phase: null, signal: controller.signal }
     jobCtx.abort = () => controller.abort()
+    // before-quit 배리어가 이 잡의 정리 완료까지 기다리도록 done 프라미스를 노출.
+    let markDone
+    jobCtx.done = new Promise(resolve => { markDone = resolve })
     running.set(jobId, jobCtx)
     try {
       const outPath = await pickOutPath()
       if (!outPath) return { ok: false, cancelled: true }
 
       const cr = prepared.cloudRequest
-      const resolved = await resolve(prepared)
+      const resolved = await resolve(prepared, { jobId })
       if (Array.isArray(resolved.tempFiles)) jobCtx.tempFiles.push(...resolved.tempFiles) // decode된 base64 이미지 정리 위임
       const sceneStartsMs = computeSceneStartsMs(cr.scenes)
       resolved.audioClips = await adapt(cr, resolved, sceneStartsMs)
@@ -74,7 +78,12 @@ export function registerRenderIPC(ipcMain, deps = {}) {
       if (jobCtx.cancelled) return { ok: false, cancelled: true }
       return { ok: false, error: String(error?.message || error), stderrTail: error?.stderrTail }
     } finally {
+      // runner 가 돌지 못한 pre-run 실패(resolve/adapt/build throw) 시 decode 임시파일이 고아로
+      // 남는다 — runner 는 성공/실패 경로에서 자기 것을 지우지만 pre-run 은 못 지운다. 여기서 정리
+      // (runner 가 이미 지운 건 ENOENT 로 무시).
+      for (const f of jobCtx.tempFiles) { try { await unlink(f) } catch { /* already gone */ } }
       running.delete(jobId)
+      markDone()
     }
   })
 
@@ -86,11 +95,14 @@ export function registerRenderIPC(ipcMain, deps = {}) {
     return { ok: true }
   })
 
-  // 앱 종료 시 렌더 중이면 전부 취소해 orphan ffmpeg/temp 를 남기지 않는다(§4.8 before-quit).
-  return function cleanupRunningRenders() {
-    for (const jobCtx of running.values()) {
+  // 앱 종료 시 렌더 중이면 전부 취소하고 각 잡의 정리(SIGKILL + temp 삭제)가 끝날 때까지 기다린다
+  // — abort 만 하고 나가면 Windows 에서 temp 가 잠긴 채 남는다(§4.8 before-quit 배리어).
+  return async function cleanupRunningRenders() {
+    const jobs = [...running.values()]
+    for (const jobCtx of jobs) {
       jobCtx.cancelled = true
       jobCtx.abort?.()
     }
+    await Promise.allSettled(jobs.map(j => j.done).filter(Boolean))
   }
 }

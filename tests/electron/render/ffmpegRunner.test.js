@@ -113,6 +113,28 @@ describe('runFfmpegRender base lifecycle', () => {
     expect(rename).not.toHaveBeenCalled()
   })
 
+  it('explains how to stage ffmpeg when the development binary is missing', async () => {
+    const child = fakeChild()
+    const missing = Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })
+    const deps = makeDeps({
+      ffmpegPath: '/app/vendor/ffmpeg/darwin-arm64/ffmpeg',
+      spawn: vi.fn(() => child),
+    })
+
+    const render = runFfmpegRender(
+      plan,
+      { jobId: 'missing-ffmpeg', cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )
+    const rejection = expect(render).rejects
+      .toThrow(/ffmpeg executable not found.*npm run install:platform-binaries/is)
+
+    await waitForSpawn(deps.spawn)
+    child.emit('error', missing)
+    await rejection
+  })
+
   it('keeps only the last 20 stderr lines in an error', async () => {
     const child = fakeChild()
     const deps = makeDeps({ spawn: vi.fn(() => child) })
@@ -207,7 +229,7 @@ describe('runFfmpegRender disk preflight and cleanup', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('estimates multi-gigabyte peak space for a 1000-clip staged render', () => {
+  it('keeps the peak estimate realistic but conservative for a 1000-clip staged render', () => {
     const scenes = [{ id: 'scene_1', duration: 3000 }]
     const audioClips = Array.from({ length: 1000 }, (_, index) => ({
       filename: `clip_${index}.wav`,
@@ -234,7 +256,9 @@ describe('runFfmpegRender disk preflight and cleanup', () => {
       },
     })
 
-    expect(estimatePeakDiskBytes(renderPlan)).toBeGreaterThan(4 * 1024 ** 3)
+    const estimate = estimatePeakDiskBytes(renderPlan)
+    expect(estimate).toBeGreaterThan(3 * 1024 ** 3)
+    expect(estimate).toBeLessThan(8 * 1024 ** 3)
   })
 
   it('keeps a temp file tracked when unlink fails with a retryable error', async () => {

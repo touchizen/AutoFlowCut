@@ -340,7 +340,16 @@ const cleanupRunningRenders = registerRenderIPC(ipcMain, {
     ? path.join(process.resourcesPath, 'fonts')
     : path.join(app.getAppPath(), 'assets', 'fonts'),
 })
-app.on('before-quit', () => { try { cleanupRunningRenders?.() } catch { /* best-effort */ } })
+let rendersCleanedUp = false
+app.on('before-quit', (event) => {
+  if (rendersCleanedUp) return
+  event.preventDefault()   // 렌더 정리(SIGKILL + temp 삭제) 완료까지 종료 보류
+  ;(async () => {
+    try { await cleanupRunningRenders?.() } catch { /* best-effort */ }
+    rendersCleanedUp = true
+    app.quit()
+  })()
+})
 
 // Flow WebContentsView factory — only called when mode:set('flow') is invoked.
 // Lazy creation ensures API mode startup is unaffected.

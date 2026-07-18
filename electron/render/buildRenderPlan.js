@@ -490,7 +490,9 @@ function effectiveSubtitleEntries(cloudRequest, durationsSec) {
     const startMs = Math.round(cumulativeSec * 1000)
     cumulativeSec += durationsSec[index]
     const endMs = Math.round(cumulativeSec * 1000)
-    const text = typeof scene.subtitleKo === 'string' ? scene.subtitleKo.trim() : ''
+    const text = [scene.subtitleKo, scene.subtitleEn]
+      .find(value => typeof value === 'string' && value.trim())
+      ?.trim() || ''
     const entry = text ? [{ startMs, endMs, text }] : []
     return entry
   })

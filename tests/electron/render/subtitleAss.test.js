@@ -25,6 +25,11 @@ describe('assFontsize', () => {
 
 describe('buildAss', () => {
   const opts = { subtitleFontSize: 8, outputWidth: 1080, outputHeight: 1920 }
+  it('uses the libass-matchable name of the bundled Korean font', () => {
+    const ass = buildAss([{ startMs: 0, endMs: 1000, text: '한글' }], opts)
+    expect(ass).toContain('Style: Default,NanumGothic,')
+    expect(ass).not.toContain('Noto Sans KR')
+  })
   it('emits a Dialogue line per entry with rebased times when offsetMs>0', () => {
     const ass = buildAss([{ startMs: 20000, endMs: 22000, text: '안녕' }], { ...opts, offsetMs: 20000 })
     expect(ass).toContain('Dialogue:')

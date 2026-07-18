@@ -14,7 +14,8 @@ const STDERR_TAIL_LINES = 20
 const ASS_PATH_TOKEN = '__ASS_PATH__'
 const FONTS_DIR_TOKEN = '__FONTS_DIR__'
 const PCM_F32LE_BYTES_PER_SECOND = 48000 * 2 * 4
-const VIDEO_BYTES_PER_PIXEL_FRAME = 0.08
+// About 10 Mbps at 1080p30 before the separate safety factor is applied.
+const VIDEO_BYTES_PER_PIXEL_FRAME = 0.02
 const DISK_SAFETY_FACTOR = 1.25
 const MIN_FREE_RESERVE_BYTES = 256 * 1024 * 1024
 
@@ -149,7 +150,7 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
       try {
         child = spawn(ffmpegPath, args, { windowsHide: true })
       } catch (error) {
-        reject(error)
+        reject(describeSpawnError(error, ffmpegPath))
         return
       }
 
@@ -194,7 +195,7 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
       }
 
       child.stderr?.on('data', onData)
-      child.once('error', error => finish(error))
+      child.once('error', error => finish(describeSpawnError(error, ffmpegPath)))
       child.once('close', (code) => {
         if (lineBuffer) rememberLine(lineBuffer)
         if (isCancelled()) {
@@ -422,6 +423,14 @@ function statfsAvailableBytes(filesystem) {
 function formatBytes(bytes) {
   const gib = Number(bytes) / (1024 ** 3)
   return `${gib.toFixed(2)} GiB`
+}
+
+function describeSpawnError(error, ffmpegPath) {
+  if (error?.code !== 'ENOENT') return error
+  return new Error(
+    `ffmpeg executable not found at ${ffmpegPath}. ` +
+    'In development, run "npm run install:platform-binaries"; packaged builds must include resources/ffmpeg.',
+  )
 }
 
 function replaceAll(value, token, replacement) {

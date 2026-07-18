@@ -10,9 +10,10 @@ function pickDataSpec(value) {
   if (typeof value !== 'string' || !value) return null
   if (value.startsWith('data:')) return value
   if (value.startsWith('http://') || value.startsWith('https://')) return null
-  // 절대/상대 경로가 아니고 base64 문자셋이면 raw base64 로 간주.
-  if (/[/\\]/.test(value) || value.startsWith('.')) return null
-  if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.length > 64) return value
+  // 파일 경로는 구분자로 "시작"한다(절대/상대/윈도우 드라이브). base64 는 '/' 를 중간에 포함할 수
+  // 있으므로 "아무데나 /" 로 배제하면 유효 base64(예: 중간에 '/' 있는 PNG)를 놓친다 — 시작만 본다.
+  if (value.startsWith('/') || value.startsWith('.') || value.startsWith('~') || value.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(value)) return null
+  if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.replace(/\s/g, '').length > 64) return value
   return null
 }
 
@@ -34,6 +35,7 @@ const defaultDeps = {
 
 export async function resolveAndValidateInputs(prepared, deps = {}) {
   const { existsSync, probeDurationMs, decodeDataUrl } = { ...defaultDeps, ...deps }
+  const jobPrefix = deps.jobId ? `${String(deps.jobId).replace(/\W+/g, '_')}_` : ''
   const cr = prepared.cloudRequest || {}
   const images = new Map()
   const sfx = new Map()
@@ -51,7 +53,7 @@ export async function resolveAndValidateInputs(prepared, deps = {}) {
     const dataSpec = pickDataSpec(m.path) || pickDataSpec(m.fallback) || pickDataSpec(m.image)
     if (dataSpec) {
       const safe = String(m.sceneId || 'scene').replace(/\W+/g, '_')
-      const tmp = await decodeDataUrl(dataSpec, `${safe}_${String(m.filename || 'img').replace(/\W+/g, '_')}`)
+      const tmp = await decodeDataUrl(dataSpec, `${jobPrefix}${safe}_${String(m.filename || 'img').replace(/\W+/g, '_')}`)
       images.set(m.sceneId, tmp)
       tempFiles.push(tmp)
       continue

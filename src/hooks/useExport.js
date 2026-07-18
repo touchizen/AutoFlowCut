@@ -552,7 +552,11 @@ export function useExport({
   }
 
   const handleCancelRender = () => {
-    if (renderJobId) window.electronAPI?.renderCancel?.({ jobId: renderJobId })
+    if (!renderJobId) return
+    // 몇 시간짜리 렌더를 한 번의 클릭으로 버리지 않도록 확인.
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function'
+        && !window.confirm(t('exportModal.renderCancelConfirm'))) return
+    window.electronAPI?.renderCancel?.({ jobId: renderJobId })
   }
 
   return {

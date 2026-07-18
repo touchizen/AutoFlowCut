@@ -41,9 +41,16 @@ export function validateRenderRequest(request) {
     if (!ids.has(sfx.sceneId)) return fail(`sfx references unknown scene: ${sfx.sceneId}`)
     if (!finitePos(sfx.duration)) return fail(`bad sfx duration: ${sfx.filename}`)
   }
+  const AUDIO_TYPES = new Set(['narration', 'story_narration', 'voice', 'sfx_timed'])
+  const TIMED_TYPES = new Set(['story_narration', 'voice', 'sfx_timed'])
   for (const t of (cr.audioTracks || [])) {
-    if (t.timecodeMs != null && !finiteNonNeg(t.timecodeMs)) return fail(`bad audioTrack timecode: ${t.filename}`)
-    if (t.durationMs != null && !finitePos(t.durationMs)) return fail(`bad audioTrack duration: ${t.filename}`)
+    if (!AUDIO_TYPES.has(t.type)) return fail(`unknown audioTrack type: ${t.type} (${t.filename})`)
+    if (TIMED_TYPES.has(t.type)) {
+      // 타임코드/길이 없으면 atrim=duration=0 → 무음. 필수로 강제(fail-closed).
+      if (!finiteNonNeg(t.timecodeMs)) return fail(`audioTrack "${t.filename}" (${t.type}) missing/invalid timecodeMs`)
+      if (!finitePos(t.durationMs)) return fail(`audioTrack "${t.filename}" (${t.type}) missing/invalid durationMs`)
+    }
+    // legacy 'narration' 은 타임코드 없이 전체 길이 → 검증 제외.
   }
   return { ok: true }
 }
