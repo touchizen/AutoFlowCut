@@ -11,6 +11,8 @@ import { shouldCreateWindowOnActivate } from './appActivation.js'
 import { registerFilesystemIPC } from './ipc/filesystem.js'
 import { registerAuthIPC } from './ipc/auth.js'
 import { registerCapcutIPC } from './ipc/capcut.js'
+import { registerRenderIPC } from './ipc/render.js'
+import { resolveFfmpegPath } from './render/ffmpegPath.js'
 import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
@@ -310,6 +312,28 @@ registerMcpIPC(ipcMain)
 
 // Vrew IPC (.vrew writing — local zip package)
 registerVrewIPC(ipcMain)
+
+// Render IPC (self-render to MP4 — fully local ffmpeg)
+registerRenderIPC(ipcMain, {
+  getMainWindow: () => mainWindow,
+  pickOutPath: async () => {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: 'render.mp4',
+      filters: [{ name: 'MP4 Video', extensions: ['mp4'] }],
+    })
+    return result.canceled ? null : result.filePath
+  },
+  ffmpegPath: resolveFfmpegPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appRoot: app.getAppPath(),
+    platform: process.platform,
+    arch: process.arch,
+  }),
+  fontsDir: app.isPackaged
+    ? path.join(process.resourcesPath, 'fonts')
+    : path.join(app.getAppPath(), 'assets', 'fonts'),
+})
 
 // Flow WebContentsView factory — only called when mode:set('flow') is invoked.
 // Lazy creation ensures API mode startup is unaffected.

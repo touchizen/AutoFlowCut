@@ -88,6 +88,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Vrew (.vrew — ZIP archive)
   writeVrewProject: (params) => ipcRenderer.invoke('vrew:write-project', params),
   openVrewProject: (params) => ipcRenderer.invoke('vrew:open-project', params),
+
+  // Self-render (local ffmpeg MP4)
+  renderMp4: (payload) => ipcRenderer.invoke('render:export-mp4', payload),
+  renderCancel: (payload) => ipcRenderer.invoke('render:cancel', payload),
+  onRenderProgress: (cb) => {
+    const listener = (_e, p) => cb(p)
+    ipcRenderer.on('render:progress', listener)
+    return () => ipcRenderer.removeListener('render:progress', listener)
+  },
   checkVrewInstalled: () => ipcRenderer.invoke('vrew:check-installed'),
 
   // MCP (Claude Code integration)
