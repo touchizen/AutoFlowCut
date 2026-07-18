@@ -7,6 +7,7 @@ import { createApprovalPrompt } from '../../../electron/agent/approvalPrompt.js'
 import { AGENT_MCP_SERVER_NAME } from '../../../electron/agent/constants.js'
 import { EventEmitter, once } from 'node:events'
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 
 const DEFAULT_MODEL_ID = 'codex:gpt-5.5'
 const DEFAULT_MODEL_ROW = {
@@ -147,6 +148,65 @@ function lifecycleHarness(overrides = {}) {
     ...managerOverrides,
   })
   return { manager, privateRpcs, orchestrators, createPrivateRpcImpl, createCodexOrchestratorImpl }
+}
+
+function claudeSessionHarness({
+  modelCatalog = modelCatalogDouble([DEFAULT_MODEL_ROW, CLAUDE_MODEL_ROW]),
+  openImpl = null,
+  sendImpl = null,
+  steerImpl = null,
+  abortImpl = null,
+  closeImpl = null,
+  settlePendingAbortImpl = null,
+  ...managerOverrides
+} = {}) {
+  let options
+  const privateRpcFactory = vi.fn(() => {
+    throw new Error('Claude sessions must not create private RPC')
+  })
+  const orchestrator = {}
+  const createClaudeOrchestratorImpl = vi.fn((receivedOptions) => {
+    options = receivedOptions
+    Object.assign(orchestrator, {
+      open: vi.fn(() => openImpl
+        ? openImpl({ options, orchestrator })
+        : Promise.resolve({ provider: 'claude', model: CLAUDE_MODEL_ROW.sdkModel })),
+      send: vi.fn((text, sdkModel) => {
+        if (sendImpl) return sendImpl({ options, orchestrator, text, sdkModel })
+        const pending = options.runState.state
+        options.runState.state = { kind: 'active', turnId: pending.turnId }
+        return Promise.resolve({ turn: { id: pending.turnId, status: 'inProgress' } })
+      }),
+      steer: vi.fn((text) => steerImpl
+        ? steerImpl({ options, orchestrator, text })
+        : Promise.resolve({ delegated: text })),
+      abort: vi.fn(() => abortImpl
+        ? abortImpl({ options, orchestrator })
+        : Promise.resolve({ aborted: false, reason: 'idle' })),
+      close: vi.fn(() => closeImpl
+        ? closeImpl({ options, orchestrator })
+        : Promise.resolve({ closed: true })),
+      settlePendingAbort: vi.fn((pending) => settlePendingAbortImpl?.({
+        options,
+        orchestrator,
+        pending,
+      })),
+    })
+    return orchestrator
+  })
+  const manager = createAgentSessionManager({
+    ...appDeps({ modelCatalog }),
+    createPrivateRpcImpl: privateRpcFactory,
+    createClaudeOrchestratorImpl,
+    ...managerOverrides,
+  })
+  return {
+    manager,
+    orchestrator,
+    createClaudeOrchestratorImpl,
+    privateRpcFactory,
+    get options() { return options },
+  }
 }
 
 function realResourceHarness(overrides = {}) {
@@ -592,16 +652,20 @@ describe('AgentSessionManager close drain', () => {
 })
 
 describe('AgentSessionManager commands and events', () => {
-  it('send/steer를 위임하고 완료 뒤 idle abort는 orchestrator를 호출하지 않는다', async () => {
+  it('send 완료 뒤 idle Codex steer/abort는 orchestrator를 호출하지 않고 structured value로 끝낸다', async () => {
     const h = lifecycleHarness()
     await h.manager.open()
 
     await expect(h.manager.send('새 turn', DEFAULT_MODEL_ID)).resolves.toEqual({ turn: { id: 'turn-새 turn' } })
-    await expect(h.manager.steer('방향 수정')).resolves.toEqual({ steered: '방향 수정' })
+    await expect(h.manager.steer('방향 수정')).resolves.toEqual({
+      error: 'agent-steer-unavailable',
+      message: '진행 중인 턴이 없습니다.',
+      turnId: null,
+    })
     await expect(h.manager.abort()).resolves.toEqual({ aborted: false, reason: 'idle' })
 
     expect(h.orchestrators[0].send).toHaveBeenCalledWith('새 turn', 'gpt-5.5')
-    expect(h.orchestrators[0].steer).toHaveBeenCalledWith('방향 수정')
+    expect(h.orchestrators[0].steer).not.toHaveBeenCalled()
     expect(h.orchestrators[0].abort).not.toHaveBeenCalled()
     await h.manager.close()
   })
@@ -646,6 +710,304 @@ describe('AgentSessionManager commands and events', () => {
       { sessionId: opened.sessionId, turns: 1, toolCalls: 1, elapsedMs: 0 },
     ])
     await h.manager.close()
+  })
+})
+
+describe('AgentSessionManager M6b-2b Claude coordination', () => {
+  it('replaceRunState는 Claude nested authority cell을 지우지 못하게 codex-only hard guard를 둔다', () => {
+    // Valid Claude flows must never call this closure, so pin the loud-failure barrier itself.
+    // Removing it must fail even if every current provider branch still avoids the invalid call.
+    const source = readFileSync(
+      new URL('../../../electron/agent/sessionManager.js', import.meta.url),
+      'utf8',
+    )
+    expect(source).toContain(
+      "if (session.provider !== 'codex') throw new Error('replaceRunState is codex-only; claude uses a nested authority cell')",
+    )
+  })
+
+  it('Claude busy 판정은 nested state의 5개 non-idle 상태와 turnId를 읽는다', async () => {
+    const h = claudeSessionHarness()
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+    const cases = [
+      {
+        state: { kind: 'pendingStart', turnId: 'manager-pending' },
+        expected: {
+          error: 'agent-busy',
+          message: '새 작업을 시작하는 중입니다. 잠시 후 다시 시도해 주세요.',
+          turnId: 'manager-pending',
+        },
+      },
+      {
+        state: { kind: 'active', turnId: 'manager-active' },
+        expected: {
+          error: 'agent-busy',
+          message: '에이전트가 이미 작업 중입니다. 진행 중인 턴에는 Steer를 사용해 주세요.',
+          turnId: 'manager-active',
+        },
+      },
+      {
+        state: { kind: 'aborting' },
+        expected: {
+          error: 'agent-busy',
+          message: '중단 처리 중입니다. 완료될 때까지 기다려 주세요.',
+          turnId: null,
+        },
+      },
+      {
+        state: { kind: 'orphanDrain' },
+        expected: {
+          error: 'agent-busy',
+          message: '이전 교정 입력을 정리 중입니다. 잠시 후 다시 시도해 주세요.',
+          turnId: null,
+        },
+      },
+      {
+        state: { kind: 'closing' },
+        expected: {
+          error: 'agent-session-closing',
+          message: '세션을 닫는 중입니다.',
+          turnId: null,
+        },
+      },
+    ]
+
+    for (const { state, expected } of cases) {
+      h.options.runState.state = state
+      await expect(h.manager.send('busy면 보내면 안 됨', CLAUDE_MODEL_ROW.id)).resolves.toEqual(expected)
+    }
+
+    expect(h.orchestrator.send).not.toHaveBeenCalled()
+    h.options.runState.state = { kind: 'idle' }
+    await h.manager.close()
+  })
+
+  it('Claude send는 매니저 P를 delegate 전에 설치하고 결과를 무변형 반환하며 event는 forward-only다', async () => {
+    const onEvent = vi.fn()
+    const result = Object.freeze({
+      turn: Object.freeze({ id: 'manager-result', status: 'inProgress' }),
+    })
+    let adopted
+    const h = claudeSessionHarness({
+      onEvent,
+      sendImpl: ({ options, text, sdkModel }) => {
+        adopted = options.runState.state
+        expect(text).toBe('Claude 작업')
+        expect(sdkModel).toBe(CLAUDE_MODEL_ROW.sdkModel)
+        expect(adopted).toMatchObject({
+          kind: 'pendingStart',
+          turnId: expect.stringMatching(/:pending:1$/),
+          cancelled: false,
+          cancellation: expect.any(Promise),
+          resolveCancellation: expect.any(Function),
+        })
+        options.runState.state = { kind: 'active', turnId: adopted.turnId }
+        return Promise.resolve(result)
+      },
+    })
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+
+    await expect(h.manager.send('Claude 작업', CLAUDE_MODEL_ROW.id)).resolves.toBe(result)
+    expect(adopted.turnId).not.toMatch(/^claude:/)
+    const active = h.options.runState.state
+    const completed = {
+      method: 'turn/completed',
+      params: { turn: { id: adopted.turnId, status: 'completed' } },
+    }
+    h.options.onEvent(completed)
+
+    expect(h.options.runState.state).toBe(active)
+    expect(h.options.runState.state).toEqual({ kind: 'active', turnId: adopted.turnId })
+    expect(onEvent).toHaveBeenCalledWith(completed)
+    await h.manager.close()
+  })
+
+  it('Claude session의 Codex row send는 공통 D2 검사로 delegate 전에 거부한다', async () => {
+    const h = claudeSessionHarness()
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+
+    await expect(h.manager.send('provider를 넘기면 안 됨', DEFAULT_MODEL_ID)).resolves.toEqual({
+      error: 'provider-switch-required',
+      message: '모델 제공자를 바꾸려면 새 세션을 시작해 주세요.',
+      turnId: expect.stringMatching(/:pending:1$/),
+    })
+
+    expect(h.orchestrator.send).not.toHaveBeenCalled()
+    expect(h.orchestrator.settlePendingAbort).toHaveBeenCalledOnce()
+    await h.manager.close()
+  })
+
+  it('catalog await 중 Claude pendingStart abort는 매니저 unwind 훅으로 즉시 idle 정산한다', async () => {
+    const catalogGate = deferred()
+    const catalog = {
+      list: vi.fn(() => catalogGate.promise),
+      snapshot: vi.fn(() => ({
+        cacheReady: true,
+        rows: [{ ...DEFAULT_MODEL_ROW }, { ...CLAUDE_MODEL_ROW }],
+        defaultId: DEFAULT_MODEL_ID,
+      })),
+    }
+    let abortPromise
+    let resolveAbort
+    let transaction
+    const h = claudeSessionHarness({
+      modelCatalog: catalog,
+      abortImpl: ({ options }) => {
+        const pending = options.runState.state
+        abortPromise = new Promise((resolve) => { resolveAbort = resolve })
+        transaction = { kind: 'aborting', phase: 'pendingStart', pending, promise: abortPromise }
+        options.runState.state = transaction
+        pending.cancelled = true
+        pending.resolveCancellation()
+        return abortPromise
+      },
+      settlePendingAbortImpl: ({ options, pending }) => {
+        if (options.runState.state !== transaction || transaction.pending !== pending) return
+        options.runState.state = { kind: 'idle' }
+        resolveAbort({
+          aborted: true,
+          phase: 'pendingStart',
+          turnId: pending.turnId,
+          abortInputId: null,
+        })
+      },
+    })
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+    const sending = h.manager.send('catalog 대기 Claude 작업', CLAUDE_MODEL_ROW.id)
+    await vi.waitFor(() => expect(catalog.list).toHaveBeenCalledOnce())
+
+    const aborting = h.manager.abort()
+
+    expect(aborting).toBe(abortPromise)
+    await expect(sending).resolves.toEqual({
+      error: 'agent-send-cancelled',
+      message: '전송이 중단되었습니다.',
+      turnId: expect.stringMatching(/:pending:1$/),
+    })
+    await expect(aborting).resolves.toEqual({
+      aborted: true,
+      phase: 'pendingStart',
+      turnId: expect.stringMatching(/:pending:1$/),
+      abortInputId: null,
+    })
+    expect(h.orchestrator.settlePendingAbort).toHaveBeenCalledWith(transaction.pending)
+    expect(h.options.runState.state).toEqual({ kind: 'idle' })
+    expect(h.orchestrator.send).not.toHaveBeenCalled()
+    expect(h.orchestrator.close).not.toHaveBeenCalled()
+
+    catalogGate.resolve([DEFAULT_MODEL_ROW, CLAUDE_MODEL_ROW])
+    await h.manager.close()
+  })
+
+  it('Claude abort promise/value를 그대로 반환하고 sessionClosed만 background cleanup으로 소비한다', async () => {
+    const abortGate = deferred()
+    const result = Object.freeze({
+      aborted: true,
+      phase: 'active',
+      turnId: 'manager-active',
+      abortInputId: null,
+      contextPreserved: false,
+      sessionClosed: true,
+      reason: 'abort-before-remote-start',
+    })
+    const h = claudeSessionHarness({
+      abortImpl: ({ options }) => {
+        options.runState.state = { kind: 'closing' }
+        return abortGate.promise
+      },
+    })
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+    h.options.runState.state = { kind: 'active', turnId: 'manager-active' }
+
+    const aborting = h.manager.abort()
+
+    expect(aborting).toBe(abortGate.promise)
+    abortGate.resolve(result)
+    await expect(aborting).resolves.toBe(result)
+    await vi.waitFor(() => expect(h.manager.status()).toEqual({ state: 'idle', sessionId: null }))
+    expect(h.orchestrator.abort).toHaveBeenCalledOnce()
+    expect(h.orchestrator.close).toHaveBeenCalledOnce()
+  })
+
+  it('Claude steer는 nested 상태를 매니저에서 재게이팅하지 않고 orchestrator에 위임한다', async () => {
+    const refusal = Object.freeze({
+      error: 'agent-steer-unavailable',
+      message: '진행 중인 턴이 없습니다.',
+      turnId: null,
+    })
+    const h = claudeSessionHarness({ steerImpl: () => Promise.resolve(refusal) })
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+
+    await expect(h.manager.steer('Claude 수정')).resolves.toBe(refusal)
+    expect(h.orchestrator.steer).toHaveBeenCalledWith('Claude 수정')
+    await h.manager.close()
+  })
+})
+
+describe('AgentSessionManager M6b-2b Codex steer gate', () => {
+  it('active에서만 delegate하고 pendingStart/aborting에서는 exact refusal을 반환한다', async () => {
+    const catalogGate = deferred()
+    const catalog = {
+      list: vi.fn()
+        .mockImplementationOnce(() => catalogGate.promise)
+        .mockResolvedValue([DEFAULT_MODEL_ROW]),
+      snapshot: vi.fn(() => ({
+        cacheReady: true,
+        rows: [{ ...DEFAULT_MODEL_ROW }],
+        defaultId: DEFAULT_MODEL_ID,
+      })),
+    }
+    const abortGate = deferred()
+    const h = lifecycleHarness({
+      autoComplete: false,
+      modelCatalog: catalog,
+      orchestratorAbortImpl: () => abortGate.promise,
+    })
+    await h.manager.open()
+    const pendingSend = h.manager.send('pending 작업', DEFAULT_MODEL_ID)
+    await vi.waitFor(() => expect(catalog.list).toHaveBeenCalledOnce())
+
+    await expect(h.manager.steer('pending 수정')).resolves.toEqual({
+      error: 'agent-steer-not-started',
+      message: '새 작업을 시작하는 중이라 아직 수정할 턴이 없습니다.',
+      turnId: null,
+    })
+    expect(h.orchestrators[0].steer).not.toHaveBeenCalled()
+
+    catalogGate.resolve([DEFAULT_MODEL_ROW])
+    await pendingSend
+    await expect(h.manager.steer('active 수정')).resolves.toEqual({ steered: 'active 수정' })
+
+    const aborting = h.manager.abort()
+    await expect(h.manager.steer('aborting 수정')).resolves.toEqual({
+      error: 'agent-steer-stale',
+      message: '중단 처리 중에는 수정할 수 없습니다.',
+      turnId: null,
+    })
+    expect(h.orchestrators[0].steer).toHaveBeenCalledTimes(1)
+
+    abortGate.resolve({ aborted: true })
+    await aborting
+    await h.manager.close()
+  })
+
+  it('closing 중 steer는 withOpenSession throw 전에 structured refusal로 끝낸다', async () => {
+    const closeGate = deferred()
+    const h = lifecycleHarness()
+    await h.manager.open()
+    h.orchestrators[0].close.mockImplementationOnce(() => closeGate.promise)
+
+    const closing = h.manager.close()
+
+    await expect(h.manager.steer('closing 수정')).resolves.toEqual({
+      error: 'agent-session-closing',
+      message: '세션을 닫는 중입니다.',
+      turnId: null,
+    })
+    expect(h.orchestrators[0].steer).not.toHaveBeenCalled()
+
+    closeGate.resolve()
+    await closing
   })
 })
 
@@ -1139,14 +1501,21 @@ describe('AgentSessionManager D10 app ledger', () => {
   })
 
   it('steer는 이미 센 active turn에 주입하므로 turn budget을 증가시키지 않는다', async () => {
-    const h = lifecycleHarness({ maxTurns: 1 })
+    const h = lifecycleHarness({ maxTurns: 1, autoComplete: false })
     await h.manager.open()
 
     await h.manager.send('한 turn', DEFAULT_MODEL_ID)
+    // autoComplete:false로 turn이 active로 남아 steer가 delegate된다(§5.6: steer는 active에서만).
     await expect(h.manager.steer('첫 수정')).resolves.toEqual({ steered: '첫 수정' })
     await expect(h.manager.steer('둘째 수정')).resolves.toEqual({ steered: '둘째 수정' })
 
     expect(h.manager.status()).toMatchObject({ turns: 1 })
+    // active turn을 완료시켜 두 번째 send가 busy가 아니라 admitTurn까지 도달하게 한다.
+    // steer가 budget을 늘리지 않았으므로 turns는 여전히 1이고 두 번째 send는 turn 한도에 걸린다.
+    h.orchestrators[0].options.onEvent({
+      method: 'turn/completed',
+      params: { turn: { id: 'turn-한 turn', status: 'completed' } },
+    })
     await expect(h.manager.send('두 번째 turn', DEFAULT_MODEL_ID)).resolves.toEqual({
       error: 'agent-limit',
       limit: 1,

@@ -995,23 +995,26 @@ export function createClaudeOrchestrator({
   }
 
   async function send(text, sdkModel = undefined) {
+    const injected = runState.state.kind === 'pendingStart' ? runState.state : null
     await open()
     const nextModel = sdkModel === undefined ? currentModel : sdkModel
     if (typeof nextModel !== 'string' || !nextModel) {
       throw new TypeError('Claude sdkModel must be a non-empty string')
     }
-    if (runState.state.kind !== 'idle') throw new Error('Claude orchestrator is busy')
-
-    let resolveCancellation
-    const cancellation = new Promise((resolve) => { resolveCancellation = resolve })
-    const pending = {
-      kind: 'pendingStart',
-      turnId: `claude:${sessionId}:${++turnCounter}`,
-      cancelled: false,
-      cancellation,
-      resolveCancellation,
+    let pending = injected
+    if (!pending) {
+      if (runState.state.kind !== 'idle') throw new Error('Claude orchestrator is busy')
+      let resolveCancellation
+      const cancellation = new Promise((resolve) => { resolveCancellation = resolve })
+      pending = {
+        kind: 'pendingStart',
+        turnId: `claude:${sessionId}:${++turnCounter}`,
+        cancelled: false,
+        cancellation,
+        resolveCancellation,
+      }
+      runState.state = pending
     }
-    runState.state = pending
     try {
       if (nextModel !== currentModel) {
         const modelOutcome = await Promise.race([
@@ -1303,7 +1306,7 @@ export function createClaudeOrchestrator({
     return settled
   }
 
-  return { open, send, steer, abort, close }
+  return { open, send, steer, abort, close, settlePendingAbort }
 }
 
 export default { createClaudeOrchestrator }

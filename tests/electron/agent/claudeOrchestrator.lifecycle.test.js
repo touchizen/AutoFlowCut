@@ -250,6 +250,34 @@ describe('createClaudeOrchestrator — persistent Query lifecycle', () => {
     await h.orchestrator.close()
   })
 
+  it('send는 await open 전에 주입된 매니저 pendingStart P를 self-mint 없이 채택한다', async () => {
+    let resolveCancellation
+    const pending = {
+      kind: 'pendingStart',
+      turnId: 'manager-session:pending:7',
+      cancelled: false,
+      cancellation: new Promise((resolve) => { resolveCancellation = resolve }),
+      resolveCancellation,
+    }
+    const runState = { state: pending, turnEpoch: 4, toolEpoch: 8 }
+    const h = createHarness({ runState })
+
+    expect(typeof h.orchestrator.settlePendingAbort).toBe('function')
+    await expect(h.orchestrator.send('매니저가 예약한 요청', 'claude-sonnet-5')).resolves.toEqual({
+      turn: { id: pending.turnId, status: 'inProgress' },
+    })
+
+    expect(h.inputs).toHaveLength(1)
+    expect(runState.state).toMatchObject({
+      kind: 'active',
+      turnId: pending.turnId,
+      epoch: 5,
+      toolEpoch: 9,
+    })
+    expect(runState.state.turnId).not.toMatch(/^claude:/)
+    await h.orchestrator.close()
+  })
+
   it('generator yield 전 ownerless output/result를 새 turn에 귀속하지 않는다', async () => {
     const inputStartGate = deferred()
     const h = createHarness({ beforeInputs: inputStartGate.promise })
