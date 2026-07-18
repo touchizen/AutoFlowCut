@@ -338,3 +338,17 @@ export async function generateVideo(
 
   return { success: false, error: 'Video generation timed out', operationName }
 }
+
+/**
+ * Provider 객체 형태(레지스트리 §5.10용). 기존 함수를 참조만 — 로직 이동 없음(무동작).
+ * dispatcher 가 submitVideo/checkVideo/fetchVideoBase64 로 소비한다. google 은 handle 인코딩
+ * 안 함(operationName === generationId === rawId).
+ */
+export const googleVideoProvider = {
+  id: 'google',
+  kind: 'video',
+  submitVideo,
+  checkVideo: checkVideoOperation,
+  fetchVideoBase64,
+  catalogModel: DEFAULT_VIDEO_MODEL,
+}

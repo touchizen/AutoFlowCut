@@ -124,3 +124,14 @@ export async function generateImage(
     return { success: false, error: error?.message || String(error) }
   }
 }
+
+/**
+ * Provider 객체 형태(레지스트리 §5.10용). 기존 함수를 참조만 — 로직 이동 없음(무동작).
+ * dispatcher/registry 가 provider.id / provider.generateImage 로 소비한다.
+ */
+export const googleImageProvider = {
+  id: 'google',
+  kind: 'image',
+  generateImage,
+  catalogModel: DEFAULT_IMAGE_MODEL,
+}
