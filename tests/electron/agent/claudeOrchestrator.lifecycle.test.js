@@ -408,6 +408,25 @@ describe('createClaudeOrchestrator — persistent Query lifecycle', () => {
     await h.orchestrator.close()
   })
 
+  it('stream-error 정리 중 query.close가 던져도 onExit 종결을 보고한다', async () => {
+    const h = createHarness()
+    await h.orchestrator.open()
+    await h.orchestrator.send('원 요청', 'claude-sonnet-5')
+    h.onEvent.mockImplementationOnce(() => { throw new Error('renderer callback failed') })
+    h.query.close.mockImplementationOnce(() => { throw new Error('query close failed') })
+
+    h.output.push({
+      type: 'assistant',
+      uuid: 'boom',
+      message: { content: [{ type: 'text', text: 'triggers throwing onEvent' }] },
+    })
+
+    await vi.waitFor(() => expect(h.onExit).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'claude',
+      reason: 'stream-error',
+    })))
+  })
+
   it('예상 밖 SDK stream 종료만 onExit로 보고한다', async () => {
     const h = createHarness()
     await h.orchestrator.open()

@@ -658,7 +658,8 @@ export function createClaudeOrchestrator({
         state = { kind: 'closing' }
         inputQueue.end(steerRefusal(state))
         // A throw inside mapSdkMessage (e.g. a renderer callback) leaves the SDK query alive.
-        closeQueryOnce()
+        // Guard the close so a throwing query.close() cannot suppress the onExit settlement.
+        try { closeQueryOnce() } catch { /* still report the terminal below */ }
         onExit?.({ provider: 'claude', code: null, signal: null, error, reason: 'stream-error' })
       }
     }
@@ -709,14 +710,14 @@ export function createClaudeOrchestrator({
         const authorization = nonEmptyString(callToken) ? authorizedCalls.get(callToken) : null
         if (authorization) authorizedCalls.delete(callToken)
 
-        const permissionMatches = authorization?.permission === record.permission
         // Every permission (R included) binds the token to its tool + cleaned-args hash so a
-        // token approved for one tool/args can never run a different tool or altered args.
+        // token approved for one tool/args can never run a different tool or altered args. A
+        // separate permission check would be redundant: a token minted for tool X carries X's
+        // permission and only its own handler ever sees it, so tool-name equality implies it.
         const grantMatches = authorization?.tool === record.name
           && authorization?.argsHash === hashArgs(args)
         if (!authorization
           || !activeMatches(authorization.turnId, authorization.toolEpoch)
-          || !permissionMatches
           || !grantMatches) {
           // Burn any G/B grant this call could consume — keyed on the authorization's own nonce
           // (a stale/misrouted grant) or the nonce the model presented, never the destination
@@ -730,7 +731,7 @@ export function createClaudeOrchestrator({
           return staleMcpResult()
         }
 
-        const context = authorization.permission === 'R'
+        const context = record.permission === 'R'
           ? {}
           : { nonce: authorization.nonce }
         const result = await toolCore.call(record.name, args, context)

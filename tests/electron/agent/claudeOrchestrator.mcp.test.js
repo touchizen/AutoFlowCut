@@ -706,6 +706,33 @@ describe('Claude §5.4 permission and nonce flow', () => {
     await h.orchestrator.close()
   })
 
+  it('invalidates live authorizations when the SDK stream ends normally mid-turn', async () => {
+    const h = createHarness()
+    await startActive(h)
+    const allowed = await h.queryParams.options.canUseTool(
+      'mcp__autoflowcut__write_project', { title: 'live g' }, permissionOptions('req-eof', 'use-eof'),
+    )
+    const nonce = allowed.updatedInput[GRANT_NONCE]
+
+    // Normal stream termination (EOF) mid-turn drives readQuery's stream-ended path.
+    h.output.end()
+    await vi.waitFor(() => expect(h.grantLedger.closeSession).toHaveBeenCalledWith('mcp-session'))
+
+    const late = await h.definition('write_project').handler(allowed.updatedInput)
+    expect(decodedHandlerResult(late)).toEqual({ status: 'rejected', reason: 'aborted-or-stale' })
+    expect(h.toolCore.call).not.toHaveBeenCalled()
+    // The unconsumed G grant is burned on the terminal, not left in the ledger.
+    expect(h.grantLedger.consume).toHaveBeenCalledWith({
+      nonce,
+      tool: 'write_project',
+      argsHash: hashArgs({ title: 'live g' }),
+      sessionId: 'mcp-session',
+      projectToken: h.projectToken,
+    })
+
+    await h.orchestrator.close()
+  })
+
   it('close clears authorization, closes grants, and makes a late handler stale', async () => {
     const h = createHarness()
     await startActive(h)
