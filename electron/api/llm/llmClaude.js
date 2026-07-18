@@ -311,7 +311,10 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
   try {
     // 1차: outputFormat(json_schema) 강제. 파싱 후 스키마 검증 통과 시 반환, 실패/retry면 폴백.
     // sdkExtra(D11 — 팩트체크의 tools:['WebSearch']/maxTurns 등)는 1차·폴백 모두에 적용된다.
-    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, outputFormat: { type: 'json_schema', schema } }))
+    // includePartialMessages: structured output 은 input_json_delta 로 JSON 을 스트리밍한다 —
+    // 켜야 씬분리/프롬프트/검수도 생성 중 토큰이 실시간으로 오른다(result 파싱엔 영향 없음, 부분
+    // 메시지는 아래 루프에서 'result' 아니면 skip). 입력도 message_start 로 즉시 뜬다.
+    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true, outputFormat: { type: 'json_schema', schema } }))
     let needFallback = false
     for await (const m of queryImpl({ prompt, options: opt1 })) {
       if (m.type !== 'result') continue
@@ -329,7 +332,7 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     if (!needFallback) throw new Error('no result message returned')
     // 2차 폴백: outputFormat 없이 JSON-only 재요청. 파싱 결과도 검증, 실패하면 그대로 throw.
     const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
-    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra }))
+    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true }))
     for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
       if (m.type === 'result') {
         const data = parseJsonLoose(extractClaudeSdkResult(m))

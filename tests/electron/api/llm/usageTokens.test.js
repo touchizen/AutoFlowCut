@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { claudeResultToUsage, codexNotifToUsage } from '../../../../electron/api/llm/usageTokens.js'
+import { claudeResultToUsage, codexNotifToUsage, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from '../../../../electron/api/llm/usageTokens.js'
 
 describe('claudeResultToUsage', () => {
   // BetaUsage 의 input_tokens 는 cache 를 제외한다(cache_*_input_tokens 가 별도 필드).
@@ -39,6 +39,33 @@ describe('claudeResultToUsage', () => {
     expect(claudeResultToUsage({ type: 'stream_event' })).toBeNull()
     expect(claudeResultToUsage({ type: 'result' })).toBeNull()
     expect(claudeResultToUsage(null)).toBeNull()
+  })
+})
+
+describe('claude stream helpers (실시간 추정)', () => {
+  const se = (event) => ({ type: 'stream_event', event })
+
+  it('claudeStreamInput: message_start 입력은 cache 포함 합산, 그 외 null', () => {
+    expect(claudeStreamInput(se({ type: 'message_start', message: { usage: { input_tokens: 2, cache_creation_input_tokens: 2689, cache_read_input_tokens: 0 } } }))).toBe(2691)
+    expect(claudeStreamInput(se({ type: 'message_delta', usage: { output_tokens: 5 } }))).toBeNull()
+    expect(claudeStreamInput({ type: 'result' })).toBeNull()
+  })
+
+  it('claudeStreamOutChars: text/thinking/input_json_delta 를 센다', () => {
+    expect(claudeStreamOutChars(se({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'hello' } }))).toBe(5)
+    expect(claudeStreamOutChars(se({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'abc' } }))).toBe(3)
+    // structured output(씬분리/프롬프트)은 JSON 을 input_json_delta 로 흘린다 — 이걸 세야 실시간으로 오른다.
+    expect(claudeStreamOutChars(se({ type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"n":1}' } }))).toBe(7)
+    // 세지 않는 것들
+    expect(claudeStreamOutChars(se({ type: 'content_block_delta', delta: { type: 'signature_delta', signature: 'xxxx' } }))).toBe(0)
+    expect(claudeStreamOutChars(se({ type: 'message_start', message: {} }))).toBe(0)
+    expect(claudeStreamOutChars({ type: 'result' })).toBe(0)
+  })
+
+  it('estimateOutputTokens: chars/3 반올림, 0 은 0', () => {
+    expect(estimateOutputTokens(0)).toBe(0)
+    expect(estimateOutputTokens(90)).toBe(30)
+    expect(estimateOutputTokens(10)).toBe(3) // round(3.33)
   })
 })
 

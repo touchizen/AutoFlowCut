@@ -42,7 +42,9 @@ export function claudeStreamInput(message) {
   return n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens)
 }
 
-/** content_block_delta 로 흘러온 출력 문자수(text + thinking). 그 외 0. */
+/** content_block_delta 로 흘러온 출력 문자수(text + thinking + structured JSON). 그 외 0.
+ *  structured output(씬분리/프롬프트/검수)은 텍스트가 아니라 input_json_delta.partial_json
+ *  으로 JSON 을 조각조각 흘린다 — 그것도 세야 그 스텝들도 실시간으로 오른다. */
 export function claudeStreamOutChars(message) {
   if (message?.type !== 'stream_event') return 0
   const ev = message.event
@@ -50,6 +52,7 @@ export function claudeStreamOutChars(message) {
   const d = ev.delta
   if (d?.type === 'text_delta') return (d.text || '').length
   if (d?.type === 'thinking_delta') return (d.thinking || '').length
+  if (d?.type === 'input_json_delta') return (d.partial_json || '').length
   return 0
 }
 
