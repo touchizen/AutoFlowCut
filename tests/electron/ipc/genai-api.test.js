@@ -162,6 +162,8 @@ describe('genai-api — 이미지 생성', () => {
     const res = await ipc.invoke('genai:generate-image', { prompt: 'a cat', apiKey: 'ATTACKER_KEY' })
     expect(res.success).toBe(true)
     expect(res.images[0].base64).toBe('IMG64')
+    // §2.3: google(정확 비율)은 actualAspectRatio 를 안 달지만 dispatcher 가 null 로 보강
+    expect(res.actualAspectRatio).toBe(null)
     expect(fetchImpl.mock.calls[0][1].headers['x-goog-api-key']).toBe('STORED_KEY')
     expect(JSON.stringify(fetchImpl.mock.calls[0])).not.toContain('ATTACKER_KEY')
   })

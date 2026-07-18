@@ -318,6 +318,96 @@ describe('createDispatcher — security and keys', () => {
   })
 })
 
+describe('createDispatcher — actualAspectRatio 보강 (§2.2/§5.9)', () => {
+  it('google 성공(actualAspectRatio 없음) → null 보강', async () => {
+    const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'B' }] })
+    const google = { id: 'google', kind: 'image', generateImage }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ image: { google } }),
+    })
+    const res = await dispatcher.generateImage({ prompt: 'x', aspectRatio: '16:9' })
+    expect(res.success).toBe(true)
+    expect(res.actualAspectRatio).toBe(null)
+  })
+
+  it('openai 성공(actualAspectRatio 있음) → 그대로 통과', async () => {
+    const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'B' }], actualAspectRatio: '3:2' })
+    const openai = { id: 'openai', kind: 'image', generateImage }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ openai: 'OA_KEY' }),
+      registry: makeRegistry({ image: { openai } }),
+    })
+    const res = await dispatcher.generateImage({ provider: 'openai', prompt: 'x', aspectRatio: '16:9' })
+    expect(res.actualAspectRatio).toBe('3:2')
+  })
+
+  it('실패 응답에는 actualAspectRatio 안 붙음', async () => {
+    const generateImage = vi.fn().mockResolvedValue({ success: false, error: 'boom' })
+    const google = { id: 'google', kind: 'image', generateImage }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ image: { google } }),
+    })
+    const res = await dispatcher.generateImage({ prompt: 'x' })
+    expect(res).not.toHaveProperty('actualAspectRatio')
+  })
+})
+
+describe('createDispatcher — validateKey non-google 라우팅', () => {
+  it('openai → provider.validateKey (후보 키)', async () => {
+    const validateKey = vi.fn().mockResolvedValue({ valid: true })
+    const openai = { id: 'openai', kind: 'image', generateImage: vi.fn(), validateKey }
+    const engineDeps = { marker: 'deps' }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      engineDeps,
+      registry: makeRegistry({ image: { openai } }),
+    })
+    const res = await dispatcher.validateKey({ provider: 'openai', apiKey: 'CAND' })
+    expect(res).toEqual({ valid: true })
+    expect(validateKey).toHaveBeenCalledWith({ apiKey: 'CAND' }, engineDeps)
+  })
+
+  it('openai → 후보 없으면 저장키(openai 슬롯)로', async () => {
+    const validateKey = vi.fn().mockResolvedValue({ valid: true })
+    const openai = { id: 'openai', kind: 'image', generateImage: vi.fn(), validateKey }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ openai: 'STORED_OA' }),
+      registry: makeRegistry({ image: { openai } }),
+    })
+    await dispatcher.validateKey({ provider: 'openai' })
+    expect(validateKey).toHaveBeenCalledWith({ apiKey: 'STORED_OA' }, expect.anything())
+  })
+
+  it('openai 키 아예 없으면 No API key (validateKey 미호출)', async () => {
+    const validateKey = vi.fn()
+    const openai = { id: 'openai', kind: 'image', generateImage: vi.fn(), validateKey }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ image: { openai } }),
+    })
+    const res = await dispatcher.validateKey({ provider: 'openai' })
+    expect(res).toEqual({ valid: false, error: 'No API key' })
+    expect(validateKey).not.toHaveBeenCalled()
+  })
+
+  it('validateKey 메서드 없는/미등록 provider → Unknown provider', async () => {
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry(),
+    })
+    expect(await dispatcher.validateKey({ provider: 'nope' })).toEqual({ valid: false, error: 'Unknown provider: nope' })
+  })
+})
+
 describe('createDispatcher — errorKind', () => {
   it('google failures를 분류하고 unknown provider를 invalid-config로 거부한다', async () => {
     const generateImage = vi.fn()

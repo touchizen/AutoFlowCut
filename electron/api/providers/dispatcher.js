@@ -62,6 +62,9 @@ export function createDispatcher({
         aspectRatio,
         model,
       }, engineDeps)
+      // §2.2/§5.9: 성공 이미지에 actualAspectRatio 를 항상 실어 표면화(값 or null).
+      // 근사 provider(openai 16:9→3:2)는 값, 정확 provider(google)는 undefined→null.
+      if (res?.success) res.actualAspectRatio = res.actualAspectRatio ?? null
       return attachErrorKind(res, providerId)
     },
 
@@ -201,13 +204,21 @@ export function createDispatcher({
     },
 
     async validateKey({ provider = 'google', apiKey } = {}) {
-      if (provider !== 'google') {
-        return { valid: false, error: `Unknown provider: ${provider}` }
+      if (provider === 'google') {
+        const key = apiKey || resolveKeyOps('google', keyDeps).getKey()
+        if (!key) return { valid: false, error: 'No API key' }
+        return validateApiKey({ apiKey: key }, engineDeps)
       }
 
-      const key = apiKey || resolveKeyOps('google', keyDeps).getKey()
+      // non-google: provider 객체의 네이티브 validateKey(모달리티 무관 — image/video 어느 레지스트리든).
+      const providerObj = registry.getImageProvider(provider) || registry.getVideoProvider(provider)
+      if (!providerObj || typeof providerObj.validateKey !== 'function') {
+        return { valid: false, error: `Unknown provider: ${provider}` }
+      }
+      const keyOps = resolveKeyOps(provider, keyDeps)
+      const key = apiKey || (keyOps ? keyOps.getKey() : null)
       if (!key) return { valid: false, error: 'No API key' }
-      return validateApiKey({ apiKey: key }, engineDeps)
+      return providerObj.validateKey({ apiKey: key }, engineDeps)
     },
 
     async listModels({ provider = 'google' } = {}) {
