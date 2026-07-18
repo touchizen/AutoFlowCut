@@ -93,6 +93,13 @@ describe('canonical scene timeline', () => {
       missing: 4250,
     })
   })
+
+  it('handles a "__proto__" scene id without prototype pollution (null-proto map)', () => {
+    const starts = buildSceneStartsMs([{ id: '__proto__', duration: 2 }, { id: 'scene_2', duration: 3 }])
+    expect(starts['__proto__']).toBe(0)     // 실제 값이 저장됨(prototype 아님)
+    expect(starts.scene_2).toBe(2000)
+    expect(Object.getPrototypeOf(starts)).toBe(null)
+  })
 })
 
 describe('computeTotalDurationMs (max of all endpoints)', () => {

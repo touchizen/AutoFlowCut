@@ -530,6 +530,8 @@ export function useExport({
         return { success: false, cancelled: true }
       }
       if (!result?.ok) {
+        // ffmpeg stderr tail 을 진단용으로 콘솔에 보존(사용자 토스트엔 요약만 뜬다).
+        if (result?.stderrTail) console.error('[Render] ffmpeg stderr tail:', result.stderrTail)
         throw new Error(result?.error || 'Render failed')
       }
 

@@ -311,14 +311,14 @@ function verifyStagedFfmpeg(binaryPath, target, deps = {}) {
     verifyCapabilities(binaryPath, { execFileSync: deps.execFileSync })
     return true
   } catch (error) {
-    if (error?.code !== 'ENOENT') {
-      const warn = deps.warn || console.warn
-      const code = error?.code || error?.name || 'UNKNOWN'
-      warn(
-        `[platform-binaries] verify staged ffmpeg failed for ${binaryPath} (${code}): ` +
-        `${error?.message || error}`,
-      )
-    }
+    // 캐시 파일 존재는 위(:301)에서 확인했으므로 여기서의 ENOENT 는 검증 실행파일(otool/ffmpeg)
+    // 부재나 race 를 뜻한다 — 삼키지 말고 항상 경고(원인이 재다운로드에 가려지지 않도록).
+    const warn = deps.warn || console.warn
+    const code = error?.code || error?.name || 'UNKNOWN'
+    warn(
+      `[platform-binaries] verify staged ffmpeg failed for ${binaryPath} (${code}): ` +
+      `${error?.message || error}`,
+    )
     return false
   }
 }

@@ -492,7 +492,7 @@ function effectiveSubtitleEntries(cloudRequest, sceneStartsMs, sceneEndMs) {
 }
 
 export function buildSceneStartsMs(scenes) {
-  const starts = {}
+  const starts = Object.create(null)  // '__proto__' 같은 씬 id 가 prototype 을 오염/무력화하지 않도록
   let cumulativeSec = 0
   scenes.forEach((scene) => {
     starts[scene.id] = Math.round(cumulativeSec * 1000)

@@ -32,7 +32,7 @@ export function registerRenderIPC(ipcMain, deps = {}) {
     // jobId 를 먼저 예약해 dialog 대기 중에도 중복 진입을 막는다.
     // AbortController 로 취소 시 실행 중 ffmpeg 프로세스를 즉시 kill (runner 가 signal 을 감시).
     const controller = new AbortController()
-    const jobCtx = { jobId, cancelled: false, tempFiles: [], phase: null, signal: controller.signal }
+    const jobCtx = { jobId, cancelled: false, tempFiles: [], signal: controller.signal }
     jobCtx.abort = () => controller.abort()
     // before-quit 배리어가 이 잡의 정리 완료까지 기다리도록 done 프라미스를 노출.
     let markDone
