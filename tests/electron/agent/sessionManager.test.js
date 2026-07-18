@@ -948,6 +948,51 @@ describe('AgentSessionManager M6b-2b Claude coordination', () => {
     await h.manager.close()
   })
 
+  it('close가 Claude pendingStart 창에 오면 refuse unwind가 closing cell을 idle로 덮지 않는다', async () => {
+    // R2 MINOR: finishPending claude 분기의 idle-복원은 `state === reservation` identity-guard가 있어야
+    // 한다. close(또는 abort)가 창 안에서 cell을 이미 다른 terminal(여기선 closing)로 바꾼 뒤 send가
+    // unwind하면, 무조건 reset은 그 terminal을 idle로 덮어 status 오보/그 창 abort의 값 오류를 낸다.
+    const catalogGate = deferred()
+    const catalog = {
+      list: vi.fn(() => catalogGate.promise),
+      snapshot: vi.fn(() => ({
+        cacheReady: true,
+        rows: [{ ...DEFAULT_MODEL_ROW }, { ...CLAUDE_MODEL_ROW }],
+        defaultId: DEFAULT_MODEL_ID,
+      })),
+    }
+    const h = claudeSessionHarness({
+      modelCatalog: catalog,
+      closeImpl: ({ options }) => {
+        // 실제 claudeOrchestrator.close처럼 pendingStart를 취소하고 nested cell을 closing으로 만든다.
+        const previous = options.runState.state
+        if (previous?.kind === 'pendingStart') {
+          previous.cancelled = true
+          previous.resolveCancellation()
+        }
+        options.runState.state = { kind: 'closing' }
+        return Promise.resolve({ closed: true })
+      },
+    })
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+    const sending = h.manager.send('close 경쟁 Claude 작업', CLAUDE_MODEL_ROW.id)
+    await vi.waitFor(() => expect(catalog.list).toHaveBeenCalledOnce())
+
+    const closing = h.manager.close()
+
+    await expect(sending).resolves.toEqual({
+      error: 'agent-send-cancelled',
+      message: '전송이 중단되었습니다.',
+      turnId: expect.stringMatching(/:pending:1$/),
+    })
+    // identity-guard가 없으면 여기서 { kind: 'idle' }로 덮인다.
+    expect(h.options.runState.state).toEqual({ kind: 'closing' })
+    expect(h.orchestrator.send).not.toHaveBeenCalled()
+
+    catalogGate.resolve([DEFAULT_MODEL_ROW, CLAUDE_MODEL_ROW])
+    await closing
+  })
+
   it('Claude abort promise/value를 그대로 반환하고 sessionClosed만 background cleanup으로 소비한다', async () => {
     const abortGate = deferred()
     const result = Object.freeze({
