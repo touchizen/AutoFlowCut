@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
+import { modelLabel, coerceImageModel, imageModelsForProvider, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
 import { FLOW_MODELS } from '../../src/engine/flowModels'
 
 describe('genModels — modelLabel', () => {
@@ -48,9 +48,39 @@ describe('genModels — provider-aware catalog (§5.12)', () => {
     for (const model of VIDEO_MODELS) expect(model.provider).toBe('google')
   })
 
-  it('aggregate IMAGE_MODELS 에는 아직 openai 항목 없음 (T5b 에서 드롭다운 필터와 함께 추가)', () => {
-    // provider 필터 없는 현재 드롭다운에 노출되면 Gemini 로 오라우팅되므로 여기 미노출이 정상.
-    expect(IMAGE_MODELS.some(m => m.provider === 'openai')).toBe(false)
+  it('gpt-image-1 카탈로그 항목 (드롭다운 provider 필터와 함께 추가)', () => {
+    const gpt = IMAGE_MODELS.find(m => m.id === 'gpt-image-1')
+    expect(gpt).toMatchObject({ id: 'gpt-image-1', label: 'GPT Image', provider: 'openai', aspectCapability: 'approx' })
+    expect(modelLabel('gpt-image-1')).toBe('GPT Image')
+    expect(coerceImageModel('gpt-image-1')).toBe('gpt-image-1')
+  })
+})
+
+describe('genModels — imageModelsForProvider (드롭다운 provider 필터, 누출 방지)', () => {
+  it('google 선택 → gpt-image(openai) 제외, gemini 만', () => {
+    const list = imageModelsForProvider('google', IMAGE_MODELS)
+    expect(list.every(m => m.provider === 'google')).toBe(true)
+    expect(list.some(m => m.id === 'gpt-image-1')).toBe(false)
+  })
+
+  it('google 선택 → 라이브 dynamic extra(provider 필드 없음)는 google 로 간주해 포함', () => {
+    const dynamic = [
+      { id: 'gemini-3.1-flash-image', label: 'NB2', provider: 'google' },
+      { id: 'gemini-9-flash-image', label: 'Future' }, // dynamic extra, provider 없음
+    ]
+    const list = imageModelsForProvider('google', dynamic)
+    expect(list.map(m => m.id)).toEqual(['gemini-3.1-flash-image', 'gemini-9-flash-image'])
+  })
+
+  it('openai 선택 → 정적 카탈로그의 openai 항목(gpt-image), 라이브 google 목록 무관', () => {
+    const dynamicGoogle = [{ id: 'gemini-3.1-flash-image', provider: 'google' }]
+    const list = imageModelsForProvider('openai', dynamicGoogle)
+    expect(list.map(m => m.id)).toEqual(['gpt-image-1'])
+  })
+
+  it('provider 미지정 → google 취급', () => {
+    const list = imageModelsForProvider(undefined, IMAGE_MODELS)
+    expect(list.some(m => m.id === 'gpt-image-1')).toBe(false)
   })
 })
 

@@ -22,10 +22,10 @@ export const IMAGE_MODELS = [
   { id: 'gemini-2.5-flash-image', label: 'Nano Banana', cost: '$0.039', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNb', url: IMAGE_DOCS_URL },
   { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.067~', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
   { id: 'gemini-3-pro-image', label: 'Nano Banana Pro', cost: '$0.134~', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNbPro', url: IMAGE_DOCS_URL },
-  // ⚠ openai gpt-image-1 카탈로그 항목은 T5b(provider-필터 드롭다운 + locale)와 함께 추가한다.
-  // 여기 aggregate IMAGE_MODELS 에 미리 넣으면 provider 필터 없는 현재 UI 의 google 드롭다운에
-  // 노출돼 Gemini 엔진으로 잘못 라우팅된다(Fable M1-T5a 리뷰 실증). 지금은 provider 메타데이터 +
-  // heal 경계만 도입한다.
+  // OpenAI gpt-image-1. 드롭다운은 imageModelsForProvider 로 선택 provider 만 필터하므로
+  // google 사용자에겐 노출되지 않는다(누출 방지, Fable M1-T5a 리뷰). cost 는 PROVISIONAL —
+  // 실제 가격은 §5.13 / T6 실키 게이트에서 확정.
+  { id: 'gpt-image-1', label: 'GPT Image', cost: '$0.04~', unit: 'image', provider: 'openai', aspectCapability: 'approx', descKey: 'settings.modelImgGptImage', url: 'https://platform.openai.com/docs/guides/images' },
 ]
 
 // allowedResolutions: 낮은→높은 순. 공식 Veo 3.1 Lite 는 4K 미지원(720p/1080p),
@@ -46,6 +46,25 @@ export const VIDEO_REFERENCE_IMAGE_MODEL_IDS = [
 ]
 export const VIDEO_REFERENCE_IMAGE_LIMIT = 3
 export const VIDEO_REFERENCE_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+
+/**
+ * 선택된 image provider 의 모델 목록만 반환 (§5.12 드롭다운 provider 필터 — 누출 방지).
+ *
+ * - google: 라이브/정적 목록을 그대로 쓰되 비-google 카탈로그 항목(gpt-image 등)만 제외한다.
+ *   라이브 /models 의 dynamic extra 는 provider 필드가 없다 → google 로 간주(Google /models 산출물).
+ * - 비-google(openai 등): 라이브 목록은 Google 전용이라 무관 → 정적 카탈로그의 해당 provider 항목.
+ *
+ * @param {string} providerId - 선택된 image provider (미지정→google)
+ * @param {Array<{id,provider?}>} availableImageModels - useAvailableModels.imageModels(동적 or 정적)
+ * @returns {Array} 드롭다운에 노출할 모델 목록
+ */
+export function imageModelsForProvider(providerId, availableImageModels) {
+  const provider = providerId || 'google'
+  if (provider === 'google') {
+    return (availableImageModels || []).filter((m) => (m.provider ?? 'google') === 'google')
+  }
+  return IMAGE_MODELS.filter((m) => m.provider === provider)
+}
 
 /** API 모델 id → 사람이 읽는 라벨. 카탈로그에 없으면 id 그대로, falsy 면 null.
  *  ResultsTable / 상세 모달의 모델 표시에 사용. */

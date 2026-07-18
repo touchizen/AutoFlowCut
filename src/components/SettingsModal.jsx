@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { useI18n } from '../hooks/useI18n'
 import { TIMING } from '../config/defaults'
+import { imageModelsForProvider } from '../config/genModels'
 import Modal from './Modal'
 import StorageTab from './settings/StorageTab'
 import SceneTab from './settings/SceneTab'
@@ -123,7 +124,7 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
             setLocalSettings={setLocalSettings}
             t={t}
             appMode={appMode}
-            imageModels={availableModels.imageModels}
+            imageModels={imageModelsForProvider(localSettings.generation?.image?.provider, availableModels.imageModels)}
             videoModels={availableModels.videoModels}
           />
         )}
