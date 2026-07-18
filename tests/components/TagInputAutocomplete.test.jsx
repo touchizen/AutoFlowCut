@@ -428,3 +428,50 @@ describe('TagInputAutocomplete — 드롭다운 portal (clip 회피)', () => {
     expect(dd.style.position).toBe('fixed')
   })
 })
+
+describe('TagInputAutocomplete — 선택 후 dropdown 닫힘 (단일 vs 다중)', () => {
+  const stylePresets = [
+    { id: 'korean-ani', name_ko: '한국 애니', name_en: 'Korean Anime' },
+    { id: 'photorealistic', name_ko: '실사', name_en: 'Photorealistic' },
+  ]
+
+  it('style(단일 선택): 옵션을 고르면 값이 반영되고 dropdown 이 닫힌다', () => {
+    const onChange = vi.fn()
+    render(<TagInputAutocomplete {...baseProps} type="style" presets={stylePresets} onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeInTheDocument()
+    fireEvent.mouseDown(screen.getByText('한국 애니'))
+    expect(onChange).toHaveBeenCalledWith('Korean Anime')
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeNull()
+  })
+
+  it('style(단일 선택): 이미 값이 있어도 다른 옵션을 고르면 새 값으로 바뀌고 닫힌다', () => {
+    const onChange = vi.fn()
+    render(<TagInputAutocomplete {...baseProps} type="style" presets={stylePresets} value="Photorealistic" onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('한국 애니'))
+    expect(onChange).toHaveBeenCalledWith('Korean Anime')
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeNull()
+  })
+
+  it("style(단일 선택): '없음' 클리어도 dropdown 을 닫는다", () => {
+    const onChange = vi.fn()
+    render(<TagInputAutocomplete {...baseProps} type="style" presets={stylePresets} value="Korean Anime" onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('(없음)'))
+    expect(onChange).toHaveBeenCalledWith('')
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeNull()
+  })
+
+  it('character(다중 선택): 옵션을 골라도 dropdown 이 열린 채 유지된다(연속 선택)', () => {
+    const onChange = vi.fn()
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    render(<TagInputAutocomplete {...baseProps} type="character" references={refs} onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('Hero'))
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeInTheDocument()
+  })
+})
