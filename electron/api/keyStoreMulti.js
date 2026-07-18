@@ -11,6 +11,13 @@ const FILENAME_BY_PROVIDER = {
   typecast: 'typecast-key.enc',
   googletts: 'googletts-key.enc',
   anthropic: 'anthropic-key.enc',
+  // 멀티 provider 이미지/비디오 슬롯(§5.5). google 은 genaiKeyStore(userData/genai-key.enc)를
+  // 쓰므로 여기 genai 슬롯은 이미지/비디오 경로로 쓰지 않는다(경로 소실 방지, R2 BLOCKER).
+  openai: 'openai-key.enc',
+  xai: 'xai-key.enc',            // provider id 'grok' → 슬롯 'xai'
+  fal: 'fal-key.enc',
+  wavespeed: 'wavespeed-key.enc',
+  higgsfield: 'higgsfield-key.enc',  // "key:secret" 결합 문자열(G1)
 }
 export const PROVIDERS = Object.keys(FILENAME_BY_PROVIDER)
 
