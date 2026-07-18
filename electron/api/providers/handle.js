@@ -15,6 +15,10 @@
  */
 
 export const HANDLE_PREFIX = 'gen:v1:'
+// 예약 네임스페이스: `gen:` 로 시작하는 모든 generationId 는 handle 전용.
+// google raw op name 이 여기 충돌하면 인코딩은 되지만 디코딩 불가(복구불가) → encode 에서 거부.
+// `gen:v2:` 같은 미지원 버전은 legacy google 로 오라우팅하지 않고 명시 실패(malformed=throw 규칙).
+const RESERVED_NAMESPACE = 'gen:'
 
 // 과도한 handle 거부(오염/DoS 방어). M0b 방어값 — M2 fixture 로 정밀 확정.
 const MAX_HANDLE_LENGTH = 8192
@@ -62,6 +66,10 @@ export function encodeHandle(providerId, rawId) {
     if (!isNonEmptyString(rawId)) {
       throw new Error('encodeHandle: google rawId must be a non-empty string (operationName)')
     }
+    // google raw op name 은 예약 네임스페이스와 충돌하면 안 된다(디코딩 시 handle 로 오인 → 복구불가).
+    if (rawId.startsWith(RESERVED_NAMESPACE)) {
+      throw new Error(`encodeHandle: google rawId must not start with reserved namespace '${RESERVED_NAMESPACE}'`)
+    }
     return rawId
   }
   if (!Object.hasOwn(RAWID_SCHEMA, providerId)) {
@@ -91,6 +99,10 @@ export function decodeHandle(generationId) {
     throw new Error('decodeHandle: generationId must be a non-empty string')
   }
   if (!generationId.startsWith(HANDLE_PREFIX)) {
+    // 예약 네임스페이스지만 지원 버전(gen:v1:)이 아니면 legacy google 로 오라우팅하지 않고 명시 실패.
+    if (generationId.startsWith(RESERVED_NAMESPACE)) {
+      throw new Error(`decodeHandle: unsupported handle version in reserved namespace '${RESERVED_NAMESPACE}'`)
+    }
     // legacy: prefix 없는 raw op name → google
     return { provider: 'google', rawId: generationId }
   }

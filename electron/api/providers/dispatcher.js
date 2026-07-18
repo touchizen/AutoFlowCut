@@ -15,6 +15,12 @@ function unknownProvider(provider) {
   }
 }
 
+// 저장키 부재는 어떤 provider 든 'auth'(키 교체로 해결) — google-only classify 에 의존하지 않고
+// 일관 부착(checkVideoStatus 의 per-item 'auth' 와 동일 의미, M1 비-google 등록 시 비대칭 방지).
+function noApiKey() {
+  return { success: false, error: 'No API key', errorKind: 'auth' }
+}
+
 function attachErrorKind(res, provider) {
   if (res?.success === false && res.errorKind === undefined && provider === 'google') {
     res.errorKind = classifyGoogleErrorKind(res.error)
@@ -46,7 +52,7 @@ export function createDispatcher({
       if (!keyOps) return unknownProvider(providerId)
 
       const apiKey = keyOps.getKey()
-      if (!apiKey) return attachErrorKind({ success: false, error: 'No API key' }, providerId)
+      if (!apiKey) return noApiKey()
 
       const { prompt, referenceImages, aspectRatio, model } = params
       const res = await provider.generateImage({
@@ -68,7 +74,7 @@ export function createDispatcher({
       if (!keyOps) return unknownProvider(providerId)
 
       const apiKey = keyOps.getKey()
-      if (!apiKey) return attachErrorKind({ success: false, error: 'No API key' }, providerId)
+      if (!apiKey) return noApiKey()
 
       const {
         prompt,
@@ -162,16 +168,18 @@ export function createDispatcher({
       if (!provider || !keyOps) return unknownProvider(providerId)
 
       const apiKey = keyOps.getKey()
-      if (!apiKey) return attachErrorKind({ success: false, error: 'No API key' }, providerId)
+      if (!apiKey) return noApiKey()
 
       const res = await provider.fetchVideoBase64({ apiKey, videoUri }, engineDeps)
       return attachErrorKind(res, providerId)
     },
 
     getKeyStatus() {
+      // null-guard: KEY_STATUS_PROVIDERS 와 keyResolver 슬롯 맵이 어긋나도(둘이 평행 리스트)
+      // get-key-status IPC 전체가 TypeError 로 죽지 않게 미해결 provider 는 false.
       const byProvider = Object.fromEntries(KEY_STATUS_PROVIDERS.map((providerId) => [
         providerId,
-        resolveKeyOps(providerId, keyDeps).hasKey(),
+        resolveKeyOps(providerId, keyDeps)?.hasKey() ?? false,
       ]))
       return {
         hasKey: byProvider.google,
@@ -206,7 +214,7 @@ export function createDispatcher({
       if (provider !== 'google') return unknownProvider(provider)
 
       const key = resolveKeyOps('google', keyDeps).getKey()
-      if (!key) return attachErrorKind({ success: false, error: 'No API key' }, provider)
+      if (!key) return noApiKey()
 
       const res = await listModelsFromGenai({ apiKey: key }, engineDeps)
       return attachErrorKind(res, provider)

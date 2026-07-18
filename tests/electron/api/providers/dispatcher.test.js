@@ -91,6 +91,49 @@ describe('createDispatcher — provider routing', () => {
     expect(res.statuses.map(({ generationId }) => generationId)).toEqual([googleGenId, grokHandle])
   })
 
+  it('checkVideoStatus는 완료 순서가 아니라 입력 순서를 보존한다 (지연 mock으로 실증)', async () => {
+    // google 은 느리게(30ms), grok 은 빠르게(1ms) 완료 — 완료순 push 뮤턴트면 순서가 뒤집힌다.
+    const delay = (ms, val) => new Promise((r) => setTimeout(() => r(val), ms))
+    const google = {
+      id: 'google', kind: 'video',
+      checkVideo: vi.fn(() => delay(30, { success: true, done: true, videoUri: 'https://v/google' })),
+    }
+    const grok = {
+      id: 'grok', kind: 'video',
+      checkVideo: vi.fn(() => delay(1, { success: true, done: true, videoUri: 'https://v/grok' })),
+    }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ xai: 'GROK_KEY' }),
+      registry: makeRegistry({ video: { google, grok } }),
+    })
+    const googleGenId = 'operations/slow'
+    const grokHandle = encodeHandle('grok', 'grok-fast')
+
+    const res = await dispatcher.checkVideoStatus({ generationIds: [googleGenId, grokHandle] })
+
+    // 완료는 grok 이 먼저지만 결과 배열은 입력 순서([google, grok])여야 한다.
+    expect(res.statuses.map((s) => s.generationId)).toEqual([googleGenId, grokHandle])
+    expect(res.statuses[0].videoUri).toBe('https://v/google')
+    expect(res.statuses[1].videoUri).toBe('https://v/grok')
+  })
+
+  it('checkVideoStatus: 저장키 없으면 per-item failed/auth (top-level success 유지)', async () => {
+    const google = { id: 'google', kind: 'video', checkVideo: vi.fn() }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore({ getKey: vi.fn(() => null) }),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ video: { google } }),
+    })
+
+    const res = await dispatcher.checkVideoStatus({ generationIds: ['operations/x'] })
+    expect(res.success).toBe(true)
+    expect(res.statuses).toEqual([
+      { generationId: 'operations/x', status: 'failed', error: 'No API key', errorKind: 'auth' },
+    ])
+    expect(google.checkVideo).not.toHaveBeenCalled()
+  })
+
   it('malformed handle은 invalid-config item으로 실패하고 google로 fallback하지 않는다', async () => {
     const google = { id: 'google', kind: 'video', checkVideo: vi.fn() }
     const dispatcher = createDispatcher({
@@ -111,6 +154,65 @@ describe('createDispatcher — provider routing', () => {
       },
     ])
     expect(google.checkVideo).not.toHaveBeenCalled()
+  })
+})
+
+describe('createDispatcher — downloadVideo routing', () => {
+  it('generationId 없으면 google 로 라우팅', async () => {
+    const fetchVideoBase64 = vi.fn().mockResolvedValue({ success: true, base64: 'B64', mimeType: 'video/mp4' })
+    const google = { id: 'google', kind: 'video', fetchVideoBase64 }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore({ getKey: vi.fn(() => 'GOOGLE_KEY') }),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ video: { google } }),
+    })
+    const res = await dispatcher.downloadVideo({ videoUri: 'https://v/c' })
+    expect(res).toEqual({ success: true, base64: 'B64', mimeType: 'video/mp4' })
+    expect(fetchVideoBase64).toHaveBeenCalledWith({ apiKey: 'GOOGLE_KEY', videoUri: 'https://v/c' }, expect.anything())
+  })
+
+  it('grok handle 이면 grok provider/키로 라우팅 (google 폴백 아님)', async () => {
+    const googleDl = vi.fn()
+    const grokDl = vi.fn().mockResolvedValue({ success: true, base64: 'GROK64', mimeType: 'video/mp4' })
+    const google = { id: 'google', kind: 'video', fetchVideoBase64: googleDl }
+    const grok = { id: 'grok', kind: 'video', fetchVideoBase64: grokDl }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ xai: 'GROK_KEY' }),
+      registry: makeRegistry({ video: { google, grok } }),
+    })
+    const grokHandle = encodeHandle('grok', 'grok-req-9')
+    const res = await dispatcher.downloadVideo({ videoUri: 'https://cdn/grok', generationId: grokHandle })
+    expect(res.base64).toBe('GROK64')
+    expect(grokDl).toHaveBeenCalledWith({ apiKey: 'GROK_KEY', videoUri: 'https://cdn/grok' }, expect.anything())
+    expect(googleDl).not.toHaveBeenCalled()
+  })
+
+  it('malformed handle → invalid-config, provider 호출 없음 (google 폴백 금지)', async () => {
+    const googleDl = vi.fn()
+    const google = { id: 'google', kind: 'video', fetchVideoBase64: googleDl }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ video: { google } }),
+    })
+    const res = await dispatcher.downloadVideo({ videoUri: 'https://v/c', generationId: 'gen:v1:!!!' })
+    expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('invalid-config')
+    expect(googleDl).not.toHaveBeenCalled()
+  })
+})
+
+describe('createDispatcher — listProviders', () => {
+  it('registry.listProviders 를 그대로 반환', () => {
+    const google = { id: 'google', kind: 'image', generateImage: vi.fn() }
+    const gvideo = { id: 'google', kind: 'video', submitVideo: vi.fn() }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ image: { google }, video: { google: gvideo } }),
+    })
+    expect(dispatcher.listProviders()).toEqual({ image: [{ id: 'google' }], video: [{ id: 'google' }] })
   })
 })
 

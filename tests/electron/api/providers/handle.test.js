@@ -36,6 +36,13 @@ describe('encodeHandle', () => {
     expect(() => encodeHandle('nope', 'x')).toThrow()
   })
 
+  it('google rawId 가 예약 네임스페이스(gen:)와 충돌하면 throw (복구불가 방출 금지)', () => {
+    expect(() => encodeHandle('google', 'gen:v1:not-a-handle')).toThrow(/reserved namespace/)
+    expect(() => encodeHandle('google', 'gen:whatever')).toThrow(/reserved namespace/)
+    // 정상 google op name 은 통과
+    expect(encodeHandle('google', 'operations/abc')).toBe('operations/abc')
+  })
+
   it('대칭: encode 가 방출한 handle 이 상한 초과면 encode 에서 throw (decode 거부 방지, F1)', () => {
     // 6KB 넘는 rawId → 인코딩 handle 이 8192 초과 → encode 에서 실패해야(영속 후 복구불가 방지)
     const huge = 'x'.repeat(7000)
@@ -131,5 +138,12 @@ describe('decodeHandle', () => {
   it('null/비문자 입력 → throw', () => {
     expect(() => decodeHandle(null)).toThrow()
     expect(() => decodeHandle(123)).toThrow()
+  })
+
+  it('예약 네임스페이스지만 미지원 버전(gen:v2:) → throw, google 폴백 금지', () => {
+    expect(() => decodeHandle('gen:v2:abc')).toThrow(/unsupported handle version/)
+    expect(() => decodeHandle('gen:xyz')).toThrow(/unsupported handle version/)
+    // 예약 네임스페이스가 아닌 legacy 는 여전히 google
+    expect(decodeHandle('operations/abc')).toEqual({ provider: 'google', rawId: 'operations/abc' })
   })
 })
