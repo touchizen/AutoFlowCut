@@ -42,18 +42,25 @@ const APP_TOOLS = [
     },
   },
   {
-    name: 'record_read',
+    name: 'read_meta',
     permission: 'R',
-    description: 'Read a string record.',
-    inputSchema: { type: 'object', additionalProperties: { type: 'string' } },
+    description: 'Read project metadata.',
+    inputSchema: {
+      type: 'object',
+      properties: { key: { type: 'string' } },
+      additionalProperties: false,
+    },
   },
   {
-    // Permissive schema on a G tool: string-record args accept a forged carrier field,
-    // so the reserved-carrier deny is the SOLE defense here (strict schemas mask it).
-    name: 'permissive_write',
+    name: 'write_meta',
     permission: 'G',
-    description: 'Write with an open string map.',
-    inputSchema: { type: 'object', additionalProperties: { type: 'string' } },
+    description: 'Update project metadata.',
+    inputSchema: {
+      type: 'object',
+      properties: { title: { type: 'string' } },
+      required: ['title'],
+      additionalProperties: false,
+    },
   },
 ]
 
@@ -215,9 +222,11 @@ describe('Claude §5.4 in-process MCP registration', () => {
     }))
     expect(h.definition('read_stats').inputSchema[CALL_TOKEN].safeParse(undefined).success).toBe(true)
     expect(h.definition('read_stats').inputSchema[GRANT_NONCE].safeParse(undefined).success).toBe(true)
-    expect(Object.keys(h.definition('record_read').inputSchema).sort()).toEqual([
+    // The tool's own properties survive alongside the reserved carriers (not carrier-only).
+    expect(Object.keys(h.definition('read_meta').inputSchema).sort()).toEqual([
       CALL_TOKEN,
       GRANT_NONCE,
+      'key',
     ].sort())
     expect(h.sdkMcpServerFactory).toHaveBeenCalledWith({
       name: AGENT_MCP_SERVER_NAME,
@@ -228,6 +237,28 @@ describe('Claude §5.4 in-process MCP registration', () => {
     expect(h.serverOptions).not.toHaveProperty('type')
 
     await h.orchestrator.close()
+  })
+
+  it('fails closed when a tool schema cannot preserve the reserved carriers', async () => {
+    const recordTool = createHarness({
+      tools: [{
+        name: 'open_map',
+        permission: 'R',
+        description: 'Open string map.',
+        inputSchema: { type: 'object', additionalProperties: { type: 'string' } },
+      }],
+    })
+    await expect(recordTool.orchestrator.open()).rejects.toThrow(/open_map.*carrier|carrier.*open_map/i)
+
+    const unionTool = createHarness({
+      tools: [{
+        name: 'either',
+        permission: 'G',
+        description: 'Union schema.',
+        inputSchema: { oneOf: [{ type: 'object', properties: {} }, { type: 'string' }] },
+      }],
+    })
+    await expect(unionTool.orchestrator.open()).rejects.toThrow(/either/)
   })
 
   it('validates the permission, tool core, ledger, and tool factory seams', () => {
@@ -388,10 +419,6 @@ describe('Claude §5.4 permission and nonce flow', () => {
       ['mcp__autoflowcut__write_project', {}],
       ['mcp__autoflowcut__read_stats', { scope: 'all', [CALL_TOKEN]: undefined }],
       ['mcp__autoflowcut__read_stats', { scope: 'all', [GRANT_NONCE]: 'forged' }],
-      // Permissive-schema tool: the schema accepts the forged carrier, so only the
-      // reserved-carrier deny stops it — pins that check independently of strict schemas.
-      ['mcp__autoflowcut__permissive_write', { note: 'ok', [CALL_TOKEN]: 'forged' }],
-      ['mcp__autoflowcut__permissive_write', { note: 'ok', [GRANT_NONCE]: 'forged' }],
     ]
 
     for (const [name, input] of attempts) {
@@ -534,8 +561,9 @@ describe('Claude §5.4 permission and nonce flow', () => {
       'mcp__autoflowcut__write_project', { title: 'g approved' }, permissionOptions('req-x', 'use-x'),
     )
 
-    // Feed write_project's (G) call token into read_stats's (R) handler. grantMatches
-    // short-circuits to true for R, so the permission match is the only line of defense.
+    // Feed write_project's (G) call token into read_stats's (R) handler. The permission and
+    // tool-name mismatch both deny it, and the G grant must still be burned (not left in the
+    // ledger just because the destination handler happens to be permission R).
     const result = await h.definition('read_stats').handler({
       scope: 'stolen',
       [CALL_TOKEN]: allowed.updatedInput[CALL_TOKEN],
@@ -543,6 +571,41 @@ describe('Claude §5.4 permission and nonce flow', () => {
 
     expect(decodedHandlerResult(result)).toEqual({ status: 'rejected', reason: 'aborted-or-stale' })
     expect(h.toolCore.call).not.toHaveBeenCalled()
+    expect(h.grantLedger.consume).toHaveBeenCalledWith({
+      nonce: allowed.updatedInput[GRANT_NONCE],
+      tool: 'write_project',
+      argsHash: hashArgs({ title: 'g approved' }),
+      sessionId: 'mcp-session',
+      projectToken: h.projectToken,
+    })
+    await h.orchestrator.close()
+  })
+
+  it('rejects an R token replayed through a different R tool handler or with changed args', async () => {
+    const h = createHarness()
+    await startActive(h)
+    // Two independent R authorizations so each replay path is isolated (one-shot delete would
+    // otherwise mask the tool/args binding behind a missing token).
+    const tokenA = await h.queryParams.options.canUseTool(
+      'mcp__autoflowcut__read_stats', { scope: 'bound' }, permissionOptions('req-ra', 'use-ra'),
+    )
+    const tokenB = await h.queryParams.options.canUseTool(
+      'mcp__autoflowcut__read_stats', { scope: 'bound' }, permissionOptions('req-rb', 'use-rb'),
+    )
+
+    // tokenA in a different R tool handler → tool-name bound even for R (no grant to burn).
+    const crossTool = await h.definition('read_meta').handler({
+      key: 'x', [CALL_TOKEN]: tokenA.updatedInput[CALL_TOKEN],
+    })
+    // tokenB in the same handler but with altered args → argsHash bound even for R.
+    const changedArgs = await h.definition('read_stats').handler({
+      scope: 'tampered', [CALL_TOKEN]: tokenB.updatedInput[CALL_TOKEN],
+    })
+
+    expect(decodedHandlerResult(crossTool)).toEqual({ status: 'rejected', reason: 'aborted-or-stale' })
+    expect(decodedHandlerResult(changedArgs)).toEqual({ status: 'rejected', reason: 'aborted-or-stale' })
+    expect(h.toolCore.call).not.toHaveBeenCalled()
+    expect(h.grantLedger.consume).not.toHaveBeenCalled()
     await h.orchestrator.close()
   })
 
@@ -554,9 +617,9 @@ describe('Claude §5.4 permission and nonce flow', () => {
       'mcp__autoflowcut__write_project', args, permissionOptions('req-y', 'use-y'),
     )
 
-    // permissive_write is also G, and the cleaned args hash identically, so permission
-    // and argsHash both match. The tool-name correlation is the only remaining guard.
-    const result = await h.definition('permissive_write').handler({
+    // write_meta is also G with the same {title} shape, so permission and argsHash both
+    // match. The tool-name correlation is the only remaining guard.
+    const result = await h.definition('write_meta').handler({
       ...args,
       [CALL_TOKEN]: allowed.updatedInput[CALL_TOKEN],
       [GRANT_NONCE]: allowed.updatedInput[GRANT_NONCE],
@@ -613,6 +676,34 @@ describe('Claude §5.4 permission and nonce flow', () => {
     expect(a.toolCore.call).toHaveBeenCalledWith('read_stats', { scope: 'a-owned' }, {})
     expect(decodedHandlerResult(result)).not.toMatchObject({ reason: 'aborted-or-stale' })
     await a.orchestrator.close()
+  })
+
+  it('invalidates live authorizations when the SDK stream terminates mid-turn', async () => {
+    // A renderer callback that throws drives readQuery's catch (stream-error) path while the
+    // turn is still active and an R authorization is live. §5.4 step 6 must still run.
+    let throwOnEvent = false
+    const h = createHarness({
+      onEventImpl: () => { if (throwOnEvent) throw new Error('renderer callback failed') },
+    })
+    await startActive(h)
+    const allowed = await h.queryParams.options.canUseTool(
+      'mcp__autoflowcut__read_stats', { scope: 'live' }, permissionOptions('req-term', 'use-term'),
+    )
+
+    throwOnEvent = true
+    h.output.push({
+      type: 'assistant',
+      uuid: 'boom',
+      message: { content: [{ type: 'text', text: 'triggers throwing onEvent' }] },
+    })
+    await vi.waitFor(() => expect(h.grantLedger.closeSession).toHaveBeenCalledWith('mcp-session'))
+
+    // The authorization minted before the terminal must no longer execute.
+    const late = await h.definition('read_stats').handler(allowed.updatedInput)
+    expect(decodedHandlerResult(late)).toEqual({ status: 'rejected', reason: 'aborted-or-stale' })
+    expect(h.toolCore.call).not.toHaveBeenCalled()
+
+    await h.orchestrator.close()
   })
 
   it('close clears authorization, closes grants, and makes a late handler stale', async () => {

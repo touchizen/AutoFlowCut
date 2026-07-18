@@ -305,7 +305,7 @@ export function createClaudeOrchestrator({
   function enterOrphanDrain() {
     if (state.kind === 'orphanDrain' || state.kind === 'closing') return
     if (state.kind === 'pendingStart') cancelPendingStart(state)
-    toolEpoch += 1
+    invalidateToolAuthorizations()
     state = { kind: 'orphanDrain' }
     orphanTimer = setTimeout(() => {
       if (state.kind !== 'orphanDrain') return
@@ -349,7 +349,7 @@ export function createClaudeOrchestrator({
 
   function closeInvalidRemoteStartState() {
     if (state.kind === 'pendingStart') cancelPendingStart(state)
-    toolEpoch += 1
+    invalidateToolAuthorizations()
     state = { kind: 'closing' }
     inputQueue.end(steerRefusal(state))
     closeQueryOnce()
@@ -638,6 +638,9 @@ export function createClaudeOrchestrator({
       for await (const message of query) mapSdkMessage(message)
       if (state.kind !== 'closing') {
         clearOrphanTimer()
+        // §5.4 step 6: a terminal transition must invalidate live tool authorizations before
+        // any late handler can run, otherwise the handler's turn/epoch check is the sole defense.
+        invalidateToolAuthorizations()
         state = { kind: 'closing' }
         inputQueue.end(steerRefusal(state))
         onExit?.({
@@ -651,8 +654,11 @@ export function createClaudeOrchestrator({
     } catch (error) {
       if (state.kind !== 'closing') {
         clearOrphanTimer()
+        invalidateToolAuthorizations()
         state = { kind: 'closing' }
         inputQueue.end(steerRefusal(state))
+        // A throw inside mapSdkMessage (e.g. a renderer callback) leaves the SDK query alive.
+        closeQueryOnce()
         onExit?.({ provider: 'claude', code: null, signal: null, error, reason: 'stream-error' })
       }
     }
@@ -661,13 +667,19 @@ export function createClaudeOrchestrator({
   async function doOpen() {
     if (state.kind === 'closing') throw new Error('Claude orchestrator is closed')
     const appTools = toolCore.list()
-    const registeredTools = appTools.map((record) => ({
-      record,
-      validator: record.inputSchema ? zodFromJson(record.inputSchema) : null,
-    }))
+    const registeredTools = appTools.map((record) => {
+      const validator = record.inputSchema ? zodFromJson(record.inputSchema) : null
+      // §5.4 fail-closed: only object schemas expose a `.shape` that can carry the reserved
+      // carriers. A record/union/primitive top-level schema would register as carrier-only and
+      // strip the model's real args (R runs on {}, G/B always mismatch). Refuse rather than corrupt.
+      if (validator && (!validator.shape || typeof validator.shape !== 'object')) {
+        throw new Error(`Claude MCP tool ${record.name} has a non-object schema that cannot preserve reserved carriers`)
+      }
+      return { record, validator }
+    })
     const toolByName = new Map(registeredTools.map((entry) => [entry.record.name, entry]))
 
-    const deny = (message = 'Tool use denied.') => ({ behavior: 'deny', message })
+    const deny = (message = '도구 사용이 거부되었습니다.') => ({ behavior: 'deny', message })
     const activeMatches = (turnId, expectedToolEpoch) => (
       state.kind === 'active'
       && state.turnId === turnId
@@ -698,28 +710,23 @@ export function createClaudeOrchestrator({
         if (authorization) authorizedCalls.delete(callToken)
 
         const permissionMatches = authorization?.permission === record.permission
-        const grantMatches = record.permission === 'R' || (
-          authorization?.tool === record.name
+        // Every permission (R included) binds the token to its tool + cleaned-args hash so a
+        // token approved for one tool/args can never run a different tool or altered args.
+        const grantMatches = authorization?.tool === record.name
           && authorization?.argsHash === hashArgs(args)
-        )
         if (!authorization
           || !activeMatches(authorization.turnId, authorization.toolEpoch)
           || !permissionMatches
           || !grantMatches) {
-          if (record.permission !== 'R') {
-            const exactGrant = authorization?.nonce
-              ? {
-                  nonce: authorization.nonce,
-                  tool: authorization.tool,
-                  argsHash: authorization.argsHash,
-                }
-              : {
-                  nonce: grantNonce,
-                  tool: record.name,
-                  argsHash: hashArgs(args),
-                }
-            consumeGrant(exactGrant)
-          }
+          // Burn any G/B grant this call could consume — keyed on the authorization's own nonce
+          // (a stale/misrouted grant) or the nonce the model presented, never the destination
+          // record's permission (which misses a G/B grant routed to an R handler).
+          const exactGrant = authorization?.nonce
+            ? { nonce: authorization.nonce, tool: authorization.tool, argsHash: authorization.argsHash }
+            : (nonEmptyString(grantNonce)
+                ? { nonce: grantNonce, tool: record.name, argsHash: hashArgs(args) }
+                : null)
+          if (exactGrant) consumeGrant(exactGrant)
           return staleMcpResult()
         }
 
@@ -746,7 +753,7 @@ export function createClaudeOrchestrator({
     })
     const claudeToolPermissionGate = async (sdkToolName, input, permissionContext = {}) => {
       // The SDK callback carries no turn id. Only the synchronously observed active owner is valid.
-      if (state.kind !== 'active') return deny('No active turn owns this tool request.')
+      if (state.kind !== 'active') return deny('진행 중인 턴이 없어 도구 요청을 처리할 수 없습니다.')
       const turnId = state.turnId
       const expectedToolEpoch = state.toolEpoch
       const callToken = randomUuid()
@@ -764,7 +771,7 @@ export function createClaudeOrchestrator({
         || !['R', 'G', 'B'].includes(record.permission)
         || (registered.validator && !registered.validator.safeParse(input).success)
         || permissionContext.signal?.aborted) {
-        return deny('Invalid tool permission request.')
+        return deny('허용되지 않은 도구 요청입니다.')
       }
 
       if (record.permission === 'R') {
@@ -772,6 +779,8 @@ export function createClaudeOrchestrator({
           turnId,
           toolEpoch: expectedToolEpoch,
           permission: 'R',
+          tool: canonicalName,
+          argsHash: hashArgs(input),
         })
         return {
           behavior: 'allow',
@@ -792,15 +801,15 @@ export function createClaudeOrchestrator({
           turnId,
         })
       } catch {
-        return deny('Tool approval failed.')
+        return deny('도구 승인 처리에 실패했습니다.')
       }
 
       if (permissionResult?.action !== 'accept') {
-        return deny('Tool approval was not accepted.')
+        return deny('도구 사용이 승인되지 않았습니다.')
       }
       if (!activeMatches(turnId, expectedToolEpoch) || permissionContext.signal?.aborted) {
         consumeGrant({ nonce, tool: canonicalName, argsHash })
-        return deny('Tool approval is no longer active.')
+        return deny('승인 시점의 작업이 종료되어 도구를 실행하지 않았습니다.')
       }
 
       authorizedCalls.set(callToken, {
