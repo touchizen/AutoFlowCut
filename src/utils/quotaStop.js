@@ -71,6 +71,14 @@ export function normalizeErrorText(err) {
  * Flow 응답이 quota 소진인지 판정. 어떤 형태의 입력도 normalize 후 검사.
  */
 export function isQuotaExhaustedError(err) {
+  // §5.11 진리표: 입력이 (Error 아닌) 객체이고 provider 가 errorKind 를 달았으면 그것만 판정.
+  // provider 분류가 authoritative — errorKind:'other' 면 문자열에 RESOURCE_EXHAUSTED 있어도 quota 아님.
+  // null 은 "미분류" 관용구(`errorKind ?? null`) → 폴백. Error 가드는 load-bearing:
+  //   prepareCloudRequest/useExport 가 Error 에 non-§5.11 errorKind('story-audio-out-of-sync' 등)를
+  //   붙이므로, 이를 authoritative 로 오인하면 message 의 quota 신호를 놓친다 → 문자열 폴백으로 우회.
+  if (err != null && typeof err === 'object' && !(err instanceof Error) && err.errorKind != null) {
+    return err.errorKind === 'quota'
+  }
   const text = normalizeErrorText(err)
   if (!text) return false
   return PATTERNS.some((re) => re.test(text))

@@ -88,6 +88,42 @@ describe('isQuotaExhaustedError (object inputs)', () => {
   })
 })
 
+// §5.11 errorKind 우선 진리표: provider 분류가 authoritative, 없으면 문자열 폴백
+describe('isQuotaExhaustedError — errorKind priority (§5.11)', () => {
+  it('object + errorKind 정의됨 → errorKind 만 판정', () => {
+    expect(isQuotaExhaustedError({ errorKind: 'quota', error: 'anything' })).toBe(true)
+    // provider 가 other 로 분류 → RESOURCE_EXHAUSTED 문자열 있어도 false (collision)
+    expect(isQuotaExhaustedError({ errorKind: 'other', error: 'RESOURCE_EXHAUSTED' })).toBe(false)
+    expect(isQuotaExhaustedError({ errorKind: 'auth', error: 'quota exceeded' })).toBe(false)
+  })
+
+  it('errorKind 없는 object → 기존 normalizeErrorText 폴백 (회귀 0)', () => {
+    expect(isQuotaExhaustedError({ error: 'RESOURCE_EXHAUSTED' })).toBe(true)
+    expect(isQuotaExhaustedError({ error: 'Network down' })).toBe(false)
+  })
+
+  it('string/Error 입력은 errorKind 개념 없음 → 폴백', () => {
+    expect(isQuotaExhaustedError('RESOURCE_EXHAUSTED')).toBe(true)
+    expect(isQuotaExhaustedError(new Error('quota exceeded'))).toBe(true)
+  })
+
+  it('errorKind:null object → 폴백 (F1: 미분류 관용구)', () => {
+    expect(isQuotaExhaustedError({ errorKind: null, error: 'RESOURCE_EXHAUSTED' })).toBe(true)
+    expect(isQuotaExhaustedError({ errorKind: null, error: 'Network down' })).toBe(false)
+  })
+
+  it('Error 에 붙은 non-§5.11 errorKind 는 authoritative 아님 → 문자열 폴백 (F2: load-bearing 가드)', () => {
+    // prepareCloudRequest/useExport 가 Error 에 'story-audio-out-of-sync' 등을 붙인다.
+    // 이를 authoritative 로 오인하면 message 의 quota 신호를 놓친다.
+    expect(isQuotaExhaustedError(Object.assign(new Error('quota exceeded'), { errorKind: 'story-audio-out-of-sync' }))).toBe(true)
+  })
+
+  it('null/undefined 입력은 throw 없이 false (F3)', () => {
+    expect(isQuotaExhaustedError(null)).toBe(false)
+    expect(isQuotaExhaustedError(undefined)).toBe(false)
+  })
+})
+
 describe('emitQuotaStop', () => {
   it('마킹: stopRequestedRef.current=true 로 만들고 quota-blocked 상태로 진입', () => {
     const stopRef = { current: false }
