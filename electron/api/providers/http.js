@@ -10,7 +10,7 @@
 export const GENAI_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 export const DEFAULT_ASPECT_RATIO = '16:9'
 
-const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+export const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * fetch 응답을 안전하게 JSON 으로 파싱. 비-JSON 응답(HTML 에러 페이지 등)도 죽지 않게.

@@ -12,7 +12,7 @@ import {
   coerceResolution,
   supportsVideoReferenceMimeType,
 } from '../../../../src/config/genModels.js'
-import { GENAI_BASE, DEFAULT_ASPECT_RATIO, RETRY_BACKOFF_MS, genaiFetch } from '../http.js'
+import { GENAI_BASE, DEFAULT_ASPECT_RATIO, RETRY_BACKOFF_MS, genaiFetch, defaultSleep } from '../http.js'
 
 export const DEFAULT_VIDEO_MODEL = 'veo-3.1-fast-generate-preview'
 export const DEFAULT_VIDEO_DURATION = 8
@@ -280,7 +280,7 @@ export async function checkVideoOperation(
  */
 export async function fetchVideoBase64(
   { apiKey, videoUri } = {},
-  { fetchImpl = fetch, sleepImpl = (ms) => new Promise((r) => setTimeout(r, ms)), maxRetries = RETRY_BACKOFF_MS.length } = {}
+  { fetchImpl = fetch, sleepImpl = defaultSleep, maxRetries = RETRY_BACKOFF_MS.length } = {}
 ) {
   if (!apiKey) return { success: false, error: 'No API key' }
   if (!videoUri) return { success: false, error: 'No video URI' }
@@ -316,7 +316,7 @@ export async function generateVideo(
   params = {},
   {
     fetchImpl = fetch,
-    sleepImpl = (ms) => new Promise((r) => setTimeout(r, ms)),
+    sleepImpl = defaultSleep,
     pollIntervalMs = VIDEO_POLL_INTERVAL_MS,
     maxAttempts = VIDEO_POLL_MAX_ATTEMPTS,
   } = {}

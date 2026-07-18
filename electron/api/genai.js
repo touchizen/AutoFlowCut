@@ -6,10 +6,14 @@
  * 하위호환 배럴이다 — 새 코드는 providers/* 를 직접 import할 것.
  * (멀티 provider 리팩터 M0a: 무동작 이동)
  */
-export { GENAI_BASE, MAX_429_RETRY_DELAY_MS, parseRetryDelayMs } from './providers/http.js'
+export { GENAI_BASE, DEFAULT_ASPECT_RATIO, RETRY_BACKOFF_MS, MAX_429_RETRY_DELAY_MS, parseRetryDelayMs } from './providers/http.js'
 export { DEFAULT_IMAGE_MODEL, generateImage } from './providers/image/google.js'
 export {
   DEFAULT_VIDEO_MODEL,
+  DEFAULT_VIDEO_DURATION,
+  VIDEO_REFERENCE_IMAGE_MODELS,
+  VIDEO_POLL_INTERVAL_MS,
+  VIDEO_POLL_MAX_ATTEMPTS,
   submitVideo,
   summarizeVeoOperation,
   checkVideoOperation,
