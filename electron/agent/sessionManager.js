@@ -214,6 +214,15 @@ export function createAgentSessionManager({
     settleStart(reservation)
     if (session.provider === 'claude') {
       session.orchestrator.settlePendingAbort?.(reservation)
+      // A pre-delegate refusal (D2 provider-switch, model-unavailable, invalid sdkModel,
+      // turn-limit, or a thrown list()) unwinds here WITHOUT an abort transaction, so
+      // settlePendingAbort is a no-op. Reset the nested cell to idle so the stale reservation
+      // does not wedge the session at pendingStart (every later send would return agent-busy and
+      // Stop would only close the session). Identity-guard so we never clobber an abort
+      // transaction that already replaced the reservation.
+      if (session.runState.state === reservation) {
+        session.runState.state = { kind: 'idle' }
+      }
       return result
     }
     if (ownsReservation(session, reservation, 'pendingStart')) {
@@ -704,16 +713,18 @@ export function createAgentSessionManager({
       return Promise.resolve({ aborted: false, reason: 'idle' })
     }
 
-    if (state.kind === 'closing' || session.state === 'closing') {
-      return Promise.resolve({ aborted: false, reason: 'idle' })
-    }
-
+    // Claude owns its own state machine: delegate every non-idle abort (including closing) so the
+    // orchestrator's exact value — e.g. {aborted:false,reason:'closing'} — is returned unchanged.
     if (session.provider === 'claude') {
       const delegated = session.orchestrator.abort()
       Promise.resolve(delegated).then((result) => {
         if (result?.sessionClosed === true) driveCloseSession(session)
       }, () => {})
       return delegated
+    }
+
+    if (state.kind === 'closing' || session.state === 'closing') {
+      return Promise.resolve({ aborted: false, reason: 'idle' })
     }
 
     const runState = session.runState

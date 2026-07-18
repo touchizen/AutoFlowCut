@@ -7,7 +7,6 @@ import { createApprovalPrompt } from '../../../electron/agent/approvalPrompt.js'
 import { AGENT_MCP_SERVER_NAME } from '../../../electron/agent/constants.js'
 import { EventEmitter, once } from 'node:events'
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
 
 const DEFAULT_MODEL_ID = 'codex:gpt-5.5'
 const DEFAULT_MODEL_ROW = {
@@ -714,17 +713,11 @@ describe('AgentSessionManager commands and events', () => {
 })
 
 describe('AgentSessionManager M6b-2b Claude coordination', () => {
-  it('replaceRunState는 Claude nested authority cell을 지우지 못하게 codex-only hard guard를 둔다', () => {
-    // Valid Claude flows must never call this closure, so pin the loud-failure barrier itself.
-    // Removing it must fail even if every current provider branch still avoids the invalid call.
-    const source = readFileSync(
-      new URL('../../../electron/agent/sessionManager.js', import.meta.url),
-      'utf8',
-    )
-    expect(source).toContain(
-      "if (session.provider !== 'codex') throw new Error('replaceRunState is codex-only; claude uses a nested authority cell')",
-    )
-  })
+  // NOTE: replaceRunState's `provider !== 'codex'` guard is unreachable defense-in-depth — no
+  // correct claude path calls it, so it cannot be pinned behaviorally without synthetic injection,
+  // and a source-string assertion violates repo discipline (spec-by-string). The claude nested-cell
+  // integrity it protects is covered behaviorally by the refuse-then-resend (C1) and observeEvent
+  // guard tests below; the guard itself stays as a loud runtime barrier.
 
   it('Claude busy 판정은 nested state의 5개 non-idle 상태와 turnId를 읽는다', async () => {
     const h = claudeSessionHarness()
@@ -836,6 +829,45 @@ describe('AgentSessionManager M6b-2b Claude coordination', () => {
     expect(h.orchestrator.settlePendingAbort).toHaveBeenCalledOnce()
     await h.manager.close()
   })
+
+  it('refuse된 Claude send는 nested cell을 idle로 되돌려 다음 send를 wedge하지 않는다', async () => {
+    // C1 회귀: send가 reservation을 nested cell에 설치한 뒤 abort 없이 refuse(D2/model/limit)로
+    // unwind하면 settlePendingAbort는 no-op이므로 cell을 명시적으로 idle로 되돌려야 한다. 안 그러면
+    // cell이 stale pendingStart에 고정돼 이후 모든 send가 agent-busy가 되고 Stop만 세션을 닫는다.
+    const h = claudeSessionHarness()
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+
+    await expect(h.manager.send('코덱스로', DEFAULT_MODEL_ID)).resolves.toEqual({
+      error: 'provider-switch-required',
+      message: '모델 제공자를 바꾸려면 새 세션을 시작해 주세요.',
+      turnId: expect.stringMatching(/:pending:1$/),
+    })
+
+    // wedge가 없다면 유효한 Claude send가 성공한다(agent-busy가 아님).
+    await expect(h.manager.send('클로드로', CLAUDE_MODEL_ROW.id)).resolves.toEqual({
+      turn: { id: expect.stringMatching(/:pending:2$/), status: 'inProgress' },
+    })
+    expect(h.orchestrator.send).toHaveBeenCalledWith('클로드로', CLAUDE_MODEL_ROW.sdkModel)
+    await h.manager.close()
+  })
+
+  it('Claude closing abort는 orchestrator의 closing 값을 무변형 반환한다', async () => {
+    const closingValue = Object.freeze({ aborted: false, reason: 'closing' })
+    const h = claudeSessionHarness({ abortImpl: () => Promise.resolve(closingValue) })
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+    // nested cell을 closing으로 두면 매니저 top closing 단락이 아니라 claude 위임이 이겨야 한다.
+    h.options.runState.state = { kind: 'closing' }
+
+    await expect(h.manager.abort()).resolves.toBe(closingValue)
+    expect(h.orchestrator.abort).toHaveBeenCalledOnce()
+    await h.manager.close()
+  })
+
+  // NOTE: the observeEvent codex-only guard is pure forward-proofing defense — for a real claude
+  // session the nested cell has no top-level .kind/.reservation, so removing the guard is a no-op
+  // (mutation-confirmed survivor). It cannot be killed without a fully-matching synthetic
+  // reservation (sessionToken), which the manager never exposes. Both consult reviewers classified
+  // it as acceptable defense-in-depth, not a production risk. Left documented in source, untested.
 
   it('Claude 명시 open 뒤 생략 send는 Codex defaultPin과의 D2를 공통 검사한다', async () => {
     const catalog = modelCatalogDouble([DEFAULT_MODEL_ROW, CLAUDE_MODEL_ROW])

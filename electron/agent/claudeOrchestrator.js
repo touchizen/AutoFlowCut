@@ -996,6 +996,11 @@ export function createClaudeOrchestrator({
 
   async function send(text, sdkModel = undefined) {
     const injected = runState.state.kind === 'pendingStart' ? runState.state : null
+    // When adopting an injected pendingStart, the two pre-try steps below cannot wedge it: the
+    // manager only reaches here after awaiting its open promise (so this open() is already settled
+    // and cannot reject) and after validating a non-empty sdkModel (so nextModel never throws). A
+    // standalone caller self-mints instead and its own catch/finally clean up. If either precondition
+    // ever changes, move these two steps inside the try so an adopted reservation is unwound.
     await open()
     const nextModel = sdkModel === undefined ? currentModel : sdkModel
     if (typeof nextModel !== 'string' || !nextModel) {
