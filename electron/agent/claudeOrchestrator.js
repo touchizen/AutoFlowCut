@@ -1,13 +1,34 @@
 import { randomUUID } from 'node:crypto'
-import { createSdkMcpServer, query as claudeQuery } from '@anthropic-ai/claude-agent-sdk'
+import {
+  createSdkMcpServer,
+  query as claudeQuery,
+  tool as sdkTool,
+} from '@anthropic-ai/claude-agent-sdk'
+import { encodeApprovalPayload } from './approvalPayload.js'
+import { toMcpContent } from './codexAdapterEntry.js'
 import {
   AGENT_CLAUDE_MAX_TURNS,
+  AGENT_CLAUDE_MCP_TOOL_TIMEOUT_MS,
   AGENT_MCP_SERVER_NAME,
 } from './constants.js'
+import { hashArgs } from './grantLedger.js'
+import { zodFromJson } from './jsonSchemaToZod.js'
 
-const MCP_TOOL_TIMEOUT = '1800000'
+const MCP_TOOL_TIMEOUT = String(AGENT_CLAUDE_MCP_TOOL_TIMEOUT_MS)
 const ORPHAN_DRAIN_TIMEOUT_MS = 120_000
 const SDK_MCP_VERSION = '0.0.0'
+const CALL_TOKEN_FIELD = '__autoflowcutCallToken'
+const GRANT_NONCE_FIELD = '__autoflowcutGrantNonce'
+const SDK_TOOL_PREFIX = `mcp__${AGENT_MCP_SERVER_NAME}__`
+const STALE_TOOL_RESULT = Object.freeze({ status: 'rejected', reason: 'aborted-or-stale' })
+const carrierShape = zodFromJson({
+  type: 'object',
+  properties: {
+    [CALL_TOKEN_FIELD]: { type: 'string' },
+    [GRANT_NONCE_FIELD]: { type: 'string' },
+  },
+  additionalProperties: false,
+}).shape
 
 function createInputQueue() {
   const entries = []
@@ -204,8 +225,10 @@ function steerRefusal(state, expectedTurnId = null) {
  */
 export function createClaudeOrchestrator({
   sessionId,
-  elicitationResponder: _elicitationResponder,
-  toolCore: _toolCore,
+  projectToken = null,
+  elicitationResponder,
+  toolCore,
+  grantLedger,
   model: initialModel,
   onDelta,
   onEvent,
@@ -213,13 +236,26 @@ export function createClaudeOrchestrator({
   env: inheritedEnv = process.env,
   queryFactory = claudeQuery,
   sdkMcpServerFactory = createSdkMcpServer,
+  toolFactory = sdkTool,
   randomUuid = randomUUID,
   orphanDrainTimeoutMs = ORPHAN_DRAIN_TIMEOUT_MS,
 } = {}) {
   if (typeof sessionId !== 'string' || !sessionId) throw new TypeError('sessionId is required')
   if (typeof initialModel !== 'string' || !initialModel) throw new TypeError('Claude sdkModel is required')
+  if (typeof elicitationResponder?.handle !== 'function') {
+    throw new TypeError('elicitationResponder.handle must be a function')
+  }
+  if (typeof toolCore?.list !== 'function') throw new TypeError('toolCore.list must be a function')
+  if (typeof toolCore?.call !== 'function') throw new TypeError('toolCore.call must be a function')
+  if (typeof grantLedger?.closeSession !== 'function') {
+    throw new TypeError('grantLedger.closeSession must be a function')
+  }
+  if (typeof grantLedger?.consume !== 'function') {
+    throw new TypeError('grantLedger.consume must be a function')
+  }
   if (typeof queryFactory !== 'function') throw new TypeError('queryFactory must be a function')
   if (typeof sdkMcpServerFactory !== 'function') throw new TypeError('sdkMcpServerFactory must be a function')
+  if (typeof toolFactory !== 'function') throw new TypeError('toolFactory must be a function')
 
   const inputQueue = createInputQueue()
   let state = { kind: 'idle' }
@@ -235,6 +271,18 @@ export function createClaudeOrchestrator({
   let cancelAsyncMessageCapable = false
   let orphanTimer = null
   const retractedPairs = new Set()
+  const authorizedCalls = new Map()
+
+  function invalidateToolAuthorizations() {
+    toolEpoch += 1
+    authorizedCalls.clear()
+    grantLedger.closeSession(sessionId)
+  }
+
+  function consumeGrant({ nonce, tool, argsHash }) {
+    if (!nonEmptyString(nonce) || !nonEmptyString(tool) || !nonEmptyString(argsHash)) return false
+    return grantLedger.consume({ nonce, tool, argsHash, sessionId, projectToken })
+  }
 
   function closeQueryOnce() {
     if (!query || queryClosed) return
@@ -543,14 +591,14 @@ export function createClaudeOrchestrator({
 
     const sdkSuccess = message.subtype === 'success' && message.is_error !== true
     const error = active.accumulator.errors[0] || (!sdkSuccess ? sdkResultError(message) : null)
-    if (error) closeOpenToolsAsFailed(active)
     const turn = error
       ? { id: active.turnId, status: 'failed', error }
       : { id: active.turnId, status: 'completed' }
     if (state !== active) return
     state = { kind: 'idle' }
     turnEpoch += 1
-    toolEpoch += 1
+    invalidateToolAuthorizations()
+    if (error) closeOpenToolsAsFailed(active)
     onEvent?.({ method: 'turn/completed', params: { turn } })
   }
 
@@ -612,15 +660,166 @@ export function createClaudeOrchestrator({
 
   async function doOpen() {
     if (state.kind === 'closing') throw new Error('Claude orchestrator is closed')
+    const appTools = toolCore.list()
+    const registeredTools = appTools.map((record) => ({
+      record,
+      validator: record.inputSchema ? zodFromJson(record.inputSchema) : null,
+    }))
+    const toolByName = new Map(registeredTools.map((entry) => [entry.record.name, entry]))
+
+    const deny = (message = 'Tool use denied.') => ({ behavior: 'deny', message })
+    const activeMatches = (turnId, expectedToolEpoch) => (
+      state.kind === 'active'
+      && state.turnId === turnId
+      && state.toolEpoch === expectedToolEpoch
+    )
+    const cleanHandlerInput = (input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        return { args: {}, callToken: null, grantNonce: null }
+      }
+      const callToken = input[CALL_TOKEN_FIELD]
+      const grantNonce = input[GRANT_NONCE_FIELD]
+      const args = { ...input }
+      delete args[CALL_TOKEN_FIELD]
+      delete args[GRANT_NONCE_FIELD]
+      return { args, callToken, grantNonce }
+    }
+    const staleMcpResult = () => ({ content: toMcpContent(STALE_TOOL_RESULT) })
+
+    const sdkTools = registeredTools.map(({ record, validator }) => {
+      const rawShape = validator?.shape && typeof validator.shape === 'object'
+        ? validator.shape
+        : {}
+      const inputShape = { ...rawShape, ...carrierShape }
+
+      const handler = async (input = {}) => {
+        const { args, callToken, grantNonce } = cleanHandlerInput(input)
+        const authorization = nonEmptyString(callToken) ? authorizedCalls.get(callToken) : null
+        if (authorization) authorizedCalls.delete(callToken)
+
+        const permissionMatches = authorization?.permission === record.permission
+        const grantMatches = record.permission === 'R' || (
+          authorization?.tool === record.name
+          && authorization?.argsHash === hashArgs(args)
+        )
+        if (!authorization
+          || !activeMatches(authorization.turnId, authorization.toolEpoch)
+          || !permissionMatches
+          || !grantMatches) {
+          if (record.permission !== 'R') {
+            const exactGrant = authorization?.nonce
+              ? {
+                  nonce: authorization.nonce,
+                  tool: authorization.tool,
+                  argsHash: authorization.argsHash,
+                }
+              : {
+                  nonce: grantNonce,
+                  tool: record.name,
+                  argsHash: hashArgs(args),
+                }
+            consumeGrant(exactGrant)
+          }
+          return staleMcpResult()
+        }
+
+        const context = authorization.permission === 'R'
+          ? {}
+          : { nonce: authorization.nonce }
+        const result = await toolCore.call(record.name, args, context)
+        return { content: toMcpContent(result) }
+      }
+
+      return toolFactory(
+        record.name,
+        record.description ?? record.name,
+        inputShape,
+        handler,
+      )
+    })
+
     const sdkMcpServer = sdkMcpServerFactory({
       name: AGENT_MCP_SERVER_NAME,
       version: SDK_MCP_VERSION,
-      tools: [], // M3: register the real AutoFlowCut tool definitions.
+      tools: sdkTools,
+      alwaysLoad: true,
     })
-    const claudeToolPermissionGate = async () => ({
-      behavior: 'deny',
-      message: 'Claude 인앱 도구 승인은 M3에서 연결됩니다.',
-    })
+    const claudeToolPermissionGate = async (sdkToolName, input, permissionContext = {}) => {
+      // The SDK callback carries no turn id. Only the synchronously observed active owner is valid.
+      if (state.kind !== 'active') return deny('No active turn owns this tool request.')
+      const turnId = state.turnId
+      const expectedToolEpoch = state.toolEpoch
+      const callToken = randomUuid()
+      const canonicalName = nonEmptyString(sdkToolName) && sdkToolName.startsWith(SDK_TOOL_PREFIX)
+        ? sdkToolName.slice(SDK_TOOL_PREFIX.length)
+        : null
+      const registered = canonicalName ? toolByName.get(canonicalName) : null
+      const record = registered?.record
+      if (!record
+        || !input
+        || typeof input !== 'object'
+        || Array.isArray(input)
+        || Object.hasOwn(input, CALL_TOKEN_FIELD)
+        || Object.hasOwn(input, GRANT_NONCE_FIELD)
+        || !['R', 'G', 'B'].includes(record.permission)
+        || (registered.validator && !registered.validator.safeParse(input).success)
+        || permissionContext.signal?.aborted) {
+        return deny('Invalid tool permission request.')
+      }
+
+      if (record.permission === 'R') {
+        authorizedCalls.set(callToken, {
+          turnId,
+          toolEpoch: expectedToolEpoch,
+          permission: 'R',
+        })
+        return {
+          behavior: 'allow',
+          updatedInput: { ...input, [CALL_TOKEN_FIELD]: callToken },
+        }
+      }
+
+      const nonce = randomUuid()
+      const argsHash = hashArgs(input)
+      let permissionResult
+      try {
+        permissionResult = await elicitationResponder.handle({
+          serverName: AGENT_MCP_SERVER_NAME,
+          message: encodeApprovalPayload(canonicalName, input),
+          _meta: { nonce, tool: canonicalName, argsHash },
+        }, {
+          requestId: permissionContext.requestId,
+          turnId,
+        })
+      } catch {
+        return deny('Tool approval failed.')
+      }
+
+      if (permissionResult?.action !== 'accept') {
+        return deny('Tool approval was not accepted.')
+      }
+      if (!activeMatches(turnId, expectedToolEpoch) || permissionContext.signal?.aborted) {
+        consumeGrant({ nonce, tool: canonicalName, argsHash })
+        return deny('Tool approval is no longer active.')
+      }
+
+      authorizedCalls.set(callToken, {
+        turnId,
+        toolEpoch: expectedToolEpoch,
+        permission: record.permission,
+        nonce,
+        tool: canonicalName,
+        argsHash,
+      })
+      return {
+        behavior: 'allow',
+        updatedInput: {
+          ...input,
+          [CALL_TOKEN_FIELD]: callToken,
+          [GRANT_NONCE_FIELD]: nonce,
+        },
+      }
+    }
     const options = {
       tools: [],
       allowedTools: [],
@@ -763,7 +962,7 @@ export function createClaudeOrchestrator({
       if (previous.kind === 'pendingStart') cancelPendingStart(previous)
       state = { kind: 'closing' }
       turnEpoch += 1
-      toolEpoch += 1
+      invalidateToolAuthorizations()
       clearOrphanTimer()
       inputQueue.end(steerRefusal(state))
       let closeError = null

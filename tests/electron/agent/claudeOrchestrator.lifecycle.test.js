@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   AGENT_CLAUDE_MAX_TURNS,
+  AGENT_CLAUDE_MCP_TOOL_TIMEOUT_MS,
   AGENT_MCP_SERVER_NAME,
   AGENT_SESSION_MAX_TOOL_CALLS,
   AGENT_SESSION_MAX_TURNS,
@@ -83,15 +84,34 @@ function createHarness({ afterInput, beforeInputs, cancelCapability = true, ...o
   })
   const sdkMcpServer = { type: 'sdk', name: AGENT_MCP_SERVER_NAME }
   const sdkMcpServerFactory = vi.fn(() => sdkMcpServer)
+  const toolDefinitions = []
+  const toolFactory = vi.fn((name, description, inputSchema, handler, extras) => {
+    const definition = { name, description, inputSchema, handler, extras }
+    toolDefinitions.push(definition)
+    return definition
+  })
+  const elicitationResponder = { handle: vi.fn() }
+  const toolCore = {
+    list: vi.fn(() => [{
+      name: 'read_stats',
+      permission: 'R',
+      description: 'Read statistics.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    }]),
+    call: vi.fn(),
+  }
+  const grantLedger = { consume: vi.fn(), closeSession: vi.fn() }
   const randomUuid = vi.fn(() => `input-${inputs.length + 1}`)
   const orchestrator = createClaudeOrchestrator({
     sessionId: 'session-1',
     model: 'claude-sonnet-5',
     env: { PATH: '/usr/bin', CLAUDE_CONFIG_DIR: '/tmp/claude-test' },
-    elicitationResponder: { handle: vi.fn() },
-    toolCore: { list: vi.fn(() => []) },
+    elicitationResponder,
+    toolCore,
+    grantLedger,
     queryFactory,
     sdkMcpServerFactory,
+    toolFactory,
     randomUuid,
     onDelta,
     onEvent,
@@ -112,6 +132,11 @@ function createHarness({ afterInput, beforeInputs, cancelCapability = true, ...o
     get queryParams() { return queryParams },
     sdkMcpServer,
     sdkMcpServerFactory,
+    toolDefinitions,
+    toolFactory,
+    elicitationResponder,
+    toolCore,
+    grantLedger,
     randomUuid,
     capabilityRead,
     cancelAsyncMessage,
@@ -140,8 +165,15 @@ describe('createClaudeOrchestrator — persistent Query lifecycle', () => {
     expect(h.sdkMcpServerFactory).toHaveBeenCalledWith({
       name: AGENT_MCP_SERVER_NAME,
       version: '0.0.0',
-      tools: [],
+      tools: h.toolDefinitions,
+      alwaysLoad: true,
     })
+    expect(h.toolDefinitions).toHaveLength(1)
+    expect(h.toolDefinitions[0]).toEqual(expect.objectContaining({
+      name: 'read_stats',
+      description: 'Read statistics.',
+      handler: expect.any(Function),
+    }))
     expect(h.queryParams.options).toEqual({
       tools: [],
       allowedTools: [],
@@ -154,15 +186,15 @@ describe('createClaudeOrchestrator — persistent Query lifecycle', () => {
       persistSession: true,
       maxTurns: 384,
       mcpServers: { [AGENT_MCP_SERVER_NAME]: h.sdkMcpServer },
-      env: { ...inheritedEnv, MCP_TOOL_TIMEOUT: '1800000' },
+      env: { ...inheritedEnv, MCP_TOOL_TIMEOUT: String(AGENT_CLAUDE_MCP_TOOL_TIMEOUT_MS) },
       model: 'claude-sonnet-5',
     })
     expect(h.queryParams.options.maxTurns).not.toBe(2)
     expect(inheritedEnv).toEqual({ PATH: '/custom/bin', KEEP_ME: 'yes' })
-    await expect(h.queryParams.options.canUseTool('mcp__other__unknown', {})).resolves.toEqual({
-      behavior: 'deny',
-      message: 'Claude 인앱 도구 승인은 M3에서 연결됩니다.',
-    })
+    const denied = await h.queryParams.options.canUseTool('mcp__other__unknown', {})
+    expect(denied).toEqual({ behavior: 'deny', message: expect.any(String) })
+    expect(denied.message).not.toContain('M3')
+    expect(h.elicitationResponder.handle).not.toHaveBeenCalled()
     expect(h.capabilityRead).toHaveBeenCalledOnce()
 
     await h.orchestrator.close()
