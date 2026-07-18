@@ -139,6 +139,25 @@ describe('useAppSettings — 전역 image provider (M1 §5.8)', () => {
     const { result } = renderHook(() => useAppSettings())
     expect(result.current.settings.imageModel).toBe('gpt-image-1')
     expect(result.current.settings.modelsByProvider.openai).toBe('gpt-image-1')
+    // consume-once: 반영 후 nested model 은 제거돼 재로드 시 사용자 선택을 덮어쓰지 않는다
+    expect(result.current.settings.generation.image.model).toBeUndefined()
+  })
+
+  it('nested model consume-once: 반영 후 저장된 imageModel 변경이 재로드에서 안 덮어써짐', () => {
+    // 최초: nested model 로드 → imageModel=gpt-image-1, nested model 소비됨
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      generation: { image: { provider: 'openai', model: 'gpt-image-1' } },
+    }))
+    const first = renderHook(() => useAppSettings())
+    expect(first.result.current.settings.generation.image.model).toBeUndefined()
+    // 사용자가 이후 다른 모델을 저장한 상태를 시뮬레이션(nested model 없음, flat imageModel 이 진실)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      imageModel: 'some-other-model',
+      generation: { image: { provider: 'openai' } },
+      modelsByProvider: { openai: 'some-other-model' },
+    }))
+    const second = renderHook(() => useAppSettings())
+    expect(second.result.current.settings.imageModel).toBe('some-other-model') // stale nested 가 안 덮음
   })
 })
 

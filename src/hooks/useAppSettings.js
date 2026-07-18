@@ -64,7 +64,12 @@ function loadSettings() {
     // provider/model desync 방지: 스펙 shape 의 nested generation.image.model 이 있으면 활성 모델로 정합.
     // (UI 는 flat imageModel 을 쓰지만, nested model 로 저장된 설정을 로드할 때 provider=openai +
     //  model=gemini 로 어긋나는 것을 막는다.)
-    if (merged.generation.image.model) merged.imageModel = merged.generation.image.model
+    // **consume-once**: 반영 후 삭제한다 — 남겨두면 아무도 갱신 안 하는 stale nested model 이
+    // 매 로드마다 사용자의 이후 모델 선택을 덮어써 되돌린다(Fable 리뷰). flat imageModel 이 단일 진실.
+    if (merged.generation.image.model) {
+      merged.imageModel = merged.generation.image.model
+      delete merged.generation.image.model
+    }
     // provider별 모델 기억: 저장된 modelsByProvider 가 없으면 옛 설정 → (정합된) imageModel 을 그 슬롯에 시드.
     if (parsed.modelsByProvider && typeof parsed.modelsByProvider === 'object') {
       merged.modelsByProvider = { ...parsed.modelsByProvider }
