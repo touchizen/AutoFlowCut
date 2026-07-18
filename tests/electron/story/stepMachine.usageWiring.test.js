@@ -55,6 +55,42 @@ describe('토큰 배선 — provider tap → machine tracker → emit', () => {
     expect((await lastEmit(m, seen)).usage).toEqual({ input: 15, output: 2 })
   })
 
+  // 스트리밍 진행(pending) → 확정(commit) 배선. 이 경로가 이중계산이 실제로 일어나는 glue 다:
+  // clearPending 을 빼면 추정치가 확정치에 얹혀 두 배가 되고, setPending 을 addDelta 로 바꾸면
+  // 델타마다 누적이 다시 더해진다. tap/tracker 단위 테스트는 이 machine 배선을 안 지난다.
+  const se = (event) => ({ type: 'stream_event', event })
+  it('스트리밍 pending→commit 이 machine 배선을 통과해도 확정치만 남는다 (이중계산 킬)', async () => {
+    const events = []
+    const m = await mkMachine((ch, p) => events.push([ch, p]))
+    events.length = 0
+    const tapped = __tapQueryForTest(() => results(
+      se({ type: 'message_start', message: { usage: { input_tokens: 2, cache_creation_input_tokens: 98, cache_read_input_tokens: 0 } } }),
+      se({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'x'.repeat(300) } }), // 추정 out=100
+      { type: 'result', subtype: 'success', usage: { input_tokens: 2, cache_creation_input_tokens: 98, output_tokens: 42 } },
+    ))
+    for await (const _m of tapped({})) { /* drain */ }
+    const usage = events.filter(([ch]) => ch === 'story:usage').map(([, p]) => p.usage)
+    // 진행 중엔 추정치(in=100, out=100)가 실려 올라간다 — setPending→addDelta 스왑 시 값이 어긋난다.
+    expect(usage).toContainEqual({ input: 100, output: 100 })
+    // 확정 후 snapshot = 확정치만. clearPending 을 빼면 100(추정)+42 = 142 로 뜬다.
+    expect(usage[usage.length - 1]).toEqual({ input: 100, output: 42 })
+  })
+
+  it('스트림이 result 없이 끝나면 machine 합계에서 추정치가 빠진다 (clear 라우팅)', async () => {
+    const events = []
+    const m = await mkMachine((ch, p) => events.push([ch, p]))
+    events.length = 0
+    const tapped = __tapQueryForTest(() => results(
+      se({ type: 'message_start', message: { usage: { input_tokens: 2, cache_creation_input_tokens: 98 } } }),
+      se({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'y'.repeat(300) } }), // 추정 out=100
+      // result 없음 — 중단/EOF
+    ))
+    for await (const _m of tapped({})) { /* drain */ }
+    const usage = events.filter(([ch]) => ch === 'story:usage').map(([, p]) => p.usage)
+    expect(usage).toContainEqual({ input: 100, output: 100 }) // 진행 중엔 떴다가
+    expect(usage[usage.length - 1]).toEqual({ input: 0, output: 0 }) // finally clear 로 정리됨
+  })
+
   it('machine 이 codex sink 를 물린다 — 안 물리면 codex 토큰이 통째로 사라진다', async () => {
     const seen = []
     const m = await mkMachine((_ch, p) => seen.push(p))

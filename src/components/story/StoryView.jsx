@@ -18,7 +18,7 @@ import { useAudioPlayback } from '../../hooks/useAudioPlayback'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
 import StoryStepper, { STEP_META } from './StoryStepper'
-import { formatTokens } from './StoryTokenUsage'
+import { UsageInline } from './StoryTokenUsage'
 import VoicePicker from './VoicePicker'
 import SpeakerAudioSource from './SpeakerAudioSource'
 import Modal from '../Modal'
@@ -210,7 +210,6 @@ function StoryRunning({ label, startedAt, detail, log = [], usage = null }) {
     const el = logRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [log.length])
-  const hasUsage = usage && (usage.input || usage.output)
   return (
     <div className="story-running" aria-live="polite">
       {detail && <div className="story-running-detail">{detail}</div>}
@@ -218,9 +217,7 @@ function StoryRunning({ label, startedAt, detail, log = [], usage = null }) {
         <StopwatchIcon size={18} />
         <span className="story-running-label">{label}</span>
         <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
-        {hasUsage && (
-          <span className="story-running-tokens">in {formatTokens(usage.input)} / out {formatTokens(usage.output)}</span>
-        )}
+        <UsageInline usage={usage} />
       </div>
       {log.length > 0 && (
         <div className="story-progress-log" ref={logRef} role="log" aria-live="polite">
@@ -233,17 +230,6 @@ function StoryRunning({ label, startedAt, detail, log = [], usage = null }) {
         </div>
       )}
     </div>
-  )
-}
-
-/** 이 프로젝트 세션 누적 토큰 인라인 — 별도 영역 없이 각 스텝 기존 UI 에 얹는다.
- *  0/0 이면 숨긴다(파이프라인 돌리기 전엔 안 뜨는 게 정상). formatTokens 로 k 단위. */
-function UsageInline({ usage, className = '' }) {
-  if (!usage || (!usage.input && !usage.output)) return null
-  return (
-    <span className={`story-usage-inline ${className}`.trim()}>
-      in {formatTokens(usage.input)} / out {formatTokens(usage.output)}
-    </span>
   )
 }
 
@@ -1371,6 +1357,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   }, [scenes, segmentProgress])
   // 해당 타겟의 검수 점수만 — 다른 스텝 점수가 새지 않게.
   const scoresFor = (target) => (reviewScores?.target === target ? reviewScores.scores : [])
+  // 편집기 카운트 행(줄 수·자 수)에 얹는 검수 점수 + 세션 토큰. 둘 다 없으면 null 을 줘야
+  // PromptInput 이 빈 footer span 을 안 만든다(안 그러면 실행 전에도 12px gap 이 뜬다).
+  const hasUsage = !!(usage && (usage.input || usage.output))
+  const stepFooter = (target) => {
+    const scores = scoresFor(target)
+    if (!scores.length && !hasUsage) return null
+    return <>{scores.length ? <ReviewScore scores={scores} /> : null}<UsageInline usage={usage} /></>
+  }
   // 검수 진행 표시 — 시놉시스 패널과 같은 모양(콘텐츠는 그대로 두고 하단에 시계+로그창).
   const reviewRunning = (step, log) => (
     <StoryRunning usage={usage}
@@ -1398,7 +1392,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
         hideTip
         countLabelKey="prompt.lineCount"
         // 검수 점수·세션 토큰은 줄 수·자 수 행에 얹는다 — 별도 줄을 만들면 편집 영역만 좁아진다.
-        footerExtra={<>{scoresFor('script').length ? <ReviewScore scores={scoresFor('script')} /> : null}<UsageInline usage={usage} /></>}
+        footerExtra={stepFooter('script')}
         placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
       />
     </div>
@@ -1418,7 +1412,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
         hideTip
         countLabelKey="prompt.lineCount"
         ariaLabel={t('story.synopsis.editorLabel', '줄거리')}
-        footerExtra={<>{scoresFor('synopsis').length ? <ReviewScore scores={scoresFor('synopsis')} /> : null}<UsageInline usage={usage} /></>}
+        footerExtra={stepFooter('synopsis')}
         placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
       />
     </div>

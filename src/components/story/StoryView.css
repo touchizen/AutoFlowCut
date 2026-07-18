@@ -1335,16 +1335,7 @@
 .story-voice-source { grid-area: source; min-width: 0; }
 
 
-/* 진행 표시(초시계+경과시간) 옆 인라인 토큰 — 별도 영역 없이 소요시간 줄에 같이. */
-.story-running-tokens {
-  margin-left: 8px;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary, #8a8a8a);
-  opacity: 0.85;
-}
-
-/* 편집기 카운트 행(줄 수·자 수) 및 프롬프트 표 하단에 얹는 세션 토큰 — 별도 영역 없음. */
+/* 세션 토큰 인라인(UsageInline) — 진행 표시 옆 / 편집기 카운트 행 / 프롬프트 표 하단, 별도 영역 없음. */
 .story-usage-inline {
   margin-left: 8px;
   font-size: 12px;

@@ -81,35 +81,51 @@ export function setClaudeUsageSink(fn) { claudeUsageSink = fn }
 // 서로의 진행 표시를 안 덮는다. Date/random 불필요.
 let pendingKeySeq = 0
 
-// commit(=result) 은 기존대로 {input,output} 을 addDelta 한다. 스트리밍 진행 표시는 pending 채널:
-//   진행:  sink({ pendingKey, input, output })  → tracker.setPending  (key 별 교체)
-//   확정:  sink({ pendingKey, clear:true })      → tracker.clearPending (result 직전에 지움)
-//          그 뒤 sink({ input, output })          → addDelta (정확치 커밋)
-// pending 을 안 지우고 커밋하면 같은 응답이 두 번 세어진다 — 이 기능의 유일 실패 모드.
+// sink 프로토콜:
+//   진행:  sink({ pendingKey, input, output })            → tracker.setPending   (key 별 교체, 추정치)
+//   확정:  sink({ pendingKey, commit:true, input, output }) → clearPending + addDelta (원샷 — 사이에 0/0
+//            snapshot 이 안 생겨 UI 가 안 깜빡인다)
+//   정리:  sink({ pendingKey, clear:true })                → clearPending (result 없이 끝났을 때)
+//   비스트림: sink({ input, output })                       → addDelta (기존 경로)
+// pending 을 커밋/정리 없이 두면 추정치가 세션 합계에 영구히 남는다 — 이 기능의 유일 실패 모드.
 function tapQuery(makeStream, sink) {
   return async function* (args) {
     let key = null      // 이 쿼리의 pending 키(usage 있는 첫 이벤트에서 지연 생성)
     let pin = 0         // 입력(message_start 누적, 즉시 정확)
-    let ochars = 0      // 스트리밍된 출력 문자수(text+thinking)
-    const emitPending = () => sink({ pendingKey: (key ??= `claude-pending-${++pendingKeySeq}`), input: pin, output: estimateOutputTokens(ochars) })
-    for await (const m of makeStream(args)) {
-      // 계측 실패가 생성을 죽이면 안 된다.
-      if (sink) {
-        try {
-          if (m?.type === 'result') {
-            const u = claudeResultToUsage(m)
-            // pending 제거 + 확정치 가산을 한 번에(commit) — 따로 쏘면 그 사이 snapshot 이 순간
-            // 0/0 이 되어 UI 가 깜빡인다(0/0 은 숨김). 스트림이 아니었으면(key 없음) 기존대로 가산.
-            if (key) { sink({ pendingKey: key, commit: true, input: u?.input || 0, output: u?.output || 0 }); key = null }
-            else if (u) sink(u)
-          } else {
-            const inp = claudeStreamInput(m)
-            if (inp != null) { pin += inp; emitPending() }        // message_start: 입력 즉시 반영
-            else { const c = claudeStreamOutChars(m); if (c) { ochars += c; emitPending() } } // 텍스트/thinking 델타: 출력 추정 상승
-          }
-        } catch { /* best-effort */ }
+    let ochars = 0      // 스트리밍된 출력 문자수(text+thinking+structured JSON)
+    let lastIn = -1, lastOut = -1 // 마지막 emit 값 — 추정치가 안 바뀌면(3자 미만 증가) IPC 를 아낀다.
+    const emitPending = () => {
+      const out = estimateOutputTokens(ochars)
+      if (pin === lastIn && out === lastOut) return
+      lastIn = pin; lastOut = out
+      sink({ pendingKey: (key ??= `claude-pending-${++pendingKeySeq}`), input: pin, output: out })
+    }
+    try {
+      for await (const m of makeStream(args)) {
+        // 계측 실패가 생성을 죽이면 안 된다.
+        if (sink) {
+          try {
+            if (m?.type === 'result') {
+              const u = claudeResultToUsage(m)
+              // pending 제거 + 확정치 가산을 한 번에(commit). 스트림이 아니었으면(key 없음) 기존대로 가산.
+              // result 에 usage 가 없는 비정상 응답이면(SDK 상 필수라 방어적) 마지막 추정치로 커밋 —
+              // 0/0 으로 커밋하면 이미 쓴 토큰을 통째로 버린다.
+              if (key) { sink({ pendingKey: key, commit: true, input: u ? u.input : pin, output: u ? u.output : estimateOutputTokens(ochars) }); key = null }
+              else if (u) sink(u)
+            } else {
+              const inp = claudeStreamInput(m)
+              if (inp != null) { pin += inp; emitPending() }        // message_start: 입력 즉시 반영
+              else { const c = claudeStreamOutChars(m); if (c) { ochars += c; emitPending() } } // 델타: 출력 추정 상승
+            }
+          } catch { /* best-effort */ }
+        }
+        yield m
       }
-      yield m
+    } finally {
+      // result 없이 스트림 종료(abort/EOF/에러 — 소비자가 break/return 하면 여기로 온다):
+      // pending 추정치를 지운다. 안 지우면 세션 합계에 영구히 박히고 Map 이 샌다.
+      // (중단 시엔 정확치를 못 받으므로 그 부분 토큰은 미집계 — 기존 result-tap 동작과 동일.)
+      if (sink && key) { try { sink({ pendingKey: key, clear: true }) } catch { /* best-effort */ } }
     }
   }
 }
@@ -208,7 +224,7 @@ export async function generateSynopsis(input, opts = {}, { onDelta, signal, quer
     if (input?.type === 'pasted') {
       // 대본에서 시놉시스(로그라인/훅/구조)+등장인물을 함께 역추출(비스트리밍 단일 result).
       const prompt = buildSynopsisFromScriptPrompt(input.pastedScript, opts)
-      const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+      const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
       for await (const m of queryImpl({ prompt, options })) {
         if (m.type === 'result') return splitSynopsisOutput(extractClaudeSdkResult(m))
       }
@@ -242,7 +258,7 @@ export async function generateTitle(scriptMd, opts = {}, { signal, queryImpl = d
   const prompt = buildTitlePrompt(scriptMd, opts)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return { title: extractClaudeSdkResult(m).split('\n')[0].trim() }
     }
@@ -370,7 +386,7 @@ export async function reviseScript(scriptMd, critique, opts = {}, { signal, quer
   const prompt = buildRevisePrompt(scriptMd, critique, opts)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return { scriptMd: extractClaudeSdkResult(m) }
     }
@@ -397,7 +413,7 @@ export async function reviseSynopsis(synopsisMd, characters = [], critique, opts
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
     if (signal?.aborted) throw new Error('Aborted')
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return splitSynopsisOutput(extractClaudeSdkResult(m))
     }

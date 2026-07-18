@@ -79,6 +79,35 @@ describe('claude usage tap', () => {
     expect(seen).toHaveLength(4)
   })
 
+  it('result 없이 스트림 종료(abort/EOF) 시 pending 을 clear 로 정리 — 추정치가 합계에 안 남는다', async () => {
+    const seen = []
+    setClaudeUsageSink((u) => seen.push(u))
+    const tapped = __tapQueryForTest(() => results(
+      se({ type: 'message_start', message: { usage: { input_tokens: 2, cache_creation_input_tokens: 100, cache_read_input_tokens: 0 } } }),
+      se({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'z'.repeat(30) } }),
+      // result 없음 — 스트림이 그냥 끝난다(중단/EOF 재현)
+    ))
+    for await (const _m of tapped({})) { /* drain */ }
+    const key = seen[0].pendingKey
+    expect(seen[0]).toEqual({ pendingKey: key, input: 102, output: 0 })
+    expect(seen[1]).toEqual({ pendingKey: key, input: 102, output: 10 })
+    expect(seen[2]).toEqual({ pendingKey: key, clear: true }) // finally 가 pending 정리
+    expect(seen).toHaveLength(3)
+  })
+
+  it('소비자가 중간에 break 해도(early return) finally 가 pending 을 정리한다', async () => {
+    const seen = []
+    setClaudeUsageSink((u) => seen.push(u))
+    const tapped = __tapQueryForTest(() => results(
+      se({ type: 'message_start', message: { usage: { input_tokens: 5, cache_read_input_tokens: 0 } } }),
+      se({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'yy' } }),
+      se({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'more text here' } }),
+    ))
+    for await (const _m of tapped({})) { break } // 첫 메시지 뒤 중단 → generator.return() → finally
+    const key = seen[0].pendingKey
+    expect(seen.some((s) => s.pendingKey === key && s.clear)).toBe(true) // pending 이 정리됨
+  })
+
   it('스트림 usage 가 전혀 없으면 pending 을 안 만들고 result 만 커밋 — 기존 경로 불변', async () => {
     const seen = []
     setClaudeUsageSink((u) => seen.push(u))

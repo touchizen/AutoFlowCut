@@ -8,11 +8,8 @@ import * as llmClaude from '../../electron/api/llm/llmClaude.js'
 // SDK query만 목킹 — llmClaude 실제 로직(스트리밍/structured) 경유
 function fakeQueryFactory() {
   return async function* (args) {
-    if (args.options?.includePartialMessages) {
-      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '# 대본' } } }
-      yield { type: 'result', subtype: 'success', is_error: false, result: '# 대본' }
-      return
-    }
+    // outputFormat 을 먼저 본다 — structured 호출도 이제 includePartialMessages 를 켜므로
+    // (씬/프롬프트 실시간 usage), includePartialMessages 를 먼저 보면 structured 가 텍스트 분기로 샌다.
     if (args.options?.outputFormat) {
       // splitScenes 또는 writePrompts 스키마에 따라 최소 유효 데이터 반환
       const isPrompts = /imagePrompt/.test(JSON.stringify(args.options.outputFormat.schema))
@@ -20,6 +17,11 @@ function fakeQueryFactory() {
         ? { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
         : { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'narrator', text: 'hi' }] }], speakers: [{ id: 'narrator', name: 'N' }] }
       yield { type: 'result', subtype: 'success', is_error: false, structured_output: data }
+      return
+    }
+    if (args.options?.includePartialMessages) {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '# 대본' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, result: '# 대본' }
       return
     }
     yield { type: 'result', subtype: 'success', is_error: false, result: '{}' }

@@ -290,6 +290,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   setClaudeUsageSink((u) => {
     if (u?.pendingKey) {
       if (u.commit) { usageTracker.clearPending(u.pendingKey); usageTracker.addDelta(u) } // 제거+가산 원샷
+      else if (u.clear) usageTracker.clearPending(u.pendingKey) // result 없이 종료(abort/EOF) — 추정치 정리
       else usageTracker.setPending(u.pendingKey, u)
     } else {
       usageTracker.addDelta(u) // 비스트림 확정 커밋

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import StoryTokenUsage, { formatTokens } from '../../../src/components/story/StoryTokenUsage.jsx'
+import { formatTokens, UsageInline } from '../../../src/components/story/StoryTokenUsage.jsx'
 
 describe('formatTokens', () => {
   it('1000 미만은 그대로', () => {
@@ -25,26 +25,22 @@ describe('formatTokens', () => {
   })
 })
 
-describe('StoryTokenUsage', () => {
+// 표시 컴포넌트는 StoryView 의 UsageInline 으로 대체됨(하단 바 StoryTokenUsage 제거). 숨김/렌더 규칙 테스트.
+describe('UsageInline', () => {
   it('in / out 을 함께 보여준다', () => {
-    render(<StoryTokenUsage usage={{ input: 8149, output: 4210 }} />)
-    expect(screen.getByText('in 8.1k')).toBeTruthy()
-    expect(screen.getByText('out 4.2k')).toBeTruthy()
+    render(<UsageInline usage={{ input: 8149, output: 4210 }} />)
+    expect(screen.getByText(/in 8\.1k/)).toBeTruthy()
+    expect(screen.getByText(/out 4\.2k/)).toBeTruthy()
   })
 
-  it('아직 아무것도 안 돌았으면 아무것도 안 그린다', () => {
-    const { container } = render(<StoryTokenUsage usage={null} />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('0/0 이면 자리를 차지하지 않는다', () => {
-    const { container } = render(<StoryTokenUsage usage={{ input: 0, output: 0 }} />)
-    expect(container.firstChild).toBeNull()
+  it('null / 0-0 이면 아무것도 안 그린다', () => {
+    expect(render(<UsageInline usage={null} />).container.firstChild).toBeNull()
+    expect(render(<UsageInline usage={{ input: 0, output: 0 }} />).container.firstChild).toBeNull()
   })
 
   it('한쪽만 있어도 보여준다', () => {
-    render(<StoryTokenUsage usage={{ input: 500, output: 0 }} />)
-    expect(screen.getByText('in 500')).toBeTruthy()
-    expect(screen.getByText('out 0')).toBeTruthy()
+    render(<UsageInline usage={{ input: 500, output: 0 }} />)
+    expect(screen.getByText(/in 500/)).toBeTruthy()
+    expect(screen.getByText(/out 0/)).toBeTruthy()
   })
 })
