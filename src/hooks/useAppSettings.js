@@ -2,7 +2,7 @@
  * useAppSettings — 앱 설정 관리 (초기화 + localStorage 동기화)
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { DEFAULTS, UI } from '../config/defaults'
 import { generateProjectName } from '../utils/formatters'
 import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from '../config/genModels'
@@ -71,10 +71,14 @@ function loadSettings() {
 }
 
 /**
- * @returns {{ settings, setSettings, updateSetting }}
+ * @returns {{ settings, setSettings, updateSetting, ensureProjectName, projectNameRef }}
  */
 export function useAppSettings() {
   const [settings, setSettings] = useState(loadSettings)
+  const projectNameRef = useRef(settings.projectName)
+  // 비동기 coordinator는 렌더 closure가 아니라 현재 프로젝트를 읽어야 한다.
+  // 프로젝트 전환으로 settings가 바뀌면 render 시점에 즉시 mirror한다.
+  projectNameRef.current = settings.projectName
 
   // localStorage 동기화
   useEffect(() => {
@@ -92,14 +96,16 @@ export function useAppSettings() {
    * - 없으면(빈 문자열/falsy) 새 이름을 생성해 settings에 고정하고 반환
    *
    * 호출마다 Date.now()가 새로 찍혀 여러 개의 autoflowcut_<ts> 고아 폴더가
-   * 만들어지는 문제를 방지하기 위해, 한 번 생성한 이름은 settings에 영구 저장한다.
+   * 만들어지는 문제를 방지하기 위해, React setter보다 ref를 먼저 갱신한다.
+   * 같은 tick의 연속 호출은 re-render를 기다리지 않고 방금 확정한 이름을 본다.
    */
   const ensureProjectName = useCallback(() => {
-    const current = settings.projectName
+    const current = projectNameRef.current
     if (current && typeof current === 'string' && current.trim()) {
       return current
     }
     const generated = generateProjectName()
+    projectNameRef.current = generated
     setSettings(prev => {
       // 동일 렌더에서 다른 호출이 이미 이름을 확정했다면 그 값 유지
       if (prev.projectName && typeof prev.projectName === 'string' && prev.projectName.trim()) {
@@ -108,7 +114,7 @@ export function useAppSettings() {
       return { ...prev, projectName: generated }
     })
     return generated
-  }, [settings.projectName])
+  }, [])
 
-  return { settings, setSettings, updateSetting, ensureProjectName }
+  return { settings, setSettings, updateSetting, ensureProjectName, projectNameRef }
 }

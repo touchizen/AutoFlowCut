@@ -14,7 +14,35 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { computeGuardAvailable } from '../../src/services/startGuard'
+import { computeGuardAvailable, isStartBlocked, shouldStopRefWork } from '../../src/services/startGuard'
+
+// handleStop 이 ref 작업을 중단할지 — 진리표로 고정한다.
+//
+// 왜 술어로 뺐나: 이 판정은 App.jsx 안에 인라인이었고 테스트는 가드의 소스 문자열을 통째로
+// 핀했다. 그 계기는 `||` → `&&` 뮤턴트를 잡긴 하지만, 의미가 같은 정상 리팩터(피연산자 순서
+// 교환, 헬퍼 추출, 줄바꿈)에도 깨진다. 정상 리팩터에 깨지는 테스트는 사람을 "느슨하게 풀도록"
+// 훈련시키고, 그게 애초에 이 버그가 들어온 경로였다.
+//
+// 결정적 케이스는 (refBatchRunning=false, gatePhase='busy') → 중단해야 함이다. 큐 대기와
+// 아이템별 auth preflight 에서 lifecycle flag 가 전부 false 인데 gate 는 busy 인 그 창 —
+// 옛 `if (refBatchRunning)` 가드에서 Stop 이 떠 있는 채 무반응이던 바로 그 상태다.
+describe('shouldStopRefWork — handleStop 의 ref 중단 판정', () => {
+  it.each([
+    [true, null, true, 'ref 배치가 실제로 돌고 있음'],
+    [true, 'busy', true, '둘 다 참'],
+    [false, 'busy', true, '⭐ lifecycle flag 빈틈(큐 대기/아이템 preflight) — && 뮤턴트가 여기서 죽는다'],
+    [false, 'confirm', false, '사용자가 아직 고르는 중 — 중단할 ref 작업 없음'],
+    [false, 'failure', false, '이미 끝나고 실패 모달 — 중단할 것 없음'],
+    [false, null, false, 'gate 도 배치도 없음'],
+  ])('refBatchRunning=%s gatePhase=%s → %s (%s)', (refBatchRunning, gatePhase, expected) => {
+    expect(shouldStopRefWork({ refBatchRunning, gatePhase })).toBe(expected)
+  })
+
+  it('gate 가 없어도(undefined) 안전하다', () => {
+    expect(shouldStopRefWork({ refBatchRunning: false, gatePhase: undefined })).toBe(false)
+    expect(shouldStopRefWork({ refBatchRunning: true, gatePhase: undefined })).toBe(true)
+  })
+})
 
 describe('computeGuardAvailable — handleStart requireStyle 가드 헬퍼 (P3)', () => {
   // App.jsx case 'text'/'list'의 가드 분기를 재현하는 wrapper.
@@ -155,5 +183,31 @@ describe('computeGuardAvailable — pure function direct tests', () => {
     const references = [{ id: 'x', type: 'style' }]
     expect(computeGuardAvailable({ force: true, targetScenes, references, autoAvailable: false, previewStyleMatchingFn: fn })).toBe(true)
     expect(fn).toHaveBeenCalledWith(targetScenes, references)
+  })
+})
+
+describe('isStartBlocked — handleStart entry guard', () => {
+  it.each([
+    ['scene automation', { isRunning: true }],
+    ['video automation', { videoRunning: true }],
+    ['pending batch latch', { hasPendingBatch: true }],
+    ['video retry', { retryInFlight: true }],
+  ])('%s가 진행 중이면 시작을 차단한다', (_label, overrides) => {
+    expect(isStartBlocked({
+      isRunning: false,
+      videoRunning: false,
+      hasPendingBatch: false,
+      retryInFlight: false,
+      ...overrides,
+    })).toBe(true)
+  })
+
+  it('모든 실행/latch 신호가 false면 통과한다', () => {
+    expect(isStartBlocked({
+      isRunning: false,
+      videoRunning: false,
+      hasPendingBatch: false,
+      retryInFlight: false,
+    })).toBe(false)
   })
 })

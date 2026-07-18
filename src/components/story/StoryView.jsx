@@ -18,7 +18,9 @@ import { useAudioPlayback } from '../../hooks/useAudioPlayback'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
 import StoryStepper, { STEP_META } from './StoryStepper'
+import { UsageInline } from './StoryTokenUsage'
 import VoicePicker from './VoicePicker'
+import SpeakerAudioSource from './SpeakerAudioSource'
 import Modal from '../Modal'
 import LiveTimeline from '../LiveTimeline'
 import { buildStoryAudioPackage, buildStorySrtEntries } from '../../utils/storyAudioPackage'
@@ -203,7 +205,7 @@ function formatProgressLogTime(value) {
 }
 
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
-function StoryRunning({ label, startedAt, detail, log = [] }) {
+function StoryRunning({ label, startedAt, detail, log = [], usage = null }) {
   const logRef = useRef(null)
   useEffect(() => {
     const el = logRef.current
@@ -216,6 +218,7 @@ function StoryRunning({ label, startedAt, detail, log = [] }) {
         <StopwatchIcon size={18} />
         <span className="story-running-label">{label}</span>
         <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
+        <UsageInline usage={usage} />
       </div>
       {log.length > 0 && (
         <div className="story-progress-log" ref={logRef} role="log" aria-live="polite">
@@ -234,12 +237,13 @@ function StoryRunning({ label, startedAt, detail, log = [] }) {
 /** 생성 중 인라인 시계 — 스트리밍(시놉시스/대본)처럼 텍스트만 뜨는 뷰 하단 우측에 붙여
  *  "돌고 있음 + 경과 시간"을 보인다(초시계 애니메이션 + 1초 갱신). reasoning=max 등 첫 출력이
  *  늦을 때 화면이 텅 비어 멈춘 것처럼 보이던 문제를 해소. */
-function GenClock({ startedAt, label }) {
+function GenClock({ startedAt, label, usage = null }) {
   return (
     <div className="story-gen-clock" aria-live="polite">
       <StopwatchIcon size={14} />
       {label && <span className="story-gen-clock-label">{label}</span>}
       <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
+      <UsageInline usage={usage} />
     </div>
   )
 }
@@ -357,7 +361,7 @@ export default function StoryView({
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, reviewScores = null, progressLog = [],
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
@@ -515,8 +519,44 @@ export default function StoryView({
   // M2a-3b/슬라이스3, Task 11: 화자별 엔진(provider)·목소리 선택 + VoicePicker 모달 상태.
   // useStoryVoiceSelection 훅으로 분리(순수 리팩터) — src/hooks/useStoryVoiceSelection.js 참고.
   const voiceSel = useStoryVoiceSelection({ speakers: state?.speakers || [], voices, onTagGender })
+  /**
+   * 이 화자의 오디오를 파일에서 가져오는가 — main의 isImportProvider와 같은 기준(화자로 판정).
+   *
+   * 세그먼트의 srcStartMs로 보면 안 된다: 그 구간은 ⑤가 매 실행마다 계산하고 영속하지 않아
+   * renderer엔 절대 오지 않는다(= 항상 false인 죽은 판정이 된다).
+   *
+   * 화자 참조는 main의 findSpeakerByRef와 **같은 정규화**로 푼다 — id 완전일치로 보면 안 된다:
+   * seg.speaker는 id가 아니라 이름이나 별칭일 수 있고(나레이터는 {id:'narrator', name:'나레이션'}로
+   * 시딩된다), 그러면 주 화자에서 바로 어긋나 판정이 죽는다.
+   */
+  const refKey = (v) => (isNarratorSpeaker(v) ? 'narrator' : String(v || '').replace(/\s/g, '').toLowerCase())
+  /**
+   * 세그먼트의 화자 참조(id·이름·별칭) → 화자 객체. main의 findSpeakerByRef와 **같은 정규화**여야
+   * 한다 — 어긋나면 같은 세그먼트를 main은 A에, UI는 B에 붙인다.
+   *
+   * 공백뿐인 참조는 뺀다(main과 같은 이유): refKey는 그걸 'narrator'로 접으므로, name이 '   '인
+   * 인물이 나레이터 별칭을 갖게 되고 목록에서 나레이터보다 앞이면 **나레이터 세그먼트가 그 인물
+   * 것으로** 잡힌다(진행 배지가 합쳐지고 나레이터 성우 버튼이 사라진다). 스키마가 공백 이름을 허용한다.
+   */
+  const speakerByRef = (speakerRef) => {
+    const key = refKey(speakerRef)
+    if (!key) return null
+    const keysOf = (s) => [s.id, s.name].filter((v) => String(v || '').trim()).map(refKey)
+    return (state?.speakers || []).find((s) => keysOf(s).includes(key)) || null
+  }
+  const isImportSpeaker = (speakerRef) => {
+    const sp = speakerByRef(speakerRef)
+    if (!sp) return false
+    const src = voiceSel.importForSpeaker(sp)
+    return !!(src?.mp3Path && src?.srtPath)
+  }
   // M2b-5: sfx 세그먼트별 소스(로컬 오버라이드). 기본은 세그먼트 영속값(seg.sourceMode) > elevenlabs.
   const [sourceModeBySegment, setSourceModeBySegment] = useState({})
+  // 화자별 오디오 출처 — 성우 행 전체가 드롭 타깃이다(칩 영역만 노리면 좁다). 행에 놓인 파일을
+  // 그 화자의 SpeakerAudioSource(takeFiles)로 위임한다. 화자 id → 위젯 핸들.
+  const srcDropHandles = useRef(new Map())
+  // 지금 드래그가 올라온 성우 행 id(하나만 하이라이트). 놓거나 벗어나면 null.
+  const [dragVoiceRowId, setDragVoiceRowId] = useState(null)
   // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
   const { playingFile, playAudio, stopAudio } = useAudioPlayback()
   // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
@@ -952,6 +992,10 @@ export default function StoryView({
     const sps = state?.speakers || []
     if (sps.length) {
       params.speakers = sps.map((sp) => {
+        // 오디오 출처(mp3+SRT)를 지정한 화자는 TTS로 만들지 않는다 — ⑤가 자막에서 구간을 찾아
+        // 그 파일을 잘라 쓴다. 성우 선택보다 우선한다(출처를 고른 건 명시적 의사표시다).
+        const src = voiceSel.importForSpeaker(sp)
+        if (src?.mp3Path && src?.srtPath) return { ...sp, voice: { provider: 'import', mp3Path: src.mp3Path, srtPath: src.srtPath } }
         const vid = voiceSel.voiceIdForSpeaker(sp)
         if (!vid) return { ...sp, voice: null } // '기본 성우' → backend defaultVoice 폴백
         return { ...sp, voice: { provider: voiceSel.providerForSpeaker(sp), voiceId: vid } }
@@ -978,14 +1022,32 @@ export default function StoryView({
     return {}
   }
 
+  /**
+   * 확인이 필요한 조각 표식. 진행 로그로는 부족하다 — 메모리라 start() 마다 지워지고(전체 실행은
+   * audio 완료 직후 prompts 를 시작한다) 재오픈하면 없다. 영속된 사실을 목록에 띄운다.
+   *
+   * 두 사유는 **다른 사실**이라 문구를 나눈다 — 합치면 툴팁이 거짓말이 된다:
+   *   approx      — 자막에서 정확한 자리를 못 찾아 이웃 사이로 보간해 잘랐다.
+   *   needsReview — 남의 대사가 어긋나 이 출처의 오디오가 남의 자리를 물어왔을 수 있다.
+   */
+  const renderSegmentMark = (seg) => {
+    const hint = seg.approx
+      ? t('story.audio.approxHint', '자막에서 정확한 자리를 못 찾아 근처로 잘랐습니다 — 들어보고 조정하세요')
+      : seg.needsReview
+        ? t('story.audio.needsReviewHint', '자막의 다른 화자 대사가 대본과 어긋나, 이 조각이 남의 자리 오디오일 수 있습니다 — 들어보세요')
+        : null
+    if (!hint) return null
+    return <span className="story-seg-approx" data-testid={`seg-mark-${seg.id}`} title={hint}>≈</span>
+  }
+
   // 세그먼트 셀 — 윗줄 대화. 감정은 화자(대사)만 아랫줄 (감정)으로, 나레이터는 제외.
   // 감정은 TTS·프롬프트 작성에도 쓰인다.
   const renderNarrationCell = (seg) => {
-    if (isNarratorSpeaker(seg.speaker)) return seg.text
+    if (isNarratorSpeaker(seg.speaker)) return <>{renderSegmentMark(seg)}{seg.text}</>
     const emo = seg.emotion || 'normal'
     return (
       <div className="story-seg-cell">
-        <div className="story-seg-text">{seg.text}</div>
+        <div className="story-seg-text">{renderSegmentMark(seg)}{seg.text}</div>
         <div className="story-seg-emotion">({t(`story.emotion.${emo}`, EMOTION_LABEL[emo] || EMOTION_LABEL.normal)})</div>
       </div>
     )
@@ -998,8 +1060,28 @@ export default function StoryView({
     setViewedStep(null)
   }
 
+  const runSpeakerAudio = async (sp) => {
+    const result = await start('audio', { ...buildAudioParams(), onlySpeaker: sp.id })
+    // main 의 거절(대사 없는 화자 등)은 **사전검사라 스텝 상태를 일부러 안 건드린다**(완료 프로젝트의
+    // done 을 지키려고). 그래서 오류 배너도 안 뜬다 — 여기서 안 띄우면 버튼이 무반응으로 보인다.
+    // busy 는 뺀다: 실행 중엔 화자 맵 자체가 안 보이므로 사용자가 만든 상황이 아니다.
+    if (result?.error && result.error !== 'busy') {
+      toast.error(resolveDisplayError(t, result.error, result.error))
+      return
+    }
+    if (result?.partialAudioRun) {
+      const speaker = sp.name || sp.id
+      toast.success(t(
+        'story.audio.runThisSpeakerDone',
+        '{speaker} generated — run the full step to complete the timeline',
+        { speaker },
+      ))
+    }
+  }
+
   // audio 타임라인 프리뷰 — story 세그먼트를 화자별 voices audioPackage로 변환해 기존 AudioTimeline
-  // (LiveTimeline)에 넘긴다(디스크 재배치 없이 메모리 변환). audio done일 때만 렌더.
+  // (LiveTimeline)에 넘긴다(디스크 재배치 없이 메모리 변환). 만들어진 오디오가 있으면 렌더 —
+  // done 을 기다리면 부분 실행("이 화자만 생성")이 영영 확인이 안 된다.
   const storyAudioPkg = useMemo(() => buildStoryAudioPackage(scenes), [scenes])
   const storySrtEntries = useMemo(() => buildStorySrtEntries(scenes), [scenes])
   // Codex-Low: sfx만 있는 story(narration 없음)도 타임라인에 나오도록 sfx도 포함해 판정.
@@ -1193,6 +1275,7 @@ export default function StoryView({
     if (title.trim() || !scriptText.trim()) return title
     try {
       const res = await pipeline.generateTitle(scriptText, currentOptions())
+      if (res?.aborted) return null // 겹친 호출/프로젝트 전환이 취소함 — toast 없이 조용히
       if (!res?.title) throw new Error(res?.error || 'empty-title')
       setTitle(res.title)
       return res.title
@@ -1222,11 +1305,16 @@ export default function StoryView({
     const resolved = await resolveTitle()
     if (resolved == null) return false // 제목 자동생성 실패 → 실행 안 함(자동 진행이 이걸로 멈춤)
     // resolveTitle이 생성한 title을 main source of truth에 커밋 — 없으면 재오픈 hydrate가 제목을 잃는다.
-    const res = await runStep('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
-    // §1 — scenes 실행으로 scriptPhase를 벗고 스텝퍼가 진행한다.
     setScriptPhase(null)
-    setViewedStep(null) // 씬 분리 진행 시 현재 단계(scenes) 패널로 화면 이동
-    return !res?.error // busy 등 enqueue 실패면 false
+    // 재분리에서는 currentStep이 audio 이후일 수 있어 null로 비우면 그 패널로 튄다.
+    setViewedStep('scenes')
+    try {
+      const res = await runStep('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
+      setViewedStep(null)
+      return !res?.error // busy 등 enqueue 실패면 false
+    } catch {
+      return false
+    }
   }
 
   // ── 자동 진행 오케스트레이션 ──────────────────────────────────────────────
@@ -1346,11 +1434,43 @@ export default function StoryView({
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
   const scriptProgressLog = progressLog.filter((entry) => entry.step === 'script')
   const promptsProgressLog = progressLog.filter((entry) => entry.step === 'prompts')
+  // ⑤ 오디오 로그 — 파일 가져오기의 진단(화자별 정렬 결과, 자막이 안 맞는 위치)이 여기로 온다.
+  const audioProgressLog = progressLog.filter((entry) => entry.step === 'audio')
+  // 화자별 진행 — 행마다 "227/230"처럼 얼마나 완성됐는지. 하단 전체 초시계에 더해 화자 단위로 본다.
+  // 상태 판정은 목록과 같은 규칙: 실시간(segmentProgress) > 영속(seg.status) > pending.
+  // segId별로 오는 audio-segment 진행을 화자로 접어 카운트한다. sfx는 화자 오디오가 아니라 뺀다.
+  const speakerSegProgress = useMemo(() => {
+    const m = new Map() // 화자 id → { total, done, error }
+    for (const sc of scenes) {
+      for (const seg of sc.segments || []) {
+        if ((seg.type || 'narration') === 'sfx' || !seg.speaker) continue
+        // seg.speaker는 id가 아니라 이름/별칭일 수 있다 — 조회는 sp.id로 하므로 여기서 id로 접는다.
+        // 원시값으로 키잉하면 나레이터({id:'narrator', name:'나레이션'})부터 어긋나 배지가 사라진다.
+        const spId = speakerByRef(seg.speaker)?.id
+        if (!spId) continue
+        const cur = m.get(spId) || { total: 0, done: 0, error: 0 }
+        cur.total += 1
+        const st = segmentProgress[seg.id] || seg.status || 'pending'
+        if (st === 'done') cur.done += 1
+        else if (st === 'error') cur.error += 1
+        m.set(spId, cur)
+      }
+    }
+    return m
+  }, [scenes, segmentProgress])
   // 해당 타겟의 검수 점수만 — 다른 스텝 점수가 새지 않게.
   const scoresFor = (target) => (reviewScores?.target === target ? reviewScores.scores : [])
+  // 편집기 카운트 행(줄 수·자 수)에 얹는 검수 점수 + 세션 토큰. 둘 다 없으면 null 을 줘야
+  // PromptInput 이 빈 footer span 을 안 만든다(안 그러면 실행 전에도 12px gap 이 뜬다).
+  const hasUsage = !!(usage && (usage.input || usage.output))
+  const stepFooter = (target) => {
+    const scores = scoresFor(target)
+    if (!scores.length && !hasUsage) return null
+    return <>{scores.length ? <ReviewScore scores={scores} /> : null}<UsageInline usage={usage} /></>
+  }
   // 검수 진행 표시 — 시놉시스 패널과 같은 모양(콘텐츠는 그대로 두고 하단에 시계+로그창).
   const reviewRunning = (step, log) => (
-    <StoryRunning
+    <StoryRunning usage={usage}
       label={t('story.review.running', '검수 중')}
       startedAt={Date.parse(steps[step]?.updatedAt)}
       log={log}
@@ -1374,8 +1494,8 @@ export default function StoryView({
         showCharCount
         hideTip
         countLabelKey="prompt.lineCount"
-        // 검수 점수는 줄 수·자 수 행에 얹는다 — 별도 줄을 만들면 편집 영역만 좁아진다.
-        footerExtra={scoresFor('script').length ? <ReviewScore scores={scoresFor('script')} /> : null}
+        // 검수 점수·세션 토큰은 줄 수·자 수 행에 얹는다 — 별도 줄을 만들면 편집 영역만 좁아진다.
+        footerExtra={stepFooter('script')}
         placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
       />
     </div>
@@ -1395,7 +1515,7 @@ export default function StoryView({
         hideTip
         countLabelKey="prompt.lineCount"
         ariaLabel={t('story.synopsis.editorLabel', '줄거리')}
-        footerExtra={scoresFor('synopsis').length ? <ReviewScore scores={scoresFor('synopsis')} /> : null}
+        footerExtra={stepFooter('synopsis')}
         placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
       />
     </div>
@@ -1498,7 +1618,7 @@ export default function StoryView({
                 )}
                 {/* 생성 중 시계+경과 — 첫 출력(특히 reasoning=max)이 늦어도 진행 중임을 보인다. */}
                 {synopsisGenerating && (
-                  <GenClock startedAt={synopsisStartedAt} label={t('story.gen.generating', '생성 중')} />
+                  <GenClock startedAt={synopsisStartedAt} label={t('story.gen.generating', '생성 중')} usage={usage} />
                 )}
                 <div className="story-synopsis-characters">
                   <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
@@ -1515,7 +1635,7 @@ export default function StoryView({
                     남기고, StoryRunning이 시계+로그창을 제공한다(신규 컴포넌트/CSS 없음). */}
                 {reviewBadge}
                 {synopsisReviewing && (
-                  <StoryRunning
+                  <StoryRunning usage={usage}
                     label={t('story.review.running', '검수 중')}
                     startedAt={synopsisReviewStartedAt}
                     log={synopsisProgressLog}
@@ -1595,7 +1715,7 @@ export default function StoryView({
                       {baseScript ? baseScript + streamingText : streamingText}
                     </div>
                     {/* 생성 중 시계+경과 (대본) — 첫 출력이 늦어도 진행 중임을 보인다. */}
-                    <GenClock startedAt={Date.parse(steps.script?.updatedAt)} label={t('story.gen.generating', '생성 중')} />
+                    <GenClock startedAt={Date.parse(steps.script?.updatedAt)} label={t('story.gen.generating', '생성 중')} usage={usage} />
                   </>
                 ) : (
                   <>
@@ -1834,7 +1954,7 @@ export default function StoryView({
             {steps.scenes?.status === 'running' && !scenesReviewRun ? (
               <>
                 {reviewBadge}
-                <StoryRunning
+                <StoryRunning usage={usage}
                   label={t('story.scenes.running', '씬 분리 진행 중')}
                   startedAt={Date.parse(steps.scenes.updatedAt)}
                   detail={splitSummary}
@@ -1892,12 +2012,40 @@ export default function StoryView({
 
         {displayStep === 'audio' && (
           <div className="story-audio-panel">
-            {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행). */}
+            {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행).
+                로그를 함께 넘긴다 — 파일 가져오기의 진단(정렬 결과, 자막이 안 맞는 위치)이 여기로
+                온다. 안 넘기면 그 정보가 어디에도 안 보인다(오류 배너는 errorKind로 번역되면서
+                상세 메시지를 버린다 — errorDisplay.js). */}
             {steps.audio?.status === 'running' && (
-              <StoryRunning
+              <StoryRunning usage={usage}
                 label={t('story.audio.running', '오디오 생성 중')}
                 startedAt={Date.parse(steps.audio.updatedAt)}
+                log={audioProgressLog}
               />
+            )}
+            {/* 실패했을 때도 로그를 남겨 둔다 — "자막이 안 맞는다"는 배너만 보고는 어디를 고칠지 모른다.
+                로그가 비었으면(앱을 껐다 켠 뒤: 오류는 story.json에 영속되지만 progressLog는 메모리라
+                open 시 비워진다) 영속된 원문 진단을 대신 보여준다 — 배너의 번역문은 상세를 버린다
+                (errorDisplay.js). 안 그러면 "진행 로그를 보라"는 안내가 없는 로그를 가리킨다.
+
+                **성공(done)했어도 경고가 있으면 남긴다.** 가져오기는 안 맞아도 막지 않고 대략 잘라
+                놓고 경고하는 정책이라(사용자 결정), 그 실행은 done으로 끝난다 — 여기서 안 띄우면
+                "어느 조각이 보간됐나 / 남의 자리를 물어왔나"가 완료되는 순간 사라져 확인할 방법이
+                없어진다. 경고 없는 깨끗한 실행(ep02 실측: 237/237 exact)엔 안 띄운다 — 정상에
+                소음을 얹으면 경고가 경고로 안 읽힌다. */}
+            {(steps.audio?.status === 'error' || audioProgressLog.some((e) => e.level === 'warn' || e.level === 'error'))
+              && (audioProgressLog.length > 0 || steps.audio?.error) && (
+              <div className="story-progress-log" role="log" data-testid="audio-progress-log">
+                {(audioProgressLog.length > 0
+                  ? audioProgressLog
+                  : [{ id: 'audio-error', level: 'error', at: steps.audio.updatedAt, message: steps.audio.error }]
+                ).map((entry, i) => (
+                  <div key={entry.id || `audio-log-${i}`} className={`story-progress-log-row ${entry.level || 'info'}`}>
+                    <span className="story-progress-log-time">{formatProgressLogTime(entry.at)}</span>
+                    <span className="story-progress-log-message">{entry.message}</span>
+                  </div>
+                ))}
+              </div>
             )}
             {/* 화자 매핑은 생성 중이 아닐 때만 노출(생성 중 변경 방지) */}
             {steps.audio?.status !== 'running' && (state?.speakers || []).length > 0 && (
@@ -1922,8 +2070,24 @@ export default function StoryView({
                       const charGender = resolveCharacterGender(sp)
                       // 캐릭터·성우 성별이 둘 다 확실하고 서로 다르면 불일치 경고.
                       const genderMismatch = charGender && selectedVoiceObj?.gender && charGender !== selectedVoiceObj.gender
+                      // 이 화자의 오디오 출처(mp3+SRT). 짝이 다 맞아야 실제로 쓰인다.
+                      const src = voiceSel.importForSpeaker(sp)
+                      const hasSrc = !!(src?.mp3Path && src?.srtPath)
                       return (
-                        <div key={sp.id} className="story-voice-row">
+                        <div
+                          key={sp.id}
+                          className={`story-voice-row${dragVoiceRowId === sp.id ? ' drag-over' : ''}`}
+                          // 행 전체가 드롭 타깃 — 위젯 칩만이 아니라 이름·설명·성우 버튼 위에 놓아도 된다.
+                          onDragOver={(e) => { if (isRunning) return; e.preventDefault(); setDragVoiceRowId(sp.id) }}
+                          onDragLeave={(e) => { if (e.currentTarget.contains(e.relatedTarget)) return; setDragVoiceRowId((id) => (id === sp.id ? null : id)) }}
+                          onDrop={(e) => {
+                            if (isRunning) return
+                            e.preventDefault()
+                            setDragVoiceRowId(null)
+                            // 위젯에 직접 놓았으면 그쪽이 stopPropagation으로 처리하고 여긴 안 온다.
+                            srcDropHandles.current.get(sp.id)?.takeFiles(Array.from(e.dataTransfer?.files || []))
+                          }}
+                        >
                           <div className="story-voice-info">
                             <span className="story-voice-speaker">
                               {sp.name || sp.id}
@@ -1940,16 +2104,36 @@ export default function StoryView({
                             {sp.appearance && (
                               <span className="story-voice-appearance">{sp.appearance}</span>
                             )}
+                            {/* 화자별 진행 — 오디오가 돌았을 때만(그 전엔 0/N이 소음). 예: 227/230, 미완은 강조. */}
+                            {(() => {
+                              const prog = speakerSegProgress.get(sp.id)
+                              if (!prog || !prog.total || !(steps.audio?.status === 'done' || prog.done > 0)) return null
+                              const complete = prog.done === prog.total
+                              return (
+                                <span
+                                  className={`story-voice-progress${complete ? ' done' : ''}${prog.error ? ' has-error' : ''}`}
+                                  data-testid={`voice-progress-${sp.id}`}
+                                  title={t('story.audio.speakerProgress', `${prog.done}/${prog.total}개 세그먼트 완성`, { done: prog.done, total: prog.total })}
+                                >
+                                  {prog.done}/{prog.total}
+                                  {prog.error ? ` (⚠${prog.error})` : ''}
+                                </span>
+                              )
+                            })()}
                           </div>
-                          {/* Task 11: 드롭다운 3종(엔진/검색/목소리) → 버튼 1개 + VoicePicker 모달 */}
+                          {/* Task 11: 드롭다운 3종(엔진/검색/목소리) → 버튼 1개 + VoicePicker 모달.
+                              출처(mp3+SRT)를 지정한 화자는 TTS를 안 쓰므로 성우 선택을 잠근다 —
+                              열어두면 고른 성우가 무시되는데 그 이유가 화면에 안 보인다. */}
                           <button
                             type="button"
                             className="story-input story-voice-picker-btn"
                             aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`, { speaker: sp.name || sp.id })}
                             onClick={() => voiceSel.openVoicePicker(sp)}
+                            disabled={hasSrc}
+                            title={hasSrc ? t('story.audio.source.voiceLocked', 'mp3에서 가져오는 중 — 성우 TTS를 쓰지 않습니다') : undefined}
                           >
-                            🎙 {voiceLabel}
-                            {genderMismatch && (
+                            🎙 {hasSrc ? t('story.audio.source.fromFile', '파일에서') : voiceLabel}
+                            {!hasSrc && genderMismatch && (
                               <span
                                 className="story-voice-gender-warn"
                                 title={t('story.audio.genderMismatch', '캐릭터 성별과 성우 성별이 다릅니다')}
@@ -1958,6 +2142,35 @@ export default function StoryView({
                               </span>
                             )}
                           </button>
+                          {/* 아이콘 하나로 — 라벨("이 화자만 생성"/"Generate this speaker")을 그대로 두면
+                              열을 통째로 먹어 인물 특징 텍스트가 좁아진다. ✨는 이 앱이 이미 "생성"에
+                              쓰는 기호다(시작 버튼). 설명은 툴팁으로, 이름은 aria-label로 남긴다 —
+                              아이콘만 두면 스크린리더와 테스트가 버튼을 못 읽는다. */}
+                          <button
+                            type="button"
+                            className="story-speaker-run-btn"
+                            onClick={() => runSpeakerAudio(sp)}
+                            // ✨ 가 보이는데 다른 작업이 도는 상태가 둘 있다: 미리듣기 중(steps.audio 가
+                            // running 이 아니다)과 audio:done + 다른 스텝 running(완료된 탭을 다시 열 수
+                            // 있다). 누르면 start() 가 invoke 전에 segmentProgress/progressLog 를 비워
+                            // **돌던 작업의 진행·경고가 증발**하고, main 의 busy 는 조용히 무시된다.
+                            disabled={isRunning || previewBusy}
+                            aria-label={t('story.audio.runThisSpeakerFor', `${sp.name || sp.id}만 생성`, { speaker: sp.name || sp.id })}
+                            title={t('story.audio.runThisSpeakerHint', '이 화자 세그먼트만 생성합니다. 나머지 화자는 그대로 두고, 결과를 먼저 확인할 수 있습니다.')}
+                          >
+                            ✨
+                          </button>
+                          <div className="story-voice-source">
+                            {/* 화자별 오디오 출처 — 위젯 자체도 드롭을 받지만, 위 행 전체가 위임한다. */}
+                            <SpeakerAudioSource
+                              ref={(h) => { if (h) srcDropHandles.current.set(sp.id, h); else srcDropHandles.current.delete(sp.id) }}
+                              source={src}
+                              disabled={isRunning}
+                              onPick={pipeline.pickAudioImportFile}
+                              onChange={(next) => voiceSel.setImportForSpeaker(sp.id, next)}
+                              t={t}
+                            />
+                          </div>
                         </div>
                       )
                     })}
@@ -1990,7 +2203,14 @@ export default function StoryView({
                     </Modal>
                   )
                 })()}
-                {steps.audio?.status === 'done' && hasStoryAudio && (
+                {/* done 게이트를 걷어냈다 — **일부라도 만들어졌으면 보여야 확인할 수 있다.**
+                    "이 화자만 생성"은 설계상 조립을 건너뛰고 done 을 안 찍는다(반쪽 타임라인·manifest 가
+                    생기면 안 되므로). done 을 요구하면 그 기능이 영영 타임라인을 못 봐 "나레이터만 먼저
+                    확인"이라는 목적 자체가 무너진다. 부분재시도(다른 화자 TTS 실패)도 같다 —
+                    실측(무한야담ep02): 나레이터 237개가 잘려 있는데 audio 는 pending 이라 화면이 비었다.
+                    export 는 audio.status==='done' 을 따로 요구하므로(readAudioPackage) 미완성 타임라인이
+                    결과물로 새지 않는다. hasStoryAudio 가 "만들어진 게 있나"를 판정한다. */}
+                {hasStoryAudio && (
                   <div className="story-audio-timeline">
                     <LiveTimeline audioPackage={storyAudioPkg} scenes={[]} srtEntries={storySrtEntries} />
                   </div>
@@ -2043,16 +2263,23 @@ export default function StoryView({
                           </td>
                           <td className="story-audio-actions-cell">
                             <div className="story-audio-actions">
-                              {/* 세그먼트 단건 테스트(배치와 분리) — narration은 TTS, sfx는 sfxFor로 단건 생성 */}
-                              <button
-                                type="button"
-                                className="story-seg-btn"
-                                aria-label={t('story.audio.test', `${seg.id} 테스트`, { id: seg.id })}
-                                onClick={() => testSegment(seg.id)}
-                                disabled={isRunning || previewBusy}
-                              >
-                                ▶{t('story.audio.testLabel', '테스트')}
-                              </button>
+                              {/* 세그먼트 단건 테스트(배치와 분리) — narration은 TTS, sfx는 sfxFor로 단건 생성.
+                                  파일에서 가져오는 화자의 세그먼트엔 안 띄운다: 합성 대상이 아니라 main이
+                                  걸러내고 빈 결과를 돌려주므로, 눌러도 소리도 안 나고 알림도 없어 고장난
+                                  버튼이 된다. 그 세그먼트는 ⑤가 mp3를 잘라 채운다.
+                                  판정은 **화자**로 한다 — main과 같은 기준(isImportProvider). 세그먼트의
+                                  src 구간으로 보면 안 된다: 그 필드는 영속되지 않아 renderer엔 절대 안 온다. */}
+                              {!isImportSpeaker(seg.speaker) && (
+                                <button
+                                  type="button"
+                                  className="story-seg-btn"
+                                  aria-label={t('story.audio.test', `${seg.id} 테스트`, { id: seg.id })}
+                                  onClick={() => testSegment(seg.id)}
+                                  disabled={isRunning || previewBusy}
+                                >
+                                  ▶{t('story.audio.testLabel', '테스트')}
+                                </button>
+                              )}
                               {/* M2a-3c 미리듣기 (오디오 있을 때) */}
                               {seg.audioPath && (
                                 <button
@@ -2097,7 +2324,7 @@ export default function StoryView({
             {steps.prompts?.status === 'running' && !promptsReviewRun ? (
               <>
                 {reviewBadge}
-                <StoryRunning
+                <StoryRunning usage={usage}
                   label={t('story.prompts.running', '프롬프트 생성 중')}
                   startedAt={Date.parse(steps.prompts.updatedAt)}
                 />
@@ -2124,6 +2351,13 @@ export default function StoryView({
                 </table>
                 {scenes.length === 0 && (
                   <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
+                )}
+                {/* 프롬프트는 편집기(카운트 행)가 없다 — 표 밑에 씬 수 + 세션 토큰을 한 줄로 얹는다. */}
+                {scenes.length > 0 && (
+                  <div className="story-prompts-count-row">
+                    <span className="story-prompts-count">{t('story.prompts.sceneCount', '씬')} {scenes.length}</span>
+                    <UsageInline usage={usage} />
+                  </div>
                 )}
                 {promptsReviewRun && reviewRunning('prompts', promptsProgressLog)}
               </>

@@ -26,6 +26,7 @@ vi.mock('../../src/utils/imageProcessing', () => ({ tryUpscaleImage: vi.fn(), ex
 vi.mock('../../src/utils/urls', () => ({ cleanBase64: vi.fn((s) => s), toDataURL: vi.fn((s) => s) }))
 
 import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
+import { useAppSettings } from '../../src/hooks/useAppSettings'
 
 function makeHook(mode, refOverrides = {}) {
   const genAPI = {
@@ -77,5 +78,79 @@ describe('useReferenceGeneration — model threading + engine label', () => {
     const { result } = makeHook('flow')
     await act(async () => { await result.current.handleGenerateRef(0) })
     expect(saveReference.mock.calls[0][3]).toBe('flow')
+  })
+
+  it('이름 없는 프로젝트의 targeted batch는 Start가 같은 tick에 mint한 이름으로 저장한다', async () => {
+    localStorage.setItem('autoflowcut_settings', JSON.stringify({
+      saveMode: 'folder',
+      projectName: '',
+    }))
+    let liveRefs = [{
+      id: 'hero',
+      name: 'Hero',
+      prompt: 'a hero portrait',
+      type: 'character',
+      status: 'pending',
+    }]
+    const setReferences = vi.fn(updater => {
+      liveRefs = typeof updater === 'function' ? updater(liveRefs) : updater
+    })
+    const genAPI = {
+      mode: 'flow',
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      generateImage: vi.fn().mockResolvedValue({
+        success: true,
+        images: [{ base64: 'hero-image', mediaId: 'hero-media' }],
+      }),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => {
+      const appSettings = useAppSettings()
+      const refGeneration = useReferenceGeneration({
+        settings: appSettings.settings,
+        projectNameRef: appSettings.projectNameRef,
+        references: liveRefs,
+        setReferences,
+        genAPI,
+        addPendingSave: vi.fn(),
+        openSettings: vi.fn(),
+        t: key => key,
+        generationQueue: null,
+        flowProjectId: 'flow-project',
+      })
+      return { ...appSettings, ...refGeneration }
+    })
+
+    let mintedName
+    let batchResult
+    await act(async () => {
+      mintedName = result.current.ensureProjectName()
+      batchResult = await result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:hero'],
+      })
+    })
+
+    expect(batchResult).toMatchObject({
+      ok: true,
+      outcome: 'completed',
+      requestedKeys: ['id:hero'],
+      succeededKeys: ['id:hero'],
+    })
+    expect(mintedName).toMatch(/^autoflowcut_\d+$/)
+    expect(saveReference).toHaveBeenCalledWith(
+      mintedName,
+      'Hero',
+      'hero-image',
+      'flow',
+      expect.any(Object),
+    )
+    expect(saveReference).not.toHaveBeenCalledWith(
+      'Untitled',
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    )
   })
 })

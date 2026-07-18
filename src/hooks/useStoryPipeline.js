@@ -42,6 +42,10 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // 보여준다. reviewProgress(검토/수정 단계)와 분리한다.
   const [reviewScores, setReviewScores] = useState(null)
   const [progressLog, setProgressLog] = useState([])
+  // 이 프로젝트 세션의 누적 토큰 { input, output } | null. main tracker snapshot 이 emit 마다 온다.
+  // progressLog 와 달리 start() 마다 비우지 않는다 — 자동 진행은 start() 연쇄라 비우면
+  // 앞 스텝 합계가 사라지고, main 에 tracker 를 둔 의미가 없어진다. 리셋은 프로젝트 전환뿐.
+  const [usage, setUsage] = useState(null)
   // 슬라이스4(§3.4): synopsis side action 로컬 상태 — 스트리밍 누적은 대본(streamingText)과
   // 별도 채널/상태(story:synopsis-delta → synopsisStreamingText)로 분리.
   const [synopsisStreamingText, setSynopsisStreamingText] = useState('')
@@ -113,9 +117,14 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     pendingResetRef.current = null
     setState(null)
     setScenes([])
+    setOpenError(null)
     setStreamingText('')
     setScriptText('')
+    setSegmentProgress({})
     setProgressLog([])
+    // 프로젝트 전환에서만 usage 를 리셋한다 — start() 마다가 아니다(아래 start/open 미러에
+    // 넣으면 자동 진행 연쇄에서 앞 스텝 합계가 사라진다). main 의 tracker 도 machine 과 함께 죽는다.
+    setUsage(null)
     activeOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
     setReviewScores(null)
@@ -175,8 +184,15 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         at: new Date().toISOString(),
       }].slice(-120))
     }
+    // main 의 모든 emit 에 이번 실행 누적 usage 가 실려온다. 어느 채널로 오든 최신값을 잡는다.
+    // **progressLog 처럼 start() 마다 비우면 안 된다** — 그러면 main 에 tracker 를 둔 게
+    // 무의미해지고 숫자가 렌더러에서 똑같이 죽는다. 프로젝트 전환(projectPath 변경)에서만 리셋된다.
+    const takeUsage = (p) => { if (p?.usage && p.projectToken === tokenRef.current) setUsage(p.usage) }
     const offs = [
+      // sink 가 불릴 때마다 오는 usage 전용 이벤트 — 실패한 side action 의 토큰도 즉시 화면에 반영.
+      api.onStoryEvent('story:usage', takeUsage),
       api.onStoryEvent('story:state', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         const anyRunning = p.state?.steps && Object.values(p.state.steps).some((s) => s?.status === 'running')
         if (anyRunning && p.operationId) activeOpRef.current = p.operationId
@@ -197,11 +213,13 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       }),
       // 리서치(§5): hydrate/복원용 신규 채널 — research side action 완료 시 main이 최신 상태를 push.
       api.onStoryEvent('story:research-state', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         if (p.research !== undefined) setResearch(p.research)
       }),
       // 슬라이스4(§3.3 op lifecycle): started 신호로 전용 op 세팅 + 누적 리셋, 그 op의 delta만 누적.
       api.onStoryEvent('story:synopsis-delta', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         if (p.phase === 'started') {
           synopsisActiveOpRef.current = p.operationId || null
@@ -212,6 +230,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         setSynopsisStreamingText((t) => t + (p.text || ''))
       }),
       api.onStoryEvent('story:delta', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         if (activeOpRef.current && p.operationId !== activeOpRef.current) return
         setStreamingText((t) => t + p.text)
@@ -235,6 +254,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       }),
       // D: audio 세그먼트별 실시간 진행 — segId→status로 누적해 목록이 생성 상태를 실시간 표시한다.
       api.onStoryEvent('story:progress', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         // 리서치(§3.6): research side action은 running step을 만들지 않아 activeOpRef(step 기반)에
         // 안 잡힌다 — op 필터 전에 처리(synopsisActiveOpRef 분리와 동일 이유). 맵 리셋은
@@ -374,6 +394,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
 
   const start = useCallback(async (step, params) => {
     setStreamingText('')
+    setSegmentProgress({})
     setProgressLog([])
     activeOpRef.current = null
     setReviewProgress(null) // M3: 새 실행 시 검토 배지 초기화(이전 error 배지 포함)
@@ -458,6 +479,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     window.electronAPI.storyConfirmSynopsis({ projectToken: tokenRef.current, ...params }), [])
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치 진행버튼과 분리). 저장된 오디오는 story:state로 반영.
   const ttsPreview = useCallback((params) => window.electronAPI.storyTtsPreview({ projectToken: tokenRef.current, ...params }), [])
+  // SRT 가져오기 — main이 state를 story:state로 되쏘므로 여기서 setState 하지 않는다(단일 진실원).
+  const pickAudioImportFile = useCallback((params) => window.electronAPI.storyPickAudioImportFile(params), [])
   // 리서치 side actions(spec §3.1/§5) — machine 위임. 상태 갱신은 story:research-state 구독이 담당.
   const researchSearch = useCallback((params = {}) =>
     window.electronAPI.storyResearchSearch({ projectToken: tokenRef.current, ...params }), [])
@@ -484,7 +507,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, stageImageFirst, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+    return { state: null, scenes: [], streamingText: '', scriptText: '', open, stageImageFirst, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, stageImageFirst, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, reviewScores, progressLog, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, stageImageFirst, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, reviewProgress, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }

@@ -2,6 +2,7 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
+import { claudeResultToUsage, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from './usageTokens.js'
 import {
   buildScriptPrompt,
   buildSplitPrompt,
@@ -28,18 +29,125 @@ import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } fro
 import { toJsonSchema } from './toJsonSchema.js'
 import { GROUPS_SCHEMA, SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
 import { validatePromptScenesExactOnce } from './srtPrompts.js'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+
+const require = createRequire(import.meta.url)
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
+// 패키지된 Electron 앱에서 SDK는 app.asar 내부의 claude 바이너리를 spawn하려다 실패한다
+// (아카이브 내부 실행파일은 spawn 불가). 실제 파일은 asarUnpack로 app.asar.unpacked에 풀려 있으므로
+// 그 경로를 pathToClaudeCodeExecutable로 명시한다. dev/미해석 시 null → SDK 기본 해석에 위임.
+let cachedClaudePath
+function claudeExecutablePath() {
+  if (cachedClaudePath !== undefined) return cachedClaudePath
+  try {
+    const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`
+    const bin = process.platform === 'win32' ? 'claude.exe' : 'claude'
+    const dir = path.dirname(require.resolve(`${pkg}/package.json`))
+    let p = path.join(dir, bin)
+    if (p.includes(`app.asar${path.sep}`)) {
+      p = p.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`)
+    }
+    cachedClaudePath = p
+  } catch {
+    cachedClaudePath = null
+  }
+  return cachedClaudePath
+}
+
+function withClaudePath(args) {
+  const exe = claudeExecutablePath()
+  if (!exe || args?.options?.pathToClaudeCodeExecutable) return args
+  return { ...args, options: { ...args.options, pathToClaudeCodeExecutable: exe } }
+}
+
+// --- token usage tap --------------------------------------------------------
+// 이 파일의 모든 `for await (const m of queryImpl(...))` 루프(대본/시놉/이어쓰기 스트리밍,
+// structuredClaudeCall 1차·폴백, 제목/재작성 등)는 전부 이 tap 하나(defaultQuery)를 지난다 —
+// 각 루프에 usage 파싱을 흩뿌리면 새 루프가 생길 때 조용히 샌다(조용히 틀린 합계가 이 기능의
+// 유일한 실패 모드다). structuredClaudeCall 재시도는 1차·폴백 양쪽이 지나 둘 다 과금되고,
+// 실패 result 도 파서가 throw 하기 전에 여기를 지난다.
+let claudeUsageSink = null
+
+/** main 이 tracker 를 물린다. null 로 해제. */
+export function setClaudeUsageSink(fn) { claudeUsageSink = fn }
+
+// sink 는 **호출 시작의 동기 지점에서** 캡처해 여기로 넘긴다 — 메시지마다 전역을 다시 읽거나,
+// async 경계(dynamic import) 뒤에 읽으면 안 된다. abort() 는 취소만 하고 드레인하지 않는다:
+// 프로젝트 전환은 abort 직후 새 machine 을 만들며 전역 sink 를 B 로 바꾸고, A 의 SDK 는 graceful
+// close 동안 버퍼된 result 를 더 뱉는다. 캡처가 늦으면(예: `await import` 뒤) 그 늦은 보고가 B 의
+// 합계에 들어간다 — 조용히 틀린 합계. 캡처된 sink 로 넘기면 늦은 보고는 죽은 A 의 tracker 로 간다.
+// pending 키 시퀀스 — tapQuery 호출(=쿼리)마다 고유. 구조화 재시도의 1차/폴백도 각기 다른 키라
+// 서로의 진행 표시를 안 덮는다. Date/random 불필요.
+let pendingKeySeq = 0
+
+// sink 프로토콜:
+//   진행:  sink({ pendingKey, input, output })            → tracker.setPending   (key 별 교체, 추정치)
+//   확정:  sink({ pendingKey, commit:true, input, output }) → clearPending + addDelta (원샷 — 사이에 0/0
+//            snapshot 이 안 생겨 UI 가 안 깜빡인다)
+//   정리:  sink({ pendingKey, clear:true })                → clearPending (result 없이 끝났을 때)
+//   비스트림: sink({ input, output })                       → addDelta (기존 경로)
+// pending 을 커밋/정리 없이 두면 추정치가 세션 합계에 영구히 남는다 — 이 기능의 유일 실패 모드.
+function tapQuery(makeStream, sink) {
+  return async function* (args) {
+    let key = null      // 이 쿼리의 pending 키(usage 있는 첫 이벤트에서 지연 생성)
+    let pin = 0         // 입력(message_start 누적, 즉시 정확)
+    let ochars = 0      // 스트리밍된 출력 문자수(text+thinking+structured JSON)
+    let lastIn = -1, lastOut = -1 // 마지막 emit 값 — 추정치가 안 바뀌면(3자 미만 증가) IPC 를 아낀다.
+    const emitPending = () => {
+      const out = estimateOutputTokens(ochars)
+      if (pin === lastIn && out === lastOut) return
+      lastIn = pin; lastOut = out
+      sink({ pendingKey: (key ??= `claude-pending-${++pendingKeySeq}`), input: pin, output: out })
+    }
+    try {
+      for await (const m of makeStream(args)) {
+        // 계측 실패가 생성을 죽이면 안 된다.
+        if (sink) {
+          try {
+            if (m?.type === 'result') {
+              const u = claudeResultToUsage(m)
+              // pending 제거 + 확정치 가산을 한 번에(commit). 스트림이 아니었으면(key 없음) 기존대로 가산.
+              // result 에 usage 가 없는 비정상 응답이면(SDK 상 필수라 방어적) 마지막 추정치로 커밋 —
+              // 0/0 으로 커밋하면 이미 쓴 토큰을 통째로 버린다.
+              if (key) { sink({ pendingKey: key, commit: true, input: u ? u.input : pin, output: u ? u.output : estimateOutputTokens(ochars) }); key = null }
+              else if (u) sink(u)
+            } else {
+              const inp = claudeStreamInput(m)
+              if (inp != null) { pin += inp; emitPending() }        // message_start: 입력 즉시 반영
+              else { const c = claudeStreamOutChars(m); if (c) { ochars += c; emitPending() } } // 델타: 출력 추정 상승
+            }
+          } catch { /* best-effort */ }
+        }
+        yield m
+      }
+    } finally {
+      // result 없이 스트림 종료(abort/EOF/에러 — 소비자가 break/return 하면 여기로 온다):
+      // pending 추정치를 지운다. 안 지우면 세션 합계에 영구히 박히고 Map 이 샌다.
+      // (중단 시엔 정확치를 못 받으므로 그 부분 토큰은 미집계 — 기존 result-tap 동작과 동일.)
+      if (sink && key) { try { sink({ pendingKey: key, clear: true }) } catch { /* best-effort */ } }
+    }
+  }
+}
+
+/** @internal 테스트 전용 — 현재 전역 sink 로 tap 한다(실제 SDK 없이 동작 고정). */
+export const __tapQueryForTest = (makeStream) => tapQuery(makeStream, claudeUsageSink)
+
 async function* defaultQuery(args) {
+  // 이 첫 줄은 generator 의 첫 next() 에서 실행되고, 그 시점은 아직 호출자(A) 스택 안이다.
+  // dynamic import 는 이벤트 루프를 양보하므로 그 뒤에 잡으면 B 로 바뀌어 있을 수 있다 —
+  // 반드시 import 전에 잡는다.
+  const sink = claudeUsageSink
   const { query } = await import('@anthropic-ai/claude-agent-sdk')
-  yield* query(args)
+  yield* tapQuery((a) => query(withClaudePath(a)), sink)(args)
 }
 
 // defaultQuery는 async generator라 Query 객체(=supportedModels 보유)를 잃는다. 조회는 직접 부른다.
 async function rawQuery(args) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk')
-  return query(args)
+  return query(withClaudePath(args))
 }
 
 /**
@@ -118,7 +226,7 @@ export async function generateSynopsis(input, opts = {}, { onDelta, signal, quer
     if (input?.type === 'pasted') {
       // 대본에서 시놉시스(로그라인/훅/구조)+등장인물을 함께 역추출(비스트리밍 단일 result).
       const prompt = buildSynopsisFromScriptPrompt(input.pastedScript, opts)
-      const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+      const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
       for await (const m of queryImpl({ prompt, options })) {
         if (m.type === 'result') return splitSynopsisOutput(extractClaudeSdkResult(m))
       }
@@ -152,7 +260,7 @@ export async function generateTitle(scriptMd, opts = {}, { signal, queryImpl = d
   const prompt = buildTitlePrompt(scriptMd, opts)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return { title: extractClaudeSdkResult(m).split('\n')[0].trim() }
     }
@@ -221,7 +329,10 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
   try {
     // 1차: outputFormat(json_schema) 강제. 파싱 후 스키마 검증 통과 시 반환, 실패/retry면 폴백.
     // sdkExtra(D11 — 팩트체크의 tools:['WebSearch']/maxTurns 등)는 1차·폴백 모두에 적용된다.
-    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, outputFormat: { type: 'json_schema', schema } }))
+    // includePartialMessages: structured output 은 input_json_delta 로 JSON 을 스트리밍한다 —
+    // 켜야 씬분리/프롬프트/검수도 생성 중 토큰이 실시간으로 오른다(result 파싱엔 영향 없음, 부분
+    // 메시지는 아래 루프에서 'result' 아니면 skip). 입력도 message_start 로 즉시 뜬다.
+    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true, outputFormat: { type: 'json_schema', schema } }))
     let needFallback = false
     for await (const m of queryImpl({ prompt, options: opt1 })) {
       if (m.type !== 'result') continue
@@ -239,7 +350,7 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     if (!needFallback) throw new Error('no result message returned')
     // 2차 폴백: outputFormat 없이 JSON-only 재요청. 파싱 결과도 검증, 실패하면 그대로 throw.
     const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
-    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra }))
+    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true }))
     for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
       if (m.type === 'result') {
         const data = parseJsonLoose(extractClaudeSdkResult(m))
@@ -277,7 +388,7 @@ export async function reviseScript(scriptMd, critique, opts = {}, { signal, quer
   const prompt = buildRevisePrompt(scriptMd, critique, opts)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return { scriptMd: extractClaudeSdkResult(m) }
     }
@@ -304,7 +415,7 @@ export async function reviseSynopsis(synopsisMd, characters = [], critique, opts
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
     if (signal?.aborted) throw new Error('Aborted')
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return splitSynopsisOutput(extractClaudeSdkResult(m))
     }

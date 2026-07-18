@@ -218,15 +218,17 @@ describe('D15 — agent session의 프로젝트 경계', () => {
 
 describe('M1 slice 10 — 핸들러 계수 불변식 (D7)', () => {
   // D7 은 M1 기준 20 = 17 guarded + 3 custom 이라고 쓰지만, **M1a 의 `story:stage-image-first` 가
-  // 먼저 착지해서** 현재는 21 = 18 guarded + 3 custom 이다. 궤적은 20 → (D24a) 21 → (D24b) 22 다.
+  // 먼저 착지해서** 21 = 18 guarded + 3 custom 이었다. main 병합으로 `story:pick-audio-import-file`
+  // (파일 다이얼로그 — 프로젝트 토큰 무관)이 착지해 현재는 22 = 18 guarded + 4 custom 이다.
   // 🔴 숫자를 맞추려고 D24b `story:commit-image-first-script` 를 **조기 구현하지 마라** —
   //    스펙은 그걸 blind gate 통과 뒤 M3 로 미뤄뒀다. 계수는 현실을 적고, 궤적을 주석으로 남긴다.
-  // custom 3개 = token guard 를 안 타는 것들.
+  // custom 4개 = token guard 를 안 타는 것들.
   //   list-llm-options: 프로젝트와 무관 / open: 토큰을 **발급하는** 쪽 / load-audio-package: 경로 직독 허용
-  const CUSTOM = ['story:list-llm-options', 'story:open', 'story:load-audio-package']
+  //   pick-audio-import-file: OS 파일 다이얼로그 — 프로젝트 상태 변경 없음, 토큰 무관
+  const CUSTOM = ['story:list-llm-options', 'story:open', 'story:load-audio-package', 'story:pick-audio-import-file']
 
-  it('IPC 핸들러는 21개 = 18 guarded + 3 custom', async () => {
-    expect(ipc.handlers.size).toBe(21)
+  it('IPC 핸들러는 22개 = 18 guarded + 4 custom', async () => {
+    expect(ipc.handlers.size).toBe(22)
     for (const ch of CUSTOM) expect(ipc.handlers.has(ch), `custom 핸들러 ${ch} 가 없다`).toBe(true)
     expect(ipc.handlers.size - CUSTOM.length).toBe(18)
   })

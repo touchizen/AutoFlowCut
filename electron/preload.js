@@ -138,6 +138,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyReviewSynopsis: (params) => ipcRenderer.invoke('story:review-synopsis', params),
   storyConfirmSynopsis: (params) => ipcRenderer.invoke('story:confirm-synopsis', params),
   storyTtsPreview: (params) => ipcRenderer.invoke('story:tts-preview', params),
+  // SRT 가져오기 — 나레이션 오디오를 TTS로 만들지, 완성된 mp3에서 잘라 쓸지.
+  storyPickAudioImportFile: (params) => ipcRenderer.invoke('story:pick-audio-import-file', params),
   storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath }),
   storyListLlmOptions: () => ipcRenderer.invoke('story:list-llm-options'),
   // 리서치 side actions (spec §5) — 진행(research-fetch)은 기존 story:progress 채널 재사용.
@@ -150,7 +152,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyResearchSelect: (params) => ipcRenderer.invoke('story:research-select', params),
   storyResearchVideoDetails: (params) => ipcRenderer.invoke('story:research-video-details', params),
   onStoryEvent: (channel, cb) => {
-    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters', 'story:synopsis-delta', 'story:research-state']
+    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters', 'story:synopsis-delta', 'story:research-state', 'story:usage']
     if (!valid.includes(channel)) return () => {}
     const listener = (_e, payload) => cb(payload)
     ipcRenderer.on(channel, listener)

@@ -20,10 +20,33 @@ const fileOf = (s) => ({
   durationMs: s.durationMs || 0,
 })
 
+/**
+ * 오디오가 있는 세그먼트 + 타임라인 자리.
+ *
+ * startMs 는 **조립(buildSegmentTimeline)에서만** 붙는다. 부분 실행("이 화자만 생성")과 부분재시도는
+ * 성공분의 audioPath·durationMs 를 저장하면서 조립은 건너뛴다 — 그래서 파일은 있는데 자리는 모르는
+ * 세그먼트가 남는다(실측 무한야담ep02: 나레이터 237개가 그 상태였다).
+ *
+ * 옛 코드는 `startMs || 0` 으로 자리를 **지어냈다** → 237개가 전부 0초에 쌓여 한 덩어리로 겹쳤다.
+ * 그렇다고 빼버리면 잘라 놓은 조각이 화면에서 통째로 사라져 확인할 방법이 없다.
+ *
+ * 그래서: 자리를 아는 게 하나라도 있으면 **그것만** 그린다(조립이 돈 것 = 진짜 타임라인).
+ * 아무도 모르면 **순서대로 이어붙인다** — "내가 뭘 잘랐나"를 듣기 위한 프리뷰다. 최종 타이밍은
+ * 아니지만(인물 대사가 들어가면 밀린다) export 는 audio.status==='done' 게이트가 막으므로
+ * 이 파생 위치가 결과물로 샐 수 없다.
+ */
 function audioSegments(scenes) {
-  return (Array.isArray(scenes) ? scenes : [])
+  const withAudio = (Array.isArray(scenes) ? scenes : [])
     .flatMap((sc) => sc?.segments || [])
     .filter((s) => s && s.audioPath)
+  const placed = withAudio.filter((s) => Number.isFinite(s.startMs))
+  if (placed.length) return placed
+  let cursor = 0
+  return withAudio.map((s) => {
+    const startMs = cursor
+    cursor += s.durationMs || 0
+    return { ...s, startMs }
+  })
 }
 
 export function buildStoryAudioPackage(scenes) {

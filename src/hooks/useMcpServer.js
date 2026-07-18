@@ -472,8 +472,8 @@ export function useMcpServer({
     //
     // ref batch는 씬 매칭 개념 자체가 없음 → 'auto' 토큰 미지원.
     // 생략 시 useReferenceGeneration._resolveEffectiveStyleId가 첫 카드 fallback 적용.
-    // options = { force?: boolean } (선택). 없으면 handleStart 1-arg 호출 (백워드 호환).
-    // options 있으면 handleStart(effective, options) — App.jsx의 handleStart가 force 등을 추출.
+    // options = { force?: boolean } (선택). App.jsx가 MCP caller를 구분할 수 있게
+    // options 유무와 관계없이 source:'mcp'를 합쳐 handleStart(effective, options)로 호출한다.
     //
     // Phase 2: 진행 중이면 자동 stop → waitForStopped → start. 확인 모달 없음 (MCP 자동화 의도 명확).
     // timeout 시 restart abort, console.warn.
@@ -482,9 +482,10 @@ export function useMcpServer({
     // → Start 버튼 라벨이 새 스타일 자동 표시. 'auto'/'none'/생략은 UI 유지 (사용자 의도 보존).
     window.__mcpStartBatch = async (styleId, options) => {
       // ref로 항상 최신 handleStart 호출 — stop 후 stale `isRunning=true` 가드에 막히는 회귀 방지.
-      const callHandleStart = options
-        ? (effective) => handleStartRef.current?.(effective, options)
-        : (effective) => handleStartRef.current?.(effective)
+      const callHandleStart = effective => handleStartRef.current?.(effective, {
+        ...(options || {}),
+        source: 'mcp',
+      })
       const resolveEffective = () => {
         if (styleId === 'auto') return null
         if (styleId === 'none') return 'none'

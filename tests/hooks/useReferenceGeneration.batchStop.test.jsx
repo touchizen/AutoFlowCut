@@ -37,8 +37,15 @@ vi.mock('../../src/utils/urls', () => ({
 }))
 
 import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
+import { useGenerationQueue } from '../../src/hooks/useGenerationQueue'
 import { checkAuthToken } from '../../src/utils/guards'
 import { toast } from '../../src/components/Toast'
+
+const deferred = () => {
+  let resolve
+  const promise = new Promise(r => { resolve = r })
+  return { promise, resolve }
+}
 
 function setupHook({ checkGenerationImpl }) {
   const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
@@ -78,6 +85,347 @@ function setupHook({ checkGenerationImpl }) {
 
   return { result, setRefCalls, genAPI }
 }
+
+describe('useReferenceGeneration — queued batch stop semantics', () => {
+  it('individual-only 생성 중 stop은 batch stopping latch를 만들지 않는다', async () => {
+    const individualResult = deferred()
+    const refs = [{
+      id: 'solo',
+      prompt: 'solo portrait',
+      type: 'scene',
+      status: 'pending',
+    }]
+    const genAPI = {
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      generateImage: vi.fn(() => individualResult.promise),
+    }
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references: refs,
+      setReferences: vi.fn(),
+      genAPI,
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: key => key,
+      generationQueue: null,
+    }))
+
+    let individualPromise
+    await act(async () => {
+      individualPromise = result.current.handleGenerateRef(0)
+      for (let i = 0; i < 5; i++) await Promise.resolve()
+      result.current.stopGenerateAllRefs()
+    })
+
+    expect(result.current.generatingRefs).toEqual([0])
+    expect(result.current.stoppingRefs).toBe(false)
+
+    await act(async () => {
+      individualResult.resolve({
+        success: true,
+        images: [{ base64: 'solo-image', mediaId: 'solo-media' }],
+      })
+      await individualPromise
+    })
+  })
+
+  it('stale stop을 버린 새 batch는 실행 중 stopping UI도 즉시 해제한다', async () => {
+    const submitResult = deferred()
+    const refs = [{
+      id: 'fresh',
+      prompt: 'fresh portrait',
+      type: 'scene',
+      status: 'pending',
+    }]
+    const genAPI = {
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      submitGeneration: vi.fn(() => submitResult.promise),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references: refs,
+      setReferences: vi.fn(),
+      genAPI,
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: key => key,
+      generationQueue: null,
+    }))
+
+    let batchPromise
+    await act(async () => {
+      result.current.stopGenerateAllRefs()
+      batchPromise = result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:fresh'],
+      })
+      for (let i = 0; i < 5; i++) await Promise.resolve()
+    })
+
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.generatingRefs).toEqual([0])
+    expect(result.current.stoppingRefs).toBe(false)
+
+    await act(async () => {
+      submitResult.resolve({
+        success: false,
+        error: 'submit finished',
+      })
+      await batchPromise
+    })
+  })
+
+  it('batch enqueue 전에 남은 stop은 새 batch 시작에서 stale로 버리고 정상 실행한다', async () => {
+    const refs = [{
+      id: 'fresh',
+      prompt: 'fresh portrait',
+      type: 'scene',
+      status: 'pending',
+    }]
+    const genAPI = {
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      submitGeneration: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'submit reached',
+      }),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references: refs,
+      setReferences: vi.fn(),
+      genAPI,
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: key => key,
+      generationQueue: null,
+    }))
+
+    let batchResult
+    await act(async () => {
+      result.current.stopGenerateAllRefs()
+      batchResult = await result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:fresh'],
+      })
+    })
+
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
+    expect(batchResult).toMatchObject({
+      ok: false,
+      outcome: 'failed',
+      requestedKeys: ['id:fresh'],
+      failed: [{
+        key: 'id:fresh',
+        stage: 'submit',
+        error: 'submit reached',
+      }],
+    })
+    expect(result.current.stoppingRefs).toBe(false)
+  })
+
+  it('individual job 뒤에 대기 중인 batch는 먼저 들어온 stop을 삼키지 않고 stopped로 끝낸다', async () => {
+    const individualResult = deferred()
+    let liveRefs = [
+      { id: 'first', prompt: 'first portrait', type: 'scene', status: 'pending' },
+      { id: 'second', prompt: 'second portrait', type: 'scene', status: 'pending' },
+    ]
+    const setReferences = vi.fn(updater => {
+      liveRefs = typeof updater === 'function' ? updater(liveRefs) : updater
+    })
+    const genAPI = {
+      mode: 'api',
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      generateImage: vi.fn(() => individualResult.promise),
+      submitGeneration: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'queued batch should not submit',
+      }),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => {
+      const generationQueue = useGenerationQueue()
+      const refs = useReferenceGeneration({
+        settings: { saveMode: 'project', imageBatchCount: 1 },
+        references: liveRefs,
+        setReferences,
+        genAPI,
+        addPendingSave: vi.fn(),
+        openSettings: vi.fn(),
+        t: key => key,
+        generationQueue,
+      })
+      return { ...refs, generationQueue }
+    })
+
+    let individualPromise
+    await act(async () => {
+      individualPromise = result.current.handleGenerateRef(0)
+      await Promise.resolve()
+    })
+    expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:second'],
+      })
+      await Promise.resolve()
+    })
+
+    // Batch execute는 앞선 individual job 뒤에 대기 중이라 lifecycle state가 아직 비어 있다.
+    // 이 창에서도 외부(App gate busy) Stop이 callback에 도달하면 queued stop version이 소비돼야 한다.
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.generatingRefs).toEqual([0])
+
+    act(() => result.current.stopGenerateAllRefs())
+    expect(result.current.stoppingRefs).toBe(true)
+
+    await act(async () => {
+      individualResult.resolve({
+        success: true,
+        images: [{ base64: 'first-image', mediaId: 'first-media' }],
+      })
+      await individualPromise
+    })
+
+    let batchResult
+    await act(async () => {
+      batchResult = await batchPromise
+    })
+
+    expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    expect(batchResult).toMatchObject({
+      ok: false,
+      outcome: 'stopped',
+      requestedKeys: ['id:second'],
+      attemptedKeys: [],
+      succeededKeys: [],
+      failed: [],
+    })
+    expect(result.current.stoppingRefs).toBe(false)
+  })
+
+  it('scene job 뒤에 queued된 batch는 lifecycle flags가 비어 있어도 gate Stop으로 stopped 된다', async () => {
+    const sceneResult = deferred()
+    const refs = [{
+      id: 'queued-ref',
+      prompt: 'queued portrait',
+      type: 'scene',
+      status: 'pending',
+    }]
+    const genAPI = {
+      mode: 'api',
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      submitGeneration: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'queued batch should not submit',
+      }),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => {
+      const generationQueue = useGenerationQueue()
+      const refGeneration = useReferenceGeneration({
+        settings: { saveMode: 'project', imageBatchCount: 1 },
+        references: refs,
+        setReferences: vi.fn(),
+        genAPI,
+        addPendingSave: vi.fn(),
+        openSettings: vi.fn(),
+        t: key => key,
+        generationQueue,
+      })
+      return { ...refGeneration, generationQueue }
+    })
+
+    let scenePromise
+    await act(async () => {
+      scenePromise = result.current.generationQueue.enqueue({
+        type: 'image',
+        label: 'Scene regeneration',
+        execute: () => sceneResult.promise,
+      })
+      await Promise.resolve()
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:queued-ref'],
+      })
+      await Promise.resolve()
+    })
+
+    // 실제 회귀 창: scene job만 실행 중이라 ref batch lifecycle state는 아직 하나도 켜지지 않는다.
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.generatingRefs).toEqual([])
+    expect(result.current.stoppingRefs).toBe(false)
+
+    act(() => result.current.stopGenerateAllRefs())
+    expect(result.current.stoppingRefs).toBe(true)
+
+    await act(async () => {
+      sceneResult.resolve({ success: true })
+      await scenePromise
+    })
+
+    let batchResult
+    await act(async () => {
+      batchResult = await batchPromise
+    })
+
+    expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    expect(batchResult).toMatchObject({
+      ok: false,
+      outcome: 'stopped',
+      requestedKeys: ['id:queued-ref'],
+      attemptedKeys: [],
+      succeededKeys: [],
+      failed: [],
+    })
+    expect(result.current.stoppingRefs).toBe(false)
+  })
+
+  it('stop 직후 실행된 noop batch도 stoppingRefs를 남기지 않는다', async () => {
+    const refs = [{
+      id: 'filled',
+      prompt: 'filled portrait',
+      type: 'scene',
+      status: 'done',
+      data: 'existing-image',
+    }]
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references: refs,
+      setReferences: vi.fn(),
+      genAPI: {},
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: key => key,
+      generationQueue: null,
+    }))
+
+    let batchResult
+    await act(async () => {
+      result.current.stopGenerateAllRefs()
+      batchResult = await result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:filled'],
+      })
+    })
+
+    expect(batchResult).toMatchObject({
+      ok: true,
+      outcome: 'noop',
+      requestedKeys: ['id:filled'],
+    })
+    expect(result.current.stoppingRefs).toBe(false)
+  })
+})
 
 describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
   // 회귀 컨텍스트:

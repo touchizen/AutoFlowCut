@@ -268,7 +268,7 @@ export function createClaudeOrchestrator({
         provider: 'claude',
         code: null,
         signal: null,
-        error: new Error('이전 입력 정리가 끝나지 않아 세션을 닫았습니다.'),
+        error: new Error('orphan drain did not settle in time; session closed'),
         reason: 'agent-orphan-drain-timeout',
         sessionClosed: true,
       })

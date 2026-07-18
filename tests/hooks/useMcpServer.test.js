@@ -182,13 +182,13 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     renderHook(() => useMcpServer(makeProps({ handleStart, setSelectedStyleRefId })))
 
     window.__mcpStartBatch('preset:cinematic')
-    expect(handleStart).toHaveBeenCalledWith('preset:cinematic')
+    expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { source: 'mcp' })
 
     window.__mcpStartBatch('cinematic')  // legacy plain
-    expect(handleStart).toHaveBeenCalledWith('preset:cinematic')
+    expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { source: 'mcp' })
 
     window.__mcpStartBatch('ref:42')
-    expect(handleStart).toHaveBeenCalledWith('ref:42')
+    expect(handleStart).toHaveBeenCalledWith('ref:42', { source: 'mcp' })
 
     // double-wrap 회귀 가드 — setSelectedStyleRefId 호출 인자에 'preset:preset:*' 없어야
     for (const call of setSelectedStyleRefId.mock.calls) {
@@ -206,13 +206,13 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     })))
 
     window.__mcpStartBatch(undefined)
-    expect(handleStart).toHaveBeenCalledWith('ref:555')
+    expect(handleStart).toHaveBeenCalledWith('ref:555', { source: 'mcp' })
 
     window.__mcpStartBatch('')
-    expect(handleStart).toHaveBeenLastCalledWith('ref:555')
+    expect(handleStart).toHaveBeenLastCalledWith('ref:555', { source: 'mcp' })
 
     window.__mcpStartBatch(null)
-    expect(handleStart).toHaveBeenLastCalledWith('ref:555')
+    expect(handleStart).toHaveBeenLastCalledWith('ref:555', { source: 'mcp' })
   })
 
   it('__mcpStartBatch passes null when styleId omitted AND no usable style card exists', () => {
@@ -223,7 +223,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     })))
 
     window.__mcpStartBatch(undefined)
-    expect(handleStart).toHaveBeenCalledWith(null)
+    expect(handleStart).toHaveBeenCalledWith(null, { source: 'mcp' })
   })
 
   it('__mcpGenerateRef applies caller-side fallback when styleId omitted (no UI leak)', async () => {
@@ -325,12 +325,12 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
     // 'auto' sentinel → caller explicitly wants per-scene matching, no fallback
     window.__mcpStartBatch('auto')
-    expect(handleStart).toHaveBeenCalledWith(null)
+    expect(handleStart).toHaveBeenCalledWith(null, { source: 'mcp' })
 
     // Sanity: same setup, undefined styleId would pick the fallback (proves the sentinel changes behavior)
     handleStart.mockClear()
     window.__mcpStartBatch(undefined)
-    expect(handleStart).toHaveBeenCalledWith('ref:555')
+    expect(handleStart).toHaveBeenCalledWith('ref:555', { source: 'mcp' })
   })
 
   it("__mcpStartBatch('none') passes 'none' sentinel through (downstream forces no style)", () => {
@@ -341,7 +341,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     window.__mcpStartBatch('none')
     // 'none' must propagate end-to-end so styleService.resolveSceneStyle skips all style application.
     // null would have meant "auto-match per-scene" which is not what 'none' guarantees.
-    expect(handleStart).toHaveBeenCalledWith('none')
+    expect(handleStart).toHaveBeenCalledWith('none', { source: 'mcp' })
   })
 
   it("__mcpStartRefBatch('none') passes 'none' sentinel through", () => {
@@ -421,16 +421,15 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     renderHook(() => useMcpServer(makeProps({ handleStart, references: [refWithMedia] })))
 
     window.__mcpStartBatch('preset:cinematic', { force: true })
-    expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { force: true })
+    expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { force: true, source: 'mcp' })
   })
 
-  it('__mcpStartBatch without force keeps single-arg call (backward compat)', () => {
+  it('__mcpStartBatch without force still passes MCP source metadata', () => {
     const handleStart = vi.fn()
     renderHook(() => useMcpServer(makeProps({ handleStart })))
 
     window.__mcpStartBatch('preset:cinematic')
-    // 백워드 호환 — 옵션 안 넘기면 handleStart도 1-arg 호출 (기존 테스트가 이 형태 기대)
-    expect(handleStart).toHaveBeenCalledWith('preset:cinematic')
+    expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { source: 'mcp' })
   })
 
   it("__mcpStartBatch('auto', { force: true }) forwards force with null override", () => {
@@ -438,7 +437,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     renderHook(() => useMcpServer(makeProps({ handleStart })))
 
     window.__mcpStartBatch('auto', { force: true })
-    expect(handleStart).toHaveBeenCalledWith(null, { force: true })
+    expect(handleStart).toHaveBeenCalledWith(null, { force: true, source: 'mcp' })
   })
 
   it("__mcpStartBatch('none', { force: true }) forwards force with 'none' override", () => {
@@ -446,7 +445,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     renderHook(() => useMcpServer(makeProps({ handleStart })))
 
     window.__mcpStartBatch('none', { force: true })
-    expect(handleStart).toHaveBeenCalledWith('none', { force: true })
+    expect(handleStart).toHaveBeenCalledWith('none', { force: true, source: 'mcp' })
   })
 
   // --- Task 4: start-ref-batch force ---
@@ -500,7 +499,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     await window.__mcpStartBatch('preset:noir', { force: true })
 
     expect(handleStop).not.toHaveBeenCalled()
-    expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true })
+    expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true, source: 'mcp' })
   })
 
   it('handleStartRef uses LATEST handleStart even when rerender happens DURING __mcpStartBatch async call (P0 stale closure)', async () => {
@@ -552,7 +551,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
     // ref fix가 없으면: v1만 호출됨 (stale).
     // ref fix가 있으면: v2 호출, v1은 호출 안 됨.
-    expect(handleStart_v2).toHaveBeenCalledWith('preset:noir', { force: true })
+    expect(handleStart_v2).toHaveBeenCalledWith('preset:noir', { force: true, source: 'mcp' })
     expect(handleStart_v1).not.toHaveBeenCalled()
 
     vi.useRealTimers()
@@ -621,7 +620,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     await vi.advanceTimersByTimeAsync(100)
     await callPromise
 
-    expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true })
+    expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true, source: 'mcp' })
     vi.useRealTimers()
   })
 

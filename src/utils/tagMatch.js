@@ -5,10 +5,14 @@
 
 import { STYLE_PRESETS } from '../config/defaults'
 
+export function normalizeTagKey(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
 /** 태그 문자열을 배열로 분리 (콤마, 세미콜론, 콜론) */
 export function splitTags(tagString) {
   if (!tagString) return []
-  return tagString.split(/[,;:]/).map(t => t.trim().toLowerCase()).filter(Boolean)
+  return tagString.split(/[,;:]/).map(normalizeTagKey).filter(Boolean)
 }
 
 /**
@@ -25,9 +29,9 @@ export function checkTagMatch(tagValue, references, type) {
   const presetTokens = type === 'style'
     ? new Set(
         (STYLE_PRESETS?.styles || []).flatMap(p => [
-          p.id?.toLowerCase(),
-          p.name_ko?.toLowerCase(),
-          p.name_en?.toLowerCase(),
+          normalizeTagKey(p.id),
+          normalizeTagKey(p.name_ko),
+          normalizeTagKey(p.name_en),
         ]).filter(Boolean)
       )
     : null
@@ -35,8 +39,8 @@ export function checkTagMatch(tagValue, references, type) {
   const matchedTags = []
   const unmatchedTags = []
   for (const tag of tags) {
-    const refMatch = references.some(ref =>
-      ref.type === type && ref.name.toLowerCase() === tag
+    const refMatch = (references || []).some(ref =>
+      ref.type === type && normalizeTagKey(ref.name) === tag
     )
     const presetMatch = presetTokens?.has(tag) || false
     if (refMatch || presetMatch) matchedTags.push(tag)

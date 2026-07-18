@@ -23,7 +23,7 @@ import { createSrtTrackFromScenes, pruneSrtTrackToScenes } from '../utils/srtTra
 import { matchSrtLines } from '../utils/srtLineMatcher'
 import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
-import { splitTags } from '../utils/tagMatch'
+import { normalizeTagKey, splitTags } from '../utils/tagMatch'
 import { resolveMentions } from '../utils/mentionParser'
 import { isStyleReference } from '../services/styleService'
 
@@ -599,16 +599,18 @@ export function useScenes() {
   /**
    * 씬에 매칭되는 레퍼런스 찾기
    */
-  const getMatchingReferences = useCallback((scene) => {
-    if (!scene || references.length === 0) return []
+  // referencePool: 판정에 쓸 authoritative refs. 기본값은 hook closure references.
+  // M2 continuation 은 모달을 연 지 수 분 뒤 실행돼 closure 가 stale 하므로 live pool 을 명시 주입한다.
+  const getMatchingReferences = useCallback((scene, referencePool = references) => {
+    if (!scene || referencePool.length === 0) return []
 
     const matched = []
 
     // 캐릭터 태그 매칭
     if (scene.characters) {
       const charTags = splitTags(scene.characters)
-      for (const ref of references) {
-        if (ref.type === 'character' && charTags.includes(ref.name.toLowerCase())) {
+      for (const ref of referencePool) {
+        if (ref.type === 'character' && charTags.includes(normalizeTagKey(ref.name))) {
           matched.push(ref)
         }
       }
@@ -617,8 +619,8 @@ export function useScenes() {
     // 배경 태그 매칭
     if (scene.scene_tag) {
       const sceneTags = splitTags(scene.scene_tag)
-      for (const ref of references) {
-        if (ref.type === 'scene' && sceneTags.includes(ref.name.toLowerCase())) {
+      for (const ref of referencePool) {
+        if (ref.type === 'scene' && sceneTags.includes(normalizeTagKey(ref.name))) {
           matched.push(ref)
         }
       }
@@ -627,8 +629,8 @@ export function useScenes() {
     // 스타일 태그 매칭
     if (scene.style_tag) {
       const styleTags = splitTags(scene.style_tag)
-      for (const ref of references) {
-        const refName = ref.name?.toLowerCase()
+      for (const ref of referencePool) {
+        const refName = normalizeTagKey(ref.name)
         if (isStyleReference(ref) && refName && styleTags.includes(refName)) {
           matched.push(ref)
         }
@@ -638,7 +640,7 @@ export function useScenes() {
     // 프롬프트 본문의 `@name` 인라인 멘션도 함께 수집 — Google Flow 방식.
     // CSV 태그와 합집합, id 우선 / name 보조로 dedup. 타입 무관 (캐릭터/씬/스타일 모두 가능).
     if (scene.prompt) {
-      const { matched: mentionMatched } = resolveMentions(scene.prompt, references)
+      const { matched: mentionMatched } = resolveMentions(scene.prompt, referencePool)
       for (const ref of mentionMatched) {
         const dup = matched.some((m) =>
           (ref.id != null && m.id === ref.id) ||
@@ -807,6 +809,7 @@ export function useScenes() {
     updateReferences,
     
     // Queries
+    scenesRef,   // live scenes — async continuation 이 stale closure 대신 읽는 동기 최신값
     getMatchingReferences,
     getCompletedCount,
     getErrorCount,

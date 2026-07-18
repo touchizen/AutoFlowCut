@@ -1,3 +1,22 @@
+// handleStart 초입 guard — hasPendingBatch는 M2 failure 모달이 열린 동안 유지되어 MCP
+// stop-restart의 scene start 재호출을 막는 latch다.
+export function isStartBlocked({ isRunning, videoRunning, hasPendingBatch, retryInFlight }) {
+  return !!(isRunning || videoRunning || hasPendingBatch || retryInFlight)
+}
+
+// handleStop 이 ref 작업을 중단할지.
+//
+// refBatchRunning(preparing/stopping/generating) 만으로는 부족하다 — 빈 레퍼런스 gate 가
+// 생성 중일 때 그 flag 들이 전부 false 인 창이 둘 있다: (1) 공유 큐에서 배치가 앞 작업 뒤에
+// 대기하는 동안(분 단위), (2) 아이템마다 도는 auth preflight 동안(Flow character 직행 경로는
+// preflight 추적을 건너뛴다 — 그런데 빈 character 카드가 바로 이 gate 의 대상이라 이게 기본
+// 경로다). 그 창에서 Stop 은 렌더돼 있는데 아무 일도 안 했다.
+// gate 가 busy 면 flag 와 무관하게 중단한다. 이르게 불러도 안전하다 — 배치가 enqueue 시점의
+// stop 버전과 비교해 큐 대기 중 들어온 중단을 시작할 때 소비한다.
+export function shouldStopRefWork({ refBatchRunning, gatePhase }) {
+  return !!refBatchRunning || gatePhase === 'busy'
+}
+
 /**
  * handleStart의 requireStyle 가드 보조 — auto 매칭 가능 여부 계산.
  *

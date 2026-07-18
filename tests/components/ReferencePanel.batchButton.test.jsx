@@ -31,7 +31,7 @@ vi.mock('../../src/components/StylePicker', () => ({ default: () => null }))
 
 import ReferencePanel from '../../src/components/ReferencePanel'
 
-function renderPanel(references) {
+function renderPanel(references, extraProps = {}) {
   return render(
     <ReferencePanel
       references={references}
@@ -48,6 +48,7 @@ function renderPanel(references) {
       selectedStyleRefId={null}
       onStyleRefChange={vi.fn()}
       projectName="proj"
+      {...extraProps}
     />
   )
 }
@@ -72,5 +73,29 @@ describe('ReferencePanel — 일괄 생성 버튼 (style 카드 포함)', () => 
     const btn = container.querySelector('.btn-generate-all')
     expect(btn).toBeTruthy()
     expect(btn.textContent).toContain('(2)')
+  })
+
+  it('gate batch가 pending이면 Clear All과 일괄 생성 진입점을 비활성화한다', () => {
+    const { container } = renderPanel([
+      { id: 1, type: 'character', prompt: 'a hero' }
+    ], { hasPendingBatch: true })
+
+    expect(container.querySelector('.btn-clear-refs').disabled).toBe(true)
+    expect(container.querySelector('.btn-generate-all').disabled).toBe(true)
+  })
+
+  it('gate batch가 pending이면 Flow 일괄 Sync 진입점도 비활성화한다', () => {
+    const { container } = renderPanel([
+      {
+        id: 1,
+        type: 'character',
+        name: 'Hero',
+        prompt: 'a hero',
+        data: 'data:image/png;base64,AAA',
+      }
+    ], { hasPendingBatch: true, appMode: 'flow' })
+
+    expect(container.querySelector('.btn-sync-all').disabled).toBe(true)
+    expect(container.querySelector('.btn-clear-refs').disabled).toBe(true)
   })
 })

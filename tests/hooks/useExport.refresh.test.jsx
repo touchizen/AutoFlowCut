@@ -269,6 +269,36 @@ describe('handleExportClick — loading 윈도우 paywall 차단 (P2-3 후속)',
   })
 })
 
+// main 은 stale/손상 manifest 를 { error: kind } 로 알린다(throw 는 IPC 를 건너며 errorKind 가
+// 소실된다 — Electron 이 message 만 직렬화한다). 그 객체를 그대로 흘려보내면 storyAudio 자리로
+// 들어가 manifest 없는 채 export 가 진행된다. (문구 번역은 useExport.storyAudioStale.test.jsx —
+// 이 파일의 t 목은 키를 그대로 돌려줘 번역을 관찰할 수 없다.)
+describe('handleExportConfirm — story 오디오가 stale 이면 막는다', () => {
+  it('{ error: kind } 를 storyAudio 로 흘려보내지 않고 export 를 중단한다', async () => {
+    window.electronAPI = { storyLoadAudioPackage: vi.fn(async () => ({ error: 'story-audio-stale-manifest' })) }
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: baseScenes,
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn(),
+        storyProjectPath: '/tmp/proj',
+      })
+    )
+
+    await act(async () => {
+      await result.current.handleExportConfirm(baseConfirmArgs)
+    })
+
+    expect(mockExportCapcut).not.toHaveBeenCalled()
+    expect(mockToastError).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('handleExportConfirm — 성공 후 refreshSubscription 호출 (P2-1)', () => {
   it('export 성공 시 refreshSubscription 이 호출된다', async () => {
     const refreshSubscription = vi.fn().mockResolvedValue(undefined)

@@ -22,6 +22,10 @@ import { consumeBatchDownload } from '../firebase/functions'
 import { batchStartGate } from './batchStartGate'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
+import {
+  applyM1MentionExclusions,
+  flowImageInjectable,
+} from '../utils/refImageGuard'
 
 export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -80,7 +84,20 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
   const runConcurrentQueue = async (targetScenes, options, total) => {
-    let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, imageModel, selectedStyleRefId, seed = null, concurrency: rawConcurrency, currentRefs, consumeGate } = options
+    let {
+      projectName,
+      saveMode,
+      imageBatchCount,
+      imageUpscale,
+      aspectRatio,
+      imageModel,
+      selectedStyleRefId,
+      seed = null,
+      concurrency: rawConcurrency,
+      currentRefs,
+      consumeGate,
+      m1ExcludedMentionNamesBySceneId = {},
+    } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
     // #R6-15: entity 패치가 반영된 refs (없으면 closure references 폴백 — 멘션 해석 일관성).
     const effectiveRefs = currentRefs || references
@@ -252,7 +269,10 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       }
       if (stopRequestedRef.current) break
 
-      const scene = targetScenes[i]
+      const scene = applyM1MentionExclusions(
+        targetScenes[i],
+        m1ExcludedMentionNamesBySceneId
+      )
       updateScene(scene.id, { status: 'generating', generatingStartedAt: Date.now() })
       setStatusMessage(t('status.generatingScene', { ids: scene.id, current: completedCountRef.current, total }))
 
@@ -263,14 +283,17 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // 디스크 fallback 도 못 타고 조용히 빠지는 회귀 차단. (useSceneGeneration 과 정책 동일.)
       const allMatched = getMatchingReferences(scene)
       const matchedRefs = allMatched
-        .filter(r => r.mediaId || r.name || r.data || r.filePath)
+        .filter(r => mode === 'flow'
+          ? flowImageInjectable(r)
+          : !!(r?.mediaId || r?.name || r?.data || r?.filePath)
+        )
         .map(r => ({
           category: r.category,
           mediaId: r.mediaId || null,
           caption: r.caption || '',
           name: r.name,
           data: r.data || null,
-          filePath: r.filePath || null,
+          filePath: r.filePath || r.imagePath || null,
         }))
       if (matchedRefs.length > 0) {
         console.log('[Automation] Scene', scene.id, '→ injecting', matchedRefs.length, 'refs')
@@ -435,6 +458,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       saveMode = 'folder',
       sceneIndices = null,
       sceneIds = null,  // 선호 — queue 지연 후에도 안정적으로 id 로 resolve (index staleness 회피)
+      batchIntent = null,
       imageBatchCount = 1,
       imageUpscale = 'off',
       aspectRatio = '16:9',
@@ -446,8 +470,15 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // #R34-fix: 호출자(App sync 게이트)가 방금 동기화한 entity 패치가 반영된 refs 를 넘기면
       //   closure 의 stale `references` 대신 이걸로 시작한다 — 첫 배치부터 @멘션이 해석된다.
       currentRefs: currentRefsOverride = null,
+      m1ExcludedMentionNamesBySceneId = {},
     } = options
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
+    // #M2: sceneIds 는 membership 고정용이지 partial retry 의미가 아니다. 호출자가 batchIntent 로
+    //   명시하면 그 의미가 우선하고, 미전달이면 기존 sceneIds/sceneIndices 추론을 보존한다.
+    const inferredPartialRetry = !!(sceneIds || sceneIndices)
+    const isPartialRetry =
+      batchIntent === 'retry' ||
+      (batchIntent == null && inferredPartialRetry)
 
     if (isRunning) return
 
@@ -494,7 +525,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // #5: 부분 retry(sceneIds/sceneIndices)로 이 프로젝트의 기존 batchId 를 재사용하면 paywall 스킵
       //   (서버 멱등 no-op/거부에 위임). 이 프로젝트에 기존 id 가 없으면(첫 실행/재로드) 새 배치 → paywall 적용.
       //   프로젝트별 키라 다른 프로젝트의 과금된 id 에는 무임승차 불가.
-      const isReusingBatch = !!((sceneIds || sceneIndices) && batchIdByProjectRef.current.get(projectName))
+      const isReusingBatch = !!(isPartialRetry && batchIdByProjectRef.current.get(projectName))
       const gate = batchStartGate({ subscriptionBatch, isAuthenticated, subscriptionStatus, isReusingBatch })
       if (gate.action === 'login') {
         onLoginRequired?.()
@@ -709,7 +740,6 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     // (배치 구독 게이트는 위 preflight 이전으로 이동 — 로그인/paywall 우선)
     // batchId: full start 면 이 프로젝트에 새 배치(새 id), retry/partial(sceneIds/sceneIndices) 이면
     // 이 프로젝트의 직전 배치 재사용. 재사용 시 서버 consume 가 멱등 no-op → 재시도가 이중과금되지 않는다.
-    const isPartialRetry = !!(sceneIds || sceneIndices)
     const { batchId } = resolveProjectBatchId(batchIdByProjectRef.current, projectName, isPartialRetry)
     // #6: charged 성공 시 refreshSubscription 1회 호출 — Firestore mirror stale 방지.
     const consumeGate = makeBatchConsumeGate(batchId, 'image', (a) => consumeBatchDownload(a), () => {
@@ -732,6 +762,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       concurrency,
       currentRefs, // #R6-15: entity 패치가 반영된 로컬 refs (멘션 해석에 사용)
       consumeGate,  // 배치당 1회 consume 보장 게이트
+      m1ExcludedMentionNamesBySceneId,
     }, total)
     
     // 완료 — 즉시 저장 (auto-save debounce 전에 프로젝트 전환/종료 방지)

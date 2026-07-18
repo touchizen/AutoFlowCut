@@ -1,5 +1,30 @@
 import { describe, it, expect } from 'vitest'
-import { checkTagMatch, collectTagErrors, splitTags } from '../../src/utils/tagMatch'
+import {
+  checkTagMatch,
+  collectTagErrors,
+  normalizeTagKey,
+  splitTags,
+} from '../../src/utils/tagMatch'
+
+describe('normalizeTagKey', () => {
+  it('trims and lowercases without collapsing internal whitespace', () => {
+    expect(normalizeTagKey('  HeRo  ')).toBe('hero')
+    expect(normalizeTagKey('Red  Fox')).toBe('red  fox')
+    expect(normalizeTagKey(null)).toBe('')
+    expect(normalizeTagKey(undefined)).toBe('')
+  })
+
+  it('is the normalization used by splitTags and validation', () => {
+    expect(splitTags(' Hero , Red  Fox ')).toEqual(['hero', 'red  fox'])
+
+    const result = checkTagMatch(
+      'hero',
+      [{ id: 1, type: 'character', name: '  HeRo  ' }],
+      'character'
+    )
+    expect(result?.allMatched).toBe(true)
+  })
+})
 
 describe('splitTags', () => {
   it('returns empty for falsy input', () => {

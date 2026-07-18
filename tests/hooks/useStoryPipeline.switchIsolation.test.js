@@ -25,14 +25,16 @@ describe('useStoryPipeline 프로젝트 전환 격리 타이밍', () => {
     const { result, rerender } = renderHook(
       ({ projectPath }) => {
         const p = useStoryPipeline({ projectPath, onPushScenes: vi.fn() })
-        renders.push({ projectPath, state: p.state, scriptText: p.scriptText, scenes: p.scenes })
+        renders.push({ projectPath, state: p.state, streamingText: p.streamingText, scriptText: p.scriptText, scenes: p.scenes })
         return p
       },
       { initialProps: { projectPath: '/A' } },
     )
     await act(() => result.current.open())
+    act(() => listeners['story:delta']({ projectToken: 'tok1', text: 'A 스트리밍' }))
     // A 프로젝트: editor 진입에 필요한 scriptText/state가 채워진 상태
     expect(result.current.scriptText).toBe('복원대본')
+    expect(result.current.streamingText).toBe('A 스트리밍')
 
     renders.length = 0
     await act(async () => { rerender({ projectPath: '/B' }) })
@@ -40,8 +42,33 @@ describe('useStoryPipeline 프로젝트 전환 격리 타이밍', () => {
     // 전환을 처음 감지한 render(B) — effect의 리셋 이전 — 에서 이미 빈 값을 반환해야 한다
     const firstB = renders.find((r) => r.projectPath === '/B')
     expect(firstB).toBeTruthy()
+    expect(firstB.streamingText).toBe('')
     expect(firstB.scriptText).toBe('')
     expect(firstB.state).toBeNull()
     expect(firstB.scenes).toEqual([])
+  })
+
+  it('전환 effect flush 후 segmentProgress와 openError를 초기화한다', async () => {
+    const { result, rerender } = renderHook(
+      ({ projectPath }) => useStoryPipeline({ projectPath, onPushScenes: vi.fn() }),
+      { initialProps: { projectPath: '/A' } },
+    )
+    await act(() => result.current.open())
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1',
+      kind: 'audio-segment',
+      segId: 's1-1',
+      status: 'done',
+    }))
+    window.electronAPI.storyOpen.mockResolvedValueOnce({ error: 'A-open-error' })
+    await act(() => result.current.open())
+    expect(result.current.segmentProgress).toEqual({ 's1-1': 'done' })
+    expect(result.current.openError).toBe('A-open-error')
+
+    await act(async () => { rerender({ projectPath: '/B' }) })
+    await act(async () => {})
+
+    expect.soft(result.current.segmentProgress).toEqual({})
+    expect.soft(result.current.openError).toBeNull()
   })
 })

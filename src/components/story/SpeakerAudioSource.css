@@ -1,0 +1,90 @@
+/* 화자별 오디오 출처 — ⑤ 오디오의 성우 행에 붙는다. 행 전체가 mp3/SRT 드롭 타깃이다. */
+
+.story-src {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* 성우 행의 고정 3열 그리드(StoryView.css)에서 이 위젯은 폭이 일정한 마지막 열이다. 칩 두 개 +
+     해제 버튼이 그 폭에 한 줄로 들어간다(칩 max-width 120 → 240+여백 < 300). 아주 긴 파일명만
+     둘째 줄로 접힌다. min-width:0이라야 칩이 열 안에서 줄어들며 ellipsis가 먹는다. */
+  flex-wrap: wrap;
+  min-width: 0;
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px dashed transparent;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+/* 드래그 중일 때만 드롭 가능하다는 걸 드러낸다 — 평소엔 조용히 있는다. */
+.story-src.over {
+  border-color: var(--accent-color, #6aa9ff);
+  background: rgba(106, 169, 255, 0.1);
+}
+
+.story-src-chip {
+  max-width: 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 7px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px dashed var(--border-color, #3a3a3a);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.story-src-chip:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--accent-color, #6aa9ff);
+}
+
+.story-src-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+/* 짝이 다 맞은 출처 = 실선 + 강조. 반쪽(half)은 점선 유지 — 아직 안 쓰인다는 뜻. */
+.story-src-chip.on {
+  opacity: 1;
+  border-style: solid;
+  border-color: var(--accent-color, #6aa9ff);
+  color: var(--accent-color, #6aa9ff);
+}
+
+.story-src-chip.half {
+  opacity: 1;
+  border-color: #e0a030;
+  color: #e0a030;
+}
+
+.story-src-clear {
+  padding: 3px 6px;
+  font-size: 11px;
+  line-height: 1;
+  border-radius: 5px;
+  border: 1px solid var(--border-color, #3a3a3a);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.story-src-clear:hover:not(:disabled) {
+  opacity: 1;
+  border-color: #e05c5c;
+  color: #e05c5c;
+}
+
+.story-src-need {
+  font-size: 10px;
+  color: #e0a030;
+}
+
+.story-src-error {
+  font-size: 10px;
+  color: #e05c5c;
+}

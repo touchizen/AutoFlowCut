@@ -227,3 +227,47 @@ describe('withStoryAudio — 메인 audioPackage에 story 오디오 합류(프�
     expect(merged.sfx.some(s => s.category === 'story')).toBe(true)
   })
 })
+
+// startMs 가 없는 세그먼트 = **아직 타임라인 자리를 못 정한 것**이다. 부분재시도 경로가 그렇다:
+// 성공분의 audioPath·durationMs 는 저장하지만 조립(buildSegmentTimeline)을 건너뛰므로 startMs 가 없다.
+// 그걸 `startMs || 0` 으로 지어내면 **전부 0초에 쌓여 한 덩어리로 뭉친다** — 실측(무한야담ep02):
+// 나레이터 237개가 audioPath 는 있는데 startMs 가 전부 undefined 였고, 프리뷰가 통짜로 겹쳐 보였다.
+// 자리를 모르면 그리지 않는 게 맞다. 0초는 "맨 앞"이라는 **틀린 정보**다.
+describe('buildStoryAudioPackage — 자리를 모르는 세그먼트', () => {
+  // 조립이 아예 안 돈 상태(부분 실행/부분실패) — 아무도 startMs 가 없다. 여기서 빼버리면 잘라 놓은
+  // 조각이 화면에서 통째로 사라져 확인할 방법이 없다. 순서대로 이어붙여 "내가 뭘 잘랐나"를 들려준다.
+  // 최종 타이밍은 아니지만(인물 대사가 들어가면 밀린다) export 는 audio.status==='done' 게이트가
+  // 막으므로 결과물로 샐 수 없다. 0초에 전부 쌓는 것과는 다르다 — 그건 겹쳐서 못 듣는다.
+  it('아무도 startMs 가 없으면 순서대로 이어붙인다 — 0초에 쌓아 뭉개지 않는다', () => {
+    const pkg = buildStoryAudioPackage([{ segments: [
+      { id: 'a', speaker: 'narrator', durationMs: 1000, audioPath: '/a/a.wav', type: 'narration' },
+      { id: 'b', speaker: 'narrator', durationMs: 2000, audioPath: '/a/b.wav', type: 'narration' },
+    ] }])
+    expect(pkg.voices[0].files.map((f) => f.timecodeMs)).toEqual([0, 1000]) // 겹치지 않는다
+  })
+
+  it('오디오 없는 세그먼트는 자리를 차지하지 않는다 — 아직 안 만든 것이다', () => {
+    const pkg = buildStoryAudioPackage([{ segments: [
+      { id: 'a', speaker: 'narrator', durationMs: 1000, audioPath: '/a/a.wav', type: 'narration' },
+      { id: 'd', speaker: '과부', durationMs: 0, type: 'narration' }, // 오디오 없음(TTS 미실행)
+      { id: 'b', speaker: 'narrator', durationMs: 2000, audioPath: '/a/b.wav', type: 'narration' },
+    ] }])
+    expect(pkg.voices[0].files.map((f) => f.timecodeMs)).toEqual([0, 1000])
+  })
+
+  it('자리를 아는 것만 그린다 — 섞여 있어도', () => {
+    const pkg = buildStoryAudioPackage([{ segments: [
+      { id: 'a', speaker: 'narrator', startMs: 0, durationMs: 1000, audioPath: '/a/a.wav', type: 'narration' },
+      { id: 'b', speaker: 'narrator', durationMs: 1000, audioPath: '/a/b.wav', type: 'narration' }, // 자리 모름
+    ] }])
+    expect(pkg.voices[0].files.map((f) => f.filename)).toEqual(['a.wav'])
+  })
+
+  it('sfx 도 같은 규칙으로 자리를 받는다 — 나레이션만 깔고 효과음을 버리면 반쪽이다', () => {
+    const pkg = buildStoryAudioPackage([{ segments: [
+      { id: 'a', speaker: 'narrator', durationMs: 1000, audioPath: '/a/a.wav', type: 'narration' },
+      { id: 'x', speaker: null, durationMs: 300, audioPath: '/a/x.wav', type: 'sfx' },
+    ] }])
+    expect(pkg.sfx[0].files.map((f) => f.timecodeMs)).toEqual([1000]) // 나레이션 뒤 — 0초에 겹치지 않는다
+  })
+})

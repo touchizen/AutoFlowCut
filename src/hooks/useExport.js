@@ -12,6 +12,7 @@ import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
 import { resolveExportVideos, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
+import { resolveDisplayError } from '../utils/errorDisplay'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
 import { isSceneGenerationDone } from '../services/generationStatus'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
@@ -160,7 +161,12 @@ export function useExport({
   //     차단한다(Codex finding 3, fail-fast). IPC 자체가 없으면(테스트 등) optional chain → null.
   const loadStoryAudio = async () => {
     if (!storyProjectPath) return null
-    return (await window.electronAPI?.storyLoadAudioPackage?.(storyProjectPath)) ?? null
+    const pkg = (await window.electronAPI?.storyLoadAudioPackage?.(storyProjectPath)) ?? null
+    // main 은 stale/손상 manifest 를 { error: kind } 로 알린다(throw 는 IPC 를 건너며 errorKind 가
+    // 소실된다). 그대로 흘려보내면 이 객체가 storyAudio 로 들어가 manifest 없는 채 export 가
+    // 진행된다 — 막고, kind 를 실어 던져 catch 가 로케일 문구로 바꾸게 한다.
+    if (pkg?.error) throw Object.assign(new Error(pkg.error), { errorKind: pkg.error })
+    return pkg
   }
 
   // CapCut / Premiere 공통 — exporter 가 기대하는 project 구조 빌드.
@@ -333,7 +339,7 @@ export function useExport({
       onExportSuccess?.()
       return { success: true, targetPath: result.targetPath }
     } catch (error) {
-      toast.error(t('toast.exportFailed', { error: error.message }))
+      toast.error(t('toast.exportFailed', { error: resolveDisplayError(t, error.errorKind, error.message) }))
       return { success: false, error: error.message }
     } finally {
       setExporting(false)
@@ -428,7 +434,7 @@ export function useExport({
       onExportSuccess?.()
       return { success: true, targetPath: result.targetPath }
     } catch (error) {
-      toast.error(t('toast.exportFailed', { error: error.message }))
+      toast.error(t('toast.exportFailed', { error: resolveDisplayError(t, error.errorKind, error.message) }))
       return { success: false, error: error.message }
     } finally {
       setExporting(false)
@@ -509,7 +515,7 @@ export function useExport({
       onExportSuccess?.()
       return { success: true, targetPath: result.targetPath, warnings: result.warnings }
     } catch (error) {
-      toast.error(t('toast.exportFailed', { error: error.message }))
+      toast.error(t('toast.exportFailed', { error: resolveDisplayError(t, error.errorKind, error.message) }))
       return { success: false, error: error.message }
     } finally {
       setExporting(false)

@@ -85,6 +85,32 @@ describe('Modal', () => {
       expect(onClose).toHaveBeenCalledTimes(1)
     })
 
+    // onClose 없는 모달은 "닫을 수 없는" 모달이다 (예: 빈 레퍼런스 게이트의 busy 단계 —
+    // ref 배치가 진행 중이라 사용자에게 돌려줄 안전한 답이 없다). 그런 모달이 ✕ 를 그리면
+    // 눌러도 아무 일이 없어 앱이 멈춘 것처럼 보인다. 아예 안 그리는 게 맞다.
+    it('onClose가 없으면 닫기 버튼을 그리지 않는다 (죽은 컨트롤 방지)', () => {
+      render(
+        <Modal isOpen={true} title="테스트">
+          <p>내용</p>
+        </Modal>
+      )
+
+      expect(screen.queryByText('✕')).not.toBeInTheDocument()
+      expect(screen.getByText('내용')).toBeInTheDocument()
+    })
+
+    it('onClose가 없으면 오버레이 클릭도 아무 일이 없다', () => {
+      render(
+        <Modal isOpen={true} title="테스트">
+          <p>내용</p>
+        </Modal>
+      )
+
+      // 던지지 않아야 하고, 모달은 그대로 있어야 한다
+      fireEvent.click(document.body.querySelector('.modal-overlay'))
+      expect(screen.getByText('내용')).toBeInTheDocument()
+    })
+
     it('모달 내부 클릭 시 onClose 호출하지 않음 (stopPropagation)', () => {
       const onClose = vi.fn()
       render(

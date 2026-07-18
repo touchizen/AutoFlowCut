@@ -2,19 +2,26 @@
  * Story 스텝 머신 — 스펙 §2/§3/§4. main process 소유, 결정적 순서 제어.
  * LLM 어댑터는 DI(테스트 mock). emit은 모든 payload에 projectToken/operationId 포함.
  */
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import path from 'node:path'
 import { readFile, stat } from 'node:fs/promises'
 import { createStoryStore } from './storyStore.js'
 import { checkFixedSceneConsistency, validateFixedScenes } from './fixedScenes.js'
 import { buildStoryboardArtifacts, validateStoryboardRows } from './storyboardInput.js'
+import { parseSrtCues, validateCues, cueCoverage, alignSegmentsToSource, isImportProvider, isImportedSegment } from './srtImport.js'
+import { cutMp3ToWavSegments } from './audioCut.js'
 import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inheritSegmentIds } from './sceneIdentity.js'
 import { buildFallbackTimeline, buildFixedSlotTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
 import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
+import { createUsageTracker } from '../api/llm/usageTracker.js'
+import { setClaudeUsageSink } from '../api/llm/llmClaude.js'
+import { setCodexUsageSink } from '../api/llm/codexAppServer.js'
 import { validateScenesSegments } from '../api/llm/schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
+// 순수 함수(TextDecoder만 사용) — renderer 전용 의존성이 없어 main에서도 그대로 쓴다.
+import { decodeTextBytes } from '../../src/utils/decodeTextFile.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
 import { isRosterGatedInputType } from '../../src/services/storyInputTypes.js'
 import { parseStoryboardCSVRows } from '../../src/utils/parsers.js'
@@ -81,30 +88,182 @@ function assertSegmentIdsValid(scenes) {
 // projectPath 만으로 부를 수 있다. 경로 검증(traversal/workFolder)은 호출측 IPC 책임.
 //   - manifest 없으면(audio 미실행) null → 오디오 없이 export.
 //   - 손상(파싱 불가)이면 throw → export 차단(fail-fast, Codex finding 3).
+//   - audio 스텝이 done 이 아니면 throw → export 차단. manifest 파일이 남아 있다고 그게 **지금**
+//     오디오를 설명하는 건 아니다. 남는 경로가 둘 있다:
+//       · import 절단이 도중에 실패 — 새 wav 는 이미 최종 경로에 덮어써졌는데 예외가 부분재시도
+//         병합보다 먼저 빠져나가 manifest/scenes.json 은 옛 실행 그대로다. 그대로 export 하면
+//         **옛 타이밍에 새 오디오**가 실린다. pushRevision 가드는 이걸 못 잡는다 — 실패는 두 값을
+//         모두 안 건드려 정합 검사를 그냥 통과한다.
+//       · ③/④ 재실행 — DOWNSTREAM 이 audio 를 pending 으로 되돌려도 manifest 파일은 남는다.
+//     null(=오디오 없이 export)로 뭉개지 않는 이유는 손상 케이스와 같다: 오디오가 조용히
+//     빠지는 것도 사고다. 막고 사유를 말하는 쪽이 낫다.
 export async function readAudioPackage(projectPath) {
   const store = createStoryStore(projectPath)
-  const raw = await store.loadText('audio/manifest.json')
-  if (!raw) return null
+  const unusable = (msg, kind) => Object.assign(new Error(msg), { errorKind: kind })
+  // loadText가 아니라 loadTextStrict — loadText는 EACCES/EISDIR/EIO까지 전부 null로 접는다.
+  // null은 "audio 미실행"이라는 **한 가지 뜻**이어야 한다(그래야 "오디오 없이 export"가 맞는
+  // 처방이다). 못 읽은 것까지 null이면 오디오가 통째로 빠진 채 조용히 나간다.
+  //
+  // 오류 문구에 경로를 싣지 않는다(code만): 이 오류는 IPC를 건너 UI로 가고, 절대경로엔 계정명이
+  // 들어 있다(noKoreanIpcErrors와 같은 취지).
+  let raw
+  try { raw = await store.loadTextStrict('audio/manifest.json') } catch (e) {
+    throw unusable(`story audio manifest could not be read (${e?.code || 'unknown'}) — export blocked`, 'story-audio-manifest-corrupt')
+  }
+  // state도 store.load()가 아니라 직접 읽는다 — load()는 story.json의 읽기 실패·파싱 실패까지
+  // defaultStoryState()로 접어 **'pending'을 위조한다**. 그러면 아래 "명시적 pending만 통과"가
+  // 무의미해져 무음 export가 그대로 샌다(loadText에서 겪은 것과 같은 병이다).
+  // 파일이 아예 없는 건 정상이다 — story를 안 쓰는 프로젝트라 audio도 미실행이다.
+  let st = null
+  let rawState
+  try { rawState = await store.loadTextStrict('story.json') } catch (e) {
+    throw unusable(`story state could not be read (${e?.code || 'unknown'}) — export blocked`, 'story-audio-state-corrupt')
+  }
+  if (rawState != null) {
+    try { st = JSON.parse(rawState) } catch (e) {
+      throw unusable(`story state corrupt: ${e.message} — export blocked`, 'story-audio-state-corrupt')
+    }
+    if (!st || typeof st !== 'object') throw unusable('story state is not an object — export blocked', 'story-audio-state-corrupt')
+  }
+  // story.json이 없으면 미실행(비-story 프로젝트). 있으면 그 값을 그대로 쓴다(없으면 undefined).
+  const audioStatus = st == null ? 'pending' : st.steps?.audio?.status
+  // manifest 파일 자체가 없는 것(null)과 빈 파일('')은 다르다. 0바이트는 "없음"이 아니라 **못 쓰는
+  // 파일**이라 아래 파싱에서 손상으로 걸려야 한다 — `!raw`로 뭉개면 ENOENT와 같아져 조용히 샌다.
+  if (raw == null) {
+    // manifest가 없다. null은 **"audio를 아직 안 돌렸다"** 하나만 뜻해야 한다 — 그래야 renderer가
+    // "오디오 없는 프로젝트"로 읽고 오디오 없이 export하는 게 맞는 처방이다.
+    // 그래서 통과는 **명시적 'pending'** 하나로 좁힌다("done만 막는다"는 블랙리스트로 두면 새 상태나
+    // 값 없음으로 조용히 샌다):
+    //   - done  — 조립이 manifest를 쓰므로 없을 리 없다. 상태와 산출물이 어긋난 것.
+    //   - error — 돌렸는데 실패했다(첫 실행이 자막 불일치·디코드 오류로 죽으면 manifest가 없다).
+    //             null을 주면 **나레이션이 통째로 빠진 채** export된다 — 만들려다 실패한 것인데.
+    //   - running — 만드는 중인 산출물로 내보내면 안 된다.
+    //   - undefined — story.json은 있는데 steps가 없다(손으로 고쳤거나 깨진 상태). defaultStoryState
+    //             폴백은 파일이 **없을 때만** 걸리므로 여기까지 온다. 모르는 상태는 통과시키지 않는다.
+    //             (story.json이 아예 없는 정상 비-story 프로젝트는 폴백으로 'pending'이라 null이다.)
+    if (audioStatus !== 'pending') {
+      throw unusable(`story audio manifest is missing while the audio step is "${audioStatus}" — re-run the audio step; export blocked`, 'story-audio-stale-manifest')
+    }
+    // "이 화자만 생성"은 만들고도 조립을 건너뛰어 manifest 없이 pending 으로 끝난다. 그걸 "미실행"으로
+    // 읽으면 방금 만든 나레이션이 **통째로 빠진 채 export 된다** — 사용자는 만들었는데.
+    //
+    // 디스크 모양으론 못 가른다: 세그먼트 미리듣기(synthPreview)도 scenes.json 에 audioPath 를
+    // 쓰면서 steps.audio 는 안 건드려 **부분 실행과 완전히 같은 모양**이 된다(pending + audioPath +
+    // startMs 없음). 오디오 존재로 추측하면 "성우 몇 개 들어본" 사용자의 export 를 오진단해 막는다.
+    // 그래서 부분 실행이 **스스로 표식을 남긴다** — 그게 유일하게 정직한 신호다.
+    if (st?.steps?.audio?.partial) {
+      throw unusable('story audio was generated for one speaker only and never assembled — run the full audio step; export blocked', 'story-audio-stale-manifest')
+    }
+    return null
+  }
   let manifest
   try { manifest = JSON.parse(raw) } catch (e) {
-    throw new Error(`story audio manifest corrupt: ${e.message} — export blocked`)
+    throw unusable(`story audio manifest corrupt: ${e.message} — export blocked`, 'story-audio-manifest-corrupt')
   }
-  const st = await store.load()
-  return { manifest, lastPushedRevision: st.lastPushedRevision ?? 0 }
+  // 파싱만 통과한 게 아니라 **쓸 수 있는 모양**인지 본다. 배열이 아니면 prepareCloudRequest가
+  // `segments || []`로 받고, 원소가 못 쓰는 모양이면 하나씩 건너뛴다 — 어느 쪽이든 **나레이션 없이**
+  // export가 성공하고, storyAudio가 truthy라는 이유로 기존 audioPackage까지 억눌러 오디오가 통째로
+  // 빠진다. 조용히. (segments:[null]은 kind 없는 TypeError까지 냈다.)
+  //
+  // buildManifest가 내는 모양만 통과시킨다: 객체 + id + 실측 timing.
+  //
+  // audioPath는 **타입별로** 본다. 전역으로 "null 금지"는 과하다(생성 안 된 SFX 등 비오디오
+  // 세그먼트는 null이 정상이고 exporter가 건너뛰는 것도 정상 계약이다). 반면 **narration은 오디오가
+  // 반드시 있다** — 조립이 그걸 보장한다(narration/imported가 results에 없으면 부분재시도로 throw).
+  // 그러니 audioPath 없는 narration은 손상이다. 그냥 통과시키면 exporter가 조용히 건너뛰고,
+  // storyAudio가 truthy라는 이유로 기존 audioPackage까지 억눌러 **나레이션이 통째로 빠진다**.
+  const usableSegment = (s) => {
+    if (!s || typeof s !== 'object') return false
+    if (typeof s.id !== 'string' || !s.id) return false
+    if (!Number.isFinite(s.startMs) || !Number.isFinite(s.durationMs)) return false
+    if ((s.type || 'narration') === 'narration') return typeof s.audioPath === 'string' && !!s.audioPath && s.durationMs > 0
+    return s.audioPath == null || typeof s.audioPath === 'string'
+  }
+  if (!Array.isArray(manifest?.segments) || !manifest.segments.every(usableSegment)) {
+    throw unusable('story audio manifest segments are missing or malformed — export blocked', 'story-audio-manifest-corrupt')
+  }
+  if (audioStatus !== 'done') {
+    throw unusable(`story audio is stale: audio step is "${audioStatus}", not done — re-run the audio step; export blocked`, 'story-audio-stale-manifest')
+  }
+  return { manifest, lastPushedRevision: st?.lastPushedRevision ?? 0 }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null, cutAudio = cutMp3ToWavSegments }) {
   const store = createStoryStore(projectPath)
   // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
   const resolveTts = (provider) => (ttsFor ? ttsFor(provider) : tts)
   // 세그먼트 오디오의 합성 지문 — provider/voiceId/emotion. 재사용 시 현재 배정과 일치해야 함
   // (Codex-TTS HIGH: 화자 voice/엔진을 바꿔도 옛 오디오가 재사용되던 버그 방지).
   const ttsVoiceKey = (voice, emotion) => (voice?.voiceId ? `${voice.provider || 'typecast'}:${voice.voiceId}:${emotion || 'normal'}` : '')
+  // 파일에서 가져온 세그먼트의 지문 — 출처 파일의 신원과 잘라낸 구간. ttsVoiceKey와 같은
+  // 자리(voiceKey)에 들어가 canReuse가 그대로 판정한다.
+  // 파일 신원(크기|mtime)을 넣는 게 핵심: 경로만 넣으면 같은 경로에 다른 mp3를 덮어써도 지문이
+  // 같아 옛 조각을 영영 재사용한다(조용히 틀린 오디오 — 가장 나쁜 실패 모드).
+  const importVoiceKey = (sourceId, seg) => (sourceId ? `import:${sourceId}:${seg.srcStartMs}-${seg.srcEndMs}` : '')
+
+  function audioImportMissing() {
+    // 파일이 사라졌으면(다운로드 폴더에서 고른 뒤 몇 주 뒤 프로젝트를 다시 여는 흔한 흐름) 날것의
+    // ENOENT가 올라가는데, 그 메시지엔 전체 경로가 실려 있고 errorKind가 없어 번역도 안 된다 —
+    // errorKind 계약으로 바꿔 잡는다(noKoreanIpcErrors: 경로를 오류에 싣지 않는다).
+    const err = new Error('audio import: source SRT or mp3 is missing or unreadable')
+    err.errorKind = 'story-audio-import-missing'
+    return err
+  }
+  /**
+   * voice에 실린 경로를 신뢰하지 않는다 — renderer/영속 state에서 온 값이다. 숫자를 넘기면
+   * readFile(fd)가 임의 파일 디스크립터를 읽고, 상대경로/'..'는 예상 밖 위치를 읽는다.
+   * workFolder로 가두지는 않는다(다운로드 폴더 등에서 고르는 게 정상적인 사용이다).
+   */
+  const okImportPath = (p, ext) => typeof p === 'string' && path.isAbsolute(p)
+    && !p.split(/[\\/]/).includes('..')
+    && new RegExp(`\\.${ext}$`, 'i').test(p)
+  function assertImportVoicePaths(voice) {
+    if (!okImportPath(voice?.mp3Path, 'mp3') || !okImportPath(voice?.srtPath, 'srt')) {
+      const err = new Error('audio import: invalid source path')
+      err.errorKind = 'story-audio-import-invalid-path'
+      throw err
+    }
+  }
+  async function readImportFile(p) {
+    try { return await readFile(p) } catch { throw audioImportMissing() }
+  }
+  /** mp3와 SRT **둘 다**의 신원. SRT가 바뀌면 구간이 달라지므로 잘라둔 조각도 전부 무효다. */
+  /**
+   * 출처 (mp3, SRT) 짝의 신원 — **내용 해시**다. 메타데이터(크기|mtime)로 삼았다가 바꿨다:
+   * 같은 크기로 덮어쓰면서 동기화 도구가 mtime을 보존하거나 같은 ms 안에 다시 쓰면 지문이 그대로라
+   * 옛 조각을 영영 재사용한다 — 이 지문이 애초에 막으려던 "조용히 틀린 오디오"가 그대로 난다.
+   * 비용은 무시할 만하다: cutAudio가 어차피 mp3를 통째로 읽고 디코드까지 한다(실측 소스 17.7MB).
+   */
+  async function importSourceId(voice) {
+    let mp3, srt
+    try {
+      ;[mp3, srt] = await Promise.all([readFile(voice.mp3Path), readFile(voice.srtPath)])
+    } catch {
+      throw audioImportMissing()
+    }
+    const digest = (b) => createHash('sha256').update(b).digest('hex')
+    return `${digest(mp3)}::${digest(srt)}`
+  }
   // 감정은 화자(대사)만 — narrator는 normal로 고정(나레이션에 감정 안 실림). TTS·reuse 지문에 공통.
   const effectiveEmotion = (seg) => (isNarratorTrackSpeaker(seg?.speaker) ? 'normal' : seg?.emotion)
   const projectToken = randomUUID()
   let state = null
   let controller = null
+  // start()가 실행 소유권을 잡았다는 **동기** 래치. busy 검사는 state.steps의 'running'을 보는데,
+  // 그건 첫 await 뒤에야 마킹된다 — 그 사이에 await가 하나라도 있으면 같은 tick의 두 호출이 **둘 다**
+  // 통과한다(실측: onlySpeaker 사전검사가 scenes.json을 읽자 busy 0, TTS 2회). 동기로 먼저 잡는다.
+  let startInFlight = false
+  // abort 세대 — abort()는 controller 와 running 스텝만 보는데, start()의 사전검사 await 창에는
+  // **둘 다 없다**. 그 창에서 온 abort 가 안 닿아 프로젝트를 전환했는데도 옛 프로젝트의 절단/TTS 가
+  // 계속 돌았다(과금 + 파일 쓰기 경쟁). 세대를 올려 그 창의 실행이 스스로 물러나게 한다.
+  let abortGeneration = 0
+  /**
+   * 다른 작업이 돌고 있나 — step/preview/synopsis/research 상호배제의 **단일 술어**.
+   * 네 곳이 같은 조건을 복붙하고 있었고, 그래서 startInFlight 를 start()에만 넣었을 때 preview 가
+   * 그 창으로 새어 들어왔다(실측: start(audio)+synthPreview 동시 → preview TTS 1회 실행).
+   */
+  const anyRunning = () => startInFlight || previewing || !!synopsisController || !!researchController
+    || Object.values(state?.steps || {}).some((s) => s.status === 'running')
   let previewing = false // synthPreview 진행 중 — 배치/다른 preview와의 경쟁 직렬화(Codex-TTS HIGH2)
   // §3.3/§v2.8 M4: generateSynopsis side action 전용 controller — step/preview/synopsis 상호배제 +
   // abort 대칭(machine.abort()가 synopsis도 중단)의 기준.
@@ -112,9 +271,43 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 리서치 §3.1/§5: research side action 전용 controller — step/preview/synopsis/confirm과
   // 상호배제(MINOR 5), abort 대칭. generateSynopsis 패턴 미러.
   let researchController = null
+  // 제목 생성 side action 전용 controller — abort 대칭(프로젝트 전환이 진행 중 제목 생성을
+  // 넘겨받지 않도록). synopsisController 패턴 미러.
+  let titleController = null
 
+  // 이번 실행의 토큰 누산기. **모듈 싱글톤이 아니라 machine 인스턴스 소유** — 프로젝트 전환 시
+  // machine 과 함께 죽어야 A 의 토큰이 B 에 안 뜬다.
+  // provider sink 는 전역이지만 machine 은 동시에 1개고(story-api.js: `let machine = null`),
+  // 전환 전 abort() 가 진행 중 호출을 전부 취소하므로(제목 생성 포함) 뒤늦은 보고가 없다.
+  const usageTracker = createUsageTracker()
+
+  // 모든 emit 에 이 세션 누적을 싣는다 — 렌더러가 progress/state 어느 쪽을 받든 최신값을 본다.
   const send = (ch, payload, operationId) =>
-    emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
+    emit(ch, {
+      projectToken,
+      operationId: operationId || randomUUID(),
+      usage: usageTracker.snapshot(),
+      ...payload,
+    })
+
+  // sink 가 불릴 때마다 usage 전용 이벤트를 쏜다. 실패한 side action(generateTitle/synopsis/
+  // research)은 별도 state emit 을 안 하므로, 이게 없으면 실패로 쓴 토큰이 다음 성공 emit 까지
+  // 화면에 안 뜬다 — tracker 는 맞아도 화면이 낮게 남는 조용히 틀린 합계(3R Codex). tokenUsage 는
+  // result/알림에만 오므로(스트리밍 텍스트 델타와 다름) 빈도가 낮아 emit 비용도 작다.
+  const emitUsage = () => send('story:usage', {})
+  // claude: result 는 {input,output} delta 가산(확정), 스트리밍 진행은 pendingKey 채널로 교체/제거.
+  // 스트리밍 텍스트 델타마다 오므로 빈도가 높지만, emit 은 snapshot 을 실어 story:usage 만 쏜다.
+  setClaudeUsageSink((u) => {
+    if (u?.pendingKey) {
+      if (u.commit) { usageTracker.clearPending(u.pendingKey); usageTracker.addDelta(u) } // 제거+가산 원샷
+      else if (u.clear) usageTracker.clearPending(u.pendingKey) // result 없이 종료(abort/EOF) — 추정치 정리
+      else usageTracker.setPending(u.pendingKey, u)
+    } else {
+      usageTracker.addDelta(u) // 비스트림 확정 커밋
+    }
+    emitUsage()
+  })
+  setCodexUsageSink((u) => { usageTracker.setCumulative(u); emitUsage() }) // codex: thread 누적 → key 별 교체
 
   async function flush() { await store.save(state) }
 
@@ -181,7 +374,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   const speakerKey = (v) => String(v || '').replace(/\s/g, '').toLowerCase()
   const referencedSpeakerKey = (v) => isNarratorTrackSpeaker(v) ? 'narrator' : speakerKey(v)
-  const speakerReferenceKeys = (sp) => [sp?.id, sp?.name].filter(Boolean).map(referencedSpeakerKey)
+  // 빈/공백 참조는 뺀다 — referencedSpeakerKey는 그걸 'narrator'로 접는다(화자 미지정 = 나레이터).
+  // 그래서 name이 '   '인 인물이 나레이터 별칭을 갖게 되고, findSpeakerByRef(speakers,'narrator')가
+  // **그 인물을 먼저 집어** 나레이터 세그먼트가 인물 출처로 흘러간다. 스키마가 공백 이름을 허용한다.
+  const speakerReferenceKeys = (sp) => [sp?.id, sp?.name].filter((v) => String(v || '').trim()).map(referencedSpeakerKey)
   const findSpeakerByRef = (speakers = [], ref) => {
     const key = referencedSpeakerKey(ref)
     if (!key) return null
@@ -616,6 +812,24 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     try { return !(await store.loadTextStrict(relPath))?.trim() } catch { return false }
   }
 
+  /**
+   * "이 화자만 생성"의 사전검사 — 문제가 있으면 errorKind, 없으면 null.
+   * start()가 running을 마킹하기 **전에** 불린다: 여기서 통과시키면 완료된 프로젝트의 done이
+   * 날아간 채 "아무것도 안 만들고 성공"이 된다.
+   */
+  async function onlySpeakerScopeError(onlySpeaker, speakersParam) {
+    if (!String(onlySpeaker || '').trim()) return 'story-audio-speaker-empty'
+    const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+    if (!scenesJson) return null // scenes.json이 없으면 audio 스텝이 자기 오류로 알린다
+    const speakers = speakersParam || state.speakers || []
+    const canonical = (ref) => findSpeakerByRef(speakers, ref)?.id ?? ref
+    const target = canonical(onlySpeaker)
+    const has = (scenesJson.scenes || []).some((sc) => (sc.segments || []).some(
+      (s) => (s.type || 'narration') === 'narration' && canonical(s.speaker) === target,
+    ))
+    return has ? null : 'story-audio-speaker-empty'
+  }
+
   async function healMissingStepArtifacts() {
     if (!state?.steps) return
     const missing = {
@@ -715,10 +929,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   }
 
   // 리서치 side action 공통 busy 판정 — step/preview/synopsis/research 상호배제(§5).
-  function researchBusy() {
-    return previewing || synopsisController || researchController ||
-      Object.values(state?.steps || {}).some((s) => s.status === 'running')
-  }
+  // anyRunning() 에 위임한다: 같은 조건을 따로 들고 있으면 한쪽만 고쳐져 새는 창이 생긴다
+  // (실측: startInFlight 를 넣을 때 여기를 놓쳐 research 가 사전검사 창으로 끼어들었다).
+  const researchBusy = anyRunning
 
   // §3.3 + §v2.10: hydrate payload — renderer가 synopsis phase/게이트 복원을 판단할 재료.
   // characters는 state.speakers 단일 저장에서 파생(m3). charactersConfirmed는 3-state 그대로
@@ -934,6 +1147,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // 분리시작이 넘긴 title(자동생성 포함)을 보존 — 재오픈 hydrate가 제목을 복원하려면 필요.
         if (params.title) state.input.title = params.title
       }
+
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')
       // §v2.8 B2: 확정 명단을 분리/검토 프롬프트에 주입 — 배정을 명단에 묶는다(새 인물 생성 금지).
@@ -977,14 +1191,207 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       assertSegmentIdsValid(scenesJson.scenes)
       // 화자 voice 배정 (params.speakers 우선, 없으면 state.speakers)
       const speakers = params.speakers || state.speakers || []
+      // 배정을 **일하기 전에** 영속한다. 예전엔 전체 조립 성공 직전(아래)에만 저장해서, 첫 실행이
+      // 실패(unmatched·디코드 오류)하고 앱을 재시작하면 골라둔 mp3/SRT가 사라졌다 — 실패를
+      // 고치려면 파일부터 다시 고르는 꼴이었다. 선택은 사용자의 의도지 실행의 산출물이 아니다.
+      if (params.speakers) { state.speakers = params.speakers; await flush() }
       // C1-a: 화자 매핑 UI(M2a-3) 전에는 미배정 화자를 주입된 기본 voice로 폴백해 audio가 앱에서
       // 돌게 한다. defaultVoice 미주입(정식 흐름)이면 null → 아래 미배정 검증이 그대로 실행 차단(스펙 §6).
       const voiceOf = (spk) => findSpeakerByRef(speakers, spk)?.voice || defaultVoice || null
       // 모든 씬의 세그먼트를 순서대로 평탄화
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
-      const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
+      const allNarration = segments.filter((s) => (s.type || 'narration') === 'narration')
+
+      // ── 화자별 오디오 출처 해석 ──
+      // voice가 {provider:'import', mp3Path, srtPath}인 화자는 TTS로 만들지 않고 그 파일에서
+      // 잘라 쓴다. 여기서 각 출처의 SRT를 읽어 그 화자의 세그먼트에 mp3 구간(srcStartMs/srcEndMs)을
+      // 붙인다 — ④는 이 일에 관여하지 않으므로(평소대로 LLM 분리) 정렬은 매번 여기서 한다.
+      // 결정론적이고 싸다(문자열 매칭).
+      // 세그먼트의 화자 참조는 id일 수도 이름/별칭일 수도 있다(나레이터는 {id:'narrator',
+      // name:'나레이션'}로 시딩된다). 원시값으로 묶으면 한 화자가 **두 출처로 쪼개져** 같은 mp3를
+      // 두 번 훑고, 각 패스가 상대를 "남의 대사"로 세어(otherHit/otherMiss) 정상 import가 막힌다.
+      // voiceOf가 이미 findSpeakerByRef로 정규화하므로 묶는 축도 같은 정규화를 써야 한다.
+      const canonicalSpeaker = (ref) => findSpeakerByRef(speakers, ref)?.id ?? ref
+      const belongsTo = (spk) => (seg) => canonicalSpeaker(seg.speaker) === spk
+      // 빈/공백 onlySpeaker 는 부분 실행으로 받지 않는다 — isNarratorTrackSpeaker('')는 true 라
+      // 그대로 두면 **엉뚱하게 나레이터가 실행된다**(UI 버그나 빈 id 화자를 눌렀을 때).
+      const partialAudioRun = typeof params.onlySpeaker === 'string' && !!params.onlySpeaker.trim()
+      const scopedNarration = partialAudioRun
+        ? allNarration.filter(belongsTo(canonicalSpeaker(params.onlySpeaker)))
+        : allNarration
+      const importSpeakers = [...new Set(scopedNarration.map((s) => canonicalSpeaker(s.speaker)))].filter((spk) => isImportProvider(voiceOf(spk)))
+      // 이 화자가 나레이터인가 — **정체**로 본다(id 문자열 하나로 보면 안 된다). 나레이터 판정은
+      // 별칭 집합 매칭인데 화자 id는 그 집합 밖일 수 있다({id:'voiceover', name:'나레이션'}).
+      // id만 보면 그런 나레이터를 놓쳐 coverage가 false가 되고, 남의 대사 불일치를 못 잡아
+      // 조용히 남의 자리 오디오를 쓴다. id·이름 중 하나라도 나레이터면 나레이터다
+      // (findSpeakerByRef가 참조를 푸는 규칙과 같다).
+      // speakerReferenceKeys가 나레이터 별칭(id든 name이든)을 'narrator'로 접어준다 — 참조를 푸는
+      // 규칙과 같은 걸 써야 판정이 어긋나지 않는다. 명단에 없는 참조는 원시값으로 본다.
+      const isNarratorSpk = (spk) => {
+        const sp = findSpeakerByRef(speakers, spk)
+        return sp ? speakerReferenceKeys(sp).includes('narrator') : isNarratorTrackSpeaker(spk)
+      }
+      // 옛 approx 를 털고 시작한다 — 이 표식은 **이번 실행의 사실**이어야 한다. 안 털면 정렬을 안
+      // 타는 화자(가져오기를 해제해 TTS 로 되돌린 경우)의 옛 값이 byWorkId 로 그대로 흘러 새 TTS
+      // 오디오에 "SRT 에서 대략 자른 조각" 표시가 붙는다(거짓). 자막을 고쳐 정확히 맞게 만든
+      // 경우도 같다. 정렬이 다시 붙일 것만 남는다.
+      let workScenes = scenesJson.scenes.map((sc) => ({
+        ...sc,
+        segments: (sc.segments || []).map(({ approx, needsReview, ...seg }) => seg),
+      }))
+      const importSources = new Map() // speaker → { voice, sourceId }
+      // 남의 자리 오디오를 물어왔을 수 있는 **출처의 화자** — 보수적으로 그 화자 전체를 표시한다.
+      // 정확히 어느 조각인지는 원리적으로 못 구한다(남의 대사가 원래 어디였는지는 매칭 실패라
+      // 모른다). 정밀 추론을 시도했다가 과잉·누락을 동시에 만들었고 라운드마다 새 엣지를 낳았다.
+      // 이건 차단이 아니라 확인 표식이라 과잉이 안전하다 — 과잉 비용은 몇 번 더 들어보는 것,
+      // 누락 비용은 틀린 오디오가 조용히 남는 것이다. warn 로그는 다음 실행이 지워 흔적이 안 남는다.
+      const reviewSpeakers = new Set()
+      for (const spk of importSpeakers) {
+        const voice = voiceOf(spk)
+        assertImportVoicePaths(voice)
+        const sourceId = await importSourceId(voice)
+        const cues = parseSrtCues(decodeTextBytes(await readImportFile(voice.srtPath)))
+        const audioDurationMs = await probe(voice.mp3Path)
+        if (!(audioDurationMs > 0)) {
+          const err = new Error('audio import: source mp3 could not be read')
+          err.errorKind = 'story-audio-import-unreadable'
+          throw err
+        }
+        const errors = validateCues(cues, { audioDurationMs })
+        if (errors.length) {
+          const err = new Error(`audio import: subtitle validation failed (${errors[0].kind})`)
+          err.errorKind = errors[0].kind
+          throw err
+        }
+        // 나레이터 mp3는 대본 전체(인물 대사 포함)를 읽은 것이다 — 이 모듈의 모델이자 실측이다
+        // (무한야담2: 대사 구간 F0가 나레이션과 동일). 그래서 남의 대사가 어긋나면 곧 위험이다.
+        // 인물 mp3는 그 인물 대사만 덮으므로 남의 대사 불일치가 정상이다. 이 사실은 호출측만
+        // 안다 — 남의 대사가 하나뿐이고 그게 어긋나면 정렬기엔 증거(otherHit)가 안 남는다.
+        const r = alignSegmentsToSource(workScenes, cues, {
+          belongsToSource: belongsTo(spk),
+          coversOtherSpeakers: isNarratorSpk(spk),
+        })
+        workScenes = r.scenes
+        importSources.set(spk, { voice, sourceId })
+        sendStepLog('audio', 'import-align', `${spk}: 자막에서 ${r.aligned}/${r.total}개 구간 찾음`, opId, { count: r.aligned })
+        // 한 세그먼트도 못 맞췄다 = 보간의 기준(앵커)이 없다 = 대략 맞는 파일이 아니라 **다른 회차
+        // 파일**이다. "안 맞아도 대략 잘라 놓고 경고" 정책은 *비슷한 게 있을 때* 성립한다 — 없으면
+        // 전체를 쪼개 붙여봐야 통째로 엉뚱한 오디오고, 그건 사용자가 보고 편집해서 구할 수 있는 게
+        // 아니다. 파일 없음·경로 오류와 같은 부류(입력이 틀림)라 같은 처방을 쓴다.
+        if (r.unpaired) {
+          sendStepLog('audio', 'import-unmatched', `${spk}: 자막에서 맞는 구간을 하나도 못 찾음 — 다른 회차의 mp3/SRT가 아닌지 확인하세요`, opId, { level: 'error' })
+          const err = new Error(`audio import: none of the ${r.total} segment(s) matched the subtitles — wrong episode?`)
+          err.errorKind = 'story-audio-import-unmatched'
+          throw err
+        }
+        // 자막에서 못 찾은 세그먼트도 이웃 매칭 사이를 보간해 mp3에서 자른다. 정확한 구간은 아니므로
+        // 조용히 넘기지 않고 id·시각만 남겨 사용자가 그 조각을 확인하게 한다.
+        if (r.missed) {
+          const approxById = new Map(r.scenes.flatMap((sc) => sc.segments || []).filter((seg) => seg.approx).map((seg) => [seg.id, seg]))
+          const eg = r.approximatedIds.map((id) => {
+            const seg = approxById.get(id)
+            return seg ? `${id} ${(seg.srcStartMs / 1000).toFixed(1)}-${(seg.srcEndMs / 1000).toFixed(1)}초` : id
+          })
+          // 보간된 것과 **아예 못 만든 것**을 함께 싣는다. 후자는 자막에 그 줄이 없고 보간할 틈도
+          // 없는 경우(나레이터가 안 읽음) — 오디오가 존재하지 않아 비워둔다. 정작 사용자가 봐야 할
+          // 게 그쪽인데 보간된 id만 실으면 안 보인다.
+          const noAudio = r.missedIds.filter((id) => !approxById.has(id))
+          const parts = []
+          if (eg.length) parts.push(`보간 ${eg.join(', ')}`)
+          if (noAudio.length) parts.push(`오디오 없음 ${noAudio.join(', ')}`)
+          const where = parts.length ? ` (${parts.join(' / ')})` : ''
+          sendStepLog('audio', 'import-unmatched', `${spk}: 자막에서 못 찾은 세그먼트 ${r.missed}/${r.total}개 중 ${r.approximated}개 보간${where} — 확인하세요`, opId, { level: 'warn' })
+        }
+        // ── 경고하는 경우: 남의 대사가 이 자막에 있는데 그중 일부가 어긋남(r.dangerous) ──
+        // 자막이 남의 대사까지 담은 나레이터 mp3인데(otherHit>0이 그 증거) 그중 하나가 대본과 달라
+        // 매칭에 실패하면 커서가 안 밀린다. 그러면 뒤따르는 내 세그먼트가 그 미소비 구간에서 자기
+        // 텍스트를 찾아 **남의 구간 오디오를 물어올 수 있다**(missed는 0인 채다). 새 제품 정책은
+        // 최선 구간을 그대로 쓰되 사용자가 확인하도록 경고한다.
+        //
+        // 한때 조건이 `otherMiss>0 && skipped>0`이었는데, 그건 **인물 전용 mp3를 막았다**:
+        // 거기선 나레이터 세그먼트가 이 자막에 없는 게 정상이라 otherMiss>0이 기본값이고, 애드리브가
+        // 하나 섞이면 skipped>0이 된다 — 두 정상 현상의 곱을 위험으로 읽었다. otherHit이 가른다.
+        if (r.dangerous) {
+          reviewSpeakers.add(spk)
+          const where = r.firstHole ? ` — 첫 위치 ${(r.firstHole.atMs / 1000).toFixed(1)}초` : ''
+          sendStepLog('audio', 'import-unmatched', `${spk}: 자막에 있는 다른 화자 대사 ${r.otherMiss}개가 대본과 어긋남 — 이 화자 오디오가 남의 자리를 물어올 수 있다${where} — 확인하세요`, opId, { level: 'warn' })
+        }
+        // ── 넘기는 경우: 안 가져간 자막이 있지만 위험하진 않음 ──
+        // 대본에 없는 나레이터 애드리브·의성어("컹컹")·아웃트로다. 내 세그먼트는 전부 제자리를
+        // 찾았으니(missed=0) 그 오디오는 그냥 버리면 된다 — 목소리가 섞이지 않는다. 실측(ep02):
+        // 60자 전부 그런 것들이었다. 다만 조용히 넘기지 않고 warn으로 남겨 사용자가 안다.
+        if (r.skipped > 0) {
+          const where = r.firstHole ? ` — 첫 위치 ${(r.firstHole.atMs / 1000).toFixed(1)}초` : ''
+          sendStepLog('audio', 'import-extra', `${spk}: 대본에 없는 자막 ${r.skipped}자(애드리브/효과음)는 버림${where}`, opId, { level: 'warn' })
+        }
+        // ── 삽입을 건너뛰며 맞춘 세그먼트 ──
+        // exact 매칭과 달리 이건 **추측**이다: 나레이터가 덧읽은 애드리브를 건너뛴 것일 수도,
+        // 의미가 다른 문장을 삼킨 것일 수도 있고 여기선 구분할 수단이 없다(예산으로 위험만 줄인다).
+        // 그래서 통과시키되 어느 세그먼트인지 알려 사용자가 그 구간만 들어볼 수 있게 한다.
+        // 실측(ep02): 237개 전부 exact라 이 경고는 안 뜬다 — 뜨면 실제로 볼 만한 신호라는 뜻이다.
+        if (r.gapped > 0) {
+          const eg = r.gappedIds.length ? ` (${r.gappedIds.join(', ')})` : ''
+          sendStepLog('audio', 'import-gapped', `${spk}: 자막에 낀 삽입을 건너뛰며 맞춘 세그먼트 ${r.gapped}/${r.total}개${eg} — 구간을 확인하세요`, opId, { level: 'warn' })
+        }
+        const cov = cueCoverage(cues, { audioDurationMs })
+        if (cov.gapMs > 0) sendStepLog('audio', 'import-gaps', `${spk}: 자막 사이 간격 ${(cov.gapMs / 1000).toFixed(1)}초`, opId)
+      }
+      // 정렬 결과를 반영한 세그먼트로 갈아끼운다(원본 scenesJson.scenes는 불변).
+      const workSegments = workScenes.flatMap((sc) => sc.segments || [])
+      const byWorkId = new Map(workSegments.map((s) => [s.id, s]))
+      // 보간 표시를 **영속**한다. 경고 로그(progressLog)는 메모리고 start()마다 지워진다 —
+      // "전체 실행"은 audio가 done 되자마자 prompts를 시작하므로 보간 경고가 몇 초 만에 사라지고
+      // 재오픈해도 없다. 그러면 "대략 잘라 놓고 경고, 보고 편집" 정책이 사실상 조용한 진행이 된다.
+      // 아래 두 영속 경로(전체 성공 / 부분재시도)는 원본 segments를 훑으므로 정렬 결과를 여기서 끌어온다.
+      // {} 를 돌려주면 `{...seg, ...{}}` 가 **옛 approx 를 보존한다** — 자막을 고쳐 정확히 맞게
+      // 만들고 다시 돌려도 ≈ 배지가 영영 남는다. 정확히 맞았으면 명시적으로 지운다(undefined).
+      // dangerous(남의 대사가 어긋나 내 오디오가 남의 자리를 물어올 수 있음)도 **확인 대상**이라
+      // 같은 표식을 단다. 옛 코드는 이걸 차단 + errorKind 영속(재시작해도 배너)으로 알렸는데, 새
+      // 정책이 warn 으로 내리면서 **내구성이 통째로 사라졌다** — warn 로그는 메모리라 다음 start()가
+      // 지운다(전체 실행은 audio done 직후 prompts 를 시작한다). 게다가 이 경우 세그먼트는 "정확
+      // 매칭"이라 보간 표식도 없어 흔적이 0이었다. ≈("근처를 잘랐으니 확인하세요")와 뜻이 같으니
+      // 표식을 새로 늘리지 않는다.
+      // 항상 undefined 를 실어 **옛 값을 계승하지 않는다**. `{...seg, ...{}}` 로 두면 두 곳에서
+      // 거짓 표식이 남는다: (1) 자막을 고쳐 정확히 맞게 만들어도 ≈ 가 영영 남고, (2) 가져오기를
+      // 해제해 TTS 로 되돌리면 그 화자는 정렬 패스를 안 타(byWorkId 에 없다) 새 TTS 오디오에
+      // "SRT 에서 대략 자른 조각" 표시가 붙는다. 표식은 **이번 실행의 사실**이어야 한다.
+      // approx 와 needsReview 는 **다른 사실**이다: approx = "근처로 잘랐다"(보간), needsReview =
+      // "남의 자리일 수 있다". 합치면 툴팁이 거짓말이 된다. 둘 다 항상 실어 옛 값을 계승하지 않는다.
+      const reviewFlagsOf = (id) => {
+        const w = byWorkId.get(id)
+        return {
+          approx: w?.approx ? true : undefined,
+          needsReview: (w && reviewSpeakers.has(canonicalSpeaker(w.speaker))) ? true : undefined,
+        }
+      }
+      const imported = scopedNarration.map((s) => byWorkId.get(s.id) || s).filter(isImportedSegment)
+      const importedIds = new Set(imported.map((s) => s.id))
+      // 남은 것 = TTS 대상. 사전 검증과 배치 루프 *앞에서* 갈라낸다 — 여기서 안 빼면 미배정 검증이
+      // import 화자에 voiceId가 없다며 막거나, resolveTts('import')가 undefined라 TypeError로 죽는다.
+      // import 화자인데 구간을 못 받은 세그먼트 = **그 오디오가 mp3에 없다**(나레이터가 그 줄을
+      // 안 읽었고 자막이 연속이라 보간할 틈도 없다). 그냥 두면 아래 TTS 목록으로 떨어지는데,
+      // import 화자는 voiceId가 없어 `voice not assigned`로 **전체 실행이 죽는다**(errorKind도 없다).
+      // "안 맞아도 대략 잘라 놓고 경고" 정책의 전형적 케이스가 통째로 막히는 것이다.
+      // "대략 잘라 놓고 경고" 정책은 **자를 게 있을 때** 성립한다 — 없으면 편집으로 구할 수 없고
+      // 대본을 고치거나 성우를 배정해야 한다. unpaired(다른 회차)와 같은 부류라 명확한 사유로 막는다.
+      // 그냥 넘기면 실행이 구멍을 안은 채 "성공"으로 끝나고, 그 manifest가 export에서 corrupt로
+      // 막혀 사유가 더 헷갈려진다(실측).
+      // voiceId 면제를 두지 않는다 — UI 는 voice 를 {provider:'import',…} 아니면 {provider,voiceId}
+      // 로만 만들어 둘이 공존하지 않는다(죽은 분기). 손편집 등으로 hybrid 가 생기면 그 면제가
+      // 세그먼트를 TTS 목록으로 흘려 resolveTts('import') 가 `Unsupported TTS provider`(errorKind
+      // 없는 내부 영문)로 죽는다 — 이 작업이 없애려던 바로 그 부류다. no-audio 차단으로 일원화한다.
+      const unvoicedImport = scopedNarration.filter((s) => !importedIds.has(s.id)
+        && isImportProvider(voiceOf(s.speaker)))
+      if (unvoicedImport.length) {
+        const eg = unvoicedImport.slice(0, 5).map((s) => s.id).join(', ')
+        sendStepLog('audio', 'import-unmatched', `자막에 없어 오디오를 만들 수 없는 세그먼트 ${unvoicedImport.length}개 (${eg}) — 대본에서 그 줄을 고치거나 이 화자에 성우를 배정하세요`, opId, { level: 'error' })
+        const err = new Error(`audio import: ${unvoicedImport.length} segment(s) have no audio in the source and no TTS voice (${eg})`)
+        err.errorKind = 'story-audio-import-no-audio'
+        throw err
+      }
+      const narration = scopedNarration.filter((s) => !importedIds.has(s.id))
       // M2b: sfx 세그먼트(효과음) — narration과 같은 시퀀스 자리를 차지, sfxFor로 생성.
-      const sfxSegs = sfxFor ? segments.filter((s) => s.type === 'sfx') : []
+      const sfxSegs = !partialAudioRun && sfxFor ? segments.filter((s) => s.type === 'sfx') : []
 
       // 0) 사전 검증: 배치 루프를 시작하기 전에 모든 narration 세그먼트의 화자에 voice가
       // 배정돼 있는지 먼저 확인한다 — 루프 중간에 던지면 이미 앞선 세그먼트들의 TTS 비용을
@@ -1024,11 +1431,84 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
       }
       // 동시성: 기본 tts(단일) 또는 첫 세그먼트 화자 어댑터에서. 없으면 2.
-      const conc = (tts?.capabilities?.()?.maxConcurrency) || (resolveTts(voiceOf(narration[0]?.speaker)?.provider)?.capabilities?.()?.maxConcurrency) || 2
+      // SRT 가져오기 전용 프로젝트는 narration이 비어 화자 어댑터를 물을 대상이 없다 — 그때
+      // resolveTts(undefined)까지 가지 않도록 막는다(TTS를 안 쓰는데 어댑터 조회로 죽으면 안 된다).
+      const conc = (tts?.capabilities?.()?.maxConcurrency)
+        || (narration.length ? resolveTts(voiceOf(narration[0]?.speaker)?.provider)?.capabilities?.()?.maxConcurrency : 0)
+        || 2
       const results = new Map()
       const errored = new Set()
       const errorMsgs = new Map() // 세그먼트별 실패 사유(인증/설정 등) — generic retry로 묻지 않기 위함
       const errorKinds = new Map()
+
+      // 0.5) 파일에서 가져오는 화자: 출처 mp3를 세그먼트 구간별로 잘라 TTS 결과와 **같은 모양**으로
+      // 채운다(audio/segments/{id}.wav + 실측 durationMs). 아래 파이프라인(타임라인·SRT·재그룹·
+      // manifest·export)은 이게 TTS 산출물인지 잘라낸 오디오인지 구분하지 않는다 — 그래서 GCF도
+      // 안 건드린다. 화자마다 자기 mp3가 있을 수 있으므로 출처별로 한 번씩 훑는다.
+      for (const [spk, { voice, sourceId }] of importSources) {
+        const mine = imported.filter(belongsTo(spk))
+        const toCut = []
+        for (const seg of mine) {
+          const key = importVoiceKey(sourceId, seg)
+          // canReuse와 같은 판정: 지문 일치 + 파일 실재. 출처 파일이 바뀌면 sourceId가 달라져 자동 무효화.
+          if (!forceRegen.has(seg.id) && seg.status === 'done' && seg.audioPath && (seg.durationMs || 0) > 0 && seg.voiceKey === key) {
+            try {
+              if ((await stat(reusePathOf(seg))).isFile()) {
+                results.set(seg.id, { audioPath: reusePathOf(seg), durationMs: seg.durationMs, voiceKey: key })
+                continue
+              }
+            } catch { /* 파일이 없으면 다시 자른다 */ }
+          }
+          toCut.push(seg)
+        }
+        if (!toCut.length) continue
+        sendStepLog('audio', 'import-cut', `${spk}: ${toCut.length}개 구간 잘라내는 중`, opId, { count: toCut.length })
+        for (const seg of toCut) send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'running' }, opId)
+        // 출처를 한 번만 훑으며 구간이 준비되는 즉시 파일로 흘려보낸다(스트리밍) — 18분짜리를
+        // 통째로 디코드하면 Float32로 424MB지만 이렇게 하면 상주 메모리가 수 MB에 머문다.
+        try {
+          await cutAudio({
+            mp3: voice.mp3Path,
+            ranges: toCut.map((s) => ({ id: s.id, startMs: s.srcStartMs, endMs: s.srcEndMs })),
+            signal,
+            onSegment: async ({ id, wav }) => {
+              const rel = `audio/segments/${id}.wav`
+              await store.saveBinary(rel, wav)
+              const seg = toCut.find((s) => s.id === id)
+              // TTS 경로와 동일하게 파일을 실측한다 — 계산값을 믿지 않는다(I2와 같은 취지).
+              const measured = await probe(path.join(projectPath, 'story', rel))
+              if (measured <= 0) {
+                errored.add(id)
+                errorMsgs.set(id, 'sliced audio unreadable')
+                send('story:progress', { kind: 'audio-segment', segId: id, status: 'error' }, opId)
+                return
+              }
+              results.set(id, { audioPath: path.join(projectPath, 'story', rel), durationMs: measured, voiceKey: importVoiceKey(sourceId, seg) })
+              send('story:progress', { kind: 'audio-segment', segId: id, status: 'done' }, opId)
+            },
+          })
+        } catch (e) {
+          if (!partialAudioRun) throw e
+          for (const seg of toCut) {
+            if (results.has(seg.id)) continue
+            errored.add(seg.id)
+            errorMsgs.set(seg.id, e?.message || String(e))
+            if (e?.errorKind) errorKinds.set(seg.id, e.errorKind)
+            send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId)
+          }
+        }
+        if (signal?.aborted) return
+        // 정렬(위)과 cutAudio의 실제 파일 읽기 사이에 출처가 갈릴 수 있다(같은 파일명으로 다음 화를
+        // 작업하는 흐름). 그 창으로 새 mp3를 옛 구간에 자르면 지문(voiceKey)까지 옛 sourceId로 맞아
+        // 떨어져 오류 없이 커밋·push·export까지 간다. 커밋 전에 한 번 더 대조해 창을 닫는다.
+        if (await importSourceId(voice) !== sourceId) {
+          const err = new Error('audio import: source files changed while cutting')
+          err.errorKind = 'story-audio-import-stale'
+          throw err
+        }
+      }
+      if (signal?.aborted) return
+
       const toSynth = []
       for (const seg of narration) {
         if (await canReuse(seg)) results.set(seg.id, { audioPath: reusePathOf(seg), durationMs: seg.durationMs, voiceKey: seg.voiceKey })
@@ -1091,20 +1571,26 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // Codex-M2a-2b MED/스펙 §5 부분재시도: 일부 세그먼트가 실패해도 M2a-1처럼 전체를 버리지
       // 않는다 — 성공분은 status:'done', 실패분은 status:'error'로 원 씬 구조에 영속(재그룹 없이)한
       // 뒤 실패시킨다. 다음 실행이 done을 재사용하고 error/pending만 재합성한다.
-      // 오디오 보유 세그먼트(narration+sfx) 중 하나라도 실패면 부분재시도(성공분 done 영속 후 실패).
-      const audioBearing = [...narration, ...sfxSegs]
+      // 오디오 보유 세그먼트(narration+가져오기+sfx) 중 하나라도 실패면 부분재시도(성공분 done 영속 후 실패).
+      const audioBearing = [...narration, ...imported, ...sfxSegs]
       const anyFailed = audioBearing.some((seg) => !results.has(seg.id))
-      if (anyFailed) {
+      if (anyFailed || partialAudioRun) {
+        // 이 경로는 **조립을 건너뛴다**(재그룹·타임라인·manifest 없음). 그러면 옛 실행이 남긴
+        // startMs 는 이제 거짓이다 — 이번에 만든 조각은 길이가 달라졌는데 위치는 옛것이다.
+        // 남겨두면 프리뷰가 "자리를 아는 게 있다"고 보고(storyAudioPackage) 옛 위치 + 새 길이로
+        // 그려 겹친다. 지워서 정직한 "순서대로" 모드로 떨어뜨린다.
         const updated = (scenesJson.scenes || []).map((sc) => ({
           ...sc,
           segments: (sc.segments || []).map((g) => {
+            const { startMs, ...rest } = g
             const r = results.get(g.id)
-            if (r) return { ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs, ...(r.voiceKey != null ? { voiceKey: r.voiceKey } : {}), ...(r.sfxKey != null ? { sfxKey: r.sfxKey } : {}), ...(r.sourceMode != null ? { sourceMode: r.sourceMode } : {}) }
-            if (errored.has(g.id)) return { ...g, status: 'error' }
-            return g
+            if (r) return { ...rest, ...reviewFlagsOf(g.id), status: 'done', audioPath: r.audioPath, durationMs: r.durationMs, ...(r.voiceKey != null ? { voiceKey: r.voiceKey } : {}), ...(r.sfxKey != null ? { sfxKey: r.sfxKey } : {}), ...(r.sourceMode != null ? { sourceMode: r.sourceMode } : {}) }
+            if (errored.has(g.id)) return { ...rest, status: 'error' }
+            return rest
           }),
         }))
         if (!signal?.aborted) await store.saveText('scenes.json', JSON.stringify({ scenes: updated }, null, 2))
+        if (!anyFailed) return { partialAudioRun: true }
         const firstFail = audioBearing.find((seg) => !results.has(seg.id))
         // 인증/설정 등 실제 예외 사유가 있으면 보존(예: "No Typecast API key" → UI가 키 설정 안내).
         // probe=0(측정 실패)은 예외가 아니라 사유 없음 → generic retry.
@@ -1122,7 +1608,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 기록(재실행 재사용 기준). sfx 등 results에 없는 세그먼트는 기존 상태 유지.
       const measured = segments.map((s) => {
         const r = results.get(s.id)
-        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status, voiceKey: r ? (r.voiceKey ?? s.voiceKey) : s.voiceKey, sfxKey: r ? (r.sfxKey ?? s.sfxKey) : s.sfxKey, sourceMode: r ? (r.sourceMode ?? s.sourceMode) : s.sourceMode }
+        return { ...s, ...reviewFlagsOf(s.id), durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status, voiceKey: r ? (r.voiceKey ?? s.voiceKey) : s.voiceKey, sfxKey: r ? (r.sfxKey ?? s.sfxKey) : s.sfxKey, sourceMode: r ? (r.sourceMode ?? s.sourceMode) : s.sourceMode }
       })
       // 3) 타임라인(startMs). audio-first는 기존 flat concat/regroup/ID 발급을 그대로 쓰고,
       // image-first는 fixed slot 시작에 segment를 재앵커해 N/order/identity/membership을 보존한다.
@@ -1174,7 +1660,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 4) SRT. 두 mode 모두 manifest와 동일한 timed flat array를 소비한다.
       const srt = buildSrt(timed)
       if (signal?.aborted) return
-      if (params.speakers) state.speakers = params.speakers
+      // (params.speakers 영속은 스텝 진입 시 이미 했다 — 실패해도 선택이 남게.)
 
       // IP5-b/c(스펙 §4 재TTS 정책): prompts가 이미 있었고(=re-TTS) 재그룹 멤버십이 불변이면
       // audio가 push를 소유해 timing-only로 갱신하고 프롬프트를 보존한다. 멤버십이 변했거나 최초
@@ -1305,6 +1791,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     projectToken,
     // M3 slice 32: story-api commands가 scene directory 유도용으로 읽는다. 생성 시 검증된 값 고정.
     projectPath,
+    // 이 machine 의 토큰 누산기. provider tap 이 전역 sink 를 통해 여기에 기록한다.
+    usageTracker,
     async open() {
       state = await store.load()
       await healMissingStepArtifacts()
@@ -1488,7 +1976,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // Codex-TTS HIGH2: preview는 스텝 밖 mutation이라 배치/다른 preview와 경쟁하면 scenes.json을
       // 옛 스냅샷으로 덮어쓸 수 있다 — 진행 중 스텝/preview가 있으면 거부하고, 커밋 직전 최신
       // scenes.json에 세그먼트 단위로 병합한다.
-      if (previewing || synopsisController || researchController || (state && Object.values(state.steps || {}).some((s) => s.status === 'running'))) return { busy: true }
+      if (anyRunning()) return { busy: true }
       previewing = true
       try {
         const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
@@ -1498,7 +1986,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const spks = speakers || state?.speakers || []
         const voiceOf = (spk) => findSpeakerByRef(spks, spk)?.voice || defaultVoice || null
         const allTargets = scenesJson.scenes.flatMap((sc) => sc.segments || []).filter((s) => ids.has(s.id))
-        const targets = allTargets.filter((s) => (s.type || 'narration') === 'narration')
+        // 파일에서 가져오는 화자는 합성 대상이 아니다 — 여기 남으면 resolveTts('import')가
+        // undefined라 .synthesize로 죽는다. ⑤가 잘라둔 오디오를 UI가 audioPath로 재생하면 된다.
+        const targets = allTargets.filter((s) => (s.type || 'narration') === 'narration' && !isImportProvider(voiceOf(s.speaker)))
         // M2b: sfx 세그먼트도 단건 테스트(배치 audio와 동일 계약 — sfxFor로 생성, sfxKey/sourceMode 영속).
         const sfxTargets = sfxFor ? allTargets.filter((s) => s.type === 'sfx') : []
         const results = new Map()
@@ -1546,16 +2036,40 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         previewing = false
       }
     },
+    // 제목 생성 side action — synopsis/research 와 같은 controller 패턴.
+    // signal 이 없으면 abort() 가 이 호출을 멈추지도 기다리지도 못해, 프로젝트 전환
+    // (story:open 의 `await machine.abort()`) 을 넘어 살아남는다.
     async generateTitle(scriptMd, options = {}) {
-      const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
-      return llm.generateTitle(scriptMd, opts, {})
+      // 자기 자신과의 상호배제 — 겹쳐 불리면 이전 controller 가 고아가 되어 abort() 가 그 호출을
+      // 영영 못 잡고, 프로젝트 전환을 넘어 살아남는다(IPC story:generate-title 은 게이트가 없고
+      // UI 도 제목 생성 중 버튼을 안 잠근다 — 더블클릭이면 재현된다).
+      // anyRunning() 에는 넣지 않는다 — 그건 "제목 생성 중 스텝 시작 불가"라는 UX 변경이다.
+      titleController?.abort()
+      const myController = new AbortController()
+      titleController = myController
+      try {
+        const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
+        const res = await llm.generateTitle(scriptMd, opts, { signal: myController.signal })
+        // provider 가 abort 를 무시하고 버퍼된 result 로 resolve 했을 수 있다 — 그래도 취소는 취소다.
+        // resolve 경로도 검사하지 않으면 renderer 가 취소된 옛 제목으로 진행한다.
+        if (myController.signal.aborted) return { aborted: true }
+        return res
+      } catch (err) {
+        // 겹친 호출이 이 호출을 abort 했으면 실패가 아니다 — 조용한 취소다.
+        // throw 하면 renderer 가 "제목 생성 실패" toast 를 띄운다(의도한 취소인데).
+        if (myController.signal.aborted) return { aborted: true }
+        throw err
+      } finally {
+        // 신원 확인 — 늦게 끝난 이전 호출의 finally 가 새 controller 를 지우면 안 된다.
+        if (titleController === myController) titleController = null
+      }
     },
     // 시놉시스 검수 side action (spec 2026-07-10) — generateSynopsis 미러.
     // 시놉시스는 실행 스텝이 아닌 게이트라 reviewOnly 스텝 경로를 못 쓴다. steps.* 불변.
     // draft-only: 결과를 renderer에 돌려줄 뿐 디스크에 쓰지 않는다(확정은 confirmSynopsis 담당).
     async reviewSynopsis(params = {}) {
       if (!state) state = await store.load()
-      if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+      if (anyRunning()) {
         return { error: 'busy' }
       }
       const operationId = randomUUID()
@@ -1635,7 +2149,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // 단일 계약 송신 → renderer가 synopsisActiveOpRef를 세팅한다. busy/abort는 step/preview와 대칭.
     async generateSynopsis(params = {}) {
       if (!state) state = await store.load()
-      if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+      if (anyRunning()) {
         return { error: 'busy' }
       }
       const imageFirst = state.sceneMode === 'image-first'
@@ -1720,7 +2234,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       fixedSceneRevision,
     } = {}) {
       if (!state) state = await store.load()
-      if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+      if (anyRunning()) {
         return { error: 'busy' }
       }
 
@@ -2037,49 +2551,79 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // error로 마킹하므로, abort 후에는 이 가드에 걸리지 않고 정상 재시작할 수 있다.
       // §3.3(Codex R2 #2): synopsis side action 진행 중에도 busy — step/preview/synopsis 상호배제.
       // 리서치 §5: research side action 진행 중에도 busy(상호배제 대칭).
-      if (previewing || synopsisController || researchController || Object.values(state.steps).some((s) => s.status === 'running')) return { error: 'busy' }
-      const fixedSceneConsistency = checkFixedSceneConsistency(await loadProjectState(), state)
-      if (!fixedSceneConsistency.success) return { error: 'fixed-scenes-stale' }
-      if (state.sceneMode === 'image-first' && (step === 'script' || step === 'scenes')) {
-        return { error: 'fixed-scenes-immutable' }
+      if (anyRunning()) return { error: 'busy' }
+      // 여기부터 running 이 영속될 때까지 await 가 있어도 두 번째 호출이 못 들어온다.
+      // **반드시 finally 로 푼다** — 조기 return 이든 flush/send 의 throw 든 안 풀리면 앱이 영영
+      // busy 로 잠긴다(실측: flush 실패 후 다음 start()가 계속 busy).
+      startInFlight = true
+      const myGeneration = abortGeneration
+      let operationId
+      let myController
+      let partialAudioRun = false
+      let deferDownstreamReset = false
+      try {
+        const fixedSceneConsistency = checkFixedSceneConsistency(await loadProjectState(), state)
+        if (!fixedSceneConsistency.success) return { error: 'fixed-scenes-stale' }
+        if (state.sceneMode === 'image-first' && (step === 'script' || step === 'scenes')) {
+          return { error: 'fixed-scenes-immutable' }
+        }
+        // FIX-2: 미확정 게이트 — 신규 roster-gated 프로젝트(charactersConfirmed===false)는 synopsis
+        // 확정 전까지 하류(scenes/audio/prompts)를 거부한다(§v2.8 B1/§v2.11 게이트 우회 차단).
+        // script(붙여넣기 저장/제목 생성)는 게이트 전 단계라 허용. legacy(undefined)는 미적용(FIX-1).
+        if (step !== 'script'
+          && isRosterGatedInputType(state?.input?.type)
+          && state.charactersConfirmed === false) return { error: 'unconfirmed' }
+        // FIX-6: pasted 미확정은 script *재생성*(이어쓰기/다시쓰기/검토)도 게이트 대상 — §v2.8 B1:
+        // 확정 전 붙여넣은 script는 건드리지 않는다. 재붙여넣기(pastedScript)는 게이트 전 저장이라 허용.
+        // title 미확정의 최초 script 생성은 기존대로 허용(FIX-2 — script 스텝은 게이트 전 단계).
+        if (step === 'script'
+          && state?.input?.type === 'pasted'
+          && state.charactersConfirmed === false
+          && !params.pastedScript) return { error: 'unconfirmed' }
+        if (state.sceneMode === 'image-first'
+          && step === 'prompts'
+          && state.steps.audio?.status !== 'done') return { error: 'fixed-audio-required' }
+        // onlySpeaker 사전검사 — **running 마킹 전에** 해야 한다. 아래에서 state.steps[step]이 통째로
+        // 'running'으로 교체되므로, 스텝 안에서 던지면 완료된 프로젝트의 done이 이미 날아간 뒤다.
+        // 범위가 비면(대사 없는 확정 인물 / 명단에 없는 참조 / 빈 문자열) 그냥 두면 anyFailed=false로
+        // "성공"이 되어 audio가 done→pending으로 내려가 **export가 막힌다** — 아무것도 안 만들었는데.
+        // 빈/공백은 isNarratorTrackSpeaker('')===true라 엉뚱하게 나레이터가 도는 것도 여기서 막는다.
+        if (step === 'audio' && typeof params.onlySpeaker === 'string') {
+          let err
+          try { err = await onlySpeakerScopeError(params.onlySpeaker, params.speakers) } catch { err = null }
+          if (err) return { error: err }
+        }
+        // 사전검사 await 동안 abort 가 왔으면 여기서 물러난다 — 아직 controller 가 없어 abort() 가
+        // 우리를 못 멈춘다. 이걸 빼면 중단/프로젝트 전환 뒤에도 절단·TTS 가 시작된다.
+        if (abortGeneration !== myGeneration) return { error: 'aborted' }
+        operationId = randomUUID()
+        myController = new AbortController()
+        controller = myController
+        partialAudioRun = step === 'audio' && typeof params.onlySpeaker === 'string' && !!params.onlySpeaker.trim()
+        deferDownstreamReset = params.reviewOnly === true || partialAudioRun
+        // 하류 리셋 — revision은 스펙대로 단조 증가 유지(빈 push 재발신은 maybeResendPush의 prompts-done 가드가 차단)
+        // reset 시점/reviewOnly 예외를 바꾸면 approvalPresenters의 하류 초기화 문구도 함께 바꿔라.
+        if (!deferDownstreamReset) {
+          for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
+        }
+        // reviewOnly 마커 — renderer가 "지금 도는 게 검수인지 생성인지"를 알아야 패널을 다르게
+        // 그린다(검수는 델타가 없어 스트림 뷰가 빈 상자가 된다). reviewProgress로 유추하면 첫
+        // progress 이벤트 전까지 한 프레임 어긋나므로 status와 같은 story:state에 함께 싣는다.
+        // done/error 마킹은 객체를 통째 교체하므로 마커가 남지 않는다.
+        state.steps[step] = {
+          status: 'running',
+          updatedAt: new Date().toISOString(),
+          ...(params.reviewOnly === true ? { reviewOnly: true } : {}),
+        }
+        await flush(); send('story:state', { state }, operationId)
+      } finally {
+        // running 이 영속됐으면 이제부터는 state 의 'running' 이 가드를 선다. 실패했으면 아무것도
+        // 안 잡힌 상태다 — 어느 쪽이든 래치는 놓아야 한다.
+        startInFlight = false
       }
-      // FIX-2: 미확정 게이트 — 신규 roster-gated 프로젝트(charactersConfirmed===false)는 synopsis
-      // 확정 전까지 하류(scenes/audio/prompts)를 거부한다(§v2.8 B1/§v2.11 게이트 우회 차단).
-      // script(붙여넣기 저장/제목 생성)는 게이트 전 단계라 허용. legacy(undefined)는 미적용(FIX-1).
-      if (step !== 'script'
-        && isRosterGatedInputType(state?.input?.type)
-        && state.charactersConfirmed === false) return { error: 'unconfirmed' }
-      // FIX-6: pasted 미확정은 script *재생성*(이어쓰기/다시쓰기/검토)도 게이트 대상 — §v2.8 B1:
-      // 확정 전 붙여넣은 script는 건드리지 않는다. 재붙여넣기(pastedScript)는 게이트 전 저장이라 허용.
-      // title 미확정의 최초 script 생성은 기존대로 허용(FIX-2 — script 스텝은 게이트 전 단계).
-      if (step === 'script'
-        && state?.input?.type === 'pasted'
-        && state.charactersConfirmed === false
-        && !params.pastedScript) return { error: 'unconfirmed' }
-      if (state.sceneMode === 'image-first'
-        && step === 'prompts'
-        && state.steps.audio?.status !== 'done') return { error: 'fixed-audio-required' }
-      const operationId = randomUUID()
-      const myController = new AbortController()
-      controller = myController
-      const deferDownstreamReset = params.reviewOnly === true
-      // 하류 리셋 — revision은 스펙대로 단조 증가 유지(빈 push 재발신은 maybeResendPush의 prompts-done 가드가 차단)
-      // reset 시점/reviewOnly 예외를 바꾸면 approvalPresenters의 하류 초기화 문구도 함께 바꿔라.
-      if (!deferDownstreamReset) {
-        for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
-      }
-      // reviewOnly 마커 — renderer가 "지금 도는 게 검수인지 생성인지"를 알아야 패널을 다르게
-      // 그린다(검수는 델타가 없어 스트림 뷰가 빈 상자가 된다). reviewProgress로 유추하면 첫
-      // progress 이벤트 전까지 한 프레임 어긋나므로 status와 같은 story:state에 함께 싣는다.
-      // done/error 마킹은 객체를 통째 교체하므로 마커가 남지 않는다.
-      state.steps[step] = {
-        status: 'running',
-        updatedAt: new Date().toISOString(),
-        ...(params.reviewOnly === true ? { reviewOnly: true } : {}),
-      }
-      await flush(); send('story:state', { state }, operationId)
       let pushScenes = null
       let outcome = null
+      let partialAudioRunCompleted = false
       // HIGH: abort()는 controller를 교체하지 않고(같은 controller에 abort 신호만 보냄) running
       // 스텝을 동기적으로 error 마킹한다. 스텝 fn이 signal을 무시하고 뒤늦게 resolve/reject하면
       // `controller === myController`만으로는 늦은 결과가 통과해 abort의 error 마킹을 done/다른
@@ -2093,9 +2637,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           if (deferDownstreamReset && result?.changed) {
             for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
           }
-          state.steps[step] = { status: 'done', updatedAt: new Date().toISOString() }
+          state.steps[step] = partialAudioRun
+            // partial 표식 — export 게이트가 "만들다 만 것"과 "미실행"을 가르는 유일한 신호다.
+            // 디스크 모양은 미리듣기와 구분이 안 된다(위 readAudioPackage 주석).
+            ? { status: 'pending', partial: true }
+            : { status: 'done', updatedAt: new Date().toISOString() }
           pushScenes = result?.pushScenes || null
           outcome = { status: 'done' }
+          partialAudioRunCompleted = result?.partialAudioRun === true
         }
       } catch (e) {
         if (!isStale()) {
@@ -2112,12 +2661,19 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (pushScenes) sendPush(pushScenes, operationId)
         send('story:state', { state, scenes: await loadScenesForPayload(), scriptText: (await store.loadText('script.md')) || '', ...(await hydrateExtras()) }, operationId)
       }
-      return { operationId, outcome: outcome ?? { status: 'aborted' } }
+      return {
+        operationId,
+        outcome: outcome ?? { status: 'aborted' },
+        ...(partialAudioRunCompleted ? { partialAudioRun: true } : {}),
+      }
     },
     async abort() {
+      abortGeneration += 1 // 아직 controller 를 못 잡은 start(사전검사 중)도 물러나게 한다
       controller?.abort()
       // §3.3: synopsis side action도 대칭 중단 — 프로젝트 전환/open cleanup 경로 공용.
       synopsisController?.abort()
+      // 제목 생성도 대칭 중단 — 없으면 프로젝트 전환 후에도 이전 프로젝트의 호출이 살아남는다.
+      titleController?.abort()
       // 리서치 §5: research side action도 대칭 중단(진행 중 fetch/analyze 등).
       researchController?.abort()
       // 중단 시점에 running인 스텝은 동기적으로 terminal 마킹 — 이후 다른 스텝 시작으로
