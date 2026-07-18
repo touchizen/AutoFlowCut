@@ -18,6 +18,23 @@ describe('exportRenderVideo', () => {
     expect(res.ok).toBe(true)
   })
 
+  it('does not call renderMp4 when shouldCancel latches before IPC registration', async () => {
+    const prepareCloudRequest = vi.fn(async () => ({ cloudRequest: {} }))
+    const renderMp4 = vi.fn()
+    const res = await exportRenderVideo({ name: 'p' }, { renderMode: 'final', renderBurnSubtitle: false },
+      { prepareCloudRequest, renderMp4, makeJobId: () => 'j', shouldCancel: () => true })
+    expect(renderMp4).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ ok: false, cancelled: true })
+  })
+
+  it('proceeds to renderMp4 when shouldCancel stays false', async () => {
+    const prepareCloudRequest = vi.fn(async () => ({ cloudRequest: {} }))
+    const renderMp4 = vi.fn(async () => ({ ok: true }))
+    await exportRenderVideo({ name: 'p' }, { renderMode: 'final', renderBurnSubtitle: false },
+      { prepareCloudRequest, renderMp4, makeJobId: () => 'j', shouldCancel: () => false })
+    expect(renderMp4).toHaveBeenCalled()
+  })
+
   it('generates a deterministic jobId without Date.now', async () => {
     const prepareCloudRequest = vi.fn(async () => ({ cloudRequest: {} }))
     const renderMp4 = vi.fn(async (p) => p.jobId)

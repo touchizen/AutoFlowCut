@@ -8,7 +8,7 @@
   "scripts": {
     "patch-electron-name": "node scripts/patch-electron-name.cjs",
     "postinstall": "node scripts/patch-electron-name.cjs",
-    "predev": "npm run stage:ffmpeg && node scripts/patch-electron-name.cjs",
+    "predev": "(npm run stage:ffmpeg || echo \"[dev] ffmpeg staging skipped — render export disabled until 'npm run stage:ffmpeg' succeeds\") && node scripts/patch-electron-name.cjs",
     "dev": "npm run build:preloads && vite",
     "dev:prod": "npm run build:preloads && vite --mode production",
     "build": "vite build && npm run build:preloads",

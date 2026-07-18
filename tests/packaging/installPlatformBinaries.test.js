@@ -22,6 +22,43 @@ function tempDir() {
   return directory
 }
 
+function peImportFixture(importedDlls) {
+  const peOffset = 0x80
+  const optionalOffset = peOffset + 24
+  const optionalSize = 0xf0
+  const sectionOffset = optionalOffset + optionalSize
+  const sectionRva = 0x1000
+  const sectionRawOffset = 0x200
+  const descriptorBytes = (importedDlls.length + 1) * 20
+  const buffer = Buffer.alloc(0x1000)
+
+  buffer.write('MZ', 0, 'ascii')
+  buffer.writeUInt32LE(peOffset, 0x3c)
+  buffer.write('PE\0\0', peOffset, 'binary')
+  buffer.writeUInt16LE(0x8664, peOffset + 4)
+  buffer.writeUInt16LE(1, peOffset + 6)
+  buffer.writeUInt16LE(optionalSize, peOffset + 20)
+  buffer.writeUInt16LE(0x20b, optionalOffset)
+  buffer.writeUInt32LE(16, optionalOffset + 108)
+  buffer.writeUInt32LE(sectionRva, optionalOffset + 120)
+  buffer.writeUInt32LE(descriptorBytes, optionalOffset + 124)
+
+  buffer.write('.rdata', sectionOffset, 'ascii')
+  buffer.writeUInt32LE(0x800, sectionOffset + 8)
+  buffer.writeUInt32LE(sectionRva, sectionOffset + 12)
+  buffer.writeUInt32LE(0x800, sectionOffset + 16)
+  buffer.writeUInt32LE(sectionRawOffset, sectionOffset + 20)
+
+  let nameOffset = sectionRawOffset + descriptorBytes
+  importedDlls.forEach((dll, index) => {
+    const nameRva = sectionRva + nameOffset - sectionRawOffset
+    buffer.writeUInt32LE(nameRva, sectionRawOffset + index * 20 + 12)
+    buffer.write(`${dll}\0`, nameOffset, 'ascii')
+    nameOffset += Buffer.byteLength(dll, 'ascii') + 1
+  })
+  return buffer.subarray(0, nameOffset)
+}
+
 afterEach(() => {
   for (const directory of tempDirs.splice(0)) fs.rmSync(directory, { recursive: true, force: true })
 })
@@ -216,10 +253,29 @@ describe('verifySelfContainedFfmpeg', () => {
     })).toThrow(/not static.*libavcodec/is)
   })
 
+  test('allows only Windows system DLLs found in a PE import table', () => {
+    const directory = tempDir()
+    const binary = path.join(directory, 'ffmpeg.exe')
+    fs.writeFileSync(binary, peImportFixture([
+      'KERNEL32.dll',
+      'WS2_32.dll',
+      'api-ms-win-crt-runtime-l1-1-0.dll',
+    ]))
+    expect(() => verifySelfContainedFfmpeg(binary, { platform: 'win32' })).not.toThrow()
+  })
+
+  test('rejects a non-system DLL imported by the PE even when no sibling DLL exists', () => {
+    const directory = tempDir()
+    const binary = path.join(directory, 'ffmpeg.exe')
+    fs.writeFileSync(binary, peImportFixture(['KERNEL32.dll', 'avcodec-61.dll']))
+    expect(() => verifySelfContainedFfmpeg(binary, { platform: 'win32' }))
+      .toThrow(/non-system PE imports.*avcodec-61\.dll/is)
+  })
+
   test('rejects adjacent FFmpeg runtime DLLs for the PE distribution', () => {
     const directory = tempDir()
     const binary = path.join(directory, 'ffmpeg.exe')
-    fs.writeFileSync(binary, 'exe')
+    fs.writeFileSync(binary, peImportFixture(['KERNEL32.dll']))
     fs.writeFileSync(path.join(directory, 'avcodec-61.dll'), 'dll')
     expect(() => verifySelfContainedFfmpeg(binary, { platform: 'win32' }))
       .toThrow(/not self-contained.*avcodec-61\.dll/is)

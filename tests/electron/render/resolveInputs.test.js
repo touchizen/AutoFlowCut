@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 import { resolveAndValidateInputs } from '../../../electron/render/resolveInputs.js'
 
 const deps = (present = ['/img1.png', '/sfx1.wav', '/nar.mp3']) => ({
@@ -69,6 +72,21 @@ describe('resolveAndValidateInputs', () => {
     const decodeDataUrl = async () => '/tmp/raw.png'
     const r = await resolveAndValidateInputs(p, { ...deps(['/sfx1.wav', '/nar.mp3']), decodeDataUrl })
     expect(r.images.get('scene_1')).toBe('/tmp/raw.png')
+  })
+
+  it('cleans up already-decoded temps when a later input throws (transactional)', async () => {
+    const p = prepared()
+    p.mediaFiles[0] = { sceneId: 'scene_1', type: 'image', filename: 's1.png', path: 'data:image/png;base64,QQ==' }
+    const tmpPath = path.join(os.tmpdir(), 'resolveinputs_txn_test.png')
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath)
+    const decodeDataUrl = async () => { fs.writeFileSync(tmpPath, 'x'); return tmpPath }
+    // sfx1.wav 를 missing 으로 만들어 이미지 decode 이후 sfx 루프에서 throw 시킨다.
+    await expect(resolveAndValidateInputs(p, {
+      existsSync: (x) => x === '/nar.mp3',
+      probeDurationMs: async () => 1,
+      decodeDataUrl,
+    })).rejects.toThrow(/sfx/)
+    expect(fs.existsSync(tmpPath)).toBe(false) // decode 된 temp 가 정리됨
   })
 
   it('prefixes decoded temp names with jobId to avoid cross-project collisions', async () => {

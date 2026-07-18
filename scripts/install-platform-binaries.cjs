@@ -53,6 +53,19 @@ const FFMPEG_BUILD_MANIFEST = Object.freeze({
   }),
 })
 
+const WINDOWS_SYSTEM_DLLS = new Set([
+  'advapi32.dll', 'avicap32.dll', 'avrt.dll', 'bcrypt.dll', 'cfgmgr32.dll',
+  'comctl32.dll', 'comdlg32.dll', 'crypt32.dll', 'd2d1.dll', 'd3d11.dll',
+  'dbghelp.dll', 'dhcpcsvc.dll', 'dnsapi.dll', 'dwrite.dll', 'dwmapi.dll',
+  'dxgi.dll', 'gdi32.dll', 'imm32.dll', 'iphlpapi.dll', 'kernel32.dll',
+  'mf.dll', 'mfplat.dll', 'mfreadwrite.dll', 'mfuuid.dll', 'msvcrt.dll',
+  'ncrypt.dll', 'netapi32.dll', 'normaliz.dll', 'ntdll.dll', 'ole32.dll',
+  'oleaut32.dll', 'powrprof.dll', 'propsys.dll', 'psapi.dll', 'rpcrt4.dll',
+  'secur32.dll', 'setupapi.dll', 'shell32.dll', 'shlwapi.dll', 'ucrtbase.dll',
+  'user32.dll', 'usp10.dll', 'uxtheme.dll', 'version.dll', 'winhttp.dll',
+  'winmm.dll', 'winspool.drv', 'winusb.dll', 'ws2_32.dll', 'wtsapi32.dll',
+])
+
 // codex 의 arch 패키지는 독립 패키지가 아니라 codex 자신의 버전 태그 별칭이다:
 //   "@openai/codex-darwin-x64": "npm:@openai/codex@0.142.5-darwin-x64"
 // (레지스트리에 @openai/codex-darwin-x64 라는 이름 자체는 없다 — 404)
@@ -128,11 +141,16 @@ function verifySelfContainedFfmpeg(binaryPath, deps = {}) {
   }
 
   if (platform === 'win32') {
-    // The BtbN "win64-gpl" artifact statically links FFmpeg/codec libraries.
-    // We stage only ffmpeg.exe (no adjacent av*.dll/lib*.dll), then execute its
-    // filters/encoders in verifyFfmpegCapabilities. For release auditing, the
-    // equivalent PE check is `dumpbin /dependents ffmpeg.exe`; only Windows
-    // system DLLs may be listed.
+    const importedDlls = parsePeImportedDlls(binaryPath)
+    const nonSystemImports = importedDlls.filter(dll => !isWindowsSystemDll(dll))
+    if (nonSystemImports.length > 0) {
+      throw new Error(
+        `[platform-binaries] ffmpeg PE has non-system PE imports: ${nonSystemImports.join(', ')}`
+      )
+    }
+
+    // Also reject split FFmpeg distributions even if a currently-unused DLL
+    // is not present in the executable's import directory.
     const siblings = fs.existsSync(path.dirname(binaryPath))
       ? fs.readdirSync(path.dirname(binaryPath))
       : []
@@ -149,6 +167,106 @@ function verifySelfContainedFfmpeg(binaryPath, deps = {}) {
   }
 
   throw new Error(`[platform-binaries] unsupported ffmpeg platform: ${platform}`)
+}
+
+function parsePeImportedDlls(bufferOrPath) {
+  const buffer = Buffer.isBuffer(bufferOrPath) ? bufferOrPath : fs.readFileSync(bufferOrPath)
+  if (buffer.length < 0x40 || buffer.toString('ascii', 0, 2) !== 'MZ') {
+    throw new Error('[platform-binaries] invalid PE executable: missing MZ header')
+  }
+
+  const peOffset = buffer.readUInt32LE(0x3c)
+  if (peOffset + 24 > buffer.length || buffer.toString('binary', peOffset, peOffset + 4) !== 'PE\0\0') {
+    throw new Error('[platform-binaries] invalid PE executable: missing PE signature')
+  }
+
+  const sectionCount = buffer.readUInt16LE(peOffset + 6)
+  const optionalSize = buffer.readUInt16LE(peOffset + 20)
+  const optionalOffset = peOffset + 24
+  const sectionTableOffset = optionalOffset + optionalSize
+  if (sectionTableOffset + sectionCount * 40 > buffer.length) {
+    throw new Error('[platform-binaries] invalid PE executable: truncated section table')
+  }
+
+  const magic = buffer.readUInt16LE(optionalOffset)
+  const dataDirectoryOffset = magic === 0x20b
+    ? optionalOffset + 112
+    : magic === 0x10b
+      ? optionalOffset + 96
+      : -1
+  const numberOfDirectoriesOffset = magic === 0x20b
+    ? optionalOffset + 108
+    : optionalOffset + 92
+  if (dataDirectoryOffset < 0 || dataDirectoryOffset + 16 > sectionTableOffset) {
+    throw new Error('[platform-binaries] invalid PE executable: unsupported optional header')
+  }
+  if (buffer.readUInt32LE(numberOfDirectoriesOffset) < 2) return []
+
+  const sections = []
+  for (let index = 0; index < sectionCount; index += 1) {
+    const offset = sectionTableOffset + index * 40
+    sections.push({
+      virtualSize: buffer.readUInt32LE(offset + 8),
+      virtualAddress: buffer.readUInt32LE(offset + 12),
+      rawSize: buffer.readUInt32LE(offset + 16),
+      rawOffset: buffer.readUInt32LE(offset + 20),
+    })
+  }
+
+  const sizeOfHeaders = buffer.readUInt32LE(optionalOffset + 60)
+  const rvaToOffset = (rva) => {
+    if (rva < sizeOfHeaders && rva < buffer.length) return rva
+    const section = sections.find(candidate => {
+      const span = Math.max(candidate.virtualSize, candidate.rawSize)
+      return rva >= candidate.virtualAddress && rva < candidate.virtualAddress + span
+    })
+    if (!section) throw new Error(`[platform-binaries] invalid PE import RVA: 0x${rva.toString(16)}`)
+    const delta = rva - section.virtualAddress
+    if (delta >= section.rawSize || section.rawOffset + delta >= buffer.length) {
+      throw new Error(`[platform-binaries] truncated PE import RVA: 0x${rva.toString(16)}`)
+    }
+    return section.rawOffset + delta
+  }
+
+  const importRva = buffer.readUInt32LE(dataDirectoryOffset + 8)
+  const importSize = buffer.readUInt32LE(dataDirectoryOffset + 12)
+  if (importRva === 0 || importSize === 0) return []
+  const importOffset = rvaToOffset(importRva)
+  const descriptorLimit = Math.min(4096, Math.max(1, Math.ceil(importSize / 20)))
+  const importedDlls = []
+  let foundTerminator = false
+
+  for (let index = 0; index < descriptorLimit; index += 1) {
+    const descriptorOffset = importOffset + index * 20
+    if (descriptorOffset + 20 > buffer.length) {
+      throw new Error('[platform-binaries] truncated PE import descriptor')
+    }
+    const fields = Array.from({ length: 5 }, (_, field) => (
+      buffer.readUInt32LE(descriptorOffset + field * 4)
+    ))
+    if (fields.every(value => value === 0)) {
+      foundTerminator = true
+      break
+    }
+    if (fields[3] === 0) throw new Error('[platform-binaries] PE import descriptor has no DLL name')
+    importedDlls.push(readPeAsciiZ(buffer, rvaToOffset(fields[3])))
+  }
+
+  if (!foundTerminator) throw new Error('[platform-binaries] unterminated PE import table')
+  return [...new Set(importedDlls)]
+}
+
+function readPeAsciiZ(buffer, offset) {
+  const limit = Math.min(buffer.length, offset + 4096)
+  let end = offset
+  while (end < limit && buffer[end] !== 0) end += 1
+  if (end === limit || end === offset) throw new Error('[platform-binaries] invalid PE import DLL name')
+  return buffer.toString('ascii', offset, end)
+}
+
+function isWindowsSystemDll(value) {
+  const dll = path.win32.basename(String(value)).toLowerCase()
+  return WINDOWS_SYSTEM_DLLS.has(dll) || /^(?:api|ext)-ms-win-[a-z0-9._-]+\.dll$/.test(dll)
 }
 
 function sha256(bufferOrPath) {
@@ -479,6 +597,7 @@ async function main() {
 exports.FFMPEG_BUILD_MANIFEST = FFMPEG_BUILD_MANIFEST
 exports.acquireFfmpegBuild = acquireFfmpegBuild
 exports.extractFfmpegArchive = extractFfmpegArchive
+exports.parsePeImportedDlls = parsePeImportedDlls
 exports.resolveRequestedFfmpegTargets = resolveRequestedFfmpegTargets
 exports.resolveSpecs = resolveSpecs
 exports.sha256 = sha256

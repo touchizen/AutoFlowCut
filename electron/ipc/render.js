@@ -103,6 +103,11 @@ export function registerRenderIPC(ipcMain, deps = {}) {
       jobCtx.cancelled = true
       jobCtx.abort?.()
     }
-    await Promise.allSettled(jobs.map(j => j.done).filter(Boolean))
+    // 렌더 중 잡은 SIGKILL + temp 정리가 곧 끝난다. 단 save dialog 대기 중인 잡은 abort 로
+    // 안 닫혀 done 이 오지 않으므로(ffmpeg/temp 도 없어 안전), 유한 타임아웃으로 배리어를 종료한다.
+    await Promise.race([
+      Promise.allSettled(jobs.map(j => j.done).filter(Boolean)),
+      new Promise(resolve => setTimeout(resolve, 5000)),
+    ])
   }
 }

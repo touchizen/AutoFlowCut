@@ -7,7 +7,7 @@
  * JSZip 후처리(SRT 리네임)도 capcut.js / capcutCloud.js 쪽으로 이관되었습니다.
  */
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
@@ -43,6 +43,7 @@ export function useExport({
   const [exportPhase, setExportPhase] = useState(null) // 'saving' | 'launching' | 'rendering' | null
   const [renderProgress, setRenderProgress] = useState(null) // { jobId, percent, stage } | null
   const [renderJobId, setRenderJobId] = useState(null)       // 취소 대상 jobId
+  const cancelLatchRef = useRef(false)                       // IPC 등록 전 취소 래치
   // 마지막 선택 포맷 — split 진입 버튼 본체 동작/문구 + 모달 초기 탭에 사용. localStorage 영속.
   const [exportFormat, setExportFormat] = useState(() => {
     try { return normalizeExportFormat(localStorage.getItem('lastExportFormat')) } catch { return 'capcut' }
@@ -488,6 +489,7 @@ export function useExport({
     setExporting(true)
     setExportPhase('rendering')
     setRenderProgress(null)
+    cancelLatchRef.current = false
     let unsub
     try {
       const { exportRenderVideo, makeRenderJobId } = await import('../exporters/render.js')
@@ -517,6 +519,7 @@ export function useExport({
         renderBurnSubtitle
       }, {
         makeJobId: () => jobId,
+        shouldCancel: () => cancelLatchRef.current,
         confirmOverlays: (count) => (typeof window !== 'undefined' && typeof window.confirm === 'function')
           ? window.confirm(t('toast.renderVideoOverlayWarning', { count }))
           : true
@@ -552,11 +555,12 @@ export function useExport({
   }
 
   const handleCancelRender = () => {
-    if (!renderJobId) return
     // 몇 시간짜리 렌더를 한 번의 클릭으로 버리지 않도록 확인.
     if (typeof window !== 'undefined' && typeof window.confirm === 'function'
         && !window.confirm(t('exportModal.renderCancelConfirm'))) return
-    window.electronAPI?.renderCancel?.({ jobId: renderJobId })
+    // IPC 등록 전(jobId 미확정)이면 래치로 예약 — exportRenderVideo 가 등록 직전 확인해 멈춘다.
+    cancelLatchRef.current = true
+    if (renderJobId) window.electronAPI?.renderCancel?.({ jobId: renderJobId })
   }
 
   return {

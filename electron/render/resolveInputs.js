@@ -1,6 +1,6 @@
 // effectful: filename→절대경로 해석(컬렉션별 키), 존재 검증, narration 길이 probe. 스펙 §3.
 import fs from 'fs'
-import { writeFile } from 'fs/promises'
+import { writeFile, unlink } from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { probeDurationMs as realProbe } from '../story/audioProbe.js'
@@ -42,6 +42,7 @@ export async function resolveAndValidateInputs(prepared, deps = {}) {
   const audio = new Map()
   const tempFiles = []
 
+  try {
   for (const m of (prepared.mediaFiles || [])) {
     if (m.type === 'video') continue                    // v1 미지원 (§4.9)
     // 1) 실제 파일 경로면 존재 확인
@@ -81,4 +82,10 @@ export async function resolveAndValidateInputs(prepared, deps = {}) {
     return ms
   }
   return { images, sfx, audio, narrationDurationMs, tempFiles }
+  } catch (err) {
+    // 부분 decode 후 이후 입력에서 throw 하면 tempFiles 가 호출자(ipc)에게 반환되지 않아
+    // 고아가 된다 — 여기서 트랜잭션 정리 후 rethrow.
+    for (const f of tempFiles) { try { await unlink(f) } catch { /* already gone */ } }
+    throw err
+  }
 }

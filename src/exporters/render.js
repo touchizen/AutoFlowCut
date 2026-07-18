@@ -23,6 +23,10 @@ export async function exportRenderVideo(project, options, deps = {}) {
     if (!confirmed) return { ok: false, cancelled: true }
   }
 
+  // IPC 등록(renderMp4) 전에 취소가 눌렸으면 여기서 멈춘다 — 안 그러면 등록 전 취소가 no-op 이 되고
+  // 렌더가 그대로 시작된다(prepareCloudRequest/story audio 로딩 중 취소 창).
+  if (deps.shouldCancel?.()) return { ok: false, cancelled: true }
+
   const jobId = makeJobId()
 
   return renderMp4({

@@ -27,6 +27,7 @@ function makeDeps(overrides = {}) {
     writeFile: vi.fn(async () => {}),
     mkdtemp: vi.fn(async () => '/tmp/render-job'),
     rmdir: vi.fn(async () => {}),
+    stat: vi.fn(async directory => ({ dev: directory === tmpdir() ? 2 : 1 })),
     statfs: vi.fn(async () => ({ bavail: 10_000_000, bsize: 4096 })),
     ...overrides,
   }
@@ -196,6 +197,36 @@ describe('runFfmpegRender base lifecycle', () => {
 })
 
 describe('runFfmpegRender disk preflight and cleanup', () => {
+  function splitVolumePlan() {
+    const audioStage = (output, dependsOn = []) => ({
+      kind: 'audio',
+      inputs: [],
+      filtergraphScript: '[aout]',
+      output,
+      dependsOn,
+      subtitleAss: null,
+      estimatedDurationMs: 8_000_000,
+    })
+    return {
+      totalDurationMs: 3_000_000,
+      stages: [
+        audioStage('leaf-1.wav'),
+        audioStage('leaf-2.wav'),
+        audioStage('master.wav', ['leaf-1.wav', 'leaf-2.wav']),
+        {
+          kind: 'final',
+          inputs: ['master.wav'],
+          filtergraphScript: '[vout]',
+          output: 'out.mp4',
+          dependsOn: ['master.wav'],
+          subtitleAss: null,
+          estimatedDurationMs: 3_000_000,
+          outputSpec: { width: 1920, height: 1080, fps: 30 },
+        },
+      ],
+    }
+  }
+
   it('refuses before spawning when estimated intermediates exceed free disk space', async () => {
     const deps = makeDeps({
       outPath: '/exports/final.mp4',
@@ -226,6 +257,43 @@ describe('runFfmpegRender disk preflight and cleanup', () => {
     )).rejects.toThrow(/insufficient disk space.*available/i)
     expect(statfs).toHaveBeenCalledWith('/exports')
     expect(statfs).toHaveBeenCalledWith(tmpdir())
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('requires only the final output peak on a separate destination volume', async () => {
+    const gib = 1024 ** 3
+    const reachedSpawn = new Error('spawn reached after split-volume preflight')
+    const spawn = vi.fn(() => { throw reachedSpawn })
+    const statfs = vi.fn(async directory => ({
+      bavail: Math.floor((directory === '/exports' ? 5 * gib : 12 * gib) / 4096),
+      bsize: 4096,
+      fsid: directory === '/exports' ? 'destination-volume' : 'temp-volume',
+    }))
+
+    await expect(runFfmpegRender(
+      splitVolumePlan(),
+      { jobId: 'split-volume', cancelled: false, tempFiles: [] },
+      () => {},
+      makeDeps({ outPath: '/exports/final.mp4', statfs, spawn }),
+    )).rejects.toThrow('spawn reached after split-volume preflight')
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('combines temp and destination peaks when both paths share one filesystem', async () => {
+    const gib = 1024 ** 3
+    const statfs = vi.fn(async () => ({
+      bavail: Math.floor(12 * gib / 4096),
+      bsize: 4096,
+      fsid: 'shared-volume',
+    }))
+    const spawn = vi.fn(() => { throw new Error('must not spawn') })
+
+    await expect(runFfmpegRender(
+      splitVolumePlan(),
+      { jobId: 'shared-volume', cancelled: false, tempFiles: [] },
+      () => {},
+      makeDeps({ outPath: '/exports/final.mp4', statfs, spawn }),
+    )).rejects.toThrow(/insufficient disk space.*shared filesystem/i)
     expect(spawn).not.toHaveBeenCalled()
   })
 

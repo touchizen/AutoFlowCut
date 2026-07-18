@@ -3,6 +3,7 @@ import {
   mkdtemp as nodeMkdtemp,
   rename as nodeRename,
   rmdir as nodeRmdir,
+  stat as nodeStat,
   statfs as nodeStatfs,
   unlink as nodeUnlink,
   writeFile as nodeWriteFile,
@@ -27,6 +28,7 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   const rename = deps.rename || nodeRename
   const unlink = deps.unlink || nodeUnlink
   const rmdir = deps.rmdir || nodeRmdir
+  const stat = deps.stat || nodeStat
   const statfs = deps.statfs || nodeStatfs
   const writeFile = deps.writeFile || nodeWriteFile
   const mkdtemp = deps.mkdtemp || nodeMkdtemp
@@ -123,11 +125,42 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   }
 
   async function preflightDiskSpace() {
-    const peakBytes = estimatePeakDiskBytes(jobPlan, totalDurationMs)
-    const requiredBytes = Math.ceil(peakBytes * DISK_SAFETY_FACTOR) + MIN_FREE_RESERVE_BYTES
-    const directories = [...new Set([path.dirname(outPath), tmpdir()])]
+    const estimates = estimateDiskSpaceBytes(jobPlan, totalDurationMs)
+    const destinationDirectory = path.dirname(outPath)
+    const temporaryDirectory = tmpdir()
+    const destination = await inspectFilesystem(destinationDirectory)
+    const temporary = destinationDirectory === temporaryDirectory
+      ? destination
+      : await inspectFilesystem(temporaryDirectory)
 
-    for (const targetDirectory of directories) {
+    if (sameFilesystem(destination, temporary)) {
+      const requiredBytes = diskRequirementBytes(
+        estimates.destinationBytes + estimates.tempBytes,
+      )
+      const availableBytes = Math.min(destination.availableBytes, temporary.availableBytes)
+      if (availableBytes < requiredBytes) {
+        throw new Error(
+          `insufficient disk space on shared filesystem for ${destinationDirectory} and ${temporaryDirectory}: ` +
+          `required ${formatBytes(requiredBytes)}, available ${formatBytes(availableBytes)}`,
+        )
+      }
+      return
+    }
+
+    assertDiskAvailable(
+      destinationDirectory,
+      'destination',
+      diskRequirementBytes(estimates.destinationBytes),
+      destination.availableBytes,
+    )
+    assertDiskAvailable(
+      temporaryDirectory,
+      'temporary',
+      diskRequirementBytes(estimates.tempBytes),
+      temporary.availableBytes,
+    )
+
+    async function inspectFilesystem(targetDirectory) {
       let filesystem
       try {
         filesystem = await statfs(targetDirectory)
@@ -135,11 +168,18 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
         throw new Error(`disk space preflight failed for ${targetDirectory}: ${error.message}`)
       }
 
-      const availableBytes = statfsAvailableBytes(filesystem)
-      if (availableBytes < requiredBytes) {
-        throw new Error(
-          `insufficient disk space on ${targetDirectory}: required ${formatBytes(requiredBytes)}, available ${formatBytes(availableBytes)}`,
-        )
+      let identity = statfsIdentity(filesystem)
+      if (!identity) {
+        try {
+          const metadata = await stat(targetDirectory)
+          if (metadata?.dev != null) identity = `dev:${String(metadata.dev)}`
+        } catch (error) {
+          throw new Error(`disk filesystem preflight failed for ${targetDirectory}: ${error.message}`)
+        }
+      }
+      return {
+        availableBytes: statfsAvailableBytes(filesystem),
+        identity,
       }
     }
   }
@@ -316,17 +356,18 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   }
 }
 
-export function estimatePeakDiskBytes(jobPlan, fallbackDurationMs = jobPlan?.totalDurationMs) {
+export function estimateDiskSpaceBytes(jobPlan, fallbackDurationMs = jobPlan?.totalDurationMs) {
+  const stages = jobPlan?.stages || []
   const outputSizes = new Map()
   const fallbackMs = positiveNumber(fallbackDurationMs, 1000)
   let liveBytes = 0
-  let peakBytes = 0
+  let tempBytes = 0
 
-  for (const stage of (jobPlan?.stages || [])) {
+  for (const stage of stages.slice(0, -1)) {
     const outputBytes = estimateStageOutputBytes(stage, fallbackMs)
     outputSizes.set(stage.output, outputBytes)
     liveBytes += outputBytes
-    peakBytes = Math.max(peakBytes, liveBytes)
+    tempBytes = Math.max(tempBytes, liveBytes)
 
     for (const dependency of (stage.dependsOn || [])) {
       const dependencyBytes = outputSizes.get(dependency)
@@ -336,7 +377,19 @@ export function estimatePeakDiskBytes(jobPlan, fallbackDurationMs = jobPlan?.tot
     }
   }
 
-  return Math.ceil(peakBytes)
+  const finalStage = stages.at(-1)
+  const destinationBytes = finalStage
+    ? estimateStageOutputBytes(finalStage, fallbackMs)
+    : 0
+  return {
+    tempBytes: Math.ceil(tempBytes),
+    destinationBytes: Math.ceil(destinationBytes),
+  }
+}
+
+export function estimatePeakDiskBytes(jobPlan, fallbackDurationMs = jobPlan?.totalDurationMs) {
+  const estimates = estimateDiskSpaceBytes(jobPlan, fallbackDurationMs)
+  return estimates.tempBytes + estimates.destinationBytes
 }
 
 function estimateStageOutputBytes(stage, fallbackDurationMs) {
@@ -425,6 +478,36 @@ function statfsAvailableBytes(filesystem) {
     throw new Error('statfs did not return bavail/bfree and bsize')
   }
   return Number(BigInt(availableBlocks) * BigInt(blockSize))
+}
+
+function statfsIdentity(filesystem) {
+  if (filesystem?.fsid != null) return `fsid:${stableIdentityValue(filesystem.fsid)}`
+  const mount = filesystem?.mount ?? filesystem?.mountpoint
+  return mount == null ? null : `mount:${String(mount)}`
+}
+
+function stableIdentityValue(value) {
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) return value.map(String).join(',')
+    return Object.keys(value).sort().map(key => `${key}:${String(value[key])}`).join(',')
+  }
+  return String(value)
+}
+
+function sameFilesystem(left, right) {
+  return Boolean(left.identity && right.identity && left.identity === right.identity)
+}
+
+function diskRequirementBytes(estimatedBytes) {
+  return Math.ceil(estimatedBytes * DISK_SAFETY_FACTOR) + MIN_FREE_RESERVE_BYTES
+}
+
+function assertDiskAvailable(directory, role, requiredBytes, availableBytes) {
+  if (availableBytes >= requiredBytes) return
+  throw new Error(
+    `insufficient disk space on ${role} volume ${directory}: ` +
+    `required ${formatBytes(requiredBytes)}, available ${formatBytes(availableBytes)}`,
+  )
 }
 
 function formatBytes(bytes) {
