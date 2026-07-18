@@ -98,6 +98,40 @@ describe('useAppSettings — 모델 id 보존 (동적 /models 모델 지원)', (
   })
 })
 
+describe('useAppSettings — 전역 image provider (M1 §5.8)', () => {
+  it('fresh install: generation.image.provider=google + modelsByProvider.google=기본모델', () => {
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.generation.image.provider).toBe('google')
+    expect(result.current.settings.modelsByProvider.google).toBe(DEFAULT_IMAGE_MODEL_ID)
+  })
+
+  it('마이그레이션: flat imageModel 만 있던 기존 설정 → provider=google, 그 모델을 google 슬롯에 시드, imageModel 보존', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ imageModel: 'gemini-3-pro-image' }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.generation.image.provider).toBe('google')
+    expect(result.current.settings.modelsByProvider.google).toBe('gemini-3-pro-image')
+    expect(result.current.settings.imageModel).toBe('gemini-3-pro-image') // 기존 consumer 하위호환
+  })
+
+  it('기존 nested 설정 보존(openai 선택 + 기억 모델)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      imageModel: 'gpt-image-1',
+      generation: { image: { provider: 'openai' } },
+      modelsByProvider: { google: 'gemini-3.1-flash-image', openai: 'gpt-image-1' },
+    }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.generation.image.provider).toBe('openai')
+    expect(result.current.settings.modelsByProvider.openai).toBe('gpt-image-1')
+    expect(result.current.settings.modelsByProvider.google).toBe('gemini-3.1-flash-image')
+  })
+
+  it('부분 nested(generation.image 만, provider 누락) → provider=google 로 채움', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ generation: { image: {} } }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.generation.image.provider).toBe('google')
+  })
+})
+
 describe('useAppSettings — videoConcurrency', () => {
   it('fresh install 기본값은 videoConcurrency 4', () => {
     const { result } = renderHook(() => useAppSettings())

@@ -23,7 +23,11 @@ function createDefaults() {
     imageBatchCount: 1,
     imageUpscale: 'off',
     videoBatchCount: 1,
-    imageModel: DEFAULT_IMAGE_MODEL_ID,        // T2I 모델
+    imageModel: DEFAULT_IMAGE_MODEL_ID,        // T2I 모델 (선택 provider 의 활성 모델 — 하위호환)
+    // M1 §5.8: 전역 image provider 축 + provider별 모델 기억.
+    // imageModel 은 "선택 provider 의 활성 모델"로 유지(기존 consumer 하위호환).
+    generation: { image: { provider: 'google' } },
+    modelsByProvider: { google: DEFAULT_IMAGE_MODEL_ID },
     videoModelT2V: DEFAULT_VIDEO_MODEL_ID,      // T2V 모델
     videoModelF2V: DEFAULT_VIDEO_MODEL_ID,      // F2V 모델
     videoResolution: '720p',
@@ -50,6 +54,20 @@ function loadSettings() {
     // 옛 Flow(none) 저장 모드 폐기 — 공식 API 는 base64 만 오므로 작업폴더 저장이 필수.
     // 'none'/legacy 값은 'folder' 로 강제 (설정 UI 의 저장 방식 토글도 제거됨).
     if (merged.saveMode !== 'folder') merged.saveMode = 'folder'
+    // M1 §5.8 마이그레이션(멱등): flat imageModel → 전역 image provider 축 + provider별 모델 기억.
+    // 기존 사용자는 generation/modelsByProvider 가 없다 → google 로 채우고 현재 imageModel 을 시드.
+    // generation.image.provider 는 저장값(parsed)만 신뢰 — defaults 병합값이 아닌 실제 저장 구조로 판정.
+    merged.generation = (parsed.generation && typeof parsed.generation === 'object') ? { ...parsed.generation } : {}
+    merged.generation.image = (merged.generation.image && typeof merged.generation.image === 'object') ? { ...merged.generation.image } : {}
+    if (!merged.generation.image.provider) merged.generation.image.provider = 'google'
+    const imgProvider = merged.generation.image.provider
+    // provider별 모델 기억: 저장된 modelsByProvider 가 없으면 옛 설정 → 활성 imageModel 을 그 슬롯에 시드.
+    if (parsed.modelsByProvider && typeof parsed.modelsByProvider === 'object') {
+      merged.modelsByProvider = { ...parsed.modelsByProvider }
+      if (merged.modelsByProvider[imgProvider] == null) merged.modelsByProvider[imgProvider] = merged.imageModel
+    } else {
+      merged.modelsByProvider = { [imgProvider]: merged.imageModel }
+    }
     // 모델 id 는 coerce 하지 않고 저장값을 그대로 보존한다 — 정적 카탈로그에 없는 동적
     // /models 모델을 선택·저장했을 때 reload 마다 기본값으로 되돌아가지 않도록(리뷰 P2).
     // 실제 사용 가능 여부는 /models 로드 후 ModelSelector 가 조정(없으면 합성 옵션 노출).
