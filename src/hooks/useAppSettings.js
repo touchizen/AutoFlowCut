@@ -61,7 +61,11 @@ function loadSettings() {
     merged.generation.image = (merged.generation.image && typeof merged.generation.image === 'object') ? { ...merged.generation.image } : {}
     if (!merged.generation.image.provider) merged.generation.image.provider = 'google'
     const imgProvider = merged.generation.image.provider
-    // provider별 모델 기억: 저장된 modelsByProvider 가 없으면 옛 설정 → 활성 imageModel 을 그 슬롯에 시드.
+    // provider/model desync 방지: 스펙 shape 의 nested generation.image.model 이 있으면 활성 모델로 정합.
+    // (UI 는 flat imageModel 을 쓰지만, nested model 로 저장된 설정을 로드할 때 provider=openai +
+    //  model=gemini 로 어긋나는 것을 막는다.)
+    if (merged.generation.image.model) merged.imageModel = merged.generation.image.model
+    // provider별 모델 기억: 저장된 modelsByProvider 가 없으면 옛 설정 → (정합된) imageModel 을 그 슬롯에 시드.
     if (parsed.modelsByProvider && typeof parsed.modelsByProvider === 'object') {
       merged.modelsByProvider = { ...parsed.modelsByProvider }
       if (merged.modelsByProvider[imgProvider] == null) merged.modelsByProvider[imgProvider] = merged.imageModel

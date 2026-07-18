@@ -130,6 +130,16 @@ describe('useAppSettings — 전역 image provider (M1 §5.8)', () => {
     const { result } = renderHook(() => useAppSettings())
     expect(result.current.settings.generation.image.provider).toBe('google')
   })
+
+  it('nested generation.image.model 이 있으면 imageModel/슬롯 정합 (provider/model desync 방지)', () => {
+    // 스펙 shape: {provider:openai, model:gpt-image-1} 로드 시 imageModel 이 gemini 로 어긋나면 안 됨
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      generation: { image: { provider: 'openai', model: 'gpt-image-1' } },
+    }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.imageModel).toBe('gpt-image-1')
+    expect(result.current.settings.modelsByProvider.openai).toBe('gpt-image-1')
+  })
 })
 
 describe('useAppSettings — videoConcurrency', () => {

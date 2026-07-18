@@ -83,7 +83,7 @@ export function toFileUrl(pathOrUrl, version = null) {
   return pathOrUrl
 }
 
-export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
+export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvider = 'google', imageModel } = {}) {
   const [thumbnails, setThumbnails] = useState({})         // { presetId: filePath | blobUrl }
   const [generating, setGenerating] = useState(false)
   const [stopping, setStopping] = useState(false)
@@ -164,7 +164,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
       console.log(`[StyleThumbnails] Generating preset ${presetId}: ${prompt}`)
 
       try {
-        const result = await genAPI.generateImage(prompt, [], { batchCount: 1 })
+        const result = await genAPI.generateImage(prompt, [], { batchCount: 1, provider: imageProvider, model: imageModel })
 
         if (result.success && result.images?.length > 0) {
           const firstImage = result.images[0]
@@ -230,7 +230,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
         console.log(`[StyleThumbnails] Generating custom style "${ref.name}": ${prompt}`)
 
         try {
-          const result = await genAPI.generateImage(prompt, [], { batchCount: 1 })
+          const result = await genAPI.generateImage(prompt, [], { batchCount: 1, provider: imageProvider, model: imageModel })
 
           if (result.success && result.images?.length > 0) {
             const firstImage = result.images[0]

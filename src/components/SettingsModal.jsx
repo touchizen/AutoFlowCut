@@ -124,7 +124,7 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
             setLocalSettings={setLocalSettings}
             t={t}
             appMode={appMode}
-            imageModels={imageModelsForProvider(localSettings.generation?.image?.provider, availableModels.imageModels)}
+            imageModels={appMode === 'flow' ? availableModels.imageModels : imageModelsForProvider(localSettings.generation?.image?.provider, availableModels.imageModels)}
             videoModels={availableModels.videoModels}
           />
         )}

@@ -91,7 +91,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await genAPI.generateImage(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel, references: allRefs })
+      const result = await genAPI.generateImage(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel, provider: settings.generation?.image?.provider ?? 'google', references: allRefs })
 
       const { success, sceneUpdate } = await finalizeGeneratedImage({
         result, genAPI,

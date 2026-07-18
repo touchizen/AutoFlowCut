@@ -198,22 +198,24 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       {/* 생성 모델 선택 — T2I / T2V / F2V 각각 (옵션마다 특징·비용 표시) */}
       <div className="settings-section">
         <h3>{t('settings.modelImageTitle')} {modeBadge}</h3>
-        {/* 전역 image provider 선택(§5.8) — 전환 시 provider별 기억 모델 복원 */}
-        <div className="batch-count-buttons" role="group" aria-label={t('settings.imageProviderTitle')}>
-          {IMAGE_PROVIDERS.map((p) => {
-            const active = (localSettings.generation?.image?.provider ?? 'google') === p
-            return (
-              <button
-                key={p}
-                type="button"
-                className={`batch-btn ${active ? 'active' : ''}`}
-                onClick={() => setLocalSettings(s => ({ ...s, ...computeImageProviderSwitch(s, p) }))}
-              >
-                {t(`settings.imageProvider_${p}`)}
-              </button>
-            )
-          })}
-        </div>
+        {/* 전역 image provider 선택(§5.8) — API 모드에서만(Flow 는 google 전용). 전환 시 provider별 기억 모델 복원 */}
+        {appMode !== 'flow' && (
+          <div className="batch-count-buttons" role="group" aria-label={t('settings.imageProviderTitle')}>
+            {IMAGE_PROVIDERS.map((p) => {
+              const active = (localSettings.generation?.image?.provider ?? 'google') === p
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  className={`batch-btn ${active ? 'active' : ''}`}
+                  onClick={() => setLocalSettings(s => ({ ...s, ...computeImageProviderSwitch(s, p) }))}
+                >
+                  {t(`settings.imageProvider_${p}`)}
+                </button>
+              )
+            })}
+          </div>
+        )}
         <ModelSelector
           options={imageModels}
           value={localSettings.imageModel}

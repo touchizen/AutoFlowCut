@@ -81,17 +81,38 @@ describe('SceneTab — image provider 선택 (M1 §5.8)', () => {
     expect(next.modelsByProvider.google).toBe('gemini-3.1-flash-image')
   })
 
-  it('모델 변경 → modelsByProvider 를 현재 provider 슬롯에 갱신', () => {
+  it('모델 변경 → modelsByProvider 를 현재 provider 슬롯에 갱신 (google)', () => {
     const setLocalSettings = vi.fn()
     render(<SceneTab localSettings={provSettings} setLocalSettings={setLocalSettings} t={t} />)
-    // ModelSelector 의 첫 옵션 변경을 직접 트리거하긴 어려우니 onChange updater 계약만 확인:
-    // 이미지 섹션의 select 를 찾아 변경 이벤트 발생
     const selects = screen.getAllByRole('combobox')
     fireEvent.change(selects[0], { target: { value: 'gemini-3-pro-image' } })
     const updater = setLocalSettings.mock.calls.at(-1)[0]
     const next = updater(provSettings)
     expect(next.imageModel).toBe('gemini-3-pro-image')
     expect(next.modelsByProvider.google).toBe('gemini-3-pro-image')
+  })
+
+  it('모델 변경 → 활성 provider(openai) 슬롯에 갱신 (F5: 슬롯 키 상수 아님)', () => {
+    const openaiSettings = {
+      ...baseSettings,
+      imageModel: 'gpt-image-1',
+      generation: { image: { provider: 'openai' } },
+      modelsByProvider: { google: 'gemini-3.1-flash-image', openai: 'gpt-image-1' },
+    }
+    const setLocalSettings = vi.fn()
+    render(<SceneTab localSettings={openaiSettings} setLocalSettings={setLocalSettings} t={t} />)
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[0], { target: { value: 'gpt-image-1' } })
+    const updater = setLocalSettings.mock.calls.at(-1)[0]
+    const next = updater(openaiSettings)
+    // openai 슬롯에 기록돼야 (google 슬롯 오염 금지)
+    expect(next.modelsByProvider.openai).toBe('gpt-image-1')
+    expect(next.modelsByProvider.google).toBe('gemini-3.1-flash-image')
+  })
+
+  it('Flow 모드에서는 provider 셀렉터 숨김 (F4: Flow 는 google 전용)', () => {
+    render(<SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} appMode="flow" />)
+    expect(screen.queryByRole('button', { name: 'settings.imageProvider_openai' })).toBeNull()
   })
 })
 

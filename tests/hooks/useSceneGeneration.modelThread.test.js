@@ -59,6 +59,27 @@ describe('useSceneGeneration — 모델 전달', () => {
     expect(opts.model).toBe('gemini-3-pro-image')
   })
 
+  // M1 F2: 단일 씬 재생성도 전역 image provider 를 전달해야 openai 로 라우팅된다(안 그러면 google 오라우팅).
+  it('settings.generation.image.provider 를 generateImage provider 로 전달', async () => {
+    const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'X' }] })
+    const scenes = [{ id: 'scene_1', prompt: 'a hero' }]
+    const scenesHook = { references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+    const settings = {
+      imageModel: 'gpt-image-1', aspectRatio: '16:9', imageBatchCount: 1, saveMode: 'memory',
+      generation: { image: { provider: 'openai' } },
+    }
+    const { result } = renderHook(() =>
+      useSceneGeneration({
+        settings, scenes, scenesHook,
+        genAPI: { generateImage },
+        openSettings: vi.fn(), setSelectedScene: vi.fn(),
+        t: (k) => k, generationQueue: null,
+      })
+    )
+    await act(async () => { await result.current.handleGenerateScene('scene_1') })
+    expect(generateImage.mock.calls[0][2].provider).toBe('openai')
+  })
+
   it('finalizeGeneratedImage 에도 선택 모델을 넘긴다 (ResultsTable 모델명이 flow 로 기록되는 회귀 방지)', async () => {
     const { finalizeGeneratedImage } = await import('../../src/services/imageFinalize')
     const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'X' }] })
