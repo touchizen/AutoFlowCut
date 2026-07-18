@@ -136,10 +136,13 @@ async function observeRemoteStart(h, uuid = 'remote-frame') {
 afterEach(() => vi.useRealTimers())
 
 describe('Claude orchestrator §5.7 abort transaction', () => {
-  it('defines the fixed abort deadline and silent-stop payload', () => {
+  it('defines the fixed abort deadline and the spec §5.0 D3 byte-exact silent-stop payload', () => {
     expect(agentConstants.AGENT_CLAUDE_ABORT_BOUNDARY_TIMEOUT_MS).toBe(30_000)
-    expect(agentConstants.AGENT_CLAUDE_ABORT_PAYLOAD).toEqual(expect.any(String))
-    expect(agentConstants.AGENT_CLAUDE_ABORT_PAYLOAD.length).toBeGreaterThan(0)
+    // §5.0 D3 line 143 fixes this exact ASCII string — the silent-stop behaviour is only
+    // grounded (m0-16/m0-18) for this literal payload, so pin it byte-exact.
+    expect(agentConstants.AGENT_CLAUDE_ABORT_PAYLOAD).toBe(
+      'Stop the current task immediately. Do not explain, summarize, or continue. Wait silently for the user\'s next instruction.',
+    )
   })
 
   it('idle abort is an input-0 no-op and does not close the Query', async () => {
@@ -310,6 +313,66 @@ describe('Claude orchestrator §5.7 abort transaction', () => {
       turn: { id: 'claude:abort-session:2', status: 'inProgress' },
     })
     expect(h.inputs).toHaveLength(3)
+    await h.orchestrator.close()
+  })
+
+  it('abort after close reports closing, not a misleading idle', async () => {
+    const h = createHarness()
+    await startActive(h)
+    await h.orchestrator.close()
+
+    await expect(h.orchestrator.abort()).resolves.toEqual({ aborted: false, reason: 'closing' })
+  })
+
+  it('a superseded transaction late approval rejection cannot close the live session', async () => {
+    // settleAbort's currentAbort/settled guard is the SOLE defense here: the approvalClose
+    // .catch(failAbort) runs with no pre-check, so after this abort settles context-preserved
+    // and a new turn starts, the old closeSession promise rejecting must be a no-op.
+    const approvalClose = deferred()
+    approvalClose.promise.catch(() => {})
+    const h = createHarness({ approvalPrompt: { closeSession: () => approvalClose.promise } })
+    await startActive(h)
+    await observeRemoteStart(h)
+
+    const aborting = h.orchestrator.abort()
+    await Promise.resolve()
+    h.output.push(result('opaque-boundary'))
+    await expect(aborting).resolves.toMatchObject({ contextPreserved: true, sessionClosed: false })
+
+    const next = await h.orchestrator.send('next turn', 'claude-sonnet-5')
+    expect(next).toMatchObject({ turn: { status: 'inProgress' } })
+
+    // The stale transaction's approval promise rejects only now — must not touch the live session.
+    approvalClose.reject(new Error('late approval rejection'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(h.query.close).not.toHaveBeenCalled()
+    await expect(h.orchestrator.steer('still steerable')).resolves.toMatchObject({ accepted: true })
+
+    await h.orchestrator.close()
+  })
+
+  it('a partial approvalPrompt without closeSession does not fail the abort barrier', async () => {
+    const h = createHarness({ approvalPrompt: {} })
+    const started = await startActive(h)
+    await observeRemoteStart(h)
+    vi.useFakeTimers()
+
+    const aborting = h.orchestrator.abort()
+    await vi.advanceTimersByTimeAsync(0)
+    h.output.push(result('opaque-boundary'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    await expect(aborting).resolves.toEqual({
+      aborted: true,
+      phase: 'active',
+      turnId: started.turn.id,
+      abortInputId: 'uuid-2',
+      boundaryObserved: true,
+      contextPreserved: true,
+      sessionClosed: false,
+    })
     await h.orchestrator.close()
   })
 

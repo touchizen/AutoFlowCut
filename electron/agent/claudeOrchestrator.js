@@ -291,8 +291,10 @@ export function createClaudeOrchestrator({
 
   function closeQueryOnce() {
     if (!query || queryClosed) return
-    queryClosed = true
+    // Mark closed only after a successful close so a throwing close() stays retryable
+    // instead of silently leaving a live Query reported as sessionClosed.
     query.close()
+    queryClosed = true
   }
 
   function clearOrphanTimer() {
@@ -1152,6 +1154,9 @@ export function createClaudeOrchestrator({
       }
       return transaction.promise
     }
+    if (state.kind === 'closing') {
+      return Promise.resolve({ aborted: false, reason: 'closing' })
+    }
     if (state.kind !== 'active') {
       return Promise.resolve({ aborted: false, reason: 'idle' })
     }
@@ -1166,7 +1171,7 @@ export function createClaudeOrchestrator({
 
     let setupFailed = false
     try {
-      const approvalClose = approvalPrompt?.closeSession(sessionId)
+      const approvalClose = approvalPrompt?.closeSession?.(sessionId)
       if (approvalClose && typeof approvalClose.then === 'function') {
         Promise.resolve(approvalClose).catch(() => { failAbort(transaction) })
       }
