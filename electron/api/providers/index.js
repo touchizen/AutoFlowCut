@@ -6,10 +6,12 @@
  * M0b 는 google 만 등록(image/video). 신규 provider(openai/grok/...)는 M1+ 에서 한 줄 슬롯인.
  */
 import { googleImageProvider } from './image/google.js'
+import { openaiImageProvider } from './image/openai.js'
 import { googleVideoProvider } from './video/google.js'
 
 const imageRegistry = Object.assign(Object.create(null), {
   google: googleImageProvider,
+  openai: openaiImageProvider,
 })
 const videoRegistry = Object.assign(Object.create(null), {
   google: googleVideoProvider,

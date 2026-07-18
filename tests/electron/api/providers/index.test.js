@@ -5,6 +5,7 @@ import {
   listProviders,
 } from '../../../../electron/api/providers/index.js'
 import { googleImageProvider } from '../../../../electron/api/providers/image/google.js'
+import { openaiImageProvider } from '../../../../electron/api/providers/image/openai.js'
 import { googleVideoProvider } from '../../../../electron/api/providers/video/google.js'
 
 describe('provider registry (§5.10)', () => {
@@ -26,9 +27,18 @@ describe('provider registry (§5.10)', () => {
     expect(typeof p.fetchVideoBase64).toBe('function')
   })
 
+  it('openai image provider 등록됨 (M1)', () => {
+    const p = getImageProvider('openai')
+    expect(p).toBe(openaiImageProvider)
+    expect(p.id).toBe('openai')
+    expect(p.kind).toBe('image')
+    expect(typeof p.generateImage).toBe('function')
+    expect(typeof p.validateKey).toBe('function')
+  })
+
   it('미등록 id → null (조용한 google 폴백 금지)', () => {
-    expect(getImageProvider('openai')).toBe(null)
-    expect(getVideoProvider('grok')).toBe(null)
+    expect(getVideoProvider('grok')).toBe(null) // video 는 아직 google 만
+    expect(getVideoProvider('openai')).toBe(null) // openai 는 image 만, video 미등록
     expect(getImageProvider('nope')).toBe(null)
   })
 
@@ -46,10 +56,10 @@ describe('provider registry (§5.10)', () => {
     }
   })
 
-  it('listProviders() → M0b 등록: image/video 각각 google 만', () => {
+  it('listProviders() → M1 등록: image=google+openai, video=google', () => {
     const list = listProviders()
     expect(list).toEqual({
-      image: [{ id: 'google' }],
+      image: [{ id: 'google' }, { id: 'openai' }],
       video: [{ id: 'google' }],
     })
   })

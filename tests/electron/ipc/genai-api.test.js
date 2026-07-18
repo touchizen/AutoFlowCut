@@ -166,15 +166,23 @@ describe('genai-api — 이미지 생성', () => {
     expect(JSON.stringify(fetchImpl.mock.calls[0])).not.toContain('ATTACKER_KEY')
   })
 
-  it('미등록 provider 를 명시하면 invalid-config 실패', async () => {
+  it('진짜 미등록 provider 를 명시하면 invalid-config 실패', async () => {
     const ipc = makeIpcMain()
     registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
-    const res = await ipc.invoke('genai:generate-image', { provider: 'openai', prompt: 'x' })
+    const res = await ipc.invoke('genai:generate-image', { provider: 'nonexistent', prompt: 'x' })
     expect(res).toEqual({
       success: false,
-      error: 'Unknown provider: openai',
+      error: 'Unknown provider: nonexistent',
       errorKind: 'invalid-config',
     })
+  })
+
+  it('openai 는 M1 에서 등록됨 — 키 없으면 No API key/auth (unknown 아님)', async () => {
+    const ipc = makeIpcMain()
+    // multiKeyStore.hasKey/getKey 기본 false/null → openai 키 없음
+    registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
+    const res = await ipc.invoke('genai:generate-image', { provider: 'openai', prompt: 'x' })
+    expect(res).toEqual({ success: false, error: 'No API key', errorKind: 'auth' })
   })
 })
 
