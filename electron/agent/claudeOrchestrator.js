@@ -317,7 +317,9 @@ export function createClaudeOrchestrator({
     state = { kind: nextState }
     if (closeSession) {
       inputQueue.end(steerRefusal(state))
-      try { closeQueryOnce() } catch { /* abort always resolves after an exact-once close attempt */ }
+      // abort always resolves after attempting the close; a throwing close stays retryable
+      // (closeQueryOnce marks closed only on success) so a later close() can finish teardown.
+      try { closeQueryOnce() } catch { /* resolve regardless; retry happens via a later close() */ }
     }
     transaction.resolve(value)
     return true
@@ -1283,9 +1285,16 @@ export function createClaudeOrchestrator({
     } catch (error) {
       closeError ||= error
     }
-    if (closeError) rejectClose(closeError)
-    else resolveClose({ closed: true })
-    return closePromise
+    const settled = closePromise
+    if (closeError) {
+      // A failed transport close leaves a live Query. Drop the cached rejection so a later
+      // close() retries the still-open Query instead of reporting a permanent zombie.
+      if (!queryClosed) closePromise = null
+      rejectClose(closeError)
+    } else {
+      resolveClose({ closed: true })
+    }
+    return settled
   }
 
   return { open, send, steer, abort, close }

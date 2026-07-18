@@ -410,6 +410,20 @@ describe('createClaudeOrchestrator — persistent Query lifecycle', () => {
     await h.orchestrator.close()
   })
 
+  it('throwing query.close leaves the Query retryable — a later close finishes teardown', async () => {
+    const h = createHarness()
+    await h.orchestrator.open()
+    h.query.close.mockImplementationOnce(() => { throw new Error('query close failed') })
+
+    // First close attempts query.close (throws) → rejects, but must not mark the Query closed.
+    await expect(h.orchestrator.close()).rejects.toThrow(/query close failed/)
+    expect(h.query.close).toHaveBeenCalledTimes(1)
+
+    // A later close() retries the still-open Query instead of caching the rejection forever.
+    await expect(h.orchestrator.close()).resolves.toEqual({ closed: true })
+    expect(h.query.close).toHaveBeenCalledTimes(2)
+  })
+
   it('stream-error 정리 중 query.close가 던져도 onExit 종결을 보고한다', async () => {
     const h = createHarness()
     await h.orchestrator.open()
