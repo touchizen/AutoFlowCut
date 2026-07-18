@@ -14,6 +14,9 @@ export const AGENT_SESSION_MAX_TOOL_CALLS = 256
 export const AGENT_CLAUDE_MAX_TURNS =
   2 * AGENT_SESSION_MAX_TURNS + AGENT_SESSION_MAX_TOOL_CALLS
 export const AGENT_CLAUDE_MCP_TOOL_TIMEOUT_MS = 30 * 60 * 1000
+export const AGENT_CLAUDE_ABORT_BOUNDARY_TIMEOUT_MS = 30_000
+export const AGENT_CLAUDE_ABORT_PAYLOAD =
+  '현재 작업을 조용히 중단하고 추가 응답 없이 사용자의 다음 요청을 기다리세요.'
 
 // §5.1: cold catalog에서도 Default는 동기적으로 이 built-in 행에 resolve된다.
 export const COLD_DEFAULT_MODEL_ID = 'codex:gpt-5.5'

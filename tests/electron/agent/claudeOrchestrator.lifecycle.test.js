@@ -396,14 +396,16 @@ describe('createClaudeOrchestrator — persistent Query lifecycle', () => {
     expect(h.inputs).toHaveLength(0)
   })
 
-  it('abort는 M4 경계를 명시한 최소 stub이다', async () => {
+  it('idle abort는 입력이나 Query close 없이 no-op으로 끝난다', async () => {
     const h = createHarness()
     await h.orchestrator.open()
 
     await expect(h.orchestrator.abort()).resolves.toEqual({
       aborted: false,
-      reason: 'not-implemented',
+      reason: 'idle',
     })
+    expect(h.inputs).toHaveLength(0)
+    expect(h.query.close).not.toHaveBeenCalled()
 
     await h.orchestrator.close()
   })

@@ -7,6 +7,8 @@ import {
 import { encodeApprovalPayload } from './approvalPayload.js'
 import { toMcpContent } from './codexAdapterEntry.js'
 import {
+  AGENT_CLAUDE_ABORT_BOUNDARY_TIMEOUT_MS,
+  AGENT_CLAUDE_ABORT_PAYLOAD,
   AGENT_CLAUDE_MAX_TURNS,
   AGENT_CLAUDE_MCP_TOOL_TIMEOUT_MS,
   AGENT_MCP_SERVER_NAME,
@@ -239,6 +241,8 @@ export function createClaudeOrchestrator({
   toolFactory = sdkTool,
   randomUuid = randomUUID,
   orphanDrainTimeoutMs = ORPHAN_DRAIN_TIMEOUT_MS,
+  abortBoundaryTimeoutMs = AGENT_CLAUDE_ABORT_BOUNDARY_TIMEOUT_MS,
+  approvalPrompt,
 } = {}) {
   if (typeof sessionId !== 'string' || !sessionId) throw new TypeError('sessionId is required')
   if (typeof initialModel !== 'string' || !initialModel) throw new TypeError('Claude sdkModel is required')
@@ -270,6 +274,7 @@ export function createClaudeOrchestrator({
   let queryClosed = false
   let cancelAsyncMessageCapable = false
   let orphanTimer = null
+  let currentAbort = null
   const retractedPairs = new Set()
   const authorizedCalls = new Map()
 
@@ -294,6 +299,99 @@ export function createClaudeOrchestrator({
     if (!orphanTimer) return
     clearTimeout(orphanTimer)
     orphanTimer = null
+  }
+
+  function clearAbortTimer(transaction) {
+    if (transaction?.timer === null) return
+    clearTimeout(transaction.timer)
+    transaction.timer = null
+  }
+
+  function settleAbort(transaction, value, { nextState, closeSession = false }) {
+    if (currentAbort !== transaction || transaction.settled) return false
+    transaction.settled = true
+    clearAbortTimer(transaction)
+    currentAbort = null
+    state = { kind: nextState }
+    if (closeSession) {
+      inputQueue.end(steerRefusal(state))
+      try { closeQueryOnce() } catch { /* abort always resolves after an exact-once close attempt */ }
+    }
+    transaction.resolve(value)
+    return true
+  }
+
+  function abortFailureValue(transaction, error) {
+    return {
+      error,
+      message: '중단을 완료하지 못해 세션을 닫았습니다.',
+      aborted: true,
+      phase: transaction.phase,
+      turnId: transaction.turnId,
+      abortInputId: transaction.abortInputId,
+      contextPreserved: false,
+      sessionClosed: true,
+    }
+  }
+
+  function failAbort(transaction, error = 'agent-abort-failed') {
+    return settleAbort(transaction, abortFailureValue(transaction, error), {
+      nextState: 'closing',
+      closeSession: true,
+    })
+  }
+
+  function createAbortTransaction({ phase, turnId, pending = null, active = null }) {
+    let resolve
+    const transaction = {
+      kind: 'aborting',
+      phase,
+      turnId,
+      pending,
+      active,
+      remoteStarted: active?.remoteStarted === true,
+      abortInputId: null,
+      cancelConfirmed: false,
+      opaqueBoundarySeen: false,
+      timer: null,
+      settled: false,
+      promise: null,
+      resolve: null,
+    }
+    transaction.promise = new Promise((settle) => { resolve = settle })
+    transaction.resolve = resolve
+    currentAbort = transaction
+    state = transaction
+    transaction.timer = setTimeout(() => {
+      failAbort(transaction, 'agent-abort-timeout')
+    }, abortBoundaryTimeoutMs)
+    return transaction
+  }
+
+  function settlePendingAbort(pending) {
+    const transaction = currentAbort
+    if (transaction?.phase !== 'pendingStart' || transaction.pending !== pending) return
+    settleAbort(transaction, {
+      aborted: true,
+      phase: 'pendingStart',
+      turnId: transaction.turnId,
+      abortInputId: null,
+    }, { nextState: 'idle' })
+  }
+
+  function settleActiveAbortBoundary(transaction) {
+    if (currentAbort !== transaction
+      || !transaction.cancelConfirmed
+      || !transaction.opaqueBoundarySeen) return
+    settleAbort(transaction, {
+      aborted: true,
+      phase: 'active',
+      turnId: transaction.turnId,
+      abortInputId: transaction.abortInputId,
+      boundaryObserved: true,
+      contextPreserved: true,
+      sessionClosed: false,
+    }, { nextState: 'idle' })
   }
 
   function cancelPendingStart(pending) {
@@ -603,8 +701,17 @@ export function createClaudeOrchestrator({
   }
 
   function mapSdkMessage(message) {
-    // State/epoch ownership is checked before parsing. M4 extends the aborting branch only.
+    // State/epoch ownership is checked before parsing.
     if (state.kind === 'closing') return
+    if (state.kind === 'aborting') {
+      if (state.phase === 'active'
+        && state.remoteStarted
+        && message?.type === 'result') {
+        state.opaqueBoundarySeen = true
+        settleActiveAbortBoundary(state)
+      }
+      return
+    }
     if (state.kind !== 'active' && Object.hasOwn(state, 'remoteStarted')) {
       closeInvalidRemoteStartState()
       return
@@ -613,7 +720,6 @@ export function createClaudeOrchestrator({
       if (message?.type === 'result') closeOrphanDrain()
       return
     }
-    if (state.kind === 'aborting') return
     if (state.kind !== 'active') {
       if (isOrphanOutput(message)) {
         enterOrphanDrain()
@@ -636,6 +742,17 @@ export function createClaudeOrchestrator({
   async function readQuery() {
     try {
       for await (const message of query) mapSdkMessage(message)
+      if (state.kind === 'aborting') {
+        failAbort(state)
+        onExit?.({
+          provider: 'claude',
+          code: null,
+          signal: null,
+          error: null,
+          reason: 'stream-ended',
+        })
+        return
+      }
       if (state.kind !== 'closing') {
         clearOrphanTimer()
         // §5.4 step 6: a terminal transition must invalidate live tool authorizations before
@@ -652,6 +769,11 @@ export function createClaudeOrchestrator({
         })
       }
     } catch (error) {
+      if (state.kind === 'aborting') {
+        failAbort(state)
+        onExit?.({ provider: 'claude', code: null, signal: null, error, reason: 'stream-error' })
+        return
+      }
       if (state.kind !== 'closing') {
         clearOrphanTimer()
         invalidateToolAuthorizations()
@@ -935,6 +1057,8 @@ export function createClaudeOrchestrator({
         state = { kind: 'idle' }
       }
       throw error
+    } finally {
+      settlePendingAbort(pending)
     }
   }
 
@@ -957,10 +1081,156 @@ export function createClaudeOrchestrator({
     return { turnId: expectedTurnId, accepted: true }
   }
 
-  async function abort() {
-    // M4: early-cancel barrier, remoteStarted capability branch, and watchdog.
-    void cancelAsyncMessageCapable
-    return { aborted: false, reason: 'not-implemented' }
+  async function continueActiveAbort(transaction) {
+    try {
+      const receipt = await inputQueue.write({
+        type: 'user',
+        uuid: transaction.abortInputId,
+        priority: 'now',
+        message: { role: 'user', content: AGENT_CLAUDE_ABORT_PAYLOAD },
+      }, {
+        guard: () => (state === transaction ? null : steerRefusal(state)),
+      })
+      if (currentAbort !== transaction) return
+      if (!receipt.written) {
+        failAbort(transaction)
+        return
+      }
+
+      const cancelled = await query.cancelAsyncMessage(transaction.abortInputId)
+      if (currentAbort !== transaction) return
+      if (cancelled !== true) {
+        settleAbort(transaction, {
+          aborted: true,
+          phase: 'active',
+          turnId: transaction.turnId,
+          abortInputId: transaction.abortInputId,
+          contextPreserved: false,
+          sessionClosed: true,
+          reason: 'abort-cancel-unconfirmed',
+        }, { nextState: 'closing', closeSession: true })
+        return
+      }
+      transaction.cancelConfirmed = true
+      settleActiveAbortBoundary(transaction)
+    } catch {
+      failAbort(transaction)
+    }
+  }
+
+  function abort() {
+    if (state.kind === 'aborting') return state.promise
+    if (state.kind === 'idle') return Promise.resolve({ aborted: false, reason: 'idle' })
+    if (state.kind === 'orphanDrain') {
+      clearOrphanTimer()
+      state = { kind: 'closing' }
+      turnEpoch += 1
+      inputQueue.end(steerRefusal(state))
+      try { closeQueryOnce() } catch { /* abort never rejects */ }
+      return Promise.resolve({
+        aborted: true,
+        phase: 'orphanDrain',
+        turnId: null,
+        abortInputId: null,
+        sessionClosed: true,
+        reason: 'orphan-drain-close',
+      })
+    }
+    if (state.kind === 'pendingStart') {
+      const pending = state
+      const transaction = createAbortTransaction({
+        phase: 'pendingStart',
+        turnId: pending.turnId,
+        pending,
+      })
+      cancelPendingStart(pending)
+      turnEpoch += 1
+      try {
+        invalidateToolAuthorizations()
+      } catch {
+        failAbort(transaction)
+      }
+      return transaction.promise
+    }
+    if (state.kind !== 'active') {
+      return Promise.resolve({ aborted: false, reason: 'idle' })
+    }
+
+    const active = state
+    const transaction = createAbortTransaction({
+      phase: 'active',
+      turnId: active.turnId,
+      active,
+    })
+    turnEpoch += 1
+
+    let setupFailed = false
+    try {
+      const approvalClose = approvalPrompt?.closeSession(sessionId)
+      if (approvalClose && typeof approvalClose.then === 'function') {
+        Promise.resolve(approvalClose).catch(() => { failAbort(transaction) })
+      }
+    } catch {
+      setupFailed = true
+    }
+    try {
+      invalidateToolAuthorizations()
+    } catch {
+      setupFailed = true
+    }
+    try {
+      closeOpenToolsAsFailed(active, {
+        error: 'agent-turn-aborted',
+        message: 'Claude turn이 중단되어 도구 호출이 종료되었습니다.',
+      })
+    } catch {
+      setupFailed = true
+    }
+    try {
+      onEvent?.({
+        method: 'turn/completed',
+        params: { turn: { id: active.turnId, status: 'aborted' } },
+      })
+    } catch {
+      setupFailed = true
+    }
+
+    if (setupFailed) {
+      failAbort(transaction)
+      return transaction.promise
+    }
+    if (!transaction.remoteStarted) {
+      settleAbort(transaction, {
+        aborted: true,
+        phase: 'active',
+        turnId: active.turnId,
+        abortInputId: null,
+        contextPreserved: false,
+        sessionClosed: true,
+        reason: 'abort-before-remote-start',
+      }, { nextState: 'closing', closeSession: true })
+      return transaction.promise
+    }
+    if (!cancelAsyncMessageCapable) {
+      settleAbort(transaction, {
+        aborted: true,
+        phase: 'active',
+        turnId: active.turnId,
+        abortInputId: null,
+        contextPreserved: false,
+        sessionClosed: true,
+        reason: 'abort-cancel-unavailable',
+      }, { nextState: 'closing', closeSession: true })
+      return transaction.promise
+    }
+
+    try {
+      transaction.abortInputId = randomUuid()
+      void continueActiveAbort(transaction)
+    } catch {
+      failAbort(transaction)
+    }
+    return transaction.promise
   }
 
   function close() {
@@ -968,34 +1238,48 @@ export function createClaudeOrchestrator({
     let resolveClose, rejectClose
     closePromise = new Promise((resolve, reject) => { resolveClose = resolve; rejectClose = reject })
     const previous = state
+    let closeError = null
+    if (previous.kind === 'pendingStart') cancelPendingStart(previous)
+    state = { kind: 'closing' }
+    turnEpoch += 1
     try {
-      if (previous.kind === 'pendingStart') cancelPendingStart(previous)
-      state = { kind: 'closing' }
-      turnEpoch += 1
       invalidateToolAuthorizations()
-      clearOrphanTimer()
-      inputQueue.end(steerRefusal(state))
-      let closeError = null
-      try {
-        if (previous.kind === 'active') {
-          closeOpenToolsAsFailed(previous, {
-            error: 'agent-session-closed',
-            message: 'Claude 세션이 닫혀 도구 호출이 종료되었습니다.',
-          })
-        }
-      } catch (error) {
-        closeError = error
-      }
-      try {
-        closeQueryOnce()
-      } catch (error) {
-        closeError ||= error
-      }
-      if (closeError) rejectClose(closeError)
-      else resolveClose({ closed: true })
     } catch (error) {
-      rejectClose(error)
+      closeError = error
     }
+    clearOrphanTimer()
+    if (previous.kind === 'aborting') {
+      settleAbort(previous, {
+        aborted: true,
+        phase: previous.phase,
+        turnId: previous.turnId,
+        abortInputId: previous.abortInputId,
+        sessionClosed: true,
+        reason: 'session-close',
+      }, { nextState: 'closing' })
+    }
+    try {
+      inputQueue.end(steerRefusal(state))
+    } catch (error) {
+      closeError ||= error
+    }
+    try {
+      if (previous.kind === 'active') {
+        closeOpenToolsAsFailed(previous, {
+          error: 'agent-session-closed',
+          message: 'Claude 세션이 닫혀 도구 호출이 종료되었습니다.',
+        })
+      }
+    } catch (error) {
+      closeError ||= error
+    }
+    try {
+      closeQueryOnce()
+    } catch (error) {
+      closeError ||= error
+    }
+    if (closeError) rejectClose(closeError)
+    else resolveClose({ closed: true })
     return closePromise
   }
 
