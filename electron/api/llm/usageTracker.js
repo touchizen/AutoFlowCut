@@ -22,6 +22,10 @@ export function createUsageTracker() {
   let deltaIn = 0
   let deltaOut = 0
   const cumulative = new Map() // key(threadId) -> { input, output }
+  // 진행중(스트리밍) 응답의 임시 usage. message_delta 는 응답 내 누적치라 key 별 교체한다.
+  // 응답이 끝나면 tap 이 clearPending 후 확정치를 addDelta 로 커밋한다 — 안 지우면 이중계산.
+  // codex cumulative 와 별개 통이라 key 문자열이 겹쳐도 안전하다.
+  const pending = new Map() // key(query) -> { input, output }
 
   return {
     addDelta(u) {
@@ -35,13 +39,21 @@ export function createUsageTracker() {
       cumulative.set(u.key, { input: u.input || 0, output: u.output || 0 })
     },
 
+    setPending(key, u) {
+      if (!key || !u) return
+      pending.set(key, { input: u.input || 0, output: u.output || 0 })
+    },
+
+    clearPending(key) {
+      if (!key) return
+      pending.delete(key)
+    },
+
     snapshot() {
       let input = deltaIn
       let output = deltaOut
-      for (const v of cumulative.values()) {
-        input += v.input
-        output += v.output
-      }
+      for (const v of cumulative.values()) { input += v.input; output += v.output }
+      for (const v of pending.values()) { input += v.input; output += v.output }
       return { input, output }
     },
   }

@@ -285,7 +285,17 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 화면에 안 뜬다 — tracker 는 맞아도 화면이 낮게 남는 조용히 틀린 합계(3R Codex). tokenUsage 는
   // result/알림에만 오므로(스트리밍 텍스트 델타와 다름) 빈도가 낮아 emit 비용도 작다.
   const emitUsage = () => send('story:usage', {})
-  setClaudeUsageSink((u) => { usageTracker.addDelta(u); emitUsage() }) // claude: 호출당 delta → 가산
+  // claude: result 는 {input,output} delta 가산(확정), 스트리밍 진행은 pendingKey 채널로 교체/제거.
+  // 스트리밍 텍스트 델타마다 오므로 빈도가 높지만, emit 은 snapshot 을 실어 story:usage 만 쏜다.
+  setClaudeUsageSink((u) => {
+    if (u?.pendingKey) {
+      if (u.commit) { usageTracker.clearPending(u.pendingKey); usageTracker.addDelta(u) } // 제거+가산 원샷
+      else usageTracker.setPending(u.pendingKey, u)
+    } else {
+      usageTracker.addDelta(u) // 비스트림 확정 커밋
+    }
+    emitUsage()
+  })
   setCodexUsageSink((u) => { usageTracker.setCumulative(u); emitUsage() }) // codex: thread 누적 → key 별 교체
 
   async function flush() { await store.save(state) }

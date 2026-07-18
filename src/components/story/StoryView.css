@@ -1334,19 +1334,34 @@
 .story-speaker-run-btn { grid-area: run; }
 .story-voice-source { grid-area: source; min-width: 0; }
 
-/* 이 프로젝트 세션 누적 토큰 — story-view(flex column, overflow:hidden) 의 마지막 고정 자식.
-   flex-shrink:0 으로 하단에 항상 남고, margin-top:auto 로 위 패널과 사이를 벌린다. */
-.story-token-usage {
-  flex-shrink: 0;
-  margin-top: auto;
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 4px 12px;
+
+/* 진행 표시(초시계+경과시간) 옆 인라인 토큰 — 별도 영역 없이 소요시간 줄에 같이. */
+.story-running-tokens {
+  margin-left: 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary, #8a8a8a);
-  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  opacity: 0.85;
 }
-.story-token-usage__sep { opacity: 0.4; }
+
+/* 편집기 카운트 행(줄 수·자 수) 및 프롬프트 표 하단에 얹는 세션 토큰 — 별도 영역 없음. */
+.story-usage-inline {
+  margin-left: 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #8a8a8a);
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+/* 프롬프트 스텝은 편집기가 없어 표 밑에 씬 수 + 토큰을 한 줄로. */
+.story-prompts-count-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 4px 2px 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #8a8a8a);
+}

@@ -37,6 +37,40 @@ describe('createUsageTracker', () => {
 
 
 
+  // 실시간(스트리밍) 표시용. message_delta 는 응답 내 output 누적치라 더하면 중복 —
+  // pending 은 key 별 교체(setCumulative 와 같은 꼴)로 두고 snapshot 에 포함한다.
+  it('pending 은 같은 key 를 교체하고 snapshot 에 포함된다', () => {
+    const t = createUsageTracker()
+    t.setPending('q1', { input: 500, output: 3 })
+    t.setPending('q1', { input: 500, output: 120 }) // output 누적 증가 → 교체
+    expect(t.snapshot()).toEqual({ input: 500, output: 120 }) // 6/123 이 아니다
+  })
+
+  // 급소: 스트림이 끝나면 result 가 확정 usage 를 addDelta 로 커밋한다. pending 을 안 지우면
+  // 같은 응답이 두 번(진행중 추정 + 확정) 세어진다.
+  it('clearPending 후 addDelta 커밋 — 이중계산 없이 확정치만 남는다', () => {
+    const t = createUsageTracker()
+    t.setPending('q1', { input: 500, output: 120 }) // 진행중 추정
+    t.clearPending('q1')
+    t.addDelta({ input: 512, output: 128 })          // 확정
+    expect(t.snapshot()).toEqual({ input: 512, output: 128 })
+  })
+
+  it('pending 은 codex cumulative 와 격리된다 — key 공간이 겹치지 않는다', () => {
+    const t = createUsageTracker()
+    t.setCumulative({ key: 't1', input: 100, output: 40 })
+    t.setPending('t1', { input: 7, output: 2 }) // 같은 문자열이어도 별개 통
+    expect(t.snapshot()).toEqual({ input: 107, output: 42 })
+  })
+
+  it('null/빈 pending 은 무시한다', () => {
+    const t = createUsageTracker()
+    t.setPending('q1', null)
+    t.setPending(null, { input: 1, output: 1 })
+    t.clearPending('nope')
+    expect(t.snapshot()).toEqual({ input: 0, output: 0 })
+  })
+
   it('null/빈 기록은 무시한다', () => {
     const t = createUsageTracker()
     t.addDelta(null)

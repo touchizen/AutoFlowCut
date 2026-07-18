@@ -18,7 +18,7 @@ import { useAudioPlayback } from '../../hooks/useAudioPlayback'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
 import StoryStepper, { STEP_META } from './StoryStepper'
-import StoryTokenUsage from './StoryTokenUsage'
+import { formatTokens } from './StoryTokenUsage'
 import VoicePicker from './VoicePicker'
 import SpeakerAudioSource from './SpeakerAudioSource'
 import Modal from '../Modal'
@@ -204,12 +204,13 @@ function formatProgressLogTime(value) {
 }
 
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
-function StoryRunning({ label, startedAt, detail, log = [] }) {
+function StoryRunning({ label, startedAt, detail, log = [], usage = null }) {
   const logRef = useRef(null)
   useEffect(() => {
     const el = logRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [log.length])
+  const hasUsage = usage && (usage.input || usage.output)
   return (
     <div className="story-running" aria-live="polite">
       {detail && <div className="story-running-detail">{detail}</div>}
@@ -217,6 +218,9 @@ function StoryRunning({ label, startedAt, detail, log = [] }) {
         <StopwatchIcon size={18} />
         <span className="story-running-label">{label}</span>
         <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
+        {hasUsage && (
+          <span className="story-running-tokens">in {formatTokens(usage.input)} / out {formatTokens(usage.output)}</span>
+        )}
       </div>
       {log.length > 0 && (
         <div className="story-progress-log" ref={logRef} role="log" aria-live="polite">
@@ -232,15 +236,27 @@ function StoryRunning({ label, startedAt, detail, log = [] }) {
   )
 }
 
+/** 이 프로젝트 세션 누적 토큰 인라인 — 별도 영역 없이 각 스텝 기존 UI 에 얹는다.
+ *  0/0 이면 숨긴다(파이프라인 돌리기 전엔 안 뜨는 게 정상). formatTokens 로 k 단위. */
+function UsageInline({ usage, className = '' }) {
+  if (!usage || (!usage.input && !usage.output)) return null
+  return (
+    <span className={`story-usage-inline ${className}`.trim()}>
+      in {formatTokens(usage.input)} / out {formatTokens(usage.output)}
+    </span>
+  )
+}
+
 /** 생성 중 인라인 시계 — 스트리밍(시놉시스/대본)처럼 텍스트만 뜨는 뷰 하단 우측에 붙여
  *  "돌고 있음 + 경과 시간"을 보인다(초시계 애니메이션 + 1초 갱신). reasoning=max 등 첫 출력이
  *  늦을 때 화면이 텅 비어 멈춘 것처럼 보이던 문제를 해소. */
-function GenClock({ startedAt, label }) {
+function GenClock({ startedAt, label, usage = null }) {
   return (
     <div className="story-gen-clock" aria-live="polite">
       <StopwatchIcon size={14} />
       {label && <span className="story-gen-clock-label">{label}</span>}
       <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
+      <UsageInline usage={usage} />
     </div>
   )
 }
@@ -1357,7 +1373,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const scoresFor = (target) => (reviewScores?.target === target ? reviewScores.scores : [])
   // 검수 진행 표시 — 시놉시스 패널과 같은 모양(콘텐츠는 그대로 두고 하단에 시계+로그창).
   const reviewRunning = (step, log) => (
-    <StoryRunning
+    <StoryRunning usage={usage}
       label={t('story.review.running', '검수 중')}
       startedAt={Date.parse(steps[step]?.updatedAt)}
       log={log}
@@ -1381,8 +1397,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
         showCharCount
         hideTip
         countLabelKey="prompt.lineCount"
-        // 검수 점수는 줄 수·자 수 행에 얹는다 — 별도 줄을 만들면 편집 영역만 좁아진다.
-        footerExtra={scoresFor('script').length ? <ReviewScore scores={scoresFor('script')} /> : null}
+        // 검수 점수·세션 토큰은 줄 수·자 수 행에 얹는다 — 별도 줄을 만들면 편집 영역만 좁아진다.
+        footerExtra={<>{scoresFor('script').length ? <ReviewScore scores={scoresFor('script')} /> : null}<UsageInline usage={usage} /></>}
         placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
       />
     </div>
@@ -1402,7 +1418,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
         hideTip
         countLabelKey="prompt.lineCount"
         ariaLabel={t('story.synopsis.editorLabel', '줄거리')}
-        footerExtra={scoresFor('synopsis').length ? <ReviewScore scores={scoresFor('synopsis')} /> : null}
+        footerExtra={<>{scoresFor('synopsis').length ? <ReviewScore scores={scoresFor('synopsis')} /> : null}<UsageInline usage={usage} /></>}
         placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
       />
     </div>
@@ -1479,7 +1495,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 )}
                 {/* 생성 중 시계+경과 — 첫 출력(특히 reasoning=max)이 늦어도 진행 중임을 보인다. */}
                 {synopsisGenerating && (
-                  <GenClock startedAt={synopsisStartedAt} label={t('story.gen.generating', '생성 중')} />
+                  <GenClock startedAt={synopsisStartedAt} label={t('story.gen.generating', '생성 중')} usage={usage} />
                 )}
                 <div className="story-synopsis-characters">
                   <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
@@ -1489,7 +1505,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     남기고, StoryRunning이 시계+로그창을 제공한다(신규 컴포넌트/CSS 없음). */}
                 {reviewBadge}
                 {synopsisReviewing && (
-                  <StoryRunning
+                  <StoryRunning usage={usage}
                     label={t('story.review.running', '검수 중')}
                     startedAt={synopsisReviewStartedAt}
                     log={synopsisProgressLog}
@@ -1569,7 +1585,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       {baseScript ? baseScript + streamingText : streamingText}
                     </div>
                     {/* 생성 중 시계+경과 (대본) — 첫 출력이 늦어도 진행 중임을 보인다. */}
-                    <GenClock startedAt={Date.parse(steps.script?.updatedAt)} label={t('story.gen.generating', '생성 중')} />
+                    <GenClock startedAt={Date.parse(steps.script?.updatedAt)} label={t('story.gen.generating', '생성 중')} usage={usage} />
                   </>
                 ) : (
                   <>
@@ -1800,7 +1816,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             {steps.scenes?.status === 'running' && !scenesReviewRun ? (
               <>
                 {reviewBadge}
-                <StoryRunning
+                <StoryRunning usage={usage}
                   label={t('story.scenes.running', '씬 분리 진행 중')}
                   startedAt={Date.parse(steps.scenes.updatedAt)}
                   detail={splitSummary}
@@ -1860,7 +1876,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 온다. 안 넘기면 그 정보가 어디에도 안 보인다(오류 배너는 errorKind로 번역되면서
                 상세 메시지를 버린다 — errorDisplay.js). */}
             {steps.audio?.status === 'running' && (
-              <StoryRunning
+              <StoryRunning usage={usage}
                 label={t('story.audio.running', '오디오 생성 중')}
                 startedAt={Date.parse(steps.audio.updatedAt)}
                 log={audioProgressLog}
@@ -2167,7 +2183,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             {steps.prompts?.status === 'running' && !promptsReviewRun ? (
               <>
                 {reviewBadge}
-                <StoryRunning
+                <StoryRunning usage={usage}
                   label={t('story.prompts.running', '프롬프트 생성 중')}
                   startedAt={Date.parse(steps.prompts.updatedAt)}
                 />
@@ -2194,6 +2210,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 </table>
                 {scenes.length === 0 && (
                   <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
+                )}
+                {/* 프롬프트는 편집기(카운트 행)가 없다 — 표 밑에 씬 수 + 세션 토큰을 한 줄로 얹는다. */}
+                {scenes.length > 0 && (
+                  <div className="story-prompts-count-row">
+                    <span className="story-prompts-count">{t('story.prompts.sceneCount', '씬')} {scenes.length}</span>
+                    <UsageInline usage={usage} />
+                  </div>
                 )}
                 {promptsReviewRun && reviewRunning('prompts', promptsProgressLog)}
               </>
@@ -2246,7 +2269,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           )}
         </div>
       )}
-      <StoryTokenUsage usage={usage} />
     </div>
   )
 }

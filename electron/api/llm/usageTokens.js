@@ -26,6 +26,41 @@ export function claudeResultToUsage(message) {
 }
 
 /**
+ * 스트리밍 실시간 표시용 추정 — message_delta.usage 는 응답 **끝에 한 번만** 오므로
+ * (0.3s 짜리든 2분 짜리든 마지막에 딱 1개, 실측 확인됨) 생성 중 숫자를 올리려면
+ * 스트리밍되는 텍스트/thinking 델타 길이로 output 을 추정하는 수밖에 없다 —
+ * Claude Code 의 thinking 카운터와 같은 방식이다. result 에서 정확치로 확정(commit)된다.
+ */
+
+/** message_start 의 입력 토큰(캐시 포함, 즉시 정확). 그 외 null. */
+export function claudeStreamInput(message) {
+  if (message?.type !== 'stream_event') return null
+  const ev = message.event
+  if (ev?.type !== 'message_start') return null
+  const u = ev.message?.usage
+  if (!u) return null
+  return n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens)
+}
+
+/** content_block_delta 로 흘러온 출력 문자수(text + thinking). 그 외 0. */
+export function claudeStreamOutChars(message) {
+  if (message?.type !== 'stream_event') return 0
+  const ev = message.event
+  if (ev?.type !== 'content_block_delta') return 0
+  const d = ev.delta
+  if (d?.type === 'text_delta') return (d.text || '').length
+  if (d?.type === 'thinking_delta') return (d.thinking || '').length
+  return 0
+}
+
+// 문자→토큰 대략 추정. 한국어/마크다운 혼합 기준 ~3자/토큰(느슨). 진행 표시용일 뿐
+// result 가 정확치로 덮으므로 정밀도는 중요치 않고, 단조 증가만 하면 된다.
+const CHARS_PER_TOKEN = 3
+export function estimateOutputTokens(chars) {
+  return chars > 0 ? Math.round(chars / CHARS_PER_TOKEN) : 0
+}
+
+/**
  * codex app-server `thread/tokenUsage/updated` 의 params.
  *
  * 0.144.5 실측 스키마 — 추론이 아니라 바이너리가 자기 Rust 타입에서 생성한 것:

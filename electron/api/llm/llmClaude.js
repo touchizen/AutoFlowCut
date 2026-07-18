@@ -2,7 +2,7 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
-import { claudeResultToUsage } from './usageTokens.js'
+import { claudeResultToUsage, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from './usageTokens.js'
 import {
   buildScriptPrompt,
   buildSplitPrompt,
@@ -77,14 +77,36 @@ export function setClaudeUsageSink(fn) { claudeUsageSink = fn }
 // 프로젝트 전환은 abort 직후 새 machine 을 만들며 전역 sink 를 B 로 바꾸고, A 의 SDK 는 graceful
 // close 동안 버퍼된 result 를 더 뱉는다. 캡처가 늦으면(예: `await import` 뒤) 그 늦은 보고가 B 의
 // 합계에 들어간다 — 조용히 틀린 합계. 캡처된 sink 로 넘기면 늦은 보고는 죽은 A 의 tracker 로 간다.
+// pending 키 시퀀스 — tapQuery 호출(=쿼리)마다 고유. 구조화 재시도의 1차/폴백도 각기 다른 키라
+// 서로의 진행 표시를 안 덮는다. Date/random 불필요.
+let pendingKeySeq = 0
+
+// commit(=result) 은 기존대로 {input,output} 을 addDelta 한다. 스트리밍 진행 표시는 pending 채널:
+//   진행:  sink({ pendingKey, input, output })  → tracker.setPending  (key 별 교체)
+//   확정:  sink({ pendingKey, clear:true })      → tracker.clearPending (result 직전에 지움)
+//          그 뒤 sink({ input, output })          → addDelta (정확치 커밋)
+// pending 을 안 지우고 커밋하면 같은 응답이 두 번 세어진다 — 이 기능의 유일 실패 모드.
 function tapQuery(makeStream, sink) {
   return async function* (args) {
+    let key = null      // 이 쿼리의 pending 키(usage 있는 첫 이벤트에서 지연 생성)
+    let pin = 0         // 입력(message_start 누적, 즉시 정확)
+    let ochars = 0      // 스트리밍된 출력 문자수(text+thinking)
+    const emitPending = () => sink({ pendingKey: (key ??= `claude-pending-${++pendingKeySeq}`), input: pin, output: estimateOutputTokens(ochars) })
     for await (const m of makeStream(args)) {
       // 계측 실패가 생성을 죽이면 안 된다.
       if (sink) {
         try {
-          const u = claudeResultToUsage(m)
-          if (u) sink(u)
+          if (m?.type === 'result') {
+            const u = claudeResultToUsage(m)
+            // pending 제거 + 확정치 가산을 한 번에(commit) — 따로 쏘면 그 사이 snapshot 이 순간
+            // 0/0 이 되어 UI 가 깜빡인다(0/0 은 숨김). 스트림이 아니었으면(key 없음) 기존대로 가산.
+            if (key) { sink({ pendingKey: key, commit: true, input: u?.input || 0, output: u?.output || 0 }); key = null }
+            else if (u) sink(u)
+          } else {
+            const inp = claudeStreamInput(m)
+            if (inp != null) { pin += inp; emitPending() }        // message_start: 입력 즉시 반영
+            else { const c = claudeStreamOutChars(m); if (c) { ochars += c; emitPending() } } // 텍스트/thinking 델타: 출력 추정 상승
+          }
         } catch { /* best-effort */ }
       }
       yield m
