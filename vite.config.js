@@ -40,7 +40,14 @@ export default defineConfig(({ command, mode }) => {
       electron([
         {
           entry: 'electron/main.js',
-          onstart(args) { args.startup() },
+          // VS Code / Claude Code 확장 계열 셸은 ELECTRON_RUN_AS_NODE=1 을 상속시킨다.
+          // 그대로 spawn 하면 electron 이 plain Node 로 떠서 main(ESM)의 `import "electron"`이
+          // cjsPreparseModuleExports TypeError 로 죽는다(spawn 은 process.env 상속). dev 전용
+          // — 패키징은 onstart 를 타지 않는다. 없을 땐 무해.
+          onstart(args) {
+            delete process.env.ELECTRON_RUN_AS_NODE
+            args.startup()
+          },
           vite: {
             define: mainDefine,
             build: {
