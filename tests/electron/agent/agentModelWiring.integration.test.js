@@ -42,21 +42,38 @@ function fakeIpcMain() {
  * ⚠️ 기본 모델을 **배열 첫 번째가 아닌 자리**에 두고, id 도 실제 codex id 를 안 쓴다.
  *    안 그러면 `models[0]` 이나 `'gpt-5.5'` 하드코딩 뮤턴트가 살아남는다.
  */
-function createHarness({ models = [{ id: 'alt-model' }, { id: 'the-default', isDefault: true }] } = {}) {
+function createHarness({
+  models = [
+    { id: 'codex:alt-model', provider: 'codex', sdkModel: 'alt-model' },
+    { id: 'codex:the-default', provider: 'codex', sdkModel: 'the-default', isDefault: true },
+    { id: 'codex:gpt-turn', provider: 'codex', sdkModel: 'gpt-turn' },
+  ],
+} = {}) {
   const sent = []
+  let onNotification = () => {}
   const client = {
     request: vi.fn(async (method, params) => {
       sent.push({ method, params })
       if (method === 'initialize') return {}
       if (method === 'thread/start') return { thread: { id: 'thread-model-wire' } }
-      if (method === 'turn/start') return { turn: { id: 'turn-model-wire', status: 'inProgress' } }
+      if (method === 'turn/start') {
+        const turn = { id: `turn-model-wire-${sent.length}`, status: 'inProgress' }
+        onNotification({ method: 'turn/completed', params: { turn: { ...turn, status: 'completed' } } })
+        return { turn }
+      }
       throw new Error(`unexpected method: ${method}`)
     }),
     respond: vi.fn(),
   }
   const ipcMain = fakeIpcMain()
+  const cached = models
+  const modelCatalog = {
+    list: vi.fn(async () => (cached ? cached.map((m) => ({ ...m })) : [])),
+    defaultModelId: vi.fn(() => cached?.find((m) => m?.isDefault === true)?.id ?? 'codex:gpt-5.5'),
+  }
   const manager = createAgentSessionManager({
     grantLedger: { closeSession: vi.fn() },
+    modelCatalog,
     approvalPrompt: { ask: vi.fn(), closeSession: vi.fn() },
     toolBridge: { clearOperations: vi.fn() },
     storyCommands: { projectToken: 'project-model-wire' },
@@ -73,24 +90,20 @@ function createHarness({ models = [{ id: 'alt-model' }, { id: 'the-default', isD
       authCheck: async () => 'Logged in using ChatGPT',
       runtimeHomeFactory: async () => ({ env: {}, cleanup: vi.fn(async () => {}) }),
       workingDirectoryFactory: async () => ({ workingDirectory: '/tmp/work', cleanup: vi.fn(async () => {}) }),
-      appServerFactory: () => ({ client, close: vi.fn(async () => {}) }),
+      appServerFactory: (options) => {
+        onNotification = options.onNotification
+        return { client, close: vi.fn(async () => {}) }
+      },
     },
   })
-  // 🔴 카탈로그를 **주입**한다. 안 주면 `defaultModelCatalog`(모듈 전역) 를 쓰게 되고,
-  //    그건 실제 codex 를 spawn 하는 `listCodexModels` 를 물고 있다 = 단위 테스트가 실물을 부른다.
-  const cached = models
-  const modelCatalog = {
-    list: async () => (cached ? cached.map((m) => ({ ...m })) : []),
-    // 캐시된 기본 모델 id 를 **동기로** 준다 (fetch 유발 금지 — cold send 를 블로킹하면 안 된다).
-    defaultModelId: () => cached?.find((m) => m?.isDefault === true)?.id ?? null,
-  }
+  // 🔴 manager와 IPC가 같은 catalog instance를 공유해야 id→sdkModel 변환과 default 선택이 어긋나지 않는다.
   registerAgentIPC(ipcMain, {
     sessionManager: manager,
     modelCatalog,
     getWindow: () => null,
   })
   electronDouble.ipcRenderer.invoke.mockImplementation((channel, payload) => ipcMain.invoke(channel, payload))
-  return { manager, sent }
+  return { manager, modelCatalog, sent }
 }
 
 beforeAll(async () => {
@@ -102,7 +115,7 @@ describe('agent model runtime wiring', () => {
     const { manager, sent } = createHarness()
 
     await electronDouble.exposed.agentSessionOpen({ model: 'gpt-thread' })
-    await electronDouble.exposed.agentSend({ text: '다음 턴', model: 'gpt-turn' })
+    await electronDouble.exposed.agentSend({ text: '다음 턴', model: 'codex:gpt-turn' })
 
     expect(sent.find(({ method }) => method === 'thread/start')?.params.model).toBe('gpt-thread')
     expect(sent.find(({ method }) => method === 'turn/start')?.params).toMatchObject({
@@ -130,7 +143,7 @@ describe('agent model runtime wiring', () => {
     const { manager, sent } = createHarness()
 
     await electronDouble.exposed.agentSessionOpen()
-    await electronDouble.exposed.agentSend({ text: '먼저 다른 모델', model: 'alt-model' })
+    await electronDouble.exposed.agentSend({ text: '먼저 다른 모델', model: 'codex:alt-model' })
     await electronDouble.exposed.agentSend({ text: '이제 기본으로' })   // ← 사용자가 '기본' 선택
 
     const turns = sent.filter(({ method }) => method === 'turn/start')
@@ -156,14 +169,14 @@ describe('agent model runtime wiring', () => {
     await manager.close()
   })
 
-  it('카탈로그가 비어 있으면(auth 실패/codex 부재) 생략으로 폴백한다 — 그 경우 thread 는 어차피 서버 기본이다', async () => {
+  it('카탈로그가 비어 있으면 built-in id도 resolve하지 않고 structured refusal로 막는다', async () => {
     const { manager, sent } = createHarness({ models: null })
 
     await electronDouble.exposed.agentSessionOpen()
-    await electronDouble.exposed.agentSend({ text: '카탈로그 없음' })
+    const result = await electronDouble.exposed.agentSend({ text: '카탈로그 없음' })
 
-    // 카탈로그가 없으면 사용자가 애초에 비-기본 모델을 고를 수 없다 → sticky 가 성립 불가 → 생략이 안전.
-    expect(sent.find(({ method }) => method === 'turn/start')?.params).not.toHaveProperty('model')
+    expect(result).toMatchObject({ error: 'agent-model-unavailable' })
+    expect(sent.find(({ method }) => method === 'turn/start')).toBeUndefined()
     await manager.close()
   })
 })

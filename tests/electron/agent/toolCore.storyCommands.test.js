@@ -158,6 +158,7 @@ describe('D15 — agent session의 프로젝트 경계', () => {
 
     const manager = createAgentSessionManager({
       grantLedger: ledger,
+      modelCatalog: { list: vi.fn(async () => []) },
       approvalPrompt: {
         ask: vi.fn(async () => ({ action: 'decline' })),
         closeSession: vi.fn(),

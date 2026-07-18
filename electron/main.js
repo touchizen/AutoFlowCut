@@ -23,7 +23,7 @@ import { createApprovalPrompt } from './agent/approvalPrompt.js'
 import { createAgentSessionManager } from './agent/sessionManager.js'
 import { createNativeImageReader } from './agent/nativeImageReader.js'
 import { createVisualReviewStore } from './agent/visualReviewStore.js'
-import { createAgentEventForwarder, registerAgentIPC } from './ipc/agent-api.js'
+import { createAgentEventForwarder, defaultModelCatalog, registerAgentIPC } from './ipc/agent-api.js'
 import { AGENT_APPROVAL_WINDOW_MS } from './agent/constants.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
@@ -346,6 +346,7 @@ const agentSessionManager = createAgentSessionManager({
   approvalPrompt,
   toolBridge,
   storyCommands,
+  modelCatalog: defaultModelCatalog,
   // D11 get_scene_images 의 이미지 decode(main nativeImage). 세션이 열릴 때 Tool Core 에 주입된다.
   imageReader: createNativeImageReader(),
   // slice 33 visual review store. 현재 열린 프로젝트 경로로 store 를 쓰되, **프로젝트별로 캐시**한다 —
@@ -366,7 +367,11 @@ const agentSessionManager = createAgentSessionManager({
   resourcesPath: process.resourcesPath,
   ...agentEvents,
 })
-registerAgentIPC(ipcMain, { sessionManager: agentSessionManager, getWindow: () => mainWindow })
+registerAgentIPC(ipcMain, {
+  sessionManager: agentSessionManager,
+  modelCatalog: defaultModelCatalog,
+  getWindow: () => mainWindow,
+})
 
 app.on('will-quit', () => {
   agentSessionManager.close().catch(() => {})

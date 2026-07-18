@@ -4,6 +4,7 @@ import { createElicitationResponder } from './elicitationResponder.js'
 import { createPrivateRpc } from './privateRpc.js'
 import { createToolCore } from './toolCore.js'
 import {
+  AGENT_CLAUDE_ABORT_BOUNDARY_TIMEOUT_MS,
   AGENT_MCP_SERVER_NAME,
   AGENT_SESSION_MAX_MS,
   AGENT_SESSION_MAX_TOOL_CALLS,
@@ -25,6 +26,7 @@ export function createAgentSessionManager({
   approvalPrompt,
   toolBridge,
   storyCommands,
+  modelCatalog,
   // D11 이미지 decode seam(main nativeImage). get_scene_images 가 쓴다. 없으면 그 툴만 못 돈다.
   imageReader = null,
   // slice 33 visual review durable store. 없으면 review 툴만 못 돈다.
@@ -47,7 +49,186 @@ export function createAgentSessionManager({
   createCodexOrchestratorImpl = createCodexOrchestrator,
   orchestratorOptions = {},
 } = {}) {
+  if (typeof modelCatalog?.list !== 'function') throw new TypeError('modelCatalog.list is required')
+
   let current = null
+  let reservationSequence = 0
+
+  const CANCELLED = Symbol('agent-send-cancelled')
+  const CLOSING_REFUSAL = {
+    error: 'agent-session-closing',
+    message: '세션을 닫는 중입니다.',
+    turnId: null,
+  }
+
+  function replaceRunState(session, kind, fields = {}) {
+    // M6에서 Claude에 이 manager-owned cell 자체를 주입하므로 identity를 유지한다.
+    // M5 Codex는 주입하지 않고 manager onEvent wrapper가 바깥 권위로 완료를 관측한다.
+    const runState = session.runState
+    const steerEpoch = fields.steerEpoch ?? runState.steerEpoch ?? 0
+    const toolEpoch = fields.toolEpoch ?? runState.toolEpoch ?? 0
+    for (const key of Object.keys(runState)) delete runState[key]
+    Object.assign(runState, { kind, turnId: null, steerEpoch, toolEpoch, ...fields })
+    return runState
+  }
+
+  function busyRefusal(runState) {
+    switch (runState?.kind) {
+      case 'pendingStart':
+        return {
+          error: 'agent-busy',
+          message: '새 작업을 시작하는 중입니다. 잠시 후 다시 시도해 주세요.',
+          turnId: runState.turnId,
+        }
+      case 'active':
+        return {
+          error: 'agent-busy',
+          message: '에이전트가 이미 작업 중입니다. 진행 중인 턴에는 Steer를 사용해 주세요.',
+          turnId: runState.turnId,
+        }
+      case 'aborting':
+        return {
+          error: 'agent-busy',
+          message: '중단 처리 중입니다. 완료될 때까지 기다려 주세요.',
+          turnId: null,
+        }
+      case 'orphanDrain':
+        return {
+          error: 'agent-busy',
+          message: '이전 교정 입력을 정리 중입니다. 잠시 후 다시 시도해 주세요.',
+          turnId: null,
+        }
+      case 'closing':
+        return CLOSING_REFUSAL
+      default:
+        return null
+    }
+  }
+
+  function createReservation(session) {
+    let resolveCancellation
+    let resolveStartSettled
+    const turnId = `${session.sessionId}:pending:${++reservationSequence}`
+    return {
+      kind: 'pendingStart',
+      turnId,
+      token: Symbol(turnId),
+      sessionToken: session.sessionToken,
+      cancelled: false,
+      delegated: false,
+      sdkTurnId: null,
+      completedTurnIds: new Set(),
+      cancellation: new Promise((resolve) => { resolveCancellation = resolve }),
+      resolveCancellation,
+      startSettled: new Promise((resolve) => { resolveStartSettled = resolve }),
+      resolveStartSettled,
+      startDidSettle: false,
+    }
+  }
+
+  function cancelReservation(reservation) {
+    if (reservation.cancelled) return
+    reservation.cancelled = true
+    reservation.resolveCancellation()
+  }
+
+  function settleStart(reservation) {
+    if (reservation.startDidSettle) return false
+    reservation.startDidSettle = true
+    reservation.resolveStartSettled()
+    return true
+  }
+
+  function ownsReservation(session, reservation, ...kinds) {
+    return current === session
+      && reservation.sessionToken === session.sessionToken
+      && session.runState.reservation === reservation
+      && kinds.includes(session.runState.kind)
+  }
+
+  function cancelledSend(reservation) {
+    return {
+      error: 'agent-send-cancelled',
+      message: '전송이 중단되었습니다.',
+      turnId: reservation.turnId,
+    }
+  }
+
+  function modelUnavailable(reservation) {
+    return {
+      error: 'agent-model-unavailable',
+      message: '선택한 모델을 사용할 수 없습니다.',
+      turnId: reservation.turnId,
+    }
+  }
+
+  function providerSwitchRequired(reservation) {
+    return {
+      error: 'provider-switch-required',
+      message: '모델 제공자를 바꾸려면 새 세션을 시작해 주세요.',
+      turnId: reservation.turnId,
+    }
+  }
+
+  function finishPending(session, reservation, result) {
+    settleStart(reservation)
+    if (ownsReservation(session, reservation, 'pendingStart')) {
+      replaceRunState(session, 'idle')
+      return result
+    }
+    if (ownsReservation(session, reservation, 'aborting')) {
+      const transaction = {
+        timer: session.runState.timer,
+        resolve: session.runState.resolveAbort,
+      }
+      clearTimeout(transaction.timer)
+      replaceRunState(session, 'idle')
+      transaction.resolve({
+        aborted: true,
+        phase: 'pendingStart',
+        turnId: reservation.turnId,
+        abortInputId: null,
+      })
+    }
+    return result
+  }
+
+  function reservationWasCancelled(session, reservation) {
+    return current !== session
+      || reservation.sessionToken !== session.sessionToken
+      || reservation.cancelled
+      || !ownsReservation(session, reservation, 'pendingStart')
+  }
+
+  async function waitForReservation(reservation, promise) {
+    return Promise.race([
+      Promise.resolve(promise),
+      reservation.cancellation.then(() => CANCELLED),
+    ])
+  }
+
+  function releaseActive(session, reservation) {
+    if (!ownsReservation(session, reservation, 'active')) return false
+    replaceRunState(session, 'idle')
+    return true
+  }
+
+  function observeEvent(session, event) {
+    const completedTurnId = event?.method === 'turn/completed' ? event?.params?.turn?.id : null
+    if (completedTurnId) {
+      const runState = session.runState
+      const reservation = runState.reservation
+      if (runState.kind === 'active' && reservation) {
+        if (reservation.sdkTurnId) {
+          if (completedTurnId === reservation.sdkTurnId) releaseActive(session, reservation)
+        } else {
+          // Codex stdout may report completion before turn/start's request promise resolves.
+          reservation.completedTurnIds.add(completedTurnId)
+        }
+      }
+    }
+    onEvent?.(event)
+  }
 
   function status() {
     if (!current) return { state: 'idle', sessionId: null }
@@ -126,6 +307,8 @@ export function createAgentSessionManager({
     const projectToken = storyCommands?.projectToken ?? null
     const session = {
       sessionId,
+      sessionToken: Symbol(sessionId),
+      provider: 'codex',
       projectToken,
       startedAt: now(),
       turns: 0,
@@ -135,6 +318,7 @@ export function createAgentSessionManager({
       elicitationResponder: null,
       orchestrator: null,
       state: 'opening',
+      runState: { kind: 'idle', turnId: null, steerEpoch: 0, toolEpoch: 0 },
       openPromise: null,
       closePromise: null,
     }
@@ -165,7 +349,7 @@ export function createAgentSessionManager({
       isPackaged,
       resourcesPath,
       onDelta: (delta) => onDelta?.(delta),
-      onEvent: (event) => onEvent?.(event),
+      onEvent: (event) => observeEvent(session, event),
       onExit: (details) => {
         onExit?.(details)
         // child가 스스로 죽어도 borrowed RPC와 세션 grant/prompt는 manager가 끝까지 거둔다.
@@ -191,6 +375,12 @@ export function createAgentSessionManager({
   function closeSession(session) {
     if (session.closePromise) return session.closePromise
     session.state = 'closing'
+    const previousRunState = { ...session.runState }
+    if (previousRunState.reservation) cancelReservation(previousRunState.reservation)
+    clearTimeout(previousRunState.timer)
+    replaceRunState(session, 'closing', {
+      reservation: previousRunState.reservation ?? null,
+    })
     session.closePromise = (async () => {
       // app-scoped prompt 자체를 close하면 다음 세션도 영구 decline된다. 현재 세션 pending만 닫는다.
       approvalPrompt?.closeSession?.(session.sessionId)
@@ -203,6 +393,16 @@ export function createAgentSessionManager({
       toolBridge?.clearOperations?.()
       grantLedger?.closeSession?.(session.sessionId)
       if (current === session) current = null
+      if (previousRunState.kind === 'aborting') {
+        previousRunState.resolveAbort?.({
+          aborted: true,
+          phase: previousRunState.phase,
+          turnId: previousRunState.turnId,
+          abortInputId: null,
+          sessionClosed: true,
+          reason: 'session-close',
+        })
+      }
       const failed = results.find((result) => result.status === 'rejected')
       if (failed) throw failed.reason
       return { sessionId: session.sessionId }
@@ -223,12 +423,90 @@ export function createAgentSessionManager({
     return run(session)
   }
 
-  function send(text, model) {
-    return withOpenSession((session) => {
-      const refusal = admitTurn(session)
-      if (refusal) return refusal
-      return model ? session.orchestrator.send(text, model) : session.orchestrator.send(text)
+  function send(text, modelId) {
+    const session = current
+    if (!session) return Promise.reject(new Error('Agent session is not open'))
+    if (session.state === 'closing' || session.runState.kind === 'closing') {
+      return Promise.resolve(CLOSING_REFUSAL)
+    }
+
+    const busy = busyRefusal(session.runState)
+    if (busy) return Promise.resolve(busy)
+
+    const reservation = createReservation(session)
+    replaceRunState(session, 'pendingStart', {
+      turnId: reservation.turnId,
+      reservation,
     })
+
+    return (async () => {
+      try {
+        const opened = await waitForReservation(reservation, session.openPromise)
+        if (opened === CANCELLED || reservationWasCancelled(session, reservation)) {
+          return finishPending(session, reservation, cancelledSend(reservation))
+        }
+      } catch {
+        cancelReservation(reservation)
+        return finishPending(session, reservation, cancelledSend(reservation))
+      }
+
+      let rows
+      try {
+        rows = await waitForReservation(reservation, modelCatalog.list())
+        if (rows === CANCELLED || reservationWasCancelled(session, reservation)) {
+          return finishPending(session, reservation, cancelledSend(reservation))
+        }
+      } catch {
+        if (reservationWasCancelled(session, reservation)) {
+          return finishPending(session, reservation, cancelledSend(reservation))
+        }
+        return finishPending(session, reservation, modelUnavailable(reservation))
+      }
+
+      const row = Array.isArray(rows) ? rows.find((candidate) => candidate?.id === modelId) : null
+      if (!row) return finishPending(session, reservation, modelUnavailable(reservation))
+      if (row.provider !== session.provider) {
+        return finishPending(session, reservation, providerSwitchRequired(reservation))
+      }
+      if (typeof row.sdkModel !== 'string' || row.sdkModel.trim().length === 0) {
+        return finishPending(session, reservation, modelUnavailable(reservation))
+      }
+      if (reservationWasCancelled(session, reservation)) {
+        return finishPending(session, reservation, cancelledSend(reservation))
+      }
+
+      const refusal = admitTurn(session)
+      if (refusal) return finishPending(session, reservation, refusal)
+      if (reservationWasCancelled(session, reservation)) {
+        return finishPending(session, reservation, cancelledSend(reservation))
+      }
+
+      replaceRunState(session, 'active', {
+        turnId: reservation.turnId,
+        reservation,
+        remoteStarted: false,
+      })
+      settleStart(reservation)
+      reservation.delegated = true
+
+      try {
+        const result = await session.orchestrator.send(text, row.sdkModel)
+        const sdkTurnId = result?.turn?.id
+        if (typeof sdkTurnId === 'string' && sdkTurnId) {
+          reservation.sdkTurnId = sdkTurnId
+          if (ownsReservation(session, reservation, 'active')) {
+            session.runState.turnId = sdkTurnId
+            if (reservation.completedTurnIds.has(sdkTurnId)) releaseActive(session, reservation)
+          } else if (ownsReservation(session, reservation, 'aborting')) {
+            session.runState.turnId = sdkTurnId
+          }
+        }
+        return result
+      } catch (error) {
+        releaseActive(session, reservation)
+        throw error
+      }
+    })()
   }
 
   function steer(text) {
@@ -240,9 +518,90 @@ export function createAgentSessionManager({
     })
   }
 
+  function startAbortTimer(session, abortState) {
+    abortState.timer = setTimeout(() => {
+      if (current !== session || session.runState !== abortState || abortState.kind !== 'aborting') return
+      closeSession(session).catch(() => {})
+    }, AGENT_CLAUDE_ABORT_BOUNDARY_TIMEOUT_MS)
+  }
+
   function abort() {
-    // 한도에 닿았어도 안전 제어인 abort는 막지 않는다.
-    return withOpenSession((session) => session.orchestrator.abort())
+    // 한도에 닿았어도 안전 제어인 abort는 막지 않는다. runState는 모든 await보다 먼저 읽는다.
+    const session = current
+    if (!session || session.runState.kind === 'idle') {
+      return Promise.resolve({ aborted: false, reason: 'idle' })
+    }
+
+    const runState = session.runState
+    if (runState.kind === 'aborting') return runState.abortPromise
+    if (runState.kind === 'pendingStart') {
+      const reservation = runState.reservation
+      cancelReservation(reservation)
+      let resolveAbort
+      const abortPromise = new Promise((resolve) => { resolveAbort = resolve })
+      const abortState = replaceRunState(session, 'aborting', {
+        turnId: reservation.turnId,
+        reservation,
+        phase: 'pendingStart',
+        abortPromise,
+        resolveAbort,
+        timer: null,
+        steerEpoch: runState.steerEpoch + 1,
+        toolEpoch: runState.toolEpoch + 1,
+      })
+      startAbortTimer(session, abortState)
+      return abortPromise
+    }
+
+    if (runState.kind === 'closing' || session.state === 'closing') {
+      return Promise.resolve({ aborted: false, reason: 'idle' })
+    }
+
+    const reservation = runState.reservation ?? null
+    let resolveAbort
+    let rejectAbort
+    const abortPromise = new Promise((resolve, reject) => {
+      resolveAbort = resolve
+      rejectAbort = reject
+    })
+    const abortState = replaceRunState(session, 'aborting', {
+      turnId: runState.turnId,
+      reservation,
+      phase: runState.kind,
+      abortPromise,
+      resolveAbort,
+      rejectAbort,
+      timer: null,
+      steerEpoch: runState.steerEpoch + 1,
+      toolEpoch: runState.toolEpoch + 1,
+    })
+    startAbortTimer(session, abortState)
+
+    let delegated
+    try {
+      // Codex의 inner turnStartPending는 transport guard로 남고 public busy authority는 이 wrapper다.
+      delegated = session.orchestrator.abort()
+    } catch (error) {
+      clearTimeout(abortState.timer)
+      if (current === session && session.runState.kind === 'aborting') replaceRunState(session, 'idle')
+      rejectAbort(error)
+      return abortPromise
+    }
+    Promise.resolve(delegated).then(
+      (result) => {
+        if (current !== session || session.runState.kind !== 'aborting') return
+        clearTimeout(abortState.timer)
+        replaceRunState(session, 'idle')
+        resolveAbort(result)
+      },
+      (error) => {
+        if (current !== session || session.runState.kind !== 'aborting') return
+        clearTimeout(abortState.timer)
+        replaceRunState(session, 'idle')
+        rejectAbort(error)
+      },
+    )
+    return abortPromise
   }
 
   return { open, send, steer, abort, close, status }

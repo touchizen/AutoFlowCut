@@ -8,6 +8,31 @@ import { AGENT_MCP_SERVER_NAME } from '../../../electron/agent/constants.js'
 import { EventEmitter, once } from 'node:events'
 import { spawn } from 'node:child_process'
 
+const DEFAULT_MODEL_ID = 'codex:gpt-5.5'
+const DEFAULT_MODEL_ROW = {
+  id: DEFAULT_MODEL_ID,
+  provider: 'codex',
+  sdkModel: 'gpt-5.5',
+  isDefault: true,
+}
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function modelCatalogDouble(rows = [DEFAULT_MODEL_ROW]) {
+  return {
+    list: vi.fn(async () => rows.map((row) => ({ ...row }))),
+    defaultModelId: vi.fn(() => rows.find((row) => row.isDefault)?.id ?? null),
+  }
+}
+
 function fakeWindow() {
   const win = new EventEmitter()
   win.isDestroyed = () => false
@@ -38,11 +63,18 @@ function appDeps(overrides = {}) {
       projectToken: 'project-token',
       getState: vi.fn(async () => ({ sceneMode: 'audio-first' })),
     },
+    modelCatalog: modelCatalogDouble(),
     ...overrides,
   }
 }
 
 function lifecycleHarness(overrides = {}) {
+  const {
+    autoComplete = true,
+    orchestratorOpenImpl = null,
+    orchestratorAbortImpl = null,
+    ...managerOverrides
+  } = overrides
   const privateRpcs = []
   const orchestrators = []
   const createPrivateRpcImpl = vi.fn(({ toolCore, sessionId }) => {
@@ -65,12 +97,24 @@ function lifecycleHarness(overrides = {}) {
       alive: false,
       open: vi.fn(async () => {
         await options.privateRpc.start()
+        const opened = orchestratorOpenImpl
+          ? await orchestratorOpenImpl({ options, record })
+          : { threadId: `thread-${orchestrators.length}` }
         record.alive = true
-        return { threadId: `thread-${orchestrators.length}` }
+        return opened
       }),
-      send: vi.fn(async (text) => ({ turn: { id: `turn-${text}` } })),
+      send: vi.fn(async (text) => {
+        const result = { turn: { id: `turn-${text}` } }
+        if (autoComplete) {
+          options.onEvent({
+            method: 'turn/completed',
+            params: { turn: { id: result.turn.id, status: 'completed' } },
+          })
+        }
+        return result
+      }),
       steer: vi.fn(async (text) => ({ steered: text })),
-      abort: vi.fn(async () => ({ aborted: true })),
+      abort: vi.fn(orchestratorAbortImpl || (async () => ({ aborted: true }))),
       close: vi.fn(async () => { record.alive = false }),
     }
     orchestrators.push(record)
@@ -80,7 +124,7 @@ function lifecycleHarness(overrides = {}) {
     ...appDeps(),
     createPrivateRpcImpl,
     createCodexOrchestratorImpl,
-    ...overrides,
+    ...managerOverrides,
   })
   return { manager, privateRpcs, orchestrators, createPrivateRpcImpl, createCodexOrchestratorImpl }
 }
@@ -196,10 +240,10 @@ describe('AgentSessionManager per-session ownership', () => {
 
     // 핵심은 id 모양이 아니라, 새 자원 묶음이 실제로 열려 다음 turn을 받는지다.
     expect(second.sessionId).not.toBe(first.sessionId)
-    await expect(h.manager.send('재시작 후 turn')).resolves.toEqual({ turn: { id: 'turn-재시작 후 turn' } })
+    await expect(h.manager.send('재시작 후 turn', DEFAULT_MODEL_ID)).resolves.toEqual({ turn: { id: 'turn-재시작 후 turn' } })
     expect(h.privateRpcs[0].closed).toBe(true)
     expect(h.privateRpcs[1].start).toHaveBeenCalledOnce()
-    expect(h.orchestrators[1].send).toHaveBeenCalledWith('재시작 후 turn')
+    expect(h.orchestrators[1].send).toHaveBeenCalledWith('재시작 후 turn', 'gpt-5.5')
 
     await h.manager.close()
   })
@@ -330,17 +374,17 @@ describe('AgentSessionManager close drain', () => {
 })
 
 describe('AgentSessionManager commands and events', () => {
-  it('send/steer/abort를 현재 persistent orchestrator에 위임한다', async () => {
+  it('send/steer를 위임하고 완료 뒤 idle abort는 orchestrator를 호출하지 않는다', async () => {
     const h = lifecycleHarness()
     await h.manager.open()
 
-    await expect(h.manager.send('새 turn')).resolves.toEqual({ turn: { id: 'turn-새 turn' } })
+    await expect(h.manager.send('새 turn', DEFAULT_MODEL_ID)).resolves.toEqual({ turn: { id: 'turn-새 turn' } })
     await expect(h.manager.steer('방향 수정')).resolves.toEqual({ steered: '방향 수정' })
-    await expect(h.manager.abort()).resolves.toEqual({ aborted: true })
+    await expect(h.manager.abort()).resolves.toEqual({ aborted: false, reason: 'idle' })
 
-    expect(h.orchestrators[0].send).toHaveBeenCalledWith('새 turn')
+    expect(h.orchestrators[0].send).toHaveBeenCalledWith('새 turn', 'gpt-5.5')
     expect(h.orchestrators[0].steer).toHaveBeenCalledWith('방향 수정')
-    expect(h.orchestrators[0].abort).toHaveBeenCalledOnce()
+    expect(h.orchestrators[0].abort).not.toHaveBeenCalled()
     await h.manager.close()
   })
 
@@ -376,7 +420,7 @@ describe('AgentSessionManager commands and events', () => {
     const h = lifecycleHarness({ onUsage, now: () => 10_000, storyCommands })
     const opened = await h.manager.open()
 
-    await h.manager.send('usage turn')
+    await h.manager.send('usage turn', DEFAULT_MODEL_ID)
     await h.privateRpcs[0].toolCore.call('list_scenes')
 
     expect(onUsage.mock.calls.map(([snapshot]) => snapshot)).toEqual([
@@ -387,16 +431,280 @@ describe('AgentSessionManager commands and events', () => {
   })
 })
 
+describe('AgentSessionManager M5 send reservation', () => {
+  it('modelCatalog.list 계약을 생성 시 검증한다', () => {
+    expect(() => createAgentSessionManager({
+      ...appDeps(),
+      modelCatalog: null,
+    })).toThrow('modelCatalog.list is required')
+  })
+
+  it('open await 전에 pendingStart를 예약하고 동시 send를 exact busy 값으로 즉시 거부한다', async () => {
+    const openGate = deferred()
+    const h = lifecycleHarness({
+      autoComplete: false,
+      orchestratorOpenImpl: () => openGate.promise,
+    })
+    const opening = h.manager.open()
+    const first = h.manager.send('첫 작업', DEFAULT_MODEL_ID)
+    const second = h.manager.send('겹친 작업', DEFAULT_MODEL_ID)
+    const notSettled = Symbol('not-settled')
+
+    const busy = await Promise.race([
+      second,
+      new Promise((resolve) => setImmediate(() => resolve(notSettled))),
+    ])
+    expect(busy).not.toBe(notSettled)
+    expect(busy).toEqual({
+      error: 'agent-busy',
+      message: '새 작업을 시작하는 중입니다. 잠시 후 다시 시도해 주세요.',
+      turnId: expect.any(String),
+    })
+    expect(h.orchestrators[0].send).not.toHaveBeenCalled()
+
+    const aborting = h.manager.abort()
+    await expect(first).resolves.toEqual({
+      error: 'agent-send-cancelled',
+      message: '전송이 중단되었습니다.',
+      turnId: busy.turnId,
+    })
+    await expect(aborting).resolves.toEqual({
+      aborted: true,
+      phase: 'pendingStart',
+      turnId: busy.turnId,
+      abortInputId: null,
+    })
+
+    openGate.resolve({ threadId: 'thread-after-cancel' })
+    await opening
+    await h.manager.close()
+  })
+
+  it('cold open 중 runState가 idle이면 abort는 openPromise를 기다리지 않고 즉시 no-op한다', async () => {
+    const openGate = deferred()
+    const h = lifecycleHarness({ orchestratorOpenImpl: () => openGate.promise })
+    const opening = h.manager.open()
+    const notSettled = Symbol('not-settled')
+
+    const result = await Promise.race([
+      h.manager.abort(),
+      new Promise((resolve) => setImmediate(() => resolve(notSettled))),
+    ])
+
+    expect(result).toEqual({ aborted: false, reason: 'idle' })
+    expect(result).not.toBe(notSettled)
+    expect(h.orchestrators[0].abort).not.toHaveBeenCalled()
+
+    openGate.resolve({ threadId: 'thread-cold-open' })
+    await opening
+    await h.manager.close()
+  })
+
+  it('active send ack만으로 reservation을 풀지 않고 같은 turn/completed에서만 다음 send를 허용한다', async () => {
+    const h = lifecycleHarness({ autoComplete: false })
+    await h.manager.open()
+
+    await expect(h.manager.send('첫 active', DEFAULT_MODEL_ID)).resolves.toEqual({
+      turn: { id: 'turn-첫 active' },
+    })
+    await expect(h.manager.send('ack 직후', DEFAULT_MODEL_ID)).resolves.toEqual({
+      error: 'agent-busy',
+      message: '에이전트가 이미 작업 중입니다. 진행 중인 턴에는 Steer를 사용해 주세요.',
+      turnId: 'turn-첫 active',
+    })
+
+    h.orchestrators[0].options.onEvent({
+      method: 'turn/completed',
+      params: { turn: { id: '다른-turn', status: 'completed' } },
+    })
+    await expect(h.manager.send('다른 completion 뒤', DEFAULT_MODEL_ID)).resolves.toMatchObject({
+      error: 'agent-busy',
+      turnId: 'turn-첫 active',
+    })
+
+    h.orchestrators[0].options.onEvent({
+      method: 'turn/completed',
+      params: { turn: { id: 'turn-첫 active', status: 'completed' } },
+    })
+    await expect(h.manager.send('완료 뒤 새 작업', DEFAULT_MODEL_ID)).resolves.toEqual({
+      turn: { id: 'turn-완료 뒤 새 작업' },
+    })
+    await h.manager.close()
+  })
+
+  it('active abort가 정산될 때까지 send를 aborting exact busy 값으로 거부한다', async () => {
+    const abortGate = deferred()
+    const h = lifecycleHarness({
+      autoComplete: false,
+      orchestratorAbortImpl: () => abortGate.promise,
+    })
+    await h.manager.open()
+    await h.manager.send('active 작업', DEFAULT_MODEL_ID)
+
+    const aborting = h.manager.abort()
+    await expect(h.manager.send('abort 중 작업', DEFAULT_MODEL_ID)).resolves.toEqual({
+      error: 'agent-busy',
+      message: '중단 처리 중입니다. 완료될 때까지 기다려 주세요.',
+      turnId: null,
+    })
+
+    abortGate.resolve({ aborted: true })
+    await expect(aborting).resolves.toEqual({ aborted: true })
+    await h.manager.close()
+  })
+
+  it('close 정산 중 send를 throw 대신 agent-session-closing exact 값으로 거부한다', async () => {
+    const closeGate = deferred()
+    const h = lifecycleHarness()
+    await h.manager.open()
+    h.orchestrators[0].close.mockImplementationOnce(() => closeGate.promise)
+
+    const closing = h.manager.close()
+    await expect(h.manager.send('닫는 중 작업', DEFAULT_MODEL_ID)).resolves.toEqual({
+      error: 'agent-session-closing',
+      message: '세션을 닫는 중입니다.',
+      turnId: null,
+    })
+
+    closeGate.resolve()
+    await closing
+  })
+
+  it('catalog id를 exact lookup해 row가 가진 sdkModel 문자열만 orchestrator에 보낸다', async () => {
+    const catalog = modelCatalogDouble([
+      { id: 'codex:gpt-5.5-mini', provider: 'codex', sdkModel: 'gpt-5.5-mini' },
+      DEFAULT_MODEL_ROW,
+    ])
+    const h = lifecycleHarness({ modelCatalog: catalog })
+    await h.manager.open()
+
+    await h.manager.send('모델 변환', DEFAULT_MODEL_ID)
+
+    expect(catalog.list).toHaveBeenCalledOnce()
+    expect(h.orchestrators[0].send).toHaveBeenCalledWith('모델 변환', 'gpt-5.5')
+    expect(h.orchestrators[0].send).not.toHaveBeenCalledWith('모델 변환', DEFAULT_MODEL_ID)
+    await h.manager.close()
+  })
+
+  it.each([
+    {
+      name: 'unknown id',
+      modelId: 'codex:gpt-missing',
+      rows: [DEFAULT_MODEL_ROW],
+      refusal: {
+        error: 'agent-model-unavailable',
+        message: '선택한 모델을 사용할 수 없습니다.',
+      },
+    },
+    {
+      name: 'wrong provider',
+      modelId: 'claude:opus',
+      rows: [{ id: 'claude:opus', provider: 'claude', sdkModel: 'opus' }],
+      refusal: {
+        error: 'provider-switch-required',
+        message: '모델 제공자를 바꾸려면 새 세션을 시작해 주세요.',
+      },
+    },
+    {
+      name: 'null sdkModel',
+      modelId: 'codex:unresolved',
+      rows: [{ id: 'codex:unresolved', provider: 'codex', sdkModel: null }],
+      refusal: {
+        error: 'agent-model-unavailable',
+        message: '선택한 모델을 사용할 수 없습니다.',
+      },
+    },
+  ])('$name은 text를 보내지 않고 structured refusal 뒤 reservation을 해제한다', async ({ modelId, rows, refusal }) => {
+    const h = lifecycleHarness({ modelCatalog: modelCatalogDouble(rows) })
+    await h.manager.open()
+
+    await expect(h.manager.send('보내면 안 됨', modelId)).resolves.toEqual({
+      ...refusal,
+      turnId: expect.any(String),
+    })
+    expect(h.orchestrators[0].send).not.toHaveBeenCalled()
+
+    await expect(h.manager.send('재검증', modelId)).resolves.toMatchObject(refusal)
+    expect(h.orchestrators[0].send).not.toHaveBeenCalled()
+    await h.manager.close()
+  })
+
+  it('open 실패는 pending envelope 0을 agent-send-cancelled로 정산하고 reservation을 남기지 않는다', async () => {
+    const openGate = deferred()
+    const h = lifecycleHarness({ orchestratorOpenImpl: () => openGate.promise })
+    const opening = h.manager.open()
+    const openingRejection = opening.catch((error) => error)
+    const sending = h.manager.send('열기 실패 중 작업', DEFAULT_MODEL_ID)
+
+    openGate.reject(new Error('open failed'))
+
+    await expect(sending).resolves.toEqual({
+      error: 'agent-send-cancelled',
+      message: '전송이 중단되었습니다.',
+      turnId: expect.any(String),
+    })
+    expect((await openingRejection).message).toBe('open failed')
+    expect(h.orchestrators[0].send).not.toHaveBeenCalled()
+    expect(h.manager.status()).toEqual({ state: 'idle', sessionId: null })
+  })
+
+  it('catalog await 중 abort는 list 완료를 기다리지 않고 pendingStart를 동기 취소한다', async () => {
+    const catalogGate = deferred()
+    const catalog = {
+      list: vi.fn(() => catalogGate.promise),
+      defaultModelId: vi.fn(() => DEFAULT_MODEL_ID),
+    }
+    const h = lifecycleHarness({ modelCatalog: catalog })
+    await h.manager.open()
+    const sending = h.manager.send('catalog 대기 작업', DEFAULT_MODEL_ID)
+    await vi.waitFor(() => expect(catalog.list).toHaveBeenCalledOnce())
+
+    const aborting = h.manager.abort()
+    const notSettled = Symbol('not-settled')
+    const abortResult = await Promise.race([
+      aborting,
+      new Promise((resolve) => setImmediate(() => resolve(notSettled))),
+    ])
+    expect(abortResult).not.toBe(notSettled)
+    expect(abortResult).toMatchObject({
+      aborted: true,
+      phase: 'pendingStart',
+      abortInputId: null,
+    })
+    await expect(sending).resolves.toEqual({
+      error: 'agent-send-cancelled',
+      message: '전송이 중단되었습니다.',
+      turnId: abortResult.turnId,
+    })
+    expect(h.orchestrators[0].send).not.toHaveBeenCalled()
+
+    catalogGate.resolve([DEFAULT_MODEL_ROW])
+    await h.manager.close()
+  })
+
+  it('admitTurn refusal은 reservation을 풀어 다음 send도 busy가 아닌 같은 refusal을 받는다', async () => {
+    const h = lifecycleHarness({ maxTurns: 0 })
+    await h.manager.open()
+
+    const refusal = { error: 'agent-limit', limit: 0, used: 0 }
+    await expect(h.manager.send('첫 거부', DEFAULT_MODEL_ID)).resolves.toEqual(refusal)
+    await expect(h.manager.send('둘째 거부', DEFAULT_MODEL_ID)).resolves.toEqual(refusal)
+    expect(h.orchestrators[0].send).not.toHaveBeenCalled()
+    await h.manager.close()
+  })
+})
+
 describe('AgentSessionManager D10 app ledger', () => {
   it('기본 64번째 turn/start는 admit하고 65번째는 structured value로 report한다', async () => {
     const onError = vi.fn()
     const h = lifecycleHarness({ onError })
     await h.manager.open()
 
-    const admitted = await Promise.all(
-      Array.from({ length: 64 }, (_, index) => h.manager.send(`turn-${index + 1}`)),
-    )
-    const refused = await h.manager.send('turn-65')
+    const admitted = []
+    for (let index = 0; index < 64; index += 1) {
+      admitted.push(await h.manager.send(`turn-${index + 1}`, DEFAULT_MODEL_ID))
+    }
+    const refused = await h.manager.send('turn-65', DEFAULT_MODEL_ID)
 
     expect(admitted).toHaveLength(64)
     expect(refused).toEqual({ error: 'agent-limit', limit: 64, used: 64 })
@@ -412,8 +720,8 @@ describe('AgentSessionManager D10 app ledger', () => {
     await h.manager.open()
     h.orchestrators[0].send.mockRejectedValueOnce(new Error('turn failed'))
 
-    await expect(h.manager.send('실패할 turn')).rejects.toThrow('turn failed')
-    await expect(h.manager.send('재시도')).resolves.toEqual({
+    await expect(h.manager.send('실패할 turn', DEFAULT_MODEL_ID)).rejects.toThrow('turn failed')
+    await expect(h.manager.send('재시도', DEFAULT_MODEL_ID)).resolves.toEqual({
       error: 'agent-limit',
       limit: 1,
       used: 1,
@@ -428,12 +736,12 @@ describe('AgentSessionManager D10 app ledger', () => {
     const h = lifecycleHarness({ maxTurns: 1 })
     await h.manager.open()
 
-    await h.manager.send('한 turn')
+    await h.manager.send('한 turn', DEFAULT_MODEL_ID)
     await expect(h.manager.steer('첫 수정')).resolves.toEqual({ steered: '첫 수정' })
     await expect(h.manager.steer('둘째 수정')).resolves.toEqual({ steered: '둘째 수정' })
 
     expect(h.manager.status()).toMatchObject({ turns: 1 })
-    await expect(h.manager.send('두 번째 turn')).resolves.toEqual({
+    await expect(h.manager.send('두 번째 turn', DEFAULT_MODEL_ID)).resolves.toEqual({
       error: 'agent-limit',
       limit: 1,
       used: 1,
@@ -496,7 +804,7 @@ describe('AgentSessionManager D10 app ledger', () => {
     await h.manager.open()
     time += 2 * 60 * 60 * 1000
 
-    const refused = await h.manager.send('2시간 경계 뒤 작업')
+    const refused = await h.manager.send('2시간 경계 뒤 작업', DEFAULT_MODEL_ID)
 
     expect(refused).toEqual({
       error: 'agent-limit',
@@ -522,7 +830,7 @@ describe('AgentSessionManager D10 app ledger', () => {
       expect(h.child.exitCode).toBeNull()
 
       time += 2 * 60 * 60 * 1000
-      await expect(h.manager.send('2시간 경계 뒤 자원 해제')).resolves.toEqual({
+      await expect(h.manager.send('2시간 경계 뒤 자원 해제', DEFAULT_MODEL_ID)).resolves.toEqual({
         error: 'agent-limit',
         limit: 2 * 60 * 60 * 1000,
         used: 2 * 60 * 60 * 1000,

@@ -205,7 +205,7 @@ export function createAgentModelCatalog({
   }
 }
 
-const defaultModelCatalog = createAgentModelCatalog()
+export const defaultModelCatalog = createAgentModelCatalog()
 
 function isWindowAlive(window) {
   if (!window || typeof window.isDestroyed !== 'function' || window.isDestroyed()) return false

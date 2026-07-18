@@ -10,10 +10,10 @@ describe('main AgentSessionManager ownership wiring', () => {
     const main = await mainSource()
 
     expect(main).toMatch(/import \{ createAgentSessionManager \} from '\.\/agent\/sessionManager\.js'/)
-    expect(main).toMatch(/import \{ createAgentEventForwarder, registerAgentIPC \} from '\.\/ipc\/agent-api\.js'/)
+    expect(main).toMatch(/import \{ createAgentEventForwarder, defaultModelCatalog, registerAgentIPC \} from '\.\/ipc\/agent-api\.js'/)
     expect(main).toMatch(/const agentEvents = createAgentEventForwarder\(\{ getWindow: \(\) => mainWindow \}\)/)
-    expect(main).toMatch(/const agentSessionManager = createAgentSessionManager\(\{[\s\S]*?grantLedger,[\s\S]*?approvalPrompt,[\s\S]*?toolBridge,[\s\S]*?storyCommands,[\s\S]*?isPackaged: app\.isPackaged,[\s\S]*?resourcesPath: process\.resourcesPath,[\s\S]*?\.\.\.agentEvents,[\s\S]*?\}\)/)
-    expect(main).toMatch(/registerAgentIPC\(ipcMain, \{ sessionManager: agentSessionManager, getWindow: \(\) => mainWindow \}\)/)
+    expect(main).toMatch(/const agentSessionManager = createAgentSessionManager\(\{[\s\S]*?grantLedger,[\s\S]*?approvalPrompt,[\s\S]*?toolBridge,[\s\S]*?storyCommands,[\s\S]*?modelCatalog: defaultModelCatalog,[\s\S]*?isPackaged: app\.isPackaged,[\s\S]*?resourcesPath: process\.resourcesPath,[\s\S]*?\.\.\.agentEvents,[\s\S]*?\}\)/)
+    expect(main).toMatch(/registerAgentIPC\(ipcMain, \{[\s\S]*?sessionManager: agentSessionManager,[\s\S]*?modelCatalog: defaultModelCatalog,[\s\S]*?getWindow: \(\) => mainWindow,[\s\S]*?\}\)/)
 
     expect(main).not.toMatch(/\bcreateToolCore\s*\(/)
     expect(main).not.toMatch(/\bcreatePrivateRpc\s*\(/)
