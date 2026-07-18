@@ -837,6 +837,23 @@ describe('AgentSessionManager M6b-2b Claude coordination', () => {
     await h.manager.close()
   })
 
+  it('Claude 명시 open 뒤 생략 send는 Codex defaultPin과의 D2를 공통 검사한다', async () => {
+    const catalog = modelCatalogDouble([DEFAULT_MODEL_ROW, CLAUDE_MODEL_ROW])
+    const h = claudeSessionHarness({ modelCatalog: catalog })
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+
+    await expect(h.manager.send('기본 provider로 돌아가기')).resolves.toEqual({
+      error: 'provider-switch-required',
+      message: '모델 제공자를 바꾸려면 새 세션을 시작해 주세요.',
+      turnId: expect.stringMatching(/:pending:1$/),
+    })
+
+    expect(catalog.list).not.toHaveBeenCalled()
+    expect(h.orchestrator.send).not.toHaveBeenCalled()
+    expect(h.orchestrator.settlePendingAbort).toHaveBeenCalledOnce()
+    await h.manager.close()
+  })
+
   it('catalog await 중 Claude pendingStart abort는 매니저 unwind 훅으로 즉시 idle 정산한다', async () => {
     const catalogGate = deferred()
     const catalog = {
@@ -1328,6 +1345,73 @@ describe('AgentSessionManager M5 send reservation', () => {
     expect(catalog.list).toHaveBeenCalledOnce()
     expect(h.orchestrators[0].send).toHaveBeenCalledWith('모델 변환', 'gpt-5.5')
     expect(h.orchestrators[0].send).not.toHaveBeenCalledWith('모델 변환', DEFAULT_MODEL_ID)
+    await h.manager.close()
+  })
+
+  it('cold defaultPin은 catalog가 warm된 뒤 생략 send에서도 고정 sdkModel을 쓰고 재조회하지 않는다', async () => {
+    const coldDefault = {
+      ...DEFAULT_MODEL_ROW,
+      sdkModel: 'gpt-cold-pinned',
+    }
+    const warmDefault = {
+      id: 'codex:gpt-warm-default',
+      provider: 'codex',
+      sdkModel: 'gpt-warm-default',
+      isDefault: true,
+    }
+    let cacheReady = false
+    const catalog = {
+      snapshot: vi.fn(() => ({
+        cacheReady,
+        rows: [{ ...(cacheReady ? warmDefault : coldDefault) }],
+        defaultId: cacheReady ? warmDefault.id : coldDefault.id,
+      })),
+      list: vi.fn(async () => {
+        cacheReady = true
+        return [{ ...warmDefault }]
+      }),
+      defaultModelId: vi.fn(() => (cacheReady ? warmDefault.id : coldDefault.id)),
+    }
+    const h = lifecycleHarness({ modelCatalog: catalog })
+
+    const opened = await h.manager.open()
+    expect(opened.defaultPin).toMatchObject({
+      id: coldDefault.id,
+      provider: 'codex',
+      sdkModel: 'gpt-cold-pinned',
+      fallbackReason: 'catalog-cold',
+    })
+
+    await catalog.list()
+    await h.manager.send('고정 기본으로 전송')
+
+    expect(catalog.list).toHaveBeenCalledOnce()
+    expect(catalog.defaultModelId).not.toHaveBeenCalled()
+    expect(h.orchestrators[0].send).toHaveBeenCalledWith('고정 기본으로 전송', 'gpt-cold-pinned')
+    expect(h.orchestrators[0].send).not.toHaveBeenCalledWith('고정 기본으로 전송', 'gpt-warm-default')
+    await h.manager.close()
+  })
+
+  it('null modelId send도 defaultPin의 unusable sdkModel을 공통 검사해 fail-closed한다', async () => {
+    const unresolvedDefault = { ...DEFAULT_MODEL_ROW, sdkModel: null }
+    const selectedRow = {
+      id: 'codex:gpt-selected',
+      provider: 'codex',
+      sdkModel: 'gpt-selected',
+      isDefault: false,
+    }
+    const catalog = modelCatalogDouble([unresolvedDefault, selectedRow])
+    const h = lifecycleHarness({ modelCatalog: catalog })
+    await h.manager.open(selectedRow.id)
+
+    await expect(h.manager.send('해결 안 된 pin은 보내면 안 됨', null)).resolves.toEqual({
+      error: 'agent-model-unavailable',
+      message: '선택한 모델을 사용할 수 없습니다.',
+      turnId: expect.any(String),
+    })
+
+    expect(catalog.list).not.toHaveBeenCalled()
+    expect(h.orchestrators[0].send).not.toHaveBeenCalled()
     await h.manager.close()
   })
 

@@ -540,20 +540,30 @@ export function createAgentSessionManager({
         return finishPending(session, reservation, cancelledSend(reservation))
       }
 
-      let rows
-      try {
-        rows = await waitForReservation(reservation, modelCatalog.list())
-        if (rows === CANCELLED || reservationWasCancelled(session, reservation)) {
-          return finishPending(session, reservation, cancelledSend(reservation))
+      let row
+      if (modelId == null) {
+        // 생략은 thread 상속이 아니라 open 때 고정한 앱 Default다. 여기서 catalog를 다시 보면
+        // cold session이 warm 뒤 다른 기본으로 조용히 바뀌므로 pin만 복사한다.
+        const pin = session.defaultPin
+        row = pin
+          ? { id: pin.id, provider: pin.provider, sdkModel: pin.sdkModel }
+          : null
+      } else {
+        let rows
+        try {
+          rows = await waitForReservation(reservation, modelCatalog.list())
+          if (rows === CANCELLED || reservationWasCancelled(session, reservation)) {
+            return finishPending(session, reservation, cancelledSend(reservation))
+          }
+        } catch {
+          if (reservationWasCancelled(session, reservation)) {
+            return finishPending(session, reservation, cancelledSend(reservation))
+          }
+          return finishPending(session, reservation, modelUnavailable(reservation))
         }
-      } catch {
-        if (reservationWasCancelled(session, reservation)) {
-          return finishPending(session, reservation, cancelledSend(reservation))
-        }
-        return finishPending(session, reservation, modelUnavailable(reservation))
+        row = Array.isArray(rows) ? rows.find((candidate) => candidate?.id === modelId) : null
       }
 
-      const row = Array.isArray(rows) ? rows.find((candidate) => candidate?.id === modelId) : null
       if (!row) return finishPending(session, reservation, modelUnavailable(reservation))
       if (row.provider !== session.provider) {
         return finishPending(session, reservation, providerSwitchRequired(reservation))

@@ -68,8 +68,8 @@ function fullModelCatalogDouble() {
       rows: rows.map((row) => ({ ...row })),
       defaultId: 'codex:gpt-5.5',
     })),
-    // `agent:send` 계약이 이걸 요구한다 (registerAgentIPC 가 가드한다).
-    // production catalog처럼 cold에서도 동기 문자열을 준다.
+    // production catalog의 cache-only lookup 계약을 재현한다. send 생략의 authority는
+    // sessionManager의 open snapshot/defaultPin이라 registerAgentIPC는 이 메서드를 호출하지 않는다.
     defaultModelId: vi.fn(() => 'codex:gpt-5.5'),
   }
 }
@@ -88,17 +88,28 @@ describe('registerAgentIPC — session command 효과', () => {
     expect(subject.registerAgentIPC).toBeTypeOf('function')
     expect(subject.createAgentEventForwarder).toBeTypeOf('function')
     const events = subject.createAgentEventForwarder({ getWindow: () => win })
+    const modelCatalog = fullModelCatalogDouble()
     sessionManager.send.mockImplementationOnce(async (text) => {
       events.onDelta(`응답:${text}`)
       return { turn: { id: 'turn-1' } }
     })
-    subject.registerAgentIPC(ipcMain, { sessionManager, getWindow: () => win })
+    subject.registerAgentIPC(ipcMain, { sessionManager, modelCatalog, getWindow: () => win })
 
     const result = await ipcMain.invoke('agent:send', { text: '계속해' })
 
-    expect(sessionManager.send).toHaveBeenCalledWith('계속해', 'codex:gpt-5.5')
+    expect(sessionManager.send).toHaveBeenCalledWith('계속해')
+    expect(modelCatalog.defaultModelId).not.toHaveBeenCalled()
     expect(result).toEqual({ turn: { id: 'turn-1' } })
     expect(win.webContents.send).toHaveBeenCalledWith('agent:delta', { delta: '응답:계속해' })
+  })
+
+  it('명시 model은 sessionManager send의 두 번째 인자로 보존한다', async () => {
+    const { registerAgentIPC } = await loadSubject()
+    registerAgentIPC(ipcMain, { sessionManager, getWindow: () => win })
+
+    await ipcMain.invoke('agent:send', { text: '모델 지정', model: 'claude:opus[1m]' })
+
+    expect(sessionManager.send).toHaveBeenCalledWith('모델 지정', 'claude:opus[1m]')
   })
 
   it('open/steer/abort/close가 각 manager method를 실제 호출하고 값을 보존한다', async () => {
@@ -224,17 +235,19 @@ describe('agent:list-models catalog', () => {
    * `models[0]` 로 바꾼 뮤턴트와 `'gpt-5.5'` 하드코딩 뮤턴트가 **둘 다 살아남았다**
    * (배선 테스트는 전부 green). 그래서 여기 좁은 단위 테스트가 따로 필요하다.
    */
-  /**
-   * 가드가 없으면 `defaultModelId?.()` 옵셔널 호출이 **조용히 생략 폴백**으로 무너진다 = sticky 버그 부활.
-   * (뮤테이션으로 실증: 가드를 지워도 아무 테스트도 안 죽었다 → 이 테스트를 추가했다.)
-   */
-  it('defaultModelId 없는 catalog를 주입하면 registerAgentIPC가 거부한다 (조용한 폴백 금지)', async () => {
+  it('registerAgentIPC는 미사용 defaultModelId를 요구하지 않고 send 생략을 manager pin에 위임한다', async () => {
     const { registerAgentIPC } = await loadSubject()
-    expect(() => registerAgentIPC(fakeIpcMain(), {
-      sessionManager: fullSessionManagerDouble(),
-      modelCatalog: { list: async () => [] },   // ← list 만 있는 옛 계약
+    const localIpcMain = fakeIpcMain()
+    const localSessionManager = fullSessionManagerDouble()
+
+    registerAgentIPC(localIpcMain, {
+      sessionManager: localSessionManager,
+      modelCatalog: { list: vi.fn(async () => []) },
       getWindow: () => fakeWindow(),
-    })).toThrow(/defaultModelId/)
+    })
+
+    await localIpcMain.invoke('agent:send', { text: '세션 pin 사용' })
+    expect(localSessionManager.send).toHaveBeenCalledWith('세션 pin 사용')
   })
 
   it('Claude default candidate는 두 번째 raw value로 식별하고 sdkModel:null과 [1m] resolvedModel을 그대로 보존한다', async () => {

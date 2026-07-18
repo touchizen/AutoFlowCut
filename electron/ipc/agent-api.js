@@ -328,18 +328,13 @@ export function registerAgentIPC(ipcMain, {
   if (!ipcMain || typeof ipcMain.handle !== 'function') throw new TypeError('ipcMain.handle is required')
   if (!sessionManager) throw new TypeError('sessionManager is required')
   if (typeof modelCatalog?.list !== 'function') throw new TypeError('modelCatalog.list is required')
-  // 🔴 `agent:send` 의 계약이 이제 여기에 의존한다. 없으면 옵셔널 호출이 **조용히 생략 폴백**으로
-  //    무너져 sticky 버그가 되살아난다(테스트가 list-only 카탈로그를 주입하면 아무도 못 알아챈다).
-  //    계약이면 계약답게 막는다.
-  if (typeof modelCatalog?.defaultModelId !== 'function') throw new TypeError('modelCatalog.defaultModelId is required')
   if (typeof getWindow !== 'function') throw new TypeError('getWindow must be a function')
 
   const emit = createEmitter(getWindow)
   const registrations = [
-    // thread/start 의 model 생략은 **실측상 안전**하다 — 새 thread 는 서버 기본으로 시작한다(m0-14 turn1).
-    // 그래서 open 은 통과만 시킨다. 계약을 필요 이상으로 넓히지 않는다.
+    // model 생략은 manager가 open 시점의 defaultPin을 initial row로 고정하라는 뜻이다.
     ['agent:session-open', 'open', (payload) => (payload?.model ? [payload.model] : [])],
-    // 🔴 `agent:send` 에서 model 이 없으면 **기본 모델 id 를 명시해서** 내려보낸다.
+    // 🔴 `agent:send`에서 model이 없으면 생략을 그대로 manager에 내려 session.defaultPin으로 resolve한다.
     //
     //    이유(실측 m0-14, codex app-server 0.144.5): `turn/start.model` 은 **sticky inheritance** 다.
     //    생략은 "기본으로" 가 아니라 "직전 모델 유지" 로 동작한다(턴 사이에 `thread/settings/updated`
@@ -348,14 +343,11 @@ export function registerAgentIPC(ipcMain, {
     //    ⚠️ 여기(main)에서 푸는 이유: 렌더러에서 풀면 **ChatPanel 이 remount** 될 때 구멍이 난다 —
     //    main 세션(=thread)은 살아있는데 `selectedModel` 은 null 로 리셋되고 `models` 는 아직 로딩 중이라,
     //    그 창에서 send 하면 **사용자가 selector 를 건드리지도 않았는데** 직전 sticky 모델로 나간다.
-    //    카탈로그 캐시는 main 에 있으므로 렌더러 수명과 무관하게 일관된다.
+    //    open 때 manager가 고정한 pin은 렌더러 수명과 이후 catalog warm 여부에 영향받지 않는다.
     //
-    //    → 이 채널의 계약: **model 생략 = 앱 기본(카탈로그 isDefault)**. "thread 의 현재 모델을 물려받기"는
-    //      이 경계에서 **표현 불가능**해야 한다. 그게 바로 위 버그이기 때문이다.
-    ['agent:send', 'send', (payload) => {
-      const model = payload?.model || modelCatalog.defaultModelId?.() || null
-      return model ? [payload?.text, model] : [payload?.text]
-    }],
+    //    → 이 채널의 계약: **model 생략 = 세션 open 때 고정된 앱 기본**. "thread 의 현재 모델을
+    //      물려받기"는 manager가 pin.sdkModel을 명시하므로 표현 불가능하다.
+    ['agent:send', 'send', (payload) => (payload?.model ? [payload.text, payload.model] : [payload?.text])],
     ['agent:steer', 'steer', (payload) => [payload?.text]],
     ['agent:abort', 'abort', () => []],
     ['agent:session-close', 'close', () => []],
