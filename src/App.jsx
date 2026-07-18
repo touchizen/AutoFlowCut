@@ -1516,6 +1516,8 @@ function App() {
           projectName,
           saveMode: settings.saveMode,
           concurrency: settings.concurrency || 5,
+          flowPacingMinMs: settings.flowPacingMinMs,
+          flowPacingMaxMs: settings.flowPacingMaxMs,
           imageBatchCount: settings.imageBatchCount || 1,
           imageUpscale: settings.imageUpscale || 'off',
           aspectRatio: settings.aspectRatio,
@@ -1725,6 +1727,8 @@ function App() {
           videoModel: settings.videoModelF2V,
           videoBatchCount: settings.videoBatchCount || 1,
           concurrency: settings.videoConcurrency || 4,
+          flowPacingMinMs: settings.flowPacingMinMs,
+          flowPacingMaxMs: settings.flowPacingMaxMs,
           seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {
             setFramePairs(prev => {
@@ -2469,6 +2473,8 @@ function App() {
                   // 동시성 — retryErrors 도 정상 생성과 동일하게 전달 (Stage 2 에서
                   // runConcurrentQueue 가 실제 소비). 게이트가 clampInt 로 재방어.
                   concurrency: settings.concurrency || 5,
+                  flowPacingMinMs: settings.flowPacingMinMs,
+                  flowPacingMaxMs: settings.flowPacingMaxMs,
                   imageBatchCount: settings.imageBatchCount || 1,
                   imageUpscale: settings.imageUpscale || 'off',
                   aspectRatio: settings.aspectRatio,

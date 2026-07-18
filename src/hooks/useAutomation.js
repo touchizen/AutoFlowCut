@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { resolveSceneStyle } from '../services/styleService'
+import { resolveSceneStyle, presetTagForStyleId } from '../services/styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
 import { processAsyncSceneResult } from '../services/imageFinalize'
 import { fileSystemAPI } from './useFileSystem'
@@ -94,6 +94,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       selectedStyleRefId,
       seed = null,
       concurrency: rawConcurrency,
+      flowPacingMinMs,
+      flowPacingMaxMs,
       currentRefs,
       consumeGate,
       m1ExcludedMentionNamesBySceneId = {},
@@ -306,6 +308,17 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // scene.prompt 그대로 전달 — strip은 engineApi.submitGeneration 내부에서 수행.
       const { styledPrompt, appliedStyle } = resolveSceneStyle(scene.prompt, allMatched, selectedStyleRefId, effectiveRefs, matchedRefs, scene.style_tag)
 
+      // Issue #3: 전역 프리셋 스타일이 적용됐으면 씬 style_tag 에 반영 — 상세 모달이 적용된
+      //   스타일을 보여주고, 모달 재생성(전역 override 없이 style_tag fallback)이 동일 스타일을
+      //   재현하도록. ref: 스타일/미선택은 null → 무동작.
+      // 한계(리뷰 M5): style_tag 는 프리셋만 표현 가능(문자열). 따라서 (a) 프리셋 배치는 씬의 기존
+      //   per-scene style_tag 를 실제 적용된 프리셋으로 덮고, (b) ref: 스타일/none 배치는 stamp 를
+      //   하지 않아 이전 프리셋 태그가 남을 수 있다. 둘 다 "적용된 스타일 반영"이라는 취지의 트레이드오프.
+      const stampTag = presetTagForStyleId(selectedStyleRefId)
+      if (stampTag && scene.style_tag !== stampTag) {
+        updateScene(scene.id, { style_tag: stampTag })
+      }
+
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
       const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, references: effectiveRefs })
@@ -373,11 +386,11 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         }
       }
 
-      // Flow 반봇 페이싱 — 씬 사이 20~40초 랜덤 대기 + 중간 수집.
+      // Flow 반봇 페이싱 — 씬 사이 랜덤 대기(기본 7~15초, 설정에서 조정) + 중간 수집.
       // Flow(Agent OFF)는 단일 웹 패널 DOM 자동화라 빠른 연속 제출이 봇 감지/레이트리밋을
       // 유발한다. API 모드는 동시성 윈도우(위 게이트)로 충분하므로 대기 없음.
       if (mode === 'flow' && i < targetScenes.length - 1 && !stopRequestedRef.current) {
-        const waitMs = getFlowSubmitPacingDelayMs()
+        const waitMs = getFlowSubmitPacingDelayMs(flowPacingMinMs, flowPacingMaxMs)
         console.log('[Automation] (Flow) Waiting', Math.round(waitMs / 1000), 's before next submit...')
         const waitEnd = Date.now() + waitMs
         while (Date.now() < waitEnd && !stopRequestedRef.current) {
@@ -466,6 +479,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
       concurrency = undefined,
+      flowPacingMinMs = undefined,  // Flow 페이싱 하한(ms) — 미지정 시 util 기본(7000)
+      flowPacingMaxMs = undefined,  // Flow 페이싱 상한(ms) — 미지정 시 util 기본(15000)
       force = false,
       // #R34-fix: 호출자(App sync 게이트)가 방금 동기화한 entity 패치가 반영된 refs 를 넘기면
       //   closure 의 stale `references` 대신 이걸로 시작한다 — 첫 배치부터 @멘션이 해석된다.
@@ -760,6 +775,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       selectedStyleRefId,
       seed,
       concurrency,
+      flowPacingMinMs,
+      flowPacingMaxMs,
       currentRefs, // #R6-15: entity 패치가 반영된 로컬 refs (멘션 해석에 사용)
       consumeGate,  // 배치당 1회 consume 보장 게이트
       m1ExcludedMentionNamesBySceneId,

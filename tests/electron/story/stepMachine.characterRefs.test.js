@@ -19,6 +19,41 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     speakers,
   })
 
+  async function runCharacterPipeline(splitResult, { precise = false } = {}) {
+    const localEmitted = []
+    const localLlm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => splitResult),
+      writePrompts: vi.fn(async (scenes) => ({
+        scenes: scenes.map((s, i) => ({ ...s, imagePrompt: `img${i}`, videoPrompt: `vid${i}` })),
+      })),
+    }
+    const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-presence-'))
+    const machineOptions = {
+      projectPath: localDir,
+      llm: localLlm,
+      emit: (ch, p) => localEmitted.push({ ch, p }),
+      getApiKey: () => 'k',
+    }
+    if (precise) {
+      machineOptions.tts = {
+        capabilities: () => ({ maxConcurrency: 2 }),
+        synthesize: vi.fn(async ({ text }) => ({ audio: Buffer.from(`AUDIO:${text}`), format: 'wav' })),
+      }
+      machineOptions.probe = async () => 4000
+      machineOptions.defaultVoice = { provider: 'typecast', voiceId: 'tc_x' }
+    }
+    const localMachine = createStepMachine(machineOptions)
+    await localMachine.open()
+    await localMachine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await localMachine.start('scenes', {})
+    if (precise) await localMachine.start('audio', {})
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop().p
+    return { push, llm: localLlm, machine: localMachine, emitted: localEmitted }
+  }
+
   beforeEach(async () => {
     dir = await mkdtemp(path.join(tmpdir(), 'sm-charref-'))
     emitted = []
@@ -94,6 +129,220 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(scene.prompt).toMatch(/(^|\s)@민수(\s|$)/)
     expect(scene.prompt).toContain('img0')
     expect(scene.videoT2VPrompt).toMatch(/(^|\s)@민수(\s|$)/)
+  })
+
+  it('나레이터만 말하는 씬도 appearingCharacters의 화면 인물을 characters와 @멘션에 연결한다 (Issue #6)', async () => {
+    const { push } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '민수가 골목을 걷는다',
+        appearingCharacters: ['a'],
+        segments: [{ speaker: 'narrator', text: '민수는 골목을 걸었다', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+      ],
+    })
+
+    expect(push.scenes[0].characters).toContain('민수')
+    expect(push.scenes[0].prompt).toMatch(/(^|\s)@민수(\s|$)/)
+  })
+
+  it('대화 화자 뒤에 appearingCharacters의 추가 화면 인물을 안정된 순서로 합친다', async () => {
+    const { push } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '민수가 말하고 영희가 듣는다',
+        appearingCharacters: ['b'],
+        segments: [{ speaker: 'a', text: '거기 있었구나', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+        { id: 'b', name: '영희', appearance: 'woman in a blue hanbok' },
+      ],
+    })
+
+    expect(push.scenes[0].characters).toBe('민수, 영희')
+  })
+
+  it('명단에 없는 appearingCharacters 값은 characters와 @멘션에서 제외한다', async () => {
+    const { push, llm: localLlm } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '빈 골목',
+        appearingCharacters: ['ghost'],
+        segments: [{ speaker: 'narrator', text: '골목에는 아무도 없었다', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+      ],
+    })
+
+    expect(localLlm.writePrompts.mock.calls[0][0][0].segments[0].onScreen).toEqual([])
+    expect(push.scenes[0].characters).toBe('')
+    expect(push.scenes[0].prompt).not.toContain('@ghost')
+  })
+
+  it('appearingCharacters의 narrator와 narrator 별칭은 화면 인물에서 제외한다', async () => {
+    const { push, llm: localLlm } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '나레이션 장면',
+        appearingCharacters: ['narrator', '해설'],
+        segments: [{ speaker: 'narrator', text: '밤이 깊었다', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator', appearance: 'studio narrator' },
+        { id: 'voiceover', name: '해설', appearance: 'another narrator' },
+      ],
+    })
+
+    expect(localLlm.writePrompts.mock.calls[0][0][0].segments[0].onScreen).toEqual([])
+    expect(push.scenes[0].characters).toBe('')
+    expect(push.scenes[0].prompt).not.toMatch(/@(?:narrator|해설)/)
+  })
+
+  it('appearingCharacters가 speaker id 대신 이름을 써도 id로 해석해 연결한다', async () => {
+    const { push, llm: localLlm } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '민수가 서 있다',
+        appearingCharacters: ['민수'],
+        segments: [{ speaker: 'narrator', text: '민수가 문 앞에 서 있었다', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+      ],
+    })
+
+    expect(localLlm.writePrompts.mock.calls[0][0][0].segments[0].onScreen).toEqual(['a'])
+    expect(push.scenes[0].characters).toBe('민수')
+    expect(push.scenes[0].prompt).toMatch(/(^|\s)@민수(\s|$)/)
+  })
+
+  it('scenes review 수정본의 appearingCharacters도 segments.onScreen으로 저장한다', async () => {
+    const { machine: localMachine, llm: localLlm, emitted: localEmitted } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '민수가 서 있다',
+        segments: [{ speaker: 'narrator', text: '민수가 문 앞에 서 있었다', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+      ],
+    })
+    localLlm.reviewScenes = vi.fn(async () => ({ verdict: 'revise', critique: '화면 인물을 복구하라' }))
+    localLlm.reviseScenes = vi.fn(async (_script, scenes, speakers) => ({
+      scenes: scenes.map((s) => ({ ...s, appearingCharacters: ['a'] })),
+      speakers,
+    }))
+
+    await localMachine.start('scenes', { reviewOnly: true, review: { scenes: { enabled: true, rounds: 1 } } })
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop().p
+    expect(localLlm.writePrompts.mock.calls.at(-1)[0][0].segments[0].onScreen).toEqual(['a'])
+    expect(push.scenes[0].characters).toBe('민수')
+  })
+
+  it('scenes review 가 appearingCharacters 를 누락해도 이전 onScreen 을 상속해 유지한다 (리뷰 M7)', async () => {
+    const { machine: localMachine, llm: localLlm, emitted: localEmitted } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '민수가 서 있다',
+        appearingCharacters: ['a'],
+        segments: [{ speaker: 'narrator', text: '민수가 문 앞에 서 있었다', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+      ],
+    })
+    // 리뷰가 씬을 수정하되 appearingCharacters 를 빠뜨린다(스키마상 optional). 실제 LLM 은 내부 필드인
+    // onScreen 도 emit 하지 않으므로 세그먼트에서 제거해 진짜 손실을 재현한다. 상속이 없으면 onScreen 유실.
+    localLlm.reviewScenes = vi.fn(async () => ({ verdict: 'revise', critique: '문장을 다듬어라' }))
+    localLlm.reviseScenes = vi.fn(async (_script, scenes, speakers) => ({
+      scenes: scenes.map((s) => {
+        const { appearingCharacters, ...rest } = s
+        return {
+          ...rest,
+          summary: '민수가 문앞에 섰다',
+          segments: (s.segments || []).map((g) => { const { onScreen, ...seg } = g; return seg }),
+        }
+      }),
+      speakers,
+    }))
+
+    await localMachine.start('scenes', { reviewOnly: true, review: { scenes: { enabled: true, rounds: 1 } } })
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop().p
+    expect(push.scenes[0].characters).toBe('민수') // 이전 onScreen 상속 → 유지
+  })
+
+  it('scenes review 가 appearingCharacters 를 []로 명시하면 제거를 존중(상속 안 함)', async () => {
+    const { machine: localMachine, llm: localLlm, emitted: localEmitted } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '민수가 서 있다',
+        appearingCharacters: ['a'],
+        segments: [{ speaker: 'narrator', text: '민수가 문 앞에 서 있었다', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+      ],
+    })
+    localLlm.reviewScenes = vi.fn(async () => ({ verdict: 'revise', critique: '민수를 화면에서 빼라' }))
+    localLlm.reviseScenes = vi.fn(async (_script, scenes, speakers) => ({
+      scenes: scenes.map((s) => ({ ...s, appearingCharacters: [] })), // 명시적 제거
+      speakers,
+    }))
+
+    await localMachine.start('scenes', { reviewOnly: true, review: { scenes: { enabled: true, rounds: 1 } } })
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop().p
+    expect(push.scenes[0].characters).toBe('') // 나레이터만 → 빈 태그(제거 존중)
+  })
+
+  it('appearingCharacters가 없는 기존 split 출력은 speaker 기반 연결을 그대로 유지한다', async () => {
+    const { push } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+    ]))
+
+    expect(push.scenes[0].characters).toBe('민수')
+    expect(push.scenes[0].prompt).toMatch(/(^|\s)@민수(\s|$)/)
+  })
+
+  it('segments.onScreen은 정밀 audio 재그룹 뒤에도 살아남아 화면 인물 태그를 유지한다', async () => {
+    const { push, llm: localLlm } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '민수의 긴 이동',
+        appearingCharacters: ['a'],
+        segments: [
+          { speaker: 'narrator', text: '민수는 골목에 들어섰다', emotion: 'normal' },
+          { speaker: 'narrator', text: '그는 천천히 주위를 살폈다', emotion: 'normal' },
+          { speaker: 'narrator', text: '마침내 낡은 문 앞에 멈췄다', emotion: 'normal' },
+        ],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+      ],
+    }, { precise: true })
+
+    const regroupedScenes = localLlm.writePrompts.mock.calls[0][0]
+    expect(regroupedScenes).toHaveLength(2)
+    expect(regroupedScenes.flatMap((s) => s.segments).every((seg) => seg.onScreen?.includes('a'))).toBe(true)
+    expect(push.scenes.map((s) => s.characters)).toEqual(['민수', '민수'])
   })
 
   it('멘션-불가 이름(공백 포함)은 멘션 생략(태그로 폴백, @는 안 넣음)', async () => {
