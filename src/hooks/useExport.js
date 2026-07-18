@@ -40,7 +40,9 @@ export function useExport({
   const { t } = useI18n()
   const [showExportModal, setShowExportModal] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [exportPhase, setExportPhase] = useState(null) // 'saving' | 'launching' | null
+  const [exportPhase, setExportPhase] = useState(null) // 'saving' | 'launching' | 'rendering' | null
+  const [renderProgress, setRenderProgress] = useState(null) // { jobId, percent, stage } | null
+  const [renderJobId, setRenderJobId] = useState(null)       // 취소 대상 jobId
   // 마지막 선택 포맷 — split 진입 버튼 본체 동작/문구 + 모달 초기 탭에 사용. localStorage 영속.
   const [exportFormat, setExportFormat] = useState(() => {
     try { return normalizeExportFormat(localStorage.getItem('lastExportFormat')) } catch { return 'capcut' }
@@ -462,15 +464,104 @@ export function useExport({
     }
   }
 
+  // Self-render — 완전 로컬 MP4. Premiere 미러(loadStoryAudio 호출 필수 — 무음 방지),
+  // 단 GCF 대신 render:export-mp4 IPC. 진행/취소 상태는 이 훅이 소유한다.
+  const handleExportRender = async ({ scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize, renderMode, renderBurnSubtitle }) => {
+    const validScenes = scenes.filter(isExportableScene)
+    if (validScenes.length === 0) {
+      toast.warning(t('toast.noGeneratedImages'))
+      setShowExportModal(false)
+      return { success: false, error: t('toast.noGeneratedImages') }
+    }
+
+    const hasFilePaths = validScenes.some(s => getExportFilePaths(s).length > 0)
+    if (hasFilePaths) {
+      const permission = await fileSystemAPI.ensurePermission()
+      if (!permission.hasPermission) {
+        toast.warning(t('toast.filePermissionRequired'))
+        setShowExportModal(false)
+        openSettings('storage')
+        return { success: false, error: t('toast.filePermissionRequired') }
+      }
+    }
+
+    setExporting(true)
+    setExportPhase('rendering')
+    setRenderProgress(null)
+    let unsub
+    try {
+      const { exportRenderVideo, makeRenderJobId } = await import('../exporters/render.js')
+      const project = buildExportProject(validScenes)
+
+      console.log('[Export] Render — aspectRatio:', settings.aspectRatio, '→ format:', project.format)
+
+      const storyAudio = await loadStoryAudio()
+      const jobId = makeRenderJobId(project)
+      setRenderJobId(jobId)
+      unsub = window.electronAPI?.onRenderProgress?.((p) => {
+        if (p?.jobId === jobId) setRenderProgress(p)
+      })
+
+      const result = await exportRenderVideo(project, {
+        scaleMode,
+        kenBurns,
+        kenBurnsMode,
+        kenBurnsCycle,
+        kenBurnsScaleMin,
+        kenBurnsScaleMax,
+        subtitleOption,
+        subtitleFontSize,
+        audioPackage,
+        storyAudio,
+        renderMode,
+        renderBurnSubtitle
+      }, { makeJobId: () => jobId })
+
+      if (result?.cancelled) {
+        toast.info(t('toast.renderCancelled'), 4000)
+        return { success: false, cancelled: true }
+      }
+      if (!result?.ok) {
+        throw new Error(result?.error || 'Render failed')
+      }
+
+      toast.success(t('toast.renderComplete'), 6000)
+      if (result.outPath && window.electronAPI?.revealPath) {
+        try { await window.electronAPI.revealPath(result.outPath) } catch { /* best-effort */ }
+      }
+
+      await new Promise(r => setTimeout(r, 800))
+      setShowExportModal(false)
+      onExportSuccess?.()
+      return { success: true, outPath: result.outPath }
+    } catch (error) {
+      toast.error(t('toast.exportFailed', { error: resolveDisplayError(t, error.errorKind, error.message) }))
+      return { success: false, error: error.message }
+    } finally {
+      unsub?.()
+      setExporting(false)
+      setExportPhase(null)
+      setRenderProgress(null)
+      setRenderJobId(null)
+    }
+  }
+
+  const handleCancelRender = () => {
+    if (renderJobId) window.electronAPI?.renderCancel?.({ jobId: renderJobId })
+  }
+
   return {
     showExportModal,
     setShowExportModal,
     exporting,
     exportPhase,
     exportFormat,
+    renderProgress,
     handleExportClick,
     handleExportConfirm,
     handleExportPremiere,
-    handleExportVrew
+    handleExportVrew,
+    handleExportRender,
+    handleCancelRender
   }
 }

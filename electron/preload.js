@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Self-render (local ffmpeg MP4)
   renderMp4: (payload) => ipcRenderer.invoke('render:export-mp4', payload),
   renderCancel: (payload) => ipcRenderer.invoke('render:cancel', payload),
+  revealPath: (filePath) => ipcRenderer.invoke('render:reveal', { path: filePath }),
   onRenderProgress: (cb) => {
     const listener = (_e, p) => cb(p)
     ipcRenderer.on('render:progress', listener)

@@ -11,7 +11,7 @@
  *   - ExportModal: 카드 분기 + handleExport 의 export 경로 분기
  */
 
-export const EXPORT_FORMATS = ['capcut', 'premiere', 'vrew']
+export const EXPORT_FORMATS = ['capcut', 'premiere', 'vrew', 'render']
 
 export const DEFAULT_EXPORT_FORMAT = 'capcut'
 

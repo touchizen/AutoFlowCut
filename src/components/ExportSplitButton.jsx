@@ -24,6 +24,7 @@ const FORMATS = [
   { key: 'capcut', label: '✂️ CapCut' },
   { key: 'premiere', label: '🎬 Premiere' },
   { key: 'vrew', label: '📝 Vrew' },
+  { key: 'render', label: '🎞️ Render' },
 ]
 
 export default function ExportSplitButton({ format = 'capcut', onSelect, disabled = false, className = '', wrapperClassName = '', direction = 'down', title }) {
@@ -43,7 +44,9 @@ export default function ExportSplitButton({ format = 'capcut', onSelect, disable
     ? t('actions.exportPremiere')
     : fmt === 'vrew'
       ? t('actions.exportVrew')
-      : t('actions.exportCapcut')
+      : fmt === 'render'
+        ? t('actions.exportRender')
+        : t('actions.exportCapcut')
 
   const pick = (key) => {
     setMenuOpen(false)

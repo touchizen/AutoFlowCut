@@ -313,6 +313,12 @@ registerMcpIPC(ipcMain)
 // Vrew IPC (.vrew writing — local zip package)
 registerVrewIPC(ipcMain)
 
+// Reveal a rendered file in the OS file manager (self-render completion)
+ipcMain.handle('render:reveal', (_e, { path: filePath } = {}) => {
+  try { if (filePath) shell.showItemInFolder(filePath); return { ok: true } }
+  catch (error) { return { ok: false, error: String(error?.message || error) } }
+})
+
 // Render IPC (self-render to MP4 — fully local ffmpeg)
 registerRenderIPC(ipcMain, {
   getMainWindow: () => mainWindow,

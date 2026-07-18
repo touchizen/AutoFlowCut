@@ -39,7 +39,22 @@ function FormatCard({ icon, title, description, children }) {
   )
 }
 
-export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExportVrew, initialFormat = 'capcut', projectName, loading, exportPhase, hasSubtitles, onUpgradeClick }) => {
+export const ExportModal = ({
+  isOpen,
+  onClose,
+  onExport,
+  onExportPremiere,
+  onExportVrew,
+  onExportRender,
+  onCancelRender,
+  renderProgress,
+  initialFormat = 'capcut',
+  projectName,
+  loading,
+  exportPhase,
+  hasSubtitles,
+  onUpgradeClick,
+}) => {
   const { t, lang } = useI18n()
   const { isAuthenticated, subscription } = useAuth()
   const { settings: savedSettings, isLoaded, saveSettings } = useExportSettings()
@@ -47,7 +62,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   // OS 감지 (기본값 결정용)
   const detectedMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
 
-  // 내보내기 포맷 — 'capcut'(기본) | 'premiere' | 'vrew'.
+  // 내보내기 포맷 — 'capcut'(기본) | 'premiere' | 'vrew' | 'render'.
   // CapCut 은 draft 폴더 경로 + 설치확인 + 앱 실행, Premiere 는 프로젝트 폴더에
   // .prproj 자동 저장(경로 UI 불필요). Scale/KenBurns/자막 옵션은 공유.
   const [format, setFormat] = useState(() => normalizeExportFormat(initialFormat))
@@ -64,6 +79,8 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   const [pathCopied, setPathCopied] = useState(false)
   const [scaleMode, setScaleMode] = useState('none')
   const [includeSubtitle, setIncludeSubtitle] = useState(true)
+  const [renderMode, setRenderMode] = useState('final')
+  const [renderBurnSubtitle, setRenderBurnSubtitle] = useState(true)
   const [kenBurns, setKenBurns] = useState(true)
   const [kenBurnsMode, setKenBurnsMode] = useState('random')
   const [kenBurnsCycle, setKenBurnsCycle] = useState(5)
@@ -80,6 +97,8 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
     if (isLoaded) {
       setScaleMode(savedSettings.scaleMode || 'none')
       setIncludeSubtitle(savedSettings.includeSubtitle !== false)
+      setRenderMode(savedSettings.renderMode === 'preview' ? 'preview' : 'final')
+      setRenderBurnSubtitle(savedSettings.renderBurnSubtitle !== false)
       setKenBurns(savedSettings.kenBurns !== false)
       setKenBurnsMode(savedSettings.kenBurnsMode || 'random')
       setKenBurnsCycle(savedSettings.kenBurnsCycle || 5)
@@ -200,7 +219,9 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
     kenBurnsCycle: Number(kenBurnsCycle) || 5,
     kenBurnsScaleMin: Number(kenBurnsScaleMin) / 100 || 1.0,  // % → 비율
     kenBurnsScaleMax: Number(kenBurnsScaleMax) / 100 || 1.15,  // % → 비율
-    subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none'
+    subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
+    renderMode,
+    renderBurnSubtitle,
   })
 
   const persistOptions = () => {
@@ -208,6 +229,8 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
       pathPreset,
       scaleMode,
       includeSubtitle,
+      renderMode,
+      renderBurnSubtitle,
       kenBurns,
       kenBurnsMode,
       kenBurnsCycle: Number(kenBurnsCycle) || 5,
@@ -287,6 +310,11 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   }
 
   const handleExport = async () => {
+    if (format === 'render') {
+      persistOptions()
+      await onExportRender?.(buildExportOptions())
+      return
+    }
     if (format === 'premiere') {
       await handleExportPremiere()
       return
@@ -331,34 +359,66 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
     })
   }
 
+  const isRenderBusy = format === 'render' && (loading || exportPhase === 'rendering')
+  const progressNumber = Number(renderProgress?.percent)
+  const renderPercent = Number.isFinite(progressNumber)
+    ? Math.min(100, Math.max(0, Math.round(progressNumber)))
+    : 0
+
   return createPortal(
-    <div className="export-modal-overlay" onClick={loading ? undefined : onClose}>
+    <div className="export-modal-overlay" onClick={loading || isRenderBusy ? undefined : onClose}>
       <div className="export-modal" onClick={(e) => e.stopPropagation()}>
         {/* 로딩 오버레이 */}
-        {loading && (
+        {(loading || isRenderBusy) && (
           <div className="export-loading-overlay">
             <div className="export-loading-content">
-              <div className="export-loading-spinner"></div>
-              <p>{exportPhase === 'launching'
-                ? (format === 'premiere'
-                  ? t('exportModal.premiereLaunching')
-                  : format === 'vrew'
-                    ? t('exportModal.vrewLaunching')
-                    : t('exportModal.launchingCapcut'))
-                : (format === 'premiere'
-                  ? t('exportModal.premiereExporting')
-                  : format === 'vrew'
-                    ? t('exportModal.vrewExporting')
-                    : t('exportModal.preparingPackage'))
-              }</p>
-              <span className="export-loading-hint">{exportPhase === 'launching'
-                ? (format === 'premiere'
-                  ? t('exportModal.premiereLaunchingHint')
-                  : format === 'vrew'
-                    ? t('exportModal.vrewLaunchingHint')
-                    : t('exportModal.launchingHint'))
-                : t('exportModal.pleaseWait')
-              }</span>
+              {isRenderBusy ? (
+                <>
+                  <p>{t('exportModal.renderProgress')}</p>
+                  <div
+                    className="render-progress-bar"
+                    role="progressbar"
+                    aria-label={t('exportModal.renderProgress')}
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow={renderPercent}
+                  >
+                    <div className="render-progress-fill" style={{ width: `${renderPercent}%` }} />
+                  </div>
+                  <span className="render-progress-percent">{renderPercent}%</span>
+                  <button
+                    type="button"
+                    className="export-btn export-btn-cancel render-cancel-btn"
+                    onClick={onCancelRender}
+                  >
+                    {t('exportModal.renderCancel')}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="export-loading-spinner"></div>
+                  <p>{exportPhase === 'launching'
+                    ? (format === 'premiere'
+                      ? t('exportModal.premiereLaunching')
+                      : format === 'vrew'
+                        ? t('exportModal.vrewLaunching')
+                        : t('exportModal.launchingCapcut'))
+                    : (format === 'premiere'
+                      ? t('exportModal.premiereExporting')
+                      : format === 'vrew'
+                        ? t('exportModal.vrewExporting')
+                        : t('exportModal.preparingPackage'))
+                  }</p>
+                  <span className="export-loading-hint">{exportPhase === 'launching'
+                    ? (format === 'premiere'
+                      ? t('exportModal.premiereLaunchingHint')
+                      : format === 'vrew'
+                        ? t('exportModal.vrewLaunchingHint')
+                        : t('exportModal.launchingHint'))
+                    : t('exportModal.pleaseWait')
+                  }</span>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -368,10 +428,12 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
               ? t('exportModal.premiereTitle')
               : format === 'vrew'
                 ? t('exportModal.vrewTitle')
-                : t('exportModal.title')}</h2>
+                : format === 'render'
+                  ? t('exportModal.renderTitle')
+                  : t('exportModal.title')}</h2>
             {/* 'loading' 상태에서 0/0 garbage 가 새는 걸 막기 위해 trial/expired 만 명시.
                 useExport gateway 가 loading 윈도우엔 모달을 안 열지만, defense in depth. */}
-            {isAuthenticated && (subscription.status === 'trial' || subscription.status === 'expired') && (
+            {format !== 'render' && isAuthenticated && (subscription.status === 'trial' || subscription.status === 'expired') && (
               <span className="header-trial-badge">
                 🎁 {t('exportModal.trialBadge', { exports: subscription.exportsRemaining, days: subscription.daysRemaining })}
               </span>
@@ -412,6 +474,14 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
             >
               📝 Vrew
             </button>
+            <button
+              type="button"
+              className={`export-format-tab ${format === 'render' ? 'active' : ''}`}
+              aria-pressed={format === 'render'}
+              onClick={() => setFormat('render')}
+            >
+              🎞️ {t('exportModal.renderTab')}
+            </button>
           </div>
 
           {format === 'capcut' ? (
@@ -434,6 +504,41 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
                 // 작업 폴더 미설정 — 가짜 경로 대신 안내. Export 버튼도 비활성(사후 alert 보다 사전 차단).
                 <p className="option-hint">📁 {t('exportModal.premiereWorkFolderRequired')}</p>
               )}
+            </FormatCard>
+          ) : format === 'render' ? (
+            <FormatCard icon="🎞️" title={t('exportModal.renderPackage')} description={t('exportModal.renderPackageDesc')}>
+              <fieldset className="render-mode-options">
+                <legend>{t('exportModal.renderMode')}</legend>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="render-mode"
+                    value="preview"
+                    checked={renderMode === 'preview'}
+                    onChange={(e) => setRenderMode(e.target.value)}
+                  />
+                  <span>{t('exportModal.renderModePreview')}</span>
+                </label>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="render-mode"
+                    value="final"
+                    checked={renderMode === 'final'}
+                    onChange={(e) => setRenderMode(e.target.value)}
+                  />
+                  <span>{t('exportModal.renderModeFinal')}</span>
+                </label>
+              </fieldset>
+              <label className="checkbox-label render-subtitle-option">
+                <input
+                  type="checkbox"
+                  checked={renderBurnSubtitle}
+                  onChange={(e) => setRenderBurnSubtitle(e.target.checked)}
+                />
+                <span>{t('exportModal.renderBurnSubtitle')}</span>
+              </label>
+              <p className="option-hint">{t('exportModal.renderBurnSubtitleHint')}</p>
             </FormatCard>
           ) : (
             <FormatCard icon="📝" title={t('exportModal.vrewPackage')} description={t('exportModal.vrewPackageDesc')}>
@@ -647,7 +752,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
           </div>
 
           {/* 자막 옵션 - 자막이 있을 때만 표시 */}
-          {hasSubtitles && (
+          {hasSubtitles && format !== 'render' && (
             <div className="export-option-section">
               <label className="checkbox-label">
                 <input
@@ -725,9 +830,13 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
               <button
                 className="export-btn export-btn-export"
                 onClick={handleExport}
-                disabled={loading || ((format === 'premiere' || format === 'vrew') && !premiereWorkFolder)}
+                disabled={loading || isRenderBusy || ((format === 'premiere' || format === 'vrew') && !premiereWorkFolder)}
               >
-                {loading ? `⏳ ${t('exportModal.exporting')}` : `📦 ${t('exportModal.export')}`}
+                {loading
+                  ? `⏳ ${t('exportModal.exporting')}`
+                  : format === 'render'
+                    ? `🎞️ ${t('actions.exportRender')}`
+                    : `📦 ${t('exportModal.export')}`}
               </button>
             </div>
           </div>

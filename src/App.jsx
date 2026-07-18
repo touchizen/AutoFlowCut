@@ -875,7 +875,7 @@ function App() {
   }
 
   // Export
-  const { showExportModal, setShowExportModal, exporting, exportPhase, exportFormat, handleExportClick, handleExportConfirm, handleExportPremiere, handleExportVrew } = useExport({
+  const { showExportModal, setShowExportModal, exporting, exportPhase, exportFormat, renderProgress, handleExportClick, handleExportConfirm, handleExportPremiere, handleExportVrew, handleExportRender, handleCancelRender } = useExport({
     settings, scenes, srtTrack: scenesHook.srtTrack, videoScenes, framePairs, openSettings,
     audioPackage,
     storyProjectPath,  // M2a-4: story 프로젝트면 export 시 나레이션 manifest 배치
@@ -2890,6 +2890,9 @@ function App() {
         onExport={handleExportConfirm}
         onExportPremiere={handleExportPremiere}
         onExportVrew={handleExportVrew}
+        onExportRender={handleExportRender}
+        onCancelRender={handleCancelRender}
+        renderProgress={renderProgress}
         initialFormat={exportFormat}
         projectName={ensureProjectName()}
         loading={exporting}
