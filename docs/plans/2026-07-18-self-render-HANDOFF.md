@@ -22,15 +22,17 @@ Task 1~11 코드 전부 + 크로스 리뷰 2라운드 + 배포 인프라(B). 전
 
 **검증 방식** ([[role-split-codex-authors-fable-reviews]]): 어려운 건 Codex(gpt-5.6-sol) 작성 → Fable 5 리뷰 → **내가 뮤테이션+실측 검증**. 순수 모듈은 내가 직접. 실측 사례: ffmpeg 필터 이스케이프 2패스([[ffmpeg-filter-escape-two-pass]]), 진행바 jobId 버그(내 뮤테이션이 놓친 걸 크로스 리뷰가 잡음).
 
-## 남은 것 (TODO)
+## 상태: 코드 완료 + 크로스 리뷰 4R findings 0. 남은 건 실앱 눈검증뿐.
 
-1. **ffmpeg static SHA 채우기 — mac/win/linux 다** (진행 중):
-   - ✅ `darwin-arm64`: osxexperts, SHA `563111a2…27f2` pin, vendor 배치+self-contained 확인(otool 깨끗, zoompan/subtitles/ass/libx264/aac ✓), ffmpeg 7.0
-   - ⏳ `darwin-x64`(evermeet 7.1.1), `win32-x64`(BtbN), `linux-x64`(johnvansickle) — 다운로드해서 SHA pin 필요. **`scripts/install-platform-binaries.cjs`의 `TODO_FILL_SHA` 교체.**
-   - ⚠️ **rolling URL 주의**: BtbN `latest`, johnvansickle `release`는 매번 바뀜 → SHA pin이 곧 무효. **고정 버전 태그 URL로 교체 권장**(BtbN autobuild 태그, johnvansickle 버전 tar).
-2. **round-3 크로스 재리뷰**: A(코드 버그) findings 0 확인. Fable(agent a1cf422d), Codex(thread 019f744f) 이어서. 리뷰 패키지 `.superpowers/sdd/review-c0479c6b..<HEAD>.diff`.
-3. **실앱 눈검증** (필수 게이트, [[reviewers-miss-ui-discoverability]]): `npm run dev` → render 탭 → 3~5씬 프로젝트를 **preview/final × 16:9/9:16 × 자막 on/off**로 렌더. 눈으로: Ken Burns 떨림 없음 · **한글 자막 tofu 없음** · 오디오 싱크 · 취소 확인 다이얼로그 · 진행바 동작. dev는 vendor/ffmpeg/darwin-arm64 사용(배치됨).
-4. **PR/머지**: 눈검증 후. `.planning`/`.superpowers` 제외.
+- ✅ **ffmpeg static 4타깃 SHA pin 완료**: darwin-arm64(osxexperts `563111a2…`), darwin-x64(evermeet 7.1.1 `8d7917c1…`), win32-x64(BtbN `09dba4ed…`), linux-x64(johnvansickle `abda8d77…`). 전부 실다운로드+self-contained(otool/ldd/PE-import)+arch(헤더파싱)+capability 검증. vendor는 gitignore(스크립트 스테이징).
+  - ⚠️ **rolling URL**: BtbN `latest`, johnvansickle `release`, osxexperts `ffmpeg7arm.zip`은 회전 → SHA drift. **릴리스 시 고정 버전 태그로 교체**(주석에 명시).
+- ✅ **크로스 리뷰 4라운드 findings 0**(Codex 019f744f + Fable a1cf422d). R1 Critical3/Imp6 → R4 0. 1000씬 실렌더 slow smoke(AFC_SLOW_SMOKE) 100초/24fps 통과. 전체 6486 통과(+1 slow skip).
+
+### 남은 것 (TODO)
+
+1. **실앱 눈검증** (⭐ 유일한 남은 게이트, 코드 아님, [[reviewers-miss-ui-discoverability]]): `npm run dev` → 프로젝트 열고 export → **🎞️ Render 탭** → 3~5씬을 **preview/final × 16:9/9:16 × 자막 on/off**로 렌더. 눈으로: Ken Burns 떨림 없음 · **한글 자막 tofu 없음** · 오디오 싱크 · 취소 시 확인 다이얼로그 · 진행바 동작 · 완료 후 폴더 열림. dev ffmpeg는 vendor/ffmpeg/darwin-arm64(배치됨, osxexperts 7.0).
+2. **릴리스 체크리스트**(Minor): darwin-x64는 arm64 호스트에서 exec 검증 안 됨(host-native 게이트) → 배포 전 target-native CI 또는 Rosetta 검증. rolling URL 고정 버전화.
+3. **PR/머지**: 눈검증 후. `.superpowers`/vendor 제외.
 
 ## 함정/교훈
 
