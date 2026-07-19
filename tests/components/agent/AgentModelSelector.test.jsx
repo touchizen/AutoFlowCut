@@ -8,8 +8,9 @@ import AgentModelSelector, { listboxPosition } from '../../../src/components/age
 const originalResizeObserver = globalThis.ResizeObserver
 
 const models = [
-  { id: 'gpt-a', displayName: 'GPT A', hidden: false },
-  { id: 'gpt-b', displayName: 'GPT B', hidden: false },
+  { id: 'codex:gpt-a', provider: 'codex', displayName: 'GPT A', hidden: false },
+  { id: 'codex:gpt-b', provider: 'codex', displayName: 'GPT B', hidden: false },
+  { id: 'claude:sonnet', provider: 'claude', displayName: 'Claude Sonnet', hidden: false },
 ]
 
 function renderSelector(props = {}, { appContainer = false } = {}) {
@@ -25,7 +26,6 @@ function renderSelector(props = {}, { appContainer = false } = {}) {
         defaultLabel="Default"
         codexLabel="Codex"
         claudeLabel="Claude"
-        comingSoonLabel="Coming soon"
         {...props}
       />
       <button type="button">Outside</button>
@@ -52,7 +52,7 @@ describe('AgentModelSelector', () => {
     )).toEqual({ left: 972, top: 724, width: 220, placement: 'top' })
   })
 
-  it('combobox/listbox/option ARIA와 Claude disabled badge를 완전하게 노출한다', async () => {
+  it('combobox/listbox ARIA와 provider별 grouping을 노출하고 Claude 모델을 선택 가능한 option으로 준다', async () => {
     const user = userEvent.setup()
     renderSelector()
     const combo = screen.getByRole('combobox', { name: 'Agent model' })
@@ -63,28 +63,36 @@ describe('AgentModelSelector', () => {
 
     const listbox = screen.getByRole('listbox', { name: 'Agent model' })
     const defaultOption = screen.getByRole('option', { name: 'Default' })
-    const claude = screen.getByRole('option', { name: /Claude.*Coming soon/ })
+    const claude = screen.getByRole('option', { name: 'Claude Sonnet' })
     expect(combo).toHaveAttribute('aria-expanded', 'true')
     expect(listbox.id).toBe('agent-model-listbox')
     expect(defaultOption).toHaveAttribute('aria-selected', 'true')
-    expect(claude).toHaveAttribute('aria-disabled', 'true')
-    expect(claude).toHaveTextContent('Coming soon')
+    // Claude 모델은 하드코딩 disabled placeholder가 아니라 카탈로그가 준 실제 선택지다.
+    expect(claude).toHaveAttribute('aria-disabled', 'false')
     expect(combo).toHaveAttribute('aria-activedescendant', defaultOption.id)
+
+    // provider header는 각 그룹 첫 option 앞에 정확히 한 번씩 뜬다.
+    const codexHeaders = listbox.querySelectorAll('.agent-model-provider')
+    expect([...codexHeaders].map((h) => h.textContent)).toEqual(['Codex', 'Claude'])
+    // Default는 header 없이 맨 위, 그 다음 Codex 그룹, 마지막 Claude 그룹.
+    const rendered = [...listbox.children].map((child) => child.textContent)
+    expect(rendered).toEqual(['Default', 'Codex', 'GPT A', 'GPT B', 'Claude', 'Claude Sonnet'])
   })
 
-  it('Arrow/Enter로 이동·선택하고 disabled Claude를 건너뛴다', async () => {
+  it('Arrow/Enter로 Codex·Claude 그룹을 가로질러 이동·선택한다', async () => {
     const user = userEvent.setup()
-    const { onChange } = renderSelector({ value: 'gpt-b' })
+    const { onChange } = renderSelector({ value: 'codex:gpt-b' })
     const combo = screen.getByRole('combobox', { name: 'Agent model' })
 
     combo.focus()
+    // 닫힌 상태 첫 ArrowDown은 열면서 active=selected(gpt-b). 다음 ArrowDown이 Claude 그룹으로 넘어간다.
     await user.keyboard('{ArrowDown}')
     expect(combo).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: 'GPT B' }).id)
     await user.keyboard('{ArrowDown}')
-    expect(combo).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: 'Default' }).id)
-    await user.keyboard('{ArrowDown}{Enter}')
+    expect(combo).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: 'Claude Sonnet' }).id)
+    await user.keyboard('{Enter}')
 
-    expect(onChange).toHaveBeenCalledWith('gpt-a')
+    expect(onChange).toHaveBeenCalledWith('claude:sonnet')
     expect(combo).toHaveFocus()
     expect(combo).toHaveAttribute('aria-expanded', 'false')
   })
@@ -103,14 +111,14 @@ describe('AgentModelSelector', () => {
     expect(combo).not.toHaveAttribute('aria-activedescendant')
   })
 
-  it('option click은 값을 반영하고 outside pointerdown은 listbox를 닫는다', async () => {
+  it('Claude option click은 값을 반영하고 outside pointerdown은 listbox를 닫는다', async () => {
     const user = userEvent.setup()
     const { onChange } = renderSelector()
     const combo = screen.getByRole('combobox', { name: 'Agent model' })
 
     await user.click(combo)
-    await user.click(screen.getByRole('option', { name: 'GPT A' }))
-    expect(onChange).toHaveBeenCalledWith('gpt-a')
+    await user.click(screen.getByRole('option', { name: 'Claude Sonnet' }))
+    expect(onChange).toHaveBeenCalledWith('claude:sonnet')
     expect(combo).toHaveFocus()
 
     await user.click(combo)
@@ -119,23 +127,25 @@ describe('AgentModelSelector', () => {
     expect(screen.queryByRole('listbox', { name: 'Agent model' })).toBeNull()
   })
 
-  it('loading/빈 목록도 Default 선택과 disabled Claude를 제공한다', async () => {
+  it('빈 목록은 Default 하나만 주고 provider header/coming-soon placeholder를 렌더하지 않는다', async () => {
     const user = userEvent.setup()
     renderSelector({ models: [], loading: true })
     const combo = screen.getByRole('combobox', { name: 'Agent model' })
 
     expect(combo).toHaveTextContent('Default')
     await user.click(combo)
-    expect(screen.getAllByRole('option')).toHaveLength(2)
-    expect(screen.getByRole('option', { name: /Claude.*Coming soon/ })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByRole('option', { name: 'Default' })).toHaveAttribute('aria-selected', 'true')
+    const listbox = screen.getByRole('listbox', { name: 'Agent model' })
+    expect(listbox.querySelectorAll('.agent-model-provider')).toHaveLength(0)
   })
 
   it('hidden 모델은 옵션에서 제외한다', async () => {
     const user = userEvent.setup()
     renderSelector({
       models: [
-        { id: 'gpt-visible', displayName: 'GPT Visible', hidden: false },
-        { id: 'gpt-hidden', displayName: 'GPT Hidden', hidden: true },
+        { id: 'codex:visible', provider: 'codex', displayName: 'GPT Visible', hidden: false },
+        { id: 'codex:hidden', provider: 'codex', displayName: 'GPT Hidden', hidden: true },
       ],
     })
     const combo = screen.getByRole('combobox', { name: 'Agent model' })
@@ -143,6 +153,18 @@ describe('AgentModelSelector', () => {
     await user.click(combo)
     expect(screen.getByRole('option', { name: 'GPT Visible' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'GPT Hidden' })).toBeNull()
+  })
+
+  it('Default label로 D4 fallback 문자열을 그대로 렌더한다', async () => {
+    const user = userEvent.setup()
+    renderSelector({ defaultLabel: 'Default · GPT-5.5 (Claude Opus 4.8 unavailable)' })
+    const combo = screen.getByRole('combobox', { name: 'Agent model' })
+
+    // 버튼(축약)과 dropdown option 모두 ChatPanel이 계산한 D4 fallback label을 그대로 보여준다.
+    expect(combo).toHaveTextContent('Default · GPT-5.5 (Claude Opus 4.8 unavailable)')
+    await user.click(combo)
+    expect(screen.getByRole('option', { name: 'Default · GPT-5.5 (Claude Opus 4.8 unavailable)' }))
+      .toHaveAttribute('aria-selected', 'true')
   })
 
   it('listbox body portal을 offset App container 안에 두고 아래 공간이 없으면 위로 flip한다', async () => {
@@ -174,19 +196,6 @@ describe('AgentModelSelector', () => {
     expect(listbox.style.top).toBe('724px')
   })
 
-  it('portaled listbox의 마지막 option으로 disabled Claude coming soon을 보존한다', async () => {
-    const user = userEvent.setup()
-    renderSelector()
-
-    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
-    const listbox = screen.getByRole('listbox', { name: 'Agent model' })
-    const claude = screen.getByRole('option', { name: /Claude.*Coming soon/ })
-
-    expect(listbox.parentElement).toBe(document.body)
-    expect(listbox.lastElementChild).toBe(claude)
-    expect(claude).toHaveAttribute('aria-disabled', 'true')
-  })
-
   it('portaled option pointerdown은 선택으로 처리하고 sibling pointerdown만 닫는다', async () => {
     const user = userEvent.setup()
     const { onChange } = renderSelector()
@@ -202,7 +211,7 @@ describe('AgentModelSelector', () => {
     expect(screen.getByRole('listbox', { name: 'Agent model' })).toBeTruthy()
 
     await user.click(screen.getByRole('option', { name: 'GPT A' }))
-    expect(onChange).toHaveBeenCalledWith('gpt-a')
+    expect(onChange).toHaveBeenCalledWith('codex:gpt-a')
     expect(combo).toHaveFocus()
 
     await user.click(combo)

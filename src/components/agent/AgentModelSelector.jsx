@@ -1,8 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 const DEFAULT_OPTION = Object.freeze({ id: 'default', value: null, labelKey: 'default' })
-const CLAUDE_OPTION = Object.freeze({ id: 'claude-coming-soon', value: 'claude', disabled: true })
 const EDGE = 8
 const GAP = 6
 const MIN_LISTBOX_WIDTH = 220
@@ -51,7 +50,6 @@ export default function AgentModelSelector({
   defaultLabel,
   codexLabel,
   claudeLabel,
-  comingSoonLabel,
 }) {
   const listboxId = `${id}-listbox`
   const rootRef = useRef(null)
@@ -61,13 +59,34 @@ export default function AgentModelSelector({
   const [activeIndex, setActiveIndex] = useState(0)
   const [position, setPosition] = useState(null)
 
+  // provider별로 묶되(codex/claude) 첫 등장 순서를 보존한다. Default는 provider-agnostic이라 맨 위에 둔다.
+  // routing/grouping은 저장된 `provider` 필드로만 하고 id prefix를 파싱하지 않는다(§5.1).
+  const modelOptions = useMemo(() => {
+    const order = []
+    const byProvider = new Map()
+    for (const model of models) {
+      if (!model || typeof model.id !== 'string' || model.hidden === true) continue
+      const provider = model.provider === 'claude' ? 'claude' : 'codex'
+      if (!byProvider.has(provider)) {
+        byProvider.set(provider, [])
+        order.push(provider)
+      }
+      byProvider.get(provider).push({
+        id: model.id,
+        value: model.id,
+        label: model.displayName || model.id,
+        provider,
+      })
+    }
+    return order.flatMap((provider) => byProvider.get(provider))
+  }, [models])
+
   const options = useMemo(() => [
     { ...DEFAULT_OPTION, label: defaultLabel },
-    ...models
-      .filter((model) => model && typeof model.id === 'string' && model.hidden !== true)
-      .map((model) => ({ id: model.id, value: model.id, label: model.displayName || model.id })),
-    { ...CLAUDE_OPTION, label: claudeLabel },
-  ], [claudeLabel, defaultLabel, models])
+    ...modelOptions,
+  ], [defaultLabel, modelOptions])
+
+  const providerLabel = (provider) => (provider === 'claude' ? claudeLabel : codexLabel)
 
   const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value))
   const selected = options[selectedIndex]
@@ -120,7 +139,7 @@ export default function AgentModelSelector({
       window.removeEventListener('scroll', update, true)
       observer?.disconnect()
     }
-  }, [codexLabel, comingSoonLabel, open, options])
+  }, [open, options])
 
   const closeAndFocus = () => {
     setOpen(false)
@@ -203,32 +222,30 @@ export default function AgentModelSelector({
             visibility: position ? 'visible' : 'hidden',
           }}
         >
-          <div className="agent-model-provider" role="presentation">{codexLabel}</div>
-          {options.slice(0, -1).map((option, index) => (
-            <div
-              key={option.id}
-              id={optionId(listboxId, option)}
-              className={`agent-model-option ${activeIndex === index ? 'is-active' : ''}`}
-              role="option"
-              aria-selected={option.value === value}
-              aria-disabled="false"
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => selectIndex(index)}
-            >
-              {option.label}
-            </div>
-          ))}
-          <div className="agent-model-provider" role="presentation">{claudeLabel}</div>
-          <div
-            id={optionId(listboxId, CLAUDE_OPTION)}
-            className="agent-model-option is-disabled"
-            role="option"
-            aria-selected="false"
-            aria-disabled="true"
-          >
-            <span>{claudeLabel}</span>
-            <span className="agent-model-badge">{comingSoonLabel}</span>
-          </div>
+          {options.map((option, index) => {
+            const previous = options[index - 1]
+            const showHeader = option.provider && option.provider !== previous?.provider
+            return (
+              <Fragment key={option.id}>
+                {showHeader && (
+                  <div className="agent-model-provider" role="presentation">
+                    {providerLabel(option.provider)}
+                  </div>
+                )}
+                <div
+                  id={optionId(listboxId, option)}
+                  className={`agent-model-option ${activeIndex === index ? 'is-active' : ''}`}
+                  role="option"
+                  aria-selected={option.value === value}
+                  aria-disabled="false"
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => selectIndex(index)}
+                >
+                  {option.label}
+                </div>
+              </Fragment>
+            )
+          })}
         </div>,
         document.body,
       )}
