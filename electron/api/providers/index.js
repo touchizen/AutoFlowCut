@@ -11,6 +11,7 @@ import { falImageProvider } from './image/fal.js'
 import { falVideoProvider } from './video/fal.js'
 import { grokVideoProvider } from './video/grok.js'
 import { wavespeedVideoProvider } from './video/wavespeed.js'
+import { higgsfieldVideoProvider } from './video/higgsfield.js'
 import { googleVideoProvider } from './video/google.js'
 
 const imageRegistry = Object.assign(Object.create(null), {
@@ -23,6 +24,7 @@ const videoRegistry = Object.assign(Object.create(null), {
   grok: grokVideoProvider,
   fal: falVideoProvider,
   wavespeed: wavespeedVideoProvider,
+  higgsfield: higgsfieldVideoProvider,
 })
 
 /** @returns {object|null} 이미지 provider 객체 또는 미등록 시 null */

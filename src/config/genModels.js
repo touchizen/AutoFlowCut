@@ -43,6 +43,8 @@ export const VIDEO_MODELS = [
   { id: 'fal-ai/kling-video/v2.1/standard/image-to-video', label: 'Kling 2.1 Standard (fal)', cost: '?', unit: 'sec', provider: 'fal', provisional: true, descKey: 'settings.modelVidFalKling', url: 'https://fal.ai/models/fal-ai/kling-video/v2.1/standard/image-to-video' },
   // PROVISIONAL — verify model id, price, input mapping, paths, and result CDN/auth with an M5 real-key smoke.
   { id: 'wavespeed-ai/wan-2.1/t2v-480p', label: 'WaveSpeed WAN 2.1 T2V 480p', cost: '?', unit: 'sec', provider: 'wavespeed', provisional: true, descKey: 'settings.modelVidWaveSpeedWan', url: 'https://wavespeed.ai/models/wavespeed-ai/wan-2.1/t2v-480p' },
+  // PROVISIONAL — verify model id, price, payload, paths, statuses, and result CDN/auth with an M6 real-key smoke.
+  { id: 'higgsfield-ai/dop-turbo', label: 'Higgsfield DoP Turbo', cost: '?', unit: 'sec', provider: 'higgsfield', provisional: true, descKey: 'settings.modelVidHiggsfieldDopTurbo', url: 'https://higgsfield.ai/' },
 ]
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2

@@ -106,6 +106,20 @@ describe('genModels — provider-aware catalog (§5.12)', () => {
     })
     expect(modelLabel(video.id)).toBe('WaveSpeed WAN 2.1 T2V 480p')
   })
+
+  it('Higgsfield video model is a provisional M6 catalog entry', () => {
+    const video = VIDEO_MODELS.find((model) => model.provider === 'higgsfield')
+    expect(video).toMatchObject({
+      id: 'higgsfield-ai/dop-turbo',
+      label: 'Higgsfield DoP Turbo',
+      cost: '?',
+      unit: 'sec',
+      provider: 'higgsfield',
+      provisional: true,
+      descKey: 'settings.modelVidHiggsfieldDopTurbo',
+    })
+    expect(modelLabel(video.id)).toBe('Higgsfield DoP Turbo')
+  })
 })
 
 describe('genModels — videoModelsForProvider + supported feature flag', () => {
@@ -151,6 +165,14 @@ describe('genModels — videoModelsForProvider + supported feature flag', () => 
     ])
     expect(defaultVideoModelForProvider('wavespeed')).toBe('wavespeed-ai/wan-2.1/t2v-480p')
     expect(listSupportedVideoProviders()).not.toContain('wavespeed')
+  })
+
+  it('higgsfield catalog resolves while all-provisional feature flag keeps it hidden', () => {
+    expect(videoModelsForProvider('higgsfield', []).map((model) => model.id)).toEqual([
+      'higgsfield-ai/dop-turbo',
+    ])
+    expect(defaultVideoModelForProvider('higgsfield')).toBe('higgsfield-ai/dop-turbo')
+    expect(listSupportedVideoProviders()).not.toContain('higgsfield')
   })
 })
 

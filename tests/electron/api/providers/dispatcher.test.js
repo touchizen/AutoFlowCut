@@ -5,6 +5,7 @@ import { falVideoProvider } from '../../../../electron/api/providers/video/fal.j
 import { submitVideo as submitGoogleVideo } from '../../../../electron/api/providers/video/google.js'
 import { wavespeedVideoProvider } from '../../../../electron/api/providers/video/wavespeed.js'
 import { WAVESPEED_CDN_ORIGIN } from '../../../../electron/api/providers/wavespeedClient.js'
+import { HIGGSFIELD_CDN_ORIGIN } from '../../../../electron/api/providers/higgsfieldClient.js'
 
 const makeGenaiKeyStore = (overrides = {}) => ({
   getKey: vi.fn(() => 'STORED_GOOGLE_KEY'),
@@ -113,6 +114,38 @@ describe('createDispatcher — provider routing', () => {
       engineDeps,
     )
     expect(multiKeyStore.getKey).toHaveBeenCalledWith('wavespeed')
+  })
+
+  it('higgsfield string handle round-trips and submit/poll route with the higgsfield-slot pair', async () => {
+    const rawId = 'hf-job-dispatch'
+    const submitVideo = vi.fn().mockResolvedValue({ success: true, rawId })
+    const checkVideo = vi.fn().mockResolvedValue({ success: true, done: false })
+    const higgsfield = { id: 'higgsfield', kind: 'video', submitVideo, checkVideo }
+    const engineDeps = { marker: 'higgsfield-deps' }
+    const multiKeyStore = makeMultiKeyStore({ higgsfield: 'HF_KEY:HF_SECRET' })
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore,
+      engineDeps,
+      registry: makeRegistry({ video: { higgsfield } }),
+    })
+
+    const submitted = await dispatcher.submitVideo({ provider: 'higgsfield', prompt: 'animate' })
+    expect(decodeHandle(submitted.generationId)).toEqual({ provider: 'higgsfield', rawId })
+    expect(submitVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'HF_KEY:HF_SECRET', prompt: 'animate' }),
+      engineDeps,
+    )
+
+    await expect(dispatcher.checkVideoStatus({ generationIds: [submitted.generationId] })).resolves.toEqual({
+      success: true,
+      statuses: [{ generationId: submitted.generationId, status: 'pending' }],
+    })
+    expect(checkVideo).toHaveBeenCalledWith(
+      { apiKey: 'HF_KEY:HF_SECRET', operationName: rawId },
+      engineDeps,
+    )
+    expect(multiKeyStore.getKey).toHaveBeenCalledWith('higgsfield')
   })
 
   it('non-google submitVideo raw id를 opaque handle로 감추고 operationName을 생략한다', async () => {
@@ -374,6 +407,43 @@ describe('createDispatcher — downloadVideo routing', () => {
     expect(res.success).toBe(false)
     expect(res.errorKind).toBe('invalid-config')
     expect(dl).not.toHaveBeenCalled() // dispatcher 가 adapter 도달 전에 차단
+  })
+
+  it('higgsfield dispatcher gate를 독립 핀: allow/deny하며 bad origin에 pair를 넘기지 않는다', async () => {
+    const dl = vi.fn().mockResolvedValue({ success: true, base64: 'HF64', mimeType: 'video/mp4' })
+    const higgsfield = {
+      id: 'higgsfield',
+      kind: 'video',
+      fetchVideoBase64: dl,
+      // Adapter 자체 gate가 없는 fake라 dispatcher gate만 검증한다.
+      downloadPolicy: {
+        origins: [{ origin: HIGGSFIELD_CDN_ORIGIN, authMode: 'provider-key' }],
+        buildAuthHeaders: (pair) => ({ Authorization: `Basic ${Buffer.from(pair).toString('base64')}` }),
+      },
+    }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ higgsfield: 'HF_KEY:HF_SECRET' }),
+      registry: makeRegistry({ video: { higgsfield } }),
+    })
+    const handle = encodeHandle('higgsfield', 'hf-download-job')
+    const allowedUri = `${HIGGSFIELD_CDN_ORIGIN}/results/video.mp4`
+
+    await expect(dispatcher.downloadVideo({ videoUri: allowedUri, generationId: handle })).resolves.toMatchObject({
+      success: true,
+      base64: 'HF64',
+    })
+    expect(dl).toHaveBeenCalledWith(
+      { apiKey: 'HF_KEY:HF_SECRET', videoUri: allowedUri },
+      expect.anything(),
+    )
+
+    dl.mockClear()
+    await expect(dispatcher.downloadVideo({
+      videoUri: 'https://attacker.example/steal',
+      generationId: handle,
+    })).resolves.toMatchObject({ success: false, errorKind: 'invalid-config' })
+    expect(dl).not.toHaveBeenCalled()
   })
 
   it('wavespeed downloadPolicy: allowlist만 다운로드하고 bad origin에는 key를 붙이지 않는다', async () => {

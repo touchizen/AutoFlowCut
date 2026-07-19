@@ -15,6 +15,8 @@ const XAI_KEY_URL = 'https://console.x.ai/'
 const FAL_KEY_URL = 'https://fal.ai/dashboard/keys'
 // PROVISIONAL — re-verify the exact WaveSpeed key-management URL with the M5 real-key smoke.
 const WAVESPEED_KEY_URL = 'https://wavespeed.ai/dashboard/api-keys'
+// PROVISIONAL — re-verify the exact Higgsfield credential-management URL with the M6 real-key smoke.
+const HIGGSFIELD_KEY_URL = 'https://platform.higgsfield.ai/'
 
 const linkStyle = {
   color: '#4a9eff',
@@ -43,6 +45,11 @@ export default function ApiKeyTab({ t }) {
   const [wavespeedKeyInput, setWavespeedKeyInput] = useState('')
   const [wavespeedBusy, setWavespeedBusy] = useState(false)
   const hasWavespeedKey = !!byProvider?.wavespeed
+  // Higgsfield Basic auth는 key+secret 두 값을 하나의 higgsfield 슬롯에 `key:secret`로 저장한다.
+  const [higgsfieldKeyInput, setHiggsfieldKeyInput] = useState('')
+  const [higgsfieldSecretInput, setHiggsfieldSecretInput] = useState('')
+  const [higgsfieldBusy, setHiggsfieldBusy] = useState(false)
+  const hasHiggsfieldKey = !!byProvider?.higgsfield
 
   const openLink = (url) => window.electronAPI?.openExternal?.(url)
 
@@ -194,6 +201,39 @@ export default function ApiKeyTab({ t }) {
     setWavespeedBusy(true)
     await clearKey('wavespeed')
     setWavespeedBusy(false)
+    toast.success(t('settings.apiKeyRemoved'))
+  }
+
+  const handleHiggsfieldVerifySave = async () => {
+    const key = higgsfieldKeyInput.trim()
+    const secret = higgsfieldSecretInput.trim()
+    if (!key || !secret) {
+      toast.error(t('settings.apiKeyEmpty'))
+      return
+    }
+    const candidate = `${key}:${secret}`
+    setHiggsfieldBusy(true)
+    const v = await validateKey(candidate, 'higgsfield')
+    if (!v?.valid) {
+      setHiggsfieldBusy(false)
+      toast.error(t('settings.apiKeyInvalid', { error: v?.error || '' }))
+      return
+    }
+    const res = await saveKey(candidate, 'higgsfield')
+    setHiggsfieldBusy(false)
+    if (res?.success) {
+      setHiggsfieldKeyInput('')
+      setHiggsfieldSecretInput('')
+      toast.success(t('settings.apiKeySaved'))
+    } else {
+      toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
+    }
+  }
+
+  const handleHiggsfieldRemove = async () => {
+    setHiggsfieldBusy(true)
+    await clearKey('higgsfield')
+    setHiggsfieldBusy(false)
     toast.success(t('settings.apiKeyRemoved'))
   }
 
@@ -378,6 +418,51 @@ export default function ApiKeyTab({ t }) {
           </div>
           <span className="setting-sublabel">{t('settings.wavespeedKeyNote')}</span>
           <a style={{ ...linkStyle, marginTop: '6px' }} onClick={() => openLink(WAVESPEED_KEY_URL)}>{t('settings.wavespeedKeyGetKey')}</a>
+        </div>
+      </div>
+
+      {/* Higgsfield Basic-pair — video registry만 등록, real-key smoke 전 선택 UI는 숨김 */}
+      <div className="settings-section">
+        <h3>{t('settings.higgsfieldKeyTitle')}</h3>
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.apiKeyStatusLabel')}</label>
+          <span style={{ color: hasHiggsfieldKey ? '#10b981' : '#888' }}>
+            {loading ? '…' : hasHiggsfieldKey ? t('settings.higgsfieldKeySet') : t('settings.higgsfieldKeyNotSet')}
+          </span>
+        </div>
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.higgsfieldKeyInputLabel')}</label>
+          <input
+            type="password"
+            value={higgsfieldKeyInput}
+            onChange={(e) => setHiggsfieldKeyInput(e.target.value)}
+            placeholder={t('settings.higgsfieldKeyPlaceholder')}
+            disabled={higgsfieldBusy || !encryptionAvailable}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <label className="setting-label" style={{ marginTop: '8px' }}>{t('settings.higgsfieldSecretInputLabel')}</label>
+          <input
+            type="password"
+            value={higgsfieldSecretInput}
+            onChange={(e) => setHiggsfieldSecretInput(e.target.value)}
+            placeholder={t('settings.higgsfieldSecretPlaceholder')}
+            disabled={higgsfieldBusy || !encryptionAvailable}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button className="btn-primary" onClick={handleHiggsfieldVerifySave} disabled={higgsfieldBusy || !encryptionAvailable}>
+              {higgsfieldBusy ? t('settings.apiKeyVerifying') : t('settings.higgsfieldKeyVerifySave')}
+            </button>
+            {hasHiggsfieldKey && (
+              <button className="btn-secondary" onClick={handleHiggsfieldRemove} disabled={higgsfieldBusy}>
+                {t('settings.higgsfieldKeyRemove')}
+              </button>
+            )}
+          </div>
+          <span className="setting-sublabel">{t('settings.higgsfieldKeyNote')}</span>
+          <a style={{ ...linkStyle, marginTop: '6px' }} onClick={() => openLink(HIGGSFIELD_KEY_URL)}>{t('settings.higgsfieldKeyGetKey')}</a>
         </div>
       </div>
 

@@ -234,4 +234,66 @@ describe('ApiKeyTab', () => {
       expect(en.settings[key]).not.toBe(ko.settings[key])
     }
   })
+
+  it('Higgsfield key+secret 두 입력을 key:secret pair로 결합해 provider:higgsfield로 검증·저장한다', async () => {
+    render(<ApiKeyTab t={t} />)
+    await waitFor(() => screen.getByText('settings.higgsfieldKeyTitle'))
+
+    const keyInput = screen.getByPlaceholderText('settings.higgsfieldKeyPlaceholder')
+    const secretInput = screen.getByPlaceholderText('settings.higgsfieldSecretPlaceholder')
+    fireEvent.change(keyInput, { target: { value: '  hf-client-key  ' } })
+    fireEvent.change(secretInput, { target: { value: '  hf-client-secret  ' } })
+    fireEvent.click(screen.getByText('settings.higgsfieldKeyVerifySave'))
+
+    const pair = 'hf-client-key:hf-client-secret'
+    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({
+      apiKey: pair,
+      provider: 'higgsfield',
+    }))
+    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({
+      apiKey: pair,
+      provider: 'higgsfield',
+    })
+    expect(keyInput.value).toBe('')
+    expect(secretInput.value).toBe('')
+  })
+
+  it('Higgsfield pair 있음 → byProvider.higgsfield 상태 표시 + 삭제 위임', async () => {
+    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({
+      hasKey: false,
+      encryptionAvailable: true,
+      byProvider: { google: false, openai: false, grok: false, fal: false, wavespeed: false, higgsfield: true },
+    })
+    render(<ApiKeyTab t={t} />)
+
+    await waitFor(() => expect(screen.getByText('settings.higgsfieldKeySet')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('settings.higgsfieldKeyRemove'))
+
+    await waitFor(() => expect(window.electronAPI.genaiClearKey).toHaveBeenCalledWith({ provider: 'higgsfield' }))
+  })
+
+  it('Higgsfield pair section/model labels use distinct ko/en locale keys', () => {
+    const keys = [
+      'higgsfieldKeyTitle',
+      'higgsfieldKeySet',
+      'higgsfieldKeyNotSet',
+      'higgsfieldKeyInputLabel',
+      'higgsfieldKeyPlaceholder',
+      'higgsfieldSecretInputLabel',
+      'higgsfieldSecretPlaceholder',
+      'higgsfieldKeyVerifySave',
+      'higgsfieldKeyRemove',
+      'higgsfieldKeyNote',
+      'higgsfieldKeyGetKey',
+      'videoProvider_higgsfield',
+      'modelVidHiggsfieldDopTurbo',
+    ]
+    for (const key of keys) {
+      expect(en.settings[key]).toEqual(expect.any(String))
+      expect(ko.settings[key]).toEqual(expect.any(String))
+      expect(en.settings[key].length).toBeGreaterThan(0)
+      expect(ko.settings[key].length).toBeGreaterThan(0)
+      expect(en.settings[key]).not.toBe(ko.settings[key])
+    }
+  })
 })

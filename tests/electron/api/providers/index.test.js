@@ -10,6 +10,7 @@ import { falImageProvider } from '../../../../electron/api/providers/image/fal.j
 import { falVideoProvider } from '../../../../electron/api/providers/video/fal.js'
 import { grokVideoProvider } from '../../../../electron/api/providers/video/grok.js'
 import { wavespeedVideoProvider } from '../../../../electron/api/providers/video/wavespeed.js'
+import { higgsfieldVideoProvider } from '../../../../electron/api/providers/video/higgsfield.js'
 import { googleVideoProvider } from '../../../../electron/api/providers/video/google.js'
 
 describe('provider registry (§5.10)', () => {
@@ -68,6 +69,13 @@ describe('provider registry (§5.10)', () => {
     expect(typeof getVideoProvider('wavespeed').checkVideo).toBe('function')
   })
 
+  it('higgsfield video provider is registered while its catalog remains provisional', () => {
+    expect(getVideoProvider('higgsfield')).toBe(higgsfieldVideoProvider)
+    expect(getVideoProvider('higgsfield')).toMatchObject({ id: 'higgsfield', kind: 'video' })
+    expect(typeof getVideoProvider('higgsfield').submitVideo).toBe('function')
+    expect(typeof getVideoProvider('higgsfield').checkVideo).toBe('function')
+  })
+
   it('미등록 id → null (조용한 google 폴백 금지)', () => {
     expect(getVideoProvider('openai')).toBe(null) // openai 는 image 만, video 미등록
     expect(getImageProvider('nope')).toBe(null)
@@ -91,7 +99,7 @@ describe('provider registry (§5.10)', () => {
     const list = listProviders()
     expect(list).toEqual({
       image: [{ id: 'google' }, { id: 'openai' }, { id: 'fal' }],
-      video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }, { id: 'wavespeed' }],
+      video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }, { id: 'wavespeed' }, { id: 'higgsfield' }],
     })
   })
 })
