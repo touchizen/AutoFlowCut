@@ -721,6 +721,7 @@ export function registerCharacterIPC(ipcMain, deps) {
 
   ipcMain.handle('flow:generate-scene', async (_e, opts = {}) => {
     const { prompt, segments } = opts
+    const gapReferences = Array.isArray(opts.gapReferences) ? opts.gapReferences : []
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
@@ -736,6 +737,9 @@ export function registerCharacterIPC(ipcMain, deps) {
     )
     const _batchCount = opts.batchCount
     const _agentOn = !!(getFlowAgentOn && getFlowAgentOn())
+    if (_agentOn && gapReferences.length > 0) {
+      console.warn('[Flow Scene] (Agent ON) gap reference injection is unavailable for streamChat:', gapReferences.length)
+    }
     // #R35: 비동기 제출 여부 — Agent OFF 에서만 async(컴포저 intercept). Agent ON 은 DOM 수집이라 동기 유지.
     const _asyncMode = opts.asyncMode === true && !_agentOn && !!pendingGenerations
     const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
@@ -929,7 +933,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       const generationId = `scene-async-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       if (setFlowPageInject) {
         // seed: _seedValue (사용자 seed 그대로), genTag: generationId (correlation 전용, seed 무관).
-        const _inj = await setFlowPageInject({ seed: _seedValue, aspectRatio: _aspectRatioEnum, references: null, i2v: null, genTag: generationId })
+        const _inj = await setFlowPageInject({ seed: _seedValue, aspectRatio: _aspectRatioEnum, references: gapReferences.length > 0 ? gapReferences : null, i2v: null, genTag: generationId })
         if (_inj && _inj.success === false) {
           // #R35-fix(Codex R7[3]): arm 실패여도 페이지엔 payload 가 이미 써졌을 수 있다 → stale
           //   seed/aspect/genTag 가 다음 요청을 오염시키지 않게 best-effort clear.
@@ -948,7 +952,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         token: null,               // collect 시 렌더러가 token 을 넘김(fifeUrl 은 sessionFetch 라 불필요)
         allowDomFallback: false,   // intercept(fifeUrl)로 받으므로 DOM 잔상 재배정 방지
         promptKey,                 // 보조 상관키(텍스트 세그먼트) — 주 매칭은 genTag(=generationId)
-        refMediaIds: [],           // 멘션은 entity 참조(mediaId 주입 아님)
+        refMediaIds: gapReferences.map(ref => ref?.mediaId).filter(Boolean).sort(), // sorted → parseSignature(정렬 추출)와 signature 일치
         reqSeed: _seedValue,       // 실제 사용자 seed 기록(override 안 함)
         reqAspectRatio: _aspectRatioEnum,
       })
@@ -1005,7 +1009,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     //   batchGenerateImages 요청 body 의 imageAspectRatio 를 이 값으로 덮어써 16:9/9:16 이 반영된다.
     //   미주입 시 Flow 기본값(관측상 9:16)으로 나간다. 캡처 후 finally 에서 반드시 clear.
     if (setFlowPageInject) {
-      const _inj = await setFlowPageInject({ seed: _seedValue, aspectRatio: _aspectRatioEnum, references: null, i2v: null })
+      const _inj = await setFlowPageInject({ seed: _seedValue, aspectRatio: _aspectRatioEnum, references: gapReferences.length > 0 ? gapReferences : null, i2v: null })
       if (_inj && _inj.success === false) {
         return { success: false, error: `Flow inject arming failed: ${_inj.error || 'unknown'}`, retry: true }
       }

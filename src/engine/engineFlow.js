@@ -110,6 +110,29 @@ export function planMentionRouting(prompt, referenceImages, references) {
   return { kind: 'image', prompt, referenceImages: referenceImages || [] }
 }
 
+/** Flow scene 칩으로 표현되지 않은 mediaId 레퍼런스만 주입 대상으로 남긴다. */
+export function computeSceneGapReferences(referenceImages, segments) {
+  const mentionNames = new Set(
+    (segments || [])
+      .filter(segment => segment?.type === 'mention' && segment.name)
+      .map(segment => String(segment.name).toLowerCase())
+  )
+  const refs = referenceImages || []
+  const isChip = (ref) => ref.name && mentionNames.has(String(ref.name).toLowerCase())
+  // 선-패스: chip 으로 이미 컨디셔닝되는 mediaId 를 먼저 모은다 — referenceImages 순서와 무관하게
+  //   같은-mediaId 별칭(다른 이름의 중복 카드)이 imageInput 으로 재주입돼 이중 컨디셔닝되는 것을 막는다.
+  const seenMediaIds = new Set(
+    refs.filter(ref => flowImageInjectable(ref) && isChip(ref)).map(ref => ref.mediaId)
+  )
+  return refs.filter(ref => {
+    if (!flowImageInjectable(ref)) return false
+    if (isChip(ref)) return false
+    if (seenMediaIds.has(ref.mediaId)) return false
+    seenMediaIds.add(ref.mediaId)
+    return true
+  })
+}
+
 /**
  * #R3-1: 바운드 flowProjectId(useProjectData 설정)와 추출된 projectId(live URL) 중
  * 더 신뢰할 수 있는 것을 선택한다. bound 우선, 없으면 extracted 폴백.
@@ -321,6 +344,7 @@ export function useFlowEngine(opts = {}) {
       if (routing.kind === 'error') return { success: false, error: routing.error }
 
       if (routing.kind === 'scene') {
+        const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
         // #R7-7(R6-2 sibling): pass opts (aspectRatio/seed/model/batchCount/references) through.
         const res = await api().flowGenerateScene({
           prompt,
@@ -331,6 +355,7 @@ export function useFlowEngine(opts = {}) {
           model: callOpts.model,
           batchCount: callOpts.batchCount,
           references: callOpts.references,
+          gapReferences,
         })
         // map flow:generate-scene return to generateImage contract: { success, images }
         // #R22-2: base64 이미지가 없으면 fail-closed — base64:null 복구 엔트리는 downstream finalize 가
@@ -397,6 +422,7 @@ export function useFlowEngine(opts = {}) {
       if (routing.kind === 'error') return { success: false, error: routing.error }
 
       if (routing.kind === 'scene') {
+        const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
         // #R6-2: pass opts (aspectRatio, seed, model, batchCount) into flowGenerateScene
         // #R35: 멘션 씬도 비동기 제출(asyncMode). Agent OFF 는 컴포저 블록 없이 클릭 후 즉시 반환 →
         //   응답은 배경(pendingGenerations)에서 수집 → 씬들이 병렬로 생성된다. Agent ON 은 컴포저
@@ -410,6 +436,7 @@ export function useFlowEngine(opts = {}) {
           model: callOpts.model,
           batchCount: callOpts.batchCount,
           references: callOpts.references,
+          gapReferences,
           asyncMode: true,
         })
 

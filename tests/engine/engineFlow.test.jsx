@@ -60,7 +60,7 @@ beforeEach(() => {
 })
 
 // Import after mocks are set up in beforeEach
-import { useFlowEngine, resolveEffectiveProjectId, isFlowAuthError, markFlowAuthFailure, planMentionRouting, planUnresolvedMentionFallback, planCharacterGeneration } from '../../src/engine/engineFlow'
+import { useFlowEngine, resolveEffectiveProjectId, isFlowAuthError, markFlowAuthFailure, planMentionRouting, planUnresolvedMentionFallback, planCharacterGeneration, computeSceneGapReferences } from '../../src/engine/engineFlow'
 
 // #R8-11: Flow auth-error sentinel — pure unit tests
 describe('isFlowAuthError / markFlowAuthFailure (#R8-11)', () => {
@@ -567,6 +567,31 @@ describe('useFlowEngine — submitGeneration: mention routing (C1)', () => {
     expect(call.segments.some(s => s.type === 'mention' && s.name === 'hero')).toBe(true)
   })
 
+  it('passes only tag-matched scene gap refs alongside resolved mention chips', async () => {
+    const syncedMention = { ...syncedRef, name: '사내', entityId: 'ent-office', mediaId: 'media-office' }
+    const tagOnly = {
+      id: 2,
+      name: '도둑 우두머리',
+      type: 'character',
+      category: 'character',
+      entityId: 'ent-bandit',
+      flowNameSyncStatus: 'synced',
+      mediaId: 'media-bandit',
+    }
+    mockFlowGenerateScene.mockResolvedValue({ success: true, generationId: 'scene-gap-async' })
+
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => {
+      await result.current.submitGeneration('@사내가 도둑 우두머리를 바라본다', [syncedMention, tagOnly], {
+        references: [syncedMention, tagOnly],
+      })
+    })
+
+    const call = mockFlowGenerateScene.mock.calls[0][0]
+    expect(call.segments.some(s => s.type === 'mention' && s.name === '사내')).toBe(true)
+    expect(call.gapReferences.map(r => r.mediaId)).toEqual(['media-bandit'])
+  })
+
   it('#R35: passes asyncMode:true to flowGenerateScene', async () => {
     mockFlowGenerateScene.mockResolvedValue({ success: true, generationId: 'scene-async-1' })
     const { result } = renderHook(() => useFlowEngine())
@@ -676,6 +701,29 @@ describe('useFlowEngine — generateImage: mention routing (C1)', () => {
     expect(res.success).toBe(true)
     expect(res.images).toHaveLength(1)
     expect(res.images[0].mediaId).toBe('scene-m2')
+  })
+
+  it('passes only tag-matched scene gap refs on the synchronous scene route', async () => {
+    const syncedMention = { ...syncedRef, name: '사내', entityId: 'ent-office', mediaId: 'media-office' }
+    const tagOnly = {
+      id: 2,
+      name: '도둑 우두머리',
+      type: 'character',
+      category: 'character',
+      entityId: 'ent-bandit',
+      flowNameSyncStatus: 'synced',
+      mediaId: 'media-bandit',
+    }
+    mockFlowGenerateScene.mockResolvedValue({ success: true, images: [{ base64: 'data:img', mediaId: 'scene-gap-sync' }] })
+
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => {
+      await result.current.generateImage('@사내가 도둑 우두머리를 바라본다', [syncedMention, tagOnly], {
+        references: [syncedMention, tagOnly],
+      })
+    })
+
+    expect(mockFlowGenerateScene.mock.calls[0][0].gapReferences.map(r => r.mediaId)).toEqual(['media-bandit'])
   })
 
   it('falls back to flowGenerateImage (asyncMode:false) when no mention', async () => {
@@ -1255,6 +1303,50 @@ describe('#R33: planMentionRouting (pure)', () => {
     const r = planMentionRouting('@hero and @king', [], [synced, unsyncedMedia])
     expect(r.kind).toBe('error')
     expect(r.error).toContain('king')
+  })
+})
+
+describe('computeSceneGapReferences (pure)', () => {
+  it('excludes chip mentions, drops refs without mediaId, and dedupes by mediaId', () => {
+    const mentionRef = { name: 'Office Man', mediaId: 'media-office' }
+    const gapRef = { name: '도둑 우두머리', mediaId: 'media-bandit' }
+    const duplicateMedia = { name: '초저녁 도둑', mediaId: 'media-bandit' }
+    const noMedia = { name: '배경 인물', mediaId: null }
+
+    const result = computeSceneGapReferences(
+      [mentionRef, gapRef, duplicateMedia, noMedia],
+      [{ type: 'mention', name: 'office man' }, { type: 'text', text: ' 장면' }],
+    )
+
+    expect(result).toEqual([gapRef])
+  })
+
+  it('does not inject a same-mediaId alias of a chip-mentioned ref (no double-conditioning)', () => {
+    // 사내(chip) 와 mediaId 가 같은 중복 카드(다른 이름)는 이미 chip 으로 컨디셔닝된 이미지라 imageInput 재주입 금지.
+    const chipRef = { name: '사내', mediaId: 'media-office' }
+    const sameMediaAlias = { name: '사내_복제', mediaId: 'media-office' }
+    const realGap = { name: '도둑 우두머리', mediaId: 'media-bandit' }
+
+    const result = computeSceneGapReferences(
+      [chipRef, sameMediaAlias, realGap],
+      [{ type: 'mention', name: '사내' }],
+    )
+
+    expect(result.map(r => r.mediaId)).toEqual(['media-bandit'])
+  })
+
+  it('blocks a same-mediaId alias even when it precedes the chip ref (order-independent)', () => {
+    // referenceImages 순서는 caller/사용자 정의 → alias 가 chip ref 보다 앞서도 이중 컨디셔닝 금지.
+    const sameMediaAlias = { name: '사내_복제', mediaId: 'media-office' }
+    const chipRef = { name: '사내', mediaId: 'media-office' }
+    const realGap = { name: '도둑 우두머리', mediaId: 'media-bandit' }
+
+    const result = computeSceneGapReferences(
+      [sameMediaAlias, chipRef, realGap],
+      [{ type: 'mention', name: '사내' }],
+    )
+
+    expect(result.map(r => r.mediaId)).toEqual(['media-bandit'])
   })
 })
 
