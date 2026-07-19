@@ -1818,6 +1818,19 @@ describe('AgentSessionManager D10 app ledger', () => {
     expect(h.orchestrators[0].close).toHaveBeenCalledOnce()
   })
 
+  it('usage 통지(onUsage)가 throw해도 send admission이 reservation을 wedge하지 않는다', async () => {
+    // onUsage는 admitTurn의 turns++ 뒤에 불린다(onError와 같은 sync-admission 경로). throw가 flow를
+    // 끊으면 pendingStart reservation이 갇혀 다음 send가 busy가 된다. 가드로 send가 정상 완료돼야 한다.
+    const onUsage = vi.fn(() => { throw new Error('webContents.send boom') })
+    const h = lifecycleHarness({ onUsage })
+    await h.manager.open()
+
+    const first = await h.manager.send('첫 turn', DEFAULT_MODEL_ID)
+    expect(first).toMatchObject({ turn: { id: expect.any(String) } })
+    expect(onUsage).toHaveBeenCalled()
+    await h.manager.close()
+  })
+
   it('wall-clock 한도 거부는 Codex child를 종료하고 실제 private RPC port를 닫는다', async () => {
     let time = 5_000
     const h = realResourceHarness({ now: () => time })

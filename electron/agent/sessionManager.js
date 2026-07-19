@@ -277,7 +277,8 @@ export function createAgentSessionManager({
         }
       }
     }
-    onEvent?.(event)
+    // 통지 throw가 event 처리를 끊으면 안 된다(다른 forward 콜백과 같은 resilience).
+    try { onEvent?.(event) } catch { /* notification failure must not break the session */ }
   }
 
   function status() {
@@ -332,7 +333,7 @@ export function createAgentSessionManager({
     // 합친 공급자 공통 단위이므로 send admission에서 정확히 1회 센다. 완료/성공 뒤에 세면 실패·abort
     // turn이 공짜가 되어 무한 재시도가 가능해진다. 64번째는 여기서 64가 되고 65번째가 거부된다.
     session.turns += 1
-    onUsage?.(usage(session))
+    try { onUsage?.(usage(session)) } catch { /* notification failure must not break admission */ }
     return null
   }
 
@@ -345,7 +346,7 @@ export function createAgentSessionManager({
 
     // Tool Core call 진입은 실제 invoke와 1:1이다. await 전에 동기로 올려 병렬 호출도 각각 1회다.
     session.toolCalls += 1
-    onUsage?.(usage(session))
+    try { onUsage?.(usage(session)) } catch { /* notification failure must not break admission */ }
     return null
   }
 
@@ -422,7 +423,7 @@ export function createAgentSessionManager({
       askUser: (params, ctx) => approvalPrompt.ask(params, ctx),
     })
     const lifecycleCallbacks = {
-      onDelta: (delta) => onDelta?.(delta),
+      onDelta: (delta) => { try { onDelta?.(delta) } catch { /* notification failure must not break streaming */ } },
       onEvent: (event) => observeEvent(session, event),
       onExit: (details) => {
         // child가 스스로 죽어도 borrowed RPC와 세션 grant/prompt는 manager가 끝까지 거둔다.
