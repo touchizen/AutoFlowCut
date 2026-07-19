@@ -626,6 +626,22 @@ describe('Claude §5.3 mapper — retraction, terminal, orphan gate', () => {
     expect(h.query.close).toHaveBeenCalledOnce()
   })
 
+  it('orphan-drain close에서 query.close가 throw해도 onExit(sessionClosed)을 삼키지 않는다', async () => {
+    // R4: throwing query.close가 onExit 정산을 막으면 manager가 세션을 못 정리해 wedge가 error
+    // 서브패스에서 되살아난다. close를 가드해 onExit이 반드시 나가야 한다(readQuery와 같은 규칙).
+    const h = createHarness()
+    await h.orchestrator.open()
+    h.query.close.mockImplementation(() => { throw new Error('close boom') })
+
+    h.output.push(result('orphan-result'))
+    await vi.waitFor(() => expect(h.query.close).toHaveBeenCalled())
+
+    expect(h.onExit).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'agent-orphan-drain-close',
+      sessionClosed: true,
+    }))
+  })
+
   it('pendingStart 중 먼저 온 output은 remote-start로 소유하지 않고 send를 취소한 뒤 orphan drain한다', async () => {
     const modelGate = deferred()
     const h = createHarness({ setModelImpl: () => modelGate.promise })

@@ -418,7 +418,9 @@ export function createClaudeOrchestrator({
       if (runState.state.kind !== 'orphanDrain') return
       runState.state = { kind: 'closing' }
       inputQueue.end(steerRefusal(runState.state))
-      closeQueryOnce()
+      // Guard the close so a throwing query.close() cannot suppress the onExit settlement below
+      // (else the manager never clears current and the session wedges). Same rule as readQuery.
+      try { closeQueryOnce() } catch { /* still report onExit below */ }
       onExit?.({
         provider: 'claude',
         code: null,
@@ -435,7 +437,9 @@ export function createClaudeOrchestrator({
     clearOrphanTimer()
     runState.state = { kind: 'closing' }
     inputQueue.end(steerRefusal(runState.state))
-    closeQueryOnce()
+    // Guard the close so a throwing query.close() cannot suppress the onExit below (else the
+    // manager never clears current and the session wedges). Same rule as readQuery's catch.
+    try { closeQueryOnce() } catch { /* still report onExit below */ }
     // The Query is now closed, so the session is dead. The manager's onExit wrapper is the only
     // path that clears current + lowers the renderer session ref; without this call the session
     // stays 'closing' and every later send loops on the closing refusal. Mirrors the orphan-drain
@@ -471,7 +475,9 @@ export function createClaudeOrchestrator({
     invalidateToolAuthorizations()
     runState.state = { kind: 'closing' }
     inputQueue.end(steerRefusal(runState.state))
-    closeQueryOnce()
+    // Guard the close so a throwing query.close() cannot suppress the onExit below (else the
+    // manager never clears current and the session wedges). Same rule as readQuery's catch.
+    try { closeQueryOnce() } catch { /* still report onExit below */ }
     onExit?.({
       provider: 'claude',
       code: null,
