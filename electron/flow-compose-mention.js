@@ -46,7 +46,9 @@ async function openCharacterFilterMenu(flowView, trustedClick) {
   const hasFilter = await flowView.webContents.executeJavaScript(`!!(${FILTER_TRIGGER_EXPR})`).catch(() => false)
   if (!hasFilter) return false
   const opened = await trustedClick(FILTER_TRIGGER_EXPR, { step: 'mention-filter-open' }).catch(() => null)
-  if (!opened?.success) return false
+  // trustedClick 은 클릭을 이미 전달한 뒤에도 success:false 를 낼 수 있다(bounds-changed 사후검사·timeout
+  //   race). Radix 는 pointerdown 에 열리므로 메뉴가 열린 채 남을 수 있다 — 실패로 빠지기 전에 정리(리뷰 R2).
+  if (!opened?.success) { await dismissOpenMenu(flowView); return false }
   // 메뉴(Radix portal)의 캐릭터 항목 렌더 대기.
   let hasItem = false
   for (let i = 0; i < 20 && !hasItem; i++) {

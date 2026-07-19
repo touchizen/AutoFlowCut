@@ -154,12 +154,24 @@ describe('insertSceneMention failure contract', () => {
     expect(escKeys).toContain('Escape')
   })
 
-  it('좁은 레이아웃: filter 트리거가 없으면 character-tab-not-found', async () => {
+  it('좁은 레이아웃: 필터 열기 클릭이 success:false 여도 열린 메뉴를 Escape 로 정리 + character-tab-not-found', async () => {
+    // trustedClick 이 클릭 전달 후 success:false (bounds-changed/timeout race). 메뉴 잔류 → wedge 방지.
+    const trustedClick = vi.fn(async () => ({ success: false }))
+    const flowView = makeFlowView({ tabClicked: false })
+    const result = await settle(insertSceneMention(flowView, NAME, trustedClick))
+    expect(result).toEqual({ ok: false, reason: 'character-tab-not-found' })
+    const escKeys = flowView.webContents.sendInputEvent.mock.calls.map((c) => c[0]?.keyCode)
+    expect(escKeys).toContain('Escape')
+  })
+
+  it('좁은 레이아웃: filter 트리거가 없으면 character-tab-not-found (pre-open 이므로 Escape 안 보냄)', async () => {
     const trustedClick = vi.fn(async () => ({ success: true }))
     const flowView = makeFlowView({ tabClicked: false, filterExists: false })
     const result = await settle(insertSceneMention(flowView, NAME, trustedClick))
     expect(trustedClick).not.toHaveBeenCalled()
     expect(result).toEqual({ ok: false, reason: 'character-tab-not-found' })
+    const escKeys = flowView.webContents.sendInputEvent.mock.calls.map((c) => c[0]?.keyCode)
+    expect(escKeys).not.toContain('Escape') // 아무것도 안 열었으니 정리 불필요
   })
 
   it('좁은 레이아웃: 필터는 열렸지만 캐릭터 menuitem 이 안 뜨면 character-tab-not-found + Escape', async () => {
