@@ -710,6 +710,20 @@ describe('AgentSessionManager commands and events', () => {
     await h.manager.close()
   })
 
+  it('onExit renderer 통지가 throw해도 세션 cleanup은 반드시 돈다 (통지가 cleanup을 막지 않음)', async () => {
+    // R5 MAJOR: onExit(webContents.send)이 창 파괴 race로 throw하면 뒤의 closeSession이 스킵돼 current가
+    // 남아 wedge된다. cleanup이 load-bearing이므로 통지 throw와 무관하게 돌아야 한다.
+    const onExit = vi.fn(() => { throw new Error('webContents.send boom') })
+    const h = lifecycleHarness({ onExit })
+    await h.manager.open()
+
+    h.orchestrators[0].options.onExit({ code: 1, signal: null, error: new Error('crashed') })
+
+    expect(onExit).toHaveBeenCalled()
+    await vi.waitFor(() => expect(h.manager.status()).toEqual({ state: 'idle', sessionId: null }))
+    expect(h.orchestrators[0].close).toHaveBeenCalledOnce()
+  })
+
   it('turn/tool admission 뒤의 app ledger snapshot을 usage callback으로 노출한다', async () => {
     const onUsage = vi.fn()
     const storyCommands = {

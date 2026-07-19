@@ -685,6 +685,23 @@ describe('Claude §5.3 mapper — retraction, terminal, orphan gate', () => {
     }))
   })
 
+  it('watchdog close에서 query.close가 throw해도 onExit(timeout, sessionClosed)을 삼키지 않는다', async () => {
+    // R4/R5: timer 콜백의 throwing close가 onExit을 삼키면 wedge + uncaught exception. 가드 확인.
+    vi.useFakeTimers()
+    const h = createHarness()
+    await h.orchestrator.open()
+    h.query.close.mockImplementation(() => { throw new Error('close boom') })
+    h.output.push(assistant('orphan-assistant', [{ type: 'text', text: '버림' }]))
+
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(h.query.close).toHaveBeenCalled()
+    expect(h.onExit).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'agent-orphan-drain-timeout',
+      sessionClosed: true,
+    }))
+  })
+
   it('tool_result가 없는 일반 user replay/echo는 remote-start나 orphan output이 아니다', async () => {
     vi.useFakeTimers()
     const h = createHarness()

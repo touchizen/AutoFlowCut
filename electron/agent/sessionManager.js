@@ -429,7 +429,11 @@ export function createAgentSessionManager({
         // current 세션의 어떤 exit(crash/stream-ended/stream-error/orphan-drain)든 세션을 닫으므로
         // renderer가 sessionOpenRef를 내려 다음 Send가 재open하게 sessionClosed를 실어 보낸다.
         // stale 세션의 늦은 exit(exitedSession==null)은 current 세션을 안 닫으니 강제하지 않는다.
-        onExit?.({ ...details, sessionClosed: (details?.sessionClosed === true) || exitedSession != null })
+        // 🔴 renderer 통지(webContents.send)가 throw해도 아래 closeSession은 반드시 돌아야 한다 —
+        //    cleanup이 load-bearing이고, 안 돌면 current가 남아 세션이 wedge된다. 통지를 가드한다.
+        try {
+          onExit?.({ ...details, sessionClosed: (details?.sessionClosed === true) || exitedSession != null })
+        } catch { /* run cleanup below regardless of a throwing renderer notification */ }
         if (exitedSession) closeSession(exitedSession).catch(() => {})
       },
     }
