@@ -267,11 +267,15 @@ describe('CLICK_CHARACTER_TAB (탭도 로케일에 묶이지 않는다)', () => 
  * 여기서는 그 표현식이 올바른 요소(또는 null)를 돌려주는지만 검증한다.
  */
 describe('FILTER_TRIGGER_EXPR / CHAR_MENUITEM_EXPR (좁은 레이아웃 요소 셀렉터)', () => {
-  const narrowDialog = () => `<div role="dialog"><button id="ft" aria-haspopup="menu" aria-expanded="false" data-state="closed"><i>filter_list</i></button><button aria-haspopup="menu"><i>more_vert</i></button></div>`
+  // 실앱(2026-07-19 덤프): filter_list 트리거는 멘션 dialog **밖**의 툴바에 있다 → dialog 밖 형제로 둔다.
+  const narrowLayout = () => `
+    <button id="ft" aria-haspopup="menu" aria-expanded="false" data-state="closed"><i>filter_list</i></button>
+    <button aria-haspopup="menu"><i>more_vert</i></button>
+    <div role="dialog"><input type="text"><div role="option">x</div></div>`
   const menu = (items) => `<div role="menu">${items.map(([lig, label]) => `<button role="menuitem"><i>${lig}</i>${label}</button>`).join('')}</div>`
 
-  it('FILTER_TRIGGER_EXPR: filter_list 아이콘 트리거를 찾는다(more_vert 등 다른 메뉴 버튼 배제)', () => {
-    document.body.innerHTML = narrowDialog()
+  it('FILTER_TRIGGER_EXPR: dialog 밖 툴바의 filter_list 트리거를 찾는다(more_vert 등 배제)', () => {
+    document.body.innerHTML = narrowLayout()
     const el = run(FILTER_TRIGGER_EXPR)
     expect(el).toBeTruthy()
     expect(el.id).toBe('ft')

@@ -65,10 +65,11 @@ const HELPERS = `
   };
 
   // 좁은 창(창 축소)에서는 탭 바가 [role='tab'] 대신 filter_list 드롭다운(aria-haspopup=menu)으로
-  // 접힌다. 그 트리거 버튼을 찾는다 — 아이콘 리거처 'filter_list' 로 식별(more_vert 등 다른 메뉴 버튼 배제).
-  const __findFilterTrigger = (dlg) => {
-    const scope = dlg || document;
-    const btns = Array.from(scope.querySelectorAll("button[aria-haspopup='menu'], [role='button'][aria-haspopup='menu']"));
+  // 접힌다. 이 트리거는 멘션 팝업 dialog **밖**의 미디어 브라우저 툴바에 있으므로(실앱 덤프
+  // 2026-07-19: 필터 radix id 가 dialog 보다 먼저 마운트) document 전체에서 찾는다 — 아이콘 리거처
+  // 'filter_list' 로 식별(more_vert/add/settings 등 다른 메뉴 버튼 배제). 넓은 레이아웃엔 없음(=null).
+  const __findFilterTrigger = () => {
+    const btns = Array.from(document.querySelectorAll("button[aria-haspopup='menu'], [role='button'][aria-haspopup='menu']"));
     return btns.find((b) => (b.textContent || '').indexOf('filter_list') >= 0) || null;
   };
 
@@ -124,7 +125,7 @@ export const CLICK_CHARACTER_TAB = `(async function(){
 
 // 좁은 레이아웃(창 축소)에서 탭 바가 접힌 filter_list 드롭다운 트리거를 반환하는 표현식 —
 //   trustedClickOnFlowView(jsSelector) 에 그대로 넘긴다(요소 반환식). 없으면 null.
-export const FILTER_TRIGGER_EXPR = `(function(){ ${HELPERS} return __findFilterTrigger(__dialog()); })()`
+export const FILTER_TRIGGER_EXPR = `(function(){ ${HELPERS} return __findFilterTrigger(); })()`
 
 // 열린 필터 드롭다운(role=menu, Radix portal)의 캐릭터 menuitem 을 반환하는 표현식.
 export const CHAR_MENUITEM_EXPR = `(function(){ ${HELPERS} return __findCharMenuItem(); })()`
