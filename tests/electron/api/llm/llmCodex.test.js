@@ -121,6 +121,23 @@ describe('llmCodex adapter', () => {
     await expect(writePrompts(scenes, { scriptMd: '#' }, OPTS, { runJson })).rejects.toThrow(/scene 1 missing\/empty prompt/)
   })
 
+  it('writePrompts는 Codex raw JSON delta의 닫힌 scene을 onPartialPrompt로 전달한다', async () => {
+    const scenes = [{ sceneNo: 1, summary: 's' }]
+    const onPartialPrompt = vi.fn()
+    const runJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onPartialText?.('{"scenes":[{"sceneNo":1,"imagePrompt":"GHOST-IMG","videoPrompt":"GHOST-VID"}]}')
+      return { scenes: [{ sceneNo: 1, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }] }
+    })
+
+    const out = await writePrompts(scenes, {}, OPTS, { runJson, onPartialPrompt })
+
+    expect(onPartialPrompt).toHaveBeenCalledWith(
+      { sceneNo: 1, imagePrompt: 'GHOST-IMG', videoPrompt: 'GHOST-VID' },
+      0,
+    )
+    expect(out.scenes[0]).toMatchObject({ imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' })
+  })
+
   it('reviewScenes/reviewPrompts는 Codex JSON runner와 backend guard를 사용한다', async () => {
     const runJson = vi.fn(async () => ({ verdict: 'revise', critique: 'fix' }))
     await expect(reviewScenes('SCRIPT', [{ sceneNo: 1, segments: [] }], [], OPTS, { runJson }))

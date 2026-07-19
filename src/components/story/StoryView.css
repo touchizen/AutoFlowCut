@@ -869,6 +869,14 @@
   background: color-mix(in srgb, var(--primary-color) 8%, transparent);
 }
 
+/* 저장 전 streamed prompt — 텍스트 노드라 편집되지 않고 final story:state가 오면 즉시 사라진다. */
+.story-prompt-ghost {
+  color: var(--text-secondary, #8a8a8a);
+  font-style: italic;
+  opacity: 0.72;
+  white-space: pre-wrap;
+}
+
 /* 상태 배지 (ResultsTable의 .status 룩) — 세그먼트 상태를 색깔 pill로 */
 .story-status {
   display: inline-block;

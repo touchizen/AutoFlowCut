@@ -275,7 +275,10 @@ export async function runCodexText(prompt, opts = {}, deps = {}) {
 }
 
 export async function runCodexJson(prompt, outputSchema, opts = {}, deps = {}) {
-  const text = await runCodexTurn(prompt, opts, { ...deps, outputSchema })
+  const onDelta = deps.onPartialText && deps.onDelta
+    ? (delta) => { deps.onDelta(delta); deps.onPartialText(delta) }
+    : (deps.onPartialText || deps.onDelta)
+  const text = await runCodexTurn(prompt, opts, { ...deps, outputSchema, onDelta })
   return parseCodexJson(text)
 }
 

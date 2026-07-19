@@ -174,6 +174,19 @@ describe('runCodexText — app-server 트랜스포트', () => {
 })
 
 describe('runCodexJson — outputSchema 보존', () => {
+  it('item/agentMessage/delta의 raw JSON 조각을 onPartialText로 보내고 최종 JSON은 완료 텍스트로 파싱한다', async () => {
+    const onPartialText = vi.fn()
+    const { spawnImpl } = fakeAppServer({
+      deltas: ['{"a":', '"draft"}'],
+      finalText: '{"a":"final"}',
+    })
+
+    const out = await runCodexJson('p', {}, {}, deps(spawnImpl, { onPartialText }))
+
+    expect(onPartialText.mock.calls).toEqual([['{"a":'], ['"draft"}']])
+    expect(out).toEqual({ a: 'final' })
+  })
+
   it('outputSchema 를 turn/start 로 넘긴다', async () => {
     const schema = { type: 'object', properties: { a: { type: 'string' } } }
     const { spawnImpl, sent } = fakeAppServer({ finalText: '{"a":"b"}' })

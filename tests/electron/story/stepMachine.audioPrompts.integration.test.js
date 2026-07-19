@@ -84,6 +84,41 @@ describe('audio → prompts 통합 (C2: sceneNo/summary 보존)', () => {
     }
   })
 
+  it('prompts 호출마다 started를 먼저 보내고 partial prompt payload를 sanitize한다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    llm.writePrompts.mockImplementationOnce(async (scenes, _context, _opts, ctx) => {
+      ctx.onPartialPrompt({
+        sceneNo: 1,
+        imagePrompt: 'GHOST-IMG',
+        videoPrompt: 'GHOST-VID',
+        summary: 'renderer로 보내면 안 되는 필드',
+        segments: [{ text: 'secret' }],
+      })
+      return {
+        scenes: scenes.map((scene) => ({ ...scene, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' })),
+      }
+    })
+
+    const { operationId } = await machine.start('prompts', {})
+    const promptEvents = emitted.filter((event) => (
+      event.ch === 'story:progress' && event.payload.kind === 'prompt-delta'
+    ))
+
+    expect(promptEvents).toHaveLength(2)
+    expect(promptEvents[0].payload).toMatchObject({ operationId, kind: 'prompt-delta', phase: 'started' })
+    const { projectToken, usage, operationId: deltaOp, ...deltaBody } = promptEvents[1].payload
+    expect(projectToken).toBeTruthy()
+    expect(usage).toBeTruthy()
+    expect(deltaOp).toBe(operationId)
+    expect(deltaBody).toEqual({
+      kind: 'prompt-delta',
+      sceneNo: 1,
+      imagePrompt: 'GHOST-IMG',
+      videoPrompt: 'GHOST-VID',
+    })
+  })
+
   // IP1: prompts push payload의 씬 timing은 audio 실측(finalScenes startSec/endSec)에서 와야 한다.
   // 현재 sendPush는 buildFallbackTimeline(글자수 추정)을 쓰므로 짧은 텍스트가 ~1.5s로 나가
   // 실측 7.0s와 어긋난다 — 실측이 push까지 흐르게 하는 게 M2a-2a 1번 과제.

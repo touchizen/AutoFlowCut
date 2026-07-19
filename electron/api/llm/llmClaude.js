@@ -27,6 +27,7 @@ import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extra
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toJsonSchema } from './toJsonSchema.js'
 import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
+import { createPartialScenesParser } from './partialScenes.js'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
@@ -321,7 +322,7 @@ function assertSchema(data, schema, path = 'root') {
   }
 }
 
-async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery, sdkExtra = {} }) {
+async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery, sdkExtra = {}, onPartialText, onPartialReset } = {}) {
   const schema = toJsonSchema(geminiSchema)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
@@ -333,6 +334,11 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true, outputFormat: { type: 'json_schema', schema } }))
     let needFallback = false
     for await (const m of queryImpl({ prompt, options: opt1 })) {
+      if (m.type === 'stream_event') {
+        const delta = m.event?.delta
+        if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') onPartialText?.(delta.partial_json)
+        else if (delta?.type === 'text_delta' && typeof delta.text === 'string') onPartialText?.(delta.text)
+      }
       if (m.type !== 'result') continue
       const r = readStructuredResult(m)
       if (r.kind === 'structured' || r.kind === 'text') {
@@ -347,9 +353,15 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     if (signal?.aborted) throw new Error('Aborted')
     if (!needFallback) throw new Error('no result message returned')
     // 2차 폴백: outputFormat 없이 JSON-only 재요청. 파싱 결과도 검증, 실패하면 그대로 throw.
+    onPartialReset?.()
     const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
     const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true }))
     for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
+      if (m.type === 'stream_event') {
+        const delta = m.event?.delta
+        if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') onPartialText?.(delta.partial_json)
+        else if (delta?.type === 'text_delta' && typeof delta.text === 'string') onPartialText?.(delta.text)
+      }
       if (m.type === 'result') {
         const data = parseJsonLoose(extractClaudeSdkResult(m))
         assertSchema(data, geminiSchema)
@@ -365,9 +377,9 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
   }
 }
 
-export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {}) {
+export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl, onPartialText } = {}) {
   const prompt = buildSplitPrompt(scriptMd, opts)
-  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
+  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl, onPartialText })
   const scenes = out.scenes || []
   validateScenesSegments(scenes) // M2b: loose 스키마 → type별(narration/sfx) 필수 필드 검증
   return { scenes, speakers: out.speakers || [] }
@@ -493,9 +505,16 @@ export async function factCheckClaims(claims, opts = {}, { signal, queryImpl } =
   }
 }
 
-export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
+export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl, onPartialPrompt } = {}) {
   const prompt = buildPromptsPrompt(scenes, context, opts)
-  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
+  const makePartialParser = () => createPartialScenesParser({ onItem: onPartialPrompt })
+  let partialParser = typeof onPartialPrompt === 'function' ? makePartialParser() : null
+  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, {
+    signal,
+    queryImpl,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+    onPartialReset: partialParser ? () => { partialParser = makePartialParser() } : undefined,
+  })
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
   // 계약 검증: 입력 씬 전체가 커버되고 각 프롬프트가 non-empty string인지 (병합 폴백 전에 실패시킴)
   for (const s of scenes) {

@@ -363,6 +363,31 @@ describe('StoryView', () => {
     expect(screen.getByText('VID-1')).toBeTruthy()
   })
 
+  it('prompts 생성 중 기존 scene 행에 streamed prompt를 non-editable ghost text로 표시한다', () => {
+    const p = pipeline({
+      scenes: [
+        { storyId: 's1', sceneNo: 1, imagePrompt: 'OLD-IMG-1', videoPrompt: 'OLD-VID-1' },
+        { storyId: 's2', sceneNo: 2, imagePrompt: 'OLD-IMG-2', videoPrompt: 'OLD-VID-2' },
+      ],
+      previewPrompts: {
+        1: { imagePrompt: 'GHOST-IMG-1', videoPrompt: 'GHOST-VID-1' },
+      },
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.steps.audio.status = 'done'
+    p.state.steps.prompts = { status: 'running', updatedAt: new Date(0).toISOString() }
+
+    const { container } = render(<StoryView pipeline={p} />)
+
+    expect(container.querySelectorAll('.story-prompts-panel tbody tr')).toHaveLength(2)
+    expect(screen.getByText('GHOST-IMG-1')).toHaveClass('story-prompt-ghost')
+    expect(screen.getByText('GHOST-VID-1')).toHaveClass('story-prompt-ghost')
+    expect(screen.getByText('GHOST-IMG-1')).not.toHaveAttribute('contenteditable')
+    expect(screen.getByText('OLD-IMG-2')).toBeTruthy()
+    expect(screen.queryByText('OLD-IMG-1')).toBeNull()
+  })
+
   it('에러 단계는 error 뱃지 + 재실행 버튼', () => {
     const p = pipeline()
     p.state.steps.script.status = 'error'

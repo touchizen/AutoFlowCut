@@ -351,7 +351,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewPrompts = {}, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
@@ -2173,8 +2173,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
-            {/* 검수는 프롬프트 표를 그대로 두고 하단에 로그창만 붙인다. 생성은 현행 유지. */}
-            {steps.prompts?.status === 'running' && !promptsReviewRun ? (
+            {/* 생성 중에도 splitScenes가 만든 정식 행은 유지하고, 값만 표시 전용 ghost로 덧칠한다. */}
+            {steps.prompts?.status === 'running' && !promptsReviewRun && (
               <>
                 {reviewBadge}
                 <StoryRunning usage={usage}
@@ -2182,39 +2182,45 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   startedAt={Date.parse(steps.prompts.updatedAt)}
                 />
               </>
-            ) : (
-              <>
-                <table className="story-readonly-table">
-                  <thead>
-                    <tr>
-                      <th>{t('story.prompts.no', '#')}</th>
-                      <th>{t('story.prompts.image', '이미지 프롬프트')}</th>
-                      <th>{t('story.prompts.video', '비디오 프롬프트')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scenes.map((sc, i) => (
-                      <tr key={sc.storyId ?? i}>
-                        <td>{i + 1}</td>
-                        <td>{sc.imagePrompt}</td>
-                        <td>{sc.videoPrompt}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {scenes.length === 0 && (
-                  <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
-                )}
-                {/* 프롬프트는 편집기(카운트 행)가 없다 — 표 밑에 씬 수 + 세션 토큰을 한 줄로 얹는다. */}
-                {scenes.length > 0 && (
-                  <div className="story-prompts-count-row">
-                    <span className="story-prompts-count">{t('story.prompts.sceneCount', '씬')} {scenes.length}</span>
-                    <UsageInline usage={usage} />
-                  </div>
-                )}
-                {promptsReviewRun && reviewRunning('prompts', promptsProgressLog)}
-              </>
             )}
+            <table className="story-readonly-table">
+              <thead>
+                <tr>
+                  <th>{t('story.prompts.no', '#')}</th>
+                  <th>{t('story.prompts.image', '이미지 프롬프트')}</th>
+                  <th>{t('story.prompts.video', '비디오 프롬프트')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scenes.map((sc, i) => {
+                  const preview = steps.prompts?.status === 'running' && !promptsReviewRun
+                    ? previewPrompts[sc.sceneNo]
+                    : null
+                  return (
+                    <tr key={sc.storyId ?? i}>
+                      <td>{i + 1}</td>
+                      <td>{preview
+                        ? <span className="story-prompt-ghost">{preview.imagePrompt}</span>
+                        : sc.imagePrompt}</td>
+                      <td>{preview
+                        ? <span className="story-prompt-ghost">{preview.videoPrompt}</span>
+                        : sc.videoPrompt}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            {scenes.length === 0 && (
+              <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
+            )}
+            {/* 프롬프트는 편집기(카운트 행)가 없다 — 표 밑에 씬 수 + 세션 토큰을 한 줄로 얹는다. */}
+            {scenes.length > 0 && (
+              <div className="story-prompts-count-row">
+                <span className="story-prompts-count">{t('story.prompts.sceneCount', '씬')} {scenes.length}</span>
+                <UsageInline usage={usage} />
+              </div>
+            )}
+            {promptsReviewRun && reviewRunning('prompts', promptsProgressLog)}
           </div>
         )}
       </div>

@@ -1688,7 +1688,17 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
 
       // V2: 프롬프트 컨텍스트엔 캐릭터(non-narrator·appearance 보유)만 전달 — narrator 외형 누수 방지(Codex-Low).
-      let { scenes } = await llm.writePrompts(scenesJson.scenes, context, opts, { signal })
+      // prompt preview 전용 op gate. 최종 scenes는 아래 writePrompts 반환만 사용하고 delta는 저장하지 않는다.
+      send('story:progress', { kind: 'prompt-delta', phase: 'started' }, opId)
+      let { scenes } = await llm.writePrompts(scenesJson.scenes, context, opts, {
+        signal,
+        onPartialPrompt: (scene) => send('story:progress', {
+          kind: 'prompt-delta',
+          sceneNo: Number.isInteger(scene?.sceneNo) ? scene.sceneNo : null,
+          imagePrompt: typeof scene?.imagePrompt === 'string' ? scene.imagePrompt : '',
+          videoPrompt: typeof scene?.videoPrompt === 'string' ? scene.videoPrompt : '',
+        }, opId),
+      })
       const cfg = reviewConfig(opts, 'prompts')
       if (cfg.enabled && !signal?.aborted) {
         const reviewed = await reviewPromptsCandidate(scenes, context, opts, cfg.rounds, opId, signal)
