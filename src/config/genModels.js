@@ -41,6 +41,8 @@ export const VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5', label: 'Grok Imagine', cost: '?', unit: 'sec', provider: 'grok', provisional: true, descKey: 'settings.modelVidGrok', url: 'https://docs.x.ai/' },
   // PROVISIONAL — verify model id, price, inputs, and result CDN with a real fal key (M4 real-key gate).
   { id: 'fal-ai/kling-video/v2.1/standard/image-to-video', label: 'Kling 2.1 Standard (fal)', cost: '?', unit: 'sec', provider: 'fal', provisional: true, descKey: 'settings.modelVidFalKling', url: 'https://fal.ai/models/fal-ai/kling-video/v2.1/standard/image-to-video' },
+  // PROVISIONAL — verify model id, price, input mapping, paths, and result CDN/auth with an M5 real-key smoke.
+  { id: 'wavespeed-ai/wan-2.1/t2v-480p', label: 'WaveSpeed WAN 2.1 T2V 480p', cost: '?', unit: 'sec', provider: 'wavespeed', provisional: true, descKey: 'settings.modelVidWaveSpeedWan', url: 'https://wavespeed.ai/models/wavespeed-ai/wan-2.1/t2v-480p' },
 ]
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2
@@ -112,7 +114,7 @@ export function defaultVideoModelForProvider(providerId) {
 /**
  * 비디오 provider 선택 UI의 단일 feature-flag 권위.
  * provider 카탈로그가 전부 provisional이면 registry에 등록돼도 UI에서는 숨긴다.
- * Grok real-key smoke 후 항목을 `provisional:false`로 바꾸면 자동으로 supported 승격된다.
+ * provider real-key smoke 후 항목을 `provisional:false`로 바꾸면 자동으로 supported 승격된다.
  */
 export function listSupportedVideoProviders() {
   const providers = [...new Set(VIDEO_MODELS.map((model) => model.provider))]

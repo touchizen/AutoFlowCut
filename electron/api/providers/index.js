@@ -10,6 +10,7 @@ import { openaiImageProvider } from './image/openai.js'
 import { falImageProvider } from './image/fal.js'
 import { falVideoProvider } from './video/fal.js'
 import { grokVideoProvider } from './video/grok.js'
+import { wavespeedVideoProvider } from './video/wavespeed.js'
 import { googleVideoProvider } from './video/google.js'
 
 const imageRegistry = Object.assign(Object.create(null), {
@@ -21,6 +22,7 @@ const videoRegistry = Object.assign(Object.create(null), {
   google: googleVideoProvider,
   grok: grokVideoProvider,
   fal: falVideoProvider,
+  wavespeed: wavespeedVideoProvider,
 })
 
 /** @returns {object|null} 이미지 provider 객체 또는 미등록 시 null */

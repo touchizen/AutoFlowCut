@@ -7,6 +7,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import ApiKeyTab from '../../../src/components/settings/ApiKeyTab'
+import en from '../../../src/locales/en'
+import ko from '../../../src/locales/ko'
 
 vi.mock('../../../src/components/Toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -174,5 +176,62 @@ describe('ApiKeyTab', () => {
     fireEvent.click(screen.getByText('settings.falKeyRemove'))
 
     await waitFor(() => expect(window.electronAPI.genaiClearKey).toHaveBeenCalledWith({ provider: 'fal' }))
+  })
+
+  it('WaveSpeed 키: 검증→저장이 provider:wavespeed 로 위임', async () => {
+    render(<ApiKeyTab t={t} />)
+    await waitFor(() => screen.getByText('settings.wavespeedKeyTitle'))
+
+    const input = screen.getByPlaceholderText('settings.wavespeedKeyPlaceholder')
+    fireEvent.change(input, { target: { value: 'wavespeed-secret-key' } })
+    fireEvent.click(screen.getByText('settings.wavespeedKeyVerifySave'))
+
+    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({
+      apiKey: 'wavespeed-secret-key',
+      provider: 'wavespeed',
+    }))
+    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({
+      apiKey: 'wavespeed-secret-key',
+      provider: 'wavespeed',
+    })
+    expect(toast.success).toHaveBeenCalled()
+    expect(input.value).toBe('')
+  })
+
+  it('WaveSpeed 키 있음 → byProvider.wavespeed 상태 표시 + 삭제가 provider:wavespeed 로 위임', async () => {
+    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({
+      hasKey: false,
+      encryptionAvailable: true,
+      byProvider: { google: false, openai: false, grok: false, fal: false, wavespeed: true, higgsfield: false },
+    })
+    render(<ApiKeyTab t={t} />)
+
+    await waitFor(() => expect(screen.getByText('settings.wavespeedKeySet')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('settings.wavespeedKeyRemove'))
+
+    await waitFor(() => expect(window.electronAPI.genaiClearKey).toHaveBeenCalledWith({ provider: 'wavespeed' }))
+  })
+
+  it('WaveSpeed key section/model labels use distinct ko/en locale keys', () => {
+    const keys = [
+      'wavespeedKeyTitle',
+      'wavespeedKeySet',
+      'wavespeedKeyNotSet',
+      'wavespeedKeyInputLabel',
+      'wavespeedKeyPlaceholder',
+      'wavespeedKeyVerifySave',
+      'wavespeedKeyRemove',
+      'wavespeedKeyNote',
+      'wavespeedKeyGetKey',
+      'videoProvider_wavespeed',
+      'modelVidWaveSpeedWan',
+    ]
+    for (const key of keys) {
+      expect(en.settings[key]).toEqual(expect.any(String))
+      expect(ko.settings[key]).toEqual(expect.any(String))
+      expect(en.settings[key].length).toBeGreaterThan(0)
+      expect(ko.settings[key].length).toBeGreaterThan(0)
+      expect(en.settings[key]).not.toBe(ko.settings[key])
+    }
   })
 })

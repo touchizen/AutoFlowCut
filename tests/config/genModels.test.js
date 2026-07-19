@@ -92,6 +92,20 @@ describe('genModels — provider-aware catalog (§5.12)', () => {
     expect(modelLabel(image.id)).toBe('FLUX Pro 1.1 (fal)')
     expect(modelLabel(video.id)).toBe('Kling 2.1 Standard (fal)')
   })
+
+  it('WaveSpeed video model is a provisional M5 catalog entry', () => {
+    const video = VIDEO_MODELS.find((model) => model.provider === 'wavespeed')
+    expect(video).toMatchObject({
+      id: 'wavespeed-ai/wan-2.1/t2v-480p',
+      label: 'WaveSpeed WAN 2.1 T2V 480p',
+      cost: '?',
+      unit: 'sec',
+      provider: 'wavespeed',
+      provisional: true,
+      descKey: 'settings.modelVidWaveSpeedWan',
+    })
+    expect(modelLabel(video.id)).toBe('WaveSpeed WAN 2.1 T2V 480p')
+  })
 })
 
 describe('genModels — videoModelsForProvider + supported feature flag', () => {
@@ -129,6 +143,14 @@ describe('genModels — videoModelsForProvider + supported feature flag', () => 
     expect(videoModelsForProvider('fal', [])).toHaveLength(1)
     expect(defaultVideoModelForProvider('fal')).toBe('fal-ai/kling-video/v2.1/standard/image-to-video')
     expect(listSupportedVideoProviders()).not.toContain('fal')
+  })
+
+  it('wavespeed catalog resolves generically while all-provisional feature flag hides it', () => {
+    expect(videoModelsForProvider('wavespeed', []).map((model) => model.id)).toEqual([
+      'wavespeed-ai/wan-2.1/t2v-480p',
+    ])
+    expect(defaultVideoModelForProvider('wavespeed')).toBe('wavespeed-ai/wan-2.1/t2v-480p')
+    expect(listSupportedVideoProviders()).not.toContain('wavespeed')
   })
 })
 

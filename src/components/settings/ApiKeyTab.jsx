@@ -13,6 +13,8 @@ const BILLING_URL = 'https://console.cloud.google.com/billing'
 const OPENAI_KEY_URL = 'https://platform.openai.com/api-keys'
 const XAI_KEY_URL = 'https://console.x.ai/'
 const FAL_KEY_URL = 'https://fal.ai/dashboard/keys'
+// PROVISIONAL — re-verify the exact WaveSpeed key-management URL with the M5 real-key smoke.
+const WAVESPEED_KEY_URL = 'https://wavespeed.ai/dashboard/api-keys'
 
 const linkStyle = {
   color: '#4a9eff',
@@ -37,6 +39,10 @@ export default function ApiKeyTab({ t }) {
   const [falKeyInput, setFalKeyInput] = useState('')
   const [falBusy, setFalBusy] = useState(false)
   const hasFalKey = !!byProvider?.fal
+  // WaveSpeed gateway 키 — wavespeed 전용 슬롯, video-only provisional provider.
+  const [wavespeedKeyInput, setWavespeedKeyInput] = useState('')
+  const [wavespeedBusy, setWavespeedBusy] = useState(false)
+  const hasWavespeedKey = !!byProvider?.wavespeed
 
   const openLink = (url) => window.electronAPI?.openExternal?.(url)
 
@@ -158,6 +164,36 @@ export default function ApiKeyTab({ t }) {
     setFalBusy(true)
     await clearKey('fal')
     setFalBusy(false)
+    toast.success(t('settings.apiKeyRemoved'))
+  }
+
+  const handleWavespeedVerifySave = async () => {
+    const candidate = wavespeedKeyInput.trim()
+    if (!candidate) {
+      toast.error(t('settings.apiKeyEmpty'))
+      return
+    }
+    setWavespeedBusy(true)
+    const v = await validateKey(candidate, 'wavespeed')
+    if (!v?.valid) {
+      setWavespeedBusy(false)
+      toast.error(t('settings.apiKeyInvalid', { error: v?.error || '' }))
+      return
+    }
+    const res = await saveKey(candidate, 'wavespeed')
+    setWavespeedBusy(false)
+    if (res?.success) {
+      setWavespeedKeyInput('')
+      toast.success(t('settings.apiKeySaved'))
+    } else {
+      toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
+    }
+  }
+
+  const handleWavespeedRemove = async () => {
+    setWavespeedBusy(true)
+    await clearKey('wavespeed')
+    setWavespeedBusy(false)
     toast.success(t('settings.apiKeyRemoved'))
   }
 
@@ -307,6 +343,41 @@ export default function ApiKeyTab({ t }) {
           </div>
           <span className="setting-sublabel">{t('settings.falKeyNote')}</span>
           <a style={{ ...linkStyle, marginTop: '6px' }} onClick={() => openLink(FAL_KEY_URL)}>{t('settings.falKeyGetKey')}</a>
+        </div>
+      </div>
+
+      {/* WaveSpeed gateway 키 — video registry만 등록, real-key smoke 전 선택 UI는 숨김 */}
+      <div className="settings-section">
+        <h3>{t('settings.wavespeedKeyTitle')}</h3>
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.apiKeyStatusLabel')}</label>
+          <span style={{ color: hasWavespeedKey ? '#10b981' : '#888' }}>
+            {loading ? '…' : hasWavespeedKey ? t('settings.wavespeedKeySet') : t('settings.wavespeedKeyNotSet')}
+          </span>
+        </div>
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.wavespeedKeyInputLabel')}</label>
+          <input
+            type="password"
+            value={wavespeedKeyInput}
+            onChange={(e) => setWavespeedKeyInput(e.target.value)}
+            placeholder={t('settings.wavespeedKeyPlaceholder')}
+            disabled={wavespeedBusy || !encryptionAvailable}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button className="btn-primary" onClick={handleWavespeedVerifySave} disabled={wavespeedBusy || !encryptionAvailable}>
+              {wavespeedBusy ? t('settings.apiKeyVerifying') : t('settings.wavespeedKeyVerifySave')}
+            </button>
+            {hasWavespeedKey && (
+              <button className="btn-secondary" onClick={handleWavespeedRemove} disabled={wavespeedBusy}>
+                {t('settings.wavespeedKeyRemove')}
+              </button>
+            )}
+          </div>
+          <span className="setting-sublabel">{t('settings.wavespeedKeyNote')}</span>
+          <a style={{ ...linkStyle, marginTop: '6px' }} onClick={() => openLink(WAVESPEED_KEY_URL)}>{t('settings.wavespeedKeyGetKey')}</a>
         </div>
       </div>
 

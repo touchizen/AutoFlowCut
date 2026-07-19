@@ -64,13 +64,13 @@ describe('genai-api — 채널 등록', () => {
     )
   })
 
-  it('list-providers: 등록된 provider 목록 반환 (M4: fal image+video 포함)', async () => {
+  it('list-providers: 등록된 provider 목록 반환 (M5: wavespeed video 포함)', async () => {
     const ipc = makeIpcMain()
     registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
     const res = await ipc.invoke('genai:list-providers')
     expect(res).toEqual({
       image: [{ id: 'google' }, { id: 'openai' }, { id: 'fal' }],
-      video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }],
+      video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }, { id: 'wavespeed' }],
     })
   })
 })
@@ -148,15 +148,22 @@ describe('genai-api — 키 관리', () => {
   it('validate-key: 미등록 provider 는 명시 실패', async () => {
     const ipc = makeIpcMain()
     registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
-    // grok 은 M2 에서 validateKey 지원(등록됨) → 진짜 미등록 id 로 unknown-provider 를 검증.
-    const res = await ipc.invoke('genai:validate-key', { provider: 'wavespeed' })
-    expect(res).toEqual({ valid: false, error: 'Unknown provider: wavespeed' })
+    // wavespeed 은 M5 에서 validateKey 지원(등록됨) → 아직 미등록인 higgsfield 로 검증.
+    const res = await ipc.invoke('genai:validate-key', { provider: 'higgsfield' })
+    expect(res).toEqual({ valid: false, error: 'Unknown provider: higgsfield' })
   })
 
   it('validate-key: grok(M2 등록) 는 xai 슬롯 키 없으면 No API key', async () => {
     const ipc = makeIpcMain()
     registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
     const res = await ipc.invoke('genai:validate-key', { provider: 'grok' })
+    expect(res).toEqual({ valid: false, error: 'No API key' })
+  })
+
+  it('validate-key: wavespeed(M5 등록) 는 wavespeed 슬롯 키 없으면 No API key', async () => {
+    const ipc = makeIpcMain()
+    registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
+    const res = await ipc.invoke('genai:validate-key', { provider: 'wavespeed' })
     expect(res).toEqual({ valid: false, error: 'No API key' })
   })
 })

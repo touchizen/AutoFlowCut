@@ -9,6 +9,7 @@ import { openaiImageProvider } from '../../../../electron/api/providers/image/op
 import { falImageProvider } from '../../../../electron/api/providers/image/fal.js'
 import { falVideoProvider } from '../../../../electron/api/providers/video/fal.js'
 import { grokVideoProvider } from '../../../../electron/api/providers/video/grok.js'
+import { wavespeedVideoProvider } from '../../../../electron/api/providers/video/wavespeed.js'
 import { googleVideoProvider } from '../../../../electron/api/providers/video/google.js'
 
 describe('provider registry (§5.10)', () => {
@@ -60,6 +61,13 @@ describe('provider registry (§5.10)', () => {
     expect(typeof getVideoProvider('fal').checkVideo).toBe('function')
   })
 
+  it('wavespeed video provider is registered while its catalog remains provisional', () => {
+    expect(getVideoProvider('wavespeed')).toBe(wavespeedVideoProvider)
+    expect(getVideoProvider('wavespeed')).toMatchObject({ id: 'wavespeed', kind: 'video' })
+    expect(typeof getVideoProvider('wavespeed').submitVideo).toBe('function')
+    expect(typeof getVideoProvider('wavespeed').checkVideo).toBe('function')
+  })
+
   it('미등록 id → null (조용한 google 폴백 금지)', () => {
     expect(getVideoProvider('openai')).toBe(null) // openai 는 image 만, video 미등록
     expect(getImageProvider('nope')).toBe(null)
@@ -79,11 +87,11 @@ describe('provider registry (§5.10)', () => {
     }
   })
 
-  it('listProviders() includes registered fal capabilities independently of provisional UI flags', () => {
+  it('listProviders() includes registered provisional gateway capabilities independently of UI flags', () => {
     const list = listProviders()
     expect(list).toEqual({
       image: [{ id: 'google' }, { id: 'openai' }, { id: 'fal' }],
-      video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }],
+      video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }, { id: 'wavespeed' }],
     })
   })
 })

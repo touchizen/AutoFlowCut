@@ -3,6 +3,8 @@ import { createDispatcher } from '../../../../electron/api/providers/dispatcher.
 import { decodeHandle, encodeHandle, HANDLE_PREFIX } from '../../../../electron/api/providers/handle.js'
 import { falVideoProvider } from '../../../../electron/api/providers/video/fal.js'
 import { submitVideo as submitGoogleVideo } from '../../../../electron/api/providers/video/google.js'
+import { wavespeedVideoProvider } from '../../../../electron/api/providers/video/wavespeed.js'
+import { WAVESPEED_CDN_ORIGIN } from '../../../../electron/api/providers/wavespeedClient.js'
 
 const makeGenaiKeyStore = (overrides = {}) => ({
   getKey: vi.fn(() => 'STORED_GOOGLE_KEY'),
@@ -84,6 +86,33 @@ describe('createDispatcher — provider routing', () => {
       { apiKey: 'FAL_KEY', operationName: rawId },
       engineDeps,
     )
+  })
+
+  it('wavespeed string handle round-trips and poll routes with the wavespeed-slot key', async () => {
+    const rawId = 'ws-task-dispatch'
+    const checkVideo = vi.fn().mockResolvedValue({ success: true, done: false })
+    const wavespeed = { id: 'wavespeed', kind: 'video', checkVideo }
+    const engineDeps = { marker: 'wavespeed-deps' }
+    const multiKeyStore = makeMultiKeyStore({ wavespeed: 'WAVESPEED_KEY' })
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore,
+      engineDeps,
+      registry: makeRegistry({ video: { wavespeed } }),
+    })
+    const generationId = encodeHandle('wavespeed', rawId)
+
+    expect(generationId).toMatch(/^gen:v1:/)
+    expect(decodeHandle(generationId)).toEqual({ provider: 'wavespeed', rawId })
+    await expect(dispatcher.checkVideoStatus({ generationIds: [generationId] })).resolves.toEqual({
+      success: true,
+      statuses: [{ generationId, status: 'pending' }],
+    })
+    expect(checkVideo).toHaveBeenCalledWith(
+      { apiKey: 'WAVESPEED_KEY', operationName: rawId },
+      engineDeps,
+    )
+    expect(multiKeyStore.getKey).toHaveBeenCalledWith('wavespeed')
   })
 
   it('non-google submitVideo raw id를 opaque handle로 감추고 operationName을 생략한다', async () => {
@@ -345,6 +374,39 @@ describe('createDispatcher — downloadVideo routing', () => {
     expect(res.success).toBe(false)
     expect(res.errorKind).toBe('invalid-config')
     expect(dl).not.toHaveBeenCalled() // dispatcher 가 adapter 도달 전에 차단
+  })
+
+  it('wavespeed downloadPolicy: allowlist만 다운로드하고 bad origin에는 key를 붙이지 않는다', async () => {
+    const bytes = Uint8Array.from([7, 7, 7])
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: vi.fn().mockResolvedValue(bytes.buffer),
+      headers: { get: vi.fn(() => 'video/mp4') },
+    })
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ wavespeed: 'WAVESPEED_DOWNLOAD_KEY' }),
+      engineDeps: { fetchImpl },
+      registry: makeRegistry({ video: { wavespeed: wavespeedVideoProvider } }),
+    })
+    const generationId = encodeHandle('wavespeed', 'ws-download-task')
+    const allowedUri = `${WAVESPEED_CDN_ORIGIN}/results/ws-download-task.mp4`
+
+    await expect(dispatcher.downloadVideo({ videoUri: allowedUri, generationId })).resolves.toMatchObject({
+      success: true,
+      base64: Buffer.from(bytes).toString('base64'),
+    })
+    expect(fetchImpl).toHaveBeenCalledWith(allowedUri, {
+      headers: { Authorization: 'Bearer WAVESPEED_DOWNLOAD_KEY' },
+    })
+
+    fetchImpl.mockClear()
+    await expect(dispatcher.downloadVideo({
+      videoUri: 'https://attacker.example/steal-key.mp4',
+      generationId,
+    })).resolves.toMatchObject({ success: false, errorKind: 'invalid-config' })
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('malformed handle → invalid-config, provider 호출 없음 (google 폴백 금지)', async () => {
