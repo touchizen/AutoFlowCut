@@ -351,13 +351,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewPrompts = {}, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewScenes = {}, previewPrompts = {}, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
     synopsisReviewing = false,
   } = pipeline
   const steps = state?.steps || {}
+  const orderedPreviewScenes = Object.values(previewScenes)
+    .filter((item) => item?.scene && Number.isInteger(item.chunkIndex) && Number.isInteger(item.localSceneNo))
+    .sort((a, b) => a.chunkIndex - b.chunkIndex || a.localSceneNo - b.localSceneNo)
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
   const isRunning = stepData.status === 'running'
@@ -1806,8 +1809,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
-            {/* 검수는 씬 테이블을 그대로 두고 하단에 로그창만 붙인다. 생성은 현행 유지. */}
-            {steps.scenes?.status === 'running' && !scenesReviewRun ? (
+            {/* 생성 중에도 테이블을 유지하고 streamed scene을 표시 전용 ghost 행으로 보여준다. */}
+            {steps.scenes?.status === 'running' && !scenesReviewRun && (
               <>
                 {reviewBadge}
                 <StoryRunning usage={usage}
@@ -1817,33 +1820,44 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   log={scenesProgressLog}
                 />
               </>
-            ) : (
-              <>
-                {/* 10번: 씬 분리 탭에 필요한 옵션(씬 분리 단위)만 노출 — 바꾸고 하단 '씬 재분리'로 재분리. */}
-                <div className="story-rerun-bar">
-                  <span className="story-opt-label">{t('story.form.granularityLabel', '씬 분리 단위')}</span>
-                  <select
-                    className="story-input"
-                    aria-label={t('story.scenes.rerunGranularity', '씬 분리 단위 (재분리)')}
-                    value={sceneGranularity}
-                    onChange={(e) => setSceneGranularity(e.target.value)}
-                    disabled={isRunning}
-                  >
-                    <option value="scene">{t('story.form.granularityScene', '씬 기준')}</option>
-                    <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
-                  </select>
-                  {renderSceneSec()}
-                </div>
-                <table className="story-readonly-table">
-                  <thead>
-                    <tr>
-                      <th>{t('story.scenes.no', '#')}</th>
-                      <th>{t('story.scenes.speaker', '화자')}</th>
-                      <th>{t('story.scenes.segment', '세그먼트(감정)')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scenes.flatMap((sc, si) =>
+            )}
+            {/* 10번: 씬 분리 탭에 필요한 옵션(씬 분리 단위)만 노출 — 바꾸고 하단 '씬 재분리'로 재분리. */}
+            {!(steps.scenes?.status === 'running' && !scenesReviewRun) && (
+              <div className="story-rerun-bar">
+                <span className="story-opt-label">{t('story.form.granularityLabel', '씬 분리 단위')}</span>
+                <select
+                  className="story-input"
+                  aria-label={t('story.scenes.rerunGranularity', '씬 분리 단위 (재분리)')}
+                  value={sceneGranularity}
+                  onChange={(e) => setSceneGranularity(e.target.value)}
+                  disabled={isRunning}
+                >
+                  <option value="scene">{t('story.form.granularityScene', '씬 기준')}</option>
+                  <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
+                </select>
+                {renderSceneSec()}
+              </div>
+            )}
+            <table className="story-readonly-table">
+              <thead>
+                <tr>
+                  <th>{t('story.scenes.no', '#')}</th>
+                  <th>{t('story.scenes.speaker', '화자')}</th>
+                  <th>{t('story.scenes.segment', '세그먼트(감정)')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {steps.scenes?.status === 'running' && !scenesReviewRun
+                  ? orderedPreviewScenes.flatMap(({ chunkIndex, localSceneNo, scene }, si) =>
+                      (scene.segments || []).map((seg, gi) => (
+                        <tr key={`preview-${chunkIndex}-${localSceneNo}-${gi}`} className={seg.type === 'sfx' ? 'story-sfx-row' : undefined}>
+                          <td><span className="story-scene-ghost">{si + 1}</span></td>
+                          <td><span className="story-scene-ghost">{seg.type === 'sfx' ? t('story.audio.sfxLabel', 'SFX') : seg.speaker}</span></td>
+                          <td><span className={`story-scene-ghost${seg.type === 'sfx' ? ' story-sfx-desc' : ''}`}>{seg.text}</span></td>
+                        </tr>
+                      )),
+                    )
+                  : scenes.flatMap((sc, si) =>
                       (sc.segments || []).map((seg, gi) => (
                         <tr key={`${sc.storyId ?? si}-${gi}`} className={seg.type === 'sfx' ? 'story-sfx-row' : undefined}>
                           <td>{si + 1}</td>
@@ -1852,14 +1866,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                         </tr>
                       )),
                     )}
-                  </tbody>
-                </table>
-                {scenes.length === 0 && (
-                  <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
-                )}
-                {scenesReviewRun && reviewRunning('scenes', scenesProgressLog)}
-              </>
+              </tbody>
+            </table>
+            {steps.scenes?.status !== 'running' && scenes.length === 0 && (
+              <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
             )}
+            {scenesReviewRun && reviewRunning('scenes', scenesProgressLog)}
           </div>
         )}
 

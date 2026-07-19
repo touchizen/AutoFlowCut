@@ -124,9 +124,15 @@ export async function continueScript(existingScript, opts = {}, { onDelta, signa
   return { scriptMd: `${existingScript}\n\n${added}` }
 }
 
-export async function splitScenes(scriptMd, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function splitScenes(scriptMd, opts = {}, { signal, runJson = runCodexJson, onPartialScene } = {}) {
   const prompt = guardScenesPrompt(buildSplitPrompt(scriptMd, opts))
-  const out = await runJson(prompt, codexSchema(SCENES_SCHEMA), runtimeOptions(opts), { signal })
+  const partialParser = typeof onPartialScene === 'function'
+    ? createPartialScenesParser({ onItem: onPartialScene })
+    : null
+  const out = await runJson(prompt, codexSchema(SCENES_SCHEMA), runtimeOptions(opts), {
+    signal,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+  })
   const scenes = out.scenes || []
   validateScenesSegments(scenes)
   validateVisibleSpeakerAppearances(scenes, out.speakers || [])

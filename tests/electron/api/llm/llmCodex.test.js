@@ -82,6 +82,25 @@ describe('llmCodex adapter', () => {
     expect(segmentSchema.properties.description.type).toEqual(['string', 'null'])
   })
 
+  it('splitScenes는 Codex raw JSON delta의 닫힌 scene을 onPartialScene으로 전달한다', async () => {
+    const out = {
+      scenes: [{ sceneNo: 1, summary: 'FINAL', segments: [{ speaker: 'narrator', text: '최종', emotion: 'normal' }] }],
+      speakers: [],
+    }
+    const onPartialScene = vi.fn()
+    const runJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onPartialText?.('{"scenes":[{"sceneNo":7,"summary":"GHOST","segments":[{"speaker":"narrator","text":"preview"}]}]}')
+      return out
+    })
+
+    await expect(splitScenes('SCRIPT', OPTS, { runJson, onPartialScene })).resolves.toEqual(out)
+    expect(onPartialScene).toHaveBeenCalledWith({
+      sceneNo: 7,
+      summary: 'GHOST',
+      segments: [{ speaker: 'narrator', text: 'preview' }],
+    }, 0)
+  })
+
   it('splitScenes는 non-narrator speaker appearance 누락을 실패시킨다', async () => {
     const out = {
       scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'a', text: '안녕', emotion: 'normal' }] }],

@@ -15,6 +15,48 @@ const SCENES = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'nar
 function resultOf(msg) { return async function* () { yield msg } }
 
 describe('llmClaude.splitScenes', () => {
+  it('structured stream의 닫힌 scene을 onPartialScene으로 보내고 최종 result는 그대로 반환한다', async () => {
+    const onPartialScene = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"sceneNo":999,"summary":"GHOST","segments":[{"speaker":"narrator","text":"preview"}]}' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: ']}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    }
+
+    const out = await splitScenes('SCRIPT', {}, { queryImpl, onPartialScene })
+
+    expect(onPartialScene).toHaveBeenCalledWith({
+      sceneNo: 999,
+      summary: 'GHOST',
+      segments: [{ speaker: 'narrator', text: 'preview' }],
+    }, 0)
+    expect(out).toEqual(SCENES)
+  })
+
+  it('outputFormat 폴백 전에 partial scene parser를 리셋해 1차 시도 bytes를 버린다', async () => {
+    const onPartialScene = vi.fn()
+    let call = 0
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) {
+        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[{"sceneNo":999,"summary":"PRIMARY"' } } }
+        yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }
+        return
+      }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '{"scenes":[{"sceneNo":1,"summary":"FALLBACK","segments":[{"speaker":"narrator","text":"preview"}]}],"speakers":[]}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(SCENES) }
+    }
+
+    const out = await splitScenes('SCRIPT', {}, { queryImpl, onPartialScene })
+
+    expect(onPartialScene.mock.calls).toEqual([[
+      { sceneNo: 1, summary: 'FALLBACK', segments: [{ speaker: 'narrator', text: 'preview' }] },
+      0,
+    ]])
+    expect(out).toEqual(SCENES)
+  })
+
   it('structured stream의 input_json_delta를 onPartialText로 보내고 최종 result는 그대로 반환한다', async () => {
     const onPartialText = vi.fn()
     const queryImpl = async function* () {

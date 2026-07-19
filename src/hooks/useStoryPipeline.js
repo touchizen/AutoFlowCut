@@ -36,6 +36,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   const [scriptText, setScriptText] = useState('')
   // D: audio 생성 중 세그먼트별 실시간 status(segId→'running'|'done'|'error').
   const [segmentProgress, setSegmentProgress] = useState({})
+  // scenes 단일 structured 호출의 표시 전용 좌표→scene map. 최종 scenes와 섞지 않는다.
+  const [previewScenes, setPreviewScenes] = useState({})
   // prompts 단일 structured 호출의 표시 전용 sceneNo→prompt map. 최종 scenes와 섞지 않는다.
   const [previewPrompts, setPreviewPrompts] = useState({})
   // M3: 대본 검토 루프 진행 — { operationId, round, of, phase:'reviewing'|'revising'|'error', error? } | null.
@@ -87,6 +89,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // prompt-delta도 started 신호가 연 전용 gate만 통과한다. step 기반 activeOpRef에 기대면
   // 새 실행의 started 전 틈에 이전 op delta가 들어올 수 있어 별도 ref가 필요하다.
   const promptActiveOpRef = useRef(null)
+  // scene-delta도 prompt와 같은 이유로 별도 started gate를 쓴다.
+  const sceneActiveOpRef = useRef(null)
   // 시놉시스 side action(생성·검수) 공용 소유권 토큰. main이 synopsisController 하나로 둘을
   // 상호배제하므로 renderer도 같은 불변식을 갖는다. boolean으로는 부족하다 — 이 훅은 App에 살아
   // 프로젝트 전환에도 재마운트되지 않으므로(StoryView만 key로 remount), 전환 후 도착한 옛 호출의
@@ -126,12 +130,14 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setStreamingText('')
     setScriptText('')
     setSegmentProgress({})
+    setPreviewScenes({})
     setPreviewPrompts({})
     setProgressLog([])
     // 프로젝트 전환에서만 usage 를 리셋한다 — start() 마다가 아니다(아래 start/open 미러에
     // 넣으면 자동 진행 연쇄에서 앞 스텝 합계가 사라진다). main 의 tracker 도 machine 과 함께 죽는다.
     setUsage(null)
     activeOpRef.current = null
+    sceneActiveOpRef.current = null
     promptActiveOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
     setReviewScores(null)
@@ -203,6 +209,11 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         if (p.projectToken !== tokenRef.current) return
         const anyRunning = p.state?.steps && Object.values(p.state.steps).some((s) => s?.status === 'running')
         if (anyRunning && p.operationId) activeOpRef.current = p.operationId
+        // scenes의 terminal state가 최종 진실 소스다. preview와 gate를 같이 폐기해 늦은 delta도 막는다.
+        if (p.state?.steps?.scenes?.status !== 'running') {
+          sceneActiveOpRef.current = null
+          setPreviewScenes((prev) => (Object.keys(prev).length ? {} : prev))
+        }
         // prompts의 terminal state가 최종 진실 소스다. preview와 gate를 같이 폐기해 늦은 delta도 막는다.
         if (p.state?.steps?.prompts?.status !== 'running') {
           promptActiveOpRef.current = null
@@ -269,6 +280,26 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       api.onStoryEvent('story:progress', (p) => {
         takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
+        if (p.kind === 'scene-delta') {
+          if (p.phase === 'started') {
+            sceneActiveOpRef.current = p.operationId || null
+            setPreviewScenes({})
+            return
+          }
+          if (!sceneActiveOpRef.current || p.operationId !== sceneActiveOpRef.current) return
+          if (!Number.isInteger(p.chunkIndex) || !Number.isInteger(p.localSceneNo)) return
+          if (!p.scene || typeof p.scene !== 'object' || Array.isArray(p.scene)) return
+          const key = `${p.chunkIndex}:${p.localSceneNo}`
+          setPreviewScenes((preview) => ({
+            ...preview,
+            [key]: {
+              chunkIndex: p.chunkIndex,
+              localSceneNo: p.localSceneNo,
+              scene: p.scene,
+            },
+          }))
+          return
+        }
         if (p.kind === 'prompt-delta') {
           if (p.phase === 'started') {
             promptActiveOpRef.current = p.operationId || null
@@ -532,7 +563,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, previewPrompts: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, previewScenes: {}, previewPrompts: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, previewPrompts, reviewProgress, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, previewScenes, previewPrompts, reviewProgress, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }

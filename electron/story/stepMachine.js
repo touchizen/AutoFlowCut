@@ -53,6 +53,26 @@ function assignSegmentIds(scenes) {
   }))
 }
 
+// 씬 스트림은 renderer 표시 전용이다. ID/프롬프트/오디오 같은 영속·중량 필드는 IPC에 싣지 않는다.
+function sanitizePreviewScene(scene) {
+  const preview = {
+    summary: typeof scene?.summary === 'string' ? scene.summary : '',
+    segments: Array.isArray(scene?.segments)
+      ? scene.segments.map((segment) => {
+          const type = typeof segment?.type === 'string' ? segment.type : 'narration'
+          const text = type === 'sfx' ? segment?.description : segment?.text
+          return {
+            type,
+            speaker: typeof segment?.speaker === 'string' ? segment.speaker : '',
+            text: typeof text === 'string' ? text : '',
+          }
+        })
+      : [],
+  }
+  if (Number.isInteger(scene?.sceneNo)) preview.sceneNo = scene.sceneNo
+  return preview
+}
+
 // audio 스텝 fail-fast: scenes.json의 내레이션 세그먼트가 id 없이(또는 중복 id로) 넘어오면
 // TTS 파일명/results 맵/manifest 키가 조용히 undefined로 붕괴한다 — 여기서 즉시 던진다.
 // Codex-2 HIGH: id는 audio/segments/${id}.${format} 파일명에 그대로 쓰이고 storyStore.writeAtomic은
@@ -1131,7 +1151,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const roster = confirmedRoster()
       const opts = buildLlmOptions(effectiveOptions(params), roster ? { roster } : {})
       sendStepLog('scenes', 'split-request', 'LLM 씬 분리 요청', opId)
-      const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
+      send('story:progress', { kind: 'scene-delta', phase: 'started' }, opId)
+      const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, {
+        signal,
+        onPartialScene: (scene, index) => send('story:progress', {
+          kind: 'scene-delta',
+          chunkIndex: 0,
+          localSceneNo: index,
+          scene: sanitizePreviewScene(scene),
+        }, opId),
+      })
       if (signal?.aborted) return
       sendStepLog('scenes', 'split-response', `씬 ${scenes?.length || 0}개 응답 수신`, opId, { count: scenes?.length || 0 })
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes

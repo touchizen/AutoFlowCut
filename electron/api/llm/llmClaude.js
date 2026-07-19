@@ -377,9 +377,32 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
   }
 }
 
-export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl, onPartialText } = {}) {
+export async function splitScenes(scriptMd, opts = {}, {
+  signal,
+  queryImpl,
+  onPartialText,
+  onPartialReset,
+  onPartialScene,
+} = {}) {
   const prompt = buildSplitPrompt(scriptMd, opts)
-  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl, onPartialText })
+  const makePartialParser = () => createPartialScenesParser({ onItem: onPartialScene })
+  let partialParser = typeof onPartialScene === 'function' ? makePartialParser() : null
+  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, {
+    signal,
+    queryImpl,
+    onPartialText: onPartialText || partialParser
+      ? (text) => {
+          onPartialText?.(text)
+          partialParser?.push(text)
+        }
+      : undefined,
+    onPartialReset: onPartialReset || partialParser
+      ? () => {
+          onPartialReset?.()
+          if (partialParser) partialParser = makePartialParser()
+        }
+      : undefined,
+  })
   const scenes = out.scenes || []
   validateScenesSegments(scenes) // M2b: loose 스키마 → type별(narration/sfx) 필수 필드 검증
   return { scenes, speakers: out.speakers || [] }
