@@ -293,9 +293,10 @@ export function createAgentSessionManager({
       // '기본' resolve), initialModelId(명시 선택 복원)을 다시 얻는다. §5.1 M7 이연분(pin/initial row).
       provider: current.provider,
       initialModelId: current.initialModelId ?? null,
-      // turn이 진행 중인지(idle 아님). remount에서 renderer가 running을 복원해 D2 switch가 라이브 턴을
-      // 조용히 죽이지 않게 한다(§5.1 busy switch 금지). lifecycle state와 별개인 turn runState 기준이다.
-      turnActive: runStateView(current).kind !== undefined && runStateView(current).kind !== 'idle',
+      // turn이 살아서 아직 완료를 낼 상태인지. remount에서 renderer가 running을 복원해 D2 switch가
+      // 라이브 턴을 죽이지 않게 한다(§5.1). active/pendingStart만 참이다 — aborting/orphanDrain은 이미
+      // turn/completed(→agent:done)를 냈으므로 running을 복원하면 그 뒤 정산엔 새 done이 없어 영구 wedge된다.
+      turnActive: runStateView(current).kind === 'active' || runStateView(current).kind === 'pendingStart',
       defaultPin: current.defaultPin,
     }
   }

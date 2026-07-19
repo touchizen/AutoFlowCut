@@ -446,6 +446,7 @@ export default function ChatPanel({
   // D2: cross-provider 선택을 보내기 전 확인. { modelId } | null. modelId 는 null(Default) 가능.
   const [pendingSwitch, setPendingSwitch] = useState(null)
   const fallbackLoggedRef = useRef(null)
+  const sessionIdRef = useRef(null)
   const fabRef = useRef(null)
   const inputRef = useRef(null)
   const prevOpenRef = useRef(open)
@@ -506,31 +507,36 @@ export default function ChatPanel({
     setPendingSwitch(null)
   }, [])
 
-  // open 응답/status 로 얻은 orchestratorProvider·defaultPin 을 반영한다(§5.1 M7). pin 이 D4 fallback 이면
-  // session 당 정확히 한 번 status log 를 남긴다(§5.0 D4: 조용한 폴백 금지). 같은 session 재적용은 재로그 안 함.
+  // D4(§5.0: 조용한 폴백 금지): 세션이 실제로 fallback 을 쓰기 시작할 때 session 당 정확히 한 번 status log.
+  // "실제로 쓴다" = Default(생략) 로 보낼 때다 → open 이 Default 세션이거나, 명시 세션에서 나중에 Default 를
+  // 고른 순간. sessionIdRef 로 dedup 해 open+hydration 재적용이나 Default 재선택이 재로그하지 않게 한다.
+  const logFallbackDefaultOnce = useCallback((pin) => {
+    const sessionKey = sessionIdRef.current
+    if (!pin?.defaultFallbackFrom || !sessionKey || fallbackLoggedRef.current === sessionKey) return
+    fallbackLoggedRef.current = sessionKey
+    messageIdRef.current += 1
+    const text = t('agent.modelFallbackStatus', {
+      model: fallbackModelName(pin, models),
+      from: fallbackFromName(pin.defaultFallbackFrom),
+    })
+    setMessages((current) => [
+      ...current,
+      { id: `agent-${messageIdRef.current}`, role: 'system', text, streaming: false },
+    ])
+  }, [models, t])
+
+  // open 응답/status 로 얻은 orchestratorProvider·defaultPin 을 반영한다(§5.1 M7).
   const applyOpenedSession = useCallback((opened) => {
     if (!opened || typeof opened !== 'object') return
     if (opened.provider) setOrchestratorProvider(opened.provider)
     const pin = opened.defaultPin ?? null
     setSessionPin(pin)
-    // D4 status log 은 세션이 실제로 fallback 을 쓸 때만 = Default(initialModelId==null) 세션에만 건다.
-    // 명시 모델(예 claude:sonnet) 세션은 pin 이 codex fallback 이어도 그 모델을 쓰므로 "GPT-5.5 사용" 은 거짓이다.
-    // (selector 의 Default label 은 pin 기반으로 항상 D4 를 보여준다 — Default 가 무슨 뜻인지 설명하므로 무관.)
-    const usesFallbackDefault = (opened.initialModelId ?? null) == null
-    if (usesFallbackDefault && pin?.defaultFallbackFrom && opened.sessionId
-      && fallbackLoggedRef.current !== opened.sessionId) {
-      fallbackLoggedRef.current = opened.sessionId
-      messageIdRef.current += 1
-      const text = t('agent.modelFallbackStatus', {
-        model: fallbackModelName(pin, models),
-        from: fallbackFromName(pin.defaultFallbackFrom),
-      })
-      setMessages((current) => [
-        ...current,
-        { id: `agent-${messageIdRef.current}`, role: 'system', text, streaming: false },
-      ])
-    }
-  }, [models, t])
+    sessionIdRef.current = opened.sessionId ?? null
+    // 명시 모델(예 claude:sonnet) 세션은 그 모델을 쓰므로 여기선 로그하지 않는다("GPT-5.5 사용" 이 거짓).
+    // Default(initialModelId==null) 세션만 open 즉시 fallback 을 쓴다. selector Default label 은 pin 기반이라
+    // 명시 세션에서도 D4 를 보여주지만(=Default 가 무슨 뜻인지 설명) 그건 로그와 별개다.
+    if ((opened.initialModelId ?? null) == null) logFallbackDefaultOnce(pin)
+  }, [logFallbackDefaultOnce])
 
   // remount 복구: main session 이 이미 열려 있으면 status 로 orchestratorProvider·defaultPin 을 되찾는다.
   // 이게 없으면 remount 뒤 selectedModel 만 null 로 리셋돼 D2 비교/D4 표시가 다음 send 까지 비게 된다.
@@ -798,7 +804,9 @@ export default function ChatPanel({
     // 옛 cross-provider target 을 붙든 채 남아 Send 를 막고 Switch 가 화면과 다른 provider 로 전환한다.
     setPendingSwitch(null)
     setSelectedModel(nextModelId)
-  }, [models, sessionPin, orchestratorProvider, running])
+    // 명시 세션에서 Default 로 바꾸면 그때부터 fallback 을 쓴다 → D4 status log(세션당 1회, dedup).
+    if (nextModelId == null) logFallbackDefaultOnce(sessionPin)
+  }, [models, sessionPin, orchestratorProvider, running, logFallbackDefaultOnce])
 
   const cancelProviderSwitch = useCallback(() => setPendingSwitch(null), [])
 

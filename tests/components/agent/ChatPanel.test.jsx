@@ -1655,6 +1655,32 @@ describe('ChatPanel — M7b provider selector · D2 switch · D4 fallback', () =
     expect(screen.queryByText(/is unavailable/)).toBeNull()
   })
 
+  it('명시 codex 세션에서 나중에 Default 를 고르면 그때 실제 fallback 사용이라 D4 status log 가 한 번 뜬다', async () => {
+    const user = userEvent.setup()
+    window.electronAPI.agentListModels.mockResolvedValue(providerModels)
+    window.electronAPI.agentStatus.mockResolvedValue({
+      state: 'open', sessionId: 'session-1', provider: 'codex',
+      initialModelId: 'codex:gpt-a', defaultPin: coldFallbackPin,
+    })
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+    await screen.findByRole('combobox', { name: 'Agent model' })
+    await waitFor(() => expect(window.electronAPI.agentStatus).toHaveBeenCalled())
+    // 명시 gpt-a 세션 → open 시엔 fallback 미사용 → 로그 없음.
+    expect(screen.queryByText(/is unavailable/)).toBeNull()
+
+    // Default(생략) 선택 → 이제부터 fallback gpt-5.5 를 쓴다 → status log 1회.
+    await openCombobox(user)
+    await user.click(screen.getByRole('option', { name: /^Default/ }))
+    expect(screen.getByText(/is unavailable/)).toBeInTheDocument()
+
+    // 다시 GPT A → Default 왕복해도 세션당 1회라 재로그 없음.
+    await openCombobox(user)
+    await user.click(screen.getByRole('option', { name: 'GPT A' }))
+    await openCombobox(user)
+    await user.click(screen.getByRole('option', { name: /^Default/ }))
+    expect(screen.getAllByText(/is unavailable/)).toHaveLength(1)
+  })
+
   it('active turn 중 remount(turnActive)면 running 이 복원돼 D2 switch 가 라이브 턴을 죽이지 않는다', async () => {
     const user = userEvent.setup()
     window.electronAPI.agentListModels.mockResolvedValue(providerModels)

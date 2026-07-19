@@ -848,14 +848,20 @@ describe('AgentSessionManager M6b-2b Claude coordination', () => {
     await h.manager.close()
   })
 
-  it('status().turnActive는 turn runState가 idle이 아닌지를 반영한다(remount running 복원용)', async () => {
+  it('status().turnActive는 active/pendingStart만 참이고 aborting 등 종료 신호를 낸 상태는 거짓이다', async () => {
     const h = claudeSessionHarness()
     await h.manager.open(CLAUDE_MODEL_ROW.id)
-    expect(h.manager.status()).toMatchObject({ turnActive: false })
+    expect(h.manager.status()).toMatchObject({ turnActive: false }) // idle
     h.options.runState.state = { kind: 'active', turnId: 't1' }
     expect(h.manager.status()).toMatchObject({ turnActive: true })
-    h.options.runState.state = { kind: 'idle' }
+    h.options.runState.state = { kind: 'pendingStart', turnId: 't2' }
+    expect(h.manager.status()).toMatchObject({ turnActive: true })
+    // aborting/orphanDrain은 이미 agent:done을 냈으므로 running 복원 대상이 아니다(영구 wedge 방지).
+    h.options.runState.state = { kind: 'aborting' }
     expect(h.manager.status()).toMatchObject({ turnActive: false })
+    h.options.runState.state = { kind: 'orphanDrain' }
+    expect(h.manager.status()).toMatchObject({ turnActive: false })
+    h.options.runState.state = { kind: 'idle' }
     await h.manager.close()
   })
 
