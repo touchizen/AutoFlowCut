@@ -44,9 +44,10 @@ export async function checkFolderPermission(settings, openSettings, t) {
  * @param {function} [showLoginModal] - 로그인 만료 모달 표시 함수
  * @returns {boolean} true = 통과, false = 차단됨
  */
-export async function checkAuthToken(genAPI, t) {
+export async function checkAuthToken(genAPI, t, providerId = 'google') {
   // forceRefresh=true: 캐시 무시, 실제 WebContentsView에서 토큰 재추출
-  const token = await genAPI.getAccessToken(true)
+  // providerId(§5.7): 선택된 image provider 키로 게이트 — openai-only 사용자 시작 허용.
+  const token = await genAPI.getAccessToken(true, false, providerId)
   if (!token) {
     genAPI.clearTokenCache()
     // 커스텀 이벤트로 로그인 만료 모달 표시 요청

@@ -362,7 +362,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const readyCheck = checkFlowProjectReady(flowProjectReady, t)
       if (!readyCheck.ok) { releasePreflightBusy(); return { success: false } }
     }
-    if (!(await checkAuthToken(genAPI, t))) {
+    if (!(await checkAuthToken(genAPI, t, settings.generation?.image?.provider ?? 'google'))) {
       const message = authRequiredMessage()
       releasePreflightBusy()
       setReferences(prev => patchReferenceByIdentity(
@@ -749,7 +749,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     }
 
     // 토큰 확인
-    if (!(await checkAuthToken(genAPI, t))) {
+    if (!(await checkAuthToken(genAPI, t, settings.generation?.image?.provider ?? 'google'))) {
       toast.warning(authRequiredMessage())
       recordFail(null, 'auth', authRequiredMessage())
       return buildResult()

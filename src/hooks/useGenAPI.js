@@ -90,14 +90,21 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
    */
   // 조용한 체크(mount 시 authReady 확인 등)에서도 호출되므로 여기서 onAuthError 를
   // 직접 트리거하지 않는다 — 무키 상태 UX 는 checkAuthToken 가드가 담당.
-  const getAccessToken = useCallback(async () => {
+  // providerId(3번째 인자, §5.7): 배치 시작 게이트가 "선택된 provider 의 키" 유무로 판정하게 한다.
+  //   미지정/google → hasKey(google, 기존 동작·헤더 표시 호환). 비-google → byProvider[id].
+  //   google 키 없이 openai 만 있는 사용자가 openai 배치를 시작할 수 있게 하는 핵심(그 전엔 google 게이트가 차단).
+  //   forceRefresh/silent 는 레거시 Flow 시그니처 호환용(현재 BYOK 경로에선 미사용).
+  const getAccessToken = useCallback(async (_forceRefresh = false, _silent = false, providerId = 'google') => {
     try {
       const s = await window.electronAPI.genaiGetKeyStatus()
-      const ok = !!s?.hasKey
-      setAccessToken(ok ? 'byok' : null)
+      const ok = (providerId && providerId !== 'google')
+        ? !!s?.byProvider?.[providerId]
+        : !!s?.hasKey
+      // accessToken 상태(헤더 표시)는 google 기준으로만 갱신 — provider-특정 게이트가 헤더를 흔들지 않게.
+      if (!providerId || providerId === 'google') setAccessToken(ok ? 'byok' : null)
       return ok ? 'byok' : null
     } catch {
-      setAccessToken(null)
+      if (!providerId || providerId === 'google') setAccessToken(null)
       return null
     }
   }, [])

@@ -40,7 +40,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     }
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
     if (!readyCheck.ok) { setGeneratingSceneId(null); return }
-    if (!(await checkAuthToken(genAPI, t))) {
+    if (!(await checkAuthToken(genAPI, t, settings.generation?.image?.provider ?? 'google'))) {
       const message = getAuthRequiredMessage(genAPI?.mode, t)
       scenesHook.updateScene(sceneId, { status: 'error', errorKind: 'auth', error: message })
       toast.warning(message)

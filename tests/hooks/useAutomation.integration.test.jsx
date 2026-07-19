@@ -95,6 +95,7 @@ function setupHook(overrides = {}) {
     submitGeneration,
     checkGeneration,
     collectGeneration,
+    getAccessToken,
   }
 }
 
@@ -170,8 +171,8 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
   })
 
   // M1: 전역 image provider 가 배치 제출 옵션까지 전달돼야 dispatcher 가 openai 로 라우팅한다.
-  it('start({imageProvider:openai}) 을 submitGeneration provider 로 전달', async () => {
-    const { hook, submitGeneration, checkGeneration, collectGeneration } = setupHook({
+  it('start({imageProvider:openai}) 을 submitGeneration provider + 게이트에 전달', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration, getAccessToken } = setupHook({
       scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
     })
     submitGeneration.mockResolvedValue({ success: true, generationId: 'gen-1' })
@@ -188,6 +189,8 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
     const submitOptions = submitGeneration.mock.calls[0][2]
     expect(submitOptions.provider).toBe('openai')
     expect(submitOptions.model).toBe('gpt-image-1')
+    // §5.7 게이트: 선택된 provider(openai)로 키 확인 — google-only 게이트면 openai-only 사용자가 막힘
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'openai')
   })
 
   it('imageProvider 미지정 → submitGeneration provider=google (하위호환)', async () => {

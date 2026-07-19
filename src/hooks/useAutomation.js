@@ -566,9 +566,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       }
     }
     
-    // 토큰 확인
+    // 토큰 확인 — 선택된 image provider 의 키로 게이트(§5.7). google 키 없이 openai 만 있어도 시작 가능.
     setStatusMessage(t('status.checkingAuth'))
-    const token = await getAccessToken()
+    const token = await getAccessToken(false, false, imageProvider)
     if (!token) {
       // BYOK 키 없음 → 생성 중단 + API 키 모달 안내 (handleStart 와 동일 UX).
       // 'flow-login-expired' → App 의 useFlowEvents → showApiKeyModal.

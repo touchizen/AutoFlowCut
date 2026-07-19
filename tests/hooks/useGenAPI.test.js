@@ -33,6 +33,21 @@ describe('useGenAPI — 인증(BYOK)', () => {
     await act(async () => { tok = await result.current.getAccessToken() })
     expect(tok).toBeNull()
   })
+
+  it('providerId 지정 시 byProvider[id] 로 게이트 (§5.7 openai-only)', async () => {
+    // google 키 없음 + openai 키 있음
+    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({
+      hasKey: false, byProvider: { google: false, openai: true },
+    })
+    const { result } = renderHook(() => useGenAPI())
+    let googleTok, openaiTok
+    await act(async () => {
+      googleTok = await result.current.getAccessToken(false, false, 'google')
+      openaiTok = await result.current.getAccessToken(false, false, 'openai')
+    })
+    expect(googleTok).toBeNull()   // google 키 없음 → 차단
+    expect(openaiTok).toBe('byok') // openai 키 있음 → 통과 (핵심)
+  })
 })
 
 describe('useGenAPI — 이미지', () => {
