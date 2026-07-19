@@ -310,6 +310,32 @@ describe('AgentSessionManager M6b-2a open provider factory', () => {
     await h.manager.close()
   })
 
+  it('open 뒤 status()가 orchestratorProvider와 defaultPin을 remount 복구용으로 노출한다', async () => {
+    const catalog = modelCatalogDouble([DEFAULT_MODEL_ROW, CLAUDE_MODEL_ROW])
+    const h = lifecycleHarness({ modelCatalog: catalog })
+
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+
+    // orchestratorProvider는 열린 세션의 provider(claude)이지 pin의 provider(codex fallback)가 아니다.
+    // D2 remount 복구가 이 둘을 구분해야 다른-provider 선택을 경고할 수 있다.
+    expect(h.manager.status()).toMatchObject({
+      state: 'open',
+      provider: 'claude',
+      defaultPin: {
+        id: DEFAULT_MODEL_ID,
+        provider: 'codex',
+        sdkModel: 'gpt-5.5',
+        defaultFallbackFrom: 'claude-opus-4-8',
+      },
+    })
+    await h.manager.close()
+  })
+
+  it('idle status()는 provider/defaultPin을 붙이지 않는다', async () => {
+    const h = lifecycleHarness({ modelCatalog: modelCatalogDouble([DEFAULT_MODEL_ROW]) })
+    expect(h.manager.status()).toEqual({ state: 'idle', sessionId: null })
+  })
+
   it.each([
     {
       name: 'cold',

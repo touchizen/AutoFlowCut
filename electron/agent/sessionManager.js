@@ -289,6 +289,10 @@ export function createAgentSessionManager({
       startedAt: current.startedAt,
       turns: current.turns,
       toolCalls: current.toolCalls,
+      // remount 복구용: renderer가 open 응답을 잃어도 orchestratorProvider(D2 비교)와
+      // defaultPin(D4 표시·'기본' resolve)을 다시 얻는다. §5.1 M7 이연분.
+      provider: current.provider,
+      defaultPin: current.defaultPin,
     }
   }
 
