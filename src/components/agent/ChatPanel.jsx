@@ -558,6 +558,10 @@ export default function ChatPanel({
       'agent:error': (payload) => {
         setRunning(false)
         setMessages((current) => current.map((message) => ({ ...message, streaming: false })))
+        // orphan-drain timeout / invalid-remote-start close the main session (§5.3). Lower the
+        // local ref so the next Send reopens instead of looping on withOpenSession's throw. The
+        // error message itself is surfaced by pushError, so no extra status entry here.
+        if (payload?.sessionClosed === true) sessionOpenRef.current = false
         pushError(payload)
       },
     }

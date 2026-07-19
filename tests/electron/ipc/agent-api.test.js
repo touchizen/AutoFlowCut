@@ -526,6 +526,26 @@ describe('createAgentEventForwarder — D14 event 효과', () => {
     expect(win.webContents.send.mock.calls.every(([channel]) => channel.startsWith('agent:'))).toBe(true)
   })
 
+  it('onExit의 sessionClosed를 agent:error로 통과시켜 renderer가 local session ref를 내리게 한다', async () => {
+    const { createAgentEventForwarder } = await loadSubject()
+    const win = fakeWindow()
+    const events = createAgentEventForwarder({ getWindow: () => win })
+    events.onExit({ code: null, signal: null, error: null, reason: 'agent-orphan-drain-timeout', sessionClosed: true })
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:error', expect.objectContaining({
+      error: 'agent-exit',
+      sessionClosed: true,
+    }))
+  })
+
+  it('sessionClosed 없는 onExit은 sessionClosed:false로 내보내 세션을 유지하게 한다', async () => {
+    const { createAgentEventForwarder } = await loadSubject()
+    const win = fakeWindow()
+    const events = createAgentEventForwarder({ getWindow: () => win })
+    events.onExit({ code: 1, signal: null, error: new Error('boom') })
+    const call = win.webContents.send.mock.calls.find(([channel]) => channel === 'agent:error')
+    expect(call[1].sessionClosed).toBe(false)
+  })
+
   it('failed turn은 done으로 위장하지 않고 구조화 agent:error로 보낸다', async () => {
     const { createAgentEventForwarder } = await loadSubject()
     expect(createAgentEventForwarder).toBeTypeOf('function')

@@ -583,6 +583,18 @@ describe('ChatPanel — agentMessage completion reconciliation', () => {
     const bubbles = [...container.querySelectorAll('.agent-chat-message.agent')]
     expect(bubbles.map((bubble) => bubble.textContent)).toEqual(['절단된 답', '다음 답'])
   })
+
+  it('다른 turnId의 연속 delta는 이전 streaming bubble에 병합하지 않고 새 bubble을 만든다', () => {
+    // §5.3 provenance: turn 경계는 turnId로 갈린다. 이 분리가 없으면 다른 turn delta가 이전 bubble에
+    // 병합돼 sourceUuids가 오염되고 turn별 retraction이 엉뚱한 텍스트를 지우거나 놓친다.
+    const { container } = render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+
+    window.electronAPI.emitAgent('agent:delta', { delta: 'A답', turnId: 'turn-1', sourceUuid: 'a' })
+    window.electronAPI.emitAgent('agent:delta', { delta: 'B답', turnId: 'turn-2', sourceUuid: 'b' })
+
+    const bubbles = [...container.querySelectorAll('.agent-chat-message.agent')]
+    expect(bubbles.map((bubble) => bubble.textContent)).toEqual(['A답', 'B답'])
+  })
 })
 
 describe('ChatPanel — abort session settlement', () => {
@@ -659,6 +671,38 @@ describe('ChatPanel — abort session settlement', () => {
     await act(async () => resolveAbort({ aborted: true, sessionClosed: true }))
 
     expect(screen.getAllByText('The agent session was closed after stopping.')).toHaveLength(1)
+  })
+
+  it('agent:error의 sessionClosed:true는 local session ref를 내린다 (orphan-drain/exit)', async () => {
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message to the agent' }), {
+      target: { value: '작업 시작' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await act(async () => {})
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled()
+
+    // main이 orphan-drain timeout으로 세션을 닫으면 exit가 sessionClosed:true로 온다.
+    window.electronAPI.emitAgent('agent:error', {
+      error: 'agent-exit', message: 'orphan drain timed out', sessionClosed: true,
+    })
+
+    // ref가 내려가 Close session이 비활성(다음 Send는 재open한다). error 메시지는 alert로 보인다.
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('orphan drain timed out')
+  })
+
+  it('sessionClosed 없는 agent:error는 local session을 유지한다', async () => {
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message to the agent' }), {
+      target: { value: '작업 시작' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await act(async () => {})
+
+    window.electronAPI.emitAgent('agent:error', { error: 'agent-turn-failed', message: '턴 실패' })
+
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled()
   })
 })
 

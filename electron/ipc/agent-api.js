@@ -327,6 +327,9 @@ export function createAgentEventForwarder({ getWindow } = {}) {
         message: messageOf(details.error, '에이전트 프로세스가 종료됐습니다.'),
         code: details.code ?? null,
         signal: details.signal ?? null,
+        // orphan-drain timeout / invalid-remote-start close the main session; the renderer must
+        // lower its local session ref or every later send hits withOpenSession's throw (§5.3).
+        sessionClosed: details.sessionClosed === true,
       })
     },
   }
