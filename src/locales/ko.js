@@ -1710,6 +1710,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     failed: '에이전트 작업에 실패했습니다.',
     limitReached: '에이전트 사용 한도에 도달했습니다. 사용 {used} / 한도 {limit}',
     projectSwitched: '프로젝트가 바뀌어 이전 에이전트 세션을 종료했습니다.',
+    sessionClosedAfterStop: '중지 후 에이전트 세션을 닫았습니다.',
     // 승인 창
     approvalMergeSpeakers: '제출한 화자 {count}건{empty}을 기존 명단과 병합하도록 요청합니다 — 아래 목록에 없는 기존 화자는 유지됩니다.',
     approvalVisualReview: '씬 {ordinals}의 시각 리뷰를 "{status}"(으)로 기록하도록 요청합니다.',

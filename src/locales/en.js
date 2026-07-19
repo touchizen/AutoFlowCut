@@ -1711,6 +1711,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     failed: 'The agent failed to complete the task.',
     limitReached: 'Agent usage limit reached. Used {used} / limit {limit}',
     projectSwitched: 'The project changed, so the previous agent session was closed.',
+    sessionClosedAfterStop: 'The agent session was closed after stopping.',
     // Approval dialog
     approvalMergeSpeakers: 'Submit {count} speaker record(s){empty} for merge into the existing roster — existing speakers not listed below are kept.',
     approvalVisualReview: 'Record the visual review of scene(s) {ordinals} as "{status}".',

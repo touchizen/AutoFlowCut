@@ -244,12 +244,28 @@ export function createAgentEventForwarder({ getWindow } = {}) {
 
   return {
     onDelta(delta) {
+      if (delta && typeof delta === 'object' && !Array.isArray(delta)) {
+        emit('agent:delta', {
+          delta: delta.text,
+          turnId: delta.turnId,
+          sourceUuid: delta.sourceUuid,
+        })
+        return
+      }
       emit('agent:delta', { delta })
     },
 
     onEvent(event = {}) {
       const { method, params = {} } = event
       const item = params.item
+
+      if (method === 'item/retracted') {
+        emit('agent:item-retracted', {
+          turnId: params.turnId ?? null,
+          sourceUuids: Array.isArray(params.sourceUuids) ? params.sourceUuids : [],
+        })
+        return
+      }
 
       if (method === 'item/completed' && item?.type === 'agentMessage') {
         // delta 합과 completed text는 실제로 다를 수 있고 빈 문자열도 확정값이다. renderer가 fallback

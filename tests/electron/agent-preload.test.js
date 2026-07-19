@@ -87,6 +87,22 @@ describe('preload agent surface — D14 효과', () => {
     expect(electronDouble.ipcRenderer.removeListener).toHaveBeenCalledWith('agent:message', listener)
   })
 
+  it('agent:item-retracted를 allowlist가 renderer에 전달한다', () => {
+    const api = electronDouble.exposed
+    const callback = vi.fn()
+    const off = api.onAgentEvent('agent:item-retracted', callback)
+    const [channel, listener] = electronDouble.ipcRenderer.on.mock.calls[0]
+    const payload = { turnId: 'turn-1', sourceUuids: ['source-1'] }
+
+    listener({}, payload)
+    off()
+
+    expect(channel).toBe('agent:item-retracted')
+    expect(callback).toHaveBeenCalledWith(payload)
+    expect(electronDouble.ipcRenderer.removeListener)
+      .toHaveBeenCalledWith('agent:item-retracted', listener)
+  })
+
   it('permission request는 기존 app-scoped 전용 listener만 받고 session event allowlist에 섞이지 않는다', () => {
     const api = electronDouble.exposed
     const before = electronDouble.ipcRenderer.on.mock.calls.length

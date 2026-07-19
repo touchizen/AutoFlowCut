@@ -447,6 +447,40 @@ describe('agent:list-models catalog', () => {
 })
 
 describe('createAgentEventForwarder — D14 event 효과', () => {
+  it('Codex 문자열 delta는 유지하고 Claude 객체 delta는 provenance와 함께 언팩한다', async () => {
+    const { createAgentEventForwarder } = await loadSubject()
+    const win = fakeWindow()
+    const events = createAgentEventForwarder({ getWindow: () => win })
+
+    events.onDelta('Codex 조각')
+    events.onDelta({ text: 'Claude 조각', turnId: 'turn-claude', sourceUuid: 'source-1' })
+
+    expect(win.webContents.send).toHaveBeenNthCalledWith(1, 'agent:delta', {
+      delta: 'Codex 조각',
+    })
+    expect(win.webContents.send).toHaveBeenNthCalledWith(2, 'agent:delta', {
+      delta: 'Claude 조각',
+      turnId: 'turn-claude',
+      sourceUuid: 'source-1',
+    })
+  })
+
+  it('item/retracted를 turn과 source UUID가 보존된 전용 renderer event로 전달한다', async () => {
+    const { createAgentEventForwarder } = await loadSubject()
+    const win = fakeWindow()
+    const events = createAgentEventForwarder({ getWindow: () => win })
+
+    events.onEvent({
+      method: 'item/retracted',
+      params: { turnId: 'turn-1', sourceUuids: ['source-1', 'source-2'] },
+    })
+
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:item-retracted', {
+      turnId: 'turn-1',
+      sourceUuids: ['source-1', 'source-2'],
+    })
+  })
+
   it('item/completed(agentMessage)를 확정 text가 든 agent:message로 전달한다', async () => {
     const { createAgentEventForwarder } = await loadSubject()
     const win = fakeWindow()

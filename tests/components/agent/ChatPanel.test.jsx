@@ -463,6 +463,203 @@ describe('ChatPanel — agentMessage completion reconciliation', () => {
     expect(bubbles).toHaveLength(1)
     expect(bubbles[0]).toHaveTextContent('completion 없이 끝난 답')
   })
+
+  it('retraction은 같은 turn과 source UUID가 겹치는 message/tool만 제거한다', () => {
+    const { container } = render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+
+    window.electronAPI.emitAgent('agent:delta', {
+      delta: '지울 ', turnId: 'turn-1', sourceUuid: 'source-delta-1',
+    })
+    window.electronAPI.emitAgent('agent:delta', {
+      delta: '답', turnId: 'turn-1', sourceUuid: 'source-delta-2',
+    })
+    window.electronAPI.emitAgent('agent:message', {
+      turnId: 'turn-1',
+      item: {
+        id: 'message-target', type: 'agentMessage', text: '지울 답', sourceUuid: 'source-final',
+      },
+    })
+    window.electronAPI.emitAgent('agent:delta', {
+      delta: '최종 source로 지울 초안', turnId: 'turn-1', sourceUuid: 'source-delta-3',
+    })
+    window.electronAPI.emitAgent('agent:message', {
+      turnId: 'turn-1',
+      item: {
+        id: 'message-final-source', type: 'agentMessage', text: '최종 source로 지울 답', sourceUuid: 'source-final-2',
+      },
+    })
+    window.electronAPI.emitAgent('agent:message', {
+      turnId: 'turn-2',
+      item: {
+        id: 'message-other-turn', type: 'agentMessage', text: '다른 turn 보존', sourceUuid: 'source-delta-1',
+      },
+    })
+    window.electronAPI.emitAgent('agent:message', {
+      turnId: 'turn-1',
+      item: {
+        id: 'message-other-source', type: 'agentMessage', text: '다른 source 보존', sourceUuid: 'source-other',
+      },
+    })
+    window.electronAPI.emitAgent('agent:message', {
+      item: { id: 'message-codex', type: 'agentMessage', text: 'Codex 보존' },
+    })
+    window.electronAPI.emitAgent('agent:tool-call', {
+      turnId: 'turn-1',
+      phase: 'completed',
+      item: {
+        id: 'tool-target', type: 'mcpToolCall', tool: 'target_tool', sourceUuids: ['source-tool'],
+      },
+    })
+    window.electronAPI.emitAgent('agent:tool-call', {
+      turnId: 'turn-2',
+      phase: 'completed',
+      item: {
+        id: 'tool-other-turn', type: 'mcpToolCall', tool: 'other_turn_tool', sourceUuids: ['source-tool'],
+      },
+    })
+    window.electronAPI.emitAgent('agent:tool-call', {
+      phase: 'completed',
+      item: { id: 'tool-codex', type: 'mcpToolCall', tool: 'codex_tool' },
+    })
+
+    window.electronAPI.emitAgent('agent:item-retracted', {
+      turnId: 'turn-1', sourceUuids: ['source-delta-1', 'source-final-2', 'source-tool'],
+    })
+
+    expect(screen.queryByText('지울 답')).toBeNull()
+    expect(screen.queryByText('최종 source로 지울 답')).toBeNull()
+    expect(screen.queryByText(/target_tool/)).toBeNull()
+    expect(screen.getByText('다른 turn 보존')).toBeTruthy()
+    expect(screen.getByText('다른 source 보존')).toBeTruthy()
+    expect(screen.getByText('Codex 보존')).toBeTruthy()
+    expect(screen.getByText(/other_turn_tool/)).toBeTruthy()
+    expect(screen.getByText(/codex_tool/)).toBeTruthy()
+    expect(container.querySelectorAll('.agent-chat-message.agent')).toHaveLength(3)
+  })
+
+  it('null turn이나 빈 source UUID retraction은 Claude/Codex 엔트리를 지우지 않는다', () => {
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+    window.electronAPI.emitAgent('agent:message', {
+      turnId: 'turn-1',
+      item: { id: 'message-claude', type: 'agentMessage', text: 'Claude 답', sourceUuid: 'source-1' },
+    })
+    window.electronAPI.emitAgent('agent:tool-call', {
+      turnId: 'turn-1',
+      phase: 'completed',
+      item: {
+        id: 'tool-claude', type: 'mcpToolCall', tool: 'claude_tool', sourceUuids: ['source-1'],
+      },
+    })
+    window.electronAPI.emitAgent('agent:message', {
+      item: { id: 'message-codex', type: 'agentMessage', text: 'Codex 답' },
+    })
+    window.electronAPI.emitAgent('agent:tool-call', {
+      phase: 'completed',
+      item: { id: 'tool-codex', type: 'mcpToolCall', tool: 'codex_tool' },
+    })
+
+    window.electronAPI.emitAgent('agent:item-retracted', { turnId: null, sourceUuids: ['source-1'] })
+    window.electronAPI.emitAgent('agent:item-retracted', { turnId: 'turn-1', sourceUuids: [] })
+
+    expect(screen.getByText('Claude 답')).toBeTruthy()
+    expect(screen.getByText(/claude_tool/)).toBeTruthy()
+    expect(screen.getByText('Codex 답')).toBeTruthy()
+    expect(screen.getByText(/codex_tool/)).toBeTruthy()
+  })
+
+  it('agent:error가 partial bubble을 닫아 다음 delta를 새 bubble에 둔다', () => {
+    const { container } = render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+
+    window.electronAPI.emitAgent('agent:delta', {
+      delta: '절단된 답', turnId: 'turn-1', sourceUuid: 'source-1',
+    })
+    window.electronAPI.emitAgent('agent:error', { error: 'agent-turn-failed', message: '실패' })
+    // 같은 turnId로 이어지는 delta다: agent:error가 partial의 streaming을 닫았을 때만 새 bubble이 된다.
+    // (turnId가 달랐다면 appendDelta의 turnId 분리만으로 새 bubble이 돼 streaming close를 검증하지 못한다.)
+    window.electronAPI.emitAgent('agent:delta', {
+      delta: '다음 답', turnId: 'turn-1', sourceUuid: 'source-2',
+    })
+
+    const bubbles = [...container.querySelectorAll('.agent-chat-message.agent')]
+    expect(bubbles.map((bubble) => bubble.textContent)).toEqual(['절단된 답', '다음 답'])
+  })
+})
+
+describe('ChatPanel — abort session settlement', () => {
+  async function openTurnAndStop(abortResult) {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(0)
+    window.electronAPI.agentAbort.mockResolvedValueOnce(abortResult)
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message to the agent' }), {
+      target: { value: '중단할 작업' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await act(async () => {})
+    window.electronAPI.emitAgent('agent:delta', {
+      delta: '작업 중', turnId: 'turn-1', sourceUuid: 'source-1',
+    })
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled()
+
+    vi.advanceTimersByTime(400)
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    await act(async () => {})
+  }
+
+  it('sessionClosed:true면 local session을 내리고 status message를 한 번 남긴다', async () => {
+    await openTurnAndStop({
+      aborted: true,
+      error: 'agent-abort-timeout',
+      message: 'abort timed out',
+      contextPreserved: false,
+      sessionClosed: true,
+      reason: 'abort-timeout',
+    })
+
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeDisabled()
+    expect(screen.getAllByText('The agent session was closed after stopping.')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent('abort timed out')
+  })
+
+  it('contextPreserved:true면 같은 local session을 유지하고 close status를 만들지 않는다', async () => {
+    await openTurnAndStop({
+      aborted: true,
+      contextPreserved: true,
+      sessionClosed: false,
+    })
+
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled()
+    expect(screen.queryByText('The agent session was closed after stopping.')).toBeNull()
+  })
+
+  it('같은 sessionClosed settlement를 Stop 재클릭이 함께 받아도 status는 한 번만 남긴다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(0)
+    let resolveAbort
+    window.electronAPI.agentAbort.mockReturnValue(
+      new Promise((resolve) => { resolveAbort = resolve }),
+    )
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message to the agent' }), {
+      target: { value: '중복 중단할 작업' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await act(async () => {})
+    window.electronAPI.emitAgent('agent:delta', {
+      delta: '작업 중', turnId: 'turn-1', sourceUuid: 'source-1',
+    })
+    vi.advanceTimersByTime(400)
+
+    const stop = screen.getByRole('button', { name: 'Stop' })
+    fireEvent.click(stop)
+    fireEvent.click(stop)
+    expect(window.electronAPI.agentAbort).toHaveBeenCalledTimes(2)
+    await act(async () => resolveAbort({ aborted: true, sessionClosed: true }))
+
+    expect(screen.getAllByText('The agent session was closed after stopping.')).toHaveLength(1)
+  })
 })
 
 describe('ChatPanel — effective panel mode', () => {

@@ -22,9 +22,23 @@ import {
 } from './agentPanelLayout.js'
 import './ChatPanel.css'
 
-const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
+const AGENT_EVENTS = [
+  'agent:delta',
+  'agent:message',
+  'agent:tool-call',
+  'agent:item-retracted',
+  'agent:usage',
+  'agent:done',
+  'agent:error',
+]
 const STOP_ARM_MS = 300
 const DOCK_KEYBOARD_STEP_PX = 16
+
+function sourceUuidList(...values) {
+  return [...new Set(values.flatMap((value) => (
+    Array.isArray(value) ? value : [value]
+  )).filter((value) => typeof value === 'string' && value.length > 0))]
+}
 
 function AgentControlIcon({ name }) {
   const paths = {
@@ -446,16 +460,29 @@ export default function ChatPanel({
     ))
   }, [])
 
-  const appendDelta = useCallback((delta) => {
-    const text = String(delta ?? '')
+  const appendDelta = useCallback((payload) => {
+    const text = String(payload?.delta ?? '')
     if (!text) return
+    const turnId = payload?.turnId ?? null
+    const sourceUuids = sourceUuidList(payload?.sourceUuid)
     setMessages((current) => {
       const last = current.at(-1)
-      if (last?.role === 'agent' && last.streaming) {
-        return [...current.slice(0, -1), { ...last, text: `${last.text}${text}` }]
+      if (last?.role === 'agent' && last.streaming && last.turnId === turnId) {
+        return [...current.slice(0, -1), {
+          ...last,
+          text: `${last.text}${text}`,
+          sourceUuids: sourceUuidList(last.sourceUuids, sourceUuids),
+        }]
       }
       messageIdRef.current += 1
-      return [...current, { id: `agent-${messageIdRef.current}`, role: 'agent', text, streaming: true }]
+      return [...current, {
+        id: `agent-${messageIdRef.current}`,
+        role: 'agent',
+        text,
+        streaming: true,
+        turnId,
+        sourceUuids,
+      }]
     })
   }, [])
 
@@ -465,6 +492,7 @@ export default function ChatPanel({
     // 실제 wire는 item마다 delta* → completed 순서다. completed는 빈 문자열까지 확정값이므로 현재
     // streaming bubble을 무조건 덮어쓰고 닫는다. completion이 없는 item만 기존 delta를 보존한다.
     const text = String(item.text ?? '')
+    const turnId = payload?.turnId ?? null
     setMessages((current) => {
       const last = current.at(-1)
       if (last?.role === 'agent' && last.streaming) {
@@ -473,6 +501,8 @@ export default function ChatPanel({
           itemId: item.id ?? null,
           text,
           streaming: false,
+          turnId,
+          sourceUuids: sourceUuidList(last.sourceUuids, item.sourceUuid),
         }]
       }
       messageIdRef.current += 1
@@ -482,23 +512,43 @@ export default function ChatPanel({
         role: 'agent',
         text,
         streaming: false,
+        turnId,
+        sourceUuids: sourceUuidList(item.sourceUuid),
       }]
     })
   }, [])
 
   useEffect(() => {
     const handlers = {
-      'agent:delta': (payload) => appendDelta(payload?.delta),
+      'agent:delta': (payload) => appendDelta(payload),
       'agent:message': finalizeMessage,
       'agent:tool-call': (payload) => {
         const item = payload?.item || {}
         const id = item.id || `${toolName(item, t)}:${payload?.turnId || 'unknown'}`
         setToolCalls((current) => {
-          const next = { id, phase: payload?.phase || 'started', item }
+          const next = {
+            id,
+            phase: payload?.phase || 'started',
+            item,
+            turnId: payload?.turnId ?? null,
+            sourceUuids: sourceUuidList(item.sourceUuids),
+          }
           const index = current.findIndex((entry) => entry.id === id)
           if (index < 0) return [...current, next]
           return current.map((entry, i) => (i === index ? next : entry))
         })
+      },
+      'agent:item-retracted': (payload) => {
+        const turnId = payload?.turnId ?? null
+        const sourceUuids = sourceUuidList(payload?.sourceUuids)
+        if (turnId === null || sourceUuids.length === 0) return
+        const retracted = new Set(sourceUuids)
+        const keepEntry = (entry) => (
+          entry.turnId !== turnId
+          || !entry.sourceUuids?.some((sourceUuid) => retracted.has(sourceUuid))
+        )
+        setMessages((current) => current.filter(keepEntry))
+        setToolCalls((current) => current.filter(keepEntry))
       },
       'agent:usage': setUsage,
       'agent:done': () => {
@@ -507,6 +557,7 @@ export default function ChatPanel({
       },
       'agent:error': (payload) => {
         setRunning(false)
+        setMessages((current) => current.map((message) => ({ ...message, streaming: false })))
         pushError(payload)
       },
     }
@@ -664,6 +715,18 @@ export default function ChatPanel({
     abortEpochRef.current += 1
     try {
       const result = await api.agentAbort()
+      if (result?.sessionClosed === true) {
+        const wasOpen = sessionOpenRef.current
+        sessionOpenRef.current = false
+        if (wasOpen) {
+          messageIdRef.current += 1
+          setMessages((current) => [...current, {
+            id: `system-${messageIdRef.current}`,
+            role: 'system',
+            text: t('agent.sessionClosedAfterStop'),
+          }])
+        }
+      }
       if (hasFailure(result)) pushError(result)
     } catch (error) {
       pushError({ error: 'agent-abort-failed', message: error?.message })

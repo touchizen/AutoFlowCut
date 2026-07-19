@@ -168,7 +168,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentListModels: () => ipcRenderer.invoke('agent:list-models'),
   onAgentEvent: (channel, cb) => {
     // 승인 요청은 ApprovalDialog가 별도 listener로 받는다. 여기 섞으면 session 재등록/수명 결합이 쉽다.
-    const valid = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
+    const valid = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:item-retracted', 'agent:usage', 'agent:done', 'agent:error']
     if (!valid.includes(channel)) return () => {}
     const listener = (_e, payload) => cb(payload)
     ipcRenderer.on(channel, listener)

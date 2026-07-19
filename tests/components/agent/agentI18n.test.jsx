@@ -27,6 +27,7 @@ const REDESIGN_KEYS = [
   'claudeProvider', 'comingSoon', 'slideMode', 'floatingMode', 'modeToggle',
   'switchToSlide', 'switchToFloating', 'flowFloatingOnly', 'sendTooltip',
   'steerTooltip', 'stopTooltip', 'closeSessionTooltip',
+  'sessionClosedAfterStop',
 ]
 
 function agentApi() {
