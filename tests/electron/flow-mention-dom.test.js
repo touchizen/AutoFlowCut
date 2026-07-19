@@ -15,6 +15,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   CLICK_CHARACTER_TAB,
+  FILTER_TRIGGER_EXPR,
+  CHAR_MENUITEM_EXPR,
   hasMentionOption,
   dispatchMentionOption,
   chipCheck,
@@ -251,61 +253,49 @@ describe('CLICK_CHARACTER_TAB (탭도 로케일에 묶이지 않는다)', () => 
     await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(false)
   })
 
-  it('캐릭터 탭이 없으면 false', async () => {
+  it('캐릭터 탭이 없으면(좁은 레이아웃 포함) false — 호출측이 trusted 필터 경로로 처리', async () => {
     document.body.innerHTML = dialog({ tabs: [tab('dashboard', 'All')], options: [] })
     await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(false)
   })
+})
 
-  /**
-   * 좁은 창(창 크기 축소)에서는 Flow 가 탭 바를 [role='tab'] 대신 filter_list 드롭다운
-   * (button[aria-haspopup='menu'])으로 접는다. 클릭하면 role='menu' 안에 role='menuitem' 들이
-   * 뜨고, 그중 캐릭터 항목은 아이콘 리거처 'accessibility_new' 로 식별한다. (실앱 DOM 덤프 2026-07-19)
-   */
-  const narrowDialog = () => `<div role="dialog"><button id="ft" aria-haspopup="menu" aria-expanded="false" data-state="closed"><i>filter_list</i></button></div>`
-  // Radix 는 메뉴를 body 로 portal 하고, 트리거는 synthetic .click() 이 아니라 실제 pointer 이벤트
-  //   (pointerdown)로 열린다 — 그래서 filterBtn.click() 만으론 안 열렸다(실앱 확인 2026-07-19).
-  const opensFilterMenu = (items) => {
-    const ft = document.getElementById('ft')
-    const clicks = []
-    ft.addEventListener('pointerdown', () => {
-      if (document.querySelector("[role='menu']")) return
-      const menu = document.createElement('div')
-      menu.setAttribute('role', 'menu')
-      menu.innerHTML = items.map(([lig, label]) => `<button role="menuitem"><i>${lig}</i>${label}</button>`).join('')
-      document.body.appendChild(menu)
-      menu.querySelectorAll("[role='menuitem']").forEach((mi) => mi.addEventListener('click', () => clicks.push(mi.textContent)))
-    })
-    return clicks
-  }
+/**
+ * 좁은 창(창 크기 축소)에서는 Flow 가 탭 바를 [role='tab'] 대신 filter_list 드롭다운
+ * (button[aria-haspopup='menu'])으로 접는다(실앱 DOM 덤프 2026-07-19). 이 드롭다운 트리거와
+ * 열린 메뉴의 캐릭터 항목은 Radix 라 synthetic click 을 무시하므로, 페이지-내 클릭이 아니라
+ * 요소를 돌려주는 표현식을 trustedClickOnFlowView(sendInputEvent)로 눌러야 한다.
+ * 여기서는 그 표현식이 올바른 요소(또는 null)를 돌려주는지만 검증한다.
+ */
+describe('FILTER_TRIGGER_EXPR / CHAR_MENUITEM_EXPR (좁은 레이아웃 요소 셀렉터)', () => {
+  const narrowDialog = () => `<div role="dialog"><button id="ft" aria-haspopup="menu" aria-expanded="false" data-state="closed"><i>filter_list</i></button><button aria-haspopup="menu"><i>more_vert</i></button></div>`
+  const menu = (items) => `<div role="menu">${items.map(([lig, label]) => `<button role="menuitem"><i>${lig}</i>${label}</button>`).join('')}</div>`
 
-  it('좁은 모드: 탭 없이 filter_list 드롭다운이면 메뉴 열고 캐릭터(accessibility_new) 항목을 클릭한다', async () => {
+  it('FILTER_TRIGGER_EXPR: filter_list 아이콘 트리거를 찾는다(more_vert 등 다른 메뉴 버튼 배제)', () => {
     document.body.innerHTML = narrowDialog()
-    const clicks = opensFilterMenu([
-      ['dashboard', '모두'], ['image', '이미지'], ['accessibility_new', '캐릭터'], ['face', '인물'],
-    ])
-    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(true)
-    expect(clicks).toHaveLength(1)
-    expect(clicks[0]).toContain('accessibility_new')
+    const el = run(FILTER_TRIGGER_EXPR)
+    expect(el).toBeTruthy()
+    expect(el.id).toBe('ft')
+    expect(el.textContent).toContain('filter_list')
   })
 
-  it('좁은 모드(영어): 리거처로 찾으므로 로케일 무관', async () => {
-    document.body.innerHTML = narrowDialog()
-    const clicks = opensFilterMenu([
-      ['dashboard', 'All'], ['image', 'Images'], ['accessibility_new', 'Characters'],
-    ])
-    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(true)
-    expect(clicks[0]).toContain('accessibility_new')
+  it('FILTER_TRIGGER_EXPR: 넓은 레이아웃(탭 존재)이면 null', () => {
+    document.body.innerHTML = KO // 탭만 있고 filter_list 없음
+    expect(run(FILTER_TRIGGER_EXPR)).toBeNull()
   })
 
-  it('좁은 모드: 메뉴에 캐릭터 항목이 없으면 false (엉뚱한 필터로 진행 안 함)', async () => {
-    document.body.innerHTML = narrowDialog()
-    opensFilterMenu([['dashboard', '모두'], ['image', '이미지']])
-    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(false)
+  it.each([
+    ['ko', [['dashboard', '모두'], ['image', '이미지'], ['accessibility_new', '캐릭터'], ['face', '인물']]],
+    ['en', [['dashboard', 'All'], ['image', 'Images'], ['accessibility_new', 'Characters']]],
+  ])('CHAR_MENUITEM_EXPR(%s): accessibility_new 리거처로 캐릭터 menuitem 을 찾는다(로케일 무관)', (_l, items) => {
+    document.body.innerHTML = `<div role="dialog"></div>` + menu(items)
+    const el = run(CHAR_MENUITEM_EXPR)
+    expect(el).toBeTruthy()
+    expect(el.textContent).toContain('accessibility_new')
   })
 
-  it('좁은 모드: filter_list 트리거조차 없으면 false', async () => {
-    document.body.innerHTML = `<div role="dialog"><div role="option">x</div></div>`
-    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(false)
+  it('CHAR_MENUITEM_EXPR: 메뉴에 캐릭터 항목이 없으면 null(엉뚱한 필터 선택 방지)', () => {
+    document.body.innerHTML = `<div role="dialog"></div>` + menu([['dashboard', '모두'], ['image', '이미지']])
+    expect(run(CHAR_MENUITEM_EXPR)).toBeNull()
   })
 })
 

@@ -856,7 +856,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       await sleep(150)
       // #R36: 컴포저 클리어 + segments(칩/텍스트) 주입 — 공용 헬퍼(injectComposeSegments)로 T2V 와 공유.
       //   Characters 탭에서 option 이 없을 때만 staleMention 이 온다. 다른 멘션 실패는 재등록 없이 재시도.
-      const _inj = await injectComposeSegments(flowView, segs)
+      const _inj = await injectComposeSegments(flowView, segs, trustedClickOnFlowView)
       if (!_inj.ok) {
         return {
           success: false,

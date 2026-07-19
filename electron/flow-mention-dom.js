@@ -99,57 +99,35 @@ const HELPERS = `
     try { return new Ctor(type, init); }
     catch { const i = Object.assign({}, init); delete i.view; return new Ctor(type, i); }
   };
-
-  // Radix 컨트롤(드롭다운 트리거·menuitem)은 synthetic .click() 이 아니라 실제 pointer 시퀀스로
-  // 반응한다. dispatchMentionOption 과 동일한 포인터/마우스 시퀀스를 공용화한다.
-  const __pointerClick = (el) => {
-    if (!el) return false;
-    try { el.scrollIntoView({ block: 'center' }); } catch {}
-    const r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
-    const opt = { bubbles: true, cancelable: true, composed: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, view: window, button: 0, pointerId: 1 };
-    try { el.dispatchEvent(__mkEvent(PointerEvent, 'pointerover', opt)); el.dispatchEvent(__mkEvent(PointerEvent, 'pointerenter', opt)); } catch {}
-    try { el.dispatchEvent(__mkEvent(PointerEvent, 'pointerdown', opt)); } catch {}
-    el.dispatchEvent(__mkEvent(MouseEvent, 'mousedown', opt));
-    try { el.dispatchEvent(__mkEvent(PointerEvent, 'pointerup', opt)); } catch {}
-    el.dispatchEvent(__mkEvent(MouseEvent, 'mouseup', opt));
-    el.dispatchEvent(__mkEvent(MouseEvent, 'click', opt));
-    return true;
-  };
 `
 
 /** 캐릭터 탭 클릭. (기본 "모두" 탭은 가상화 때문에 캐릭터 entity 가 렌더 안 될 수 있다.) */
+// (넓은 레이아웃) 캐릭터가 role='tab' 로 존재할 때 클릭. Radix Tabs 는 synthetic click 을 받는다.
+//   좁은 레이아웃(탭이 filter_list 드롭다운으로 접힘)은 여기서 false 를 돌려주고, 호출측이
+//   trustedClick(FILTER_TRIGGER_EXPR → CHAR_MENUITEM_EXPR)으로 처리한다 — Radix 드롭다운 트리거는
+//   synthetic click(isTrusted:false)을 무시하므로 반드시 sendInputEvent(trusted)가 필요하기 때문.
 export const CLICK_CHARACTER_TAB = `(async function(){
   ${HELPERS}
-  const dlg = __dialog();
+  const t = __findCharTab(__dialog());
+  if (!t) return false;
   const active = (el) => el.getAttribute('aria-selected') === 'true' || el.getAttribute('data-state') === 'active';
-  // (A) 넓은 레이아웃: 캐릭터가 role='tab' 로 존재.
-  const t = __findCharTab(dlg);
-  if (t) {
-    if (active(t)) return true;
-    t.click();
-    // Radix/React 는 상태를 비동기로 갱신한다 — 클릭한 틱에 aria-selected 를 읽으면 아직 false 다.
-    //   (2026-07-14: 동기 검증 때문에 탭을 찾아놓고도 하드 실패했다. 실앱 로그 charTabFound:true.)
-    for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 100));
-      if (active(t)) return true;
-    }
-    return false;
-  }
-  // (B) 좁은 레이아웃(창 축소): 탭 바가 filter_list 드롭다운으로 접힘 → 메뉴 열고 캐릭터 항목 클릭.
-  //   (2026-07-19 실앱 DOM 덤프: role='tab' 0개, filter_list 버튼 + role='menu'/'menuitem'.)
-  const filterBtn = __findFilterTrigger(dlg);
-  if (!filterBtn) return false;
-  __pointerClick(filterBtn); // Radix 드롭다운은 .click() 으론 안 열린다 — pointer 시퀀스 필요.
-  let item = null;
-  for (let i = 0; i < 20 && !item; i++) {
+  if (active(t)) return true;
+  t.click();
+  // Radix/React 는 상태를 비동기로 갱신한다 — 클릭한 틱에 aria-selected 를 읽으면 아직 false 다.
+  //   (2026-07-14: 동기 검증 때문에 탭을 찾아놓고도 하드 실패했다. 실앱 로그 charTabFound:true.)
+  for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 100));
-    item = __findCharMenuItem();
+    if (active(t)) return true;
   }
-  if (!item) return false;
-  __pointerClick(item);
-  await new Promise((r) => setTimeout(r, 150)); // 옵션이 캐릭터로 재필터될 시간
-  return true;
+  return false;
 })()`
+
+// 좁은 레이아웃(창 축소)에서 탭 바가 접힌 filter_list 드롭다운 트리거를 반환하는 표현식 —
+//   trustedClickOnFlowView(jsSelector) 에 그대로 넘긴다(요소 반환식). 없으면 null.
+export const FILTER_TRIGGER_EXPR = `(function(){ ${HELPERS} return __findFilterTrigger(__dialog()); })()`
+
+// 열린 필터 드롭다운(role=menu, Radix portal)의 캐릭터 menuitem 을 반환하는 표현식.
+export const CHAR_MENUITEM_EXPR = `(function(){ ${HELPERS} return __findCharMenuItem(); })()`
 
 /** 이름과 정확히 일치하는 옵션이 피커에 있는가. */
 export const hasMentionOption = (name) => `(function(){
