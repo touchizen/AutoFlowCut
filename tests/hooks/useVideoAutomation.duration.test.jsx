@@ -18,11 +18,6 @@ vi.mock('../../src/components/Toast', () => ({
   toast: { error: vi.fn(), info: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }))
 vi.mock('../../src/services/videoRecovery', () => ({ retryVideoDownload: vi.fn() }))
-vi.mock('../../src/utils/videoMetadata', () => ({
-  pickVideoMetadata: vi.fn(() => ({})),
-  buildVideoMetaPatch: vi.fn(() => ({})),
-}))
-
 beforeEach(() => {
   __resetQuotaStopForTests()
   vi.useFakeTimers()
@@ -49,7 +44,7 @@ function makeHook() {
     getAccessToken: vi.fn().mockResolvedValue('token'),
   }
   const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
-  return { hook, generateVideoT2V, generateVideoI2V }
+  return { hook, generateVideoT2V, generateVideoI2V, getAccessToken: genAPI.getAccessToken }
 }
 
 async function runT2V(hook, sceneOverrides, startOverrides) {
@@ -231,5 +226,101 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
     const args = generateVideoI2V.mock.calls[0]
     expect(args[5]).toBe(8)
     expect(args[7]).toBe('1080p')
+  })
+
+  it('non-google T2V: grok model/resolution/duration과 provider를 변조 없이 제출', async () => {
+    const { hook, generateVideoT2V, getAccessToken } = makeHook()
+    await runT2V(hook, { targetDuration: 5 }, {
+      videoProvider: 'grok',
+      videoModel: 'grok-imagine-video-1.5',
+      videoResolution: 'native-ultra',
+    })
+
+    const args = generateVideoT2V.mock.calls[0]
+    expect(args[1]).toBe('grok-imagine-video-1.5')
+    expect(args[3]).toBe(5)
+    expect(args[5]).toBe('native-ultra')
+    expect(args[7]).toMatchObject({ provider: 'grok' })
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'grok')
+  })
+
+  it('non-google I2V: grok model/resolution/duration과 i2v provider를 변조 없이 제출', async () => {
+    const { hook, generateVideoI2V } = makeHook()
+    await runI2V(hook, { targetDuration: 7 }, {
+      videoProvider: 'grok',
+      videoModel: 'grok-imagine-video-1.5',
+      videoResolution: 'provider-native',
+    })
+
+    const args = generateVideoI2V.mock.calls[0]
+    expect(args[3]).toBe('grok-imagine-video-1.5')
+    expect(args[5]).toBe(7)
+    expect(args[7]).toBe('provider-native')
+    expect(args[8]).toMatchObject({ provider: 'grok' })
+  })
+
+  it('submit appliedInputs를 pending/project patch와 완료 duration/model에 반영', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({
+      success: true,
+      generationId: 'gen-applied',
+      appliedInputs: {
+        model: 'veo-3.1-lite-generate-preview',
+        aspectRatio: '16:9',
+        durationSeconds: 8,
+        resolution: '1080p',
+      },
+    })
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: true,
+      statuses: [{ generationId: 'gen-applied', status: 'complete', mediaId: 'uri', videoUrl: 'uri' }],
+    })
+    const genAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus,
+      downloadVideo: vi.fn().mockResolvedValue({ success: true, base64: 'VIDEO' }),
+      upscaleVideo: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const onItemUpdate = vi.fn()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+
+    await act(async () => {
+      await hook.result.current.start({
+        mode: 't2v',
+        scenes: [{ id: 'vscene_v1', prompt: 'p' }],
+        projectName: 'test',
+        saveMode: 'memory',
+        videoProvider: 'google',
+        videoModel: 'veo-3.1-lite',
+        aspectRatio: '16:9',
+        duration: 4,
+        videoResolution: '4k',
+        onItemUpdate,
+      })
+    })
+
+    expect(onItemUpdate).toHaveBeenCalledWith(
+      'vscene_v1',
+      'generating',
+      expect.objectContaining({
+        model: 'veo-3.1-lite-generate-preview',
+        appliedInputs: {
+          model: 'veo-3.1-lite-generate-preview',
+          aspectRatio: '16:9',
+          durationSeconds: 8,
+          resolution: '1080p',
+        },
+      }),
+    )
+    expect(onItemUpdate).toHaveBeenCalledWith(
+      'vscene_v1',
+      'complete',
+      expect.objectContaining({
+        model: 'veo-3.1-lite-generate-preview',
+        duration: 8,
+        appliedInputs: expect.objectContaining({ resolution: '1080p' }),
+      }),
+    )
   })
 })

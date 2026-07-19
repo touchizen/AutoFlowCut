@@ -1246,6 +1246,7 @@ function App() {
             ...(result?.seed != null ? { seed: result.seed } : {}),
             ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
             ...(result?.model ? { model: result.model } : {}),
+            ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
             // 'error'/'errorKind' in result 패턴 — null 값도 patch 에 포함시켜 stale error 메시지 clear.
             ...(result && 'error' in result ? { error: result.error } : {}),
             ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
@@ -1280,6 +1281,7 @@ function App() {
           ...(result?.seed != null ? { seed: result.seed } : {}),
           ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
           ...(result?.model ? { model: result.model } : {}),
+          ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
           // null 값도 적용해 stale error clear (success 분기 patch 가 작동하도록).
           ...(result && 'error' in result ? { error: result.error } : {}),
           ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
@@ -1625,6 +1627,7 @@ function App() {
               ...(result?.seed != null ? { seed: result.seed } : {}),
               ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
               ...(result?.model ? { model: result.model } : {}),
+              ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
               // null 값 보존 — success 시 stale error 메시지 clear.
               ...(result && 'error' in result ? { error: result.error } : {}),
               ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
@@ -1724,6 +1727,7 @@ function App() {
           saveMode: settings.saveMode,
           videoResolution: settings.videoResolution || '720p',
           videoModel: settings.videoModelF2V,
+          videoProvider: settings.generation?.video?.i2v?.provider ?? 'google',
           videoBatchCount: settings.videoBatchCount || 1,
           concurrency: settings.videoConcurrency || 4,
           seed: effectiveI2VSeed,
@@ -1745,6 +1749,7 @@ function App() {
                   ...(result?.seed != null ? { seed: result.seed } : {}),
                   ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
                   ...(result?.model ? { model: result.model } : {}),
+                  ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
                   // null 값 보존 — success 시 stale error 메시지 clear.
                   ...(result && 'error' in result ? { error: result.error } : {}),
                   ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),

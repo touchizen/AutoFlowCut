@@ -161,6 +161,74 @@ describe('useAppSettings — 전역 image provider (M1 §5.8)', () => {
   })
 })
 
+describe('useAppSettings — 단계별 video provider (M2-pre §5.8)', () => {
+  it('fresh install: T2V/I2V provider=google + 단계별 google 모델 기억', () => {
+    const { result } = renderHook(() => useAppSettings())
+
+    expect(result.current.settings.generation.video).toEqual({
+      t2v: { provider: 'google' },
+      i2v: { provider: 'google' },
+    })
+    expect(result.current.settings.modelsByProviderVideo).toEqual({
+      t2v: { google: DEFAULT_VIDEO_MODEL_ID },
+      i2v: { google: DEFAULT_VIDEO_MODEL_ID },
+    })
+  })
+
+  it('마이그레이션: flat videoModelT2V/videoModelF2V를 각 google stage 슬롯에 시드하고 보존', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      videoModelT2V: 'legacy-t2v-model',
+      videoModelF2V: 'legacy-i2v-model',
+    }))
+
+    const { result } = renderHook(() => useAppSettings())
+
+    expect(result.current.settings.videoModelT2V).toBe('legacy-t2v-model')
+    expect(result.current.settings.videoModelF2V).toBe('legacy-i2v-model')
+    expect(result.current.settings.modelsByProviderVideo.t2v.google).toBe('legacy-t2v-model')
+    expect(result.current.settings.modelsByProviderVideo.i2v.google).toBe('legacy-i2v-model')
+  })
+
+  it('nested provider/model을 flat active model과 정합하고 모델은 consume-once', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      generation: {
+        video: {
+          t2v: { provider: 'future-t2v', model: 'future-t2v-model' },
+          i2v: { provider: 'future-i2v', model: 'future-i2v-model' },
+        },
+      },
+    }))
+
+    const { result } = renderHook(() => useAppSettings())
+
+    expect(result.current.settings.videoModelT2V).toBe('future-t2v-model')
+    expect(result.current.settings.videoModelF2V).toBe('future-i2v-model')
+    expect(result.current.settings.modelsByProviderVideo.t2v['future-t2v']).toBe('future-t2v-model')
+    expect(result.current.settings.modelsByProviderVideo.i2v['future-i2v']).toBe('future-i2v-model')
+    expect(result.current.settings.generation.video.t2v.model).toBeUndefined()
+    expect(result.current.settings.generation.video.i2v.model).toBeUndefined()
+  })
+
+  it('마이그레이션은 재로드해도 멱등이고 image/provider 축을 보존', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      imageModel: 'gpt-image-1',
+      videoModelT2V: 'legacy-t2v-model',
+      videoModelF2V: 'legacy-i2v-model',
+      generation: { image: { provider: 'openai' } },
+      modelsByProvider: { openai: 'gpt-image-1' },
+    }))
+
+    const first = renderHook(() => useAppSettings())
+    const once = first.result.current.settings
+    first.unmount()
+    const second = renderHook(() => useAppSettings())
+
+    expect(second.result.current.settings).toEqual(once)
+    expect(second.result.current.settings.generation.image.provider).toBe('openai')
+    expect(second.result.current.settings.modelsByProvider.openai).toBe('gpt-image-1')
+  })
+})
+
 describe('useAppSettings — videoConcurrency', () => {
   it('fresh install 기본값은 videoConcurrency 4', () => {
     const { result } = renderHook(() => useAppSettings())

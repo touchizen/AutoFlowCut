@@ -205,11 +205,16 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
 
   // --- 비디오 생성 -----------------------------------------------------------
 
-  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, referenceImages = []) => {
+  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, referenceImages = [], { provider } = {}) => {
     try {
-      const effectiveModel = normalizeVideoModel(model)
-      const videoReferenceInputs = (referenceImages || []).slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
-      const invalidTypeRef = videoReferenceInputs.find(isInvalidVideoAssetReference)
+      const isGoogleProvider = !provider || provider === 'google'
+      const effectiveModel = isGoogleProvider ? normalizeVideoModel(model) : model
+      const videoReferenceInputs = isGoogleProvider
+        ? (referenceImages || []).slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
+        : (referenceImages || [])
+      const invalidTypeRef = isGoogleProvider
+        ? videoReferenceInputs.find(isInvalidVideoAssetReference)
+        : null
       if (invalidTypeRef) {
         return {
           success: false,
@@ -219,7 +224,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
       const refs = []
       const unresolvedRefs = []
       for (const ref of videoReferenceInputs) {
-        const resolved = await resolveReferenceImages([ref], { projectName: projectName(), strictMime: true })
+        const resolved = await resolveReferenceImages([ref], { projectName: projectName(), strictMime: isGoogleProvider })
         if (resolved.length === 0) unresolvedRefs.push(describeVideoReference(ref))
         else refs.push(resolved[0])
       }
@@ -229,14 +234,16 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
           error: `Veo reference images could not be resolved: ${unresolvedRefs.join(', ')}`,
         }
       }
-      const invalidRef = refs.find(ref => !supportsVideoReferenceMimeType(ref.mimeType))
+      const invalidRef = isGoogleProvider
+        ? refs.find(ref => !supportsVideoReferenceMimeType(ref.mimeType))
+        : null
       if (invalidRef) {
         return {
           success: false,
           error: 'Veo reference images support PNG, JPEG, or WebP.',
         }
       }
-      if (refs.length > 0 && !supportsVideoReferenceImages(effectiveModel || DEFAULT_VIDEO_MODEL_ID)) {
+      if (isGoogleProvider && refs.length > 0 && !supportsVideoReferenceImages(effectiveModel || DEFAULT_VIDEO_MODEL_ID)) {
         return {
           success: false,
           error: 'Veo reference images require Veo 3.1 Fast/Quality. Select Fast or Quality, or remove @references.',
@@ -244,12 +251,13 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
       }
       const payload = {
         prompt,
-        aspectRatio: toVeoAspect(aspectRatio),
+        aspectRatio: isGoogleProvider ? toVeoAspect(aspectRatio) : aspectRatio,
         durationSeconds: duration,
         model: effectiveModel,
         // 모델이 지원하지 않는 해상도(예: Veo Lite + 4K)는 허용 최대로 강등 — 전역 resolution
         // 설정과 타입별 모델 조합에서 잘못된 해상도가 API 로 새어나가 실패하는 걸 막는다.
-        resolution: coerceResolution(effectiveModel, resolution) || undefined,
+        resolution: isGoogleProvider ? (coerceResolution(effectiveModel, resolution) || undefined) : resolution,
+        ...(provider ? { provider } : {}),
       }
       if (Number.isFinite(seed)) payload.seed = seed
       if (refs.length > 0) payload.referenceImages = refs
@@ -263,18 +271,20 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
   // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 { mimeType, data } 로 정규화한다.
   // main-process submitVideo 가 image/lastFrame 을 bytesBase64Encoded REST payload 로 직렬화한다.
   // (T2V referenceImages 는 별도 경로로 inlineData 를 쓴다.)
-  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution) => {
+  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution, { provider } = {}) => {
     try {
-      const effectiveModel = normalizeVideoModel(model)
+      const isGoogleProvider = !provider || provider === 'google'
+      const effectiveModel = isGoogleProvider ? normalizeVideoModel(model) : model
       const r = await window.electronAPI.genaiGenerateVideo({
         prompt,
         image: toInlineImage(startImage),
         endImage: toInlineImage(endImage),
-        aspectRatio: toVeoAspect(aspectRatio),
+        aspectRatio: isGoogleProvider ? toVeoAspect(aspectRatio) : aspectRatio,
         durationSeconds: duration,
         model: effectiveModel,
         seed: Number.isFinite(seed) ? seed : undefined,
-        resolution: coerceResolution(effectiveModel, resolution) || undefined,
+        resolution: isGoogleProvider ? (coerceResolution(effectiveModel, resolution) || undefined) : resolution,
+        ...(provider ? { provider } : {}),
       })
       return markAuthFailure(r)
     } catch (error) {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createDispatcher } from '../../../../electron/api/providers/dispatcher.js'
 import { decodeHandle, encodeHandle, HANDLE_PREFIX } from '../../../../electron/api/providers/handle.js'
+import { submitVideo as submitGoogleVideo } from '../../../../electron/api/providers/video/google.js'
 
 const makeGenaiKeyStore = (overrides = {}) => ({
   getKey: vi.fn(() => 'STORED_GOOGLE_KEY'),
@@ -29,10 +30,16 @@ const makeRegistry = ({ image = {}, video = {} } = {}) => ({
 
 describe('createDispatcher — provider routing', () => {
   it('non-google submitVideo raw id를 opaque handle로 감추고 operationName을 생략한다', async () => {
+    const appliedInputs = {
+      model: 'grok-imagine-video-1.5',
+      aspectRatio: '16:9',
+      durationSeconds: 6,
+      resolution: '720p',
+    }
     const grok = {
       id: 'grok',
       kind: 'video',
-      submitVideo: vi.fn().mockResolvedValue({ success: true, operationName: 'grok-raw-1' }),
+      submitVideo: vi.fn().mockResolvedValue({ success: true, operationName: 'grok-raw-1', appliedInputs }),
       checkVideo: vi.fn(),
       fetchVideoBase64: vi.fn(),
     }
@@ -44,7 +51,7 @@ describe('createDispatcher — provider routing', () => {
 
     const res = await dispatcher.submitVideo({ provider: 'grok', prompt: 'launch' })
 
-    expect(res).toEqual({ success: true, generationId: expect.stringMatching(/^gen:v1:/) })
+    expect(res).toEqual({ success: true, generationId: expect.stringMatching(/^gen:v1:/), appliedInputs })
     expect(res.generationId.startsWith(HANDLE_PREFIX)).toBe(true)
     expect(res).not.toHaveProperty('operationName')
     expect(decodeHandle(res.generationId)).toEqual({ provider: 'grok', rawId: 'grok-raw-1' })
@@ -250,7 +257,13 @@ describe('createDispatcher — security and keys', () => {
   })
 
   it('submitVideo는 renderer apiKey를 무시하고 whitelisted payload만 전달한다', async () => {
-    const submitVideo = vi.fn().mockResolvedValue({ success: true, operationName: 'operations/google-1' })
+    const appliedInputs = {
+      model: 'video-model',
+      aspectRatio: '16:9',
+      durationSeconds: 8,
+      resolution: '1080p',
+    }
+    const submitVideo = vi.fn().mockResolvedValue({ success: true, operationName: 'operations/google-1', appliedInputs })
     const google = { id: 'google', kind: 'video', submitVideo }
     const engineDeps = { marker: 'deps' }
     const dispatcher = createDispatcher({
@@ -293,6 +306,32 @@ describe('createDispatcher — security and keys', () => {
       success: true,
       generationId: 'operations/google-1',
       operationName: 'operations/google-1',
+      appliedInputs,
+    })
+  })
+
+  it('google adapter submit 성공은 REST에 실제 적용한 model/aspect/duration/resolution을 appliedInputs로 반환', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ name: 'operations/google-applied' }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ))
+
+    const result = await submitGoogleVideo({
+      apiKey: 'GOOGLE_KEY',
+      prompt: 'run',
+      model: 'veo-3.1-lite',
+      aspectRatio: '',
+      durationSeconds: 4,
+      resolution: '4k',
+    }, { fetchImpl })
+
+    expect(result.success).toBe(true)
+    expect(result.operationName).toBe('operations/google-applied')
+    expect(result.appliedInputs).toEqual({
+      model: 'veo-3.1-lite-generate-preview',
+      aspectRatio: '16:9',
+      durationSeconds: 8,
+      resolution: '1080p',
     })
   })
 

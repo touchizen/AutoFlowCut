@@ -116,6 +116,90 @@ describe('SceneTab — image provider 선택 (M1 §5.8)', () => {
   })
 })
 
+describe('SceneTab — video provider 선택 (M2-pre §5.8)', () => {
+  const provSettings = {
+    ...baseSettings,
+    videoModelT2V: 'veo-3.1-fast-generate-preview',
+    videoModelF2V: 'veo-3.1-generate-preview',
+    generation: {
+      image: { provider: 'google' },
+      video: {
+        t2v: { provider: 'google' },
+        i2v: { provider: 'google' },
+      },
+    },
+    modelsByProviderVideo: {
+      t2v: { google: 'veo-3.1-fast-generate-preview', grok: 'grok-t2v-model' },
+      i2v: { google: 'veo-3.1-generate-preview', grok: 'grok-i2v-model' },
+    },
+  }
+
+  it('실제 등록 provider가 google 하나면 단일 옵션 토글을 숨김', () => {
+    render(<SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} appMode="api" />)
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderT2VTitle' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
+  })
+
+  it('미래 provider 목록이 있으면 T2V/I2V를 독립 노출하고 기억 모델을 복원', () => {
+    const setLocalSettings = vi.fn()
+    render(
+      <SceneTab
+        localSettings={provSettings}
+        setLocalSettings={setLocalSettings}
+        t={t}
+        appMode="api"
+        videoProviders={['google', 'grok']}
+      />,
+    )
+
+    const t2vGroup = screen.getByRole('group', { name: 'settings.videoProviderT2VTitle' })
+    const i2vGroup = screen.getByRole('group', { name: 'settings.videoProviderI2VTitle' })
+    fireEvent.click(t2vGroup.querySelector('button:nth-child(2)'))
+    const afterT2V = setLocalSettings.mock.calls[0][0](provSettings)
+    expect(afterT2V.generation.video.t2v.provider).toBe('grok')
+    expect(afterT2V.generation.video.i2v.provider).toBe('google')
+    expect(afterT2V.videoModelT2V).toBe('grok-t2v-model')
+
+    fireEvent.click(i2vGroup.querySelector('button:nth-child(2)'))
+    const afterI2V = setLocalSettings.mock.calls[1][0](provSettings)
+    expect(afterI2V.generation.video.i2v.provider).toBe('grok')
+    expect(afterI2V.generation.video.t2v.provider).toBe('google')
+    expect(afterI2V.videoModelF2V).toBe('grok-i2v-model')
+  })
+
+  it('T2V/I2V 모델 변경을 각 현재 provider stage 슬롯에 기억', () => {
+    const setLocalSettings = vi.fn()
+    const { container } = render(
+      <SceneTab localSettings={provSettings} setLocalSettings={setLocalSettings} t={t} appMode="api" />,
+    )
+    const selects = container.querySelectorAll('select.model-select')
+
+    fireEvent.change(selects[1], { target: { value: 'veo-3.1-generate-preview' } })
+    const afterT2V = setLocalSettings.mock.calls[0][0](provSettings)
+    expect(afterT2V.modelsByProviderVideo.t2v.google).toBe('veo-3.1-generate-preview')
+    expect(afterT2V.modelsByProviderVideo.i2v.google).toBe('veo-3.1-generate-preview')
+
+    fireEvent.change(selects[2], { target: { value: 'veo-3.1-fast-generate-preview' } })
+    const afterI2V = setLocalSettings.mock.calls[1][0](provSettings)
+    expect(afterI2V.modelsByProviderVideo.i2v.google).toBe('veo-3.1-fast-generate-preview')
+    expect(afterI2V.modelsByProviderVideo.t2v.google).toBe('veo-3.1-fast-generate-preview')
+  })
+
+  it('Flow 모드에서는 여러 video provider가 주입돼도 셀렉터를 숨김', () => {
+    render(
+      <SceneTab
+        localSettings={provSettings}
+        setLocalSettings={vi.fn()}
+        t={t}
+        appMode="flow"
+        videoProviders={['google', 'grok']}
+      />,
+    )
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderT2VTitle' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
+  })
+})
+
 describe('SceneTab — model selectors (T2I/T2V/F2V)', () => {
   it('3개 모델 섹션(T2I/T2V/F2V) 렌더', () => {
     render(<SceneTab localSettings={baseSettings} setLocalSettings={vi.fn()} t={t} />)

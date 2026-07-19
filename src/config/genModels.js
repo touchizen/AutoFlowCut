@@ -182,17 +182,29 @@ export function computeModelHeal(availableModels, settings, mode) {
     if (next !== settings.imageModel) out.imageModel = next
   }
   if (videoModels && videoModels !== VIDEO_MODELS) {
-    const t2v = pickValidModel(videoModels, settings.videoModelT2V, DEFAULT_VIDEO_MODEL_ID)
-    if (t2v !== settings.videoModelT2V) out.videoModelT2V = t2v
+    // §5.12 heal 경계(video): google /models 는 google 모델만 권위. 단계별 provider 가 비-google 이면
+    // 그 단계 모델은 heal 하지 않는다(비-google 모델을 Veo 로 되돌려 M2-선행 grok 생존을 무산시키지 않게).
+    // Flow 모드는 google 전용이라 provider 무관하게 heal(mode 우선, image heal 과 동일 규칙).
+    const t2vProvider = settings?.generation?.video?.t2v?.provider ?? 'google'
+    const i2vProvider = settings?.generation?.video?.i2v?.provider ?? 'google'
+    const healT2V = mode === 'flow' || t2vProvider === 'google'
+    const healI2V = mode === 'flow' || i2vProvider === 'google'
+
+    if (healT2V) {
+      const t2v = pickValidModel(videoModels, settings.videoModelT2V, DEFAULT_VIDEO_MODEL_ID)
+      if (t2v !== settings.videoModelT2V) out.videoModelT2V = t2v
+    }
 
     // Flow 비디오 모델은 패밀리 단위(Omni Flash / Veo Lite·Fast·Quality)라 t2v/i2v 구분이 없다 —
     //   T2V/F2V 둘 다 같은 4개 패밀리에서 고른다. F2V 기본값은 목록 첫 패밀리(저장값 무효 시).
-    let f2vDefaultId = DEFAULT_VIDEO_MODEL_ID
-    if (mode === 'flow' && videoModels.length > 0) {
-      f2vDefaultId = videoModels[0].id
+    if (healI2V) {
+      let f2vDefaultId = DEFAULT_VIDEO_MODEL_ID
+      if (mode === 'flow' && videoModels.length > 0) {
+        f2vDefaultId = videoModels[0].id
+      }
+      const f2v = pickValidModel(videoModels, settings.videoModelF2V, f2vDefaultId)
+      if (f2v !== settings.videoModelF2V) out.videoModelF2V = f2v
     }
-    const f2v = pickValidModel(videoModels, settings.videoModelF2V, f2vDefaultId)
-    if (f2v !== settings.videoModelF2V) out.videoModelF2V = f2v
   }
   return out
 }

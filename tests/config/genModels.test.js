@@ -290,6 +290,41 @@ describe('genModels — computeModelHeal (권위 있는 목록으로 stale 저�
     expect(out.imageModel).toBe(DEFAULT_IMAGE_MODEL_ID)
   })
 
+  it('video: 단계 provider 가 비-google(grok) 이면 그 단계 모델을 heal 안 함 (§5.12, M2-선행 grok 생존)', () => {
+    const googleVideoModels = [
+      { id: 'veo-3.1-fast-generate-preview' },
+      { id: 'veo-3.1-generate-preview' },
+    ]
+    const out = computeModelHeal(
+      { imageModels: IMAGE_MODELS, videoModels: googleVideoModels, source: 'dynamic' },
+      {
+        imageModel: 'gemini-3.1-flash-image',
+        videoModelT2V: 'grok-imagine-video-1.5',   // grok 모델
+        videoModelF2V: 'veo-3.1-generate-preview', // google 모델
+        generation: {
+          image: { provider: 'google' },
+          video: { t2v: { provider: 'grok' }, i2v: { provider: 'google' } },
+        },
+      },
+    )
+    // t2v provider=grok → heal 스킵(grok 모델 보존). i2v provider=google → 정상(이미 유효라 patch 없음)
+    expect(out).not.toHaveProperty('videoModelT2V')
+  })
+
+  it('video: 단계 provider 가 google 이면 stale 모델을 heal (기존 동작 유지)', () => {
+    const googleVideoModels = [{ id: 'veo-3.1-fast-generate-preview' }]
+    const out = computeModelHeal(
+      { imageModels: IMAGE_MODELS, videoModels: googleVideoModels, source: 'dynamic' },
+      {
+        imageModel: 'gemini-3.1-flash-image',
+        videoModelT2V: 'stale-video',
+        videoModelF2V: 'stale-video',
+        // generation.video 없음 → 기본 google → 기존 heal
+      },
+    )
+    expect(out.videoModelT2V).toBe('veo-3.1-fast-generate-preview')
+  })
+
   it('Flow 모드는 google 전용 — openai provider 설정이 남아있어도 image heal 유지', () => {
     // Flow 는 google 전용이라 provider 설정과 무관하게 heal(mode 우선, Fable F3 forward-guard)
     const flowImageModels = [

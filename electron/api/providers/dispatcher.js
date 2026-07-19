@@ -106,9 +106,9 @@ export function createDispatcher({
 
       const generationId = encodeHandle(provider.id, res.operationName)
       if (provider.id === 'google') {
-        return { success: true, generationId, operationName: res.operationName }
+        return { success: true, generationId, operationName: res.operationName, appliedInputs: res.appliedInputs }
       }
-      return { success: true, generationId }
+      return { success: true, generationId, appliedInputs: res.appliedInputs }
     },
 
     async checkVideoStatus({ generationIds = [] } = {}) {

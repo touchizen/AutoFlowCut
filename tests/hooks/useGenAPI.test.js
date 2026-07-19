@@ -177,6 +177,63 @@ describe('useGenAPI — 비디오', () => {
     expect(r).toEqual({ success: true, generationId: 'op1' })
   })
 
+  it('generateVideoT2V: non-google provider의 grok model/aspect/resolution을 IPC까지 byte-for-byte 보존', async () => {
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => {
+      await result.current.generateVideoT2V(
+        'launch',
+        'grok-imagine-video-1.5',
+        'VIDEO_ASPECT_RATIO_CINEMATIC_RAW',
+        5,
+        17,
+        'native-ultra',
+        [],
+        { provider: 'grok' },
+      )
+    })
+
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'launch',
+      aspectRatio: 'VIDEO_ASPECT_RATIO_CINEMATIC_RAW',
+      durationSeconds: 5,
+      model: 'grok-imagine-video-1.5',
+      resolution: 'native-ultra',
+      seed: 17,
+      provider: 'grok',
+    })
+  })
+
+  it('generateVideoI2V: non-google provider의 model/aspect/resolution을 IPC까지 원형 보존', async () => {
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => {
+      await result.current.generateVideoI2V(
+        'animate',
+        'data:image/png;base64,START',
+        null,
+        'grok-imagine-video-1.5',
+        '1:1',
+        7,
+        null,
+        'provider-native',
+        { provider: 'grok' },
+      )
+    })
+
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'animate',
+      image: { mimeType: 'image/png', data: 'START' },
+      endImage: null,
+      aspectRatio: '1:1',
+      durationSeconds: 7,
+      model: 'grok-imagine-video-1.5',
+      seed: undefined,
+      resolution: 'provider-native',
+      provider: 'grok',
+    })
+  })
+
   it('generateVideoT2V: referenceImages 를 base64 해석 후 IPC 로 전달', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     await act(async () => {

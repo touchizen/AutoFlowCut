@@ -84,6 +84,7 @@ describe('videoTextStart', () => {
         saveMode: 'memory',
         videoResolution: '1080p',
         videoModelT2V: 'veo-3.1-fast-generate-preview',
+        generation: { video: { t2v: { provider: 'grok' } } },
         videoBatchCount: 2,
         videoConcurrency: 3,
       },
@@ -100,6 +101,7 @@ describe('videoTextStart', () => {
       saveMode: 'memory',
       videoResolution: '1080p',
       videoModel: 'veo-3.1-fast-generate-preview',
+      videoProvider: 'grok',
       videoBatchCount: 2,
       concurrency: 3,
     })

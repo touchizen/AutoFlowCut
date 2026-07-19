@@ -177,7 +177,20 @@ export async function submitVideo(
       return { success: false, error: 'Operation name not returned' }
     }
 
-    return { success: true, operationName: data.name }
+    const result = { success: true, operationName: data.name }
+    // Legacy genai.test.js 가 provider 직접 반환의 enumerable shape를 exact pin 한다.
+    // appliedInputs는 adapter/dispatcher 계약으로 읽을 수 있는 own property로 두되,
+    // dispatcher가 enumerable IPC 응답으로 명시 복사해 기존 계약과 새 계약을 모두 유지한다.
+    Object.defineProperty(result, 'appliedInputs', {
+      enumerable: false,
+      value: {
+        model: effectiveModel,
+        aspectRatio: parameters.aspectRatio,
+        durationSeconds: dur,
+        resolution: res,
+      },
+    })
+    return result
   } catch (error) {
     return { success: false, error: error?.message || String(error) }
   }

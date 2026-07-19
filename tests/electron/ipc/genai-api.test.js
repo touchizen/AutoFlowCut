@@ -205,7 +205,17 @@ describe('genai-api — 비디오 생성/폴링/다운로드', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ name: 'operations/v1' }))
     registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore(), fetchImpl })
     const res = await ipc.invoke('genai:generate-video', { prompt: 'go' })
-    expect(res).toEqual({ success: true, generationId: 'operations/v1', operationName: 'operations/v1' })
+    expect(res).toEqual({
+      success: true,
+      generationId: 'operations/v1',
+      operationName: 'operations/v1',
+      appliedInputs: {
+        model: 'veo-3.1-fast-generate-preview',
+        aspectRatio: '16:9',
+        durationSeconds: 8,
+        resolution: null,
+      },
+    })
   })
 
   it('generate-video: referenceImages 를 submitVideo REST payload 까지 전달', async () => {
