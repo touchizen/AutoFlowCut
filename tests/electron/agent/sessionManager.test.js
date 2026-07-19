@@ -1788,6 +1788,36 @@ describe('AgentSessionManager D10 app ledger', () => {
     await h.manager.close()
   })
 
+  it('limit 통지(onError)가 throw해도 turn-limit send가 reservation을 wedge하지 않는다', async () => {
+    // R6 MAJOR: reportLimit의 onError(webContents.send)가 창 파괴 race로 throw하면 admission flow가
+    // 끊겨 pendingStart reservation이 안 정산되고 이후 send가 agent-busy로 wedge된다. 통지를 가드해
+    // caller가 refusal을 받고 reservation이 idle로 정산돼야 한다.
+    const onError = vi.fn(() => { throw new Error('webContents.send boom') })
+    const h = lifecycleHarness({ maxTurns: 0, onError })
+    await h.manager.open()
+
+    const first = await h.manager.send('첫 시도', DEFAULT_MODEL_ID)
+    expect(first).toMatchObject({ error: 'agent-limit', limit: 0 })
+    // reservation이 idle로 정산됐어야 다음 send가 busy가 아니라 다시 limit을 준다.
+    const second = await h.manager.send('둘째 시도', DEFAULT_MODEL_ID)
+    expect(second).toMatchObject({ error: 'agent-limit', limit: 0 })
+    await h.manager.close()
+  })
+
+  it('wall-clock 통지(onError)가 throw해도 closeSession은 반드시 돈다', async () => {
+    // R6: wall-clock refusal 통지 throw가 뒤의 closeSession을 막으면 안 된다(자원 누수/미정산).
+    let time = 5_000
+    const onError = vi.fn(() => { throw new Error('webContents.send boom') })
+    const h = lifecycleHarness({ now: () => time, onError })
+    await h.manager.open()
+    time += 2 * 60 * 60 * 1000
+
+    await h.manager.send('통지 throw 뒤 자원 해제', DEFAULT_MODEL_ID)
+
+    await vi.waitFor(() => expect(h.manager.status()).toEqual({ state: 'idle', sessionId: null }))
+    expect(h.orchestrators[0].close).toHaveBeenCalledOnce()
+  })
+
   it('wall-clock 한도 거부는 Codex child를 종료하고 실제 private RPC port를 닫는다', async () => {
     let time = 5_000
     const h = realResourceHarness({ now: () => time })

@@ -304,7 +304,9 @@ export function createAgentSessionManager({
     const refusal = { error: 'agent-limit', limit, used, ...extra }
     // slice 3은 이 callback을 `agent:error`로 보낸다. return value와 event 둘 다 있어야 어느 caller도
     // 조용한 `{success:false}`처럼 버리지 못하고 ChatPanel에 같은 structured failure를 올릴 수 있다.
-    onError?.(refusal)
+    // 🔴 renderer 통지(webContents.send)가 throw해도 admission flow(caller의 refusal 반환·정산·
+    //    wall-clock의 closeSession)가 끊기면 안 된다 — reservation이 pendingStart에 갇혀 wedge된다.
+    try { onError?.(refusal) } catch { /* notification failure must not break admission/cleanup */ }
     return refusal
   }
 
