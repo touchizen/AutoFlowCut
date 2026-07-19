@@ -103,6 +103,24 @@ describe('registerAgentIPC — session command 효과', () => {
     expect(win.webContents.send).toHaveBeenCalledWith('agent:delta', { delta: '응답:계속해' })
   })
 
+  it('agent:status handler가 sessionManager.status()를 그대로 renderer에 노출한다', async () => {
+    const { registerAgentIPC } = await loadSubject()
+    sessionManager.status.mockReturnValue({
+      state: 'open',
+      sessionId: 'session-1',
+      provider: 'claude',
+      defaultPin: { id: 'codex:gpt-5.5', provider: 'codex', sdkModel: 'gpt-5.5', defaultFallbackFrom: 'claude-opus-4-8' },
+    })
+    registerAgentIPC(ipcMain, { sessionManager, getWindow: () => win })
+
+    await expect(ipcMain.invoke('agent:status')).resolves.toEqual({
+      state: 'open',
+      sessionId: 'session-1',
+      provider: 'claude',
+      defaultPin: { id: 'codex:gpt-5.5', provider: 'codex', sdkModel: 'gpt-5.5', defaultFallbackFrom: 'claude-opus-4-8' },
+    })
+  })
+
   it('명시 model은 sessionManager send의 두 번째 인자로 보존한다', async () => {
     const { registerAgentIPC } = await loadSubject()
     registerAgentIPC(ipcMain, { sessionManager, getWindow: () => win })

@@ -165,6 +165,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentSteer: (params) => ipcRenderer.invoke('agent:steer', params),
   agentAbort: (params) => ipcRenderer.invoke('agent:abort', params),
   agentSessionClose: (params) => ipcRenderer.invoke('agent:session-close', params),
+  agentStatus: () => ipcRenderer.invoke('agent:status'),
   agentListModels: () => ipcRenderer.invoke('agent:list-models'),
   onAgentEvent: (channel, cb) => {
     // 승인 요청은 ApprovalDialog가 별도 listener로 받는다. 여기 섞으면 session 재등록/수명 결합이 쉽다.

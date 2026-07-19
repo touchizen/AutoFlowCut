@@ -370,6 +370,9 @@ export function registerAgentIPC(ipcMain, {
     ['agent:steer', 'steer', (payload) => [payload?.text]],
     ['agent:abort', 'abort', () => []],
     ['agent:session-close', 'close', () => []],
+    // remount 복구: renderer가 open 응답을 잃어도 orchestratorProvider(D2)와 defaultPin(D4)을
+    // 다시 얻는다. status()는 동기지만 command loop의 try/catch를 그대로 태워 실패도 값+event로 남긴다.
+    ['agent:status', 'status', () => []],
   ]
   const channels = registrations.map(([channel]) => channel)
   channels.push('agent:list-models')

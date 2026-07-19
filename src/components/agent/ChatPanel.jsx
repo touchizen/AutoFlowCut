@@ -83,6 +83,35 @@ function toolName(item = {}, t) {
   return item.tool || item.name || item.server || t('agent.toolCall')
 }
 
+// D4: defaultFallbackFrom 은 SDK 에 안 보내는 opaque product marker다. 사람이 읽는 이름으로만 매핑한다.
+const FALLBACK_FROM_NAMES = { 'claude-opus-4-8': 'Claude Opus 4.8' }
+
+function fallbackFromName(marker) {
+  return FALLBACK_FROM_NAMES[marker] || marker
+}
+
+// D4 표시(label·status)의 {model}: pin 이 가리키는 fallback 행의 displayName(예 'GPT-5.5').
+// catalog 가 아직 안 실렸으면 pin.sdkModel 로 낙착한다.
+function fallbackModelName(pin, models) {
+  return models.find((model) => model?.id === pin?.id)?.displayName || pin?.sdkModel || ''
+}
+
+// selector 에 넘길 Default label. session pin 이 D4 fallback 이면 '기본 · GPT-5.5 (…)' 로 바꾼다(§5.0 D4).
+function defaultModelLabel(pin, models, t) {
+  if (!pin?.defaultFallbackFrom) return t('agent.modelDefault')
+  return t('agent.modelFallback', {
+    model: fallbackModelName(pin, models),
+    from: fallbackFromName(pin.defaultFallbackFrom),
+  })
+}
+
+// D2: 선택한 row 의 effective provider. Default(null)은 session pin 의 provider 로 resolve 된다
+//     (main 이 생략을 defaultPin 으로 풀기 때문). unknown 이면 null.
+function providerOfSelection(modelId, models, pin, orchestratorProvider) {
+  if (modelId == null) return pin?.provider ?? orchestratorProvider ?? null
+  return models.find((model) => model?.id === modelId)?.provider ?? null
+}
+
 /**
  * I18nProvider 없이도(단위 테스트) 렌더 가능해야 한다 — `useI18n()` 은 provider 가 없으면 throw 한다.
  * StoryView 가 쓰는 것과 같은 관례다. provider 가 없으면 기본 locale(en) 문자열로 떨어진다.
@@ -408,6 +437,12 @@ export default function ChatPanel({
   const [models, setModels] = useState([])
   const [modelsLoading, setModelsLoading] = useState(true)
   const [selectedModel, setSelectedModel] = useState(null)
+  // D2/D4: 열린 session 의 orchestrator provider 와 defaultPin. open 응답/status 로 hydrate 한다.
+  const [orchestratorProvider, setOrchestratorProvider] = useState(null)
+  const [sessionPin, setSessionPin] = useState(null)
+  // D2: cross-provider 선택을 보내기 전 확인. { modelId } | null. modelId 는 null(Default) 가능.
+  const [pendingSwitch, setPendingSwitch] = useState(null)
+  const fallbackLoggedRef = useRef(null)
   const fabRef = useRef(null)
   const inputRef = useRef(null)
   const prevOpenRef = useRef(open)
@@ -459,6 +494,45 @@ export default function ChatPanel({
       current.some((entry) => entry.key === key) ? current : [...current, { key, text }]
     ))
   }, [])
+
+  // open 응답/status 로 얻은 orchestratorProvider·defaultPin 을 반영한다(§5.1 M7). pin 이 D4 fallback 이면
+  // session 당 정확히 한 번 status log 를 남긴다(§5.0 D4: 조용한 폴백 금지). 같은 session 재적용은 재로그 안 함.
+  const applyOpenedSession = useCallback((opened) => {
+    if (!opened || typeof opened !== 'object') return
+    if (opened.provider) setOrchestratorProvider(opened.provider)
+    const pin = opened.defaultPin ?? null
+    setSessionPin(pin)
+    if (pin?.defaultFallbackFrom && opened.sessionId && fallbackLoggedRef.current !== opened.sessionId) {
+      fallbackLoggedRef.current = opened.sessionId
+      messageIdRef.current += 1
+      const text = t('agent.modelFallbackStatus', {
+        model: fallbackModelName(pin, models),
+        from: fallbackFromName(pin.defaultFallbackFrom),
+      })
+      setMessages((current) => [
+        ...current,
+        { id: `agent-${messageIdRef.current}`, role: 'system', text, streaming: false },
+      ])
+    }
+  }, [models, t])
+
+  // remount 복구: main session 이 이미 열려 있으면 status 로 orchestratorProvider·defaultPin 을 되찾는다.
+  // 이게 없으면 remount 뒤 selectedModel 만 null 로 리셋돼 D2 비교/D4 표시가 다음 send 까지 비게 된다.
+  // applyOpenedSession(models 의존)이 바뀔 때마다 재조회하면 안 되므로(중복 agentStatus + 재hydrate) ref 로
+  // 최신 함수만 부르고 effect 는 mount 당 한 번만 돈다.
+  const applyOpenedSessionRef = useRef(applyOpenedSession)
+  applyOpenedSessionRef.current = applyOpenedSession
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve(api.agentStatus?.())
+      .then((snapshot) => {
+        if (cancelled || !snapshot || snapshot.state === 'idle' || !snapshot.sessionId) return
+        sessionOpenRef.current = true
+        applyOpenedSessionRef.current(snapshot)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [api])
 
   const appendDelta = useCallback((payload) => {
     const text = String(payload?.delta ?? '')
@@ -623,6 +697,11 @@ export default function ChatPanel({
     setToolCalls([])
     setUsage(null)
     setErrors([])
+    // 새 프로젝트는 새 session — 직전 session 의 provider/pin/switch 확인/fallback 로그 표식을 버린다.
+    setOrchestratorProvider(null)
+    setSessionPin(null)
+    setPendingSwitch(null)
+    fallbackLoggedRef.current = null
     setMessages(hadOpenSession
       ? [{ id: 'project-switch', role: 'system', text: t('agent.projectSwitched') }]
       : [])
@@ -656,6 +735,7 @@ export default function ChatPanel({
             return false
           }
           sessionOpenRef.current = true
+          applyOpenedSession(result)
           return true
         })
         .catch((error) => {
@@ -669,7 +749,57 @@ export default function ChatPanel({
       openPromiseRef.current = trackedOpen
     }
     return openPromiseRef.current
-  }, [api, pushError])
+  }, [api, applyOpenedSession, pushError])
+
+  // D2: selector 선택. 열린 session 과 다른 provider 로 바뀌면 보내기 전에 확인을 띄운다(맥락 소실 경고).
+  // 같은 provider·session 없음이면 바로 반영. running 중 cross-provider 는 무시한다(Stop/완료 뒤에만 허용).
+  const handleModelChange = useCallback((nextModelId) => {
+    const target = providerOfSelection(nextModelId, models, sessionPin, orchestratorProvider)
+    // orchestratorProvider 는 열린 session 에서만 set 되고 close/project-switch/switch teardown 에서 내려간다.
+    // 따라서 null 이면 "열린 session 없음" 이라 D2 대상이 아니다.
+    const crossProvider = orchestratorProvider && target && target !== orchestratorProvider
+    if (crossProvider) {
+      if (running) return
+      setPendingSwitch({ modelId: nextModelId })
+      return
+    }
+    setSelectedModel(nextModelId)
+  }, [models, sessionPin, orchestratorProvider, running])
+
+  const cancelProviderSwitch = useCallback(() => setPendingSwitch(null), [])
+
+  // D2 확인: 현재 session 을 닫고(경고대로 맥락 소실) 선택 row 로 새로 연다. project switch teardown 을 그대로 미러.
+  const confirmProviderSwitch = useCallback(() => {
+    const pending = pendingSwitch
+    if (!pending) return
+    setPendingSwitch(null)
+    const nextModelId = pending.modelId
+    const hadOpen = sessionOpenRef.current || !!openPromiseRef.current
+    sessionEpochRef.current += 1
+    abortEpochRef.current += 1
+    sessionOpenRef.current = false
+    openPromiseRef.current = null
+    setRunning(false)
+    setToolCalls([])
+    setUsage(null)
+    setErrors([])
+    setMessages([])
+    setOrchestratorProvider(null)
+    setSessionPin(null)
+    setSelectedModel(nextModelId)
+    if (hadOpen) {
+      projectSettleRef.current = Promise.resolve(projectSettleRef.current)
+        .then(() => api.agentAbort())
+        .then((result) => { if (hasFailure(result)) pushError(result) })
+        .catch((error) => pushError({ error: 'agent-abort-failed', message: error?.message }))
+        .then(() => api.agentSessionClose())
+        .then((result) => { if (hasFailure(result)) pushError(result) })
+        .catch((error) => pushError({ error: 'agent-close-failed', message: error?.message }))
+    }
+    // 새 provider 로 즉시 reopen 한다(§5.0 D2: close await → new open). ensureSession 이 projectSettle 를
+    // 먼저 await 하므로 위 close 뒤에 열리고, 성공 시 orchestratorProvider·pin 을 다시 잡는다.
+    ensureSession(nextModelId ?? undefined)
+  }, [pendingSwitch, api, pushError, ensureSession])
 
   const send = async (event) => {
     event.preventDefault()
@@ -757,6 +887,9 @@ export default function ChatPanel({
       // 세션은 사라졌으니 ref를 항상 내려 다음 Send가 재open하게 한다(실패 시 유지하면 wedge).
       sessionOpenRef.current = false
       setRunning(false)
+      // 세션이 사라졌으니 provider/pin 도 내린다 → D2 비교가 닫힌 session 을 대상으로 삼지 않고 D4 label 도 복귀.
+      setOrchestratorProvider(null)
+      setSessionPin(null)
     }
   }
 
@@ -872,6 +1005,21 @@ export default function ChatPanel({
           </div>
         )}
 
+        {/* D2: cross-provider 확인. 네이티브 모달 금지(Flow 뷰 파괴) — 패널 안 인라인 배너. */}
+        {pendingSwitch && (
+          <div className="agent-provider-switch" role="alertdialog" aria-label={t('agent.providerSwitchConfirm')}>
+            <span className="agent-provider-switch-text">{t('agent.providerSwitchConfirm')}</span>
+            <div className="agent-provider-switch-actions">
+              <button type="button" className="agent-provider-switch-proceed" onClick={confirmProviderSwitch}>
+                {t('agent.providerSwitchProceed')}
+              </button>
+              <button type="button" className="agent-provider-switch-cancel" onClick={cancelProviderSwitch}>
+                {t('agent.providerSwitchCancel')}
+              </button>
+            </div>
+          </div>
+        )}
+
         <form className="agent-chat-compose" onSubmit={send}>
           <textarea
             ref={inputRef}
@@ -886,12 +1034,11 @@ export default function ChatPanel({
               models={models}
               value={selectedModel}
               loading={modelsLoading}
-              onChange={setSelectedModel}
+              onChange={handleModelChange}
               label={t('agent.modelLabel')}
-              defaultLabel={t('agent.modelDefault')}
+              defaultLabel={defaultModelLabel(sessionPin, models, t)}
               codexLabel={t('agent.codexProvider')}
               claudeLabel={t('agent.claudeProvider')}
-              comingSoonLabel={t('agent.comingSoon')}
             />
             <div className="agent-chat-toolbar-actions">
               <AgentIconButton

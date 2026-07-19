@@ -43,6 +43,7 @@ describe('preload agent surface — D14 효과', () => {
     await api.agentSteer({ text: '영상은 빼' })
     await api.agentAbort()
     await api.agentSessionClose()
+    await api.agentStatus()
     await api.agentListModels()
 
     expect(electronDouble.ipcRenderer.invoke.mock.calls).toEqual([
@@ -51,6 +52,7 @@ describe('preload agent surface — D14 효과', () => {
       ['agent:steer', { text: '영상은 빼' }],
       ['agent:abort', undefined],
       ['agent:session-close', undefined],
+      ['agent:status'],
       ['agent:list-models'],
     ])
   })
