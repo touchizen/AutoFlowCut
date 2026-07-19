@@ -30,7 +30,7 @@ const coordinator = coordinatorSource.slice(coordinatorStart)
 describe('App handleStart M1 reference guard wiring', () => {
   it('persists mention tag merges before auth and other asynchronous preflight', () => {
     const mergeIndex = handleStartImpl.indexOf('planMentionTagMerges(')
-    const authIndex = handleStartImpl.indexOf('genAPI.getAccessToken(')
+    const authIndex = handleStartImpl.indexOf('runOuterStartAuthPreflight(')
 
     expect(mergeIndex).toBeGreaterThan(-1)
     expect(authIndex).toBeGreaterThan(-1)

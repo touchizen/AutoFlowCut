@@ -22,8 +22,9 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
-import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows } from './lib/csv.js';
+import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, nestSceneGenerationColumns } from './lib/csv.js';
 import { handleExportCapcutTool, handleExportPremiereTool } from './lib/toolResponses.js';
+import { SCENE_GENERATION_PATCH_SCHEMA } from './lib/sceneGenerationSchema.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
 
@@ -502,6 +503,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           fields: {
             type: 'object',
             description: '수정할 필드 (subtitle, status 등)',
+            properties: {
+              generation: SCENE_GENERATION_PATCH_SCHEMA,
+            },
           },
         },
         required: ['index', 'fields'],
@@ -869,7 +873,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           scenes = bundled.scenes;
           bundledSrtTrack = bundled.srtTrack;
         } else {
-          scenes = data.scenes;
+          scenes = data.scenes.map(nestSceneGenerationColumns);
         }
         // project.json 자동 로드 (image_dir이 프로젝트 루트)
         let projectLoaded = false;
@@ -1118,6 +1122,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const old = scenes[idx][args.field];
         scenes[idx][args.field] = args.value;
+        // F3(Fable): save_csv 의 valueForHeader 는 nested generation 을 우선 읽는다 → generation 컬럼을
+        //   flat 으로만 쓰면 옛 nested 값이 이겨 update 가 무시된다. 갱신된 flat 컬럼으로 nested 재구성.
+        //   (generation 컬럼이 없으면 nestSceneGenerationColumns 가 row 를 그대로 반환 → 무해)
+        scenes[idx] = nestSceneGenerationColumns(scenes[idx]);
         return {
           content: [{
             type: 'text',

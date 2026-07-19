@@ -98,6 +98,15 @@ describe('useVideoScenes — derived view', () => {
     expect(vs.srtLineIds).toEqual(['sub_1', 'sub_2'])
   })
 
+  it('source scene의 generation override를 T2V derived scene에 보존한다', () => {
+    const generation = { video: { t2v: { provider: 'grok', model: 'grok-scene' } } }
+    const { result } = setupHook([
+      { id: 'scene_1', videoT2VPrompt: 'v1', generation },
+    ])
+
+    expect(result.current.videoScenesHook.videoScenes[0].generation).toEqual(generation)
+  })
+
   it('T2V 진행중 타이머 필드(generatingStartedAt/EndedAt)를 vscene 에 노출한다', () => {
     // 회귀: deriveVideoScene 이 이 필드를 안 꺼내면 ResultsTable 의 ElapsedTime 이
     // 항상 0:00 으로 멈춰 다운로드 완료 전까지 경과 시간을 보여주지 못한다.

@@ -119,4 +119,23 @@ describe('R9 — MCP update-scenes 가 _sceneNum 으로 매칭', () => {
     expect(result[0].prompt).toBe('A-refined')
     expect(result[0].image).toBe('img-A')
   })
+
+  it('update-scenes runtime merge preserves generation when incoming omits it', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes })))
+    const generation = {
+      image: { provider: 'openai', model: 'gpt-image-1' },
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    }
+
+    cb({
+      type: 'update-scenes',
+      scenes: [{ id: 'scene_1', _sceneNum: 1, prompt: 'updated without generation' }],
+    })
+
+    const result = setScenes.mock.calls[0][0]([
+      { id: 'scene_1', _sceneNum: 1, prompt: 'old', generation },
+    ])
+    expect(result[0].generation).toEqual(generation)
+  })
 })

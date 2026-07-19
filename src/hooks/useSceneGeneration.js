@@ -10,6 +10,7 @@ import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { resolveMentions } from '../utils/mentionParser'
 import { getAuthRequiredMessage } from '../utils/authMessages'
+import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 
 export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
@@ -25,6 +26,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       toast.warning(t('toast.noPrompt'))
       return
     }
+    const resolvedGeneration = resolveSceneImageProvider(scene, settings)
+    if (resolvedGeneration.warning) console.warn('[Scene]', resolvedGeneration.warning)
 
     // #R27-1: preflight(folder/ready/auth) await 동안에도 busy 로 표시한다. 안 그러면 그 창에서
     //   project/mode 전환이 허용돼, 전환 뒤 stale 엔진으로 생성하고 결과를 현재 프로젝트의 씬
@@ -40,7 +43,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     }
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
     if (!readyCheck.ok) { setGeneratingSceneId(null); return }
-    if (!(await checkAuthToken(genAPI, t, settings.generation?.image?.provider ?? 'google'))) {
+    if (!(await checkAuthToken(genAPI, t, resolvedGeneration.provider))) {
       const message = getAuthRequiredMessage(genAPI?.mode, t)
       scenesHook.updateScene(sceneId, { status: 'error', errorKind: 'auth', error: message })
       toast.warning(message)
@@ -91,7 +94,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await genAPI.generateImage(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel, provider: settings.generation?.image?.provider ?? 'google', references: allRefs })
+      const result = await genAPI.generateImage(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: resolvedGeneration.model, provider: resolvedGeneration.provider, references: allRefs })
 
       const { success, sceneUpdate } = await finalizeGeneratedImage({
         result, genAPI,
@@ -102,7 +105,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         seed,
         // 선택 모델을 기록 — 안 넘기면 imageFinalize 기본값 'flow' 로 저장돼 ResultsTable 에
         //   엔진ID 가 뜬다(응답이 더 구체적 model 을 주면 그게 우선). batch 경로와 일관.
-        model: settings.imageModel,
+        model: resolvedGeneration.model,
         logPrefix: '[Scene]'
       })
       scenesHook.updateScene(sceneId, sceneUpdate)

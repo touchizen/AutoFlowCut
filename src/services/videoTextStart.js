@@ -64,6 +64,7 @@ export function buildVideoTextStartPayload({
       videoResolution: settings.videoResolution || '720p',
       videoModel: settings.videoModelT2V,
       videoProvider: settings.generation?.video?.t2v?.provider ?? 'google',
+      generationSettings: settings,
       videoBatchCount: settings.videoBatchCount || 1,
       concurrency: settings.videoConcurrency || 4,
     },

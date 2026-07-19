@@ -13,6 +13,16 @@ import { normalizeStyleId, findAutoStyle } from '../services/styleService'
 import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 import { clearedImageFields } from '../utils/refEntityRegistration'
+import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
+
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
+
+export function mergeSceneGenerationForMcp(existingScene, incomingScene, settings = {}) {
+  const patch = incomingScene && hasOwn(incomingScene, 'generation')
+    ? incomingScene.generation
+    : undefined
+  return mergeSceneGeneration(existingScene?.generation, patch, settings)
+}
 
 /**
  * MCP load_csv(update-references) 병합. CSV 는 prompt/type/category 의 authoritative 소스지만,
@@ -124,6 +134,11 @@ export function useMcpServer({
   useEffect(() => { handleStartRef.current = handleStart }, [handleStart])
   const handleGenerateAllRefsRef = useRef(handleGenerateAllRefs)
   useEffect(() => { handleGenerateAllRefsRef.current = handleGenerateAllRefs }, [handleGenerateAllRefs])
+  // F2(Fable): onMcpUpdate effect 는 [] deps 라 settings 를 클로저로 잡으면 mount 시점 값에 고정된다
+  //   → 세션 중 바뀐 모델/provider 허용목록(isKnownModel)이 반영 안 돼 유효한 override 가 조용히 드롭.
+  //   다른 상태처럼 ref 로 최신값을 읽는다(파일 관례).
+  const settingsRef = useRef(settings)
+  useEffect(() => { settingsRef.current = settings }, [settings])
 
   // MCP HTTP 서버 시작/중지
   useEffect(() => {
@@ -382,12 +397,22 @@ export function useMcpServer({
                 assignedId = freshId()
               }
               taken.add(assignedId)
-              return { ...incoming, id: assignedId, status: incoming.status || 'pending' }
+              const generationMerge = mergeSceneGenerationForMcp(null, incoming, settingsRef.current)
+              generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
+              return {
+                ...incoming,
+                generation: generationMerge.generation,
+                id: assignedId,
+                status: incoming.status || 'pending',
+              }
             }
             // matched: matched.id 는 prev 에서 왔으니 이미 taken — 중복 체크 불필요
             taken.add(matched.id)
+            const generationMerge = mergeSceneGenerationForMcp(matched, incoming, settingsRef.current)
+            generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
             return {
               ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
+              generation: generationMerge.generation,  // sparse stage-pair deep merge; omitted generation is preserved
               id: matched.id,                          // R9 fix: 기존 stable id 유지 (incoming.id 무시)
               image: matched.image,                    // preserve in-memory image payload (if any)
               imagePath: matched.imagePath,            // preserve saved image path
@@ -413,7 +438,12 @@ export function useMcpServer({
           console.log('[MCP] srtTrack replaced via HTTP:', data.srtTrack.length)
         }
       } else if (data.type === 'update-scene') {
-        setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
+        setScenes(prev => prev.map((s, i) => {
+          if (i !== data.index) return s
+          const generationMerge = mergeSceneGenerationForMcp(s, data.fields || {}, settingsRef.current)
+          generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
+          return { ...s, ...data.fields, generation: generationMerge.generation }
+        }))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
       } else if (data.type === 'generate-reference') {
         console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)

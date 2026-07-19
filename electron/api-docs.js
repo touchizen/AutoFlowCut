@@ -438,8 +438,8 @@ curl http://127.0.0.1:3210/api/batch-status
 **지원 type:**
 - \`update-references\`: 레퍼런스 전체 교체
 - \`update-reference\`: 특정 레퍼런스 수정 (index + fields)
-- \`update-scenes\`: 씬 전체 교체
-- \`update-scene\`: 특정 씬 수정 (index + fields)
+- \`update-scenes\`: 씬 전체 교체 (scene.generation stage-pair deep merge)
+- \`update-scene\`: 특정 씬 수정 (index + fields, generation 지원)
 - \`generate-reference\`: 레퍼런스 생성 트리거 (index + styleId?)
 - \`generate-scene\`: 씬 생성 트리거 (sceneId + styleId?)
 - \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force?)
@@ -621,6 +621,39 @@ curl http://127.0.0.1:3210/api/batch-status
           characters: { type: 'string', description: '등장인물' },
           status: { type: 'string', enum: ['pending', 'generating', 'done', 'error'], description: '생성 상태' },
           imagePath: { type: 'string', description: '이미지 파일 경로', nullable: true },
+          generation: { $ref: '#/components/schemas/SceneGeneration' },
+        },
+      },
+      SceneGeneration: {
+        type: 'object',
+        description: '씬별 provider/model override. 누락 stage는 보존, null stage는 전역 상속.',
+        properties: {
+          image: {
+            type: 'object', nullable: true, additionalProperties: false,
+            properties: {
+              provider: { type: 'string', enum: ['google', 'openai', 'fal'] },
+              model: { type: 'string', nullable: true },
+            },
+          },
+          video: {
+            type: 'object', nullable: true, additionalProperties: false,
+            properties: {
+              t2v: {
+                type: 'object', nullable: true, additionalProperties: false,
+                properties: {
+                  provider: { type: 'string', enum: ['google', 'grok', 'fal', 'wavespeed', 'higgsfield'] },
+                  model: { type: 'string', nullable: true },
+                },
+              },
+              i2v: {
+                type: 'object', nullable: true, additionalProperties: false,
+                properties: {
+                  provider: { type: 'string', enum: ['google', 'grok', 'fal', 'wavespeed', 'higgsfield'] },
+                  model: { type: 'string', nullable: true },
+                },
+              },
+            },
+          },
         },
       },
       UpdateRequest: {
@@ -632,9 +665,15 @@ curl http://127.0.0.1:3210/api/batch-status
             enum: ['update-references', 'update-reference', 'update-scenes', 'update-scene', 'generate-reference', 'generate-scene', 'start-scene-batch', 'start-ref-batch'],
           },
           index: { type: 'integer', description: '대상 인덱스 (0-based)' },
-          fields: { type: 'object', description: '수정할 필드 객체' },
+          fields: {
+            type: 'object',
+            description: '수정할 필드 객체',
+            properties: {
+              generation: { $ref: '#/components/schemas/SceneGeneration' },
+            },
+          },
           references: { type: 'array', description: '레퍼런스 전체 교체 시' },
-          scenes: { type: 'array', description: '씬 전체 교체 시' },
+          scenes: { type: 'array', description: '씬 전체 교체 시', items: { $ref: '#/components/schemas/Scene' } },
           sceneId: { type: 'string', description: '생성할 씬 ID' },
           styleId: { type: 'string', description: '스타일 ID' },
         },

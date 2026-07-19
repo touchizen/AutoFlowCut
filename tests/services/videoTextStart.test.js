@@ -111,6 +111,9 @@ describe('videoTextStart', () => {
       referenceImages: [expect.objectContaining({ name: 'hero', data: 'data:image/png;base64,REF' })],
       targetDuration: 4,
     })
+    expect(startOptions.generationSettings).toEqual(expect.objectContaining({
+      generation: { video: { t2v: { provider: 'grok' } } },
+    }))
   })
 
   it('keeps 720p no-reference scenes on scene duration even if a prior generated video was 8s', () => {

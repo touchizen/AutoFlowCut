@@ -210,6 +210,47 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
 
     expect(submitGeneration.mock.calls[0][2].provider).toBe('google')
   })
+
+  it('혼합 배치에서 각 scene의 image provider/model override를 독립적으로 제출', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration, getAccessToken } = setupHook({
+      scenes: [
+        {
+          id: 's1', prompt: 'openai scene', status: 'pending',
+          generation: { image: { provider: 'openai', model: 'gpt-image-scene' } },
+        },
+        { id: 's2', prompt: 'global scene', status: 'pending' },
+      ],
+    })
+    submitGeneration
+      .mockResolvedValueOnce({ success: true, generationId: 'gen-1' })
+      .mockResolvedValueOnce({ success: true, generationId: 'gen-2' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        projectName: 'p', saveMode: 'memory',
+        imageProvider: 'google', imageModel: 'gemini-global',
+        generationSettings: {
+          generation: { image: { provider: 'google' } },
+          modelsByProvider: { google: 'gemini-global', openai: 'gpt-image-global' },
+        },
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(90 * 1000) })
+    await startPromise
+
+    expect(submitGeneration).toHaveBeenCalledTimes(2)
+    expect(submitGeneration.mock.calls[0][2]).toMatchObject({
+      provider: 'openai', model: 'gpt-image-scene',
+    })
+    expect(submitGeneration.mock.calls[1][2]).toMatchObject({
+      provider: 'google', model: 'gemini-global',
+    })
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'openai')
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'google')
+  })
 })
 
 describe('useAutomation — force regenerate status reset ordering', () => {

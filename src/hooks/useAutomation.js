@@ -26,6 +26,7 @@ import {
   applyM1MentionExclusions,
   flowImageInjectable,
 } from '../utils/refImageGuard'
+import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 
 export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -92,6 +93,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       aspectRatio,
       imageModel,
       imageProvider = 'google',
+      generationSettings,
       selectedStyleRefId,
       seed = null,
       concurrency: rawConcurrency,
@@ -149,10 +151,10 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     }
 
     // 비동기 결과 후처리 (업스케일 + 저장) — 단위 테스트 가능한 standalone 헬퍼로 위임.
-    const processAsyncResult = async (scene, result) => {
+    const processAsyncResult = async (scene, result, resolvedModel = imageModel) => {
       const ok = await processAsyncSceneResult({
         scene, result,
-        genAPI, imageUpscale, saveMode, projectName, seed, model: imageModel,
+        genAPI, imageUpscale, saveMode, projectName, seed, model: resolvedModel,
         updateScene,
         gate: consumeGate,  // 배치당 1회 consume 보장 (undefined 면 processAsyncSceneResult 가 no-op 사용)
         logPrefix: '[Automation]',
@@ -228,7 +230,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             //   finalize 예외는 씬을 error 로 표시하고 완료로 카운트한다.
             let finalizeOk = false
             try {
-              finalizeOk = await processAsyncResult(item.scene, result)
+              finalizeOk = await processAsyncResult(item.scene, result, item.model)
             } catch (finErr) {
               console.error('[Automation] Finalize/save error for scene', item.scene.id, ':', finErr.message)
               updateScene(item.scene.id, { status: 'error', error: finErr.message, errorKind: null })
@@ -309,10 +311,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, provider: imageProvider, references: effectiveRefs })
+      const resolvedGeneration = resolveSceneImageProvider(scene, generationSettings)
+      if (resolvedGeneration.warning) console.warn('[Automation]', resolvedGeneration.warning)
+      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: resolvedGeneration.model, provider: resolvedGeneration.provider, references: effectiveRefs })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
-        pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })
+        pendingQueue.push({ generationId: submitResult.generationId, scene, model: resolvedGeneration.model, submittedAt: _now, originalSubmittedAt: _now })
         consecutiveErrors = 0
         console.log('[Automation] Submitted scene', scene.id, '→', submitResult.generationId)
       } else if (submitResult.success && Array.isArray(submitResult.images) && submitResult.images.length > 0) {
@@ -321,7 +325,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         //   이미지가 버려지고, 에러 씬으로 남아 다음 배치/재생성에서 또 생성된다(중복 생성).
         consecutiveErrors = 0
         let finalizeOk = false
-        try { finalizeOk = await processAsyncResult(scene, submitResult) }
+        try { finalizeOk = await processAsyncResult(scene, submitResult, resolvedGeneration.model) }
         catch (finErr) {
           console.error('[Automation] Finalize error (sync) for scene', scene.id, ':', finErr.message)
           updateScene(scene.id, { status: 'error', error: finErr.message, errorKind: null })
@@ -465,6 +469,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       aspectRatio = '16:9',
       imageModel = undefined,
       imageProvider = 'google', // 전역 image provider(§5.8) — 미지정→google
+      generationSettings: suppliedGenerationSettings = null,
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
       concurrency = undefined,
@@ -474,6 +479,20 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       currentRefs: currentRefsOverride = null,
       m1ExcludedMentionNamesBySceneId = {},
     } = options
+    const generationSettings = {
+      ...(suppliedGenerationSettings || {}),
+      generation: {
+        ...(suppliedGenerationSettings?.generation || {}),
+        image: {
+          provider: suppliedGenerationSettings?.generation?.image?.provider ?? imageProvider,
+          ...(suppliedGenerationSettings?.generation?.image || {}),
+        },
+      },
+      modelsByProvider: {
+        ...(imageModel != null ? { [imageProvider]: imageModel } : {}),
+        ...(suppliedGenerationSettings?.modelsByProvider || {}),
+      },
+    }
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
     // #M2: sceneIds 는 membership 고정용이지 partial retry 의미가 아니다. 호출자가 batchIntent 로
     //   명시하면 그 의미가 우선하고, 미전달이면 기존 sceneIds/sceneIndices 추론을 보존한다.
@@ -568,8 +587,19 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     
     // 토큰 확인 — 선택된 image provider 의 키로 게이트(§5.7). google 키 없이 openai 만 있어도 시작 가능.
     setStatusMessage(t('status.checkingAuth'))
-    const token = await getAccessToken(false, false, imageProvider)
-    if (!token) {
+    const requiredImageProviders = [...new Set(targetScenes.map(scene => {
+      const resolved = resolveSceneImageProvider(scene, generationSettings)
+      if (resolved.warning) console.warn('[Automation]', resolved.warning)
+      return resolved.provider
+    }))]
+    let hasRequiredToken = true
+    for (const provider of requiredImageProviders) {
+      if (!(await getAccessToken(false, false, provider))) {
+        hasRequiredToken = false
+        break
+      }
+    }
+    if (!hasRequiredToken) {
       // BYOK 키 없음 → 생성 중단 + API 키 모달 안내 (handleStart 와 동일 UX).
       // 'flow-login-expired' → App 의 useFlowEvents → showApiKeyModal.
       console.log('[Automation] No auth token — prompting setup.')
@@ -760,6 +790,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       aspectRatio,
       imageModel,
       imageProvider,
+      generationSettings,
       selectedStyleRefId,
       seed,
       concurrency,

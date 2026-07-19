@@ -40,7 +40,12 @@ import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
-import { computeGuardAvailable, isStartBlocked, shouldStopRefWork } from './services/startGuard'
+import {
+  computeGuardAvailable,
+  isStartBlocked,
+  runOuterStartAuthPreflight,
+  shouldStopRefWork,
+} from './services/startGuard'
 import {
   buildEmptyRefGateDeps,
   nonInteractiveGateView,
@@ -1425,7 +1430,10 @@ function App() {
 
     // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
     // Flow 모드는 Flow 뷰/onFlowStatus 에서 인증을 처리하므로 BYOK 모달을 열지 않는다.
-    if (!(await genAPI.getAccessToken(false, true))) {
+    if (!(await runOuterStartAuthPreflight({
+      appMode: modeRef.current,
+      getAccessToken: genAPI.getAccessToken,
+    }))) {
       // #R8-4: getAccessToken await 동안 flow 로 전환됐을 수 있으니 stale closure `mode` 가
       //   아니라 현재 모드(modeRef)로 BYOK 모달 여부를 판단한다(flow 에서 BYOK 모달 방지).
       if (modeRef.current !== 'flow') {
@@ -1523,6 +1531,7 @@ function App() {
           aspectRatio: settings.aspectRatio,
           imageModel: settings.imageModel,
           imageProvider: settings.generation?.image?.provider ?? 'google',
+          generationSettings: settings,
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
           force,
@@ -1707,6 +1716,7 @@ function App() {
             _startImage: frameImageFor(p.startSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
             _endImage: frameImageFor(p.endSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
             targetDuration: ownerScene ? getSceneDuration(ownerScene, scenesHook.srtTrack) : (p.targetDuration ?? null),
+            generation: ownerScene?.generation,
           }
           // OmniFlash 면 UI 에서 숨긴 끝 프레임을 payload 에서도 제거 (start-only 보장).
           return stripOmniEndFrame(resolved, omniNoEndFrame)
@@ -1728,6 +1738,7 @@ function App() {
           videoResolution: settings.videoResolution || '720p',
           videoModel: settings.videoModelF2V,
           videoProvider: settings.generation?.video?.i2v?.provider ?? 'google',
+          generationSettings: settings,
           videoBatchCount: settings.videoBatchCount || 1,
           concurrency: settings.videoConcurrency || 4,
           seed: effectiveI2VSeed,
@@ -1817,7 +1828,10 @@ function App() {
         return
       }
       // #R9-4: 인증 재확인(모달 사이 키 변경/만료 가능). flow 는 BYOK 모달 대신 Flow 뷰가 처리.
-      if (!(await genAPI.getAccessToken(false, true))) {
+      if (!(await runOuterStartAuthPreflight({
+        appMode: modeRef.current,
+        getAccessToken: genAPI.getAccessToken,
+      }))) {
         if (modeRef.current !== 'flow') {
           setShowApiKeyModal(true)
         } else {
@@ -2480,6 +2494,7 @@ function App() {
                   aspectRatio: settings.aspectRatio,
                   imageModel: settings.imageModel,
                   imageProvider: settings.generation?.image?.provider ?? 'google',
+                  generationSettings: settings,
                   selectedStyleRefId,
                   seed: effectiveSeed,
                 }).finally(() => setHasPendingBatch(false))
@@ -2592,6 +2607,7 @@ function App() {
                   aspectRatio: settings.aspectRatio,
                   imageModel: settings.imageModel,
                   imageProvider: settings.generation?.image?.provider ?? 'google',
+                  generationSettings: settings,
                   selectedStyleRefId,
                   seed: effectiveSeed,
                 }).finally(() => setHasPendingBatch(false))
@@ -2693,6 +2709,7 @@ function App() {
                 aspectRatio: settings.aspectRatio,
                 imageModel: settings.imageModel,
                 imageProvider: settings.generation?.image?.provider ?? 'google',
+                generationSettings: settings,
                 selectedStyleRefId,
                 seed: effectiveSeed,
               }).finally(() => setHasPendingBatch(false))

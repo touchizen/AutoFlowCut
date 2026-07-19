@@ -26,6 +26,7 @@ import { fileSystemAPI } from './useFileSystem'
 import { normalizeTagKey, splitTags } from '../utils/tagMatch'
 import { resolveMentions } from '../utils/mentionParser'
 import { isStyleReference } from '../services/styleService'
+import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
 
 // snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
@@ -189,8 +190,10 @@ export function useScenes() {
         const existing = prevByNum.get(parsedScene._sceneNum)
           || (prevHasSceneNums ? null : prev[i])
         if (!existing) return parsedScene
+        const generation = mergeSceneGeneration(existing.generation, parsedScene.generation).generation
         return {
           ...parsedScene,
+          generation,
           id: existing.id, // 안정 ID 유지
           image: existing.image,
           imagePath: existing.imagePath,

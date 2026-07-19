@@ -97,4 +97,26 @@ describe('useScenes — parseFromCSV (new scene-column format)', () => {
     })
     expect(returned).toHaveLength(2)
   })
+
+  it('새 형식 CSV 재import의 빈 generation 셀은 기존 override를 보존한다', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.parseFromCSV(
+        'scene,prompt,image_provider,image_model,t2v_provider,t2v_model\n' +
+        '1,old,openai,gpt-image-1,grok,grok-imagine-video-1.5'
+      )
+    })
+    act(() => {
+      result.current.parseFromCSV(
+        'scene,prompt,image_provider,image_model,t2v_provider,t2v_model\n' +
+        '1,new,,,,'
+      )
+    })
+
+    expect(result.current.scenes[0].prompt).toBe('new')
+    expect(result.current.scenes[0].generation).toEqual({
+      image: { provider: 'openai', model: 'gpt-image-1' },
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
+  })
 })

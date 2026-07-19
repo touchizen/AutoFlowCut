@@ -4,6 +4,14 @@ export function isStartBlocked({ isRunning, videoRunning, hasPendingBatch, retry
   return !!(isRunning || videoRunning || hasPendingBatch || retryInFlight)
 }
 
+// API mode resolves credentials per scene/provider inside the generation hooks. Running a
+// provider-less preflight here would implicitly ask for Google's key and block an otherwise
+// valid OpenAI/Grok-only batch. Flow keeps its existing outer authentication check.
+export async function runOuterStartAuthPreflight({ appMode, getAccessToken }) {
+  if (appMode !== 'flow') return true
+  return !!(await getAccessToken(false, true))
+}
+
 // handleStop 이 ref 작업을 중단할지.
 //
 // refBatchRunning(preparing/stopping/generating) 만으로는 부족하다 — 빈 레퍼런스 gate 가

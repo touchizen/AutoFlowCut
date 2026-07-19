@@ -259,6 +259,52 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
     expect(args[8]).toMatchObject({ provider: 'grok' })
   })
 
+  it('T2V scene override가 전역 video provider/model보다 우선한다', async () => {
+    const { hook, generateVideoT2V, getAccessToken } = makeHook()
+    await runT2V(hook, {
+      targetDuration: 5,
+      generation: { video: { t2v: { provider: 'grok', model: 'grok-scene-model' } } },
+    }, {
+      videoProvider: 'google',
+      videoModel: 'veo-global-model',
+      videoResolution: 'provider-native',
+      generationSettings: {
+        generation: { video: { t2v: { provider: 'google' } } },
+        modelsByProviderVideo: {
+          t2v: { google: 'veo-global-model', grok: 'grok-global-model' },
+        },
+      },
+    })
+
+    const args = generateVideoT2V.mock.calls[0]
+    expect(args[1]).toBe('grok-scene-model')
+    expect(args[7]).toMatchObject({ provider: 'grok' })
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'grok')
+  })
+
+  it('I2V owner scene override를 실은 framePair가 전역 video provider/model보다 우선한다', async () => {
+    const { hook, generateVideoI2V, getAccessToken } = makeHook()
+    await runI2V(hook, {
+      targetDuration: 7,
+      generation: { video: { i2v: { provider: 'grok', model: 'grok-i2v-scene' } } },
+    }, {
+      videoProvider: 'google',
+      videoModel: 'veo-global-model',
+      videoResolution: 'provider-native',
+      generationSettings: {
+        generation: { video: { i2v: { provider: 'google' } } },
+        modelsByProviderVideo: {
+          i2v: { google: 'veo-global-model', grok: 'grok-global-model' },
+        },
+      },
+    })
+
+    const args = generateVideoI2V.mock.calls[0]
+    expect(args[3]).toBe('grok-i2v-scene')
+    expect(args[8]).toMatchObject({ provider: 'grok' })
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'grok')
+  })
+
   it('submit appliedInputs를 pending/project patch와 완료 duration/model에 반영', async () => {
     const generateVideoT2V = vi.fn().mockResolvedValue({
       success: true,
@@ -321,6 +367,48 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
         duration: 8,
         appliedInputs: expect.objectContaining({ resolution: '1080p' }),
       }),
+    )
+  })
+
+  it('non-google scene override completion metadata uses that scene provider duration rules', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-grok' })
+    const genAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus: vi.fn().mockResolvedValue({
+        success: true,
+        statuses: [{ generationId: 'gen-grok', status: 'complete', mediaId: 'uri', videoUrl: 'uri' }],
+      }),
+      downloadVideo: vi.fn().mockResolvedValue({ success: true, base64: 'VIDEO' }),
+      upscaleVideo: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const onItemUpdate = vi.fn()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+
+    await act(async () => {
+      await hook.result.current.start({
+        mode: 't2v',
+        scenes: [{
+          id: 'vscene_v1', prompt: 'p', targetDuration: 5,
+          generation: { video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } } },
+        }],
+        projectName: 'test', saveMode: 'memory',
+        videoProvider: 'google', videoModel: 'veo-3.1-fast-generate-preview',
+        generationSettings: {
+          generation: { video: { t2v: { provider: 'google' } } },
+          modelsByProviderVideo: {
+            t2v: { google: 'veo-3.1-fast-generate-preview', grok: 'grok-imagine-video-1.5' },
+          },
+        },
+        aspectRatio: '16:9', duration: 8, videoResolution: 'native', onItemUpdate,
+      })
+    })
+
+    expect(onItemUpdate).toHaveBeenCalledWith(
+      'vscene_v1',
+      'complete',
+      expect.objectContaining({ duration: 5, model: 'grok-imagine-video-1.5' }),
     )
   })
 })

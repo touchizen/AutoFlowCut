@@ -100,6 +100,8 @@ function deriveVideoScene(s) {
     error: s.videoT2VError ?? null,
     errorKind: s.videoT2VErrorKind ?? null,
     videoSaveId: s.videoT2VSaveId ?? null,
+    // Scene-level provider/model override must survive the image-scene → T2V derived view.
+    generation: s.generation,
     // Poster fields from the source image scene. ResultsTable uses these while
     // keeping the video element unmounted until hover.
     image: s.image ?? null,
