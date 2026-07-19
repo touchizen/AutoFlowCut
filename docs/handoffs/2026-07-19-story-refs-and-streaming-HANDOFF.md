@@ -102,8 +102,15 @@ independently. Clarify intent first.
 
 ---
 
-## Working style for whoever resumes
-TDD everything; Codex (gpt-5.6-sol via mcp, no model override) authors hard parts, Fable 5
-(Agent model:'fable') reviews, Opus verifies by RUNNING tests + raw data. Per-milestone review loop
-to findings 0. Commits in English. Flow DOM changes need packaged/real-app verification (unit tests
-can be green while the app is broken).
+## Working style for whoever resumes (ROLE SPLIT — mandatory)
+- **Codex (gpt-5.6-sol via mcp — do NOT pass a model override, ChatGPT account rejects gpt-5.6*;
+  let config.toml default apply, xhigh) AUTHORS the hard parts**, directly in the worktree
+  (sandbox: workspace-write). For these items that means: the partial-JSON incremental parser
+  (`partialScenes.js`), the Claude/Codex streaming hooks, and the B-2 space-name fix.
+- **Fable 5 (Agent subagent_type Explore, model:'fable') REVIEWS** every milestone — it found the
+  real race/failure gaps Codex's own review missed this session, so always run BOTH.
+- **Opus ORCHESTRATES + VERIFIES** — never trust a paper fix: run the tests yourself, diff raw
+  data, mutation-check the key change reverts red. Loop Codex→Fable→verify to findings 0 per
+  milestone (3–5 rounds max; if findings don't shrink, the scope isn't captured).
+- TDD every change (failing test first). Commits in English. Flow DOM changes need packaged/real-app
+  verification — unit tests can be green while the app is broken (proven repeatedly this session).
