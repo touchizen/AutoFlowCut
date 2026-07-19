@@ -26,6 +26,8 @@ export const IMAGE_MODELS = [
   // google 사용자에겐 노출되지 않는다(누출 방지, Fable M1-T5a 리뷰). cost 는 PROVISIONAL —
   // 실제 가격은 §5.13 / T6 실키 게이트에서 확정.
   { id: 'gpt-image-1', label: 'GPT Image', cost: '$0.04~', unit: 'image', provider: 'openai', aspectCapability: 'approx', descKey: 'settings.modelImgGptImage', url: 'https://platform.openai.com/docs/guides/images' },
+  // PROVISIONAL — verify model id, price, aspect mapping, and output shape with a real fal key (M4 real-key gate).
+  { id: 'fal-ai/flux-pro/v1.1', label: 'FLUX Pro 1.1 (fal)', cost: '?', unit: 'image', provider: 'fal', provisional: true, aspectCapability: 'exact', descKey: 'settings.modelImgFalFlux', url: 'https://fal.ai/models/fal-ai/flux-pro/v1.1' },
 ]
 
 // allowedResolutions: 낮은→높은 순. 공식 Veo 3.1 Lite 는 4K 미지원(720p/1080p),
@@ -37,6 +39,8 @@ export const VIDEO_MODELS = [
   // PROVISIONAL — verify against real xAI API + key (M2 real-key gate)
   // Model id, cost, and documentation URL remain provisional until submit→poll→download smoke passes.
   { id: 'grok-imagine-video-1.5', label: 'Grok Imagine', cost: '?', unit: 'sec', provider: 'grok', provisional: true, descKey: 'settings.modelVidGrok', url: 'https://docs.x.ai/' },
+  // PROVISIONAL — verify model id, price, inputs, and result CDN with a real fal key (M4 real-key gate).
+  { id: 'fal-ai/kling-video/v2.1/standard/image-to-video', label: 'Kling 2.1 Standard (fal)', cost: '?', unit: 'sec', provider: 'fal', provisional: true, descKey: 'settings.modelVidFalKling', url: 'https://fal.ai/models/fal-ai/kling-video/v2.1/standard/image-to-video' },
 ]
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2
@@ -73,6 +77,17 @@ export function imageModelsForProvider(providerId, availableImageModels) {
 export function defaultImageModelForProvider(providerId) {
   if (!providerId || providerId === 'google') return DEFAULT_IMAGE_MODEL_ID
   return IMAGE_MODELS.find((m) => m.provider === providerId)?.id ?? null
+}
+
+/**
+ * 이미지 provider 선택 UI의 feature-flag 권위.
+ * 모든 catalog model이 provisional인 provider(fal)는 registry에 등록돼도 숨긴다.
+ */
+export function listSupportedImageProviders() {
+  const providers = [...new Set(IMAGE_MODELS.map((model) => model.provider))]
+  return providers.filter((provider) => IMAGE_MODELS.some(
+    (model) => model.provider === provider && model.provisional !== true
+  ))
 }
 
 /**

@@ -114,6 +114,21 @@ describe('SceneTab — image provider 선택 (M1 §5.8)', () => {
     render(<SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} appMode="flow" />)
     expect(screen.queryByRole('button', { name: 'settings.imageProvider_openai' })).toBeNull()
   })
+
+  it('registry 목록에 fal image가 있어도 provisional이면 image provider toggle에서 숨김', () => {
+    render(
+      <SceneTab
+        localSettings={provSettings}
+        setLocalSettings={vi.fn()}
+        t={t}
+        appMode="api"
+        imageProviders={['google', 'fal']}
+      />,
+    )
+    // The injected registry list is respected, then intersected with supported providers.
+    expect(screen.queryByRole('button', { name: 'settings.imageProvider_openai' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'settings.imageProvider_fal' })).toBeNull()
+  })
 })
 
 describe('SceneTab — video provider 선택 (M2-pre §5.8)', () => {
@@ -147,13 +162,14 @@ describe('SceneTab — video provider 선택 (M2-pre §5.8)', () => {
         setLocalSettings={vi.fn()}
         t={t}
         appMode="api"
-        videoProviders={['google', 'grok']}
+        videoProviders={['google', 'grok', 'fal']}
       />,
     )
 
     expect(screen.queryByRole('group', { name: 'settings.videoProviderT2VTitle' })).toBeNull()
     expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'settings.videoProvider_grok' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'settings.videoProvider_fal' })).toBeNull()
   })
 
   it('T2V/I2V 모델 변경을 각 현재 provider stage 슬롯에 기억', () => {

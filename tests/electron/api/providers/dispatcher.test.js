@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createDispatcher } from '../../../../electron/api/providers/dispatcher.js'
 import { decodeHandle, encodeHandle, HANDLE_PREFIX } from '../../../../electron/api/providers/handle.js'
+import { falVideoProvider } from '../../../../electron/api/providers/video/fal.js'
 import { submitVideo as submitGoogleVideo } from '../../../../electron/api/providers/video/google.js'
 
 const makeGenaiKeyStore = (overrides = {}) => ({
@@ -29,6 +30,62 @@ const makeRegistry = ({ image = {}, video = {} } = {}) => ({
 })
 
 describe('createDispatcher — provider routing', () => {
+  it('fal submit object rawId round-trips through an opaque gen:v1 handle', async () => {
+    const rawId = {
+      model_id: 'fal-ai/kling-video/v2.1/standard/image-to-video',
+      request_id: 'fal-req-submit',
+    }
+    const appliedInputs = {
+      model: rawId.model_id,
+      aspectRatio: null,
+      durationSeconds: 5,
+      resolution: null,
+    }
+    const fal = {
+      id: 'fal',
+      kind: 'video',
+      submitVideo: vi.fn().mockResolvedValue({ success: true, rawId, appliedInputs }),
+    }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ fal: 'FAL_KEY' }),
+      registry: makeRegistry({ video: { fal } }),
+    })
+
+    const result = await dispatcher.submitVideo({ provider: 'fal', prompt: 'animate' })
+
+    expect(result).toEqual({
+      success: true,
+      generationId: expect.stringMatching(/^gen:v1:/),
+      appliedInputs,
+    })
+    expect(result).not.toHaveProperty('operationName')
+    expect(decodeHandle(result.generationId)).toEqual({ provider: 'fal', rawId })
+  })
+
+  it('checkVideoStatus routes a decoded fal object handle to fal.checkVideo', async () => {
+    const rawId = { model_id: 'fal-ai/model/path', request_id: 'fal-req-poll' }
+    const checkVideo = vi.fn().mockResolvedValue({ success: true, done: false })
+    const fal = { id: 'fal', kind: 'video', checkVideo }
+    const engineDeps = { marker: 'fal-deps' }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ fal: 'FAL_KEY' }),
+      engineDeps,
+      registry: makeRegistry({ video: { fal } }),
+    })
+    const generationId = encodeHandle('fal', rawId)
+
+    await expect(dispatcher.checkVideoStatus({ generationIds: [generationId] })).resolves.toEqual({
+      success: true,
+      statuses: [{ generationId, status: 'pending' }],
+    })
+    expect(checkVideo).toHaveBeenCalledWith(
+      { apiKey: 'FAL_KEY', operationName: rawId },
+      engineDeps,
+    )
+  })
+
   it('non-google submitVideo raw id를 opaque handle로 감추고 operationName을 생략한다', async () => {
     const appliedInputs = {
       model: 'grok-imagine-video-1.5',
@@ -165,6 +222,54 @@ describe('createDispatcher — provider routing', () => {
 })
 
 describe('createDispatcher — downloadVideo routing', () => {
+  it('fal.media signed URL is allowed and downloaded without attaching the fal key', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      Uint8Array.from([1, 2, 3]),
+      { status: 200, headers: { 'content-type': 'video/mp4' } },
+    ))
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ fal: 'FAL_SECRET_MUST_NOT_LEAK' }),
+      engineDeps: { fetchImpl },
+      registry: makeRegistry({ video: { fal: falVideoProvider } }),
+    })
+    const generationId = encodeHandle('fal', {
+      model_id: 'fal-ai/kling-video/v2.1/standard/image-to-video',
+      request_id: 'fal-download',
+    })
+
+    await expect(dispatcher.downloadVideo({
+      generationId,
+      videoUri: 'https://fal.media/video.mp4?signature=ok',
+    })).resolves.toEqual({ success: true, base64: 'AQID', mimeType: 'video/mp4' })
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://fal.media/video.mp4?signature=ok',
+      { headers: {} },
+    )
+    expect(JSON.stringify(fetchImpl.mock.calls)).not.toContain('FAL_SECRET_MUST_NOT_LEAK')
+  })
+
+  it('fal handle rejects an off-allowlist origin before the downloader can run', async () => {
+    const fetchImpl = vi.fn()
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ fal: 'FAL_KEY' }),
+      engineDeps: { fetchImpl },
+      registry: makeRegistry({ video: { fal: falVideoProvider } }),
+    })
+    const generationId = encodeHandle('fal', {
+      model_id: 'fal-ai/kling-video/v2.1/standard/image-to-video',
+      request_id: 'fal-download-bad-origin',
+    })
+
+    const result = await dispatcher.downloadVideo({
+      generationId,
+      videoUri: 'https://attacker.example/video.mp4',
+    })
+    expect(result).toMatchObject({ success: false, errorKind: 'invalid-config' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('generationId 없으면 google 로 라우팅', async () => {
     const fetchVideoBase64 = vi.fn().mockResolvedValue({ success: true, base64: 'B64', mimeType: 'video/mp4' })
     const google = { id: 'google', kind: 'video', fetchVideoBase64 }
@@ -220,6 +325,26 @@ describe('createDispatcher — downloadVideo routing', () => {
     const http = await dispatcher.downloadVideo({ videoUri: 'http://api.x.ai/x.mp4', generationId: grokHandle })
     expect(http.success).toBe(false)
     expect(grokDl).not.toHaveBeenCalled()
+  })
+
+  it('dispatcher 게이트 독립 핀: adapter 가 자체 origin 체크를 안 해도 dispatcher 가 off-allowlist 를 거부', async () => {
+    // fetchVideoBase64 가 무조건 다운로드하는 provider(자체 게이트 없음)라도 dispatcher 의
+    // downloadPolicy origin 게이트가 단독으로 막아야 한다(F4: 두 계층이 서로 가리지 않게).
+    const dl = vi.fn().mockResolvedValue({ success: true, base64: 'X' })
+    const prov = {
+      id: 'grok', kind: 'video', fetchVideoBase64: dl,
+      downloadPolicy: { origins: [{ origin: 'https://api.x.ai', authMode: 'provider-key' }], buildAuthHeaders: () => ({}) },
+    }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ xai: 'GROK_KEY' }),
+      registry: makeRegistry({ video: { grok: prov } }),
+    })
+    const handle = encodeHandle('grok', 'r1')
+    const res = await dispatcher.downloadVideo({ videoUri: 'https://attacker.example/x', generationId: handle })
+    expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('invalid-config')
+    expect(dl).not.toHaveBeenCalled() // dispatcher 가 adapter 도달 전에 차단
   })
 
   it('malformed handle → invalid-config, provider 호출 없음 (google 폴백 금지)', async () => {

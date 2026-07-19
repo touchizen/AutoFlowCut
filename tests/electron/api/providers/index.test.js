@@ -6,6 +6,8 @@ import {
 } from '../../../../electron/api/providers/index.js'
 import { googleImageProvider } from '../../../../electron/api/providers/image/google.js'
 import { openaiImageProvider } from '../../../../electron/api/providers/image/openai.js'
+import { falImageProvider } from '../../../../electron/api/providers/image/fal.js'
+import { falVideoProvider } from '../../../../electron/api/providers/video/fal.js'
 import { grokVideoProvider } from '../../../../electron/api/providers/video/grok.js'
 import { googleVideoProvider } from '../../../../electron/api/providers/video/google.js'
 
@@ -47,6 +49,17 @@ describe('provider registry (§5.10)', () => {
     expect(typeof p.fetchVideoBase64).toBe('function')
   })
 
+  it('fal image/video providers are both registered while UI support stays feature-flagged', () => {
+    expect(getImageProvider('fal')).toBe(falImageProvider)
+    expect(getImageProvider('fal')).toMatchObject({ id: 'fal', kind: 'image' })
+    expect(typeof getImageProvider('fal').generateImage).toBe('function')
+
+    expect(getVideoProvider('fal')).toBe(falVideoProvider)
+    expect(getVideoProvider('fal')).toMatchObject({ id: 'fal', kind: 'video' })
+    expect(typeof getVideoProvider('fal').submitVideo).toBe('function')
+    expect(typeof getVideoProvider('fal').checkVideo).toBe('function')
+  })
+
   it('미등록 id → null (조용한 google 폴백 금지)', () => {
     expect(getVideoProvider('openai')).toBe(null) // openai 는 image 만, video 미등록
     expect(getImageProvider('nope')).toBe(null)
@@ -66,11 +79,11 @@ describe('provider registry (§5.10)', () => {
     }
   })
 
-  it('listProviders() → M2 등록: image=google+openai, video=google+grok', () => {
+  it('listProviders() includes registered fal capabilities independently of provisional UI flags', () => {
     const list = listProviders()
     expect(list).toEqual({
-      image: [{ id: 'google' }, { id: 'openai' }],
-      video: [{ id: 'google' }, { id: 'grok' }],
+      image: [{ id: 'google' }, { id: 'openai' }, { id: 'fal' }],
+      video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }],
     })
   })
 })

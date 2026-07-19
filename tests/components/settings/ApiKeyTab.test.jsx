@@ -141,4 +141,38 @@ describe('ApiKeyTab', () => {
 
     await waitFor(() => expect(window.electronAPI.genaiClearKey).toHaveBeenCalledWith({ provider: 'grok' }))
   })
+
+  it('fal 키: 검증→저장이 provider:fal 로 위임', async () => {
+    render(<ApiKeyTab t={t} />)
+    await waitFor(() => screen.getByText('settings.falKeyTitle'))
+
+    const input = screen.getByPlaceholderText('settings.falKeyPlaceholder')
+    fireEvent.change(input, { target: { value: 'fal-secret-key' } })
+    fireEvent.click(screen.getByText('settings.falKeyVerifySave'))
+
+    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({
+      apiKey: 'fal-secret-key',
+      provider: 'fal',
+    }))
+    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({
+      apiKey: 'fal-secret-key',
+      provider: 'fal',
+    })
+    expect(toast.success).toHaveBeenCalled()
+    expect(input.value).toBe('')
+  })
+
+  it('fal 키 있음 → byProvider.fal 상태 표시 + 삭제가 provider:fal 로 위임', async () => {
+    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({
+      hasKey: false,
+      encryptionAvailable: true,
+      byProvider: { google: false, openai: false, grok: false, fal: true, wavespeed: false, higgsfield: false },
+    })
+    render(<ApiKeyTab t={t} />)
+
+    await waitFor(() => expect(screen.getByText('settings.falKeySet')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('settings.falKeyRemove'))
+
+    await waitFor(() => expect(window.electronAPI.genaiClearKey).toHaveBeenCalledWith({ provider: 'fal' }))
+  })
 })

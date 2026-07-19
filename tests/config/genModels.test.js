@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceImageModel, imageModelsForProvider, videoModelsForProvider, defaultVideoModelForProvider, listSupportedVideoProviders, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
+import { modelLabel, coerceImageModel, imageModelsForProvider, videoModelsForProvider, defaultImageModelForProvider, defaultVideoModelForProvider, listSupportedImageProviders, listSupportedVideoProviders, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
 import { FLOW_MODELS } from '../../src/engine/flowModels'
 
 describe('genModels — modelLabel', () => {
@@ -69,6 +69,29 @@ describe('genModels — provider-aware catalog (§5.12)', () => {
     expect(modelLabel('gpt-image-1')).toBe('GPT Image')
     expect(coerceImageModel('gpt-image-1')).toBe('gpt-image-1')
   })
+
+  it('fal image/video models are provisional catalog entries until the M4 real-key smoke', () => {
+    const image = IMAGE_MODELS.find((model) => model.provider === 'fal')
+    const video = VIDEO_MODELS.find((model) => model.provider === 'fal')
+
+    expect(image).toMatchObject({
+      id: 'fal-ai/flux-pro/v1.1',
+      label: 'FLUX Pro 1.1 (fal)',
+      provider: 'fal',
+      provisional: true,
+      aspectCapability: 'exact',
+      descKey: 'settings.modelImgFalFlux',
+    })
+    expect(video).toMatchObject({
+      id: 'fal-ai/kling-video/v2.1/standard/image-to-video',
+      label: 'Kling 2.1 Standard (fal)',
+      provider: 'fal',
+      provisional: true,
+      descKey: 'settings.modelVidFalKling',
+    })
+    expect(modelLabel(image.id)).toBe('FLUX Pro 1.1 (fal)')
+    expect(modelLabel(video.id)).toBe('Kling 2.1 Standard (fal)')
+  })
 })
 
 describe('genModels — videoModelsForProvider + supported feature flag', () => {
@@ -101,6 +124,12 @@ describe('genModels — videoModelsForProvider + supported feature flag', () => 
   it('지원 목록은 모든 모델이 provisional인 Grok을 제외한다', () => {
     expect(listSupportedVideoProviders()).toEqual(['google'])
   })
+
+  it('fal video catalog remains resolvable while the supported list hides it', () => {
+    expect(videoModelsForProvider('fal', [])).toHaveLength(1)
+    expect(defaultVideoModelForProvider('fal')).toBe('fal-ai/kling-video/v2.1/standard/image-to-video')
+    expect(listSupportedVideoProviders()).not.toContain('fal')
+  })
 })
 
 describe('genModels — imageModelsForProvider (드롭다운 provider 필터, 누출 방지)', () => {
@@ -128,6 +157,14 @@ describe('genModels — imageModelsForProvider (드롭다운 provider 필터, �
   it('provider 미지정 → google 취급', () => {
     const list = imageModelsForProvider(undefined, IMAGE_MODELS)
     expect(list.some(m => m.id === 'gpt-image-1')).toBe(false)
+  })
+
+  it('fal image catalog remains resolvable while the supported list hides it', () => {
+    expect(imageModelsForProvider('fal', []).map((model) => model.id))
+      .toEqual(['fal-ai/flux-pro/v1.1'])
+    expect(defaultImageModelForProvider('fal')).toBe('fal-ai/flux-pro/v1.1')
+    expect(listSupportedImageProviders()).toEqual(['google', 'openai'])
+    expect(listSupportedImageProviders()).not.toContain('fal')
   })
 })
 

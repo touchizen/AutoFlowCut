@@ -12,6 +12,7 @@ const GET_KEY_URL = 'https://aistudio.google.com/apikey'
 const BILLING_URL = 'https://console.cloud.google.com/billing'
 const OPENAI_KEY_URL = 'https://platform.openai.com/api-keys'
 const XAI_KEY_URL = 'https://console.x.ai/'
+const FAL_KEY_URL = 'https://fal.ai/dashboard/keys'
 
 const linkStyle = {
   color: '#4a9eff',
@@ -32,6 +33,10 @@ export default function ApiKeyTab({ t }) {
   const [grokKeyInput, setGrokKeyInput] = useState('')
   const [grokBusy, setGrokBusy] = useState(false)
   const hasGrokKey = !!byProvider?.grok
+  // fal.ai gateway 키 — image/video가 같은 fal 슬롯을 공유한다.
+  const [falKeyInput, setFalKeyInput] = useState('')
+  const [falBusy, setFalBusy] = useState(false)
+  const hasFalKey = !!byProvider?.fal
 
   const openLink = (url) => window.electronAPI?.openExternal?.(url)
 
@@ -123,6 +128,36 @@ export default function ApiKeyTab({ t }) {
     setGrokBusy(true)
     await clearKey('grok')
     setGrokBusy(false)
+    toast.success(t('settings.apiKeyRemoved'))
+  }
+
+  const handleFalVerifySave = async () => {
+    const candidate = falKeyInput.trim()
+    if (!candidate) {
+      toast.error(t('settings.apiKeyEmpty'))
+      return
+    }
+    setFalBusy(true)
+    const v = await validateKey(candidate, 'fal')
+    if (!v?.valid) {
+      setFalBusy(false)
+      toast.error(t('settings.apiKeyInvalid', { error: v?.error || '' }))
+      return
+    }
+    const res = await saveKey(candidate, 'fal')
+    setFalBusy(false)
+    if (res?.success) {
+      setFalKeyInput('')
+      toast.success(t('settings.apiKeySaved'))
+    } else {
+      toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
+    }
+  }
+
+  const handleFalRemove = async () => {
+    setFalBusy(true)
+    await clearKey('fal')
+    setFalBusy(false)
     toast.success(t('settings.apiKeyRemoved'))
   }
 
@@ -237,6 +272,41 @@ export default function ApiKeyTab({ t }) {
           </div>
           <span className="setting-sublabel">{t('settings.grokKeyNote')}</span>
           <a style={{ ...linkStyle, marginTop: '6px' }} onClick={() => openLink(XAI_KEY_URL)}>{t('settings.grokKeyGetKey')}</a>
+        </div>
+      </div>
+
+      {/* fal gateway 키 — 양 모달리티 등록, real-key smoke 전 선택 UI는 provisional 숨김 */}
+      <div className="settings-section">
+        <h3>{t('settings.falKeyTitle')}</h3>
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.apiKeyStatusLabel')}</label>
+          <span style={{ color: hasFalKey ? '#10b981' : '#888' }}>
+            {loading ? '…' : hasFalKey ? t('settings.falKeySet') : t('settings.falKeyNotSet')}
+          </span>
+        </div>
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.falKeyInputLabel')}</label>
+          <input
+            type="password"
+            value={falKeyInput}
+            onChange={(e) => setFalKeyInput(e.target.value)}
+            placeholder={t('settings.falKeyPlaceholder')}
+            disabled={falBusy || !encryptionAvailable}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button className="btn-primary" onClick={handleFalVerifySave} disabled={falBusy || !encryptionAvailable}>
+              {falBusy ? t('settings.apiKeyVerifying') : t('settings.falKeyVerifySave')}
+            </button>
+            {hasFalKey && (
+              <button className="btn-secondary" onClick={handleFalRemove} disabled={falBusy}>
+                {t('settings.falKeyRemove')}
+              </button>
+            )}
+          </div>
+          <span className="setting-sublabel">{t('settings.falKeyNote')}</span>
+          <a style={{ ...linkStyle, marginTop: '6px' }} onClick={() => openLink(FAL_KEY_URL)}>{t('settings.falKeyGetKey')}</a>
         </div>
       </div>
 

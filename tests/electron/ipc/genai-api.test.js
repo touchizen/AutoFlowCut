@@ -64,13 +64,13 @@ describe('genai-api — 채널 등록', () => {
     )
   })
 
-  it('list-providers: 등록된 provider 목록 반환 (M2: image=google+openai, video=google+grok)', async () => {
+  it('list-providers: 등록된 provider 목록 반환 (M4: fal image+video 포함)', async () => {
     const ipc = makeIpcMain()
     registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
     const res = await ipc.invoke('genai:list-providers')
     expect(res).toEqual({
-      image: [{ id: 'google' }, { id: 'openai' }],
-      video: [{ id: 'google' }, { id: 'grok' }],
+      image: [{ id: 'google' }, { id: 'openai' }, { id: 'fal' }],
+      video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }],
     })
   })
 })

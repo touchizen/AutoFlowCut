@@ -4,11 +4,13 @@
 
 import AspectRatioSelector from './AspectRatioSelector'
 import ModelSelector from './ModelSelector'
-import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL, defaultVideoModelForProvider, listSupportedVideoProviders, videoModelsForProvider } from '../../config/genModels'
+import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL, defaultImageModelForProvider, defaultVideoModelForProvider, imageModelsForProvider, listSupportedImageProviders, listSupportedVideoProviders, videoModelsForProvider } from '../../config/genModels'
 import { computeImageProviderSwitch } from '../../utils/imageProviderSwitch'
 
-// 전역 image provider 선택지(§5.8).
-const IMAGE_PROVIDERS = ['google', 'openai']
+// provider 선택 UI는 catalog provisional flag가 단일 권위다. Registry에는 fal이 양쪽에
+// 등록돼 persisted 설정이 라우팅되지만 real-key smoke 전에는 supported 목록에서 제외된다.
+const SUPPORTED_IMAGE_PROVIDERS = listSupportedImageProviders()
+const SUPPORTED_IMAGE_PROVIDER_IDS = new Set(SUPPORTED_IMAGE_PROVIDERS)
 // video provider 선택 UI는 카탈로그 provisional flag가 단일 권위다. Registry에는 Grok이
 // 등록돼 persisted 설정이 라우팅되지만 real-key smoke 전에는 이 목록에서 제외된다.
 const SUPPORTED_VIDEO_PROVIDERS = listSupportedVideoProviders()
@@ -54,14 +56,18 @@ const VIDEO_RESOLUTION_OPTIONS = [
 ]
 
 // imageModels/videoModels: 라이브 /models 로 채운 동적 목록(상위에서 주입). 없으면 정적 카탈로그.
-export default function SceneTab({ localSettings, setLocalSettings, t, imageModels = IMAGE_MODELS, videoModels = VIDEO_MODELS, videoProviders = SUPPORTED_VIDEO_PROVIDERS, appMode }) {
+export default function SceneTab({ localSettings, setLocalSettings, t, imageModels = IMAGE_MODELS, videoModels = VIDEO_MODELS, imageProviders = SUPPORTED_IMAGE_PROVIDERS, videoProviders = SUPPORTED_VIDEO_PROVIDERS, appMode }) {
   // 모델 출처 구분 배지 — Flow 모드면 Flow 패널(동적), 그 외 API(BYOK) 모델임을 타이틀에 표시.
   const modeBadge = appMode
     ? <span className={`model-mode-badge model-mode-${appMode}`}>{appMode === 'flow' ? 'Flow' : 'API'}</span>
     : null
   // Flow 모드는 Gemini 구독 기반 → 구독 페이지. API(BYOK) 모드는 종량제 → API 과금 페이지.
   const priceUrl = appMode === 'flow' ? FLOW_PRICING_URL : PRICING_URL
+  const visibleImageProviders = (imageProviders || []).filter((provider) => SUPPORTED_IMAGE_PROVIDER_IDS.has(provider))
   const visibleVideoProviders = (videoProviders || []).filter((provider) => SUPPORTED_VIDEO_PROVIDER_IDS.has(provider))
+  const imageProvider = appMode === 'flow' ? 'google' : (localSettings.generation?.image?.provider ?? 'google')
+  const visibleImageModels = imageModelsForProvider(imageProvider, imageModels)
+  const imageDefaultModel = defaultImageModelForProvider(imageProvider) ?? DEFAULT_IMAGE_MODEL_ID
   const t2vProvider = appMode === 'flow' ? 'google' : (localSettings.generation?.video?.t2v?.provider ?? 'google')
   const i2vProvider = appMode === 'flow' ? 'google' : (localSettings.generation?.video?.i2v?.provider ?? 'google')
   const t2vModels = videoModelsForProvider(t2vProvider, videoModels)
@@ -239,9 +245,9 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       <div className="settings-section">
         <h3>{t('settings.modelImageTitle')} {modeBadge}</h3>
         {/* 전역 image provider 선택(§5.8) — API 모드에서만(Flow 는 google 전용). 전환 시 provider별 기억 모델 복원 */}
-        {appMode !== 'flow' && (
+        {appMode !== 'flow' && visibleImageProviders.length > 1 && (
           <div className="batch-count-buttons" role="group" aria-label={t('settings.imageProviderTitle')}>
-            {IMAGE_PROVIDERS.map((p) => {
+            {visibleImageProviders.map((p) => {
               const active = (localSettings.generation?.image?.provider ?? 'google') === p
               return (
                 <button
@@ -257,9 +263,9 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
           </div>
         )}
         <ModelSelector
-          options={imageModels}
+          options={visibleImageModels}
           value={localSettings.imageModel}
-          defaultValue={DEFAULT_IMAGE_MODEL_ID}
+          defaultValue={imageDefaultModel}
           onChange={(id) => setLocalSettings(s => ({
             ...s,
             imageModel: id,
