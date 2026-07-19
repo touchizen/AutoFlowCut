@@ -267,19 +267,36 @@ describe('CLICK_CHARACTER_TAB (탭도 로케일에 묶이지 않는다)', () => 
  * 여기서는 그 표현식이 올바른 요소(또는 null)를 돌려주는지만 검증한다.
  */
 describe('FILTER_TRIGGER_EXPR / CHAR_MENUITEM_EXPR (좁은 레이아웃 요소 셀렉터)', () => {
-  // 실앱(2026-07-19 덤프): filter_list 트리거는 멘션 dialog **밖**의 툴바에 있다 → dialog 밖 형제로 둔다.
+  // 실앱(2026-07-19 덤프): 좁은 창의 타입 필터 트리거(radix-:r75:)는 멘션 dialog 헤더 **안**에 있고
+  //   '현재 선택 타입 아이콘(모두=dashboard) + arrow_drop_down' 을 가진다. dialog 밖의 filter_list
+  //   (배경 미디어 필터, radix-:r65:)는 hit-test 에서 covered 라 절대 잡으면 안 된다.
   const narrowLayout = () => `
-    <button id="ft" aria-haspopup="menu" aria-expanded="false" data-state="closed"><i>filter_list</i></button>
-    <button aria-haspopup="menu"><i>more_vert</i></button>
-    <div role="dialog"><input type="text"><div role="option">x</div></div>`
+    <div role="dialog">
+      <button id="topbar" aria-haspopup="menu"><i>arrow_drop_down</i></button>
+      <button id="ft" aria-haspopup="menu" aria-expanded="false" data-state="closed"><i>dashboard</i><i>arrow_drop_down</i></button>
+      <button aria-haspopup="menu"><i>more_vert</i></button>
+      <input type="text"><div role="option">x</div>
+    </div>
+    <button id="bg" aria-haspopup="menu"><i>filter_list</i></button>`
   const menu = (items) => `<div role="menu">${items.map(([lig, label]) => `<button role="menuitem"><i>${lig}</i>${label}</button>`).join('')}</div>`
 
-  it('FILTER_TRIGGER_EXPR: dialog 밖 툴바의 filter_list 트리거를 찾는다(more_vert 등 배제)', () => {
+  it('FILTER_TRIGGER_EXPR: dialog 헤더의 타입 필터(dashboard+arrow_drop_down)를 찾는다', () => {
     document.body.innerHTML = narrowLayout()
     const el = run(FILTER_TRIGGER_EXPR)
     expect(el).toBeTruthy()
     expect(el.id).toBe('ft')
-    expect(el.textContent).toContain('filter_list')
+  })
+
+  it('FILTER_TRIGGER_EXPR: dialog 밖 filter_list(배경 미디어 필터)나 arrow_drop_down-only 는 잡지 않는다', () => {
+    document.body.innerHTML = narrowLayout()
+    const el = run(FILTER_TRIGGER_EXPR)
+    expect(el.id).not.toBe('bg')     // dialog 밖 filter_list (covered)
+    expect(el.id).not.toBe('topbar') // 타입 아이콘 없는 arrow_drop_down-only
+  })
+
+  it('FILTER_TRIGGER_EXPR: 이미 캐릭터 선택 상태(accessibility_new+arrow_drop_down)도 인식', () => {
+    document.body.innerHTML = `<div role="dialog"><button id="ft" aria-haspopup="menu"><i>accessibility_new</i><i>arrow_drop_down</i></button></div>`
+    expect(run(FILTER_TRIGGER_EXPR).id).toBe('ft')
   })
 
   it('FILTER_TRIGGER_EXPR: 넓은 레이아웃(탭 존재)이면 null', () => {

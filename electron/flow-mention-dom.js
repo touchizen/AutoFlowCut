@@ -64,13 +64,19 @@ const HELPERS = `
     return tabs.find((t) => /캐릭터|characters?/i.test(t.textContent || '')) || null;
   };
 
-  // 좁은 창(창 축소)에서는 탭 바가 [role='tab'] 대신 filter_list 드롭다운(aria-haspopup=menu)으로
-  // 접힌다. 이 트리거는 멘션 팝업 dialog **밖**의 미디어 브라우저 툴바에 있으므로(실앱 덤프
-  // 2026-07-19: 필터 radix id 가 dialog 보다 먼저 마운트) document 전체에서 찾는다 — 아이콘 리거처
-  // 'filter_list' 로 식별(more_vert/add/settings 등 다른 메뉴 버튼 배제). 넓은 레이아웃엔 없음(=null).
+  // 좁은 창(창 축소)에서는 탭 바가 [role='tab'] 대신 **타입 필터 드롭다운**(aria-haspopup=menu)으로
+  // 접힌다. 이 트리거는 멘션 dialog 헤더 안에 있고(실앱 덤프 2026-07-19: radix-:r75:, x12 y56),
+  // 현재 선택 타입 아이콘 + arrow_drop_down 을 가진다(모두=dashboard → 선택 시 accessibility_new 등으로 바뀜).
+  // 같은 위치의 filter_list(radix-:r65:)는 dialog 밖 배경 요소라 hit-test 에서 '가려짐(covered)'이 되므로
+  // 절대 그걸 잡으면 안 된다 — 반드시 dialog 안, 타입 아이콘 + arrow_drop_down 인 버튼을 고른다.
+  const __TYPE_FILTER_ICONS = ['dashboard', 'accessibility_new', 'image', 'face', 'drive_folder_upload'];
   const __findFilterTrigger = () => {
-    const btns = Array.from(document.querySelectorAll("button[aria-haspopup='menu'], [role='button'][aria-haspopup='menu']"));
-    return btns.find((b) => (b.textContent || '').indexOf('filter_list') >= 0) || null;
+    const scope = __dialog() || document;
+    const btns = Array.from(scope.querySelectorAll("button[aria-haspopup='menu'], [role='button'][aria-haspopup='menu']"));
+    return btns.find((b) => {
+      const txt = b.textContent || '';
+      return txt.indexOf('arrow_drop_down') >= 0 && __TYPE_FILTER_ICONS.some((ic) => txt.indexOf(ic) >= 0);
+    }) || null;
   };
 
   // 필터 드롭다운을 열면 role='menu'(Radix 는 body 로 portal) 안에 role='menuitem' 들이 뜬다.
