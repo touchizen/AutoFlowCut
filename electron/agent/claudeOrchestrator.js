@@ -436,6 +436,18 @@ export function createClaudeOrchestrator({
     runState.state = { kind: 'closing' }
     inputQueue.end(steerRefusal(runState.state))
     closeQueryOnce()
+    // The Query is now closed, so the session is dead. The manager's onExit wrapper is the only
+    // path that clears current + lowers the renderer session ref; without this call the session
+    // stays 'closing' and every later send loops on the closing refusal. Mirrors the orphan-drain
+    // timeout path, which already reports onExit.
+    onExit?.({
+      provider: 'claude',
+      code: null,
+      signal: null,
+      error: null,
+      reason: 'agent-orphan-drain-close',
+      sessionClosed: true,
+    })
   }
 
   function isRemoteStartFrame(message) {

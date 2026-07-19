@@ -693,6 +693,23 @@ describe('AgentSessionManager commands and events', () => {
     expect(opened.sessionId).toBeTruthy()
   })
 
+  it('stale 세션의 늦은 onExit은 current 세션을 안 닫고 sessionClosed를 강제하지 않는다', async () => {
+    // M-3의 exitedSession != null 분기 핀: current가 아닌(닫힌) 세션의 늦은 exit은 강제 close 대상이
+    // 아니므로 sessionClosed를 true로 만들면 안 된다(살아있는 current 세션의 renderer ref를 오하강).
+    const onExit = vi.fn()
+    const h = lifecycleHarness({ onExit })
+    await h.manager.open()
+    await h.manager.close()
+    const reopened = await h.manager.open()
+
+    // 첫(stale) orchestrator의 늦은 exit — current(두 번째)와 sessionId가 다르다.
+    h.orchestrators[0].options.onExit({ code: 1, signal: null, error: new Error('late') })
+
+    expect(onExit).toHaveBeenLastCalledWith(expect.objectContaining({ sessionClosed: false }))
+    expect(h.manager.status().sessionId).toBe(reopened.sessionId)
+    await h.manager.close()
+  })
+
   it('turn/tool admission 뒤의 app ledger snapshot을 usage callback으로 노출한다', async () => {
     const onUsage = vi.fn()
     const storyCommands = {

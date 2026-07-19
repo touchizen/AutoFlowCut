@@ -614,6 +614,12 @@ describe('Claude §5.3 mapper — retraction, terminal, orphan gate', () => {
     await vi.waitFor(() => expect(h.query.close).toHaveBeenCalledOnce())
     expect(h.onDelta).not.toHaveBeenCalled()
     expect(h.onEvent).not.toHaveBeenCalled()
+    // Query를 닫으면 세션이 죽는다 — manager가 정산하고 renderer ref를 내리도록 onExit(sessionClosed)을
+    // 반드시 보고해야 한다(안 그러면 세션이 'closing'에 갇혀 이후 send가 계속 거부된다).
+    expect(h.onExit).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'agent-orphan-drain-close',
+      sessionClosed: true,
+    }))
     await expect(h.orchestrator.send('뒤 turn', 'claude-sonnet-5')).rejects.toThrow(/closed/i)
 
     await h.orchestrator.close()
