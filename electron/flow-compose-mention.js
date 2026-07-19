@@ -8,6 +8,7 @@ import {
   CLICK_CHARACTER_TAB,
   FILTER_TRIGGER_EXPR,
   CHAR_MENUITEM_EXPR,
+  CHAR_FILTER_ACTIVE_EXPR,
   hasMentionOption,
   dispatchMentionOption,
   chipCheck,
@@ -15,6 +16,17 @@ import {
 } from './flow-mention-dom.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// 열린 Radix 드롭다운을 Escape(trusted)로 닫는다. 실패로 빠질 때 메뉴를 남기면 modal 특성상
+// (body pointer-events:none) 이후 모든 trusted click 의 hit-test 가 막혀 생성/재시도가 wedge 된다(리뷰).
+async function dismissOpenMenu(flowView) {
+  try {
+    flowView.webContents.focus()
+    flowView.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+    flowView.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+  } catch { /* 뷰가 이미 없을 수 있다 */ }
+  await sleep(150)
+}
 
 /**
  * 좁은 창(창 축소)에서 멘션 피커의 탭 바가 filter_list 드롭다운으로 접혔을 때, trusted click 으로
@@ -27,7 +39,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  */
 async function openCharacterFilterMenu(flowView, trustedClick) {
   if (typeof trustedClick !== 'function') return false
-  // 좁은 레이아웃에서만 filter_list 트리거가 존재(넓으면 탭이라 null → 여기 안 옴).
+  // 이미 캐릭터 필터면(트리거 아이콘 accessibility_new) 재선택 불필요 — 불필요한 trusted click 왕복과
+  //   그로 인한 race 노출을 없앤다(멀티 멘션 씬은 필터 상태가 유지된다).
+  if (await flowView.webContents.executeJavaScript(CHAR_FILTER_ACTIVE_EXPR).catch(() => false)) return true
+  // 좁은 레이아웃에서만 타입 필터 트리거가 존재(넓으면 탭이라 null → 여기 안 옴).
   const hasFilter = await flowView.webContents.executeJavaScript(`!!(${FILTER_TRIGGER_EXPR})`).catch(() => false)
   if (!hasFilter) return false
   const opened = await trustedClick(FILTER_TRIGGER_EXPR, { step: 'mention-filter-open' }).catch(() => null)
@@ -38,10 +53,17 @@ async function openCharacterFilterMenu(flowView, trustedClick) {
     await sleep(100)
     hasItem = await flowView.webContents.executeJavaScript(`!!(${CHAR_MENUITEM_EXPR})`).catch(() => false)
   }
-  if (!hasItem) return false
+  if (!hasItem) { await dismissOpenMenu(flowView); return false }
   const picked = await trustedClick(CHAR_MENUITEM_EXPR, { step: 'mention-filter-character' }).catch(() => null)
-  if (!picked?.success) return false
-  await sleep(400) // 옵션이 캐릭터로 재필터될 시간
+  if (!picked?.success) { await dismissOpenMenu(flowView); return false }
+  // 클릭 전달 != 선택 적용. 트리거 아이콘이 accessibility_new 로 바뀔 때까지 폴링해 "캐릭터 필터 적용"을
+  //   확정한다 — 확정 못 하면 All 탭인 채로 진행해 동명 이미지 asset 을 오선택하는 것을 막는다(리뷰 HIGH).
+  let applied = false
+  for (let i = 0; i < 20 && !applied; i++) {
+    await sleep(100)
+    applied = await flowView.webContents.executeJavaScript(CHAR_FILTER_ACTIVE_EXPR).catch(() => false)
+  }
+  if (!applied) { await dismissOpenMenu(flowView); return false }
   return true
 }
 

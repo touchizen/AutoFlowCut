@@ -70,19 +70,34 @@ const HELPERS = `
   // 같은 위치의 filter_list(radix-:r65:)는 dialog 밖 배경 요소라 hit-test 에서 '가려짐(covered)'이 되므로
   // 절대 그걸 잡으면 안 된다 — 반드시 dialog 안, 타입 아이콘 + arrow_drop_down 인 버튼을 고른다.
   const __TYPE_FILTER_ICONS = ['dashboard', 'accessibility_new', 'image', 'face', 'drive_folder_upload'];
+  // 타입 필터 트리거는 멘션 dialog **안**에만 정당하게 존재한다. dialog 가 없으면(피커가 이미 닫힘)
+  // null — document 로 넓히면 dialog 밖 툴바의 엉뚱한 드롭다운(예: 'Text to Image' 모드 셀렉터)을
+  // 잡을 수 있다(리뷰). 열린 menu 는 portal 로 dialog 밖에 있지만 그건 __findCharMenuItem 담당.
   const __findFilterTrigger = () => {
-    const scope = __dialog() || document;
-    const btns = Array.from(scope.querySelectorAll("button[aria-haspopup='menu'], [role='button'][aria-haspopup='menu']"));
+    const dlg = __dialog();
+    if (!dlg) return null;
+    const btns = Array.from(dlg.querySelectorAll("button[aria-haspopup='menu'], [role='button'][aria-haspopup='menu']"));
     return btns.find((b) => {
       const txt = b.textContent || '';
       return txt.indexOf('arrow_drop_down') >= 0 && __TYPE_FILTER_ICONS.some((ic) => txt.indexOf(ic) >= 0);
     }) || null;
   };
 
+  // 현재 타입 필터가 '캐릭터'인가 — 트리거 아이콘이 accessibility_new 로 바뀌면 캐릭터 선택 상태다.
+  // (1) 이미 캐릭터면 재선택 스킵, (2) 메뉴 선택 후 "실제로 적용됐는지" 확정에 쓴다(클릭 전달 != 적용).
+  const __isCharacterFilterActive = () => {
+    const t = __findFilterTrigger();
+    return !!(t && (t.textContent || '').indexOf('accessibility_new') >= 0);
+  };
+
   // 필터 드롭다운을 열면 role='menu'(Radix 는 body 로 portal) 안에 role='menuitem' 들이 뜬다.
+  // 트리거의 aria-controls 로 그 트리거가 소유한 메뉴만 뒤진다(다른 열린 메뉴의 동명 항목 오클릭 방지).
   // 캐릭터 항목은 탭과 동일한 아이콘 리거처 'accessibility_new' 로 식별(로케일 무관), 없으면 라벨 fallback.
   const __findCharMenuItem = () => {
-    const items = Array.from(document.querySelectorAll("[role='menuitem'], [role='menuitemradio']"));
+    const trig = __findFilterTrigger();
+    const ctrl = trig && trig.getAttribute('aria-controls');
+    const root = (ctrl && document.getElementById(ctrl)) || document;
+    const items = Array.from(root.querySelectorAll("[role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox']"));
     return items.find((m) => (m.textContent || '').indexOf('accessibility_new') >= 0)
         || items.find((m) => /캐릭터|characters?/i.test(m.textContent || ''))
         || null;
@@ -135,6 +150,10 @@ export const FILTER_TRIGGER_EXPR = `(function(){ ${HELPERS} return __findFilterT
 
 // 열린 필터 드롭다운(role=menu, Radix portal)의 캐릭터 menuitem 을 반환하는 표현식.
 export const CHAR_MENUITEM_EXPR = `(function(){ ${HELPERS} return __findCharMenuItem(); })()`
+
+// 현재 타입 필터가 '캐릭터'로 적용됐는지(불리언) — 트리거 아이콘 accessibility_new 기준.
+// 클릭 전달만으론 Radix 선택이 됐다고 보장 못 하므로, 이 값이 true 가 될 때까지 폴링해 확정한다.
+export const CHAR_FILTER_ACTIVE_EXPR = `(function(){ ${HELPERS} return __isCharacterFilterActive(); })()`
 
 /** 이름과 정확히 일치하는 옵션이 피커에 있는가. */
 export const hasMentionOption = (name) => `(function(){

@@ -10,6 +10,7 @@ import {
   CLICK_CHARACTER_TAB,
   FILTER_TRIGGER_EXPR,
   CHAR_MENUITEM_EXPR,
+  CHAR_FILTER_ACTIVE_EXPR,
   MENTION_PROBE,
   chipCheck,
   dispatchMentionOption,
@@ -25,6 +26,8 @@ function makeFlowView({
   tabClicked = true,
   filterExists = true,
   charMenuItemExists = true,
+  // 캐릭터 필터 적용 상태(트리거 아이콘 accessibility_new). ref 로 넘기면 trustedClick 이 선택 후 flip.
+  charFilterActiveRef = { value: false },
   searchEntered = true,
   optionFound = true,
   optionCheckThrows = false,
@@ -42,6 +45,7 @@ function makeFlowView({
       return dialogChecks === 1 ? true : !dialogClosed
     }
     if (source === CLICK_CHARACTER_TAB) return tabClicked
+    if (source === CHAR_FILTER_ACTIVE_EXPR) return charFilterActiveRef.value
     if (source === `!!(${FILTER_TRIGGER_EXPR})`) return filterExists
     if (source === `!!(${CHAR_MENUITEM_EXPR})`) return charMenuItemExists
     if (source.includes("Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')")) return searchEntered
@@ -114,11 +118,16 @@ describe('insertSceneMention failure contract', () => {
     expect(result).toEqual({ ok: false, reason: 'option-not-found' })
   })
 
-  // 좁은 창: 탭이 filter_list 드롭다운으로 접힘. Radix 트리거는 synthetic click(isTrusted:false)을
+  // 좁은 창: 탭이 타입 필터 드롭다운으로 접힘. Radix 트리거는 synthetic click(isTrusted:false)을
   //   무시하므로 trustedClick(sendInputEvent)으로 필터를 열고 캐릭터 항목을 골라야 한다.
-  it('좁은 레이아웃: 탭 없음 → trustedClick(FILTER→MENUITEM)으로 필터 열고 캐릭터 선택 후 진행', async () => {
-    const trustedClick = vi.fn(async () => ({ success: true }))
-    const flowView = makeFlowView({ tabClicked: false }) // 넓은 탭 없음(좁은 모드)
+  //   선택 후엔 트리거 아이콘(accessibility_new)로 "실제 적용"을 확정한다(클릭 전달 != 적용).
+  it('좁은 레이아웃: 탭 없음 → 필터 열고 캐릭터 선택 → 적용 확정 후 진행', async () => {
+    const charRef = { value: false }
+    const trustedClick = vi.fn(async (expr) => {
+      if (expr === CHAR_MENUITEM_EXPR) charRef.value = true // 선택하면 캐릭터 필터가 적용된다
+      return { success: true }
+    })
+    const flowView = makeFlowView({ tabClicked: false, charFilterActiveRef: charRef })
     const result = await settle(insertSceneMention(flowView, NAME, trustedClick))
 
     expect(trustedClick).toHaveBeenNthCalledWith(1, FILTER_TRIGGER_EXPR, expect.objectContaining({ step: 'mention-filter-open' }))
@@ -126,7 +135,26 @@ describe('insertSceneMention failure contract', () => {
     expect(result).toEqual({ ok: true })
   })
 
-  it('좁은 레이아웃: filter 트리거가 없으면(넓지도 좁지도 않은 이상 상태) character-tab-not-found', async () => {
+  it('좁은 레이아웃: 이미 캐릭터 필터면 재선택 없이 바로 진행(trustedClick 미호출)', async () => {
+    const trustedClick = vi.fn(async () => ({ success: true }))
+    const flowView = makeFlowView({ tabClicked: false, charFilterActiveRef: { value: true } })
+    const result = await settle(insertSceneMention(flowView, NAME, trustedClick))
+    expect(trustedClick).not.toHaveBeenCalled()
+    expect(result).toEqual({ ok: true })
+  })
+
+  it('좁은 레이아웃: 클릭은 됐지만 캐릭터 필터가 끝내 적용 안 되면 character-tab-not-found + 메뉴 Escape로 정리', async () => {
+    // charRef 가 계속 false → 적용 확정 실패(동명 이미지 오선택 방지). 열린 메뉴는 Escape 로 닫는다.
+    const trustedClick = vi.fn(async () => ({ success: true }))
+    const flowView = makeFlowView({ tabClicked: false, charFilterActiveRef: { value: false } })
+    const result = await settle(insertSceneMention(flowView, NAME, trustedClick))
+    expect(result).toEqual({ ok: false, reason: 'character-tab-not-found' })
+    // 실패 출구에서 Escape(trusted) 전송
+    const escKeys = flowView.webContents.sendInputEvent.mock.calls.map((c) => c[0]?.keyCode)
+    expect(escKeys).toContain('Escape')
+  })
+
+  it('좁은 레이아웃: filter 트리거가 없으면 character-tab-not-found', async () => {
     const trustedClick = vi.fn(async () => ({ success: true }))
     const flowView = makeFlowView({ tabClicked: false, filterExists: false })
     const result = await settle(insertSceneMention(flowView, NAME, trustedClick))
@@ -134,14 +162,15 @@ describe('insertSceneMention failure contract', () => {
     expect(result).toEqual({ ok: false, reason: 'character-tab-not-found' })
   })
 
-  it('좁은 레이아웃: 필터는 열렸지만 캐릭터 menuitem 이 안 뜨면 character-tab-not-found', async () => {
+  it('좁은 레이아웃: 필터는 열렸지만 캐릭터 menuitem 이 안 뜨면 character-tab-not-found + Escape', async () => {
     const trustedClick = vi.fn(async () => ({ success: true }))
     const flowView = makeFlowView({ tabClicked: false, charMenuItemExists: false })
     const result = await settle(insertSceneMention(flowView, NAME, trustedClick))
-    // 필터 열기는 시도, 캐릭터 항목 클릭은 안 함(못 찾음)
     expect(trustedClick).toHaveBeenCalledWith(FILTER_TRIGGER_EXPR, expect.objectContaining({ step: 'mention-filter-open' }))
     expect(trustedClick).not.toHaveBeenCalledWith(CHAR_MENUITEM_EXPR, expect.anything())
     expect(result).toEqual({ ok: false, reason: 'character-tab-not-found' })
+    const escKeys = flowView.webContents.sendInputEvent.mock.calls.map((c) => c[0]?.keyCode)
+    expect(escKeys).toContain('Escape')
   })
 
   it('좁은 레이아웃: trustedClick 이 없으면(레거시 호출) character-tab-not-found (오선택 방지)', async () => {

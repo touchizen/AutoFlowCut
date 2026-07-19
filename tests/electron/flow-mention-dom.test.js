@@ -17,6 +17,7 @@ import {
   CLICK_CHARACTER_TAB,
   FILTER_TRIGGER_EXPR,
   CHAR_MENUITEM_EXPR,
+  CHAR_FILTER_ACTIVE_EXPR,
   hasMentionOption,
   dispatchMentionOption,
   chipCheck,
@@ -300,8 +301,31 @@ describe('FILTER_TRIGGER_EXPR / CHAR_MENUITEM_EXPR (좁은 레이아웃 요소 �
   })
 
   it('FILTER_TRIGGER_EXPR: 넓은 레이아웃(탭 존재)이면 null', () => {
-    document.body.innerHTML = KO // 탭만 있고 filter_list 없음
+    document.body.innerHTML = KO // 탭만 있고 타입 필터 없음
     expect(run(FILTER_TRIGGER_EXPR)).toBeNull()
+  })
+
+  it('FILTER_TRIGGER_EXPR: dialog 가 없으면 null (dialog 밖 툴바 오매칭 방지)', () => {
+    // 피커가 닫힌 뒤: dialog 밖에 타입아이콘+arrow_drop_down 버튼이 있어도 잡지 않는다.
+    document.body.innerHTML = `<button aria-haspopup="menu"><i>image</i><i>arrow_drop_down</i></button>`
+    expect(run(FILTER_TRIGGER_EXPR)).toBeNull()
+  })
+
+  it('CHAR_FILTER_ACTIVE_EXPR: 트리거 아이콘이 accessibility_new 면 true, dashboard(모두)면 false', () => {
+    document.body.innerHTML = `<div role="dialog"><button aria-haspopup="menu"><i>accessibility_new</i><i>arrow_drop_down</i></button></div>`
+    expect(run(CHAR_FILTER_ACTIVE_EXPR)).toBe(true)
+    document.body.innerHTML = `<div role="dialog"><button aria-haspopup="menu"><i>dashboard</i><i>arrow_drop_down</i></button></div>`
+    expect(run(CHAR_FILTER_ACTIVE_EXPR)).toBe(false)
+  })
+
+  it('CHAR_MENUITEM_EXPR: 트리거 aria-controls 가 가리키는 메뉴만 뒤진다(다른 열린 메뉴 오클릭 방지)', () => {
+    document.body.innerHTML =
+      `<div role="dialog"><button aria-haspopup="menu" aria-controls="m1"><i>dashboard</i><i>arrow_drop_down</i></button></div>` +
+      `<div role="menu" id="m1"><button role="menuitem"><i>dashboard</i>모두</button><button role="menuitem"><i>accessibility_new</i>캐릭터</button></div>` +
+      `<div role="menu" id="m2"><button role="menuitem"><i>accessibility_new</i>딴메뉴캐릭터</button></div>`
+    const el = run(CHAR_MENUITEM_EXPR)
+    expect(el).toBeTruthy()
+    expect(el.closest("[role='menu']").id).toBe('m1') // 트리거가 소유한 메뉴(m1), m2 아님
   })
 
   it.each([
