@@ -300,8 +300,8 @@ export function createAgentSessionManager({
     }
   }
 
-  function reportLimit(session, limit, used) {
-    const refusal = { error: 'agent-limit', limit, used }
+  function reportLimit(session, limit, used, extra = {}) {
+    const refusal = { error: 'agent-limit', limit, used, ...extra }
     // slice 3은 이 callback을 `agent:error`로 보낸다. return value와 event 둘 다 있어야 어느 caller도
     // 조용한 `{success:false}`처럼 버리지 못하고 ChatPanel에 같은 structured failure를 올릴 수 있다.
     onError?.(refusal)
@@ -312,7 +312,9 @@ export function createAgentSessionManager({
     const used = Math.max(0, now() - session.startedAt)
     if (used < maxSessionMs) return null
 
-    const refusal = reportLimit(session, maxSessionMs, used)
+    // wall-clock 한도는 turn/tool-count 한도와 달리 세션을 닫는다. renderer가 ref를 내려 다음 Send가
+    // 재open하게 sessionClosed를 실어 보낸다(turn/tool 한도는 세션을 안 닫으므로 이 플래그가 없다).
+    const refusal = reportLimit(session, maxSessionMs, used, { sessionClosed: true })
     // admission은 Tool Core 진입에서 동기여야 하지만, 거부된 세션의 child/port를 남겨두면
     // 다시는 일할 수 없는 zombie가 된다. 거부값은 즉시 돌려주고 멱등 close는 백그라운드에서 정산한다.
     closeSession(session).catch(() => {})
@@ -421,9 +423,13 @@ export function createAgentSessionManager({
       onDelta: (delta) => onDelta?.(delta),
       onEvent: (event) => observeEvent(session, event),
       onExit: (details) => {
-        onExit?.(details)
         // child가 스스로 죽어도 borrowed RPC와 세션 grant/prompt는 manager가 끝까지 거둔다.
         const exitedSession = current?.sessionId === sessionId ? current : null
+        // manager가 세션을 닫는지의 진실 소유자는 여기다(orchestrator의 per-path 플래그가 아니라).
+        // current 세션의 어떤 exit(crash/stream-ended/stream-error/orphan-drain)든 세션을 닫으므로
+        // renderer가 sessionOpenRef를 내려 다음 Send가 재open하게 sessionClosed를 실어 보낸다.
+        // stale 세션의 늦은 exit(exitedSession==null)은 current 세션을 안 닫으니 강제하지 않는다.
+        onExit?.({ ...details, sessionClosed: (details?.sessionClosed === true) || exitedSession != null })
         if (exitedSession) closeSession(exitedSession).catch(() => {})
       },
     }

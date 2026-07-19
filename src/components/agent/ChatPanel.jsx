@@ -750,10 +750,12 @@ export default function ChatPanel({
       videoAdmissionSourcesRef.current.abortAndClear?.()
       const result = await api.agentSessionClose()
       if (hasFailure(result)) pushError(result)
-      else sessionOpenRef.current = false
     } catch (error) {
       pushError({ error: 'agent-close-failed', message: error?.message })
     } finally {
+      // close는 성공이든 실패든 main이 current를 비운다(closeSession이 throw 전에 current=null).
+      // 세션은 사라졌으니 ref를 항상 내려 다음 Send가 재open하게 한다(실패 시 유지하면 wedge).
+      sessionOpenRef.current = false
       setRunning(false)
     }
   }

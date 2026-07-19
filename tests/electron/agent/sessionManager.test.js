@@ -684,7 +684,9 @@ describe('AgentSessionManager commands and events', () => {
 
     expect(onDelta).toHaveBeenCalledWith('조각')
     expect(onEvent).toHaveBeenCalledWith(event)
-    expect(onExit).toHaveBeenCalledWith(exited)
+    // M-3: current 세션의 crash exit(플래그 없어도)은 세션을 닫으므로 manager가 sessionClosed:true를
+    // 실어 renderer가 sessionOpenRef를 내리고 다음 Send가 재open하게 한다.
+    expect(onExit).toHaveBeenCalledWith({ ...exited, sessionClosed: true })
     await vi.waitFor(() => expect(h.manager.status()).toEqual({ state: 'idle', sessionId: null }))
     expect(h.privateRpcs[0].close).toHaveBeenCalledOnce()
     expect(h.orchestrators[0].close).toHaveBeenCalledOnce()
@@ -1742,10 +1744,13 @@ describe('AgentSessionManager D10 app ledger', () => {
 
     const refused = await h.manager.send('2시간 경계 뒤 작업', DEFAULT_MODEL_ID)
 
+    // M-3: wall-clock 한도는 세션을 닫으므로 sessionClosed:true를 실어 renderer가 ref를 내리게 한다.
+    // (turn/tool-count 한도는 세션을 안 닫으므로 이 플래그가 없다.)
     expect(refused).toEqual({
       error: 'agent-limit',
       limit: 2 * 60 * 60 * 1000,
       used: 2 * 60 * 60 * 1000,
+      sessionClosed: true,
     })
     expect(h.orchestrators[0].send).not.toHaveBeenCalled()
     expect(onError).toHaveBeenCalledWith(refused)
@@ -1770,6 +1775,7 @@ describe('AgentSessionManager D10 app ledger', () => {
         error: 'agent-limit',
         limit: 2 * 60 * 60 * 1000,
         used: 2 * 60 * 60 * 1000,
+        sessionClosed: true,
       })
 
       // manager status 만 idle로 바꾸는 뮤턴트를 막는다. OS child 종료와 같은 port 접속 실패를 본다.

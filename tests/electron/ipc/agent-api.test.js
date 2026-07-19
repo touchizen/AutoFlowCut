@@ -537,7 +537,10 @@ describe('createAgentEventForwarder — D14 event 효과', () => {
     }))
   })
 
-  it('sessionClosed 없는 onExit은 sessionClosed:false로 내보내 세션을 유지하게 한다', async () => {
+  it('forwarder는 details.sessionClosed 플래그를 그대로 반영한다 (닫힘 판정은 manager 소유)', async () => {
+    // forwarder는 세션 닫힘을 판정하지 않는다 — sessionManager의 onExit 래퍼가 current 세션 여부로
+    // 플래그를 결정해 여기로 넘긴다(sessionManager.test.js가 그 annotation을 핀). 이 unit은 순수
+    // passthrough만 본다: 플래그가 없으면 false. crash exit에 실제 true를 싣는 건 manager 계층이다.
     const { createAgentEventForwarder } = await loadSubject()
     const win = fakeWindow()
     const events = createAgentEventForwarder({ getWindow: () => win })

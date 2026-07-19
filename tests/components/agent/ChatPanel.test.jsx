@@ -704,6 +704,28 @@ describe('ChatPanel — abort session settlement', () => {
 
     expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled()
   })
+
+  it('close가 실패해도 local session ref를 내린다 (main이 current를 이미 비웠으므로)', async () => {
+    window.electronAPI.agentSessionClose.mockResolvedValueOnce({
+      error: 'agent-close-failed', message: 'teardown boom',
+    })
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message to the agent' }), {
+      target: { value: '작업 시작' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await act(async () => {})
+    const closeButton = screen.getByRole('button', { name: 'Close session' })
+    expect(closeButton).toBeEnabled()
+
+    fireEvent.click(closeButton)
+    await act(async () => {})
+
+    // 실패해도 세션은 main에서 사라졌으니 ref가 내려가 Close가 비활성(다음 Send는 재open)이고
+    // 실패 원인은 alert로 보인다.
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('teardown boom')
+  })
 })
 
 describe('ChatPanel — effective panel mode', () => {
