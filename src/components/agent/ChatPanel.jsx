@@ -96,12 +96,15 @@ function fallbackModelName(pin, models) {
   return models.find((model) => model?.id === pin?.id)?.displayName || pin?.sdkModel || ''
 }
 
-// selector 에 넘길 Default label. session pin 이 D4 fallback 이면 '기본 · GPT-5.5 (…)' 로 바꾼다(§5.0 D4).
+// selector 에 넘길 Default label. D4 fallback 이면 '기본 · GPT-5.5 (…)' 로 바꾼다(§5.0 D4).
+// open session 은 pin 이 권위(§5.1). pin 이 없으면(pre-session) catalog default row 의 D4 신호를 쓴다 —
+// 첫 send 전에도 '기본' 이 실은 fallback 임을 숨기지 않는다("실패를 평범한 기본으로 보이는 것은 금지").
 function defaultModelLabel(pin, models, t) {
-  if (!pin?.defaultFallbackFrom) return t('agent.modelDefault')
+  const source = pin ?? models.find((model) => model?.isDefault === true)
+  if (!source?.defaultFallbackFrom) return t('agent.modelDefault')
   return t('agent.modelFallback', {
-    model: fallbackModelName(pin, models),
-    from: fallbackFromName(pin.defaultFallbackFrom),
+    model: fallbackModelName(source, models),
+    from: fallbackFromName(source.defaultFallbackFrom),
   })
 }
 
@@ -495,6 +498,14 @@ export default function ChatPanel({
     ))
   }, [])
 
+  // session 이 사라지는 모든 경로에서 provider/pin/switch 확인을 내린다 → 닫힌 session 을 대상으로 한
+  // 유령 D2 확인이나 stale D4 label 을 막는다. project-switch/confirm-switch 는 자체 teardown 을 쓴다.
+  const clearOpenSessionState = useCallback(() => {
+    setOrchestratorProvider(null)
+    setSessionPin(null)
+    setPendingSwitch(null)
+  }, [])
+
   // open 응답/status 로 얻은 orchestratorProvider·defaultPin 을 반영한다(§5.1 M7). pin 이 D4 fallback 이면
   // session 당 정확히 한 번 status log 를 남긴다(§5.0 D4: 조용한 폴백 금지). 같은 session 재적용은 재로그 안 함.
   const applyOpenedSession = useCallback((opened) => {
@@ -524,11 +535,20 @@ export default function ChatPanel({
   applyOpenedSessionRef.current = applyOpenedSession
   useEffect(() => {
     let cancelled = false
+    // 이 mount 시점의 session epoch. status가 도착하기 전에 project-switch가 epoch을 올리면
+    // stale snapshot이 새 프로젝트에 옛 session을 되살리지 못하게 버린다.
+    const hydrationEpoch = sessionEpochRef.current
     Promise.resolve(api.agentStatus?.())
       .then((snapshot) => {
-        if (cancelled || !snapshot || snapshot.state === 'idle' || !snapshot.sessionId) return
+        if (cancelled || sessionEpochRef.current !== hydrationEpoch) return
+        // 'open'만 hydrate한다. opening/closing을 잡으면 죽어가는/여는 중 session에 sessionOpenRef를
+        // 세워, 이후 send가 'session not open' throw로 (sessionClosed 없이) 영원히 wedge된다.
+        if (!snapshot || snapshot.state !== 'open' || !snapshot.sessionId) return
         sessionOpenRef.current = true
         applyOpenedSessionRef.current(snapshot)
+        // 명시 세션은 selectedModel을 복원한다(Default면 null 유지) → remount 뒤 omitted send가
+        // pin(다른 provider)으로 새어 거부되는 wedge를 막는다.
+        setSelectedModel(snapshot.initialModelId ?? null)
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -635,14 +655,17 @@ export default function ChatPanel({
         // orphan-drain timeout / invalid-remote-start close the main session (§5.3). Lower the
         // local ref so the next Send reopens instead of looping on withOpenSession's throw. The
         // error message itself is surfaced by pushError, so no extra status entry here.
-        if (payload?.sessionClosed === true) sessionOpenRef.current = false
+        if (payload?.sessionClosed === true) {
+          sessionOpenRef.current = false
+          clearOpenSessionState()
+        }
         pushError(payload)
       },
     }
 
     const disposers = AGENT_EVENTS.map((channel) => api.onAgentEvent(channel, handlers[channel]))
     return () => disposers.forEach((dispose) => dispose())
-  }, [api, appendDelta, finalizeMessage, pushError])
+  }, [api, appendDelta, finalizeMessage, pushError, clearOpenSessionState])
 
   useEffect(() => {
     const bridge = registerToolBridgeHandlers({
@@ -771,7 +794,9 @@ export default function ChatPanel({
   // D2 확인: 현재 session 을 닫고(경고대로 맥락 소실) 선택 row 로 새로 연다. project switch teardown 을 그대로 미러.
   const confirmProviderSwitch = useCallback(() => {
     const pending = pendingSwitch
-    if (!pending) return
+    // running 중에는 전환 금지(§5.1 D2: busy switch는 Stop/완료 뒤에만). send가 pendingSwitch를 막지만
+    // 이중 방어로 여기서도 거른다 — teardown이 active turn을 조용히 죽이면 안 된다.
+    if (!pending || running) return
     setPendingSwitch(null)
     const nextModelId = pending.modelId
     const hadOpen = sessionOpenRef.current || !!openPromiseRef.current
@@ -779,6 +804,9 @@ export default function ChatPanel({
     abortEpochRef.current += 1
     sessionOpenRef.current = false
     openPromiseRef.current = null
+    // detached video pipeline도 세션 경계에서 닫는다(project-switch/close와 동일) — 아니면 크레딧
+    // 소모 operation이 UI 흔적 없이 새 provider 세션으로 event를 계속 흘린다.
+    videoAdmissionSourcesRef.current.abortAndClear?.()
     setRunning(false)
     setToolCalls([])
     setUsage(null)
@@ -799,12 +827,13 @@ export default function ChatPanel({
     // 새 provider 로 즉시 reopen 한다(§5.0 D2: close await → new open). ensureSession 이 projectSettle 를
     // 먼저 await 하므로 위 close 뒤에 열리고, 성공 시 orchestratorProvider·pin 을 다시 잡는다.
     ensureSession(nextModelId ?? undefined)
-  }, [pendingSwitch, api, pushError, ensureSession])
+  }, [pendingSwitch, running, api, pushError, ensureSession])
 
   const send = async (event) => {
     event.preventDefault()
     const snapshot = { text: input.trim(), model: selectedModel || undefined }
-    if (!snapshot.text || running) return
+    // D2: provider-switch 확인이 열려 있으면 보내지 않는다 — 확인 전에 보내면 옛 provider 로 조용히 나간다.
+    if (!snapshot.text || running || pendingSwitch) return
     messageIdRef.current += 1
     setMessages((current) => [...current, {
       id: `user-${messageIdRef.current}`, role: 'user', text: snapshot.text, streaming: false,
@@ -852,6 +881,7 @@ export default function ChatPanel({
       if (result?.sessionClosed === true) {
         const wasOpen = sessionOpenRef.current
         sessionOpenRef.current = false
+        clearOpenSessionState()
         if (wasOpen) {
           messageIdRef.current += 1
           setMessages((current) => [...current, {
@@ -887,9 +917,8 @@ export default function ChatPanel({
       // 세션은 사라졌으니 ref를 항상 내려 다음 Send가 재open하게 한다(실패 시 유지하면 wedge).
       sessionOpenRef.current = false
       setRunning(false)
-      // 세션이 사라졌으니 provider/pin 도 내린다 → D2 비교가 닫힌 session 을 대상으로 삼지 않고 D4 label 도 복귀.
-      setOrchestratorProvider(null)
-      setSessionPin(null)
+      // 세션이 사라졌으니 provider/pin/switch 확인을 내린다 → D2 비교가 닫힌 session 을 대상으로 삼지 않고 D4 복귀.
+      clearOpenSessionState()
     }
   }
 
@@ -1005,10 +1034,11 @@ export default function ChatPanel({
           </div>
         )}
 
-        {/* D2: cross-provider 확인. 네이티브 모달 금지(Flow 뷰 파괴) — 패널 안 인라인 배너. */}
+        {/* D2: cross-provider 확인. 의도적으로 비모달 인라인 배너다 — 네이티브 모달/focus trap 은 Flow 뷰를
+            0×0 으로 만들어 자동화를 죽인다. 경고는 role="alert" 로 announce 하되 focus 는 뺏지 않는다. */}
         {pendingSwitch && (
-          <div className="agent-provider-switch" role="alertdialog" aria-label={t('agent.providerSwitchConfirm')}>
-            <span className="agent-provider-switch-text">{t('agent.providerSwitchConfirm')}</span>
+          <div className="agent-provider-switch">
+            <span className="agent-provider-switch-text" role="alert">{t('agent.providerSwitchConfirm')}</span>
             <div className="agent-provider-switch-actions">
               <button type="button" className="agent-provider-switch-proceed" onClick={confirmProviderSwitch}>
                 {t('agent.providerSwitchProceed')}

@@ -289,9 +289,10 @@ export function createAgentSessionManager({
       startedAt: current.startedAt,
       turns: current.turns,
       toolCalls: current.toolCalls,
-      // remount 복구용: renderer가 open 응답을 잃어도 orchestratorProvider(D2 비교)와
-      // defaultPin(D4 표시·'기본' resolve)을 다시 얻는다. §5.1 M7 이연분.
+      // remount 복구용: renderer가 open 응답을 잃어도 orchestratorProvider(D2 비교), defaultPin(D4 표시·
+      // '기본' resolve), initialModelId(명시 선택 복원)을 다시 얻는다. §5.1 M7 이연분(pin/initial row).
       provider: current.provider,
+      initialModelId: current.initialModelId ?? null,
       defaultPin: current.defaultPin,
     }
   }
@@ -389,6 +390,9 @@ export function createAgentSessionManager({
       sessionId,
       sessionToken: Symbol(sessionId),
       provider: initialRow.provider,
+      // renderer가 명시 선택한 row id(생략=Default면 null). remount hydration이 selectedModel을 복원해
+      // 명시 세션이 remount 뒤 Default로 새어 cross-provider omitted send로 거부되는 걸 막는다.
+      initialModelId: model ?? null,
       defaultPin,
       projectToken,
       startedAt: now(),
@@ -472,7 +476,9 @@ export function createAgentSessionManager({
       try {
         const opened = await orchestrator.open()
         session.state = 'open'
-        return { sessionId, ...opened, defaultPin: session.defaultPin }
+        // provider는 session이 authority다(codex orchestrator는 open 응답에 provider를 안 실는다).
+        // renderer가 이 필드로 orchestratorProvider를 잡아 D2 provider-switch를 판단한다.
+        return { sessionId, ...opened, provider: session.provider, defaultPin: session.defaultPin }
       } catch (error) {
         await closeSession(session)
         throw error

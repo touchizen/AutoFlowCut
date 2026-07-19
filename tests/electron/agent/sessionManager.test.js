@@ -307,6 +307,9 @@ describe('AgentSessionManager M6b-2a open provider factory', () => {
       sdkModel: 'gpt-5.5',
       defaultFallbackFrom: 'claude-opus-4-8',
     })
+    // codex open 응답은 orchestrator가 provider를 안 실어도 manager가 session.provider를 넣어야 한다
+    // (renderer D2가 이 필드로 orchestratorProvider를 잡는다 — 없으면 codex 세션에서 D2가 죽는다).
+    expect(opened.provider).toBe('codex')
     await h.manager.close()
   })
 
@@ -321,6 +324,8 @@ describe('AgentSessionManager M6b-2a open provider factory', () => {
     expect(h.manager.status()).toMatchObject({
       state: 'open',
       provider: 'claude',
+      // 명시 open이므로 initialModelId는 그 row id(remount에서 selectedModel 복원용).
+      initialModelId: CLAUDE_MODEL_ROW.id,
       defaultPin: {
         id: DEFAULT_MODEL_ID,
         provider: 'codex',
@@ -328,6 +333,13 @@ describe('AgentSessionManager M6b-2a open provider factory', () => {
         defaultFallbackFrom: 'claude-opus-4-8',
       },
     })
+    await h.manager.close()
+  })
+
+  it('Default(생략) open의 status.initialModelId는 null이다', async () => {
+    const h = lifecycleHarness({ modelCatalog: modelCatalogDouble([DEFAULT_MODEL_ROW]) })
+    await h.manager.open()
+    expect(h.manager.status()).toMatchObject({ state: 'open', provider: 'codex', initialModelId: null })
     await h.manager.close()
   })
 
