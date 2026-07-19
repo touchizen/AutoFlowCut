@@ -2,6 +2,8 @@
  * AutoFlowCut - Default Configuration
  */
 
+import { FLOW_SUBMIT_PACING_MIN_MS, FLOW_SUBMIT_PACING_MAX_MS } from '../utils/flowSubmitPacing'
+
 export const DEFAULTS = {
   // 프로젝트 설정
   project: {
@@ -21,6 +23,8 @@ export const DEFAULTS = {
     concurrency: 5,        // 이미지 동시 생성 기본 (1~15)
     videoConcurrency: 4,   // 비디오 동시 생성 기본 (1~10)
     flowAgentOn: false,    // Flow Agent(Maps 그라운딩) 모드 — 기본 OFF(직접 API 경로)
+    flowPacingMinMs: FLOW_SUBMIT_PACING_MIN_MS,  // Flow(DOM 자동화) 제출 사이 최소 랜덤 대기 (ms) — 단일 소스
+    flowPacingMaxMs: FLOW_SUBMIT_PACING_MAX_MS,  // Flow(DOM 자동화) 제출 사이 최대 랜덤 대기 (ms) — 단일 소스
   },
 
   // API 엔드포인트 (Flow AI)

@@ -25,6 +25,7 @@ vi.mock('../../src/utils/guards', () => ({
   checkFlowProjectReady: vi.fn().mockReturnValue({ ok: true }),
 }))
 vi.mock('../../src/services/styleService', () => ({
+  presetTagForStyleId: vi.fn(() => null),
   resolveSceneStyle: vi.fn((prompt) => ({ styledPrompt: prompt, appliedStyle: 'none' })),
 }))
 vi.mock('../../src/services/imageFinalize', () => ({

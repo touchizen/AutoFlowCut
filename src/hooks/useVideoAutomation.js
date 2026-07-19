@@ -230,6 +230,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       videoBatchCount = 1,
       seed = null,
       concurrency: rawConcurrency,
+      flowPacingMinMs = undefined,  // Flow 페이싱 하한(ms) — 미지정 시 util 기본(7000)
+      flowPacingMaxMs = undefined,  // Flow 페이싱 상한(ms) — 미지정 시 util 기본(15000)
       onItemUpdate,
       // #video-3: 명시적 retry 플래그. true 이면 직전 batchId 재사용 → 이중과금 방지.
       // false/미전달이면 새 배치 id 발급 (첫 실행 또는 의도적 재시작).
@@ -584,9 +586,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           if (_maybeTriggerQuotaStop(genResult.error)) return
         }
 
-        // Flow 반봇 페이싱 — 다음 제출 전 20~40초 랜덤 대기(이미지 자동화와 동일). API 는 대기 없음.
+        // Flow 반봇 페이싱 — 다음 제출 전 랜덤 대기(기본 7~15초, 설정에서 조정). 이미지 자동화와 동일. API 는 대기 없음.
         if (appMode === 'flow' && nextFreshIdx < freshGen.length && !stopRequestedRef.current && !authStopped) {
-          const waitMs = getFlowSubmitPacingDelayMs()
+          const waitMs = getFlowSubmitPacingDelayMs(flowPacingMinMs, flowPacingMaxMs)
           const waitEnd = Date.now() + waitMs
           while (Date.now() < waitEnd && !stopRequestedRef.current) {
             await waitIfPaused()

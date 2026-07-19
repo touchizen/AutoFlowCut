@@ -210,6 +210,7 @@ export function buildSplitPrompt(scriptMd, opts) {
     buildRosterBlock(opts.roster),
     // V2: 가시 등장인물의 외형을 speakers에 담아 캐릭터 레퍼런스로 등록 → 씬 이미지 일관성.
     `화면에 보이는 등장인물(narrator 제외)은 speakers 항목에 appearance(이미지 생성용 짧은 영어 외형/생김새 묘사: 나이·성별·헤어·의상·분위기)를 넣어라. narrator나 화면에 안 나오는 화자는 appearance를 생략한다.`,
+    `각 씬의 appearingCharacters에는 그 씬 화면에 실제로 보이는 인물의 speaker id만 배열로 넣어라(narrator 제외). 말하지 않는 인물도 포함하고, 전체 대본 맥락으로 대명사·별칭(예: "그 남자")을 roster/speakers 목록의 id로 해석하며, 목록에 없는 새 이름은 만들지 말고 목록 인물이 아무도 안 보이면 []를 반환하라.`,
     // M2b: 효과음 큐를 세그먼트 단위로 삽입. 단어 단위(문장 내부) 금지 — 시퀀스의 한 자리를 차지한다.
     `대본 흐름상 효과음(문 여는 소리·천둥·발소리·비명 등)이 꼭 필요한 지점에는 그 자리에 { "type": "sfx", "description": "..." } 세그먼트를 삽입하라. description은 효과음을 생성할 짧은 영어 묘사(예: "door creaking open", "distant thunder")로 쓴다. sfx 세그먼트에는 speaker/text/emotion을 넣지 않는다. 나레이션/대사 세그먼트는 type을 생략해도 된다(기본 narration).`,
     `효과음은 꼭 필요한 순간(장면 전환·긴장·중요한 사건)에만 절제해서 넣어라 — 과도하게 넣으면 흐름을 해친다.`,
@@ -332,6 +333,7 @@ export function buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, op
     `아래 critique를 반영해 scenes JSON 전체를 수정하라.`,
     `반드시 SCENES_SCHEMA 형태의 JSON만 반환하라. 설명/코드펜스 금지.`,
     `sceneNo, summary, segments, speakers를 포함하고, narration 세그먼트는 speaker/text/emotion을 유지하며, sfx 세그먼트는 description을 유지한다.`,
+    `각 씬의 appearingCharacters도 유지하되 critique와 대본상 화면 등장에 맞게 수정한다.`,
     `장르 공식보다 대본의 몰입도, 궁금증, 기대감 흐름을 우선한다.`,
     // §v2.9 MINOR②: 검토루프에도 roster 제약 — 검토 중 명단 밖 인물 재유입 차단.
     buildRosterBlock(opts.roster),

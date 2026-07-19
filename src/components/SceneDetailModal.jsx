@@ -171,7 +171,12 @@ export default function SceneDetailModal({
   const handleRegenerate = () => {
     console.log('[SceneDetail] Regenerate clicked')
     if (!onGenerate) return
-    onGenerate(scene.id)
+    // Issue #4: 모달에서 편집한 내용(prompt/characters/style_tag 등)을 먼저 영속 — 재생성이 저장을
+    //   안 하면 편집이 사라지고 모달을 다시 열면 옛 값이 보인다.
+    if (onUpdate) onUpdate(scene.id, editData)
+    // Issue #4/#5: 편집 스냅샷을 명시 전달 — onUpdate 직후라 scenes 클로저가 stale 이면 생성이
+    //   옛 prompt/style_tag 를 읽어(스타일은 항상 실사, 프롬프트는 편집 전 값) 나오는 race 를 피한다.
+    onGenerate(scene.id, undefined, editData)
     onClose()
   }
   

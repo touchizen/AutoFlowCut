@@ -289,7 +289,8 @@ describe('SceneDetailModal — §3.8 close-on-regenerate', () => {
     const regenBtn = screen.getByRole('button', { name: /sceneDetail\.regenerate/ })
     fireEvent.click(regenBtn)
 
-    expect(onGenerate).toHaveBeenCalledWith('scene_1')
+    // Issue #4/#5: 재생성은 편집 스냅샷(editData 객체)을 3번째 인자로 전달
+    expect(onGenerate).toHaveBeenCalledWith('scene_1', undefined, expect.objectContaining({ id: 'scene_1' }))
     expect(onClose).toHaveBeenCalled()
   })
 

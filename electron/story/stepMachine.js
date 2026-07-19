@@ -354,11 +354,25 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     }, operationId)
   }
 
+  // 리뷰 M7: revise LLM 이 appearingCharacters 를 빠뜨리면(스키마상 optional) 화면 등장 정보가
+  //   유실된다(내부 필드 onScreen 도 LLM 이 안 emit). 필드를 "명시적으로" 준 씬([]=제거 포함)은
+  //   존중하고, 아예 누락한 씬만 storyId 로 매칭된 이전 값을 상속한다.
+  function inheritAppearingCharacters(prev, scenes) {
+    const prevByStory = new Map((prev || []).filter((s) => s.storyId).map((s) => [s.storyId, s]))
+    return (scenes || []).map((s) => {
+      if (Array.isArray(s.appearingCharacters)) return s // 명시적(빈 배열=제거)은 그대로
+      const p = s.storyId ? prevByStory.get(s.storyId) : null
+      if (p && Array.isArray(p.appearingCharacters)) return { ...s, appearingCharacters: p.appearingCharacters }
+      return s
+    })
+  }
+
   function normalizeScenes(prev, scenes) {
     validateScenesSegments(scenes)
     const { scenes: withIds } = inheritStoryIds(prev, scenes)
     assertUniqueStoryIds(withIds)
-    const { scenes: withInheritedSegs } = inheritSegmentIds(prev, withIds)
+    const withAppear = inheritAppearingCharacters(prev, withIds)
+    const { scenes: withInheritedSegs } = inheritSegmentIds(prev, withAppear)
     return assignSegmentIds(withInheritedSegs)
   }
 
@@ -470,6 +484,26 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         { level: 'warn', speakers: [...unknown] })
     }
     return { scenes: out, changed: unknown.size > 0 }
+  }
+
+  // Issue #6: 씬 단위 시각 등장 정보는 audio 재그룹에서 사라진다. split/revise가 반환한
+  // appearingCharacters를 확정 speaker id로 정규화해 모든 세그먼트에 복제하면, 세그먼트 id로
+  // 씬을 다시 만들 때도 화면 등장 정보가 따라간다. 필드가 없는 legacy 출력은 그대로 둔다.
+  function stampAppearingCharacters(scenes = [], speakers = []) {
+    return (scenes || []).map((s) => {
+      if (!Array.isArray(s.appearingCharacters)) return s
+      const onScreen = []
+      for (const ref of s.appearingCharacters) {
+        const sp = findSpeakerByRef(speakers, ref)
+        const id = sp?.id
+        if (!sp || typeof id !== 'string' || !id.trim() || isNarratorSpeaker(sp) || onScreen.includes(id)) continue
+        onScreen.push(id)
+      }
+      return {
+        ...s,
+        segments: (s.segments || []).map((g) => ({ ...g, onScreen: [...onScreen] })),
+      }
+    })
   }
 
   // FIX-1 + FIX-7: roster 강제(신규 speaker 금지 + 명단 밖 seg.speaker → narrator 재기록)의 단일 기준.
@@ -687,9 +721,20 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         .map((sp) => [sp.id, sp.name])
     )
     const names = []
-    for (const g of s.segments || []) {
-      const name = chars.get(g.speaker)
+    const addName = (id) => {
+      const name = chars.get(id)
       if (name && !names.includes(name)) names.push(name)
+    }
+    // 안정된 순서: 대사/나레이션의 실제 화자들을 먼저, 화면에만 등장하는 인물을 그 뒤에 추가.
+    // 의미론(리뷰 R2): 화자 ∪ onScreen 합집합. 발화 캐릭터는 청각적으로 씬에 존재하므로 항상 링크되고
+    //   (이슈6 이전부터의 baseline), appearingCharacters/onScreen 은 "무언 시각 등장"을 추가로 얹는다.
+    //   따라서 appearingCharacters:[] 는 화면 전용 인물만 비울 뿐 발화 화자를 지우지 못한다(오프스크린
+    //   대사 시 과도 멘션 가능 — under-report 로 레퍼런스가 통째 누락되는 것보다 안전한 보수적 선택).
+    for (const g of s.segments || []) {
+      addName(g.speaker)
+    }
+    for (const g of s.segments || []) {
+      for (const id of Array.isArray(g.onScreen) ? g.onScreen : []) addName(id)
     }
     return names
   }
@@ -1050,7 +1095,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           rewriteChanged = rewritten.changed
           if (rewritten.changed) reviewedSpeakers = ensureReferencedSpeakers(reviewedSpeakers, reviewedScenes, state.speakers || [])
         }
-        const changed = reviewed.changed || rewriteChanged
+        const stampedScenes = stampAppearingCharacters(reviewedScenes, reviewedSpeakers)
+        const stampChanged = !sameJson(stampedScenes, reviewedScenes)
+        reviewedScenes = stampedScenes
+        const changed = reviewed.changed || rewriteChanged || stampChanged
         if (changed) {
           sendStepLog('scenes', 'review-save', '검수 반영 씬 저장', opId)
           await store.saveText('scenes.json', JSON.stringify({ scenes: reviewedScenes }, null, 2))
@@ -1108,6 +1156,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         nextScenes = rewritten.scenes
         if (rewritten.changed) nextSpeakers = ensureReferencedSpeakers(nextSpeakers, nextScenes, state.speakers || [])
       }
+      nextScenes = stampAppearingCharacters(nextScenes, nextSpeakers)
       sendStepLog('scenes', 'save', 'scenes.json 저장', opId)
       await store.saveText('scenes.json', JSON.stringify({ scenes: nextScenes }, null, 2))
       state.speakers = nextSpeakers

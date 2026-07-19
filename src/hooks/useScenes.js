@@ -411,9 +411,24 @@ export function useScenes() {
         }
       }
     }
-    setScenes(prev => prev.map(scene =>
-      scene.id === sceneId ? { ...scene, ...updates } : scene
-    ))
+    setScenes(prev => prev.map(scene => {
+      if (scene.id !== sceneId) return scene
+      const next = { ...scene, ...updates }
+      // Issue #2: 이미 생성 완료(이미지 보유)된 씬의 프롬프트가 실제로 바뀌면 재생성 대상이
+      // 되도록 status 를 pending 으로 되돌린다.
+      // 가드: 호출자가 status 를 "실제로 바꾸는" 경우(생성 코드 — done→generating 등)만 존중하고
+      // 덮어쓰지 않는다. SceneDetailModal 은 editData={...scene} 를 통째로 넘겨 status 가 늘 포함되지만
+      // 그 값은 현재 status 와 동일(변경 아님)하므로, updates.status === 현재 status 면 리셋을 허용한다.
+      const promptChanged = Object.prototype.hasOwnProperty.call(updates, 'prompt') && updates.prompt !== scene.prompt
+      const hasImage = !!(scene.image || scene.imagePath)
+      const callerChangesStatus = Object.prototype.hasOwnProperty.call(updates, 'status') && updates.status !== scene.status
+      // 진행 중(generating)인 씬은 리셋 보류 — finalize 가 곧 done 을 쓴다. 여기서 pending 으로
+      // 뒤집으면 옛 프롬프트로 만든 이미지가 done 으로 덮여 UI 가 거짓말한다(리뷰 M4).
+      if (promptChanged && hasImage && !callerChangesStatus && scene.status !== 'generating') {
+        next.status = 'pending'
+      }
+      return next
+    }))
   }, [])
   
   /**

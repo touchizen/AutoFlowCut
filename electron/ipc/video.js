@@ -261,7 +261,7 @@ export function registerVideoIPC(ipcMain, deps) {
         : _segments
       const promptResult = _injSegments
         ? await (async () => {
-            const _si = await injectComposeSegments(flowView, _injSegments)
+            const _si = await injectComposeSegments(flowView, _injSegments, trustedClickOnFlowView)
             console.log('[Flow Video T2V] segments injected (chips):', _segments.filter(s => s.type === 'mention').length, '→', _si.ok)
             return _si.ok
               ? { success: true }

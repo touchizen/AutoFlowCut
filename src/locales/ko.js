@@ -794,7 +794,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     aspectRatioShortform: '숏폼',
     aspectRatioHint: '프로젝트 화면 구성 — 생성·카드 표시·CapCut 내보내기에 반영됩니다.',
     defaultDuration: '기본 지속시간 (초)',
-    seconds: '',
+    seconds: '초',
     projectName: '프로젝트 이름',
     exportThreshold: '내보내기 버튼 표시 완료율',
     exportThresholdHint: '씬 생성 완료 후, 이 비율 이상 성공 시 내보내기 버튼 표시',
@@ -804,6 +804,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
     videoConcurrency: '비디오 동시 생성 수',
     videoConcurrencyHint: '한 번에 동시에 생성할 비디오 수 (1~10). 비디오는 요청당 쿼터 소모가 많습니다. 기본 4.',
+
+    flowPacing: 'Flow 제출 간격',
+    flowPacingMin: 'Flow 제출 최소 간격(초)',
+    flowPacingMax: 'Flow 제출 최대 간격(초)',
+    flowPacingHint: 'Flow(DOM 자동화)에서 씬 제출 사이 랜덤 대기(초). 봇 감지/레이트리밋 회피용. 너무 짧으면 감지 위험이 커집니다. 기본 7~15초.',
 
     // 스타일 필수
     requireStyle: '스타일 필수',

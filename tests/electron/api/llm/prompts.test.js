@@ -176,6 +176,23 @@ describe('buildSplitPrompt appearance(V2)', () => {
   })
 })
 
+describe('씬 화면 등장인물 appearingCharacters 지시 (Issue #6)', () => {
+  it('split은 무언 인물·별칭 해석·명단 id·narrator 제외·빈 배열을 지시한다', () => {
+    const p = buildSplitPrompt('S', { language: 'ko' })
+    expect(p).toContain('appearingCharacters')
+    expect(p).toMatch(/말하지|침묵|무언/)
+    expect(p).toMatch(/대명사|별칭/)
+    expect(p).toMatch(/speaker id|speaker ID/)
+    expect(p).toContain('narrator')
+    expect(p).toContain('[]')
+  })
+
+  it('scenes revise는 기존 appearingCharacters를 보존·수정하도록 지시한다', () => {
+    const p = buildScenesRevisePrompt('SCRIPT', [{ sceneNo: 1, appearingCharacters: ['a'] }], [{ id: 'a', name: '민수' }], 'CRITIQUE')
+    expect(p).toMatch(/appearingCharacters.{0,100}(?:유지|보존)/s)
+  })
+})
+
 describe('buildPromptsPrompt appearance 컨텍스트(V2)', () => {
   it('speakers[].appearance를 프롬프트 컨텍스트로 포함', () => {
     const scenes = [{ sceneNo: 1, summary: 'S1', segments: [{ speaker: 'a', text: 'hi' }] }]

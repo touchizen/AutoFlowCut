@@ -806,6 +806,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     videoConcurrency: 'Video concurrency',
     videoConcurrencyHint: 'How many videos to generate at once (1–10). Videos use more quota per request. Default 4.',
 
+    flowPacing: 'Flow submit interval',
+    flowPacingMin: 'Flow submit min interval (sec)',
+    flowPacingMax: 'Flow submit max interval (sec)',
+    flowPacingHint: 'Random wait between scene submits in Flow (DOM automation), in seconds. Avoids bot detection / rate limits. Too short raises detection risk. Default 7–15s.',
+
     // Require style
     requireStyle: 'Require Style',
     requireStyleHint: 'ON: Block generation without style / OFF: Allow generation without style',
