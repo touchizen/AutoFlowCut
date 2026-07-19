@@ -151,11 +151,32 @@ export const MENTION_PROBE = `(function(){
   const dlg = __dialog();
   const scope = dlg || document;
   const opts = Array.from(scope.querySelectorAll("[role='option']"));
+  // 좁은 화면에서 탭이 어디로(오버플로우 메뉴 등) 접혔는지 판별용 — 구조(tag/role/aria)만,
+  //   내용(텍스트/이름)은 절대 반환하지 않는다. 'accessibility_new' 는 Flow 의 캐릭터 아이콘
+  //   Material ligature(사용자 콘텐츠 아님).
+  const ligatureHosts = Array.from(scope.querySelectorAll('*'))
+    .filter((e) => e.children.length === 0 && (e.textContent || '').indexOf('accessibility_new') >= 0)
+    .slice(0, 8)
+    .map((e) => {
+      const host = e.closest("[role='tab'], [role='menuitem'], [role='menuitemradio'], button, [role='button'], a") || e;
+      return {
+        tag: host.tagName,
+        role: host.getAttribute('role') || '',
+        hasPopup: host.getAttribute('aria-haspopup') || '',
+        expanded: host.getAttribute('aria-expanded') || '',
+      };
+    });
   return {
     hasDialog: !!dlg,
     documentLang: String(document.documentElement.lang || ''),
+    viewportWidth: Math.round((window.innerWidth) || 0),
+    dialogWidth: dlg ? Math.round(dlg.getBoundingClientRect().width) : 0,
     tabCount: scope.querySelectorAll("[role='tab']").length,
+    tablistCount: scope.querySelectorAll("[role='tablist']").length,
+    buttonCount: scope.querySelectorAll("button, [role='button']").length,
+    menuitemCount: scope.querySelectorAll("[role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox']").length,
     charTabFound: !!__findCharTab(dlg),
+    ligatureHosts,
     optionCount: opts.length,
     // 이름 후보의 길이만 — 어떤 leaf 도 내용 자체는 반환하지 않는다.
     optionNameLens: opts.slice(0, 20).map((o) => (__optionCandidates(o)[0] || '').length),
