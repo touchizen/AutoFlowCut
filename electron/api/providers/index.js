@@ -7,6 +7,7 @@
  */
 import { googleImageProvider } from './image/google.js'
 import { openaiImageProvider } from './image/openai.js'
+import { grokVideoProvider } from './video/grok.js'
 import { googleVideoProvider } from './video/google.js'
 
 const imageRegistry = Object.assign(Object.create(null), {
@@ -15,6 +16,7 @@ const imageRegistry = Object.assign(Object.create(null), {
 })
 const videoRegistry = Object.assign(Object.create(null), {
   google: googleVideoProvider,
+  grok: grokVideoProvider,
 })
 
 /** @returns {object|null} 이미지 provider 객체 또는 미등록 시 null */

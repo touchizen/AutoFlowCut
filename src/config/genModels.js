@@ -34,6 +34,9 @@ export const VIDEO_MODELS = [
   { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite', cost: '$0.05~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidLite', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD },
   { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast', cost: '$0.10~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidFast', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
   { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality', cost: '$0.40~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidQuality', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
+  // PROVISIONAL — verify against real xAI API + key (M2 real-key gate)
+  // Model id, cost, and documentation URL remain provisional until submit→poll→download smoke passes.
+  { id: 'grok-imagine-video-1.5', label: 'Grok Imagine', cost: '?', unit: 'sec', provider: 'grok', provisional: true, descKey: 'settings.modelVidGrok', url: 'https://docs.x.ai/' },
 ]
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2
@@ -70,6 +73,37 @@ export function imageModelsForProvider(providerId, availableImageModels) {
 export function defaultImageModelForProvider(providerId) {
   if (!providerId || providerId === 'google') return DEFAULT_IMAGE_MODEL_ID
   return IMAGE_MODELS.find((m) => m.provider === providerId)?.id ?? null
+}
+
+/**
+ * 선택된 video provider의 모델 목록만 반환한다(§5.12).
+ * Google live 목록은 provider 필드가 없는 dynamic extra를 Google로 간주하고,
+ * 비-Google은 정적 provider 카탈로그만 사용한다.
+ */
+export function videoModelsForProvider(providerId, availableVideoModels) {
+  const provider = providerId || 'google'
+  if (provider === 'google') {
+    return (availableVideoModels || []).filter((m) => (m.provider ?? 'google') === 'google')
+  }
+  return VIDEO_MODELS.filter((m) => m.provider === provider)
+}
+
+/** 선택 provider의 기본 비디오 모델 id. google=DEFAULT, 그 외=카탈로그 첫 항목. */
+export function defaultVideoModelForProvider(providerId) {
+  if (!providerId || providerId === 'google') return DEFAULT_VIDEO_MODEL_ID
+  return VIDEO_MODELS.find((m) => m.provider === providerId)?.id ?? null
+}
+
+/**
+ * 비디오 provider 선택 UI의 단일 feature-flag 권위.
+ * provider 카탈로그가 전부 provisional이면 registry에 등록돼도 UI에서는 숨긴다.
+ * Grok real-key smoke 후 항목을 `provisional:false`로 바꾸면 자동으로 supported 승격된다.
+ */
+export function listSupportedVideoProviders() {
+  const providers = [...new Set(VIDEO_MODELS.map((model) => model.provider))]
+  return providers.filter((provider) => VIDEO_MODELS.some(
+    (model) => model.provider === provider && model.provisional !== true
+  ))
 }
 
 /** API 모델 id → 사람이 읽는 라벨. 카탈로그에 없으면 id 그대로, falsy 면 null.

@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceImageModel, imageModelsForProvider, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
+import { modelLabel, coerceImageModel, imageModelsForProvider, videoModelsForProvider, defaultVideoModelForProvider, listSupportedVideoProviders, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
 import { FLOW_MODELS } from '../../src/engine/flowModels'
 
 describe('genModels — modelLabel', () => {
@@ -44,8 +44,23 @@ describe('genModels — provider-aware catalog (§5.12)', () => {
   })
 
   it('기존 Veo 비디오 모델은 google provider 메타데이터 유지', () => {
-    expect(VIDEO_MODELS).toHaveLength(3)
-    for (const model of VIDEO_MODELS) expect(model.provider).toBe('google')
+    const veoModels = VIDEO_MODELS.filter((model) => model.provider === 'google')
+    expect(veoModels).toHaveLength(3)
+    for (const model of veoModels) expect(model.provider).toBe('google')
+  })
+
+  it('Grok Imagine 비디오 모델은 real-key gate 전 provisional 카탈로그다', () => {
+    const grok = VIDEO_MODELS.find((model) => model.id === 'grok-imagine-video-1.5')
+    expect(grok).toMatchObject({
+      id: 'grok-imagine-video-1.5',
+      label: 'Grok Imagine',
+      cost: '?',
+      unit: 'sec',
+      provider: 'grok',
+      provisional: true,
+      descKey: 'settings.modelVidGrok',
+    })
+    expect(modelLabel(grok.id)).toBe('Grok Imagine')
   })
 
   it('gpt-image-1 카탈로그 항목 (드롭다운 provider 필터와 함께 추가)', () => {
@@ -53,6 +68,38 @@ describe('genModels — provider-aware catalog (§5.12)', () => {
     expect(gpt).toMatchObject({ id: 'gpt-image-1', label: 'GPT Image', provider: 'openai', aspectCapability: 'approx' })
     expect(modelLabel('gpt-image-1')).toBe('GPT Image')
     expect(coerceImageModel('gpt-image-1')).toBe('gpt-image-1')
+  })
+})
+
+describe('genModels — videoModelsForProvider + supported feature flag', () => {
+  it('google 선택 → Grok 제외, provider 없는 live extra는 google로 포함', () => {
+    const dynamic = [
+      ...VIDEO_MODELS,
+      { id: 'veo-future', label: 'Future Veo' },
+    ]
+    const list = videoModelsForProvider('google', dynamic)
+
+    expect(list.some((model) => model.id === 'grok-imagine-video-1.5')).toBe(false)
+    expect(list.some((model) => model.id === 'veo-future')).toBe(true)
+    expect(list.every((model) => (model.provider ?? 'google') === 'google')).toBe(true)
+  })
+
+  it('grok 선택 → live Google 목록과 무관하게 정적 Grok 항목만 반환', () => {
+    const list = videoModelsForProvider('grok', [
+      { id: 'veo-live', provider: 'google' },
+    ])
+    expect(list.map((model) => model.id)).toEqual(['grok-imagine-video-1.5'])
+  })
+
+  it('provider별 기본 video 모델을 반환한다', () => {
+    expect(defaultVideoModelForProvider()).toBe(DEFAULT_VIDEO_MODEL_ID)
+    expect(defaultVideoModelForProvider('google')).toBe(DEFAULT_VIDEO_MODEL_ID)
+    expect(defaultVideoModelForProvider('grok')).toBe('grok-imagine-video-1.5')
+    expect(defaultVideoModelForProvider('unknown')).toBe(null)
+  })
+
+  it('지원 목록은 모든 모델이 provisional인 Grok을 제외한다', () => {
+    expect(listSupportedVideoProviders()).toEqual(['google'])
   })
 })
 

@@ -11,6 +11,7 @@ import { useApiKey } from '../../hooks/useApiKey'
 const GET_KEY_URL = 'https://aistudio.google.com/apikey'
 const BILLING_URL = 'https://console.cloud.google.com/billing'
 const OPENAI_KEY_URL = 'https://platform.openai.com/api-keys'
+const XAI_KEY_URL = 'https://console.x.ai/'
 
 const linkStyle = {
   color: '#4a9eff',
@@ -27,6 +28,10 @@ export default function ApiKeyTab({ t }) {
   const [openaiKeyInput, setOpenaiKeyInput] = useState('')
   const [openaiBusy, setOpenaiBusy] = useState(false)
   const hasOpenaiKey = !!byProvider?.openai
+  // Grok(xAI) 키 — keyResolver에서 xai 슬롯으로 격리되고 provider id는 grok이다.
+  const [grokKeyInput, setGrokKeyInput] = useState('')
+  const [grokBusy, setGrokBusy] = useState(false)
+  const hasGrokKey = !!byProvider?.grok
 
   const openLink = (url) => window.electronAPI?.openExternal?.(url)
 
@@ -88,6 +93,36 @@ export default function ApiKeyTab({ t }) {
     setOpenaiBusy(true)
     await clearKey('openai')
     setOpenaiBusy(false)
+    toast.success(t('settings.apiKeyRemoved'))
+  }
+
+  const handleGrokVerifySave = async () => {
+    const candidate = grokKeyInput.trim()
+    if (!candidate) {
+      toast.error(t('settings.apiKeyEmpty'))
+      return
+    }
+    setGrokBusy(true)
+    const v = await validateKey(candidate, 'grok')
+    if (!v?.valid) {
+      setGrokBusy(false)
+      toast.error(t('settings.apiKeyInvalid', { error: v?.error || '' }))
+      return
+    }
+    const res = await saveKey(candidate, 'grok')
+    setGrokBusy(false)
+    if (res?.success) {
+      setGrokKeyInput('')
+      toast.success(t('settings.apiKeySaved'))
+    } else {
+      toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
+    }
+  }
+
+  const handleGrokRemove = async () => {
+    setGrokBusy(true)
+    await clearKey('grok')
+    setGrokBusy(false)
     toast.success(t('settings.apiKeyRemoved'))
   }
 
@@ -167,6 +202,41 @@ export default function ApiKeyTab({ t }) {
           </div>
           <span className="setting-sublabel">{t('settings.openaiKeyNote')}</span>
           <a style={{ ...linkStyle, marginTop: '6px' }} onClick={() => openLink(OPENAI_KEY_URL)}>{t('settings.openaiKeyGetKey')}</a>
+        </div>
+      </div>
+
+      {/* Grok(xAI) 키 — provider plumbing은 등록, 모델 선택 UI는 real-key smoke 전 숨김 */}
+      <div className="settings-section">
+        <h3>{t('settings.grokKeyTitle')}</h3>
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.apiKeyStatusLabel')}</label>
+          <span style={{ color: hasGrokKey ? '#10b981' : '#888' }}>
+            {loading ? '…' : hasGrokKey ? t('settings.grokKeySet') : t('settings.grokKeyNotSet')}
+          </span>
+        </div>
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.grokKeyInputLabel')}</label>
+          <input
+            type="password"
+            value={grokKeyInput}
+            onChange={(e) => setGrokKeyInput(e.target.value)}
+            placeholder={t('settings.grokKeyPlaceholder')}
+            disabled={grokBusy || !encryptionAvailable}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button className="btn-primary" onClick={handleGrokVerifySave} disabled={grokBusy || !encryptionAvailable}>
+              {grokBusy ? t('settings.apiKeyVerifying') : t('settings.grokKeyVerifySave')}
+            </button>
+            {hasGrokKey && (
+              <button className="btn-secondary" onClick={handleGrokRemove} disabled={grokBusy}>
+                {t('settings.grokKeyRemove')}
+              </button>
+            )}
+          </div>
+          <span className="setting-sublabel">{t('settings.grokKeyNote')}</span>
+          <a style={{ ...linkStyle, marginTop: '6px' }} onClick={() => openLink(XAI_KEY_URL)}>{t('settings.grokKeyGetKey')}</a>
         </div>
       </div>
 

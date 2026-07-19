@@ -39,7 +39,7 @@ describe('createDispatcher — provider routing', () => {
     const grok = {
       id: 'grok',
       kind: 'video',
-      submitVideo: vi.fn().mockResolvedValue({ success: true, operationName: 'grok-raw-1', appliedInputs }),
+      submitVideo: vi.fn().mockResolvedValue({ success: true, rawId: 'grok-raw-1', appliedInputs }),
       checkVideo: vi.fn(),
       fetchVideoBase64: vi.fn(),
     }
@@ -193,6 +193,33 @@ describe('createDispatcher — downloadVideo routing', () => {
     expect(res.base64).toBe('GROK64')
     expect(grokDl).toHaveBeenCalledWith({ apiKey: 'GROK_KEY', videoUri: 'https://cdn/grok' }, expect.anything())
     expect(googleDl).not.toHaveBeenCalled()
+  })
+
+  it('downloadPolicy 선언 provider: allowlist origin 은 다운로드, 비허용/비-HTTPS origin 은 키 미부착 거부 (§5.6)', async () => {
+    const grokDl = vi.fn().mockResolvedValue({ success: true, base64: 'OK', mimeType: 'video/mp4' })
+    const grok = {
+      id: 'grok', kind: 'video', fetchVideoBase64: grokDl,
+      downloadPolicy: { origins: [{ origin: 'https://api.x.ai', authMode: 'provider-key' }], buildAuthHeaders: (c) => ({ Authorization: `Bearer ${c}` }) },
+    }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore({ xai: 'GROK_KEY' }),
+      registry: makeRegistry({ video: { grok } }),
+    })
+    const grokHandle = encodeHandle('grok', 'req-1')
+    // 허용 origin → 다운로드
+    const ok = await dispatcher.downloadVideo({ videoUri: 'https://api.x.ai/videos/req-1.mp4', generationId: grokHandle })
+    expect(ok.base64).toBe('OK')
+    // 비허용 origin(공격자) → 거부, fetchVideoBase64 미호출(키 유출 없음)
+    grokDl.mockClear()
+    const bad = await dispatcher.downloadVideo({ videoUri: 'https://attacker.example/steal', generationId: grokHandle })
+    expect(bad.success).toBe(false)
+    expect(bad.errorKind).toBe('invalid-config')
+    expect(grokDl).not.toHaveBeenCalled()
+    // 비-HTTPS → 거부
+    const http = await dispatcher.downloadVideo({ videoUri: 'http://api.x.ai/x.mp4', generationId: grokHandle })
+    expect(http.success).toBe(false)
+    expect(grokDl).not.toHaveBeenCalled()
   })
 
   it('malformed handle → invalid-config, provider 호출 없음 (google 폴백 금지)', async () => {

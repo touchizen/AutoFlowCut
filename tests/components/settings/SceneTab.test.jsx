@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import SceneTab from '../../../src/components/settings/SceneTab'
-import { PRICING_URL, FLOW_PRICING_URL } from '../../../src/config/genModels'
+import { PRICING_URL, FLOW_PRICING_URL, VIDEO_MODELS } from '../../../src/config/genModels'
 
 const t = (k) => k
 const baseSettings = {
@@ -140,31 +140,20 @@ describe('SceneTab — video provider 선택 (M2-pre §5.8)', () => {
     expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
   })
 
-  it('미래 provider 목록이 있으면 T2V/I2V를 독립 노출하고 기억 모델을 복원', () => {
-    const setLocalSettings = vi.fn()
+  it('registry 목록에 Grok이 있어도 provisional이면 provider toggle에 노출하지 않음', () => {
     render(
       <SceneTab
         localSettings={provSettings}
-        setLocalSettings={setLocalSettings}
+        setLocalSettings={vi.fn()}
         t={t}
         appMode="api"
         videoProviders={['google', 'grok']}
       />,
     )
 
-    const t2vGroup = screen.getByRole('group', { name: 'settings.videoProviderT2VTitle' })
-    const i2vGroup = screen.getByRole('group', { name: 'settings.videoProviderI2VTitle' })
-    fireEvent.click(t2vGroup.querySelector('button:nth-child(2)'))
-    const afterT2V = setLocalSettings.mock.calls[0][0](provSettings)
-    expect(afterT2V.generation.video.t2v.provider).toBe('grok')
-    expect(afterT2V.generation.video.i2v.provider).toBe('google')
-    expect(afterT2V.videoModelT2V).toBe('grok-t2v-model')
-
-    fireEvent.click(i2vGroup.querySelector('button:nth-child(2)'))
-    const afterI2V = setLocalSettings.mock.calls[1][0](provSettings)
-    expect(afterI2V.generation.video.i2v.provider).toBe('grok')
-    expect(afterI2V.generation.video.t2v.provider).toBe('google')
-    expect(afterI2V.videoModelF2V).toBe('grok-i2v-model')
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderT2VTitle' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'settings.videoProvider_grok' })).toBeNull()
   })
 
   it('T2V/I2V 모델 변경을 각 현재 provider stage 슬롯에 기억', () => {
@@ -197,6 +186,21 @@ describe('SceneTab — video provider 선택 (M2-pre §5.8)', () => {
     )
     expect(screen.queryByRole('group', { name: 'settings.videoProviderT2VTitle' })).toBeNull()
     expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
+  })
+
+  it('F3: google stage 의 T2V/I2V 드롭다운은 provider 필터로 grok 항목을 노출하지 않는다', () => {
+    // videoModels 에 grok 이 섞여 들어와도(집계 카탈로그) google 단계 드롭다운엔 안 보여야
+    // (안 그러면 provider=google + grok 모델 선택 → Veo 로 오라우팅).
+    const withGrok = [
+      ...VIDEO_MODELS,
+      { id: 'grok-imagine-video-1.5', label: 'Grok Imagine', provider: 'grok', provisional: true },
+    ]
+    const { container } = render(
+      <SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} appMode="api" videoModels={withGrok} />,
+    )
+    const optionValues = Array.from(container.querySelectorAll('select.model-select option')).map((o) => o.value)
+    expect(optionValues).not.toContain('grok-imagine-video-1.5')
+    expect(optionValues).toContain('veo-3.1-fast-generate-preview') // google 모델은 있음
   })
 })
 

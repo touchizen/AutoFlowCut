@@ -64,13 +64,13 @@ describe('genai-api — 채널 등록', () => {
     )
   })
 
-  it('list-providers: 등록된 provider 목록 반환 (M1: image=google+openai, video=google)', async () => {
+  it('list-providers: 등록된 provider 목록 반환 (M2: image=google+openai, video=google+grok)', async () => {
     const ipc = makeIpcMain()
     registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
     const res = await ipc.invoke('genai:list-providers')
     expect(res).toEqual({
       image: [{ id: 'google' }, { id: 'openai' }],
-      video: [{ id: 'google' }],
+      video: [{ id: 'google' }, { id: 'grok' }],
     })
   })
 })
@@ -145,11 +145,19 @@ describe('genai-api — 키 관리', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('validate-key: M0b 미지원 provider 는 명시 실패', async () => {
+  it('validate-key: 미등록 provider 는 명시 실패', async () => {
+    const ipc = makeIpcMain()
+    registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
+    // grok 은 M2 에서 validateKey 지원(등록됨) → 진짜 미등록 id 로 unknown-provider 를 검증.
+    const res = await ipc.invoke('genai:validate-key', { provider: 'wavespeed' })
+    expect(res).toEqual({ valid: false, error: 'Unknown provider: wavespeed' })
+  })
+
+  it('validate-key: grok(M2 등록) 는 xai 슬롯 키 없으면 No API key', async () => {
     const ipc = makeIpcMain()
     registerGenaiIPC(ipc, { genaiKeyStore: makeKeyStore(), multiKeyStore: makeMultiKeyStore() })
     const res = await ipc.invoke('genai:validate-key', { provider: 'grok' })
-    expect(res).toEqual({ valid: false, error: 'Unknown provider: grok' })
+    expect(res).toEqual({ valid: false, error: 'No API key' })
   })
 })
 

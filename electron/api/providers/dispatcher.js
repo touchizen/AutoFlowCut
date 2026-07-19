@@ -28,6 +28,19 @@ function attachErrorKind(res, provider) {
   return res
 }
 
+// §5.6 download 라우팅 방어: provider 가 downloadPolicy 를 선언하면 videoUri origin 을 그 allowlist 와
+// 정확 대조(scheme+host+port, url.origin) + HTTPS 강제. 비매칭/비-HTTPS 면 키를 붙이지 않고 거부해
+// 손상된 project.json·렌더러가 임의 origin 으로 provider 키를 유출하는 것을 막는다.
+// downloadPolicy 미선언 provider(google)는 기존 동작(신뢰된 googleapis URI) 유지 — 하위호환.
+function checkDownloadOrigin(videoUri, downloadPolicy) {
+  let url
+  try { url = new URL(String(videoUri)) } catch { return 'Invalid video URI' }
+  if (url.protocol !== 'https:') return 'Video URI must use HTTPS'
+  const allowed = (downloadPolicy.origins || []).some((o) => o.origin === url.origin)
+  if (!allowed) return `Video URI origin not allowed by download policy: ${url.origin}`
+  return null
+}
+
 function failureStatus(generationId, error, errorKind) {
   const status = { generationId, status: 'failed', error }
   if (errorKind !== undefined) status.errorKind = errorKind
@@ -104,10 +117,11 @@ export function createDispatcher({
       }, engineDeps)
       if (!res.success) return attachErrorKind(res, providerId)
 
-      const generationId = encodeHandle(provider.id, res.operationName)
       if (provider.id === 'google') {
+        const generationId = encodeHandle(provider.id, res.operationName)
         return { success: true, generationId, operationName: res.operationName, appliedInputs: res.appliedInputs }
       }
+      const generationId = encodeHandle(provider.id, res.rawId)
       return { success: true, generationId, appliedInputs: res.appliedInputs }
     },
 
@@ -172,6 +186,12 @@ export function createDispatcher({
 
       const apiKey = keyOps.getKey()
       if (!apiKey) return noApiKey()
+
+      // §5.6: downloadPolicy 를 선언한 provider 는 origin allowlist·HTTPS 통과해야 키 부착 다운로드.
+      if (provider.downloadPolicy) {
+        const policyError = checkDownloadOrigin(videoUri, provider.downloadPolicy)
+        if (policyError) return { success: false, error: policyError, errorKind: 'invalid-config' }
+      }
 
       const res = await provider.fetchVideoBase64({ apiKey, videoUri }, engineDeps)
       return attachErrorKind(res, providerId)

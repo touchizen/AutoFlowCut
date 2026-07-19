@@ -107,4 +107,38 @@ describe('ApiKeyTab', () => {
     // google 은 미설정
     expect(screen.getByText('settings.apiKeyNotSet')).toBeInTheDocument()
   })
+
+  it('Grok 키: 검증→저장이 provider:grok 로 위임', async () => {
+    render(<ApiKeyTab t={t} />)
+    await waitFor(() => screen.getByText('settings.grokKeyTitle'))
+
+    const input = screen.getByPlaceholderText('settings.grokKeyPlaceholder')
+    fireEvent.change(input, { target: { value: 'xai-grok-key' } })
+    fireEvent.click(screen.getByText('settings.grokKeyVerifySave'))
+
+    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({
+      apiKey: 'xai-grok-key',
+      provider: 'grok',
+    }))
+    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({
+      apiKey: 'xai-grok-key',
+      provider: 'grok',
+    })
+    expect(toast.success).toHaveBeenCalled()
+    expect(input.value).toBe('')
+  })
+
+  it('Grok 키 있음 → grok 상태 표시 + grok 삭제가 provider:grok 로 위임', async () => {
+    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({
+      hasKey: false,
+      encryptionAvailable: true,
+      byProvider: { google: false, openai: false, grok: true, fal: false, wavespeed: false, higgsfield: false },
+    })
+    render(<ApiKeyTab t={t} />)
+
+    await waitFor(() => expect(screen.getByText('settings.grokKeySet')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('settings.grokKeyRemove'))
+
+    await waitFor(() => expect(window.electronAPI.genaiClearKey).toHaveBeenCalledWith({ provider: 'grok' }))
+  })
 })

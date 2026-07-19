@@ -4,20 +4,22 @@
 
 import AspectRatioSelector from './AspectRatioSelector'
 import ModelSelector from './ModelSelector'
-import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL } from '../../config/genModels'
+import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL, defaultVideoModelForProvider, listSupportedVideoProviders, videoModelsForProvider } from '../../config/genModels'
 import { computeImageProviderSwitch } from '../../utils/imageProviderSwitch'
 
-// 전역 provider 선택지(§5.8). video는 M2-pre 시점에 google만 등록되어
-// 단일 토글은 숨기고, M2가 provider를 추가하면 단계별 토글이 바로 노출된다.
+// 전역 image provider 선택지(§5.8).
 const IMAGE_PROVIDERS = ['google', 'openai']
-const VIDEO_PROVIDERS = ['google']
+// video provider 선택 UI는 카탈로그 provisional flag가 단일 권위다. Registry에는 Grok이
+// 등록돼 persisted 설정이 라우팅되지만 real-key smoke 전에는 이 목록에서 제외된다.
+const SUPPORTED_VIDEO_PROVIDERS = listSupportedVideoProviders()
+const SUPPORTED_VIDEO_PROVIDER_IDS = new Set(SUPPORTED_VIDEO_PROVIDERS)
 
 function computeVideoProviderSwitch(settings, stage, newProvider) {
   const modelKey = stage === 't2v' ? 'videoModelT2V' : 'videoModelF2V'
   const currentProvider = settings?.generation?.video?.[stage]?.provider ?? 'google'
   const stageMemory = settings?.modelsByProviderVideo?.[stage] || {}
   const remembered = stageMemory[newProvider]
-  const nextModel = remembered ?? (newProvider === 'google' ? DEFAULT_VIDEO_MODEL_ID : undefined)
+  const nextModel = remembered ?? defaultVideoModelForProvider(newProvider) ?? undefined
 
   return {
     [modelKey]: nextModel,
@@ -52,13 +54,20 @@ const VIDEO_RESOLUTION_OPTIONS = [
 ]
 
 // imageModels/videoModels: 라이브 /models 로 채운 동적 목록(상위에서 주입). 없으면 정적 카탈로그.
-export default function SceneTab({ localSettings, setLocalSettings, t, imageModels = IMAGE_MODELS, videoModels = VIDEO_MODELS, videoProviders = VIDEO_PROVIDERS, appMode }) {
+export default function SceneTab({ localSettings, setLocalSettings, t, imageModels = IMAGE_MODELS, videoModels = VIDEO_MODELS, videoProviders = SUPPORTED_VIDEO_PROVIDERS, appMode }) {
   // 모델 출처 구분 배지 — Flow 모드면 Flow 패널(동적), 그 외 API(BYOK) 모델임을 타이틀에 표시.
   const modeBadge = appMode
     ? <span className={`model-mode-badge model-mode-${appMode}`}>{appMode === 'flow' ? 'Flow' : 'API'}</span>
     : null
   // Flow 모드는 Gemini 구독 기반 → 구독 페이지. API(BYOK) 모드는 종량제 → API 과금 페이지.
   const priceUrl = appMode === 'flow' ? FLOW_PRICING_URL : PRICING_URL
+  const visibleVideoProviders = (videoProviders || []).filter((provider) => SUPPORTED_VIDEO_PROVIDER_IDS.has(provider))
+  const t2vProvider = appMode === 'flow' ? 'google' : (localSettings.generation?.video?.t2v?.provider ?? 'google')
+  const i2vProvider = appMode === 'flow' ? 'google' : (localSettings.generation?.video?.i2v?.provider ?? 'google')
+  const t2vModels = videoModelsForProvider(t2vProvider, videoModels)
+  const i2vModels = videoModelsForProvider(i2vProvider, videoModels)
+  const t2vDefaultModel = defaultVideoModelForProvider(t2vProvider) ?? DEFAULT_VIDEO_MODEL_ID
+  const i2vDefaultModel = defaultVideoModelForProvider(i2vProvider) ?? DEFAULT_VIDEO_MODEL_ID
   return (
     <div className="tab-panel">
       {/* 프로젝트 화면비: 롱폼(16:9) / 숏폼(9:16) — 생성·카드·CapCut export 에 반영 */}
@@ -263,9 +272,9 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       </div>
       <div className="settings-section">
         <h3>{t('settings.modelVideoT2VTitle')} {modeBadge}</h3>
-        {appMode !== 'flow' && videoProviders.length > 1 && (
+        {appMode !== 'flow' && visibleVideoProviders.length > 1 && (
           <div className="batch-count-buttons" role="group" aria-label={t('settings.videoProviderT2VTitle')}>
-            {videoProviders.map((provider) => (
+            {visibleVideoProviders.map((provider) => (
               <button
                 key={provider}
                 type="button"
@@ -278,9 +287,9 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
           </div>
         )}
         <ModelSelector
-          options={videoModels}
+          options={t2vModels}
           value={localSettings.videoModelT2V}
-          defaultValue={DEFAULT_VIDEO_MODEL_ID}
+          defaultValue={t2vDefaultModel}
           onChange={(id) => setLocalSettings(s => ({
             ...s,
             videoModelT2V: id,
@@ -298,9 +307,9 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       </div>
       <div className="settings-section">
         <h3>{t('settings.modelVideoF2VTitle')} {modeBadge}</h3>
-        {appMode !== 'flow' && videoProviders.length > 1 && (
+        {appMode !== 'flow' && visibleVideoProviders.length > 1 && (
           <div className="batch-count-buttons" role="group" aria-label={t('settings.videoProviderI2VTitle')}>
-            {videoProviders.map((provider) => (
+            {visibleVideoProviders.map((provider) => (
               <button
                 key={provider}
                 type="button"
@@ -313,9 +322,9 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
           </div>
         )}
         <ModelSelector
-          options={videoModels}
+          options={i2vModels}
           value={localSettings.videoModelF2V}
-          defaultValue={DEFAULT_VIDEO_MODEL_ID}
+          defaultValue={i2vDefaultModel}
           onChange={(id) => setLocalSettings(s => ({
             ...s,
             videoModelF2V: id,
