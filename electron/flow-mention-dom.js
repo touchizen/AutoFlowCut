@@ -64,6 +64,23 @@ const HELPERS = `
     return tabs.find((t) => /캐릭터|characters?/i.test(t.textContent || '')) || null;
   };
 
+  // 좁은 창(창 축소)에서는 탭 바가 [role='tab'] 대신 filter_list 드롭다운(aria-haspopup=menu)으로
+  // 접힌다. 그 트리거 버튼을 찾는다 — 아이콘 리거처 'filter_list' 로 식별(more_vert 등 다른 메뉴 버튼 배제).
+  const __findFilterTrigger = (dlg) => {
+    const scope = dlg || document;
+    const btns = Array.from(scope.querySelectorAll("button[aria-haspopup='menu'], [role='button'][aria-haspopup='menu']"));
+    return btns.find((b) => (b.textContent || '').indexOf('filter_list') >= 0) || null;
+  };
+
+  // 필터 드롭다운을 열면 role='menu'(Radix 는 body 로 portal) 안에 role='menuitem' 들이 뜬다.
+  // 캐릭터 항목은 탭과 동일한 아이콘 리거처 'accessibility_new' 로 식별(로케일 무관), 없으면 라벨 fallback.
+  const __findCharMenuItem = () => {
+    const items = Array.from(document.querySelectorAll("[role='menuitem'], [role='menuitemradio']"));
+    return items.find((m) => (m.textContent || '').indexOf('accessibility_new') >= 0)
+        || items.find((m) => /캐릭터|characters?/i.test(m.textContent || ''))
+        || null;
+  };
+
   const __compact = (s) => String(s || '').replace(/\\s+/g, '');
   const __chipForms = (target) => [target, '@' + target, target + '캐릭터', '@' + target + '캐릭터'];
 
@@ -87,18 +104,35 @@ const HELPERS = `
 /** 캐릭터 탭 클릭. (기본 "모두" 탭은 가상화 때문에 캐릭터 entity 가 렌더 안 될 수 있다.) */
 export const CLICK_CHARACTER_TAB = `(async function(){
   ${HELPERS}
-  const t = __findCharTab(__dialog());
-  if (!t) return false;
+  const dlg = __dialog();
   const active = (el) => el.getAttribute('aria-selected') === 'true' || el.getAttribute('data-state') === 'active';
-  if (active(t)) return true;
-  t.click();
-  // Radix/React 는 상태를 비동기로 갱신한다 — 클릭한 틱에 aria-selected 를 읽으면 아직 false 다.
-  //   (2026-07-14: 동기 검증 때문에 탭을 찾아놓고도 하드 실패했다. 실앱 로그 charTabFound:true.)
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 100));
+  // (A) 넓은 레이아웃: 캐릭터가 role='tab' 로 존재.
+  const t = __findCharTab(dlg);
+  if (t) {
     if (active(t)) return true;
+    t.click();
+    // Radix/React 는 상태를 비동기로 갱신한다 — 클릭한 틱에 aria-selected 를 읽으면 아직 false 다.
+    //   (2026-07-14: 동기 검증 때문에 탭을 찾아놓고도 하드 실패했다. 실앱 로그 charTabFound:true.)
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (active(t)) return true;
+    }
+    return false;
   }
-  return false;
+  // (B) 좁은 레이아웃(창 축소): 탭 바가 filter_list 드롭다운으로 접힘 → 메뉴 열고 캐릭터 항목 클릭.
+  //   (2026-07-19 실앱 DOM 덤프: role='tab' 0개, filter_list 버튼 + role='menu'/'menuitem'.)
+  const filterBtn = __findFilterTrigger(dlg);
+  if (!filterBtn) return false;
+  filterBtn.click();
+  let item = null;
+  for (let i = 0; i < 20 && !item; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    item = __findCharMenuItem();
+  }
+  if (!item) return false;
+  item.click();
+  await new Promise((r) => setTimeout(r, 150)); // 옵션이 캐릭터로 재필터될 시간
+  return true;
 })()`
 
 /** 이름과 정확히 일치하는 옵션이 피커에 있는가. */

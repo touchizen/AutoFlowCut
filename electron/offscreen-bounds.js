@@ -15,17 +15,10 @@
  * @param {number} height
  * @returns {{x:number,y:number,width:number,height:number}}
  */
-// 주입 시 Flow 뷰 최소 너비. 창(=Flow 뷰)이 좁으면 Flow 웹 UI 가 반응형으로 접혀 멘션 피커의
-// "캐릭터" 탭이 [role=tab] 로 안 남고(overflow), __findCharTab 이 실패한다(character-tab-not-found).
-// 주입 중 뷰는 오프스크린이라 안 보이므로, 반환 너비를 이 최소값으로 올려 Flow 를 풀 레이아웃으로
-// 렌더시킨다(탭 미접힘). x(오프스크린 위치)는 원본 width 로 계산해 그대로 둔다.
-export const MIN_INJECT_WIDTH = 1280
-
 export function computeOffscreenBounds(displays, winX, width, height) {
   let maxRight = (winX || 0) + (width || 0) // 폴백: 디스플레이 정보 없으면 창 오른쪽
   if (Array.isArray(displays) && displays.length) {
     maxRight = Math.max(...displays.map(d => ((d && d.bounds && d.bounds.x) || 0) + ((d && d.bounds && d.bounds.width) || 0)))
   }
-  const injectWidth = Math.max(MIN_INJECT_WIDTH, width || 0)
-  return { x: Math.round(maxRight - (winX || 0)) + 200, y: 0, width: injectWidth, height }
+  return { x: Math.round(maxRight - (winX || 0)) + 200, y: 0, width, height }
 }
