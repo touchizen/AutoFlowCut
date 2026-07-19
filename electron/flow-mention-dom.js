@@ -99,6 +99,22 @@ const HELPERS = `
     try { return new Ctor(type, init); }
     catch { const i = Object.assign({}, init); delete i.view; return new Ctor(type, i); }
   };
+
+  // Radix 컨트롤(드롭다운 트리거·menuitem)은 synthetic .click() 이 아니라 실제 pointer 시퀀스로
+  // 반응한다. dispatchMentionOption 과 동일한 포인터/마우스 시퀀스를 공용화한다.
+  const __pointerClick = (el) => {
+    if (!el) return false;
+    try { el.scrollIntoView({ block: 'center' }); } catch {}
+    const r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+    const opt = { bubbles: true, cancelable: true, composed: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, view: window, button: 0, pointerId: 1 };
+    try { el.dispatchEvent(__mkEvent(PointerEvent, 'pointerover', opt)); el.dispatchEvent(__mkEvent(PointerEvent, 'pointerenter', opt)); } catch {}
+    try { el.dispatchEvent(__mkEvent(PointerEvent, 'pointerdown', opt)); } catch {}
+    el.dispatchEvent(__mkEvent(MouseEvent, 'mousedown', opt));
+    try { el.dispatchEvent(__mkEvent(PointerEvent, 'pointerup', opt)); } catch {}
+    el.dispatchEvent(__mkEvent(MouseEvent, 'mouseup', opt));
+    el.dispatchEvent(__mkEvent(MouseEvent, 'click', opt));
+    return true;
+  };
 `
 
 /** 캐릭터 탭 클릭. (기본 "모두" 탭은 가상화 때문에 캐릭터 entity 가 렌더 안 될 수 있다.) */
@@ -123,14 +139,14 @@ export const CLICK_CHARACTER_TAB = `(async function(){
   //   (2026-07-19 실앱 DOM 덤프: role='tab' 0개, filter_list 버튼 + role='menu'/'menuitem'.)
   const filterBtn = __findFilterTrigger(dlg);
   if (!filterBtn) return false;
-  filterBtn.click();
+  __pointerClick(filterBtn); // Radix 드롭다운은 .click() 으론 안 열린다 — pointer 시퀀스 필요.
   let item = null;
   for (let i = 0; i < 20 && !item; i++) {
     await new Promise((r) => setTimeout(r, 100));
     item = __findCharMenuItem();
   }
   if (!item) return false;
-  item.click();
+  __pointerClick(item);
   await new Promise((r) => setTimeout(r, 150)); // 옵션이 캐릭터로 재필터될 시간
   return true;
 })()`

@@ -262,11 +262,12 @@ describe('CLICK_CHARACTER_TAB (탭도 로케일에 묶이지 않는다)', () => 
    * 뜨고, 그중 캐릭터 항목은 아이콘 리거처 'accessibility_new' 로 식별한다. (실앱 DOM 덤프 2026-07-19)
    */
   const narrowDialog = () => `<div role="dialog"><button id="ft" aria-haspopup="menu" aria-expanded="false" data-state="closed"><i>filter_list</i></button></div>`
-  // Radix 는 메뉴를 body 로 portal 한다 — 필터 버튼 클릭 시 dialog 밖(body)에 메뉴를 렌더.
+  // Radix 는 메뉴를 body 로 portal 하고, 트리거는 synthetic .click() 이 아니라 실제 pointer 이벤트
+  //   (pointerdown)로 열린다 — 그래서 filterBtn.click() 만으론 안 열렸다(실앱 확인 2026-07-19).
   const opensFilterMenu = (items) => {
     const ft = document.getElementById('ft')
     const clicks = []
-    ft.addEventListener('click', () => {
+    ft.addEventListener('pointerdown', () => {
       if (document.querySelector("[role='menu']")) return
       const menu = document.createElement('div')
       menu.setAttribute('role', 'menu')
