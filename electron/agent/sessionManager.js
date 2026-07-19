@@ -293,6 +293,9 @@ export function createAgentSessionManager({
       // '기본' resolve), initialModelId(명시 선택 복원)을 다시 얻는다. §5.1 M7 이연분(pin/initial row).
       provider: current.provider,
       initialModelId: current.initialModelId ?? null,
+      // turn이 진행 중인지(idle 아님). remount에서 renderer가 running을 복원해 D2 switch가 라이브 턴을
+      // 조용히 죽이지 않게 한다(§5.1 busy switch 금지). lifecycle state와 별개인 turn runState 기준이다.
+      turnActive: runStateView(current).kind !== undefined && runStateView(current).kind !== 'idle',
       defaultPin: current.defaultPin,
     }
   }
@@ -477,8 +480,14 @@ export function createAgentSessionManager({
         const opened = await orchestrator.open()
         session.state = 'open'
         // provider는 session이 authority다(codex orchestrator는 open 응답에 provider를 안 실는다).
-        // renderer가 이 필드로 orchestratorProvider를 잡아 D2 provider-switch를 판단한다.
-        return { sessionId, ...opened, provider: session.provider, defaultPin: session.defaultPin }
+        // renderer가 provider로 D2를 판단하고, initialModelId로 D4 status log을 Default 세션에만 건다.
+        return {
+          sessionId,
+          ...opened,
+          provider: session.provider,
+          initialModelId: session.initialModelId,
+          defaultPin: session.defaultPin,
+        }
       } catch (error) {
         await closeSession(session)
         throw error

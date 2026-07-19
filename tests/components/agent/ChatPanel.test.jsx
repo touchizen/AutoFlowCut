@@ -1502,8 +1502,14 @@ describe('ChatPanel — M7b provider selector · D2 switch · D4 fallback', () =
     expect(screen.getByText(/Claude Opus 4.8 is unavailable/)).toBeTruthy()
   })
 
-  it('warm 명시 GPT pin 은 D4 marker 가 없어 평범한 Default label 을 보여준다', async () => {
-    hydrateOpenCodexSession({ id: 'codex:gpt-a', provider: 'codex', sdkModel: 'gpt-a' })
+  it('marker 없는 default pin(승격 후 claude:default)은 평범한 Default label 을 보여준다', async () => {
+    // defaultPin 은 항상 catalog default row 다. 미승격 동안은 늘 codex fallback(marker 有)이라
+    // marker 없는 pin 은 오직 승격 뒤 claude:default 로만 실재한다 — 그 실제 모양으로 no-marker 분기를 친다.
+    window.electronAPI.agentListModels.mockResolvedValue(providerModels)
+    window.electronAPI.agentStatus.mockResolvedValue({
+      state: 'open', sessionId: 'session-1', provider: 'claude', initialModelId: null,
+      defaultPin: { id: 'claude:default', provider: 'claude', sdkModel: 'claude-opus-4-8[1m]' },
+    })
     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
 
     const combo = await screen.findByRole('combobox', { name: 'Agent model' })
@@ -1611,6 +1617,60 @@ describe('ChatPanel — M7b provider selector · D2 switch · D4 fallback', () =
       await Promise.resolve()
     })
     expect(screen.getAllByText(/Claude Opus 4.8 is unavailable/)).toHaveLength(1)
+  })
+
+  it('배너가 뜬 뒤 같은 provider 모델을 재선택하면 배너가 사라지고 그 모델로 send 된다(stale target 방지)', async () => {
+    const user = userEvent.setup()
+    hydrateOpenCodexSession()
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+    await waitFor(() => expect(window.electronAPI.agentStatus).toHaveBeenCalled())
+
+    await openCombobox(user)
+    await user.click(screen.getByRole('option', { name: 'Claude Sonnet' }))
+    expect(screen.getByText('Switching providers clears the current conversation context.')).toBeInTheDocument()
+
+    // 마음을 바꿔 같은 provider(codex) GPT A 재선택 → 배너가 사라진다.
+    await openCombobox(user)
+    await user.click(screen.getByRole('option', { name: 'GPT A' }))
+    expect(screen.queryByText('Switching providers clears the current conversation context.')).toBeNull()
+
+    // Send 는 막히지 않고, stale Claude target 이 아니라 화면에 보이는 GPT A 로 나간다.
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '계속')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(window.electronAPI.agentSend).toHaveBeenCalledWith({ text: '계속', model: 'codex:gpt-a' })
+  })
+
+  it('D4 status log 은 Default 세션에만 남고 명시 모델 세션엔 안 남는다(거짓 "GPT-5.5 사용" 방지)', async () => {
+    window.electronAPI.agentListModels.mockResolvedValue(providerModels)
+    // 명시 claude:sonnet 세션. pin 은 codex fallback(marker 有)이지만 세션은 sonnet 을 쓴다.
+    window.electronAPI.agentStatus.mockResolvedValue({
+      state: 'open', sessionId: 'session-1', provider: 'claude',
+      initialModelId: 'claude:sonnet', defaultPin: coldFallbackPin,
+    })
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+    await screen.findByRole('combobox', { name: 'Agent model' })
+    await waitFor(() => expect(window.electronAPI.agentStatus).toHaveBeenCalled())
+
+    // 상태 로그("... is unavailable — using ...")는 명시 세션에 뜨면 안 된다(label 의 "(... unavailable)" 과 구별).
+    expect(screen.queryByText(/is unavailable/)).toBeNull()
+  })
+
+  it('active turn 중 remount(turnActive)면 running 이 복원돼 D2 switch 가 라이브 턴을 죽이지 않는다', async () => {
+    const user = userEvent.setup()
+    window.electronAPI.agentListModels.mockResolvedValue(providerModels)
+    window.electronAPI.agentStatus.mockResolvedValue({
+      state: 'open', sessionId: 'session-1', provider: 'codex',
+      initialModelId: null, turnActive: true, defaultPin: coldFallbackPin,
+    })
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+    await screen.findByRole('combobox', { name: 'Agent model' })
+    // running 복원 → Stop 버튼이 뜬다.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument())
+
+    // 진행 중 턴이므로 Claude 선택은 D2 확인을 띄우지 않는다(teardown 이 라이브 턴을 안 죽인다).
+    await openCombobox(user)
+    await user.click(screen.getByRole('option', { name: 'Claude Sonnet' }))
+    expect(screen.queryByText('Switching providers clears the current conversation context.')).toBeNull()
   })
 
   it('OPEN 경로(hydration 아님): 첫 send 로 열린 codex session 이 provider 를 잡아 Claude 선택에 D2 를 띄운다', async () => {

@@ -490,6 +490,8 @@ describe('AgentSessionManager M6b-2a open provider factory', () => {
     expect(opened).toEqual({
       sessionId: expect.any(String),
       provider: 'claude',
+      // 명시 open이므로 open 응답도 initialModelId를 실어 remount에서 selectedModel을 복원한다.
+      initialModelId: CLAUDE_MODEL_ROW.id,
       model: CLAUDE_MODEL_ROW.sdkModel,
       defaultPin: {
         id: DEFAULT_MODEL_ID,
@@ -843,6 +845,17 @@ describe('AgentSessionManager M6b-2b Claude coordination', () => {
 
     expect(h.orchestrator.send).not.toHaveBeenCalled()
     h.options.runState.state = { kind: 'idle' }
+    await h.manager.close()
+  })
+
+  it('status().turnActive는 turn runState가 idle이 아닌지를 반영한다(remount running 복원용)', async () => {
+    const h = claudeSessionHarness()
+    await h.manager.open(CLAUDE_MODEL_ROW.id)
+    expect(h.manager.status()).toMatchObject({ turnActive: false })
+    h.options.runState.state = { kind: 'active', turnId: 't1' }
+    expect(h.manager.status()).toMatchObject({ turnActive: true })
+    h.options.runState.state = { kind: 'idle' }
+    expect(h.manager.status()).toMatchObject({ turnActive: false })
     await h.manager.close()
   })
 

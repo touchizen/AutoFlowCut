@@ -513,7 +513,12 @@ export default function ChatPanel({
     if (opened.provider) setOrchestratorProvider(opened.provider)
     const pin = opened.defaultPin ?? null
     setSessionPin(pin)
-    if (pin?.defaultFallbackFrom && opened.sessionId && fallbackLoggedRef.current !== opened.sessionId) {
+    // D4 status log 은 세션이 실제로 fallback 을 쓸 때만 = Default(initialModelId==null) 세션에만 건다.
+    // 명시 모델(예 claude:sonnet) 세션은 pin 이 codex fallback 이어도 그 모델을 쓰므로 "GPT-5.5 사용" 은 거짓이다.
+    // (selector 의 Default label 은 pin 기반으로 항상 D4 를 보여준다 — Default 가 무슨 뜻인지 설명하므로 무관.)
+    const usesFallbackDefault = (opened.initialModelId ?? null) == null
+    if (usesFallbackDefault && pin?.defaultFallbackFrom && opened.sessionId
+      && fallbackLoggedRef.current !== opened.sessionId) {
       fallbackLoggedRef.current = opened.sessionId
       messageIdRef.current += 1
       const text = t('agent.modelFallbackStatus', {
@@ -549,6 +554,9 @@ export default function ChatPanel({
         // 명시 세션은 selectedModel을 복원한다(Default면 null 유지) → remount 뒤 omitted send가
         // pin(다른 provider)으로 새어 거부되는 wedge를 막는다.
         setSelectedModel(snapshot.initialModelId ?? null)
+        // 진행 중 turn이면 running을 복원한다 → 라이브 턴 중 remount 뒤 D2 switch가 그 턴을 죽이지
+        // 못하게 하고(handleModelChange의 running guard) Stop도 다시 뜬다. agent:done이 오면 정상 해제.
+        if (snapshot.turnActive === true) setRunning(true)
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -786,6 +794,9 @@ export default function ChatPanel({
       setPendingSwitch({ modelId: nextModelId })
       return
     }
+    // same-provider 재선택은 마음을 바꾼 것이다 — 열려 있던 확인 배너를 지운다. 안 지우면 배너가
+    // 옛 cross-provider target 을 붙든 채 남아 Send 를 막고 Switch 가 화면과 다른 provider 로 전환한다.
+    setPendingSwitch(null)
     setSelectedModel(nextModelId)
   }, [models, sessionPin, orchestratorProvider, running])
 
@@ -1034,8 +1045,8 @@ export default function ChatPanel({
           </div>
         )}
 
-        {/* D2: cross-provider 확인. 의도적으로 비모달 인라인 배너다 — 네이티브 모달/focus trap 은 Flow 뷰를
-            0×0 으로 만들어 자동화를 죽인다. 경고는 role="alert" 로 announce 하되 focus 는 뺏지 않는다. */}
+        {/* D2: cross-provider 확인. 의도적으로 비모달 인라인 배너다(패널 안, focus trap 없음). 경고는
+            role="alert" 로 SR 에 announce 하고 버튼은 tab 으로 닿는다. send 차단이 오발신을 막는다. */}
         {pendingSwitch && (
           <div className="agent-provider-switch">
             <span className="agent-provider-switch-text" role="alert">{t('agent.providerSwitchConfirm')}</span>
