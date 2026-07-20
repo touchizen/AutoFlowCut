@@ -208,6 +208,35 @@ export function bundleSceneCSVRows(rows, options = {}) {
 }
 
 /**
+ * CSV 재로드가 생성 이미지 런타임 필드를 지우지 않도록 기존 씬에서 보존한다.
+ * _sceneNum 매칭을 우선하고, legacy 데이터는 길이가 같을 때 index로 폴백한다.
+ */
+export function preserveSceneRuntimeFields(scenes, existingScenes) {
+  const copyRuntime = (scene, existing) => {
+    if (!existing) return scene
+    const preserved = {}
+    for (const field of ['mediaId', 'imagePath', 'image_size', 'generatedAt', 'upscaledAt']) {
+      if (existing[field] !== undefined) preserved[field] = existing[field]
+    }
+    if (existing.status === 'done') preserved.status = 'done'
+    return { ...scene, ...preserved }
+  }
+
+  const existingByNum = new Map()
+  for (const existing of existingScenes || []) {
+    if (existing._sceneNum != null) existingByNum.set(existing._sceneNum, existing)
+  }
+
+  if (existingByNum.size > 0) {
+    return (scenes || []).map((scene) => copyRuntime(scene, existingByNum.get(scene._sceneNum)))
+  }
+  if ((existingScenes || []).length === (scenes || []).length) {
+    return (scenes || []).map((scene, index) => copyRuntime(scene, existingScenes[index]))
+  }
+  return scenes
+}
+
+/**
  * 씬 배열을 CSV 파일로 저장
  * @param {string} csvPath - 저장 경로
  * @param {string[]} headers - 헤더 배열

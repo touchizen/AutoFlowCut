@@ -197,6 +197,34 @@ describe('fetchLatestHistoryMeta', () => {
     expect(result.seed).toBe(999)
   })
 
+  it('upscayl history는 생성 메타 backfill 후보에서 건너뛴다', async () => {
+    mockGetHistory.mockResolvedValue({
+      success: true,
+      histories: [
+        { filename: 'scene_1_200_upscayl.png', engine: 'upscayl' },
+        { filename: 'scene_1_100_flow.png', engine: 'flow' },
+      ],
+    })
+    mockReadHistoryMetadata.mockImplementation(async (_project, _type, filename) => ({
+      success: true,
+      metadata: filename.includes('_flow.')
+        ? { seed: 77, timestamp: 100, model: 'imagen' }
+        : { seed: null, timestamp: 200, model: null },
+    }))
+
+    await expect(fetchLatestHistoryMeta('proj', 'scenes', 'scene_1')).resolves.toEqual({
+      seed: 77,
+      generatedAt: 100,
+      model: 'imagen',
+    })
+    expect(mockReadHistoryMetadata).toHaveBeenCalledTimes(1)
+    expect(mockReadHistoryMetadata).toHaveBeenCalledWith(
+      'proj',
+      'scenes',
+      'scene_1_100_flow.png',
+    )
+  })
+
   it('readHistoryFile throw 시 빈 객체로 안전 폴백 (앱 안 깨짐)', async () => {
     mockGetHistory.mockResolvedValue({
       success: true,

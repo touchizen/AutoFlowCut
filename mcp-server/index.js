@@ -22,7 +22,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
-import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows } from './lib/csv.js';
+import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, preserveSceneRuntimeFields } from './lib/csv.js';
 import { handleExportCapcutTool, handleExportPremiereTool } from './lib/toolResponses.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
@@ -892,29 +892,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
               const pj = JSON.parse(fs.readFileSync(pjPath, 'utf-8'));
               const existingScenes = pj.scenes || [];
-              // R9 review fix: _sceneNum 우선 매칭 → reorder/insert 안전. 둘 다
-              // _sceneNum 가지면 stable key 로 매핑 (renderer parseFromCSV 와 동일
-              // 전략). 둘 중 한쪽이라도 _sceneNum 없으면 옛 동작 (길이 동일 시 인덱스 매핑).
-              const existingByNum = new Map();
-              existingScenes.forEach(s => {
-                if (s._sceneNum != null) existingByNum.set(s._sceneNum, s);
-              });
-              if (existingByNum.size > 0) {
-                scenes.forEach(s => {
-                  const existing = existingByNum.get(s._sceneNum);
-                  if (!existing) return;
-                  if (existing.mediaId) s.mediaId = existing.mediaId;
-                  if (existing.imagePath) s.imagePath = existing.imagePath;
-                  if (existing.status === 'done') s.status = 'done';
-                });
-              } else if (existingScenes.length === scenes.length) {
-                // 옛 동작 fallback — 길이 동일 시 인덱스 매핑
-                existingScenes.forEach((existing, i) => {
-                  if (existing.mediaId) scenes[i].mediaId = existing.mediaId;
-                  if (existing.imagePath) scenes[i].imagePath = existing.imagePath;
-                  if (existing.status === 'done') scenes[i].status = 'done';
-                });
-              }
+              // _sceneNum 우선, legacy는 길이가 같을 때 index fallback. 이미지 포인터와
+              // 캐시/업스케일 메타를 함께 보존한다(renderer CSV merge와 동일 정책).
+              scenes = preserveSceneRuntimeFields(scenes, existingScenes);
             } catch { /* project.json 파싱 실패 시 무시 */ }
           }
         }

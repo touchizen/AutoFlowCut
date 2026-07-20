@@ -13,6 +13,7 @@ import { normalizeStyleId, findAutoStyle } from '../services/styleService'
 import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 import { clearedImageFields } from '../utils/refEntityRegistration'
+import { baseImageReplacementPatch } from '../utils/imagePatch'
 
 /**
  * MCP load_csv(update-references) 병합. CSV 는 prompt/type/category 의 authoritative 소스지만,
@@ -395,6 +396,8 @@ export function useMcpServer({
               mediaId: matched.mediaId,
               generatingStartedAt: matched.generatingStartedAt,
               image_size: matched.image_size,
+              generatedAt: matched.generatedAt,
+              upscaledAt: matched.upscaledAt,
               // C9 fix: incoming 이 srtLineIds 안 보내면 기존 보존
               srtLineIds: incoming.srtLineIds ?? matched.srtLineIds ?? [],
             }
@@ -413,7 +416,12 @@ export function useMcpServer({
           console.log('[MCP] srtTrack replaced via HTTP:', data.srtTrack.length)
         }
       } else if (data.type === 'update-scene') {
-        setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
+        const fields = data.fields || {}
+        const replacesImage = 'image' in fields || 'imagePath' in fields
+        const patch = replacesImage && !('upscaledAt' in fields)
+          ? baseImageReplacementPatch(fields)
+          : fields
+        setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...patch } : s))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
       } else if (data.type === 'generate-reference') {
         console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)

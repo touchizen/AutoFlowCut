@@ -29,6 +29,7 @@ export async function fetchLatestHistoryMeta(projectName, resourceType, baseName
     // metadata-only API 사용 — readHistoryFile 은 비디오 본문(수십 MB)까지 base64 로 읽음.
     // backfill 은 seed/timestamp/model 만 필요하므로 .json 사이드카만 읽어 부담 회피.
     for (const hist of histResult.histories) {
+      if (hist.engine === 'upscayl') continue
       const metaResult = await fileSystemAPI.readHistoryMetadata(projectName, resourceType, hist.filename)
       const meta = metaResult?.metadata
       if (meta && (meta.seed != null || meta.timestamp != null || meta.model != null)) {

@@ -52,8 +52,8 @@ describe('R9 — MCP update-scenes 가 _sceneNum 으로 매칭', () => {
     renderHook(() => useMcpServer(makeProps({ setScenes })))
 
     const prev = [
-      { id: 'scene_old_A', _sceneNum: 1, prompt: 'A', image: 'img-A', mediaId: 'mA' },
-      { id: 'scene_old_B', _sceneNum: 2, prompt: 'B', image: 'img-B', mediaId: 'mB' },
+      { id: 'scene_old_A', _sceneNum: 1, prompt: 'A', image: 'img-A', mediaId: 'mA', generatedAt: 100, upscaledAt: 101 },
+      { id: 'scene_old_B', _sceneNum: 2, prompt: 'B', image: 'img-B', mediaId: 'mB', generatedAt: 200, upscaledAt: 201 },
     ]
 
     // MCP bundler 가 새로 부여한 id (scene_1, scene_2) — 옛 id 와 다름
@@ -72,11 +72,15 @@ describe('R9 — MCP update-scenes 가 _sceneNum 으로 매칭', () => {
     expect(result[0].prompt).toBe('B-refined')
     expect(result[0].image).toBe('img-B')
     expect(result[0].mediaId).toBe('mB')
+    expect(result[0].generatedAt).toBe(200)
+    expect(result[0].upscaledAt).toBe(201)
     // result[1] sceneNum=1 → 매칭 prev[0] (A), image=img-A 보존
     expect(result[1]._sceneNum).toBe(1)
     expect(result[1].prompt).toBe('A-refined')
     expect(result[1].image).toBe('img-A')
     expect(result[1].mediaId).toBe('mA')
+    expect(result[1].generatedAt).toBe(100)
+    expect(result[1].upscaledAt).toBe(101)
   })
 
   it('새 _sceneNum (이전에 없음) 은 신규 씬으로 취급, image 없음', () => {
@@ -105,7 +109,7 @@ describe('R9 — MCP update-scenes 가 _sceneNum 으로 매칭', () => {
     renderHook(() => useMcpServer(makeProps({ setScenes })))
 
     const prev = [
-      { id: 'scene_1', prompt: 'A', image: 'img-A' },
+      { id: 'scene_1', prompt: 'A', image: 'img-A', generatedAt: 300, upscaledAt: 301 },
     ]
     cb({
       type: 'update-scenes',
@@ -118,5 +122,47 @@ describe('R9 — MCP update-scenes 가 _sceneNum 으로 매칭', () => {
     const result = updater(prev)
     expect(result[0].prompt).toBe('A-refined')
     expect(result[0].image).toBe('img-A')
+    expect(result[0].generatedAt).toBe(300)
+    expect(result[0].upscaledAt).toBe(301)
+  })
+
+  it('update-scene 이미지 교체는 명시된 upscaledAt이 없을 때 업스케일 마커를 비운다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes })))
+
+    cb({
+      type: 'update-scene',
+      index: 0,
+      fields: { imagePath: '/new/scene_1.png' },
+    })
+
+    const updater = setScenes.mock.calls[0][0]
+    const [updated] = updater([{
+      id: 'scene_1',
+      imagePath: '/old/scene_1.png',
+      upscaledAt: 999,
+      upscaled_size: { width: 4000, height: 3000 },
+    }])
+    expect(updated).toMatchObject({
+      imagePath: '/new/scene_1.png',
+      upscaledAt: null,
+      upscaled_size: null,
+    })
+  })
+
+  it('update-scene이 upscaledAt을 명시하면 자동 reset으로 덮지 않는다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes })))
+
+    cb({
+      type: 'update-scene',
+      index: 0,
+      fields: { image: 'NEW', upscaledAt: 1234 },
+    })
+
+    const updater = setScenes.mock.calls[0][0]
+    const [updated] = updater([{ id: 'scene_1', upscaledAt: 999 }])
+    expect(updated.image).toBe('NEW')
+    expect(updated.upscaledAt).toBe(1234)
   })
 })

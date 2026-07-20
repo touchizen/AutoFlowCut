@@ -37,6 +37,8 @@ describe('C6 — 새 형식 CSV 재import 시 image/status 보존', () => {
         imagePath: '/path/to/scene_1.png',
         mediaId: 'media_aaa',
         status: 'done',
+        generatedAt: 1700000000000,
+        upscaledAt: 1700000001000,
       })
       result.current.updateScene(sceneIds[1], {
         image: 'data:image/png;base64,YYY',
@@ -58,6 +60,8 @@ describe('C6 — 새 형식 CSV 재import 시 image/status 보존', () => {
     expect(result.current.scenes[0].imagePath).toBe('/path/to/scene_1.png')
     expect(result.current.scenes[0].mediaId).toBe('media_aaa')
     expect(result.current.scenes[0].status).toBe('done')
+    expect(result.current.scenes[0].generatedAt).toBe(1700000000000)
+    expect(result.current.scenes[0].upscaledAt).toBe(1700000001000)
     expect(result.current.scenes[1].image).toBe('data:image/png;base64,YYY')
   })
 

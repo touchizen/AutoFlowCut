@@ -198,6 +198,8 @@ export function useScenes() {
           mediaId: existing.mediaId,
           generatingStartedAt: existing.generatingStartedAt,
           image_size: existing.image_size,
+          generatedAt: existing.generatedAt,
+          upscaledAt: existing.upscaledAt,
           // 비디오 관련 런타임 필드도 보존
           videoT2V: existing.videoT2V,
           videoT2VPath: existing.videoT2VPath,

@@ -4,7 +4,11 @@
  * Renderer 의 parseSceneCSVToTracks 와 동등한 결과 emit 확인.
  */
 import { describe, it, expect } from 'vitest'
-import { isNewSceneCSVFormat, bundleSceneCSVRows } from '../../mcp-server/lib/csv.js'
+import {
+  isNewSceneCSVFormat,
+  bundleSceneCSVRows,
+  preserveSceneRuntimeFields,
+} from '../../mcp-server/lib/csv.js'
 
 describe('isNewSceneCSVFormat', () => {
   it('scene 컬럼 + 정수값 → true', () => {
@@ -72,5 +76,30 @@ describe('bundleSceneCSVRows', () => {
     expect(result.srtTrack[0].endTime).toBe(10)
     expect(result.scenes[0].startTime).toBe(5)
     expect(result.scenes[0].endTime).toBe(10)
+  })
+})
+
+describe('preserveSceneRuntimeFields', () => {
+  const runtime = {
+    mediaId: 'media-1',
+    imagePath: '/project/scenes/scene_1.png',
+    image_size: { width: 2048, height: 1152 },
+    generatedAt: 1700000000000,
+    upscaledAt: 1700000001000,
+    status: 'done',
+  }
+
+  it('_sceneNum 매칭으로 이미지 런타임 필드를 보존한다', () => {
+    const scenes = [{ id: 'fresh', _sceneNum: 7, prompt: 'new' }]
+    const existing = [{ id: 'old', _sceneNum: 7, prompt: 'old', ...runtime }]
+
+    expect(preserveSceneRuntimeFields(scenes, existing)[0]).toMatchObject(runtime)
+  })
+
+  it('_sceneNum이 없고 길이가 같으면 index fallback으로 보존한다', () => {
+    const scenes = [{ id: 'fresh', prompt: 'new' }]
+    const existing = [{ id: 'old', prompt: 'old', ...runtime }]
+
+    expect(preserveSceneRuntimeFields(scenes, existing)[0]).toMatchObject(runtime)
   })
 })

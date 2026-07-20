@@ -10,6 +10,7 @@ import { RESOURCE } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { getImageSizeFromBase64 } from '../utils/formatters'
 import { tryUpscaleImage } from '../utils/imageProcessing'
+import { baseImageReplacementPatch } from '../utils/imagePatch'
 
 /**
  * 생성된 이미지 결과를 후처리 (업스케일 + 크기 + 저장 + 씬 업데이트 데이터 반환)
@@ -132,7 +133,7 @@ export async function finalizeGeneratedImage({
 
   return {
     success: true,
-    sceneUpdate: {
+    sceneUpdate: baseImageReplacementPatch({
       status: 'done',
       // updateScene 은 merge 방식이라 prior error/errorKind (예: image-missing 마커)가
       // 그대로 남으면 ErrorSection/ResultsTable 이 계속 에러 메시지를 띄운다 — 명시 클리어.
@@ -145,7 +146,7 @@ export async function finalizeGeneratedImage({
       seed: effectiveSeed,
       generatedAt,
       model: effectiveModel
-    }
+    })
   }
 }
 

@@ -49,6 +49,8 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
       status: 'done',
       error: null,
       errorKind: null,    // ← critical: prior 'image-missing' 마커가 merge 후 남으면 안 됨
+      upscaledAt: null,
+      upscaled_size: null,
     })
   })
 
@@ -68,6 +70,8 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
       error: 'Quota exceeded',
       errorKind: null,    // ← stale 'image-missing' 가 'Quota exceeded' 메시지를 가리면 안 됨
     })
+    expect(res.sceneUpdate).not.toHaveProperty('upscaledAt')
+    expect(res.sceneUpdate).not.toHaveProperty('upscaled_size')
   })
 
   it('#R26-6: failure path with authFailed sentinel preserves errorKind:auth', async () => {
@@ -126,6 +130,8 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
     expect(res.sceneUpdate.status).toBe('error')
     expect(res.sceneUpdate.error).toMatch(/Image save failed.*Disk full/)
     expect(res.sceneUpdate.errorKind).toBeNull()
+    expect(res.sceneUpdate).not.toHaveProperty('upscaledAt')
+    expect(res.sceneUpdate).not.toHaveProperty('upscaled_size')
   })
 })
 
