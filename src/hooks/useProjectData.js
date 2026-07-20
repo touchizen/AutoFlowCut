@@ -139,11 +139,17 @@ export async function loadProjectWithResources(projectName) {
           // 그 외 'error' 는 generation 실패 등 다른 사유 — 보존해 사용자가 재생성 트리거할 수 있게 함.
           const wasMissingImageError = scene.status === 'error' && scene.errorKind === ERROR_KIND_IMAGE_MISSING
           const preserveError = scene.status === 'error' && !wasMissingImageError
+          // 프롬프트 변경으로 재생성 대기(pending) 인 씬은 디스크에 옛 이미지가 남아있어도 done 으로
+          // 올리지 않는다. 안 그러면 프로젝트 전환·복귀 시 "새 프롬프트 + 옛 이미지" 가 done 으로
+          // 표시돼 UI 가 거짓말하고 재생성 의도가 사라진다(실측 버그). donePrompt 는 그대로 보존돼
+          // 복귀 후 원복 시 done 복원도 유지된다.
+          const preservePending = scene.status === 'pending'
+          const restoredStatus = preserveError ? 'error' : (preservePending ? 'pending' : 'done')
           return {
             ...scene,
             image: null,
             imagePath: pathResult.path,
-            status: preserveError ? 'error' : 'done',
+            status: restoredStatus,
             error: preserveError ? (scene.error ?? null) : null,
             errorKind: preserveError ? (scene.errorKind ?? null) : null,
           }

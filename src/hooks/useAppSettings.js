@@ -24,6 +24,8 @@ function createDefaults() {
     concurrency: DEFAULTS.generation.concurrency,
     videoConcurrency: DEFAULTS.generation.videoConcurrency,
     flowAgentOn: DEFAULTS.generation.flowAgentOn,
+    flowPacingMinMs: DEFAULTS.generation.flowPacingMinMs,  // Flow 제출 사이 최소 대기(ms)
+    flowPacingMaxMs: DEFAULTS.generation.flowPacingMaxMs,  // Flow 제출 사이 최대 대기(ms)
     exportThreshold: UI.EXPORT_THRESHOLD,
     imageBatchCount: 1,
     imageUpscale: 'off',

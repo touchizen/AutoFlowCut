@@ -76,6 +76,25 @@ describe('importStoryScenes', () => {
     expect(scene.stalePromptAt).toBeTruthy()
   })
 
+  it('재push의 unrelated 필드는 현재 이미지의 donePrompt 를 보존', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { prompt: 'P2' })] }) })
+    act(() => {
+      result.current.setScenes(result.current.scenes.map((s) => ({
+        ...s,
+        status: 'done',
+        image: 'file://img.png',
+        donePrompt: 'P2',
+      })))
+    })
+
+    act(() => {
+      result.current.importStoryScenes({ scenes: [pushScene('u1', { prompt: 'P2', subtitle: '새 자막' })] })
+    })
+
+    expect(result.current.scenes.find((x) => x.storyId === 'u1').donePrompt).toBe('P2')
+  })
+
   it('재push: videoT2VPrompt 변경 + 기존 비디오 존재 시 staleVideo', () => {
     const { result } = renderHook(() => useScenes())
     act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })

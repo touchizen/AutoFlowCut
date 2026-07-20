@@ -25,6 +25,9 @@ import { decodeTextBytes } from '../../src/utils/decodeTextFile.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
 import { isRosterGatedInputType } from '../../src/services/storyInputTypes.js'
 import { parseStoryboardCSVRows } from '../../src/utils/parsers.js'
+import { extractMentionNames, formatMentionToken, resolveMentionPrefix } from '../../src/utils/mentionParser.js'
+import { runScenesSplitExperiment } from './storySplitExperiment.js'
+import { validatePromptMentions } from './promptMentions.js'
 
 export const STORY_STEP_DOWNSTREAM = {
   script: ['scenes', 'audio', 'prompts'],
@@ -61,6 +64,26 @@ function assignSegmentIds(scenes) {
       return { ...seg, id }
     }),
   }))
+}
+
+// 씬 스트림은 renderer 표시 전용이다. ID/프롬프트/오디오 같은 영속·중량 필드는 IPC에 싣지 않는다.
+function sanitizePreviewScene(scene) {
+  const preview = {
+    summary: typeof scene?.summary === 'string' ? scene.summary : '',
+    segments: Array.isArray(scene?.segments)
+      ? scene.segments.map((segment) => {
+          const type = typeof segment?.type === 'string' ? segment.type : 'narration'
+          const text = type === 'sfx' ? segment?.description : segment?.text
+          return {
+            type,
+            speaker: typeof segment?.speaker === 'string' ? segment.speaker : '',
+            text: typeof text === 'string' ? text : '',
+          }
+        })
+      : [],
+  }
+  if (Number.isInteger(scene?.sceneNo)) preview.sceneNo = scene.sceneNo
+  return preview
 }
 
 // audio 스텝 fail-fast: scenes.json의 내레이션 세그먼트가 id 없이(또는 중복 id로) 넘어오면
@@ -188,7 +211,7 @@ export async function readAudioPackage(projectPath) {
   return { manifest, lastPushedRevision: st?.lastPushedRevision ?? 0 }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null, cutAudio = cutMp3ToWavSegments }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null, cutAudio = cutMp3ToWavSegments, sceneSplitExperiment = null }) {
   const store = createStoryStore(projectPath)
   // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
   const resolveTts = (provider) => (ttsFor ? ttsFor(provider) : tts)
@@ -249,6 +272,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   const projectToken = randomUUID()
   let state = null
   let controller = null
+  let sceneSplitExperimentRecord = null
   // start()가 실행 소유권을 잡았다는 **동기** 래치. busy 검사는 state.steps의 'running'을 보는데,
   // 그건 첫 await 뒤에야 마킹된다 — 그 사이에 await가 하나라도 있으면 같은 tick의 두 호출이 **둘 다**
   // 통과한다(실측: onlySpeaker 사전검사가 scenes.json을 읽자 busy 0, TTS 2회). 동기로 먼저 잡는다.
@@ -352,6 +376,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     if (target === 'script') send('story:progress', { kind: 'script-review', ...payload }, operationId)
   }
 
+  function createReviewThinkingReporter(target, round, of, operationId) {
+    let lastEmitAt = -Infinity
+    return () => {
+      const now = Date.now()
+      if (now - lastEmitAt < 1000) return
+      lastEmitAt = now
+      sendReviewProgress(target, { round, of, phase: 'reviewing', thinking: true }, operationId)
+    }
+  }
+
   function sendStepLog(step, phase, message, operationId, extra = {}) {
     send('story:progress', {
       kind: 'step-log',
@@ -364,11 +398,25 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     }, operationId)
   }
 
+  // 리뷰 M7: revise LLM 이 appearingCharacters 를 빠뜨리면(스키마상 optional) 화면 등장 정보가
+  //   유실된다(내부 필드 onScreen 도 LLM 이 안 emit). 필드를 "명시적으로" 준 씬([]=제거 포함)은
+  //   존중하고, 아예 누락한 씬만 storyId 로 매칭된 이전 값을 상속한다.
+  function inheritAppearingCharacters(prev, scenes) {
+    const prevByStory = new Map((prev || []).filter((s) => s.storyId).map((s) => [s.storyId, s]))
+    return (scenes || []).map((s) => {
+      if (Array.isArray(s.appearingCharacters)) return s // 명시적(빈 배열=제거)은 그대로
+      const p = s.storyId ? prevByStory.get(s.storyId) : null
+      if (p && Array.isArray(p.appearingCharacters)) return { ...s, appearingCharacters: p.appearingCharacters }
+      return s
+    })
+  }
+
   function normalizeScenes(prev, scenes) {
     validateScenesSegments(scenes)
     const { scenes: withIds } = inheritStoryIds(prev, scenes)
     assertUniqueStoryIds(withIds)
-    const { scenes: withInheritedSegs } = inheritSegmentIds(prev, withIds)
+    const withAppear = inheritAppearingCharacters(prev, withIds)
+    const { scenes: withInheritedSegs } = inheritSegmentIds(prev, withAppear)
     return assignSegmentIds(withInheritedSegs)
   }
 
@@ -488,6 +536,26 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     return { scenes: out, changed: unknown.size > 0 }
   }
 
+  // Issue #6: 씬 단위 시각 등장 정보는 audio 재그룹에서 사라진다. split/revise가 반환한
+  // appearingCharacters를 확정 speaker id로 정규화해 모든 세그먼트에 복제하면, 세그먼트 id로
+  // 씬을 다시 만들 때도 화면 등장 정보가 따라간다. 필드가 없는 legacy 출력은 그대로 둔다.
+  function stampAppearingCharacters(scenes = [], speakers = []) {
+    return (scenes || []).map((s) => {
+      if (!Array.isArray(s.appearingCharacters)) return s
+      const onScreen = []
+      for (const ref of s.appearingCharacters) {
+        const sp = findSpeakerByRef(speakers, ref)
+        const id = sp?.id
+        if (!sp || typeof id !== 'string' || !id.trim() || isNarratorSpeaker(sp) || onScreen.includes(id)) continue
+        onScreen.push(id)
+      }
+      return {
+        ...s,
+        segments: (s.segments || []).map((g) => ({ ...g, onScreen: [...onScreen] })),
+      }
+    })
+  }
+
   // FIX-1 + FIX-7: roster 강제(신규 speaker 금지 + 명단 밖 seg.speaker → narrator 재기록)의 단일 기준.
   // charactersConfirmed는 phase 판정 마커일 뿐 — 강제는 "확정 + roster-gated input"일 때다.
   // 확정된 빈 명단(나레이션-only)도 강제 대상(FIX-7 — 명단 밖 non-narrator는 narrator로 흡수).
@@ -591,11 +659,21 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     try {
       for (let round = 1; round <= rounds; round++) {
         sendReviewProgress('scenes', { round, of: rounds, phase: 'reviewing' }, opId)
-        const { verdict, critique } = await llm.reviewScenes(scriptMd, currentScenes, currentSpeakers, reviewOpts, { signal })
+        const onThinkingActivity = createReviewThinkingReporter('scenes', round, rounds, opId)
+        const { verdict, critique } = await llm.reviewScenes(scriptMd, currentScenes, currentSpeakers, reviewOpts, { signal, onThinkingActivity })
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
         if (verdict !== 'revise' || !critique?.trim()) break
         sendReviewProgress('scenes', { round, of: rounds, phase: 'revising' }, opId)
-        const r = await llm.reviseScenes(scriptMd, currentScenes, currentSpeakers, critique, reviewOpts, { signal })
+        send('story:progress', { kind: 'scene-delta', phase: 'started' }, opId)
+        const r = await llm.reviseScenes(scriptMd, currentScenes, currentSpeakers, critique, reviewOpts, {
+          signal,
+          onPartialScene: (scene, index) => send('story:progress', {
+            kind: 'scene-delta',
+            chunkIndex: 0,
+            localSceneNo: index,
+            scene: sanitizePreviewScene(scene),
+          }, opId),
+        })
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
         const nextScenes = normalizeScenes(currentScenes, r?.scenes || [])
         const nextSpeakers = mergeSpeakers(ensureReferencedSpeakers(r?.speakers || [], nextScenes, currentSpeakers), { preferNewAppearance: true })
@@ -620,13 +698,23 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     try {
       for (let round = 1; round <= rounds; round++) {
         sendReviewProgress('prompts', { round, of: rounds, phase: 'reviewing' }, opId)
-        const { verdict, critique } = await llm.reviewPrompts(currentScenes, context, reviewOpts, { signal })
+        const onThinkingActivity = createReviewThinkingReporter('prompts', round, rounds, opId)
+        const { verdict, critique } = await llm.reviewPrompts(currentScenes, context, reviewOpts, { signal, onThinkingActivity })
         if (signal?.aborted) return { scenes: currentScenes, changed }
         if (verdict !== 'revise' || !critique?.trim()) break
         sendReviewProgress('prompts', { round, of: rounds, phase: 'revising' }, opId)
-        const r = await llm.revisePrompts(currentScenes, context, critique, reviewOpts, { signal })
+        send('story:progress', { kind: 'prompt-delta', phase: 'started' }, opId)
+        const r = await llm.revisePrompts(currentScenes, context, critique, reviewOpts, {
+          signal,
+          onPartialPrompt: (scene) => send('story:progress', {
+            kind: 'prompt-delta',
+            sceneNo: Number.isInteger(scene?.sceneNo) ? scene.sceneNo : null,
+            imagePrompt: typeof scene?.imagePrompt === 'string' ? scene.imagePrompt : '',
+            videoPrompt: typeof scene?.videoPrompt === 'string' ? scene.videoPrompt : '',
+          }, opId),
+        })
         if (signal?.aborted) return { scenes: currentScenes, changed }
-        const nextScenes = r?.scenes || []
+        const nextScenes = validatePromptMentionScenes(r?.scenes || [], context, opId)
         changed = changed || !sameJson(promptSignature(nextScenes), promptSignature(currentScenes))
         currentScenes = nextScenes
       }
@@ -705,19 +793,95 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         .map((sp) => [sp.id, sp.name])
     )
     const names = []
-    for (const g of s.segments || []) {
-      const name = chars.get(g.speaker)
+    const addName = (id) => {
+      const name = chars.get(id)
       if (name && !names.includes(name)) names.push(name)
+    }
+    // 안정된 순서: 대사/나레이션의 실제 화자들을 먼저, 화면에만 등장하는 인물을 그 뒤에 추가.
+    // 의미론(리뷰 R2): 화자 ∪ onScreen 합집합. 발화 캐릭터는 청각적으로 씬에 존재하므로 항상 링크되고
+    //   (이슈6 이전부터의 baseline), appearingCharacters/onScreen 은 "무언 시각 등장"을 추가로 얹는다.
+    //   따라서 appearingCharacters:[] 는 화면 전용 인물만 비울 뿐 발화 화자를 지우지 못한다(오프스크린
+    //   대사 시 과도 멘션 가능 — under-report 로 레퍼런스가 통째 누락되는 것보다 안전한 보수적 선택).
+    for (const g of s.segments || []) {
+      addName(g.speaker)
+    }
+    for (const g of s.segments || []) {
+      for (const id of Array.isArray(g.onScreen) ? g.onScreen : []) addName(id)
     }
     return names
   }
-  // V2: 멘션 문법(mentionParser.MENTION_RE)에 맞는 이름만 @멘션 가능 — 공백 포함 이름은 불가.
-  const MENTION_SAFE = /^[A-Za-z0-9_\-가-힣]+$/
-  // V2: 프롬프트에 @이름 멘션 주입(Flow·API 공통 레퍼런스 지정). 멘션-불가 이름은 생략(태그 폴백).
+
+  function validatePromptMentionScenes(scenes, context, operationId) {
+    const rosterNames = (context.speakers || [])
+      .map((speaker) => speaker?.name)
+      .filter((name) => typeof name === 'string' && name.trim())
+    const requiredByScene = context.requiredMentionNamesByScene || {}
+    return (scenes || []).map((scene) => {
+      if (!scene) return scene // fail-open: null entry가 "cannot fail the step" 보장을 깨지 않게
+      const next = { ...scene }
+      const requiredNames = requiredByScene[scene.sceneNo] || []
+      for (const field of ['imagePrompt', 'videoPrompt']) {
+        // 저장 전 gate가 legacy `@공백 이름본문`을 unknown으로 낮추기 전에 기존 brace repair를 적용한다.
+        const prompt = repairLegacySpacedMentions(scene[field], requiredNames)
+        const result = validatePromptMentions(prompt, rosterNames, requiredNames)
+        next[field] = result.text
+        if (result.unknown.length) {
+          sendStepLog(
+            'prompts',
+            'mention-sanitize',
+            `씬 ${scene.sceneNo} ${field}: 해결할 수 없는 mention ${result.unknown.length}개를 평문으로 변환`,
+            operationId,
+            { level: 'warn', sceneNo: scene.sceneNo, field, count: result.unknown.length, unknown: result.unknown },
+          )
+        }
+        if (result.missing.length) {
+          // 저장은 fail-open 한다. push 시 기존 withMentions가 빠진 token만 호환 prepend한다.
+          sendStepLog(
+            'prompts',
+            'mention-missing',
+            `씬 ${scene.sceneNo} ${field}: required mention ${result.missing.length}개 누락`,
+            operationId,
+            { level: 'warn', sceneNo: scene.sceneNo, field, count: result.missing.length, missing: result.missing },
+          )
+        }
+      }
+      return next
+    })
+  }
+  // V2: 프롬프트에 @이름 멘션 주입(Flow·API 공통 레퍼런스 지정). 표현 불가 이름은 생략(태그 폴백).
   function withMentions(prompt, names) {
-    const mentions = names.filter((n) => MENTION_SAFE.test(n)).map((n) => `@${n}`)
+    // dedup은 gate(validatePromptMentions)와 같은 particle-aware 해석을 쓴다 — raw 이름만 비교하면
+    // `@민수가`(조사 붙은 plain mention)를 못 알아보고 `@민수`를 앞에 또 붙여 이중 멘션이 된다.
+    const byLower = new Map(names.map((n) => [String(n).toLowerCase(), true]))
+    const existing = new Set()
+    for (const mention of extractMentionNames(prompt)) {
+      const resolved = resolveMentionPrefix(mention, byLower)
+      existing.add((resolved ? resolved.matched : mention).toLowerCase())
+    }
+    const mentions = []
+    for (const name of names) {
+      const key = String(name).toLowerCase()
+      if (existing.has(key)) continue
+      const token = formatMentionToken(name)
+      if (!token) continue
+      existing.add(key)
+      mentions.push(token)
+    }
     if (!mentions.length) return prompt || ''
     return prompt ? `${mentions.join(' ')} ${prompt}` : mentions.join(' ')
+  }
+
+  // 구버전이 만든 `@공백 이름본문...`은 known canonical name으로만 brace form을 복구한다.
+  // 뒤 경계는 일부러 검사하지 않는다 — ep02의 `@도둑 우두머리A young...` 형태도 치유 대상이다.
+  function repairLegacySpacedMentions(prompt, names) {
+    let repaired = prompt || ''
+    const candidates = [...new Set(names.map((name) => String(name)))]
+      .filter((name) => name.includes(' ') && formatMentionToken(name)?.startsWith('@{'))
+      .sort((a, b) => b.length - a.length || a.localeCompare(b))
+    for (const name of candidates) {
+      repaired = repaired.split(`@${name}`).join(`@{${name}}`)
+    }
+    return repaired
   }
 
   function mapScene(s, timing) {
@@ -725,11 +889,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // staleVideoAt 5개로 제한 — sceneNo(scenes.json 전용 표시용 순번)는 push payload에 넣지 않는다.
     const measured = typeof s.startSec === 'number' && typeof s.endSec === 'number'
     const charNames = sceneCharacterNames(s)
+    const imagePrompt = repairLegacySpacedMentions(s.imagePrompt || '', charNames)
+    const videoPrompt = repairLegacySpacedMentions(s.videoPrompt || '', charNames)
     return {
       storyId: s.storyId,
       // V2: 등장 캐릭터 @멘션 주입 → Flow/API 둘 다 캐릭터 레퍼런스 이미지를 conditioning으로 붙인다.
-      prompt: withMentions(s.imagePrompt || '', charNames),
-      videoT2VPrompt: withMentions(s.videoPrompt || '', charNames),
+      prompt: withMentions(imagePrompt, charNames),
+      videoT2VPrompt: withMentions(videoPrompt, charNames),
       // IP1: audio 실측(finalScenes startSec/endSec)이 있으면 timing의 유일 소스. 없으면(대략 모드)
       // buildFallbackTimeline 글자수 추정으로 폴백(스펙 §3 대략 모드 / §7 흐름A).
       startTime: measured ? s.startSec : timing.startTime,
@@ -1120,7 +1286,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           rewriteChanged = rewritten.changed
           if (rewritten.changed) reviewedSpeakers = ensureReferencedSpeakers(reviewedSpeakers, reviewedScenes, state.speakers || [])
         }
-        const changed = reviewed.changed || rewriteChanged
+        const stampedScenes = stampAppearingCharacters(reviewedScenes, reviewedSpeakers)
+        const stampChanged = !sameJson(stampedScenes, reviewedScenes)
+        reviewedScenes = stampedScenes
+        const changed = reviewed.changed || rewriteChanged || stampChanged
         if (changed) {
           sendStepLog('scenes', 'review-save', '검수 반영 씬 저장', opId)
           await store.saveText('scenes.json', JSON.stringify({ scenes: reviewedScenes }, null, 2))
@@ -1154,8 +1323,61 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const roster = confirmedRoster()
       const opts = buildLlmOptions(effectiveOptions(params), roster ? { roster } : {})
       sendStepLog('scenes', 'split-request', 'LLM 씬 분리 요청', opId)
-      // 외부 분리/정본 저장을 바꾸면 approvalPresenters의 generate scenes 비용·덮어쓰기 문구도 바꿔라.
-      const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
+      send('story:progress', { kind: 'scene-delta', phase: 'started' }, opId)
+      let lastThinkingEmitAt = -Infinity
+      const onThinkingActivity = () => {
+        const now = Date.now()
+        if (now - lastThinkingEmitAt < 1000) return
+        lastThinkingEmitAt = now
+        send('story:progress', { kind: 'scene-delta', phase: 'thinking' }, opId)
+      }
+      let scenes
+      let speakers
+      let activeExperimentRecord = null
+      const experimentStartedAt = sceneSplitExperiment ? Date.now() : null
+      if (!sceneSplitExperiment) {
+        // 기본 경로: M1의 단일 호출 인자/preview 좌표를 그대로 유지한다.
+        // 외부 분리/정본 저장을 바꾸면 approvalPresenters의 generate scenes 비용·덮어쓰기 문구도 바꿔라.
+        ;({ scenes, speakers } = await llm.splitScenes(scriptMd, opts, {
+          signal,
+          onThinkingActivity,
+          onPartialScene: (scene, index) => send('story:progress', {
+            kind: 'scene-delta',
+            chunkIndex: 0,
+            localSceneNo: index,
+            scene: sanitizePreviewScene(scene),
+          }, opId),
+        }))
+      } else {
+        if (sceneSplitExperiment.mode !== 'single' && sceneSplitExperiment.mode !== 'parallel') {
+          throw new Error(`unknown scene split experiment mode: ${sceneSplitExperiment.mode}`)
+        }
+        try {
+          const experimental = await runScenesSplitExperiment(scriptMd, llm, opts, {
+            ...sceneSplitExperiment,
+            signal,
+            onThinkingActivity,
+            onPartialScene: (scene, localSceneNo, chunkIndex) => send('story:progress', {
+              kind: 'scene-delta',
+              chunkIndex,
+              localSceneNo,
+              scene: sanitizePreviewScene(scene),
+            }, opId),
+          })
+          scenes = experimental.scenes
+          speakers = experimental.speakers
+          activeExperimentRecord = experimental.record
+        } catch (error) {
+          if (error?.experimentRecord) {
+            activeExperimentRecord = error.experimentRecord
+            activeExperimentRecord.timing.terminalMs = Math.max(0, Date.now() - experimentStartedAt)
+            sceneSplitExperimentRecord = activeExperimentRecord
+            try { sceneSplitExperiment.onRecord?.(activeExperimentRecord) } catch {}
+            send('story:progress', { kind: 'scene-split-experiment', record: activeExperimentRecord }, opId)
+          }
+          throw error
+        }
+      }
       if (signal?.aborted) return
       sendStepLog('scenes', 'split-response', `씬 ${scenes?.length || 0}개 응답 수신`, opId, { count: scenes?.length || 0 })
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
@@ -1180,9 +1402,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         nextScenes = rewritten.scenes
         if (rewritten.changed) nextSpeakers = ensureReferencedSpeakers(nextSpeakers, nextScenes, state.speakers || [])
       }
+      nextScenes = stampAppearingCharacters(nextScenes, nextSpeakers)
       sendStepLog('scenes', 'save', 'scenes.json 저장', opId)
       await store.saveText('scenes.json', JSON.stringify({ scenes: nextScenes }, null, 2))
       state.speakers = nextSpeakers
+      if (activeExperimentRecord) {
+        activeExperimentRecord.timing.terminalMs = Math.max(0, Date.now() - experimentStartedAt)
+        sceneSplitExperimentRecord = activeExperimentRecord
+        try { sceneSplitExperiment.onRecord?.(activeExperimentRecord) } catch {}
+        send('story:progress', { kind: 'scene-split-experiment', record: activeExperimentRecord }, opId)
+      }
       sendStepLog('scenes', 'complete', '씬 분리 완료', opId)
     },
     async audio(params, opId, signal) {
@@ -1750,7 +1979,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
       const scriptMd = await store.loadText('script.md')
       const opts = buildLlmOptions(effectiveOptions(params))
-      const context = { scriptMd, style: params.style || null, speakers: characterSpeakers() }
+      const context = {
+        scriptMd,
+        style: params.style || null,
+        speakers: characterSpeakers(),
+        requiredMentionNamesByScene: Object.fromEntries(
+          (scenesJson.scenes || []).map((scene) => [scene.sceneNo, sceneCharacterNames(scene)]),
+        ),
+      }
       if (params.reviewOnly) {
         const cfg = reviewConfig(opts, 'prompts')
         if (!cfg.enabled) return { changed: false }
@@ -1764,7 +2000,26 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
 
       // V2: 프롬프트 컨텍스트엔 캐릭터(non-narrator·appearance 보유)만 전달 — narrator 외형 누수 방지(Codex-Low).
-      let { scenes } = await llm.writePrompts(scenesJson.scenes, context, opts, { signal })
+      // prompt preview 전용 op gate. 최종 scenes는 아래 writePrompts 반환만 사용하고 delta는 저장하지 않는다.
+      send('story:progress', { kind: 'prompt-delta', phase: 'started' }, opId)
+      let lastThinkingEmitAt = -Infinity
+      const onThinkingActivity = () => {
+        const now = Date.now()
+        if (now - lastThinkingEmitAt < 1000) return
+        lastThinkingEmitAt = now
+        send('story:progress', { kind: 'prompt-delta', phase: 'thinking' }, opId)
+      }
+      let { scenes } = await llm.writePrompts(scenesJson.scenes, context, opts, {
+        signal,
+        onThinkingActivity,
+        onPartialPrompt: (scene) => send('story:progress', {
+          kind: 'prompt-delta',
+          sceneNo: Number.isInteger(scene?.sceneNo) ? scene.sceneNo : null,
+          imagePrompt: typeof scene?.imagePrompt === 'string' ? scene.imagePrompt : '',
+          videoPrompt: typeof scene?.videoPrompt === 'string' ? scene.videoPrompt : '',
+        }, opId),
+      })
+      scenes = validatePromptMentionScenes(scenes, context, opId)
       const cfg = reviewConfig(opts, 'prompts')
       if (cfg.enabled && !signal?.aborted) {
         const reviewed = await reviewPromptsCandidate(scenes, context, opts, cfg.rounds, opId, signal)
@@ -1793,6 +2048,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     projectPath,
     // 이 machine 의 토큰 누산기. provider tap 이 전역 sink 를 통해 여기에 기록한다.
     usageTracker,
+    getSceneSplitExperimentRecord() { return sceneSplitExperimentRecord },
     async open() {
       state = await store.load()
       await healMissingStepArtifacts()

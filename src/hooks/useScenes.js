@@ -26,6 +26,7 @@ import { fileSystemAPI } from './useFileSystem'
 import { normalizeTagKey, splitTags } from '../utils/tagMatch'
 import { resolveMentions } from '../utils/mentionParser'
 import { isStyleReference } from '../services/styleService'
+import { hasImageData } from '../utils/formatters'
 
 // snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
@@ -203,6 +204,7 @@ export function useScenes() {
           mediaId: existing.mediaId,
           generatingStartedAt: existing.generatingStartedAt,
           image_size: existing.image_size,
+          donePrompt: existing.donePrompt, // 생성 기준 스냅샷 — 되돌림 done 복원이 CSV 왕복에도 유지
           // 비디오 관련 런타임 필드도 보존
           videoT2V: existing.videoT2V,
           videoT2VPath: existing.videoT2VPath,
@@ -416,9 +418,44 @@ export function useScenes() {
         }
       }
     }
-    setScenes(prev => prev.map(scene =>
-      scene.id === sceneId ? { ...scene, ...updates } : scene
-    ))
+    setScenes(prev => prev.map(scene => {
+      if (scene.id !== sceneId) return scene
+      const next = { ...scene, ...updates }
+      // Issue #2: 이미 생성 완료(이미지 보유)된 씬의 프롬프트가 실제로 바뀌면 재생성 대상이
+      // 되도록 status 를 pending 으로 되돌린다.
+      // 가드: 호출자가 status 를 "실제로 바꾸는" 경우(생성 코드 — done→generating 등)만 존중하고
+      // 덮어쓰지 않는다. SceneDetailModal 은 editData={...scene} 를 통째로 넘겨 status 가 늘 포함되지만
+      // 그 값은 현재 status 와 동일(변경 아님)하므로, updates.status === 현재 status 면 리셋을 허용한다.
+      const promptChanged = Object.prototype.hasOwnProperty.call(updates, 'prompt') && updates.prompt !== scene.prompt
+      // 화면 썸네일과 동일 기준(hasImageData: imagePath|filePath|image|data)으로 "이미지 있음"을 판정.
+      //   좁게 image||imagePath 만 보면 이미지가 filePath/data 에만 있는 씬은 썸네일은 뜨는데 여기선
+      //   "없음"으로 판정돼 프롬프트 변경 pending 전환도, 원복 done 복원도 통째로 스킵된다(실측 버그).
+      const hasImage = hasImageData(scene)
+      const callerChangesStatus = Object.prototype.hasOwnProperty.call(updates, 'status') && updates.status !== scene.status
+      // 진행 중(generating)인 씬은 리셋 보류 — finalize 가 곧 done 을 쓴다. 여기서 pending 으로
+      // 뒤집으면 옛 프롬프트로 만든 이미지가 done 으로 덮여 UI 가 거짓말한다(리뷰 M4).
+      if (promptChanged && hasImage && !callerChangesStatus && scene.status !== 'generating') {
+        let hasBaseline = typeof scene.donePrompt === 'string'
+        let baseline = scene.donePrompt
+        // donePrompt 도입 전 완료된 legacy 씬은 아직 편집되지 않은 현재 prompt 가 생성 기준이다.
+        // 첫 편집 시 한 번만 캡처하고, 이미 pending 인 legacy 씬은 기준을 추측하지 않는다.
+        if (!hasBaseline && scene.status === 'done') {
+          baseline = scene.prompt
+          hasBaseline = true
+          next.donePrompt = baseline
+        }
+        if (hasBaseline && updates.prompt === baseline) {
+          next.status = 'done'
+          // error 씬(순수 생성실패 — 이미지는 여전히 baseline 산물)의 되돌림 복원 시, 옛 에러가
+          // 남으면 done 인데 에러 배지가 뜨는 모순 상태 — finalize 와 동일하게 클리어.
+          next.error = null
+          next.errorKind = null
+        } else {
+          next.status = 'pending'
+        }
+      }
+      return next
+    }))
   }, [])
   
   /**

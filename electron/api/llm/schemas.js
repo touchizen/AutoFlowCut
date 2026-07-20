@@ -9,6 +9,7 @@ export const SCENES_SCHEMA = {
         properties: {
           sceneNo: { type: 'INTEGER' },
           summary: { type: 'STRING' },
+          appearingCharacters: { type: 'ARRAY', items: { type: 'STRING' } },
           segments: {
             // M2b: narration/sfx 두 종류의 세그먼트를 한 배열에 담는다. Claude structured
             // validator가 oneOf/discriminated union을 지원하지 않으므로 스키마는 loose(모두

@@ -840,6 +840,67 @@
   border: 1px solid var(--border-color);
 }
 
+/* ghost 행이 늘어나는 동안만 StoryView가 붙이는 viewport. 완료 표는 wrapper 없이 기존 렌더 유지. */
+.story-stream-table {
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+  /* prompts auto-scroll(frontier 행 offsetTop 기반)이 이 컨테이너를 offsetParent 로 삼도록 —
+     없으면 offsetTop 이 바깥 positioned 조상 기준이라 스크롤 계산이 틀어져 화면이 "고정"된다. */
+  position: relative;
+}
+
+/* ghost table의 auto-scroll viewport 바깥에서, 유일한 패널 스크롤(.story-step-panel)에 고정된다. */
+.story-stream-progress-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+.story-stream-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 30%, var(--border-color));
+  border-radius: var(--border-radius);
+  background: var(--bg-color);
+  box-shadow: 0 2px 8px color-mix(in srgb, #000 16%, transparent);
+}
+
+.story-stream-progress-label {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.story-stream-progress-track {
+  display: block;
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-color) 12%, transparent);
+}
+
+.story-stream-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-color);
+  transition: width 180ms ease-out;
+}
+
+.story-stream-progress-fill.indeterminate {
+  width: 34%;
+  animation: story-stream-progress-indeterminate 1.15s ease-in-out infinite;
+}
+
+@keyframes story-stream-progress-indeterminate {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(310%); }
+}
+
 .story-readonly-table th {
   padding: 9px 10px;
   text-align: left;
@@ -867,6 +928,31 @@
 
 .story-readonly-table tbody tr:hover {
   background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+}
+
+.story-row-revising {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--primary-color) 4%, transparent) 0%,
+    color-mix(in srgb, var(--primary-color) 18%, transparent) 50%,
+    color-mix(in srgb, var(--primary-color) 4%, transparent) 100%
+  );
+  background-size: 220% 100%;
+  animation: story-row-revising-shimmer 1.15s linear infinite;
+}
+
+@keyframes story-row-revising-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+/* 저장 전 streamed 값 — 텍스트 노드라 편집되지 않고 final story:state가 오면 즉시 사라진다. */
+.story-prompt-ghost,
+.story-scene-ghost {
+  color: var(--text-secondary, #8a8a8a);
+  font-style: italic;
+  opacity: 0.72;
+  white-space: pre-wrap;
 }
 
 /* 상태 배지 (ResultsTable의 .status 룩) — 세그먼트 상태를 색깔 pill로 */
@@ -901,7 +987,11 @@
   table-layout: fixed;
 }
 .story-audio-table th:nth-child(1),
-.story-audio-table td:nth-child(1) { width: 40px; }
+.story-audio-table td:nth-child(1) {
+  width: 64px;
+  min-width: 64px;
+  white-space: nowrap;
+}
 .story-audio-table th:nth-child(2),
 .story-audio-table td:nth-child(2) { width: 96px; }
 /* 3번(세그먼트)은 지정하지 않아 남는 폭을 모두 차지 */
@@ -937,6 +1027,8 @@
   opacity: 0.85;
 }
 
+/* justify/wrap 을 여기 넣으면 script/audio/review 등 모든 StoryRunning 헤더가 가운데 정렬로
+   바뀐다(Fable NIT — blast radius). 배지/진행은 자체 클래스로 배치하고 기존 정렬은 유지한다. */
 .story-running-main {
   display: flex;
   align-items: center;
@@ -951,6 +1043,16 @@
 .story-running-elapsed {
   font-variant-numeric: tabular-nums;
   color: var(--primary-color);
+}
+
+.story-thinking-badge {
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 35%, var(--border-color));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  text-align: center;
 }
 
 /* 생성 중 인라인 시계 — 스트리밍 뷰(시놉시스/대본) 하단 우측. 초시계 애니메이션 + 경과시간. */
@@ -1068,11 +1170,11 @@
      스크린샷: 인물 설명이 6줄로 접힘). 아랫줄로 내려 그 폭을 appearance에 돌려준다. 화자 칸은
      두 줄에 걸쳐(speaker/speaker) 설명이 세로로 자랄 자리를 갖는다. */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(110px, 150px) max-content;
+  grid-template-columns: minmax(0, 1fr) 150px 28px;
   grid-template-areas:
     "speaker voice run"
     "speaker source source";
-  align-items: center;
+  align-items: start;
   gap: 8px 12px;
   padding: 6px 8px;
   border-radius: var(--border-radius);
@@ -1142,6 +1244,9 @@
      .story-input의 flex:1 1 160px은 그리드 아이템이라 무시된다. */
   width: 100%;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-align: left;
   cursor: pointer;
 }

@@ -34,6 +34,7 @@ vi.mock('../../src/components/Toast', () => ({
 }))
 
 vi.mock('../../src/services/styleService', () => ({
+  presetTagForStyleId: vi.fn(() => null),
   resolveSceneStyle: vi.fn((prompt) => ({ styledPrompt: prompt || 'p', appliedStyle: null })),
 }))
 

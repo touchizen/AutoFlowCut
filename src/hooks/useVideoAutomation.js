@@ -309,6 +309,12 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       videoBatchCount = 1,
       seed = null,
       concurrency: rawConcurrency,
+      flowPacingMinMs = undefined,  // Flow 페이싱 하한(ms) — 미지정 시 util 기본(7000)
+      flowPacingMaxMs = undefined,  // Flow 페이싱 상한(ms) — 미지정 시 util 기본(15000)
+      onItemUpdate: optionOnItemUpdate,
+      // #video-3: 명시적 retry 플래그. true 이면 직전 batchId 재사용 → 이중과금 방지.
+      // false/미전달이면 새 배치 id 발급 (첫 실행 또는 의도적 재시작).
+      isRetry = false,
     } = options
     const pipelineEngine = options.generationEngine || genAPI
     const pipelineAppMode = options.generationMode || appMode
@@ -317,13 +323,15 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     const pipelineGetAccessToken = pipelineEngine.getAccessToken || getAccessToken
     const pipelineFetchMedia = pipelineEngine.fetchMedia || fetchMedia
     const {
-      onItemUpdate,
+      onItemUpdate: callbackOnItemUpdate,
       onComplete: pipelineOnComplete,
       onPaywall: pipelineOnPaywall,
       onProgress: pipelineOnProgress,
     } = callbacks
+    const onItemUpdate = callbackOnItemUpdate ?? optionOnItemUpdate
     // batchId 는 pipeline 관측/상태용 identity 다. consumeGate 와 함께 admission/legacy start 에서만 생성된다.
     void batchId
+    void isRetry
     // 손상된 저장값('x'/NaN/0/음수)은 무한대기/no-op 유발 → clampInt 로 기본 4 폴백 (useAutomation 과 동일).
     const concurrency = clampInt(rawConcurrency, 1, 10, 4)
     // #R26-4: API 모드는 공식 Veo hyphen 모델명으로 정규화해야 한다(실제 Veo API 로 전송).
@@ -568,9 +576,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           if (_maybeTriggerQuotaStop(genResult.error)) return
         }
 
-        // Flow 반봇 페이싱 — 다음 제출 전 20~40초 랜덤 대기(이미지 자동화와 동일). API 는 대기 없음.
+        // Flow 반봇 페이싱 — 다음 제출 전 랜덤 대기(기본 7~15초, 설정에서 조정). 이미지 자동화와 동일. API 는 대기 없음.
         if (pipelineAppMode === 'flow' && nextFreshIdx < freshGen.length && !stopRequestedRef.current && !authStopped) {
-          const waitMs = getFlowSubmitPacingDelayMs()
+          const waitMs = getFlowSubmitPacingDelayMs(flowPacingMinMs, flowPacingMaxMs)
           const waitEnd = Date.now() + waitMs
           while (Date.now() < waitEnd && !stopRequestedRef.current) {
             await waitIfPaused()

@@ -3,6 +3,7 @@
 // Ref 카드 prompt와 동일한 `${ethnicity}, ${age}, ${gender}, ${appearance}` 조합 규칙(공유 helper) —
 // electron→src import는 stepMachine의 기존 관례(storyCharacter.js는 순수 모듈, 순환 없음).
 import { characterVisualPrompt } from '../../../src/services/storyCharacter.js'
+import { formatMentionToken } from '../../../src/utils/mentionParser.js'
 
 const KOREAN_CHARS_PER_MINUTE = 330
 const ENGLISH_WORDS_PER_MINUTE = 150
@@ -210,6 +211,7 @@ export function buildSplitPrompt(scriptMd, opts) {
     buildRosterBlock(opts.roster),
     // V2: 가시 등장인물의 외형을 speakers에 담아 캐릭터 레퍼런스로 등록 → 씬 이미지 일관성.
     `화면에 보이는 등장인물(narrator 제외)은 speakers 항목에 appearance(이미지 생성용 짧은 영어 외형/생김새 묘사: 나이·성별·헤어·의상·분위기)를 넣어라. narrator나 화면에 안 나오는 화자는 appearance를 생략한다.`,
+    `각 씬의 appearingCharacters에는 그 씬 화면에 실제로 보이는 인물의 speaker id만 배열로 넣어라(narrator 제외). 말하지 않는 인물도 포함하고, 전체 대본 맥락으로 대명사·별칭(예: "그 남자")을 roster/speakers 목록의 id로 해석하며, 목록에 없는 새 이름은 만들지 말고 목록 인물이 아무도 안 보이면 []를 반환하라.`,
     // M2b: 효과음 큐를 세그먼트 단위로 삽입. 단어 단위(문장 내부) 금지 — 시퀀스의 한 자리를 차지한다.
     `대본 흐름상 효과음(문 여는 소리·천둥·발소리·비명 등)이 꼭 필요한 지점에는 그 자리에 { "type": "sfx", "description": "..." } 세그먼트를 삽입하라. description은 효과음을 생성할 짧은 영어 묘사(예: "door creaking open", "distant thunder")로 쓴다. sfx 세그먼트에는 speaker/text/emotion을 넣지 않는다. 나레이션/대사 세그먼트는 type을 생략해도 된다(기본 narration).`,
     `효과음은 꼭 필요한 순간(장면 전환·긴장·중요한 사건)에만 절제해서 넣어라 — 과도하게 넣으면 흐름을 해친다.`,
@@ -332,6 +334,7 @@ export function buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, op
     `아래 critique를 반영해 scenes JSON 전체를 수정하라.`,
     `반드시 SCENES_SCHEMA 형태의 JSON만 반환하라. 설명/코드펜스 금지.`,
     `sceneNo, summary, segments, speakers를 포함하고, narration 세그먼트는 speaker/text/emotion을 유지하며, sfx 세그먼트는 description을 유지한다.`,
+    `각 씬의 appearingCharacters도 유지하되 critique와 대본상 화면 등장에 맞게 수정한다.`,
     `장르 공식보다 대본의 몰입도, 궁금증, 기대감 흐름을 우선한다.`,
     // §v2.9 MINOR②: 검토루프에도 roster 제약 — 검토 중 명단 밖 인물 재유입 차단.
     buildRosterBlock(opts.roster),
@@ -357,10 +360,15 @@ export function buildPromptsReviewPrompt(scenes, context = {}, opts = {}) {
 }
 
 export function buildPromptsRevisePrompt(scenes, context = {}, critique, opts = {}) {
+  const rosterLines = buildMentionRosterLines(context)
   return [
     `아래 critique를 반영해 imagePrompt/videoPrompt만 수정하라.`,
     `반드시 PROMPTS_SCHEMA 형태의 JSON만 반환하라. sceneNo, imagePrompt, videoPrompt만 포함한다. 설명/코드펜스 금지.`,
     `씬 구조, 세그먼트, 화자, storyId는 변경하지 않는다.`,
+    // M4: 수정 라운드가 inline mention 배치를 무너뜨리면 push 안전망이 앞에 몰아 붙인다(front-load) —
+    // 기존 token을 유지·재배치만 하고, 새 token을 지어내지 않는다.
+    `기존 프롬프트의 mention token(@이름, @{이름})은 유지(keep)하라 — 수정 후에도 각 token이 imagePrompt/videoPrompt 각각에 최소 한 번, 캐릭터가 행동하는 자연스러운 위치에 남아야 한다. token을 프롬프트 앞에 몰아서(front-load) 붙이지 말고, roster 밖의 새 token을 만들지 마라.`,
+    rosterLines.length ? `등장인물 roster(이 token 표기를 정확히 사용):\n${rosterLines.join('\n')}` : '',
     `--- critique ---`,
     critique,
     context.scriptMd ? `--- 대본 ---\n${context.scriptMd}` : '',
@@ -405,19 +413,44 @@ export function buildFactCheckPrompt(claims = [], opts = {}) {
   ].join('\n')
 }
 
+// 생성/수정(revise) 프롬프트가 같은 roster·token 표기를 쓰도록 공용 빌더로 분리 — revise가
+// 다른 표기를 실으면 수정 라운드가 token을 지우거나 새로 지어낸다.
+function buildMentionRosterLines(context) {
+  return (context.speakers || [])
+    .map((sp) => ({ sp, desc: characterVisualPrompt(sp) }))
+    .filter(({ sp, desc }) => sp && desc)
+    .map(({ sp, desc }) => {
+      const token = formatMentionToken(sp.name)
+      return token
+        ? `- ${sp.name}: ${desc} (exact mention token: ${token})`
+        : `- ${sp.name}: ${desc} (portable token 없음 — 평문 이름 + 캐릭터 태그 fallback)`
+    })
+}
+
 export function buildPromptsPrompt(scenes, context, opts) {
-  const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
+  const requiredByScene = context.requiredMentionNamesByScene || {}
+  const sceneLines = scenes.map((s) => {
+    const required = (requiredByScene[s.sceneNo] || [])
+      .map((name) => ({ name, token: formatMentionToken(name) }))
+    const tokens = required.filter(({ token }) => token).map(({ token }) => token)
+    const plainNames = required.filter(({ token }) => !token).map(({ name }) => name)
+    return [
+      `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`,
+      tokens.length ? `   이 씬의 required exact mention tokens: ${tokens.join(', ')}` : '',
+      plainNames.length ? `   mention token 없이 평문 이름으로만 쓸 캐릭터(태그 fallback): ${plainNames.join(', ')}` : '',
+    ].filter(Boolean).join('\n')
+  })
   // V2: 캐릭터별 정본 외형(appearance)을 컨텍스트로 줘서 씬마다 외형을 새로 지어내지 않고 일관 서술.
   // §v2.12 FIX(MAJOR): 포함 기준·조합 모두 characterVisualPrompt(ethnicity/age/gender/appearance
   // 조합, 빈 항목 콤마 생략) — ethnicity-only 캐릭터도 Ref 카드와 동일하게 씬 프롬프트에 반영.
-  const charLines = (context.speakers || [])
-    .map((sp) => ({ sp, desc: characterVisualPrompt(sp) }))
-    .filter(({ sp, desc }) => sp && desc)
-    .map(({ sp, desc }) => `- ${sp.name}: ${desc}`)
+  const charLines = buildMentionRosterLines(context)
   return [
     `아래 씬들에 대해 이미지 생성 프롬프트(imagePrompt)와 비디오 생성 프롬프트(videoPrompt)를 영어로 작성하라.`,
-    `캐릭터가 등장하면 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라 (레퍼런스 참조 문법 금지 — 플레인 텍스트).`,
-    charLines.length ? `등장인물 외형(이 묘사를 일관되게 사용):\n${charLines.join('\n')}` : '',
+    `캐릭터가 등장하면 아래 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라.`,
+    `각 씬의 required exact mention token은 imagePrompt와 videoPrompt 각각에 최소 한 번씩 넣고, 캐릭터가 행동하는 자연스러운 명사구 위치에 배치하라. token들을 프롬프트 앞에 몰아서(front-load) 붙이지 마라.`,
+    `예: "A slow dolly toward @{Mina Kim} as she opens the letter"처럼 쓰고, "@{Mina Kim} A slow dolly..."처럼 쓰지 마라.`,
+    `token은 아래 roster의 표기를 정확히(exactly) 복사하라. 새 이름/token을 만들지 말고, 중괄호 안에 조사를 넣지 마라. 닫힌 } 바로 뒤에 본문이 이어져도 괜찮다.`,
+    charLines.length ? `등장인물 roster(이 외형과 token을 일관되게 사용):\n${charLines.join('\n')}` : '',
     context.style ? `스타일: ${context.style}` : '',
     `--- 씬 목록 ---`,
     ...sceneLines,

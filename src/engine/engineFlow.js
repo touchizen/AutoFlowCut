@@ -48,7 +48,7 @@ const api = () => window.electronAPI
  *
  * @param {string} prompt
  * @param {Array} referenceImages - 이미 주입 예정인 매칭 ref 이미지들
- * @param {Array<{name:string}>} unresolved - parseSceneMentions 의 미해결 멘션
+ * @param {Array<{name:string,exact?:boolean}>} unresolved - parseSceneMentions 의 미해결 멘션
  * @param {Array} references - 전체 ref 목록(effectiveRefs)
  * @returns {{ prompt: string, referenceImages: Array } | null}
  */
@@ -57,11 +57,18 @@ export function planUnresolvedMentionFallback(prompt, referenceImages, unresolve
   // #R34-fix: @멘션은 character 의도다. 같은 이름의 비-character(scene/style) ref 가 mediaId 를
   //   가졌다고 character 멘션 폴백을 가로채면 안 된다 → character 만 lookup 대상으로 둔다.
   const byName = new Map()
-  for (const r of references || []) { if (r?.name && r.type === 'character') byName.set(String(r.name).toLowerCase(), r) }
+  const byExactName = new Map()
+  for (const r of references || []) {
+    if (r?.name && r.type === 'character') {
+      byName.set(String(r.name).toLowerCase(), r)
+      byExactName.set(String(r.name).toLowerCase(), r)
+    }
+  }
   const fallbackRefs = []
   for (const u of unresolved) {
-    const resolved = resolveMentionPrefix(u.name, byName)
-    const ref = resolved?.ref
+    const ref = u.exact
+      ? byExactName.get(String(u.name).toLowerCase())
+      : resolveMentionPrefix(u.name, byName)?.ref
     if (!ref || !ref.mediaId) return null  // 주입 불가 → 폴백 포기(하드 실패 유지)
     fallbackRefs.push(ref)
   }
@@ -108,6 +115,29 @@ export function planMentionRouting(prompt, referenceImages, references) {
   }
   if (hasMention) return { kind: 'scene', segments }
   return { kind: 'image', prompt, referenceImages: referenceImages || [] }
+}
+
+/** Flow scene 칩으로 표현되지 않은 mediaId 레퍼런스만 주입 대상으로 남긴다. */
+export function computeSceneGapReferences(referenceImages, segments) {
+  const mentionNames = new Set(
+    (segments || [])
+      .filter(segment => segment?.type === 'mention' && segment.name)
+      .map(segment => String(segment.name).toLowerCase())
+  )
+  const refs = referenceImages || []
+  const isChip = (ref) => ref.name && mentionNames.has(String(ref.name).toLowerCase())
+  // 선-패스: chip 으로 이미 컨디셔닝되는 mediaId 를 먼저 모은다 — referenceImages 순서와 무관하게
+  //   같은-mediaId 별칭(다른 이름의 중복 카드)이 imageInput 으로 재주입돼 이중 컨디셔닝되는 것을 막는다.
+  const seenMediaIds = new Set(
+    refs.filter(ref => flowImageInjectable(ref) && isChip(ref)).map(ref => ref.mediaId)
+  )
+  return refs.filter(ref => {
+    if (!flowImageInjectable(ref)) return false
+    if (isChip(ref)) return false
+    if (seenMediaIds.has(ref.mediaId)) return false
+    seenMediaIds.add(ref.mediaId)
+    return true
+  })
 }
 
 /**
@@ -321,6 +351,7 @@ export function useFlowEngine(opts = {}) {
       if (routing.kind === 'error') return { success: false, error: routing.error }
 
       if (routing.kind === 'scene') {
+        const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
         // #R7-7(R6-2 sibling): pass opts (aspectRatio/seed/model/batchCount/references) through.
         const res = await api().flowGenerateScene({
           prompt,
@@ -331,6 +362,7 @@ export function useFlowEngine(opts = {}) {
           model: callOpts.model,
           batchCount: callOpts.batchCount,
           references: callOpts.references,
+          gapReferences,
         })
         // map flow:generate-scene return to generateImage contract: { success, images }
         // #R22-2: base64 이미지가 없으면 fail-closed — base64:null 복구 엔트리는 downstream finalize 가
@@ -397,6 +429,7 @@ export function useFlowEngine(opts = {}) {
       if (routing.kind === 'error') return { success: false, error: routing.error }
 
       if (routing.kind === 'scene') {
+        const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
         // #R6-2: pass opts (aspectRatio, seed, model, batchCount) into flowGenerateScene
         // #R35: 멘션 씬도 비동기 제출(asyncMode). Agent OFF 는 컴포저 블록 없이 클릭 후 즉시 반환 →
         //   응답은 배경(pendingGenerations)에서 수집 → 씬들이 병렬로 생성된다. Agent ON 은 컴포저
@@ -410,6 +443,7 @@ export function useFlowEngine(opts = {}) {
           model: callOpts.model,
           batchCount: callOpts.batchCount,
           references: callOpts.references,
+          gapReferences,
           asyncMode: true,
         })
 

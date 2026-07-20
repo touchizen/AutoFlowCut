@@ -28,6 +28,58 @@ const LOG = (step, message) => ({ id: `${step}-1`, step, message, level: 'info',
 
 const stream = (c) => c.querySelector('.story-script-stream')
 
+const reviewingPipeline = (target, over = {}) => pipeline({
+  state: {
+    steps: STEP({ [target]: { ...RUNNING_REVIEW } }),
+    speakers: [{ id: 'narrator', name: '나레이션' }],
+  },
+  reviewProgress: { target, round: 2, of: 3, phase: 'reviewing' },
+  reviewThinking: true,
+  ...over,
+})
+
+describe('씬/프롬프트 검수 상단 진행 표시', () => {
+  it.each([
+    ['scenes', '.story-scenes-panel'],
+    ['prompts', '.story-prompts-panel'],
+  ])('%s manual reviewOnly의 reviewing을 패널 상단 sticky indeterminate bar로 표시한다', (target, panelSelector) => {
+    const { container } = render(<StoryView pipeline={reviewingPipeline(target)} />)
+
+    const progress = screen.getByRole('progressbar', { name: '검수 2/3' })
+    const panel = container.querySelector(panelSelector)
+    expect(progress).toHaveClass('story-stream-progress-sticky')
+    expect(progress).toHaveAttribute('aria-valuetext', '검수 2/3')
+    expect(progress).not.toHaveAttribute('aria-valuenow')
+    expect(progress.querySelector('.story-stream-progress-fill')).toHaveClass('indeterminate')
+    expect(panel.firstElementChild).toBe(progress)
+    expect(screen.getByText('🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)')).toBeInTheDocument()
+  })
+
+  it('terminal prompts state에서는 stale review progress/thinking을 숨긴다', () => {
+    render(<StoryView pipeline={pipeline({
+      reviewProgress: { target: 'prompts', round: 2, of: 3, phase: 'reviewing' },
+      reviewThinking: true,
+    })} />)
+
+    expect(screen.queryByRole('progressbar', { name: '검수 2/3' })).toBeNull()
+    expect(screen.queryByText('🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)')).toBeNull()
+  })
+
+  it.each([
+    ['scenes', { scenesRevising: true, previewScenes: { '0:0': { chunkIndex: 0, localSceneNo: 0, scene: { segments: [{ speaker: 'narrator', text: 'NEW-SCENE' }] } } } }, '씬 수정 1/1'],
+    ['prompts', { promptsRevising: true, previewPrompts: { 1: { imagePrompt: 'NEW-IMG', videoPrompt: 'NEW-VID' } } }, '프롬프트 수정 1/1'],
+  ])('%s revising progress와 frontier shimmer를 유지한다', (target, preview, progressName) => {
+    const { container } = render(<StoryView pipeline={reviewingPipeline(target, {
+      ...preview,
+      reviewProgress: { target, round: 1, of: 1, phase: 'revising' },
+      reviewThinking: false,
+    })} />)
+
+    expect(screen.getByRole('progressbar', { name: progressName })).toBeInTheDocument()
+    expect(container.querySelectorAll('.story-row-revising')).toHaveLength(1)
+  })
+})
+
 describe('대본 검수 중', () => {
   const p = (over = {}) => pipeline({
     state: { steps: STEP({ script: RUNNING_REVIEW }), speakers: [] },

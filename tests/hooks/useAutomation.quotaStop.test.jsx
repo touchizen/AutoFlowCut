@@ -32,6 +32,7 @@ import { subscribeQuotaStop, __resetQuotaStopForTests } from '../../src/utils/qu
 const showMock = vi.fn()
 
 vi.mock('../../src/services/styleService', () => ({
+  presetTagForStyleId: vi.fn(() => null),
   resolveSceneStyle: vi.fn((prompt) => ({ styledPrompt: prompt || 'p', appliedStyle: null })),
 }))
 

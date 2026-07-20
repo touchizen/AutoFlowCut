@@ -65,6 +65,8 @@ export function buildVideoTextStartPayload({
       videoModel: settings.videoModelT2V,
       videoBatchCount: settings.videoBatchCount || 1,
       concurrency: settings.videoConcurrency || 4,
+      flowPacingMinMs: settings.flowPacingMinMs,
+      flowPacingMaxMs: settings.flowPacingMaxMs,
     },
   }
 }

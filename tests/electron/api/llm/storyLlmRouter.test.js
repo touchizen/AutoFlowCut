@@ -62,6 +62,22 @@ describe('storyLlmRouter', () => {
     expect(a.claude.generateTitle).not.toHaveBeenCalled()
   })
 
+  it('writePrompts의 onPartialPrompt context를 선택된 adapter에 그대로 전달한다', async () => {
+    const a = adapters()
+    const router = createStoryLlmRouter(a)
+    const scenes = [{ sceneNo: 1 }]
+    const ctx = { signal: 'sig', onPartialPrompt: vi.fn() }
+
+    await router.writePrompts(scenes, {}, { engine: 'codex', model: 'gpt-5.5' }, ctx)
+
+    expect(a.codex.writePrompts).toHaveBeenCalledWith(
+      scenes,
+      {},
+      expect.objectContaining({ engine: 'codex', model: 'gpt-5.5' }),
+      ctx,
+    )
+  })
+
   it('선택된 adapter에 메서드가 없으면 명시적으로 실패한다', async () => {
     const a = adapters()
     delete a.codex.reviewScript

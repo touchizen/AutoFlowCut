@@ -159,10 +159,11 @@ export default function VideoDetailModal({
       : video.id)
     fetchLatestHistoryMeta(projectName, 'videos', baseName).then(meta => {
       if (cancelled) return
+      // 히스토리가 없으면 meta 가 null 로 온다 — 무가드 접근은 throw (main 의 generateButton 테스트가 이 경로를 침).
       setBackfilledMeta({
-        seed: meta.seed ?? null,
-        generatedAt: meta.generatedAt ?? null,
-        model: meta.model ?? null
+        seed: meta?.seed ?? null,
+        generatedAt: meta?.generatedAt ?? null,
+        model: meta?.model ?? null
       })
     })
     return () => { cancelled = true }
@@ -237,7 +238,9 @@ export default function VideoDetailModal({
               onClick={handleRegenerate}
               disabled={isGenerating}
             >
-              {isGenerating ? t('sceneDetail.generating') : t('sceneDetail.regenerate')}
+              {isGenerating
+                ? t('sceneDetail.generating')
+                : (video?.video || video?.videoPath) ? t('sceneDetail.regenerate') : t('sceneDetail.generate')}
             </button>
           )}
           {typeof onUpdate === 'function' && (
