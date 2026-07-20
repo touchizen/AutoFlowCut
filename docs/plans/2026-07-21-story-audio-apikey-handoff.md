@@ -3,7 +3,15 @@
 작성 2026-07-21 / 브랜치 `feature/story-audio-apikey-gate` (로컬, **미푸시**)
 메모리: `autoflowcut-story-audio-apikey-gate` / SDD ledger: `.superpowers/sdd/progress.md`
 
-## 현 상태 — 전체 코드 완성, M3b 리뷰 findings 미fix
+## 현 상태 — 전체 코드 완성, M3b 리뷰 R1~R4 완료(findings 0), 실앱 눈검증만 남음
+
+**M3b 최종 리뷰 완료(Fable5+Codex, R1~R4, findings 0)** — commit `44cf2f2c`까지. 아래 §"M3b 리뷰 findings"의 High/Med는 **전부 fix됨**(커밋 `4b80e00b`,`80da150b`,`7f68acae`,`4e682e7d`,`a2cd61b1`,`7e6415ae`,`44cf2f2c`). 잔여 후속(코드 findings 아님, 회귀 아님):
+- **§4.4 main 재검사**(유예 합의): 런타임 errorKind 안전망이 stepMachine e2e로 고정돼 TOCTOU 시 번역 배너로 강등(raw 없음). 구현 시 running 마킹 전 `{error:kind}` 반환(stepMachine.js:2510 패턴).
+- **reload race**(Codex 엣지 Medium): 같은 provider 키를 연속 저장 + 조회 순서 역전 시 옛 계정 voice가 최신 slice를 덮음. provider별 sequence 가드로 최신 요청만 commit(TtsApiKeyField가 onSaved await 안 함 + App reload 순서가드 없음).
+
+**남은 종료 게이트 = 실앱 눈검증**(아래 STEP 1) → main PR.
+
+## (이력) M3b 리뷰 findings — 전부 fix됨
 
 스펙 `docs/plans/2026-07-20-story-audio-apikey-gate-design.md`(v4, Codex+Fable 4R findings 0) 기반으로 6개 마일스톤 구현 완료. 전체 스위트 6717 tests green(사전존재 `VideoDetailModal` 2 async-race 무관).
 
