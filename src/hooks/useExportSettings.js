@@ -31,6 +31,16 @@ export function useExportSettings() {
     loadSettings()
   }, [])
 
+  // 초기 로드가 끝난 뒤 state를 localStorage에 반영한다.
+  useEffect(() => {
+    if (!isLoaded) return
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    } catch (error) {
+      console.warn('Failed to save export settings:', error)
+    }
+  }, [settings, isLoaded])
+
   // localStorage에서 설정 불러오기
   const loadSettings = useCallback(async () => {
     try {
@@ -49,30 +59,18 @@ export function useExportSettings() {
   }, [])
 
   // localStorage에 설정 저장
-  const saveSettings = useCallback(async (newSettings) => {
-    try {
-      const merged = { ...settings, ...newSettings }
-      setSettings(merged)
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
-    } catch (error) {
-      console.warn('Failed to save export settings:', error)
-    }
-  }, [settings])
+  const saveSettings = useCallback((newSettings) => {
+    setSettings(prev => ({ ...prev, ...newSettings }))
+  }, [])
 
   // 개별 설정값 업데이트
   const updateSetting = useCallback((key, value) => {
-    saveSettings({ [key]: value })
-  }, [saveSettings])
+    setSettings(prev => ({ ...prev, [key]: value }))
+  }, [])
 
   // 설정 초기화
-  const resetSettings = useCallback(async () => {
-    try {
-      setSettings(DEFAULT_SETTINGS)
-      localStorage.removeItem(STORAGE_KEY)
-    } catch (error) {
-      console.warn('Failed to reset export settings:', error)
-    }
+  const resetSettings = useCallback(() => {
+    setSettings(DEFAULT_SETTINGS)
   }, [])
 
   return {

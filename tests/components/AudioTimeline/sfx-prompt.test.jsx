@@ -6,11 +6,12 @@
  * 유지하는지 검증.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render as rtlRender, screen, fireEvent } from '@testing-library/react'
+import { screen, fireEvent } from '@testing-library/react'
 import AudioTimeline from '../../../src/components/AudioTimeline/AudioTimeline'
 import { I18nProvider } from '../../../src/hooks/useI18n'
+import { renderWithExportSettings } from '../../utils/renderWithExportSettings'
 
-const render = (ui, options) => rtlRender(<I18nProvider>{ui}</I18nProvider>, options)
+const render = (ui, options) => renderWithExportSettings(<I18nProvider>{ui}</I18nProvider>, options)
 
 // 한 카테고리에 메타데이터 있는 파일 + 없는 파일을 섞어 둠
 const audioPackage = {

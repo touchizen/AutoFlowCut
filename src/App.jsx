@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { DEFAULTS, UI, TIMING, STYLE_PRESETS } from './config/defaults'
 import { useGenerationEngine } from './engine/useGenerationEngine'
 import { useMode } from './contexts/ModeContext'
+import { ExportSettingsProvider } from './contexts/ExportSettingsContext'
 import { useScenes } from './hooks/useScenes'
 import { useAutomation } from './hooks/useAutomation'
 import { useVideoAutomation } from './hooks/useVideoAutomation'
@@ -2029,6 +2030,7 @@ function App() {
   }
 
   return (
+    <ExportSettingsProvider aspectRatio={settings.aspectRatio}>
     <div className={computeAppClass(mode)}>
       <QAProgressBanner />
       <ImportProcessingOverlay
@@ -3089,6 +3091,7 @@ function App() {
         t={t}
       />
     </div>
+    </ExportSettingsProvider>
   )
 }
 

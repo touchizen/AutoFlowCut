@@ -1,19 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-
-const mockSaveSettings = vi.fn()
-const mockSavedSettings = {
-  pathPreset: 'capcut',
-  scaleMode: 'none',
-  includeSubtitle: true,
-  kenBurns: true,
-  kenBurnsMode: 'random',
-  kenBurnsCycle: 5,
-  kenBurnsScaleMin: 100,
-  kenBurnsScaleMax: 130,
-  renderMode: 'final',
-  renderBurnSubtitle: true,
-}
+import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { useExportSettingsContext } from '../../src/contexts/ExportSettingsContext'
+import { renderWithExportSettings as render } from '../utils/renderWithExportSettings'
 
 vi.mock('../../src/hooks/useI18n', () => ({
   default: () => ({ t: key => key, lang: 'ko', setLang: vi.fn() }),
@@ -28,14 +16,6 @@ vi.mock('../../src/contexts/AuthContext', () => ({
       exportsRemaining: 3,
       daysRemaining: 5,
     },
-  }),
-}))
-
-vi.mock('../../src/hooks/useExportSettings', () => ({
-  useExportSettings: () => ({
-    settings: mockSavedSettings,
-    isLoaded: true,
-    saveSettings: mockSaveSettings,
   }),
 }))
 
@@ -66,6 +46,11 @@ const baseProps = {
   exportPhase: null,
   hasSubtitles: true,
   onUpgradeClick: vi.fn(),
+}
+
+function SettingsProbe() {
+  const { settings } = useExportSettingsContext()
+  return <output data-testid="export-settings">{JSON.stringify(settings)}</output>
 }
 
 beforeEach(() => {
@@ -108,10 +93,43 @@ describe('ExportModal self-render format', () => {
     expect(exportOptions).not.toHaveProperty('mode')
     expect(exportOptions).not.toHaveProperty('scaleMin')
     expect(exportOptions).not.toHaveProperty('scaleMax')
-    expect(mockSaveSettings).toHaveBeenCalledWith(expect.objectContaining({
-      renderMode: 'preview',
-      renderBurnSubtitle: false,
-    }))
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('exportSettings'))
+      expect(stored.renderMode).toBe('preview')
+      expect(stored.renderBurnSubtitle).toBe(false)
+    })
+  })
+
+  it('context-bound export fields update the shared store immediately', async () => {
+    render(
+      <>
+        <ExportModal {...baseProps} initialFormat="render" />
+        <SettingsProbe />
+      </>,
+    )
+
+    fireEvent.click(screen.getByLabelText('exportModal.renderModePreview'))
+
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects.find(select => select.value === 'none'), { target: { value: 'fill' } })
+    fireEvent.change(selects.find(select => select.value === 'random'), { target: { value: 'pattern' } })
+
+    const scaleInputs = [...document.querySelectorAll('input[type="number"][min="100"]')]
+    fireEvent.change(scaleInputs[0], { target: { value: '110' } })
+    fireEvent.change(scaleInputs[1], { target: { value: '140' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: /exportModal\.kenBurns$/ }))
+
+    await waitFor(() => {
+      const settings = JSON.parse(screen.getByTestId('export-settings').textContent)
+      expect(settings).toMatchObject({
+        scaleMode: 'fill',
+        renderMode: 'preview',
+        kenBurns: false,
+        kenBurnsMode: 'pattern',
+      })
+      expect(String(settings.kenBurnsScaleMin)).toBe('110')
+      expect(String(settings.kenBurnsScaleMax)).toBe('140')
+    })
   })
 
   it('shows render progress and cancels the active render', () => {

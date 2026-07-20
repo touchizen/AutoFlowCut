@@ -6,13 +6,14 @@
  *  2) Integration: 실제 AudioPanel을 렌더해 비오디오 클릭 시 모달이 진짜 안 열리는지 확인
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render as rtlRender, fireEvent, waitFor, act } from '@testing-library/react'
+import { fireEvent, waitFor, act } from '@testing-library/react'
 import AudioTimeline from '../../src/components/AudioTimeline/AudioTimeline'
 import { AUDIO_CLIP_CLICK_DELAY_MS } from '../../src/components/AudioTimeline/interactionTiming'
 import AudioPanel from '../../src/components/AudioPanel'
 import { I18nProvider } from '../../src/hooks/useI18n'
+import { renderWithExportSettings } from '../utils/renderWithExportSettings'
 
-const render = (ui, options) => rtlRender(<I18nProvider>{ui}</I18nProvider>, options)
+const render = (ui, options) => renderWithExportSettings(<I18nProvider>{ui}</I18nProvider>, options)
 
 const audioPackage = {
   folderPath: '/audio',

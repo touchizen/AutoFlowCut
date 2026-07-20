@@ -1070,8 +1070,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     zoomWheelHint: 'Cmd/Ctrl + Wheel',
     kenBurns: 'Ken Burns Effect',
     kenBurnsLabel: 'Ken Burns Effect',
-    kenBurnsDesc: 'Apply automatic zoom/pan animation to images (enabled at export time)',
-    kenBurnsToast: 'Ken Burns effect is applied at export time. Enable the Ken Burns option in the Export modal and export.',
+    kenBurnsDesc: 'Apply automatic zoom/pan animation to image previews and exports',
   },
 
   // History

@@ -125,6 +125,39 @@ describe('useExportSettings', () => {
       const stored = JSON.parse(localStorage.getItem('exportSettings'))
       expect(stored.scaleMode).toBe('fit')
     })
+
+    it('같은 tick의 두 updateSetting을 모두 반영한다', async () => {
+      const { result } = renderHook(() => useExportSettings())
+
+      await vi.waitFor(() => {
+        expect(result.current.isLoaded).toBe(true)
+      })
+
+      act(() => {
+        result.current.updateSetting('kenBurns', false)
+        result.current.updateSetting('kenBurnsMode', 'pattern')
+      })
+
+      expect(result.current.settings.kenBurns).toBe(false)
+      expect(result.current.settings.kenBurnsMode).toBe('pattern')
+    })
+
+    it('state 변경 뒤에도 saveSettings와 updateSetting 참조가 안정적이다', async () => {
+      const { result } = renderHook(() => useExportSettings())
+
+      await vi.waitFor(() => {
+        expect(result.current.isLoaded).toBe(true)
+      })
+      const firstSaveSettings = result.current.saveSettings
+      const firstUpdateSetting = result.current.updateSetting
+
+      act(() => {
+        result.current.updateSetting('kenBurns', false)
+      })
+
+      expect(result.current.saveSettings).toBe(firstSaveSettings)
+      expect(result.current.updateSetting).toBe(firstUpdateSetting)
+    })
   })
 
   // ============================================================
@@ -154,7 +187,7 @@ describe('useExportSettings', () => {
       expect(result.current.settings.pathPreset).toBe('capcut')
     })
 
-    it('removes localStorage key on reset', async () => {
+    it('persists default settings on reset', async () => {
       const { result } = renderHook(() => useExportSettings())
 
       await act(async () => {
@@ -167,7 +200,9 @@ describe('useExportSettings', () => {
         await result.current.resetSettings()
       })
 
-      expect(localStorage.getItem('exportSettings')).toBeNull()
+      await vi.waitFor(() => {
+        expect(JSON.parse(localStorage.getItem('exportSettings'))).toEqual(result.current.DEFAULT_SETTINGS)
+      })
     })
   })
 

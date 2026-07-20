@@ -9,10 +9,10 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } fr
 import { useAudioTimeline, collectPlayableClips } from './useAudioTimeline'
 import { useVideoPosters } from './useVideoPosters'
 import { useI18n } from '../../hooks/useI18n'
+import { useExportSettingsContext } from '../../contexts/ExportSettingsContext'
 import { formatDuration } from '../../utils/formatters'
 import { getVideoDisabledField } from '../../utils/sceneMedia'
 import { readMonitorMaster } from '../../utils/monitorAudioMaster'
-import { toast } from '../Toast'
 import TimeRuler from './TimeRuler'
 import TrackLane from './TrackLane'
 import TimelineFlagButton from './TimelineFlagButton'
@@ -81,6 +81,7 @@ function formatTC(ms) {
 
 export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange, onHiddenRolesChange, onSceneUpdate, onTitleClick = null, titleActive = false }) {
   const { t } = useI18n()
+  const { settings, updateSetting } = useExportSettingsContext()
   // 영상 클립 호버 👁 → 해당 씬의 i2v/t2v export 제외 플래그 토글 (falsy=포함).
   const handleToggleVideo = useCallback((clip) => {
     if (!onSceneUpdate || !clip?.sceneRef) return
@@ -1022,18 +1023,17 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           </span>
           <label
             className="atl-kb-toggle"
-            onClick={(e) => {
-              // 실제 토글 X — 클릭만 받아서 안내 토스트 표시
-              e.preventDefault()
-              toast.info(t('audioTimeline.kenBurnsToast'))
-            }}
             onMouseEnter={(e) => showBtnTooltip(e, {
               label: t('audioTimeline.kenBurnsLabel'),
               desc: t('audioTimeline.kenBurnsDesc'),
             })}
             onMouseLeave={hideBtnTooltip}
           >
-            <input type="checkbox" checked={false} readOnly tabIndex={-1} />
+            <input
+              type="checkbox"
+              checked={settings.kenBurns}
+              onChange={() => updateSetting('kenBurns', !settings.kenBurns)}
+            />
             <span>{t('audioTimeline.kenBurns')}</span>
           </label>
         </div>

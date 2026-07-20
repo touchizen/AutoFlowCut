@@ -19,6 +19,7 @@ vi.mock('../../../src/components/AudioTimeline/Clip', async (importOriginal) => 
 
 import AudioTimeline from '../../../src/components/AudioTimeline/AudioTimeline'
 import TrackLane from '../../../src/components/AudioTimeline/TrackLane'
+import { renderWithExportSettings } from '../../utils/renderWithExportSettings'
 
 const clipAt = (index, extra = {}) => ({
   id: `clip_${index}`,
@@ -172,7 +173,7 @@ describe('TrackLane clip virtualization', () => {
       endMs: clip.endMs,
       text: clip.label,
     }))
-    const { container } = render(
+    const { container } = renderWithExportSettings(
       <AudioTimeline audioPackage={null} scenes={[]} srtEntries={srtEntries} />
     )
 

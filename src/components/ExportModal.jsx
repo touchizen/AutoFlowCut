@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useLayoutEffect } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { useAuth } from '../contexts/AuthContext'
-import { useExportSettings } from '../hooks/useExportSettings'
+import { useExportSettingsContext } from '../contexts/ExportSettingsContext'
 import { useModalVisibility } from '../hooks/useModalVisibility'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { normalizeExportFormat } from '../utils/exportFormat'
@@ -58,7 +58,15 @@ export const ExportModal = ({
 }) => {
   const { t, lang } = useI18n()
   const { isAuthenticated, subscription } = useAuth()
-  const { settings: savedSettings, isLoaded, saveSettings } = useExportSettings()
+  const { settings, isLoaded, saveSettings, updateSetting } = useExportSettingsContext()
+  const {
+    scaleMode,
+    renderMode,
+    kenBurns,
+    kenBurnsMode,
+    kenBurnsScaleMin,
+    kenBurnsScaleMax,
+  } = settings
 
   // OS 감지 (기본값 결정용)
   const detectedMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
@@ -78,37 +86,26 @@ export const ExportModal = ({
   const [pathPreset, setPathPreset] = useState('capcut')
   const [pathManuallyEdited, setPathManuallyEdited] = useState(false)
   const [pathCopied, setPathCopied] = useState(false)
-  const [scaleMode, setScaleMode] = useState('none')
   const [includeSubtitle, setIncludeSubtitle] = useState(true)
-  const [renderMode, setRenderMode] = useState('final')
   const [renderBurnSubtitle, setRenderBurnSubtitle] = useState(true)
-  const [kenBurns, setKenBurns] = useState(true)
-  const [kenBurnsMode, setKenBurnsMode] = useState('random')
   const [kenBurnsCycle, setKenBurnsCycle] = useState(5)
-  const [kenBurnsScaleMin, setKenBurnsScaleMin] = useState(100)
-  const [kenBurnsScaleMax, setKenBurnsScaleMax] = useState(130)
   const [selectedOS, setSelectedOS] = useState(detectedMac ? 'mac' : 'windows')
   const [detectedBasePath, setDetectedBasePath] = useState('')  // 감지된 CapCut basePath
 
   // 현재 OS에 해당하는 프리셋 목록
   const currentPresets = PATH_PRESETS[selectedOS] || PATH_PRESETS.windows
+  const didInitRef = useRef(false)
 
   // 저장된 설정 로드
   useEffect(() => {
-    if (isLoaded) {
-      setScaleMode(savedSettings.scaleMode || 'none')
-      setIncludeSubtitle(savedSettings.includeSubtitle !== false)
-      setRenderMode(savedSettings.renderMode === 'preview' ? 'preview' : 'final')
-      setRenderBurnSubtitle(savedSettings.renderBurnSubtitle !== false)
-      setKenBurns(savedSettings.kenBurns !== false)
-      setKenBurnsMode(savedSettings.kenBurnsMode || 'random')
-      setKenBurnsCycle(savedSettings.kenBurnsCycle || 5)
-      setKenBurnsScaleMin(savedSettings.kenBurnsScaleMin || 100)
-      setKenBurnsScaleMax(savedSettings.kenBurnsScaleMax || 130)
-      // pathPreset 로드
-      setPathPreset(savedSettings.pathPreset || 'capcut')
-    }
-  }, [isLoaded, savedSettings])
+    if (!isLoaded || didInitRef.current) return
+    didInitRef.current = true
+    setIncludeSubtitle(settings.includeSubtitle !== false)
+    setRenderBurnSubtitle(settings.renderBurnSubtitle !== false)
+    setKenBurnsCycle(settings.kenBurnsCycle || 5)
+    // pathPreset 로드
+    setPathPreset(settings.pathPreset || 'capcut')
+  }, [isLoaded, settings])
 
   // 모달 열릴 때 진입에서 고른 포맷으로 초기화 (모달은 unmount 안 되므로 useState 초기값만으론 부족).
   // useLayoutEffect — paint 전 동기 적용해 "이전 탭이 한 프레임 보이는" 깜빡임 방지.
@@ -238,15 +235,9 @@ export const ExportModal = ({
   const persistOptions = () => {
     saveSettings({
       pathPreset,
-      scaleMode,
       includeSubtitle,
-      renderMode,
       renderBurnSubtitle,
-      kenBurns,
-      kenBurnsMode,
       kenBurnsCycle: Number(kenBurnsCycle) || 5,
-      kenBurnsScaleMin: Number(kenBurnsScaleMin) || 100,
-      kenBurnsScaleMax: Number(kenBurnsScaleMax) || 130,
     })
   }
 
@@ -526,7 +517,7 @@ export const ExportModal = ({
                     name="render-mode"
                     value="preview"
                     checked={renderMode === 'preview'}
-                    onChange={(e) => setRenderMode(e.target.value)}
+                    onChange={(e) => updateSetting('renderMode', e.target.value)}
                   />
                   <span>{t('exportModal.renderModePreview')}</span>
                 </label>
@@ -536,7 +527,7 @@ export const ExportModal = ({
                     name="render-mode"
                     value="final"
                     checked={renderMode === 'final'}
-                    onChange={(e) => setRenderMode(e.target.value)}
+                    onChange={(e) => updateSetting('renderMode', e.target.value)}
                   />
                   <span>{t('exportModal.renderModeFinal')}</span>
                 </label>
@@ -684,7 +675,7 @@ export const ExportModal = ({
             </label>
             <select
               value={scaleMode}
-              onChange={(e) => setScaleMode(e.target.value)}
+              onChange={(e) => updateSetting('scaleMode', e.target.value)}
               style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #444', background: '#1a1a1a', color: '#fff', fontSize: '0.9rem' }}
             >
               <option value="fill">📐 Fill - {t('exportModal.scaleFill')}</option>
@@ -704,7 +695,7 @@ export const ExportModal = ({
               <input
                 type="checkbox"
                 checked={kenBurns}
-                onChange={(e) => setKenBurns(e.target.checked)}
+                onChange={(e) => updateSetting('kenBurns', e.target.checked)}
               />
               <span>🎬 {t('exportModal.kenBurns')}</span>
             </label>
@@ -716,7 +707,7 @@ export const ExportModal = ({
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <select
                     value={kenBurnsMode}
-                    onChange={(e) => setKenBurnsMode(e.target.value)}
+                    onChange={(e) => updateSetting('kenBurnsMode', e.target.value)}
                     style={{ padding: '4px 8px', borderRadius: '4px' }}
                     title={t('exportModal.kenBurnsModeTooltip')}
                   >
@@ -746,7 +737,7 @@ export const ExportModal = ({
                     min="100"
                     max="150"
                     value={kenBurnsScaleMin}
-                    onChange={(e) => setKenBurnsScaleMin(e.target.value)}
+                    onChange={(e) => updateSetting('kenBurnsScaleMin', e.target.value)}
                     style={{ width: '55px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc', textAlign: 'center' }}
                   />
                   <span>~</span>
@@ -755,7 +746,7 @@ export const ExportModal = ({
                     min="100"
                     max="150"
                     value={kenBurnsScaleMax}
-                    onChange={(e) => setKenBurnsScaleMax(e.target.value)}
+                    onChange={(e) => updateSetting('kenBurnsScaleMax', e.target.value)}
                     style={{ width: '55px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc', textAlign: 'center' }}
                   />
                   <span>%</span>
