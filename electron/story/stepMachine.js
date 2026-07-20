@@ -21,6 +21,7 @@ import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/sto
 // 순수 함수(TextDecoder만 사용) — renderer 전용 의존성이 없어 main에서도 그대로 쓴다.
 import { decodeTextBytes } from '../../src/utils/decodeTextFile.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
+import { extractMentionNames, formatMentionToken } from '../../src/utils/mentionParser.js'
 import { runScenesSplitExperiment } from './storySplitExperiment.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
@@ -760,13 +761,33 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     }
     return names
   }
-  // V2: 멘션 문법(mentionParser.MENTION_RE)에 맞는 이름만 @멘션 가능 — 공백 포함 이름은 불가.
-  const MENTION_SAFE = /^[A-Za-z0-9_\-가-힣]+$/
-  // V2: 프롬프트에 @이름 멘션 주입(Flow·API 공통 레퍼런스 지정). 멘션-불가 이름은 생략(태그 폴백).
+  // V2: 프롬프트에 @이름 멘션 주입(Flow·API 공통 레퍼런스 지정). 표현 불가 이름은 생략(태그 폴백).
   function withMentions(prompt, names) {
-    const mentions = names.filter((n) => MENTION_SAFE.test(n)).map((n) => `@${n}`)
+    const existing = new Set(extractMentionNames(prompt).map((name) => name.toLowerCase()))
+    const mentions = []
+    for (const name of names) {
+      const key = String(name).toLowerCase()
+      if (existing.has(key)) continue
+      const token = formatMentionToken(name)
+      if (!token) continue
+      existing.add(key)
+      mentions.push(token)
+    }
     if (!mentions.length) return prompt || ''
     return prompt ? `${mentions.join(' ')} ${prompt}` : mentions.join(' ')
+  }
+
+  // 구버전이 만든 `@공백 이름본문...`은 known canonical name으로만 brace form을 복구한다.
+  // 뒤 경계는 일부러 검사하지 않는다 — ep02의 `@도둑 우두머리A young...` 형태도 치유 대상이다.
+  function repairLegacySpacedMentions(prompt, names) {
+    let repaired = prompt || ''
+    const candidates = [...new Set(names.map((name) => String(name)))]
+      .filter((name) => name.includes(' ') && formatMentionToken(name)?.startsWith('@{'))
+      .sort((a, b) => b.length - a.length || a.localeCompare(b))
+    for (const name of candidates) {
+      repaired = repaired.split(`@${name}`).join(`@{${name}}`)
+    }
+    return repaired
   }
 
   function mapScene(s, timing) {
@@ -774,11 +795,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // staleVideoAt 5개로 제한 — sceneNo(scenes.json 전용 표시용 순번)는 push payload에 넣지 않는다.
     const measured = typeof s.startSec === 'number' && typeof s.endSec === 'number'
     const charNames = sceneCharacterNames(s)
+    const imagePrompt = repairLegacySpacedMentions(s.imagePrompt || '', charNames)
+    const videoPrompt = repairLegacySpacedMentions(s.videoPrompt || '', charNames)
     return {
       storyId: s.storyId,
       // V2: 등장 캐릭터 @멘션 주입 → Flow/API 둘 다 캐릭터 레퍼런스 이미지를 conditioning으로 붙인다.
-      prompt: withMentions(s.imagePrompt || '', charNames),
-      videoT2VPrompt: withMentions(s.videoPrompt || '', charNames),
+      prompt: withMentions(imagePrompt, charNames),
+      videoT2VPrompt: withMentions(videoPrompt, charNames),
       // IP1: audio 실측(finalScenes startSec/endSec)이 있으면 timing의 유일 소스. 없으면(대략 모드)
       // buildFallbackTimeline 글자수 추정으로 폴백(스펙 §3 대략 모드 / §7 흐름A).
       startTime: measured ? s.startSec : timing.startTime,

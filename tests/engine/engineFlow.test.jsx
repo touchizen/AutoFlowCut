@@ -1304,6 +1304,57 @@ describe('#R33: planMentionRouting (pure)', () => {
     expect(r.kind).toBe('error')
     expect(r.error).toContain('king')
   })
+
+  it('braced unresolved error reports the full inner name', () => {
+    const r = planMentionRouting('@{도둑 우두머리} 등장', [], [synced])
+    expect(r).toEqual({
+      kind: 'error',
+      error: 'Unresolved @mention(s): 도둑 우두머리',
+    })
+  })
+
+  it('braced unresolved character with mediaId falls back without prefix shortening', () => {
+    const boss = {
+      id: 4,
+      name: '도둑 우두머리',
+      type: 'character',
+      flowNameSyncStatus: 'failed',
+      mediaId: 'boss-media',
+    }
+    const r = planMentionRouting('@{도둑 우두머리}A young man', [], [boss])
+    expect(r.kind).toBe('image')
+    expect(r.prompt).toBe('도둑 우두머리A young man')
+    expect(r.referenceImages.map(ref => ref.mediaId)).toEqual(['boss-media'])
+  })
+
+  it('braced unresolved fallback does not strip a particle to a shorter ref', () => {
+    const chulsoo = {
+      id: 5,
+      name: '철수',
+      type: 'character',
+      flowNameSyncStatus: 'failed',
+      mediaId: 'chulsoo-media',
+    }
+    const r = planMentionRouting('@{철수가} 달린다', [], [chulsoo])
+    expect(r.kind).toBe('error')
+    expect(r.error).toContain('철수가')
+  })
+
+  it('braced unresolved fallback matches the exact full name case-insensitively', () => {
+    const bob = {
+      id: 6,
+      name: 'Bob',
+      type: 'character',
+      flowNameSyncStatus: 'failed',
+      mediaId: 'bob-media',
+    }
+
+    const r = planMentionRouting('@{BOB} walks', [], [bob])
+
+    expect(r.kind).toBe('image')
+    expect(r.prompt).toBe('BOB walks')
+    expect(r.referenceImages.map(ref => ref.mediaId)).toEqual(['bob-media'])
+  })
 })
 
 describe('computeSceneGapReferences (pure)', () => {
@@ -1347,6 +1398,22 @@ describe('computeSceneGapReferences (pure)', () => {
     )
 
     expect(result.map(r => r.mediaId)).toEqual(['media-bandit'])
+  })
+
+  it('excludes a canonical space-name chip produced from a braced mention', () => {
+    const chipRef = {
+      id: 6,
+      type: 'character',
+      name: '도둑 우두머리',
+      entityId: 'boss-entity',
+      flowNameSyncStatus: 'synced',
+      mediaId: 'boss-media',
+    }
+    const gapRef = { name: '골목 배경', mediaId: 'alley-media' }
+    const routing = planMentionRouting('@{도둑 우두머리} 등장', [], [chipRef])
+
+    expect(routing.kind).toBe('scene')
+    expect(computeSceneGapReferences([chipRef, gapRef], routing.segments)).toEqual([gapRef])
   })
 })
 

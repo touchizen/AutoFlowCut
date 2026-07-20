@@ -48,7 +48,7 @@ const api = () => window.electronAPI
  *
  * @param {string} prompt
  * @param {Array} referenceImages - 이미 주입 예정인 매칭 ref 이미지들
- * @param {Array<{name:string}>} unresolved - parseSceneMentions 의 미해결 멘션
+ * @param {Array<{name:string,exact?:boolean}>} unresolved - parseSceneMentions 의 미해결 멘션
  * @param {Array} references - 전체 ref 목록(effectiveRefs)
  * @returns {{ prompt: string, referenceImages: Array } | null}
  */
@@ -57,11 +57,18 @@ export function planUnresolvedMentionFallback(prompt, referenceImages, unresolve
   // #R34-fix: @멘션은 character 의도다. 같은 이름의 비-character(scene/style) ref 가 mediaId 를
   //   가졌다고 character 멘션 폴백을 가로채면 안 된다 → character 만 lookup 대상으로 둔다.
   const byName = new Map()
-  for (const r of references || []) { if (r?.name && r.type === 'character') byName.set(String(r.name).toLowerCase(), r) }
+  const byExactName = new Map()
+  for (const r of references || []) {
+    if (r?.name && r.type === 'character') {
+      byName.set(String(r.name).toLowerCase(), r)
+      byExactName.set(String(r.name).toLowerCase(), r)
+    }
+  }
   const fallbackRefs = []
   for (const u of unresolved) {
-    const resolved = resolveMentionPrefix(u.name, byName)
-    const ref = resolved?.ref
+    const ref = u.exact
+      ? byExactName.get(String(u.name).toLowerCase())
+      : resolveMentionPrefix(u.name, byName)?.ref
     if (!ref || !ref.mediaId) return null  // 주입 불가 → 폴백 포기(하드 실패 유지)
     fallbackRefs.push(ref)
   }
