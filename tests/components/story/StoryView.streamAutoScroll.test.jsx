@@ -63,6 +63,20 @@ const promptsPipeline = (count) => basePipeline({
   previewPrompts: promptPreview(count),
 })
 
+const scenesRevisingPipeline = (count) => basePipeline({
+  state: { steps: { script: { status: 'done' }, scenes: { status: 'running', reviewOnly: true, updatedAt: '2026-07-20T00:00:00Z' }, audio: { status: 'done' }, prompts: { status: 'done' } } },
+  scenes: promptScenes.map((scene) => ({ ...scene, segments: [{ speaker: 'narrator', text: `old-${scene.sceneNo}` }] })),
+  previewScenes: scenePreview(count),
+  scenesRevising: true,
+})
+
+const promptsRevisingPipeline = (count) => basePipeline({
+  state: { steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'done' }, prompts: { status: 'running', reviewOnly: true, updatedAt: '2026-07-20T00:00:00Z' } } },
+  scenes: promptScenes,
+  previewPrompts: promptPreview(count),
+  promptsRevising: true,
+})
+
 describe('대본 스트리밍 자동 스크롤', () => {
   it('델타가 들어오면 바닥으로 따라간다', () => {
     const { container, rerender } = render(<StoryView pipeline={scriptPipeline('한 줄')} />)
@@ -199,5 +213,27 @@ describe('프롬프트 ghost table 자동 스크롤', () => {
 
     rerender(<StoryView pipeline={promptsPipeline(2)} />)
     expect(el.scrollTop).toBe(300)
+  })
+})
+
+describe('수정 ghost table frontier 자동 스크롤', () => {
+  it.each([
+    ['scenes', scenesRevisingPipeline, 'scene'],
+    ['prompts', promptsRevisingPipeline, 'prompt'],
+  ])('%s revising은 마지막 수정 행의 offsetTop을 따라간다', (step, pipelineFor, frontierName) => {
+    const { container, rerender } = render(<StoryView pipeline={pipelineFor(0)} />)
+    const el = streamingTable(container, step)
+    fakeLayout(el, { scrollHeight: 1000 })
+    const rows = [...el.querySelectorAll('tbody tr')]
+    fakeRowLayout(rows[0], { offsetTop: 100, offsetHeight: 80 })
+    fakeRowLayout(rows[1], { offsetTop: 400, offsetHeight: 80 })
+    fakeRowLayout(rows[2], { offsetTop: 700, offsetHeight: 80 })
+
+    rerender(<StoryView pipeline={pipelineFor(1)} />)
+    expect(el.querySelector(`[data-${frontierName}-frontier]`)).toBe(rows[0])
+    expect(el.scrollTop).toBe(0)
+    rerender(<StoryView pipeline={pipelineFor(2)} />)
+    expect(el.querySelector(`[data-${frontierName}-frontier]`)).toBe(rows[1])
+    expect(el.scrollTop).toBe(280)
   })
 })

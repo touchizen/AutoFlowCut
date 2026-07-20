@@ -39,9 +39,11 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // scenes 단일 structured 호출의 표시 전용 좌표→scene map. 최종 scenes와 섞지 않는다.
   const [previewScenes, setPreviewScenes] = useState({})
   const [sceneThinking, setSceneThinking] = useState(false)
+  const [scenesRevising, setScenesRevising] = useState(false)
   // prompts 단일 structured 호출의 표시 전용 sceneNo→prompt map. 최종 scenes와 섞지 않는다.
   const [previewPrompts, setPreviewPrompts] = useState({})
   const [promptThinking, setPromptThinking] = useState(false)
+  const [promptsRevising, setPromptsRevising] = useState(false)
   // M3: 대본 검토 루프 진행 — { operationId, round, of, phase:'reviewing'|'revising'|'error', error? } | null.
   const [reviewProgress, setReviewProgress] = useState(null)
   // 검수 채점(몰입감) — { target, scores: number[] } | null. 라운드 순서대로 쌓아 첫→마지막 변화를
@@ -134,8 +136,10 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setSegmentProgress({})
     setPreviewScenes({})
     setSceneThinking(false)
+    setScenesRevising(false)
     setPreviewPrompts({})
     setPromptThinking(false)
+    setPromptsRevising(false)
     setProgressLog([])
     // 프로젝트 전환에서만 usage 를 리셋한다 — start() 마다가 아니다(아래 start/open 미러에
     // 넣으면 자동 진행 연쇄에서 앞 스텝 합계가 사라진다). main 의 tracker 도 machine 과 함께 죽는다.
@@ -217,12 +221,14 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         if (p.state?.steps?.scenes?.status !== 'running') {
           sceneActiveOpRef.current = null
           setSceneThinking(false)
+          setScenesRevising(false)
           setPreviewScenes((prev) => (Object.keys(prev).length ? {} : prev))
         }
         // prompts의 terminal state가 최종 진실 소스다. preview와 gate를 같이 폐기해 늦은 delta도 막는다.
         if (p.state?.steps?.prompts?.status !== 'running') {
           promptActiveOpRef.current = null
           setPromptThinking(false)
+          setPromptsRevising(false)
           // 이미 비었으면 같은 참조 유지 — 매 story:state마다 새 객체로 불필요한 리렌더 방지(F6).
           setPreviewPrompts((prev) => (Object.keys(prev).length ? {} : prev))
         }
@@ -389,6 +395,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
             if (p.kind === 'review') collectScore(p, REVIEW_TARGET_LOG_LABEL[p.target] || '대본')
             return
           }
+          if (p.kind === 'review' && p.target === 'scenes') setScenesRevising(p.phase === 'revising')
+          if (p.kind === 'review' && p.target === 'prompts') setPromptsRevising(p.phase === 'revising')
           setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
           if (p.kind === 'review') {
             const targetLabel = `${REVIEW_TARGET_LOG_LABEL[p.target] || '대본'} 검수`
@@ -476,6 +484,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     activeOpRef.current = null
     setReviewProgress(null) // M3: 새 실행 시 검토 배지 초기화(이전 error 배지 포함)
     setReviewScores(null)
+    setScenesRevising(false)
+    setPromptsRevising(false)
     return window.electronAPI.storyStart({ projectToken: tokenRef.current, step, params })
   }, [])
 
@@ -581,7 +591,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, previewScenes: {}, sceneThinking: false, previewPrompts: {}, promptThinking: false, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, previewScenes: {}, sceneThinking: false, scenesRevising: false, previewPrompts: {}, promptThinking: false, promptsRevising: false, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, previewScenes, sceneThinking, previewPrompts, promptThinking, reviewProgress, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, previewScenes, sceneThinking, scenesRevising, previewPrompts, promptThinking, promptsRevising, reviewProgress, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }

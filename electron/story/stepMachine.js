@@ -635,7 +635,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
         if (verdict !== 'revise' || !critique?.trim()) break
         sendReviewProgress('scenes', { round, of: rounds, phase: 'revising' }, opId)
-        const r = await llm.reviseScenes(scriptMd, currentScenes, currentSpeakers, critique, reviewOpts, { signal })
+        send('story:progress', { kind: 'scene-delta', phase: 'started' }, opId)
+        const r = await llm.reviseScenes(scriptMd, currentScenes, currentSpeakers, critique, reviewOpts, {
+          signal,
+          onPartialScene: (scene, index) => send('story:progress', {
+            kind: 'scene-delta',
+            chunkIndex: 0,
+            localSceneNo: index,
+            scene: sanitizePreviewScene(scene),
+          }, opId),
+        })
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
         const nextScenes = normalizeScenes(currentScenes, r?.scenes || [])
         const nextSpeakers = mergeSpeakers(ensureReferencedSpeakers(r?.speakers || [], nextScenes, currentSpeakers), { preferNewAppearance: true })
@@ -664,7 +673,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (signal?.aborted) return { scenes: currentScenes, changed }
         if (verdict !== 'revise' || !critique?.trim()) break
         sendReviewProgress('prompts', { round, of: rounds, phase: 'revising' }, opId)
-        const r = await llm.revisePrompts(currentScenes, context, critique, reviewOpts, { signal })
+        send('story:progress', { kind: 'prompt-delta', phase: 'started' }, opId)
+        const r = await llm.revisePrompts(currentScenes, context, critique, reviewOpts, {
+          signal,
+          onPartialPrompt: (scene) => send('story:progress', {
+            kind: 'prompt-delta',
+            sceneNo: Number.isInteger(scene?.sceneNo) ? scene.sceneNo : null,
+            imagePrompt: typeof scene?.imagePrompt === 'string' ? scene.imagePrompt : '',
+            videoPrompt: typeof scene?.videoPrompt === 'string' ? scene.videoPrompt : '',
+          }, opId),
+        })
         if (signal?.aborted) return { scenes: currentScenes, changed }
         const nextScenes = validatePromptMentionScenes(r?.scenes || [], context, opId)
         changed = changed || !sameJson(promptSignature(nextScenes), promptSignature(currentScenes))

@@ -930,6 +930,22 @@
   background: color-mix(in srgb, var(--primary-color) 8%, transparent);
 }
 
+.story-row-revising {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--primary-color) 4%, transparent) 0%,
+    color-mix(in srgb, var(--primary-color) 18%, transparent) 50%,
+    color-mix(in srgb, var(--primary-color) 4%, transparent) 100%
+  );
+  background-size: 220% 100%;
+  animation: story-row-revising-shimmer 1.15s linear infinite;
+}
+
+@keyframes story-row-revising-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
 /* 저장 전 streamed 값 — 텍스트 노드라 편집되지 않고 final story:state가 오면 즉시 사라진다. */
 .story-prompt-ghost,
 .story-scene-ghost {

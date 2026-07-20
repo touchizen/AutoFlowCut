@@ -394,7 +394,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewScenes = {}, sceneThinking = false, previewPrompts = {}, promptThinking = false, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewScenes = {}, sceneThinking = false, scenesRevising = false, previewPrompts = {}, promptThinking = false, promptsRevising = false, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
@@ -403,10 +403,20 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const steps = state?.steps || {}
   const scenesStreaming = steps.scenes?.status === 'running' && steps.scenes?.reviewOnly !== true
   const promptsStreaming = steps.prompts?.status === 'running' && steps.prompts?.reviewOnly !== true
+  const scenesPreviewActive = scenesStreaming || scenesRevising
+  const promptsPreviewActive = promptsStreaming || promptsRevising
   const orderedPreviewScenes = Object.values(previewScenes)
     .filter((item) => item?.scene && Number.isInteger(item.chunkIndex) && Number.isInteger(item.localSceneNo))
     .sort((a, b) => a.chunkIndex - b.chunkIndex || a.localSceneNo - b.localSceneNo)
   const scenePreviewCount = orderedPreviewScenes.length
+  const revisionPreviewScenesByIndex = new Map(
+    orderedPreviewScenes
+      .filter((item) => item.chunkIndex === 0)
+      .map((item) => [item.localSceneNo, item]),
+  )
+  const sceneFrontierIndex = orderedPreviewScenes.length
+    ? orderedPreviewScenes[orderedPreviewScenes.length - 1].localSceneNo
+    : -1
   const promptPreviewCount = Object.keys(previewPrompts).length
   const promptFrontierIndex = scenes.reduce((frontier, scene, index) => (
     previewPrompts[scene.sceneNo] ? index : frontier
@@ -446,6 +456,18 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const promptStreamPercent = scenes.length > 0
     ? Math.min(100, Math.max(0, Math.round((promptPreviewCount / scenes.length) * 100)))
     : 0
+  const sceneRevisionTotal = Math.max(scenes.length, scenePreviewCount)
+  const sceneRevisionProgress = t('story.stream.sceneRevisionProgress', '씬 수정 {count}/{total}', {
+    count: scenePreviewCount,
+    total: sceneRevisionTotal,
+  })
+  const sceneRevisionPercent = sceneRevisionTotal > 0
+    ? Math.min(100, Math.max(0, Math.round((scenePreviewCount / sceneRevisionTotal) * 100)))
+    : 0
+  const promptRevisionProgress = t('story.stream.promptRevisionProgress', '프롬프트 수정 {count}/{total}', {
+    count: promptPreviewCount,
+    total: scenes.length,
+  })
 
   // 재설계 §1 — script 스텝 2-phase. 재오픈 복원 시 scriptText가 있으면 바로 대본 작업
   // 화면(editor). setup→editor 승격은 명시 트리거(시작/붙여넣기 시작/스텝퍼 script 클릭)에서만.
@@ -483,10 +505,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const promptsTableRef = useRef(null)
   const scenesStickToBottomRef = useRef(true)
   const promptsStickToBottomRef = useRef(true)
+  const scenesAutoScrollTopRef = useRef(null)
   const promptsAutoScrollTopRef = useRef(null)
   const handleScenesTableScroll = () => {
     const el = scenesTableRef.current
     if (!el) return
+    if (scenesAutoScrollTopRef.current === el.scrollTop) {
+      scenesAutoScrollTopRef.current = null
+      return
+    }
+    scenesAutoScrollTopRef.current = null
     scenesStickToBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
   }
   const handlePromptsTableScroll = () => {
@@ -500,15 +528,26 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     promptsStickToBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
   }
   useEffect(() => {
-    if (!scenesStreaming) {
+    if (!scenesPreviewActive) {
       scenesStickToBottomRef.current = true
+      scenesAutoScrollTopRef.current = null
       return
     }
     const el = scenesTableRef.current
-    if (el && scenesStickToBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [scenesStreaming, scenePreviewCount])
+    if (!el || !scenesStickToBottomRef.current) return
+    if (!scenesRevising) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
+    const frontierRow = el.querySelector('[data-scene-frontier]')
+    if (!frontierRow) return
+    const nextScrollTop = Math.max(0, frontierRow.offsetTop + frontierRow.offsetHeight - el.clientHeight)
+    if (el.scrollTop === nextScrollTop) return
+    scenesAutoScrollTopRef.current = nextScrollTop
+    el.scrollTop = nextScrollTop
+  }, [scenesPreviewActive, scenesRevising, sceneFrontierIndex, scenePreviewCount])
   useEffect(() => {
-    if (!promptsStreaming) {
+    if (!promptsPreviewActive) {
       promptsStickToBottomRef.current = true
       promptsAutoScrollTopRef.current = null
       return
@@ -521,7 +560,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     if (el.scrollTop === nextScrollTop) return
     promptsAutoScrollTopRef.current = nextScrollTop
     el.scrollTop = nextScrollTop
-  }, [promptsStreaming, promptFrontierIndex])
+  }, [promptsPreviewActive, promptsRevising, promptFrontierIndex])
 
   // 재오픈 phase 승격 — open() 응답이 마운트 뒤 도착해 pipeline.scriptText가 늦게 채워지면
   // 초기 phase가 setup으로 굳어 있다. 사용자가 [⚙ 설정으로]를 눌러 명시적으로 setup에 온
@@ -1917,11 +1956,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
-            {scenesStreaming && (
+            {scenesPreviewActive && (
               <StreamingProgressBar
-                label={t('story.scenes.running', '씬 분리 진행 중')}
-                valueText={sceneStreamProgress}
-                value={sceneStreamPercent}
+                label={scenesRevising ? sceneRevisionProgress : t('story.scenes.running', '씬 분리 진행 중')}
+                valueText={scenesRevising ? sceneRevisionProgress : sceneStreamProgress}
+                value={scenesRevising ? sceneRevisionPercent : sceneStreamPercent}
               />
             )}
             {/* 생성 중에도 테이블을 유지하고 streamed scene을 표시 전용 ghost 행으로 보여준다. */}
@@ -1956,7 +1995,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               </div>
             )}
             <StreamingTableViewport
-              active={scenesStreaming}
+              active={scenesPreviewActive}
               step="scenes"
               containerRef={scenesTableRef}
               onScroll={handleScenesTableScroll}
@@ -1970,7 +2009,35 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   </tr>
                 </thead>
                 <tbody>
-                  {steps.scenes?.status === 'running' && !scenesReviewRun
+                  {scenesRevising
+                    ? Array.from({ length: Math.max(scenes.length, sceneFrontierIndex + 1) }, (_, si) => {
+                        const preview = revisionPreviewScenesByIndex.get(si)?.scene || null
+                        const scene = preview || scenes[si]
+                        const segments = scene?.segments || []
+                        return segments.map((seg, gi) => {
+                          const frontier = !!preview && si === sceneFrontierIndex && gi === segments.length - 1
+                          const className = [
+                            seg.type === 'sfx' ? 'story-sfx-row' : '',
+                            frontier ? 'story-row-revising' : '',
+                          ].filter(Boolean).join(' ') || undefined
+                          return (
+                            <tr
+                              key={`${scenes[si]?.storyId ?? `revision-${si}`}-${gi}`}
+                              className={className}
+                              data-scene-frontier={frontier ? '' : undefined}
+                            >
+                              <td>{preview ? <span className="story-scene-ghost">{si + 1}</span> : si + 1}</td>
+                              <td>{preview
+                                ? <span className="story-scene-ghost">{seg.type === 'sfx' ? t('story.audio.sfxLabel', 'SFX') : seg.speaker}</span>
+                                : (seg.type === 'sfx' ? t('story.audio.sfxLabel', 'SFX') : seg.speaker)}</td>
+                              <td>{preview
+                                ? <span className={`story-scene-ghost${seg.type === 'sfx' ? ' story-sfx-desc' : ''}`}>{seg.text}</span>
+                                : (seg.type === 'sfx' ? <span className="story-sfx-desc">{seg.description}</span> : renderNarrationCell(seg))}</td>
+                            </tr>
+                          )
+                        })
+                      })
+                    : scenesStreaming
                     ? orderedPreviewScenes.flatMap(({ chunkIndex, localSceneNo, scene }, si) =>
                         (scene.segments || []).map((seg, gi) => (
                           <tr key={`preview-${chunkIndex}-${localSceneNo}-${gi}`} className={seg.type === 'sfx' ? 'story-sfx-row' : undefined}>
@@ -2309,10 +2376,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
-            {promptsStreaming && (
+            {promptsPreviewActive && (
               <StreamingProgressBar
-                label={t('story.prompts.running', '프롬프트 생성 중')}
-                valueText={promptStreamProgress}
+                label={promptsRevising ? promptRevisionProgress : t('story.prompts.running', '프롬프트 생성 중')}
+                valueText={promptsRevising ? promptRevisionProgress : promptStreamProgress}
                 value={promptStreamPercent}
               />
             )}
@@ -2329,7 +2396,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               </>
             )}
             <StreamingTableViewport
-              active={promptsStreaming}
+              active={promptsPreviewActive}
               step="prompts"
               containerRef={promptsTableRef}
               onScroll={handlePromptsTableScroll}
@@ -2344,13 +2411,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 </thead>
                 <tbody>
                   {scenes.map((sc, i) => {
-                    const preview = steps.prompts?.status === 'running' && !promptsReviewRun
+                    const preview = promptsPreviewActive
                       ? previewPrompts[sc.sceneNo]
                       : null
+                    const frontier = i === promptFrontierIndex
                     return (
                       <tr
                         key={sc.storyId ?? i}
-                        data-prompt-frontier={i === promptFrontierIndex ? '' : undefined}
+                        className={promptsRevising && frontier ? 'story-row-revising' : undefined}
+                        data-prompt-frontier={frontier ? '' : undefined}
                       >
                         <td>{i + 1}</td>
                         <td>{preview

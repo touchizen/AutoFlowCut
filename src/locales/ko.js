@@ -101,6 +101,8 @@ export default {
       sceneProgress: '씬 {count}개 · ~{percent}%',
       sceneCount: '씬 {count}개',
       promptProgress: '프롬프트 {count}/{total}',
+      sceneRevisionProgress: '씬 수정 {count}/{total}',
+      promptRevisionProgress: '프롬프트 수정 {count}/{total}',
     },
     step: {
       setup: '설정',

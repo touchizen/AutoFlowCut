@@ -101,6 +101,8 @@ export default {
       sceneProgress: '{count} scenes · ~{percent}%',
       sceneCount: '{count} scenes',
       promptProgress: 'Prompts {count}/{total}',
+      sceneRevisionProgress: 'Revising scenes {count}/{total}',
+      promptRevisionProgress: 'Revising prompts {count}/{total}',
     },
     step: {
       setup: 'Setup',

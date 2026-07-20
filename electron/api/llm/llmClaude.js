@@ -481,9 +481,16 @@ export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { sign
   return { verdict, critique: out.critique || '' }
 }
 
-export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, queryImpl } = {}) {
+export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, queryImpl, onPartialScene } = {}) {
   const prompt = buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, opts)
-  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
+  const makePartialParser = () => createPartialScenesParser({ onItem: onPartialScene })
+  let partialParser = typeof onPartialScene === 'function' ? makePartialParser() : null
+  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, {
+    signal,
+    queryImpl,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+    onPartialReset: partialParser ? () => { partialParser = makePartialParser() } : undefined,
+  })
   const revisedScenes = out.scenes || []
   validateScenesSegments(revisedScenes)
   return { scenes: revisedScenes, speakers: out.speakers || [] }
@@ -496,9 +503,16 @@ export async function reviewPrompts(scenes, context, opts = {}, { signal, queryI
   return { verdict, critique: out.critique || '' }
 }
 
-export async function revisePrompts(scenes, context, critique, opts = {}, { signal, queryImpl } = {}) {
+export async function revisePrompts(scenes, context, critique, opts = {}, { signal, queryImpl, onPartialPrompt } = {}) {
   const prompt = buildPromptsRevisePrompt(scenes, context, critique, opts)
-  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
+  const makePartialParser = () => createPartialScenesParser({ onItem: onPartialPrompt })
+  let partialParser = typeof onPartialPrompt === 'function' ? makePartialParser() : null
+  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, {
+    signal,
+    queryImpl,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+    onPartialReset: partialParser ? () => { partialParser = makePartialParser() } : undefined,
+  })
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
   for (const s of scenes) {
     const p = byNo.get(s.sceneNo)

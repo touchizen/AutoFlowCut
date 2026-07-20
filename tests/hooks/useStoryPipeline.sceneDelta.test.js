@@ -36,6 +36,44 @@ const sceneEvent = (over = {}) => ({
 })
 
 describe('useStoryPipeline scene-delta preview', () => {
+  it('scenesRevising은 활성 scenes review의 revising 동안만 true다', async () => {
+    const { result } = await openHook()
+    expect(result.current.scenesRevising).toBe(false)
+
+    act(() => listeners['story:state']({
+      projectToken: 'tok1',
+      operationId: 'scene-op-1',
+      state: { steps: { scenes: { status: 'running', reviewOnly: true } } },
+    }))
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'scene-op-1', kind: 'review', target: 'scenes', phase: 'reviewing', round: 1, of: 1,
+    }))
+    expect(result.current.scenesRevising).toBe(false)
+
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'stale-op', kind: 'review', target: 'scenes', phase: 'revising', round: 1, of: 1,
+    }))
+    expect(result.current.scenesRevising).toBe(false)
+
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'scene-op-1', kind: 'review', target: 'scenes', phase: 'revising', round: 1, of: 1,
+    }))
+    expect(result.current.scenesRevising).toBe(true)
+
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'scene-op-1', kind: 'review', target: 'scenes', phase: 'reviewing', round: 2, of: 2,
+    }))
+    expect(result.current.scenesRevising).toBe(false)
+
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'scene-op-1', kind: 'review', target: 'scenes', phase: 'revising', round: 2, of: 2,
+    }))
+    act(() => listeners['story:state']({
+      projectToken: 'tok1', operationId: 'scene-op-1', state: { steps: { scenes: { status: 'done' } } },
+    }))
+    expect(result.current.scenesRevising).toBe(false)
+  })
+
   it('활성 op의 thinking만 표시하고 real delta와 terminal state에서 해제한다', async () => {
     const { result } = await openHook()
     expect(result.current.sceneThinking).toBe(false)

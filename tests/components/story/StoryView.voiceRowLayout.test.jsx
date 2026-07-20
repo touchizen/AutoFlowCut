@@ -137,3 +137,10 @@ describe('.story-stream-table', () => {
     expect(decl('.story-stream-table', 'overflow-y')).toBe('auto')
   })
 })
+
+describe('.story-row-revising', () => {
+  it('frontier 한 행에만 붙일 수 있는 전용 shimmer animation을 갖는다', () => {
+    expect(decl('.story-row-revising', 'animation')).toContain('story-row-revising-shimmer')
+    expect(decl('.story-row-revising', 'background')).toContain('linear-gradient')
+  })
+})

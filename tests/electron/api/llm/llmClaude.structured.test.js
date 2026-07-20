@@ -374,6 +374,36 @@ describe('llmClaude scenes/prompts review controls', () => {
     expect(out.scenes[0].sceneNo).toBe(1)
     expect(out.speakers[0].id).toBe('narrator')
   })
+  it('reviseScenes/revisePrompts는 structured stream의 닫힌 scene을 preview callback으로 전달한다', async () => {
+    const queryImpl = (final) => async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"sceneNo":1,"summary":"GHOST","segments":[{"speaker":"narrator","text":"preview"}],"imagePrompt":"GHOST-IMG","videoPrompt":"GHOST-VID"}' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: ']}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: final }
+    }
+    const onPartialScene = vi.fn()
+    const onPartialPrompt = vi.fn()
+    const promptScenes = [{ sceneNo: 1, storyId: 's1', imagePrompt: 'old', videoPrompt: 'old' }]
+    const finalPrompts = { scenes: [{ sceneNo: 1, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }] }
+
+    await expect(reviseScenes('SCRIPT', SCENES.scenes, SCENES.speakers, 'fix', {}, {
+      queryImpl: queryImpl(SCENES),
+      onPartialScene,
+    })).resolves.toEqual(SCENES)
+    await expect(revisePrompts(promptScenes, { scriptMd: 'SCRIPT' }, 'fix', {}, {
+      queryImpl: queryImpl(finalPrompts),
+      onPartialPrompt,
+    })).resolves.toEqual({
+      scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }],
+    })
+
+    expect(onPartialScene).toHaveBeenCalledWith(expect.objectContaining({ sceneNo: 1, summary: 'GHOST' }), 0)
+    expect(onPartialPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      sceneNo: 1,
+      imagePrompt: 'GHOST-IMG',
+      videoPrompt: 'GHOST-VID',
+    }), 0)
+  })
   it('reviewPrompts는 verdict/critique를 반환한다', async () => {
     const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } })
     const out = await reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, {}, { queryImpl })

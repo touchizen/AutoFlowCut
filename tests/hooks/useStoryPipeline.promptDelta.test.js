@@ -36,6 +36,44 @@ const promptEvent = (over = {}) => ({
 })
 
 describe('useStoryPipeline prompt-delta preview', () => {
+  it('promptsRevising은 활성 prompts review의 revising 동안만 true다', async () => {
+    const { result } = await openHook()
+    expect(result.current.promptsRevising).toBe(false)
+
+    act(() => listeners['story:state']({
+      projectToken: 'tok1',
+      operationId: 'prompt-op-1',
+      state: { steps: { prompts: { status: 'running', reviewOnly: true } } },
+    }))
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'prompt-op-1', kind: 'review', target: 'prompts', phase: 'reviewing', round: 1, of: 1,
+    }))
+    expect(result.current.promptsRevising).toBe(false)
+
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'stale-op', kind: 'review', target: 'prompts', phase: 'revising', round: 1, of: 1,
+    }))
+    expect(result.current.promptsRevising).toBe(false)
+
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'prompt-op-1', kind: 'review', target: 'prompts', phase: 'revising', round: 1, of: 1,
+    }))
+    expect(result.current.promptsRevising).toBe(true)
+
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'prompt-op-1', kind: 'review', target: 'prompts', phase: 'error', error: 'boom',
+    }))
+    expect(result.current.promptsRevising).toBe(false)
+
+    act(() => listeners['story:progress']({
+      projectToken: 'tok1', operationId: 'prompt-op-1', kind: 'review', target: 'prompts', phase: 'revising', round: 1, of: 1,
+    }))
+    act(() => listeners['story:state']({
+      projectToken: 'tok1', operationId: 'prompt-op-1', state: { steps: { prompts: { status: 'error' } } },
+    }))
+    expect(result.current.promptsRevising).toBe(false)
+  })
+
   it('활성 op의 thinking만 표시하고 real delta와 terminal state에서 해제한다', async () => {
     const { result } = await openHook()
     expect(result.current.promptThinking).toBe(false)

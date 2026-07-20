@@ -174,9 +174,15 @@ export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { sign
   return { verdict, critique: out.critique || '' }
 }
 
-export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, runJson = runCodexJson, onPartialScene } = {}) {
   const prompt = guardScenesPrompt(buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, opts))
-  const out = await runJson(prompt, codexSchema(SCENES_SCHEMA), runtimeOptions(opts), { signal })
+  const partialParser = typeof onPartialScene === 'function'
+    ? createPartialScenesParser({ onItem: onPartialScene })
+    : null
+  const out = await runJson(prompt, codexSchema(SCENES_SCHEMA), runtimeOptions(opts), {
+    signal,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+  })
   const revisedScenes = out.scenes || []
   validateScenesSegments(revisedScenes)
   validateVisibleSpeakerAppearances(revisedScenes, out.speakers || [], speakers)
@@ -190,9 +196,15 @@ export async function reviewPrompts(scenes, context, opts = {}, { signal, runJso
   return { verdict, critique: out.critique || '' }
 }
 
-export async function revisePrompts(scenes, context, critique, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function revisePrompts(scenes, context, critique, opts = {}, { signal, runJson = runCodexJson, onPartialPrompt } = {}) {
   const prompt = guardPrompt(buildPromptsRevisePrompt(scenes, context, critique, opts))
-  const out = await runJson(prompt, codexSchema(PROMPTS_SCHEMA), runtimeOptions(opts), { signal })
+  const partialParser = typeof onPartialPrompt === 'function'
+    ? createPartialScenesParser({ onItem: onPartialPrompt })
+    : null
+  const out = await runJson(prompt, codexSchema(PROMPTS_SCHEMA), runtimeOptions(opts), {
+    signal,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+  })
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
   for (const s of scenes) {
     const p = byNo.get(s.sceneNo)

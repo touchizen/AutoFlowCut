@@ -200,6 +200,38 @@ describe('llmCodex adapter', () => {
       .resolves.toEqual({ scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'IMG2', videoPrompt: 'VID2' }] })
   })
 
+  it('reviseScenes/revisePrompts는 Codex raw JSON delta의 닫힌 scene을 preview callback으로 전달한다', async () => {
+    const scenesPayload = {
+      scenes: [{ sceneNo: 1, summary: 'FINAL', segments: [{ speaker: 'narrator', text: '최종', emotion: 'normal' }] }],
+      speakers: [],
+    }
+    const promptInput = [{ sceneNo: 1, storyId: 's1', imagePrompt: 'old', videoPrompt: 'old' }]
+    const onPartialScene = vi.fn()
+    const onPartialPrompt = vi.fn()
+    const runScenesJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onPartialText?.('{"scenes":[{"sceneNo":1,"summary":"GHOST","segments":[{"speaker":"narrator","text":"preview"}]}]}')
+      return scenesPayload
+    })
+    const runPromptsJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onPartialText?.('{"scenes":[{"sceneNo":1,"imagePrompt":"GHOST-IMG","videoPrompt":"GHOST-VID"}]}')
+      return { scenes: [{ sceneNo: 1, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }] }
+    })
+
+    await expect(reviseScenes('SCRIPT', [], [], 'fix', OPTS, { runJson: runScenesJson, onPartialScene }))
+      .resolves.toEqual(scenesPayload)
+    await expect(revisePrompts(promptInput, {}, 'fix', OPTS, { runJson: runPromptsJson, onPartialPrompt }))
+      .resolves.toEqual({
+        scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }],
+      })
+
+    expect(onPartialScene).toHaveBeenCalledWith(expect.objectContaining({ sceneNo: 1, summary: 'GHOST' }), 0)
+    expect(onPartialPrompt).toHaveBeenCalledWith({
+      sceneNo: 1,
+      imagePrompt: 'GHOST-IMG',
+      videoPrompt: 'GHOST-VID',
+    }, 0)
+  })
+
   it('reviseScenes는 기존 speaker appearance가 있으면 수정 JSON의 null appearance를 허용한다', async () => {
     const scenesPayload = {
       scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'a', text: '안녕', emotion: 'normal' }] }],

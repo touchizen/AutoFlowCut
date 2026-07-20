@@ -127,6 +127,50 @@ describe('stepMachine review controls', () => {
     expect(state.steps.prompts.status).toBe('pending')
   })
 
+  it('scenes revise partial은 표시 전용 scene-delta로 보내고 최종 revise 결과만 저장한다', async () => {
+    const llm = baseLlm({
+      reviewScenes: vi.fn(async () => ({ verdict: 'revise', critique: 'fix scenes' })),
+      reviseScenes: vi.fn(async (_script, _scenes, _speakers, _critique, _opts, ctx) => {
+        ctx.onPartialScene?.({
+          sceneNo: 9,
+          summary: 'GHOST',
+          segments: [{ speaker: 'narrator', text: 'preview', audioPath: '/private/ghost.wav' }],
+          imagePrompt: 'GHOST-IMG',
+        }, 2)
+        return {
+          scenes: [{ sceneNo: 1, summary: 'FINAL', segments: [{ speaker: 'narrator', text: '최종', emotion: 'normal' }] }],
+          speakers: [{ id: 'narrator', name: '나레이션' }],
+        }
+      }),
+    })
+    const { machine, emitted } = makeMachine(dir, llm)
+    await machine.open()
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    emitted.length = 0
+
+    const { operationId } = await machine.start('scenes', {
+      reviewOnly: true,
+      review: { scenes: { enabled: true, rounds: 1 } },
+    })
+
+    const deltas = emitted.filter((e) => e.ch === 'story:progress' && e.payload.kind === 'scene-delta')
+    expect(deltas.map((e) => e.payload.phase)).toEqual(['started', undefined])
+    expect(deltas[0].payload.operationId).toBe(operationId)
+    expect(deltas[1].payload).toMatchObject({
+      operationId,
+      chunkIndex: 0,
+      localSceneNo: 2,
+      scene: {
+        sceneNo: 9,
+        summary: 'GHOST',
+        segments: [{ type: 'narration', speaker: 'narrator', text: 'preview' }],
+      },
+    })
+    expect(deltas[1].payload.scene).not.toHaveProperty('imagePrompt')
+    expect((await readJson(dir, 'scenes.json')).scenes[0].summary).toBe('FINAL')
+  })
+
   it('manual scenes review revise가 speakers를 비워 반환해도 기존 referenced speaker voice를 보존한다', async () => {
     const llm = baseLlm({
       reviewScenes: vi.fn(async () => ({ verdict: 'revise', critique: 'fix scenes' })),
@@ -245,5 +289,38 @@ describe('stepMachine review controls', () => {
     expect(state.lastPushedRevision).toBe(1)
     expect(manifest.pushRevision).toBe(2)
     expect(emitted.find((e) => e.ch === 'story:pushScenes')?.payload.pushRevision).toBe(2)
+  })
+
+  it('prompts revise partial은 표시 전용 prompt-delta로 보내고 최종 revise 결과만 저장한다', async () => {
+    const llm = baseLlm({
+      reviewPrompts: vi.fn(async () => ({ verdict: 'revise', critique: 'fix prompts' })),
+      revisePrompts: vi.fn(async (scenes, _context, _critique, _opts, ctx) => {
+        ctx.onPartialPrompt?.({ sceneNo: 1, imagePrompt: 'GHOST-IMG', videoPrompt: 'GHOST-VID', secret: 'drop' })
+        return { scenes: scenes.map((scene) => ({ ...scene, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' })) }
+      }),
+    })
+    const { machine, emitted } = makeMachine(dir, llm)
+    await runToPrompts(machine)
+    emitted.length = 0
+
+    const { operationId } = await machine.start('prompts', {
+      reviewOnly: true,
+      review: { prompts: { enabled: true, rounds: 1 } },
+    })
+
+    const deltas = emitted.filter((e) => e.ch === 'story:progress' && e.payload.kind === 'prompt-delta')
+    expect(deltas.map((e) => e.payload.phase)).toEqual(['started', undefined])
+    expect(deltas[0].payload.operationId).toBe(operationId)
+    expect(deltas[1].payload).toMatchObject({
+      operationId,
+      sceneNo: 1,
+      imagePrompt: 'GHOST-IMG',
+      videoPrompt: 'GHOST-VID',
+    })
+    expect(deltas[1].payload).not.toHaveProperty('secret')
+    expect((await readJson(dir, 'scenes.json')).scenes[0]).toMatchObject({
+      imagePrompt: 'FINAL-IMG',
+      videoPrompt: 'FINAL-VID',
+    })
   })
 })
