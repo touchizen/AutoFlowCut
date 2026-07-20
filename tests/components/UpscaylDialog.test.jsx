@@ -175,7 +175,7 @@ describe('UpscaylDialog 실행과 완료 상태', () => {
           isOpen
           onClose={vi.fn()}
           targetSceneIds={null}
-          upscayl={upscayl({ total: 3, current: 3, completed: 2, failures: [{ sceneId: 'scene_2', error: 'GPU' }], skipped: 4 })}
+          upscayl={upscayl({ total: 3, current: 3, completed: 2, failures: [{ sceneId: 'scene_2', error: 'GPU' }], skipped: 4, durationMs: 65000 })}
           detectState={{ ok: true, platform: 'darwin', models: ['ultrasharp-4x'] }}
           onDetect={vi.fn()}
           onLocate={vi.fn()}
@@ -184,6 +184,7 @@ describe('UpscaylDialog 실행과 완료 상태', () => {
     )
 
     expect(screen.getByText('2 succeeded · 1 failed · 4 skipped')).toBeInTheDocument()
+    expect(screen.getByText('Total time 01:05')).toBeInTheDocument()
   })
 
   it('취소된 배치는 실제 completed와 미처리 수를 표시한다', () => {

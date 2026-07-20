@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { computeUpscaylTargets } from '../utils/imagePatch'
+import { formatElapsedMs } from '../utils/formatters'
 import Modal from './Modal'
 import './UpscaylDialog.css'
 
@@ -65,6 +66,15 @@ export default function UpscaylDialog({
     localStorage.setItem(OPTIONS_KEY, JSON.stringify({ ...options, model: effectiveModel }))
   }, [hasDetectedModels, effectiveModel, options])
 
+  // 진행 중 경과 시간 실시간 갱신(1초 tick). 완료 후엔 upscayl.durationMs 를 쓴다.
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (!upscayl?.running) return undefined
+    setNowTick(Date.now())
+    const id = setInterval(() => setNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [upscayl?.running])
+
   if (!isOpen) return null
 
   const running = !!upscayl?.running
@@ -84,11 +94,13 @@ export default function UpscaylDialog({
   let footer
 
   if (running) {
+    const elapsedMs = upscayl?.startedAt ? Math.max(0, nowTick - upscayl.startedAt) : 0
     body = (
       <div className="upscayl-running" role="status">
         <div className="upscayl-progress-value">{upscayl.current} / {upscayl.total}</div>
         <progress value={upscayl.current} max={Math.max(1, upscayl.total)} />
         <p>{t('upscayl.current', { scene: upscayl.currentSceneId || upscayl.current })}</p>
+        <p className="upscayl-elapsed">{t('upscayl.elapsed', { time: formatElapsedMs(elapsedMs) })}</p>
       </div>
     )
     footer = <button className="btn-danger" onClick={() => upscayl?.cancel?.()}>{t('upscayl.cancel')}</button>
@@ -97,6 +109,9 @@ export default function UpscaylDialog({
       <div className="upscayl-done" role="status">
         <h4>{t('upscayl.done')}</h4>
         <p>{t('upscayl.doneSummary', { completed, fail: failed, skipped: upscayl?.skipped || 0 })}</p>
+        {upscayl?.durationMs != null && (
+          <p className="upscayl-elapsed">{t('upscayl.duration', { time: formatElapsedMs(upscayl.durationMs) })}</p>
+        )}
         {upscayl?.cancelled && <p>{t('upscayl.cancelledSummary', { count: unprocessed })}</p>}
         {upscayl?.stopped && <p>{t('upscayl.stoppedSummary', { count: unprocessed })}</p>}
         {failed > 0 && (

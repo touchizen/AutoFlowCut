@@ -14,6 +14,8 @@ const INITIAL_STATE = {
   skipped: 0,
   cancelled: false,
   stopped: false,
+  startedAt: null,   // 배치 시작 시각(ms) — 진행 중 경과 시간 계산용
+  durationMs: null,  // 완료 후 총 소요시간(ms)
 }
 
 function errorMessage(error, fallback) {
@@ -56,6 +58,7 @@ export function useUpscayl({
     const { targets, skipped } = computeUpscaylTargets(scenes, targetSceneIds)
     const capturedProject = projectNameRef.current
     const { model, scale } = optionOverride || options
+    const startedAt = Date.now()
     let failures = []
     let completed = 0
     let stopped = false
@@ -72,6 +75,8 @@ export function useUpscayl({
       skipped,
       cancelled: false,
       stopped: false,
+      startedAt,
+      durationMs: null,
     })
 
     const recordFailure = (sceneId, error, fallback) => {
@@ -147,6 +152,7 @@ export function useUpscayl({
         skipped,
         cancelled: cancelledRef.current,
         stopped,
+        durationMs: Date.now() - startedAt,
       }))
     }
 
