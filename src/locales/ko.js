@@ -1375,6 +1375,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
       'story-srt-no-cues': 'SRT에 자막이 없습니다. 다른 자막 파일을 선택해주세요.',
       'story-srt-cues-overlap': 'SRT의 자막 구간이 서로 겹칩니다. 겹치는 구간이 있으면 오디오를 나눌 수 없습니다.',
       'story-srt-longer-than-audio': 'SRT가 mp3보다 깁니다. 두 파일이 같은 회차의 짝이 맞는지 확인해주세요.',
+      'story-audio-no-tts-key': '음성 API 키가 없어 오디오를 만들 수 없습니다. 설정 › API 키에서 해당 음성 제공자의 키를 등록하세요.',
+      'story-audio-tts-auth': '음성 API 키가 유효하지 않습니다(인증 실패). 설정 › API 키에서 키를 다시 확인하세요.',
     },
   },
 

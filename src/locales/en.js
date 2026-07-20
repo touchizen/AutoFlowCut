@@ -1376,6 +1376,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
       'story-srt-cues-overlap': 'The SRT has overlapping subtitle ranges. Overlapping ranges cannot be cut into segments.',
       'story-srt-longer-than-audio': 'The SRT is longer than the mp3. Check that both files belong to the same episode.',
       'story-sfx-library-unavailable': 'The local sound-effects library is not available yet. Choose ElevenLabs as the SFX source and try again.',
+      'story-audio-no-tts-key': 'Cannot generate audio — the voice API key is missing. Add it in Settings › API Keys for this voice provider.',
+      'story-audio-tts-auth': 'The voice API key is invalid (authentication failed). Recheck it in Settings › API Keys.',
     },
   },
 
