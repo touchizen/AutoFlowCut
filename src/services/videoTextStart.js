@@ -1,4 +1,5 @@
 import { buildVideoPromptScenes, VIDEO_REFERENCE_LIMIT } from '../utils/videoPromptReferences'
+import { sharedVideoStartOptions } from './videoStartOptions'
 
 export function prepareVideoTextStartScenes({
   videoScenes = [],
@@ -51,6 +52,11 @@ export function buildVideoTextStartPayload({
   const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
     ? settings.seedNo
     : null
+  const {
+    saveMode,
+    videoResolution,
+    ...trailingSharedOptions
+  } = sharedVideoStartOptions(settings)
 
   return {
     runningStyle: { styleId: effectiveStyleId, label: styleLabel, applies: true },
@@ -60,15 +66,11 @@ export function buildVideoTextStartPayload({
       scenes,
       seed,
       projectName,
-      saveMode: settings.saveMode,
-      videoResolution: settings.videoResolution || '720p',
+      saveMode,
+      videoResolution,
       videoModel: settings.videoModelT2V,
       videoProvider: settings.generation?.video?.t2v?.provider ?? 'google',
-      generationSettings: settings,
-      videoBatchCount: settings.videoBatchCount || 1,
-      concurrency: settings.videoConcurrency || 4,
-      flowPacingMinMs: settings.flowPacingMinMs,
-      flowPacingMaxMs: settings.flowPacingMaxMs,
+      ...trailingSharedOptions,
     },
   }
 }

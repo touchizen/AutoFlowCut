@@ -1,22 +1,26 @@
+import { sharedVideoStartOptions } from './videoStartOptions'
+
 export function buildVideoI2VStartOptions({
   settings = {},
   framePairs,
   projectName,
   seed,
 } = {}) {
+  const {
+    saveMode,
+    videoResolution,
+    ...trailingSharedOptions
+  } = sharedVideoStartOptions(settings)
+
   return {
     mode: 'i2v',
     framePairs,
     projectName,
-    saveMode: settings.saveMode,
-    videoResolution: settings.videoResolution || '720p',
+    saveMode,
+    videoResolution,
     videoModel: settings.videoModelF2V,
     videoProvider: settings.generation?.video?.i2v?.provider ?? 'google',
-    generationSettings: settings,
-    videoBatchCount: settings.videoBatchCount || 1,
-    concurrency: settings.videoConcurrency || 4,
-    flowPacingMinMs: settings.flowPacingMinMs,
-    flowPacingMaxMs: settings.flowPacingMaxMs,
+    ...trailingSharedOptions,
     seed,
   }
 }
