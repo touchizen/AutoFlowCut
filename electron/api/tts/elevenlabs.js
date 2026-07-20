@@ -3,6 +3,7 @@
  * getKey/fetch 주입으로 단위 테스트. 세그먼트=단일 요청.
  * 계약: https://elevenlabs.io/docs/api-reference/text-to-speech/convert
  */
+import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
 const BASE = 'https://api.elevenlabs.io/v1/text-to-speech'
 const VOICES_ENDPOINT = 'https://api.elevenlabs.io/v2/voices'
 const SHARED_VOICES_ENDPOINT = 'https://api.elevenlabs.io/v1/shared-voices'
@@ -90,7 +91,7 @@ function uniqueVoices(voices) {
   return out
 }
 
-export function createElevenLabsAdapter({ getKey, fetch }) {
+export function createElevenLabsAdapter({ getKey, fetch, provider = 'elevenlabs' }) {
   return {
     capabilities() {
       return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['mp3'], supportsPreview: true, maxConcurrency: 2 }
@@ -137,7 +138,7 @@ export function createElevenLabsAdapter({ getKey, fetch }) {
     },
     async synthesize({ text, voiceId, emotion = 'normal', signal }) {
       const key = getKey()
-      if (!key) throw new Error('No ElevenLabs API key')
+      if (key == null) throw new MissingProviderKeyError(provider)
       const voiceSettings = EMOTION_VOICE_SETTINGS[emotion]
       const res = await fetch(`${BASE}/${voiceId}?output_format=mp3_44100_128`, {
         method: 'POST',
@@ -147,6 +148,7 @@ export function createElevenLabsAdapter({ getKey, fetch }) {
       })
       if (!res.ok) {
         const detail = await (res.text?.() ?? Promise.resolve(''))
+        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
         throw new Error(`ElevenLabs TTS failed: ${res.status} ${detail}`)
       }
       return { audio: Buffer.from(await res.arrayBuffer()), format: 'mp3' }

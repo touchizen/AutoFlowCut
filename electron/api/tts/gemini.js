@@ -4,6 +4,7 @@
  * 응답은 raw PCM(L16, 예: 24kHz mono)이라 WAV 헤더로 래핑해 재생/실측 가능하게 한다.
  * 키는 genai(Gemini) 키 재사용. 계약: https://ai.google.dev/gemini-api/docs/speech-generation
  */
+import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
 const MODEL = 'gemini-2.5-flash-preview-tts'
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
 
@@ -74,7 +75,7 @@ function pcmToWav(pcm, { rate = 24000, channels = 1, bits = 16 } = {}) {
   return Buffer.concat([header, pcm])
 }
 
-export function createGeminiAdapter({ getKey, fetch }) {
+export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
   return {
     capabilities() {
       return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
@@ -84,7 +85,7 @@ export function createGeminiAdapter({ getKey, fetch }) {
     },
     async synthesize({ text, voiceId, emotion = 'normal', signal }) {
       const key = getKey()
-      if (!key) throw new Error('No Gemini API key')
+      if (key == null) throw new MissingProviderKeyError(provider)
       const stylePrompt = EMOTION_STYLE_PROMPTS[emotion]
       const promptText = stylePrompt ? `${stylePrompt} ${text}` : text
       const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
@@ -101,6 +102,7 @@ export function createGeminiAdapter({ getKey, fetch }) {
       })
       if (!res.ok) {
         const detail = await (res.text?.() ?? Promise.resolve(''))
+        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
         throw new Error(`Gemini TTS failed: ${res.status} ${detail}`)
       }
       const json = await res.json()

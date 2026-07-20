@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createElevenLabsAdapter } from '../../../../electron/api/tts/elevenlabs.js'
 import { createGoogleTtsAdapter } from '../../../../electron/api/tts/googletts.js'
 import { createGeminiAdapter } from '../../../../electron/api/tts/gemini.js'
+import { MissingProviderKeyError } from '../../../../electron/api/keyErrors.js'
 
 function expectVoiceMetadata(voice) {
   expect(typeof voice.id).toBe('string')
@@ -26,7 +27,7 @@ describe('ElevenLabs 어댑터', () => {
     expect(JSON.parse(cap.opts.body).model_id).toBeTruthy()
   })
   it('키 없으면 throw / HTTP 실패 throw', async () => {
-    await expect(createElevenLabsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/ElevenLabs API key/)
+    await expect(createElevenLabsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'v' })).rejects.toBeInstanceOf(MissingProviderKeyError)
     const fetch = async () => ({ ok: false, status: 401, text: async () => 'nope' })
     await expect(createElevenLabsAdapter({ getKey: () => 'k', fetch }).synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/401/)
   })
@@ -216,7 +217,7 @@ describe('Google Cloud TTS 어댑터', () => {
     expect(body.audioConfig.audioEncoding).toBe('MP3')
   })
   it('키 없음/HTTP 실패/audioContent 없음 throw', async () => {
-    await expect(createGoogleTtsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'ko-KR-Neural2-A' })).rejects.toThrow(/Google TTS API key/)
+    await expect(createGoogleTtsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'ko-KR-Neural2-A' })).rejects.toBeInstanceOf(MissingProviderKeyError)
     const noContent = async () => ({ ok: true, json: async () => ({}) })
     await expect(createGoogleTtsAdapter({ getKey: () => 'k', fetch: noContent }).synthesize({ text: 'x', voiceId: 'ko-KR-Neural2-A' })).rejects.toThrow(/audioContent/)
   })
@@ -322,7 +323,7 @@ describe('Gemini TTS 어댑터', () => {
     }
   })
   it('키 없음/데이터 없음 throw', async () => {
-    await expect(createGeminiAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/Gemini API key/)
+    await expect(createGeminiAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toBeInstanceOf(MissingProviderKeyError)
     const noData = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{}] } }] }) })
     await expect(createGeminiAdapter({ getKey: () => 'k', fetch: noData }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/no audio/)
   })
