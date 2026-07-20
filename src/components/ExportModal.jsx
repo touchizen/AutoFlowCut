@@ -6,7 +6,7 @@ import { useExportSettingsContext } from '../contexts/ExportSettingsContext'
 import { useModalVisibility } from '../hooks/useModalVisibility'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { normalizeExportFormat } from '../utils/exportFormat'
-import { formatExpiryDate } from '../utils/formatters'
+import { formatExpiryDate, formatElapsedMs } from '../utils/formatters'
 import { toKenBurnsRatios } from '../utils/kenBurnsPreview'
 import './ExportModal.css'
 
@@ -49,6 +49,7 @@ export const ExportModal = ({
   onExportRender,
   onCancelRender,
   renderProgress,
+  renderStartedAt,
   initialFormat = 'capcut',
   projectName,
   loading,
@@ -198,6 +199,16 @@ export const ExportModal = ({
 
   // 모달 열릴 때 Flow 뷰 숨기기 (네이티브 레이어는 CSS z-index로 가릴 수 없음)
   useModalVisibility(isOpen)
+
+  // 렌더 중 경과 시간 실시간 갱신(1초 tick). early return 앞 — hook 순서 고정.
+  const renderBusyForTick = format === 'render' && (loading || exportPhase === 'rendering')
+  const [renderNowTick, setRenderNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (!renderBusyForTick || !renderStartedAt) return undefined
+    setRenderNowTick(Date.now())
+    const id = setInterval(() => setRenderNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [renderBusyForTick, renderStartedAt])
 
   if (!isOpen) return null
 
@@ -360,6 +371,7 @@ export const ExportModal = ({
   }
 
   const isRenderBusy = format === 'render' && (loading || exportPhase === 'rendering')
+  const renderElapsedMs = isRenderBusy && renderStartedAt ? Math.max(0, renderNowTick - renderStartedAt) : 0
   const progressNumber = Number(renderProgress?.percent)
   const renderPercent = Number.isFinite(progressNumber)
     ? Math.min(100, Math.max(0, Math.round(progressNumber)))
@@ -385,7 +397,10 @@ export const ExportModal = ({
                   >
                     <div className="render-progress-fill" style={{ width: `${renderPercent}%` }} />
                   </div>
-                  <span className="render-progress-percent">{renderPercent}%</span>
+                  <span className="render-progress-percent">
+                    {renderPercent}%
+                    {renderStartedAt != null && <span className="render-progress-elapsed"> · {t('exportModal.renderElapsed', { time: formatElapsedMs(renderElapsedMs) })}</span>}
+                  </span>
                   <button
                     type="button"
                     className="export-btn export-btn-cancel render-cancel-btn"

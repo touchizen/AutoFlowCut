@@ -39,6 +39,7 @@ export function useExport({
   const [exporting, setExporting] = useState(false)
   const [exportPhase, setExportPhase] = useState(null) // 'saving' | 'launching' | 'rendering' | null
   const [renderProgress, setRenderProgress] = useState(null) // { jobId, percent, stage } | null
+  const [renderStartedAt, setRenderStartedAt] = useState(null) // 렌더 시작 시각(ms) — 진행 중 경과 표시용
   const [renderJobId, setRenderJobId] = useState(null)       // 취소 대상 jobId
   const cancelLatchRef = useRef(false)                       // IPC 등록 전 취소 래치
   // 마지막 선택 포맷 — split 진입 버튼 본체 동작/문구 + 모달 초기 탭에 사용. localStorage 영속.
@@ -486,6 +487,7 @@ export function useExport({
     setExporting(true)
     setExportPhase('rendering')
     setRenderProgress(null)
+    setRenderStartedAt(Date.now())
     cancelLatchRef.current = false
     let unsub
     try {
@@ -549,6 +551,7 @@ export function useExport({
       setExporting(false)
       setExportPhase(null)
       setRenderProgress(null)
+      setRenderStartedAt(null)
       setRenderJobId(null)
     }
   }
@@ -569,6 +572,7 @@ export function useExport({
     exportPhase,
     exportFormat,
     renderProgress,
+    renderStartedAt,
     handleExportClick,
     handleExportConfirm,
     handleExportPremiere,
