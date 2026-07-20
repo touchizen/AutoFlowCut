@@ -1,3 +1,10 @@
+> ✅ **RESOLVED (2026-07-20, commit a6bf5f47).** 이 문서의 가설(1~4, updateScene line 442)은 **전부 헛다리**였다.
+> 실제 편집 UI("대본"/text 탭 PromptInput)는 `updateScene` 을 아예 안 타고 `handleTextChange → mergeTextIntoScenes`(parsers.js)로
+> 흐른다. 진단 결정타: 계측한 `updateScene CALLED` 가 편집해도 안 찍힘 = 이 UI 가 그 함수를 안 거친다는 확정 증거.
+> 그 벌크 경로의 `mergeField` 에 `updateScene` 의 donePrompt 기반 done 복원 분기가 통째로 없었다("직전 값과 다르면 무조건 pending").
+> Fix: `mergeField` 에 동일 복원 규칙 이식(baseline 캡처 → 원복이면 done + error 클리어 → generating 스킵). hasImageData fix(6e12fce5)가
+> 재현된 이유도 이것 — 그 fix 는 이 UI 가 부르지 않는 `updateScene` 만 고쳤다. 실앱 눈검증 OK.
+
 # 핸드오프 — 프롬프트 원복 시 done 복원 안 됨 (still failing)
 
 작성: 2026-07-20 / 브랜치: `fix/scene-hasimage-detection` (off `main`)
