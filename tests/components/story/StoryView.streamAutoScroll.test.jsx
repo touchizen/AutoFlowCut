@@ -14,6 +14,11 @@ function fakeLayout(el, { scrollHeight, clientHeight = 200 }) {
   Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => clientHeight })
 }
 
+function fakeRowLayout(row, { offsetTop, offsetHeight }) {
+  Object.defineProperty(row, 'offsetTop', { configurable: true, get: () => offsetTop })
+  Object.defineProperty(row, 'offsetHeight', { configurable: true, get: () => offsetHeight })
+}
+
 const stream = (container) => container.querySelector('.story-script-stream')
 const streamingTable = (container, step) => container.querySelector(`.story-stream-table-${step}`)
 
@@ -156,8 +161,8 @@ describe('씬 ghost table 자동 스크롤', () => {
 })
 
 describe('프롬프트 ghost table 자동 스크롤', () => {
-  it('preview prompt가 늘고 바닥에 붙어 있으면 최신 행으로 내린다', () => {
-    const { container, rerender } = render(<StoryView pipeline={promptsPipeline(1)} />)
+  it('preview prompt가 0→1→2행으로 채워지면 마지막 채움 행을 따라간다', () => {
+    const { container, rerender } = render(<StoryView pipeline={promptsPipeline(0)} />)
     const el = streamingTable(container, 'prompts')
     const progress = container.querySelector('.story-stream-progress-sticky')
     expect(el).toBeTruthy()
@@ -166,19 +171,33 @@ describe('프롬프트 ghost table 자동 스크롤', () => {
     expect(progress.parentElement).toBe(el.parentElement)
     expect(progress.parentElement.firstElementChild).toBe(progress)
     fakeLayout(el, { scrollHeight: 1000 })
+    const rows = [...el.querySelectorAll('tbody tr')]
+    fakeRowLayout(rows[0], { offsetTop: 100, offsetHeight: 80 })
+    fakeRowLayout(rows[1], { offsetTop: 400, offsetHeight: 80 })
+    fakeRowLayout(rows[2], { offsetTop: 700, offsetHeight: 80 })
 
+    rerender(<StoryView pipeline={promptsPipeline(1)} />)
+    expect(el.scrollTop).toBe(0)
+    expect(el.scrollTop).not.toBe(580) // 첫 행만 채웠을 때 마지막 행 위치로 점프하면 안 된다.
     rerender(<StoryView pipeline={promptsPipeline(2)} />)
-    expect(el.scrollTop).toBe(1000)
+    expect(el.scrollTop).toBe(280)
+    fireEvent.scroll(el) // 브라우저가 programmatic scrollTop 변경 뒤 발생시키는 이벤트
+    rerender(<StoryView pipeline={promptsPipeline(3)} />)
+    expect(el.scrollTop).toBe(580)
   })
 
   it('사용자가 위로 올렸으면 preview prompt가 늘어도 끌어내리지 않는다', () => {
-    const { container, rerender } = render(<StoryView pipeline={promptsPipeline(1)} />)
+    const { container, rerender } = render(<StoryView pipeline={promptsPipeline(0)} />)
     const el = streamingTable(container, 'prompts')
     fakeLayout(el, { scrollHeight: 1000 })
-    el.scrollTop = 0
+    const rows = [...el.querySelectorAll('tbody tr')]
+    fakeRowLayout(rows[0], { offsetTop: 100, offsetHeight: 80 })
+    fakeRowLayout(rows[1], { offsetTop: 400, offsetHeight: 80 })
+    fakeRowLayout(rows[2], { offsetTop: 700, offsetHeight: 80 })
+    el.scrollTop = 300
     fireEvent.scroll(el)
 
     rerender(<StoryView pipeline={promptsPipeline(2)} />)
-    expect(el.scrollTop).toBe(0)
+    expect(el.scrollTop).toBe(300)
   })
 })

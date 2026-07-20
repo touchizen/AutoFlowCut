@@ -408,6 +408,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     .sort((a, b) => a.chunkIndex - b.chunkIndex || a.localSceneNo - b.localSceneNo)
   const scenePreviewCount = orderedPreviewScenes.length
   const promptPreviewCount = Object.keys(previewPrompts).length
+  const promptFrontierIndex = scenes.reduce((frontier, scene, index) => (
+    previewPrompts[scene.sceneNo] ? index : frontier
+  ), -1)
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
   const isRunning = stepData.status === 'running'
@@ -480,6 +483,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const promptsTableRef = useRef(null)
   const scenesStickToBottomRef = useRef(true)
   const promptsStickToBottomRef = useRef(true)
+  const promptsAutoScrollTopRef = useRef(null)
   const handleScenesTableScroll = () => {
     const el = scenesTableRef.current
     if (!el) return
@@ -488,6 +492,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const handlePromptsTableScroll = () => {
     const el = promptsTableRef.current
     if (!el) return
+    if (promptsAutoScrollTopRef.current === el.scrollTop) {
+      promptsAutoScrollTopRef.current = null
+      return
+    }
+    promptsAutoScrollTopRef.current = null
     promptsStickToBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
   }
   useEffect(() => {
@@ -501,11 +510,18 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   useEffect(() => {
     if (!promptsStreaming) {
       promptsStickToBottomRef.current = true
+      promptsAutoScrollTopRef.current = null
       return
     }
     const el = promptsTableRef.current
-    if (el && promptsStickToBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [promptsStreaming, promptPreviewCount])
+    if (!el || !promptsStickToBottomRef.current || promptFrontierIndex < 0) return
+    const frontierRow = el.querySelector('[data-prompt-frontier]')
+    if (!frontierRow) return
+    const nextScrollTop = Math.max(0, frontierRow.offsetTop + frontierRow.offsetHeight - el.clientHeight)
+    if (el.scrollTop === nextScrollTop) return
+    promptsAutoScrollTopRef.current = nextScrollTop
+    el.scrollTop = nextScrollTop
+  }, [promptsStreaming, promptFrontierIndex])
 
   // 재오픈 phase 승격 — open() 응답이 마운트 뒤 도착해 pipeline.scriptText가 늦게 채워지면
   // 초기 phase가 setup으로 굳어 있다. 사용자가 [⚙ 설정으로]를 눌러 명시적으로 setup에 온
@@ -2332,7 +2348,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       ? previewPrompts[sc.sceneNo]
                       : null
                     return (
-                      <tr key={sc.storyId ?? i}>
+                      <tr
+                        key={sc.storyId ?? i}
+                        data-prompt-frontier={i === promptFrontierIndex ? '' : undefined}
+                      >
                         <td>{i + 1}</td>
                         <td>{preview
                           ? <span className="story-prompt-ghost">{preview.imagePrompt}</span>
