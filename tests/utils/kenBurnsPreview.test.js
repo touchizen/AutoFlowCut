@@ -58,6 +58,9 @@ describe('kenBurnsPreviewStyle', () => {
     [{ x: 0, y: 0 }, 'translate(0%, 0%) scale(1.25)'],
     [{ x: 1, y: 1 }, 'translate(-25%, -25%) scale(1.25)'],
     [{ x: 0.5, y: 0.5 }, 'translate(-12.5%, -12.5%) scale(1.25)'],
+    // 비대칭 anchor — tx는 ax, ty는 ay에서 나와야 함 (뮤테이션 M5: ty가 ax를 쓰면 죽는 케이스)
+    [{ x: 1, y: 0 }, 'translate(-25%, 0%) scale(1.25)'],
+    [{ x: 0, y: 1 }, 'translate(0%, -25%) scale(1.25)'],
   ])('anchor %j에서 정확한 이동량을 만든다', (anchor, transform) => {
     const kb = {
       startScale: 1.25,
