@@ -5,7 +5,7 @@ import Modal from './Modal'
 import './UpscaylDialog.css'
 
 const OPTIONS_KEY = 'upscaylOptions'
-const DEFAULT_OPTIONS = { model: 'ultrasharp-4x', scale: 4 }
+const DEFAULT_OPTIONS = { model: 'ultrasharp-4x', scale: 2 }
 
 function loadOptions() {
   try {

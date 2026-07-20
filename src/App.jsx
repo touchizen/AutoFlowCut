@@ -416,7 +416,7 @@ function App() {
     projectNameRef,
     saveImage: saveUpscaylImage,
     upscaylAPI: window.upscaylAPI,
-    options: { model: 'ultrasharp-4x', scale: 4 },
+    options: { model: 'ultrasharp-4x', scale: 2 },
   })
   const handleUpscaylDetect = useCallback(async () => {
     setUpscaylDetectState((previous) => ({ ...previous, loading: true }))

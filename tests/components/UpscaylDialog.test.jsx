@@ -92,6 +92,12 @@ describe('UpscaylDialog 준비 상태', () => {
     expect(screen.getByText('1 target · 1 already upscaled · 1 skipped (no file)')).toBeInTheDocument()
   })
 
+  it('저장된 옵션이 없으면 배율 기본값은 2x다', () => {
+    renderDialog()
+    expect(screen.getByLabelText('2x')).toBeChecked()
+    expect(screen.getByLabelText('4x')).not.toBeChecked()
+  })
+
   it('기억한 모델이 없으면 첫 모델로 폴백하고 선택/배율을 기억해 Start에 전달한다', async () => {
     localStorage.setItem('upscaylOptions', JSON.stringify({ model: 'missing-model', scale: 2 }))
     const batch = upscayl()
