@@ -31,26 +31,33 @@ Story 오디오 탭은 화자별 TTS로 나레이션을 만들고, SFX 세그먼
 
 ### 4.1 진실 소스 — main pre-flight IPC
 
-`ipcMain.handle('story:audio-preflight', (params) => …)`를 추가한다. **renderer의 `keys:status`가 아니라** 런타임 합성과 동일한 `ttsKeyFor`/`sfxKeyFor` resolver를 써서 각 필요 provider의 키가 **해석되는지**(폴백 포함) `try/catch`로 판정한다. 반환:
+`ipcMain.handle('story:audio-preflight', (params) => …)`를 추가한다. **renderer의 `keys:status`가 아니라** 런타임 합성과 **동일한 `ttsKeyFor`/`sfxKeyFor` closure를 IPC에 직접 주입**(재구현 금지 — 이 두 객체는 [main.js:233-238/273-283](../../electron/main.js#L233)의 module-local closure이므로 preflight 핸들러를 main.js에서 배선하거나 `resolveTtsKey`/`resolveSfxKey` 의존성으로 주입)해 각 필요 provider의 키가 **해석되는지**(폴백 포함) 판정한다.
+
+- **missing 판정은 이원 신호 통일**: typecast resolver는 키 없으면 **throw**([typecatKey.js:17](../../electron/api/tts/typecastKey.js#L17)), 나머지는 **null 반환**([main.js:235-237](../../electron/main.js#L235)). 따라서 `try { const k = resolve(); if (!k) missing }`(**throw 또는 falsy = missing**)로 판정. dev 스위치(§4.9)는 resolver 내부라 자동 공유.
+
+반환 shape(3분류를 실을 수 있게 per-provider status):
 
 ```
-{ missing: [{ provider, keyId }], encryptionUnavailable: boolean }
+{
+  providers: [{ provider, keyId, status: 'resolved-store'|'resolved-fallback'|'missing', encryptionAvailable }],
+  encryptionAvailable: boolean            // 전역(safeStorage)
+}
 ```
 
-- `provider`: 화면 표시용(예: 'typecast','gemini','elevenlabs').
-- `keyId`: 설정/저장 대상 식별자(§4.3 registry; 'gemini'→'genai').
-- renderer 게이트는 이 결과를 **표시만** 하고, 실제 `start('audio')`도 main에서 동일 검사를 반복(선차단이 아니라 진실은 main).
+- `status`: `resolved-store`(store 키) / `resolved-fallback`(store엔 없지만 env·credentials로 해석됨 → **차단 안 함**) / `missing`(입력 유도). §4.10 3분류가 이 값으로 구현된다. 평문 키는 반환하지 않는다.
+- `provider`(표시용) / `keyId`(설정·저장 대상, §4.3 registry; 'gemini'→'genai').
+- renderer 게이트는 이 결과를 **표시만** 하고, 실제 `start('audio')`도 main에서 동일 검사를 반복(§4.4 배치 주의).
 
-### 4.2 필요 provider/키 계산 (backend, 세그먼트 기준)
+### 4.2 필요 provider/키 계산 (backend, 세그먼트 기준) — async planner
 
-`buildAudioParams`([StoryView.jsx:1077-1104](../../src/components/story/StoryView.jsx#L1077))가 만든 `params`(speakers[].voice, sfxSources, regenerate)와 `scenes` 세그먼트로, **실제 합성할 세그먼트만** 골라 provider 집합을 만든다. 규칙(합성 루프 [stepMachine.js:1549-1588](../../electron/story/stepMachine.js#L1549)와 동일):
+`buildAudioParams`([StoryView.jsx:1077-1104](../../src/components/story/StoryView.jsx#L1077))가 만든 `params`(speakers[].voice, sfxSources, regenerate, onlySpeaker)와 `scenes` 세그먼트로, **실제 합성할 세그먼트만** 골라 provider 집합을 만든다. 규칙(합성 루프 [stepMachine.js:1524-1588](../../electron/story/stepMachine.js#L1524)와 동일):
 
-- **narration 세그먼트**: 화자 voice → `voice.provider`. `voice:null`(voiceId 빈값 = "기본 성우")이면 **defaultVoice.provider = 'typecast'**([story-api.js:70](../../electron/ipc/story-api.js#L70)). `voice.provider==='import'`이면 **제외**(TTS 키 불필요).
-- **SFX 세그먼트**(부분 재생성이 아닐 때): `sfxSources[segId] || seg.sourceMode || 'elevenlabs'`([stepMachine.js:1582](../../electron/story/stepMachine.js#L1582)). `'library'`는 키 불필요 → **제외**.
-- **재사용 가능한 완료 세그먼트**(`canReuse`/`canReuseSfx` [stepMachine.js:1573-1588](../../electron/story/stepMachine.js#L1573))는 재합성 안 하므로 **제외**(불필요 차단 방지). 단순화가 필요하면 1차 구현은 이 제외를 생략하고 "요구 provider 전체"로 보수적 계산 후, 정확도 개선을 후속으로 둘 수 있다 — 트레이드오프는 §7에서 확정.
-- **부분 실행**(`params.regenerate`/화자 단독/세그먼트 테스트)은 그 스코프의 세그먼트만으로 집합 계산.
+- **narration 세그먼트**: 화자 voice → `voice.provider`. `voice:null`(voiceId 빈값 = "기본 성우")이면 **defaultVoice.provider = 'typecast'**([story-api.js:70](../../electron/ipc/story-api.js#L70), `voiceOf` [stepMachine.js:1357](../../electron/story/stepMachine.js#L1357)). `voice.provider==='import'`이면 **제외**(TTS 키 불필요).
+- **SFX 세그먼트**(부분 실행이 아닐 때): `sfxSources[segId] || seg.sourceMode || 'elevenlabs'`([stepMachine.js:1582](../../electron/story/stepMachine.js#L1582)). `'library'`는 키 불필요 → **제외**.
+- **재사용 가능한 완료 세그먼트**(`canReuse`/`canReuseSfx`)는 재합성 안 하므로 **제외**. **단, 이 판정은 `await stat()` 파일 실재 확인이 포함된 IO**([stepMachine.js:1573-1588](../../electron/story/stepMachine.js#L1573)) — 순수 함수로 못 만든다(§8 정정).
+- **스코프 정정(중요)**: 부분 실행은 **`onlySpeaker`뿐**([stepMachine.js:1375](../../electron/story/stepMachine.js#L1375))이다. **`params.regenerate`는 부분 실행이 아니라 전체 실행**이며 지정 ID의 reuse만 강제 무효화(`forceRegen`)한다([stepMachine.js:1570-1574](../../electron/story/stepMachine.js#L1570)) — 같은 런에서 다른 pending/error/파일없음 세그먼트와 SFX도 합성된다([stepMachine.js:1668/1700](../../electron/story/stepMachine.js#L1668)). 따라서 regenerate는 **전체 세그먼트로 집합 계산 + `forceRegen`을 reuse 제외 판정에 반영**해야 한다(스코프 축소 금지). 세그먼트 테스트(`synthPreview` [stepMachine.js:1969-1977](../../electron/story/stepMachine.js#L1969), 지정 id·import 제외·sfx는 sfxTargets만)와 onlySpeaker만 진짜 부분 스코프.
 
-이 계산은 합성 루프의 provider 결정 로직을 **공유 함수로 추출**해 pre-flight와 실제 실행이 갈리지 않게 한다(single source).
+**공유 async planner로 추출**: `planAudioWork(params, scenes, { stat, segmentsDir, forceRegen, onlySpeaker }) → { toSynth, requiredProviders }`. 순수 부분(`providerForSegment`, fingerprint/sfxSource 계산)은 별도 순수 함수로, IO 부분(reuse stat)은 planner가 담당. **합성 루프도 이 planner의 `toSynth`를 사용**해 pre-flight와 실제 실행이 갈리지 않게 한다(single source). preflight IPC는 planner의 `requiredProviders`를 §4.1 resolver에 넘긴다.
 
 ### 4.3 provider → keyId → resolver/store registry (별칭 명문화)
 
@@ -69,7 +76,8 @@ pre-flight/게이트/VoicePicker는 storyProvider를 이 테이블로 keyId에 �
 
 오디오를 트리거하는 모든 경로를 공통 `runAudioWithPreflight(scopeParams)`로 감싼다:
 - 기본 생성 `start('audio')`, 재실행, 자동 진행([StoryView.jsx:1292/1312/1395](../../src/components/story/StoryView.jsx#L1292)), 세그먼트 재생성([:1144](../../src/components/story/StoryView.jsx#L1144)), 화자 단독([:1150](../../src/components/story/StoryView.jsx#L1150), 그 화자 provider만), 세그먼트 테스트([:1180](../../src/components/story/StoryView.jsx#L1180)), 성우 미리듣기([voicePreviewService.js:58](../../electron/api/tts/voicePreviewService.js#L58)).
-- 흐름: preflight IPC → `missing` 있으면 인라인 게이트 카드 표시(키 저장 후 재검사→해당 action 재개) / 없으면 진행. main의 `start('audio')`도 동일 preflight를 재검사(안전).
+- 흐름: preflight IPC → `missing` 있으면 인라인 게이트 카드 표시(키 저장 후 재검사→해당 action 재개) / 없으면 진행.
+- **main 재검사 배치(중요)**: `start('audio')`의 동일 preflight 재검사는 **`running` 마킹·downstream reset 전에** 실행하고, `onlySpeakerScopeError`처럼 **`{ error: errorKind }` 반환 패턴**([stepMachine.js:2510-2513](../../electron/story/stepMachine.js#L2510))으로 "시작 안 함"을 표현한다. audio 스텝 fn 안에서 throw하면 이미 done이던 스텝 상태가 교체된 뒤라 **done→error 회귀**가 된다([stepMachine.js:2505-2531](../../electron/story/stepMachine.js#L2505) 주석이 이 함정을 설명). renderer preflight와 start 사이 TOCTOU는 이 재검사로 닫히고, 그 이후 외부 키/파일 변경 race는 런타임 errorKind(§4.8)가 담당.
 
 ### 4.5 설정 "API 키" 통합 탭 + split-brain 제거
 
@@ -85,12 +93,14 @@ pre-flight/게이트/VoicePicker는 storyProvider를 이 테이블로 keyId에 �
 ### 4.7 VoicePicker / 미리듣기
 
 - 성우 목록은 지금처럼 **키 없이도 로드/표시**(후퇴 없음). picker의 provider 칩도 유지.
-- **미리듣기 버튼**: 해당 성우 provider의 keyId를 preflight/`hasKey`로 확인. 없으면 미리듣기 대신 인라인 `ApiKeyField`(그 provider) 표시. 저장되면 미리듣기 재시도.
-- **저장 후 목록 refetch**: 키 저장 시 App의 listVoices effect가 자동으로 안 도므로([App.jsx:711-727](../../src/App.jsx#L711) 의존성 `activeView`뿐), VoicePicker→상위로 refetch 콜백을 올려 `mergeTtsVoices`를 재실행한다.
+- **미리듣기는 선차단하지 않는다(중요)**: `voicePreviewService.getPreview`는 이미 **디스크 캐시 히트**([voicePreviewService.js:43-49](../../electron/api/tts/voicePreviewService.js#L43))와 **elevenlabs `previewUrl` 다운로드**([:52-56](../../electron/api/tts/voicePreviewService.js#L52))를 **키 없이** 처리하고, 이 둘이 없을 때만 synthesize가 키를 요구하며 그때 `{ error: 'no-key', provider }`를 반환한다([:79-83](../../electron/api/tts/voicePreviewService.js#L79)). 따라서 hasKey 선차단(캐시/previewUrl까지 막고 store-only false-negative 재발)이 아니라 **미리듣기를 먼저 시도 → `no-key` 응답에만 인라인 `ApiKeyField`(그 provider) 표시**. 기존 계약 재사용, 후퇴 0. (§4.8 표준화 시 [:81](../../electron/api/tts/voicePreviewService.js#L81)의 `/no .* key/i` 정규식 분류도 errorKind 기반으로 교체.)
+- **저장 후 목록 refetch(replace semantics)**: 키 저장 시 App의 listVoices effect가 자동으로 안 도므로([App.jsx:711-727](../../src/App.jsx#L711) 의존성 `activeView`뿐), 저장 wrapper가 공유하는 App-level reload를 호출한다. 단 `mergeTtsVoices`([App.jsx:700-710](../../src/App.jsx#L700))는 이전 목록을 보존·병합만 하므로, 계정 교체 시 옛 계정 전용 voice가 남아 합성 실패한다 → **전체 refetch는 해당 provider slice를 replace**하고 remote search/gender 태그만 merge. 설정에서 저장한 경우엔 VoicePicker 콜백이 없으므로 **키-변경 이벤트 또는 App-level reload를 모든 저장 wrapper가 공유**한다.
 
 ### 4.8 errorKind 일원화 (런타임 안전망)
 
-- 키 해석/인증 실패를 표준 에러로: `MissingProviderKeyError(provider)`(errorKind `story-audio-no-tts-key`) + `ProviderAuthError(provider)`(errorKind `story-audio-tts-auth`, 401/403). 발생 지점을 **키 해석 일원화 지점**(4 어댑터 + `typecastKey`/`credentialsKey`)에 두어 typecast가 어댑터 이전에서 던지는 케이스([typecastKey.js:17](../../electron/api/tts/typecastKey.js#L17))도 커버.
+- 키 해석/인증 실패를 표준 에러로: `MissingProviderKeyError(provider)`(errorKind `story-audio-no-tts-key`) + `ProviderAuthError(provider)`(errorKind `story-audio-tts-auth`, 401/403).
+- **일원화(중복 제거)**: loader들(`getTypecastKey`/`readCredentialsKey`/`genaiKeyStore.getKey`)은 **null만 반환**하도록 계약 통일(§4.9와 정합 — typecast의 현재 throw [typecastKey.js:17](../../electron/api/tts/typecastKey.js#L17)도 null로), missing throw는 **canonical resolver 한 곳**(`ttsKeyFor`/`sfxKeyFor` wrapper)이 `MissingProviderKeyError`로 던진다. loader와 adapter 양쪽에서 던지는 중복을 피한다.
+- **대상에 SFX 어댑터 포함(누락 정정)**: 화자 TTS 4어댑터뿐 아니라 **SFX ElevenLabs 어댑터**([sfx/elevenlabs.js:14/26](../../electron/api/sfx/elevenlabs.js#L14))도 missing/auth를 raw로 던지므로 동일 표준 에러로 감싼다(TOCTOU·무효키 시 F8/F9가 SFX에서 재현되는 것 방지).
 - 집계 재던지기([stepMachine.js:1750-1760](../../electron/story/stepMachine.js#L1750))는 첫 실패의 errorKind만 보존 → pre-flight로 대부분 예방되므로 잔여만 담당. **미리듣기 IPC**([story-api.js:174](../../electron/ipc/story-api.js#L174))는 aggregate를 안 거치고 IPC throw 시 custom errorKind가 소실되므로([story-api.js:143](../../electron/ipc/story-api.js#L143)), `{errorKind, provider}` 객체 반환으로 보존.
 - ko/en 로케일에 두 kind 문구 + `resolveDisplayError`([errorDisplay.js:29-40](../../src/utils/errorDisplay.js#L29)) 매핑 추가. 이로써 raw 영어는 missing-key/auth 한정으로 제거.
 
@@ -126,17 +136,19 @@ mock만으로 넘기지 않고 다음 조합을 커버:
 - **게이트 UI = 인라인 카드**(별도 모달 없음).
 - **테스트 재현 = env 스위치** `AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1`, preflight resolver와 동일 경로.
 - **`ApiKeyField` = presentational + `GenaiApiKeyField`/`TtsApiKeyField` wrapper**, `src/components/settings/`.
-- **reuse 세그먼트 제외**: 1차 구현부터 정확 계산(제외 포함)으로 간다(보수적 전체-provider 차단은 F1/F3 정신에 어긋나므로 회피).
+- **reuse 세그먼트 제외**: 1차 구현부터 정확 계산(제외 포함). 단 reuse 판정은 `stat()` IO라 **순수 함수 불가 → async `planAudioWork`**로 구현(§4.2/§8). 보수적 전체-provider 차단은 F1/F3 정신에 어긋나므로 회피.
 
 ## 8. 구현 단위 (isolation)
 
 - `apiKeyRegistry`(순수 매핑) — storyProvider↔keyId↔hook/resolver.
-- `computeRequiredProviders(params, scenes)`(순수) — 합성 루프와 공유, pre-flight/실행 공용.
-- `story:audio-preflight` IPC(main) — resolver try/catch, dev 스위치 연동.
-- `runAudioWithPreflight`(renderer) — 진입점 통합.
-- `ApiKeyField` + 2 wrapper — 설정/게이트/미리듣기 공용.
-- errorKind 표준화(어댑터/resolver/로케일/errorDisplay).
-- keyStoreMulti genai 하드닝.
+- `providerForSegment` + fingerprint/sfxSource(순수) — 세그먼트→provider·재사용 지문 계산.
+- `planAudioWork(params, scenes, { stat, segmentsDir, forceRegen, onlySpeaker })`(**async**) — 세그먼트 선별(voiceOf·import 분리·canReuse·canReuseSfx) 전체를 담아 `{ toSynth, requiredProviders }` 반환. **합성 루프와 preflight가 이 하나를 공유**(순수 아님 — reuse가 stat IO).
+- `story:audio-preflight` IPC(main) — 주입된 `ttsKeyFor`/`sfxKeyFor` closure로 판정(throw/falsy=missing), dev 스위치 연동, per-provider status 반환.
+- `runAudioWithPreflight`(renderer) — 진입점 통합 + main `start('audio')` 재검사(running 마킹 전 `{error}` 반환).
+- `ApiKeyField`(presentational) + `GenaiApiKeyField`/`TtsApiKeyField` wrapper — 설정/게이트/미리듣기 공용.
+- errorKind 표준화(canonical resolver 일원화 + SFX 어댑터 + 로케일/errorDisplay + preview IPC 객체 반환).
+- keyStoreMulti genai 하드닝(split-brain 제거).
+- voices refetch(provider slice **replace**) — 저장 wrapper 공유 App-level reload.
 
 각 단위는 독립 테스트 가능하고, 무엇을 하는지/어떻게 쓰는지/무엇에 의존하는지가 명확하다.
 
@@ -155,3 +167,14 @@ v1의 확정 결함(둘 다 실측 지적, 필자 직접 코드 대조 확인):
 - **hook 규칙** 조건부 hook → §4.6 wrapper 분리.
 - **암호화 불가** → §4.10 상태 분리.
 - **진입점 다수** → §4.4 공통 진입점 + main 재검사.
+
+### v3 반영 (R2 라운드, 잔여 문구성 findings)
+- **R1** `regenerate`는 부분 스코프 아님(전체 실행 + forceRegen) → §4.2 스코프 정정.
+- **R2** reuse 판정이 stat IO라 순수 함수 불가 → §4.2/§7/§8 async `planAudioWork`.
+- **R3** 미리듣기 선차단이 캐시/previewUrl 키리스를 막음 → §4.7 시도-후-`no-key`-게이트.
+- **R4** missing 신호 이원(throw/null) + SFX 어댑터 누락 → §4.1 throw/falsy 통일, §4.8 SFX 포함·loader null 통일.
+- **R5** 반환 shape이 fallback-available 못 실음 → §4.1 per-provider status.
+- **R6** main 재검사 배치(running 마킹 전 `{error}` 반환) → §4.4.
+- **R7** refetch가 merge라 stale voice 잔존 → §4.7 provider slice replace.
+- resolver 주입 경계(main closure 재구현 금지) → §4.1.
+- 확인됨(무결): resolver 동일성(stepMachine `resolveTts`=주입된 `ttsFor`), googletts 설정전용/anthropic 제외, genai split-brain 하드닝은 마이그레이션 무손실(`keys:set('genai')` 호출 UI 부재).
