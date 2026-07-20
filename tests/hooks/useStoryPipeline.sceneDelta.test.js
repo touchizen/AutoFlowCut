@@ -36,6 +36,37 @@ const sceneEvent = (over = {}) => ({
 })
 
 describe('useStoryPipeline scene-delta preview', () => {
+  it('활성 op의 thinking만 표시하고 real delta와 terminal state에서 해제한다', async () => {
+    const { result } = await openHook()
+    expect(result.current.sceneThinking).toBe(false)
+
+    act(() => listeners['story:progress'](sceneEvent({ phase: 'thinking' })))
+    expect(result.current.sceneThinking).toBe(false)
+
+    act(() => listeners['story:progress'](sceneEvent({ phase: 'started' })))
+    act(() => listeners['story:progress'](sceneEvent({ operationId: 'stale-op', phase: 'thinking' })))
+    expect(result.current.sceneThinking).toBe(false)
+
+    act(() => listeners['story:progress'](sceneEvent({ phase: 'thinking' })))
+    expect(result.current.sceneThinking).toBe(true)
+
+    act(() => listeners['story:progress'](sceneEvent({
+      chunkIndex: 0,
+      localSceneNo: 0,
+      scene: { summary: 'GHOST', segments: [] },
+    })))
+    expect(result.current.sceneThinking).toBe(false)
+
+    act(() => listeners['story:progress'](sceneEvent({ phase: 'thinking' })))
+    expect(result.current.sceneThinking).toBe(true)
+    act(() => listeners['story:state']({
+      projectToken: 'tok1',
+      operationId: 'scene-op-1',
+      state: { steps: { scenes: { status: 'done' } } },
+    }))
+    expect(result.current.sceneThinking).toBe(false)
+  })
+
   it('started gate 뒤 같은 op의 scene만 좌표별 누적하고 stale/ungated delta를 버린다', async () => {
     const { result } = await openHook()
 

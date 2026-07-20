@@ -79,6 +79,11 @@ export async function runScenesSplitExperiment(scriptMd, llm, opts = {}, config 
       : opts
     const result = await llm.splitScenes(chunk.text, callOpts, {
       signal: config.signal,
+      // onPartialScene 과 같은 게이트 — stop 후 zombie chunk 가 thinking 신호를 흘리지 않게(대칭성).
+      onThinkingActivity: () => {
+        if (config.signal?.aborted || stopped) return
+        config.onThinkingActivity?.()
+      },
       onPartialScene: (scene, localSceneNo) => {
         if (config.signal?.aborted || stopped) return
         streamed += 1

@@ -204,7 +204,7 @@ function formatProgressLogTime(value) {
 }
 
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
-function StoryRunning({ label, startedAt, detail, log = [], usage = null }) {
+function StoryRunning({ label, startedAt, detail, progress, thinking = false, log = [], usage = null, t = (k, fallback) => fallback ?? k }) {
   const logRef = useRef(null)
   useEffect(() => {
     const el = logRef.current
@@ -217,8 +217,14 @@ function StoryRunning({ label, startedAt, detail, log = [], usage = null }) {
         <StopwatchIcon size={18} />
         <span className="story-running-label">{label}</span>
         <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
+        {progress && <span className="story-running-progress">{progress}</span>}
         <UsageInline usage={usage} />
       </div>
+      {thinking && (
+        <div className="story-thinking-badge" role="status">
+          {t('story.stream.thinking', '🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)')}
+        </div>
+      )}
       {log.length > 0 && (
         <div className="story-progress-log" ref={logRef} role="log" aria-live="polite">
           {log.map((entry, i) => (
@@ -229,6 +235,20 @@ function StoryRunning({ label, startedAt, detail, log = [], usage = null }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// 완료 결과 표의 DOM/layout은 그대로 두고, ghost 행이 생기는 동안에만 독립 스크롤 영역을 만든다.
+function StreamingTableViewport({ active, step, containerRef, onScroll, children }) {
+  if (!active) return children
+  return (
+    <div
+      className={`story-stream-table story-stream-table-${step}`}
+      ref={containerRef}
+      onScroll={onScroll}
+    >
+      {children}
     </div>
   )
 }
@@ -351,16 +371,20 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewScenes = {}, previewPrompts = {}, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewScenes = {}, sceneThinking = false, previewPrompts = {}, promptThinking = false, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
     synopsisReviewing = false,
   } = pipeline
   const steps = state?.steps || {}
+  const scenesStreaming = steps.scenes?.status === 'running' && steps.scenes?.reviewOnly !== true
+  const promptsStreaming = steps.prompts?.status === 'running' && steps.prompts?.reviewOnly !== true
   const orderedPreviewScenes = Object.values(previewScenes)
     .filter((item) => item?.scene && Number.isInteger(item.chunkIndex) && Number.isInteger(item.localSceneNo))
     .sort((a, b) => a.chunkIndex - b.chunkIndex || a.localSceneNo - b.localSceneNo)
+  const scenePreviewCount = orderedPreviewScenes.length
+  const promptPreviewCount = Object.keys(previewPrompts).length
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
   const isRunning = stepData.status === 'running'
@@ -381,6 +405,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   useEffect(() => {
     setScriptText(pipeline.scriptText || '')
   }, [pipeline.scriptText])
+  const consumedSceneChars = orderedPreviewScenes.reduce((total, item) => (
+    total + (item.scene.segments || []).reduce((sum, segment) => (
+      sum + (typeof segment?.text === 'string' ? segment.text.length : 0)
+    ), 0)
+  ), 0)
+  const sceneStreamProgress = scriptText.length > 0
+    ? t('story.stream.sceneProgress', '씬 {count}개 · ~{percent}%', { count: scenePreviewCount, percent: Math.min(99, Math.round((consumedSceneChars / scriptText.length) * 100)) })
+    : t('story.stream.sceneCount', '씬 {count}개', { count: scenePreviewCount })
+  const promptStreamProgress = t('story.stream.promptProgress', '프롬프트 {count}/{total}', { count: promptPreviewCount, total: scenes.length })
 
   // 재설계 §1 — script 스텝 2-phase. 재오픈 복원 시 scriptText가 있으면 바로 대본 작업
   // 화면(editor). setup→editor 승격은 명시 트리거(시작/붙여넣기 시작/스텝퍼 script 클릭)에서만.
@@ -414,6 +447,36 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const synopsisStream = useStickToBottom(synopsisStreamingText)
   const scriptEditorStream = useStickToBottom(baseScript + streamingText)
   const scriptPreviewStream = useStickToBottom(streamingText)
+  const scenesTableRef = useRef(null)
+  const promptsTableRef = useRef(null)
+  const scenesStickToBottomRef = useRef(true)
+  const promptsStickToBottomRef = useRef(true)
+  const handleScenesTableScroll = () => {
+    const el = scenesTableRef.current
+    if (!el) return
+    scenesStickToBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+  }
+  const handlePromptsTableScroll = () => {
+    const el = promptsTableRef.current
+    if (!el) return
+    promptsStickToBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+  }
+  useEffect(() => {
+    if (!scenesStreaming) {
+      scenesStickToBottomRef.current = true
+      return
+    }
+    const el = scenesTableRef.current
+    if (el && scenesStickToBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [scenesStreaming, scenePreviewCount])
+  useEffect(() => {
+    if (!promptsStreaming) {
+      promptsStickToBottomRef.current = true
+      return
+    }
+    const el = promptsTableRef.current
+    if (el && promptsStickToBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [promptsStreaming, promptPreviewCount])
 
   // 재오픈 phase 승격 — open() 응답이 마운트 뒤 도착해 pipeline.scriptText가 늦게 채워지면
   // 초기 phase가 setup으로 굳어 있다. 사용자가 [⚙ 설정으로]를 눌러 명시적으로 setup에 온
@@ -1817,6 +1880,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   label={t('story.scenes.running', '씬 분리 진행 중')}
                   startedAt={Date.parse(steps.scenes.updatedAt)}
                   detail={splitSummary}
+                  progress={sceneStreamProgress}
+                  thinking={sceneThinking && scenePreviewCount === 0}
+                  t={t}
                   log={scenesProgressLog}
                 />
               </>
@@ -1838,36 +1904,43 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {renderSceneSec()}
               </div>
             )}
-            <table className="story-readonly-table">
-              <thead>
-                <tr>
-                  <th>{t('story.scenes.no', '#')}</th>
-                  <th>{t('story.scenes.speaker', '화자')}</th>
-                  <th>{t('story.scenes.segment', '세그먼트(감정)')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {steps.scenes?.status === 'running' && !scenesReviewRun
-                  ? orderedPreviewScenes.flatMap(({ chunkIndex, localSceneNo, scene }, si) =>
-                      (scene.segments || []).map((seg, gi) => (
-                        <tr key={`preview-${chunkIndex}-${localSceneNo}-${gi}`} className={seg.type === 'sfx' ? 'story-sfx-row' : undefined}>
-                          <td><span className="story-scene-ghost">{si + 1}</span></td>
-                          <td><span className="story-scene-ghost">{seg.type === 'sfx' ? t('story.audio.sfxLabel', 'SFX') : seg.speaker}</span></td>
-                          <td><span className={`story-scene-ghost${seg.type === 'sfx' ? ' story-sfx-desc' : ''}`}>{seg.text}</span></td>
-                        </tr>
-                      )),
-                    )
-                  : scenes.flatMap((sc, si) =>
-                      (sc.segments || []).map((seg, gi) => (
-                        <tr key={`${sc.storyId ?? si}-${gi}`} className={seg.type === 'sfx' ? 'story-sfx-row' : undefined}>
-                          <td>{si + 1}</td>
-                          <td>{seg.type === 'sfx' ? t('story.audio.sfxLabel', 'SFX') : seg.speaker}</td>
-                          <td>{seg.type === 'sfx' ? <span className="story-sfx-desc">{seg.description}</span> : renderNarrationCell(seg)}</td>
-                        </tr>
-                      )),
-                    )}
-              </tbody>
-            </table>
+            <StreamingTableViewport
+              active={scenesStreaming}
+              step="scenes"
+              containerRef={scenesTableRef}
+              onScroll={handleScenesTableScroll}
+            >
+              <table className="story-readonly-table">
+                <thead>
+                  <tr>
+                    <th>{t('story.scenes.no', '#')}</th>
+                    <th>{t('story.scenes.speaker', '화자')}</th>
+                    <th>{t('story.scenes.segment', '세그먼트(감정)')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {steps.scenes?.status === 'running' && !scenesReviewRun
+                    ? orderedPreviewScenes.flatMap(({ chunkIndex, localSceneNo, scene }, si) =>
+                        (scene.segments || []).map((seg, gi) => (
+                          <tr key={`preview-${chunkIndex}-${localSceneNo}-${gi}`} className={seg.type === 'sfx' ? 'story-sfx-row' : undefined}>
+                            <td><span className="story-scene-ghost">{si + 1}</span></td>
+                            <td><span className="story-scene-ghost">{seg.type === 'sfx' ? t('story.audio.sfxLabel', 'SFX') : seg.speaker}</span></td>
+                            <td><span className={`story-scene-ghost${seg.type === 'sfx' ? ' story-sfx-desc' : ''}`}>{seg.text}</span></td>
+                          </tr>
+                        )),
+                      )
+                    : scenes.flatMap((sc, si) =>
+                        (sc.segments || []).map((seg, gi) => (
+                          <tr key={`${sc.storyId ?? si}-${gi}`} className={seg.type === 'sfx' ? 'story-sfx-row' : undefined}>
+                            <td>{si + 1}</td>
+                            <td>{seg.type === 'sfx' ? t('story.audio.sfxLabel', 'SFX') : seg.speaker}</td>
+                            <td>{seg.type === 'sfx' ? <span className="story-sfx-desc">{seg.description}</span> : renderNarrationCell(seg)}</td>
+                          </tr>
+                        )),
+                      )}
+                </tbody>
+              </table>
+            </StreamingTableViewport>
             {steps.scenes?.status !== 'running' && scenes.length === 0 && (
               <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
             )}
@@ -2192,36 +2265,46 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 <StoryRunning usage={usage}
                   label={t('story.prompts.running', '프롬프트 생성 중')}
                   startedAt={Date.parse(steps.prompts.updatedAt)}
+                  progress={promptStreamProgress}
+                  thinking={promptThinking && promptPreviewCount === 0}
+                  t={t}
                 />
               </>
             )}
-            <table className="story-readonly-table">
-              <thead>
-                <tr>
-                  <th>{t('story.prompts.no', '#')}</th>
-                  <th>{t('story.prompts.image', '이미지 프롬프트')}</th>
-                  <th>{t('story.prompts.video', '비디오 프롬프트')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scenes.map((sc, i) => {
-                  const preview = steps.prompts?.status === 'running' && !promptsReviewRun
-                    ? previewPrompts[sc.sceneNo]
-                    : null
-                  return (
-                    <tr key={sc.storyId ?? i}>
-                      <td>{i + 1}</td>
-                      <td>{preview
-                        ? <span className="story-prompt-ghost">{preview.imagePrompt}</span>
-                        : sc.imagePrompt}</td>
-                      <td>{preview
-                        ? <span className="story-prompt-ghost">{preview.videoPrompt}</span>
-                        : sc.videoPrompt}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+            <StreamingTableViewport
+              active={promptsStreaming}
+              step="prompts"
+              containerRef={promptsTableRef}
+              onScroll={handlePromptsTableScroll}
+            >
+              <table className="story-readonly-table">
+                <thead>
+                  <tr>
+                    <th>{t('story.prompts.no', '#')}</th>
+                    <th>{t('story.prompts.image', '이미지 프롬프트')}</th>
+                    <th>{t('story.prompts.video', '비디오 프롬프트')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scenes.map((sc, i) => {
+                    const preview = steps.prompts?.status === 'running' && !promptsReviewRun
+                      ? previewPrompts[sc.sceneNo]
+                      : null
+                    return (
+                      <tr key={sc.storyId ?? i}>
+                        <td>{i + 1}</td>
+                        <td>{preview
+                          ? <span className="story-prompt-ghost">{preview.imagePrompt}</span>
+                          : sc.imagePrompt}</td>
+                        <td>{preview
+                          ? <span className="story-prompt-ghost">{preview.videoPrompt}</span>
+                          : sc.videoPrompt}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </StreamingTableViewport>
             {scenes.length === 0 && (
               <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
             )}

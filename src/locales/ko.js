@@ -96,6 +96,12 @@ export default {
     charRef: {
       collision: '동명 레퍼런스가 있어 캐릭터 카드를 건너뜀: {names}',
     },
+    stream: {
+      thinking: '🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)',
+      sceneProgress: '씬 {count}개 · ~{percent}%',
+      sceneCount: '씬 {count}개',
+      promptProgress: '프롬프트 {count}/{total}',
+    },
     step: {
       setup: '설정',
       research: '리서치',

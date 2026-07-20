@@ -36,6 +36,33 @@ const promptEvent = (over = {}) => ({
 })
 
 describe('useStoryPipeline prompt-delta preview', () => {
+  it('활성 op의 thinking만 표시하고 real delta와 terminal state에서 해제한다', async () => {
+    const { result } = await openHook()
+    expect(result.current.promptThinking).toBe(false)
+
+    act(() => listeners['story:progress'](promptEvent({ phase: 'thinking' })))
+    expect(result.current.promptThinking).toBe(false)
+
+    act(() => listeners['story:progress'](promptEvent({ phase: 'started' })))
+    act(() => listeners['story:progress'](promptEvent({ operationId: 'stale-op', phase: 'thinking' })))
+    expect(result.current.promptThinking).toBe(false)
+
+    act(() => listeners['story:progress'](promptEvent({ phase: 'thinking' })))
+    expect(result.current.promptThinking).toBe(true)
+
+    act(() => listeners['story:progress'](promptEvent({ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' })))
+    expect(result.current.promptThinking).toBe(false)
+
+    act(() => listeners['story:progress'](promptEvent({ phase: 'thinking' })))
+    expect(result.current.promptThinking).toBe(true)
+    act(() => listeners['story:state']({
+      projectToken: 'tok1',
+      operationId: 'prompt-op-1',
+      state: { steps: { prompts: { status: 'error' } } },
+    }))
+    expect(result.current.promptThinking).toBe(false)
+  })
+
   it('started gate 뒤 같은 op의 sceneNo별 prompt만 누적하고 stale/ungated delta를 버린다', async () => {
     const { result } = await openHook()
 

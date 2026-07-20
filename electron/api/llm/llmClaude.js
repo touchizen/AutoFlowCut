@@ -322,7 +322,7 @@ function assertSchema(data, schema, path = 'root') {
   }
 }
 
-async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery, sdkExtra = {}, onPartialText, onPartialReset } = {}) {
+async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery, sdkExtra = {}, onPartialText, onPartialReset, onThinkingActivity } = {}) {
   const schema = toJsonSchema(geminiSchema)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
@@ -335,6 +335,8 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     let needFallback = false
     for await (const m of queryImpl({ prompt, options: opt1 })) {
       if (m.type === 'stream_event') {
+        if ((m.event?.type === 'content_block_start' && (m.event?.content_block?.type === 'thinking' || m.event?.content_block?.type === 'redacted_thinking'))
+          || m.event?.delta?.type === 'thinking_delta') onThinkingActivity?.()
         const delta = m.event?.delta
         if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') onPartialText?.(delta.partial_json)
         else if (delta?.type === 'text_delta' && typeof delta.text === 'string') onPartialText?.(delta.text)
@@ -358,6 +360,8 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true }))
     for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
       if (m.type === 'stream_event') {
+        if ((m.event?.type === 'content_block_start' && (m.event?.content_block?.type === 'thinking' || m.event?.content_block?.type === 'redacted_thinking'))
+          || m.event?.delta?.type === 'thinking_delta') onThinkingActivity?.()
         const delta = m.event?.delta
         if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') onPartialText?.(delta.partial_json)
         else if (delta?.type === 'text_delta' && typeof delta.text === 'string') onPartialText?.(delta.text)
@@ -383,6 +387,7 @@ export async function splitScenes(scriptMd, opts = {}, {
   onPartialText,
   onPartialReset,
   onPartialScene,
+  onThinkingActivity,
 } = {}) {
   const prompt = buildSplitPrompt(scriptMd, opts)
   const makePartialParser = () => createPartialScenesParser({ onItem: onPartialScene })
@@ -390,6 +395,7 @@ export async function splitScenes(scriptMd, opts = {}, {
   const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, {
     signal,
     queryImpl,
+    onThinkingActivity,
     onPartialText: onPartialText || partialParser
       ? (text) => {
           onPartialText?.(text)
@@ -528,13 +534,14 @@ export async function factCheckClaims(claims, opts = {}, { signal, queryImpl } =
   }
 }
 
-export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl, onPartialPrompt } = {}) {
+export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl, onPartialPrompt, onThinkingActivity } = {}) {
   const prompt = buildPromptsPrompt(scenes, context, opts)
   const makePartialParser = () => createPartialScenesParser({ onItem: onPartialPrompt })
   let partialParser = typeof onPartialPrompt === 'function' ? makePartialParser() : null
   const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, {
     signal,
     queryImpl,
+    onThinkingActivity,
     onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
     onPartialReset: partialParser ? () => { partialParser = makePartialParser() } : undefined,
   })

@@ -840,6 +840,12 @@
   border: 1px solid var(--border-color);
 }
 
+/* ghost 행이 늘어나는 동안만 StoryView가 붙이는 viewport. 완료 표는 wrapper 없이 기존 렌더 유지. */
+.story-stream-table {
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+}
+
 .story-readonly-table th {
   padding: 9px 10px;
   text-align: left;
@@ -946,6 +952,8 @@
   opacity: 0.85;
 }
 
+/* justify/wrap 을 여기 넣으면 script/audio/review 등 모든 StoryRunning 헤더가 가운데 정렬로
+   바뀐다(Fable NIT — blast radius). 배지/진행은 자체 클래스로 배치하고 기존 정렬은 유지한다. */
 .story-running-main {
   display: flex;
   align-items: center;
@@ -960,6 +968,23 @@
 .story-running-elapsed {
   font-variant-numeric: tabular-nums;
   color: var(--primary-color);
+}
+
+.story-running-progress {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+.story-thinking-badge {
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 35%, var(--border-color));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  text-align: center;
 }
 
 /* 생성 중 인라인 시계 — 스트리밍 뷰(시놉시스/대본) 하단 우측. 초시계 애니메이션 + 경과시간. */

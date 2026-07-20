@@ -6,6 +6,58 @@ import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
 
 describe('stepMachine scenes streaming preview', () => {
+  it('thinking activity를 즉시 보낸 뒤 1초 간격으로 throttle한다', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'sm-scenes-thinking-'))
+    const emitted = []
+    const finalScene = {
+      sceneNo: 1,
+      summary: 'FINAL',
+      segments: [{ type: 'narration', speaker: 'narrator', text: '최종 본문', emotion: 'normal' }],
+    }
+    const llm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '# 대본' })),
+      splitScenes: vi.fn(async (_scriptMd, _opts, ctx) => {
+        ctx.onThinkingActivity?.()
+        ctx.onThinkingActivity?.()
+        vi.advanceTimersByTime(999)
+        ctx.onThinkingActivity?.()
+        vi.advanceTimersByTime(1)
+        ctx.onThinkingActivity?.()
+        return { scenes: [finalScene], speakers: [{ id: 'narrator', name: '나레이션' }] }
+      }),
+    }
+    const machine = createStepMachine({
+      projectPath: dir,
+      llm,
+      emit: (ch, payload) => emitted.push({ ch, payload }),
+      getApiKey: () => 'k',
+    })
+    await machine.open()
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-20T00:00:00.000Z'))
+    try {
+      const { operationId } = await machine.start('scenes', {})
+      const thinkingEvents = emitted.filter((event) => (
+        event.ch === 'story:progress'
+        && event.payload.kind === 'scene-delta'
+        && event.payload.phase === 'thinking'
+      ))
+
+      expect(thinkingEvents).toHaveLength(2)
+      for (const event of thinkingEvents) {
+        const { projectToken, operationId: eventOp, usage, ...body } = event.payload
+        expect(projectToken).toBeTruthy()
+        expect(eventOp).toBe(operationId)
+        expect(usage).toBeTruthy()
+        expect(body).toEqual({ kind: 'scene-delta', phase: 'thinking' })
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('started 뒤 좌표와 preview 전용 필드만 보낸 뒤 최종 splitScenes 결과만 저장한다', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'sm-scenes-streaming-'))
     const emitted = []

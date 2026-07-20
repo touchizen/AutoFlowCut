@@ -96,6 +96,12 @@ export default {
     charRef: {
       collision: 'Skipped character cards with a same-named reference: {names}',
     },
+    stream: {
+      thinking: '🧠 Reasoning… (no output is shown while the model thinks)',
+      sceneProgress: '{count} scenes · ~{percent}%',
+      sceneCount: '{count} scenes',
+      promptProgress: 'Prompts {count}/{total}',
+    },
     step: {
       setup: 'Setup',
       research: 'Research',

@@ -15,6 +15,7 @@ function fakeLayout(el, { scrollHeight, clientHeight = 200 }) {
 }
 
 const stream = (container) => container.querySelector('.story-script-stream')
+const streamingTable = (container, step) => container.querySelector(`.story-stream-table-${step}`)
 
 const basePipeline = (over = {}) => ({
   state: { steps: { script: { status: 'pending' }, scenes: { status: 'pending' }, audio: { status: 'pending' }, prompts: { status: 'pending' } } },
@@ -33,6 +34,28 @@ const synopsisPipeline = (synopsisStreamingText) => basePipeline({
   synopsisGenerating: true,
   synopsisStreamingText,
   generateSynopsis: vi.fn().mockResolvedValue({}),
+})
+
+const scenePreview = (count) => Object.fromEntries(Array.from({ length: count }, (_, i) => [
+  `0:${i}`,
+  { chunkIndex: 0, localSceneNo: i, scene: { segments: [{ speaker: 'narrator', text: `scene-${i}` }] } },
+]))
+
+const scenesPipeline = (count) => basePipeline({
+  state: { steps: { script: { status: 'done' }, scenes: { status: 'running', updatedAt: '2026-07-20T00:00:00Z' }, audio: { status: 'pending' }, prompts: { status: 'pending' } } },
+  scriptText: 'streaming script',
+  previewScenes: scenePreview(count),
+})
+
+const promptScenes = [1, 2, 3].map((sceneNo) => ({ sceneNo, storyId: `s${sceneNo}` }))
+const promptPreview = (count) => Object.fromEntries(promptScenes.slice(0, count).map((scene) => [
+  scene.sceneNo,
+  { imagePrompt: `image-${scene.sceneNo}`, videoPrompt: `video-${scene.sceneNo}` },
+]))
+const promptsPipeline = (count) => basePipeline({
+  state: { steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'done' }, prompts: { status: 'running', updatedAt: '2026-07-20T00:00:00Z' } } },
+  scenes: promptScenes,
+  previewPrompts: promptPreview(count),
 })
 
 describe('대본 스트리밍 자동 스크롤', () => {
@@ -100,6 +123,52 @@ describe('시놉시스 스트리밍 자동 스크롤', () => {
     el.scrollTop = 0
     fireEvent.scroll(el)
     rerender(<StoryView pipeline={synopsisPipeline('로그라인 이야기')} />)
+    expect(el.scrollTop).toBe(0)
+  })
+})
+
+describe('씬 ghost table 자동 스크롤', () => {
+  it('preview scene이 늘고 바닥에 붙어 있으면 최신 행으로 내린다', () => {
+    const { container, rerender } = render(<StoryView pipeline={scenesPipeline(1)} />)
+    const el = streamingTable(container, 'scenes')
+    expect(el).toBeTruthy()
+    fakeLayout(el, { scrollHeight: 1000 })
+
+    rerender(<StoryView pipeline={scenesPipeline(2)} />)
+    expect(el.scrollTop).toBe(1000)
+  })
+
+  it('사용자가 위로 올렸으면 preview scene이 늘어도 끌어내리지 않는다', () => {
+    const { container, rerender } = render(<StoryView pipeline={scenesPipeline(1)} />)
+    const el = streamingTable(container, 'scenes')
+    fakeLayout(el, { scrollHeight: 1000 })
+    el.scrollTop = 0
+    fireEvent.scroll(el)
+
+    rerender(<StoryView pipeline={scenesPipeline(2)} />)
+    expect(el.scrollTop).toBe(0)
+  })
+})
+
+describe('프롬프트 ghost table 자동 스크롤', () => {
+  it('preview prompt가 늘고 바닥에 붙어 있으면 최신 행으로 내린다', () => {
+    const { container, rerender } = render(<StoryView pipeline={promptsPipeline(1)} />)
+    const el = streamingTable(container, 'prompts')
+    expect(el).toBeTruthy()
+    fakeLayout(el, { scrollHeight: 1000 })
+
+    rerender(<StoryView pipeline={promptsPipeline(2)} />)
+    expect(el.scrollTop).toBe(1000)
+  })
+
+  it('사용자가 위로 올렸으면 preview prompt가 늘어도 끌어내리지 않는다', () => {
+    const { container, rerender } = render(<StoryView pipeline={promptsPipeline(1)} />)
+    const el = streamingTable(container, 'prompts')
+    fakeLayout(el, { scrollHeight: 1000 })
+    el.scrollTop = 0
+    fireEvent.scroll(el)
+
+    rerender(<StoryView pipeline={promptsPipeline(2)} />)
     expect(el.scrollTop).toBe(0)
   })
 })

@@ -15,6 +15,47 @@ const SCENES = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'nar
 function resultOf(msg) { return async function* () { yield msg } }
 
 describe('llmClaude.splitScenes', () => {
+  it('thinking block 시작과 빈 thinking_delta도 onThinkingActivity로 알린다', async () => {
+    const onThinkingActivity = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    }
+
+    await expect(splitScenes('SCRIPT', {}, { queryImpl, onThinkingActivity })).resolves.toEqual(SCENES)
+    expect(onThinkingActivity).toHaveBeenCalledTimes(2)
+  })
+
+  it('redacted_thinking block도 activity 로 감지한다 — 침묵 창 방어(Fable NIT)', async () => {
+    const onThinkingActivity = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'redacted_thinking', data: 'x' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    }
+
+    await expect(splitScenes('SCRIPT', {}, { queryImpl, onThinkingActivity })).resolves.toEqual(SCENES)
+    expect(onThinkingActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('outputFormat 폴백 stream의 thinking activity도 알린다', async () => {
+    const onThinkingActivity = vi.fn()
+    let call = 0
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) {
+        yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }
+        return
+      }
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(SCENES) }
+    }
+
+    await splitScenes('SCRIPT', {}, { queryImpl, onThinkingActivity })
+    expect(onThinkingActivity).toHaveBeenCalledTimes(2)
+  })
+
   it('structured stream의 닫힌 scene을 onPartialScene으로 보내고 최종 result는 그대로 반환한다', async () => {
     const onPartialScene = vi.fn()
     const queryImpl = async function* () {
@@ -91,8 +132,10 @@ describe('llmClaude.splitScenes', () => {
     expect(out).toEqual(SCENES)
   })
 
-  it('partial stream message가 와도 onPartialText를 생략하면 기존 호출이 그대로 동작한다', async () => {
+  it('partial/thinking stream callback을 생략해도 기존 호출이 그대로 동작한다', async () => {
     const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
       yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[]}' } } }
       yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
     }
@@ -178,6 +221,19 @@ describe('llmClaude.splitScenes', () => {
 })
 
 describe('llmClaude.writePrompts', () => {
+  it('structured call의 thinking activity callback을 전달한다', async () => {
+    const scenes = [{ sceneNo: 1, storyId: 'a' }]
+    const final = { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
+    const onThinkingActivity = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: final }
+    }
+
+    await writePrompts(scenes, {}, {}, { queryImpl, onThinkingActivity })
+    expect(onThinkingActivity).toHaveBeenCalledTimes(1)
+  })
+
   it('닫힌 streamed scene마다 onPartialPrompt를 호출하지만 최종 병합은 result를 사용한다', async () => {
     const scenes = [
       { sceneNo: 1, storyId: 'a', summary: 'S1' },

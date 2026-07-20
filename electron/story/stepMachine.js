@@ -1223,6 +1223,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const opts = buildLlmOptions(effectiveOptions(params), roster ? { roster } : {})
       sendStepLog('scenes', 'split-request', 'LLM 씬 분리 요청', opId)
       send('story:progress', { kind: 'scene-delta', phase: 'started' }, opId)
+      let lastThinkingEmitAt = -Infinity
+      const onThinkingActivity = () => {
+        const now = Date.now()
+        if (now - lastThinkingEmitAt < 1000) return
+        lastThinkingEmitAt = now
+        send('story:progress', { kind: 'scene-delta', phase: 'thinking' }, opId)
+      }
       let scenes
       let speakers
       let activeExperimentRecord = null
@@ -1231,6 +1238,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // 기본 경로: M1의 단일 호출 인자/preview 좌표를 그대로 유지한다.
         ;({ scenes, speakers } = await llm.splitScenes(scriptMd, opts, {
           signal,
+          onThinkingActivity,
           onPartialScene: (scene, index) => send('story:progress', {
             kind: 'scene-delta',
             chunkIndex: 0,
@@ -1246,6 +1254,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           const experimental = await runScenesSplitExperiment(scriptMd, llm, opts, {
             ...sceneSplitExperiment,
             signal,
+            onThinkingActivity,
             onPartialScene: (scene, localSceneNo, chunkIndex) => send('story:progress', {
               kind: 'scene-delta',
               chunkIndex,
@@ -1838,8 +1847,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // V2: 프롬프트 컨텍스트엔 캐릭터(non-narrator·appearance 보유)만 전달 — narrator 외형 누수 방지(Codex-Low).
       // prompt preview 전용 op gate. 최종 scenes는 아래 writePrompts 반환만 사용하고 delta는 저장하지 않는다.
       send('story:progress', { kind: 'prompt-delta', phase: 'started' }, opId)
+      let lastThinkingEmitAt = -Infinity
+      const onThinkingActivity = () => {
+        const now = Date.now()
+        if (now - lastThinkingEmitAt < 1000) return
+        lastThinkingEmitAt = now
+        send('story:progress', { kind: 'prompt-delta', phase: 'thinking' }, opId)
+      }
       let { scenes } = await llm.writePrompts(scenesJson.scenes, context, opts, {
         signal,
+        onThinkingActivity,
         onPartialPrompt: (scene) => send('story:progress', {
           kind: 'prompt-delta',
           sceneNo: Number.isInteger(scene?.sceneNo) ? scene.sceneNo : null,
