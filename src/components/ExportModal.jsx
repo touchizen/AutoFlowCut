@@ -220,11 +220,9 @@ export const ExportModal = ({
     return {
       scaleMode,  // 'fill' | 'fit' | 'none'
       kenBurns,
-      ...{
-        kenBurnsMode: mode,
-        kenBurnsScaleMin: scaleMin,
-        kenBurnsScaleMax: scaleMax,
-      },
+      kenBurnsMode: mode,
+      kenBurnsScaleMin: scaleMin,
+      kenBurnsScaleMax: scaleMax,
       kenBurnsCycle: Number(kenBurnsCycle) || 5,
       subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
       renderMode,

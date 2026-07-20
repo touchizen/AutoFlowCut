@@ -97,6 +97,32 @@ describe('useExportSettings', () => {
       expect(result.current.settings.username).toBe('saved')
       expect(result.current.settings.includeSubtitle).toBe(true) // default
     })
+
+    it('레거시/오염된 저장값을 로드 시 한 번 정규화한다 (Fable M2 리뷰 #1·#3)', async () => {
+      // 문자열 숫자(per-keystroke persist 드리프트), falsy/garbage enum — 소비처가 아니라
+      // 로드 merge에서 한 번 정규화해 UI·export 양쪽에 깨끗한 값이 흐르게 한다.
+      localStorage.setItem('exportSettings', JSON.stringify({
+        kenBurnsScaleMin: '110',   // 문자열 → 숫자
+        kenBurnsScaleMax: 0,       // falsy → 기본값 130
+        kenBurnsCycle: '7',        // 문자열 → 숫자
+        renderMode: 'x',           // garbage → 'final'
+        scaleMode: '',             // falsy → 'none'
+        kenBurnsMode: null,        // falsy → 'random'
+      }))
+
+      const { result } = renderHook(() => useExportSettings())
+
+      await vi.waitFor(() => {
+        expect(result.current.isLoaded).toBe(true)
+      })
+
+      expect(result.current.settings.kenBurnsScaleMin).toBe(110)
+      expect(result.current.settings.kenBurnsScaleMax).toBe(130)
+      expect(result.current.settings.kenBurnsCycle).toBe(7)
+      expect(result.current.settings.renderMode).toBe('final')
+      expect(result.current.settings.scaleMode).toBe('none')
+      expect(result.current.settings.kenBurnsMode).toBe('random')
+    })
   })
 
   // ============================================================

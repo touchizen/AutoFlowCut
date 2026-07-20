@@ -22,6 +22,21 @@ const DEFAULT_SETTINGS = {
   renderBurnSubtitle: true    // self-render 자막 번인 토글
 }
 
+// 구 ExportModal load-effect의 정규화 의미 재현 + 숫자 필드는 Number 강제
+// (per-keystroke persist로 문자열이 저장돼도 소비처는 숫자만 본다).
+function normalizeStoredSettings(merged) {
+  return {
+    ...merged,
+    scaleMode: merged.scaleMode || 'none',
+    renderMode: merged.renderMode === 'preview' ? 'preview' : 'final',
+    kenBurns: merged.kenBurns !== false,
+    kenBurnsMode: merged.kenBurnsMode || 'random',
+    kenBurnsCycle: Number(merged.kenBurnsCycle) || 5,
+    kenBurnsScaleMin: Number(merged.kenBurnsScaleMin) || 100,
+    kenBurnsScaleMax: Number(merged.kenBurnsScaleMax) || 130,
+  }
+}
+
 export function useExportSettings() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
   const [isLoaded, setIsLoaded] = useState(false)
@@ -41,12 +56,14 @@ export function useExportSettings() {
     }
   }, [settings, isLoaded])
 
-  // localStorage에서 설정 불러오기
+  // localStorage에서 설정 불러오기.
+  // 레거시/오염 저장값(문자열 숫자, garbage enum)은 여기서 한 번 정규화 —
+  // Context 직접 바인딩 이후 소비처별 방어 대신 로드 merge가 단일 정규화 지점.
   const loadSettings = useCallback(async () => {
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY))
       if (stored) {
-        setSettings(prev => ({
+        setSettings(prev => normalizeStoredSettings({
           ...DEFAULT_SETTINGS,
           ...stored
         }))
