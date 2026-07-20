@@ -25,6 +25,8 @@ import { useExport } from './hooks/useExport'
 import { useStoreRating } from './hooks/useStoreRating'
 import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
+import { useUpscayl } from './hooks/useUpscayl'
+import { fileSystemAPI } from './hooks/useFileSystem'
 import { useAvailableModels } from './hooks/useAvailableModels'
 import { computeModelHeal, computeModeSwitch } from './config/genModels'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
@@ -114,6 +116,7 @@ import Modal from './components/Modal'
 import DeleteSceneConfirmModal from './components/DeleteSceneConfirmModal'
 import SrtImportConflictModal from './components/SrtImportConflictModal'
 import ImportProcessingOverlay from './components/ImportProcessingOverlay'
+import UpscaylDialog from './components/UpscaylDialog'
 import { useAuth } from './contexts/AuthContext'
 import { useImportProcessing } from './hooks/useImportProcessing'
 
@@ -251,6 +254,9 @@ function App() {
   const [selectedStyleRefId, setSelectedStyleRefId] = useState(null) // 레퍼런스 생성 시 적용할 스타일
   const [showStylePicker, setShowStylePicker] = useState(false) // 스타일 선택 모달
   const [selectedVideo, setSelectedVideo] = useState(null) // 비디오 상세 모달용
+  const [upscaylDialogOpen, setUpscaylDialogOpen] = useState(false)
+  const [upscaylTargetSceneIds, setUpscaylTargetSceneIds] = useState(null)
+  const [upscaylDetectState, setUpscaylDetectState] = useState(null)
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
     const saved = localStorage.getItem('autoflowcut_bottomPanelHeight')
     return saved ? parseInt(saved, 10) : UI.DEFAULT_BOTTOM_PANEL_HEIGHT // 기본 높이
@@ -401,6 +407,42 @@ function App() {
   }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  const saveUpscaylImage = useCallback((...args) => fileSystemAPI.saveImage(...args), [])
+  const upscayl = useUpscayl({
+    scenes,
+    updateScene: scenesHook.updateScene,
+    projectNameRef,
+    saveImage: saveUpscaylImage,
+    upscaylAPI: window.upscaylAPI,
+    options: { model: 'ultrasharp-4x', scale: 4 },
+  })
+  const handleUpscaylDetect = useCallback(async () => {
+    setUpscaylDetectState((previous) => ({ ...previous, loading: true }))
+    try {
+      const result = await window.upscaylAPI?.detect?.()
+      setUpscaylDetectState(result || { ok: false, reason: 'missing' })
+    } catch {
+      setUpscaylDetectState({ ok: false, reason: 'missing' })
+    }
+  }, [])
+  const handleUpscaylLocate = useCallback(async () => {
+    setUpscaylDetectState((previous) => ({ ...previous, loading: true }))
+    try {
+      const result = await window.upscaylAPI?.locate?.()
+      setUpscaylDetectState(result || { ok: false, reason: 'missing' })
+    } catch {
+      setUpscaylDetectState({ ok: false, reason: 'missing' })
+    }
+  }, [])
+  const openUpscayl = useCallback((targetSceneIds = null) => {
+    setUpscaylTargetSceneIds(Array.isArray(targetSceneIds) ? targetSceneIds : null)
+    setUpscaylDetectState(null)
+    setUpscaylDialogOpen(true)
+  }, [])
+  useEffect(() => {
+    if (!upscaylDialogOpen) return
+    void handleUpscaylDetect()
+  }, [upscaylDialogOpen, handleUpscaylDetect])
   const latestScenesRef = useRef(scenes)
   latestScenesRef.current = scenes
   const handleRequestSceneDelete = useCallback((sceneId, sceneIndex) => {
@@ -1991,7 +2033,7 @@ function App() {
   // #R13-14: 큐 대기(hasPendingBatch) 구간도 busy 로 본다 — isRunning 으로 뒤집기 전 windows 에서
   //   편집/프로젝트 액션이 열려 있던 비일관성 차단. (anyRunning 은 videoRetryInFlightRef 를 제외하지만,
   //   #R24-2 로 모드 토글 차단용 반응형 videoRetryRunning 은 별도로 modeBusy 에 포함된다.)
-  const anyRunning = isRunning || videoAutomation.isRunning || hasPendingBatch
+  const anyRunning = isRunning || videoAutomation.isRunning || hasPendingBatch || upscayl.running
 
   // 생성 중: 가장 최근 생성된 이미지 씬으로 모니터를 점프 → "만들어지는 걸 본다".
   // (씬에 SRT/길이 타이밍이 있어야 위치 계산 가능 — 없으면 그대로 둠)
@@ -2296,6 +2338,7 @@ function App() {
               generatingSceneId={generatingSceneId}
               references={references}
               styleThumbnails={styleThumbnails}
+              onUpscaleClick={openUpscayl}
             />
           )}
           {activeTab === 'audio' && (
@@ -2322,6 +2365,7 @@ function App() {
               }}
               onSrtImport={(content) => handleImport('srt', content)}
               onSceneUpdate={scenesHook.updateScene}
+              onUpscaleClick={openUpscayl}
             />
           )}
         </div>
@@ -2555,6 +2599,7 @@ function App() {
                 onHiddenRolesChange={setMonitorHiddenRoles}
                 onTrackDrop={handleTrackDrop}
                 onSceneUpdate={scenesHook.updateScene}
+                onUpscaleClick={openUpscayl}
                 disabled={anyRunning}
                 onTitleClick={mode === 'flow' ? () => setMonitorOverlayOpen(o => !o) : null}
                 titleActive={monitorOverlayOpen}
@@ -2567,6 +2612,7 @@ function App() {
               mediaType="image"
               layout={resultsLayout}
               aspectRatio={settings.aspectRatio}
+              onUpscaleClick={openUpscayl}
               onRetry={(id) => {
                 // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
                 // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
@@ -2597,6 +2643,7 @@ function App() {
                 image: null, imagePath: null, filePath: null, data: null, status: 'pending',
                 mediaId: null, seed: null, generatedAt: null, model: null,
               })}
+              disabled={anyRunning}
             />
         )}
         {activeTab === 'video-text' && (
@@ -2744,6 +2791,7 @@ function App() {
           projectName={ensureProjectName()}
           references={references}
           styleThumbnails={styleThumbnails}
+          onUpscaleClick={openUpscayl}
         />
       )}
 
@@ -3059,6 +3107,16 @@ function App() {
           }}
         />
       )}
+
+      <UpscaylDialog
+        isOpen={upscaylDialogOpen}
+        onClose={() => setUpscaylDialogOpen(false)}
+        targetSceneIds={upscaylTargetSceneIds}
+        upscayl={upscayl}
+        detectState={upscaylDetectState}
+        onDetect={handleUpscaylDetect}
+        onLocate={handleUpscaylLocate}
+      />
 
       <DeleteSceneConfirmModal
         scene={sceneToDelete?.scene || null}

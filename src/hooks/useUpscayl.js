@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { isSceneGenerationDone } from '../services/generationStatus.js'
-import { baseImageReplacementPatch } from '../utils/imagePatch.js'
+import {
+  baseImageReplacementPatch,
+  computeUpscaylTargets,
+} from '../utils/imagePatch.js'
 
 const INITIAL_STATE = {
   running: false,
   current: 0,
+  currentSceneId: null,
   total: 0,
   failures: [],
   skipped: 0,
@@ -44,25 +47,18 @@ export function useUpscayl({
     void apiRef.current?.cancel?.()
   }, [])
 
-  const startBatch = useCallback(async (targetSceneIds) => {
+  const startBatch = useCallback(async (targetSceneIds, optionOverride) => {
     if (runningRef.current) return { ok: false, error: 'busy' }
 
-    const selectedIds = Array.isArray(targetSceneIds) ? new Set(targetSceneIds) : null
-    const source = selectedIds
-      ? (scenes || []).filter((scene) => selectedIds.has(scene.id))
-      : (scenes || [])
-    const targets = source.filter((scene) => (
-      isSceneGenerationDone(scene) && scene.imagePath && !scene.upscaledAt
-    ))
-    const skipped = source.length - targets.length
+    const { targets, skipped } = computeUpscaylTargets(scenes, targetSceneIds)
     const capturedProject = projectNameRef.current
-    const { model, scale } = options
+    const { model, scale } = optionOverride || options
     let failures = []
     let stopped = false
 
     runningRef.current = true
     cancelledRef.current = false
-    setState({ running: true, current: 0, total: targets.length, failures, skipped })
+    setState({ running: true, current: 0, currentSceneId: null, total: targets.length, failures, skipped })
 
     const recordFailure = (sceneId, error, fallback) => {
       failures = [...failures, { sceneId, error: errorMessage(error, fallback) }]
@@ -73,7 +69,7 @@ export function useUpscayl({
       for (let index = 0; index < targets.length; index += 1) {
         if (cancelledRef.current) break
         const scene = targets[index]
-        setState((prev) => ({ ...prev, current: index + 1 }))
+        setState((prev) => ({ ...prev, current: index + 1, currentSceneId: scene.id }))
 
         let runResult
         try {
@@ -139,5 +135,5 @@ export function useUpscayl({
     }
   }, [scenes, updateScene, projectNameRef, saveImage, options.model, options.scale])
 
-  return { ...state, startBatch, cancel }
+  return { ...state, scenes, startBatch, cancel }
 }

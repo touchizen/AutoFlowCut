@@ -26,7 +26,8 @@ export default function SceneDetailModal({
   projectName,
   aspectRatio = '9:16',
   references = [],
-  styleThumbnails = {}
+  styleThumbnails = {},
+  onUpscaleClick,
 }) {
   const [editData, setEditData] = useState({ ...scene })
   const [histories, setHistories] = useState([])
@@ -56,12 +57,13 @@ export default function SceneDetailModal({
       model: scene.model,
       image_size: scene.image_size,
       mediaId: scene.mediaId,
+      upscaledAt: scene.upscaledAt,
     }))
     // 부모 prop 갱신 = scene 권위 — 로컬 복원 메타 리셋
     setRestoredMeta(null)
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
-  }, [scene.image, scene.imagePath, scene.status, scene.seed, scene.generatedAt, scene.model, scene.image_size, scene.mediaId])
+  }, [scene.image, scene.imagePath, scene.status, scene.seed, scene.generatedAt, scene.model, scene.image_size, scene.mediaId, scene.upscaledAt])
   
   // 히스토리 로드 — metadata(seed/timestamp/model)도 함께 보존하여 복원 시 활용.
   const loadHistory = async () => {
@@ -174,6 +176,11 @@ export default function SceneDetailModal({
     onGenerate(scene.id)
     onClose()
   }
+
+  const handleUpscale = () => {
+    onClose()
+    onUpscaleClick?.([scene.id])
+  }
   
   const ratioClass = getRatioClass(aspectRatio)
 
@@ -199,6 +206,11 @@ export default function SceneDetailModal({
           disabled={isGenerating || !editData.prompt}
         >
           {isGenerating ? t('sceneDetail.generating') : t('sceneDetail.regenerate')}
+        </button>
+      )}
+      {onUpscaleClick && (
+        <button className="btn-upscale" onClick={handleUpscale} disabled={!editData.imagePath || isGenerating}>
+          {t('sceneDetail.upscale')}
         </button>
       )}
       <button className="btn-primary" onClick={handleSave}>{t('sceneDetail.save')}</button>
@@ -263,6 +275,11 @@ export default function SceneDetailModal({
             model={restoredMeta ? restoredMeta.model : (editData.model ?? backfilledMeta.model)}
             t={t}
           />
+          {editData.upscaledAt && (
+            <div className="scene-upscaled-at">
+              {t('sceneDetail.upscaledAt', { date: new Date(editData.upscaledAt).toLocaleString() })}
+            </div>
+          )}
           
           {/* 프롬프트 */}
           <div className="form-group">

@@ -1689,6 +1689,33 @@ html, body {
   container-name: results-table;
 }
 
+.results-action-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.results-action-toolbar button {
+  padding: 5px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  background: var(--bg-color);
+  cursor: pointer;
+}
+
+.results-action-toolbar button:hover:not(:disabled) {
+  border-color: var(--primary-color);
+}
+
+.results-action-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .results-table-header {
   flex-shrink: 0;
 }

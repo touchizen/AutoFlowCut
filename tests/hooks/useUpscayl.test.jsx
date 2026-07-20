@@ -83,6 +83,19 @@ describe('useUpscayl 대상 선정과 성공', () => {
     expect(harness.result.current).toMatchObject({ total: 1, skipped: 0 })
   })
 
+  it('startBatch 옵션 override를 해당 배치 실행에 사용한다', async () => {
+    const harness = setup()
+
+    await act(async () => {
+      await harness.result.current.startBatch(null, { model: 'remacri-4x', scale: 2 })
+    })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'remacri-4x',
+      scale: 2,
+    }))
+  })
+
   it('각 씬을 run→saveImage→updateScene 순서로 완전히 끝낸 뒤 다음 씬으로 간다', async () => {
     const order = []
     const run = vi.fn(async ({ inputPath }) => {

@@ -406,7 +406,8 @@ export default function SceneList({
   onGenerate,
   generatingSceneId,
   references = [],
-  styleThumbnails = {}
+  styleThumbnails = {},
+  onUpscaleClick,
 }) {
   const { t } = useI18n()
   const [detailModal, setDetailModal] = useState({ open: false, scene: null })
@@ -698,6 +699,7 @@ export default function SceneList({
           aspectRatio={aspectRatio}
           references={references}
           styleThumbnails={styleThumbnails}
+          onUpscaleClick={onUpscaleClick}
         />
       )}
 
