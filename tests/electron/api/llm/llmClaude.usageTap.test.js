@@ -55,9 +55,42 @@ describe('claude usage tap', () => {
     expect(seen).toEqual([{ input: 50, output: 10 }, { input: 60, output: 20 }])
   })
 
-  // 실시간 진행 표시: message_delta 는 끝에 한 번뿐이라(실측) 스트리밍 텍스트/thinking 델타
-  // 길이로 output 을 추정해 pending 채널로 올리고, result 에서 pending 제거 + 확정치 커밋.
+  // 실시간 진행 표시: 텍스트/JSON 은 델타 길이, thinking 은 system 누적 추정 토큰으로
+  // pending 채널에 올리고, result 에서 pending 제거 + 확정치 커밋.
   const se = (event) => ({ type: 'stream_event', event })
+  it('thinking_tokens 누적 추정치로 pending 이 오르고 exact result 는 중복 없이 확정한다', async () => {
+    const seen = []
+    setClaudeUsageSink((u) => seen.push(u))
+    const tapped = __tapQueryForTest(() => results(
+      { type: 'system', subtype: 'thinking_tokens', estimated_tokens: 50, estimated_tokens_delta: 50 },
+      { type: 'system', subtype: 'thinking_tokens', estimated_tokens: 153, estimated_tokens_delta: 103 },
+      { type: 'system', subtype: 'thinking_tokens', estimated_tokens: 10, estimated_tokens_delta: 10 }, // 새 블록 reset
+      { type: 'result', subtype: 'success', result: 'ok', usage: { input_tokens: 20, output_tokens: 200 } },
+    ))
+    for await (const _m of tapped({})) { /* drain */ }
+
+    const pending = seen.filter((u) => !u.commit)
+    const key = pending[0]?.pendingKey
+    expect(pending.map((u) => u.output)).toEqual([50, 153])
+    expect(pending.every((u) => u.pendingKey === key)).toBe(true)
+    expect(seen.at(-1)).toEqual({ pendingKey: key, commit: true, input: 20, output: 200 }) // 153+200 이 아니다
+  })
+
+  it('usage 없는 result fallback 은 문자 추정치 + thinking 추정치를 확정한다', async () => {
+    const seen = []
+    setClaudeUsageSink((u) => seen.push(u))
+    const tapped = __tapQueryForTest(() => results(
+      { type: 'system', subtype: 'thinking_tokens', estimated_tokens: 50, estimated_tokens_delta: 50 },
+      se({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'x'.repeat(30) } }), // 10토큰
+      { type: 'result', subtype: 'success', result: 'ok' },
+    ))
+    for await (const _m of tapped({})) { /* drain */ }
+
+    const key = seen[0]?.pendingKey
+    expect(seen.map((u) => u.output)).toEqual([50, 60, 60])
+    expect(seen.at(-1)).toEqual({ pendingKey: key, commit: true, input: 0, output: 60 })
+  })
+
   it('message_start 입력 + 텍스트 델타로 pending output 상승, result 에서 clear+commit', async () => {
     const seen = []
     setClaudeUsageSink((u) => seen.push(u))

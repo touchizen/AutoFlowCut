@@ -2,7 +2,7 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
-import { claudeResultToUsage, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from './usageTokens.js'
+import { claudeResultToUsage, claudeThinkingTokens, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from './usageTokens.js'
 import {
   buildScriptPrompt,
   buildSplitPrompt,
@@ -94,9 +94,13 @@ function tapQuery(makeStream, sink) {
     let key = null      // 이 쿼리의 pending 키(usage 있는 첫 이벤트에서 지연 생성)
     let pin = 0         // 입력(message_start 누적, 즉시 정확)
     let ochars = 0      // 스트리밍된 출력 문자수(text+thinking+structured JSON)
+    // system 추정치는 thinking 블록별 누적이라 새 블록에서 작아질 수 있다. 호출 안에서는 max 로
+    // 단조 증가시키고, 마지막 result 정확치가 최종 보정한다.
+    let thinkingEstTokens = 0
     let lastIn = -1, lastOut = -1 // 마지막 emit 값 — 추정치가 안 바뀌면(3자 미만 증가) IPC 를 아낀다.
+    const estimatedOutput = () => estimateOutputTokens(ochars) + thinkingEstTokens
     const emitPending = () => {
-      const out = estimateOutputTokens(ochars)
+      const out = estimatedOutput()
       if (pin === lastIn && out === lastOut) return
       lastIn = pin; lastOut = out
       sink({ pendingKey: (key ??= `claude-pending-${++pendingKeySeq}`), input: pin, output: out })
@@ -111,12 +115,16 @@ function tapQuery(makeStream, sink) {
               // pending 제거 + 확정치 가산을 한 번에(commit). 스트림이 아니었으면(key 없음) 기존대로 가산.
               // result 에 usage 가 없는 비정상 응답이면(SDK 상 필수라 방어적) 마지막 추정치로 커밋 —
               // 0/0 으로 커밋하면 이미 쓴 토큰을 통째로 버린다.
-              if (key) { sink({ pendingKey: key, commit: true, input: u ? u.input : pin, output: u ? u.output : estimateOutputTokens(ochars) }); key = null }
+              if (key) { sink({ pendingKey: key, commit: true, input: u ? u.input : pin, output: u ? u.output : estimatedOutput() }); key = null }
               else if (u) sink(u)
             } else {
-              const inp = claudeStreamInput(m)
-              if (inp != null) { pin += inp; emitPending() }        // message_start: 입력 즉시 반영
-              else { const c = claudeStreamOutChars(m); if (c) { ochars += c; emitPending() } } // 델타: 출력 추정 상승
+              const thinking = claudeThinkingTokens(m)
+              if (thinking != null) { thinkingEstTokens = Math.max(thinkingEstTokens, thinking || 0); emitPending() }
+              else {
+                const inp = claudeStreamInput(m)
+                if (inp != null) { pin += inp; emitPending() }        // message_start: 입력 즉시 반영
+                else { const c = claudeStreamOutChars(m); if (c) { ochars += c; emitPending() } } // 델타: 출력 추정 상승
+              }
             }
           } catch { /* best-effort */ }
         }
