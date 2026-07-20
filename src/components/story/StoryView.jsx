@@ -1216,24 +1216,37 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 없이 바로 ttsPreview를 불렀다 — 키가 없으면 IPC 거절이 errorKind 없이 raw 토스트로 샌다.
   // backend audioPreflight가 mode:'segmentTest'(stepMachine:1971)를 이미 지원하므로 여기서도
   // runAudioWithPreflight를 재사용해 같은 게이트 카드로 안내한다.
+  // Finding1(2R 리뷰): 게이트가 뜬 뒤 "키 저장"은 AudioKeyGateCard.onKeySaved(~L2166)가
+  // testSegment의 try/finally가 이미 끝난 뒤 audioGate.retry()로 별도(비동기) 재호출한다.
+  // 그 retry가 원래처럼 raw ttsPreview 콜백을 그대로 부르면 previewBusy 가드도 catch도 없이
+  // 실행돼, "존재하지만 무효한" 키에서 ttsPreview가 거부될 때 unhandled rejection +
+  // 번역 안 된 토스트로 새고, 두 번째 트리거와 겹칠 수도 있다. 가드+에러 처리를 가진 실행부를
+  // 별도 함수로 빼서 최초 호출과 retry가 항상 같은(가드된) 경로를 타게 한다.
+  const previewBusyRef = useRef(false)
   const [previewBusy, setPreviewBusy] = useState(false)
-  const testSegment = async (segId) => {
-    if (previewBusy) return
+  const runSegmentTestGuarded = async (segId) => {
+    if (previewBusyRef.current) return
+    previewBusyRef.current = true
     setPreviewBusy(true)
     try {
       const ap = buildAudioParams()
-      const result = await runAudioWithPreflight({ ...ap, mode: 'segmentTest', segmentIds: [segId] }, async () => {
-        const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
-        if (r?.busy) { toast.error(t('story.audio.busy')); return }
-        const seg = r?.segments?.find((s) => s.id === segId)
-        if (seg?.audioPath) playAudio(seg.audioPath)
-      })
-      if (result?.error === 'preflight-missing-key') return // 게이트 카드가 이미 안내한다.
+      const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
+      if (r?.busy) { toast.error(t('story.audio.busy')); return }
+      const seg = r?.segments?.find((s) => s.id === segId)
+      if (seg?.audioPath) playAudio(seg.audioPath)
     } catch (e) {
       toast.error(t('story.audio.testFailed', { error: e?.message || e }))
     } finally {
+      previewBusyRef.current = false
       setPreviewBusy(false)
     }
+  }
+  const testSegment = async (segId) => {
+    if (previewBusyRef.current) return
+    const ap = buildAudioParams()
+    // run 콜백은 runSegmentTestGuarded 그대로 — runAudioWithPreflight가 이걸 audioGate.retry로도
+    // 저장하므로(위 주석), 최초 실행과 키 저장 후 retry가 완전히 같은 가드된 경로를 탄다.
+    return runAudioWithPreflight({ ...ap, mode: 'segmentTest', segmentIds: [segId] }, () => runSegmentTestGuarded(segId))
   }
 
   const startScriptFromTitle = () => {
@@ -2163,8 +2176,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 onKeySaved={async (provider) => {
                   try { await onReloadVoices?.(provider) } catch { /* best-effort — 재조회 실패해도 재검사는 진행 */ }
                   const r = await preflight.check(audioGate.paramsForRecheck)
-                  if (r.ok) { setAudioGate(null); audioGate.retry?.() }
-                  else setAudioGate((g) => (g ? { ...g, missing: r.missing } : g))
+                  if (r.ok) {
+                    setAudioGate(null)
+                    // Finding1(2R 리뷰): retry는 여기서 fire-and-forget으로 불리면 그 안에서
+                    // 도는 실제 실행이 이 컴포넌트의 원래 호출부(testSegment 등)의 try/finally
+                    // 밖에서 돈다 — await+catch로 감싸 unhandled rejection을 막는다. 세그먼트
+                    // 테스트 경로는 retry 자체가 이미 가드+토스트를 갖고 있어(runSegmentTestGuarded)
+                    // 안 던지지만, 다른 진입점(배치 실행 등)의 방어도 여기서 함께 확보한다.
+                    try { await audioGate.retry?.() } catch { /* run 콜백이 이미 자체 처리 — 방어적 캐치 */ }
+                  } else {
+                    setAudioGate((g) => (g ? { ...g, missing: r.missing } : g))
+                  }
                 }}
               />
             )}
@@ -2352,6 +2374,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                         onConfirm={voiceSel.confirmVoice}
                         onCancel={voiceSel.closeVoicePicker}
                         onVoiceSearch={onVoiceSearch}
+                        onReloadVoices={onReloadVoices}
                         previewState={voiceSel.preview.state}
                         t={t}
                         isKo={isKo}

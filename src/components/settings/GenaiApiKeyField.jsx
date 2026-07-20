@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { toast } from '../Toast'
 import { useApiKey } from '../../hooks/useApiKey'
 import ApiKeyField from './ApiKeyField'
+import { API_KEY_REGISTRY } from '../../config/apiKeyRegistry'
 
 export default function GenaiApiKeyField({ t, onSaved }) {
   const { hasKey, encryptionAvailable, loading, validateKey, saveKey, clearKey } = useApiKey()
@@ -29,11 +30,13 @@ export default function GenaiApiKeyField({ t, onSaved }) {
     if (res?.success === false) toast.error(t('settings.apiKeyRemoveFailed', { error: res?.error || '' }))
     else toast.success(t('settings.apiKeyRemoved'))
   }
+  // Finding4(M3b 2R 리뷰): label/url을 여기 하드코딩하지 않고 API_KEY_REGISTRY.gemini(단일
+  // 진실 — AudioKeyGateCard/ApiKeyTab과 같은 테이블)에서 읽는다.
   return (
     <ApiKeyField
-      label="Google Gemini" hasKey={hasKey} loading={loading} encryptionAvailable={encryptionAvailable}
+      label={API_KEY_REGISTRY.gemini.label} hasKey={hasKey} loading={loading} encryptionAvailable={encryptionAvailable}
       busy={busy} keyInput={keyInput} onKeyInput={setKeyInput} onSave={onSave} onRemove={onRemove}
-      getKeyUrl="https://aistudio.google.com/apikey" extraNote={t('settings.ttsKeyGeminiNote')} t={t}
+      getKeyUrl={API_KEY_REGISTRY.gemini.url} extraNote={t('settings.ttsKeyGeminiNote')} t={t}
     />
   )
 }

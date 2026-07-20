@@ -174,6 +174,52 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     expect(screen.getByRole('button', { name: /오디오 다시 생성/ })).toBeTruthy()
   })
 
+  // Finding1(2R 리뷰): 세그먼트 "테스트" 게이트에서 키 저장→재시도는 testSegment의 원래
+  // try/finally 밖(AudioKeyGateCard.onKeySaved)에서 돈다 — 그 retry가 가드/catch 없는 raw
+  // ttsPreview 호출이면, 존재하지만 무효한 키에서 ttsPreview가 reject할 때 unhandled rejection +
+  // 번역 안 된 토스트로 샌다. retry가 testSegment와 같은 가드된 경로(에러 토스트 포함)를 타야 한다.
+  it('세그먼트 "테스트" 게이트에서 키 저장 후 retry가 가드된 경로를 타 — ttsPreview가 거부돼도 unhandled 없이 에러 토스트를 보여준다', async () => {
+    const ttsPreview = vi.fn()
+      .mockRejectedValueOnce(new Error('invalid api key'))
+    const audioPreflight = vi.fn()
+      .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }], encryptionAvailable: true })
+      .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'resolved-store' }], encryptionAvailable: true })
+    const onReloadVoices = vi.fn(async () => {})
+    mockSaveKey.mockResolvedValue({ success: true })
+
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      renderStory(pipeline({
+        ttsPreview,
+        audioPreflight,
+        scenes: [{ storyId: 's1', segments: [{ id: 's1-1', speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
+      }), { onReloadVoices })
+      fireEvent.click(screen.getByRole('button', { name: '오디오' })) // 스텝퍼 → viewedStep=audio
+      fireEvent.click(screen.getByRole('button', { name: 's1-1 테스트' }))
+
+      await screen.findByText('Typecast')
+      expect(ttsPreview).not.toHaveBeenCalled()
+
+      const input = document.querySelector('.audio-key-gate input[type="password"]')
+      fireEvent.change(input, { target: { value: 'sk-invalid' } })
+      fireEvent.click(screen.getByRole('button', { name: /저장|Save/i }))
+
+      await waitFor(() => expect(ttsPreview).toHaveBeenCalledWith(
+        expect.objectContaining({ segmentIds: ['s1-1'] }),
+      ))
+      // 게이트는 재검사 통과로 닫힌다 — 실패는 ttsPreview 쪽(무효 키)에서 난다.
+      await waitFor(() => expect(screen.queryByText('Typecast')).toBeNull())
+      // 가드된 경로(runSegmentTestGuarded)의 catch가 번역된 에러 토스트를 보여준다.
+      await screen.findByText('테스트 실패: invalid api key')
+      // 매크로태스크 한 틱을 더 흘려보내 어떤 unhandled rejection도 없었는지 확인.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
+  })
+
   // Finding2(리뷰) 미러 — 세그먼트 단건 "재생성"도 같은 이유로 같은 문제가 있었다.
   it('세그먼트 "재생성"이 missing 키로 막히면 오디오 패널이 그대로 보인다', async () => {
     const start = vi.fn()

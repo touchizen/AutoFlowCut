@@ -35,6 +35,7 @@ import { batchStartGate } from './hooks/batchStartGate'
 import { upsertStoryCharacterRefs, assertStoryProjectCurrent } from './utils/storyCharacterRefs'
 import { waitUntil } from './utils/waitUntil'
 import { voiceKey } from './utils/voiceKey'
+import { ttsListVoicesReloadParams, replaceTtsVoicesForProvider } from './utils/ttsVoiceReload'
 import { stripMentionsForNames } from './utils/mentionParser'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
@@ -770,20 +771,19 @@ function App() {
   // "재조회"할 수 없다 — 그 함수는 검색어 2자 미만이면 조용히 no-op하는 원격 검색이라(빈 검색어로
   // provider 전체를 다시 긁는 용도가 아니다), 그 provider의 목소리를 처음부터 다시 로드하는
   // 별도 경로가 필요하다. 초기 로드 이펙트(~L711)와 같은 모양으로 provider 하나만 다시 긁어 병합.
+  // Finding2(2R 리뷰): mergeTtsVoices는 voice별 upsert라, 키를 다른 계정으로 교체한 뒤 재조회해도
+  // 이전 계정의 stale voice가 그대로 남는다(새 목록에 없다고 지워지지 않음). 이 provider "슬라이스"는
+  // 방금 받아온 목록으로 통째로 교체해야 한다 — 다른 provider의 voice는 그대로 둔다.
   const reloadTtsVoicesForProvider = useCallback(async (provider) => {
     if (!provider) return
     try {
-      const vs = await window.electronAPI?.ttsListVoices?.({
-        provider,
-        includeShared: provider === 'elevenlabs',
-        limit: 100,
-        maxSharedPages: provider === 'elevenlabs' ? 10 : 1,
-      })
-      if (Array.isArray(vs)) mergeTtsVoices(vs.map((v) => ({ ...v, provider })))
+      const vs = await window.electronAPI?.ttsListVoices?.(ttsListVoicesReloadParams(provider))
+      if (!Array.isArray(vs)) return
+      setTtsVoices((prev) => replaceTtsVoicesForProvider(prev, provider, vs))
     } catch {
       // best-effort — 실패해도 뒤이은 preflight 재검사는 별도로 진행된다.
     }
-  }, [mergeTtsVoices])
+  }, [])
 
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.

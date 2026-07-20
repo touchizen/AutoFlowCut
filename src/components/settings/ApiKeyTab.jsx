@@ -4,12 +4,12 @@
  */
 import GenaiApiKeyField from './GenaiApiKeyField'
 import TtsApiKeyField from './TtsApiKeyField'
+import { API_KEY_REGISTRY } from '../../config/apiKeyRegistry'
 
-const TTS_PROVIDERS = [
-  { id: 'typecast', label: 'Typecast', url: 'https://app.typecast.ai' },
-  { id: 'elevenlabs', label: 'ElevenLabs', url: 'https://elevenlabs.io/app/settings/api-keys' },
-  { id: 'googletts', label: 'Google Cloud TTS', url: 'https://console.cloud.google.com/apis/credentials' },
-]
+// Finding4(M3b 2R 리뷰): label/url을 여기 따로 하드코딩하지 않는다 — API_KEY_REGISTRY가 이미
+// 단일 진실(AudioKeyGateCard가 쓰는 것과 같은 테이블)이다. store!=='genai'로 걸러 gemini(별도
+// GenaiApiKeyField로 이미 렌더)를 뺀 나머지 3개 TTS provider만 순서대로 남는다.
+const TTS_PROVIDER_IDS = Object.keys(API_KEY_REGISTRY).filter((id) => API_KEY_REGISTRY[id].store !== 'genai')
 
 const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
 
@@ -20,15 +20,15 @@ export default function ApiKeyTab({ t }) {
       <div className="settings-section">
         <h3>{t('settings.apiKeyTitle')}</h3>
         <GenaiApiKeyField t={t} />
-        {TTS_PROVIDERS.map((p) => (
+        {TTS_PROVIDER_IDS.map((id) => (
           <TtsApiKeyField
-            key={p.id}
-            provider={p.id}
-            label={p.label}
-            getKeyUrl={p.url}
+            key={id}
+            provider={id}
+            label={API_KEY_REGISTRY[id].label}
+            getKeyUrl={API_KEY_REGISTRY[id].url}
             extraNote={
-              p.id === 'elevenlabs' ? t('settings.elevenlabsVoicesReadHint')
-              : p.id === 'googletts' ? t('settings.googlettsStoryUnavailable')
+              id === 'elevenlabs' ? t('settings.elevenlabsVoicesReadHint')
+              : id === 'googletts' ? t('settings.googlettsStoryUnavailable')
               : undefined
             }
             t={t}

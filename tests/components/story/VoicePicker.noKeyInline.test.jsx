@@ -108,4 +108,59 @@ describe('VoicePicker attempt-first no-key inline card', () => {
     await new Promise((r) => setTimeout(r, 0)) // flush onSave's await saveKey()
     expect(onPreview).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: null, name: 'Sanghyun' })
   })
+
+  // Finding3(2R 리뷰): 이전엔 onKeySaved가 preview 재시도만 하고 그 provider의 계정 목소리를
+  // 다시 안 긁었다 — 키를 막 저장한 계정 전용(키 게이트된) 목소리가 이번 렌더의 voices 목록에는
+  // 없으므로, 재조회를 안 하면 그 목소리들이 화면에 영영 안 나타난다. onReloadVoices(provider)와
+  // preview 재시도를 둘 다 해야 한다.
+  it('finding3: saving the key inline also reloads that provider account voices (onReloadVoices), then re-attempts preview', async () => {
+    mockTtsSaveKey.mockResolvedValue({ success: true })
+    const onPreview = vi.fn()
+    const onReloadVoices = vi.fn(async () => {})
+    const previewState = { status: 'error', error: 'no-key', provider: 'typecast', voiceId: 'v1' }
+    render(
+      <VoicePicker
+        voices={voices}
+        selected={{}}
+        onSelect={vi.fn()}
+        onPreview={onPreview}
+        onOverrideGender={vi.fn()}
+        onReloadVoices={onReloadVoices}
+        previewState={previewState}
+        t={t}
+        isKo
+      />,
+    )
+    const input = document.querySelector('.audio-key-gate input[type="password"]')
+    fireEvent.change(input, { target: { value: 'sk-abc' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.ttsKeySave' }))
+
+    await new Promise((r) => setTimeout(r, 0)) // flush onSave's await saveKey()
+    expect(onReloadVoices).toHaveBeenCalledWith('typecast')
+    expect(onPreview).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: null, name: 'Sanghyun' })
+  })
+
+  it('finding3: missing onReloadVoices prop does not break the preview re-attempt (best-effort)', async () => {
+    mockTtsSaveKey.mockResolvedValue({ success: true })
+    const onPreview = vi.fn()
+    const previewState = { status: 'error', error: 'no-key', provider: 'typecast', voiceId: 'v1' }
+    render(
+      <VoicePicker
+        voices={voices}
+        selected={{}}
+        onSelect={vi.fn()}
+        onPreview={onPreview}
+        onOverrideGender={vi.fn()}
+        previewState={previewState}
+        t={t}
+        isKo
+      />,
+    )
+    const input = document.querySelector('.audio-key-gate input[type="password"]')
+    fireEvent.change(input, { target: { value: 'sk-abc' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.ttsKeySave' }))
+
+    await new Promise((r) => setTimeout(r, 0))
+    expect(onPreview).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: null, name: 'Sanghyun' })
+  })
 })
