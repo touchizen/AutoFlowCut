@@ -11,7 +11,10 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { ASS_PATH_TOKEN, FONTS_DIR_TOKEN } from './filtergraphTokens.js'
-import { detectHardwareEncoder as detectBundledHardwareEncoder } from './hardwareEncoder.js'
+import {
+  detectHardwareEncoder as detectBundledHardwareEncoder,
+  hardwareVideoCodecArgs,
+} from './hardwareEncoder.js'
 
 const STDERR_TAIL_LINES = 20
 const PCM_F32LE_BYTES_PER_SECOND = 48000 * 2 * 4
@@ -43,6 +46,7 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   const totalDurationMs = positiveNumber(deps.totalDurationMs, positiveNumber(jobPlan.totalDurationMs, 1))
   const safeJobId = sanitizeName(jobCtx.jobId || 'render')
   const outputPaths = new Map()
+  const stageOutputPaths = new Set()
   let tempDirPromise
   let tempDirRemoved = false
   let lastPercent = 0
@@ -55,26 +59,34 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
     await assertNotCancelled()
     await preflightDiskSpace()
     hardwareEncoder = await detectHardwareEncoderBestEffort()
-    for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
-      await assertNotCancelled()
-      const stage = stages[stageIndex]
-      const prepared = await prepareStage(stage, stageIndex, hardwareEncoder)
-      await assertNotCancelled()
-      try {
-        await runStage(stage, stageIndex, prepared.args)
-      } catch (error) {
-        if (!prepared.fallbackArgs || isCancelled()) throw error
+    let hardwareError = null
+    let renderPassCompleted = false
 
-        hardwareEncoder = null
+    if (hardwareEncoder) {
+      try {
+        await runStagePass(hardwareEncoder)
+        renderPassCompleted = true
+      } catch (error) {
+        if (!error.hardwareEncoder || isCancelled()) throw error
+
+        hardwareError = error
         warn(
-          `[ffmpegRunner] ${prepared.hardwareEncoder} failed for ${stage.kind} stage; ` +
-          `retrying with libx264: ${error.message}`,
+          `[ffmpegRunner] ${error.hardwareEncoder} failed for ${error.phase} stage; ` +
+          `restarting the render with libx264: ${error.message}`,
         )
-        await removePartialHardwareOutput(prepared.output)
+        hardwareEncoder = null
+        await resetStageOutputsForSoftwareRestart()
         await assertNotCancelled()
-        await runStage(stage, stageIndex, prepared.fallbackArgs)
       }
-      await removeCompletedDependencies(stage)
+    }
+
+    if (!renderPassCompleted) {
+      try {
+        await runStagePass(null)
+      } catch (error) {
+        if (hardwareError) error.cause = hardwareError
+        throw error
+      }
     }
 
     const finalStage = stages.at(-1)
@@ -90,10 +102,27 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
     throw error
   }
 
+  async function runStagePass(selectedHardwareEncoder) {
+    for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+      await assertNotCancelled()
+      const stage = stages[stageIndex]
+      const prepared = await prepareStage(stage, stageIndex, selectedHardwareEncoder)
+      await assertNotCancelled()
+      try {
+        await runStage(stage, stageIndex, prepared.args)
+      } catch (error) {
+        if (prepared.hardwareEncoder) error.hardwareEncoder = prepared.hardwareEncoder
+        throw error
+      }
+      await removeCompletedDependencies(stage)
+    }
+  }
+
   async function prepareStage(stage, stageIndex, selectedHardwareEncoder) {
     const resolvedInputs = (stage.inputs || []).map(input => outputPaths.get(input) || input)
     const output = await resolveStageOutput(stage.output, stageIndex)
     outputPaths.set(stage.output, output)
+    stageOutputPaths.add(output)
     trackTemp(output)
 
     if (stage.concatDemuxer === true) {
@@ -110,7 +139,6 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
           '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
           '-c', 'copy', '-progress', 'pipe:2', output,
         ],
-        fallbackArgs: null,
         hardwareEncoder: null,
         output,
       }
@@ -140,18 +168,17 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
       selectedHardwareEncoder && selectedCodecArgs.includes(selectedHardwareEncoder),
     )
     const buildArgs = codecs => [
-        '-y',
-        ...inputArgs,
-        ...graphArgs,
-        ...mapArgs(stage, graph, resolvedInputs),
-        ...codecs,
-        '-progress', 'pipe:2',
-        output,
-      ]
+      '-y',
+      ...inputArgs,
+      ...graphArgs,
+      ...mapArgs(stage, graph, resolvedInputs),
+      ...codecs,
+      '-progress', 'pipe:2',
+      output,
+    ]
 
     return {
       args: buildArgs(selectedCodecArgs),
-      fallbackArgs: usesHardwareEncoder ? buildArgs(codecArgs(stage, graph, null)) : null,
       hardwareEncoder: usesHardwareEncoder ? selectedHardwareEncoder : null,
       output,
     }
@@ -166,12 +193,13 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
   }
 
   async function removePartialHardwareOutput(output) {
-    try {
-      await unlink(output)
-    } catch (error) {
-      if (error?.code === 'ENOENT') return
-      throw new Error(`failed to remove partial hardware output ${output}: ${error.message}`)
-    }
+    await unlinkTemp(output)
+  }
+
+  async function resetStageOutputsForSoftwareRestart() {
+    for (const output of stageOutputPaths) await removePartialHardwareOutput(output)
+    outputPaths.clear()
+    stageOutputPaths.clear()
   }
 
   async function preflightDiskSpace() {
@@ -516,47 +544,6 @@ export function codecArgs(stage, graph, hardwareEncoder = null) {
     ...videoArgs,
     '-c:a', 'aac', '-b:a', audioBitrate, '-ar', '48000',
   ]
-}
-
-function hardwareVideoCodecArgs(encoder, spec) {
-  const quality = hardwareQuality(spec.crf)
-  switch (encoder) {
-    case 'h264_videotoolbox':
-      return [
-        '-c:v', encoder, '-q:v', videoToolboxQuality(quality),
-        '-pix_fmt', 'yuv420p',
-      ]
-    case 'h264_nvenc':
-      return [
-        '-c:v', encoder, '-preset', 'p5',
-        '-rc', 'vbr', '-cq', quality, '-b:v', '0',
-        '-pix_fmt', 'yuv420p',
-      ]
-    case 'h264_qsv':
-      return [
-        '-c:v', encoder, '-preset', String(spec.preset ?? 'medium'),
-        '-global_quality', quality, '-pix_fmt', 'nv12',
-      ]
-    case 'h264_amf':
-      return [
-        '-c:v', encoder, '-quality', 'balanced', '-rc', 'cqp',
-        '-qp_i', quality, '-qp_p', quality, '-qp_b', quality,
-        '-pix_fmt', 'nv12',
-      ]
-    default:
-      return null
-  }
-}
-
-function hardwareQuality(crf) {
-  const number = Number(crf ?? 20)
-  const quality = Number.isFinite(number) ? Math.round(number) : 20
-  return String(Math.min(51, Math.max(0, quality)))
-}
-
-function videoToolboxQuality(crf) {
-  const quality = 100 - (Number(crf) / 51) * 99
-  return String(Math.min(100, Math.max(1, Math.round(quality))))
 }
 
 function quoteConcatPath(value) {

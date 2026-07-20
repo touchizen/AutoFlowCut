@@ -51,9 +51,10 @@ describe('pickHardwareEncoder', () => {
 })
 
 describe('detectHardwareEncoder', () => {
-  it('runs ffmpeg encoders detection once and memoizes by ffmpeg path', async () => {
+  it('runs encoder listing and a matching one-frame probe once, then memoizes success', async () => {
     const execFile = vi.fn((file, args, options, callback) => {
-      callback(null, encoders('h264_nvenc'), '')
+      if (args.includes('-encoders')) callback(null, encoders('h264_nvenc'), '')
+      else callback(null, '', '')
     })
 
     const first = detectHardwareEncoder('/vendor/ffmpeg-cache', { platform: 'linux', execFile })
@@ -61,22 +62,104 @@ describe('detectHardwareEncoder', () => {
 
     await expect(first).resolves.toBe('h264_nvenc')
     await expect(second).resolves.toBe('h264_nvenc')
-    expect(execFile).toHaveBeenCalledTimes(1)
-    expect(execFile).toHaveBeenCalledWith(
+    expect(execFile).toHaveBeenCalledTimes(2)
+    expect(execFile).toHaveBeenNthCalledWith(
+      1,
       '/vendor/ffmpeg-cache',
       ['-hide_banner', '-encoders'],
       expect.objectContaining({ windowsHide: true }),
       expect.any(Function),
     )
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      '/vendor/ffmpeg-cache',
+      [
+        '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1',
+        '-frames:v', '1',
+        '-c:v', 'h264_nvenc', '-preset', 'p5',
+        '-rc', 'vbr', '-cq', '20', '-b:v', '0',
+        '-pix_fmt', 'yuv420p',
+        '-f', 'null', '-',
+      ],
+      expect.objectContaining({ windowsHide: true }),
+      expect.any(Function),
+    )
   })
 
-  it('treats an ffmpeg detection error as no hardware encoder', async () => {
+  it('does not retain a negative cache entry after an encoder-listing error', async () => {
     const execFile = vi.fn((file, args, options, callback) => {
       callback(new Error('ffmpeg failed'), encoders('h264_nvenc'), '')
     })
 
     await expect(detectHardwareEncoder('/vendor/ffmpeg-error', { platform: 'linux', execFile }))
       .resolves.toBeNull()
+    await expect(detectHardwareEncoder('/vendor/ffmpeg-error', { platform: 'linux', execFile }))
+      .resolves.toBeNull()
+    expect(execFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects VideoToolbox when its real q:v probe cannot initialize', async () => {
+    const execFile = vi.fn((file, args, options, callback) => {
+      if (args.includes('-encoders')) {
+        callback(null, encoders('h264_videotoolbox'), '')
+        return
+      }
+      callback(new Error('EINVAL: QSCALE unsupported'), '', 'Error while opening encoder')
+    })
+
+    await expect(detectHardwareEncoder('/vendor/ffmpeg-intel-vt', {
+      platform: 'darwin',
+      execFile,
+    })).resolves.toBeNull()
+    expect(execFile).toHaveBeenCalledTimes(2)
+    expect(execFile.mock.calls[1][1]).toEqual(expect.arrayContaining([
+      '-c:v', 'h264_videotoolbox', '-q:v', '61', '-pix_fmt', 'yuv420p',
+    ]))
+  })
+
+  it('retries detection after a transient probe failure', async () => {
+    let probeCount = 0
+    const execFile = vi.fn((file, args, options, callback) => {
+      if (args.includes('-encoders')) {
+        callback(null, encoders('h264_qsv'), '')
+        return
+      }
+      probeCount += 1
+      if (probeCount === 1) callback(new Error('device busy'), '', '')
+      else callback(null, '', '')
+    })
+
+    await expect(detectHardwareEncoder('/vendor/ffmpeg-probe-retry', {
+      platform: 'linux',
+      execFile,
+    })).resolves.toBeNull()
+    await expect(detectHardwareEncoder('/vendor/ffmpeg-probe-retry', {
+      platform: 'linux',
+      execFile,
+    })).resolves.toBe('h264_qsv')
+    expect(execFile).toHaveBeenCalledTimes(4)
+  })
+
+  it('probes Windows candidates in priority order until one opens', async () => {
+    const probed = []
+    const execFile = vi.fn((file, args, options, callback) => {
+      if (args.includes('-encoders')) {
+        callback(null, encoders('h264_amf', 'h264_qsv', 'h264_nvenc'), '')
+        return
+      }
+      const encoder = args[args.indexOf('-c:v') + 1]
+      probed.push(encoder)
+      if (encoder === 'h264_nvenc') callback(new Error('no NVIDIA device'), '', '')
+      else callback(null, '', '')
+    })
+
+    await expect(detectHardwareEncoder('/vendor/ffmpeg-win-fallback', {
+      platform: 'win32',
+      execFile,
+    })).resolves.toBe('h264_qsv')
+    expect(probed).toEqual(['h264_nvenc', 'h264_qsv'])
+    expect(execFile).toHaveBeenCalledTimes(3)
   })
 
   it('treats a synchronous exec error as no hardware encoder', async () => {

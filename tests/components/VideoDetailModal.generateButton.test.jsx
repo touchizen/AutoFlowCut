@@ -24,7 +24,7 @@ vi.mock('../../src/components/ErrorSection', () => ({ default: () => null }))
 vi.mock('../../src/components/MediaMetaBar', () => ({ default: () => null }))
 vi.mock('../../src/components/PromptInput', () => ({ default: () => null }))
 vi.mock('../../src/utils/mediaMeta', () => ({
-  fetchLatestHistoryMeta: vi.fn().mockResolvedValue({}),
+  fetchLatestHistoryMeta: vi.fn().mockResolvedValue(null),
   estimateBase64FileSize: vi.fn(() => 0),
 }))
 vi.mock('../../src/utils/videoSrc', () => ({

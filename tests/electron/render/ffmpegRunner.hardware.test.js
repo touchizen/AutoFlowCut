@@ -120,6 +120,33 @@ const renderPlan = {
   }],
 }
 
+function segmentedRenderPlan() {
+  const segments = [1, 2].map(index => ({
+    kind: 'video',
+    inputs: [`/image-${index}.png`],
+    filtergraphScript: '[0:v]null[vout]',
+    output: `segment-${index}.mp4`,
+    dependsOn: [],
+    subtitleAss: null,
+    outputSpec: { fps: 24, crf: 26, preset: 'veryfast' },
+  }))
+  return {
+    totalDurationMs: 2000,
+    stages: [
+      ...segments,
+      {
+        kind: 'video',
+        concatDemuxer: true,
+        inputs: segments.map(stage => stage.output),
+        filtergraphScript: '',
+        output: 'joined.mp4',
+        dependsOn: segments.map(stage => stage.output),
+        subtitleAss: null,
+      },
+    ],
+  }
+}
+
 async function waitForSpawn(spawn, count) {
   await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(count))
 }
@@ -224,7 +251,118 @@ describe('runFfmpegRender hardware fallback', () => {
     expect(result.value).toBeUndefined()
     expect(result.error).toMatchObject({ code: 2, phase: 'final' })
     expect(result.error.message).toContain('software encode failed')
+    expect(result.error.cause).toMatchObject({ code: 1, phase: 'final' })
+    expect(result.error.cause.message).toContain('hardware init failed')
     expect(spawn).toHaveBeenCalledTimes(2)
     expect(deps.rename).not.toHaveBeenCalled()
+  })
+
+  it('warns and continues the software restart when a partial output is locked', async () => {
+    const hardwareChild = fakeChild()
+    const softwareChild = fakeChild()
+    const spawn = vi.fn()
+      .mockReturnValueOnce(hardwareChild)
+      .mockReturnValueOnce(softwareChild)
+    const locked = Object.assign(new Error('file busy'), { code: 'EBUSY' })
+    const unlink = vi.fn(async () => { throw locked })
+    const warn = vi.fn()
+    const deps = makeRenderDeps({ spawn, unlink, warn })
+    const render = runFfmpegRender(
+      renderPlan,
+      { jobId: 'locked-output', cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )
+    const observed = render.then(value => ({ value }), error => ({ error }))
+
+    await waitForSpawn(spawn, 1)
+    hardwareChild.emit('close', 1)
+    await waitForSpawn(spawn, 2)
+    expect(spawn.mock.calls[1][1]).toContain('libx264')
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/unlink.*EBUSY/i))
+
+    softwareChild.emit('close', 0)
+    const result = await observed
+    expect(result.error).toBeUndefined()
+  })
+
+  it('restarts every segment in software before concat after a later hardware failure', async () => {
+    const children = Array.from({ length: 5 }, () => fakeChild())
+    const spawn = vi.fn()
+    children.forEach(child => spawn.mockReturnValueOnce(child))
+    const unlink = vi.fn(async () => {})
+    const deps = makeRenderDeps({ spawn, unlink, totalDurationMs: 2000 })
+    const render = runFfmpegRender(
+      segmentedRenderPlan(),
+      { jobId: 'mixed-segment-guard', cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )
+    const observed = render.then(value => ({ value }), error => ({ error }))
+
+    await waitForSpawn(spawn, 1)
+    children[0].emit('close', 0)
+    await waitForSpawn(spawn, 2)
+    children[1].stderr.emit('data', Buffer.from('hardware session exhausted\n'))
+    children[1].emit('close', 1)
+    await waitForSpawn(spawn, 3)
+    children[2].emit('close', 0)
+    await waitForSpawn(spawn, 4)
+    children[3].emit('close', 0)
+    await waitForSpawn(spawn, 5)
+    children[4].emit('close', 0)
+
+    const result = await observed
+    expect(result.error).toBeUndefined()
+    expect(spawn.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      '-i', '/image-1.png', '-c:v', 'h264_nvenc',
+    ]))
+    expect(spawn.mock.calls[1][1]).toEqual(expect.arrayContaining([
+      '-i', '/image-2.png', '-c:v', 'h264_nvenc',
+    ]))
+    expect(spawn.mock.calls[2][1]).toEqual(expect.arrayContaining([
+      '-i', '/image-1.png', '-c:v', 'libx264',
+    ]))
+    expect(spawn.mock.calls[3][1]).toEqual(expect.arrayContaining([
+      '-i', '/image-2.png', '-c:v', 'libx264',
+    ]))
+    expect(spawn.mock.calls[2][1]).not.toContain('h264_nvenc')
+    expect(spawn.mock.calls[3][1]).not.toContain('h264_nvenc')
+    expect(spawn.mock.calls[4][1]).toEqual(expect.arrayContaining(['-c', 'copy']))
+    expect(unlink).toHaveBeenCalledWith('/tmp/render-hardware/segment-1.mp4')
+    expect(unlink).toHaveBeenCalledWith('/tmp/render-hardware/segment-2.mp4')
+    const restartSpawnOrder = spawn.mock.invocationCallOrder[2]
+    const resetUnlinks = unlink.mock.invocationCallOrder.slice(0, 2)
+    expect(resetUnlinks.every(order => order < restartSpawnOrder)).toBe(true)
+  })
+
+  it('uses libx264 for segment 2 when segment 1 hardware encoding fails', async () => {
+    const children = Array.from({ length: 4 }, () => fakeChild())
+    const spawn = vi.fn()
+    children.forEach(child => spawn.mockReturnValueOnce(child))
+    const deps = makeRenderDeps({ spawn, totalDurationMs: 2000 })
+    const render = runFfmpegRender(
+      segmentedRenderPlan(),
+      { jobId: 'later-segment-software', cancelled: false, tempFiles: [] },
+      () => {},
+      deps,
+    )
+    const observed = render.then(value => ({ value }), error => ({ error }))
+
+    await waitForSpawn(spawn, 1)
+    children[0].emit('close', 1)
+    await waitForSpawn(spawn, 2)
+    children[1].emit('close', 0)
+    await waitForSpawn(spawn, 3)
+    expect(spawn.mock.calls[2][1]).toEqual(expect.arrayContaining([
+      '-i', '/image-2.png', '-c:v', 'libx264',
+    ]))
+    expect(spawn.mock.calls[2][1]).not.toContain('h264_nvenc')
+    children[2].emit('close', 0)
+    await waitForSpawn(spawn, 4)
+    children[3].emit('close', 0)
+
+    const result = await observed
+    expect(result.error).toBeUndefined()
   })
 })
