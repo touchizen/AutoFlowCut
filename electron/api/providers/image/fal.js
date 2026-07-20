@@ -91,11 +91,24 @@ export async function generateImage(
   if (!isValidFalEndpointId(selectedModel)) {
     return { success: false, error: 'Invalid fal endpoint ID', errorKind: 'invalid-config' }
   }
-  const timeoutLimit = Math.max(1, Number(timeoutMs) || DEFAULT_FAL_IMAGE_TIMEOUT_MS)
+  const numericTimeoutMs = Number(timeoutMs)
+  const timeoutLimit = Math.max(
+    1,
+    Number.isFinite(numericTimeoutMs) && numericTimeoutMs !== 0
+      ? numericTimeoutMs
+      : DEFAULT_FAL_IMAGE_TIMEOUT_MS,
+  )
+  const numericPollIntervalMs = Number(pollIntervalMs)
+  const effectivePollIntervalMs = Math.max(
+    1,
+    Number.isFinite(numericPollIntervalMs)
+      ? numericPollIntervalMs
+      : DEFAULT_FAL_IMAGE_POLL_INTERVAL_MS,
+  )
   // deadline is authoritative. The derived count is only a runaway-loop backstop;
   // callers can still provide a smaller explicit maxAttempts for tests/diagnostics.
   const derivedAttemptsLimit = Math.ceil(
-    timeoutLimit / Math.max(1, Number(pollIntervalMs) || 0),
+    timeoutLimit / effectivePollIntervalMs,
   ) + 1
   const attemptsLimit = maxAttempts == null
     ? derivedAttemptsLimit
@@ -185,7 +198,7 @@ export async function generateImage(
       }
       if (attempt < attemptsLimit && Date.now() < deadline) {
         await withFalDeadline(
-          () => delay(pollIntervalMs, signal),
+          () => delay(effectivePollIntervalMs, signal),
           { deadline, signal, timeoutMessage: FAL_IMAGE_TIMEOUT_ERROR },
         )
       }

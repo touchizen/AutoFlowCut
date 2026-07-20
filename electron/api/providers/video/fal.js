@@ -117,7 +117,13 @@ export async function checkVideo(
   }
 
   let completed = false
-  const timeoutLimit = Math.max(1, Number(timeoutMs) || DEFAULT_FAL_VIDEO_CHECK_TIMEOUT_MS)
+  const numericTimeoutMs = Number(timeoutMs)
+  const timeoutLimit = Math.max(
+    1,
+    Number.isFinite(numericTimeoutMs) && numericTimeoutMs !== 0
+      ? numericTimeoutMs
+      : DEFAULT_FAL_VIDEO_CHECK_TIMEOUT_MS,
+  )
   const deadline = Date.now() + timeoutLimit
   try {
     const sdk = configureFalClient(apiKey, client)

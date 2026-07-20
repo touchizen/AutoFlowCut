@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  DEFAULT_FAL_VIDEO_CHECK_TIMEOUT_MS,
   DEFAULT_FAL_VIDEO_MODEL,
   checkVideo,
   downloadPolicy,
@@ -272,6 +273,33 @@ describe('fal video provider — SDK queue contract', () => {
         .then(value => { settled = value })
 
       await vi.advanceTimersByTimeAsync(26)
+
+      expect(settled).toEqual({
+        success: false,
+        done: false,
+        error: 'fal video status check timed out',
+        errorKind: 'transient',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('N1: non-finite check timeout falls back to the finite video default', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn(() => new Promise(() => {})),
+      })
+      let settled
+      checkVideo({
+        apiKey: 'fal-key',
+        operationName: { model_id: DEFAULT_FAL_VIDEO_MODEL, request_id: 'req-infinite-timeout' },
+      }, { client, timeoutMs: Infinity }).then(value => { settled = value })
+
+      await vi.advanceTimersByTimeAsync(DEFAULT_FAL_VIDEO_CHECK_TIMEOUT_MS - 1)
+      expect(settled).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(2)
 
       expect(settled).toEqual({
         success: false,

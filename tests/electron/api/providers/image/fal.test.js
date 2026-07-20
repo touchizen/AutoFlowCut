@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  DEFAULT_FAL_IMAGE_MAX_ATTEMPTS,
   DEFAULT_FAL_IMAGE_MODEL,
+  DEFAULT_FAL_IMAGE_POLL_INTERVAL_MS,
+  DEFAULT_FAL_IMAGE_TIMEOUT_MS,
   falImageProvider,
   generateImage,
 } from '../../../../../electron/api/providers/image/fal.js'
@@ -35,6 +38,12 @@ async function expectWallClockTimeout(operation, timeoutMs) {
 }
 
 describe('fal image provider — run to completion', () => {
+  it('N1: default timeout and poll interval remain 300000ms and 1000ms', () => {
+    expect(DEFAULT_FAL_IMAGE_TIMEOUT_MS).toBe(300000)
+    expect(DEFAULT_FAL_IMAGE_POLL_INTERVAL_MS).toBe(1000)
+    expect(DEFAULT_FAL_IMAGE_MAX_ATTEMPTS).toBe(301)
+  })
+
   it.each([
     'https://evil.example/capture',
     'file:fal-ai/flux-pro/v1.1',
@@ -159,6 +168,65 @@ describe('fal image provider — run to completion', () => {
         errorKind: 'transient',
       })
       expect(client.queue.result).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('N1: timeoutMs Infinity falls back to the finite default deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn().mockResolvedValue({ status: 'IN_PROGRESS', request_id: 'img-req' }),
+      })
+      let settled
+      generateImage({
+        apiKey: 'fal-key',
+        prompt: 'finite fallback',
+      }, { client, pollIntervalMs: 1000, timeoutMs: Infinity })
+        .then(value => { settled = value })
+
+      await vi.advanceTimersByTimeAsync(DEFAULT_FAL_IMAGE_TIMEOUT_MS - 1)
+      expect(settled).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(2)
+
+      expect(settled).toEqual({
+        success: false,
+        error: 'fal image polling timed out',
+        errorKind: 'transient',
+      })
+      expect(client.queue.status.mock.calls.length).toBeLessThanOrEqual(
+        DEFAULT_FAL_IMAGE_MAX_ATTEMPTS,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('N1: pollIntervalMs zero is clamped and does not busy-spin', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn().mockResolvedValue({ status: 'IN_PROGRESS', request_id: 'img-req' }),
+      })
+      let settled
+      generateImage({
+        apiKey: 'fal-key',
+        prompt: 'paced polling',
+      }, { client, pollIntervalMs: 0, timeoutMs: 100, maxAttempts: 3 })
+        .then(value => { settled = value })
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBeUndefined()
+      expect(client.queue.status).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(2)
+
+      expect(settled).toEqual({
+        success: false,
+        error: 'fal image polling timed out after 3 attempts',
+        errorKind: 'transient',
+      })
+      expect(client.queue.status).toHaveBeenCalledTimes(3)
     } finally {
       vi.useRealTimers()
     }
