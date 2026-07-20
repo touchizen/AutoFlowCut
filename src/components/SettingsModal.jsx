@@ -12,13 +12,11 @@ import SceneTab from './settings/SceneTab'
 import DisplayTab from './settings/DisplayTab'
 import McpTab from './settings/McpTab'
 import ApiKeyTab from './settings/ApiKeyTab'
-import TtsKeyTab from './settings/TtsKeyTab'
 import './SettingsModal.css'
 
 const TABS = [
   { id: 'storage', icon: '📁', labelKey: 'settings.tabStorage' },
   { id: 'apiKey', icon: '🔑', labelKey: 'settings.tabApiKey' },
-  { id: 'ttsKey', icon: '🎙️', labelKey: 'settings.tabTtsKey' },
   { id: 'scene', icon: '🎬', labelKey: 'settings.tabScene' },
   { id: 'display', icon: '🖥️', labelKey: 'settings.tabDisplay' },
   { id: 'mcp', icon: '🔌', labelKey: 'settings.tabMcp' }
@@ -111,10 +109,6 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
 
         {activeTab === 'apiKey' && (
           <ApiKeyTab t={t} />
-        )}
-
-        {activeTab === 'ttsKey' && (
-          <TtsKeyTab t={t} />
         )}
 
         {activeTab === 'scene' && (
