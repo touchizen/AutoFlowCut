@@ -114,7 +114,9 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       } else {
         // 단일 씬 실패도 quota 면 batch 와 동일하게 전역 stop+modal 트리거 — 사용자가 잇따른
         // 단일 재시도로 quota 를 더 소진하는 것을 막는다.
-        const failErr = result?.error ?? sceneUpdate.error
+        const failErr = result && typeof result === 'object'
+          ? result
+          : (result?.error ?? sceneUpdate.error)
         if (isQuotaExhaustedError(failErr)) {
           emitQuotaStop({ scope: 'SceneGen' })
         } else {

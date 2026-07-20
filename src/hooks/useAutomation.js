@@ -27,6 +27,7 @@ import {
   flowImageInjectable,
 } from '../utils/refImageGuard'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
+import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
 
 export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -116,7 +117,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     let consecutiveErrors = 0
 
     // 사용자 일시정지 동안 대기하고, 재개 시 그 시간만큼 보정한다 — pause 가
-    // in-flight 의 ITEM_TIMEOUT(2분)이나 Phase2 drain 예산(3분)을 갉아먹지 않게.
+    // in-flight 의 provider별 item timeout이나 Phase2 drain 예산을 갉아먹지 않게.
     const awaitUnpause = async () => {
       if (!pausedRef.current) return
       const pausedAt = Date.now()
@@ -169,13 +170,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     }
 
     // 완료된 결과 수집
-    const ITEM_TIMEOUT = 120000 // 개별 아이템 2분 타임아웃
     const collectCompleted = async () => {
       const stillPending = []
       for (const item of pendingQueue) {
         if (stopRequestedRef.current) { stillPending.push(item); continue }
         const elapsed = Date.now() - item.submittedAt
-        if (elapsed > ITEM_TIMEOUT) {
+        const itemTimeoutMs = imageGenerationItemTimeoutMs(item.provider)
+        if (elapsed > itemTimeoutMs) {
           console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
           updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
           errorCountRef.current++
@@ -186,7 +187,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         try {
           const st = await checkGeneration(item.generationId)
           // #R23-4: checkGeneration 자체가 401/403 → authFailed 를 표면화할 수 있다(완료 안 돼도).
-          //   이걸 무시하면 죽은 인증으로 ITEM_TIMEOUT(2분)까지 pending 으로 매달린다 → 즉시 중단.
+          //   이걸 무시하면 죽은 인증으로 provider별 item timeout까지 pending 으로 매달린다 → 즉시 중단.
           //   onAuthError 는 withAuthRetry wrapper 가 이미 발화 — 여기서 또 발화하지 않는다.
           if (st.authFailed) {
             console.warn('[Automation] checkGeneration authFailed — stopping batch:', st.error)
@@ -316,7 +317,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: resolvedGeneration.model, provider: resolvedGeneration.provider, references: effectiveRefs })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
-        pendingQueue.push({ generationId: submitResult.generationId, scene, model: resolvedGeneration.model, submittedAt: _now, originalSubmittedAt: _now })
+        pendingQueue.push({ generationId: submitResult.generationId, scene, model: resolvedGeneration.model, provider: resolvedGeneration.provider, submittedAt: _now, originalSubmittedAt: _now })
         consecutiveErrors = 0
         console.log('[Automation] Submitted scene', scene.id, '→', submitResult.generationId)
       } else if (submitResult.success && Array.isArray(submitResult.images) && submitResult.images.length > 0) {
@@ -410,12 +411,17 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
     }
 
-    // Phase 2: 남은 결과 전부 수집 (3초 간격, 최대 3분)
+    // Phase 2: 남은 결과 전부 수집 (3초 간격, 기본 최대 3분).
+    // fal 동기 adapter는 자체 wall-clock cap이 더 길어서 그 cap+IPC 여유까지 drain한다.
     const pollStart = Date.now()
+    const phase2TimeoutMs = pendingQueue.reduce(
+      (maxMs, item) => Math.max(maxMs, imageGenerationItemTimeoutMs(item.provider, 180000)),
+      180000,
+    )
     while (
       pendingQueue.length > 0 &&
       !stopRequestedRef.current &&
-      (Date.now() - pollStart - pauseBudgetMs < 180000)
+      (Date.now() - pollStart - pauseBudgetMs < phase2TimeoutMs)
     ) {
       // paused (사용자 일시정지) 인식 — Phase 2 도 pause 동안 멈추고 시간 보정.
       await awaitUnpause()

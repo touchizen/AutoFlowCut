@@ -163,6 +163,53 @@ export function withAbortSignal(options, signal) {
   return signal ? { ...options, abortSignal: signal } : options
 }
 
+const FAL_DEADLINE_ERROR_NAME = 'FalDeadlineError'
+
+function abortError() {
+  return Object.assign(new Error('Operation aborted'), { name: 'AbortError' })
+}
+
+function deadlineError(message) {
+  return Object.assign(new Error(message), { name: FAL_DEADLINE_ERROR_NAME })
+}
+
+export function isFalDeadlineError(error) {
+  return error?.name === FAL_DEADLINE_ERROR_NAME
+}
+
+/** Bound one SDK/fetch await to an operation's absolute wall-clock deadline. */
+export async function withFalDeadline(
+  task,
+  { deadline, signal, timeoutMessage } = {},
+) {
+  if (signal?.aborted) throw abortError()
+  const remainingMs = Number(deadline) - Date.now()
+  if (!(remainingMs > 0)) throw deadlineError(timeoutMessage)
+
+  let timeoutId
+  let abortHandler
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(deadlineError(timeoutMessage)),
+      remainingMs,
+    )
+  })
+  const contenders = [Promise.resolve().then(task), timeout]
+  if (signal) {
+    contenders.push(new Promise((_, reject) => {
+      abortHandler = () => reject(abortError())
+      signal.addEventListener?.('abort', abortHandler, { once: true })
+    }))
+  }
+
+  try {
+    return await Promise.race(contenders)
+  } finally {
+    clearTimeout(timeoutId)
+    if (abortHandler) signal?.removeEventListener?.('abort', abortHandler)
+  }
+}
+
 export function isFalPendingStatus(status) {
   // PROVISIONAL — SDK status values verified from v1.10.1 types; confirm live transitions.
   return status === 'IN_QUEUE' || status === 'IN_PROGRESS'

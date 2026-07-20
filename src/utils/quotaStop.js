@@ -59,6 +59,7 @@ export function normalizeErrorText(err) {
       const parts = []
       if (typeof err.message === 'string') parts.push(err.message)
       if (err.status != null) parts.push(`${err.status}${err.statusText ? `: ${err.statusText}` : ''}`)
+      if (typeof err.error === 'string') parts.push(err.error)
       if (parts.length > 0) return parts.join(' :: ')
     }
     if (typeof err.error === 'string') return err.error

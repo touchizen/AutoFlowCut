@@ -10,11 +10,14 @@ import {
   isValidFalEndpointId,
   validateKey,
   withAbortSignal,
+  withFalDeadline,
 } from '../falClient.js'
 
 // PROVISIONAL — verify model id and endpoint behavior with a real fal key (M4 real-key gate).
 export const DEFAULT_FAL_VIDEO_MODEL = 'fal-ai/kling-video/v2.1/standard/image-to-video'
 export const DEFAULT_FAL_VIDEO_DURATION_SECONDS = 5
+export const DEFAULT_FAL_VIDEO_CHECK_TIMEOUT_MS = 30000
+const FAL_VIDEO_CHECK_TIMEOUT_ERROR = 'fal video status check timed out'
 
 function dataUrl(image) {
   if (!image?.data) return null
@@ -101,7 +104,7 @@ export async function submitVideo(
 
 export async function checkVideo(
   { apiKey, operationName, signal } = {},
-  { client = null } = {}
+  { client = null, timeoutMs = DEFAULT_FAL_VIDEO_CHECK_TIMEOUT_MS } = {}
 ) {
   if (!apiKey) return { success: false, done: false, error: 'No API key', errorKind: 'auth' }
   const modelId = operationName?.model_id
@@ -114,13 +117,18 @@ export async function checkVideo(
   }
 
   let completed = false
+  const timeoutLimit = Math.max(1, Number(timeoutMs) || DEFAULT_FAL_VIDEO_CHECK_TIMEOUT_MS)
+  const deadline = Date.now() + timeoutLimit
   try {
     const sdk = configureFalClient(apiKey, client)
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const status = await sdk.queue.status(
-          modelId,
-          withAbortSignal({ requestId }, signal),
+        const status = await withFalDeadline(
+          () => sdk.queue.status(
+            modelId,
+            withAbortSignal({ requestId }, signal),
+          ),
+          { deadline, signal, timeoutMessage: FAL_VIDEO_CHECK_TIMEOUT_ERROR },
         )
         if (isFalPendingStatus(status?.status)) return { success: true, done: false }
         if (!isFalCompletedStatus(status?.status)) {
@@ -134,9 +142,12 @@ export async function checkVideo(
 
         completed = true
         // Status metadata is not the output. result() is required after COMPLETED.
-        const result = await sdk.queue.result(
-          modelId,
-          withAbortSignal({ requestId }, signal),
+        const result = await withFalDeadline(
+          () => sdk.queue.result(
+            modelId,
+            withAbortSignal({ requestId }, signal),
+          ),
+          { deadline, signal, timeoutMessage: FAL_VIDEO_CHECK_TIMEOUT_ERROR },
         )
         const videoUri = videoUrlFromResult(result)
         if (!videoUri) {

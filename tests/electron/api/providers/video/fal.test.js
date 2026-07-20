@@ -258,6 +258,58 @@ describe('fal video provider — SDK queue contract', () => {
     expect(client.queue.result).not.toHaveBeenCalled()
   })
 
+  it('L3: a queue.status call that never settles is bounded by the check deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn(() => new Promise(() => {})),
+      })
+      let settled
+      checkVideo({
+        apiKey: 'fal-key',
+        operationName: { model_id: DEFAULT_FAL_VIDEO_MODEL, request_id: 'req-hung' },
+      }, { client, timeoutMs: 25 })
+        .then(value => { settled = value })
+
+      await vi.advanceTimersByTimeAsync(26)
+
+      expect(settled).toEqual({
+        success: false,
+        done: false,
+        error: 'fal video status check timed out',
+        errorKind: 'transient',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('L3: a queue.result call that never settles is bounded by the check deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn().mockResolvedValue({ status: 'COMPLETED' }),
+        result: vi.fn(() => new Promise(() => {})),
+      })
+      let settled
+      checkVideo({
+        apiKey: 'fal-key',
+        operationName: { model_id: DEFAULT_FAL_VIDEO_MODEL, request_id: 'req-hung-result' },
+      }, { client, timeoutMs: 25 }).then(value => { settled = value })
+
+      await vi.advanceTimersByTimeAsync(26)
+
+      expect(settled).toEqual({
+        success: false,
+        done: true,
+        error: 'fal video status check timed out',
+        errorKind: 'transient',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('K4: non-transient checkVideo failure returns immediately without retry', async () => {
     const client = makeClient({
       status: vi.fn().mockRejectedValue(sdkError('Endpoint entitlement forbidden', 403)),

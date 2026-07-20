@@ -13,6 +13,7 @@ import { toast } from '../components/Toast'
 import { createStyleResolver } from '../services/styleResolver'
 import { isStyleReference } from '../services/styleService'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
 import { clampInt } from '../utils/clampInt'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
@@ -432,7 +433,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           const errorMsg = result.error || ''
           const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
           const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
-          const isQuota = _maybeTriggerQuotaStop(errorMsg)
+          const isQuota = _maybeTriggerQuotaStop(result)
           if (!isQuota) toast.error(t('toast.generateFailed', { error: displayResultError(result, 'Unknown error') }))
           releaseGeneratingBusy()
           // #R26-5: 단일-ref 경로도 배치 경로(R25-5)와 동일하게 인증 실패를 errorKind:'auth' 로 분류.
@@ -523,7 +524,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const errorMsg = result.error || ''
       const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token')
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503')
-      const isQuota = _maybeTriggerQuotaStop(errorMsg)
+      const isQuota = _maybeTriggerQuotaStop(result)
       if (!isQuota) toast.error(t('toast.generateFailed', { error: displayResultError(result, 'Unknown error') }))
       removeBatchGeneratingRef(busyIndex)
       // #R25-5: authFailed 면 errorKind:'auth' 도 같이 남긴다 — cleanup 은 pendingQueue 항목에만
@@ -832,7 +833,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           try {
             const status = await genAPI.checkGeneration(pending.generationId)
             // #R23-5: checkGeneration 자체가 401/403 → authFailed 를 표면화할 수 있다(완료 안 돼도).
-            //   무시하면 죽은 인증으로 maxWait(3분)까지 pending 으로 매달린다 → 배치 즉시 중단
+            //   무시하면 죽은 인증으로 provider별 maxWait까지 pending 으로 매달린다 → 배치 즉시 중단
             //   (processAsyncResult 의 R21-1 collectGeneration 경로와 동일 stop 시맨틱).
             if (status?.authFailed) {
               console.warn('[GenerateAllRefs] checkGeneration authFailed — stopping batch:', status.error)
@@ -1020,7 +1021,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
                 })
             ))
 
-            if (_maybeTriggerQuotaStop(submitResult?.error)) {
+            if (_maybeTriggerQuotaStop(submitResult)) {
               break
             }
             submitFailCount++
@@ -1058,7 +1059,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
       // ─── Phase 2: 남은 결과 전부 수집 (폴링) ───
       console.log('[GenerateAllRefs] All submitted. Waiting for', pendingQueue.length, 'remaining results...')
-      const maxWait = 180000
+      const maxWait = imageGenerationItemTimeoutMs(
+        settings.generation?.image?.provider ?? 'google',
+        180000,
+      )
       const pollStart = Date.now()
 
       while (pendingQueue.length > 0 && Date.now() - pollStart < maxWait) {

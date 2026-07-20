@@ -74,6 +74,14 @@ describe('isQuotaExhaustedError — status-only quota signal (회귀)', () => {
       status: 'RESOURCE_EXHAUSTED',
     })).toBe(true)
   })
+
+  it("L4: non-HTTP status:'failed' does not shadow a string error fallback", () => {
+    expect(isQuotaExhaustedError({
+      status: 'failed',
+      error: 'RESOURCE_EXHAUSTED: quota exceeded',
+      errorKind: null,
+    })).toBe(true)
+  })
 })
 
 describe('isQuotaExhaustedError (object inputs)', () => {

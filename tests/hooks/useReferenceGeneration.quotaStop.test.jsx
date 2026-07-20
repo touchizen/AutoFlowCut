@@ -11,7 +11,7 @@
  * 이 테스트는 collect-path quota 감지 후 추가 submit 이 일어나지 않음을 검증한다.
  */
 
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 
 vi.mock('../../src/utils/guards', () => ({
@@ -45,12 +45,135 @@ import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
 
 const quotaShowMock = vi.fn()
 
-describe('useReferenceGeneration — quota stop in collect path', () => {
+function setupHook({ refs, genOverrides = {} }) {
+  const genAPI = {
+    mode: 'api',
+    getAccessToken: vi.fn().mockResolvedValue('token'),
+    clearTokenCache: vi.fn(),
+    generateImage: vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'image' }] }),
+    submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' }),
+    checkGeneration: vi.fn().mockResolvedValue({ success: true, completed: true }),
+    collectGeneration: vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'image' }] }),
+    uploadReference: vi.fn().mockResolvedValue({ success: true, mediaId: 'media-1' }),
+    clearGenerations: vi.fn().mockResolvedValue(undefined),
+    ...genOverrides,
+  }
+  const hook = renderHook(() => useReferenceGeneration({
+    settings: {
+      saveMode: 'project',
+      imageBatchCount: 1,
+      concurrency: 1,
+      generation: { image: { provider: 'fal' } },
+      imageModel: 'fal-ai/flux-pro/v1.1',
+    },
+    references: refs,
+    setReferences: vi.fn(),
+    genAPI,
+    addPendingSave: vi.fn(),
+    openSettings: vi.fn(),
+    t: key => key,
+    generationQueue: null,
+  }))
+  return { hook, genAPI }
+}
+
+beforeEach(() => {
+  __resetQuotaStopForTests()
+  quotaShowMock.mockClear()
+  subscribeQuotaStop(quotaShowMock)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  __resetQuotaStopForTests()
+})
+
+describe('useReferenceGeneration — provider quota classification', () => {
+  it('L1: direct generation forwards an opaque quota result object', async () => {
+    const { hook } = setupHook({
+      refs: [{ id: 1, prompt: 'a', type: 'character', status: 'pending' }],
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: false,
+          error: 'Too Many Requests',
+          errorKind: 'quota',
+        }),
+      },
+    })
+
+    await act(async () => {
+      await hook.result.current.handleGenerateRef(0)
+    })
+
+    expect(quotaShowMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('L1: direct generation honors authoritative errorKind other', async () => {
+    const { hook } = setupHook({
+      refs: [{ id: 1, prompt: 'a', type: 'character', status: 'pending' }],
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: false,
+          error: 'RESOURCE_EXHAUSTED',
+          errorKind: 'other',
+        }),
+      },
+    })
+
+    await act(async () => {
+      await hook.result.current.handleGenerateRef(0)
+    })
+
+    expect(quotaShowMock).not.toHaveBeenCalled()
+  })
+
+  it('L1: submit failure forwards an opaque quota result object', async () => {
+    const submitGeneration = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'Too Many Requests',
+      errorKind: 'quota',
+    })
+    const { hook } = setupHook({
+      refs: [
+        { id: 1, prompt: 'a', type: 'character', status: 'pending' },
+        { id: 2, prompt: 'b', type: 'character', status: 'pending' },
+      ],
+      genOverrides: { submitGeneration },
+    })
+
+    await act(async () => {
+      await hook.result.current.handleGenerateAllRefs()
+    })
+
+    expect(submitGeneration).toHaveBeenCalledTimes(1)
+    expect(quotaShowMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('L1: submit failure honors authoritative errorKind other', async () => {
+    const submitGeneration = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'RESOURCE_EXHAUSTED',
+      errorKind: 'other',
+    })
+    const { hook } = setupHook({
+      refs: [
+        { id: 1, prompt: 'a', type: 'character', status: 'pending' },
+        { id: 2, prompt: 'b', type: 'character', status: 'pending' },
+        { id: 3, prompt: 'c', type: 'character', status: 'pending' },
+      ],
+      genOverrides: { submitGeneration },
+    })
+
+    await act(async () => {
+      await hook.result.current.handleGenerateAllRefs()
+    })
+
+    expect(submitGeneration).toHaveBeenCalledTimes(3)
+    expect(quotaShowMock).not.toHaveBeenCalled()
+  })
+
   it('collectCompleted 가 quota 감지 후 다음 ref 가 submit 되지 않는다', async () => {
     vi.useFakeTimers()
-    __resetQuotaStopForTests()
-    quotaShowMock.mockClear()
-    subscribeQuotaStop(quotaShowMock)
 
     const refs = [
       { id: 1, prompt: 'a', type: 'character', status: 'pending' },
@@ -67,7 +190,8 @@ describe('useReferenceGeneration — quota stop in collect path', () => {
     const checkGeneration = vi.fn().mockResolvedValue({ success: true, completed: true })
     const collectGeneration = vi.fn().mockResolvedValue({
       success: false,
-      error: 'Resource has been exhausted (e.g. check quota).',
+      error: 'Too Many Requests',
+      errorKind: 'quota',
     })
 
     const genAPI = {
@@ -105,11 +229,41 @@ describe('useReferenceGeneration — quota stop in collect path', () => {
       await batchPromise
     })
 
-    vi.useRealTimers()
-
     // 핵심 가드: submit 이 첫 1번만 일어남. 두 번째 iteration 의 collectCompleted 에서
     // quota 감지 → stopRequestedRef=true → 추가 submit (line 506) 안 일어남.
     expect(submitCallCount).toBe(1)
     expect(quotaShowMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('L2: fal reference result completing after the legacy 180-second drain is retained', async () => {
+    vi.useFakeTimers()
+    let submittedAt = null
+    const submitGeneration = vi.fn().mockImplementation(async () => {
+      submittedAt = Date.now()
+      return { success: true, generationId: 'slow-fal-ref' }
+    })
+    const checkGeneration = vi.fn().mockImplementation(async () => ({
+      success: true,
+      completed: submittedAt != null && Date.now() - submittedAt >= 200000,
+    }))
+    const collectGeneration = vi.fn().mockResolvedValue({
+      success: true,
+      images: [{ base64: 'slow-fal-image' }],
+    })
+    const { hook } = setupHook({
+      refs: [{ id: 1, prompt: 'slow', type: 'character', status: 'pending' }],
+      genOverrides: { submitGeneration, checkGeneration, collectGeneration },
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = hook.result.current.handleGenerateAllRefs()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(210000)
+    })
+    await act(async () => { await batchPromise })
+
+    expect(collectGeneration).toHaveBeenCalledTimes(1)
   })
 })

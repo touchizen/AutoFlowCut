@@ -20,6 +20,20 @@ function makeClient(overrides = {}) {
   }
 }
 
+async function expectWallClockTimeout(operation, timeoutMs) {
+  let settled
+  operation.then(
+    value => { settled = value },
+    error => { settled = { rejected: error } },
+  )
+  await vi.advanceTimersByTimeAsync(timeoutMs + 1)
+  expect(settled).toEqual({
+    success: false,
+    error: 'fal image polling timed out',
+    errorKind: 'transient',
+  })
+}
+
 describe('fal image provider — run to completion', () => {
   it.each([
     'https://evil.example/capture',
@@ -169,6 +183,129 @@ describe('fal image provider — run to completion', () => {
     })
     expect(client.queue.status).toHaveBeenCalledTimes(1)
     expect(client.queue.result).not.toHaveBeenCalled()
+  })
+
+  it('L3: a queue.submit call that never settles is bounded by the wall-clock deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        submit: vi.fn(() => new Promise(() => {})),
+      })
+
+      await expectWallClockTimeout(generateImage({
+        apiKey: 'fal-key',
+        prompt: 'hung submit',
+      }, { client, timeoutMs: 25 }), 25)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('L3: a queue.status call that never settles is bounded by the wall-clock deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn(() => new Promise(() => {})),
+      })
+
+      await expectWallClockTimeout(generateImage({
+        apiKey: 'fal-key',
+        prompt: 'hung status',
+      }, { client, timeoutMs: 25 }), 25)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('L3: abort interrupts a queue.status call that never settles', async () => {
+    const controller = new AbortController()
+    const client = makeClient({
+      status: vi.fn(() => new Promise(() => {})),
+    })
+    const operation = generateImage({
+      apiKey: 'fal-key',
+      prompt: 'abort hung status',
+      signal: controller.signal,
+    }, { client, timeoutMs: 10000 })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    controller.abort()
+
+    await expect(operation).resolves.toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'transient',
+    })
+  })
+
+  it('L3: a queue.result call that never settles is bounded by the wall-clock deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn().mockResolvedValue({ status: 'COMPLETED' }),
+        result: vi.fn(() => new Promise(() => {})),
+      })
+
+      await expectWallClockTimeout(generateImage({
+        apiKey: 'fal-key',
+        prompt: 'hung result',
+      }, { client, timeoutMs: 25 }), 25)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('L3: every SDK await shares one absolute wall-clock deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        submit: vi.fn(() => new Promise(resolve => {
+          setTimeout(() => resolve({ request_id: 'img-req' }), 10)
+        })),
+        status: vi.fn(() => new Promise(resolve => {
+          setTimeout(() => resolve({ status: 'COMPLETED' }), 10)
+        })),
+        result: vi.fn(() => new Promise(() => {})),
+      })
+      let settled
+      generateImage({
+        apiKey: 'fal-key',
+        prompt: 'one shared deadline',
+      }, { client, timeoutMs: 25 }).then(value => { settled = value })
+
+      await vi.advanceTimersByTimeAsync(24)
+      expect(settled).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(2)
+
+      expect(settled).toEqual({
+        success: false,
+        error: 'fal image polling timed out',
+        errorKind: 'transient',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('L3: a signed-asset fetch that never settles is bounded by the wall-clock deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn().mockResolvedValue({ status: 'COMPLETED' }),
+        result: vi.fn().mockResolvedValue({
+          data: { images: [{ url: 'https://fal.media/hung.png', content_type: 'image/png' }] },
+        }),
+      })
+      const fetchImpl = vi.fn(() => new Promise(() => {}))
+
+      await expectWallClockTimeout(generateImage({
+        apiKey: 'fal-key',
+        prompt: 'hung download',
+      }, { client, fetchImpl, timeoutMs: 25 }), 25)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('AbortSignal stops polling immediately and is forwarded to queue calls', async () => {
