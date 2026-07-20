@@ -47,6 +47,41 @@ function setup(scene) {
 const PROMPT_ARG = 0
 const STYLE_TAG_ARG = 5
 
+describe('useSceneGeneration — queue 거부 시 침묵 금지', () => {
+  it('generationQueue.enqueue 가 reject 하면 toast.warning 으로 사용자에게 알린다', async () => {
+    const { toast } = await import('../../src/components/Toast')
+    const scene = { id: 'scene_1', prompt: 'p' }
+    const scenesHook = { references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+    const rejectingQueue = { enqueue: vi.fn().mockRejectedValue(new Error('Flow quota exhausted — dismiss the alert before retrying')) }
+    const { result } = renderHook(() =>
+      useSceneGeneration({
+        settings: { saveMode: 'memory' }, scenes: [scene], scenesHook,
+        genAPI: {}, openSettings: vi.fn(), setSelectedScene: vi.fn(),
+        t: (k) => k, generationQueue: rejectingQueue,
+      })
+    )
+    await act(() => result.current.handleGenerateScene('scene_1'))
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('quota'))
+  })
+
+  it('이미 전역으로 알린 거부(alreadySurfaced — quota-stop 일괄 clear 등)는 toast 를 또 띄우지 않는다', async () => {
+    const { toast } = await import('../../src/components/Toast')
+    const scene = { id: 'scene_1', prompt: 'p' }
+    const scenesHook = { references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+    const err = Object.assign(new Error('Flow quota exhausted — pending work cleared'), { alreadySurfaced: true })
+    const rejectingQueue = { enqueue: vi.fn().mockRejectedValue(err) }
+    const { result } = renderHook(() =>
+      useSceneGeneration({
+        settings: { saveMode: 'memory' }, scenes: [scene], scenesHook,
+        genAPI: {}, openSettings: vi.fn(), setSelectedScene: vi.fn(),
+        t: (k) => k, generationQueue: rejectingQueue,
+      })
+    )
+    await act(() => result.current.handleGenerateScene('scene_1'))
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+})
+
 describe('useSceneGeneration — sceneOverride(모달 편집 스냅샷)', () => {
   beforeEach(() => vi.clearAllMocks())
 

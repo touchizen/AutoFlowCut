@@ -237,7 +237,9 @@ export default function VideoDetailModal({
               onClick={handleRegenerate}
               disabled={isGenerating}
             >
-              {isGenerating ? t('sceneDetail.generating') : t('sceneDetail.regenerate')}
+              {isGenerating
+                ? t('sceneDetail.generating')
+                : (video?.video || video?.videoPath) ? t('sceneDetail.regenerate') : t('sceneDetail.generate')}
             </button>
           )}
           {typeof onUpdate === 'function' && (

@@ -197,6 +197,8 @@ export default function SceneDetailModal({
     }
   }
   
+  // 이미지가 아직 없는 씬은 '재생성'이 아니라 '생성' — 라벨이 실제 동작을 말해야 한다.
+  const hasGeneratedImage = !!(editData.image || editData.imagePath)
   const footer = (
     <>
       <button className="btn-secondary" onClick={onClose}>{t('sceneDetail.cancel')}</button>
@@ -205,8 +207,12 @@ export default function SceneDetailModal({
           className="btn-warning"
           onClick={handleRegenerate}
           disabled={isGenerating || !editData.prompt}
+          // 프롬프트가 없어 disabled 면 이유를 tooltip 으로 — 침묵 disabled 는 "생성이 안 된다"로 보인다.
+          title={!editData.prompt ? t('toast.noPrompt') : undefined}
         >
-          {isGenerating ? t('sceneDetail.generating') : t('sceneDetail.regenerate')}
+          {isGenerating
+            ? t('sceneDetail.generating')
+            : hasGeneratedImage ? t('sceneDetail.regenerate') : t('sceneDetail.generate')}
         </button>
       )}
       <button className="btn-primary" onClick={handleSave}>{t('sceneDetail.save')}</button>
