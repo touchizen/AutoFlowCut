@@ -243,6 +243,23 @@ describe('Grok video provider — poll', () => {
 })
 
 describe('Grok video provider — download', () => {
+  it.each([
+    ['https://evil.example/capture.mp4', /origin not allowed/],
+    ['http://api.x.ai/v1/videos/capture.mp4', /must use HTTPS/],
+  ])('허용되지 않은 download URL %s에는 Bearer key를 보내지 않는다', async (videoUri, errorPattern) => {
+    const fetchImpl = vi.fn()
+
+    await expect(fetchVideoBase64({
+      apiKey: 'xai-secret',
+      videoUri,
+    }, { fetchImpl })).resolves.toEqual({
+      success: false,
+      error: expect.stringMatching(errorPattern),
+      errorKind: 'invalid-config',
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('Bearer 인증으로 binary를 받아 base64/mimeType 계약을 반환한다', async () => {
     const bytes = Uint8Array.from([0, 1, 2, 255])
     const fetchImpl = vi.fn().mockResolvedValue({

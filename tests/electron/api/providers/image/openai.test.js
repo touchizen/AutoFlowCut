@@ -103,6 +103,25 @@ describe('OpenAI image provider', () => {
     expect(result.actualAspectRatio).toBe('2:3')
   })
 
+  it('MIME 줄바꿈이 있는 reference base64를 정규화해 edits 요청에 넣는다', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(imageResponse('EDITED_B64'))
+    const referenceBytes = Uint8Array.from([1, 2, 3, 4, 5, 6])
+
+    const result = await generateImage({
+      apiKey: 'sk-wrapped-ref',
+      prompt: 'accept MIME-wrapped base64',
+      referenceImages: [{
+        mimeType: 'image/png',
+        data: 'AQID\n  BAUG',
+      }],
+    }, { fetchImpl })
+
+    expect(result).toMatchObject({ success: true })
+    const [, init] = fetchImpl.mock.calls[0]
+    const [imagePart] = init.body.getAll('image[]')
+    expect(new Uint8Array(await imagePart.arrayBuffer())).toEqual(referenceBytes)
+  })
+
   it('referenceImages가 배열이 아니면 invalid-input으로 fail-fast한다', async () => {
     const fetchImpl = vi.fn()
 

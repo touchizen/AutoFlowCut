@@ -86,6 +86,7 @@ describe('Higgsfield REST client — provisional basic-pair auth', () => {
     [401, { code: 401, message: 'invalid api key' }, 'auth'],
     [403, { code: 403, message: 'access forbidden' }, 'forbidden'],
     [402, {}, 'quota'],
+    [402, { message: 'invalid api key' }, 'quota'],
     [429, { code: 'credit-exhausted', message: 'credit exhausted; top-up required' }, 'quota'],
     [429, { code: 'rate_limit_exceeded', message: 'rate limited' }, 'transient'],
     [503, { message: 'service unavailable' }, 'transient'],

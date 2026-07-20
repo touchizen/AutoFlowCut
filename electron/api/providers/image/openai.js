@@ -29,23 +29,33 @@ function mapImageAspect(aspectRatio) {
     : DEFAULT_IMAGE_ASPECT
 }
 
-function isRawBase64(data) {
-  if (typeof data !== 'string') return false
-  const value = data.trim()
-  if (!value || /^data:/i.test(value)) return false
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return false
+function normalizeRawBase64(data) {
+  if (typeof data !== 'string') return null
+  const trimmed = data.trim()
+  if (!trimmed || /^data:/i.test(trimmed)) return null
+  const value = trimmed.replace(/\s+/g, '')
+  if (!value || /^data:/i.test(value)) return null
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return null
   try {
     const canonical = Buffer.from(value, 'base64').toString('base64')
-    return value === canonical || value === canonical.replace(/=+$/, '')
+    return value === canonical || value === canonical.replace(/=+$/, '') ? value : null
   } catch {
-    return false
+    return null
   }
 }
 
-function validateReferenceImages(referenceImages) {
-  if (!Array.isArray(referenceImages)) return 'referenceImages must be an array'
-  const invalidIndex = referenceImages.findIndex((ref) => !ref || !isRawBase64(ref.data))
-  return invalidIndex === -1 ? null : `Invalid reference image at index ${invalidIndex}`
+function normalizeReferenceImages(referenceImages) {
+  if (!Array.isArray(referenceImages)) {
+    return { error: 'referenceImages must be an array', referenceImages: [] }
+  }
+  const normalized = referenceImages.map((ref) => {
+    const data = ref ? normalizeRawBase64(ref.data) : null
+    return data ? { ...ref, data } : null
+  })
+  const invalidIndex = normalized.findIndex((ref) => !ref)
+  return invalidIndex === -1
+    ? { error: null, referenceImages: normalized }
+    : { error: `Invalid reference image at index ${invalidIndex}`, referenceImages: [] }
 }
 
 async function safeJson(response) {
@@ -135,7 +145,10 @@ export async function generateImage(
 ) {
   if (!apiKey) return { success: false, error: 'No API key', errorKind: 'auth' }
 
-  const referenceError = validateReferenceImages(referenceImages)
+  const {
+    error: referenceError,
+    referenceImages: normalizedReferenceImages,
+  } = normalizeReferenceImages(referenceImages)
   if (referenceError) {
     return { success: false, error: referenceError, errorKind: 'invalid-input' }
   }
@@ -144,7 +157,7 @@ export async function generateImage(
   const { size, actualAspectRatio } = mapImageAspect(aspectRatio)
   const selectedModel = model || DEFAULT_OPENAI_IMAGE_MODEL
   const finalPrompt = prompt || ''
-  const hasReferences = referenceImages.length > 0
+  const hasReferences = normalizedReferenceImages.length > 0
   const url = hasReferences
     ? `${OPENAI_BASE}/images/edits`
     : `${OPENAI_BASE}/images/generations`
@@ -156,7 +169,7 @@ export async function generateImage(
       model: selectedModel,
       prompt: finalPrompt,
       size,
-      referenceImages,
+      referenceImages: normalizedReferenceImages,
     })
   } else {
     headers['Content-Type'] = 'application/json'

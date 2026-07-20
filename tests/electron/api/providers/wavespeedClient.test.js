@@ -107,6 +107,7 @@ describe('WaveSpeed-only REST client — provisional transport', () => {
     // Fable F1: 순수 HTTP 402(문구 없음)도 credit 소진 → quota (top-up 전 무동작 방지).
     [402, {}, 'quota'],
     [402, { message: 'request denied' }, 'quota'],
+    [402, { message: 'invalid api key' }, 'quota'],
     // Fable F2: 200-body string code(invalid_api_key, 숫자 status 없음) → auth (AUTH_SIGNAL 분기).
     [200, { code: 'invalid_api_key', message: 'invalid api key' }, 'auth'],
     // Fable F2: 200-internal rate/throttle → transient (200-internal RATE 분기).

@@ -221,6 +221,16 @@ export async function checkVideo(
   }
 }
 
+function videoOriginError(videoUri) {
+  let url
+  try { url = new URL(String(videoUri)) } catch { return 'Invalid Grok video URL' }
+  if (url.protocol !== 'https:') return 'Grok video URL must use HTTPS'
+  if (!downloadPolicy.origins.some(({ origin }) => origin === url.origin)) {
+    return `Grok video URL origin not allowed: ${url.origin}`
+  }
+  return null
+}
+
 /** 완료된 Grok video URI를 base64로 다운로드한다. */
 export async function fetchVideoBase64(
   { apiKey, videoUri } = {},
@@ -228,6 +238,8 @@ export async function fetchVideoBase64(
 ) {
   if (!apiKey) return { success: false, error: 'No API key', errorKind: 'auth' }
   if (!videoUri) return { success: false, error: 'No video URI', errorKind: 'other' }
+  const policyError = videoOriginError(videoUri)
+  if (policyError) return { success: false, error: policyError, errorKind: 'invalid-config' }
 
   const doFetch = fetchImpl ?? fetch
   try {
