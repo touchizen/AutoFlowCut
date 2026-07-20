@@ -33,7 +33,7 @@ Story 오디오 탭은 화자별 TTS로 나레이션을 만들고, SFX 세그먼
 
 `ipcMain.handle('story:audio-preflight', (params) => …)`를 추가한다. **renderer의 `keys:status`가 아니라** 런타임 합성과 **동일한 `ttsKeyFor`/`sfxKeyFor` closure를 IPC에 직접 주입**(재구현 금지 — 이 두 객체는 [main.js:233-238/273-283](../../electron/main.js#L233)의 module-local closure이므로 preflight 핸들러를 main.js에서 배선하거나 `resolveTtsKey`/`resolveSfxKey` 의존성으로 주입)해 각 필요 provider의 키가 **해석되는지**(폴백 포함) 판정한다.
 
-- **missing 판정은 이원 신호 통일**: typecast resolver는 키 없으면 **throw**([typecatKey.js:17](../../electron/api/tts/typecastKey.js#L17)), 나머지는 **null 반환**([main.js:235-237](../../electron/main.js#L235)). 따라서 `try { const k = resolve(); if (!k) missing }`(**throw 또는 falsy = missing**)로 판정. dev 스위치(§4.9)는 resolver 내부라 자동 공유.
+- **판정은 `resolveKey(provider) → { key|null, source }`로**(§4.8 2계층의 nullable 진입점): `key === null` → `missing`, `source === 'store'` → `resolved-store`, 그 외(env/credentials) → `resolved-fallback`. **`hasKey()`로 판정하지 않는다** — 깨진 암호문에서 `hasKey=true`인데 `getKey=null`이 가능하고([keyStore.js:52/70](../../electron/api/keyStore.js#L52)), 폴백 사용 시에도 store로 오표시된다. 실제 `resolveKey` 결과의 `source`만 신뢰한다. loader가 null 통일(§4.8)되므로 throw 신호는 없다. dev 스위치(§4.9)는 loader 내부라 자동 공유.
 
 반환 shape(3분류를 실을 수 있게 per-provider status):
 
@@ -57,7 +57,11 @@ Story 오디오 탭은 화자별 TTS로 나레이션을 만들고, SFX 세그먼
 - **재사용 가능한 완료 세그먼트**(`canReuse`/`canReuseSfx`)는 재합성 안 하므로 **제외**. **단, 이 판정은 `await stat()` 파일 실재 확인이 포함된 IO**([stepMachine.js:1573-1588](../../electron/story/stepMachine.js#L1573)) — 순수 함수로 못 만든다(§8 정정).
 - **스코프 정정(중요)**: 부분 실행은 **`onlySpeaker`뿐**([stepMachine.js:1375](../../electron/story/stepMachine.js#L1375))이다. **`params.regenerate`는 부분 실행이 아니라 전체 실행**이며 지정 ID의 reuse만 강제 무효화(`forceRegen`)한다([stepMachine.js:1570-1574](../../electron/story/stepMachine.js#L1570)) — 같은 런에서 다른 pending/error/파일없음 세그먼트와 SFX도 합성된다([stepMachine.js:1668/1700](../../electron/story/stepMachine.js#L1668)). 따라서 regenerate는 **전체 세그먼트로 집합 계산 + `forceRegen`을 reuse 제외 판정에 반영**해야 한다(스코프 축소 금지). 세그먼트 테스트(`synthPreview` [stepMachine.js:1969-1977](../../electron/story/stepMachine.js#L1969), 지정 id·import 제외·sfx는 sfxTargets만)와 onlySpeaker만 진짜 부분 스코프.
 
-**공유 async planner로 추출**: `planAudioWork(params, scenes, { stat, segmentsDir, forceRegen, onlySpeaker }) → { toSynth, requiredProviders }`. 순수 부분(`providerForSegment`, fingerprint/sfxSource 계산)은 별도 순수 함수로, IO 부분(reuse stat)은 planner가 담당. **합성 루프도 이 planner의 `toSynth`를 사용**해 pre-flight와 실제 실행이 갈리지 않게 한다(single source). preflight IPC는 planner의 `requiredProviders`를 §4.1 resolver에 넘긴다.
+**공유 async planner로 추출**: `planAudioWork(params, scenes, { speakers, defaultVoice, mode, segmentIds, stat, segmentsDir, forceRegen }) → { toSynth, requiredProviders }`.
+- **권위 입력 명시(계약 완결)**: `speakers = params.speakers || state.speakers`([stepMachine.js:1350](../../electron/story/stepMachine.js#L1350)), `defaultVoice`(주입, [story-api.js:68](../../electron/ipc/story-api.js#L68)) — voice/fingerprint를 실루프와 동일하게 계산하려면 필수. `mode ∈ {full, onlySpeaker, segmentTest}`, `segmentIds`(segmentTest/부분용).
+- 순수 부분(`providerForSegment(seg, speakers, defaultVoice)`, fingerprint/sfxSource)은 별도 순수 함수. IO 부분(reuse `stat`)은 planner.
+- **모드별 경로**: `full`/`onlySpeaker`는 reuse 제외(canReuse/canReuseSfx) 포함. **`segmentTest`는 reuse를 보지 않고**(synthPreview는 지정 id를 항상 합성 [stepMachine.js:1969-1998](../../electron/story/stepMachine.js#L1969)) **순수 `providerForSegment`로 `segmentIds`만** 계산 — planner의 reuse 제외를 태우면 done 세그먼트 재테스트가 잘못 스킵된다.
+- **합성 루프도 이 planner의 `toSynth`를 사용**해 pre-flight와 실제 실행이 갈리지 않게 한다(single source). preflight IPC는 `requiredProviders`를 §4.1 `resolveKey`에 넘긴다.
 
 ### 4.3 provider → keyId → resolver/store registry (별칭 명문화)
 
@@ -74,8 +78,9 @@ pre-flight/게이트/VoicePicker는 storyProvider를 이 테이블로 keyId에 �
 
 ### 4.4 게이트 진입점 통합
 
-오디오를 트리거하는 모든 경로를 공통 `runAudioWithPreflight(scopeParams)`로 감싼다:
-- 기본 생성 `start('audio')`, 재실행, 자동 진행([StoryView.jsx:1292/1312/1395](../../src/components/story/StoryView.jsx#L1292)), 세그먼트 재생성([:1144](../../src/components/story/StoryView.jsx#L1144)), 화자 단독([:1150](../../src/components/story/StoryView.jsx#L1150), 그 화자 provider만), 세그먼트 테스트([:1180](../../src/components/story/StoryView.jsx#L1180)), 성우 미리듣기([voicePreviewService.js:58](../../electron/api/tts/voicePreviewService.js#L58)).
+오디오를 **생성/합성**하는 경로를 공통 `runAudioWithPreflight(scopeParams)`로 감싼다:
+- 기본 생성 `start('audio')`, 재실행, 자동 진행([StoryView.jsx:1292/1312/1395](../../src/components/story/StoryView.jsx#L1292)), 세그먼트 재생성([:1144](../../src/components/story/StoryView.jsx#L1144)), 화자 단독([:1150](../../src/components/story/StoryView.jsx#L1150), 그 화자 provider만), 세그먼트 테스트([:1180](../../src/components/story/StoryView.jsx#L1180)).
+- **성우 미리듣기는 여기 포함하지 않는다** — 선차단하면 키리스 캐시/previewUrl 미리듣기가 막힌다(§4.7). 미리듣기는 attempt-first(§4.7)로 별도 처리.
 - 흐름: preflight IPC → `missing` 있으면 인라인 게이트 카드 표시(키 저장 후 재검사→해당 action 재개) / 없으면 진행.
 - **main 재검사 배치(중요)**: `start('audio')`의 동일 preflight 재검사는 **`running` 마킹·downstream reset 전에** 실행하고, `onlySpeakerScopeError`처럼 **`{ error: errorKind }` 반환 패턴**([stepMachine.js:2510-2513](../../electron/story/stepMachine.js#L2510))으로 "시작 안 함"을 표현한다. audio 스텝 fn 안에서 throw하면 이미 done이던 스텝 상태가 교체된 뒤라 **done→error 회귀**가 된다([stepMachine.js:2505-2531](../../electron/story/stepMachine.js#L2505) 주석이 이 함정을 설명). renderer preflight와 start 사이 TOCTOU는 이 재검사로 닫히고, 그 이후 외부 키/파일 변경 race는 런타임 errorKind(§4.8)가 담당.
 
@@ -99,9 +104,12 @@ pre-flight/게이트/VoicePicker는 storyProvider를 이 테이블로 keyId에 �
 ### 4.8 errorKind 일원화 (런타임 안전망)
 
 - 키 해석/인증 실패를 표준 에러로: `MissingProviderKeyError(provider)`(errorKind `story-audio-no-tts-key`) + `ProviderAuthError(provider)`(errorKind `story-audio-tts-auth`, 401/403).
-- **일원화(중복 제거)**: loader들(`getTypecastKey`/`readCredentialsKey`/`genaiKeyStore.getKey`)은 **null만 반환**하도록 계약 통일(§4.9와 정합 — typecast의 현재 throw [typecastKey.js:17](../../electron/api/tts/typecastKey.js#L17)도 null로), missing throw는 **canonical resolver 한 곳**(`ttsKeyFor`/`sfxKeyFor` wrapper)이 `MissingProviderKeyError`로 던진다. loader와 adapter 양쪽에서 던지는 중복을 피한다.
-- **대상에 SFX 어댑터 포함(누락 정정)**: 화자 TTS 4어댑터뿐 아니라 **SFX ElevenLabs 어댑터**([sfx/elevenlabs.js:14/26](../../electron/api/sfx/elevenlabs.js#L14))도 missing/auth를 raw로 던지므로 동일 표준 에러로 감싼다(TOCTOU·무효키 시 F8/F9가 SFX에서 재현되는 것 방지).
-- 집계 재던지기([stepMachine.js:1750-1760](../../electron/story/stepMachine.js#L1750))는 첫 실패의 errorKind만 보존 → pre-flight로 대부분 예방되므로 잔여만 담당. **미리듣기 IPC**([story-api.js:174](../../electron/ipc/story-api.js#L174))는 aggregate를 안 거치고 IPC throw 시 custom errorKind가 소실되므로([story-api.js:143](../../electron/ipc/story-api.js#L143)), `{errorKind, provider}` 객체 반환으로 보존.
+- **2계층 키 계약(throw 경계 = synthesize/generate, listVoices 아님)**: loader들(`getTypecastKey`/`readCredentialsKey`/`genaiKeyStore.getKey`)은 **null만 반환**하도록 통일(§4.9 정합 — typecast의 현재 throw [typecastKey.js:17](../../electron/api/tts/typecastKey.js#L17)도 null로). 그 위에 두 진입점:
+  - `resolveKey(provider) → { key|null, source }` — **nullable**. `listVoices()`/시드 폴백이 쓴다. **여기서 throw하면 안 된다** — elevenlabs/googletts `listVoices`는 키 없으면 시드 목록을 반환해야 하는데([elevenlabs.js:99-136](../../electron/api/tts/elevenlabs.js#L99), [googletts.js:53](../../electron/api/tts/googletts.js#L53)) main이 예외를 `[]`로 접어([main.js:262](../../electron/main.js#L262)) **키리스 목록(F6/R3)이 후퇴**한다.
+  - `requireKey(provider) → string (throw)` — 키 없으면 `MissingProviderKeyError`. **synthesize/generate 진입점**(4 TTS 어댑터 + SFX 어댑터)에서만 호출. loader/adapter 이중 throw는 제거하되 throw 자체는 이 경계에 유지.
+- **대상에 SFX 어댑터 포함(누락 정정)**: 화자 TTS 4어댑터뿐 아니라 **SFX ElevenLabs 어댑터**([sfx/elevenlabs.js:15-16/27-29](../../electron/api/sfx/elevenlabs.js#L15))도 missing/auth를 raw로 던지므로 동일 표준 에러로 감싼다(TOCTOU·무효키 시 F8/F9가 SFX에서 재현되는 것 방지).
+- **집계 안전망 typed 우선 보존**: 현재 세그먼트 catch는 `errorKind`만 저장하고 `provider`를 버리며([stepMachine.js:1690/1719](../../electron/story/stepMachine.js#L1690)), 집계는 씬 순서상 **첫 실패만** 고른다([stepMachine.js:1750](../../electron/story/stepMachine.js#L1750)) — 앞이 generic·뒤가 auth면 auth kind가 소실된다. → 세그먼트별 `{ errorKind, provider, message }`를 보존하고 집계는 **typed(key/auth) 실패를 generic보다 우선** 선택. pre-flight로 대부분 예방되므로 잔여 담당.
+- **미리듣기 IPC**([story-api.js:174](../../electron/ipc/story-api.js#L174))는 aggregate를 안 거치고 IPC throw 시 custom errorKind가 소실되므로([story-api.js:143](../../electron/ipc/story-api.js#L143)), `{errorKind, provider}` 객체 반환으로 보존.
 - ko/en 로케일에 두 kind 문구 + `resolveDisplayError`([errorDisplay.js:29-40](../../src/utils/errorDisplay.js#L29)) 매핑 추가. 이로써 raw 영어는 missing-key/auth 한정으로 제거.
 
 ### 4.9 dev 스위치
@@ -142,8 +150,9 @@ mock만으로 넘기지 않고 다음 조합을 커버:
 
 - `apiKeyRegistry`(순수 매핑) — storyProvider↔keyId↔hook/resolver.
 - `providerForSegment` + fingerprint/sfxSource(순수) — 세그먼트→provider·재사용 지문 계산.
-- `planAudioWork(params, scenes, { stat, segmentsDir, forceRegen, onlySpeaker })`(**async**) — 세그먼트 선별(voiceOf·import 분리·canReuse·canReuseSfx) 전체를 담아 `{ toSynth, requiredProviders }` 반환. **합성 루프와 preflight가 이 하나를 공유**(순수 아님 — reuse가 stat IO).
-- `story:audio-preflight` IPC(main) — 주입된 `ttsKeyFor`/`sfxKeyFor` closure로 판정(throw/falsy=missing), dev 스위치 연동, per-provider status 반환.
+- `planAudioWork(params, scenes, { speakers, defaultVoice, mode, segmentIds, stat, segmentsDir, forceRegen })`(**async**) — 세그먼트 선별(voiceOf·import 분리·canReuse·canReuseSfx) 전체를 담아 `{ toSynth, requiredProviders }` 반환. `segmentTest` 모드는 reuse 미적용(순수 `providerForSegment`로 `segmentIds`만). **합성 루프와 preflight가 이 하나를 공유**(순수 아님 — reuse가 stat IO).
+- `resolveKey(provider) → {key,source}`(nullable) / `requireKey(provider)`(throw) — 2계층 키 계약. listVoices는 resolveKey(시드 폴백), synthesize/generate는 requireKey.
+- `story:audio-preflight` IPC(main) — 주입된 `resolveKey`로 판정(`{key,source}`→missing/resolved-store/resolved-fallback), dev 스위치 연동, per-provider status 반환.
 - `runAudioWithPreflight`(renderer) — 진입점 통합 + main `start('audio')` 재검사(running 마킹 전 `{error}` 반환).
 - `ApiKeyField`(presentational) + `GenaiApiKeyField`/`TtsApiKeyField` wrapper — 설정/게이트/미리듣기 공용.
 - errorKind 표준화(canonical resolver 일원화 + SFX 어댑터 + 로케일/errorDisplay + preview IPC 객체 반환).
@@ -178,3 +187,12 @@ v1의 확정 결함(둘 다 실측 지적, 필자 직접 코드 대조 확인):
 - **R7** refetch가 merge라 stale voice 잔존 → §4.7 provider slice replace.
 - resolver 주입 경계(main closure 재구현 금지) → §4.1.
 - 확인됨(무결): resolver 동일성(stepMachine `resolveTts`=주입된 `ttsFor`), googletts 설정전용/anthropic 제외, genai split-brain 하드닝은 마이그레이션 무손실(`keys:set('genai')` 호출 UI 부재).
+
+### v4 반영 (R3 라운드)
+- **N1** canonical throw가 키리스 listVoices 후퇴시킴 → §4.8 2계층(`resolveKey` nullable / `requireKey` throw), throw 경계 = synthesize/generate.
+- **N2** §4.4 미리듣기 선차단이 §4.7과 모순 → §4.4에서 미리듣기 제외(attempt-first만).
+- **N3** planAudioWork 계약 불완전 → §4.2/§8 `speakers/defaultVoice/mode/segmentIds` 추가, segmentTest는 순수 경로(reuse 미적용).
+- **source 판별**: hasKey 오표시 → §4.1 `resolveKey→{key,source}`로 store/fallback 판정.
+- **집계 보존**: typed(key/auth) > generic 우선 + `{errorKind,provider,message}` → §4.8.
+- 오타/드리프트 정정(typecastKey, sfx/elevenlabs 라인).
+- R1~R7 클로즈 확인됨(두 리뷰어 판정표 일치).
