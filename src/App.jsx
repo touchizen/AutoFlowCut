@@ -766,6 +766,25 @@ function App() {
     }
   }, [mergeTtsVoices])
 
+  // M3b 리뷰 Finding 1: 오디오 pre-flight 게이트에서 키를 막 저장한 뒤엔 handleTtsVoiceSearch로
+  // "재조회"할 수 없다 — 그 함수는 검색어 2자 미만이면 조용히 no-op하는 원격 검색이라(빈 검색어로
+  // provider 전체를 다시 긁는 용도가 아니다), 그 provider의 목소리를 처음부터 다시 로드하는
+  // 별도 경로가 필요하다. 초기 로드 이펙트(~L711)와 같은 모양으로 provider 하나만 다시 긁어 병합.
+  const reloadTtsVoicesForProvider = useCallback(async (provider) => {
+    if (!provider) return
+    try {
+      const vs = await window.electronAPI?.ttsListVoices?.({
+        provider,
+        includeShared: provider === 'elevenlabs',
+        limit: 100,
+        maxSharedPages: provider === 'elevenlabs' ? 10 : 1,
+      })
+      if (Array.isArray(vs)) mergeTtsVoices(vs.map((v) => ({ ...v, provider })))
+    } catch {
+      // best-effort — 실패해도 뒤이은 preflight 재검사는 별도로 진행된다.
+    }
+  }, [mergeTtsVoices])
+
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
   //   아직 dynamic 을 못 받았을 때만 — 이미 받았으면 반복 스크랩 생략.
@@ -2725,6 +2744,7 @@ function App() {
               voices={ttsVoices}
               onTagGender={handleTagGender}
               onVoiceSearch={handleTtsVoiceSearch}
+              onReloadVoices={reloadTtsVoicesForProvider}
               onClose={() => setActiveView('generate')}
             />
           </div>
