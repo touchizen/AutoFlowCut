@@ -2883,6 +2883,10 @@ function App() {
           onProjectChange={handleProjectChange}
           availableModels={availableModels}
           appMode={mode}
+          // §4.7 R3: "모든 저장 wrapper가 App-level 리로드를 공유한다" — Settings › API Keys에서
+          // provider 키를 저장하면 그 provider의 목소리 목록을 다시 긁는다. Story가 안 열려 있으면
+          // (voices가 안 쓰이면) best-effort로 조용히 끝난다 — 무해하다.
+          onKeySaved={reloadTtsVoicesForProvider}
           onSave={async (newSettings) => {
             setSettings(newSettings)
             setShowSettings(false)

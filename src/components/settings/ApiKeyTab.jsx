@@ -13,13 +13,16 @@ const TTS_PROVIDER_IDS = Object.keys(API_KEY_REGISTRY).filter((id) => API_KEY_RE
 
 const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
 
-export default function ApiKeyTab({ t }) {
+// §4.7 R3: "모든 저장 wrapper가 App-level 리로드를 공유한다" — Story가 열려 있으면 방금 저장한
+// provider의 목소리 목록이 stale로 남는 회귀를 막는다. App이 onKeySaved(provider)를
+// SettingsModal→ApiKeyTab으로 내려주면, 여기서 provider별 wrapper에 onSaved를 물려 알린다.
+export default function ApiKeyTab({ t, onKeySaved }) {
   const openLink = (url) => window.electronAPI?.openExternal?.(url)
   return (
     <div className="settings-tab-content">
       <div className="settings-section">
         <h3>{t('settings.apiKeyTitle')}</h3>
-        <GenaiApiKeyField t={t} />
+        <GenaiApiKeyField t={t} onSaved={() => onKeySaved?.('gemini')} />
         {TTS_PROVIDER_IDS.map((id) => (
           <TtsApiKeyField
             key={id}
@@ -32,6 +35,7 @@ export default function ApiKeyTab({ t }) {
               : undefined
             }
             t={t}
+            onSaved={() => onKeySaved?.(id)}
           />
         ))}
         <span className="setting-sublabel" style={{ display: 'block', marginTop: '8px' }}>{t('settings.apiKeySecurityNote')}</span>
