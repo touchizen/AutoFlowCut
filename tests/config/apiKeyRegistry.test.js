@@ -19,4 +19,11 @@ describe('apiKeyRegistry', () => {
   it('unknown provider falls through to itself', () => {
     expect(keyIdForProvider('mystery')).toBe('mystery')
   })
+
+  it('each provider carries a get-key url (single source of truth for AudioKeyGateCard/ApiKeyTab)', () => {
+    expect(API_KEY_REGISTRY.typecast.url).toBe('https://app.typecast.ai')
+    expect(API_KEY_REGISTRY.elevenlabs.url).toBe('https://elevenlabs.io/app/settings/api-keys')
+    expect(API_KEY_REGISTRY.googletts.url).toBe('https://console.cloud.google.com/apis/credentials')
+    expect(API_KEY_REGISTRY.gemini.url).toBe('https://aistudio.google.com/apikey')
+  })
 })

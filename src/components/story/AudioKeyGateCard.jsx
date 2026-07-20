@@ -6,12 +6,6 @@ import { API_KEY_REGISTRY, keyIdForProvider } from '../../config/apiKeyRegistry'
 import GenaiApiKeyField from '../settings/GenaiApiKeyField'
 import TtsApiKeyField from '../settings/TtsApiKeyField'
 
-const GETKEY_URL = {
-  typecast: 'https://app.typecast.ai',
-  elevenlabs: 'https://elevenlabs.io/app/settings/api-keys',
-  googletts: 'https://console.cloud.google.com/apis/credentials',
-}
-
 export default function AudioKeyGateCard({ missing, onKeySaved, t }) {
   if (!missing || missing.length === 0) return null
   return (
@@ -27,7 +21,7 @@ export default function AudioKeyGateCard({ missing, onKeySaved, t }) {
             key={m.provider}
             provider={m.provider}
             label={meta.label}
-            getKeyUrl={GETKEY_URL[m.provider]}
+            getKeyUrl={meta.url}
             onSaved={() => onKeySaved?.(m.provider)}
             t={t}
           />

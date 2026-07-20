@@ -5,10 +5,10 @@
  *   store 'multi': keyStoreMulti, useTtsKeys, 검증 없음.
  */
 export const API_KEY_REGISTRY = {
-  typecast:   { keyId: 'typecast',   store: 'multi', validate: false, label: 'Typecast' },
-  elevenlabs: { keyId: 'elevenlabs', store: 'multi', validate: false, label: 'ElevenLabs' },
-  gemini:     { keyId: 'genai',      store: 'genai', validate: true,  label: 'Google Gemini' },
-  googletts:  { keyId: 'googletts',  store: 'multi', validate: false, label: 'Google Cloud TTS' },
+  typecast:   { keyId: 'typecast',   store: 'multi', validate: false, label: 'Typecast',        url: 'https://app.typecast.ai' },
+  elevenlabs: { keyId: 'elevenlabs', store: 'multi', validate: false, label: 'ElevenLabs',       url: 'https://elevenlabs.io/app/settings/api-keys' },
+  gemini:     { keyId: 'genai',      store: 'genai', validate: true,  label: 'Google Gemini',    url: 'https://aistudio.google.com/apikey' },
+  googletts:  { keyId: 'googletts',  store: 'multi', validate: false, label: 'Google Cloud TTS', url: 'https://console.cloud.google.com/apis/credentials' },
 }
 
 export function keyIdForProvider(storyProvider) {
