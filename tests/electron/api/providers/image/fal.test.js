@@ -102,7 +102,69 @@ describe('fal image provider — run to completion', () => {
     })
   })
 
-  it('poll cap returns transient and never calls result/download', async () => {
+  it('M1: default polling remains active until a result completes around 150 seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      const startedAt = Date.now()
+      const client = makeClient({
+        status: vi.fn().mockImplementation(async () => ({
+          status: Date.now() - startedAt >= 150000 ? 'COMPLETED' : 'IN_PROGRESS',
+          request_id: 'img-req',
+        })),
+        result: vi.fn().mockResolvedValue({
+          data: { images: [{ url: 'https://fal.media/slow.png', content_type: 'image/png' }] },
+        }),
+      })
+      const fetchImpl = vi.fn().mockResolvedValue(new Response(
+        Uint8Array.from([115, 108, 111, 119]),
+        { status: 200, headers: { 'content-type': 'image/png' } },
+      ))
+      const operation = generateImage({
+        apiKey: 'fal-key',
+        prompt: 'slow but billable',
+      }, { client, fetchImpl, pollIntervalMs: 1000, timeoutMs: 200000 })
+
+      await vi.advanceTimersByTimeAsync(151000)
+
+      await expect(operation).resolves.toMatchObject({
+        success: true,
+        images: [{ base64: 'c2xvdw==', mimeType: 'image/png' }],
+      })
+      expect(client.queue.status.mock.calls.length).toBeGreaterThan(120)
+      expect(client.queue.result).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('M1: continuously pending polling stops at the wall-clock deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = makeClient({
+        status: vi.fn().mockResolvedValue({ status: 'IN_PROGRESS', request_id: 'img-req' }),
+      })
+      let settled
+      generateImage({
+        apiKey: 'fal-key',
+        prompt: 'deadline bound',
+      }, { client, pollIntervalMs: 10, timeoutMs: 25 }).then(value => { settled = value })
+
+      await vi.advanceTimersByTimeAsync(24)
+      expect(settled).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(2)
+
+      expect(settled).toEqual({
+        success: false,
+        error: 'fal image polling timed out',
+        errorKind: 'transient',
+      })
+      expect(client.queue.result).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('M1: explicit small maxAttempts remains an honored safety backstop', async () => {
     const client = makeClient({
       status: vi.fn().mockResolvedValue({ status: 'IN_PROGRESS', request_id: 'img-req' }),
     })

@@ -17,9 +17,11 @@ import { DEFAULT_FAL_IMAGE_TIMEOUT_MS as FAL_IMAGE_TIMEOUT_MS } from '../../../.
 
 // PROVISIONAL — verify model id and endpoint behavior with a real fal key (M4 real-key gate).
 export const DEFAULT_FAL_IMAGE_MODEL = 'fal-ai/flux-pro/v1.1'
-export const DEFAULT_FAL_IMAGE_MAX_ATTEMPTS = 120
 export const DEFAULT_FAL_IMAGE_POLL_INTERVAL_MS = 1000
 export const DEFAULT_FAL_IMAGE_TIMEOUT_MS = FAL_IMAGE_TIMEOUT_MS
+export const DEFAULT_FAL_IMAGE_MAX_ATTEMPTS = Math.ceil(
+  DEFAULT_FAL_IMAGE_TIMEOUT_MS / DEFAULT_FAL_IMAGE_POLL_INTERVAL_MS,
+) + 1
 const FAL_IMAGE_TIMEOUT_ERROR = 'fal image polling timed out'
 
 const IMAGE_SIZE_BY_ASPECT = Object.freeze({
@@ -67,7 +69,7 @@ export async function generateImage(
   {
     client = null,
     fetchImpl,
-    maxAttempts = DEFAULT_FAL_IMAGE_MAX_ATTEMPTS,
+    maxAttempts,
     pollIntervalMs = DEFAULT_FAL_IMAGE_POLL_INTERVAL_MS,
     timeoutMs = DEFAULT_FAL_IMAGE_TIMEOUT_MS,
   } = {}
@@ -89,8 +91,15 @@ export async function generateImage(
   if (!isValidFalEndpointId(selectedModel)) {
     return { success: false, error: 'Invalid fal endpoint ID', errorKind: 'invalid-config' }
   }
-  const attemptsLimit = Math.max(1, Math.floor(Number(maxAttempts) || DEFAULT_FAL_IMAGE_MAX_ATTEMPTS))
   const timeoutLimit = Math.max(1, Number(timeoutMs) || DEFAULT_FAL_IMAGE_TIMEOUT_MS)
+  // deadline is authoritative. The derived count is only a runaway-loop backstop;
+  // callers can still provide a smaller explicit maxAttempts for tests/diagnostics.
+  const derivedAttemptsLimit = Math.ceil(
+    timeoutLimit / Math.max(1, Number(pollIntervalMs) || 0),
+  ) + 1
+  const attemptsLimit = maxAttempts == null
+    ? derivedAttemptsLimit
+    : Math.max(1, Math.floor(Number(maxAttempts) || DEFAULT_FAL_IMAGE_MAX_ATTEMPTS))
   const startedAt = Date.now()
   const deadline = startedAt + timeoutLimit
   // PROVISIONAL — whitelist and input field names require the M4 real-key smoke.
@@ -115,11 +124,10 @@ export async function generateImage(
       return { success: false, error: 'fal request ID not returned', errorKind: 'other' }
     }
 
-    for (let attempt = 0; attempt < attemptsLimit; attempt += 1) {
+    let attempt = 0
+    while (Date.now() < deadline && attempt < attemptsLimit) {
+      attempt += 1
       if (signal?.aborted) return abortFailure()
-      if (Date.now() - startedAt >= timeoutLimit) {
-        return { success: false, error: FAL_IMAGE_TIMEOUT_ERROR, errorKind: 'transient' }
-      }
 
       try {
         const status = await withFalDeadline(
@@ -175,12 +183,16 @@ export async function generateImage(
         if (isFalDeadlineError(error)) throw error
         if (classifyFalError(error) !== 'transient') throw error
       }
-      if (attempt + 1 < attemptsLimit) {
+      if (attempt < attemptsLimit && Date.now() < deadline) {
         await withFalDeadline(
           () => delay(pollIntervalMs, signal),
           { deadline, signal, timeoutMessage: FAL_IMAGE_TIMEOUT_ERROR },
         )
       }
+    }
+
+    if (Date.now() >= deadline) {
+      return { success: false, error: FAL_IMAGE_TIMEOUT_ERROR, errorKind: 'transient' }
     }
 
     return {
