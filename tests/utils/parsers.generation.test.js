@@ -4,8 +4,38 @@ import {
   mergeCSVIntoScenes,
   parseCSVToScenes,
   parseSceneCSVToTracks,
-  serializeScenesToCSV,
 } from '../../src/utils/parsers'
+
+function escapeCSVField(value) {
+  if (value == null) return ''
+  const text = String(value)
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+function serializeScenesToCSV(scenes = []) {
+  const headers = [
+    'scene', 'prompt', 'subtitle', 'start_time', 'end_time',
+    ...SCENE_GENERATION_CSV_COLUMNS,
+  ]
+  const lines = [headers.join(',')]
+  ;(scenes || []).forEach((scene, index) => {
+    const values = {
+      scene: scene?._sceneNum ?? index + 1,
+      prompt: scene?.prompt ?? '',
+      subtitle: scene?.subtitle ?? '',
+      start_time: scene?.startTime ?? '',
+      end_time: scene?.endTime ?? '',
+      image_provider: scene?.generation?.image?.provider ?? '',
+      image_model: scene?.generation?.image?.model ?? '',
+      t2v_provider: scene?.generation?.video?.t2v?.provider ?? '',
+      t2v_model: scene?.generation?.video?.t2v?.model ?? '',
+      i2v_provider: scene?.generation?.video?.i2v?.provider ?? '',
+      i2v_model: scene?.generation?.video?.i2v?.model ?? '',
+    }
+    lines.push(headers.map(header => escapeCSVField(values[header])).join(','))
+  })
+  return lines.join('\n')
+}
 
 describe('scene generation CSV columns', () => {
   it('round-trips N distinct overrides and asserts exactly N overrides survived', () => {

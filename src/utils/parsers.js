@@ -5,6 +5,7 @@
 import { DEFAULTS } from '../config/defaults'
 import { parseCSVTextToRows } from './csvParser'
 import { mergeSceneGeneration } from './sceneGenerationMerge'
+import { isKnownImageProvider, isKnownVideoProvider } from './sceneProviderResolution'
 
 export const SCENE_GENERATION_CSV_COLUMNS = [
   'image_provider', 'image_model',
@@ -13,20 +14,24 @@ export const SCENE_GENERATION_CSV_COLUMNS = [
 ]
 export const SCENE_GENERATION_INHERIT_SENTINEL = '__inherit__'
 
-function generationFromCSV(getCol) {
-  const stage = (providerColumn, modelColumn) => {
+function generationFromCSV(getCol, warnings) {
+  const stage = (providerColumn, modelColumn, isKnownProvider, path) => {
     const provider = getCol(providerColumn)
     const model = getCol(modelColumn)
     if (provider === SCENE_GENERATION_INHERIT_SENTINEL) return null
     if (!provider && !model) return undefined
+    if (provider && !isKnownProvider(provider)) {
+      if (Array.isArray(warnings)) warnings.push(`Rejected unknown provider '${provider}' at ${path}.`)
+      return undefined
+    }
     return {
       ...(provider ? { provider } : {}),
       ...(model ? { model } : {}),
     }
   }
-  const image = stage('image_provider', 'image_model')
-  const t2v = stage('t2v_provider', 't2v_model')
-  const i2v = stage('i2v_provider', 'i2v_model')
+  const image = stage('image_provider', 'image_model', isKnownImageProvider, 'generation.image')
+  const t2v = stage('t2v_provider', 't2v_model', isKnownVideoProvider, 'generation.video.t2v')
+  const i2v = stage('i2v_provider', 'i2v_model', isKnownVideoProvider, 'generation.video.i2v')
   if (image === undefined && t2v === undefined && i2v === undefined) return undefined
   return {
     ...(image !== undefined ? { image } : {}),
@@ -37,12 +42,6 @@ function generationFromCSV(getCol) {
       },
     } : {}),
   }
-}
-
-function escapeCSVField(value) {
-  if (value == null) return ''
-  const text = String(value)
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 // ============================================================
@@ -127,7 +126,7 @@ export function parseTextToScenes(text, defaultDuration = DEFAULTS.scene.duratio
  * @param {number} defaultDuration - 기본 duration
  * @returns {Array} 씬 배열
  */
-export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.duration) {
+export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.duration, options = {}) {
   // R10 review fix: shared RFC parser (escaped quote / multiline / CRLF 안전)
   const { headers: rawHeaders, rows } = parseCSVTextToRows(csvText)
   if (rows.length === 0) return []
@@ -148,7 +147,7 @@ export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.durat
     const startTime = !isNaN(parsedStart) ? parsedStart : currentTime
     const parsedEnd = parseTimeToSeconds(row.end_time)
     const endTime = !isNaN(parsedEnd) ? parsedEnd : startTime + duration
-    const generation = generationFromCSV(name => (row[name] || '').trim())
+    const generation = generationFromCSV(name => (row[name] || '').trim(), options.warnings)
 
     currentTime = endTime
 
@@ -323,7 +322,7 @@ export function parseSceneCSVToTracks(csvText, options = {}) {
       scene_tag: getCol('scene_tag') || getCol('background') || '',
       style_tag: getCol('style_tag') || getCol('style') || '',
       shot_type: getCol('shot_type') || '',
-      generation: generationFromCSV(getCol),
+      generation: generationFromCSV(getCol, options.warnings),
     }
     parsedRows.push(row)
 
@@ -386,35 +385,6 @@ export function parseSceneCSVToTracks(csvText, options = {}) {
   }
 
   return { srtTrack, scenes }
-}
-
-/**
- * Scene CSV export columns. Generation overrides use the same six flat column names
- * consumed by parseCSVToScenes/parseSceneCSVToTracks.
- */
-export function serializeScenesToCSV(scenes = []) {
-  const headers = [
-    'scene', 'prompt', 'subtitle', 'start_time', 'end_time',
-    ...SCENE_GENERATION_CSV_COLUMNS,
-  ]
-  const lines = [headers.join(',')]
-  ;(scenes || []).forEach((scene, index) => {
-    const values = {
-      scene: scene?._sceneNum ?? index + 1,
-      prompt: scene?.prompt ?? '',
-      subtitle: scene?.subtitle ?? '',
-      start_time: scene?.startTime ?? '',
-      end_time: scene?.endTime ?? '',
-      image_provider: scene?.generation?.image?.provider ?? '',
-      image_model: scene?.generation?.image?.model ?? '',
-      t2v_provider: scene?.generation?.video?.t2v?.provider ?? '',
-      t2v_model: scene?.generation?.video?.t2v?.model ?? '',
-      i2v_provider: scene?.generation?.video?.i2v?.provider ?? '',
-      i2v_model: scene?.generation?.video?.i2v?.model ?? '',
-    }
-    lines.push(headers.map(header => escapeCSVField(values[header])).join(','))
-  })
-  return lines.join('\n')
 }
 
 /**

@@ -3,6 +3,7 @@
  */
 
 import fs from 'fs';
+import { IMAGE_PROVIDER_IDS, VIDEO_PROVIDER_IDS } from './sceneGenerationSchema.js'
 
 const GENERATION_COLUMN_PATHS = {
   image_provider: ['image', 'provider'],
@@ -13,18 +14,24 @@ const GENERATION_COLUMN_PATHS = {
   i2v_model: ['video', 'i2v', 'model'],
 }
 const GENERATION_INHERIT_SENTINEL = '__inherit__'
+const IMAGE_PROVIDER_ID_SET = new Set(IMAGE_PROVIDER_IDS)
+const VIDEO_PROVIDER_ID_SET = new Set(VIDEO_PROVIDER_IDS)
 
-function generationFromRow(get) {
-  const stage = (providerColumn, modelColumn) => {
+function generationFromRow(get, warnings) {
+  const stage = (providerColumn, modelColumn, providerIds, path) => {
     const provider = get(providerColumn)
     const model = get(modelColumn)
     if (provider === GENERATION_INHERIT_SENTINEL) return null
     if (!provider && !model) return undefined
+    if (provider && !providerIds.has(provider)) {
+      if (Array.isArray(warnings)) warnings.push(`Rejected unknown provider '${provider}' at ${path}.`)
+      return undefined
+    }
     return { ...(provider ? { provider } : {}), ...(model ? { model } : {}) }
   }
-  const image = stage('image_provider', 'image_model')
-  const t2v = stage('t2v_provider', 't2v_model')
-  const i2v = stage('i2v_provider', 'i2v_model')
+  const image = stage('image_provider', 'image_model', IMAGE_PROVIDER_ID_SET, 'generation.image')
+  const t2v = stage('t2v_provider', 't2v_model', VIDEO_PROVIDER_ID_SET, 'generation.video.t2v')
+  const i2v = stage('i2v_provider', 'i2v_model', VIDEO_PROVIDER_ID_SET, 'generation.video.i2v')
   if (image === undefined && t2v === undefined && i2v === undefined) return undefined
   return {
     ...(image !== undefined ? { image } : {}),
@@ -37,9 +44,9 @@ function generationFromRow(get) {
   }
 }
 
-export function nestSceneGenerationColumns(row = {}) {
+export function nestSceneGenerationColumns(row = {}, options = {}) {
   const byLower = new Map(Object.entries(row).map(([key, value]) => [String(key).toLowerCase(), value]))
-  const generation = generationFromRow(key => String(byLower.get(key) ?? '').trim())
+  const generation = generationFromRow(key => String(byLower.get(key) ?? '').trim(), options?.warnings)
   return generation === undefined ? row : { ...row, generation }
 }
 
@@ -208,7 +215,7 @@ export function bundleSceneCSVRows(rows, options = {}) {
       scene_tag: get('scene_tag') || get('background') || '',
       style_tag: get('style_tag') || get('style') || '',
       shot_type: get('shot_type') || '',
-      generation: generationFromRow(get),
+      generation: generationFromRow(get, options.warnings),
     }
     if (!groupByNumber.has(sceneNum)) {
       const g = { sceneNum, rows: [] }
