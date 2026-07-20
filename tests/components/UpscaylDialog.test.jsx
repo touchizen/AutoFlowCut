@@ -24,8 +24,11 @@ function upscayl(extra = {}) {
     current: 0,
     total: 0,
     currentSceneId: null,
+    completed: 0,
     failures: [],
     skipped: 0,
+    cancelled: false,
+    stopped: false,
     startBatch: vi.fn().mockResolvedValue({ ok: true }),
     cancel: vi.fn().mockResolvedValue({ ok: true }),
     ...extra,
@@ -113,6 +116,35 @@ describe('UpscaylDialog 준비 상태', () => {
       })
     })
   })
+
+  it('닫힘/감지 대기 중에는 기억한 커스텀 모델을 기본값으로 덮어쓰지 않는다', () => {
+    localStorage.setItem('upscaylOptions', JSON.stringify({ model: 'custom-model', scale: 2 }))
+    const batch = upscayl()
+    const view = renderDialog({
+      isOpen: false,
+      upscayl: batch,
+      detectState: { loading: true },
+    })
+
+    expect(JSON.parse(localStorage.getItem('upscaylOptions'))).toEqual({ model: 'custom-model', scale: 2 })
+
+    view.rerender(
+      <I18nProvider>
+        <UpscaylDialog
+          isOpen
+          onClose={vi.fn()}
+          targetSceneIds={null}
+          upscayl={batch}
+          detectState={{ loading: true }}
+          onDetect={vi.fn()}
+          onLocate={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('Checking for Upscayl...')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('upscaylOptions'))).toEqual({ model: 'custom-model', scale: 2 })
+  })
 })
 
 describe('UpscaylDialog 실행과 완료 상태', () => {
@@ -137,7 +169,7 @@ describe('UpscaylDialog 실행과 완료 상태', () => {
           isOpen
           onClose={vi.fn()}
           targetSceneIds={null}
-          upscayl={upscayl({ total: 3, current: 3, failures: [{ sceneId: 'scene_2', error: 'GPU' }] })}
+          upscayl={upscayl({ total: 3, current: 3, completed: 2, failures: [{ sceneId: 'scene_2', error: 'GPU' }], skipped: 4 })}
           detectState={{ ok: true, platform: 'darwin', models: ['ultrasharp-4x'] }}
           onDetect={vi.fn()}
           onLocate={vi.fn()}
@@ -145,6 +177,29 @@ describe('UpscaylDialog 실행과 완료 상태', () => {
       </I18nProvider>,
     )
 
-    expect(screen.getByText('2 succeeded · 1 failed')).toBeInTheDocument()
+    expect(screen.getByText('2 succeeded · 1 failed · 4 skipped')).toBeInTheDocument()
+  })
+
+  it('취소된 배치는 실제 completed와 미처리 수를 표시한다', () => {
+    const batch = upscayl()
+    const view = renderDialog({ upscayl: batch })
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+
+    view.rerender(
+      <I18nProvider>
+        <UpscaylDialog
+          isOpen
+          onClose={vi.fn()}
+          targetSceneIds={null}
+          upscayl={upscayl({ total: 3, current: 2, completed: 1, cancelled: true })}
+          detectState={{ ok: true, platform: 'darwin', models: ['ultrasharp-4x'] }}
+          onDetect={vi.fn()}
+          onLocate={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('1 succeeded · 0 failed · 0 skipped')).toBeInTheDocument()
+    expect(screen.getByText('Cancelled · 2 not processed')).toBeInTheDocument()
   })
 })

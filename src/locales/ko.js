@@ -1094,7 +1094,9 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     cancel: '취소',
     current: '현재: {scene}',
     done: '업스케일 완료',
-    doneSummary: '성공 {success}개 · 실패 {fail}개',
+    doneSummary: '성공 {completed}개 · 실패 {fail}개 · 스킵 {skipped}개',
+    cancelledSummary: '취소됨 · 미처리 {count}개',
+    stoppedSummary: '프로젝트 변경으로 중단 · 미처리 {count}개',
   },
 
   // 기록

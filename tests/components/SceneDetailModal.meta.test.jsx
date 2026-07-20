@@ -8,13 +8,14 @@
  *      잘못된 (직전 생성의) seed/model 이 남는 케이스
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 // fileSystemAPI 모킹
 const mockGetHistory = vi.fn()
 const mockReadHistoryFile = vi.fn()
 const mockRestoreFromHistory = vi.fn()
+const mockGetImageSizeFromBase64 = vi.fn()
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -22,6 +23,11 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
     readHistoryFile: (...a) => mockReadHistoryFile(...a),
     restoreFromHistory: (...a) => mockRestoreFromHistory(...a)
   }
+}))
+
+vi.mock('../../src/utils/formatters', async (importOriginal) => ({
+  ...await importOriginal(),
+  getImageSizeFromBase64: (...args) => mockGetImageSizeFromBase64(...args),
 }))
 
 vi.mock('../../src/hooks/useI18n', () => ({
@@ -73,7 +79,10 @@ const baseScene = {
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetHistory.mockResolvedValue({ success: true, histories: [] })
+  mockGetImageSizeFromBase64.mockResolvedValue({ width: 1920, height: 1080 })
 })
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('SceneDetailModal — 재생성 후 editData 동기화', () => {
   it('scene props 가 새 seed/generatedAt/model 로 갱신되면 editData 도 같이 갱신', async () => {
@@ -170,7 +179,8 @@ describe('SceneDetailModal — 재생성 후 editData 동기화', () => {
 })
 
 describe('SceneDetailModal — history 복원 시 메타 반영', () => {
-  it('history 항목 클릭 시 metadata 의 seed/generatedAt/model 이 editData 에 들어감', async () => {
+  it('history 복원은 크기/cachebuster를 새로 계산하고 Upscayl 표식을 지운다', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1800000000000)
     // history 1건 + metadata 포함
     mockGetHistory.mockResolvedValue({
       success: true,
@@ -193,7 +203,7 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
 
     render(
       <SceneDetailModal
-        scene={baseScene}
+        scene={{ ...baseScene, upscaledAt: 1750000000000, upscaled_size: { width: 4096, height: 4096 } }}
         onUpdate={onUpdate}
         onClose={vi.fn()}
         t={t}
@@ -220,10 +230,14 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
 
     expect(onUpdate).toHaveBeenCalledWith('scene_1', expect.objectContaining({
       seed: 7777,
-      generatedAt: 1600000000000,
+      generatedAt: 1800000000000,
       model: 'flow-old',
       mediaId: 'history-media-id',
+      image_size: { width: 1920, height: 1080 },
+      upscaledAt: null,
+      upscaled_size: null,
     }))
+    expect(mockGetImageSizeFromBase64).toHaveBeenCalledWith('data:image/png;base64,history')
   })
 
   it('history.metadata 가 비어있으면 seed/generatedAt/model 이 null 로 명시 (stale 값 유지 X)', async () => {
@@ -262,8 +276,39 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
     // 핵심: 저장 시 stale seed=100 이 아니라 null 로 가야 함
     const callArgs = onUpdate.mock.calls[0][1]
     expect(callArgs.seed).toBeNull()
-    expect(callArgs.generatedAt).toBeNull()
+    expect(callArgs.generatedAt).toEqual(expect.any(Number))
     expect(callArgs.model).toBeNull()
+  })
+})
+
+describe('SceneDetailModal — 이미지 삭제', () => {
+  it('이미지를 지울 때 Upscayl 표식과 파생 크기도 함께 초기화한다', () => {
+    const onUpdate = vi.fn()
+    render(
+      <SceneDetailModal
+        scene={{
+          ...baseScene,
+          imagePath: '/old.png',
+          upscaledAt: 1750000000000,
+          upscaled_size: { width: 4096, height: 4096 },
+        }}
+        onUpdate={onUpdate}
+        onClose={vi.fn()}
+        t={(key) => key}
+        projectName="proj"
+      />
+    )
+
+    fireEvent.click(screen.getByTitle('reference.clearImage'))
+    fireEvent.click(screen.getByText('sceneDetail.save'))
+
+    expect(onUpdate).toHaveBeenCalledWith('scene_1', expect.objectContaining({
+      image: null,
+      imagePath: null,
+      image_size: null,
+      upscaledAt: null,
+      upscaled_size: null,
+    }))
   })
 })
 

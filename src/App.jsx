@@ -71,6 +71,7 @@ import {
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
+import { baseImageReplacementPatch } from './utils/imagePatch'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
@@ -895,7 +896,8 @@ function App() {
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
-    settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady
+    settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
+    upscaylRunning: upscayl.running,
   })
 
   const handleImportAudio = async () => {
@@ -1440,6 +1442,7 @@ function App() {
       videoRunning: videoAutomation.isRunning,
       hasPendingBatch,
       retryInFlight: videoRetryInFlightRef.current,
+      upscaylRunning: upscayl.running,
     })) return
     const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
     const imageTargetScenes = isImageBatchStart
@@ -2026,7 +2029,7 @@ function App() {
     automationState: { isRunning, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
     refBatchRunning,
-    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning
+    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning || upscayl.running
   })
 
   // 어느 자동화든 실행 중이면 true
@@ -2637,12 +2640,12 @@ function App() {
                 }).finally(() => setHasPendingBatch(false))
               }}
               onShowDetail={(scene) => setSelectedScene(scene)}
-              onClearMedia={(id) => scenesHook.updateScene(id, {
+              onClearMedia={(id) => scenesHook.updateScene(id, baseImageReplacementPatch({
                 // 이미지 미디어 전체 정리 — mediaId 남기면 isSceneEmpty 가 scene을 non-empty 로
                 // 판정해 trim 안 됨. derived 메타도 같이 비워야 history/재생성 경로가 stale 메타로 흐트러지지 않음.
                 image: null, imagePath: null, filePath: null, data: null, status: 'pending',
                 mediaId: null, seed: null, generatedAt: null, model: null,
-              })}
+              }))}
               disabled={anyRunning}
             />
         )}
@@ -2738,12 +2741,12 @@ function App() {
               }).finally(() => setHasPendingBatch(false))
             }}
             onShowDetail={(scene) => setSelectedScene(scene)}
-            onClearMedia={(id) => scenesHook.updateScene(id, {
+            onClearMedia={(id) => scenesHook.updateScene(id, baseImageReplacementPatch({
               // 이미지 미디어 전체 정리 — mediaId 남기면 isSceneEmpty 가 scene을 non-empty 로
               // 판정해 trim 안 됨. derived 메타도 같이 비워야 history/재생성 경로가 stale 메타로 흐트러지지 않음.
               image: null, imagePath: null, filePath: null, data: null, status: 'pending',
               mediaId: null, seed: null, generatedAt: null, model: null,
-            })}
+            }))}
           />
         )}
               </>

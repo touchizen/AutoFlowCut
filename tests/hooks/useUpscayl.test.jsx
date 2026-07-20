@@ -66,6 +66,7 @@ describe('useUpscayl 대상 선정과 성공', () => {
       running: false,
       current: 1,
       total: 1,
+      completed: 1,
       failures: [],
       skipped: 3,
     })
@@ -231,6 +232,33 @@ describe('useUpscayl 취소', () => {
     expect(harness.saveImage).not.toHaveBeenCalled()
     expect(harness.updateScene).not.toHaveBeenCalled()
     expect(harness.result.current.running).toBe(false)
+  })
+
+  it('N개 중 1개 patch 후 취소하면 completed는 실제 완료한 1개만 센다', async () => {
+    const secondRun = deferred()
+    const run = vi.fn()
+      .mockResolvedValueOnce({ ok: true, base64: 'FIRST', width: 100, height: 100 })
+      .mockImplementationOnce(() => secondRun.promise)
+    const harness = setup({ scenes: [scene('one'), scene('two'), scene('three')], run })
+    let batchPromise
+
+    act(() => { batchPromise = harness.result.current.startBatch() })
+    await waitFor(() => {
+      expect(harness.updateScene).toHaveBeenCalledTimes(1)
+      expect(run).toHaveBeenCalledTimes(2)
+    })
+
+    await act(async () => { await harness.result.current.cancel() })
+    secondRun.resolve({ ok: false, error: 'cancelled' })
+    await act(async () => { await batchPromise })
+
+    expect(harness.result.current).toMatchObject({
+      running: false,
+      total: 3,
+      completed: 1,
+      cancelled: true,
+      stopped: false,
+    })
   })
 
   it('실행 중 unmount하면 IPC 취소를 호출한다', async () => {

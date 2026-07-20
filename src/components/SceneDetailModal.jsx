@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from 'react'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
+import { formatTime, getImageSizeFromBase64, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { STYLE_PRESETS, UI, RESOURCE } from '../config/defaults'
 import { toast } from './Toast'
 import { useI18n } from '../hooks/useI18n'
@@ -14,6 +14,7 @@ import MediaMetaBar from './MediaMetaBar'
 import { fetchLatestHistoryMeta } from '../utils/mediaMeta'
 import TagInputAutocomplete from './TagInputAutocomplete'
 import PromptInput from './PromptInput'
+import { baseImageReplacementPatch } from '../utils/imagePatch'
 import './SceneDetailModal.css'
 
 export default function SceneDetailModal({
@@ -58,12 +59,13 @@ export default function SceneDetailModal({
       image_size: scene.image_size,
       mediaId: scene.mediaId,
       upscaledAt: scene.upscaledAt,
+      upscaled_size: scene.upscaled_size,
     }))
     // 부모 prop 갱신 = scene 권위 — 로컬 복원 메타 리셋
     setRestoredMeta(null)
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
-  }, [scene.image, scene.imagePath, scene.status, scene.seed, scene.generatedAt, scene.model, scene.image_size, scene.mediaId, scene.upscaledAt])
+  }, [scene.image, scene.imagePath, scene.status, scene.seed, scene.generatedAt, scene.model, scene.image_size, scene.mediaId, scene.upscaledAt, scene.upscaled_size])
   
   // 히스토리 로드 — metadata(seed/timestamp/model)도 함께 보존하여 복원 시 활용.
   const loadHistory = async () => {
@@ -134,21 +136,31 @@ export default function SceneDetailModal({
         return
       }
 
-      // 복원한 history 항목의 메타(seed/timestamp/model)도 editData 에 반영.
-      // 빠뜨리면 모달 표시 + 저장 시 project.json 에 직전 생성의 stale 메타가 남는다.
+      // seed/model은 history 메타를 복원하되 generatedAt은 파일 교체 cachebuster라 현재 시각을 쓴다.
+      // history timestamp는 아래 restoredMeta에만 두어 상세 표시 의미를 보존한다.
       const meta = historyItem.metadata || {}
       const restoredSeed = meta.seed ?? null
       const restoredAt = typeof meta.timestamp === 'number' ? meta.timestamp : null
       const restoredModel = meta.model ?? null
+      let restoredSize = null
+      try {
+        restoredSize = await getImageSizeFromBase64(historyItem.data)
+      } catch {
+        // 크기 판독 실패 시 이전 이미지 크기를 남기지 않는다.
+      }
+      const restoredGeneratedAt = Date.now()
       setEditData(prev => ({
         ...prev,
-        image: historyItem.data,
-        imagePath: result.path || prev.imagePath,
-        status: 'done',
-        seed: restoredSeed,
-        generatedAt: restoredAt,
-        model: restoredModel,
-        ...(meta.mediaId ? { mediaId: meta.mediaId } : {}),
+        ...baseImageReplacementPatch({
+          image: historyItem.data,
+          imagePath: result.path || prev.imagePath,
+          image_size: restoredSize,
+          generatedAt: restoredGeneratedAt,
+          status: 'done',
+          seed: restoredSeed,
+          model: restoredModel,
+          ...(meta.mediaId ? { mediaId: meta.mediaId } : {}),
+        }),
       }))
       // restoredMeta 가 set 됐다는 건 "사용자가 history 복원했음" — 렌더 시 backfill 폴백 차단.
       // null 도 명시적 의도 (해당 history 에 메타 없음) → MediaMetaBar 에 그대로 노출.
@@ -245,7 +257,10 @@ export default function SceneDetailModal({
                   className="btn-clear-image"
                   onClick={(e) => {
                     e.stopPropagation()
-                    setEditData(prev => ({ ...prev, image: null, imagePath: null }))
+                    setEditData(prev => ({
+                      ...prev,
+                      ...baseImageReplacementPatch({ image: null, imagePath: null, image_size: null }),
+                    }))
                     setImageSize(null)
                   }}
                   title={t('reference.clearImage') || '이미지 제거'}

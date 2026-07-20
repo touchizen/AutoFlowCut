@@ -41,9 +41,10 @@ export default function UpscaylDialog({
   const [options, setOptions] = useState(loadOptions)
   const [started, setStarted] = useState(false)
   const models = detectState?.ok ? (detectState.models || []) : []
-  const effectiveModel = models.includes(options.model)
+  const hasDetectedModels = !!detectState?.ok && models.length > 0
+  const effectiveModel = !hasDetectedModels || models.includes(options.model)
     ? options.model
-    : (models.includes(DEFAULT_OPTIONS.model) ? DEFAULT_OPTIONS.model : models[0] || DEFAULT_OPTIONS.model)
+    : (models.includes(DEFAULT_OPTIONS.model) ? DEFAULT_OPTIONS.model : models[0])
   const targetInfo = useMemo(
     () => computeUpscaylTargets(upscayl?.scenes, targetSceneIds),
     [upscayl?.scenes, targetSceneIds],
@@ -54,20 +55,23 @@ export default function UpscaylDialog({
   }, [isOpen])
 
   useEffect(() => {
+    if (!hasDetectedModels) return
     if (effectiveModel === options.model) return
     setOptions((previous) => ({ ...previous, model: effectiveModel }))
-  }, [effectiveModel, options.model])
+  }, [hasDetectedModels, effectiveModel, options.model])
 
   useEffect(() => {
+    if (!hasDetectedModels) return
     localStorage.setItem(OPTIONS_KEY, JSON.stringify({ ...options, model: effectiveModel }))
-  }, [effectiveModel, options])
+  }, [hasDetectedModels, effectiveModel, options])
 
   if (!isOpen) return null
 
   const running = !!upscayl?.running
   const done = started && !running
   const failed = upscayl?.failures?.length || 0
-  const succeeded = Math.max(0, (upscayl?.total || 0) - failed)
+  const completed = upscayl?.completed || 0
+  const unprocessed = Math.max(0, (upscayl?.total || 0) - completed - failed)
 
   const handleStart = () => {
     const selected = { model: effectiveModel, scale: options.scale }
@@ -92,7 +96,9 @@ export default function UpscaylDialog({
     body = (
       <div className="upscayl-done" role="status">
         <h4>{t('upscayl.done')}</h4>
-        <p>{t('upscayl.doneSummary', { success: succeeded, fail: failed })}</p>
+        <p>{t('upscayl.doneSummary', { completed, fail: failed, skipped: upscayl?.skipped || 0 })}</p>
+        {upscayl?.cancelled && <p>{t('upscayl.cancelledSummary', { count: unprocessed })}</p>}
+        {upscayl?.stopped && <p>{t('upscayl.stoppedSummary', { count: unprocessed })}</p>}
         {failed > 0 && (
           <ul>
             {upscayl.failures.map((failure) => (

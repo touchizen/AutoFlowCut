@@ -9,8 +9,11 @@ const INITIAL_STATE = {
   current: 0,
   currentSceneId: null,
   total: 0,
+  completed: 0,
   failures: [],
   skipped: 0,
+  cancelled: false,
+  stopped: false,
 }
 
 function errorMessage(error, fallback) {
@@ -54,11 +57,22 @@ export function useUpscayl({
     const capturedProject = projectNameRef.current
     const { model, scale } = optionOverride || options
     let failures = []
+    let completed = 0
     let stopped = false
 
     runningRef.current = true
     cancelledRef.current = false
-    setState({ running: true, current: 0, currentSceneId: null, total: targets.length, failures, skipped })
+    setState({
+      running: true,
+      current: 0,
+      currentSceneId: null,
+      total: targets.length,
+      completed,
+      failures,
+      skipped,
+      cancelled: false,
+      stopped: false,
+    })
 
     const recordFailure = (sceneId, error, fallback) => {
       failures = [...failures, { sceneId, error: errorMessage(error, fallback) }]
@@ -120,16 +134,27 @@ export function useUpscayl({
           generatedAt: completedAt,
           upscaledAt: completedAt,
         }))
+        completed += 1
+        setState((prev) => ({ ...prev, completed }))
       }
     } finally {
       runningRef.current = false
-      setState((prev) => ({ ...prev, running: false, failures, skipped }))
+      setState((prev) => ({
+        ...prev,
+        running: false,
+        completed,
+        failures,
+        skipped,
+        cancelled: cancelledRef.current,
+        stopped,
+      }))
     }
 
     return {
       ok: failures.length === 0 && !stopped && !cancelledRef.current,
       failures,
       skipped,
+      completed,
       stopped,
       cancelled: cancelledRef.current,
     }

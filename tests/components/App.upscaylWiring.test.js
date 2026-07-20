@@ -38,4 +38,15 @@ describe('App Upscayl wiring', () => {
   it('StoryView timeline에는 Upscayl 트리거를 전달하지 않는다', () => {
     expect(story).not.toContain('onUpscaleClick')
   })
+
+  it('배치·단일 씬·MCP 생성 진입점이 Upscayl 실행 상태를 busy로 공유한다', () => {
+    expect(app).toContain('upscaylRunning: upscayl.running,')
+    expect(app).toContain('retryInFlight: videoRetryInFlightRef.current,\n      upscaylRunning: upscayl.running,')
+    expect(app).toContain('isRunning: isRunning || videoAutomation.isRunning || refBatchRunning || upscayl.running')
+  })
+
+  it('두 이미지 Results clear 경로가 Upscayl 메타데이터까지 초기화한다', () => {
+    expect(app).toContain("import { baseImageReplacementPatch } from './utils/imagePatch'")
+    expect(app.match(/onClearMedia=\{\(id\) => scenesHook\.updateScene\(id, baseImageReplacementPatch\(\{/g)).toHaveLength(2)
+  })
 })

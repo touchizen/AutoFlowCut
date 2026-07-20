@@ -1095,7 +1095,9 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     cancel: 'Cancel',
     current: 'Current: {scene}',
     done: 'Upscaling complete',
-    doneSummary: '{success} succeeded · {fail} failed',
+    doneSummary: '{completed} succeeded · {fail} failed · {skipped} skipped',
+    cancelledSummary: 'Cancelled · {count} not processed',
+    stoppedSummary: 'Stopped after project change · {count} not processed',
   },
 
   // History

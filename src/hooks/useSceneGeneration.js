@@ -2,7 +2,7 @@
  * useSceneGeneration - 씬 이미지 재생성 (상세 모달에서 개별)
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { checkFolderPermission, checkAuthToken, checkFlowProjectReady } from '../utils/guards'
 import { resolveSceneStyle } from '../services/styleService'
 import { finalizeGeneratedImage } from '../services/imageFinalize'
@@ -11,8 +11,10 @@ import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { resolveMentions } from '../utils/mentionParser'
 import { getAuthRequiredMessage } from '../utils/authMessages'
 
-export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true }) {
+export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true, upscaylRunning = false }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
+  const upscaylRunningRef = useRef(upscaylRunning)
+  upscaylRunningRef.current = upscaylRunning
 
   // 핵심 생성 로직
   // overrideStyleId: MCP 호출 등에서 명시 styleId 줬을 때 사용. undefined면 기존 동작 (style_tag fallback만).
@@ -20,6 +22,9 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   //   - 'none' → 'none' sentinel pass-through (스타일 미적용 강제)
   //   - 'auto' → null로 취급 (style_tag 매칭 fallback)
   const _executeSceneGeneration = useCallback(async (sceneId, overrideStyleId = undefined) => {
+    // 큐에 들어간 뒤 Upscayl이 시작될 수도 있으므로 실제 실행 직전에도 live ref로 확인한다.
+    if (upscaylRunningRef.current) return { success: false, error: 'busy' }
+
     const scene = scenes.find(s => s.id === sceneId)
     if (!scene?.prompt) {
       toast.warning(t('toast.noPrompt'))
@@ -142,6 +147,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
 
   // 큐를 통한 생성. overrideStyleId 선택 — MCP `app_generate_scene(sceneId, styleId)`에서 사용.
   const handleGenerateScene = useCallback(async (sceneId, overrideStyleId = undefined) => {
+    if (upscaylRunningRef.current) return { success: false, error: 'busy' }
+
     if (!generationQueue) {
       return _executeSceneGeneration(sceneId, overrideStyleId)
     }
