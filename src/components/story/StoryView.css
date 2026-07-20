@@ -844,6 +844,9 @@
 .story-stream-table {
   max-height: min(52vh, 520px);
   overflow-y: auto;
+  /* prompts auto-scroll(frontier 행 offsetTop 기반)이 이 컨테이너를 offsetParent 로 삼도록 —
+     없으면 offsetTop 이 바깥 positioned 조상 기준이라 스크롤 계산이 틀어져 화면이 "고정"된다. */
+  position: relative;
 }
 
 /* ghost table의 auto-scroll viewport 바깥에서, 유일한 패널 스크롤(.story-step-panel)에 고정된다. */

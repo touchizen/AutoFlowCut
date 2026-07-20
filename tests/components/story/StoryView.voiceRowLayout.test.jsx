@@ -129,3 +129,11 @@ describe('.story-voice-source', () => {
     expect(decl('.story-voice-source', 'min-width')).toBe('0')
   })
 })
+
+describe('.story-stream-table', () => {
+  it('스크롤 컨테이너가 offsetParent 가 되도록 position:relative 다 (prompts frontier auto-scroll 계약)', () => {
+    // 없으면 frontier 행 offsetTop 이 바깥 조상 기준이라 prompts auto-scroll 이 "화면 고정"으로 깨진다.
+    expect(decl('.story-stream-table', 'position')).toBe('relative')
+    expect(decl('.story-stream-table', 'overflow-y')).toBe('auto')
+  })
+})
