@@ -98,9 +98,16 @@ describe('ExportModal self-render format', () => {
 
     await waitFor(() => expect(onExportRender).toHaveBeenCalledTimes(1))
     expect(onExportRender).toHaveBeenCalledWith(expect.objectContaining({
+      kenBurnsMode: 'random',
+      kenBurnsScaleMin: 1,
+      kenBurnsScaleMax: 1.3,
       renderMode: 'preview',
       renderBurnSubtitle: false,
     }))
+    const exportOptions = onExportRender.mock.calls[0][0]
+    expect(exportOptions).not.toHaveProperty('mode')
+    expect(exportOptions).not.toHaveProperty('scaleMin')
+    expect(exportOptions).not.toHaveProperty('scaleMax')
     expect(mockSaveSettings).toHaveBeenCalledWith(expect.objectContaining({
       renderMode: 'preview',
       renderBurnSubtitle: false,

@@ -11,15 +11,11 @@ import { useState, useRef } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
-import { resolveExportVideos, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
+import { resolveExportVideos, getExportFilePaths } from '../utils/sceneMedia'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
-import { isSceneGenerationDone } from '../services/generationStatus'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
-
-function isExportableScene(scene) {
-  return isSceneGenerationDone(scene) && hasExportableMedia(scene)
-}
+import { isExportableScene } from '../utils/exportableScene'
 
 export function useExport({
   settings,

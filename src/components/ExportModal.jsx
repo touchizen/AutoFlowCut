@@ -7,6 +7,7 @@ import { useModalVisibility } from '../hooks/useModalVisibility'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { normalizeExportFormat } from '../utils/exportFormat'
 import { formatExpiryDate } from '../utils/formatters'
+import { toKenBurnsRatios } from '../utils/kenBurnsPreview'
 import './ExportModal.css'
 
 // 경로 프리셋 정의
@@ -212,17 +213,27 @@ export const ExportModal = ({
   const vrewTargetPath = `${vrewOutputFolder}/${safeProjectName}.vrew`
 
   // 포맷 공통 옵션 — CapCut/Premiere 콜백에 동일하게 전달.
-  const buildExportOptions = () => ({
-    scaleMode,  // 'fill' | 'fit' | 'none'
-    kenBurns,
-    kenBurnsMode,
-    kenBurnsCycle: Number(kenBurnsCycle) || 5,
-    kenBurnsScaleMin: Number(kenBurnsScaleMin) / 100 || 1.0,  // % → 비율
-    kenBurnsScaleMax: Number(kenBurnsScaleMax) / 100 || 1.15,  // % → 비율
-    subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
-    renderMode,
-    renderBurnSubtitle,
-  })
+  const buildExportOptions = () => {
+    const { mode, scaleMin, scaleMax } = toKenBurnsRatios({
+      kenBurnsMode,
+      kenBurnsScaleMin,
+      kenBurnsScaleMax,
+    })
+
+    return {
+      scaleMode,  // 'fill' | 'fit' | 'none'
+      kenBurns,
+      ...{
+        kenBurnsMode: mode,
+        kenBurnsScaleMin: scaleMin,
+        kenBurnsScaleMax: scaleMax,
+      },
+      kenBurnsCycle: Number(kenBurnsCycle) || 5,
+      subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
+      renderMode,
+      renderBurnSubtitle,
+    }
+  }
 
   const persistOptions = () => {
     saveSettings({
