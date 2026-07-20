@@ -25,6 +25,28 @@ export function normalizeStyleId(styleId) {
   return `preset:${s}`
 }
 
+/**
+ * 프리셋 styleId → 씬 style_tag 에 stamp 할 canonical 표시명 (Issue #3).
+ *
+ * 배치가 전역 프리셋 스타일을 적용했을 때 각 씬의 style_tag 를 채워, 상세 모달이
+ * 적용된 스타일을 보여주고 모달 재생성이 동일 스타일을 재현하도록 한다.
+ * ref: 스타일(이미지 레퍼런스)은 태그로 표현하지 않으므로 null.
+ *
+ * @param {string|number|null|undefined} styleId - 'preset:<id>' / plain id / 'ref:*' / 'none'
+ * @returns {string|null} name_en(||name_ko||id) 또는 null
+ */
+export function presetTagForStyleId(styleId) {
+  // 'none'(스타일 미적용)·'auto'(자동 매칭) sentinel 은 프리셋이 아니다 — 명시적으로 제외
+  //   (normalizeStyleId 가 'preset:none' 으로 감싸 우연히 miss→null 되는 것에 의존하지 않는다).
+  if (styleId === 'none' || styleId === 'auto') return null
+  const normalized = normalizeStyleId(styleId)
+  if (!normalized || !normalized.startsWith('preset:')) return null
+  const presetId = normalized.slice('preset:'.length)
+  const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
+  if (!preset) return null
+  return preset.name_en || preset.name_ko || preset.id
+}
+
 export function isStyleReference(ref) {
   const type = String(ref?.type || '').toLowerCase()
   const category = String(ref?.category || '').toLowerCase()

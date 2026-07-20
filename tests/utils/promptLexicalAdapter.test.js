@@ -4,8 +4,12 @@
  * createEditor 로 헤드리스 editor 인스턴스를 만들어 검증 (UI 없이 노드 트리만).
  */
 import { describe, it, expect, beforeAll } from 'vitest'
-import { createEditor, $getRoot } from 'lexical'
-import { BeautifulMentionNode, $isBeautifulMentionNode } from 'lexical-beautiful-mentions'
+import { createEditor, $createParagraphNode, $createTextNode, $getRoot } from 'lexical'
+import {
+  BeautifulMentionNode,
+  $createBeautifulMentionNode,
+  $isBeautifulMentionNode,
+} from 'lexical-beautiful-mentions'
 import {
   $applyTextToRoot,
   $editorStateToText,
@@ -63,6 +67,33 @@ function applyAndCount(text, refs = REFS) {
   return { chips, text: texts.join('') }
 }
 
+function applyAndReadChildren(text, refs = REFS) {
+  const editor = makeEditor()
+  editor.update(() => $applyTextToRoot(text, refs), { discrete: true })
+  return editor.getEditorState().read(() => (
+    $getRoot().getFirstChild().getChildren().map((node) => ({
+      type: node instanceof UnknownMentionTextNode
+        ? 'unknown'
+        : $isBeautifulMentionNode(node) ? 'chip' : 'text',
+      text: node.getTextContent(),
+      value: $isBeautifulMentionNode(node) ? node.getValue() : null,
+    }))
+  ))
+}
+
+function serializeMentionValues(values) {
+  const editor = makeEditor()
+  editor.update(() => {
+    const paragraph = $createParagraphNode()
+    $getRoot().append(paragraph)
+    values.forEach((value, index) => {
+      if (index > 0) paragraph.append($createTextNode(' '))
+      paragraph.append($createBeautifulMentionNode('@', value))
+    })
+  }, { discrete: true })
+  return $editorStateToText(editor.getEditorState())
+}
+
 describe('promptLexicalAdapter — roundtrip', () => {
   it('preserves plain text without mentions', () => {
     expect(applyAndRead('A wizard walks')).toBe('A wizard walks')
@@ -102,6 +133,55 @@ describe('promptLexicalAdapter — roundtrip', () => {
   it('matches Hangul names', () => {
     const refs = [{ id: 1, name: '캐릭터1', type: 'character' }]
     expect(applyAndRead('이야기 @캐릭터1 등장', refs)).toBe('이야기 @캐릭터1 등장')
+  })
+
+  it('round-trips a resolved braced space-name as one canonical chip', () => {
+    const refs = [{ id: 4, name: '도둑 우두머리', type: 'character' }]
+    expect(applyAndRead('@{도둑 우두머리}A young man', refs)).toBe(
+      '@{도둑 우두머리}A young man'
+    )
+    expect(applyAndReadChildren('@{도둑 우두머리}', refs)).toEqual([
+      { type: 'chip', text: '@도둑 우두머리', value: '도둑 우두머리' },
+    ])
+  })
+
+  it('round-trips two adjacent braced chips without degrading the second to text', () => {
+    const refs = [
+      { id: 4, name: 'Alpha One', type: 'character' },
+      { id: 5, name: 'Beta Two', type: 'character' },
+    ]
+    const prompt = '@{Alpha One}@{Beta Two}'
+
+    expect(applyAndRead(prompt, refs)).toBe(prompt)
+    expect(applyAndReadChildren(prompt, refs)).toEqual([
+      { type: 'chip', text: '@Alpha One', value: 'Alpha One' },
+      { type: 'chip', text: '@Beta Two', value: 'Beta Two' },
+    ])
+  })
+
+  it('round-trips an unresolved braced space-name verbatim as UnknownMentionTextNode', () => {
+    expect(applyAndRead('@{도둑 우두머리} 등장')).toBe('@{도둑 우두머리} 등장')
+    expect(applyAndReadChildren('@{도둑 우두머리}', REFS)).toEqual([
+      { type: 'unknown', text: '@{도둑 우두머리}', value: null },
+    ])
+  })
+
+  it('does not apply Korean particle prefix resolution inside braces', () => {
+    const refs = [{ id: 5, name: '철수', type: 'character' }]
+    expect(applyAndReadChildren('@{철수가}', refs)).toEqual([
+      { type: 'unknown', text: '@{철수가}', value: null },
+    ])
+  })
+
+  it('serializes chip values with braces only when plain form is unsafe', () => {
+    expect(serializeMentionValues(['Alice', '도둑 우두머리', 'Mina-style'])).toBe(
+      '@Alice @{도둑 우두머리} @Mina-style'
+    )
+  })
+
+  it('degrades brace-containing or multiline chip values to plain prose without an @ sigil', () => {
+    expect(serializeMentionValues(['brace{name'])).toBe('brace{name')
+    expect(serializeMentionValues(['line\nname'])).toBe('line\nname')
   })
 })
 

@@ -98,6 +98,14 @@ export default {
     charRef: {
       collision: 'Skipped character cards with a same-named reference: {names}',
     },
+    stream: {
+      thinking: '🧠 Reasoning… (no output is shown while the model thinks)',
+      sceneProgress: '{count} scenes · ~{percent}%',
+      sceneCount: '{count} scenes',
+      promptProgress: 'Prompts {count}/{total}',
+      sceneRevisionProgress: 'Revising scenes {count}/{total}',
+      promptRevisionProgress: 'Revising prompts {count}/{total}',
+    },
     step: {
       setup: 'Setup',
       research: 'Research',
@@ -257,6 +265,7 @@ export default {
       runAria: '{target} Review',
       run: 'Review',
       stopped: 'Review stopped',
+      progress: 'Review {round}/{of}',
       revising: 'Revising {round}/{of}',
       reviewing: 'Reviewing {round}/{of}',
     },
@@ -808,6 +817,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
     videoConcurrency: 'Video concurrency',
     videoConcurrencyHint: 'How many videos to generate at once (1–10). Videos use more quota per request. Default 4.',
+
+    flowPacing: 'Flow submit interval',
+    flowPacingMin: 'Flow submit min interval (sec)',
+    flowPacingMax: 'Flow submit max interval (sec)',
+    flowPacingHint: 'Random wait between scene submits in Flow (DOM automation), in seconds. Avoids bot detection / rate limits. Too short raises detection risk. Default 7–15s.',
 
     // Require style
     requireStyle: 'Require Style',
@@ -1409,6 +1423,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     generating: '⏳ Generating...',
     regenerate: '🔄 Regenerate',
     upscale: 'Upscale',
+    generate: '✨ Generate',
     save: 'Save',
     generatingStatus: 'Generating...',
     noImage: 'No image',

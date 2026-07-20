@@ -151,6 +151,9 @@ export default function SceneDetailModal({
       const restoredGeneratedAt = Date.now()
       setEditData(prev => ({
         ...prev,
+        // 업스케일 메타 리셋(upscaledAt/upscaled_size) + generatedAt=현재시각(파일 교체 cachebuster,
+        //   history timestamp 아님). donePrompt=복원 이미지의 생성 프롬프트(되돌림 done 복원 baseline;
+        //   메타에 없으면 null 로 stale donePrompt 잔존 방지).
         ...baseImageReplacementPatch({
           image: historyItem.data,
           imagePath: result.path || prev.imagePath,
@@ -159,6 +162,7 @@ export default function SceneDetailModal({
           status: 'done',
           seed: restoredSeed,
           model: restoredModel,
+          donePrompt: meta.prompt ?? null,
           ...(meta.mediaId ? { mediaId: meta.mediaId } : {}),
         }),
       }))
@@ -185,7 +189,12 @@ export default function SceneDetailModal({
   const handleRegenerate = () => {
     console.log('[SceneDetail] Regenerate clicked')
     if (!onGenerate) return
-    onGenerate(scene.id)
+    // Issue #4: 모달에서 편집한 내용(prompt/characters/style_tag 등)을 먼저 영속 — 재생성이 저장을
+    //   안 하면 편집이 사라지고 모달을 다시 열면 옛 값이 보인다.
+    if (onUpdate) onUpdate(scene.id, editData)
+    // Issue #4/#5: 편집 스냅샷을 명시 전달 — onUpdate 직후라 scenes 클로저가 stale 이면 생성이
+    //   옛 prompt/style_tag 를 읽어(스타일은 항상 실사, 프롬프트는 편집 전 값) 나오는 race 를 피한다.
+    onGenerate(scene.id, undefined, editData)
     onClose()
   }
 
@@ -208,6 +217,8 @@ export default function SceneDetailModal({
     }
   }
   
+  // 이미지가 아직 없는 씬은 '재생성'이 아니라 '생성' — 라벨이 실제 동작을 말해야 한다.
+  const hasGeneratedImage = !!(editData.image || editData.imagePath)
   const footer = (
     <>
       <button className="btn-secondary" onClick={onClose}>{t('sceneDetail.cancel')}</button>
@@ -216,8 +227,12 @@ export default function SceneDetailModal({
           className="btn-warning"
           onClick={handleRegenerate}
           disabled={isGenerating || !editData.prompt}
+          // 프롬프트가 없어 disabled 면 이유를 tooltip 으로 — 침묵 disabled 는 "생성이 안 된다"로 보인다.
+          title={!editData.prompt ? t('toast.noPrompt') : undefined}
         >
-          {isGenerating ? t('sceneDetail.generating') : t('sceneDetail.regenerate')}
+          {isGenerating
+            ? t('sceneDetail.generating')
+            : hasGeneratedImage ? t('sceneDetail.regenerate') : t('sceneDetail.generate')}
         </button>
       )}
       {onUpscaleClick && (

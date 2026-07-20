@@ -65,6 +65,20 @@ describe('C6 — 새 형식 CSV 재import 시 image/status 보존', () => {
     expect(result.current.scenes[1].image).toBe('data:image/png;base64,YYY')
   })
 
+  it('재import 가 donePrompt(생성 기준 스냅샷)도 보존 — 되돌림 시 done 복원이 CSV 왕복에도 유지', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.parseFromCSV(NEW_CSV_V1) })
+    const ids = result.current.scenes.map(s => s.id)
+    act(() => {
+      result.current.updateScene(ids[0], {
+        image: 'data:image/png;base64,XXX', status: 'done', donePrompt: 'PromptA',
+      })
+    })
+
+    act(() => { result.current.parseFromCSV(NEW_CSV_V2) })
+    expect(result.current.scenes[0].donePrompt).toBe('PromptA')
+  })
+
   it('씬 수 변경 시 (3→2): 기존 첫 2개 image 보존, 사라진 씬 폐기', () => {
     const csv3 = `scene,prompt,subtitle\n1,"A","x"\n2,"B","y"\n3,"C","z"`
     const csv2 = `scene,prompt,subtitle\n1,"A","x"\n2,"B","y"`

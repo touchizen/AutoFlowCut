@@ -893,7 +893,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               const pj = JSON.parse(fs.readFileSync(pjPath, 'utf-8'));
               const existingScenes = pj.scenes || [];
               // _sceneNum 우선, legacy는 길이가 같을 때 index fallback. 이미지 포인터와
-              // 캐시/업스케일 메타를 함께 보존한다(renderer CSV merge와 동일 정책).
+              // 캐시/업스케일 메타 + donePrompt(되돌림 done 복원)를 함께 보존한다
+              // (renderer CSV merge와 동일 정책).
               scenes = preserveSceneRuntimeFields(scenes, existingScenes);
             } catch { /* project.json 파싱 실패 시 무시 */ }
           }

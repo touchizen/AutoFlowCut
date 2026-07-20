@@ -24,6 +24,7 @@ vi.mock('../../src/components/Toast', () => ({
   toast: { error: vi.fn(), warning: vi.fn(), success: vi.fn() },
 }))
 vi.mock('../../src/services/styleService', () => ({
+  presetTagForStyleId: vi.fn(() => null),
   resolveSceneStyle: vi.fn((prompt) => ({ styledPrompt: prompt || 'p', appliedStyle: null })),
 }))
 vi.mock('../../src/services/imageFinalize', () => ({

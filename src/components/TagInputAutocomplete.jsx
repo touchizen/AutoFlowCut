@@ -133,6 +133,16 @@ export default function TagInputAutocomplete({
     }
   }, [dropdownOpen])
 
+  // 단일 선택은 고르는 순간 확정 → dropdown 을 닫는다. 옵션은 onMouseDown+preventDefault 로
+  //   input focus 를 유지하므로(값 반영 보장) onBlur 로는 안 닫힌다 — 명시적으로 닫아준다.
+  //   다중 선택(character)은 연속 선택을 위해 열어 둔다.
+  const closeIfSingle = () => {
+    if (!isMulti) {
+      setIsFocused(false)
+      inputRef.current?.blur()
+    }
+  }
+
   const applyOption = (opt) => {
     if (isMulti) {
       // 토글: 입력 중이던 미완성 마지막 토큰은 버린다
@@ -149,11 +159,13 @@ export default function TagInputAutocomplete({
       onChange(opt.value)
     }
     setHighlightedIndex(-1)
+    closeIfSingle()
   }
 
   const clearValue = () => {
     onChange('')
     setHighlightedIndex(-1)
+    closeIfSingle()
   }
 
   const handleKeyDown = (e) => {

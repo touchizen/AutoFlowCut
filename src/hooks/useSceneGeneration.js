@@ -21,11 +21,15 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   //   - 'preset:*' / 'ref:*' / plain id → resolveSceneStyle에 전달 (해당 스타일 강제)
   //   - 'none' → 'none' sentinel pass-through (스타일 미적용 강제)
   //   - 'auto' → null로 취급 (style_tag 매칭 fallback)
-  const _executeSceneGeneration = useCallback(async (sceneId, overrideStyleId = undefined) => {
+  // sceneOverride: 상세 모달 재생성이 방금 편집한 스냅샷(editData)을 명시 전달(Issue #4/#5). undefined면
+  //   closure scene 그대로. 모달이 onUpdate 직후 onGenerate 를 부르면 scenes 클로저가 stale 이라
+  //   방금 편집한 prompt/characters/style_tag 를 못 보는 race 가 난다 — 스냅샷을 병합해 fresh 하게 쓴다.
+  const _executeSceneGeneration = useCallback(async (sceneId, overrideStyleId = undefined, sceneOverride = undefined) => {
     // 큐에 들어간 뒤 Upscayl이 시작될 수도 있으므로 실제 실행 직전에도 live ref로 확인한다.
     if (upscaylRunningRef.current) return { success: false, error: 'busy' }
 
-    const scene = scenes.find(s => s.id === sceneId)
+    const baseScene = scenes.find(s => s.id === sceneId)
+    const scene = (baseScene && sceneOverride) ? { ...baseScene, ...sceneOverride } : baseScene
     if (!scene?.prompt) {
       toast.warning(t('toast.noPrompt'))
       return
@@ -90,6 +94,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       if (missing.length > 0) console.warn('[Scene]', sceneId, 'unknown @mentions:', missing.join(', '))
       // 스타일 프롬프트 합치기 (style_tag 프리셋 fallback + override)
       // scene.prompt 그대로 전달 — strip은 engineApi.generateImage 내부에서 수행.
+      // scene 은 sceneOverride 가 병합된 fresh 스냅샷 — prompt/style_tag 모두 편집본을 반영.
       const { styledPrompt } = resolveSceneStyle(scene.prompt, [], effectiveOverride, allRefs, matchedRefs, scene.style_tag)
 
       // seedLocked && seedNo 가 숫자일 때만 고정 seed, 그 외엔 Flow 자체 랜덤
@@ -146,21 +151,25 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   }, [settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, flowProjectReady])
 
   // 큐를 통한 생성. overrideStyleId 선택 — MCP `app_generate_scene(sceneId, styleId)`에서 사용.
-  const handleGenerateScene = useCallback(async (sceneId, overrideStyleId = undefined) => {
+  // sceneOverride 선택 — 상세 모달 재생성이 방금 편집한 스냅샷(editData)을 명시 전달(Issue #4/#5).
+  const handleGenerateScene = useCallback(async (sceneId, overrideStyleId = undefined, sceneOverride = undefined) => {
     if (upscaylRunningRef.current) return { success: false, error: 'busy' }
 
     if (!generationQueue) {
-      return _executeSceneGeneration(sceneId, overrideStyleId)
+      return _executeSceneGeneration(sceneId, overrideStyleId, sceneOverride)
     }
 
     try {
       await generationQueue.enqueue({
         type: 'scene',
         label: `Scene #${sceneId}`,
-        execute: () => _executeSceneGeneration(sceneId, overrideStyleId)
+        execute: () => _executeSceneGeneration(sceneId, overrideStyleId, sceneOverride)
       })
     } catch (err) {
+      // 침묵 금지: quota-block 등으로 큐가 거부하면 사용자에겐 "버튼이 안 먹는" 것으로 보인다.
+      // 단, 일괄 clear(전역 quota 모달이 이미 알림 — alreadySurfaced)는 씬당 toast 를 또 띄우지 않는다.
       console.warn('[SceneGen] Queue rejected:', err.message)
+      if (!err.alreadySurfaced) toast.warning(err.message)
     }
   }, [generationQueue, _executeSceneGeneration])
 

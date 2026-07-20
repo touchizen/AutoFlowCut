@@ -35,7 +35,7 @@ import { baseImageReplacementPatch } from '../utils/imagePatch'
  * @param {string} [params.model='flow'] - 엔진/모델 식별자 (응답에서 더 구체적인 값 받으면 우선)
  * @param {string} [params.logPrefix]
  * @returns {Promise<{ success: boolean, sceneUpdate?: object }>}
- *   sceneUpdate: updateScene 에 전달할 객체 (status, image, imagePath, mediaId, image_size, seed, generatedAt, model)
+ *   sceneUpdate: updateScene 에 전달할 객체 (status, donePrompt, image, imagePath, mediaId, image_size, seed, generatedAt, model)
  */
 export async function finalizeGeneratedImage({
   result, genAPI, upscaleRes = 'off', saveMode, projectName, sceneId, prompt,
@@ -120,6 +120,9 @@ export async function finalizeGeneratedImage({
         status: 'error',
         error: `Image save failed: ${saveError}`,
         errorKind: null,    // stale image-missing kind 가 free-form 메시지를 가리지 않도록 클리어
+        // NEW 이미지를 메모리에 남기므로 옛 donePrompt 가 merge 로 살아남으면 "새 이미지 + 옛 기준"
+        // 불일치로 되돌림이 error→done 오복원될 수 있다 — 명시적으로 클리어.
+        donePrompt: null,
         // 메모리 표시는 유지 (사용자가 재시도 결정 가능)
         image: imageData,
         mediaId,
@@ -135,6 +138,7 @@ export async function finalizeGeneratedImage({
     success: true,
     sceneUpdate: baseImageReplacementPatch({
       status: 'done',
+      donePrompt: prompt,
       // updateScene 은 merge 방식이라 prior error/errorKind (예: image-missing 마커)가
       // 그대로 남으면 ErrorSection/ResultsTable 이 계속 에러 메시지를 띄운다 — 명시 클리어.
       error: null,

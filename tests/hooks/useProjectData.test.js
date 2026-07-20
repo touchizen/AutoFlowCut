@@ -310,6 +310,35 @@ describe('loadProjectWithResources — image path remap on load', () => {
     expect(result.scenes[0].errorKind).toBe('image-missing')
     expect(result.scenes[0].error).toBeNull()
   })
+
+  it('donePrompt survives a project.json save/load round-trip', async () => {
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.saveProjectData.mockResolvedValue({ success: true })
+
+    await saveCurrentProject(
+      { projectName: 'ep6', saveMode: 'folder' },
+      [{
+        id: 'scene_1',
+        prompt: 'P2',
+        donePrompt: 'P2',
+        status: 'done',
+        imagePath: '/projects/ep6/scenes/scene_1.jpg',
+      }],
+      [],
+    )
+
+    const saved = fileSystemAPI.saveProjectData.mock.calls[0][1]
+    expect(saved.scenes[0].donePrompt).toBe('P2')
+
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: saved })
+    fileSystemAPI.getResourcePath.mockResolvedValue({
+      success: true,
+      path: '/projects/ep6/scenes/scene_1.jpg',
+    })
+
+    const loaded = await loadProjectWithResources('ep6')
+    expect(loaded.scenes[0].donePrompt).toBe('P2')
+  })
 })
 
 /**

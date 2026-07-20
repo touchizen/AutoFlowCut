@@ -215,7 +215,7 @@ export function preserveSceneRuntimeFields(scenes, existingScenes) {
   const copyRuntime = (scene, existing) => {
     if (!existing) return scene
     const preserved = {}
-    for (const field of ['mediaId', 'imagePath', 'image_size', 'generatedAt', 'upscaledAt']) {
+    for (const field of ['mediaId', 'imagePath', 'image_size', 'generatedAt', 'upscaledAt', 'donePrompt']) {
       if (existing[field] !== undefined) preserved[field] = existing[field]
     }
     if (existing.status === 'done') preserved.status = 'done'

@@ -82,6 +82,25 @@ describe('llmCodex adapter', () => {
     expect(segmentSchema.properties.description.type).toEqual(['string', 'null'])
   })
 
+  it('splitScenes는 Codex raw JSON delta의 닫힌 scene을 onPartialScene으로 전달한다', async () => {
+    const out = {
+      scenes: [{ sceneNo: 1, summary: 'FINAL', segments: [{ speaker: 'narrator', text: '최종', emotion: 'normal' }] }],
+      speakers: [],
+    }
+    const onPartialScene = vi.fn()
+    const runJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onPartialText?.('{"scenes":[{"sceneNo":7,"summary":"GHOST","segments":[{"speaker":"narrator","text":"preview"}]}]}')
+      return out
+    })
+
+    await expect(splitScenes('SCRIPT', OPTS, { runJson, onPartialScene })).resolves.toEqual(out)
+    expect(onPartialScene).toHaveBeenCalledWith({
+      sceneNo: 7,
+      summary: 'GHOST',
+      segments: [{ speaker: 'narrator', text: 'preview' }],
+    }, 0)
+  })
+
   it('splitScenes는 non-narrator speaker appearance 누락을 실패시킨다', async () => {
     const out = {
       scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'a', text: '안녕', emotion: 'normal' }] }],
@@ -121,6 +140,41 @@ describe('llmCodex adapter', () => {
     await expect(writePrompts(scenes, { scriptMd: '#' }, OPTS, { runJson })).rejects.toThrow(/scene 1 missing\/empty prompt/)
   })
 
+  it('writePrompts는 inline mention 지시를 공유하고 byNo 병합에서 token 위치를 바꾸지 않는다', async () => {
+    const scenes = [{ sceneNo: 1, summary: 'Mina opens the letter', segments: [{ speaker: 'a', text: 'open it' }] }]
+    const inlineImage = 'A slow dolly toward @{Mina Kim} as she opens the letter'
+    const inlineVideo = 'The camera circles @{Mina Kim} while she reads'
+    const runJson = vi.fn(async () => ({
+      scenes: [{ sceneNo: 1, imagePrompt: inlineImage, videoPrompt: inlineVideo }],
+    }))
+
+    const out = await writePrompts(scenes, {
+      speakers: [{ id: 'a', name: 'Mina Kim', appearance: 'a young editor' }],
+      requiredMentionNamesByScene: { 1: ['Mina Kim'] },
+    }, OPTS, { runJson })
+
+    expect(runJson.mock.calls[0][0]).toContain('@{Mina Kim}')
+    expect(out.scenes[0].imagePrompt).toBe(inlineImage)
+    expect(out.scenes[0].videoPrompt).toBe(inlineVideo)
+  })
+
+  it('writePrompts는 Codex raw JSON delta의 닫힌 scene을 onPartialPrompt로 전달한다', async () => {
+    const scenes = [{ sceneNo: 1, summary: 's' }]
+    const onPartialPrompt = vi.fn()
+    const runJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onPartialText?.('{"scenes":[{"sceneNo":1,"imagePrompt":"GHOST-IMG","videoPrompt":"GHOST-VID"}]}')
+      return { scenes: [{ sceneNo: 1, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }] }
+    })
+
+    const out = await writePrompts(scenes, {}, OPTS, { runJson, onPartialPrompt })
+
+    expect(onPartialPrompt).toHaveBeenCalledWith(
+      { sceneNo: 1, imagePrompt: 'GHOST-IMG', videoPrompt: 'GHOST-VID' },
+      0,
+    )
+    expect(out.scenes[0]).toMatchObject({ imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' })
+  })
+
   it('reviewScenes/reviewPrompts는 Codex JSON runner와 backend guard를 사용한다', async () => {
     const runJson = vi.fn(async () => ({ verdict: 'revise', critique: 'fix' }))
     await expect(reviewScenes('SCRIPT', [{ sceneNo: 1, segments: [] }], [], OPTS, { runJson }))
@@ -131,6 +185,21 @@ describe('llmCodex adapter', () => {
     expect(runJson.mock.calls[0][1]).toMatchObject({ type: 'object', additionalProperties: false })
     expect(runJson.mock.calls[0][2]).toEqual({ model: 'gpt-5.5', reasoningEffort: 'high' })
     expect(runJson.mock.calls[1][2]).toEqual({ model: 'gpt-5.5', reasoningEffort: 'high' })
+  })
+
+  it.each([
+    ['reviewScenes', (ctx) => reviewScenes('SCRIPT', [{ sceneNo: 1, segments: [] }], [], OPTS, ctx)],
+    ['reviewPrompts', (ctx) => reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, OPTS, ctx)],
+  ])('%s는 Codex runner의 reasoning activity를 onThinkingActivity로 전달한다', async (_name, review) => {
+    const onThinkingActivity = vi.fn()
+    const runJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onThinkingActivity?.()
+      return { verdict: 'pass', critique: '' }
+    })
+
+    await review({ runJson, onThinkingActivity })
+
+    expect(onThinkingActivity).toHaveBeenCalledTimes(1)
   })
 
   it('reviseScenes/revisePrompts는 수정 JSON을 검증하고 병합한다', async () => {
@@ -144,6 +213,38 @@ describe('llmCodex adapter', () => {
     const runPromptsJson = vi.fn(async () => ({ scenes: [{ sceneNo: 1, imagePrompt: 'IMG2', videoPrompt: 'VID2' }] }))
     await expect(revisePrompts([{ sceneNo: 1, storyId: 's1' }], { scriptMd: 'SCRIPT' }, 'fix', OPTS, { runJson: runPromptsJson }))
       .resolves.toEqual({ scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'IMG2', videoPrompt: 'VID2' }] })
+  })
+
+  it('reviseScenes/revisePrompts는 Codex raw JSON delta의 닫힌 scene을 preview callback으로 전달한다', async () => {
+    const scenesPayload = {
+      scenes: [{ sceneNo: 1, summary: 'FINAL', segments: [{ speaker: 'narrator', text: '최종', emotion: 'normal' }] }],
+      speakers: [],
+    }
+    const promptInput = [{ sceneNo: 1, storyId: 's1', imagePrompt: 'old', videoPrompt: 'old' }]
+    const onPartialScene = vi.fn()
+    const onPartialPrompt = vi.fn()
+    const runScenesJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onPartialText?.('{"scenes":[{"sceneNo":1,"summary":"GHOST","segments":[{"speaker":"narrator","text":"preview"}]}]}')
+      return scenesPayload
+    })
+    const runPromptsJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onPartialText?.('{"scenes":[{"sceneNo":1,"imagePrompt":"GHOST-IMG","videoPrompt":"GHOST-VID"}]}')
+      return { scenes: [{ sceneNo: 1, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }] }
+    })
+
+    await expect(reviseScenes('SCRIPT', [], [], 'fix', OPTS, { runJson: runScenesJson, onPartialScene }))
+      .resolves.toEqual(scenesPayload)
+    await expect(revisePrompts(promptInput, {}, 'fix', OPTS, { runJson: runPromptsJson, onPartialPrompt }))
+      .resolves.toEqual({
+        scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }],
+      })
+
+    expect(onPartialScene).toHaveBeenCalledWith(expect.objectContaining({ sceneNo: 1, summary: 'GHOST' }), 0)
+    expect(onPartialPrompt).toHaveBeenCalledWith({
+      sceneNo: 1,
+      imagePrompt: 'GHOST-IMG',
+      videoPrompt: 'GHOST-VID',
+    }, 0)
   })
 
   it('reviseScenes는 기존 speaker appearance가 있으면 수정 JSON의 null appearance를 허용한다', async () => {

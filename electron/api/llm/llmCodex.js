@@ -25,6 +25,7 @@ import { runCodexJson, runCodexText } from './codexAppServer.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toOpenAiJsonSchema } from './toJsonSchema.js'
 import { PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, SCENES_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, validateScenesSegments } from './schemas.js'
+import { createPartialScenesParser } from './partialScenes.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../../src/utils/storyNarrationTracks.js'
 
 export const DEFAULT_MODEL = 'gpt-5.5'
@@ -123,9 +124,15 @@ export async function continueScript(existingScript, opts = {}, { onDelta, signa
   return { scriptMd: `${existingScript}\n\n${added}` }
 }
 
-export async function splitScenes(scriptMd, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function splitScenes(scriptMd, opts = {}, { signal, runJson = runCodexJson, onPartialScene } = {}) {
   const prompt = guardScenesPrompt(buildSplitPrompt(scriptMd, opts))
-  const out = await runJson(prompt, codexSchema(SCENES_SCHEMA), runtimeOptions(opts), { signal })
+  const partialParser = typeof onPartialScene === 'function'
+    ? createPartialScenesParser({ onItem: onPartialScene })
+    : null
+  const out = await runJson(prompt, codexSchema(SCENES_SCHEMA), runtimeOptions(opts), {
+    signal,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+  })
   const scenes = out.scenes || []
   validateScenesSegments(scenes)
   validateVisibleSpeakerAppearances(scenes, out.speakers || [])
@@ -160,32 +167,44 @@ export async function reviseSynopsis(synopsisMd, characters = [], critique, opts
   return splitSynopsisOutput(text)
 }
 
-export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, runJson = runCodexJson, onThinkingActivity } = {}) {
   const prompt = guardPrompt(buildScenesReviewPrompt(scriptMd, scenes, speakers, opts))
-  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal })
+  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal, onThinkingActivity })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
   return { verdict, critique: out.critique || '' }
 }
 
-export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, runJson = runCodexJson, onPartialScene } = {}) {
   const prompt = guardScenesPrompt(buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, opts))
-  const out = await runJson(prompt, codexSchema(SCENES_SCHEMA), runtimeOptions(opts), { signal })
+  const partialParser = typeof onPartialScene === 'function'
+    ? createPartialScenesParser({ onItem: onPartialScene })
+    : null
+  const out = await runJson(prompt, codexSchema(SCENES_SCHEMA), runtimeOptions(opts), {
+    signal,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+  })
   const revisedScenes = out.scenes || []
   validateScenesSegments(revisedScenes)
   validateVisibleSpeakerAppearances(revisedScenes, out.speakers || [], speakers)
   return { scenes: revisedScenes, speakers: out.speakers || [] }
 }
 
-export async function reviewPrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function reviewPrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson, onThinkingActivity } = {}) {
   const prompt = guardPrompt(buildPromptsReviewPrompt(scenes, context, opts))
-  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal })
+  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal, onThinkingActivity })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
   return { verdict, critique: out.critique || '' }
 }
 
-export async function revisePrompts(scenes, context, critique, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function revisePrompts(scenes, context, critique, opts = {}, { signal, runJson = runCodexJson, onPartialPrompt } = {}) {
   const prompt = guardPrompt(buildPromptsRevisePrompt(scenes, context, critique, opts))
-  const out = await runJson(prompt, codexSchema(PROMPTS_SCHEMA), runtimeOptions(opts), { signal })
+  const partialParser = typeof onPartialPrompt === 'function'
+    ? createPartialScenesParser({ onItem: onPartialPrompt })
+    : null
+  const out = await runJson(prompt, codexSchema(PROMPTS_SCHEMA), runtimeOptions(opts), {
+    signal,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+  })
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
   for (const s of scenes) {
     const p = byNo.get(s.sceneNo)
@@ -211,9 +230,15 @@ export async function analyzeResearch(transcripts, opts = {}, { signal, runJson 
   return { structure: out.structure || [], claims: out.claims || [], commonThemes: out.commonThemes || [] }
 }
 
-export async function writePrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function writePrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson, onPartialPrompt } = {}) {
   const prompt = guardPrompt(buildPromptsPrompt(scenes, context, opts))
-  const out = await runJson(prompt, codexSchema(PROMPTS_SCHEMA), runtimeOptions(opts), { signal })
+  const partialParser = typeof onPartialPrompt === 'function'
+    ? createPartialScenesParser({ onItem: onPartialPrompt })
+    : null
+  const out = await runJson(prompt, codexSchema(PROMPTS_SCHEMA), runtimeOptions(opts), {
+    signal,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+  })
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
   for (const s of scenes) {
     const p = byNo.get(s.sceneNo)

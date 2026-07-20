@@ -193,7 +193,8 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
         seed: 7777,
         timestamp: 1600000000000,
         model: 'flow-old',
-        mediaId: 'history-media-id'
+        mediaId: 'history-media-id',
+        prompt: 'the prompt that generated this history image'
       }
     })
     mockRestoreFromHistory.mockResolvedValue({ success: true, path: '/restored.png' })
@@ -236,6 +237,8 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
       image_size: { width: 1920, height: 1080 },
       upscaledAt: null,
       upscaled_size: null,
+      // 복원한 이미지의 생성 프롬프트가 새 baseline — 이후 편집→되돌림의 done 복원 기준.
+      donePrompt: 'the prompt that generated this history image',
     }))
     expect(mockGetImageSizeFromBase64).toHaveBeenCalledWith('data:image/png;base64,history')
   })
@@ -278,6 +281,9 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
     expect(callArgs.seed).toBeNull()
     expect(callArgs.generatedAt).toEqual(expect.any(Number))
     expect(callArgs.model).toBeNull()
+    // metadata 에 prompt 가 없으면 donePrompt 도 null — 이전 생성의 stale baseline 이 남아
+    // "다른 프롬프트 이미지"에 done 오복원되는 것을 막는다.
+    expect(callArgs.donePrompt).toBeNull()
   })
 })
 
@@ -334,7 +340,8 @@ describe('SceneDetailModal — §3.8 close-on-regenerate', () => {
     const regenBtn = screen.getByRole('button', { name: /sceneDetail\.regenerate/ })
     fireEvent.click(regenBtn)
 
-    expect(onGenerate).toHaveBeenCalledWith('scene_1')
+    // Issue #4/#5: 재생성은 편집 스냅샷(editData 객체)을 3번째 인자로 전달
+    expect(onGenerate).toHaveBeenCalledWith('scene_1', undefined, expect.objectContaining({ id: 'scene_1' }))
     expect(onClose).toHaveBeenCalled()
   })
 

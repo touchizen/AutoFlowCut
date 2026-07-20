@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { claudeResultToUsage, codexNotifToUsage, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from '../../../../electron/api/llm/usageTokens.js'
+import { claudeResultToUsage, claudeThinkingTokens, codexNotifToUsage, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from '../../../../electron/api/llm/usageTokens.js'
 
 describe('claudeResultToUsage', () => {
   // BetaUsage 의 input_tokens 는 cache 를 제외한다(cache_*_input_tokens 가 별도 필드).
@@ -44,6 +44,13 @@ describe('claudeResultToUsage', () => {
 
 describe('claude stream helpers (실시간 추정)', () => {
   const se = (event) => ({ type: 'stream_event', event })
+
+  it('claudeThinkingTokens: system/thinking_tokens 의 누적 추정값만 읽는다', () => {
+    expect(claudeThinkingTokens({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 153 })).toBe(153)
+    expect(claudeThinkingTokens({ type: 'system', subtype: 'status', estimated_tokens: 153 })).toBeNull()
+    expect(claudeThinkingTokens(se({ type: 'content_block_delta', delta: { type: 'thinking_delta', estimated_tokens: 153 } }))).toBeNull()
+    expect(claudeThinkingTokens(null)).toBeNull()
+  })
 
   it('claudeStreamInput: message_start 입력은 cache 포함 합산, 그 외 null', () => {
     expect(claudeStreamInput(se({ type: 'message_start', message: { usage: { input_tokens: 2, cache_creation_input_tokens: 2689, cache_read_input_tokens: 0 } } }))).toBe(2691)

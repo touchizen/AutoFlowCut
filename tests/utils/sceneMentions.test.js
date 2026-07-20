@@ -5,6 +5,7 @@
 // 멘션 후보 precondition(F9): type==='character' + entityId + name.trim() + flowNameSyncStatus==='synced'.
 import { describe, it, expect } from 'vitest'
 import { parseSceneMentions } from '../../src/utils/sceneMentions'
+import { iterateMentions } from '../../src/utils/mentionParser'
 
 const synced = (name, entityId) => ({ type: 'character', name, entityId, flowNameSyncStatus: 'synced' })
 
@@ -85,6 +86,112 @@ describe('parseSceneMentions', () => {
     ])
     expect(r.mentions).toEqual([{ name: 'A', entityId: 'EA' }, { name: 'B', entityId: 'EB' }])
   })
+
+  it('braced 공백 이름을 exact mention segment로 만든다', () => {
+    const r = parseSceneMentions('@{도둑 우두머리}A young man', [synced('도둑 우두머리', 'BOSS')])
+    expect(r.hasMention).toBe(true)
+    expect(r.mentions).toEqual([{ name: '도둑 우두머리', entityId: 'BOSS' }])
+    expect(r.segments).toEqual([
+      { type: 'mention', name: '도둑 우두머리', entityId: 'BOSS' },
+      { type: 'text', text: 'A young man' },
+    ])
+    expect(r.unresolved).toEqual([])
+  })
+
+  it('미해결 braced mention은 full inner name과 exactness를 보고하고 원문을 보존한다', () => {
+    const r = parseSceneMentions('@{도둑 우두머리} 등장', [synced('회사원', 'E1')])
+    expect(r.hasMention).toBe(false)
+    expect(r.unresolved).toEqual([{ name: '도둑 우두머리', exact: true }])
+    expect(r.segments).toEqual([{ type: 'text', text: '@{도둑 우두머리} 등장' }])
+  })
+
+  it('plain과 braced mention을 한 prompt에서 순서대로 처리한다', () => {
+    const refs = [synced('회사원', 'WORKER'), synced('도둑 우두머리', 'BOSS')]
+    const r = parseSceneMentions('@회사원과 @{도둑 우두머리}가 대치한다', refs)
+    expect(r.mentions).toEqual([
+      { name: '회사원', entityId: 'WORKER' },
+      { name: '도둑 우두머리', entityId: 'BOSS' },
+    ])
+    expect(r.unresolved).toEqual([])
+  })
+
+  it.each([
+    ['@{a}@{b}', ['a', 'b']],
+    ['@{a}@bob', ['a', 'bob']],
+  ])('keeps parser parity for adjacent mentions: %s', (prompt, names) => {
+    const refs = names.map((name, index) => synced(name, `E${index}`))
+    const editorNames = [...iterateMentions(prompt)].map(({ name }) => name)
+    const flowNames = parseSceneMentions(prompt, refs).mentions.map(({ name }) => name)
+
+    expect(editorNames).toEqual(names)
+    expect(flowNames).toEqual(names)
+  })
+
+  it('does not let a non-boundary malformed brace swallow a later mention', () => {
+    const prompt = 'x@{ then @bob runs'
+    const expected = ['bob']
+
+    expect([...iterateMentions(prompt)].map(({ name }) => name)).toEqual(expected)
+    expect(parseSceneMentions(prompt, [synced('bob', 'BOB')]).mentions.map(({ name }) => name)).toEqual(expected)
+  })
+
+  it('ends an unclosed braced candidate at newline so the next line can contain mentions', () => {
+    const prompt = '@{oops\n@bob walks'
+    const expected = ['bob']
+
+    expect([...iterateMentions(prompt)].map(({ name }) => name)).toEqual(expected)
+    expect(parseSceneMentions(prompt, [synced('bob', 'BOB')]).mentions.map(({ name }) => name)).toEqual(expected)
+  })
+
+  it('braced mention 내부에는 조사 로직을 적용하지 않는다', () => {
+    const r = parseSceneMentions('@{철수가} 달린다', [synced('철수', 'C1')])
+    expect(r.hasMention).toBe(false)
+    expect(r.unresolved).toEqual([{ name: '철수가', exact: true }])
+  })
+
+  it('keeps Flow-side eligible braced matching case-sensitive', () => {
+    const r = parseSceneMentions('@{BOB} walks', [synced('Bob', 'BOB')])
+
+    expect(r.hasMention).toBe(false)
+    expect(r.mentions).toEqual([])
+    expect(r.unresolved).toEqual([{ name: 'BOB', exact: true }])
+  })
+
+  it.each([
+    ['@철수 @{철수}', [{ name: '철수' }]],
+    ['@{철수} @철수', [{ name: '철수', exact: true }]],
+  ])('dedupes unresolved names regardless of plain/braced exactness: %s', (prompt, expected) => {
+    const r = parseSceneMentions(prompt, [synced('영희', 'YOUNGHEE')])
+
+    expect(r.unresolved).toEqual(expected)
+  })
+
+  it.each(['@{ }', '@{ \t }'])('treats an all-whitespace braced name as malformed plain text: %s', (prompt) => {
+    expect([...iterateMentions(prompt)]).toEqual([])
+
+    const r = parseSceneMentions(prompt, [synced('영희', 'YOUNGHEE')])
+    expect(r.hasMention).toBe(false)
+    expect(r.mentions).toEqual([])
+    expect(r.unresolved).toEqual([])
+    expect(r.segments).toEqual([{ type: 'text', text: prompt }])
+  })
+
+  it.each([
+    '@{닫히지 않음',
+    '@{}',
+    '@{중첩{이름}}',
+    '@{줄바꿈\n이름}',
+    '@{닫히지 않은 @회사원',
+    '@{중첩{@회사원}}',
+  ]) (
+    '비정상 braced syntax는 unresolved 없이 plain text로 둔다: %s',
+    (prompt) => {
+      const r = parseSceneMentions(prompt, [synced('회사원', 'E1')])
+      expect(r.hasMention).toBe(false)
+      expect(r.unresolved).toEqual([])
+      expect(r.segments).toEqual([{ type: 'text', text: prompt }])
+    }
+  )
 
   it('빈/널 프롬프트 안전', () => {
     expect(parseSceneMentions('', [synced('A', 'EA')])).toMatchObject({ hasMention: false, mentions: [], segments: [] })

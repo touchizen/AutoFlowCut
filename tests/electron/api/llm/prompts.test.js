@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt, buildScenesRevisePrompt, buildSynopsisPrompt, buildSynopsisFromScriptPrompt, buildCharacterExtractPrompt } from '../../../../electron/api/llm/prompts.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildPromptsRevisePrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt, buildScenesRevisePrompt, buildSynopsisPrompt, buildSynopsisFromScriptPrompt, buildCharacterExtractPrompt } from '../../../../electron/api/llm/prompts.js'
 
 describe('buildScriptPrompt 길이 단위', () => {
   it('min 단위는 "약 N분"', () => {
@@ -176,6 +176,23 @@ describe('buildSplitPrompt appearance(V2)', () => {
   })
 })
 
+describe('씬 화면 등장인물 appearingCharacters 지시 (Issue #6)', () => {
+  it('split은 무언 인물·별칭 해석·명단 id·narrator 제외·빈 배열을 지시한다', () => {
+    const p = buildSplitPrompt('S', { language: 'ko' })
+    expect(p).toContain('appearingCharacters')
+    expect(p).toMatch(/말하지|침묵|무언/)
+    expect(p).toMatch(/대명사|별칭/)
+    expect(p).toMatch(/speaker id|speaker ID/)
+    expect(p).toContain('narrator')
+    expect(p).toContain('[]')
+  })
+
+  it('scenes revise는 기존 appearingCharacters를 보존·수정하도록 지시한다', () => {
+    const p = buildScenesRevisePrompt('SCRIPT', [{ sceneNo: 1, appearingCharacters: ['a'] }], [{ id: 'a', name: '민수' }], 'CRITIQUE')
+    expect(p).toMatch(/appearingCharacters.{0,100}(?:유지|보존)/s)
+  })
+})
+
 describe('buildPromptsPrompt appearance 컨텍스트(V2)', () => {
   it('speakers[].appearance를 프롬프트 컨텍스트로 포함', () => {
     const scenes = [{ sceneNo: 1, summary: 'S1', segments: [{ speaker: 'a', text: 'hi' }] }]
@@ -212,6 +229,51 @@ describe('buildPromptsPrompt appearance 컨텍스트(V2)', () => {
     const p = buildPromptsPrompt(scenes, { style: null, speakers: [{ id: 'a', name: '민수', ethnicity: '', appearance: '' }] }, { language: 'en' })
     expect(p).not.toContain('민수:')
     expect(p).not.toContain('등장인물 외형')
+  })
+
+  it('씬별 portable token을 정확히 제공하고 두 프롬프트의 자연스러운 inline 배치를 요구한다', () => {
+    const scenes = [{ sceneNo: 1, summary: '편지를 연다', segments: [{ speaker: 'a', text: '봉투를 열었다' }] }]
+    const p = buildPromptsPrompt(scenes, {
+      style: null,
+      speakers: [
+        { id: 'a', name: '민수', appearance: 'a young man' },
+        { id: 'b', name: '도둑 우두머리', appearance: 'a scarred gang leader' },
+        { id: 'c', name: 'John {Smith}', appearance: 'a tall detective' },
+      ],
+      requiredMentionNamesByScene: {
+        1: ['민수', '도둑 우두머리', 'John {Smith}'],
+      },
+    }, { language: 'en' })
+
+    expect(p).toContain('@민수')
+    expect(p).toContain('@{도둑 우두머리}')
+    expect(p).toContain('John {Smith}')
+    expect(p).not.toContain('@{John {Smith}}')
+    expect(p).toMatch(/imagePrompt.{0,160}videoPrompt/s)
+    expect(p).toMatch(/자연스러운|natural/i)
+    expect(p).toMatch(/앞에 몰아|front-load/i)
+    expect(p).toMatch(/정확히|exact/i)
+    expect(p).toMatch(/중괄호.{0,80}조사|particle.{0,80}brace/i)
+    expect(p).toMatch(/닫힌 `?}`?.{0,100}(?:바로|immediately)/i)
+    expect(p).not.toContain('레퍼런스 참조 문법 금지')
+    expect(p).not.toContain('플레인 텍스트')
+  })
+
+  it('revise 프롬프트도 mention token 보존 계약과 roster 를 싣는다 — 수정 라운드가 inline 배치를 무너뜨리지 않게', () => {
+    const scenes = [{ sceneNo: 1, imagePrompt: 'A dolly toward @{도둑 우두머리} at dawn', videoPrompt: 'x' }]
+    const p = buildPromptsRevisePrompt(scenes, {
+      speakers: [
+        { id: 'a', name: '민수', appearance: 'a young man' },
+        { id: 'b', name: '도둑 우두머리', appearance: 'a scarred gang leader' },
+      ],
+      requiredMentionNamesByScene: { 1: ['민수', '도둑 우두머리'] },
+    }, 'critique text', { language: 'en' })
+
+    // 수정 후에도 required token 이 각 프롬프트에 남고, 앞에 몰지 말라는 지시.
+    expect(p).toMatch(/token.{0,120}(유지|보존|keep)/i)
+    expect(p).toMatch(/앞에 몰아|front-load/i)
+    expect(p).toContain('@{도둑 우두머리}')
+    expect(p).toContain('@민수')
   })
 })
 

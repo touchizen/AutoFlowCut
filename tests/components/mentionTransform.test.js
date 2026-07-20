@@ -172,6 +172,44 @@ describe('Mention live transform — subclass cleanup', () => {
   })
 })
 
+describe('Mention live transform — braced cursor guard', () => {
+  it('keeps a resolved braced token as text while the cursor is near its closing brace', () => {
+    const editor = makeEditor([{ id: 3, name: '도둑 우두머리', type: 'character' }])
+    editor.update(
+      () => {
+        const para = $createParagraphNode()
+        const node = $createTextNode('@{도둑 우두머리}')
+        para.append(node)
+        $getRoot().append(para)
+        node.select(9, 9)
+      },
+      { discrete: true }
+    )
+
+    expect(readParagraphChildren(editor)).toEqual([
+      { type: 'text', content: '@{도둑 우두머리}' },
+    ])
+  })
+
+  it('treats an unclosed braced token under the cursor as typing in progress', () => {
+    const editor = makeEditor(REFS)
+    editor.update(
+      () => {
+        const para = $createParagraphNode()
+        const node = $createUnknownMentionTextNode('@{도둑 우두')
+        para.append(node)
+        $getRoot().append(para)
+        node.select(node.getTextContentSize(), node.getTextContentSize())
+      },
+      { discrete: true }
+    )
+
+    expect(readParagraphChildren(editor)).toEqual([
+      { type: 'unknown', content: '@{도둑 우두' },
+    ])
+  })
+})
+
 describe('Lexical transform behavior — regression guard', () => {
   // 회귀 lock: TextNode 만 등록하면 subclass(UnknownMentionTextNode) 에 발화 안 됨.
   // PromptInput 이 양쪽 등록을 빠뜨리면 cleanup 회귀가 다시 들어와도 이 테스트가 잡는다.
