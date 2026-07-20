@@ -77,9 +77,15 @@ export function createVoicePreviewService({ cacheDir, fs = nodeFs, ttsFor, voice
     if (inflight.has(key)) return inflight.get(key)
     const promise = produce({ provider, voiceId, language })
       .catch((e) => {
-        const msg = String(e?.message || e)
-        const error = /no .* key|No .* API key/i.test(msg) ? 'no-key' : /401|unauth/i.test(msg) ? 'unauthorized' : 'failed'
-        return { error, provider }
+        const kind = e?.errorKind
+        let error
+        if (kind === 'story-audio-no-tts-key') error = 'no-key'
+        else if (kind === 'story-audio-tts-auth') error = 'unauthorized'
+        else {
+          const msg = String(e?.message || e)
+          error = /no .* key|No .* API key/i.test(msg) ? 'no-key' : /401|unauth/i.test(msg) ? 'unauthorized' : 'failed'
+        }
+        return { error, provider: e?.provider || provider }
       })
       .finally(() => inflight.delete(key))
     inflight.set(key, promise)
