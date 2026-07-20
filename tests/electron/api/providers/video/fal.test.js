@@ -8,7 +8,12 @@ import {
   submitVideo,
   validateKey,
 } from '../../../../../electron/api/providers/video/fal.js'
+import * as falClientModule from '../../../../../electron/api/providers/falClient.js'
 import { fetchFalAsset } from '../../../../../electron/api/providers/falClient.js'
+
+it('K5: shared fal client singleton is not re-exported', () => {
+  expect(falClientModule).not.toHaveProperty('defaultFalClient')
+})
 
 // Fable F4: image 다운로드는 dispatcher.downloadVideo 를 안 거치고 fetchFalAsset 의 originError 가
 // 유일한 origin 게이트다 → 직접 핀(삭제 시 poisoned result URL 로 임의 fetch 가능).
@@ -60,6 +65,43 @@ function sdkError(message, status, body = {}) {
 }
 
 describe('fal video provider — SDK queue contract', () => {
+  it.each([
+    'https://evil.example/capture',
+    'data:fal-ai/kling-video/v2.1',
+  ])('K1: rejects unsafe endpoint id %s before any SDK client invocation', async (model) => {
+    const client = makeClient()
+
+    const result = await submitVideo({
+      apiKey: 'fal-key',
+      prompt: 'must not submit',
+      image: { mimeType: 'image/png', data: 'IMG64' },
+      model,
+    }, { client })
+
+    expect(result).toMatchObject({ success: false, errorKind: 'invalid-config' })
+    expect(client.config).not.toHaveBeenCalled()
+    expect(client.queue.submit).not.toHaveBeenCalled()
+    expect(client.queue.status).not.toHaveBeenCalled()
+    expect(client.queue.result).not.toHaveBeenCalled()
+  })
+
+  it('K1: rejects an unsafe endpoint id from a video operation handle before SDK use', async () => {
+    const client = makeClient()
+
+    const result = await checkVideo({
+      apiKey: 'fal-key',
+      operationName: {
+        model_id: 'https://evil.example/capture',
+        request_id: 'req-injected',
+      },
+    }, { client })
+
+    expect(result).toMatchObject({ success: false, done: false, errorKind: 'invalid-config' })
+    expect(client.config).not.toHaveBeenCalled()
+    expect(client.queue.status).not.toHaveBeenCalled()
+    expect(client.queue.result).not.toHaveBeenCalled()
+  })
+
   it('provider shape과 signed-CDN no-auth policy를 노출한다', () => {
     expect(falVideoProvider).toEqual({
       id: 'fal',
@@ -154,6 +196,86 @@ describe('fal video provider — SDK queue contract', () => {
     })
   })
 
+  it('K4: transient status failure is retried once and checkVideo succeeds', async () => {
+    const client = makeClient({
+      status: vi.fn()
+        .mockRejectedValueOnce(new TypeError('network connection reset'))
+        .mockResolvedValueOnce({ status: 'COMPLETED', request_id: 'req-retry' }),
+      result: vi.fn().mockResolvedValue({
+        data: { video: { url: 'https://fal.media/recovered.mp4' } },
+      }),
+    })
+
+    await expect(checkVideo({
+      apiKey: 'fal-key',
+      operationName: { model_id: DEFAULT_FAL_VIDEO_MODEL, request_id: 'req-retry' },
+    }, { client })).resolves.toEqual({
+      success: true,
+      done: true,
+      videoUri: 'https://fal.media/recovered.mp4',
+    })
+    expect(client.queue.status).toHaveBeenCalledTimes(2)
+    expect(client.queue.result).toHaveBeenCalledTimes(1)
+  })
+
+  it('K4: transient result failure is retried once and checkVideo succeeds', async () => {
+    const client = makeClient({
+      status: vi.fn().mockResolvedValue({ status: 'COMPLETED', request_id: 'req-retry' }),
+      result: vi.fn()
+        .mockRejectedValueOnce(new TypeError('network connection reset'))
+        .mockResolvedValueOnce({
+          data: { video: { url: 'https://fal.media/recovered.mp4' } },
+        }),
+    })
+
+    await expect(checkVideo({
+      apiKey: 'fal-key',
+      operationName: { model_id: DEFAULT_FAL_VIDEO_MODEL, request_id: 'req-retry' },
+    }, { client })).resolves.toEqual({
+      success: true,
+      done: true,
+      videoUri: 'https://fal.media/recovered.mp4',
+    })
+    expect(client.queue.status).toHaveBeenCalledTimes(2)
+    expect(client.queue.result).toHaveBeenCalledTimes(2)
+  })
+
+  it('K4: checkVideo makes only one retry for repeated transient failures', async () => {
+    const client = makeClient({
+      status: vi.fn().mockRejectedValue(new TypeError('network connection reset')),
+    })
+
+    await expect(checkVideo({
+      apiKey: 'fal-key',
+      operationName: { model_id: DEFAULT_FAL_VIDEO_MODEL, request_id: 'req-retry' },
+    }, { client })).resolves.toEqual({
+      success: false,
+      done: false,
+      error: 'network connection reset',
+      errorKind: 'transient',
+    })
+    expect(client.queue.status).toHaveBeenCalledTimes(2)
+    expect(client.queue.result).not.toHaveBeenCalled()
+  })
+
+  it('K4: non-transient checkVideo failure returns immediately without retry', async () => {
+    const client = makeClient({
+      status: vi.fn().mockRejectedValue(sdkError('Endpoint entitlement forbidden', 403)),
+    })
+
+    await expect(checkVideo({
+      apiKey: 'fal-key',
+      operationName: { model_id: DEFAULT_FAL_VIDEO_MODEL, request_id: 'req-no-retry' },
+    }, { client })).resolves.toEqual({
+      success: false,
+      done: false,
+      error: 'Endpoint entitlement forbidden',
+      errorKind: 'forbidden',
+    })
+    expect(client.queue.status).toHaveBeenCalledTimes(1)
+    expect(client.queue.result).not.toHaveBeenCalled()
+  })
+
   it('completed 뒤 result failure를 normalized failure로 반환한다', async () => {
     const client = makeClient({
       status: vi.fn().mockResolvedValue({ status: 'COMPLETED', request_id: 'req-result-fail' }),
@@ -193,6 +315,56 @@ describe('fal video provider — SDK queue contract', () => {
   })
 
   // PROVISIONAL fixtures — exact fal SDK exception bodies need the M4 real-key gate.
+  it('K2: HTTP 403 exhausted-balance response maps to quota before forbidden', async () => {
+    const detail = 'Exhausted balance. Top up your balance at fal.ai/dashboard'
+    const client = makeClient({
+      submit: vi.fn().mockRejectedValue(sdkError(detail, 403, { detail })),
+    })
+
+    await expect(submitVideo({
+      apiKey: 'fal-key',
+      prompt: 'fixture',
+      image: { mimeType: 'image/png', data: 'IMG64' },
+    }, { client })).resolves.toEqual({
+      success: false,
+      error: detail,
+      errorKind: 'quota',
+    })
+  })
+
+  it('K2: HTTP 402 remains quota even when the message looks like auth', async () => {
+    const detail = 'Invalid API key'
+    const client = makeClient({
+      submit: vi.fn().mockRejectedValue(sdkError(detail, 402, { detail })),
+    })
+
+    const result = await submitVideo({
+      apiKey: 'fal-key',
+      prompt: 'fixture',
+      image: { mimeType: 'image/png', data: 'IMG64' },
+    }, { client })
+
+    expect(result.errorKind).toBe('quota')
+  })
+
+  it.each([
+    'Exhausted balance',
+    'Exhausted_balance',
+    'Exhausted-balance',
+  ])('K2: HTTP 403 %s spelling maps to quota', async (detail) => {
+    const client = makeClient({
+      submit: vi.fn().mockRejectedValue(sdkError(detail, 403, { detail })),
+    })
+
+    const result = await submitVideo({
+      apiKey: 'fal-key',
+      prompt: 'fixture',
+      image: { mimeType: 'image/png', data: 'IMG64' },
+    }, { client })
+
+    expect(result.errorKind).toBe('quota')
+  })
+
   it.each([
     [401, { detail: 'Invalid API key' }, 'auth'],
     [403, { detail: 'Endpoint entitlement forbidden' }, 'forbidden'],

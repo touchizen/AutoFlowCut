@@ -216,7 +216,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
               setStatusMessage(result.error || authErrorMessage())
               continue
             }
-            if (!result.success && isQuotaExhaustedError(result.error)) {
+            if (!result.success && isQuotaExhaustedError(result)) {
               updateScene(item.scene.id, { status: 'error', error: result.error, errorKind: result.errorKind ?? null })
               errorCountRef.current++
               completedCountRef.current++
@@ -359,7 +359,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           setStatusMessage(submitResult.error || authErrorMessage())
           break
         }
-        if (isQuotaExhaustedError(submitResult.error)) {
+        if (isQuotaExhaustedError(submitResult)) {
           updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null })
           errorCountRef.current++
           completedCountRef.current++

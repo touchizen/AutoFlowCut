@@ -36,13 +36,14 @@ afterEach(() => {
 })
 
 describe('useVideoAutomation — poll top-level fail quota', () => {
-  it('checkVideoStatus 가 batch 전체 fail 로 quota 반환 시 즉시 break (max polls 안 감)', async () => {
+  it('K3: top-level poll result errorKind quota stops on non-matching error text', async () => {
     // submit 은 성공해서 polling 단계 진입
     const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
     // checkVideoStatus 는 batch 전체로 quota 실패 — statuses 없음
     const checkVideoStatus = vi.fn().mockResolvedValue({
       success: false,
-      error: 'Resource has been exhausted (e.g. check quota).',
+      error: 'Too Many Requests',
+      errorKind: 'quota',
     })
 
     const genAPI = {

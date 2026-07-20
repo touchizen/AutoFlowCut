@@ -684,7 +684,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           videoErrorCount++
           nextFreshIdx++
           console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)
-          if (_maybeTriggerQuotaStop(genResult.error)) return
+          if (_maybeTriggerQuotaStop(genResult)) return
         }
 
         // Flow 반봇 페이싱 — 다음 제출 전 20~40초 랜덤 대기(이미지 자동화와 동일). API 는 대기 없음.
@@ -772,7 +772,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
       // statuses[] 내부 'failed' 만 보는 기존 코드는 batch 전체가 server-side 에러로 떨어진
       // 경우를 못 잡아 max polls 까지 무한정 polling 후 timeout 처리.
-      if (!result.success && _maybeTriggerQuotaStop(result.error)) break
+      if (!result.success && _maybeTriggerQuotaStop(result)) break
 
       if (result.success && result.statuses) {
         // statuses 배열은 genIds 순서와 동일 → 인덱스로 매칭
@@ -889,7 +889,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             videoErrorCount++  // 서버 generation 실패도 집계
             pending.delete(itemId)
             console.warn(`[VideoAutomation] ❌ Generation failed: ${submission.generationId.substring(0, 16)}`)
-            _maybeTriggerQuotaStop(statusInfo.error)
+            _maybeTriggerQuotaStop(statusInfo)
 
           } else {
             // 'pending' / 'processing' — per-item 폴링 예산 소진. 초과 시 슬롯 영구 점유 방지 위해 timeout.

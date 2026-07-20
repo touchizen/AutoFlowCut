@@ -52,7 +52,7 @@ describe('ApiKeyTab', () => {
 
     await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'AIza-good', provider: 'google' }))
     expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'AIza-good', provider: 'google' })
-    expect(toast.success).toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySaved')
     expect(input.value).toBe('')
   })
 
@@ -94,7 +94,7 @@ describe('ApiKeyTab', () => {
 
     await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'sk-openai', provider: 'openai' }))
     expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'sk-openai', provider: 'openai' })
-    expect(toast.success).toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySaved')
     expect(input.value).toBe('')
   })
 
@@ -126,7 +126,7 @@ describe('ApiKeyTab', () => {
       apiKey: 'xai-grok-key',
       provider: 'grok',
     })
-    expect(toast.success).toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySaved')
     expect(input.value).toBe('')
   })
 
@@ -160,8 +160,32 @@ describe('ApiKeyTab', () => {
       apiKey: 'fal-secret-key',
       provider: 'fal',
     })
-    expect(toast.success).toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('settings.falKeySavedUnverified')
     expect(input.value).toBe('')
+  })
+
+  it('K6: fal save reports unverified validation while google keeps the verified toast', async () => {
+    render(<ApiKeyTab t={t} />)
+    await waitFor(() => screen.getByText('settings.falKeyTitle'))
+
+    const falInput = screen.getByPlaceholderText('settings.falKeyPlaceholder')
+    fireEvent.change(falInput, { target: { value: 'fal-secret-key' } })
+    fireEvent.click(screen.getByText('settings.falKeyVerifySave'))
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('settings.falKeySavedUnverified'))
+    expect(en.settings.falKeySavedUnverified).toBe(
+      'fal.ai key saved (not verified — validated on first generation)',
+    )
+    expect(ko.settings.falKeySavedUnverified).toBe(
+      'fal.ai 키를 저장했습니다 (미검증 — 첫 생성 시 검증됩니다)',
+    )
+
+    toast.success.mockClear()
+    const googleInput = screen.getByPlaceholderText('settings.apiKeyPlaceholder')
+    fireEvent.change(googleInput, { target: { value: 'AIza-good' } })
+    fireEvent.click(screen.getByText('settings.apiKeyVerifySave'))
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('settings.apiKeySaved'))
   })
 
   it('fal 키 있음 → byProvider.fal 상태 표시 + 삭제가 provider:fal 로 위임', async () => {
@@ -194,7 +218,7 @@ describe('ApiKeyTab', () => {
       apiKey: 'wavespeed-secret-key',
       provider: 'wavespeed',
     })
-    expect(toast.success).toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySaved')
     expect(input.value).toBe('')
   })
 
@@ -254,6 +278,7 @@ describe('ApiKeyTab', () => {
       apiKey: pair,
       provider: 'higgsfield',
     })
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySaved')
     expect(keyInput.value).toBe('')
     expect(secretInput.value).toBe('')
   })

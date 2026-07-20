@@ -5,13 +5,23 @@
  * SDK client instead of fetchImpl. Signed result assets are still fetched by
  * the common no-auth download path below.
  */
-import { fal, createFalClient } from '@fal-ai/client'
+import { createFalClient } from '@fal-ai/client'
 
-export const defaultFalClient = fal
-
-const CREDIT_SIGNAL = /(?:credit|balance)[ _-]?(?:exhausted|depleted|insufficient)|insufficient[ _-]?(?:credit|quota)|payment[ _-]?required|top[ -]?up/i
+const CREDIT_SIGNAL = /(?:credit|balance)[ _-]?(?:exhausted|depleted|insufficient)|exhausted[ _-]?balance|insufficient[ _-]?(?:credit|quota)|payment[ _-]?required|top[ -]?up/i
 const AUTH_SIGNAL = /invalid[ _-]?(?:api[ _-]?)?key|unauthori[sz]ed|invalid credentials/i
 const SAFETY_SIGNAL = /content[ _-]?(?:filter|policy)|safety|moderation|nsfw/i
+const FAL_ENDPOINT_ID = /^[a-z0-9_.-]+(?:\/[a-z0-9_.-]+)+$/i
+
+export function isValidFalEndpointId(id) {
+  if (typeof id !== 'string' || /[:\s]/.test(id) || id.includes('//')) return false
+  if (id.split('/').some(segment => segment === '.' || segment === '..')) return false
+  try {
+    if (new URL(id).protocol) return false
+  } catch {
+    // Plain fal endpoint ids are paths, not absolute URLs.
+  }
+  return FAL_ENDPOINT_ID.test(id)
+}
 
 function errorBody(error) {
   return error?.body ?? error?.response?.data ?? error?.cause?.body ?? null
@@ -32,10 +42,13 @@ export function classifyFalError(error) {
   const status = errorStatus(error)
   const body = errorBody(error)
   const signal = `${error?.message ?? ''} ${bodyText(body)}`
+  const hasCreditSignal = CREDIT_SIGNAL.test(signal)
 
+  if (status === 402) return 'quota'
+  if (status === 403 && hasCreditSignal) return 'quota'
   if (status === 403) return 'forbidden'
   if (status === 401 || AUTH_SIGNAL.test(signal)) return 'auth'
-  if (status === 402 || CREDIT_SIGNAL.test(signal)) return 'quota'
+  if (hasCreditSignal) return 'quota'
   if (status === 429) return 'transient'
   if (status !== null && status >= 500 && status <= 599) return 'transient'
   if (SAFETY_SIGNAL.test(signal)) return 'safety'

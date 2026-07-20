@@ -1,11 +1,13 @@
 /** fal.ai image adapter — bounded SDK queue run-to-completion. */
 import {
+  classifyFalError,
   configureFalClient,
   downloadPolicy,
   falFailure,
   fetchFalAsset,
   isFalCompletedStatus,
   isFalPendingStatus,
+  isValidFalEndpointId,
   validateKey,
   withAbortSignal,
 } from '../falClient.js'
@@ -80,6 +82,9 @@ export async function generateImage(
   }
 
   const selectedModel = model || DEFAULT_FAL_IMAGE_MODEL
+  if (!isValidFalEndpointId(selectedModel)) {
+    return { success: false, error: 'Invalid fal endpoint ID', errorKind: 'invalid-config' }
+  }
   const attemptsLimit = Math.max(1, Math.floor(Number(maxAttempts) || DEFAULT_FAL_IMAGE_MAX_ATTEMPTS))
   const timeoutLimit = Math.max(1, Number(timeoutMs) || DEFAULT_FAL_IMAGE_TIMEOUT_MS)
   const startedAt = Date.now()
@@ -108,44 +113,49 @@ export async function generateImage(
         return { success: false, error: 'fal image polling timed out', errorKind: 'transient' }
       }
 
-      const status = await sdk.queue.status(
-        selectedModel,
-        withAbortSignal({ requestId }, signal),
-      )
-      if (signal?.aborted) return abortFailure()
-
-      if (isFalCompletedStatus(status?.status)) {
-        const result = await sdk.queue.result(
+      try {
+        const status = await sdk.queue.status(
           selectedModel,
           withAbortSignal({ requestId }, signal),
         )
         if (signal?.aborted) return abortFailure()
-        const image = firstImageFromResult(result)
-        if (!image.url) {
-          return { success: false, error: 'Image URL not found in fal result', errorKind: 'other' }
-        }
-        const downloaded = await fetchFalAsset(image.url, {
-          fetchImpl,
-          defaultMimeType: image.contentType || 'image/png',
-        })
-        if (!downloaded.success) return downloaded
-        return {
-          success: true,
-          images: [{
-            base64: downloaded.base64,
-            mimeType: downloaded.mimeType,
-            dataUrl: `data:${downloaded.mimeType};base64,${downloaded.base64}`,
-          }],
-          actualAspectRatio: null,
-        }
-      }
 
-      if (!isFalPendingStatus(status?.status)) {
-        return {
-          success: false,
-          error: `Unknown fal queue status: ${status?.status || '(missing)'}`,
-          errorKind: 'other',
+        if (isFalCompletedStatus(status?.status)) {
+          const result = await sdk.queue.result(
+            selectedModel,
+            withAbortSignal({ requestId }, signal),
+          )
+          if (signal?.aborted) return abortFailure()
+          const image = firstImageFromResult(result)
+          if (!image.url) {
+            return { success: false, error: 'Image URL not found in fal result', errorKind: 'other' }
+          }
+          const downloaded = await fetchFalAsset(image.url, {
+            fetchImpl,
+            defaultMimeType: image.contentType || 'image/png',
+          })
+          if (!downloaded.success) return downloaded
+          return {
+            success: true,
+            images: [{
+              base64: downloaded.base64,
+              mimeType: downloaded.mimeType,
+              dataUrl: `data:${downloaded.mimeType};base64,${downloaded.base64}`,
+            }],
+            actualAspectRatio: null,
+          }
         }
+
+        if (!isFalPendingStatus(status?.status)) {
+          return {
+            success: false,
+            error: `Unknown fal queue status: ${status?.status || '(missing)'}`,
+            errorKind: 'other',
+          }
+        }
+      } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') return abortFailure()
+        if (classifyFalError(error) !== 'transient') throw error
       }
       if (attempt + 1 < attemptsLimit) await delay(pollIntervalMs, signal)
     }

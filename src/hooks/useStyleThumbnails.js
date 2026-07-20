@@ -191,7 +191,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
             stopped = true
             break
           }
-          if (isQuotaExhaustedError(result.error)) {
+          if (isQuotaExhaustedError(result)) {
             emitQuotaStop({ scope: 'StyleThumbnails(preset)' })
             stopped = true
             break
@@ -244,7 +244,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
             window.dispatchEvent(new CustomEvent('flow-login-expired'))
             stopped = true
             break
-          } else if (!result.success && isQuotaExhaustedError(result.error)) {
+          } else if (!result.success && isQuotaExhaustedError(result)) {
             emitQuotaStop({ scope: 'StyleThumbnails(custom)' })
             stopped = true
             break

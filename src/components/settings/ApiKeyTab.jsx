@@ -161,7 +161,7 @@ export default function ApiKeyTab({ t }) {
     setFalBusy(false)
     if (res?.success) {
       setFalKeyInput('')
-      toast.success(t('settings.apiKeySaved'))
+      toast.success(t('settings.falKeySavedUnverified'))
     } else {
       toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
     }

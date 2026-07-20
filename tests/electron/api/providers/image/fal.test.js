@@ -21,6 +21,27 @@ function makeClient(overrides = {}) {
 }
 
 describe('fal image provider — run to completion', () => {
+  it.each([
+    'https://evil.example/capture',
+    'file:fal-ai/flux-pro/v1.1',
+    'fal-ai/../capture',
+    'fal-ai/./capture',
+  ])('K1: rejects unsafe endpoint id %s before any SDK client invocation', async (model) => {
+    const client = makeClient()
+
+    const result = await generateImage({
+      apiKey: 'fal-image-key',
+      prompt: 'must not submit',
+      model,
+    }, { client })
+
+    expect(result).toMatchObject({ success: false, errorKind: 'invalid-config' })
+    expect(client.config).not.toHaveBeenCalled()
+    expect(client.queue.submit).not.toHaveBeenCalled()
+    expect(client.queue.status).not.toHaveBeenCalled()
+    expect(client.queue.result).not.toHaveBeenCalled()
+  })
+
   it('submit → status×N → completed → result → no-key download returns sync image contract', async () => {
     const client = makeClient({
       status: vi.fn()
@@ -84,6 +105,70 @@ describe('fal image provider — run to completion', () => {
     expect(client.queue.status).toHaveBeenCalledTimes(2)
     expect(client.queue.result).not.toHaveBeenCalled()
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('K4: transient status failure consumes one attempt and polling then completes', async () => {
+    const client = makeClient({
+      status: vi.fn()
+        .mockRejectedValueOnce(new TypeError('network connection reset'))
+        .mockResolvedValueOnce({ status: 'COMPLETED', request_id: 'img-req' }),
+      result: vi.fn().mockResolvedValue({
+        data: { images: [{ url: 'https://fal.media/recovered.png', content_type: 'image/png' }] },
+      }),
+    })
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      Uint8Array.from([102, 97, 108]),
+      { status: 200, headers: { 'content-type': 'image/png' } },
+    ))
+
+    const result = await generateImage({
+      apiKey: 'fal-key',
+      prompt: 'recover status',
+    }, { client, fetchImpl, pollIntervalMs: 0, maxAttempts: 2 })
+
+    expect(result.success).toBe(true)
+    expect(client.queue.status).toHaveBeenCalledTimes(2)
+    expect(client.queue.result).toHaveBeenCalledTimes(1)
+  })
+
+  it('K4: transient result failure consumes one attempt and polling then completes', async () => {
+    const client = makeClient({
+      status: vi.fn().mockResolvedValue({ status: 'COMPLETED', request_id: 'img-req' }),
+      result: vi.fn()
+        .mockRejectedValueOnce(new TypeError('network connection reset'))
+        .mockResolvedValueOnce({
+          data: { images: [{ url: 'https://fal.media/recovered.png', content_type: 'image/png' }] },
+        }),
+    })
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      Uint8Array.from([102, 97, 108]),
+      { status: 200, headers: { 'content-type': 'image/png' } },
+    ))
+
+    const result = await generateImage({
+      apiKey: 'fal-key',
+      prompt: 'recover result',
+    }, { client, fetchImpl, pollIntervalMs: 0, maxAttempts: 2 })
+
+    expect(result.success).toBe(true)
+    expect(client.queue.status).toHaveBeenCalledTimes(2)
+    expect(client.queue.result).toHaveBeenCalledTimes(2)
+  })
+
+  it('K4: non-transient polling failure returns immediately without retry', async () => {
+    const error = Object.assign(new Error('Endpoint entitlement forbidden'), { status: 403 })
+    const client = makeClient({ status: vi.fn().mockRejectedValue(error) })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      prompt: 'do not retry',
+    }, { client, pollIntervalMs: 0, maxAttempts: 5 })).resolves.toEqual({
+      success: false,
+      error: 'Endpoint entitlement forbidden',
+      errorKind: 'forbidden',
+    })
+    expect(client.queue.status).toHaveBeenCalledTimes(1)
+    expect(client.queue.result).not.toHaveBeenCalled()
   })
 
   it('AbortSignal stops polling immediately and is forwarded to queue calls', async () => {

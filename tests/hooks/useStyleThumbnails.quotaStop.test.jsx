@@ -17,7 +17,7 @@ vi.mock('../../src/components/Toast', () => ({
 }))
 
 vi.mock('../../src/config/defaults', () => ({
-  STYLE_PRESETS: { styles: [] },
+  STYLE_PRESETS: { styles: [{ id: 'p1', prompt_en: 'preset one' }] },
 }))
 
 import { useStyleThumbnails } from '../../src/hooks/useStyleThumbnails'
@@ -35,12 +35,13 @@ afterEach(() => {
 })
 
 describe('useStyleThumbnails — custom-loop quota stop', () => {
-  it('custom 루프 첫 ref 가 quota 면 stopped toast 노출, success toast 미노출', async () => {
+  it('K3: custom result errorKind quota stops on non-matching error text', async () => {
     // generateImage 이 항상 quota 에러 반환.
     const genAPI = {
       generateImage: vi.fn().mockResolvedValue({
         success: false,
-        error: 'Resource has been exhausted (e.g. check quota).',
+        error: 'Too Many Requests',
+        errorKind: 'quota',
       }),
     }
 
@@ -63,5 +64,40 @@ describe('useStyleThumbnails — custom-loop quota stop', () => {
 
     // generated=0 이라 success toast 는 안 떠야 함.
     expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('K3: preset result errorKind quota stops on non-matching error text', async () => {
+    const generateImage = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'Too Many Requests',
+      errorKind: 'quota',
+    })
+    const { result } = renderHook(() => useStyleThumbnails({ generateImage }))
+
+    await act(async () => {
+      await result.current.generateThumbnails(['p1'], [], (k) => k)
+    })
+
+    expect(generateImage).toHaveBeenCalledTimes(1)
+    expect(toastInfo).toHaveBeenCalledWith('reference.thumbnailStopped')
+  })
+
+  it('K3: result errorKind other overrides quota-looking text', async () => {
+    const generateImage = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'Resource has been exhausted (e.g. check quota).',
+      errorKind: 'other',
+    })
+    const { result } = renderHook(() => useStyleThumbnails({ generateImage }))
+
+    await act(async () => {
+      await result.current.generateThumbnails([], [
+        { id: 'c1', name: 'custom1', prompt: 'a', type: 'style' },
+        { id: 'c2', name: 'custom2', prompt: 'b', type: 'style' },
+      ], (k) => k)
+    })
+
+    expect(generateImage).toHaveBeenCalledTimes(2)
+    expect(toastInfo).not.toHaveBeenCalledWith('reference.thumbnailStopped')
   })
 })

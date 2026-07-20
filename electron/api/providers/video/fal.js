@@ -1,11 +1,13 @@
 /** fal.ai video adapter — SDK submit/status/result plus signed-CDN download. */
 import {
+  classifyFalError,
   configureFalClient,
   downloadPolicy,
   falFailure,
   fetchFalAsset,
   isFalCompletedStatus,
   isFalPendingStatus,
+  isValidFalEndpointId,
   validateKey,
   withAbortSignal,
 } from '../falClient.js'
@@ -60,6 +62,9 @@ export async function submitVideo(
   }
 
   const selectedModel = model || DEFAULT_FAL_VIDEO_MODEL
+  if (!isValidFalEndpointId(selectedModel)) {
+    return invalidInput('Invalid fal endpoint ID', 'invalid-config')
+  }
   const selectedDuration = durationForFal(durationSeconds)
   // PROVISIONAL — whitelist and input field names require the M4 real-key smoke.
   const input = {
@@ -104,40 +109,52 @@ export async function checkVideo(
   if (!modelId || !requestId) {
     return { success: false, done: false, error: 'Invalid fal operation handle', errorKind: 'invalid-input' }
   }
+  if (!isValidFalEndpointId(modelId)) {
+    return { success: false, done: false, error: 'Invalid fal endpoint ID', errorKind: 'invalid-config' }
+  }
 
   let completed = false
   try {
     const sdk = configureFalClient(apiKey, client)
-    const status = await sdk.queue.status(
-      modelId,
-      withAbortSignal({ requestId }, signal),
-    )
-    if (isFalPendingStatus(status?.status)) return { success: true, done: false }
-    if (!isFalCompletedStatus(status?.status)) {
-      return {
-        success: false,
-        done: false,
-        error: `Unknown fal queue status: ${status?.status || '(missing)'}`,
-        errorKind: 'other',
-      }
-    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const status = await sdk.queue.status(
+          modelId,
+          withAbortSignal({ requestId }, signal),
+        )
+        if (isFalPendingStatus(status?.status)) return { success: true, done: false }
+        if (!isFalCompletedStatus(status?.status)) {
+          return {
+            success: false,
+            done: false,
+            error: `Unknown fal queue status: ${status?.status || '(missing)'}`,
+            errorKind: 'other',
+          }
+        }
 
-    completed = true
-    // Status metadata is not the output. result() is required after COMPLETED.
-    const result = await sdk.queue.result(
-      modelId,
-      withAbortSignal({ requestId }, signal),
-    )
-    const videoUri = videoUrlFromResult(result)
-    if (!videoUri) {
-      return {
-        success: false,
-        done: true,
-        error: 'Video URL not found in fal result',
-        errorKind: 'other',
+        completed = true
+        // Status metadata is not the output. result() is required after COMPLETED.
+        const result = await sdk.queue.result(
+          modelId,
+          withAbortSignal({ requestId }, signal),
+        )
+        const videoUri = videoUrlFromResult(result)
+        if (!videoUri) {
+          return {
+            success: false,
+            done: true,
+            error: 'Video URL not found in fal result',
+            errorKind: 'other',
+          }
+        }
+        return { success: true, done: true, videoUri }
+      } catch (error) {
+        if (attempt === 0 && error?.name !== 'AbortError' && classifyFalError(error) === 'transient') {
+          continue
+        }
+        return falFailure(error, { done: completed })
       }
     }
-    return { success: true, done: true, videoUri }
   } catch (error) {
     return falFailure(error, { done: completed })
   }

@@ -92,13 +92,14 @@ afterEach(() => {
 })
 
 describe('useAutomation quota-exhausted stop', () => {
-  it('submit-path quota error → batch stops, no further submits, modal shown once', async () => {
+  it('K3: submit result errorKind quota stops on non-matching error text', async () => {
     const { hook, submitGeneration, updateScene } = setupHook()
 
-    // First submit returns Flow quota error — should stop batch immediately.
+    // fal classifies this opaque text as quota; the string alone is not a quota signal.
     submitGeneration.mockResolvedValueOnce({
       success: false,
-      error: 'Resource has been exhausted (e.g. check quota).',
+      error: 'Too Many Requests',
+      errorKind: 'quota',
     })
 
     let startPromise
@@ -114,13 +115,13 @@ describe('useAutomation quota-exhausted stop', () => {
     expect(showMock).toHaveBeenCalledTimes(1)
     // s1 marked as error with the quota error string.
     const s1Error = updateScene.mock.calls.find(
-      ([id, upd]) => id === 's1' && upd?.status === 'error' && /exhausted/i.test(upd?.error || '')
+      ([id, upd]) => id === 's1' && upd?.status === 'error' && upd?.error === 'Too Many Requests'
     )
     expect(s1Error).toBeTruthy()
     expect(hook.result.current.isRunning).toBe(false)
   })
 
-  it('collect-path quota error → scene marked error, modal shown, no further submits', async () => {
+  it('K3: collect result errorKind quota stops on non-matching error text', async () => {
     const { hook, submitGeneration, checkGeneration, collectGeneration, updateScene } = setupHook({
       scenes: [
         { id: 's1', prompt: 'a', status: 'pending' },
@@ -134,7 +135,8 @@ describe('useAutomation quota-exhausted stop', () => {
     checkGeneration.mockResolvedValue({ completed: true })
     collectGeneration.mockResolvedValue({
       success: false,
-      error: 'Resource has been exhausted (e.g. check quota).',
+      error: 'Too Many Requests',
+      errorKind: 'quota',
     })
 
     let startPromise
@@ -152,9 +154,28 @@ describe('useAutomation quota-exhausted stop', () => {
     expect(showMock).toHaveBeenCalledTimes(1)
     // s1 marked error with quota error string (via collect path, not finalize).
     const quotaMark = updateScene.mock.calls.find(
-      ([id, upd]) => id === 's1' && upd?.status === 'error' && /exhausted/i.test(upd?.error || '')
+      ([id, upd]) => id === 's1' && upd?.status === 'error' && upd?.error === 'Too Many Requests'
     )
     expect(quotaMark).toBeTruthy()
     expect(hook.result.current.isRunning).toBe(false)
+  })
+
+  it('K3: submit result errorKind other overrides quota-looking text', async () => {
+    const submitGeneration = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'Resource has been exhausted (e.g. check quota).',
+      errorKind: 'other',
+    })
+    const { hook } = setupHook({ genAPI: { submitGeneration } })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'folder' })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    expect(submitGeneration).toHaveBeenCalledTimes(3)
+    expect(showMock).not.toHaveBeenCalled()
   })
 })
