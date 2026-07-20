@@ -1,7 +1,7 @@
-# Story 오디오 API 키 게이트 + 설정 키 통합 — 설계 (v2)
+# Story 오디오 API 키 게이트 + 설정 키 통합 — 설계 (v4, 최종)
 
 작성: 2026-07-20 / 대상 repo: AutoFlowCut (AutoCraft Studio, Electron)
-개정: v2 — Codex(gpt-5.6-sol) + Fable 5 교차검증으로 v1 핵심 가정 4개가 틀린 것을 실측 확인 후 재설계. 대응 이력 §9.
+개정: Codex(gpt-5.6-sol) + Fable 5 교차검증 4라운드로 v1 핵심 가정 4개 오류 + 후속 findings를 실측 확인·반영. 두 리뷰어 findings 0 수렴(R4에서 Codex auth-범위 1건 반영, Fable 0). 대응 이력 §9.
 
 ## 1. 배경 / 문제 (실측 정정 포함)
 
@@ -103,7 +103,8 @@ pre-flight/게이트/VoicePicker는 storyProvider를 이 테이블로 keyId에 �
 
 ### 4.8 errorKind 일원화 (런타임 안전망)
 
-- 키 해석/인증 실패를 표준 에러로: `MissingProviderKeyError(provider)`(errorKind `story-audio-no-tts-key`) + `ProviderAuthError(provider)`(errorKind `story-audio-tts-auth`, 401/403).
+- 키 해석/인증 실패를 표준 에러로: `MissingProviderKeyError(provider)`(errorKind `story-audio-no-tts-key`) + `ProviderAuthError(provider)`(errorKind `story-audio-tts-auth`).
+- **auth 판정은 provider별 신호로**(401/403만 아님): Typecast/ElevenLabs는 HTTP 401/403, **Google 계열(Gemini TTS·GoogleTTS)은 무효 키에 `400 INVALID_ARGUMENT` + `ErrorInfo.reason === 'API_KEY_INVALID'`** 를 반환한다([gemini.js:102](../../electron/api/tts/gemini.js#L102), [googletts.js:78](../../electron/api/tts/googletts.js#L78)) — 이것도 `ProviderAuthError`로 매핑(모든 400이 아니라 reason 기준). 안 그러면 키 존재 pre-flight를 통과한 무효 Gemini 키가 raw 영어로 샌다.
 - **2계층 키 계약(throw 경계 = synthesize/generate, listVoices 아님)**: loader들(`getTypecastKey`/`readCredentialsKey`/`genaiKeyStore.getKey`)은 **null만 반환**하도록 통일(§4.9 정합 — typecast의 현재 throw [typecastKey.js:17](../../electron/api/tts/typecastKey.js#L17)도 null로). 그 위에 두 진입점:
   - `resolveKey(provider) → { key|null, source }` — **nullable**. `listVoices()`/시드 폴백이 쓴다. **여기서 throw하면 안 된다** — elevenlabs/googletts `listVoices`는 키 없으면 시드 목록을 반환해야 하는데([elevenlabs.js:99-136](../../electron/api/tts/elevenlabs.js#L99), [googletts.js:53](../../electron/api/tts/googletts.js#L53)) main이 예외를 `[]`로 접어([main.js:262](../../electron/main.js#L262)) **키리스 목록(F6/R3)이 후퇴**한다.
   - `requireKey(provider) → string (throw)` — 키 없으면 `MissingProviderKeyError`. **synthesize/generate 진입점**(4 TTS 어댑터 + SFX 어댑터)에서만 호출. loader/adapter 이중 throw는 제거하되 throw 자체는 이 경계에 유지.
@@ -114,7 +115,7 @@ pre-flight/게이트/VoicePicker는 storyProvider를 이 테이블로 keyId에 �
 
 ### 4.9 dev 스위치
 
-`AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1`이면 `getTypecastKey`/`readCredentialsKey`의 env·credentials 폴백을 무시하고 store만 본다. **§4.1 preflight resolver도 같은 스위치를 타야** 게이트와 런타임이 계속 일치. `getTypecastKey`(throw)와 `readCredentialsKey`(null) 비대칭은 스위치 on일 때 **둘 다 "없음"(null/false)** 으로 계약 통일.
+`AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1`이면 `getTypecastKey`/`readCredentialsKey`의 env·credentials 폴백을 무시하고 store만 본다. 스위치는 **폴백 무시만** 담당한다. loader의 null 계약 통일(typecast throw→null 포함)은 스위치와 무관하게 §4.8이 상시 적용한다. `resolveKey`가 이 loader들을 쓰므로 게이트(preflight)와 런타임이 자동으로 같은 스위치를 공유한다.
 
 ### 4.10 상태 3분류
 
@@ -155,7 +156,7 @@ mock만으로 넘기지 않고 다음 조합을 커버:
 - `story:audio-preflight` IPC(main) — 주입된 `resolveKey`로 판정(`{key,source}`→missing/resolved-store/resolved-fallback), dev 스위치 연동, per-provider status 반환.
 - `runAudioWithPreflight`(renderer) — 진입점 통합 + main `start('audio')` 재검사(running 마킹 전 `{error}` 반환).
 - `ApiKeyField`(presentational) + `GenaiApiKeyField`/`TtsApiKeyField` wrapper — 설정/게이트/미리듣기 공용.
-- errorKind 표준화(canonical resolver 일원화 + SFX 어댑터 + 로케일/errorDisplay + preview IPC 객체 반환).
+- errorKind 표준화(2계층 `requireKey` throw 경계 + SFX 어댑터 + Google 400 `API_KEY_INVALID` auth 매핑 + 로케일/errorDisplay + preview IPC 객체 반환).
 - keyStoreMulti genai 하드닝(split-brain 제거).
 - voices refetch(provider slice **replace**) — 저장 wrapper 공유 App-level reload.
 
@@ -196,3 +197,8 @@ v1의 확정 결함(둘 다 실측 지적, 필자 직접 코드 대조 확인):
 - **집계 보존**: typed(key/auth) > generic 우선 + `{errorKind,provider,message}` → §4.8.
 - 오타/드리프트 정정(typecastKey, sfx/elevenlabs 라인).
 - R1~R7 클로즈 확인됨(두 리뷰어 판정표 일치).
+
+### v5 반영 (R4 라운드 — 수렴)
+- **auth 범위**(Codex): Google 계열 무효키는 401/403이 아니라 `400 API_KEY_INVALID` → §4.8 reason 기준 `ProviderAuthError` 매핑([gemini.js:102](../../electron/api/tts/gemini.js#L102), [googletts.js:78](../../electron/api/tts/googletts.js#L78)).
+- 문구 정리(Fable nit): §4.9 dev 스위치=폴백무시만/null계약은 §4.8 상시, §8 2계층 용어 통일, 헤더 v4.
+- R4에서 Fable findings 0, N1~N3 + source/aggregate 전부 클로즈 확인. 스코프 내 리뷰 루프 종료(findings 0 수렴).
