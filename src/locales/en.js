@@ -263,6 +263,7 @@ export default {
       runAria: '{target} Review',
       run: 'Review',
       stopped: 'Review stopped',
+      progress: 'Review {round}/{of}',
       revising: 'Revising {round}/{of}',
       reviewing: 'Reviewing {round}/{of}',
     },

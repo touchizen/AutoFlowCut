@@ -366,6 +366,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     if (target === 'script') send('story:progress', { kind: 'script-review', ...payload }, operationId)
   }
 
+  function createReviewThinkingReporter(target, round, of, operationId) {
+    let lastEmitAt = -Infinity
+    return () => {
+      const now = Date.now()
+      if (now - lastEmitAt < 1000) return
+      lastEmitAt = now
+      sendReviewProgress(target, { round, of, phase: 'reviewing', thinking: true }, operationId)
+    }
+  }
+
   function sendStepLog(step, phase, message, operationId, extra = {}) {
     send('story:progress', {
       kind: 'step-log',
@@ -631,7 +641,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     try {
       for (let round = 1; round <= rounds; round++) {
         sendReviewProgress('scenes', { round, of: rounds, phase: 'reviewing' }, opId)
-        const { verdict, critique } = await llm.reviewScenes(scriptMd, currentScenes, currentSpeakers, reviewOpts, { signal })
+        const onThinkingActivity = createReviewThinkingReporter('scenes', round, rounds, opId)
+        const { verdict, critique } = await llm.reviewScenes(scriptMd, currentScenes, currentSpeakers, reviewOpts, { signal, onThinkingActivity })
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
         if (verdict !== 'revise' || !critique?.trim()) break
         sendReviewProgress('scenes', { round, of: rounds, phase: 'revising' }, opId)
@@ -669,7 +680,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     try {
       for (let round = 1; round <= rounds; round++) {
         sendReviewProgress('prompts', { round, of: rounds, phase: 'reviewing' }, opId)
-        const { verdict, critique } = await llm.reviewPrompts(currentScenes, context, reviewOpts, { signal })
+        const onThinkingActivity = createReviewThinkingReporter('prompts', round, rounds, opId)
+        const { verdict, critique } = await llm.reviewPrompts(currentScenes, context, reviewOpts, { signal, onThinkingActivity })
         if (signal?.aborted) return { scenes: currentScenes, changed }
         if (verdict !== 'revise' || !critique?.trim()) break
         sendReviewProgress('prompts', { round, of: rounds, phase: 'revising' }, opId)

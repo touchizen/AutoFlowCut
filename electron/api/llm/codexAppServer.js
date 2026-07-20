@@ -145,6 +145,7 @@ export function __getCodexUsageSinkForTest() { return codexUsageSink }
 async function runCodexTurn(prompt, opts = {}, {
   outputSchema,
   onDelta,
+  onThinkingActivity,
   onUsage,
   signal,
   spawnImpl,
@@ -208,7 +209,12 @@ async function runCodexTurn(prompt, opts = {}, {
         try {
           const { method, params } = message
           handleUsageNotification(method, params, usageSink)
-          if (method === 'item/agentMessage/delta') {
+          if ((method === 'item/started' && params?.item?.type === 'reasoning')
+            || method === 'item/reasoning/summaryPartAdded'
+            || method === 'item/reasoning/summaryTextDelta'
+            || method === 'item/reasoning/textDelta') {
+            onThinkingActivity?.()
+          } else if (method === 'item/agentMessage/delta') {
             if (!params?.delta) return
             const id = params.itemId ?? ANONYMOUS
             touch(id)

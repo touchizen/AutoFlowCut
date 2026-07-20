@@ -167,9 +167,9 @@ export async function reviseSynopsis(synopsisMd, characters = [], critique, opts
   return splitSynopsisOutput(text)
 }
 
-export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, runJson = runCodexJson, onThinkingActivity } = {}) {
   const prompt = guardPrompt(buildScenesReviewPrompt(scriptMd, scenes, speakers, opts))
-  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal })
+  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal, onThinkingActivity })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
   return { verdict, critique: out.critique || '' }
 }
@@ -189,9 +189,9 @@ export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = 
   return { scenes: revisedScenes, speakers: out.speakers || [] }
 }
 
-export async function reviewPrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson } = {}) {
+export async function reviewPrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson, onThinkingActivity } = {}) {
   const prompt = guardPrompt(buildPromptsReviewPrompt(scenes, context, opts))
-  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal })
+  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal, onThinkingActivity })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
   return { verdict, critique: out.critique || '' }
 }

@@ -474,9 +474,9 @@ export async function reviseSynopsis(synopsisMd, characters = [], critique, opts
   } finally { cleanup() }
 }
 
-export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, queryImpl } = {}) {
+export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, queryImpl, onThinkingActivity } = {}) {
   const prompt = buildScenesReviewPrompt(scriptMd, scenes, speakers, opts)
-  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl, onThinkingActivity })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
   return { verdict, critique: out.critique || '' }
 }
@@ -496,9 +496,9 @@ export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = 
   return { scenes: revisedScenes, speakers: out.speakers || [] }
 }
 
-export async function reviewPrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
+export async function reviewPrompts(scenes, context, opts = {}, { signal, queryImpl, onThinkingActivity } = {}) {
   const prompt = buildPromptsReviewPrompt(scenes, context, opts)
-  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl, onThinkingActivity })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
   return { verdict, critique: out.critique || '' }
 }

@@ -253,7 +253,7 @@ function StreamingTableViewport({ active, step, containerRef, onScroll, children
 }
 
 // ghost table의 자체 스크롤 바깥에 둔다. 내부 행이 auto-scroll돼도 진행률은 패널 상단에 남는다.
-function StreamingProgressBar({ label, valueText, value = null }) {
+function StreamingProgressBar({ label, valueText, value = null, thinking = false, thinkingText = '' }) {
   const indeterminate = value == null
   return (
     <div
@@ -272,6 +272,11 @@ function StreamingProgressBar({ label, valueText, value = null }) {
           style={indeterminate ? undefined : { width: `${value}%` }}
         />
       </span>
+      {thinking && (
+        <div className="story-thinking-badge" role="status">
+          {thinkingText}
+        </div>
+      )}
     </div>
   )
 }
@@ -394,7 +399,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewScenes = {}, sceneThinking = false, scenesRevising = false, previewPrompts = {}, promptThinking = false, promptsRevising = false, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewScenes = {}, sceneThinking = false, scenesRevising = false, previewPrompts = {}, promptThinking = false, promptsRevising = false, reviewProgress = null, reviewThinking = false, reviewScores = null, progressLog = [], usage = null,
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
@@ -403,8 +408,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const steps = state?.steps || {}
   const scenesStreaming = steps.scenes?.status === 'running' && steps.scenes?.reviewOnly !== true
   const promptsStreaming = steps.prompts?.status === 'running' && steps.prompts?.reviewOnly !== true
-  const scenesPreviewActive = scenesStreaming || scenesRevising
-  const promptsPreviewActive = promptsStreaming || promptsRevising
+  const reviewActiveFor = (step) => (
+    steps[step]?.status === 'running'
+    && reviewProgress?.target === step
+    && (reviewProgress.phase === 'reviewing' || reviewProgress.phase === 'revising')
+  )
+  const scenesReviewing = reviewActiveFor('scenes') && reviewProgress.phase === 'reviewing'
+  const promptsReviewing = reviewActiveFor('prompts') && reviewProgress.phase === 'reviewing'
+  const scenesReviewRevising = reviewActiveFor('scenes') && reviewProgress.phase === 'revising'
+  const promptsReviewRevising = reviewActiveFor('prompts') && reviewProgress.phase === 'revising'
+  const scenesPreviewActive = scenesStreaming || (steps.scenes?.status === 'running' && scenesRevising)
+  const promptsPreviewActive = promptsStreaming || (steps.prompts?.status === 'running' && promptsRevising)
   const orderedPreviewScenes = Object.values(previewScenes)
     .filter((item) => item?.scene && Number.isInteger(item.chunkIndex) && Number.isInteger(item.localSceneNo))
     .sort((a, b) => a.chunkIndex - b.chunkIndex || a.localSceneNo - b.localSceneNo)
@@ -468,6 +482,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     count: promptPreviewCount,
     total: scenes.length,
   })
+  const reviewTopProgress = reviewProgress
+    ? t('story.review.progress', '검수 {round}/{of}', { round: reviewProgress.round, of: reviewProgress.of })
+    : ''
+  const thinkingText = t('story.stream.thinking', '🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)')
 
   // 재설계 §1 — script 스텝 2-phase. 재오픈 복원 시 scriptText가 있으면 바로 대본 작업
   // 화면(editor). setup→editor 승격은 명시 트리거(시작/붙여넣기 시작/스텝퍼 script 클릭)에서만.
@@ -1956,11 +1974,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
-            {scenesPreviewActive && (
+            {(scenesPreviewActive || scenesReviewing || scenesReviewRevising) && (
               <StreamingProgressBar
-                label={scenesRevising ? sceneRevisionProgress : t('story.scenes.running', '씬 분리 진행 중')}
-                valueText={scenesRevising ? sceneRevisionProgress : sceneStreamProgress}
-                value={scenesRevising ? sceneRevisionPercent : sceneStreamPercent}
+                label={scenesReviewing ? reviewTopProgress : (scenesRevising || scenesReviewRevising) ? sceneRevisionProgress : t('story.scenes.running', '씬 분리 진행 중')}
+                valueText={scenesReviewing ? reviewTopProgress : (scenesRevising || scenesReviewRevising) ? sceneRevisionProgress : sceneStreamProgress}
+                value={scenesReviewing ? null : (scenesRevising || scenesReviewRevising) ? sceneRevisionPercent : sceneStreamPercent}
+                thinking={scenesReviewing && reviewThinking}
+                thinkingText={thinkingText}
               />
             )}
             {/* 생성 중에도 테이블을 유지하고 streamed scene을 표시 전용 ghost 행으로 보여준다. */}
@@ -2376,11 +2396,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
-            {promptsPreviewActive && (
+            {(promptsPreviewActive || promptsReviewing || promptsReviewRevising) && (
               <StreamingProgressBar
-                label={promptsRevising ? promptRevisionProgress : t('story.prompts.running', '프롬프트 생성 중')}
-                valueText={promptsRevising ? promptRevisionProgress : promptStreamProgress}
-                value={promptStreamPercent}
+                label={promptsReviewing ? reviewTopProgress : (promptsRevising || promptsReviewRevising) ? promptRevisionProgress : t('story.prompts.running', '프롬프트 생성 중')}
+                valueText={promptsReviewing ? reviewTopProgress : (promptsRevising || promptsReviewRevising) ? promptRevisionProgress : promptStreamProgress}
+                value={promptsReviewing ? null : promptStreamPercent}
+                thinking={promptsReviewing && reviewThinking}
+                thinkingText={thinkingText}
               />
             )}
             {/* 생성 중에도 splitScenes가 만든 정식 행은 유지하고, 값만 표시 전용 ghost로 덧칠한다. */}

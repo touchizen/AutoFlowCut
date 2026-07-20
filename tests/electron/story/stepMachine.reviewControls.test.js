@@ -50,6 +50,54 @@ describe('stepMachine review controls', () => {
   let dir
   beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'sm-review-controls-')) })
 
+  it.each(['scenes', 'prompts'])('%s critique thinking은 leading emit 후 1초 간격으로 review progress에 실린다', async (target) => {
+    const fireThinking = async (ctx) => {
+      ctx.onThinkingActivity?.()
+      ctx.onThinkingActivity?.()
+      vi.advanceTimersByTime(999)
+      ctx.onThinkingActivity?.()
+      vi.advanceTimersByTime(1)
+      ctx.onThinkingActivity?.()
+      return { verdict: 'pass', critique: '' }
+    }
+    const llm = baseLlm(target === 'scenes'
+      ? { reviewScenes: vi.fn(async (_script, _scenes, _speakers, _opts, ctx) => fireThinking(ctx)) }
+      : { reviewPrompts: vi.fn(async (_scenes, _context, _opts, ctx) => fireThinking(ctx)) })
+    const { machine, emitted } = makeMachine(dir, llm)
+    await runToPrompts(machine)
+    emitted.length = 0
+
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-20T00:00:00.000Z'))
+    try {
+      const { operationId } = await machine.start(target, {
+        reviewOnly: true,
+        review: { [target]: { enabled: true, rounds: 1 } },
+      })
+      const events = emitted.filter((event) => (
+        event.ch === 'story:progress'
+        && event.payload.kind === 'review'
+        && event.payload.target === target
+      ))
+
+      expect(events.map((event) => {
+        const { projectToken, operationId: eventOp, usage, target: eventTarget, kind, ...progress } = event.payload
+        expect(projectToken).toBeTruthy()
+        expect(eventOp).toBe(operationId)
+        expect(usage).toBeTruthy()
+        expect(eventTarget).toBe(target)
+        expect(kind).toBe('review')
+        return progress
+      })).toEqual([
+        { round: 1, of: 1, phase: 'reviewing' },
+        { round: 1, of: 1, phase: 'reviewing', thinking: true },
+        { round: 1, of: 1, phase: 'reviewing', thinking: true },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('manual script review pass는 downstream 상태를 reset하지 않는다', async () => {
     const llm = baseLlm({ reviewScript: vi.fn(async () => ({ verdict: 'pass', critique: '' })) })
     const { machine } = makeMachine(dir, llm)

@@ -3,6 +3,11 @@ import en from '../../src/locales/en'
 import ko from '../../src/locales/ko'
 
 describe('story.stream revise locale keys', () => {
+  it('review progress exists in the real ko/en story.review block', () => {
+    expect(ko.story?.review?.progress).toBe('검수 {round}/{of}')
+    expect(en.story?.review?.progress).toBe('Review {round}/{of}')
+  })
+
   it.each(['sceneRevisionProgress', 'promptRevisionProgress'])('%s exists in the real ko/en story.stream block', (key) => {
     expect(typeof ko.story?.stream?.[key]).toBe('string')
     expect(typeof en.story?.stream?.[key]).toBe('string')

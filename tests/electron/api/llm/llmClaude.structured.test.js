@@ -363,6 +363,32 @@ describe('llmClaude.reviseScript (M3)', () => {
 })
 
 describe('llmClaude scenes/prompts review controls', () => {
+  it.each([
+    ['reviewScenes', (ctx) => reviewScenes('SCRIPT', SCENES.scenes, SCENES.speakers, {}, ctx)],
+    ['reviewPrompts', (ctx) => reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, {}, ctx)],
+  ])('%s는 structured thinking event를 onThinkingActivity로 알린다', async (_name, review) => {
+    const onThinkingActivity = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } }
+    }
+
+    await review({ queryImpl, onThinkingActivity })
+
+    expect(onThinkingActivity).toHaveBeenCalledTimes(2)
+  })
+
+  it('review callback을 생략해도 thinking event가 기존 결과를 바꾸지 않는다', async () => {
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'redacted_thinking', data: 'x' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } }
+    }
+
+    await expect(reviewScenes('SCRIPT', SCENES.scenes, SCENES.speakers, {}, { queryImpl }))
+      .resolves.toEqual({ verdict: 'pass', critique: '' })
+  })
+
   it('reviewScenes는 verdict/critique를 반환한다', async () => {
     const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'revise', critique: '씬 2가 너무 김' } })
     const out = await reviewScenes('SCRIPT', SCENES.scenes, SCENES.speakers, {}, { queryImpl })

@@ -187,6 +187,21 @@ describe('llmCodex adapter', () => {
     expect(runJson.mock.calls[1][2]).toEqual({ model: 'gpt-5.5', reasoningEffort: 'high' })
   })
 
+  it.each([
+    ['reviewScenes', (ctx) => reviewScenes('SCRIPT', [{ sceneNo: 1, segments: [] }], [], OPTS, ctx)],
+    ['reviewPrompts', (ctx) => reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, OPTS, ctx)],
+  ])('%s는 Codex runner의 reasoning activity를 onThinkingActivity로 전달한다', async (_name, review) => {
+    const onThinkingActivity = vi.fn()
+    const runJson = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+      ctx.onThinkingActivity?.()
+      return { verdict: 'pass', critique: '' }
+    })
+
+    await review({ runJson, onThinkingActivity })
+
+    expect(onThinkingActivity).toHaveBeenCalledTimes(1)
+  })
+
   it('reviseScenes/revisePrompts는 수정 JSON을 검증하고 병합한다', async () => {
     const scenesPayload = {
       scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'narrator', text: '안녕', emotion: 'normal' }] }],

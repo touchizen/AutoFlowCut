@@ -263,6 +263,7 @@ export default {
       runAria: '{target} 검수',
       run: '검수',
       stopped: '검토 중단',
+      progress: '검수 {round}/{of}',
       revising: '수정 중 {round}/{of}',
       reviewing: '검토 중 {round}/{of}',
     },

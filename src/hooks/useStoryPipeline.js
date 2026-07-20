@@ -46,6 +46,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   const [promptsRevising, setPromptsRevising] = useState(false)
   // M3: 대본 검토 루프 진행 — { operationId, round, of, phase:'reviewing'|'revising'|'error', error? } | null.
   const [reviewProgress, setReviewProgress] = useState(null)
+  const [reviewThinking, setReviewThinking] = useState(false)
   // 검수 채점(몰입감) — { target, scores: number[] } | null. 라운드 순서대로 쌓아 첫→마지막 변화를
   // 보여준다. reviewProgress(검토/수정 단계)와 분리한다.
   const [reviewScores, setReviewScores] = useState(null)
@@ -95,6 +96,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   const promptActiveOpRef = useRef(null)
   // scene-delta도 prompt와 같은 이유로 별도 started gate를 쓴다.
   const sceneActiveOpRef = useRef(null)
+  const reviewActiveRef = useRef(null)
   // 시놉시스 side action(생성·검수) 공용 소유권 토큰. main이 synopsisController 하나로 둘을
   // 상호배제하므로 renderer도 같은 불변식을 갖는다. boolean으로는 부족하다 — 이 훅은 App에 살아
   // 프로젝트 전환에도 재마운트되지 않으므로(StoryView만 key로 remount), 전환 후 도착한 옛 호출의
@@ -148,6 +150,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     sceneActiveOpRef.current = null
     promptActiveOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
+    setReviewThinking(false)
+    reviewActiveRef.current = null
     setReviewScores(null)
     // 슬라이스4: synopsis 로컬 상태·전용 op도 함께 리셋(옛 프로젝트 시놉이 새 화면에 남지 않게).
     synopsisActiveOpRef.current = null
@@ -217,6 +221,11 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         if (p.projectToken !== tokenRef.current) return
         const anyRunning = p.state?.steps && Object.values(p.state.steps).some((s) => s?.status === 'running')
         if (anyRunning && p.operationId) activeOpRef.current = p.operationId
+        const activeReview = reviewActiveRef.current
+        if (!anyRunning || (activeReview && p.state?.steps?.[activeReview.target]?.status !== 'running')) {
+          setReviewThinking(false)
+          reviewActiveRef.current = null
+        }
         // scenes의 terminal state가 최종 진실 소스다. preview와 gate를 같이 폐기해 늦은 delta도 막는다.
         if (p.state?.steps?.scenes?.status !== 'running') {
           sceneActiveOpRef.current = null
@@ -362,6 +371,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         if (p.kind === 'review' && p.target === 'synopsis') {
           if (synopsisActiveOpRef.current && p.operationId !== synopsisActiveOpRef.current) return
           if (p.phase === 'scored') { collectScore(p, '시놉시스'); return }
+          reviewActiveRef.current = { operationId: p.operationId || null, target: 'synopsis' }
+          setReviewThinking(p.phase === 'reviewing' && p.thinking === true)
           setReviewProgress({ operationId: p.operationId, target: 'synopsis', round: p.round, of: p.of, phase: p.phase, error: p.error })
           const line = reviewLogLine(p, '시놉시스 검수')
           setProgressLog((logs) => [...logs, {
@@ -397,8 +408,12 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
           }
           if (p.kind === 'review' && p.target === 'scenes') setScenesRevising(p.phase === 'revising')
           if (p.kind === 'review' && p.target === 'prompts') setPromptsRevising(p.phase === 'revising')
-          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
           if (p.kind === 'review') {
+            reviewActiveRef.current = { operationId: p.operationId || null, target: p.target || 'script' }
+            setReviewThinking(p.phase === 'reviewing' && p.thinking === true)
+          }
+          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
+          if (p.kind === 'review' && !p.thinking) {
             const targetLabel = `${REVIEW_TARGET_LOG_LABEL[p.target] || '대본'} 검수`
             const line = reviewLogLine(p, targetLabel)
             setProgressLog((logs) => [...logs, {
@@ -483,6 +498,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setProgressLog([])
     activeOpRef.current = null
     setReviewProgress(null) // M3: 새 실행 시 검토 배지 초기화(이전 error 배지 포함)
+    setReviewThinking(false)
+    reviewActiveRef.current = null
     setReviewScores(null)
     setScenesRevising(false)
     setPromptsRevising(false)
@@ -591,7 +608,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, previewScenes: {}, sceneThinking: false, scenesRevising: false, previewPrompts: {}, promptThinking: false, promptsRevising: false, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, previewScenes: {}, sceneThinking: false, scenesRevising: false, previewPrompts: {}, promptThinking: false, promptsRevising: false, reviewProgress: null, reviewThinking: false, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, previewScenes, sceneThinking, scenesRevising, previewPrompts, promptThinking, promptsRevising, reviewProgress, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, previewScenes, sceneThinking, scenesRevising, previewPrompts, promptThinking, promptsRevising, reviewProgress, reviewThinking, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }
