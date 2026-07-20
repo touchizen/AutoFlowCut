@@ -1,0 +1,31 @@
+/**
+ * TtsApiKeyField — TTS provider(BYOK) 키 필드. useTtsKeys(provider) 를 고정 호출한다.
+ * Typecast/ElevenLabs/Google Cloud TTS는 검증 엔드포인트 통일이 없어 저장 전 검증은 생략.
+ */
+import { useState } from 'react'
+import { toast } from '../Toast'
+import { useTtsKeys } from '../../hooks/useTtsKeys'
+import ApiKeyField from './ApiKeyField'
+
+export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, t }) {
+  const { hasKey, encryptionAvailable, loading, saveKey, clearKey } = useTtsKeys(provider)
+  const [keyInput, setKeyInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const onSave = async () => {
+    const c = keyInput.trim()
+    if (!c) { toast.error(t('settings.ttsKeyEmpty')); return }
+    setBusy(true)
+    const res = await saveKey(c)
+    setBusy(false)
+    if (res?.success) { setKeyInput(''); toast.success(t('settings.ttsKeySaved')) }
+    else toast.error(t('settings.ttsKeySaveFailed', { error: res?.error || '' }))
+  }
+  const onRemove = async () => { setBusy(true); await clearKey(); setBusy(false); toast.success(t('settings.ttsKeyRemoved')) }
+  return (
+    <ApiKeyField
+      label={label} hasKey={hasKey} loading={loading} encryptionAvailable={encryptionAvailable}
+      busy={busy} keyInput={keyInput} onKeyInput={setKeyInput} onSave={onSave} onRemove={onRemove}
+      getKeyUrl={getKeyUrl} extraNote={extraNote} t={t}
+    />
+  )
+}
