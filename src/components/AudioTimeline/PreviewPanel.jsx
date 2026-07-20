@@ -116,11 +116,19 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   }, [srtRanges, playheadMs])
 
   const imgPath = scene?.imagePath || scene?.image_path || scene?.filePath
-  const imageSrc = normalizePreviewImageSrc(resolveImageSrc({
-    imagePath: imgPath,
-    image: scene?.image,
-    generatedAt: scene?.generatedAt,
-  }))
+  // export(resolveInputs)는 imagePath의 data:/raw base64도 1순위로 decode 한다 —
+  // resolveImageSrc는 파일 경로가 아니면 fallback(image)으로 넘어가므로, data-spec
+  // imagePath는 여기서 먼저 소비해 export와 같은 이미지를 보여준다.
+  const normalizedImgPath = typeof imgPath === 'string' ? normalizePreviewImageSrc(imgPath) : imgPath
+  const imgPathIsDataSpec = typeof imgPath === 'string'
+    && (imgPath.startsWith('data:') || normalizedImgPath !== imgPath)
+  const imageSrc = imgPathIsDataSpec
+    ? normalizedImgPath
+    : normalizePreviewImageSrc(resolveImageSrc({
+        imagePath: imgPath,
+        image: scene?.image,
+        generatedAt: scene?.generatedAt,
+      }))
   const subtitleText = srt?.text || ''
 
   const renderFormat = aspectRatioToRenderFormat(aspectRatio)

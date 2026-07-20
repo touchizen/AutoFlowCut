@@ -178,6 +178,13 @@ describe('normalizePreviewImageSrc', () => {
   })
 
   it.each([
+    [`R0lGO${'A'.repeat(80)}`, 'image/gif'],
+    [`UklGR${'A'.repeat(80)}`, 'image/webp'],
+  ])('raw GIF/WebP base64를 시그니처대로 정규화한다 (%s → %s)', (raw, mime) => {
+    expect(normalizePreviewImageSrc(raw)).toBe(`data:${mime};base64,${raw}`)
+  })
+
+  it.each([
     'data:image/png;base64,AAAA',
     'file:///tmp/image.png',
     'https://example.com/image.png',

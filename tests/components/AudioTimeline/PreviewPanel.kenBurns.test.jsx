@@ -252,6 +252,22 @@ describe('PreviewPanel image gate and persistent frame DOM', () => {
     expect(container.querySelector('.atl-preview-empty')).toBeNull()
   })
 
+  it('imagePath가 data URL이면 fallback image보다 우선한다 (export resolveInputs 우선순위 동일)', async () => {
+    const scene = {
+      id: 'data-path',
+      status: 'done',
+      imagePath: 'data:image/png;base64,PRIMARY0',
+      image: 'data:image/png;base64,FALLBACK',
+      startTime: 0,
+      endTime: 3,
+    }
+    const { container } = renderPreview({ scene, playheadMs: 1000 })
+    const img = container.querySelector('.atl-preview-img')
+
+    expect(img).toBeInTheDocument()
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,PRIMARY0')
+  })
+
   it('video와 자막은 frame 안, KB layer 밖에 있고 video가 KB layer 뒤에 렌더된다', () => {
     const scene = {
       ...DEFAULT_SCENE,

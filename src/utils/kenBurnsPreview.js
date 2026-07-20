@@ -1,3 +1,5 @@
+import { detectImageType } from './urls'
+
 export function kenBurnsPreviewStyle(kb, p) {
   const progress = Math.min(1, Math.max(0, p))
   const z = kb.startScale + (kb.endScale - kb.startScale) * progress
@@ -26,6 +28,8 @@ export function aspectRatioToRenderFormat(aspectRatio) {
   return aspectRatio === '9:16' ? 'portrait' : 'landscape'
 }
 
+const BASE64_EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
+
 export function normalizePreviewImageSrc(src) {
   if (typeof src !== 'string' || !src) return src
   if (/^(?:data:|file:|https?:|blob:)/i.test(src)) return src
@@ -33,6 +37,7 @@ export function normalizePreviewImageSrc(src) {
   const base64 = src.replace(/\s/g, '')
   if (base64.length <= 64 || !/^[A-Za-z0-9+/=]+$/.test(base64)) return src
 
-  const mime = base64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg'
+  // 시그니처 기반 감지는 공유 detectImageType 재사용 (jpg/png/gif/webp).
+  const mime = BASE64_EXT_MIME[detectImageType(base64)] || 'image/jpeg'
   return `data:${mime};base64,${base64}`
 }

@@ -1069,7 +1069,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     zoomWheelHint: 'Cmd/Ctrl + 휠',
     kenBurns: 'Ken Burns 효과',
     kenBurnsLabel: 'Ken Burns 효과',
-    kenBurnsDesc: '프리뷰 모니터에서 줌/패닝 애니메이션 미리보기 (내보내기 적용 여부는 Export 설정)',
+    kenBurnsDesc: '프리뷰 모니터에서 줌/패닝 애니메이션 미리보기. Export 설정의 Ken Burns가 켜져 있을 때만 표시됩니다 (내보내기 적용 여부는 Export 설정이 결정)',
   },
 
   // 기록

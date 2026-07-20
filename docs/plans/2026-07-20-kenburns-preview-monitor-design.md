@@ -71,7 +71,7 @@ export function useExportSettingsContext() {
   - `updateSetting`/`saveSettings`를 **순수 함수형** `setSettings(prev => ({ ...prev, ...newSettings }))` 로(같은-틱 clobber 제거, `useCallback([])` 안정화). **localStorage I/O는 updater 밖 effect로 분리**: `useEffect(() => { if (!isLoaded) return; try { localStorage.setItem(KEY, JSON.stringify(settings)) } catch {} }, [settings, isLoaded])`(초기 로드 전 저장 방지, 기존 try/catch 유지).
   - **`resetSettings` ↔ persist effect 상호작용**(Codex r4#3): reset이 key 제거 + `setSettings(DEFAULT)`면 effect가 곧바로 defaults를 다시 써 key를 복원 → 기존 reset 계약테스트(`useExportSettings.test.js:157`) 깨짐. → reset을 **"defaults persist"로 재정의**(key 제거 대신 defaults 저장, effect와 일관)하고 계약테스트를 그에 맞춤. (또는 1-pass 억제 ref — 재정의 쪽이 단순.)
 - **App**: 트리를 `<ExportSettingsProvider aspectRatio={settings.aspectRatio}>`로 감싼다(모니터·타임라인·ExportModal 포함).
-- **AudioTimeline**: `settings.kenBurns` / `updateSetting('kenBurns', !cur)` 체크박스(§8). (LiveTimeline/AudioPanel/StoryView **무변경**.)
+- **AudioTimeline**: `settings.kenBurnsPreview` / `updateSetting('kenBurnsPreview', !cur)` 체크박스(§8, v5). (LiveTimeline/AudioPanel/StoryView **무변경**.)
 - **PreviewPanel**: KB 파라미터 + `settings.scaleMode`/`settings.renderMode` + `aspectRatio`(Context에서) consume → 프레임(§5.1)·transform(§5).
 - **ExportModal**(핵심 배선 — Codex#1·#4, Fable#2·#7):
   - **Ken Burns(enabled/mode/scaleMin/scaleMax) + `scaleMode` + `renderMode`를 Context에 직접 바인딩**(로컬 useState 제거, `updateSetting` 즉시 반영). → 모달에서 이 값들 바꾸면 모니터 라이브 반영, 닫아도 유실 없음, **export가 프리뷰와 정확히 같은 값 사용**.
@@ -158,7 +158,7 @@ export는 zoompan **전에** `scaleTransform(scaleMode)`로 **출력 aspect 캔�
 
 ## 8. 체크박스 실토글 (AudioTimeline.jsx:1023-1039)
 
-- `onClick preventDefault + toast` 제거. `<input type="checkbox" checked={settings.kenBurns} onChange={() => updateSetting('kenBurns', !settings.kenBurns)}>` 제어 컴포넌트. `readOnly/tabIndex={-1}` 제거(포커스·접근성 복원).
+- `onClick preventDefault + toast` 제거. `<input type="checkbox" checked={settings.kenBurnsPreview} onChange={() => updateSetting('kenBurnsPreview', !settings.kenBurnsPreview)}> (v5)` 제어 컴포넌트. `readOnly/tabIndex={-1}` 제거(포커스·접근성 복원).
 - 툴팁 유지, 문구가 "내보내기 시점에만"이면 갱신. `kenBurnsToast` 키 및 참조 제거(dead).
 
 ## 9. 파일 · 함수
@@ -192,7 +192,7 @@ export는 zoompan **전에** `scaleTransform(scaleMode)`로 **출력 aspect 캔�
 - **base64-only 씬**: `scene.image`만 있는 exportable 씬 → `<img>` 렌더 + KB 적용(“씬 없음” 아님). data-URL·raw base64 둘 다 `onLoad`까지.
 - **비디오/자막 프레임 배치**(Codex r5#2): `<video>`·자막이 `.atl-preview-frame`의 자식이며 `.atl-preview-kb` 밖(DOM-parent assert). 이미지 숨김/비디오-only 씬에서도 프레임은 독립 마운트.
 - **dims stale**(Codex r5#1): `scene.image_size`가 실제와 다른 씬 → onLoad 후 실제 dims로 정정되는지.
-- **체크박스** `AudioTimeline.test.jsx`: 클릭 → `updateSetting('kenBurns',…)` 호출, `checked` 반영, toast 미발생.
+- **체크박스** `AudioTimeline.test.jsx`: 클릭 → `updateSetting('kenBurnsPreview',…)` 호출(v5), `checked` 반영, toast 미발생.
 - **PreviewPanel**: KB on + still image → **`.atl-preview-kb`** transform/transformOrigin(Codex r4#5 — `<img>` 아님). 비디오 씬 → 없음. off → 없음.
 - **ExportModal load-once(회귀)**: Context settings identity 변경(KB 토글)해도 미저장 로컬 필드(scaleMode 로컬이 없어졌으니 path/format 등) 리셋 안 됨(didInitRef 가드). KB/scaleMode/renderMode는 Context 값 반영.
 - **Context 동기화(통합)**: Provider 아래 체크박스 토글 → PreviewPanel transform 반영(단일 인스턴스 공유 증명). value memo로 불필요 리렌더 없음.
@@ -213,6 +213,6 @@ export는 zoompan **전에** `scaleTransform(scaleMode)`로 **출력 aspect 캔�
 ## 13. 구현 순서 (마일스톤 — 리뷰 단위)
 
 1. **M1 순수 로직**: `kenBurnsPreview.js`(`kenBurnsPreviewStyle`, `toKenBurnsRatios`) + `exportableScene.js` 추출 + 골든/뮤테이션/정합 테스트. (렌더 무관, 가장 안전.)
-2. **M2 배선**: `ExportSettingsContext` + `useExportSettings` saveSettings 함수형 + App Provider + ExportModal Context 바인딩·load-once + AudioTimeline 체크박스. (상태 단일화, 눈검증: 체크박스↔모달 동기화.)
+2. **M2 배선**: `ExportSettingsContext` + `useExportSettings` saveSettings 함수형 + App Provider + ExportModal Context 바인딩·load-once + AudioTimeline 체크박스. (상태 단일화. v5: 체크박스=kenBurnsPreview, 모달=kenBurns — 의도적으로 독립.)
 3. **M3 프리뷰 렌더**: PreviewPanel range/exportIndex/씬단위 비디오 + 프레임 wrapper + scaleMode 기저 배치(fill/fit/none) + transform 적용 + CSS. (눈검증: 줌/팬 + self-render 대조.)
 - 각 M 끝에 Codex+Fable 리뷰 findings 0.
