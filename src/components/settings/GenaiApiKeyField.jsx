@@ -7,7 +7,7 @@ import { toast } from '../Toast'
 import { useApiKey } from '../../hooks/useApiKey'
 import ApiKeyField from './ApiKeyField'
 
-export default function GenaiApiKeyField({ t }) {
+export default function GenaiApiKeyField({ t, onSaved }) {
   const { hasKey, encryptionAvailable, loading, validateKey, saveKey, clearKey } = useApiKey()
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -19,7 +19,7 @@ export default function GenaiApiKeyField({ t }) {
     if (!v?.valid) { setBusy(false); toast.error(t('settings.apiKeyInvalid', { error: v?.error || '' })); return }
     const res = await saveKey(c)
     setBusy(false)
-    if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')) }
+    if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')); onSaved?.() }
     else toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
   }
   const onRemove = async () => {

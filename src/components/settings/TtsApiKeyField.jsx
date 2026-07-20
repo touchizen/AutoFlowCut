@@ -7,7 +7,7 @@ import { toast } from '../Toast'
 import { useTtsKeys } from '../../hooks/useTtsKeys'
 import ApiKeyField from './ApiKeyField'
 
-export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, t }) {
+export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, t, onSaved }) {
   const { hasKey, encryptionAvailable, loading, saveKey, clearKey } = useTtsKeys(provider)
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -17,7 +17,7 @@ export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, 
     setBusy(true)
     const res = await saveKey(c)
     setBusy(false)
-    if (res?.success) { setKeyInput(''); toast.success(t('settings.ttsKeySaved')) }
+    if (res?.success) { setKeyInput(''); toast.success(t('settings.ttsKeySaved')); onSaved?.() }
     else toast.error(t('settings.ttsKeySaveFailed', { error: res?.error || '' }))
   }
   const onRemove = async () => {
