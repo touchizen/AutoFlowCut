@@ -254,24 +254,7 @@ describe('bundleSceneCSVRows', () => {
     ])
   })
 
-  it.each([
-    {
-      label: 'explicit empty',
-      provider: '',
-      expectedImage: { model: 'fal-ai/flux-pro/v1.1-ultra' },
-      expectedWarnings: [],
-      expectedCount: 3,
-    },
-    {
-      label: '__inherit__',
-      provider: '__inherit__',
-      expectedImage: null,
-      expectedWarnings: [],
-      expectedCount: 3,
-    },
-  ])('H1: sparse provider update handles $label without touching other stages', ({
-    provider, expectedImage, expectedWarnings, expectedCount,
-  }) => {
+  it('H1: sparse provider update handles __inherit__ without touching other stages', () => {
     const scene = bundleSceneCSVRows([{
       scene: '1', prompt: 'P',
       image_provider: 'fal', image_model: 'fal-ai/flux-pro/v1.1-ultra',
@@ -279,19 +262,50 @@ describe('bundleSceneCSVRows', () => {
       i2v_provider: 'google', i2v_model: 'veo-3.1-fast-generate-preview',
     }]).scenes[0]
 
-    scene.image_provider = provider
+    scene.image_provider = '__inherit__'
     const warnings = []
     const updated = nestSceneGenerationColumns(scene, { warnings })
 
     expect(updated.generation).toEqual({
-      ...(expectedImage !== undefined ? { image: expectedImage } : {}),
+      image: null,
       video: {
         t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' },
         i2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' },
       },
     })
-    expect(countGenerationStages(updated.generation)).toBe(expectedCount)
-    expect(warnings).toEqual(expectedWarnings)
+    expect(countGenerationStages(updated.generation)).toBe(3)
+    expect(warnings).toEqual([])
+  })
+
+  it('J1: sparse empty provider clears a provider-bound model and preserves sibling stages', () => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: 'fal', image_model: 'm0',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+    }]).scenes[0]
+
+    scene.image_provider = ''
+    const updated = nestSceneGenerationColumns(scene)
+
+    expect(updated.generation).toEqual({
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
+  })
+
+  it('J1: sparse empty provider keeps a model-only existing override', () => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: '', image_model: 'm0',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+    }]).scenes[0]
+
+    scene.image_provider = ''
+    const updated = nestSceneGenerationColumns(scene)
+
+    expect(updated.generation).toEqual({
+      image: { model: 'm0' },
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
   })
 
   it('I1: sparse provider-only change resets the previous provider model and preserves sibling stages', () => {

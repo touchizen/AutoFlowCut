@@ -27,8 +27,7 @@ function generationFromRow(get, warnings, options = {}) {
     const provider = hasProviderColumn ? get(providerColumn) : (existing?.provider ?? '')
     const providerChanged = hasProviderColumn
       && !hasModelColumn
-      && !!provider
-      && provider !== existing?.provider
+      && provider !== (existing?.provider ?? '')
     let model = hasModelColumn ? get(modelColumn) : (providerChanged ? '' : (existing?.model ?? ''))
     if (provider === GENERATION_INHERIT_SENTINEL) {
       if (hasModelColumn && model && Array.isArray(warnings)) {
