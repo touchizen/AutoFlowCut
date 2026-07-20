@@ -204,7 +204,7 @@ function formatProgressLogTime(value) {
 }
 
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
-function StoryRunning({ label, startedAt, detail, progress, thinking = false, log = [], usage = null, t = (k, fallback) => fallback ?? k }) {
+function StoryRunning({ label, startedAt, detail, thinking = false, log = [], usage = null, t = (k, fallback) => fallback ?? k }) {
   const logRef = useRef(null)
   useEffect(() => {
     const el = logRef.current
@@ -217,7 +217,6 @@ function StoryRunning({ label, startedAt, detail, progress, thinking = false, lo
         <StopwatchIcon size={18} />
         <span className="story-running-label">{label}</span>
         <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
-        {progress && <span className="story-running-progress">{progress}</span>}
         <UsageInline usage={usage} />
       </div>
       {thinking && (
@@ -249,6 +248,30 @@ function StreamingTableViewport({ active, step, containerRef, onScroll, children
       onScroll={onScroll}
     >
       {children}
+    </div>
+  )
+}
+
+// ghost table의 자체 스크롤 바깥에 둔다. 내부 행이 auto-scroll돼도 진행률은 패널 상단에 남는다.
+function StreamingProgressBar({ label, valueText, value = null }) {
+  const indeterminate = value == null
+  return (
+    <div
+      className="story-stream-progress story-stream-progress-sticky"
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin="0"
+      aria-valuemax="100"
+      aria-valuenow={indeterminate ? undefined : value}
+      aria-valuetext={valueText}
+    >
+      <span className="story-stream-progress-label">{valueText}</span>
+      <span className="story-stream-progress-track" aria-hidden="true">
+        <span
+          className={`story-stream-progress-fill${indeterminate ? ' indeterminate' : ''}`}
+          style={indeterminate ? undefined : { width: `${value}%` }}
+        />
+      </span>
     </div>
   )
 }
@@ -410,10 +433,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       sum + (typeof segment?.text === 'string' ? segment.text.length : 0)
     ), 0)
   ), 0)
-  const sceneStreamProgress = scriptText.length > 0
-    ? t('story.stream.sceneProgress', '씬 {count}개 · ~{percent}%', { count: scenePreviewCount, percent: Math.min(99, Math.round((consumedSceneChars / scriptText.length) * 100)) })
+  const sceneStreamPercent = scriptText.length > 0
+    ? Math.min(99, Math.max(0, Math.round((consumedSceneChars / scriptText.length) * 100)))
+    : null
+  const sceneStreamProgress = sceneStreamPercent != null
+    ? t('story.stream.sceneProgress', '씬 {count}개 · ~{percent}%', { count: scenePreviewCount, percent: sceneStreamPercent })
     : t('story.stream.sceneCount', '씬 {count}개', { count: scenePreviewCount })
   const promptStreamProgress = t('story.stream.promptProgress', '프롬프트 {count}/{total}', { count: promptPreviewCount, total: scenes.length })
+  const promptStreamPercent = scenes.length > 0
+    ? Math.min(100, Math.max(0, Math.round((promptPreviewCount / scenes.length) * 100)))
+    : 0
 
   // 재설계 §1 — script 스텝 2-phase. 재오픈 복원 시 scriptText가 있으면 바로 대본 작업
   // 화면(editor). setup→editor 승격은 명시 트리거(시작/붙여넣기 시작/스텝퍼 script 클릭)에서만.
@@ -1872,6 +1901,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
+            {scenesStreaming && (
+              <StreamingProgressBar
+                label={t('story.scenes.running', '씬 분리 진행 중')}
+                valueText={sceneStreamProgress}
+                value={sceneStreamPercent}
+              />
+            )}
             {/* 생성 중에도 테이블을 유지하고 streamed scene을 표시 전용 ghost 행으로 보여준다. */}
             {steps.scenes?.status === 'running' && !scenesReviewRun && (
               <>
@@ -1880,7 +1916,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   label={t('story.scenes.running', '씬 분리 진행 중')}
                   startedAt={Date.parse(steps.scenes.updatedAt)}
                   detail={splitSummary}
-                  progress={sceneStreamProgress}
                   thinking={sceneThinking && scenePreviewCount === 0}
                   t={t}
                   log={scenesProgressLog}
@@ -2258,6 +2293,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
+            {promptsStreaming && (
+              <StreamingProgressBar
+                label={t('story.prompts.running', '프롬프트 생성 중')}
+                valueText={promptStreamProgress}
+                value={promptStreamPercent}
+              />
+            )}
             {/* 생성 중에도 splitScenes가 만든 정식 행은 유지하고, 값만 표시 전용 ghost로 덧칠한다. */}
             {steps.prompts?.status === 'running' && !promptsReviewRun && (
               <>
@@ -2265,7 +2307,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 <StoryRunning usage={usage}
                   label={t('story.prompts.running', '프롬프트 생성 중')}
                   startedAt={Date.parse(steps.prompts.updatedAt)}
-                  progress={promptStreamProgress}
                   thinking={promptThinking && promptPreviewCount === 0}
                   t={t}
                 />

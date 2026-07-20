@@ -131,7 +131,12 @@ describe('씬 ghost table 자동 스크롤', () => {
   it('preview scene이 늘고 바닥에 붙어 있으면 최신 행으로 내린다', () => {
     const { container, rerender } = render(<StoryView pipeline={scenesPipeline(1)} />)
     const el = streamingTable(container, 'scenes')
+    const progress = container.querySelector('.story-stream-progress-sticky')
     expect(el).toBeTruthy()
+    expect(progress).toBeTruthy()
+    expect(el.contains(progress)).toBe(false)
+    expect(progress.parentElement).toBe(el.parentElement)
+    expect(progress.parentElement.firstElementChild).toBe(progress)
     fakeLayout(el, { scrollHeight: 1000 })
 
     rerender(<StoryView pipeline={scenesPipeline(2)} />)
@@ -154,7 +159,12 @@ describe('프롬프트 ghost table 자동 스크롤', () => {
   it('preview prompt가 늘고 바닥에 붙어 있으면 최신 행으로 내린다', () => {
     const { container, rerender } = render(<StoryView pipeline={promptsPipeline(1)} />)
     const el = streamingTable(container, 'prompts')
+    const progress = container.querySelector('.story-stream-progress-sticky')
     expect(el).toBeTruthy()
+    expect(progress).toBeTruthy()
+    expect(el.contains(progress)).toBe(false)
+    expect(progress.parentElement).toBe(el.parentElement)
+    expect(progress.parentElement.firstElementChild).toBe(progress)
     fakeLayout(el, { scrollHeight: 1000 })
 
     rerender(<StoryView pipeline={promptsPipeline(2)} />)
