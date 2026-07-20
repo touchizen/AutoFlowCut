@@ -5,7 +5,7 @@
 const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
 
 export default function ApiKeyField({
-  label, statusLabel, hasKey, loading, encryptionAvailable, busy,
+  label, hasKey, loading, encryptionAvailable, busy,
   keyInput, onKeyInput, onSave, onRemove, getKeyUrl, extraNote, t,
 }) {
   const openLink = (url) => window.electronAPI?.openExternal?.(url)
@@ -24,7 +24,7 @@ export default function ApiKeyField({
         type="password"
         value={keyInput}
         onChange={(e) => onKeyInput(e.target.value)}
-        placeholder={t('settings.ttsKeyPlaceholder')}
+        placeholder={t('settings.ttsKeyPlaceholder', { label })}
         disabled={busy || !encryptionAvailable}
         autoComplete="off"
         spellCheck={false}
@@ -40,7 +40,7 @@ export default function ApiKeyField({
         )}
         {getKeyUrl && (
           <a style={{ ...linkStyle, marginLeft: 'auto', alignSelf: 'center' }} onClick={() => openLink(getKeyUrl)}>
-            {t('settings.ttsKeyGetKey')}
+            {t('settings.ttsKeyGetKey', { label })}
           </a>
         )}
       </div>

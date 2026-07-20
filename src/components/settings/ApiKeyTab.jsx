@@ -26,7 +26,11 @@ export default function ApiKeyTab({ t }) {
             provider={p.id}
             label={p.label}
             getKeyUrl={p.url}
-            extraNote={p.id === 'elevenlabs' ? t('settings.elevenlabsVoicesReadHint') : undefined}
+            extraNote={
+              p.id === 'elevenlabs' ? t('settings.elevenlabsVoicesReadHint')
+              : p.id === 'googletts' ? t('settings.googlettsStoryUnavailable')
+              : undefined
+            }
             t={t}
           />
         ))}

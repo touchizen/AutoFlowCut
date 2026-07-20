@@ -16,4 +16,9 @@ describe('ApiKeyTab (consolidated list)', () => {
     expect(screen.getByText('ElevenLabs')).toBeTruthy()
     expect(screen.getByText('Google Cloud TTS')).toBeTruthy()
   })
+
+  it('flags Google Cloud TTS as unavailable for Story audio', () => {
+    render(<ApiKeyTab t={t} />)
+    expect(screen.getByText('settings.googlettsStoryUnavailable')).toBeTruthy()
+  })
 })

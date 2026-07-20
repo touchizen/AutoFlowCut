@@ -22,7 +22,13 @@ export default function GenaiApiKeyField({ t }) {
     if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')) }
     else toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
   }
-  const onRemove = async () => { setBusy(true); await clearKey(); setBusy(false); toast.success(t('settings.apiKeyRemoved')) }
+  const onRemove = async () => {
+    setBusy(true)
+    const res = await clearKey()
+    setBusy(false)
+    if (res?.success === false) toast.error(t('settings.apiKeyRemoveFailed', { error: res?.error || '' }))
+    else toast.success(t('settings.apiKeyRemoved'))
+  }
   return (
     <ApiKeyField
       label="Google Gemini" hasKey={hasKey} loading={loading} encryptionAvailable={encryptionAvailable}
