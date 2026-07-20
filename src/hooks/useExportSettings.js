@@ -11,7 +11,8 @@ const DEFAULT_SETTINGS = {
   projectNumber: '',
   pathPreset: 'capcut',  // 'capcut' | 'capcutpro' | 'capcut_docs' | 'custom'
   scaleMode: 'none',
-  kenBurns: true,
+  kenBurns: true,          // export 시 Ken Burns 적용 여부 (Export 모달, 기본 on)
+  kenBurnsPreview: false,  // 프리뷰 모니터에서 Ken Burns 표시 여부 (Timeline 체크박스, 기본 off)
   kenBurnsMode: 'random',
   kenBurnsCycle: 5,
   kenBurnsScaleMin: 100,
@@ -29,7 +30,8 @@ function normalizeStoredSettings(merged) {
     ...merged,
     scaleMode: merged.scaleMode || 'none',
     renderMode: merged.renderMode === 'preview' ? 'preview' : 'final',
-    kenBurns: merged.kenBurns !== false,
+    kenBurns: merged.kenBurns !== false,          // 기본 on — 명시적 false 만 끔
+    kenBurnsPreview: merged.kenBurnsPreview === true,  // 기본 off — 명시적 true 만 켬
     kenBurnsMode: merged.kenBurnsMode || 'random',
     kenBurnsCycle: Number(merged.kenBurnsCycle) || 5,
     kenBurnsScaleMin: Number(merged.kenBurnsScaleMin) || 100,

@@ -124,7 +124,7 @@ describe('ExportModal self-render format', () => {
       expect(settings).toMatchObject({
         scaleMode: 'fill',
         renderMode: 'preview',
-        kenBurns: false,
+        kenBurns: false,  // 기본 on(export) → 클릭으로 off
         kenBurnsMode: 'pattern',
       })
       expect(String(settings.kenBurnsScaleMin)).toBe('110')

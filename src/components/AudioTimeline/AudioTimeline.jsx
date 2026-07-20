@@ -1031,8 +1031,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           >
             <input
               type="checkbox"
-              checked={settings.kenBurns}
-              onChange={() => updateSetting('kenBurns', !settings.kenBurns)}
+              checked={settings.kenBurnsPreview}
+              onChange={() => updateSetting('kenBurnsPreview', !settings.kenBurnsPreview)}
             />
             <span>{t('audioTimeline.kenBurns')}</span>
           </label>

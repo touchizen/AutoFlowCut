@@ -171,7 +171,10 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
     return computeKenBurns(scene, exportIndex, kenBurnsOptions)
   }, [scene, exportIndex, kenBurnsOptions])
   const hasVideo = useMemo(() => resolveExportVideos(scene).length > 0, [scene])
-  const kenBurnsStyle = settings.kenBurns && exportIndex != null && !hasVideo && kenBurns
+  // 모니터 표시는 kenBurnsPreview(Timeline 체크박스)가 게이트하되, export 가 적용하지
+  // 않는 효과를 보여주지 않도록 kenBurns(export 설정)도 함께 요구한다(WYSIWYG).
+  const kenBurnsStyle = settings.kenBurnsPreview && settings.kenBurns
+    && exportIndex != null && !hasVideo && kenBurns
     ? kenBurnsPreviewStyle(kenBurns, sceneProgress)
     : undefined
 

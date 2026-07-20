@@ -6,7 +6,7 @@ const { mockUpdateSetting, mockToastInfo, mockContext } = vi.hoisted(() => ({
   mockUpdateSetting: vi.fn(),
   mockToastInfo: vi.fn(),
   mockContext: {
-    settings: { kenBurns: true },
+    settings: { kenBurnsPreview: true },
     updateSetting: vi.fn(),
   },
 }))
@@ -33,15 +33,15 @@ function renderTimeline() {
 describe('AudioTimeline Ken Burns toggle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockContext.settings = { kenBurns: true }
+    mockContext.settings = { kenBurnsPreview: true }
   })
 
-  it('Context의 kenBurns 값을 checked에 반영한다', () => {
+  it('Context의 kenBurnsPreview 값을 checked에 반영한다', () => {
     const { container, rerender } = renderTimeline()
     const checkbox = container.querySelector('.atl-kb-toggle input[type="checkbox"]')
     expect(checkbox).toBeChecked()
 
-    mockContext.settings = { kenBurns: false }
+    mockContext.settings = { kenBurnsPreview: false }
     rerender(
       <I18nProvider>
         <AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />
@@ -56,7 +56,7 @@ describe('AudioTimeline Ken Burns toggle', () => {
 
     fireEvent.click(checkbox)
 
-    expect(mockUpdateSetting).toHaveBeenCalledWith('kenBurns', false)
+    expect(mockUpdateSetting).toHaveBeenCalledWith('kenBurnsPreview', false)
     expect(mockToastInfo).not.toHaveBeenCalled()
   })
 })

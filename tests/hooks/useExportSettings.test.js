@@ -21,7 +21,8 @@ describe('useExportSettings', () => {
       expect(result.current.settings.projectNumber).toBe('')
       expect(result.current.settings.pathPreset).toBe('capcut')
       expect(result.current.settings.scaleMode).toBe('none')
-      expect(result.current.settings.kenBurns).toBe(true)
+      expect(result.current.settings.kenBurns).toBe(true)          // export 기본 on
+      expect(result.current.settings.kenBurnsPreview).toBe(false)  // 타임라인 프리뷰 기본 off
       expect(result.current.settings.kenBurnsMode).toBe('random')
       expect(result.current.settings.kenBurnsCycle).toBe(5)
       expect(result.current.settings.kenBurnsScaleMin).toBe(100)
@@ -108,6 +109,7 @@ describe('useExportSettings', () => {
         renderMode: 'x',           // garbage → 'final'
         scaleMode: '',             // falsy → 'none'
         kenBurnsMode: null,        // falsy → 'random'
+        kenBurnsPreview: 1,        // truthy garbage → false (명시적 true 만 켬)
       }))
 
       const { result } = renderHook(() => useExportSettings())
@@ -122,6 +124,7 @@ describe('useExportSettings', () => {
       expect(result.current.settings.renderMode).toBe('final')
       expect(result.current.settings.scaleMode).toBe('none')
       expect(result.current.settings.kenBurnsMode).toBe('random')
+      expect(result.current.settings.kenBurnsPreview).toBe(false)
     })
   })
 

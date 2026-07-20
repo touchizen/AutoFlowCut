@@ -1,4 +1,12 @@
-# Ken Burns 프리뷰 모니터 — 설계 스펙 (v4, Codex+Fable 크로스 리뷰 4R 반영)
+# Ken Burns 프리뷰 모니터 — 설계 스펙 (v5)
+
+> **v5 (구현 후 사용자 결정, 2026-07-20)**: Ken Burns 설정을 **둘로 분리** —
+> `kenBurns`(export 적용 여부, Export 모달, **기본 on**) / `kenBurnsPreview`(모니터 표시 여부,
+> Timeline 체크박스, **기본 off**). §2·§7·§8의 "체크박스=kenBurns 단일 토글" 서술은 이 결정으로
+> 대체된다: Timeline 체크박스는 `kenBurnsPreview`를 토글하고, 프리뷰 KB 표시 조건은
+> `kenBurnsPreview && kenBurns && exportIndex != null && !hasVideo && kb` — export가 적용하지
+> 않는 효과를 모니터가 보여주지 않도록(WYSIWYG) 두 게이트를 모두 요구한다. 두 설정 모두
+> useExportSettings/Context 단일 스토어에 있으며 나머지 배선·파라미터 재사용은 그대로다.
 
 > self-render 후속. Timeline의 Ken Burns 체크박스를 실토글로 만들고, 프리뷰 모니터에서 줌/팬을
 > **self-render export와 동일한 파라미터(`computeKenBurns` 재사용)** 로 실시간 표시한다.

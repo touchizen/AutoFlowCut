@@ -49,6 +49,7 @@ describe('PreviewPanel Ken Burns preview', () => {
     const { container } = renderPreview({
       playheadMs: 5000,
       settings: {
+        kenBurnsPreview: true,
         kenBurns: true,
         kenBurnsMode: 'pattern',
         kenBurnsScaleMin: 100,
@@ -63,8 +64,17 @@ describe('PreviewPanel Ken Burns preview', () => {
     expect(img.style.transform).not.toContain('scale(')
   })
 
-  it('Ken Burns 설정이 꺼지면 transform을 적용하지 않는다', async () => {
-    const { container } = renderPreview({ settings: { kenBurns: false } })
+  it('export kenBurns가 꺼지면 프리뷰 토글이 켜져 있어도 transform을 적용하지 않는다', async () => {
+    // export 가 적용하지 않는 효과를 모니터가 보여주면 WYSIWYG 위반 — 두 게이트 모두 필요.
+    const { container } = renderPreview({ settings: { kenBurnsPreview: true, kenBurns: false } })
+    const layer = container.querySelector('.atl-preview-kb')
+
+    await waitFor(() => expect(layer.style.transform).toBe(''))
+    expect(layer.style.transformOrigin).toBe('')
+  })
+
+  it('kenBurnsPreview(타임라인 토글)가 꺼지면 export kenBurns가 켜져 있어도 transform을 적용하지 않는다', async () => {
+    const { container } = renderPreview({ settings: { kenBurnsPreview: false, kenBurns: true } })
     const layer = container.querySelector('.atl-preview-kb')
 
     await waitFor(() => expect(layer.style.transform).toBe(''))
@@ -88,7 +98,7 @@ describe('PreviewPanel Ken Burns preview', () => {
     const view = renderPreview({
       scenes,
       playheadMs: 500,
-      settings: { kenBurns: true, kenBurnsMode: 'pattern' },
+      settings: { kenBurnsPreview: true, kenBurns: true, kenBurnsMode: 'pattern' },
     })
     const layer = view.container.querySelector('.atl-preview-kb')
 
@@ -108,7 +118,7 @@ describe('PreviewPanel Ken Burns preview', () => {
       videoI2VPath: '/videos/tail.mp4',
       videoI2VDuration: 2,
     }
-    const { container } = renderPreview({ scene, playheadMs: 1000 })
+    const { container } = renderPreview({ scene, playheadMs: 1000, settings: { kenBurnsPreview: true, kenBurns: true } })
     const layer = container.querySelector('.atl-preview-kb')
 
     await waitFor(() => expect(layer.style.transform).toBe(''))
@@ -231,7 +241,7 @@ describe('PreviewPanel image gate and persistent frame DOM', () => {
       startTime: 0,
       endTime: 3,
     }
-    const { container } = renderPreview({ scene, playheadMs: 1000 })
+    const { container } = renderPreview({ scene, playheadMs: 1000, settings: { kenBurnsPreview: true, kenBurns: true } })
     const img = container.querySelector('.atl-preview-img')
     const layer = container.querySelector('.atl-preview-kb')
 

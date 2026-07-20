@@ -7,7 +7,7 @@ import { renderWithExportSettings } from '../utils/renderWithExportSettings'
 
 function SettingsProbe() {
   const { settings } = useExportSettingsContext()
-  return <output data-testid="ken-burns-setting">{String(settings.kenBurns)}</output>
+  return <output data-testid="ken-burns-setting">{String(settings.kenBurnsPreview)}</output>
 }
 
 describe('ExportSettingsContext consumer sync', () => {
@@ -32,16 +32,18 @@ describe('ExportSettingsContext consumer sync', () => {
     const checkbox = container.querySelector('.atl-kb-toggle input[type="checkbox"]')
     const previewLayer = container.querySelector('.atl-preview-kb')
 
-    expect(checkbox).toBeChecked()
-    expect(screen.getByTestId('ken-burns-setting')).toHaveTextContent('true')
-    expect(previewLayer.style.transform).not.toBe('')
+    // kenBurnsPreview 기본 off — 체크 시 켜지고 다른 consumer(프로브·프리뷰 KB 레이어)가
+    // 즉시 본다. export kenBurns 는 기본 on 이므로 프리뷰 게이트만 열리면 transform 이 나온다.
+    expect(checkbox).not.toBeChecked()
+    expect(screen.getByTestId('ken-burns-setting')).toHaveTextContent('false')
+    expect(previewLayer.style.transform).toBe('')
 
     fireEvent.click(checkbox)
 
     await waitFor(() => {
-      expect(checkbox).not.toBeChecked()
-      expect(screen.getByTestId('ken-burns-setting')).toHaveTextContent('false')
-      expect(previewLayer.style.transform).toBe('')
+      expect(checkbox).toBeChecked()
+      expect(screen.getByTestId('ken-burns-setting')).toHaveTextContent('true')
+      expect(previewLayer.style.transform).not.toBe('')
     })
   })
 })
