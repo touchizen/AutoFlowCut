@@ -59,6 +59,15 @@ const randomSleep = (min, max) =>
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
+const isDownloadOnlyItem = (item) =>
+  item.status === 'error' && item.generationId && item.mediaId && !item.videoPath
+
+const isInFlightItem = (item) =>
+  item.status === 'generating' && item.generationId && !item.mediaId && !item.videoPath
+
+const shouldUsePersistedGenerationProvider = (item) =>
+  !!item.generationProvider && (isDownloadOnlyItem(item) || isInFlightItem(item))
+
 // Auth failures are handled centrally by useFlowAPI's withAuthRetry wrapper
 // (see useFlowAPI.js — wrapper shim calls clearTokenCache + the App-level
 // handleAuthError on 2nd 401). This hook only consumes the `authFailed` sentinel
@@ -160,7 +169,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // cloud(Veo): 완료된 operation 의 videoUri 를 직접 base64 로 다운로드.
     // (구 Flow 의 DOM→URL→fetchMedia 3단계 폴백은 제거 — videoDownload 공통 헬퍼로 통일)
     setStatusMsg?.(`⬇️ Downloading — ${String(videoUrl || mediaId || '').substring(0, 24)}...`)
-    const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution)
+    const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution, item.generationId)
 
     if (!mediaResult?.success) {
       return { success: false, error: `Video download failed: ${mediaResult?.error || 'no video URL'}` }
@@ -341,7 +350,11 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       : scenes.filter(scene => scene.prompt)
     const requiredProviders = appMode === 'flow'
       ? [globalGeneration.provider]
-      : [...new Set(sourceItems.map(item => resolveItemGeneration(item).provider))]
+      : [...new Set(sourceItems.map(item => (
+          shouldUsePersistedGenerationProvider(item)
+            ? item.generationProvider
+            : resolveItemGeneration(item).provider
+        )))]
     let hasRequiredToken = true
     for (const provider of requiredProviders) {
       const token = appMode === 'flow'
@@ -372,12 +385,6 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // seed/model 도 보존 — error 상태에서 retry 가 retryVideoDownload → downloadAndSaveVideo
     // 로 흘러갈 때 item.model/seed 가 비면 'flow-video' 폴백되어 메타 일관성이 깨진다.
     // 호출자가 새 seed/videoModel 을 plumb 하는 일반 경로는 그대로 그 값이 우선.
-    // in-flight 항목 분류용: status='generating' + generationId set + 미완료 (no mediaId/videoPath).
-    // recovery 가 서버 상태 확인 후 'generating' 으로 표시한 항목 — 재제출(quota 중복) 안 함.
-    // 대신 Phase 2 polling 에 직접 합류시켜 서버가 complete 되면 다운로드만 수행.
-    const isInFlightItem = (it) =>
-      it.status === 'generating' && it.generationId && !it.mediaId && !it.videoPath
-
     let items = []
     switch (mode) {
       case 't2v':
@@ -395,7 +402,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               videoPath: s.videoPath,
               seed: s.seed ?? seed ?? null,
               model: s.model ? canonicalVideoModel(s.model, resolved.provider) : resolved.model,
-              generationProvider: resolved.provider,
+              generationProvider: shouldUsePersistedGenerationProvider(s) ? s.generationProvider : resolved.provider,
               generationModel: resolved.model,
               generationResolution: resolved.resolution,
               appliedInputs: s.appliedInputs || null,
@@ -436,7 +443,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               //   pickVideoMetadata(item.model 우선) 가 history 를 실제 사용 모델로 저장한다. fresh 제출은
               //   fillWindow 가 제출 시점에 effectiveVideoModel 을 다시 stamp 하므로(447) 새 선택이 반영된다.
               model: p.model ? canonicalVideoModel(p.model, resolved.provider) : resolved.model,
-              generationProvider: resolved.provider,
+              generationProvider: shouldUsePersistedGenerationProvider(p) ? p.generationProvider : resolved.provider,
               generationModel: resolved.model,
               generationResolution: resolved.resolution,
               appliedInputs: p.appliedInputs || null,
@@ -476,9 +483,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     //    → 이전 세션에서 제출만 됐고 결과 못 받음 (recovery 가 status 확인 후 'generating' 유지).
     //      재제출 없이 Phase 2 polling 에 합류 → 서버가 complete 되면 다운로드만.
     // 3. freshGen: 그 외 — 새 generation 제출 필요.
-    const downloadOnly = items.filter(it =>
-      it.status === 'error' && it.generationId && it.mediaId && !it.videoPath
-    )
+    const downloadOnly = items.filter(isDownloadOnlyItem)
     const downloadOnlyIds = new Set(downloadOnly.map(it => it.id))
     const inFlight = items.filter(it => !downloadOnlyIds.has(it.id) && isInFlightItem(it))
     const inFlightIds = new Set(inFlight.map(it => it.id))
@@ -625,6 +630,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           //   regen(완료 쌍 재생성) 항목은 item-build(310)에서 보존된 옛 p.model 을 들고 있어
           //   stamp 하지 않으면 새 모델로 생성했는데 history 엔 옛 모델이 저장된다.
           //   (download-only/in-flight 항목은 fillWindow 를 안 거치므로 옛 메타 그대로 유지.)
+          item.generationId = genResult.generationId
           item.model = appliedModel
           item.appliedInputs = appliedInputs
           // Persist generationId + 메타(seed/model) 를 즉시 state 에 박는다.
@@ -634,7 +640,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             generationId: genResult.generationId,
             ...(seed != null ? { seed } : {}),
             model: appliedModel,
-            ...(appliedInputs ? { appliedInputs } : {}),
+            generationProvider: itemProvider,
+            appliedInputs: appliedInputs ?? null,
             // canonical 식별자 — recovery/retry 가 file 위치 매칭에 사용 (videoSaveId 없으면 vscene_/fp_ 폴백되어 파일명 갈라짐)
             ...(item.videoSaveId ? { videoSaveId: item.videoSaveId } : {}),
             // 새 generation 제출 — 이전 complete 의 path/mediaId/video 명시적 제거.
@@ -872,6 +879,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             const item = items.find(i => i.id === itemId)
             onItemUpdate?.(itemId, 'error', {
               error: statusInfo.error || 'Video generation failed',
+              errorKind: statusInfo.errorKind ?? null,
               ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
             })
             videoErrorCount++  // 서버 generation 실패도 집계

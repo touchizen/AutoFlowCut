@@ -80,6 +80,7 @@ import {
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
+import { resolveSceneVideoProvider } from './utils/sceneProviderResolution'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
@@ -1292,7 +1293,11 @@ function App() {
       //   Retry+Start 가 auth await 동안 busy 가드를 통과하는 것을 막는다. 모든 종료 경로에서 해제.
       videoRetryInFlightRef.current = true
       setVideoRetryRunning(true)  // #R24-2: 모드 토글 차단(반응형)
-      if (!(await genAPI.getAccessToken(false, true))) {
+      if (!(await genAPI.getAccessToken(
+        false,
+        true,
+        item.generationProvider || resolveSceneVideoProvider(item, settings, isFramePair ? 'i2v' : 't2v').provider,
+      ))) {
         videoRetryInFlightRef.current = false
         setVideoRetryRunning(false)
         if (modeRef.current === 'flow') {
@@ -2583,6 +2588,7 @@ function App() {
               status: 'pending', selected: false,
               // 비디오 메타도 정리 — 상세 모달/저장에 이전 비디오 메타 잔류 방지.
               generatedAt: null, seed: null, model: null, error: null, errorKind: null, videoSaveId: null,
+              generationProvider: null, appliedInputs: null,
               // per-clip toggle 도 reset — stale disabled 가 project.json 에 남아 history 복원 등
               // path 재부착 경로와 만나면 새 영상이 숨겨짐. (FIELD_MAP 미매핑 → scene.videoT2VDisabled 로 직행)
               videoT2VDisabled: null,
@@ -2615,6 +2621,7 @@ function App() {
               // timing / 메타 — history 모달에 stale 값 표시 안 되도록
               generatingStartedAt: null, generatingEndedAt: null,
               seed: null, generatedAt: null, model: null, duration: null,
+              generationProvider: null, appliedInputs: null,
             } : p))
             if (fp?.ownerSceneId) {
               scenesHook.updateScene(fp.ownerSceneId, { ...videoClearPatch('i2v'), videoI2VGeneratedAt: null })

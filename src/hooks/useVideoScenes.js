@@ -57,6 +57,8 @@ const FIELD_MAP = {
   error: 'videoT2VError',
   errorKind: 'videoT2VErrorKind',
   videoSaveId: 'videoT2VSaveId',
+  generationProvider: 'videoT2VProvider',
+  appliedInputs: 'videoT2VAppliedInputs',
   // startTime / endTime 은 scene 본체와 공유 — 별도 매핑 없이 patch에 그대로
 }
 
@@ -100,6 +102,8 @@ function deriveVideoScene(s) {
     error: s.videoT2VError ?? null,
     errorKind: s.videoT2VErrorKind ?? null,
     videoSaveId: s.videoT2VSaveId ?? null,
+    generationProvider: s.videoT2VProvider ?? null,
+    appliedInputs: s.videoT2VAppliedInputs ?? null,
     // Scene-level provider/model override must survive the image-scene → T2V derived view.
     generation: s.generation,
     // Poster fields from the source image scene. ResultsTable uses these while
@@ -211,6 +215,8 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
       videoT2VError: null,
       videoT2VErrorKind: null,
       videoT2VSaveId: null,
+      videoT2VProvider: null,
+      videoT2VAppliedInputs: null,
     })))
   }, [scenesHook])
 

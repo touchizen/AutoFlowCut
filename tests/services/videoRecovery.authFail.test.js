@@ -11,7 +11,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: { saveVideo: vi.fn() },
 }))
 
-import { recoverInFlightVideos, retryVideoDownload } from '../../src/services/videoRecovery'
+import { downloadAndSaveVideo, recoverInFlightVideos, retryVideoDownload } from '../../src/services/videoRecovery'
 
 let authEvents
 const onAuthExpired = () => authEvents.push(1)
@@ -118,5 +118,27 @@ describe('retryVideoDownload — authFailed (#R24-3)', () => {
     expect(patch.errorKind).toBe('auth')
     // must NOT report the wrong "Generation expired — please regenerate" path
     expect(patch.error).not.toMatch(/generation expired/i)
+  })
+})
+
+describe('videoRecovery — provider-aware download', () => {
+  it('D1: recovery download가 item generationId를 downloadVideo에 전달', async () => {
+    const downloadVideo = vi.fn().mockResolvedValue({ success: true, base64: 'VIDEO' })
+
+    await downloadAndSaveVideo({
+      mediaId: 'media-grok',
+      videoUrl: 'https://cdn/grok/video.mp4',
+      item: { id: 'fp_1', generationId: 'gen:v1:grok-handle' },
+      projectName: 'p',
+      saveMode: 'memory',
+      videoResolution: '1080p',
+      downloadVideo,
+    })
+
+    expect(downloadVideo).toHaveBeenCalledWith(
+      'https://cdn/grok/video.mp4',
+      '1080p',
+      'gen:v1:grok-handle',
+    )
   })
 })

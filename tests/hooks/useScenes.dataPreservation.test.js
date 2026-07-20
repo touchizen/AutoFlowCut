@@ -119,6 +119,27 @@ describe('T2V 런타임 필드 — CSV 재파싱 시 보존', () => {
     expect(s0.videoT2VGeneratingStartedAt).toBe(startedAt)
     expect(s0.videoT2VGeneratingEndedAt).toBeNull()
   })
+
+  it('D3/D4: CSV 재import 가 T2V provider와 appliedInputs를 generationId와 함께 보존한다', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.parseFromCSV(NEW_CSV_V1) })
+    const sceneId = result.current.scenes[0].id
+    const appliedInputs = { model: 'grok-imagine-video-1.5', resolution: '720p' }
+
+    act(() => {
+      result.current.updateScene(sceneId, {
+        videoT2VGenerationId: 'gen:v1:grok-handle',
+        videoT2VProvider: 'grok',
+        videoT2VAppliedInputs: appliedInputs,
+      })
+    })
+    act(() => { result.current.parseFromCSV(NEW_CSV_V2) })
+
+    const scene = result.current.scenes[0]
+    expect(scene.videoT2VGenerationId).toBe('gen:v1:grok-handle')
+    expect(scene.videoT2VProvider).toBe('grok')
+    expect(scene.videoT2VAppliedInputs).toBe(appliedInputs)
+  })
 })
 
 describe('I2V 런타임 필드 — CSV 재파싱 시 보존', () => {

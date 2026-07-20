@@ -637,6 +637,19 @@ describe('useGenAPI — 비디오', () => {
     expect(window.electronAPI.genaiDownloadVideo).toHaveBeenCalledWith({ videoUri: 'https://v/a' })
     expect(r).toEqual({ success: true, base64: 'VID' })
   })
+
+  it('D1: downloadVideo provider handle을 IPC payload에 포함', async () => {
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => {
+      await result.current.downloadVideo('https://cdn/grok/video.mp4', '1080p', 'gen:v1:grok-handle')
+    })
+
+    expect(window.electronAPI.genaiDownloadVideo).toHaveBeenCalledWith({
+      videoUri: 'https://cdn/grok/video.mp4',
+      generationId: 'gen:v1:grok-handle',
+    })
+  })
 })
 
 describe('useGenAPI — auth 실패 센티넬 (BYOK 키 거부)', () => {
@@ -673,6 +686,48 @@ describe('useGenAPI — auth 실패 센티넬 (BYOK 키 거부)', () => {
     await act(async () => { r = await result.current.checkVideoStatus(['a']) })
     expect(r.authFailed).toBe(true)
     expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('D2: provider auth errorKind를 보존하고 opaque auth 실패를 중단', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({
+      success: true,
+      statuses: [{
+        generationId: 'gen-grok',
+        status: 'failed',
+        error: 'Unauthorized',
+        errorKind: 'auth',
+      }],
+    })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+
+    await act(async () => { r = await result.current.checkVideoStatus(['gen-grok']) })
+
+    expect(r.statuses[0].errorKind).toBe('auth')
+    expect(r.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('D2: authoritative non-auth errorKind가 auth 비슷한 문구의 false positive를 막음', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({
+      success: true,
+      statuses: [{
+        generationId: 'gen-grok',
+        status: 'failed',
+        error: 'HTTP 403 :: PERMISSION_DENIED',
+        errorKind: 'other',
+      }],
+    })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+
+    await act(async () => { r = await result.current.checkVideoStatus(['gen-grok']) })
+
+    expect(r.statuses[0].errorKind).toBe('other')
+    expect(r.authFailed).toBeUndefined()
+    expect(onAuthError).not.toHaveBeenCalled()
   })
 
   it('일반(quota) 에러는 authFailed 아님', async () => {

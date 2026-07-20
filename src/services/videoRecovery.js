@@ -29,7 +29,7 @@ export async function downloadAndSaveVideo({
 }) {
   // cloud(Veo): videoUri 직접 base64 다운로드 (구 DOM→URL→fetchMedia 폴백 제거,
   // useVideoAutomation 과 동일한 videoDownload 공통 헬퍼 사용)
-  const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution) // #R13-6
+  const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution, item.generationId) // #R13-6
 
   if (!mediaResult?.success) {
     return { success: false, error: `Media download failed: ${mediaResult?.error || 'no video URL'}`, mediaId }

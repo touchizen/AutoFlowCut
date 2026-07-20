@@ -219,6 +219,8 @@ export function useScenes() {
           videoT2VStatus: existing.videoT2VStatus,
           videoT2VMediaId: existing.videoT2VMediaId,
           videoT2VGenerationId: existing.videoT2VGenerationId,
+          videoT2VProvider: existing.videoT2VProvider,
+          videoT2VAppliedInputs: existing.videoT2VAppliedInputs,
           videoT2VSelected: existing.videoT2VSelected,
           videoT2VGeneratingStartedAt: existing.videoT2VGeneratingStartedAt,
           videoT2VGeneratingEndedAt: existing.videoT2VGeneratingEndedAt,

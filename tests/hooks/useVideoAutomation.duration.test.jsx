@@ -370,6 +370,90 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
     )
   })
 
+  it('D1: completed item generationId를 provider-aware download에 전달', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({
+      success: true,
+      generationId: 'gen:v1:grok-handle',
+    })
+    const downloadVideo = vi.fn().mockResolvedValue({ success: true, base64: 'VIDEO' })
+    const genAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus: vi.fn().mockResolvedValue({
+        success: true,
+        statuses: [{
+          generationId: 'gen:v1:grok-handle',
+          status: 'complete',
+          mediaId: 'https://cdn/grok/video.mp4',
+          videoUrl: 'https://cdn/grok/video.mp4',
+        }],
+      }),
+      downloadVideo,
+      upscaleVideo: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+
+    await act(async () => {
+      await hook.result.current.start({
+        mode: 't2v',
+        scenes: [{ id: 'vscene_v1', prompt: 'p' }],
+        projectName: 'test',
+        saveMode: 'memory',
+        videoProvider: 'grok',
+        videoModel: 'grok-imagine-video-1.5',
+        aspectRatio: '16:9',
+        duration: 5,
+        videoResolution: '1080p',
+        onItemUpdate: vi.fn(),
+      })
+    })
+
+    expect(downloadVideo).toHaveBeenCalledWith(
+      'https://cdn/grok/video.mp4',
+      '1080p',
+      'gen:v1:grok-handle',
+    )
+  })
+
+  it('D5: submit result에 appliedInputs가 없으면 stale metadata clear null을 전송', async () => {
+    const genAPI = {
+      generateVideoT2V: vi.fn().mockResolvedValue({
+        success: true,
+        generationId: 'gen-flow',
+      }),
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus: vi.fn().mockResolvedValue({
+        success: true,
+        statuses: [{ status: 'failed', error: 'stop after submit', errorKind: 'other' }],
+      }),
+      downloadVideo: vi.fn(),
+      upscaleVideo: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const onItemUpdate = vi.fn()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+
+    await act(async () => {
+      await hook.result.current.start({
+        mode: 't2v',
+        scenes: [{
+          id: 'vscene_v1', prompt: 'p',
+          appliedInputs: { model: 'stale-api-model', resolution: '4k' },
+        }],
+        projectName: 'test', saveMode: 'memory',
+        videoModel: 'veo-3.1-fast-generate-preview', aspectRatio: '16:9',
+        duration: 8, videoResolution: '720p', onItemUpdate,
+      })
+    })
+
+    expect(onItemUpdate).toHaveBeenCalledWith(
+      'vscene_v1',
+      'generating',
+      expect.objectContaining({ appliedInputs: null }),
+    )
+  })
+
   it('non-google scene override completion metadata uses that scene provider duration rules', async () => {
     const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-grok' })
     const genAPI = {

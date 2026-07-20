@@ -305,9 +305,14 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         videoUrl: s.videoUri || null, // 일부 소비자가 videoUrl 로 읽음 (download 경로)
         mediaId: s.videoUri || null,  // mediaId 자리에 videoUri 전달 (완료 게이트 호환)
         error: s.error,
+        errorKind: s.errorKind ?? null,
       }))
       // 폴링 중 키 거부(authFailed)면 배치 루프가 즉시 중단하도록 센티넬 전파.
-      const authStatus = statuses.find((s) => s.status === 'failed' && isAuthError({ success: false, error: s.error }))
+      const authStatus = statuses.find((s) => s.status === 'failed' && isAuthError({
+        success: false,
+        error: s.error,
+        errorKind: s.errorKind,
+      }))
       if (authStatus) {
         onAuthErrorRef.current?.()
         return { success: true, statuses, authFailed: true }
@@ -319,9 +324,12 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
   }, [])
 
   // 완료된 비디오 다운로드 (videoUri → base64)
-  const downloadVideo = useCallback(async (videoUri) => {
+  const downloadVideo = useCallback(async (videoUri, _resolution, generationId) => {
     try {
-      return await window.electronAPI.genaiDownloadVideo({ videoUri })
+      return await window.electronAPI.genaiDownloadVideo({
+        videoUri,
+        ...(generationId != null ? { generationId } : {}),
+      })
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
     }

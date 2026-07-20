@@ -105,6 +105,46 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
     expect(hook.result.current.statusMessage).toContain('⚠️')
   })
 
+  it('D2: 서버 failed status의 errorKind를 item error patch에 보존', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: true,
+      statuses: [{
+        generationId: 'gen-1',
+        status: 'failed',
+        error: 'Opaque provider failure',
+        errorKind: 'provider-failure',
+      }],
+    })
+    const genAPI = {
+      generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus,
+      upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const onItemUpdate = vi.fn()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+    let startPromise
+
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v', scenes: [{ id: 'vscene_v1', prompt: 'p' }],
+        projectName: 'test', saveMode: 'memory', videoModel: 'veo-3', aspectRatio: '16:9',
+        duration: 8, videoResolution: '720p', videoBatchCount: 1, seed: null,
+        onItemUpdate,
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(20 * 1000) })
+    await startPromise
+
+    expect(onItemUpdate).toHaveBeenCalledWith(
+      'vscene_v1',
+      'error',
+      expect.objectContaining({
+        error: 'Opaque provider failure',
+        errorKind: 'provider-failure',
+      }),
+    )
+  })
+
   it('non-quota top-level 실패가 반복돼도 per-item 예산으로 종료 (무한루프 방지)', { timeout: 20000 }, async () => {
     // submit 은 성공 → polling 진입. 이후 checkVideoStatus 가 항상 non-quota 실패 반환.
     // quota/auth 가 아니므로 break 안 하고, statuses 도 없어 per-item polls 가 안 늘면 무한 폴링.

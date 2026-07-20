@@ -161,7 +161,7 @@ describe('buildVideoTextResultPatch', () => {
     expect(now).toHaveBeenCalledTimes(1)
   })
 
-  it('uses presence checks to pass null clears while truthy fields and appliedInputs stay omitted', () => {
+  it('D5: uses presence checks to pass null clears while other truthy fields stay omitted', () => {
     expect(buildVideoTextResultPatch('pending', {
       ...falsyResult,
       error: null,
@@ -172,6 +172,7 @@ describe('buildVideoTextResultPatch', () => {
       mediaId: '',
       videoPath: null,
       generatedAt: null,
+      appliedInputs: null,
       error: null,
       errorKind: null,
     })
@@ -220,7 +221,7 @@ describe('buildVideoI2VResultPatch', () => {
     })
   })
 
-  it('uses presence checks for null clears and preserves the base64 alias', () => {
+  it('D5: uses presence checks for null clears and preserves the base64 alias', () => {
     expect(buildVideoI2VResultPatch('pending', {
       ...falsyResult,
       error: null,
@@ -232,6 +233,7 @@ describe('buildVideoI2VResultPatch', () => {
       mediaId: '',
       videoPath: null,
       generatedAt: null,
+      appliedInputs: null,
       error: null,
       errorKind: null,
     })
@@ -256,5 +258,19 @@ describe('buildVideoI2VResultPatch', () => {
       generatingEndedAt: 2000,
     })
     expect(now).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('batch generation provider persistence', () => {
+  it('D3: T2V/I2V batch patches persist truthy generationProvider only', () => {
+    expect(buildVideoTextResultPatch('generating', { generationProvider: 'grok' }, () => 1))
+      .toMatchObject({ generationProvider: 'grok' })
+    expect(buildVideoI2VResultPatch('generating', { generationProvider: 'fal' }, () => 1))
+      .toMatchObject({ generationProvider: 'fal' })
+
+    expect(buildVideoTextResultPatch('pending', { generationProvider: '' }))
+      .not.toHaveProperty('generationProvider')
+    expect(buildVideoI2VResultPatch('pending', { generationProvider: null }))
+      .not.toHaveProperty('generationProvider')
   })
 })

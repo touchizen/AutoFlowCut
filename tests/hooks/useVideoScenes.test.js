@@ -107,6 +107,42 @@ describe('useVideoScenes — derived view', () => {
     expect(result.current.videoScenesHook.videoScenes[0].generation).toEqual(generation)
   })
 
+  it('D3: generationProvider를 videoT2VProvider로 저장하고 derived scene에 복원', () => {
+    const { result } = setupHook([
+      { id: 'scene_1', videoT2VPrompt: 'v1' },
+    ])
+
+    act(() => {
+      result.current.videoScenesHook.updateVideoScene('vscene_1', {
+        generationProvider: 'grok',
+      })
+    })
+
+    const scene = result.current.scenesHook.scenes[0]
+    expect(scene.videoT2VProvider).toBe('grok')
+    expect(scene).not.toHaveProperty('generationProvider')
+    expect(result.current.videoScenesHook.videoScenes[0].generationProvider).toBe('grok')
+  })
+
+  it('D4: T2V appliedInputs를 namespaced round-trip하고 bare image metadata를 보존', () => {
+    const imageAppliedInputs = { model: 'imagen', aspectRatio: '16:9' }
+    const videoAppliedInputs = { model: 'grok-video', durationSeconds: 5 }
+    const { result } = setupHook([
+      { id: 'scene_1', videoT2VPrompt: 'v1', appliedInputs: imageAppliedInputs },
+    ])
+
+    act(() => {
+      result.current.videoScenesHook.updateVideoScene('vscene_1', {
+        appliedInputs: videoAppliedInputs,
+      })
+    })
+
+    const scene = result.current.scenesHook.scenes[0]
+    expect(scene.appliedInputs).toBe(imageAppliedInputs)
+    expect(scene.videoT2VAppliedInputs).toBe(videoAppliedInputs)
+    expect(result.current.videoScenesHook.videoScenes[0].appliedInputs).toBe(videoAppliedInputs)
+  })
+
   it('T2V 진행중 타이머 필드(generatingStartedAt/EndedAt)를 vscene 에 노출한다', () => {
     // 회귀: deriveVideoScene 이 이 필드를 안 꺼내면 ResultsTable 의 ElapsedTime 이
     // 항상 0:00 으로 멈춰 다운로드 완료 전까지 경과 시간을 보여주지 못한다.
@@ -262,9 +298,15 @@ describe('useVideoScenes — write 라우팅', () => {
     expect(result.current.videoScenesHook.videoScenes).toEqual([])
   })
 
-  it('clearVideoScenes → 새 메타 필드(videoT2VGeneratedAt/Error/Seed/Model/ErrorKind/SaveId)도 초기화', () => {
+  it('D3/D4: clearVideoScenes → provider/appliedInputs를 포함한 새 메타 필드도 초기화', () => {
+    const appliedInputs = { model: 'grok-imagine-video-1.5' }
     const { result } = setupHook([
-      { id: 'scene_1', videoT2VPrompt: 'v', videoT2VGeneratedAt: 999, videoT2VError: 'e', videoT2VSeed: 5, videoT2VModel: 'm', videoT2VErrorKind: 'k', videoT2VSaveId: 't2v_1' },
+      {
+        id: 'scene_1', videoT2VPrompt: 'v', videoT2VGeneratedAt: 999,
+        videoT2VError: 'e', videoT2VSeed: 5, videoT2VModel: 'm',
+        videoT2VErrorKind: 'k', videoT2VSaveId: 't2v_1',
+        videoT2VProvider: 'grok', videoT2VAppliedInputs: appliedInputs,
+      },
     ])
     act(() => { result.current.videoScenesHook.clearVideoScenes() })
     const s = result.current.scenesHook.scenes[0]
@@ -274,6 +316,8 @@ describe('useVideoScenes — write 라우팅', () => {
     expect(s.videoT2VModel).toBeNull()
     expect(s.videoT2VErrorKind).toBeNull()
     expect(s.videoT2VSaveId).toBeNull()
+    expect(s.videoT2VProvider).toBeNull()
+    expect(s.videoT2VAppliedInputs).toBeNull()
   })
 
   it('toggleSelect → 해당 scene 의 videoT2VSelected 토글', () => {

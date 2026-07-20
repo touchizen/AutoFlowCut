@@ -54,7 +54,8 @@ export function buildVideoTextResultPatch(newStatus, result, now = Date.now) {
     ...(result?.seed != null ? { seed: result.seed } : {}),
     ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
     ...(result?.model ? { model: result.model } : {}),
-    ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
+    ...(result?.generationProvider ? { generationProvider: result.generationProvider } : {}),
+    ...(result && 'appliedInputs' in result ? { appliedInputs: result.appliedInputs } : {}),
     // null 값 보존 — success 시 stale error 메시지 clear.
     ...(result && 'error' in result ? { error: result.error } : {}),
     ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
@@ -77,7 +78,8 @@ export function buildVideoI2VResultPatch(newStatus, result, now = Date.now) {
     ...(result?.seed != null ? { seed: result.seed } : {}),
     ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
     ...(result?.model ? { model: result.model } : {}),
-    ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
+    ...(result?.generationProvider ? { generationProvider: result.generationProvider } : {}),
+    ...(result && 'appliedInputs' in result ? { appliedInputs: result.appliedInputs } : {}),
     // null 값 보존 — success 시 stale error 메시지 clear.
     ...(result && 'error' in result ? { error: result.error } : {}),
     ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
