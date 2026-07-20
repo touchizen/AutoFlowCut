@@ -8,9 +8,11 @@
  *
  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
  */
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { readTextFile } from '../../utils/decodeTextFile'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
+import { useAudioPreflight } from '../../hooks/useAudioPreflight'
+import AudioKeyGateCard from './AudioKeyGateCard'
 import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
@@ -405,6 +407,25 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
     synopsisReviewing = false,
   } = pipeline
+
+  // M3b-2b Task 2: 오디오 생성 pre-flight 키 게이트(spec §4.4). 진입점(아래 5곳)이 직접 start('audio', …)를
+  // 부르지 않고 runAudioWithPreflight를 거친다 — main이 provider별 키를 다시 검사해 missing이 있으면
+  // 실행하지 않고 게이트 카드를 인라인으로 띄운다. pipeline.audioPreflight가 없는 pipeline(구버전/단위
+  // 테스트 목)은 게이트를 건너뛰고 바로 실행 — 이 훅은 M3b-2a에서 이미 커밋된 계약을 그대로 소비할 뿐,
+  // 그 계약이 없는 호출부까지 깨뜨리지 않기 위한 하위호환이다.
+  const preflight = useAudioPreflight(pipeline)
+  const [audioGate, setAudioGate] = useState(null) // { missing, retry, paramsForRecheck } | null
+  const runAudioWithPreflight = useCallback(async (params, run) => {
+    if (typeof pipeline.audioPreflight !== 'function') return run(params)
+    const r = await preflight.check(params)
+    if (!r.ok) {
+      setAudioGate({ missing: r.missing, retry: () => run(params), paramsForRecheck: params })
+      return { error: 'preflight-missing-key' }
+    }
+    setAudioGate(null)
+    return run(params)
+  }, [preflight, pipeline])
+
   const steps = state?.steps || {}
   const scenesStreaming = steps.scenes?.status === 'running' && steps.scenes?.reviewOnly !== true
   const promptsStreaming = steps.prompts?.status === 'running' && steps.prompts?.reviewOnly !== true
@@ -1142,13 +1163,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   // M2a-3d/3c: 세그먼트 재생성(강제 re-TTS)·미리듣기.
   const regenerateSegment = (segId) => {
-    start('audio', buildAudioParams([segId]))
+    runAudioWithPreflight(buildAudioParams([segId]), (p) => start('audio', p))
     setScriptPhase(null)
     setViewedStep(null)
   }
 
   const runSpeakerAudio = async (sp) => {
-    const result = await start('audio', { ...buildAudioParams(), onlySpeaker: sp.id })
+    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id }, (p) => start('audio', p))
+    // preflight가 막은 경우엔 게이트 카드가 이미 안내하므로 별도 토스트 없이 조용히 돌아간다.
+    if (result?.error === 'preflight-missing-key') return
     // main 의 거절(대사 없는 화자 등)은 **사전검사라 스텝 상태를 일부러 안 건드린다**(완료 프로젝트의
     // done 을 지키려고). 그래서 오류 배너도 안 뜬다 — 여기서 안 띄우면 버튼이 무반응으로 보인다.
     // busy 는 뺀다: 실행 중엔 화자 맵 자체가 안 보이므로 사용자가 만든 상황이 아니다.
@@ -1299,7 +1322,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       await handleSplit()
     } else {
       // M2a-3b: audio는 화자→목소리 매핑을 실어 보낸다(그 외 스텝은 params 없음).
-      start(currentStep, buildStepParams(currentStep))
+      // M3b-2b: audio만 pre-flight 게이트를 거친다 — missing 키가 있으면 여기서 실행하지 않고
+      // AudioKeyGateCard로 안내한다(그 외 스텝은 게이트 대상이 아니라 원래대로 직접 실행).
+      if (currentStep === 'audio') {
+        runAudioWithPreflight(buildStepParams(currentStep), (p) => start('audio', p))
+      } else {
+        start(currentStep, buildStepParams(currentStep))
+      }
       // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
       setScriptPhase(null)
       // 진행 액션은 현재 단계로 화면을 되돌린다 — done 스텝을 보던 중이면 viewedStep이
@@ -1311,7 +1340,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
   const handleStepRedo = () => {
     if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(제목 확정+분리, 자체 viewedStep 처리)
-    start(redoStep, buildStepParams(redoStep))
+    if (redoStep === 'audio') {
+      runAudioWithPreflight(buildStepParams(redoStep), (p) => start('audio', p))
+    } else {
+      start(redoStep, buildStepParams(redoStep))
+    }
     setViewedStep(null)
   }
 
@@ -1399,7 +1432,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       return
     }
     setScriptPhase(null); setViewedStep(null)
-    const res = await start(step, buildStepParams(step))
+    // M3b-2b: audio는 pre-flight 게이트를 거친다 — missing 키면 'preflight-missing-key'가 res.error로
+    // 와서 아래 stuck 방지 로직이 자동 진행을 멈춘다(키가 없는데 계속 재시도하면 안 됨).
+    const res = step === 'audio'
+      ? await runAudioWithPreflight(buildStepParams(step), (p) => start('audio', p))
+      : await start(step, buildStepParams(step))
     if (res?.error) setAutoRunning(false) // busy 등 상태전이 없음 → 멈춤
   }
   const handleRunAll = () => { if (canRunAll) setAutoRunning(true) }
@@ -2088,6 +2125,21 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'audio' && (
           <div className="story-audio-panel">
+            {/* M3b-2b Task 2: pre-flight가 missing 키를 찾으면 실행 대신 여기 인라인으로 카드를
+                띄운다(§4.4). onKeySaved는 best-effort로 그 provider 목소리 재조회 후 재검사 —
+                통과하면 원래 하려던 실행(audioGate.retry)을 이어서 돈다. */}
+            {audioGate && (
+              <AudioKeyGateCard
+                missing={audioGate.missing}
+                t={t}
+                onKeySaved={async (provider) => {
+                  try { await onVoiceSearch?.(provider) } catch { /* best-effort — 재조회 실패해도 재검사는 진행 */ }
+                  const r = await preflight.check(audioGate.paramsForRecheck)
+                  if (r.ok) { setAudioGate(null); audioGate.retry?.() }
+                  else setAudioGate((g) => (g ? { ...g, missing: r.missing } : g))
+                }}
+              />
+            )}
             {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행).
                 로그를 함께 넘긴다 — 파일 가져오기의 진단(정렬 결과, 자막이 안 맞는 위치)이 여기로
                 온다. 안 넘기면 그 정보가 어디에도 안 보인다(오류 배너는 errorKind로 번역되면서
