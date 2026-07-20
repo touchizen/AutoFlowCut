@@ -459,10 +459,27 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
   // Issue #2: 이미 생성 완료(이미지 보유)된 씬의 이미지 프롬프트가 실제로 바뀌면 재생성 대상이
   //   되도록 status 를 pending 으로 되돌린다. updateScene(모달/인라인 편집)과 동일 규칙을 벌크
   //   편집(PromptInput/.txt import) 경로에도 적용. 이미지 프롬프트(fieldName==='prompt')에만 해당.
+  //   done→편집(pending)→정확히 원래 프롬프트로 원복하면 done 으로 되돌린다. 벌크 경로가 이 복원
+  //   분기를 빠뜨려(직전 값과 다르면 무조건 pending) 원복이 pending 에 고착되던 실측 버그를 고친다.
+  //   진행 중(generating)인 씬은 finalize 가 곧 done 을 쓰므로 건드리지 않는다(updateScene 과 동일 가드).
   const mergeField = (ex, value) => {
     const merged = { ...ex, [fieldName]: value }
-    if (fieldName === 'prompt' && value !== ex.prompt && (ex.image || ex.imagePath)) {
-      merged.status = 'pending'
+    if (fieldName === 'prompt' && value !== ex.prompt && (ex.image || ex.imagePath) && ex.status !== 'generating') {
+      let baseline = ex.donePrompt
+      let hasBaseline = typeof baseline === 'string'
+      // donePrompt 도입 전 완료된 legacy 씬은 편집 직전 prompt 가 생성 기준 — 첫 편집 때 한 번만 캡처.
+      if (!hasBaseline && ex.status === 'done') {
+        baseline = ex.prompt
+        hasBaseline = true
+        merged.donePrompt = baseline
+      }
+      if (hasBaseline && value === baseline) {
+        merged.status = 'done'
+        merged.error = null
+        merged.errorKind = null
+      } else {
+        merged.status = 'pending'
+      }
     }
     return merged
   }

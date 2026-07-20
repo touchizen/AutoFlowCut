@@ -97,6 +97,32 @@ describe('updateScene — 프롬프트 변경 시 Done 씬 pending 리셋', () =
     expect(result.current.scenes[0].status).toBe('pending')
   })
 
+  it('이미지가 filePath 에만 있어도(썸네일 렌더 기준=hasImageData) 프롬프트 변경 pending + 원복 done', () => {
+    // 실측 버그: image/imagePath 는 null 이고 filePath/data 로만 이미지가 있는 씬은 썸네일은 뜨는데
+    // 좁은 가드(image||imagePath)가 "이미지 없음"으로 봐서 pending 전환도 원복 복원도 스킵됐다.
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.setScenes([
+        { id: 's1', prompt: 'P0', status: 'done', donePrompt: 'P0', image: null, imagePath: null, filePath: '/x.jpg' },
+      ])
+    })
+    act(() => { result.current.updateScene('s1', { prompt: 'P1' }) })
+    expect(result.current.scenes[0].status).toBe('pending')
+    act(() => { result.current.updateScene('s1', { prompt: 'P0' }) })
+    expect(result.current.scenes[0].status).toBe('done')
+  })
+
+  it('이미지가 data(base64) 에만 있어도 프롬프트 변경 pending', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.setScenes([
+        { id: 's1', prompt: 'OLD', status: 'done', image: null, imagePath: null, data: 'data:image/png;base64,XXX' },
+      ])
+    })
+    act(() => { result.current.updateScene('s1', { prompt: 'NEW' }) })
+    expect(result.current.scenes[0].status).toBe('pending')
+  })
+
   it('프롬프트가 같은 값이면 status 유지(불필요한 리셋 없음)', () => {
     const { result } = renderHook(() => useScenes())
     seedDone(result)
