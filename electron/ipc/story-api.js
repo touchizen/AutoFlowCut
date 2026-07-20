@@ -5,6 +5,7 @@
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createStepMachine, readAudioPackage } from '../story/stepMachine.js'
+import { keyIdForProvider } from '../../src/config/apiKeyRegistry.js'
 import * as llmGemini from '../api/llm/llmGemini.js'
 import * as llmClaude from '../api/llm/llmClaude.js'
 import { searchVideos } from '../api/youtube/searchVideos.js'
@@ -47,7 +48,19 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels }) {
+// M2 오디오 사전점검(§4.1/§4.3): audioPreflight()가 계산한 필요 provider 목록을 provider별
+// 키 상태(store/fallback/missing)로 매핑하는 순수 함수 — IPC 핸들러에서 분리해 단위 테스트한다.
+export function buildAudioPreflightResult(requiredProviders, { resolveKeyWithSource, encryptionAvailable }) {
+  const providers = requiredProviders.map((provider) => {
+    const keyId = keyIdForProvider(provider)
+    const { source } = resolveKeyWithSource(keyId)
+    const status = source === 'store' ? 'resolved-store' : source === 'fallback' ? 'resolved-fallback' : 'missing'
+    return { provider, keyId, status, encryptionAvailable }
+  })
+  return { providers, encryptionAvailable }
+}
+
+export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels, resolveKeyWithSource, safeStorage }) {
   let machine = null
   let openLock = Promise.resolve()
 
@@ -166,6 +179,18 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     if (!machine) return null
     return asKind(() => machine.loadAudioPackage())
   })
+  // M2 오디오 사전점검(§4.1/§4.3): audioPreflight()로 필요 provider를 구한 뒤 provider별 키
+  // 상태를 붙여 renderer에 돌려준다. 읽기 전용 조회라 audioPreflight 자체처럼 guarded()로
+  // 감싸지 않는다(projectToken 불변 여부와 무관) — 다만 machine 이 아직 없으면(프로젝트 미오픈)
+  // machine.audioPreflight 호출이 TypeError로 터지므로 다른 비guarded 핸들러(story:load-audio-package)
+  // 관례대로 빈 목록으로 안전 반환한다.
+  ipcMain.handle('story:audio-preflight', async (_e, params) => {
+    const encryptionAvailable = safeStorage?.isEncryptionAvailable?.() ?? false
+    if (!machine) return buildAudioPreflightResult([], { resolveKeyWithSource, encryptionAvailable })
+    const required = await machine.audioPreflight(params || {})
+    return buildAudioPreflightResult(required, { resolveKeyWithSource, encryptionAvailable })
+  })
+
   ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => machine.generateTitle(scriptMd, options || {})))
   // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action — title/pasted 분기는 machine이 처리.
   // 리서치 §5 M2: 기존 채널에 useResearch 필드 추가(신규 채널 아님) — true일 때만 research.json 주입.
