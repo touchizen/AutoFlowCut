@@ -56,4 +56,10 @@ describe('MCP load_csv — Done 씬 프롬프트 변경 시 pending 리셋', () 
     const result = applyUpdate(prev, [{ id: 'scene_1', _sceneNum: 1, prompt: 'A-refined' }])
     expect(result[0].status).toBe('pending')
   })
+
+  it('merge 가 donePrompt(생성 기준 스냅샷)를 보존 — MCP CSV 왕복 후에도 되돌림 done 복원 유지', () => {
+    const prev = [{ id: 'scene_1', _sceneNum: 1, prompt: 'A', image: 'img-A', status: 'done', donePrompt: 'A' }]
+    const result = applyUpdate(prev, [{ id: 'scene_1', _sceneNum: 1, prompt: 'A-refined' }])
+    expect(result[0].donePrompt).toBe('A')
+  })
 })

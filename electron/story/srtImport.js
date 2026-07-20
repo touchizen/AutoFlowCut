@@ -114,7 +114,9 @@ export function cueCoverage(cues, { audioDurationMs = 0 } = {}) {
  * 그러면 눈에 똑같아 보여도 코드포인트가 달라 indexOf가 전부 실패한다 — 짝이 맞는 파일인데도
  * 전 세그먼트가 missed로 나와 "다른 회차 아니냐"는 엉뚱한 안내를 받게 된다.
  */
-const normalizeForAlign = (s) => String(s || '').normalize('NFC').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase()
+// export: storyChunks.normalizeVerbatim이 이 정규화와 parity를 유지해야 한다(검증기 §2.1) —
+// 테스트가 실함수를 직접 대조할 수 있게 공개한다.
+export const normalizeForAlign = (s) => String(s || '').normalize('NFC').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase()
 
 /**
  * 큐 목록 → 정규화 문자 스트림 + 문자 인덱스에서 시각을 얻는 함수.

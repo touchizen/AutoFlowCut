@@ -19,7 +19,7 @@ import {
 import { $isBeautifulMentionNode } from 'lexical-beautiful-mentions'
 import { UnknownMentionTextNode } from './UnknownMentionTextNode'
 import { buildNodesForLine, buildRefLookup } from '../utils/promptLexicalAdapter'
-import { MENTION_RE } from '../utils/mentionParser'
+import { iterateMentions, MENTION_LEAD_CHAR_RE } from '../utils/mentionParser'
 
 /**
  * Node transform 함수 생성기.
@@ -50,12 +50,19 @@ export function createMentionTransformFn(getRefs) {
       selection.anchor.key === node.getKey()
     ) {
       const cursorOffset = selection.anchor.offset
-      for (const m of text.matchAll(MENTION_RE)) {
-        const lead = m[1] || ''
-        const mStart = m.index + lead.length
-        const mEnd = mStart + 1 + m[2].length
+      for (const { index: mStart, tokenLength } of iterateMentions(text)) {
+        const mEnd = mStart + tokenLength
         if (cursorOffset >= mStart && cursorOffset <= mEnd) return
       }
+      // 아직 `}`를 입력하지 않은 brace mention도 현재 cursor가 그 안에 있으면 변환을 미룬다.
+      const beforeCursor = text.slice(0, cursorOffset)
+      const openIndex = beforeCursor.lastIndexOf('@{')
+      const openHasValidLead = openIndex === 0 || MENTION_LEAD_CHAR_RE.test(text[openIndex - 1])
+      const unclosedTail = openIndex >= 0 ? beforeCursor.slice(openIndex + 2) : ''
+      if (
+        openIndex >= 0 && openHasValidLead &&
+        !unclosedTail.includes('}') && !unclosedTail.includes('\n')
+      ) return
     }
 
     // 3) 적절한 node 들로 재구성. 결과가 현재 노드와 동일 형태면 skip (idempotent).

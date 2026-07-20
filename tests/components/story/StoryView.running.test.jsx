@@ -31,6 +31,133 @@ const withRunning = (p, step, agoMs) => ({
 })
 
 describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)', () => {
+  it('story.stream 키가 실제 ko/en locale 에 존재한다 — 새 스트리밍 문자열 i18n 우회 방지', async () => {
+    // safeT 는 provider 없으면 fallback(한국어)을 쓰므로 컴포넌트 테스트로는 키 누락이 안 잡힌다.
+    // 실제 locale 파일을 직접 검사한다(SceneDetailModal locale 핀과 동일 교훈).
+    const { default: ko } = await import('../../../src/locales/ko.js')
+    const { default: en } = await import('../../../src/locales/en.js')
+    for (const strings of [ko, en]) {
+      expect(typeof strings.story?.stream?.thinking).toBe('string')
+      expect(typeof strings.story?.stream?.sceneProgress).toBe('string')
+      expect(typeof strings.story?.stream?.sceneCount).toBe('string')
+      expect(typeof strings.story?.stream?.promptProgress).toBe('string')
+    }
+  })
+
+  it('씬 thinking 중 preview가 없을 때 안내 배지를 보이고 preview가 시작되면 숨긴다', () => {
+    const p = pipeline({ scriptText: '0123456789', sceneThinking: true, previewScenes: {} })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date().toISOString() }
+    const { rerender } = render(<StoryView pipeline={p} />)
+
+    expect(screen.getByText('🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)')).toBeTruthy()
+
+    rerender(<StoryView pipeline={{
+      ...p,
+      previewScenes: {
+        '0:0': { chunkIndex: 0, localSceneNo: 0, scene: { segments: [{ text: '01234' }] } },
+      },
+    }} />)
+    expect(screen.queryByText('🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)')).toBeNull()
+  })
+
+  it('씬 preview 수와 대본 대비 소비 비율을 잠정 진행으로 표시하고 99%에서 cap한다', () => {
+    const p = pipeline({
+      scriptText: '0123456789',
+      previewScenes: {
+        '0:0': { chunkIndex: 0, localSceneNo: 0, scene: { segments: [{ text: '012' }] } },
+        '0:1': { chunkIndex: 0, localSceneNo: 1, scene: { segments: [{ text: '345' }, { text: '67890' }] } },
+      },
+    })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date().toISOString() }
+
+    render(<StoryView pipeline={p} />)
+    const progress = screen.getByRole('progressbar', { name: '씬 분리 진행 중' })
+    expect(progress).toHaveTextContent('씬 2개 · ~99%')
+    expect(progress).toHaveAttribute('aria-valuetext', '씬 2개 · ~99%')
+    expect(progress).toHaveAttribute('aria-valuenow', '99')
+    expect(progress).toHaveAttribute('aria-valuemax', '100')
+    expect(progress).toHaveClass('story-stream-progress-sticky')
+  })
+
+  it('대본이 비었으면 씬 count-only label과 indeterminate bar를 표시한다', () => {
+    const p = pipeline({
+      scriptText: '',
+      previewScenes: {
+        '0:0': { chunkIndex: 0, localSceneNo: 0, scene: { segments: [{ text: 'streamed' }] } },
+      },
+    })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date().toISOString() }
+
+    render(<StoryView pipeline={p} />)
+    const progress = screen.getByRole('progressbar', { name: '씬 분리 진행 중' })
+    expect(progress).toHaveAttribute('aria-valuetext', '씬 1개')
+    expect(progress).not.toHaveAttribute('aria-valuenow')
+    expect(progress.querySelector('.story-stream-progress-fill')).toHaveClass('indeterminate')
+  })
+
+  it('프롬프트 thinking 배지와 streamed/전체 씬 수를 표시하고 preview가 시작되면 배지를 숨긴다', () => {
+    const scenes = [1, 2, 3].map((sceneNo) => ({ sceneNo, storyId: `s${sceneNo}` }))
+    const p = pipeline({ scenes, promptThinking: true, previewPrompts: {} })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'done' }
+    p.state.steps.audio = { status: 'done' }
+    p.state.steps.prompts = { status: 'running', updatedAt: new Date().toISOString() }
+    const { rerender } = render(<StoryView pipeline={p} />)
+
+    expect(screen.getByText('🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)')).toBeTruthy()
+    let progress = screen.getByRole('progressbar', { name: '프롬프트 생성 중' })
+    expect(progress).toHaveAttribute('aria-valuetext', '프롬프트 0/3')
+    expect(progress).toHaveAttribute('aria-valuenow', '0')
+    expect(progress).toHaveAttribute('aria-valuemax', '100')
+    expect(progress).toHaveClass('story-stream-progress-sticky')
+
+    rerender(<StoryView pipeline={{
+      ...p,
+      previewPrompts: {
+        1: { imagePrompt: 'IMG-1', videoPrompt: 'VID-1' },
+        2: { imagePrompt: 'IMG-2', videoPrompt: 'VID-2' },
+      },
+    }} />)
+    expect(screen.queryByText('🧠 추론 중… (모델이 생각하는 동안 출력이 표시되지 않습니다)')).toBeNull()
+    progress = screen.getByRole('progressbar', { name: '프롬프트 생성 중' })
+    expect(progress).toHaveAttribute('aria-valuetext', '프롬프트 2/3')
+    expect(progress).toHaveAttribute('aria-valuenow', '67')
+  })
+
+  it('전체 씬이 0개인 프롬프트 스트리밍은 0% bar를 표시한다', () => {
+    const p = pipeline({ scenes: [], previewPrompts: {} })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'done' }
+    p.state.steps.audio = { status: 'done' }
+    p.state.steps.prompts = { status: 'running', updatedAt: new Date().toISOString() }
+
+    render(<StoryView pipeline={p} />)
+    const progress = screen.getByRole('progressbar', { name: '프롬프트 생성 중' })
+    expect(progress).toHaveAttribute('aria-valuetext', '프롬프트 0/0')
+    expect(progress).toHaveAttribute('aria-valuenow', '0')
+  })
+
+  it('terminal story:state가 오면 provisional progress bar를 숨긴다', () => {
+    const p = pipeline({ scriptText: '0123456789', previewScenes: {} })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date().toISOString() }
+    const { rerender } = render(<StoryView pipeline={p} />)
+    expect(screen.getByRole('progressbar')).toBeInTheDocument()
+
+    rerender(<StoryView pipeline={{
+      ...p,
+      state: {
+        ...p.state,
+        steps: { ...p.state.steps, scenes: { status: 'done', updatedAt: new Date().toISOString() } },
+      },
+      previewScenes: {},
+    }} />)
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
   it('씬 분리 running 이면 패널에 초시계와 경과 시간을 표시한다', () => {
     const p = pipeline()
     p.state.steps.script = { status: 'done' }

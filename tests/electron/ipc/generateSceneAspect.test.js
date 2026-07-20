@@ -27,6 +27,7 @@ function makeDeps({
   ensureAgentOffResult = { success: true },
   ensureAgentOnResult = { success: true },
   clickResult = { success: true },
+  pendingGenerations,
 } = {}) {
   let pending = null
   let generateClicks = 0
@@ -70,6 +71,7 @@ function makeDeps({
     flowPageFetch: vi.fn(),
     parseFlowResponse: vi.fn(),
     getCapturedProjectId: () => null,
+    pendingGenerations,
   }
   return { deps, flowView, getGenerateClicks: () => generateClicks }
 }
@@ -184,6 +186,83 @@ describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', ()
 
     expect(deps.setFlowPageInject.mock.calls[0][0].aspectRatio).toBeNull()
     expect(deps.clearFlowPageInject).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('flow:generate-scene gap reference injection', () => {
+  it('arms synchronous scene generation with gap reference mediaIds', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+    const gapReferences = [{ name: '도둑 우두머리', mediaId: 'X' }]
+
+    await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'a scene' }],
+      projectId: PID,
+      gapReferences,
+    })
+
+    expect(deps.setFlowPageInject.mock.calls[0][0].references).toEqual(gapReferences)
+  })
+
+  it('arms async scene generation and records injected refMediaIds for response matching', async () => {
+    const ipc = makeIpcMain()
+    const pendingGenerations = new Map()
+    const { deps } = makeDeps({ pendingGenerations })
+    registerCharacterIPC(ipc, deps)
+    const gapReferences = [{ name: '도둑 우두머리', mediaId: 'X' }]
+
+    const result = await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'a scene' }],
+      projectId: PID,
+      gapReferences,
+      asyncMode: true,
+    })
+
+    const injectReferences = deps.setFlowPageInject.mock.calls[0][0].references
+    const pending = pendingGenerations.get(result.generationId)
+    const refMediaIds = pending?.refMediaIds
+    clearTimeout(pending?.orphanTimer)
+    pendingGenerations.clear()
+
+    expect(refMediaIds).toEqual(['X'])
+    expect(injectReferences).toEqual(gapReferences)
+  })
+
+  it('records refMediaIds SORTED so the genTag-less response signature matches parseSignature', async () => {
+    const ipc = makeIpcMain()
+    const pendingGenerations = new Map()
+    const { deps } = makeDeps({ pendingGenerations })
+    registerCharacterIPC(ipc, deps)
+    // 비-사전순으로 넣어도 parseSignature(generationMatch.js) 는 sorted 로 추출 → 기록도 sorted 여야 signature 일치.
+    const gapReferences = [{ name: '초저녁 도둑', mediaId: 'X' }, { name: '도둑 우두머리', mediaId: 'A' }]
+
+    const result = await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'a scene' }],
+      projectId: PID,
+      gapReferences,
+      asyncMode: true,
+    })
+
+    const pending = pendingGenerations.get(result.generationId)
+    const refMediaIds = pending?.refMediaIds
+    clearTimeout(pending?.orphanTimer)
+    pendingGenerations.clear()
+
+    expect(refMediaIds).toEqual(['A', 'X'])
+  })
+
+  it('arms references:null when there are no gap references (byte-identical to pre-fix seed/aspect-only)', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+
+    await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'a scene' }],
+      projectId: PID,
+    })
+
+    expect(deps.setFlowPageInject.mock.calls[0][0].references).toBeNull()
   })
 })
 

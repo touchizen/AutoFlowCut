@@ -16,7 +16,7 @@ const TURN_ID = 'turn-1'
  * 가짜 app-server. script 로 턴 진행을 흉내낸다.
  * emit(child, msg) 는 stdout 으로 한 줄 내보낸다.
  */
-function fakeAppServer({ deltas = [], finalText = '', status = 'completed', error = null, onTurnStart, dropAgentMessage = false } = {}) {
+function fakeAppServer({ deltas = [], notifications = [], finalText = '', status = 'completed', error = null, onTurnStart, dropAgentMessage = false } = {}) {
   const sent = []
   const child = new EventEmitter()
   child.stdout = new EventEmitter()
@@ -33,6 +33,7 @@ function fakeAppServer({ deltas = [], finalText = '', status = 'completed', erro
       if (msg.method === 'turn/start') {
         push({ id: msg.id, result: { turn: { id: TURN_ID, items: [], status: 'inProgress' } } })
         onTurnStart?.(msg)
+        for (const notification of notifications) push(notification)
         for (const d of deltas) push({ method: 'item/agentMessage/delta', params: { delta: d, itemId: 'i1', threadId: THREAD_ID, turnId: TURN_ID } })
         if (!dropAgentMessage) {
           push({ method: 'item/completed', params: { threadId: THREAD_ID, turnId: TURN_ID, item: { type: 'agentMessage', id: 'i1', text: finalText } } })
@@ -75,6 +76,22 @@ describe('runCodexText — app-server 트랜스포트', () => {
   it('onDelta 가 없어도 동작한다', async () => {
     const { spawnImpl } = fakeAppServer({ deltas: ['a'], finalText: 'a' })
     expect(await runCodexText('p', {}, deps(spawnImpl))).toBe('a')
+  })
+
+  it('reasoning 시작/delta 알림을 onThinkingActivity로 전달한다', async () => {
+    const onThinkingActivity = vi.fn()
+    const { spawnImpl } = fakeAppServer({
+      notifications: [
+        { method: 'item/started', params: { item: { type: 'reasoning', id: 'r1', summary: [], content: [] } } },
+        { method: 'item/reasoning/summaryTextDelta', params: { itemId: 'r1', delta: '요약' } },
+        { method: 'item/reasoning/textDelta', params: { itemId: 'r1', delta: '내부 추론' } },
+      ],
+      finalText: 'ok',
+    })
+
+    await runCodexText('p', {}, deps(spawnImpl, { onThinkingActivity }))
+
+    expect(onThinkingActivity).toHaveBeenCalledTimes(3)
   })
 
   it('initialize → thread/start → turn/start 순서로 보낸다', async () => {
@@ -174,6 +191,19 @@ describe('runCodexText — app-server 트랜스포트', () => {
 })
 
 describe('runCodexJson — outputSchema 보존', () => {
+  it('item/agentMessage/delta의 raw JSON 조각을 onPartialText로 보내고 최종 JSON은 완료 텍스트로 파싱한다', async () => {
+    const onPartialText = vi.fn()
+    const { spawnImpl } = fakeAppServer({
+      deltas: ['{"a":', '"draft"}'],
+      finalText: '{"a":"final"}',
+    })
+
+    const out = await runCodexJson('p', {}, {}, deps(spawnImpl, { onPartialText }))
+
+    expect(onPartialText.mock.calls).toEqual([['{"a":'], ['"draft"}']])
+    expect(out).toEqual({ a: 'final' })
+  })
+
   it('outputSchema 를 turn/start 로 넘긴다', async () => {
     const schema = { type: 'object', properties: { a: { type: 'string' } } }
     const { spawnImpl, sent } = fakeAppServer({ finalText: '{"a":"b"}' })

@@ -78,6 +78,45 @@ export function parseSceneMentions(prompt, characterRefs = []) {
       //   정상 멘션이 텍스트로 떨어진다. 이메일(a@b)은 prev='a'(이름글자)라 여전히 제외.
       const prevOk = i === 0 || !isWordChar(prompt[i - 1])
       const rest = prompt.slice(i + 1)
+      // brace form은 닫는 `}` 전까지를 canonical name 전체로 보고 exact 매칭한다.
+      // 공백/하이픈/뒤 인접 문자는 이름 경계에 영향을 주지 않고, 조사 분리도 적용하지 않는다.
+      // Flow-side eligible 매칭은 기존대로 case-SENSITIVE다(mentionParser resolve는 case-insensitive).
+      if (prevOk && rest[0] === '{') {
+        const closeIndex = rest.indexOf('}', 1)
+        const newlineIndex = rest.indexOf('\n', 1)
+        const inner = closeIndex > 1 ? rest.slice(1, closeIndex) : ''
+        const validBraced = closeIndex > 1 &&
+          (newlineIndex < 0 || closeIndex < newlineIndex) &&
+          !inner.includes('{') &&
+          inner.trim().length > 0
+        if (validBraced) {
+          const bracedHit = prevOk ? eligible.find(c => c.name === inner) : null
+          if (bracedHit) {
+            flushText()
+            segments.push({ type: 'mention', name: bracedHit.name, entityId: bracedHit.entityId })
+            i += 1 + 1 + inner.length + 1
+            continue
+          }
+          if (
+            mentionsActive && prevOk &&
+            !unresolved.some(u => u.name === inner)
+          ) {
+            unresolved.push({ name: inner, exact: true })
+          }
+          // 미해결 brace token은 원문 text로 보존하되 내부를 plain mention으로 재해석하지 않는다.
+          const tokenLength = 1 + 1 + inner.length + 1
+          buf += prompt.slice(i, i + tokenLength)
+          i += tokenLength
+          continue
+        }
+        // malformed brace candidate 전체를 text로 소비해 내부 `@name`을 부분 salvage하지 않는다.
+        const malformedLength = newlineIndex >= 0 && (closeIndex < 0 || newlineIndex < closeIndex)
+          ? newlineIndex + 1
+          : closeIndex >= 0 ? closeIndex + 2 : prompt.length - i
+        buf += prompt.slice(i, i + malformedLength)
+        i += malformedLength
+        continue
+      }
       // R4-P2: eligible 매칭에도 prevOk 적용 — "mail a@회사원3.com" 의 단어중간 @ 가 멘션으로
       //   둔갑하지 않게(이전엔 unresolved 에만 prevOk 적용됐음).
       const hit = prevOk ? eligible.find(c => matchesAt(rest, c.name)) : null

@@ -404,6 +404,7 @@ export function useMcpServer({
               mediaId: matched.mediaId,
               generatingStartedAt: matched.generatingStartedAt,
               image_size: matched.image_size,
+              donePrompt: matched.donePrompt,          // 생성 기준 스냅샷 — 되돌림 done 복원 유지
               // C9 fix: incoming 이 srtLineIds 안 보내면 기존 보존
               srtLineIds: incoming.srtLineIds ?? matched.srtLineIds ?? [],
             }

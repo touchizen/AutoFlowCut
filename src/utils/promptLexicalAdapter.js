@@ -19,7 +19,12 @@ import {
   $isBeautifulMentionNode,
 } from 'lexical-beautiful-mentions'
 import { $createUnknownMentionTextNode } from '../components/UnknownMentionTextNode'
-import { MENTION_RE, resolveMentionPrefix } from './mentionParser'
+import {
+  MENTION_RE,
+  formatMentionToken,
+  iterateMentions,
+  resolveMentionPrefix,
+} from './mentionParser'
 
 // MENTION_RE 는 mentionParser 의 단일 source 를 re-export — 컴포넌트/테스트가 어댑터
 // 경로로 import 해도 호환 (정의는 mentionParser 한 곳).
@@ -51,7 +56,9 @@ export function $editorStateToText(editorState) {
       return children
         .map((node) => {
           if ($isBeautifulMentionNode(node)) {
-            return `${node.getTrigger()}${node.getValue()}`
+            const value = String(node.getValue())
+            // brace/newline 값은 유효한 token이 될 수 없어 `@` 없이 plain prose로 의도적으로 degrade한다.
+            return formatMentionToken(value) || value
           }
           return node.getTextContent ? node.getTextContent() : ''
         })
@@ -81,27 +88,26 @@ export function buildNodesForLine(line, refByLowerName, { plain = false } = {}) 
   }
   const nodes = []
   let lastIdx = 0
-  let m
-  // matchAll 대신 exec — index 정확히 추적 (sticky 효과 회피용)
-  MENTION_RE.lastIndex = 0
-  while ((m = MENTION_RE.exec(line)) !== null) {
-    const lead = m[1] || ''
-    const name = m[2]
-    const mentionStart = m.index + lead.length
+  for (const mention of iterateMentions(line)) {
+    const { index: mentionStart, name, braced, tokenLength } = mention
     if (mentionStart > lastIdx) {
       nodes.push($createTextNode(line.slice(lastIdx, mentionStart)))
     }
-    // 전체 이름 우선, 없으면 끝 한글(조사) 떼며 ref 접두사 매칭 (@queen이 → queen 칩 + "이").
-    const resolved = resolveMentionPrefix(name, refByLowerName)
+    // brace form은 exact match만, plain form만 한글 조사 접두 분리를 허용한다.
+    const exactRef = braced ? refByLowerName.get(name.toLowerCase()) : null
+    const resolved = braced
+      ? (exactRef ? { ref: exactRef, matched: name } : null)
+      : resolveMentionPrefix(name, refByLowerName)
     if (resolved) {
       nodes.push($createBeautifulMentionNode('@', resolved.ref.name, refDataPayload(resolved.ref)))
-      // 매칭된 접두사까지만 소비 — 나머지(조사 등)는 다음 텍스트 슬라이스로 자연히 흘러간다.
-      lastIdx = mentionStart + 1 + resolved.matched.length
+      // plain은 매칭 접두사까지만 소비해 조사를 남기고, brace는 닫는 `}`까지 전부 소비한다.
+      lastIdx = mentionStart + (braced ? tokenLength : 1 + resolved.matched.length)
     } else {
       // 매칭 안 되는 @xxx 는 빨간 wavy underline 이 들어가는 텍스트 노드로.
       // 일반 TextNode 로 두면 typo 가 plain text 와 구분 안 됨 (Phase A overlay 회귀 방지).
-      nodes.push($createUnknownMentionTextNode(`@${name}`))
-      lastIdx = mentionStart + 1 + name.length
+      const originalToken = line.slice(mentionStart, mentionStart + tokenLength)
+      nodes.push($createUnknownMentionTextNode(originalToken))
+      lastIdx = mentionStart + tokenLength
     }
   }
   if (lastIdx < line.length) {

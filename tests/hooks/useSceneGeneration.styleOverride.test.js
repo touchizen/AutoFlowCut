@@ -25,6 +25,7 @@ vi.mock('../../src/utils/mentionParser', () => ({ resolveMentions: vi.fn(() => (
 
 import { useSceneGeneration } from '../../src/hooks/useSceneGeneration'
 import { resolveSceneStyle } from '../../src/services/styleService'
+import { finalizeGeneratedImage } from '../../src/services/imageFinalize'
 
 function setup(scene) {
   const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'X' }] })
@@ -46,6 +47,41 @@ function setup(scene) {
 const PROMPT_ARG = 0
 const STYLE_TAG_ARG = 5
 
+describe('useSceneGeneration — queue 거부 시 침묵 금지', () => {
+  it('generationQueue.enqueue 가 reject 하면 toast.warning 으로 사용자에게 알린다', async () => {
+    const { toast } = await import('../../src/components/Toast')
+    const scene = { id: 'scene_1', prompt: 'p' }
+    const scenesHook = { references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+    const rejectingQueue = { enqueue: vi.fn().mockRejectedValue(new Error('Flow quota exhausted — dismiss the alert before retrying')) }
+    const { result } = renderHook(() =>
+      useSceneGeneration({
+        settings: { saveMode: 'memory' }, scenes: [scene], scenesHook,
+        genAPI: {}, openSettings: vi.fn(), setSelectedScene: vi.fn(),
+        t: (k) => k, generationQueue: rejectingQueue,
+      })
+    )
+    await act(() => result.current.handleGenerateScene('scene_1'))
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('quota'))
+  })
+
+  it('이미 전역으로 알린 거부(alreadySurfaced — quota-stop 일괄 clear 등)는 toast 를 또 띄우지 않는다', async () => {
+    const { toast } = await import('../../src/components/Toast')
+    const scene = { id: 'scene_1', prompt: 'p' }
+    const scenesHook = { references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+    const err = Object.assign(new Error('Flow quota exhausted — pending work cleared'), { alreadySurfaced: true })
+    const rejectingQueue = { enqueue: vi.fn().mockRejectedValue(err) }
+    const { result } = renderHook(() =>
+      useSceneGeneration({
+        settings: { saveMode: 'memory' }, scenes: [scene], scenesHook,
+        genAPI: {}, openSettings: vi.fn(), setSelectedScene: vi.fn(),
+        t: (k) => k, generationQueue: rejectingQueue,
+      })
+    )
+    await act(() => result.current.handleGenerateScene('scene_1'))
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+})
+
 describe('useSceneGeneration — sceneOverride(모달 편집 스냅샷)', () => {
   beforeEach(() => vi.clearAllMocks())
 
@@ -56,10 +92,13 @@ describe('useSceneGeneration — sceneOverride(모달 편집 스냅샷)', () => 
   })
 
   it('sceneOverride.prompt(편집한 프롬프트)를 생성에 쓴다 — stale closure 프롬프트 아님', async () => {
-    const { result } = setup({ id: 'scene_1', prompt: 'OLD cat', style_tag: '' })
+    const { result, generateImage } = setup({ id: 'scene_1', prompt: 'OLD cat', style_tag: '' })
     await act(async () => { await result.current.handleGenerateScene('scene_1', undefined, { prompt: 'NEW dog', style_tag: '' }) })
     // resolveSceneStyle 의 prompt 인자가 편집본이어야 한다
     expect(resolveSceneStyle.mock.calls[0][PROMPT_ARG]).toBe('NEW dog')
+    expect(generateImage.mock.calls[0][0]).toBe('styled prompt')
+    // donePrompt 기준은 엔진에 보낸 스타일 합성본이 아니라 사용자가 편집하는 원문이다.
+    expect(finalizeGeneratedImage.mock.calls[0][0].prompt).toBe('NEW dog')
   })
 
   it('sceneOverride.characters(편집한 태그)로 레퍼런스를 매칭한다', async () => {

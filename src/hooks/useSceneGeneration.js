@@ -159,7 +159,10 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         execute: () => _executeSceneGeneration(sceneId, overrideStyleId, sceneOverride)
       })
     } catch (err) {
+      // 침묵 금지: quota-block 등으로 큐가 거부하면 사용자에겐 "버튼이 안 먹는" 것으로 보인다.
+      // 단, 일괄 clear(전역 quota 모달이 이미 알림 — alreadySurfaced)는 씬당 toast 를 또 띄우지 않는다.
       console.warn('[SceneGen] Queue rejected:', err.message)
+      if (!err.alreadySurfaced) toast.warning(err.message)
     }
   }, [generationQueue, _executeSceneGeneration])
 

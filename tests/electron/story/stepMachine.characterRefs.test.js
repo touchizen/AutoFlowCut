@@ -1,10 +1,11 @@
 // @vitest-environment node
 // V2: 스토리 캐릭터 → 씬 characters 태그(id→name) + push storyCharacters(appearance) + appearance 승계.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
+import { planMentionRouting } from '../../../src/engine/engineFlow.js'
 
 describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
   let dir, machine, llm, emitted
@@ -19,13 +20,17 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     speakers,
   })
 
-  async function runCharacterPipeline(splitResult, { precise = false } = {}) {
+  async function runCharacterPipeline(splitResult, { precise = false, imagePrompt, videoPrompt } = {}) {
     const localEmitted = []
     const localLlm = {
       generateScript: vi.fn(async () => ({ scriptMd: '#' })),
       splitScenes: vi.fn(async () => splitResult),
       writePrompts: vi.fn(async (scenes) => ({
-        scenes: scenes.map((s, i) => ({ ...s, imagePrompt: `img${i}`, videoPrompt: `vid${i}` })),
+        scenes: scenes.map((s, i) => ({
+          ...s,
+          imagePrompt: imagePrompt ?? `img${i}`,
+          videoPrompt: videoPrompt ?? `vid${i}`,
+        })),
       })),
     }
     const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-presence-'))
@@ -51,7 +56,7 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     await localMachine.start('prompts', {})
 
     const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop().p
-    return { push, llm: localLlm, machine: localMachine, emitted: localEmitted }
+    return { push, llm: localLlm, machine: localMachine, emitted: localEmitted, dir: localDir }
   }
 
   beforeEach(async () => {
@@ -345,7 +350,7 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(push.scenes.map((s) => s.characters)).toEqual(['민수', '민수'])
   })
 
-  it('멘션-불가 이름(공백 포함)은 멘션 생략(태그로 폴백, @는 안 넣음)', async () => {
+  it('공백 포함 이름은 brace mention을 emit하고 characters 태그도 유지한다', async () => {
     llm.splitScenes.mockResolvedValueOnce(splitOut([
       { id: 'narrator', name: 'narrator' },
       { id: 'a', name: 'John Smith', appearance: 'tall' },
@@ -353,8 +358,186 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     await machine.start('scenes', {})
     await machine.start('prompts', {})
     const scene = lastPush().scenes[0]
-    expect(scene.prompt).not.toContain('@John') // 공백 이름은 멘션 안 함
-    expect(scene.characters).toBe('John Smith') // 태그는 유지(폴백)
+    expect(scene.prompt).toContain('@{John Smith}')
+    expect(scene.videoT2VPrompt).toContain('@{John Smith}')
+    expect(scene.characters).toBe('John Smith')
+  })
+
+  it('이미 있는 braced mention을 다시 prepend하지 않는다', async () => {
+    const { push } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: 'John Smith', appearance: 'tall' },
+    ]), {
+      imagePrompt: '@{John Smith} stands in an alley',
+      videoPrompt: '@{John Smith} turns around',
+    })
+
+    expect(push.scenes[0].prompt.match(/@\{John Smith\}/g)).toHaveLength(1)
+    expect(push.scenes[0].videoT2VPrompt.match(/@\{John Smith\}/g)).toHaveLength(1)
+  })
+
+  it('자연스러운 위치의 inline braced mention은 push에서 앞에 중복 prepend하지 않는다', async () => {
+    const imagePrompt = 'A slow dolly toward @{도둑 우두머리} as he opens the letter'
+    const videoPrompt = 'The camera follows @{도둑 우두머리} while he turns away'
+    const { push } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: '도둑 우두머리', appearance: 'scarred gang leader' },
+    ]), { imagePrompt, videoPrompt })
+
+    expect(push.scenes[0].prompt).toBe(imagePrompt)
+    expect(push.scenes[0].videoT2VPrompt).toBe(videoPrompt)
+  })
+
+  it('LLM이 required mention을 빠뜨리면 경고하고 push safety net이 누락 token만 prepend한다', async () => {
+    const { push, emitted: localEmitted } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: '도둑 우두머리', appearance: 'scarred gang leader' },
+    ]), { imagePrompt: 'An empty alley at night', videoPrompt: 'The camera pans left' })
+
+    expect(push.scenes[0].prompt).toBe('@{도둑 우두머리} An empty alley at night')
+    expect(push.scenes[0].videoT2VPrompt).toBe('@{도둑 우두머리} The camera pans left')
+    const warnings = localEmitted.filter((e) => e.p?.kind === 'step-log' && e.p?.phase === 'mention-missing')
+    expect(warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ p: expect.objectContaining({ sceneNo: 1, field: 'imagePrompt', level: 'warn', count: 1 }) }),
+      expect.objectContaining({ p: expect.objectContaining({ sceneNo: 1, field: 'videoPrompt', level: 'warn', count: 1 }) }),
+    ]))
+  })
+
+  it('prompts step은 unknown braced/plain mention을 평문으로 저장하고 경고한 뒤 성공한다', async () => {
+    const { push, emitted: localEmitted, machine: localMachine, dir: localDir } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: '민수', appearance: 'tall man' },
+    ]), {
+      imagePrompt: 'A shadow follows @{없는 캐릭터}',
+      videoPrompt: 'The camera tracks @ghost',
+    })
+
+    const saved = JSON.parse(await readFile(path.join(localDir, 'story', 'scenes.json'), 'utf8'))
+    expect(saved.scenes[0].imagePrompt).toBe('A shadow follows 없는 캐릭터')
+    expect(saved.scenes[0].videoPrompt).toBe('The camera tracks ghost')
+    expect(push.scenes[0].prompt).not.toContain('@{없는 캐릭터}')
+    expect(push.scenes[0].videoT2VPrompt).not.toContain('@ghost')
+    expect((await localMachine.getState()).steps.prompts.status).toBe('done')
+    expect(localEmitted).toEqual(expect.arrayContaining([
+      expect.objectContaining({ p: expect.objectContaining({
+        kind: 'step-log', phase: 'mention-sanitize', sceneNo: 1,
+        field: 'imagePrompt', unknown: ['없는 캐릭터'], level: 'warn',
+      }) }),
+      expect.objectContaining({ p: expect.objectContaining({
+        kind: 'step-log', phase: 'mention-sanitize', sceneNo: 1,
+        field: 'videoPrompt', unknown: ['ghost'], level: 'warn',
+      }) }),
+    ]))
+  })
+
+  it('review revise가 만든 unknown mention도 저장 전에 평문으로 낮춘다', async () => {
+    const imagePrompt = 'A slow dolly toward @민수 as he opens the letter'
+    const videoPrompt = 'The camera follows @민수 while he turns'
+    const { llm: localLlm, machine: localMachine, emitted: localEmitted } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: '민수', appearance: 'tall man' },
+    ]), { imagePrompt, videoPrompt })
+    localLlm.reviewPrompts = vi.fn(async () => ({ verdict: 'revise', critique: '더 역동적으로' }))
+    localLlm.revisePrompts = vi.fn(async (scenes) => ({
+      scenes: scenes.map((s) => ({
+        ...s,
+        imagePrompt: 'A crane shot reveals @{없는 캐릭터}',
+        videoPrompt: 'The camera races beside @ghost',
+      })),
+    }))
+
+    await localMachine.start('prompts', {
+      reviewOnly: true,
+      review: { prompts: { enabled: true, rounds: 1 } },
+    })
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').at(-1).p
+    expect(push.scenes[0].prompt).not.toContain('@{없는 캐릭터}')
+    expect(push.scenes[0].videoT2VPrompt).not.toContain('@ghost')
+    expect(localEmitted.some((e) => e.p?.kind === 'step-log' && e.p?.phase === 'mention-sanitize')).toBe(true)
+  })
+
+  it('인접한 braced mentions를 모두 기존 mention으로 인식해 다시 prepend하지 않는다', async () => {
+    const adjacent = '@{John Smith}@{Jane Doe} stand together'
+    const { push } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '',
+        segments: [
+          { speaker: 'a', text: 'Hello', emotion: 'normal' },
+          { speaker: 'b', text: 'Hi', emotion: 'normal' },
+        ],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: 'John Smith', appearance: 'tall' },
+        { id: 'b', name: 'Jane Doe', appearance: 'short' },
+      ],
+    }, { imagePrompt: adjacent, videoPrompt: adjacent })
+
+    expect(push.scenes[0].prompt).toBe(adjacent)
+    expect(push.scenes[0].videoT2VPrompt).toBe(adjacent)
+  })
+
+  it('조사 붙은 plain mention(@민수가)도 같은 캐릭터로 인식해 중복 prepend하지 않는다', async () => {
+    // gate(validatePromptMentions)는 @민수가 를 민수의 resolved mention으로 세지만, push의
+    // withMentions dedup이 raw 이름만 비교하면 @민수 를 앞에 또 붙여 이중 멘션이 된다(리뷰 MINOR).
+    const inline = '@민수가 opens the door slowly'
+    const { push } = await runCharacterPipeline({
+      scenes: [{
+        sceneNo: 1,
+        summary: '',
+        segments: [{ speaker: 'a', text: 'Hello', emotion: 'normal' }],
+      }],
+      speakers: [
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', appearance: 'tall' },
+      ],
+    }, { imagePrompt: inline, videoPrompt: inline })
+
+    expect(push.scenes[0].prompt).toBe(inline)
+    expect(push.scenes[0].prompt).not.toMatch(/^@민수 /)
+  })
+
+  it('이미 있는 plain mention도 다시 prepend하지 않는다', async () => {
+    const { push } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: '민수', appearance: 'tall man' },
+    ]), { imagePrompt: '@민수 stands', videoPrompt: '@민수 turns' })
+
+    expect(push.scenes[0].prompt.match(/@민수/g)).toHaveLength(1)
+    expect(push.scenes[0].videoT2VPrompt.match(/@민수/g)).toHaveLength(1)
+  })
+
+  it('중괄호가 든 이름은 mention을 emit하지 않고 characters 태그만 유지한다', async () => {
+    const { push } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: 'John {Smith}', appearance: 'tall' },
+    ]))
+
+    expect(push.scenes[0].prompt).not.toContain('@')
+    expect(push.scenes[0].videoT2VPrompt).not.toContain('@')
+    expect(push.scenes[0].characters).toBe('John {Smith}')
+  })
+
+  it('ep02 legacy glued mention을 brace form으로 repair하고 scene routing까지 복구한다', async () => {
+    const legacy = '@도둑 우두머리A young Korean man in a dark alley'
+    const { push } = await runCharacterPipeline(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: '도둑 우두머리', appearance: 'scarred gang leader' },
+    ]), { imagePrompt: legacy, videoPrompt: legacy })
+    const scene = push.scenes[0]
+
+    expect(scene.prompt).toBe('@{도둑 우두머리}A young Korean man in a dark alley')
+    expect(scene.videoT2VPrompt).toBe('@{도둑 우두머리}A young Korean man in a dark alley')
+
+    const routing = planMentionRouting(scene.prompt, [], [{
+      type: 'character',
+      name: '도둑 우두머리',
+      entityId: 'boss-entity',
+      flowNameSyncStatus: 'synced',
+    }])
+    expect(routing.kind).toBe('scene')
   })
 
   it('appearance 없는 캐릭터는 @멘션에서 제외되지만 characters 태그/storyCharacters엔 남는다 (regression 7d77a0d)', async () => {
@@ -443,6 +626,7 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
   it('writePrompts에 speakers(appearance)가 컨텍스트로 전달된다', () => {
     const ctxArg = llm.writePrompts.mock.calls[0][1]
     expect(ctxArg.speakers.find((s) => s.id === 'a').appearance).toBe('tall man in black coat')
+    expect(ctxArg.requiredMentionNamesByScene).toEqual({ 1: ['민수'] })
   })
 
   it('재실행 시 appearance는 이전 값 승계(생성된 카드와 텍스트 일관)', async () => {

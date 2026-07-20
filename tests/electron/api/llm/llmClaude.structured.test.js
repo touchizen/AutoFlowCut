@@ -15,6 +15,134 @@ const SCENES = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'nar
 function resultOf(msg) { return async function* () { yield msg } }
 
 describe('llmClaude.splitScenes', () => {
+  it('thinking block 시작과 빈 thinking_delta도 onThinkingActivity로 알린다', async () => {
+    const onThinkingActivity = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    }
+
+    await expect(splitScenes('SCRIPT', {}, { queryImpl, onThinkingActivity })).resolves.toEqual(SCENES)
+    expect(onThinkingActivity).toHaveBeenCalledTimes(2)
+  })
+
+  it('redacted_thinking block도 activity 로 감지한다 — 침묵 창 방어(Fable NIT)', async () => {
+    const onThinkingActivity = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'redacted_thinking', data: 'x' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    }
+
+    await expect(splitScenes('SCRIPT', {}, { queryImpl, onThinkingActivity })).resolves.toEqual(SCENES)
+    expect(onThinkingActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('outputFormat 폴백 stream의 thinking activity도 알린다', async () => {
+    const onThinkingActivity = vi.fn()
+    let call = 0
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) {
+        yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }
+        return
+      }
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(SCENES) }
+    }
+
+    await splitScenes('SCRIPT', {}, { queryImpl, onThinkingActivity })
+    expect(onThinkingActivity).toHaveBeenCalledTimes(2)
+  })
+
+  it('structured stream의 닫힌 scene을 onPartialScene으로 보내고 최종 result는 그대로 반환한다', async () => {
+    const onPartialScene = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"sceneNo":999,"summary":"GHOST","segments":[{"speaker":"narrator","text":"preview"}]}' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: ']}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    }
+
+    const out = await splitScenes('SCRIPT', {}, { queryImpl, onPartialScene })
+
+    expect(onPartialScene).toHaveBeenCalledWith({
+      sceneNo: 999,
+      summary: 'GHOST',
+      segments: [{ speaker: 'narrator', text: 'preview' }],
+    }, 0)
+    expect(out).toEqual(SCENES)
+  })
+
+  it('outputFormat 폴백 전에 partial scene parser를 리셋해 1차 시도 bytes를 버린다', async () => {
+    const onPartialScene = vi.fn()
+    let call = 0
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) {
+        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[{"sceneNo":999,"summary":"PRIMARY"' } } }
+        yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }
+        return
+      }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '{"scenes":[{"sceneNo":1,"summary":"FALLBACK","segments":[{"speaker":"narrator","text":"preview"}]}],"speakers":[]}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(SCENES) }
+    }
+
+    const out = await splitScenes('SCRIPT', {}, { queryImpl, onPartialScene })
+
+    expect(onPartialScene.mock.calls).toEqual([[
+      { sceneNo: 1, summary: 'FALLBACK', segments: [{ speaker: 'narrator', text: 'preview' }] },
+      0,
+    ]])
+    expect(out).toEqual(SCENES)
+  })
+
+  it('structured stream의 input_json_delta를 onPartialText로 보내고 최종 result는 그대로 반환한다', async () => {
+    const onPartialText = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"sceneNo":999}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    }
+
+    const out = await splitScenes('SCRIPT', {}, { queryImpl, onPartialText })
+
+    expect(onPartialText.mock.calls).toEqual([['{"scenes":['], ['{"sceneNo":999}']])
+    expect(out).toEqual(SCENES)
+  })
+
+  it('outputFormat 폴백 stream의 text_delta를 onPartialText로 보낸다', async () => {
+    const onPartialText = vi.fn()
+    let call = 0
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) {
+        yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }
+        return
+      }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '{"scenes":' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '[]}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(SCENES) }
+    }
+
+    const out = await splitScenes('SCRIPT', {}, { queryImpl, onPartialText })
+
+    expect(onPartialText.mock.calls).toEqual([['{"scenes":'], ['[]}']])
+    expect(out).toEqual(SCENES)
+  })
+
+  it('partial/thinking stream callback을 생략해도 기존 호출이 그대로 동작한다', async () => {
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[]}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    }
+
+    await expect(splitScenes('SCRIPT', {}, { queryImpl })).resolves.toEqual(SCENES)
+  })
+
   it('structured_output을 그대로 사용', async () => {
     const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: SCENES })
     const out = await splitScenes('SCRIPT', { language: 'ko' }, { queryImpl })
@@ -93,6 +221,72 @@ describe('llmClaude.splitScenes', () => {
 })
 
 describe('llmClaude.writePrompts', () => {
+  it('structured call의 thinking activity callback을 전달한다', async () => {
+    const scenes = [{ sceneNo: 1, storyId: 'a' }]
+    const final = { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
+    const onThinkingActivity = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: final }
+    }
+
+    await writePrompts(scenes, {}, {}, { queryImpl, onThinkingActivity })
+    expect(onThinkingActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('닫힌 streamed scene마다 onPartialPrompt를 호출하지만 최종 병합은 result를 사용한다', async () => {
+    const scenes = [
+      { sceneNo: 1, storyId: 'a', summary: 'S1' },
+      { sceneNo: 2, storyId: 'b', summary: 'S2' },
+    ]
+    const final = { scenes: [
+      { sceneNo: 1, imagePrompt: 'FINAL-IMG-1', videoPrompt: 'FINAL-VID-1' },
+      { sceneNo: 2, imagePrompt: 'FINAL-IMG-2', videoPrompt: 'FINAL-VID-2' },
+    ] }
+    const onPartialPrompt = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[{"sceneNo":1,"imagePrompt":"GHOST-IMG-1","videoPrompt":"GHOST-VID-1"},' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"sceneNo":2,"imagePrompt":"GHOST-IMG-2","videoPrompt":"GHOST-VID-2"}]}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: final }
+    }
+
+    const out = await writePrompts(scenes, {}, {}, { queryImpl, onPartialPrompt })
+
+    expect(onPartialPrompt.mock.calls).toEqual([
+      [{ sceneNo: 1, imagePrompt: 'GHOST-IMG-1', videoPrompt: 'GHOST-VID-1' }, 0],
+      [{ sceneNo: 2, imagePrompt: 'GHOST-IMG-2', videoPrompt: 'GHOST-VID-2' }, 1],
+    ])
+    expect(out.scenes).toEqual([
+      { ...scenes[0], imagePrompt: 'FINAL-IMG-1', videoPrompt: 'FINAL-VID-1' },
+      { ...scenes[1], imagePrompt: 'FINAL-IMG-2', videoPrompt: 'FINAL-VID-2' },
+    ])
+  })
+
+  it('structured 시도 뒤 fallback하면 새 parser로 fallback scene도 stream한다', async () => {
+    const scenes = [{ sceneNo: 1, storyId: 'a' }]
+    const final = { scenes: [{ sceneNo: 1, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }] }
+    const onPartialPrompt = vi.fn()
+    let call = 0
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) {
+        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[{"sceneNo":1,"imagePrompt":"FIRST-IMG","videoPrompt":"FIRST-VID"}]}' } } }
+        yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }
+        return
+      }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '{"scenes":[{"sceneNo":1,"imagePrompt":"FALLBACK-IMG","videoPrompt":"FALLBACK-VID"}]}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(final) }
+    }
+
+    const out = await writePrompts(scenes, {}, {}, { queryImpl, onPartialPrompt })
+
+    expect(onPartialPrompt.mock.calls).toEqual([
+      [{ sceneNo: 1, imagePrompt: 'FIRST-IMG', videoPrompt: 'FIRST-VID' }, 0],
+      [{ sceneNo: 1, imagePrompt: 'FALLBACK-IMG', videoPrompt: 'FALLBACK-VID' }, 0],
+    ])
+    expect(out.scenes[0]).toMatchObject({ imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' })
+  })
+
   it('sceneNo로 image/videoPrompt를 병합', async () => {
     const scenes = [{ sceneNo: 1, storyId: 'a', summary: 'S' }]
     const structured = { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
@@ -169,6 +363,32 @@ describe('llmClaude.reviseScript (M3)', () => {
 })
 
 describe('llmClaude scenes/prompts review controls', () => {
+  it.each([
+    ['reviewScenes', (ctx) => reviewScenes('SCRIPT', SCENES.scenes, SCENES.speakers, {}, ctx)],
+    ['reviewPrompts', (ctx) => reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, {}, ctx)],
+  ])('%s는 structured thinking event를 onThinkingActivity로 알린다', async (_name, review) => {
+    const onThinkingActivity = vi.fn()
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'thinking', thinking: '' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } }
+    }
+
+    await review({ queryImpl, onThinkingActivity })
+
+    expect(onThinkingActivity).toHaveBeenCalledTimes(2)
+  })
+
+  it('review callback을 생략해도 thinking event가 기존 결과를 바꾸지 않는다', async () => {
+    const queryImpl = async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'redacted_thinking', data: 'x' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } }
+    }
+
+    await expect(reviewScenes('SCRIPT', SCENES.scenes, SCENES.speakers, {}, { queryImpl }))
+      .resolves.toEqual({ verdict: 'pass', critique: '' })
+  })
+
   it('reviewScenes는 verdict/critique를 반환한다', async () => {
     const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'revise', critique: '씬 2가 너무 김' } })
     const out = await reviewScenes('SCRIPT', SCENES.scenes, SCENES.speakers, {}, { queryImpl })
@@ -179,6 +399,36 @@ describe('llmClaude scenes/prompts review controls', () => {
     const out = await reviseScenes('SCRIPT', SCENES.scenes, SCENES.speakers, 'fix', {}, { queryImpl })
     expect(out.scenes[0].sceneNo).toBe(1)
     expect(out.speakers[0].id).toBe('narrator')
+  })
+  it('reviseScenes/revisePrompts는 structured stream의 닫힌 scene을 preview callback으로 전달한다', async () => {
+    const queryImpl = (final) => async function* () {
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"scenes":[' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"sceneNo":1,"summary":"GHOST","segments":[{"speaker":"narrator","text":"preview"}],"imagePrompt":"GHOST-IMG","videoPrompt":"GHOST-VID"}' } } }
+      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: ']}' } } }
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: final }
+    }
+    const onPartialScene = vi.fn()
+    const onPartialPrompt = vi.fn()
+    const promptScenes = [{ sceneNo: 1, storyId: 's1', imagePrompt: 'old', videoPrompt: 'old' }]
+    const finalPrompts = { scenes: [{ sceneNo: 1, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }] }
+
+    await expect(reviseScenes('SCRIPT', SCENES.scenes, SCENES.speakers, 'fix', {}, {
+      queryImpl: queryImpl(SCENES),
+      onPartialScene,
+    })).resolves.toEqual(SCENES)
+    await expect(revisePrompts(promptScenes, { scriptMd: 'SCRIPT' }, 'fix', {}, {
+      queryImpl: queryImpl(finalPrompts),
+      onPartialPrompt,
+    })).resolves.toEqual({
+      scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' }],
+    })
+
+    expect(onPartialScene).toHaveBeenCalledWith(expect.objectContaining({ sceneNo: 1, summary: 'GHOST' }), 0)
+    expect(onPartialPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      sceneNo: 1,
+      imagePrompt: 'GHOST-IMG',
+      videoPrompt: 'GHOST-VID',
+    }), 0)
   })
   it('reviewPrompts는 verdict/critique를 반환한다', async () => {
     const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } })

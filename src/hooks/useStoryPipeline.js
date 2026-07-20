@@ -36,8 +36,17 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   const [scriptText, setScriptText] = useState('')
   // D: audio 생성 중 세그먼트별 실시간 status(segId→'running'|'done'|'error').
   const [segmentProgress, setSegmentProgress] = useState({})
+  // scenes 단일 structured 호출의 표시 전용 좌표→scene map. 최종 scenes와 섞지 않는다.
+  const [previewScenes, setPreviewScenes] = useState({})
+  const [sceneThinking, setSceneThinking] = useState(false)
+  const [scenesRevising, setScenesRevising] = useState(false)
+  // prompts 단일 structured 호출의 표시 전용 sceneNo→prompt map. 최종 scenes와 섞지 않는다.
+  const [previewPrompts, setPreviewPrompts] = useState({})
+  const [promptThinking, setPromptThinking] = useState(false)
+  const [promptsRevising, setPromptsRevising] = useState(false)
   // M3: 대본 검토 루프 진행 — { operationId, round, of, phase:'reviewing'|'revising'|'error', error? } | null.
   const [reviewProgress, setReviewProgress] = useState(null)
+  const [reviewThinking, setReviewThinking] = useState(false)
   // 검수 채점(몰입감) — { target, scores: number[] } | null. 라운드 순서대로 쌓아 첫→마지막 변화를
   // 보여준다. reviewProgress(검토/수정 단계)와 분리한다.
   const [reviewScores, setReviewScores] = useState(null)
@@ -82,6 +91,12 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // activeOpRef(story:state running 기반)에 안 잡힌다 — 재사용 금지. started 신호(phase:'started',
   // operationId)로 세팅되고, 그와 다른 op의 delta는 drop(regenerate 시 이전 실행 잔여 방지).
   const synopsisActiveOpRef = useRef(null)
+  // prompt-delta도 started 신호가 연 전용 gate만 통과한다. step 기반 activeOpRef에 기대면
+  // 새 실행의 started 전 틈에 이전 op delta가 들어올 수 있어 별도 ref가 필요하다.
+  const promptActiveOpRef = useRef(null)
+  // scene-delta도 prompt와 같은 이유로 별도 started gate를 쓴다.
+  const sceneActiveOpRef = useRef(null)
+  const reviewActiveRef = useRef(null)
   // 시놉시스 side action(생성·검수) 공용 소유권 토큰. main이 synopsisController 하나로 둘을
   // 상호배제하므로 renderer도 같은 불변식을 갖는다. boolean으로는 부족하다 — 이 훅은 App에 살아
   // 프로젝트 전환에도 재마운트되지 않으므로(StoryView만 key로 remount), 전환 후 도착한 옛 호출의
@@ -121,12 +136,22 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setStreamingText('')
     setScriptText('')
     setSegmentProgress({})
+    setPreviewScenes({})
+    setSceneThinking(false)
+    setScenesRevising(false)
+    setPreviewPrompts({})
+    setPromptThinking(false)
+    setPromptsRevising(false)
     setProgressLog([])
     // 프로젝트 전환에서만 usage 를 리셋한다 — start() 마다가 아니다(아래 start/open 미러에
     // 넣으면 자동 진행 연쇄에서 앞 스텝 합계가 사라진다). main 의 tracker 도 machine 과 함께 죽는다.
     setUsage(null)
     activeOpRef.current = null
+    sceneActiveOpRef.current = null
+    promptActiveOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
+    setReviewThinking(false)
+    reviewActiveRef.current = null
     setReviewScores(null)
     // 슬라이스4: synopsis 로컬 상태·전용 op도 함께 리셋(옛 프로젝트 시놉이 새 화면에 남지 않게).
     synopsisActiveOpRef.current = null
@@ -196,6 +221,26 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         if (p.projectToken !== tokenRef.current) return
         const anyRunning = p.state?.steps && Object.values(p.state.steps).some((s) => s?.status === 'running')
         if (anyRunning && p.operationId) activeOpRef.current = p.operationId
+        const activeReview = reviewActiveRef.current
+        if (!anyRunning || (activeReview && p.state?.steps?.[activeReview.target]?.status !== 'running')) {
+          setReviewThinking(false)
+          reviewActiveRef.current = null
+        }
+        // scenes의 terminal state가 최종 진실 소스다. preview와 gate를 같이 폐기해 늦은 delta도 막는다.
+        if (p.state?.steps?.scenes?.status !== 'running') {
+          sceneActiveOpRef.current = null
+          setSceneThinking(false)
+          setScenesRevising(false)
+          setPreviewScenes((prev) => (Object.keys(prev).length ? {} : prev))
+        }
+        // prompts의 terminal state가 최종 진실 소스다. preview와 gate를 같이 폐기해 늦은 delta도 막는다.
+        if (p.state?.steps?.prompts?.status !== 'running') {
+          promptActiveOpRef.current = null
+          setPromptThinking(false)
+          setPromptsRevising(false)
+          // 이미 비었으면 같은 참조 유지 — 매 story:state마다 새 객체로 불필요한 리렌더 방지(F6).
+          setPreviewPrompts((prev) => (Object.keys(prev).length ? {} : prev))
+        }
         // M3: 스텝 종료(진행 없음) 시 검토 배지 정리 — 단 error 배지는 남겨 사용자가 중단 사유를 본다.
         if (!anyRunning) setReviewProgress((rp) => (rp?.phase === 'error' ? rp : null))
         setState(p.state)
@@ -256,6 +301,55 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       api.onStoryEvent('story:progress', (p) => {
         takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
+        if (p.kind === 'scene-delta') {
+          if (p.phase === 'started') {
+            sceneActiveOpRef.current = p.operationId || null
+            setSceneThinking(false)
+            setPreviewScenes({})
+            return
+          }
+          if (!sceneActiveOpRef.current || p.operationId !== sceneActiveOpRef.current) return
+          if (p.phase === 'thinking') {
+            setSceneThinking(true)
+            return
+          }
+          if (!Number.isInteger(p.chunkIndex) || !Number.isInteger(p.localSceneNo)) return
+          if (!p.scene || typeof p.scene !== 'object' || Array.isArray(p.scene)) return
+          setSceneThinking(false)
+          const key = `${p.chunkIndex}:${p.localSceneNo}`
+          setPreviewScenes((preview) => ({
+            ...preview,
+            [key]: {
+              chunkIndex: p.chunkIndex,
+              localSceneNo: p.localSceneNo,
+              scene: p.scene,
+            },
+          }))
+          return
+        }
+        if (p.kind === 'prompt-delta') {
+          if (p.phase === 'started') {
+            promptActiveOpRef.current = p.operationId || null
+            setPromptThinking(false)
+            setPreviewPrompts({})
+            return
+          }
+          if (!promptActiveOpRef.current || p.operationId !== promptActiveOpRef.current) return
+          if (p.phase === 'thinking') {
+            setPromptThinking(true)
+            return
+          }
+          if (!Number.isInteger(p.sceneNo)) return
+          setPromptThinking(false)
+          setPreviewPrompts((prompts) => ({
+            ...prompts,
+            [p.sceneNo]: {
+              imagePrompt: typeof p.imagePrompt === 'string' ? p.imagePrompt : '',
+              videoPrompt: typeof p.videoPrompt === 'string' ? p.videoPrompt : '',
+            },
+          }))
+          return
+        }
         // 리서치(§3.6): research side action은 running step을 만들지 않아 activeOpRef(step 기반)에
         // 안 잡힌다 — op 필터 전에 처리(synopsisActiveOpRef 분리와 동일 이유). 맵 리셋은
         // researchFetchTranscripts 호출측이 수행.
@@ -277,6 +371,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         if (p.kind === 'review' && p.target === 'synopsis') {
           if (synopsisActiveOpRef.current && p.operationId !== synopsisActiveOpRef.current) return
           if (p.phase === 'scored') { collectScore(p, '시놉시스'); return }
+          reviewActiveRef.current = { operationId: p.operationId || null, target: 'synopsis' }
+          setReviewThinking(p.phase === 'reviewing' && p.thinking === true)
           setReviewProgress({ operationId: p.operationId, target: 'synopsis', round: p.round, of: p.of, phase: p.phase, error: p.error })
           const line = reviewLogLine(p, '시놉시스 검수')
           setProgressLog((logs) => [...logs, {
@@ -310,8 +406,14 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
             if (p.kind === 'review') collectScore(p, REVIEW_TARGET_LOG_LABEL[p.target] || '대본')
             return
           }
-          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
+          if (p.kind === 'review' && p.target === 'scenes') setScenesRevising(p.phase === 'revising')
+          if (p.kind === 'review' && p.target === 'prompts') setPromptsRevising(p.phase === 'revising')
           if (p.kind === 'review') {
+            reviewActiveRef.current = { operationId: p.operationId || null, target: p.target || 'script' }
+            setReviewThinking(p.phase === 'reviewing' && p.thinking === true)
+          }
+          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
+          if (p.kind === 'review' && !p.thinking) {
             const targetLabel = `${REVIEW_TARGET_LOG_LABEL[p.target] || '대본'} 검수`
             const line = reviewLogLine(p, targetLabel)
             setProgressLog((logs) => [...logs, {
@@ -396,7 +498,11 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setProgressLog([])
     activeOpRef.current = null
     setReviewProgress(null) // M3: 새 실행 시 검토 배지 초기화(이전 error 배지 포함)
+    setReviewThinking(false)
+    reviewActiveRef.current = null
     setReviewScores(null)
+    setScenesRevising(false)
+    setPromptsRevising(false)
     return window.electronAPI.storyStart({ projectToken: tokenRef.current, step, params })
   }, [])
 
@@ -502,7 +608,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, previewScenes: {}, sceneThinking: false, scenesRevising: false, previewPrompts: {}, promptThinking: false, promptsRevising: false, reviewProgress: null, reviewThinking: false, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, reviewProgress, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, previewScenes, sceneThinking, scenesRevising, previewPrompts, promptThinking, promptsRevising, reviewProgress, reviewThinking, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }

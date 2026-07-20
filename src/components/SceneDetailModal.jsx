@@ -146,6 +146,9 @@ export default function SceneDetailModal({
         seed: restoredSeed,
         generatedAt: restoredAt,
         model: restoredModel,
+        // 복원한 이미지의 생성 프롬프트가 새 baseline(되돌림 done 복원 기준). 메타에 없으면
+        // null 로 명시 — 직전 세대의 stale donePrompt 가 다른 프롬프트 이미지에 남지 않게.
+        donePrompt: meta.prompt ?? null,
         ...(meta.mediaId ? { mediaId: meta.mediaId } : {}),
       }))
       // restoredMeta 가 set 됐다는 건 "사용자가 history 복원했음" — 렌더 시 backfill 폴백 차단.
@@ -194,6 +197,8 @@ export default function SceneDetailModal({
     }
   }
   
+  // 이미지가 아직 없는 씬은 '재생성'이 아니라 '생성' — 라벨이 실제 동작을 말해야 한다.
+  const hasGeneratedImage = !!(editData.image || editData.imagePath)
   const footer = (
     <>
       <button className="btn-secondary" onClick={onClose}>{t('sceneDetail.cancel')}</button>
@@ -202,8 +207,12 @@ export default function SceneDetailModal({
           className="btn-warning"
           onClick={handleRegenerate}
           disabled={isGenerating || !editData.prompt}
+          // 프롬프트가 없어 disabled 면 이유를 tooltip 으로 — 침묵 disabled 는 "생성이 안 된다"로 보인다.
+          title={!editData.prompt ? t('toast.noPrompt') : undefined}
         >
-          {isGenerating ? t('sceneDetail.generating') : t('sceneDetail.regenerate')}
+          {isGenerating
+            ? t('sceneDetail.generating')
+            : hasGeneratedImage ? t('sceneDetail.regenerate') : t('sceneDetail.generate')}
         </button>
       )}
       <button className="btn-primary" onClick={handleSave}>{t('sceneDetail.save')}</button>

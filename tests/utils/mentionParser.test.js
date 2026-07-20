@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   extractMentionNames,
+  formatMentionToken,
+  isPlainSafeMentionName,
+  iterateMentions,
   resolveMentions,
   stripMentionPrefixes,
   stripMentionsForNames,
@@ -55,6 +58,62 @@ describe('extractMentionNames', () => {
   it('handles newline as boundary', () => {
     expect(extractMentionNames('line1\n@alice line2')).toEqual(['alice'])
   })
+
+  it('extracts braced names with spaces and exact punctuation', () => {
+    expect(extractMentionNames('@{도둑 우두머리}와 @{Mina-style}')).toEqual([
+      '도둑 우두머리',
+      'Mina-style',
+    ])
+  })
+
+  it('accepts an adjacent suffix after a closed braced mention', () => {
+    expect(extractMentionNames('@{도둑 우두머리}A young man')).toEqual(['도둑 우두머리'])
+  })
+
+  it.each([
+    '@{도둑 우두머리',
+    '@{}',
+    '@{도둑{우두머리}}',
+    '@{도둑\n우두머리}',
+    '@{outer @hero',
+    '@{outer{@hero}}',
+  ])('treats malformed braced syntax as plain text: %s', (text) => {
+    expect(extractMentionNames(text)).toEqual([])
+  })
+})
+
+describe('mention token helpers', () => {
+  it('exports the shared mention lead-character regex', async () => {
+    const parserModule = await import('../../src/utils/mentionParser')
+
+    expect(parserModule.MENTION_LEAD_CHAR_RE).toBeInstanceOf(RegExp)
+    expect(parserModule.MENTION_LEAD_CHAR_RE.test('}')).toBe(true)
+    expect(parserModule.MENTION_LEAD_CHAR_RE.test('x')).toBe(false)
+  })
+
+  it('iterates plain and braced tokens without positional capture assumptions', () => {
+    expect([...iterateMentions('x (@hero) @{도둑 우두머리}A')]).toEqual([
+      { index: 3, name: 'hero', braced: false, tokenLength: 5 },
+      { index: 10, name: '도둑 우두머리', braced: true, tokenLength: 10 },
+    ])
+  })
+
+  it.each([
+    ['@{a}@{b}', ['a', 'b']],
+    ['@{a}@bob', ['a', 'bob']],
+  ])('reuses a closing brace as the boundary before an adjacent mention: %s', (text, names) => {
+    expect([...iterateMentions(text)].map(({ name }) => name)).toEqual(names)
+  })
+
+  it('uses one plain-safe predicate and formatter for emitted tokens', () => {
+    expect(isPlainSafeMentionName('Mina-style_2')).toBe(true)
+    expect(isPlainSafeMentionName('도둑 우두머리')).toBe(false)
+    expect(formatMentionToken('Mina-style_2')).toBe('@Mina-style_2')
+    expect(formatMentionToken('도둑 우두머리')).toBe('@{도둑 우두머리}')
+    expect(formatMentionToken(' \t ')).toBeNull()
+    expect(formatMentionToken('brace{name')).toBeNull()
+    expect(formatMentionToken('line\nname')).toBeNull()
+  })
 })
 
 describe('resolveMentions', () => {
@@ -108,6 +167,38 @@ describe('resolveMentions', () => {
     expect(resolveMentions('@alice', null)).toEqual({ matched: [], missing: ['alice'] })
     expect(resolveMentions('@alice', [])).toEqual({ matched: [], missing: ['alice'] })
   })
+
+  it('resolves a braced mention by exact full name, case-insensitively', () => {
+    const spaceRef = { id: 20, name: '도둑 우두머리', type: 'character' }
+    expect(resolveMentions('@{도둑 우두머리} 등장', [spaceRef])).toEqual({
+      matched: [spaceRef],
+      missing: [],
+    })
+  })
+
+  it('does not strip a Korean particle from inside braces', () => {
+    const hangulRefs = [{ id: 10, name: '철수', type: 'character' }]
+    expect(resolveMentions('@{철수가} 걷는다', hangulRefs)).toEqual({
+      matched: [],
+      missing: ['철수가'],
+    })
+  })
+
+  it('resolves @{Mina-style} as one exact braced name', () => {
+    const ref = { id: 21, name: 'Mina-style', type: 'character' }
+    expect(resolveMentions('@{Mina-style}', [ref])).toEqual({ matched: [ref], missing: [] })
+  })
+
+  it('resolves adjacent braced and plain mentions without dropping the second ref', () => {
+    const adjacentRefs = [
+      { id: 22, name: 'a', type: 'character' },
+      { id: 23, name: 'b', type: 'character' },
+      { id: 24, name: 'bob', type: 'character' },
+    ]
+
+    expect(resolveMentions('@{a}@{b}', adjacentRefs).matched.map(({ id }) => id)).toEqual([22, 23])
+    expect(resolveMentions('@{a}@bob', adjacentRefs).matched.map(({ id }) => id)).toEqual([22, 24])
+  })
 })
 
 describe('stripMentionPrefixes', () => {
@@ -148,6 +239,21 @@ describe('stripMentionPrefixes', () => {
     expect(stripMentionPrefixes(null, refs)).toBe('')
     expect(stripMentionPrefixes(undefined, refs)).toBe('')
   })
+
+  it('strips the whole resolved braced token without adding whitespace', () => {
+    const spaceRefs = [{ name: '도둑 우두머리' }]
+    expect(stripMentionPrefixes('@{도둑 우두머리}A young man', spaceRefs)).toBe(
+      '도둑 우두머리A young man'
+    )
+  })
+
+  it('leaves unresolved braced tokens verbatim', () => {
+    expect(stripMentionPrefixes('@{도둑 우두머리} 등장', refs)).toBe('@{도둑 우두머리} 등장')
+  })
+
+  it('does not particle-strip when deciding whether to strip braces', () => {
+    expect(stripMentionPrefixes('@{철수가} 걷는다', [{ name: '철수' }])).toBe('@{철수가} 걷는다')
+  })
 })
 
 describe('stripMentionsForNames (V2 collision)', () => {
@@ -163,5 +269,13 @@ describe('stripMentionsForNames (V2 collision)', () => {
   })
   it('non-string 안전', () => {
     expect(stripMentionsForNames(null, ['민수'])).toBe('')
+  })
+  it('braced 대상은 전체 토큰을 inner name으로 바꾸고 미대상은 그대로 둔다', () => {
+    expect(
+      stripMentionsForNames('@{도둑 우두머리}A와 @{거리 배경}', ['도둑 우두머리'])
+    ).toBe('도둑 우두머리A와 @{거리 배경}')
+  })
+  it('braced 대상에는 조사 접두 매칭을 적용하지 않는다', () => {
+    expect(stripMentionsForNames('@{철수가} 걷는다', ['철수'])).toBe('@{철수가} 걷는다')
   })
 })
