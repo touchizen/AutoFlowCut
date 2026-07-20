@@ -17,8 +17,17 @@ export const SCENE_GENERATION_INHERIT_SENTINEL = '__inherit__'
 function generationFromCSV(getCol, warnings) {
   const stage = (providerColumn, modelColumn, isKnownProvider, path) => {
     const provider = getCol(providerColumn)
-    const model = getCol(modelColumn)
-    if (provider === SCENE_GENERATION_INHERIT_SENTINEL) return null
+    let model = getCol(modelColumn)
+    if (provider === SCENE_GENERATION_INHERIT_SENTINEL) {
+      if (model && Array.isArray(warnings)) {
+        warnings.push(`Model '${model}' ignored because provider is __inherit__ at ${path}.`)
+      }
+      return null
+    }
+    if (model === SCENE_GENERATION_INHERIT_SENTINEL) {
+      if (Array.isArray(warnings)) warnings.push(`Rejected invalid model '${model}' at ${path}.`)
+      model = ''
+    }
     if (!provider && !model) return undefined
     if (provider && !isKnownProvider(provider)) {
       if (Array.isArray(warnings)) warnings.push(`Rejected unknown provider '${provider}' at ${path}.`)
@@ -662,7 +671,7 @@ export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS
     }
   }
 
-  const parsed = parseCSVToScenes(csvText, defaultDuration)
+  const parsed = parseCSVToScenes(csvText, defaultDuration, { warnings: options.warnings })
   const maxLen = Math.max(existing.length, parsed.length)
   return Array.from({ length: maxLen }, (_, i) => {
     const ex = existing[i]
@@ -676,7 +685,13 @@ export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS
         }
       }
       if (p.generation !== undefined) {
-        merged.generation = mergeSceneGeneration(ex.generation, p.generation).generation
+        const generationMerge = mergeSceneGeneration(
+          ex.generation,
+          p.generation,
+          options.generationSettings,
+        )
+        merged.generation = generationMerge.generation
+        if (Array.isArray(options.warnings)) options.warnings.push(...generationMerge.warnings)
       }
       return merged
     }

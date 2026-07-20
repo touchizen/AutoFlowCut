@@ -16,6 +16,14 @@ export function isKnownVideoProvider(provider) {
   return typeof provider === 'string' && VIDEO_PROVIDER_IDS.has(provider)
 }
 
+export function getGlobalImageProvider(settings = {}) {
+  return settings?.generation?.image?.provider ?? 'google'
+}
+
+export function getGlobalVideoProvider(settings = {}, stage = 't2v') {
+  return settings?.generation?.video?.[stage]?.provider ?? 'google'
+}
+
 function sceneLabel(scene) {
   return scene?.id ?? scene?._sceneNum ?? 'unknown'
 }
@@ -33,7 +41,7 @@ function resolveProvider({ scene, sceneProvider, globalProvider, kind, isKnown }
 
 export function resolveSceneImageProvider(scene, settings = {}) {
   const sceneStage = scene?.generation?.image
-  const globalProvider = settings?.generation?.image?.provider ?? 'google'
+  const globalProvider = getGlobalImageProvider(settings)
   const resolved = resolveProvider({
     scene,
     sceneProvider: sceneStage?.provider,
@@ -56,7 +64,7 @@ export function resolveSceneImageProvider(scene, settings = {}) {
 
 export function resolveSceneVideoProvider(scene, settings = {}, stage = 't2v') {
   const sceneStage = scene?.generation?.video?.[stage]
-  const globalProvider = settings?.generation?.video?.[stage]?.provider ?? 'google'
+  const globalProvider = getGlobalVideoProvider(settings, stage)
   const resolved = resolveProvider({
     scene,
     sceneProvider: sceneStage?.provider,

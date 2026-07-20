@@ -23,7 +23,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
 import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, nestSceneGenerationColumns } from './lib/csv.js';
-import { handleExportCapcutTool, handleExportPremiereTool } from './lib/toolResponses.js';
+import { csvToolResponse, handleExportCapcutTool, handleExportPremiereTool } from './lib/toolResponses.js';
 import { SCENE_GENERATION_PATCH_SCHEMA } from './lib/sceneGenerationSchema.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
@@ -868,12 +868,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // bundling 적용.
         const isNewFormat = isNewSceneCSVFormat(headers, data.scenes);
         let bundledSrtTrack = null;
+        const csvWarnings = [];
         if (isNewFormat) {
-          const bundled = bundleSceneCSVRows(data.scenes);
+          const bundled = bundleSceneCSVRows(data.scenes, { warnings: csvWarnings });
           scenes = bundled.scenes;
           bundledSrtTrack = bundled.srtTrack;
         } else {
-          scenes = data.scenes.map(nestSceneGenerationColumns);
+          scenes = data.scenes.map(row => nestSceneGenerationColumns(row, { warnings: csvWarnings }));
         }
         // project.json 자동 로드 (image_dir이 프로젝트 루트)
         let projectLoaded = false;
@@ -932,14 +933,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         } catch { /* 앱 미실행 시 무시 */ }
 
         const modeLabel = sceneMode === 'video' ? '비디오' : '이미지';
-        return {
-          content: [{
-            type: 'text',
-            text: `CSV 로드 완료 [${modeLabel} 모드]: ${scenes.length}개 씬, 필드: ${headers.join(', ')}` +
-              (imageDirPath ? `\n미디어 경로: ${imageDirPath}` : '') +
-              (projectLoaded ? `\nproject.json 로드 완료 (레퍼런스 ${projectData.references?.length || 0}개)` : ''),
-          }],
-        };
+        return csvToolResponse(
+          `CSV 로드 완료 [${modeLabel} 모드]: ${scenes.length}개 씬, 필드: ${headers.join(', ')}` +
+            (imageDirPath ? `\n미디어 경로: ${imageDirPath}` : '') +
+            (projectLoaded ? `\nproject.json 로드 완료 (레퍼런스 ${projectData.references?.length || 0}개)` : ''),
+          csvWarnings,
+        );
       }
 
       case 'list_scenes': {
@@ -1125,13 +1124,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // F3(Fable): save_csv 의 valueForHeader 는 nested generation 을 우선 읽는다 → generation 컬럼을
         //   flat 으로만 쓰면 옛 nested 값이 이겨 update 가 무시된다. 갱신된 flat 컬럼으로 nested 재구성.
         //   (generation 컬럼이 없으면 nestSceneGenerationColumns 가 row 를 그대로 반환 → 무해)
-        scenes[idx] = nestSceneGenerationColumns(scenes[idx]);
-        return {
-          content: [{
-            type: 'text',
-            text: `씬 ${args.scene_number}.${args.field} 수정 완료.\n이전: ${old}\n이후: ${args.value}`,
-          }],
-        };
+        const csvWarnings = [];
+        scenes[idx] = nestSceneGenerationColumns(scenes[idx], { warnings: csvWarnings });
+        return csvToolResponse(
+          `씬 ${args.scene_number}.${args.field} 수정 완료.\n이전: ${old}\n이후: ${args.value}`,
+          csvWarnings,
+        );
       }
 
       case 'list_references': {

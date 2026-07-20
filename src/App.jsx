@@ -1102,6 +1102,10 @@ function App() {
       videoScenesHook.parseFromText(text, settings.defaultDuration, framePairs)
     }
 
+    const importSceneCSV = (text) => (
+      parseFromCSV(text, settings.defaultDuration, framePairs, { generationSettings: settings })
+    )
+
     const hasExistingSrt = (scenesHook.srtTrack || []).length > 0
 
     // 타입별 실행 액션
@@ -1112,8 +1116,8 @@ function App() {
       csv: () => isVideo
         // CSV 비디오 모드: prompt 컬럼이 있으면 video_t2v_prompt 로 rename 한 후 parseFromCSV.
         // 행 단위 매칭은 그대로 보존되고, video_*_prompt 컬럼이 이미 있는 CSV 는 그대로 통과.
-        ? parseFromCSV(csvPromptToVideoT2V(content), settings.defaultDuration, framePairs)
-        : parseFromCSV(content, settings.defaultDuration, framePairs),
+        ? importSceneCSV(csvPromptToVideoT2V(content))
+        : importSceneCSV(content),
       // SRT 는 자막 전용 — 비디오 모드 의미 없음 (자막 → 비디오 prompt 강제 변환은 부자연)
       // 기존 srtTrack 이 있을 때만 충돌 모달 띄움. parseFromSRT 의 smart-match
       // (fuzzy 매칭) 분기는 oldTrack && prevScenes 둘 다 있을 때만 동작하므로,

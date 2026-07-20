@@ -1,5 +1,10 @@
 import { IMAGE_MODELS, VIDEO_MODELS } from '../config/genModels'
-import { isKnownImageProvider, isKnownVideoProvider } from './sceneProviderResolution'
+import {
+  getGlobalImageProvider,
+  getGlobalVideoProvider,
+  isKnownImageProvider,
+  isKnownVideoProvider,
+} from './sceneProviderResolution'
 
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
 
@@ -21,7 +26,10 @@ function mergeStage(existing, patch, { kind, stage, settings, path }) {
   const hasModel = hasOwn(patch, 'model') && patch.model != null
   if (!hasProvider && !hasModel) return { value: existing, warnings: [] }
 
-  const provider = hasProvider ? patch.provider : existing?.provider
+  const globalProvider = kind === 'image'
+    ? getGlobalImageProvider(settings)
+    : getGlobalVideoProvider(settings, stage)
+  const provider = hasProvider ? patch.provider : (existing?.provider ?? globalProvider)
   const isKnownProvider = kind === 'image' ? isKnownImageProvider(provider) : isKnownVideoProvider(provider)
   if (hasProvider && !isKnownProvider) {
     return { value: existing, warnings: [`Rejected unknown provider '${provider}' at ${path}.`] }

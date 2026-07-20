@@ -20,8 +20,17 @@ const VIDEO_PROVIDER_ID_SET = new Set(VIDEO_PROVIDER_IDS)
 function generationFromRow(get, warnings) {
   const stage = (providerColumn, modelColumn, providerIds, path) => {
     const provider = get(providerColumn)
-    const model = get(modelColumn)
-    if (provider === GENERATION_INHERIT_SENTINEL) return null
+    let model = get(modelColumn)
+    if (provider === GENERATION_INHERIT_SENTINEL) {
+      if (model && Array.isArray(warnings)) {
+        warnings.push(`Model '${model}' ignored because provider is __inherit__ at ${path}.`)
+      }
+      return null
+    }
+    if (model === GENERATION_INHERIT_SENTINEL) {
+      if (Array.isArray(warnings)) warnings.push(`Rejected invalid model '${model}' at ${path}.`)
+      model = ''
+    }
     if (!provider && !model) return undefined
     if (provider && !providerIds.has(provider)) {
       if (Array.isArray(warnings)) warnings.push(`Rejected unknown provider '${provider}' at ${path}.`)
@@ -46,8 +55,13 @@ function generationFromRow(get, warnings) {
 
 export function nestSceneGenerationColumns(row = {}, options = {}) {
   const byLower = new Map(Object.entries(row).map(([key, value]) => [String(key).toLowerCase(), value]))
+  const hasGenerationColumns = Object.keys(GENERATION_COLUMN_PATHS).some(key => byLower.has(key))
+  if (!hasGenerationColumns) return row
   const generation = generationFromRow(key => String(byLower.get(key) ?? '').trim(), options?.warnings)
-  return generation === undefined ? row : { ...row, generation }
+  const nested = { ...row }
+  if (generation === undefined) delete nested.generation
+  else nested.generation = generation
+  return nested
 }
 
 function valueForHeader(scene, header) {

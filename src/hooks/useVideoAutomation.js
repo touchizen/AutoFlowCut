@@ -394,6 +394,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           .filter(s => s.prompt)
           .map(s => {
             const resolved = resolveItemGeneration(s)
+            const itemProvider = shouldUsePersistedGenerationProvider(s) ? s.generationProvider : resolved.provider
             return {
               id: s.id,
               prompt: s.prompt,
@@ -403,8 +404,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               mediaId: s.mediaId,
               videoPath: s.videoPath,
               seed: s.seed ?? seed ?? null,
-              model: s.model ? canonicalVideoModel(s.model, resolved.provider) : resolved.model,
-              generationProvider: shouldUsePersistedGenerationProvider(s) ? s.generationProvider : resolved.provider,
+              model: s.model ? canonicalVideoModel(s.model, itemProvider) : resolved.model,
+              generationProvider: itemProvider,
               generationModel: resolved.model,
               generationResolution: resolved.resolution,
               appliedInputs: s.appliedInputs || null,
@@ -425,6 +426,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           .filter(p => p.startSceneId)
           .map(p => {
             const resolved = resolveItemGeneration(p)
+            const itemProvider = shouldUsePersistedGenerationProvider(p) ? p.generationProvider : resolved.provider
             return {
               id: p.id,
               prompt: p.prompt,
@@ -444,8 +446,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               //   download-only/in-flight 복구 항목은 서버가 옛 모델로 생성한 메타를 그대로 들고 있어야
               //   pickVideoMetadata(item.model 우선) 가 history 를 실제 사용 모델로 저장한다. fresh 제출은
               //   fillWindow 가 제출 시점에 effectiveVideoModel 을 다시 stamp 하므로(447) 새 선택이 반영된다.
-              model: p.model ? canonicalVideoModel(p.model, resolved.provider) : resolved.model,
-              generationProvider: shouldUsePersistedGenerationProvider(p) ? p.generationProvider : resolved.provider,
+              model: p.model ? canonicalVideoModel(p.model, itemProvider) : resolved.model,
+              generationProvider: itemProvider,
               generationModel: resolved.model,
               generationResolution: resolved.resolution,
               appliedInputs: p.appliedInputs || null,

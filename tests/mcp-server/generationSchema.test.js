@@ -67,12 +67,14 @@ describe('MCP scene generation schema synchronization', () => {
     expect(schemas.SceneGeneration.properties.video.properties.i2v.properties.model.nullable).toBe(true)
   })
 
-  it('F5: renderer and MCP CSV parsers identically drop unknown-provider stages and preserve exactly N valid overrides', () => {
+  it('F5/G5: renderer and MCP CSV parsers identically reject unknown providers and __inherit__ model edges with exactly N valid overrides', () => {
     const csv = [
       'scene,prompt,image_provider,image_model,t2v_provider,t2v_model,i2v_provider,i2v_model',
       '1,one,openai,gpt-image-1,unknown-video,ignored,,model-only-i2v',
       '2,two,google,,grok,,__inherit__,',
       '3,three,unknown-image,ignored,unknown-video,ignored,unknown-video,ignored',
+      '4,four,__inherit__,ignored-image-model,,,,',
+      '5,five,,,,__inherit__,,',
     ].join('\n')
     const mcpRows = [
       {
@@ -87,6 +89,14 @@ describe('MCP scene generation schema synchronization', () => {
         scene: '3', prompt: 'three', image_provider: 'unknown-image', image_model: 'ignored',
         t2v_provider: 'unknown-video', t2v_model: 'ignored', i2v_provider: 'unknown-video', i2v_model: 'ignored',
       },
+      {
+        scene: '4', prompt: 'four', image_provider: '__inherit__', image_model: 'ignored-image-model',
+        t2v_provider: '', t2v_model: '', i2v_provider: '', i2v_model: '',
+      },
+      {
+        scene: '5', prompt: 'five', image_provider: '', image_model: '',
+        t2v_provider: '', t2v_model: '__inherit__', i2v_provider: '', i2v_model: '',
+      },
     ]
     const expectedGeneration = [
       {
@@ -98,6 +108,8 @@ describe('MCP scene generation schema synchronization', () => {
         video: { t2v: { provider: 'grok' }, i2v: null },
       },
       undefined,
+      { image: null },
+      undefined,
     ]
     const warningCollections = [[], [], [], []]
     const outputs = [
@@ -106,12 +118,14 @@ describe('MCP scene generation schema synchronization', () => {
       mcpRows.map(row => nestSceneGenerationColumns(row, { warnings: warningCollections[2] })),
       bundleSceneCSVRows(mcpRows, { warnings: warningCollections[3] }).scenes,
     ]
-    const N = 5
+    const N = 6
     const expectedWarnings = [
       "Rejected unknown provider 'unknown-video' at generation.video.t2v.",
       "Rejected unknown provider 'unknown-image' at generation.image.",
       "Rejected unknown provider 'unknown-video' at generation.video.t2v.",
       "Rejected unknown provider 'unknown-video' at generation.video.i2v.",
+      "Model 'ignored-image-model' ignored because provider is __inherit__ at generation.image.",
+      "Rejected invalid model '__inherit__' at generation.video.t2v.",
     ]
 
     outputs.forEach((scenes, index) => {

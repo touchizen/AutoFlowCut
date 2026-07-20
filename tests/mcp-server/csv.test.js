@@ -7,7 +7,13 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isNewSceneCSVFormat, bundleSceneCSVRows, nestSceneGenerationColumns, saveCSV } from '../../mcp-server/lib/csv.js'
+import {
+  isNewSceneCSVFormat,
+  bundleSceneCSVRows,
+  nestSceneGenerationColumns,
+  loadCSV,
+  saveCSV,
+} from '../../mcp-server/lib/csv.js'
 
 describe('isNewSceneCSVFormat', () => {
   it('scene 컬럼 + 정수값 → true', () => {
@@ -104,7 +110,7 @@ describe('bundleSceneCSVRows', () => {
     })
   })
 
-  it('saveCSV flattens nested generation values back into the six CSV columns', () => {
+  it('G4: production saveCSV/loadCSV round-trips all six generation columns with exactly three overrides', () => {
     const dir = mkdtempSync(join(tmpdir(), 'autoflowcut-m3-csv-'))
     const path = join(dir, 'scenes.csv')
     const headers = [
@@ -116,11 +122,30 @@ describe('bundleSceneCSVRows', () => {
       scene: '1', prompt: 'P',
       generation: {
         image: { provider: 'openai', model: 'gpt-image-1' },
-        video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+        video: {
+          t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' },
+          i2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' },
+        },
       },
     }])
 
-    expect(readFileSync(path, 'utf8')).toContain('1,P,openai,gpt-image-1,grok,grok-imagine-video-1.5,,')
+    const loaded = loadCSV(path)
+    const roundTripped = loaded.scenes.map(nestSceneGenerationColumns)
+
+    expect(roundTripped[0].generation).toEqual({
+      image: { provider: 'openai', model: 'gpt-image-1' },
+      video: {
+        t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' },
+        i2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' },
+      },
+    })
+    const overrideCount = roundTripped.reduce((count, scene) => (
+      count
+        + (scene.generation?.image !== undefined ? 1 : 0)
+        + (scene.generation?.video?.t2v !== undefined ? 1 : 0)
+        + (scene.generation?.video?.i2v !== undefined ? 1 : 0)
+    ), 0)
+    expect(overrideCount).toBe(3)
   })
 
   it('saveCSV preserves flat generation columns for legacy row-per-scene CSV rows', () => {
@@ -152,5 +177,23 @@ describe('bundleSceneCSVRows', () => {
     saveCSV(path, ['scene', 'prompt', 'image_provider', 'image_model'], [updated])
     // 재-nest 안 하면(옛 nested openai) save 가 openai 를 쓴다 — google 이어야 통과.
     expect(readFileSync(path, 'utf8')).toContain('1,P,google,gpt-image-1')
+  })
+
+  it('G5: MCP re-nesting drops stale model-only generation when the model is __inherit__', () => {
+    const loaded = nestSceneGenerationColumns({
+      scene: '1', prompt: 'P', t2v_provider: '', t2v_model: 'grok-imagine-video-1.5',
+    })
+    expect(loaded.generation).toEqual({
+      video: { t2v: { model: 'grok-imagine-video-1.5' } },
+    })
+
+    loaded.t2v_model = '__inherit__'
+    const warnings = []
+    const updated = nestSceneGenerationColumns(loaded, { warnings })
+
+    expect(updated).not.toHaveProperty('generation')
+    expect(warnings).toEqual([
+      "Rejected invalid model '__inherit__' at generation.video.t2v.",
+    ])
   })
 })

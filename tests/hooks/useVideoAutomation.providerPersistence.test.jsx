@@ -74,6 +74,56 @@ describe('useVideoAutomation — persisted generation provider', () => {
     expect(retryVideoDownload.mock.calls[0][0].item.generationProvider).toBe('grok')
   })
 
+  it('G2: grok download-only item keeps its stored model after the global provider switches to google', async () => {
+    const genAPI = makeGenAPI()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (key) => key, null))
+
+    await act(async () => {
+      await hook.result.current.start({
+        mode: 't2v',
+        scenes: [{
+          id: 'vscene_1', prompt: 'p', status: 'error',
+          generationId: 'gen:v1:grok-handle', mediaId: 'media-grok', videoPath: null,
+          generationProvider: 'grok', model: 'grok-imagine-video-1.5',
+        }],
+        generationSettings: googleSettings,
+        projectName: 'test', saveMode: 'memory', videoResolution: '720p',
+      })
+    })
+
+    expect(retryVideoDownload.mock.calls[0][0].item).toEqual(
+      expect.objectContaining({
+        generationProvider: 'grok',
+        model: 'grok-imagine-video-1.5',
+      }),
+    )
+  })
+
+  it('G2: grok I2V download-only item keeps its stored model after the global provider switches to google', async () => {
+    const genAPI = makeGenAPI()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (key) => key, null))
+
+    await act(async () => {
+      await hook.result.current.start({
+        mode: 'i2v',
+        framePairs: [{
+          id: 'fp_1', prompt: 'p', startSceneId: 'scene_1', _startMediaId: 'media-start',
+          status: 'error', generationId: 'gen:v1:grok-handle', mediaId: 'media-grok', videoPath: null,
+          generationProvider: 'grok', model: 'grok-imagine-video-1.5',
+        }],
+        generationSettings: googleSettings,
+        projectName: 'test', saveMode: 'memory', videoResolution: '720p',
+      })
+    })
+
+    expect(retryVideoDownload.mock.calls[0][0].item).toEqual(
+      expect.objectContaining({
+        generationProvider: 'grok',
+        model: 'grok-imagine-video-1.5',
+      }),
+    )
+  })
+
   it('D3: I2V download-only preflight and rebuilt item prefer persisted provider', async () => {
     const genAPI = makeGenAPI()
     const hook = renderHook(() => useVideoAutomation(genAPI, (key) => key, null))

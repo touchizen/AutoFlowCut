@@ -27,6 +27,7 @@ import { normalizeTagKey, splitTags } from '../utils/tagMatch'
 import { resolveMentions } from '../utils/mentionParser'
 import { isStyleReference } from '../services/styleService'
 import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
+import { toast } from '../components/Toast'
 
 // snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
@@ -167,14 +168,27 @@ export function useScenes() {
    * - 옛 형식: 기존 mergeCSVIntoScenes (CSV에 채워진 필드만 덮어쓰기)
    *
    * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
+   * @param {object} [options]
+   * @param {object} [options.generationSettings] - model-only override 검증에 쓸 현재 설정
+   * @returns {Array} merged scenes. 수집된 경고는 비열거형 `warnings` 배열로 제공.
    */
-  const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration, framePairs = []) => {
+  const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration, framePairs = [], options = {}) => {
     let merged
+    const warnings = []
+    const finish = (result) => {
+      Object.defineProperty(result, 'warnings', {
+        value: [...warnings],
+        enumerable: false,
+      })
+      if (warnings.length > 0) toast.warning(warnings.join('\n'))
+      return result
+    }
 
     if (isNewSceneCSVFormat(csvText)) {
       const parsed = parseSceneCSVToTracks(csvText, {
         allocateSceneId,
         defaultDuration,
+        warnings,
       })
       // C6 + R5 review fix: 기존 씬의 런타임 필드를 보존하되, 매칭 키는 CSV scene 번호
       // (_sceneNum). prev 에 _sceneNum 있는 씬이 하나라도 있으면 sceneNum 매칭만
@@ -190,10 +204,15 @@ export function useScenes() {
         const existing = prevByNum.get(parsedScene._sceneNum)
           || (prevHasSceneNums ? null : prev[i])
         if (!existing) return parsedScene
-        const generation = mergeSceneGeneration(existing.generation, parsedScene.generation).generation
+        const generationMerge = mergeSceneGeneration(
+          existing.generation,
+          parsedScene.generation,
+          options.generationSettings,
+        )
+        warnings.push(...generationMerge.warnings)
         return {
           ...parsedScene,
-          generation,
+          generation: generationMerge.generation,
           id: existing.id, // 안정 ID 유지
           image: existing.image,
           imagePath: existing.imagePath,
@@ -237,18 +256,22 @@ export function useScenes() {
       merged = trimTrailingEmptyScenes(mergedScenes, framePairs)
       setScenes(() => merged)
       setSrtTrack(parsed.srtTrack)
-      return merged
+      return finish(merged)
     }
 
     // 옛 형식: 동기 계산 후 양쪽 state 갱신 (batched-update deferral 회피)
     const prev = scenesRef.current
-    const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration, { allocateId: allocateSceneId })
+    const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration, {
+      allocateId: allocateSceneId,
+      generationSettings: options.generationSettings,
+      warnings,
+    })
     const trimmed = trimTrailingEmptyScenes(afterMerge, framePairs)
     const built = createSrtTrackFromScenes(trimmed)
     merged = recalculateTimesArr(built.scenes)
     setScenes(() => merged)
     setSrtTrack(built.srtTrack)
-    return merged
+    return finish(merged)
   }, [allocateSceneId])
 
   /**

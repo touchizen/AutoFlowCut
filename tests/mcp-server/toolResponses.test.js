@@ -1,12 +1,49 @@
 import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   exportCapcutToolResponse,
   handleExportCapcutTool,
   exportPremiereToolResponse,
   handleExportPremiereTool,
 } from '../../mcp-server/lib/toolResponses.js'
+import * as toolResponses from '../../mcp-server/lib/toolResponses.js'
+
+const mcpIndexSource = readFileSync(resolve(process.cwd(), 'mcp-server/index.js'), 'utf8')
 
 describe('mcp-server toolResponses', () => {
+  it('G3: CSV tool response includes collected warnings only when non-empty', () => {
+    expect(toolResponses.csvToolResponse).toBeTypeOf('function')
+    const warnings = ["Rejected unknown provider 'unknown' at generation.image."]
+
+    expect(toolResponses.csvToolResponse('CSV loaded', warnings)).toEqual({
+      content: [{ type: 'text', text: 'CSV loaded' }],
+      warnings,
+    })
+    expect(toolResponses.csvToolResponse('CSV loaded', [])).toEqual({
+      content: [{ type: 'text', text: 'CSV loaded' }],
+    })
+  })
+
+  it('G3: MCP CSV handlers collect parser warnings and pass them to the tool response', () => {
+    const loadCsvBlock = mcpIndexSource.slice(
+      mcpIndexSource.indexOf("case 'load_csv':"),
+      mcpIndexSource.indexOf("case 'list_scenes':"),
+    )
+    expect(loadCsvBlock).toContain('bundleSceneCSVRows(data.scenes, { warnings: csvWarnings })')
+    expect(loadCsvBlock).toContain('nestSceneGenerationColumns(row, { warnings: csvWarnings })')
+    expect(loadCsvBlock).toMatch(/csvToolResponse\([\s\S]*csvWarnings,\s*\)/)
+
+    const updateFieldBlock = mcpIndexSource.slice(
+      mcpIndexSource.indexOf("case 'update_field':"),
+      mcpIndexSource.indexOf("case 'list_references':"),
+    )
+    expect(updateFieldBlock).toContain(
+      'nestSceneGenerationColumns(scenes[idx], { warnings: csvWarnings })',
+    )
+    expect(updateFieldBlock).toMatch(/csvToolResponse\([\s\S]*csvWarnings,\s*\)/)
+  })
+
   it('export_capcut propagates HTTP failure as MCP tool error', () => {
     const result = exportCapcutToolResponse({
       status: 500,
