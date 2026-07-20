@@ -59,9 +59,16 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   // C1-a: audio 스텝은 tts/probe 주입이 필수(없으면 실앱에서 tts.capabilities() 크래시).
   // 테스트/커스텀 provider는 주입 우선, 기본은 Typecast 어댑터 + music-metadata probe.
   // 화자매핑 UI·멀티 provider 선택은 M2a-3. 키는 typecastKey(env→~/.typecast/credentials).
+  // finding 4: getTypecastKey는 키가 없으면 throw하는 로더다 — 그대로 캐싱하면 그 throw가
+  // 어댑터의 nullable getKey 경계를 우회해 MissingProviderKeyError 대신 raw Error가 샌다.
+  // try/catch로 null을 캐싱해 어댑터가 정식으로 MissingProviderKeyError를 던지게 한다.
   let cachedTtsKey
   const ttsAdapter = tts || createTtsAdapter('typecast', {
-    getKey: () => (cachedTtsKey ??= getTypecastKey()),
+    getKey: () => {
+      if (cachedTtsKey !== undefined) return cachedTtsKey
+      try { cachedTtsKey = getTypecastKey() } catch { cachedTtsKey = null }
+      return cachedTtsKey
+    },
     fetch: (...a) => globalThis.fetch(...a),
   })
   const probeFn = probe || ((filePath) => probeDurationMs(filePath))

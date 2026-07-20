@@ -67,7 +67,7 @@ export function createGoogleTtsAdapter({ getKey, fetch, provider = 'googletts' }
     },
     async synthesize({ text, voiceId, signal }) {
       const key = getKey()
-      if (key == null) throw new MissingProviderKeyError(provider)
+      if (!key) throw new MissingProviderKeyError(provider)
       const languageCode = (voiceId || '').split('-').slice(0, 2).join('-') || 'ko-KR'
       // API 키는 URL 쿼리(?key=, 로그/URL 노출) 대신 x-goog-api-key 헤더로 전달(Google 권장).
       const res = await fetch(ENDPOINT, {

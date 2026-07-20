@@ -72,7 +72,7 @@ export function createTypecastAdapter({ getKey, fetch, provider = 'typecast' }) 
     },
     async synthesize({ text, voiceId, emotion = 'normal', signal, model }) {
       const key = getKey()
-      if (key == null) throw new MissingProviderKeyError(provider)
+      if (!key) throw new MissingProviderKeyError(provider)
       // Lazy-populate voiceModelById on cache miss: if no explicit model and id not in cache, fetch voices
       if (!model && !voiceModelById.has(voiceId)) {
         try {

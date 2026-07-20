@@ -14,10 +14,10 @@ export function buildKeyResolvers({ multiKeyStore, genaiKeyStore, getTypecastKey
     typecast: () => multiKeyStore.getKey('typecast') || typecastFallback(),
     elevenlabs: () => multiKeyStore.getKey('elevenlabs') || credFallback('elevenlabs', 'ELEVENLABS_API_KEY'),
     googletts: () => multiKeyStore.getKey('googletts') || credFallback('googletts', 'GOOGLE_TTS_API_KEY'),
-    gemini: () => genaiKeyStore.getKey('genai') ?? null,
+    gemini: () => genaiKeyStore.getKey() ?? null,
   }
   const sfxKeyFor = {
-    elevenlabs: () => multiKeyStore.getKey('elevenlabs') || credFallback('elevenlabs', 'ELEVENLABS_API_KEY'),
+    elevenlabs: ttsKeyFor.elevenlabs,
   }
   return { ttsKeyFor, sfxKeyFor }
 }

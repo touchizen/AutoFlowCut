@@ -15,7 +15,7 @@ export function createElevenLabsSfxAdapter({ getKey, fetch, provider = 'elevenla
     },
     async generate({ description, durationSeconds = null, signal } = {}) {
       const key = getKey()
-      if (key == null) throw new MissingProviderKeyError(provider)
+      if (!key) throw new MissingProviderKeyError(provider)
       const body = { text: description, model_id: 'eleven_text_to_sound_v2' }
       // duration_seconds는 지정 시에만 전송(생략하면 API가 자동 추정).
       if (durationSeconds != null) body.duration_seconds = durationSeconds

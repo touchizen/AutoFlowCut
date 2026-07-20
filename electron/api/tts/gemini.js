@@ -85,7 +85,7 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
     },
     async synthesize({ text, voiceId, emotion = 'normal', signal }) {
       const key = getKey()
-      if (key == null) throw new MissingProviderKeyError(provider)
+      if (!key) throw new MissingProviderKeyError(provider)
       const stylePrompt = EMOTION_STYLE_PROMPTS[emotion]
       const promptText = stylePrompt ? `${stylePrompt} ${text}` : text
       const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {

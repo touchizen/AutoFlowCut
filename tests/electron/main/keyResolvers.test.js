@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { buildKeyResolvers } from '../../../electron/main/keyResolvers.js'
 
 const store = (map) => ({ getKey: (p) => map[p] ?? null })
@@ -31,12 +31,14 @@ describe('buildKeyResolvers (nullable, dev switch)', () => {
     expect(ttsKeyFor.elevenlabs()).toBe(null)
   })
 
-  it('gemini resolves from genaiKeyStore only', () => {
+  it('gemini resolves from genaiKeyStore only, calling getKey() with no arguments (real keyStore.getKey() contract)', () => {
+    const getKey = vi.fn(() => 'g')
     const { ttsKeyFor } = buildKeyResolvers({
-      multiKeyStore: store({}), genaiKeyStore: store({ genai: 'g' }),
+      multiKeyStore: store({}), genaiKeyStore: { getKey },
       getTypecastKey: () => null, readCredentialsKey: () => null, disableFallback: false,
     })
     expect(ttsKeyFor.gemini()).toBe('g')
+    expect(getKey).toHaveBeenCalledWith()
   })
 
   it('sfx elevenlabs mirrors tts elevenlabs resolution', () => {

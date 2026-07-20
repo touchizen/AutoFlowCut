@@ -138,7 +138,7 @@ export function createElevenLabsAdapter({ getKey, fetch, provider = 'elevenlabs'
     },
     async synthesize({ text, voiceId, emotion = 'normal', signal }) {
       const key = getKey()
-      if (key == null) throw new MissingProviderKeyError(provider)
+      if (!key) throw new MissingProviderKeyError(provider)
       const voiceSettings = EMOTION_VOICE_SETTINGS[emotion]
       const res = await fetch(`${BASE}/${voiceId}?output_format=mp3_44100_128`, {
         method: 'POST',
