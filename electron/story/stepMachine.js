@@ -21,8 +21,9 @@ import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/sto
 // 순수 함수(TextDecoder만 사용) — renderer 전용 의존성이 없어 main에서도 그대로 쓴다.
 import { decodeTextBytes } from '../../src/utils/decodeTextFile.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
-import { extractMentionNames, formatMentionToken } from '../../src/utils/mentionParser.js'
+import { extractMentionNames, formatMentionToken, resolveMentionPrefix } from '../../src/utils/mentionParser.js'
 import { runScenesSplitExperiment } from './storySplitExperiment.js'
+import { validatePromptMentions } from './promptMentions.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
@@ -665,7 +666,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         sendReviewProgress('prompts', { round, of: rounds, phase: 'revising' }, opId)
         const r = await llm.revisePrompts(currentScenes, context, critique, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, changed }
-        const nextScenes = r?.scenes || []
+        const nextScenes = validatePromptMentionScenes(r?.scenes || [], context, opId)
         changed = changed || !sameJson(promptSignature(nextScenes), promptSignature(currentScenes))
         currentScenes = nextScenes
       }
@@ -761,9 +762,54 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     }
     return names
   }
+
+  function validatePromptMentionScenes(scenes, context, operationId) {
+    const rosterNames = (context.speakers || [])
+      .map((speaker) => speaker?.name)
+      .filter((name) => typeof name === 'string' && name.trim())
+    const requiredByScene = context.requiredMentionNamesByScene || {}
+    return (scenes || []).map((scene) => {
+      if (!scene) return scene // fail-open: null entry가 "cannot fail the step" 보장을 깨지 않게
+      const next = { ...scene }
+      const requiredNames = requiredByScene[scene.sceneNo] || []
+      for (const field of ['imagePrompt', 'videoPrompt']) {
+        // 저장 전 gate가 legacy `@공백 이름본문`을 unknown으로 낮추기 전에 기존 brace repair를 적용한다.
+        const prompt = repairLegacySpacedMentions(scene[field], requiredNames)
+        const result = validatePromptMentions(prompt, rosterNames, requiredNames)
+        next[field] = result.text
+        if (result.unknown.length) {
+          sendStepLog(
+            'prompts',
+            'mention-sanitize',
+            `씬 ${scene.sceneNo} ${field}: 해결할 수 없는 mention ${result.unknown.length}개를 평문으로 변환`,
+            operationId,
+            { level: 'warn', sceneNo: scene.sceneNo, field, count: result.unknown.length, unknown: result.unknown },
+          )
+        }
+        if (result.missing.length) {
+          // 저장은 fail-open 한다. push 시 기존 withMentions가 빠진 token만 호환 prepend한다.
+          sendStepLog(
+            'prompts',
+            'mention-missing',
+            `씬 ${scene.sceneNo} ${field}: required mention ${result.missing.length}개 누락`,
+            operationId,
+            { level: 'warn', sceneNo: scene.sceneNo, field, count: result.missing.length, missing: result.missing },
+          )
+        }
+      }
+      return next
+    })
+  }
   // V2: 프롬프트에 @이름 멘션 주입(Flow·API 공통 레퍼런스 지정). 표현 불가 이름은 생략(태그 폴백).
   function withMentions(prompt, names) {
-    const existing = new Set(extractMentionNames(prompt).map((name) => name.toLowerCase()))
+    // dedup은 gate(validatePromptMentions)와 같은 particle-aware 해석을 쓴다 — raw 이름만 비교하면
+    // `@민수가`(조사 붙은 plain mention)를 못 알아보고 `@민수`를 앞에 또 붙여 이중 멘션이 된다.
+    const byLower = new Map(names.map((n) => [String(n).toLowerCase(), true]))
+    const existing = new Set()
+    for (const mention of extractMentionNames(prompt)) {
+      const resolved = resolveMentionPrefix(mention, byLower)
+      existing.add((resolved ? resolved.matched : mention).toLowerCase())
+    }
     const mentions = []
     for (const name of names) {
       const key = String(name).toLowerCase()
@@ -1769,7 +1815,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
       const scriptMd = await store.loadText('script.md')
       const opts = buildLlmOptions(effectiveOptions(params))
-      const context = { scriptMd, style: params.style || null, speakers: characterSpeakers() }
+      const context = {
+        scriptMd,
+        style: params.style || null,
+        speakers: characterSpeakers(),
+        requiredMentionNamesByScene: Object.fromEntries(
+          (scenesJson.scenes || []).map((scene) => [scene.sceneNo, sceneCharacterNames(scene)]),
+        ),
+      }
       if (params.reviewOnly) {
         const cfg = reviewConfig(opts, 'prompts')
         if (!cfg.enabled) return { changed: false }
@@ -1794,6 +1847,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           videoPrompt: typeof scene?.videoPrompt === 'string' ? scene.videoPrompt : '',
         }, opId),
       })
+      scenes = validatePromptMentionScenes(scenes, context, opId)
       const cfg = reviewConfig(opts, 'prompts')
       if (cfg.enabled && !signal?.aborted) {
         const reviewed = await reviewPromptsCandidate(scenes, context, opts, cfg.rounds, opId, signal)

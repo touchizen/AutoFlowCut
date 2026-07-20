@@ -3,6 +3,7 @@
 // Ref 카드 prompt와 동일한 `${ethnicity}, ${age}, ${gender}, ${appearance}` 조합 규칙(공유 helper) —
 // electron→src import는 stepMachine의 기존 관례(storyCharacter.js는 순수 모듈, 순환 없음).
 import { characterVisualPrompt } from '../../../src/services/storyCharacter.js'
+import { formatMentionToken } from '../../../src/utils/mentionParser.js'
 
 const KOREAN_CHARS_PER_MINUTE = 330
 const ENGLISH_WORDS_PER_MINUTE = 150
@@ -359,10 +360,15 @@ export function buildPromptsReviewPrompt(scenes, context = {}, opts = {}) {
 }
 
 export function buildPromptsRevisePrompt(scenes, context = {}, critique, opts = {}) {
+  const rosterLines = buildMentionRosterLines(context)
   return [
     `아래 critique를 반영해 imagePrompt/videoPrompt만 수정하라.`,
     `반드시 PROMPTS_SCHEMA 형태의 JSON만 반환하라. sceneNo, imagePrompt, videoPrompt만 포함한다. 설명/코드펜스 금지.`,
     `씬 구조, 세그먼트, 화자, storyId는 변경하지 않는다.`,
+    // M4: 수정 라운드가 inline mention 배치를 무너뜨리면 push 안전망이 앞에 몰아 붙인다(front-load) —
+    // 기존 token을 유지·재배치만 하고, 새 token을 지어내지 않는다.
+    `기존 프롬프트의 mention token(@이름, @{이름})은 유지(keep)하라 — 수정 후에도 각 token이 imagePrompt/videoPrompt 각각에 최소 한 번, 캐릭터가 행동하는 자연스러운 위치에 남아야 한다. token을 프롬프트 앞에 몰아서(front-load) 붙이지 말고, roster 밖의 새 token을 만들지 마라.`,
+    rosterLines.length ? `등장인물 roster(이 token 표기를 정확히 사용):\n${rosterLines.join('\n')}` : '',
     `--- critique ---`,
     critique,
     context.scriptMd ? `--- 대본 ---\n${context.scriptMd}` : '',
@@ -407,19 +413,44 @@ export function buildFactCheckPrompt(claims = [], opts = {}) {
   ].join('\n')
 }
 
+// 생성/수정(revise) 프롬프트가 같은 roster·token 표기를 쓰도록 공용 빌더로 분리 — revise가
+// 다른 표기를 실으면 수정 라운드가 token을 지우거나 새로 지어낸다.
+function buildMentionRosterLines(context) {
+  return (context.speakers || [])
+    .map((sp) => ({ sp, desc: characterVisualPrompt(sp) }))
+    .filter(({ sp, desc }) => sp && desc)
+    .map(({ sp, desc }) => {
+      const token = formatMentionToken(sp.name)
+      return token
+        ? `- ${sp.name}: ${desc} (exact mention token: ${token})`
+        : `- ${sp.name}: ${desc} (portable token 없음 — 평문 이름 + 캐릭터 태그 fallback)`
+    })
+}
+
 export function buildPromptsPrompt(scenes, context, opts) {
-  const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
+  const requiredByScene = context.requiredMentionNamesByScene || {}
+  const sceneLines = scenes.map((s) => {
+    const required = (requiredByScene[s.sceneNo] || [])
+      .map((name) => ({ name, token: formatMentionToken(name) }))
+    const tokens = required.filter(({ token }) => token).map(({ token }) => token)
+    const plainNames = required.filter(({ token }) => !token).map(({ name }) => name)
+    return [
+      `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`,
+      tokens.length ? `   이 씬의 required exact mention tokens: ${tokens.join(', ')}` : '',
+      plainNames.length ? `   mention token 없이 평문 이름으로만 쓸 캐릭터(태그 fallback): ${plainNames.join(', ')}` : '',
+    ].filter(Boolean).join('\n')
+  })
   // V2: 캐릭터별 정본 외형(appearance)을 컨텍스트로 줘서 씬마다 외형을 새로 지어내지 않고 일관 서술.
   // §v2.12 FIX(MAJOR): 포함 기준·조합 모두 characterVisualPrompt(ethnicity/age/gender/appearance
   // 조합, 빈 항목 콤마 생략) — ethnicity-only 캐릭터도 Ref 카드와 동일하게 씬 프롬프트에 반영.
-  const charLines = (context.speakers || [])
-    .map((sp) => ({ sp, desc: characterVisualPrompt(sp) }))
-    .filter(({ sp, desc }) => sp && desc)
-    .map(({ sp, desc }) => `- ${sp.name}: ${desc}`)
+  const charLines = buildMentionRosterLines(context)
   return [
     `아래 씬들에 대해 이미지 생성 프롬프트(imagePrompt)와 비디오 생성 프롬프트(videoPrompt)를 영어로 작성하라.`,
-    `캐릭터가 등장하면 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라 (레퍼런스 참조 문법 금지 — 플레인 텍스트).`,
-    charLines.length ? `등장인물 외형(이 묘사를 일관되게 사용):\n${charLines.join('\n')}` : '',
+    `캐릭터가 등장하면 아래 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라.`,
+    `각 씬의 required exact mention token은 imagePrompt와 videoPrompt 각각에 최소 한 번씩 넣고, 캐릭터가 행동하는 자연스러운 명사구 위치에 배치하라. token들을 프롬프트 앞에 몰아서(front-load) 붙이지 마라.`,
+    `예: "A slow dolly toward @{Mina Kim} as she opens the letter"처럼 쓰고, "@{Mina Kim} A slow dolly..."처럼 쓰지 마라.`,
+    `token은 아래 roster의 표기를 정확히(exactly) 복사하라. 새 이름/token을 만들지 말고, 중괄호 안에 조사를 넣지 마라. 닫힌 } 바로 뒤에 본문이 이어져도 괜찮다.`,
+    charLines.length ? `등장인물 roster(이 외형과 token을 일관되게 사용):\n${charLines.join('\n')}` : '',
     context.style ? `스타일: ${context.style}` : '',
     `--- 씬 목록 ---`,
     ...sceneLines,

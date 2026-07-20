@@ -140,6 +140,24 @@ describe('llmCodex adapter', () => {
     await expect(writePrompts(scenes, { scriptMd: '#' }, OPTS, { runJson })).rejects.toThrow(/scene 1 missing\/empty prompt/)
   })
 
+  it('writePrompts는 inline mention 지시를 공유하고 byNo 병합에서 token 위치를 바꾸지 않는다', async () => {
+    const scenes = [{ sceneNo: 1, summary: 'Mina opens the letter', segments: [{ speaker: 'a', text: 'open it' }] }]
+    const inlineImage = 'A slow dolly toward @{Mina Kim} as she opens the letter'
+    const inlineVideo = 'The camera circles @{Mina Kim} while she reads'
+    const runJson = vi.fn(async () => ({
+      scenes: [{ sceneNo: 1, imagePrompt: inlineImage, videoPrompt: inlineVideo }],
+    }))
+
+    const out = await writePrompts(scenes, {
+      speakers: [{ id: 'a', name: 'Mina Kim', appearance: 'a young editor' }],
+      requiredMentionNamesByScene: { 1: ['Mina Kim'] },
+    }, OPTS, { runJson })
+
+    expect(runJson.mock.calls[0][0]).toContain('@{Mina Kim}')
+    expect(out.scenes[0].imagePrompt).toBe(inlineImage)
+    expect(out.scenes[0].videoPrompt).toBe(inlineVideo)
+  })
+
   it('writePrompts는 Codex raw JSON delta의 닫힌 scene을 onPartialPrompt로 전달한다', async () => {
     const scenes = [{ sceneNo: 1, summary: 's' }]
     const onPartialPrompt = vi.fn()
