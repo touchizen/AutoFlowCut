@@ -4,16 +4,18 @@
  * 계약(M2b-0 확인): https://elevenlabs.io/docs/api-reference/text-to-sound-effects/convert
  *   body { text, model_id:'eleven_text_to_sound_v2', duration_seconds?:0.5~30(null=자동), prompt_influence?, loop? }
  */
+import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
+
 const URL = 'https://api.elevenlabs.io/v1/sound-generation'
 
-export function createElevenLabsSfxAdapter({ getKey, fetch }) {
+export function createElevenLabsSfxAdapter({ getKey, fetch, provider = 'elevenlabs' }) {
   return {
     capabilities() {
       return { outputFormats: ['mp3'], durationRange: [0.5, 30], maxConcurrency: 2 }
     },
     async generate({ description, durationSeconds = null, signal } = {}) {
       const key = getKey()
-      if (!key) throw new Error('No ElevenLabs API key')
+      if (key == null) throw new MissingProviderKeyError(provider)
       const body = { text: description, model_id: 'eleven_text_to_sound_v2' }
       // duration_seconds는 지정 시에만 전송(생략하면 API가 자동 추정).
       if (durationSeconds != null) body.duration_seconds = durationSeconds
@@ -25,6 +27,7 @@ export function createElevenLabsSfxAdapter({ getKey, fetch }) {
       })
       if (!res.ok) {
         const detail = await (res.text?.() ?? Promise.resolve(''))
+        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
         throw new Error(`ElevenLabs SFX failed: ${res.status} ${detail}`)
       }
       return { audio: Buffer.from(await res.arrayBuffer()), format: 'mp3' }
