@@ -204,7 +204,18 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters }) =>
     machine.confirmSynopsis({ synopsisMd, characters })))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
-  ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
+  // §4.8 R3: synthPreview가 ProviderAuthError/MissingProviderKeyError(errorKind 있음)를 그대로
+  // throw하면 ipcRenderer.invoke가 message만 직렬화해 errorKind가 소실된다 — renderer가 번역할
+  // 코드를 잃고 raw 영문 진단문을 그대로 토스트한다. story:load-audio-package의 asKind 관습대로
+  // { error: kind, provider } 로 감싸 돌려준다. errorKind 없는 예외는 버그이므로 그대로 던져 드러낸다.
+  ipcMain.handle('story:tts-preview', guarded(async ({ segmentIds, speakers, sfxSources }) => {
+    try {
+      return await machine.synthPreview({ segmentIds, speakers, sfxSources })
+    } catch (e) {
+      if (!e?.errorKind) throw e
+      return { error: e.errorKind, provider: e.provider }
+    }
+  }))
 
   // ── 화자별 오디오 출처 (mp3+SRT 가져오기) ──
   // 출처 자체는 speaker.voice = {provider:'import', mp3Path, srtPath}로 들어가므로 별도 채널이

@@ -1222,6 +1222,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 실행돼, "존재하지만 무효한" 키에서 ttsPreview가 거부될 때 unhandled rejection +
   // 번역 안 된 토스트로 새고, 두 번째 트리거와 겹칠 수도 있다. 가드+에러 처리를 가진 실행부를
   // 별도 함수로 빼서 최초 호출과 retry가 항상 같은(가드된) 경로를 타게 한다.
+  // §4.8 R3: story:tts-preview는 이제 auth/missing-key를 throw 대신 { error: errorKind, provider }
+  // 로 돌려준다(electron/ipc/story-api.js) — 여기서 resolveDisplayError로 번역해 토스트한다.
+  // throw 경로(네트워크 등 errorKind 없는 예외)는 기존처럼 raw message로 폴백.
   const previewBusyRef = useRef(false)
   const [previewBusy, setPreviewBusy] = useState(false)
   const runSegmentTestGuarded = async (segId) => {
@@ -1232,6 +1235,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       const ap = buildAudioParams()
       const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
       if (r?.busy) { toast.error(t('story.audio.busy')); return }
+      if (r?.error) {
+        toast.error(t('story.audio.testFailed', { error: resolveDisplayError(t, r.error, r.error) }))
+        return
+      }
       const seg = r?.segments?.find((s) => s.id === segId)
       if (seg?.audioPath) playAudio(seg.audioPath)
     } catch (e) {
