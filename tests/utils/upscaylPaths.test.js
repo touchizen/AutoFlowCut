@@ -54,6 +54,15 @@ describe('parseModelPairs', () => {
       'alpha.bin',
     ])).toEqual(['alpha', 'zeta'])
   })
+
+  it('발견 순서와 무관하게 이름 오름차순으로 정렬한다', () => {
+    // 삽입 순서가 역순(zeta 먼저)이어도 sort 로 알파벳 순 — UI 모델 목록 결정성.
+    expect(parseModelPairs([
+      'zeta.param', 'zeta.bin',
+      'mid.param', 'mid.bin',
+      'alpha.param', 'alpha.bin',
+    ])).toEqual(['alpha', 'mid', 'zeta'])
+  })
 })
 
 describe('parseScaledLine', () => {
