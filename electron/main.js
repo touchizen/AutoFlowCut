@@ -12,7 +12,7 @@ import { registerFilesystemIPC } from './ipc/filesystem.js'
 import { registerAuthIPC } from './ipc/auth.js'
 import { registerCapcutIPC } from './ipc/capcut.js'
 import { registerRenderIPC } from './ipc/render.js'
-import { resolveFfmpegPath } from './render/ffmpegPath.js'
+import { resolveFfmpegPath, isRuntimePackaged } from './render/ffmpegPath.js'
 import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
@@ -341,13 +341,14 @@ const cleanupRunningRenders = registerRenderIPC(ipcMain, {
     return result.canceled ? null : result.filePath
   },
   ffmpegPath: resolveFfmpegPath({
-    isPackaged: app.isPackaged,
+    // app.isPackaged 는 dev(patch-electron-name rename)에서 오판 → VITE_DEV_SERVER_URL 병행 판정.
+    isPackaged: isRuntimePackaged({ appIsPackaged: app.isPackaged, viteDevServerUrl: process.env.VITE_DEV_SERVER_URL }),
     resourcesPath: process.resourcesPath,
     appRoot: app.getAppPath(),
     platform: process.platform,
     arch: process.arch,
   }),
-  fontsDir: app.isPackaged
+  fontsDir: isRuntimePackaged({ appIsPackaged: app.isPackaged, viteDevServerUrl: process.env.VITE_DEV_SERVER_URL })
     ? path.join(process.resourcesPath, 'fonts')
     : path.join(app.getAppPath(), 'assets', 'fonts'),
 })
