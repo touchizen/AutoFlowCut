@@ -246,23 +246,6 @@
   cursor: pointer;
   accent-color: #FFB74D;
 }
-.atl-upscale-btn {
-  padding: 4px 9px;
-  border: 1px solid #3a3a3a;
-  border-radius: 4px;
-  background: #2a2a2a;
-  color: #ccc;
-  font-size: 11px;
-  cursor: pointer;
-}
-.atl-upscale-btn:hover:not(:disabled) {
-  background: #353535;
-  color: #fff;
-}
-.atl-upscale-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
 .atl-time-cur {
   color: #fff;
   font-weight: 600;

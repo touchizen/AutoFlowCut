@@ -105,6 +105,7 @@ import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
 import BottomPanelTabs from './components/BottomPanelTabs'
+import BottomPanelActions from './components/BottomPanelActions'
 import LiveTimeline from './components/LiveTimeline'
 import { useMonitor } from './hooks/useMonitor'
 import PreviewMonitor from './components/PreviewMonitor'
@@ -2368,7 +2369,6 @@ function App() {
               }}
               onSrtImport={(content) => handleImport('srt', content)}
               onSceneUpdate={scenesHook.updateScene}
-              onUpscaleClick={openUpscayl}
             />
           )}
         </div>
@@ -2587,7 +2587,10 @@ function App() {
 
         {activeTab !== 'audio' && (
           <>
-            <BottomPanelTabs view={bottomPanelView} onChange={setBottomPanelView} t={t} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <BottomPanelTabs view={bottomPanelView} onChange={setBottomPanelView} t={t} />
+              <BottomPanelActions onUpscale={() => openUpscayl()} t={t} />
+            </div>
             {bottomPanelView === 'timeline' ? (
               <LiveTimeline
                 scenes={scenes}
@@ -2602,7 +2605,6 @@ function App() {
                 onHiddenRolesChange={setMonitorHiddenRoles}
                 onTrackDrop={handleTrackDrop}
                 onSceneUpdate={scenesHook.updateScene}
-                onUpscaleClick={openUpscayl}
                 disabled={anyRunning}
                 onTitleClick={mode === 'flow' ? () => setMonitorOverlayOpen(o => !o) : null}
                 titleActive={monitorOverlayOpen}
@@ -2615,7 +2617,6 @@ function App() {
               mediaType="image"
               layout={resultsLayout}
               aspectRatio={settings.aspectRatio}
-              onUpscaleClick={openUpscayl}
               onRetry={(id) => {
                 // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
                 // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.

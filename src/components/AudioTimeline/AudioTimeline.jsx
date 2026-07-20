@@ -79,7 +79,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange, onHiddenRolesChange, onSceneUpdate, onTitleClick = null, titleActive = false, onUpscaleClick }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange, onHiddenRolesChange, onSceneUpdate, onTitleClick = null, titleActive = false }) {
   const { t } = useI18n()
   const { settings, updateSetting } = useExportSettingsContext()
   // 영상 클립 호버 👁 → 해당 씬의 i2v/t2v export 제외 플래그 토글 (falsy=포함).
@@ -1036,16 +1036,6 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
             />
             <span>{t('audioTimeline.kenBurns')}</span>
           </label>
-          {onUpscaleClick && (
-            <button
-              type="button"
-              className="atl-upscale-btn"
-              onClick={() => onUpscaleClick()}
-              disabled={disabled}
-            >
-              {t('upscayl.button')}
-            </button>
-          )}
         </div>
         <div className="atl-zoom">
           <button

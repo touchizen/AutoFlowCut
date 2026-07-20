@@ -51,7 +51,7 @@ function findSceneAtTime(scenes, timecodeMs, srtEntries) {
     scenes.find(s => s.subtitle && srtText.includes(s.subtitle)) || null
 }
 
-export default function AudioPanel({ audioPackage, audioReviews, loading = false, onSaveReview, onBulkReview, onRefresh, onSaveTimecodeOverride, srtEntries, scenes, onImportMp3, onSrtImport, onSceneUpdate, onUpscaleClick }) {
+export default function AudioPanel({ audioPackage, audioReviews, loading = false, onSaveReview, onBulkReview, onRefresh, onSaveTimecodeOverride, srtEntries, scenes, onImportMp3, onSrtImport, onSceneUpdate }) {
   const { t } = useI18n()
   const [subTab, setSubTab] = useState('timeline')
   const [flagTarget, setFlagTarget] = useState(null)
@@ -196,7 +196,6 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
             disabled={loading || isStale}
             onSaveTimecodeOverride={onSaveTimecodeOverride}
             onSceneUpdate={onSceneUpdate}
-            onUpscaleClick={onUpscaleClick}
             onTrackDrop={async ({ trackRole, files, timecodeMs }) => {
               if (!onImportMp3) return
               for (const file of files) {

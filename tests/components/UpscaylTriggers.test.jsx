@@ -36,34 +36,17 @@ beforeEach(() => {
   mockGetHistory.mockResolvedValue({ success: true, histories: [] })
 })
 
-describe('ResultsTable Upscayl 트리거', () => {
+describe('분산 whole-batch Upscayl 트리거 제거', () => {
   const item = { id: 'scene_1', status: 'done', prompt: 'test', imagePath: '/scene.png' }
 
-  it.each(['table', 'grid'])('%s 레이아웃의 이미지 공용 툴바에서 콜백을 호출한다', (layout) => {
-    const onUpscaleClick = vi.fn()
-    wrap(<ResultsTable items={[item]} mediaType="image" layout={layout} onUpscaleClick={onUpscaleClick} />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Upscale' }))
-    expect(onUpscaleClick).toHaveBeenCalledWith()
-  })
-
-  it('image가 아닌 인스턴스에는 콜백을 받아도 툴바를 노출하지 않는다', () => {
-    wrap(<ResultsTable items={[item]} mediaType="video" onUpscaleClick={vi.fn()} />)
+  it.each(['table', 'grid'])('ResultsTable %s 레이아웃에 Upscale 툴바가 없다', (layout) => {
+    wrap(<ResultsTable items={[item]} mediaType="image" layout={layout} onUpscaleClick={vi.fn()} />)
     expect(screen.queryByRole('button', { name: 'Upscale' })).not.toBeInTheDocument()
   })
-})
 
-describe('AudioTimeline Upscayl 트리거', () => {
-  it('Ken Burns 옆 Upscale 버튼을 콜백에 연결한다', () => {
-    const onUpscaleClick = vi.fn()
-    const { container } = wrap(
-      <AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} onUpscaleClick={onUpscaleClick} />,
-    )
-
-    const button = screen.getByRole('button', { name: 'Upscale' })
-    expect(container.querySelector('.atl-kb-toggle').nextElementSibling).toBe(button)
-    fireEvent.click(button)
-    expect(onUpscaleClick).toHaveBeenCalledWith()
+  it('AudioTimeline 툴바에 Upscale 버튼이 없다', () => {
+    wrap(<AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} onUpscaleClick={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'Upscale' })).not.toBeInTheDocument()
   })
 })
 

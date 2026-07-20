@@ -31,13 +31,13 @@ beforeEach(() => {
 })
 
 describe('Upscayl 트리거 passthrough', () => {
-  it('LiveTimeline이 onUpscaleClick을 AudioTimeline에 전달한다', () => {
+  it('LiveTimeline은 제거된 whole-batch 콜백을 AudioTimeline에 전달하지 않는다', () => {
     const onUpscaleClick = vi.fn()
     wrap(<LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} onUpscaleClick={onUpscaleClick} />)
-    expect(captured.timeline.at(-1).onUpscaleClick).toBe(onUpscaleClick)
+    expect(captured.timeline.at(-1)).not.toHaveProperty('onUpscaleClick')
   })
 
-  it('AudioPanel이 onUpscaleClick을 AudioTimeline에 전달한다', () => {
+  it('AudioPanel은 제거된 whole-batch 콜백을 AudioTimeline에 전달하지 않는다', () => {
     const onUpscaleClick = vi.fn()
     wrap(
       <AudioPanel
@@ -47,7 +47,7 @@ describe('Upscayl 트리거 passthrough', () => {
         onUpscaleClick={onUpscaleClick}
       />,
     )
-    expect(captured.timeline.at(-1).onUpscaleClick).toBe(onUpscaleClick)
+    expect(captured.timeline.at(-1)).not.toHaveProperty('onUpscaleClick')
   })
 
   it('SceneList가 내부 SceneDetailModal에 onUpscaleClick을 전달한다', () => {

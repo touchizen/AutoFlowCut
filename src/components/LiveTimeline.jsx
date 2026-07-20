@@ -26,7 +26,6 @@ export default function LiveTimeline({
   onHiddenRolesChange,
   onTrackDrop,
   onSceneUpdate,
-  onUpscaleClick,
   disabled = false,
   // Flow 모드: '프리뷰' 타이틀을 모니터 오버레이 토글 버튼으로. (App 이 flow 일 때만 전달)
   onTitleClick = null,
@@ -59,7 +58,6 @@ export default function LiveTimeline({
       onHiddenRolesChange={onHiddenRolesChange}
       onTrackDrop={onTrackDrop}
       onSceneUpdate={onSceneUpdate}
-      onUpscaleClick={onUpscaleClick}
       disabled={disabled}
       onTitleClick={onTitleClick}
       titleActive={titleActive}

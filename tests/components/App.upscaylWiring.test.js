@@ -26,11 +26,13 @@ describe('App Upscayl wiring', () => {
     expect(openingTags(app, 'UpscaylDialog')).toHaveLength(1)
   })
 
-  it('scene 이미지 ResultsTable과 일반 timeline/audio/detail 두 호스트만 트리거를 받는다', () => {
-    const imageResults = openingTags(app, 'ResultsTable').find((tag) => tag.includes('mediaType="image"'))
-    expect(imageResults).toContain('onUpscaleClick={openUpscayl}')
-    expect(openingTags(app, 'LiveTimeline')[0]).toContain('onUpscaleClick={openUpscayl}')
-    expect(openingTags(app, 'AudioPanel')[0]).toContain('onUpscaleClick={openUpscayl}')
+  it('BottomPanelActions만 whole-batch 트리거를 받고 SceneDetail 두 호스트는 per-scene 트리거를 유지한다', () => {
+    expect(app).toContain("import BottomPanelActions from './components/BottomPanelActions'")
+    expect(openingTags(app, 'BottomPanelActions')).toHaveLength(1)
+    expect(openingTags(app, 'BottomPanelActions')[0]).toContain('onUpscale={() => openUpscayl()}')
+    expect(openingTags(app, 'ResultsTable').every((tag) => !tag.includes('onUpscaleClick'))).toBe(true)
+    expect(openingTags(app, 'LiveTimeline')[0]).not.toContain('onUpscaleClick')
+    expect(openingTags(app, 'AudioPanel')[0]).not.toContain('onUpscaleClick')
     expect(openingTags(app, 'SceneList')[0]).toContain('onUpscaleClick={openUpscayl}')
     expect(openingTags(app, 'SceneDetailModal')[0]).toContain('onUpscaleClick={openUpscayl}')
   })

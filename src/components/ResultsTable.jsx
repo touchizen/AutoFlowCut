@@ -117,7 +117,6 @@ export default function ResultsTable({
   onToggleAll,              // () => void — 전체 선택 토글
   onPromptEdit,             // (id, newPrompt) => void — 프롬프트 인라인 편집
   onClearMedia,             // (id) => void — 미디어만 제거
-  onUpscaleClick,
   disabled = false,         // 생성 중 편집 비활성화
   layout = 'table',         // 'table'(기본 결과표) | 'grid'(카드형 그리드)
 }) {
@@ -300,13 +299,6 @@ export default function ResultsTable({
   const mediaHeader = isVideoType
     ? (t('results.video') || 'Video')
     : t('results.image')
-  const upscaleToolbar = mediaType === 'image' && onUpscaleClick ? (
-    <div className="results-action-toolbar">
-      <button type="button" onClick={() => onUpscaleClick()} disabled={disabled}>
-        {t('upscayl.button')}
-      </button>
-    </div>
-  ) : null
 
   /**
    * Determine if the item has displayable media
@@ -603,7 +595,6 @@ export default function ResultsTable({
   if (layout === 'grid') {
     return (
       <div className="results-table-container results-grid-container">
-        {upscaleToolbar}
         {selectable && (
           <div className="results-summary">
             <label className="grid-select-all">
@@ -681,7 +672,6 @@ export default function ResultsTable({
 
   return (
     <div className="results-table-container">
-      {upscaleToolbar}
       {selectable && (
         <div className="results-summary">
           <span>☑ {selectedCount}/{data.length}</span>
