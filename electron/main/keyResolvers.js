@@ -10,16 +10,6 @@ export function buildKeyResolvers({ multiKeyStore, genaiKeyStore, getTypecastKey
   }
   const credFallback = (svc, envVar) => (disableFallback ? null : (readCredentialsKey(svc, envVar) ?? null))
 
-  const ttsKeyFor = {
-    typecast: () => multiKeyStore.getKey('typecast') || typecastFallback(),
-    elevenlabs: () => multiKeyStore.getKey('elevenlabs') || credFallback('elevenlabs', 'ELEVENLABS_API_KEY'),
-    googletts: () => multiKeyStore.getKey('googletts') || credFallback('googletts', 'GOOGLE_TTS_API_KEY'),
-    gemini: () => genaiKeyStore.getKey() ?? null,
-  }
-  const sfxKeyFor = {
-    elevenlabs: ttsKeyFor.elevenlabs,
-  }
-
   const STORE_KEY = { typecast: 'typecast', elevenlabs: 'elevenlabs', googletts: 'googletts' }
   const FALLBACK = {
     typecast: typecastFallback,
@@ -36,6 +26,19 @@ export function buildKeyResolvers({ multiKeyStore, genaiKeyStore, getTypecastKey
     if (stored) return { key: stored, source: 'store' }
     const fb = FALLBACK[keyId] ? FALLBACK[keyId]() : null
     return fb ? { key: fb, source: 'fallback' } : { key: null, source: null }
+  }
+
+  // ttsKeyFor/sfxKeyFor는 resolveKeyWithSource에서 key만 뽑아 쓴다(Finding2) — store→fallback
+  // 체인을 두 곳에서 독립적으로 정의하면 드리프트 위험이다: preflight 예측(resolveKeyWithSource)과
+  // 실제 합성(ttsKeyFor)이 갈라질 수 있는 유일한 축이라 resolveKeyWithSource를 단일 정의로 삼는다.
+  const ttsKeyFor = {
+    typecast: () => resolveKeyWithSource('typecast').key,
+    elevenlabs: () => resolveKeyWithSource('elevenlabs').key,
+    googletts: () => resolveKeyWithSource('googletts').key,
+    gemini: () => resolveKeyWithSource('genai').key,
+  }
+  const sfxKeyFor = {
+    elevenlabs: ttsKeyFor.elevenlabs,
   }
 
   return { ttsKeyFor, sfxKeyFor, resolveKeyWithSource }

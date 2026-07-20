@@ -11,7 +11,7 @@ import { createStepMachine } from '../../../electron/story/stepMachine.js'
 // audio()가 보는 것과 audioPreflight()가 보는 것이 어긋나지 않는다).
 async function tmpProject() { return await mkdtemp(path.join(tmpdir(), 'story-audio-preflight-')) }
 
-async function makeMachine(scenes, { speakers = [], defaultVoice = null } = {}) {
+async function makeMachine(scenes, { speakers = [], defaultVoice = null, sfxFor = null } = {}) {
   const projectPath = await tmpProject()
   await mkdir(path.join(projectPath, 'story'), { recursive: true })
   await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({ scenes }))
@@ -37,7 +37,7 @@ async function makeMachine(scenes, { speakers = [], defaultVoice = null } = {}) 
   const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }) }
   const probe = async () => 2000
   const machine = createStepMachine({
-    projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe, defaultVoice,
+    projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe, defaultVoice, sfxFor,
   })
   await machine.open()
   return { machine, projectPath }
@@ -68,8 +68,40 @@ describe('audioPreflight — required providers', () => {
       { id: 'f1', type: 'sfx', description: 'boom', sourceMode: 'elevenlabs' },
       { id: 'f2', type: 'sfx', description: 'wind', sourceMode: 'library' },
     ] }]
-    const { machine } = await makeMachine(scenes, {})
+    // audio()는 sfxFor 미주입이면 sfx를 전혀 합성하지 않으므로(Finding3) 여기서도 실제로
+    // 필요할 때만 요구하도록 sfxFor를 주입한다.
+    const sfxFor = () => ({ generate: async () => ({ audio: Buffer.from('sfx'), format: 'wav' }) })
+    const { machine } = await makeMachine(scenes, { sfxFor })
     expect(await machine.audioPreflight({})).toEqual(['elevenlabs'])
+  })
+
+  it('sfxFor not injected → sfx skipped entirely, even for a non-library source (Finding3)', async () => {
+    const scenes = [{ segments: [
+      { id: 'f1', type: 'sfx', description: 'boom', sourceMode: 'elevenlabs' },
+    ] }]
+    const { machine } = await makeMachine(scenes, {}) // no sfxFor
+    expect(await machine.audioPreflight({})).toEqual([])
+  })
+
+  it('onlySpeaker scopes narration to the target speaker and excludes SFX entirely (Finding1+3)', async () => {
+    const scenes = [{ segments: [
+      { id: 's1', type: 'narration', speaker: 'A', text: 'hi' },
+      { id: 's2', type: 'narration', speaker: 'B', text: 'yo' },
+      { id: 'f1', type: 'sfx', description: 'boom', sourceMode: 'elevenlabs' },
+    ] }]
+    const sfxFor = () => ({ generate: async () => ({ audio: Buffer.from('sfx'), format: 'wav' }) })
+    const { machine } = await makeMachine(scenes, {
+      speakers: [
+        { id: 'A', voice: { provider: 'typecast', voiceId: 'tc_a' } },
+        { id: 'B', voice: { provider: 'gemini', voiceId: 'Kore' } },
+      ],
+      sfxFor,
+    })
+    // Without onlySpeaker, all three sources would be required.
+    expect(new Set(await machine.audioPreflight({}))).toEqual(new Set(['typecast', 'gemini', 'elevenlabs']))
+    // onlySpeaker='A' → only typecast (not B's gemini, not the elevenlabs sfx).
+    const providers = await machine.audioPreflight({ onlySpeaker: 'A' })
+    expect(providers).toEqual(['typecast'])
   })
 
   it('scenes.json missing → returns [] without throwing', async () => {
@@ -105,7 +137,10 @@ describe('audioPreflight — required providers', () => {
     const scenes = [{ segments: [
       { id: 'f1', type: 'sfx', description: 'boom', sourceMode: 'elevenlabs', status: 'done', audioPath: '/anywhere/f1.wav', durationMs: 500, sfxKey: 'elevenlabs:boom:auto' },
     ] }]
-    const { machine, projectPath } = await makeMachine(scenes, {})
+    // sfxFor injected so this genuinely exercises the canReuseSfx path (not just the
+    // sfxFor-missing skip covered by the Finding3 test above).
+    const sfxFor = () => ({ generate: async () => ({ audio: Buffer.from('sfx'), format: 'wav' }) })
+    const { machine, projectPath } = await makeMachine(scenes, { sfxFor })
     const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
     await mkdir(segmentsDir, { recursive: true })
     await writeFile(path.join(segmentsDir, 'f1.wav'), 'dummy')
@@ -129,5 +164,21 @@ describe('audioPreflight — required providers', () => {
     // s2 not targeted → excluded entirely even though it needs a provider outside segmentTest scope.
     const providers2 = await machine.audioPreflight({ mode: 'segmentTest', segmentIds: ['s2'] })
     expect(providers2).toEqual(['gemini'])
+  })
+
+  it('regenerate forces re-synth even for an otherwise reuse-eligible segment (nit)', async () => {
+    const scenes = [{ segments: [
+      { id: 's1', type: 'narration', speaker: 'A', text: 'hi', status: 'done', audioPath: '/anywhere/s1.wav', durationMs: 1000, voiceKey: 'gemini:Kore:normal' },
+    ] }]
+    const { machine, projectPath } = await makeMachine(scenes, {
+      speakers: [{ id: 'A', voice: { provider: 'gemini', voiceId: 'Kore' } }],
+    })
+    const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
+    await mkdir(segmentsDir, { recursive: true })
+    await writeFile(path.join(segmentsDir, 's1.wav'), 'dummy')
+    // Without regenerate, s1 is reuse-eligible → no provider required.
+    expect(await machine.audioPreflight({})).toEqual([])
+    // params.regenerate=[s1] forces re-synth despite being done+file-present → gemini required again.
+    expect(await machine.audioPreflight({ regenerate: ['s1'] })).toEqual(['gemini'])
   })
 })

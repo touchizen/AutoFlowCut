@@ -453,6 +453,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     if (!key) return null
     return (speakers || []).find((sp) => speakerReferenceKeys(sp).includes(key)) || null
   }
+  // audio()/audioPreflight() 공유 — onlySpeaker 스코프링에 쓰는 화자 정규화(machine-scope로
+  // 호이스트: 예전엔 audio() 함수 안에만 있어 audioPreflight가 재구현 없이 못 썼다 — Finding1).
+  // 화자 참조는 id/이름 어느 쪽이든 올 수 있어 findSpeakerByRef로 정규 id로 접어야 같은 화자가
+  // 두 갈래로 안 쪼개진다.
+  const canonicalSpeakerOf = (speakers, ref) => findSpeakerByRef(speakers, ref)?.id ?? ref
+  const belongsToSpeakerOf = (speakers, spk) => (seg) => canonicalSpeakerOf(speakers, seg.speaker) === spk
   const nonEmptyString = (v) => (typeof v === 'string' && v.trim()) ? v : undefined
   // §v2.8 B3: 확정 명단(state.speakers)이 base인 superset 병합 — scenes 스텝이 speakers를
   // 전체 교체하지 않는다. ①확정 gender/age/role(및 name/id) 보존, ②LLM 참조 인물 voice 승계,
@@ -1401,8 +1407,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // name:'나레이션'}로 시딩된다). 원시값으로 묶으면 한 화자가 **두 출처로 쪼개져** 같은 mp3를
       // 두 번 훑고, 각 패스가 상대를 "남의 대사"로 세어(otherHit/otherMiss) 정상 import가 막힌다.
       // voiceOf가 이미 findSpeakerByRef로 정규화하므로 묶는 축도 같은 정규화를 써야 한다.
-      const canonicalSpeaker = (ref) => findSpeakerByRef(speakers, ref)?.id ?? ref
-      const belongsTo = (spk) => (seg) => canonicalSpeaker(seg.speaker) === spk
+      const canonicalSpeaker = (ref) => canonicalSpeakerOf(speakers, ref)
+      const belongsTo = (spk) => belongsToSpeakerOf(speakers, spk)
       // 빈/공백 onlySpeaker 는 부분 실행으로 받지 않는다 — isNarratorTrackSpeaker('')는 true 라
       // 그대로 두면 **엉뚱하게 나레이터가 실행된다**(UI 버그나 빈 id 화자를 눌렀을 때).
       const partialAudioRun = typeof params.onlySpeaker === 'string' && !!params.onlySpeaker.trim()
@@ -1955,6 +1961,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (!scenesJson) return []
       const speakers = params.speakers || state?.speakers || []
       const sel = makeAudioSelection(params, speakers, defaultVoice || null)
+      // audio()와 정확히 같은 규칙(canonicalSpeakerOf/belongsToSpeakerOf, 호이스트된 machine-scope
+      // 헬퍼)으로 onlySpeaker를 스코프한다(Finding1) — 이걸 안 하면 "화자 A만 생성"이 B의 TTS
+      // 키와 SFX 키까지 요구해 과잉 차단한다. partialAudioRun 정의는 audio()와 동일(빈/공백은
+      // 부분실행 아님 — isNarratorTrackSpeaker('')가 true라 그대로 두면 나레이터가 스코프된다).
+      const partialAudioRun = typeof params.onlySpeaker === 'string' && !!params.onlySpeaker.trim()
+      const isTargetSpeaker = partialAudioRun ? belongsToSpeakerOf(speakers, canonicalSpeakerOf(speakers, params.onlySpeaker)) : null
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
       const isTest = params.mode === 'segmentTest'
       const ids = isTest ? new Set(params.segmentIds || []) : null
@@ -1963,11 +1975,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const type = seg.type || 'narration'
         if (isTest && !ids.has(seg.id)) continue
         if (type === 'sfx') {
+          // audio()는 sfxSegs = !partialAudioRun && sfxFor ? segments.filter(sfx) : [] 다
+          // (Finding3) — sfxFor 미주입이거나 부분실행이면 sfx를 전혀 합성하지 않으므로
+          // 프리플라이트도 그 소스를 요구하면 안 된다.
+          if (partialAudioRun || !sfxFor) continue
           const source = sel.sfxSourceOf(seg)
           if (source === 'library') continue
           if (!isTest && await sel.canReuseSfx(seg)) continue
           required.add(source)
         } else {
+          if (partialAudioRun && !isTargetSpeaker(seg)) continue
           const voice = sel.voiceOf(seg.speaker)
           if (!voice || voice.provider === 'import') continue
           if (!isTest && await sel.canReuse(seg)) continue
