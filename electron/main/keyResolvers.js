@@ -19,5 +19,24 @@ export function buildKeyResolvers({ multiKeyStore, genaiKeyStore, getTypecastKey
   const sfxKeyFor = {
     elevenlabs: ttsKeyFor.elevenlabs,
   }
-  return { ttsKeyFor, sfxKeyFor }
+
+  const STORE_KEY = { typecast: 'typecast', elevenlabs: 'elevenlabs', googletts: 'googletts' }
+  const FALLBACK = {
+    typecast: typecastFallback,
+    elevenlabs: () => credFallback('elevenlabs', 'ELEVENLABS_API_KEY'),
+    googletts: () => credFallback('googletts', 'GOOGLE_TTS_API_KEY'),
+  }
+  function resolveKeyWithSource(keyId) {
+    if (keyId === 'genai') {
+      const k = genaiKeyStore.getKey() ?? null
+      return k ? { key: k, source: 'store' } : { key: null, source: null }
+    }
+    const storeId = STORE_KEY[keyId]
+    const stored = storeId ? (multiKeyStore.getKey(storeId) || null) : null
+    if (stored) return { key: stored, source: 'store' }
+    const fb = FALLBACK[keyId] ? FALLBACK[keyId]() : null
+    return fb ? { key: fb, source: 'fallback' } : { key: null, source: null }
+  }
+
+  return { ttsKeyFor, sfxKeyFor, resolveKeyWithSource }
 }
