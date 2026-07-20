@@ -267,7 +267,11 @@ export default function VoicePicker({
                   that was clicked — the list itself stays keyless (no upfront gate per voice). */}
               {previewStatus === 'error' && previewState?.error === 'no-key' && (
                 <div onClick={(e) => e.stopPropagation()}>
-                  <AudioKeyGateCard missing={[{ provider: v.provider, keyId: keyIdForProvider(v.provider) }]} t={t} />
+                  <AudioKeyGateCard
+                    missing={[{ provider: v.provider, keyId: keyIdForProvider(v.provider) }]}
+                    onKeySaved={() => onPreview({ provider: v.provider, voiceId: v.id, language: v.language, genderSource: v.genderSource, name: v.name })}
+                    t={t}
+                  />
                 </div>
               )}
               <span className="vp-check">✔</span>

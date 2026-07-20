@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
+const mockTtsSaveKey = vi.fn()
 vi.mock('../../../src/hooks/useApiKey', () => ({ useApiKey: () => ({ hasKey: false, encryptionAvailable: true, loading: false, validateKey: vi.fn(), saveKey: vi.fn(), clearKey: vi.fn() }) }))
-vi.mock('../../../src/hooks/useTtsKeys', () => ({ useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: vi.fn(), clearKey: vi.fn(), provider: p }) }))
+vi.mock('../../../src/hooks/useTtsKeys', () => ({ useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: (...args) => mockTtsSaveKey(...args), clearKey: vi.fn(), provider: p }) }))
 import VoicePicker from '../../../src/components/story/VoicePicker.jsx'
 
 const t = (k, d) => (typeof d === 'string' ? d : k)
@@ -81,5 +82,30 @@ describe('VoicePicker attempt-first no-key inline card', () => {
     )
     expect(screen.getByText('Kore')).toBeInTheDocument()
     expect(screen.getByText('Sanghyun')).toBeInTheDocument()
+  })
+
+  it('finding4: saving the key inline re-attempts the preview for that same voice (dismisses the card on success)', async () => {
+    mockTtsSaveKey.mockResolvedValue({ success: true })
+    const onPreview = vi.fn()
+    // typecast voice (v1) uses TtsApiKeyField — no validate step, matches useTtsKeys mock above.
+    const previewState = { status: 'error', error: 'no-key', provider: 'typecast', voiceId: 'v1' }
+    render(
+      <VoicePicker
+        voices={voices}
+        selected={{}}
+        onSelect={vi.fn()}
+        onPreview={onPreview}
+        onOverrideGender={vi.fn()}
+        previewState={previewState}
+        t={t}
+        isKo
+      />,
+    )
+    const input = document.querySelector('.audio-key-gate input[type="password"]')
+    fireEvent.change(input, { target: { value: 'sk-abc' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.ttsKeySave' }))
+
+    await new Promise((r) => setTimeout(r, 0)) // flush onSave's await saveKey()
+    expect(onPreview).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: null, name: 'Sanghyun' })
   })
 })
