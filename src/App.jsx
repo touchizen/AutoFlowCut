@@ -54,6 +54,13 @@ import {
 import { shouldSkipStaleF0Gender } from './services/genderGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { buildVideoTextStartPayload } from './services/videoTextStart'
+import { buildVideoI2VStartOptions } from './services/videoI2VStart'
+import {
+  buildVideoRetryFramePairPatch,
+  buildVideoRetryScenePatch,
+  buildVideoTextResultPatch,
+  buildVideoI2VResultPatch,
+} from './services/videoResultPatch'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { isOmniFlashModel } from './utils/videoModels'
 import { startButtonTier, startChipLabelVisible } from './utils/actionButtonLayout'
@@ -1239,22 +1246,8 @@ function App() {
       if (isFramePair) {
         setFramePairs(prev => prev.map(p =>
           p.id === id ? {
-            ...p, status: newStatus,
-            ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
-            ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
-            ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
-            ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
-            ...(result?.generationId ? { generationId: result.generationId } : {}),
-            ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
-            ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-            ...(result?.duration ? { duration: result.duration } : {}),
-            ...(result?.seed != null ? { seed: result.seed } : {}),
-            ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
-            ...(result?.model ? { model: result.model } : {}),
-            ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
-            // 'error'/'errorKind' in result 패턴 — null 값도 patch 에 포함시켜 stale error 메시지 clear.
-            ...(result && 'error' in result ? { error: result.error } : {}),
-            ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+            ...p,
+            ...buildVideoRetryFramePairPatch(newStatus, result),
           } : p
         ))
         if (newStatus === 'complete' && result?.base64) {
@@ -1273,24 +1266,7 @@ function App() {
           }
         }
       } else {
-        videoScenesHook.updateVideoScene(id, {
-          status: newStatus,
-          ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
-          ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
-          ...(result?.base64 ? { video: result.base64 } : {}),
-          ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
-          ...(result?.generationId ? { generationId: result.generationId } : {}),
-          ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
-          ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-          ...(result?.duration ? { duration: result.duration } : {}),
-          ...(result?.seed != null ? { seed: result.seed } : {}),
-          ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
-          ...(result?.model ? { model: result.model } : {}),
-          ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
-          // null 값도 적용해 stale error clear (success 분기 patch 가 작동하도록).
-          ...(result && 'error' in result ? { error: result.error } : {}),
-          ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
-        })
+        videoScenesHook.updateVideoScene(id, buildVideoRetryScenePatch(newStatus, result))
         if (newStatus === 'complete' && result?.base64) {
           const sceneId = id.replace('vscene_', 'scene_')
           scenesHook.updateScene(sceneId, {
@@ -1623,24 +1599,7 @@ function App() {
             // 명시적 null 도 통과시켜야 하는 필드(video/videoPath/mediaId/generatedAt 등)는
             // `'X' in result` 체크 — useVideoAutomation 의 새 generation 제출 시 이전 complete
             // 메타를 의도적으로 null 로 지우기 때문 (regen 후 recovery 후보에 포함되도록).
-            videoScenesHook.updateVideoScene(id, {
-              status: newStatus,
-              ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
-              ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
-              ...(result && 'base64' in result ? { video: result.base64 } : {}),
-              ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
-              ...(result?.generationId ? { generationId: result.generationId } : {}),
-              ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
-              ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-              ...(result?.duration ? { duration: result.duration } : {}),
-              ...(result?.seed != null ? { seed: result.seed } : {}),
-              ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
-              ...(result?.model ? { model: result.model } : {}),
-              ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
-              // null 값 보존 — success 시 stale error 메시지 clear.
-              ...(result && 'error' in result ? { error: result.error } : {}),
-              ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
-            })
+            videoScenesHook.updateVideoScene(id, buildVideoTextResultPatch(newStatus, result))
 
             // #R36-fix(Codex R1[3]): T2V @멘션 칩이 stale(Flow 에서 캐릭터 삭제 등)면 그 ref 를 'failed' 로
             //   마킹 → 다음 실행 선등록(needsEntityRegistration)에서 자동 재등록(self-heal, 이미지와 동일).
@@ -1731,39 +1690,18 @@ function App() {
         setHasPendingBatch(true)
 
         videoAutomation.start({
-          mode: 'i2v',
-          framePairs: resolvedPairs,
-          projectName,
-          saveMode: settings.saveMode,
-          videoResolution: settings.videoResolution || '720p',
-          videoModel: settings.videoModelF2V,
-          videoProvider: settings.generation?.video?.i2v?.provider ?? 'google',
-          generationSettings: settings,
-          videoBatchCount: settings.videoBatchCount || 1,
-          concurrency: settings.videoConcurrency || 4,
-          seed: effectiveI2VSeed,
+          ...buildVideoI2VStartOptions({
+            settings,
+            framePairs: resolvedPairs,
+            projectName,
+            seed: effectiveI2VSeed,
+          }),
           onItemUpdate: (id, newStatus, result) => {
             setFramePairs(prev => {
               const updated = prev.map(p =>
                 p.id === id ? {
-                  ...p, status: newStatus,
-                  ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
-                  ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
-                  // 'X' in result — useVideoAutomation 의 새 generation 제출 시 옛 complete 메타를
-                  // 의도적으로 null 로 지우는 흐름 지원 (regen 후 recovery 후보 포함되도록).
-                  ...(result && 'base64' in result ? { video: result.base64, base64: result.base64 } : {}),
-                  ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
-                  ...(result?.generationId ? { generationId: result.generationId } : {}),
-                  ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
-                  ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-                  ...(result?.duration ? { duration: result.duration } : {}),
-                  ...(result?.seed != null ? { seed: result.seed } : {}),
-                  ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
-                  ...(result?.model ? { model: result.model } : {}),
-                  ...(result?.appliedInputs ? { appliedInputs: result.appliedInputs } : {}),
-                  // null 값 보존 — success 시 stale error 메시지 clear.
-                  ...(result && 'error' in result ? { error: result.error } : {}),
-                  ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+                  ...p,
+                  ...buildVideoI2VResultPatch(newStatus, result),
                 } : p
               )
 
