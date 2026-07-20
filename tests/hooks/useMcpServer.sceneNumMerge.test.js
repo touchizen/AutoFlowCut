@@ -142,12 +142,30 @@ describe('R9 — MCP update-scenes 가 _sceneNum 으로 매칭', () => {
       imagePath: '/old/scene_1.png',
       upscaledAt: 999,
       upscaled_size: { width: 4000, height: 3000 },
+      donePrompt: 'old baseline prompt',
     }])
     expect(updated).toMatchObject({
       imagePath: '/new/scene_1.png',
       upscaledAt: null,
       upscaled_size: null,
+      // 이미지 교체 = 새 baseline → main 의 donePrompt 불변식도 함께 클리어(merge 교차 갭 방지).
+      donePrompt: null,
     })
+  })
+
+  it('update-scene이 donePrompt를 명시하면 자동 reset으로 덮지 않는다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes })))
+
+    cb({
+      type: 'update-scene',
+      index: 0,
+      fields: { image: 'NEW', donePrompt: 'explicit' },
+    })
+
+    const updater = setScenes.mock.calls[0][0]
+    const [updated] = updater([{ id: 'scene_1', donePrompt: 'old' }])
+    expect(updated.donePrompt).toBe('explicit')
   })
 
   it('update-scene이 upscaledAt을 명시하면 자동 reset으로 덮지 않는다', () => {

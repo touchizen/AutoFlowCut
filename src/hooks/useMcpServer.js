@@ -428,8 +428,13 @@ export function useMcpServer({
       } else if (data.type === 'update-scene') {
         const fields = data.fields || {}
         const replacesImage = 'image' in fields || 'imagePath' in fields
-        const patch = replacesImage && !('upscaledAt' in fields)
-          ? baseImageReplacementPatch(fields)
+        // 이미지 교체 = 새 baseline → 명시 안 된 marker 는 클리어: 업스케일(upscaledAt/upscaled_size)은
+        // baseImageReplacementPatch, donePrompt(main 되돌림 done 복원 기준)도 함께. 명시값은 보존.
+        const patch = replacesImage
+          ? {
+              ...baseImageReplacementPatch(fields),
+              ...('donePrompt' in fields ? {} : { donePrompt: null }),
+            }
           : fields
         setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...patch } : s))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
