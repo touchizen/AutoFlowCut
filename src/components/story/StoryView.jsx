@@ -403,7 +403,7 @@ function genreLabel(g, t) {
   return t(`story.form.genre.${GENRE_I18N_KEY[g] || g}`, GENRE_FALLBACK[g] || g)
 }
 
-export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null, onVoiceSearch = null }) {
+export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null, onVoiceSearch = null, onReloadVoices = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
@@ -1169,10 +1169,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   }
 
   // M2a-3d/3c: 세그먼트 재생성(강제 re-TTS)·미리듣기.
-  const regenerateSegment = (segId) => {
-    runAudioWithPreflight(buildAudioParams([segId]), (p) => start('audio', p))
+  // Finding2(리뷰): 이 재생성은 이미 done인 audio 스텝에서 불린다 — setViewedStep(null)을 무조건
+  // 하면 displayStep이 (viewedStep 없음 →) currentStep으로 떨어지는데, computeCurrentStep은 done
+  // 스텝(audio)을 건너뛰고 다음 미완료 스텝(보통 prompts)을 가리킨다. preflight가 키 부족으로
+  // 막았을 땐 start()가 전혀 안 불려 audio는 여전히 done이라, 그대로 null로 비우면 오디오 패널
+  // (그 안의 AudioKeyGateCard)이 화면에서 사라져 키 입력 UI가 사라진다. 막혔을 땐 'audio'로
+  // 고정해 패널을 유지한다 — 실행이 성사됐을 때(steps.audio가 running/재계산)는 기존처럼 null.
+  const regenerateSegment = async (segId) => {
+    const result = await runAudioWithPreflight(buildAudioParams([segId]), (p) => start('audio', p))
     setScriptPhase(null)
-    setViewedStep(null)
+    setViewedStep(result?.error === 'preflight-missing-key' ? 'audio' : null)
   }
 
   const runSpeakerAudio = async (sp) => {
@@ -1206,16 +1212,23 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     || storyAudioPkg.sfx.some((s) => s.files.length > 0)
 
   // 슬라이스1: 세그먼트 단건 테스트 — 배치와 분리해 그 세그먼트만 합성(화자 매핑 반영) 후 바로 재생.
+  // Finding3(리뷰): 배치(runAudioWithPreflight를 거치는 audio())와 달리 이 단건 테스트는 preflight
+  // 없이 바로 ttsPreview를 불렀다 — 키가 없으면 IPC 거절이 errorKind 없이 raw 토스트로 샌다.
+  // backend audioPreflight가 mode:'segmentTest'(stepMachine:1971)를 이미 지원하므로 여기서도
+  // runAudioWithPreflight를 재사용해 같은 게이트 카드로 안내한다.
   const [previewBusy, setPreviewBusy] = useState(false)
   const testSegment = async (segId) => {
     if (previewBusy) return
     setPreviewBusy(true)
     try {
       const ap = buildAudioParams()
-      const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
-      if (r?.busy) { toast.error(t('story.audio.busy')); return }
-      const seg = r?.segments?.find((s) => s.id === segId)
-      if (seg?.audioPath) playAudio(seg.audioPath)
+      const result = await runAudioWithPreflight({ ...ap, mode: 'segmentTest', segmentIds: [segId] }, async () => {
+        const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
+        if (r?.busy) { toast.error(t('story.audio.busy')); return }
+        const seg = r?.segments?.find((s) => s.id === segId)
+        if (seg?.audioPath) playAudio(seg.audioPath)
+      })
+      if (result?.error === 'preflight-missing-key') return // 게이트 카드가 이미 안내한다.
     } catch (e) {
       toast.error(t('story.audio.testFailed', { error: e?.message || e }))
     } finally {
@@ -1345,13 +1358,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   }
 
   // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
-  const handleStepRedo = () => {
+  // Finding2(리뷰): audio 재실행이 preflight에 막히면(missing key) start()가 안 불려 steps.audio는
+  // 여전히 done — regenerateSegment와 같은 이유로, 무조건 null 대신 막혔을 때만 'audio'로 고정해
+  // AudioKeyGateCard가 보이는 오디오 패널을 유지한다.
+  const handleStepRedo = async () => {
     if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(제목 확정+분리, 자체 viewedStep 처리)
     if (redoStep === 'audio') {
-      runAudioWithPreflight(buildStepParams(redoStep), (p) => start('audio', p))
-    } else {
-      start(redoStep, buildStepParams(redoStep))
+      const result = await runAudioWithPreflight(buildStepParams(redoStep), (p) => start('audio', p))
+      setViewedStep(result?.error === 'preflight-missing-key' ? 'audio' : null)
+      return
     }
+    start(redoStep, buildStepParams(redoStep))
     setViewedStep(null)
   }
 
@@ -2134,13 +2151,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           <div className="story-audio-panel">
             {/* M3b-2b Task 2: pre-flight가 missing 키를 찾으면 실행 대신 여기 인라인으로 카드를
                 띄운다(§4.4). onKeySaved는 best-effort로 그 provider 목소리 재조회 후 재검사 —
-                통과하면 원래 하려던 실행(audioGate.retry)을 이어서 돈다. */}
+                통과하면 원래 하려던 실행(audioGate.retry)을 이어서 돈다.
+                Finding1(리뷰): onVoiceSearch는 App의 handleTtsVoiceSearch로 이어지는데, 그건
+                검색어 2자 미만이면 조용히 no-op하는 원격 "검색"이라 provider 목소리를 다시
+                로드하지 못한다(prod no-op). onReloadVoices(=App.reloadTtsVoicesForProvider)가
+                그 provider 슬라이스를 처음부터 다시 긁는 전용 경로다. */}
             {audioGate && (
               <AudioKeyGateCard
                 missing={audioGate.missing}
                 t={t}
                 onKeySaved={async (provider) => {
-                  try { await onVoiceSearch?.(provider) } catch { /* best-effort — 재조회 실패해도 재검사는 진행 */ }
+                  try { await onReloadVoices?.(provider) } catch { /* best-effort — 재조회 실패해도 재검사는 진행 */ }
                   const r = await preflight.check(audioGate.paramsForRecheck)
                   if (r.ok) { setAudioGate(null); audioGate.retry?.() }
                   else setAudioGate((g) => (g ? { ...g, missing: r.missing } : g))
