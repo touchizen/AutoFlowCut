@@ -12,6 +12,13 @@ function isKnownModel(kind, provider, model, settings, stage) {
   if (typeof model !== 'string' || !model) return false
   const catalog = kind === 'image' ? IMAGE_MODELS : VIDEO_MODELS
   if (catalog.some(entry => entry.provider === provider && entry.id === model)) return true
+  const globalProvider = kind === 'image'
+    ? getGlobalImageProvider(settings)
+    : getGlobalVideoProvider(settings, stage)
+  const activeModel = kind === 'image'
+    ? settings?.imageModel
+    : (stage === 'i2v' ? settings?.videoModelF2V : settings?.videoModelT2V)
+  if (provider === globalProvider && activeModel === model) return true
   if (kind === 'image') return settings?.modelsByProvider?.[provider] === model
   return settings?.modelsByProviderVideo?.[stage]?.[provider] === model
 }
