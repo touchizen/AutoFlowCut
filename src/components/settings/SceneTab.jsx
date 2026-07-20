@@ -5,6 +5,7 @@
 import AspectRatioSelector from './AspectRatioSelector'
 import ModelSelector from './ModelSelector'
 import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL, defaultImageModelForProvider, defaultVideoModelForProvider, imageModelsForProvider, listSupportedImageProviders, listSupportedVideoProviders, videoModelsForProvider } from '../../config/genModels'
+import { DEFAULTS } from '../../config/defaults'
 import { computeImageProviderSwitch } from '../../utils/imageProviderSwitch'
 
 // provider 선택 UI는 catalog provisional flag가 단일 권위다. Registry에는 fal이 양쪽에
@@ -114,7 +115,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
         <span className="setting-sublabel">{t('settings.exportThresholdHint')}</span>
       </div>
 
-      {/* 이미지/비디오 동시 생성 수 — API 모드 전용. Flow 는 20~40초 안티봇 페이싱이 throttle 이라
+      {/* 이미지/비디오 동시 생성 수 — API 모드 전용. Flow 는 안티봇 페이싱(아래)이 throttle 이라
           동시성 설정이 무의미해 숨긴다. */}
       {appMode !== 'flow' && (
         <>
@@ -150,6 +151,40 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
             <span className="setting-sublabel">{t('settings.videoConcurrencyHint')}</span>
           </div>
         </>
+      )}
+
+      {/* Flow 안티봇 페이싱 — Flow 모드 전용. 제출 사이 랜덤 대기 min~max(초). 값은 ms 로 저장. */}
+      {appMode === 'flow' && (
+        <div className="setting-row">
+          <label className="setting-label">{t('settings.flowPacing')}</label>
+          <div className="threshold-input-group">
+            <input
+              type="number"
+              min="1" max="60" step="1"
+              aria-label={t('settings.flowPacingMin')}
+              value={Math.round((localSettings.flowPacingMinMs ?? DEFAULTS.generation.flowPacingMinMs) / 1000)}
+              onChange={(e) => {
+                const sec = parseInt(e.target.value)
+                if (!Number.isFinite(sec)) return
+                setLocalSettings(s => ({ ...s, flowPacingMinMs: Math.min(60, Math.max(1, sec)) * 1000 }))
+              }}
+            />
+            <span className="setting-unit">~</span>
+            <input
+              type="number"
+              min="1" max="60" step="1"
+              aria-label={t('settings.flowPacingMax')}
+              value={Math.round((localSettings.flowPacingMaxMs ?? DEFAULTS.generation.flowPacingMaxMs) / 1000)}
+              onChange={(e) => {
+                const sec = parseInt(e.target.value)
+                if (!Number.isFinite(sec)) return
+                setLocalSettings(s => ({ ...s, flowPacingMaxMs: Math.min(60, Math.max(1, sec)) * 1000 }))
+              }}
+            />
+            <span className="setting-unit">{t('settings.seconds')}</span>
+          </div>
+          <span className="setting-sublabel">{t('settings.flowPacingHint')}</span>
+        </div>
       )}
 
       {/* 스타일 필수 설정 */}

@@ -26,6 +26,32 @@ const decl = (selector, prop) => {
   return m ? m[1].trim() : null
 }
 
+function ruleList(...selectors) {
+  const pattern = selectors
+    .map((selector) => selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s*,\\s*')
+  const m = css.match(new RegExp(`${pattern}\\s*\\{([^}]*)\\}`, 'm'))
+  if (!m) throw new Error(`CSS rule not found: ${selectors.join(', ')}`)
+  return m[1]
+}
+
+const blockDecl = (block, prop) => {
+  const m = block.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`))
+  return m ? m[1].trim() : null
+}
+
+describe('.story-audio-table # 열', () => {
+  it('5자리 인덱스 폭을 확보하고 줄바꿈하지 않는다', () => {
+    const indexCells = ruleList(
+      '.story-audio-table th:nth-child(1)',
+      '.story-audio-table td:nth-child(1)',
+    )
+    expect(blockDecl(indexCells, 'width')).toBe('64px')
+    expect(blockDecl(indexCells, 'min-width')).toBe('64px')
+    expect(blockDecl(indexCells, 'white-space')).toBe('nowrap')
+  })
+})
+
 describe('.story-voice-row', () => {
   it('그리드로 열을 고정한다 — flex가 아니어야 설명 길이가 열 폭을 흔들지 못한다', () => {
     expect(decl('.story-voice-row', 'display')).toBe('grid')
@@ -39,6 +65,11 @@ describe('.story-voice-row', () => {
     expect(tracks).toHaveLength(3)
   })
 
+  it('성우와 실행 열을 콘텐츠와 무관한 고정 px 폭으로 둔다', () => {
+    expect(decl('.story-voice-row', 'grid-template-columns'))
+      .toBe('minmax(0, 1fr) 150px 28px')
+  })
+
   // gap 은 `<행> <열>` 두 값을 쓸 수 있다 — 한 값만 파싱하면 행 간격을 열 간격으로 착각한다.
   it('열 사이에 간격을 둔다 — 붙으면 성우/생성 버튼이 한 덩어리로 보인다', () => {
     const gap = decl('.story-voice-row', 'gap')
@@ -46,6 +77,10 @@ describe('.story-voice-row', () => {
     const parts = gap.split(/\s+/).filter(Boolean).map((v) => parseInt(v, 10))
     const columnGap = parts.length > 1 ? parts[1] : parts[0] // 두 값이면 뒤가 열 간격
     expect(columnGap).toBeGreaterThanOrEqual(12)
+  })
+
+  it('appearance 높이와 무관하게 voice/run/source 컨트롤을 각 grid track 위에 맞춘다', () => {
+    expect(decl('.story-voice-row', 'align-items')).toBe('start')
   })
 
   // 출처(mp3/SRT)를 같은 줄에 두면 300px 열이 필요해 appearance 가 230px 로 쥐어짜였다
@@ -71,5 +106,41 @@ describe('.story-voice-info', () => {
 describe('.story-voice-picker-btn', () => {
   it('열을 가득 채운다 — 모든 행에서 좌우 가장자리가 같은 x에 정렬된다', () => {
     expect(decl('.story-voice-picker-btn', 'width')).toBe('100%')
+  })
+
+  it('긴 성우 이름은 고정 열 안에서 말줄임한다', () => {
+    expect(decl('.story-voice-picker-btn', 'min-width')).toBe('0')
+    expect(decl('.story-voice-picker-btn', 'overflow')).toBe('hidden')
+    expect(decl('.story-voice-picker-btn', 'text-overflow')).toBe('ellipsis')
+    expect(decl('.story-voice-picker-btn', 'white-space')).toBe('nowrap')
+  })
+})
+
+describe('.story-speaker-run-btn', () => {
+  it('28px 고정 실행 열 안에 패딩 없이 정확히 들어간다', () => {
+    expect(decl('.story-speaker-run-btn', 'width')).toBe('28px')
+    expect(decl('.story-speaker-run-btn', 'padding')).toBe('0')
+  })
+})
+
+describe('.story-voice-source', () => {
+  it('2·3열 span 안에서 줄어들 수 있다', () => {
+    expect(decl('.story-voice-source', 'grid-area')).toBe('source')
+    expect(decl('.story-voice-source', 'min-width')).toBe('0')
+  })
+})
+
+describe('.story-stream-table', () => {
+  it('스크롤 컨테이너가 offsetParent 가 되도록 position:relative 다 (prompts frontier auto-scroll 계약)', () => {
+    // 없으면 frontier 행 offsetTop 이 바깥 조상 기준이라 prompts auto-scroll 이 "화면 고정"으로 깨진다.
+    expect(decl('.story-stream-table', 'position')).toBe('relative')
+    expect(decl('.story-stream-table', 'overflow-y')).toBe('auto')
+  })
+})
+
+describe('.story-row-revising', () => {
+  it('frontier 한 행에만 붙일 수 있는 전용 shimmer animation을 갖는다', () => {
+    expect(decl('.story-row-revising', 'animation')).toContain('story-row-revising-shimmer')
+    expect(decl('.story-row-revising', 'background')).toContain('linear-gradient')
   })
 })

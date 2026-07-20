@@ -410,16 +410,26 @@ export function useMcpServer({
             taken.add(matched.id)
             const generationMerge = mergeSceneGenerationForMcp(matched, incoming, settingsRef.current)
             generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
+            // Issue #2 parity: CSV 재적용이 Done 씬(이미지 보유)의 프롬프트를 바꾸면 재생성 대상이
+            //   되도록 pending 으로 되돌린다. load_csv 는 에이전트가 per-row status 를 표현할 수 없어
+            //   여기서 규칙을 적용(updateScene / .txt import 와 동일). 프롬프트 불변이면 matched.status
+            //   보존(ep4 sat-fire 가드 — 안 바뀐 Done 행을 pending 으로 덮지 않음).
+            const csvPromptChanged = incoming.prompt !== matched.prompt
+            const matchedHasImage = !!(matched.image || matched.imagePath)
+            const mergedStatus = (csvPromptChanged && matchedHasImage)
+              ? 'pending'
+              : (matched.status || incoming.status || 'pending')
             return {
               ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
               generation: generationMerge.generation,  // sparse stage-pair deep merge; omitted generation is preserved
               id: matched.id,                          // R9 fix: 기존 stable id 유지 (incoming.id 무시)
               image: matched.image,                    // preserve in-memory image payload (if any)
               imagePath: matched.imagePath,            // preserve saved image path
-              status: matched.status || incoming.status || 'pending',
+              status: mergedStatus,
               mediaId: matched.mediaId,
               generatingStartedAt: matched.generatingStartedAt,
               image_size: matched.image_size,
+              donePrompt: matched.donePrompt,          // 생성 기준 스냅샷 — 되돌림 done 복원 유지
               // C9 fix: incoming 이 srtLineIds 안 보내면 기존 보존
               srtLineIds: incoming.srtLineIds ?? matched.srtLineIds ?? [],
             }

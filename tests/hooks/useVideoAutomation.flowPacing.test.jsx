@@ -1,8 +1,8 @@
 /**
- * useVideoAutomation — Flow 반봇 페이싱 (제출 사이 20~40초) + concurrency 게이트 무시
+ * useVideoAutomation — Flow 반봇 페이싱 (제출 사이 기본 7~15초) + concurrency 게이트 무시
  *
  * Flow(Agent OFF)는 단일 웹 패널이라 빠른 연속 제출이 봇 감지/레이트리밋을 유발 → 제출 사이
- * 20~40초 랜덤 대기. concurrency 윈도우 대신 페이싱이 throttle. API 모드는 동시성 윈도우(대기 없음).
+ * 랜덤 대기(기본 7~15초). concurrency 윈도우 대신 페이싱이 throttle. API 모드는 동시성 윈도우(대기 없음).
  */
 import { renderHook, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -23,7 +23,7 @@ vi.mock('../../src/utils/videoMetadata', () => ({
 beforeEach(() => {
   __resetQuotaStopForTests()
   vi.useFakeTimers()
-  vi.spyOn(Math, 'random').mockReturnValue(0) // waitMs = 20_000
+  vi.spyOn(Math, 'random').mockReturnValue(0) // waitMs = 7_000 (기본 min)
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -47,7 +47,7 @@ function setup(appMode) {
 }
 
 describe('useVideoAutomation — Flow 페이싱', () => {
-  it('Flow: concurrency=1 이어도 게이트 무시 + 최소 20초 페이싱으로 3개 모두 제출', { timeout: 20000 }, async () => {
+  it('Flow: concurrency=1 이어도 게이트 무시 + 최소 7초 페이싱으로 3개 모두 제출', { timeout: 20000 }, async () => {
     const { hook, generateVideoT2V } = setup('flow')
     let p
     await act(async () => {
@@ -57,8 +57,8 @@ describe('useVideoAutomation — Flow 페이싱', () => {
         videoBatchCount: 1, seed: null, concurrency: 1, onItemUpdate: vi.fn(),
       })
     })
-    // s1 제출 후 20초 대기 — 19초로는 s2 안 나감
-    await act(async () => { await vi.advanceTimersByTimeAsync(19000) })
+    // s1 제출 후 7초 대기 — 6초로는 s2 안 나감
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
     expect(generateVideoT2V).toHaveBeenCalledTimes(1)
     // 충분히 진행하면 게이트(=1) 무시하고 3개 전부 제출(미완료여도)
     await act(async () => { await vi.advanceTimersByTimeAsync(25000) })
@@ -68,8 +68,8 @@ describe('useVideoAutomation — Flow 페이싱', () => {
     await act(async () => { await p })
   })
 
-  it('Flow: 랜덤 상한은 40초 근처까지 늘어남', { timeout: 20000 }, async () => {
-    Math.random.mockReturnValue(0.99999) // waitMs = 40_000
+  it('Flow: 랜덤 상한은 15초 근처까지 늘어남', { timeout: 20000 }, async () => {
+    Math.random.mockReturnValue(0.99999) // waitMs = 15_000
     const { hook, generateVideoT2V } = setup('flow')
     let p
     await act(async () => {
@@ -79,9 +79,30 @@ describe('useVideoAutomation — Flow 페이싱', () => {
         videoBatchCount: 1, seed: null, concurrency: 5, onItemUpdate: vi.fn(),
       })
     })
-    await act(async () => { await vi.advanceTimersByTimeAsync(39000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(14000) })
     expect(generateVideoT2V).toHaveBeenCalledTimes(1)
 
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(generateVideoT2V).toHaveBeenCalledTimes(2)
+    await act(async () => { hook.result.current.stop() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(300000) })
+    await act(async () => { await p })
+  })
+
+  it('Flow: 설정 flowPacingMinMs/MaxMs 를 존중 — 고정 3초면 3초 대기', { timeout: 20000 }, async () => {
+    const { hook, generateVideoT2V } = setup('flow')
+    let p
+    await act(async () => {
+      p = hook.result.current.start({
+        mode: 't2v', scenes: makeScenes(2), projectName: 'test', saveMode: 'folder',
+        videoModel: 'veo-3', aspectRatio: '16:9', duration: 8, videoResolution: '720p',
+        videoBatchCount: 1, seed: null, concurrency: 5, onItemUpdate: vi.fn(),
+        flowPacingMinMs: 3000, flowPacingMaxMs: 3000, // 고정 3초
+      })
+    })
+    // 2초로는 아직 s2 안 나감(기본 7초가 아니라 설정 3초 적용 확인)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(generateVideoT2V).toHaveBeenCalledTimes(1)
     await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
     expect(generateVideoT2V).toHaveBeenCalledTimes(2)
     await act(async () => { hook.result.current.stop() })

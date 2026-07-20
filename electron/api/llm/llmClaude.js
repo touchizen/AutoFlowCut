@@ -2,7 +2,7 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
-import { claudeResultToUsage, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from './usageTokens.js'
+import { claudeResultToUsage, claudeThinkingTokens, claudeStreamInput, claudeStreamOutChars, estimateOutputTokens } from './usageTokens.js'
 import {
   buildScriptPrompt,
   buildSplitPrompt,
@@ -27,6 +27,7 @@ import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extra
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toJsonSchema } from './toJsonSchema.js'
 import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
+import { createPartialScenesParser } from './partialScenes.js'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
@@ -93,9 +94,13 @@ function tapQuery(makeStream, sink) {
     let key = null      // 이 쿼리의 pending 키(usage 있는 첫 이벤트에서 지연 생성)
     let pin = 0         // 입력(message_start 누적, 즉시 정확)
     let ochars = 0      // 스트리밍된 출력 문자수(text+thinking+structured JSON)
+    // system 추정치는 thinking 블록별 누적이라 새 블록에서 작아질 수 있다. 호출 안에서는 max 로
+    // 단조 증가시키고, 마지막 result 정확치가 최종 보정한다.
+    let thinkingEstTokens = 0
     let lastIn = -1, lastOut = -1 // 마지막 emit 값 — 추정치가 안 바뀌면(3자 미만 증가) IPC 를 아낀다.
+    const estimatedOutput = () => estimateOutputTokens(ochars) + thinkingEstTokens
     const emitPending = () => {
-      const out = estimateOutputTokens(ochars)
+      const out = estimatedOutput()
       if (pin === lastIn && out === lastOut) return
       lastIn = pin; lastOut = out
       sink({ pendingKey: (key ??= `claude-pending-${++pendingKeySeq}`), input: pin, output: out })
@@ -110,12 +115,16 @@ function tapQuery(makeStream, sink) {
               // pending 제거 + 확정치 가산을 한 번에(commit). 스트림이 아니었으면(key 없음) 기존대로 가산.
               // result 에 usage 가 없는 비정상 응답이면(SDK 상 필수라 방어적) 마지막 추정치로 커밋 —
               // 0/0 으로 커밋하면 이미 쓴 토큰을 통째로 버린다.
-              if (key) { sink({ pendingKey: key, commit: true, input: u ? u.input : pin, output: u ? u.output : estimateOutputTokens(ochars) }); key = null }
+              if (key) { sink({ pendingKey: key, commit: true, input: u ? u.input : pin, output: u ? u.output : estimatedOutput() }); key = null }
               else if (u) sink(u)
             } else {
-              const inp = claudeStreamInput(m)
-              if (inp != null) { pin += inp; emitPending() }        // message_start: 입력 즉시 반영
-              else { const c = claudeStreamOutChars(m); if (c) { ochars += c; emitPending() } } // 델타: 출력 추정 상승
+              const thinking = claudeThinkingTokens(m)
+              if (thinking != null) { thinkingEstTokens = Math.max(thinkingEstTokens, thinking || 0); emitPending() }
+              else {
+                const inp = claudeStreamInput(m)
+                if (inp != null) { pin += inp; emitPending() }        // message_start: 입력 즉시 반영
+                else { const c = claudeStreamOutChars(m); if (c) { ochars += c; emitPending() } } // 델타: 출력 추정 상승
+              }
             }
           } catch { /* best-effort */ }
         }
@@ -321,7 +330,7 @@ function assertSchema(data, schema, path = 'root') {
   }
 }
 
-async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery, sdkExtra = {} }) {
+async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery, sdkExtra = {}, onPartialText, onPartialReset, onThinkingActivity } = {}) {
   const schema = toJsonSchema(geminiSchema)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
@@ -333,6 +342,13 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true, outputFormat: { type: 'json_schema', schema } }))
     let needFallback = false
     for await (const m of queryImpl({ prompt, options: opt1 })) {
+      if (m.type === 'stream_event') {
+        if ((m.event?.type === 'content_block_start' && (m.event?.content_block?.type === 'thinking' || m.event?.content_block?.type === 'redacted_thinking'))
+          || m.event?.delta?.type === 'thinking_delta') onThinkingActivity?.()
+        const delta = m.event?.delta
+        if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') onPartialText?.(delta.partial_json)
+        else if (delta?.type === 'text_delta' && typeof delta.text === 'string') onPartialText?.(delta.text)
+      }
       if (m.type !== 'result') continue
       const r = readStructuredResult(m)
       if (r.kind === 'structured' || r.kind === 'text') {
@@ -347,9 +363,17 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     if (signal?.aborted) throw new Error('Aborted')
     if (!needFallback) throw new Error('no result message returned')
     // 2차 폴백: outputFormat 없이 JSON-only 재요청. 파싱 결과도 검증, 실패하면 그대로 throw.
+    onPartialReset?.()
     const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
     const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, includePartialMessages: true }))
     for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
+      if (m.type === 'stream_event') {
+        if ((m.event?.type === 'content_block_start' && (m.event?.content_block?.type === 'thinking' || m.event?.content_block?.type === 'redacted_thinking'))
+          || m.event?.delta?.type === 'thinking_delta') onThinkingActivity?.()
+        const delta = m.event?.delta
+        if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') onPartialText?.(delta.partial_json)
+        else if (delta?.type === 'text_delta' && typeof delta.text === 'string') onPartialText?.(delta.text)
+      }
       if (m.type === 'result') {
         const data = parseJsonLoose(extractClaudeSdkResult(m))
         assertSchema(data, geminiSchema)
@@ -365,9 +389,34 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
   }
 }
 
-export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {}) {
+export async function splitScenes(scriptMd, opts = {}, {
+  signal,
+  queryImpl,
+  onPartialText,
+  onPartialReset,
+  onPartialScene,
+  onThinkingActivity,
+} = {}) {
   const prompt = buildSplitPrompt(scriptMd, opts)
-  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
+  const makePartialParser = () => createPartialScenesParser({ onItem: onPartialScene })
+  let partialParser = typeof onPartialScene === 'function' ? makePartialParser() : null
+  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, {
+    signal,
+    queryImpl,
+    onThinkingActivity,
+    onPartialText: onPartialText || partialParser
+      ? (text) => {
+          onPartialText?.(text)
+          partialParser?.push(text)
+        }
+      : undefined,
+    onPartialReset: onPartialReset || partialParser
+      ? () => {
+          onPartialReset?.()
+          if (partialParser) partialParser = makePartialParser()
+        }
+      : undefined,
+  })
   const scenes = out.scenes || []
   validateScenesSegments(scenes) // M2b: loose 스키마 → type별(narration/sfx) 필수 필드 검증
   return { scenes, speakers: out.speakers || [] }
@@ -425,31 +474,45 @@ export async function reviseSynopsis(synopsisMd, characters = [], critique, opts
   } finally { cleanup() }
 }
 
-export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, queryImpl } = {}) {
+export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, queryImpl, onThinkingActivity } = {}) {
   const prompt = buildScenesReviewPrompt(scriptMd, scenes, speakers, opts)
-  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl, onThinkingActivity })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
   return { verdict, critique: out.critique || '' }
 }
 
-export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, queryImpl } = {}) {
+export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, queryImpl, onPartialScene } = {}) {
   const prompt = buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, opts)
-  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
+  const makePartialParser = () => createPartialScenesParser({ onItem: onPartialScene })
+  let partialParser = typeof onPartialScene === 'function' ? makePartialParser() : null
+  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, {
+    signal,
+    queryImpl,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+    onPartialReset: partialParser ? () => { partialParser = makePartialParser() } : undefined,
+  })
   const revisedScenes = out.scenes || []
   validateScenesSegments(revisedScenes)
   return { scenes: revisedScenes, speakers: out.speakers || [] }
 }
 
-export async function reviewPrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
+export async function reviewPrompts(scenes, context, opts = {}, { signal, queryImpl, onThinkingActivity } = {}) {
   const prompt = buildPromptsReviewPrompt(scenes, context, opts)
-  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl, onThinkingActivity })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
   return { verdict, critique: out.critique || '' }
 }
 
-export async function revisePrompts(scenes, context, critique, opts = {}, { signal, queryImpl } = {}) {
+export async function revisePrompts(scenes, context, critique, opts = {}, { signal, queryImpl, onPartialPrompt } = {}) {
   const prompt = buildPromptsRevisePrompt(scenes, context, critique, opts)
-  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
+  const makePartialParser = () => createPartialScenesParser({ onItem: onPartialPrompt })
+  let partialParser = typeof onPartialPrompt === 'function' ? makePartialParser() : null
+  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, {
+    signal,
+    queryImpl,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+    onPartialReset: partialParser ? () => { partialParser = makePartialParser() } : undefined,
+  })
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
   for (const s of scenes) {
     const p = byNo.get(s.sceneNo)
@@ -493,9 +556,17 @@ export async function factCheckClaims(claims, opts = {}, { signal, queryImpl } =
   }
 }
 
-export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
+export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl, onPartialPrompt, onThinkingActivity } = {}) {
   const prompt = buildPromptsPrompt(scenes, context, opts)
-  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
+  const makePartialParser = () => createPartialScenesParser({ onItem: onPartialPrompt })
+  let partialParser = typeof onPartialPrompt === 'function' ? makePartialParser() : null
+  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, {
+    signal,
+    queryImpl,
+    onThinkingActivity,
+    onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
+    onPartialReset: partialParser ? () => { partialParser = makePartialParser() } : undefined,
+  })
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
   // 계약 검증: 입력 씬 전체가 커버되고 각 프롬프트가 non-empty string인지 (병합 폴백 전에 실패시킴)
   for (const s of scenes) {

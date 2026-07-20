@@ -47,6 +47,7 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
     expect(res.success).toBe(true)
     expect(res.sceneUpdate).toMatchObject({
       status: 'done',
+      donePrompt: 'a cat',
       error: null,
       errorKind: null,    // ← critical: prior 'image-missing' 마커가 merge 후 남으면 안 됨
     })
@@ -68,6 +69,7 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
       error: 'Quota exceeded',
       errorKind: null,    // ← stale 'image-missing' 가 'Quota exceeded' 메시지를 가리면 안 됨
     })
+    expect(res.sceneUpdate).not.toHaveProperty('donePrompt')
   })
 
   it('#R26-6: failure path with authFailed sentinel preserves errorKind:auth', async () => {
@@ -126,6 +128,9 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
     expect(res.sceneUpdate.status).toBe('error')
     expect(res.sceneUpdate.error).toMatch(/Image save failed.*Disk full/)
     expect(res.sceneUpdate.errorKind).toBeNull()
+    // 저장 실패 패치는 NEW 이미지를 메모리에 남기므로, 옛 donePrompt 가 merge 로 살아남으면
+    // "새 이미지 + 옛 기준" 불일치로 error→done 오복귀가 가능하다 — 명시적으로 null 클리어.
+    expect(res.sceneUpdate).toHaveProperty('donePrompt', null)
   })
 })
 
@@ -157,7 +162,10 @@ describe('processAsyncSceneResult — useAutomation batch error counting contrac
     const ok = await processAsyncSceneResult(baseArgs({ updateScene }))
 
     expect(ok).toBe(true)
-    expect(updateScene).toHaveBeenCalledWith('scene_1', expect.objectContaining({ status: 'done' }))
+    expect(updateScene).toHaveBeenCalledWith('scene_1', expect.objectContaining({
+      status: 'done',
+      donePrompt: 'a cat',
+    }))
   })
 
   it('model 옵션을 sceneUpdate.model 로 기록 (배치 ResultsTable 모델명이 flow 로 찍히는 회귀 방지)', async () => {

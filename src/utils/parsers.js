@@ -508,11 +508,40 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
   while (split.length > 0 && split[split.length - 1] === '') split.pop()
   const lines = truncate ? split : split.filter(Boolean)
 
+  // Issue #2: 이미 생성 완료(이미지 보유)된 씬의 이미지 프롬프트가 실제로 바뀌면 재생성 대상이
+  //   되도록 status 를 pending 으로 되돌린다. updateScene(모달/인라인 편집)과 동일 규칙을 벌크
+  //   편집(PromptInput/.txt import) 경로에도 적용. 이미지 프롬프트(fieldName==='prompt')에만 해당.
+  //   done→편집(pending)→정확히 원래 프롬프트로 원복하면 done 으로 되돌린다. 벌크 경로가 이 복원
+  //   분기를 빠뜨려(직전 값과 다르면 무조건 pending) 원복이 pending 에 고착되던 실측 버그를 고친다.
+  //   진행 중(generating)인 씬은 finalize 가 곧 done 을 쓰므로 건드리지 않는다(updateScene 과 동일 가드).
+  const mergeField = (ex, value) => {
+    const merged = { ...ex, [fieldName]: value }
+    if (fieldName === 'prompt' && value !== ex.prompt && (ex.image || ex.imagePath) && ex.status !== 'generating') {
+      let baseline = ex.donePrompt
+      let hasBaseline = typeof baseline === 'string'
+      // donePrompt 도입 전 완료된 legacy 씬은 편집 직전 prompt 가 생성 기준 — 첫 편집 때 한 번만 캡처.
+      if (!hasBaseline && ex.status === 'done') {
+        baseline = ex.prompt
+        hasBaseline = true
+        merged.donePrompt = baseline
+      }
+      if (hasBaseline && value === baseline) {
+        merged.status = 'done'
+        merged.error = null
+        merged.errorKind = null
+      } else {
+        merged.status = 'pending'
+      }
+    }
+    return merged
+  }
+
   // 완전 빈 입력 가드 — 해당 필드를 모든 기존 씬에서 클리어.
   // 씬 자체를 삭제하지 않는다. 완전히 빈 trailing 씬 정리는 useScenes 의
   // trimTrailingEmptyScenes 에서 별도 처리한다 (max-driver 모델).
+  // mergeField 로 클리어 — Done 씬의 이미지 프롬프트를 비우는 것도 "변경"이므로 status 리셋(리뷰 R2).
   if (lines.length === 0) {
-    return existing.map(s => ({ ...s, [fieldName]: '' }))
+    return existing.map(s => mergeField(s, ''))
   }
 
   // truncateToIncoming 모드: PromptInput 직접 편집 — 모든 fieldName 에 동일한 max-preserve 시맨틱.
@@ -529,7 +558,7 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
         const ex = existing[i]
         cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
         // lines[i] 가 있으면 그 값, 없으면 해당 필드 클리어 (씬 자체는 보존)
-        return { ...ex, [fieldName]: i < lines.length ? lines[i] : '' }
+        return mergeField(ex, i < lines.length ? lines[i] : '')
       }
       // i >= existing.length: 새 씬 — 지정 필드만 채우고 나머지는 빈 칸
       const startTime = cursor
@@ -555,7 +584,7 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
     if (ex && line !== undefined) {
       // 둘 다: 지정 필드만 갱신, 다른 필드 보존
       cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
-      return { ...ex, [fieldName]: line }
+      return mergeField(ex, line)
     }
     if (ex) {
       // 기존만 (incoming이 더 짧음): 통째 보존

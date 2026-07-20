@@ -63,12 +63,15 @@ export function useGenerationQueue() {
   }, [processNext])
 
   const clearQueue = useCallback((type) => {
+    // alreadySurfaced: 일괄 clear 는 호출측(전역 quota 모달 등)이 이미 사용자에게 알린 상태다 —
+    // 씬당 개별 toast 를 또 띄우지 않도록 표식을 실어 보낸다.
+    const clearedError = () => Object.assign(new Error('Queue cleared'), { alreadySurfaced: true })
     if (type) {
       const removed = queueRef.current.filter(item => item.type === type)
       queueRef.current = queueRef.current.filter(item => item.type !== type)
-      removed.forEach(item => item.reject(new Error('Queue cleared')))
+      removed.forEach(item => item.reject(clearedError()))
     } else {
-      queueRef.current.forEach(item => item.reject(new Error('Queue cleared')))
+      queueRef.current.forEach(item => item.reject(clearedError()))
       queueRef.current = []
     }
     setQueueSize(queueRef.current.length)
@@ -80,7 +83,10 @@ export function useGenerationQueue() {
   useEffect(() => {
     const unsubscribe = subscribeQuotaStop(() => {
       if (queueRef.current.length > 0) {
-        queueRef.current.forEach(item => item.reject(new Error('Flow quota exhausted — pending work cleared')))
+        // 전역 quota-stop 모달이 이미 알림 — 개별 toast 중첩 방지 표식.
+        queueRef.current.forEach(item => item.reject(
+          Object.assign(new Error('Flow quota exhausted — pending work cleared'), { alreadySurfaced: true })
+        ))
         queueRef.current = []
         setQueueSize(0)
       }

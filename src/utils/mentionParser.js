@@ -1,7 +1,7 @@
 /**
  * mentionParser — Google Flow 스타일 `@name` 인라인 레퍼런스 토큰 파서.
  *
- * 사용자가 프롬프트 본문에 `@alice` 처럼 적으면, 이름이 `alice` 인 레퍼런스를
+ * 사용자가 프롬프트 본문에 `@alice`, `@{Alice Smith}` 처럼 적으면 해당 이름의 레퍼런스를
  * 해당 생성 호출에 inline base64 로 함께 첨부한다 (CSV 태그 매칭과 별도/병행).
  * 매칭은 case-insensitive.
  *
@@ -17,10 +17,76 @@
  *
  * 규약:
  *   - `@` 가 단어 경계(시작/공백/구두점) 뒤일 때만 매칭 — `user@example.com` 같은 이메일 제외
- *   - 이름은 ASCII alnum + 밑줄/하이픈 + 한글 음절 허용
+ *   - plain 이름은 ASCII alnum + 밑줄/하이픈 + 한글 음절 허용
+ *   - brace 이름은 중괄호/개행을 제외한 한 글자 이상 허용
  *   - `g` flag — exec/matchAll 양쪽 호환
  */
-export const MENTION_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]+)/g
+export const MENTION_RE = /(?:^|(?<=[\s.,!?;:()\[\]{}'"`]))@(?:\{(?<braced>[^{}\n]+)\}|(?<plain>[A-Za-z0-9_\-가-힣]+))/g
+
+const PLAIN_SAFE_MENTION_NAME_RE = /^[A-Za-z0-9_\-가-힣]+$/
+export const MENTION_LEAD_CHAR_RE = /[\s.,!?;:()\[\]{}'"`]/
+
+/** plain `@name`으로 손실 없이 표현 가능한 이름인지 검사한다. */
+export function isPlainSafeMentionName(name) {
+  return typeof name === 'string' && PLAIN_SAFE_MENTION_NAME_RE.test(name)
+}
+
+/** canonical name을 저장 가능한 mention token으로 직렬화한다. */
+export function formatMentionToken(name) {
+  if (isPlainSafeMentionName(name)) return `@${name}`
+  if (typeof name === 'string' && name.trim().length > 0 && !/[{}\r\n]/.test(name)) return `@{${name}}`
+  return null
+}
+
+/**
+ * MENTION_RE의 named capture를 정규화한 공용 iterator.
+ * index는 `@` 위치이고 tokenLength는 `@`부터 token 끝까지의 길이다.
+ */
+export function* iterateMentions(text) {
+  if (!text || typeof text !== 'string') return
+  const malformedBracedRanges = findMalformedBracedRanges(text)
+  MENTION_RE.lastIndex = 0
+  for (const match of text.matchAll(MENTION_RE)) {
+    const tokenStart = match.index
+    if (malformedBracedRanges.some(({ start, end }) => tokenStart >= start && tokenStart < end)) {
+      continue
+    }
+    const braced = match.groups?.braced !== undefined
+    const name = braced ? match.groups.braced : match.groups?.plain
+    if (!name) continue
+    yield {
+      index: match.index,
+      name,
+      braced,
+      tokenLength: braced ? name.length + 3 : name.length + 1,
+    }
+  }
+}
+
+// malformed `@{...` 내부의 별도 `@name`을 새 mention으로 부분 복구하지 않는다.
+function findMalformedBracedRanges(text) {
+  const ranges = []
+  for (let start = text.indexOf('@{'); start >= 0;) {
+    const prevOk = start === 0 || MENTION_LEAD_CHAR_RE.test(text[start - 1])
+    if (!prevOk) {
+      start = text.indexOf('@{', start + 2)
+      continue
+    }
+    const close = text.indexOf('}', start + 2)
+    const newline = text.indexOf('\n', start + 2)
+    const inner = close >= 0 ? text.slice(start + 2, close) : ''
+    const valid = close > start + 2 &&
+      (newline < 0 || close < newline) &&
+      !inner.includes('{') &&
+      inner.trim().length > 0
+    const end = newline >= 0 && (close < 0 || newline < close)
+      ? newline
+      : close >= 0 ? close + 1 : text.length
+    if (!valid) ranges.push({ start, end })
+    start = text.indexOf('@{', Math.max(start + 2, end))
+  }
+  return ranges
+}
 
 const HANGUL_CHAR_RE = /[가-힣]/
 
@@ -58,8 +124,7 @@ export function extractMentionNames(text) {
   if (!text || typeof text !== 'string') return []
   const seen = new Set()
   const names = []
-  for (const m of text.matchAll(MENTION_RE)) {
-    const name = m[2]
+  for (const { name } of iterateMentions(text)) {
     const key = name.toLowerCase()
     if (!seen.has(key)) {
       seen.add(key)
@@ -78,24 +143,33 @@ export function extractMentionNames(text) {
  *   - missing: 매칭 안 된 mention 이름들 — caller 가 경고 로깅 등에 사용
  */
 export function resolveMentions(text, references = []) {
-  const names = extractMentionNames(text)
-  if (names.length === 0) return { matched: [], missing: [] }
+  const mentions = [...iterateMentions(text)]
+  if (mentions.length === 0) return { matched: [], missing: [] }
   const byName = new Map()
   for (const r of references || []) {
     if (r?.name) byName.set(String(r.name).toLowerCase(), r)
   }
   const matched = []
   const missing = []
+  const seenMentions = new Set()
   const seenMatched = new Set()
-  for (const name of names) {
-    const resolved = resolveMentionPrefix(name, byName)
+  const seenMissing = new Set()
+  for (const { name, braced } of mentions) {
+    const mentionKey = `${braced ? 'braced' : 'plain'}:${name.toLowerCase()}`
+    if (seenMentions.has(mentionKey)) continue
+    seenMentions.add(mentionKey)
+    const exactRef = braced ? byName.get(name.toLowerCase()) : null
+    const resolved = braced
+      ? (exactRef ? { ref: exactRef, matched: name } : null)
+      : resolveMentionPrefix(name, byName)
     if (resolved) {
       const key = resolved.matched.toLowerCase()
       if (!seenMatched.has(key)) {
         seenMatched.add(key)
         matched.push(resolved.ref)
       }
-    } else {
+    } else if (!seenMissing.has(name.toLowerCase())) {
+      seenMissing.add(name.toLowerCase())
       missing.push(name)
     }
   }
@@ -122,11 +196,10 @@ export function resolveMentions(text, references = []) {
 export function stripMentionsForNames(text, names = []) {
   if (!text || typeof text !== 'string' || !names?.length) return text || ''
   const targets = new Set(names.map((n) => String(n).toLowerCase()))
-  return text.replace(MENTION_RE, (full, lead, name) => {
-    const resolved = resolveMentionPrefix(name, new Map([...targets].map((t) => [t, true])))
-    if (!resolved) return full // 대상 아님 → 그대로(다른 멘션 보존)
-    return `${lead}${resolved.matched}${name.slice(resolved.matched.length)}`
-  })
+  const targetLookup = new Map([...targets].map((target) => [target, true]))
+  return replaceResolvedMentionTokens(text, ({ name, braced }) => (
+    braced ? targetLookup.get(name.toLowerCase()) : resolveMentionPrefix(name, targetLookup)
+  ))
 }
 
 export function stripMentionPrefixes(text, references = []) {
@@ -135,9 +208,20 @@ export function stripMentionPrefixes(text, references = []) {
   for (const r of references || []) {
     if (r?.name) byName.set(String(r.name).toLowerCase(), r)
   }
-  return text.replace(MENTION_RE, (full, lead, name) => {
-    const resolved = resolveMentionPrefix(name, byName)
-    if (!resolved) return full
-    return `${lead}${resolved.matched}${name.slice(resolved.matched.length)}`
-  })
+  return replaceResolvedMentionTokens(text, ({ name, braced }) => (
+    braced ? byName.get(name.toLowerCase()) : resolveMentionPrefix(name, byName)
+  ))
+}
+
+function replaceResolvedMentionTokens(text, resolve) {
+  let output = ''
+  let lastIndex = 0
+  for (const mention of iterateMentions(text)) {
+    if (!resolve(mention)) continue
+    const tokenStart = mention.index
+    output += text.slice(lastIndex, tokenStart)
+    output += mention.name
+    lastIndex = tokenStart + mention.tokenLength
+  }
+  return lastIndex === 0 ? text : output + text.slice(lastIndex)
 }

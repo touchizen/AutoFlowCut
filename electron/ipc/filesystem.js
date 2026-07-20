@@ -509,7 +509,9 @@ export function registerFilesystemIPC(ipcMain) {
         }
       }
 
-      console.warn(`[FS] read-resource: not found ${safeName}.* in ${resourceDir}`)
+      // not-found 는 정상 케이스다 — 렌더러가 로드 시 모든 씬의 이미지/비디오를 프로브하므로
+      // 미생성 리소스(예: 비디오 미생성)가 대량으로 나온다. return 값으로만 알리고 로그는 남기지
+      // 않는다(console.warn 은 Sentry breadcrumb + 콘솔 도배가 된다).
       return { success: false, error: 'File not found' }
     } catch (error) {
       return { success: false, error: error.message }

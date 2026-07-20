@@ -126,6 +126,56 @@ describe('useStoryPipeline — reviewProgress(M3 script-review)', () => {
     expect(result.current.reviewProgress).toMatchObject({ target: 'scenes', round: 1, of: 2, phase: 'reviewing' })
   })
 
+  it('active review thinking을 노출하고 revising/stale 신호에서 정확히 관리한다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state']({
+      projectToken: 'TOK', operationId: 'op1', state: { steps: { scenes: { status: 'running', reviewOnly: true } } },
+    }))
+
+    act(() => handlers['story:progress']({
+      projectToken: 'TOK', operationId: 'op1', kind: 'review', target: 'scenes', round: 1, of: 2, phase: 'reviewing',
+    }))
+    expect(result.current.reviewThinking).toBe(false)
+
+    act(() => handlers['story:progress']({
+      projectToken: 'TOK', operationId: 'stale-op', kind: 'review', target: 'scenes', round: 1, of: 2, phase: 'reviewing', thinking: true,
+    }))
+    expect(result.current.reviewThinking).toBe(false)
+
+    act(() => handlers['story:progress']({
+      projectToken: 'TOK', operationId: 'op1', kind: 'review', target: 'scenes', round: 1, of: 2, phase: 'reviewing', thinking: true,
+    }))
+    expect(result.current.reviewThinking).toBe(true)
+    expect(result.current.reviewProgress).toMatchObject({ target: 'scenes', round: 1, of: 2, phase: 'reviewing' })
+
+    act(() => handlers['story:progress']({
+      projectToken: 'TOK', operationId: 'op1', kind: 'review', target: 'scenes', round: 1, of: 2, phase: 'revising',
+    }))
+    expect(result.current.reviewThinking).toBe(false)
+    expect(result.current.reviewProgress).toMatchObject({ target: 'scenes', round: 1, of: 2, phase: 'revising' })
+  })
+
+  it('terminal story:state는 reviewThinking을 지운다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state']({
+      projectToken: 'TOK', operationId: 'op1', state: { steps: { prompts: { status: 'running', reviewOnly: true } } },
+    }))
+    act(() => handlers['story:progress']({
+      projectToken: 'TOK', operationId: 'op1', kind: 'review', target: 'prompts', round: 1, of: 1, phase: 'reviewing', thinking: true,
+    }))
+    expect(result.current.reviewThinking).toBe(true)
+
+    act(() => handlers['story:state']({
+      projectToken: 'TOK', operationId: 'op1', state: { steps: { prompts: { status: 'done' } } },
+    }))
+    expect(result.current.reviewThinking).toBe(false)
+    expect(result.current.reviewProgress).toBeNull()
+  })
+
   it('terminal story:state(진행 없음)이면 reviewProgress를 지운다', async () => {
     const handlers = installApi()
     const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
@@ -154,5 +204,35 @@ describe('useStoryPipeline — reviewProgress(M3 script-review)', () => {
     act(() => handlers['story:progress']({ projectToken: 'TOK', operationId: 'op1', kind: 'script-review', phase: 'error' }))
     await act(async () => { await result.current.start('script', {}) })
     expect(result.current.reviewProgress).toBeNull()
+  })
+
+  it('start()와 project switch는 reviewThinking을 초기화한다', async () => {
+    const handlers = installApi()
+    const rendered = renderHook(
+      ({ projectPath }) => useStoryPipeline({ projectPath, onPushScenes: async () => {} }),
+      { initialProps: { projectPath: '/p' } },
+    )
+    await act(async () => { await rendered.result.current.open() })
+    act(() => handlers['story:state']({
+      projectToken: 'TOK', operationId: 'op1', state: { steps: { scenes: { status: 'running', reviewOnly: true } } },
+    }))
+    act(() => handlers['story:progress']({
+      projectToken: 'TOK', operationId: 'op1', kind: 'review', target: 'scenes', round: 1, of: 1, phase: 'reviewing', thinking: true,
+    }))
+    expect(rendered.result.current.reviewThinking).toBe(true)
+
+    await act(async () => { await rendered.result.current.start('scenes', {}) })
+    expect(rendered.result.current.reviewThinking).toBe(false)
+
+    act(() => handlers['story:state']({
+      projectToken: 'TOK', operationId: 'op2', state: { steps: { scenes: { status: 'running', reviewOnly: true } } },
+    }))
+    act(() => handlers['story:progress']({
+      projectToken: 'TOK', operationId: 'op2', kind: 'review', target: 'scenes', round: 1, of: 1, phase: 'reviewing', thinking: true,
+    }))
+    expect(rendered.result.current.reviewThinking).toBe(true)
+
+    rendered.rerender({ projectPath: '/other' })
+    expect(rendered.result.current.reviewThinking).toBe(false)
   })
 })

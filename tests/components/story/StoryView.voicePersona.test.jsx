@@ -1,6 +1,16 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import StoryView from '../../../src/components/story/StoryView.jsx'
+
+const cssWithoutComments = readFileSync(
+  path.resolve(__dirname, '../../../src/components/story/StoryView.css'),
+  'utf-8',
+).replace(/\/\*[\s\S]*?\*\//g, '')
+const voiceRowColumns = () => cssWithoutComments
+  .match(/\.story-voice-row\s*\{[^}]*grid-template-columns\s*:\s*([^;]+);/m)?.[1]
+  ?.trim()
 
 // 오디오 탭 등장인물 목록에 캐릭터 특징(appearance)을 표시(A1)하고,
 // 캐릭터 성별↔성우 성별로 추천/경고(C: 있으면 추천, 없으면 폴백)한다.
@@ -38,6 +48,45 @@ describe('StoryView 오디오 탭 — 캐릭터 특징 표시 + 성우 추천', 
     openAudioPanel()
     const row = container.querySelector('.story-voice-row')
     expect(row.querySelector('.story-voice-appearance')).toBeNull()
+  })
+
+  it('내용이 다른 나레이터/캐릭터 행도 고정된 성우·실행 열을 공유한다', () => {
+    const p = pipeline()
+    p.state.speakers = [
+      {
+        id: 'narrator', name: '나레이션', appearance: null,
+        voice: {
+          provider: 'import',
+          mp3Path: '/audio/narrator-recording-with-an-extremely-long-filename.mp3',
+          srtPath: '/audio/narrator-captions-with-an-extremely-long-filename.srt',
+        },
+      },
+      {
+        id: 'rian', name: '강리안',
+        appearance: 'young woman, elegant\nlong black hair, wearing a detailed ceremonial uniform',
+        voice: { provider: 'typecast', voiceId: 'short' },
+      },
+    ]
+    const { container } = render(<StoryView pipeline={p} voices={[
+      { id: 'short', name: '봄', provider: 'typecast', language: 'ko' },
+    ]} />)
+    openAudioPanel()
+
+    const narratorButton = screen.getByLabelText('나레이션 목소리')
+    const characterButton = screen.getByLabelText('강리안 목소리')
+    const narratorRow = narratorButton.closest('.story-voice-row')
+    const characterRow = characterButton.closest('.story-voice-row')
+
+    expect(narratorRow.querySelector('.story-voice-appearance')).toBeNull()
+    expect(characterRow.querySelector('.story-voice-appearance')).toHaveTextContent(/young woman, elegant.*long black hair/s)
+    expect(narratorButton).toHaveTextContent('파일에서')
+    expect(characterButton).toHaveTextContent('봄')
+    expect(within(narratorRow).getByTestId('src-mp3')).toHaveTextContent('narrator-recording-with-an-extremely-long-filename.mp3')
+    expect(within(narratorRow).getByTestId('src-srt')).toHaveTextContent('narrator-captions-with-an-extremely-long-filename.srt')
+    expect(narratorButton).toHaveClass('story-voice-picker-btn')
+    expect(characterButton).toHaveClass('story-voice-picker-btn')
+    expect(container.querySelectorAll('.story-voice-picker-btn')).toHaveLength(2)
+    expect(voiceRowColumns()).toBe('minmax(0, 1fr) 150px 28px')
   })
 
   it('C-경고: 캐릭터는 여성인데 선택된 성우가 남성이면 불일치 경고를 표시한다', () => {

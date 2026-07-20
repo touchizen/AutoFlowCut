@@ -350,6 +350,46 @@ describe('StoryView', () => {
     expect(screen.getByText('어느 날')).toBeTruthy()
   })
 
+  it('scenes 생성 중 테이블에 좌표순 ghost 행을 표시하고 terminal에는 durable 행으로 교체한다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 'old', segments: [{ speaker: 'old-speaker', text: 'OLD-DURABLE' }] }],
+      previewScenes: {
+        '1:0': {
+          chunkIndex: 1,
+          localSceneNo: 0,
+          scene: { sceneNo: 9, summary: 'later', segments: [{ type: 'narration', speaker: 'bob', text: 'GHOST-LATER' }] },
+        },
+        '0:1': {
+          chunkIndex: 0,
+          localSceneNo: 1,
+          scene: { sceneNo: 2, summary: 'first', segments: [{ type: 'narration', speaker: 'alice', text: 'GHOST-FIRST' }] },
+        },
+      },
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date(0).toISOString() }
+
+    const { container, rerender } = render(<StoryView pipeline={p} />)
+
+    expect(screen.getByText('씬 분리 진행 중')).toBeTruthy()
+    expect(container.querySelector('.story-scenes-panel table')).toBeTruthy()
+    expect(container.querySelectorAll('.story-scenes-panel tbody tr')).toHaveLength(2)
+    const ghosts = [...container.querySelectorAll('.story-scene-ghost')]
+    expect(ghosts.map((node) => node.textContent).filter((text) => text.startsWith('GHOST-')))
+      .toEqual(['GHOST-FIRST', 'GHOST-LATER'])
+    expect(screen.getByText('GHOST-FIRST')).not.toHaveAttribute('contenteditable')
+    expect(screen.queryByText('OLD-DURABLE')).toBeNull()
+
+    p.state.steps.scenes = { status: 'done' }
+    p.scenes = [{ storyId: 'final', segments: [{ speaker: 'narrator', text: 'FINAL-DURABLE' }] }]
+    rerender(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+
+    expect(screen.getByText('FINAL-DURABLE')).toBeTruthy()
+    expect(screen.queryByText('GHOST-FIRST')).toBeNull()
+    expect(screen.queryByText('OLD-DURABLE')).toBeNull()
+  })
+
   it('프롬프트 단계에서 scenes의 imagePrompt/videoPrompt를 렌더한다', () => {
     const p = pipeline({
       scenes: [{ storyId: 's1', imagePrompt: 'IMG-1', videoPrompt: 'VID-1' }],
@@ -361,6 +401,31 @@ describe('StoryView', () => {
     fireEvent.click(screen.getByRole('button', { name: '프롬프트' }))
     expect(screen.getByText('IMG-1')).toBeTruthy()
     expect(screen.getByText('VID-1')).toBeTruthy()
+  })
+
+  it('prompts 생성 중 기존 scene 행에 streamed prompt를 non-editable ghost text로 표시한다', () => {
+    const p = pipeline({
+      scenes: [
+        { storyId: 's1', sceneNo: 1, imagePrompt: 'OLD-IMG-1', videoPrompt: 'OLD-VID-1' },
+        { storyId: 's2', sceneNo: 2, imagePrompt: 'OLD-IMG-2', videoPrompt: 'OLD-VID-2' },
+      ],
+      previewPrompts: {
+        1: { imagePrompt: 'GHOST-IMG-1', videoPrompt: 'GHOST-VID-1' },
+      },
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.steps.audio.status = 'done'
+    p.state.steps.prompts = { status: 'running', updatedAt: new Date(0).toISOString() }
+
+    const { container } = render(<StoryView pipeline={p} />)
+
+    expect(container.querySelectorAll('.story-prompts-panel tbody tr')).toHaveLength(2)
+    expect(screen.getByText('GHOST-IMG-1')).toHaveClass('story-prompt-ghost')
+    expect(screen.getByText('GHOST-VID-1')).toHaveClass('story-prompt-ghost')
+    expect(screen.getByText('GHOST-IMG-1')).not.toHaveAttribute('contenteditable')
+    expect(screen.getByText('OLD-IMG-2')).toBeTruthy()
+    expect(screen.queryByText('OLD-IMG-1')).toBeNull()
   })
 
   it('에러 단계는 error 뱃지 + 재실행 버튼', () => {

@@ -192,6 +192,16 @@ describe('reviewScript / reviseScript (M3)', () => {
 })
 
 describe('scenes/prompts review controls', () => {
+  it('non-streaming review는 onThinkingActivity를 호출하지 않는다', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ verdict: 'pass', critique: '' }))
+    const onThinkingActivity = vi.fn()
+
+    await reviewScenes('SCRIPT', [{ sceneNo: 1, segments: [] }], [], OPTS, { fetchImpl, onThinkingActivity })
+    await reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, OPTS, { fetchImpl, onThinkingActivity })
+
+    expect(onThinkingActivity).not.toHaveBeenCalled()
+  })
+
   it('reviewScenes/reviewPrompts: verdict/critique 반환', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ verdict: 'revise', critique: 'fix' }))
     await expect(reviewScenes('SCRIPT', [{ sceneNo: 1, segments: [] }], [], OPTS, { fetchImpl })).resolves.toEqual({ verdict: 'revise', critique: 'fix' })

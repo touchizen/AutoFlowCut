@@ -911,6 +911,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   if (existing.mediaId) s.mediaId = existing.mediaId;
                   if (existing.imagePath) s.imagePath = existing.imagePath;
                   if (existing.status === 'done') s.status = 'done';
+                  // 생성 기준 스냅샷 보존 — 되돌림 done 복원이 load_csv 왕복에도 유지
+                  if (typeof existing.donePrompt === 'string') s.donePrompt = existing.donePrompt;
                 });
               } else if (existingScenes.length === scenes.length) {
                 // 옛 동작 fallback — 길이 동일 시 인덱스 매핑
@@ -918,6 +920,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   if (existing.mediaId) scenes[i].mediaId = existing.mediaId;
                   if (existing.imagePath) scenes[i].imagePath = existing.imagePath;
                   if (existing.status === 'done') scenes[i].status = 'done';
+                  if (typeof existing.donePrompt === 'string') scenes[i].donePrompt = existing.donePrompt;
                 });
               }
             } catch { /* project.json 파싱 실패 시 무시 */ }

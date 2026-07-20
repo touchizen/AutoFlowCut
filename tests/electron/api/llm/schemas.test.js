@@ -9,6 +9,14 @@ describe('SCENES_SCHEMA speakers.appearance (V2 캐릭터 레퍼런스)', () => 
   })
 })
 
+describe('SCENES_SCHEMA scenes.appearingCharacters (Issue #6)', () => {
+  it('씬 아이템에 문자열 배열 appearingCharacters가 있고 required에는 포함하지 않는다', () => {
+    const scene = SCENES_SCHEMA.properties.scenes.items
+    expect(scene.properties.appearingCharacters).toEqual({ type: 'ARRAY', items: { type: 'STRING' } })
+    expect(scene.required).not.toContain('appearingCharacters')
+  })
+})
+
 describe('SCENES_SCHEMA segment loosening (M2b-2)', () => {
   it('segment는 speaker/text를 required로 강제하지 않는다(sfx 세그먼트 수용)', () => {
     const segReq = SCENES_SCHEMA.properties.scenes.items.properties.segments.items.required

@@ -50,6 +50,54 @@ describe('stepMachine review controls', () => {
   let dir
   beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'sm-review-controls-')) })
 
+  it.each(['scenes', 'prompts'])('%s critique thinking은 leading emit 후 1초 간격으로 review progress에 실린다', async (target) => {
+    const fireThinking = async (ctx) => {
+      ctx.onThinkingActivity?.()
+      ctx.onThinkingActivity?.()
+      vi.advanceTimersByTime(999)
+      ctx.onThinkingActivity?.()
+      vi.advanceTimersByTime(1)
+      ctx.onThinkingActivity?.()
+      return { verdict: 'pass', critique: '' }
+    }
+    const llm = baseLlm(target === 'scenes'
+      ? { reviewScenes: vi.fn(async (_script, _scenes, _speakers, _opts, ctx) => fireThinking(ctx)) }
+      : { reviewPrompts: vi.fn(async (_scenes, _context, _opts, ctx) => fireThinking(ctx)) })
+    const { machine, emitted } = makeMachine(dir, llm)
+    await runToPrompts(machine)
+    emitted.length = 0
+
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-20T00:00:00.000Z'))
+    try {
+      const { operationId } = await machine.start(target, {
+        reviewOnly: true,
+        review: { [target]: { enabled: true, rounds: 1 } },
+      })
+      const events = emitted.filter((event) => (
+        event.ch === 'story:progress'
+        && event.payload.kind === 'review'
+        && event.payload.target === target
+      ))
+
+      expect(events.map((event) => {
+        const { projectToken, operationId: eventOp, usage, target: eventTarget, kind, ...progress } = event.payload
+        expect(projectToken).toBeTruthy()
+        expect(eventOp).toBe(operationId)
+        expect(usage).toBeTruthy()
+        expect(eventTarget).toBe(target)
+        expect(kind).toBe('review')
+        return progress
+      })).toEqual([
+        { round: 1, of: 1, phase: 'reviewing' },
+        { round: 1, of: 1, phase: 'reviewing', thinking: true },
+        { round: 1, of: 1, phase: 'reviewing', thinking: true },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('manual script review pass는 downstream 상태를 reset하지 않는다', async () => {
     const llm = baseLlm({ reviewScript: vi.fn(async () => ({ verdict: 'pass', critique: '' })) })
     const { machine } = makeMachine(dir, llm)
@@ -125,6 +173,50 @@ describe('stepMachine review controls', () => {
     expect(state.speakers[0]).toMatchObject({ id: 'narrator', appearance: 'older narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } })
     expect(state.steps.audio.status).toBe('pending')
     expect(state.steps.prompts.status).toBe('pending')
+  })
+
+  it('scenes revise partial은 표시 전용 scene-delta로 보내고 최종 revise 결과만 저장한다', async () => {
+    const llm = baseLlm({
+      reviewScenes: vi.fn(async () => ({ verdict: 'revise', critique: 'fix scenes' })),
+      reviseScenes: vi.fn(async (_script, _scenes, _speakers, _critique, _opts, ctx) => {
+        ctx.onPartialScene?.({
+          sceneNo: 9,
+          summary: 'GHOST',
+          segments: [{ speaker: 'narrator', text: 'preview', audioPath: '/private/ghost.wav' }],
+          imagePrompt: 'GHOST-IMG',
+        }, 2)
+        return {
+          scenes: [{ sceneNo: 1, summary: 'FINAL', segments: [{ speaker: 'narrator', text: '최종', emotion: 'normal' }] }],
+          speakers: [{ id: 'narrator', name: '나레이션' }],
+        }
+      }),
+    })
+    const { machine, emitted } = makeMachine(dir, llm)
+    await machine.open()
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    emitted.length = 0
+
+    const { operationId } = await machine.start('scenes', {
+      reviewOnly: true,
+      review: { scenes: { enabled: true, rounds: 1 } },
+    })
+
+    const deltas = emitted.filter((e) => e.ch === 'story:progress' && e.payload.kind === 'scene-delta')
+    expect(deltas.map((e) => e.payload.phase)).toEqual(['started', undefined])
+    expect(deltas[0].payload.operationId).toBe(operationId)
+    expect(deltas[1].payload).toMatchObject({
+      operationId,
+      chunkIndex: 0,
+      localSceneNo: 2,
+      scene: {
+        sceneNo: 9,
+        summary: 'GHOST',
+        segments: [{ type: 'narration', speaker: 'narrator', text: 'preview' }],
+      },
+    })
+    expect(deltas[1].payload.scene).not.toHaveProperty('imagePrompt')
+    expect((await readJson(dir, 'scenes.json')).scenes[0].summary).toBe('FINAL')
   })
 
   it('manual scenes review revise가 speakers를 비워 반환해도 기존 referenced speaker voice를 보존한다', async () => {
@@ -245,5 +337,38 @@ describe('stepMachine review controls', () => {
     expect(state.lastPushedRevision).toBe(1)
     expect(manifest.pushRevision).toBe(2)
     expect(emitted.find((e) => e.ch === 'story:pushScenes')?.payload.pushRevision).toBe(2)
+  })
+
+  it('prompts revise partial은 표시 전용 prompt-delta로 보내고 최종 revise 결과만 저장한다', async () => {
+    const llm = baseLlm({
+      reviewPrompts: vi.fn(async () => ({ verdict: 'revise', critique: 'fix prompts' })),
+      revisePrompts: vi.fn(async (scenes, _context, _critique, _opts, ctx) => {
+        ctx.onPartialPrompt?.({ sceneNo: 1, imagePrompt: 'GHOST-IMG', videoPrompt: 'GHOST-VID', secret: 'drop' })
+        return { scenes: scenes.map((scene) => ({ ...scene, imagePrompt: 'FINAL-IMG', videoPrompt: 'FINAL-VID' })) }
+      }),
+    })
+    const { machine, emitted } = makeMachine(dir, llm)
+    await runToPrompts(machine)
+    emitted.length = 0
+
+    const { operationId } = await machine.start('prompts', {
+      reviewOnly: true,
+      review: { prompts: { enabled: true, rounds: 1 } },
+    })
+
+    const deltas = emitted.filter((e) => e.ch === 'story:progress' && e.payload.kind === 'prompt-delta')
+    expect(deltas.map((e) => e.payload.phase)).toEqual(['started', undefined])
+    expect(deltas[0].payload.operationId).toBe(operationId)
+    expect(deltas[1].payload).toMatchObject({
+      operationId,
+      sceneNo: 1,
+      imagePrompt: 'GHOST-IMG',
+      videoPrompt: 'GHOST-VID',
+    })
+    expect(deltas[1].payload).not.toHaveProperty('secret')
+    expect((await readJson(dir, 'scenes.json')).scenes[0]).toMatchObject({
+      imagePrompt: 'FINAL-IMG',
+      videoPrompt: 'FINAL-VID',
+    })
   })
 })

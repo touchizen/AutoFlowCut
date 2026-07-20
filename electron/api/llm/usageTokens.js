@@ -25,11 +25,17 @@ export function claudeResultToUsage(message) {
   }
 }
 
+/** thinking 중 system 진행 메시지의 현재 블록 누적 추정 토큰(이미 토큰 단위). 그 외 null. */
+export function claudeThinkingTokens(message) {
+  if (message?.type !== 'system' || message.subtype !== 'thinking_tokens') return null
+  return message.estimated_tokens ?? null
+}
+
 /**
  * 스트리밍 실시간 표시용 추정 — message_delta.usage 는 응답 **끝에 한 번만** 오므로
- * (0.3s 짜리든 2분 짜리든 마지막에 딱 1개, 실측 확인됨) 생성 중 숫자를 올리려면
- * 스트리밍되는 텍스트/thinking 델타 길이로 output 을 추정하는 수밖에 없다 —
- * Claude Code 의 thinking 카운터와 같은 방식이다. result 에서 정확치로 확정(commit)된다.
+ * (0.3s 짜리든 2분 짜리든 마지막에 딱 1개, 실측 확인됨) 텍스트/JSON 은 델타 길이로
+ * 추정하고, thinking 은 system/thinking_tokens 누적 추정값을 쓴다. result 에서 정확치로
+ * 확정(commit)된다.
  */
 
 /** message_start 의 입력 토큰(캐시 포함, 즉시 정확). 그 외 null. */

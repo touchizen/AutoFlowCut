@@ -10,6 +10,8 @@ describe('buildVideoI2VStartOptions', () => {
       generation: { video: { i2v: { provider: 'grok' } } },
       videoBatchCount: 2,
       videoConcurrency: 3,
+      flowPacingMinMs: 5000,
+      flowPacingMaxMs: 12000,
     }
     const framePairs = [{ id: 'fp_1' }]
 
@@ -31,6 +33,8 @@ describe('buildVideoI2VStartOptions', () => {
       generationSettings: settings,
       videoBatchCount: 2,
       concurrency: 3,
+      flowPacingMinMs: 5000,
+      flowPacingMaxMs: 12000,
       seed: 123,
     })
     expect(options.generationSettings).toBe(settings)
@@ -63,6 +67,8 @@ describe('buildVideoI2VStartOptions', () => {
       generationSettings: settings,
       videoBatchCount: 1,
       concurrency: 4,
+      flowPacingMinMs: undefined,
+      flowPacingMaxMs: undefined,
       seed: null,
     })
   })
@@ -86,6 +92,8 @@ describe('buildVideoI2VStartOptions', () => {
       'generationSettings',
       'videoBatchCount',
       'concurrency',
+      'flowPacingMinMs',
+      'flowPacingMaxMs',
       'seed',
     ])
   })
