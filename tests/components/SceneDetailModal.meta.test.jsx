@@ -183,7 +183,8 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
         seed: 7777,
         timestamp: 1600000000000,
         model: 'flow-old',
-        mediaId: 'history-media-id'
+        mediaId: 'history-media-id',
+        prompt: 'the prompt that generated this history image'
       }
     })
     mockRestoreFromHistory.mockResolvedValue({ success: true, path: '/restored.png' })
@@ -223,6 +224,8 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
       generatedAt: 1600000000000,
       model: 'flow-old',
       mediaId: 'history-media-id',
+      // 복원한 이미지의 생성 프롬프트가 새 baseline — 이후 편집→되돌림의 done 복원 기준.
+      donePrompt: 'the prompt that generated this history image',
     }))
   })
 
@@ -264,6 +267,9 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
     expect(callArgs.seed).toBeNull()
     expect(callArgs.generatedAt).toBeNull()
     expect(callArgs.model).toBeNull()
+    // metadata 에 prompt 가 없으면 donePrompt 도 null — 이전 생성의 stale baseline 이 남아
+    // "다른 프롬프트 이미지"에 done 오복원되는 것을 막는다.
+    expect(callArgs.donePrompt).toBeNull()
   })
 })
 

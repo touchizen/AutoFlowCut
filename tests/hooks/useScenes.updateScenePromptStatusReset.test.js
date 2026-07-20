@@ -32,6 +32,60 @@ describe('updateScene — 프롬프트 변경 시 Done 씬 pending 리셋', () =
     expect(result.current.scenes[0].status).toBe('pending')
   })
 
+  it('완료 프롬프트에서 벗어났다가 정확히 되돌리면 done 으로 복원', () => {
+    const { result } = renderHook(() => useScenes())
+    seedDone(result, { donePrompt: 'OLD' })
+
+    act(() => { result.current.updateScene('s1', { prompt: 'NEW' }) })
+    expect(result.current.scenes[0].status).toBe('pending')
+
+    act(() => { result.current.updateScene('s1', { prompt: 'OLD' }) })
+    expect(result.current.scenes[0].status).toBe('done')
+  })
+
+  it('legacy done 씬은 첫 편집 때 기존 prompt 를 baseline 으로 캡처하고 되돌리면 done 복원', () => {
+    const { result } = renderHook(() => useScenes())
+    seedDone(result)
+
+    act(() => { result.current.updateScene('s1', { prompt: 'NEW' }) })
+    expect(result.current.scenes[0]).toMatchObject({
+      prompt: 'NEW',
+      donePrompt: 'OLD',
+      status: 'pending',
+    })
+
+    act(() => { result.current.updateScene('s1', { prompt: 'OLD' }) })
+    expect(result.current.scenes[0].status).toBe('done')
+  })
+
+  it('baseline 없는 legacy pending 씬은 되돌림처럼 보여도 done 으로 오복원하지 않음', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.setScenes([
+        { id: 's1', prompt: 'EDITED', status: 'pending', image: 'data:img' },
+      ])
+    })
+
+    act(() => { result.current.updateScene('s1', { prompt: 'ORIGINAL' }) })
+    expect(result.current.scenes[0].status).toBe('pending')
+    expect(result.current.scenes[0]).not.toHaveProperty('donePrompt')
+  })
+
+  it('재생성 완료가 donePrompt 를 새 prompt 로 갱신해 옛 prompt 를 done 으로 복원하지 않음', () => {
+    const { result } = renderHook(() => useScenes())
+    seedDone(result, { prompt: 'P1', donePrompt: 'P1' })
+
+    act(() => { result.current.updateScene('s1', { prompt: 'P2' }) })
+    act(() => { result.current.updateScene('s1', { status: 'done', donePrompt: 'P2' }) })
+    expect(result.current.scenes[0]).toMatchObject({ prompt: 'P2', donePrompt: 'P2', status: 'done' })
+
+    act(() => { result.current.updateScene('s1', { prompt: 'P1' }) })
+    expect(result.current.scenes[0].status).toBe('pending')
+
+    act(() => { result.current.updateScene('s1', { prompt: 'P2' }) })
+    expect(result.current.scenes[0].status).toBe('done')
+  })
+
   it('imagePath(폴더 모드, image=null) 만 있어도 프롬프트 변경 시 pending', () => {
     const { result } = renderHook(() => useScenes())
     act(() => {
@@ -102,5 +156,33 @@ describe('updateScene — 프롬프트 변경 시 Done 씬 pending 리셋', () =
     })
     act(() => { result.current.updateScene('s1', { prompt: 'NEW' }) })
     expect(result.current.scenes[0].status).toBe('generating')
+  })
+
+  it('순수 생성실패(error, 이미지는 옛 done 그대로) 씬을 baseline 으로 되돌리면 done 복원 + 잔여 error 클리어', () => {
+    // 재생성이 아예 실패하면 이미지는 여전히 donePrompt 산물이다 — 되돌림은 정당한 done 복귀이고,
+    // 이때 옛 에러 메시지가 남아 있으면 done 인데 에러 배지가 뜨는 모순 상태가 된다.
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.setScenes([{
+        id: 's1', prompt: 'P2', status: 'error', error: 'Quota exceeded', errorKind: 'quota',
+        image: 'data:img', donePrompt: 'P1',
+      }])
+    })
+    act(() => { result.current.updateScene('s1', { prompt: 'P1' }) })
+    expect(result.current.scenes[0]).toMatchObject({ status: 'done', error: null, errorKind: null })
+  })
+
+  it('저장 실패(error, 새 이미지 + donePrompt:null 클리어됨) 씬은 되돌려도 done 으로 오복원하지 않음', () => {
+    // 폴더 저장 실패 패치는 NEW 이미지를 메모리에 남기고 donePrompt 를 null 로 클리어한다 —
+    // 이 상태에서 옛 프롬프트로 되돌려도 화면 이미지는 새 프롬프트 산물이므로 done 이 되면 안 된다.
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.setScenes([{
+        id: 's1', prompt: 'P2', status: 'error', error: 'Image save failed: Disk full',
+        image: 'data:new-img', donePrompt: null,
+      }])
+    })
+    act(() => { result.current.updateScene('s1', { prompt: 'P1' }) })
+    expect(result.current.scenes[0].status).toBe('pending')
   })
 })
