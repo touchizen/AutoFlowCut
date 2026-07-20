@@ -49,3 +49,50 @@ describe('mergeTextIntoScenes — 프롬프트 변경 시 Done 씬 pending', () 
     expect(out[0].status).toBe('pending')
   })
 })
+
+// updateScene 과 동일한 donePrompt 기반 done 복원 규칙을 벌크(PromptInput) 경로에도 적용.
+// 실측 버그: done→편집(pending)→정확히 원래 프롬프트로 원복해도 done 으로 복원 안 되고 pending 고착.
+// mergeField 가 "직전 값과 다르면 pending" 만 하고 donePrompt 와 비교하지 않아서 원복을 인지 못했다.
+describe('mergeTextIntoScenes — 프롬프트 원복 시 Done 복원', () => {
+  it('첫 편집 시 생성 기준(donePrompt=P0) 을 캡처한다 (원복 baseline 확보)', () => {
+    const out = mergeTextIntoScenes([doneScene({ prompt: 'P0' })], 'P1', 3, { truncateToIncoming: true })
+    expect(out[0].status).toBe('pending')
+    expect(out[0].donePrompt).toBe('P0')
+  })
+
+  it('원복: donePrompt=P0 인 pending 씬을 다시 P0 로 되돌리면 done 복원', () => {
+    const editedPending = doneScene({ prompt: 'P1', donePrompt: 'P0', status: 'pending' })
+    const out = mergeTextIntoScenes([editedPending], 'P0', 3, { truncateToIncoming: true })
+    expect(out[0].prompt).toBe('P0')
+    expect(out[0].status).toBe('done')
+  })
+
+  it('legacy(donePrompt 없음) 도 P0→P1→P0 왕복이면 done 복원', () => {
+    // 1차 편집: baseline 캡처 + pending
+    const after1 = mergeTextIntoScenes([doneScene({ prompt: 'P0' })], 'P1', 3, { truncateToIncoming: true })
+    expect(after1[0].status).toBe('pending')
+    // 2차 원복: 캡처된 donePrompt 로 복원
+    const after2 = mergeTextIntoScenes([after1[0]], 'P0', 3, { truncateToIncoming: true })
+    expect(after2[0].status).toBe('done')
+  })
+
+  it('원복 복원 시 이전 세대의 error/errorKind 클리어 (updateScene 과 동일)', () => {
+    const errored = doneScene({ prompt: 'P1', donePrompt: 'P0', status: 'error', error: 'boom', errorKind: 'gen' })
+    const out = mergeTextIntoScenes([errored], 'P0', 3, { truncateToIncoming: true })
+    expect(out[0].status).toBe('done')
+    expect(out[0].error).toBe(null)
+    expect(out[0].errorKind).toBe(null)
+  })
+
+  it('P0 와 다른 값(P2)으로 바꾸면 여전히 pending (복원 아님)', () => {
+    const editedPending = doneScene({ prompt: 'P1', donePrompt: 'P0', status: 'pending' })
+    const out = mergeTextIntoScenes([editedPending], 'P2', 3, { truncateToIncoming: true })
+    expect(out[0].status).toBe('pending')
+  })
+
+  it('generating 씬은 벌크 편집으로 status 를 건드리지 않음 (updateScene 과 동일 가드)', () => {
+    const gen = doneScene({ prompt: 'P0', donePrompt: 'P0', status: 'generating' })
+    const out = mergeTextIntoScenes([gen], 'P1', 3, { truncateToIncoming: true })
+    expect(out[0].status).toBe('generating')
+  })
+})
