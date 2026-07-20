@@ -10,6 +10,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { voiceKey } from '../../utils/voiceKey'
+import AudioKeyGateCard from './AudioKeyGateCard'
+import { keyIdForProvider } from '../../config/apiKeyRegistry'
 import './VoicePicker.css'
 
 const RENDER_CAP = 120
@@ -258,6 +260,14 @@ export default function VoicePicker({
               {v.traits?.length > 0 && (
                 <div className="vp-tags">
                   {v.traits.map(tag => <span key={tag} className="vp-tag">{tag}</span>)}
+                </div>
+              )}
+              {/* Task 3(attempt-first): a preview click first tries the call, and only when it
+                  actually fails with no-key does an inline key field show up right on the card
+                  that was clicked — the list itself stays keyless (no upfront gate per voice). */}
+              {previewStatus === 'error' && previewState?.error === 'no-key' && (
+                <div onClick={(e) => e.stopPropagation()}>
+                  <AudioKeyGateCard missing={[{ provider: v.provider, keyId: keyIdForProvider(v.provider) }]} t={t} />
                 </div>
               )}
               <span className="vp-check">✔</span>

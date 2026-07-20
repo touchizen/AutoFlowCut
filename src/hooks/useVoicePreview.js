@@ -41,7 +41,7 @@ export function useVoicePreview() {
       res = await window.electronAPI.ttsPreviewVoice({ provider: voice.provider, voiceId: voice.voiceId, language: voice.language || 'ko' })
     } catch { if (seq === seqRef.current) setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error' }); return }
     if (seq !== seqRef.current) return // stale
-    if (!res || res.error) { setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error' }); return }
+    if (!res || res.error) { setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error', error: res?.error || 'failed' }); return }
 
     let bytes
     try {
