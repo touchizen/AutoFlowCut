@@ -21,6 +21,7 @@ import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/sto
 // 순수 함수(TextDecoder만 사용) — renderer 전용 의존성이 없어 main에서도 그대로 쓴다.
 import { decodeTextBytes } from '../../src/utils/decodeTextFile.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
+import { runScenesSplitExperiment } from './storySplitExperiment.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
@@ -198,7 +199,7 @@ export async function readAudioPackage(projectPath) {
   return { manifest, lastPushedRevision: st?.lastPushedRevision ?? 0 }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null, cutAudio = cutMp3ToWavSegments }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null, cutAudio = cutMp3ToWavSegments, sceneSplitExperiment = null }) {
   const store = createStoryStore(projectPath)
   // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
   const resolveTts = (provider) => (ttsFor ? ttsFor(provider) : tts)
@@ -259,6 +260,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   const projectToken = randomUUID()
   let state = null
   let controller = null
+  let sceneSplitExperimentRecord = null
   // start()가 실행 소유권을 잡았다는 **동기** 래치. busy 검사는 state.steps의 'running'을 보는데,
   // 그건 첫 await 뒤에야 마킹된다 — 그 사이에 await가 하나라도 있으면 같은 tick의 두 호출이 **둘 다**
   // 통과한다(실측: onlySpeaker 사전검사가 scenes.json을 읽자 busy 0, TTS 2회). 동기로 먼저 잡는다.
@@ -1152,15 +1154,50 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const opts = buildLlmOptions(effectiveOptions(params), roster ? { roster } : {})
       sendStepLog('scenes', 'split-request', 'LLM 씬 분리 요청', opId)
       send('story:progress', { kind: 'scene-delta', phase: 'started' }, opId)
-      const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, {
-        signal,
-        onPartialScene: (scene, index) => send('story:progress', {
-          kind: 'scene-delta',
-          chunkIndex: 0,
-          localSceneNo: index,
-          scene: sanitizePreviewScene(scene),
-        }, opId),
-      })
+      let scenes
+      let speakers
+      let activeExperimentRecord = null
+      const experimentStartedAt = sceneSplitExperiment ? Date.now() : null
+      if (!sceneSplitExperiment) {
+        // 기본 경로: M1의 단일 호출 인자/preview 좌표를 그대로 유지한다.
+        ;({ scenes, speakers } = await llm.splitScenes(scriptMd, opts, {
+          signal,
+          onPartialScene: (scene, index) => send('story:progress', {
+            kind: 'scene-delta',
+            chunkIndex: 0,
+            localSceneNo: index,
+            scene: sanitizePreviewScene(scene),
+          }, opId),
+        }))
+      } else {
+        if (sceneSplitExperiment.mode !== 'single' && sceneSplitExperiment.mode !== 'parallel') {
+          throw new Error(`unknown scene split experiment mode: ${sceneSplitExperiment.mode}`)
+        }
+        try {
+          const experimental = await runScenesSplitExperiment(scriptMd, llm, opts, {
+            ...sceneSplitExperiment,
+            signal,
+            onPartialScene: (scene, localSceneNo, chunkIndex) => send('story:progress', {
+              kind: 'scene-delta',
+              chunkIndex,
+              localSceneNo,
+              scene: sanitizePreviewScene(scene),
+            }, opId),
+          })
+          scenes = experimental.scenes
+          speakers = experimental.speakers
+          activeExperimentRecord = experimental.record
+        } catch (error) {
+          if (error?.experimentRecord) {
+            activeExperimentRecord = error.experimentRecord
+            activeExperimentRecord.timing.terminalMs = Math.max(0, Date.now() - experimentStartedAt)
+            sceneSplitExperimentRecord = activeExperimentRecord
+            try { sceneSplitExperiment.onRecord?.(activeExperimentRecord) } catch {}
+            send('story:progress', { kind: 'scene-split-experiment', record: activeExperimentRecord }, opId)
+          }
+          throw error
+        }
+      }
       if (signal?.aborted) return
       sendStepLog('scenes', 'split-response', `씬 ${scenes?.length || 0}개 응답 수신`, opId, { count: scenes?.length || 0 })
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
@@ -1189,6 +1226,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       sendStepLog('scenes', 'save', 'scenes.json 저장', opId)
       await store.saveText('scenes.json', JSON.stringify({ scenes: nextScenes }, null, 2))
       state.speakers = nextSpeakers
+      if (activeExperimentRecord) {
+        activeExperimentRecord.timing.terminalMs = Math.max(0, Date.now() - experimentStartedAt)
+        sceneSplitExperimentRecord = activeExperimentRecord
+        try { sceneSplitExperiment.onRecord?.(activeExperimentRecord) } catch {}
+        send('story:progress', { kind: 'scene-split-experiment', record: activeExperimentRecord }, opId)
+      }
       sendStepLog('scenes', 'complete', '씬 분리 완료', opId)
     },
     async audio(params, opId, signal) {
@@ -1754,6 +1797,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     projectToken,
     // 이 machine 의 토큰 누산기. provider tap 이 전역 sink 를 통해 여기에 기록한다.
     usageTracker,
+    getSceneSplitExperimentRecord() { return sceneSplitExperimentRecord },
     async open() {
       state = await store.load()
       await healMissingStepArtifacts()
