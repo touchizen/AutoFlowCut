@@ -1,86 +1,157 @@
-# Story 오디오 API 키 게이트 + 설정 키 통합 — 설계
+# Story 오디오 API 키 게이트 + 설정 키 통합 — 설계 (v2)
 
 작성: 2026-07-20 / 대상 repo: AutoFlowCut (AutoCraft Studio, Electron)
+개정: v2 — Codex(gpt-5.6-sol) + Fable 5 교차검증으로 v1 핵심 가정 4개가 틀린 것을 실측 확인 후 재설계. 대응 이력 §9.
 
-## 1. 배경 / 문제
+## 1. 배경 / 문제 (실측 정정 포함)
 
-Story 기능의 오디오 탭에서 나레이션을 생성하려면 화자별 TTS provider의 API 키가 필요하다. 현재 상태:
+Story 오디오 탭은 화자별 TTS로 나레이션을 만들고, SFX 세그먼트도 합성한다. 현재:
 
-- **키 없으면 raw 영어 에러**: 키가 없으면 `synthesize()`(그리고 `listVoices()`)가 `throw new Error('No Typecast API key')`. 이 에러엔 `errorKind`가 없어서([stepMachine.js:1690](../../electron/story/stepMachine.js#L1690), [story-api.js:149](../../electron/ipc/story-api.js#L149)) 오디오 로그에 **번역 안 된 영어 문자열**이 인라인 배너로 뜬다. 모달·토스트·사전 안내·설정 유도 전부 없다.
-- **성우 목록도 키를 요구**: "기본 성우" 옆 🎙 버튼 → VoicePicker가 `listVoices()`를 부르는데 [typecast.js:73-74](../../electron/api/tts/typecast.js#L73)는 키 없으면 즉시 throw. 즉 성우를 고르는 것부터 키가 있어야 한다.
-- **설정 키 UI 분산**: 설정에 "API 키" 탭(Gemini/Google BYOK)과 "TTS 키" 탭(Typecast/ElevenLabs/GoogleTTS 드롭다운)이 분리돼 있고, TTS 탭은 드롭다운이라 **어떤 provider 키가 있고 없는지 한눈에 안 보인다**.
-- **테스트가 어렵다**: 키 소스가 3중(설정 store → env → `~/.<svc>/credentials`)이라, 설정에서 지워도 폴백 때문에 "키 없음" 상태를 재현할 수 없다.
+- **키 없으면 raw 영어 에러**: 키가 없으면 합성 어댑터가 `throw new Error('No <Provider> API key')` 또는 resolver가 `Typecast API key not found: ...`([typecastKey.js:17](../../electron/api/tts/typecastKey.js#L17))를 던지고, 이 에러엔 대체로 `errorKind`가 없어([stepMachine.js:1690](../../electron/story/stepMachine.js#L1690)) 오디오 로그에 **번역 안 된 영어**가 인라인으로 뜬다.
+- **키 소스는 3중, 게이트가 볼 status는 1중**: 런타임 키 해석은 `multiKeyStore.getKey() || env || ~/.<svc>/credentials` 폴백([main.js:233-238](../../electron/main.js#L233))인데, renderer가 보는 `keys:status`는 `multiKeyStore.hasKey()` **store만**([tts-api.js:20-26](../../electron/ipc/tts-api.js#L20)) 본다. 이 불일치가 v1 게이트의 치명적 결함이었다(폴백 키 사용자를 거짓 차단).
+- **성우 목록은 키를 요구하지 않는다(v1 오독 정정)**: `listVoices()`는 키 없으면 `KNOWN_VOICES`/정적목록/시드를 **반환**([typecast.js:69-71](../../electron/api/tts/typecast.js#L69) → `fetchAndCacheVoices` [:41-63](../../electron/api/tts/typecast.js#L41)), main도 예외를 삼켜 `[]`를 준다([main.js:262](../../electron/main.js#L262)). 키가 실제 필요한 지점은 **성우 미리듣기(preview→synthesize)** 와 **합성**이다. 목록 로드는 Story 진입 시 App effect가 이미 수행([App.jsx:711](../../src/App.jsx#L711)).
+- **provider 이름 불일치**: Story 화자 provider는 `'gemini'`([storyTtsProviders.js:1](../../src/config/storyTtsProviders.js#L1))인데 키 store/ resolver 식별자는 `'genai'`([main.js:237](../../electron/main.js#L237)). `keyStoreMulti` allowlist엔 `genai`만 있고 `gemini`는 없다.
+- **설정 키 UI 분산 + genai 이중 store**: "API 키" 탭(Gemini, `keyStore` → `userData/genai-key.enc` [main.js:213](../../electron/main.js#L213)) + "TTS 키" 탭(Typecast/ElevenLabs/GoogleTTS, `keyStoreMulti` → `userData/keys/*.enc`). 그런데 `keyStoreMulti`의 allowlist에도 `genai`가 있어([keyStoreMulti.js:8-14](../../electron/api/keyStoreMulti.js#L8)) `userData/keys/genai-key.enc`라는 **다른 파일**을 쓸 수 있다(split-brain 위험).
 
 ## 2. 목표 (스코프)
 
-1. **오디오 생성 pre-flight 게이트**: 생성 시작 전에 이 대본에 쓰이는 화자들의 provider 키가 다 있는지 확인. 없으면 시작하지 않고 안내한다.
-2. **VoicePicker 게이트**: 성우 목록 로드 전에 해당 provider 키 유무 확인. 없으면 빈 목록/에러 대신 안내 + 인라인 입력.
-3. **키 없을 때 그 자리에서 바로 입력**: VoicePicker·게이트 안에 provider 키 입력 필드. 입력 저장 → 즉시 재시도(목록 로드/생성 진행).
-4. **설정 "API 키" 탭으로 통합(방법 B, UI만 통합)**: Gemini + Typecast + ElevenLabs + GoogleTTS를 한 탭에 목록형으로. 각 provider의 키 유무를 한눈에. "TTS 키" 탭 제거.
-5. **테스트용 "키 없음" 재현**: dev 전용으로 credentials/env 폴백을 무시하는 스위치.
+1. **오디오 생성 pre-flight 게이트(진실 소스 = main)**: 생성 시작 전, 실제로 합성될 세그먼트가 요구하는 provider 키가 **런타임 resolver 기준으로 해석되는지** main에서 판정. 없으면 시작 안 하고 안내.
+2. **미리듣기 게이트**: 성우 목록은 키 없이 보여주되, **미리듣기/합성 시** 키 없으면 안내 + 인라인 입력.
+3. **키 없을 때 그 자리 인라인 입력**: 게이트/미리듣기 카드 안에 provider 키 입력. 저장 → 재검사 후 진행 + 목록 refetch.
+4. **설정 "API 키" 탭 통합(방법 B, UI만 통합)** + genai split-brain 제거.
+5. **테스트용 "키 없음" 재현**: dev 전용 폴백 무시 스위치, 게이트가 쓰는 resolver IPC와 동일 경로.
 
-## 3. 비목표 (이번 스코프 밖)
+## 3. 비목표
 
-- Gemini 키의 **데이터 store 이전/마이그레이션** (방법 A). Gemini 키는 계속 `keyStore`(단일 파일, 저장 전 검증)에 저장한다.
-- Story 성우 picker에 Google Cloud TTS provider 추가 (현재 picker는 `typecast|gemini|elevenlabs`만).
-- 오디오 외 기능(이미지/Veo)의 키 UX 변경.
+- Gemini 키 데이터 store 이전/마이그레이션(방법 A). Gemini 키는 계속 `keyStore`(`genai-key.enc`, 저장 전 검증)에 저장.
+- Story 성우 picker에 GoogleTTS 추가(현재 picker는 typecast/gemini/elevenlabs).
+- 이미지/Veo 기능의 키 UX 변경.
 
 ## 4. 아키텍처
 
-### 4.1 공용 키 입력 컴포넌트 (설계의 핵심 단위)
+### 4.1 진실 소스 — main pre-flight IPC
 
-세 곳(설정 목록 / VoicePicker / 생성 게이트)이 같은 "provider 키 상태 + 입력" UI를 쓰므로 **하나의 재사용 컴포넌트**로 추출한다.
+`ipcMain.handle('story:audio-preflight', (params) => …)`를 추가한다. **renderer의 `keys:status`가 아니라** 런타임 합성과 동일한 `ttsKeyFor`/`sfxKeyFor` resolver를 써서 각 필요 provider의 키가 **해석되는지**(폴백 포함) `try/catch`로 판정한다. 반환:
 
-- 컴포넌트: `src/components/settings/ApiKeyField.jsx` (가칭)
-- 책임: 한 provider의 키 상태 표시(있음 ✓/없음 배지) + 입력 + 저장/삭제 + (Gemini만) 저장 전 검증.
-- 인터페이스(무엇을 하는가/어떻게 쓰는가/무엇에 의존하는가):
-  - props: `{ provider, label, getKeyUrl?, requireValidation?, onSaved? }`
-  - provider별 hook 선택: `provider === 'genai'` → `useApiKey`(validateKey O), 그 외 → `useTtsKeys(provider)`(validateKey X). 이 분기가 "방법 B(저장은 기존 경로 그대로, UI만 통합)"의 실체다.
-  - 평문 키는 저장 직후 폐기(기존 hook 계약 유지). renderer는 `hasKey` boolean만 본다.
-- 이 컴포넌트만 이해하면 세 소비처가 어떻게 키를 다루는지 알 수 있다. 내부(어느 store를 쓰는지)는 소비처가 몰라도 된다.
+```
+{ missing: [{ provider, keyId }], encryptionUnavailable: boolean }
+```
 
-### 4.2 설정 "API 키" 통합 탭
+- `provider`: 화면 표시용(예: 'typecast','gemini','elevenlabs').
+- `keyId`: 설정/저장 대상 식별자(§4.3 registry; 'gemini'→'genai').
+- renderer 게이트는 이 결과를 **표시만** 하고, 실제 `start('audio')`도 main에서 동일 검사를 반복(선차단이 아니라 진실은 main).
 
-- `ApiKeyTab.jsx`를 provider 목록으로 재작성: `genai(Google Gemini) · typecast · elevenlabs · googletts` 각각을 `ApiKeyField` 행으로 세로 나열.
-- 기존 `TtsKeyTab.jsx` 및 탭 정의([SettingsModal.jsx:18-25](../../src/components/SettingsModal.jsx#L18)) 제거, 탭 id `ttsKey` 삭제. `openSettings('ttsKey')` 호출부는 `openSettings('apiKey')`로 이관.
-- Gemini 행에는 기존 안내(Gemini TTS가 이 키를 재사용) 문구 유지.
-- 데이터 흐름: 각 행이 자기 provider의 `keys:status`/`genai:*`를 독립 구독. 한 행의 저장이 다른 행에 영향 없음.
+### 4.2 필요 provider/키 계산 (backend, 세그먼트 기준)
 
-### 4.3 오디오 생성 pre-flight 게이트
+`buildAudioParams`([StoryView.jsx:1077-1104](../../src/components/story/StoryView.jsx#L1077))가 만든 `params`(speakers[].voice, sfxSources, regenerate)와 `scenes` 세그먼트로, **실제 합성할 세그먼트만** 골라 provider 집합을 만든다. 규칙(합성 루프 [stepMachine.js:1549-1588](../../electron/story/stepMachine.js#L1549)와 동일):
 
-- 위치: renderer(StoryView), 오디오 생성 트리거 직전([buildAudioParams](../../src/components/story/StoryView.jsx#L1077) 흐름 / `regenerateSegment`).
-- 필요 provider 집합 계산: 대본 화자 목록 → 각 화자의 **effective provider**(선택된 voiceId의 provider, 미선택이면 기본 `typecast` — [useStoryVoiceSelection.js:31-37](../../src/hooks/useStoryVoiceSelection.js#L31), [story-api.js:68](../../electron/ipc/story-api.js#L68)) → 중복 제거.
-- 각 provider의 `hasKey`를 `keys:status`(genai는 `genai:status`)로 확인. 없는 provider가 하나라도 있으면 **생성 시작 안 함** + 게이트 UI 표시(4.1 `ApiKeyField`를 없는 provider마다). 입력·저장되면 재확인 후 진행.
+- **narration 세그먼트**: 화자 voice → `voice.provider`. `voice:null`(voiceId 빈값 = "기본 성우")이면 **defaultVoice.provider = 'typecast'**([story-api.js:70](../../electron/ipc/story-api.js#L70)). `voice.provider==='import'`이면 **제외**(TTS 키 불필요).
+- **SFX 세그먼트**(부분 재생성이 아닐 때): `sfxSources[segId] || seg.sourceMode || 'elevenlabs'`([stepMachine.js:1582](../../electron/story/stepMachine.js#L1582)). `'library'`는 키 불필요 → **제외**.
+- **재사용 가능한 완료 세그먼트**(`canReuse`/`canReuseSfx` [stepMachine.js:1573-1588](../../electron/story/stepMachine.js#L1573))는 재합성 안 하므로 **제외**(불필요 차단 방지). 단순화가 필요하면 1차 구현은 이 제외를 생략하고 "요구 provider 전체"로 보수적 계산 후, 정확도 개선을 후속으로 둘 수 있다 — 트레이드오프는 §7에서 확정.
+- **부분 실행**(`params.regenerate`/화자 단독/세그먼트 테스트)은 그 스코프의 세그먼트만으로 집합 계산.
 
-### 4.4 VoicePicker 게이트
+이 계산은 합성 루프의 provider 결정 로직을 **공유 함수로 추출**해 pre-flight와 실제 실행이 갈리지 않게 한다(single source).
 
-- 위치: [VoicePicker.jsx](../../src/components/story/VoicePicker.jsx) / 열기 경로 `voiceSel.openVoicePicker(sp)`.
-- 성우 목록 로드 전에 해당 화자 provider의 `hasKey` 확인. 없으면 `listVoices()` 호출하지 않고 `ApiKeyField`(그 provider) 표시. 저장되면 목록 재로드.
-- 이렇게 하면 대부분의 사용자가 성우 선택 단계에서 이미 키를 넣게 되어, 4.3 게이트는 안전망이 된다.
+### 4.3 provider → keyId → resolver/store registry (별칭 명문화)
 
-### 4.5 런타임 안전망 (errorKind)
+단일 매핑 테이블을 둔다(가칭 `src/config/apiKeyRegistry.js` + main 대응):
 
-pre-flight를 통과해도 런타임에 키가 무효/폐기될 수 있다. missing-key throw에 `errorKind: 'story-audio-no-tts-key'`를 부여([stepMachine.js:1690](../../electron/story/stepMachine.js#L1690) catch가 errorKind 보존)하고, ko 로케일에 안내 문구 + `resolveDisplayError`가 이 kind면 "키 설정" 유도 문구를 보이게 한다. (raw 영어 문자열 제거.)
+| storyProvider | keyId(store/status) | 저장 hook | resolver |
+|---|---|---|---|
+| typecast | typecast | useTtsKeys('typecast') | ttsKeyFor.typecast |
+| elevenlabs | elevenlabs | useTtsKeys('elevenlabs') | ttsKeyFor.elevenlabs (+ sfxKeyFor) |
+| gemini | **genai** | **useApiKey**(검증O) | ttsKeyFor.gemini = genaiKeyStore |
+| (설정 전용) googletts | googletts | useTtsKeys('googletts') | ttsKeyFor.googletts |
 
-### 4.6 테스트용 "키 없음" 재현 (dev 전용)
+pre-flight/게이트/VoicePicker는 storyProvider를 이 테이블로 keyId에 매핑해서 status/save 대상을 결정한다. **'gemini'를 그대로 keys:*에 넘기지 않는다.**
 
-- env 스위치 `AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1`이면 [typecastKey.js](../../electron/api/tts/typecastKey.js)/`credentialsKey.js`의 env·`~/.<svc>/credentials` 폴백을 무시하고 설정 store만 본다. dev에서 설정 키를 비우면 진짜 "키 없음"이 재현된다.
-- 단위 테스트는 `getKey` mock으로 폴백 자체를 우회하므로 이 스위치와 무관하게 게이트 로직을 검증한다.
+### 4.4 게이트 진입점 통합
+
+오디오를 트리거하는 모든 경로를 공통 `runAudioWithPreflight(scopeParams)`로 감싼다:
+- 기본 생성 `start('audio')`, 재실행, 자동 진행([StoryView.jsx:1292/1312/1395](../../src/components/story/StoryView.jsx#L1292)), 세그먼트 재생성([:1144](../../src/components/story/StoryView.jsx#L1144)), 화자 단독([:1150](../../src/components/story/StoryView.jsx#L1150), 그 화자 provider만), 세그먼트 테스트([:1180](../../src/components/story/StoryView.jsx#L1180)), 성우 미리듣기([voicePreviewService.js:58](../../electron/api/tts/voicePreviewService.js#L58)).
+- 흐름: preflight IPC → `missing` 있으면 인라인 게이트 카드 표시(키 저장 후 재검사→해당 action 재개) / 없으면 진행. main의 `start('audio')`도 동일 preflight를 재검사(안전).
+
+### 4.5 설정 "API 키" 통합 탭 + split-brain 제거
+
+- `ApiKeyTab.jsx`를 provider 목록으로: `genai(Gemini) · typecast · elevenlabs · googletts` 각 행. `TtsKeyTab.jsx`와 탭 id `ttsKey` 제거, `SettingsModal.jsx` 탭 정의([:18-25](../../src/components/SettingsModal.jsx#L18)) 갱신, `openSettings('ttsKey')` → `openSettings('apiKey')` 이관(호출부는 리터럴 grep이 아니라 탭 정의 기준으로 확인).
+- GoogleTTS 행엔 "Story에서 현재 선택 불가" 표시(죽은 설정 오해 방지). `anthropic`은 소비처 없음 → 통합 목록에서 **제외**.
+- **genai split-brain 제거**: `keyStoreMulti`의 `FILENAME_BY_PROVIDER`에서 `genai`를 제거하거나 `genaiKeyStore`로 위임하고, `keys:*`가 `'genai'`를 거부/위임하도록 하드닝. Gemini 행은 반드시 `useApiKey`(→ `genai:status`/`genai:*`)만 사용.
+
+### 4.6 공용 키 입력 컴포넌트 (hook 규칙 안전)
+
+- `src/components/settings/ApiKeyField.jsx` — **표시 전용 presentational**(props: `provider,label,hasKey,encryptionAvailable,loading,onSave,onClear,requireValidation,getKeyUrl`). hook을 내부에서 조건부 호출하지 않는다.
+- 두 얇은 wrapper가 hook을 고정 호출: `GenaiApiKeyField`(=`useApiKey`, 검증O), `TtsApiKeyField`(=`useTtsKeys(provider)`, 검증X). 소비처는 keyId로 wrapper를 고른다 → **React hook 순서 안전**(조건부 hook 금지).
+
+### 4.7 VoicePicker / 미리듣기
+
+- 성우 목록은 지금처럼 **키 없이도 로드/표시**(후퇴 없음). picker의 provider 칩도 유지.
+- **미리듣기 버튼**: 해당 성우 provider의 keyId를 preflight/`hasKey`로 확인. 없으면 미리듣기 대신 인라인 `ApiKeyField`(그 provider) 표시. 저장되면 미리듣기 재시도.
+- **저장 후 목록 refetch**: 키 저장 시 App의 listVoices effect가 자동으로 안 도므로([App.jsx:711-727](../../src/App.jsx#L711) 의존성 `activeView`뿐), VoicePicker→상위로 refetch 콜백을 올려 `mergeTtsVoices`를 재실행한다.
+
+### 4.8 errorKind 일원화 (런타임 안전망)
+
+- 키 해석/인증 실패를 표준 에러로: `MissingProviderKeyError(provider)`(errorKind `story-audio-no-tts-key`) + `ProviderAuthError(provider)`(errorKind `story-audio-tts-auth`, 401/403). 발생 지점을 **키 해석 일원화 지점**(4 어댑터 + `typecastKey`/`credentialsKey`)에 두어 typecast가 어댑터 이전에서 던지는 케이스([typecastKey.js:17](../../electron/api/tts/typecastKey.js#L17))도 커버.
+- 집계 재던지기([stepMachine.js:1750-1760](../../electron/story/stepMachine.js#L1750))는 첫 실패의 errorKind만 보존 → pre-flight로 대부분 예방되므로 잔여만 담당. **미리듣기 IPC**([story-api.js:174](../../electron/ipc/story-api.js#L174))는 aggregate를 안 거치고 IPC throw 시 custom errorKind가 소실되므로([story-api.js:143](../../electron/ipc/story-api.js#L143)), `{errorKind, provider}` 객체 반환으로 보존.
+- ko/en 로케일에 두 kind 문구 + `resolveDisplayError`([errorDisplay.js:29-40](../../src/utils/errorDisplay.js#L29)) 매핑 추가. 이로써 raw 영어는 missing-key/auth 한정으로 제거.
+
+### 4.9 dev 스위치
+
+`AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1`이면 `getTypecastKey`/`readCredentialsKey`의 env·credentials 폴백을 무시하고 store만 본다. **§4.1 preflight resolver도 같은 스위치를 타야** 게이트와 런타임이 계속 일치. `getTypecastKey`(throw)와 `readCredentialsKey`(null) 비대칭은 스위치 on일 때 **둘 다 "없음"(null/false)** 으로 계약 통일.
+
+### 4.10 상태 3분류
+
+게이트/미리듣기 카드는 세 상태를 구분: `missing`(입력 유도) / `fallback-available`(폴백으로 해석됨 → 차단 안 함) / `encryption-unavailable`(입력해도 저장 불가 → 안내만, 입력 비활성 [keyStore.js:34-36](../../electron/api/keyStore.js#L34)). generic "실패"로 뭉치지 않는다.
 
 ## 5. 에러 처리
 
-- pre-flight/VoicePicker 게이트: 정상 흐름(에러 아님) — 안내 UI로 처리, 콘솔 에러 없음.
-- 런타임 missing-key: `errorKind='story-audio-no-tts-key'` → 로케일 번역된 안내 + 설정/입력 유도.
-- 저장 실패(암호화 불가 등): 기존 hook의 `{success:false, error}` 표시.
+- pre-flight/미리듣기 게이트: 정상 흐름(에러 아님), 안내 UI.
+- 런타임 missing-key/auth: 표준 errorKind → 번역 안내 + 입력 유도.
+- 저장 실패(암호화 불가): `encryption-unavailable` 상태로 명시.
 
-## 6. 테스트 전략
+## 6. 테스트 전략 (경계 매트릭스)
 
-- **단위**: `ApiKeyField`(provider별 hook 분기, 저장 후 상태 갱신), pre-flight 필요-provider 계산(화자→provider 집합, 누락 감지), VoicePicker 게이트(hasKey=false면 listVoices 미호출), errorKind 부여/번역.
-- **통합**: 키 없음 → 게이트 표시 → 입력·저장 → 진행되는 흐름(mock IPC).
-- **실앱 눈검증**: `AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1`로 키 없는 상태 만들고 VoicePicker·오디오 생성·설정 통합 탭 확인.
+mock만으로 넘기지 않고 다음 조합을 커버:
+- genai: `userData/genai-key.enc`만 / `userData/keys/genai-key.enc`만(split-brain 회귀) — 통합 UI가 올바른 store를 읽는지.
+- typecast: store만 / env만 / credentials만 / 없음 — pre-flight가 폴백을 존중하는지(F1 회귀).
+- 폴백 스위치 on/off로 게이트=런타임 일치.
+- safeStorage unavailable → encryption-unavailable 경로.
+- narration 전원 typecast + SFX만 elevenlabs → SFX provider가 집합에 포함(F4 회귀).
+- import 화자 / 대사 없는 roster 화자 → 게이트 대상에서 제외(F3 회귀).
+- gemini 화자 → keyId 'genai'로 status/save(F2 회귀).
+- 진입점별(배치/자동진행/화자단독/세그먼트테스트/미리듣기) provider 스코프.
+- **실앱 눈검증**: `AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1` + store 비우고 각 경로.
 
-## 7. 미해결/확인 필요
+## 7. 확정 사항 (2026-07-20)
 
-- `ApiKeyField` 최종 파일명/위치.
-- 게이트 UI를 인라인(카드 내부)로 할지 작은 모달로 할지 — 기본 인라인(모달 최소화).
-- 테스트 재현을 env 스위치로 할지 설정 UI 토글로 할지 — 기본 env 스위치.
+- **게이트 UI = 인라인 카드**(별도 모달 없음).
+- **테스트 재현 = env 스위치** `AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1`, preflight resolver와 동일 경로.
+- **`ApiKeyField` = presentational + `GenaiApiKeyField`/`TtsApiKeyField` wrapper**, `src/components/settings/`.
+- **reuse 세그먼트 제외**: 1차 구현부터 정확 계산(제외 포함)으로 간다(보수적 전체-provider 차단은 F1/F3 정신에 어긋나므로 회피).
+
+## 8. 구현 단위 (isolation)
+
+- `apiKeyRegistry`(순수 매핑) — storyProvider↔keyId↔hook/resolver.
+- `computeRequiredProviders(params, scenes)`(순수) — 합성 루프와 공유, pre-flight/실행 공용.
+- `story:audio-preflight` IPC(main) — resolver try/catch, dev 스위치 연동.
+- `runAudioWithPreflight`(renderer) — 진입점 통합.
+- `ApiKeyField` + 2 wrapper — 설정/게이트/미리듣기 공용.
+- errorKind 표준화(어댑터/resolver/로케일/errorDisplay).
+- keyStoreMulti genai 하드닝.
+
+각 단위는 독립 테스트 가능하고, 무엇을 하는지/어떻게 쓰는지/무엇에 의존하는지가 명확하다.
+
+## 9. 리뷰 반영 이력 (Codex + Fable, 2026-07-20)
+
+v1의 확정 결함(둘 다 실측 지적, 필자 직접 코드 대조 확인):
+- **F1** 게이트 store-status vs 런타임 폴백 불일치 → §4.1 main resolver preflight, §4.9 스위치 연동.
+- **F2** gemini/genai 이름 불일치 → §4.3 registry 별칭.
+- **F3** effective provider 오규칙(voiceId 빈값→typecast, import 제외) → §4.2 세그먼트 규칙.
+- **F4** SFX(elevenlabs) 누락 → §4.2 SFX 소스 포함.
+- **F5** 방법 B genai split-brain(이중 store) → §4.5 하드닝.
+- **F6** listVoices 키리스(v1 오독) → §4.7 목록 유지 + 미리듣기 게이트.
+- **F7** 저장 후 목록 refetch 부재 → §4.7 refetch 콜백.
+- **F8** errorKind 부여 지점(typecast는 어댑터 전 throw) → §4.8 해석 일원화.
+- **F9** 무효 키(401/403) auth 에러 → §4.8 ProviderAuthError.
+- **hook 규칙** 조건부 hook → §4.6 wrapper 분리.
+- **암호화 불가** → §4.10 상태 분리.
+- **진입점 다수** → §4.4 공통 진입점 + main 재검사.
