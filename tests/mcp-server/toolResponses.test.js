@@ -12,12 +12,24 @@ import * as toolResponses from '../../mcp-server/lib/toolResponses.js'
 const mcpIndexSource = readFileSync(resolve(process.cwd(), 'mcp-server/index.js'), 'utf8')
 
 describe('mcp-server toolResponses', () => {
-  it('G3: CSV tool response includes collected warnings only when non-empty', () => {
+  it('G3/H3: CSV tool response keeps structured warnings and appends them to visible content', () => {
     expect(toolResponses.csvToolResponse).toBeTypeOf('function')
-    const warnings = ["Rejected unknown provider 'unknown' at generation.image."]
+    const warnings = [
+      "Rejected unknown provider 'unknown' at generation.image.",
+      "Rejected invalid model '__inherit__' at generation.video.t2v.",
+    ]
 
     expect(toolResponses.csvToolResponse('CSV loaded', warnings)).toEqual({
-      content: [{ type: 'text', text: 'CSV loaded' }],
+      content: [{
+        type: 'text',
+        text: [
+          'CSV loaded',
+          '',
+          'Warnings:',
+          "- Rejected unknown provider 'unknown' at generation.image.",
+          "- Rejected invalid model '__inherit__' at generation.video.t2v.",
+        ].join('\n'),
+      }],
       warnings,
     })
     expect(toolResponses.csvToolResponse('CSV loaded', [])).toEqual({

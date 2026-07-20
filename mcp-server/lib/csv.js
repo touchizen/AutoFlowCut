@@ -17,12 +17,17 @@ const GENERATION_INHERIT_SENTINEL = '__inherit__'
 const IMAGE_PROVIDER_ID_SET = new Set(IMAGE_PROVIDER_IDS)
 const VIDEO_PROVIDER_ID_SET = new Set(VIDEO_PROVIDER_IDS)
 
-function generationFromRow(get, warnings) {
-  const stage = (providerColumn, modelColumn, providerIds, path) => {
-    const provider = get(providerColumn)
-    let model = get(modelColumn)
+function generationFromRow(get, warnings, options = {}) {
+  const hasColumn = options.hasColumn || (() => true)
+  const existingGeneration = options.existingGeneration
+  const stage = (providerColumn, modelColumn, providerIds, path, existing) => {
+    const hasProviderColumn = hasColumn(providerColumn)
+    const hasModelColumn = hasColumn(modelColumn)
+    if (!hasProviderColumn && !hasModelColumn) return existing
+    const provider = hasProviderColumn ? get(providerColumn) : (existing?.provider ?? '')
+    let model = hasModelColumn ? get(modelColumn) : (existing?.model ?? '')
     if (provider === GENERATION_INHERIT_SENTINEL) {
-      if (model && Array.isArray(warnings)) {
+      if (hasModelColumn && model && Array.isArray(warnings)) {
         warnings.push(`Model '${model}' ignored because provider is __inherit__ at ${path}.`)
       }
       return null
@@ -38,9 +43,15 @@ function generationFromRow(get, warnings) {
     }
     return { ...(provider ? { provider } : {}), ...(model ? { model } : {}) }
   }
-  const image = stage('image_provider', 'image_model', IMAGE_PROVIDER_ID_SET, 'generation.image')
-  const t2v = stage('t2v_provider', 't2v_model', VIDEO_PROVIDER_ID_SET, 'generation.video.t2v')
-  const i2v = stage('i2v_provider', 'i2v_model', VIDEO_PROVIDER_ID_SET, 'generation.video.i2v')
+  const image = stage(
+    'image_provider', 'image_model', IMAGE_PROVIDER_ID_SET, 'generation.image', existingGeneration?.image,
+  )
+  const t2v = stage(
+    't2v_provider', 't2v_model', VIDEO_PROVIDER_ID_SET, 'generation.video.t2v', existingGeneration?.video?.t2v,
+  )
+  const i2v = stage(
+    'i2v_provider', 'i2v_model', VIDEO_PROVIDER_ID_SET, 'generation.video.i2v', existingGeneration?.video?.i2v,
+  )
   if (image === undefined && t2v === undefined && i2v === undefined) return undefined
   return {
     ...(image !== undefined ? { image } : {}),
@@ -57,7 +68,14 @@ export function nestSceneGenerationColumns(row = {}, options = {}) {
   const byLower = new Map(Object.entries(row).map(([key, value]) => [String(key).toLowerCase(), value]))
   const hasGenerationColumns = Object.keys(GENERATION_COLUMN_PATHS).some(key => byLower.has(key))
   if (!hasGenerationColumns) return row
-  const generation = generationFromRow(key => String(byLower.get(key) ?? '').trim(), options?.warnings)
+  const generation = generationFromRow(
+    key => String(byLower.get(key) ?? '').trim(),
+    options?.warnings,
+    {
+      hasColumn: key => byLower.has(key),
+      existingGeneration: row.generation,
+    },
+  )
   const nested = { ...row }
   if (generation === undefined) delete nested.generation
   else nested.generation = generation
@@ -67,8 +85,12 @@ export function nestSceneGenerationColumns(row = {}, options = {}) {
 function valueForHeader(scene, header) {
   const path = GENERATION_COLUMN_PATHS[String(header).toLowerCase()]
   if (!path) return scene[header]
-  let value = scene.generation
-  for (const segment of path) value = value?.[segment]
+  let stage = scene.generation
+  for (const segment of path.slice(0, -1)) stage = stage?.[segment]
+  if (stage === null) {
+    return path.at(-1) === 'provider' ? GENERATION_INHERIT_SENTINEL : ''
+  }
+  const value = stage?.[path.at(-1)]
   return value ?? scene[header]
 }
 

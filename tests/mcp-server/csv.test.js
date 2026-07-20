@@ -15,6 +15,12 @@ import {
   saveCSV,
 } from '../../mcp-server/lib/csv.js'
 
+const countGenerationStages = (generation) => (
+  (generation?.image !== undefined ? 1 : 0)
+  + (generation?.video?.t2v !== undefined ? 1 : 0)
+  + (generation?.video?.i2v !== undefined ? 1 : 0)
+)
+
 describe('isNewSceneCSVFormat', () => {
   it('scene 컬럼 + 정수값 → true', () => {
     expect(isNewSceneCSVFormat(['scene', 'subtitle'], [{ scene: '1', subtitle: 'a' }])).toBe(true)
@@ -110,7 +116,7 @@ describe('bundleSceneCSVRows', () => {
     })
   })
 
-  it('G4: production saveCSV/loadCSV round-trips all six generation columns with exactly three overrides', () => {
+  it('G4/H2: production saveCSV/loadCSV round-trips all six columns and an explicit null stage', () => {
     const dir = mkdtempSync(join(tmpdir(), 'autoflowcut-m3-csv-'))
     const path = join(dir, 'scenes.csv')
     const headers = [
@@ -118,16 +124,22 @@ describe('bundleSceneCSVRows', () => {
       'image_provider', 'image_model', 't2v_provider', 't2v_model', 'i2v_provider', 'i2v_model',
     ]
 
-    saveCSV(path, headers, [{
-      scene: '1', prompt: 'P',
-      generation: {
-        image: { provider: 'openai', model: 'gpt-image-1' },
-        video: {
-          t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' },
-          i2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' },
+    saveCSV(path, headers, [
+      {
+        scene: '1', prompt: 'P',
+        generation: {
+          image: { provider: 'openai', model: 'gpt-image-1' },
+          video: {
+            t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' },
+            i2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' },
+          },
         },
       },
-    }])
+      {
+        scene: '2', prompt: 'clear i2v',
+        generation: { video: { i2v: null } },
+      },
+    ])
 
     const loaded = loadCSV(path)
     const roundTripped = loaded.scenes.map(nestSceneGenerationColumns)
@@ -139,13 +151,16 @@ describe('bundleSceneCSVRows', () => {
         i2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' },
       },
     })
+    expect(roundTripped[1].generation).toEqual({
+      video: { i2v: null },
+    })
     const overrideCount = roundTripped.reduce((count, scene) => (
       count
         + (scene.generation?.image !== undefined ? 1 : 0)
         + (scene.generation?.video?.t2v !== undefined ? 1 : 0)
         + (scene.generation?.video?.i2v !== undefined ? 1 : 0)
     ), 0)
-    expect(overrideCount).toBe(3)
+    expect(overrideCount).toBe(4)
   })
 
   it('saveCSV preserves flat generation columns for legacy row-per-scene CSV rows', () => {
@@ -195,5 +210,94 @@ describe('bundleSceneCSVRows', () => {
     expect(warnings).toEqual([
       "Rejected invalid model '__inherit__' at generation.video.t2v.",
     ])
+  })
+
+  it('H1: sparse new-format generation update preserves sibling fields and untouched stages', () => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: 'fal', image_model: 'fal-ai/flux-pro/v1.1-ultra',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+      i2v_provider: 'google', i2v_model: 'veo-3.1-fast-generate-preview',
+    }]).scenes[0]
+
+    scene.image_model = 'fal-ai/flux-pro/kontext/max'
+    const updated = nestSceneGenerationColumns(scene)
+
+    expect(updated.generation).toEqual({
+      image: { provider: 'fal', model: 'fal-ai/flux-pro/kontext/max' },
+      video: {
+        t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' },
+        i2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' },
+      },
+    })
+    expect(countGenerationStages(updated.generation)).toBe(3)
+  })
+
+  it('H1: __inherit__ model update drops only that model and preserves the remaining generation', () => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: 'fal', image_model: 'fal-ai/flux-pro/v1.1-ultra',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+    }]).scenes[0]
+
+    scene.image_model = '__inherit__'
+    const warnings = []
+    const updated = nestSceneGenerationColumns(scene, { warnings })
+
+    expect(updated.generation).toEqual({
+      image: { provider: 'fal' },
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
+    expect(countGenerationStages(updated.generation)).toBe(2)
+    expect(warnings).toEqual([
+      "Rejected invalid model '__inherit__' at generation.image.",
+    ])
+  })
+
+  it.each([
+    {
+      label: 'explicit empty',
+      provider: '',
+      expectedImage: { model: 'fal-ai/flux-pro/v1.1-ultra' },
+      expectedWarnings: [],
+      expectedCount: 3,
+    },
+    {
+      label: '__inherit__',
+      provider: '__inherit__',
+      expectedImage: null,
+      expectedWarnings: [],
+      expectedCount: 3,
+    },
+    {
+      label: 'unknown provider',
+      provider: 'unknown-image',
+      expectedImage: undefined,
+      expectedWarnings: ["Rejected unknown provider 'unknown-image' at generation.image."],
+      expectedCount: 2,
+    },
+  ])('H1: sparse provider update handles $label without touching other stages', ({
+    provider, expectedImage, expectedWarnings, expectedCount,
+  }) => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: 'fal', image_model: 'fal-ai/flux-pro/v1.1-ultra',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+      i2v_provider: 'google', i2v_model: 'veo-3.1-fast-generate-preview',
+    }]).scenes[0]
+
+    scene.image_provider = provider
+    const warnings = []
+    const updated = nestSceneGenerationColumns(scene, { warnings })
+
+    expect(updated.generation).toEqual({
+      ...(expectedImage !== undefined ? { image: expectedImage } : {}),
+      video: {
+        t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' },
+        i2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' },
+      },
+    })
+    expect(countGenerationStages(updated.generation)).toBe(expectedCount)
+    expect(warnings).toEqual(expectedWarnings)
   })
 })
