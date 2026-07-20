@@ -477,6 +477,7 @@ git commit -m "SFX ElevenLabs adapter: standard Missing/Auth key errors"
 // tests/electron/api/keyStoreMultiGenai.test.js
 import { describe, it, expect } from 'vitest'
 import { createMultiKeyStore, PROVIDERS } from '../../../electron/api/keyStoreMulti.js'
+import path from 'node:path'
 
 const fakeSafeStorage = { isEncryptionAvailable: () => true, encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() }
 const makeFs = () => {
