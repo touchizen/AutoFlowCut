@@ -25,21 +25,31 @@ function generationFromRow(get, warnings, options = {}) {
     const hasModelColumn = hasColumn(modelColumn)
     if (!hasProviderColumn && !hasModelColumn) return existing
     const provider = hasProviderColumn ? get(providerColumn) : (existing?.provider ?? '')
-    let model = hasModelColumn ? get(modelColumn) : (existing?.model ?? '')
+    const providerChanged = hasProviderColumn
+      && !hasModelColumn
+      && !!provider
+      && provider !== existing?.provider
+    let model = hasModelColumn ? get(modelColumn) : (providerChanged ? '' : (existing?.model ?? ''))
     if (provider === GENERATION_INHERIT_SENTINEL) {
       if (hasModelColumn && model && Array.isArray(warnings)) {
         warnings.push(`Model '${model}' ignored because provider is __inherit__ at ${path}.`)
       }
       return null
     }
-    if (model === GENERATION_INHERIT_SENTINEL) {
+    const modelRejected = model === GENERATION_INHERIT_SENTINEL
+    if (modelRejected) {
       if (Array.isArray(warnings)) warnings.push(`Rejected invalid model '${model}' at ${path}.`)
       model = ''
     }
     if (!provider && !model) return undefined
     if (provider && !providerIds.has(provider)) {
       if (Array.isArray(warnings)) warnings.push(`Rejected unknown provider '${provider}' at ${path}.`)
-      return undefined
+      if (modelRejected && existing && typeof existing === 'object') {
+        const preserved = { ...existing }
+        delete preserved.model
+        return Object.keys(preserved).length > 0 ? preserved : undefined
+      }
+      return existing
     }
     return { ...(provider ? { provider } : {}), ...(model ? { model } : {}) }
   }

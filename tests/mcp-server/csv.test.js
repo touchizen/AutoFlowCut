@@ -269,13 +269,6 @@ describe('bundleSceneCSVRows', () => {
       expectedWarnings: [],
       expectedCount: 3,
     },
-    {
-      label: 'unknown provider',
-      provider: 'unknown-image',
-      expectedImage: undefined,
-      expectedWarnings: ["Rejected unknown provider 'unknown-image' at generation.image."],
-      expectedCount: 2,
-    },
   ])('H1: sparse provider update handles $label without touching other stages', ({
     provider, expectedImage, expectedWarnings, expectedCount,
   }) => {
@@ -299,5 +292,105 @@ describe('bundleSceneCSVRows', () => {
     })
     expect(countGenerationStages(updated.generation)).toBe(expectedCount)
     expect(warnings).toEqual(expectedWarnings)
+  })
+
+  it('I1: sparse provider-only change resets the previous provider model and preserves sibling stages', () => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: 'fal', image_model: 'fal-ai/flux-pro/v1.1-ultra',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+    }]).scenes[0]
+
+    scene.image_provider = 'google'
+    const updated = nestSceneGenerationColumns(scene)
+
+    expect(updated.generation).toEqual({
+      image: { provider: 'google' },
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
+  })
+
+  it('I1: sparse provider-only restatement keeps the existing model', () => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: 'fal', image_model: 'fal-ai/flux-pro/v1.1-ultra',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+    }]).scenes[0]
+
+    scene.image_provider = 'fal'
+    const updated = nestSceneGenerationColumns(scene)
+
+    expect(updated.generation).toEqual({
+      image: { provider: 'fal', model: 'fal-ai/flux-pro/v1.1-ultra' },
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
+  })
+
+  it('I2: sparse unknown-provider update warns and preserves existing and sibling stages', () => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: 'fal', image_model: 'fal-ai/flux-pro/v1.1-ultra',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+    }]).scenes[0]
+
+    scene.image_provider = 'unknown-image'
+    const warnings = []
+    const updated = nestSceneGenerationColumns(scene, { warnings })
+
+    expect(updated.generation).toEqual({
+      image: { provider: 'fal', model: 'fal-ai/flux-pro/v1.1-ultra' },
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
+    expect(warnings).toEqual([
+      "Rejected unknown provider 'unknown-image' at generation.image.",
+    ])
+  })
+
+  it('I2: full-rebuild unknown provider still drops that stage', () => {
+    const warnings = []
+    const updated = nestSceneGenerationColumns({
+      scene: '1', prompt: 'P',
+      image_provider: 'unknown-image', image_model: 'ignored-image-model',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+      i2v_provider: '', i2v_model: '',
+    }, { warnings })
+
+    expect(updated.generation).toEqual({
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
+    expect(warnings).toEqual([
+      "Rejected unknown provider 'unknown-image' at generation.image.",
+    ])
+  })
+
+  it('I2: unknown provider preserves the stage while explicit model __inherit__ still drops the model', () => {
+    const scene = bundleSceneCSVRows([{
+      scene: '1', prompt: 'P',
+      image_provider: 'fal', image_model: 'fal-ai/flux-pro/v1.1-ultra',
+      t2v_provider: 'grok', t2v_model: 'grok-imagine-video-1.5',
+    }]).scenes[0]
+
+    scene.image_provider = 'unknown-image'
+    const firstWarnings = []
+    const afterUnknownProvider = nestSceneGenerationColumns(scene, { warnings: firstWarnings })
+    expect(afterUnknownProvider.generation.image).toEqual({
+      provider: 'fal', model: 'fal-ai/flux-pro/v1.1-ultra',
+    })
+    expect(firstWarnings).toEqual([
+      "Rejected unknown provider 'unknown-image' at generation.image.",
+    ])
+
+    afterUnknownProvider.image_model = '__inherit__'
+    const secondWarnings = []
+    const updated = nestSceneGenerationColumns(afterUnknownProvider, { warnings: secondWarnings })
+
+    expect(updated.generation).toEqual({
+      image: { provider: 'fal' },
+      video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' } },
+    })
+    expect(secondWarnings).toEqual([
+      "Rejected invalid model '__inherit__' at generation.image.",
+      "Rejected unknown provider 'unknown-image' at generation.image.",
+    ])
   })
 })
