@@ -1122,6 +1122,10 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         generationEngine,
         generationMode,
         isRetry,
+        // Flow 페이싱 설정을 admission 경로로도 전달한다 — 없으면 커스텀 하한/상한이 유실되고
+        // pipeline이 util 기본(7~15초)으로 떨어진다(merge: main pacing × 이 브랜치 admission 정규화).
+        flowPacingMinMs: options.flowPacingMinMs,
+        flowPacingMaxMs: options.flowPacingMaxMs,
         onItemUpdate: options.onItemUpdate,
         getCurrentProjectIdentity: options.getCurrentProjectIdentity,
       }

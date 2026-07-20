@@ -241,15 +241,10 @@ export async function writePrompts(scenes, context, opts = {}, { signal, runJson
     signal,
     onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
   })
+  // validatePromptScenesExactOnce가 커버리지·중복·extra·non-empty를 모두 잡는 상위집합이라
+  // 별도 per-scene 루프는 불필요(merge dedup — llmClaude와 동일).
   validatePromptScenesExactOnce(scenes.map((scene) => scene.sceneNo), out.scenes)
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
-  for (const s of scenes) {
-    const p = byNo.get(s.sceneNo)
-    if (!p || typeof p.imagePrompt !== 'string' || !p.imagePrompt.trim()
-        || typeof p.videoPrompt !== 'string' || !p.videoPrompt.trim()) {
-      throw new Error(`writePrompts: scene ${s.sceneNo} missing/empty prompt`)
-    }
-  }
   return {
     scenes: scenes.map((s) => ({
       ...s,

@@ -569,16 +569,10 @@ export async function writePrompts(scenes, context, opts = {}, { signal, queryIm
     onPartialText: partialParser ? (text) => partialParser.push(text) : undefined,
     onPartialReset: partialParser ? () => { partialParser = makePartialParser() } : undefined,
   })
+  // 계약 검증: 입력 씬 전체 커버(exact-once) + 각 프롬프트 non-empty. validatePromptScenesExactOnce가
+  // 커버리지·중복·extra·non-empty를 모두 잡는 상위집합이라 별도 per-scene 루프는 불필요(merge dedup).
   validatePromptScenesExactOnce(scenes.map((scene) => scene.sceneNo), out.scenes)
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
-  // 계약 검증: 입력 씬 전체가 커버되고 각 프롬프트가 non-empty string인지 (병합 폴백 전에 실패시킴)
-  for (const s of scenes) {
-    const p = byNo.get(s.sceneNo)
-    if (!p || typeof p.imagePrompt !== 'string' || !p.imagePrompt.trim()
-          || typeof p.videoPrompt !== 'string' || !p.videoPrompt.trim()) {
-      throw new Error(`writePrompts: scene ${s.sceneNo} missing/empty prompt`)
-    }
-  }
   return {
     scenes: scenes.map((s) => ({
       ...s,
