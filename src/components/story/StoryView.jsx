@@ -347,10 +347,17 @@ function useSafeT() {
   } catch {
     i18nT = null
   }
-  return (key, fallback, params = {}) => {
-    const fallbackValue = interpolateFallback(fallback, params)
+  return (key, fallback, params) => {
+    // Two calling conventions land on this `t`: StoryView's own (key, koFallbackString, params)
+    // and the real i18n signature (key, params) used by shared Settings components (ApiKeyField/
+    // TtsApiKeyField/GenaiApiKeyField) that StoryView reuses via AudioKeyGateCard. Passing a
+    // params object straight through as `fallback` silently dropped it (params defaulted to {}),
+    // so `{label}` etc. rendered literally instead of interpolating — detect that shape here.
+    const isParamsShorthand = fallback !== null && typeof fallback === 'object'
+    const realParams = isParamsShorthand ? fallback : (params || {})
+    const fallbackValue = isParamsShorthand ? key : interpolateFallback(fallback, realParams)
     if (!i18nT) return fallbackValue
-    const v = i18nT(key, params)
+    const v = i18nT(key, realParams)
     return v === key ? fallbackValue : v
   }
 }
