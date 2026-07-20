@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut } from 'electron'
+import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, dialog } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -17,6 +17,7 @@ import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
+import { createUpscaylPathStore, registerUpscaylIPC } from './ipc/upscayl.js'
 import { registerStoryIPC } from './ipc/story-api.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
@@ -313,6 +314,16 @@ registerMcpIPC(ipcMain)
 // Vrew IPC (.vrew writing — local zip package)
 registerVrewIPC(ipcMain)
 
+// Upscayl IPC (설치본 감지 + 로컬 이미지 업스케일)
+const upscaylPathStore = createUpscaylPathStore({
+  filePath: path.join(app.getPath('userData'), 'upscayl.json'),
+  fs,
+})
+const cleanupRunningUpscayl = registerUpscaylIPC(ipcMain, {
+  dialog,
+  pathStore: upscaylPathStore,
+})
+
 // Reveal a rendered file in the OS file manager (self-render completion)
 ipcMain.handle('render:reveal', (_e, { path: filePath } = {}) => {
   try { if (filePath) shell.showItemInFolder(filePath); return { ok: true } }
@@ -340,13 +351,16 @@ const cleanupRunningRenders = registerRenderIPC(ipcMain, {
     ? path.join(process.resourcesPath, 'fonts')
     : path.join(app.getAppPath(), 'assets', 'fonts'),
 })
-let rendersCleanedUp = false
+let localJobsCleanedUp = false
 app.on('before-quit', (event) => {
-  if (rendersCleanedUp) return
-  event.preventDefault()   // 렌더 정리(SIGKILL + temp 삭제) 완료까지 종료 보류
+  if (localJobsCleanedUp) return
+  event.preventDefault()   // 로컬 child + temp 정리 완료까지 종료 보류
   ;(async () => {
-    try { await cleanupRunningRenders?.() } catch { /* best-effort */ }
-    rendersCleanedUp = true
+    await Promise.allSettled([
+      cleanupRunningRenders?.(),
+      cleanupRunningUpscayl?.(),
+    ])
+    localJobsCleanedUp = true
     app.quit()
   })()
 })

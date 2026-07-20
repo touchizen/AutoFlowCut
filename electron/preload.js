@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
+contextBridge.exposeInMainWorld('upscaylAPI', {
+  detect: () => ipcRenderer.invoke('upscayl:detect'),
+  locate: () => ipcRenderer.invoke('upscayl:locate'),
+  run: (params) => ipcRenderer.invoke('upscayl:run', params),
+  cancel: () => ipcRenderer.invoke('upscayl:cancel'),
+})
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // App
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
