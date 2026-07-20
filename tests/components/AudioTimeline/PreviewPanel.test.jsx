@@ -2,8 +2,8 @@
  * PreviewPanel — hiddenRoles(트랙 View off)로 이미지/자막/비디오 렌더를 끄는지.
  */
 import { describe, it, expect } from 'vitest'
-import { render } from '@testing-library/react'
 import PreviewPanel from '../../../src/components/AudioTimeline/PreviewPanel'
+import { renderWithExportSettings as render } from '../../utils/renderWithExportSettings'
 
 const scenes = [{ id: 's1', imagePath: '/a.png', start_time: 0, end_time: 5 }]
 const srtEntries = [{ startMs: 0, endMs: 5000, text: 'Hello' }]

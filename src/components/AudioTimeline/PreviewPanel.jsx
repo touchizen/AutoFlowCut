@@ -1,6 +1,17 @@
-import { useMemo, useRef, useEffect } from 'react'
+import { useMemo, useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react'
+import { computeKenBurns } from '../../../electron/render/kenBurns.js'
+import { outputSpec } from '../../../electron/render/buildRenderPlan.js'
+import { useExportSettingsContext } from '../../contexts/ExportSettingsContext'
 import { resolveVideoSrc } from '../../utils/videoSrc'
 import { resolveImageSrc } from '../../utils/formatters'
+import { isExportableScene } from '../../utils/exportableScene'
+import { resolveExportVideos } from '../../utils/sceneMedia'
+import {
+  aspectRatioToRenderFormat,
+  kenBurnsPreviewStyle,
+  normalizePreviewImageSrc,
+  toKenBurnsRatios,
+} from '../../utils/kenBurnsPreview'
 import { computeVideoClipPlacement, getSceneTimeRangeMs, isPreviewVideoVisible } from './useAudioTimeline'
 
 // 활성 직전 비디오 prefetch lead time — playhead가 다음 비디오 활성에 도달
@@ -47,15 +58,25 @@ export function findRangeAt(ranges, t, inclusiveEnd = false) {
 const EMPTY_HIDDEN = new Set()
 
 export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240, isPlaying = false, hiddenRoles = EMPTY_HIDDEN, monitorVolume = 1, monitorMuted = true }) {
+  const { settings, aspectRatio } = useExportSettingsContext()
+
   // 씬 ranges precompute — getSceneTimeRangeMs는 parseTimeToSeconds(regex+split)을 부르므로
   // playhead 매 tick (60fps) 마다 N회 반복하면 1시간/1500씬 기준 ~0.5% CPU 누적.
+  // exportable 씬의 객체 참조 index도 함께 보관해 self-render seed와 맞춘다.
   // sort를 명시적으로 — binary search 정확성 보장.
   const sceneRanges = useMemo(() => {
     if (!scenes?.length) return []
+    const exportableScenes = scenes.filter(isExportableScene)
+    const exportIndexByScene = new Map(exportableScenes.map((scene, index) => [scene, index]))
     return scenes
       .map(s => {
         const r = getSceneTimeRangeMs(s)
-        return r ? { startMs: r.startMs, endMs: r.endMs, scene: s } : null
+        return r ? {
+          startMs: r.startMs,
+          endMs: r.endMs,
+          scene: s,
+          exportIndex: exportIndexByScene.get(s) ?? null,
+        } : null
       })
       .filter(Boolean)
       .sort((a, b) => a.startMs - b.startMs)
@@ -72,10 +93,16 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
 
   // 시간 기준 씬 매칭 — O(log N) binary search.
   // 씬은 도메인상 비-overlap 보장 (CSV의 start_time/end_time이 순차 분할).
-  const scene = useMemo(() => {
+  const sceneRange = useMemo(() => {
     if (!sceneRanges.length) return null
-    return findRangeAt(sceneRanges, playheadMs, /* inclusiveEnd */ false)?.scene || null
+    return findRangeAt(sceneRanges, playheadMs, /* inclusiveEnd */ false)
   }, [sceneRanges, playheadMs])
+  const scene = sceneRange?.scene || null
+  const exportIndex = sceneRange?.exportIndex ?? null
+  const sceneDurationMs = sceneRange ? sceneRange.endMs - sceneRange.startMs : 0
+  const sceneProgress = sceneRange && sceneDurationMs > 0
+    ? Math.min(1, Math.max(0, (playheadMs - sceneRange.startMs) / sceneDurationMs))
+    : 0
 
   // SRT 자막 — startMs 정렬된 ranges 위에서 linear .find.
   // 일반 SRT는 비-overlap이지만 일부 도구가 카라오케·다중 화자용으로 겹친 cue를 생성.
@@ -89,7 +116,106 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   }, [srtRanges, playheadMs])
 
   const imgPath = scene?.imagePath || scene?.image_path || scene?.filePath
+  const imageSrc = normalizePreviewImageSrc(resolveImageSrc({
+    imagePath: imgPath,
+    image: scene?.image,
+    generatedAt: scene?.generatedAt,
+  }))
   const subtitleText = srt?.text || ''
+
+  const renderFormat = aspectRatioToRenderFormat(aspectRatio)
+  const spec = useMemo(
+    () => outputSpec(renderFormat, settings.renderMode),
+    [renderFormat, settings.renderMode],
+  )
+  const stageRef = useRef(null)
+  const [frameSize, setFrameSize] = useState(null)
+  useLayoutEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return undefined
+
+    const updateFrameSize = () => {
+      const { width: stageWidth, height: stageHeight } = stage.getBoundingClientRect()
+      if (!(stageWidth > 0) || !(stageHeight > 0)) {
+        setFrameSize(previous => previous == null ? previous : null)
+        return
+      }
+      const ratio = spec.width / spec.height
+      const width = Math.min(stageWidth, stageHeight * ratio)
+      const height = width / ratio
+      setFrameSize(previous => (
+        previous
+        && Math.abs(previous.width - width) < 0.01
+        && Math.abs(previous.height - height) < 0.01
+          ? previous
+          : { width, height }
+      ))
+    }
+
+    updateFrameSize()
+    const observer = new ResizeObserver(updateFrameSize)
+    observer.observe(stage)
+    return () => observer.disconnect()
+  }, [spec.width, spec.height])
+  const frameStyle = useMemo(() => ({
+    aspectRatio: `${spec.width} / ${spec.height}`,
+    ...(frameSize ? { width: `${frameSize.width}px`, height: `${frameSize.height}px` } : {}),
+  }), [spec.width, spec.height, frameSize])
+  const kenBurnsOptions = useMemo(() => toKenBurnsRatios({
+    kenBurnsMode: settings.kenBurnsMode,
+    kenBurnsScaleMin: settings.kenBurnsScaleMin,
+    kenBurnsScaleMax: settings.kenBurnsScaleMax,
+  }), [settings.kenBurnsMode, settings.kenBurnsScaleMin, settings.kenBurnsScaleMax])
+  const kenBurns = useMemo(() => {
+    if (!scene || exportIndex == null) return null
+    return computeKenBurns(scene, exportIndex, kenBurnsOptions)
+  }, [scene, exportIndex, kenBurnsOptions])
+  const hasVideo = useMemo(() => resolveExportVideos(scene).length > 0, [scene])
+  const kenBurnsStyle = settings.kenBurns && exportIndex != null && !hasVideo && kenBurns
+    ? kenBurnsPreviewStyle(kenBurns, sceneProgress)
+    : undefined
+
+  const seededImageSize = scene?.upscaled_size || scene?.image_size
+  const seededWidth = Number(seededImageSize?.width)
+  const seededHeight = Number(seededImageSize?.height)
+  const seededDims = Number.isFinite(seededWidth) && seededWidth > 0
+    && Number.isFinite(seededHeight) && seededHeight > 0
+    ? { width: seededWidth, height: seededHeight }
+    : null
+  const [loadedDims, setLoadedDims] = useState(null)
+  const imageDims = loadedDims?.src === imageSrc ? loadedDims : seededDims
+  const handleImageLoad = useCallback((event) => {
+    const width = event.currentTarget.naturalWidth
+    const height = event.currentTarget.naturalHeight
+    if (width > 0 && height > 0) setLoadedDims({ src: imageSrc, width, height })
+  }, [imageSrc])
+
+  const imagePlacementStyle = useMemo(() => {
+    const base = {
+      position: 'absolute',
+      maxWidth: 'none',
+      objectPosition: 'center',
+    }
+    if (settings.scaleMode === 'fill') {
+      return { ...base, inset: 0, width: '100%', height: '100%', objectFit: 'cover' }
+    }
+    if (settings.scaleMode === 'fit') {
+      return { ...base, inset: 0, width: '100%', height: '100%', objectFit: 'contain' }
+    }
+    if (imageDims) {
+      return {
+        ...base,
+        left: '50%',
+        top: '50%',
+        width: `${imageDims.width / spec.width * 100}%`,
+        height: `${imageDims.height / spec.height * 100}%`,
+        objectFit: 'fill',
+        transform: 'translate(-50%, -50%)',
+      }
+    }
+    // 자연 dims를 아직 모르는 첫 페인트만 cover로 임시 표시한다.
+    return { ...base, inset: 0, width: '100%', height: '100%', objectFit: 'cover' }
+  }, [settings.scaleMode, imageDims?.width, imageDims?.height, spec.width, spec.height])
 
   // ── 비디오 오버레이 ──
   // 모니터는 한 화면이라 비디오 1개만 재생 — 맨 위 "보이는" 트랙 우선(i2v → t2v).
@@ -230,30 +356,45 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
 
   return (
     <div className="atl-preview" style={{ height }}>
-      <div className="atl-preview-stage">
-        {imgPath && !hideImage ? (
-          <img className="atl-preview-img" src={resolveImageSrc({ imagePath: imgPath, generatedAt: scene?.generatedAt, image: scene?.image })} alt="" />
-        ) : (
-          <div className="atl-preview-empty">— 씬 없음 —</div>
-        )}
-        <video
-          ref={videoRef}
-          className="atl-preview-video"
-          playsInline
-          preload="metadata"
-          style={{
-            display: isVideoActive ? 'block' : 'none',
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'contain',
-            background: '#000',
-          }}
-        />
-        {subtitleText && !hideSubtitle && (
-          <div className="atl-preview-subtitle">{subtitleText}</div>
-        )}
+      <div ref={stageRef} className="atl-preview-stage">
+        <div
+          className="atl-preview-frame"
+          style={frameStyle}
+        >
+          <div className="atl-preview-kb" style={kenBurnsStyle}>
+            {imageSrc && !hideImage && (
+              <img
+                key={imageSrc}
+                className="atl-preview-img"
+                src={imageSrc}
+                alt=""
+                style={imagePlacementStyle}
+                onLoad={handleImageLoad}
+              />
+            )}
+          </div>
+          {(!imageSrc || hideImage) && (
+            <div className="atl-preview-empty">— 씬 없음 —</div>
+          )}
+          <video
+            ref={videoRef}
+            className="atl-preview-video"
+            playsInline
+            preload="metadata"
+            style={{
+              display: isVideoActive ? 'block' : 'none',
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              background: '#000',
+            }}
+          />
+          {subtitleText && !hideSubtitle && (
+            <div className="atl-preview-subtitle">{subtitleText}</div>
+          )}
+        </div>
       </div>
       {/* Hidden prefetch — 다음 활성 비디오를 미리 OS 캐시에 warm. 화면 표시는 안 함. */}
       <video

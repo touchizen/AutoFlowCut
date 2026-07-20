@@ -16,6 +16,7 @@ import { resolveDisplayError } from '../utils/errorDisplay'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
 import { isExportableScene } from '../utils/exportableScene'
+import { aspectRatioToRenderFormat } from '../utils/kenBurnsPreview'
 
 export function useExport({
   settings,
@@ -123,7 +124,7 @@ export function useExport({
     return {
       name: settings.projectName || 'Untitled',
       // 'portrait' / 'landscape' — GCF가 기대하는 값.
-      format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
+      format: aspectRatioToRenderFormat(settings.aspectRatio),
       // Phase 5 + R1 + R8 review fix: srtTrack 을 validScenes 순서로 rebase.
       srtTrack: rebaseSrtTrackToScenes(
         pruneSrtTrackToScenes(srtTrack, validScenes, { preserveUnlinked: true }),

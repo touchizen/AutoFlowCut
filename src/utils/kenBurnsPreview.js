@@ -21,3 +21,18 @@ export function toKenBurnsRatios(settings) {
     scaleMax: Number(settings.kenBurnsScaleMax) / 100 || 1.15,
   }
 }
+
+export function aspectRatioToRenderFormat(aspectRatio) {
+  return aspectRatio === '9:16' ? 'portrait' : 'landscape'
+}
+
+export function normalizePreviewImageSrc(src) {
+  if (typeof src !== 'string' || !src) return src
+  if (/^(?:data:|file:|https?:|blob:)/i.test(src)) return src
+
+  const base64 = src.replace(/\s/g, '')
+  if (base64.length <= 64 || !/^[A-Za-z0-9+/=]+$/.test(base64)) return src
+
+  const mime = base64.startsWith('iVBORw0KGgo') ? 'image/png' : 'image/jpeg'
+  return `data:${mime};base64,${base64}`
+}

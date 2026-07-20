@@ -16,22 +16,32 @@ describe('ExportSettingsContext consumer sync', () => {
   })
 
   it('AudioTimeline checkbox 토글을 다른 consumer가 즉시 본다', async () => {
+    const scenes = [{
+      id: 'scene-1',
+      status: 'done',
+      imagePath: '/images/scene-1.png',
+      startTime: 0,
+      endTime: 3,
+    }]
     const { container } = renderWithExportSettings(
       <I18nProvider>
-        <AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />
+        <AudioTimeline audioPackage={null} scenes={scenes} srtEntries={[]} />
         <SettingsProbe />
       </I18nProvider>,
     )
     const checkbox = container.querySelector('.atl-kb-toggle input[type="checkbox"]')
+    const previewLayer = container.querySelector('.atl-preview-kb')
 
     expect(checkbox).toBeChecked()
     expect(screen.getByTestId('ken-burns-setting')).toHaveTextContent('true')
+    expect(previewLayer.style.transform).not.toBe('')
 
     fireEvent.click(checkbox)
 
     await waitFor(() => {
       expect(checkbox).not.toBeChecked()
       expect(screen.getByTestId('ken-burns-setting')).toHaveTextContent('false')
+      expect(previewLayer.style.transform).toBe('')
     })
   })
 })

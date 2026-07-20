@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { computeKenBurns } from '../../electron/render/kenBurns.js'
 import {
+  aspectRatioToRenderFormat,
   kenBurnsPreviewStyle,
+  normalizePreviewImageSrc,
   toKenBurnsRatios,
 } from '../../src/utils/kenBurnsPreview.js'
 
@@ -152,4 +154,35 @@ describe('toKenBurnsRatios', () => {
       })
     },
   )
+})
+
+describe('aspectRatioToRenderFormat', () => {
+  it.each([
+    ['9:16', 'portrait'],
+    ['16:9', 'landscape'],
+    ['1:1', 'landscape'],
+  ])('%s를 export format %s로 매핑한다', (aspectRatio, format) => {
+    expect(aspectRatioToRenderFormat(aspectRatio)).toBe(format)
+  })
+})
+
+describe('normalizePreviewImageSrc', () => {
+  it('raw PNG base64를 PNG data URL로 정규화한다', () => {
+    const raw = `iVBORw0KGgo${'A'.repeat(80)}`
+    expect(normalizePreviewImageSrc(raw)).toBe(`data:image/png;base64,${raw}`)
+  })
+
+  it('raw JPEG base64를 JPEG data URL로 정규화한다', () => {
+    const raw = `/9j/${'A'.repeat(80)}`
+    expect(normalizePreviewImageSrc(raw)).toBe(`data:image/jpeg;base64,${raw}`)
+  })
+
+  it.each([
+    'data:image/png;base64,AAAA',
+    'file:///tmp/image.png',
+    'https://example.com/image.png',
+    'blob:preview-image',
+  ])('이미 사용 가능한 src %s는 그대로 둔다', (src) => {
+    expect(normalizePreviewImageSrc(src)).toBe(src)
+  })
 })
