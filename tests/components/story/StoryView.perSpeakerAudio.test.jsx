@@ -59,6 +59,34 @@ describe('StoryView — 이 화자만 생성', () => {
     expect(await screen.findByText('과부만 생성됨 — 전체 진행으로 타임라인을 완성하세요')).toBeInTheDocument()
   })
 
+  // (b-2) 성우 버튼 우클릭 → 강제 재생성 confirm 모달 → 확인 시 regenerateSpeaker로 실행.
+  it('성우 버튼 우클릭 → confirm 모달 → 재생성 확인 시 regenerateSpeaker=true로 실행한다', async () => {
+    const p = pipeline()
+    localStorage.setItem('autoflowcut_lang', 'ko')
+    render(<I18nProvider><ToastProvider><StoryView pipeline={p} voices={[]} /></ToastProvider></I18nProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    const widowRow = screen.getByLabelText('과부 목소리').closest('.story-voice-row')
+    const btn = within(widowRow).getByRole('button', { name: '과부만 생성' })
+    fireEvent.contextMenu(btn) // 우클릭 → 모달
+    const confirm = await screen.findByRole('button', { name: '재생성' })
+    fireEvent.click(confirm)
+    await waitFor(() => expect(p.start).toHaveBeenCalledWith('audio', expect.objectContaining({
+      onlySpeaker: 'widow',
+      regenerateSpeaker: true,
+    })))
+  })
+
+  it('우클릭 모달에서 취소하면 실행하지 않는다', async () => {
+    const p = pipeline()
+    localStorage.setItem('autoflowcut_lang', 'ko')
+    render(<I18nProvider><ToastProvider><StoryView pipeline={p} voices={[]} /></ToastProvider></I18nProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    const widowRow = screen.getByLabelText('과부 목소리').closest('.story-voice-row')
+    fireEvent.contextMenu(within(widowRow).getByRole('button', { name: '과부만 생성' }))
+    fireEvent.click(await screen.findByRole('button', { name: '취소' }))
+    expect(p.start).not.toHaveBeenCalled()
+  })
+
   it('버튼과 완료 토스트 문구를 ko/en 카탈로그에 제공한다', () => {
     expect(ko.story.audio.runThisSpeaker).toBe('이 화자만 생성')
     expect(en.story.audio.runThisSpeaker).toBe('Generate this speaker')

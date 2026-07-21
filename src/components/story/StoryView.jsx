@@ -23,6 +23,7 @@ import StoryStepper, { STEP_META } from './StoryStepper'
 import { UsageInline } from './StoryTokenUsage'
 import VoicePicker from './VoicePicker'
 import SpeakerAudioSource from './SpeakerAudioSource'
+import SpeakerRegenConfirmModal from './SpeakerRegenConfirmModal'
 import Modal from '../Modal'
 import LiveTimeline from '../LiveTimeline'
 import { buildStoryAudioPackage, buildStorySrtEntries } from '../../utils/storyAudioPackage'
@@ -422,6 +423,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 그 계약이 없는 호출부까지 깨뜨리지 않기 위한 하위호환이다.
   const preflight = useAudioPreflight(pipeline)
   const [audioGate, setAudioGate] = useState(null) // { missing, retry, paramsForRecheck } | null
+  const [speakerRegenTarget, setSpeakerRegenTarget] = useState(null) // 우클릭 강제 재생성 confirm 대상 화자 | null
   const runAudioWithPreflight = useCallback(async (params, run) => {
     if (typeof pipeline.audioPreflight !== 'function') return run(params)
     const r = await preflight.check(params)
@@ -1181,8 +1183,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     setViewedStep('audio')
   }
 
-  const runSpeakerAudio = async (sp) => {
-    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id }, (p) => start('audio', p))
+  // 우클릭 강제 재생성 confirm 모달에 보여줄 그 화자의 narration 세그먼트 수(표시용 근사 —
+  // 정확한 화자 매칭은 백엔드 canonicalSpeaker 소유).
+  const countSpeakerSegments = (sp) =>
+    (scenes || []).flatMap((s) => s.segments || []).filter((g) => (g.type || 'narration') === 'narration' && g.speaker === sp?.id).length
+  // force=true면 그 화자의 이미 done인 세그먼트까지 강제 재생성(regenerateSpeaker). 좌클릭(force=false)은
+  // 기존 "미생성분만 채우기".
+  const runSpeakerAudio = async (sp, { force = false } = {}) => {
+    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) }, (p) => start('audio', p))
     // preflight가 막은 경우엔 게이트 카드가 이미 안내하므로 별도 토스트 없이 조용히 돌아간다.
     if (result?.error === 'preflight-missing-key') return
     // main 의 거절(대사 없는 화자 등)은 **사전검사라 스텝 상태를 일부러 안 건드린다**(완료 프로젝트의
@@ -2335,13 +2343,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                             type="button"
                             className="story-speaker-run-btn"
                             onClick={() => runSpeakerAudio(sp)}
+                            // 우클릭: 이 화자 오디오 전체 강제 재생성(confirm 모달) — 좌클릭(미생성분 채우기)과 분리.
+                            onContextMenu={(e) => { e.preventDefault(); if (!isRunning && !previewBusy) setSpeakerRegenTarget(sp) }}
                             // ✨ 가 보이는데 다른 작업이 도는 상태가 둘 있다: 미리듣기 중(steps.audio 가
                             // running 이 아니다)과 audio:done + 다른 스텝 running(완료된 탭을 다시 열 수
                             // 있다). 누르면 start() 가 invoke 전에 segmentProgress/progressLog 를 비워
                             // **돌던 작업의 진행·경고가 증발**하고, main 의 busy 는 조용히 무시된다.
                             disabled={isRunning || previewBusy}
                             aria-label={t('story.audio.runThisSpeakerFor', `${sp.name || sp.id}만 생성`, { speaker: sp.name || sp.id })}
-                            title={t('story.audio.runThisSpeakerHint', '이 화자 세그먼트만 생성합니다. 나머지 화자는 그대로 두고, 결과를 먼저 확인할 수 있습니다.')}
+                            title={`${t('story.audio.runThisSpeakerHint', '이 화자 세그먼트만 생성합니다. 나머지 화자는 그대로 두고, 결과를 먼저 확인할 수 있습니다.')} · ${t('story.audio.runThisSpeakerForceHint', '우클릭: 이 화자 오디오 전체 재생성')}`}
                           >
                             ✨
                           </button>
@@ -2624,6 +2634,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             </button>
           )}
         </div>
+      )}
+      {speakerRegenTarget && (
+        <SpeakerRegenConfirmModal
+          speaker={speakerRegenTarget}
+          segmentCount={countSpeakerSegments(speakerRegenTarget)}
+          onConfirm={() => { const sp = speakerRegenTarget; setSpeakerRegenTarget(null); runSpeakerAudio(sp, { force: true }) }}
+          onCancel={() => setSpeakerRegenTarget(null)}
+          t={t}
+        />
       )}
     </div>
   )
