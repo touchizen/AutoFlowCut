@@ -152,3 +152,64 @@ describe('audio 부분 실패 재시도 (IP5-a / §5)', () => {
     expect(synthCalls).toEqual(['둘째 문장'])  // 실패분만
   })
 })
+
+// (b-2) 화자 단위 강제 재생성: regenerateSpeaker=true + onlySpeaker면 그 화자의 done 세그먼트도
+// 강제 재합성한다(seed 등 어댑터 변경을 이미 만든 오디오에 적용하기 위함). 다른 화자/기본 부분실행
+// (fill-missing)은 불변. 화자 매칭은 백엔드 canonicalSpeaker 단일 소스.
+describe('audio 화자 단위 강제 재생성 (regenerateSpeaker)', () => {
+  let dir, machine, tts, synthCalls
+  const readSegs = async () =>
+    JSON.parse(await readFile(path.join(dir, 'story/scenes.json'), 'utf8')).scenes.flatMap((s) => s.segments || [])
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'sm-spk-regen-'))
+    synthCalls = []
+    const llm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => ({
+        scenes: [{ sceneNo: 1, summary: '', segments: [
+          { speaker: 'alice', text: 'A1', emotion: 'normal' },
+          { speaker: 'bob', text: 'B1', emotion: 'normal' },
+          { speaker: 'alice', text: 'A2', emotion: 'normal' },
+        ] }],
+        speakers: [{ id: 'alice', name: '앨리스' }, { id: 'bob', name: '밥' }],
+      })),
+    }
+    tts = {
+      capabilities: () => ({ maxConcurrency: 2 }),
+      synthesize: async ({ text }) => { synthCalls.push(text); return { audio: Buffer.from('A:' + text), format: 'wav' } },
+    }
+    machine = createStepMachine({ projectPath: dir, llm, tts, probe: async () => 7000, emit: () => {}, getApiKey: () => 'k' })
+    await machine.open()
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+  })
+
+  const runAudio = (params = {}) =>
+    machine.start('audio', { speakers: [
+      { id: 'alice', voice: { provider: 'typecast', voiceId: 'tc_a' } },
+      { id: 'bob', voice: { provider: 'typecast', voiceId: 'tc_b' } },
+    ], ...params })
+
+  it('regenerateSpeaker=true + onlySpeaker면 그 화자의 done 세그먼트를 전부 재합성한다(다른 화자 불변)', async () => {
+    await runAudio() // 첫 실행: A1, B1, A2 모두 합성
+    synthCalls.length = 0
+    await runAudio({ onlySpeaker: 'alice', regenerateSpeaker: true })
+    expect(synthCalls.sort()).toEqual(['A1', 'A2']) // alice의 done 세그먼트만 강제 재합성, bob 불변
+  })
+
+  it('regenerateSpeaker 없이 onlySpeaker면 done은 재사용한다(기존 fill-missing 불변)', async () => {
+    await runAudio()
+    synthCalls.length = 0
+    await runAudio({ onlySpeaker: 'alice' })
+    expect(synthCalls).toEqual([]) // done 재사용, 강제 재합성 안 함
+  })
+
+  it('regenerateSpeaker=true인데 onlySpeaker가 없으면 아무 화자도 강제 재합성하지 않는다(zero work, fail-closed)', async () => {
+    await runAudio()
+    synthCalls.length = 0
+    const r = await runAudio({ regenerateSpeaker: true })
+    expect(r).toMatchObject({ error: 'story-audio-speaker-empty' }) // fail-closed: 스코프 없으면 막는다
+    expect(synthCalls).toEqual([]) // 전체 강제 재생성으로 새어나가지 않음
+  })
+})

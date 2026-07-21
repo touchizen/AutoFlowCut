@@ -181,4 +181,25 @@ describe('audioPreflight — required providers', () => {
     // params.regenerate=[s1] forces re-synth despite being done+file-present → gemini required again.
     expect(await machine.audioPreflight({ regenerate: ['s1'] })).toEqual(['gemini'])
   })
+
+  // (b-2) 화자 단위 강제 재생성: regenerateSpeaker=true + onlySpeaker면 그 화자의 재사용 가능
+  // narration도 provider를 다시 요구해야 한다(audio()와 대칭 — 재생성엔 키가 필요하므로 게이트 반영).
+  // 다른 화자는 스코프 밖이라 제외.
+  it('regenerateSpeaker=true + onlySpeaker면 그 화자의 재사용 가능 세그먼트도 provider를 required로 잡는다(다른 화자 제외)', async () => {
+    const scenes = [{ segments: [
+      { id: 's1', type: 'narration', speaker: 'A', text: 'hi', status: 'done', audioPath: '/anywhere/s1.wav', durationMs: 1000, voiceKey: 'gemini:Kore:normal' },
+      { id: 's2', type: 'narration', speaker: 'B', text: 'yo', status: 'done', audioPath: '/anywhere/s2.wav', durationMs: 1000, voiceKey: 'typecast:tc_b:normal' },
+    ] }]
+    const { machine, projectPath } = await makeMachine(scenes, {
+      speakers: [{ id: 'A', voice: { provider: 'gemini', voiceId: 'Kore' } }, { id: 'B', voice: { provider: 'typecast', voiceId: 'tc_b' } }],
+    })
+    const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
+    await mkdir(segmentsDir, { recursive: true })
+    await writeFile(path.join(segmentsDir, 's1.wav'), 'dummy')
+    await writeFile(path.join(segmentsDir, 's2.wav'), 'dummy')
+    // 평소 onlySpeaker='A'는 재사용이라 아무 provider도 요구하지 않는다.
+    expect(await machine.audioPreflight({ onlySpeaker: 'A' })).toEqual([])
+    // regenerateSpeaker → A(gemini)만 required, B(typecast)는 스코프 밖.
+    expect(await machine.audioPreflight({ onlySpeaker: 'A', regenerateSpeaker: true })).toEqual(['gemini'])
+  })
 })
