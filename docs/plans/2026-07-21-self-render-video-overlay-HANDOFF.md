@@ -2,6 +2,24 @@
 
 > **새 세션은 이 문서부터.** 이전 세션 컨텍스트 소진으로 중단. 브랜치 `feature/self-render`.
 
+---
+
+## ✅ 비디오 오버레이 합성 — 코드 완료 (2026-07-21, M1~M2 전부). 남은 건 사용자 실앱 눈검증(M3)뿐.
+
+**커밋(로컬만, 미푸시 — push 여부 사용자 결정 대기):**
+- `bdf715dc` **M1** — `computeExportVideoSegment` 순수함수 + 직렬화(`renderVideoSegments`/`renderSceneMeta`, Firebase 미포함) + validate fail-closed. 모니터 골든 strict-eq(소수 float 순서). 뮤테이션 6/6.
+- `f6e6f82a` **M2a** — resolveInputs가 선택 비디오만 resolve(`${sceneId}:${source}` 키 videos Map), decode mime 일반화(image|video, raw→signature), mediaSignatures WebM. 뮤테이션 4/4.
+- `8772f051` **M2b-1** — buildRenderPlan visual-input 인덱스(이미지+비디오)·overlay 필터(scale/pad/setpts+inSec/trim/half-open enable/eof repeat)·hasVideo→staticKenBurns·argv 3사이트·스테이징 로컬 인덱스. confirmOverlays/스틸대체 제거. **ffmpeg 7.1.1 실측: Case A 타이밍(inSec 전 배경, 후 오버레이) 정확.** 뮤테이션 4/4.
+- `57a5db16` **M2b-2** — videoAudioProbe(번들 ffmpeg `-map 0:a:0 -c:a copy -t 0 -f null -`; exit0=오디오/`matches no streams`=무음/그외 throw; memoize; abort→SIGKILL+close대기), adaptAudioClips가 오디오 있는 세그먼트만 `{startMs:sceneStart+inSec*1000, gain:VIDEO_GAIN=1.0}` 추가(기존 K_AUDIO staging 재사용). **ffmpeg 실측: 무음 exit234/유음 exit0.** 뮤테이션 5/5.
+
+**검증:** 전체 회귀 **672파일 / 7058 통과**(HEAD 57a5db16). 매 마일스톤 Fable 5 리뷰 findings 0(반영한 MINOR 전부 뮤테이션으로 필요성 실증). ffmpeg 실측은 시스템 ffmpeg 7.1.1(스펙 §0과 동일 메이저).
+
+**남은 눈검증(M3, 사용자 게이트)** — 아래 "남은 눈검증" 섹션 참조. 특히:
+- 비디오 프로젝트 self-render → 모니터(View 켜고 재생성 완료)와 같은 비디오·타이밍(0초부터)·프레이밍·KenBurns-off, 오디오 들림, 무음 비디오 렌더 성공, 비디오 없는 씬 회귀 없음. i2v+t2v 씬은 i2v 구간만 대조.
+- **스코프 밖(후속)**: i2v+t2v 시간분할 겹침, edit-list A/V offset, hiddenRoles-in-export, data-only 비디오 — 스펙 §1-Out.
+
+---
+
 ## 브랜치 상태 (2026-07-21)
 
 - HEAD = `d24cf4db`, **origin/feature/self-render와 동기(push 완료), merge 안 함**.
