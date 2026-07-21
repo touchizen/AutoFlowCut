@@ -43,10 +43,15 @@ const KNOWN_VOICES = [
 ]
 
 // Gemini TTS는 자연어 스타일 지시로 말투/감정을 제어한다(공식 문서 controllable style prompt). normal은 지시 없이 원문 그대로(기존 동작).
+// 문서가 실제로 검증한 예시는 "Say cheerfully: Have a wonderful day!" / "Say in an spooky whisper: '...'" 뿐이며
+// "the following"/"tone" 같은 완충어·메타 단어는 등장하지 않는다. 과거 "Say the following in a ... tone:" 형태는
+// 이 검증된 패턴에서 벗어나 있었고, 그 결과 모델이 TTS 대신 텍스트 응답을 시도해
+// 400 "Model tried to generate text, but it should only be used for TTS"가 발생했다.
+// 문서의 검증된 형태(Say [부사]:)와 최대한 일치시킨다.
 const EMOTION_STYLE_PROMPTS = {
-  happy: 'Say the following in a cheerful, happy tone:',
-  sad: 'Say the following in a sad, somber tone:',
-  angry: 'Say the following in an angry, intense tone:',
+  happy: 'Say cheerfully:',
+  sad: 'Say sadly:',
+  angry: 'Say angrily:',
 }
 
 function parseRate(mimeType) {
