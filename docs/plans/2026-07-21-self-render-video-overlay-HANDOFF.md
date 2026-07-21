@@ -4,9 +4,14 @@
 
 ---
 
-## ✅ 비디오 오버레이 합성 — 코드 완료 (2026-07-21, M1~M2 전부). 남은 건 사용자 실앱 눈검증(M3)뿐.
+## ✅ 비디오 오버레이 합성 — 완료 (2026-07-21, M1~M2 + 눈검증 M3까지). **사용자 눈검증 통과.** origin push됨.
 
-**커밋(로컬만, 미푸시 — push 여부 사용자 결정 대기):**
+**눈검증(M3) 통과 후 발견·수정한 후속 픽스(전부 커밋+회귀+뮤테이션+Fable findings 0):**
+- `f51b52ee` **출력 파일명 = 프로젝트명** — 저장 다이얼로그 기본이 고정 `render.mp4`였음. `sanitizeOutputName`(OS 금지문자만 치환, 한글 보존, 빈 이름→render.mp4). 뮤테이션 3/3.
+- `e705bfec` **씬 끝 이후 검은 화면** — 오디오/자막이 씬보다 길면 마지막 이미지를 `tpad=clone`으로 늘리던 것을 `tpad=stop_mode=add:color=black`으로(모니터가 범위 밖을 검은 프레임으로 그리는 것과 일치). **ffmpeg 7.1.1 실측: 씬 끝 후 RGB 0,0,0.** total 길이는 오디오/자막 커버 유지. 뮤테이션 2/2.
+- `b3f176ad` **Windows 예약명 가드**(Fable MINOR) — CON/NUL/COM1… 프로젝트명 `_` 접두. 뮤테이션 1/1.
+
+**커밋(origin/feature/self-render push 완료, merge 안 함):**
 - `bdf715dc` **M1** — `computeExportVideoSegment` 순수함수 + 직렬화(`renderVideoSegments`/`renderSceneMeta`, Firebase 미포함) + validate fail-closed. 모니터 골든 strict-eq(소수 float 순서). 뮤테이션 6/6.
 - `f6e6f82a` **M2a** — resolveInputs가 선택 비디오만 resolve(`${sceneId}:${source}` 키 videos Map), decode mime 일반화(image|video, raw→signature), mediaSignatures WebM. 뮤테이션 4/4.
 - `8772f051` **M2b-1** — buildRenderPlan visual-input 인덱스(이미지+비디오)·overlay 필터(scale/pad/setpts+inSec/trim/half-open enable/eof repeat)·hasVideo→staticKenBurns·argv 3사이트·스테이징 로컬 인덱스. confirmOverlays/스틸대체 제거. **ffmpeg 7.1.1 실측: Case A 타이밍(inSec 전 배경, 후 오버레이) 정확.** 뮤테이션 4/4.
