@@ -52,3 +52,63 @@ describe('Gemini 어댑터 emotion 프롬프트 — 400 회귀 방지', () => {
     expect(captured[0].contents[0].parts[0].text).toBe('Say cheerfully: hello')
   })
 })
+
+// 회귀: emotion 없는(normal) 세그먼트에서도 res.ok=200인데 candidates에 inlineData 없이
+// 텍스트만 오는 경우가 있다 ("Gemini TTS: no audio data in response"). 공식 문서:
+// "The model occasionally returns text tokens instead of audio tokens... implement automated
+// retry logic." systemInstruction은 이 TTS 모델 문서의 Capabilities 표에 전혀 없음
+// (지원 목록엔 "Audio generation"뿐) — 지원 여부가 검증되지 않아 채택하지 않고, 문서가
+// 명시적으로 권장하는 재시도로 대응한다.
+describe('Gemini 어댑터 — 오디오 없이 텍스트만 온 응답 재시도 (no audio data 회귀)', () => {
+  const textOnlyResponse = { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '죄송합니다, 이 요청은 처리할 수 없습니다.' }] } }] }) }
+  const audioResponse = (pcm) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) })
+
+  it('1차 응답이 오디오 없이 텍스트만 오면 1회 재시도해서 2차에서 오디오를 받으면 성공한다', async () => {
+    const pcm = Buffer.from([9, 9])
+    let calls = 0
+    const fetch = async () => {
+      calls += 1
+      return calls === 1 ? textOnlyResponse : audioResponse(pcm)
+    }
+    const a = createGeminiAdapter({ getKey: () => 'gm-key', fetch })
+    const { audio, format } = await a.synthesize({ text: '평온한 나레이션', voiceId: 'Kore', emotion: 'normal' })
+    expect(calls).toBe(2)
+    expect(format).toBe('wav')
+    expect(audio.slice(0, 4).toString()).toBe('RIFF')
+  })
+
+  it('재시도 후에도 계속 텍스트만 오면 기존과 동일한 에러로 실패한다(최대 재시도 후 종료)', async () => {
+    let calls = 0
+    const fetch = async () => {
+      calls += 1
+      return textOnlyResponse
+    }
+    const a = createGeminiAdapter({ getKey: () => 'gm-key', fetch })
+    await expect(a.synthesize({ text: '평온한 나레이션', voiceId: 'Kore', emotion: 'normal' })).rejects.toThrow(/no audio/)
+    expect(calls).toBe(2) // 무한 재시도 아님 — 최대 2회 시도 후 종료
+  })
+
+  it('1차 시도에서 바로 오디오가 오면 재시도 없이 1회만 fetch한다(기존 성공 경로 회귀 없음)', async () => {
+    const pcm = Buffer.from([1, 2, 3])
+    let calls = 0
+    const fetch = async () => {
+      calls += 1
+      return audioResponse(pcm)
+    }
+    const a = createGeminiAdapter({ getKey: () => 'gm-key', fetch })
+    const { format } = await a.synthesize({ text: 'hi', voiceId: 'Kore' })
+    expect(format).toBe('wav')
+    expect(calls).toBe(1)
+  })
+
+  it('진짜 HTTP 에러(4xx/5xx)는 재시도하지 않고 즉시 던진다', async () => {
+    let calls = 0
+    const fetch = async () => {
+      calls += 1
+      return { ok: false, status: 400, text: async () => 'bad request' }
+    }
+    const a = createGeminiAdapter({ getKey: () => 'gm-key', fetch })
+    await expect(a.synthesize({ text: 'hi', voiceId: 'Kore' })).rejects.toThrow(/400/)
+    expect(calls).toBe(1)
+  })
+})

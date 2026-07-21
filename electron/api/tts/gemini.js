@@ -93,28 +93,38 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
       if (!key) throw new MissingProviderKeyError(provider)
       const stylePrompt = EMOTION_STYLE_PROMPTS[emotion]
       const promptText = stylePrompt ? `${stylePrompt} ${text}` : text
-      const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: promptText }] }],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || 'Kore' } } },
-          },
-        }),
-        signal,
+      const body = JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || 'Kore' } } },
+        },
       })
-      if (!res.ok) {
-        const detail = await (res.text?.() ?? Promise.resolve(''))
-        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
-        throw new Error(`Gemini TTS failed: ${res.status} ${detail}`)
+      // 공식 문서: "The model occasionally returns text tokens instead of audio tokens... you should
+      // implement automated retry logic." (systemInstruction은 이 TTS 모델의 문서화된 capabilities에
+      // 없음 — "Audio generation"만 지원 목록에 있고 System instructions는 언급조차 없어 검증 불가라
+      // 채택하지 않음). ok:200이지만 inlineData가 없는 경우(모델이 오디오 대신 텍스트를 반환) 1회 재시도.
+      const MAX_ATTEMPTS = 2
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          signal,
+        })
+        if (!res.ok) {
+          const detail = await (res.text?.() ?? Promise.resolve(''))
+          if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
+          throw new Error(`Gemini TTS failed: ${res.status} ${detail}`)
+        }
+        const json = await res.json()
+        const inline = json?.candidates?.[0]?.content?.parts?.find((p) => p?.inlineData)?.inlineData
+        if (inline?.data) {
+          const pcm = Buffer.from(inline.data, 'base64')
+          return { audio: pcmToWav(pcm, { rate: parseRate(inline.mimeType) }), format: 'wav' }
+        }
       }
-      const json = await res.json()
-      const inline = json?.candidates?.[0]?.content?.parts?.find((p) => p?.inlineData)?.inlineData
-      if (!inline?.data) throw new Error('Gemini TTS: no audio data in response')
-      const pcm = Buffer.from(inline.data, 'base64')
-      return { audio: pcmToWav(pcm, { rate: parseRate(inline.mimeType) }), format: 'wav' }
+      throw new Error('Gemini TTS: no audio data in response')
     },
   }
 }
