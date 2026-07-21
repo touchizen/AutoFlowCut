@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createElevenLabsAdapter } from '../../../../electron/api/tts/elevenlabs.js'
 import { createGoogleTtsAdapter } from '../../../../electron/api/tts/googletts.js'
-import { createGeminiAdapter } from '../../../../electron/api/tts/gemini.js'
+import { createGeminiAdapter, deriveVoiceSeed } from '../../../../electron/api/tts/gemini.js'
 import { MissingProviderKeyError } from '../../../../electron/api/keyErrors.js'
 
 function expectVoiceMetadata(voice) {
@@ -313,10 +313,14 @@ describe('Gemini TTS 어댑터', () => {
     await a.synthesize({ text: '안녕', voiceId: 'Kore', emotion: 'normal' })
     await a.synthesize({ text: '안녕', voiceId: 'Kore' })
     for (const body of captured) {
+      // 원문 그대로(emotion prefix 없음)라는 기존 계약 + 음성 일관성 필드(voiceId 파생 seed,
+      // temperature=1.0 고정)가 함께 실린다.
       expect(body).toEqual({
         contents: [{ parts: [{ text: '안녕' }] }],
         generationConfig: {
           responseModalities: ['AUDIO'],
+          temperature: 1.0,
+          seed: deriveVoiceSeed('Kore'),
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
         },
       })

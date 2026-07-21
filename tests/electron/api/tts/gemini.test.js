@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { createGeminiAdapter, deriveVoiceSeed } from '../../../../electron/api/tts/gemini.js'
 
+// 공용 fixture(중복 제거). 오디오 성공 응답 / 특정 400("tried to generate text").
+const audioResponse = (pcm) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) })
+const textGenerate400 = {
+  ok: false,
+  status: 400,
+  text: async () =>
+    JSON.stringify({ error: { code: 400, message: 'Model tried to generate text, but it should only be used for TTS. Make sure your instructions are clear to only generate audio from a given text transcript.', status: 'INVALID_ARGUMENT' } }),
+}
+
 describe('Gemini 어댑터 gender 필드', () => {
   it('KNOWN_VOICES carry adapter gender; Pulcherrima unknown', () => {
     const a = createGeminiAdapter({ getKey: () => 'k', fetch: async () => ({}) })
@@ -61,7 +70,6 @@ describe('Gemini 어댑터 emotion 프롬프트 — 400 회귀 방지', () => {
 // 명시적으로 권장하는 재시도로 대응한다.
 describe('Gemini 어댑터 — 오디오 없이 텍스트만 온 응답 재시도 (no audio data 회귀)', () => {
   const textOnlyResponse = { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '죄송합니다, 이 요청은 처리할 수 없습니다.' }] } }] }) }
-  const audioResponse = (pcm) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) })
 
   it('1차 응답이 오디오 없이 텍스트만 오면 1회 재시도해서 2차에서 오디오를 받으면 성공한다', async () => {
     const pcm = Buffer.from([9, 9])
@@ -121,14 +129,6 @@ describe('Gemini 어댑터 — 오디오 없이 텍스트만 온 응답 재시�
 // → 이 400(비-auth)만 재시도 대상에 넣고, 재시도 시 프롬프트에 그 전조사+라벨을 붙인다.
 // API_KEY_INVALID(auth) 400은 반드시 즉시 throw — 이 구분이 핵심이라 별도로 고정한다.
 describe('Gemini 어댑터 — "tried to generate text" 400 재시도 (결정적 실패 회귀)', () => {
-  const textGenerate400 = {
-    ok: false,
-    status: 400,
-    text: async () =>
-      JSON.stringify({ error: { code: 400, message: 'Model tried to generate text, but it should only be used for TTS. Make sure your instructions are clear to only generate audio from a given text transcript.', status: 'INVALID_ARGUMENT' } }),
-  }
-  const audioResponse = (pcm) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) })
-
   it('1차가 "tried to generate text" 400이면 프롬프트를 보강해 재시도하고, 2차가 성공하면 오디오를 반환한다', async () => {
     const pcm = Buffer.from([7, 7])
     const bodies = []
@@ -180,7 +180,6 @@ describe('Gemini 어댑터 — "tried to generate text" 400 재시도 (결정적
 // 같은 성우는 감정이 달라도 "동일인"으로 들린다. (⚠️ seed는 TTS 미문서화·best-effort·preview라
 // 실측 근거로만 채택. GA/Gemini 3.x 전환 시 재검토.)
 describe('Gemini 어댑터 — 음성 일관성(seed/temperature 고정)', () => {
-  const audioResponse = (pcm) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) })
   const textOnlyResponse = { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '텍스트만' }] } }] }) }
 
   it('deriveVoiceSeed: 같은 voiceId는 항상 같은 seed(결정적)', () => {
@@ -245,5 +244,59 @@ describe('Gemini 어댑터 — 음성 일관성(seed/temperature 고정)', () =>
     expect(calls).toBe(2)
     expect(bodies[1].generationConfig.seed).toBe(bodies[0].generationConfig.seed)
     expect(bodies[1].generationConfig.temperature).toBe(bodies[0].generationConfig.temperature)
+  })
+})
+
+// 리뷰(Fable5+Codex, 2026-07-21) findings 회귀 방지.
+describe('Gemini 어댑터 — 리뷰 findings 회귀', () => {
+  // [Fable Med / Codex Low] 재시도 프롬프트가 emotion 스타일 지시("Say cheerfully:")를 Transcript
+  // 라벨 뒤에 넣으면 모델이 그 지시를 소리내어 읽는다(문서가 경고한 실패). 스타일은 Transcript 앞
+  // 지시부에만 두고, Transcript 뒤에는 순수 발화문만 와야 한다.
+  it('emotion 세그먼트가 400 후 재시도할 때 스타일 지시는 Transcript 밖 지시부에, Transcript 뒤엔 raw text만 온다', async () => {
+    const bodies = []
+    let calls = 0
+    const fetch = async (url, opts) => { calls += 1; bodies.push(JSON.parse(opts.body)); return calls === 1 ? textGenerate400 : audioResponse(Buffer.from([1])) }
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await a.synthesize({ text: '오늘은 날씨가 좋다', voiceId: 'Kore', emotion: 'happy' })
+    expect(calls).toBe(2)
+    const retryText = bodies[1].contents[0].parts[0].text
+    const [instruction, transcript] = retryText.split('Transcript:')
+    // 발화문(Transcript 뒤)에는 스타일 지시가 절대 섞이지 않는다
+    expect(transcript).toContain('오늘은 날씨가 좋다')
+    expect(transcript.toLowerCase()).not.toContain('cheerfully')
+    expect(transcript).not.toContain('Say cheerfully')
+    // 스타일은 지시부(Transcript 앞)에 보존된다
+    expect(instruction.toLowerCase()).toContain('cheerfully')
+  })
+
+  // [Codex Low] "should only be used for TTS" 문구가 400이 아닌 429/5xx에 있으면 재시도 대상이
+  // 아니다 — status 게이트가 없으면 rate-limit에도 불필요한 즉시 재요청을 보낸다.
+  it('같은 문구라도 status가 400이 아니면(예: 429) 재시도하지 않고 즉시 실패한다', async () => {
+    let calls = 0
+    const fetch = async () => { calls += 1; return { ok: false, status: 429, text: async () => 'rate limited: should only be used for tts' } }
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await expect(a.synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/429/)
+    expect(calls).toBe(1)
+  })
+
+  // [Codex Low] auth 시그니처와 text-error 시그니처가 한 400 응답에 모두 있어도, isAuthResponse가
+  // 먼저 처리되어 재시도 없이 즉시 ProviderAuthError여야 한다(두 분기 순서 검증 — 뒤집으면 실패).
+  it('한 400에 API_KEY_INVALID와 "tried to generate text"가 함께 있어도 auth가 우선해 즉시 ProviderAuthError(재시도 없음)', async () => {
+    let calls = 0
+    const fetch = async () => {
+      calls += 1
+      return { ok: false, status: 400, text: async () => JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key. Model tried to generate text, should only be used for TTS.', status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] } }) }
+    }
+    const a = createGeminiAdapter({ getKey: () => 'bad-key', fetch })
+    await expect(a.synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toMatchObject({ name: 'ProviderAuthError' })
+    expect(calls).toBe(1)
+  })
+
+  // [Fable Low] 두 시도 모두 오디오 없이 텍스트만 오면(정책 거부 등) 그 텍스트를 에러에 담아
+  // "왜 실패했는지"를 남긴다(조용한 일반 에러 방지 — 프로젝트의 "모든 실패 출구 계측" 교훈).
+  it('두 시도 모두 텍스트만 오면 모델이 반환한 텍스트를 에러 메시지에 담는다', async () => {
+    const fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '정책상 이 요청은 생성할 수 없습니다' }] } }] }) })
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await expect(a.synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/정책상 이 요청은 생성할 수 없습니다/)
   })
 })

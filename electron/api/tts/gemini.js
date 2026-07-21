@@ -77,8 +77,13 @@ const EMOTION_STYLE_PROMPTS = {
 // the actual spoken transcript begins." — 짧고/모호한 text(예: "짧은 한마디.")가 이 실패 유형에
 // 해당한다. 따옴표로 감싸는 방식은 문서에 근거가 없어 채택하지 않고, 문서가 명시한 그대로
 // "명확한 전조사 + 트랜스크립트 라벨"만 재시도 시 덧붙인다.
-function withSynthesisPreamble(promptText) {
-  return `Read the following text aloud as natural speech audio only. Do not reply, answer, or add any words of your own.\n\nTranscript: ${promptText}`
+// ⚠️ 스타일 지시(EMOTION_STYLE_PROMPTS의 "Say cheerfully:")는 절대 Transcript 라벨 뒤에 두지
+// 않는다 — 그러면 문서가 경고한 "모델이 style instructions/director's notes를 소리내어 읽는" 바로
+// 그 실패가 재발한다(재시도 프롬프트가 "Say cheerfully"를 발화). 스타일은 지시부에만, Transcript
+// 뒤에는 순수 발화문(raw text)만 둔다.
+function withSynthesisPreamble(text, stylePrompt) {
+  const style = stylePrompt ? ` in the style "${stylePrompt.replace(/:\s*$/, '')}"` : ''
+  return `Read the following text aloud as natural speech audio only${style}. Do not reply, answer, or add any words of your own.\n\nTranscript: ${text}`
 }
 
 // Gemini가 TTS 대신 텍스트로 응답할 때의 특정 400 시그니처. isAuthResponse(API_KEY_INVALID)와는
@@ -138,9 +143,11 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
       // (systemInstruction은 이 TTS 모델의 문서화된 capabilities에 없음 — "Audio generation"만
       // 지원 목록에 있고 System instructions는 언급조차 없어 검증 불가라 채택하지 않음.)
       const MAX_ATTEMPTS = 2
+      let lastText = null
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // 1차는 원문 그대로, 재시도(2차)는 문서가 명시한 "명확한 전조사 + 트랜스크립트 라벨"로 보강.
-        const promptText = attempt === 1 ? basePromptText : withSynthesisPreamble(basePromptText)
+        // 스타일 지시(stylePrompt)는 지시부로 넘기고 Transcript엔 raw text만(발화 방지, 위 주석 참고).
+        const promptText = attempt === 1 ? basePromptText : withSynthesisPreamble(text, stylePrompt)
         const body = JSON.stringify({
           contents: [{ parts: [{ text: promptText }] }],
           generationConfig: {
@@ -159,17 +166,23 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
         if (!res.ok) {
           const detail = await (res.text?.() ?? Promise.resolve(''))
           if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
-          if (isTextInsteadOfAudioError(detail) && attempt < MAX_ATTEMPTS) continue
+          // "tried to generate text" 재시도는 그 특정 400에만 한정한다 — status 게이트가 없으면
+          // 429/5xx 응답에 우연히 같은 문구가 있을 때 즉시 실패 대신 불필요한 재요청을 보낸다.
+          if (res.status === 400 && isTextInsteadOfAudioError(detail) && attempt < MAX_ATTEMPTS) continue
           throw new Error(`Gemini TTS failed: ${res.status} ${detail}`)
         }
         const json = await res.json()
-        const inline = json?.candidates?.[0]?.content?.parts?.find((p) => p?.inlineData)?.inlineData
+        const parts = json?.candidates?.[0]?.content?.parts
+        const inline = parts?.find((p) => p?.inlineData)?.inlineData
         if (inline?.data) {
           const pcm = Buffer.from(inline.data, 'base64')
           return { audio: pcmToWav(pcm, { rate: parseRate(inline.mimeType) }), format: 'wav' }
         }
+        // 오디오 대신 텍스트만 온 경우(정책 거부 등) 그 텍스트를 붙잡아 둔다 — 최종 실패 시
+        // "왜 실패했는지"를 에러에 담아 조용한 일반 에러가 되지 않게(모든 실패 출구에 계측).
+        lastText = parts?.find((p) => p?.text)?.text || lastText
       }
-      throw new Error('Gemini TTS: no audio data in response')
+      throw new Error(`Gemini TTS: no audio data in response${lastText ? ` (model returned text: ${lastText.slice(0, 200)})` : ''}`)
     },
   }
 }
