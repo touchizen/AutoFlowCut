@@ -17,6 +17,7 @@ export function registerRenderIPC(ipcMain, deps = {}) {
     build = buildRenderPlan,
     run = runFfmpegRender,
     pickOutPath,          // async (defaultName) => string|null (dialog); default injected in main.js
+    revealPath,           // (filePath) => void; OS 파일 관리자 열기 구현은 main.js 에서 주입
     ffmpegPath,           // string; injected in main.js
     fontsDir,             // string; injected in main.js
   } = deps
@@ -89,6 +90,11 @@ export function registerRenderIPC(ipcMain, deps = {}) {
       running.delete(jobId)
       markDone()
     }
+  })
+
+  ipcMain.handle('render:reveal', (_event, { path: filePath } = {}) => {
+    try { if (filePath) revealPath(filePath); return { ok: true } }
+    catch (error) { return { ok: false, error: String(error?.message || error) } }
   })
 
   ipcMain.handle('render:cancel', async (_event, { jobId } = {}) => {

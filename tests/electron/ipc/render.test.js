@@ -40,6 +40,16 @@ describe('registerRenderIPC', () => {
     expect(typeof ipc._h['render:cancel']).toBe('function')
   })
 
+  it('registers reveal and passes the file path to the injected implementation', async () => {
+    const ipc = fakeIpc()
+    const revealPath = vi.fn()
+    registerRenderIPC(ipc, okDeps({ revealPath }))
+
+    expect(typeof ipc._h['render:reveal']).toBe('function')
+    expect(await ipc._h['render:reveal']({}, { path: '/out.mp4' })).toEqual({ ok: true })
+    expect(revealPath).toHaveBeenCalledWith('/out.mp4')
+  })
+
   it('runs the pipeline and returns ok with outPath', async () => {
     const ipc = fakeIpc()
     registerRenderIPC(ipc, okDeps())

@@ -105,10 +105,15 @@ export function useExport({
   // CapCut/Premiere/Render 전용 — Vrew 는 오디오 미배치라 호출하지 않는다(IP-A3).
   //   - storyProjectPath 를 넘겨 교차 프로젝트 주입을 막는다(Codex finding 1, main 에서 대조).
   //   - 손상 manifest 는 IPC 가 reject → 삼키지 않고 상위 export 핸들러로 전파해 export 를
-  //     차단한다(Codex finding 3, fail-fast). IPC 자체가 없으면(테스트 등) optional chain → null.
+  //     차단한다(Codex finding 3, fail-fast). electronAPI 자체가 없는 테스트만 null 로 허용한다.
   const loadStoryAudio = async () => {
     if (!storyProjectPath) return null
-    const pkg = (await window.electronAPI?.storyLoadAudioPackage?.(storyProjectPath)) ?? null
+    const electronAPI = window.electronAPI
+    // preload 객체가 있는데 bridge만 없으면 배선 오류다 — 무음 export보다 즉시 차단.
+    if (electronAPI && typeof electronAPI.storyLoadAudioPackage !== 'function') {
+      throw new Error('storyLoadAudioPackage bridge is unavailable')
+    }
+    const pkg = (await electronAPI?.storyLoadAudioPackage?.(storyProjectPath)) ?? null
     // main 은 stale/손상 manifest 를 { error: kind } 로 알린다(throw 는 IPC 를 건너며 errorKind 가
     // 소실된다). 그대로 흘려보내면 이 객체가 storyAudio 로 들어가 manifest 없는 채 export 가
     // 진행된다 — 막고, kind 를 실어 던져 catch 가 로케일 문구로 바꾸게 한다.

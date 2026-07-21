@@ -327,15 +327,10 @@ const cleanupRunningUpscayl = registerUpscaylIPC(ipcMain, {
   pathStore: upscaylPathStore,
 })
 
-// Reveal a rendered file in the OS file manager (self-render completion)
-ipcMain.handle('render:reveal', (_e, { path: filePath } = {}) => {
-  try { if (filePath) shell.showItemInFolder(filePath); return { ok: true } }
-  catch (error) { return { ok: false, error: String(error?.message || error) } }
-})
-
 // Render IPC (self-render to MP4 — fully local ffmpeg)
 const cleanupRunningRenders = registerRenderIPC(ipcMain, {
   getMainWindow: () => mainWindow,
+  revealPath: (filePath) => shell.showItemInFolder(filePath),
   pickOutPath: async (defaultName) => {
     const result = await dialog.showSaveDialog(mainWindow, {
       defaultPath: defaultName || 'render.mp4',

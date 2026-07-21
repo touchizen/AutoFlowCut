@@ -285,6 +285,47 @@ describe('useExport 로직', () => {
   })
 
   describe('self-render 비디오 메타 직렬화', () => {
+    const storyScenes = [{ id: 'scene_1', image: 'data:image/png;base64,STORY', duration: 3 }]
+    const renderArgs = {
+      scaleMode: 'fit', kenBurns: false, kenBurnsMode: 'random', kenBurnsCycle: 5,
+      kenBurnsScaleMin: 1, kenBurnsScaleMax: 1.3, subtitleOption: 'none', subtitleFontSize: 8,
+      renderMode: 'final', renderBurnSubtitle: true,
+    }
+    const renderStoryHook = () => renderHook(() => useExport({
+      settings: { projectName: 'P', aspectRatio: '16:9', defaultDuration: 3 },
+      scenes: storyScenes,
+      openSettings: vi.fn(),
+      isAuthenticated: true,
+      subscription: { status: 'trial', canExport: true },
+      refreshSubscription: vi.fn(),
+      onLoginRequired: vi.fn(),
+      onPaywallRequired: vi.fn(),
+      storyProjectPath: '/tmp/story-project',
+    }))
+
+    it('electronAPI는 있는데 story audio bridge가 없으면 무음 렌더를 차단한다', async () => {
+      window.electronAPI = { onRenderProgress: vi.fn(() => vi.fn()) }
+      const { result } = renderStoryHook()
+
+      let exportResult
+      await act(async () => { exportResult = await result.current.handleExportRender(renderArgs) })
+
+      expect(exportResult).toMatchObject({ success: false })
+      expect(exportResult.error).toMatch(/storyLoadAudioPackage/)
+      expect(mockExportRenderVideo).not.toHaveBeenCalled()
+    })
+
+    it('electronAPI 자체가 없는 테스트 환경은 기존처럼 story audio 없이 진행한다', async () => {
+      delete window.electronAPI
+      const { result } = renderStoryHook()
+
+      let exportResult
+      await act(async () => { exportResult = await result.current.handleExportRender(renderArgs) })
+
+      expect(exportResult).toMatchObject({ success: true })
+      expect(mockExportRenderVideo).toHaveBeenCalledTimes(1)
+    })
+
     it('project에 segment/meta를 붙이고 path와 data fallback을 함께 보존한다', async () => {
       const scenes = [
         {
