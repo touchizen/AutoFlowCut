@@ -6,11 +6,13 @@ const FORBIDDEN = /[/\\:*?"<>|\x00-\x1f]/g
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 
 export function sanitizeOutputName(projectName) {
-  const base = String(projectName ?? '')
+  const cleaned = String(projectName ?? '')
     .replace(FORBIDDEN, '_')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 96)
+  // 코드포인트 단위로 자른다 — .slice 는 UTF-16 code unit 이라 astral(emoji) 서로게이트 쌍을
+  // 반으로 잘라 lone surrogate 를 남길 수 있다.
+  const base = [...cleaned].slice(0, 96).join('')
   // Windows 는 첫 확장자 앞 segment 가 장치명이면 확장자가 더 붙어도 예약명으로 취급한다.
   const safe = RESERVED.test(base.split('.')[0]) ? `_${base}` : base
   return `${safe || 'render'}.mp4`

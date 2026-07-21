@@ -45,6 +45,12 @@ describe('sanitizeOutputName', () => {
     expect(sanitizeOutputName('x'.repeat(200))).toBe(`${'x'.repeat(96)}.mp4`)
   })
 
+  it('astral(emoji) 이름을 잘라도 lone surrogate 를 남기지 않는다', () => {
+    const out = sanitizeOutputName('😀'.repeat(120))
+    expect(out.isWellFormed()).toBe(true)
+    expect(out).toBe(`${'😀'.repeat(96)}.mp4`)
+  })
+
   it('예약명을 포함할 뿐인 정상 이름은 건드리지 않는다', () => {
     expect(sanitizeOutputName('console')).toBe('console.mp4')
     expect(sanitizeOutputName('com10')).toBe('com10.mp4')
