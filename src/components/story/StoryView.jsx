@@ -1169,16 +1169,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   }
 
   // M2a-3d/3c: 세그먼트 재생성(강제 re-TTS)·미리듣기.
-  // Finding2(리뷰): 이 재생성은 이미 done인 audio 스텝에서 불린다 — setViewedStep(null)을 무조건
-  // 하면 displayStep이 (viewedStep 없음 →) currentStep으로 떨어지는데, computeCurrentStep은 done
-  // 스텝(audio)을 건너뛰고 다음 미완료 스텝(보통 prompts)을 가리킨다. preflight가 키 부족으로
-  // 막았을 땐 start()가 전혀 안 불려 audio는 여전히 done이라, 그대로 null로 비우면 오디오 패널
-  // (그 안의 AudioKeyGateCard)이 화면에서 사라져 키 입력 UI가 사라진다. 막혔을 땐 'audio'로
-  // 고정해 패널을 유지한다 — 실행이 성사됐을 때(steps.audio가 running/재계산)는 기존처럼 null.
+  // 세그먼트 단위 재생성은 그 세그먼트 하나만 다시 만드는 국소 액션이라 audio 뷰에 머물러야 한다.
+  // STEP_ORDER=[script,scenes,audio,prompts]라 audio가 done이어도 computeCurrentStep은 다음 미완료
+  // (보통 prompts)를 가리킨다. 그래서 setViewedStep(null)이면 displayStep이 currentStep=prompts로
+  // 떨어져 화면이 prompts로 새어나간다(재생성 성공이든 preflight 막힘이든 동일). 항상 'audio'로
+  // 고정해 오디오 패널(성공 시 세그먼트 목록/재생성, 막힘 시 AudioKeyGateCard)을 유지한다.
+  // (스텝 전체 redo인 handleStepRedo는 "다음으로 진행"이 맞아 별개로 null을 유지한다.)
   const regenerateSegment = async (segId) => {
-    const result = await runAudioWithPreflight(buildAudioParams([segId]), (p) => start('audio', p))
+    await runAudioWithPreflight(buildAudioParams([segId]), (p) => start('audio', p))
     setScriptPhase(null)
-    setViewedStep(result?.error === 'preflight-missing-key' ? 'audio' : null)
+    setViewedStep('audio')
   }
 
   const runSpeakerAudio = async (sp) => {
