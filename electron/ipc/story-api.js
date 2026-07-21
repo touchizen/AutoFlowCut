@@ -5,6 +5,7 @@
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createStepMachine, readAudioPackage } from '../story/stepMachine.js'
+import { keyIdForProvider } from '../../src/config/apiKeyRegistry.js'
 import * as llmGemini from '../api/llm/llmGemini.js'
 import * as llmClaude from '../api/llm/llmClaude.js'
 import { searchVideos } from '../api/youtube/searchVideos.js'
@@ -47,7 +48,19 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels }) {
+// M2 오디오 사전점검(§4.1/§4.3): audioPreflight()가 계산한 필요 provider 목록을 provider별
+// 키 상태(store/fallback/missing)로 매핑하는 순수 함수 — IPC 핸들러에서 분리해 단위 테스트한다.
+export function buildAudioPreflightResult(requiredProviders, { resolveKeyWithSource, encryptionAvailable }) {
+  const providers = requiredProviders.map((provider) => {
+    const keyId = keyIdForProvider(provider)
+    const { source } = resolveKeyWithSource(keyId)
+    const status = source === 'store' ? 'resolved-store' : source === 'fallback' ? 'resolved-fallback' : 'missing'
+    return { provider, keyId, status, encryptionAvailable }
+  })
+  return { providers, encryptionAvailable }
+}
+
+export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels, resolveKeyWithSource, safeStorage }) {
   let machine = null
   let openLock = Promise.resolve()
 
@@ -59,9 +72,16 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   // C1-a: audio 스텝은 tts/probe 주입이 필수(없으면 실앱에서 tts.capabilities() 크래시).
   // 테스트/커스텀 provider는 주입 우선, 기본은 Typecast 어댑터 + music-metadata probe.
   // 화자매핑 UI·멀티 provider 선택은 M2a-3. 키는 typecastKey(env→~/.typecast/credentials).
+  // finding 4: getTypecastKey는 키가 없으면 throw하는 로더다 — 그대로 캐싱하면 그 throw가
+  // 어댑터의 nullable getKey 경계를 우회해 MissingProviderKeyError 대신 raw Error가 샌다.
+  // try/catch로 null을 캐싱해 어댑터가 정식으로 MissingProviderKeyError를 던지게 한다.
   let cachedTtsKey
   const ttsAdapter = tts || createTtsAdapter('typecast', {
-    getKey: () => (cachedTtsKey ??= getTypecastKey()),
+    getKey: () => {
+      if (cachedTtsKey !== undefined) return cachedTtsKey
+      try { cachedTtsKey = getTypecastKey() } catch { cachedTtsKey = null }
+      return cachedTtsKey
+    },
     fetch: (...a) => globalThis.fetch(...a),
   })
   const probeFn = probe || ((filePath) => probeDurationMs(filePath))
@@ -159,6 +179,18 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     if (!machine) return null
     return asKind(() => machine.loadAudioPackage())
   })
+  // M2 오디오 사전점검(§4.1/§4.3): audioPreflight()로 필요 provider를 구한 뒤 provider별 키
+  // 상태를 붙여 renderer에 돌려준다. 읽기 전용 조회라 audioPreflight 자체처럼 guarded()로
+  // 감싸지 않는다(projectToken 불변 여부와 무관) — 다만 machine 이 아직 없으면(프로젝트 미오픈)
+  // machine.audioPreflight 호출이 TypeError로 터지므로 다른 비guarded 핸들러(story:load-audio-package)
+  // 관례대로 빈 목록으로 안전 반환한다.
+  ipcMain.handle('story:audio-preflight', async (_e, params) => {
+    const encryptionAvailable = safeStorage?.isEncryptionAvailable?.() ?? false
+    if (!machine) return buildAudioPreflightResult([], { resolveKeyWithSource, encryptionAvailable })
+    const required = await machine.audioPreflight(params || {})
+    return buildAudioPreflightResult(required, { resolveKeyWithSource, encryptionAvailable })
+  })
+
   ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => machine.generateTitle(scriptMd, options || {})))
   // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action — title/pasted 분기는 machine이 처리.
   // 리서치 §5 M2: 기존 채널에 useResearch 필드 추가(신규 채널 아님) — true일 때만 research.json 주입.
@@ -172,7 +204,18 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters }) =>
     machine.confirmSynopsis({ synopsisMd, characters })))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
-  ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
+  // §4.8 R3: synthPreview가 ProviderAuthError/MissingProviderKeyError(errorKind 있음)를 그대로
+  // throw하면 ipcRenderer.invoke가 message만 직렬화해 errorKind가 소실된다 — renderer가 번역할
+  // 코드를 잃고 raw 영문 진단문을 그대로 토스트한다. story:load-audio-package의 asKind 관습대로
+  // { error: kind, provider } 로 감싸 돌려준다. errorKind 없는 예외는 버그이므로 그대로 던져 드러낸다.
+  ipcMain.handle('story:tts-preview', guarded(async ({ segmentIds, speakers, sfxSources }) => {
+    try {
+      return await machine.synthPreview({ segmentIds, speakers, sfxSources })
+    } catch (e) {
+      if (!e?.errorKind) throw e
+      return { error: e.errorKind, provider: e.provider }
+    }
+  }))
 
   // ── 화자별 오디오 출처 (mp3+SRT 가져오기) ──
   // 출처 자체는 speaker.voice = {provider:'import', mp3Path, srtPath}로 들어가므로 별도 채널이

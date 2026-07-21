@@ -164,6 +164,42 @@ describe('StoryView', () => {
     expect(screen.queryByText('Rachel')).not.toBeInTheDocument()
   })
 
+  // Finding3(M3b 2R 리뷰): VoicePicker 인라인 키 게이트는 preview 재시도만 하고, 그 provider의
+  // 계정 목소리를 다시 안 긁었다 — StoryView가 onReloadVoices를 VoicePicker까지 실제로 이어
+  // 꽂았는지(prop 배선) end-to-end로 확인한다(useApiKey/useTtsKeys 목킹 없이 window.electronAPI만
+  // 스텁 — 실제 훅 경로를 그대로 태운다).
+  it('VoicePicker 인라인 키 게이트 저장 시 onReloadVoices(provider)가 실제로 호출된다', async () => {
+    const originalElectronAPI = window.electronAPI
+    window.electronAPI = {
+      ttsPreviewVoice: vi.fn().mockResolvedValue({ error: 'no-key' }),
+      keysStatus: vi.fn().mockResolvedValue({ hasKey: false, encryptionAvailable: true }),
+      keysSet: vi.fn().mockResolvedValue({ success: true }),
+      keysDelete: vi.fn().mockResolvedValue({ success: true }),
+    }
+    try {
+      const p = pipeline({ scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: 'x' }] }] })
+      p.state.steps.script.status = 'done'
+      p.state.steps.scenes.status = 'done'
+      p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: null }]
+      const voices = [{ id: 'tc_joon', name: 'Joonkyu', language: 'ko', provider: 'typecast' }]
+      const onReloadVoices = vi.fn(async () => {})
+      localStorage.setItem('autoflowcut_lang', 'ko')
+      render(<I18nProvider><StoryView pipeline={p} voices={voices} onReloadVoices={onReloadVoices} /></I18nProvider>)
+      fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+      fireEvent.click(screen.getByLabelText('나레이션 목소리'))
+      fireEvent.click(screen.getByLabelText('미리듣기'))
+      await waitFor(() => expect(window.electronAPI.ttsPreviewVoice).toHaveBeenCalled())
+
+      const input = await waitFor(() => document.querySelector('.audio-key-gate input[type="password"]'))
+      fireEvent.change(input, { target: { value: 'sk-abc' } })
+      fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+      await waitFor(() => expect(onReloadVoices).toHaveBeenCalledWith('typecast'))
+    } finally {
+      window.electronAPI = originalElectronAPI
+    }
+  })
+
   // Codex M2a-3: 기본 성우(빈 옵션) 명시 선택은 기존 voice를 유지하지 말고 null로 비워야 한다
   // (backend defaultVoice로 폴백). `??`가 빈문자열을 "오버라이드 없음"으로 오인하던 버그.
   it('기본 성우(빈 옵션) 선택은 화자 voice를 null로 비운다', () => {
