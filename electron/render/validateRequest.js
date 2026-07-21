@@ -3,6 +3,7 @@ const MODES = new Set(['preview', 'final'])
 const FORMATS = new Set(['portrait', 'landscape'])
 const SCALE_MODES = new Set(['fill', 'fit', 'none'])
 const KB_MODES = new Set(['random', 'pattern'])
+const VIDEO_SOURCES = new Set(['i2v', 't2v'])
 const FONT_MAX = 100
 
 const fail = (error) => ({ ok: false, error })
@@ -31,11 +32,13 @@ export function validateRenderRequest(request) {
   const scenes = Array.isArray(cr.scenes) ? cr.scenes : null
   if (!scenes || scenes.length === 0) return fail('no scenes')
   const ids = new Set()
+  const sceneDurations = new Map()
   for (const s of scenes) {
     if (typeof s.id !== 'string' || !s.id) return fail('scene id missing')
     if (ids.has(s.id)) return fail(`duplicate scene id: ${s.id}`)
     ids.add(s.id)
     if (!finitePos(s.duration)) return fail(`bad scene duration: ${s.id}`)
+    sceneDurations.set(s.id, s.duration)
   }
   for (const sfx of (cr.sfxItems || [])) {
     if (!ids.has(sfx.sceneId)) return fail(`sfx references unknown scene: ${sfx.sceneId}`)
@@ -51,6 +54,62 @@ export function validateRenderRequest(request) {
       if (!finitePos(t.durationMs)) return fail(`audioTrack "${t.filename}" (${t.type}) missing/invalid durationMs`)
     }
     // legacy 'narration' 은 타임코드 없이 전체 길이 → 검증 제외.
+  }
+
+  let videoSegments = []
+  if (prepared.renderVideoSegments != null) {
+    if (!Array.isArray(prepared.renderVideoSegments)) return fail('renderVideoSegments must be an array')
+    videoSegments = prepared.renderVideoSegments
+    const seenSceneIds = new Set()
+    const mediaFiles = Array.isArray(prepared.mediaFiles) ? prepared.mediaFiles : []
+
+    for (const segment of videoSegments) {
+      if (!VIDEO_SOURCES.has(segment?.source)) return fail(`bad video segment source: ${segment?.source}`)
+      if (!sceneDurations.has(segment?.sceneId)) return fail(`video segment references unknown scene: ${segment?.sceneId}`)
+      if (seenSceneIds.has(segment.sceneId)) return fail(`duplicate video segment scene: ${segment.sceneId}`)
+      seenSceneIds.add(segment.sceneId)
+
+      const sceneDur = sceneDurations.get(segment.sceneId)
+      if (!Number.isFinite(segment.inSec)
+          || !Number.isFinite(segment.outSec)
+          || segment.inSec < 0
+          || segment.inSec >= segment.outSec
+          || segment.outSec > sceneDur) {
+        return fail(`bad video segment bounds: ${segment.sceneId}`)
+      }
+
+      const mediaMatches = mediaFiles.filter(file => (
+        file?.type === 'video'
+        && file.sceneId === segment.sceneId
+        && file.source === segment.source
+      ))
+      if (mediaMatches.length !== 1) {
+        return fail(`video segment mediaFile match must be exactly 1: ${segment.sceneId}:${segment.source} (found ${mediaMatches.length})`)
+      }
+    }
+  }
+
+  const sceneMeta = prepared.renderSceneMeta
+  if (sceneMeta != null) {
+    if (typeof sceneMeta !== 'object' || Array.isArray(sceneMeta)) return fail('renderSceneMeta must be an object')
+    for (const sceneId of Object.keys(sceneMeta)) {
+      if (!ids.has(sceneId)) return fail(`renderSceneMeta references unknown scene: ${sceneId}`)
+    }
+    for (const sceneId of ids) {
+      if (!Object.prototype.hasOwnProperty.call(sceneMeta, sceneId)) return fail(`renderSceneMeta missing scene: ${sceneId}`)
+      if (typeof sceneMeta[sceneId]?.hasVideo !== 'boolean') {
+        return fail(`renderSceneMeta.hasVideo must be boolean: ${sceneId}`)
+      }
+    }
+  }
+
+  if (videoSegments.length > 0) {
+    if (sceneMeta == null) return fail('renderSceneMeta required for video segments')
+    for (const segment of videoSegments) {
+      if (sceneMeta[segment.sceneId].hasVideo !== true) {
+        return fail(`renderSceneMeta.hasVideo must be true for video segment: ${segment.sceneId}`)
+      }
+    }
   }
   return { ok: true }
 }

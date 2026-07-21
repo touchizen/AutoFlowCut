@@ -6,6 +6,29 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+
+const { mockExportRenderVideo } = vi.hoisted(() => ({
+  mockExportRenderVideo: vi.fn(async () => ({ ok: true, outPath: '/tmp/output.mp4' })),
+}))
+
+vi.mock('../../src/exporters/render.js', () => ({
+  exportRenderVideo: mockExportRenderVideo,
+  makeRenderJobId: () => 'job_video_segments',
+}))
+vi.mock('../../src/components/Toast', () => ({
+  toast: { warning: vi.fn(), success: vi.fn(), info: vi.fn(), error: vi.fn() },
+}))
+vi.mock('../../src/hooks/useFileSystem', () => ({
+  fileSystemAPI: { ensurePermission: vi.fn().mockResolvedValue({ hasPermission: true }) },
+  default: () => ({}),
+}))
+vi.mock('../../src/hooks/useI18n', () => ({
+  default: () => ({ t: (key) => key, lang: 'ko', setLang: vi.fn() }),
+  useI18n: () => ({ t: (key) => key, lang: 'ko', setLang: vi.fn() }),
+}))
+
+import { useExport } from '../../src/hooks/useExport'
 
 // Mock 함수들
 const mockToast = {
@@ -257,6 +280,65 @@ describe('useExport 로직', () => {
           console.warn('Failed to increment count:', error)
         }
         expect(mockIncrementExportCount).toHaveBeenCalled()
+      })
+    })
+  })
+
+  describe('self-render 비디오 메타 직렬화', () => {
+    it('project에 segment/meta를 붙이고 path와 data fallback을 함께 보존한다', async () => {
+      const scenes = [
+        {
+          id: 'scene_1', imagePath: '/tmp/scene_1.png', duration: 5,
+          videoI2VPath: '/tmp/i2v.mp4', videoI2V: 'data:video/mp4;base64,I2V', videoI2VDuration: 2,
+          videoT2VPath: '/tmp/t2v.mp4', videoT2VDuration: 4,
+        },
+        {
+          id: 'scene_2', imagePath: '/tmp/scene_2.png', duration: 4,
+          videoT2VPath: '/tmp/no-duration.mp4', videoT2V: 'data:video/mp4;base64,T2V', videoT2VDuration: null,
+        },
+        { id: 'scene_3', imagePath: '/tmp/scene_3.png', duration: 3 },
+      ]
+      window.electronAPI = { onRenderProgress: vi.fn(() => vi.fn()) }
+
+      const { result } = renderHook(() => useExport({
+        settings: { projectName: 'P', aspectRatio: '16:9', defaultDuration: 3 },
+        scenes,
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn(),
+      }))
+
+      await act(async () => {
+        await result.current.handleExportRender({
+          scaleMode: 'fit', kenBurns: false, kenBurnsMode: 'random', kenBurnsCycle: 5,
+          kenBurnsScaleMin: 1, kenBurnsScaleMax: 1.3, subtitleOption: 'none', subtitleFontSize: 8,
+          renderMode: 'final', renderBurnSubtitle: true,
+        })
+      })
+
+      const project = mockExportRenderVideo.mock.calls[0][0]
+      expect(project.renderVideoSegments).toEqual([
+        { sceneId: 'scene_1', source: 'i2v', inSec: 3, outSec: 5 },
+      ])
+      expect(project.renderSceneMeta).toEqual({
+        scene_1: { hasVideo: true },
+        scene_2: { hasVideo: true },
+        scene_3: { hasVideo: false },
+      })
+      expect(project.scenes[0].videos[0]).toEqual({
+        source: 'i2v',
+        path: '/tmp/i2v.mp4',
+        fallback: 'data:video/mp4;base64,I2V',
+        duration: 2,
+      })
+      expect(project.scenes[1].videos[0]).toEqual({
+        source: 't2v',
+        path: '/tmp/no-duration.mp4',
+        fallback: 'data:video/mp4;base64,T2V',
+        duration: 4,
       })
     })
   })

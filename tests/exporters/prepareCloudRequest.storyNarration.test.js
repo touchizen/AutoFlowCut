@@ -258,3 +258,46 @@ describe('prepareCloudRequest — story_narration 분기', () => {
     expect(cloudRequest.audioTracks.some(t => t.type === 'story_narration')).toBe(false)
   })
 })
+
+describe('prepareCloudRequest — self-render 비디오 메타', () => {
+  const renderVideoSegments = [
+    { sceneId: 's001', source: 'i2v', inSec: 1, outSec: 3 },
+  ]
+  const renderSceneMeta = { s001: { hasVideo: true } }
+  const videoFallback = 'data:video/mp4;base64,AAAA'
+  const videoProject = () => ({
+    name: 'p',
+    renderVideoSegments,
+    renderSceneMeta,
+    scenes: [{
+      ...sceneBase,
+      videos: [{
+        source: 'i2v',
+        path: '/video/i2v.mp4',
+        fallback: videoFallback,
+        duration: 2,
+      }],
+    }],
+  })
+
+  it('segment/meta를 prepared 최상위로만 전달하고 cloudRequest에는 넣지 않는다', async () => {
+    const result = await prepareCloudRequest(videoProject())
+
+    expect(result.renderVideoSegments).toEqual(renderVideoSegments)
+    expect(result.renderSceneMeta).toEqual(renderSceneMeta)
+    expect(result.cloudRequest.renderVideoSegments).toBeUndefined()
+    expect(result.cloudRequest.renderSceneMeta).toBeUndefined()
+  })
+
+  it('video mediaFiles에 sceneId+source 조인 키와 fallback을 보존한다', async () => {
+    const result = await prepareCloudRequest(videoProject())
+    const video = result.mediaFiles.find(file => file.type === 'video')
+
+    expect(video).toMatchObject({
+      sceneId: 's001',
+      source: 'i2v',
+      path: '/video/i2v.mp4',
+      fallback: videoFallback,
+    })
+  })
+})

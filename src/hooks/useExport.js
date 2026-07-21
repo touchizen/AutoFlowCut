@@ -17,6 +17,7 @@ import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
 import { isExportableScene } from '../utils/exportableScene'
 import { aspectRatioToRenderFormat } from '../utils/kenBurnsPreview'
+import { computeExportVideoSegment } from '../utils/videoSegments'
 
 export function useExport({
   settings,
@@ -122,6 +123,9 @@ export function useExport({
     if (!settings.projectName) {
       console.warn('[useExport] settings.projectName missing — falling back to "Untitled"')
     }
+    const renderVideoSegments = []
+    const renderSceneMeta = {}
+
     return {
       name: settings.projectName || 'Untitled',
       // 'portrait' / 'landscape' — GCF가 기대하는 값.
@@ -134,11 +138,20 @@ export function useExport({
       ),
       // P1 review fix: prune/rebase 전 원본 srtTrack 도 보존.
       rawSrtTrack: srtTrack,
+      renderVideoSegments,
+      renderSceneMeta,
       scenes: validScenes.map(s => {
         const sceneDuration = s.duration || settings.defaultDuration || 3
-        const videos = resolveExportVideos(s).map(v => ({
+        const rawVideos = resolveExportVideos(s)
+        const segment = computeExportVideoSegment({ videos: rawVideos, sceneDurationSec: sceneDuration })
+        if (segment) renderVideoSegments.push({ sceneId: s.id, ...segment })
+        // 모니터의 Ken Burns gate는 배치 가능한 segment가 아니라 비디오 존재 여부다.
+        renderSceneMeta[s.id] = { hasVideo: rawVideos.length > 0 }
+
+        const videos = rawVideos.map(v => ({
           source: v.source,
           path: v.path || v.data,
+          fallback: v.path ? v.data : null,
           duration: v.duration || sceneDuration || 0,
         }))
 

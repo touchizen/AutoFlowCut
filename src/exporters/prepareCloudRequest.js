@@ -193,9 +193,10 @@ export async function prepareCloudRequest(project, options = {}) {
       mediaFiles.push({
         sceneId,
         type: 'video',
+        source: v.source,
         filename: videoFilename,
         path: videoPath,
-        fallback: null,
+        fallback: v.fallback || null,
       });
     }
 
@@ -357,6 +358,8 @@ export async function prepareCloudRequest(project, options = {}) {
   }
 
   return {
+    renderVideoSegments: project.renderVideoSegments || null,
+    renderSceneMeta: project.renderSceneMeta || null,
     cloudRequest: {
       projectName: project.name || 'Untitled',
       os: detectedOS,

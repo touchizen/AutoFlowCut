@@ -46,7 +46,7 @@
   `computeExportVideoSegment({ videos, sceneDurationSec })` → `{ source, inSec, outSec } | null`
   - 입력 `videos` = **`resolveExportVideos(rawScene)`의 raw 배열**(`{source, path|data, duration}`; duration은 `?? null` 원값 — **buildExportProject의 `|| sceneDuration` fallback 우회**, Codex#1/Fable#1). GCF cloudVideoOverlays는 무영향.
   - top-visible 1개: i2v(duration>0) 우선, 없으면 t2v. **duration null/0 → null 반환**(모니터 placement와 일치).
-  - Case A(sceneDur≥videoDur): `inSec=sceneDur−videoDur, outSec=sceneDur`. Case B: `inSec=0, outSec=sceneDur`. `outSec=min(outSec,sceneDur)` 클램프. 씬-로컬 basis(sceneStart=0).
+  - Case A(sceneDur≥videoDur): `inSec=sceneDur−videoDur, outSec=sceneDur`. Case B: `inSec=0, outSec=sceneDur`. **두 경우 모두 outSec=sceneDur(씬 끝)** — 별도 클램프 불필요(구현 M1: `outSec: sceneDurationSec` 직접). 씬-로컬 basis(sceneStart=0).
 - **route (Codex#2)**: `buildExportProject`가 씬별 세그먼트/메타 계산 → **`project.renderVideoSegments[]` + `project.renderSceneMeta{}`** 부착 → `exportRenderVideo(project)` → `prepareCloudRequest(project)`가 그대로 `prepared`에 통과(cloudRequest 아님) → main `build({ cloudRequest, resolved, renderVideoSegments, renderSceneMeta })`(ipc/render.js에 인자 추가) → `buildRenderPlan`이 소비.
 - **직렬화 스키마(self-render 전용, Firebase 누출 방지)**:
   - `renderVideoSegments[{ sceneId, source, inSec, outSec }]` — path/data 없음(mediaFiles로 조인).
@@ -122,6 +122,6 @@
 1. 테스트 그린 + 핵심(세그먼트·overlay 시프트·무음 스킵·인덱스·직렬화) 뮤테이션.
 2. Codex + Fable findings 0.
 3. **실앱 눈검증**: 비디오 프로젝트 self-render → 모니터(View 켜고, 재생성 완료)와 같은 비디오·타이밍(0초부터)·프레이밍·KenBurns-off. 오디오 들림. 무음 비디오 렌더 성공. 비디오 없는 씬 회귀 없음. **i2v+t2v 동시 보유 씬은 i2v 구간만 대조**(t2v 앞구간 발산은 §1-Out 후속).
-- **M1**: `computeExportVideoSegment` + 골든(모니터 값 대조) + 직렬화(renderVideoSegments/renderSceneMeta, Firebase 미포함) + validate + decode.
+- **M1**: `computeExportVideoSegment` + 골든(모니터 값 대조) + 직렬화(renderVideoSegments/renderSceneMeta, Firebase 미포함) + validate. (decode(mime 일반화 + WebM 시그니처)는 HANDOFF 기준 **M2로 이동** — resolveInputs 소비 시점에 필요.)
 - **M2**: buildRenderPlan overlay(visualInputs/인덱스/필터/static KenBurns/스테이징) + probe/오디오(adaptAudioClips). render.js confirmOverlays 제거.
 - **M3**: 눈검증.
