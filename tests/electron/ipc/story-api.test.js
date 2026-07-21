@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStoryCommands, registerStoryIPC } from '../../../electron/ipc/story-api.js'
 import { defaultStoryState } from '../../../electron/story/storyStore.js'
+import { ProviderAuthError, MissingProviderKeyError } from '../../../electron/api/keyErrors.js'
 
 // manifest 를 심는 픽스처는 audio 스텝이 성공한 상태여야 현실과 맞는다 — manifest 는 조립
 // (전체 성공) 경로에서만 쓰인다. done 이 아닌데 manifest 가 남은 경우는 옛 실행의 잔재라
@@ -354,6 +355,101 @@ describe('story IPC', () => {
     const pkg = await ipc.invoke('story:load-audio-package', { projectPath: other })
     expect(pkg.manifest.pushRevision).toBe(7)
     expect(pkg.lastPushedRevision).toBe(7)
+  })
+
+  // §4.8 R3: machine.synthPreview는 어댑터가 던진 ProviderAuthError/MissingProviderKeyError를
+  // (errorKind 있는 타입) 그대로 throw한다. ipcRenderer.invoke는 message만 직렬화하므로 그냥
+  // 던지면 errorKind가 소실돼 renderer가 번역 못 하는 raw 영문 진단문이 뜬다(story:load-audio-package
+  // 의 asKind 와 같은 문제). story:tts-preview 핸들러가 같은 관습으로 { error: kind, provider }
+  // 를 돌려주는지 IPC 경계에서 검증한다.
+  it('story:tts-preview — 무효 키(401) 는 throw 대신 { error: errorKind, provider } 로 resolve', async () => {
+    const ipc2 = fakeIpcMain()
+    const tts = {
+      capabilities: () => ({ maxConcurrency: 2 }),
+      synthesize: async () => { throw new ProviderAuthError('typecast', { status: 401 }) },
+    }
+    registerStoryIPC(ipc2, createStoryCommands({
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: {
+        generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+        splitScenes: vi.fn(async () => ({
+          scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '한 문장입니다.', emotion: 'normal' }] }],
+          speakers: [{ id: 'narrator', name: '나레이션' }],
+        })),
+      },
+      tts,
+    }))
+    const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
+    await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
+    await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
+    const state = await ipc2.invoke('story:get-state', { projectToken })
+    const segId = state.scenes[0].segments[0].id
+
+    const r = await ipc2.invoke('story:tts-preview', {
+      projectToken, segmentIds: [segId], speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }],
+    })
+    expect(r).toEqual({ error: 'story-audio-tts-auth', provider: 'typecast' })
+  })
+
+  it('story:tts-preview — 키 없음(MissingProviderKeyError) 도 같은 모양으로 resolve', async () => {
+    const ipc2 = fakeIpcMain()
+    const tts = {
+      capabilities: () => ({ maxConcurrency: 2 }),
+      synthesize: async () => { throw new MissingProviderKeyError('typecast') },
+    }
+    registerStoryIPC(ipc2, createStoryCommands({
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: {
+        generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+        splitScenes: vi.fn(async () => ({
+          scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '한 문장입니다.', emotion: 'normal' }] }],
+          speakers: [{ id: 'narrator', name: '나레이션' }],
+        })),
+      },
+      tts,
+    }))
+    const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
+    await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
+    await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
+    const state = await ipc2.invoke('story:get-state', { projectToken })
+    const segId = state.scenes[0].segments[0].id
+
+    const r = await ipc2.invoke('story:tts-preview', {
+      projectToken, segmentIds: [segId], speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }],
+    })
+    expect(r).toEqual({ error: 'story-audio-no-tts-key', provider: 'typecast' })
+  })
+
+  // errorKind 없는 예외(네트워크 등)는 여전히 던져야 한다 — asKind 관습대로 삼키지 않는다.
+  it('story:tts-preview — errorKind 없는 예외는 그대로 throw(삼키지 않는다)', async () => {
+    const ipc2 = fakeIpcMain()
+    const tts = {
+      capabilities: () => ({ maxConcurrency: 2 }),
+      synthesize: async () => { throw new Error('network down') },
+    }
+    registerStoryIPC(ipc2, createStoryCommands({
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: {
+        generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+        splitScenes: vi.fn(async () => ({
+          scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '한 문장입니다.', emotion: 'normal' }] }],
+          speakers: [{ id: 'narrator', name: '나레이션' }],
+        })),
+      },
+      tts,
+    }))
+    const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
+    await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
+    await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
+    const state = await ipc2.invoke('story:get-state', { projectToken })
+    const segId = state.scenes[0].segments[0].id
+
+    await expect(ipc2.invoke('story:tts-preview', {
+      projectToken, segmentIds: [segId], speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }],
+    })).rejects.toThrow('network down')
   })
 
   it('story:push-ack(ok:false)는 operationId/reason을 버리지 않고 lastPushError로 보존한다', async () => {

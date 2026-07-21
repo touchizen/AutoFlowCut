@@ -8,9 +8,11 @@
  *
  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
  */
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { readTextFile } from '../../utils/decodeTextFile'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
+import { useAudioPreflight } from '../../hooks/useAudioPreflight'
+import AudioKeyGateCard from './AudioKeyGateCard'
 import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
@@ -21,6 +23,7 @@ import StoryStepper, { STEP_META } from './StoryStepper'
 import { UsageInline } from './StoryTokenUsage'
 import VoicePicker from './VoicePicker'
 import SpeakerAudioSource from './SpeakerAudioSource'
+import SpeakerRegenConfirmModal from './SpeakerRegenConfirmModal'
 import Modal from '../Modal'
 import LiveTimeline from '../LiveTimeline'
 import { buildStoryAudioPackage, buildStorySrtEntries } from '../../utils/storyAudioPackage'
@@ -346,10 +349,17 @@ function useSafeT() {
   } catch {
     i18nT = null
   }
-  return (key, fallback, params = {}) => {
-    const fallbackValue = interpolateFallback(fallback, params)
+  return (key, fallback, params) => {
+    // Two calling conventions land on this `t`: StoryView's own (key, koFallbackString, params)
+    // and the real i18n signature (key, params) used by shared Settings components (ApiKeyField/
+    // TtsApiKeyField/GenaiApiKeyField) that StoryView reuses via AudioKeyGateCard. Passing a
+    // params object straight through as `fallback` silently dropped it (params defaulted to {}),
+    // so `{label}` etc. rendered literally instead of interpolating — detect that shape here.
+    const isParamsShorthand = fallback !== null && typeof fallback === 'object'
+    const realParams = isParamsShorthand ? fallback : (params || {})
+    const fallbackValue = isParamsShorthand ? key : interpolateFallback(fallback, realParams)
     if (!i18nT) return fallbackValue
-    const v = i18nT(key, params)
+    const v = i18nT(key, realParams)
     return v === key ? fallbackValue : v
   }
 }
@@ -404,6 +414,7 @@ export default function StoryView({
   // D24a 복구: fixedSceneError(임포트 중단/거절로 project·story 불일치)에서 image-set 전체를
   // 다시 임포트/취소하는 소유자 콜백. 미주입이면 해당 버튼은 렌더하지 않는다(죽은 버튼 금지).
   onReissueImageFirst = null, onCancelImageFirst = null,
+  onReloadVoices = null,
 }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
@@ -415,6 +426,26 @@ export default function StoryView({
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
     synopsisReviewing = false,
   } = pipeline
+
+  // M3b-2b Task 2: 오디오 생성 pre-flight 키 게이트(spec §4.4). 진입점(아래 5곳)이 직접 start('audio', …)를
+  // 부르지 않고 runAudioWithPreflight를 거친다 — main이 provider별 키를 다시 검사해 missing이 있으면
+  // 실행하지 않고 게이트 카드를 인라인으로 띄운다. pipeline.audioPreflight가 없는 pipeline(구버전/단위
+  // 테스트 목)은 게이트를 건너뛰고 바로 실행 — 이 훅은 M3b-2a에서 이미 커밋된 계약을 그대로 소비할 뿐,
+  // 그 계약이 없는 호출부까지 깨뜨리지 않기 위한 하위호환이다.
+  const preflight = useAudioPreflight(pipeline)
+  const [audioGate, setAudioGate] = useState(null) // { missing, retry, paramsForRecheck } | null
+  const [speakerRegenTarget, setSpeakerRegenTarget] = useState(null) // 우클릭 강제 재생성 confirm 대상 화자 | null
+  const runAudioWithPreflight = useCallback(async (params, run) => {
+    if (typeof pipeline.audioPreflight !== 'function') return run(params)
+    const r = await preflight.check(params)
+    if (!r.ok) {
+      setAudioGate({ missing: r.missing, retry: () => run(params), paramsForRecheck: params })
+      return { error: 'preflight-missing-key' }
+    }
+    setAudioGate(null)
+    return run(params)
+  }, [preflight, pipeline])
+
   const steps = state?.steps || {}
   const scenesStreaming = steps.scenes?.status === 'running' && steps.scenes?.reviewOnly !== true
   const promptsStreaming = steps.prompts?.status === 'running' && steps.prompts?.reviewOnly !== true
@@ -1222,18 +1253,41 @@ export default function StoryView({
   }
 
   // M2a-3d/3c: 세그먼트 재생성(강제 re-TTS)·미리듣기.
-  const regenerateSegment = (segId) => {
-    start('audio', buildAudioParams([segId]))
+  // 세그먼트 단위 재생성은 그 세그먼트 하나만 다시 만드는 국소 액션이라 audio 뷰에 머물러야 한다.
+  // STEP_ORDER=[script,scenes,audio,prompts]라 audio가 done이어도 computeCurrentStep은 다음 미완료
+  // (보통 prompts)를 가리킨다. 그래서 setViewedStep(null)이면 displayStep이 currentStep=prompts로
+  // 떨어져 화면이 prompts로 새어나간다(재생성 성공이든 preflight 막힘이든 동일). 항상 'audio'로
+  // 고정해 오디오 패널(성공 시 세그먼트 목록/재생성, 막힘 시 AudioKeyGateCard)을 유지한다.
+  // (스텝 전체 redo인 handleStepRedo는 "다음으로 진행"이 맞아 별개로 null을 유지한다.)
+  const regenerateSegment = async (segId) => {
+    await runAudioWithPreflight(buildAudioParams([segId]), (p) => runStep('audio', p))
     setScriptPhase(null)
-    setViewedStep(null)
+    setViewedStep('audio')
   }
 
-  const runSpeakerAudio = async (sp) => {
-    const result = await start('audio', { ...buildAudioParams(), onlySpeaker: sp.id })
+  // 우클릭 강제 재생성 confirm 모달에 보여줄 그 화자의 narration 세그먼트 수. 세그먼트의 화자
+  // 참조는 id·이름·별칭일 수 있어(narrator={id:'narrator',name:'나레이션'}) 백엔드 canonicalSpeaker와
+  // 같은 정규화(speakerByRef)로 매칭해야 한다 — id 완전일치로 세면 별칭 화자에서 0개로 잘못 안내해
+  // 파괴적 재생성의 동의 화면이 틀린다.
+  const countSpeakerSegments = (sp) =>
+    (scenes || []).flatMap((s) => s.segments || []).filter((g) => (g.type || 'narration') === 'narration' && speakerByRef(g.speaker)?.id === sp?.id).length
+  // force=true면 그 화자의 이미 done인 세그먼트까지 강제 재생성(regenerateSpeaker). 좌클릭(force=false)은
+  // 기존 "미생성분만 채우기".
+  const runSpeakerAudio = async (sp, { force = false } = {}) => {
+    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) }, (p) => runStep('audio', p))
+    // preflight가 막은 경우엔 게이트 카드가 이미 안내하므로 별도 토스트 없이 조용히 돌아간다.
+    if (result?.error === 'preflight-missing-key') return
+    // busy: 좌클릭 fill-missing은 실행 중 화자 맵이 안 보여 사용자가 만든 상황이 아니라 조용하다.
+    // 하지만 우클릭 강제 재생성(force)은 confirm까지 거친 명시적 액션인데, 모달을 연 사이 다른 작업
+    // (synopsis/research side action 등 — isRunning은 이걸 반영 못 함)이 시작돼 busy면 무반응으로
+    // 보인다. force일 때만 피드백을 준다(파괴는 없다 — main이 이미 막았다).
+    if (result?.error === 'busy') {
+      if (force) toast.error(t('story.audio.busyRetry', 'Another task is running. Try again in a moment.'))
+      return
+    }
     // main 의 거절(대사 없는 화자 등)은 **사전검사라 스텝 상태를 일부러 안 건드린다**(완료 프로젝트의
     // done 을 지키려고). 그래서 오류 배너도 안 뜬다 — 여기서 안 띄우면 버튼이 무반응으로 보인다.
-    // busy 는 뺀다: 실행 중엔 화자 맵 자체가 안 보이므로 사용자가 만든 상황이 아니다.
-    if (result?.error && result.error !== 'busy') {
+    if (result?.error) {
       toast.error(resolveDisplayError(t, result.error, result.error))
       return
     }
@@ -1257,21 +1311,54 @@ export default function StoryView({
     || storyAudioPkg.sfx.some((s) => s.files.length > 0)
 
   // 슬라이스1: 세그먼트 단건 테스트 — 배치와 분리해 그 세그먼트만 합성(화자 매핑 반영) 후 바로 재생.
+  // Finding3(리뷰): 배치(runAudioWithPreflight를 거치는 audio())와 달리 이 단건 테스트는 preflight
+  // 없이 바로 ttsPreview를 불렀다 — 키가 없으면 IPC 거절이 errorKind 없이 raw 토스트로 샌다.
+  // backend audioPreflight가 mode:'segmentTest'(stepMachine:1971)를 이미 지원하므로 여기서도
+  // runAudioWithPreflight를 재사용해 같은 게이트 카드로 안내한다.
+  // Finding1(2R 리뷰): 게이트가 뜬 뒤 "키 저장"은 AudioKeyGateCard.onKeySaved(~L2166)가
+  // testSegment의 try/finally가 이미 끝난 뒤 audioGate.retry()로 별도(비동기) 재호출한다.
+  // 그 retry가 원래처럼 raw ttsPreview 콜백을 그대로 부르면 previewBusy 가드도 catch도 없이
+  // 실행돼, "존재하지만 무효한" 키에서 ttsPreview가 거부될 때 unhandled rejection +
+  // 번역 안 된 토스트로 새고, 두 번째 트리거와 겹칠 수도 있다. 가드+에러 처리를 가진 실행부를
+  // 별도 함수로 빼서 최초 호출과 retry가 항상 같은(가드된) 경로를 타게 한다.
+  // §4.8 R3: story:tts-preview는 이제 auth/missing-key를 throw 대신 { error: errorKind, provider }
+  // 로 돌려준다(electron/ipc/story-api.js) — 여기서 resolveDisplayError로 번역해 토스트한다.
+  // throw 경로(네트워크 등 errorKind 없는 예외)는 기존처럼 raw message로 폴백.
+  const previewBusyRef = useRef(false)
   const [previewBusy, setPreviewBusy] = useState(false)
-  const testSegment = async (segId) => {
-    if (previewBusy) return
+  // 화자 오디오 액션(좌클릭 fill-missing / 우클릭 강제 재생성)을 막아야 하는 통합 busy 신호.
+  // step/preview 실행 + synopsis 생성·검수를 포함한다 — 이걸 무시하고 start()를 dispatch하면
+  // 진행 중 progressLog/reviewProgress/reviewScores를 먼저 지운 뒤 main이 busy로 거절해 그 UI
+  // 상태가 소실된다(research는 renderer 신호가 없어 busy 토스트가 방어). isRunning은 한 스텝만
+  // 반영하므로 synopsis side action을 여기서 명시적으로 더한다.
+  const speakerAudioBusy = isRunning || previewBusy || synopsisGenerating || synopsisReviewing
+  const runSegmentTestGuarded = async (segId) => {
+    if (previewBusyRef.current) return
+    previewBusyRef.current = true
     setPreviewBusy(true)
     try {
       const ap = buildAudioParams()
       const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
       if (r?.busy) { toast.error(t('story.audio.busy')); return }
+      if (r?.error) {
+        toast.error(t('story.audio.testFailed', { error: resolveDisplayError(t, r.error, r.error) }))
+        return
+      }
       const seg = r?.segments?.find((s) => s.id === segId)
       if (seg?.audioPath) playAudio(seg.audioPath)
     } catch (e) {
       toast.error(t('story.audio.testFailed', { error: e?.message || e }))
     } finally {
+      previewBusyRef.current = false
       setPreviewBusy(false)
     }
+  }
+  const testSegment = async (segId) => {
+    if (previewBusyRef.current) return
+    const ap = buildAudioParams()
+    // run 콜백은 runSegmentTestGuarded 그대로 — runAudioWithPreflight가 이걸 audioGate.retry로도
+    // 저장하므로(위 주석), 최초 실행과 키 저장 후 retry가 완전히 같은 가드된 경로를 탄다.
+    return runAudioWithPreflight({ ...ap, mode: 'segmentTest', segmentIds: [segId] }, () => runSegmentTestGuarded(segId))
   }
 
   const startScriptFromTitle = () => {
@@ -1400,7 +1487,13 @@ export default function StoryView({
       await handleSplit()
     } else {
       // M2a-3b: audio는 화자→목소리 매핑을 실어 보낸다(그 외 스텝은 params 없음).
-      runStep(currentStep, buildStepParams(currentStep))
+      // M3b-2b: audio만 pre-flight 게이트를 거친다 — missing 키가 있으면 여기서 실행하지 않고
+      // AudioKeyGateCard로 안내한다(그 외 스텝은 게이트 대상이 아니라 원래대로 직접 실행).
+      if (currentStep === 'audio') {
+        runAudioWithPreflight(buildStepParams(currentStep), (p) => runStep('audio', p))
+      } else {
+        runStep(currentStep, buildStepParams(currentStep))
+      }
       // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
       setScriptPhase(null)
       // 진행 액션은 현재 단계로 화면을 되돌린다 — done 스텝을 보던 중이면 viewedStep이
@@ -1410,8 +1503,16 @@ export default function StoryView({
   }
 
   // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
-  const handleStepRedo = () => {
+  // Finding2(리뷰): audio 재실행이 preflight에 막히면(missing key) start()가 안 불려 steps.audio는
+  // 여전히 done — regenerateSegment와 같은 이유로, 무조건 null 대신 막혔을 때만 'audio'로 고정해
+  // AudioKeyGateCard가 보이는 오디오 패널을 유지한다.
+  const handleStepRedo = async () => {
     if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(제목 확정+분리, 자체 viewedStep 처리)
+    if (redoStep === 'audio') {
+      const result = await runAudioWithPreflight(buildStepParams(redoStep), (p) => runStep('audio', p))
+      setViewedStep(result?.error === 'preflight-missing-key' ? 'audio' : null)
+      return
+    }
     runStep(redoStep, buildStepParams(redoStep))
     setViewedStep(null)
   }
@@ -1502,7 +1603,11 @@ export default function StoryView({
       return
     }
     setScriptPhase(null); setViewedStep(null)
-    const res = await runStep(step, buildStepParams(step))
+    // M3b-2b: audio는 pre-flight 게이트를 거친다 — missing 키면 'preflight-missing-key'가 res.error로
+    // 와서 아래 stuck 방지 로직이 자동 진행을 멈춘다(키가 없는데 계속 재시도하면 안 됨).
+    const res = step === 'audio'
+      ? await runAudioWithPreflight(buildStepParams(step), (p) => runStep('audio', p))
+      : await runStep(step, buildStepParams(step))
     if (res?.error) setAutoRunning(false) // busy 등 상태전이 없음 → 멈춤
   }
   const handleRunAll = () => { if (canRunAll) setAutoRunning(true) }
@@ -2233,6 +2338,34 @@ export default function StoryView({
 
         {displayStep === 'audio' && (
           <div className="story-audio-panel">
+            {/* M3b-2b Task 2: pre-flight가 missing 키를 찾으면 실행 대신 여기 인라인으로 카드를
+                띄운다(§4.4). onKeySaved는 best-effort로 그 provider 목소리 재조회 후 재검사 —
+                통과하면 원래 하려던 실행(audioGate.retry)을 이어서 돈다.
+                Finding1(리뷰): onVoiceSearch는 App의 handleTtsVoiceSearch로 이어지는데, 그건
+                검색어 2자 미만이면 조용히 no-op하는 원격 "검색"이라 provider 목소리를 다시
+                로드하지 못한다(prod no-op). onReloadVoices(=App.reloadTtsVoicesForProvider)가
+                그 provider 슬라이스를 처음부터 다시 긁는 전용 경로다. */}
+            {audioGate && (
+              <AudioKeyGateCard
+                missing={audioGate.missing}
+                t={t}
+                onKeySaved={async (provider) => {
+                  try { await onReloadVoices?.(provider) } catch { /* best-effort — 재조회 실패해도 재검사는 진행 */ }
+                  const r = await preflight.check(audioGate.paramsForRecheck)
+                  if (r.ok) {
+                    setAudioGate(null)
+                    // Finding1(2R 리뷰): retry는 여기서 fire-and-forget으로 불리면 그 안에서
+                    // 도는 실제 실행이 이 컴포넌트의 원래 호출부(testSegment 등)의 try/finally
+                    // 밖에서 돈다 — await+catch로 감싸 unhandled rejection을 막는다. 세그먼트
+                    // 테스트 경로는 retry 자체가 이미 가드+토스트를 갖고 있어(runSegmentTestGuarded)
+                    // 안 던지지만, 다른 진입점(배치 실행 등)의 방어도 여기서 함께 확보한다.
+                    try { await audioGate.retry?.() } catch { /* run 콜백이 이미 자체 처리 — 방어적 캐치 */ }
+                  } else {
+                    setAudioGate((g) => (g ? { ...g, missing: r.missing } : g))
+                  }
+                }}
+              />
+            )}
             {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행).
                 로그를 함께 넘긴다 — 파일 가져오기의 진단(정렬 결과, 자막이 안 맞는 위치)이 여기로
                 온다. 안 넘기면 그 정보가 어디에도 안 보인다(오류 배너는 errorKind로 번역되면서
@@ -2371,13 +2504,15 @@ export default function StoryView({
                             type="button"
                             className="story-speaker-run-btn"
                             onClick={() => runSpeakerAudio(sp)}
-                            // ✨ 가 보이는데 다른 작업이 도는 상태가 둘 있다: 미리듣기 중(steps.audio 가
-                            // running 이 아니다)과 audio:done + 다른 스텝 running(완료된 탭을 다시 열 수
-                            // 있다). 누르면 start() 가 invoke 전에 segmentProgress/progressLog 를 비워
-                            // **돌던 작업의 진행·경고가 증발**하고, main 의 busy 는 조용히 무시된다.
-                            disabled={isRunning || previewBusy}
+                            // 우클릭: 이 화자 오디오 전체 강제 재생성(confirm 모달) — 좌클릭(미생성분 채우기)과 분리.
+                            onContextMenu={(e) => { e.preventDefault(); if (!speakerAudioBusy) setSpeakerRegenTarget(sp) }}
+                            // ✨ 가 보이는데 다른 작업이 도는 상태들: 미리듣기 중, audio:done + 다른 스텝
+                            // running, synopsis 생성·검수(side action) 중. 누르면 start() 가 invoke 전에
+                            // segmentProgress/progressLog 를 비워 **돌던 작업의 진행·경고가 증발**하고 main 의
+                            // busy 는 조용히 무시된다. speakerAudioBusy 로 그 모든 경우를 막는다.
+                            disabled={speakerAudioBusy}
                             aria-label={t('story.audio.runThisSpeakerFor', `${sp.name || sp.id}만 생성`, { speaker: sp.name || sp.id })}
-                            title={t('story.audio.runThisSpeakerHint', '이 화자 세그먼트만 생성합니다. 나머지 화자는 그대로 두고, 결과를 먼저 확인할 수 있습니다.')}
+                            title={`${t('story.audio.runThisSpeakerHint', '이 화자 세그먼트만 생성합니다. 나머지 화자는 그대로 두고, 결과를 먼저 확인할 수 있습니다.')} · ${t('story.audio.runThisSpeakerForceHint', '우클릭: 이 화자 오디오 전체 재생성')}`}
                           >
                             ✨
                           </button>
@@ -2417,6 +2552,7 @@ export default function StoryView({
                         onConfirm={voiceSel.confirmVoice}
                         onCancel={voiceSel.closeVoicePicker}
                         onVoiceSearch={onVoiceSearch}
+                        onReloadVoices={onReloadVoices}
                         previewState={voiceSel.preview.state}
                         t={t}
                         isKo={isKo}
@@ -2659,6 +2795,16 @@ export default function StoryView({
             </button>
           )}
         </div>
+      )}
+      {speakerRegenTarget && (
+        <SpeakerRegenConfirmModal
+          speaker={speakerRegenTarget}
+          segmentCount={countSpeakerSegments(speakerRegenTarget)}
+          onConfirm={() => { const sp = speakerRegenTarget; setSpeakerRegenTarget(null); runSpeakerAudio(sp, { force: true }) }}
+          onCancel={() => setSpeakerRegenTarget(null)}
+          confirmDisabled={speakerAudioBusy}
+          t={t}
+        />
       )}
     </div>
   )

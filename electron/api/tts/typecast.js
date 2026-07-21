@@ -2,6 +2,7 @@
  * Typecast TTS 어댑터 — 스펙 §6. 실호출은 CLAUDE.md 값(api.typecast.ai, ssfm-v21).
  * getKey/fetch 주입으로 단위 테스트. 세그먼트=단일 요청(어댑터는 이어붙이지 않음).
  */
+import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
 const ENDPOINT = 'https://api.typecast.ai/v1/text-to-speech'
 const VOICES_ENDPOINT = 'https://api.typecast.ai/v1/voices'
 
@@ -34,7 +35,7 @@ function normalizeTypecastVoice(v) {
   }
 }
 
-export function createTypecastAdapter({ getKey, fetch }) {
+export function createTypecastAdapter({ getKey, fetch, provider = 'typecast' }) {
   const voiceModelById = new Map()
 
   // Core logic for fetching and caching voices — used by listVoices() and synthesize() lazy-populate
@@ -71,7 +72,7 @@ export function createTypecastAdapter({ getKey, fetch }) {
     },
     async synthesize({ text, voiceId, emotion = 'normal', signal, model }) {
       const key = getKey()
-      if (!key) throw new Error('No Typecast API key')
+      if (!key) throw new MissingProviderKeyError(provider)
       // Lazy-populate voiceModelById on cache miss: if no explicit model and id not in cache, fetch voices
       if (!model && !voiceModelById.has(voiceId)) {
         try {
@@ -89,6 +90,7 @@ export function createTypecastAdapter({ getKey, fetch }) {
       })
       if (!res.ok) {
         const detail = await (res.text?.() ?? Promise.resolve(''))
+        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
         throw new Error(`Typecast TTS failed: ${res.status} ${detail}`)
       }
       const buf = Buffer.from(await res.arrayBuffer())

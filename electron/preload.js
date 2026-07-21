@@ -138,6 +138,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyReviewSynopsis: (params) => ipcRenderer.invoke('story:review-synopsis', params),
   storyConfirmSynopsis: (params) => ipcRenderer.invoke('story:confirm-synopsis', params),
   storyTtsPreview: (params) => ipcRenderer.invoke('story:tts-preview', params),
+  storyAudioPreflight: (params) => ipcRenderer.invoke('story:audio-preflight', params),
   // SRT 가져오기 — 나레이션 오디오를 TTS로 만들지, 완성된 mp3에서 잘라 쓸지.
   storyPickAudioImportFile: (params) => ipcRenderer.invoke('story:pick-audio-import-file', params),
   storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath }),

@@ -232,26 +232,28 @@ describe('D15 — agent session의 프로젝트 경계', () => {
 
 describe('M1 slice 10 — 핸들러 계수 불변식 (D7)', () => {
   // D7 은 M1 기준 20 = 17 guarded + 3 custom 이라고 쓰지만, **M1a 의 `story:stage-image-first` 가
-  // 먼저 착지해서** 21 = 18 guarded + 3 custom 이었다. main 병합으로 `story:pick-audio-import-file`
-  // (파일 다이얼로그 — 프로젝트 토큰 무관)이 착지해 현재는 22 = 18 guarded + 4 custom 이다.
+  // 먼저 착지해서** 21 = 18 guarded + 3 custom 이었다. `story:pick-audio-import-file`(파일 다이얼로그 —
+  // 프로젝트 토큰 무관)이 착지해 22 = 18 guarded + 4 custom, **2차 main 병합으로 `story:audio-preflight`
+  // (읽기 전용 키 점검 — 프로젝트 토큰 무관)이 착지해 현재는 23 = 18 guarded + 5 custom 이다.**
   // 🔴 숫자를 맞추려고 D24b `story:commit-image-first-script` 를 **조기 구현하지 마라** —
   //    스펙은 그걸 blind gate 통과 뒤 M3 로 미뤄뒀다. 계수는 현실을 적고, 궤적을 주석으로 남긴다.
-  // custom 4개 = token guard 를 안 타는 것들.
+  // custom 5개 = token guard 를 안 타는 것들.
   //   list-llm-options: 프로젝트와 무관 / open: 토큰을 **발급하는** 쪽 / load-audio-package: 경로 직독 허용
   //   pick-audio-import-file: OS 파일 다이얼로그 — 프로젝트 상태 변경 없음, 토큰 무관
-  const CUSTOM = ['story:list-llm-options', 'story:open', 'story:load-audio-package', 'story:pick-audio-import-file']
+  //   audio-preflight: provider 키 상태 읽기 전용 — machine 미오픈이면 빈 목록, 토큰 무관
+  const CUSTOM = ['story:list-llm-options', 'story:open', 'story:load-audio-package', 'story:pick-audio-import-file', 'story:audio-preflight']
 
-  it('IPC 핸들러는 22개 = 18 guarded + 4 custom', async () => {
-    expect(ipc.handlers.size).toBe(22)
+  it('IPC 핸들러는 23개 = 18 guarded + 5 custom', async () => {
+    expect(ipc.handlers.size).toBe(23)
     for (const ch of CUSTOM) expect(ipc.handlers.has(ch), `custom 핸들러 ${ch} 가 없다`).toBe(true)
     expect(ipc.handlers.size - CUSTOM.length).toBe(18)
   })
 
-  // 🔴 위 테스트는 **산수 항등식**이다 — `size===21` 을 단언한 뒤 `21-3===18` 을 확인할 뿐,
+  // 🔴 위 테스트는 **산수 항등식**이다 — `size===23` 을 단언한 뒤 `23-5===18` 을 확인할 뿐,
   //    그 18개가 **정말 guarded 인지**는 하나도 안 본다. 실측: `story:abort` 와 `story:tts-preview` 의
-  //    `guarded()` 를 벗겨도 electron 테스트 1,920개가 전부 초록이었다.
+  //    `guarded()` 를 벗겨도 electron 테스트가 전부 초록이었다.
   //    → **숫자가 아니라 계약을 잰다: custom 이 아닌 모든 채널은 틀린 토큰을 거부해야 한다.**
-  it('🔴 custom 3개를 뺀 **모든** 채널이 틀린 토큰을 `stale-token` 으로 거부한다', async () => {
+  it('🔴 custom 5개를 뺀 **모든** 채널이 틀린 토큰을 `stale-token` 으로 거부한다', async () => {
     await ipc.invoke('story:open', { projectPath: dir })
 
     const guardedChannels = [...ipc.handlers.keys()].filter((ch) => !CUSTOM.includes(ch))

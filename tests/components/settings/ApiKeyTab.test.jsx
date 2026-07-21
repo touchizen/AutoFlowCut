@@ -1,84 +1,78 @@
-/**
- * ApiKeyTab.test.jsx — BYOK 키 입력 탭 통합 테스트.
- *
- * useApiKey + ApiKeyTab + genai IPC mock 을 관통. 검증→저장 흐름,
- * 검증 실패 시 저장 차단, 암호화 불가 시 비활성을 확인.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import ApiKeyTab from '../../../src/components/settings/ApiKeyTab'
+import { render, screen, fireEvent } from '@testing-library/react'
 
-vi.mock('../../../src/components/Toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+/**
+ * §4.7 R3: settings-tab key save must trigger an App-level voice reload for the saved
+ * provider ("all save wrappers share an App-level reload"). ApiKeyTab is the point where
+ * every wrapper (GenaiApiKeyField + each TtsApiKeyField row) converges, so this is where the
+ * wrapper→tab→modal contract (onSaved → onKeySaved(provider)) is verified end to end.
+ */
+const { validateKey, saveKeyGenai, saveKeyTts } = vi.hoisted(() => ({
+  validateKey: vi.fn(async () => ({ valid: true })),
+  saveKeyGenai: vi.fn(async () => ({ success: true })),
+  saveKeyTts: vi.fn(async () => ({ success: true })),
 }))
-import { toast } from '../../../src/components/Toast'
+// hooks가 IPC(window.electronAPI)를 부르므로 mock — 존재 여부만 렌더 확인.
+vi.mock('../../../src/hooks/useApiKey', () => ({
+  useApiKey: () => ({ hasKey: true, encryptionAvailable: true, loading: false, validateKey, saveKey: saveKeyGenai, clearKey: vi.fn() }),
+}))
+// provider별 saveKey를 구분해야 하므로 훅을 부른 provider를 첫 인자로 실어 넘긴다.
+vi.mock('../../../src/hooks/useTtsKeys', () => ({
+  useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: (key) => saveKeyTts(p, key), clearKey: vi.fn() }),
+}))
 
-// t: 키를 그대로 반환 (보간은 무시) → 렌더된 텍스트로 키 존재 검증
-const t = (k) => k
+import ApiKeyTab from '../../../src/components/settings/ApiKeyTab'
+const t = (k, vars) => (vars ? `${k}:${JSON.stringify(vars)}` : k)
 
-beforeEach(() => {
-  window.electronAPI.genaiGetKeyStatus.mockResolvedValue({ hasKey: false, encryptionAvailable: true })
-  window.electronAPI.genaiValidateKey.mockResolvedValue({ valid: true })
-  window.electronAPI.genaiSetKey.mockResolvedValue({ success: true })
-  window.electronAPI.genaiClearKey.mockResolvedValue({ success: true })
+describe('ApiKeyTab (consolidated list)', () => {
+  it('lists Gemini + all three TTS providers', () => {
+    render(<ApiKeyTab t={t} />)
+    expect(screen.getByText('Google Gemini')).toBeTruthy()
+    expect(screen.getByText('Typecast')).toBeTruthy()
+    expect(screen.getByText('ElevenLabs')).toBeTruthy()
+    expect(screen.getByText('Google Cloud TTS')).toBeTruthy()
+  })
+
+  it('flags Google Cloud TTS as unavailable for Story audio', () => {
+    render(<ApiKeyTab t={t} />)
+    expect(screen.getByText('settings.googlettsStoryUnavailable')).toBeTruthy()
+  })
 })
 
-describe('ApiKeyTab', () => {
-  it('키 없음 상태 + 삭제 버튼 없음', async () => {
-    render(<ApiKeyTab t={t} />)
-    await waitFor(() => expect(screen.getByText('settings.apiKeyNotSet')).toBeInTheDocument())
-    expect(screen.queryByText('settings.apiKeyRemove')).toBeNull()
+describe('ApiKeyTab — onKeySaved reload wiring (§4.7)', () => {
+  beforeEach(() => {
+    validateKey.mockClear()
+    saveKeyGenai.mockClear()
+    saveKeyTts.mockClear()
   })
 
-  it('키 있음 → 상태 표시 + 삭제 버튼', async () => {
-    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({ hasKey: true, encryptionAvailable: true })
-    render(<ApiKeyTab t={t} />)
-    await waitFor(() => expect(screen.getByText('settings.apiKeySet')).toBeInTheDocument())
-    expect(screen.getByText('settings.apiKeyRemove')).toBeInTheDocument()
+  it('saving the Gemini key calls onKeySaved("gemini")', async () => {
+    const onKeySaved = vi.fn()
+    render(<ApiKeyTab t={t} onKeySaved={onKeySaved} />)
+    const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Google Gemini"}')
+    fireEvent.change(input, { target: { value: 'AIzaGOOD' } })
+    fireEvent.click(screen.getAllByText('settings.ttsKeySave')[0])
+    await vi.waitFor(() => expect(saveKeyGenai).toHaveBeenCalledWith('AIzaGOOD'))
+    await vi.waitFor(() => expect(onKeySaved).toHaveBeenCalledWith('gemini'))
   })
 
-  it('Verify & Save: 검증 통과 → 저장 + 성공 토스트 + 입력 비움', async () => {
-    window.electronAPI.genaiGetKeyStatus
-      .mockResolvedValueOnce({ hasKey: false, encryptionAvailable: true })
-      .mockResolvedValue({ hasKey: true, encryptionAvailable: true })
-    render(<ApiKeyTab t={t} />)
-    await waitFor(() => screen.getByText('settings.apiKeyNotSet'))
-
-    const input = screen.getByPlaceholderText('settings.apiKeyPlaceholder')
-    fireEvent.change(input, { target: { value: 'AIza-good' } })
-    fireEvent.click(screen.getByText('settings.apiKeyVerifySave'))
-
-    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'AIza-good' }))
-    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'AIza-good' })
-    expect(toast.success).toHaveBeenCalled()
-    expect(input.value).toBe('')
+  it('saving a TTS provider key (Typecast) calls onKeySaved("typecast")', async () => {
+    const onKeySaved = vi.fn()
+    render(<ApiKeyTab t={t} onKeySaved={onKeySaved} />)
+    const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Typecast"}')
+    fireEvent.change(input, { target: { value: 'tc-sk-abc' } })
+    fireEvent.click(screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Typecast"}')
+      .closest('.setting-row').querySelector('button.btn-primary'))
+    await vi.waitFor(() => expect(saveKeyTts).toHaveBeenCalledWith('typecast', 'tc-sk-abc'))
+    await vi.waitFor(() => expect(onKeySaved).toHaveBeenCalledWith('typecast'))
+    expect(onKeySaved).not.toHaveBeenCalledWith('gemini')
   })
 
-  it('검증 실패 → 저장 안 함 + 에러 토스트', async () => {
-    window.electronAPI.genaiValidateKey.mockResolvedValue({ valid: false, error: 'bad key' })
+  it('without onKeySaved (not wired), saving still succeeds without throwing', async () => {
     render(<ApiKeyTab t={t} />)
-    await waitFor(() => screen.getByText('settings.apiKeyNotSet'))
-
-    fireEvent.change(screen.getByPlaceholderText('settings.apiKeyPlaceholder'), { target: { value: 'bad' } })
-    fireEvent.click(screen.getByText('settings.apiKeyVerifySave'))
-
-    await waitFor(() => expect(toast.error).toHaveBeenCalled())
-    expect(window.electronAPI.genaiSetKey).not.toHaveBeenCalled()
-  })
-
-  it('빈 입력 → 검증 호출 안 함', async () => {
-    render(<ApiKeyTab t={t} />)
-    await waitFor(() => screen.getByText('settings.apiKeyNotSet'))
-    fireEvent.click(screen.getByText('settings.apiKeyVerifySave'))
-    await waitFor(() => expect(toast.error).toHaveBeenCalled())
-    expect(window.electronAPI.genaiValidateKey).not.toHaveBeenCalled()
-  })
-
-  it('암호화 불가 → 경고 + 입력/버튼 비활성', async () => {
-    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({ hasKey: false, encryptionAvailable: false })
-    render(<ApiKeyTab t={t} />)
-    await waitFor(() => expect(screen.getByText('settings.apiKeyEncUnavailable')).toBeInTheDocument())
-    expect(screen.getByPlaceholderText('settings.apiKeyPlaceholder')).toBeDisabled()
-    expect(screen.getByText('settings.apiKeyVerifySave')).toBeDisabled()
+    const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"ElevenLabs"}')
+    fireEvent.change(input, { target: { value: 'el-sk-abc' } })
+    fireEvent.click(input.closest('.setting-row').querySelector('button.btn-primary'))
+    await vi.waitFor(() => expect(saveKeyTts).toHaveBeenCalledWith('elevenlabs', 'el-sk-abc'))
   })
 })

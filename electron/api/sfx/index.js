@@ -10,7 +10,7 @@ const FACTORIES = {
 export function createSfxAdapter(provider, deps) {
   const make = FACTORIES[provider]
   if (!make) throw new Error(`Unsupported SFX provider: ${provider}`)
-  return make(deps)
+  return make({ ...deps, provider })
 }
 
 export default { createSfxAdapter }

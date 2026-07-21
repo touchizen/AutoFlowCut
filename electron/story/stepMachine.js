@@ -269,6 +269,38 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   }
   // 감정은 화자(대사)만 — narrator는 normal로 고정(나레이션에 감정 안 실림). TTS·reuse 지문에 공통.
   const effectiveEmotion = (seg) => (isNarratorTrackSpeaker(seg?.speaker) ? 'normal' : seg?.emotion)
+  // audio()/audioPreflight() 공유 선택 로직 — 재사용 판정(canReuse/canReuseSfx)과 출처 해석
+  // (voiceOf/sfxSourceOf/sfxKeyOf)을 한 곳에 묶는다. 두 메서드가 "이 세그먼트를 실제로 만들
+  // 것인가"를 정확히 같은 규칙으로 판정해야 preflight가 필요 프로바이더를 정확히 예측한다.
+  function makeAudioSelection(params, speakers, defaultVoiceCfg) {
+    // IP5-a: 이미 status:'done'이고 오디오 파일이 현 프로젝트에 실재하면 재합성하지 않는다
+    // (resume/부분재시도). params.regenerate에 든 id는 강제 재합성(re-TTS 트리거).
+    // Codex-M2a-2b MED: audioPath는 절대경로라 프로젝트 이동/복사·파일 삭제 시 stale/타프로젝트를
+    // 가리킬 수 있다 — basename을 현 프로젝트 segments 디렉터리 기준으로 재구성 + 실재(stat) 확인.
+    const forceRegen = new Set(params.regenerate || [])
+    const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
+    const reusePathOf = (seg) => path.join(segmentsDir, path.basename(seg.audioPath))
+    // C1-a: 화자 매핑 UI(M2a-3) 전에는 미배정 화자를 주입된 기본 voice로 폴백해 audio가 앱에서
+    // 돌게 한다. defaultVoice 미주입(정식 흐름)이면 null → 아래 미배정 검증이 그대로 실행 차단(스펙 §6).
+    const voiceOf = (spk) => findSpeakerByRef(speakers, spk)?.voice || defaultVoiceCfg || null
+    const canReuse = async (seg) => {
+      if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
+      // Codex-TTS HIGH: 화자 voice/provider/emotion이 바뀌면(또는 지문 없는 옛 오디오면) 재사용 금지.
+      const intended = voiceOf(seg.speaker)
+      if (!intended?.voiceId || seg.voiceKey !== ttsVoiceKey(intended, effectiveEmotion(seg))) return false
+      try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
+    }
+    // M2b sfx reuse: 지문 sfxKey(source:description:durationHint) 일치 + 파일 실재.
+    // source는 UI 오버라이드(params.sfxSources[segId]) > 세그먼트 영속값 > 기본 elevenlabs.
+    const sfxSourceOf = (seg) => params.sfxSources?.[seg.id] || seg.sourceMode || 'elevenlabs'
+    const sfxKeyOf = (seg) => `${sfxSourceOf(seg)}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
+    const canReuseSfx = async (seg) => {
+      if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
+      if (seg.sfxKey !== sfxKeyOf(seg)) return false
+      try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
+    }
+    return { forceRegen, segmentsDir, reusePathOf, voiceOf, canReuse, canReuseSfx, sfxSourceOf, sfxKeyOf }
+  }
   const projectToken = randomUUID()
   let state = null
   let controller = null
@@ -431,6 +463,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     if (!key) return null
     return (speakers || []).find((sp) => speakerReferenceKeys(sp).includes(key)) || null
   }
+  // audio()/audioPreflight() 공유 — onlySpeaker 스코프링에 쓰는 화자 정규화(machine-scope로
+  // 호이스트: 예전엔 audio() 함수 안에만 있어 audioPreflight가 재구현 없이 못 썼다 — Finding1).
+  // 화자 참조는 id/이름 어느 쪽이든 올 수 있어 findSpeakerByRef로 정규 id로 접어야 같은 화자가
+  // 두 갈래로 안 쪼개진다.
+  const canonicalSpeakerOf = (speakers, ref) => findSpeakerByRef(speakers, ref)?.id ?? ref
+  const belongsToSpeakerOf = (speakers, spk) => (seg) => canonicalSpeakerOf(speakers, seg.speaker) === spk
   const nonEmptyString = (v) => (typeof v === 'string' && v.trim()) ? v : undefined
   // §v2.8 B3: 기존 명단(state.speakers)이 base인 superset 병합 — scenes 스텝이 speakers를
   // 전체 교체하지 않는다. ①기존 gender/age/role/appearance 보존, ②LLM 참조 인물 voice 승계,
@@ -1424,9 +1462,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 실패(unmatched·디코드 오류)하고 앱을 재시작하면 골라둔 mp3/SRT가 사라졌다 — 실패를
       // 고치려면 파일부터 다시 고르는 꼴이었다. 선택은 사용자의 의도지 실행의 산출물이 아니다.
       if (params.speakers) { state.speakers = params.speakers; await flush() }
-      // C1-a: 화자 매핑 UI(M2a-3) 전에는 미배정 화자를 주입된 기본 voice로 폴백해 audio가 앱에서
-      // 돌게 한다. defaultVoice 미주입(정식 흐름)이면 null → 아래 미배정 검증이 그대로 실행 차단(스펙 §6).
-      const voiceOf = (spk) => findSpeakerByRef(speakers, spk)?.voice || defaultVoice || null
+      // 선택 로직(voiceOf/canReuse/canReuseSfx/sfxSourceOf/sfxKeyOf)은 audioPreflight()와 공유한다
+      // (makeAudioSelection) — 정확히 같은 규칙으로 "무엇을 만들 것인가"를 판정해야 한다.
+      const sel = makeAudioSelection(params, speakers, defaultVoice)
+      const { voiceOf, canReuse, canReuseSfx, sfxSourceOf, sfxKeyOf, reusePathOf, forceRegen } = sel
       // 모든 씬의 세그먼트를 순서대로 평탄화
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
       const allNarration = segments.filter((s) => (s.type || 'narration') === 'narration')
@@ -1440,14 +1479,21 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // name:'나레이션'}로 시딩된다). 원시값으로 묶으면 한 화자가 **두 출처로 쪼개져** 같은 mp3를
       // 두 번 훑고, 각 패스가 상대를 "남의 대사"로 세어(otherHit/otherMiss) 정상 import가 막힌다.
       // voiceOf가 이미 findSpeakerByRef로 정규화하므로 묶는 축도 같은 정규화를 써야 한다.
-      const canonicalSpeaker = (ref) => findSpeakerByRef(speakers, ref)?.id ?? ref
-      const belongsTo = (spk) => (seg) => canonicalSpeaker(seg.speaker) === spk
+      const canonicalSpeaker = (ref) => canonicalSpeakerOf(speakers, ref)
+      const belongsTo = (spk) => belongsToSpeakerOf(speakers, spk)
       // 빈/공백 onlySpeaker 는 부분 실행으로 받지 않는다 — isNarratorTrackSpeaker('')는 true 라
       // 그대로 두면 **엉뚱하게 나레이터가 실행된다**(UI 버그나 빈 id 화자를 눌렀을 때).
       const partialAudioRun = typeof params.onlySpeaker === 'string' && !!params.onlySpeaker.trim()
       const scopedNarration = partialAudioRun
         ? allNarration.filter(belongsTo(canonicalSpeaker(params.onlySpeaker)))
         : allNarration
+      // (b-2) 화자 단위 강제 재생성: regenerateSpeaker면 그 화자(onlySpeaker 스코프)의 done
+      // 세그먼트도 재합성하도록 forceRegen에 편입한다. 화자 매칭은 위 canonicalSpeaker 단일 소스를
+      // 그대로 쓰고, scopedNarration에만 적용 — 다른 화자나 전체 강제 재생성은 하지 않는다.
+      // partialAudioRun이 아니면(onlySpeaker 없음) 스코프가 없어 아무것도 편입하지 않는다.
+      if (params.regenerateSpeaker === true && partialAudioRun) {
+        for (const seg of scopedNarration) forceRegen.add(seg.id)
+      }
       const importSpeakers = [...new Set(scopedNarration.map((s) => canonicalSpeaker(s.speaker)))].filter((spk) => isImportProvider(voiceOf(spk)))
       // 이 화자가 나레이터인가 — **정체**로 본다(id 문자열 하나로 보면 안 된다). 나레이터 판정은
       // 별칭 집합 매칭인데 화자 id는 그 집합 밖일 수 있다({id:'voiceover', name:'나레이션'}).
@@ -1634,31 +1680,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       })
       if (missingSpeakers.length) throw new Error(`voice not assigned for speaker: ${missingSpeakers[0]}`)
 
-      // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
-      // IP5-a: 이미 status:'done'이고 오디오 파일이 현 프로젝트에 실재하면 재합성하지 않는다
-      // (resume/부분재시도). params.regenerate에 든 id는 강제 재합성(re-TTS 트리거).
-      // 강제/조건부 재합성 기준을 바꾸면 approvalPresenters의 audio 비용·재사용 문구도 함께 바꿔라.
-      // Codex-M2a-2b MED: audioPath는 절대경로라 프로젝트 이동/복사·파일 삭제 시 stale/타프로젝트를
-      // 가리킬 수 있다 — basename을 현 프로젝트 segments 디렉터리 기준으로 재구성 + 실재(stat) 확인.
-      const forceRegen = new Set(params.regenerate || [])
-      const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
-      const reusePathOf = (seg) => path.join(segmentsDir, path.basename(seg.audioPath))
-      const canReuse = async (seg) => {
-        if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
-        // Codex-TTS HIGH: 화자 voice/provider/emotion이 바뀌면(또는 지문 없는 옛 오디오면) 재사용 금지.
-        const intended = voiceOf(seg.speaker)
-        if (!intended?.voiceId || seg.voiceKey !== ttsVoiceKey(intended, effectiveEmotion(seg))) return false
-        try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
-      }
-      // M2b sfx reuse: 지문 sfxKey(source:description:durationHint) 일치 + 파일 실재.
-      // source는 UI 오버라이드(params.sfxSources[segId]) > 세그먼트 영속값 > 기본 elevenlabs.
-      const sfxSourceOf = (seg) => params.sfxSources?.[seg.id] || seg.sourceMode || 'elevenlabs'
-      const sfxKeyOf = (seg) => `${sfxSourceOf(seg)}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
-      const canReuseSfx = async (seg) => {
-        if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
-        if (seg.sfxKey !== sfxKeyOf(seg)) return false
-        try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
-      }
+      // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한) — 재사용 판정(forceRegen/reusePathOf/canReuse/
+      // canReuseSfx/sfxSourceOf/sfxKeyOf)은 위 makeAudioSelection(sel)이 제공한다.
       // 동시성: 기본 tts(단일) 또는 첫 세그먼트 화자 어댑터에서. 없으면 2.
       // SRT 가져오기 전용 프로젝트는 narration이 비어 화자 어댑터를 물을 대상이 없다 — 그때
       // resolveTts(undefined)까지 가지 않도록 막는다(TTS를 안 쓰는데 어댑터 조회로 죽으면 안 된다).
@@ -2061,6 +2084,56 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const extras = await hydrateExtras()
       send('story:state', { state, scenes, scriptText, ...extras })
       return { projectToken, state, scenes, scriptText, ...extras }
+    },
+    // M2 오디오 사전점검: 이 실행이 실제로 필요로 할 TTS/SFX 프로바이더 집합을 계산한다(중복 제거,
+    // 순서 무관). audio()와 정확히 같은 선택 규칙(makeAudioSelection)을 공유해야 한다 — 다른
+    // 규칙이면 "필요한 키" 예측이 실제 실행과 어긋나(과소/과잉) 게이트가 거짓말을 한다.
+    // 읽기 전용(부수효과 없음) — scenes.json/state를 건드리지 않는다. audio() 배치 스텝처럼
+    // start()로 감싸지 않는다 — 진행 상태/emit이 필요 없는 순수 조회다.
+    async audioPreflight(params = {}) {
+      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+      if (!scenesJson) return []
+      const speakers = params.speakers || state?.speakers || []
+      const sel = makeAudioSelection(params, speakers, defaultVoice || null)
+      // audio()와 정확히 같은 규칙(canonicalSpeakerOf/belongsToSpeakerOf, 호이스트된 machine-scope
+      // 헬퍼)으로 onlySpeaker를 스코프한다(Finding1) — 이걸 안 하면 "화자 A만 생성"이 B의 TTS
+      // 키와 SFX 키까지 요구해 과잉 차단한다. partialAudioRun 정의는 audio()와 동일(빈/공백은
+      // 부분실행 아님 — isNarratorTrackSpeaker('')가 true라 그대로 두면 나레이터가 스코프된다).
+      const partialAudioRun = typeof params.onlySpeaker === 'string' && !!params.onlySpeaker.trim()
+      const isTargetSpeaker = partialAudioRun ? belongsToSpeakerOf(speakers, canonicalSpeakerOf(speakers, params.onlySpeaker)) : null
+      const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
+      // (b-2) 화자 단위 강제 재생성: 그 화자의 재사용 가능 narration도 provider를 다시 요구하도록
+      // forceRegen에 편입한다(audio()와 대칭 — 재생성엔 키가 필요하므로 게이트에 반영). partialAudioRun
+      // 스코프의 narration에만 — 다른 화자와 sfx는 제외(sfx는 화자 소유가 아님).
+      if (params.regenerateSpeaker === true && partialAudioRun) {
+        for (const seg of segments) {
+          if ((seg.type || 'narration') === 'narration' && isTargetSpeaker(seg)) sel.forceRegen.add(seg.id)
+        }
+      }
+      const isTest = params.mode === 'segmentTest'
+      const ids = isTest ? new Set(params.segmentIds || []) : null
+      const required = new Set()
+      for (const seg of segments) {
+        const type = seg.type || 'narration'
+        if (isTest && !ids.has(seg.id)) continue
+        if (type === 'sfx') {
+          // audio()는 sfxSegs = !partialAudioRun && sfxFor ? segments.filter(sfx) : [] 다
+          // (Finding3) — sfxFor 미주입이거나 부분실행이면 sfx를 전혀 합성하지 않으므로
+          // 프리플라이트도 그 소스를 요구하면 안 된다.
+          if (partialAudioRun || !sfxFor) continue
+          const source = sel.sfxSourceOf(seg)
+          if (source === 'library') continue
+          if (!isTest && await sel.canReuseSfx(seg)) continue
+          required.add(source)
+        } else {
+          if (partialAudioRun && !isTargetSpeaker(seg)) continue
+          const voice = sel.voiceOf(seg.speaker)
+          if (!voice || voice.provider === 'import') continue
+          if (!isTest && await sel.canReuse(seg)) continue
+          required.add(voice.provider || 'typecast')
+        }
+      }
+      return [...required]
     },
     // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
     // renderer 엔 둘 다 없어 main 이 실어 준다. 정합 판단(pushRevision 일치)은 renderer 몫 — 여기선
@@ -2844,7 +2917,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // 범위가 비면(대사 없는 확정 인물 / 명단에 없는 참조 / 빈 문자열) 그냥 두면 anyFailed=false로
         // "성공"이 되어 audio가 done→pending으로 내려가 **export가 막힌다** — 아무것도 안 만들었는데.
         // 빈/공백은 isNarratorTrackSpeaker('')===true라 엉뚱하게 나레이터가 도는 것도 여기서 막는다.
-        if (step === 'audio' && typeof params.onlySpeaker === 'string') {
+        // (b-2) regenerateSpeaker는 onlySpeaker 스코프가 반드시 있어야 한다 — 없이 오면(malformed)
+        // onlySpeakerScopeError가 빈 스코프로 판정해 fail-closed('story-audio-speaker-empty')로 막는다.
+        // 이게 없으면 regenerateSpeaker만 온 요청이 일반 전체 audio 실행으로 새어나간다.
+        if (step === 'audio' && (typeof params.onlySpeaker === 'string' || params.regenerateSpeaker)) {
           let err
           try { err = await onlySpeakerScopeError(params.onlySpeaker, params.speakers) } catch { err = null }
           if (err) return { error: err }

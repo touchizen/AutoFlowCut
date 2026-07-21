@@ -5,6 +5,7 @@
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createStepMachine, readAudioPackage } from '../story/stepMachine.js'
+import { keyIdForProvider } from '../../src/config/apiKeyRegistry.js'
 import * as llmGemini from '../api/llm/llmGemini.js'
 import * as llmClaude from '../api/llm/llmClaude.js'
 import { searchVideos } from '../api/youtube/searchVideos.js'
@@ -48,6 +49,18 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
+// M2 오디오 사전점검(§4.1/§4.3): audioPreflight()가 계산한 필요 provider 목록을 provider별
+// 키 상태(store/fallback/missing)로 매핑하는 순수 함수 — IPC 핸들러에서 분리해 단위 테스트한다.
+export function buildAudioPreflightResult(requiredProviders, { resolveKeyWithSource, encryptionAvailable }) {
+  const providers = requiredProviders.map((provider) => {
+    const keyId = keyIdForProvider(provider)
+    const { source } = resolveKeyWithSource(keyId)
+    const status = source === 'store' ? 'resolved-store' : source === 'fallback' ? 'resolved-fallback' : 'missing'
+    return { provider, keyId, status, encryptionAvailable }
+  })
+  return { providers, encryptionAvailable }
+}
+
 /**
  * 🔴 **단일 storyCommands** (스펙 D7). `machine` 과 `openLock` 의 **유일한 소유자**다.
  *
@@ -58,7 +71,7 @@ function isWithinWorkFolder(projectPath, workFolder) {
  * IPC(사람)와 Tool Core(에이전트)가 **같은 인스턴스**를 쓴다. 별도 Tool Core 가 자기 machine 을
  * 만들면 둘이 서로 다른 프로젝트를 보게 된다 — 같은 앱 안에서 상태가 갈라진다.
  */
-export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels }) {
+export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels, resolveKeyWithSource, safeStorage }) {
   let machine = null
   let openLock = Promise.resolve()
 
@@ -70,9 +83,16 @@ export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, load
   // C1-a: audio 스텝은 tts/probe 주입이 필수(없으면 실앱에서 tts.capabilities() 크래시).
   // 테스트/커스텀 provider는 주입 우선, 기본은 Typecast 어댑터 + music-metadata probe.
   // 화자매핑 UI·멀티 provider 선택은 M2a-3. 키는 typecastKey(env→~/.typecast/credentials).
+  // finding 4: getTypecastKey는 키가 없으면 throw하는 로더다 — 그대로 캐싱하면 그 throw가
+  // 어댑터의 nullable getKey 경계를 우회해 MissingProviderKeyError 대신 raw Error가 샌다.
+  // try/catch로 null을 캐싱해 어댑터가 정식으로 MissingProviderKeyError를 던지게 한다.
   let cachedTtsKey
   const ttsAdapter = tts || createTtsAdapter('typecast', {
-    getKey: () => (cachedTtsKey ??= getTypecastKey()),
+    getKey: () => {
+      if (cachedTtsKey !== undefined) return cachedTtsKey
+      try { cachedTtsKey = getTypecastKey() } catch { cachedTtsKey = null }
+      return cachedTtsKey
+    },
     fetch: (...a) => globalThis.fetch(...a),
   })
   const probeFn = probe || ((filePath) => probeDurationMs(filePath))
@@ -171,6 +191,19 @@ export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, load
       return asKind(() => machine.loadAudioPackage())
     },
 
+    // M2 오디오 사전점검은 읽기 전용이라 projectToken guard를 타지 않는다. 프로젝트가 아직
+    // 열리지 않았으면 다른 비guarded 조회(loadAudioPackage)처럼 빈 결과를 안전하게 돌려준다.
+    async audioPreflight(params = {}) {
+      if (!machine) return []
+      return machine.audioPreflight(params)
+    },
+    // registerStoryIPC는 pre-built commands만 받으므로, 키 조회 deps도 같은 단일-owner 객체가
+    // 캡처해 IPC의 결과 매핑에 필요한 최소 context만 제공한다(machine 자체는 노출하지 않는다).
+    getAudioPreflightContext: () => ({
+      resolveKeyWithSource: resolveKeyWithSource || (() => ({ key: null, source: null })),
+      encryptionAvailable: safeStorage?.isEncryptionAvailable?.() ?? false,
+    }),
+
     // 화자별 오디오 출처 파일 선택. renderer가 절대경로를 직접 만들지 않도록 main에서 열고,
     // 현재 창 소유권도 createStoryCommands가 캡처한 getWindow로 일관되게 적용한다.
     async pickAudioImportFile({ kind, title, filterName } = {}) {
@@ -214,9 +247,9 @@ export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, load
  * IPC 는 **주입받은 단일 commands** 를 쓴다 (스펙 D7). deps 를 받아 자기 commands 를 만들지 않는다 —
  * 만들 수 있게 두면 main 이 실수로 두 번째 machine 을 띄우고, 에이전트와 사람의 상태가 갈라진다.
  *
- * 핸들러 21개 = **18 guarded + 3 custom**. custom 은 token guard 를 안 타는 것들:
- * `story:list-llm-options`(프로젝트 무관), `story:open`(토큰을 발급하는 쪽), `story:load-audio-package`(경로 직독 허용).
- * D7 의 궤적: 20 → (D24a `stage-image-first`) **21** → (D24b `commit-image-first-script`) 22.
+ * custom 은 token guard 를 안 타는 것들: `story:list-llm-options`(프로젝트 무관), `story:open`
+ * (토큰을 발급하는 쪽), `story:load-audio-package`(경로 직독 허용), `story:audio-preflight`
+ * (읽기 전용 키 점검), `story:pick-audio-import-file`(OS 파일 선택).
  */
 export function registerStoryIPC(ipcMain, commands) {
   const guarded = (fn) => async (_e, payload = {}) => {
@@ -227,6 +260,13 @@ export function registerStoryIPC(ipcMain, commands) {
   ipcMain.handle('story:list-llm-options', () => commands.listLlmOptions())
   ipcMain.handle('story:open', (_e, { projectPath } = {}) => commands.open(projectPath))
   ipcMain.handle('story:load-audio-package', (_e, { projectPath } = {}) => commands.loadAudioPackage({ projectPath }))
+  // M2 오디오 사전점검(§4.1/§4.3): command가 계산한 필요 provider에 provider별 키 상태를 붙인다.
+  // 프로젝트 미오픈은 commands.audioPreflight()가 빈 목록으로 정규화한다.
+  ipcMain.handle('story:audio-preflight', async (_e, params) => {
+    const required = await commands.audioPreflight(params || {})
+    const { resolveKeyWithSource, encryptionAvailable } = commands.getAudioPreflightContext()
+    return buildAudioPreflightResult(required, { resolveKeyWithSource, encryptionAvailable })
+  })
 
   ipcMain.handle('story:get-state', guarded(() => commands.getState()))
   ipcMain.handle('story:stage-image-first', guarded(({ fixedSceneRevision, imageFirstVariant, fixedScenes, storyboardCsv }) =>
@@ -247,8 +287,18 @@ export function registerStoryIPC(ipcMain, commands) {
   ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters, sceneMode, imageFirstVariant, fixedSceneRevision }) =>
     commands.confirmSynopsis({ synopsisMd, characters, sceneMode, imageFirstVariant, fixedSceneRevision })))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
-  ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) =>
-    commands.synthPreview({ segmentIds, speakers, sfxSources })))
+  // §4.8 R3: synthPreview가 ProviderAuthError/MissingProviderKeyError(errorKind 있음)를 그대로
+  // throw하면 ipcRenderer.invoke가 message만 직렬화해 errorKind가 소실된다 — renderer가 번역할
+  // 코드를 잃고 raw 영문 진단문을 그대로 토스트한다. story:load-audio-package의 asKind 관습대로
+  // { error: kind, provider } 로 감싸 돌려준다. errorKind 없는 예외는 버그이므로 그대로 던져 드러낸다.
+  ipcMain.handle('story:tts-preview', guarded(async ({ segmentIds, speakers, sfxSources }) => {
+    try {
+      return await commands.synthPreview({ segmentIds, speakers, sfxSources })
+    } catch (e) {
+      if (!e?.errorKind) throw e
+      return { error: e.errorKind, provider: e.provider }
+    }
+  }))
 
   // ── 화자별 오디오 출처 (mp3+SRT 가져오기) ──
   // 출처 자체는 speaker.voice = {provider:'import', mp3Path, srtPath}로 들어가므로 별도 채널이
