@@ -1415,6 +1415,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const scopedNarration = partialAudioRun
         ? allNarration.filter(belongsTo(canonicalSpeaker(params.onlySpeaker)))
         : allNarration
+      // (b-2) 화자 단위 강제 재생성: regenerateSpeaker면 그 화자(onlySpeaker 스코프)의 done
+      // 세그먼트도 재합성하도록 forceRegen에 편입한다. 화자 매칭은 위 canonicalSpeaker 단일 소스를
+      // 그대로 쓰고, scopedNarration에만 적용 — 다른 화자나 전체 강제 재생성은 하지 않는다.
+      // partialAudioRun이 아니면(onlySpeaker 없음) 스코프가 없어 아무것도 편입하지 않는다.
+      if (params.regenerateSpeaker === true && partialAudioRun) {
+        for (const seg of scopedNarration) forceRegen.add(seg.id)
+      }
       const importSpeakers = [...new Set(scopedNarration.map((s) => canonicalSpeaker(s.speaker)))].filter((spk) => isImportProvider(voiceOf(spk)))
       // 이 화자가 나레이터인가 — **정체**로 본다(id 문자열 하나로 보면 안 된다). 나레이터 판정은
       // 별칭 집합 매칭인데 화자 id는 그 집합 밖일 수 있다({id:'voiceover', name:'나레이션'}).
@@ -1968,6 +1975,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const partialAudioRun = typeof params.onlySpeaker === 'string' && !!params.onlySpeaker.trim()
       const isTargetSpeaker = partialAudioRun ? belongsToSpeakerOf(speakers, canonicalSpeakerOf(speakers, params.onlySpeaker)) : null
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
+      // (b-2) 화자 단위 강제 재생성: 그 화자의 재사용 가능 narration도 provider를 다시 요구하도록
+      // forceRegen에 편입한다(audio()와 대칭 — 재생성엔 키가 필요하므로 게이트에 반영). partialAudioRun
+      // 스코프의 narration에만 — 다른 화자와 sfx는 제외(sfx는 화자 소유가 아님).
+      if (params.regenerateSpeaker === true && partialAudioRun) {
+        for (const seg of segments) {
+          if ((seg.type || 'narration') === 'narration' && isTargetSpeaker(seg)) sel.forceRegen.add(seg.id)
+        }
+      }
       const isTest = params.mode === 'segmentTest'
       const ids = isTest ? new Set(params.segmentIds || []) : null
       const required = new Set()
@@ -2566,7 +2581,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 범위가 비면(대사 없는 확정 인물 / 명단에 없는 참조 / 빈 문자열) 그냥 두면 anyFailed=false로
       // "성공"이 되어 audio가 done→pending으로 내려가 **export가 막힌다** — 아무것도 안 만들었는데.
       // 빈/공백은 isNarratorTrackSpeaker('')===true라 엉뚱하게 나레이터가 도는 것도 여기서 막는다.
-      if (step === 'audio' && typeof params.onlySpeaker === 'string') {
+      // (b-2) regenerateSpeaker는 onlySpeaker 스코프가 반드시 있어야 한다 — 없이 오면(malformed)
+      // onlySpeakerScopeError가 빈 스코프로 판정해 fail-closed('story-audio-speaker-empty')로 막는다.
+      // 이게 없으면 regenerateSpeaker만 온 요청이 일반 전체 audio 실행으로 새어나간다.
+      if (step === 'audio' && (typeof params.onlySpeaker === 'string' || params.regenerateSpeaker)) {
         let err
         try { err = await onlySpeakerScopeError(params.onlySpeaker, params.speakers) } catch { err = null }
         if (err) return { error: err }
