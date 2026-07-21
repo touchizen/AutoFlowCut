@@ -46,7 +46,11 @@ export function registerRenderIPC(ipcMain, deps = {}) {
       const resolved = await resolve(prepared, { jobId })
       if (Array.isArray(resolved.tempFiles)) jobCtx.tempFiles.push(...resolved.tempFiles) // decode된 base64 이미지 정리 위임
       const sceneStartsMs = buildSceneStartsMs(cr.scenes)  // plan 과 동일 소스(중복 제거, fallback 통일)
-      resolved.audioClips = await adapt(cr, resolved, sceneStartsMs)
+      resolved.audioClips = await adapt(cr, resolved, sceneStartsMs, {
+        ffmpegPath,
+        signal: jobCtx.signal,
+        renderVideoSegments: prepared.renderVideoSegments,
+      })
 
       const plan = build(resolved, {
         renderMode: options.renderMode,

@@ -66,6 +66,26 @@ describe('registerRenderIPC', () => {
     }))
   })
 
+  it('passes bundled ffmpeg, job signal, and selected video segments to audio adaptation', async () => {
+    const ipc = fakeIpc()
+    const adapt = vi.fn(async () => [])
+    registerRenderIPC(ipc, okDeps({ adapt, ffmpegPath: '/bundled/ffmpeg' }))
+
+    const request = baseRequest()
+    await ipc._h['render:export-mp4']({}, request)
+
+    expect(adapt).toHaveBeenCalledWith(
+      request.prepared.cloudRequest,
+      expect.anything(),
+      { scene_1: 0 },
+      {
+        ffmpegPath: '/bundled/ffmpeg',
+        signal: expect.any(AbortSignal),
+        renderVideoSegments: request.prepared.renderVideoSegments,
+      },
+    )
+  })
+
   it('returns validation error without running', async () => {
     const ipc = fakeIpc()
     const run = vi.fn()
