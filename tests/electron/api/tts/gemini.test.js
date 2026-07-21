@@ -112,3 +112,62 @@ describe('Gemini 어댑터 — 오디오 없이 텍스트만 온 응답 재시�
     expect(calls).toBe(1)
   })
 })
+
+// 회귀: 짧고/모호한 text("짧은 한마디." 등)는 매번 400 "Model tried to generate text, but it
+// should only be used for TTS..."로 실패했다(간헐 아님, 결정적). 공식 문서 Limitations
+// §"Prompt classifier false rejections": "Vague prompts may fail to trigger the speech synthesis
+// classifier... Validate your prompts by adding a clear preamble instructing the model to
+// synthesize speech, and explicitly label where the actual spoken transcript begins."
+// → 이 400(비-auth)만 재시도 대상에 넣고, 재시도 시 프롬프트에 그 전조사+라벨을 붙인다.
+// API_KEY_INVALID(auth) 400은 반드시 즉시 throw — 이 구분이 핵심이라 별도로 고정한다.
+describe('Gemini 어댑터 — "tried to generate text" 400 재시도 (결정적 실패 회귀)', () => {
+  const textGenerate400 = {
+    ok: false,
+    status: 400,
+    text: async () =>
+      JSON.stringify({ error: { code: 400, message: 'Model tried to generate text, but it should only be used for TTS. Make sure your instructions are clear to only generate audio from a given text transcript.', status: 'INVALID_ARGUMENT' } }),
+  }
+  const audioResponse = (pcm) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) })
+
+  it('1차가 "tried to generate text" 400이면 프롬프트를 보강해 재시도하고, 2차가 성공하면 오디오를 반환한다', async () => {
+    const pcm = Buffer.from([7, 7])
+    const bodies = []
+    let calls = 0
+    const fetch = async (url, opts) => {
+      calls += 1
+      bodies.push(JSON.parse(opts.body))
+      return calls === 1 ? textGenerate400 : audioResponse(pcm)
+    }
+    const a = createGeminiAdapter({ getKey: () => 'gm-key', fetch })
+    const { format } = await a.synthesize({ text: '짧은 한마디.', voiceId: 'Kore', emotion: 'normal' })
+    expect(format).toBe('wav')
+    expect(calls).toBe(2)
+    // 1차는 원문 그대로, 2차는 문서가 명시한 전조사+라벨로 보강되어야 한다
+    expect(bodies[0].contents[0].parts[0].text).toBe('짧은 한마디.')
+    expect(bodies[1].contents[0].parts[0].text).not.toBe('짧은 한마디.')
+    expect(bodies[1].contents[0].parts[0].text).toContain('짧은 한마디.')
+    expect(bodies[1].contents[0].parts[0].text.toLowerCase()).toMatch(/transcript|speak|aloud/)
+  })
+
+  it('재시도(2차)도 계속 같은 400이면 최대 시도 후 원래 400 에러 그대로 던진다', async () => {
+    let calls = 0
+    const fetch = async () => {
+      calls += 1
+      return textGenerate400
+    }
+    const a = createGeminiAdapter({ getKey: () => 'gm-key', fetch })
+    await expect(a.synthesize({ text: '짧은 한마디.', voiceId: 'Kore', emotion: 'normal' })).rejects.toThrow(/tried to generate text/)
+    expect(calls).toBe(2) // 무한 재시도 아님
+  })
+
+  it('API_KEY_INVALID(auth) 400은 이 메시지 패턴과 무관하게 절대 재시도하지 않고 즉시 ProviderAuthError를 던진다', async () => {
+    let calls = 0
+    const fetch = async () => {
+      calls += 1
+      return { ok: false, status: 400, text: async () => JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] } }) }
+    }
+    const a = createGeminiAdapter({ getKey: () => 'bad-key', fetch })
+    await expect(a.synthesize({ text: '짧은 한마디.', voiceId: 'Kore' })).rejects.toMatchObject({ name: 'ProviderAuthError' })
+    expect(calls).toBe(1) // auth는 재시도 절대 금지
+  })
+})

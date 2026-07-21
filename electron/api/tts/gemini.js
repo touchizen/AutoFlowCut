@@ -54,6 +54,23 @@ const EMOTION_STYLE_PROMPTS = {
   angry: 'Say angrily:',
 }
 
+// 문서 Limitations §"Prompt classifier false rejections": "Vague prompts may fail to trigger the
+// speech synthesis classifier, resulting in a rejected request (PROHIBITED_CONTENT) or causing
+// the model to read your style instructions and director's notes aloud. Validate your prompts by
+// adding a clear preamble instructing the model to synthesize speech, and explicitly label where
+// the actual spoken transcript begins." — 짧고/모호한 text(예: "짧은 한마디.")가 이 실패 유형에
+// 해당한다. 따옴표로 감싸는 방식은 문서에 근거가 없어 채택하지 않고, 문서가 명시한 그대로
+// "명확한 전조사 + 트랜스크립트 라벨"만 재시도 시 덧붙인다.
+function withSynthesisPreamble(promptText) {
+  return `Read the following text aloud as natural speech audio only. Do not reply, answer, or add any words of your own.\n\nTranscript: ${promptText}`
+}
+
+// Gemini가 TTS 대신 텍스트로 응답할 때의 특정 400 시그니처. isAuthResponse(API_KEY_INVALID)와는
+// 별개 — 진짜 인증 실패는 절대 여기 걸리지 않고 즉시 throw 되어야 한다(위 isAuthResponse 분기가 먼저 처리).
+function isTextInsteadOfAudioError(detail) {
+  return /tried to generate text|should only be used for tts/i.test(String(detail))
+}
+
 function parseRate(mimeType) {
   const m = /rate=(\d+)/.exec(mimeType || '')
   return m ? parseInt(m[1], 10) : 24000
@@ -92,20 +109,26 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
       const key = getKey()
       if (!key) throw new MissingProviderKeyError(provider)
       const stylePrompt = EMOTION_STYLE_PROMPTS[emotion]
-      const promptText = stylePrompt ? `${stylePrompt} ${text}` : text
-      const body = JSON.stringify({
-        contents: [{ parts: [{ text: promptText }] }],
-        generationConfig: {
-          responseModalities: ['AUDIO'],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || 'Kore' } } },
-        },
-      })
-      // 공식 문서: "The model occasionally returns text tokens instead of audio tokens... you should
-      // implement automated retry logic." (systemInstruction은 이 TTS 모델의 문서화된 capabilities에
-      // 없음 — "Audio generation"만 지원 목록에 있고 System instructions는 언급조차 없어 검증 불가라
-      // 채택하지 않음). ok:200이지만 inlineData가 없는 경우(모델이 오디오 대신 텍스트를 반환) 1회 재시도.
+      const basePromptText = stylePrompt ? `${stylePrompt} ${text}` : text
+      // 공식 문서 두 가지 근거로 재시도한다:
+      // 1) "The model occasionally returns text tokens instead of audio tokens... you should
+      //    implement automated retry logic." → res.ok:200인데 inlineData가 없는 경우.
+      // 2) Limitations §"Prompt classifier false rejections" → 짧고/모호한 프롬프트가 분류기를
+      //    못 넘겨 텍스트 응답을 시도하다 400 "Model tried to generate text..."로 거부되는 경우.
+      //    isAuthResponse(API_KEY_INVALID)는 별개의 진짜 인증 실패라 절대 재시도하지 않고 즉시 throw.
+      // (systemInstruction은 이 TTS 모델의 문서화된 capabilities에 없음 — "Audio generation"만
+      // 지원 목록에 있고 System instructions는 언급조차 없어 검증 불가라 채택하지 않음.)
       const MAX_ATTEMPTS = 2
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        // 1차는 원문 그대로, 재시도(2차)는 문서가 명시한 "명확한 전조사 + 트랜스크립트 라벨"로 보강.
+        const promptText = attempt === 1 ? basePromptText : withSynthesisPreamble(basePromptText)
+        const body = JSON.stringify({
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || 'Kore' } } },
+          },
+        })
         const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -115,6 +138,7 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
         if (!res.ok) {
           const detail = await (res.text?.() ?? Promise.resolve(''))
           if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
+          if (isTextInsteadOfAudioError(detail) && attempt < MAX_ATTEMPTS) continue
           throw new Error(`Gemini TTS failed: ${res.status} ${detail}`)
         }
         const json = await res.json()
