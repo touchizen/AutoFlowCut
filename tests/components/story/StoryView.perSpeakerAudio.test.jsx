@@ -87,6 +87,23 @@ describe('StoryView — 이 화자만 생성', () => {
     expect(p.start).not.toHaveBeenCalled()
   })
 
+  // 세그먼트가 화자 id가 아니라 이름/별칭으로 참조돼도(narrator={id:'narrator',name:'나레이션'})
+  // 모달 세그먼트 수는 백엔드 canonicalSpeaker와 같은 정규화(speakerByRef)로 정확해야 한다.
+  it('별칭(이름) 참조 화자도 confirm 모달이 정확한 세그먼트 수를 보여준다', async () => {
+    const p = pipeline()
+    p.scenes = [{ storyId: 's1', segments: [
+      { id: 'n1', type: 'narration', speaker: '나레이션', text: '해설1', status: 'done' },
+      { id: 'n2', type: 'narration', speaker: '나레이션', text: '해설2', status: 'done' },
+    ] }]
+    localStorage.setItem('autoflowcut_lang', 'ko')
+    render(<I18nProvider><ToastProvider><StoryView pipeline={p} voices={[]} /></ToastProvider></I18nProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    const narratorRow = screen.getByLabelText('나레이션 목소리').closest('.story-voice-row')
+    fireEvent.contextMenu(within(narratorRow).getByRole('button', { name: '나레이션만 생성' }))
+    // id 완전일치로 세면 0개('나레이션'≠'narrator')지만, speakerByRef 매칭으로 2개가 맞다.
+    expect(await screen.findByText(/2개/)).toBeInTheDocument()
+  })
+
   it('버튼과 완료 토스트 문구를 ko/en 카탈로그에 제공한다', () => {
     expect(ko.story.audio.runThisSpeaker).toBe('이 화자만 생성')
     expect(en.story.audio.runThisSpeaker).toBe('Generate this speaker')

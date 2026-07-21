@@ -2584,7 +2584,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // (b-2) regenerateSpeaker는 onlySpeaker 스코프가 반드시 있어야 한다 — 없이 오면(malformed)
       // onlySpeakerScopeError가 빈 스코프로 판정해 fail-closed('story-audio-speaker-empty')로 막는다.
       // 이게 없으면 regenerateSpeaker만 온 요청이 일반 전체 audio 실행으로 새어나간다.
-      if (step === 'audio' && (typeof params.onlySpeaker === 'string' || params.regenerateSpeaker === true)) {
+      if (step === 'audio' && (typeof params.onlySpeaker === 'string' || params.regenerateSpeaker)) {
         let err
         try { err = await onlySpeakerScopeError(params.onlySpeaker, params.speakers) } catch { err = null }
         if (err) return { error: err }

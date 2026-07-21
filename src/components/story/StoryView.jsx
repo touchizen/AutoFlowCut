@@ -1183,10 +1183,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     setViewedStep('audio')
   }
 
-  // 우클릭 강제 재생성 confirm 모달에 보여줄 그 화자의 narration 세그먼트 수(표시용 근사 —
-  // 정확한 화자 매칭은 백엔드 canonicalSpeaker 소유).
+  // 우클릭 강제 재생성 confirm 모달에 보여줄 그 화자의 narration 세그먼트 수. 세그먼트의 화자
+  // 참조는 id·이름·별칭일 수 있어(narrator={id:'narrator',name:'나레이션'}) 백엔드 canonicalSpeaker와
+  // 같은 정규화(speakerByRef)로 매칭해야 한다 — id 완전일치로 세면 별칭 화자에서 0개로 잘못 안내해
+  // 파괴적 재생성의 동의 화면이 틀린다.
   const countSpeakerSegments = (sp) =>
-    (scenes || []).flatMap((s) => s.segments || []).filter((g) => (g.type || 'narration') === 'narration' && g.speaker === sp?.id).length
+    (scenes || []).flatMap((s) => s.segments || []).filter((g) => (g.type || 'narration') === 'narration' && speakerByRef(g.speaker)?.id === sp?.id).length
   // force=true면 그 화자의 이미 done인 세그먼트까지 강제 재생성(regenerateSpeaker). 좌클릭(force=false)은
   // 기존 "미생성분만 채우기".
   const runSpeakerAudio = async (sp, { force = false } = {}) => {
@@ -2641,6 +2643,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           segmentCount={countSpeakerSegments(speakerRegenTarget)}
           onConfirm={() => { const sp = speakerRegenTarget; setSpeakerRegenTarget(null); runSpeakerAudio(sp, { force: true }) }}
           onCancel={() => setSpeakerRegenTarget(null)}
+          confirmDisabled={isRunning || previewBusy}
           t={t}
         />
       )}

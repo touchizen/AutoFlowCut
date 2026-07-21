@@ -35,4 +35,13 @@ describe('SpeakerRegenConfirmModal', () => {
     fireEvent.click(screen.getByRole('button', { name: '취소' }))
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
+
+  it('confirmDisabled면 재생성 버튼이 비활성화된다(모달 열린 사이 다른 실행이 시작된 경우 방지)', () => {
+    const onConfirm = vi.fn()
+    render(<SpeakerRegenConfirmModal speaker={{ id: 'w', name: '과부' }} segmentCount={1} onConfirm={onConfirm} confirmDisabled t={t} />)
+    const btn = screen.getByRole('button', { name: '재생성' })
+    expect(btn).toBeDisabled()
+    fireEvent.click(btn)
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
 })

@@ -13,7 +13,7 @@ import Modal from '../Modal'
  *   onCancel      — 취소/닫기
  *   t             — i18n 함수(보간 지원)
  */
-export default function SpeakerRegenConfirmModal({ speaker, segmentCount = 0, onConfirm, onCancel, t = (k) => k }) {
+export default function SpeakerRegenConfirmModal({ speaker, segmentCount = 0, onConfirm, onCancel, confirmDisabled = false, t = (k) => k }) {
   if (!speaker) return null
   const name = speaker.name || speaker.id
 
@@ -28,7 +28,7 @@ export default function SpeakerRegenConfirmModal({ speaker, segmentCount = 0, on
           <button className="btn-cancel" onClick={onCancel}>
             {t('common.cancel', '취소')}
           </button>
-          <button className="btn-danger" onClick={onConfirm}>
+          <button className="btn-danger" onClick={onConfirm} disabled={confirmDisabled}>
             {t('story.audio.speakerRegenConfirm', '재생성')}
           </button>
         </div>
