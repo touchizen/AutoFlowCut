@@ -104,6 +104,25 @@ describe('StoryView — 이 화자만 생성', () => {
     expect(await screen.findByText(/2개/)).toBeInTheDocument()
   })
 
+  // 모달 confirm-disable이 못 잡는 race(예: research side action)로 main이 busy를 반환하면,
+  // 우클릭 강제 재생성(force)은 무반응 대신 토스트로 피드백한다. 좌클릭 fill-missing은 기존대로 조용.
+  it('강제 재생성이 busy면 토스트로 피드백하고, 좌클릭 busy는 조용하다', async () => {
+    const p = pipeline()
+    p.start = vi.fn(async () => ({ error: 'busy' }))
+    localStorage.setItem('autoflowcut_lang', 'ko')
+    render(<I18nProvider><ToastProvider><StoryView pipeline={p} voices={[]} /></ToastProvider></I18nProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    const widowRow = screen.getByLabelText('과부 목소리').closest('.story-voice-row')
+    // 좌클릭 busy → 토스트 없음
+    fireEvent.click(within(widowRow).getByRole('button', { name: '과부만 생성' }))
+    await waitFor(() => expect(p.start).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText(/다른 작업이 실행 중/)).not.toBeInTheDocument()
+    // 우클릭 강제 재생성 busy → 토스트
+    fireEvent.contextMenu(within(widowRow).getByRole('button', { name: '과부만 생성' }))
+    fireEvent.click(await screen.findByRole('button', { name: '재생성' }))
+    expect(await screen.findByText(/다른 작업이 실행 중/)).toBeInTheDocument()
+  })
+
   it('버튼과 완료 토스트 문구를 ko/en 카탈로그에 제공한다', () => {
     expect(ko.story.audio.runThisSpeaker).toBe('이 화자만 생성')
     expect(en.story.audio.runThisSpeaker).toBe('Generate this speaker')

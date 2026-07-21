@@ -2353,7 +2353,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                             className="story-speaker-run-btn"
                             onClick={() => runSpeakerAudio(sp)}
                             // 우클릭: 이 화자 오디오 전체 강제 재생성(confirm 모달) — 좌클릭(미생성분 채우기)과 분리.
-                            onContextMenu={(e) => { e.preventDefault(); if (!isRunning && !previewBusy) setSpeakerRegenTarget(sp) }}
+                            onContextMenu={(e) => { e.preventDefault(); if (!isRunning && !previewBusy && !synopsisGenerating && !synopsisReviewing) setSpeakerRegenTarget(sp) }}
                             // ✨ 가 보이는데 다른 작업이 도는 상태가 둘 있다: 미리듣기 중(steps.audio 가
                             // running 이 아니다)과 audio:done + 다른 스텝 running(완료된 탭을 다시 열 수
                             // 있다). 누르면 start() 가 invoke 전에 segmentProgress/progressLog 를 비워
@@ -2650,7 +2650,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           segmentCount={countSpeakerSegments(speakerRegenTarget)}
           onConfirm={() => { const sp = speakerRegenTarget; setSpeakerRegenTarget(null); runSpeakerAudio(sp, { force: true }) }}
           onCancel={() => setSpeakerRegenTarget(null)}
-          confirmDisabled={isRunning || previewBusy}
+          confirmDisabled={isRunning || previewBusy || synopsisGenerating || synopsisReviewing}
           t={t}
         />
       )}
