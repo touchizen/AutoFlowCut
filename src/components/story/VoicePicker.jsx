@@ -10,6 +10,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { voiceKey } from '../../utils/voiceKey'
+import AudioKeyGateCard from './AudioKeyGateCard'
+import { keyIdForProvider } from '../../config/apiKeyRegistry'
 import './VoicePicker.css'
 
 const RENDER_CAP = 120
@@ -58,6 +60,7 @@ export default function VoicePicker({
   onConfirm,
   onCancel,
   onVoiceSearch = null,
+  onReloadVoices = null,
   previewState = { voiceId: null, status: 'idle' },
   initialGender = null,
   t,
@@ -258,6 +261,24 @@ export default function VoicePicker({
               {v.traits?.length > 0 && (
                 <div className="vp-tags">
                   {v.traits.map(tag => <span key={tag} className="vp-tag">{tag}</span>)}
+                </div>
+              )}
+              {/* Task 3(attempt-first): a preview click first tries the call, and only when it
+                  actually fails with no-key does an inline key field show up right on the card
+                  that was clicked — the list itself stays keyless (no upfront gate per voice).
+                  Finding3(2R 리뷰): 저장 후 이 provider의 계정 목소리를 다시 안 긁으면(onReloadVoices)
+                  키 저장 전에는 없던(키 필요한) 계정 목소리가 목록에 영영 안 나타난다 — preview
+                  재시도와 별개로 그 provider 슬라이스를 재조회한다(best-effort, 실패해도 preview는 시도). */}
+              {previewStatus === 'error' && previewState?.error === 'no-key' && (
+                <div onClick={(e) => e.stopPropagation()}>
+                  <AudioKeyGateCard
+                    missing={[{ provider: v.provider, keyId: keyIdForProvider(v.provider) }]}
+                    onKeySaved={async () => {
+                      try { await onReloadVoices?.(v.provider) } catch { /* best-effort — 재조회 실패해도 preview는 이어간다 */ }
+                      onPreview({ provider: v.provider, voiceId: v.id, language: v.language, genderSource: v.genderSource, name: v.name })
+                    }}
+                    t={t}
+                  />
                 </div>
               )}
               <span className="vp-check">✔</span>

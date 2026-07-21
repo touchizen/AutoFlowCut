@@ -5,7 +5,7 @@
  * 자동 재생성하므로 전체 강제가 아니다.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 
 vi.mock('../../../src/components/LiveTimeline', () => ({ default: () => <div data-testid="lt" /> }))
 
@@ -70,5 +70,23 @@ describe('StoryView B — audio done 재생성/닫기', () => {
     })
     render(<StoryView pipeline={p} voices={[]} onClose={vi.fn()} />)
     expect(screen.queryByRole('button', { name: /오디오 다시 생성/ })).toBeNull()
+  })
+
+  // 버그 회귀: 세그먼트 단위 재생성(↻)은 그 세그먼트만 다시 만드는 국소 액션이라 audio 뷰에
+  // 머물러야 한다. STEP_ORDER=[script,scenes,audio,prompts]라 audio가 done이어도 currentStep은
+  // 다음 미완료(prompts)를 가리키므로, 재생성 완료 후 setViewedStep(null)이면 화면이 prompts로
+  // 새어 나간다. 성공 시에도 viewedStep을 'audio'로 유지해야 한다.
+  it('세그먼트 재생성(↻) 완료 후에도 화면이 audio에 머문다(prompts로 새지 않음)', async () => {
+    // start를 제어 가능한 promise로 — 재생성 완료(→ setViewedStep) 시점을 명확히 지나게 한다.
+    let resolveStart
+    const start = vi.fn(() => new Promise((r) => { resolveStart = r }))
+    render(<StoryView pipeline={pipeline({ start })} voices={[]} onClose={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' })) // 스텝퍼 → viewedStep=audio
+    fireEvent.click(screen.getByRole('button', { name: 's1 재생성' })) // 세그먼트 ↻
+    expect(start).toHaveBeenCalledWith('audio', expect.objectContaining({ regenerate: ['s1'] }))
+    // 재생성 완료 → regenerateSegment의 setViewedStep이 실행된다. 이 경로를 반드시 지나야 버그가 드러난다.
+    await act(async () => { resolveStart(undefined); await Promise.resolve() })
+    // 완료 후에도 오디오 패널이 유지된다(버그면 displayStep이 prompts로 새어 이 버튼이 사라진다).
+    expect(screen.getByRole('button', { name: /오디오 다시 생성/ })).toBeInTheDocument()
   })
 })

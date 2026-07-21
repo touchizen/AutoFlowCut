@@ -52,6 +52,7 @@ import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
+import { buildKeyResolvers } from './main/keyResolvers.js'
 import * as Sentry from '@sentry/electron/main'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -233,12 +234,15 @@ const multiKeyStore = createMultiKeyStore({
 //  - gemini: genai(Gemini) 키 재사용
 // 같은 어댑터를 story audio(합성)와 tts IPC(listVoices)가 공유(메모이즈).
 const ttsFetch = (...a) => globalThis.fetch(...a)
-const ttsKeyFor = {
-  typecast: () => multiKeyStore.getKey('typecast') || getTypecastKey(),
-  elevenlabs: () => multiKeyStore.getKey('elevenlabs') || readCredentialsKey('elevenlabs', 'ELEVENLABS_API_KEY'),
-  googletts: () => multiKeyStore.getKey('googletts') || readCredentialsKey('googletts', 'GOOGLE_TTS_API_KEY'),
-  gemini: () => genaiKeyStore.getKey(),
-}
+// AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1: multiKeyStore(암호화 저장)에 없으면 env/credentials
+// 폴백을 건너뛰고 null 반환(개발용 스위치, spec §4.9) — 어댑터의 requireKey 가 MissingProviderKeyError 로 처리.
+const { ttsKeyFor, sfxKeyFor: sfxKeyForBuilt, resolveKeyWithSource } = buildKeyResolvers({
+  multiKeyStore,
+  genaiKeyStore,
+  getTypecastKey,
+  readCredentialsKey,
+  disableFallback: process.env.AUTOFLOWCUT_DISABLE_KEY_FALLBACK === '1',
+})
 const ttsAdapters = {}
 const ttsFor = (provider) => {
   const p = provider || 'typecast'
@@ -273,10 +277,7 @@ registerTtsIPC(ipcMain, {
 })
 
 // M2b: SFX 어댑터 라우팅(sourceMode별). 키는 provider별 소스(elevenlabs는 tts와 동일 키 재사용).
-const sfxKeyFor = {
-  elevenlabs: () => multiKeyStore.getKey('elevenlabs') || readCredentialsKey('elevenlabs', 'ELEVENLABS_API_KEY'),
-  library: () => null,
-}
+const sfxKeyFor = { ...sfxKeyForBuilt, library: () => null }
 const sfxAdapters = {}
 const sfxFor = (provider) => {
   const p = provider || 'elevenlabs'
@@ -297,6 +298,8 @@ registerStoryIPC(ipcMain, {
   tts: ttsFor('typecast'), // 기본 어댑터(동시성/폴백)
   ttsFor, // 화자별 provider 라우팅
   sfxFor, // M2b: sfx sourceMode별 라우팅
+  resolveKeyWithSource, // M2: story:audio-preflight의 provider별 키 상태 조회
+  safeStorage, // M2: story:audio-preflight의 encryptionAvailable 판정
 })
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.

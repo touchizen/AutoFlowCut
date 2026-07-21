@@ -3,6 +3,7 @@ import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
+import { MissingProviderKeyError } from '../../../electron/api/keyErrors.js'
 
 // I1: audio 스텝의 산출물 쓰기 순서(SRT → manifest → scenes.json)를 검증하기 위해 storyStore를
 // 얇게 감싸 saveText 호출 순서를 기록한다. 실제 쓰기는 그대로 위임하므로 다른 테스트의 동작에는
@@ -299,14 +300,34 @@ describe('audio 스텝', () => {
     await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
       scenes: [{ segments: [{ id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' }] }],
     }))
-    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async () => { throw new Error('No Typecast API key') } }
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async () => { throw new Error('some non-key auth failure') } }
     const probe = async () => 2000
     const machine = createStepMachine({ projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe })
     await machine.open()
     await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
     const state = await machine.getState()
     expect(state.steps.audio.status).toBe('error')
-    expect(state.steps.audio.error).toMatch(/No Typecast API key/)
+    expect(state.steps.audio.error).toMatch(/some non-key auth failure/)
+  })
+
+  // M1 리뷰 finding 1: 실제 어댑터는 raw Error가 아니라 MissingProviderKeyError(errorKind
+  // 'story-audio-no-tts-key')를 던진다. stepMachine이 errorKind를 끝까지(세그먼트 루프 →
+  // 스텝 실패 → state.steps.audio.errorKind) 보존하는지 e2e로 잠근다 — M1 전체의 존재 이유.
+  it('합성이 MissingProviderKeyError로 실패하면 errorKind를 스텝 상태까지 보존한다', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [{ id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' }] }],
+    }))
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async () => { throw new MissingProviderKeyError('typecast') } }
+    const probe = async () => 2000
+    const machine = createStepMachine({ projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe })
+    await machine.open()
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('error')
+    expect(state.steps.audio.errorKind).toBe('story-audio-no-tts-key')
+    expect(state.steps.audio.error).toMatch(/No typecast API key/)
   })
 
   // Minor M2: 미배정 화자가 있으면 배치 루프를 시작하기 전에 즉시 실패해야 한다 —
