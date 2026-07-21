@@ -6,8 +6,7 @@
 import { useState } from 'react'
 import { toast } from '../Toast'
 import { useApiKey } from '../../hooks/useApiKey'
-
-const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
+import ApiKeyField from './ApiKeyField'
 
 export default function HiggsfieldApiKeyField({
   provider,
@@ -22,7 +21,6 @@ export default function HiggsfieldApiKeyField({
   const [secretInput, setSecretInput] = useState('')
   const [busy, setBusy] = useState(false)
   const hasKey = !!byProvider?.[provider]
-  const openLink = (url) => window.electronAPI?.openExternal?.(url)
 
   const onSave = async () => {
     const key = keyInput.trim()
@@ -66,52 +64,26 @@ export default function HiggsfieldApiKeyField({
   }
 
   return (
-    <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '6px', borderTop: '1px solid #2a2a2a', paddingTop: '12px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <label className="setting-label" style={{ fontWeight: 600 }}>{label}</label>
-        <span style={{ color: hasKey ? '#10b981' : '#888', fontSize: '13px' }}>
-          {loading ? '…' : hasKey ? t('settings.apiKeySet') : t('settings.apiKeyNotSet')}
-        </span>
-      </div>
-      {!encryptionAvailable && (
-        <span style={{ color: '#f59e0b', fontSize: '13px' }}>{t('settings.apiKeyEncUnavailable')}</span>
-      )}
-      <label className="setting-label">{t('settings.higgsfieldKeyInputLabel')}</label>
-      <input
-        type="password"
-        value={keyInput}
-        onChange={(event) => setKeyInput(event.target.value)}
-        placeholder={t('settings.higgsfieldKeyPlaceholder')}
-        disabled={busy || !encryptionAvailable}
-        autoComplete="off"
-        spellCheck={false}
-      />
-      <label className="setting-label">{t('settings.higgsfieldSecretInputLabel')}</label>
-      <input
-        type="password"
-        value={secretInput}
-        onChange={(event) => setSecretInput(event.target.value)}
-        placeholder={t('settings.higgsfieldSecretPlaceholder')}
-        disabled={busy || !encryptionAvailable}
-        autoComplete="off"
-        spellCheck={false}
-      />
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <button className="btn-primary" onClick={onSave} disabled={busy || !encryptionAvailable}>
-          {busy ? t('settings.ttsKeySaving') : t('settings.ttsKeySave')}
-        </button>
-        {hasKey && (
-          <button className="btn-secondary" onClick={onRemove} disabled={busy}>
-            {t('settings.ttsKeyRemove')}
-          </button>
-        )}
-        {getKeyUrl && (
-          <a style={{ ...linkStyle, marginLeft: 'auto', alignSelf: 'center' }} onClick={() => openLink(getKeyUrl)}>
-            {t('settings.ttsKeyGetKey', { label })}
-          </a>
-        )}
-      </div>
-      {extraNote && <span className="setting-sublabel">{extraNote}</span>}
-    </div>
+    <ApiKeyField
+      label={label}
+      hasKey={hasKey}
+      loading={loading}
+      encryptionAvailable={encryptionAvailable}
+      busy={busy}
+      keyInput={keyInput}
+      onKeyInput={setKeyInput}
+      secondaryInput={{
+        label: t('settings.higgsfieldSecretInputLabel'),
+        value: secretInput,
+        onChange: setSecretInput,
+        placeholder: t('settings.higgsfieldSecretPlaceholder'),
+        ariaLabel: t('settings.higgsfieldSecretInputLabel'),
+      }}
+      onSave={onSave}
+      onRemove={onRemove}
+      getKeyUrl={getKeyUrl}
+      extraNote={extraNote}
+      t={t}
+    />
   )
 }

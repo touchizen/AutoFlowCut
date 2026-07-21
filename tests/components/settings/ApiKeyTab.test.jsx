@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 
 const {
   toast,
@@ -8,6 +8,7 @@ const {
   clearKeyGenai,
   saveKeyTts,
   clearKeyTts,
+  apiKeyState,
 } = vi.hoisted(() => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
   validateKey: vi.fn(),
@@ -15,11 +16,7 @@ const {
   clearKeyGenai: vi.fn(),
   saveKeyTts: vi.fn(),
   clearKeyTts: vi.fn(),
-}))
-
-vi.mock('../../../src/components/Toast', () => ({ toast }))
-vi.mock('../../../src/hooks/useApiKey', () => ({
-  useApiKey: () => ({
+  apiKeyState: {
     hasKey: false,
     byProvider: {
       google: false,
@@ -29,6 +26,14 @@ vi.mock('../../../src/hooks/useApiKey', () => ({
       wavespeed: false,
       higgsfield: false,
     },
+  },
+}))
+
+vi.mock('../../../src/components/Toast', () => ({ toast }))
+vi.mock('../../../src/hooks/useApiKey', () => ({
+  useApiKey: () => ({
+    hasKey: apiKeyState.hasKey,
+    byProvider: apiKeyState.byProvider,
     encryptionAvailable: true,
     loading: false,
     validateKey,
@@ -59,6 +64,21 @@ const SINGLE_KEY_PROVIDER_CASES = [
   { id: 'wavespeed', label: 'WaveSpeed', key: 'wavespeed-key', validates: true },
 ]
 
+const EMPTY_GENERATION_STATUS = {
+  google: false,
+  openai: false,
+  grok: false,
+  fal: false,
+  wavespeed: false,
+  higgsfield: false,
+}
+
+const TTS_SAVE_CASES = [
+  { id: 'typecast', label: 'Typecast', key: 'tc-sk-abc' },
+  { id: 'elevenlabs', label: 'ElevenLabs', key: 'el-sk-abc' },
+  { id: 'googletts', label: 'Google Cloud TTS', key: 'gcp-key-json' },
+]
+
 function saveButtonFor(input) {
   return input.closest('.setting-row').querySelector('button.btn-primary')
 }
@@ -66,6 +86,8 @@ function saveButtonFor(input) {
 describe('ApiKeyTab (consolidated list)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    apiKeyState.hasKey = false
+    apiKeyState.byProvider = { ...EMPTY_GENERATION_STATUS }
     validateKey.mockResolvedValue({ valid: true })
     saveKeyGenai.mockResolvedValue({ success: true })
     clearKeyGenai.mockResolvedValue({ success: true })
@@ -82,6 +104,23 @@ describe('ApiKeyTab (consolidated list)', () => {
     expect(en.settings.apiKeyVoiceSectionTitle).toBe('Voice (TTS)')
     expect(ko.settings.apiKeyGenerationSectionTitle).toBe('이미지·비디오 생성')
     expect(ko.settings.apiKeyVoiceSectionTitle).toBe('음성')
+  })
+
+  it('uses a provider-neutral security disclosure for the shared generation section', () => {
+    render(<ApiKeyTab t={t} />)
+
+    const generationSection = screen
+      .getByRole('heading', { name: 'settings.apiKeyGenerationSectionTitle' })
+      .closest('.settings-section')
+    expect(within(generationSection).getByText('settings.apiKeySecurityNote')).toBeTruthy()
+    expect(en.settings.apiKeySecurityNote).toBe(
+      'API keys are encrypted with your OS keychain and stored only on this device. Each key is sent only to its own provider, never to us.',
+    )
+    expect(ko.settings.apiKeySecurityNote).toBe(
+      'API 키는 OS 키체인으로 암호화되어 이 기기에만 저장됩니다. 각 키는 해당 제공자에게만 전송되며 운영자에게는 전송되지 않습니다.',
+    )
+    expect(en.settings.apiKeySecurityNote).not.toContain('only to Google')
+    expect(ko.settings.apiKeySecurityNote).not.toContain('Google 로만')
   })
 
   it('keeps the required generation-provider config complete', () => {
@@ -102,6 +141,20 @@ describe('ApiKeyTab (consolidated list)', () => {
       expect(screen.getByText(provider.label)).toBeTruthy()
     }
   })
+
+  it.each(GENERATION_API_KEY_PROVIDERS)(
+    '$id status reads only byProvider.$id',
+    ({ id }) => {
+      apiKeyState.byProvider = { ...EMPTY_GENERATION_STATUS, [id]: true }
+      render(<ApiKeyTab t={t} />)
+
+      for (const provider of GENERATION_API_KEY_PROVIDERS) {
+        const row = screen.getByText(provider.label).closest('.setting-row')
+        const expectedStatus = provider.id === id ? 'settings.apiKeySet' : 'settings.apiKeyNotSet'
+        expect(within(row).getByText(expectedStatus)).toBeTruthy()
+      }
+    },
+  )
 
   it('lists all registry-driven non-genai TTS providers', () => {
     render(<ApiKeyTab t={t} />)
@@ -154,7 +207,7 @@ describe('ApiKeyTab (consolidated list)', () => {
   it('combines Higgsfield key and secret as key:secret for validation and storage', async () => {
     const onKeySaved = vi.fn()
     render(<ApiKeyTab t={t} onKeySaved={onKeySaved} />)
-    const keyInput = screen.getByPlaceholderText('settings.higgsfieldKeyPlaceholder')
+    const keyInput = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Higgsfield"}')
     const secretInput = screen.getByPlaceholderText('settings.higgsfieldSecretPlaceholder')
 
     fireEvent.change(keyInput, { target: { value: '  hf-key  ' } })
@@ -172,6 +225,8 @@ describe('ApiKeyTab (consolidated list)', () => {
 describe('ApiKeyTab — onKeySaved voice reload wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    apiKeyState.hasKey = false
+    apiKeyState.byProvider = { ...EMPTY_GENERATION_STATUS }
     validateKey.mockResolvedValue({ valid: true })
     saveKeyGenai.mockResolvedValue({ success: true })
     saveKeyTts.mockResolvedValue({ success: true })
@@ -189,16 +244,16 @@ describe('ApiKeyTab — onKeySaved voice reload wiring', () => {
     await vi.waitFor(() => expect(onKeySaved).toHaveBeenCalledWith('gemini'))
   })
 
-  it('saving Typecast calls onKeySaved("typecast")', async () => {
+  it.each(TTS_SAVE_CASES)('saving $id calls onKeySaved("$id")', async ({ id, label, key }) => {
     const onKeySaved = vi.fn()
     render(<ApiKeyTab t={t} onKeySaved={onKeySaved} />)
-    const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Typecast"}')
+    const input = screen.getByPlaceholderText(`settings.ttsKeyPlaceholder:{"label":"${label}"}`)
 
-    fireEvent.change(input, { target: { value: 'tc-sk-abc' } })
+    fireEvent.change(input, { target: { value: key } })
     fireEvent.click(saveButtonFor(input))
 
-    await vi.waitFor(() => expect(saveKeyTts).toHaveBeenCalledWith('typecast', 'tc-sk-abc'))
-    await vi.waitFor(() => expect(onKeySaved).toHaveBeenCalledWith('typecast'))
+    await vi.waitFor(() => expect(saveKeyTts).toHaveBeenCalledWith(id, key))
+    await vi.waitFor(() => expect(onKeySaved).toHaveBeenCalledWith(id))
     expect(onKeySaved).not.toHaveBeenCalledWith('gemini')
   })
 

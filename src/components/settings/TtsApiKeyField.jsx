@@ -13,19 +13,19 @@ export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, 
   const [busy, setBusy] = useState(false)
   const onSave = async () => {
     const c = keyInput.trim()
-    if (!c) { toast.error(t('settings.ttsKeyEmpty')); return }
+    if (!c) { toast.error(t('settings.apiKeyEmpty')); return }
     setBusy(true)
     const res = await saveKey(c)
     setBusy(false)
-    if (res?.success) { setKeyInput(''); toast.success(t('settings.ttsKeySaved')); onSaved?.() }
-    else toast.error(t('settings.ttsKeySaveFailed', { error: res?.error || '' }))
+    if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')); onSaved?.() }
+    else toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
   }
   const onRemove = async () => {
     setBusy(true)
     const res = await clearKey()
     setBusy(false)
-    if (res?.success === false) toast.error(t('settings.ttsKeyRemoveFailed', { error: res?.error || '' }))
-    else toast.success(t('settings.ttsKeyRemoved'))
+    if (res?.success === false) toast.error(t('settings.apiKeyRemoveFailed', { error: res?.error || '' }))
+    else toast.success(t('settings.apiKeyRemoved'))
   }
   return (
     <ApiKeyField

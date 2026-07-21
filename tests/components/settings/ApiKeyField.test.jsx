@@ -37,4 +37,47 @@ describe('ApiKeyField (presentational)', () => {
     render(<ApiKeyField {...base} encryptionAvailable={false} />)
     expect(screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Typecast"}').disabled).toBe(true)
   })
+
+  it('renders an optional secondary password input through the shared field shell', () => {
+    const onChange = vi.fn()
+    render(
+      <ApiKeyField
+        {...base}
+        label="Higgsfield"
+        secondaryInput={{
+          label: 'Secret',
+          value: 'current-secret',
+          onChange,
+          placeholder: 'Paste secret',
+          ariaLabel: 'Higgsfield secret',
+        }}
+      />,
+    )
+
+    const secondary = screen.getByLabelText('Higgsfield secret')
+    expect(screen.getByText('Secret')).toBeTruthy()
+    expect(secondary.getAttribute('type')).toBe('password')
+    expect(secondary.value).toBe('current-secret')
+    expect(secondary.getAttribute('placeholder')).toBe('Paste secret')
+
+    fireEvent.change(secondary, { target: { value: 'next-secret' } })
+    expect(onChange).toHaveBeenCalledWith('next-secret')
+  })
+
+  it('disables the optional secondary input with the primary input', () => {
+    render(
+      <ApiKeyField
+        {...base}
+        encryptionAvailable={false}
+        secondaryInput={{
+          value: '',
+          onChange: vi.fn(),
+          placeholder: 'Paste secret',
+          ariaLabel: 'Higgsfield secret',
+        }}
+      />,
+    )
+
+    expect(screen.getByLabelText('Higgsfield secret')).toBeDisabled()
+  })
 })
