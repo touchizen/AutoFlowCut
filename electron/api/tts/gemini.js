@@ -185,7 +185,18 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
         // "왜 실패했는지"를 에러에 담아 조용한 일반 에러가 되지 않게(모든 실패 출구에 계측).
         lastText = parts?.find((p) => p?.text)?.text || lastText
       }
-      throw new Error(`Gemini TTS: no audio data in response${lastText ? ` (model returned text: ${String(lastText).slice(0, 200)})` : ''}`)
+      // 진단 경로는 어떤 입력에도 절대 크래시하지 않아야 한다. String() 조차 던질 수 있다 —
+      // 예: text가 `{toString:null, valueOf:null}`(계약 위반이지만 valid JSON)이면
+      // "Cannot convert object to primitive value" TypeError. try/catch로 완전히 봉인.
+      let textNote = ''
+      if (lastText) {
+        try {
+          textNote = ` (model returned text: ${String(lastText).slice(0, 200)})`
+        } catch {
+          textNote = ' (model returned non-text content)'
+        }
+      }
+      throw new Error(`Gemini TTS: no audio data in response${textNote}`)
     },
   }
 }

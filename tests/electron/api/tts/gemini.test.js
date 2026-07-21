@@ -307,4 +307,12 @@ describe('Gemini 어댑터 — 리뷰 findings 회귀', () => {
     const a = createGeminiAdapter({ getKey: () => 'k', fetch })
     await expect(a.synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/no audio data/)
   })
+
+  // [Codex R3 Low] String()조차 던지는 원시변환 불가 객체(toString/valueOf가 null)여도 — valid
+  // JSON이라 실제로 올 수 있다 — no-audio 에러로 안전하게 떨어져야 한다(진단 경로 완전 봉인).
+  it('text가 원시변환 불가 객체({toString:null,valueOf:null})여도 TypeError 없이 no-audio 에러를 던진다', async () => {
+    const fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.parse('{"toString":null,"valueOf":null}') }] } }] }) })
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await expect(a.synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/no audio data/)
+  })
 })
