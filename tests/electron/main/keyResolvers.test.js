@@ -72,4 +72,27 @@ describe('buildKeyResolvers (nullable, dev switch)', () => {
       else delete API_KEY_REGISTRY[provider]
     }
   })
+
+  it('routes a registry provider with store:genai through the genai key store (not just keyId===genai)', () => {
+    // store 분류는 keyId 이름이 아니라 registry의 store로 파생돼야 한다 — genai store 를 쓰는
+    // 다른 keyId provider(예: 미래의 vertex)가 추가돼도 genaiKeyStore 로 라우팅돼야 한다.
+    const provider = 'drift-genai-provider'
+    const keyId = 'drift-genai-key'   // 일부러 'genai' 가 아니다
+    const hadProvider = Object.prototype.hasOwnProperty.call(API_KEY_REGISTRY, provider)
+    const previous = API_KEY_REGISTRY[provider]
+    API_KEY_REGISTRY[provider] = { keyId, store: 'genai', validate: true, label: 'Drift Genai', url: '' }
+
+    try {
+      const { ttsKeyFor, resolveKeyWithSource } = buildKeyResolvers({
+        multiKeyStore: store({}), genaiKeyStore: { getKey: () => 'genai-secret' },
+        getTypecastKey: () => null, readCredentialsKey: () => null, disableFallback: false,
+      })
+
+      expect(ttsKeyFor[provider]()).toBe('genai-secret')
+      expect(resolveKeyWithSource(keyId)).toEqual({ key: 'genai-secret', source: 'store' })
+    } finally {
+      if (hadProvider) API_KEY_REGISTRY[provider] = previous
+      else delete API_KEY_REGISTRY[provider]
+    }
+  })
 })
