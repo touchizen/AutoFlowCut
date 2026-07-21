@@ -153,16 +153,17 @@ describe('buildRenderPlan', () => {
     const plan = buildRenderPlan(resolved, options)
     expect(plan.totalDurationMs).toBe(7000)
   })
-  it('holds the last frame before trimming when audio outlasts scenes', () => {
+  it('pads black after the last scene (not frame-hold) when audio outlasts scenes', () => {
     const audioLonger = {
       ...resolved,
       audioClips: [{ filename: 'nar.wav', path: '/nar.wav', startMs: 0, durationMs: 8500, gain: 1 }],
     }
     const plan = buildRenderPlan(audioLonger, options)
     const graph = plan.stages.find(stage => stage.kind === 'final').filtergraphScript
-    const tpad = 'tpad=stop_mode=clone:stop_duration=1.5'
+    const tpad = 'tpad=stop_mode=add:stop_duration=1.5:color=black'
     expect(plan.totalDurationMs).toBe(8500)
     expect(graph).toContain(tpad)
+    expect(graph).not.toContain('stop_mode=clone')
     expect(graph.indexOf(tpad)).toBeLessThan(graph.indexOf('trim=duration=8.5'))
   })
   it('matches golden filtergraph snapshot', () => {
@@ -353,8 +354,8 @@ describe('buildRenderPlan staged video', () => {
     const concat = plan.stages.find(stage => stage.concatDemuxer)
 
     expect(segments).toHaveLength(2)
-    expect(segments[0].filtergraphScript).not.toContain('tpad=stop_mode=clone')
-    expect(segments[1].filtergraphScript).toContain('tpad=stop_mode=clone:stop_duration=1')
+    expect(segments[0].filtergraphScript).not.toContain('tpad=stop_mode=add')
+    expect(segments[1].filtergraphScript).toContain('tpad=stop_mode=add:stop_duration=1:color=black')
     expect(segments[0].subtitleAss).toContain('0:01:03.50,0:01:04.00')
     expect(segments[1].subtitleAss).toContain('0:00:00.00,0:00:00.50')
     for (const segment of segments) {

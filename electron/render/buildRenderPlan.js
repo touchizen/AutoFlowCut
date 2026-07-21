@@ -274,8 +274,10 @@ function buildVideoGraph({ videoChains, sceneDurationMs, targetDurationMs, subti
   lines.push(`${concatInputs}concat=n=${videoChains.length}:v=1:a=0[vconcat]`)
 
   const filters = []
+  // 씬(이미지/비디오)이 오디오·자막보다 짧으면 뒤를 채워야 한다. 마지막 프레임을 늘리지(clone)
+  // 않고 검은 프레임(add:black)으로 — 모니터가 씬 범위 밖을 '씬 없음'(검은 배경)으로 그리는 것과 일치.
   const holdMs = Math.max(0, targetDurationMs - sceneDurationMs)
-  if (holdMs > 0) filters.push(`tpad=stop_mode=clone:stop_duration=${formatSeconds(holdMs)}`)
+  if (holdMs > 0) filters.push(`tpad=stop_mode=add:stop_duration=${formatSeconds(holdMs)}:color=black`)
   filters.push(`trim=duration=${formatSeconds(targetDurationMs)}`)
   filters.push('setpts=PTS-STARTPTS')
   if (hasAssDialogue(subtitleAss)) {
