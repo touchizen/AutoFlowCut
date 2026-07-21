@@ -17,6 +17,8 @@ vi.mock('../../../src/hooks/useTtsKeys', () => ({
 }))
 
 import TtsApiKeyField from '../../../src/components/settings/TtsApiKeyField'
+import en from '../../../src/locales/en'
+import ko from '../../../src/locales/ko'
 
 const t = (k, vars) => (vars ? `${k}:${JSON.stringify(vars)}` : k)
 
@@ -28,7 +30,7 @@ describe('TtsApiKeyField (wrapper)', () => {
     toast.error.mockReset()
   })
 
-  it('ElevenLabs save uses the provider-neutral API key message', async () => {
+  it('unvalidated ElevenLabs save uses the shared unverified message', async () => {
     saveKey.mockResolvedValue({ success: true })
     render(<TtsApiKeyField provider="elevenlabs" label="ElevenLabs" getKeyUrl="https://x" t={t} />)
     const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"ElevenLabs"}')
@@ -36,7 +38,14 @@ describe('TtsApiKeyField (wrapper)', () => {
     fireEvent.click(screen.getByText('settings.ttsKeySave'))
     await vi.waitFor(() => expect(saveKey).toHaveBeenCalledWith('sk-abc'))
     await vi.waitFor(() => expect(input.value).toBe(''))
-    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySaved')
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySavedUnverified')
+    expect(toast.success).not.toHaveBeenCalledWith('settings.apiKeySaved')
+    expect(en.settings.apiKeySavedUnverified).toBe(
+      'API key saved (not verified — validated on first use)',
+    )
+    expect(ko.settings.apiKeySavedUnverified).toBe(
+      'API 키를 저장했습니다 (미검증 — 처음 사용할 때 검증됩니다)',
+    )
   })
 
   it('empty input → saveKey NOT called', () => {

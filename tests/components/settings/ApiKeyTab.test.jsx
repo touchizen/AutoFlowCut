@@ -191,7 +191,7 @@ describe('ApiKeyTab (consolidated list)', () => {
     },
   )
 
-  it('fal saves without no-op validation and never claims the key was verified', async () => {
+  it('fal saves without no-op validation and uses the shared unverified message', async () => {
     render(<ApiKeyTab t={t} />)
     const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"fal.ai"}')
 
@@ -200,7 +200,7 @@ describe('ApiKeyTab (consolidated list)', () => {
 
     await vi.waitFor(() => expect(saveKeyGenai).toHaveBeenCalledWith('fal-secret', 'fal'))
     expect(validateKey).not.toHaveBeenCalled()
-    expect(toast.success).toHaveBeenCalledWith('settings.falKeySavedUnverified')
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySavedUnverified')
     expect(toast.success).not.toHaveBeenCalledWith('settings.apiKeySaved')
   })
 

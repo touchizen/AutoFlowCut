@@ -17,7 +17,7 @@ export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, 
     setBusy(true)
     const res = await saveKey(c)
     setBusy(false)
-    if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')); onSaved?.() }
+    if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySavedUnverified')); onSaved?.() }
     else toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
   }
   const onRemove = async () => {

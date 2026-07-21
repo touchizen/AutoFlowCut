@@ -21,6 +21,8 @@ vi.mock('../../../src/hooks/useApiKey', () => ({
 }))
 
 import GenApiKeyField from '../../../src/components/settings/GenApiKeyField'
+import en from '../../../src/locales/en'
+import ko from '../../../src/locales/ko'
 
 const t = (key, vars) => (vars ? `${key}:${JSON.stringify(vars)}` : key)
 
@@ -44,7 +46,7 @@ describe('GenApiKeyField', () => {
     clearKey.mockResolvedValue({ success: true })
   })
 
-  it('validates and saves with the configured provider id', async () => {
+  it('validated OpenAI save uses the verified message', async () => {
     renderField()
     const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"OpenAI"}')
 
@@ -55,6 +57,9 @@ describe('GenApiKeyField', () => {
     await vi.waitFor(() => expect(saveKey).toHaveBeenCalledWith('sk-openai', 'openai'))
     await vi.waitFor(() => expect(input.value).toBe(''))
     expect(toast.success).toHaveBeenCalledWith('settings.apiKeySaved')
+    expect(toast.success).not.toHaveBeenCalledWith('settings.apiKeySavedUnverified')
+    expect(en.settings.apiKeySaved).toBe('API key verified and saved')
+    expect(ko.settings.apiKeySaved).toBe('API 키를 확인하고 저장했습니다')
   })
 
   it('does not save when provider validation fails', async () => {
@@ -72,12 +77,12 @@ describe('GenApiKeyField', () => {
     expect(toast.error).toHaveBeenCalledWith('settings.apiKeyInvalid:{"error":"bad key"}')
   })
 
-  it('can skip no-op validation and use an explicitly unverified save message', async () => {
+  it('unvalidated fal save uses the shared unverified message', async () => {
     renderField({
       provider: 'fal',
       label: 'fal.ai',
       validateOnSave: false,
-      savedToastKey: 'settings.falKeySavedUnverified',
+      savedToastKey: 'settings.apiKeySavedUnverified',
     })
     const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"fal.ai"}')
 
@@ -86,8 +91,10 @@ describe('GenApiKeyField', () => {
 
     await vi.waitFor(() => expect(saveKey).toHaveBeenCalledWith('fal-key', 'fal'))
     expect(validateKey).not.toHaveBeenCalled()
-    expect(toast.success).toHaveBeenCalledWith('settings.falKeySavedUnverified')
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySavedUnverified')
     expect(toast.success).not.toHaveBeenCalledWith('settings.apiKeySaved')
+    expect(en.settings).not.toHaveProperty('falKeySavedUnverified')
+    expect(ko.settings).not.toHaveProperty('falKeySavedUnverified')
   })
 
   it('removes only the configured provider key', async () => {

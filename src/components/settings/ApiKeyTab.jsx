@@ -30,7 +30,7 @@ export const GENERATION_API_KEY_PROVIDERS = [
     url: 'https://fal.ai/dashboard/keys',
     provisional: true,
     validateOnSave: false,
-    savedToastKey: 'settings.falKeySavedUnverified',
+    savedToastKey: 'settings.apiKeySavedUnverified',
     noteKey: 'settings.falKeyNote',
   },
   {
