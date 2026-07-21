@@ -500,11 +500,13 @@ export default function StoryView({
   // 커밋했지만 story는 아직 옛 audio-first)에서 story state.sceneMode는 여전히 audio-first다.
   // 가드 안에 넣으면 정작 이 케이스에서 영영 안 뜬다.
   // busy/unconfirmed 등 기존 audio-first 코드는 여기서 조용히 지나간다(기존 의미 보존).
+  // runStep이 스스로 토스트하는 거절 집합. runSpeakerAudio처럼 runStep을 콜백으로 쓰면서
+  // 결과 오류도 따로 토스트하는 호출자는 이 집합을 재토스트하지 않아야 이중토스트가 안 난다.
+  const runStepRefuses = (error) => error === 'fixed-scenes-stale'
+    || (isImageFirst && IMAGE_FIRST_REFUSALS.includes(error))
   const runStep = async (step, params) => {
     const res = await start(step, params)
-    const refused = res?.error === 'fixed-scenes-stale'
-      || (isImageFirst && IMAGE_FIRST_REFUSALS.includes(res?.error))
-    if (refused) toast.error(`${t('story.error.prefix')}: ${res.error}`)
+    if (runStepRefuses(res?.error)) toast.error(`${t('story.error.prefix')}: ${res.error}`)
     return res
   }
 
@@ -1274,10 +1276,11 @@ export default function StoryView({
   // force=true면 그 화자의 이미 done인 세그먼트까지 강제 재생성(regenerateSpeaker). 좌클릭(force=false)은
   // 기존 "미생성분만 채우기".
   const runSpeakerAudio = async (sp, { force = false } = {}) => {
-    // start() 직행(runStep 아님) — runStep은 fixed-scenes-stale/image-first 거절을 자체 토스트하는데,
-    // 이 경로는 아래에서 result.error를 resolveDisplayError로 이미 토스트하므로 runStep을 쓰면 같은
-    // 오류가 두 번 뜬다(merge 이중토스트). 화자별 오디오의 토스트 소유자는 runSpeakerAudio 하나다.
-    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) }, (p) => start('audio', p))
+    // 콜백은 runStep이다(start 아님) — preflight 차단 후 키 저장→재시도(runAudioWithPreflight의 저장된
+    // retry)는 runSpeakerAudio를 안 거치고 콜백만 단독 실행하므로, 그 경로의 거절 피드백은 콜백이 스스로
+    // 토스트해야 한다(runStep). 대신 직접 경로에서 아래 result.error 토스트와 겹치는 거절(runStepRefuses)은
+    // 여기서 재토스트하지 않아 이중토스트를 막는다.
+    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) }, (p) => runStep('audio', p))
     // preflight가 막은 경우엔 게이트 카드가 이미 안내하므로 별도 토스트 없이 조용히 돌아간다.
     if (result?.error === 'preflight-missing-key') return
     // busy: 좌클릭 fill-missing은 실행 중 화자 맵이 안 보여 사용자가 만든 상황이 아니라 조용하다.
@@ -1290,8 +1293,9 @@ export default function StoryView({
     }
     // main 의 거절(대사 없는 화자 등)은 **사전검사라 스텝 상태를 일부러 안 건드린다**(완료 프로젝트의
     // done 을 지키려고). 그래서 오류 배너도 안 뜬다 — 여기서 안 띄우면 버튼이 무반응으로 보인다.
+    // 단 runStep이 이미 토스트한 거절(fixed-scenes-stale/image-first)은 재토스트하지 않는다(이중토스트 방지).
     if (result?.error) {
-      toast.error(resolveDisplayError(t, result.error, result.error))
+      if (!runStepRefuses(result.error)) toast.error(resolveDisplayError(t, result.error, result.error))
       return
     }
     if (result?.partialAudioRun) {
