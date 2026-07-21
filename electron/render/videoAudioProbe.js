@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 
 const NO_AUDIO_STREAM = /matches no streams/
+const STDERR_TAIL_LINES = 20
 
 export function createVideoAudioProbe(opts = {}, deps = {}) {
   const spawn = deps.spawn || nodeSpawn
@@ -31,9 +32,22 @@ function runProbe(videoPath, { ffmpegPath, signal, spawn }) {
       return
     }
 
-    let stderr = ''
+    let lineBuffer = ''
+    let tailLines = []
     let settled = false
     let aborted = false
+
+    const rememberLine = (line) => {
+      if (!line) return
+      tailLines.push(line)
+      if (tailLines.length > STDERR_TAIL_LINES) tailLines = tailLines.slice(-STDERR_TAIL_LINES)
+    }
+
+    const onStderrData = (buffer) => {
+      const lines = `${lineBuffer}${buffer.toString()}`.split(/\r?\n/)
+      lineBuffer = lines.pop() || ''
+      for (const line of lines) rememberLine(line)
+    }
 
     const finish = (error, value) => {
       if (settled) return
@@ -48,11 +62,14 @@ function runProbe(videoPath, { ffmpegPath, signal, spawn }) {
       // kill 직후 resolve하지 않는다. close까지 기다려 파일 핸들이 풀린 뒤 취소를 전파한다.
     }
 
-    child.stderr?.on('data', buffer => { stderr += buffer.toString() })
+    // corrupt 입력의 대량 진단도 ffmpegRunner 와 같은 최근 20줄만 보존한다.
+    child.stderr?.on('data', onStderrData)
     child.once('error', error => {
       if (!aborted) finish(audioProbeSpawnError(error, ffmpegPath))
     })
     child.once('close', code => {
+      if (lineBuffer) rememberLine(lineBuffer)
+      const stderrTail = tailLines.join('\n')
       if (aborted || signal?.aborted) {
         finish(new Error('ffmpeg audio probe cancelled'))
         return
@@ -61,11 +78,11 @@ function runProbe(videoPath, { ffmpegPath, signal, spawn }) {
         finish(null, true)
         return
       }
-      if (NO_AUDIO_STREAM.test(stderr)) {
+      if (NO_AUDIO_STREAM.test(stderrTail)) {
         finish(null, false)
         return
       }
-      finish(new Error(`ffmpeg audio probe exit ${code}: ${stderr.trim()}`))
+      finish(new Error(`ffmpeg audio probe exit ${code}: ${stderrTail.trim()}`))
     })
 
     if (signal?.aborted) onAbort()

@@ -36,6 +36,15 @@ describe('sanitizeOutputName', () => {
     expect(sanitizeOutputName('LPT9')).toBe('_LPT9.mp4')
   })
 
+  it('확장자가 붙은 Windows 예약 장치명도 _ 접두로 회피한다', () => {
+    expect(sanitizeOutputName('CON.txt')).toBe('_CON.txt.mp4')
+    expect(sanitizeOutputName('NUL.mp4')).toBe('_NUL.mp4.mp4')
+  })
+
+  it('출력 base 를 96자로 제한한 뒤 .mp4 를 붙인다', () => {
+    expect(sanitizeOutputName('x'.repeat(200))).toBe(`${'x'.repeat(96)}.mp4`)
+  })
+
   it('예약명을 포함할 뿐인 정상 이름은 건드리지 않는다', () => {
     expect(sanitizeOutputName('console')).toBe('console.mp4')
     expect(sanitizeOutputName('com10')).toBe('com10.mp4')

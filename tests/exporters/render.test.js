@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { exportRenderVideo } from '../../src/exporters/render.js'
+import { exportRenderVideo, makeRenderJobId } from '../../src/exporters/render.js'
 
 describe('exportRenderVideo', () => {
   it('prepares payload locally and calls renderMp4 without GCF', async () => {
@@ -61,5 +61,13 @@ describe('exportRenderVideo', () => {
     const j2 = await exportRenderVideo({ name: 'My Proj' }, { renderMode: 'preview', renderBurnSubtitle: false }, { prepareCloudRequest, renderMp4 })
     expect(j1).toMatch(/My_Proj/)
     expect(j1).not.toBe(j2) // counter advances
+  })
+
+  it('caps a long project-name segment in the render jobId', () => {
+    const jobId = makeRenderJobId({ name: 'p'.repeat(300) })
+    const match = /^render_(.*)_\d+$/.exec(jobId)
+
+    expect(match?.[1]).toHaveLength(64)
+    expect(jobId.length).toBeLessThanOrEqual(80)
   })
 })

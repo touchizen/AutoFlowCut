@@ -48,6 +48,19 @@ describe('validateRenderRequest', () => {
     const r = good(); r.prepared.cloudRequest.sfxItems[0].sceneId = 'scene_9'
     expect(validateRenderRequest(r).ok).toBe(false)
   })
+  it.each(['sfxItems', 'audioTracks'])('rejects non-array %s without throwing', (field) => {
+    const r = good(); r.prepared.cloudRequest[field] = {}
+    expect(validateRenderRequest(r)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(new RegExp(`${field}.*array`, 'i')),
+    })
+  })
+  it('accepts omitted optional sfxItems/audioTracks collections', () => {
+    const r = good()
+    delete r.prepared.cloudRequest.sfxItems
+    delete r.prepared.cloudRequest.audioTracks
+    expect(validateRenderRequest(r)).toEqual({ ok: true })
+  })
   it('rejects non-finite scene duration', () => {
     const r = good(); r.prepared.cloudRequest.scenes[0].duration = NaN
     expect(validateRenderRequest(r).ok).toBe(false)

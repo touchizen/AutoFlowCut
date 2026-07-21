@@ -40,12 +40,15 @@ export function validateRenderRequest(request) {
     if (!finitePos(s.duration)) return fail(`bad scene duration: ${s.id}`)
     sceneDurations.set(s.id, s.duration)
   }
+  // optional 컬렉션은 생략 가능하지만 값이 있으면 배열만 받아 IPC rejection 을 막는다.
+  if (cr.sfxItems != null && !Array.isArray(cr.sfxItems)) return fail('sfxItems must be an array')
   for (const sfx of (cr.sfxItems || [])) {
     if (!ids.has(sfx.sceneId)) return fail(`sfx references unknown scene: ${sfx.sceneId}`)
     if (!finitePos(sfx.duration)) return fail(`bad sfx duration: ${sfx.filename}`)
   }
   const AUDIO_TYPES = new Set(['narration', 'story_narration', 'voice', 'sfx_timed'])
   const TIMED_TYPES = new Set(['story_narration', 'voice', 'sfx_timed'])
+  if (cr.audioTracks != null && !Array.isArray(cr.audioTracks)) return fail('audioTracks must be an array')
   for (const t of (cr.audioTracks || [])) {
     if (!AUDIO_TYPES.has(t.type)) return fail(`unknown audioTrack type: ${t.type} (${t.filename})`)
     if (TIMED_TYPES.has(t.type)) {

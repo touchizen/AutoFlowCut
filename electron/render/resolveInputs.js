@@ -29,6 +29,8 @@ async function defaultDecodeDataUrl(spec, name) {
     : rawMediaExtension(spec) || 'png'
   const b64 = m ? m[3] : spec
   const buf = Buffer.from(b64, 'base64')
+  // Buffer.from(base64) 는 잘못된 문자열도 조용히 0바이트로 만들 수 있어 쓰기 전에 닫는다.
+  if (buf.length === 0) throw new Error(`render: decoded media is empty (${name})`)
   const out = path.join(os.tmpdir(), `render_${name}.${ext}`)
   await writeFile(out, buf)
   return out

@@ -186,6 +186,27 @@ describe('resolveAndValidateInputs', () => {
     }
   })
 
+  it('rejects a data URL that decodes to an empty temp file', async () => {
+    const p = prepared()
+    p.mediaFiles[0] = {
+      sceneId: 'scene_1',
+      type: 'image',
+      filename: 'bad.png',
+      path: 'data:image/png;base64,!!!!',
+    }
+    const tempPath = path.join(os.tmpdir(), 'render_finding4_empty_scene_1_bad_png.png')
+
+    try {
+      await expect(resolveAndValidateInputs(p, {
+        existsSync: (value) => ['/sfx1.wav', '/nar.mp3'].includes(value),
+        probeDurationMs: async () => 30000,
+        jobId: 'finding4_empty',
+      })).rejects.toThrow(/render:.*empty/i)
+    } finally {
+      await fs.promises.unlink(tempPath).catch(() => {})
+    }
+  })
+
   it('decodes from base64 fallback when path is absent (parity with other exporters)', async () => {
     const p = prepared()
     p.mediaFiles[0] = { sceneId: 'scene_1', type: 'image', filename: 's1.png', path: undefined, fallback: 'data:image/jpeg;base64,BBBB' }

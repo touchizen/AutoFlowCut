@@ -10,7 +10,8 @@ export function sanitizeOutputName(projectName) {
     .replace(FORBIDDEN, '_')
     .replace(/\s+/g, ' ')
     .trim()
-  // 예약 장치명이면 '_' 접두로 회피(Windows). 그 외엔 그대로.
-  const safe = RESERVED.test(base) ? `_${base}` : base
+    .slice(0, 96)
+  // Windows 는 첫 확장자 앞 segment 가 장치명이면 확장자가 더 붙어도 예약명으로 취급한다.
+  const safe = RESERVED.test(base.split('.')[0]) ? `_${base}` : base
   return `${safe || 'render'}.mp4`
 }

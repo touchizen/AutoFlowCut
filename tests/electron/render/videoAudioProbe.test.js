@@ -46,6 +46,36 @@ describe('createVideoAudioProbe', () => {
     await expect(result).resolves.toBe(false)
   })
 
+  it('still detects a no-audio marker near the end of huge stderr', async () => {
+    const child = fakeChild()
+    const { probe } = makeProbe(child)
+    const result = probe('/media/huge-silent.mp4')
+
+    child.stderr.emit('data', Buffer.from(
+      `${'diagnostic noise\n'.repeat(2_000)}Stream map '0:a:0' matches no streams.\n`,
+    ))
+    child.emit('close', 234)
+
+    await expect(result).resolves.toBe(false)
+  })
+
+  it('keeps only the last 20 stderr lines in a probe error', async () => {
+    const child = fakeChild()
+    const { probe } = makeProbe(child)
+    const result = probe('/media/huge-corrupt.mp4')
+    const lines = Array.from({ length: 100 }, (_, index) => `diagnostic-${String(index).padStart(3, '0')}`)
+
+    child.stderr.emit('data', Buffer.from(`${lines.join('\n')}\n`))
+    child.emit('close', 1)
+
+    const error = await result.catch(value => value)
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toContain('diagnostic-080')
+    expect(error.message).toContain('diagnostic-099')
+    expect(error.message).not.toContain('diagnostic-079')
+    expect(error.message.length).toBeLessThan(500)
+  })
+
   it('throws on another non-zero ffmpeg exit', async () => {
     const child = fakeChild()
     const { probe } = makeProbe(child)

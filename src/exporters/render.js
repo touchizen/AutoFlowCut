@@ -3,7 +3,8 @@ import { prepareCloudRequest } from './prepareCloudRequest.js'
 
 let jobCounter = 0
 export function makeRenderJobId(project) {
-  const base = String(project?.name || 'project').replace(/\W+/g, '_')
+  // jobId 가 decode 임시 파일명에 들어가므로 프로젝트명 구간만 짧게 제한한다.
+  const base = String(project?.name || 'project').replace(/\W+/g, '_').slice(0, 64)
   jobCounter += 1
   return `render_${base}_${jobCounter}`
 }
