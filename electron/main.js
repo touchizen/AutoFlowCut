@@ -333,9 +333,9 @@ ipcMain.handle('render:reveal', (_e, { path: filePath } = {}) => {
 // Render IPC (self-render to MP4 — fully local ffmpeg)
 const cleanupRunningRenders = registerRenderIPC(ipcMain, {
   getMainWindow: () => mainWindow,
-  pickOutPath: async () => {
+  pickOutPath: async (defaultName) => {
     const result = await dialog.showSaveDialog(mainWindow, {
-      defaultPath: 'render.mp4',
+      defaultPath: defaultName || 'render.mp4',
       filters: [{ name: 'MP4 Video', extensions: ['mp4'] }],
     })
     return result.canceled ? null : result.filePath

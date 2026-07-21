@@ -5,6 +5,7 @@ import { resolveAndValidateInputs } from '../render/resolveInputs.js'
 import { adaptAudioClips } from '../render/audioAdapter.js'
 import { buildRenderPlan, outputSpec, buildSceneStartsMs } from '../render/buildRenderPlan.js'
 import { runFfmpegRender } from '../render/ffmpegRunner.js'
+import { sanitizeOutputName } from '../render/outputFilename.js'
 import { unlink } from 'node:fs/promises'
 
 export function registerRenderIPC(ipcMain, deps = {}) {
@@ -39,7 +40,8 @@ export function registerRenderIPC(ipcMain, deps = {}) {
     jobCtx.done = new Promise(resolve => { markDone = resolve })
     running.set(jobId, jobCtx)
     try {
-      const outPath = await pickOutPath()
+      // 저장 다이얼로그 기본 파일명은 프로젝트명 기반(고정 'render.mp4' 아님).
+      const outPath = await pickOutPath(sanitizeOutputName(prepared?.cloudRequest?.projectName))
       if (!outPath) return { ok: false, cancelled: true }
 
       const cr = prepared.cloudRequest

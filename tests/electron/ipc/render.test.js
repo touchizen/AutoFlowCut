@@ -86,6 +86,28 @@ describe('registerRenderIPC', () => {
     )
   })
 
+  it('uses the project name as the save-dialog default filename', async () => {
+    const ipc = fakeIpc()
+    const pickOutPath = vi.fn(async () => '/out.mp4')
+    registerRenderIPC(ipc, okDeps({ pickOutPath }))
+
+    const request = baseRequest()
+    request.prepared.cloudRequest.projectName = '원더풀스'
+    await ipc._h['render:export-mp4']({}, request)
+
+    expect(pickOutPath).toHaveBeenCalledWith('원더풀스.mp4')
+  })
+
+  it('falls back to render.mp4 when the project has no name', async () => {
+    const ipc = fakeIpc()
+    const pickOutPath = vi.fn(async () => '/out.mp4')
+    registerRenderIPC(ipc, okDeps({ pickOutPath }))
+
+    await ipc._h['render:export-mp4']({}, baseRequest())  // projectName 없음
+
+    expect(pickOutPath).toHaveBeenCalledWith('render.mp4')
+  })
+
   it('returns validation error without running', async () => {
     const ipc = fakeIpc()
     const run = vi.fn()
