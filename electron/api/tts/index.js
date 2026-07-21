@@ -14,5 +14,5 @@ const FACTORIES = {
 export function createTtsAdapter(provider, deps) {
   const make = FACTORIES[provider]
   if (!make) throw new Error(`Unsupported TTS provider: ${provider}`)
-  return make(deps)
+  return make({ ...deps, provider })
 }

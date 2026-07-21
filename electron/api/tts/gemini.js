@@ -4,8 +4,25 @@
  * 응답은 raw PCM(L16, 예: 24kHz mono)이라 WAV 헤더로 래핑해 재생/실측 가능하게 한다.
  * 키는 genai(Gemini) 키 재사용. 계약: https://ai.google.dev/gemini-api/docs/speech-generation
  */
+import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
 const MODEL = 'gemini-2.5-flash-preview-tts'
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
+const DEFAULT_VOICE = 'Kore'
+
+// 음성 일관성: seed 없이는 Gemini TTS가 비결정적이라 같은 성우도 매번 다른 음성이 나온다
+// (실측 2026-07-21 실 API: 같은 text 2회 다른 바이트). 성우별 결정적 seed를 파생해 고정한다.
+// ⚠️ seed는 TTS 모델에 대해 문서화돼 있지 않고(speech-generation 문서는 speech_config만 명시),
+// GenerationConfig의 seed도 "best effort... deterministic output isn't guaranteed"이며 이 모델은
+// preview다. 실측상 같은 seed는 바이트까지 재현, 다른 seed는 다른 출력 — 현재는 존중된다.
+// Google이 언제 바꿔도 계약 위반이 아니므로 GA/Gemini 3.x 전환 시 재검토한다. emotion은 프롬프트로
+// 이미 제어되므로 seed에 넣지 않는다 → 같은 성우는 감정이 달라도 "동일인"으로 들린다.
+// (djb2 변형, Math.imul로 32-bit 정수 곱을 보장해 플랫폼 무관 결정성 확보. 양의 31-bit로 clamp.)
+export function deriveVoiceSeed(voiceId) {
+  const s = String(voiceId || DEFAULT_VOICE)
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = Math.imul(h, 33) ^ s.charCodeAt(i)
+  return h & 0x7fffffff
+}
 
 // Gemini prebuilt 보이스(문서화된 안정 목록, 다국어). 한국어 합성 지원.
 const KNOWN_VOICES = [
@@ -42,10 +59,40 @@ const KNOWN_VOICES = [
 ]
 
 // Gemini TTS는 자연어 스타일 지시로 말투/감정을 제어한다(공식 문서 controllable style prompt). normal은 지시 없이 원문 그대로(기존 동작).
+// 문서가 실제로 검증한 예시는 "Say cheerfully: Have a wonderful day!" / "Say in an spooky whisper: '...'" 뿐이며
+// "the following"/"tone" 같은 완충어·메타 단어는 등장하지 않는다. 과거 "Say the following in a ... tone:" 형태는
+// 이 검증된 패턴에서 벗어나 있었고, 그 결과 모델이 TTS 대신 텍스트 응답을 시도해
+// 400 "Model tried to generate text, but it should only be used for TTS"가 발생했다.
+// 문서의 검증된 형태(Say [부사]:)와 최대한 일치시킨다.
 const EMOTION_STYLE_PROMPTS = {
-  happy: 'Say the following in a cheerful, happy tone:',
-  sad: 'Say the following in a sad, somber tone:',
-  angry: 'Say the following in an angry, intense tone:',
+  happy: 'Say cheerfully:',
+  sad: 'Say sadly:',
+  angry: 'Say angrily:',
+}
+
+// 문서 Limitations §"Prompt classifier false rejections": "Vague prompts may fail to trigger the
+// speech synthesis classifier, resulting in a rejected request (PROHIBITED_CONTENT) or causing
+// the model to read your style instructions and director's notes aloud. Validate your prompts by
+// adding a clear preamble instructing the model to synthesize speech, and explicitly label where
+// the actual spoken transcript begins." — 짧고/모호한 text(예: "짧은 한마디.")가 이 실패 유형에
+// 해당한다. 따옴표로 감싸는 방식은 문서에 근거가 없어 채택하지 않고, 문서가 명시한 그대로
+// "명확한 전조사 + 트랜스크립트 라벨"만 재시도 시 덧붙인다.
+// ⚠️ 스타일 지시(EMOTION_STYLE_PROMPTS의 "Say cheerfully:")는 절대 Transcript 라벨 뒤에 두지
+// 않는다 — 그러면 문서가 경고한 "모델이 style instructions/director's notes를 소리내어 읽는" 바로
+// 그 실패가 재발한다(재시도 프롬프트가 "Say cheerfully"를 발화). 스타일은 지시부에만, Transcript
+// 뒤에는 순수 발화문(raw text)만 둔다.
+function withSynthesisPreamble(text, stylePrompt) {
+  // 스타일은 문서가 검증한 부사 형태(cheerfully/sadly/angrily)로 지시부에 자연스럽게 녹인다.
+  // EMOTION_STYLE_PROMPTS "Say cheerfully:" → 부사 "cheerfully"만 추출. Transcript 뒤엔 발화문만.
+  const adverb = stylePrompt ? stylePrompt.replace(/^Say\s+/i, '').replace(/:\s*$/, '').trim() : ''
+  const style = adverb ? ` ${adverb}` : ''
+  return `Read the following text aloud${style} as natural speech audio only. Do not reply, answer, or add any words of your own.\n\nTranscript: ${text}`
+}
+
+// Gemini가 TTS 대신 텍스트로 응답할 때의 특정 400 시그니처. isAuthResponse(API_KEY_INVALID)와는
+// 별개 — 진짜 인증 실패는 절대 여기 걸리지 않고 즉시 throw 되어야 한다(위 isAuthResponse 분기가 먼저 처리).
+function isTextInsteadOfAudioError(detail) {
+  return /tried to generate text|should only be used for tts/i.test(String(detail))
 }
 
 function parseRate(mimeType) {
@@ -74,7 +121,7 @@ function pcmToWav(pcm, { rate = 24000, channels = 1, bits = 16 } = {}) {
   return Buffer.concat([header, pcm])
 }
 
-export function createGeminiAdapter({ getKey, fetch }) {
+export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
   return {
     capabilities() {
       return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
@@ -84,30 +131,72 @@ export function createGeminiAdapter({ getKey, fetch }) {
     },
     async synthesize({ text, voiceId, emotion = 'normal', signal }) {
       const key = getKey()
-      if (!key) throw new Error('No Gemini API key')
+      if (!key) throw new MissingProviderKeyError(provider)
       const stylePrompt = EMOTION_STYLE_PROMPTS[emotion]
-      const promptText = stylePrompt ? `${stylePrompt} ${text}` : text
-      const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const basePromptText = stylePrompt ? `${stylePrompt} ${text}` : text
+      // 음성 일관성: 같은 성우는 항상 같은 seed로 합성한다(attempt 무관 동일). temperature도
+      // 함께 고정한다 — 문서: temperature가 바뀌면 같은 seed라도 출력이 달라질 수 있음.
+      const seed = deriveVoiceSeed(voiceId)
+      // 공식 문서 두 가지 근거로 재시도한다:
+      // 1) "The model occasionally returns text tokens instead of audio tokens... you should
+      //    implement automated retry logic." → res.ok:200인데 inlineData가 없는 경우.
+      // 2) Limitations §"Prompt classifier false rejections" → 짧고/모호한 프롬프트가 분류기를
+      //    못 넘겨 텍스트 응답을 시도하다 400 "Model tried to generate text..."로 거부되는 경우.
+      //    isAuthResponse(API_KEY_INVALID)는 별개의 진짜 인증 실패라 절대 재시도하지 않고 즉시 throw.
+      // (systemInstruction은 이 TTS 모델의 문서화된 capabilities에 없음 — "Audio generation"만
+      // 지원 목록에 있고 System instructions는 언급조차 없어 검증 불가라 채택하지 않음.)
+      const MAX_ATTEMPTS = 2
+      let lastText = null
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        // 1차는 원문 그대로, 재시도(2차)는 문서가 명시한 "명확한 전조사 + 트랜스크립트 라벨"로 보강.
+        // 스타일 지시(stylePrompt)는 지시부로 넘기고 Transcript엔 raw text만(발화 방지, 위 주석 참고).
+        const promptText = attempt === 1 ? basePromptText : withSynthesisPreamble(text, stylePrompt)
+        const body = JSON.stringify({
           contents: [{ parts: [{ text: promptText }] }],
           generationConfig: {
             responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || 'Kore' } } },
+            temperature: 1.0,
+            seed,
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || DEFAULT_VOICE } } },
           },
-        }),
-        signal,
-      })
-      if (!res.ok) {
-        const detail = await (res.text?.() ?? Promise.resolve(''))
-        throw new Error(`Gemini TTS failed: ${res.status} ${detail}`)
+        })
+        const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          signal,
+        })
+        if (!res.ok) {
+          const detail = await (res.text?.() ?? Promise.resolve(''))
+          if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
+          // "tried to generate text" 재시도는 그 특정 400에만 한정한다 — status 게이트가 없으면
+          // 429/5xx 응답에 우연히 같은 문구가 있을 때 즉시 실패 대신 불필요한 재요청을 보낸다.
+          if (res.status === 400 && isTextInsteadOfAudioError(detail) && attempt < MAX_ATTEMPTS) continue
+          throw new Error(`Gemini TTS failed: ${res.status} ${detail}`)
+        }
+        const json = await res.json()
+        const parts = json?.candidates?.[0]?.content?.parts
+        const inline = parts?.find((p) => p?.inlineData)?.inlineData
+        if (inline?.data) {
+          const pcm = Buffer.from(inline.data, 'base64')
+          return { audio: pcmToWav(pcm, { rate: parseRate(inline.mimeType) }), format: 'wav' }
+        }
+        // 오디오 대신 텍스트만 온 경우(정책 거부 등) 그 텍스트를 붙잡아 둔다 — 최종 실패 시
+        // "왜 실패했는지"를 에러에 담아 조용한 일반 에러가 되지 않게(모든 실패 출구에 계측).
+        lastText = parts?.find((p) => p?.text)?.text || lastText
       }
-      const json = await res.json()
-      const inline = json?.candidates?.[0]?.content?.parts?.find((p) => p?.inlineData)?.inlineData
-      if (!inline?.data) throw new Error('Gemini TTS: no audio data in response')
-      const pcm = Buffer.from(inline.data, 'base64')
-      return { audio: pcmToWav(pcm, { rate: parseRate(inline.mimeType) }), format: 'wav' }
+      // 진단 경로는 어떤 입력에도 절대 크래시하지 않아야 한다. String() 조차 던질 수 있다 —
+      // 예: text가 `{toString:null, valueOf:null}`(계약 위반이지만 valid JSON)이면
+      // "Cannot convert object to primitive value" TypeError. try/catch로 완전히 봉인.
+      let textNote = ''
+      if (lastText) {
+        try {
+          textNote = ` (model returned text: ${String(lastText).slice(0, 200)})`
+        } catch {
+          textNote = ' (model returned non-text content)'
+        }
+      }
+      throw new Error(`Gemini TTS: no audio data in response${textNote}`)
     },
   }
 }

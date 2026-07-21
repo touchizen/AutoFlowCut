@@ -6,7 +6,6 @@ import { createKeyStore } from './keyStore.js'
 
 // allowlist → 파일명 (provider 문자열을 직접 path join 하지 않는다)
 const FILENAME_BY_PROVIDER = {
-  genai: 'genai-key.enc',
   elevenlabs: 'elevenlabs-key.enc',
   typecast: 'typecast-key.enc',
   googletts: 'googletts-key.enc',

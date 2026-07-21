@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createTypecastAdapter } from '../../../../electron/api/tts/typecast.js'
+import { MissingProviderKeyError } from '../../../../electron/api/keyErrors.js'
 import fixture from '../../../fixtures/typecast-voices.json'
 
 describe('createTypecastAdapter', () => {
@@ -89,7 +90,7 @@ describe('createTypecastAdapter', () => {
 
   it('키 없으면 throw', async () => {
     const a = createTypecastAdapter({ getKey: () => null, fetch: async () => {} })
-    await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/Typecast API key/)
+    await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toBeInstanceOf(MissingProviderKeyError)
   })
 
   it('HTTP 실패 시 throw', async () => {
