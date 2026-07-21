@@ -1274,7 +1274,10 @@ export default function StoryView({
   // force=true면 그 화자의 이미 done인 세그먼트까지 강제 재생성(regenerateSpeaker). 좌클릭(force=false)은
   // 기존 "미생성분만 채우기".
   const runSpeakerAudio = async (sp, { force = false } = {}) => {
-    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) }, (p) => runStep('audio', p))
+    // start() 직행(runStep 아님) — runStep은 fixed-scenes-stale/image-first 거절을 자체 토스트하는데,
+    // 이 경로는 아래에서 result.error를 resolveDisplayError로 이미 토스트하므로 runStep을 쓰면 같은
+    // 오류가 두 번 뜬다(merge 이중토스트). 화자별 오디오의 토스트 소유자는 runSpeakerAudio 하나다.
+    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) }, (p) => start('audio', p))
     // preflight가 막은 경우엔 게이트 카드가 이미 안내하므로 별도 토스트 없이 조용히 돌아간다.
     if (result?.error === 'preflight-missing-key') return
     // busy: 좌클릭 fill-missing은 실행 중 화자 맵이 안 보여 사용자가 만든 상황이 아니라 조용하다.
