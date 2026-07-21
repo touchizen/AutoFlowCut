@@ -123,6 +123,22 @@ describe('StoryView — 이 화자만 생성', () => {
     expect(await screen.findByText(/다른 작업이 실행 중/)).toBeInTheDocument()
   })
 
+  // synopsis 생성·검수 중에는 화자 버튼(좌클릭)이 비활성이고 우클릭 모달도 열리지 않아야 한다 —
+  // 이걸 무시하고 dispatch하면 start()가 진행 중 synopsis 로그·점수를 지운다.
+  it('synopsis 검수 중에는 좌클릭이 비활성이고 우클릭 모달도 열리지 않는다', () => {
+    const p = pipeline()
+    p.synopsisReviewing = true
+    localStorage.setItem('autoflowcut_lang', 'ko')
+    render(<I18nProvider><ToastProvider><StoryView pipeline={p} voices={[]} /></ToastProvider></I18nProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    const widowRow = screen.getByLabelText('과부 목소리').closest('.story-voice-row')
+    const btn = within(widowRow).getByRole('button', { name: '과부만 생성' })
+    expect(btn).toBeDisabled() // 좌클릭 비활성
+    fireEvent.contextMenu(btn) // 우클릭
+    expect(screen.queryByRole('button', { name: '재생성' })).not.toBeInTheDocument() // 모달 안 열림
+    expect(p.start).not.toHaveBeenCalled()
+  })
+
   it('버튼과 완료 토스트 문구를 ko/en 카탈로그에 제공한다', () => {
     expect(ko.story.audio.runThisSpeaker).toBe('이 화자만 생성')
     expect(en.story.audio.runThisSpeaker).toBe('Generate this speaker')

@@ -1244,6 +1244,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // throw 경로(네트워크 등 errorKind 없는 예외)는 기존처럼 raw message로 폴백.
   const previewBusyRef = useRef(false)
   const [previewBusy, setPreviewBusy] = useState(false)
+  // 화자 오디오 액션(좌클릭 fill-missing / 우클릭 강제 재생성)을 막아야 하는 통합 busy 신호.
+  // step/preview 실행 + synopsis 생성·검수를 포함한다 — 이걸 무시하고 start()를 dispatch하면
+  // 진행 중 progressLog/reviewProgress/reviewScores를 먼저 지운 뒤 main이 busy로 거절해 그 UI
+  // 상태가 소실된다(research는 renderer 신호가 없어 busy 토스트가 방어). isRunning은 한 스텝만
+  // 반영하므로 synopsis side action을 여기서 명시적으로 더한다.
+  const speakerAudioBusy = isRunning || previewBusy || synopsisGenerating || synopsisReviewing
   const runSegmentTestGuarded = async (segId) => {
     if (previewBusyRef.current) return
     previewBusyRef.current = true
@@ -2353,12 +2359,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                             className="story-speaker-run-btn"
                             onClick={() => runSpeakerAudio(sp)}
                             // 우클릭: 이 화자 오디오 전체 강제 재생성(confirm 모달) — 좌클릭(미생성분 채우기)과 분리.
-                            onContextMenu={(e) => { e.preventDefault(); if (!isRunning && !previewBusy && !synopsisGenerating && !synopsisReviewing) setSpeakerRegenTarget(sp) }}
-                            // ✨ 가 보이는데 다른 작업이 도는 상태가 둘 있다: 미리듣기 중(steps.audio 가
-                            // running 이 아니다)과 audio:done + 다른 스텝 running(완료된 탭을 다시 열 수
-                            // 있다). 누르면 start() 가 invoke 전에 segmentProgress/progressLog 를 비워
-                            // **돌던 작업의 진행·경고가 증발**하고, main 의 busy 는 조용히 무시된다.
-                            disabled={isRunning || previewBusy}
+                            onContextMenu={(e) => { e.preventDefault(); if (!speakerAudioBusy) setSpeakerRegenTarget(sp) }}
+                            // ✨ 가 보이는데 다른 작업이 도는 상태들: 미리듣기 중, audio:done + 다른 스텝
+                            // running, synopsis 생성·검수(side action) 중. 누르면 start() 가 invoke 전에
+                            // segmentProgress/progressLog 를 비워 **돌던 작업의 진행·경고가 증발**하고 main 의
+                            // busy 는 조용히 무시된다. speakerAudioBusy 로 그 모든 경우를 막는다.
+                            disabled={speakerAudioBusy}
                             aria-label={t('story.audio.runThisSpeakerFor', `${sp.name || sp.id}만 생성`, { speaker: sp.name || sp.id })}
                             title={`${t('story.audio.runThisSpeakerHint', '이 화자 세그먼트만 생성합니다. 나머지 화자는 그대로 두고, 결과를 먼저 확인할 수 있습니다.')} · ${t('story.audio.runThisSpeakerForceHint', '우클릭: 이 화자 오디오 전체 재생성')}`}
                           >
@@ -2650,7 +2656,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           segmentCount={countSpeakerSegments(speakerRegenTarget)}
           onConfirm={() => { const sp = speakerRegenTarget; setSpeakerRegenTarget(null); runSpeakerAudio(sp, { force: true }) }}
           onCancel={() => setSpeakerRegenTarget(null)}
-          confirmDisabled={isRunning || previewBusy || synopsisGenerating || synopsisReviewing}
+          confirmDisabled={speakerAudioBusy}
           t={t}
         />
       )}
