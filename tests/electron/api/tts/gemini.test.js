@@ -299,4 +299,12 @@ describe('Gemini 어댑터 — 리뷰 findings 회귀', () => {
     const a = createGeminiAdapter({ getKey: () => 'k', fetch })
     await expect(a.synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/정책상 이 요청은 생성할 수 없습니다/)
   })
+
+  // [Codex R2 Low] no-audio 진단 경로가 절대 크래시로 덮이면 안 된다 — text가 계약을 어긴
+  // 비-string(예: { message: 'blocked' })이어도 TypeError 없이 no-audio 에러를 던져야 한다.
+  it('text가 비정상(비-string) 형태여도 no-audio 진단 경로가 크래시하지 않는다', async () => {
+    const fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: { message: 'blocked' } }] } }] }) })
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await expect(a.synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/no audio data/)
+  })
 })

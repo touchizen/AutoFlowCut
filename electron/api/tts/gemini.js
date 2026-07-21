@@ -82,8 +82,11 @@ const EMOTION_STYLE_PROMPTS = {
 // 그 실패가 재발한다(재시도 프롬프트가 "Say cheerfully"를 발화). 스타일은 지시부에만, Transcript
 // 뒤에는 순수 발화문(raw text)만 둔다.
 function withSynthesisPreamble(text, stylePrompt) {
-  const style = stylePrompt ? ` in the style "${stylePrompt.replace(/:\s*$/, '')}"` : ''
-  return `Read the following text aloud as natural speech audio only${style}. Do not reply, answer, or add any words of your own.\n\nTranscript: ${text}`
+  // 스타일은 문서가 검증한 부사 형태(cheerfully/sadly/angrily)로 지시부에 자연스럽게 녹인다.
+  // EMOTION_STYLE_PROMPTS "Say cheerfully:" → 부사 "cheerfully"만 추출. Transcript 뒤엔 발화문만.
+  const adverb = stylePrompt ? stylePrompt.replace(/^Say\s+/i, '').replace(/:\s*$/, '').trim() : ''
+  const style = adverb ? ` ${adverb}` : ''
+  return `Read the following text aloud${style} as natural speech audio only. Do not reply, answer, or add any words of your own.\n\nTranscript: ${text}`
 }
 
 // Gemini가 TTS 대신 텍스트로 응답할 때의 특정 400 시그니처. isAuthResponse(API_KEY_INVALID)와는
@@ -182,7 +185,7 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
         // "왜 실패했는지"를 에러에 담아 조용한 일반 에러가 되지 않게(모든 실패 출구에 계측).
         lastText = parts?.find((p) => p?.text)?.text || lastText
       }
-      throw new Error(`Gemini TTS: no audio data in response${lastText ? ` (model returned text: ${lastText.slice(0, 200)})` : ''}`)
+      throw new Error(`Gemini TTS: no audio data in response${lastText ? ` (model returned text: ${String(lastText).slice(0, 200)})` : ''}`)
     },
   }
 }
