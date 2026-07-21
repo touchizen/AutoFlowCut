@@ -28,4 +28,16 @@ describe('sanitizeOutputName', () => {
   it('금지 문자만으로 된 이름도 폴백하지 않고 치환 결과를 쓴다', () => {
     expect(sanitizeOutputName('///')).toBe('___.mp4')
   })
+
+  it('Windows 예약 장치명은 _ 접두로 회피한다', () => {
+    expect(sanitizeOutputName('CON')).toBe('_CON.mp4')
+    expect(sanitizeOutputName('nul')).toBe('_nul.mp4')
+    expect(sanitizeOutputName('COM1')).toBe('_COM1.mp4')
+    expect(sanitizeOutputName('LPT9')).toBe('_LPT9.mp4')
+  })
+
+  it('예약명을 포함할 뿐인 정상 이름은 건드리지 않는다', () => {
+    expect(sanitizeOutputName('console')).toBe('console.mp4')
+    expect(sanitizeOutputName('com10')).toBe('com10.mp4')
+  })
 })

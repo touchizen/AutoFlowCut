@@ -16,7 +16,7 @@ export function registerRenderIPC(ipcMain, deps = {}) {
     adapt = adaptAudioClips,
     build = buildRenderPlan,
     run = runFfmpegRender,
-    pickOutPath,          // async () => string|null (dialog); default injected in main.js
+    pickOutPath,          // async (defaultName) => string|null (dialog); default injected in main.js
     ffmpegPath,           // string; injected in main.js
     fontsDir,             // string; injected in main.js
   } = deps
