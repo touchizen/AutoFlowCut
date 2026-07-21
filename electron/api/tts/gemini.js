@@ -7,6 +7,22 @@
 import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
 const MODEL = 'gemini-2.5-flash-preview-tts'
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
+const DEFAULT_VOICE = 'Kore'
+
+// 음성 일관성: seed 없이는 Gemini TTS가 비결정적이라 같은 성우도 매번 다른 음성이 나온다
+// (실측 2026-07-21 실 API: 같은 text 2회 다른 바이트). 성우별 결정적 seed를 파생해 고정한다.
+// ⚠️ seed는 TTS 모델에 대해 문서화돼 있지 않고(speech-generation 문서는 speech_config만 명시),
+// GenerationConfig의 seed도 "best effort... deterministic output isn't guaranteed"이며 이 모델은
+// preview다. 실측상 같은 seed는 바이트까지 재현, 다른 seed는 다른 출력 — 현재는 존중된다.
+// Google이 언제 바꿔도 계약 위반이 아니므로 GA/Gemini 3.x 전환 시 재검토한다. emotion은 프롬프트로
+// 이미 제어되므로 seed에 넣지 않는다 → 같은 성우는 감정이 달라도 "동일인"으로 들린다.
+// (djb2 변형, Math.imul로 32-bit 정수 곱을 보장해 플랫폼 무관 결정성 확보. 양의 31-bit로 clamp.)
+export function deriveVoiceSeed(voiceId) {
+  const s = String(voiceId || DEFAULT_VOICE)
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = Math.imul(h, 33) ^ s.charCodeAt(i)
+  return h & 0x7fffffff
+}
 
 // Gemini prebuilt 보이스(문서화된 안정 목록, 다국어). 한국어 합성 지원.
 const KNOWN_VOICES = [
@@ -110,6 +126,9 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
       if (!key) throw new MissingProviderKeyError(provider)
       const stylePrompt = EMOTION_STYLE_PROMPTS[emotion]
       const basePromptText = stylePrompt ? `${stylePrompt} ${text}` : text
+      // 음성 일관성: 같은 성우는 항상 같은 seed로 합성한다(attempt 무관 동일). temperature도
+      // 함께 고정한다 — 문서: temperature가 바뀌면 같은 seed라도 출력이 달라질 수 있음.
+      const seed = deriveVoiceSeed(voiceId)
       // 공식 문서 두 가지 근거로 재시도한다:
       // 1) "The model occasionally returns text tokens instead of audio tokens... you should
       //    implement automated retry logic." → res.ok:200인데 inlineData가 없는 경우.
@@ -126,7 +145,9 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
           contents: [{ parts: [{ text: promptText }] }],
           generationConfig: {
             responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || 'Kore' } } },
+            temperature: 1.0,
+            seed,
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || DEFAULT_VOICE } } },
           },
         })
         const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createGeminiAdapter } from '../../../../electron/api/tts/gemini.js'
+import { createGeminiAdapter, deriveVoiceSeed } from '../../../../electron/api/tts/gemini.js'
 
 describe('Gemini 어댑터 gender 필드', () => {
   it('KNOWN_VOICES carry adapter gender; Pulcherrima unknown', () => {
@@ -169,5 +169,81 @@ describe('Gemini 어댑터 — "tried to generate text" 400 재시도 (결정적
     const a = createGeminiAdapter({ getKey: () => 'bad-key', fetch })
     await expect(a.synthesize({ text: '짧은 한마디.', voiceId: 'Kore' })).rejects.toMatchObject({ name: 'ProviderAuthError' })
     expect(calls).toBe(1) // auth는 재시도 절대 금지
+  })
+})
+
+// 음성 일관성: 같은 성우(voiceId)로 여러 세그먼트를 합성할 때 매번 다른 음성이 나오는 문제.
+// 원인=Gemini TTS가 seed 없이는 비결정적(실측 2026-07-21: 같은 text 2회 다른 바이트).
+// deriveVoiceSeed(voiceId)로 성우별 결정적 seed를 파생해 generationConfig.seed로 고정하고,
+// temperature도 함께 고정한다(문서: temperature가 바뀌면 같은 seed라도 출력이 달라질 수 있음).
+// seed는 voiceId만으로 파생 — 감정(happy/sad)은 프롬프트로 제어되므로 seed에 넣지 않아,
+// 같은 성우는 감정이 달라도 "동일인"으로 들린다. (⚠️ seed는 TTS 미문서화·best-effort·preview라
+// 실측 근거로만 채택. GA/Gemini 3.x 전환 시 재검토.)
+describe('Gemini 어댑터 — 음성 일관성(seed/temperature 고정)', () => {
+  const audioResponse = (pcm) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) })
+  const textOnlyResponse = { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '텍스트만' }] } }] }) }
+
+  it('deriveVoiceSeed: 같은 voiceId는 항상 같은 seed(결정적)', () => {
+    expect(deriveVoiceSeed('Kore')).toBe(deriveVoiceSeed('Kore'))
+    expect(deriveVoiceSeed('Puck')).toBe(deriveVoiceSeed('Puck'))
+  })
+
+  it('deriveVoiceSeed: 다른 voiceId는 다른 seed', () => {
+    expect(deriveVoiceSeed('Kore')).not.toBe(deriveVoiceSeed('Puck'))
+    expect(deriveVoiceSeed('Zephyr')).not.toBe(deriveVoiceSeed('Charon'))
+  })
+
+  it('deriveVoiceSeed: 양의 32-bit 정수 범위(Gemini seed 안전 범위)', () => {
+    for (const v of ['Kore', 'Puck', 'Zephyr', 'Rasalgethi', 'Zubenelgenubi']) {
+      const s = deriveVoiceSeed(v)
+      expect(Number.isInteger(s)).toBe(true)
+      expect(s).toBeGreaterThanOrEqual(0)
+      expect(s).toBeLessThanOrEqual(0x7fffffff)
+    }
+  })
+
+  it('deriveVoiceSeed: voiceId 없으면 기본 Kore로 파생(결정적 fallback, synthesize의 voiceName fallback과 일치)', () => {
+    expect(deriveVoiceSeed(undefined)).toBe(deriveVoiceSeed('Kore'))
+    expect(deriveVoiceSeed(null)).toBe(deriveVoiceSeed('Kore'))
+    expect(deriveVoiceSeed('')).toBe(deriveVoiceSeed('Kore'))
+  })
+
+  it('synthesize: generationConfig에 voiceId 파생 seed와 temperature=1.0을 싣는다', async () => {
+    const captured = []
+    const fetch = async (url, opts) => { captured.push(JSON.parse(opts.body)); return audioResponse(Buffer.from([1, 2])) }
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await a.synthesize({ text: 'hi', voiceId: 'Kore' })
+    const gc = captured[0].generationConfig
+    expect(gc.seed).toBe(deriveVoiceSeed('Kore'))
+    expect(gc.temperature).toBe(1.0)
+  })
+
+  it('synthesize: 같은 성우는 emotion이 달라도 같은 seed를 싣는다(감정은 seed 무관)', async () => {
+    const captured = []
+    const fetch = async (url, opts) => { captured.push(JSON.parse(opts.body)); return audioResponse(Buffer.from([1])) }
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await a.synthesize({ text: 'hi', voiceId: 'Kore', emotion: 'happy' })
+    await a.synthesize({ text: 'hi', voiceId: 'Kore', emotion: 'sad' })
+    expect(captured[0].generationConfig.seed).toBe(captured[1].generationConfig.seed)
+  })
+
+  it('synthesize: 다른 성우는 다른 seed를 싣는다', async () => {
+    const captured = []
+    const fetch = async (url, opts) => { captured.push(JSON.parse(opts.body)); return audioResponse(Buffer.from([1])) }
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await a.synthesize({ text: 'hi', voiceId: 'Kore' })
+    await a.synthesize({ text: 'hi', voiceId: 'Puck' })
+    expect(captured[0].generationConfig.seed).not.toBe(captured[1].generationConfig.seed)
+  })
+
+  it('synthesize: retry(2차)에도 같은 seed/temperature를 유지한다(일관성이 재시도로 깨지지 않음)', async () => {
+    const bodies = []
+    let calls = 0
+    const fetch = async (url, opts) => { calls += 1; bodies.push(JSON.parse(opts.body)); return calls === 1 ? textOnlyResponse : audioResponse(Buffer.from([1])) }
+    const a = createGeminiAdapter({ getKey: () => 'k', fetch })
+    await a.synthesize({ text: 'hi', voiceId: 'Kore' })
+    expect(calls).toBe(2)
+    expect(bodies[1].generationConfig.seed).toBe(bodies[0].generationConfig.seed)
+    expect(bodies[1].generationConfig.temperature).toBe(bodies[0].generationConfig.temperature)
   })
 })
