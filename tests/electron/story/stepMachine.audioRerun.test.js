@@ -212,4 +212,13 @@ describe('audio 화자 단위 강제 재생성 (regenerateSpeaker)', () => {
     expect(r).toMatchObject({ error: 'story-audio-speaker-empty' }) // fail-closed: 스코프 없으면 막는다
     expect(synthCalls).toEqual([]) // 전체 강제 재생성으로 새어나가지 않음
   })
+
+  it('regenerateSpeaker가 truthy(1 등)인데 onlySpeaker가 없어도 fail-closed로 막는다(=== true strict 회귀)', async () => {
+    await runAudio()
+    synthCalls.length = 0
+    // guard가 === true 였다면 1은 통과해 일반 전체 audio 실행으로 새어나간다. truthy로 막아야 한다.
+    const r = await runAudio({ regenerateSpeaker: 1 })
+    expect(r).toMatchObject({ error: 'story-audio-speaker-empty' })
+    expect(synthCalls).toEqual([])
+  })
 })

@@ -343,6 +343,7 @@ export default {
       runThisSpeakerHint: 'Generates only this speaker\u2019s segments. Other speakers are left untouched so you can check the result first.',
       runThisSpeakerDone: '{speaker} generated — run the full step to complete the timeline',
       runThisSpeakerForceHint: 'Right-click: regenerate all of this speaker’s audio',
+      busyRetry: 'Another task is running. Try again in a moment.',
       speakerRegenTitle: 'Regenerate all speaker audio',
       speakerRegenConfirm: 'Regenerate',
       speakerRegenBody: 'Regenerate all {count} audio segment(s) for {speaker}. Existing audio will be replaced with the new voice.',

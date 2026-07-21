@@ -1195,10 +1195,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) }, (p) => start('audio', p))
     // preflight가 막은 경우엔 게이트 카드가 이미 안내하므로 별도 토스트 없이 조용히 돌아간다.
     if (result?.error === 'preflight-missing-key') return
+    // busy: 좌클릭 fill-missing은 실행 중 화자 맵이 안 보여 사용자가 만든 상황이 아니라 조용하다.
+    // 하지만 우클릭 강제 재생성(force)은 confirm까지 거친 명시적 액션인데, 모달을 연 사이 다른 작업
+    // (synopsis/research side action 등 — isRunning은 이걸 반영 못 함)이 시작돼 busy면 무반응으로
+    // 보인다. force일 때만 피드백을 준다(파괴는 없다 — main이 이미 막았다).
+    if (result?.error === 'busy') {
+      if (force) toast.error(t('story.audio.busyRetry', 'Another task is running. Try again in a moment.'))
+      return
+    }
     // main 의 거절(대사 없는 화자 등)은 **사전검사라 스텝 상태를 일부러 안 건드린다**(완료 프로젝트의
     // done 을 지키려고). 그래서 오류 배너도 안 뜬다 — 여기서 안 띄우면 버튼이 무반응으로 보인다.
-    // busy 는 뺀다: 실행 중엔 화자 맵 자체가 안 보이므로 사용자가 만든 상황이 아니다.
-    if (result?.error && result.error !== 'busy') {
+    if (result?.error) {
       toast.error(resolveDisplayError(t, result.error, result.error))
       return
     }

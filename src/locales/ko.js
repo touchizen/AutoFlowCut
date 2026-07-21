@@ -343,6 +343,7 @@ export default {
       runThisSpeakerHint: '이 화자 세그먼트만 생성합니다. 나머지 화자는 그대로 두고, 결과를 먼저 확인할 수 있습니다.',
       runThisSpeakerDone: '{speaker}만 생성됨 — 전체 진행으로 타임라인을 완성하세요',
       runThisSpeakerForceHint: '우클릭: 이 화자 오디오 전체 재생성',
+      busyRetry: '다른 작업이 실행 중입니다. 잠시 후 다시 시도하세요.',
       speakerRegenTitle: '화자 오디오 전체 재생성',
       speakerRegenConfirm: '재생성',
       speakerRegenBody: '{speaker}의 오디오 세그먼트 {count}개를 모두 다시 생성합니다. 이미 만들어진 오디오는 새 음성으로 교체됩니다.',
