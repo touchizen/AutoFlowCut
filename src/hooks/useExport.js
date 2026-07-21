@@ -531,10 +531,7 @@ export function useExport({
         renderBurnSubtitle
       }, {
         makeJobId: () => jobId,
-        shouldCancel: () => cancelLatchRef.current,
-        confirmOverlays: (count) => (typeof window !== 'undefined' && typeof window.confirm === 'function')
-          ? window.confirm(t('toast.renderVideoOverlayWarning', { count }))
-          : true
+        shouldCancel: () => cancelLatchRef.current
       })
 
       if (result?.cancelled) {

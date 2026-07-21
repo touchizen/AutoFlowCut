@@ -13,9 +13,10 @@ function makeScenes(count, duration = 1) {
   return Array.from({ length: count }, (_, index) => ({ id: `scene_${index + 1}`, duration }))
 }
 
-function makeResolved(scenes, audioClips = [], pathFor = scene => `/${scene.id}.png`) {
+function makeResolved(scenes, audioClips = [], pathFor = scene => `/${scene.id}.png`, videos = new Map()) {
   return {
     images: new Map(scenes.map(scene => [scene.id, pathFor(scene)])),
+    videos,
     sfx: new Map(),
     audioClips,
   }
@@ -47,6 +48,17 @@ function makeAudioClips(count, { startMs = 0, spacingMs = 100, durationMs = 500 
     durationMs,
     gain: 1,
   }))
+}
+
+function makeVideoOptions(scenes, segments, hasVideoSceneIds = segments.map(segment => segment.sceneId), overrides = {}) {
+  return makeOptions(scenes, {}, {
+    renderVideoSegments: segments,
+    renderSceneMeta: Object.fromEntries(scenes.map(scene => [
+      scene.id,
+      { hasVideo: hasVideoSceneIds.includes(scene.id) },
+    ])),
+    ...overrides,
+  })
 }
 
 describe('allocateFrames (cumulative boundaries, no per-scene rounding drift)', () => {
@@ -167,6 +179,76 @@ describe('buildRenderPlan', () => {
   })
 })
 
+describe('buildRenderPlan visual video overlays', () => {
+  it('composites a selected video with the measured timing recipe and disables Ken Burns', () => {
+    const scenes = [{ id: 'scene_1', duration: 5 }]
+    const segments = [{ sceneId: 'scene_1', source: 'i2v', inSec: 3, outSec: 5 }]
+    const videos = new Map([['scene_1:i2v', '/scene_1-i2v.mp4']])
+    const final = buildRenderPlan(
+      makeResolved(scenes, [], undefined, videos),
+      makeVideoOptions(scenes, segments),
+    ).stages.at(-1)
+
+    expect(final.inputs).toEqual(['/scene_1.png', '/scene_1-i2v.mp4'])
+    expect(final.filtergraphScript).toContain('[1:v]scale=1920:1080:force_original_aspect_ratio=decrease')
+    expect(final.filtergraphScript).toContain('pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1')
+    expect(final.filtergraphScript).toContain('trim=duration=2')
+    expect(final.filtergraphScript).toContain('setpts=PTS-STARTPTS+3/TB')
+    expect(final.filtergraphScript).toContain("overlay=(W-w)/2:(H-h)/2:enable='gte(t,3)*lt(t,5)':shortest=0:eof_action=repeat")
+    expect(final.filtergraphScript).toContain("zoompan=z='(1+(1-1)*on/149)'")
+    expect(final.filtergraphScript).not.toContain("zoompan=z='(1.3+")
+  })
+
+  it('keeps the existing image-only scene chain unchanged', () => {
+    const scenes = [{ id: 'scene_1', duration: 1 }]
+    const withoutVideoOptions = makeVideoOptions(scenes, [], [])
+    const graph = buildRenderPlan(makeResolved(scenes), withoutVideoOptions).stages.at(-1).filtergraphScript
+
+    expect(graph).toContain('[0:v]scale=w=3840:h=2160:force_original_aspect_ratio=increase:flags=lanczos')
+    expect(graph).toContain("zoompan=z='(1+(1.3-1)*on/29)'")
+    expect(graph).toContain('setsar=1[v0]')
+    expect(graph).not.toContain('overlay=')
+  })
+
+  it('uses static Ken Burns for duration-null video metadata without adding an overlay input', () => {
+    const scenes = [{ id: 'scene_1', duration: 1 }]
+    const options = makeVideoOptions(scenes, [], ['scene_1'])
+    const final = buildRenderPlan(makeResolved(scenes), options).stages.at(-1)
+
+    expect(final.inputs).toEqual(['/scene_1.png'])
+    expect(final.filtergraphScript).toContain("zoompan=z='(1+(1-1)*on/29)'")
+    expect(final.filtergraphScript).not.toContain('overlay=')
+  })
+
+  it('indexes images before selected videos and starts audio after every visual input', () => {
+    const scenes = makeScenes(3, 2)
+    const segments = [
+      { sceneId: 'scene_1', source: 'i2v', inSec: 1, outSec: 2 },
+      { sceneId: 'scene_3', source: 't2v', inSec: 0, outSec: 2 },
+    ]
+    const videos = new Map([
+      ['scene_1:i2v', '/scene_1-i2v.mp4'],
+      ['scene_3:t2v', '/scene_3-t2v.mp4'],
+    ])
+    const audio = [{ filename: 'nar.wav', path: '/nar.wav', startMs: 0, durationMs: 6000, gain: 1 }]
+    const final = buildRenderPlan(
+      makeResolved(scenes, audio, undefined, videos),
+      makeVideoOptions(scenes, segments),
+    ).stages.at(-1)
+
+    expect(final.inputs).toEqual([
+      '/scene_1.png', '/scene_2.png', '/scene_3.png',
+      '/scene_1-i2v.mp4', '/scene_3-t2v.mp4',
+      '/nar.wav',
+    ])
+    expect(final.filtergraphScript).toContain('[0:v]')
+    expect(final.filtergraphScript).toContain('[3:v]scale=1920:1080')
+    expect(final.filtergraphScript).toContain('[2:v]')
+    expect(final.filtergraphScript).toContain('[4:v]scale=1920:1080')
+    expect(final.filtergraphScript).toContain('[5:a]aresample=48000')
+  })
+})
+
 describe('buildRenderPlan staged audio', () => {
   const scenes = makeScenes(1, 3)
 
@@ -226,6 +308,21 @@ describe('buildRenderPlan staged audio', () => {
     expect(final.inputs).not.toContain(clips[0].path)
   })
 
+  it('counts selected video paths when deciding whether combined visual and audio argv needs audio staging', () => {
+    const scenes = makeScenes(1, 1)
+    const segments = [{ sceneId: 'scene_1', source: 'i2v', inSec: 0, outSec: 1 }]
+    const imagePath = () => `/${'i'.repeat(8200)}.png`
+    const videoPath = `/${'v'.repeat(8200)}.mp4`
+    const clips = [{ filename: 'a.wav', path: `/${'a'.repeat(8200)}.wav`, startMs: 0, durationMs: 1000, gain: 1 }]
+    const videos = new Map([['scene_1:i2v', videoPath]])
+    const plan = buildRenderPlan(
+      makeResolved(scenes, clips, imagePath, videos),
+      makeVideoOptions(scenes, segments),
+    )
+
+    expect(plan.stages.some(stage => stage.kind === 'audio')).toBe(true)
+  })
+
   it('chunks 32 audio clips by UTF-16 argv length even when the count limit is not exceeded', () => {
     const clips = makeAudioClips(32).map((clip, index) => ({
       ...clip,
@@ -280,6 +377,46 @@ describe('buildRenderPlan staged video', () => {
     expect(segments).toHaveLength(2)
     expect(segments.map(stage => stage.inputs.length)).toEqual([1, 1])
     expect(concat?.dependsOn).toEqual(segments.map(stage => stage.output))
+  })
+
+  it('bounds stages by visual input count and recomputes image/video indices locally', () => {
+    const scenes = makeScenes(33, 1)
+    const segments = scenes.map(scene => ({ sceneId: scene.id, source: 'i2v', inSec: 0, outSec: 1 }))
+    const videos = new Map(scenes.map(scene => [`${scene.id}:i2v`, `/${scene.id}.mp4`]))
+    const plan = buildRenderPlan(
+      makeResolved(scenes, [], undefined, videos),
+      makeVideoOptions(scenes, segments),
+    )
+    const stages = plan.stages.filter(stage => stage.kind === 'video' && !stage.concatDemuxer)
+
+    expect(stages.map(stage => stage.inputs.length)).toEqual([64, 2])
+    expect(stages[0].inputs.slice(0, 32)).toEqual(scenes.slice(0, 32).map(scene => `/${scene.id}.png`))
+    expect(stages[0].inputs.slice(32)).toEqual(scenes.slice(0, 32).map(scene => `/${scene.id}.mp4`))
+    expect(stages[0].filtergraphScript).toContain('[0:v]')
+    expect(stages[0].filtergraphScript).toContain('[32:v]scale=1920:1080')
+    expect(stages[0].filtergraphScript).toContain('[31:v]')
+    expect(stages[0].filtergraphScript).toContain('[63:v]scale=1920:1080')
+    expect(stages[1].filtergraphScript).toContain('[0:v]')
+    expect(stages[1].filtergraphScript).toContain('[1:v]scale=1920:1080')
+  })
+
+  it('counts video path characters in both the staging trigger and per-stage argv chunks', () => {
+    const scenes = makeScenes(2, 1)
+    const segments = scenes.map(scene => ({ sceneId: scene.id, source: 'i2v', inSec: 0, outSec: 1 }))
+    const videos = new Map(scenes.map((scene, index) => [
+      `${scene.id}:i2v`,
+      `/${scene.id}-${String(index).repeat(13000)}.mp4`,
+    ]))
+    const plan = buildRenderPlan(
+      makeResolved(scenes, [], undefined, videos),
+      makeVideoOptions(scenes, segments),
+    )
+    const stages = plan.stages.filter(stage => stage.kind === 'video' && !stage.concatDemuxer)
+
+    expect(stages).toHaveLength(2)
+    expect(stages.map(stage => stage.inputs.length)).toEqual([2, 2])
+    expect(stages[0].filtergraphScript).toContain('[0:v]')
+    expect(stages[0].filtergraphScript).toContain('[1:v]scale=1920:1080')
   })
 })
 

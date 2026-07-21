@@ -35,6 +35,25 @@ describe('exportRenderVideo', () => {
     expect(renderMp4).toHaveBeenCalled()
   })
 
+  it('renders generated video overlays without confirmation or still-image substitution', async () => {
+    const prepareCloudRequest = vi.fn(async () => ({
+      cloudRequest: { videoOverlays: [{ sceneId: 'scene_1' }] },
+      renderVideoSegments: [{ sceneId: 'scene_1', source: 'i2v', inSec: 0, outSec: 3 }],
+    }))
+    const renderMp4 = vi.fn(async () => ({ ok: true }))
+    const confirmOverlays = vi.fn(async () => false)
+
+    const result = await exportRenderVideo(
+      { name: 'p' },
+      { renderMode: 'final', renderBurnSubtitle: false },
+      { prepareCloudRequest, renderMp4, confirmOverlays, makeJobId: () => 'j' },
+    )
+
+    expect(confirmOverlays).not.toHaveBeenCalled()
+    expect(renderMp4).toHaveBeenCalled()
+    expect(result).toMatchObject({ ok: true })
+  })
+
   it('generates a deterministic jobId without Date.now', async () => {
     const prepareCloudRequest = vi.fn(async () => ({ cloudRequest: {} }))
     const renderMp4 = vi.fn(async (p) => p.jobId)

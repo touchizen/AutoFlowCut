@@ -48,7 +48,13 @@ export function registerRenderIPC(ipcMain, deps = {}) {
       const sceneStartsMs = buildSceneStartsMs(cr.scenes)  // plan 과 동일 소스(중복 제거, fallback 통일)
       resolved.audioClips = await adapt(cr, resolved, sceneStartsMs)
 
-      const plan = build(resolved, { renderMode: options.renderMode, renderBurnSubtitle: options.renderBurnSubtitle, cloudRequest: cr })
+      const plan = build(resolved, {
+        renderMode: options.renderMode,
+        renderBurnSubtitle: options.renderBurnSubtitle,
+        cloudRequest: cr,
+        renderVideoSegments: prepared.renderVideoSegments,
+        renderSceneMeta: prepared.renderSceneMeta,
+      })
       const spec = outputSpec(cr.format, options.renderMode)
 
       const onProgress = (p) => {

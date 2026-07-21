@@ -73,4 +73,18 @@ describe('useExport.handleExportRender', () => {
     expect(window.electronAPI.onRenderProgress).toHaveBeenCalled()
     expect(unsub).toHaveBeenCalled()
   })
+
+  it('does not pass a browser confirmation callback to the self-render exporter', async () => {
+    window.confirm = vi.fn(() => false)
+    window.electronAPI = {
+      storyLoadAudioPackage: vi.fn(async () => null),
+      renderMp4: vi.fn(async () => ({ ok: true, outPath: '/o.mp4' })),
+      onRenderProgress: vi.fn(() => () => {}),
+    }
+    const { result } = renderExport()
+    await act(async () => { await result.current.handleExportRender(renderArgs) })
+
+    expect(exportRenderVideo.mock.calls[0][2]).not.toHaveProperty('confirmOverlays')
+    expect(window.confirm).not.toHaveBeenCalled()
+  })
 })

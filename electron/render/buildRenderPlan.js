@@ -75,26 +75,40 @@ export function buildRenderPlan(resolved, options) {
     subtitleEndMs,
   })
 
-  const sceneContexts = scenes.map((scene, index) => ({
-    scene,
-    index,
-    frames: frames[index],
-    durationSec: durationsSec[index],
-    startMs: sceneStartsMs[scene.id],
-    endMs: index + 1 < scenes.length ? sceneStartsMs[scenes[index + 1].id] : sceneEndMs,
-    imagePath: resolved.images.get(scene.id),
-    kenBurns: cloudRequest.kenBurns?.enabled
-      ? computeKenBurns(scene, index, cloudRequest.kenBurns)
-      : staticKenBurns(),
+  const segmentsBySceneId = new Map(
+    (options.renderVideoSegments || []).map(segment => [segment.sceneId, segment]),
+  )
+
+  const sceneContexts = assignVisualInputIndices(scenes.map((scene, index) => {
+    const segment = segmentsBySceneId.get(scene.id) || null
+    const videoPath = segment
+      ? resolved.videos?.get(`${scene.id}:${segment.source}`) || null
+      : null
+    const hasVideo = options.renderSceneMeta?.[scene.id]?.hasVideo === true
+    return {
+      scene,
+      index,
+      frames: frames[index],
+      durationSec: durationsSec[index],
+      startMs: sceneStartsMs[scene.id],
+      endMs: index + 1 < scenes.length ? sceneStartsMs[scenes[index + 1].id] : sceneEndMs,
+      imagePath: resolved.images.get(scene.id),
+      segment,
+      videoPath,
+      // 모니터도 영상 메타 존재를 게이트로 쓰므로 duration-null이어도 정적이어야 한다.
+      kenBurns: !hasVideo && cloudRequest.kenBurns?.enabled
+        ? computeKenBurns(scene, index, cloudRequest.kenBurns)
+        : staticKenBurns(),
+    }
   }))
 
   const stages = []
-  const imageInputPaths = sceneContexts.map(context => context.imagePath)
+  const visualInputPaths = visualPathsFor(sceneContexts)
   const audioInputPaths = audioClips.map(clip => clip.path)
   const stagedAudio = audioClips.length > 0 && (
     audioClips.length > K_AUDIO
     || exceedsArgvBudget(audioInputPaths)
-    || exceedsArgvBudget([...imageInputPaths, ...audioInputPaths])
+    || exceedsArgvBudget([...visualInputPaths, ...audioInputPaths])
   ) ? buildAudioStages(audioClips) : null
   if (stagedAudio) stages.push(...stagedAudio.stages)
 
@@ -156,10 +170,8 @@ function buildFinalStage({
     dependsOn.push(stagedVideo.output)
     audioInputOffset = 1
   } else {
-    inputs.push(...sceneContexts.map(context => context.imagePath))
-    const videoChains = sceneContexts.map((context, inputIndex) =>
-      buildSceneChain({ context, inputIndex, spec, scaleMode })
-    )
+    inputs.push(...visualPathsFor(sceneContexts))
+    const videoChains = sceneContexts.map(context => buildSceneChain({ context, spec, scaleMode }))
     subtitleAss = subtitleEntries.length > 0
       ? buildAss(subtitleEntries, {
           subtitleFontSize,
@@ -174,7 +186,7 @@ function buildFinalStage({
       targetDurationMs: totalDurationMs,
       subtitleAss,
     }))
-    audioInputOffset = sceneContexts.length
+    audioInputOffset = inputs.length
   }
 
   const finalAudioClips = stagedAudio
@@ -210,7 +222,7 @@ function buildFinalStage({
   }
 }
 
-function buildSceneChain({ context, inputIndex, spec, scaleMode }) {
+function buildSceneChain({ context, spec, scaleMode }) {
   const canvasWidth = Math.round(spec.width * spec.upscale)
   const canvasHeight = Math.round(spec.height * spec.upscale)
   const lastFrame = Math.max(1, context.frames - 1)
@@ -223,13 +235,35 @@ function buildSceneChain({ context, inputIndex, spec, scaleMode }) {
   const y = `max(0,min(ih-ih/zoom,(ih-ih/zoom)*${anchorY}))`
   const baseTransform = scaleTransform(scaleMode, canvasWidth, canvasHeight, spec.upscale)
   const label = `v${context.index}`
-  const filter = [
-    `[${inputIndex}:v]${baseTransform}`,
+  const hasVideoInput = context.segment && context.videoInputIndex !== null
+  const baseLabel = hasVideoInput ? `vbase${context.index}` : label
+  const baseFilter = [
+    `[${context.imageInputIndex}:v]${baseTransform}`,
     `zoompan=z='${zoom}':x='${x}':y='${y}':d=${context.frames}:s=${spec.width}x${spec.height}:fps=${spec.fps}`,
-    `setsar=1[${label}]`,
+    `setsar=1[${baseLabel}]`,
   ].join(',')
 
-  return { label, filter }
+  if (!hasVideoInput) return { label, filter: baseFilter }
+
+  const segmentLabel = `seg${context.index}`
+  const inSec = formatNumber(context.segment.inSec)
+  const outSec = formatNumber(context.segment.outSec)
+  const durationSec = formatNumber(context.segment.outSec - context.segment.inSec)
+  const videoFilter = [
+    `[${context.videoInputIndex}:v]scale=${spec.width}:${spec.height}:force_original_aspect_ratio=decrease`,
+    `pad=${spec.width}:${spec.height}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    'setsar=1',
+    `trim=duration=${durationSec}`,
+    `setpts=PTS-STARTPTS+${inSec}/TB[${segmentLabel}]`,
+  ].join(',')
+  const overlayFilter = [
+    `[${baseLabel}][${segmentLabel}]overlay=(W-w)/2:(H-h)/2`,
+    `enable='gte(t,${inSec})*lt(t,${outSec})'`,
+    'shortest=0',
+    `eof_action=repeat[${label}]`,
+  ].join(':')
+
+  return { label, filter: [baseFilter, videoFilter, overlayFilter].join(';\n') }
 }
 
 function buildVideoGraph({ videoChains, sceneDurationMs, targetDurationMs, subtitleAss }) {
@@ -366,9 +400,10 @@ function buildAudioGraph({ clips, inputOffset, baseStartMs, applyLimiter = false
 }
 
 function needsVideoStages(sceneContexts, finalAudioInputPaths = []) {
-  if (sceneContexts.length > K_VIDEO) return true
+  const visualInputPaths = visualPathsFor(sceneContexts)
+  if (visualInputPaths.length > K_VIDEO) return true
   return exceedsArgvBudget([
-    ...sceneContexts.map(context => context.imagePath),
+    ...visualInputPaths,
     ...finalAudioInputPaths,
   ])
 }
@@ -376,6 +411,8 @@ function needsVideoStages(sceneContexts, finalAudioInputPaths = []) {
 function buildVideoStages({ sceneContexts, spec, scaleMode, subtitleEntries, subtitleFontSize, sceneEndMs, totalDurationMs }) {
   const groups = chunkVideoContexts(sceneContexts)
   const segmentStages = groups.map((contexts, segmentIndex) => {
+    // 각 ffmpeg invocation은 입력 0부터 다시 시작하므로 그룹별 로컬 인덱스를 붙인다.
+    const localContexts = assignVisualInputIndices(contexts)
     const segmentStartMs = contexts[0].startMs
     const segmentSceneEndMs = contexts[contexts.length - 1].endMs
     const isLast = segmentIndex === groups.length - 1
@@ -396,13 +433,11 @@ function buildVideoStages({ sceneContexts, spec, scaleMode, subtitleEntries, sub
           offsetMs: segmentStartMs,
         })
       : null
-    const videoChains = contexts.map((context, inputIndex) =>
-      buildSceneChain({ context, inputIndex, spec, scaleMode })
-    )
+    const videoChains = localContexts.map(context => buildSceneChain({ context, spec, scaleMode }))
     const output = `VIDEO_SEGMENT_${String(segmentIndex).padStart(4, '0')}.mp4`
     return {
       kind: 'video',
-      inputs: contexts.map(context => context.imagePath),
+      inputs: visualPathsFor(localContexts),
       filtergraphScript: buildVideoGraph({
         videoChains,
         sceneDurationMs: segmentSceneEndMs - segmentStartMs,
@@ -435,34 +470,64 @@ function buildVideoStages({ sceneContexts, spec, scaleMode, subtitleEntries, sub
 }
 
 function chunkVideoContexts(contexts) {
-  return chunkByArgvBudget(contexts, context => context.imagePath, K_VIDEO)
+  return chunkByArgvBudget(
+    contexts,
+    context => [context.imagePath, ...(context.videoPath ? [context.videoPath] : [])],
+    K_VIDEO,
+  )
 }
 
 function chunkByArgvBudget(items, pathFor, maxCount) {
   const groups = []
   let current = []
+  let currentInputCount = 0
   let currentInputChars = 0
 
   for (const item of items) {
-    const inputPath = String(pathFor(item))
-    const inputChars = inputArgChars(inputPath)
-    if (inputChars > MAX_STAGE_INPUT_ARG_CHARS) {
-      throw new Error(`ffmpeg input path exceeds the argv budget: ${inputPath}`)
+    const rawPaths = pathFor(item)
+    const inputPaths = (Array.isArray(rawPaths) ? rawPaths : [rawPaths]).map(String)
+    const itemInputChars = inputPaths.reduce((total, inputPath) => {
+      const inputChars = inputArgChars(inputPath)
+      if (inputChars > MAX_STAGE_INPUT_ARG_CHARS) {
+        throw new Error(`ffmpeg input path exceeds the argv budget: ${inputPath}`)
+      }
+      return total + inputChars
+    }, 0)
+    if (inputPaths.length > maxCount || itemInputChars > MAX_STAGE_INPUT_ARG_CHARS) {
+      throw new Error(`ffmpeg scene inputs exceed the argv budget: ${inputPaths.join(', ')}`)
     }
     if (current.length > 0 && (
-      current.length >= maxCount
-      || currentInputChars + inputChars > MAX_STAGE_INPUT_ARG_CHARS
+      currentInputCount + inputPaths.length > maxCount
+      || currentInputChars + itemInputChars > MAX_STAGE_INPUT_ARG_CHARS
     )) {
       groups.push(current)
       current = []
+      currentInputCount = 0
       currentInputChars = 0
     }
     current.push(item)
-    currentInputChars += inputChars
+    currentInputCount += inputPaths.length
+    currentInputChars += itemInputChars
   }
 
   if (current.length > 0) groups.push(current)
   return groups
+}
+
+function assignVisualInputIndices(contexts) {
+  let nextVideoInputIndex = contexts.length
+  return contexts.map((context, imageInputIndex) => ({
+    ...context,
+    imageInputIndex,
+    videoInputIndex: context.videoPath ? nextVideoInputIndex++ : null,
+  }))
+}
+
+function visualPathsFor(contexts) {
+  return [
+    ...contexts.map(context => context.imagePath),
+    ...contexts.flatMap(context => context.videoPath ? [context.videoPath] : []),
+  ]
 }
 
 function exceedsArgvBudget(inputPaths) {

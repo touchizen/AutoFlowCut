@@ -14,7 +14,9 @@ const baseRequest = () => ({
     kenBurns: { enabled: false },
     scenes: [{ id: 'scene_1', duration: 3 }],
     audioTracks: [], sfxItems: [], srtEntries: null,
-  }, mediaFiles: [], sfxFiles: [], audioFiles: [], pathMap: {} },
+  }, mediaFiles: [], sfxFiles: [], audioFiles: [], pathMap: {},
+  renderVideoSegments: [{ sceneId: 'scene_1', source: 'i2v', inSec: 0, outSec: 3 }],
+  renderSceneMeta: { scene_1: { hasVideo: true } } },
 })
 
 function okDeps(overrides = {}) {
@@ -43,6 +45,25 @@ describe('registerRenderIPC', () => {
     registerRenderIPC(ipc, okDeps())
     const res = await ipc._h['render:export-mp4']({}, baseRequest())
     expect(res).toMatchObject({ ok: true, outPath: '/out.mp4', width: 1080, height: 1920 })
+  })
+
+  it('passes self-render video segments and scene metadata into the render plan builder', async () => {
+    const ipc = fakeIpc()
+    const build = vi.fn(() => ({
+      stages: [{ kind: 'final', output: 'OUT.mp4' }],
+      totalDurationMs: 3000,
+      sceneCount: 1,
+      audioClipCount: 0,
+    }))
+    registerRenderIPC(ipc, okDeps({ build }))
+
+    const request = baseRequest()
+    await ipc._h['render:export-mp4']({}, request)
+
+    expect(build).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      renderVideoSegments: request.prepared.renderVideoSegments,
+      renderSceneMeta: request.prepared.renderSceneMeta,
+    }))
   })
 
   it('returns validation error without running', async () => {
