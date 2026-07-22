@@ -35,6 +35,7 @@ import { batchStartGate } from './hooks/batchStartGate'
 import { upsertStoryCharacterRefs, assertStoryProjectCurrent } from './utils/storyCharacterRefs'
 import { waitUntil } from './utils/waitUntil'
 import { voiceKey } from './utils/voiceKey'
+import { useFlowAdoptPrompt } from './hooks/useFlowAdoptPrompt'
 import { ttsListVoicesReloadParams, replaceTtsVoicesForProvider } from './utils/ttsVoiceReload'
 import { stripMentionsForNames } from './utils/mentionParser'
 import { syncVideosIntoScenes } from './services/mediaSync'
@@ -799,21 +800,11 @@ function App() {
   // 성공하면 flowProjectReady 가 true 가 되어 이 effect 자체가 멈춘다.
   // ⚠️ tryAdoptFlowProject 는 매 render 새 함수라 deps 에 넣으면 App 이 리렌더될 때마다(재생 중
   //    playhead 등) interval 이 리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
-  const adoptFlowRef = useRef(tryAdoptFlowProject)
-  adoptFlowRef.current = tryAdoptFlowProject
   // 채택은 항상 사용자 확인을 거친다 — 훅은 후보를 찾으면 needs-confirm 을 돌려주고, 그때 확인
-  // 모달을 띄운다(모달이 떠 있는 동안은 폴링을 멈춘다).
-  const [flowAdoptCandidate, setFlowAdoptCandidate] = useState(null)
-  useEffect(() => {
-    // 프로젝트 전환 중(projectLoading)에는 폴링하지 않는다 — 전환은 projectName 과 flowProjectId 를
-    // 따로 커밋하므로, 그 사이에 채택/저장이 발화하면 어느 프로젝트의 것인지 어긋난다.
-    if (mode !== 'flow' || flowProjectReady || flowAdoptCandidate || projectLoading) return
-    const timer = setInterval(async () => {
-      const r = await adoptFlowRef.current?.()
-      if (r?.reason === 'needs-confirm' && r.projectId) setFlowAdoptCandidate(r.projectId)
-    }, 5000)
-    return () => clearInterval(timer)
-  }, [mode, flowProjectReady, flowAdoptCandidate, projectLoading])
+  // 모달을 띄운다(폴링/일시정지/취소 쿨다운/확인 대상 고정은 useFlowAdoptPrompt 안에 있다).
+  const flowAdoptPrompt = useFlowAdoptPrompt({
+    mode, flowProjectReady, projectLoading, tryAdopt: tryAdoptFlowProject,
+  })
 
   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
   const automation = useAutomation(
@@ -3125,14 +3116,9 @@ function App() {
       {/* Flow 자동 생성 실패 후, Flow 가 baseline 과 다른 프로젝트를 보고 있을 때 뜬다.
           연결하면 그 Flow 프로젝트에 앞으로의 캐릭터·씬이 만들어진다(자동 채택은 하지 않는다). */}
       <FlowProjectAdoptModal
-        projectId={flowAdoptCandidate}
-        onConfirm={async () => {
-          const expectedId = flowAdoptCandidate
-          setFlowAdoptCandidate(null)
-          // 사용자가 승인한 것은 "그때 보여준 ID" 다 — 확인 시점에 Flow 가 옮겨갔으면 채택되지 않는다.
-          await adoptFlowRef.current?.({ confirmed: true, expectedId })
-        }}
-        onCancel={() => setFlowAdoptCandidate(null)}
+        projectId={flowAdoptPrompt.candidate}
+        onConfirm={flowAdoptPrompt.confirm}
+        onCancel={flowAdoptPrompt.cancel}
         t={t}
       />
 

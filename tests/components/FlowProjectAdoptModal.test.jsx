@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import FlowProjectAdoptModal from '../../src/components/FlowProjectAdoptModal.jsx'
+import { I18nProvider, useI18n } from '../../src/hooks/useI18n.jsx'
 
 // 실제 앱과 같은 계약: t(key, params). (3-arg mock 을 쓰면 params 무시 결함을 가린다.)
 const DICT = {
@@ -34,5 +35,21 @@ describe('FlowProjectAdoptModal', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('button', { name: '취소' }))
     expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ID 는 이 확인의 유일한 증거라 반드시 치환돼야 한다. 목 t 는 계약을 흉내 낼 뿐이므로,
+// 실제 사전 + 실제 보간으로 한 번 더 고정한다(예전에 여기서 '{id}' 가 리터럴로 노출됐다).
+describe('FlowProjectAdoptModal — 실제 I18nProvider 보간', () => {
+  function RealT({ projectId }) {
+    const { t } = useI18n()
+    return <FlowProjectAdoptModal projectId={projectId} t={t} onConfirm={() => {}} onCancel={() => {}} />
+  }
+
+  it('실제 사전으로도 {id} 가 치환된다', () => {
+    render(<I18nProvider><RealT projectId="real-id-42" /></I18nProvider>)
+
+    expect(screen.getByText(/real-id-42/)).toBeInTheDocument()
+    expect(screen.queryByText(/\{id\}/)).toBeNull()
   })
 })
