@@ -1041,44 +1041,48 @@ describe('App prompt busyLines wiring', () => {
     await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([newPair]))
   })
 
-  it('I2V preflight 중 load epoch가 바뀌면 옛 콜백을 버리고 새 batch를 제출하지 않는다', async () => {
-    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
-    render(<App />)
+  it.each(['api', 'flow'])(
+    '%s 모드에서 I2V preflight 중 load epoch가 바뀌면 중립적인 프로젝트 변경 안내 후 중단한다',
+    async (mode) => {
+      appMocks.state.mode = mode
+      appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+      render(<App />)
 
-    fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
-    await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
-    const pair = {
-      id: 'fp_1', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
-      prompt: 'old scene', selected: true, status: 'pending',
-    }
-    act(() => appMocks.state.framePanelProps.onUpdate([pair]))
-    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([pair]))
+      fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+      await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+      const pair = {
+        id: 'fp_1', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
+        prompt: 'old scene', selected: true, status: 'pending',
+      }
+      act(() => appMocks.state.framePanelProps.onUpdate([pair]))
+      await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([pair]))
 
-    fireEvent.click(screen.getByTitle('actions.start'))
-    await waitFor(() => expect(appMocks.videoStart).toHaveBeenCalledTimes(1))
-    const oldOnItemUpdate = appMocks.state.videoStartOptions.onItemUpdate
-    await act(async () => { await Promise.resolve() })
+      fireEvent.click(screen.getByTitle('actions.start'))
+      await waitFor(() => expect(appMocks.videoStart).toHaveBeenCalledTimes(1))
+      const oldOnItemUpdate = appMocks.state.videoStartOptions.onItemUpdate
+      await act(async () => { await Promise.resolve() })
 
-    const token = deferred()
-    appMocks.videoStart.mockClear()
-    appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
-    fireEvent.click(screen.getByTitle('actions.start'))
-    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
+      const token = deferred()
+      appMocks.videoStart.mockClear()
+      appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
+      fireEvent.click(screen.getByTitle('actions.start'))
+      await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
 
-    appMocks.scenesHook.updateScene.mockClear()
-    act(() => {
-      appMocks.loadEpochRef.current += 1
-      oldOnItemUpdate('fp_1', 'complete', { base64: 'OLD_VIDEO' })
-    })
-    expect(appMocks.scenesHook.updateScene).not.toHaveBeenCalled()
+      appMocks.scenesHook.updateScene.mockClear()
+      act(() => {
+        appMocks.loadEpochRef.current += 1
+        oldOnItemUpdate('fp_1', 'complete', { base64: 'OLD_VIDEO' })
+      })
+      expect(appMocks.scenesHook.updateScene).not.toHaveBeenCalled()
 
-    await act(async () => {
-      token.resolve('token')
-      await token.promise
-    })
-    await waitFor(() => expect(appMocks.videoStart).not.toHaveBeenCalled())
-    expect(appMocks.toastWarning).toHaveBeenCalledWith('errorSection.kind.flow-project-changed')
-  })
+      await act(async () => {
+        token.resolve('token')
+        await token.promise
+      })
+      await waitFor(() => expect(appMocks.videoStart).not.toHaveBeenCalled())
+      expect(appMocks.toastWarning).toHaveBeenCalledWith('errorSection.kind.project-changed')
+    },
+  )
 
   it('I2V folder preflight 중 mode만 바뀌면 최종 mode 절에서 기존처럼 조용히 중단한다', async () => {
     appMocks.genAPI.getAccessToken.mockResolvedValue('token')

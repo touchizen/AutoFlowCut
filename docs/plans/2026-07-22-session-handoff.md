@@ -194,6 +194,14 @@
 2. T2V 배치 `onItemUpdate`(`App.jsx:1704` 부근)는 load epoch 가드가 없다. 프로젝트마다
    `vscene_N` id가 다시 시작하므로, 이전 프로젝트의 늦은 콜백이 새 프로젝트의 같은 id를 갱신할 수
    있는 pre-existing 교차-프로젝트 오염 문제다.
+3. 프로젝트 전환 진입점 중 `useMcpServer.js:139`의
+   `window.__mcpOpenProject = (name) => handleProjectChange(name)`는 busy 검사 없이 직접 전환한다.
+   이미 열린 Settings도 `StorageTab.jsx:183`의 select
+   `onChange={(e) => onProjectChange(e.target.value)}`로 직접 전환하며, `App.jsx:2944`의
+   `SettingsModal` 호출은 busy 상태를 넘기지 않는다. 이 둘은 실행 중 교차-프로젝트 오염을 일으키는
+   가장 넓은 발화 창이고, 위 2번 T2V epoch 문제의 주 발화 경로다. 두 리뷰어 합의로, 이 진입점들에
+   게이트를 추가하더라도 epoch 가드는 소비자 쪽 단일 초크포인트로 계속 필요하다. 전환 진입점이
+   여럿이고, preflight 창은 `hasPendingBatch`가 서기 전이라 busy만으로 덮을 수 없기 때문이다.
 
 ## 이 세션에서 값비싸게 배운 것
 

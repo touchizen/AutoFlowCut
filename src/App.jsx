@@ -1557,7 +1557,7 @@ function App() {
     }
     if (loadEpochRef.current !== i2vStartEpoch) {
       console.warn('[App] handleStart aborted — project changed during preflight')
-      toast.warning(t('errorSection.kind.flow-project-changed'))
+      toast.warning(t('errorSection.kind.project-changed'))
       return
     }
 
