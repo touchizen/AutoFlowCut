@@ -157,6 +157,25 @@ describe('useRefPanelVisibility', () => {
     expect(hook.result.current.isOpen).toBe(true)
   })
 
+  // 위 테스트는 open 자체가 억제와 무관하게 패널을 열기 때문에 해제 여부를 관측하지 못한다
+  // (해제를 지우는 뮤테이션이 살아남았다). 해제됐을 때만 달라지는 지점까지 걸어간다:
+  // 사용자 open 뒤 idle 에서 닫고(새 억제 없음), rising edge 없이 온 다음 작업이 열려야 한다.
+  it('사용자 open이 억제를 실제로 해제해 rising edge 없는 다음 작업도 열린다', () => {
+    const hook = renderVisibility({ refBatchActive: true })
+    act(() => hook.result.current.setOpenByUser(false))   // 창 안에서 닫음 → 억제
+    hook.rerender(baseProps)
+    act(() => vi.runAllTimers())
+
+    act(() => hook.result.current.setOpenByUser(true))    // 억제 해제 지점
+    act(() => hook.result.current.setOpenByUser(false))   // idle 이라 새 억제는 안 생긴다
+    expect(hook.result.current.isOpen).toBe(false)
+
+    // hasPendingBatch rising edge 없이 온 작업(개별 씬 sync 등) — 억제가 남아 있으면 안 열린다.
+    hook.rerender({ ...baseProps, syncGate: { id: 9 } })
+    act(() => vi.runAllTimers())
+    expect(hook.result.current.isOpen).toBe(true)
+  })
+
   it('다음 배치보다 먼저 온 늦은 sync에는 억제를 유지하고 rising edge 뒤 실제 작업부터 연다', () => {
     const hook = renderVisibility({ syncGate: { id: 1 } })
     act(() => hook.result.current.setOpenByUser(false))
