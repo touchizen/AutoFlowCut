@@ -17,29 +17,28 @@ export default function FlowProjectAdoptModal({ projectId, onConfirm, onCancel, 
     <Modal
       isOpen={true}
       onClose={onCancel}
-      title={t('flowAdopt.title', 'Flow 프로젝트 연결')}
+      title={t('flowAdopt.title') || 'Flow 프로젝트 연결'}
       className="modal-confirm-delete"
       footer={
         <div className="modal-confirm-actions">
           <button className="btn-cancel" onClick={onCancel}>
-            {t('common.cancel', '취소')}
+            {t('common.cancel') || '취소'}
           </button>
           <button className="btn-danger" onClick={onConfirm}>
-            {t('flowAdopt.confirm', '연결')}
+            {t('flowAdopt.confirm') || '연결'}
           </button>
         </div>
       }
     >
       <div className="flow-adopt-preview">
         <p>
-          {t(
-            'flowAdopt.body',
-            'Flow 에 열려 있는 프로젝트 {id} 를 지금 프로젝트에 연결할까요? 앞으로 생성되는 캐릭터·씬이 이 Flow 프로젝트에 만들어집니다.',
-            { id: projectId },
-          )}
+          {/* ⚠️ 이 앱의 t 계약은 t(key, params) 다. 두 번째에 fallback 을 넘기면 params 가 무시돼
+              {id} 가 리터럴로 노출된다 — ID 는 이 확인의 핵심 증거라 반드시 치환돼야 한다. */}
+          {t('flowAdopt.body', { id: projectId })
+            || `Flow 에 열려 있는 프로젝트 ${projectId} 를 지금 프로젝트에 연결할까요? 앞으로 생성되는 캐릭터·씬이 이 Flow 프로젝트에 만들어집니다.`}
         </p>
         <p className="flow-adopt-hint">
-          {t('flowAdopt.hint', '의도한 프로젝트가 아니라면 Flow 에서 원하는 프로젝트를 연 뒤 다시 시도하세요.')}
+          {t('flowAdopt.hint') || '의도한 프로젝트가 아니라면 Flow 에서 원하는 프로젝트를 연 뒤 다시 시도하세요.'}
         </p>
       </div>
     </Modal>

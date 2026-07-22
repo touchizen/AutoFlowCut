@@ -3125,8 +3125,10 @@ function App() {
       <FlowProjectAdoptModal
         projectId={flowAdoptCandidate}
         onConfirm={async () => {
+          const expectedId = flowAdoptCandidate
           setFlowAdoptCandidate(null)
-          await adoptFlowRef.current?.({ confirmed: true })
+          // 사용자가 승인한 것은 "그때 보여준 ID" 다 — 확인 시점에 Flow 가 옮겨갔으면 채택되지 않는다.
+          await adoptFlowRef.current?.({ confirmed: true, expectedId })
         }}
         onCancel={() => setFlowAdoptCandidate(null)}
         t={t}

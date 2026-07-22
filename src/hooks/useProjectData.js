@@ -703,6 +703,9 @@ export function useProjectData({
         return { ok: false, reason: 'baseline-set' }
       }
       if (!id) return { ok: false, reason: 'no-open-project' }
+      // 확인 모달이 보여준 그 프로젝트여야 한다 — 확인 사이에 Flow 가 다른 프로젝트로 이동했으면
+      // 사용자가 승인한 대상이 아니므로 채택하지 않는다.
+      if (opts.expectedId && id !== opts.expectedId) return { ok: false, reason: 'candidate-changed' }
       if (id === adoptPreIdRef.current) return { ok: false, reason: 'unchanged' }
       // baseline 이 null 이면 Flow 가 home 이었다는 뜻 — 지금 보이는 프로젝트가 "사용자가 방금 만든
       // 것"인지 "이전 프로젝트가 복원된 것"인지 코드로는 구분할 수 없다(composer 확인은 유효성

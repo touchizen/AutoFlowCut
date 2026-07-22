@@ -2,8 +2,15 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import FlowProjectAdoptModal from '../../src/components/FlowProjectAdoptModal.jsx'
 
-const t = (k, d, p) => {
-  let s = d || k
+// 실제 앱과 같은 계약: t(key, params). (3-arg mock 을 쓰면 params 무시 결함을 가린다.)
+const DICT = {
+  'flowAdopt.title': 'Flow 프로젝트 연결',
+  'flowAdopt.confirm': '연결',
+  'flowAdopt.body': 'Flow 에 열려 있는 프로젝트 {id} 를 지금 프로젝트에 연결할까요?',
+  'common.cancel': '취소',
+}
+const t = (k, p) => {
+  let s = DICT[k] || ''
   if (p) for (const [key, val] of Object.entries(p)) s = s.replaceAll(`{${key}}`, String(val))
   return s
 }
