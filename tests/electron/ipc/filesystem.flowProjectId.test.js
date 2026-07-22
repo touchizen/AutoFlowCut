@@ -74,6 +74,14 @@ describe('project.json 의 flowProjectId 보존', () => {
     expect(read()).toHaveProperty('flowProjectId', null)
   })
 
+  // 디스크에 키가 아예 없으면(매핑 없는 프로젝트), stale payload 가 들고 온 죽은 id 를
+  // 되살리면 안 된다 — 그 프로젝트의 생성이 남의 Flow 프로젝트로 향한다.
+  it('디스크에 flowProjectId 가 없으면 full save 의 값도 쓰지 않는다', async () => {
+    await save({ schemaVersion: 2 })                          // 매핑 없는 프로젝트
+    await save({ schemaVersion: 2, flowProjectId: 'stale' })  // 옛 payload 가 뒤늦게 도착
+    expect(read()).not.toHaveProperty('flowProjectId')
+  })
+
   it('project.json 이 없으면 merge 가 패치로 파일을 만든다(영구 차단 방지)', async () => {
     expect(existsSync(join(tmpDir, 'P', 'project.json'))).toBe(false)
 

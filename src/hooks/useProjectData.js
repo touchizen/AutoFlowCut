@@ -726,6 +726,27 @@ export function useProjectData({
       }
     }
 
+    // 바인딩된 프로젝트가 있는데 열려 있지 않으면(Case A 의 open 이 일시 실패), 재오픈을 재시도한다.
+    // mode-entry effect 는 deps 가 그대로라 다시 돌지 않아, 이 폴링이 없으면 모드/프로젝트를 손으로
+    // 바꾸기 전까지 생성이 계속 막힌다. 영구 에러(errorPage)면 applyOpenResult 가 죽은 매핑을 정리해
+    // Case B 로 넘긴다. 채택보다 먼저 시도한다 — 이미 제 프로젝트가 있으니 남의 것을 채택할 이유가 없다.
+    if (flowProjectId && !flowProjectReady) {
+      adoptInFlightRef.current = true
+      const reopenEpoch = loadEpochRef.current
+      const isCurrent = () => modeRef.current === 'flow' && projectNameRef.current === projectName
+        && loadEpochRef.current === reopenEpoch
+      try {
+        const r = await window.electronAPI?.openFlowProject?.({ flowProjectId })
+        if (!isCurrent()) return { ok: false, reason: 'superseded' }
+        const confirmed = await applyOpenResult(r, flowProjectId, projectName, isCurrent)
+        return confirmed ? { ok: true, projectId: flowProjectId } : { ok: false, reason: 'reopen-failed' }
+      } catch {
+        return { ok: false, reason: 'reopen-failed' }
+      } finally {
+        adoptInFlightRef.current = false
+      }
+    }
+
     // 자동 생성이 실패해 arm 된 뒤에만 채택한다(진행 중 오채택 방지).
     if (!adoptArmedRef.current) return { ok: false, reason: 'not-armed' }
     // arm 이 "지금 이 프로젝트/세션"의 것인지 — 아니면 stale 이므로 채택하지 않는다.
@@ -908,6 +929,23 @@ export function useProjectData({
           if (cancelled) return
           if (!pr.ok) console.warn('[ProjectData] mode-entry: pending persist 재시도 실패 —', pr.reason)
           return
+        }
+        // state 에 id 가 없다고 매핑이 없는 것은 아니다 — 저장은 성공했는데 그 사이 모드 이탈/전환
+        // 으로 state 반영을 건너뛴 경우가 있다(그 시점에 회복 항목은 이미 지워진다). 만들기 전에
+        // 디스크를 확인한다. 있으면 세워 두고 Case A 의 open 확인에 넘긴다.
+        try {
+          const meta = await fileSystemAPI.loadProjectData(currentProjectName)
+          const savedId = pickFlowProjectId(meta?.data)
+          if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch) return
+          if (savedId) {
+            console.log('[ProjectData] mode-entry: 디스크의 flowProjectId 를 사용 —', savedId)
+            setFlowProjectId(savedId)
+            return
+          }
+        } catch (e) {
+          // 읽기 실패는 "매핑 없음"으로 취급하고 평소대로 생성한다.
+          console.warn('[ProjectData] mode-entry: project.json 확인 실패:', e.message)
+          if (cancelled || modeRef.current !== 'flow') return
         }
         try {
           const r = await window.electronAPI?.newFlowProject?.()

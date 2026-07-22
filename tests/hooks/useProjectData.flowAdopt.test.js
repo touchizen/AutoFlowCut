@@ -366,6 +366,47 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(newFlowProject).toHaveBeenCalledTimes(2)  // 세 번째 프로젝트를 만들면 안 된다
   })
 
+  // state 에는 id 가 없는데 디스크에는 있는 상태가 실재한다 — 저장은 성공했지만 그 사이 모드
+  // 이탈/전환으로 state 반영을 건너뛴 경우(회복 항목은 저장 성공 시점에 이미 지워진다).
+  // 그때 새로 만들면 방금 저장한 프로젝트를 버리고 빈 프로젝트를 하나 더 만든다.
+  it('Case B 는 만들기 전에 디스크의 flowProjectId 를 확인한다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'unwanted-new' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'disk-id' })
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('disk-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    // 디스크에는 매핑이 있는데 state(flowProjectId)는 null 인 상태로 flow 에 진입한다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: { flowProjectId: 'disk-id' } })
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(newFlowProject).not.toHaveBeenCalled()
+    expect(result.current.flowProjectId).toBe('disk-id')
+    expect(result.current.flowProjectReady).toBe(true)
+  })
+
+  // Case A 의 open 이 일시적으로 실패하면 ready 만 닫히고 effect deps 는 그대로다 — 폴링이
+  // 재오픈을 맡지 않으면 모드/프로젝트를 손으로 바꾸기 전까지 생성이 계속 막힌다.
+  it('저장된 프로젝트의 open 이 일시 실패해도 폴링 재시도로 ready 가 열린다', async () => {
+    const newFlowProject = vi.fn()
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'saved-id' })
+    const openFlowProject = vi.fn()
+      .mockResolvedValueOnce({ success: false })  // 일시 실패(에러 페이지 아님)
+      .mockResolvedValue({ success: true, already: true, url: urlOf('saved-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: { flowProjectId: 'saved-id' } })
+    localStorage.setItem('autoflowcut_settings', JSON.stringify({ projectName: 'p1', saveMode: 'folder' }))
+
+    const { result, rerender } = setupHook({ mode: 'flow' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    expect(result.current.flowProjectReady).toBe(false)
+
+    await act(async () => { await result.current.tryAdoptFlowProject() })
+
+    expect(result.current.flowProjectReady).toBe(true)
+    expect(newFlowProject).not.toHaveBeenCalled()
+  })
+
   // arm 토큰의 epoch 를 await **뒤에** 읽으면, 그 사이 시작된 프로젝트 전환의 epoch 가 붙어
   // 이전 프로젝트의 arm 이 "현재 세션의 것"으로 되살아난다. epoch 는 effect 시작 시점 값이어야 한다.
   it('생성 응답이 늦게 도착해도, 그 사이 시작된 전환의 epoch 로 arm 이 되살아나지 않는다', async () => {
