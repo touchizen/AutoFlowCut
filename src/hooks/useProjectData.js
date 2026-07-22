@@ -597,6 +597,15 @@ export function useProjectData({
   // #R14-3: restore/switch 의 flow 분기는 await 뒤에 실행되므로 closure `mode` 가 stale 일 수 있다.
   //   modeRef 로 최신 mode 를 읽어, 그 사이 api 로 전환됐으면 flow readiness 를 적용하지 않게 한다.
   const modeRef = useRef(mode)
+  // 자동 생성(Case B)이 실패한 시점에 Flow 가 보고 있던 프로젝트 id. 이후 현재 id 가 이 값과
+  // "달라지면" 사용자가 Flow 에서 직접 새 프로젝트로 들어간 것이므로 채택한다(newFlowProject 가
+  // 새 프로젝트를 판정할 때 쓰는 preId 기법과 동일). 같으면 Flow 가 이전 프로젝트에 머문 것이라
+  // 채택하지 않는다 — "엉뚱한 Flow 프로젝트에 캐릭터·씬이 섞이는" 사고를 구조적으로 막는다.
+  const adoptPreIdRef = useRef(null)
+  // 채택 허용 여부. Case B(자동 생성)가 **실제로 실패한 뒤**에만 true 가 된다. flowProjectReady 는
+  // open/생성 "진행 중"에도 false 라, 이 플래그 없이 채택을 허용하면 아직 preId 도 없는 진행 중
+  // 상태에서 엉뚱한 프로젝트를 채택할 수 있다.
+  const adoptArmedRef = useRef(false)
   useEffect(() => { modeRef.current = mode }, [mode])
 
   // Flow 모드 전용: saved flowProjectId 를 main process 에 즉시 알림 (startup gate 용).
@@ -624,15 +633,63 @@ export function useProjectData({
   // mode-entry effect 의 closure 가 캡처한 STALE scenes/references 스냅샷으로 전체 project.json 을
   // 덮어쓰지 않도록(R6-8), 그리고 autosave 와의 read-modify-write interleave clobber 가 없도록(R7-4),
   // main 의 write-lock 안에서 read+merge+write 하는 mergeProjectData 를 쓴다.
+  // 성공 여부를 boolean 으로 돌려준다 — 채택(adopt) 경로는 저장이 확인된 뒤에만 readiness 를
+  // 열어야 한다. 저장 실패인데 ready 를 열면 다음 실행에서 저장 id 가 없어 또 새 Flow 프로젝트를
+  // 만든다(autosave 는 flowProjectId 를 의존성으로 받지 않아 재시도가 보장되지 않는다).
   const persistFlowProjectId = async (projectName, id) => {
-    if (!projectName || !id) return
+    if (!projectName || !id) return false
     try {
       // #R8-2: 결과를 확인 — 실패해도 state 에 id 가 있어 autosave 가 재영속화하지만, 조용히 묻지 않는다.
       const res = await fileSystemAPI.mergeProjectData(projectName, { flowProjectId: id })
-      if (res?.success === false) console.warn('[ProjectData] persistFlowProjectId merge 실패(auto-save 가 재시도):', res.error)
+      if (res?.success === false) {
+        console.warn('[ProjectData] persistFlowProjectId merge 실패(auto-save 가 재시도):', res.error)
+        return false
+      }
+      return true
     } catch (e) {
       console.warn('[ProjectData] persistFlowProjectId 실패 (auto-save 가 재시도):', e.message)
+      return false
     }
+  }
+
+  /**
+   * 사용자가 Flow 웹에서 직접 만든/들어간 프로젝트를 이 로컬 프로젝트에 채택한다.
+   * 자동 생성(Case B)이 실패해 flowProjectReady 가 false 로 고착됐을 때의 회복 경로.
+   *
+   * 채택 조건: flow 모드 + 현재 Flow id 가 있고 adoptPreIdRef(실패 시점 id)와 **다를 것**.
+   *   같으면 Flow 가 이전 프로젝트에 머문 것이라 채택하지 않는다(오염 방지).
+   * 순서(중요): confirmedBindingRef 를 setFlowProjectId **보다 먼저** 세운다 — id 변경으로
+   *   재실행되는 mode-entry 가 Case A 로 중복 재오픈해 readiness 를 되돌리지 않게.
+   *   그리고 project.json 저장이 성공한 **뒤에만** readiness 를 연다(fail-open 금지).
+   */
+  const tryAdoptFlowProject = async () => {
+    if (modeRef.current !== 'flow') return { ok: false, reason: 'not-flow' }
+    // 자동 생성이 실패해 arm 된 뒤에만 채택한다(진행 중 오채택 방지).
+    if (!adoptArmedRef.current) return { ok: false, reason: 'not-armed' }
+    const projectName = settings?.projectName
+    if (!projectName) return { ok: false, reason: 'no-project' }
+    let id = null
+    try {
+      const res = await window.electronAPI?.flowExtractProjectId?.({ liveOnly: true })
+      id = res?.projectId ?? null
+    } catch { return { ok: false, reason: 'extract-failed' } }
+    if (!id) return { ok: false, reason: 'no-open-project' }
+    if (id === adoptPreIdRef.current) return { ok: false, reason: 'unchanged' }
+    // URL 에 id 가 있어도 에러 화면일 수 있다 — 정상 composer 로 열리는지 확인한 뒤 채택한다.
+    let opened = null
+    try {
+      opened = await window.electronAPI?.openFlowProject?.({ flowProjectId: id })
+    } catch { return { ok: false, reason: 'open-failed' } }
+    if (!isFlowOpenConfirmed(opened, id)) return { ok: false, reason: 'not-confirmed' }
+    const saved = await persistFlowProjectId(projectName, id)
+    if (!saved) return { ok: false, reason: 'persist-failed' }
+    confirmedBindingRef.current = { projectName, flowProjectId: id }
+    setFlowProjectId(id)
+    setFlowProjectReady(true)
+    adoptPreIdRef.current = id
+    adoptArmedRef.current = false
+    console.log('[ProjectData] adopted Flow project:', id)
+    return { ok: true, projectId: id }
   }
 
   // open 결과를 flowProjectReady 에 반영하고, 영구 에러(errorPage)면 죽은 매핑을 제거한다.
@@ -759,6 +816,14 @@ export function useProjectData({
             // user must re-enter flow mode or manually retry. Consider adding a retry UI.
             setFlowProjectReady(false)
             console.warn('[ProjectData] mode-entry newFlowProject failed or unavailable')
+            // 회복 준비: 실패 시점에 Flow 가 보고 있는 프로젝트 id 를 기록해 둔다. 이후 사용자가
+            // Flow 에서 직접 새 프로젝트를 만들면 id 가 이 값과 달라지고, tryAdoptFlowProject 가
+            // 그것을 채택해 차단을 푼다.
+            try {
+              const pre = await window.electronAPI?.flowExtractProjectId?.({ liveOnly: true })
+              adoptPreIdRef.current = pre?.projectId ?? null
+            } catch { adoptPreIdRef.current = null }
+            adoptArmedRef.current = true
           }
         } catch (e) {
           if (!cancelled) {
@@ -1160,5 +1225,7 @@ export function useProjectData({
     flowProjectId,
     setFlowProjectId,
     flowProjectReady,  // R3-P1: Flow 프로젝트 진입 확인 게이트 — false면 생성 차단
+    // 자동 생성 실패로 차단된 상태에서, 사용자가 Flow 에서 직접 연 프로젝트를 채택해 푸는 회복 경로.
+    tryAdoptFlowProject,
   }
 }

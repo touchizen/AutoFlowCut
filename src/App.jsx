@@ -526,7 +526,7 @@ function App() {
   })
 
   // Project Data 관리
-  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
+  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId, tryAdoptFlowProject } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
     framePairs, setFramePairs,
@@ -791,6 +791,16 @@ function App() {
   useEffect(() => {
     if (mode === 'flow' && flowProjectReady && modelsSource !== 'dynamic') refetchModels?.()
   }, [mode, flowProjectReady, modelsSource, refetchModels])
+
+  // Flow 자동 생성(Case B)이 실패해 생성이 차단된 동안, 사용자가 Flow 에서 직접 새 프로젝트를
+  // 만들면 그것을 채택해 차단을 푼다. tryAdoptFlowProject 는 arm(자동 생성 실패) 되기 전이거나
+  // Flow 가 이전 프로젝트에 그대로 머물러 있으면 아무것도 하지 않으므로, 도는 동안 무해하다.
+  // 성공하면 flowProjectReady 가 true 가 되어 이 effect 자체가 멈춘다.
+  useEffect(() => {
+    if (mode !== 'flow' || flowProjectReady || !tryAdoptFlowProject) return
+    const timer = setInterval(() => { tryAdoptFlowProject() }, 5000)
+    return () => clearInterval(timer)
+  }, [mode, flowProjectReady, tryAdoptFlowProject])
 
   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
   const automation = useAutomation(
