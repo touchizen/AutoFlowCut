@@ -176,6 +176,55 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(result.current.flowProjectReady).toBe(false)
   })
 
+  // baseline 이 null(Flow 가 home) 이면, 지금 보이는 프로젝트가 "사용자가 방금 만든 것"인지
+  // "이전 프로젝트가 복원된 것"인지 구분할 수 없다 → 자동 채택하지 않고 사용자 확인을 요구한다.
+  it('baseline 이 null(home)이면 자동 채택하지 않고 needs-confirm 을 돌려준다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: false })
+    const flowExtractProjectId = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: null })  // Case B 실패 시점: home
+      .mockResolvedValue({ success: true, projectId: 'some-id' })
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('some-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    let res
+    await act(async () => { res = await result.current.tryAdoptFlowProject() })
+
+    expect(res).toMatchObject({ ok: false, reason: 'needs-confirm', projectId: 'some-id' })
+    expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalled()
+    expect(result.current.flowProjectReady).toBe(false)
+
+    // 사용자가 확인하면 그때 채택된다.
+    await act(async () => { res = await result.current.tryAdoptFlowProject({ confirmed: true }) })
+    expect(res).toMatchObject({ ok: true, projectId: 'some-id' })
+    expect(result.current.flowProjectReady).toBe(true)
+  })
+
+  // 다른 로컬 프로젝트에서 arm 된 채택이 살아남아 현재 프로젝트에 발화하면 안 된다.
+  it('arm 이 다른 로컬 프로젝트/세션의 것이면 채택하지 않는다(stale-arm)', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: false })
+    const flowExtractProjectId = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'old-id' })
+      .mockResolvedValue({ success: true, projectId: 'new-id' })
+    const openFlowProject = vi.fn()
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    // 로컬 프로젝트가 바뀐 상황을 흉내 — arm 은 p1 것이라 p2 에서는 발화하면 안 된다.
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p2' }) })
+
+    let res
+    await act(async () => { res = await result.current.tryAdoptFlowProject() })
+
+    // 어떤 경로로 거절되든(stale-arm / 재arm 후 unchanged) 지켜야 할 성질은 하나다:
+    // 이전 로컬 프로젝트(p1)의 project.json 에 절대 쓰지 않는다.
+    expect(res?.ok).toBe(false)
+    expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalledWith('p1', expect.anything())
+  })
+
   // 저장이 실패했는데 ready 를 열면, 다음 실행에서 저장 id 가 없어 또 새 프로젝트를 만든다(fail-open 금지).
   it('project.json 저장이 실패하면 ready 를 열지 않는다', async () => {
     const newFlowProject = vi.fn().mockResolvedValue({ success: false })

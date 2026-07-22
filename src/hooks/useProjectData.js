@@ -607,6 +607,9 @@ export function useProjectData({
   // 상태에서 엉뚱한 프로젝트를 채택할 수 있다.
   const adoptArmedRef = useRef(false)
   const adoptInFlightRef = useRef(false)
+  // arm 의 소유자(로컬 프로젝트 + load epoch). 늦게 도착한 이전 프로젝트의 응답이 arm 을 되살려
+  // 다른 프로젝트에 채택이 발화하는 것을 막는다.
+  const adoptArmTokenRef = useRef(null)
   // 채택은 async 라 시작 시점의 로컬 프로젝트/모드가 끝날 때까지 같은지 확인해야 한다(전환 중
   // 완료되면 엉뚱한 project.json 에 id 를 쓴다). render closure 대신 최신값을 ref 로 본다.
   const projectNameRef = useRef(settings?.projectName)
@@ -667,13 +670,18 @@ export function useProjectData({
    *   재실행되는 mode-entry 가 Case A 로 중복 재오픈해 readiness 를 되돌리지 않게.
    *   그리고 project.json 저장이 성공한 **뒤에만** readiness 를 연다(fail-open 금지).
    */
-  const tryAdoptFlowProject = async () => {
+  const tryAdoptFlowProject = async (opts = {}) => {
     if (modeRef.current !== 'flow') return { ok: false, reason: 'not-flow' }
     // 자동 생성이 실패해 arm 된 뒤에만 채택한다(진행 중 오채택 방지).
     if (!adoptArmedRef.current) return { ok: false, reason: 'not-armed' }
     if (adoptInFlightRef.current) return { ok: false, reason: 'in-flight' }
     const projectName = projectNameRef.current
     if (!projectName) return { ok: false, reason: 'no-project' }
+    // arm 이 "지금 이 프로젝트/세션"의 것인지 — 아니면 stale 이므로 채택하지 않는다.
+    const tok = adoptArmTokenRef.current
+    if (!tok || tok.projectName !== projectName || tok.epoch !== loadEpochRef.current) {
+      return { ok: false, reason: 'stale-arm' }
+    }
     const startEpoch = loadEpochRef.current
     // 시작 시점의 (mode, 로컬 프로젝트, load epoch, arm) 이 그대로인가 — async 경계마다 확인한다.
     const stillCurrent = () => modeRef.current === 'flow' && adoptArmedRef.current
@@ -696,6 +704,12 @@ export function useProjectData({
       }
       if (!id) return { ok: false, reason: 'no-open-project' }
       if (id === adoptPreIdRef.current) return { ok: false, reason: 'unchanged' }
+      // baseline 이 null 이면 Flow 가 home 이었다는 뜻 — 지금 보이는 프로젝트가 "사용자가 방금 만든
+      // 것"인지 "이전 프로젝트가 복원된 것"인지 코드로는 구분할 수 없다(composer 확인은 유효성
+      // 증명일 뿐 소유권 증명이 아니다). 이 경우에만 사용자 확인을 받는다.
+      if (adoptPreIdRef.current === null && !opts.confirmed) {
+        return { ok: false, reason: 'needs-confirm', projectId: id }
+      }
       // URL 에 id 가 있어도 에러 화면일 수 있다 — 정상 composer 로 열리는지 확인한 뒤 채택한다.
       let opened = null
       try {
@@ -711,6 +725,7 @@ export function useProjectData({
       setFlowProjectReady(true)
       adoptPreIdRef.current = id
       adoptArmedRef.current = false
+      adoptArmTokenRef.current = null
       console.log('[ProjectData] adopted Flow project:', id)
       return { ok: true, projectId: id }
     } finally {
@@ -763,6 +778,7 @@ export function useProjectData({
       // 끼어들 수 있다.
       adoptArmedRef.current = false
       adoptPreIdRef.current = undefined
+      adoptArmTokenRef.current = null
     }
   }, [mode])
 
@@ -852,11 +868,17 @@ export function useProjectData({
             // ⚠️ "관측 실패"와 "home 을 정상 관측(null)"을 구분한다. 실패를 null 로 뭉개면, 이후 Flow 가
             //    이전 프로젝트로 복원됐을 때 id !== null 이라 그 옛 프로젝트를 채택해버린다.
             //    관측 못 했으면 undefined 로 두고, 첫 채택 시도에서 baseline 만 잡는다.
+            let baseline
             try {
               const pre = await window.electronAPI?.flowExtractProjectId?.({ liveOnly: true })
-              adoptPreIdRef.current = pre?.success ? (pre.projectId ?? null) : undefined
-            } catch { adoptPreIdRef.current = undefined }
+              baseline = pre?.success ? (pre.projectId ?? null) : undefined
+            } catch { baseline = undefined }
+            // ⚠️ await 뒤 재검사 — 이 사이 프로젝트 전환/모드 이탈이 일어났으면 arm 을 되살리면 안 된다
+            //    (전환이 지운 arm 을 늦은 응답이 복구해 다른 프로젝트에 채택이 발화한다).
+            if (cancelled || modeRef.current !== 'flow') return
+            adoptPreIdRef.current = baseline
             adoptArmedRef.current = true
+            adoptArmTokenRef.current = { projectName: currentProjectName, epoch: loadEpochRef.current }
           }
         } catch (e) {
           if (!cancelled) {
@@ -866,6 +888,7 @@ export function useProjectData({
             // 류의 실패는 영구 차단으로 남는다. baseline 은 첫 채택 시도에서 잡는다.
             adoptPreIdRef.current = undefined
             adoptArmedRef.current = true
+            adoptArmTokenRef.current = { projectName: currentProjectName, epoch: loadEpochRef.current }
           }
         }
       }
@@ -1052,6 +1075,7 @@ export function useProjectData({
     // 도중에 채택이 발화해 엉뚱한 project.json 에 id 를 쓸 수 있다.
     adoptArmedRef.current = false
     adoptPreIdRef.current = undefined
+    adoptArmTokenRef.current = null
 
     // #R5-2: 에폭 클레임 — BEFORE isRestoringRef(spec 요건: 에폭이 먼저라야 이전 restore 를 supersede).
     const myEpoch = ++loadEpochRef.current
