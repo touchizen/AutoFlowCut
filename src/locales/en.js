@@ -1468,6 +1468,12 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   },
 
   // Toast messages
+  flowAdopt: {
+    title: 'Connect Flow project',
+    confirm: 'Connect',
+    body: 'Connect the Flow project {id} currently open to this project? Characters and scenes you generate from now on will be created in it.',
+    hint: 'If this is not the project you meant, open the right one in Flow and try again.',
+  },
   toast: {
     noPrompt: 'No prompt provided.',
     unusableRefsExcluded:

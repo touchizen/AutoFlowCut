@@ -112,6 +112,7 @@ import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
 import DeleteSceneConfirmModal from './components/DeleteSceneConfirmModal'
+import FlowProjectAdoptModal from './components/FlowProjectAdoptModal'
 import SrtImportConflictModal from './components/SrtImportConflictModal'
 import ImportProcessingOverlay from './components/ImportProcessingOverlay'
 import { useAuth } from './contexts/AuthContext'
@@ -800,11 +801,17 @@ function App() {
   //    playhead 등) interval 이 리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
   const adoptFlowRef = useRef(tryAdoptFlowProject)
   adoptFlowRef.current = tryAdoptFlowProject
+  // baseline 이 home 이라 코드로 소유권을 판단할 수 없는 경우엔 훅이 needs-confirm 을 돌려준다 —
+  // 그때만 확인 모달을 띄운다(모달이 떠 있는 동안은 폴링을 멈춘다).
+  const [flowAdoptCandidate, setFlowAdoptCandidate] = useState(null)
   useEffect(() => {
-    if (mode !== 'flow' || flowProjectReady) return
-    const timer = setInterval(() => { adoptFlowRef.current?.() }, 5000)
+    if (mode !== 'flow' || flowProjectReady || flowAdoptCandidate) return
+    const timer = setInterval(async () => {
+      const r = await adoptFlowRef.current?.()
+      if (r?.reason === 'needs-confirm' && r.projectId) setFlowAdoptCandidate(r.projectId)
+    }, 5000)
     return () => clearInterval(timer)
-  }, [mode, flowProjectReady])
+  }, [mode, flowProjectReady, flowAdoptCandidate])
 
   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
   const automation = useAutomation(
@@ -3110,6 +3117,18 @@ function App() {
           setSceneToDelete(null)
         }}
         onCancel={() => setSceneToDelete(null)}
+        t={t}
+      />
+
+      {/* Flow 자동 생성 실패 후, baseline 이 home 이라 소유권을 코드로 판단할 수 없을 때만 뜬다.
+          연결하면 그 Flow 프로젝트에 앞으로의 캐릭터·씬이 만들어진다. */}
+      <FlowProjectAdoptModal
+        projectId={flowAdoptCandidate}
+        onConfirm={async () => {
+          setFlowAdoptCandidate(null)
+          await adoptFlowRef.current?.({ confirmed: true })
+        }}
+        onCancel={() => setFlowAdoptCandidate(null)}
         t={t}
       />
 
