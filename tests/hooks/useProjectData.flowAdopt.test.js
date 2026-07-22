@@ -67,6 +67,8 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -169,7 +171,8 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     let adopted
     await act(async () => { adopted = await result.current.tryAdoptFlowProject() })
 
-    expect(adopted).toMatchObject({ ok: false, reason: 'not-armed' })
+    // 생성이 진행 중이면 재바인딩 요청조차 하지 않는다(두 소유자 금지) — 채택은 당연히 안 된다.
+    expect(adopted).toMatchObject({ ok: false, reason: 'bind-in-flight' })
     expect(openFlowProject).not.toHaveBeenCalled()
     expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalled()
     expect(result.current.flowProjectId).toBeNull()
@@ -279,6 +282,8 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
     fileSystemAPI.mergeProjectData.mockResolvedValueOnce({ success: false, error: 'disk' })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
 
     const { result, rerender } = setupHook({ mode: 'api' })
     await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
@@ -307,6 +312,8 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
     fileSystemAPI.mergeProjectData.mockResolvedValueOnce({ success: false, error: 'disk' })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
 
     const { result, rerender } = setupHook({ mode: 'api' })
     await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
@@ -335,6 +342,8 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     // 로컬 프로젝트가 p2 로 바뀐 상황
     await act(async () => { rerender({ mode: 'flow', projectName: 'p2' }) })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
 
     await act(async () => { await result.current.tryAdoptFlowProject() })
 
@@ -359,6 +368,8 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
 
     // 디스크가 회복되고 p1 으로 돌아온다.
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
     await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
 
     expect(fileSystemAPI.mergeProjectData).toHaveBeenLastCalledWith('p1', { flowProjectId: 'p1-flow-id' })
@@ -383,6 +394,29 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(newFlowProject).not.toHaveBeenCalled()
     expect(result.current.flowProjectId).toBe('disk-id')
     expect(result.current.flowProjectReady).toBe(true)
+  })
+
+  // project.json 을 못 읽은 것과 "매핑이 없다"는 다르다. 읽기 실패를 매핑 없음으로 뭉개면
+  // 멀쩡한 매핑 위에 새 Flow 프로젝트를 만들어 덮어쓴다(원래 프로젝트의 작업물과 분리된다).
+  it('project.json 읽기가 실패하면 새로 만들지 않고, 다음 폴링에서 회복한다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'unwanted-new' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'disk-id' })
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('disk-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: false, error: 'EIO' })
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(newFlowProject).not.toHaveBeenCalled()
+    expect(result.current.flowProjectReady).toBe(false)
+
+    // 디스크가 회복되면 폴링이 재바인딩을 요청해 원래 매핑을 되찾는다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: { flowProjectId: 'disk-id' } })
+    await act(async () => { await result.current.tryAdoptFlowProject() })
+
+    expect(result.current.flowProjectId).toBe('disk-id')
+    expect(newFlowProject).not.toHaveBeenCalled()
   })
 
   // Case A 의 open 이 일시적으로 실패하면 ready 만 닫히고 effect deps 는 그대로다 — 폴링이
@@ -428,9 +462,9 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     let res
     await act(async () => { res = await result.current.tryAdoptFlowProject() })
 
-    // arm 자체가 서지 않아야 한다. arm 이 서면(=회복이 이전 세션의 관측을 물려받으면) 그 뒤의
+    // arm 자체가 서지 않아야 한다(그래서 채택이 아니라 재바인딩으로 간다). arm 이 서면 그 뒤의
     // 판정은 baseline 이 우연히 무엇이었는지에 좌우된다 — 그 우연에 기대지 않게 여기서 끊는다.
-    expect(res).toMatchObject({ ok: false, reason: 'not-armed' })
+    expect(res).toMatchObject({ ok: false, reason: 'rebind-requested' })
     expect(openFlowProject).not.toHaveBeenCalled()
   })
 

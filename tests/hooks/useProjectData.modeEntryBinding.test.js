@@ -65,6 +65,8 @@ describe('mode-entry Flow project binding (#2)', () => {
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -193,6 +195,8 @@ describe('R2-1: create-new deferred until hydration complete', () => {
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -279,6 +283,8 @@ describe('R2-3: switching to api mode resets flowProjectReady', () => {
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -331,6 +337,8 @@ describe('#R3-2: hydrated state re-triggers create-new after hydration', () => {
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -439,6 +447,8 @@ describe('#R3-3: video recovery deferred in flow mode until Flow project confirm
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 

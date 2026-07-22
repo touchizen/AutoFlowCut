@@ -615,6 +615,12 @@ export function useProjectData({
   //    돌아와도 여전히 유효하다. 버리면 그 프로젝트를 잃고 Case B 가 두 번째를 만든다.
   //    프로젝트마다 따로 담는다 — 단일 슬롯이면 p2 의 실패가 p1 의 회복 정보를 지운다.
   const pendingPersistRef = useRef(new Map())
+  // mode-entry 바인딩이 진행 중인지. 폴링이 그 위에 또 open/create 를 걸면 두 소유자가 서로의
+  // readiness 를 뒤집는다 — 진행 중이면 재바인딩 요청을 건너뛴다.
+  const bindInFlightRef = useRef(false)
+  // 폴링이 mode-entry 를 다시 돌리기 위한 nonce. 폴링이 직접 openFlowProject 를 부르지 않고
+  // 이 값만 올려, Case A/B 로직과 소유권을 한 곳에 둔다.
+  const [bindNonce, setBindNonce] = useState(0)
   // arm 의 소유자(로컬 프로젝트 + load epoch). 늦게 도착한 이전 프로젝트의 응답이 arm 을 되살려
   // 다른 프로젝트에 채택이 발화하는 것을 막는다.
   const adoptArmTokenRef = useRef(null)
@@ -726,29 +732,15 @@ export function useProjectData({
       }
     }
 
-    // 바인딩된 프로젝트가 있는데 열려 있지 않으면(Case A 의 open 이 일시 실패), 재오픈을 재시도한다.
-    // mode-entry effect 는 deps 가 그대로라 다시 돌지 않아, 이 폴링이 없으면 모드/프로젝트를 손으로
-    // 바꾸기 전까지 생성이 계속 막힌다. 영구 에러(errorPage)면 applyOpenResult 가 죽은 매핑을 정리해
-    // Case B 로 넘긴다. 채택보다 먼저 시도한다 — 이미 제 프로젝트가 있으니 남의 것을 채택할 이유가 없다.
-    if (flowProjectId && !flowProjectReady) {
-      adoptInFlightRef.current = true
-      const reopenEpoch = loadEpochRef.current
-      const isCurrent = () => modeRef.current === 'flow' && projectNameRef.current === projectName
-        && loadEpochRef.current === reopenEpoch
-      try {
-        const r = await window.electronAPI?.openFlowProject?.({ flowProjectId })
-        if (!isCurrent()) return { ok: false, reason: 'superseded' }
-        const confirmed = await applyOpenResult(r, flowProjectId, projectName, isCurrent)
-        return confirmed ? { ok: true, projectId: flowProjectId } : { ok: false, reason: 'reopen-failed' }
-      } catch {
-        return { ok: false, reason: 'reopen-failed' }
-      } finally {
-        adoptInFlightRef.current = false
-      }
+    // 아직 채택을 arm 하지 않았다면(= 자동 생성이 실패해 사용자를 기다리는 상태가 아니라면),
+    // 막혀 있는 원인은 바인딩 자체다: Case A 의 open 이 일시 실패했거나, project.json 을 읽지
+    // 못해 생성을 보류했거나. 여기서 직접 열지 않고 mode-entry 를 다시 돌린다 — 폴링과 effect 가
+    // 각자 openFlowProject 를 부르면 서로의 readiness/confirmed 기록을 뒤집는다(소유자는 하나).
+    if (!adoptArmedRef.current) {
+      if (bindInFlightRef.current) return { ok: false, reason: 'bind-in-flight' }
+      setBindNonce((n) => n + 1)
+      return { ok: false, reason: 'rebind-requested' }
     }
-
-    // 자동 생성이 실패해 arm 된 뒤에만 채택한다(진행 중 오채택 방지).
-    if (!adoptArmedRef.current) return { ok: false, reason: 'not-armed' }
     // arm 이 "지금 이 프로젝트/세션"의 것인지 — 아니면 stale 이므로 채택하지 않는다.
     const tok = adoptArmTokenRef.current
     if (!tok || tok.projectName !== projectName || tok.epoch !== loadEpochRef.current) {
@@ -933,19 +925,25 @@ export function useProjectData({
         // state 에 id 가 없다고 매핑이 없는 것은 아니다 — 저장은 성공했는데 그 사이 모드 이탈/전환
         // 으로 state 반영을 건너뛴 경우가 있다(그 시점에 회복 항목은 이미 지워진다). 만들기 전에
         // 디스크를 확인한다. 있으면 세워 두고 Case A 의 open 확인에 넘긴다.
+        // ⚠️ "못 읽었다"와 "매핑이 없다"는 다르다. 읽기 실패를 매핑 없음으로 뭉개면 멀쩡한 매핑
+        //    위에 새 프로젝트를 만들어 덮어쓴다. 성공적으로 읽어 매핑이 없을 때만 생성한다.
+        let meta = null
         try {
-          const meta = await fileSystemAPI.loadProjectData(currentProjectName)
-          const savedId = pickFlowProjectId(meta?.data)
-          if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch) return
-          if (savedId) {
-            console.log('[ProjectData] mode-entry: 디스크의 flowProjectId 를 사용 —', savedId)
-            setFlowProjectId(savedId)
-            return
-          }
+          meta = await fileSystemAPI.loadProjectData(currentProjectName)
         } catch (e) {
-          // 읽기 실패는 "매핑 없음"으로 취급하고 평소대로 생성한다.
           console.warn('[ProjectData] mode-entry: project.json 확인 실패:', e.message)
-          if (cancelled || modeRef.current !== 'flow') return
+        }
+        if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch) return
+        if (meta?.success !== true) {
+          // 생성 차단을 유지한 채 폴링의 재바인딩 요청을 기다린다(빈 프로젝트 양산 금지).
+          console.warn('[ProjectData] mode-entry: project.json 을 읽지 못해 생성을 보류한다')
+          return
+        }
+        const savedId = pickFlowProjectId(meta.data)
+        if (savedId) {
+          console.log('[ProjectData] mode-entry: 디스크의 flowProjectId 를 사용 —', savedId)
+          setFlowProjectId(savedId)
+          return
         }
         try {
           const r = await window.electronAPI?.newFlowProject?.()
@@ -1011,13 +1009,16 @@ export function useProjectData({
       }
     }
 
-    bind()
+    bindInFlightRef.current = true
+    bind().finally(() => { bindInFlightRef.current = false })
 
     return () => { cancelled = true }
   // #R3-2: hydrated 를 dep 에 추가 — tryAutoRestore 완료 후 state 변경이
   // 이 effect 를 re-trigger → flow + no-saved-id 케이스에서 create-new 가 실행됨.
   // #R7-1: projectLoading 도 dep — 전환 완료(false) 시 재실행해 일관 상태로 바인딩.
-  }, [mode, flowProjectId, settings.projectName, hydrated, projectLoading])
+  // bindNonce: 폴링(tryAdoptFlowProject)이 재바인딩을 요청하면 이 effect 가 다시 돈다 —
+  //   바인딩의 소유자를 이 effect 하나로 유지하기 위한 유일한 재시도 통로다.
+  }, [mode, flowProjectId, settings.projectName, hydrated, projectLoading, bindNonce])
 
   // 마운트 시 자동 복원: 폴더가 설정되어 있으면 이전 프로젝트 로드
   useEffect(() => {
