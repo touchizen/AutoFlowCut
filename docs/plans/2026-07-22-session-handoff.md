@@ -69,6 +69,66 @@
 
 방식은 스펙 확정 → **구현은 Codex(gpt-5.6-sol)** → **리뷰는 Fable 5** → 검증은 Opus.
 
+---
+
+# 이어진 세션 — 2026-07-22 (2차)
+
+`origin/main` 대비 **로컬 27커밋 미푸시.** 전체 스위트 **672파일 / 6963테스트 통과**
+(기존 `VideoDetailModal.generateButton.test.jsx` 의 unhandled rejection 2건은 이 작업과 무관한 기존 문제).
+
+## 끝난 것
+
+**1. 업로드 중 Stop 고착 버그 — 별건으로 수정 완료** (`91abb635`)
+
+토큰 IPC 대기 중 Stop 을 누르면 배치가 **영구히 멈춰** 앱이 다시는 배치를 못 돌렸다. 업로드
+코디네이터의 유일한 `resolve()` 가 투입된 업로드의 `finally` 안에만 있는데, `tryLaunch` 는 stop
+상태면 하나도 투입하지 않고 interval 은 `clearInterval` 후 그냥 return 한다. `settleIfDone()` 이
+정산을 소유하도록 고쳤다. TDD — 수정을 되돌리면 테스트가 타임아웃으로 행하는 것까지 실측 확인.
+
+**2. 기능 1(Ref 패널 자동 펼침) — 스펙 확정 + 구현 완료**
+
+스펙: `docs/plans/2026-07-23-ref-peek-spec-v2.md`. **저자는 Codex** — 내가 쓴 초안이 R1·R2·R3
+리뷰에서 계속 BLOCKER 를 맞고 수렴하지 않아 저자를 교체했다(그 판단은 메모리
+`swap-the-author-when-spec-wont-converge` 에 남겼다).
+
+핵심 설계:
+- **여는 신호 = 실제 ref 작업 증거**(`refBatchActive` / `generatingRefs` / `syncGate` / flow `uploading`),
+  `preparing` 은 **유지 신호로만**. "배치 시작"은 여는 조건이 아니다.
+- `refBatchActive` 신규 — 배치가 아이템마다 auth 토큰을 재추출하는 동안 기존 ref 플래그가 **전부
+  꺼져서** 레퍼런스 개수만큼 패널이 깜빡였다. `startGuard.js:7-13` 주석이 이미 그 창을 적어놨었다.
+- `useAutomation` 에 `'preparing'` 상태 신설, **MCP 경계에서 `running` 으로 정규화**해 외부 계약 유지.
+- `isStartBlocked` 에 `generatingSceneId` + `refBatchRunning` 추가, `useSceneGeneration` preflight 를
+  outer try/finally 로 감싸 busy flag 고착 차단.
+
+리뷰: Fable 5 스펙 2라운드 → GO, 구현 1라운드 → **GO(블로커 없음)**.
+
+**이 기능의 진짜 근거**(3라운드 내내 아무도 못 찾다가 마지막에 나옴): `EmptyReferenceGateModal.jsx:91-95`
+가 busy 동안 `null` 을 반환하며 *"진행 상황은 레퍼런스 카드의 기존 spinner 가 담당한다"* 고 적어놨다.
+그 카드가 접힌 패널 안에 있어서 아무도 못 봤을 뿐이다. 모달 뒤인 구간은 **동기화 하나뿐**이고
+(`.modal-overlay` = `rgba(0,0,0,0.7)`), 빈카드 생성과 업로드는 온전히 보인다.
+
+## 뮤테이션에서 나온 것 — 전체 초록불이 못 잡은 구멍 2개
+
+10종을 돌려 8종은 바로 죽었고 **2종이 살아남았다. 둘 다 테스트 이름이 약속한 걸 몸이 안 했다.**
+
+1. `bridge 신호만으로는 닫힌 패널을 열지 않는다` — 테스트가 패널을 **먼저 열어놓고** 시작해 "유지"
+   절반만 지나갔다. → `36dc2aca`
+2. `사용자 open 이 억제를 해제한다` — `setOpenByUser(true)` 는 억제와 무관하게 패널을 열기 때문에
+   그 뒤 `isOpen === true` 를 봐도 해제 여부를 관측 못 한다. 억제가 남아 있어도 통과했다. → `b885269a`
+
+## 남은 것
+
+- **실앱 눈검증 2건** (푸시 게이트):
+  1. 문지기 동기화 — repro 프로젝트를 깔아뒀다: `~/Documents/AutoFlowCut/_syncgate_repro`
+     (정도준 ref 가 `entityId`+`workflowId`+`mediaId` 는 있는데 `flowNameSyncStatus:'failed'`,
+     씬1 프롬프트 `@정도준 …`, 원본 Flow 프로젝트를 안 건드리게 바인딩 제거). Flow 모드로 열고
+     씬1 카드 생성 → `🔄 Flow 동기화 필요` 모달에 정도준 → `동기화 후 생성` → 생성 진행.
+  2. 기능 1 — App 어댑터 배선은 설계상 테스트 밖이라(이 repo 에 App 렌더 테스트 0건) 눈검증이
+     실질 게이트다. 스펙 §11 의 실앱 시나리오 6개 참조.
+- **기능 2(거터 진행 링) 미착수.** 스펙은 리뷰 통과 상태로 `2026-07-22-ref-peek-and-gutter-spinner-design.md`
+  에 있다.
+- 별건 기록: `VideoDetailModal.jsx:163` 이 `meta` 가 null 인데 `meta.seed` 를 읽는다.
+
 ## 이 세션에서 값비싸게 배운 것
 
 - **미커밋 상태에서 `git checkout <file>` 을 네 번 쳐서 방금 쓴 구현을 날렸다.** 뮤테이션 확인
