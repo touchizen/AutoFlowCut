@@ -469,9 +469,10 @@ StatusBar의 21~28줄은 라벨 맵이 아니라 클래스 맵이다
    [useSceneGeneration.js:42-79](../../src/hooks/useSceneGeneration.js#L42), try 밖 해제는
    [useSceneGeneration.js:193-197](../../src/hooks/useSceneGeneration.js#L193)에 있다.
 8. `src/components/StatusBar.jsx`는 `preparing`을 active progress로만 취급한다. CSS 변경은 없다.
-9. `src/hooks/useVideoAutomation.js`, `src/services/emptyRefGate.js`, `src/components/ReferencePanel.jsx`, MCP
-   서버·Electron route는 변경하지 않는다. `preparingRefs` 표시 계약은 그대로라 ReferencePanel 변경이
-   필요 없다.
+9. `src/hooks/useVideoAutomation.js`, `src/services/emptyRefGate.js`, MCP 서버·Electron route는 변경하지
+   않는다. `src/components/ReferencePanel.jsx`는 `refBatchActive`를 받아 `isGenerating`에 포함한다.
+   아이템별 auth 창에서 `generatingRefs`와 `preparingRefs`가 모두 비어도 Stop·타이머·진입점 잠금이
+   batch-global 수명을 따르게 하는 배선이므로 유지한다. `preparingRefs` 표시 계약은 그대로다.
 10. [App.jsx:2467-2501](../../src/App.jsx#L2467),
    [App.jsx:2591-2612](../../src/App.jsx#L2591),
    [App.jsx:2691-2712](../../src/App.jsx#L2691)의 retry 진입점과 `anyRunning` 정의는 변경하지 않는다.

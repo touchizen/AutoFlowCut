@@ -4,7 +4,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 const appMocks = vi.hoisted(() => {
   const noop = vi.fn()
   const asyncNoop = vi.fn(async () => null)
-  const state = { generatingSceneId: null }
+  const state = {
+    generatingSceneId: null,
+    preparingRefs: false,
+    refBatchActive: false,
+  }
   const generationEnqueue = vi.fn(async job => job.execute?.())
   const sceneBatchStart = vi.fn(async options => generationEnqueue({
     type: 'scene_batch',
@@ -223,8 +227,8 @@ vi.mock('../../src/hooks/useReferenceGeneration', () => ({
   useReferenceGeneration: () => ({
     generatingRefs: [],
     stoppingRefs: false,
-    preparingRefs: false,
-    refBatchActive: false,
+    preparingRefs: appMocks.state.preparingRefs,
+    refBatchActive: appMocks.state.refBatchActive,
     handleGenerateRef: appMocks.noop,
     handleGenerateAllRefs: appMocks.noop,
     stopGenerateAllRefs: appMocks.noop,
@@ -268,7 +272,16 @@ vi.mock('../../src/components/PromptInput', async () => {
 
 vi.mock('../../src/components/Header', () => ({ default: () => null }))
 vi.mock('../../src/components/SceneList', () => ({ default: () => null }))
-vi.mock('../../src/components/GenerateMenu', () => ({ default: () => null }))
+vi.mock('../../src/components/GenerateMenu', async () => {
+  const React = await import('react')
+  return {
+    default: ({ disabled }) => React.createElement('button', {
+      type: 'button',
+      'data-testid': 'generate-menu',
+      disabled,
+    }),
+  }
+})
 vi.mock('../../src/components/FrameToVideoPanel', () => ({ default: () => null }))
 vi.mock('../../src/components/ReferencePanel', () => ({ default: () => null }))
 vi.mock('../../src/components/SettingsModal', () => ({ default: () => null }))
@@ -306,6 +319,10 @@ describe('App prompt busyLines wiring', () => {
   afterEach(() => {
     cleanup()
     appMocks.state.generatingSceneId = null
+    appMocks.state.preparingRefs = false
+    appMocks.state.refBatchActive = false
+    appMocks.scenesHook.scenes = appMocks.scenes
+    appMocks.scenesHook.scenesRef.current = appMocks.scenes
     appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue(null)
     appMocks.generationEnqueue.mockClear()
     appMocks.sceneBatchStart.mockClear()
@@ -367,5 +384,17 @@ describe('App prompt busyLines wiring', () => {
       type: 'scene_batch',
       label: 'Batch Scene Generation',
     }))
+  })
+
+  it('Ref batch preflight 중에는 전체 재생성 메뉴를 비활성화한다', () => {
+    appMocks.state.preparingRefs = true
+    appMocks.state.refBatchActive = true
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, image: 'generated-image' } : scene
+    ))
+
+    render(<App />)
+
+    expect(screen.getByTestId('generate-menu')).toBeDisabled()
   })
 })

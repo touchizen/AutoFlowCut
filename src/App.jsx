@@ -2469,7 +2469,7 @@ function App() {
                     {showGenerateMenu && (
                       <GenerateMenu
                         onForceRegenerate={() => handleStart(undefined, { force: true })}
-                        disabled={hasPendingBatch}
+                        disabled={hasPendingBatch || refBatchRunning}
                       />
                     )}
                   </div>

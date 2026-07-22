@@ -95,7 +95,7 @@
 - **여는 신호 = 실제 ref 작업 증거**(`refBatchActive` / `generatingRefs` / `syncGate` / flow `uploading`),
   `preparing` 은 **유지 신호로만**. "배치 시작"은 여는 조건이 아니다.
 - `refBatchActive` 신규 — 배치가 아이템마다 auth 토큰을 재추출하는 동안 기존 ref 플래그가 **전부
-  꺼져서** 레퍼런스 개수만큼 패널이 깜빡였다. `startGuard.js:7-13` 주석이 이미 그 창을 적어놨었다.
+  꺼져서** 레퍼런스 개수만큼 패널이 깜빡였다. `startGuard.js:15-19` 주석이 이미 그 창을 적어놨었다.
 - `useAutomation` 에 `'preparing'` 상태 신설, **MCP 경계에서 `running` 으로 정규화**해 외부 계약 유지.
 - `isStartBlocked` 에 `refBatchRunning` 추가, `useSceneGeneration` preflight 를 outer try/finally 로
   감싸 busy flag 고착 차단.
@@ -159,6 +159,21 @@
      이미지 탭에서 봐도 그 씬의 비디오 생성 중이면 도는지. 배치 중에는 편집기가
      `opacity: 0.6` 이라 링도 흐려 보인다 — 그 체감도 확인.
 - 별건 기록: `VideoDetailModal.jsx:163` 이 `meta` 가 null 인데 `meta.seed` 를 읽는다.
+
+### 별건 후속 (이번 작업에서 코드 변경 없음)
+
+1. `app_wait_batch`가 **큐에 대기 중인 배치를 완료로 오보**할 수 있다. MCP liveness
+   (`useMcpServer.js:575`)가 queued batch를 포함하지 않는 pre-existing 문제다. `hasPendingBatch`를
+   그대로 넣으면 M2 failure 모달 대기 동안 영구 busy가 되므로 단순 추가는 위험하고, 별도 latch
+   설계가 필요하다.
+2. **대기 중 배치를 Stop이 취소하지 못한다.** `anyRunning`은 `hasPendingBatch`를 포함해 Stop 버튼을
+   렌더하지만(`App.jsx:2035`), `handleStop`(`App.jsx:2005`)은 큐의 대기 배치를 취소하지 않는
+   pre-existing 문제다. 눌러도 반응이 없고 나중에 그 배치가 실행돼 quota를 쓴다.
+3. `setFramePairs` updater 안에서 `setScenes`를 호출하는 비순수 패턴이 복구 경로와 정상 경로 양쪽에
+   있다(`useProjectData.js:529`, `App.jsx:1850`). patch가 멱등이라 관측된 실해는 없지만 StrictMode
+   이중 실행 시 중복 enqueue 가능성이 있다. 정리하려면 두 곳을 함께 다뤄야 한다.
+4. `App.jsx:1332`의 비디오 retry가 stale closure인 `framePairs.find`로 owner를 찾는다. F2-1이 복구
+   경로에서 고친 것과 같은 부류의 pre-existing 문제다.
 
 ## 이 세션에서 값비싸게 배운 것
 
