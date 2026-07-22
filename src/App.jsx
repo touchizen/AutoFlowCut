@@ -803,6 +803,8 @@ function App() {
     mode, flowProjectReady, projectLoading,
     projectName: settings.projectName,
     tryAdopt: tryAdoptFlowProject,
+    // 채택이 실패하면(에러 페이지, 저장 실패 등) 조용히 묻지 않는다 — 사용자는 연결됐다고 믿는다.
+    onAdoptFailed: () => toast.error(t('toast.flowAdoptFailed')),
   })
 
   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.

@@ -25,19 +25,26 @@ export const ADOPT_POLL_MS = 5000
  *          tryAdopt: (opts?: object) => Promise<object>, intervalMs?: number}} params
  * @returns {{candidate: string|null, confirm: () => Promise<void>, cancel: () => void}}
  */
-export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, projectName, tryAdopt, intervalMs = ADOPT_POLL_MS }) {
+export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, projectName, tryAdopt, onAdoptFailed, intervalMs = ADOPT_POLL_MS }) {
   // ⚠️ tryAdopt 는 매 render 새 함수라 deps 에 넣으면 리렌더마다(재생 중 playhead 등) interval 이
   //    리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
   const adoptRef = useRef(tryAdopt)
   adoptRef.current = tryAdopt
+  const onFailedRef = useRef(onAdoptFailed)
+  onFailedRef.current = onAdoptFailed
   // {projectId, projectName} — 후보를 **관측한 프로젝트**를 함께 들고 다닌다. 취소/확인 시점의
   // 프로젝트로 판단하면 그 사이 전환이 있었을 때 엉뚱한 프로젝트를 침묵시키거나 승인하게 된다.
   const [candidate, setCandidate] = useState(null)
   const cancelledAtRef = useRef(new Map())
 
   useEffect(() => {
-    // 후보를 관측한 프로젝트를 떠났으면 그 확인은 더 이상 유효하지 않다 — 모달을 닫는다.
-    if (candidate && candidate.projectName !== projectName) { setCandidate(null); return }
+    // 확인이 무의미해진 상태면 모달을 닫는다: 관측한 프로젝트를 떠났거나, flow 를 떠났거나,
+    // 그 사이 다른 경로로 바인딩이 열렸거나. 열어 두면 사용자는 X 에 연결했다고 믿는데 앱은
+    // 이미 다른 프로젝트에 바인딩돼 있고, 승인은 조용히 무시된다.
+    if (candidate && (candidate.projectName !== projectName || mode !== 'flow' || flowProjectReady)) {
+      setCandidate(null)
+      return
+    }
     if (mode !== 'flow' || flowProjectReady || candidate || projectLoading || !projectName) return
     const timer = setInterval(async () => {
       const r = await adoptRef.current?.()
@@ -51,9 +58,15 @@ export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, pro
 
   const confirm = async () => {
     // 사용자가 승인한 것은 "그때 보여준 ID" 다 — 확인 사이에 Flow 가 옮겨갔으면 채택되지 않는다.
-    const expectedId = candidate?.projectId
+    const approved = candidate
     setCandidate(null)
-    if (expectedId) await adoptRef.current?.({ confirmed: true, expectedId })
+    if (!approved) return
+    const r = await adoptRef.current?.({ confirmed: true, expectedId: approved.projectId })
+    if (r?.ok) return
+    // 실패를 묻으면 아무 일도 안 일어난 것처럼 보이고 5초 뒤 같은 모달이 다시 뜬다 — 취소를
+    // 눌러야만 멈추는 루프다. 사용자에게 알리고, 같은 후보는 쿨다운을 걸어 바로 다시 묻지 않는다.
+    cancelledAtRef.current.set(cooldownKey(approved.projectName, approved.projectId), Date.now())
+    onFailedRef.current?.(r)
   }
 
   const cancel = () => {

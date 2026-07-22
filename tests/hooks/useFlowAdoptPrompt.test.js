@@ -11,10 +11,10 @@ import { ADOPT_PROMPT_COOLDOWN_MS } from '../../src/utils/flowAdoptPrompt'
 
 const needsConfirm = (projectId) => ({ ok: false, reason: 'needs-confirm', projectId })
 
-function setup({ mode = 'flow', flowProjectReady = false, projectLoading = false, projectName = 'p1', tryAdopt } = {}) {
+function setup({ mode = 'flow', flowProjectReady = false, projectLoading = false, projectName = 'p1', tryAdopt, onAdoptFailed } = {}) {
   return renderHook(
     (props) => useFlowAdoptPrompt(props),
-    { initialProps: { mode, flowProjectReady, projectLoading, projectName, tryAdopt } },
+    { initialProps: { mode, flowProjectReady, projectLoading, projectName, tryAdopt, onAdoptFailed } },
   )
 }
 
@@ -208,6 +208,55 @@ describe('useFlowAdoptPrompt', () => {
     const { result } = setup({ tryAdopt, projectName: '' })
     await tick()
     expect(result.current.candidate).toBeNull()
+  })
+
+
+  // 모달이 떠 있는 사이 flow 를 떠나거나 다른 경로로 바인딩이 열리면, 그 확인은 이미 무의미하다.
+  // 열어 두면 사용자는 X 에 연결했다고 믿는데 앱은 그 사이 Y 에 바인딩돼 있다(승인은 조용히 무시된다).
+  it.each([
+    ['flow 를 떠나면', { mode: 'api' }],
+    ['다른 경로로 ready 가 되면', { flowProjectReady: true }],
+  ])('%s 열려 있던 확인 모달을 닫는다', async (_label, override) => {
+    const tryAdopt = vi.fn().mockResolvedValue(needsConfirm('cand-1'))
+    const { result, rerender } = setup({ tryAdopt })
+    await tick()
+    expect(result.current.candidate).toBe('cand-1')
+
+    rerender({ mode: 'flow', flowProjectReady: false, projectLoading: false, projectName: 'p1', tryAdopt, ...override })
+
+    expect(result.current.candidate).toBeNull()
+  })
+
+  // 확인했는데 채택이 실패하면(에러 페이지, 저장 실패 등) 아무 일도 안 일어난 것처럼 보이고
+  // 5초 뒤 같은 모달이 다시 뜬다 — 취소를 눌러야만 멈추는 루프. 실패도 알리고 쿨다운을 건다.
+  it('확인했는데 채택이 실패하면 알리고, 같은 후보를 바로 다시 묻지 않는다', async () => {
+    const tryAdopt = vi.fn(async (opts) => (opts?.confirmed
+      ? { ok: false, reason: 'not-confirmed' }
+      : needsConfirm('cand-1')))
+    const onAdoptFailed = vi.fn()
+    const { result } = setup({ tryAdopt, onAdoptFailed })
+    await tick()
+
+    await act(async () => { await result.current.confirm() })
+
+    expect(onAdoptFailed).toHaveBeenCalledWith(expect.objectContaining({ reason: 'not-confirmed' }))
+
+    await tick()
+    await tick()
+    expect(result.current.candidate).toBeNull()
+  })
+
+  it('확인이 성공하면 실패를 알리지 않는다', async () => {
+    const tryAdopt = vi.fn(async (opts) => (opts?.confirmed
+      ? { ok: true, projectId: 'cand-1' }
+      : needsConfirm('cand-1')))
+    const onAdoptFailed = vi.fn()
+    const { result } = setup({ tryAdopt, onAdoptFailed })
+    await tick()
+
+    await act(async () => { await result.current.confirm() })
+
+    expect(onAdoptFailed).not.toHaveBeenCalled()
   })
 
   it('쿨다운은 10분이다', () => {
