@@ -1551,8 +1551,13 @@ function App() {
 
     // #R7-5: preflight 비동기 구간에서 모드나 프로젝트 load 소유권이 바뀌었으면 중단
     // (stale 엔진/프로젝트로 제출 방지).
-    if (modeRef.current !== startMode || loadEpochRef.current !== i2vStartEpoch) {
-      console.warn('[App] handleStart aborted — mode or project changed during preflight')
+    if (modeRef.current !== startMode) {
+      console.warn('[App] handleStart aborted — mode changed during preflight')
+      return
+    }
+    if (loadEpochRef.current !== i2vStartEpoch) {
+      console.warn('[App] handleStart aborted — project changed during preflight')
+      toast.warning(t('errorSection.kind.flow-project-changed'))
       return
     }
 

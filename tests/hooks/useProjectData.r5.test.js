@@ -103,16 +103,20 @@ function makeHookProps(overrides = {}) {
 }
 
 describe('framePairsRef live-owner 계약', () => {
-  it('dev에서 framePairsRef 없이 useProjectData를 호출하면 stale fallback 경고를 낸다', () => {
+  it('dev에서 유효한 framePairsRef는 경고하지 않고 누락 호출만 한 번 경고한다', () => {
     commonBeforeEach()
     fileSystemAPI.loadProjectData.mockResolvedValue({ success: false })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const valid = renderHook(() => useProjectData(makeHookProps()))
+    expect(warn).not.toHaveBeenCalled()
 
     const first = renderHook(() => useProjectData(makeHookProps({ framePairsRef: null })))
     const second = renderHook(() => useProjectData(makeHookProps({ framePairsRef: null })))
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('framePairsRef'))
     expect(warn).toHaveBeenCalledTimes(1)
+    valid.unmount()
     first.unmount()
     second.unmount()
     warn.mockRestore()

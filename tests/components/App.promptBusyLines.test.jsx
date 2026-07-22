@@ -59,6 +59,7 @@ const appMocks = vi.hoisted(() => {
   const videoStart = vi.fn(async options => {
     state.videoStartOptions = options
   })
+  const folderPermissionCheck = vi.fn(async () => ({ ok: true }))
   const scenes = [
     { id: 's1', prompt: 'scene 1-a\nscene 1-b', videoT2VPrompt: 'video 1', status: 'pending' },
     { id: 's2', prompt: 'scene 2', videoT2VPrompt: '', status: 'pending', videoT2VStatus: 'generating' },
@@ -98,7 +99,7 @@ const appMocks = vi.hoisted(() => {
   return {
     noop, asyncNoop, state, loadEpochRef,
     generationEnqueue, generationClearQueue, sceneBatchStart, automationStop, retryErrors, retryScene, videoStart,
-    scenes, scenesHook, genAPI, toastWarning,
+    scenes, scenesHook, genAPI, toastWarning, folderPermissionCheck,
   }
 })
 
@@ -337,6 +338,13 @@ vi.mock('../../src/hooks/useMcpServer', () => ({
 vi.mock('../../src/hooks/useImportProcessing', () => ({
   useImportProcessing: () => ({ processing: false, spinnerVisible: false, runImportProcessing: appMocks.asyncNoop }),
 }))
+vi.mock('../../src/utils/guards', async importOriginal => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    checkFolderPermission: (...args) => appMocks.folderPermissionCheck(...args),
+  }
+})
 
 vi.mock('../../src/components/PromptInput', async () => {
   const React = await import('react')
@@ -391,10 +399,10 @@ vi.mock('../../src/components/LiveTimeline', () => ({ default: () => null }))
 vi.mock('../../src/components/PreviewMonitor', () => ({ default: () => null }))
 vi.mock('../../src/components/SubscriptionBanner', () => ({ SubscriptionBanner: () => null }))
 vi.mock('../../src/components/StylePicker', () => ({
-  default: ({ onSelect }) => <>
+  default: ({ onSelect, selectedId }) => <div data-testid="style-picker" data-selected-id={selectedId ?? 'auto'}>
     <button type="button" onClick={() => onSelect('preset:test')}>pick-style</button>
     <button type="button" onClick={() => onSelect(null)}>pick-auto-style</button>
-  </>,
+  </div>,
 }))
 vi.mock('../../src/components/Modal', () => ({
   default: ({ isOpen, children, footer }) => isOpen ? <div>{children}{footer}</div> : null,
@@ -429,6 +437,7 @@ describe('App prompt busyLines wiring', () => {
     appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue(null)
     appMocks.genAPI.checkVideoStatus.mockReset()
     appMocks.genAPI.downloadVideo.mockReset()
+    appMocks.folderPermissionCheck.mockReset().mockResolvedValue({ ok: true })
     appMocks.generationEnqueue.mockClear()
     appMocks.generationClearQueue.mockClear()
     appMocks.sceneBatchStart.mockClear()
@@ -641,11 +650,26 @@ describe('App prompt busyLines wiring', () => {
   it('StylePicker 자동 카드는 handleStart preflight와 empty-ref gate payload를 거쳐 시작한다', async () => {
     appMocks.state.mode = 'flow'
     appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, status: 'done', image: 'generated-image' } : scene
+    ))
+    appMocks.scenesHook.scenesRef.current = appMocks.scenesHook.scenes
     const { container } = render(<App />)
     await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
     appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue('token')
 
     fireEvent.click(container.querySelector('.btn-style-link'))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'pick-style' }))
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(appMocks.sceneBatchStart).toHaveBeenCalledTimes(1))
+
+    appMocks.sceneBatchStart.mockClear()
+    appMocks.generationEnqueue.mockClear()
+    appMocks.genAPI.getAccessToken.mockClear()
+    fireEvent.click(container.querySelector('.btn-style-link'))
+    expect(screen.getByTestId('style-picker')).toHaveAttribute('data-selected-id', 'preset:test')
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'pick-auto-style' }))
       await Promise.resolve()
@@ -655,7 +679,8 @@ describe('App prompt busyLines wiring', () => {
     expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1)
     expect(appMocks.sceneBatchStart).toHaveBeenCalledWith(expect.objectContaining({
       selectedStyleRefId: null,
-      sceneIds: ['s1', 's2', 's3', 's4'],
+      force: false,
+      sceneIds: ['s2', 's3', 's4'],
       batchIntent: 'full',
       currentRefs: [],
     }))
@@ -1052,6 +1077,36 @@ describe('App prompt busyLines wiring', () => {
       await token.promise
     })
     await waitFor(() => expect(appMocks.videoStart).not.toHaveBeenCalled())
+    expect(appMocks.toastWarning).toHaveBeenCalledWith('errorSection.kind.flow-project-changed')
+  })
+
+  it('I2V folder preflight 중 mode만 바뀌면 최종 mode 절에서 기존처럼 조용히 중단한다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    const view = render(<App />)
+
+    fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+    await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+    const pair = {
+      id: 'fp_1', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
+      prompt: 'old scene', selected: true, status: 'pending',
+    }
+    act(() => appMocks.state.framePanelProps.onUpdate([pair]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([pair]))
+
+    const folderPermission = deferred()
+    appMocks.folderPermissionCheck.mockReturnValueOnce(folderPermission.promise)
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await waitFor(() => expect(appMocks.folderPermissionCheck).toHaveBeenCalledTimes(1))
+
+    appMocks.state.mode = 'flow'
+    view.rerender(<App />)
+    await act(async () => {
+      folderPermission.resolve({ ok: true })
+      await folderPermission.promise
+    })
+
+    expect(appMocks.videoStart).not.toHaveBeenCalled()
+    expect(appMocks.toastWarning).not.toHaveBeenCalled()
   })
 
   it('다운로드 재시도 대기 중 행을 지우면 늦은 완료가 pair와 owner 씬을 모두 건드리지 않는다', async () => {
@@ -1095,10 +1150,42 @@ describe('App prompt busyLines wiring', () => {
     expect(appMocks.state.framePanelProps.framePairs).toEqual([])
   })
 
-  it('다운로드 재시도가 발행한 generating 상태를 live owner 씬에도 즉시 적용한다', async () => {
+  it.each([
+    ['generating', 'deferred', {
+      videoI2VStatus: 'generating',
+      videoI2VGeneratingStartedAt: expect.any(Number),
+      videoI2VGeneratingEndedAt: null,
+    }],
+    ['error', 'failed', {
+      videoI2VStatus: 'error',
+      videoI2VGeneratingEndedAt: expect.any(Number),
+    }],
+    ['pending', 'slow-path', {
+      videoI2VStatus: 'pending',
+    }],
+    ['complete', 'complete', {
+      videoI2VStatus: 'complete',
+      videoI2V: 'RETRY_VIDEO',
+      videoI2VDisabled: null,
+      videoI2VGeneratingEndedAt: expect.any(Number),
+    }],
+  ])('다운로드 재시도의 %s 상태를 live owner 씬에도 적용한다', async (_status, outcome, expectedPatch) => {
     appMocks.genAPI.getAccessToken.mockResolvedValue('token')
-    const statusCheck = deferred()
-    appMocks.genAPI.checkVideoStatus.mockReturnValue(statusCheck.promise)
+    const statusCheck = outcome === 'deferred' ? deferred() : null
+    if (statusCheck) {
+      appMocks.genAPI.checkVideoStatus.mockReturnValue(statusCheck.promise)
+    } else if (outcome === 'failed') {
+      appMocks.genAPI.checkVideoStatus.mockResolvedValue({
+        success: true,
+        statuses: [{ status: 'failed', error: 'retry failed' }],
+      })
+    } else if (outcome === 'complete') {
+      appMocks.genAPI.checkVideoStatus.mockResolvedValue({
+        success: true,
+        statuses: [{ status: 'complete', mediaId: 'media-retry', videoUrl: 'https://video.test/retry' }],
+      })
+      appMocks.genAPI.downloadVideo.mockResolvedValue({ success: true, base64: 'RETRY_VIDEO' })
+    }
     render(<App />)
 
     fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
@@ -1106,7 +1193,7 @@ describe('App prompt busyLines wiring', () => {
     const pair = {
       id: 'fp_1', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
       prompt: 'retry scene', selected: true, status: 'error',
-      generationId: 'generation-retry', mediaId: 'media-retry',
+      ...(outcome === 'slow-path' ? {} : { generationId: 'generation-retry', mediaId: 'media-retry' }),
     }
     act(() => appMocks.state.framePanelProps.onUpdate([pair]))
     await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([pair]))
@@ -1115,19 +1202,18 @@ describe('App prompt busyLines wiring', () => {
     await act(async () => {
       await appMocks.state.framePanelProps.onVideoRetry(pair)
     })
-    await waitFor(() => expect(appMocks.genAPI.checkVideoStatus).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(appMocks.scenesHook.updateScene).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining(expectedPatch),
+    ))
 
-    expect(appMocks.scenesHook.updateScene).toHaveBeenCalledWith('s1', expect.objectContaining({
-      videoI2VStatus: 'generating',
-      videoI2VGeneratingStartedAt: expect.any(Number),
-      videoI2VGeneratingEndedAt: null,
-    }))
-
-    await act(async () => {
-      statusCheck.resolve({ success: false, error: 'test cleanup' })
-      await statusCheck.promise
-      await Promise.resolve()
-    })
+    if (statusCheck) {
+      await act(async () => {
+        statusCheck.resolve({ success: false, error: 'test cleanup' })
+        await statusCheck.promise
+        await Promise.resolve()
+      })
+    }
   })
 
   it('다운로드 재시도 시작 뒤 load epoch가 바뀌면 같은 fp_1의 새 pair와 owner 씬을 건드리지 않는다', async () => {
