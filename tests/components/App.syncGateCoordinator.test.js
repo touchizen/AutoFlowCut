@@ -5,26 +5,19 @@ import fs from 'node:fs'
 const source = fs.readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8')
 
 describe('App sync gate — coordinator publish lifetime wiring', () => {
-  it('syncRefToFlow 에 scope/index/publishResult 를 넘겨 patch 를 flight 안에서 publish 한다', () => {
+  // scopeToken/refIndex/publishResult 와 fail-closed 정산은 services/syncGateRun 으로 옮겼고,
+  // tests/services/syncGateRun.test.js 가 **실행해서** 검증한다(스코프 변경 시 publish 안 함,
+  // 부분 실패 시 finish 대신 abort 등). 여기선 App 이 그 실행부에 무엇을 주입하는지만 본다.
+  it('실행부에 동기화 함수와 정산 콜백을 주입한다', () => {
     const start = source.indexOf('const handleSyncGateProceed')
     const end = source.indexOf('const handleSyncGateCancel', start)
     const handler = source.slice(start, end)
 
-    expect(handler).toContain('scopeToken:')
-    expect(handler).toContain('refIndex')
-    expect(handler).toContain('publishResult:')
-    // 결과 전달(finishSyncGate)보다 먼저 publish 돼야 flight 안에서 반영된다.
-    expect(handler.indexOf('publishResult:')).toBeLessThan(handler.indexOf('finishSyncGate(myGate'))
-  })
-
-  it('부분 sync 실패를 generating anyway 로 흘리지 않고 fail closed 한다', () => {
-    const start = source.indexOf('const handleSyncGateProceed')
-    const end = source.indexOf('const handleSyncGateCancel', start)
-    const handler = source.slice(start, end)
-
-    expect(handler).toContain('planSyncGateCompletion(ok, fail)')
-    expect(handler).not.toContain('generating anyway')
-    expect(handler).not.toContain('생성을 계속합니다')
+    expect(handler).toContain('runSyncGate(')
+    expect(handler).toContain('syncRef:')
+    expect(handler).toContain('publishRefs:')
+    expect(handler).toContain('finish:')
+    expect(handler).toContain('abort:')
   })
 
   // 취소/완료의 순서(대기자를 먼저 풀고 모달을 내린다)와 소유권은 이제 useSyncGateHost 가

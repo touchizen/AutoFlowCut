@@ -81,9 +81,12 @@ describe('App empty reference gate wiring', () => {
     expect(tagProceed).not.toContain('initialTargetScenes:')
   })
 
-  it('sync-proceed의 authoritative seed는 referencesRef.current다', () => {
-    expect(syncProceed).toContain('let patchedRefs = referencesRef.current')
-    expect(syncProceed).not.toContain('let patchedRefs = scenesHook.references')
+  // 실행부는 services/syncGateRun 으로 옮겼고 그 동작은 tests/services/syncGateRun.test.js 가
+  // **실행해서** 검증한다. 여기선 App 이 authoritative 한 값(동기 최신 ref)을 주입하는지만 본다 —
+  // scenesHook.references 를 주면 async 루프에서 stale 이다.
+  it('sync-proceed 는 동기 최신 refs 를 실행부에 주입한다', () => {
+    expect(syncProceed).toContain('getReferences: () => referencesRef.current')
+    expect(syncProceed).not.toContain('getReferences: () => scenesHook.references')
   })
 
   it('M2 coordinator는 Flow 이미지 배치에서만 호출된다', () => {

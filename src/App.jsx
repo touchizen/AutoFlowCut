@@ -68,7 +68,8 @@ import { planMentionTagMerges } from './utils/mentionTagMerge'
 import {
   buildM1FlowReferenceExclusionToast,
 } from './utils/refImageGuard'
-import { selectMentionSyncTargets } from './utils/mentionSyncTargets'
+import { runMentionSyncRequest } from './services/mentionSyncRequest'
+import { runSyncGate } from './services/syncGateRun'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
@@ -893,38 +894,15 @@ function App() {
   //   - names 없음(프리플라이트): 씬이 멘션한 캐릭터 중 미동기화 + 수리 가능한 것
   //   - names 있음(엔진이 미해결로 거절한 뒤): 그 이름들. 우리 기록상 synced 여도 엔진이 못 쓴다고
   //     했으므로 동기화 상태로 거르지 않는다 — 기록이 옛것일 수 있다.
-  const requestMentionSync = useCallback(async ({ scene, names, projectName: expectedProject }) => {
-    // 호출자가 시작 시점의 프로젝트를 넘긴다. 그 사이 프로젝트가 바뀌었으면 지금의 refs 는 다른
-    // 프로젝트의 것이다 — 넘겨주면 A 의 씬을 B 의 레퍼런스로 생성한다.
-    // ⚠️ 이름만 보면 부족하다: 전환은 **레퍼런스를 먼저 갈고 이름을 나중에** 커밋해서, 그 사이엔
-    //    이름이 아직 A 인데 refs 는 이미 B 다. 전환이 진행 중이면(projectLoading) 아예 진행하지 않는다.
-    // ⚠️ 렌더 클로저의 projectLoading 을 보면, 게이트를 기다리는 동안 시작된 전환을 못 본다
-    //    (그 호출은 계속 옛 값을 본다). 반드시 live ref 로 읽는다.
-    const outOfScope = () => projectLoadingRef.current
-      || (expectedProject != null && expectedProject !== projectNameRef.current)
-    if (outOfScope()) return { proceeded: false, reason: 'project-changed' }
-    // referencesRef 는 매 렌더 갱신되는 동기 최신값 — 호출자(훅)의 클로저는 stale 일 수 있다.
-    const refs = referencesRef.current || []
-    const targets = selectMentionSyncTargets({ scene, names, references: refs })
-    // 동기화할 게 없어도 **live refs 를 넘긴다**. 큐에 쌓여 있던 다음 씬은 이전 씬이 동기화한
-    // 결과를 모르는 클로저를 들고 있어서, 그냥 진행시키면 옛 ref 로 또 미해결 실패가 난다.
-    if (targets.length === 0) {
-      // 복구 요청(names)인데 고칠 대상이 없다 = 동기화로 풀 수 있는 문제가 아니다. 그대로 진행시키면
-      // 훅이 같은 실패를 한 번 더 부른다 — 헛수고 + quota. 진행 불가로 돌려준다.
-      if (names?.length) return { proceeded: false, reason: 'no-target' }
-      return { proceeded: true, refs }
-    }
-    // names 로 온 요청 = 엔진이 거절한 뒤의 복구 → 기록이 synced 여도 재등록을 태운다.
-    const res = await openSyncGate({ refs: targets, forceRepair: !!names?.length })
-    if (!res.proceeded) {
-      // 동기화가 이미 돌고 있어 거절된 경우엔 조용히 넘어가지 않는다 — 사용자는 버튼이 안 먹은
-      // 것처럼 느낀다. 잠시 뒤 다시 시도하라고 알린다.
-      if (res.reason === 'busy') toast.warning(t('toast.flowSyncBusy'))
-      return { proceeded: false, reason: res.reason }
-    }
-    if (outOfScope()) return { proceeded: false, reason: 'project-changed' }
-    return { proceeded: true, refs: res.patchedRefs || referencesRef.current || refs }
-  }, [openSyncGate, t])
+  // 판정은 services/mentionSyncRequest 가 소유한다 — App 안에 두면 실행되는 테스트를 못 붙인다
+  // (이 판정을 통째로 되돌려도 전체 스위트가 초록불이었다).
+  const requestMentionSync = useCallback((req) => runMentionSyncRequest(req, {
+    getReferences: () => referencesRef.current || [],
+    getProjectName: () => projectNameRef.current,
+    isProjectLoading: () => projectLoadingRef.current,
+    openGate: openSyncGate,
+    onBlocked: () => toast.warning(t('toast.flowSyncBusy')),
+  }), [openSyncGate, t])
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
@@ -1954,104 +1932,27 @@ function App() {
   //   SPA 새로고침하고, 원래 생성(proceed 클로저)을 이어서 실행한다. 동시 실행 금지(공유 flowView).
   const handleSyncGateProceed = async () => {
     if (!syncGate || syncGateBusy) return
-    // 이 핸들러가 처리하는 게이트를 고정한다 — 동기화가 도는 동안 다른 경로가 새 게이트를 열면,
-    // 끝날 때 무조건 setSyncGate(null) 하는 옛 코드는 **남의 모달을 닫아** 그 대기자를 영구히
-    // 매달아 놨다(생성 큐 정지).
+    // 이 핸들러가 처리하는 게이트를 고정한다 — 동기화가 도는 동안 다른 경로가 새 게이트를 열어도
+    // 자기 게이트만 닫는다(남의 모달을 닫으면 그 대기자가 영구히 매달린다).
     const myGate = syncGate
     beginSyncGateWork()
-    // 여기부터는 어떤 예외가 나도 busy 를 풀어야 한다 — 안 풀리면 이후 모든 게이트 요청이
-    // busy 로 거절되고 생성이 통째로 막힌다.
+    // 실행부는 services/syncGateRun 이 소유한다 — App 안에 두면 프로젝트 스코프 판정과
+    // forceRepair 전달을 되돌려도 전체 스위트가 초록불이었다(뮤테이션 실측).
     try {
-    // 이 게이트 작업이 속한 프로젝트. 동기화 도중 프로젝트가 바뀌면 referencesRef 는 다른
-    // 프로젝트의 것이 된다 — 그대로 계속하면 B 의 ref 를 A 의 Flow 프로젝트로 동기화하거나
-    // A 의 결과를 B 의 ref 에 덮어쓴다. 그 시점에서 멈추고 실패로 닫는다(fail-closed).
-    // 게이트가 **열린 시점**의 프로젝트. Proceed 시점에 읽으면 그 사이 바뀐 프로젝트를 정상으로
-    // 간주해, A 에서 열린 목록을 B 의 refs 와 대조하게 된다.
-    const gateProject = myGate.scope ?? projectNameRef.current
-    const gateScopeChanged = () => projectLoadingRef.current || projectNameRef.current !== gateProject
-    let ok = 0, fail = 0
-    // #R34-fix: 패치를 로컬 배열에 누적해 첫 생성(start)에 currentRefs 로 넘긴다(React state 는 같은
-    //   tick 에 stale). character 는 업로드 성공이어도 displayName PATCH 실패면 'failed' 라 미동기화 —
-    //   patch.flowNameSyncStatus 로 실제 동기화 여부를 판정해 카운트한다(업로드성공=성공으로 오인 금지).
-    let patchedRefs = referencesRef.current
-    const syncFlowProjectId = flowProjectIdRef.current
-    const syncScope = `${modeRef.current ?? ''}::${settings.projectName ?? ''}`
-    const gateTargets = syncGate.refs.map((ref) => {
-      const refIndex = ref.id != null
-        ? patchedRefs.findIndex(r => r.id === ref.id)
-        : patchedRefs.findIndex(r => r === ref || (
-          r?.id == null && r?.type === ref.type && r?.name === ref.name
-          && (r?.filePath || r?.imagePath || '') === (ref.filePath || ref.imagePath || '')
-        ))
-      return { ref, refIndex }
-    })
-    const patchAt = (list, ref, refIndex, patch) => list.map((r, i) => (
-      ref.id != null ? r.id === ref.id : i === refIndex
-    ) ? { ...r, ...patch } : r)
-      // 시작 전에 이미 다른 프로젝트면 아무것도 하지 않고 접는다.
-      if (gateScopeChanged()) {
-        abortSyncGate(myGate, 'project-changed')
-        return
-      }
-      for (const { ref, refIndex } of gateTargets) {
-        // #R37: syncGate.refs 는 모달을 열 때의 스냅샷이다. 루프 매 회차에 live 로 다시 판단한다 —
-        //   스냅샷을 넘기면 그 사이 끝난 sync 의 entityId 를 못 보고 재업로드로 빠져 중복이 생긴다.
-        //   (referencesRef 는 매 렌더 갱신되는 동기 최신값. scenesHook.references 는 이 async 루프에서 stale.)
-        const live = ref.id != null
-          ? referencesRef.current.find(r => r.id === ref.id)
-          : referencesRef.current[refIndex]
-        const decision = resolveSyncTarget(live, { forceRepair: !!myGate.forceRepair })
-        if (decision.action === 'skip') {
-          if (decision.reason === 'already-synced') {
-            ok++
-            // ⚠️ live 를 patchedRefs 에 병합해야 한다 — 이 배열이 생성에 넘어가는 authoritative refs 다
-            //   (useAutomation currentRefsOverride). 안 하면 "동기화 성공"이라 보고해놓고 생성에는
-            //   entity 없는 클릭 시점 stale ref 가 넘어가 멘션이 안 붙는다.
-            patchedRefs = patchAt(patchedRefs, ref, refIndex, live)
-          } else {
-            fail++
-            console.warn('[App] sync-gate skip:', ref?.name, decision.reason)
-          }
-          continue
-        }
-        const res = await syncRefToFlow(decision.ref, genAPI.uploadReference, {
-          projectId: syncFlowProjectId,
-          scopeToken: syncScope,
-          refIndex,
-          // patch publish 를 flight 안에서 실행 — React setter 전에 같은 stale ref 가 재진입하는 창 제거.
-          publishResult: async (syncResult) => {
-            if (!syncResult.patch) return
-            // 프로젝트가 바뀌었으면 지금의 refs 는 다른 프로젝트 것이다 — 패치하지 않는다.
-            if (gateScopeChanged()) return
-            patchedRefs = patchAt(patchedRefs, ref, refIndex, syncResult.patch)
-            updateReferences(prev => patchAt(prev, ref, refIndex, syncResult.patch))
-          },
-        })
-        if (gateScopeChanged()) {
-          // 원격 동기화 자체는 성공했을 수 있지만, 이 결과를 지금 프로젝트의 성공으로 셀 수는 없다.
-          console.warn('[App] sync-gate aborted — project changed mid-sync')
-          abortSyncGate(myGate, 'project-changed')
-          return
-        }
-        const synced = res.ok && isRefSynced(res.patch ? { ...ref, ...res.patch } : ref)
-        if (synced) ok++
-        else { fail++; console.warn('[App] sync-gate sync incomplete for', ref?.name, res.error || res.patch?.flowNameSyncStatus) }
-      }
-      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
-      // required mention sync 는 all-or-nothing. 하나라도 실패하면 혼합 resolved/unresolved 는 하드 에러,
-      // all-unresolved+mediaId 는 plain-image 로 조용히 degrade 하므로 원래 생성을 시작하지 않는다.
-      if (gateScopeChanged()) {
-        abortSyncGate(myGate, 'project-changed')
-        return
-      }
-      const completion = planSyncGateCompletion(ok, fail)
-      if (!completion.proceed) {
-        toast.error(t('toast.flowSyncIncomplete', { ok, fail }))
-        abortSyncGate(myGate, 'sync-incomplete')
-        return
-      }
-      toast.success(t('toast.flowSyncGenerationStarting', { ok }))
-      finishSyncGate(myGate, patchedRefs)
+      await runSyncGate({ gate: myGate }, {
+        getReferences: () => referencesRef.current || [],
+        getProjectName: () => projectNameRef.current,
+        isProjectLoading: () => projectLoadingRef.current,
+        getFlowProjectId: () => flowProjectIdRef.current,
+        getScopeToken: () => `${modeRef.current ?? ''}::${settings.projectName ?? ''}`,
+        syncRef: (ref, opts) => syncRefToFlow(ref, genAPI.uploadReference, opts),
+        publishRefs: updateReferences,
+        refreshComposer: () => window.electronAPI?.refreshFlowComposer?.(),
+        onIncomplete: ({ ok, fail }) => toast.error(t('toast.flowSyncIncomplete', { ok, fail })),
+        onSuccess: ({ ok }) => toast.success(t('toast.flowSyncGenerationStarting', { ok })),
+        finish: (patchedRefs) => finishSyncGate(myGate, patchedRefs),
+        abort: (reason) => abortSyncGate(myGate, reason),
+      })
     } catch (e) {
       // 예기치 못한 예외로도 대기자를 남기지 않는다 — 남기면 모달이 화면에 그대로 있고
       // 그 promise 를 기다리던 생성 큐가 영영 멈춘다.
