@@ -1,16 +1,17 @@
-# 쇼핑 숏츠 (Shopping Shorts) — 스펙 v3
+# 쇼핑 숏츠 (Shopping Shorts) — 스펙 v5
 
 > 상품 URL 1개 → 한국어 쇼핑 숏츠 1개를 AutoFlowCut 안에서 기획·승인·생성·검수하고
 > **CapCut 프로젝트**로 내보낸다.
 >
-> v1의 Codex R1 11건, Fable 5 R1 12건과 v2의 Fable 5 R2 11건을 모두 반영했다. 원본은
+> v1의 Codex R1 11건, Fable 5 R1 12건, v2의 Fable 5 R2 11건, v3의 Fable 5 R3 6건과
+> v4의 Fable 5 R4 3건을 모두 반영했다. 원본은
 > `sync-shopshorts-higgs` Claude 스킬이지만, MVP 실행 경로는 Higgsfield가 아니라
 > **공식 Google API(Nano Banana 2 → Veo 3.1 i2v)** 하나로 고정한다.
-> v3의 가장 큰 변경은 사용자 결정에 따라 **인물 씬의 Veo 네이티브 한국어 대사를 보존**하고,
-> 제품 실사 씬은 무음·씬 블록 자막으로 두는 것이다.
+> v5는 그 음성·길이 결정을 유지하면서 integer probe 정본과 CapCut/Premiere/Vrew 전체 UI export admission을
+> 닫은 최종 구현 스펙이다.
 
 작성일: 2026-07-23  
-상태: **R3 리뷰 대기**  
+상태: **최종 확정 — 구현 착수 가능**
 구현 베이스: `/Users/tuxxon/workspace/AutoFlowCut`, 브랜치 `feature/inapp-agent`
 
 ---
@@ -57,18 +58,24 @@
 
 ### 0.2 미확인 가정
 
-- **U1**: MVP allowlist인 page host `coupang.com`/`www.coupang.com`과 image host suffix
+- **U1 (v4 재점검: 유효)**: MVP allowlist인 page host `coupang.com`/`www.coupang.com`과 image host suffix
   `coupangcdn.com`이 캡처 fixture의 필수 상품/이미지를 모두 포괄한다. M1 fixture에서 벗어나면 host를
   자동 확장하지 않고 해당 URL을 `unsupported`로 처리한다.
-- **U2**: Google Veo API가 POST timeout/5xx에 대해 idempotency key 또는 operation reconciliation/list
+- **U2 (v4 재점검: 유효)**: Google Veo API가 POST timeout/5xx에 대해 idempotency key 또는 operation reconciliation/list
   수단을 제공하지 않는다. 현재 코드에는 그런 수단이 없지만, M3.5 공급자 스파이크 전까지는
   **미확인 가정**이다.
-- **U3**: 독립 생성한 Veo 인물 clip들의 목소리 톤·음량이 같은 페르소나처럼 들린다는 보장은 없다.
-  v3는 이를 자동 보정 가능하다고 가정하지 않고 D11의 명시적 인간 대사 검수로 닫는다.
-- **U4**: 현재 CapCut exporter가 video overlay의 원음을 보존하는지는 베이스 요청만으로 확정할 수 없다.
+- **U3 (v4 재점검: 유효)**: 독립 생성한 Veo 인물 clip들의 목소리 톤·음량이 같은 페르소나처럼 들린다는 보장은 없다.
+  v4는 이를 자동 보정 가능하다고 가정하지 않고 D11의 명시적 인간 대사 검수로 닫는다.
+- **U4 (v4 재점검: 유효·MVP 출하 blocker)**: 현재 CapCut exporter가 video overlay의 원음을 보존하는지는 베이스 요청만으로 확정할 수 없다.
   현재 overlay에는 시작·길이·track index만 있고 명시적 source-audio 필드가 없다
-  (`AutoFlowCut/src/exporters/prepareCloudRequest.js:167-191`). M5 실물 CapCut smoke에서 보존을 증명하지
-  못하면 MVP 출하를 막는다.
+  (`AutoFlowCut/src/exporters/prepareCloudRequest.js:183-191`). GCF도 overlay의 길이·위치·track만 받아 source
+  range를 0부터 만들 뿐 명시적 source-audio 정책은 받지 않는다
+  (`whisk2capcut/functions/index.suffixed.js:918-924`,
+  `whisk2capcut/functions/index.suffixed.js:1157-1199`). M5 실물 CapCut smoke에서 보존을 증명하지 못하면
+  MVP 출하를 막는다.
+
+R3 뒤에도 U1은 M1 fixture, U2는 M3.5 공급자 스파이크, U3·U4는 M5 실물 검수 전까지 확인 사실로
+승격할 근거가 생기지 않았다. 따라서 네 항목 모두 **미확인 가정**으로 유지한다.
 
 ---
 
@@ -125,7 +132,7 @@ empty → fetched → approved_materializing(rev 1) → materialized → generat
   `acceptance_unknown` row가 하나라도 있으면 revision·scene identity와 무관하게 true이며, 모든 새 과금
   submission reserve와 export를 막는다. 계획 수정·재승인은 허용하지만 hold를 지우지 않는다.
 - `shopping_get_state`가 `{planId, revision, currentHash, approvedHash, materializationRevision,
-  materializationDigest, state, openAcceptanceHolds, sceneStates, submissionStates,
+  materializationDigest, state, openAcceptanceHold, sceneStates, submissionStates,
   unreadPlaybookSections, nextRequiredAction}`의 byte-free 요약을 반환한다.
 - 프로젝트 전환·재시작 뒤에도 main store와 submission journal로 복구한다.
 - 모든 shopping G/B 툴은 현재 `projectToken`과 store의 project identity를 대조한다.
@@ -310,9 +317,12 @@ MVP 허용 `claimType`은 아래뿐이다.
 - `cta`, `disclosure`: `sourceFactIds:[]`를 허용한다.
 
 `experience`, `performance_proof`, `comparison_result`, `social_proof`, `medical_effect` 타입은 schema에
-존재하지 않아 승인 입력 자체가 될 수 없다. main tokenizer는 각 scene의 **승인된 `dialogueText`와
-`subtitleText`에 나타나는 모든 문장**을 claim `text`와 exact match하고, 누락 문장·고아 claim·존재하지
-않는 fact ID를 거부한다. product still은 음성이 없으므로 claim-bearing 자막이 같은 검사를 받는다.
+존재하지 않아 승인 입력 자체가 될 수 없다. 문장 splitter/tokenizer는 쓰지 않는다. 결정론적 coverage는
+각 scene의 순서 있는 `claimIds`에 대해 `N(승인 텍스트) === N(claim1.text) + … + N(claimN.text)`로 정의한다.
+여기서 `N`은 D5.3 문자열 정규화 뒤 Unicode `White_Space` code point만 모두 제거하며, 대소문자·숫자·문장부호는
+보존한다. persona는 `dialogueText`와 `subtitleText` 각각, product still은 `subtitleText`에 이 식을 적용한다.
+따라서 마침표 없는 종결어미·물음표·줄바꿈도 별도 문장 경계 추론 없이 같은 결과를 내며, 불일치 텍스트,
+중복·고아 claim, 존재하지 않는 fact ID를 거부한다.
 
 따라서 원본의 “직접 확인해봤습니다”
 (`shoppingshorts/sync-shopshorts-higgs/references/script-templates.md:155-164`)와 “첫 느낌”
@@ -369,9 +379,12 @@ ShoppingPlanInput {
 - `id`/`name`/`appearance`는 non-empty. sceneKey와 claim ID는 unique다.
 - `product_still`은 `dialogueText:''`, generation 0, trim null, videoPrompt 빈 문자열,
   `1_000 <= timelineDurationMs <= 3_000`이다. `subtitleText`는 씬 전체에 보일 non-empty 승인 문장이다.
+- validator는 순서 있는 scene 배열의 각 maximal consecutive `product_still` run에 대해
+  `sum(timelineDurationMs) <= 5_000`을 강제한다. persona scene이 나오면 run 합을 0으로 초기화한다.
 - `persona_i2v`는 `subtitleText === dialogueText`, generation 4/6/8초,
   `timelineDurationMs === generationDurationSec*1000`,
-  `trim:{startMs:0,endMs:timelineDurationMs}`다. 즉 네이티브 대사 clip은 앞뒤를 포함해 **자르지 않는다**.
+  `trim:{startMs:0,endMs:timelineDurationMs}`다. 즉 승인자가 임의 source trim을 정하지 않는다. 생성 파일과
+  plan의 한 프레임 이내 차이를 맞추는 D9 runtime window는 이 author trim과 별개다.
 - `persona_i2v.videoPrompt`는 exact `dialogueText`를 한 번 포함하고 `speaking in Korean`, `say exactly`,
   `no ad-lib`, `no extra speech`, `no music`, `no captions`, `no on-screen text`를 포함해야 한다.
 - 대사가 clip을 넘지 않게 non-whitespace Unicode grapheme 상한을 4/6/8초 각각 18/30/42로 둔다.
@@ -418,7 +431,7 @@ hash 대상은 schema/playbook 버전, canonical 상품 URL·SKU·모든 sourceF
 선택 이미지 URL 또는 attachment ID/콘텐츠 digest/크기/실제 asset ID, persona 전체와 fingerprint,
 순서 있는 scene ID·`visualType`·`visualDescription`·scene별 `productImageId` 매핑·시간·`dialogueText`·자막·
 생성 방식·**`videoPrompt`**, claim→sourceFact 연결과 formula, template/style의 실제 prompt/version/digest,
-provider/model/aspect/resolution/generation duration/full-source trim/video seed, `speechMode`·`productStillAudio`·
+provider/model/aspect/resolution/generation duration/승인된 full-range trim 정책/video seed, `speechMode`·`productStillAudio`·
 `sourceAudioGain`·`subtitleTiming`·dialogue policy와 실제 resolved voice-direction prompt/version/digest를 모두 포함한다.
 결과·비용을 바꾸는 값은 hash 밖에 둘 수 없다.
 
@@ -497,7 +510,7 @@ shoppingMaterializationDigest: sha256-hex
 ```
 
 materialization digest는 canonical `{shoppingPlanId, shoppingPlanHash, revision, ordered fixed slot identities,
-ordered scene의 shopping identity/image asset digest/duration/full trim/sourceAudioPolicy/sourceAudioGain,
+ordered scene의 shopping identity/image asset digest/duration/승인 trim/sourceAudioPolicy/sourceAudioGain,
 ordered scene-block SRT}`의 SHA-256이다. 현재 save payload는 허용 top-level key를 명시적으로 만들므로
 (`AutoFlowCut/src/hooks/useProjectData.js:422-442`), M3는 save/load/autosave/merge 모두 이 네 필드를 보존하게
 바꾼다. main의 recovery는 renderer bridge ack가 아니라 이 persisted 값으로 판정한다.
@@ -514,7 +527,7 @@ ordered scene-block SRT}`의 SHA-256이다. 현재 save payload는 허용 top-le
 | `dialogueText`/`subtitleText` | persona는 승인 대사를 scene metadata에 저장, 모든 씬은 subtitle/SRT block text와 scene start/end 저장 |
 | `product_still` | 선택 제품 asset을 `imagePath`에 저장, i2v 필드 없음 |
 | `persona_i2v` | materialization 시 제품 asset placeholder를 `imagePath`에 넣고 `personaImageRequired:true`; persona 생성 뒤 같은 승인 scene에만 실제 persona image로 교체 |
-| `videoPrompt`/trim/audio | `videoI2VPrompt`, `videoI2VGenerationDuration`, full-source `videoI2VTrimStartMs/EndMs`, `sourceAudioPolicy:'native'`, `sourceAudioGain:1.0` |
+| `videoPrompt`/trim/audio | `videoI2VPrompt`, plan 값인 `videoI2VGenerationDuration`/`videoI2VPlannedDurationMs`, 승인 full-range `videoI2VTrimStartMs/EndMs`, `sourceAudioPolicy:'native'`, `sourceAudioGain:1.0` |
 | plan identity | `shoppingPlanId`, `shoppingPlanHash`, `shoppingSceneKey`, `personaFingerprint` |
 
 모든 skeleton scene은 처음부터 `imagePath` 또는 fallback을 갖는다. AI scene의 product placeholder는
@@ -610,22 +623,43 @@ plan은 `timelineDurationMs`와 `generationDurationSec`를 분리한다.
 
 - product still: generation 0초, timeline 1~3초, audio source 없음.
 - persona i2v: generation 4/6/8초이고 native dialogue 보호를 위해
-  `timelineDurationMs === generationDurationSec*1000`다. 선택한 API grid의 clip 전체를 쓴다.
+  `timelineDurationMs === generationDurationSec*1000`다. 승인 plan은 선택한 API grid 전체를 목표 range로 삼는다.
 - `trim.startMs/endMs`는 승인·project에 반드시 저장하지만 persona scene에서는 항상
   `{0, generationDurationSec*1000}`이다. 임의 앞/뒤 trim, 가운데 cut, 속도 변경은 MVP에서 금지한다.
-- 완료 파일 probe가 요청 길이와 ±100ms보다 크게 다르면 승인 timeline을 자동 변경하거나 자르지 않고
-  `video-duration-mismatch`로 reject한다.
+- **R3-1 선택은 (a)**다. 완료 파일은 ffprobe 실측을 integer `probeDurationMs`로 반올림하고
+  `abs(probeDurationMs - timelineDurationMs) <= 34`일 때만 admit한다. 34ms는 30fps 한 프레임을 올림한
+  허용창이며, 이를 넘으면 승인 timeline/hash를 고치거나 clip을 자르지 않고 `video-duration-mismatch`로
+  reject한다. plan 길이를 실측처럼 저장하는 (b)는 파일 사실을 숨기고 GCF 동작에 의존하므로, probe 길이로
+  timeline을 바꾸는 (c)는 승인 hash를 생성 후 바꾸므로 기각한다.
+- result patch의 `scene.videoI2VDuration`에는 **plan 길이가 아니라 probe 실측 초
+  (`probeDurationMs / 1000`)**를 호환 필드로 저장하고, 같은 patch의 integer
+  `scene.videoI2VProbeDurationMs = probeDurationMs`를 resolver 입력의 유일한 정본으로 저장한다. review player와
+  export builder는 float 초를 다시 곱하지 않고 이 integer 필드만 읽는다. plan 값은 별도
+  `videoI2VPlannedDurationMs`에 보존한다. 현재
+  `resolveExportVideos`가 `scene.videoI2VDuration`을 exporter의 video duration으로 전달하므로 이 구분은
+  실제 `Math.min`/back-placement를 결정한다
+  (`AutoFlowCut/src/utils/sceneMedia.js:21-29`,
+  `AutoFlowCut/src/exporters/prepareCloudRequest.js:170-181`).
+- renderer 공용 pure helper `resolveShoppingVideoWindow(planDurationMs, probeDurationMs)`가
+  `{sourceStartMs:0, sourceDurationMs:min(plan,probe), timelineStartOffsetMs:max(0,plan-probe),
+  admissible:abs(plan-probe)<=34}`를 반환한다. shopping review player와 CapCut request builder가 이 **같은
+  결과 객체**를 사용한다. probe가 길면 최대 한 프레임 tail만 제외하고, 짧으면 그만큼 base image 뒤에
+  영상을 놓는다. 따라서 사람이 보는 합성 재생 범위·배치와 export 범위·배치가 byte-for-byte 같은
+  window 계약이다. 허용창 밖 결과도 두 소비자의 resolver 결과는 같지만 `admissible:false`라 player 승인과
+  export를 모두 막는다.
 - 승인 대사가 D5 grapheme budget을 넘으면 submission 전에 막는다. 생성 뒤 대사가 늦게 시작하거나 끝이
   잘렸거나 문장 중간에서 끊겼으면 D11 인간 review에서 `rejected`; 더 긴 6/8초 grid 또는 분할 scene으로
-  plan을 고쳐 재승인한다. **대사를 살리기 위해 trim을 조절하는 경로는 없다.**
-- 현재 exporter도 긴 영상을 scene 길이만큼 source 처음부터 자른다
-  (`AutoFlowCut/src/exporters/prepareCloudRequest.js:167-190`). v3 persona는 두 길이가 같아 이 암묵 trim을
-  쓰지 않으며, M5는 full-source range와 native source audio 보존을 명시적으로 검증한다.
+  plan을 고쳐 재승인한다. runtime 한 프레임 clamp가 발화 일부를 잃어도 자동 trim 이동은 하지 않고
+  `rejected`다.
+- 현재 generic exporter는 `Math.min(videoDuration, sceneDuration)`과 짧은 clip back-placement를 이미 한다
+  (`AutoFlowCut/src/exporters/prepareCloudRequest.js:178-181`). M5는 그 계산을 위 공용 resolver에 연결해
+  generic export와 shopping 검수 player가 따로 진화하지 않게 한다. 승인 `trim:{0,planEnd}`는 창 정책의
+  정본이지 probe보다 긴 파일의 마지막 한 프레임까지 무조건 포함한다는 약속이 아니다.
 - 총 길이는 scene **timeline** 합으로 검증하고 60초 미만이어야 한다. audio/subtitle 마지막 end도
   이 합을 넘을 수 없다.
 - 예상 과금과 B approval의 영상 초는 `sum(generationDurationSec)`다. timeline trim으로 버리는 초도
-  일반 원칙상 생성됐으면 과금에 포함하지만, v3 persona는 full clip을 써 버리는 초가 없다. 이미지 1장
-  비용은 별도 표시하고 TTS 비용 항목은 없다.
+  생성됐으면 과금에 포함한다. 허용된 한 프레임 tail clamp도 비용을 줄이지 않는다. 이미지 1장 비용은
+  별도 표시하고 TTS 비용 항목은 없다.
 
 F5의 정확한 범위는 “Veo 단일 clip 최대 8초 — API `{4,6,8}`, Flow 비-Omni Veo 8초 고정,
 Omni `{4,6,8,10}`”이다(F5-a~c). Flow/Omni는 설명 정확성을 위해 기록했을 뿐 MVP 실행 분기가 아니다.
@@ -654,8 +688,9 @@ Veo의 실제 단어별 발화 시각을 앱이 알 수 없으므로 균등 단�
 
 - video prompt는 승인 대사 한 문장만 exact quote하고 `say exactly`/`no ad-lib`/`no extra speech`를 넣지만,
   생성 모델이 따를 것이라고 신뢰하지 않는다.
-- persona clip은 D9처럼 full-source로 배치해 대사 중간을 trim하지 않는다. 불완전 발화는 clip reject와
-  plan duration 수정/scene 분할만 허용한다.
+- persona clip은 D9의 export-equivalent window로 재생한다. plan과 probe의 차이는 한 프레임 이하여야 하고,
+  그 clamp/back-placement까지 포함한 실제 export 합성을 사람이 듣는다. tail clamp가 음소 하나라도 자르거나
+  짧은 clip 배치 때문에 문장이 불완전하면 clip reject와 plan duration 수정/scene 분할만 허용한다.
 - speech technology는 Veo 하나뿐이고 product still은 무음이므로 TTS와의 두-source volume/tone mix는 없다.
   모든 persona overlay gain은 1.0으로 동일하게 유지하고 자동 loudness/timbre 변환은 하지 않는다.
 - 독립 Veo clip끼리 목소리·음량·배경음이 달라질 수 있다(U3). 고정 voice-direction prompt는
@@ -672,18 +707,26 @@ Veo의 실제 단어별 발화 시각을 앱이 알 수 없으므로 균등 단�
   `AutoFlowCut/electron/api/tts/googletts.js:48-87`에서 확인된다.
 - `buildStorySrtEntries`는 audio segment의 실측 `startMs/durationMs`로 SRT를 만드는 함수지만
   (`AutoFlowCut/src/utils/storyAudioPackage.js:77-88`), shopping에는 TTS segment가 없으므로 사용하지 않는다.
-- shopping export는 `storyAudio:null`과 voice가 없는 `audioPackage`를 전달한다. 따라서
+- shopping export는 **`storyAudio:null`과 `audioPackage:null`을 모두 강제**한다. Audio 탭에 import된 MP3,
+  SRT, voice, SFX가 project state에 남아 있어도 shopping request builder에는 전달하지 않는다. 따라서
   `storyAudio`가 있을 때만 실행되는 manifest revision gate
   (`AutoFlowCut/src/exporters/prepareCloudRequest.js:242-256`)는 shopping 계약이 아니다. 자막은
-  `project.srtTrack` fallback을 타고, 별도 audio track은 만들지 않는다
-  (`AutoFlowCut/src/exporters/prepareCloudRequest.js:289-345`,
-  `AutoFlowCut/src/exporters/prepareCloudRequest.js:376-396`).
+  실제 우선순위인 `audioPackage.srtEntries → project.rawSrtTrack → project.srtTrack` 중 `audioPackage`를 제거한
+  뒤 canonical shopping `rawSrtTrack`을 타며, 별도 audio track은 만들지 않는다
+  (`AutoFlowCut/src/hooks/useExport.js:183-190`,
+  `AutoFlowCut/src/exporters/prepareCloudRequest.js:289-303`,
+  `AutoFlowCut/src/exporters/prepareCloudRequest.js:387-396`).
 - M5는 `sourceAudioPolicy:'native'`를 CapCut video overlay source-audio-on으로 물질화하고 실제 project에서
   persona 음성이 들리고 product still 구간에 별도 voice track이 없는지 검증한다. U4가 실패하면 exporter
-  계약을 구현하기 전에는 MVP를 완료로 치지 않는다.
+  계약을 구현하기 전에는 MVP를 완료로 치지 않는다. 현재 client overlay에는 `sourceAudio` 필드가 없고
+  (`AutoFlowCut/src/exporters/prepareCloudRequest.js:183-191`), GCF 입력/segment에도 이를 해석하는 필드가 없다
+  (`whisk2capcut/functions/index.suffixed.js:918-924`,
+  `whisk2capcut/functions/index.suffixed.js:1157-1199`). 실패 시 AutoFlowCut cloudRequest에 `sourceAudio` 계약을
+  신설하고 `whisk2capcut` GCF를 함께 수정·test/prod 배포해야 한다. 별도 repo의 배포 스크립트가 함수 선택과
+  Firebase deploy를 수행한다(`whisk2capcut/functions/deploy.sh:174-194`). 이는 M5 일정 위험이다.
 
 이 결정은 lip/voice 자연스러움을 얻는 대신 timing 자동 검증과 음색 결정성을 포기한다. 그 비용을 짧은
-대사, full clip, scene-block 자막, 별도 인간 claim 대조 gate로 지불한다.
+대사, 한 프레임 이내 export-equivalent window, scene-block 자막, 별도 인간 claim 대조 gate로 지불한다.
 
 ### D11. 검수와 export
 
@@ -701,7 +744,7 @@ record지만 둘 다 이 2단 값만 가지며, `manual-review` enum이나 5개 
 #### D11.2 필수 인간 대사 검수
 
 프레임 검수는 소리를 보지 못하므로 persona scene마다 별도 G 툴 `shopping_update_dialogue_review`를 쓴다.
-approval presenter는 current clip을 재생할 수 있는 player, 승인 `dialogueText`, 연결 claim/source fact,
+approval presenter는 D9 공용 resolver로 만든 **export-equivalent 합성 window**를 재생하는 player, 승인 `dialogueText`, 연결 claim/source fact,
 scene 순서의 이전·다음 persona clip을 함께 보여준다. 사용자는 실제 원음을 들은 뒤 아래를 한 번에 확인하고
 `ok` 또는 `rejected`만 남긴다.
 
@@ -725,7 +768,8 @@ clip bytes, plan hash, expected text 중 하나라도 바뀌면 자동 stale다.
   persona 재생성으로 active asset이 바뀌거나 i2v bytes가 바뀌어도 video digest binding이 옛 review를 stale로
   만든다.
 - shopping export gate는 모든 fixed slot pair, project.json materialization revision/digest 일치, 실제 base
-  image, persona placeholder 해소, 필요한 i2v result, full-source trim, persona source audio enabled,
+  image, persona placeholder 해소, 필요한 i2v result, 승인 full-range trim과 admissible D9 window,
+  persona source audio enabled,
   shopping SRT block, 모든 scene visual `ok`, 모든 persona dialogue `ok`,
   `approvedHash===currentHash`를 요구한다.
 - project journal에 **미종결(open) `acceptance_unknown` row가 하나라도 있으면 revision과 무관하게 export를
@@ -734,9 +778,50 @@ clip bytes, plan hash, expected text 중 하나라도 바뀌면 자동 stale다.
 - 기존 `export_capcut({force:true})`의 force도 shopping review/hash/materialization/audio/placeholder/open-hold
   gate를 우회하지 못한다. batch 진행 여부 같은 기존 soft gate만 우회할 수 있다.
 
+**시행 지점은 `useExport`의 공용 renderer preflight + main의 durable admission 한 경로**다. M5에서
+`admitFixedExport` 옆에 async `admitShoppingExport(target, preparedRequest)`를 두고 UI의
+`handleExportConfirm`/`handleExportPremiere`/**`handleExportVrew`**가 외부 GCF 호출이나 파일 쓰기 전에 반드시
+호출한다. 현재 UI modal은 세 handler를 직접 받고(`AutoFlowCut/src/App.jsx:3751-3756`), Vrew도 현재는
+fixed gate 뒤에 project와 `audioPackage`를 로컬 exporter로 보낸다
+(`AutoFlowCut/src/hooks/useExport.js:445-487`). CapCut/Premiere도 같은 fixed gate를 호출한다
+(`AutoFlowCut/src/hooks/useExport.js:55-96`, `AutoFlowCut/src/hooks/useExport.js:243-247`,
+`AutoFlowCut/src/hooks/useExport.js:350-356`). agent도 별도 exporter가 아니라 `window.__mcpExport*`를 통해 이
+중 CapCut/Premiere handler를 재사용하고 `force`를 실행 handler에 전달하지 않는다
+(`AutoFlowCut/src/agent/exportBridge.js:4-7`). 외부 export 진입점은 **UI 3개+agent 2개=5개**이고 `force`는
+agent 경로의 옵션이지 여섯 번째 handler가 아니다. Vrew agent bridge는 allowlist에 없다
+(`AutoFlowCut/src/agent/toolBridgeHandlers.js:15-19`). 이 다섯 진입이 세 renderer handler에서 같은 shopping
+gate를 통과하므로 agent tool layer에만 gate를 둘 수 없다.
+
+`admitShoppingExport`는 current project가 shopping이면 main IPC `export.shopping.admit`을 호출해 project lock
+안에서 D11의 durable plan/hash/materialization/review/open-hold 조건을 다시 읽는다. CapCut은
+`exportCapcut`을 prepare/execute 두 단계로 나눠 **prepared cloudRequest를 검사한 뒤에만** execute한다.
+Shopping prepare 입력은 D10.3처럼 `storyAudio:null`, `audioPackage:null`로 강제하고 다음 파생 계약을 모두
+만족해야 한다.
+
+1. `cloudRequest.audioTracks === null`.
+2. `Array.isArray(cloudRequest.sfxItems) && cloudRequest.sfxItems.length === 0`. legacy scene의 `sfx_path`도
+   exporter에서 SFX가 되므로 fail-closed한다
+   (`AutoFlowCut/src/exporters/prepareCloudRequest.js:209-224`,
+   `AutoFlowCut/src/exporters/prepareCloudRequest.js:393-396`).
+3. `cloudRequest.srtEntries`가 canonical shopping scene-block SRT entries와 순서·text·start/end까지 deep exact match.
+4. 각 persona overlay의 source/target range가 D9 resolver의 review-player range와 exact match하고, 대응
+   project scene의 `sourceAudioPolicy:'native'`, gain 1.0이 유지된다. U4 확인 전에는 cloudRequest에 존재하지
+   않는 source-audio 필드를 검사했다고 간주하지 않는다.
+
+현재 exporter는 `audioPackage.media.video`가 있으면 narration track을 추가하고
+(`AutoFlowCut/src/exporters/prepareCloudRequest.js:289-303`), SRT는 `audioPackage.srtEntries`를
+`rawSrtTrack`보다 먼저 선택한다(`AutoFlowCut/src/exporters/prepareCloudRequest.js:387-396`). 그러므로 위 검사는
+Audio 탭 상태에 기대지 않는 fail-closed 산출물 gate다. 하나라도 다르면 `shopping-export-contract-mismatch`로
+끝내며 remote call/file write는 0회다.
+
+`export_premiere`, UI Premiere 버튼, **UI Vrew 버튼**은 shopping project에서
+`unsupported-for-shopping`으로 거부한다. UI가 실제 허용하는 세 포맷은 CapCut/Premiere/Vrew이고
+(`AutoFlowCut/src/utils/exportFormat.js:14`), Premiere와 Vrew의 native-audio/무음 still/SRT 계약은 MVP에서
+검증하지 않았으며 산출물도 CapCut으로 한정했기 때문이다. 비-shopping Premiere/Vrew 동작은 바꾸지 않는다.
+
 CapCut은 image를 base track, video를 overlay로 쓰며 image가 있는 scene만 exportable로 본다
 (`AutoFlowCut/src/utils/sceneMedia.js:32-52`). D7이 모든 scene에 base image를 보장하고 D9/D10이
-full-source/native-audio 정책을 추가해 이 계약에 맞춘다.
+export-equivalent window/native-audio 정책을 추가해 이 계약에 맞춘다.
 
 ### D12. 산출물
 
@@ -763,11 +848,14 @@ CapCut project의 target canvas는 1080×1920 portrait다. Veo 720p source는 �
 | `generate_shopping_video` | B | `{sceneIds}` | 승인 persona scene의 Veo i2v native-dialogue admission |
 | `shopping_update_dialogue_review` | G | `{sceneIds,status:'ok'|'rejected',reason?}` | current clip player+승인 대사를 보여준 뒤 video digest에 묶인 인간 대사 확인 기록 |
 | `shopping_force_retry` | B | `{submissionId, acknowledgement:'DUPLICATE_CHARGE_POSSIBLE'}` | old open row를 `superseded_by_user`로 종결하며 새 submissionId/attempt를 원자 생성 |
+| UI-only `handleExportVrew` | — | agent caller 없음 | shopping은 공용 gate에서 `unsupported-for-shopping`; bridge allowlist에도 없음 (`AutoFlowCut/src/hooks/useExport.js:445-487`, `AutoFlowCut/src/agent/toolBridgeHandlers.js:15-19`) |
 
 기존 `get_scene_images`, `get_scene_video_frames`, `update_visual_review`, `list_visual_reviews`,
 `list_problem_scenes`, `export_capcut`은 D7 resolver와 D11 shopping gate를 통해 재사용한다. 기존 `generate_videos`
 는 T2V 전용이라 shopping에서 호출하지 않는다
 (`AutoFlowCut/electron/agent/toolCore.js:744-755`).
+기존 `export_premiere`는 tool inventory에는 남지만 shopping project에서는 D11 공용 gate가
+`unsupported-for-shopping`으로 거부한다(`AutoFlowCut/electron/agent/toolCore.js:825-835`).
 
 ### 3.2 내부 bridge allowlist
 
@@ -778,6 +866,7 @@ CapCut project의 target canvas는 1080×1920 portrait다. Veo 720p source는 �
 | `image.shopping.admit` | 승인 persona image request admission | caller prompt/model/ref |
 | `video.shopping.i2v.admit` | 승인 scene i2v admission | T2V, caller prompt/model/duration/ref |
 | `video.shopping.dialogue-review` | current plan/scene/video digest를 대조하고 approval용 로컬 clip player packet 제공 | caller path, 다른 project clip, audio 변조 |
+| `export.shopping.admit` | target과 prepared request digest를 받아 main durable state·review·open hold·파생 audio/SRT/SFX/window 계약 확인 | caller override, force bypass, Premiere/Vrew shopping export |
 | 기존 `scene.snapshot`, `video.frames`, `export.capcut` | 조회·검수·export | 기존 계약 유지 |
 
 main과 renderer 양쪽 allowlist가 같은 exact name set을 테스트한다. 내부 bridge는 agent MCP inventory에
@@ -809,13 +898,12 @@ D8 admission/journal, D10 native-audio/export 계약의 semantic diff를 별도�
 
 ### 4.3 스펙 추적·커밋 선행 게이트
 
-옛 `docs/superpowers/`는 저장소 ignore 대상이다(`AutoFlowCut/.gitignore:28-31`). R2는 이동된 v1·v2도
-아직 untracked라고 보고했다
-(`/private/tmp/claude-501/-Users-tuxxon-workspace/f3e45e2d-ad7c-463a-8d16-26c19884829e/scratchpad/FABLE-R2.md:65-67`).
-R3 승인 직후 M0.5보다 먼저 현재 v3 본문인
-`docs/handoffs/2026-07-23-shopping-shorts-spec-v2.md`와 보존용 v1을 `git add`/commit해야 한다.
-구현 시작 gate는 두 경로가 `git ls-files --error-unmatch`를 통과하고 v3 commit SHA가 구현 PR/commit
-메시지에 기록되는 것이다. 본 문서 작성 작업 자체는 코드 commit을 수행하지 않는다.
+옛 `docs/superpowers/`는 저장소 ignore 대상이다(`AutoFlowCut/.gitignore:28-31`). 그러나 이동된 v1과 당시 v3
+본문은 이미 commit `7008753f`에 tracked됐고 R3 시작 시 working tree도 clean이었다
+(`/private/tmp/claude-501/-Users-tuxxon-workspace/f3e45e2d-ad7c-463a-8d16-26c19884829e/scratchpad/FABLE-R3.md:3-7`).
+v5는 새 경로를 만들지 않고 같은 tracked 파일을 갱신한다. 별도 “문서를 먼저 track” gate는 끝났으며,
+M0에 남는 일은 최종 v5를 commit한 뒤 **그 v5 commit SHA를 구현 PR에 기록**하는 것뿐이다. 본 문서 작성
+작업 자체는 commit을 수행하지 않는다.
 
 ---
 
@@ -823,14 +911,14 @@ R3 승인 직후 M0.5보다 먼저 현재 v3 본문인
 
 | M | 내용 | 검증 가능한 출구 조건 |
 |---|---|---|
-| **M0** | §4.3 스펙 추적 gate | v1과 이 v3 문서가 git tracked/committed이고 구현 작업이 v3 commit SHA를 가리킴 |
+| **M0** | §4.3 스펙 버전 pin | 최종 v5를 commit하고 구현 PR이 그 v5 commit SHA를 기록함 |
 | **M0.5** | 원본 `SKILL.md`+references 4종을 byte-for-byte 병행 배포하고 `metadata.json`만 추가 | `list_skills` 노출·설치 확인. metadata description과 `runtimePrerequisites`에 **Higgsfield MCP의 `show_marketing_studio`/generations 필요, 인앱 MVP와 별도**라고 표시. 현재 installer가 metadata의 name/version/description/dependencies만 목록에 내므로(`AutoFlowCut/electron/ipc/mcp.js:162-187`) description에도 전제조건을 넣는다. 앱 실행 경로에는 영향 없음 |
 | **M1** | `safeHttpFetch` + 쿠팡 JSON-LD/OG parser + `product_fetch` + 로컬 수동 이미지 첨부 | 캡처 HTML fixture에서 allowlisted 필드/provenance green. socket pin, mixed DNS, mapped IPv6/NAT64/ULA/link-local/multicast/reserved/0/8, 상대 redirect, downgrade, deadline, decompressed byte, MIME/magic, pixel bomb 테스트 green. local picker는 caller path/URL 0개, digest/decode limit/cleanup green. 라이브 쿠팡은 수동 smoke만 |
-| **M2** | bounded playbook loader, claim validator, persona builder/fingerprint, **ShoppingPlanInput v2/canonical schema 정의** | Claude/Codex SDK 봉인 불변. 모든 section confirm gate와 B 툴 `workflow`+`quality` gate. 승인 dialogue/subtitle claim coverage, 허위 체험·고아 claim 거부. exact `a Korean woman in her 30s`. `imageSeed` unknown. native speech/silent still/scene-block policy와 `videoPrompt` 포함 canonical hash golden test |
+| **M2** | bounded playbook loader, claim validator, persona builder/fingerprint, **ShoppingPlanInput v2/canonical schema 정의** | Claude/Codex SDK 봉인 불변. 모든 section confirm gate와 B 툴 `workflow`+`quality` gate. splitter 없는 ordered claim concatenation coverage, 허위 체험·고아 claim 거부, 연속 product-still 합 5초 상한. exact `a Korean woman in her 30s`. `imageSeed` unknown. native speech/silent still/scene-block policy와 `videoPrompt` 포함 canonical hash golden test |
 | **M3** | durable plan store, approval presenter scene table, `shopping_confirm_plan`, **revision loop+원자적 scene materialization** | hash caller 입력 0개. 승인 전 mutation 0회. crawl/manual image digest 재검증. project.json의 shopping materialization revision/digest 저장·autosave 보존. 첫 revision과 rev+1의 renderer crash recovery. 모든 slot unique pair+base image, scene drop 0. non-shopping project 거부→UI 새 프로젝트→새 대화→URL 재입력 E2E green |
 | **M3.5** | Google image/Veo idempotency·reconciliation spike | 공식 API 실제 응답에서 idempotency key/list/reconciliation 지원 여부 기록. 미지원/미확인이면 open `acceptance_unknown`, project-scoped paid hold, manual-force/supersede 정책을 그대로 M4 gate로 확정 |
 | **M4** | persona image admission, Veo native-dialogue i2v admission, submission journal | 공식 API-only. 승인/materialization 전 과금 호출 0회. scene membership/fingerprint/active persona attempt/stale/project-token tests. row별 unique submissionId. 500/timeout→open hold, revision 우회 불가, force-retry만 old supersede+new reserve. generation seconds 비용 표시 |
-| **M5 (MVP)** | 2단 visual+human dialogue review, native-audio CapCut export, E2E | 쿠팡 fixture와 비쿠팡 수동 사실+로컬 이미지 각 1개 → 승인→물질화→persona/i2v → frame `ok/rejected` + clip 인간 대사 `ok/rejected` → 1080×1920·60초 미만 CapCut project. image 누락 0, persona 원음 audible, product still voice track 0, scene-block SRT, full clip, dialogue drift/rejected/open hold/stale plan export 차단. 실물 CapCut에서 U4 해소 |
+| **M5 (MVP)** | 2단 visual+human dialogue review, native-audio CapCut export, E2E | 쿠팡 fixture와 비쿠팡 수동 사실+로컬 이미지 각 1개 → 승인→물질화→persona/i2v → frame `ok/rejected` + clip 인간 대사 `ok/rejected` → 1080×1920·60초 미만 CapCut project. image 누락 0, persona 원음 audible, product still voice track 0, exact scene-block SRT, review/export window 동일, dialogue drift/rejected/open hold/stale plan과 shopping Premiere export 차단. UI·agent·force가 공용 gate를 통과하고 Audio 탭 오염에도 `audioTracks:null`. 실물 CapCut에서 U4를 해소해야 출구 통과. **U4 실패 시 AutoFlowCut cloudRequest `sourceAudio` 신설 + `whisk2capcut` GCF 수정·test/prod 배포라는 크로스-레포 작업이 추가되며 일정 재산정** |
 | **M6 (마지막·MVP 밖)** | `feature/self-render` 통합 후 완성 MP4 | 별도 merge·회귀·패키징 계획과 portrait 1080×1920/30fps/CRF20 검증. 이 뒤 마일스톤은 본 스펙에 두지 않는다 |
 
 다중 세트, 업로드, Higgsfield, 다른 사이트 자동 크롤은 M6에도 넣지 않는다. 별도 제품 결정과 별도 스펙이
@@ -862,6 +950,11 @@ R3 승인 직후 M0.5보다 먼저 현재 v3 본문인
   scene별 `productImageId` 매핑 변경도 각각 hash를 바꾼다.
 - `imageSeed` 입력은 unknown key로 거부하고, 동일 persona 재생성은 seed가 아니라 journal attempt가 증가한다.
 - “직접 확인해봤습니다”, “첫 느낌”, “문의가 폭주했습니다”가 source fact 없이 승인되지 않는다.
+- claim text의 순서 있는 연결은 승인 dialogue/subtitle과 Unicode whitespace를 제거한 뒤 exact match해야 한다.
+  마침표 없는 “좋아요”, “맞나요?”, 줄바꿈 fixture가 같은 규칙을 쓰며 문자·문장부호 하나의 추가/누락과
+  claim 순서 교환은 거부된다.
+- maximal consecutive product-still run 합 5,000ms는 통과하고 5,001ms는 거부한다. 중간 persona scene이
+  들어오면 run 합이 초기화된다.
 - SDK options snapshot에서 Claude `skills`/`settingSources`가 빈 배열이고 Codex skill instructions가 계속
   false인지 확인한다.
 
@@ -892,8 +985,14 @@ R3 승인 직후 M0.5보다 먼저 현재 v3 본문인
 ### 6.4 timing·native audio·review·export
 
 - timeline total과 generation total을 별도로 계산하고 B approval은 generation total을 표시한다.
-- persona 4/6/8초 clip은 timeline과 같은 full-source `{0,end}`로 export된다. non-full trim을 schema가
-  거부하고, measured duration mismatch나 중간에 끊긴 대사는 자동 timeline 변경 없이 block한다.
+- persona 4/6/8초 plan은 승인 full-range `{0,planEnd}`를 목표로 하되 `videoI2VDuration`에는 probe 실측값을
+  저장한다. non-full author trim을 schema가 거부하고, 34ms 초과 mismatch나 중간에 끊긴 대사는 자동 timeline
+  변경 없이 block한다.
+- 8초 plan에 probe **7.95s와 8.05s** fixture를 각각 넣어 공용 resolver가 검수 player와 export builder에
+  동일한 source range·timeline placement를 반환하는지 비교한다. 둘 다 50ms 차이이므로
+  `video-duration-mismatch`로 player 승인·export가 함께 차단돼야 한다. 허용 경계 fixture 7.98s/8.02s도
+  각각 review 재생 범위·배치와 export 범위·배치가 exact match하는지 확인한다. **34ms exact**인 8.034s는
+  `videoI2VProbeDurationMs===8034`로 통과하고 8.035s는 거부해 float 왕복이 경계를 바꾸지 않는지도 검증한다.
 - product still에는 voice/audio track이 0개이고 persona i2v source audio는 mute 없이 gain 1.0이다.
   shopping 경로의 Google TTS network call, Story audio manifest, 별도 narration track은 모두 0회다.
 - 모든 자막은 승인 scene start/end의 한 block이다. persona는 exact `dialogueText`, product still은 exact
@@ -905,13 +1004,22 @@ R3 승인 직후 M0.5보다 먼저 현재 v3 본문인
   scene 순서 playback에서 voice identity·상대 음량·추가 음악이 다르면 `rejected`다.
 - visual/dialogue review는 각각 `ok/rejected` 외 값을 거부한다. rejected·unreviewed·stale·open hold가
   하나라도 있으면 export를 막는다.
+- dialogue가 unreviewed인 shopping project에서 agent `export_capcut`, `force:true`, **UI CapCut 버튼**을 각각
+  호출해 모두 같은 `dialogue-review-required`로 remote call/file write 0회인지 확인한다. UI/agent
+  `export_premiere`와 **UI Vrew 버튼**은 review 상태와 무관하게 `unsupported-for-shopping`, 비-shopping
+  Premiere/Vrew는 기존 동작이다.
+- Audio 탭에 MP3, SRT, voice/SFX package를 넣은 shopping project도 prepare 입력이
+  `storyAudio:null`/`audioPackage:null`이고, built cloudRequest의 `audioTracks === null`, `sfxItems.length === 0`,
+  `srtEntries`가 canonical shopping SRT block과 deep exact match인지 검사한다. legacy `sfx_path`를 넣은 fixture도
+  거부한다. 어느 필드든 오염시키면 공용 gate가
+  `shopping-export-contract-mismatch`로 차단한다.
 - 실제 CapCut 프로젝트를 열어 persona 한국어 원음이 들리고 product still은 무음이며 자막 block이 scene
   경계에 맞는지 수동 smoke한다. 이 검증 전에는 U4를 확인 사실로 승격하지 않는다.
 - E2E 성공 결과의 `sum(scene duration) < 60s`, scene count 일치, 누락 image 0을 검사한다.
 
 ---
 
-## §X. R1·R2 findings 대응표 (34건)
+## §X. R1·R2·R3·R4 findings 대응표 (43건)
 
 | Finding | 어떻게 닫았는가 |
 |---|---|
@@ -943,31 +1051,37 @@ R3 승인 직후 M0.5보다 먼저 현재 v3 본문인
 | **[Fable-R2-3]** 비쿠팡 수동 이미지 경로 사망 | D3.4에서 arbitrary network policy 대신 native **로컬 파일 첨부**를 채택. opaque attachment/digest/decode limit로 묶고 D5/D7/M1에 연결 |
 | **[Fable-R2-4]** 빈 프로젝트 요구 뒤 대화 단절 | D1에서 자동 re-pin을 기각하고 `project-not-empty → restartPrompt → UI 빈 프로젝트 → 새 대화 → URL 재입력 → playbook 재로드`를 확정. M3/§6.3 E2E 배정 |
 | **[Fable-R2-5]** canonical hash에 videoPrompt 누락 | D5.3에 exact `videoPrompt`, `visualDescription`, scene별 `productImageId`를 열거하고 §6.2에 1글자 변경 hash test 추가 |
-| **[Fable-R2-6]** 이동 앵커·문서 untracked | §0의 v1 handoff 앵커 5개는 오케스트레이터 수정본을 유지. §4.3/M0에 v1+현재 v3 `git ls-files`/commit 선행 gate 추가 |
+| **[Fable-R2-6]** 이동 앵커·문서 untracked | §0의 v1 handoff 앵커 5개는 오케스트레이터 수정본을 유지. §4.3은 v1+v3가 `7008753f`에 이미 tracked됐음을 반영하고 M0을 최종 v5 SHA 기록으로 갱신 |
 | **[Fable-R2-7]** 죽은 imageSeed·persona 재생성 의미 부재 | D5에서 `imageSeed` 제거·unknown 처리. D8.1에서 definite fail/인간 reject만 attempt 증가, active asset 교체 시 dependent i2v/review stale 규칙 명시 |
 | **[Fable-R2-8]** 단방향 상태와 revision 모순 | D1에 materialized 이후 `approved_materializing(rev+1)` loop, D5/D7에 rollback/commit 규칙, §6.3에 반복 revision crash recovery test 추가 |
 | **[Fable-R2-9]** crash recovery persisted 판정값 없음 | D7에 project.json top-level `shoppingMaterializationRevision`/`shoppingMaterializationDigest` schema, digest 대상과 boot main 직접 read 판정 명시 |
 | **[Fable-R2-10]** 재시작 세션이 playbook 없이 생성 | D2에서 모든 과금 B와 대사 확인 G에 current workflow+quality digest gate. `shopping_get_state`가 unread section/next action을 매번 반환 |
 | **[Fable-R2-11]** force-retry submissionId 발급 규칙 없음 | D8.2에서 main이 lock 안 pre-POST `shopsub_` UUID를 row마다 발급하고 primary key/unique tuple/불변·비재사용 규칙 명시 |
+| **[Fable-R3-1]** ±100ms와 full-source 모순·`videoI2VDuration` 미정의 | D9에서 수정안 (a)를 채택해 허용창을 30fps 한 프레임인 34ms로 축소. `videoI2VDuration=probeDurationMs/1000`, plan 값은 별도 필드로 확정하고 review/export 공용 window resolver를 정의. §6.4에 7.95/8.05 차단 및 허용 경계 range 동일성 test 추가 |
+| **[Fable-R3-2]** export gate 시행 레이어·Premiere 우회 | D11.3에서 `useExport` 공용 preflight와 main durable admission을 UI·agent·force 모두의 단일 경로로 지정. Shopping `export_premiere`는 `unsupported-for-shopping`; §6.4에 UI dialogue-unreviewed 차단 test 추가 |
+| **[Fable-R3-3]** SRT 우선순위 오류·Audio 탭 오염 | D10.3에서 실제 `audioPackage.srtEntries → rawSrtTrack → srtTrack` 순서로 정정하고 shopping prepare를 `storyAudio:null`+`audioPackage:null`로 고정. D11.3/§6.4에 built `audioTracks===null`과 canonical SRT deep exact gate 추가 |
+| **[Fable-R3-4]** U4 실패의 GCF 크로스-레포 비용 누락 | U4, D10.3, M5에서 실패 시 AutoFlowCut `sourceAudio` cloud contract와 `whisk2capcut` GCF 수정·test/prod 배포가 필요하며 일정 재산정 대상임을 명시 |
+| **[Fable-R3-5]** 연속 product-still 장시간 무음 | D5 validator에 maximal consecutive product-still timeline 합 5,000ms 상한을 추가하고 M2/§6.2에 5,000/5,001ms·persona reset test 배정 |
+| **[Fable-R3-6]** claim exact-match 문장 경계 미정의 | D4에서 splitter를 제거하고 `N(승인 텍스트) === ordered concat(N(claim.text))`로 정식화. Unicode whitespace만 무시하고 나머지 문자는 보존하며 §6.2에 한국어 종결·물음표·줄바꿈 test 추가 |
+| **[Fable-R4-1]** Vrew UI export가 shopping gate 우회 | D11.3에서 UI 3개+agent 2개=5개 진입을 열거하고 `handleExportVrew`도 공용 admission을 거쳐 `unsupported-for-shopping`으로 거부. §3.1과 §6.4에 Vrew UI-only 경로와 차단 test 추가 |
+| **[Fable-R4-2]** resolver probe integer 정본 부재 | D9에서 `videoI2VProbeDurationMs` integer를 유일한 resolver 정본으로 저장하고 float 초 역산을 금지. §6.4에 8.034s 허용/8.035s 거부 경계 test 추가 |
+| **[Fable-R4-3]** 파생 계약에 SFX 무음 검사 누락 | D11.3에 `Array.isArray(sfxItems) && sfxItems.length===0` gate를 추가하고 §6.4에 legacy `sfx_path` 거부 test 배정 |
 
 ---
 
-## §Y. 리뷰어에게 묻는 것 (R3)
+## §Y. 구현 착수 체크리스트
 
-1. **D10 최우선**: 사용자 선택인 “persona=Veo 네이티브 한국어 원음, product still=무음+scene-block
-   자막”에서 승인 밖 발화 위험을 video digest에 묶인 필수 인간 대사 `ok|rejected`로 닫은 것이 충분한가?
-   자동 STT 없이도 claim gate가 형식뿐인 승인으로 퇴행하지 않는가?
-2. D9의 persona full-source/no-trim, 4/6/8초 grapheme budget, 불완전 발화 시 더 긴 grid 또는 scene 분할
-   재승인 규칙이 대사 중간 cut을 완전히 없애는가? ±100ms duration mismatch 기준에 구현상 맹점이 있는가?
-3. D10의 product still 무음은 두 음성 정본의 volume/tone 충돌을 없애지만 정보 전달을 자막에 맡긴다.
-   MVP를 유지하면서도 반드시 필요한 별도 audio source가 있는가, 아니면 Google TTS 보조는 후속으로 두는가?
-4. D8.2의 `acceptance_unknown → superseded_by_user + 새 reserved` 원자 transaction과 project-scoped paid
-   hold가 중복 과금 우회 및 force-retry 후 export deadlock을 모두 닫는가? late old success 처리에 빠진 상태가 있는가?
-5. D7의 project.json materialization revision/digest와 boot main 직접 read가 첫 물질화와 rev+1 loop 모두에서
-   all-or-none recovery를 증명하는가? normal autosave가 shopping field를 잃는 경로가 더 있는가?
-6. D3.4의 로컬 파일 첨부가 비쿠팡 수동 fallback을 실제로 살리면서 arbitrary URL/경로 권한을 충분히
-   막는가? staging 수명·project 전환 cleanup에 더 강한 경계가 필요한가?
-7. D1의 `project-not-empty → UI 새 프로젝트 → 새 대화 → URL 재입력`은 자동 re-pin/global draft를 만들지
-   않는 대신 작업을 다시 시작한다. 비개발자 E2E로 충분히 명확하며 token/read-ledger 경계와 맞는가?
-8. M0~M5 출구 조건으로 쿠팡/수동 입력→native-dialogue CapCut E2E가 실제로 닫히는가? 특히 U4
-   source-audio 보존 실물 smoke 전에는 MVP 완료를 선언할 수 없다는 gate가 적절한가?
+R4로 리뷰 루프를 끝낸다. M1~M4는 R4 export finding과 독립이므로 지금 착수할 수 있고, R4 3건의 구현은
+전부 M5 export gate 범위다.
+
+| 마일스톤 | 착수 전 확인 |
+|---|---|
+| **M0** | 최종 v5 commit SHA를 구현 PR에 기록한다. |
+| **M0.5** | 원본 skill의 Higgsfield MCP 전제조건이 metadata description과 `runtimePrerequisites`에 모두 적혔는지 확인한다. |
+| **M1** | 캡처 fixture와 수동 live smoke를 분리하고, HTML·이미지가 같은 socket-pinned SSRF primitive를 쓴다는 test 경계를 고정한다. **착수 가능.** |
+| **M2** | `ShoppingPlanInput`/canonical hash, ordered claim coverage, 단일 persona와 bounded playbook schema를 먼저 pin한다. **착수 가능.** |
+| **M3** | M2 schema를 입력 계약으로 삼고 main store·revision loop·원자적 materialization과 crash recovery owner를 확정한다. **착수 가능.** |
+| **M3.5** | M4의 paid submission 전에 Google idempotency/list/reconciliation 실제 지원 여부를 기록한다. |
+| **M4** | M3 materialization identity와 M3.5 결론을 admission/journal 선행조건으로 고정한다. R4 finding은 M4 blocker가 아니다. **착수 가능.** |
+| **M5** | 공용 admission이 UI 3개+agent 2개를 덮고 Premiere/Vrew를 거부하는지, `videoI2VProbeDurationMs` integer 경계, `audioTracks===null`, 빈 `sfxItems`, exact SRT/window와 U4 실물 CapCut source audio를 모두 통과시킨 뒤 MVP 완료를 선언한다. |
+| **M6** | MVP 완료 뒤에만 `feature/self-render` 별도 merge·회귀 계획으로 착수한다. |
