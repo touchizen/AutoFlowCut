@@ -10,7 +10,7 @@
  *   Hook 순서 위반, 런타임 오류, 실제 번들 산출물은 못 잡는다 — 그건 실행/빌드가 잡는다.
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { transformSync, buildSync } from 'esbuild'
@@ -51,9 +51,25 @@ describe('renderer sources', () => {
       write: false,
       format: 'esm',
       loader: { '.js': 'jsx', '.jsx': 'jsx', '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
-      // /assets/* 는 Vite 의 publicDir 로 서빙되는 절대 경로라 번들러가 풀 대상이 아니다.
-      external: ['react', 'react-dom', 'react-dom/client', 'electron', 'firebase', 'firebase/*', '@sentry/*', '/assets/*'],
+      // 패키지를 external 로 빼면 그 경로의 오타(`firebase/nope`)를 못 잡는다 — 이 테스트의 목적이
+      // 바로 그것이므로 최소한만 뺀다. electron 은 renderer 번들에 없고, /assets/* 는 Vite publicDir.
+      external: ['electron', '/assets/*'],
       logLevel: 'silent',
     })).not.toThrow()
+  })
+
+  // 이 그물이 실제로 무는지 — 없는 모듈을 import 하면 실패해야 한다. 안 그러면 external 목록이
+  // 넓어질 때 테스트가 조용히 무력해진다.
+  it('없는 모듈 import 는 실패로 잡힌다', () => {
+    const probe = join(SRC, '__import_probe__.jsx')
+    writeFileSync(probe, "import x from './definitely-not-real-module'\nexport default x\n")
+    try {
+      expect(() => buildSync({
+        entryPoints: [probe], bundle: true, write: false, format: 'esm',
+        loader: { '.js': 'jsx', '.jsx': 'jsx' }, external: ['electron', '/assets/*'], logLevel: 'silent',
+      })).toThrow()
+    } finally {
+      rmSync(probe, { force: true })
+    }
   })
 })
