@@ -799,6 +799,9 @@ export function useProjectData({
       if (!saved) return { ok: false, reason: 'persist-failed' }
       if (!stillCurrent()) return { ok: false, reason: 'superseded' }
       confirmedBindingRef.current = { projectName, flowProjectId: id }
+      // 사용자가 정상 프로젝트를 지정했다 — 이 프로젝트가 나중에 죽으면 다시 자동 생성해도 된다.
+      createDistrustRef.current.delete(projectName)
+      createdIdsRef.current.delete(projectName)
       setFlowProjectId(id)
       setFlowProjectReady(true)
       adoptPreIdRef.current = id
@@ -888,6 +891,10 @@ export function useProjectData({
     //    것으로 되살아난다.
     const startEpoch = loadEpochRef.current
 
+    // 이 bind 의 세대. 늦게 도착한 응답이 최신 bind 의 결과를 덮어쓰지 않도록 쓰기 앞에서 대조한다.
+    const myBindGeneration = ++bindGenerationRef.current
+    const isNewestBind = () => bindGenerationRef.current === myBindGeneration
+
     const bind = async () => {
       if (flowProjectId) {
         // #R8-3: 이미 이 (projectName, flowProjectId) 가 이번 세션에서 confirmed 면 재오픈하지 않는다 —
@@ -904,6 +911,10 @@ export function useProjectData({
           const r = await window.electronAPI?.openFlowProject?.({ flowProjectId })
           if (!cancelled) {
             const ok = await applyOpenResult(r, flowProjectId, currentProjectName, () => !cancelled && modeRef.current === 'flow')
+            // 첫 확인에 성공하면 더 이상 "확인 대기 중인 생성물"이 아니다. 표식을 남겨 두면 한참
+            // 뒤에 그 프로젝트가 삭제돼 죽은 매핑이 됐을 때도 "생성 직후 실패"로 오인해 자동
+            // 생성을 세션 내내 막는다.
+            if (ok) createdIdsRef.current.delete(currentProjectName)
             // 방금 이 앱이 만든 프로젝트가 확인에 실패했다면 다시 만들어도 같은 결과일 공산이 크다.
             if (!ok && createdIdsRef.current.get(currentProjectName) === flowProjectId) {
               createDistrustRef.current.add(currentProjectName)
@@ -968,6 +979,13 @@ export function useProjectData({
           if (distrusted) console.warn('[ProjectData] mode-entry: 생성 불신 상태 — 사용자의 채택을 기다린다')
           const r = distrusted ? null : await window.electronAPI?.newFlowProject?.()
           if (r?.success && r?.projectId) {
+            // ⚠️ 워치독이 잠금을 푼 뒤 새 bind 가 시작됐다면, 이 응답은 옛 세대의 것이다. 그대로
+            //    park/persist 하면 최신 bind 가 확인해 둔 매핑을 디스크에서 옛 id 로 덮는다
+            //    (앱은 확인된 프로젝트를 쓰는데 재시작하면 빈 프로젝트로 열린다).
+            if (!isNewestBind()) {
+              console.warn('[ProjectData] mode-entry: 늦게 도착한 생성 응답 무시 —', r.projectId)
+              return
+            }
             createdIdsRef.current.set(currentProjectName, r.projectId)
             // 만들어진 프로젝트는 취소 여부와 무관하게 이 로컬 프로젝트의 것이다 — 저장을
             // 기다리기 전에 먼저 붙잡아 둔다. 여기서 cancelled 로 버리면 그 프로젝트를 잃고
@@ -1034,7 +1052,6 @@ export function useProjectData({
       }
     }
 
-    const myBindGeneration = ++bindGenerationRef.current
     bindInFlightRef.current = true
     const releaseBind = () => {
       // 아직 내가 최신 세대일 때만 푼다 — 취소된 이전 세대는 남의 in-flight 를 끄지 않는다.

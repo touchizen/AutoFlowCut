@@ -411,6 +411,46 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
 
     expect(openFlowProject).toHaveBeenCalledWith({ flowProjectId: 'created-id' })
     expect(result.current.flowProjectReady).toBe(false)
+
+    // 생성이 막힌 상태에서 사용자에게 탈출로가 있어야 한다 — 재생성만 멈추고 채택을 arm 하지
+    // 않으면 그대로 영구 차단이다. 사용자가 Flow 에서 쓸 만한 프로젝트를 열면 확인을 묻는다.
+    flowExtractProjectId.mockResolvedValue({ success: true, projectId: 'user-picked' })
+    openFlowProject.mockResolvedValue({ success: true, already: true, url: urlOf('user-picked') })
+
+    let res
+    await act(async () => { res = await result.current.tryAdoptFlowProject() })
+    expect(res).toMatchObject({ ok: false, reason: 'needs-confirm', projectId: 'user-picked' })
+
+    await act(async () => { res = await result.current.tryAdoptFlowProject({ confirmed: true, expectedId: 'user-picked' }) })
+    expect(res).toMatchObject({ ok: true, projectId: 'user-picked' })
+    expect(result.current.flowProjectReady).toBe(true)
+    expect(fileSystemAPI.mergeProjectData).toHaveBeenCalledWith('p1', { flowProjectId: 'user-picked' })
+  })
+
+  // 저장이 끝나는 사이 프로젝트가 바뀌면, 그 id 는 이전 프로젝트의 것이다 — 새 프로젝트의 state 에
+  // 적용하면 앞으로의 생성이 남의 Flow 프로젝트로 나간다.
+  it('저장이 끝나기 전 프로젝트가 바뀌면 그 id 를 새 프로젝트에 적용하지 않는다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'p1-flow-id' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'p1-flow-id' })
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('p1-flow-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.projectExists.mockResolvedValue(false)
+    let resolveMerge
+    fileSystemAPI.mergeProjectData.mockImplementation(() => new Promise((r) => { resolveMerge = r }))
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    expect(resolveMerge).toBeTypeOf('function')
+
+    // 저장이 끝나기 전에 전환이 시작돼 epoch 가 오른다. cleanup 이 커밋되기 전에 저장이 끝나는
+    // 창을 열어(같은 act) — 이 창에서는 epoch 대조만이 이전 프로젝트의 id 를 막는다.
+    await act(async () => {
+      const switching = result.current.handleProjectChange('p9')
+      resolveMerge({ success: true })
+      await switching
+    })
+
+    expect(result.current.flowProjectId).toBeNull()
   })
 
   // 생성은 성공했는데 그 사이 모드가 바뀌면, 만들어진 Flow 프로젝트는 이미 존재한다. 그걸 버리면
