@@ -1,15 +1,15 @@
 # 스펙 v2 — 실제 Ref 작업에서만 레퍼런스 패널 자동 펼침
 
-작성 2026-07-23 / 브랜치 `main` / HEAD `b4629afe` 기준
+작성 2026-07-23 / 브랜치 `main` / HEAD `2c1f9114` 기준
 
 이 문서는 `2026-07-22-ref-peek-and-gutter-spinner-design.md`의 **기능 1만** 처음부터 다시 쓴다.
 기능 2(프롬프트 거터 진행 링)는 이미 리뷰를 통과했으므로 기존 문서에 남기고 여기서는 다루지 않는다.
 
-업로드 중 Stop 고착 수정은 `91abb635`로 이미 커밋됐고 HEAD `b4629afe`에 포함돼 있다. 이 스펙은
+업로드 중 Stop 고착 수정은 `91abb635`로 이미 커밋됐고 HEAD `2c1f9114`에 포함돼 있다. 이 스펙은
 `tests/hooks/useAutomation.uploadStopHang.test.jsx`와 `useAutomation`의 `settleIfDone`을 전제로 하며,
 그 문제를 다시 설계하거나 변경하지 않는다. 그 커밋의 삽입 때문에 앞선 리뷰의 clean-tree 앵커인 씬 큐
 직전 `setStatus('running')` 766줄/`setProgress` 767줄은 HEAD에서 각각 780/781줄이다. 아래 인용 앵커는
-모두 HEAD `b4629afe`의 실제 파일과 줄을 직접 대조한 기준이다.
+모두 HEAD `2c1f9114`의 실제 파일과 줄을 직접 대조한 기준이다.
 
 ---
 
@@ -434,6 +434,29 @@ StatusBar는 `preparing`을 그대로 보고, `/api/batch-status`, `app_batch_st
 ([mcp-server/index.js:1423-1435](../../mcp-server/index.js#L1423)) 동작은 바뀌지 않는다. 외부 문서와 MCP
 서버 enum을 늘리지 않는다.
 
+상태 문자열 정규화와 별도로 **외부 liveness 불리언**에는 개별 씬도 포함한다. 현재
+`__mcpBatchStatus`는 scene batch, video, Ref의 `refIsRunning`을 top-level `isRunning`으로 합치지만
+([useMcpServer.js:571-580](../../src/hooks/useMcpServer.js#L571)), App은 `generatingSceneId`를
+`useMcpServer`에 전달하지 않는다
+([App.jsx:1990-2008](../../src/App.jsx#L1990)). 변경 후 합성은 다음과 같다.
+
+```js
+externalIsRunning =
+     automationState.isRunning
+  || videoAutomation.isRunning
+  || refIsRunning
+  || Boolean(generatingSceneId)
+```
+
+App은 `generatingSceneId`를 별도 prop으로 전달하고, `useMcpServer`의 기존 stop/wait/restart용
+`isRunning` prop에도 `!!generatingSceneId`를 포함한다. 그러면 개별 씬 중 들어온 MCP batch start는
+`handleStartImpl`에서 조용히 버려지는 대신 기존 busy 경로에서 기다렸다가
+([useMcpServer.js:507-515](../../src/hooks/useMcpServer.js#L507)) 개별 씬 종료 뒤 실제 `handleStart`를
+호출한다. 동시에 대기 중 `/api/batch-status`도 `isRunning:true`여서 `app_wait_batch`가 시작되지 않은
+요청을 즉시 완료로 판정하지 않는다
+([mcp-server/index.js:1431-1435](../../mcp-server/index.js#L1431)). 별도 `busy` 필드나 외부 status enum은
+추가하지 않는다.
+
 StatusBar의 21~28줄은 라벨 맵이 아니라 클래스 맵이다
 ([StatusBar.jsx:21-28](../../src/components/StatusBar.jsx#L21)). CSS에는
 `.status-bar.uploading` 규칙만 있고
@@ -460,12 +483,21 @@ StatusBar의 21~28줄은 라벨 맵이 아니라 클래스 맵이다
 5. `src/services/startGuard.js`와 `src/App.jsx`는 `generatingSceneId`와 `refBatchRunning`을 Start 차단
    입력에 추가하고 primary Start 버튼도 같은 두 신호를 사용한다. `refBatchRunning`은
    `refBatchActive || stoppingRefs || generatingRefs.length > 0`로 계산한다.
-6. `src/hooks/useMcpServer.js`는 외부 batch status에서만 `preparing → running`으로 정규화한다.
-7. `src/components/StatusBar.jsx`는 `preparing`을 active progress로만 취급한다. CSS 변경은 없다.
-8. `src/hooks/useVideoAutomation.js`, `src/services/emptyRefGate.js`, `src/components/ReferencePanel.jsx`, MCP
+6. `src/App.jsx`는 `generatingSceneId`를 `useMcpServer`에 전달하고 stop/wait/restart용 `isRunning` 합성에도
+   포함한다. `src/hooks/useMcpServer.js`는 외부 batch status에서 `preparing → running`을 정규화하고,
+   top-level `isRunning`에도 `!!generatingSceneId`를 포함하며 등록 effect dependency에도 이 prop을
+   넣는다. 외부 status 문자열과 응답 필드 집합은 늘리지 않는다.
+7. `src/hooks/useSceneGeneration.js`는 `setGeneratingSceneId(sceneId)` 이후 폴더/auth/sync preflight와
+   기존 생성 try/catch 전체를 outer `try/finally`로 감싸고, `finally` 한 곳에서만
+   `setGeneratingSceneId(null)`을 보장한다. 조기 return의 다른 부수효과와 기존 생성 오류 처리는
+   유지한다. 현재 producer와 try 밖 preflight는
+   [useSceneGeneration.js:42-79](../../src/hooks/useSceneGeneration.js#L42), try 밖 해제는
+   [useSceneGeneration.js:193-197](../../src/hooks/useSceneGeneration.js#L193)에 있다.
+8. `src/components/StatusBar.jsx`는 `preparing`을 active progress로만 취급한다. CSS 변경은 없다.
+9. `src/hooks/useVideoAutomation.js`, `src/services/emptyRefGate.js`, `src/components/ReferencePanel.jsx`, MCP
    서버·Electron route는 변경하지 않는다. `preparingRefs` 표시 계약은 그대로라 ReferencePanel 변경이
    필요 없다.
-9. [App.jsx:2467-2501](../../src/App.jsx#L2467),
+10. [App.jsx:2467-2501](../../src/App.jsx#L2467),
    [App.jsx:2591-2612](../../src/App.jsx#L2591),
    [App.jsx:2691-2712](../../src/App.jsx#L2691)의 retry 진입점과 `anyRunning` 정의는 변경하지 않는다.
 
@@ -498,9 +530,12 @@ StatusBar의 21~28줄은 라벨 맵이 아니라 클래스 맵이다
 9. 패널을 억제한 뒤 프로젝트를 전환하거나 이름을 바꾸면 현재 open/closed 화면 상태는 즉시 바뀌지
    않지만, 다음 실제 Ref 작업은 옛 억제에 막히지 않는다.
 10. `generatingSceneId` 또는 `refBatchRunning`이 있는 동안 primary Start 버튼은 disabled이고 UI/MCP의
-    `handleStartImpl`은 새 batch를 enqueue하지 않는다. 개별 씬이나 Ref 작업이 끝난 뒤 자동으로
-    뒤늦은 `preparing` 상태나 패널 재열림이 나타나지 않는다. `handleStartImpl`을 우회하는 retry 버튼
-    세 곳에는 이 기준을 적용하지 않는다.
+    `handleStartImpl`은 새 batch를 enqueue하지 않는다. 개별 씬 중 들어온 MCP scene batch 요청은
+    `useMcpServer`의 stop/wait/restart 경로가 보류했다가 `generatingSceneId` 해제 뒤 한 번 시작하며,
+    차단되는 동안 `/api/batch-status`의 `isRunning`은 `true`라 `app_wait_batch`가 거짓 완료하지 않는다.
+    프리플라이트 IPC가 throw해도 `generatingSceneId`가 해제돼 primary Start가 영구 차단되지 않는다.
+    개별 씬이나 Ref 작업이 끝난 뒤 자동으로 뒤늦은 `preparing` 상태나 패널 재열림이 나타나지 않는다.
+    `handleStartImpl`을 우회하는 retry 버튼 세 곳에는 이 기준을 적용하지 않는다.
 11. 내부 이미지 자동화가 `preparing`일 때 StatusBar는 완료 개수 대신 `current / total (percent%)`를
     표시한다. 같은 시점의 `GET /api/batch-status`와 `app_batch_status` 응답의 `status`는
     `"running"`, `isRunning`은 `true`다.
@@ -516,10 +551,11 @@ App을 통째로 렌더하거나 `PromptInput`만 mock하면 된다고 가정하
 |---|---|
 | `useRefPanelVisibility` | `tests/hooks/useRefPanelVisibility.test.jsx`에서 `renderHook`으로 `refBatchActive`를 포함한 opening/bridge 분리 진리표, bridge 단독 비개방, 한 틱 F→T, 자동 소유/사용자 소유, `setOpenByUser(true/false)`, 같은 배치 억제, 다음 rising edge 해제, 늦은 sync 해제 타이밍, `projectKey` 변경, rename과 같은 key 변경, unmount, StrictMode를 fake timer로 실행한다. 특히 `preparingRefs`는 입력으로 받지 않고 `refBatchActive:true` 동안 다른 opening 신호가 모두 false여도 패널을 유지한다. |
 | Ref batch lifecycle | 기존 `tests/hooks/useReferenceGeneration.targetedBatch.test.jsx`에서 두 Flow character target을 실행한다. batch-global auth는 즉시 통과시키고 각 아이템의 `checkAuthToken`을 차례로 deferred해 `preparingRefs:false`, `generatingRefs:[]`인 auth 창에서도 `refBatchActive:true`이며 두 아이템 사이 state log에 false 렌더가 없음을 확인한다. permission/auth 조기 실패, 정상 완료, throw, Stop 뒤에는 둘 다 false인지 기존 batch stop 테스트와 함께 검증한다. |
-| noop/queued Stop 위치 계약 | `useReferenceGeneration`에 production 기본값이 `null`인 optional `beforeBatchActivation` dependency를 둔다. 테스트에서 이 gate를 `allTargets`/queued Stop 계산과 두 조기 반환 사이에 deferred로 주입한다. gate가 pending인 동안 target 0건과 queued Stop 모두 `refBatchActive:false`, `preparingRefs:false`인지 렌더로 관측하고, release 뒤 noop/stopped 반환까지 true log가 없는지 확인한다. producer를 조기 반환 앞으로 되돌리는 뮤턴트는 gate pending 중 true 렌더를 만들어 반드시 실패해야 한다. |
+| noop/queued Stop 위치 계약 | `useReferenceGeneration`에 production 기본값이 `null`인 optional `beforeBatchActivation` dependency를 둔다. 테스트에서 이 gate를 `allTargets`/queued Stop 계산과 두 조기 반환 사이에 deferred로 주입한다. gate가 pending인 동안 target 0건과 queued Stop 모두 `refBatchActive:false`, `preparingRefs:false`인지 렌더로 관측하고, release 뒤 noop/stopped 반환까지 true log가 없는지 확인한다. producer를 **gate 앞으로** 되돌리는 뮤턴트는 gate pending 중 true 렌더를 만들어 반드시 실패한다. producer를 gate 뒤·조기 반환 앞에 두는 변종은 그 사이 await가 없어 React 자동 배칭상 관측 동등이므로 생존할 수 있고, 현재 관측 가능한 실해도 없다. |
 | 이미지 status | `tests/hooks/useAutomation.preparingStatus.test.jsx`를 추가해 deferred folder/token 동안 `preparing`, 실제 upload에서 `uploading`, 첫 scene submit 직전 `running` 순서를 관측한다. quota reject와 `clearQueue` reject에서는 status가 `ready`에서 바뀌지 않는 케이스를 반드시 넣어 status를 enqueue 앞으로 옮기는 회귀를 막는다. |
 | Start 인터리브 | `tests/components/App.handleStart.test.js`가 실제 import하는 `isStartBlocked` 진리표에 `generatingSceneId`와 `refBatchRunning`을 각각 true로 넣고, 둘 다 false일 때만 통과함을 확인한다. `refBatchRunning` 합성은 아이템 auth deferred 상태에서도 true인지 Ref batch lifecycle 테스트가 맡는다. 버튼의 최종 disabled와 실경로는 아래 실앱 시나리오에서도 확인한다. |
-| MCP 계약 | `tests/hooks/useMcpServer.test.js`에서 `automationState.status:'preparing', isRunning:true`로 훅을 렌더한 뒤 `window.__mcpBatchStatus()`가 `status:'running'`을 반환하는지 실행한다. `uploading`, `running`, `done`, 별도 video status는 그대로 통과하는 표도 둔다. |
+| 개별 씬 busy cleanup | 기존 `tests/hooks/useSceneGeneration.preflightBusy.test.js`에 `checkFolderPermission`, `checkAuthToken`, `requestMentionSync`가 각각 reject하는 표를 추가한다. 각 promise가 throw를 전파하더라도 렌더된 `generatingSceneId`가 `null`로 돌아오고 다음 개별 생성/Start를 막지 않는지 확인한다. 기존 auth deferred 테스트로 preflight 중에는 scene ID가 유지되는 계약도 함께 보존한다. |
+| MCP 계약 | `tests/hooks/useMcpServer.test.js`에서 `automationState.status:'preparing', isRunning:true`로 훅을 렌더한 뒤 `window.__mcpBatchStatus()`가 `status:'running'`을 반환하는지 실행한다. 모든 batch/video/ref 신호가 false이고 `generatingSceneId:'scene-1'`만 있을 때도 top-level `isRunning:true`인지 확인한다. 이어 `__mcpStartBatch`가 이 busy를 관측해 즉시 `handleStart`하지 않고, `generatingSceneId`와 stop/wait용 `isRunning` prop을 false로 rerender한 뒤 정확히 한 번 호출하는지 fake timer로 검증한다. `uploading`, `running`, `done`, 별도 video status는 그대로 통과하는 표도 둔다. |
 | StatusBar | `tests/components/StatusBar.test.jsx`에서 `status="preparing"`이 active progress 텍스트를 표시하고 별도 `preparing`/`running` CSS class에 의존하지 않는지 렌더한다. |
 | 빈카드 busy DOM | 기존 `tests/components/EmptyReferenceGateModal.test.jsx`를 회귀 실행해 `phase:'busy'`에서 `.modal-overlay`가 없고 Flow 뷰 숨김도 획득하지 않는지 확인한다. 이 테스트와 실제 `ReferencePanel` spinner 관측이 받아들임 기준 2의 양쪽 계약을 고정한다. |
 | 기존 sync 경로 | `tests/hooks/useSceneGeneration.mentionSync.test.js`, `tests/hooks/useSyncGateHost.test.js`, `tests/services/emptyRefGate.test.js`를 회귀 실행해 프리플라이트/사후복구/배치 gate 수명이 그대로인지 확인한다. |
@@ -546,7 +582,9 @@ App 배선에 기존과 같은 소스 문자열 assertion을 더하지 않는다
    보이며 아이템 전환 때 패널이 깜빡이지 않는지 본다.
 2. 개별 씬을 한 번은 프리플라이트 sync, 한 번은 unresolved 응답 뒤 사후복구 sync로 실행한다.
 3. 개별 씬 생성 중과 Ref batch의 global/item auth·생성·정리 중 primary Start 버튼이 disabled인지
-   확인하고, 완료 뒤 유령 batch가 시작되지 않는지 본다.
+   확인한다. 개별 씬 중 MCP scene batch를 요청해 `/api/batch-status`의 `isRunning:true`를 확인하고,
+   개별 씬 종료 뒤 요청한 batch가 한 번 시작되는지 본다. 프리플라이트 IPC reject 뒤에는 Start가 다시
+   활성화돼야 한다.
 4. T2V sync와 I2V 무신호를 비교한다.
 5. 자동으로 열린 패널을 닫고 같은 배치에서 다음 Ref 단계가 와도 안 열리는지, 다음 배치에서는 다시
    열리는지 확인한다.
@@ -566,6 +604,7 @@ npx vitest run \
   tests/components/EmptyReferenceGateModal.test.jsx \
   tests/components/StatusBar.test.jsx \
   tests/hooks/useMcpServer.test.js \
+  tests/hooks/useSceneGeneration.preflightBusy.test.js \
   tests/hooks/useSceneGeneration.mentionSync.test.js \
   tests/hooks/useSyncGateHost.test.js \
   tests/services/emptyRefGate.test.js
