@@ -1281,6 +1281,19 @@ describe('generateImage: 미해결 멘션 결과 계약', () => {
     expect(res.errorKind).toBe('unresolved-mentions')
     expect(res.unresolvedNames).toEqual(['king'])
   })
+
+  // 배치는 submitGeneration 을 쓴다 — 두 진입점이 같은 계약이어야 호출부가 하나로 복구할 수 있다.
+  it('submitGeneration 도 같은 계약으로 돌려준다', async () => {
+    const { result } = renderHook(() => useFlowEngine({ mode: 'flow', projectId: 'p' }))
+    const refs = [
+      { id: 1, name: 'hero', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' },
+      { id: 2, name: 'king', type: 'character', entityId: 'e2', flowNameSyncStatus: 'failed', mediaId: 'km' },
+    ]
+    const res = await result.current.submitGeneration('@hero and @king', [], { references: refs })
+    expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('unresolved-mentions')
+    expect(res.unresolvedNames).toEqual(['king'])
+  })
 })
 
 describe('#R33: planMentionRouting (pure)', () => {

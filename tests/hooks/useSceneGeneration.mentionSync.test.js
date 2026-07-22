@@ -18,8 +18,14 @@ vi.mock('../../src/utils/guards', () => ({
   checkAuthToken: vi.fn().mockResolvedValue(true),
   checkFlowProjectReady: vi.fn().mockReturnValue({ ok: true }),
 }))
+// 실제 resolveSceneStyle 은 넘겨받은 matchedRefs 배열에 스타일 ref 이미지를 **밀어 넣는다**
+// (styleService: matchedRefs.push(img)). 목이 그 부수효과를 흉내내지 않으면 "재시도가 스타일을
+// 떨군다"는 회귀를 이 파일 어느 테스트도 잡지 못한다.
 vi.mock('../../src/services/styleService', () => ({
-  resolveSceneStyle: vi.fn((prompt) => ({ styledPrompt: prompt })),
+  resolveSceneStyle: vi.fn((prompt, _a, _override, _all, matchedRefs) => {
+    matchedRefs?.push({ name: '__style__', mediaId: 'style-1' })
+    return { styledPrompt: `styled:${prompt}` }
+  }),
 }))
 vi.mock('../../src/services/imageFinalize', () => ({
   finalizeGeneratedImage: vi.fn(async ({ result }) => (
@@ -129,7 +135,60 @@ describe('개별 씬 생성 — 미동기화 @멘션', () => {
 
     await act(async () => { await result.current.handleGenerateScene('scene_6') })
 
+    // 복구를 **시도는 했고**(두 번째 호출) 사용자가 거절해서 재생성이 없었다는 것까지 고정한다 —
+    // 호출 횟수만 보면 복구 분기를 통째로 지워도 통과한다.
+    expect(requestMentionSync).toHaveBeenCalledTimes(2)
     expect(generateImage).toHaveBeenCalledTimes(1)
+  })
+
+  // 취소했는데 씬이 'generating' 으로 남으면 삭제도 안 되고 다음 배치 선택에서도 빠진다
+  // (filterPendingScenes 는 pending/error 만 잡는다) — 사용자 입장에선 씬이 얼어붙는다.
+  it('취소하면 씬을 generating 으로 남기지 않는다', async () => {
+    const generateImage = vi.fn()
+    const requestMentionSync = vi.fn().mockResolvedValue({ proceeded: false })
+    const { result, scenesHook } = setup({ generateImage, requestMentionSync })
+
+    await act(async () => { await result.current.handleGenerateScene('scene_6') })
+
+    const statuses = scenesHook.updateScene.mock.calls.map(([, patch]) => patch?.status)
+    expect(statuses).not.toContain('generating')
+  })
+
+  // 재시도가 스타일 ref 이미지를 떨구면 사용자가 고른 스타일이 조용히 사라진 그림이 나온다.
+  // (resolveSceneStyle 이 matchedRefs 에 스타일 이미지를 밀어 넣는다 — 재시도도 같은 경로여야 한다.)
+  it('재시도도 첫 호출과 같은 방식으로 레퍼런스를 만든다', async () => {
+    const generateImage = vi.fn()
+      .mockResolvedValueOnce(unresolvedResult)
+      .mockResolvedValue({ success: true, images: [{ base64: 'a' }] })
+    const requestMentionSync = vi.fn()
+      .mockResolvedValueOnce({ proceeded: true })
+      .mockResolvedValue({ proceeded: true, refs: [SYNCED] })
+    const { result } = setup({ generateImage, requestMentionSync })
+
+    await act(async () => { await result.current.handleGenerateScene('scene_6') })
+
+    const [firstPrompt, firstRefs] = generateImage.mock.calls[0]
+    const [retryPrompt, retryRefs] = generateImage.mock.calls[1]
+    expect(retryPrompt).toBe(firstPrompt)
+    expect(retryRefs).toEqual(firstRefs)
+  })
+
+  // Flow 가 "그 칩은 이제 없다"(staleMention)고 알려주는 경우 — 앱 기록은 synced 인데 Flow 에서
+  // 캐릭터가 사라진 상태다. 배치는 그 ref 를 failed 로 찍어 다음 실행에 자가치유하는데
+  // (useAutomation), 개별 생성은 아무것도 안 해서 눌러도 계속 같은 실패였다.
+  it('Flow 가 stale 멘션을 알려주면 그 이름으로 동기화를 제안하고 재시도한다', async () => {
+    const generateImage = vi.fn()
+      .mockResolvedValueOnce({ success: false, error: 'option-not-found', staleMention: '문지기' })
+      .mockResolvedValue({ success: true, images: [{ base64: 'a' }] })
+    const requestMentionSync = vi.fn()
+      .mockResolvedValueOnce({ proceeded: true })
+      .mockResolvedValue({ proceeded: true, refs: [SYNCED] })
+    const { result } = setup({ generateImage, requestMentionSync })
+
+    await act(async () => { await result.current.handleGenerateScene('scene_6') })
+
+    expect(requestMentionSync).toHaveBeenLastCalledWith(expect.objectContaining({ names: ['문지기'] }))
+    expect(generateImage).toHaveBeenCalledTimes(2)
   })
 
   // API 모드엔 Flow 캐릭터 동기화 개념이 없다 — 게이트를 부르면 안 된다.

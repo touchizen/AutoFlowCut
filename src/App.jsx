@@ -66,8 +66,8 @@ import { collectTagErrors } from './utils/tagMatch'
 import { planMentionTagMerges } from './utils/mentionTagMerge'
 import {
   buildM1FlowReferenceExclusionToast,
-  flowSyncable,
 } from './utils/refImageGuard'
+import { selectMentionSyncTargets } from './utils/mentionSyncTargets'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
@@ -150,16 +150,25 @@ function App() {
     }),
     close: () => setEmptyRefGate(null),
   }), [])
-  const openEmptyRefSyncGate = useCallback(({ refs }) => new Promise(resolve => {
+  // 동기화 게이트의 **유일한** 진입점. 게이트를 여는 곳이 여럿인데(배치/T2V/개별 씬) 각자
+  // setSyncGate 를 부르면, 열려 있던 게이트 객체가 교체되면서 그 안에 들어 있던 resolver 가
+  // 사라진다 — 그 promise 를 기다리던 생성 큐가 영영 멈춘다(뒤에 쌓인 작업 전부 정지).
+  // 여기서 이전 대기자를 먼저 '취소'로 풀어준 뒤 새 게이트를 연다.
+  const pendingSyncGateRef = useRef(null)
+  const openSyncGate = useCallback(({ refs }) => new Promise(resolve => {
+    pendingSyncGateRef.current?.({ proceeded: false, patchedRefs: null })
+    const settle = (value) => {
+      if (pendingSyncGateRef.current === settle) pendingSyncGateRef.current = null
+      resolve(value)
+    }
+    pendingSyncGateRef.current = settle
     setSyncGate({
       refs,
-      proceed: patchedRefs => resolve({
-        proceeded: true,
-        patchedRefs: patchedRefs ?? null,
-      }),
-      onCancel: () => resolve({ proceeded: false, patchedRefs: null }),
+      proceed: patchedRefs => settle({ proceeded: true, patchedRefs: patchedRefs ?? null }),
+      onCancel: () => settle({ proceeded: false, patchedRefs: null }),
     })
   }), [])
+  const openEmptyRefSyncGate = openSyncGate
   const { isAuthenticated, subscription, refreshSubscription } = useAuth()
   // 두 자동화 훅(useAutomation, useVideoAutomation)에 동일한 안정 레퍼런스를 전달.
   // 인라인 객체 리터럴은 매 렌더마다 새 참조를 만들어 useCallback deps 를 불필요하게 갱신함.
@@ -890,25 +899,17 @@ function App() {
   //   - names 없음(프리플라이트): 씬이 멘션한 캐릭터 중 미동기화 + 수리 가능한 것
   //   - names 있음(엔진이 미해결로 거절한 뒤): 그 이름들. 우리 기록상 synced 여도 엔진이 못 쓴다고
   //     했으므로 동기화 상태로 거르지 않는다 — 기록이 옛것일 수 있다.
-  const syncGateOpenRef = useRef(false)
-  syncGateOpenRef.current = !!syncGate
-  const requestMentionSync = useCallback(({ scene, names }) => {
-    if (syncGateOpenRef.current) return Promise.resolve({ proceeded: false })
+  const requestMentionSync = useCallback(async ({ scene, names }) => {
+    // referencesRef 는 매 렌더 갱신되는 동기 최신값 — 호출자(훅)의 클로저는 stale 일 수 있다.
     const refs = referencesRef.current || []
-    const wanted = new Set((names || []).map(n => String(n).toLowerCase()))
-    const targets = (wanted.size > 0
-      ? refs.filter(r => r?.type === 'character' && r?.name && wanted.has(String(r.name).toLowerCase()))
-      : selectUnsyncedMentionedRefs([scene], refs)
-    ).filter(flowSyncable)
-    if (targets.length === 0) return Promise.resolve({ proceeded: true })
-    return new Promise((resolve) => {
-      setSyncGate({
-        refs: targets,
-        proceed: (patchedRefs) => resolve({ proceeded: true, refs: patchedRefs }),
-        onCancel: () => resolve({ proceeded: false }),
-      })
-    })
-  }, [])
+    const targets = selectMentionSyncTargets({ scene, names, references: refs })
+    // 동기화할 게 없어도 **live refs 를 넘긴다**. 큐에 쌓여 있던 다음 씬은 이전 씬이 동기화한
+    // 결과를 모르는 클로저를 들고 있어서, 그냥 진행시키면 옛 ref 로 또 미해결 실패가 난다.
+    if (targets.length === 0) return { proceeded: true, refs }
+    const res = await openSyncGate({ refs: targets })
+    if (!res.proceeded) return { proceeded: false }
+    return { proceeded: true, refs: res.patchedRefs || referencesRef.current || refs }
+  }, [openSyncGate])
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
@@ -1723,9 +1724,8 @@ function App() {
         if (mode === 'flow') {
           const unsyncedMentioned = selectUnsyncedMentionedRefs(selectedVideoScenes, scenesHook.references)
           if (unsyncedMentioned.length > 0) {
-            setSyncGate({
-              refs: unsyncedMentioned,
-              proceed: (currentRefs) => startVideoTextWith(currentRefs || scenesHook.references),
+            openSyncGate({ refs: unsyncedMentioned }).then((res) => {
+              if (res.proceeded) startVideoTextWith(res.patchedRefs || scenesHook.references)
             })
             return
           }
