@@ -691,6 +691,19 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         let nextIndex = 0
         let activeCount = 0
         let completedCount = 0
+        let timer = null
+        let settled = false
+
+        // Stop 이 이미 걸렸거나 투입 대기 중 걸려도, 진행 중 작업이 없으면 반드시 한 번 정산한다.
+        const settleIfDone = () => {
+          const allCompleted = completedCount >= refsToUpload.length
+          const stoppedAndIdle = stopRequestedRef.current && activeCount === 0
+          if (settled || (!allCompleted && !stoppedAndIdle)) return false
+          settled = true
+          if (timer !== null) clearInterval(timer)
+          resolve()
+          return true
+        }
 
         const tryLaunch = () => {
           while (activeCount < MAX_CONCURRENT && nextIndex < refsToUpload.length && !stopRequestedRef.current) {
@@ -707,18 +720,19 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
               if (!authStoppedRef.current) {
                 setStatusMessage(t('status.uploadingRefs', { current: uploadedCount, total: refsToUpload.length }))
               }
-              if (completedCount >= refsToUpload.length || stopRequestedRef.current) {
-                resolve()
-              }
+              settleIfDone()
             })
           }
         }
 
         // 1초 간격으로 투입
         tryLaunch() // 첫 번째 즉시
-        const timer = setInterval(() => {
+        if (settleIfDone()) return
+        timer = setInterval(() => {
+          if (settleIfDone()) return
           if (nextIndex >= refsToUpload.length || stopRequestedRef.current) {
             clearInterval(timer)
+            timer = null
             return
           }
           tryLaunch()
