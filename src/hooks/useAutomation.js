@@ -509,7 +509,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
     setIsRunning(true)
     setIsPaused(false)
-    setStatus('running')
+    setStatus('preparing')
     
     // 대상 씬 결정:
     //   - sceneIndices 명시: 그 인덱스들 (retry/partial 호출)

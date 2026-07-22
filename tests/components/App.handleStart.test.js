@@ -192,12 +192,16 @@ describe('isStartBlocked — handleStart entry guard', () => {
     ['video automation', { videoRunning: true }],
     ['pending batch latch', { hasPendingBatch: true }],
     ['video retry', { retryInFlight: true }],
+    ['개별 씬 생성', { generatingSceneId: 'scene-1' }],
+    ['Ref batch', { refBatchRunning: true }],
   ])('%s가 진행 중이면 시작을 차단한다', (_label, overrides) => {
     expect(isStartBlocked({
       isRunning: false,
       videoRunning: false,
       hasPendingBatch: false,
       retryInFlight: false,
+      generatingSceneId: null,
+      refBatchRunning: false,
       ...overrides,
     })).toBe(true)
   })
@@ -208,6 +212,8 @@ describe('isStartBlocked — handleStart entry guard', () => {
       videoRunning: false,
       hasPendingBatch: false,
       retryInFlight: false,
+      generatingSceneId: null,
+      refBatchRunning: false,
     })).toBe(false)
   })
 })

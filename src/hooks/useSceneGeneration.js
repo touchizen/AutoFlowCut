@@ -41,23 +41,22 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
 
     // #R27-1: preflight(folder/ready/auth) await 동안에도 busy 로 표시한다. 안 그러면 그 창에서
     //   project/mode 전환이 허용돼, 전환 뒤 stale 엔진으로 생성하고 결과를 현재 프로젝트의 씬
-    //   (id 재사용)에 patch 한다. generatingSceneId 를 await 전에 켜고 조기 return 마다 해제한다.
+    //   (id 재사용)에 patch 한다. generatingSceneId 를 await 전에 켜고 outer finally 한 곳에서 해제한다.
     setGeneratingSceneId(sceneId)
 
+    try {
     // 폴더 설정 + Flow 프로젝트 준비 + 토큰 확인
     const folderCheck = await checkFolderPermission(settings, openSettings, t)
     if (!folderCheck.ok) {
-      setGeneratingSceneId(null)
       setSelectedScene(null)  // 모달 닫기
       return
     }
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
-    if (!readyCheck.ok) { setGeneratingSceneId(null); return }
+    if (!readyCheck.ok) return
     if (!(await checkAuthToken(genAPI, t))) {
       const message = getAuthRequiredMessage(genAPI?.mode, t)
       scenesHook.updateScene(sceneId, { status: 'error', errorKind: 'auth', error: message })
       toast.warning(message)
-      setGeneratingSceneId(null)
       return
     }
 
@@ -68,7 +67,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     let effectiveRefs = scenesHook.references || []
     if (genAPI?.mode === 'flow' && requestMentionSync) {
       const gate = await requestMentionSync({ scene, projectName: settings.projectName })
-      if (gate && gate.proceeded === false) { setGeneratingSceneId(null); return }
+      if (gate && gate.proceeded === false) return
       if (gate?.refs) effectiveRefs = gate.refs
     }
 
@@ -190,7 +189,10 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       }
     }
 
-    setGeneratingSceneId(null)
+    } finally {
+      // folder/auth/sync preflight reject를 포함해 busy 해제는 이 한 곳에서만 보장한다.
+      setGeneratingSceneId(null)
+    }
   // R2-5: flowProjectReady missing from dep array → stale closure could allow
   // generation when not ready, or block after recovery. Adding it here ensures
   // the callback sees the current value on every invocation.

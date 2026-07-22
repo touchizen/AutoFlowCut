@@ -101,7 +101,8 @@ export function useMcpServer({
   importByPath, audioPackage,
   automationState, videoAutomation, generatingRefs,
   isRunning = false,  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
-  refBatchRunning = false  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  refBatchRunning = false,  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  generatingSceneId = null
 }) {
   // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
@@ -549,6 +550,8 @@ export function useMcpServer({
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {
       const { isRunning, isPaused, progress, status, statusMessage } = automationState
+      // renderer 내부의 이미지 preflight 상태는 유지하되 기존 MCP 외부 enum은 늘리지 않는다.
+      const externalAutomationStatus = status === 'preparing' ? 'running' : status
       // P2/P3 v2/v3: done 판정은 services/generationStatus의 공통 helper 사용.
       // status가 in-flight (pending/generating/error)면 image/mediaId 있어도 done에서 제외 —
       // force 재생성 중 progress가 100% stuck 회귀 차단.
@@ -571,11 +574,11 @@ export function useMcpServer({
       const refIsRunning = refBatchRunning || generatingRefs.length > 0
 
       return {
-        isRunning: isRunning || videoAutomation.isRunning || refIsRunning,
+        isRunning: isRunning || videoAutomation.isRunning || refIsRunning || Boolean(generatingSceneId),
         isPaused: isPaused || videoAutomation.isPaused,
         progress: isRunning ? progress : videoAutomation.progress,
         total, done, pending, generating, error,
-        status: isRunning ? status : videoAutomation.status,
+        status: isRunning ? externalAutomationStatus : videoAutomation.status,
         statusMessage: isRunning ? statusMessage : videoAutomation.statusMessage,
         ref: { total: refTotal, done: refDone, generating: refGenerating, pending: refPending, isRunning: refIsRunning }
       }
@@ -586,5 +589,5 @@ export function useMcpServer({
       delete window.__mcpStopBatch
       delete window.__mcpBatchStatus
     }
-  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning])
+  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning, generatingSceneId])
 }

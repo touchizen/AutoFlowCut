@@ -39,10 +39,11 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null }) {
+export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
+  const [refBatchActive, setRefBatchActive] = useState(false)  // 실제 target이 있는 batch execute 전체 수명
   const [saveFailedOnce, setSaveFailedOnce] = useState(false)  // 배치 중 저장 실패 알림 1회만
   const stopRequestedRef = useRef(false)
   const stopRequestVersionRef = useRef(0)
@@ -699,7 +700,6 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     stopRequestedRef.current = queuedStopRequested
     if (!queuedStopRequested) setStoppingRefs(false)
     authStoppedRef.current = false
-    setPreparingRefs(true)
     let hasPendingSaves = false
     setSaveFailedOnce(false)
 
@@ -708,6 +708,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // batch loop의 예상 못한 throw (IPC reject 등)에선 flag가 stuck → refBatchRunning이 영구 true,
     // 다음 MCP 호출이 waitForStopped 30s timeout 회귀.
     try {
+
+    // 테스트에서만 조기 반환과 producer 사이의 위치 계약을 관측한다. production은 null이라 yield 없음.
+    if (beforeBatchActivation) await beforeBatchActivation()
 
     if (allTargets.length === 0) {
       // targeted 정상 noop은 전체 Ref 배치가 끝났다는 인상을 주면 안 된다.
@@ -720,6 +723,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     if (stopRequestedRef.current) {
       return buildResult()
     }
+
+    // target과 queued Stop을 모두 확인한 뒤부터 outer finally까지가 실제 Ref batch의 수명이다.
+    setRefBatchActive(true)
+    setPreparingRefs(true)
 
     // 폴더 모드 권한 확인
     if (settings.saveMode === 'folder') {
@@ -1150,6 +1157,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       // 안 그러면 refBatchRunning이 stuck 되어 MCP stop-restart가 30s timeout.
       stopRequestedRef.current = false
       authStoppedRef.current = false
+      setRefBatchActive(false)
       setPreparingRefs(false)
       setStoppingRefs(false)
     }
@@ -1233,6 +1241,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     generatingRefs,
     stoppingRefs,
     preparingRefs,
+    refBatchActive,
     handleGenerateRef,
     handleGenerateAllRefs,
     stopGenerateAllRefs

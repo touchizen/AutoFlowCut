@@ -23,6 +23,22 @@ describe('StatusBar', () => {
       expect(screen.getByText('생성 중...')).toBeInTheDocument()
     })
 
+    it('preparing은 별도 CSS 클래스 없이 active progress 텍스트를 표시한다', () => {
+      const { container } = render(
+        <StatusBar
+          progress={{ current: 2, total: 5, percent: 40 }}
+          status="preparing"
+          message="준비 중"
+          scenes={[{ id: 's1', status: 'done', image: 'old' }]}
+        />
+      )
+
+      expect(screen.getByText('2 / 5 (40%)')).toBeInTheDocument()
+      const root = container.querySelector('.status-bar')
+      expect(root).not.toHaveClass('preparing')
+      expect(root).not.toHaveClass('running')
+    })
+
     it('비디오 뷰 완료 시 비디오 실패(progress.errorCount)를 ❌ 로 표시', () => {
       // T2V/F2V 실패는 scene.status='error' 가 아니라 progress.errorCount 로만 옴.
       const { container } = render(

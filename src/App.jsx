@@ -17,6 +17,7 @@ import { useStoryAutoOpen } from './hooks/useStoryAutoOpen'
 import { STORY_TTS_PROVIDERS } from './config/storyTtsProviders'
 import StoryView from './components/story/StoryView'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
+import { useRefPanelVisibility } from './hooks/useRefPanelVisibility'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
 import { useSceneGeneration } from './hooks/useSceneGeneration'
 import { useSyncGateHost } from './hooks/useSyncGateHost'
@@ -245,7 +246,6 @@ function App() {
   const [srtImportPending, setSrtImportPending] = useState(null)
   const { processing: importProcessing, spinnerVisible: importSpinnerVisible, runImportProcessing } = useImportProcessing()
   const [showAudioResult, setShowAudioResult] = useState(false)
-  const [showReferences, setShowReferences] = useState(false)
   const [authReady, setAuthReady] = useState(false)
   // True after handleAuthError fires — disables the auto-recovery effect at line ~165
   // that would otherwise immediately re-extract a token from the webview and flip
@@ -885,9 +885,21 @@ function App() {
   const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady })
 
   // Reference 생성
-  const { generatingRefs, stoppingRefs, preparingRefs, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
+  const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
     settings, references, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady,
     flowProjectId: _flowProjectId, projectNameRef,
+  })
+
+  const { isOpen: showReferences, setOpenByUser } = useRefPanelVisibility({
+    refBatchActive,
+    generatingRefsCount: generatingRefs.length,
+    stoppingRefs,
+    syncGate,
+    syncGateBusy,
+    mode,
+    automationStatus: status,
+    hasPendingBatch,
+    projectKey: settings.projectName,
   })
 
   // 개별 씬 생성이 "이 씬의 미동기화 @멘션을 처리해 달라"고 요청하면 **배치와 같은** 동기화
@@ -1172,7 +1184,7 @@ function App() {
       },
       reference: async () => {
         await parseReferencesFromCSV(content, projectName)
-        setShowReferences(true)
+        setOpenByUser(true)
       }
     }
 
@@ -1453,6 +1465,8 @@ function App() {
       videoRunning: videoAutomation.isRunning,
       hasPendingBatch,
       retryInFlight: videoRetryInFlightRef.current,
+      generatingSceneId,
+      refBatchRunning,
     })) return
     const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
     const imageTargetScenes = isImageBatchStart
@@ -1974,10 +1988,9 @@ function App() {
     cancelSyncGate(syncGate)
   }
 
-  // ref batch는 generatingRefs.length만으로 부족 — preparingRefs(폴더/토큰 체크 ~ 첫 submit 사이)와
-  // stoppingRefs(중지 진행 중)도 "실행 중"에 포함해야 한다. 안 그러면 그 구간에 MCP가 batch 다시
-  // 호출 시 stop-restart 우회하고 동시에 두 batch가 진행되는 회귀 발생.
-  const refBatchRunning = preparingRefs || stoppingRefs || generatingRefs.length > 0
+  // ref batch는 generatingRefs.length만으로 부족 — refBatchActive가 batch-global preflight부터
+  // 아이템별 auth와 정리까지 덮고, stoppingRefs는 중지 정리 창을 잇는다.
+  const refBatchRunning = refBatchActive || stoppingRefs || generatingRefs.length > 0
 
   // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
   // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
@@ -2004,7 +2017,8 @@ function App() {
     automationState: { isRunning, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
     refBatchRunning,
-    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning
+    generatingSceneId,
+    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning || !!generatingSceneId
   })
 
   // 어느 자동화든 실행 중이면 true
@@ -2150,7 +2164,7 @@ function App() {
             </button> */}
             <button
               className={`tab tab-icon ${showReferences ? 'active' : ''}`}
-              onClick={() => setShowReferences(!showReferences)}
+              onClick={() => setOpenByUser(!showReferences)}
               title={t('tabs.references')}
             >
               🖼️ <span className="tab-label">Ref</span> ({references.length})
@@ -2415,7 +2429,9 @@ function App() {
                         ((activeTab === 'text' || activeTab === 'list') && scenes.length === 0) ||
                         (activeTab === 'video-text' && videoScenes.length === 0) ||
                         (activeTab === 'frame-to-video' && framePairs.length === 0) ||
-                        hasPendingBatch
+                        hasPendingBatch ||
+                        !!generatingSceneId ||
+                        refBatchRunning
                       }
                     >
                       {(() => {

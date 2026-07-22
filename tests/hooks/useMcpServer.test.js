@@ -38,6 +38,7 @@ function makeProps(overrides = {}) {
     automationState: { isRunning: false, isPaused: false, progress: { current: 0, total: 0 }, status: 'idle', statusMessage: '' },
     videoAutomation: {},
     generatingRefs: [],
+    generatingSceneId: null,
     isRunning: false,  // Phase 2: anyRunning (scene + ref + video) — used for auto stop-restart
     ...overrides,
   }
@@ -797,6 +798,98 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(window.__mcpBatchStatus().ref.isRunning).toBe(true)
 
     // Cleanup
+    result.unmount()
+  })
+
+  it('내부 preparing은 외부 batch status에서만 running으로 정규화한다', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      automationState: {
+        isRunning: true,
+        isPaused: false,
+        progress: { current: 0, total: 3 },
+        status: 'preparing',
+        statusMessage: 'checking folder',
+      },
+    })))
+
+    expect(window.__mcpBatchStatus().status).toBe('running')
+    result.unmount()
+  })
+
+  it('generatingSceneId만 바뀌어도 top-level isRunning을 최신 true로 노출한다', () => {
+    let generatingSceneId = null
+    const hook = renderHook(() => useMcpServer(makeProps({ generatingSceneId })))
+    expect(window.__mcpBatchStatus().isRunning).toBe(false)
+
+    generatingSceneId = 'scene-1'
+    hook.rerender()
+    expect(window.__mcpBatchStatus().isRunning).toBe(true)
+    hook.unmount()
+  })
+
+  it('개별 씬 busy 중 MCP scene batch를 보류하고 해제 뒤 정확히 한 번 시작한다', async () => {
+    vi.useFakeTimers()
+    const handleStart = vi.fn()
+    const handleStop = vi.fn()
+    let generatingSceneId = 'scene-1'
+
+    const hook = renderHook(() => useMcpServer(makeProps({
+      generatingSceneId,
+      isRunning: Boolean(generatingSceneId),
+      handleStart,
+      handleStop,
+    })))
+
+    const callPromise = window.__mcpStartBatch('preset:noir')
+    expect(window.__mcpBatchStatus().isRunning).toBe(true)
+    expect(handleStop).toHaveBeenCalledTimes(1)
+    expect(handleStart).not.toHaveBeenCalled()
+
+    generatingSceneId = null
+    hook.rerender()
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    expect(handleStart).toHaveBeenCalledTimes(1)
+    expect(handleStart).toHaveBeenCalledWith('preset:noir', { source: 'mcp' })
+    hook.unmount()
+    vi.useRealTimers()
+  })
+
+  it.each(['uploading', 'running', 'done'])('이미지 status %s는 외부에서 그대로 유지한다', status => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      automationState: {
+        isRunning: true,
+        isPaused: false,
+        progress: { current: 1, total: 3 },
+        status,
+        statusMessage: status,
+      },
+    })))
+
+    expect(window.__mcpBatchStatus().status).toBe(status)
+    result.unmount()
+  })
+
+  it('별도 video status는 이미지 정규화의 영향을 받지 않는다', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      automationState: {
+        isRunning: false,
+        isPaused: false,
+        progress: { current: 0, total: 0 },
+        status: 'preparing',
+        statusMessage: 'internal only',
+      },
+      videoAutomation: {
+        isRunning: true,
+        isPaused: false,
+        progress: { current: 2, total: 4 },
+        status: 'uploading',
+        statusMessage: 'video uploading',
+      },
+    })))
+
+    expect(window.__mcpBatchStatus().status).toBe('uploading')
     result.unmount()
   })
 
