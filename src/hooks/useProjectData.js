@@ -398,8 +398,9 @@ export async function loadProjectWithResources(projectName) {
 }
 
 /**
- * project.json 저장 payload 빌드 (순수). flowProjectId 는 truthy 일 때만 포함
- * (빈 값이면 생략 → 기존 저장값 보존, §3.3.1). camelCase canonical 필드.
+ * project.json 저장 payload 빌드 (순수). flowProjectId 는 truthy 일 때만 포함한다 —
+ * 다만 이 값은 파일이 없을 때의 부트스트랩에만 쓰인다. 파일이 있으면 main 의 full save 가
+ * 디스크 값을 보존한다(flowProjectId 는 merge 전용 키). camelCase canonical 필드.
  */
 export function buildProjectSavePayload({ srtTrack, scenes, references, videoScenes, framePairs, settings, audioFolderPath, selectedStyleRefId, flowProjectId }) {
   const payload = {
@@ -605,10 +606,7 @@ export function useProjectData({
   // 새 프로젝트를 판정할 때 쓰는 preId 기법과 동일). 같으면 Flow 가 이전 프로젝트에 머문 것이라
   // 채택하지 않는다 — "엉뚱한 Flow 프로젝트에 캐릭터·씬이 섞이는" 사고를 구조적으로 막는다.
   const adoptPreIdRef = useRef(null)
-  // 채택 허용 여부. Case B(자동 생성)가 **실제로 실패한 뒤**에만 true 가 된다. flowProjectReady 는
-  // open/생성 "진행 중"에도 false 라, 이 플래그 없이 채택을 허용하면 아직 preId 도 없는 진행 중
-  // 상태에서 엉뚱한 프로젝트를 채택할 수 있다.
-  const adoptArmedRef = useRef(false)
+
   const adoptInFlightRef = useRef(false)
   // Case B 가 성공해 Flow 프로젝트는 만들어졌는데 project.json 저장만 실패한 것들.
   // Map<projectName, flowProjectId>. ready 는 닫아 둔 채 저장만 재시도한다 — 여기서 ready 를
@@ -618,12 +616,12 @@ export function useProjectData({
   //    돌아와도 여전히 유효하다. 버리면 그 프로젝트를 잃고 Case B 가 두 번째를 만든다.
   //    프로젝트마다 따로 담는다 — 단일 슬롯이면 p2 의 실패가 p1 의 회복 정보를 지운다.
   const pendingPersistRef = useRef(new Map())
-  // mode-entry 바인딩이 진행 중인지. 폴링이 그 위에 또 open/create 를 걸면 두 소유자가 서로의
-  // readiness 를 뒤집는다 — 진행 중이면 재바인딩 요청을 건너뛴다.
-  const bindInFlightRef = useRef(false)
-  // 그 플래그의 소유자(세대). 취소된 이전 bind 가 뒤늦게 끝나면서 진행 중인 최신 bind 의
-  // 플래그를 끄면, 폴링이 그 위에 재바인딩을 걸어 open/create 가 겹친다.
-  const bindGenerationRef = useRef(0)
+  // 현재 mode-entry 바인딩의 소유권: {token, done}. 두 가지를 한 곳에서 표현한다 —
+  //  - "레인이 비었나"(done): 진행 중인데 폴링이 그 위에 또 open/create 를 걸면 두 소유자가
+  //    서로의 readiness 를 뒤집는다.
+  //  - "내가 아직 최신인가"(token): 취소된 이전 bind 의 늦은 응답이 최신 bind 의 결과를 덮지 않게.
+  // 따로 두면 둘을 lockstep 으로 갱신할 의무가 생기고, 어긋나면 정확히 위 두 사고가 난다.
+  const bindOwnerRef = useRef(null)
   // 이번 세션에 이 앱이 만든 Flow 프로젝트(projectName → id). 만든 프로젝트가 open 확인에
   // 실패하면(에러 페이지) 다시 만들어도 같은 결과일 가능성이 크다 — 재생성 루프로 빈 프로젝트를
   // 쏟아내지 않도록, 그 프로젝트는 생성 대신 채택(사용자 확인)으로 넘긴다.
@@ -635,6 +633,9 @@ export function useProjectData({
   // arm 의 소유자(로컬 프로젝트 + load epoch). 늦게 도착한 이전 프로젝트의 응답이 arm 을 되살려
   // 다른 프로젝트에 채택이 발화하는 것을 막는다.
   const adoptArmTokenRef = useRef(null)
+  // 채택이 arm 된 상태 ≡ 이 토큰이 non-null. Case B(자동 생성)가 **실제로 실패한 뒤**에만 세운다 —
+  // flowProjectReady 는 open/생성 "진행 중"에도 false 라, 이것 없이 채택을 허용하면 아직 baseline 도
+  // 없는 진행 중 상태에서 엉뚱한 프로젝트를 채택할 수 있다.
   // arm 마다 **새 객체**를 만든다. {projectName, epoch} 값만으로는 flow→api→flow 처럼 같은
   // 프로젝트/epoch 로 다시 arm 됐을 때 이전 arm 과 구별되지 않아(ABA), 늦게 도착한 옛 시도의
   // 결과가 새 세션의 baseline 을 무시하고 수용된다. 구별은 identity 비교로 한다.
@@ -752,12 +753,14 @@ export function useProjectData({
     // 막혀 있는 원인은 바인딩 자체다: Case A 의 open 이 일시 실패했거나, project.json 을 읽지
     // 못해 생성을 보류했거나. 여기서 직접 열지 않고 mode-entry 를 다시 돌린다 — 폴링과 effect 가
     // 각자 openFlowProject 를 부르면 서로의 readiness/confirmed 기록을 뒤집는다(소유자는 하나).
-    if (!adoptArmedRef.current) {
-      if (bindInFlightRef.current) return { ok: false, reason: 'bind-in-flight' }
+    if (!adoptArmTokenRef.current) {
+      if (bindOwnerRef.current && !bindOwnerRef.current.done) return { ok: false, reason: 'bind-in-flight' }
       setBindNonce((n) => n + 1)
       return { ok: false, reason: 'rebind-requested' }
     }
-    // arm 이 "지금 이 프로젝트/세션"의 것인지 — 아니면 stale 이므로 채택하지 않는다.
+    // arm 이 "지금 이 프로젝트/세션"의 것인지. 오늘의 모든 경로(모드 이탈, 프로젝트 전환)는
+    // arm 을 먼저 지우므로 이 값 비교는 도달하지 않는 backstop 이다 — arm 을 지우지 않는 경로가
+    // 새로 생겼을 때 조용히 오채택되지 않도록 남겨 둔다(in-flight ABA 는 아래 identity 가 막는다).
     const tok = adoptArmTokenRef.current
     if (!tok || tok.projectName !== projectName || tok.epoch !== loadEpochRef.current) {
       return { ok: false, reason: 'stale-arm' }
@@ -766,8 +769,7 @@ export function useProjectData({
     // 시작 시점의 arm **바로 그것**이 아직 유효한가. 값 비교가 아니라 identity 비교여야 한다 —
     // 그 사이 해제됐다 같은 값으로 다시 arm 된 것은 다른 arm 이다(ABA).
     const startToken = adoptArmTokenRef.current
-    const stillCurrent = () => modeRef.current === 'flow' && adoptArmedRef.current
-      && adoptArmTokenRef.current === startToken
+    const stillCurrent = () => modeRef.current === 'flow' && adoptArmTokenRef.current === startToken
       && projectNameRef.current === projectName && loadEpochRef.current === startEpoch
     adoptInFlightRef.current = true
     try {
@@ -813,7 +815,6 @@ export function useProjectData({
       setFlowProjectId(id)
       setFlowProjectReady(true)
       adoptPreIdRef.current = id
-      adoptArmedRef.current = false
       adoptArmTokenRef.current = null
       console.log('[ProjectData] adopted Flow project:', id)
       return { ok: true, projectId: id }
@@ -886,7 +887,6 @@ export function useProjectData({
       confirmedBindingRef.current = null
       // 채택 arm 도 함께 해제 — stale arm 이 남으면 재진입/전환 후의 정상 open/create 도중에 채택이
       // 끼어들 수 있다.
-      adoptArmedRef.current = false
       adoptPreIdRef.current = undefined
       adoptArmTokenRef.current = null
       // pendingPersistRef 는 지우지 않는다 — 그 Flow 프로젝트는 로컬 프로젝트 소유이고,
@@ -920,9 +920,9 @@ export function useProjectData({
     //    것으로 되살아난다.
     const startEpoch = loadEpochRef.current
 
-    // 이 bind 의 세대. 늦게 도착한 응답이 최신 bind 의 결과를 덮어쓰지 않도록 쓰기 앞에서 대조한다.
-    const myBindGeneration = ++bindGenerationRef.current
-    const isNewestBind = () => bindGenerationRef.current === myBindGeneration
+    // 이 bind 의 소유권 토큰. 늦게 도착한 응답이 최신 bind 의 결과를 덮어쓰지 않도록 쓰기 앞에서 대조한다.
+    const myBindToken = {}
+    const isNewestBind = () => bindOwnerRef.current?.token === myBindToken
 
     const bind = async () => {
       if (flowProjectId) {
@@ -1054,7 +1054,6 @@ export function useProjectData({
             if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch
               || projectNameRef.current !== currentProjectName) return
             adoptPreIdRef.current = baseline
-            adoptArmedRef.current = true
             adoptArmTokenRef.current = newArmToken(currentProjectName, startEpoch)
           }
         } catch (e) {
@@ -1069,24 +1068,22 @@ export function useProjectData({
             // resolved-failure 와 동일하게 회복을 arm 한다 — 여기서 arm 하지 않으면 invoke rejection
             // 류의 실패는 영구 차단으로 남는다. baseline 은 첫 채택 시도에서 잡는다.
             adoptPreIdRef.current = undefined
-            adoptArmedRef.current = true
             adoptArmTokenRef.current = newArmToken(currentProjectName, startEpoch)
           }
         }
       }
     }
 
-    bindInFlightRef.current = true
-    const releaseBind = () => {
-      // 아직 내가 최신 세대일 때만 푼다 — 취소된 이전 세대는 남의 in-flight 를 끄지 않는다.
-      if (bindGenerationRef.current === myBindGeneration) bindInFlightRef.current = false
-    }
-    // IPC 가 영영 안 끝나면(끊긴 네트워크 폴더, 멈춘 loadURL) 플래그가 영구히 잠겨 폴링의 재시도까지
+    bindOwnerRef.current = { token: myBindToken, done: false }
+    // 레인을 놓아준다 — 아직 내가 소유자일 때만(취소된 이전 bind 는 남의 레인을 놓지 않는다).
+    const releaseBind = () => { if (isNewestBind()) bindOwnerRef.current.done = true }
+    // IPC 가 영영 안 끝나면(끊긴 네트워크 폴더, 멈춘 loadURL) 레인이 영구히 잠겨 폴링의 재시도까지
     // 막힌다. 영구 차단보다는 중복 시도 위험을 택한다 — 넉넉한 워치독으로만 푼다.
+    // 단, 토큰은 그대로 둔다: 더 새 bind 가 없다면 늦게 끝난 이 bind 도 자기 결과를 쓸 수 있어야 한다.
     const watchdog = setTimeout(() => {
-      if (bindGenerationRef.current === myBindGeneration && bindInFlightRef.current) {
-        console.warn('[ProjectData] mode-entry bind 가 끝나지 않아 in-flight 를 해제한다(워치독)')
-        bindInFlightRef.current = false
+      if (isNewestBind() && !bindOwnerRef.current.done) {
+        console.warn('[ProjectData] mode-entry bind 가 끝나지 않아 레인을 놓는다(워치독)')
+        bindOwnerRef.current.done = true
       }
     }, BIND_WATCHDOG_MS)
     bind().finally(() => { clearTimeout(watchdog); releaseBind() })
@@ -1270,7 +1267,6 @@ export function useProjectData({
 
     // 프로젝트가 바뀌면 이전 프로젝트에서 arm 된 채택은 무효다 — 그대로 두면 새 프로젝트를 여는
     // 도중에 채택이 발화해 엉뚱한 project.json 에 id 를 쓸 수 있다.
-    adoptArmedRef.current = false
     adoptPreIdRef.current = undefined
     adoptArmTokenRef.current = null
     // pendingPersistRef 는 지우지 않는다 — 로컬 프로젝트에 귀속돼 있어 다른 프로젝트에서는
@@ -1288,7 +1284,8 @@ export function useProjectData({
     let switched = false // step 4(setSettings)까지 도달했는지 — 실패 반환값 판정용
     try {
       // 1. 현재 프로젝트 데이터 저장
-      // #R4-2: flowProjectId (9th arg) 포함 — 누락 시 프로젝트 전환 때 바인딩이 지워짐
+      // flowProjectId(9번째)는 project.json 이 아직 없는 부트스트랩 때만 의미가 있다 — 파일이
+      // 있으면 main 이 디스크 값을 보존한다(merge 전용 키). 설정/해제는 mergeProjectData 로만.
       const _saveRes = await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, flowProjectId)
       // #R20-6: 현재 프로젝트 저장이 실패했으면 전환을 중단한다 — 그대로 전환하면 미저장 편집이
       //   유실된다. onSaveError 로 알리고 switched=false 로 반환(호출부가 롤백).

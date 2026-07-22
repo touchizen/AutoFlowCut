@@ -9,14 +9,14 @@
 export const ADOPT_PROMPT_COOLDOWN_MS = 10 * 60 * 1000
 
 /**
- * @param {string|null|undefined} projectId 이번에 물으려는 Flow 프로젝트 id
+ * @param {string|null|undefined} key 후보의 쿨다운 키(호출부가 만든다 — 로컬 프로젝트 × Flow id)
  * @param {Map<string, number>} cancelledAt id → 취소한 시각(ms)
  * @param {number} now 현재 시각(ms)
  * @param {number} [cooldownMs]
  */
-export function shouldPromptAdopt(projectId, cancelledAt, now, cooldownMs = ADOPT_PROMPT_COOLDOWN_MS) {
-  if (!projectId) return false
-  const at = cancelledAt?.get?.(projectId)
+export function shouldPromptAdopt(key, cancelledAt, now, cooldownMs = ADOPT_PROMPT_COOLDOWN_MS) {
+  if (!key) return false
+  const at = cancelledAt?.get?.(key)
   if (at === undefined) return true
   // 기록이 미래면(시계 역행/수동 조정) 남은 시간이 무한대가 된다 — 영구 침묵보다 다시 묻는 쪽.
   if (at > now) return true
