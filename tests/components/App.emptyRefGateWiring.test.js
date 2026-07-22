@@ -84,9 +84,27 @@ describe('App empty reference gate wiring', () => {
   // 실행부는 services/syncGateRun 으로 옮겼고 그 동작은 tests/services/syncGateRun.test.js 가
   // **실행해서** 검증한다. 여기선 App 이 authoritative 한 값(동기 최신 ref)을 주입하는지만 본다 —
   // scenesHook.references 를 주면 async 루프에서 stale 이다.
-  it('sync-proceed 는 동기 최신 refs 를 실행부에 주입한다', () => {
+  // 실행부/판정은 services 로 옮겼고 그 동작은 실행 테스트가 검증한다. 여기 남은 위험은 하나뿐 —
+  // App 이 그 서비스에 **렌더 클로저**를 바인딩하는 것. 이 수정 전체가 바로 그 병이었다.
+  // (live ref 대신 클로저를 주면 await 를 건넌 판정이 옛 값을 본다.)
+  it('실행부에 동기 최신값(ref)을 주입한다 — 렌더 클로저 금지', () => {
     expect(syncProceed).toContain('getReferences: () => referencesRef.current')
+    expect(syncProceed).toContain('getProjectName: () => projectNameRef.current')
+    expect(syncProceed).toContain('isProjectLoading: () => projectLoadingRef.current')
     expect(syncProceed).not.toContain('getReferences: () => scenesHook.references')
+    expect(syncProceed).not.toContain('isProjectLoading: () => projectLoading\n')
+  })
+
+  it('게이트는 여는 시점의 프로젝트를 새긴다', () => {
+    expect(source).toContain('scope: projectNameRef.current')
+  })
+
+  it('요청 판정에도 같은 동기 최신값을 준다', () => {
+    const start = source.indexOf('const requestMentionSync')
+    const handler = source.slice(start, source.indexOf('// Scene 재생성', start))
+    expect(handler).toContain('getReferences: () => referencesRef.current')
+    expect(handler).toContain('getProjectName: () => projectNameRef.current')
+    expect(handler).toContain('isProjectLoading: () => projectLoadingRef.current')
   })
 
   it('M2 coordinator는 Flow 이미지 배치에서만 호출된다', () => {

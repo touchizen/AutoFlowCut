@@ -68,6 +68,7 @@ import { planMentionTagMerges } from './utils/mentionTagMerge'
 import {
   buildM1FlowReferenceExclusionToast,
 } from './utils/refImageGuard'
+import { selectMentionSyncTargets } from './utils/mentionSyncTargets'
 import { runMentionSyncRequest } from './services/mentionSyncRequest'
 import { runSyncGate } from './services/syncGateRun'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
@@ -76,7 +77,7 @@ import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
-import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced, resolveSyncTarget, planSyncGateCompletion } from './utils/flowCharacterSync'
+import { syncRefToFlow } from './utils/flowCharacterSync'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
 
 // Components
@@ -901,7 +902,7 @@ function App() {
     getProjectName: () => projectNameRef.current,
     isProjectLoading: () => projectLoadingRef.current,
     openGate: openSyncGate,
-    onBlocked: () => toast.warning(t('toast.flowSyncBusy')),
+    onBlocked: (reason) => toast.warning(t(reason === 'superseded' ? 'toast.flowSyncSuperseded' : 'toast.flowSyncBusy')),
   }), [openSyncGate, t])
 
   // Scene 재생성
@@ -1715,7 +1716,12 @@ function App() {
         //   먼저 동기화(칩으로 넣을 수 있게)한 뒤 patchedRefs 로 페이로드를 재빌드해 생성한다. 안 하면
         //   미동기화 @king 이 chip/ref 없이 텍스트로 나가 잘못된 영상 + quota 낭비.
         if (mode === 'flow') {
-          const unsyncedMentioned = selectUnsyncedMentionedRefs(selectedVideoScenes, scenesHook.references)
+          // 이미지 배치와 **같은 셀렉터**를 쓴다. T2V 페이로드는 parseSceneMentions(case-sensitive,
+          //   조사/공백 관용)로 칩을 붙이는데 게이트만 다른 매처로 고르면, `@hero`/`Hero` 는 동기화만
+          //   시켜 놓고 칩이 안 붙고 `@문지기가` 는 게이트가 아예 안 열린다. 수리 불가 ref 제외도 포함.
+          const unsyncedMentioned = [...new Set(
+            selectedVideoScenes.flatMap(scene => selectMentionSyncTargets({ scene, references: scenesHook.references }))
+          )]
           if (unsyncedMentioned.length > 0) {
             openSyncGate({ refs: unsyncedMentioned }).then((res) => {
               if (res.proceeded) startVideoTextWith(res.patchedRefs || scenesHook.references)

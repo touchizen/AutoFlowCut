@@ -9,7 +9,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
 
 import * as flowSync from '../../src/utils/flowCharacterSync'
 
-const { isRefSynced, selectUnsyncedRefs, selectUnsyncedMentionedRefs, syncRefToFlow, needsComposerRefresh } = flowSync
+const { isRefSynced, selectUnsyncedRefs, syncRefToFlow, needsComposerRefresh } = flowSync
 
 describe('#R34: isRefSynced', () => {
   it('character → entityId + synced', () => {
@@ -38,26 +38,8 @@ describe('#R34: selectUnsyncedRefs', () => {
   })
 })
 
-describe('#R34: selectUnsyncedMentionedRefs (생성 전 가드)', () => {
-  const refs = [
-    { id: 1, type: 'character', name: 'king', data: 'x', entityId: null, flowNameSyncStatus: 'failed' },  // 미동기화
-    { id: 2, type: 'character', name: 'queen', data: 'x', entityId: 'e', flowNameSyncStatus: 'synced' },  // 동기화됨
-  ]
-  it('@멘션된 캐릭터 중 미동기화만 반환', () => {
-    const scenes = [{ prompt: '@king and @queen walk in' }]
-    expect(selectUnsyncedMentionedRefs(scenes, refs).map(r => r.id)).toEqual([1])
-  })
-  it('멘션 안 된 씬은 빈 배열', () => {
-    expect(selectUnsyncedMentionedRefs([{ prompt: 'no mention' }], refs)).toEqual([])
-  })
-  it('한국어 조사 멘션(@king이)도 인식', () => {
-    expect(selectUnsyncedMentionedRefs([{ prompt: '@king이 들어온다' }], refs).map(r => r.id)).toEqual([1])
-  })
-  it('id 없는 legacy/CSV character 도 생성 전 sync gate 대상에 포함', () => {
-    const legacy = { id: null, type: 'character', name: 'legacyzed', data: 'x', flowNameSyncStatus: 'failed' }
-    expect(selectUnsyncedMentionedRefs([{ prompt: '@legacyzed enters' }], [legacy])).toEqual([legacy])
-  })
-})
+// #R34 selectUnsyncedMentionedRefs 는 제거됐다 — 게이트 대상 선정은 엔진과 같은 파서를 쓰는
+// selectMentionSyncTargets 하나로 합쳤다(tests/utils/mentionSyncTargets.test.js).
 
 describe('#R34: syncRefToFlow', () => {
   beforeEach(() => vi.clearAllMocks())

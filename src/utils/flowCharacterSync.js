@@ -62,25 +62,6 @@ export function refBadgeState(ref, mode) {
   return ref.mediaId ? 'ok' : 'none'
 }
 
-/**
- * #R34: 생성 대상 씬들의 @멘션 캐릭터 중 "미동기화" 인 것만 추린다.
- *   생성 전 가드 모달에 쓴다 — 이 캐릭터들이 동기화 안 된 채 생성하면 멘션 실패/이미지 폴백이 된다.
- * @param {Array<{prompt?:string}>} scenes - 생성 대상 씬
- * @param {Array} references - 전체 ref
- * @returns {Array} 미동기화 character ref (멘션된 것만)
- */
-export function selectUnsyncedMentionedRefs(scenes = [], references = []) {
-  // #R34-fix: @멘션은 character 의도다. resolveMentions 는 전체 ref 를 name→ref 맵(뒤가 덮음)에 넣어
-  //   같은 이름의 scene/style 이 character 를 가리면(@king→scene) character 가 누락돼 게이트가 안 열린다.
-  //   → character ref 만으로 멘션을 해석해 같은 이름 비-character 의 shadowing 을 막는다.
-  const charRefs = (references || []).filter(r => r?.type === 'character')
-  const mentionedRefs = new Set()
-  for (const s of scenes || []) {
-    const { matched } = resolveMentions(s?.prompt || '', charRefs)
-    for (const r of matched) if (r) mentionedRefs.add(r)
-  }
-  return charRefs.filter(r => r && mentionedRefs.has(r) && !isRefSynced(r))
-}
 
 /** 생성에 필요한 @mention sync 결과 — 하나라도 실패하면 unresolved ref 가 남으므로 fail closed. */
 export function planSyncGateCompletion(ok = 0, fail = 0) {
