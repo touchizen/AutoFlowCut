@@ -801,8 +801,8 @@ function App() {
   //    playhead 등) interval 이 리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
   const adoptFlowRef = useRef(tryAdoptFlowProject)
   adoptFlowRef.current = tryAdoptFlowProject
-  // baseline 이 home 이라 코드로 소유권을 판단할 수 없는 경우엔 훅이 needs-confirm 을 돌려준다 —
-  // 그때만 확인 모달을 띄운다(모달이 떠 있는 동안은 폴링을 멈춘다).
+  // 채택은 항상 사용자 확인을 거친다 — 훅은 후보를 찾으면 needs-confirm 을 돌려주고, 그때 확인
+  // 모달을 띄운다(모달이 떠 있는 동안은 폴링을 멈춘다).
   const [flowAdoptCandidate, setFlowAdoptCandidate] = useState(null)
   useEffect(() => {
     if (mode !== 'flow' || flowProjectReady || flowAdoptCandidate) return
@@ -3120,8 +3120,8 @@ function App() {
         t={t}
       />
 
-      {/* Flow 자동 생성 실패 후, baseline 이 home 이라 소유권을 코드로 판단할 수 없을 때만 뜬다.
-          연결하면 그 Flow 프로젝트에 앞으로의 캐릭터·씬이 만들어진다. */}
+      {/* Flow 자동 생성 실패 후, Flow 가 baseline 과 다른 프로젝트를 보고 있을 때 뜬다.
+          연결하면 그 Flow 프로젝트에 앞으로의 캐릭터·씬이 만들어진다(자동 채택은 하지 않는다). */}
       <FlowProjectAdoptModal
         projectId={flowAdoptCandidate}
         onConfirm={async () => {

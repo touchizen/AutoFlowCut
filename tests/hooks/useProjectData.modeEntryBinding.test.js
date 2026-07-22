@@ -20,6 +20,8 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
     projectExists: vi.fn(),
     saveProjectData: vi.fn(),
     ensurePermission: vi.fn(),
+    // 실제 fileSystemAPI 에 있는 메서드 — 빠져 있으면 persistFlowProjectId 가 TypeError 로 실패한다.
+    mergeProjectData: vi.fn(),
   },
 }))
 
@@ -62,6 +64,7 @@ describe('mode-entry Flow project binding (#2)', () => {
     fileSystemAPI.readHistoryMetadata.mockResolvedValue({ success: false })
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -189,6 +192,7 @@ describe('R2-1: create-new deferred until hydration complete', () => {
     fileSystemAPI.readHistoryMetadata.mockResolvedValue({ success: false })
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -274,6 +278,7 @@ describe('R2-3: switching to api mode resets flowProjectReady', () => {
     fileSystemAPI.readHistoryMetadata.mockResolvedValue({ success: false })
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -325,6 +330,7 @@ describe('#R3-2: hydrated state re-triggers create-new after hydration', () => {
     fileSystemAPI.readHistoryMetadata.mockResolvedValue({ success: false })
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
@@ -432,6 +438,7 @@ describe('#R3-3: video recovery deferred in flow mode until Flow project confirm
     fileSystemAPI.readHistoryMetadata.mockResolvedValue({ success: false })
     fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
     fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 

@@ -70,8 +70,31 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     if (typeof window !== 'undefined') delete window.electronAPI
   })
 
-  // Case B 실패 → armed. 그 후 사용자가 Flow 에서 새 프로젝트로 들어가면(id != preId) 채택된다.
-  it('사용자가 Flow 에서 새 프로젝트로 들어가면(preId와 다름) 채택해 ready 를 푼다', async () => {
+  // Case B 실패 → armed. 그 후 id 가 baseline 과 달라지면 채택 후보지만, **자동 채택은 하지 않는다**.
+  // id 변화는 "이동이 일어났다"만 증명할 뿐 누가 왜 이동시켰는지(provenance)를 증명하지 않는다 —
+  // 사용자가 예전 작업물을 열어봤거나 Flow 가 자율 이동한 경우 남의 프로젝트에 씬이 섞인다.
+  it('id 가 baseline 과 달라져도 확인 없이는 채택하지 않는다(항상 확인)', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: false, error: 'timeout waiting for a NEW project URL' })
+    const flowExtractProjectId = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'old-id' })
+      .mockResolvedValue({ success: true, projectId: 'new-id' })
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('new-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    let res
+    await act(async () => { res = await result.current.tryAdoptFlowProject() })
+
+    expect(res).toMatchObject({ ok: false, reason: 'needs-confirm', projectId: 'new-id' })
+    expect(openFlowProject).not.toHaveBeenCalled()
+    expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalled()
+    expect(result.current.flowProjectReady).toBe(false)
+  })
+
+  // 사용자가 확인하면 그때 채택된다(baseline 이 non-null 이어도 동일).
+  it('사용자가 확인하면 채택해 ready 를 푼다', async () => {
     const newFlowProject = vi.fn().mockResolvedValue({ success: false, error: 'timeout waiting for a NEW project URL' })
     const flowExtractProjectId = vi.fn()
       .mockResolvedValueOnce({ success: true, projectId: 'old-id' }) // Case B 실패 시점 preId
@@ -84,7 +107,7 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(result.current.flowProjectReady).toBe(false) // Case B 실패로 차단됨
 
     let adopted
-    await act(async () => { adopted = await result.current.tryAdoptFlowProject() })
+    await act(async () => { adopted = await result.current.tryAdoptFlowProject({ confirmed: true }) })
 
     expect(adopted?.ok).toBe(true)
     expect(result.current.flowProjectId).toBe('new-id')
@@ -124,7 +147,7 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
 
     let adopted
-    await act(async () => { adopted = await result.current.tryAdoptFlowProject() })
+    await act(async () => { adopted = await result.current.tryAdoptFlowProject({ confirmed: true }) })
 
     expect(adopted?.ok).toBe(false)
     expect(result.current.flowProjectReady).toBe(false)
@@ -225,6 +248,50 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalledWith('p1', expect.anything())
   })
 
+  // 자동 생성(Case B)이 "성공"해도 project.json 저장이 실패하면, ready 를 여는 순간 다음 실행에서
+  // 저장된 id 가 없어 또 새 Flow 프로젝트를 만든다(빈 프로젝트 양산). 채택 경로와 같은 규칙 —
+  // 저장이 확인된 뒤에만 ready 를 연다.
+  it('Case B 성공이라도 project.json 저장이 실패하면 ready 를 열지 않는다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    const openFlowProject = vi.fn()
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: false, error: 'disk' })
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(fileSystemAPI.mergeProjectData).toHaveBeenCalledWith('p1', { flowProjectId: 'created-id' })
+    expect(result.current.flowProjectReady).toBe(false)
+    // 저장되지 않은 id 를 state 에 바인딩하면 mode-entry 가 Case A 로 재오픈해 ready 를 열어버린다
+    // (같은 fail-open 이 뒷문으로 재현된다).
+    expect(result.current.flowProjectId).toBeNull()
+  })
+
+  // 저장만 실패한 상태에는 회복 경로가 있어야 한다 — Flow 프로젝트는 이미 만들어졌으므로
+  // 새로 만들 필요 없이 저장만 재시도하면 된다(App 의 5초 폴링이 이 함수를 계속 부른다).
+  it('Case B 저장 실패 후, 폴링 재시도에서 저장이 성공하면 그때 ready 를 연다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    const openFlowProject = vi.fn()
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.mergeProjectData.mockResolvedValueOnce({ success: false, error: 'disk' })
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    expect(result.current.flowProjectReady).toBe(false)
+
+    let res
+    await act(async () => { res = await result.current.tryAdoptFlowProject() })
+
+    expect(res).toMatchObject({ ok: true, projectId: 'created-id' })
+    expect(result.current.flowProjectId).toBe('created-id')
+    expect(result.current.flowProjectReady).toBe(true)
+    // 이미 만들어진 프로젝트를 저장만 재시도한 것 — 새 Flow 프로젝트를 또 만들면 안 된다.
+    expect(newFlowProject).toHaveBeenCalledTimes(1)
+  })
+
   // 저장이 실패했는데 ready 를 열면, 다음 실행에서 저장 id 가 없어 또 새 프로젝트를 만든다(fail-open 금지).
   it('project.json 저장이 실패하면 ready 를 열지 않는다', async () => {
     const newFlowProject = vi.fn().mockResolvedValue({ success: false })
@@ -239,7 +306,7 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
 
     let adopted
-    await act(async () => { adopted = await result.current.tryAdoptFlowProject() })
+    await act(async () => { adopted = await result.current.tryAdoptFlowProject({ confirmed: true }) })
 
     expect(adopted?.ok).toBe(false)
     expect(result.current.flowProjectReady).toBe(false)

@@ -607,6 +607,10 @@ export function useProjectData({
   // 상태에서 엉뚱한 프로젝트를 채택할 수 있다.
   const adoptArmedRef = useRef(false)
   const adoptInFlightRef = useRef(false)
+  // Case B 가 성공해 Flow 프로젝트는 만들어졌는데 project.json 저장만 실패한 상태
+  // {projectName, flowProjectId, epoch}. ready 는 닫아 둔 채 저장만 재시도한다 — 여기서 ready 를
+  // 열면(fail-open) 다음 실행에 저장 id 가 없어 또 새 프로젝트를 만들어 빈 프로젝트가 쌓인다.
+  const pendingPersistRef = useRef(null)
   // arm 의 소유자(로컬 프로젝트 + load epoch). 늦게 도착한 이전 프로젝트의 응답이 arm 을 되살려
   // 다른 프로젝트에 채택이 발화하는 것을 막는다.
   const adoptArmTokenRef = useRef(null)
@@ -666,17 +670,47 @@ export function useProjectData({
    *
    * 채택 조건: flow 모드 + 현재 Flow id 가 있고 adoptPreIdRef(실패 시점 id)와 **다를 것**.
    *   같으면 Flow 가 이전 프로젝트에 머문 것이라 채택하지 않는다(오염 방지).
+   *   조건을 만족해도 자동 채택하지 않는다 — opts.confirmed 없이는 needs-confirm 을 돌려주고
+   *   호출부(App)가 확인 모달을 띄운다. 유일한 예외는 pending persist 재시도(사용자가 이미
+   *   확인했거나 앱이 직접 만든 프로젝트라 새로 물을 것이 없다).
    * 순서(중요): confirmedBindingRef 를 setFlowProjectId **보다 먼저** 세운다 — id 변경으로
    *   재실행되는 mode-entry 가 Case A 로 중복 재오픈해 readiness 를 되돌리지 않게.
    *   그리고 project.json 저장이 성공한 **뒤에만** readiness 를 연다(fail-open 금지).
    */
   const tryAdoptFlowProject = async (opts = {}) => {
     if (modeRef.current !== 'flow') return { ok: false, reason: 'not-flow' }
-    // 자동 생성이 실패해 arm 된 뒤에만 채택한다(진행 중 오채택 방지).
-    if (!adoptArmedRef.current) return { ok: false, reason: 'not-armed' }
     if (adoptInFlightRef.current) return { ok: false, reason: 'in-flight' }
     const projectName = projectNameRef.current
     if (!projectName) return { ok: false, reason: 'no-project' }
+
+    // Case B 는 성공했는데 project.json 저장만 실패한 상태 — Flow 프로젝트는 이미 존재하므로
+    // 새로 만들거나 사용자에게 물을 것이 없다. 저장만 재시도해서 성공하면 그때 ready 를 연다.
+    const pending = pendingPersistRef.current
+    if (pending) {
+      if (pending.projectName !== projectName || pending.epoch !== loadEpochRef.current) {
+        pendingPersistRef.current = null
+        return { ok: false, reason: 'stale-pending' }
+      }
+      adoptInFlightRef.current = true
+      try {
+        const saved = await persistFlowProjectId(projectName, pending.flowProjectId)
+        if (!saved) return { ok: false, reason: 'persist-failed' }
+        // await 뒤 재검사 — 저장하는 사이 모드 이탈/프로젝트 전환이 있었으면 state 를 건드리지 않는다.
+        if (modeRef.current !== 'flow' || projectNameRef.current !== projectName
+          || loadEpochRef.current !== pending.epoch) return { ok: false, reason: 'superseded' }
+        pendingPersistRef.current = null
+        confirmedBindingRef.current = { projectName, flowProjectId: pending.flowProjectId }
+        setFlowProjectId(pending.flowProjectId)
+        setFlowProjectReady(true)
+        console.log('[ProjectData] pending persist 재시도 성공:', pending.flowProjectId)
+        return { ok: true, projectId: pending.flowProjectId }
+      } finally {
+        adoptInFlightRef.current = false
+      }
+    }
+
+    // 자동 생성이 실패해 arm 된 뒤에만 채택한다(진행 중 오채택 방지).
+    if (!adoptArmedRef.current) return { ok: false, reason: 'not-armed' }
     // arm 이 "지금 이 프로젝트/세션"의 것인지 — 아니면 stale 이므로 채택하지 않는다.
     const tok = adoptArmTokenRef.current
     if (!tok || tok.projectName !== projectName || tok.epoch !== loadEpochRef.current) {
@@ -707,12 +741,12 @@ export function useProjectData({
       // 사용자가 승인한 대상이 아니므로 채택하지 않는다.
       if (opts.expectedId && id !== opts.expectedId) return { ok: false, reason: 'candidate-changed' }
       if (id === adoptPreIdRef.current) return { ok: false, reason: 'unchanged' }
-      // baseline 이 null 이면 Flow 가 home 이었다는 뜻 — 지금 보이는 프로젝트가 "사용자가 방금 만든
-      // 것"인지 "이전 프로젝트가 복원된 것"인지 코드로는 구분할 수 없다(composer 확인은 유효성
-      // 증명일 뿐 소유권 증명이 아니다). 이 경우에만 사용자 확인을 받는다.
-      if (adoptPreIdRef.current === null && !opts.confirmed) {
-        return { ok: false, reason: 'needs-confirm', projectId: id }
-      }
+      // 채택은 **항상** 사용자 확인을 거친다. id 가 baseline 과 달라졌다는 사실은 "이동이 일어났다"만
+      // 증명할 뿐, 누가 왜 이동시켰는지(provenance)는 증명하지 않는다 — 사용자가 예전 작업물을
+      // 열어봤거나 Flow 가 자율 이동(세션 복원/리다이렉트)한 경우 자동 채택하면 남의 Flow 프로젝트에
+      // 앞으로의 캐릭터·씬이 섞여 들어간다(발견도 늦고 되돌리기도 비싸다).
+      // composer 확인(openFlowProject)은 유효성 증명일 뿐 소유권 증명이 아니라 대체가 안 된다.
+      if (!opts.confirmed) return { ok: false, reason: 'needs-confirm', projectId: id }
       // URL 에 id 가 있어도 에러 화면일 수 있다 — 정상 composer 로 열리는지 확인한 뒤 채택한다.
       let opened = null
       try {
@@ -782,6 +816,7 @@ export function useProjectData({
       adoptArmedRef.current = false
       adoptPreIdRef.current = undefined
       adoptArmTokenRef.current = null
+      pendingPersistRef.current = null
     }
   }, [mode])
 
@@ -847,17 +882,32 @@ export function useProjectData({
         try {
           const r = await window.electronAPI?.newFlowProject?.()
           if (!cancelled && r?.success && r?.projectId) {
+            // #R6-8: Persist ONLY the new flowProjectId by merging into disk JSON.
+            // saveCurrentProject would write this effect closure's STALE scenes/refs
+            // snapshot, clobbering edits made since the closure was created.
+            // ⚠️ 저장을 ready 보다 **먼저** 확인한다(fail-open 금지). 저장 실패인데 ready 를 열면
+            //    다음 실행에서 저장된 id 가 없어 또 새 Flow 프로젝트를 만든다(빈 프로젝트 양산).
+            const saved = await persistFlowProjectId(currentProjectName, r.projectId)
+            if (cancelled || modeRef.current !== 'flow') return
+            if (!saved) {
+              // 프로젝트는 이미 만들어졌다 — 새로 만들 필요 없이 저장만 재시도하면 된다.
+              // App 의 5초 폴링(tryAdoptFlowProject)이 이 pending 을 처리한다.
+              setFlowProjectReady(false)
+              pendingPersistRef.current = {
+                projectName: currentProjectName,
+                flowProjectId: r.projectId,
+                epoch: loadEpochRef.current,
+              }
+              console.warn('[ProjectData] mode-entry: 새 Flow 프로젝트 저장 실패 — 저장 재시도까지 생성 차단')
+              return
+            }
             // #R9-2: newFlowProject 가 새 프로젝트로 진입시켰으니 confirmed 로 기록 →
             //   setFlowProjectId 로 인한 mode-entry 재실행(Case A)이 중복 재오픈하지 않게(transient flip 방지).
             confirmedBindingRef.current = { projectName: currentProjectName, flowProjectId: r.projectId }
             setFlowProjectId(r.projectId)
-            // flowProjectReady=true: creation succeeded, generation is now unblocked.
+            // flowProjectReady=true: creation succeeded AND was persisted — generation is now unblocked.
             setFlowProjectReady(true)
             console.log('[ProjectData] mode-entry: new Flow project created:', r.projectId)
-            // #R6-8: Persist ONLY the new flowProjectId by merging into disk JSON.
-            // saveCurrentProject would write this effect closure's STALE scenes/refs
-            // snapshot, clobbering edits made since the closure was created.
-            await persistFlowProjectId(currentProjectName, r.projectId)
           } else if (!cancelled) {
             // newFlowProject failed or not available (live-only path)
             // Leave flowProjectReady=false so generation is blocked until next retry.
@@ -1079,6 +1129,8 @@ export function useProjectData({
     adoptArmedRef.current = false
     adoptPreIdRef.current = undefined
     adoptArmTokenRef.current = null
+    // 저장 대기(pending persist)도 이전 프로젝트의 것 — 새 프로젝트에 그 id 를 쓰면 안 된다.
+    pendingPersistRef.current = null
 
     // #R5-2: 에폭 클레임 — BEFORE isRestoringRef(spec 요건: 에폭이 먼저라야 이전 restore 를 supersede).
     const myEpoch = ++loadEpochRef.current
