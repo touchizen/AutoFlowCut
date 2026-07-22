@@ -73,7 +73,7 @@
 
 # 이어진 세션 — 2026-07-22 (2차)
 
-`origin/main` 대비 **로컬 31커밋 미푸시.** 전체 스위트 **675파일 / 6978테스트 통과**
+`origin/main` 대비 **로컬 43커밋 미푸시.** 전체 스위트 **675파일 / 7028테스트 통과**
 (기존 `VideoDetailModal.generateButton.test.jsx` 의 unhandled rejection 2건은 이 작업과 무관한 기존 문제).
 
 ## 끝난 것
