@@ -19,6 +19,7 @@ import StoryView from './components/story/StoryView'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
 import { useSceneGeneration } from './hooks/useSceneGeneration'
+import { useSyncGateHost } from './hooks/useSyncGateHost'
 import { useGenerationQueue } from './hooks/useGenerationQueue'
 import { useExport } from './hooks/useExport'
 import { useStoreRating } from './hooks/useStoreRating'
@@ -123,9 +124,13 @@ import { useImportProcessing } from './hooks/useImportProcessing'
 function App() {
   const { t, lang } = useI18n()
   const isKo = t('common.cancel') === '취소'  // 간단한 언어 감지 (ReferencePanel 과 동일)
-  // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 모달 상태 — { refs, proceed } | null
-  const [syncGate, setSyncGate] = useState(null)
-  const [syncGateBusy, setSyncGateBusy] = useState(false)
+  // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 모달. 게이트를 여는 경로가 여럿이라(배치/T2V/개별 씬)
+  //   소유권 조정은 useSyncGateHost 하나가 맡는다 — 고아 promise·남의 모달 닫기 방지.
+  const {
+    gate: syncGate, busy: syncGateBusy, open: openSyncGate,
+    beginWork: beginSyncGateWork, endWork: endSyncGateWork,
+    finish: finishSyncGate, cancel: cancelSyncGate,
+  } = useSyncGateHost()
   const [emptyRefGate, setEmptyRefGate] = useState(null)
   // #M2: coordinator가 폴링/effect chain 없이 사용자 선택을 await하도록 resolver를 state에 둔다.
   // failure 확인 resolver는 확인 즉시 모달도 닫아 coordinator finally가 latch를 풀 수 있게 한다.
@@ -149,32 +154,6 @@ function App() {
       }))
     }),
     close: () => setEmptyRefGate(null),
-  }), [])
-  // 동기화 게이트의 **유일한** 진입점. 게이트를 여는 곳이 여럿인데(배치/T2V/개별 씬) 각자
-  // setSyncGate 를 부르면, 열려 있던 게이트 객체가 교체되면서 그 안에 들어 있던 resolver 가
-  // 사라진다 — 그 promise 를 기다리던 생성 큐가 영영 멈춘다(뒤에 쌓인 작업 전부 정지).
-  // 여기서 이전 대기자를 먼저 '취소'로 풀어준 뒤 새 게이트를 연다.
-  const pendingSyncGateRef = useRef(null)
-  const syncGateBusyRef = useRef(false)
-  syncGateBusyRef.current = syncGateBusy
-  const syncGateSeqRef = useRef(0)
-  const openSyncGate = useCallback(({ refs, forceRepair = false }) => new Promise(resolve => {
-    // 이미 동기화가 돌고 있는 게이트는 건드리지 않는다 — 중간에 가로채면 그 작업의 결과를
-    // 어디에도 전달할 수 없다. 새 요청만 취소로 돌려보낸다(호출부가 다음 기회에 다시 묻는다).
-    if (syncGateBusyRef.current) { resolve({ proceeded: false, patchedRefs: null }); return }
-    pendingSyncGateRef.current?.({ proceeded: false, patchedRefs: null })
-    const settle = (value) => {
-      if (pendingSyncGateRef.current === settle) pendingSyncGateRef.current = null
-      resolve(value)
-    }
-    pendingSyncGateRef.current = settle
-    setSyncGate({
-      id: ++syncGateSeqRef.current,
-      refs,
-      forceRepair,
-      proceed: patchedRefs => settle({ proceeded: true, patchedRefs: patchedRefs ?? null }),
-      onCancel: () => settle({ proceeded: false, patchedRefs: null }),
-    })
   }), [])
   const openEmptyRefSyncGate = openSyncGate
   const { isAuthenticated, subscription, refreshSubscription } = useAuth()
@@ -909,24 +888,34 @@ function App() {
   //     했으므로 동기화 상태로 거르지 않는다 — 기록이 옛것일 수 있다.
   const requestMentionSync = useCallback(async ({ scene, names, projectName: expectedProject }) => {
     // 호출자가 시작 시점의 프로젝트를 넘긴다. 그 사이 프로젝트가 바뀌었으면 지금의 refs 는 다른
-    // 프로젝트의 것이다 — 넘겨주면 A 의 씬을 B 의 레퍼런스로 생성한다. 그럴 땐 진행하지 않는다.
-    if (expectedProject != null && expectedProject !== projectNameRef.current) {
-      return { proceeded: false }
-    }
+    // 프로젝트의 것이다 — 넘겨주면 A 의 씬을 B 의 레퍼런스로 생성한다.
+    // ⚠️ 이름만 보면 부족하다: 전환은 **레퍼런스를 먼저 갈고 이름을 나중에** 커밋해서, 그 사이엔
+    //    이름이 아직 A 인데 refs 는 이미 B 다. 전환이 진행 중이면(projectLoading) 아예 진행하지 않는다.
+    const outOfScope = () => projectLoading
+      || (expectedProject != null && expectedProject !== projectNameRef.current)
+    if (outOfScope()) return { proceeded: false, reason: 'project-changed' }
     // referencesRef 는 매 렌더 갱신되는 동기 최신값 — 호출자(훅)의 클로저는 stale 일 수 있다.
     const refs = referencesRef.current || []
     const targets = selectMentionSyncTargets({ scene, names, references: refs })
     // 동기화할 게 없어도 **live refs 를 넘긴다**. 큐에 쌓여 있던 다음 씬은 이전 씬이 동기화한
     // 결과를 모르는 클로저를 들고 있어서, 그냥 진행시키면 옛 ref 로 또 미해결 실패가 난다.
-    if (targets.length === 0) return { proceeded: true, refs }
+    if (targets.length === 0) {
+      // 복구 요청(names)인데 고칠 대상이 없다 = 동기화로 풀 수 있는 문제가 아니다. 그대로 진행시키면
+      // 훅이 같은 실패를 한 번 더 부른다 — 헛수고 + quota. 진행 불가로 돌려준다.
+      if (names?.length) return { proceeded: false, reason: 'no-target' }
+      return { proceeded: true, refs }
+    }
     // names 로 온 요청 = 엔진이 거절한 뒤의 복구 → 기록이 synced 여도 재등록을 태운다.
     const res = await openSyncGate({ refs: targets, forceRepair: !!names?.length })
-    if (!res.proceeded) return { proceeded: false }
-    if (expectedProject != null && expectedProject !== projectNameRef.current) {
-      return { proceeded: false }
+    if (!res.proceeded) {
+      // 동기화가 이미 돌고 있어 거절된 경우엔 조용히 넘어가지 않는다 — 사용자는 버튼이 안 먹은
+      // 것처럼 느낀다. 잠시 뒤 다시 시도하라고 알린다.
+      if (res.reason === 'busy') toast.warning(t('toast.flowSyncBusy'))
+      return { proceeded: false, reason: res.reason }
     }
+    if (outOfScope()) return { proceeded: false, reason: 'project-changed' }
     return { proceeded: true, refs: res.patchedRefs || referencesRef.current || refs }
-  }, [openSyncGate])
+  }, [openSyncGate, projectLoading, t])
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
@@ -1960,7 +1949,7 @@ function App() {
     // 끝날 때 무조건 setSyncGate(null) 하는 옛 코드는 **남의 모달을 닫아** 그 대기자를 영구히
     // 매달아 놨다(생성 큐 정지).
     const myGate = syncGate
-    setSyncGateBusy(true)
+    beginSyncGateWork()
     let ok = 0, fail = 0
     // #R34-fix: 패치를 로컬 배열에 누적해 첫 생성(start)에 currentRefs 로 넘긴다(React state 는 같은
     //   tick 에 stale). character 는 업로드 성공이어도 displayName PATCH 실패면 'failed' 라 미동기화 —
@@ -2026,17 +2015,14 @@ function App() {
         return
       }
       toast.success(t('toast.flowSyncGenerationStarting', { ok }))
-      const proceed = myGate.proceed
-      setSyncGate(prev => (prev && prev.id === myGate.id ? null : prev))
-      proceed?.(patchedRefs)
+      finishSyncGate(myGate, patchedRefs)
     } finally {
-      setSyncGateBusy(false)
+      endSyncGateWork()
     }
   }
   const handleSyncGateCancel = () => {
     if (syncGateBusy) return
-    syncGate?.onCancel?.()
-    setSyncGate(null)
+    cancelSyncGate()
   }
 
   // ref batch는 generatingRefs.length만으로 부족 — preparingRefs(폴더/토큰 체크 ~ 첫 submit 사이)와

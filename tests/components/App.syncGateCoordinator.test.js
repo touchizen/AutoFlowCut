@@ -13,7 +13,8 @@ describe('App sync gate — coordinator publish lifetime wiring', () => {
     expect(handler).toContain('scopeToken:')
     expect(handler).toContain('refIndex')
     expect(handler).toContain('publishResult:')
-    expect(handler.indexOf('publishResult:')).toBeLessThan(handler.indexOf('proceed?.(patchedRefs)'))
+    // 결과 전달(finishSyncGate)보다 먼저 publish 돼야 flight 안에서 반영된다.
+    expect(handler.indexOf('publishResult:')).toBeLessThan(handler.indexOf('finishSyncGate(myGate'))
   })
 
   it('부분 sync 실패를 generating anyway 로 흘리지 않고 fail closed 한다', () => {
@@ -26,13 +27,13 @@ describe('App sync gate — coordinator publish lifetime wiring', () => {
     expect(handler).not.toContain('생성을 계속합니다')
   })
 
-  it('취소는 coordinator promise를 먼저 resolve한 뒤 sync gate를 닫는다', () => {
+  // 취소/완료의 순서(대기자를 먼저 풀고 모달을 내린다)와 소유권은 이제 useSyncGateHost 가
+  // 소유하고 tests/hooks/useSyncGateHost.test.js 가 **실행해서** 검증한다 — 소스 문자열이 아니라.
+  it('취소는 게이트 조정자에게 위임한다', () => {
     const start = source.indexOf('const handleSyncGateCancel')
     const end = source.indexOf('// ref batch는', start)
     const handler = source.slice(start, end)
 
-    expect(handler).toContain('syncGate?.onCancel?.()')
-    expect(handler.indexOf('syncGate?.onCancel?.()'))
-      .toBeLessThan(handler.indexOf('setSyncGate(null)'))
+    expect(handler).toContain('cancelSyncGate()')
   })
 })
