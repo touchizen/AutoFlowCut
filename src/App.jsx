@@ -805,13 +805,15 @@ function App() {
   // 모달을 띄운다(모달이 떠 있는 동안은 폴링을 멈춘다).
   const [flowAdoptCandidate, setFlowAdoptCandidate] = useState(null)
   useEffect(() => {
-    if (mode !== 'flow' || flowProjectReady || flowAdoptCandidate) return
+    // 프로젝트 전환 중(projectLoading)에는 폴링하지 않는다 — 전환은 projectName 과 flowProjectId 를
+    // 따로 커밋하므로, 그 사이에 채택/저장이 발화하면 어느 프로젝트의 것인지 어긋난다.
+    if (mode !== 'flow' || flowProjectReady || flowAdoptCandidate || projectLoading) return
     const timer = setInterval(async () => {
       const r = await adoptFlowRef.current?.()
       if (r?.reason === 'needs-confirm' && r.projectId) setFlowAdoptCandidate(r.projectId)
     }, 5000)
     return () => clearInterval(timer)
-  }, [mode, flowProjectReady, flowAdoptCandidate])
+  }, [mode, flowProjectReady, flowAdoptCandidate, projectLoading])
 
   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
   const automation = useAutomation(

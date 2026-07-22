@@ -290,6 +290,51 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(result.current.flowProjectReady).toBe(true)
     // 이미 만들어진 프로젝트를 저장만 재시도한 것 — 새 Flow 프로젝트를 또 만들면 안 된다.
     expect(newFlowProject).toHaveBeenCalledTimes(1)
+    // 재시도가 실제로 "저장"이었는지 핀 — 저장을 건너뛰고 ready 만 열면 같은 fail-open 이다.
+    expect(fileSystemAPI.mergeProjectData).toHaveBeenCalledTimes(2)
+    expect(fileSystemAPI.mergeProjectData).toHaveBeenNthCalledWith(2, 'p1', { flowProjectId: 'created-id' })
+  })
+
+  // 저장 대기는 그 로컬 프로젝트의 것이다. api 로 잠깐 나갔다 돌아왔다고 버리면, 이미 만들어진
+  // Flow 프로젝트를 잃고 Case B 가 두 번째 프로젝트를 만든다(빈 프로젝트 양산).
+  it('Case B 저장 실패 후 api 로 나갔다 돌아와도, 새로 만들지 않고 저장만 재시도한다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject: vi.fn() }
+    fileSystemAPI.mergeProjectData.mockResolvedValueOnce({ success: false, error: 'disk' })
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    expect(result.current.flowProjectReady).toBe(false)
+
+    await act(async () => { rerender({ mode: 'api', projectName: 'p1' }) })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(newFlowProject).toHaveBeenCalledTimes(1)
+    expect(result.current.flowProjectId).toBe('created-id')
+    expect(result.current.flowProjectReady).toBe(true)
+  })
+
+  // 저장 대기가 다른 로컬 프로젝트에서 발화하면 그 프로젝트의 project.json 에 남의 Flow id 를 쓴다.
+  it('저장 대기는 다른 로컬 프로젝트에서 발화하지 않는다', async () => {
+    // 두 로컬 프로젝트가 서로 다른 Flow 프로젝트를 만든다 — id 가 같으면 오염을 관측할 수 없다.
+    const newFlowProject = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'p1-flow-id' })
+      .mockResolvedValue({ success: true, projectId: 'p2-flow-id' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'p2-flow-id' })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject: vi.fn() }
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: false, error: 'disk' })
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    // 로컬 프로젝트가 p2 로 바뀐 상황
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p2' }) })
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+
+    await act(async () => { await result.current.tryAdoptFlowProject() })
+
+    expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalledWith('p2', { flowProjectId: 'p1-flow-id' })
   })
 
   // 저장이 실패했는데 ready 를 열면, 다음 실행에서 저장 id 가 없어 또 새 프로젝트를 만든다(fail-open 금지).

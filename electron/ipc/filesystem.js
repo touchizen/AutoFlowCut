@@ -221,6 +221,19 @@ async function pathExists(p) {
 }
 
 /**
+ * Read a JSON file, or null when it is missing or unparseable.
+ * 손상된 project.json 을 읽다 throw 하면 저장 자체가 실패한다 — 읽기 실패는 "이전 값 없음"으로
+ * 취급하고 쓰기는 진행한다(다음 쓰기가 파일을 정상화한다).
+ */
+async function readJsonOrNull(p) {
+  try {
+    return JSON.parse(await fs.readFile(p, 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+/**
  * Try to read + parse W4-3 SFX prompt list (`08_sfx_list.md` / `08_sfx_목록.md`).
  * Returns a plain object `{ [filenameStem]: meta }` for IPC structured-clone safety,
  * or `null` if no file found. Never throws.
@@ -407,7 +420,17 @@ export function registerFilesystemIPC(ipcMain) {
     return withProjectWriteLock(jsonPath, async () => {
       try {
         await fs.mkdir(path.join(workFolder, project), { recursive: true })
-        await fs.writeFile(jsonPath, JSON.stringify(data, null, 2), 'utf-8')
+        // flowProjectId 는 renderer state 가 아직 null 이던 시점의 payload 에는 실리지 않는다.
+        // 그런 payload 가 merge-project-data 뒤에 도착하면 방금 저장된 매핑을 지우는데,
+        // merge 성공을 보고 생성 게이트를 연 renderer 는 그걸 알 수 없다(디스크엔 id 가 없어
+        // 다음 실행이 또 새 Flow 프로젝트를 만든다). payload 가 그 키를 아예 언급하지 않을
+        // 때만 디스크 값을 보존한다 — 명시하면(null 포함) payload 가 이긴다.
+        const next = { ...data }
+        if (!('flowProjectId' in next)) {
+          const prev = await readJsonOrNull(jsonPath)
+          if (prev && 'flowProjectId' in prev) next.flowProjectId = prev.flowProjectId
+        }
+        await fs.writeFile(jsonPath, JSON.stringify(next, null, 2), 'utf-8')
         return { success: true }
       } catch (error) {
         return { success: false, error: error.message }
@@ -422,11 +445,10 @@ export function registerFilesystemIPC(ipcMain) {
     const jsonPath = path.join(workFolder, project, 'project.json')
     return withProjectWriteLock(jsonPath, async () => {
       try {
-        if (!(await pathExists(jsonPath))) {
-          return { success: false, error: 'project_json_missing' }
-        }
-        const text = await fs.readFile(jsonPath, 'utf-8')
-        const data = JSON.parse(text)
+        // 파일이 없으면 패치만으로 만든다. 반환값을 실패로 두면(옛 동작) 최초 저장이 실패한
+        // 프로젝트는 저장 재시도가 통과할 길이 없어 flowProjectReady 가 영구히 닫힌다.
+        await fs.mkdir(path.join(workFolder, project), { recursive: true })
+        const data = (await readJsonOrNull(jsonPath)) || {}
         const merged = { ...data, ...(patch || {}) }
         await fs.writeFile(jsonPath, JSON.stringify(merged, null, 2), 'utf-8')
         return { success: true }
