@@ -27,7 +27,21 @@
 
 ### 동작
 
-`refWorkActive = automation.status === 'uploading' || syncGateBusy`
+`refWorkActive = mode === 'flow' && automation.status === 'uploading'`
+
+> **리뷰(Fable)로 바뀐 부분.** 처음엔 `|| syncGateBusy` 를 함께 봤는데 세 가지가 걸렸다:
+> - **API 모드에서 헛발화**: API 모드의 `uploadReference` 는 스텁이라 `mediaId` 가 영영 안 채워지고
+>   ([useGenAPI.js:190](../../src/hooks/useGenAPI.js#L190)), 그래서 ref 를 쓰는 **모든** API 배치가
+>   아무 일도 안 하면서 `'uploading'` 에 들어간다. → `mode === 'flow'` 로 막는다.
+> - **배치당 2회 펄스**: 게이트 동기화(`syncGateBusy`) 뒤 폴더권한·토큰·구독 확인의 async 간격을
+>   두고 `'uploading'` 이 뒤따라, 열림→닫힘→열림→닫힘이 된다. 게다가 두 번째 펄스가 그 사이
+>   사용자가 닫은 패널을 다시 연다(아래 표의 마지막 줄과 정면 충돌).
+>   → **"`uploading` 은 배치당 한 번뿐"이라는 원래 문장은 틀렸다.** 확인 없이 추론으로 쓴 것이었다.
+> - **보이지도 않는다**: `syncGateBusy` 인 동안은 동기화 모달이 전체화면 오버레이로 떠 있어
+>   ([Modal.jsx:25](../../src/components/Modal.jsx#L25)) 뒤에서 패널을 펼쳐도 안 보인다.
+>
+> 그래서 신호를 하나로 줄였다. 캐릭터 동기화만 도는 배치는 펼침을 못 받지만, 그건 모달 자체가
+> 이미 피드백이다.
 
 | 전이 | 동작 |
 |---|---|
@@ -39,7 +53,7 @@
 마지막 줄이 핵심이다. 사용자가 일부러 닫았는데 앱이 다시 열거나, 일부러 열어 뒀는데 앱이 닫으면
 앱이 사용자와 싸우는 꼴이 된다. 사용자의 마지막 의사가 이긴다.
 
-"배치당 1회"는 자연히 성립한다 — `uploading` 단계는 배치당 한 번뿐이다.
+신호가 하나뿐이라 배치당 한 번만 펄스가 뜬다(위 리뷰 노트 참고).
 
 ### 구조
 
@@ -82,15 +96,25 @@ App 은 `onClick={() => { onUserToggle(); setShowReferences(v => !v) }}` 로 배
 - **문단 index = 씬 index** 가 정확히 성립한다: 이미지 탭
   `value={scenes.map(s => s.prompt).join('\n')}` ([App.jsx:2221](../../src/App.jsx#L2221)),
   비디오 탭 `value={scenes.map(s => s.videoT2VPrompt || '').join('\n').replace(/\n+$/, '')}`
-  ([App.jsx:2239](../../src/App.jsx#L2239)) — 둘 다 **전체 scenes 기준**이라 위에서부터 index 가 어긋나지 않는다.
+  ([App.jsx:2240](../../src/App.jsx#L2240)) — 둘 다 **전체 scenes 기준**이라 위에서부터 index 가 어긋나지 않는다 — **편집기에서 입력된
+  내용에 한해서다.** `scene.prompt` 안에 리터럴 `\n` 이 들어가면(CSV 인용 셀은 줄바꿈을 보존한다:
+  [csvParser.js:39](../../src/utils/csvParser.js#L39)) 그 씬이 문단 2개로 그려져 이후 index 가 밀린다.
+  거터 **번호**가 이미 같은 이유로 밀리는 기존 한계이고, 링은 그걸 물려받는다.
 - 금색은 이미 쓰는 토큰이다: `--warning-color: #ecc94b` ([App.css:92](../../src/App.css#L92)),
   생성 중 카드가 `gold-glow` 를 쓴다([App.css:1843](../../src/App.css#L1843)).
-- `PromptInput` 은 jsdom 에서 렌더된다(기존 `tests/components/PromptInput.glow.test.jsx`).
+- `PromptInput` 은 jsdom 에서 렌더된다 — `tests/components/PromptInput/gutter.test.jsx` 가
+  이미 `.prompt-paragraph` 요소를 직접 검사한다(더 강한 근거).
 
 ### 동작
 
-그 줄의 **이미지 또는 비디오 중 하나라도** 생성 중이면, 거터의 씬 번호 둘레를 금색 링이 계속
-회전한다. 숫자는 그대로 읽힌다(대체하지 않는다).
+**보고 있는 탭의 상태**를 본다 — 이미지 탭은 그 씬의 이미지가, 비디오 탭은 그 씬의 T2V 가 생성
+중일 때 거터의 씬 번호 둘레를 금색 링이 계속 회전한다. 숫자는 그대로 읽힌다(대체하지 않는다).
+
+- 이미지 탭: `scene.status === 'generating'`
+- 비디오 탭: `scene.videoT2VStatus === 'generating'` (**I2V 는 세지 않는다** — 그 탭의 프롬프트가 아니다)
+
+> 초안엔 "이미지 **또는** 비디오 중 하나라도"라고 썼는데, 받아들임 기준·헬퍼 API 와 모순이었다
+> (Fable 지적). 탭이 보여주는 프롬프트의 상태만 본다로 확정.
 
 ### 구조
 
@@ -123,7 +147,15 @@ App 은 `onClick={() => { onUserToggle(); setShowReferences(v => !v) }}` 로 배
 - 씬 번호가 3자리(100+)가 되면 링이 숫자에 빡빡해진다. 링 지름을 숫자 폭에 맞춰 최소값으로
   잡되, 3자리에서 겹침이 보기 싫으면 그때 거터 폭을 늘리는 별건으로 다룬다.
 - 링 애니메이션은 CSS 만 쓴다(타이머 없음). `prefers-reduced-motion` 에서는 회전을 끄고 정적
-  링만 남긴다.
+  링만 남긴다(App.css 에 이미 해당 블록이 있다).
+- 링은 거터 박스의 **고정 지점에 앵커**된다. 숫자가 우측정렬이라 자릿수에 따라 글리프 중심이
+  ±3px 움직인다 — 숫자마다 정확히 중앙에 오지는 않는다(18px 지름에서는 눈에 띄지 않는다).
+- CSV/MCP 로 들어온 여러 줄 프롬프트는 위 index 한계를 그대로 받는다. `busyPromptLines` 가
+  씬마다 `prompt.split('\n').length` 를 세어 보정할 수는 있으나, 거터 번호와의 일관성이 먼저다.
+- 비디오 탭에서 **맨 끝** 씬의 프롬프트가 비어 있으면(trailing 정리로 문단이 없음) 생성 중이어도
+  링이 없다. 받아들임 4 의 반대 경우다.
+- `setShowReferences` 호출부는 토글 버튼 말고 하나 더 있다(레퍼런스 CSV 임포트 직후,
+  [App.jsx:1175](../../src/App.jsx#L1175)). 그건 "사용자 토글" 로 세지 않는다.
 
 ---
 
