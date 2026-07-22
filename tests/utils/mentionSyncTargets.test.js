@@ -87,4 +87,19 @@ describe('selectMentionSyncTargets', () => {
     expect(selectMentionSyncTargets()).toEqual([])
     expect(selectMentionSyncTargets({})).toEqual([])
   })
+
+  // 배치 게이트도 같은 셀렉터를 써야 한다 — 여러 씬의 합집합(중복 없이).
+  it('여러 씬의 대상을 합집합으로 모은다', () => {
+    const refs = [
+      ch('문지기', { flowNameSyncStatus: 'failed' }),
+      ch('박씨', { flowNameSyncStatus: 'failed' }),
+      ch('변호사'),
+    ]
+    const scenes = [{ prompt: '@문지기 등장' }, { prompt: '@박씨 와 @문지기' }, { prompt: '@변호사 등장' }]
+
+    const targets = scenes.flatMap(scene => selectMentionSyncTargets({ scene, references: refs }))
+    const unique = [...new Set(targets)]
+
+    expect(unique.map(r => r.name).sort()).toEqual(['문지기', '박씨'].sort())
+  })
 })

@@ -67,6 +67,8 @@ describe('App handleStart M1 reference guard wiring', () => {
     expect(handleStartImpl).toContain('runEmptyRefGateFlow(')
     expect(tagProceed).toContain('runEmptyRefGateFlow(')
     expect(coordinator).toContain('applyM1MentionExclusions(')
-    expect(coordinator).toContain('.filter(flowSyncable)')
+    // 수리 불가능한 ref 걸러내기는 selectMentionSyncTargets 안으로 들어갔다(씬 경로와 같은
+    // 셀렉터를 쓰기 위해). 그 동작은 tests/utils/mentionSyncTargets.test.js 가 실행해서 검증한다.
+    expect(coordinator).toContain('selectMentionSyncTargets(')
   })
 })
