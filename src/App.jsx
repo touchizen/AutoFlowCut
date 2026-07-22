@@ -127,9 +127,9 @@ function App() {
   // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 모달. 게이트를 여는 경로가 여럿이라(배치/T2V/개별 씬)
   //   소유권 조정은 useSyncGateHost 하나가 맡는다 — 고아 promise·남의 모달 닫기 방지.
   const {
-    gate: syncGate, busy: syncGateBusy, open: openSyncGate,
+    gate: syncGate, busy: syncGateBusy, open: openSyncGateRaw,
     beginWork: beginSyncGateWork, endWork: endSyncGateWork,
-    finish: finishSyncGate, cancel: cancelSyncGate,
+    finish: finishSyncGate, cancel: cancelSyncGate, abort: abortSyncGate,
   } = useSyncGateHost()
   const [emptyRefGate, setEmptyRefGate] = useState(null)
   // #M2: coordinator가 폴링/effect chain 없이 사용자 선택을 await하도록 resolver를 state에 둔다.
@@ -155,6 +155,11 @@ function App() {
     }),
     close: () => setEmptyRefGate(null),
   }), [])
+  // 게이트를 여는 시점의 프로젝트를 새겨 둔다 — 전환 뒤에 눌린 Proceed 를 걸러낸다.
+  const openSyncGate = useCallback(
+    ({ refs, forceRepair = false }) => openSyncGateRaw({ refs, forceRepair, scope: projectNameRef.current }),
+    [openSyncGateRaw],
+  )
   const openEmptyRefSyncGate = openSyncGate
   const { isAuthenticated, subscription, refreshSubscription } = useAuth()
   // 두 자동화 훅(useAutomation, useVideoAutomation)에 동일한 안정 레퍼런스를 전달.
@@ -1960,7 +1965,9 @@ function App() {
     // 이 게이트 작업이 속한 프로젝트. 동기화 도중 프로젝트가 바뀌면 referencesRef 는 다른
     // 프로젝트의 것이 된다 — 그대로 계속하면 B 의 ref 를 A 의 Flow 프로젝트로 동기화하거나
     // A 의 결과를 B 의 ref 에 덮어쓴다. 그 시점에서 멈추고 실패로 닫는다(fail-closed).
-    const gateProject = projectNameRef.current
+    // 게이트가 **열린 시점**의 프로젝트. Proceed 시점에 읽으면 그 사이 바뀐 프로젝트를 정상으로
+    // 간주해, A 에서 열린 목록을 B 의 refs 와 대조하게 된다.
+    const gateProject = myGate.scope ?? projectNameRef.current
     const gateScopeChanged = () => projectLoadingRef.current || projectNameRef.current !== gateProject
     let ok = 0, fail = 0
     // #R34-fix: 패치를 로컬 배열에 누적해 첫 생성(start)에 currentRefs 로 넘긴다(React state 는 같은
@@ -1981,12 +1988,12 @@ function App() {
     const patchAt = (list, ref, refIndex, patch) => list.map((r, i) => (
       ref.id != null ? r.id === ref.id : i === refIndex
     ) ? { ...r, ...patch } : r)
+      // 시작 전에 이미 다른 프로젝트면 아무것도 하지 않고 접는다.
+      if (gateScopeChanged()) {
+        abortSyncGate(myGate, 'project-changed')
+        return
+      }
       for (const { ref, refIndex } of gateTargets) {
-        if (gateScopeChanged()) {
-          fail++
-          console.warn('[App] sync-gate aborted — project changed mid-sync')
-          break
-        }
         // #R37: syncGate.refs 는 모달을 열 때의 스냅샷이다. 루프 매 회차에 live 로 다시 판단한다 —
         //   스냅샷을 넘기면 그 사이 끝난 sync 의 entityId 를 못 보고 재업로드로 빠져 중복이 생긴다.
         //   (referencesRef 는 매 렌더 갱신되는 동기 최신값. scenesHook.references 는 이 async 루프에서 stale.)
@@ -2020,6 +2027,12 @@ function App() {
             updateReferences(prev => patchAt(prev, ref, refIndex, syncResult.patch))
           },
         })
+        if (gateScopeChanged()) {
+          // 원격 동기화 자체는 성공했을 수 있지만, 이 결과를 지금 프로젝트의 성공으로 셀 수는 없다.
+          console.warn('[App] sync-gate aborted — project changed mid-sync')
+          abortSyncGate(myGate, 'project-changed')
+          return
+        }
         const synced = res.ok && isRefSynced(res.patch ? { ...ref, ...res.patch } : ref)
         if (synced) ok++
         else { fail++; console.warn('[App] sync-gate sync incomplete for', ref?.name, res.error || res.patch?.flowNameSyncStatus) }
@@ -2027,9 +2040,14 @@ function App() {
       try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
       // required mention sync 는 all-or-nothing. 하나라도 실패하면 혼합 resolved/unresolved 는 하드 에러,
       // all-unresolved+mediaId 는 plain-image 로 조용히 degrade 하므로 원래 생성을 시작하지 않는다.
+      if (gateScopeChanged()) {
+        abortSyncGate(myGate, 'project-changed')
+        return
+      }
       const completion = planSyncGateCompletion(ok, fail)
       if (!completion.proceed) {
         toast.error(t('toast.flowSyncIncomplete', { ok, fail }))
+        abortSyncGate(myGate, 'sync-incomplete')
         return
       }
       toast.success(t('toast.flowSyncGenerationStarting', { ok }))

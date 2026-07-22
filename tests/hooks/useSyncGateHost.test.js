@@ -152,4 +152,30 @@ describe('useSyncGateHost', () => {
     await act(async () => { result.current.cancel(gateB) })
     await expect(second).resolves.toMatchObject({ proceeded: false, reason: 'cancelled' })
   })
+
+  // 중간에 접어야 하는 경우(프로젝트 전환 등) — 대기자를 반드시 풀고 자기 모달만 닫는다.
+  // 안 풀면 그걸 기다리던 생성 큐가 멈추고, 모달도 화면에 남는다.
+  it('abort 는 대기자를 실패로 풀고 자기 게이트만 닫는다', async () => {
+    const { result } = renderHook(() => useSyncGateHost())
+    let first, second
+    act(() => { first = result.current.open({ refs: REFS }) })
+    const gateA = result.current.gate
+    act(() => { second = result.current.open({ refs: [{ id: 2 }] }) })
+    const gateB = result.current.gate
+
+    await act(async () => { result.current.abort(gateA, 'project-changed') })
+    expect(result.current.gate?.id).toBe(gateB.id)
+
+    await act(async () => { result.current.abort(gateB, 'project-changed') })
+    await expect(second).resolves.toMatchObject({ proceeded: false, reason: 'project-changed' })
+    expect(result.current.gate).toBeNull()
+    await expect(first).resolves.toMatchObject({ proceeded: false })
+  })
+
+  // 게이트를 연 시점의 프로젝트를 게이트가 들고 있어야, 전환 뒤에 눌린 Proceed 를 걸러낼 수 있다.
+  it('연 시점의 scope 를 게이트에 실어 둔다', () => {
+    const { result } = renderHook(() => useSyncGateHost())
+    act(() => { result.current.open({ refs: REFS, scope: 'projA' }) })
+    expect(result.current.gate?.scope).toBe('projA')
+  })
 })

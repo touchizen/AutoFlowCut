@@ -30,13 +30,15 @@ export function useSyncGateHost() {
     if (gateRef.current && gateRef.current.id === myGate.id) setCurrent(null)
   }, [setCurrent])
 
-  const open = useCallback(({ refs, forceRepair = false }) => new Promise((resolve) => {
+  const open = useCallback(({ refs, forceRepair = false, scope = null }) => new Promise((resolve) => {
     if (busyRef.current) { resolve({ proceeded: false, patchedRefs: null, reason: 'busy' }); return }
     // 새 게이트가 이전 것을 대체한다면, 이전 대기자를 반드시 풀어준다(고아 promise 금지).
     gateRef.current?.settle({ proceeded: false, patchedRefs: null, reason: 'superseded' })
     let settled = false
     const settle = (value) => { if (settled) return; settled = true; resolve(value) }
-    setCurrent({ id: ++seqRef.current, refs, forceRepair, settle })
+    // scope: 게이트를 **연 시점**의 프로젝트. 전환 뒤에 눌린 Proceed 를 걸러내는 데 쓴다 —
+    //   Proceed 시점에 읽으면 이미 바뀐 프로젝트를 정상으로 간주한다.
+    setCurrent({ id: ++seqRef.current, refs, forceRepair, scope, settle })
   }), [setCurrent])
 
   /** 이 게이트의 동기화 작업을 시작한다(그동안 다른 요청은 busy 로 거절된다). */
@@ -48,6 +50,13 @@ export function useSyncGateHost() {
     if (!myGate) return
     // 대기자를 먼저 풀고 화면을 내린다 — 모달이 사라진 뒤에도 대기자가 남아 있는 창을 만들지 않는다.
     myGate.settle({ proceeded: true, patchedRefs: patchedRefs ?? null })
+    clearIfMine(myGate)
+  }, [clearIfMine])
+
+  /** 중간에 접는다(프로젝트 전환 등) — 대기자를 실패로 풀고 자기 게이트만 닫는다. */
+  const abort = useCallback((myGate, reason = 'aborted') => {
+    if (!myGate) return
+    myGate.settle({ proceeded: false, patchedRefs: null, reason })
     clearIfMine(myGate)
   }, [clearIfMine])
 
@@ -66,5 +75,5 @@ export function useSyncGateHost() {
     gateRef.current = null
   }, [])
 
-  return { gate, busy, busyRef, open, beginWork, endWork, finish, cancel }
+  return { gate, busy, busyRef, open, beginWork, endWork, finish, cancel, abort }
 }
