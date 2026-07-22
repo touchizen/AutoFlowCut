@@ -19,7 +19,6 @@
 
 import { cleanBase64 } from './urls'
 import { applyEntityRegistrationPatch } from './refEntityRegistration'
-import { resolveMentions } from './mentionParser'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import {
   isFlowCharacterOperationActive,
