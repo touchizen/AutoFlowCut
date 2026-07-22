@@ -605,6 +605,64 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(newFlowProject).toHaveBeenCalledTimes(2)
   })
 
+  // 워치독이 in-flight 를 푼 뒤 새 bind 가 시작됐는데, 그 다음에 옛 생성 응답이 도착하면 —
+  // 그 옛 id 를 저장하면 앱은 확인된 새 프로젝트를 쓰는데 project.json 은 옛 것을 가리킨다
+  // (재시작하면 작업물이 분리된 것처럼 보인다).
+  it('워치독 이후 늦게 도착한 옛 생성 응답은 디스크 매핑을 덮지 않는다', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveStale
+      const newFlowProject = vi.fn()
+        .mockImplementationOnce(() => new Promise((r) => { resolveStale = r }))
+        .mockResolvedValue({ success: true, projectId: 'fresh-id' })
+      const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'fresh-id' })
+      const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('fresh-id') })
+      window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+      const { result, rerender } = setupHook({ mode: 'api' })
+      await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+      expect(newFlowProject).toHaveBeenCalledTimes(1)
+
+      // 첫 bind 가 끝나지 않아 워치독이 잠금을 풀고, 폴링이 새 bind 를 시작한다.
+      await act(async () => { await vi.advanceTimersByTimeAsync(BIND_WATCHDOG_MS + 1000) })
+      await act(async () => { await result.current.tryAdoptFlowProject() })
+      expect(newFlowProject).toHaveBeenCalledTimes(2)
+
+      // 이제야 옛 응답이 도착한다.
+      await act(async () => { resolveStale({ success: true, projectId: 'stale-id' }); await Promise.resolve() })
+
+      expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalledWith('p1', { flowProjectId: 'stale-id' })
+      expect(result.current.flowProjectId).not.toBe('stale-id')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // 모달이 보여준 id 와 확인 시점의 id 가 다르면 사용자가 승인한 대상이 아니다 — 그 사이 Flow 가
+  // 옮겨갔을 뿐인데 채택하면, 사용자는 A 를 승인했는데 앱은 B 에 바인딩한다.
+  it('확인 사이에 Flow 가 다른 프로젝트로 옮겨갔으면 채택하지 않는다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: false, error: 'timeout' })
+    const flowExtractProjectId = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'baseline' })
+      .mockResolvedValueOnce({ success: true, projectId: 'shown-a' })   // 모달이 보여준 후보
+      .mockResolvedValue({ success: true, projectId: 'moved-b' })       // 확인 시점엔 다른 곳
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('moved-b') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    let asked, confirmed
+    await act(async () => { asked = await result.current.tryAdoptFlowProject() })
+    expect(asked).toMatchObject({ reason: 'needs-confirm', projectId: 'shown-a' })
+
+    await act(async () => { confirmed = await result.current.tryAdoptFlowProject({ confirmed: true, expectedId: 'shown-a' }) })
+
+    expect(confirmed).toMatchObject({ ok: false, reason: 'candidate-changed' })
+    expect(openFlowProject).not.toHaveBeenCalled()
+    expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalled()
+  })
+
   // 생성은 성공했는데 그 사이 모드가 바뀌면, 만들어진 Flow 프로젝트는 이미 존재한다. 그걸 버리면
   // 다시 들어올 때 또 만들어 빈 프로젝트가 쌓인다 — 취소 여부와 무관하게 붙잡아 둬야 한다.
   it('생성 응답이 도착하기 전에 모드가 바뀌어도 만들어진 프로젝트를 잃지 않는다', async () => {
