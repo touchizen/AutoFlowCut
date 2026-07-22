@@ -606,6 +606,11 @@ export function useProjectData({
   // open/생성 "진행 중"에도 false 라, 이 플래그 없이 채택을 허용하면 아직 preId 도 없는 진행 중
   // 상태에서 엉뚱한 프로젝트를 채택할 수 있다.
   const adoptArmedRef = useRef(false)
+  const adoptInFlightRef = useRef(false)
+  // 채택은 async 라 시작 시점의 로컬 프로젝트/모드가 끝날 때까지 같은지 확인해야 한다(전환 중
+  // 완료되면 엉뚱한 project.json 에 id 를 쓴다). render closure 대신 최신값을 ref 로 본다.
+  const projectNameRef = useRef(settings?.projectName)
+  projectNameRef.current = settings?.projectName
   useEffect(() => { modeRef.current = mode }, [mode])
 
   // Flow 모드 전용: saved flowProjectId 를 main process 에 즉시 알림 (startup gate 용).
@@ -666,30 +671,51 @@ export function useProjectData({
     if (modeRef.current !== 'flow') return { ok: false, reason: 'not-flow' }
     // 자동 생성이 실패해 arm 된 뒤에만 채택한다(진행 중 오채택 방지).
     if (!adoptArmedRef.current) return { ok: false, reason: 'not-armed' }
-    const projectName = settings?.projectName
+    if (adoptInFlightRef.current) return { ok: false, reason: 'in-flight' }
+    const projectName = projectNameRef.current
     if (!projectName) return { ok: false, reason: 'no-project' }
-    let id = null
+    const startEpoch = loadEpochRef.current
+    // 시작 시점의 (mode, 로컬 프로젝트, load epoch, arm) 이 그대로인가 — async 경계마다 확인한다.
+    const stillCurrent = () => modeRef.current === 'flow' && adoptArmedRef.current
+      && projectNameRef.current === projectName && loadEpochRef.current === startEpoch
+    adoptInFlightRef.current = true
     try {
-      const res = await window.electronAPI?.flowExtractProjectId?.({ liveOnly: true })
-      id = res?.projectId ?? null
-    } catch { return { ok: false, reason: 'extract-failed' } }
-    if (!id) return { ok: false, reason: 'no-open-project' }
-    if (id === adoptPreIdRef.current) return { ok: false, reason: 'unchanged' }
-    // URL 에 id 가 있어도 에러 화면일 수 있다 — 정상 composer 로 열리는지 확인한 뒤 채택한다.
-    let opened = null
-    try {
-      opened = await window.electronAPI?.openFlowProject?.({ flowProjectId: id })
-    } catch { return { ok: false, reason: 'open-failed' } }
-    if (!isFlowOpenConfirmed(opened, id)) return { ok: false, reason: 'not-confirmed' }
-    const saved = await persistFlowProjectId(projectName, id)
-    if (!saved) return { ok: false, reason: 'persist-failed' }
-    confirmedBindingRef.current = { projectName, flowProjectId: id }
-    setFlowProjectId(id)
-    setFlowProjectReady(true)
-    adoptPreIdRef.current = id
-    adoptArmedRef.current = false
-    console.log('[ProjectData] adopted Flow project:', id)
-    return { ok: true, projectId: id }
+      let res = null
+      try {
+        res = await window.electronAPI?.flowExtractProjectId?.({ liveOnly: true })
+      } catch { return { ok: false, reason: 'extract-failed' } }
+      // 관측 자체가 실패하면(Flow view 미준비 등) 아무것도 판단하지 않는다.
+      if (!res?.success) return { ok: false, reason: 'extract-failed' }
+      const id = res.projectId ?? null
+      if (!stillCurrent()) return { ok: false, reason: 'superseded' }
+      // baseline 을 아직 관측하지 못했으면(undefined) 지금 값을 baseline 으로만 잡고 끝낸다 —
+      // 다음 시도부터 "달라졌는가"로 판정한다. 이러면 관측 실패를 이전 프로젝트 채택으로 오인하지 않는다.
+      if (adoptPreIdRef.current === undefined) {
+        adoptPreIdRef.current = id
+        return { ok: false, reason: 'baseline-set' }
+      }
+      if (!id) return { ok: false, reason: 'no-open-project' }
+      if (id === adoptPreIdRef.current) return { ok: false, reason: 'unchanged' }
+      // URL 에 id 가 있어도 에러 화면일 수 있다 — 정상 composer 로 열리는지 확인한 뒤 채택한다.
+      let opened = null
+      try {
+        opened = await window.electronAPI?.openFlowProject?.({ flowProjectId: id })
+      } catch { return { ok: false, reason: 'open-failed' } }
+      if (!isFlowOpenConfirmed(opened, id)) return { ok: false, reason: 'not-confirmed' }
+      if (!stillCurrent()) return { ok: false, reason: 'superseded' }
+      const saved = await persistFlowProjectId(projectName, id)
+      if (!saved) return { ok: false, reason: 'persist-failed' }
+      if (!stillCurrent()) return { ok: false, reason: 'superseded' }
+      confirmedBindingRef.current = { projectName, flowProjectId: id }
+      setFlowProjectId(id)
+      setFlowProjectReady(true)
+      adoptPreIdRef.current = id
+      adoptArmedRef.current = false
+      console.log('[ProjectData] adopted Flow project:', id)
+      return { ok: true, projectId: id }
+    } finally {
+      adoptInFlightRef.current = false
+    }
   }
 
   // open 결과를 flowProjectReady 에 반영하고, 영구 에러(errorPage)면 죽은 매핑을 제거한다.
@@ -733,6 +759,10 @@ export function useProjectData({
       setFlowProjectReady(true)
       // #R8-3: flow 를 떠나면 confirmed 바인딩 리셋 — 재진입 시 Flow 뷰가 재연결되므로 재검증.
       confirmedBindingRef.current = null
+      // 채택 arm 도 함께 해제 — stale arm 이 남으면 재진입/전환 후의 정상 open/create 도중에 채택이
+      // 끼어들 수 있다.
+      adoptArmedRef.current = false
+      adoptPreIdRef.current = undefined
     }
   }, [mode])
 
@@ -819,16 +849,23 @@ export function useProjectData({
             // 회복 준비: 실패 시점에 Flow 가 보고 있는 프로젝트 id 를 기록해 둔다. 이후 사용자가
             // Flow 에서 직접 새 프로젝트를 만들면 id 가 이 값과 달라지고, tryAdoptFlowProject 가
             // 그것을 채택해 차단을 푼다.
+            // ⚠️ "관측 실패"와 "home 을 정상 관측(null)"을 구분한다. 실패를 null 로 뭉개면, 이후 Flow 가
+            //    이전 프로젝트로 복원됐을 때 id !== null 이라 그 옛 프로젝트를 채택해버린다.
+            //    관측 못 했으면 undefined 로 두고, 첫 채택 시도에서 baseline 만 잡는다.
             try {
               const pre = await window.electronAPI?.flowExtractProjectId?.({ liveOnly: true })
-              adoptPreIdRef.current = pre?.projectId ?? null
-            } catch { adoptPreIdRef.current = null }
+              adoptPreIdRef.current = pre?.success ? (pre.projectId ?? null) : undefined
+            } catch { adoptPreIdRef.current = undefined }
             adoptArmedRef.current = true
           }
         } catch (e) {
           if (!cancelled) {
             setFlowProjectReady(false)
             console.warn('[ProjectData] mode-entry newFlowProject threw:', e.message)
+            // resolved-failure 와 동일하게 회복을 arm 한다 — 여기서 arm 하지 않으면 invoke rejection
+            // 류의 실패는 영구 차단으로 남는다. baseline 은 첫 채택 시도에서 잡는다.
+            adoptPreIdRef.current = undefined
+            adoptArmedRef.current = true
           }
         }
       }
@@ -1010,6 +1047,11 @@ export function useProjectData({
    */
   const handleProjectChange = async (newProjectName, opts = {}) => {
     if (newProjectName === settings.projectName) return { aspectRatio: settings.aspectRatio, success: true }
+
+    // 프로젝트가 바뀌면 이전 프로젝트에서 arm 된 채택은 무효다 — 그대로 두면 새 프로젝트를 여는
+    // 도중에 채택이 발화해 엉뚱한 project.json 에 id 를 쓸 수 있다.
+    adoptArmedRef.current = false
+    adoptPreIdRef.current = undefined
 
     // #R5-2: 에폭 클레임 — BEFORE isRestoringRef(spec 요건: 에폭이 먼저라야 이전 restore 를 supersede).
     const myEpoch = ++loadEpochRef.current

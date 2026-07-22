@@ -152,6 +152,30 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(result.current.flowProjectId).toBeNull()
   })
 
+  // baseline 관측 자체가 실패했는데(Flow view 미준비 등) 이를 null 로 뭉개면, 이후 Flow 가 이전
+  // 프로젝트로 복원됐을 때 "id !== null" 이라 그 옛 프로젝트를 채택해 새 로컬 프로젝트를 오염시킨다.
+  it('baseline 관측에 실패했으면 첫 시도는 baseline 만 잡고, 이전 프로젝트를 채택하지 않는다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: false })
+    const flowExtractProjectId = vi.fn()
+      .mockResolvedValueOnce({ success: false, error: 'Flow view not ready' }) // Case B 실패 시점: 관측 실패
+      .mockResolvedValue({ success: true, projectId: 'previous-id' })          // 이후 이전 프로젝트로 복원됨
+    const openFlowProject = vi.fn()
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    let first, second
+    await act(async () => { first = await result.current.tryAdoptFlowProject() })
+    await act(async () => { second = await result.current.tryAdoptFlowProject() })
+
+    expect(first).toMatchObject({ ok: false, reason: 'baseline-set' })
+    expect(second).toMatchObject({ ok: false, reason: 'unchanged' }) // 이전 프로젝트는 채택 안 됨
+    expect(openFlowProject).not.toHaveBeenCalled()
+    expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalled()
+    expect(result.current.flowProjectReady).toBe(false)
+  })
+
   // 저장이 실패했는데 ready 를 열면, 다음 실행에서 저장 id 가 없어 또 새 프로젝트를 만든다(fail-open 금지).
   it('project.json 저장이 실패하면 ready 를 열지 않는다', async () => {
     const newFlowProject = vi.fn().mockResolvedValue({ success: false })

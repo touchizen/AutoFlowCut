@@ -796,11 +796,15 @@ function App() {
   // 만들면 그것을 채택해 차단을 푼다. tryAdoptFlowProject 는 arm(자동 생성 실패) 되기 전이거나
   // Flow 가 이전 프로젝트에 그대로 머물러 있으면 아무것도 하지 않으므로, 도는 동안 무해하다.
   // 성공하면 flowProjectReady 가 true 가 되어 이 effect 자체가 멈춘다.
+  // ⚠️ tryAdoptFlowProject 는 매 render 새 함수라 deps 에 넣으면 App 이 리렌더될 때마다(재생 중
+  //    playhead 등) interval 이 리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
+  const adoptFlowRef = useRef(tryAdoptFlowProject)
+  adoptFlowRef.current = tryAdoptFlowProject
   useEffect(() => {
-    if (mode !== 'flow' || flowProjectReady || !tryAdoptFlowProject) return
-    const timer = setInterval(() => { tryAdoptFlowProject() }, 5000)
+    if (mode !== 'flow' || flowProjectReady) return
+    const timer = setInterval(() => { adoptFlowRef.current?.() }, 5000)
     return () => clearInterval(timer)
-  }, [mode, flowProjectReady, tryAdoptFlowProject])
+  }, [mode, flowProjectReady])
 
   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
   const automation = useAutomation(
