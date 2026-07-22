@@ -558,14 +558,13 @@ function App() {
   // 새 저장을 덮어씀. referencesRef(동기 최신)로 upsert하고, pushQueueRef로 한 번에 하나씩 처리한다.
   const referencesRef = useRef(scenesHook.references)
   referencesRef.current = scenesHook.references
-  // 프로젝트 전환 진행 여부의 동기 최신값 — await 를 건넌 코드가 렌더 클로저를 보면 안 된다.
-  const projectLoadingRef = useRef(projectLoading)
-  projectLoadingRef.current = projectLoading
   // 앱 시작 직후 machine.open() 이 story:pushCharacters 를 쏘는데, 그때 references 는 아직 디스크에서
   //   안 올라와 빈 배열이다. 그 위에 upsert 하면 새 카드가 만들어지고 saveCurrentProjectWithPayload
   //   가 디바운스 없이 즉시 확정 저장해, 디스크의 카드(entityId/이미지 포인터/스타일 기억)를 통째로
   //   지운다. 프로젝트 전환은 저장→로드를 await 해서 안 겪지만, 복원 경로는 그 순서 보장이 없다.
   //   하이드레이션이 끝날 때까지 푸시를 미룬다(fire-and-forget 이라 미뤄도 안전하다).
+  //   (전환 진행 여부의 동기 최신값 — await 를 건넌 코드가 렌더 클로저를 보면 안 된다. 동기화
+  //    게이트의 프로젝트 스코프 판정도 이 값을 쓴다.)
   const projectLoadingRef = useRef(projectLoading)
   projectLoadingRef.current = projectLoading
   const awaitProjectHydration = useCallback(
