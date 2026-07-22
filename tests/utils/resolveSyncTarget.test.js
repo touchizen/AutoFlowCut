@@ -36,4 +36,19 @@ describe('resolveSyncTarget — 스냅샷이 아니라 live 로 판단한다', (
     expect(out.ref).toBe(live)
     expect(out.ref.entityId).toBe('e1')   // 이게 있어야 repair 로 가고 중복이 안 생긴다
   })
+
+  // 엔진이 "그 칩은 못 쓴다"(미해결/stale)고 한 뒤의 복구 요청은, 우리 기록이 synced 여도
+  // 실제로 재등록을 태워야 한다. 여기서 already-synced 로 건너뛰면 모달만 뜨고 아무것도 안 바뀐
+  // 채 같은 실패가 반복된다. (planCharacterSync 가 entity+workflow 를 멱등 repair 로 보낸다.)
+  it('forceRepair 면 이미 synced 인 ref 도 동기화 대상이다', () => {
+    const live = { type: 'character', name: 'a', entityId: 'e', workflowId: 'w', mediaId: 'm', flowNameSyncStatus: 'synced' }
+
+    expect(resolveSyncTarget(live)).toMatchObject({ action: 'skip', reason: 'already-synced' })
+    expect(resolveSyncTarget(live, { forceRepair: true })).toMatchObject({ action: 'sync', ref: live })
+  })
+
+  it('forceRepair 라도 사라졌거나 진행 중이면 건너뛴다', () => {
+    expect(resolveSyncTarget(null, { forceRepair: true })).toMatchObject({ action: 'skip', reason: 'gone' })
+    expect(resolveSyncTarget({ syncing: true }, { forceRepair: true })).toMatchObject({ action: 'skip', reason: 'in-flight' })
+  })
 })

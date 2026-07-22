@@ -155,7 +155,13 @@ function App() {
   // 사라진다 — 그 promise 를 기다리던 생성 큐가 영영 멈춘다(뒤에 쌓인 작업 전부 정지).
   // 여기서 이전 대기자를 먼저 '취소'로 풀어준 뒤 새 게이트를 연다.
   const pendingSyncGateRef = useRef(null)
-  const openSyncGate = useCallback(({ refs }) => new Promise(resolve => {
+  const syncGateBusyRef = useRef(false)
+  syncGateBusyRef.current = syncGateBusy
+  const syncGateSeqRef = useRef(0)
+  const openSyncGate = useCallback(({ refs, forceRepair = false }) => new Promise(resolve => {
+    // 이미 동기화가 돌고 있는 게이트는 건드리지 않는다 — 중간에 가로채면 그 작업의 결과를
+    // 어디에도 전달할 수 없다. 새 요청만 취소로 돌려보낸다(호출부가 다음 기회에 다시 묻는다).
+    if (syncGateBusyRef.current) { resolve({ proceeded: false, patchedRefs: null }); return }
     pendingSyncGateRef.current?.({ proceeded: false, patchedRefs: null })
     const settle = (value) => {
       if (pendingSyncGateRef.current === settle) pendingSyncGateRef.current = null
@@ -163,7 +169,9 @@ function App() {
     }
     pendingSyncGateRef.current = settle
     setSyncGate({
+      id: ++syncGateSeqRef.current,
       refs,
+      forceRepair,
       proceed: patchedRefs => settle({ proceeded: true, patchedRefs: patchedRefs ?? null }),
       onCancel: () => settle({ proceeded: false, patchedRefs: null }),
     })
@@ -899,15 +907,24 @@ function App() {
   //   - names 없음(프리플라이트): 씬이 멘션한 캐릭터 중 미동기화 + 수리 가능한 것
   //   - names 있음(엔진이 미해결로 거절한 뒤): 그 이름들. 우리 기록상 synced 여도 엔진이 못 쓴다고
   //     했으므로 동기화 상태로 거르지 않는다 — 기록이 옛것일 수 있다.
-  const requestMentionSync = useCallback(async ({ scene, names }) => {
+  const requestMentionSync = useCallback(async ({ scene, names, projectName: expectedProject }) => {
+    // 호출자가 시작 시점의 프로젝트를 넘긴다. 그 사이 프로젝트가 바뀌었으면 지금의 refs 는 다른
+    // 프로젝트의 것이다 — 넘겨주면 A 의 씬을 B 의 레퍼런스로 생성한다. 그럴 땐 진행하지 않는다.
+    if (expectedProject != null && expectedProject !== projectNameRef.current) {
+      return { proceeded: false }
+    }
     // referencesRef 는 매 렌더 갱신되는 동기 최신값 — 호출자(훅)의 클로저는 stale 일 수 있다.
     const refs = referencesRef.current || []
     const targets = selectMentionSyncTargets({ scene, names, references: refs })
     // 동기화할 게 없어도 **live refs 를 넘긴다**. 큐에 쌓여 있던 다음 씬은 이전 씬이 동기화한
     // 결과를 모르는 클로저를 들고 있어서, 그냥 진행시키면 옛 ref 로 또 미해결 실패가 난다.
     if (targets.length === 0) return { proceeded: true, refs }
-    const res = await openSyncGate({ refs: targets })
+    // names 로 온 요청 = 엔진이 거절한 뒤의 복구 → 기록이 synced 여도 재등록을 태운다.
+    const res = await openSyncGate({ refs: targets, forceRepair: !!names?.length })
     if (!res.proceeded) return { proceeded: false }
+    if (expectedProject != null && expectedProject !== projectNameRef.current) {
+      return { proceeded: false }
+    }
     return { proceeded: true, refs: res.patchedRefs || referencesRef.current || refs }
   }, [openSyncGate])
 
@@ -1939,6 +1956,10 @@ function App() {
   //   SPA 새로고침하고, 원래 생성(proceed 클로저)을 이어서 실행한다. 동시 실행 금지(공유 flowView).
   const handleSyncGateProceed = async () => {
     if (!syncGate || syncGateBusy) return
+    // 이 핸들러가 처리하는 게이트를 고정한다 — 동기화가 도는 동안 다른 경로가 새 게이트를 열면,
+    // 끝날 때 무조건 setSyncGate(null) 하는 옛 코드는 **남의 모달을 닫아** 그 대기자를 영구히
+    // 매달아 놨다(생성 큐 정지).
+    const myGate = syncGate
     setSyncGateBusy(true)
     let ok = 0, fail = 0
     // #R34-fix: 패치를 로컬 배열에 누적해 첫 생성(start)에 currentRefs 로 넘긴다(React state 는 같은
@@ -1967,7 +1988,7 @@ function App() {
         const live = ref.id != null
           ? referencesRef.current.find(r => r.id === ref.id)
           : referencesRef.current[refIndex]
-        const decision = resolveSyncTarget(live)
+        const decision = resolveSyncTarget(live, { forceRepair: !!myGate.forceRepair })
         if (decision.action === 'skip') {
           if (decision.reason === 'already-synced') {
             ok++
@@ -2005,8 +2026,8 @@ function App() {
         return
       }
       toast.success(t('toast.flowSyncGenerationStarting', { ok }))
-      const proceed = syncGate.proceed
-      setSyncGate(null)
+      const proceed = myGate.proceed
+      setSyncGate(prev => (prev && prev.id === myGate.id ? null : prev))
       proceed?.(patchedRefs)
     } finally {
       setSyncGateBusy(false)

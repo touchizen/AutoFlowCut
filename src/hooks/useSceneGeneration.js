@@ -67,7 +67,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     //    삭제도 안 되고 다음 배치 선택에서도 빠져(filterPendingScenes) 씬이 얼어붙는다.
     let effectiveRefs = scenesHook.references || []
     if (genAPI?.mode === 'flow' && requestMentionSync) {
-      const gate = await requestMentionSync({ scene })
+      const gate = await requestMentionSync({ scene, projectName: settings.projectName })
       if (gate && gate.proceeded === false) { setGeneratingSceneId(null); return }
       if (gate?.refs) effectiveRefs = gate.refs
     }
@@ -143,7 +143,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         ? (result.unresolvedNames || [])
         : (result?.staleMention ? [result.staleMention] : [])
       if (unresolvedNames.length > 0 && genAPI?.mode === 'flow' && requestMentionSync) {
-        const recovery = await requestMentionSync({ scene, names: unresolvedNames })
+        const recovery = await requestMentionSync({ scene, names: unresolvedNames, projectName: settings.projectName })
         if (recovery?.proceeded) {
           result = await callEngine(recovery.refs || effectiveRefs)
         }

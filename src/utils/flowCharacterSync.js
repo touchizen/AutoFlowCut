@@ -135,10 +135,13 @@ export function needsComposerRefresh(ref, result) {
  * @param {object|undefined} live - 최신 상태의 ref (없으면 삭제된 것)
  * @returns {{action:'skip'|'sync', reason?:'gone'|'in-flight'|'already-synced', ref?:object}}
  */
-export function resolveSyncTarget(live) {
+export function resolveSyncTarget(live, opts = {}) {
   if (!live) return { action: 'skip', reason: 'gone' }
   if (live.syncing) return { action: 'skip', reason: 'in-flight' }   // 다른 진입점이 이미 처리 중
-  if (isRefSynced(live)) return { action: 'skip', reason: 'already-synced' }
+  // forceRepair: 엔진이 "그 칩은 못 쓴다"(미해결/stale)고 한 뒤의 복구 요청. 우리 기록이 synced 여도
+  //   실제로 재등록을 태운다 — 여기서 건너뛰면 모달만 뜨고 아무것도 안 바뀐 채 같은 실패가 반복된다.
+  //   planCharacterSync 가 entity+workflow 를 멱등 repair 로 보내므로 중복 entity 는 생기지 않는다.
+  if (isRefSynced(live) && !opts.forceRepair) return { action: 'skip', reason: 'already-synced' }
   return { action: 'sync', ref: live }                               // ← 스냅샷이 아니라 live 를 넘긴다
 }
 

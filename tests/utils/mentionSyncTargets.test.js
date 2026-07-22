@@ -44,6 +44,22 @@ describe('selectMentionSyncTargets', () => {
     expect(targets.map(r => r.name)).toEqual(['문지기'])
   })
 
+  // 프리플라이트도 recovery 와 같은 규칙이어야 한다. 예전엔 프리플라이트만 소문자 매칭이라
+  // `@hero` 가 미해결인데 다른 ref 'Hero' 를 골라 동기화시키고, 그래도 프롬프트는 안 풀렸다.
+  it('프리플라이트도 대소문자를 구분한다', () => {
+    const refs = [ch('Hero', { flowNameSyncStatus: 'failed' })]
+
+    expect(selectMentionSyncTargets({ scene: { prompt: '@hero 등장' }, references: refs })).toEqual([])
+    expect(selectMentionSyncTargets({ scene: { prompt: '@Hero 등장' }, references: refs }).map(r => r.name)).toEqual(['Hero'])
+  })
+
+  // 동기화로 고칠 수 없는 오타 멘션으로 모달을 띄우면 사용자는 눌러도 같은 실패를 본다.
+  it('어느 ref 와도 맞지 않는 멘션은 대상이 아니다', () => {
+    const refs = [ch('문지기', { flowNameSyncStatus: 'failed' })]
+
+    expect(selectMentionSyncTargets({ scene: { prompt: '@문지기x 등장' }, references: refs })).toEqual([])
+  })
+
   // Flow 멘션 해석은 대소문자를 구분한다. 소문자로 뭉개면 @hero 가 미해결인데 다른 ref 'Hero' 를
   // 골라 "동기화는 했는데 프롬프트는 그대로"인 모달을 반복하게 된다.
   it('이름 대조는 대소문자를 구분한다', () => {
