@@ -234,9 +234,16 @@ function App() {
   // 뷰 전환: 기존 생성 화면 vs Story 파이프라인 화면. activeTab 과 별개 — Story 는 씬/이미지
   // 생성과 무관한 별도 워크플로우(스텝퍼 + 단계 패널)라 탭 목록에 섞지 않는다.
   const [activeView, setActiveView] = useState('generate') // 'generate' | 'story'
-  const [framePairs, setFramePairs] = useState([])   // Frame to Video 매핑
+  const [framePairs, setFramePairsState] = useState([])   // Frame to Video 매핑
   const framePairsRef = useRef(framePairs)
   framePairsRef.current = framePairs
+  const setFramePairs = useCallback((nextFramePairsOrUpdater) => {
+    const nextFramePairs = typeof nextFramePairsOrUpdater === 'function'
+      ? nextFramePairsOrUpdater(framePairsRef.current)
+      : nextFramePairsOrUpdater
+    framePairsRef.current = nextFramePairs
+    setFramePairsState(nextFramePairs)
+  }, [])
   const [ftvPromptSource, setFtvPromptSource] = useState('image') // 'image' | 'video' | 'none'
   const [galleryItems, setGalleryItems] = useState([])
   const [galleryUploading, setGalleryUploading] = useState(false)  // #R29-3: F2V 디스크 업로드 중 전환 차단
@@ -546,7 +553,7 @@ function App() {
   const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId, tryAdoptFlowProject } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
-    framePairs, setFramePairs,
+    framePairs, framePairsRef, setFramePairs,
     selectedStyleRefId, setSelectedStyleRefId,
     // Phase 7: srtTrack 영속화 (load/save 시 useProjectData 가 동기화)
     srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
@@ -872,6 +879,7 @@ function App() {
   // requireStyle 가드가 StylePicker 를 띄울 때 force(전체 재생성) 의도를 보존 —
   // 스타일 선택 후 handleStart 로 재진입할 때 force 를 그대로 넘긴다.
   const pendingStyleForceRef = useRef(false)
+  const pendingStyleSourceRef = useRef('ui')
   useEffect(() => {
     const running = isRunning || videoAutomation.isRunning
     if (wasRunningRef.current && !running) {
@@ -921,6 +929,13 @@ function App() {
     settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
     requestMentionSync,
   })
+  const generatingSceneIdRef = useRef(generatingSceneId)
+  generatingSceneIdRef.current = generatingSceneId
+  const guardSceneBatchStart = (source = 'ui') => {
+    if (source === 'mcp' || !generatingSceneIdRef.current) return true
+    toast.warning(t('videoAutomation.busy') || 'Generation already running')
+    return false
+  }
 
   const handleImportAudio = async () => {
     setShowAudioResult(true)
@@ -1449,6 +1464,7 @@ function App() {
     handleGenerateAllRefs,
     openSyncGate: openEmptyRefSyncGate,
     automationStartRef,
+    guardSceneBatchStart,
     toastM1Exclusions: exclusions => {
       const warning = buildM1FlowReferenceExclusionToast(exclusions)
       if (warning) toast.warning(t(warning.key, warning.params))
@@ -1571,6 +1587,7 @@ function App() {
           if (!guardAvailable) {
             // 스타일 선택 후 handleStart 로 재진입할 때 force 의도를 잃지 않도록 보존.
             pendingStyleForceRef.current = force
+            pendingStyleSourceRef.current = source
             setShowStylePicker(true)
             return
           }
@@ -1612,6 +1629,7 @@ function App() {
           return
         }
 
+        if (!guardSceneBatchStart(source)) return
         // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 id + 라벨 모두 시작 시점 snapshot
         setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
         if (modeRef.current === 'flow') {
@@ -1867,6 +1885,10 @@ function App() {
     startInFlightRef.current = true
     try {
       const { __startMode, __startSource = 'ui', ...opts } = pendingStartOptions
+      if (!guardSceneBatchStart(__startSource)) {
+        setPendingStartOptions(null)
+        return
+      }
       // 이 경로는 handleStart 의 preflight(stale-mode/projectName/auth/flow-ready)를 우회하므로 재검증한다.
       // #R8-6: 모달이 열린 동안 모드가 바뀌었으면 중단.
       if (__startMode && modeRef.current !== __startMode) {
@@ -1928,6 +1950,10 @@ function App() {
         return
       }
       // API 모드는 M2 미노출 — 기존 tag proceed 직접 시작을 유지한다(§11.12).
+      if (!guardSceneBatchStart(__startSource)) {
+        setPendingStartOptions(null)
+        return
+      }
       setHasPendingBatch(true)
       start(opts).finally(() => setHasPendingBatch(false))
       setPendingStartOptions(null)
@@ -2464,7 +2490,7 @@ function App() {
                           <>
                             {emoji}{label && ` ${label}`}
                             {' ▸ '}
-                            <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); pendingStyleForceRef.current = false; setShowStylePicker(true) }}>
+                            <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); pendingStyleForceRef.current = false; pendingStyleSourceRef.current = 'ui'; setShowStylePicker(true) }}>
                               🎨{startChipLabelVisible(startTier) ? ` ${startStyleLabel}` : ''}
                             </span>
                           </>
@@ -3065,9 +3091,11 @@ function App() {
           selectedId={selectedStyleRefId}
           onSelect={(id) => {
             setSelectedStyleRefId(id)
+            const startSource = pendingStyleSourceRef.current
             if (id) {
               setShowStylePicker(false)
-              handleStart(id, { force: pendingStyleForceRef.current })
+              if (!guardSceneBatchStart(startSource)) return
+              handleStart(id, { force: pendingStyleForceRef.current, source: startSource })
               return
             }
             // 자동 카드 (id === null) — availability는 styleResolver가 탭별로 판단:
@@ -3076,7 +3104,8 @@ function App() {
             // requireStyle=false면 어느 탭이든 통과.
             if (styleResolver.autoAvailable || !settings.requireStyle) {
               setShowStylePicker(false)
-              handleStart(null, { force: pendingStyleForceRef.current })
+              if (!guardSceneBatchStart(startSource)) return
+              handleStart(null, { force: pendingStyleForceRef.current, source: startSource })
             } else {
               toast.warning(t('toast.autoMatchNoMatchesPickStyle'))
             }

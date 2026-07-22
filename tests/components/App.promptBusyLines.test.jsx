@@ -18,6 +18,7 @@ const appMocks = vi.hoisted(() => {
     projectDataProps: null,
     menuProps: null,
   }
+  const toastWarning = vi.fn()
   const generationEnqueue = vi.fn(job => {
     if (!state.holdSceneBatch) return Promise.resolve(job.execute?.())
     return new Promise((resolve, reject) => {
@@ -91,12 +92,26 @@ const appMocks = vi.hoisted(() => {
   return {
     noop, asyncNoop, state,
     generationEnqueue, generationClearQueue, sceneBatchStart, automationStop, retryErrors, retryScene, videoStart,
-    scenes, scenesHook, genAPI,
+    scenes, scenesHook, genAPI, toastWarning,
   }
 })
 
+const deferred = () => {
+  let resolve
+  const promise = new Promise(r => { resolve = r })
+  return { promise, resolve }
+}
+
 vi.mock('../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (key) => key, lang: 'ko' }),
+}))
+vi.mock('../../src/components/Toast', () => ({
+  toast: {
+    success: appMocks.noop,
+    error: appMocks.noop,
+    warning: appMocks.toastWarning,
+    info: appMocks.noop,
+  },
 }))
 vi.mock('../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'api', clearMode: appMocks.noop }) }))
 vi.mock('../../src/contexts/AuthContext', () => ({
@@ -354,7 +369,9 @@ vi.mock('../../src/components/ExportModal', () => ({ ExportModal: () => null }))
 vi.mock('../../src/components/ExportSplitButton', () => ({ default: () => null }))
 vi.mock('../../src/components/AuthModal', () => ({ AuthModal: () => null }))
 vi.mock('../../src/components/PaywallModal', () => ({ PaywallModal: () => null }))
-vi.mock('../../src/components/TagValidationModal', () => ({ default: () => null }))
+vi.mock('../../src/components/TagValidationModal', () => ({
+  default: ({ onProceed }) => <button type="button" onClick={onProceed}>tag-proceed</button>,
+}))
 vi.mock('../../src/components/EmptyReferenceGateModal', () => ({ default: () => null }))
 vi.mock('../../src/components/StoreRatingModal', () => ({ default: () => null }))
 vi.mock('../../src/components/AudioResultModal', () => ({ default: () => null }))
@@ -366,7 +383,9 @@ vi.mock('../../src/components/BottomPanelTabs', () => ({
 vi.mock('../../src/components/LiveTimeline', () => ({ default: () => null }))
 vi.mock('../../src/components/PreviewMonitor', () => ({ default: () => null }))
 vi.mock('../../src/components/SubscriptionBanner', () => ({ SubscriptionBanner: () => null }))
-vi.mock('../../src/components/StylePicker', () => ({ default: () => null }))
+vi.mock('../../src/components/StylePicker', () => ({
+  default: ({ onSelect }) => <button type="button" onClick={() => onSelect('preset:test')}>pick-style</button>,
+}))
 vi.mock('../../src/components/Modal', () => ({
   default: ({ isOpen, children, footer }) => isOpen ? <div>{children}{footer}</div> : null,
 }))
@@ -402,6 +421,7 @@ describe('App prompt busyLines wiring', () => {
     appMocks.retryErrors.mockClear()
     appMocks.retryScene.mockClear()
     appMocks.videoStart.mockClear()
+    appMocks.toastWarning.mockClear()
   })
 
   it('이미지·비디오 PromptInput에 각 value 규칙으로 계산한 busy 문단을 전달한다', async () => {
@@ -462,6 +482,128 @@ describe('App prompt busyLines wiring', () => {
     fireEvent.click(generateMenuTrigger)
 
     expect(screen.queryByRole('button', { name: /actions\.forceRegenerate/ })).not.toBeInTheDocument()
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('UI Start preflight 중 개별 씬 생성이 시작되면 재개된 배치를 enqueue하지 않고 알린다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
+    const view = render(<App />)
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
+
+    const token = deferred()
+    appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
+
+    appMocks.state.generatingSceneId = 's4'
+    view.rerender(<App />)
+    await act(async () => {
+      token.resolve('token')
+      await token.promise
+    })
+
+    await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy'))
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('MCP Start는 같은 preflight race에서도 scene batch를 enqueue한다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
+    const view = render(<App />)
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
+
+    const token = deferred()
+    appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
+
+    const startPromise = appMocks.state.mcpProps.handleStart(undefined, { source: 'mcp' })
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
+
+    appMocks.state.generatingSceneId = 's4'
+    view.rerender(<App />)
+    await act(async () => {
+      token.resolve('token')
+      await startPromise
+    })
+
+    expect(appMocks.sceneBatchStart).toHaveBeenCalledTimes(1)
+    expect(appMocks.generationEnqueue).toHaveBeenCalledTimes(1)
+    expect(appMocks.toastWarning).not.toHaveBeenCalled()
+  })
+
+  it('StylePicker가 열린 뒤 개별 씬 생성이 시작되면 선택 시 preflight에 재진입하지 않고 알린다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
+    const { container, rerender } = render(<App />)
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
+    appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue('token')
+
+    fireEvent.click(container.querySelector('.btn-style-link'))
+    expect(screen.getByRole('button', { name: 'pick-style' })).toBeInTheDocument()
+
+    appMocks.state.generatingSceneId = 's4'
+    rerender(<App />)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'pick-style' }))
+      await Promise.resolve()
+    })
+
+    expect(appMocks.genAPI.getAccessToken).not.toHaveBeenCalled()
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+    expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy')
+  })
+
+  it('태그 Proceed 전에 개별 씬 생성이 시작되면 auth 재검사나 enqueue 없이 알린다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, characters: 'Missing' } : scene
+    ))
+    const view = render(<App />)
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
+    appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue('token')
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await screen.findByRole('button', { name: 'tag-proceed' })
+    expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1)
+
+    appMocks.state.generatingSceneId = 's4'
+    view.rerender(<App />)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'tag-proceed' }))
+      await Promise.resolve()
+    })
+
+    expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1)
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+    expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy')
+  })
+
+  it('태그 Proceed의 auth 재검사 중 개별 씬 생성이 시작되면 enqueue 직전에 차단한다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, characters: 'Missing' } : scene
+    ))
+    const view = render(<App />)
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
+    appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue('token')
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await screen.findByRole('button', { name: 'tag-proceed' })
+    expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1)
+
+    const token = deferred()
+    appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
+    fireEvent.click(screen.getByRole('button', { name: 'tag-proceed' }))
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
+
+    appMocks.state.generatingSceneId = 's4'
+    view.rerender(<App />)
+    await act(async () => {
+      token.resolve('token')
+      await token.promise
+    })
+
+    await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy'))
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
     expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
   })
 
@@ -576,7 +718,7 @@ describe('App prompt busyLines wiring', () => {
     expect(appMocks.state.menuProps.busy).toBe(true)
   })
 
-  it('I2V 결과는 StrictMode에서도 owner 씬을 한 번만 갱신하고 삭제된 행은 건드리지 않는다', async () => {
+  it('I2V 행 삭제와 늦은 완료 사이에 렌더가 없어도 owner 씬을 건드리지 않는다', async () => {
     appMocks.genAPI.getAccessToken.mockResolvedValue('token')
     render(<StrictMode><App /></StrictMode>)
 
@@ -607,10 +749,12 @@ describe('App prompt busyLines wiring', () => {
       videoI2VGeneratingStartedAt: 123,
     }))
 
-    act(() => appMocks.state.framePanelProps.onUpdate([]))
-    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([]))
-    act(() => onItemUpdate('fp-1', 'complete', { base64: 'VIDEO' }))
+    act(() => {
+      appMocks.state.framePanelProps.onUpdate([])
+      onItemUpdate('fp-1', 'complete', { base64: 'VIDEO' })
+    })
     expect(appMocks.scenesHook.updateScene).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([]))
   })
 
   it('I2V onItemUpdate를 렌더 없이 연속 호출해도 첫 완료의 비디오 데이터와 둘째 패치가 모두 남는다', async () => {
@@ -640,7 +784,7 @@ describe('App prompt busyLines wiring', () => {
     })))
   })
 
-  it('프로젝트 load가 같은 tick에 먼저 쓴 framePairs를 늦은 I2V 완료가 덮지 않는다', async () => {
+  it('프로젝트 framePairs 교체와 옛 완료 사이에 렌더가 없어도 같은 id의 새 프로젝트 씬을 건드리지 않는다', async () => {
     appMocks.genAPI.getAccessToken.mockResolvedValue('token')
     render(<App />)
 
@@ -657,15 +801,17 @@ describe('App prompt busyLines wiring', () => {
     await waitFor(() => expect(appMocks.videoStart).toHaveBeenCalledTimes(1))
     const { onItemUpdate } = appMocks.state.videoStartOptions
     const loadedPair = {
-      id: 'fp-new', ownerSceneId: 's2', startSceneId: 's2', endSceneId: null,
+      id: 'fp-new', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
       prompt: 'new scene', selected: true, status: 'pending',
     }
 
+    appMocks.scenesHook.updateScene.mockClear()
     act(() => {
       appMocks.state.projectDataProps.setFramePairs([loadedPair])
       onItemUpdate('fp-old', 'complete', { base64: 'OLD_VIDEO' })
     })
 
+    expect(appMocks.scenesHook.updateScene).not.toHaveBeenCalled()
     await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([loadedPair]))
   })
 })

@@ -37,6 +37,7 @@ export function buildEmptyRefGateDeps({
   handleGenerateAllRefs,
   openSyncGate,
   automationStartRef,
+  guardSceneBatchStart,
   toastM1Exclusions,
   gateView,
 }) {
@@ -56,6 +57,7 @@ export function buildEmptyRefGateDeps({
     openSyncGate: source === 'mcp'
       ? nonInteractiveSyncGate
       : openSyncGate,
+    canStartScenes: () => guardSceneBatchStart(source),
     startScenes: opts => automationStartRef.current(opts),
     toastM1Exclusions,
     gateView,
@@ -116,6 +118,7 @@ const REQUIRED_DEPS = [
   'setPendingLatch',
   'generateRefs',
   'openSyncGate',
+  'canStartScenes',
   'startScenes',
   'toastM1Exclusions',
 ]
@@ -220,6 +223,10 @@ export async function runEmptyRefGateFlow(context, deps) {
     const beforeStartInvariant = invariantBroken()
     if (beforeStartInvariant) {
       return { started: false, reason: beforeStartInvariant }
+    }
+
+    if (!deps.canStartScenes()) {
+      return { started: false, reason: 'scene-generation-active' }
     }
 
     // 실제 launch에 쓰이는 최종 M1 결과만 한 번 알린다. 실패/취소 경로에는 토스트가 없다.

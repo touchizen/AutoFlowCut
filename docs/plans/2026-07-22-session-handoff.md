@@ -177,6 +177,15 @@
 5. Header와 네이티브 File 메뉴가 같은 `fullProjectBusy`를 쓴다. New Project·Open Project·생성 모드
    선택은 busy 중 모두 toast로 거부해 개별 씬 생성 중 프로젝트 교체 우회도 닫았다.
 6. `useMcpServer`의 `automationState` JSDoc shape에 `isSceneBatchQueued`를 반영했다.
+7. `21790d7c` 후속 리뷰의 stale I2V owner 회귀를 수정했다. `framePairs`는 이제 App이 소유한
+   mirrored setter/ref 하나로만 발행하고, 값과 함수 updater 모두 ref를 React 렌더 전에 동기 반영한다.
+   `useProjectData`도 그 ref를 받아 쓰며 별도 mirror를 만들지 않는다. 행 삭제 또는 프로젝트 교체와
+   늦은 완료가 같은 tick에 와도 pair가 live 배열에 없으면 owner scene patch는 나가지 않는다.
+8. UI scene-batch guard를 enqueue 시점까지 연장했다. `generatingSceneId` live ref를 direct Start,
+   StylePicker, tag-validation Proceed, empty-reference coordinator의 최종 launch 경계에서 다시 읽고,
+   거부 시 기존 busy toast를 표시한다. `source:'mcp'`는 같은 상황에서도 계속 enqueue 가능하다.
+   렌더 없는 owner 회귀와 deferred preflight/Proceed 테스트를 추가했고, shared setter·존재 가드·최종
+   재검사·MCP 예외를 되돌리는 뮤턴트가 모두 실패하는 것을 확인했다.
 
 ### 남은 별건 후속
 

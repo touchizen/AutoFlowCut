@@ -112,6 +112,7 @@ describe('empty reference gate + useReferenceGeneration integration', () => {
         proceeded: true,
         patchedRefs: null,
       })),
+      canStartScenes: vi.fn(() => true),
       startScenes,
       toastM1Exclusions: vi.fn(),
       gateView: {

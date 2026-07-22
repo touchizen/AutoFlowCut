@@ -397,7 +397,7 @@ describe('I2V recovery callback updates its owner scene', () => {
     expect(setScenes).toHaveBeenCalledTimes(1)
   })
 
-  it('복구 중 live framePair가 삭제됐으면 owner scene patch도 no-op이다', async () => {
+  it('복구 중 shared live framePair가 렌더 없이 삭제됐으면 owner scene patch도 no-op이다', async () => {
     window.electronAPI = { setStartupProject: vi.fn() }
     let i2vRecoveryCallback = null
     recoverInFlightVideos.mockImplementation(async ({ framePairs, onFramePairUpdate }) => {
@@ -406,18 +406,18 @@ describe('I2V recovery callback updates its owner scene', () => {
     const setFramePairs = vi.fn()
     const setScenes = vi.fn()
 
-    let liveFramePairs = [
+    const liveFramePairs = [
       { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
       { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
     ]
-    const hook = renderHook(() => useProjectData(makeHookProps({
-      mode: 'api', genAPI: makeGenAPI(), framePairs: liveFramePairs, setFramePairs, setScenes,
+    const framePairsRef = { current: liveFramePairs }
+    renderHook(() => useProjectData(makeHookProps({
+      mode: 'api', genAPI: makeGenAPI(), framePairs: liveFramePairs, framePairsRef, setFramePairs, setScenes,
     })))
     await waitForEffect()
     expect(i2vRecoveryCallback).toBeTypeOf('function')
 
-    liveFramePairs = []
-    hook.rerender()
+    framePairsRef.current = []
     setFramePairs.mockClear()
     setScenes.mockClear()
     act(() => i2vRecoveryCallback('fp-owned', { status: 'complete', base64: 'VIDEO' }))

@@ -54,7 +54,6 @@ const syncProceed = sliceBetween(
   'const handleSyncGateProceed',
   'const handleSyncGateCancel'
 )
-const stylePicker = sliceBetween('<StylePicker', '{showAudioResult &&')
 const emptyRefModal = sliceBetween(
   '{emptyRefGate && (',
   '{/* #R34: 생성 전 미동기화'
@@ -156,16 +155,6 @@ describe('App empty reference gate wiring', () => {
     expect(handleStartImpl).toContain("const { force = false, source = 'ui' } = options")
     expect(handleStartImpl).toContain('getEmptyRefGateDeps(source)')
     expect(tagProceed).toContain('getEmptyRefGateDeps(__startSource)')
-  })
-
-  it('StylePicker 선택은 handleStart로 재진입해 M2 guard를 다시 통과한다 (§11.8)', () => {
-    expect(stylePicker).toContain(
-      'handleStart(id, { force: pendingStyleForceRef.current })'
-    )
-    expect(stylePicker).toContain(
-      'handleStart(null, { force: pendingStyleForceRef.current })'
-    )
-    expect(stylePicker).not.toContain('automationStartRef.current(')
   })
 
   // busy 에는 모달 자체가 없다 — 모달이 열려 있으면 layout.js 가 Flow WebContentsView 를 0×0 으로
