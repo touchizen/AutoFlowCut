@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useFlowAdoptPrompt, ADOPT_POLL_MS } from '../../src/hooks/useFlowAdoptPrompt'
-import { ADOPT_PROMPT_COOLDOWN_MS } from '../../src/utils/flowAdoptPrompt'
+import { ADOPT_PROMPT_COOLDOWN_MS, ADOPT_RETRY_COOLDOWN_MS } from '../../src/utils/flowAdoptPrompt'
 
 const needsConfirm = (projectId) => ({ ok: false, reason: 'needs-confirm', projectId })
 
@@ -243,6 +243,22 @@ describe('useFlowAdoptPrompt', () => {
 
     await tick()
     await tick()
+    expect(result.current.candidate).toBeNull()
+
+    // 다만 실패는 대개 일시적이라 짧게만 쉰다 — 곧 다시 묻는다.
+    await tick(ADOPT_RETRY_COOLDOWN_MS)
+    expect(result.current.candidate).toBe('cand-1')
+  })
+
+  // 거절은 다르다: 사용자가 그 프로젝트를 아니라고 한 것이라 짧게 쉬고 다시 물으면 안 된다.
+  it('취소한 후보는 실패 재시도 시간이 지나도 계속 침묵한다', async () => {
+    const tryAdopt = vi.fn().mockResolvedValue(needsConfirm('cand-1'))
+    const { result } = setup({ tryAdopt })
+    await tick()
+    act(() => { result.current.cancel() })
+
+    await tick(ADOPT_RETRY_COOLDOWN_MS * 4)
+
     expect(result.current.candidate).toBeNull()
   })
 

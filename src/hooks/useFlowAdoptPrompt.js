@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { shouldPromptAdopt } from '../utils/flowAdoptPrompt'
+import { shouldPromptAdopt, ADOPT_PROMPT_COOLDOWN_MS, ADOPT_RETRY_COOLDOWN_MS } from '../utils/flowAdoptPrompt'
 
 /** 쿨다운 키: 거절은 (로컬 프로젝트, Flow 프로젝트) 쌍에 대한 것이다. */
 const cooldownKey = (projectName, flowProjectId) => (flowProjectId ? `${projectName ?? ''}\u0000${flowProjectId}` : null)
@@ -65,13 +65,19 @@ export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, pro
     if (r?.ok) return
     // 실패를 묻으면 아무 일도 안 일어난 것처럼 보이고 5초 뒤 같은 모달이 다시 뜬다 — 취소를
     // 눌러야만 멈추는 루프다. 사용자에게 알리고, 같은 후보는 쿨다운을 걸어 바로 다시 묻지 않는다.
-    cancelledAtRef.current.set(cooldownKey(approved.projectName, approved.projectId), Date.now())
+    // 침묵은 짧게 — 실패는 대개 일시적이고(Flow 뷰가 그 순간 바쁨) 사용자의 의사는 이미 확인됐다.
+    // 거절과 같은 10분을 재우면 "다시 시도하세요" 라고 띄워 놓고 10분간 안 묻는 꼴이 된다.
+    cancelledAtRef.current.set(cooldownKey(approved.projectName, approved.projectId),
+      { at: Date.now(), cooldownMs: ADOPT_RETRY_COOLDOWN_MS })
     onFailedRef.current?.(r)
   }
 
   const cancel = () => {
     // 이 프로젝트는 아니라는 의사표시 — 한동안 다시 묻지 않아 Flow 뷰를 되찾을 시간을 준다.
-    if (candidate) cancelledAtRef.current.set(cooldownKey(candidate.projectName, candidate.projectId), Date.now())
+    if (candidate) {
+      cancelledAtRef.current.set(cooldownKey(candidate.projectName, candidate.projectId),
+        { at: Date.now(), cooldownMs: ADOPT_PROMPT_COOLDOWN_MS })
+    }
     setCandidate(null)
   }
 
