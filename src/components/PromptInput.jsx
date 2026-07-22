@@ -256,6 +256,7 @@ function EditablePlugin({ editable }) {
 
 function BusyLinesPlugin({ busyLines }) {
   const [editor] = useLexicalComposerContext()
+  const lastScrolledIndexRef = useRef(null)
 
   useEffect(() => {
     const applyBusyLines = () => {
@@ -264,6 +265,19 @@ function BusyLinesPlugin({ busyLines }) {
       paragraphs.forEach((paragraph, index) => {
         paragraph.classList.toggle('is-busy', busyLines.has(index))
       })
+
+      if (busyLines.size === 0) {
+        lastScrolledIndexRef.current = null
+        return
+      }
+
+      // Set 순서가 아닌 아래쪽 생성 프런티어를 따르고, 편집 update 때마다 같은 줄로
+      // 튀지 않도록 실제 타깃 index가 바뀐 경우에만 스크롤한다.
+      const targetIndex = Math.max(...busyLines)
+      if (targetIndex === lastScrolledIndexRef.current) return
+      const targetParagraph = paragraphs[targetIndex]
+      targetParagraph?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+      if (targetParagraph) lastScrolledIndexRef.current = targetIndex
     }
 
     // prop 상태 변화는 즉시 반영하고, Lexical이 편집 DOM/className을 재조정한 뒤에도

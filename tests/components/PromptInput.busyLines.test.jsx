@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -17,7 +17,22 @@ const waitForParagraphs = async (count) => {
 }
 
 describe('PromptInput busyLines', () => {
-  afterEach(() => cleanup())
+  const originalScrollIntoView = Element.prototype.scrollIntoView
+  let scrollIntoView
+
+  beforeEach(() => {
+    scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+  })
+
+  afterEach(() => {
+    cleanup()
+    if (originalScrollIntoView) {
+      Element.prototype.scrollIntoView = originalScrollIntoView
+    } else {
+      delete Element.prototype.scrollIntoView
+    }
+  })
 
   it('busy index 문단에만 is-busy를 붙인다', async () => {
     render(<PromptInput value={'first\nsecond\nthird'} onChange={vi.fn()} busyLines={new Set([1])} disableMentions />)
@@ -82,5 +97,101 @@ describe('PromptInput busyLines', () => {
         delete Range.prototype.getBoundingClientRect
       }
     }
+  })
+
+  it('마지막 busy 문단을 가장 가까운 위치로 부드럽게 스크롤한다', async () => {
+    render(
+      <PromptInput
+        value={'first\nsecond\nthird'}
+        onChange={vi.fn()}
+        busyLines={new Set([2])}
+        disableMentions
+      />
+    )
+
+    const items = await waitForParagraphs(3)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView.mock.contexts[0]).toBe(items[2])
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' })
+  })
+
+  it('busy 타깃이 같으면 prop 재적용과 Lexical 업데이트에도 다시 스크롤하지 않는다', async () => {
+    const { rerender } = render(
+      <PromptInput
+        value={'first\nsecond\nthird'}
+        onChange={vi.fn()}
+        busyLines={new Set([2])}
+        disableMentions
+      />
+    )
+    await waitForParagraphs(3)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    scrollIntoView.mockClear()
+
+    rerender(
+      <PromptInput
+        value={'first changed\nsecond\nthird'}
+        onChange={vi.fn()}
+        busyLines={new Set([2])}
+        disableMentions
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('prompt-textarea')).toHaveTextContent('first changed'))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('busy 타깃이 바뀌면 새 문단으로 다시 스크롤한다', async () => {
+    const value = 'first\nsecond\nthird\nfourth\nfifth'
+    const { rerender } = render(
+      <PromptInput value={value} onChange={vi.fn()} busyLines={new Set([2])} disableMentions />
+    )
+    await waitForParagraphs(5)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    scrollIntoView.mockClear()
+
+    rerender(
+      <PromptInput value={value} onChange={vi.fn()} busyLines={new Set([4])} disableMentions />
+    )
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView.mock.contexts[0]).toBe(paragraphs()[4])
+  })
+
+  it('busy 문단이 여러 개면 가장 큰 index 문단으로 스크롤한다', async () => {
+    render(
+      <PromptInput
+        value={'first\nsecond\nthird\nfourth'}
+        onChange={vi.fn()}
+        busyLines={new Set([1, 3])}
+        disableMentions
+      />
+    )
+
+    const items = await waitForParagraphs(4)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView.mock.contexts[0]).toBe(items[3])
+  })
+
+  it('busy가 비면 스크롤 타깃을 리셋해 같은 index가 다시 busy일 때 스크롤한다', async () => {
+    const value = 'first\nsecond\nthird'
+    const { rerender } = render(
+      <PromptInput value={value} onChange={vi.fn()} busyLines={new Set([2])} disableMentions />
+    )
+    await waitForParagraphs(3)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    scrollIntoView.mockClear()
+
+    rerender(
+      <PromptInput value={value} onChange={vi.fn()} busyLines={new Set()} disableMentions />
+    )
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    rerender(
+      <PromptInput value={value} onChange={vi.fn()} busyLines={new Set([2])} disableMentions />
+    )
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView.mock.contexts[0]).toBe(paragraphs()[2])
   })
 })
