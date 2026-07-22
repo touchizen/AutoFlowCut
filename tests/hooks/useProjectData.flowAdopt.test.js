@@ -387,8 +387,9 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     let res
     await act(async () => { res = await result.current.tryAdoptFlowProject() })
 
-    expect(res).toMatchObject({ ok: false })
-    expect(res.reason).not.toBe('needs-confirm')  // 옛 세션의 arm 으로 채택을 물으면 안 된다
+    // arm 자체가 서지 않아야 한다. arm 이 서면(=회복이 이전 세션의 관측을 물려받으면) 그 뒤의
+    // 판정은 baseline 이 우연히 무엇이었는지에 좌우된다 — 그 우연에 기대지 않게 여기서 끊는다.
+    expect(res).toMatchObject({ ok: false, reason: 'not-armed' })
     expect(openFlowProject).not.toHaveBeenCalled()
   })
 
