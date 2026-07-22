@@ -17,7 +17,7 @@ import { clampInt } from '../utils/clampInt'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
 import { resolveDisplayError } from '../utils/errorDisplay'
-import { isReferenceImageEmpty, referenceGuardKey } from '../utils/refImageGuard'
+import { isReferenceImageEmpty, referenceGuardKey, sourceAvailable } from '../utils/refImageGuard'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -375,18 +375,21 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       return { success: false, authError: true }
     }
 
-    // 재생성은 이 카드가 실제로 쓴 스타일을 따른다 — 그 사이 전역 선택(selectedStyleRefId)이 바뀌거나
-    //   findAutoStyle 의 자동 추정 대상이 달라져도 결과가 흔들리면 안 된다. styleId===null 은
-    //   "무스타일로 생성했다"는 기록이므로 전역으로 새지 않게 값으로 판정한다(undefined = 기억 없음).
-    //   명시적 overrideStyleId 는 그보다 우선(상세 모달의 스타일 지정 재생성).
+    // 이미지가 없는 미생성 카드는 실패/중지 때 남은 stale styleId 대신 현재 선택 스타일을 따른다.
+    //   이미지가 있는 재생성만 카드가 실제로 쓴 스타일을 유지하며, styleId===null 도
+    //   "무스타일로 생성했다"는 기록이므로 값으로 판정한다(undefined = 기억 없음).
+    //   명시적 overrideStyleId 는 이미지 유무보다 우선(배치/MCP의 스타일 지정 생성).
     //   스타일 카드에는 스타일을 적용하지 않는다(_prepareStyleRefs 조기 반환) — findAutoStyle 이
     //   그 카드 자신을 고른 값을 찍으면 "ref:1 로 생성됨"이라는 거짓 기록이 남는다(배치는 null).
     const effectiveStyleId = isStyleReference(ref)
       ? null
-      : overrideStyleId ?? (ref.styleId !== undefined ? ref.styleId : _resolveEffectiveStyleId(null))
+      : overrideStyleId ?? (!sourceAvailable(ref)
+          ? _resolveEffectiveStyleId(null)
+          : (ref.styleId !== undefined ? ref.styleId : _resolveEffectiveStyleId(null)))
 
     addGeneratingBusy()
-    // styleId 는 성공 시점이 아니라 시작 시점에 남긴다 — 실패한 카드야말로 같은 스타일로 재생성돼야 한다.
+    // styleId 는 성공 시점이 아니라 시작 시점에 남겨 실패/중지 원인과 적용 시도를 추적한다.
+    //   이미지 없이 다시 생성할 때는 위 정책대로 당시의 현재 선택 스타일을 새로 해석한다.
     setReferences(prev => patchReferenceByIdentity(
       prev,
       index,
