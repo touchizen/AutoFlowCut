@@ -427,6 +427,38 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(fileSystemAPI.mergeProjectData).toHaveBeenCalledWith('p1', { flowProjectId: 'user-picked' })
   })
 
+  // flow → api → flow 로 돌아와 같은 프로젝트/epoch 로 다시 arm 되면, 이전 arm 으로 시작한 채택
+  // 시도의 토큰이 값만으로는 새 arm 과 구별되지 않는다(ABA). 그 늦은 결과가 새 세션의 baseline 을
+  // 무시하고 채택되면, 사용자가 이미 다른 상황으로 옮겨간 뒤에 옛 판단이 적용된다.
+  it('arm 이 새로 서면 이전 arm 으로 시작한 채택은 수용되지 않는다(ABA)', async () => {
+    let resolveExtract
+    const newFlowProject = vi.fn().mockResolvedValue({ success: false, error: 'timeout' })
+    const flowExtractProjectId = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'baseline-1' })          // 1차 arm 의 baseline
+      .mockImplementationOnce(() => new Promise((r) => { resolveExtract = r }))    // 진행 중인 채택 시도
+      .mockResolvedValue({ success: true, projectId: 'baseline-2' })               // 2차 arm 의 baseline
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('late-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })   // 1차 arm
+
+    // ⚠️ act 로 감싸지 않는다 — 겹친 act 스코프 안에서는 아래 rerender 의 effect 가 밀려
+    //    ABA 시퀀스(해제 → 재arm)가 아예 일어나지 않는다(가짜 통과).
+    const pending = result.current.tryAdoptFlowProject({ confirmed: true })
+    expect(resolveExtract).toBeTypeOf('function')
+
+    // 그 사이 flow 를 떠났다가(arm 해제) 돌아와 같은 프로젝트/epoch 로 다시 arm 된다.
+    await act(async () => { rerender({ mode: 'api', projectName: 'p1' }) })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    let late
+    await act(async () => { resolveExtract({ success: true, projectId: 'late-id' }); late = await pending })
+
+    expect(late?.ok).toBe(false)
+    expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalledWith('p1', { flowProjectId: 'late-id' })
+  })
+
   // 저장이 끝나는 사이 프로젝트가 바뀌면, 그 id 는 이전 프로젝트의 것이다 — 새 프로젝트의 state 에
   // 적용하면 앞으로의 생성이 남의 Flow 프로젝트로 나간다.
   it('저장이 끝나기 전 프로젝트가 바뀌면 그 id 를 새 프로젝트에 적용하지 않는다', async () => {

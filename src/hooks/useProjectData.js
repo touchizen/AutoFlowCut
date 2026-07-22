@@ -635,6 +635,11 @@ export function useProjectData({
   // arm 의 소유자(로컬 프로젝트 + load epoch). 늦게 도착한 이전 프로젝트의 응답이 arm 을 되살려
   // 다른 프로젝트에 채택이 발화하는 것을 막는다.
   const adoptArmTokenRef = useRef(null)
+  // arm 마다 새 객체를 만들어 identity 로 비교한다. {projectName, epoch} 값만으로는 flow→api→flow
+  // 처럼 같은 프로젝트/epoch 로 다시 arm 됐을 때 이전 arm 과 구별되지 않아(ABA), 늦게 도착한 옛
+  // 시도의 결과가 새 세션의 baseline 을 무시하고 수용된다. armId 는 로그·디버깅용.
+  const adoptArmSeqRef = useRef(0)
+  const newArmToken = (projectName, epoch) => ({ projectName, epoch, armId: ++adoptArmSeqRef.current })
   // 채택은 async 라 시작 시점의 로컬 프로젝트/모드가 끝날 때까지 같은지 확인해야 한다(전환 중
   // 완료되면 엉뚱한 project.json 에 id 를 쓴다). render closure 대신 최신값을 ref 로 본다.
   const projectNameRef = useRef(settings?.projectName)
@@ -758,8 +763,11 @@ export function useProjectData({
       return { ok: false, reason: 'stale-arm' }
     }
     const startEpoch = loadEpochRef.current
-    // 시작 시점의 (mode, 로컬 프로젝트, load epoch, arm) 이 그대로인가 — async 경계마다 확인한다.
+    // 시작 시점의 arm **바로 그것**이 아직 유효한가. 값 비교가 아니라 identity 비교여야 한다 —
+    // 그 사이 해제됐다 같은 값으로 다시 arm 된 것은 다른 arm 이다(ABA).
+    const startToken = adoptArmTokenRef.current
     const stillCurrent = () => modeRef.current === 'flow' && adoptArmedRef.current
+      && adoptArmTokenRef.current === startToken
       && projectNameRef.current === projectName && loadEpochRef.current === startEpoch
     adoptInFlightRef.current = true
     try {
@@ -1036,7 +1044,7 @@ export function useProjectData({
             if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch) return
             adoptPreIdRef.current = baseline
             adoptArmedRef.current = true
-            adoptArmTokenRef.current = { projectName: currentProjectName, epoch: startEpoch }
+            adoptArmTokenRef.current = newArmToken(currentProjectName, startEpoch)
           }
         } catch (e) {
           if (!cancelled) {
@@ -1046,7 +1054,7 @@ export function useProjectData({
             // 류의 실패는 영구 차단으로 남는다. baseline 은 첫 채택 시도에서 잡는다.
             adoptPreIdRef.current = undefined
             adoptArmedRef.current = true
-            adoptArmTokenRef.current = { projectName: currentProjectName, epoch: startEpoch }
+            adoptArmTokenRef.current = newArmToken(currentProjectName, startEpoch)
           }
         }
       }
