@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { shouldPromptAdopt } from '../utils/flowAdoptPrompt'
 
+/** 쿨다운 키: 거절은 (로컬 프로젝트, Flow 프로젝트) 쌍에 대한 것이다. */
+const cooldownKey = (projectName, flowProjectId) => (flowProjectId ? `${projectName ?? ''}\u0000${flowProjectId}` : null)
+
 /** 채택 회복을 다시 시도하는 주기. */
 export const ADOPT_POLL_MS = 5000
 
@@ -15,12 +18,14 @@ export const ADOPT_POLL_MS = 5000
  * - 프로젝트 전환 중(projectLoading)에도 멈춘다 — 전환은 projectName 과 flowProjectId 를 따로
  *   커밋하므로 그 사이의 채택은 어느 프로젝트의 것인지 어긋난다.
  * - 취소한 후보는 한동안 다시 묻지 않는다(모달이 Flow 뷰를 0×0 으로 접어 선택 시간을 뺏는다).
+ *   거절은 "이 로컬 프로젝트에 저 Flow 프로젝트를 붙이지 않겠다"는 뜻이므로 (로컬 프로젝트, Flow id)
+ *   쌍으로 기억한다 — Flow id 는 전역이라 id 만으로 기억하면 다른 프로젝트의 정답까지 막는다.
  *
- * @param {{mode: string, flowProjectReady: boolean, projectLoading: boolean,
+ * @param {{mode: string, flowProjectReady: boolean, projectLoading: boolean, projectName: string,
  *          tryAdopt: (opts?: object) => Promise<object>, intervalMs?: number}} params
  * @returns {{candidate: string|null, confirm: () => Promise<void>, cancel: () => void}}
  */
-export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, tryAdopt, intervalMs = ADOPT_POLL_MS }) {
+export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, projectName, tryAdopt, intervalMs = ADOPT_POLL_MS }) {
   // ⚠️ tryAdopt 는 매 render 새 함수라 deps 에 넣으면 리렌더마다(재생 중 playhead 등) interval 이
   //    리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
   const adoptRef = useRef(tryAdopt)
@@ -33,10 +38,10 @@ export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, try
     const timer = setInterval(async () => {
       const r = await adoptRef.current?.()
       if (r?.reason !== 'needs-confirm') return
-      if (shouldPromptAdopt(r.projectId, cancelledAtRef.current, Date.now())) setCandidate(r.projectId)
+      if (shouldPromptAdopt(cooldownKey(projectName, r.projectId), cancelledAtRef.current, Date.now())) setCandidate(r.projectId)
     }, intervalMs)
     return () => clearInterval(timer)
-  }, [mode, flowProjectReady, candidate, projectLoading, intervalMs])
+  }, [mode, flowProjectReady, candidate, projectLoading, projectName, intervalMs])
 
   const confirm = async () => {
     // 사용자가 승인한 것은 "그때 보여준 ID" 다 — 확인 사이에 Flow 가 옮겨갔으면 채택되지 않는다.
@@ -47,7 +52,7 @@ export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, try
 
   const cancel = () => {
     // 이 프로젝트는 아니라는 의사표시 — 한동안 다시 묻지 않아 Flow 뷰를 되찾을 시간을 준다.
-    if (candidate) cancelledAtRef.current.set(candidate, Date.now())
+    if (candidate) cancelledAtRef.current.set(cooldownKey(projectName, candidate), Date.now())
     setCandidate(null)
   }
 

@@ -635,11 +635,10 @@ export function useProjectData({
   // arm 의 소유자(로컬 프로젝트 + load epoch). 늦게 도착한 이전 프로젝트의 응답이 arm 을 되살려
   // 다른 프로젝트에 채택이 발화하는 것을 막는다.
   const adoptArmTokenRef = useRef(null)
-  // arm 마다 새 객체를 만들어 identity 로 비교한다. {projectName, epoch} 값만으로는 flow→api→flow
-  // 처럼 같은 프로젝트/epoch 로 다시 arm 됐을 때 이전 arm 과 구별되지 않아(ABA), 늦게 도착한 옛
-  // 시도의 결과가 새 세션의 baseline 을 무시하고 수용된다. armId 는 로그·디버깅용.
-  const adoptArmSeqRef = useRef(0)
-  const newArmToken = (projectName, epoch) => ({ projectName, epoch, armId: ++adoptArmSeqRef.current })
+  // arm 마다 **새 객체**를 만든다. {projectName, epoch} 값만으로는 flow→api→flow 처럼 같은
+  // 프로젝트/epoch 로 다시 arm 됐을 때 이전 arm 과 구별되지 않아(ABA), 늦게 도착한 옛 시도의
+  // 결과가 새 세션의 baseline 을 무시하고 수용된다. 구별은 identity 비교로 한다.
+  const newArmToken = (projectName, epoch) => ({ projectName, epoch })
   // 채택은 async 라 시작 시점의 로컬 프로젝트/모드가 끝날 때까지 같은지 확인해야 한다(전환 중
   // 완료되면 엉뚱한 project.json 에 id 를 쓴다). render closure 대신 최신값을 ref 로 본다.
   const projectNameRef = useRef(settings?.projectName)
@@ -671,28 +670,29 @@ export function useProjectData({
   // mode-entry effect 의 closure 가 캡처한 STALE scenes/references 스냅샷으로 전체 project.json 을
   // 덮어쓰지 않도록(R6-8), 그리고 autosave 와의 read-modify-write interleave clobber 가 없도록(R7-4),
   // main 의 write-lock 안에서 read+merge+write 하는 mergeProjectData 를 쓴다.
-  // 성공 여부를 boolean 으로 돌려준다 — 채택(adopt) 경로는 저장이 확인된 뒤에만 readiness 를
-  // 열어야 한다. 저장 실패인데 ready 를 열면 다음 실행에서 저장 id 가 없어 또 새 Flow 프로젝트를
-  // 만든다(autosave 는 flowProjectId 를 의존성으로 받지 않아 재시도가 보장되지 않는다).
+  // 성공 여부를 boolean 으로 돌려준다 — 저장이 확인되기 전에는 readiness 를 열지 않는다. 저장
+  // 실패인데 열면 다음 실행에서 저장 id 가 없어 또 새 Flow 프로젝트를 만든다. flowProjectId 는
+  // merge 전용 키라(full save 는 디스크 값을 보존한다) autosave 는 재시도 주체가 아니다 —
+  // 재시도는 pendingPersist + 폴링이 맡는다.
   const persistFlowProjectId = async (projectName, id) => {
     if (!projectName || !id) return false
     try {
-      // #R8-2: 결과를 확인 — 실패해도 state 에 id 가 있어 autosave 가 재영속화하지만, 조용히 묻지 않는다.
+      // #R8-2: 결과를 확인한다 — 실패를 조용히 묻으면 저장되지 않은 매핑 위에서 생성이 이어진다.
       const res = await fileSystemAPI.mergeProjectData(projectName, { flowProjectId: id })
       if (res?.success === false) {
-        console.warn('[ProjectData] persistFlowProjectId merge 실패(auto-save 가 재시도):', res.error)
+        console.warn('[ProjectData] persistFlowProjectId merge 실패(저장 대기로 재시도):', res.error)
         return false
       }
       return true
     } catch (e) {
-      console.warn('[ProjectData] persistFlowProjectId 실패 (auto-save 가 재시도):', e.message)
+      console.warn('[ProjectData] persistFlowProjectId 실패(저장 대기로 재시도):', e.message)
       return false
     }
   }
 
   /**
    * 만들어졌지만 project.json 에 저장되지 못한 Flow 프로젝트(pendingPersist)를 저장하고,
-   * 성공하면 바인딩을 확정해 생성 차단을 푼다. 프로젝트는 이미 존재하므로 새로 만들거나
+   * 성공하면 id 를 세워 Case A 의 open 확인으로 넘긴다(차단을 푸는 것은 그 확인이다). 프로젝트는 이미 존재하므로 새로 만들거나
    * 사용자에게 물을 것이 없다 — 저장만 재시도하면 된다.
    * mode-entry(Case B 진입 전)와 App 의 5초 폴링(tryAdoptFlowProject)이 공유한다.
    */
@@ -1041,13 +1041,19 @@ export function useProjectData({
             } catch { baseline = undefined }
             // ⚠️ await 뒤 재검사 — 이 사이 프로젝트 전환/모드 이탈이 일어났으면 arm 을 되살리면 안 된다
             //    (전환이 지운 arm 을 늦은 응답이 복구해 다른 프로젝트에 채택이 발화한다).
-            if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch) return
+            if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch
+              || projectNameRef.current !== currentProjectName) return
             adoptPreIdRef.current = baseline
             adoptArmedRef.current = true
             adoptArmTokenRef.current = newArmToken(currentProjectName, startEpoch)
           }
         } catch (e) {
-          if (!cancelled) {
+          // ⚠️ resolved-failure 와 같은 소유권 가드 — 전환은 arm 을 지우고 epoch 를 올린 뒤
+          //    cleanup 이 커밋되기 전에 이 rejection 이 도착할 수 있다. 그대로 arm 하면 이전
+          //    프로젝트의 arm 이 남아 폴링이 stale-arm 만 돌려주고 재바인딩도 못 한다(고착).
+          if (!cancelled && modeRef.current === 'flow'
+            && projectNameRef.current === currentProjectName
+            && loadEpochRef.current === startEpoch) {
             setFlowProjectReady(false)
             console.warn('[ProjectData] mode-entry newFlowProject threw:', e.message)
             // resolved-failure 와 동일하게 회복을 arm 한다 — 여기서 arm 하지 않으면 invoke rejection

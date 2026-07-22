@@ -427,6 +427,33 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(fileSystemAPI.mergeProjectData).toHaveBeenCalledWith('p1', { flowProjectId: 'user-picked' })
   })
 
+  // 생성 호출이 reject 로 끝나는 경로도 arm 을 세운다. 그 사이 전환이 시작됐는데 그대로 arm 하면
+  // 이전 프로젝트의 arm 이 남아, 폴링이 매번 stale-arm 만 돌려주고 재바인딩을 요청하지 못한다
+  // (arm 이 서 있으면 재바인딩 분기를 건너뛴다) — 새 프로젝트의 생성이 고착된다.
+  it('생성 호출이 reject 로 끝나도, 그 사이 시작된 전환의 arm 을 되살리지 않는다', async () => {
+    let rejectNew
+    const newFlowProject = vi.fn(() => new Promise((_r, rej) => { rejectNew = rej }))
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'other-id' })
+    const openFlowProject = vi.fn()
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.projectExists.mockResolvedValue(false)
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    // 전환이 epoch 를 올린 직후, effect cleanup(cancelled)이 커밋되기 전에 rejection 이 도착하는 창.
+    await act(async () => {
+      const switching = result.current.handleProjectChange('p9')
+      rejectNew(new Error('invoke failed'))
+      await switching
+    })
+
+    let res
+    await act(async () => { res = await result.current.tryAdoptFlowProject() })
+
+    expect(res).toMatchObject({ ok: false, reason: 'rebind-requested' })
+  })
+
   // flow → api → flow 로 돌아와 같은 프로젝트/epoch 로 다시 arm 되면, 이전 arm 으로 시작한 채택
   // 시도의 토큰이 값만으로는 새 arm 과 구별되지 않는다(ABA). 그 늦은 결과가 새 세션의 baseline 을
   // 무시하고 채택되면, 사용자가 이미 다른 상황으로 옮겨간 뒤에 옛 판단이 적용된다.

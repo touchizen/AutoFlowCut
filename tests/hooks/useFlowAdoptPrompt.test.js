@@ -11,10 +11,10 @@ import { ADOPT_PROMPT_COOLDOWN_MS } from '../../src/utils/flowAdoptPrompt'
 
 const needsConfirm = (projectId) => ({ ok: false, reason: 'needs-confirm', projectId })
 
-function setup({ mode = 'flow', flowProjectReady = false, projectLoading = false, tryAdopt } = {}) {
+function setup({ mode = 'flow', flowProjectReady = false, projectLoading = false, projectName = 'p1', tryAdopt } = {}) {
   return renderHook(
     (props) => useFlowAdoptPrompt(props),
-    { initialProps: { mode, flowProjectReady, projectLoading, tryAdopt } },
+    { initialProps: { mode, flowProjectReady, projectLoading, projectName, tryAdopt } },
   )
 }
 
@@ -118,5 +118,58 @@ describe('useFlowAdoptPrompt', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(ADOPT_POLL_MS * 3) })
 
     expect(tryAdopt).toHaveBeenCalledTimes(1)
+  })
+
+  // 거절은 "이 로컬 프로젝트에 저 Flow 프로젝트를 붙이지 않겠다"는 뜻이다. Flow id 만으로 기억하면
+  // 다른 로컬 프로젝트에서 그 id 가 정답이어도 10분간 묻지 못해 그쪽 생성이 막힌다.
+  it('한 프로젝트에서 취소해도 다른 로컬 프로젝트에서는 같은 후보를 묻는다', async () => {
+    const tryAdopt = vi.fn().mockResolvedValue(needsConfirm('cand-1'))
+    const { result, rerender } = setup({ tryAdopt, projectName: 'p1' })
+    await tick()
+    act(() => { result.current.cancel() })
+
+    rerender({ mode: 'flow', flowProjectReady: false, projectLoading: false, projectName: 'p2', tryAdopt })
+    await tick()
+
+    expect(result.current.candidate).toBe('cand-1')
+  })
+
+  // 폴링이 도는 **중에** 게이트가 켜지면 그 자리에서 멈춰야 한다 — deps 에서 빠지면 이미 걸린
+  // interval 이 그대로 살아 전환 중에도 채택이 발화한다.
+  it.each([
+    ['api 로 전환', { mode: 'api' }],
+    ['ready 로 전환', { flowProjectReady: true }],
+    ['프로젝트 전환 시작', { projectLoading: true }],
+  ])('폴링 중 %s 되면 즉시 멈춘다', async (_label, override) => {
+    const tryAdopt = vi.fn().mockResolvedValue({ ok: false, reason: 'unchanged' })
+    const { rerender } = setup({ tryAdopt })
+    await tick()
+    expect(tryAdopt).toHaveBeenCalledTimes(1)
+
+    rerender({ mode: 'flow', flowProjectReady: false, projectLoading: false, projectName: 'p1', tryAdopt, ...override })
+    await tick()
+    await tick()
+
+    expect(tryAdopt).toHaveBeenCalledTimes(1)
+  })
+
+  // App 은 재생 중 playhead 등으로 자주 리렌더되고 그때마다 tryAdopt 는 새 함수다. deps 에 넣으면
+  // interval 이 매번 리셋돼 5초가 영영 안 찬다 — 최신 함수는 쓰되 타이머는 유지해야 한다.
+  it('리렌더로 tryAdopt 가 바뀌어도 타이머를 리셋하지 않고 최신 함수를 부른다', async () => {
+    const first = vi.fn().mockResolvedValue({ ok: false, reason: 'unchanged' })
+    const { rerender } = setup({ tryAdopt: first })
+
+    // 폴링 주기의 90% 지점마다 리렌더 — deps 에 들어 있으면 타이머가 계속 리셋된다.
+    const second = vi.fn().mockResolvedValue({ ok: false, reason: 'unchanged' })
+    await tick(ADOPT_POLL_MS * 0.9)
+    rerender({ mode: 'flow', flowProjectReady: false, projectLoading: false, projectName: 'p1', tryAdopt: second })
+    await tick(ADOPT_POLL_MS * 0.9)
+
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledTimes(1)
+  })
+
+  it('쿨다운은 10분이다', () => {
+    expect(ADOPT_PROMPT_COOLDOWN_MS).toBe(10 * 60 * 1000)
   })
 })

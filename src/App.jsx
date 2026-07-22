@@ -794,16 +794,15 @@ function App() {
     if (mode === 'flow' && flowProjectReady && modelsSource !== 'dynamic') refetchModels?.()
   }, [mode, flowProjectReady, modelsSource, refetchModels])
 
-  // Flow 자동 생성(Case B)이 실패해 생성이 차단된 동안, 사용자가 Flow 에서 직접 새 프로젝트를
-  // 만들면 그것을 채택해 차단을 푼다. tryAdoptFlowProject 는 arm(자동 생성 실패) 되기 전이거나
-  // Flow 가 이전 프로젝트에 그대로 머물러 있으면 아무것도 하지 않으므로, 도는 동안 무해하다.
-  // 성공하면 flowProjectReady 가 true 가 되어 이 effect 자체가 멈춘다.
-  // ⚠️ tryAdoptFlowProject 는 매 render 새 함수라 deps 에 넣으면 App 이 리렌더될 때마다(재생 중
-  //    playhead 등) interval 이 리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
+  // Flow 바인딩이 막혀 생성이 차단된 동안 회복을 주기적으로 시도한다: 저장만 실패했으면 저장을
+  // 재시도하고, 바인딩이 안 열렸으면 재바인딩을 요청하고, 사용자가 Flow 에서 다른 프로젝트를
+  // 열었으면 채택을 묻는다. 회복되면 flowProjectReady 가 true 가 되어 폴링이 멈춘다.
   // 채택은 항상 사용자 확인을 거친다 — 훅은 후보를 찾으면 needs-confirm 을 돌려주고, 그때 확인
   // 모달을 띄운다(폴링/일시정지/취소 쿨다운/확인 대상 고정은 useFlowAdoptPrompt 안에 있다).
   const flowAdoptPrompt = useFlowAdoptPrompt({
-    mode, flowProjectReady, projectLoading, tryAdopt: tryAdoptFlowProject,
+    mode, flowProjectReady, projectLoading,
+    projectName: settings.projectName,
+    tryAdopt: tryAdoptFlowProject,
   })
 
   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
