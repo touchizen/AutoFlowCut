@@ -741,6 +741,8 @@ export function useProjectData({
     // 있으므로 남의 프로젝트를 채택할 이유가 없다. 다른 프로젝트의 pending 은 여기서 건드리지
     // 않고(그 프로젝트로 돌아가면 유효하다) 아래 채택 로직으로 넘어간다.
     if (pendingPersistRef.current.has(projectName)) {
+      // 바인딩이 진행 중이면 mode-entry 가 같은 pending 을 이미 처리하고 있을 수 있다 — 소유자는 하나.
+      if (bindOwnerRef.current && !bindOwnerRef.current.done) return { ok: false, reason: 'bind-in-flight' }
       adoptInFlightRef.current = true
       try {
         return await resolvePendingPersist(projectName)

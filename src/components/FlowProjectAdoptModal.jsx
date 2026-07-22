@@ -38,7 +38,7 @@ export default function FlowProjectAdoptModal({ projectId, onConfirm, onCancel, 
             || `Flow 에 열려 있는 프로젝트 ${projectId} 를 지금 프로젝트에 연결할까요? 앞으로 생성되는 캐릭터·씬이 이 Flow 프로젝트에 만들어집니다.`}
         </p>
         <p className="flow-adopt-hint">
-          {t('flowAdopt.hint') || '의도한 프로젝트가 아니라면 Flow 에서 원하는 프로젝트를 연 뒤 다시 시도하세요.'}
+          {t('flowAdopt.hint') || 'Flow 에서 다른 프로젝트를 열거나 새로 만드세요.'}
         </p>
       </div>
     </Modal>

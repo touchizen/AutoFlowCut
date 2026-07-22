@@ -1471,7 +1471,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     title: 'Flow 프로젝트 연결',
     confirm: '연결',
     body: 'Flow 에 열려 있는 프로젝트 {id} 를 지금 프로젝트에 연결할까요? 앞으로 생성되는 캐릭터·씬이 이 Flow 프로젝트에 만들어집니다.',
-    hint: '의도한 프로젝트가 아니라면 Flow 에서 원하는 프로젝트를 연 뒤 다시 시도하세요.',
+    hint: '의도한 프로젝트가 아니라면 Flow 에서 다른 프로젝트를 열거나 새로 만드세요 — 그러면 그 프로젝트로 다시 물어봅니다.',
   },
   toast: {
     noPrompt: '프롬프트가 없습니다.',

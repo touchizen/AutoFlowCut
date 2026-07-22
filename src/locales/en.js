@@ -1472,7 +1472,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     title: 'Connect Flow project',
     confirm: 'Connect',
     body: 'Connect the Flow project {id} currently open to this project? Characters and scenes you generate from now on will be created in it.',
-    hint: 'If this is not the project you meant, open the right one in Flow and try again.',
+    hint: 'If this is not the project you meant, open a different project in Flow or create one — you will be asked about that one instead.',
   },
   toast: {
     noPrompt: 'No prompt provided.',
