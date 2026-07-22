@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * 동기화 게이트(모달)의 소유권 조정자.
@@ -58,6 +58,13 @@ export function useSyncGateHost() {
     g.settle({ proceeded: false, patchedRefs: null, reason: 'cancelled' })
     clearIfMine(g)
   }, [clearIfMine])
+
+  // 언마운트되면 이 게이트를 닫아 줄 사람이 없다 — 열려 있던 대기자를 풀어주지 않으면 그걸
+  // 기다리던 생성 큐가 영영 멈춘다.
+  useEffect(() => () => {
+    gateRef.current?.settle({ proceeded: false, patchedRefs: null, reason: 'unmounted' })
+    gateRef.current = null
+  }, [])
 
   return { gate, busy, busyRef, open, beginWork, endWork, finish, cancel }
 }

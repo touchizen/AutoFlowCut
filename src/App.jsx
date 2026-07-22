@@ -558,6 +558,9 @@ function App() {
   // 새 저장을 덮어씀. referencesRef(동기 최신)로 upsert하고, pushQueueRef로 한 번에 하나씩 처리한다.
   const referencesRef = useRef(scenesHook.references)
   referencesRef.current = scenesHook.references
+  // 프로젝트 전환 진행 여부의 동기 최신값 — await 를 건넌 코드가 렌더 클로저를 보면 안 된다.
+  const projectLoadingRef = useRef(projectLoading)
+  projectLoadingRef.current = projectLoading
   // 앱 시작 직후 machine.open() 이 story:pushCharacters 를 쏘는데, 그때 references 는 아직 디스크에서
   //   안 올라와 빈 배열이다. 그 위에 upsert 하면 새 카드가 만들어지고 saveCurrentProjectWithPayload
   //   가 디바운스 없이 즉시 확정 저장해, 디스크의 카드(entityId/이미지 포인터/스타일 기억)를 통째로
@@ -891,7 +894,9 @@ function App() {
     // 프로젝트의 것이다 — 넘겨주면 A 의 씬을 B 의 레퍼런스로 생성한다.
     // ⚠️ 이름만 보면 부족하다: 전환은 **레퍼런스를 먼저 갈고 이름을 나중에** 커밋해서, 그 사이엔
     //    이름이 아직 A 인데 refs 는 이미 B 다. 전환이 진행 중이면(projectLoading) 아예 진행하지 않는다.
-    const outOfScope = () => projectLoading
+    // ⚠️ 렌더 클로저의 projectLoading 을 보면, 게이트를 기다리는 동안 시작된 전환을 못 본다
+    //    (그 호출은 계속 옛 값을 본다). 반드시 live ref 로 읽는다.
+    const outOfScope = () => projectLoadingRef.current
       || (expectedProject != null && expectedProject !== projectNameRef.current)
     if (outOfScope()) return { proceeded: false, reason: 'project-changed' }
     // referencesRef 는 매 렌더 갱신되는 동기 최신값 — 호출자(훅)의 클로저는 stale 일 수 있다.
@@ -915,7 +920,7 @@ function App() {
     }
     if (outOfScope()) return { proceeded: false, reason: 'project-changed' }
     return { proceeded: true, refs: res.patchedRefs || referencesRef.current || refs }
-  }, [openSyncGate, projectLoading, t])
+  }, [openSyncGate, t])
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
@@ -1950,6 +1955,14 @@ function App() {
     // 매달아 놨다(생성 큐 정지).
     const myGate = syncGate
     beginSyncGateWork()
+    // 여기부터는 어떤 예외가 나도 busy 를 풀어야 한다 — 안 풀리면 이후 모든 게이트 요청이
+    // busy 로 거절되고 생성이 통째로 막힌다.
+    try {
+    // 이 게이트 작업이 속한 프로젝트. 동기화 도중 프로젝트가 바뀌면 referencesRef 는 다른
+    // 프로젝트의 것이 된다 — 그대로 계속하면 B 의 ref 를 A 의 Flow 프로젝트로 동기화하거나
+    // A 의 결과를 B 의 ref 에 덮어쓴다. 그 시점에서 멈추고 실패로 닫는다(fail-closed).
+    const gateProject = projectNameRef.current
+    const gateScopeChanged = () => projectLoadingRef.current || projectNameRef.current !== gateProject
     let ok = 0, fail = 0
     // #R34-fix: 패치를 로컬 배열에 누적해 첫 생성(start)에 currentRefs 로 넘긴다(React state 는 같은
     //   tick 에 stale). character 는 업로드 성공이어도 displayName PATCH 실패면 'failed' 라 미동기화 —
@@ -1969,8 +1982,12 @@ function App() {
     const patchAt = (list, ref, refIndex, patch) => list.map((r, i) => (
       ref.id != null ? r.id === ref.id : i === refIndex
     ) ? { ...r, ...patch } : r)
-    try {
       for (const { ref, refIndex } of gateTargets) {
+        if (gateScopeChanged()) {
+          fail++
+          console.warn('[App] sync-gate aborted — project changed mid-sync')
+          break
+        }
         // #R37: syncGate.refs 는 모달을 열 때의 스냅샷이다. 루프 매 회차에 live 로 다시 판단한다 —
         //   스냅샷을 넘기면 그 사이 끝난 sync 의 entityId 를 못 보고 재업로드로 빠져 중복이 생긴다.
         //   (referencesRef 는 매 렌더 갱신되는 동기 최신값. scenesHook.references 는 이 async 루프에서 stale.)
@@ -1998,6 +2015,8 @@ function App() {
           // patch publish 를 flight 안에서 실행 — React setter 전에 같은 stale ref 가 재진입하는 창 제거.
           publishResult: async (syncResult) => {
             if (!syncResult.patch) return
+            // 프로젝트가 바뀌었으면 지금의 refs 는 다른 프로젝트 것이다 — 패치하지 않는다.
+            if (gateScopeChanged()) return
             patchedRefs = patchAt(patchedRefs, ref, refIndex, syncResult.patch)
             updateReferences(prev => patchAt(prev, ref, refIndex, syncResult.patch))
           },
@@ -2022,7 +2041,7 @@ function App() {
   }
   const handleSyncGateCancel = () => {
     if (syncGateBusy) return
-    cancelSyncGate()
+    cancelSyncGate(syncGate)
   }
 
   // ref batch는 generatingRefs.length만으로 부족 — preparingRefs(폴더/토큰 체크 ~ 첫 submit 사이)와

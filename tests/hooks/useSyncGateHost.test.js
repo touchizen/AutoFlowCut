@@ -123,4 +123,33 @@ describe('useSyncGateHost', () => {
     act(() => { result.current.open({ refs: REFS, forceRepair: true }) })
     expect(result.current.gate?.forceRepair).toBe(true)
   })
+
+  // 언마운트로 사라지면 대기자는 아무에게서도 결과를 못 받는다 — 그걸 기다리던 큐가 영영 멈춘다.
+  it('언마운트하면 열려 있던 대기자를 풀어준다', async () => {
+    const { result, unmount } = renderHook(() => useSyncGateHost())
+    let waiter
+    act(() => { waiter = result.current.open({ refs: REFS }) })
+
+    unmount()
+
+    await expect(waiter).resolves.toMatchObject({ proceeded: false, reason: 'unmounted' })
+  })
+
+  // 화면에 남아 있던 옛 모달의 취소 버튼이 그 사이 열린 새 게이트를 닫으면 안 된다.
+  it('취소도 자기 게이트만 닫는다', async () => {
+    const { result } = renderHook(() => useSyncGateHost())
+    let first, second
+    act(() => { first = result.current.open({ refs: REFS }) })
+    const gateA = result.current.gate
+    act(() => { second = result.current.open({ refs: [{ id: 2 }] }) })
+    const gateB = result.current.gate
+
+    await act(async () => { result.current.cancel(gateA) })
+
+    expect(result.current.gate?.id).toBe(gateB.id)
+    await expect(first).resolves.toMatchObject({ proceeded: false, reason: 'superseded' })
+
+    await act(async () => { result.current.cancel(gateB) })
+    await expect(second).resolves.toMatchObject({ proceeded: false, reason: 'cancelled' })
+  })
 })

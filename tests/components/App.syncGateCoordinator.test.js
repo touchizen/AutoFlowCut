@@ -34,6 +34,6 @@ describe('App sync gate — coordinator publish lifetime wiring', () => {
     const end = source.indexOf('// ref batch는', start)
     const handler = source.slice(start, end)
 
-    expect(handler).toContain('cancelSyncGate()')
+    expect(handler).toContain('cancelSyncGate(syncGate)')  // 렌더된 게이트 identity 로 취소
   })
 })
