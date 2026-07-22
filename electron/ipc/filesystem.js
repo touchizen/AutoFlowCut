@@ -420,15 +420,16 @@ export function registerFilesystemIPC(ipcMain) {
     return withProjectWriteLock(jsonPath, async () => {
       try {
         await fs.mkdir(path.join(workFolder, project), { recursive: true })
-        // flowProjectId 는 renderer state 가 아직 null 이던 시점의 payload 에는 실리지 않는다.
-        // 그런 payload 가 merge-project-data 뒤에 도착하면 방금 저장된 매핑을 지우는데,
-        // merge 성공을 보고 생성 게이트를 연 renderer 는 그걸 알 수 없다(디스크엔 id 가 없어
-        // 다음 실행이 또 새 Flow 프로젝트를 만든다). payload 가 그 키를 아예 언급하지 않을
-        // 때만 디스크 값을 보존한다 — 명시하면(null 포함) payload 가 이긴다.
+        // flowProjectId 는 **merge 전용 키**다. full save 의 payload 는 renderer 가 payload 를
+        // 만든 시점의 값이라, write-lock 뒤에서 순서가 뒤집히면 그 사이 merge 로 저장된 최신
+        // 매핑을 옛 값(또는 키 누락)으로 덮어쓴다 — merge 성공을 보고 생성 게이트를 연 renderer
+        // 는 그걸 알 수 없다. 그래서 파일이 이미 있으면 디스크 값이 항상 이긴다. 설정/해제는
+        // 둘 다 merge-project-data 로만 한다(persistFlowProjectId / clearDeadFlowMapping).
         const next = { ...data }
-        if (!('flowProjectId' in next)) {
-          const prev = await readJsonOrNull(jsonPath)
-          if (prev && 'flowProjectId' in prev) next.flowProjectId = prev.flowProjectId
+        const prev = await readJsonOrNull(jsonPath)
+        if (prev) {
+          if ('flowProjectId' in prev) next.flowProjectId = prev.flowProjectId
+          else delete next.flowProjectId
         }
         await fs.writeFile(jsonPath, JSON.stringify(next, null, 2), 'utf-8')
         return { success: true }
@@ -447,8 +448,14 @@ export function registerFilesystemIPC(ipcMain) {
       try {
         // 파일이 없으면 패치만으로 만든다. 반환값을 실패로 두면(옛 동작) 최초 저장이 실패한
         // 프로젝트는 저장 재시도가 통과할 길이 없어 flowProjectReady 가 영구히 닫힌다.
-        await fs.mkdir(path.join(workFolder, project), { recursive: true })
-        const data = (await readJsonOrNull(jsonPath)) || {}
+        // ⚠️ "없음"과 "깨짐"은 다르다 — 파싱 실패는 여기서 throw 되어 실패로 반환된다.
+        //    깨진 project.json 을 패치만 든 파일로 덮으면 씬/레퍼런스가 통째로 날아간다.
+        let data = {}
+        if (await pathExists(jsonPath)) {
+          data = JSON.parse(await fs.readFile(jsonPath, 'utf-8'))
+        } else {
+          await fs.mkdir(path.join(workFolder, project), { recursive: true })
+        }
         const merged = { ...data, ...(patch || {}) }
         await fs.writeFile(jsonPath, JSON.stringify(merged, null, 2), 'utf-8')
         return { success: true }

@@ -607,13 +607,14 @@ export function useProjectData({
   // 상태에서 엉뚱한 프로젝트를 채택할 수 있다.
   const adoptArmedRef = useRef(false)
   const adoptInFlightRef = useRef(false)
-  // Case B 가 성공해 Flow 프로젝트는 만들어졌는데 project.json 저장만 실패한 상태
-  // {projectName, flowProjectId}. ready 는 닫아 둔 채 저장만 재시도한다 — 여기서 ready 를
+  // Case B 가 성공해 Flow 프로젝트는 만들어졌는데 project.json 저장만 실패한 것들.
+  // Map<projectName, flowProjectId>. ready 는 닫아 둔 채 저장만 재시도한다 — 여기서 ready 를
   // 열면(fail-open) 다음 실행에 저장 id 가 없어 또 새 프로젝트를 만들어 빈 프로젝트가 쌓인다.
   // ⚠️ 로컬 프로젝트에만 귀속시키고 mode/epoch 로는 버리지 않는다 — 그 Flow 프로젝트는 이 로컬
   //    프로젝트를 위해 이미 만들어졌으므로, api 로 잠깐 나갔다 오거나 다른 프로젝트를 들렀다
   //    돌아와도 여전히 유효하다. 버리면 그 프로젝트를 잃고 Case B 가 두 번째를 만든다.
-  const pendingPersistRef = useRef(null)
+  //    프로젝트마다 따로 담는다 — 단일 슬롯이면 p2 의 실패가 p1 의 회복 정보를 지운다.
+  const pendingPersistRef = useRef(new Map())
   // arm 의 소유자(로컬 프로젝트 + load epoch). 늦게 도착한 이전 프로젝트의 응답이 arm 을 되살려
   // 다른 프로젝트에 채택이 발화하는 것을 막는다.
   const adoptArmTokenRef = useRef(null)
@@ -674,21 +675,24 @@ export function useProjectData({
    * mode-entry(Case B 진입 전)와 App 의 5초 폴링(tryAdoptFlowProject)이 공유한다.
    */
   const resolvePendingPersist = async (projectName) => {
-    const pending = pendingPersistRef.current
-    if (!pending || pending.projectName !== projectName) return { ok: false, reason: 'no-pending' }
+    const pendingId = pendingPersistRef.current.get(projectName)
+    if (!pendingId) return { ok: false, reason: 'no-pending' }
     const startEpoch = loadEpochRef.current
-    const saved = await persistFlowProjectId(projectName, pending.flowProjectId)
+    const saved = await persistFlowProjectId(projectName, pendingId)
     if (!saved) return { ok: false, reason: 'persist-failed' }
+    // 저장이 끝난 순간 회복은 디스크에서 완료다 — 항목을 남겨 두면 나중에 죽은 매핑으로 판정돼
+    // 지워진 id 를 이 항목이 되살린다. 그 뒤의 supersede 는 state 반영만 건너뛴다(디스크에는
+    // 이미 올바른 projectName 으로 썼고, 다음 mode-entry 가 Case A 로 이어받는다).
+    if (pendingPersistRef.current.get(projectName) === pendingId) pendingPersistRef.current.delete(projectName)
     // await 뒤 재검사 — 저장하는 사이 모드 이탈/프로젝트 전환이 있었으면 state 를 건드리지 않는다.
-    // 디스크에는 이미 (올바른) projectName 으로 썼으므로 pending 은 그대로 두고 다음 기회에 확정한다.
     if (modeRef.current !== 'flow' || projectNameRef.current !== projectName
       || loadEpochRef.current !== startEpoch) return { ok: false, reason: 'superseded' }
-    pendingPersistRef.current = null
-    confirmedBindingRef.current = { projectName, flowProjectId: pending.flowProjectId }
-    setFlowProjectId(pending.flowProjectId)
-    setFlowProjectReady(true)
-    console.log('[ProjectData] pending persist 재시도 성공:', pending.flowProjectId)
-    return { ok: true, projectId: pending.flowProjectId }
+    // ⚠️ ready 를 여기서 열지 않는다. 저장은 매핑이 디스크에 있다는 증명일 뿐, Flow 뷰가 지금 그
+    //    프로젝트를 보고 있다는 증명이 아니다(다른 프로젝트를 들렀다 온 사이 Flow 는 다른 곳에
+    //    있다). id 만 세우고 mode-entry Case A 의 openFlowProject 확인을 거쳐 ready 가 열린다.
+    setFlowProjectId(pendingId)
+    console.log('[ProjectData] pending persist 재시도 성공 — open 확인 대기:', pendingId)
+    return { ok: true, projectId: pendingId }
   }
 
   /**
@@ -713,7 +717,7 @@ export function useProjectData({
     // 저장만 실패한 Case B 회복이 채택보다 우선한다 — 이 로컬 프로젝트의 Flow 프로젝트는 이미
     // 있으므로 남의 프로젝트를 채택할 이유가 없다. 다른 프로젝트의 pending 은 여기서 건드리지
     // 않고(그 프로젝트로 돌아가면 유효하다) 아래 채택 로직으로 넘어간다.
-    if (pendingPersistRef.current?.projectName === projectName) {
+    if (pendingPersistRef.current.has(projectName)) {
       adoptInFlightRef.current = true
       try {
         return await resolvePendingPersist(projectName)
@@ -899,7 +903,7 @@ export function useProjectData({
         setFlowProjectReady(false)
         // 이 로컬 프로젝트를 위한 Flow 프로젝트가 이미 만들어졌는데 저장만 실패한 상태라면,
         // 새로 만들지 않고 저장만 재시도한다 — 안 그러면 갈 때마다 빈 프로젝트가 하나씩 쌓인다.
-        if (pendingPersistRef.current?.projectName === currentProjectName) {
+        if (pendingPersistRef.current.has(currentProjectName)) {
           const pr = await resolvePendingPersist(currentProjectName)
           if (cancelled) return
           if (!pr.ok) console.warn('[ProjectData] mode-entry: pending persist 재시도 실패 —', pr.reason)
@@ -919,7 +923,7 @@ export function useProjectData({
               // 프로젝트는 이미 만들어졌다 — 새로 만들 필요 없이 저장만 재시도하면 된다.
               // App 의 5초 폴링(tryAdoptFlowProject)이 이 pending 을 처리한다.
               setFlowProjectReady(false)
-              pendingPersistRef.current = { projectName: currentProjectName, flowProjectId: r.projectId }
+              pendingPersistRef.current.set(currentProjectName, r.projectId)
               console.warn('[ProjectData] mode-entry: 새 Flow 프로젝트 저장 실패 — 저장 재시도까지 생성 차단')
               return
             }

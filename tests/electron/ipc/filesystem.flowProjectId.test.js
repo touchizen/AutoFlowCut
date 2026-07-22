@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 
 vi.mock('child_process', () => ({
   execFile: vi.fn((cmd, args, opts, cb) => { cb(new Error('no ffprobe'), '', '') }),
@@ -51,21 +51,27 @@ describe('project.json 의 flowProjectId 보존', () => {
     // autosave 가 state 에 id 가 없던 시점의 payload 로 뒤늦게 쓰는 상황.
     await save({ schemaVersion: 2, scenes: [{ id: 1 }] })
 
-    expect(read().flowProjectId).toBe('flow-abc')
+    expect(read()).toHaveProperty('flowProjectId', 'flow-abc')
     expect(read().scenes).toHaveLength(1)  // 나머지는 payload 대로 갱신된다
   })
 
-  it('full save 가 flowProjectId 를 명시하면 그 값으로 갱신한다', async () => {
-    await save({ schemaVersion: 2, flowProjectId: 'old' })
-    await save({ schemaVersion: 2, flowProjectId: 'new' })
-    expect(read().flowProjectId).toBe('new')
+  // payload 의 값도 renderer 가 payload 를 만든 시점의 것이라, 그 사이 merge 로 바뀐 최신
+  // 매핑을 되돌릴 수 있다. 파일이 이미 있으면 디스크 값이 이긴다(설정/해제는 merge 전용).
+  it('full save 가 옛 flowProjectId 를 명시해도 디스크의 최신 값을 되돌리지 않는다', async () => {
+    await save({ schemaVersion: 2, flowProjectId: 'old' })   // 파일 없음 → payload 로 부트스트랩
+    await merge({ flowProjectId: 'new' })
+
+    await save({ schemaVersion: 2, flowProjectId: 'old' })   // 뒤늦게 도착한 stale autosave
+
+    expect(read()).toHaveProperty('flowProjectId', 'new')
   })
 
   it('merge 로 null 을 쓴 뒤(죽은 매핑 제거) full save 가 옛 id 를 되살리지 않는다', async () => {
     await save({ schemaVersion: 2, flowProjectId: 'dead' })
     await merge({ flowProjectId: null })
-    await save({ schemaVersion: 2, scenes: [] })
-    expect(read().flowProjectId ?? null).toBeNull()
+    // payload 가 옛 id 를 들고 와도 해제 상태(null)가 유지돼야 한다.
+    await save({ schemaVersion: 2, flowProjectId: 'dead' })
+    expect(read()).toHaveProperty('flowProjectId', null)
   })
 
   it('project.json 이 없으면 merge 가 패치로 파일을 만든다(영구 차단 방지)', async () => {
@@ -75,5 +81,16 @@ describe('project.json 의 flowProjectId 보존', () => {
 
     expect(res.success).toBe(true)
     expect(read().flowProjectId).toBe('flow-xyz')
+  })
+
+  // "없음"과 "깨짐"은 다르다. 깨진 파일을 패치만 든 파일로 덮으면 씬·레퍼런스가 통째로 날아간다.
+  it('project.json 이 깨져 있으면 merge 는 실패하고 파일을 덮지 않는다', async () => {
+    mkdirSync(join(tmpDir, 'P'), { recursive: true })
+    writeFileSync(join(tmpDir, 'P', 'project.json'), '{"scenes": [1,2,3', 'utf-8')
+
+    const res = await merge({ flowProjectId: 'flow-xyz' })
+
+    expect(res.success).toBe(false)
+    expect(readFileSync(join(tmpDir, 'P', 'project.json'), 'utf-8')).toBe('{"scenes": [1,2,3')
   })
 })

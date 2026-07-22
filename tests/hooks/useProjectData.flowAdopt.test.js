@@ -270,10 +270,12 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
 
   // 저장만 실패한 상태에는 회복 경로가 있어야 한다 — Flow 프로젝트는 이미 만들어졌으므로
   // 새로 만들 필요 없이 저장만 재시도하면 된다(App 의 5초 폴링이 이 함수를 계속 부른다).
-  it('Case B 저장 실패 후, 폴링 재시도에서 저장이 성공하면 그때 ready 를 연다', async () => {
+  it('Case B 저장 실패 후, 폴링 재시도에서 저장이 성공하면 open 확인을 거쳐 ready 를 연다', async () => {
     const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
     const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
-    const openFlowProject = vi.fn()
+    // 저장은 "디스크에 매핑이 있다"는 증명일 뿐 Flow 뷰가 그 프로젝트를 보고 있다는 증명이 아니다 —
+    // ready 는 openFlowProject 확인을 거쳐야 열린다.
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('created-id') })
     window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
     fileSystemAPI.mergeProjectData.mockResolvedValueOnce({ success: false, error: 'disk' })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
@@ -288,6 +290,7 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(res).toMatchObject({ ok: true, projectId: 'created-id' })
     expect(result.current.flowProjectId).toBe('created-id')
     expect(result.current.flowProjectReady).toBe(true)
+    expect(openFlowProject).toHaveBeenCalledWith({ flowProjectId: 'created-id' })
     // 이미 만들어진 프로젝트를 저장만 재시도한 것 — 새 Flow 프로젝트를 또 만들면 안 된다.
     expect(newFlowProject).toHaveBeenCalledTimes(1)
     // 재시도가 실제로 "저장"이었는지 핀 — 저장을 건너뛰고 ready 만 열면 같은 fail-open 이다.
@@ -300,7 +303,8 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
   it('Case B 저장 실패 후 api 로 나갔다 돌아와도, 새로 만들지 않고 저장만 재시도한다', async () => {
     const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
     const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
-    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject: vi.fn() }
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('created-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
     fileSystemAPI.mergeProjectData.mockResolvedValueOnce({ success: false, error: 'disk' })
     fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
 
@@ -335,6 +339,57 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     await act(async () => { await result.current.tryAdoptFlowProject() })
 
     expect(fileSystemAPI.mergeProjectData).not.toHaveBeenCalledWith('p2', { flowProjectId: 'p1-flow-id' })
+  })
+
+  // p2 의 저장 실패가 p1 의 회복 정보를 덮으면, p1 으로 돌아왔을 때 이미 만들어진 Flow 프로젝트를
+  // 잃고 세 번째 프로젝트를 만든다. 저장 대기는 프로젝트마다 따로 남아야 한다.
+  it('두 로컬 프로젝트가 각각 저장 실패해도 서로의 회복 정보를 지우지 않는다', async () => {
+    const newFlowProject = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'p1-flow-id' })
+      .mockResolvedValueOnce({ success: true, projectId: 'p2-flow-id' })
+      .mockResolvedValue({ success: true, projectId: 'unexpected-third' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'p1-flow-id' })
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('p1-flow-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: false, error: 'disk' })
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })  // p1: 저장 실패로 대기
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p2' }) })  // p2: 저장 실패로 대기
+
+    // 디스크가 회복되고 p1 으로 돌아온다.
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(fileSystemAPI.mergeProjectData).toHaveBeenLastCalledWith('p1', { flowProjectId: 'p1-flow-id' })
+    expect(result.current.flowProjectId).toBe('p1-flow-id')
+    expect(newFlowProject).toHaveBeenCalledTimes(2)  // 세 번째 프로젝트를 만들면 안 된다
+  })
+
+  // arm 토큰의 epoch 를 await **뒤에** 읽으면, 그 사이 시작된 프로젝트 전환의 epoch 가 붙어
+  // 이전 프로젝트의 arm 이 "현재 세션의 것"으로 되살아난다. epoch 는 effect 시작 시점 값이어야 한다.
+  it('생성 응답이 늦게 도착해도, 그 사이 시작된 전환의 epoch 로 arm 이 되살아나지 않는다', async () => {
+    let resolveNew
+    const newFlowProject = vi.fn(() => new Promise((r) => { resolveNew = r }))
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'other-id' })
+    const openFlowProject = vi.fn()
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.projectExists.mockResolvedValue(false)
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    // 생성 응답을 기다리는 동안 프로젝트 전환이 시작된다(= load epoch 증가).
+    await act(async () => { await result.current.handleProjectChange('p9') })
+    // 그 뒤에야 생성 실패 응답이 도착해 arm 을 세운다.
+    await act(async () => { resolveNew({ success: false, error: 'timeout' }); await Promise.resolve() })
+
+    let res
+    await act(async () => { res = await result.current.tryAdoptFlowProject() })
+
+    expect(res).toMatchObject({ ok: false })
+    expect(res.reason).not.toBe('needs-confirm')  // 옛 세션의 arm 으로 채택을 물으면 안 된다
+    expect(openFlowProject).not.toHaveBeenCalled()
   })
 
   // 저장이 실패했는데 ready 를 열면, 다음 실행에서 저장 id 가 없어 또 새 프로젝트를 만든다(fail-open 금지).
