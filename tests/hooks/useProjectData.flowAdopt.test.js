@@ -534,6 +534,37 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(result.current.flowProjectId).toBeNull()
   })
 
+  // 생성한 프로젝트의 첫 open 이 "일시" 실패하면 재생성을 불신하지만, 재시도로 확인에 성공하면
+  // 그 불신은 근거를 잃는다. 남겨 두면 나중에 그 프로젝트가 정말 죽었을 때 자동 생성이 거부돼
+  // 사용자가 직접 Flow 에서 프로젝트를 만들어 채택할 때까지 생성이 막힌다.
+  it('확인에 성공하면 생성 불신이 풀려, 나중에 매핑이 죽으면 다시 만든다', async () => {
+    const newFlowProject = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'created-1' })
+      .mockResolvedValue({ success: true, projectId: 'created-2' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-1' })
+    const openFlowProject = vi.fn()
+      .mockResolvedValueOnce({ success: false })                                            // 일시 실패 → 불신
+      .mockResolvedValueOnce({ success: true, already: true, url: urlOf('created-1') })      // 재시도 성공 → 불신 해제
+      .mockResolvedValueOnce({ success: false, errorPage: true, url: urlOf('created-1') })   // 나중에 정말 죽음
+      .mockResolvedValue({ success: true, already: true, url: urlOf('created-2') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    expect(result.current.flowProjectReady).toBe(false)   // 첫 open 실패로 차단
+
+    // 폴링이 재바인딩을 요청 → Case A 재시도가 확인에 성공한다.
+    await act(async () => { await result.current.tryAdoptFlowProject() })
+    expect(result.current.flowProjectReady).toBe(true)
+
+    // 한참 뒤 그 Flow 프로젝트가 삭제된다(재진입 시 에러 페이지) — 이때는 새로 만들어야 한다.
+    await act(async () => { rerender({ mode: 'api', projectName: 'p1' }) })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(newFlowProject).toHaveBeenCalledTimes(2)
+    expect(result.current.flowProjectId).toBe('created-2')
+  })
+
   // 생성은 성공했는데 그 사이 모드가 바뀌면, 만들어진 Flow 프로젝트는 이미 존재한다. 그걸 버리면
   // 다시 들어올 때 또 만들어 빈 프로젝트가 쌓인다 — 취소 여부와 무관하게 붙잡아 둬야 한다.
   it('생성 응답이 도착하기 전에 모드가 바뀌어도 만들어진 프로젝트를 잃지 않는다', async () => {

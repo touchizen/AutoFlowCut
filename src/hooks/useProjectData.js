@@ -922,7 +922,12 @@ export function useProjectData({
             // 첫 확인에 성공하면 더 이상 "확인 대기 중인 생성물"이 아니다. 표식을 남겨 두면 한참
             // 뒤에 그 프로젝트가 삭제돼 죽은 매핑이 됐을 때도 "생성 직후 실패"로 오인해 자동
             // 생성을 세션 내내 막는다.
-            if (ok) createdIdsRef.current.delete(currentProjectName)
+            if (ok) {
+              createdIdsRef.current.delete(currentProjectName)
+              // 확인에 성공했으니 "생성해도 어차피 안 열린다"는 근거가 사라졌다 — 불신도 푼다.
+              // 남겨 두면 나중에 이 프로젝트가 정말 죽었을 때 자동 생성이 거부돼 다시 고착된다.
+              createDistrustRef.current.delete(currentProjectName)
+            }
             // 방금 이 앱이 만든 프로젝트가 확인에 실패했다면 다시 만들어도 같은 결과일 공산이 크다.
             if (!ok && createdIdsRef.current.get(currentProjectName) === flowProjectId) {
               createDistrustRef.current.add(currentProjectName)
