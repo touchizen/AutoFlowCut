@@ -29,6 +29,7 @@ export default function ReferencePanel({
   generatingRefs = [],
   stoppingRefs = false,
   preparingRefs = false,
+  refBatchActive = false,
   hasPendingBatch = false,
   selectedStyleRefId,
   onStyleRefChange,
@@ -59,7 +60,9 @@ export default function ReferencePanel({
 
   // 생성 가능한 레퍼런스 (프롬프트 있고, 이미지 없음). 스타일 카드도 배치 대상.
   const generatableRefs = references.filter(r => r.prompt && !r.data && !r.filePath)
-  const isGenerating = generatingRefs.length > 0
+  // 아이템별 auth 토큰을 기다리는 동안 generatingRefs/preparingRefs 가 모두 비어도
+  // 배치 수명은 계속된다. Stop·타이머·진입점 잠금은 batch-global 신호까지 따라간다.
+  const isGenerating = refBatchActive || generatingRefs.length > 0
 
   // 진행률은 누적 기준 — 프롬프트 있는 전체(스타일 카드 포함) 중 완료된 개수.
   // 배치를 여러 번 나눠 돌려도 "N/total"이 일관되게 표시된다.

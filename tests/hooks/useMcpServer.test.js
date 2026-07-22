@@ -827,13 +827,14 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     hook.unmount()
   })
 
-  it('개별 씬 busy 중 MCP scene batch를 보류하고 해제 뒤 정확히 한 번 시작한다', async () => {
+  it('개별 씬 busy가 30초를 넘어도 MCP scene batch를 보류하고 해제 뒤 정확히 한 번 시작한다', async () => {
     vi.useFakeTimers()
     const handleStart = vi.fn()
     const handleStop = vi.fn()
     let generatingSceneId = 'scene-1'
 
     const hook = renderHook(() => useMcpServer(makeProps({
+      settings: { mcpHttpEnabled: false, mcpHttpPort: 3210, projectName: 'project-a' },
       generatingSceneId,
       isRunning: Boolean(generatingSceneId),
       handleStart,
@@ -842,7 +843,10 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
     const callPromise = window.__mcpStartBatch('preset:noir')
     expect(window.__mcpBatchStatus().isRunning).toBe(true)
-    expect(handleStop).toHaveBeenCalledTimes(1)
+    expect(handleStop).not.toHaveBeenCalled()
+    expect(handleStart).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(31_000)
     expect(handleStart).not.toHaveBeenCalled()
 
     generatingSceneId = null
@@ -853,6 +857,101 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleStart).toHaveBeenCalledTimes(1)
     expect(handleStart).toHaveBeenCalledWith('preset:noir', { source: 'mcp' })
     hook.unmount()
+    vi.useRealTimers()
+  })
+
+  it('개별 씬 busy 중 보류한 프로젝트가 바뀌면 해제 시 scene batch를 버린다', async () => {
+    vi.useFakeTimers()
+    const handleStart = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let generatingSceneId = 'scene-1'
+    let projectName = 'project-a'
+
+    const hook = renderHook(() => useMcpServer(makeProps({
+      settings: { mcpHttpEnabled: false, mcpHttpPort: 3210, projectName },
+      generatingSceneId,
+      isRunning: Boolean(generatingSceneId),
+      handleStart,
+    })))
+
+    const callPromise = window.__mcpStartBatch('preset:noir')
+    expect(handleStart).not.toHaveBeenCalled()
+
+    projectName = 'project-b'
+    generatingSceneId = null
+    hook.rerender()
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    const warnings = warnSpy.mock.calls.flat().join(' ')
+    warnSpy.mockRestore()
+    expect(handleStart).not.toHaveBeenCalled()
+    expect(warnings).toMatch(/project scope changed/)
+    hook.unmount()
+    vi.useRealTimers()
+  })
+
+  it('개별 씬 busy 중 scene/ref 중복 요청은 공유 슬롯의 첫 요청만 시작한다', async () => {
+    vi.useFakeTimers()
+    const handleStart = vi.fn()
+    const handleGenerateAllRefs = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let generatingSceneId = 'scene-1'
+
+    const hook = renderHook(() => useMcpServer(makeProps({
+      settings: { mcpHttpEnabled: false, mcpHttpPort: 3210, projectName: 'project-a' },
+      generatingSceneId,
+      isRunning: Boolean(generatingSceneId),
+      handleStart,
+      handleGenerateAllRefs,
+    })))
+
+    const firstPromise = window.__mcpStartBatch('preset:first')
+    const duplicatePromise = window.__mcpStartRefBatch('preset:second')
+    expect(handleStart).not.toHaveBeenCalled()
+    expect(handleGenerateAllRefs).not.toHaveBeenCalled()
+
+    generatingSceneId = null
+    hook.rerender()
+    await vi.advanceTimersByTimeAsync(100)
+    await Promise.all([firstPromise, duplicatePromise])
+
+    const warnings = warnSpy.mock.calls.flat().join(' ')
+    warnSpy.mockRestore()
+    expect(handleStart).toHaveBeenCalledTimes(1)
+    expect(handleStart).toHaveBeenCalledWith('preset:first', { source: 'mcp' })
+    expect(handleGenerateAllRefs).not.toHaveBeenCalled()
+    expect(warnings).toMatch(/discarding duplicate/)
+    hook.unmount()
+    vi.useRealTimers()
+  })
+
+  it('개별 씬 busy 중 unmount하면 보류 슬롯을 즉시 정리한다', async () => {
+    vi.useFakeTimers()
+    const handleStart = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const hook = renderHook(() => useMcpServer(makeProps({
+      settings: { mcpHttpEnabled: false, mcpHttpPort: 3210, projectName: 'project-a' },
+      generatingSceneId: 'scene-1',
+      isRunning: true,
+      handleStart,
+    })))
+
+    const callPromise = window.__mcpStartBatch('preset:noir')
+    const settlement = Promise.race([
+      callPromise.then(() => 'settled'),
+      new Promise(resolve => setTimeout(() => resolve('pending'), 1)),
+    ])
+    hook.unmount()
+    await vi.advanceTimersByTimeAsync(1)
+
+    const warnings = warnSpy.mock.calls.flat().join(' ')
+    warnSpy.mockRestore()
+    expect(await settlement).toBe('settled')
+    expect(handleStart).not.toHaveBeenCalled()
+    expect(warnings).toMatch(/unmounted/)
+    await callPromise
     vi.useRealTimers()
   })
 

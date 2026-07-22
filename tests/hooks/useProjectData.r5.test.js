@@ -297,6 +297,80 @@ describe('#R25-1: triggerVideoRecovery patch guarded by epoch', () => {
   })
 })
 
+// ─── I2V recovery: framePair patch와 owner scene 상태를 함께 복구 ──────────────
+
+describe('I2V recovery callback updates its owner scene', () => {
+  beforeEach(() => {
+    commonBeforeEach()
+    localStorage.setItem('autoflowcut_settings', JSON.stringify({ projectName: 'prev', saveMode: 'folder' }))
+    fileSystemAPI.loadProjectData.mockResolvedValue({
+      success: true,
+      data: {
+        scenes: [{ id: 'scene-1', status: 'done' }],
+        references: [],
+        settings: { aspectRatio: '16:9' },
+        videoScenes: [],
+        framePairs: [
+          { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+          { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
+        ],
+        srtTrack: [],
+        schemaVersion: 2,
+      },
+    })
+  })
+
+  afterEach(() => { delete window.electronAPI })
+
+  it.each([
+    ['generating', { status: 'generating' }, {
+      videoI2VStatus: 'generating',
+      videoI2VGeneratingStartedAt: expect.any(Number),
+      videoI2VGeneratingEndedAt: null,
+    }],
+    ['complete', { status: 'complete', base64: 'VIDEO', videoPath: '/videos/fp-owned.mp4', generatedAt: 123 }, {
+      videoI2VStatus: 'complete',
+      videoI2VGeneratingEndedAt: expect.any(Number),
+      videoI2V: 'VIDEO',
+      videoI2VPath: '/videos/fp-owned.mp4',
+      videoI2VDisabled: null,
+      videoI2VGeneratedAt: 123,
+    }],
+    ['error', { status: 'error', error: 'failed' }, {
+      videoI2VStatus: 'error',
+      videoI2VGeneratingEndedAt: expect.any(Number),
+    }],
+  ])('%s patch를 owner scene에 병합하고 gallery 행은 제외한다', async (_status, recoveryPatch, expectedPatch) => {
+    window.electronAPI = { setStartupProject: vi.fn() }
+    let i2vRecoveryCallback = null
+    recoverInFlightVideos.mockImplementation(async ({ framePairs, onFramePairUpdate }) => {
+      if (framePairs.some(fp => fp.id === 'fp-owned')) i2vRecoveryCallback = onFramePairUpdate
+    })
+    const setScenes = vi.fn()
+
+    renderHook(() => useProjectData(makeHookProps({ mode: 'api', genAPI: makeGenAPI(), setScenes })))
+    await waitForEffect()
+    expect(i2vRecoveryCallback).toBeTypeOf('function')
+
+    setScenes.mockClear()
+    act(() => i2vRecoveryCallback('fp-owned', recoveryPatch))
+
+    expect(setScenes).toHaveBeenCalledTimes(1)
+    const ownerUpdater = setScenes.mock.calls[0][0]
+    const ownerResult = ownerUpdater([
+      { id: 'scene-1', untouched: 'keep' },
+      { id: 'scene-2', untouched: 'other' },
+    ])
+    expect(ownerResult).toEqual([
+      expect.objectContaining({ id: 'scene-1', untouched: 'keep', ...expectedPatch }),
+      { id: 'scene-2', untouched: 'other' },
+    ])
+
+    act(() => i2vRecoveryCallback('fp-gallery', recoveryPatch))
+    expect(setScenes).toHaveBeenCalledTimes(1)
+  })
+})
+
 // ─── R5-2: Epoch guard — rapid switch, older resolves last ─────────────────────
 
 describe('#R5-2: Epoch guard — rapid switch stale state skipped', () => {

@@ -15,8 +15,9 @@
  *  - PasteNormalizationPlugin: 탭 → 줄바꿈 변환 유지
  *  - EditablePlugin: disabled 토글
  *
- * 데이터 모델: paragraph = 씬 1개, BeautifulMentionNode = `@name` 토큰.
- * 직렬화 시 paragraph 는 `\n` 으로, mention 은 `@value` 로.
+ * 데이터 모델: paragraph 는 줄바꿈 단위이며 한 씬이 여러 paragraph 를 차지할 수 있다.
+ * 씬 매핑은 호출자가 offset 으로 넘긴다. 직렬화 시 paragraph 는 `\n` 으로,
+ * BeautifulMentionNode 는 `@value` 로 변환된다.
  */
 
 import { useEffect, useMemo, useRef, useState, forwardRef } from 'react'

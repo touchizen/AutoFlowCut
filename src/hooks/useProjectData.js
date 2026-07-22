@@ -8,6 +8,7 @@ import { syncVideosIntoScenes } from '../services/mediaSync'
 import { recoverInFlightVideos } from '../services/videoRecovery'
 import { migrateLegacyProject } from '../utils/srtTrack'
 import { stripReferencesForSave } from '../utils/projectPersist'
+import { buildI2VScenePatch } from '../utils/i2vScenePatch'
 
 // 프로젝트 화면비는 project.json 에 프로젝트별로 저장된다. project.json 에 값이
 // 없으면(기능 추가 전 프로젝트 등) 직전 프로젝트 값을 물려받지 않고 이 기본값으로
@@ -529,7 +530,19 @@ export function useProjectData({
     const myEpoch = loadEpochRef.current
     const stillCurrent = () => myEpoch === loadEpochRef.current
     const guardedVideoScenePatch = (id, patch) => { if (stillCurrent()) applyVideoScenePatch(id, patch) }
-    const guardedFramePairPatch = (id, patch) => { if (stillCurrent()) applyFramePairPatch(id, patch) }
+    const guardedFramePairPatch = (id, patch) => {
+      if (!stillCurrent()) return
+      applyFramePairPatch(id, patch)
+
+      // I2V 복구도 일반 생성과 같은 owner-scene 상태를 갱신해야 프롬프트 링/타이머가 돈다.
+      // epoch 확인 뒤 둘을 함께 적용하고, owner가 없는 gallery 행은 scene에 흘리지 않는다.
+      const ownerSceneId = (loadedFramePairs || []).find(fp => fp.id === id)?.ownerSceneId
+      if (ownerSceneId == null || !setScenes) return
+      const scenePatch = buildI2VScenePatch(patch.status, patch)
+      setScenes(prev => prev.map(scene => (
+        scene.id === ownerSceneId ? { ...scene, ...scenePatch } : scene
+      )))
+    }
 
     const t2vInFlight = (loadedVideoScenes || []).some(vs =>
       vs.generationId && !vs.videoPath && (vs.status === 'generating' || vs.status === 'pending')

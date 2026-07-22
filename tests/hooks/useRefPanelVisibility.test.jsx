@@ -102,6 +102,38 @@ describe('useRefPanelVisibility', () => {
     expect(hook.result.current.isOpen).toBe(false)
   })
 
+  it('자동 open 뒤 close 타이머 만료 전에 사용자가 닫으면 다음 opening도 억제한다', () => {
+    const hook = renderVisibility({ refBatchActive: true })
+
+    hook.rerender(baseProps)
+    expect(vi.getTimerCount()).toBe(1)
+    act(() => hook.result.current.setOpenByUser(false))
+    expect(vi.getTimerCount()).toBe(0)
+    expect(hook.result.current.isOpen).toBe(false)
+
+    hook.rerender({ ...baseProps, syncGate: { id: 2 } })
+    expect(hook.result.current.isOpen).toBe(false)
+  })
+
+  it.each([
+    ['bridge', (hook) => hook.rerender({ ...baseProps, stoppingRefs: true })],
+    ['사용자 소유 패널', (hook) => act(() => hook.result.current.setOpenByUser(true))],
+  ])('취소된 close 타이머 callback이 %s을 닫지 않는다', (_label, cancelWith) => {
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const hook = renderVisibility({ refBatchActive: true })
+
+    hook.rerender(baseProps)
+    const staleClose = timeoutSpy.mock.calls.findLast(([, delay]) => delay === 0)?.[0]
+    expect(staleClose).toBeTypeOf('function')
+
+    cancelWith(hook)
+    expect(vi.getTimerCount()).toBe(0)
+    act(() => staleClose())
+    timeoutSpy.mockRestore()
+
+    expect(hook.result.current.isOpen).toBe(true)
+  })
+
   it('사용자가 먼저 연 패널은 Ref 창이 끝나도 닫지 않는다', () => {
     const hook = renderVisibility()
     act(() => hook.result.current.setOpenByUser(true))
