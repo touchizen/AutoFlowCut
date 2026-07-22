@@ -2056,7 +2056,7 @@ function App() {
       // 예기치 못한 예외로도 대기자를 남기지 않는다 — 남기면 모달이 화면에 그대로 있고
       // 그 promise 를 기다리던 생성 큐가 영영 멈춘다.
       console.error('[App] sync-gate failed:', e)
-      toast.error(t('toast.flowSyncIncomplete', { ok: 0, fail: gateTargets.length }))
+      toast.error(t('toast.flowSyncIncomplete', { ok: 0, fail: myGate.refs?.length ?? 0 }))
       abortSyncGate(myGate, 'sync-error')
     } finally {
       endSyncGateWork()
