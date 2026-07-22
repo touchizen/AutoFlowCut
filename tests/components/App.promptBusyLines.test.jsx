@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 const appMocks = vi.hoisted(() => {
   const noop = vi.fn()
@@ -8,13 +9,40 @@ const appMocks = vi.hoisted(() => {
     generatingSceneId: null,
     preparingRefs: false,
     refBatchActive: false,
+    isSceneBatchQueued: false,
+    holdSceneBatch: false,
+    heldQueueItem: null,
+    mcpProps: null,
+    framePanelProps: null,
+    videoStartOptions: null,
   }
-  const generationEnqueue = vi.fn(async job => job.execute?.())
-  const sceneBatchStart = vi.fn(async options => generationEnqueue({
-    type: 'scene_batch',
-    label: 'Batch Scene Generation',
-    execute: async () => options,
-  }))
+  const generationEnqueue = vi.fn(job => {
+    if (!state.holdSceneBatch) return Promise.resolve(job.execute?.())
+    return new Promise((resolve, reject) => {
+      state.heldQueueItem = { job, resolve, reject }
+    })
+  })
+  const generationClearQueue = vi.fn(type => {
+    const held = state.heldQueueItem
+    if (!held || (type && held.job.type !== type)) return
+    state.heldQueueItem = null
+    held.reject(Object.assign(new Error('Queue cleared'), { alreadySurfaced: true }))
+  })
+  const sceneBatchStart = vi.fn(async options => {
+    try {
+      return await generationEnqueue({
+        type: 'scene_batch',
+        label: 'Batch Scene Generation',
+        execute: async () => options,
+      })
+    } catch {
+      return undefined
+    }
+  })
+  const automationStop = vi.fn()
+  const videoStart = vi.fn(async options => {
+    state.videoStartOptions = options
+  })
   const scenes = [
     { id: 's1', prompt: 'scene 1-a\nscene 1-b', videoT2VPrompt: 'video 1', status: 'pending' },
     { id: 's2', prompt: 'scene 2', videoT2VPrompt: '', status: 'pending', videoT2VStatus: 'generating' },
@@ -34,7 +62,7 @@ const appMocks = vi.hoisted(() => {
     setScenes: noop,
     setReferences: noop,
     setSrtTrack: noop,
-    updateScene: noop,
+    updateScene: vi.fn(),
     updateSrtLine: noop,
     addScene: noop,
     trimScenes: noop,
@@ -48,7 +76,11 @@ const appMocks = vi.hoisted(() => {
     listFlowProjects: asyncNoop,
     capabilities: {},
   }
-  return { noop, asyncNoop, state, generationEnqueue, sceneBatchStart, scenes, scenesHook, genAPI }
+  return {
+    noop, asyncNoop, state,
+    generationEnqueue, generationClearQueue, sceneBatchStart, automationStop, videoStart,
+    scenes, scenesHook, genAPI,
+  }
 })
 
 vi.mock('../../src/hooks/useI18n', () => ({
@@ -182,18 +214,24 @@ vi.mock('../../src/hooks/useStoryAutoOpen', () => ({ useStoryAutoOpen: appMocks.
 vi.mock('../../src/hooks/useFlowAdoptPrompt', () => ({
   useFlowAdoptPrompt: () => ({ candidate: null, confirm: appMocks.noop, cancel: appMocks.noop }),
 }))
-vi.mock('../../src/hooks/useGenerationQueue', () => ({ useGenerationQueue: () => ({ enqueue: appMocks.generationEnqueue }) }))
+vi.mock('../../src/hooks/useGenerationQueue', () => ({
+  useGenerationQueue: () => ({
+    enqueue: appMocks.generationEnqueue,
+    clearQueue: appMocks.generationClearQueue,
+  }),
+}))
 vi.mock('../../src/hooks/useAutomation', () => ({
   useAutomation: () => ({
     isRunning: false,
     isPaused: false,
     isStopping: false,
+    isSceneBatchQueued: appMocks.state.isSceneBatchQueued,
     progress: 0,
     status: 'idle',
     statusMessage: '',
     start: appMocks.sceneBatchStart,
     togglePause: appMocks.noop,
-    stop: appMocks.noop,
+    stop: appMocks.automationStop,
     retryErrors: appMocks.noop,
     retryScene: vi.fn(async () => null),
   }),
@@ -205,7 +243,7 @@ vi.mock('../../src/hooks/useVideoAutomation', () => ({
     progress: 0,
     status: 'idle',
     statusMessage: '',
-    start: appMocks.asyncNoop,
+    start: appMocks.videoStart,
     togglePause: appMocks.noop,
     stop: appMocks.noop,
     retryErrors: appMocks.noop,
@@ -254,7 +292,9 @@ vi.mock('../../src/hooks/useExport', () => ({
   }),
 }))
 vi.mock('../../src/hooks/useAutoSave', () => ({ useAutoSave: appMocks.noop }))
-vi.mock('../../src/hooks/useMcpServer', () => ({ useMcpServer: appMocks.noop }))
+vi.mock('../../src/hooks/useMcpServer', () => ({
+  useMcpServer: props => { appMocks.state.mcpProps = props },
+}))
 vi.mock('../../src/hooks/useImportProcessing', () => ({
   useImportProcessing: () => ({ processing: false, spinnerVisible: false, runImportProcessing: appMocks.asyncNoop }),
 }))
@@ -282,7 +322,9 @@ vi.mock('../../src/components/GenerateMenu', async () => {
     }),
   }
 })
-vi.mock('../../src/components/FrameToVideoPanel', () => ({ default: () => null }))
+vi.mock('../../src/components/FrameToVideoPanel', () => ({
+  default: props => { appMocks.state.framePanelProps = props; return null },
+}))
 vi.mock('../../src/components/ReferencePanel', () => ({ default: () => null }))
 vi.mock('../../src/components/SettingsModal', () => ({ default: () => null }))
 vi.mock('../../src/components/ImportModal', () => ({ default: () => null }))
@@ -321,11 +363,20 @@ describe('App prompt busyLines wiring', () => {
     appMocks.state.generatingSceneId = null
     appMocks.state.preparingRefs = false
     appMocks.state.refBatchActive = false
+    appMocks.state.isSceneBatchQueued = false
+    appMocks.state.holdSceneBatch = false
+    appMocks.state.heldQueueItem = null
+    appMocks.state.mcpProps = null
+    appMocks.state.framePanelProps = null
+    appMocks.state.videoStartOptions = null
     appMocks.scenesHook.scenes = appMocks.scenes
     appMocks.scenesHook.scenesRef.current = appMocks.scenes
     appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue(null)
     appMocks.generationEnqueue.mockClear()
+    appMocks.generationClearQueue.mockClear()
     appMocks.sceneBatchStart.mockClear()
+    appMocks.automationStop.mockClear()
+    appMocks.videoStart.mockClear()
   })
 
   it('이미지·비디오 PromptInput에 각 value 규칙으로 계산한 busy 문단을 전달한다', async () => {
@@ -369,21 +420,37 @@ describe('App prompt busyLines wiring', () => {
     }
   })
 
-  it('개별 씬 생성 중에도 primary Start를 공유 큐에 enqueue한다', async () => {
+  it('개별 씬 생성 중에는 primary Start만 비활성화하고 공유 큐에 enqueue하지 않는다', async () => {
     appMocks.state.generatingSceneId = 's4'
     appMocks.genAPI.getAccessToken.mockResolvedValue('token')
     render(<App />)
 
     const startButton = screen.getByTitle('actions.start')
-    expect(startButton).toBeEnabled()
+    expect(startButton).toBeDisabled()
 
     fireEvent.click(startButton)
 
-    await waitFor(() => expect(appMocks.generationEnqueue).toHaveBeenCalledTimes(1))
-    expect(appMocks.generationEnqueue).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'scene_batch',
-      label: 'Batch Scene Generation',
-    }))
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('개별 씬 실행 중 MCP가 넣은 대기 배치는 Stop으로 scene_batch만 취소하고 래치를 푼다', async () => {
+    appMocks.state.generatingSceneId = 's4'
+    appMocks.state.holdSceneBatch = true
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    render(<App />)
+
+    await act(async () => {
+      await appMocks.state.mcpProps.handleStart(undefined, { source: 'mcp' })
+    })
+    expect(appMocks.state.heldQueueItem?.job.type).toBe('scene_batch')
+
+    const stopButton = await screen.findByRole('button', { name: /actions\.stop/ })
+    fireEvent.click(stopButton)
+
+    expect(appMocks.generationClearQueue).toHaveBeenCalledTimes(1)
+    expect(appMocks.generationClearQueue).toHaveBeenCalledWith('scene_batch')
+    expect(appMocks.automationStop).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByRole('button', { name: /actions\.stop/ })).not.toBeInTheDocument())
   })
 
   it('Ref batch preflight 중에는 전체 재생성 메뉴를 비활성화한다', () => {
@@ -396,5 +463,50 @@ describe('App prompt busyLines wiring', () => {
     render(<App />)
 
     expect(screen.getByTestId('generate-menu')).toBeDisabled()
+  })
+
+  it('useAutomation의 scene batch 대기 신호를 MCP liveness 입력에 전달한다', () => {
+    appMocks.state.isSceneBatchQueued = true
+    render(<App />)
+
+    expect(appMocks.state.mcpProps.automationState.isSceneBatchQueued).toBe(true)
+    expect(appMocks.state.mcpProps.isRunning).toBe(true)
+  })
+
+  it('I2V 결과는 StrictMode에서도 owner 씬을 한 번만 갱신하고 삭제된 행은 건드리지 않는다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    render(<StrictMode><App /></StrictMode>)
+
+    fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+    await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+
+    const pair = {
+      id: 'fp-1',
+      ownerSceneId: 's1',
+      startSceneId: 's1',
+      endSceneId: null,
+      prompt: 'scene 1',
+      selected: true,
+      status: 'pending',
+    }
+    act(() => appMocks.state.framePanelProps.onUpdate([pair]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([pair]))
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await waitFor(() => expect(appMocks.videoStart).toHaveBeenCalledTimes(1))
+    const { onItemUpdate } = appMocks.state.videoStartOptions
+    appMocks.scenesHook.updateScene.mockClear()
+
+    act(() => onItemUpdate('fp-1', 'generating', { generatingStartedAt: 123 }))
+    expect(appMocks.scenesHook.updateScene).toHaveBeenCalledTimes(1)
+    expect(appMocks.scenesHook.updateScene).toHaveBeenCalledWith('s1', expect.objectContaining({
+      videoI2VStatus: 'generating',
+      videoI2VGeneratingStartedAt: 123,
+    }))
+
+    act(() => appMocks.state.framePanelProps.onUpdate([]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([]))
+    act(() => onItemUpdate('fp-1', 'complete', { base64: 'VIDEO' }))
+    expect(appMocks.scenesHook.updateScene).toHaveBeenCalledTimes(1)
   })
 })

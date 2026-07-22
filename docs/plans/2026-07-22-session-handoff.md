@@ -160,19 +160,22 @@
      `opacity: 0.6` 이라 링도 흐려 보인다 — 그 체감도 확인.
 - 별건 기록: `VideoDetailModal.jsx:163` 이 `meta` 가 null 인데 `meta.seed` 를 읽는다.
 
-### 별건 후속 (이번 작업에서 코드 변경 없음)
+### 별건 후속 처리 결과 (2026-07-23)
 
-1. `app_wait_batch`가 **큐에 대기 중인 배치를 완료로 오보**할 수 있다. MCP liveness
-   (`useMcpServer.js:575`)가 queued batch를 포함하지 않는 pre-existing 문제다. `hasPendingBatch`를
-   그대로 넣으면 M2 failure 모달 대기 동안 영구 busy가 되므로 단순 추가는 위험하고, 별도 latch
-   설계가 필요하다.
-2. **대기 중 배치를 Stop이 취소하지 못한다.** `anyRunning`은 `hasPendingBatch`를 포함해 Stop 버튼을
-   렌더하지만(`App.jsx:2035`), `handleStop`(`App.jsx:2005`)은 큐의 대기 배치를 취소하지 않는
-   pre-existing 문제다. 눌러도 반응이 없고 나중에 그 배치가 실행돼 quota를 쓴다.
-3. `setFramePairs` updater 안에서 `setScenes`를 호출하는 비순수 패턴이 복구 경로와 정상 경로 양쪽에
-   있다(`useProjectData.js:529`, `App.jsx:1850`). patch가 멱등이라 관측된 실해는 없지만 StrictMode
-   이중 실행 시 중복 enqueue 가능성이 있다. 정리하려면 두 곳을 함께 다뤄야 한다.
-4. `App.jsx:1332`의 비디오 retry가 stale closure인 `framePairs.find`로 owner를 찾는다. F2-1이 복구
+1. Stop은 공유 큐의 `scene_batch`만 type-selective clear한다. 실행 중인 개별 씬(`scene`)은 유지되고,
+   queue reject 뒤 `emptyRefGate`/직접 시작 경로의 `finally`가 `hasPendingBatch`를 해제한다.
+2. 개별 씬 생성 중 primary Start는 Header와 같이 비활성화했다. `isStartBlocked`에는 넣지 않아
+   MCP·프로그램 경로는 계속 공유 큐에 들어간다.
+3. `useAutomation`이 execute 전 scene batch 대기 수를 정확히 추적해 `isSceneBatchQueued`로 노출하고,
+   App→MCP liveness가 이를 `isRunning`에 합성한다. enqueue reject/throw에서도 신호를 반드시 정산하며
+   외부 status enum은 늘리지 않았다.
+4. I2V 정상 결과와 복구 결과 모두 live `framePairs` ref에서 updater 밖에 owner를 확정한다.
+   `setFramePairs` updater 안의 다른 setter 호출을 제거했고, 결과 도착 전에 삭제된 행은 owner 씬도
+   건드리지 않는 F2-1 계약을 유지했다.
+
+### 남은 별건 후속
+
+1. `App.jsx:1332`의 비디오 retry가 stale closure인 `framePairs.find`로 owner를 찾는다. F2-1이 복구
    경로에서 고친 것과 같은 부류의 pre-existing 문제다.
 
 ## 이 세션에서 값비싸게 배운 것

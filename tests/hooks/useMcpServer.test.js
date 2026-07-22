@@ -815,6 +815,22 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     result.unmount()
   })
 
+  it('execute 전 scene batch 대기는 외부 enum을 늘리지 않고 isRunning으로 보고한다', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      automationState: {
+        isRunning: false,
+        isSceneBatchQueued: true,
+        isPaused: false,
+        progress: { current: 0, total: 0 },
+        status: 'idle',
+        statusMessage: '',
+      },
+    })))
+
+    expect(window.__mcpBatchStatus()).toMatchObject({ isRunning: true, status: 'idle' })
+    result.unmount()
+  })
+
   it.each(['uploading', 'running', 'done'])('이미지 status %s는 외부에서 그대로 유지한다', status => {
     const result = renderHook(() => useMcpServer(makeProps({
       automationState: {

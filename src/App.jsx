@@ -235,6 +235,8 @@ function App() {
   // 생성과 무관한 별도 워크플로우(스텝퍼 + 단계 패널)라 탭 목록에 섞지 않는다.
   const [activeView, setActiveView] = useState('generate') // 'generate' | 'story'
   const [framePairs, setFramePairs] = useState([])   // Frame to Video 매핑
+  const framePairsRef = useRef(framePairs)
+  framePairsRef.current = framePairs
   const [ftvPromptSource, setFtvPromptSource] = useState('image') // 'image' | 'video' | 'none'
   const [galleryItems, setGalleryItems] = useState([])
   const [galleryUploading, setGalleryUploading] = useState(false)  // #R29-3: F2V 디스크 업로드 중 전환 차단
@@ -857,7 +859,7 @@ function App() {
     refreshSubscription     // #6: consume 성공 시 1회 refresh
   )
 
-  const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
+  const { isRunning, isPaused, isStopping, isSceneBatchQueued, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
   // #M2: 모달/ref batch 대기 뒤 scene launch가 과거 render의 start closure를 부르지 않게 한다.
   const automationStartRef = useRef(start)
   automationStartRef.current = start
@@ -1813,8 +1815,12 @@ function App() {
           flowPacingMaxMs: settings.flowPacingMaxMs,
           seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {
-            setFramePairs(prev => {
-              const updated = prev.map(p =>
+            const liveFramePairs = framePairsRef.current
+            const fpOwner = liveFramePairs.find(p => p.id === id)
+            // F2-1: 비동기 결과가 오기 전에 행이 삭제됐으면 owner scene도 건드리지 않는다.
+            if (!fpOwner) return
+
+            const updated = liveFramePairs.map(p =>
                 p.id === id ? {
                   ...p, status: newStatus,
                   ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
@@ -1835,23 +1841,16 @@ function App() {
                   ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
                 } : p
               )
+            framePairsRef.current = updated
+            setFramePairs(updated)
 
-              // ── I2V 상태/결과를 ownerSceneId 로 씬에 동기화 ── (prev 사용 — stale closure 방지)
-              // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted rows(null)는 스킵.
-              // - videoI2VStatus: t2v 의 videoT2VStatus 대응 신호 — 타임라인이 generating 시 빈칸+shimmer 판정.
-              // - 제출(generating) 시 비디오 데이터는 일부러 안 지운다(예전엔 videoClearPatch('i2v')).
-              //   타임라인/모니터가 generating 동안 화면에서만 숨기므로 stale 노출 없고, 데이터를 유지해야
-              //   에러/취소 시 status≠generating 으로 기존 비디오가 복귀한다. 완료 시 아래에서 새 걸로 교체.
-              const fpOwner = prev.find(p => p.id === id)
-              if (fpOwner?.ownerSceneId) {
-                // status + 경과 타이머 타임스탬프(videoI2VGeneratingStartedAt/EndedAt) + 완료 결과를
-                // 한 곳에서 — T2V 와 동일하게 generating 클립 경과 타이머가 동작하도록(00:00 회귀 방지).
-                const scenePatch = buildI2VScenePatch(newStatus, result)
-                scenesHook.updateScene(fpOwner.ownerSceneId, scenePatch)
-              }
-
-              return updated
-            })
+            // ── I2V 상태/결과를 ownerSceneId 로 씬에 동기화 ──
+            // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted rows(null)는 스킵.
+            // status + 경과 타이머 타임스탬프 + 완료 결과를 한 곳에서 적용한다.
+            if (fpOwner.ownerSceneId) {
+              const scenePatch = buildI2VScenePatch(newStatus, result)
+              scenesHook.updateScene(fpOwner.ownerSceneId, scenePatch)
+            }
           },
         }).finally(() => setHasPendingBatch(false))
         break
@@ -2003,6 +2002,10 @@ function App() {
   // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
   // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
   const handleStop = () => {
+    // 실행 중인 개별 씬(type: scene)은 그대로 두고, 공유 큐에서 아직 시작하지 않은
+    // 씬 배치만 reject한다. queue reject는 start(...).finally / emptyRefGate finally로
+    // 이어져 hasPendingBatch latch도 해제된다.
+    generationQueue.clearQueue?.('scene_batch')
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
     if (shouldStopRefWork({ refBatchRunning, gatePhase: emptyRefGate?.phase })) stopGenerateAllRefs()
@@ -2022,10 +2025,10 @@ function App() {
     selectedStyleRefId, setSelectedStyleRefId,
     refreshReviews, audioReviews,
     importByPath, audioPackage,
-    automationState: { isRunning, isPaused, progress, status, statusMessage },
+    automationState: { isRunning, isSceneBatchQueued, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
     refBatchRunning,
-    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning
+    isRunning: isRunning || isSceneBatchQueued || videoAutomation.isRunning || refBatchRunning
   })
 
   // 어느 자동화든 실행 중이면 true
@@ -2440,7 +2443,8 @@ function App() {
                         (activeTab === 'video-text' && videoScenes.length === 0) ||
                         (activeTab === 'frame-to-video' && framePairs.length === 0) ||
                         hasPendingBatch ||
-                        refBatchRunning
+                        refBatchRunning ||
+                        !!generatingSceneId
                       }
                     >
                       {(() => {

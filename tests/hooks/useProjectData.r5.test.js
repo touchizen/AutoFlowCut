@@ -350,7 +350,12 @@ describe('I2V recovery callback updates its owner scene', () => {
     const setScenes = vi.fn()
 
     renderHook(() => useProjectData(makeHookProps({
-      mode: 'api', genAPI: makeGenAPI(), setFramePairs, setScenes,
+      mode: 'api', genAPI: makeGenAPI(),
+      framePairs: [
+        { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+        { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
+      ],
+      setFramePairs, setScenes,
     })))
     await waitForEffect()
     expect(i2vRecoveryCallback).toBeTypeOf('function')
@@ -360,12 +365,10 @@ describe('I2V recovery callback updates its owner scene', () => {
     act(() => i2vRecoveryCallback('fp-owned', recoveryPatch))
 
     expect(setFramePairs).toHaveBeenCalledTimes(1)
-    const ownerFrameUpdater = setFramePairs.mock.calls[0][0]
-    ownerFrameUpdater([
-      { id: 'fp-owned', ownerSceneId: 'scene-1' },
-      { id: 'fp-gallery', ownerSceneId: null },
+    expect(setFramePairs.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ id: 'fp-owned', ownerSceneId: 'scene-1', ...recoveryPatch }),
+      expect.objectContaining({ id: 'fp-gallery', ownerSceneId: null }),
     ])
-
     expect(setScenes).toHaveBeenCalledTimes(1)
     const ownerUpdater = setScenes.mock.calls[0][0]
     const ownerResult = ownerUpdater([
@@ -379,10 +382,9 @@ describe('I2V recovery callback updates its owner scene', () => {
 
     act(() => i2vRecoveryCallback('fp-gallery', recoveryPatch))
     expect(setFramePairs).toHaveBeenCalledTimes(2)
-    const galleryFrameUpdater = setFramePairs.mock.calls[1][0]
-    galleryFrameUpdater([
-      { id: 'fp-owned', ownerSceneId: 'scene-1' },
-      { id: 'fp-gallery', ownerSceneId: null },
+    expect(setFramePairs.mock.calls[1][0]).toEqual([
+      expect.objectContaining({ id: 'fp-owned', ownerSceneId: 'scene-1', ...recoveryPatch }),
+      expect.objectContaining({ id: 'fp-gallery', ownerSceneId: null, ...recoveryPatch }),
     ])
     expect(setScenes).toHaveBeenCalledTimes(1)
   })
@@ -396,19 +398,23 @@ describe('I2V recovery callback updates its owner scene', () => {
     const setFramePairs = vi.fn()
     const setScenes = vi.fn()
 
-    renderHook(() => useProjectData(makeHookProps({
-      mode: 'api', genAPI: makeGenAPI(), setFramePairs, setScenes,
+    let liveFramePairs = [
+      { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+      { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
+    ]
+    const hook = renderHook(() => useProjectData(makeHookProps({
+      mode: 'api', genAPI: makeGenAPI(), framePairs: liveFramePairs, setFramePairs, setScenes,
     })))
     await waitForEffect()
     expect(i2vRecoveryCallback).toBeTypeOf('function')
 
+    liveFramePairs = []
+    hook.rerender()
     setFramePairs.mockClear()
     setScenes.mockClear()
     act(() => i2vRecoveryCallback('fp-owned', { status: 'complete', base64: 'VIDEO' }))
 
-    expect(setFramePairs).toHaveBeenCalledTimes(1)
-    const framePairUpdater = setFramePairs.mock.calls[0][0]
-    expect(framePairUpdater([])).toEqual([])
+    expect(setFramePairs).not.toHaveBeenCalled()
     expect(setScenes).not.toHaveBeenCalled()
   })
 
@@ -422,7 +428,11 @@ describe('I2V recovery callback updates its owner scene', () => {
     const setScenes = vi.fn()
 
     renderHook(() => useProjectData(makeHookProps({
-      mode: 'api', genAPI: makeGenAPI(), setFramePairs, setScenes,
+      mode: 'api', genAPI: makeGenAPI(),
+      framePairs: [
+        { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+      ],
+      setFramePairs, setScenes,
     })))
     await waitForEffect()
     expect(i2vRecoveryCallback).toBeTypeOf('function')
@@ -432,10 +442,7 @@ describe('I2V recovery callback updates its owner scene', () => {
     const generatingStartedAt = 1_753_200_000_123
     act(() => i2vRecoveryCallback('fp-owned', { status: 'generating', generatingStartedAt }))
 
-    const framePairUpdater = setFramePairs.mock.calls[0][0]
-    const framePairResult = framePairUpdater([
-      { id: 'fp-owned', ownerSceneId: 'scene-1', status: 'pending' },
-    ])
+    const framePairResult = setFramePairs.mock.calls[0][0]
     expect(framePairResult[0].generatingStartedAt).toBe(generatingStartedAt)
 
     expect(setScenes).toHaveBeenCalledTimes(1)

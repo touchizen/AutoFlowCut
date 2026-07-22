@@ -505,6 +505,16 @@ export function useProjectData({
   onSaveError = null, // 프로젝트 저장 실패 시 호출 (인자: 에러 메시지)
   mode = 'api', // 'flow' | 'api' — flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화
 }) {
+  // recovery callback은 비동기로 늦게 도착하므로 render closure 대신 live 행을 본다.
+  // 프로젝트 로드 직후 recovery가 같은 tick에 시작해도 최신 배열을 보도록 이 훅이
+  // 발행하는 framePairs는 setter와 ref를 함께 갱신한다.
+  const framePairsRef = useRef(framePairs)
+  framePairsRef.current = framePairs
+  const publishFramePairs = (nextFramePairs) => {
+    framePairsRef.current = nextFramePairs
+    setFramePairs?.(nextFramePairs)
+  }
+
   // videoScenes (T2V) state 업데이트 헬퍼 — recovery 가 patch 를 던지면 적용.
   const applyVideoScenePatch = (id, patch) => {
     if (!setVideoScenes) return
@@ -526,16 +536,18 @@ export function useProjectData({
     const guardedVideoScenePatch = (id, patch) => { if (stillCurrent()) applyVideoScenePatch(id, patch) }
     const guardedFramePairPatch = (id, patch) => {
       if (!stillCurrent() || !setFramePairs) return
-      setFramePairs(prev => {
-        const fpOwner = prev.find(fp => fp.id === id)
-        if (fpOwner?.ownerSceneId && setScenes) {
-          const scenePatch = buildI2VScenePatch(patch.status, patch)
-          setScenes(currentScenes => currentScenes.map(scene => (
-            scene.id === fpOwner.ownerSceneId ? { ...scene, ...scenePatch } : scene
-          )))
-        }
-        return prev.map(fp => fp.id === id ? { ...fp, ...patch } : fp)
-      })
+      const liveFramePairs = framePairsRef.current || []
+      const fpOwner = liveFramePairs.find(fp => fp.id === id)
+      // F2-1: recovery 도착 전에 행이 삭제됐으면 pair와 owner scene 모두 no-op.
+      if (!fpOwner) return
+
+      publishFramePairs(liveFramePairs.map(fp => fp.id === id ? { ...fp, ...patch } : fp))
+      if (fpOwner.ownerSceneId && setScenes) {
+        const scenePatch = buildI2VScenePatch(patch.status, patch)
+        setScenes(currentScenes => currentScenes.map(scene => (
+          scene.id === fpOwner.ownerSceneId ? { ...scene, ...scenePatch } : scene
+        )))
+      }
     }
 
     const t2vInFlight = (loadedVideoScenes || []).some(vs =>
@@ -1173,7 +1185,7 @@ export function useProjectData({
         setScenes(loaded.scenes)
         setReferences(loaded.references)
         setVideoScenes?.(loaded.videoScenes || [])
-        setFramePairs?.(loaded.framePairs || [])
+        publishFramePairs(loaded.framePairs || [])
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         setSrtTrack?.(loaded.srtTrack || [])
         setFlowProjectId(loaded.flowProjectId || null)
@@ -1323,7 +1335,7 @@ export function useProjectData({
           setScenes(loaded.scenes)
           setReferences(loaded.references)
           setVideoScenes?.(loaded.videoScenes || [])
-          setFramePairs?.(loaded.framePairs || [])
+          publishFramePairs(loaded.framePairs || [])
           setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
           setSrtTrack?.(loaded.srtTrack || [])
           setFlowProjectId(loaded.flowProjectId || null)
@@ -1370,7 +1382,7 @@ export function useProjectData({
           setScenes([])
           setReferences([])
           setVideoScenes?.([])
-          setFramePairs?.([])
+          publishFramePairs([])
           setSelectedStyleRefId?.(null)
           setSrtTrack?.([])
           setFlowProjectId(null)
@@ -1384,7 +1396,7 @@ export function useProjectData({
         setScenes([])
         setReferences([])
         setVideoScenes?.([])
-        setFramePairs?.([])
+        publishFramePairs([])
         setSelectedStyleRefId?.(null)
         // C4 review fix: 새 프로젝트 분기에도 srtTrack 리셋 (안 그러면 직전 프로젝트의
         // srtTrack 이 새 프로젝트로 누수되어 autosave 가 잘못 영속화함)

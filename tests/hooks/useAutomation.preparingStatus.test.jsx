@@ -158,7 +158,69 @@ describe('useAutomation — preparing status', () => {
 
     expect(hook.result.current.status).toBe('ready')
     expect(hook.result.current.isRunning).toBe(false)
+    expect(hook.result.current.isSceneBatchQueued).toBe(false)
     expect(genAPI.getAccessToken).not.toHaveBeenCalled()
+  })
+
+  it('scene batch 대기 신호는 enqueue 대기 동안만 true이고 execute 진입에서 내려간다', async () => {
+    const blocker = deferred()
+    const tokenGate = deferred()
+    const { scenesHook, genAPI } = makeFixtures({
+      scenesHook: { references: [], getMatchingReferences: vi.fn(() => []) },
+      genAPI: { getAccessToken: vi.fn(() => tokenGate.promise) },
+    })
+    const hook = renderHook(() => {
+      const queue = useGenerationQueue()
+      const automation = useAutomation(
+        genAPI, scenesHook, null, null, null, key => key,
+        null, queue, null, 'flow', true,
+      )
+      return { ...automation, queue }
+    })
+
+    act(() => {
+      hook.result.current.queue.enqueue({
+        type: 'scene',
+        label: 'blocking individual scene',
+        execute: () => blocker.promise,
+      })
+    })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'project', saveMode: 'project' })
+      await Promise.resolve()
+    })
+    expect(hook.result.current.isSceneBatchQueued).toBe(true)
+    expect(hook.result.current.isRunning).toBe(false)
+
+    await act(async () => {
+      blocker.resolve()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+    expect(hook.result.current.isSceneBatchQueued).toBe(false)
+    expect(hook.result.current.isRunning).toBe(true)
+
+    await act(async () => {
+      tokenGate.resolve(null)
+      await startPromise
+    })
+  })
+
+  it('generationQueue.enqueue가 동기 throw해도 scene batch 대기 신호가 고착되지 않는다', async () => {
+    const { scenesHook, genAPI } = makeFixtures()
+    const queue = { enqueue: vi.fn(() => { throw new Error('enqueue exploded') }) }
+    const hook = renderHook(() => useAutomation(
+      genAPI, scenesHook, null, null, null, key => key,
+      null, queue, null, 'flow', true,
+    ))
+
+    await act(async () => {
+      await hook.result.current.start({ projectName: 'project', saveMode: 'project' })
+    })
+
+    expect(hook.result.current.isSceneBatchQueued).toBe(false)
+    expect(hook.result.current.isRunning).toBe(false)
   })
 
   it('clearQueue가 대기 중 scene batch를 reject하면 status가 ready에 남는다', async () => {
@@ -187,6 +249,7 @@ describe('useAutomation — preparing status', () => {
       await Promise.resolve()
     })
     expect(hook.result.current.queue.queueSize).toBe(1)
+    expect(hook.result.current.isSceneBatchQueued).toBe(true)
 
     await act(async () => {
       hook.result.current.queue.clearQueue('scene_batch')
@@ -195,6 +258,7 @@ describe('useAutomation — preparing status', () => {
 
     expect(hook.result.current.status).toBe('ready')
     expect(hook.result.current.isRunning).toBe(false)
+    expect(hook.result.current.isSceneBatchQueued).toBe(false)
     expect(genAPI.getAccessToken).not.toHaveBeenCalled()
   })
 })

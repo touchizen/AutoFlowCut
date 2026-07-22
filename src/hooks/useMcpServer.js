@@ -547,7 +547,8 @@ export function useMcpServer({
     }
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {
-      const { isRunning, isPaused, progress, status, statusMessage } = automationState
+      const { isRunning, isSceneBatchQueued = false, isPaused, progress, status, statusMessage } = automationState
+      const sceneIsRunning = isRunning || isSceneBatchQueued
       // renderer 내부의 이미지 preflight 상태는 유지하되 기존 MCP 외부 enum은 늘리지 않는다.
       const externalAutomationStatus = status === 'preparing' ? 'running' : status
       // P2/P3 v2/v3: done 판정은 services/generationStatus의 공통 helper 사용.
@@ -572,12 +573,12 @@ export function useMcpServer({
       const refIsRunning = refBatchRunning || generatingRefs.length > 0
 
       return {
-        isRunning: isRunning || videoAutomation.isRunning || refIsRunning,
+        isRunning: sceneIsRunning || videoAutomation.isRunning || refIsRunning,
         isPaused: isPaused || videoAutomation.isPaused,
-        progress: isRunning ? progress : videoAutomation.progress,
+        progress: sceneIsRunning ? progress : videoAutomation.progress,
         total, done, pending, generating, error,
-        status: isRunning ? externalAutomationStatus : videoAutomation.status,
-        statusMessage: isRunning ? statusMessage : videoAutomation.statusMessage,
+        status: sceneIsRunning ? externalAutomationStatus : videoAutomation.status,
+        statusMessage: sceneIsRunning ? statusMessage : videoAutomation.statusMessage,
         ref: { total: refTotal, done: refDone, generating: refGenerating, pending: refPending, isRunning: refIsRunning }
       }
     }
