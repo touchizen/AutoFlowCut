@@ -41,10 +41,10 @@ Flow 모드에서 **새 로컬 프로젝트**를 만들면 저장된 `flowProjec
 |---|---|
 | load epoch + projectName | 늦게 도착한 응답이 다른 프로젝트에 적용되는 것 |
 | arm 토큰 **object identity** | flow→api→flow 로 같은 값으로 재arm 됐을 때의 ABA |
-| bind generation | 취소된 이전 bind 가 최신 bind 의 in-flight 를 푸는 것 |
+| bind 소유권 `{token, done}` | 취소된 이전 bind 가 최신 bind 의 레인을 놓거나, 늦은 응답이 확인된 매핑을 덮는 것 |
 | bind watchdog(90s) | 안 끝나는 IPC 가 재시도를 영구히 잠그는 것 |
 | `createDistrustRef` | 만든 프로젝트가 에러 페이지일 때의 재생성 루프 (확인되면 해제) |
-| 채택 쿨다운 10분 (로컬 프로젝트 × Flow id) | 취소했는데 5초마다 다시 물어 Flow 뷰를 계속 접는 것 |
+| 채택 쿨다운 (로컬 프로젝트 × Flow id) | 거절 10분: 5초마다 다시 물어 Flow 뷰를 계속 접는 것 / 확인 실패 30초: 무음 재등장 루프 |
 
 ## 앵커
 
