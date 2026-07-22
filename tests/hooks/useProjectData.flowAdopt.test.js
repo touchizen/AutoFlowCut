@@ -427,6 +427,28 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(fileSystemAPI.mergeProjectData).toHaveBeenCalledWith('p1', { flowProjectId: 'user-picked' })
   })
 
+  // 반대 방향도 고정한다: 전환이 없는 평범한 rejection 은 **반드시** arm 해야 한다. 가드를 과하게
+  // 조여 여기서 arm 하지 않으면, 폴링이 재바인딩만 반복하고 사용자가 채택할 기회를 못 얻는다.
+  it('생성 호출이 reject 로 끝나면(전환 없음) 채택을 arm 한다', async () => {
+    const newFlowProject = vi.fn().mockRejectedValue(new Error('invoke failed'))
+    const flowExtractProjectId = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'baseline' })
+      .mockResolvedValue({ success: true, projectId: 'user-picked' })
+    const openFlowProject = vi.fn()
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    // rejection 경로는 baseline 을 미리 잡지 않는다 — 첫 시도가 baseline 을 잡고, 그다음이 후보다.
+    let first, second
+    await act(async () => { first = await result.current.tryAdoptFlowProject() })
+    await act(async () => { second = await result.current.tryAdoptFlowProject() })
+
+    expect(first).toMatchObject({ ok: false, reason: 'baseline-set' })
+    expect(second).toMatchObject({ ok: false, reason: 'needs-confirm', projectId: 'user-picked' })
+  })
+
   // 생성 호출이 reject 로 끝나는 경로도 arm 을 세운다. 그 사이 전환이 시작됐는데 그대로 arm 하면
   // 이전 프로젝트의 arm 이 남아, 폴링이 매번 stale-arm 만 돌려주고 재바인딩을 요청하지 못한다
   // (arm 이 서 있으면 재바인딩 분기를 건너뛴다) — 새 프로젝트의 생성이 고착된다.

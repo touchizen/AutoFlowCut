@@ -30,31 +30,37 @@ export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, pro
   //    리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
   const adoptRef = useRef(tryAdopt)
   adoptRef.current = tryAdopt
+  // {projectId, projectName} — 후보를 **관측한 프로젝트**를 함께 들고 다닌다. 취소/확인 시점의
+  // 프로젝트로 판단하면 그 사이 전환이 있었을 때 엉뚱한 프로젝트를 침묵시키거나 승인하게 된다.
   const [candidate, setCandidate] = useState(null)
   const cancelledAtRef = useRef(new Map())
 
   useEffect(() => {
-    if (mode !== 'flow' || flowProjectReady || candidate || projectLoading) return
+    // 후보를 관측한 프로젝트를 떠났으면 그 확인은 더 이상 유효하지 않다 — 모달을 닫는다.
+    if (candidate && candidate.projectName !== projectName) { setCandidate(null); return }
+    if (mode !== 'flow' || flowProjectReady || candidate || projectLoading || !projectName) return
     const timer = setInterval(async () => {
       const r = await adoptRef.current?.()
-      if (r?.reason !== 'needs-confirm') return
-      if (shouldPromptAdopt(cooldownKey(projectName, r.projectId), cancelledAtRef.current, Date.now())) setCandidate(r.projectId)
+      if (r?.reason !== 'needs-confirm' || !r.projectId) return
+      if (shouldPromptAdopt(cooldownKey(projectName, r.projectId), cancelledAtRef.current, Date.now())) {
+        setCandidate({ projectId: r.projectId, projectName })
+      }
     }, intervalMs)
     return () => clearInterval(timer)
   }, [mode, flowProjectReady, candidate, projectLoading, projectName, intervalMs])
 
   const confirm = async () => {
     // 사용자가 승인한 것은 "그때 보여준 ID" 다 — 확인 사이에 Flow 가 옮겨갔으면 채택되지 않는다.
-    const expectedId = candidate
+    const expectedId = candidate?.projectId
     setCandidate(null)
     if (expectedId) await adoptRef.current?.({ confirmed: true, expectedId })
   }
 
   const cancel = () => {
     // 이 프로젝트는 아니라는 의사표시 — 한동안 다시 묻지 않아 Flow 뷰를 되찾을 시간을 준다.
-    if (candidate) cancelledAtRef.current.set(cooldownKey(projectName, candidate), Date.now())
+    if (candidate) cancelledAtRef.current.set(cooldownKey(candidate.projectName, candidate.projectId), Date.now())
     setCandidate(null)
   }
 
-  return { candidate, confirm, cancel }
+  return { candidate: candidate?.projectId ?? null, confirm, cancel }
 }

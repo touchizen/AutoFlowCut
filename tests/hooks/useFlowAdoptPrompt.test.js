@@ -169,6 +169,47 @@ describe('useFlowAdoptPrompt', () => {
     expect(second).toHaveBeenCalledTimes(1)
   })
 
+
+  // 후보는 "그 로컬 프로젝트에서 관측된 것"이다. 프로젝트가 바뀌면 그 확인은 더 이상 유효하지
+  // 않다 — 열린 채로 두면 사용자가 p2 를 보면서 p1 의 후보를 승인하게 된다.
+  it('프로젝트가 바뀌면 열려 있던 확인 모달을 닫는다', async () => {
+    const tryAdopt = vi.fn().mockResolvedValue(needsConfirm('cand-1'))
+    const { result, rerender } = setup({ tryAdopt, projectName: 'p1' })
+    await tick()
+    expect(result.current.candidate).toBe('cand-1')
+
+    rerender({ mode: 'flow', flowProjectReady: false, projectLoading: false, projectName: 'p2', tryAdopt })
+
+    expect(result.current.candidate).toBeNull()
+  })
+
+  // 취소 기록은 후보를 만든 프로젝트 기준이어야 한다 — 취소 시점의 프로젝트로 기록하면 엉뚱한
+  // 프로젝트가 10분간 막힌다.
+  it('취소는 후보를 만든 프로젝트 기준으로 기억한다', async () => {
+    const tryAdopt = vi.fn().mockResolvedValue(needsConfirm('cand-1'))
+    const { result, rerender } = setup({ tryAdopt, projectName: 'p1' })
+    await tick()
+    act(() => { result.current.cancel() })
+
+    // p2 는 같은 후보라도 물어야 하고(p1 의 거절이므로),
+    rerender({ mode: 'flow', flowProjectReady: false, projectLoading: false, projectName: 'p2', tryAdopt })
+    await tick()
+    expect(result.current.candidate).toBe('cand-1')
+
+    // p1 으로 돌아오면 여전히 침묵해야 한다.
+    act(() => { result.current.cancel() })
+    rerender({ mode: 'flow', flowProjectReady: false, projectLoading: false, projectName: 'p1', tryAdopt })
+    await tick()
+    expect(result.current.candidate).toBeNull()
+  })
+
+  it('프로젝트가 없으면 후보를 만들지 않는다', async () => {
+    const tryAdopt = vi.fn().mockResolvedValue(needsConfirm('cand-1'))
+    const { result } = setup({ tryAdopt, projectName: '' })
+    await tick()
+    expect(result.current.candidate).toBeNull()
+  })
+
   it('쿨다운은 10분이다', () => {
     expect(ADOPT_PROMPT_COOLDOWN_MS).toBe(10 * 60 * 1000)
   })
