@@ -97,8 +97,12 @@
 - `refBatchActive` 신규 — 배치가 아이템마다 auth 토큰을 재추출하는 동안 기존 ref 플래그가 **전부
   꺼져서** 레퍼런스 개수만큼 패널이 깜빡였다. `startGuard.js:7-13` 주석이 이미 그 창을 적어놨었다.
 - `useAutomation` 에 `'preparing'` 상태 신설, **MCP 경계에서 `running` 으로 정규화**해 외부 계약 유지.
-- `isStartBlocked` 에 `generatingSceneId` + `refBatchRunning` 추가, `useSceneGeneration` preflight 를
-  outer try/finally 로 감싸 busy flag 고착 차단.
+- `isStartBlocked` 에 `refBatchRunning` 추가, `useSceneGeneration` preflight 를 outer try/finally 로
+  감싸 busy flag 고착 차단.
+  ⚠️ **`generatingSceneId` 가드는 후속 `b922e9e7` 에서 제거됐다**(가드·Start 버튼·MCP liveness 전부).
+  되돌린 이유: 그 가드가 MCP 배치를 드롭시켜 보류 기계장치가 필요해졌고, 그게 조용한 드롭·탭
+  오라우팅·프로젝트 로딩 창을 낳았는데 막으려던 건 패널 깜빡임 하나였다. 스펙 §7/§12 참조.
+  **"가드가 없다"를 회귀로 보고 재도입하지 말 것.**
 
 리뷰: Fable 5 스펙 2라운드 → GO, 구현 1라운드 → **GO(블로커 없음)**.
 
