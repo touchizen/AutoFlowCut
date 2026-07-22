@@ -565,6 +565,46 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(result.current.flowProjectId).toBe('created-2')
   })
 
+  // 확인은 mode-entry 만의 일이 아니다 — 프로젝트 전환의 open 도 같은 확인을 거친다. 정리를
+  // 한쪽 경로에만 두면, 전환으로 확인된 프로젝트는 불신이 남아 나중에 자동 생성이 거부된다.
+  it('프로젝트 전환의 open 으로 확인돼도 생성 불신이 풀린다', async () => {
+    const newFlowProject = vi.fn()
+      .mockResolvedValueOnce({ success: true, projectId: 'created-1' })
+      .mockResolvedValue({ success: true, projectId: 'created-2' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-1' })
+    // 호출 횟수가 아니라 "지금 그 프로젝트가 어떤 상태인가"로 답한다 — 중간 재오픈이 몇 번
+    // 일어나든 시나리오가 흔들리지 않는다.
+    let phase = 'transient'
+    const openFlowProject = vi.fn(async ({ flowProjectId }) => {
+      if (flowProjectId === 'created-2') return { success: true, already: true, url: urlOf('created-2') }
+      if (phase === 'transient') return { success: false }                                    // 일시 실패 → 불신
+      if (phase === 'alive') return { success: true, already: true, url: urlOf('created-1') }  // 확인 성공
+      return { success: false, errorPage: true, url: urlOf('created-1') }                     // 삭제됨
+    })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    expect(result.current.flowProjectReady).toBe(false)   // 첫 open 실패로 불신
+
+    // 다른 프로젝트로 갔다가 p1 으로 전환해 돌아온다 — 이 경로의 open 이 확인을 만든다.
+    phase = 'alive'
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: { flowProjectId: 'created-1' } })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p2' }) })
+    await act(async () => { await result.current.handleProjectChange('p1') })
+    expect(result.current.flowProjectReady).toBe(true)
+
+    // 그 뒤 그 Flow 프로젝트가 삭제된다. 확인된 바인딩은 재오픈을 건너뛰므로 api 를 거쳐 돌아온다.
+    // 불신이 풀려 있어야 여기서 새로 만든다.
+    phase = 'dead'
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
+    await act(async () => { rerender({ mode: 'api', projectName: 'p1' }) })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(newFlowProject).toHaveBeenCalledTimes(2)
+  })
+
   // 생성은 성공했는데 그 사이 모드가 바뀌면, 만들어진 Flow 프로젝트는 이미 존재한다. 그걸 버리면
   // 다시 들어올 때 또 만들어 빈 프로젝트가 쌓인다 — 취소 여부와 무관하게 붙잡아 둬야 한다.
   it('생성 응답이 도착하기 전에 모드가 바뀌어도 만들어진 프로젝트를 잃지 않는다', async () => {

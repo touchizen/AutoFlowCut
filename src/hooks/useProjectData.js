@@ -833,6 +833,12 @@ export function useProjectData({
       return !!(cb && cb.projectName === projectName && cb.flowProjectId === fProjectId)
     }
     if (shouldClearFlowMapping(result)) {
+      // 방금 이 앱이 만든 프로젝트가 에러 페이지라면 다시 만들어도 같은 결과일 공산이 크다 —
+      // 매핑을 지우면 Case B 가 즉시 또 만들어 빈 프로젝트를 쏟아낸다. 사용자의 채택으로 넘긴다.
+      if (createdIdsRef.current.get(projectName) === fProjectId) {
+        createDistrustRef.current.add(projectName)
+        console.warn('[ProjectData] 생성한 Flow 프로젝트가 에러 페이지 — 재생성 대신 채택으로 넘긴다')
+      }
       // #R9-1: 죽은 매핑 → confirmed 기록도 지워(다음 mode-entry 가 새 establish 를 막지 않게).
       if (matchesConfirmed()) confirmedBindingRef.current = null
       // disk 정리는 supersede 와 무관하게 안전(죽은 매핑 제거).
@@ -852,6 +858,21 @@ export function useProjectData({
     if (confirmed) confirmedBindingRef.current = { projectName, flowProjectId: fProjectId }
     // #R9-1: 재오픈이 실패(미확인)면 stale confirmed 기록을 지운다 — 다음 mode-entry 가 재오픈하게.
     else if (matchesConfirmed()) confirmedBindingRef.current = null
+    // 방금 이 앱이 만든 프로젝트의 확인 결과를 여기서 한 번에 처리한다 — mode-entry 뿐 아니라
+    // 프로젝트 전환/복원의 open 도 이 함수를 지나므로, 어느 경로로 확인되든 같은 결론이 나온다.
+    if (createdIdsRef.current.get(projectName) === fProjectId) {
+      if (confirmed) {
+        // 확인됐으니 "만들어도 어차피 안 열린다"는 근거가 사라졌다 — 표식도 불신도 푼다.
+        // 남겨 두면 나중에 이 프로젝트가 정말 죽었을 때 자동 생성이 거부돼 다시 고착된다.
+        createdIdsRef.current.delete(projectName)
+        createDistrustRef.current.delete(projectName)
+      } else {
+        // 방금 만든 프로젝트가 확인에 실패했다면 다시 만들어도 같은 결과일 공산이 크다 —
+        // 재생성 루프로 빈 프로젝트를 쏟아내지 말고 사용자의 채택으로 넘긴다.
+        createDistrustRef.current.add(projectName)
+        console.warn('[ProjectData] 생성한 Flow 프로젝트가 확인에 실패 — 재생성 대신 채택으로 넘긴다')
+      }
+    }
     return confirmed
   }
 
@@ -917,23 +938,7 @@ export function useProjectData({
         setFlowProjectReady(false)
         try {
           const r = await window.electronAPI?.openFlowProject?.({ flowProjectId })
-          if (!cancelled) {
-            const ok = await applyOpenResult(r, flowProjectId, currentProjectName, () => !cancelled && modeRef.current === 'flow')
-            // 첫 확인에 성공하면 더 이상 "확인 대기 중인 생성물"이 아니다. 표식을 남겨 두면 한참
-            // 뒤에 그 프로젝트가 삭제돼 죽은 매핑이 됐을 때도 "생성 직후 실패"로 오인해 자동
-            // 생성을 세션 내내 막는다.
-            if (ok) {
-              createdIdsRef.current.delete(currentProjectName)
-              // 확인에 성공했으니 "생성해도 어차피 안 열린다"는 근거가 사라졌다 — 불신도 푼다.
-              // 남겨 두면 나중에 이 프로젝트가 정말 죽었을 때 자동 생성이 거부돼 다시 고착된다.
-              createDistrustRef.current.delete(currentProjectName)
-            }
-            // 방금 이 앱이 만든 프로젝트가 확인에 실패했다면 다시 만들어도 같은 결과일 공산이 크다.
-            if (!ok && createdIdsRef.current.get(currentProjectName) === flowProjectId) {
-              createDistrustRef.current.add(currentProjectName)
-              console.warn('[ProjectData] 생성한 Flow 프로젝트가 확인에 실패 — 재생성 대신 채택으로 넘긴다')
-            }
-          }
+          if (!cancelled) await applyOpenResult(r, flowProjectId, currentProjectName, () => !cancelled && modeRef.current === 'flow')
         } catch {
           if (!cancelled) {
             setFlowProjectReady(false)
