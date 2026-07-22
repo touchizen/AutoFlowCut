@@ -164,9 +164,6 @@ html, body {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 
 /* ============================================
    Main Panel & Tabs
@@ -597,6 +594,22 @@ html, body {
   user-select: none;
   pointer-events: none;
 }
+/* 숫자는 우측 정렬이라 자릿수마다 중심이 달라진다. 번호 박스의 고정 우측 끝(-12px)에
+   링을 맞춰 한 자리/두 자리에서도 위치가 흔들리지 않게 한다. */
+.prompt-paragraph.is-busy::after {
+  content: '';
+  position: absolute;
+  left: -30px;
+  top: 0;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--border-color);
+  border-top-color: var(--warning-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  pointer-events: none;
+}
 /* placeholder — RichTextPlugin 이 빈 상태에서만 표시 */
 /* §3.5.1: 거터 폭만큼 left 보정 — 텍스트와 동일한 x 위치에 정렬. */
 .prompt-placeholder {
@@ -772,6 +785,9 @@ html, body {
   .prompt-textarea-wrap.intro::before,
   .prompt-textarea-wrap.intro::after,
   .prompt-textarea-wrap.intro .prompt-textarea {
+    animation: none;
+  }
+  .prompt-paragraph.is-busy::after {
     animation: none;
   }
 }

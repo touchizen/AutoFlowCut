@@ -77,6 +77,7 @@ import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
+import { busyPromptLines } from './utils/promptBusyLines'
 import { toast } from './components/Toast'
 import { syncRefToFlow } from './utils/flowCharacterSync'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
@@ -407,6 +408,14 @@ function App() {
   }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  const imageBusyLines = useMemo(
+    () => busyPromptLines(scenes, { field: 'prompt', trimTrailing: false }),
+    [scenes],
+  )
+  const videoBusyLines = useMemo(
+    () => busyPromptLines(scenes, { field: 'videoT2VPrompt', trimTrailing: true }),
+    [scenes],
+  )
   const latestScenesRef = useRef(scenes)
   latestScenesRef.current = scenes
   const handleRequestSceneDelete = useCallback((sceneId, sceneIndex) => {
@@ -2233,6 +2242,7 @@ function App() {
           {activeTab === 'text' && (
             <PromptInput
               value={scenes.map(s => s.prompt).join('\n')}
+              busyLines={imageBusyLines}
               onChange={handleTextChange}
               disabled={anyRunning}
               references={scenesHook.references}
@@ -2252,6 +2262,7 @@ function App() {
               // 비디오 prompt 가 편집 순간 다른 씬으로 당겨지는 회귀를 막는다. 마지막 trailing
               // 빈 줄만 정리해서 표시 깔끔하게.
               value={scenes.map(s => s.videoT2VPrompt || '').join('\n').replace(/\n+$/, '')}
+              busyLines={videoBusyLines}
               onChange={handleVideoTextChange}
               disabled={anyRunning}
               references={(scenesHook.references || []).filter(isUsableVideoReference)}
