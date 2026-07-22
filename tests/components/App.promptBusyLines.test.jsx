@@ -312,4 +312,30 @@ describe('App prompt busyLines wiring', () => {
     expect(videoInput).toHaveAttribute('data-busy-lines', '1,2')
     await waitFor(() => expect(screen.queryByTestId('image-prompt-input')).not.toBeInTheDocument())
   })
+
+  // 위 테스트는 한 번만 렌더하므로 memo 의존성을 []로 바꿔도 통과한다(뮤테이션 실측). 실앱은 씬이
+  // 빈 배열로 시작해 나중에 채워지므로, 그 뮤턴트는 링이 영영 안 뜨는 죽은 기능이 된다.
+  // 씬이 바뀐 뒤 다시 계산되는 경로를 실제로 지나간다.
+  it('씬 상태가 바뀌면 busy 문단을 다시 계산한다', async () => {
+    const original = appMocks.scenesHook.scenes
+    try {
+      render(<App />)
+      expect(screen.getByTestId('image-prompt-input')).toHaveAttribute('data-busy-lines', '2,3,4')
+
+      // 새 배열로 교체한다 — 제자리 수정은 identity 가 안 바뀌어 실제 갱신 경로가 아니다.
+      appMocks.scenesHook.scenes = original.map(
+        scene => scene.id === 's1' ? { ...scene, status: 'generating' } : scene
+      )
+
+      // 탭을 오가며 App 을 다시 렌더시킨다.
+      fireEvent.click(screen.getByRole('button', { name: /tabs\.videoText/ }))
+      await screen.findByTestId('video-prompt-input')
+      fireEvent.click(screen.getByRole('button', { name: /tabs\.text/ }))
+
+      const imageInput = await screen.findByTestId('image-prompt-input')
+      expect(imageInput).toHaveAttribute('data-busy-lines', '0,2,3,4')
+    } finally {
+      appMocks.scenesHook.scenes = original
+    }
+  })
 })
