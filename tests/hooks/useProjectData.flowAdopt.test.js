@@ -17,7 +17,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useProjectData } from '../../src/hooks/useProjectData'
+import { useProjectData, BIND_WATCHDOG_MS } from '../../src/hooks/useProjectData'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -396,6 +396,47 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(result.current.flowProjectReady).toBe(true)
   })
 
+  // flow:new-project 는 URL 의 UUID 가 바뀐 것만 확인한다 — 그 페이지가 정상 composer 인지는
+  // 모른다(에러/랜딩 화면도 새 URL 을 받는다). 생성만으로 ready 를 열면 확인되지 않은 프로젝트로
+  // 생성이 나간다. ready 는 open 확인(applyOpenResult)에서만 열려야 한다.
+  it('생성에 성공해도 open 확인 전에는 ready 를 열지 않는다', async () => {
+    const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    // 만들어진 URL 이 사실 에러 페이지였다.
+    const openFlowProject = vi.fn().mockResolvedValue({ success: false, errorPage: true, url: urlOf('created-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(openFlowProject).toHaveBeenCalledWith({ flowProjectId: 'created-id' })
+    expect(result.current.flowProjectReady).toBe(false)
+  })
+
+  // 생성은 성공했는데 그 사이 모드가 바뀌면, 만들어진 Flow 프로젝트는 이미 존재한다. 그걸 버리면
+  // 다시 들어올 때 또 만들어 빈 프로젝트가 쌓인다 — 취소 여부와 무관하게 붙잡아 둬야 한다.
+  it('생성 응답이 도착하기 전에 모드가 바뀌어도 만들어진 프로젝트를 잃지 않는다', async () => {
+    let resolveNew
+    const newFlowProject = vi.fn(() => new Promise((r) => { resolveNew = r }))
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'created-id' })
+    const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true, url: urlOf('created-id') })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject }
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: false, error: 'disk' })
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+    // 생성 응답 전에 api 로 빠진다(effect cleanup → cancelled).
+    await act(async () => { rerender({ mode: 'api', projectName: 'p1' }) })
+    await act(async () => { resolveNew({ success: true, projectId: 'created-id' }); await Promise.resolve() })
+
+    // 다시 flow 로 — 이미 만들어진 프로젝트를 쓰고, 새로 만들면 안 된다.
+    fileSystemAPI.mergeProjectData.mockResolvedValue({ success: true })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+    expect(newFlowProject).toHaveBeenCalledTimes(1)
+    expect(result.current.flowProjectId).toBe('created-id')
+  })
+
   // 취소된 이전 bind 가 뒤늦게 끝나면서 in-flight 플래그를 끄면, 아직 IPC 가 진행 중인 최신
   // bind 위에 폴링이 재바인딩을 걸어 openFlowProject/newFlowProject 가 겹친다(두 소유자).
   it('취소된 이전 bind 가 끝나도 진행 중인 최신 bind 의 in-flight 를 풀지 않는다', async () => {
@@ -418,6 +459,32 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
 
     expect(res).toMatchObject({ ok: false, reason: 'bind-in-flight' })
     expect(newFlowProject).toHaveBeenCalledTimes(2)  // 세 번째 생성이 시작되면 안 된다
+  })
+
+  // IPC 가 영영 끝나지 않으면(끊긴 네트워크 폴더, 멈춘 loadURL) in-flight 잠금이 폴링의 재시도까지
+  // 막아 영구 차단이 된다. 영구 차단보다는 중복 시도 위험을 택한다.
+  it('bind 가 끝나지 않으면 워치독이 in-flight 를 풀어 재시도를 허용한다', async () => {
+    vi.useFakeTimers()
+    try {
+      const newFlowProject = vi.fn(() => new Promise(() => {}))  // 영영 끝나지 않는다
+      const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'x' })
+      window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject: vi.fn() }
+
+      const { result, rerender } = setupHook({ mode: 'api' })
+      await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })
+
+      let before
+      await act(async () => { before = await result.current.tryAdoptFlowProject() })
+      expect(before).toMatchObject({ reason: 'bind-in-flight' })
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(BIND_WATCHDOG_MS + 1000) })
+
+      let after
+      await act(async () => { after = await result.current.tryAdoptFlowProject() })
+      expect(after).toMatchObject({ reason: 'rebind-requested' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   // project.json 을 못 읽은 것과 "매핑이 없다"는 다르다. 읽기 실패를 매핑 없음으로 뭉개면

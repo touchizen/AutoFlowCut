@@ -427,6 +427,9 @@ export function pickFlowProjectId(data) {
  *   result: { success?, url?, already? }. already(이미 그 프로젝트)거나 url 에 flowProjectId 가
  *   포함되고 success!==false 면 confirmed. 검증 실패면 생성을 막아 잘못된 프로젝트 오염 방지.
  */
+// mode-entry 바인딩이 이 시간 안에 끝나지 않으면 in-flight 잠금을 푼다(영구 차단 방지).
+export const BIND_WATCHDOG_MS = 90_000
+
 export function isFlowOpenConfirmed(result, flowProjectId) {
   if (!result || result.success === false || !flowProjectId) return false
   return !!(result.already || (typeof result.url === 'string' && result.url.includes(flowProjectId)))
@@ -621,6 +624,11 @@ export function useProjectData({
   // 그 플래그의 소유자(세대). 취소된 이전 bind 가 뒤늦게 끝나면서 진행 중인 최신 bind 의
   // 플래그를 끄면, 폴링이 그 위에 재바인딩을 걸어 open/create 가 겹친다.
   const bindGenerationRef = useRef(0)
+  // 이번 세션에 이 앱이 만든 Flow 프로젝트(projectName → id). 만든 프로젝트가 open 확인에
+  // 실패하면(에러 페이지) 다시 만들어도 같은 결과일 가능성이 크다 — 재생성 루프로 빈 프로젝트를
+  // 쏟아내지 않도록, 그 프로젝트는 생성 대신 채택(사용자 확인)으로 넘긴다.
+  const createdIdsRef = useRef(new Map())
+  const createDistrustRef = useRef(new Set())
   // 폴링이 mode-entry 를 다시 돌리기 위한 nonce. 폴링이 직접 openFlowProject 를 부르지 않고
   // 이 값만 올려, Case A/B 로직과 소유권을 한 곳에 둔다.
   const [bindNonce, setBindNonce] = useState(0)
@@ -894,7 +902,14 @@ export function useProjectData({
         setFlowProjectReady(false)
         try {
           const r = await window.electronAPI?.openFlowProject?.({ flowProjectId })
-          if (!cancelled) await applyOpenResult(r, flowProjectId, currentProjectName, () => !cancelled && modeRef.current === 'flow')
+          if (!cancelled) {
+            const ok = await applyOpenResult(r, flowProjectId, currentProjectName, () => !cancelled && modeRef.current === 'flow')
+            // 방금 이 앱이 만든 프로젝트가 확인에 실패했다면 다시 만들어도 같은 결과일 공산이 크다.
+            if (!ok && createdIdsRef.current.get(currentProjectName) === flowProjectId) {
+              createDistrustRef.current.add(currentProjectName)
+              console.warn('[ProjectData] 생성한 Flow 프로젝트가 확인에 실패 — 재생성 대신 채택으로 넘긴다')
+            }
+          }
         } catch {
           if (!cancelled) {
             setFlowProjectReady(false)
@@ -949,35 +964,42 @@ export function useProjectData({
           return
         }
         try {
-          const r = await window.electronAPI?.newFlowProject?.()
-          if (!cancelled && r?.success && r?.projectId) {
+          const distrusted = createDistrustRef.current.has(currentProjectName)
+          if (distrusted) console.warn('[ProjectData] mode-entry: 생성 불신 상태 — 사용자의 채택을 기다린다')
+          const r = distrusted ? null : await window.electronAPI?.newFlowProject?.()
+          if (r?.success && r?.projectId) {
+            createdIdsRef.current.set(currentProjectName, r.projectId)
+            // 만들어진 프로젝트는 취소 여부와 무관하게 이 로컬 프로젝트의 것이다 — 저장을
+            // 기다리기 전에 먼저 붙잡아 둔다. 여기서 cancelled 로 버리면 그 프로젝트를 잃고
+            // 다시 들어올 때 또 만든다(빈 프로젝트 양산).
+            pendingPersistRef.current.set(currentProjectName, r.projectId)
             // #R6-8: Persist ONLY the new flowProjectId by merging into disk JSON.
             // saveCurrentProject would write this effect closure's STALE scenes/refs
             // snapshot, clobbering edits made since the closure was created.
             // ⚠️ 저장을 ready 보다 **먼저** 확인한다(fail-open 금지). 저장 실패인데 ready 를 열면
             //    다음 실행에서 저장된 id 가 없어 또 새 Flow 프로젝트를 만든다(빈 프로젝트 양산).
             const saved = await persistFlowProjectId(currentProjectName, r.projectId)
-            if (cancelled || modeRef.current !== 'flow') return
+            if (saved && pendingPersistRef.current.get(currentProjectName) === r.projectId) {
+              pendingPersistRef.current.delete(currentProjectName)
+            }
+            if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch) return
             if (!saved) {
               // 프로젝트는 이미 만들어졌다 — 새로 만들 필요 없이 저장만 재시도하면 된다.
               // App 의 5초 폴링(tryAdoptFlowProject)이 이 pending 을 처리한다.
               setFlowProjectReady(false)
-              pendingPersistRef.current.set(currentProjectName, r.projectId)
               console.warn('[ProjectData] mode-entry: 새 Flow 프로젝트 저장 실패 — 저장 재시도까지 생성 차단')
               return
             }
-            // #R9-2: newFlowProject 가 새 프로젝트로 진입시켰으니 confirmed 로 기록 →
-            //   setFlowProjectId 로 인한 mode-entry 재실행(Case A)이 중복 재오픈하지 않게(transient flip 방지).
-            confirmedBindingRef.current = { projectName: currentProjectName, flowProjectId: r.projectId }
+            // ⚠️ 여기서 ready 를 열지 않는다. flow:new-project 는 URL 의 UUID 가 바뀐 것만 확인하고
+            //    그 페이지가 정상 composer 인지는 모른다(에러/랜딩 화면도 새 URL 을 받는다).
+            //    id 만 세우고, Case A 의 openFlowProject 확인을 거쳐야 ready 가 열린다 —
+            //    readiness 를 여는 곳은 applyOpenResult(및 채택의 자체 확인) 하나로 유지한다.
             setFlowProjectId(r.projectId)
-            // flowProjectReady=true: creation succeeded AND was persisted — generation is now unblocked.
-            setFlowProjectReady(true)
-            console.log('[ProjectData] mode-entry: new Flow project created:', r.projectId)
+            console.log('[ProjectData] mode-entry: new Flow project created — open 확인 대기:', r.projectId)
           } else if (!cancelled) {
             // newFlowProject failed or not available (live-only path)
-            // Leave flowProjectReady=false so generation is blocked until next retry.
-            // NOTE(live-tuning): If newFlowProject returns success:false (e.g. view not ready),
-            // user must re-enter flow mode or manually retry. Consider adding a retry UI.
+            // Leave flowProjectReady=false so generation is blocked until the poll asks for a rebind
+            // (App 의 5초 폴링이 bindNonce 를 올려 이 effect 를 다시 돌린다).
             setFlowProjectReady(false)
             console.warn('[ProjectData] mode-entry newFlowProject failed or unavailable')
             // 회복 준비: 실패 시점에 Flow 가 보고 있는 프로젝트 id 를 기록해 둔다. 이후 사용자가
@@ -1014,10 +1036,19 @@ export function useProjectData({
 
     const myBindGeneration = ++bindGenerationRef.current
     bindInFlightRef.current = true
-    bind().finally(() => {
+    const releaseBind = () => {
       // 아직 내가 최신 세대일 때만 푼다 — 취소된 이전 세대는 남의 in-flight 를 끄지 않는다.
       if (bindGenerationRef.current === myBindGeneration) bindInFlightRef.current = false
-    })
+    }
+    // IPC 가 영영 안 끝나면(끊긴 네트워크 폴더, 멈춘 loadURL) 플래그가 영구히 잠겨 폴링의 재시도까지
+    // 막힌다. 영구 차단보다는 중복 시도 위험을 택한다 — 넉넉한 워치독으로만 푼다.
+    const watchdog = setTimeout(() => {
+      if (bindGenerationRef.current === myBindGeneration && bindInFlightRef.current) {
+        console.warn('[ProjectData] mode-entry bind 가 끝나지 않아 in-flight 를 해제한다(워치독)')
+        bindInFlightRef.current = false
+      }
+    }, BIND_WATCHDOG_MS)
+    bind().finally(() => { clearTimeout(watchdog); releaseBind() })
 
     return () => { cancelled = true }
   // #R3-2: hydrated 를 dep 에 추가 — tryAutoRestore 완료 후 state 변경이

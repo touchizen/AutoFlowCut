@@ -362,10 +362,10 @@ describe('#R3-2: hydrated state re-triggers create-new after hydration', () => {
     expect(result.current.flowProjectReady).toBe(true)
   })
 
-  it('#R9-2: newFlowProject success does NOT trigger a redundant openFlowProject re-open', async () => {
-    // After Case B creates the project, setFlowProjectId reruns the effect (Case A). The
-    // confirmedBindingRef recorded by Case B must make Case A skip the re-open — otherwise a
-    // transient re-open failure would flip flowProjectReady false.
+  it('newFlowProject success is confirmed by a Case A open before readiness opens', async () => {
+    // flow:new-project 는 URL 의 UUID 가 바뀐 것만 확인한다 — 그 페이지가 정상 composer 인지는
+    // 모른다(에러/랜딩 화면도 새 URL 을 받는다). 그래서 생성 뒤의 재오픈은 중복이 아니라
+    // **확인**이며, ready 는 그 확인에서만 열린다.
     const createdId = 'r9-2-proj'
     const newFlowProject = vi.fn().mockResolvedValue({ success: true, projectId: createdId })
     const openFlowProject = vi.fn().mockResolvedValue({ success: true, already: true })
@@ -377,7 +377,9 @@ describe('#R3-2: hydrated state re-triggers create-new after hydration', () => {
     expect(newFlowProject).toHaveBeenCalledTimes(1)
     expect(result.current.flowProjectId).toBe(createdId)
     expect(result.current.flowProjectReady).toBe(true)
-    expect(openFlowProject).not.toHaveBeenCalled()
+    expect(openFlowProject).toHaveBeenCalledWith({ flowProjectId: createdId })
+    // 확인은 한 번이면 된다 — 확인된 바인딩은 다시 열지 않는다.
+    expect(openFlowProject).toHaveBeenCalledTimes(1)
   })
 
   it('api mode: newFlowProject never called even after hydration completes', async () => {
