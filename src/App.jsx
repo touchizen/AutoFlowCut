@@ -550,7 +550,7 @@ function App() {
   })
 
   // Project Data 관리
-  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId, tryAdoptFlowProject } = useProjectData({
+  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, loadEpochRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId, tryAdoptFlowProject } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
     framePairs, framePairsRef, setFramePairs,
@@ -1300,12 +1300,15 @@ function App() {
     }
     // #R17-7: 시작 모드 스냅샷 — 다운로드 await 동안 모드가 바뀌면(stale 엔진) 중단.
     const startMode = modeRef.current
+    const startLoadEpoch = loadEpochRef.current
 
     // 타입 판별: framePair는 pair.id가 fp_*, videoScene은 vscene_*
     const isFramePair = typeof item.id === 'string' && item.id.startsWith('fp_')
     const projectName = ensureProjectName()
 
     const onUpdate = (id, newStatus, result = {}) => {
+      // 프로젝트/load 소유권이 바뀌었으면 id가 재사용된 새 프로젝트의 row를 보기 전에 중단한다.
+      if (loadEpochRef.current !== startLoadEpoch) return
       // #R23-7: retryVideoDownload 완료는 비동기라 preflight 모드 가드(아래 R17-7) 이후에도
       //   모드가 바뀔 수 있다. 시작 모드와 현재 모드가 다르면 stale 교차-모드 비디오 데이터로
       //   현재 모드 UI 를 덮어쓰지 않는다.
@@ -1314,6 +1317,10 @@ function App() {
         return
       }
       if (isFramePair) {
+        const fpOwner = framePairsRef.current.find(p => p.id === id)
+        // retry 완료 전에 행이 삭제됐으면 pair와 owner scene 모두 no-op.
+        if (!fpOwner) return
+
         setFramePairs(prev => prev.map(p =>
           p.id === id ? {
             ...p, status: newStatus,
@@ -1334,11 +1341,10 @@ function App() {
           } : p
         ))
         if (newStatus === 'complete' && result?.base64) {
-          const fp = framePairs.find(p => p.id === id)
           // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
           // rows have ownerSceneId=null and are skipped by the truthy guard.
-          if (fp?.ownerSceneId) {
-            scenesHook.updateScene(fp.ownerSceneId, {
+          if (fpOwner.ownerSceneId) {
+            scenesHook.updateScene(fpOwner.ownerSceneId, {
               videoI2V: result.base64,
               videoI2VPath: result.videoPath || null,
               videoI2VDisabled: null,
@@ -1425,7 +1431,7 @@ function App() {
     // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
     onUpdate(item.id, 'pending', { error: null })
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
-  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, framePairs, scenesHook, videoScenesHook, t])
+  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t])
 
   const styleResolver = createStyleResolver({
     activeTab,
@@ -1807,6 +1813,7 @@ function App() {
         // I2V는 스타일 무관 — Stop 버튼에 표시 안 함
         setRunningStyle({ styleId: null, applies: false })
         setHasPendingBatch(true)
+        const i2vStartEpoch = loadEpochRef.current
 
         videoAutomation.start({
           mode: 'i2v',
@@ -1821,6 +1828,8 @@ function App() {
           flowPacingMaxMs: settings.flowPacingMaxMs,
           seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {
+            // epoch를 owner lookup보다 먼저 검사해야 재사용된 fp_* id를 새 프로젝트 소유자로 오인하지 않는다.
+            if (loadEpochRef.current !== i2vStartEpoch) return
             const fpOwner = framePairsRef.current.find(p => p.id === id)
             // F2-1: 비동기 결과가 오기 전에 행이 삭제됐으면 owner scene도 건드리지 않는다.
             if (!fpOwner) return

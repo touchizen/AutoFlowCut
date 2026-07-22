@@ -14,6 +14,7 @@ import { buildI2VScenePatch } from '../utils/i2vScenePatch'
 // 없으면(기능 추가 전 프로젝트 등) 직전 프로젝트 값을 물려받지 않고 이 기본값으로
 // 떨어진다 — 그래야 화면비가 전역처럼 새지 않고 프로젝트별로 결정론적이다.
 const DEFAULT_ASPECT_RATIO = '16:9'
+let warnedMissingFramePairsRef = false
 
 /**
  * 로드/복원 시 중단된 'generating' 상태를 'pending' 으로 정규화.
@@ -505,6 +506,13 @@ export function useProjectData({
   onSaveError = null, // 프로젝트 저장 실패 시 호출 (인자: 에러 메시지)
   mode = 'api', // 'flow' | 'api' — flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화
 }) {
+  // CONTRACT: runtime callers must provide the synchronous framePairs mirror. The array fallback
+  // below exists only for legacy/test callers and can observe a stale render closure during recovery.
+  if (import.meta.env.DEV && !framePairsRef && !warnedMissingFramePairsRef) {
+    warnedMissingFramePairsRef = true
+    console.warn('[useProjectData] framePairsRef is required for live recovery owner checks; falling back to a stale render snapshot')
+  }
+
   // videoScenes (T2V) state 업데이트 헬퍼 — recovery 가 patch 를 던지면 적용.
   const applyVideoScenePatch = (id, patch) => {
     if (!setVideoScenes) return
@@ -526,6 +534,8 @@ export function useProjectData({
     const guardedVideoScenePatch = (id, patch) => { if (stillCurrent()) applyVideoScenePatch(id, patch) }
     const guardedFramePairPatch = (id, patch) => {
       if (!stillCurrent() || !setFramePairs) return
+      // Runtime contract requires framePairsRef; fallback is legacy/test compatibility only and is
+      // intentionally noisy in dev so a new caller cannot silently reintroduce stale-owner lookup.
       const liveFramePairs = framePairsRef?.current ?? framePairs ?? []
       const fpOwner = liveFramePairs.find(fp => fp.id === id)
       // F2-1: recovery 도착 전에 행이 삭제됐으면 pair와 owner scene 모두 no-op.
@@ -1492,6 +1502,7 @@ export function useProjectData({
       return { ok: !(res && res.success === false) }
     },
     isRestoringRef,  // auto-save 가드용
+    loadEpochRef,    // async generation/retry callbacks share the project-load ownership epoch
     projectLoading,  // 로딩 오버레이용
     // 하이드레이션 완료 신호(즉시 읽기). 스토리 캐릭터 푸시가 references 가 올라오기 전에
     //   도착하면 빈 배열 위에 upsert 해 디스크의 카드를 새 카드로 덮어쓴다 — 그걸 막는 게이트용.

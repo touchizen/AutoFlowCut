@@ -5,7 +5,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 const appMocks = vi.hoisted(() => {
   const noop = vi.fn()
   const asyncNoop = vi.fn(async () => null)
+  const loadEpochRef = { current: 0 }
   const state = {
+    mode: 'api',
     generatingSceneId: null,
     preparingRefs: false,
     refBatchActive: false,
@@ -76,6 +78,7 @@ const appMocks = vi.hoisted(() => {
     setReferences: noop,
     setSrtTrack: noop,
     updateScene: vi.fn(),
+    getMatchingReferences: vi.fn(() => []),
     updateSrtLine: noop,
     addScene: noop,
     trimScenes: noop,
@@ -85,12 +88,14 @@ const appMocks = vi.hoisted(() => {
   }
   const genAPI = {
     getAccessToken: vi.fn(async () => null),
+    checkVideoStatus: vi.fn(),
+    downloadVideo: vi.fn(),
     fetchGallery: vi.fn(async () => ({ success: true, items: [] })),
     listFlowProjects: asyncNoop,
     capabilities: {},
   }
   return {
-    noop, asyncNoop, state,
+    noop, asyncNoop, state, loadEpochRef,
     generationEnqueue, generationClearQueue, sceneBatchStart, automationStop, retryErrors, retryScene, videoStart,
     scenes, scenesHook, genAPI, toastWarning,
   }
@@ -113,7 +118,7 @@ vi.mock('../../src/components/Toast', () => ({
     info: appMocks.noop,
   },
 }))
-vi.mock('../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'api', clearMode: appMocks.noop }) }))
+vi.mock('../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: appMocks.state.mode, clearMode: appMocks.noop }) }))
 vi.mock('../../src/contexts/AuthContext', () => ({
   useAuth: () => ({
     isAuthenticated: true,
@@ -231,6 +236,7 @@ vi.mock('../../src/hooks/useProjectData', () => ({
     isRestoringRef: { current: false },
     projectLoading: false,
     hydratedRef: { current: true },
+    loadEpochRef: appMocks.loadEpochRef,
     flowProjectReady: true,
     flowProjectId: null,
     tryAdoptFlowProject: appMocks.asyncNoop,
@@ -401,6 +407,8 @@ describe('App prompt busyLines wiring', () => {
   afterEach(() => {
     cleanup()
     appMocks.state.generatingSceneId = null
+    appMocks.state.mode = 'api'
+    appMocks.loadEpochRef.current = 0
     appMocks.state.preparingRefs = false
     appMocks.state.refBatchActive = false
     appMocks.state.isSceneBatchQueued = false
@@ -414,6 +422,8 @@ describe('App prompt busyLines wiring', () => {
     appMocks.scenesHook.scenes = appMocks.scenes
     appMocks.scenesHook.scenesRef.current = appMocks.scenes
     appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue(null)
+    appMocks.genAPI.checkVideoStatus.mockReset()
+    appMocks.genAPI.downloadVideo.mockReset()
     appMocks.generationEnqueue.mockClear()
     appMocks.generationClearQueue.mockClear()
     appMocks.sceneBatchStart.mockClear()
@@ -422,6 +432,7 @@ describe('App prompt busyLines wiring', () => {
     appMocks.retryScene.mockClear()
     appMocks.videoStart.mockClear()
     appMocks.toastWarning.mockClear()
+    appMocks.scenesHook.updateScene.mockClear()
   })
 
   it('이미지·비디오 PromptInput에 각 value 규칙으로 계산한 busy 문단을 전달한다', async () => {
@@ -550,6 +561,55 @@ describe('App prompt busyLines wiring', () => {
     expect(appMocks.genAPI.getAccessToken).not.toHaveBeenCalled()
     expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
     expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy')
+  })
+
+  it('비차단 StylePicker 선택은 handleStart preflight와 empty-ref gate를 거쳐 UI 배치를 시작한다', async () => {
+    appMocks.state.mode = 'flow'
+    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
+    const { container } = render(<App />)
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
+    appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue('token')
+
+    fireEvent.click(container.querySelector('.btn-style-link'))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'pick-style' }))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(appMocks.sceneBatchStart).toHaveBeenCalledTimes(1))
+    expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1)
+    // sceneIds/batchIntent/currentRefs는 runEmptyRefGateFlow가 launch 직전에 만드는 payload다.
+    // StylePicker가 automationStartRef를 직접 부르면 이 계약을 만들 수 없다.
+    expect(appMocks.sceneBatchStart).toHaveBeenCalledWith(expect.objectContaining({
+      selectedStyleRefId: 'preset:test',
+      sceneIds: ['s1', 's2', 's3', 's4'],
+      batchIntent: 'full',
+      currentRefs: [],
+    }))
+  })
+
+  it("비차단 StylePicker 선택 뒤 preflight 중 개별 생성이 시작되면 source:'ui' 재검사로 배치를 막는다", async () => {
+    appMocks.state.mode = 'flow'
+    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
+    const { container, rerender } = render(<App />)
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
+
+    const token = deferred()
+    appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
+    fireEvent.click(container.querySelector('.btn-style-link'))
+    fireEvent.click(screen.getByRole('button', { name: 'pick-style' }))
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
+
+    appMocks.state.generatingSceneId = 's4'
+    rerender(<App />)
+    await act(async () => {
+      token.resolve('token')
+      await token.promise
+    })
+
+    await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy'))
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
   })
 
   it('태그 Proceed 전에 개별 씬 생성이 시작되면 auth 재검사나 enqueue 없이 알린다', async () => {
@@ -813,5 +873,129 @@ describe('App prompt busyLines wiring', () => {
 
     expect(appMocks.scenesHook.updateScene).not.toHaveBeenCalled()
     await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([loadedPair]))
+  })
+
+  it('I2V 시작 뒤 load epoch가 바뀌면 같은 fp_1의 새 프로젝트 pair와 owner 씬을 건드리지 않는다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    render(<App />)
+
+    fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+    await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+    const oldPair = {
+      id: 'fp_1', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
+      prompt: 'old scene', selected: true, status: 'pending',
+    }
+    act(() => appMocks.state.framePanelProps.onUpdate([oldPair]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([oldPair]))
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await waitFor(() => expect(appMocks.videoStart).toHaveBeenCalledTimes(1))
+    const { onItemUpdate } = appMocks.state.videoStartOptions
+    const newPair = {
+      id: 'fp_1', ownerSceneId: 's2', startSceneId: 's2', endSceneId: null,
+      prompt: 'new scene', selected: true, status: 'pending',
+    }
+
+    appMocks.scenesHook.updateScene.mockClear()
+    act(() => {
+      appMocks.loadEpochRef.current += 1
+      appMocks.state.projectDataProps.setFramePairs([newPair])
+      onItemUpdate('fp_1', 'complete', { base64: 'OLD_VIDEO', videoPath: '/old.mp4' })
+    })
+
+    expect(appMocks.scenesHook.updateScene).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ videoI2V: 'OLD_VIDEO' }),
+    )
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([newPair]))
+  })
+
+  it('다운로드 재시도 대기 중 행을 지우면 늦은 완료가 pair와 owner 씬을 모두 건드리지 않는다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    appMocks.genAPI.checkVideoStatus.mockResolvedValue({
+      success: true,
+      statuses: [{ status: 'complete', mediaId: 'media-old', videoUrl: 'https://video.test/old' }],
+    })
+    const download = deferred()
+    appMocks.genAPI.downloadVideo.mockReturnValue(download.promise)
+    render(<App />)
+
+    fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+    await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+    const pair = {
+      id: 'fp_1', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
+      prompt: 'old scene', selected: true, status: 'error',
+      generationId: 'generation-old', mediaId: 'media-old',
+    }
+    act(() => appMocks.state.framePanelProps.onUpdate([pair]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([pair]))
+
+    await act(async () => {
+      await appMocks.state.framePanelProps.onVideoRetry(pair)
+    })
+    await waitFor(() => expect(appMocks.genAPI.downloadVideo).toHaveBeenCalledTimes(1))
+
+    act(() => appMocks.state.framePanelProps.onUpdate([]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([]))
+    appMocks.scenesHook.updateScene.mockClear()
+    await act(async () => {
+      download.resolve({ success: true, base64: 'OLD_VIDEO' })
+      await download.promise
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(appMocks.scenesHook.updateScene).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ videoI2V: 'OLD_VIDEO' }),
+    )
+    expect(appMocks.state.framePanelProps.framePairs).toEqual([])
+  })
+
+  it('다운로드 재시도 시작 뒤 load epoch가 바뀌면 같은 fp_1의 새 pair와 owner 씬을 건드리지 않는다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    appMocks.genAPI.checkVideoStatus.mockResolvedValue({
+      success: true,
+      statuses: [{ status: 'complete', mediaId: 'media-old', videoUrl: 'https://video.test/old' }],
+    })
+    const download = deferred()
+    appMocks.genAPI.downloadVideo.mockReturnValue(download.promise)
+    render(<App />)
+
+    fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+    await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+    const oldPair = {
+      id: 'fp_1', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
+      prompt: 'old scene', selected: true, status: 'error',
+      generationId: 'generation-old', mediaId: 'media-old',
+    }
+    act(() => appMocks.state.framePanelProps.onUpdate([oldPair]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([oldPair]))
+
+    await act(async () => {
+      await appMocks.state.framePanelProps.onVideoRetry(oldPair)
+    })
+    await waitFor(() => expect(appMocks.genAPI.downloadVideo).toHaveBeenCalledTimes(1))
+    const newPair = {
+      id: 'fp_1', ownerSceneId: 's2', startSceneId: 's2', endSceneId: null,
+      prompt: 'new scene', selected: true, status: 'pending',
+    }
+
+    act(() => {
+      appMocks.loadEpochRef.current += 1
+      appMocks.state.projectDataProps.setFramePairs([newPair])
+    })
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([newPair]))
+    appMocks.scenesHook.updateScene.mockClear()
+    await act(async () => {
+      download.resolve({ success: true, base64: 'OLD_VIDEO' })
+      await download.promise
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(appMocks.scenesHook.updateScene).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ videoI2V: 'OLD_VIDEO' }),
+    )
+    expect(appMocks.state.framePanelProps.framePairs).toEqual([newPair])
   })
 })

@@ -83,12 +83,16 @@ function makeGenAPI() {
 }
 
 function makeHookProps(overrides = {}) {
+  const framePairs = overrides.framePairs || []
+  const framePairsRef = Object.prototype.hasOwnProperty.call(overrides, 'framePairsRef')
+    ? overrides.framePairsRef
+    : { current: framePairs }
   return {
     settings: { projectName: 'old', saveMode: 'folder', aspectRatio: '16:9' },
     setSettings: vi.fn(),
     scenes: [], references: [], setScenes: vi.fn(), setReferences: vi.fn(),
     videoScenes: [], setVideoScenes: vi.fn(),
-    framePairs: [], setFramePairs: vi.fn(),
+    framePairs, framePairsRef, setFramePairs: vi.fn(),
     selectedStyleRefId: null, setSelectedStyleRefId: vi.fn(),
     srtTrack: [], setSrtTrack: vi.fn(),
     openSettings: vi.fn(), onAudioSwitch: vi.fn(),
@@ -97,6 +101,20 @@ function makeHookProps(overrides = {}) {
     ...overrides,
   }
 }
+
+describe('framePairsRef live-owner 계약', () => {
+  it('dev에서 framePairsRef 없이 useProjectData를 호출하면 stale fallback 경고를 낸다', () => {
+    commonBeforeEach()
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: false })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { unmount } = renderHook(() => useProjectData(makeHookProps({ framePairsRef: null })))
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('framePairsRef'))
+    unmount()
+    warn.mockRestore()
+  })
+})
 
 function commonBeforeEach() {
   vi.resetAllMocks()
