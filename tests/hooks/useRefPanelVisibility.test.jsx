@@ -62,6 +62,22 @@ describe('useRefPanelVisibility', () => {
     expect(hook.result.current.isOpen).toBe(false)
   })
 
+  // 위 표는 패널을 먼저 opening 으로 열어 두고 시작하므로 "유지" 절반만 지나간다. bridge 가 닫힌
+  // 패널을 여는 뮤테이션이 살아남아서(실측) 열지 않는다는 절반을 따로 지나가게 한다.
+  it.each([
+    ['ref Stop 정리', { stoppingRefs: true }],
+    ['Flow 이미지 preflight', { automationStatus: 'preparing' }],
+  ])('%s bridge 만 켜지면 닫힌 패널을 열지 않는다', (_label, bridge) => {
+    const hook = renderVisibility(bridge)
+    act(() => vi.runAllTimers())
+    expect(hook.result.current.isOpen).toBe(false)
+
+    // 신호가 이어져도 계속 닫혀 있어야 한다 — bridge 는 소유권을 만들지 못한다.
+    hook.rerender({ ...baseProps, ...bridge })
+    act(() => vi.runAllTimers())
+    expect(hook.result.current.isOpen).toBe(false)
+  })
+
   it('refBatchActive 하나만 true인 아이템 auth 창에서도 계속 열린다', () => {
     const hook = renderVisibility({ refBatchActive: true })
     hook.rerender({ ...baseProps, refBatchActive: true })
