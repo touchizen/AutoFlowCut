@@ -11,7 +11,16 @@ import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { resolveMentions } from '../utils/mentionParser'
 import { getAuthRequiredMessage } from '../utils/authMessages'
 
-export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true }) {
+/**
+ * @param {object} deps
+ * @param {(req: {scene: object, names?: string[]}) => Promise<{proceeded: boolean, refs?: Array}>} [deps.requestMentionSync]
+ *   flow 모드에서 "이 씬의 @멘션 중 동기화가 필요한 게 있으면 처리해 달라"는 요청. 호출부(App)가
+ *   대상 판정과 동기화 게이트(모달)를 소유한다 — 배치(Start)와 같은 게이트를 재사용하기 위함.
+ *   names 가 있으면 "엔진이 이 이름들을 미해결로 거절했다"는 사후 복구 요청이다.
+ *   반환: proceeded=false 면 사용자가 취소한 것(생성하지 않는다), refs 가 있으면 그것이
+ *   authoritative refs 다(React state 는 같은 tick 에 stale).
+ */
+export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true, requestMentionSync }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
 
   // 핵심 생성 로직
@@ -66,7 +75,16 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       // referenceResolver 는 data 우선 → name 디스크 fallback 순으로 읽는데,
       // 여기서 data 를 떨구면 디스크에 없는 ref 가 조용히 빈 inlineData parts 로
       // 넘어가 Gemini 가 캐릭터 일관성을 못 잡는다.
-      const matchedRefs = scenesHook.getMatchingReferences(scene)
+      // 배치(Start)와 같은 계약: 미동기화 @멘션 캐릭터는 생성 **전에** 동기화한다. 개별 생성만
+      // 이 게이트가 없어서, 같은 프롬프트가 Start 로는 되고 씬 카드 버튼으로는 영구 실패했다.
+      let effectiveRefs = scenesHook.references || []
+      if (genAPI?.mode === 'flow' && requestMentionSync) {
+        const gate = await requestMentionSync({ scene })
+        if (gate && gate.proceeded === false) { setGeneratingSceneId(null); return }
+        if (gate?.refs) effectiveRefs = gate.refs
+      }
+
+      const matchedRefs = scenesHook.getMatchingReferences(scene, effectiveRefs)
         .filter(r => r.mediaId || r.name || r.data || r.filePath)
         .map(r => ({
           category: r.category,
@@ -84,7 +102,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         : overrideStyleId == null ? null
         : overrideStyleId
       // `@name` 인라인 멘션은 engineApi 내부에서 제거됨 (M4 T7). 여기선 로깅 전용.
-      const allRefs = scenesHook.references || []
+      const allRefs = effectiveRefs
       const { missing } = resolveMentions(scene.prompt, allRefs)
       if (missing.length > 0) console.warn('[Scene]', sceneId, 'unknown @mentions:', missing.join(', '))
       // 스타일 프롬프트 합치기 (style_tag 프리셋 fallback + override)
@@ -96,7 +114,26 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await genAPI.generateImage(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel, references: allRefs })
+      const callEngine = (refs) => genAPI.generateImage(
+        styledPrompt,
+        scenesHook.getMatchingReferences(scene, refs).filter(r => r.mediaId || r.name || r.data || r.filePath).map(r => ({
+          category: r.category, mediaId: r.mediaId || null, caption: r.caption || '',
+          name: r.name, data: r.data || null, filePath: r.filePath || null,
+        })),
+        { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel, references: refs },
+      )
+      let result = await genAPI.generateImage(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel, references: allRefs })
+
+      // 프리플라이트가 "동기화할 것 없음"으로 봤는데도 엔진이 미해결로 거절할 수 있다 — 앱이 들고
+      // 있던 동기화 판정이 옛것이면 그렇다(Flow 에서 사용자가 직접 고친 경우 등). 그때 그냥 에러로
+      // 끝내면 사용자는 손쓸 방법이 없다. 이름을 알고 있으니 그 자리에서 동기화를 제안하고 **한 번만**
+      // 재시도한다(동기화 후에도 미해결이면 그대로 실패 — 무한 루프 금지).
+      if (result?.errorKind === 'unresolved-mentions' && genAPI?.mode === 'flow' && requestMentionSync) {
+        const recovery = await requestMentionSync({ scene, names: result.unresolvedNames || [] })
+        if (recovery?.proceeded) {
+          result = await callEngine(recovery.refs || effectiveRefs)
+        }
+      }
 
       const { success, sceneUpdate } = await finalizeGeneratedImage({
         result, genAPI,
@@ -143,7 +180,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   // R2-5: flowProjectReady missing from dep array → stale closure could allow
   // generation when not ready, or block after recovery. Adding it here ensures
   // the callback sees the current value on every invocation.
-  }, [settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, flowProjectReady])
+  }, [settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, flowProjectReady, requestMentionSync])
 
   // 큐를 통한 생성. overrideStyleId 선택 — MCP `app_generate_scene(sceneId, styleId)`에서 사용.
   // sceneOverride 선택 — 상세 모달 재생성이 방금 편집한 스냅샷(editData)을 명시 전달(Issue #4/#5).

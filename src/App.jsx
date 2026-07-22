@@ -66,6 +66,7 @@ import { collectTagErrors } from './utils/tagMatch'
 import { planMentionTagMerges } from './utils/mentionTagMerge'
 import {
   buildM1FlowReferenceExclusionToast,
+  flowSyncable,
 } from './utils/refImageGuard'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
@@ -884,9 +885,35 @@ function App() {
     flowProjectId: _flowProjectId, projectNameRef,
   })
 
+  // 개별 씬 생성이 "이 씬의 미동기화 @멘션을 처리해 달라"고 요청하면 **배치와 같은** 동기화
+  // 게이트를 연다. 대상이 없으면 모달 없이 즉시 진행한다(평소엔 아무것도 안 뜬다).
+  //   - names 없음(프리플라이트): 씬이 멘션한 캐릭터 중 미동기화 + 수리 가능한 것
+  //   - names 있음(엔진이 미해결로 거절한 뒤): 그 이름들. 우리 기록상 synced 여도 엔진이 못 쓴다고
+  //     했으므로 동기화 상태로 거르지 않는다 — 기록이 옛것일 수 있다.
+  const syncGateOpenRef = useRef(false)
+  syncGateOpenRef.current = !!syncGate
+  const requestMentionSync = useCallback(({ scene, names }) => {
+    if (syncGateOpenRef.current) return Promise.resolve({ proceeded: false })
+    const refs = referencesRef.current || []
+    const wanted = new Set((names || []).map(n => String(n).toLowerCase()))
+    const targets = (wanted.size > 0
+      ? refs.filter(r => r?.type === 'character' && r?.name && wanted.has(String(r.name).toLowerCase()))
+      : selectUnsyncedMentionedRefs([scene], refs)
+    ).filter(flowSyncable)
+    if (targets.length === 0) return Promise.resolve({ proceeded: true })
+    return new Promise((resolve) => {
+      setSyncGate({
+        refs: targets,
+        proceed: (patchedRefs) => resolve({ proceeded: true, refs: patchedRefs }),
+        onCancel: () => resolve({ proceeded: false }),
+      })
+    })
+  }, [])
+
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
-    settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady
+    settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
+    requestMentionSync,
   })
 
   const handleImportAudio = async () => {
