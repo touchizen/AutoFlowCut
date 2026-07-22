@@ -396,6 +396,30 @@ describe('Flow 프로젝트 채택 (Case B 실패 회복)', () => {
     expect(result.current.flowProjectReady).toBe(true)
   })
 
+  // 취소된 이전 bind 가 뒤늦게 끝나면서 in-flight 플래그를 끄면, 아직 IPC 가 진행 중인 최신
+  // bind 위에 폴링이 재바인딩을 걸어 openFlowProject/newFlowProject 가 겹친다(두 소유자).
+  it('취소된 이전 bind 가 끝나도 진행 중인 최신 bind 의 in-flight 를 풀지 않는다', async () => {
+    const resolvers = []
+    const newFlowProject = vi.fn(() => new Promise((r) => resolvers.push(r)))
+    const flowExtractProjectId = vi.fn().mockResolvedValue({ success: true, projectId: 'x' })
+    window.electronAPI = { newFlowProject, flowExtractProjectId, openFlowProject: vi.fn() }
+
+    const { result, rerender } = setupHook({ mode: 'api' })
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })   // bind A 시작(대기)
+    await act(async () => { rerender({ mode: 'api', projectName: 'p1' }) })    // A 취소
+    await act(async () => { rerender({ mode: 'flow', projectName: 'p1' }) })   // bind B 시작(대기)
+    expect(resolvers).toHaveLength(2)
+
+    // 취소된 A 가 뒤늦게 끝난다. B 는 아직 진행 중이다.
+    await act(async () => { resolvers[0]({ success: false, error: 'late' }); await Promise.resolve() })
+
+    let res
+    await act(async () => { res = await result.current.tryAdoptFlowProject() })
+
+    expect(res).toMatchObject({ ok: false, reason: 'bind-in-flight' })
+    expect(newFlowProject).toHaveBeenCalledTimes(2)  // 세 번째 생성이 시작되면 안 된다
+  })
+
   // project.json 을 못 읽은 것과 "매핑이 없다"는 다르다. 읽기 실패를 매핑 없음으로 뭉개면
   // 멀쩡한 매핑 위에 새 Flow 프로젝트를 만들어 덮어쓴다(원래 프로젝트의 작업물과 분리된다).
   it('project.json 읽기가 실패하면 새로 만들지 않고, 다음 폴링에서 회복한다', async () => {

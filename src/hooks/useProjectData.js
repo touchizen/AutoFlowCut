@@ -618,6 +618,9 @@ export function useProjectData({
   // mode-entry 바인딩이 진행 중인지. 폴링이 그 위에 또 open/create 를 걸면 두 소유자가 서로의
   // readiness 를 뒤집는다 — 진행 중이면 재바인딩 요청을 건너뛴다.
   const bindInFlightRef = useRef(false)
+  // 그 플래그의 소유자(세대). 취소된 이전 bind 가 뒤늦게 끝나면서 진행 중인 최신 bind 의
+  // 플래그를 끄면, 폴링이 그 위에 재바인딩을 걸어 open/create 가 겹친다.
+  const bindGenerationRef = useRef(0)
   // 폴링이 mode-entry 를 다시 돌리기 위한 nonce. 폴링이 직접 openFlowProject 를 부르지 않고
   // 이 값만 올려, Case A/B 로직과 소유권을 한 곳에 둔다.
   const [bindNonce, setBindNonce] = useState(0)
@@ -1009,8 +1012,12 @@ export function useProjectData({
       }
     }
 
+    const myBindGeneration = ++bindGenerationRef.current
     bindInFlightRef.current = true
-    bind().finally(() => { bindInFlightRef.current = false })
+    bind().finally(() => {
+      // 아직 내가 최신 세대일 때만 푼다 — 취소된 이전 세대는 남의 in-flight 를 끄지 않는다.
+      if (bindGenerationRef.current === myBindGeneration) bindInFlightRef.current = false
+    })
 
     return () => { cancelled = true }
   // #R3-2: hydrated 를 dep 에 추가 — tryAutoRestore 완료 후 state 변경이
