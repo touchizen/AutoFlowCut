@@ -505,12 +505,6 @@ export function useProjectData({
   onSaveError = null, // 프로젝트 저장 실패 시 호출 (인자: 에러 메시지)
   mode = 'api', // 'flow' | 'api' — flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화
 }) {
-  // 복구 콜백 — framePairs state에 patch를 병합
-  const applyFramePairPatch = (id, patch) => {
-    if (!setFramePairs) return
-    setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, ...patch } : fp))
-  }
-
   // videoScenes (T2V) state 업데이트 헬퍼 — recovery 가 patch 를 던지면 적용.
   const applyVideoScenePatch = (id, patch) => {
     if (!setVideoScenes) return
@@ -531,17 +525,17 @@ export function useProjectData({
     const stillCurrent = () => myEpoch === loadEpochRef.current
     const guardedVideoScenePatch = (id, patch) => { if (stillCurrent()) applyVideoScenePatch(id, patch) }
     const guardedFramePairPatch = (id, patch) => {
-      if (!stillCurrent()) return
-      applyFramePairPatch(id, patch)
-
-      // I2V 복구도 일반 생성과 같은 owner-scene 상태를 갱신해야 프롬프트 링/타이머가 돈다.
-      // epoch 확인 뒤 둘을 함께 적용하고, owner가 없는 gallery 행은 scene에 흘리지 않는다.
-      const ownerSceneId = (loadedFramePairs || []).find(fp => fp.id === id)?.ownerSceneId
-      if (ownerSceneId == null || !setScenes) return
-      const scenePatch = buildI2VScenePatch(patch.status, patch)
-      setScenes(prev => prev.map(scene => (
-        scene.id === ownerSceneId ? { ...scene, ...scenePatch } : scene
-      )))
+      if (!stillCurrent() || !setFramePairs) return
+      setFramePairs(prev => {
+        const fpOwner = prev.find(fp => fp.id === id)
+        if (fpOwner?.ownerSceneId && setScenes) {
+          const scenePatch = buildI2VScenePatch(patch.status, patch)
+          setScenes(currentScenes => currentScenes.map(scene => (
+            scene.id === fpOwner.ownerSceneId ? { ...scene, ...scenePatch } : scene
+          )))
+        }
+        return prev.map(fp => fp.id === id ? { ...fp, ...patch } : fp)
+      })
     }
 
     const t2vInFlight = (loadedVideoScenes || []).some(vs =>

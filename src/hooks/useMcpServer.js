@@ -101,8 +101,7 @@ export function useMcpServer({
   importByPath, audioPackage,
   automationState, videoAutomation, generatingRefs,
   isRunning = false,  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
-  refBatchRunning = false,  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
-  generatingSceneId = null
+  refBatchRunning = false  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
 }) {
   // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
@@ -125,65 +124,6 @@ export function useMcpServer({
   useEffect(() => { handleStartRef.current = handleStart }, [handleStart])
   const handleGenerateAllRefsRef = useRef(handleGenerateAllRefs)
   useEffect(() => { handleGenerateAllRefsRef.current = handleGenerateAllRefs }, [handleGenerateAllRefs])
-
-  // 개별 씬 생성은 App의 stop 대상이 아니다. 그 busy만 남은 동안 들어온 MCP 배치는
-  // timeout 없이 공유 슬롯 하나에 보류하고, 첫 요청만 유지한다.
-  const generatingSceneIdRef = useRef(generatingSceneId)
-  generatingSceneIdRef.current = generatingSceneId
-  const projectScopeRef = useRef(settings.projectName)
-  projectScopeRef.current = settings.projectName
-  const pendingBatchRef = useRef(null)
-
-  const deferBatchUntilSceneStops = (label, createStart) => {
-    const existing = pendingBatchRef.current
-    if (existing) {
-      console.warn(`[MCP] ${label}: discarding duplicate and joining the first pending batch request`)
-      return existing.promise
-    }
-
-    // createStart는 첫 요청으로 채택된 뒤에만 평가한다. 폐기된 후속 요청이 스타일 선택 등
-    // 부수 효과를 남기거나, 해제 시점의 다른 프로젝트 refs로 effective style을 다시 풀면 안 된다.
-    const start = createStart()
-    let resolvePending
-    const promise = new Promise(resolve => { resolvePending = resolve })
-    pendingBatchRef.current = {
-      label,
-      projectName: projectScopeRef.current,
-      start,
-      resolve: resolvePending,
-      promise,
-    }
-    console.warn(`[MCP] ${label}: individual scene generation busy; deferring batch without timeout`)
-    return promise
-  }
-
-  // 최신 handle ref를 먼저 갱신한 뒤 이 effect가 실행되므로, 긴 보류 뒤에도 stale handler를
-  // 부르지 않는다. 슬롯을 먼저 비워 같은 commit/StrictMode에서도 정확히 한 번만 시작한다.
-  useEffect(() => {
-    if (generatingSceneId) return
-    const pending = pendingBatchRef.current
-    if (!pending) return
-    pendingBatchRef.current = null
-
-    if (pending.projectName !== projectScopeRef.current) {
-      console.warn(`[MCP] ${pending.label}: project scope changed while pending; discarding batch request`)
-      pending.resolve(false)
-      return
-    }
-
-    pending.start()
-    pending.resolve(true)
-  }, [generatingSceneId, settings.projectName])
-
-  // 언마운트 뒤에는 해제 신호를 볼 host가 없다. promise와 슬롯을 함께 정리해 고아 대기자를
-  // 남기지 않고, 이후 다른 mount의 프로젝트에서 실행될 가능성도 닫는다.
-  useEffect(() => () => {
-    const pending = pendingBatchRef.current
-    if (!pending) return
-    pendingBatchRef.current = null
-    console.warn(`[MCP] ${pending.label}: host unmounted; discarding pending batch request`)
-    pending.resolve(false)
-  }, [])
 
   // MCP HTTP 서버 시작/중지
   useEffect(() => {
@@ -545,8 +485,7 @@ export function useMcpServer({
     // options = { force?: boolean } (선택). App.jsx가 MCP caller를 구분할 수 있게
     // options 유무와 관계없이 source:'mcp'를 합쳐 handleStart(effective, options)로 호출한다.
     //
-    // Phase 2: 중단 가능한 자동화는 stop → waitForStopped(30s) → start. 개별 씬 생성은 stop
-    // 대상이 아니므로 공유 슬롯에서 timeout 없이 기다린다. 확인 모달 없음 (MCP 자동화 의도 명확).
+    // Phase 2: 진행 중이면 자동 stop → waitForStopped → start. 확인 모달 없음 (MCP 자동화 의도 명확).
     //
     // Phase 2 sync: 명시 styleId ('preset:*', 'ref:*', plain id)면 selectedStyleRefId도 갱신
     // → Start 버튼 라벨이 새 스타일 자동 표시. 'auto'/'none'/생략은 UI 유지 (사용자 의도 보존).
@@ -560,14 +499,6 @@ export function useMcpServer({
         if (styleId === 'auto') return null
         if (styleId === 'none') return 'none'
         return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
-      }
-
-      if (generatingSceneIdRef.current) {
-        return deferBatchUntilSceneStops('start-scene-batch', () => {
-          syncExplicitStyleId(styleId, { normalizeStyleId, setSelectedStyleRefId })
-          const effective = resolveEffective()
-          return () => callHandleStart(effective)
-        })
       }
 
       syncExplicitStyleId(styleId, { normalizeStyleId, setSelectedStyleRefId })
@@ -600,14 +531,6 @@ export function useMcpServer({
         }
         if (styleId === 'none') return 'none'
         return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current) ?? 'none'
-      }
-
-      if (generatingSceneIdRef.current) {
-        return deferBatchUntilSceneStops('start-ref-batch', () => {
-          syncExplicitStyleId(styleId, { normalizeStyleId, setSelectedStyleRefId })
-          const effective = resolveEffective()
-          return () => callHandler(effective)
-        })
       }
 
       syncExplicitStyleId(styleId, { normalizeStyleId, setSelectedStyleRefId })
@@ -649,7 +572,7 @@ export function useMcpServer({
       const refIsRunning = refBatchRunning || generatingRefs.length > 0
 
       return {
-        isRunning: isRunning || videoAutomation.isRunning || refIsRunning || Boolean(generatingSceneId),
+        isRunning: isRunning || videoAutomation.isRunning || refIsRunning,
         isPaused: isPaused || videoAutomation.isPaused,
         progress: isRunning ? progress : videoAutomation.progress,
         total, done, pending, generating, error,
@@ -664,5 +587,5 @@ export function useMcpServer({
       delete window.__mcpStopBatch
       delete window.__mcpBatchStatus
     }
-  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning, generatingSceneId])
+  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning])
 }

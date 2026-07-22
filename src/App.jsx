@@ -1474,7 +1474,6 @@ function App() {
       videoRunning: videoAutomation.isRunning,
       hasPendingBatch,
       retryInFlight: videoRetryInFlightRef.current,
-      generatingSceneId,
       refBatchRunning,
     })) return
     const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
@@ -2026,8 +2025,7 @@ function App() {
     automationState: { isRunning, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
     refBatchRunning,
-    generatingSceneId,
-    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning || !!generatingSceneId
+    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning
   })
 
   // 어느 자동화든 실행 중이면 true
@@ -2442,7 +2440,6 @@ function App() {
                         (activeTab === 'video-text' && videoScenes.length === 0) ||
                         (activeTab === 'frame-to-video' && framePairs.length === 0) ||
                         hasPendingBatch ||
-                        !!generatingSceneId ||
                         refBatchRunning
                       }
                     >

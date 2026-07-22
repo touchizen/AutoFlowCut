@@ -4,6 +4,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 const appMocks = vi.hoisted(() => {
   const noop = vi.fn()
   const asyncNoop = vi.fn(async () => null)
+  const state = { generatingSceneId: null }
+  const generationEnqueue = vi.fn(async job => job.execute?.())
+  const sceneBatchStart = vi.fn(async options => generationEnqueue({
+    type: 'scene_batch',
+    label: 'Batch Scene Generation',
+    execute: async () => options,
+  }))
   const scenes = [
     { id: 's1', prompt: 'scene 1-a\nscene 1-b', videoT2VPrompt: 'video 1', status: 'pending' },
     { id: 's2', prompt: 'scene 2', videoT2VPrompt: '', status: 'pending', videoT2VStatus: 'generating' },
@@ -37,7 +44,7 @@ const appMocks = vi.hoisted(() => {
     listFlowProjects: asyncNoop,
     capabilities: {},
   }
-  return { noop, asyncNoop, scenes, scenesHook, genAPI }
+  return { noop, asyncNoop, state, generationEnqueue, sceneBatchStart, scenes, scenesHook, genAPI }
 })
 
 vi.mock('../../src/hooks/useI18n', () => ({
@@ -171,7 +178,7 @@ vi.mock('../../src/hooks/useStoryAutoOpen', () => ({ useStoryAutoOpen: appMocks.
 vi.mock('../../src/hooks/useFlowAdoptPrompt', () => ({
   useFlowAdoptPrompt: () => ({ candidate: null, confirm: appMocks.noop, cancel: appMocks.noop }),
 }))
-vi.mock('../../src/hooks/useGenerationQueue', () => ({ useGenerationQueue: () => ({ enqueue: appMocks.asyncNoop }) }))
+vi.mock('../../src/hooks/useGenerationQueue', () => ({ useGenerationQueue: () => ({ enqueue: appMocks.generationEnqueue }) }))
 vi.mock('../../src/hooks/useAutomation', () => ({
   useAutomation: () => ({
     isRunning: false,
@@ -180,7 +187,7 @@ vi.mock('../../src/hooks/useAutomation', () => ({
     progress: 0,
     status: 'idle',
     statusMessage: '',
-    start: appMocks.asyncNoop,
+    start: appMocks.sceneBatchStart,
     togglePause: appMocks.noop,
     stop: appMocks.noop,
     retryErrors: appMocks.noop,
@@ -227,7 +234,7 @@ vi.mock('../../src/hooks/useRefPanelVisibility', () => ({
   useRefPanelVisibility: () => ({ isOpen: false, setOpenByUser: appMocks.noop }),
 }))
 vi.mock('../../src/hooks/useSceneGeneration', () => ({
-  useSceneGeneration: () => ({ generatingSceneId: null, handleGenerateScene: appMocks.noop }),
+  useSceneGeneration: () => ({ generatingSceneId: appMocks.state.generatingSceneId, handleGenerateScene: appMocks.noop }),
 }))
 vi.mock('../../src/hooks/useExport', () => ({
   useExport: () => ({
@@ -296,7 +303,13 @@ vi.mock('../../src/components/story/StoryView', () => ({ default: () => null }))
 import App from '../../src/App'
 
 describe('App prompt busyLines wiring', () => {
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    appMocks.state.generatingSceneId = null
+    appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue(null)
+    appMocks.generationEnqueue.mockClear()
+    appMocks.sceneBatchStart.mockClear()
+  })
 
   it('이미지·비디오 PromptInput에 각 value 규칙으로 계산한 busy 문단을 전달한다', async () => {
     render(<App />)
@@ -337,5 +350,22 @@ describe('App prompt busyLines wiring', () => {
     } finally {
       appMocks.scenesHook.scenes = original
     }
+  })
+
+  it('개별 씬 생성 중에도 primary Start를 공유 큐에 enqueue한다', async () => {
+    appMocks.state.generatingSceneId = 's4'
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    render(<App />)
+
+    const startButton = screen.getByTitle('actions.start')
+    expect(startButton).toBeEnabled()
+
+    fireEvent.click(startButton)
+
+    await waitFor(() => expect(appMocks.generationEnqueue).toHaveBeenCalledTimes(1))
+    expect(appMocks.generationEnqueue).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'scene_batch',
+      label: 'Batch Scene Generation',
+    }))
   })
 })
