@@ -880,18 +880,6 @@ function App() {
     wasRunningRef.current = running
   }, [isRunning, videoAutomation.isRunning])
 
-  // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
-  // Recent 항목은 work folder 단위로 구분되므로 현재 work folder 경로도 함께 전달.
-  useMenuActions({
-    activeProject: settings.saveMode === 'folder' ? settings.projectName : null,
-    workFolder: settings.saveMode === 'folder' ? (localStorage.getItem('workFolderPath') || null) : null,
-    onNewProject: () => openSettings('storage'),
-    onOpenProject: handleProjectChange,
-    onShowModeSelector: clearMode,
-    // 배치 생성 중에는 모드 리셋(앱 언마운트) 차단 — in-app ModeToggle 와 동일 가드.
-    busy: isRunning || videoAutomation.isRunning,
-  })
-
   // Style Thumbnails
   const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady })
 
@@ -1815,34 +1803,31 @@ function App() {
           flowPacingMaxMs: settings.flowPacingMaxMs,
           seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {
-            const liveFramePairs = framePairsRef.current
-            const fpOwner = liveFramePairs.find(p => p.id === id)
+            const fpOwner = framePairsRef.current.find(p => p.id === id)
             // F2-1: 비동기 결과가 오기 전에 행이 삭제됐으면 owner scene도 건드리지 않는다.
             if (!fpOwner) return
 
-            const updated = liveFramePairs.map(p =>
-                p.id === id ? {
-                  ...p, status: newStatus,
-                  ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
-                  ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
-                  // 'X' in result — useVideoAutomation 의 새 generation 제출 시 옛 complete 메타를
-                  // 의도적으로 null 로 지우는 흐름 지원 (regen 후 recovery 후보 포함되도록).
-                  ...(result && 'base64' in result ? { video: result.base64, base64: result.base64 } : {}),
-                  ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
-                  ...(result?.generationId ? { generationId: result.generationId } : {}),
-                  ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
-                  ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-                  ...(result?.duration ? { duration: result.duration } : {}),
-                  ...(result?.seed != null ? { seed: result.seed } : {}),
-                  ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
-                  ...(result?.model ? { model: result.model } : {}),
-                  // null 값 보존 — success 시 stale error 메시지 clear.
-                  ...(result && 'error' in result ? { error: result.error } : {}),
-                  ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
-                } : p
-              )
-            framePairsRef.current = updated
-            setFramePairs(updated)
+            setFramePairs(prev => prev.map(p =>
+              p.id === id ? {
+                ...p, status: newStatus,
+                ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
+                ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
+                // 'X' in result — useVideoAutomation 의 새 generation 제출 시 옛 complete 메타를
+                // 의도적으로 null 로 지우는 흐름 지원 (regen 후 recovery 후보 포함되도록).
+                ...(result && 'base64' in result ? { video: result.base64, base64: result.base64 } : {}),
+                ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
+                ...(result?.generationId ? { generationId: result.generationId } : {}),
+                ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
+                ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
+                ...(result?.duration ? { duration: result.duration } : {}),
+                ...(result?.seed != null ? { seed: result.seed } : {}),
+                ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
+                ...(result?.model ? { model: result.model } : {}),
+                // null 값 보존 — success 시 stale error 메시지 clear.
+                ...(result && 'error' in result ? { error: result.error } : {}),
+                ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+              } : p
+            ))
 
             // ── I2V 상태/결과를 ownerSceneId 로 씬에 동기화 ──
             // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted rows(null)는 스킵.
@@ -2036,6 +2021,23 @@ function App() {
   //   편집/프로젝트 액션이 열려 있던 비일관성 차단. (anyRunning 은 videoRetryInFlightRef 를 제외하지만,
   //   #R24-2 로 모드 토글 차단용 반응형 videoRetryRunning 은 별도로 modeBusy 에 포함된다.)
   const anyRunning = isRunning || videoAutomation.isRunning || hasPendingBatch
+  // 개별 씬 생성은 MCP·프로그램 배치를 공유 큐에 대기시킬 수 있어야 한다. 로직 가드가 아니라
+  // 사용자가 동시에 scene batch를 넣을 수 있는 UI 진입점만 공통으로 차단한다.
+  const uiSceneBatchBlocked = !!generatingSceneId
+  // Header의 프로젝트/모드 액션과 네이티브 File 메뉴가 같은 전체 busy 계약을 쓴다.
+  const fullProjectBusy = anyRunning || refBatchRunning || videoRetryRunning || uiSceneBatchBlocked || thumbnailGenerating || galleryUploading
+
+  // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
+  // Recent 항목은 work folder 단위로 구분되므로 현재 work folder 경로도 함께 전달.
+  useMenuActions({
+    activeProject: settings.saveMode === 'folder' ? settings.projectName : null,
+    workFolder: settings.saveMode === 'folder' ? (localStorage.getItem('workFolderPath') || null) : null,
+    onNewProject: () => openSettings('storage'),
+    onOpenProject: handleProjectChange,
+    onShowModeSelector: clearMode,
+    busy: fullProjectBusy,
+    busyMessage: t('modeInfo.busySwitch'),
+  })
 
   // 생성 중: 가장 최근 생성된 이미지 씬으로 모니터를 점프 → "만들어지는 걸 본다".
   // (씬에 SRT/길이 타이밍이 있어야 위치 계산 가능 — 없으면 그대로 둠)
@@ -2107,8 +2109,8 @@ function App() {
           setPaywallReason('upgrade')
           setShowPaywallModal(true)
         }}
-        disabled={anyRunning || refBatchRunning || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
-        modeBusy={isRunning || videoAutomation.isRunning || refBatchRunning || hasPendingBatch || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
+        disabled={fullProjectBusy}
+        modeBusy={fullProjectBusy}
         storyActive={activeView === 'story'}
         onStoryClick={() => setActiveView(v => v === 'story' ? 'generate' : 'story')}
       />
@@ -2444,7 +2446,7 @@ function App() {
                         (activeTab === 'frame-to-video' && framePairs.length === 0) ||
                         hasPendingBatch ||
                         refBatchRunning ||
-                        !!generatingSceneId
+                        uiSceneBatchBlocked
                       }
                     >
                       {(() => {
@@ -2472,8 +2474,11 @@ function App() {
                     {/* 전체 재생성 ▾ — split-button 으로 생성 버튼에 붙는다 */}
                     {showGenerateMenu && (
                       <GenerateMenu
-                        onForceRegenerate={() => handleStart(undefined, { force: true })}
-                        disabled={hasPendingBatch || refBatchRunning}
+                        onForceRegenerate={() => {
+                          if (uiSceneBatchBlocked) return
+                          handleStart(undefined, { force: true })
+                        }}
+                        disabled={hasPendingBatch || refBatchRunning || uiSceneBatchBlocked}
                       />
                     )}
                   </div>
@@ -2499,7 +2504,7 @@ function App() {
               onClick={() => {
                 // 큐 대기(hasPendingBatch, isRunning 아직 false) 구간에도 노출될 수 있으니
                 // snapshot 을 덮기 전에 먼저 차단 — Start 버튼의 disabled 조건과 동일선상.
-                if (anyRunning || hasPendingBatch) return
+                if (anyRunning || hasPendingBatch || uiSceneBatchBlocked) return
                 // ⚠️ 직접 바인딩(`onClick={retryErrors}`) 시 React SyntheticEvent 가
                 //    options 인자로 들어가서 projectName 누락 → start() 가 'Untitled' 로
                 //    폴백 → 모든 저장이 다른 프로젝트로 잘못 가는 데이터 손실 회귀.
@@ -2620,7 +2625,7 @@ function App() {
               onRetry={(id) => {
                 // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
                 // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
-                if (anyRunning || hasPendingBatch) return
+                if (anyRunning || hasPendingBatch || uiSceneBatchBlocked) return
                 const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                   ? settings.seedNo : null
                 // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
@@ -2720,7 +2725,7 @@ function App() {
             onRetry={(id) => {
               // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
               // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
-              if (anyRunning || hasPendingBatch) return
+              if (anyRunning || hasPendingBatch || uiSceneBatchBlocked) return
               const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                 ? settings.seedNo : null
               // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.

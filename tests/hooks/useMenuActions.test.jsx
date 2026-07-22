@@ -11,7 +11,12 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
+vi.mock('../../src/components/Toast', () => ({
+  toast: { warning: vi.fn() },
+}))
+
 import { useMenuActions } from '../../src/hooks/useMenuActions'
+import { toast } from '../../src/components/Toast'
 
 let menuCallback
 let unsubscribe
@@ -23,6 +28,7 @@ beforeEach(() => {
   menuCallback = null
   unsubscribe = vi.fn()
   notifyProjectActivated = vi.fn()
+  toast.warning.mockClear()
   window.electronAPI = {
     onMenuAction: vi.fn((cb) => {
       menuCallback = cb
@@ -73,6 +79,7 @@ describe('useMenuActions', () => {
     // Native menu fires mid-run (busy) → must NOT abandon the in-flight batch.
     menuCallback({ action: 'show-mode-selector' })
     expect(onShowModeSelector).not.toHaveBeenCalled()
+    expect(toast.warning).toHaveBeenCalledTimes(1)
 
     // Once idle, the same action is honored.
     rerender({ busy: false })
@@ -80,24 +87,29 @@ describe('useMenuActions', () => {
     expect(onShowModeSelector).toHaveBeenCalledTimes(1)
   })
 
-  it('still honors non-destructive actions while busy', () => {
+  it('rejects New, Open, and mode selector actions while busy and warns for each attempt', () => {
     const onNewProject = vi.fn()
     const onOpenProject = vi.fn()
+    const onShowModeSelector = vi.fn()
     renderHook(() =>
       useMenuActions({
         activeProject: 'p',
         workFolder: '/wf',
         onNewProject,
         onOpenProject,
+        onShowModeSelector,
         busy: true,
       }),
     )
 
     menuCallback({ action: 'new-project' })
     menuCallback({ action: 'open-project', name: 'x' })
+    menuCallback({ action: 'show-mode-selector' })
 
-    expect(onNewProject).toHaveBeenCalledTimes(1)
-    expect(onOpenProject).toHaveBeenCalledWith('x')
+    expect(onNewProject).not.toHaveBeenCalled()
+    expect(onOpenProject).not.toHaveBeenCalled()
+    expect(onShowModeSelector).not.toHaveBeenCalled()
+    expect(toast.warning).toHaveBeenCalledTimes(3)
   })
 
   it('routes the "open-project" action to onOpenProject with the name', () => {

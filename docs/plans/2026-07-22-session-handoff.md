@@ -164,14 +164,19 @@
 
 1. Stop은 공유 큐의 `scene_batch`만 type-selective clear한다. 실행 중인 개별 씬(`scene`)은 유지되고,
    queue reject 뒤 `emptyRefGate`/직접 시작 경로의 `finally`가 `hasPendingBatch`를 해제한다.
-2. 개별 씬 생성 중 primary Start는 Header와 같이 비활성화했다. `isStartBlocked`에는 넣지 않아
-   MCP·프로그램 경로는 계속 공유 큐에 들어간다.
+2. 개별 씬 생성 중 primary Start·전체 재생성 메뉴·Retry All·text/list 개별 Retry를
+   `uiSceneBatchBlocked` 하나로 차단한다. 이미 열린 전체 재생성 확인창도 확인 시 다시 가드한다.
+   `isStartBlocked`에는 넣지 않아 MCP·프로그램 경로는 계속 공유 큐에 들어간다.
 3. `useAutomation`이 execute 전 scene batch 대기 수를 정확히 추적해 `isSceneBatchQueued`로 노출하고,
    App→MCP liveness가 이를 `isRunning`에 합성한다. enqueue reject/throw에서도 신호를 반드시 정산하며
    외부 status enum은 늘리지 않았다.
-4. I2V 정상 결과와 복구 결과 모두 live `framePairs` ref에서 updater 밖에 owner를 확정한다.
-   `setFramePairs` updater 안의 다른 setter 호출을 제거했고, 결과 도착 전에 삭제된 행은 owner 씬도
-   건드리지 않는 F2-1 계약을 유지했다.
+4. I2V 정상 결과와 복구 결과 모두 live `framePairs` ref에서 updater 밖에 owner를 확정하되,
+   `framePairs` state 쓰기는 함수형 updater로 합성한다. App의 eager ref 쓰기도 제거해 같은 tick의
+   프로젝트 load/연속 완료 patch를 덮지 않으며, 결과 도착 전에 삭제된 행은 owner 씬도 건드리지 않는
+   F2-1 계약을 유지했다.
+5. Header와 네이티브 File 메뉴가 같은 `fullProjectBusy`를 쓴다. New Project·Open Project·생성 모드
+   선택은 busy 중 모두 toast로 거부해 개별 씬 생성 중 프로젝트 교체 우회도 닫았다.
+6. `useMcpServer`의 `automationState` JSDoc shape에 `isSceneBatchQueued`를 반영했다.
 
 ### 남은 별건 후속
 

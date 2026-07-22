@@ -541,7 +541,7 @@ export function useProjectData({
       // F2-1: recovery 도착 전에 행이 삭제됐으면 pair와 owner scene 모두 no-op.
       if (!fpOwner) return
 
-      publishFramePairs(liveFramePairs.map(fp => fp.id === id ? { ...fp, ...patch } : fp))
+      setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, ...patch } : fp))
       if (fpOwner.ownerSceneId && setScenes) {
         const scenePatch = buildI2VScenePatch(patch.status, patch)
         setScenes(currentScenes => currentScenes.map(scene => (

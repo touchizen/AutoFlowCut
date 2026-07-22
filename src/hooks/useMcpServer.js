@@ -84,7 +84,7 @@ export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
  * @param {Array}    params.audioReviews - 오디오 리뷰 배열
  * @param {Function} params.importByPath - 오디오 폴더 임포트
  * @param {object}   params.audioPackage - 오디오 패키지
- * @param {object}   params.automationState - { isRunning, isPaused, progress, status, statusMessage }
+ * @param {object}   params.automationState - { isRunning, isSceneBatchQueued, isPaused, progress, status, statusMessage }
  * @param {object}   params.videoAutomation - 비디오 자동화 상태
  * @param {Array}    params.generatingRefs - 생성 중인 레퍼런스 인덱스들
  */

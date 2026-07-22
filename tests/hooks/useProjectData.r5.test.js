@@ -365,7 +365,13 @@ describe('I2V recovery callback updates its owner scene', () => {
     act(() => i2vRecoveryCallback('fp-owned', recoveryPatch))
 
     expect(setFramePairs).toHaveBeenCalledTimes(1)
-    expect(setFramePairs.mock.calls[0][0]).toEqual([
+    const ownedUpdater = setFramePairs.mock.calls[0][0]
+    expect(ownedUpdater).toBeTypeOf('function')
+    const ownedResult = ownedUpdater([
+      { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+      { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
+    ])
+    expect(ownedResult).toEqual([
       expect.objectContaining({ id: 'fp-owned', ownerSceneId: 'scene-1', ...recoveryPatch }),
       expect.objectContaining({ id: 'fp-gallery', ownerSceneId: null }),
     ])
@@ -382,7 +388,9 @@ describe('I2V recovery callback updates its owner scene', () => {
 
     act(() => i2vRecoveryCallback('fp-gallery', recoveryPatch))
     expect(setFramePairs).toHaveBeenCalledTimes(2)
-    expect(setFramePairs.mock.calls[1][0]).toEqual([
+    const galleryUpdater = setFramePairs.mock.calls[1][0]
+    expect(galleryUpdater).toBeTypeOf('function')
+    expect(galleryUpdater(ownedResult)).toEqual([
       expect.objectContaining({ id: 'fp-owned', ownerSceneId: 'scene-1', ...recoveryPatch }),
       expect.objectContaining({ id: 'fp-gallery', ownerSceneId: null, ...recoveryPatch }),
     ])
@@ -442,7 +450,11 @@ describe('I2V recovery callback updates its owner scene', () => {
     const generatingStartedAt = 1_753_200_000_123
     act(() => i2vRecoveryCallback('fp-owned', { status: 'generating', generatingStartedAt }))
 
-    const framePairResult = setFramePairs.mock.calls[0][0]
+    const framePairUpdater = setFramePairs.mock.calls[0][0]
+    expect(framePairUpdater).toBeTypeOf('function')
+    const framePairResult = framePairUpdater([
+      { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+    ])
     expect(framePairResult[0].generatingStartedAt).toBe(generatingStartedAt)
 
     expect(setScenes).toHaveBeenCalledTimes(1)

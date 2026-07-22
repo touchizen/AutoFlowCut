@@ -15,6 +15,8 @@ const appMocks = vi.hoisted(() => {
     mcpProps: null,
     framePanelProps: null,
     videoStartOptions: null,
+    projectDataProps: null,
+    menuProps: null,
   }
   const generationEnqueue = vi.fn(job => {
     if (!state.holdSceneBatch) return Promise.resolve(job.execute?.())
@@ -40,6 +42,16 @@ const appMocks = vi.hoisted(() => {
     }
   })
   const automationStop = vi.fn()
+  const retryErrors = vi.fn(async options => generationEnqueue({
+    type: 'scene_batch',
+    label: 'Retry Error Scenes',
+    execute: async () => options,
+  }))
+  const retryScene = vi.fn(async (id, options) => generationEnqueue({
+    type: 'scene_batch',
+    label: `Retry Scene ${id}`,
+    execute: async () => options,
+  }))
   const videoStart = vi.fn(async options => {
     state.videoStartOptions = options
   })
@@ -78,7 +90,7 @@ const appMocks = vi.hoisted(() => {
   }
   return {
     noop, asyncNoop, state,
-    generationEnqueue, generationClearQueue, sceneBatchStart, automationStop, videoStart,
+    generationEnqueue, generationClearQueue, sceneBatchStart, automationStop, retryErrors, retryScene, videoStart,
     scenes, scenesHook, genAPI,
   }
 })
@@ -194,7 +206,9 @@ vi.mock('../../src/hooks/useAudioImport', () => ({
   }),
 }))
 vi.mock('../../src/hooks/useProjectData', () => ({
-  useProjectData: () => ({
+  useProjectData: props => {
+    appMocks.state.projectDataProps = props
+    return ({
     addPendingSave: appMocks.noop,
     handleProjectChange: appMocks.noop,
     saveCurrentProject: appMocks.asyncNoop,
@@ -205,7 +219,8 @@ vi.mock('../../src/hooks/useProjectData', () => ({
     flowProjectReady: true,
     flowProjectId: null,
     tryAdoptFlowProject: appMocks.asyncNoop,
-  }),
+    })
+  },
 }))
 vi.mock('../../src/hooks/useStoryPipeline', () => ({
   useStoryPipeline: () => ({ scenes: [], open: appMocks.asyncNoop }),
@@ -232,8 +247,8 @@ vi.mock('../../src/hooks/useAutomation', () => ({
     start: appMocks.sceneBatchStart,
     togglePause: appMocks.noop,
     stop: appMocks.automationStop,
-    retryErrors: appMocks.noop,
-    retryScene: vi.fn(async () => null),
+    retryErrors: appMocks.retryErrors,
+    retryScene: appMocks.retryScene,
   }),
 }))
 vi.mock('../../src/hooks/useVideoAutomation', () => ({
@@ -249,7 +264,9 @@ vi.mock('../../src/hooks/useVideoAutomation', () => ({
     retryErrors: appMocks.noop,
   }),
 }))
-vi.mock('../../src/hooks/useMenuActions', () => ({ useMenuActions: appMocks.noop }))
+vi.mock('../../src/hooks/useMenuActions', () => ({
+  useMenuActions: props => { appMocks.state.menuProps = props },
+}))
 vi.mock('../../src/hooks/useStyleThumbnails', () => ({
   useStyleThumbnails: () => ({
     thumbnails: [],
@@ -312,14 +329,15 @@ vi.mock('../../src/components/PromptInput', async () => {
 
 vi.mock('../../src/components/Header', () => ({ default: () => null }))
 vi.mock('../../src/components/SceneList', () => ({ default: () => null }))
-vi.mock('../../src/components/GenerateMenu', async () => {
+vi.mock('../../src/components/ResultsTable', async () => {
   const React = await import('react')
   return {
-    default: ({ disabled }) => React.createElement('button', {
+    default: ({ items, mediaType, onRetry }) => onRetry && items?.length
+      ? React.createElement('button', {
       type: 'button',
-      'data-testid': 'generate-menu',
-      disabled,
-    }),
+      onClick: () => onRetry(items[0].id),
+    }, `retry-${mediaType}-${items[0].id}`)
+      : null,
   }
 })
 vi.mock('../../src/components/FrameToVideoPanel', () => ({
@@ -329,7 +347,6 @@ vi.mock('../../src/components/ReferencePanel', () => ({ default: () => null }))
 vi.mock('../../src/components/SettingsModal', () => ({ default: () => null }))
 vi.mock('../../src/components/ImportModal', () => ({ default: () => null }))
 vi.mock('../../src/components/StatusBar', () => ({ default: () => null }))
-vi.mock('../../src/components/ResultsTable', () => ({ default: () => null }))
 vi.mock('../../src/components/SceneDetailModal', () => ({ default: () => null }))
 vi.mock('../../src/components/VideoDetailModal', () => ({ default: () => null }))
 vi.mock('../../src/components/ResizeHandle', () => ({ default: () => null }))
@@ -343,12 +360,16 @@ vi.mock('../../src/components/StoreRatingModal', () => ({ default: () => null })
 vi.mock('../../src/components/AudioResultModal', () => ({ default: () => null }))
 vi.mock('../../src/components/QAProgressBanner', () => ({ default: () => null }))
 vi.mock('../../src/components/AudioPanel', () => ({ default: () => null }))
-vi.mock('../../src/components/BottomPanelTabs', () => ({ default: () => null }))
+vi.mock('../../src/components/BottomPanelTabs', () => ({
+  default: ({ onChange }) => <button type="button" onClick={() => onChange('results')}>show-results</button>,
+}))
 vi.mock('../../src/components/LiveTimeline', () => ({ default: () => null }))
 vi.mock('../../src/components/PreviewMonitor', () => ({ default: () => null }))
 vi.mock('../../src/components/SubscriptionBanner', () => ({ SubscriptionBanner: () => null }))
 vi.mock('../../src/components/StylePicker', () => ({ default: () => null }))
-vi.mock('../../src/components/Modal', () => ({ default: ({ children }) => children }))
+vi.mock('../../src/components/Modal', () => ({
+  default: ({ isOpen, children, footer }) => isOpen ? <div>{children}{footer}</div> : null,
+}))
 vi.mock('../../src/components/DeleteSceneConfirmModal', () => ({ default: () => null }))
 vi.mock('../../src/components/FlowProjectAdoptModal', () => ({ default: () => null }))
 vi.mock('../../src/components/SrtImportConflictModal', () => ({ default: () => null }))
@@ -369,6 +390,8 @@ describe('App prompt busyLines wiring', () => {
     appMocks.state.mcpProps = null
     appMocks.state.framePanelProps = null
     appMocks.state.videoStartOptions = null
+    appMocks.state.projectDataProps = null
+    appMocks.state.menuProps = null
     appMocks.scenesHook.scenes = appMocks.scenes
     appMocks.scenesHook.scenesRef.current = appMocks.scenes
     appMocks.genAPI.getAccessToken.mockReset().mockResolvedValue(null)
@@ -376,6 +399,8 @@ describe('App prompt busyLines wiring', () => {
     appMocks.generationClearQueue.mockClear()
     appMocks.sceneBatchStart.mockClear()
     appMocks.automationStop.mockClear()
+    appMocks.retryErrors.mockClear()
+    appMocks.retryScene.mockClear()
     appMocks.videoStart.mockClear()
   })
 
@@ -420,16 +445,87 @@ describe('App prompt busyLines wiring', () => {
     }
   })
 
-  it('개별 씬 생성 중에는 primary Start만 비활성화하고 공유 큐에 enqueue하지 않는다', async () => {
+  it('개별 씬 생성 중에는 primary Start와 전체 재생성 trigger를 비활성화한다', async () => {
     appMocks.state.generatingSceneId = 's4'
     appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, image: 'generated-image' } : scene
+    ))
     render(<App />)
 
     const startButton = screen.getByTitle('actions.start')
     expect(startButton).toBeDisabled()
+    const generateMenuTrigger = screen.getByRole('button', { name: /actions\.moreGenerateOptions/ })
+    expect(generateMenuTrigger).toBeDisabled()
 
     fireEvent.click(startButton)
+    fireEvent.click(generateMenuTrigger)
 
+    expect(screen.queryByRole('button', { name: /actions\.forceRegenerate/ })).not.toBeInTheDocument()
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('전체 재생성 확인창이 열린 뒤 개별 씬 생성이 시작돼도 확인은 배치를 넣지 않는다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, image: 'generated-image' } : scene
+    ))
+    const view = render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: /actions\.moreGenerateOptions/ }))
+    fireEvent.click(screen.getByRole('button', { name: /actions\.forceRegenerate/ }))
+    expect(screen.getByText('actions.forceRegenerateWarn')).toBeInTheDocument()
+
+    appMocks.state.generatingSceneId = 's4'
+    view.rerender(<App />)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /actions\.forceRegenerate/ }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('개별 씬 생성 중 Retry All 클릭은 배치를 넣지 않는다', () => {
+    appMocks.state.generatingSceneId = 's4'
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, status: 'error' } : scene
+    ))
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: /actions\.retryErrors/ }))
+
+    expect(appMocks.retryErrors).not.toHaveBeenCalled()
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('개별 씬 생성 중 text 결과 Retry 클릭은 배치를 넣지 않는다', () => {
+    appMocks.state.generatingSceneId = 's4'
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, status: 'error' } : scene
+    ))
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'show-results' }))
+    fireEvent.click(screen.getByRole('button', { name: 'retry-image-s1' }))
+
+    expect(appMocks.retryScene).not.toHaveBeenCalled()
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('개별 씬 생성 중 list 결과 Retry 클릭은 배치를 넣지 않는다', () => {
+    appMocks.state.generatingSceneId = 's4'
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, status: 'error' } : scene
+    ))
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: /tabs\.list/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'show-results' }))
+    fireEvent.click(screen.getByRole('button', { name: 'retry-image-s1' }))
+
+    expect(appMocks.retryScene).not.toHaveBeenCalled()
     expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
   })
 
@@ -462,7 +558,7 @@ describe('App prompt busyLines wiring', () => {
 
     render(<App />)
 
-    expect(screen.getByTestId('generate-menu')).toBeDisabled()
+    expect(screen.getByRole('button', { name: /actions\.moreGenerateOptions/ })).toBeDisabled()
   })
 
   it('useAutomation의 scene batch 대기 신호를 MCP liveness 입력에 전달한다', () => {
@@ -471,6 +567,13 @@ describe('App prompt busyLines wiring', () => {
 
     expect(appMocks.state.mcpProps.automationState.isSceneBatchQueued).toBe(true)
     expect(appMocks.state.mcpProps.isRunning).toBe(true)
+  })
+
+  it('개별 씬 생성 중 신호를 네이티브 프로젝트 메뉴의 busy로 전달한다', () => {
+    appMocks.state.generatingSceneId = 's4'
+    render(<App />)
+
+    expect(appMocks.state.menuProps.busy).toBe(true)
   })
 
   it('I2V 결과는 StrictMode에서도 owner 씬을 한 번만 갱신하고 삭제된 행은 건드리지 않는다', async () => {
@@ -508,5 +611,61 @@ describe('App prompt busyLines wiring', () => {
     await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([]))
     act(() => onItemUpdate('fp-1', 'complete', { base64: 'VIDEO' }))
     expect(appMocks.scenesHook.updateScene).toHaveBeenCalledTimes(1)
+  })
+
+  it('I2V onItemUpdate를 렌더 없이 연속 호출해도 첫 완료의 비디오 데이터와 둘째 패치가 모두 남는다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    render(<App />)
+
+    fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+    await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+    const pair = {
+      id: 'fp-1', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
+      prompt: 'scene 1', selected: true, status: 'pending',
+    }
+    act(() => appMocks.state.framePanelProps.onUpdate([pair]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([pair]))
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await waitFor(() => expect(appMocks.videoStart).toHaveBeenCalledTimes(1))
+    const { onItemUpdate } = appMocks.state.videoStartOptions
+
+    act(() => {
+      onItemUpdate('fp-1', 'complete', { base64: 'VIDEO' })
+      onItemUpdate('fp-1', 'complete', { videoPath: '/videos/fp-1.mp4' })
+    })
+
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs[0]).toEqual(expect.objectContaining({
+      id: 'fp-1', status: 'complete', base64: 'VIDEO', videoPath: '/videos/fp-1.mp4',
+    })))
+  })
+
+  it('프로젝트 load가 같은 tick에 먼저 쓴 framePairs를 늦은 I2V 완료가 덮지 않는다', async () => {
+    appMocks.genAPI.getAccessToken.mockResolvedValue('token')
+    render(<App />)
+
+    fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+    await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+    const oldPair = {
+      id: 'fp-old', ownerSceneId: 's1', startSceneId: 's1', endSceneId: null,
+      prompt: 'old scene', selected: true, status: 'pending',
+    }
+    act(() => appMocks.state.framePanelProps.onUpdate([oldPair]))
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([oldPair]))
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await waitFor(() => expect(appMocks.videoStart).toHaveBeenCalledTimes(1))
+    const { onItemUpdate } = appMocks.state.videoStartOptions
+    const loadedPair = {
+      id: 'fp-new', ownerSceneId: 's2', startSceneId: 's2', endSceneId: null,
+      prompt: 'new scene', selected: true, status: 'pending',
+    }
+
+    act(() => {
+      appMocks.state.projectDataProps.setFramePairs([loadedPair])
+      onItemUpdate('fp-old', 'complete', { base64: 'OLD_VIDEO' })
+    })
+
+    await waitFor(() => expect(appMocks.state.framePanelProps.framePairs).toEqual([loadedPair]))
   })
 })
