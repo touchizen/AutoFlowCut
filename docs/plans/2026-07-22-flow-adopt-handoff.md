@@ -1,56 +1,74 @@
-# 핸드오프 — Flow 프로젝트 채택(adopt)으로 생성 차단 회복
+# 핸드오프 — Flow 프로젝트 바인딩 회복(생성 차단 해제)
 
 작성 2026-07-22 / 브랜치 `feature/flow-adopt-manual-project` (origin/main 기준, **미푸시**)
 
 ## 문제
 
-Flow 모드에서 **새 로컬 프로젝트**를 만들면 저장된 `flowProjectId`가 없어 mode-entry **Case B**가
-`newFlowProject()`로 Flow 프로젝트를 만든다. 이게 **간헐적으로 실패**하면(Flow 홈 광고/오버레이,
-클릭은 갔는데 URL이 안 바뀌어 20초 타임아웃 등) `flowProjectReady=false`로 **고착**되고 회복
-경로가 없어 모든 생성이 `"The Flow project is still loading."` 토스트로 막힌다. 사용자가 Flow
-웹에서 직접 프로젝트를 만들어도 앱이 채택하지 않아 풀리지 않았다.
+Flow 모드에서 **새 로컬 프로젝트**를 만들면 저장된 `flowProjectId` 가 없어 mode-entry **Case B** 가
+`newFlowProject()` 로 Flow 프로젝트를 만든다. 이게 **간헐적으로 실패**하면 `flowProjectReady=false`
+로 고착되고 회복 경로가 없어 모든 생성이 `"The Flow project is still loading."` 토스트로 막혔다.
+사용자가 Flow 웹에서 직접 프로젝트를 만들어도 앱이 채택하지 않아 풀리지 않았다.
 
-- 차단 지점: `guards.js:checkFlowProjectReady` 7곳 + inline guard 3곳 (총 10곳) → **중앙(useProjectData)에서 회복**하도록 설계
-- 근본 원인(왜 `newFlowProject`가 실패하나)은 **미확정**. 광고 가설은 사용자 목격이지만, trusted click은 이미 overlay hit-test로 거부하므로([shared.js:268](../../electron/ipc/shared.js)) "광고가 클릭을 훔쳤다"는 코드로 증명되지 않음. 20초 타임아웃 경로는 실재.
+- 차단 지점: `guards.js:checkFlowProjectReady` 7곳 + inline guard 3곳 → **중앙(useProjectData)에서 회복**
+- 근본 원인(왜 `newFlowProject` 가 실패하나)은 **여전히 미확정**. 광고 가설은 사용자 목격이지만
+  trusted click 은 이미 overlay hit-test 로 거부하므로([shared.js:268](../../electron/ipc/shared.js))
+  코드로는 증명되지 않는다. 20초 타임아웃 경로는 실재. → 필요하면 실패 시 `r.error` 로그 +
+  Flow 뷰 `capturePage` 로 계측해 확정할 것.
 
-## 구현된 것 (커밋 5개)
+## 지금 상태 (커밋 20개, 전체 스위트 6845 green)
 
-| 커밋 | 내용 |
+### 불변식 4개
+
+1. **ready 는 확인된 open 에서만 열린다.** `applyOpenResult` 가 유일한 지점이다(채택 경로는 자체
+   `openFlowProject` 확인 후). 생성 성공만으로는 열지 않는다 — `flow:new-project` 는 URL 의 UUID 가
+   바뀐 것만 증명하고 그 페이지가 정상 composer 인지는 모른다.
+2. **채택은 항상 사용자 확인을 거친다.** id 변화는 "이동이 일어났다"만 증명할 뿐 provenance 를
+   증명하지 않는다(Flow 자율 이동, 사용자가 옛 작업물 열람 등). 자동 채택 경로는 없다.
+3. **저장이 확인되기 전에는 ready 를 열지 않는다.** 열면 다음 실행에 저장 id 가 없어 또 새 Flow
+   프로젝트를 만든다(빈 프로젝트 양산).
+4. **`flowProjectId` 는 merge 전용 키다.** main 의 full save 는 디스크 값을 보존하고, 설정/해제는
+   `fs:merge-project-data` 로만 한다 — full save payload 는 stale 일 수 있다.
+
+### 회복 경로 (App 의 5초 폴링 → `tryAdoptFlowProject`)
+
+우선순위대로: **저장 대기 재시도**(만들어졌지만 project.json 저장만 실패) → **재바인딩 요청**
+(`bindNonce` 를 올려 mode-entry 를 다시 돌린다 — 폴링이 직접 open 하지 않는다. 소유자는 하나) →
+**채택 확인**(needs-confirm → 모달).
+
+### 소유권 가드
+
+| 가드 | 막는 것 |
 |---|---|
-| `f16f933e` | Case B 실패 시 `preId` 기록 + arm, `tryAdoptFlowProject()`, App 5초 재시도 배선 |
-| `a8c52122` | Codex R1 fix: baseline 미관측 구분, 소유권 재검사, throw 경로 arm, 타이머 안정화, in-flight 가드 |
-| `38a68d0a` | Codex R2 fix: baseline이 home(null)이면 `needs-confirm`, arm 소유 토큰(projectName+epoch) |
-| `ddada788` | 확인 UI: `FlowProjectAdoptModal` + App 배선(폴링 일시정지) + ko/en |
-| `e8bbd5dd` | Codex R3 fix: `t(key, params)` 계약 위반으로 `{id}` 리터럴 노출 수정, 확인을 `expectedId`에 바인딩 |
+| load epoch + projectName | 늦게 도착한 응답이 다른 프로젝트에 적용되는 것 |
+| arm 토큰 **object identity** | flow→api→flow 로 같은 값으로 재arm 됐을 때의 ABA |
+| bind generation | 취소된 이전 bind 가 최신 bind 의 in-flight 를 푸는 것 |
+| bind watchdog(90s) | 안 끝나는 IPC 가 재시도를 영구히 잠그는 것 |
+| `createDistrustRef` | 만든 프로젝트가 에러 페이지일 때의 재생성 루프 (확인되면 해제) |
+| 채택 쿨다운 10분 (로컬 프로젝트 × Flow id) | 취소했는데 5초마다 다시 물어 Flow 뷰를 계속 접는 것 |
 
-**동작**: Case B 실패 → 그 시점 Flow id를 baseline으로 기록 + arm → 5초마다 재시도 →
-현재 id가 baseline과 **다르면** 채택(= 사용자가 새 프로젝트로 이동한 것). baseline이 `null`(home)
-이면 자동 대신 **확인 모달**. 채택은 `openFlowProject`로 composer 확인 → `project.json` 저장 성공
-후에만 `flowProjectReady=true`.
+## 앵커
 
-테스트: `tests/hooks/useProjectData.flowAdopt.test.js`(8), `tests/components/FlowProjectAdoptModal.test.jsx`(3). 전체 6793 green.
+- `src/hooks/useProjectData.js` — `applyOpenResult`(확인 판정 + 생성물 표식/불신 처리),
+  mode-entry effect(Case A/B, 디스크 확인, pending persist), `tryAdoptFlowProject`,
+  `resolvePendingPersist`, `persistFlowProjectId`, `BIND_WATCHDOG_MS`
+- `src/hooks/useFlowAdoptPrompt.js` — 폴링·모달 배선(후보는 관측 프로젝트를 함께 들고 다닌다)
+- `src/utils/flowAdoptPrompt.js` — `shouldPromptAdopt`(쿨다운, 순수)
+- `src/components/FlowProjectAdoptModal.jsx` + `flowAdopt.*` (ko/en)
+- `electron/ipc/filesystem.js` — `fs:save-project-data`(flowProjectId 보존), `fs:merge-project-data`
+  (없으면 생성, 깨졌으면 실패)
+- `electron/ipc/flow-api.js:128` `flow:extract-project-id`(`liveOnly`), `electron/ipc/dom.js` open/new
 
-## 남은 것 (Codex R3에서 열려 있음)
+## 리뷰
 
-1. **[High] non-null baseline 변경도 provenance 증명 못 함** — Flow가 자율적으로 A→B 이동하면
-   "달라졌다"만 보고 B를 자동 채택한다. Codex: *"ID 차이는 navigation을 증명할 뿐 누가 시작했는지는
-   증명하지 않는다."* → 자동 경로를 없애고 **항상 확인**으로 갈지 결정 필요(제품 판단).
-2. **[High] flow→api→flow ABA** — 같은 프로젝트/epoch면 새 arm 토큰이 옛 토큰과 구별되지 않아
-   늦게 도착한 이전 세션 결과가 수용될 수 있다. → 토큰에 **단조 증가 arm id**를 넣고 `stillCurrent()`가
-   시작 시점 토큰 identity까지 비교해야 한다.
-3. **[Low] Cancel 후 5초 뒤 같은 모달 재등장** — 모달이 Flow 뷰를 0×0으로 접으므로, 사용자가
-   원하는 프로젝트를 고를 시간이 5초뿐이다. → 취소한 id를 일정 시간/세션 동안 다시 묻지 않기.
-4. **[Med, 스코프 밖 기존 버그] Case B 성공 경로 fail-open** — `useProjectData.js`에서 ready를 먼저
-   열고 `persistFlowProjectId` 결과를 무시한다. 저장 실패 시 다음 실행에서 또 새 Flow 프로젝트 생성.
-5. **미핀 테스트**(Codex 지적): baseline await 후 취소 재검사, arm 토큰 자체, ABA, `expectedId`
-   불일치, App 폴링 일시정지/취소/확인 배선, 실제 `I18nProvider` 보간, interval cleanup.
-6. **실앱 눈검증**: 특히 **모달이 Flow 뷰를 0×0으로 만드는 알려진 이슈**([[native-view-modals-break-flow-automation]])
-   — 모달 닫은 뒤 Flow 뷰가 정상 복구되는지 확인 필요.
+Codex(gpt-5.6-sol, xhigh) 12라운드: 6·6·3·2·1·4·4·5·2·1·1 → **findings 0 / GO**.
+핵심 수정은 뮤테이션으로 실측(각 가드를 되돌리면 해당 테스트가 죽는지 확인).
 
-## 참고 앵커
+## 남은 것
 
-- `src/hooks/useProjectData.js` — `flowProjectReady`, `persistFlowProjectId`(boolean 반환으로 변경),
-  `applyOpenResult`, mode-entry Case A/B, `tryAdoptFlowProject`, `adoptPreIdRef`/`adoptArmedRef`/`adoptArmTokenRef`
-- `src/App.jsx` — `adoptFlowRef`(타이머가 최신 함수 참조), `flowAdoptCandidate`, 모달 렌더
-- `electron/ipc/flow-api.js:128` `flow:extract-project-id`(`liveOnly`), `electron/ipc/dom.js:68/146` open/new
-- `src/utils/guards.js:66` + 차단 호출부들
+1. **실앱 눈검증** — 특히 모달이 Flow 뷰를 0×0 으로 만드는 알려진 이슈
+   ([[native-view-modals-break-flow-automation]]): 모달을 닫은 뒤 Flow 뷰가 정상 복구되는지.
+   시나리오: 새 프로젝트 → Flow 진입 → (생성 실패 유도) → 모달 취소 → 뷰 복구 확인 →
+   Flow 에서 프로젝트 생성 → 모달 확인 → 생성이 그 프로젝트로 나가는지.
+2. 스코프 밖으로 합의한 것: 프로젝트 rename / 같은 이름 삭제→재생성(저장이 실패 중일 때),
+   저장 대기는 세션 한정, main 쪽 IPC 데드라인(loadURL/filesystem).
+3. 푸시/PR — 아직 로컬 브랜치.
