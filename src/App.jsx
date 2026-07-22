@@ -1340,19 +1340,10 @@ function App() {
             ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
           } : p
         ))
-        if (newStatus === 'complete' && result?.base64) {
-          // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
-          // rows have ownerSceneId=null and are skipped by the truthy guard.
-          if (fpOwner.ownerSceneId) {
-            scenesHook.updateScene(fpOwner.ownerSceneId, {
-              videoI2V: result.base64,
-              videoI2VPath: result.videoPath || null,
-              videoI2VDisabled: null,
-              ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
-              // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 시 타임라인/모니터 갱신).
-              ...(result?.generatedAt ? { videoI2VGeneratedAt: result.generatedAt } : {}),
-            })
-          }
+        // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
+        // rows have ownerSceneId=null and are skipped by the truthy guard.
+        if (fpOwner.ownerSceneId) {
+          scenesHook.updateScene(fpOwner.ownerSceneId, buildI2VScenePatch(newStatus, result))
         }
       } else {
         videoScenesHook.updateVideoScene(id, {
@@ -1510,6 +1501,7 @@ function App() {
     // #R7-5: 비동기 preflight(getAccessToken/폴더확인) 동안 모드가 바뀌면 캡처한 엔진/모드가
     //   stale 해진다 — 시작 모드를 잠그고, 디스패치 직전 바뀌었으면 중단.
     const startMode = modeRef.current
+    const i2vStartEpoch = loadEpochRef.current
 
     // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
     // Flow 모드는 Flow 뷰/onFlowStatus 에서 인증을 처리하므로 BYOK 모달을 열지 않는다.
@@ -1557,9 +1549,10 @@ function App() {
       if (!readyCheck.ok) return
     }
 
-    // #R7-5: preflight 비동기 구간에서 모드가 바뀌었으면 중단(stale 엔진/모드로 제출 방지).
-    if (modeRef.current !== startMode) {
-      console.warn('[App] handleStart aborted — mode changed during preflight')
+    // #R7-5: preflight 비동기 구간에서 모드나 프로젝트 load 소유권이 바뀌었으면 중단
+    // (stale 엔진/프로젝트로 제출 방지).
+    if (modeRef.current !== startMode || loadEpochRef.current !== i2vStartEpoch) {
+      console.warn('[App] handleStart aborted — mode or project changed during preflight')
       return
     }
 
@@ -1813,7 +1806,6 @@ function App() {
         // I2V는 스타일 무관 — Stop 버튼에 표시 안 함
         setRunningStyle({ styleId: null, applies: false })
         setHasPendingBatch(true)
-        const i2vStartEpoch = loadEpochRef.current
 
         videoAutomation.start({
           mode: 'i2v',

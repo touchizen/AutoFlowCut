@@ -108,10 +108,13 @@ describe('framePairsRef live-owner 계약', () => {
     fileSystemAPI.loadProjectData.mockResolvedValue({ success: false })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    const { unmount } = renderHook(() => useProjectData(makeHookProps({ framePairsRef: null })))
+    const first = renderHook(() => useProjectData(makeHookProps({ framePairsRef: null })))
+    const second = renderHook(() => useProjectData(makeHookProps({ framePairsRef: null })))
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('framePairsRef'))
-    unmount()
+    expect(warn).toHaveBeenCalledTimes(1)
+    first.unmount()
+    second.unmount()
     warn.mockRestore()
   })
 })
@@ -133,6 +136,40 @@ async function waitForEffect(ms = 80) {
     await new Promise(r => setTimeout(r, ms))
   })
 }
+
+describe('loadEpochRef live 공유 계약', () => {
+  beforeEach(() => {
+    commonBeforeEach()
+    localStorage.clear()
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: false })
+  })
+
+  afterEach(() => {
+    delete window.electronAPI
+  })
+
+  it('프로젝트 전환 뒤에도 반환 ref 객체가 같고 그 current가 동기적으로 증가한다', async () => {
+    window.electronAPI = { setStartupProject: vi.fn() }
+    const { result } = renderHook(() => useProjectData(makeHookProps({ mode: 'api' })))
+    await waitForEffect(20)
+
+    const returnedEpochRef = result.current.loadEpochRef
+    const epochBeforeSwitch = returnedEpochRef.current
+    let switchPromise
+    act(() => {
+      switchPromise = result.current.handleProjectChange('next')
+    })
+
+    expect(result.current.loadEpochRef).toBe(returnedEpochRef)
+    expect(returnedEpochRef.current).toBe(epochBeforeSwitch + 1)
+
+    await act(async () => {
+      await switchPromise
+    })
+    expect(result.current.loadEpochRef).toBe(returnedEpochRef)
+    expect(returnedEpochRef.current).toBe(epochBeforeSwitch + 1)
+  })
+})
 
 // ─── R5-1: tryAutoRestore — flow mode, no saved flowProjectId ──────────────────
 

@@ -189,8 +189,11 @@
 
 ### 남은 별건 후속
 
-1. `App.jsx:1332`의 비디오 retry가 stale closure인 `framePairs.find`로 owner를 찾는다. F2-1이 복구
-   경로에서 고친 것과 같은 부류의 pre-existing 문제다.
+1. `App.jsx`의 video-text/F2V 시작 경로는 auth·폴더 preflight 뒤 `videoAutomation.start` enqueue
+   직전에 시작 차단 상태를 live하게 다시 확인하지 않는다. pre-existing race이므로 별도 수정이 필요하다.
+2. T2V 배치 `onItemUpdate`(`App.jsx:1704` 부근)는 load epoch 가드가 없다. 프로젝트마다
+   `vscene_N` id가 다시 시작하므로, 이전 프로젝트의 늦은 콜백이 새 프로젝트의 같은 id를 갱신할 수
+   있는 pre-existing 교차-프로젝트 오염 문제다.
 
 ## 이 세션에서 값비싸게 배운 것
 
