@@ -143,17 +143,18 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
     return firstStyleId
   }
 
-  // 우선순위: override(명시적) → selectedStyleRefId(프로젝트 전체 스타일) → 카드들의 기억 →
-  //   씬들의 단일 effective style 파생 → findAutoStyle. 기억을 건너뛰고 파생/자동 fallback으로 가면,
-  //   기존 카드가 명시적으로 기억한 '무스타일'(null) 계약을 깨뜨린다.
+  // 우선순위: override(명시적) → selectedStyleRefId(프로젝트 전체 스타일) → 명시(non-null) 카드 기억 →
+  //   씬들의 단일 effective style 파생 → null 카드 기억(무스타일 fallback) → findAutoStyle.
+  // null 기억은 파생할 씬 스타일이 없을 때만 존중하고, non-null 기억은 의도적 선택이라 파생보다 우선한다.
   const resolveEffectiveStyleIdForRef = (override) => {
     if (override != null) return override
     if (selectedStyleRefId != null) return selectedStyleRefId
-    // styleId:null 도 정당한 기억("무스타일로 생성됨")이라 ?? 로 건너뛰면 안 된다.
     const inherited = inheritStyleIdFromCards(references)
-    if (inherited.found) return inherited.styleId
+    if (inherited.found && inherited.styleId != null) return inherited.styleId
     const derivedStyleId = deriveStyleIdFromScenes()
     if (derivedStyleId) return derivedStyleId
+    // 파생이 abstain한 프로젝트에서는 styleId:null도 정당한 기억("무스타일로 생성됨")이다.
+    if (inherited.found) return inherited.styleId
     return findAutoStyle(references)
   }
 

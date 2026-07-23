@@ -413,22 +413,59 @@ describe('createStyleResolver — Ref가 씬들의 단일 effective style을 파
     expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('ref:9')
   })
 
-  it('selectedStyleRefId가 있으면 씬 파생보다 우선한다', () => {
+  it('selectedStyleRefId가 있으면 명시 카드 기억과 씬 파생보다 우선한다', () => {
     const r = createStyleResolver({
       ...baseDeps,
       selectedStyleRefId: 'preset:cinematic',
       scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'korean-ani')],
-      references: [],
+      references: [{
+        id: 7,
+        type: 'character',
+        prompt: 'hero',
+        styleId: 'preset:noir',
+        generatedAt: 100,
+      }],
     })
 
     expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('preset:cinematic')
   })
 
-  it('카드의 styleId:null 기억은 씬 파생보다 우선한다', () => {
+  it('카드의 styleId:null 기억보다 단일 씬 preset 파생을 우선한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'Korean Anime'), pendingScene(2, 'Korean Anime')],
+      references: [
+        { id: 7, type: 'character', prompt: 'rich man', styleId: null, generatedAt: 100 },
+        { id: 8, type: 'character', prompt: 'poor man', styleId: null, generatedAt: 200 },
+      ],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('preset:korean-ani')
+  })
+
+  it('명시 preset 카드 기억은 씬 파생보다 우선한다', () => {
     const r = createStyleResolver({
       ...baseDeps,
       selectedStyleRefId: null,
       scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'korean-ani')],
+      references: [{
+        id: 7,
+        type: 'character',
+        prompt: 'hero',
+        styleId: 'preset:noir',
+        generatedAt: 100,
+      }],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('preset:noir')
+  })
+
+  it('null 카드 기억이 있고 씬 파생이 혼합으로 abstain하면 null을 유지한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'cinematic')],
       references: [{
         id: 7,
         type: 'character',
@@ -439,6 +476,20 @@ describe('createStyleResolver — Ref가 씬들의 단일 effective style을 파
     })
 
     expect(r.resolveEffectiveStyleIdForRef(undefined)).toBeNull()
+  })
+
+  it('명시 custom style ref 카드 기억은 씬 파생보다 우선한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'korean-ani')],
+      references: [
+        { id: 3, type: 'style', name: 'custom', prompt: 'custom style' },
+        { id: 7, type: 'character', prompt: 'hero', styleId: 'ref:3', generatedAt: 100 },
+      ],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('ref:3')
   })
 })
 
