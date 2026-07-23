@@ -1214,7 +1214,9 @@ export function registerCharacterIPC(ipcMain, deps) {
       if (!res.ok) console.warn('[Flow Character] rename failed: bodyLen=', (res.text || '').length)
       // PATCH 가 실패했으면 SPA 를 건드리지 않는다 — 서버와 화면이 어긋나는 게 더 나쁘다.
       if (!res.ok) return { success: false, status: res.status, nameApplied: false }
-      const nameApplied = await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
+      const nameApplied = opts.patchOnly
+        ? false
+        : await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
       return { success: true, status: res.status, nameApplied }
     } catch (e) {
       console.warn('[Flow Character] rename error:', e.message)

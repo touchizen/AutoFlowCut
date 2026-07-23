@@ -21,7 +21,7 @@ import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { sourceAvailable } from '../utils/refImageGuard'
 
-export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
+export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, refBatchRunning = false, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
   const [editData, setEditData] = useState({ ...reference })
   // 스타일 팝업은 두 뜻으로 쓰인다: 스타일 카드의 '프리셋에서 채우기' vs 그 외 카드의 '적용할 스타일'.
   //   같은 위젯이 다른 뜻으로 동시에 뜨면 헷갈리므로 타입에 따라 하나만 연다.
@@ -299,22 +299,19 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
             scopeToken: renameStartScope,
             refIndex: renameIdx,
             operation: 'rename',
-            task: () => {
-              if (getScopeToken() !== renameStartScope) {
-                return { success: false, skipped: true, scopeChanged: true }
-              }
-              return window.electronAPI?.renameFlowCharacter?.({
+            task: () => window.electronAPI?.renameFlowCharacter?.({
                 entityId: renameSnapshot.entityId,
                 displayName: renameSnapshot.name,
                 projectId: flowProjectId,
-              })
-            },
+                patchOnly: getScopeToken() !== renameStartScope,
+              }),
           })
-          if (res?.scopeChanged || getScopeToken() !== renameStartScope) {
-            console.warn('[ReferenceDetail] scope changed during queued rename — skipping stale result/refresh')
-            return
-          }
           if (res?.success) {
+            if (getScopeToken() !== renameStartScope) {
+              console.warn('[ReferenceDetail] scope changed during queued rename — PATCH applied, skipping DOM result/refresh')
+              return
+            }
+            toast.success(t('reference.flowRenameSuccess', { name: renameSnapshot.name }))
             // nameApplied 는 상세 DOM 반영일 뿐 목록/picker 캐시 갱신까지 보장하지 않으므로 항상 재진입한다.
             try {
               await runFlowComposerRefresh({
@@ -323,15 +320,14 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                 shouldRun: () => getScopeToken() === renameStartScope,
               })
             } catch (_e) {}
-            toast.success(t('reference.flowRenameSuccess', { name: renameSnapshot.name }))
           } else {
-            markFailed()
+            if (getScopeToken() === renameStartScope) markFailed()
             toast.error(t('reference.flowRenameFailed', {
               error: resolveDisplayError(t, res?.errorKind, res?.error || 'unknown'),
             }))
           }
         } catch (e) {
-          markFailed()
+          if (getScopeToken() === renameStartScope) markFailed()
           toast.error(t('reference.flowRenameError', { error: e?.message || String(e) }))
         }
       })()
@@ -458,6 +454,11 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       if (!published) onUpdate(idx, { ...refSnapshot, syncing: false })
       // refresh 는 Flow 프로젝트 재진입으로 수 초 걸릴 수 있으므로 성공 확인은 먼저 보여준다.
       if (res.ok) toast.success(t('reference.flowSyncSuccess', { name: refSnapshot.name }))
+      else {
+        toast.error(t('reference.flowSyncFailed', {
+          error: resolveDisplayError(t, res.errorKind, res.error || 'unknown'),
+        }))
+      }
       // 등록 자체가 실패했어도 entity 가 생성됐다면 목록 캐시 갱신을 위해 재진입한다.
       if (needsComposerRefresh(refSnapshot, res.result)) {
         try {
@@ -467,11 +468,6 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
             shouldRun: () => getScopeToken() === startScope,
           })
         } catch (_e) {}
-      }
-      if (!res.ok) {
-        toast.error(t('reference.flowSyncFailed', {
-          error: resolveDisplayError(t, res.errorKind, res.error || 'unknown'),
-        }))
       }
     })()
   }
@@ -722,7 +718,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                     onClick={handleSync}
                     // #R37: 이미 동기화가 진행 중이면 막는다 — 모달은 닫고 백그라운드로 돌기 때문에
                     //   다시 눌리면 같은 ref 를 두 번 업로드하고 Flow 가 새 entity 를 또 만든다.
-                    disabled={!hasImageData(editData) || !!reference.syncing}
+                    disabled={!hasImageData(editData) || !!reference.syncing || refBatchRunning}
                     title={isKo ? '동기화 후 모달이 닫히고 백그라운드로 진행(@멘션/레퍼런스 복구)' : 'Closes modal and syncs in background'}
                   >
                     🔄 {isKo ? '동기화' : 'Sync'}

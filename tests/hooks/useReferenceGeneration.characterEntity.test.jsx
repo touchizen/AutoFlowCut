@@ -5,7 +5,7 @@
  * 그걸 카드에 저장하지 않으면, 이미지는 있는데 Flow 엔 캐릭터가 없는 상태(= @멘션 불가)로 남아
  * 사용자가 '동기화' 버튼을 눌러 같은 이미지를 다시 업로드해야 한다.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
@@ -29,6 +29,11 @@ vi.mock('../../src/utils/urls', () => ({ cleanBase64: vi.fn(s => s), toDataURL: 
 import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
 
 const CHAR = { id: 2, name: '준호', type: 'character', prompt: '한국인, 40대 초, male', status: 'pending' }
+const SCENE = { id: 3, name: '거리', type: 'scene', prompt: '비 오는 거리', status: 'pending' }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 function setupHook({ references, genOverrides = {}, flowProjectId = null, projectName = null }) {
   let liveRefs = references
@@ -119,6 +124,109 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
     await act(async () => { await result.current.handleGenerateRef(0) })
     expect(refreshFlowComposer).not.toHaveBeenCalled()
     restore()
+  })
+
+  it('배치는 캐릭터 refresh 완료 뒤에만 다음 non-character submit을 시작한다', async () => {
+    vi.useFakeTimers()
+    let resolveRefresh
+    const previousAPI = window.electronAPI
+    const refreshFlowComposer = vi.fn(() => new Promise(resolve => { resolveRefresh = resolve }))
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
+    const { result, genAPI } = setupHook({
+      references: [CHAR, SCENE],
+      flowProjectId: 'flow-project-two-phase',
+      projectName: 'two-phase',
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          images: [{ base64: 'char-img', mediaId: 'm-char' }],
+          entityId: 'e-char',
+          workflowId: 'w-char',
+          registered: true,
+          nameApplied: false,
+        }),
+      },
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs()
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+    })
+
+    expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
+    const submittedBeforeRefreshSettled = genAPI.submitGeneration.mock.calls.length > 0
+
+    resolveRefresh({ success: true })
+    for (let i = 0; i < 20; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(16000) })
+    }
+    await act(async () => { await batchPromise })
+
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
+    expect(submittedBeforeRefreshSettled).toBe(false)
+    window.electronAPI = previousAPI
+  })
+
+  it('캐릭터 refresh 실패 시 현재 phase를 중단하고 다음 target을 submit하지 않는다', async () => {
+    const previousAPI = window.electronAPI
+    window.electronAPI = {
+      ...(previousAPI || {}),
+      refreshFlowComposer: vi.fn().mockResolvedValue({ success: false, error: 'refresh failed' }),
+    }
+    const { result, genAPI } = setupHook({
+      references: [CHAR, SCENE],
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          images: [{ base64: 'char-img', mediaId: 'm-char' }],
+          entityId: 'e-char',
+          workflowId: 'w-char',
+          registered: true,
+          nameApplied: false,
+        }),
+      },
+    })
+
+    await runBatch(result)
+
+    expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    window.electronAPI = previousAPI
+  })
+
+  it('coordinator timeout 뒤 늦게 끝난 inner 결과에서는 refresh를 시작하지 않는다', async () => {
+    vi.useFakeTimers()
+    let resolveGenerate
+    const previousAPI = window.electronAPI
+    const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
+    const { result } = setupHook({
+      references: [CHAR],
+      genOverrides: {
+        generateImage: vi.fn(() => new Promise(resolve => { resolveGenerate = resolve })),
+      },
+    })
+
+    let generationPromise
+    await act(async () => {
+      generationPromise = result.current.handleGenerateRef(0)
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180000) })
+    await act(async () => { await generationPromise })
+
+    resolveGenerate({
+      success: true,
+      images: [{ base64: 'char-img', mediaId: 'm-char' }],
+      entityId: 'e-char',
+      workflowId: 'w-char',
+      registered: true,
+      nameApplied: false,
+    })
+    await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve() })
+
+    expect(refreshFlowComposer).not.toHaveBeenCalled()
+    window.electronAPI = previousAPI
   })
 })
 

@@ -2258,6 +2258,7 @@ function App() {
             stoppingRefs={stoppingRefs}
             preparingRefs={preparingRefs}
             refBatchActive={refBatchActive}
+            refBatchRunning={refBatchRunning}
             hasPendingBatch={hasPendingBatch}
             selectedStyleRefId={selectedStyleRefId}
             onStyleRefChange={setSelectedStyleRefId}

@@ -31,6 +31,7 @@ export default function ReferencePanel({
   stoppingRefs = false,
   preparingRefs = false,
   refBatchActive = false,
+  refBatchRunning = false,
   hasPendingBatch = false,
   selectedStyleRefId,
   onStyleRefChange,
@@ -172,6 +173,8 @@ export default function ReferencePanel({
         console.warn('[ReferencePanel] scope changed during sync-all — skipping stale refresh/result toast')
         return
       }
+      if (fail === 0) toast.success(t('reference.flowSyncAllSuccess', { ok }))
+      else toast.error(t('reference.flowSyncAllFailed', { ok, fail }))
       // 캐릭터 entity 동기화가 실제로 한 건이라도 있었을 때만 마지막에 1회 새로고침한다.
       if (needsRefresh) {
         try {
@@ -182,8 +185,6 @@ export default function ReferencePanel({
           })
         } catch (_e) {}
       }
-      if (fail === 0) toast.success(t('reference.flowSyncAllSuccess', { ok }))
-      else toast.error(t('reference.flowSyncAllFailed', { ok, fail }))
     } finally {
       setSyncingAll(false)
     }
@@ -281,7 +282,7 @@ export default function ReferencePanel({
               <button
                 className="btn-sync-all"
                 onClick={handleSyncAll}
-                disabled={syncingAll || isGenerating || hasPendingBatch}
+                disabled={syncingAll || isGenerating || refBatchRunning || hasPendingBatch}
                 title={isKo ? '동기화 안 된 캐릭터/씬을 Flow 에 일괄 등록(@멘션 복구)' : 'Sync all unsynced refs to Flow'}
               >
                 {syncingAll
@@ -422,6 +423,7 @@ export default function ReferencePanel({
           thumbnails={thumbnails}
           selectedStyleRefId={selectedStyleRefId}
           flowProjectId={flowProjectId}
+          refBatchRunning={refBatchRunning}
         />
       )}
     </div>

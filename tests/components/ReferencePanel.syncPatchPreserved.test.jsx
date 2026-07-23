@@ -21,6 +21,7 @@ vi.mock('../../src/components/Toast', () => ({
 }))
 
 import ReferencePanel from '../../src/components/ReferencePanel'
+import { toast } from '../../src/components/Toast'
 import { I18nProvider } from '../../src/hooks/useI18n'
 import { runFlowCharacterOperation } from '../../src/utils/flowCharacterCoordinator'
 
@@ -138,6 +139,31 @@ describe('ReferencePanel — Flow 캐릭터 동기화 후 refresh 보장', () =>
 
     await waitFor(() => expect(syncRefToFlow).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1))
+  })
+
+  it('sync-all 요약 toast는 coordinated refresh 완료 전에 표시한다', async () => {
+    let resolveRefresh
+    window.electronAPI.refreshFlowComposer = vi.fn(() => new Promise(resolve => { resolveRefresh = resolve }))
+    syncRefToFlow.mockImplementation(async (_ref, _upload, deps) => {
+      const syncResult = {
+        ok: true,
+        patch: { entityId: 'entity-1', workflowId: 'workflow-1', flowNameSyncStatus: 'synced' },
+        result: { success: true, entityId: 'entity-1', registered: true },
+      }
+      await deps.publishResult(syncResult)
+      return syncResult
+    })
+    toast.success.mockClear()
+
+    renderPanel(vi.fn())
+    await userEvent.click(await screen.findByRole('button', { name: /sync/i }))
+    await waitFor(() => expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1))
+    const summaryShownBeforeRefreshSettled = toast.success.mock.calls.length > 0
+
+    resolveRefresh({ success: true })
+    await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve() })
+
+    expect(summaryShownBeforeRefreshSettled).toBe(true)
   })
 
   it('동기화 대상이 0건이면 refresh하지 않는다', async () => {

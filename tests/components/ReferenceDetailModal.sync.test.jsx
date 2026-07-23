@@ -80,6 +80,20 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(getSyncButton(container)).toBeTruthy()
   })
 
+  it('ref batch lifecycle 중에는 modal Sync 버튼을 비활성화한다', () => {
+    const { container } = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={charRef}
+        appMode="flow"
+        refBatchRunning
+        onUpdate={vi.fn()}
+        onUpload={vi.fn()}
+      />
+    )
+    expect(getSyncButton(container).disabled).toBe(true)
+  })
+
   it('does NOT show the sync button in api mode', () => {
     const { container } = render(
       <ReferenceDetailModal {...baseProps} reference={charRef} appMode="api" onUpdate={vi.fn()} onUpload={vi.fn()} />
@@ -144,6 +158,28 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(onUpdate).toHaveBeenCalledWith(0, expect.objectContaining({ name: 'kingnew' }))
   })
 
+  it('rename 성공 toast는 coordinated refresh 완료 전에 표시한다', async () => {
+    let resolveRefresh
+    window.electronAPI.renameFlowCharacter = vi.fn().mockResolvedValue({ success: true, nameApplied: true })
+    window.electronAPI.refreshFlowComposer = vi.fn(() => new Promise(resolve => { resolveRefresh = resolve }))
+    const syncedChar = { ...charRef, name: 'king', entityId: 'ent-1', flowNameSyncStatus: 'synced' }
+    const { container, getByText } = render(
+      <ReferenceDetailModal {...baseProps} reference={syncedChar} appMode="flow" onUpdate={vi.fn()} onUpload={vi.fn()} />
+    )
+    fireEvent.change(container.querySelector('input[type="text"]'), { target: { value: 'kingnew' } })
+    await act(async () => {
+      getByText('common.save').click()
+      for (let i = 0; i < 12; i++) await Promise.resolve()
+    })
+    await waitFor(() => expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1))
+    const successShownBeforeRefreshSettled = toast.success.mock.calls.length > 0
+
+    resolveRefresh({ success: true })
+    await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve() })
+
+    expect(successShownBeforeRefreshSettled).toBe(true)
+  })
+
   it('#R34-fix: rename 실패 시 로컬 ref 를 failed 로 마킹(앱이 synced 로 오인해 @새이름 생성이 깨지는 것 방지)', async () => {
     window.electronAPI.renameFlowCharacter = vi.fn().mockResolvedValue({ success: false, error: 'patch failed' })
     const onUpdate = vi.fn()
@@ -205,7 +241,7 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(window.electronAPI.renameFlowCharacter).toHaveBeenCalledTimes(1)
   })
 
-  it('rename 이 대기하는 동안 scope 가 바뀌면 이전 프로젝트 rename/refresh를 시작하지 않는다', async () => {
+  it('rename 대기 중 scope가 바뀌어도 PATCH는 patchOnly로 실행하고 DOM/refresh만 건너뛴다', async () => {
     let resolveBlockingUpload
     let currentScope = 'flow::project-a'
     const blocker = syncRefToFlow(
@@ -216,7 +252,8 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     for (let i = 0; i < 4; i++) await Promise.resolve()
 
     window.electronAPI.renameFlowCharacter = vi.fn().mockResolvedValue({ success: true, nameApplied: false })
-    const syncedChar = { ...charRef, entityId: 'ent-rename', flowNameSyncStatus: 'synced' }
+    const onUpdate = vi.fn()
+    const syncedChar = { ...charRef, entityId: 'ent-rename', flowNameSyncStatus: 'synced', registered: true }
     const { container, getByText } = render(
       <ReferenceDetailModal
         {...baseProps}
@@ -224,7 +261,7 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
         appMode="flow"
         flowProjectId="flow-project-a"
         getScopeToken={() => currentScope}
-        onUpdate={vi.fn()}
+        onUpdate={onUpdate}
         onUpload={vi.fn()}
       />
     )
@@ -241,8 +278,60 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     await blocker
     await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve() })
 
-    expect(window.electronAPI.renameFlowCharacter).not.toHaveBeenCalled()
+    expect(window.electronAPI.renameFlowCharacter).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'ent-rename',
+      displayName: 'kingnew',
+      projectId: 'flow-project-a',
+      patchOnly: true,
+    }))
     expect(window.electronAPI.refreshFlowComposer).not.toHaveBeenCalled()
+    expect(onUpdate.mock.calls.map(([, patch]) => patch).some(
+      patch => patch.flowNameSyncStatus === 'failed' || patch.registered === false
+    )).toBe(false)
+  })
+
+  it('scope가 바뀐 patchOnly rename 실패는 toast만 띄우고 새 프로젝트 index를 markFailed하지 않는다', async () => {
+    let resolveBlockingUpload
+    let currentScope = 'flow::project-a'
+    const blocker = syncRefToFlow(
+      { ...charRef, id: 101, entityId: null, workflowId: null },
+      vi.fn(() => new Promise(resolve => { resolveBlockingUpload = resolve })),
+      { projectId: 'flow-project-a', scopeToken: currentScope },
+    )
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+
+    window.electronAPI.renameFlowCharacter = vi.fn().mockResolvedValue({ success: false, error: 'patch failed' })
+    const onUpdate = vi.fn()
+    const syncedChar = { ...charRef, entityId: 'ent-rename', flowNameSyncStatus: 'synced', registered: true }
+    const { container, getByText } = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={syncedChar}
+        appMode="flow"
+        flowProjectId="flow-project-a"
+        getScopeToken={() => currentScope}
+        onUpdate={onUpdate}
+        onUpload={vi.fn()}
+      />
+    )
+    fireEvent.change(container.querySelector('input[type="text"]'), { target: { value: 'kingnew' } })
+    await act(async () => {
+      getByText('common.save').click()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+
+    currentScope = 'flow::project-b'
+    resolveBlockingUpload({
+      success: true, entityId: 'blocking-ent', workflowId: 'blocking-wf', mediaId: 'blocking-media', registered: true,
+    })
+    await blocker
+    await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve() })
+
+    expect(window.electronAPI.renameFlowCharacter).toHaveBeenCalledWith(expect.objectContaining({ patchOnly: true }))
+    expect(toast.error).toHaveBeenCalled()
+    expect(onUpdate.mock.calls.map(([, patch]) => patch).some(
+      patch => patch.flowNameSyncStatus === 'failed' || patch.registered === false
+    )).toBe(false)
   })
 
   it('#R34: 이름이 그대로면 renameFlowCharacter 호출 안 함', async () => {
@@ -416,6 +505,8 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
   })
 
   it('entity 는 생성됐지만 등록이 실패한 sync 결과도 composer 를 한 번 refresh한다', async () => {
+    let resolveRefresh
+    window.electronAPI.refreshFlowComposer = vi.fn(() => new Promise(resolve => { resolveRefresh = resolve }))
     const onUpload = vi.fn().mockResolvedValue({
       success: true,
       mediaId: 'created-media',
@@ -434,7 +525,13 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
       for (let i = 0; i < 12; i++) await Promise.resolve()
     })
 
+    await waitFor(() => expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1))
+    const failureShownBeforeRefreshSettled = toast.error.mock.calls.length > 0
+
+    resolveRefresh({ success: true })
+    await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve() })
+
+    expect(failureShownBeforeRefreshSettled).toBe(true)
     expect(toast.error).toHaveBeenCalled()
-    expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1)
   })
 })

@@ -264,17 +264,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     //   다시 PATCH 하고 새 이미지는 영영 업로드되지 않는다(ReferenceCard #R31-3 와 동일 정책).
     const entityPatch = entityPatchForNewImage({ ...ref, mediaId }, genResult)
     // 서버엔 이름이 등록됐지만 SPA 가 옛 이름('제목 없는 캐릭터')을 캐시한 채면 @멘션이 새 이름을
-    //   못 찾는다. main 이 상세페이지 이름칸 타이핑으로 스토어를 갱신하지 못했을 때만(nameApplied:false)
-    //   기존 방식(프로젝트 나갔다 재진입)으로 폴백한다 — 성공했으면 그 왕복을 통째로 건너뛴다.
-    if (genResult?.entityId && genResult.nameApplied === false) {
-      // generate-character 보호 구간 안에서 기다리면 자기 tail 과 deadlock 되므로 다음 작업으로 예약한다.
-      const refreshScope = `flow::${getLiveProjectName() ?? ''}`
-      void runFlowComposerRefresh({
-        projectId: flowProjectId,
-        scopeToken: refreshScope,
-        shouldRun: () => `flow::${getLiveProjectName() ?? ''}` === refreshScope,
-      }).catch(() => {})
-    }
+    // 못 찾는다. 실제 refresh 는 generate-character 보호 구간이 settle 된 뒤 호출측이 await 한다.
+    const composerRefreshNeeded = !!(genResult?.entityId && genResult.nameApplied === false)
     const resolvedIndex = resolveReferenceIndex(
       referencesRef.current,
       index,
@@ -301,7 +292,11 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       current => ({ ...current, ...donePatch })
     )
     releaseBusy()
-    return { success: true, savedToMemory: filePath === null && settings.saveMode === 'folder' }
+    return {
+      success: true,
+      savedToMemory: filePath === null && settings.saveMode === 'folder',
+      composerRefreshNeeded,
+    }
   }
 
   // ─── 공통: effectiveStyleId 결정 ───
@@ -470,10 +465,11 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       }
 
       if (genAPI?.mode === 'flow' && ref.type === 'character') {
+        const scopeToken = `flow::${getLiveProjectName() ?? ''}`
         const coordinated = await runFlowCharacterOperation({
           ref,
           projectId: flowProjectId,
-          scopeToken: `flow::${getLiveProjectName() ?? ''}`,
+          scopeToken,
           refIndex: index,
           operation: 'generate-character',
           task: generateAndPublish,
@@ -487,6 +483,30 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             current => ({ ...current, status: 'pending', errorMessage: null })
           ))
           return { success: false, busy: true, error: coordinated.error }
+        }
+        if (coordinated?.composerRefreshNeeded) {
+          try {
+            const refreshResult = await runFlowComposerRefresh({
+              projectId: flowProjectId,
+              scopeToken,
+              shouldRun: () => `flow::${getLiveProjectName() ?? ''}` === scopeToken,
+            })
+            if (refreshResult?.success !== true) {
+              return {
+                ...coordinated,
+                success: false,
+                refreshFailed: true,
+                error: refreshResult?.error || 'Composer refresh failed',
+              }
+            }
+          } catch (error) {
+            return {
+              ...coordinated,
+              success: false,
+              refreshFailed: true,
+              error: error?.message || String(error),
+            }
+          }
         }
         return coordinated
       }
@@ -956,6 +976,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               recordSkip(target.key, direct.skipStage || 'not-found')
             } else if (direct?.busy) {
               recordFail(target.key, 'busy', direct.error)
+            } else if (direct?.refreshFailed) {
+              recordFail(target.key, 'refresh', direct.error || 'Composer refresh failed')
+              break
             } else if (direct?.success) {
               attemptedKeys.add(target.key)
               succeededKeys.add(target.key)

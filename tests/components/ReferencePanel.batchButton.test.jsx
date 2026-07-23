@@ -99,6 +99,20 @@ describe('ReferencePanel — 일괄 생성 버튼 (style 카드 포함)', () => 
     expect(container.querySelector('.btn-clear-refs').disabled).toBe(true)
   })
 
+  it('ref batch lifecycle 중에는 Flow 일괄 Sync 진입점을 비활성화한다', () => {
+    const { container } = renderPanel([
+      {
+        id: 1,
+        type: 'character',
+        name: 'Hero',
+        prompt: 'a hero',
+        data: 'data:image/png;base64,AAA',
+      }
+    ], { refBatchRunning: true, appMode: 'flow' })
+
+    expect(container.querySelector('.btn-sync-all').disabled).toBe(true)
+  })
+
   it('아이템 auth 대기 창에도 Stop을 유지하고 Generate All 진입을 막는다', () => {
     const { container } = renderPanel([
       { id: 1, type: 'character', prompt: 'a hero' }
