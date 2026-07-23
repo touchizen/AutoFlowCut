@@ -38,7 +38,7 @@
 | F10 | **확인·교정** | `StoryStepper`는 presentation component지만 shopping step order를 prop으로 받지는 않는다. `STEP_ORDER`와 meta가 모듈 상수로 고정돼 있어, 기존 기본값을 보존하는 prop 확장이 필요하다. | `src/components/story/StoryStepper.jsx:14-42`, `src/components/story/StoryStepper.jsx:46-62`, `src/components/story/StoryStepper.jsx:96-102` |
 | F11 | **확인·M1a 완료** | HTML/이미지 정책, public-address 판정, socket-pinned transport, redirect·deadline·압축해제 후 크기·이미지 dimension 제한을 가진 공용 `safeHttpFetch`가 있다. | `electron/api/net/safeHttpFetch.js:74-94`, `electron/api/net/safeHttpFetch.js:433-453`, `electron/api/net/safeHttpFetch.js:453-531` |
 | F12 | **확인·M1b 완료** | 쿠팡 parser는 JSON-LD/OG allowlist만 읽고 `page-asserted` provenance를 남기며, 정가가 판매가보다 큰 동일 통화일 때만 할인율을 계산한다. | `electron/api/commerce/coupangParser.js:328-345`, `electron/api/commerce/coupangParser.js:488-513`, `electron/api/commerce/coupangParser.js:516-561` |
-| F13 | **확인** | M1a/M1b 모듈은 아직 앱 실행 경로에서 호출되지 않는다. `parseCoupangProduct`와 shopping fetch 정책의 소비자는 테스트뿐이다. 따라서 M2가 이 완료된 primitive를 `planMachine` side action에 배선해야 한다. | `tests/electron/api/net/safeHttpFetch.test.js:190-309`, `tests/electron/api/commerce/coupangParser.test.js:22-97` |
+| F13 | **확인** | M1a/M1b 모듈은 아직 앱 실행 경로에서 호출되지 않는다. `parseCoupangProduct`와 shopping fetch 정책의 소비자는 테스트뿐이다. 따라서 M2a가 이 완료된 primitive를 `planMachine` side action에 배선해야 한다. | `tests/electron/api/net/safeHttpFetch.test.js:190-309`, `tests/electron/api/commerce/coupangParser.test.js:22-97` |
 | F14 | **확인** | 기존 character identity는 `id/name/gender/age/role/ethnicity/appearance`를 정규화한다. 공용 visual prompt는 `ethnicity, age, gender, appearance` 콤마 결합이라 `a Korean woman in her 30s` 문법을 보장하지 않는다. | `src/services/storyCharacter.js:20-32`, `src/services/storyCharacter.js:51-57` |
 | F15 | **확인** | renderer scene은 이미 `videoI2VPrompt`와 `imagePath` 기반 export를 지원한다. | `src/utils/parsers.js:66-80`, `src/utils/parsers.js:114-130`, `src/utils/sceneMedia.js:50-52` |
 | F16 | **확인** | Google 저수준 함수는 이미지 `generateImage`와 시작 이미지가 있으면 I2V가 되는 `generateVideo`/`submitVideo`를 제공한다. | `electron/api/genai.js:216-242`, `electron/api/genai.js:287-310`, `electron/api/genai.js:362-390`, `electron/api/genai.js:541-565` |
@@ -263,7 +263,7 @@ LLM 호출은 Story가 `metaPrompt`를 만든 뒤 adapter를 직접 부르는 �
 - asset을 renderer나 agent가 먼저 “읽었다”는 ledger는 없다. main 호출이 asset digest를 사용했다는 canonical
   stamp가 충분하다.
 
-### D3. 쿠팡 fetch와 SSRF — M1a 완료, M2에서 배선
+### D3. 쿠팡 fetch와 SSRF — M1a 완료, M2a에서 배선
 
 #### D3.1 공통 transport
 
@@ -555,7 +555,7 @@ Flow/DOM, app-global TTS 진입점은 승인·ack가 모두 있어도 열리지 
 D6.2의 hash/ack gate는 신규 `shopping:*` handler에만 붙여서는 코드 계약이 아니다. main은 active project의
 `workflowType`을 **disk `project.json`에서 읽어 보유한 main-owned project context**로 판정한다. 현재
 `app:project-activated`는 `{name,workFolder}`만 받아 `activeWorkFolder`를 갱신한다
-(`electron/main.js:886-892`, `electron/preload.js:32`). M2는 main이 이 두 값에서 검증된 project path를 resolve하고
+(`electron/main.js:886-892`, `electron/preload.js:32`). M2a는 main이 이 두 값에서 검증된 project path를 resolve하고
 disk workflow를 읽어 `{projectPath,workflowType,epoch}`를 원자 교체하도록 확장한다. caller가 workflow 값을 보내는
 형태는 금지한다. project switch에서 새 context를 읽는 동안 generic generation은 `project-context-not-ready`로
 fail-closed하고, `shopping:open`도 같은 path/workflow/epoch를 교차 확인한다.
@@ -1053,7 +1053,7 @@ step 안에서 renderer ack/journal 상태로 표현한다.
   `electron/api/net/safeHttpFetch.js`, `tests/electron/api/net/safeHttpFetch.test.js`,
   `electron/api/commerce/coupangParser.js`, `tests/electron/api/commerce/coupangParser.test.js`에 있다.
 
-M2는 이 모듈을 새 `planMachine`에 배선한다. 같은 fetch/parser를 다시 구현하지 않는다.
+M2a는 이 모듈을 새 `planMachine`에 배선한다. 같은 fetch/parser를 다시 구현하지 않는다.
 
 ### 4.3 선행 merge 없음
 
@@ -1066,8 +1066,10 @@ M2는 이 모듈을 새 `planMachine`에 배선한다. 같은 fetch/parser를 �
 
 | M | 상태·내용 | 검증 가능한 출구 조건 |
 |---|---|---|
-| **M1 — 크롤 기반** | **완료**: socket-pinned `safeHttpFetch` + 쿠팡 JSON-LD/OG parser | public IP/socket pin/redirect/deadline/decode cap/image dimension와 parser allowlist/provenance/할인 formula test가 존재. M2는 primitive를 소비만 함 |
-| **M2 — app-native plan** | `shoppingPlanStore` + validator/hash + 6-state `planMachine` + prompt asset/direct LLM + project workflow type + ShoppingPanel fact/plan UI + Story session 격리 | 기존 project missing type→story. shopping new project→9:16. URL→A/B→strict 5~8 scene plan. caller hash 0. uint32 seed golden. shopping에서 Story open/push listener 0, forced `story:open` main 거부. ordered claim coverage, 금지 claim, persona 문법, revision/token/abort test green |
+| **M0 — 스펙 기준선 pin** | 이 app-native 정본과 구현 마일스톤 경계를 구현 기준으로 고정 | 구현 계획과 구현 PR이 이 문서의 commit SHA를 기록하고 `M2a`/`M2b` 경계를 그대로 사용 |
+| **M1 — 크롤 기반** | **완료**: socket-pinned `safeHttpFetch` + 쿠팡 JSON-LD/OG parser | public IP/socket pin/redirect/deadline/decode cap/image dimension와 parser allowlist/provenance/할인 formula test가 존재. M2a는 primitive를 소비만 함 |
+| **M2a — app-native plan (비-UI 배선)** | `shoppingPlanStore`(Story store 미러) + validator/canonical hash + 6-state `planMachine` + prompt asset/direct LLM + `project.workflowType` + Story session 격리(D1.2/D1.3). M1a/M1b 크롤 primitive를 `planMachine` side action에 배선. **ShoppingPanel UI 없음** | 기존 project missing type→story. shopping new project→9:16. URL→A/B→strict 5~8 scene plan. caller hash 0. uint32 seed golden. shopping에서 Story open/push listener 0, forced `story:open` main 거부. ordered claim coverage, 금지 claim, persona 문법, revision/token/abort test green |
+| **M2b — ShoppingPanel fact/plan UI** | 상품 URL 첫 화면 + A/B 사실확인 UI + 씬표/plan 표시. 프로젝트에 shopping marker가 있으면 `StoryView` 자리에 `ShoppingPanel` 렌더 | 실앱 눈검증으로 shopping 프로젝트 생성·재열기, 상품 URL 첫 화면, A/B 사실확인, 씬표/plan 표시, `StoryView` 대체를 확인. **UI는 테스트 초록불만으로 완료 처리하지 않음** |
 | **M3 — 물질화** | push/save/ack transaction + project mirror fields + shared scenes/SRT + 외부 mutation barrier | 승인 전 push 0. whole snapshot save 뒤 ack. product still `imagePath`, persona placeholder/`videoI2VPrompt`. active shopping `/api/update` scene/SRT/reference mutation과 MCP alias는 409. unexpected digest drift는 ack 무효화+materialization retry. scene drop 0. crash recovery old/new/neither matrix. 승인 hash만 있고 ack 없으면 paid IPC 0 |
 | **M4 — 생성** | protected shopping IPC + `generateImage`/`submitVideo→check→fetch` 조각 조합 + global capability firewall + journal + acceptance policy | 승인/ack 전 protected paid IPC·journal reserve·Google POST 0. active shopping에서 generic Google IPC 2, Flow 노출 8, Flow DOM 2, HTTP named 4와 `/api/update` 생성 type, MCP 생성 alias 4, app-global TTS preview를 main 거부. Story 유료는 guarded. provider POST/DOM/event 0. submit retry 0. operationName 즉시 durable. typed HTTP/phase 분류, 4xx definite/500·timeout unknown. U5 공식 schema+uint32 boundary provider spike. boot recovery, revision 우회 금지, force retry atomic. product still generation 0 |
 | **M5 — MVP** | frame+human dialogue review + integer-ms shopping export builder + common export gate + CapCut E2E + U4 실물 검증 | `buildShoppingExportProject`가 D9 resolver integer ms를 overlay에 직접 기록하고 generic float-second builder를 우회. 모든 review current/ok, exact SRT/window, audioTracks null, SFX 0, Premiere/Vrew reject, remote/file write 전 admission. 1080×1920·60초 미만 CapCut, image 누락 0, persona native Korean audible, product still silent. U4 실패 시 AutoFlowCut+GCF 계약 수정·배포·재검증까지 완료 |
@@ -1201,7 +1203,7 @@ M5 뒤 후속은 별도 제품 결정이다. self-render, 다중 세트, 업로�
 | §1 스코프 | **계승** | 증거 기반 단일 상품·단일 persona·API/CapCut만 유지. 실행 주체만 ShoppingPanel/planMachine |
 | D1 실행 레이어 | **전면 재작성** | agent durable workflow 삭제 → `electron/shopping/planMachine.js`, `shoppingPlanStore`, `project.workflowType`, ShoppingPanel. App/main 양쪽 Story session 차단 |
 | D2 bounded R playbook | **삭제·대체** | tool/read ledger/SDK 봉인 논의 삭제 → versioned app asset을 main의 direct LLM 호출에 사용 |
-| D3 SSRF | **계승·완료 반영** | M1a `safeHttpFetch`를 정본으로 하고 M2가 side action에 배선 |
+| D3 SSRF | **계승·완료 반영** | M1a `safeHttpFetch`를 정본으로 하고 M2a가 side action에 배선 |
 | D4 claim 분리 | **계승·M1b 재앵커** | parser `page-asserted` provenance + 별도 A/B FactDecision + strict claim coverage |
 | D5 plan/hash | **계승·저장소 재앵커** | caller hash 금지와 canonical rules 유지. agent store 대신 Story store를 미러한 `shoppingPlanStore`; seed는 SHA-256 선두 uint32 |
 | D6 persona | **계승+확장** | character identity 재사용, exact Korean grammar builder 신규 |
@@ -1215,7 +1217,7 @@ M5 뒤 후속은 별도 제품 결정이다. self-render, 다중 세트, 업로�
 | D12 산출물 | **계승** | CapCut project 하나, 자체 MP4 제외 |
 | §3 agent tool/bridge | **삭제·대체** | §3의 planMachine side action/IPC와 ShoppingPanel component inventory |
 | §4 base/선행 merge | **전면 재작성** | base `main`, worktree `feature/shopping-shorts`, agent 선행 merge 없음, M1a/M1b 완료 |
-| §5 milestones | **전면 재작성** | M1 완료 → M2 plan → M3 materialize → M4 generation → M5 review/export/U4 |
+| §5 milestones | **전면 재작성** | M0 spec pin → M1 완료 → M2a non-UI plan 배선 → M2b ShoppingPanel UI → M3 materialize → M4 generation → M5 review/export/U4 |
 | §6 tests | **계승+재작성** | agent/SDK test 삭제. project type, IPC zero-call, renderer ack, direct GenAI seam, UI export gate 추가 |
 | v5 §X 43 findings 표 | **정본에서 삭제** | 역사·리뷰 추적은 REFERENCE에 보존. 살아 있는 불변식은 D3~D11과 §6에 흡수 |
 | v5 §Y 구현 착수 체크리스트 | **삭제·대체** | 본 문서 §5 마일스톤과 아래 reviewer 질문으로 대체 |
@@ -1225,8 +1227,8 @@ M5 뒤 후속은 별도 제품 결정이다. self-render, 다중 세트, 업로�
 | R1 finding | 등급 | v2 규범 변경 | 수용 증거 위치 |
 |---|---|---|---|
 | F1 유료 생성 진입점 누락 | BLOCKER | D6.3에 main-owned workflow guard와 generic Google IPC 2종, HTTP 생성 4종, Flow 생성/영상/upscale 전수 deny 표를 고정. 승인 뒤에도 protected shopping IPC만 허용 | D6.3, §3.1, §6.3~6.4, M4 |
-| F2 53-bit seed | MAJOR | SHA-256 선두 4byte big-endian **uint32**로 축소; 53-bit 생성·입력 금지. 정확한 provider 범위는 U5/M4 boundary spike로 닫음 | D5.2~D5.3, U5, §6.2·§6.4, M2·M4 |
-| F3 Story 세션 동시 활성 | MAJOR | App에서 shopping일 때 Story open/listener 금지, 전환 시 abort/detach. main `story:open`도 disk workflow를 읽고 거부 | D1.2~D1.3, §6.2, M2 |
+| F2 53-bit seed | MAJOR | SHA-256 선두 4byte big-endian **uint32**로 축소; 53-bit 생성·입력 금지. 정확한 provider 범위는 U5/M4 boundary spike로 닫음 | D5.2~D5.3, U5, §6.2·§6.4, M2a·M4 |
+| F3 Story 세션 동시 활성 | MAJOR | App에서 shopping일 때 Story open/listener 금지, 전환 시 abort/detach. main `story:open`도 disk workflow를 읽고 거부 | D1.2~D1.3, §6.2, M2a |
 | F4 GenAI seam 부정확 | MINOR | 기존 `generateImage(...,{maxRetries:0})`와 `submitVideo→check→fetch` 조각을 사용. `generateVideo` 개조 삭제, typed failure metadata만 additive | F17, D8.1~D8.3, §3.1, §6.4, M4 |
 | F5 float export seam 누락 | MINOR | generic float builder를 우회하는 `buildShoppingExportProject`가 D9 resolver integer ms를 overlay에 직접 기록 | F28, D9, D11.3, §6.5, M5 |
 | F6 D4 앵커 drift | MINOR | 안전 변형의 실제 heading/selection row인 원본 `script-templates.md:368`, `:453`으로 교체 | D4 |
