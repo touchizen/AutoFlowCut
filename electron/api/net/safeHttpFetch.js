@@ -178,7 +178,7 @@ function fixedHeaders(hostname, kind) {
     Accept: kind === 'image'
       ? 'image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8'
       : 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
+    'Accept-Encoding': 'gzip, br',
     'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
   }
 }
@@ -221,7 +221,9 @@ function openPinnedRequest(url, policy, pinned, createRequest, timeout, signal) 
       agent: false,
       autoSelectFamily: false,
       rejectUnauthorized: true,
-      lookup: (_hostname, _options, callback) => callback(null, pinned.address, pinned.family),
+      lookup: (_hostname, _options, callback) => {
+        queueMicrotask(() => callback(null, pinned.address, pinned.family))
+      },
       servername: url.hostname,
       headers: fixedHeaders(url.hostname, policy.kind),
       timeout,

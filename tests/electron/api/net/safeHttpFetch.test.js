@@ -1,3 +1,4 @@
+import dns from 'node:dns'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib'
@@ -305,6 +306,41 @@ describe('safeHttpFetch DNS and socket pinning', () => {
     }))
   })
 
+  it('pins the real https transport to the selected address without a system DNS lookup', async () => {
+    const systemLookup = vi.spyOn(dns, 'lookup')
+    let addressReads = 0
+    const resolveDns = vi.fn(async () => [{
+      family: 4,
+      // The CIDR truth table is covered separately. Return a public address
+      // for that gate, then loopback only when the real socket invokes lookup.
+      get address() {
+        return addressReads++ === 0 ? '93.184.216.34' : '127.0.0.1'
+      },
+    }])
+    let connectionError
+    let systemLookupCalls
+
+    try {
+      await safeHttpFetch('https://www.coupang.com/real-transport-pin', HTML_FETCH_POLICY, {
+        resolveDns,
+      })
+    } catch (error) {
+      connectionError = error
+    } finally {
+      systemLookupCalls = systemLookup.mock.calls.length
+      systemLookup.mockRestore()
+    }
+
+    // Managed sandboxes can block loopback with EPERM before the host kernel
+    // reaches the expected ECONNREFUSED. Both retain the actual destination.
+    expect(['ECONNREFUSED', 'EPERM']).toContain(connectionError?.code)
+    expect(connectionError).toMatchObject({
+      address: '127.0.0.1',
+      port: 443,
+    })
+    expect(systemLookupCalls).toBe(0)
+  })
+
   it.each([
     ['html', HTML_FETCH_POLICY, htmlResponse()],
     ['image', IMAGE_FETCH_POLICY, imageResponse()],
@@ -334,6 +370,16 @@ describe('safeHttpFetch DNS and socket pinning', () => {
     expect(headers).not.toHaveProperty('Cookie')
     expect(headers).not.toHaveProperty('Authorization')
     expect(headers).not.toHaveProperty('Referer')
+  })
+
+  it('advertises only unambiguous content encodings', async () => {
+    const createRequest = makeTransport([htmlResponse()])
+    await safeHttpFetch('https://www.coupang.com/x', HTML_FETCH_POLICY, {
+      resolveDns: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+      createRequest,
+    })
+
+    expect(createRequest.mock.calls[0][1].headers['Accept-Encoding']).toBe('gzip, br')
   })
 })
 
