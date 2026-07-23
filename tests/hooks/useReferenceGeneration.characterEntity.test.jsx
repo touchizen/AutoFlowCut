@@ -85,9 +85,9 @@ async function runBatch(result) {
   return batchResult
 }
 
-// SPA 캐시 갱신에 실패했으면(nameApplied:false) 예전처럼 Flow 프로젝트를 나갔다 재진입해야
-// 새 이름이 멘션에 잡힌다. 성공했으면 그 왕복(loadURL 2회 + 대기)을 건너뛴다.
-describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한다', () => {
+// 상세 DOM의 nameApplied 성공 여부와 무관하게 목록/멘션 피커 캐시는 stale할 수 있다.
+// character entity가 생겼으면 generate-character op가 settle된 뒤 composer를 재진입한다.
+describe('캐릭터 entity 생성 뒤 composer를 refresh한다', () => {
   const withRefresh = (fn) => {
     const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
     const prev = window.electronAPI
@@ -265,7 +265,7 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
     window.electronAPI = previousAPI
   })
 
-  it('nameApplied:true 면 refresh 를 건너뛴다', async () => {
+  it('nameApplied:true 여도 entity가 생겼으면 composerRefreshNeeded를 올리고 refresh한다', async () => {
     const { refreshFlowComposer, restore } = withRefresh()
     const { result } = setupHook({
       references: [CHAR],
@@ -276,8 +276,10 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
         }),
       },
     })
-    await act(async () => { await result.current.handleGenerateRef(0) })
-    expect(refreshFlowComposer).not.toHaveBeenCalled()
+    let generationResult
+    await act(async () => { generationResult = await result.current.handleGenerateRef(0) })
+    expect(generationResult).toMatchObject({ success: true, composerRefreshNeeded: true })
+    expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
     restore()
   })
 
@@ -469,6 +471,8 @@ describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
   })
 
   it('단건 생성: entityId/workflowId 와 synced 상태를 카드에 남긴다', async () => {
+    const previousAPI = window.electronAPI
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer: vi.fn().mockResolvedValue({ success: true }) }
     const { result, finalRef } = setupHook({
       references: [CHAR],
       genOverrides: {
@@ -483,6 +487,7 @@ describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
     expect(finalRef(2)).toMatchObject({
       status: 'done', entityId: 'e-1', workflowId: 'w-1', flowNameSyncStatus: 'synced', registered: true,
     })
+    window.electronAPI = previousAPI
   })
 
   it('같은 project/ref sync 중이면 단건 캐릭터 생성이 두 번째 entity 작업을 시작하지 않는다', async () => {
@@ -524,6 +529,8 @@ describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
   })
 
   it('Flow 캐릭터 배치는 동기 generate+publish 로 처리해 coordinator lifetime 을 유지한다', async () => {
+    const previousAPI = window.electronAPI
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer: vi.fn().mockResolvedValue({ success: true }) }
     const { result, finalRef, genAPI } = setupHook({
       references: [CHAR],
       genOverrides: {
@@ -537,6 +544,7 @@ describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
     expect(finalRef(2)).toMatchObject({ entityId: 'e-2', flowNameSyncStatus: 'synced' })
     expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
     expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    window.electronAPI = previousAPI
   })
 
   // #R37: entity 정보가 없는 응답(API 모드·style 카드)은 entityId 를 **지어내지 않는다**.

@@ -308,7 +308,7 @@ export default function ReferenceCard({
           </button>
           {showRemoveMenu && (
             <div className="remove-menu" onMouseLeave={() => setShowRemoveMenu(false)}>
-              <button onClick={() => { setShowRemoveMenu(false); onUpdate(index, { ...reference, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }) }}>
+              <button onClick={() => { setShowRemoveMenu(false); onUpdate(index, { ...reference, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null, status: 'pending' }) }}>
                 {/* #R29-1: 이미지 제거 시 Flow 캐릭터 엔티티 필드도 비운다 — 안 그러면 sceneMentions 가
                     여전히 mention-eligible 로 보고 @name 이 옛 캐릭터를 주입한다(ReferenceDetailModal 과 동일 정책). */}
                 {t('reference.clearImage') || '이미지만 제거'}

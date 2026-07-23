@@ -263,9 +263,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     //   안 그러면 이미지만 새것이고 id 는 옛 캐릭터를 가리켜, 이후 Sync 가 repair 로 빠져 옛 entity 만
     //   다시 PATCH 하고 새 이미지는 영영 업로드되지 않는다(ReferenceCard #R31-3 와 동일 정책).
     const entityPatch = entityPatchForNewImage({ ...ref, mediaId }, genResult)
-    // 서버엔 이름이 등록됐지만 SPA 가 옛 이름('제목 없는 캐릭터')을 캐시한 채면 @멘션이 새 이름을
-    // 못 찾는다. 실제 refresh 는 generate-character 보호 구간이 settle 된 뒤 호출측이 await 한다.
-    const composerRefreshNeeded = !!(genResult?.entityId && genResult.nameApplied === false)
+    // 상세 DOM의 nameApplied 성공 여부와 무관하게 목록/멘션 피커 캐시는 옛 이름을 유지할 수 있다.
+    // character entity가 생겼으면 generate-character 보호 구간이 settle 된 뒤 호출측이 refresh를 await한다.
+    const composerRefreshNeeded = !!genResult?.entityId
     const resolvedIndex = resolveReferenceIndex(
       referencesRef.current,
       index,

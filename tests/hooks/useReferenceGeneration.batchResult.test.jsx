@@ -7,6 +7,7 @@ import { act, renderHook } from '@testing-library/react'
 
 const coordinatorMocks = vi.hoisted(() => ({
   runFlowCharacterOperation: vi.fn(),
+  runFlowComposerRefresh: vi.fn(),
 }))
 
 vi.mock('../../src/utils/guards', () => ({
@@ -42,6 +43,7 @@ vi.mock('../../src/utils/urls', () => ({
 
 vi.mock('../../src/utils/flowCharacterCoordinator', () => ({
   runFlowCharacterOperation: coordinatorMocks.runFlowCharacterOperation,
+  runFlowComposerRefresh: coordinatorMocks.runFlowComposerRefresh,
 }))
 
 import {
@@ -57,7 +59,13 @@ function setupHook({
   settingsOverrides = {},
   genOverrides = {},
   flowProjectReady = true,
+  electronAPIOverrides = {},
 }) {
+  window.electronAPI = {
+    ...(window.electronAPI || {}),
+    refreshFlowComposer: vi.fn().mockResolvedValue({ success: true }),
+    ...electronAPIOverrides,
+  }
   let liveRefs = references.map(ref => ({ ...ref }))
   let generationNo = 0
   const setReferences = vi.fn(updater => {
@@ -155,7 +163,10 @@ async function runTimedBatch(result, targetRefKeys) {
   }
 }
 
+let previousElectronAPI
+
 beforeEach(() => {
+  previousElectronAPI = window.electronAPI
   vi.clearAllMocks()
   checkAuthToken.mockResolvedValue(true)
   checkFlowProjectReady.mockReturnValue({ ok: true })
@@ -164,9 +175,13 @@ beforeEach(() => {
     name: 'test',
   })
   coordinatorMocks.runFlowCharacterOperation.mockImplementation(({ task }) => task())
+  coordinatorMocks.runFlowComposerRefresh.mockImplementation(() => (
+    window.electronAPI?.refreshFlowComposer?.()
+  ))
 })
 
 afterEach(() => {
+  window.electronAPI = previousElectronAPI
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
