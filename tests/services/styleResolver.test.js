@@ -320,8 +320,22 @@ describe('createStyleResolver — resolveEffectiveStyleIdForRef (reference gener
   })
 })
 
-describe('createStyleResolver — Ref가 씬들의 단일 preset을 파생 상속한다', () => {
+describe('createStyleResolver — Ref가 씬들의 단일 effective style을 파생 상속한다', () => {
   const pendingScene = (id, styleTag) => ({ id, prompt: `scene-${id}`, style_tag: styleTag })
+
+  it('style 카드 name이 태그에 매칭되면 같은 이름의 preset보다 ref를 우선한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'noir'), pendingScene(2, 'noir')],
+      references: [
+        { id: 44, type: 'style', name: 'noir', prompt: 'custom noir lighting' },
+        { id: 7, type: 'character', prompt: 'hero' },
+      ],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('ref:44')
+  })
 
   it("선택과 카드 기억이 없고 모든 대상 씬이 korean-ani이면 preset:korean-ani를 쓴다", () => {
     const r = createStyleResolver({
@@ -340,6 +354,34 @@ describe('createStyleResolver — Ref가 씬들의 단일 preset을 파생 상�
       selectedStyleRefId: null,
       scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'cinematic')],
       references: [{ id: 9, type: 'style', name: 'fallback', prompt: 'watercolor' }],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('ref:9')
+  })
+
+  it('ref-match 씬과 같은 preset으로 해석되는 씬이 섞여도 effective style이 다르면 abstain한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'Korean Anime'), pendingScene(2, 'korean-ani')],
+      references: [
+        { id: 9, type: 'style', name: 'fallback', prompt: 'fallback style' },
+        { id: 44, type: 'style', name: 'Korean Anime', prompt: 'custom korean animation' },
+      ],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('ref:9')
+  })
+
+  it('pending 부분집합만 같아도 전체 씬의 effective style이 혼합이면 파생하지 않는다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [
+        pendingScene(1, 'korean-ani'),
+        { id: 2, prompt: 'done scene', style_tag: 'cinematic', image: 'done.png', status: 'done' },
+      ],
+      references: [{ id: 9, type: 'style', name: 'fallback', prompt: 'fallback style' }],
     })
 
     expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('ref:9')

@@ -18,7 +18,7 @@
  */
 
 import { STYLE_PRESETS } from '../config/defaults'
-import { findAutoPromptStyle, findAutoStyle, findPresetForStyleTag, inheritStyleIdFromCards, isStyleReference, previewStyleMatching } from './styleService'
+import { findAutoPromptStyle, findAutoStyle, findSceneTagStyle, inheritStyleIdFromCards, isStyleReference, previewStyleMatching } from './styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
 
 export function createStyleResolver({ activeTab, scenes = [], references = [], selectedStyleRefId, t, isKo }) {
@@ -125,22 +125,23 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
     return selectedStyleForContext ?? (isVideoText ? autoEffectiveStyleId : null)
   }
 
-  const derivePresetStyleIdFromScenes = () => {
-    const sourceScenes = targetScenes.length > 0 ? targetScenes : scenes
-    if (sourceScenes.length === 0) return null
+  const deriveStyleIdFromScenes = () => {
+    if (scenes.length === 0) return null
 
-    const presetIds = sourceScenes.map(scene => {
-      const preset = findPresetForStyleTag(scene?.style_tag)
+    const styleIds = scenes.map(scene => {
+      const match = findSceneTagStyle(scene?.style_tag, references)
+      if (match?.source === 'ref' && match.style.id != null) return `ref:${match.style.id}`
       // resolveSceneStyle도 prompt_en이 있어야 실제로 preset을 적용한다.
-      return preset?.prompt_en ? preset.id : null
+      if (match?.source === 'preset' && match.style.prompt_en) return `preset:${match.style.id}`
+      return null
     })
-    const firstPresetId = presetIds[0]
-    if (!firstPresetId || !presetIds.every(id => id === firstPresetId)) return null
-    return `preset:${firstPresetId}`
+    const firstStyleId = styleIds[0]
+    if (!firstStyleId || !styleIds.every(id => id === firstStyleId)) return null
+    return firstStyleId
   }
 
   // 우선순위: override(명시적) → selectedStyleRefId(프로젝트 전체 스타일) → 카드들의 기억 →
-  //   씬들의 단일 preset 파생 → findAutoStyle. 기억을 건너뛰고 파생/자동 fallback으로 가면,
+  //   씬들의 단일 effective style 파생 → findAutoStyle. 기억을 건너뛰고 파생/자동 fallback으로 가면,
   //   기존 카드가 명시적으로 기억한 '무스타일'(null) 계약을 깨뜨린다.
   const resolveEffectiveStyleIdForRef = (override) => {
     if (override != null) return override
@@ -148,8 +149,8 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
     // styleId:null 도 정당한 기억("무스타일로 생성됨")이라 ?? 로 건너뛰면 안 된다.
     const inherited = inheritStyleIdFromCards(references)
     if (inherited.found) return inherited.styleId
-    const derivedPresetStyleId = derivePresetStyleIdFromScenes()
-    if (derivedPresetStyleId) return derivedPresetStyleId
+    const derivedStyleId = deriveStyleIdFromScenes()
+    if (derivedStyleId) return derivedStyleId
     return findAutoStyle(references)
   }
 

@@ -64,7 +64,7 @@ const handleStopImpl = sliceBetween(
 )
 const referencePanel = sliceBetween(
   '<ReferencePanel',
-  '<PreviewMonitor'
+  '/>'
 )
 const referenceGenerationHook = sliceBetween(
   'useReferenceGeneration({',
@@ -184,5 +184,9 @@ describe('App empty reference gate wiring', () => {
 
   it('Ref 스타일 resolver가 씬 style_tag를 읽도록 scenes를 generation hook에 전달한다', () => {
     expect(referenceGenerationHook).toMatch(/\bscenes\b/)
+  })
+
+  it('상세 모달 라벨도 같은 씬 파생을 쓰도록 scenes를 ReferencePanel에 전달한다', () => {
+    expect(referencePanel).toContain('scenes={scenes}')
   })
 })

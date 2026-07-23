@@ -21,7 +21,7 @@ import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { sourceAvailable } from '../utils/refImageGuard'
 
-export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, refBatchRunning = false, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
+export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, refBatchRunning = false, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], scenes = [], selectedStyleRefId = null, flowProjectId = null }) {
   const [editData, setEditData] = useState({ ...reference })
   // 스타일 팝업은 두 뜻으로 쓰인다: 스타일 카드의 '프리셋에서 채우기' vs 그 외 카드의 '적용할 스타일'.
   //   같은 위젯이 다른 뜻으로 동시에 뜨면 헷갈리므로 타입에 따라 하나만 연다.
@@ -391,7 +391,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   const hasStyleMemory = editData.styleId !== undefined && (styleDirtyRef.current || sourceAvailable(editData))
   const resolvedStyleId = hasStyleMemory
     ? editData.styleId
-    : createStyleResolver({ activeTab: 'list', scenes: [], references, selectedStyleRefId, t, isKo })
+    : createStyleResolver({ activeTab: 'list', scenes, references, selectedStyleRefId, t, isKo })
       .resolveEffectiveStyleIdForRef(null)
   const styleLabelFor = (id) => {
     if (!id || id === 'none') return t('reference.styleNone')

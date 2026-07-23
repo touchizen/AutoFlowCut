@@ -317,6 +317,17 @@ describe('ReferenceDetailModal — 적용할 스타일', () => {
     expect(screen.getByTestId('apply-style')).toHaveTextContent('자동: 한국 애니 ▼')
   })
 
+  it('이미지 없는 카드의 자동 라벨은 씬들의 파생 preset을 생성 경로와 동일하게 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero' }, {
+      scenes: [
+        { id: 11, prompt: 'scene one', style_tag: 'korean-ani' },
+        { id: 12, prompt: 'scene two', style_tag: 'Korean Anime' },
+      ],
+    })
+
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('자동: 한국 애니 ▼')
+  })
+
   it('이미지가 없어도 모달에서 직접 고른 스타일은 그 이름을 표시한다', () => {
     open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }, {
       selectedStyleRefId: 'preset:korean-ani',

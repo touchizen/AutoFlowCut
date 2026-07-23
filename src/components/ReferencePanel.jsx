@@ -20,6 +20,7 @@ import './ReferencePanel.css'
 
 export default function ReferencePanel({
   references,
+  scenes = [],
   onUpdate,
   onUpload,
   onGenerate,
@@ -410,6 +411,7 @@ export default function ReferencePanel({
           key={`${projectName}:${references[detailIndex].id ?? detailIndex}`}
           reference={references[detailIndex]}
           references={references}
+          scenes={scenes}
           index={detailIndex}
           onUpdate={handleUpdateRef}
           onUpload={onUpload}

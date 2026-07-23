@@ -2242,6 +2242,7 @@ function App() {
         {showReferences && (
           <ReferencePanel
             references={references}
+            scenes={scenes}
             aspectRatio={settings.aspectRatio}
             appMode={mode}
             onUpdate={updateReferences}

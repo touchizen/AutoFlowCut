@@ -69,6 +69,8 @@ export function useReferenceGeneration({ settings, references, scenes = [], setR
   }
   const referencesRef = useRef(references)
   referencesRef.current = references  // 매 렌더마다 최신 상태 반영
+  const scenesRef = useRef(scenes)
+  scenesRef.current = scenes  // queue의 execute closure도 시작 시점 최신 scenes를 읽는다.
   const getLiveProjectName = () => projectNameRef?.current ?? settings.projectName
   const batchGeneratingRefCountsRef = useRef(new Map())
   const addBatchGeneratingRef = (index) => {
@@ -309,7 +311,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], setR
     // (activeTab 무관 — ref 생성은 항상 동일 fallback chain)
     const resolver = createStyleResolver({
       activeTab: 'list',  // value irrelevant for resolveEffectiveStyleIdForRef
-      scenes,
+      scenes: scenesRef.current,
       references: referencesRef.current,
       selectedStyleRefId,
       t,

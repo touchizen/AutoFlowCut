@@ -36,7 +36,7 @@ const STYLE_A = { id: 1, type: 'style', name: '수채화', prompt: 'watercolor',
 const STYLE_B = { id: 9, type: 'style', name: '유화', prompt: 'oil painting', status: 'done', data: 'd', mediaId: 'ms9' }
 const HERO = { id: 2, type: 'character', name: '준호', prompt: 'hero', status: 'pending' }
 
-function setupHook({ references, scenes = [], selectedStyleRefId = null, genOverrides = {} }) {
+function setupHook({ references, scenes = [], selectedStyleRefId = null, genOverrides = {}, generationQueue = null }) {
   let liveRefs = references
   const patches = []
   const setReferences = vi.fn((updater) => {
@@ -55,18 +55,19 @@ function setupHook({ references, scenes = [], selectedStyleRefId = null, genOver
     clearGenerations: vi.fn().mockResolvedValue(undefined),
     ...genOverrides,
   }
-  const props = { selectedStyleRefId }
+  const props = { selectedStyleRefId, scenes }
   const { result, rerender } = renderHook(() => useReferenceGeneration({
     settings: { saveMode: 'project', imageBatchCount: 1 },
     references: liveRefs, setReferences, genAPI,
-    addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue: null,
+    addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue,
     selectedStyleRefId: props.selectedStyleRefId,
-    scenes,
+    scenes: props.scenes,
   }))
   // 전역 스타일 선택을 바꾸고 훅을 다시 렌더한다(App 의 setSelectedStyleRefId 시뮬레이션).
   const setGlobalStyle = (id) => { props.selectedStyleRefId = id; rerender() }
+  const setScenes = (nextScenes) => { props.scenes = nextScenes; rerender() }
   const finalRef = (id) => (patches.length ? patches[patches.length - 1].find(r => r.id === id) : null)
-  return { result, genAPI, finalRef, setGlobalStyle }
+  return { result, genAPI, finalRef, setGlobalStyle, setScenes }
 }
 
 async function runBatch(result, overrideStyleId = null) {
@@ -81,6 +82,34 @@ async function runBatch(result, overrideStyleId = null) {
 }
 
 describe('카드가 쓴 스타일을 기록한다', () => {
+  it('queue 대기 뒤 실행돼도 enqueue closure가 아니라 최신 scenes로 파생한다', async () => {
+    let queuedJob = null
+    const generationQueue = {
+      enqueue: vi.fn(async (job) => {
+        queuedJob = job
+        return { queued: true }
+      }),
+    }
+    const { result, genAPI, setScenes } = setupHook({
+      references: [HERO],
+      scenes: [{ id: 11, prompt: 'old scene', style_tag: 'cinematic' }],
+      selectedStyleRefId: null,
+      generationQueue,
+    })
+
+    await act(async () => { await result.current.handleGenerateRef(0) })
+    expect(queuedJob).not.toBeNull()
+
+    act(() => {
+      setScenes([{ id: 12, prompt: 'latest scene', style_tag: 'korean-ani' }])
+    })
+    await act(async () => { await queuedJob.execute() })
+
+    expect(genAPI.generateImage.mock.calls[0][0]).toBe(
+      'hero, Korean anime style, vibrant colors, detailed characters',
+    )
+  })
+
   it('선택과 카드 기억이 없으면 씬들의 단일 preset style_tag를 Ref 생성에 적용한다', async () => {
     const { result, genAPI, finalRef } = setupHook({
       references: [HERO],

@@ -29,11 +29,12 @@ vi.mock('../../src/components/ReferenceCard', () => ({
 vi.mock('../../src/components/ReferenceDetailModal', async () => {
   const { useState } = await import('react')
   return {
-    default: ({ reference }) => {
+    default: ({ reference, scenes }) => {
       const [draft, setDraft] = useState(reference.name)
       return (
         <div data-testid="detail-modal">
           <span>{draft}</span>
+          <span data-testid="detail-scenes-count">{scenes?.length ?? 0}</span>
           <button onClick={() => setDraft('dirty-old-project')}>dirty</button>
         </div>
       )
@@ -43,24 +44,36 @@ vi.mock('../../src/components/ReferenceDetailModal', async () => {
 
 import ReferencePanel from '../../src/components/ReferencePanel'
 
-function panel(references, projectName = 'proj') {
+function panel(references, projectName = 'proj', scenes = []) {
   return (
     <ReferencePanel
       references={references} onUpdate={vi.fn()} onUpload={vi.fn()}
       onGenerate={vi.fn()} onGenerateAll={vi.fn()} onStopGenerateAll={vi.fn()} onClearAll={vi.fn()}
       aspectRatio="16:9" generatingRefs={[]} stoppingRefs={false} preparingRefs={false}
       selectedStyleRefId={null} onStyleRefChange={vi.fn()} projectName={projectName}
+      scenes={scenes}
     />
   )
 }
 
-function renderPanel(references, projectName) {
-  return render(panel(references, projectName))
+function renderPanel(references, projectName, scenes) {
+  return render(panel(references, projectName, scenes))
 }
 
 beforeEach(() => { vi.clearAllMocks() })
 
 describe('ReferencePanel — card key collision', () => {
+  it('App에서 받은 scenes를 상세 모달까지 전달한다', () => {
+    renderPanel(
+      [{ id: 1, name: 'hero', type: 'character' }],
+      'proj',
+      [{ id: 11, prompt: 'scene', style_tag: 'korean-ani' }],
+    )
+
+    fireEvent.click(screen.getByTestId('open-1'))
+    expect(screen.getByTestId('detail-scenes-count')).toHaveTextContent('1')
+  })
+
   it('does not emit a duplicate-key warning for mixed id / no-id references', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
