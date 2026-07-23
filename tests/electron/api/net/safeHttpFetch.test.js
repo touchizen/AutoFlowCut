@@ -1,3 +1,4 @@
+// @vitest-environment node
 import dns from 'node:dns'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 
 import { computePlanHash, normalizeCanonicalPlan } from '../../../electron/shopping/planCanonical.js'
