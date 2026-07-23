@@ -586,7 +586,7 @@ html, body {
   left: calc(-1 * (var(--gutter-w, 2rem) + 12px - 4px));
   top: 0;
   width: calc(var(--gutter-w, 2rem) - 4px);
-  text-align: right;
+  text-align: center;
   font-size: 0.75rem;
   line-height: 1.6;
   color: var(--text-secondary, #888);
@@ -594,12 +594,13 @@ html, body {
   user-select: none;
   pointer-events: none;
 }
-/* 숫자는 우측 정렬이라 자릿수마다 중심이 달라진다. 번호 박스의 고정 우측 끝(-12px)에
-   링을 맞춰 한 자리/두 자리에서도 위치가 흔들리지 않게 한다. */
+/* 숫자를 가운데 정렬(::before)하고, 링을 번호 박스 중심에 동심으로 맞춘다. 번호 박스는
+   left = -(gutter-w+8), width = gutter-w-4 → 중심 = -(gutter-w/2 + 10). 링(18px)의 중심을
+   그 지점에 두면(left = 중심 - 9) 한 자리/두 자리 무관하게 숫자가 링 정중앙에 온다. */
 .prompt-paragraph.is-busy::after {
   content: '';
   position: absolute;
-  left: -30px;
+  left: calc(-1 * (var(--gutter-w, 2rem) / 2 + 19px));
   top: 0;
   width: 18px;
   height: 18px;
