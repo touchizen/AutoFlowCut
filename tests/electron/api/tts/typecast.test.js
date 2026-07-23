@@ -31,6 +31,8 @@ describe('createTypecastAdapter', () => {
     expect(body.model).toBe('ssfm-v21')
     // 실제 계약: language 필드 없음 (script와 동일한 body shape)
     expect(body.language).toBeUndefined()
+    // 성량이 낮은 문제 — 서버측 라우드니스 정규화로 -15 LUFS 고정(volume 과 동시 사용 불가).
+    expect(body.output).toEqual({ target_lufs: -15 })
   })
 
   it('listVoices: 알려진 Typecast 성우 목록을 {id,name,language,previewUrl} 형태로 반환한다', async () => {
