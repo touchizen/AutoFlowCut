@@ -34,7 +34,7 @@ const ID_OR_ENUM_KEYS = new Set([
   'status',
 ])
 
-function trimAsciiEdges(value) {
+export function trimAsciiEdges(value) {
   return value.replace(ASCII_EDGE_WHITESPACE, '')
 }
 
@@ -96,7 +96,7 @@ function normalizeNumber(value, key, path) {
 }
 
 function normalizeValue(value, key, path, ancestors) {
-  if (value === undefined) return undefined
+  if (value === undefined) throw new TypeError(`${path} cannot be undefined; omit optional properties`)
   if (value === null) {
     if (key === 'trim') return null
     throw new TypeError(`${path} must omit optional values instead of using null`)

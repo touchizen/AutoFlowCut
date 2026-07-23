@@ -1,4 +1,4 @@
-import { normalizeCanonicalString } from './planCanonical.js'
+import { normalizeCanonicalString, trimAsciiEdges } from './planCanonical.js'
 
 const PLAN_KEYS = [
   'schemaVersion',
@@ -121,12 +121,22 @@ function checkString(value, path, errors, { nonEmpty = false } = {}) {
   return true
 }
 
+function checkCanonicalIdOrEnum(value, path, errors, { nonEmpty = false } = {}) {
+  if (!checkString(value, path, errors, { nonEmpty })) return false
+  if (value !== trimAsciiEdges(value)) {
+    addError(errors, `${path} must not contain leading or trailing ASCII whitespace`)
+    return false
+  }
+  return true
+}
+
 function checkEnum(value, path, allowed, errors) {
+  const canonical = checkCanonicalIdOrEnum(value, path, errors)
   if (!allowed.includes(value)) {
     addError(errors, `${path} must be ${allowed.map((item) => JSON.stringify(item)).join(' or ')}`)
     return false
   }
-  return true
+  return canonical
 }
 
 function checkInteger(value, path, errors) {
@@ -154,7 +164,7 @@ function checkUniqueStrings(values, path, errors) {
   const seen = new Set()
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index]
-    if (!checkString(value, `${path}[${index}]`, errors, { nonEmpty: true })) continue
+    if (!checkCanonicalIdOrEnum(value, `${path}[${index}]`, errors, { nonEmpty: true })) continue
     if (seen.has(value)) addError(errors, `${path} contains duplicate value ${value}`)
     seen.add(value)
   }
@@ -197,10 +207,16 @@ export function normalizeClaimCoverageText(value) {
   return normalizeCanonicalString(value).replace(/\p{White_Space}/gu, '')
 }
 
+function normalizeSecurityComparisonText(value) {
+  return normalizeClaimCoverageText(value)
+    .normalize('NFKC')
+    .replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu, '')
+}
+
 function validateSourceFact(fact, path, errors) {
   if (!checkObject(fact, path, SOURCE_FACT_KEYS, REQUIRED_SOURCE_FACT_KEYS, errors)) return
-  checkString(fact.id, `${path}.id`, errors, { nonEmpty: true })
-  checkString(fact.field, `${path}.field`, errors, { nonEmpty: true })
+  checkCanonicalIdOrEnum(fact.id, `${path}.id`, errors, { nonEmpty: true })
+  checkCanonicalIdOrEnum(fact.field, `${path}.field`, errors, { nonEmpty: true })
   if (
     !['string', 'number', 'boolean'].includes(typeof fact.value)
     || (typeof fact.value === 'number' && !Number.isFinite(fact.value))
@@ -226,6 +242,7 @@ function validateProduct(product, errors) {
 
   const crawl = product.mode === 'crawl'
   const manual = product.mode === 'manual'
+  checkCanonicalIdOrEnum(product.mode, '$.product.mode', errors, { nonEmpty: true })
   if (!crawl && !manual) addError(errors, '$.product.mode must be "crawl" or "manual"')
 
   const keys = crawl
@@ -235,7 +252,7 @@ function validateProduct(product, errors) {
   checkObject(product, '$.product', keys, required, errors)
 
   if (crawl) {
-    checkString(product.snapshotId, '$.product.snapshotId', errors, { nonEmpty: true })
+    checkCanonicalIdOrEnum(product.snapshotId, '$.product.snapshotId', errors, { nonEmpty: true })
     if (checkArray(product.selectedImageIds, '$.product.selectedImageIds', errors, { min: 1, max: 5 })) {
       checkUniqueStrings(product.selectedImageIds, '$.product.selectedImageIds', errors)
     }
@@ -246,7 +263,9 @@ function validateProduct(product, errors) {
   }
 
   checkString(product.title, '$.product.title', errors, { nonEmpty: true })
-  if (product.sku !== undefined) checkString(product.sku, '$.product.sku', errors, { nonEmpty: true })
+  if (product.sku !== undefined) {
+    checkCanonicalIdOrEnum(product.sku, '$.product.sku', errors, { nonEmpty: true })
+  }
   if (product.sourceUrl !== undefined) checkUrl(product.sourceUrl, '$.product.sourceUrl', errors)
 
   const manualFactIds = new Set()
@@ -283,7 +302,7 @@ function validateFactDecisions(decisions, manualFactIds, errors) {
       ['sourceFactId', 'decision', 'confirmedAt'],
       errors,
     )) continue
-    checkString(decision.sourceFactId, `${path}.sourceFactId`, errors, { nonEmpty: true })
+    checkCanonicalIdOrEnum(decision.sourceFactId, `${path}.sourceFactId`, errors, { nonEmpty: true })
     checkEnum(decision.decision, `${path}.decision`, ['allowed', 'excluded'], errors)
     checkString(decision.confirmedAt, `${path}.confirmedAt`, errors, { nonEmpty: true })
 
@@ -309,7 +328,7 @@ function validateProhibitedClaims(prohibitedClaims, errors) {
     const prohibited = prohibitedClaims[index]
     const path = `$.prohibitedClaims[${index}]`
     if (!checkObject(prohibited, path, ['id', 'text', 'reason'], ['id', 'text', 'reason'], errors)) continue
-    checkString(prohibited.id, `${path}.id`, errors, { nonEmpty: true })
+    checkCanonicalIdOrEnum(prohibited.id, `${path}.id`, errors, { nonEmpty: true })
     checkString(prohibited.text, `${path}.text`, errors, { nonEmpty: true })
     checkString(prohibited.reason, `${path}.reason`, errors, { nonEmpty: true })
     if (typeof prohibited.id === 'string') {
@@ -317,7 +336,7 @@ function validateProhibitedClaims(prohibitedClaims, errors) {
       ids.add(prohibited.id)
     }
     if (typeof prohibited.text === 'string' && prohibited.text.trim()) {
-      normalized.push({ id: prohibited.id, text: normalizeClaimCoverageText(prohibited.text) })
+      normalized.push({ id: prohibited.id, text: normalizeSecurityComparisonText(prohibited.text) })
     }
   }
   return normalized
@@ -325,9 +344,8 @@ function validateProhibitedClaims(prohibitedClaims, errors) {
 
 function validatePersona(persona, errors) {
   if (!checkObject(persona, '$.persona', PERSONA_KEYS, PERSONA_KEYS, errors)) return
-  for (const key of ['id', 'name', 'appearance']) {
-    checkString(persona[key], `$.persona.${key}`, errors, { nonEmpty: true })
-  }
+  checkCanonicalIdOrEnum(persona.id, '$.persona.id', errors, { nonEmpty: true })
+  for (const key of ['name', 'appearance']) checkString(persona[key], `$.persona.${key}`, errors, { nonEmpty: true })
   checkEnum(persona.role, '$.persona.role', ['presenter'], errors)
   checkEnum(persona.gender, '$.persona.gender', ['female', 'male'], errors)
   checkEnum(persona.ageBand, '$.persona.ageBand', ['20s', '30s', '40s', '50s', '60s'], errors)
@@ -367,8 +385,9 @@ function validateClaims(claims, decisionByFactId, errors) {
     const claim = claims[index]
     const path = `$.claims[${index}]`
     if (!checkObject(claim, path, CLAIM_KEYS, REQUIRED_CLAIM_KEYS, errors)) continue
-    checkString(claim.id, `${path}.id`, errors, { nonEmpty: true })
+    checkCanonicalIdOrEnum(claim.id, `${path}.id`, errors, { nonEmpty: true })
     checkString(claim.text, `${path}.text`, errors, { nonEmpty: true })
+    checkCanonicalIdOrEnum(claim.claimType, `${path}.claimType`, errors, { nonEmpty: true })
     if (!ALLOWED_CLAIM_TYPES.has(claim.claimType)) {
       addError(errors, `${path}.claimType ${String(claim.claimType)} is not allowed`)
     }
@@ -407,14 +426,14 @@ function validateClaims(claims, decisionByFactId, errors) {
 function validateSceneShape(scene, index, selectedProductImageIds, errors) {
   const path = `$.scenes[${index}]`
   if (!checkObject(scene, path, SCENE_KEYS, SCENE_KEYS, errors)) return
-  checkString(scene.sceneKey, `${path}.sceneKey`, errors, { nonEmpty: true })
+  checkCanonicalIdOrEnum(scene.sceneKey, `${path}.sceneKey`, errors, { nonEmpty: true })
   const expectedSceneKey = `S${String(index + 1).padStart(2, '0')}`
   if (scene.sceneKey !== expectedSceneKey) {
     addError(errors, `${path}.sceneKey must be ${expectedSceneKey}`)
   }
   checkEnum(scene.visualType, `${path}.visualType`, ['product_still', 'persona_i2v'], errors)
   checkString(scene.visualDescription, `${path}.visualDescription`, errors, { nonEmpty: true })
-  checkString(scene.productImageId, `${path}.productImageId`, errors, { nonEmpty: true })
+  checkCanonicalIdOrEnum(scene.productImageId, `${path}.productImageId`, errors, { nonEmpty: true })
   if (typeof scene.productImageId === 'string' && !selectedProductImageIds.has(scene.productImageId)) {
     addError(errors, `${path}.productImageId must reference a selected product image`)
   }
@@ -551,14 +570,14 @@ function validateScenes(scenes, claimById, prohibitedClaims, selectedProductImag
 
     for (const approvedText of approvedTexts) {
       if (typeof approvedText !== 'string') continue
-      const normalizedApproved = normalizeClaimCoverageText(approvedText)
+      const normalizedApproved = normalizeSecurityComparisonText(approvedText)
       for (const prohibited of prohibitedClaims) {
         if (prohibited.text && normalizedApproved.includes(prohibited.text)) {
           addError(errors, `$.scenes[${index}] overlaps prohibited claim ${prohibited.id}`)
         }
       }
       for (const phrase of FORBIDDEN_EVIDENCE_PHRASES) {
-        if (normalizedApproved.includes(normalizeClaimCoverageText(phrase))) {
+        if (normalizedApproved.includes(normalizeSecurityComparisonText(phrase))) {
           addError(errors, `$.scenes[${index}] contains forbidden experience/social-proof language`)
         }
       }

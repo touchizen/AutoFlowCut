@@ -38,6 +38,7 @@ export function defaultShoppingPlanState() {
 }
 
 export function assertShoppingPlanStoreState(state) {
+  // F6/M2a-2 contract: dumb persistence validates only this key shape; approve must gate approvedHash === computePlanHash(canonicalize(snapshot)).
   if (!state || typeof state !== 'object' || Array.isArray(state)) {
     throw new TypeError('shopping plan store state must be an object')
   }
@@ -96,6 +97,7 @@ export function createShoppingPlanStore(projectPath, deps = {}) {
       return readState()
     },
 
+    // F5 contract: save() is blind full-state last-writer-wins; approval/hash mutations must use queued update() for atomic read-modify-write.
     save(state) {
       return enqueueWrite(async () => {
         assertShoppingPlanStoreState(state)

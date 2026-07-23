@@ -5,6 +5,7 @@ import {
   normalizeClaimCoverageText,
   validateShoppingPlanDraft,
 } from '../../../electron/shopping/planSchema.js'
+import { computePlanHash } from '../../../electron/shopping/planCanonical.js'
 
 const PROMPT_PHRASES = [
   'speaking in Korean',
@@ -14,6 +15,14 @@ const PROMPT_PHRASES = [
   'no music',
   'no captions',
   'no on-screen text',
+]
+
+const SECURITY_IGNORABLES = [
+  ['ZWSP U+200B', '\u200B'],
+  ['ZWNJ U+200C', '\u200C'],
+  ['WORD JOINER U+2060', '\u2060'],
+  ['BOM U+FEFF', '\uFEFF'],
+  ['HANGUL FILLER U+3164', '\u3164'],
 ]
 
 function personaPrompt(dialogue) {
@@ -246,6 +255,75 @@ describe('validateShoppingPlanDraft — schema', () => {
     expectInvalid(plan, '$.scenes[2].productImageId must reference a selected product image')
   })
 
+  const nonCanonicalIdOrEnumMutations = [
+    ['schemaVersion', makePlan, (plan) => { plan.schemaVersion += ' ' }, '$.schemaVersion'],
+    ['product mode', makePlan, (plan) => { plan.product.mode += ' ' }, '$.product.mode'],
+    ['snapshotId', makePlan, (plan) => { plan.product.snapshotId = ` ${plan.product.snapshotId}` }, '$.product.snapshotId'],
+    ['selectedImageIds item', makePlan, (plan) => { plan.product.selectedImageIds[0] += ' ' }, '$.product.selectedImageIds[0]'],
+    ['manual SKU', makeManualPlan, (plan) => { plan.product.sku = `\t${plan.product.sku}` }, '$.product.sku'],
+    ['manual source fact id', makeManualPlan, (plan) => { plan.product.facts[0].id += ' ' }, '$.product.facts[0].id'],
+    ['manual source fact field', makeManualPlan, (plan) => { plan.product.facts[0].field = ` ${plan.product.facts[0].field}` }, '$.product.facts[0].field'],
+    ['manual sourceKind', makeManualPlan, (plan) => { plan.product.facts[0].sourceKind += ' ' }, '$.product.facts[0].sourceKind'],
+    ['attachmentIds item', makeManualPlan, (plan) => { plan.product.attachmentIds[0] += ' ' }, '$.product.attachmentIds[0]'],
+    ['fact decision sourceFactId', makePlan, (plan) => { plan.factDecisions[0].sourceFactId += ' ' }, '$.factDecisions[0].sourceFactId'],
+    ['fact decision enum', makePlan, (plan) => { plan.factDecisions[0].decision = ` ${plan.factDecisions[0].decision}` }, '$.factDecisions[0].decision'],
+    ['prohibited claim id', makePlan, (plan) => { plan.prohibitedClaims[0].id += '\t' }, '$.prohibitedClaims[0].id'],
+    ['persona id', makePlan, (plan) => { plan.persona.id = ` ${plan.persona.id}` }, '$.persona.id'],
+    ['persona enum', makePlan, (plan) => { plan.persona.gender += ' ' }, '$.persona.gender'],
+    ['creative templateId', makePlan, (plan) => { plan.creative.templateId += ' ' }, '$.creative.templateId'],
+    ['generation provider', makePlan, (plan) => { plan.generation.provider = `\t${plan.generation.provider}` }, '$.generation.provider'],
+    ['dialogue policy version', makePlan, (plan) => { plan.generation.dialoguePolicyVersion += ' ' }, '$.generation.dialoguePolicyVersion'],
+    ['claim id', makePlan, (plan) => { plan.claims[0].id += ' ' }, '$.claims[0].id'],
+    ['claimType enum', makePlan, (plan) => { plan.claims[0].claimType = ` ${plan.claims[0].claimType}` }, '$.claims[0].claimType'],
+    ['sourceFactIds item', makePlan, (plan) => { plan.claims[0].sourceFactIds[0] += ' ' }, '$.claims[0].sourceFactIds[0]'],
+    ['sceneKey', makePlan, (plan) => { plan.scenes[0].sceneKey += ' ' }, '$.scenes[0].sceneKey'],
+    ['visualType enum', makePlan, (plan) => { plan.scenes[0].visualType = ` ${plan.scenes[0].visualType}` }, '$.scenes[0].visualType'],
+    ['productImageId', makePlan, (plan) => { plan.scenes[0].productImageId += ' ' }, '$.scenes[0].productImageId'],
+    ['claimIds item', makePlan, (plan) => { plan.scenes[0].claimIds[0] += ' ' }, '$.scenes[0].claimIds[0]'],
+  ]
+
+  it.each(nonCanonicalIdOrEnumMutations)('rejects non-canonical ASCII edge whitespace in %s', (_label, factory, mutate, path) => {
+    const plan = factory()
+    mutate(plan)
+    expectInvalid(plan, `${path} must not contain leading or trailing ASCII whitespace`)
+  })
+
+  const acceptedHashCollisionVariants = [
+    ['selectedImageIds/productImageId', () => {
+      const first = makePlan()
+      first.product.selectedImageIds.push('image-1 ')
+      first.scenes[0].productImageId = 'image-1 '
+      const second = structuredClone(first)
+      second.scenes[0].productImageId = 'image-1'
+      return [first, second]
+    }],
+    ['claimIds', () => {
+      const first = makePlan()
+      const original = first.claims[0]
+      first.claims.push({ ...original, id: `${original.id} ` })
+      first.scenes[0].subtitleText = `${original.text}${original.text}`
+      first.scenes[0].claimIds = [original.id, `${original.id} `]
+      const second = structuredClone(first)
+      second.scenes[0].claimIds.reverse()
+      return [first, second]
+    }],
+    ['sourceFactIds', () => {
+      const first = makePlan()
+      first.factDecisions.push({ ...first.factDecisions[0], sourceFactId: 'fact-1 ' })
+      first.claims[0].sourceFactIds = ['fact-1', 'fact-1 ']
+      const second = structuredClone(first)
+      second.claims[0].sourceFactIds.reverse()
+      return [first, second]
+    }],
+  ]
+
+  it.each(acceptedHashCollisionVariants)('never accepts two distinct %s variants with the same canonical hash', (_label, factory) => {
+    const [first, second] = factory()
+    const bothAccepted = result(first).valid && result(second).valid
+    const hashesCollide = computePlanHash(first) === computePlanHash(second)
+    expect(bothAccepted && hashesCollide).toBe(false)
+  })
+
   it.each([
     ['non-array selectedImageIds', (plan) => { plan.product.selectedImageIds = 1 }],
     ['non-string claim text', (plan) => { plan.claims[0].text = 7 }],
@@ -394,6 +472,10 @@ describe('validateShoppingPlanDraft — ordered claim coverage', () => {
     expectValid(plan)
   })
 
+  it('keeps format characters significant for exact claim coverage', () => {
+    expect(normalizeClaimCoverageText('승인\u200B정보')).toBe('승인\u200B정보')
+  })
+
   it('preserves punctuation, case, number, and claim order', () => {
     const plan = makePlan()
     plan.claims.push({ id: 'claim-extra', text: '!', claimType: 'disclosure', sourceFactIds: [] })
@@ -470,5 +552,22 @@ describe('validateShoppingPlanDraft — ordered claim coverage', () => {
     plan.claims[0].text = text
     plan.scenes[0].subtitleText = text
     expectInvalid(plan, 'contains forbidden experience/social-proof language')
+  })
+
+  it.each(SECURITY_IGNORABLES)('rejects a forbidden phrase split by %s', (_label, formatCharacter) => {
+    const plan = makePlan()
+    const obfuscated = `직접${formatCharacter}확인해봤습니다`
+    plan.claims[0].text = obfuscated
+    plan.scenes[0].subtitleText = obfuscated
+    expectInvalid(plan, 'contains forbidden experience/social-proof language')
+  })
+
+  it.each(SECURITY_IGNORABLES)('rejects prohibited-claim overlap split by %s', (_label, formatCharacter) => {
+    const plan = makePlan()
+    const obfuscated = `과장된${formatCharacter}효능`
+    plan.prohibitedClaims[0].text = '과장된효능'
+    plan.claims[0].text = obfuscated
+    plan.scenes[0].subtitleText = obfuscated
+    expectInvalid(plan, 'overlaps prohibited claim ban-1')
   })
 })

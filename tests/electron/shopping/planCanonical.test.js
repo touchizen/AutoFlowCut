@@ -257,6 +257,11 @@ describe('plan canonical normalization', () => {
   ])('rejects %s', (_label, input) => {
     expect(() => normalizeCanonicalPlan(input)).toThrow()
   })
+
+  it('rejects an explicit undefined object child instead of omitting it from the hash', () => {
+    expect(() => computePlanHash({ schemaVersion: 'shopping-plan/3-appnative', stampedField: undefined }))
+      .toThrow('$.stampedField cannot be undefined')
+  })
 })
 
 describe('canonical hash truth table', () => {
