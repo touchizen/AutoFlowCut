@@ -10,7 +10,7 @@
 이번 M1a 스코프는 **primitive 하나뿐**이다. 쿠팡 파서(M1b), 에이전트 툴 배선(M1c)은 별도 작업이니 **건드리지 마라.**
 
 ## 권위 스펙 (반드시 직접 열어 읽어라)
-`docs/handoffs/2026-07-23-shopping-shorts-spec.md` 의 **§D3.1 / §D3.2 / §D3.3** 이 이 모듈의 전체 계약이다.
+`docs/handoffs/2026-07-23-shopping-shorts-spec-v5-agentbased-REFERENCE.md` 의 **§D3.1 / §D3.2 / §D3.3** 이 이 모듈의 전체 계약이다.
 그리고 테스트 요구는 **§6.1**. 요약하지 말고 원문을 따르되, 아래는 놓치기 쉬운 핵심:
 
 - **D3.1 URL·redirect**: 입력·모든 redirect hop 에서 `https:` + 포트 443 만. userinfo/IP literal/fragment/빈 hostname 거부. hostname 은 URL parser 로 punycode 정규화 + trailing dot 제거 후 host allowlist 비교. HTML host = exact `{coupang.com, www.coupang.com}`, 이미지 host = `coupangcdn.com` 또는 `*.coupangcdn.com`. **`link.coupang.com` 등 다른 서브도메인도 MVP 는 unsupported.** redirect 는 `new URL(location, currentUrl)` 로 상대 해석, HTTPS→HTTP downgrade/host 이탈/userinfo/비표준 포트 거부. **최대 3 hop, 각 hop 에서 URL·DNS 정책 처음부터 재적용.**
