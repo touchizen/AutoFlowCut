@@ -392,6 +392,56 @@ describe('plan revision reset', () => {
     }
   })
 
+  it('resets approval and pending materialization while aborting an in-flight approved push', async () => {
+    let finishMaterialization
+    let materializeSignal
+    const materialization = new Promise((resolve) => { finishMaterialization = resolve })
+    const plan = makePlan()
+    const initial = {
+      ...defaultShoppingPlanState(),
+      snapshot: plan,
+      currentPlanHash: computePlanHash(plan),
+      revision: 1,
+      state: 'plan_review',
+    }
+    const { machine, store, deps, token } = await openMachine({
+      initial,
+      deps: {
+        materialize: vi.fn((_canonicalPlan, { signal }) => {
+          materializeSignal = signal
+          return materialization
+        }),
+      },
+    })
+    const approval = machine.approvePlan(token)
+    await vi.waitFor(() => expect(deps.materialize).toHaveBeenCalledTimes(1))
+
+    const approved = await machine.getState()
+    expect(approved.state).toBe('plan_review')
+    expect(approved.approvedHash).toBe(approved.currentPlanHash)
+    expect(approved.pendingMaterialization).toMatchObject({ revision: 1 })
+    expect(materializeSignal.aborted).toBe(false)
+
+    const edited = makePlan()
+    edited.creative.templateId = 'problem-info-v1'
+    await expect(machine.setPlanDraft(token, edited)).resolves.toMatchObject({
+      ok: true,
+      revision: 2,
+    })
+
+    const revised = await machine.getState()
+    expect(revised.state).toBe('plan_review')
+    expect(revised.approvedHash).toBeNull()
+    expect(revised.pendingMaterialization).toBeNull()
+    expect(revised.rendererAck).toBeNull()
+    expect(materializeSignal.aborted).toBe(true)
+    expect(store.save).not.toHaveBeenCalled()
+    expect(deps.generate).not.toHaveBeenCalled()
+
+    finishMaterialization({ materializationDigest: 'late-materialization-digest' })
+    await expect(approval).resolves.toEqual({ error: 'aborted' })
+  })
+
   it('does not create a new revision when canonical plan content is unchanged', async () => {
     const initial = reviewedState('materialized')
     const { machine, token } = await openMachine({ initial })
@@ -582,6 +632,53 @@ describe('approval and paid generation gates', () => {
     await expect(machine.recordRendererAck(token, changed.ack || ack))
       .resolves.toEqual({ error: 'materialization-not-acknowledged' })
     expect((await machine.getState()).state).toBe('plan_review')
+  })
+
+  it('rejects a live renderer ack whose planHash no longer matches the current plan', async () => {
+    const initial = {
+      ...reviewedState('materialized'),
+      pendingMaterialization: null,
+      rendererAck: {
+        ...reviewedState('materialized').rendererAck,
+        planHash: 'stale-plan-hash',
+      },
+      generationJournal: [],
+      visualReviews: [],
+      dialogueReviews: [],
+      openAcceptanceHold: null,
+    }
+    const { machine, store, deps, token } = await openMachine({ initial })
+
+    await expect(machine.requestGeneration(token, ['S02']))
+      .resolves.toEqual({ error: 'materialization-not-acknowledged' })
+    expect(deps.generate).not.toHaveBeenCalled()
+    expect(deps.now).not.toHaveBeenCalled()
+    expect(store.writtenCount()).toBe(0)
+    expect((await machine.getState()).generationJournal).toEqual([])
+  })
+
+  it('rejects a live renderer ack whose revision no longer matches the current revision', async () => {
+    const ready = reviewedState('materialized')
+    const initial = {
+      ...ready,
+      pendingMaterialization: null,
+      rendererAck: {
+        ...ready.rendererAck,
+        revision: ready.revision + 1,
+      },
+      generationJournal: [],
+      visualReviews: [],
+      dialogueReviews: [],
+      openAcceptanceHold: null,
+    }
+    const { machine, store, deps, token } = await openMachine({ initial })
+
+    await expect(machine.requestGeneration(token, ['S02']))
+      .resolves.toEqual({ error: 'materialization-not-acknowledged' })
+    expect(deps.generate).not.toHaveBeenCalled()
+    expect(deps.now).not.toHaveBeenCalled()
+    expect(store.writtenCount()).toBe(0)
+    expect((await machine.getState()).generationJournal).toEqual([])
   })
 
   it('recomputes the snapshot hash at generation admission instead of trusting forged store hashes', async () => {

@@ -621,7 +621,11 @@ export function createPlanMachine({ store, deps } = {}) {
         && row.status === 'reserved'
       ))
     ))
-    if (!operation) return { error: 'aborted' }
+    if (!operation) {
+      // Admission may already be durable as `generating` + `reserved`. No paid action ran;
+      // rolling that orphaned row/state back is follow-up recovery work, not this gate fix.
+      return { error: 'aborted' }
+    }
     let result
     try {
       result = await deps.generate(clone(sceneIds), {
