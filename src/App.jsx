@@ -14,8 +14,10 @@ import { useI18n } from './hooks/useI18n'
 import { useProjectData } from './hooks/useProjectData'
 import { useStoryPipeline } from './hooks/useStoryPipeline'
 import { useStoryAutoOpen } from './hooks/useStoryAutoOpen'
+import { useShoppingPipeline } from './hooks/useShoppingPipeline'
 import { STORY_TTS_PROVIDERS } from './config/storyTtsProviders'
 import StoryView from './components/story/StoryView'
+import ProjectWorkflowPanel from './components/ProjectWorkflowPanel'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
 import { useRefPanelVisibility } from './hooks/useRefPanelVisibility'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
@@ -550,7 +552,7 @@ function App() {
   })
 
   // Project Data 관리
-  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, loadEpochRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId, tryAdoptFlowProject } = useProjectData({
+  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, loadEpochRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId, tryAdoptFlowProject, workflowType } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
     framePairs, framePairsRef, setFramePairs,
@@ -575,9 +577,13 @@ function App() {
   // Story 파이프라인 — projectPath 는 폴더 저장 모드의 프로젝트 루트
   // (workFolder/projectName, useProjectData 의 audio 폴더 경로 계산과 동일 패턴).
   const workFolder = localStorage.getItem('workFolderPath')
-  const storyProjectPath = settings.saveMode === 'folder' && workFolder && settings.projectName
+  const projectRootPath = settings.saveMode === 'folder' && workFolder && settings.projectName
     ? `${workFolder}/${settings.projectName}`
     : null
+  const isStoryWorkflow = workflowType === 'story'
+  const isShoppingWorkflow = workflowType === 'shopping-short'
+  const storyProjectPath = isStoryWorkflow ? projectRootPath : null
+  const shoppingProjectPath = isShoppingWorkflow ? projectRootPath : null
   // V2/Codex-High: story push 핸들러는 직렬화돼야 한다 — 연속 push가 겹치면 (a) 렌더 클로저의
   // 옛 references로 upsert해 중복 id/카드 유실, (b) whole-snapshot 저장이 순서 역전돼 옛 저장이
   // 새 저장을 덮어씀. referencesRef(동기 최신)로 upsert하고, pushQueueRef로 한 번에 하나씩 처리한다.
@@ -602,6 +608,7 @@ function App() {
   const storyProjectPathRef = useRef(storyProjectPath)
   storyProjectPathRef.current = storyProjectPath
   const storyPipeline = useStoryPipeline({
+    enabled: isStoryWorkflow,
     projectPath: storyProjectPath,
     onPushCharacters: (payload) => {
       const enqueuedPath = storyProjectPathRef.current
@@ -686,6 +693,7 @@ function App() {
       return p
     },
   })
+  const shoppingPipeline = useShoppingPipeline({ projectPath: shoppingProjectPath, enabled: isShoppingWorkflow })
 
   // Story 프로젝트 경로가 준비되면 세션을 연다 — 일반 타임라인도 story audio/SFX를
   // `storyPipeline.scenes`에서 합류하므로 Story 화면 진입 전에도 hydrate가 필요하다.
@@ -695,23 +703,27 @@ function App() {
   // 않으면 main의 story 머신이 이전 프로젝트 경로에 바인딩된 채 새 프로젝트 화면에서 쓰기가
   // 발생하는 크로스 프로젝트 데이터 오염이 생긴다(Task 10 리뷰).
   useStoryAutoOpen({ activeView, projectPath: storyProjectPath, open: storyPipeline.open })
+  useEffect(() => {
+    if (shoppingProjectPath) shoppingPipeline.open()
+  }, [shoppingProjectPath, shoppingPipeline.open])
 
   // 일반 생성 화면의 프리뷰(LiveTimeline)들은 메인 audioPackage만 본다 — story 프로젝트면 story
   // 세그먼트 오디오(화자별 voices)를 얹어 프리뷰(상단/ResultsTable)에도 오디오 트랙이 보이게 한다.
+  const workflowStoryScenes = isStoryWorkflow ? (storyPipeline.scenes || []) : []
   const effectiveAudioPackage = useMemo(
-    () => withStoryAudio(audioPackage, storyPipeline.scenes || []),
-    [audioPackage, storyPipeline.scenes]
+    () => withStoryAudio(audioPackage, workflowStoryScenes),
+    [audioPackage, workflowStoryScenes]
   )
   const effectiveSrtEntries = useMemo(
     () => resolveStorySrtEntries(
-      storyPipeline.scenes || [],
+      workflowStoryScenes,
       resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack, scenes),
       {
         srtTrack: scenesHook.srtTrack,
         audioPackageHasSrt: !!audioPackage?.srtEntries?.length,
       },
     ),
-    [storyPipeline.scenes, audioPackage, scenesHook.srtTrack, scenes],
+    [workflowStoryScenes, audioPackage, scenesHook.srtTrack, scenes],
   )
 
   // Story 오디오 화자 매핑용 성우 목록 — story 뷰 진입 시 provider별로 로드해 합쳐 내려준다.
@@ -2797,26 +2809,30 @@ function App() {
       {/* Story 뷰 — 폴더 저장 모드 전용(로컬 저장 모드는 프로젝트 경로가 없어 open()이 실패할 수
           있다, Task 9 리뷰 노트). 로컬 저장 모드면 안내만 보여주고 StoryView/파이프라인을 띄우지 않는다. */}
       {activeView === 'story' && (
-        storyProjectPath ? (
-          <div className="main-panel">
-            {/* key={storyProjectPath}: 프로젝트 전환 시 재마운트해 StoryView 로컬 state
-                (scriptPhase/title/genre/length/... 폼)를 새 프로젝트의 pipeline 값 기준으로
-                초기화한다 — 없으면 A(editor)→B(빈) 전환에서 B가 A의 제목/옵션과 빈 editor로 열림. */}
-            <StoryView
-              key={storyProjectPath}
-              pipeline={storyPipeline}
-              voices={ttsVoices}
-              onTagGender={handleTagGender}
-              onVoiceSearch={handleTtsVoiceSearch}
-              onReloadVoices={reloadTtsVoicesForProvider}
-              onClose={() => setActiveView('generate')}
-            />
-          </div>
-        ) : (
-          <div className="story-guard">
-            <p>📁 폴더 저장 모드에서만 Story 기능을 사용할 수 있습니다. 설정에서 저장 모드를 폴더로 변경해주세요.</p>
-          </div>
-        )
+        <ProjectWorkflowPanel
+          workflowType={workflowType}
+          shoppingProjectPath={shoppingProjectPath}
+          shoppingPipeline={shoppingPipeline}
+          storyContent={storyProjectPath ? (
+            <div className="main-panel">
+              {/* key={storyProjectPath}: 프로젝트 전환 시 StoryView 로컬 state를 새 프로젝트의
+                  pipeline 값 기준으로 초기화한다. */}
+              <StoryView
+                key={storyProjectPath}
+                pipeline={storyPipeline}
+                voices={ttsVoices}
+                onTagGender={handleTagGender}
+                onVoiceSearch={handleTtsVoiceSearch}
+                onReloadVoices={reloadTtsVoicesForProvider}
+                onClose={() => setActiveView('generate')}
+              />
+            </div>
+          ) : (
+            <div className="story-guard">
+              <p>📁 폴더 저장 모드에서만 Story 기능을 사용할 수 있습니다. 설정에서 저장 모드를 폴더로 변경해주세요.</p>
+            </div>
+          )}
+        />
       )}
 
       {/* 씬 상세 모달 (ResultsTable에서 열림) */}

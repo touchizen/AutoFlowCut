@@ -60,6 +60,7 @@ describe('StorageTab — New Project aspect ratio', () => {
 
     expect(screen.getByRole('button', { name: /16:9/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /9:16/ })).toBeTruthy()
+    expect(screen.getByLabelText('콘텐츠 타입')).toBeTruthy()
   })
 
   it('creates a project with the chosen 9:16 (shortform) ratio', async () => {
@@ -73,7 +74,11 @@ describe('StorageTab — New Project aspect ratio', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.create' }))
 
     await waitFor(() => {
-      expect(onProjectChange).toHaveBeenCalledWith('my_short', { aspectRatio: '9:16', isNewProject: true })
+      expect(onProjectChange).toHaveBeenCalledWith('my_short', {
+        aspectRatio: '9:16',
+        workflowType: 'story',
+        isNewProject: true,
+      })
     })
   })
 
@@ -87,7 +92,34 @@ describe('StorageTab — New Project aspect ratio', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.create' }))
 
     await waitFor(() => {
-      expect(onProjectChange).toHaveBeenCalledWith('my_long', { aspectRatio: '16:9', isNewProject: true })
+      expect(onProjectChange).toHaveBeenCalledWith('my_long', {
+        aspectRatio: '16:9',
+        workflowType: 'story',
+        isNewProject: true,
+      })
+    })
+  })
+
+  it('쇼핑 숏츠를 선택하면 workflowType과 고정 9:16으로 생성한다', async () => {
+    const { onProjectChange } = renderStorageTab()
+    fireEvent.click(await screen.findByTitle('settings.createProject'))
+
+    fireEvent.change(screen.getByLabelText('콘텐츠 타입'), {
+      target: { value: 'shopping-short' },
+    })
+    expect(screen.getByText('쇼핑 숏츠 화면비는 9:16으로 고정됩니다.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /16:9/ })).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText('settings.projectNamePlaceholder'), {
+      target: { value: 'shopping_project' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.create' }))
+
+    await waitFor(() => {
+      expect(onProjectChange).toHaveBeenCalledWith('shopping_project', {
+        aspectRatio: '9:16',
+        workflowType: 'shopping-short',
+        isNewProject: true,
+      })
     })
   })
 

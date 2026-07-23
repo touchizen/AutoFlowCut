@@ -151,6 +151,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
+  // --- Shopping pipeline ---
+  shoppingOpen: (params) => ipcRenderer.invoke('shopping:open', params),
+  shoppingGetState: (params) => ipcRenderer.invoke('shopping:get-state', params),
+  shoppingSubmitProduct: (params) => ipcRenderer.invoke('shopping:submit-product', params),
+  shoppingAbort: (params) => ipcRenderer.invoke('shopping:abort', params),
+  onShoppingEvent: (channel, cb) => {
+    const shoppingChannels = ['shopping:state']
+    if (!shoppingChannels.includes(channel)) return () => {}
+    const listener = (_event, payload) => cb(payload)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
   // Auth
   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
   googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),

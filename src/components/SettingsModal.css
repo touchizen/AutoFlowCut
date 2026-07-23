@@ -197,6 +197,35 @@
   color: var(--text-color);
 }
 
+.new-project-content-type {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.new-project-content-type label {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.new-project-content-type select {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-color);
+  background: var(--bg-secondary);
+}
+
+.new-project-fixed-ratio {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  font-size: 0.85rem;
+}
+
 .btn-small {
   padding: 6px 12px !important;
   font-size: 0.85rem !important;

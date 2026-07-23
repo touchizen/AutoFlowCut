@@ -17,6 +17,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
   const [loading, setLoading] = useState(true)
   const [newProjectName, setNewProjectName] = useState('')
   const [newAspectRatio, setNewAspectRatio] = useState(aspectRatio)
+  const [newWorkflowType, setNewWorkflowType] = useState('story')
   const [showNewProject, setShowNewProject] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [editName, setEditName] = useState('')
@@ -72,7 +73,8 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
       // 전환 실패면 사용자에게 알린다. 폼은 그래도 닫는다 — getProjectFolder 로
       // 폴더는 이미 생성됐으므로(같은 이름 재생성이 막힘) 폼을 열어두면 dead-end 다.
       // 프로젝트는 목록(드롭다운)에서 선택할 수 있다.
-      const res = await onCreateProject(name, newAspectRatio)
+      const ratio = newWorkflowType === 'shopping-short' ? '9:16' : newAspectRatio
+      const res = await onCreateProject(name, ratio, newWorkflowType)
       if (res && res.success === false) {
         toast.error(t('toast.projectCreateFailed'))
       }
@@ -207,6 +209,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
                   className="btn-new-project"
                   onClick={() => {
                     setNewAspectRatio(aspectRatio)
+                    setNewWorkflowType('story')
                     setShowNewProject(!showNewProject)
                   }}
                   title={t('settings.createProject')}
@@ -234,8 +237,26 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
                   {t('common.cancel')}
                 </button>
               </div>
-              {/* 화면비: 롱폼(16:9) / 숏폼(9:16) */}
-              <AspectRatioSelector value={newAspectRatio} onChange={setNewAspectRatio} t={t} />
+              <div className="new-project-content-type">
+                <label htmlFor="new-project-workflow-type">콘텐츠 타입</label>
+                <select
+                  id="new-project-workflow-type"
+                  value={newWorkflowType}
+                  onChange={(event) => {
+                    const workflowType = event.target.value
+                    setNewWorkflowType(workflowType)
+                    if (workflowType === 'shopping-short') setNewAspectRatio('9:16')
+                  }}
+                >
+                  <option value="story">일반 스토리</option>
+                  <option value="shopping-short">쇼핑 숏츠</option>
+                </select>
+              </div>
+              {newWorkflowType === 'shopping-short' ? (
+                <p className="new-project-fixed-ratio">쇼핑 숏츠 화면비는 9:16으로 고정됩니다.</p>
+              ) : (
+                <AspectRatioSelector value={newAspectRatio} onChange={setNewAspectRatio} t={t} />
+              )}
             </div>
           )}
 
@@ -335,7 +356,7 @@ export default function StorageTab({
               }
             }
           }}
-          onCreateProject={async (name, ratio) => {
+          onCreateProject={async (name, ratio, workflowType) => {
             // 위와 동일 — 생성 경로도 optimistic 갱신 + 실패 시 롤백.
             // 전환 결과(res)를 호출부(handleCreateProject)로 그대로 반환한다.
             const prev = { projectName: localSettings.projectName, aspectRatio: localSettings.aspectRatio }
@@ -343,7 +364,7 @@ export default function StorageTab({
             if (!onProjectChange) return undefined
             // isNewProject: 신규 생성임을 명시 — handleProjectChange 가 기존
             // project.json 값 대신 이 화면비를 쓰도록.
-            const res = await onProjectChange(name, { aspectRatio: ratio, isNewProject: true })
+            const res = await onProjectChange(name, { aspectRatio: ratio, workflowType, isNewProject: true })
             if (res && res.success === false) {
               setLocalSettings(s => ({ ...s, ...prev }))
             }

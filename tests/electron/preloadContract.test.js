@@ -132,6 +132,19 @@ describe('preload contract', () => {
     expect(preloadKeys.has('storyListLlmOptions')).toBe(true)
   })
 
+  it('shopping pipeline commands and state event are exposed through preload', () => {
+    const preloadText = fs.readFileSync(preloadPath, 'utf8')
+    const preloadKeys = extractPreloadKeys(preloadText)
+    expect([...preloadKeys]).toEqual(expect.arrayContaining([
+      'shoppingOpen',
+      'shoppingGetState',
+      'shoppingSubmitProduct',
+      'shoppingAbort',
+      'onShoppingEvent',
+    ]))
+    expect(preloadText).toMatch(/const shoppingChannels = \['shopping:state'\]/)
+  })
+
   // 슬라이스4(§3.4 + §v2.8 M1): synopsis IPC 브릿지 + 이벤트 화이트리스트
   it('storyGenerateSynopsis / storyConfirmSynopsis are in preload (synopsis IPC bridges)', () => {
     const preloadText = fs.readFileSync(preloadPath, 'utf8')

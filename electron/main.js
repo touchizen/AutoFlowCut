@@ -16,6 +16,7 @@ import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { registerStoryIPC } from './ipc/story-api.js'
+import { registerShoppingIPC } from './ipc/shopping-api.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
@@ -297,6 +298,12 @@ registerStoryIPC(ipcMain, {
   sfxFor, // M2b: sfx sourceMode별 라우팅
   resolveKeyWithSource, // M2: story:audio-preflight의 provider별 키 상태 조회
   safeStorage, // M2: story:audio-preflight의 encryptionAvailable 판정
+})
+
+// Shopping pipeline IPC (product crawl + app-native plan machine).
+registerShoppingIPC(ipcMain, {
+  getWindow: () => mainWindow,
+  getActiveWorkFolder: () => activeWorkFolder,
 })
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.

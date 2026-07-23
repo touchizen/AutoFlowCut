@@ -23,7 +23,7 @@ function reviewLogLine(p, prefix) {
   }
 }
 
-export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }) {
+export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters, enabled = true }) {
   const [state, setState] = useState(null)
   // Important: scenes.json 파생 데이터(씬 세그먼트/이미지·비디오 프롬프트)는 story.json
   // 상태와 별도로 보관한다 — StoryView ②/④ 패널이 이 값을 직접 소비한다.
@@ -173,6 +173,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   }, [projectPath])
 
   useEffect(() => {
+    if (!enabled) return
     const api = window.electronAPI
     if (!api?.storyListLlmOptions) return
     let alive = true
@@ -188,9 +189,10 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         setDefaultLlmOption(null)
       })
     return () => { alive = false }
-  }, [])
+  }, [enabled])
 
   useEffect(() => {
+    if (!enabled) return
     const api = window.electronAPI
     if (!api?.onStoryEvent) return
     // 채점 이벤트(phase:'scored') — reviewProgress(검토/수정 단계)는 건드리지 않고 점수만 쌓는다.
@@ -430,9 +432,10 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       }),
     ]
     return () => offs.forEach((off) => off?.())
-  }, [])
+  }, [enabled])
 
   const open = useCallback(async () => {
+    if (!enabled || !projectPath) return { error: 'story-workflow-disabled' }
     // Minor: open() 호출 시점의 projectPath를 캡처 — resolve 시점에 projectPath가 이미
     // 바뀌었다면(사용자가 open() 대기 중 다른 프로젝트로 전환) 이 응답은 stale이다. 그대로
     // 반영하면 옛 프로젝트의 토큰/state가 새 프로젝트 화면 위로 부활한다.
@@ -490,7 +493,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       if (gsResearch !== undefined) setResearch(gsResearch)
     }
     return r
-  }, [projectPath])
+  }, [enabled, projectPath])
 
   const start = useCallback(async (step, params) => {
     setStreamingText('')
