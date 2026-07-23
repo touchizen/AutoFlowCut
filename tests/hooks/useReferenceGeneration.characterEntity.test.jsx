@@ -421,17 +421,17 @@ describe('캐릭터 entity 생성 뒤 composer를 refresh한다', () => {
     window.electronAPI = previousAPI
   })
 
-  it('mixed-scope pending은 live scope key만 refresh·repair·failed 집계하고 다른 scope key는 드롭한다', async () => {
+  it('배치 도중 scope가 바뀌면 시작 scope A를 권위로 유지하고 B refresh/remaining phase를 차단한다', async () => {
     const previousAPI = window.electronAPI
-    const refreshFlowComposer = vi.fn().mockResolvedValue({ success: false, error: 'refresh failed' })
+    const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
     window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
     const projectNameRef = { current: 'project-a' }
     let characterNo = 0
-    const { result } = setupHook({
-      references: [CHAR, CHAR_2],
+    const { result, genAPI } = setupHook({
+      references: [CHAR, CHAR_2, SCENE],
       projectName: 'project-a',
       projectNameRef,
-      flowProjectId: 'shared-flow-project',
+      flowProjectId: 'flow-project-a',
       genOverrides: {
         generateImage: vi.fn().mockImplementation(async () => {
           characterNo += 1
@@ -451,11 +451,13 @@ describe('캐릭터 entity 생성 뒤 composer를 refresh한다', () => {
     toast.error.mockClear()
     const batchResult = await runBatch(result)
 
-    expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
-    expect(batchResult.failed.map(item => item.key)).toEqual([`id:${CHAR_2.id}`])
+    expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
+    expect(refreshFlowComposer).not.toHaveBeenCalled()
+    expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    expect(batchResult).toMatchObject({ ok: false, outcome: 'stopped', scopeChanged: true })
+    expect(batchResult.failed).toEqual([])
     expect(batchResult.succeededKeys).toEqual([`id:${CHAR.id}`])
     expect(batchResult.currentRefs[0]).toMatchObject({ flowNameSyncStatus: 'synced', registered: true })
-    expect(batchResult.currentRefs[1]).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
     window.electronAPI = previousAPI
   })
 
@@ -549,6 +551,15 @@ describe('캐릭터 entity 생성 뒤 composer를 refresh한다', () => {
     expect(toast.error).not.toHaveBeenCalledWith('toast.flowComposerRefreshFailed')
     expect(batchResult.currentRefs[0]).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
     expect(batchResult.currentRefs[1]).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
+    const firstKey = `id:${CHAR.id}`
+    const firstTerminalCount = Number(batchResult.succeededKeys.includes(firstKey))
+      + Number(batchResult.failed.some(item => item.key === firstKey))
+      + Number(batchResult.skipped.some(item => item.key === firstKey))
+    expect(firstTerminalCount).toBe(1)
+    expect(batchResult.succeededKeys).not.toContain(firstKey)
+    expect(batchResult.failed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: firstKey, stage: 'refresh-blocked' }),
+    ]))
     window.electronAPI = previousAPI
   })
 })
