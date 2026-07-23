@@ -8,7 +8,7 @@ import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatter
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
 import { needsComposerRefresh, refBadgeState, isSyncInFlight } from '../utils/flowCharacterSync'
-import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
+import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import HoverImageBalloon from './HoverImageBalloon'
 import LazyImage from './LazyImage'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
@@ -192,7 +192,13 @@ export default function ReferenceCard({
 
       // #R33: 캐릭터 entity 등록 직후 목록 캐시/멘션 피커의 옛 이름 방지(비차단).
       //   상세 DOM 반영 성공값만으로 마지막 목록 캐시까지 갱신됐다고 보지 않는다.
-      if (needsComposerRefresh(reference, uploadResult)) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      if (needsComposerRefresh(reference, uploadResult)) {
+        // 현재 replace-upload 작업이 tail 을 놓은 뒤 실행돼야 하므로 여기서는 예약만 한다.
+        void runFlowComposerRefresh({
+          ...flowOperationOpts,
+          shouldRun: typeof getScopeToken === 'function' ? () => getScopeToken() === startScope : undefined,
+        }).catch(() => {})
+      }
      }
      // #R34-fix: onUpload reject/예외 시에도 finishUpload() 보장 + unhandled rejection 방지.
      try {

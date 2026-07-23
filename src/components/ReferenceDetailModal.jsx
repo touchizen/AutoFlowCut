@@ -9,6 +9,7 @@ import { useImageUpload } from '../hooks/useImageUpload'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
 import { syncRefToFlow, needsComposerRefresh, refBadgeState } from '../utils/flowCharacterSync'
+import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
@@ -148,7 +149,15 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       }
       // #R33: 캐릭터 entity 등록(entityId 수신) 직후 Flow SPA 새로고침 — 새 이름이 'Untitled' 로
       //   stale 하게 보이거나 멘션 피커가 옛 이름으로 뜨는 것을 방지(비차단).
-      if (result.entityId) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      if (needsComposerRefresh(reference, result)) {
+        // onUploadComplete 는 replace-upload 보호 구간 안이므로 현재 작업 뒤에 예약만 한다.
+        const refreshScope = getScopeToken()
+        void runFlowComposerRefresh({
+          projectId: flowProjectId,
+          scopeToken: refreshScope,
+          shouldRun: () => getScopeToken() === refreshScope,
+        }).catch(() => {})
+      }
     },
     // #R34: 업로드 시작 → 즉시 모달 닫기(Flow UI 진행 가시화). 결과는 위 onUploadComplete 가
     //   onUpdate 로 부모 ref 에 반영하므로 닫혀도 안전. 스냅샷으로 merge base 보존.
@@ -284,10 +293,36 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         try {
           // bound projectId 를 넘긴다 — 안 넘기면 main 이 projectIdFromUrl() 로 폴백해, Flow 웹뷰가
           //   다른 프로젝트로 드리프트했을 때 엉뚱한 프로젝트 컨텍스트로 PATCH/navigate 한다.
-          const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name, projectId: flowProjectId })
+          const res = await runFlowCharacterOperation({
+            ref: renameBase,
+            projectId: flowProjectId,
+            scopeToken: renameStartScope,
+            refIndex: renameIdx,
+            operation: 'rename',
+            task: () => {
+              if (getScopeToken() !== renameStartScope) {
+                return { success: false, skipped: true, scopeChanged: true }
+              }
+              return window.electronAPI?.renameFlowCharacter?.({
+                entityId: renameSnapshot.entityId,
+                displayName: renameSnapshot.name,
+                projectId: flowProjectId,
+              })
+            },
+          })
+          if (res?.scopeChanged || getScopeToken() !== renameStartScope) {
+            console.warn('[ReferenceDetail] scope changed during queued rename — skipping stale result/refresh')
+            return
+          }
           if (res?.success) {
-            // main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
-            if (!res.nameApplied) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+            // nameApplied 는 상세 DOM 반영일 뿐 목록/picker 캐시 갱신까지 보장하지 않으므로 항상 재진입한다.
+            try {
+              await runFlowComposerRefresh({
+                projectId: flowProjectId,
+                scopeToken: renameStartScope,
+                shouldRun: () => getScopeToken() === renameStartScope,
+              })
+            } catch (_e) {}
             toast.success(t('reference.flowRenameSuccess', { name: renameSnapshot.name }))
           } else {
             markFailed()
@@ -421,13 +456,19 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       }
       // busy/timeout 은 task/publish callback 이 실행되지 않는다 — 런타임 spinner 만 해제한다.
       if (!published) onUpdate(idx, { ...refSnapshot, syncing: false })
-      if (res.ok) {
-        // 상세 DOM 반영 성공값만으로 목록 캐시를 신뢰하지 않고, 캐릭터 entity 작업이면 재진입한다.
-        if (needsComposerRefresh(refSnapshot, res.result)) {
-          try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
-        }
-        toast.success(t('reference.flowSyncSuccess', { name: refSnapshot.name }))
-      } else {
+      // refresh 는 Flow 프로젝트 재진입으로 수 초 걸릴 수 있으므로 성공 확인은 먼저 보여준다.
+      if (res.ok) toast.success(t('reference.flowSyncSuccess', { name: refSnapshot.name }))
+      // 등록 자체가 실패했어도 entity 가 생성됐다면 목록 캐시 갱신을 위해 재진입한다.
+      if (needsComposerRefresh(refSnapshot, res.result)) {
+        try {
+          await runFlowComposerRefresh({
+            projectId: flowProjectId,
+            scopeToken: startScope,
+            shouldRun: () => getScopeToken() === startScope,
+          })
+        } catch (_e) {}
+      }
+      if (!res.ok) {
         toast.error(t('reference.flowSyncFailed', {
           error: resolveDisplayError(t, res.errorKind, res.error || 'unknown'),
         }))

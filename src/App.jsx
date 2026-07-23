@@ -80,6 +80,7 @@ import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { busyPromptLines } from './utils/promptBusyLines'
 import { toast } from './components/Toast'
 import { syncRefToFlow } from './utils/flowCharacterSync'
+import { runFlowComposerRefresh } from './utils/flowCharacterCoordinator'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
 
 // Components
@@ -1991,7 +1992,14 @@ function App() {
         getScopeToken: () => `${modeRef.current ?? ''}::${settings.projectName ?? ''}`,
         syncRef: (ref, opts) => syncRefToFlow(ref, genAPI.uploadReference, opts),
         publishRefs: updateReferences,
-        refreshComposer: () => window.electronAPI?.refreshFlowComposer?.(),
+        refreshComposer: () => {
+          const scopeToken = `${modeRef.current ?? ''}::${projectNameRef.current ?? ''}`
+          return runFlowComposerRefresh({
+            projectId: flowProjectIdRef.current,
+            scopeToken,
+            shouldRun: () => `${modeRef.current ?? ''}::${projectNameRef.current ?? ''}` === scopeToken,
+          })
+        },
         onIncomplete: ({ ok, fail }) => toast.error(t('toast.flowSyncIncomplete', { ok, fail })),
         onSuccess: ({ ok }) => toast.success(t('toast.flowSyncGenerationStarting', { ok })),
         finish: (patchedRefs) => finishSyncGate(myGate, patchedRefs),

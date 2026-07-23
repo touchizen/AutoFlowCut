@@ -15,7 +15,7 @@ import { isStyleReference } from '../services/styleService'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { clampInt } from '../utils/clampInt'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
-import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
+import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { isReferenceImageEmpty, referenceGuardKey, sourceAvailable } from '../utils/refImageGuard'
 
@@ -267,7 +267,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     //   못 찾는다. main 이 상세페이지 이름칸 타이핑으로 스토어를 갱신하지 못했을 때만(nameApplied:false)
     //   기존 방식(프로젝트 나갔다 재진입)으로 폴백한다 — 성공했으면 그 왕복을 통째로 건너뛴다.
     if (genResult?.entityId && genResult.nameApplied === false) {
-      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+      // generate-character 보호 구간 안에서 기다리면 자기 tail 과 deadlock 되므로 다음 작업으로 예약한다.
+      const refreshScope = `flow::${getLiveProjectName() ?? ''}`
+      void runFlowComposerRefresh({
+        projectId: flowProjectId,
+        scopeToken: refreshScope,
+        shouldRun: () => `flow::${getLiveProjectName() ?? ''}` === refreshScope,
+      }).catch(() => {})
     }
     const resolvedIndex = resolveReferenceIndex(
       referencesRef.current,

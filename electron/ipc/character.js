@@ -340,8 +340,8 @@ export function registerCharacterIPC(ipcMain, deps) {
           var x = n[i];
           if (!x || !x.url || x.url.indexOf('/flow/uploadImage') === -1) continue;
           if (x.status === 200 && x.respBody && x.respBody.indexOf('parentEntityId') !== -1)
-            return { status: 200, respBody: x.respBody };
-          if (x.status >= 400) return { status: x.status, respBody: x.respBody || '' };
+            return { status: 200, respBody: x.respBody, bufferIndex: i, bufferCount: n.length };
+          if (x.status >= 400) return { status: x.status, respBody: x.respBody || '', bufferIndex: i, bufferCount: n.length };
         }
         return null;
       })()`).catch(() => null)
@@ -1229,6 +1229,11 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   네트워크 버퍼에서 그 응답(parentEntityId/workflowId) 회수. 3) PATCH /flow/entities 로 이름 등록.
   ipcMain.handle('flow:upload-character-entity', async (_e, opts = {}) => {
     const { base64, displayName, mimeType, fileName } = opts
+    console.log(
+      '[Flow Character] A2 request displayName:',
+      'present=', displayName != null,
+      'length=', displayName == null ? 0 : String(displayName).length,
+    )
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
     if (!base64) return { success: false, error: 'base64 required' }
     // renderer 의 정상 Sync 경로는 ref.name 을 displayName 으로 넘긴다. 그래도 IPC 경계에서 빈 값을
@@ -1311,7 +1316,15 @@ export function registerCharacterIPC(ipcMain, deps) {
           error: 'Character upload response was invalid',
         }
       }
-      console.log('[Flow Character] A2 uploaded mediaId:', parsed.mediaId, 'workflowId:', parsed.workflowId, 'entityId:', parsed.entityId)
+      console.log(
+        '[Flow Character] A2 upload response attributed:',
+        'bufferIndex=', resp.bufferIndex ?? null,
+        'bufferCount=', resp.bufferCount ?? null,
+        'status=', resp.status,
+        'entityId=', parsed.entityId,
+        'workflowId=', parsed.workflowId,
+        'mediaId=', parsed.mediaId,
+      )
 
       // 이름 등록 — SPA 가 만든 entity 에 displayName + 이미지 레퍼런스 PATCH (검증된 경로).
       let registered = false

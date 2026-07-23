@@ -15,6 +15,7 @@ import ReferenceDetailModal from './ReferenceDetailModal'
 import StylePicker from './StylePicker'
 import { toast } from './Toast'
 import { selectUnsyncedRefs, syncRefToFlow, needsComposerRefresh, resolveSyncTarget } from '../utils/flowCharacterSync'
+import { runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import './ReferencePanel.css'
 
 export default function ReferencePanel({
@@ -167,8 +168,20 @@ export default function ReferencePanel({
           console.warn('[ReferencePanel] sync-all failed for', ref?.name, res.error)
         }
       }
+      if (getScopeToken() !== startScope) {
+        console.warn('[ReferencePanel] scope changed during sync-all — skipping stale refresh/result toast')
+        return
+      }
       // 캐릭터 entity 동기화가 실제로 한 건이라도 있었을 때만 마지막에 1회 새로고침한다.
-      if (needsRefresh) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      if (needsRefresh) {
+        try {
+          await runFlowComposerRefresh({
+            projectId: flowProjectId,
+            scopeToken: startScope,
+            shouldRun: () => getScopeToken() === startScope,
+          })
+        } catch (_e) {}
+      }
       if (fail === 0) toast.success(t('reference.flowSyncAllSuccess', { ok }))
       else toast.error(t('reference.flowSyncAllFailed', { ok, fail }))
     } finally {

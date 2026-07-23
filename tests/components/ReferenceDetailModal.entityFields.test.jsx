@@ -9,7 +9,7 @@
  *
  * API mode (no entity fields): editData gets mediaId only, no spurious entityId.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, act } from '@testing-library/react'
 import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
@@ -90,9 +90,18 @@ async function triggerDropZoneUpload(container) {
 }
 
 describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
+  let previousElectronAPI
+
   beforeEach(() => {
     vi.clearAllMocks()
+    previousElectronAPI = window.electronAPI
+    window.electronAPI = {
+      ...(window.electronAPI || {}),
+      refreshFlowComposer: vi.fn().mockResolvedValue({ success: true }),
+    }
   })
+
+  afterEach(() => { window.electronAPI = previousElectronAPI })
 
   it('Flow character upload: uploadToFlow called with type/name/refId meta', async () => {
     const onUpload = vi.fn().mockResolvedValue({
@@ -124,6 +133,43 @@ describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
     )
     // #R34: 업로드 시작 시 모달은 즉시 닫힌다(Flow UI 진행 가시화).
     expect(baseProps.onClose).toHaveBeenCalled()
+  })
+
+  it('upload refresh 정책은 character entity 에만 적용하고 scene entity-shaped 결과는 제외한다', async () => {
+    const entityResult = {
+      success: true,
+      mediaId: 'med-policy',
+      entityId: 'ent-policy',
+      workflowId: 'wf-policy',
+      registered: true,
+      flowNameSyncStatus: 'synced',
+    }
+    const characterView = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={baseRef}
+        appMode="flow"
+        flowProjectId="flow-project-policy"
+        onUpload={vi.fn().mockResolvedValue(entityResult)}
+      />
+    )
+    await triggerDropZoneUpload(characterView.container)
+    await vi.waitFor(() => expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1))
+    characterView.unmount()
+
+    window.electronAPI.refreshFlowComposer.mockClear()
+    const sceneView = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={{ ...baseRef, type: 'scene' }}
+        appMode="flow"
+        flowProjectId="flow-project-policy"
+        onUpload={vi.fn().mockResolvedValue(entityResult)}
+      />
+    )
+    await triggerDropZoneUpload(sceneView.container)
+
+    expect(window.electronAPI.refreshFlowComposer).not.toHaveBeenCalled()
   })
 
   it('같은 Flow project/ref sync 중이면 상세 모달 이미지 교체가 entity 를 추가 업로드하지 않는다', async () => {
