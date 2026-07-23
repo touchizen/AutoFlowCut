@@ -388,6 +388,7 @@ export async function loadProjectWithResources(projectName) {
     scenes: migrated.scenes,
     srtTrack: migrated.srtTrack,
     schemaVersion: migrated.schemaVersion,
+    workflowType: Object.hasOwn(result.data, 'workflowType') ? result.data.workflowType : 'story',
     references: finalReferences,
     videoScenes: finalVideoScenes,
     framePairs: finalFramePairs,
@@ -404,7 +405,7 @@ export async function loadProjectWithResources(projectName) {
  * 다만 이 값은 파일이 없을 때의 부트스트랩에만 쓰인다. 파일이 있으면 main 의 full save 가
  * 디스크 값을 보존한다(flowProjectId 는 merge 전용 키). camelCase canonical 필드.
  */
-export function buildProjectSavePayload({ srtTrack, scenes, references, videoScenes, framePairs, settings, audioFolderPath, selectedStyleRefId, flowProjectId }) {
+export function buildProjectSavePayload({ srtTrack, scenes, references, videoScenes, framePairs, settings, audioFolderPath, selectedStyleRefId, flowProjectId, workflowType }) {
   const payload = {
     schemaVersion: 2,
     srtTrack,
@@ -417,6 +418,7 @@ export function buildProjectSavePayload({ srtTrack, scenes, references, videoSce
     selectedStyleRefId,
   }
   if (flowProjectId) payload.flowProjectId = flowProjectId
+  if (workflowType !== undefined) payload.workflowType = workflowType
   return payload
 }
 
@@ -455,7 +457,7 @@ export function shouldClearFlowMapping(result) {
  *   결과. 저장 대상이 아니면(폴더 모드 아님 / 프로젝트 폴더 없음) undefined.
  */
 // 테스트용 export — hook 통합 없이 직접 호출 가능 (예: audioFolderPath fallback 검증)
-export async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = [], audioFolderPathArg = undefined, flowProjectId = null) {
+export async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = [], audioFolderPathArg = undefined, flowProjectId = null, workflowType = undefined) {
   if (!settings.projectName || settings.saveMode !== 'folder') return
   const exists = await fileSystemAPI.projectExists(settings.projectName)
   if (!exists) return
@@ -489,6 +491,7 @@ export async function saveCurrentProject(settings, scenes, references, videoScen
     audioFolderPath,
     selectedStyleRefId,
     flowProjectId,
+    workflowType,
   }))
 }
 
@@ -609,6 +612,9 @@ export function useProjectData({
   const hydratedRef = useRef(false)
   const [projectLoading, setProjectLoading] = useState(false)
   const [flowProjectId, setFlowProjectId] = useState(null)
+  // 디스크 workflow를 읽기 전에는 unresolved. App의 `workflowType==='story'` gate가
+  // auto-restore 중 Story pipeline을 먼저 여는 것을 막는다.
+  const [workflowType, setWorkflowType] = useState(undefined)
   // R3-P1: Flow 프로젝트 진입(open/new)이 확인되지 않으면 false — 생성(character/scene/image)을
   //   막아 "이전/엉뚱한 Flow 프로젝트에 entity 가 들어가는" 것을 차단. 전환 성공 확인 시 true.
   //   API 모드: 항상 true(default) — no-op.
@@ -1127,6 +1133,7 @@ export function useProjectData({
       try {
       const saved = localStorage.getItem('autoflowcut_settings')
       if (!saved) {
+        setWorkflowType('story')
         // 저장된 프로젝트 없음 — main 의 startup gate 를 null 로 즉시 해제
         declareStartup(null)
         return
@@ -1135,6 +1142,7 @@ export function useProjectData({
       const parsed = JSON.parse(saved)
       const prevProjectName = parsed.projectName
       if (!prevProjectName) {
+        setWorkflowType('story')
         declareStartup(null)
         return
       }
@@ -1189,6 +1197,7 @@ export function useProjectData({
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         setSrtTrack?.(loaded.srtTrack || [])
         setFlowProjectId(loaded.flowProjectId || null)
+        setWorkflowType(loaded.workflowType)
         setSettings(s => ({
           ...s,
           projectName: prevProjectName,
@@ -1235,6 +1244,11 @@ export function useProjectData({
           triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, prevProjectName)
         }
       } else {
+        // load 실패(null)와 project.json 자체가 없는 legacy 빈 폴더를 구분한다.
+        // 전자면 workflow를 알 수 없으므로 unresolved를 유지하고, 후자만 story로 확정한다.
+        const emptyResult = await fileSystemAPI.loadProjectData(prevProjectName)
+        if (myRestoreEpoch !== loadEpochRef.current) return
+        if (emptyResult?.success === true && !emptyResult.data) setWorkflowType('story')
         setFlowProjectId(null)
         setFlowProjectReady(true) // 프로젝트 없음 — 새 establish 허용
       }
@@ -1277,7 +1291,7 @@ export function useProjectData({
   /**
    * 프로젝트 전환 핸들러
    * @param {string} newProjectName
-   * @param {{ aspectRatio?: string, isNewProject?: boolean }} [opts]
+   * @param {{ aspectRatio?: string, workflowType?: 'story'|'shopping-short', isNewProject?: boolean }} [opts]
    *   isNewProject=true: 신규 생성 — opts.aspectRatio 를 화면비로 확정한다.
    *   그 외(기존 프로젝트 전환): project.json 의 화면비를 복원한다.
    * @returns {{ aspectRatio: string, success: boolean }} 확정 화면비 + 실제 전환
@@ -1307,7 +1321,11 @@ export function useProjectData({
       // 1. 현재 프로젝트 데이터 저장
       // flowProjectId(9번째)는 project.json 이 아직 없는 부트스트랩 때만 의미가 있다 — 파일이
       // 있으면 main 이 디스크 값을 보존한다(merge 전용 키). 설정/해제는 mergeProjectData 로만.
-      const _saveRes = await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, flowProjectId)
+      // workflowType 미확정(auto-restore 중/실패)이면 full save를 건너뛴다. undefined payload로
+      // 저장하면 디스크의 shopping-short marker를 지워 다음 load가 story로 강등된다.
+      const _saveRes = workflowType === undefined
+        ? undefined
+        : await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, flowProjectId, workflowType)
       // #R20-6: 현재 프로젝트 저장이 실패했으면 전환을 중단한다 — 그대로 전환하면 미저장 편집이
       //   유실된다. onSaveError 로 알리고 switched=false 로 반환(호출부가 롤백).
       if (_saveRes && _saveRes.success === false) {
@@ -1323,6 +1341,7 @@ export function useProjectData({
       // 화면비: 신규 생성(isNewProject)이면 opts.aspectRatio, 기존 프로젝트 전환이면
       // project.json 값을 복원한다. 둘 다 없으면 현재 settings 값 유지.
       let nextAspectRatio = opts.isNewProject ? (opts.aspectRatio || null) : null
+      let nextWorkflowType = opts.isNewProject ? (opts.workflowType ?? 'story') : 'story'
       let isFreshProject = false
       const newExists = await fileSystemAPI.projectExists(newProjectName)
       // #R5-2: projectExists await 후 확인
@@ -1339,6 +1358,7 @@ export function useProjectData({
           setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
           setSrtTrack?.(loaded.srtTrack || [])
           setFlowProjectId(loaded.flowProjectId || null)
+          nextWorkflowType = loaded.workflowType
           // #R24-1: main 의 startup-hint 도 현재 프로젝트로 동기화한다. 안 그러면 hint 가 앱 시작
           //   시 auto-restore 가 선언한 (이전) 프로젝트에 멈춰 있다가, API 모드에서 프로젝트를
           //   전환한 뒤 처음 Flow 로 들어갈 때 bootstrap 이 stale hint 로 이전 프로젝트를 연다.
@@ -1379,6 +1399,14 @@ export function useProjectData({
             if (!superseded()) triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, newProjectName)
           }
         } else {
+          // load 실패와 project.json 자체가 없는 빈 폴더를 재확인해 구분한다. 읽기 실패를
+          // story로 강등해 덮지 않고, success:true + data:null인 빈 폴더만 bootstrap한다.
+          const emptyResult = await fileSystemAPI.loadProjectData(newProjectName)
+          if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
+          if (emptyResult?.success !== true || emptyResult.data) {
+            console.warn('[App] Project load failed — aborting switch:', newProjectName)
+            return { aspectRatio: settings.aspectRatio, success: false }
+          }
           setScenes([])
           setReferences([])
           setVideoScenes?.([])
@@ -1420,6 +1448,8 @@ export function useProjectData({
       // #R5-2: step 4 직전 최종 확인 — 여기까지 superseded 되면 상태 업데이트 전체 skip.
       if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
       const resolvedAspectRatio = nextAspectRatio || DEFAULT_ASPECT_RATIO
+      const resolvedWorkflowType = nextWorkflowType
+      setWorkflowType(resolvedWorkflowType)
       setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: resolvedAspectRatio }))
       switched = true // 여기까지 왔으면 앱은 새 프로젝트로 전환됨
 
@@ -1434,6 +1464,7 @@ export function useProjectData({
           const res = await saveCurrentProject(
             { ...settings, projectName: newProjectName, aspectRatio: resolvedAspectRatio },
             [], [], [], [], null, [], null, // 신규 프로젝트 — audio 폴더는 아직 없음
+            null, resolvedWorkflowType,
           )
           if (res && res.success === false) {
             console.warn('[App] New project save failed:', res.error)
@@ -1472,8 +1503,9 @@ export function useProjectData({
   // saveCurrentProject 래퍼와 saveCurrentProjectWithPayload 가 공유하는 내부 헬퍼.
   // scenes/srtTrack(및 settings) 을 명시로 넘기면 그 값을, 안 넘기면(undefined) 현재
   // closure 값(hook 의 최신 render 상태)을 사용해 표준 saveCurrentProject 를 호출한다.
-  const buildProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) =>
-    saveCurrentProject(
+  const buildProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) => {
+    if (workflowType === undefined) return undefined
+    return saveCurrentProject(
       settingsOverride || settings,
       scenesArg !== undefined ? scenesArg : scenes,
       referencesArg !== undefined ? referencesArg : references,
@@ -1483,7 +1515,9 @@ export function useProjectData({
       srtTrackArg !== undefined ? srtTrackArg : srtTrack,
       audioFolderPath,
       flowProjectId,
+      workflowType,
     )
+  }
 
   return {
     addPendingSave,
@@ -1507,6 +1541,7 @@ export function useProjectData({
     // 하이드레이션 완료 신호(즉시 읽기). 스토리 캐릭터 푸시가 references 가 올라오기 전에
     //   도착하면 빈 배열 위에 upsert 해 디스크의 카드를 새 카드로 덮어쓴다 — 그걸 막는 게이트용.
     hydratedRef,
+    workflowType,
     flowProjectId,
     setFlowProjectId,
     flowProjectReady,  // R3-P1: Flow 프로젝트 진입 확인 게이트 — false면 생성 차단

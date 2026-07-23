@@ -2,7 +2,7 @@
  * Story 파이프라인 IPC — 스펙 §6. 프로젝트당 하나의 스텝 머신 인스턴스.
  * 모든 R→M 명령은 projectToken 검증, 불일치 시 { error: 'stale-token' }.
  */
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createStepMachine, readAudioPackage } from '../story/stepMachine.js'
 import { keyIdForProvider } from '../../src/config/apiKeyRegistry.js'
@@ -37,6 +37,17 @@ async function validateProjectPath(projectPath) {
     return st.isDirectory()
   } catch {
     return false
+  }
+}
+
+async function readProjectWorkflowType(projectPath) {
+  try {
+    const raw = await readFile(path.join(projectPath, 'project.json'), 'utf8')
+    const data = JSON.parse(raw)
+    return Object.hasOwn(data, 'workflowType') ? data.workflowType : 'story'
+  } catch (error) {
+    if (error?.code === 'ENOENT') return 'story'
+    throw error
   }
 }
 
@@ -140,6 +151,10 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
       // activeWorkFolder를 아직 모르면(활성화 전) 기존 검증만 적용 — 하위호환.
       if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) {
         return { error: 'invalid-project-path' }
+      }
+      const workflowType = await readProjectWorkflowType(projectPath)
+      if (workflowType !== 'story') {
+        return { error: 'shopping-workflow-requires-plan-machine' }
       }
       if (machine) await machine.abort()
       machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt, tts: ttsAdapter, ttsFor, probe: probeFn, defaultVoice: defaultVoiceCfg, sfxFor, youtube: youtubeApi, factCheck: factCheckFn })
