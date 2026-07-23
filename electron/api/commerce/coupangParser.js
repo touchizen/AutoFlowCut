@@ -28,6 +28,12 @@ const OG_PROPERTIES = new Set([
   'og:url',
 ])
 
+const STRIKETHROUGH_PRICE_TYPES = new Set([
+  'StrikethroughPrice',
+  'https://schema.org/StrikethroughPrice',
+  'http://schema.org/StrikethroughPrice',
+])
+
 const IMAGE_EXTENSIONS = new Set(['jpeg', 'jpg', 'png', 'webp'])
 
 function unsupported(reason) {
@@ -245,7 +251,9 @@ function inspectJsonLd(root) {
     }
 
     if (!current.value || typeof current.value !== 'object') continue
-    if (!product && current.value['@type'] === 'Product') product = current
+    const type = current.value['@type']
+    const isProduct = Array.isArray(type) ? type.includes('Product') : type === 'Product'
+    if (!product && isProduct) product = current
 
     const entries = Object.entries(current.value)
     for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -317,33 +325,41 @@ function makeState(sourceUrl) {
   }
 }
 
-function addFact(state, key, value, path) {
-  state.sourceFacts.push({ key, value, sourceUrl: state.sourceUrl, path, sourceKind: 'crawled' })
+function addFact(state, field, value, jsonPathOrProperty, sourceKind) {
+  state.sourceFacts.push({
+    field,
+    value,
+    sourceKind,
+    sourceUrl: state.sourceUrl,
+    jsonPathOrProperty,
+    verification: 'page-asserted',
+    trust: TRUST,
+  })
 }
 
-function setProductField(state, key, value, path) {
-  if (value === undefined || Object.hasOwn(state.product, key)) return false
-  state.product[key] = value
-  addFact(state, key, value, path)
+function setProductField(state, field, value, jsonPathOrProperty, sourceKind) {
+  if (value === undefined || Object.hasOwn(state.product, field)) return false
+  state.product[field] = value
+  addFact(state, field, value, jsonPathOrProperty, sourceKind)
   return true
 }
 
-function addImage(state, value, path) {
+function addImage(state, value, jsonPathOrProperty, sourceKind) {
   if (state.imageUrls.length >= LIMITS.images) return
   const normalized = normalizeImageUrl(value)
   if (!normalized || state.imageSet.has(normalized)) return
   state.imageSet.add(normalized)
   state.imageUrls.push(normalized)
-  addFact(state, 'imageUrls', normalized, path)
+  addFact(state, 'imageUrls', normalized, jsonPathOrProperty, sourceKind)
 }
 
 function addJsonLdImages(state, value, path) {
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index += 1) {
-      addImage(state, value[index], `${path}[${index}]`)
+      addImage(state, value[index], `${path}[${index}]`, 'jsonld')
     }
   } else {
-    addImage(state, value, path)
+    addImage(state, value, path, 'jsonld')
   }
 }
 
@@ -352,13 +368,14 @@ function extractJsonLd(productNode, state) {
   const node = productNode.value
   const path = productNode.path
 
-  setProductField(state, 'name', boundedString(node.name, LIMITS.name), `${path}.name`)
-  setProductField(state, 'sku', boundedString(node.sku, LIMITS.sku), `${path}.sku`)
+  setProductField(state, 'name', boundedString(node.name, LIMITS.name), `${path}.name`, 'jsonld')
+  setProductField(state, 'sku', boundedString(node.sku, LIMITS.sku), `${path}.sku`, 'jsonld')
   setProductField(
     state,
     'description',
     boundedString(node.description, LIMITS.description),
     `${path}.description`,
+    'jsonld',
   )
   addJsonLdImages(state, node.image, `${path}.image`)
 
@@ -368,11 +385,11 @@ function extractJsonLd(productNode, state) {
     const count = ratingCount(node.aggregateRating.ratingCount)
     if (value != null && value >= 0) {
       rating.value = value
-      addFact(state, 'rating.value', value, `${path}.aggregateRating.ratingValue`)
+      addFact(state, 'rating.value', value, `${path}.aggregateRating.ratingValue`, 'jsonld')
     }
     if (count != null) {
       rating.count = count
-      addFact(state, 'rating.count', count, `${path}.aggregateRating.ratingCount`)
+      addFact(state, 'rating.count', count, `${path}.aggregateRating.ratingCount`, 'jsonld')
     }
     if (Object.keys(rating).length > 0) state.product.rating = rating
   }
@@ -381,18 +398,20 @@ function extractJsonLd(productNode, state) {
   if (!selectedOffer) return
   const offer = selectedOffer.value
   const offerPath = `${path}.offers${selectedOffer.suffix}`
-  setProductField(state, 'priceKrw', positiveNumber(offer.price), `${offerPath}.price`)
+  setProductField(state, 'priceKrw', positiveNumber(offer.price), `${offerPath}.price`, 'jsonld')
   setProductField(
     state,
     'currency',
     currencyCode(offer.priceCurrency),
     `${offerPath}.priceCurrency`,
+    'jsonld',
   )
   setProductField(
     state,
     'availability',
     boundedString(offer.availability, LIMITS.availability),
     `${offerPath}.availability`,
+    'jsonld',
   )
 
   const specifications = Array.isArray(offer.priceSpecification)
@@ -404,12 +423,13 @@ function extractJsonLd(productNode, state) {
       ? boundedString(specification.priceType, LIMITS.url)
       : undefined
     const price = isRecord(specification) ? positiveNumber(specification.price) : undefined
-    if (!priceType?.endsWith('StrikethroughPrice') || price == null) continue
+    if (!STRIKETHROUGH_PRICE_TYPES.has(priceType) || price == null) continue
     const suffix = Array.isArray(offer.priceSpecification) ? `[${index}]` : ''
     state.listCandidate = {
       value: price,
       currency: currencyCode(specification.priceCurrency),
       path: `${offerPath}.priceSpecification${suffix}.price`,
+      sourceKind: 'jsonld',
     }
     break
   }
@@ -429,34 +449,39 @@ function fillFromOg(metaValues, state) {
     'name',
     firstMetaValue(metaValues, 'og:title', (value) => boundedString(value, LIMITS.name)),
     'og:title',
+    'og',
   )
   setProductField(
     state,
     'description',
     firstMetaValue(metaValues, 'og:description', (value) => boundedString(value, LIMITS.description)),
     'og:description',
+    'og',
   )
   if (state.imageUrls.length === 0) {
     const image = firstMetaValue(metaValues, 'og:image', normalizeImageUrl)
-    if (image) addImage(state, image, 'og:image')
+    if (image) addImage(state, image, 'og:image', 'og')
   }
   setProductField(
     state,
     'priceKrw',
     firstMetaValue(metaValues, 'product:price:amount', positiveNumber),
     'product:price:amount',
+    'og',
   )
   setProductField(
     state,
     'currency',
     firstMetaValue(metaValues, 'product:price:currency', currencyCode),
     'product:price:currency',
+    'og',
   )
   setProductField(
     state,
     'url',
     firstMetaValue(metaValues, 'og:url', normalizeHttpsUrl),
     'og:url',
+    'og',
   )
 }
 
@@ -472,6 +497,7 @@ function finalizeDerivedFields(state) {
       'listPriceKrw',
       state.listCandidate.value,
       state.listCandidate.path,
+      state.listCandidate.sourceKind,
     )
   }
 
@@ -496,10 +522,19 @@ function finalizeDerivedFields(state) {
  *   status: 'ok'|'unsupported',
  *   trust: 'untrusted-web-data',
  *   product?: object,
- *   sourceFacts?: Array<{key: string, value: unknown, sourceUrl: string, path: string, sourceKind: 'crawled'}>,
+ *   sourceFacts?: Array<{
+ *     field: string,
+ *     value: unknown,
+ *     sourceKind: 'jsonld'|'og',
+ *     sourceUrl: string,
+ *     jsonPathOrProperty: string,
+ *     verification: 'page-asserted',
+ *     trust: 'untrusted-web-data',
+ *   }>,
  *   imageUrls?: string[],
  *   reason?: string,
  * }}
+ * Source fact id and fetchedAt are stamped by M1c, which owns the actual fetch.
  */
 export function parseCoupangProduct(html, options = {}) {
   const sourceUrl = boundedString(options?.sourceUrl, LIMITS.sourceUrl)

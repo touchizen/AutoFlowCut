@@ -40,24 +40,46 @@ describe('parseCoupangProduct', () => {
     expect(result.imageUrls).toHaveLength(5)
     expect(result.imageUrls.every((url) => url.startsWith('https://thumbnail.coupangcdn.com/'))).toBe(true)
     expect(result.sourceFacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ key: 'name', value: result.product.name, path: '$.name' }),
-      expect.objectContaining({ key: 'priceKrw', value: 29800, path: '$.offers.price' }),
       expect.objectContaining({
-        key: 'listPriceKrw',
-        value: 70000,
-        path: '$.offers.priceSpecification.price',
+        field: 'name',
+        value: result.product.name,
+        sourceKind: 'jsonld',
+        jsonPathOrProperty: '$.name',
       }),
       expect.objectContaining({
-        key: 'rating.value',
+        field: 'priceKrw',
+        value: 29800,
+        sourceKind: 'jsonld',
+        jsonPathOrProperty: '$.offers.price',
+      }),
+      expect.objectContaining({
+        field: 'listPriceKrw',
+        value: 70000,
+        sourceKind: 'jsonld',
+        jsonPathOrProperty: '$.offers.priceSpecification.price',
+      }),
+      expect.objectContaining({
+        field: 'rating.value',
         value: 4.8,
-        path: '$.aggregateRating.ratingValue',
+        sourceKind: 'jsonld',
+        jsonPathOrProperty: '$.aggregateRating.ratingValue',
+      }),
+      expect.objectContaining({
+        field: 'url',
+        value: 'https://www.coupang.com/vp/products/9593899670?vendorItemId=95613628582',
+        sourceKind: 'og',
+        jsonPathOrProperty: 'og:url',
       }),
     ]))
     expect(result.sourceFacts.length).toBeGreaterThanOrEqual(13)
     for (const fact of result.sourceFacts) {
       expect(fact.sourceUrl).toBe(SOURCE_URL)
-      expect(fact.sourceKind).toBe('crawled')
-      expect(fact.path).toEqual(expect.any(String))
+      expect(['jsonld', 'og']).toContain(fact.sourceKind)
+      expect(fact.jsonPathOrProperty).toEqual(expect.any(String))
+      expect(fact.verification).toBe('page-asserted')
+      expect(fact.trust).toBe('untrusted-web-data')
+      expect(fact).not.toHaveProperty('key')
+      expect(fact).not.toHaveProperty('path')
     }
   })
 
@@ -86,9 +108,13 @@ describe('parseCoupangProduct', () => {
       imageUrls: ['https://images.example.test/item.webp'],
     })
     expect(result.sourceFacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ key: 'name', path: 'og:title' }),
-      expect.objectContaining({ key: 'imageUrls', path: 'og:image' }),
-      expect.objectContaining({ key: 'priceKrw', path: 'product:price:amount' }),
+      expect.objectContaining({ field: 'name', sourceKind: 'og', jsonPathOrProperty: 'og:title' }),
+      expect.objectContaining({ field: 'imageUrls', sourceKind: 'og', jsonPathOrProperty: 'og:image' }),
+      expect.objectContaining({
+        field: 'priceKrw',
+        sourceKind: 'og',
+        jsonPathOrProperty: 'product:price:amount',
+      }),
     ]))
     expect(JSON.stringify(result)).not.toContain('금지 판매자')
   })
@@ -116,7 +142,10 @@ describe('parseCoupangProduct', () => {
       currency: 'KRW',
     })
     expect(result.imageUrls).toEqual(['https://images.example.test/jsonld.jpg'])
-    expect(result.sourceFacts.find((fact) => fact.key === 'description')?.path).toBe('og:description')
+    expect(result.sourceFacts.find((fact) => fact.field === 'description')).toMatchObject({
+      sourceKind: 'og',
+      jsonPathOrProperty: 'og:description',
+    })
     expect(result.sourceFacts.some((fact) => fact.value === '덮어쓰면 안 되는 이름')).toBe(false)
     expect(result.sourceFacts.some((fact) => fact.value === 999)).toBe(false)
   })
@@ -149,7 +178,53 @@ describe('parseCoupangProduct', () => {
 
     expect(result.product).not.toHaveProperty('listPriceKrw')
     expect(result.product).not.toHaveProperty('discountPercent')
-    expect(result.sourceFacts.some((fact) => fact.key === 'listPriceKrw')).toBe(false)
+    expect(result.sourceFacts.some((fact) => fact.field === 'listPriceKrw')).toBe(false)
+  })
+
+  it.each([
+    'https://evil.example/NotReallyAStrikethroughPrice',
+    'XStrikethroughPrice',
+  ])('rejects non-exact StrikethroughPrice type %s', (priceType) => {
+    const html = jsonLdHtml(productJson({
+      offers: {
+        price: '10000',
+        priceCurrency: 'KRW',
+        priceSpecification: {
+          price: '999999',
+          priceCurrency: 'KRW',
+          priceType,
+        },
+      },
+    }))
+
+    const result = parseCoupangProduct(html, { sourceUrl: SOURCE_URL })
+
+    expect(result.product).not.toHaveProperty('listPriceKrw')
+    expect(result.product).not.toHaveProperty('discountPercent')
+    expect(result.sourceFacts.some((fact) => fact.field === 'listPriceKrw')).toBe(false)
+  })
+
+  it.each([
+    'StrikethroughPrice',
+    'https://schema.org/StrikethroughPrice',
+    'http://schema.org/StrikethroughPrice',
+  ])('accepts exact StrikethroughPrice type %s', (priceType) => {
+    const html = jsonLdHtml(productJson({
+      offers: {
+        price: '10000',
+        priceCurrency: 'KRW',
+        priceSpecification: {
+          price: '20000',
+          priceCurrency: 'KRW',
+          priceType,
+        },
+      },
+    }))
+
+    const result = parseCoupangProduct(html, { sourceUrl: SOURCE_URL })
+
+    expect(result.product.listPriceKrw).toBe(20000)
+    expect(result.product.discountPercent).toBe(50)
   })
 
   it.each([
@@ -222,8 +297,24 @@ describe('parseCoupangProduct', () => {
 
     expect(result.status).toBe('ok')
     expect(result.product.name).toBe('그래프 상품')
-    expect(result.sourceFacts.find((fact) => fact.key === 'name')?.path)
+    expect(result.sourceFacts.find((fact) => fact.field === 'name')?.jsonPathOrProperty)
       .toBe('$["@graph"][1].name')
+  })
+
+  it('finds Product when JSON-LD @type is an array', () => {
+    const html = jsonLdHtml(productJson({
+      '@type': ['Product', 'Thing'],
+      name: '다중 타입 상품',
+    }))
+
+    const result = parseCoupangProduct(html, { sourceUrl: SOURCE_URL })
+
+    expect(result.status).toBe('ok')
+    expect(result.product.name).toBe('다중 타입 상품')
+    expect(result.sourceFacts.find((fact) => fact.field === 'name')).toMatchObject({
+      sourceKind: 'jsonld',
+      jsonPathOrProperty: '$.name',
+    })
   })
 
   it.each([
