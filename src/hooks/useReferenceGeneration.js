@@ -39,7 +39,7 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, scenes = [], scenesRef = null, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
+export function useReferenceGeneration({ settings, references, scenes = [], scenesRef = null, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, selectedStyleRefIdRef = null, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
@@ -69,6 +69,13 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   }
   const referencesRef = useRef(references)
   referencesRef.current = references  // 매 렌더마다 최신 상태 반영
+  // 스타일 선택도 live ref 로 읽는다 — 배치/생성이 옛 렌더의 클로저로 stale selectedStyleRefId(null)를
+  //   읽어, 방금 픽커에서 고른 스타일이 첫 시도에 안 먹고 실사로 나가는 레이스를 없앤다.
+  //   App 이 setter 에서 동기 갱신하는 ref 를 우선한다(리렌더 전에도 최신값). 없으면(단위 테스트 등)
+  //   prop 기반 render-time ref 로 폴백한다.
+  const _ownSelectedStyleRefIdRef = useRef(selectedStyleRefId)
+  _ownSelectedStyleRefIdRef.current = selectedStyleRefId
+  const liveSelectedStyleRefIdRef = selectedStyleRefIdRef ?? _ownSelectedStyleRefIdRef
   const getLiveProjectName = () => projectNameRef?.current ?? settings.projectName
   const batchGeneratingRefCountsRef = useRef(new Map())
   const addBatchGeneratingRef = (index) => {
@@ -307,17 +314,20 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   const _resolveEffectiveStyleId = (overrideStyleId) => {
     // ref 도메인 — createStyleResolver의 ref-aware fallback 사용
     // (activeTab 무관 — ref 생성은 항상 동일 fallback chain)
+    // selectedStyleRefId 는 live ref 로 읽는다 — 방금 픽커에서 고른 값이 옛 클로저의 stale null 로
+    //   덮이지 않게(레이스: 첫 배치가 무스타일로 나가던 원인).
+    const liveSelectedStyleRefId = liveSelectedStyleRefIdRef.current
     const resolver = createStyleResolver({
       activeTab: 'list',  // value irrelevant for resolveEffectiveStyleIdForRef
       // App/useScenes의 setter가 React commit 전에 동기 갱신하는 ref를 우선한다.
       scenes: scenesRef?.current ?? scenes,
       references: referencesRef.current,
-      selectedStyleRefId,
+      selectedStyleRefId: liveSelectedStyleRefId,
       t,
       isKo: false,  // labels not used here
     })
     const effective = resolver.resolveEffectiveStyleIdForRef(overrideStyleId)
-    if (effective && !overrideStyleId && !selectedStyleRefId) {
+    if (effective && !overrideStyleId && !liveSelectedStyleRefId) {
       console.log('[StyleRef] Auto-detected style card:', effective)
     }
     return effective

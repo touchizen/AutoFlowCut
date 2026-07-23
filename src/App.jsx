@@ -265,7 +265,15 @@ function App() {
   // Cleared by handleAuthRecovered when the user explicitly re-authenticates.
   const authInvalidatedRef = useRef(false)
   const [selectedScene, setSelectedScene] = useState(null) // 상세 모달용 선택된 씬
-  const [selectedStyleRefId, setSelectedStyleRefId] = useState(null) // 레퍼런스 생성 시 적용할 스타일
+  const [selectedStyleRefId, _setSelectedStyleRefIdRaw] = useState(null) // 레퍼런스 생성 시 적용할 스타일
+  // 스타일 선택을 동기 ref 로도 즉시 반영한다. 씬 픽커는 "고르면 즉시 실행"이라, setState 커밋(리렌더)
+  //   전에 배치/생성 핸들러가 옛 클로저의 stale selectedStyleRefId(null)를 읽어 방금 고른 스타일이
+  //   첫 시도에 안 먹고 실사로 나가는 레이스가 있었다. ref 는 픽 즉시 갱신되므로 리렌더를 안 기다린다.
+  const selectedStyleRefIdRef = useRef(null)
+  const setSelectedStyleRefId = useCallback((v) => {
+    selectedStyleRefIdRef.current = v
+    _setSelectedStyleRefIdRaw(v)
+  }, [])
   const [showStylePicker, setShowStylePicker] = useState(false) // 스타일 선택 모달
   const [selectedVideo, setSelectedVideo] = useState(null) // 비디오 상세 모달용
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
@@ -894,7 +902,7 @@ function App() {
 
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
-    settings, references, scenes, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady,
+    settings, references, scenes, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, selectedStyleRefIdRef, styleThumbnails, generationQueue, flowProjectReady,
     scenesRef: scenesHook.scenesRef, flowProjectId: _flowProjectId, projectNameRef,
   })
 
