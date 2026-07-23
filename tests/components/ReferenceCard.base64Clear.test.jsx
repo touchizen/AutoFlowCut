@@ -141,6 +141,7 @@ describe('ReferenceCard — base64 clear after disk save (#3)', () => {
       data: 'data:image/png;base64,IMG', filePath: null, mediaId: 'med-1', caption: 'c',
       entityId: 'ent-1', workflowId: 'wf-1', registered: true, flowNameSyncStatus: 'synced',
       status: 'done', prompt: 'hero portrait',
+      errorMessage: 'old failure', errorKind: 'old-kind', error: 'old error',
     }
     const { container, getByText } = render(
       <ReferenceCard reference={charRef} index={0} onUpdate={onUpdate} onRemove={vi.fn()}
@@ -159,6 +160,10 @@ describe('ReferenceCard — base64 clear after disk save (#3)', () => {
     expect(patch.workflowId).toBeNull()
     expect(patch.registered).toBeNull()
     expect(patch.flowNameSyncStatus).toBeNull()
+    expect(patch.status).toBe('pending')
+    expect(patch.errorMessage).toBeNull()
+    expect(patch.errorKind).toBeNull()
+    expect(patch.error).toBeNull()
 
     const genAPI = {
       mode: 'api',

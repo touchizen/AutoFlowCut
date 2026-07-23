@@ -7,7 +7,7 @@ import { REFERENCE_TYPES, STYLE_PRESETS, RESOURCE } from '../config/defaults'
 import { resolveImageSrc, hasImageData } from '../utils/formatters'
 import { useImageUpload } from '../hooks/useImageUpload'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
+import { applyEntityRegistrationPatch, clearedImageFields } from '../utils/refEntityRegistration'
 import { syncRefToFlow, needsComposerRefresh, refBadgeState } from '../utils/flowCharacterSync'
 import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import PromptInput from './PromptInput'
@@ -591,7 +591,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                       // #R10-8: 이미지 제거도 미저장 로컬 미디어 변경 → dirty(배경 prop 동기화가 되돌리지 않게).
                       mediaDirtyRef.current = true
                       // #R16-3: 이미지 제거 시 옛 entity 등록도 무효화(멘션이 옛 캐릭터를 가리키지 않게).
-                      setEditData(prev => ({ ...prev, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null, status: 'pending' }))
+                      setEditData(prev => ({ ...prev, ...clearedImageFields() }))
                       setImageSize(null)
                     }}
                     title={t('reference.clearImage') || '이미지 제거'}

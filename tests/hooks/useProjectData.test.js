@@ -260,6 +260,37 @@ describe('loadProjectWithResources — image path remap on load', () => {
     expect(result.scenes[0].image ?? null).toBeNull()
   })
 
+  it('명시적으로 비운 folder-backed ref 는 같은 이름 파일이 남아 있어도 reload 때 복원하지 않는다', async () => {
+    fileSystemAPI.loadProjectData.mockResolvedValue({
+      success: true,
+      data: {
+        scenes: [],
+        references: [{
+          id: 7,
+          name: 'Alice',
+          type: 'character',
+          prompt: 'portrait',
+          data: null,
+          filePath: null,
+          status: 'pending',
+        }],
+      },
+    })
+    fileSystemAPI.getResourcePath.mockResolvedValue({
+      success: true,
+      path: '/projects/ep6/references/Alice.png',
+    })
+
+    const result = await loadProjectWithResources('ep6')
+
+    expect(result.references[0]).toMatchObject({
+      status: 'pending',
+      data: null,
+      filePath: null,
+    })
+    expect(fileSystemAPI.getResourcePath).not.toHaveBeenCalledWith('ep6', 'references', 'Alice')
+  })
+
   // ── Project aspect ratio (longform/shortform) ──
   // project.json stores the per-project aspect ratio under settings.aspectRatio;
   // the loader surfaces it so handleProjectChange can restore it on switch.

@@ -298,7 +298,11 @@ describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
     //   비-업로드 편집(이미지 제거/스타일/히스토리)에서 검증한다. 여기선 이미지 제거(btn-clear-image)로
     //   미저장 편집을 만든 뒤, entity-only prop 업데이트가 그 편집을 되돌리지 않음을 확인한다.
     const onUpdate = vi.fn()
-    const initialRef = { ...baseRef, data: 'data:image/png;base64,ORIG', mediaId: 'med-init', entityId: 'ent-old', flowNameSyncStatus: 'synced', status: 'done' }
+    const initialRef = {
+      ...baseRef,
+      data: 'data:image/png;base64,ORIG', mediaId: 'med-init', entityId: 'ent-old', flowNameSyncStatus: 'synced', status: 'done',
+      errorMessage: 'old failure', errorKind: 'old-kind', error: 'old error',
+    }
 
     const { container, getByText, rerender } = render(
       <ReferenceDetailModal {...baseProps} reference={initialRef} onUpdate={onUpdate} onUpload={vi.fn()} />
@@ -323,6 +327,9 @@ describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
     expect(saved.data).toBeFalsy()
     expect(saved.entityId).toBeFalsy()
     expect(saved.status).toBe('pending')
+    expect(saved.errorMessage).toBeNull()
+    expect(saved.errorKind).toBeNull()
+    expect(saved.error).toBeNull()
   })
 
   it('API upload (no entity fields): onUpdate has mediaId only, no spurious entityId', async () => {

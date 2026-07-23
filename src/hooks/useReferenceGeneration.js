@@ -503,6 +503,11 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           ))
           return { success: false, busy: true, error: coordinated.error }
         }
+        // 단건/MCP는 지금 refresh까지 await한다. 배치는 모든 character op가 settle된 뒤
+        // outer character phase가 한 번만 refresh하도록 신호만 올린다.
+        if (batchBusy && coordinated?.composerRefreshNeeded) {
+          return { ...coordinated, composerRefreshScopeToken: scopeToken }
+        }
         if (coordinated?.composerRefreshNeeded) {
           addGeneratingBusy()
           try {
@@ -672,8 +677,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       .filter(Boolean)
 
     const styleTargets = pickTargets(isStyleReference)
-    const nonStyleTargets = pickTargets(ref => !isStyleReference(ref))
-    const allTargets = [...styleTargets, ...nonStyleTargets]
+    const isFlowCharacter = ref => genAPI?.mode === 'flow' && ref.type === 'character'
+    const characterTargets = pickTargets(ref => !isStyleReference(ref) && isFlowCharacter(ref))
+    const otherTargets = pickTargets(ref => !isStyleReference(ref) && !isFlowCharacter(ref))
+    const allTargets = [...styleTargets, ...characterTargets, ...otherTargets]
 
     // 구조화 결과 accumulator — 기존 setReferences 상태 갱신은 그대로 두고,
     // fail-closed 호출자가 읽을 lifecycle 결과만 별도로 집계한다.
@@ -681,6 +688,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     const attemptedKeys = new Set()
     const failedByKey = new Map()
     const skippedByKey = new Map()
+    const pendingComposerRefreshByKey = new Map()
+    let blockRemainingPhases = false
     const recordFail = (key, stage, error) => {
       if (!failedByKey.has(key)) {
         failedByKey.set(key, { key, stage, error: error ?? null })
@@ -1010,14 +1019,22 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             } else if (direct?.operationTimedOut) {
               recordFail(target.key, 'operation-timeout', direct.error || 'Character operation timed out')
               if (options.reason !== 'm2-empty-reference-gate') toast.error(t('toast.flowCharacterOperationTimedOut'))
+              blockRemainingPhases = true
               break
             } else if (direct?.refreshFailed) {
               recordFail(target.key, 'refresh', direct.error || 'Composer refresh failed')
               if (options.reason !== 'm2-empty-reference-gate') toast.error(t('toast.flowComposerRefreshFailed'))
+              blockRemainingPhases = true
               break
             } else if (direct?.success) {
               attemptedKeys.add(target.key)
               succeededKeys.add(target.key)
+              if (direct.composerRefreshNeeded) {
+                pendingComposerRefreshByKey.set(target.key, {
+                  key: target.key,
+                  scopeToken: direct.composerRefreshScopeToken,
+                })
+              }
               submitFailCount = 0
             } else {
               recordFail(target.key, 'submit', direct?.error || 'Generation failed')
@@ -1198,15 +1215,65 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
     setPreparingRefs(false)
 
+    const markPendingComposerRefreshesRepairable = () => {
+      const liveScopeToken = `flow::${getLiveProjectName() ?? ''}`
+      const repairableKeys = new Set(
+        [...pendingComposerRefreshByKey.values()]
+          .filter(item => item.scopeToken === liveScopeToken)
+          .map(item => item.key)
+      )
+      if (repairableKeys.size === 0) return
+      const markRepairable = prev => prev.map(ref =>
+        repairableKeys.has(referenceGuardKey(ref))
+          ? { ...ref, flowNameSyncStatus: 'failed', registered: false }
+          : ref
+      )
+      referencesRef.current = markRepairable(referencesRef.current)
+      setReferences(prev => markRepairable(prev))
+    }
+
+    const refreshGeneratedCharacters = async () => {
+      const pendingRefreshes = [...pendingComposerRefreshByKey.values()]
+      if (pendingRefreshes.length === 0) return
+      const scopeToken = pendingRefreshes[0].scopeToken
+      try {
+        const refreshResult = await runFlowComposerRefresh({
+          projectId: flowProjectId,
+          scopeToken,
+          shouldRun: () => `flow::${getLiveProjectName() ?? ''}` === scopeToken,
+        })
+        if (refreshResult?.success === true) return
+        throw new Error(refreshResult?.error || 'Composer refresh failed')
+      } catch (error) {
+        markPendingComposerRefreshesRepairable()
+        for (const item of pendingRefreshes) {
+          recordFail(item.key, 'refresh', error?.message || String(error))
+        }
+        if (options.reason !== 'm2-empty-reference-gate') {
+          toast.error(t('toast.flowComposerRefreshFailed'))
+        }
+        blockRemainingPhases = true
+      }
+    }
+
     // Phase 1: style refs first — they generate standalone (no style applied to a style ref).
     await runPhase(styleTargets, null)
 
-    // Phase 2: non-style refs — resolve style AFTER phase 1 so freshly-generated
-    // style cards are picked up by the auto-fallback. 스타일 단계 도중 사용자가
-    // 중단했다면 비스타일 단계는 통째로 건너뛴다 (중복 stop 토스트 + 무의미한 호출 방지).
-    if (!stopRequestedRef.current) {
+    // Phase 2: Flow character는 모두 생성한 뒤 composer cache를 한 번만 갱신한다.
+    // refresh가 끝나기 전에는 shared flowView를 쓰는 다음 non-character submit을 시작하지 않는다.
+    if (!stopRequestedRef.current && !blockRemainingPhases) {
       const batchEffectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
-      await runPhase(nonStyleTargets, batchEffectiveStyleId)
+      await runPhase(characterTargets, batchEffectiveStyleId)
+      if (!stopRequestedRef.current && !blockRemainingPhases) {
+        await refreshGeneratedCharacters()
+      } else if (blockRemainingPhases) {
+        // timeout된 inner가 coordinator tail을 계속 쥘 수 있어 refresh await는 금지한다.
+        // 그 전에 생성된 key만 repairable로 낮춰 다음 Sync에서 cache refresh를 재시도하게 한다.
+        markPendingComposerRefreshesRepairable()
+      }
+      if (!stopRequestedRef.current && !blockRemainingPhases) {
+        await runPhase(otherTargets, batchEffectiveStyleId)
+      }
     }
 
     await genAPI.clearGenerations()
