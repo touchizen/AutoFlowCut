@@ -232,7 +232,16 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     }))
   }
   
+  const flowRenamePending = !!(
+    appMode === 'flow'
+    && editData.type === 'character'
+    && editData.entityId
+    && editData.name?.trim()
+    && editData.name !== reference.name
+  )
+
   const handleSave = async () => {
+    if (refBatchRunning && flowRenamePending) return
     // 이미지가 있고 파일로 저장 안 된 경우 (업로드된 이미지) 파일 저장
     if (editData.data && !editData.filePath && projectName) {
       try {
@@ -267,11 +276,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     // #R34: 이미 Flow 에 등록된(entityId) character 의 이름을 바꿔 저장하면 Flow entity 의
     //   displayName 도 재동기화한다(PATCH /flow/entities). 안 하면 앱 이름만 바뀌고 Flow/멘션
     //   피커는 옛 이름으로 남는다. 이름이 실제로 바뀐 경우에만, 백그라운드로 진행(저장은 즉시 닫힘).
-    const needsFlowRename = appMode === 'flow'
-      && editData.type === 'character'
-      && editData.entityId
-      && editData.name?.trim()
-      && editData.name !== reference.name
+    const needsFlowRename = flowRenamePending
     const renameSnapshot = needsFlowRename ? { entityId: editData.entityId, name: editData.name } : null
     const renameIdx = index
     const renameBase = { ...editData }
@@ -513,7 +518,13 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           )}
         </button>
       )}
-      <button className="btn-primary" onClick={handleSave}>{t('common.save')}</button>
+      <button
+        className="btn-primary"
+        onClick={handleSave}
+        disabled={refBatchRunning && flowRenamePending}
+      >
+        {t('common.save')}
+      </button>
     </>
   )
   

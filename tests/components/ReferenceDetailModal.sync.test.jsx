@@ -94,6 +94,29 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(getSyncButton(container).disabled).toBe(true)
   })
 
+  it('ref batch lifecycle 중에는 Flow rename을 유발하는 Save를 비활성화한다', () => {
+    window.electronAPI.renameFlowCharacter = vi.fn()
+    const onUpdate = vi.fn()
+    const syncedChar = { ...charRef, name: 'king', entityId: 'ent-1', flowNameSyncStatus: 'synced' }
+    const { container, getByText } = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={syncedChar}
+        appMode="flow"
+        refBatchRunning
+        onUpdate={onUpdate}
+        onUpload={vi.fn()}
+      />
+    )
+    fireEvent.change(container.querySelector('input[type="text"]'), { target: { value: 'kingnew' } })
+
+    const saveButton = getByText('common.save')
+    expect(saveButton.disabled).toBe(true)
+    fireEvent.click(saveButton)
+    expect(window.electronAPI.renameFlowCharacter).not.toHaveBeenCalled()
+    expect(onUpdate).not.toHaveBeenCalled()
+  })
+
   it('does NOT show the sync button in api mode', () => {
     const { container } = render(
       <ReferenceDetailModal {...baseProps} reference={charRef} appMode="api" onUpdate={vi.fn()} onUpload={vi.fn()} />

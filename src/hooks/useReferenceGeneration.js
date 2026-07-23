@@ -356,6 +356,18 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       if (batchBusy) removeBatchGeneratingRef(index)
       else setGeneratingRefs(prev => prev.filter(i => i !== index))
     }
+    let characterOperationTimedOut = false
+    const failureGuardKey = guardKey ?? referenceGuardKey(ref)
+    const markFlowRefreshFailed = () => {
+      const applyPatch = prev => patchReferenceByIdentity(
+        prev,
+        index,
+        failureGuardKey,
+        current => ({ ...current, flowNameSyncStatus: 'failed', registered: false })
+      )
+      referencesRef.current = applyPatch(referencesRef.current)
+      setReferences(prev => applyPatch(prev))
+    }
 
     // 폴더 설정 + Flow 프로젝트 준비 + 토큰 확인 (배치 모드에서는 권한 체크 스킵)
     if (!skipPermissionCheck) {
@@ -423,7 +435,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
         const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId } })
 
         if (result.success && result.images?.length > 0) {
-          return await _processAndSaveImage(
+          const processed = await _processAndSaveImage(
             result.images,
             submitIndex,
             submitRef,
@@ -433,6 +445,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             index,
             batchBusy,
           )
+          // coordinator timeout은 호출자만 먼저 풀고 inner는 계속된다. 늦게 끝난 저장이 synced를
+          // 다시 쓰더라도 repair 경로가 사라지지 않게 마지막 상태를 failed로 되돌린다.
+          if (characterOperationTimedOut && processed?.success) markFlowRefreshFailed()
+          return processed
         } else if (!result.success) {
           const errorMsg = result.error || ''
           const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
@@ -485,6 +501,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           return { success: false, busy: true, error: coordinated.error }
         }
         if (coordinated?.composerRefreshNeeded) {
+          addGeneratingBusy()
           try {
             const refreshResult = await runFlowComposerRefresh({
               projectId: flowProjectId,
@@ -492,20 +509,24 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               shouldRun: () => `flow::${getLiveProjectName() ?? ''}` === scopeToken,
             })
             if (refreshResult?.success !== true) {
+              markFlowRefreshFailed()
               return {
                 ...coordinated,
-                success: false,
+                success: true,
                 refreshFailed: true,
                 error: refreshResult?.error || 'Composer refresh failed',
               }
             }
           } catch (error) {
+            markFlowRefreshFailed()
             return {
               ...coordinated,
-              success: false,
+              success: true,
               refreshFailed: true,
               error: error?.message || String(error),
             }
+          } finally {
+            releaseGeneratingBusy()
           }
         }
         return coordinated
@@ -516,6 +537,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const errorMsg = error.message || ''
       const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
+      const operationTimedOut = genAPI?.mode === 'flow'
+        && ref.type === 'character'
+        && errorMsg.includes('Flow character operation timed out')
+      if (operationTimedOut) {
+        characterOperationTimedOut = true
+        markFlowRefreshFailed()
+      }
       toast.error(t('toast.generateError', { error: error.message }))
       releaseGeneratingBusy()
       setReferences(prev => patchReferenceByIdentity(
@@ -527,7 +555,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       if (guardKey && resolveReferenceIndex(referencesRef.current, index, guardKey) < 0) {
         return { success: false, skipped: true, skipStage: 'not-found' }
       }
-      return { success: false, authError: isAuthError, serverError: isServerError }
+      return { success: false, authError: isAuthError, serverError: isServerError, operationTimedOut }
     }
 
     return { success: false }
@@ -976,8 +1004,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               recordSkip(target.key, direct.skipStage || 'not-found')
             } else if (direct?.busy) {
               recordFail(target.key, 'busy', direct.error)
+            } else if (direct?.operationTimedOut) {
+              recordFail(target.key, 'operation-timeout', direct.error || 'Character operation timed out')
+              if (options.reason !== 'm2-empty-reference-gate') toast.error(t('toast.flowComposerRefreshFailed'))
+              break
             } else if (direct?.refreshFailed) {
               recordFail(target.key, 'refresh', direct.error || 'Composer refresh failed')
+              if (options.reason !== 'm2-empty-reference-gate') toast.error(t('toast.flowComposerRefreshFailed'))
               break
             } else if (direct?.success) {
               attemptedKeys.add(target.key)

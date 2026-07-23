@@ -108,6 +108,26 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(setSelectedStyleRefId).not.toHaveBeenCalled()
   })
 
+  it('__mcpGenerateRef maps refresh failure to partial success and explicitly forbids regeneration', async () => {
+    const handleGenerateRef = vi.fn().mockResolvedValue({
+      success: false,
+      refreshFailed: true,
+      entityId: 'entity-created',
+      error: 'Composer refresh failed',
+    })
+    renderHook(() => useMcpServer(makeProps({ handleGenerateRef })))
+
+    const result = await window.__mcpGenerateRef(0, 'none')
+
+    expect(handleGenerateRef).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({
+      success: true,
+      refreshFailed: true,
+      entityId: 'entity-created',
+      warning: expect.stringContaining('Do not regenerate'),
+    })
+  })
+
   it('__mcpGenerateRef normalizes plain id (legacy MCP shape)', async () => {
     const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
     renderHook(() => useMcpServer(makeProps({ handleGenerateRef })))

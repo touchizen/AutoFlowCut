@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
+import { selectUnsyncedRefs, syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
 vi.mock('../../src/utils/guards', () => ({
   checkAuthToken: vi.fn().mockResolvedValue(true),
@@ -27,6 +27,7 @@ vi.mock('../../src/utils/imageProcessing', () => ({
 vi.mock('../../src/utils/urls', () => ({ cleanBase64: vi.fn(s => s), toDataURL: vi.fn(s => s) }))
 
 import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
+import { toast } from '../../src/components/Toast'
 
 const CHAR = { id: 2, name: '준호', type: 'character', prompt: '한국인, 40대 초, male', status: 'pending' }
 const SCENE = { id: 3, name: '거리', type: 'scene', prompt: '비 오는 거리', status: 'pending' }
@@ -35,7 +36,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function setupHook({ references, genOverrides = {}, flowProjectId = null, projectName = null }) {
+function setupHook({ references, genOverrides = {}, flowProjectId = null, projectName = null, projectNameRef = null }) {
   let liveRefs = references
   const patches = []
   const setReferences = vi.fn((updater) => {
@@ -54,15 +55,20 @@ function setupHook({ references, genOverrides = {}, flowProjectId = null, projec
     clearGenerations: vi.fn().mockResolvedValue(undefined),
     ...genOverrides,
   }
-  const { result } = renderHook(() => useReferenceGeneration({
+  const { result, rerender } = renderHook(() => useReferenceGeneration({
     settings: { saveMode: 'project', imageBatchCount: 1, projectName },
     references: liveRefs, setReferences, genAPI,
     addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue: null,
     flowProjectId,
+    projectNameRef,
   }))
   // 마지막으로 카드에 반영된 상태
   const finalRef = (id) => patches.length ? patches[patches.length - 1].find(r => r.id === id) : null
-  return { result, genAPI, finalRef }
+  const replaceLiveRefs = (next) => {
+    liveRefs = next
+    rerender()
+  }
+  return { result, genAPI, finalRef, replaceLiveRefs }
 }
 
 async function runBatch(result) {
@@ -72,8 +78,10 @@ async function runBatch(result) {
   for (let i = 0; i < 20; i++) {
     await act(async () => { await vi.advanceTimersByTimeAsync(16000) })
   }
-  await act(async () => { await p })
+  let batchResult
+  await act(async () => { batchResult = await p })
   vi.useRealTimers()
+  return batchResult
 }
 
 // SPA 캐시 갱신에 실패했으면(nameApplied:false) 예전처럼 Flow 프로젝트를 나갔다 재진입해야
@@ -100,6 +108,123 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
     await act(async () => { await result.current.handleGenerateRef(0) })
     expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
     restore()
+  })
+
+  it('refresh 실패는 생성 이미지를 부분 성공으로 반환하고 ref를 Sync-all 복구 대상으로 남긴다', async () => {
+    const previousAPI = window.electronAPI
+    window.electronAPI = {
+      ...(previousAPI || {}),
+      refreshFlowComposer: vi.fn().mockResolvedValue({ success: false, error: 'refresh failed' }),
+    }
+    const { result, finalRef } = setupHook({
+      references: [CHAR],
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          images: [{ base64: 'img', mediaId: 'm' }],
+          entityId: 'e-1', workflowId: 'w-1', registered: true, nameApplied: false,
+        }),
+      },
+    })
+
+    let generationResult
+    await act(async () => { generationResult = await result.current.handleGenerateRef(0) })
+
+    expect(generationResult).toMatchObject({ success: true, refreshFailed: true })
+    expect(finalRef(2)).toMatchObject({
+      status: 'done', entityId: 'e-1', workflowId: 'w-1',
+      flowNameSyncStatus: 'failed', registered: false,
+    })
+    expect(selectUnsyncedRefs([finalRef(2)]).map(ref => ref.id)).toEqual([2])
+    window.electronAPI = previousAPI
+  })
+
+  it('refresh reject도 생성 성공을 유지하고 ref를 failed로 낮춘다', async () => {
+    const previousAPI = window.electronAPI
+    window.electronAPI = {
+      ...(previousAPI || {}),
+      refreshFlowComposer: vi.fn().mockRejectedValue(new Error('refresh rejected')),
+    }
+    const { result, finalRef } = setupHook({
+      references: [CHAR],
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          images: [{ base64: 'img', mediaId: 'm' }],
+          entityId: 'e-1', workflowId: 'w-1', registered: true, nameApplied: false,
+        }),
+      },
+    })
+
+    let generationResult
+    await act(async () => { generationResult = await result.current.handleGenerateRef(0) })
+
+    expect(generationResult).toMatchObject({ success: true, refreshFailed: true })
+    expect(finalRef(2)).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
+    window.electronAPI = previousAPI
+  })
+
+  it('refresh 대기 중 ref 배열이 재정렬돼도 실패 상태를 원래 character identity에만 쓴다', async () => {
+    let resolveRefresh
+    const previousAPI = window.electronAPI
+    const refreshFlowComposer = vi.fn(() => new Promise(resolve => { resolveRefresh = resolve }))
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
+    const { result, finalRef, replaceLiveRefs } = setupHook({
+      references: [CHAR, SCENE],
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          images: [{ base64: 'img', mediaId: 'm' }],
+          entityId: 'e-1', workflowId: 'w-1', registered: true, nameApplied: false,
+        }),
+      },
+    })
+
+    let generationPromise
+    await act(async () => {
+      generationPromise = result.current.handleGenerateRef(0)
+      for (let i = 0; i < 12; i++) await Promise.resolve()
+    })
+    expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      replaceLiveRefs([SCENE, finalRef(CHAR.id)])
+      resolveRefresh({ success: false, error: 'refresh failed' })
+      await generationPromise
+    })
+
+    expect(finalRef(CHAR.id)).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
+    expect(finalRef(SCENE.id)).not.toHaveProperty('flowNameSyncStatus')
+    window.electronAPI = previousAPI
+  })
+
+  it('scope-skip refresh도 부분 성공으로 반환하고 ref를 failed로 낮춘다', async () => {
+    const previousAPI = window.electronAPI
+    const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
+    const projectNameRef = { current: 'project-a' }
+    const { result, finalRef } = setupHook({
+      references: [CHAR],
+      projectNameRef,
+      genOverrides: {
+        generateImage: vi.fn().mockImplementation(async () => {
+          projectNameRef.current = 'project-b'
+          return {
+            success: true,
+            images: [{ base64: 'img', mediaId: 'm' }],
+            entityId: 'e-1', workflowId: 'w-1', registered: true, nameApplied: false,
+          }
+        }),
+      },
+    })
+
+    let generationResult
+    await act(async () => { generationResult = await result.current.handleGenerateRef(0) })
+
+    expect(refreshFlowComposer).not.toHaveBeenCalled()
+    expect(generationResult).toMatchObject({ success: true, refreshFailed: true })
+    expect(finalRef(2)).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
+    window.electronAPI = previousAPI
   })
 
   it('nameApplied:true 면 refresh 를 건너뛴다', async () => {
@@ -156,6 +281,7 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
 
     expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
     const submittedBeforeRefreshSettled = genAPI.submitGeneration.mock.calls.length > 0
+    const characterBusyWhileRefreshPending = result.current.generatingRefs.includes(0)
 
     resolveRefresh({ success: true })
     for (let i = 0; i < 20; i++) {
@@ -165,6 +291,8 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
 
     expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
     expect(submittedBeforeRefreshSettled).toBe(false)
+    expect(characterBusyWhileRefreshPending).toBe(true)
+    expect(result.current.generatingRefs).not.toContain(0)
     window.electronAPI = previousAPI
   })
 
@@ -188,9 +316,13 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
       },
     })
 
-    await runBatch(result)
+    toast.error.mockClear()
+    const batchResult = await runBatch(result)
 
     expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith('toast.flowComposerRefreshFailed')
+    expect(batchResult.currentRefs[0]).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
+    expect(selectUnsyncedRefs(batchResult.currentRefs).map(ref => ref.id)).toContain(CHAR.id)
     window.electronAPI = previousAPI
   })
 
@@ -200,7 +332,7 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
     const previousAPI = window.electronAPI
     const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
     window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
-    const { result } = setupHook({
+    const { result, finalRef } = setupHook({
       references: [CHAR],
       genOverrides: {
         generateImage: vi.fn(() => new Promise(resolve => { resolveGenerate = resolve })),
@@ -213,7 +345,8 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
       for (let i = 0; i < 8; i++) await Promise.resolve()
     })
     await act(async () => { await vi.advanceTimersByTimeAsync(180000) })
-    await act(async () => { await generationPromise })
+    let generationResult
+    await act(async () => { generationResult = await generationPromise })
 
     resolveGenerate({
       success: true,
@@ -225,7 +358,49 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
     })
     await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve() })
 
+    expect(generationResult).toMatchObject({ success: false, operationTimedOut: true })
+    expect(finalRef(2)).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
     expect(refreshFlowComposer).not.toHaveBeenCalled()
+    window.electronAPI = previousAPI
+  })
+
+  it('character operation timeout이면 batch phase를 중단하고 다음 target을 submit하지 않는다', async () => {
+    vi.useFakeTimers()
+    let resolveGenerate
+    const previousAPI = window.electronAPI
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer: vi.fn() }
+    const { result, genAPI } = setupHook({
+      references: [CHAR, SCENE],
+      genOverrides: {
+        generateImage: vi.fn(() => new Promise(resolve => { resolveGenerate = resolve })),
+      },
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180000) })
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    const submittedAfterTimeout = genAPI.submitGeneration.mock.calls.length > 0
+
+    resolveGenerate({
+      success: true,
+      images: [{ base64: 'char-img', mediaId: 'm-char' }],
+      entityId: 'e-char', workflowId: 'w-char', registered: true, nameApplied: false,
+    })
+    for (let i = 0; i < 20; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(16000) })
+    }
+    let batchResult
+    await act(async () => { batchResult = await batchPromise })
+
+    expect(submittedAfterTimeout).toBe(false)
+    expect(batchResult.failed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: expect.any(String), stage: 'operation-timeout' }),
+    ]))
+    expect(batchResult.currentRefs[0]).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
     window.electronAPI = previousAPI
   })
 })

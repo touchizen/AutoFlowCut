@@ -28,6 +28,7 @@ export default function ReferenceCard({
   getScopeToken,  // #R34-fix: live 스코프 토큰(부모 ReferencePanel 제공). 업로드 중 프로젝트/모드 전환 감지.
   appMode,        // 배지 판정용 — Flow 엔티티 동기화는 flow 모드의 character 에만 의미가 있다.
   flowProjectId = null,
+  refBatchRunning = false,
 }) {
   const cardRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -53,6 +54,10 @@ export default function ReferenceCard({
   // 파일 처리 공통 함수
   const processFile = async (file) => {
     if (!file || !file.type.startsWith('image/')) return
+    if (refBatchRunning) {
+      console.warn('[ReferenceCard] ref batch running — ignoring direct upload:', reference?.name)
+      return
+    }
     // #R37: 이 ref 의 동기화/업로드가 이미 진행 중이면 새 업로드를 시작하지 않는다. 진행 중인 캐릭터
     //   sync 위로 파일을 드롭하거나 빠르게 두 번 드롭하면 /characters 업로드가 겹쳐 Flow 가 동명의
     //   entity 를 하나 더 만든다(중복의 또 다른 출구). 공유 flowView DOM 충돌(ERR_ABORTED)도 막는다.
@@ -267,6 +272,7 @@ export default function ReferenceCard({
         type="file"
         ref={fileInputRef}
         accept="image/*"
+        disabled={refBatchRunning}
         onChange={handleFileSelect}
         style={{ display: 'none' }}
       />

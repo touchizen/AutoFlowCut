@@ -349,6 +349,7 @@ export default function ReferencePanel({
               getScopeToken={getScopeToken}
               appMode={appMode}
               flowProjectId={flowProjectId}
+              refBatchRunning={refBatchRunning}
             />
           ))}
           

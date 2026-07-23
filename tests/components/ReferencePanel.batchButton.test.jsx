@@ -25,7 +25,9 @@ vi.mock('../../src/components/Toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
 }))
 
-vi.mock('../../src/components/ReferenceCard', () => ({ default: () => null }))
+vi.mock('../../src/components/ReferenceCard', () => ({
+  default: ({ refBatchRunning }) => <div className="card-batch-prop">{String(!!refBatchRunning)}</div>
+}))
 vi.mock('../../src/components/ReferenceDetailModal', () => ({ default: () => null }))
 vi.mock('../../src/components/StylePicker', () => ({ default: () => null }))
 
@@ -111,6 +113,14 @@ describe('ReferencePanel — 일괄 생성 버튼 (style 카드 포함)', () => 
     ], { refBatchRunning: true, appMode: 'flow' })
 
     expect(container.querySelector('.btn-sync-all').disabled).toBe(true)
+  })
+
+  it('refBatchRunning을 각 ReferenceCard 직접 업로드 가드에 전달한다', () => {
+    const { container } = renderPanel([
+      { id: 1, type: 'character', name: 'Hero', data: 'data:image/png;base64,AAA' }
+    ], { refBatchRunning: true, appMode: 'flow' })
+
+    expect(container.querySelector('.card-batch-prop').textContent).toBe('true')
   })
 
   it('아이템 auth 대기 창에도 Stop을 유지하고 Generate All 진입을 막는다', () => {

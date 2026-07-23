@@ -70,6 +70,39 @@ describe('ReferenceCard — entity field propagation (Codex #3)', () => {
     vi.clearAllMocks()
   })
 
+  it('ref batch lifecycle 중에는 직접 이미지 업로드를 시작하지 않는다', async () => {
+    const onUpload = vi.fn().mockResolvedValue({
+      success: true,
+      mediaId: 'm-new',
+      entityId: 'e-new',
+      workflowId: 'w-new',
+      registered: true,
+    })
+    const previousAPI = window.electronAPI
+    const refreshFlowComposer = vi.fn()
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
+    const { container } = render(
+      <ReferenceCard
+        reference={baseRef}
+        index={0}
+        onUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onUpload={onUpload}
+        t={(k) => k}
+        projectName={null}
+        appMode="flow"
+        refBatchRunning
+      />
+    )
+
+    const input = container.querySelector('input[type="file"]')
+    expect(input.disabled).toBe(true)
+    await triggerUpload(container)
+    expect(onUpload).not.toHaveBeenCalled()
+    expect(refreshFlowComposer).not.toHaveBeenCalled()
+    window.electronAPI = previousAPI
+  })
+
   it('Flow character upload: onUpdate final call contains entityId + flowNameSyncStatus=synced', async () => {
     const flowResult = {
       success: true,
