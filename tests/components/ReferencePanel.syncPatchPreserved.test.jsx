@@ -28,11 +28,11 @@ const CHAR = {
   // 아직 Flow 에 안 올라간 상태 → Sync 대상
 }
 
-function renderPanel(onUpdate) {
+function renderPanel(onUpdate, references = [CHAR]) {
   return render(
     <I18nProvider>
     <ReferencePanel
-      references={[CHAR]}
+      references={references}
       onUpdate={onUpdate}
       onUpload={vi.fn()}
       onGenerate={vi.fn()}
@@ -108,5 +108,44 @@ describe('ReferencePanel — 동기화 실패 시에도 entity id 를 보존한�
     expect(final.workflowId).toBe('w1')
     expect(final.flowNameSyncStatus).toBe('failed')
     expect(final.syncing).toBe(false)
+  })
+})
+
+describe('ReferencePanel — Flow 캐릭터 동기화 후 refresh 보장', () => {
+  beforeEach(() => {
+    syncRefToFlow.mockReset()
+    window.electronAPI = { ...(window.electronAPI || {}), refreshFlowComposer: vi.fn() }
+  })
+
+  it('마지막 결과의 nameApplied=true 여도 캐릭터를 하나라도 동기화했으면 마지막에 한 번 refresh한다', async () => {
+    const refs = [
+      CHAR,
+      { ...CHAR, id: 2, name: 'Mina', data: 'data:image/png;base64,BBB' },
+    ]
+    syncRefToFlow.mockImplementation(async (ref, _upload, deps) => {
+      const syncResult = {
+        ok: true,
+        patch: { entityId: `entity-${ref.id}`, workflowId: `workflow-${ref.id}`, flowNameSyncStatus: 'synced' },
+        result: { success: true, entityId: `entity-${ref.id}`, registered: true, nameApplied: true },
+      }
+      await deps.publishResult(syncResult)
+      return syncResult
+    })
+
+    renderPanel(vi.fn(), refs)
+    await userEvent.click(await screen.findByRole('button', { name: /sync/i }))
+
+    await waitFor(() => expect(syncRefToFlow).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1))
+  })
+
+  it('동기화 대상이 0건이면 refresh하지 않는다', async () => {
+    const synced = { ...CHAR, entityId: 'entity-1', flowNameSyncStatus: 'synced' }
+
+    renderPanel(vi.fn(), [synced])
+    await Promise.resolve()
+
+    expect(syncRefToFlow).not.toHaveBeenCalled()
+    expect(window.electronAPI.refreshFlowComposer).not.toHaveBeenCalled()
   })
 })

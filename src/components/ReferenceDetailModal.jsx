@@ -422,7 +422,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       // busy/timeout 은 task/publish callback 이 실행되지 않는다 — 런타임 spinner 만 해제한다.
       if (!published) onUpdate(idx, { ...refSnapshot, syncing: false })
       if (res.ok) {
-        // 이름을 SPA 에 못 넣었을 때만 새로고침(나갔다 재진입)한다.
+        // 상세 DOM 반영 성공값만으로 목록 캐시를 신뢰하지 않고, 캐릭터 entity 작업이면 재진입한다.
         if (needsComposerRefresh(refSnapshot, res.result)) {
           try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
         }

@@ -190,8 +190,8 @@ export default function ReferenceCard({
         errorMessage: finalErrorMessage,
       })
 
-      // #R33: 캐릭터 entity 등록 직후 'Untitled Character' stale 캐시/멘션 피커 옛 이름 방지(비차단).
-      //   main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
+      // #R33: 캐릭터 entity 등록 직후 목록 캐시/멘션 피커의 옛 이름 방지(비차단).
+      //   상세 DOM 반영 성공값만으로 마지막 목록 캐시까지 갱신됐다고 보지 않는다.
       if (needsComposerRefresh(reference, uploadResult)) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
      }
      // #R34-fix: onUpload reject/예외 시에도 finishUpload() 보장 + unhandled rejection 방지.

@@ -277,6 +277,61 @@ describe('flow character IPC coded failure responses', () => {
     })
     expect(res.error).not.toContain('Zed')
   })
+
+  it.each([undefined, null, '', '   '])('upload는 빈 displayName(%s)이면 DOM 업로드 전에 거부한다', async (displayName) => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({
+      uploadResponse: {
+        status: 200,
+        respBody: JSON.stringify({
+          media: { name: 'media-1', workflowId: 'wf-1' },
+          workflow: { name: 'wf-1', parentEntityId: 'ent-1' },
+        }),
+      },
+    })
+    deps.flowPageFetch = vi.fn(async () => ({ ok: true, status: 200, text: '{}' }))
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:upload-character-entity', {
+      base64: 'data:image/png;base64,AA==', displayName, projectId: PID,
+    })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'character-display-name-required',
+      error: 'Character display name required',
+    })
+    expect(deps.trustedClickOnFlowView).not.toHaveBeenCalled()
+    expect(deps.flowPageFetch).not.toHaveBeenCalled()
+  })
+
+  it('upload는 이름 있는 캐릭터를 정상 등록하고 그 이름을 body에 넣는다', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({
+      uploadResponse: {
+        status: 200,
+        respBody: JSON.stringify({
+          media: { name: 'media-1', workflowId: 'wf-1' },
+          workflow: { name: 'wf-1', parentEntityId: 'ent-1' },
+        }),
+      },
+    })
+    deps.flowPageFetch = vi.fn(async (url) => (
+      url === deps.SESSION_URL
+        ? { ok: true, status: 200, text: '{"access_token":"token"}' }
+        : { ok: true, status: 200, text: '{}' }
+    ))
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:upload-character-entity', {
+      base64: 'data:image/png;base64,AA==', displayName: 'Zed', projectId: PID,
+    })
+
+    expect(res).toMatchObject({ success: true, entityId: 'ent-1', registered: true })
+    const request = deps.flowPageFetch.mock.calls.find(([url]) => String(url).endsWith('/flow/entities'))?.[1]
+    const body = JSON.parse(request.body)
+    expect(body.entity.entityInfo.displayName).toBe('Zed')
+  })
 })
 
 // 서버 저장은 PATCH /flow/entities 가 한다(라이브 캡처로 200 확인). 하지만 SPA 는 페이지 로드 시점의

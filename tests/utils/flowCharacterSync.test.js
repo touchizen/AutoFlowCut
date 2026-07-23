@@ -101,13 +101,13 @@ describe('planSyncGateCompletion — required mention sync 는 all-or-nothing', 
   })
 })
 
-// main 이 상세페이지 이름칸 타이핑으로 SPA 스토어를 갱신했으면(nameApplied) 프로젝트를 나갔다
-// 재진입하는 refreshFlowComposer(loadURL 2회 + 1s 대기)가 필요 없다. 실패했을 때만 폴백한다.
+// DOM 자동화의 nameApplied 는 타이밍에 따라 true 여도 마지막 목록 캐시가 갱신되지 않을 수 있다.
+// 캐릭터 entity 동기화가 실제로 있었으면 마지막에 한 번 refresh 하고, 대상이 없으면 하지 않는다.
 describe('needsComposerRefresh', () => {
   const CHAR = { type: 'character' }
 
-  it('이름이 SPA 에 반영됐으면 refresh 불필요', () => {
-    expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1', nameApplied: true })).toBe(false)
+  it('nameApplied=true 여도 캐릭터 entity 동기화가 있었으면 refresh 필요', () => {
+    expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1', nameApplied: true })).toBe(true)
   })
 
   it('반영 실패면 refresh 필요', () => {
@@ -116,6 +116,12 @@ describe('needsComposerRefresh', () => {
 
   it('nameApplied 를 안 주는 옛 응답은 refresh 필요 (안전한 쪽)', () => {
     expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1' })).toBe(true)
+  })
+
+  it('이름 등록이 실패했어도 entity 등록 시도가 있었으면 refresh 필요', () => {
+    expect(needsComposerRefresh(CHAR, {
+      success: true, entityId: 'e1', registered: false, nameApplied: false,
+    })).toBe(true)
   })
 
   it('캐릭터가 아니면 이름 자체가 없다 — refresh 불필요', () => {

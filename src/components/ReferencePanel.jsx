@@ -108,7 +108,7 @@ export default function ReferencePanel({
     if (targets.length === 0) return
     setSyncingAll(true)
     let ok = 0, fail = 0
-    // main 이 이름을 SPA 스토어에 반영했으면(nameApplied) 나갔다 재진입할 필요가 없다.
+    // nameApplied 는 마지막 목록 캐시 반영까지 보장하지 못하므로, 실제 캐릭터 entity 작업을 누적한다.
     let needsRefresh = false
     // #R34-fix: 직렬 동기화 도중 프로젝트/모드가 바뀌면 이후 결과를 현재(새) 프로젝트 refs 에 반영하지 않는다.
     const startScope = getScopeToken()
@@ -157,15 +157,17 @@ export default function ReferencePanel({
         //   버리면 다음 Sync 가 다시 업로드하고 Flow 에 중복 entity 가 쌓인다.
         // busy/timeout 처럼 task 자체가 시작되지 않으면 publish callback 이 안 불린다 — spinner 만 해제.
         if (!published) onUpdate(prev => patchTarget(prev, { syncing: false }))
+        // 등록 자체가 실패했어도 uploadImage 로 entity 가 생겨 이름 반영을 시도했다면 마지막에 한 번
+        // 재진입한다. scene/작업 미시작/대상 0건은 needsComposerRefresh 가 false 라 비용이 없다.
+        if (needsComposerRefresh(target, res.result)) needsRefresh = true
         if (res.ok) {
           ok++
-          if (needsComposerRefresh(target, res.result)) needsRefresh = true
         } else {
           fail++
           console.warn('[ReferencePanel] sync-all failed for', ref?.name, res.error)
         }
       }
-      // 이름을 SPA 에 못 넣은 카드가 하나라도 있을 때만 새로고침(나갔다 재진입)한다.
+      // 캐릭터 entity 동기화가 실제로 한 건이라도 있었을 때만 마지막에 1회 새로고침한다.
       if (needsRefresh) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
       if (fail === 0) toast.success(t('reference.flowSyncAllSuccess', { ok }))
       else toast.error(t('reference.flowSyncAllFailed', { ok, fail }))
