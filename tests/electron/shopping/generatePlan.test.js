@@ -3,12 +3,40 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { shoppingAssets } from '../../../electron/shopping/assets/index.js'
 import { createGeneratePlan } from '../../../electron/shopping/generatePlan.js'
+import { createPlanMachine } from '../../../electron/shopping/planMachine.js'
 import { validateShoppingPlanDraft } from '../../../electron/shopping/planSchema.js'
+import { defaultShoppingPlanState } from '../../../electron/shopping/shoppingPlanStore.js'
 
 const RAW_HTML_SENTINEL = '<html><script>RAW_HTML_MUST_NOT_REACH_LLM</script></html>'
+const DISCOUNT_PERCENT_FORMULA = 'round((listPriceKrw-priceKrw)/listPriceKrw*100)'
 
 function personaPrompt(dialogue) {
   return `Presenter speaking in Korean, say exactly "${dialogue}", no ad-lib, no extra speech, no music, no captions, no on-screen text`
+}
+
+function setClaimText(draft, claimIndex, text) {
+  const claim = draft.claims[claimIndex]
+  const scene = draft.scenes.find(({ claimIds }) => claimIds.includes(claim.id))
+  claim.text = text
+  scene.subtitleText = text
+  if (scene.visualType === 'persona_i2v') {
+    scene.dialogueText = text
+    scene.videoPrompt = personaPrompt(text)
+  }
+}
+
+function makeDiscountDraft(percent, formula = DISCOUNT_PERCENT_FORMULA) {
+  const value = makeDraft()
+  value.facts[1].field = 'priceKrw'
+  value.facts[1].value = 29800
+  value.facts[2].field = 'listPriceKrw'
+  value.facts[2].value = 70000
+  value.draft.claims[1].claimType = 'derived_numeric'
+  value.draft.claims[1].sourceFactIds = ['fact-2', 'fact-3']
+  value.draft.claims[1].formula = formula
+  setClaimText(value.draft, 1, `정가 대비 ${percent}% 할인`)
+  setClaimText(value.draft, 2, '정가는 70,000원')
+  return value
 }
 
 function makeDraft() {
@@ -102,7 +130,7 @@ describe('createGeneratePlan', () => {
     const { facts, decisions, draft } = makeDraft()
     facts[0].rawHtml = RAW_HTML_SENTINEL
     facts[0].body = Buffer.from('forbidden bytes')
-    facts[1].value = '가'.repeat(10_000)
+    facts[1].value = `2${'가'.repeat(9_999)}`
     facts[2].jsonPathOrProperty = RAW_HTML_SENTINEL
     const llm = {
       generateShoppingPlan: vi.fn(async () => JSON.stringify(draft)),
@@ -184,6 +212,55 @@ describe('createGeneratePlan', () => {
     })
   })
 
+  it('rejects page_fact numeric tokens that are absent from every referenced fact value', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[1].value = '비듬샴푸'
+    setClaimText(draft, 1, '출시 3일 만에 5만 개 완판')
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('numeric tokens')],
+    })
+  })
+
+  it('rejects a derived discount whose claimed percentage disagrees with main recomputation', async () => {
+    const { facts, decisions, draft } = makeDiscountDraft(87)
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('derived_numeric')],
+    })
+  })
+
+  it('rejects a non-deterministic derived formula even when the claimed percentage is correct', async () => {
+    const { facts, decisions, draft } = makeDiscountDraft(57, 'x')
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('formula')],
+    })
+  })
+
+  it('returns the main-recomputed discount and deterministic formula in the hashable draft', async () => {
+    const { facts, decisions, draft } = makeDiscountDraft(57)
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+
+    const result = await generatePlan(facts, decisions)
+
+    expect(validateShoppingPlanDraft(result)).toEqual({ valid: true, errors: [] })
+    expect(result.claims[1]).toMatchObject({
+      text: '정가 대비 57% 할인',
+      formula: DISCOUNT_PERCENT_FORMULA,
+    })
+  })
+
   it('rejects LLM attempts to forge the user-confirmed A/B decisions', async () => {
     const { facts, decisions, draft } = makeDraft()
     draft.factDecisions[0].decision = 'excluded'
@@ -194,6 +271,46 @@ describe('createGeneratePlan', () => {
       error: 'plan-draft-invalid',
       validationErrors: [expect.stringContaining('confirmed A/B')],
     })
+  })
+
+  it('rejects an LLM-dropped prohibitedClaims list without a durable store write', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    draft.prohibitedClaims = []
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+    let state = {
+      ...defaultShoppingPlanState(),
+      state: 'fact_review',
+      snapshot: { sourceFacts: facts, ...decisions },
+    }
+    const store = {
+      load: vi.fn(async () => structuredClone(state)),
+      update: vi.fn(async (updater) => {
+        const next = await updater(structuredClone(state))
+        if (next) state = structuredClone(next)
+        return structuredClone(state)
+      }),
+      save: vi.fn(),
+    }
+    const machine = createPlanMachine({
+      store,
+      deps: {
+        fetchProduct: vi.fn(),
+        generatePlan,
+        materialize: vi.fn(),
+        generate: vi.fn(),
+        now: vi.fn(() => '2026-07-23T09:00:00.000Z'),
+        randomUUID: vi.fn(() => 'operation-1'),
+      },
+    })
+    const { projectToken } = await machine.open('/tmp/shopping-prohibited-coverage')
+    store.update.mockClear()
+
+    const result = await machine.draftPlan(projectToken)
+
+    expect(result).toMatchObject({ error: 'plan-draft-invalid' })
+    expect(store.update).not.toHaveBeenCalled()
+    expect(store.save).not.toHaveBeenCalled()
   })
 
   it('rejects a claim linked to a fact ID that was never present in sanitized input', async () => {

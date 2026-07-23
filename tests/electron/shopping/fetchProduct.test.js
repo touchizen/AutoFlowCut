@@ -159,6 +159,35 @@ describe('createFetchProduct', () => {
     expect(await readdir(path.dirname(first.path))).toEqual([`${digest}.jpg`])
   })
 
+  it('rejects a relative projectPath before staging any image', async () => {
+    const projectPath = await makeTempProject()
+    const relativeProjectPath = path.relative(process.cwd(), projectPath)
+    const fs = await import('node:fs/promises')
+    const staging = createContentAddressedStaging({ fs })
+    const bytes = Buffer.from('same image bytes')
+    const digest = 'f10266197016b8e8842aeba6800100997ce04f35a45a3bff974711e9615ea597'
+
+    await expect(staging.stageImage({
+      projectPath: relativeProjectPath,
+      digest,
+      bytes,
+      mimeType: 'image/jpeg',
+    })).rejects.toThrow(TypeError)
+  })
+
+  it('rejects a non-hex digest before it can become a staging path component', async () => {
+    const projectPath = await makeTempProject()
+    const fs = await import('node:fs/promises')
+    const staging = createContentAddressedStaging({ fs })
+
+    await expect(staging.stageImage({
+      projectPath,
+      digest: 'g'.repeat(64),
+      bytes: Buffer.from('same image bytes'),
+      mimeType: 'image/jpeg',
+    })).rejects.toThrow(TypeError)
+  })
+
   it('refuses to reuse a content-addressed path whose existing bytes were tampered with', async () => {
     const projectPath = await makeTempProject()
     const fs = await import('node:fs/promises')
