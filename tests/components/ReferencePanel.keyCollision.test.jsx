@@ -7,7 +7,7 @@
  * + 컴포넌트 오재사용/누락. key 가 충돌하지 않아야 한다.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 
 vi.mock('../../src/hooks/useI18n', () => ({
   default: () => ({ t: (k) => k, lang: 'en', setLang: vi.fn() }),
@@ -18,21 +18,44 @@ vi.mock('../../src/hooks/useModalVisibility', () => ({ useModalVisibility: () =>
 vi.mock('../../src/components/Toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }))
-vi.mock('../../src/components/ReferenceDetailModal', () => ({ default: () => null }))
 vi.mock('../../src/components/StylePicker', () => ({ default: () => null }))
-vi.mock('../../src/components/ReferenceCard', () => ({ default: () => null }))
+vi.mock('../../src/components/ReferenceCard', () => ({
+  default: ({ reference, index, onShowDetail }) => (
+    <button data-testid={`open-${reference.id ?? index}`} onClick={() => onShowDetail(index)}>
+      {reference.name}
+    </button>
+  ),
+}))
+vi.mock('../../src/components/ReferenceDetailModal', async () => {
+  const { useState } = await import('react')
+  return {
+    default: ({ reference }) => {
+      const [draft, setDraft] = useState(reference.name)
+      return (
+        <div data-testid="detail-modal">
+          <span>{draft}</span>
+          <button onClick={() => setDraft('dirty-old-project')}>dirty</button>
+        </div>
+      )
+    },
+  }
+})
 
 import ReferencePanel from '../../src/components/ReferencePanel'
 
-function renderPanel(references) {
-  return render(
+function panel(references, projectName = 'proj') {
+  return (
     <ReferencePanel
       references={references} onUpdate={vi.fn()} onUpload={vi.fn()}
       onGenerate={vi.fn()} onGenerateAll={vi.fn()} onStopGenerateAll={vi.fn()} onClearAll={vi.fn()}
       aspectRatio="16:9" generatingRefs={[]} stoppingRefs={false} preparingRefs={false}
-      selectedStyleRefId={null} onStyleRefChange={vi.fn()} projectName="proj"
+      selectedStyleRefId={null} onStyleRefChange={vi.fn()} projectName={projectName}
     />
   )
+}
+
+function renderPanel(references, projectName) {
+  return render(panel(references, projectName))
 }
 
 beforeEach(() => { vi.clearAllMocks() })
@@ -55,5 +78,22 @@ describe('ReferencePanel — card key collision', () => {
     expect(dupKeyWarning).toBeUndefined()
 
     errSpy.mockRestore()
+  })
+})
+
+describe('ReferencePanel — 프로젝트별 상세 모달 identity', () => {
+  it('같은 reference id여도 projectName이 바뀌면 모달 draft를 새 프로젝트 카드로 초기화한다', () => {
+    const firstReference = { id: 1, type: 'character', name: 'project-a-card' }
+    const { rerender } = renderPanel([firstReference], 'project-a')
+
+    fireEvent.click(screen.getByTestId('open-1'))
+    fireEvent.click(screen.getByRole('button', { name: 'dirty' }))
+    expect(screen.getByTestId('detail-modal')).toHaveTextContent('dirty-old-project')
+
+    const secondReference = { id: 1, type: 'character', name: 'project-b-card' }
+    rerender(panel([secondReference], 'project-b'))
+
+    expect(screen.getByTestId('detail-modal')).toHaveTextContent('project-b-card')
+    expect(screen.getByTestId('detail-modal')).not.toHaveTextContent('dirty-old-project')
   })
 })

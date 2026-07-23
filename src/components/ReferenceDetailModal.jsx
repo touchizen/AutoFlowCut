@@ -18,6 +18,7 @@ import { isStyleReference } from '../services/styleService'
 import ErrorSection from './ErrorSection'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
 import { resolveDisplayError } from '../utils/errorDisplay'
+import { sourceAvailable } from '../utils/refImageGuard'
 
 export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
   const [editData, setEditData] = useState({ ...reference })
@@ -347,13 +348,11 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   const typeInfo = REFERENCE_TYPES.find(t => t.value === editData.type) || REFERENCE_TYPES[0]
   const isStyle = editData.type === 'style'
 
-  // 이 카드가 어떤 스타일로 생성될지. styleId 키가 있으면 그게 카드의 기억이고(null = 무스타일),
-  //   없으면(새 카드) 전역 스타일 → 다른 카드들의 기억 → 자동 탐색 순으로 결정된다.
-  //   기억이 없을 땐 '자동: X' 로 표시해 지금 무엇이 적용될지 보이게 한다.
+  // 이미지가 있거나 이번 모달에서 직접 고른 카드는 styleId 를 기억으로 표시한다.
+  //   이미지 없는 미조작 카드는 stale styleId 가 있어도 생성 정책대로 전역 스타일을 '자동: X'로 표시한다.
   const styleRefs = references.filter(isStyleReference)
-  // 키 존재가 아니라 값으로 판정한다 — prop 동기화 effect 가 styleId:undefined 로 키를 만든다.
-  //   (undefined = 기억 없음, null = '무스타일로 생성됨'이라는 정당한 기억)
-  const hasStyleMemory = editData.styleId !== undefined
+  // undefined = 기억 없음. null 도 dirty/source 카드에서는 '무스타일'이라는 정당한 기억이다.
+  const hasStyleMemory = editData.styleId !== undefined && (styleDirtyRef.current || sourceAvailable(editData))
   const resolvedStyleId = hasStyleMemory
     ? editData.styleId
     : createStyleResolver({ activeTab: 'list', scenes: [], references, selectedStyleRefId, t, isKo })
@@ -744,7 +743,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               <button onClick={() => setShowStyleDropdown(false)}>✕</button>
             </div>
             <StylePicker
-              selectedId={styleDropdownMode === 'apply' ? (resolvedStyleId || null) : selectedStylePickerId}
+              selectedId={styleDropdownMode === 'apply' ? (resolvedStyleId === 'none' ? null : resolvedStyleId) : selectedStylePickerId}
               onSelect={(id) => {
                 if (styleDropdownMode === 'apply') {
                   // stale 기억과 직접 선택을 구분해 재생성에서 명시 override 로 전달한다.

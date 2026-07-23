@@ -291,10 +291,28 @@ describe('ReferenceDetailModal — 적용할 스타일', () => {
     />
   )
 
-  it('캐릭터 카드에는 "적용할 스타일"이 보인다', () => {
-    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' })
-    expect(screen.getByTestId('apply-style')).toBeTruthy()
-    expect(screen.getByTestId('apply-style').textContent).toContain('유화')
+  it('이미지가 있는 카드는 기억한 스타일을 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9', data: 'image' })
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('유화 ▼')
+  })
+
+  it('이미지 없는 미조작 카드는 stale styleId 대신 전역 스타일을 자동 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }, {
+      selectedStyleRefId: 'preset:korean-ani',
+    })
+
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('자동: 한국 애니 ▼')
+  })
+
+  it('이미지가 없어도 모달에서 직접 고른 스타일은 그 이름을 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }, {
+      selectedStyleRefId: 'preset:korean-ani',
+    })
+
+    fireEvent.click(screen.getByTestId('apply-style'))
+    fireEvent.click(screen.getByText('내 수채화').closest('.sp-card'))
+
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('내 수채화 ▼')
   })
 
   it('스타일 카드에는 "적용할 스타일"이 안 보인다 (프리셋 선택과 뜻이 다르다)', () => {
@@ -348,6 +366,14 @@ describe('ReferenceDetailModal — 적용할 스타일', () => {
     fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
 
     expect(onGenerate).toHaveBeenCalledWith(0, false, 'ref:1', expect.objectContaining({ styleId: 'ref:1' }))
+  })
+
+  it("styleId='none'인 카드를 재오픈하면 무스타일 카드가 선택된다", () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'none', data: 'image' })
+
+    fireEvent.click(screen.getByTestId('apply-style'))
+
+    expect(document.querySelector('.style-picker-overlay .sp-no-style')).toHaveClass('selected')
   })
 })
 

@@ -388,9 +388,9 @@ export default function ReferencePanel({
       {/* 상세 모달 */}
       {detailIndex !== null && references[detailIndex] && (
         <ReferenceDetailModal
-          // #R9: 다른 ref 로 바뀌면 remount → editData 가 stale(이전 ref 의 name/prompt 등)로
+          // #R9: 다른 ref 나 프로젝트로 바뀌면 remount → editData 가 stale(이전 ref 의 name/prompt 등)로
           //   남지 않게 한다(editData 는 mount 시 1회 초기화되므로).
-          key={references[detailIndex].id ?? detailIndex}
+          key={`${projectName}:${references[detailIndex].id ?? detailIndex}`}
           reference={references[detailIndex]}
           references={references}
           index={detailIndex}
