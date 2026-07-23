@@ -39,7 +39,7 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, scenes = [], setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
+export function useReferenceGeneration({ settings, references, scenes = [], scenesRef = null, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
@@ -69,8 +69,6 @@ export function useReferenceGeneration({ settings, references, scenes = [], setR
   }
   const referencesRef = useRef(references)
   referencesRef.current = references  // 매 렌더마다 최신 상태 반영
-  const scenesRef = useRef(scenes)
-  scenesRef.current = scenes  // queue의 execute closure도 시작 시점 최신 scenes를 읽는다.
   const getLiveProjectName = () => projectNameRef?.current ?? settings.projectName
   const batchGeneratingRefCountsRef = useRef(new Map())
   const addBatchGeneratingRef = (index) => {
@@ -311,7 +309,8 @@ export function useReferenceGeneration({ settings, references, scenes = [], setR
     // (activeTab 무관 — ref 생성은 항상 동일 fallback chain)
     const resolver = createStyleResolver({
       activeTab: 'list',  // value irrelevant for resolveEffectiveStyleIdForRef
-      scenes: scenesRef.current,
+      // App/useScenes의 setter가 React commit 전에 동기 갱신하는 ref를 우선한다.
+      scenes: scenesRef?.current ?? scenes,
       references: referencesRef.current,
       selectedStyleRefId,
       t,

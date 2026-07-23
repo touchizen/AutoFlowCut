@@ -186,6 +186,10 @@ describe('App empty reference gate wiring', () => {
     expect(referenceGenerationHook).toMatch(/\bscenes\b/)
   })
 
+  it('같은 tick queue 실행도 최신 씬을 읽도록 useScenes의 동기 scenesRef를 전달한다', () => {
+    expect(referenceGenerationHook).toContain('scenesRef: scenesHook.scenesRef')
+  })
+
   it('상세 모달 라벨도 같은 씬 파생을 쓰도록 scenes를 ReferencePanel에 전달한다', () => {
     expect(referencePanel).toContain('scenes={scenes}')
   })

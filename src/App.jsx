@@ -895,7 +895,7 @@ function App() {
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
     settings, references, scenes, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady,
-    flowProjectId: _flowProjectId, projectNameRef,
+    scenesRef: scenesHook.scenesRef, flowProjectId: _flowProjectId, projectNameRef,
   })
 
   const { isOpen: showReferences, setOpenByUser } = useRefPanelVisibility({

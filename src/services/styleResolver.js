@@ -126,9 +126,12 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
   }
 
   const deriveStyleIdFromScenes = () => {
-    if (scenes.length === 0) return null
+    // Ref 스타일은 실제 이미지 생성 입력(prompt가 있는 씬)만 상속 근거로 삼는다.
+    // prompt가 있는 tagless 씬은 아래에서 null이 되어 unanimity를 계속 veto한다.
+    const sourceScenes = scenes.filter(scene => scene?.prompt)
+    if (sourceScenes.length === 0) return null
 
-    const styleIds = scenes.map(scene => {
+    const styleIds = sourceScenes.map(scene => {
       const match = findSceneTagStyle(scene?.style_tag, references)
       if (match?.source === 'ref' && match.style.id != null) return `ref:${match.style.id}`
       // resolveSceneStyle도 prompt_en이 있어야 실제로 preset을 적용한다.

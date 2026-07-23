@@ -36,7 +36,7 @@ const STYLE_A = { id: 1, type: 'style', name: '수채화', prompt: 'watercolor',
 const STYLE_B = { id: 9, type: 'style', name: '유화', prompt: 'oil painting', status: 'done', data: 'd', mediaId: 'ms9' }
 const HERO = { id: 2, type: 'character', name: '준호', prompt: 'hero', status: 'pending' }
 
-function setupHook({ references, scenes = [], selectedStyleRefId = null, genOverrides = {}, generationQueue = null }) {
+function setupHook({ references, scenes = [], scenesRef = null, selectedStyleRefId = null, genOverrides = {}, generationQueue = null }) {
   let liveRefs = references
   const patches = []
   const setReferences = vi.fn((updater) => {
@@ -62,12 +62,12 @@ function setupHook({ references, scenes = [], selectedStyleRefId = null, genOver
     addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue,
     selectedStyleRefId: props.selectedStyleRefId,
     scenes: props.scenes,
+    scenesRef,
   }))
   // 전역 스타일 선택을 바꾸고 훅을 다시 렌더한다(App 의 setSelectedStyleRefId 시뮬레이션).
   const setGlobalStyle = (id) => { props.selectedStyleRefId = id; rerender() }
-  const setScenes = (nextScenes) => { props.scenes = nextScenes; rerender() }
   const finalRef = (id) => (patches.length ? patches[patches.length - 1].find(r => r.id === id) : null)
-  return { result, genAPI, finalRef, setGlobalStyle, setScenes }
+  return { result, genAPI, finalRef, setGlobalStyle }
 }
 
 async function runBatch(result, overrideStyleId = null) {
@@ -82,17 +82,21 @@ async function runBatch(result, overrideStyleId = null) {
 }
 
 describe('카드가 쓴 스타일을 기록한다', () => {
-  it('queue 대기 뒤 실행돼도 enqueue closure가 아니라 최신 scenes로 파생한다', async () => {
+  it('queue 대기 뒤 같은 tick에 실행돼도 authoritative scenesRef의 최신값으로 파생한다', async () => {
     let queuedJob = null
+    const scenesRef = {
+      current: [{ id: 11, prompt: 'old scene', style_tag: 'cinematic' }],
+    }
     const generationQueue = {
       enqueue: vi.fn(async (job) => {
         queuedJob = job
         return { queued: true }
       }),
     }
-    const { result, genAPI, setScenes } = setupHook({
+    const { result, genAPI } = setupHook({
       references: [HERO],
-      scenes: [{ id: 11, prompt: 'old scene', style_tag: 'cinematic' }],
+      scenes: scenesRef.current,
+      scenesRef,
       selectedStyleRefId: null,
       generationQueue,
     })
@@ -100,9 +104,9 @@ describe('카드가 쓴 스타일을 기록한다', () => {
     await act(async () => { await result.current.handleGenerateRef(0) })
     expect(queuedJob).not.toBeNull()
 
-    act(() => {
-      setScenes([{ id: 12, prompt: 'latest scene', style_tag: 'korean-ani' }])
-    })
+    // useScenes.setScenes/updateScene가 React commit 전에 동기 갱신하는 ref를 재현한다.
+    // rerender 없이 같은 tick에 queued execute가 시작돼도 이 값을 읽어야 한다.
+    scenesRef.current = [{ id: 12, prompt: 'latest scene', style_tag: 'korean-ani' }]
     await act(async () => { await queuedJob.execute() })
 
     expect(genAPI.generateImage.mock.calls[0][0]).toBe(

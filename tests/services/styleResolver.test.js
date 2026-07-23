@@ -348,6 +348,32 @@ describe('createStyleResolver — Ref가 씬들의 단일 effective style을 파
     expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('preset:korean-ani')
   })
 
+  it('prompt 없는 빈 행은 파생 집합에서 제외한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [
+        pendingScene(1, 'korean-ani'),
+        pendingScene(2, 'Korean Anime'),
+        { id: 3, prompt: '', style_tag: '' },
+      ],
+      references: [],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('preset:korean-ani')
+  })
+
+  it('prompt 있는 tagless 이미지 씬은 계속 파생을 veto한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, '')],
+      references: [{ id: 9, type: 'style', name: 'fallback', prompt: 'fallback style' }],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('ref:9')
+  })
+
   it('대상 씬 preset이 섞이면 파생하지 않고 기존 findAutoStyle fallback을 쓴다', () => {
     const r = createStyleResolver({
       ...baseDeps,
