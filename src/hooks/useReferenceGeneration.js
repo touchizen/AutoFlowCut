@@ -1215,14 +1215,16 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
     setPreparingRefs(false)
 
-    const markPendingComposerRefreshesRepairable = () => {
+    const pendingComposerRefreshesForLiveScope = () => {
       const liveScopeToken = `flow::${getLiveProjectName() ?? ''}`
-      const repairableKeys = new Set(
-        [...pendingComposerRefreshByKey.values()]
-          .filter(item => item.scopeToken === liveScopeToken)
-          .map(item => item.key)
-      )
+      return [...pendingComposerRefreshByKey.values()]
+        .filter(item => item.scopeToken === liveScopeToken)
+    }
+
+    const markPendingComposerRefreshesRepairable = (pendingRefreshes = pendingComposerRefreshesForLiveScope()) => {
+      const repairableKeys = new Set(pendingRefreshes.map(item => item.key))
       if (repairableKeys.size === 0) return
+      for (const key of repairableKeys) succeededKeys.delete(key)
       const markRepairable = prev => prev.map(ref =>
         repairableKeys.has(referenceGuardKey(ref))
           ? { ...ref, flowNameSyncStatus: 'failed', registered: false }
@@ -1233,7 +1235,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     }
 
     const refreshGeneratedCharacters = async () => {
-      const pendingRefreshes = [...pendingComposerRefreshByKey.values()]
+      const pendingRefreshes = pendingComposerRefreshesForLiveScope()
       if (pendingRefreshes.length === 0) return
       const scopeToken = pendingRefreshes[0].scopeToken
       try {
@@ -1245,8 +1247,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
         if (refreshResult?.success === true) return
         throw new Error(refreshResult?.error || 'Composer refresh failed')
       } catch (error) {
-        markPendingComposerRefreshesRepairable()
-        for (const item of pendingRefreshes) {
+        // refresh 대기 중 scope가 다시 바뀌었으면 그 key도 조용히 드롭한다.
+        const failedRefreshes = pendingRefreshes.filter(
+          item => item.scopeToken === `flow::${getLiveProjectName() ?? ''}`
+        )
+        if (failedRefreshes.length === 0) return
+        markPendingComposerRefreshesRepairable(failedRefreshes)
+        for (const item of failedRefreshes) {
           recordFail(item.key, 'refresh', error?.message || String(error))
         }
         if (options.reason !== 'm2-empty-reference-gate') {
@@ -1264,9 +1271,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     if (!stopRequestedRef.current && !blockRemainingPhases) {
       const batchEffectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
       await runPhase(characterTargets, batchEffectiveStyleId)
-      if (!stopRequestedRef.current && !blockRemainingPhases) {
+      if (!blockRemainingPhases) {
+        // Stop은 새 target 제출만 막는다. 이미 생성된 entity의 cache 반영은 반드시 마무리한다.
         await refreshGeneratedCharacters()
-      } else if (blockRemainingPhases) {
+      } else {
         // timeout된 inner가 coordinator tail을 계속 쥘 수 있어 refresh await는 금지한다.
         // 그 전에 생성된 key만 repairable로 낮춰 다음 Sync에서 cache refresh를 재시도하게 한다.
         markPendingComposerRefreshesRepairable()

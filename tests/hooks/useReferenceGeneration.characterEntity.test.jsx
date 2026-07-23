@@ -347,6 +347,39 @@ describe('캐릭터 entity 생성 뒤 composer를 refresh한다', () => {
     window.electronAPI = previousAPI
   })
 
+  it('character 생성 도중 Stop이 걸려도 완료된 entity의 final refresh는 1회 실행하고 other phase만 막는다', async () => {
+    let resolveGenerate
+    const previousAPI = window.electronAPI
+    const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
+    const { result, genAPI } = setupHook({
+      references: [CHAR, SCENE],
+      projectName: 'stop-during-character',
+      genOverrides: {
+        generateImage: vi.fn(() => new Promise(resolve => { resolveGenerate = resolve })),
+      },
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs()
+      for (let i = 0; i < 12; i++) await Promise.resolve()
+    })
+    await act(async () => {
+      result.current.stopGenerateAllRefs()
+      resolveGenerate({
+        success: true,
+        images: [{ base64: 'char-img', mediaId: 'm-char' }],
+        entityId: 'e-char', workflowId: 'w-char', registered: true, nameApplied: true,
+      })
+      await batchPromise
+    })
+
+    expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
+    expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    window.electronAPI = previousAPI
+  })
+
   it('N-character phase의 단일 refresh가 실패하면 생성된 character key들만 failed로 낮추고 다음 target을 submit하지 않는다', async () => {
     const previousAPI = window.electronAPI
     window.electronAPI = {
@@ -382,6 +415,47 @@ describe('캐릭터 entity 생성 뒤 composer를 refresh한다', () => {
     expect(batchResult.currentRefs[1]).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
     expect(batchResult.currentRefs[2]).not.toHaveProperty('flowNameSyncStatus')
     expect(selectUnsyncedRefs(batchResult.currentRefs).map(ref => ref.id)).toEqual(expect.arrayContaining([CHAR.id, CHAR_2.id]))
+    const failedKeys = batchResult.failed.map(item => item.key)
+    expect(batchResult.succeededKeys).not.toEqual(expect.arrayContaining(failedKeys))
+    expect(batchResult.succeededKeys.filter(key => failedKeys.includes(key))).toEqual([])
+    window.electronAPI = previousAPI
+  })
+
+  it('mixed-scope pending은 live scope key만 refresh·repair·failed 집계하고 다른 scope key는 드롭한다', async () => {
+    const previousAPI = window.electronAPI
+    const refreshFlowComposer = vi.fn().mockResolvedValue({ success: false, error: 'refresh failed' })
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
+    const projectNameRef = { current: 'project-a' }
+    let characterNo = 0
+    const { result } = setupHook({
+      references: [CHAR, CHAR_2],
+      projectName: 'project-a',
+      projectNameRef,
+      flowProjectId: 'shared-flow-project',
+      genOverrides: {
+        generateImage: vi.fn().mockImplementation(async () => {
+          characterNo += 1
+          if (characterNo === 1) projectNameRef.current = 'project-b'
+          return {
+            success: true,
+            images: [{ base64: `char-img-${characterNo}`, mediaId: `m-char-${characterNo}` }],
+            entityId: `e-char-${characterNo}`,
+            workflowId: `w-char-${characterNo}`,
+            registered: true,
+            nameApplied: true,
+          }
+        }),
+      },
+    })
+
+    toast.error.mockClear()
+    const batchResult = await runBatch(result)
+
+    expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
+    expect(batchResult.failed.map(item => item.key)).toEqual([`id:${CHAR_2.id}`])
+    expect(batchResult.succeededKeys).toEqual([`id:${CHAR.id}`])
+    expect(batchResult.currentRefs[0]).toMatchObject({ flowNameSyncStatus: 'synced', registered: true })
+    expect(batchResult.currentRefs[1]).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
     window.electronAPI = previousAPI
   })
 
