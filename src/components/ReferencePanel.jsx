@@ -393,7 +393,7 @@ export default function ReferencePanel({
               <button className="btn-wizard-cancel" onClick={() => setShowBatchWizard(false)} disabled={thumbnailGenerating}>
                 {t('common.cancel')}
               </button>
-              <button className="btn-wizard-start" onClick={() => { setShowBatchWizard(false); onGenerateAll() }} disabled={thumbnailGenerating}>
+              <button className="btn-wizard-start" onClick={() => { setShowBatchWizard(false); onGenerateAll(selectedStyleRefId) }} disabled={thumbnailGenerating}>
                 🎨 {t('reference.batchStart')}
               </button>
             </div>

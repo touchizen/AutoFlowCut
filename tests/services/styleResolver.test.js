@@ -320,6 +320,60 @@ describe('createStyleResolver — resolveEffectiveStyleIdForRef (reference gener
   })
 })
 
+describe('createStyleResolver — Ref가 씬들의 단일 preset을 파생 상속한다', () => {
+  const pendingScene = (id, styleTag) => ({ id, prompt: `scene-${id}`, style_tag: styleTag })
+
+  it("선택과 카드 기억이 없고 모든 대상 씬이 korean-ani이면 preset:korean-ani를 쓴다", () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'Korean Anime')],
+      references: [{ id: 7, type: 'character', prompt: 'hero' }],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('preset:korean-ani')
+  })
+
+  it('대상 씬 preset이 섞이면 파생하지 않고 기존 findAutoStyle fallback을 쓴다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'cinematic')],
+      references: [{ id: 9, type: 'style', name: 'fallback', prompt: 'watercolor' }],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('ref:9')
+  })
+
+  it('selectedStyleRefId가 있으면 씬 파생보다 우선한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: 'preset:cinematic',
+      scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'korean-ani')],
+      references: [],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('preset:cinematic')
+  })
+
+  it('카드의 styleId:null 기억은 씬 파생보다 우선한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      scenes: [pendingScene(1, 'korean-ani'), pendingScene(2, 'korean-ani')],
+      references: [{
+        id: 7,
+        type: 'character',
+        prompt: 'hero',
+        styleId: null,
+        generatedAt: 100,
+      }],
+    })
+
+    expect(r.resolveEffectiveStyleIdForRef(undefined)).toBeNull()
+  })
+})
+
 // 새로 추가한 카드는 styleId 기억이 없다. 마지막 폴백이 findAutoStyle(references 의 "첫 번째"
 // 스타일 카드)이면, 스타일 카드를 추가하거나 순서가 바뀌는 것만으로 새 카드가 조용히 다른
 // 스타일로 생성된다. 사용자가 의도적으로 다른 걸 고르지 않는 한, 프로젝트가 이미 쓰던 스타일을

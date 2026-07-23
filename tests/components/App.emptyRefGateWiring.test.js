@@ -66,6 +66,10 @@ const referencePanel = sliceBetween(
   '<ReferencePanel',
   '<PreviewMonitor'
 )
+const referenceGenerationHook = sliceBetween(
+  'useReferenceGeneration({',
+  'const { isOpen: showReferences'
+)
 
 describe('App empty reference gate wiring', () => {
   it('direct 이미지 시작과 tag-proceed가 모두 같은 coordinator를 호출한다', () => {
@@ -176,5 +180,9 @@ describe('App empty reference gate wiring', () => {
 
   it('gate pending latch를 ReferencePanel 진입점 비활성화에 전달한다', () => {
     expect(referencePanel).toContain('hasPendingBatch={hasPendingBatch}')
+  })
+
+  it('Ref 스타일 resolver가 씬 style_tag를 읽도록 scenes를 generation hook에 전달한다', () => {
+    expect(referenceGenerationHook).toMatch(/\bscenes\b/)
   })
 })

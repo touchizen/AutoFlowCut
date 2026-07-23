@@ -18,7 +18,7 @@
  */
 
 import { STYLE_PRESETS } from '../config/defaults'
-import { findAutoPromptStyle, findAutoStyle, inheritStyleIdFromCards, isStyleReference, previewStyleMatching } from './styleService'
+import { findAutoPromptStyle, findAutoStyle, findPresetForStyleTag, inheritStyleIdFromCards, isStyleReference, previewStyleMatching } from './styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
 
 export function createStyleResolver({ activeTab, scenes = [], references = [], selectedStyleRefId, t, isKo }) {
@@ -125,15 +125,31 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
     return selectedStyleForContext ?? (isVideoText ? autoEffectiveStyleId : null)
   }
 
+  const derivePresetStyleIdFromScenes = () => {
+    const sourceScenes = targetScenes.length > 0 ? targetScenes : scenes
+    if (sourceScenes.length === 0) return null
+
+    const presetIds = sourceScenes.map(scene => {
+      const preset = findPresetForStyleTag(scene?.style_tag)
+      // resolveSceneStyle도 prompt_en이 있어야 실제로 preset을 적용한다.
+      return preset?.prompt_en ? preset.id : null
+    })
+    const firstPresetId = presetIds[0]
+    if (!firstPresetId || !presetIds.every(id => id === firstPresetId)) return null
+    return `preset:${firstPresetId}`
+  }
+
   // 우선순위: override(명시적) → selectedStyleRefId(프로젝트 전체 스타일) → 카드들의 기억 →
-  //   findAutoStyle. 기억을 건너뛰고 findAutoStyle 로 가면, 스타일 카드를 추가하거나 순서가
-  //   바뀌는 것만으로 새 카드가 조용히 다른 스타일로 생성된다.
+  //   씬들의 단일 preset 파생 → findAutoStyle. 기억을 건너뛰고 파생/자동 fallback으로 가면,
+  //   기존 카드가 명시적으로 기억한 '무스타일'(null) 계약을 깨뜨린다.
   const resolveEffectiveStyleIdForRef = (override) => {
     if (override != null) return override
     if (selectedStyleRefId != null) return selectedStyleRefId
     // styleId:null 도 정당한 기억("무스타일로 생성됨")이라 ?? 로 건너뛰면 안 된다.
     const inherited = inheritStyleIdFromCards(references)
     if (inherited.found) return inherited.styleId
+    const derivedPresetStyleId = derivePresetStyleIdFromScenes()
+    if (derivedPresetStyleId) return derivedPresetStyleId
     return findAutoStyle(references)
   }
 

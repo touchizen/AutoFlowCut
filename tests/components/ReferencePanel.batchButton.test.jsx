@@ -6,7 +6,7 @@
  * 버튼이 안 뜨거나 카운트가 틀리던 버그.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { fireEvent, render } from '@testing-library/react'
 
 vi.mock('../../src/hooks/useI18n', () => ({
   default: () => ({ t: (k) => k, lang: 'en', setLang: vi.fn() }),
@@ -56,6 +56,22 @@ function renderPanel(references, extraProps = {}) {
 }
 
 describe('ReferencePanel — 일괄 생성 버튼 (style 카드 포함)', () => {
+  it('위저드 시작은 현재 selectedStyleRefId를 배치 override로 원자 전달한다', () => {
+    const onGenerateAll = vi.fn()
+    const { container } = renderPanel([
+      { id: 1, type: 'character', prompt: 'a hero' }
+    ], {
+      selectedStyleRefId: 'preset:korean-ani',
+      onGenerateAll,
+    })
+
+    fireEvent.click(container.querySelector('.btn-generate-all'))
+    fireEvent.click(document.body.querySelector('.btn-wizard-start'))
+
+    expect(onGenerateAll).toHaveBeenCalledTimes(1)
+    expect(onGenerateAll).toHaveBeenCalledWith('preset:korean-ani')
+  })
+
   it('style 카드만 pending 일 때도 일괄 생성 버튼이 뜬다', () => {
     const { container } = renderPanel([
       { id: 1, type: 'style', prompt: 'a noir style' }

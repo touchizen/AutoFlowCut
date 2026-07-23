@@ -39,7 +39,7 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
+export function useReferenceGeneration({ settings, references, scenes = [], setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
@@ -309,6 +309,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // (activeTab 무관 — ref 생성은 항상 동일 fallback chain)
     const resolver = createStyleResolver({
       activeTab: 'list',  // value irrelevant for resolveEffectiveStyleIdForRef
+      scenes,
       references: referencesRef.current,
       selectedStyleRefId,
       t,

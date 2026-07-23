@@ -36,7 +36,7 @@ const STYLE_A = { id: 1, type: 'style', name: '수채화', prompt: 'watercolor',
 const STYLE_B = { id: 9, type: 'style', name: '유화', prompt: 'oil painting', status: 'done', data: 'd', mediaId: 'ms9' }
 const HERO = { id: 2, type: 'character', name: '준호', prompt: 'hero', status: 'pending' }
 
-function setupHook({ references, selectedStyleRefId = null, genOverrides = {} }) {
+function setupHook({ references, scenes = [], selectedStyleRefId = null, genOverrides = {} }) {
   let liveRefs = references
   const patches = []
   const setReferences = vi.fn((updater) => {
@@ -61,6 +61,7 @@ function setupHook({ references, selectedStyleRefId = null, genOverrides = {} })
     references: liveRefs, setReferences, genAPI,
     addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue: null,
     selectedStyleRefId: props.selectedStyleRefId,
+    scenes,
   }))
   // 전역 스타일 선택을 바꾸고 훅을 다시 렌더한다(App 의 setSelectedStyleRefId 시뮬레이션).
   const setGlobalStyle = (id) => { props.selectedStyleRefId = id; rerender() }
@@ -80,6 +81,24 @@ async function runBatch(result, overrideStyleId = null) {
 }
 
 describe('카드가 쓴 스타일을 기록한다', () => {
+  it('선택과 카드 기억이 없으면 씬들의 단일 preset style_tag를 Ref 생성에 적용한다', async () => {
+    const { result, genAPI, finalRef } = setupHook({
+      references: [HERO],
+      scenes: [
+        { id: 11, prompt: 'scene one', style_tag: 'korean-ani' },
+        { id: 12, prompt: 'scene two', style_tag: 'Korean Anime' },
+      ],
+      selectedStyleRefId: null,
+    })
+
+    await act(async () => { await result.current.handleGenerateRef(0) })
+
+    expect(genAPI.generateImage.mock.calls[0][0]).toBe(
+      'hero, Korean anime style, vibrant colors, detailed characters',
+    )
+    expect(finalRef(2).styleId).toBe('preset:korean-ani')
+  })
+
   it('단건 생성: 적용된 스타일을 styleId 로 남긴다', async () => {
     const { result, finalRef } = setupHook({ references: [STYLE_A, HERO], selectedStyleRefId: 'ref:1' })
     await act(async () => { await result.current.handleGenerateRef(1) })
