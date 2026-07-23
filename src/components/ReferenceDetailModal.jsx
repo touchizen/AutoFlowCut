@@ -346,7 +346,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   const selectedStylePickerId = currentPresetId ? `preset:${currentPresetId}` : null
   
   const typeInfo = REFERENCE_TYPES.find(t => t.value === editData.type) || REFERENCE_TYPES[0]
-  const isStyle = editData.type === 'style'
+  const isStyle = isStyleReference(editData)
 
   // 이미지가 있거나 이번 모달에서 직접 고른 카드는 styleId 를 기억으로 표시한다.
   //   이미지 없는 미조작 카드는 stale styleId 가 있어도 생성 정책대로 전역 스타일을 '자동: X'로 표시한다.
