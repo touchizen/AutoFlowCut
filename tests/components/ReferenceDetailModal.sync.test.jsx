@@ -112,6 +112,7 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
 
     const saveButton = getByText('common.save')
     expect(saveButton.disabled).toBe(true)
+    expect(saveButton.title).toBe('reference.batchRenameBlocked')
     fireEvent.click(saveButton)
     expect(window.electronAPI.renameFlowCharacter).not.toHaveBeenCalled()
     expect(onUpdate).not.toHaveBeenCalled()

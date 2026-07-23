@@ -357,8 +357,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       else setGeneratingRefs(prev => prev.filter(i => i !== index))
     }
     let characterOperationTimedOut = false
+    let characterScopeToken = null
     const failureGuardKey = guardKey ?? referenceGuardKey(ref)
     const markFlowRefreshFailed = () => {
+      if (`flow::${getLiveProjectName() ?? ''}` !== characterScopeToken) return
       const applyPatch = prev => patchReferenceByIdentity(
         prev,
         index,
@@ -482,6 +484,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
       if (genAPI?.mode === 'flow' && ref.type === 'character') {
         const scopeToken = `flow::${getLiveProjectName() ?? ''}`
+        characterScopeToken = scopeToken
         const coordinated = await runFlowCharacterOperation({
           ref,
           projectId: flowProjectId,
@@ -1006,7 +1009,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               recordFail(target.key, 'busy', direct.error)
             } else if (direct?.operationTimedOut) {
               recordFail(target.key, 'operation-timeout', direct.error || 'Character operation timed out')
-              if (options.reason !== 'm2-empty-reference-gate') toast.error(t('toast.flowComposerRefreshFailed'))
+              if (options.reason !== 'm2-empty-reference-gate') toast.error(t('toast.flowCharacterOperationTimedOut'))
               break
             } else if (direct?.refreshFailed) {
               recordFail(target.key, 'refresh', direct.error || 'Composer refresh failed')

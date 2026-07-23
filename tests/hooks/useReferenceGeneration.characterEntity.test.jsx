@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { selectUnsyncedRefs, syncRefToFlow } from '../../src/utils/flowCharacterSync'
+import { runFlowCharacterOperation } from '../../src/utils/flowCharacterCoordinator'
 
 vi.mock('../../src/utils/guards', () => ({
   checkAuthToken: vi.fn().mockResolvedValue(true),
@@ -68,7 +69,7 @@ function setupHook({ references, genOverrides = {}, flowProjectId = null, projec
     liveRefs = next
     rerender()
   }
-  return { result, genAPI, finalRef, replaceLiveRefs }
+  return { result, genAPI, finalRef, replaceLiveRefs, getLiveRefs: () => liveRefs }
 }
 
 async function runBatch(result) {
@@ -198,17 +199,39 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
     window.electronAPI = previousAPI
   })
 
-  it('scope-skip refresh도 부분 성공으로 반환하고 ref를 failed로 낮춘다', async () => {
+  it('scope-skip refresh는 새 프로젝트의 같은 id character를 failed로 오염시키지 않는다', async () => {
+    let releaseBlocker
+    let notifyBlockerStarted
+    const blockerStarted = new Promise(resolve => { notifyBlockerStarted = resolve })
     const previousAPI = window.electronAPI
     const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
     window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
     const projectNameRef = { current: 'project-a' }
-    const { result, finalRef } = setupHook({
+    const newProjectChar = {
+      ...CHAR,
+      name: '새 프로젝트 캐릭터',
+      status: 'done',
+      entityId: 'new-project-entity',
+      workflowId: 'new-project-workflow',
+      flowNameSyncStatus: 'synced',
+      registered: true,
+    }
+    const { result, replaceLiveRefs, getLiveRefs } = setupHook({
       references: [CHAR],
+      projectName: 'project-a',
       projectNameRef,
       genOverrides: {
         generateImage: vi.fn().mockImplementation(async () => {
-          projectNameRef.current = 'project-b'
+          void runFlowCharacterOperation({
+            ref: { id: 'scope-switch-blocker' },
+            scopeToken: 'test::scope-switch-blocker',
+            operation: 'test-blocker',
+            timeoutMs: 0,
+            task: () => {
+              notifyBlockerStarted()
+              return new Promise(resolve => { releaseBlocker = resolve })
+            },
+          })
           return {
             success: true,
             images: [{ base64: 'img', mediaId: 'm' }],
@@ -219,11 +242,26 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
     })
 
     let generationResult
-    await act(async () => { generationResult = await result.current.handleGenerateRef(0) })
+    let generationPromise
+    await act(async () => {
+      generationPromise = result.current.handleGenerateRef(0)
+      await blockerStarted
+    })
+    await act(async () => {
+      projectNameRef.current = 'project-b'
+      replaceLiveRefs([newProjectChar])
+      releaseBlocker({ success: true })
+      generationResult = await generationPromise
+    })
 
     expect(refreshFlowComposer).not.toHaveBeenCalled()
     expect(generationResult).toMatchObject({ success: true, refreshFailed: true })
-    expect(finalRef(2)).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
+    expect(getLiveRefs()[0]).toMatchObject({
+      id: CHAR.id,
+      entityId: 'new-project-entity',
+      flowNameSyncStatus: 'synced',
+      registered: true,
+    })
     window.electronAPI = previousAPI
   })
 
@@ -366,6 +404,7 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
 
   it('character operation timeout이면 batch phase를 중단하고 다음 target을 submit하지 않는다', async () => {
     vi.useFakeTimers()
+    toast.error.mockClear()
     let resolveGenerate
     const previousAPI = window.electronAPI
     window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer: vi.fn() }
@@ -400,6 +439,8 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
     expect(batchResult.failed).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: expect.any(String), stage: 'operation-timeout' }),
     ]))
+    expect(toast.error).toHaveBeenCalledWith('toast.flowCharacterOperationTimedOut')
+    expect(toast.error).not.toHaveBeenCalledWith('toast.flowComposerRefreshFailed')
     expect(batchResult.currentRefs[0]).toMatchObject({ flowNameSyncStatus: 'failed', registered: false })
     window.electronAPI = previousAPI
   })

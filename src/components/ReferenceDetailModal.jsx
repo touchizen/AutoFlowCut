@@ -522,6 +522,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         className="btn-primary"
         onClick={handleSave}
         disabled={refBatchRunning && flowRenamePending}
+        title={refBatchRunning && flowRenamePending ? t('reference.batchRenameBlocked') : undefined}
       >
         {t('common.save')}
       </button>

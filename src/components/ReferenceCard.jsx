@@ -12,6 +12,7 @@ import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flow
 import HoverImageBalloon from './HoverImageBalloon'
 import LazyImage from './LazyImage'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
+import { toast } from './Toast'
 
 export default function ReferenceCard({
   reference,
@@ -56,6 +57,7 @@ export default function ReferenceCard({
     if (!file || !file.type.startsWith('image/')) return
     if (refBatchRunning) {
       console.warn('[ReferenceCard] ref batch running — ignoring direct upload:', reference?.name)
+      toast.info(t('reference.batchUploadBlocked'))
       return
     }
     // #R37: 이 ref 의 동기화/업로드가 이미 진행 중이면 새 업로드를 시작하지 않는다. 진행 중인 캐릭터
