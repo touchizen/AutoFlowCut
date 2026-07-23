@@ -150,6 +150,7 @@ describe('재생성은 카드가 기억한 스타일을 따른다', () => {
   it.each([
     ['data', { data: 'existing-image' }],
     ['filePath', { filePath: '/refs/hero.png' }],
+    ['imagePath', { imagePath: '/refs/hero.png' }],
   ])('이미지가 있는 카드(%s)는 전역 선택이 바뀌어도 자기 styleId 로 생성한다', async (_sourceName, imageSource) => {
     const { result, genAPI, setGlobalStyle } = setupHook({
       references: [STYLE_A, STYLE_B, { ...HERO, ...imageSource, styleId: 'ref:1', status: 'error' }],

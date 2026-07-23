@@ -31,6 +31,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   // #R9-5: 사용자가 모달에서 이미지를 로컬로 바꿨는지(미저장). dirty 면 prop→local 미디어 동기화를
   //   건너뛰어, 배경 자동화(on-demand 등록 등)가 reference.mediaId 를 바꿔도 미저장 편집을 덮지 않는다.
   const mediaDirtyRef = useRef(false)
+  // stale styleId 와 모달에서 사용자가 직접 고른 값을 구분한다. null 선택은 재생성 때 'none' override다.
+  const styleDirtyRef = useRef(false)
   // #R34: 업로드 시작 시 모달을 즉시 닫아 Flow UI 진행을 보이게 한다. 닫히면 onUploadComplete 가
   //   setEditData(언마운트됨) 대신 onUpdate(부모)로 결과를 반영하도록, 닫힘 여부 + 스냅샷을 ref 로 보관.
   const uploadClosingRef = useRef(false)
@@ -48,7 +50,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       caption: reference.caption,
       // 생성이 카드에 찍는 스타일 기억. 모달이 열린 채 배치가 돌면 prev 에는 없어서, 저장/재생성이
       //   editData 로 ref 를 통째로 교체할 때 기억이 지워진다(그럼 재생성이 전역 스타일로 샌다).
-      styleId: reference.styleId,
+      styleId: styleDirtyRef.current ? prev.styleId : reference.styleId,
     }))
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
@@ -448,7 +450,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       // (그렇지 않으면 useReferenceGeneration이 옛 references[index]를 읽어
       // noPrompt 경로 또는 옛 prompt로 생성하는 race 발생)
       // 주의: onUpdate → onGenerate 순서 유지 필수 (editData race-condition 우회)
-      onGenerate(index, false, null, editData)
+      const overrideStyleId = styleDirtyRef.current ? (editData.styleId ?? 'none') : null
+      onGenerate(index, false, overrideStyleId, editData)
       onClose()
     } catch (err) {
       console.error('[ReferenceDetail] Regenerate error:', err)
@@ -744,8 +747,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               selectedId={styleDropdownMode === 'apply' ? (resolvedStyleId || null) : selectedStylePickerId}
               onSelect={(id) => {
                 if (styleDropdownMode === 'apply') {
-                  // 카드의 스타일 기억을 바꾼다. 재생성은 ref.styleId 를 전역 선택보다 우선하므로
-                  //   저장만 하면 그대로 따라온다(override 를 따로 넘길 필요 없다).
+                  // stale 기억과 직접 선택을 구분해 재생성에서 명시 override 로 전달한다.
+                  styleDirtyRef.current = true
                   setEditData((prev) => ({ ...prev, styleId: id ?? null }))
                 } else {
                   handleStylePickerSelect(id)
