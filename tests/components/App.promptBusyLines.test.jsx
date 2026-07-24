@@ -796,6 +796,27 @@ describe('App prompt busyLines wiring', () => {
     expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
   })
 
+  it('API 모드 태그 Proceed의 preflight 중 개별 씬 생성이 시작되면 직접 enqueue 직전에 차단한다', async () => {
+    appMocks.state.mode = 'api'
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, characters: 'Missing' } : scene
+    ))
+    const view = render(<App />)
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await screen.findByRole('button', { name: 'tag-proceed' })
+
+    // API auth preflight도 async 함수라 첫 guard와 direct-start guard 사이에서 한 microtask 양보한다.
+    // 클릭 직후 같은 turn에 ref를 갱신해 API 전용 두 번째 guard가 race를 잡는 경로를 지난다.
+    fireEvent.click(screen.getByRole('button', { name: 'tag-proceed' }))
+    appMocks.state.generatingSceneId = 's4'
+    view.rerender(<App />)
+
+    await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy'))
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
   it('전체 재생성 확인창이 열린 뒤 개별 씬 생성이 시작돼도 확인은 배치를 넣지 않는다', async () => {
     appMocks.genAPI.getAccessToken.mockResolvedValue('token')
     appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
