@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { useState } from 'react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+
+vi.mock('../../src/utils/guards', () => ({
+  checkAuthToken: vi.fn().mockResolvedValue(true),
+  checkFolderPermission: vi.fn().mockResolvedValue({ ok: true }),
+  checkFlowProjectReady: vi.fn().mockReturnValue({ ok: true }),
+}))
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -7,8 +14,19 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
     readHistoryFile: vi.fn().mockResolvedValue({ success: false }),
     restoreFromHistory: vi.fn(),
     checkPermission: vi.fn().mockResolvedValue({ hasPermission: false }),
+    ensurePermission: vi.fn().mockResolvedValue({ hasPermission: true }),
     saveReference: vi.fn().mockResolvedValue({ success: false })
   }
+}))
+
+vi.mock('../../src/utils/imageProcessing', () => ({
+  tryUpscaleImage: vi.fn(),
+  extractThumbnailBase64: vi.fn().mockResolvedValue('thumb'),
+}))
+
+vi.mock('../../src/utils/urls', () => ({
+  cleanBase64: vi.fn(s => s),
+  toDataURL: vi.fn(s => s),
 }))
 
 vi.mock('../../src/hooks/useI18n', () => ({
@@ -51,6 +69,7 @@ vi.mock('../../src/components/PromptInput', () => ({
 }))
 
 import ReferenceDetailModal from '../../src/components/ReferenceDetailModal'
+import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
 
 const t = (k, vars) => {
   const map = {
@@ -67,6 +86,7 @@ const t = (k, vars) => {
     'reference.applyStyle': '적용할 스타일',
     'reference.styleAuto': '자동',
     'reference.styleNone': '스타일 없음',
+    'reference.noStyle': '스타일 없음',
     'reference.promptPlaceholder': '이미지 생성용 프롬프트를 입력하세요',
   }
   let s = map[k] || k
@@ -271,16 +291,73 @@ describe('ReferenceDetailModal — 적용할 스타일', () => {
     />
   )
 
-  it('캐릭터 카드에는 "적용할 스타일"이 보인다', () => {
-    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' })
-    expect(screen.getByTestId('apply-style')).toBeTruthy()
-    expect(screen.getByTestId('apply-style').textContent).toContain('유화')
+  it('이미지가 있는 카드는 기억한 스타일을 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9', data: 'image' })
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('유화 ▼')
+  })
+
+  it('기억한 스타일이 있는 카드에서 이미지를 제거하면 전역 스타일을 자동 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9', data: 'image' }, {
+      selectedStyleRefId: 'preset:korean-ani',
+    })
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('유화 ▼')
+
+    const clearButton = document.querySelector('.btn-clear-image')
+    expect(clearButton).toBeTruthy()
+    fireEvent.click(clearButton)
+
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('자동: 한국 애니 ▼')
+  })
+
+  it('이미지 없는 미조작 카드는 stale styleId 대신 전역 스타일을 자동 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }, {
+      selectedStyleRefId: 'preset:korean-ani',
+    })
+
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('자동: 한국 애니 ▼')
+  })
+
+  it('이미지 없는 카드의 자동 라벨은 씬들의 파생 preset을 생성 경로와 동일하게 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero' }, {
+      scenes: [
+        { id: 11, prompt: 'scene one', style_tag: 'korean-ani' },
+        { id: 12, prompt: 'scene two', style_tag: 'Korean Anime' },
+      ],
+    })
+
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('자동: 한국 애니 ▼')
+  })
+
+  it('이미지가 없어도 모달에서 직접 고른 스타일은 그 이름을 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }, {
+      selectedStyleRefId: 'preset:korean-ani',
+    })
+
+    fireEvent.click(screen.getByTestId('apply-style'))
+    fireEvent.click(screen.getByText('내 수채화').closest('.sp-card'))
+
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('내 수채화 ▼')
   })
 
   it('스타일 카드에는 "적용할 스타일"이 안 보인다 (프리셋 선택과 뜻이 다르다)', () => {
     open({ id: 1, type: 'style', name: '내 수채화', prompt: 'watercolor' })
     expect(screen.queryByTestId('apply-style')).toBeNull()
     expect(screen.getByRole('button', { name: /프리셋에서 채우기/ })).toBeTruthy()
+  })
+
+  it('category로 스타일인 레거시 카드도 프리셋 피커를 보여준다', () => {
+    open({
+      id: 7,
+      type: 'character',
+      category: 'MEDIA_CATEGORY_STYLE',
+      name: '레거시 스타일',
+      prompt: 'legacy style',
+    })
+
+    expect(screen.queryByTestId('apply-style')).toBeNull()
+    const fillButton = screen.getByRole('button', { name: /프리셋에서 채우기/ })
+    fireEvent.click(fillButton)
+    expect(document.querySelector('.style-picker-overlay')).toBeTruthy()
   })
 
   it('캐릭터 카드에는 "프리셋에서 채우기"가 안 보인다', () => {
@@ -298,14 +375,152 @@ describe('ReferenceDetailModal — 적용할 스타일', () => {
     expect(el.textContent).toContain('유화')
   })
 
-  it('선택하면 editData.styleId 에 담겨 저장/재생성으로 흘러간다', () => {
+  it('선택하면 editData.styleId 에 담겨 저장/재생성 override로 흘러간다', () => {
     const onGenerate = vi.fn()
     open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }, { onGenerate })
     fireEvent.click(screen.getByTestId('apply-style'))
     // StylePicker 의 스타일 카드는 div(sp-card) 다 — 이름으로 찾아 그 카드를 클릭한다.
     fireEvent.click(screen.getByText('내 수채화').closest('.sp-card'))
     fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
-    expect(onGenerate).toHaveBeenCalledWith(0, false, null, expect.objectContaining({ styleId: 'ref:1' }))
+    expect(onGenerate).toHaveBeenCalledWith(0, false, 'ref:1', expect.objectContaining({ styleId: 'ref:1' }))
+  })
+
+  it('직접 선택한 스타일은 열린 모달의 prop styleId 갱신에도 덮이지 않는다', () => {
+    const onGenerate = vi.fn()
+    const reference = { id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }
+    const { rerender } = open(reference, { onGenerate })
+    fireEvent.click(screen.getByTestId('apply-style'))
+    fireEvent.click(screen.getByText('내 수채화').closest('.sp-card'))
+
+    const externallyUpdated = { ...reference, styleId: 'preset:korean-ani' }
+    rerender(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={externallyUpdated}
+        references={[STYLE_A, STYLE_B, externallyUpdated]}
+        selectedStyleRefId={null}
+        onGenerate={onGenerate}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+
+    expect(onGenerate).toHaveBeenCalledWith(0, false, 'ref:1', expect.objectContaining({ styleId: 'ref:1' }))
+  })
+
+  it('기억한 레퍼런스 스타일을 피커에서 선택 표시한다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9', data: 'image' })
+
+    fireEvent.click(screen.getByTestId('apply-style'))
+
+    const uploadedStyles = document.querySelector('.sp-uploaded-section')
+    expect(uploadedStyles).toBeTruthy()
+    expect(within(uploadedStyles).getByText('유화').closest('.sp-card')).toHaveClass('selected')
+  })
+
+  it("styleId='none'인 카드를 재오픈하면 무스타일 카드가 선택된다", () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'none', data: 'image' })
+
+    fireEvent.click(screen.getByTestId('apply-style'))
+
+    expect(document.querySelector('.style-picker-overlay .sp-no-style')).toHaveClass('selected')
+  })
+})
+
+describe('ReferenceDetailModal — 이미지 없는 카드의 명시적 스타일 재생성', () => {
+  const STYLE_A = { id: 1, type: 'style', name: '내 수채화', prompt: 'watercolor', status: 'done', data: 'style-image' }
+
+  const createGenAPI = () => ({
+    mode: 'api',
+    getAccessToken: vi.fn().mockResolvedValue('token'),
+    clearTokenCache: vi.fn(),
+    generateImage: vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'image' }] }),
+  })
+
+  function Harness({ genAPI, initialReference }) {
+    const [references, setReferences] = useState([
+      STYLE_A,
+      initialReference || { id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: null, status: 'error' },
+    ])
+    const { handleGenerateRef } = useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references,
+      setReferences,
+      genAPI,
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t,
+      selectedStyleRefId: 'preset:korean-ani',
+      generationQueue: null,
+    })
+    const handleUpdate = (index, next) => {
+      setReferences(prev => prev.map((ref, refIndex) => refIndex === index ? next : ref))
+    }
+
+    return (
+      <ReferenceDetailModal
+        {...baseProps}
+        index={1}
+        reference={references[1]}
+        references={references}
+        selectedStyleRefId="preset:korean-ani"
+        onUpdate={handleUpdate}
+        onGenerate={handleGenerateRef}
+      />
+    )
+  }
+
+  it('모달에서 수채화를 직접 고르면 전역 한국애니 대신 수채화로 생성한다', async () => {
+    const genAPI = createGenAPI()
+    render(<Harness genAPI={genAPI} />)
+
+    fireEvent.click(screen.getByTestId('apply-style'))
+    fireEvent.click(screen.getByText('내 수채화').closest('.sp-card'))
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+
+    await waitFor(() => expect(genAPI.generateImage).toHaveBeenCalledTimes(1))
+    expect(genAPI.generateImage.mock.calls[0][0]).toBe('hero, watercolor')
+  })
+
+  it('모달에서 무스타일을 직접 고르면 전역 한국애니를 적용하지 않는다', async () => {
+    const genAPI = createGenAPI()
+    render(<Harness genAPI={genAPI} />)
+
+    fireEvent.click(screen.getByTestId('apply-style'))
+    fireEvent.click(screen.getByText('스타일 없음').closest('.sp-card'))
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+
+    await waitFor(() => expect(genAPI.generateImage).toHaveBeenCalledTimes(1))
+    expect(genAPI.generateImage.mock.calls[0][0]).toBe('hero')
+  })
+
+  it('모달에서 스타일을 건드리지 않으면 기존 정책대로 전역 한국애니로 생성한다', async () => {
+    const genAPI = createGenAPI()
+    render(<Harness genAPI={genAPI} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+
+    await waitFor(() => expect(genAPI.generateImage).toHaveBeenCalledTimes(1))
+    expect(genAPI.generateImage.mock.calls[0][0]).toBe(
+      'hero, Korean anime style, vibrant colors, detailed characters',
+    )
+  })
+
+  it('이미지는 있지만 styleId가 없는 레거시 카드는 전역 스타일을 라벨과 생성에 같이 적용한다', async () => {
+    const genAPI = createGenAPI()
+    render(
+      <Harness
+        genAPI={genAPI}
+        initialReference={{ id: 2, type: 'character', name: '준호', prompt: 'hero', status: 'error', data: 'image' }}
+      />
+    )
+
+    expect(screen.getByTestId('apply-style')).toHaveTextContent('자동: 한국 애니 ▼')
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+
+    await waitFor(() => expect(genAPI.generateImage).toHaveBeenCalledTimes(1))
+    expect(genAPI.generateImage.mock.calls[0][0]).toBe(
+      'hero, Korean anime style, vibrant colors, detailed characters',
+    )
   })
 })
 

@@ -168,9 +168,6 @@ html, body {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 
 /* ============================================
    Main Panel & Tabs
@@ -593,12 +590,29 @@ html, body {
   left: calc(-1 * (var(--gutter-w, 2rem) + 12px - 4px));
   top: 0;
   width: calc(var(--gutter-w, 2rem) - 4px);
-  text-align: right;
+  text-align: center;
   font-size: 0.75rem;
   line-height: 1.6;
   color: var(--text-secondary, #888);
   opacity: 0.5;
   user-select: none;
+  pointer-events: none;
+}
+/* 숫자를 가운데 정렬(::before)하고, 링을 번호 박스 중심에 동심으로 맞춘다. 번호 박스는
+   left = -(gutter-w+8), width = gutter-w-4 → 중심 = -(gutter-w/2 + 10). 링(18px)의 중심을
+   그 지점에 두면(left = 중심 - 9) 한 자리/두 자리 무관하게 숫자가 링 정중앙에 온다. */
+.prompt-paragraph.is-busy::after {
+  content: '';
+  position: absolute;
+  left: calc(-1 * (var(--gutter-w, 2rem) / 2 + 19px));
+  top: 0;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--border-color);
+  border-top-color: var(--warning-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
   pointer-events: none;
 }
 /* placeholder — RichTextPlugin 이 빈 상태에서만 표시 */
@@ -776,6 +790,9 @@ html, body {
   .prompt-textarea-wrap.intro::before,
   .prompt-textarea-wrap.intro::after,
   .prompt-textarea-wrap.intro .prompt-textarea {
+    animation: none;
+  }
+  .prompt-paragraph.is-busy::after {
     animation: none;
   }
 }

@@ -232,24 +232,27 @@ describe('StoryView 분리시작 (§2/§0.4)', () => {
     expect(screen.getByText('화자')).toBeTruthy()
   })
 
-  it('제목이 비면 generateTitle에 현재 options를 전달한 뒤 start("scenes")', async () => {
+  it('제목이 비어도 generateTitle 없이 즉시 start("scenes") (제목은 미전달)', async () => {
     const p = pipeline()
     p.state.steps.script.status = 'done'
     render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
     await waitFor(() => expect(p.start).toHaveBeenCalledWith('scenes', {
-      scriptOverride: '대본 본문', options: defaultOptions, title: '자동 제목',
+      scriptOverride: '대본 본문', options: defaultOptions, title: undefined,
     }))
-    expect(p.generateTitle).toHaveBeenCalledWith('대본 본문', defaultOptions)
+    // C: 씬분리는 제목 자동생성(LLM)을 타지 않는다 — 임포트 경로에서 전환이 제목 생성 대기에
+    //   막히던 원인을 제거. 제목은 선택 메타데이터라 비어 있으면 넘기지 않는다.
+    expect(p.generateTitle).not.toHaveBeenCalled()
   })
 
-  it('generateTitle 실패 시 start를 부르지 않고 editor에 머문다', async () => {
+  it('제목이 비고 generateTitle이 실패할 상황이어도 분리는 막히지 않는다(제목 생성 시도 안 함)', async () => {
     const p = pipeline({ generateTitle: vi.fn().mockRejectedValue(new Error('boom')) })
+    p.state.steps.script.status = 'done'
     render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
-    await waitFor(() => expect(p.generateTitle).toHaveBeenCalled())
-    expect(p.start).not.toHaveBeenCalled()
-    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+    await waitFor(() => expect(p.start).toHaveBeenCalledWith('scenes', expect.objectContaining({ scriptOverride: '대본 본문' })))
+    // 제목 생성을 아예 시도하지 않으므로 그 실패가 분리를 막지 못한다.
+    expect(p.generateTitle).not.toHaveBeenCalled()
   })
 })
 

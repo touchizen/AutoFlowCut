@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 /**
@@ -21,18 +21,20 @@ vi.mock('../../src/components/Toast', () => ({
 }))
 
 import ReferencePanel from '../../src/components/ReferencePanel'
+import { toast } from '../../src/components/Toast'
 import { I18nProvider } from '../../src/hooks/useI18n'
+import { runFlowCharacterOperation } from '../../src/utils/flowCharacterCoordinator'
 
 const CHAR = {
   id: 1, type: 'character', name: 'Zed', data: 'data:image/png;base64,AAA',
   // 아직 Flow 에 안 올라간 상태 → Sync 대상
 }
 
-function renderPanel(onUpdate) {
+function renderPanel(onUpdate, references = [CHAR]) {
   return render(
     <I18nProvider>
     <ReferencePanel
-      references={[CHAR]}
+      references={references}
       onUpdate={onUpdate}
       onUpload={vi.fn()}
       onGenerate={vi.fn()}
@@ -108,5 +110,157 @@ describe('ReferencePanel — 동기화 실패 시에도 entity id 를 보존한�
     expect(final.workflowId).toBe('w1')
     expect(final.flowNameSyncStatus).toBe('failed')
     expect(final.syncing).toBe(false)
+  })
+})
+
+describe('ReferencePanel — Flow 캐릭터 동기화 후 refresh 보장', () => {
+  beforeEach(() => {
+    syncRefToFlow.mockReset()
+    window.electronAPI = { ...(window.electronAPI || {}), refreshFlowComposer: vi.fn() }
+  })
+
+  it('마지막 결과의 nameApplied=true 여도 캐릭터를 하나라도 동기화했으면 마지막에 한 번 refresh한다', async () => {
+    const refs = [
+      CHAR,
+      { ...CHAR, id: 2, name: 'Mina', data: 'data:image/png;base64,BBB' },
+    ]
+    syncRefToFlow.mockImplementation(async (ref, _upload, deps) => {
+      const syncResult = {
+        ok: true,
+        patch: { entityId: `entity-${ref.id}`, workflowId: `workflow-${ref.id}`, flowNameSyncStatus: 'synced' },
+        result: { success: true, entityId: `entity-${ref.id}`, registered: true, nameApplied: true },
+      }
+      await deps.publishResult(syncResult)
+      return syncResult
+    })
+
+    renderPanel(vi.fn(), refs)
+    await userEvent.click(await screen.findByRole('button', { name: /sync/i }))
+
+    await waitFor(() => expect(syncRefToFlow).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1))
+  })
+
+  it('sync-all 요약 toast는 coordinated refresh 완료 전에 표시한다', async () => {
+    let resolveRefresh
+    window.electronAPI.refreshFlowComposer = vi.fn(() => new Promise(resolve => { resolveRefresh = resolve }))
+    syncRefToFlow.mockImplementation(async (_ref, _upload, deps) => {
+      const syncResult = {
+        ok: true,
+        patch: { entityId: 'entity-1', workflowId: 'workflow-1', flowNameSyncStatus: 'synced' },
+        result: { success: true, entityId: 'entity-1', registered: true },
+      }
+      await deps.publishResult(syncResult)
+      return syncResult
+    })
+    toast.success.mockClear()
+
+    renderPanel(vi.fn())
+    await userEvent.click(await screen.findByRole('button', { name: /sync/i }))
+    await waitFor(() => expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalledTimes(1))
+    const summaryShownBeforeRefreshSettled = toast.success.mock.calls.length > 0
+
+    resolveRefresh({ success: true })
+    await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve() })
+
+    expect(summaryShownBeforeRefreshSettled).toBe(true)
+  })
+
+  it('동기화 대상이 0건이면 refresh하지 않는다', async () => {
+    const synced = { ...CHAR, entityId: 'entity-1', flowNameSyncStatus: 'synced' }
+
+    renderPanel(vi.fn(), [synced])
+    await Promise.resolve()
+
+    expect(syncRefToFlow).not.toHaveBeenCalled()
+    expect(window.electronAPI.refreshFlowComposer).not.toHaveBeenCalled()
+  })
+
+  it('sync-all 중 scope 가 바뀌면 이전 프로젝트에 누적된 refresh를 실행하지 않는다', async () => {
+    const refs = [
+      CHAR,
+      { ...CHAR, id: 2, name: 'Mina', data: 'data:image/png;base64,BBB' },
+    ]
+    let resolveSecond
+    syncRefToFlow.mockImplementation(async (ref, _upload, deps) => {
+      const syncResult = {
+        ok: true,
+        patch: { entityId: `entity-${ref.id}`, workflowId: `workflow-${ref.id}`, flowNameSyncStatus: 'synced' },
+        result: { success: true, entityId: `entity-${ref.id}`, registered: true },
+      }
+      if (ref.id === 2) await new Promise(resolve => { resolveSecond = resolve })
+      await deps.publishResult(syncResult)
+      return syncResult
+    })
+    const props = (projectName) => ({
+      references: refs,
+      onUpdate: vi.fn(),
+      onUpload: vi.fn(),
+      onGenerate: vi.fn(),
+      t: (k, d) => d || k,
+      appMode: 'flow',
+      projectName,
+      flowProjectId: 'flow-project-a',
+      aspectRatio: '16:9',
+      generatingRefs: [],
+    })
+    const view = render(
+      <I18nProvider><ReferencePanel {...props('project-a')} /></I18nProvider>
+    )
+    await userEvent.click(await screen.findByRole('button', { name: /sync/i }))
+    await waitFor(() => expect(syncRefToFlow).toHaveBeenCalledTimes(2))
+
+    view.rerender(<I18nProvider><ReferencePanel {...props('project-b')} /></I18nProvider>)
+    await act(async () => {
+      resolveSecond()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+
+    expect(window.electronAPI.refreshFlowComposer).not.toHaveBeenCalled()
+  })
+
+  it('sync-all refresh 가 queue 에서 대기하는 동안 scope 가 바뀌면 이전 프로젝트 refresh를 건너뛴다', async () => {
+    let resolveRefreshBlocker
+    const refreshBlocker = runFlowCharacterOperation({
+      ref: { id: 'panel-refresh-blocker' },
+      projectId: 'flow-project-blocker',
+      operation: 'test-blocker',
+      task: () => new Promise(resolve => { resolveRefreshBlocker = resolve }),
+    })
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+    const syncResult = {
+      ok: true,
+      patch: { entityId: 'entity-1', workflowId: 'workflow-1', flowNameSyncStatus: 'synced' },
+      result: { success: true, entityId: 'entity-1', registered: true },
+    }
+    syncRefToFlow.mockImplementation(async (_ref, _upload, deps) => {
+      await deps.publishResult(syncResult)
+      return syncResult
+    })
+    const props = (projectName) => ({
+      references: [CHAR],
+      onUpdate: vi.fn(),
+      onUpload: vi.fn(),
+      onGenerate: vi.fn(),
+      t: (k, d) => d || k,
+      appMode: 'flow',
+      projectName,
+      flowProjectId: 'flow-project-a',
+      aspectRatio: '16:9',
+      generatingRefs: [],
+    })
+    const view = render(
+      <I18nProvider><ReferencePanel {...props('project-a')} /></I18nProvider>
+    )
+    await userEvent.click(await screen.findByRole('button', { name: /sync/i }))
+    await waitFor(() => expect(syncRefToFlow).toHaveBeenCalledTimes(1))
+    await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve() })
+
+    view.rerender(<I18nProvider><ReferencePanel {...props('project-b')} /></I18nProvider>)
+    resolveRefreshBlocker({ ok: true })
+    await refreshBlocker
+    await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve() })
+
+    expect(window.electronAPI.refreshFlowComposer).not.toHaveBeenCalled()
   })
 })

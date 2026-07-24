@@ -18,6 +18,7 @@ const makeArgs = (overrides = {}) => ({
   handleGenerateAllRefs: vi.fn(),
   openSyncGate: vi.fn(),
   automationStartRef: { current: vi.fn() },
+  guardSceneBatchStart: vi.fn(() => true),
   toastM1Exclusions: vi.fn(),
   gateView: {},
   ...overrides,
@@ -73,6 +74,14 @@ describe('buildEmptyRefGateDeps — liveness 배선', () => {
 
     expect(oldStart).not.toHaveBeenCalled()
     expect(newStart).toHaveBeenCalledWith({ a: 1 })
+  })
+
+  it.each(['ui', 'mcp'])('%s source를 launch guard에 보존한다', source => {
+    const guardSceneBatchStart = vi.fn(() => true)
+    const deps = buildEmptyRefGateDeps(makeArgs({ source, guardSceneBatchStart }))
+
+    expect(deps.canStartScenes()).toBe(true)
+    expect(guardSceneBatchStart).toHaveBeenCalledWith(source)
   })
 
   it('generateRefs는 M2 계약으로 handleGenerateAllRefs를 부른다 (overrideStyleId=null, force=false, reason)', () => {

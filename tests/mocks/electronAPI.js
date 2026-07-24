@@ -64,6 +64,24 @@ export const mockElectronAPI = {
   ttsListVoices: vi.fn(),
   storyListLlmOptions: vi.fn(),
   readFileAbsolute: vi.fn(),
+
+  // In-app agent — preload 가 항상 노출하는 표면이라 App 을 렌더하는 어떤 테스트든 필요하다
+  // (ChatPanel 이 mount 에서 구독한다). 구독형은 반드시 **dispose 함수**를 돌려줘야 한다 —
+  // ChatPanel 의 cleanup 이 `disposers.forEach(d => d())` 로 부른다.
+  agentSessionOpen: vi.fn(),
+  agentSend: vi.fn(),
+  agentSteer: vi.fn(),
+  agentAbort: vi.fn(),
+  agentSessionClose: vi.fn(),
+  agentStatus: vi.fn(),
+  agentListModels: vi.fn(),
+  onAgentEvent: vi.fn(() => () => {}),
+  onToolBridgeRequest: vi.fn(() => () => {}),
+  respondToolBridge: vi.fn(),
+  emitToolBridgeEvent: vi.fn(),
+  onAgentPermissionRequest: vi.fn(() => () => {}),
+  onAgentPermissionCancel: vi.fn(() => () => {}),
+  respondAgentPermission: vi.fn(),
 }
 
 export function resetElectronAPI() {

@@ -2,9 +2,8 @@ import {
   applyM1MentionExclusions,
   collectM1FlowReferenceExclusions,
   collectReferencedEmptyCards,
-  flowSyncable,
 } from '../utils/refImageGuard'
-import { selectUnsyncedMentionedRefs } from '../utils/flowCharacterSync'
+import { selectMentionSyncTargets } from '../utils/mentionSyncTargets'
 import { filterPendingScenes } from '../utils/sceneFilters'
 
 // MCP 가 시작한 배치엔 사람이 없다 — 모달을 띄우면 아무도 안 눌러 배치가 영영 시작 안 되고
@@ -38,6 +37,7 @@ export function buildEmptyRefGateDeps({
   handleGenerateAllRefs,
   openSyncGate,
   automationStartRef,
+  guardSceneBatchStart,
   toastM1Exclusions,
   gateView,
 }) {
@@ -57,6 +57,7 @@ export function buildEmptyRefGateDeps({
     openSyncGate: source === 'mcp'
       ? nonInteractiveSyncGate
       : openSyncGate,
+    canStartScenes: () => guardSceneBatchStart(source),
     startScenes: opts => automationStartRef.current(opts),
     toastM1Exclusions,
     gateView,
@@ -117,6 +118,7 @@ const REQUIRED_DEPS = [
   'setPendingLatch',
   'generateRefs',
   'openSyncGate',
+  'canStartScenes',
   'startScenes',
   'toastM1Exclusions',
 ]
@@ -180,10 +182,12 @@ export async function runEmptyRefGateFlow(context, deps) {
     const syncCandidateScenes = liveTargetScenes.map(scene =>
       applyM1MentionExclusions(scene, m1Result.mentionNamesBySceneId)
     )
-    const unsyncedMentioned = selectUnsyncedMentionedRefs(
-      syncCandidateScenes,
-      authoritativeRefs
-    ).filter(flowSyncable)
+    // 씬 경로와 **같은 셀렉터**를 쓴다. 예전엔 배치만 case-insensitive 매처(resolveMentions)로
+    // 대상을 골라, 미동기화 ref `Hero` + 프롬프트 `@hero` 면 게이트는 열려 동기화까지 시켜 놓고
+    // 엔진은 여전히 case-sensitive 로 하드 에러였다 — 파서가 둘이면 늘 이런 식으로 어긋난다.
+    const unsyncedMentioned = [...new Set(
+      syncCandidateScenes.flatMap(scene => selectMentionSyncTargets({ scene, references: authoritativeRefs }))
+    )]
 
     if (unsyncedMentioned.length > 0) {
       const syncResult = await deps.openSyncGate({ refs: unsyncedMentioned })
@@ -219,6 +223,10 @@ export async function runEmptyRefGateFlow(context, deps) {
     const beforeStartInvariant = invariantBroken()
     if (beforeStartInvariant) {
       return { started: false, reason: beforeStartInvariant }
+    }
+
+    if (!deps.canStartScenes()) {
+      return { started: false, reason: 'scene-generation-active' }
     }
 
     // 실제 launch에 쓰이는 최종 M1 결과만 한 번 알린다. 실패/취소 경로에는 토스트가 없다.

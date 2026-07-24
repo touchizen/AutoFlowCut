@@ -19,7 +19,6 @@
 
 import { cleanBase64 } from './urls'
 import { applyEntityRegistrationPatch } from './refEntityRegistration'
-import { resolveMentions } from './mentionParser'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import {
   isFlowCharacterOperationActive,
@@ -62,25 +61,6 @@ export function refBadgeState(ref, mode) {
   return ref.mediaId ? 'ok' : 'none'
 }
 
-/**
- * #R34: 생성 대상 씬들의 @멘션 캐릭터 중 "미동기화" 인 것만 추린다.
- *   생성 전 가드 모달에 쓴다 — 이 캐릭터들이 동기화 안 된 채 생성하면 멘션 실패/이미지 폴백이 된다.
- * @param {Array<{prompt?:string}>} scenes - 생성 대상 씬
- * @param {Array} references - 전체 ref
- * @returns {Array} 미동기화 character ref (멘션된 것만)
- */
-export function selectUnsyncedMentionedRefs(scenes = [], references = []) {
-  // #R34-fix: @멘션은 character 의도다. resolveMentions 는 전체 ref 를 name→ref 맵(뒤가 덮음)에 넣어
-  //   같은 이름의 scene/style 이 character 를 가리면(@king→scene) character 가 누락돼 게이트가 안 열린다.
-  //   → character ref 만으로 멘션을 해석해 같은 이름 비-character 의 shadowing 을 막는다.
-  const charRefs = (references || []).filter(r => r?.type === 'character')
-  const mentionedRefs = new Set()
-  for (const s of scenes || []) {
-    const { matched } = resolveMentions(s?.prompt || '', charRefs)
-    for (const r of matched) if (r) mentionedRefs.add(r)
-  }
-  return charRefs.filter(r => r && mentionedRefs.has(r) && !isRefSynced(r))
-}
 
 /** 생성에 필요한 @mention sync 결과 — 하나라도 실패하면 unresolved ref 가 남으므로 fail closed. */
 export function planSyncGateCompletion(ok = 0, fail = 0) {
@@ -109,16 +89,15 @@ export function selectUnsyncedRefs(references = []) {
 /**
  * 등록/동기화/이름변경 뒤 Flow SPA 를 새로고침해야 하는가.
  *
- * main 이 상세페이지 이름칸 타이핑으로 SPA 스토어를 갱신했으면(result.nameApplied) 프로젝트를
- * 나갔다 재진입하는 refreshFlowComposer(loadURL 2회 + 1s 대기)가 필요 없다. 실패했을 때만 폴백한다.
- * nameApplied 를 안 싣는 옛 응답은 refresh 필요로 본다 — 이름이 안 보이는 쪽이 헛수고보다 나쁘다.
- * 캐릭터가 아닌 ref(scene 등)는 entity 이름 자체가 없으므로 해당 없음.
+ * 상세페이지 이름칸 타이핑 결과(result.nameApplied)는 타이밍에 따라 true 여도 마지막 목록 캐시가
+ * 갱신되지 않을 수 있다. 캐릭터 entity 동기화가 실제로 있었으면 루프 마지막에 한 번 refresh 한다.
+ * 캐릭터가 아닌 ref(scene 등)나 entity 가 생기지 않은 결과는 재진입 비용만 생기므로 제외한다.
  */
 export function needsComposerRefresh(ref, result) {
   if (!result || result.success === false) return false
   if (ref?.type !== 'character') return false
   if (!result.entityId) return false
-  return result.nameApplied !== true
+  return true
 }
 
 /**
@@ -135,10 +114,13 @@ export function needsComposerRefresh(ref, result) {
  * @param {object|undefined} live - 최신 상태의 ref (없으면 삭제된 것)
  * @returns {{action:'skip'|'sync', reason?:'gone'|'in-flight'|'already-synced', ref?:object}}
  */
-export function resolveSyncTarget(live) {
+export function resolveSyncTarget(live, opts = {}) {
   if (!live) return { action: 'skip', reason: 'gone' }
   if (live.syncing) return { action: 'skip', reason: 'in-flight' }   // 다른 진입점이 이미 처리 중
-  if (isRefSynced(live)) return { action: 'skip', reason: 'already-synced' }
+  // forceRepair: 엔진이 "그 칩은 못 쓴다"(미해결/stale)고 한 뒤의 복구 요청. 우리 기록이 synced 여도
+  //   실제로 재등록을 태운다 — 여기서 건너뛰면 모달만 뜨고 아무것도 안 바뀐 채 같은 실패가 반복된다.
+  //   planCharacterSync 가 entity+workflow 를 멱등 repair 로 보내므로 중복 entity 는 생기지 않는다.
+  if (isRefSynced(live) && !opts.forceRepair) return { action: 'skip', reason: 'already-synced' }
   return { action: 'sync', ref: live }                               // ← 스냅샷이 아니라 live 를 넘긴다
 }
 

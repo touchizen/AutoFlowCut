@@ -26,6 +26,7 @@ import {
   isStaleRegistrationResponse,
   parseUploadImageResponse,
   buildCharactersUrl,
+  normalizeEntityDisplayName,
 } from '../flow-character-api.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
 import { EDITOR_SELECTOR, appendSceneText, insertSceneMention, injectComposeSegments } from '../flow-compose-mention.js'
@@ -339,8 +340,8 @@ export function registerCharacterIPC(ipcMain, deps) {
           var x = n[i];
           if (!x || !x.url || x.url.indexOf('/flow/uploadImage') === -1) continue;
           if (x.status === 200 && x.respBody && x.respBody.indexOf('parentEntityId') !== -1)
-            return { status: 200, respBody: x.respBody };
-          if (x.status >= 400) return { status: x.status, respBody: x.respBody || '' };
+            return { status: 200, respBody: x.respBody, bufferIndex: i, bufferCount: n.length };
+          if (x.status >= 400) return { status: x.status, respBody: x.respBody || '', bufferIndex: i, bufferCount: n.length };
         }
         return null;
       })()`).catch(() => null)
@@ -1213,7 +1214,9 @@ export function registerCharacterIPC(ipcMain, deps) {
       if (!res.ok) console.warn('[Flow Character] rename failed: bodyLen=', (res.text || '').length)
       // PATCH 가 실패했으면 SPA 를 건드리지 않는다 — 서버와 화면이 어긋나는 게 더 나쁘다.
       if (!res.ok) return { success: false, status: res.status, nameApplied: false }
-      const nameApplied = await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
+      const nameApplied = opts.patchOnly
+        ? false
+        : await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
       return { success: true, status: res.status, nameApplied }
     } catch (e) {
       console.warn('[Flow Character] rename error:', e.message)
@@ -1228,8 +1231,22 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   네트워크 버퍼에서 그 응답(parentEntityId/workflowId) 회수. 3) PATCH /flow/entities 로 이름 등록.
   ipcMain.handle('flow:upload-character-entity', async (_e, opts = {}) => {
     const { base64, displayName, mimeType, fileName } = opts
+    console.log(
+      '[Flow Character] A2 request displayName:',
+      'present=', displayName != null,
+      'length=', displayName == null ? 0 : String(displayName).length,
+    )
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
     if (!base64) return { success: false, error: 'base64 required' }
+    // renderer 의 정상 Sync 경로는 ref.name 을 displayName 으로 넘긴다. 그래도 IPC 경계에서 빈 값을
+    // 허용하면 누락 payload 하나가 uploadImage 로 entity 를 먼저 만든 뒤 빈 이름 PATCH 를 보내
+    // "Untitled Character" orphan 을 남긴다. DOM 작업 전에 막아 원격 상태를 오염시키지 않는다.
+    const entityDisplayName = normalizeEntityDisplayName(displayName)
+    if (!entityDisplayName) return {
+      success: false,
+      errorKind: 'character-display-name-required',
+      error: 'Character display name required',
+    }
     const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
     if (!projectId) return { success: false, error: 'No projectId' }
     const flowView = getFlowView && getFlowView()
@@ -1301,7 +1318,15 @@ export function registerCharacterIPC(ipcMain, deps) {
           error: 'Character upload response was invalid',
         }
       }
-      console.log('[Flow Character] A2 uploaded mediaId:', parsed.mediaId, 'workflowId:', parsed.workflowId, 'entityId:', parsed.entityId)
+      console.log(
+        '[Flow Character] A2 upload response attributed:',
+        'bufferIndex=', resp.bufferIndex ?? null,
+        'bufferCount=', resp.bufferCount ?? null,
+        'status=', resp.status,
+        'entityId=', parsed.entityId,
+        'workflowId=', parsed.workflowId,
+        'mediaId=', parsed.mediaId,
+      )
 
       // 이름 등록 — SPA 가 만든 entity 에 displayName + 이미지 레퍼런스 PATCH (검증된 경로).
       let registered = false
@@ -1311,7 +1336,7 @@ export function registerCharacterIPC(ipcMain, deps) {
           const reg = await flowPageFetch(`${await apiBase()}/flow/entities`, {
             method: 'PATCH',
             headers: { authorization: 'Bearer ' + token },
-            body: JSON.stringify(buildEntityRegisterBody({ projectId, entityId: parsed.entityId, displayName: displayName || '', workflowId: parsed.workflowId })),
+            body: JSON.stringify(buildEntityRegisterBody({ projectId, entityId: parsed.entityId, displayName: entityDisplayName, workflowId: parsed.workflowId })),
           })
           registered = !!reg.ok
           console.log('[Flow Character] A2 register entities:', reg.status, registered ? '✓' : '✗')
@@ -1321,7 +1346,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         console.warn('[Flow Character] A2 register error:', e2.message)
       }
       const nameApplied = registered
-        ? await applyEntityNameToSpa(flowView, { entityId: parsed.entityId, projectId, displayName })
+        ? await applyEntityNameToSpa(flowView, { entityId: parsed.entityId, projectId, displayName: entityDisplayName })
         : false
       return { success: true, entityId: parsed.entityId, workflowId: parsed.workflowId, mediaId: parsed.mediaId, registered, nameApplied }
     } catch (e) {

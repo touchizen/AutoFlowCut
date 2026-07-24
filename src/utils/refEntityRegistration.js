@@ -122,5 +122,6 @@ export function clearedImageFields() {
   return {
     data: null, filePath: null, mediaId: null, caption: null, dataStorage: null,
     entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null,
+    status: 'pending', errorMessage: null, errorKind: null, error: null,
   }
 }

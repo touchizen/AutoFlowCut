@@ -220,6 +220,12 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v3.1.0 — Story audio, redone. Per-speaker regeneration, consistent Gemini voices, and 20+ fixes.
+
+Enter each provider's key right where audio generation asks for it — all API keys now live in one Settings tab (Gemini, Typecast, ElevenLabs, Google TTS). Right-click any speaker to regenerate all of their lines with a new voice. Gemini TTS now keeps each speaker sounding the same from line to line with a per-voice seed, and no longer breaks on short lines or emotion tags.
+
+Also: live token usage during generation, prompt output that streams as you watch, @{name} mentions for character names with spaces, and 20+ fixes — segment regenerate no longer jumps to the prompts step, audio preview retries after you save a key inline, and Flow mentions work on narrow windows.
+
 v3.0.4 — Non-Korean locale fixes, Windows subtitles, big projects. If your Google account isn't Korean, please update. Flow character mentions now work on any account language, error messages follow your app language, Windows .srt files (CRLF, CP949/UTF-16) import and split correctly, and very long projects no longer freeze the app.
 
 v3.0.3 — Character reference sync fix. If you use character references in Flow mode, please update.
@@ -452,6 +458,12 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v3.1.0 — Story 오디오, 다시 만들었습니다. 성우 단위 재생성, 일관된 Gemini 음성, 그리고 20여 건 수정.
+
+오디오 생성에 필요한 provider 키를 그 자리에서 바로 입력하세요 — 모든 API 키가 이제 설정의 "API 키" 탭 하나로 모였습니다(Gemini · Typecast · ElevenLabs · Google TTS). 성우를 우클릭하면 그 화자의 대사 전체를 새 음성으로 다시 생성합니다. Gemini TTS는 성우별 고정 seed로 같은 화자가 문장이 달라도 같은 목소리를 유지하고, 짧은 문장이나 감정 표현에서도 더 이상 깨지지 않습니다.
+
+그 밖에: 생성 중 실시간 토큰 사용량 표시, 눈앞에서 스트리밍되는 프롬프트 출력, 공백 포함 캐릭터 이름 멘션(@{이름}), 그리고 20여 건 수정 — 세그먼트 재생성 후 프롬프트 단계로 튀던 문제, 인라인 키 저장 후 오디오 미리듣기 재시도, 좁은 창에서의 Flow 멘션까지.
+
 v3.0.4 — 한국어 외 계정, Windows 자막, 대용량 프로젝트 수정. 구글 계정 언어가 한국어가 아니라면 업데이트해 주세요. 이제 계정 언어와 무관하게 Flow 캐릭터 멘션이 동작하고, 에러 메시지가 앱 언어를 따르며, Windows에서 저장한 .srt 파일(CRLF, CP949/UTF-16)이 올바르게 분할되어 들어오고, 아주 긴 프로젝트에서도 앱이 멈추지 않습니다.
 
 v3.0.3 — 캐릭터 레퍼런스 동기화 수정. Flow 모드에서 캐릭터 레퍼런스를 쓰신다면 업데이트해 주세요.
@@ -589,6 +601,12 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 
 ### What's New
 ```
+v3.1.0 — Storyの音声を作り直しました。話者単位の再生成、一貫したGemini音声、そして20件以上の修正。
+
+音声生成に必要なプロバイダーのキーを、その場で直接入力できます — すべてのAPIキーが設定の「APIキー」タブ1つにまとまりました（Gemini・Typecast・ElevenLabs・Google TTS）。話者を右クリックすると、その話者のセリフ全体を新しい音声で再生成します。Gemini TTSは話者ごとの固定シードで、同じ話者が文章が変わっても同じ声を保ち、短い文章や感情表現でも壊れなくなりました。
+
+その他：生成中のリアルタイムトークン使用量、目の前でストリーミングされるプロンプト出力、スペースを含むキャラクター名のメンション（@{名前}）、そして20件以上の修正 — セグメント再生成後にプロンプトステップへ飛ぶ問題、インラインでキーを保存した後の音声プレビュー再試行、狭いウィンドウでのFlowメンションなど。
+
 v3.0.4 — 韓国語以外のアカウント、Windows字幕、大規模プロジェクトの修正。Googleアカウントの言語が韓国語でない方は、アップデートしてください。アカウントの言語に関係なくFlowのキャラクターメンションが動作し、エラーメッセージがアプリの言語に従い、Windowsで保存した.srtファイル（CRLF、CP949/UTF-16）が正しく分割して読み込まれ、非常に長いプロジェクトでもアプリが固まらなくなりました。
 
 v3.0.3 — キャラクターリファレンスの同期を修正。Flowモードでキャラクターリファレンスをお使いの方は、アップデートしてください。
@@ -721,6 +739,12 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
+v3.1.0 — Story-Audio, neu gemacht. Regenerierung pro Sprecher, konsistente Gemini-Stimmen und 20+ Fixes.
+
+Geben Sie den Schlüssel des jeweiligen Anbieters genau dort ein, wo die Audiogenerierung ihn verlangt — alle API-Schlüssel liegen jetzt in einem einzigen Einstellungen-Tab (Gemini, Typecast, ElevenLabs, Google TTS). Rechtsklick auf einen Sprecher regeneriert alle seine Zeilen mit einer neuen Stimme. Gemini TTS hält dank eines Seeds pro Stimme denselben Sprecher von Zeile zu Zeile gleich klingend und bricht bei kurzen Zeilen oder Emotions-Tags nicht mehr ab.
+
+Außerdem: Live-Token-Nutzung während der Generierung, Prompt-Ausgabe die live streamt, @{name}-Mentions für Charakternamen mit Leerzeichen und 20+ Fixes — Segment-Regenerierung springt nicht mehr zum Prompt-Schritt, die Audiovorschau wiederholt nach dem Inline-Speichern eines Schlüssels, und Flow-Mentions funktionieren in schmalen Fenstern.
+
 v3.0.4 — Korrekturen für nicht-koreanische Konten, Windows-Untertitel, große Projekte. Wenn Ihr Google-Konto nicht auf Koreanisch eingestellt ist, aktualisieren Sie bitte. Flow-Charakter-Mentions funktionieren jetzt unabhängig von der Kontosprache, Fehlermeldungen folgen Ihrer App-Sprache, unter Windows gespeicherte .srt-Dateien (CRLF, CP949/UTF-16) werden korrekt eingelesen und aufgeteilt, und sehr lange Projekte lassen die App nicht mehr einfrieren.
 
 v3.0.3 — Fix für die Synchronisierung von Charakter-Referenzen. Wenn Sie Charakter-Referenzen im Flow-Modus nutzen, aktualisieren Sie bitte.

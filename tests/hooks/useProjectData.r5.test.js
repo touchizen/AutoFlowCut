@@ -83,12 +83,16 @@ function makeGenAPI() {
 }
 
 function makeHookProps(overrides = {}) {
+  const framePairs = overrides.framePairs || []
+  const framePairsRef = Object.prototype.hasOwnProperty.call(overrides, 'framePairsRef')
+    ? overrides.framePairsRef
+    : { current: framePairs }
   return {
     settings: { projectName: 'old', saveMode: 'folder', aspectRatio: '16:9' },
     setSettings: vi.fn(),
     scenes: [], references: [], setScenes: vi.fn(), setReferences: vi.fn(),
     videoScenes: [], setVideoScenes: vi.fn(),
-    framePairs: [], setFramePairs: vi.fn(),
+    framePairs, framePairsRef, setFramePairs: vi.fn(),
     selectedStyleRefId: null, setSelectedStyleRefId: vi.fn(),
     srtTrack: [], setSrtTrack: vi.fn(),
     openSettings: vi.fn(), onAudioSwitch: vi.fn(),
@@ -97,6 +101,27 @@ function makeHookProps(overrides = {}) {
     ...overrides,
   }
 }
+
+describe('framePairsRef live-owner 계약', () => {
+  it('dev에서 유효한 framePairsRef는 경고하지 않고 누락 호출만 한 번 경고한다', () => {
+    commonBeforeEach()
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: false })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const valid = renderHook(() => useProjectData(makeHookProps()))
+    expect(warn).not.toHaveBeenCalled()
+
+    const first = renderHook(() => useProjectData(makeHookProps({ framePairsRef: null })))
+    const second = renderHook(() => useProjectData(makeHookProps({ framePairsRef: null })))
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('framePairsRef'))
+    expect(warn).toHaveBeenCalledTimes(1)
+    valid.unmount()
+    first.unmount()
+    second.unmount()
+    warn.mockRestore()
+  })
+})
 
 function commonBeforeEach() {
   vi.resetAllMocks()
@@ -115,6 +140,40 @@ async function waitForEffect(ms = 80) {
     await new Promise(r => setTimeout(r, ms))
   })
 }
+
+describe('loadEpochRef live 공유 계약', () => {
+  beforeEach(() => {
+    commonBeforeEach()
+    localStorage.clear()
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: false })
+  })
+
+  afterEach(() => {
+    delete window.electronAPI
+  })
+
+  it('프로젝트 전환 뒤에도 반환 ref 객체가 같고 그 current가 동기적으로 증가한다', async () => {
+    window.electronAPI = { setStartupProject: vi.fn() }
+    const { result } = renderHook(() => useProjectData(makeHookProps({ mode: 'api' })))
+    await waitForEffect(20)
+
+    const returnedEpochRef = result.current.loadEpochRef
+    const epochBeforeSwitch = returnedEpochRef.current
+    let switchPromise
+    act(() => {
+      switchPromise = result.current.handleProjectChange('next')
+    })
+
+    expect(result.current.loadEpochRef).toBe(returnedEpochRef)
+    expect(returnedEpochRef.current).toBe(epochBeforeSwitch + 1)
+
+    await act(async () => {
+      await switchPromise
+    })
+    expect(result.current.loadEpochRef).toBe(returnedEpochRef)
+    expect(returnedEpochRef.current).toBe(epochBeforeSwitch + 1)
+  })
+})
 
 // ─── R5-1: tryAutoRestore — flow mode, no saved flowProjectId ──────────────────
 
@@ -294,6 +353,173 @@ describe('#R25-1: triggerVideoRecovery patch guarded by epoch', () => {
 
     // Guarded: stale proj-A patch must NOT mutate the (now proj-B) videoScenes state
     expect(setVideoScenes).not.toHaveBeenCalled()
+  })
+})
+
+// ─── I2V recovery: framePair patch와 owner scene 상태를 함께 복구 ──────────────
+
+describe('I2V recovery callback updates its owner scene', () => {
+  beforeEach(() => {
+    commonBeforeEach()
+    localStorage.setItem('autoflowcut_settings', JSON.stringify({ projectName: 'prev', saveMode: 'folder' }))
+    fileSystemAPI.loadProjectData.mockResolvedValue({
+      success: true,
+      data: {
+        scenes: [{ id: 'scene-1', status: 'done' }],
+        references: [],
+        settings: { aspectRatio: '16:9' },
+        videoScenes: [],
+        framePairs: [
+          { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+          { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
+        ],
+        srtTrack: [],
+        schemaVersion: 2,
+      },
+    })
+  })
+
+  afterEach(() => { delete window.electronAPI })
+
+  it.each([
+    ['generating', { status: 'generating' }, {
+      videoI2VStatus: 'generating',
+      videoI2VGeneratingStartedAt: expect.any(Number),
+      videoI2VGeneratingEndedAt: null,
+    }],
+    ['complete', { status: 'complete', base64: 'VIDEO', videoPath: '/videos/fp-owned.mp4', generatedAt: 123 }, {
+      videoI2VStatus: 'complete',
+      videoI2VGeneratingEndedAt: expect.any(Number),
+      videoI2V: 'VIDEO',
+      videoI2VPath: '/videos/fp-owned.mp4',
+      videoI2VDisabled: null,
+      videoI2VGeneratedAt: 123,
+    }],
+    ['error', { status: 'error', error: 'failed' }, {
+      videoI2VStatus: 'error',
+      videoI2VGeneratingEndedAt: expect.any(Number),
+    }],
+  ])('%s patch를 owner scene에 병합하고 gallery 행은 제외한다', async (_status, recoveryPatch, expectedPatch) => {
+    window.electronAPI = { setStartupProject: vi.fn() }
+    let i2vRecoveryCallback = null
+    recoverInFlightVideos.mockImplementation(async ({ framePairs, onFramePairUpdate }) => {
+      if (framePairs.some(fp => fp.id === 'fp-owned')) i2vRecoveryCallback = onFramePairUpdate
+    })
+    const setFramePairs = vi.fn()
+    const setScenes = vi.fn()
+
+    renderHook(() => useProjectData(makeHookProps({
+      mode: 'api', genAPI: makeGenAPI(),
+      framePairs: [
+        { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+        { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
+      ],
+      setFramePairs, setScenes,
+    })))
+    await waitForEffect()
+    expect(i2vRecoveryCallback).toBeTypeOf('function')
+
+    setFramePairs.mockClear()
+    setScenes.mockClear()
+    act(() => i2vRecoveryCallback('fp-owned', recoveryPatch))
+
+    expect(setFramePairs).toHaveBeenCalledTimes(1)
+    const ownedUpdater = setFramePairs.mock.calls[0][0]
+    expect(ownedUpdater).toBeTypeOf('function')
+    const ownedResult = ownedUpdater([
+      { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+      { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
+    ])
+    expect(ownedResult).toEqual([
+      expect.objectContaining({ id: 'fp-owned', ownerSceneId: 'scene-1', ...recoveryPatch }),
+      expect.objectContaining({ id: 'fp-gallery', ownerSceneId: null }),
+    ])
+    expect(setScenes).toHaveBeenCalledTimes(1)
+    const ownerUpdater = setScenes.mock.calls[0][0]
+    const ownerResult = ownerUpdater([
+      { id: 'scene-1', untouched: 'keep' },
+      { id: 'scene-2', untouched: 'other' },
+    ])
+    expect(ownerResult).toEqual([
+      expect.objectContaining({ id: 'scene-1', untouched: 'keep', ...expectedPatch }),
+      { id: 'scene-2', untouched: 'other' },
+    ])
+
+    act(() => i2vRecoveryCallback('fp-gallery', recoveryPatch))
+    expect(setFramePairs).toHaveBeenCalledTimes(2)
+    const galleryUpdater = setFramePairs.mock.calls[1][0]
+    expect(galleryUpdater).toBeTypeOf('function')
+    expect(galleryUpdater(ownedResult)).toEqual([
+      expect.objectContaining({ id: 'fp-owned', ownerSceneId: 'scene-1', ...recoveryPatch }),
+      expect.objectContaining({ id: 'fp-gallery', ownerSceneId: null, ...recoveryPatch }),
+    ])
+    expect(setScenes).toHaveBeenCalledTimes(1)
+  })
+
+  it('복구 중 shared live framePair가 렌더 없이 삭제됐으면 owner scene patch도 no-op이다', async () => {
+    window.electronAPI = { setStartupProject: vi.fn() }
+    let i2vRecoveryCallback = null
+    recoverInFlightVideos.mockImplementation(async ({ framePairs, onFramePairUpdate }) => {
+      if (framePairs.some(fp => fp.id === 'fp-owned')) i2vRecoveryCallback = onFramePairUpdate
+    })
+    const setFramePairs = vi.fn()
+    const setScenes = vi.fn()
+
+    const liveFramePairs = [
+      { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+      { id: 'fp-gallery', ownerSceneId: null, generationId: 'g-gallery', status: 'pending' },
+    ]
+    const framePairsRef = { current: liveFramePairs }
+    renderHook(() => useProjectData(makeHookProps({
+      mode: 'api', genAPI: makeGenAPI(), framePairs: liveFramePairs, framePairsRef, setFramePairs, setScenes,
+    })))
+    await waitForEffect()
+    expect(i2vRecoveryCallback).toBeTypeOf('function')
+
+    framePairsRef.current = []
+    setFramePairs.mockClear()
+    setScenes.mockClear()
+    act(() => i2vRecoveryCallback('fp-owned', { status: 'complete', base64: 'VIDEO' }))
+
+    expect(setFramePairs).not.toHaveBeenCalled()
+    expect(setScenes).not.toHaveBeenCalled()
+  })
+
+  it('generating 복구 timestamp를 live framePair와 owner scene에 같은 값으로 적용한다', async () => {
+    window.electronAPI = { setStartupProject: vi.fn() }
+    let i2vRecoveryCallback = null
+    recoverInFlightVideos.mockImplementation(async ({ framePairs, onFramePairUpdate }) => {
+      if (framePairs.some(fp => fp.id === 'fp-owned')) i2vRecoveryCallback = onFramePairUpdate
+    })
+    const setFramePairs = vi.fn()
+    const setScenes = vi.fn()
+
+    renderHook(() => useProjectData(makeHookProps({
+      mode: 'api', genAPI: makeGenAPI(),
+      framePairs: [
+        { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+      ],
+      setFramePairs, setScenes,
+    })))
+    await waitForEffect()
+    expect(i2vRecoveryCallback).toBeTypeOf('function')
+
+    setFramePairs.mockClear()
+    setScenes.mockClear()
+    const generatingStartedAt = 1_753_200_000_123
+    act(() => i2vRecoveryCallback('fp-owned', { status: 'generating', generatingStartedAt }))
+
+    const framePairUpdater = setFramePairs.mock.calls[0][0]
+    expect(framePairUpdater).toBeTypeOf('function')
+    const framePairResult = framePairUpdater([
+      { id: 'fp-owned', ownerSceneId: 'scene-1', generationId: 'g-owned', status: 'pending' },
+    ])
+    expect(framePairResult[0].generatingStartedAt).toBe(generatingStartedAt)
+
+    expect(setScenes).toHaveBeenCalledTimes(1)
+    const sceneUpdater = setScenes.mock.calls[0][0]
+    const sceneResult = sceneUpdater([{ id: 'scene-1' }])
+    expect(sceneResult[0].videoI2VGeneratingStartedAt).toBe(generatingStartedAt)
   })
 })
 

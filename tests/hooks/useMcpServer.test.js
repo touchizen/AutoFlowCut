@@ -108,6 +108,26 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(setSelectedStyleRefId).not.toHaveBeenCalled()
   })
 
+  it('__mcpGenerateRef maps refresh failure to partial success and explicitly forbids regeneration', async () => {
+    const handleGenerateRef = vi.fn().mockResolvedValue({
+      success: false,
+      refreshFailed: true,
+      entityId: 'entity-created',
+      error: 'Composer refresh failed',
+    })
+    renderHook(() => useMcpServer(makeProps({ handleGenerateRef })))
+
+    const result = await window.__mcpGenerateRef(0, 'none')
+
+    expect(handleGenerateRef).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({
+      success: true,
+      refreshFailed: true,
+      entityId: 'entity-created',
+      warning: expect.stringContaining('Do not regenerate'),
+    })
+  })
+
   it('__mcpGenerateRef normalizes plain id (legacy MCP shape)', async () => {
     const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
     renderHook(() => useMcpServer(makeProps({ handleGenerateRef })))
@@ -797,6 +817,74 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(window.__mcpBatchStatus().ref.isRunning).toBe(true)
 
     // Cleanup
+    result.unmount()
+  })
+
+  it('내부 preparing은 외부 batch status에서만 running으로 정규화한다', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      automationState: {
+        isRunning: true,
+        isPaused: false,
+        progress: { current: 0, total: 3 },
+        status: 'preparing',
+        statusMessage: 'checking folder',
+      },
+    })))
+
+    expect(window.__mcpBatchStatus().status).toBe('running')
+    result.unmount()
+  })
+
+  it('execute 전 scene batch 대기는 외부 enum을 늘리지 않고 isRunning으로 보고한다', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      automationState: {
+        isRunning: false,
+        isSceneBatchQueued: true,
+        isPaused: false,
+        progress: { current: 0, total: 0 },
+        status: 'idle',
+        statusMessage: '',
+      },
+    })))
+
+    expect(window.__mcpBatchStatus()).toMatchObject({ isRunning: true, status: 'idle' })
+    result.unmount()
+  })
+
+  it.each(['uploading', 'running', 'done'])('이미지 status %s는 외부에서 그대로 유지한다', status => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      automationState: {
+        isRunning: true,
+        isPaused: false,
+        progress: { current: 1, total: 3 },
+        status,
+        statusMessage: status,
+      },
+    })))
+
+    expect(window.__mcpBatchStatus().status).toBe(status)
+    result.unmount()
+  })
+
+  it('별도 video status는 이미지 정규화의 영향을 받지 않는다', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      automationState: {
+        isRunning: false,
+        isPaused: false,
+        progress: { current: 0, total: 0 },
+        status: 'preparing',
+        statusMessage: 'internal only',
+      },
+      videoAutomation: {
+        isRunning: true,
+        isPaused: false,
+        progress: { current: 2, total: 4 },
+        status: 'uploading',
+        statusMessage: 'video uploading',
+      },
+    })))
+
+    expect(window.__mcpBatchStatus().status).toBe('uploading')
     result.unmount()
   })
 

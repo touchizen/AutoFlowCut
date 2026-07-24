@@ -4,6 +4,10 @@
  */
 import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
 const ENDPOINT = 'https://api.typecast.ai/v1/text-to-speech'
+// Typecast 원음이 작아 성량이 낮다 — 서버측 라우드니스 정규화로 -15 LUFS 로 맞춘다.
+//   API 가 output.target_lufs(-70~0) 를 네이티브로 처리하므로 ffmpeg 후처리가 필요 없다.
+//   ⚠️ target_lufs 와 volume 은 동시 사용 불가(volume 을 쓰려면 이 값을 빼야 한다).
+const TARGET_LUFS = -15
 const VOICES_ENDPOINT = 'https://api.typecast.ai/v1/voices'
 
 // 알려진 Typecast 성우(CLAUDE.md). 라이브 /voices fetch가 실패하거나 키가 없을 때의 폴백,
@@ -85,7 +89,7 @@ export function createTypecastAdapter({ getKey, fetch, provider = 'typecast' }) 
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': key },
-        body: JSON.stringify({ text, voice_id: voiceId, model: useModel, emotion }),
+        body: JSON.stringify({ text, voice_id: voiceId, model: useModel, emotion, output: { target_lufs: TARGET_LUFS } }),
         signal,
       })
       if (!res.ok) {

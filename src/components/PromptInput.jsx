@@ -15,8 +15,9 @@
  *  - PasteNormalizationPlugin: 탭 → 줄바꿈 변환 유지
  *  - EditablePlugin: disabled 토글
  *
- * 데이터 모델: paragraph = 씬 1개, BeautifulMentionNode = `@name` 토큰.
- * 직렬화 시 paragraph 는 `\n` 으로, mention 은 `@value` 로.
+ * 데이터 모델: paragraph 는 줄바꿈 단위이며 한 씬이 여러 paragraph 를 차지할 수 있다.
+ * 씬 매핑은 호출자가 offset 으로 넘긴다. 직렬화 시 paragraph 는 `\n` 으로,
+ * BeautifulMentionNode 는 `@value` 로 변환된다.
  */
 
 import { useEffect, useMemo, useRef, useState, forwardRef } from 'react'
@@ -48,6 +49,7 @@ import { registerMentionLiveTransforms } from './mentionLiveTransform'
 // Mention chip 노드 클래스 — 모듈 로드 시 1회만 생성 (한 번 등록한 노드를 새 인스턴스로
 // 갈아끼우면 Lexical 이 "duplicate node" 에러 냄).
 const MentionNodes = createBeautifulMentionNode(MentionChip)
+const EMPTY_BUSY_LINES = new Set()
 
 const baseEditorConfig = {
   namespace: 'PromptInput',
@@ -252,6 +254,41 @@ function EditablePlugin({ editable }) {
   return null
 }
 
+function BusyLinesPlugin({ busyLines }) {
+  const [editor] = useLexicalComposerContext()
+  const lastScrolledIndexRef = useRef(null)
+
+  useEffect(() => {
+    const applyBusyLines = () => {
+      const root = editor.getRootElement()
+      const paragraphs = root?.querySelectorAll('.prompt-paragraph') || []
+      paragraphs.forEach((paragraph, index) => {
+        paragraph.classList.toggle('is-busy', busyLines.has(index))
+      })
+
+      if (busyLines.size === 0) {
+        lastScrolledIndexRef.current = null
+        return
+      }
+
+      // Set 순서가 아닌 아래쪽 생성 프런티어를 따르고, 편집 update 때마다 같은 줄로
+      // 튀지 않도록 실제 타깃 index가 바뀐 경우에만 스크롤한다.
+      const targetIndex = Math.max(...busyLines)
+      if (targetIndex === lastScrolledIndexRef.current) return
+      const targetParagraph = paragraphs[targetIndex]
+      targetParagraph?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+      if (targetParagraph) lastScrolledIndexRef.current = targetIndex
+    }
+
+    // prop 상태 변화는 즉시 반영하고, Lexical이 편집 DOM/className을 재조정한 뒤에도
+    // 같은 index 기준으로 다시 붙인다. 둘 중 하나만 두면 한 경로에서 링이 사라진다.
+    applyBusyLines()
+    return editor.registerUpdateListener(applyBusyLines)
+  }, [editor, busyLines])
+
+  return null
+}
+
 export default function PromptInput({
   value,
   onChange,
@@ -270,6 +307,7 @@ export default function PromptInput({
   countLabelKey = 'prompt.count',  // 대본 스텝: 카운트 라벨 키 교체(기본 "N개 프롬프트" → "N줄").
   footerExtra = null,       // 대본 스텝: 카운트 행(줄 수·자 수)에 얹을 노드(검수 점수 등). hideFooter면 함께 숨는다.
   ariaLabel,                // 접근성 라벨 — 한 화면에 편집기가 둘 이상일 때 구분(대본/줄거리).
+  busyLines = EMPTY_BUSY_LINES,  // 생성 중인 씬의 0-based 문단 index. 기본은 아무 링도 표시하지 않음.
 }) {
   const { t } = useI18n()
 
@@ -353,6 +391,7 @@ export default function PromptInput({
             <HistoryPlugin />
             <PasteNormalizationPlugin />
             <EditablePlugin editable={!disabled} />
+            <BusyLinesPlugin busyLines={busyLines} />
             {!disableMentions && <MentionLiveTransformPlugin references={references} />}
             <SyncPlugin value={value} onChange={handleChange} references={references} disableMentions={disableMentions} />
             {!disableMentions && (

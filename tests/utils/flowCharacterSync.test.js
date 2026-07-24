@@ -9,7 +9,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
 
 import * as flowSync from '../../src/utils/flowCharacterSync'
 
-const { isRefSynced, selectUnsyncedRefs, selectUnsyncedMentionedRefs, syncRefToFlow, needsComposerRefresh } = flowSync
+const { isRefSynced, selectUnsyncedRefs, syncRefToFlow, needsComposerRefresh } = flowSync
 
 describe('#R34: isRefSynced', () => {
   it('character → entityId + synced', () => {
@@ -38,26 +38,8 @@ describe('#R34: selectUnsyncedRefs', () => {
   })
 })
 
-describe('#R34: selectUnsyncedMentionedRefs (생성 전 가드)', () => {
-  const refs = [
-    { id: 1, type: 'character', name: 'king', data: 'x', entityId: null, flowNameSyncStatus: 'failed' },  // 미동기화
-    { id: 2, type: 'character', name: 'queen', data: 'x', entityId: 'e', flowNameSyncStatus: 'synced' },  // 동기화됨
-  ]
-  it('@멘션된 캐릭터 중 미동기화만 반환', () => {
-    const scenes = [{ prompt: '@king and @queen walk in' }]
-    expect(selectUnsyncedMentionedRefs(scenes, refs).map(r => r.id)).toEqual([1])
-  })
-  it('멘션 안 된 씬은 빈 배열', () => {
-    expect(selectUnsyncedMentionedRefs([{ prompt: 'no mention' }], refs)).toEqual([])
-  })
-  it('한국어 조사 멘션(@king이)도 인식', () => {
-    expect(selectUnsyncedMentionedRefs([{ prompt: '@king이 들어온다' }], refs).map(r => r.id)).toEqual([1])
-  })
-  it('id 없는 legacy/CSV character 도 생성 전 sync gate 대상에 포함', () => {
-    const legacy = { id: null, type: 'character', name: 'legacyzed', data: 'x', flowNameSyncStatus: 'failed' }
-    expect(selectUnsyncedMentionedRefs([{ prompt: '@legacyzed enters' }], [legacy])).toEqual([legacy])
-  })
-})
+// #R34 selectUnsyncedMentionedRefs 는 제거됐다 — 게이트 대상 선정은 엔진과 같은 파서를 쓰는
+// selectMentionSyncTargets 하나로 합쳤다(tests/utils/mentionSyncTargets.test.js).
 
 describe('#R34: syncRefToFlow', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -119,13 +101,13 @@ describe('planSyncGateCompletion — required mention sync 는 all-or-nothing', 
   })
 })
 
-// main 이 상세페이지 이름칸 타이핑으로 SPA 스토어를 갱신했으면(nameApplied) 프로젝트를 나갔다
-// 재진입하는 refreshFlowComposer(loadURL 2회 + 1s 대기)가 필요 없다. 실패했을 때만 폴백한다.
+// DOM 자동화의 nameApplied 는 타이밍에 따라 true 여도 마지막 목록 캐시가 갱신되지 않을 수 있다.
+// 캐릭터 entity 동기화가 실제로 있었으면 마지막에 한 번 refresh 하고, 대상이 없으면 하지 않는다.
 describe('needsComposerRefresh', () => {
   const CHAR = { type: 'character' }
 
-  it('이름이 SPA 에 반영됐으면 refresh 불필요', () => {
-    expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1', nameApplied: true })).toBe(false)
+  it('nameApplied=true 여도 캐릭터 entity 동기화가 있었으면 refresh 필요', () => {
+    expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1', nameApplied: true })).toBe(true)
   })
 
   it('반영 실패면 refresh 필요', () => {
@@ -134,6 +116,12 @@ describe('needsComposerRefresh', () => {
 
   it('nameApplied 를 안 주는 옛 응답은 refresh 필요 (안전한 쪽)', () => {
     expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1' })).toBe(true)
+  })
+
+  it('이름 등록이 실패했어도 entity 등록 시도가 있었으면 refresh 필요', () => {
+    expect(needsComposerRefresh(CHAR, {
+      success: true, entityId: 'e1', registered: false, nameApplied: false,
+    })).toBe(true)
   })
 
   it('캐릭터가 아니면 이름 자체가 없다 — refresh 불필요', () => {

@@ -9,7 +9,7 @@
  * no spurious entityId.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, act } from '@testing-library/react'
+import { render, act, fireEvent } from '@testing-library/react'
 import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -42,6 +42,7 @@ class FakeFileReader {
 global.FileReader = FakeFileReader
 
 import ReferenceCard from '../../src/components/ReferenceCard'
+import { toast } from '../../src/components/Toast'
 
 const fakeFile = new File(['x'], 'hero.png', { type: 'image/png' })
 
@@ -68,6 +69,45 @@ const baseRef = {
 describe('ReferenceCard — entity field propagation (Codex #3)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('ref batch lifecycle 중에는 직접 이미지 업로드를 시작하지 않는다', async () => {
+    const onUpload = vi.fn().mockResolvedValue({
+      success: true,
+      mediaId: 'm-new',
+      entityId: 'e-new',
+      workflowId: 'w-new',
+      registered: true,
+    })
+    const previousAPI = window.electronAPI
+    const refreshFlowComposer = vi.fn()
+    window.electronAPI = { ...(previousAPI || {}), refreshFlowComposer }
+    const { container } = render(
+      <ReferenceCard
+        reference={baseRef}
+        index={0}
+        onUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onUpload={onUpload}
+        t={(k) => k}
+        projectName={null}
+        appMode="flow"
+        refBatchRunning
+      />
+    )
+
+    const input = container.querySelector('input[type="file"]')
+    expect(input.disabled).toBe(true)
+    await act(async () => {
+      fireEvent.drop(container.querySelector('.ref-image-area'), {
+        dataTransfer: { files: [fakeFile] },
+      })
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+    expect(toast.info).toHaveBeenCalledWith('reference.batchUploadBlocked')
+    expect(onUpload).not.toHaveBeenCalled()
+    expect(refreshFlowComposer).not.toHaveBeenCalled()
+    window.electronAPI = previousAPI
   })
 
   it('Flow character upload: onUpdate final call contains entityId + flowNameSyncStatus=synced', async () => {
