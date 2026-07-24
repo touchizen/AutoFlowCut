@@ -17,8 +17,10 @@ import { useStoryAutoOpen } from './hooks/useStoryAutoOpen'
 import { STORY_TTS_PROVIDERS } from './config/storyTtsProviders'
 import StoryView from './components/story/StoryView'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
+import { useRefPanelVisibility } from './hooks/useRefPanelVisibility'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
 import { useSceneGeneration } from './hooks/useSceneGeneration'
+import { useSyncGateHost } from './hooks/useSyncGateHost'
 import { useGenerationQueue } from './hooks/useGenerationQueue'
 import { useExport } from './hooks/useExport'
 import { useStoreRating } from './hooks/useStoreRating'
@@ -35,6 +37,7 @@ import { batchStartGate } from './hooks/batchStartGate'
 import { upsertStoryCharacterRefs, assertStoryProjectCurrent } from './utils/storyCharacterRefs'
 import { waitUntil } from './utils/waitUntil'
 import { voiceKey } from './utils/voiceKey'
+import { useFlowAdoptPrompt } from './hooks/useFlowAdoptPrompt'
 import { ttsListVoicesReloadParams, replaceTtsVoicesForProvider } from './utils/ttsVoiceReload'
 import { stripMentionsForNames } from './utils/mentionParser'
 import { syncVideosIntoScenes } from './services/mediaSync'
@@ -78,14 +81,19 @@ import { planMentionTagMerges } from './utils/mentionTagMerge'
 import {
   buildM1FlowReferenceExclusionToast,
 } from './utils/refImageGuard'
+import { selectMentionSyncTargets } from './utils/mentionSyncTargets'
+import { runMentionSyncRequest } from './services/mentionSyncRequest'
+import { runSyncGate } from './services/syncGateRun'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
 import { resolveSceneVideoProvider } from './utils/sceneProviderResolution'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
+import { busyPromptLines } from './utils/promptBusyLines'
 import { toast } from './components/Toast'
-import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced, resolveSyncTarget, planSyncGateCompletion } from './utils/flowCharacterSync'
+import { syncRefToFlow } from './utils/flowCharacterSync'
+import { runFlowComposerRefresh } from './utils/flowCharacterCoordinator'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
 
 // Components
@@ -125,6 +133,7 @@ import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
 import DeleteSceneConfirmModal from './components/DeleteSceneConfirmModal'
+import FlowProjectAdoptModal from './components/FlowProjectAdoptModal'
 import SrtImportConflictModal from './components/SrtImportConflictModal'
 import ImportProcessingOverlay from './components/ImportProcessingOverlay'
 import { useAuth } from './contexts/AuthContext'
@@ -133,9 +142,13 @@ import { useImportProcessing } from './hooks/useImportProcessing'
 function App() {
   const { t, lang } = useI18n()
   const isKo = t('common.cancel') === '취소'  // 간단한 언어 감지 (ReferencePanel 과 동일)
-  // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 모달 상태 — { refs, proceed } | null
-  const [syncGate, setSyncGate] = useState(null)
-  const [syncGateBusy, setSyncGateBusy] = useState(false)
+  // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 모달. 게이트를 여는 경로가 여럿이라(배치/T2V/개별 씬)
+  //   소유권 조정은 useSyncGateHost 하나가 맡는다 — 고아 promise·남의 모달 닫기 방지.
+  const {
+    gate: syncGate, busy: syncGateBusy, open: openSyncGateRaw,
+    beginWork: beginSyncGateWork, endWork: endSyncGateWork,
+    finish: finishSyncGate, cancel: cancelSyncGate, abort: abortSyncGate,
+  } = useSyncGateHost()
   const [emptyRefGate, setEmptyRefGate] = useState(null)
   // #M2: coordinator가 폴링/effect chain 없이 사용자 선택을 await하도록 resolver를 state에 둔다.
   // failure 확인 resolver는 확인 즉시 모달도 닫아 coordinator finally가 latch를 풀 수 있게 한다.
@@ -160,16 +173,12 @@ function App() {
     }),
     close: () => setEmptyRefGate(null),
   }), [])
-  const openEmptyRefSyncGate = useCallback(({ refs }) => new Promise(resolve => {
-    setSyncGate({
-      refs,
-      proceed: patchedRefs => resolve({
-        proceeded: true,
-        patchedRefs: patchedRefs ?? null,
-      }),
-      onCancel: () => resolve({ proceeded: false, patchedRefs: null }),
-    })
-  }), [])
+  // 게이트를 여는 시점의 프로젝트를 새겨 둔다 — 전환 뒤에 눌린 Proceed 를 걸러낸다.
+  const openSyncGate = useCallback(
+    ({ refs, forceRepair = false }) => openSyncGateRaw({ refs, forceRepair, scope: projectNameRef.current }),
+    [openSyncGateRaw],
+  )
+  const openEmptyRefSyncGate = openSyncGate
   const { isAuthenticated, subscription, refreshSubscription } = useAuth()
   // 두 자동화 훅(useAutomation, useVideoAutomation)에 동일한 안정 레퍼런스를 전달.
   // 인라인 객체 리터럴은 매 렌더마다 새 참조를 만들어 useCallback deps 를 불필요하게 갱신함.
@@ -239,7 +248,16 @@ function App() {
   // 뷰 전환: 기존 생성 화면 vs Story 파이프라인 화면. activeTab 과 별개 — Story 는 씬/이미지
   // 생성과 무관한 별도 워크플로우(스텝퍼 + 단계 패널)라 탭 목록에 섞지 않는다.
   const [activeView, setActiveView] = useState('generate') // 'generate' | 'story'
-  const [framePairs, setFramePairs] = useState([])   // Frame to Video 매핑
+  const [framePairs, setFramePairsState] = useState([])   // Frame to Video 매핑
+  const framePairsRef = useRef(framePairs)
+  framePairsRef.current = framePairs
+  const setFramePairs = useCallback((nextFramePairsOrUpdater) => {
+    const nextFramePairs = typeof nextFramePairsOrUpdater === 'function'
+      ? nextFramePairsOrUpdater(framePairsRef.current)
+      : nextFramePairsOrUpdater
+    framePairsRef.current = nextFramePairs
+    setFramePairsState(nextFramePairs)
+  }, [])
   const [ftvPromptSource, setFtvPromptSource] = useState('image') // 'image' | 'video' | 'none'
   const [galleryItems, setGalleryItems] = useState([])
   const [galleryUploading, setGalleryUploading] = useState(false)  // #R29-3: F2V 디스크 업로드 중 전환 차단
@@ -252,7 +270,6 @@ function App() {
   const [srtImportPending, setSrtImportPending] = useState(null)
   const { processing: importProcessing, spinnerVisible: importSpinnerVisible, runImportProcessing } = useImportProcessing()
   const [showAudioResult, setShowAudioResult] = useState(false)
-  const [showReferences, setShowReferences] = useState(false)
   const [authReady, setAuthReady] = useState(false)
   // True after handleAuthError fires — disables the auto-recovery effect at line ~165
   // that would otherwise immediately re-extract a token from the webview and flip
@@ -261,7 +278,15 @@ function App() {
   // Cleared by handleAuthRecovered when the user explicitly re-authenticates.
   const authInvalidatedRef = useRef(false)
   const [selectedScene, setSelectedScene] = useState(null) // 상세 모달용 선택된 씬
-  const [selectedStyleRefId, setSelectedStyleRefId] = useState(null) // 레퍼런스 생성 시 적용할 스타일
+  const [selectedStyleRefId, _setSelectedStyleRefIdRaw] = useState(null) // 레퍼런스 생성 시 적용할 스타일
+  // 스타일 선택을 동기 ref 로도 즉시 반영한다. 씬 픽커는 "고르면 즉시 실행"이라, setState 커밋(리렌더)
+  //   전에 배치/생성 핸들러가 옛 클로저의 stale selectedStyleRefId(null)를 읽어 방금 고른 스타일이
+  //   첫 시도에 안 먹고 실사로 나가는 레이스가 있었다. ref 는 픽 즉시 갱신되므로 리렌더를 안 기다린다.
+  const selectedStyleRefIdRef = useRef(null)
+  const setSelectedStyleRefId = useCallback((v) => {
+    selectedStyleRefIdRef.current = v
+    _setSelectedStyleRefIdRaw(v)
+  }, [])
   const [showStylePicker, setShowStylePicker] = useState(false) // 스타일 선택 모달
   const [selectedVideo, setSelectedVideo] = useState(null) // 비디오 상세 모달용
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
@@ -414,6 +439,14 @@ function App() {
   }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  const imageBusyLines = useMemo(
+    () => busyPromptLines(scenes, { field: 'prompt', trimTrailing: false }),
+    [scenes],
+  )
+  const videoBusyLines = useMemo(
+    () => busyPromptLines(scenes, { field: 'videoT2VPrompt', trimTrailing: true }),
+    [scenes],
+  )
   const latestScenesRef = useRef(scenes)
   latestScenesRef.current = scenes
   const handleRequestSceneDelete = useCallback((sceneId, sceneIndex) => {
@@ -539,10 +572,10 @@ function App() {
   })
 
   // Project Data 관리
-  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
+  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, loadEpochRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId, tryAdoptFlowProject } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
-    framePairs, setFramePairs,
+    framePairs, framePairsRef, setFramePairs,
     selectedStyleRefId, setSelectedStyleRefId,
     // Phase 7: srtTrack 영속화 (load/save 시 useProjectData 가 동기화)
     srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
@@ -577,6 +610,8 @@ function App() {
   //   가 디바운스 없이 즉시 확정 저장해, 디스크의 카드(entityId/이미지 포인터/스타일 기억)를 통째로
   //   지운다. 프로젝트 전환은 저장→로드를 await 해서 안 겪지만, 복원 경로는 그 순서 보장이 없다.
   //   하이드레이션이 끝날 때까지 푸시를 미룬다(fire-and-forget 이라 미뤄도 안전하다).
+  //   (전환 진행 여부의 동기 최신값 — await 를 건넌 코드가 렌더 클로저를 보면 안 된다. 동기화
+  //    게이트의 프로젝트 스코프 판정도 이 값을 쓴다.)
   const projectLoadingRef = useRef(projectLoading)
   projectLoadingRef.current = projectLoading
   const awaitProjectHydration = useCallback(
@@ -805,6 +840,19 @@ function App() {
     if (mode === 'flow' && flowProjectReady && modelsSource !== 'dynamic') refetchModels?.()
   }, [mode, flowProjectReady, modelsSource, refetchModels])
 
+  // Flow 바인딩이 막혀 생성이 차단된 동안 회복을 주기적으로 시도한다: 저장만 실패했으면 저장을
+  // 재시도하고, 바인딩이 안 열렸으면 재바인딩을 요청하고, 사용자가 Flow 에서 다른 프로젝트를
+  // 열었으면 채택을 묻는다. 회복되면 flowProjectReady 가 true 가 되어 폴링이 멈춘다.
+  // 채택은 항상 사용자 확인을 거친다 — 훅은 후보를 찾으면 needs-confirm 을 돌려주고, 그때 확인
+  // 모달을 띄운다(폴링/일시정지/취소 쿨다운/확인 대상 고정은 useFlowAdoptPrompt 안에 있다).
+  const flowAdoptPrompt = useFlowAdoptPrompt({
+    mode, flowProjectReady, projectLoading,
+    projectName: settings.projectName,
+    tryAdopt: tryAdoptFlowProject,
+    // 채택이 실패하면(에러 페이지, 저장 실패 등) 조용히 묻지 않는다 — 사용자는 연결됐다고 믿는다.
+    onAdoptFailed: () => toast.error(t('toast.flowAdoptFailed')),
+  })
+
   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
   const automation = useAutomation(
     genAPI,
@@ -840,7 +888,7 @@ function App() {
     refreshSubscription     // #6: consume 성공 시 1회 refresh
   )
 
-  const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
+  const { isRunning, isPaused, isStopping, isSceneBatchQueued, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
   // #M2: 모달/ref batch 대기 뒤 scene launch가 과거 render의 start closure를 부르지 않게 한다.
   const automationStartRef = useRef(start)
   automationStartRef.current = start
@@ -853,6 +901,7 @@ function App() {
   // requireStyle 가드가 StylePicker 를 띄울 때 force(전체 재생성) 의도를 보존 —
   // 스타일 선택 후 handleStart 로 재진입할 때 force 를 그대로 넘긴다.
   const pendingStyleForceRef = useRef(false)
+  const pendingStyleSourceRef = useRef('ui')
   useEffect(() => {
     const running = isRunning || videoAutomation.isRunning
     if (wasRunningRef.current && !running) {
@@ -861,31 +910,54 @@ function App() {
     wasRunningRef.current = running
   }, [isRunning, videoAutomation.isRunning])
 
-  // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
-  // Recent 항목은 work folder 단위로 구분되므로 현재 work folder 경로도 함께 전달.
-  useMenuActions({
-    activeProject: settings.saveMode === 'folder' ? settings.projectName : null,
-    workFolder: settings.saveMode === 'folder' ? (localStorage.getItem('workFolderPath') || null) : null,
-    onNewProject: () => openSettings('storage'),
-    onOpenProject: handleProjectChange,
-    onShowModeSelector: clearMode,
-    // 배치 생성 중에는 모드 리셋(앱 언마운트) 차단 — in-app ModeToggle 와 동일 가드.
-    busy: isRunning || videoAutomation.isRunning,
-  })
-
   // Style Thumbnails
   const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
 
   // Reference 생성
-  const { generatingRefs, stoppingRefs, preparingRefs, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
-    settings, references, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady,
-    flowProjectId: _flowProjectId, projectNameRef,
+  const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
+    settings, references, scenes, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, selectedStyleRefIdRef, styleThumbnails, generationQueue, flowProjectReady,
+    scenesRef: scenesHook.scenesRef, flowProjectId: _flowProjectId, projectNameRef,
   })
+
+  const { isOpen: showReferences, setOpenByUser } = useRefPanelVisibility({
+    refBatchActive,
+    generatingRefsCount: generatingRefs.length,
+    stoppingRefs,
+    syncGate,
+    syncGateBusy,
+    mode,
+    automationStatus: status,
+    hasPendingBatch,
+    projectKey: settings.projectName,
+  })
+
+  // 개별 씬 생성이 "이 씬의 미동기화 @멘션을 처리해 달라"고 요청하면 **배치와 같은** 동기화
+  // 게이트를 연다. 대상이 없으면 모달 없이 즉시 진행한다(평소엔 아무것도 안 뜬다).
+  //   - names 없음(프리플라이트): 씬이 멘션한 캐릭터 중 미동기화 + 수리 가능한 것
+  //   - names 있음(엔진이 미해결로 거절한 뒤): 그 이름들. 우리 기록상 synced 여도 엔진이 못 쓴다고
+  //     했으므로 동기화 상태로 거르지 않는다 — 기록이 옛것일 수 있다.
+  // 판정은 services/mentionSyncRequest 가 소유한다 — App 안에 두면 실행되는 테스트를 못 붙인다
+  // (이 판정을 통째로 되돌려도 전체 스위트가 초록불이었다).
+  const requestMentionSync = useCallback((req) => runMentionSyncRequest(req, {
+    getReferences: () => referencesRef.current || [],
+    getProjectName: () => projectNameRef.current,
+    isProjectLoading: () => projectLoadingRef.current,
+    openGate: openSyncGate,
+    onBlocked: (reason) => toast.warning(t(reason === 'superseded' ? 'toast.flowSyncSuperseded' : 'toast.flowSyncBusy')),
+  }), [openSyncGate, t])
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
-    settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady
+    settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
+    requestMentionSync,
   })
+  const generatingSceneIdRef = useRef(generatingSceneId)
+  generatingSceneIdRef.current = generatingSceneId
+  const guardSceneBatchStart = (source = 'ui') => {
+    if (source === 'mcp' || !generatingSceneIdRef.current) return true
+    toast.warning(t('videoAutomation.busy') || 'Generation already running')
+    return false
+  }
 
   const handleImportAudio = async () => {
     setShowAudioResult(true)
@@ -1152,7 +1224,7 @@ function App() {
       },
       reference: async () => {
         await parseReferencesFromCSV(content, projectName)
-        setShowReferences(true)
+        setOpenByUser(true)
       }
     }
 
@@ -1254,12 +1326,15 @@ function App() {
     }
     // #R17-7: 시작 모드 스냅샷 — 다운로드 await 동안 모드가 바뀌면(stale 엔진) 중단.
     const startMode = modeRef.current
+    const startLoadEpoch = loadEpochRef.current
 
     // 타입 판별: framePair는 pair.id가 fp_*, videoScene은 vscene_*
     const isFramePair = typeof item.id === 'string' && item.id.startsWith('fp_')
     const projectName = ensureProjectName()
 
     const onUpdate = (id, newStatus, result = {}) => {
+      // 프로젝트/load 소유권이 바뀌었으면 id가 재사용된 새 프로젝트의 row를 보기 전에 중단한다.
+      if (loadEpochRef.current !== startLoadEpoch) return
       // #R23-7: retryVideoDownload 완료는 비동기라 preflight 모드 가드(아래 R17-7) 이후에도
       //   모드가 바뀔 수 있다. 시작 모드와 현재 모드가 다르면 stale 교차-모드 비디오 데이터로
       //   현재 모드 UI 를 덮어쓰지 않는다.
@@ -1268,26 +1343,20 @@ function App() {
         return
       }
       if (isFramePair) {
+        const fpOwner = framePairsRef.current.find(p => p.id === id)
+        // retry 완료 전에 행이 삭제됐으면 pair와 owner scene 모두 no-op.
+        if (!fpOwner) return
+
         setFramePairs(prev => prev.map(p =>
           p.id === id ? {
             ...p,
             ...buildVideoRetryFramePairPatch(newStatus, result),
           } : p
         ))
-        if (newStatus === 'complete' && result?.base64) {
-          const fp = framePairs.find(p => p.id === id)
-          // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
-          // rows have ownerSceneId=null and are skipped by the truthy guard.
-          if (fp?.ownerSceneId) {
-            scenesHook.updateScene(fp.ownerSceneId, {
-              videoI2V: result.base64,
-              videoI2VPath: result.videoPath || null,
-              videoI2VDisabled: null,
-              ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
-              // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 시 타임라인/모니터 갱신).
-              ...(result?.generatedAt ? { videoI2VGeneratedAt: result.generatedAt } : {}),
-            })
-          }
+        // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
+        // rows have ownerSceneId=null and are skipped by the truthy guard.
+        if (fpOwner.ownerSceneId) {
+          scenesHook.updateScene(fpOwner.ownerSceneId, buildI2VScenePatch(newStatus, result))
         }
       } else {
         videoScenesHook.updateVideoScene(id, buildVideoRetryScenePatch(newStatus, result))
@@ -1354,7 +1423,7 @@ function App() {
     // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
     onUpdate(item.id, 'pending', { error: null })
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
-  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, framePairs, scenesHook, videoScenesHook, t])
+  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t])
 
   const styleResolver = createStyleResolver({
     activeTab,
@@ -1393,6 +1462,7 @@ function App() {
     handleGenerateAllRefs,
     openSyncGate: openEmptyRefSyncGate,
     automationStartRef,
+    guardSceneBatchStart,
     toastM1Exclusions: exclusions => {
       const warning = buildM1FlowReferenceExclusionToast(exclusions)
       if (warning) toast.warning(t(warning.key, warning.params))
@@ -1408,6 +1478,7 @@ function App() {
       videoRunning: videoAutomation.isRunning,
       hasPendingBatch,
       retryInFlight: videoRetryInFlightRef.current,
+      refBatchRunning,
     })) return
     const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
     const imageTargetScenes = isImageBatchStart
@@ -1431,6 +1502,7 @@ function App() {
     // #R7-5: 비동기 preflight(getAccessToken/폴더확인) 동안 모드가 바뀌면 캡처한 엔진/모드가
     //   stale 해진다 — 시작 모드를 잠그고, 디스패치 직전 바뀌었으면 중단.
     const startMode = modeRef.current
+    const i2vStartEpoch = loadEpochRef.current
 
     // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
     // Flow 모드는 Flow 뷰/onFlowStatus 에서 인증을 처리하므로 BYOK 모달을 열지 않는다.
@@ -1481,9 +1553,15 @@ function App() {
       if (!readyCheck.ok) return
     }
 
-    // #R7-5: preflight 비동기 구간에서 모드가 바뀌었으면 중단(stale 엔진/모드로 제출 방지).
+    // #R7-5: preflight 비동기 구간에서 모드나 프로젝트 load 소유권이 바뀌었으면 중단
+    // (stale 엔진/프로젝트로 제출 방지).
     if (modeRef.current !== startMode) {
       console.warn('[App] handleStart aborted — mode changed during preflight')
+      return
+    }
+    if (loadEpochRef.current !== i2vStartEpoch) {
+      console.warn('[App] handleStart aborted — project changed during preflight')
+      toast.warning(t('errorSection.kind.project-changed'))
       return
     }
 
@@ -1517,6 +1595,7 @@ function App() {
           if (!guardAvailable) {
             // 스타일 선택 후 handleStart 로 재진입할 때 force 의도를 잃지 않도록 보존.
             pendingStyleForceRef.current = force
+            pendingStyleSourceRef.current = source
             setShowStylePicker(true)
             return
           }
@@ -1560,6 +1639,7 @@ function App() {
           return
         }
 
+        if (!guardSceneBatchStart(source)) return
         // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 id + 라벨 모두 시작 시점 snapshot
         setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
         if (modeRef.current === 'flow') {
@@ -1660,11 +1740,15 @@ function App() {
         //   먼저 동기화(칩으로 넣을 수 있게)한 뒤 patchedRefs 로 페이로드를 재빌드해 생성한다. 안 하면
         //   미동기화 @king 이 chip/ref 없이 텍스트로 나가 잘못된 영상 + quota 낭비.
         if (mode === 'flow') {
-          const unsyncedMentioned = selectUnsyncedMentionedRefs(selectedVideoScenes, scenesHook.references)
+          // 이미지 배치와 **같은 셀렉터**를 쓴다. T2V 페이로드는 parseSceneMentions(case-sensitive,
+          //   조사/공백 관용)로 칩을 붙이는데 게이트만 다른 매처로 고르면, `@hero`/`Hero` 는 동기화만
+          //   시켜 놓고 칩이 안 붙고 `@문지기가` 는 게이트가 아예 안 열린다. 수리 불가 ref 제외도 포함.
+          const unsyncedMentioned = [...new Set(
+            selectedVideoScenes.flatMap(scene => selectMentionSyncTargets({ scene, references: scenesHook.references }))
+          )]
           if (unsyncedMentioned.length > 0) {
-            setSyncGate({
-              refs: unsyncedMentioned,
-              proceed: (currentRefs) => startVideoTextWith(currentRefs || scenesHook.references),
+            openSyncGate({ refs: unsyncedMentioned }).then((res) => {
+              if (res.proceeded) startVideoTextWith(res.patchedRefs || scenesHook.references)
             })
             return
           }
@@ -1727,30 +1811,26 @@ function App() {
             seed: effectiveI2VSeed,
           }),
           onItemUpdate: (id, newStatus, result) => {
-            setFramePairs(prev => {
-              const updated = prev.map(p =>
-                p.id === id ? {
-                  ...p,
-                  ...buildVideoI2VResultPatch(newStatus, result),
-                } : p
-              )
+            // epoch를 owner lookup보다 먼저 검사해야 재사용된 fp_* id를 새 프로젝트 소유자로 오인하지 않는다.
+            if (loadEpochRef.current !== i2vStartEpoch) return
+            const fpOwner = framePairsRef.current.find(p => p.id === id)
+            // F2-1: 비동기 결과가 오기 전에 행이 삭제됐으면 owner scene도 건드리지 않는다.
+            if (!fpOwner) return
 
-              // ── I2V 상태/결과를 ownerSceneId 로 씬에 동기화 ── (prev 사용 — stale closure 방지)
-              // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted rows(null)는 스킵.
-              // - videoI2VStatus: t2v 의 videoT2VStatus 대응 신호 — 타임라인이 generating 시 빈칸+shimmer 판정.
-              // - 제출(generating) 시 비디오 데이터는 일부러 안 지운다(예전엔 videoClearPatch('i2v')).
-              //   타임라인/모니터가 generating 동안 화면에서만 숨기므로 stale 노출 없고, 데이터를 유지해야
-              //   에러/취소 시 status≠generating 으로 기존 비디오가 복귀한다. 완료 시 아래에서 새 걸로 교체.
-              const fpOwner = prev.find(p => p.id === id)
-              if (fpOwner?.ownerSceneId) {
-                // status + 경과 타이머 타임스탬프(videoI2VGeneratingStartedAt/EndedAt) + 완료 결과를
-                // 한 곳에서 — T2V 와 동일하게 generating 클립 경과 타이머가 동작하도록(00:00 회귀 방지).
-                const scenePatch = buildI2VScenePatch(newStatus, result)
-                scenesHook.updateScene(fpOwner.ownerSceneId, scenePatch)
-              }
+            setFramePairs(prev => prev.map(p =>
+              p.id === id ? {
+                ...p,
+                ...buildVideoI2VResultPatch(newStatus, result),
+              } : p
+            ))
 
-              return updated
-            })
+            // ── I2V 상태/결과를 ownerSceneId 로 씬에 동기화 ──
+            // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted rows(null)는 스킵.
+            // status + 경과 타이머 타임스탬프 + 완료 결과를 한 곳에서 적용한다.
+            if (fpOwner.ownerSceneId) {
+              const scenePatch = buildI2VScenePatch(newStatus, result)
+              scenesHook.updateScene(fpOwner.ownerSceneId, scenePatch)
+            }
           },
         }).finally(() => setHasPendingBatch(false))
         break
@@ -1782,6 +1862,10 @@ function App() {
     startInFlightRef.current = true
     try {
       const { __startMode, __startSource = 'ui', ...opts } = pendingStartOptions
+      if (!guardSceneBatchStart(__startSource)) {
+        setPendingStartOptions(null)
+        return
+      }
       // 이 경로는 handleStart 의 preflight(stale-mode/projectName/auth/flow-ready)를 우회하므로 재검증한다.
       // #R8-6: 모달이 열린 동안 모드가 바뀌었으면 중단.
       if (__startMode && modeRef.current !== __startMode) {
@@ -1846,6 +1930,10 @@ function App() {
         return
       }
       // API 모드는 M2 미노출 — 기존 tag proceed 직접 시작을 유지한다(§11.12).
+      if (!guardSceneBatchStart(__startSource)) {
+        setPendingStartOptions(null)
+        return
+      }
       setHasPendingBatch(true)
       start(opts).finally(() => setHasPendingBatch(false))
       setPendingStartOptions(null)
@@ -1862,93 +1950,60 @@ function App() {
   //   SPA 새로고침하고, 원래 생성(proceed 클로저)을 이어서 실행한다. 동시 실행 금지(공유 flowView).
   const handleSyncGateProceed = async () => {
     if (!syncGate || syncGateBusy) return
-    setSyncGateBusy(true)
-    let ok = 0, fail = 0
-    // #R34-fix: 패치를 로컬 배열에 누적해 첫 생성(start)에 currentRefs 로 넘긴다(React state 는 같은
-    //   tick 에 stale). character 는 업로드 성공이어도 displayName PATCH 실패면 'failed' 라 미동기화 —
-    //   patch.flowNameSyncStatus 로 실제 동기화 여부를 판정해 카운트한다(업로드성공=성공으로 오인 금지).
-    let patchedRefs = referencesRef.current
-    const syncFlowProjectId = flowProjectIdRef.current
-    const syncScope = `${modeRef.current ?? ''}::${settings.projectName ?? ''}`
-    const gateTargets = syncGate.refs.map((ref) => {
-      const refIndex = ref.id != null
-        ? patchedRefs.findIndex(r => r.id === ref.id)
-        : patchedRefs.findIndex(r => r === ref || (
-          r?.id == null && r?.type === ref.type && r?.name === ref.name
-          && (r?.filePath || r?.imagePath || '') === (ref.filePath || ref.imagePath || '')
-        ))
-      return { ref, refIndex }
-    })
-    const patchAt = (list, ref, refIndex, patch) => list.map((r, i) => (
-      ref.id != null ? r.id === ref.id : i === refIndex
-    ) ? { ...r, ...patch } : r)
+    // 이 핸들러가 처리하는 게이트를 고정한다 — 동기화가 도는 동안 다른 경로가 새 게이트를 열어도
+    // 자기 게이트만 닫는다(남의 모달을 닫으면 그 대기자가 영구히 매달린다).
+    const myGate = syncGate
+    beginSyncGateWork()
+    // 실행부는 services/syncGateRun 이 소유한다 — App 안에 두면 프로젝트 스코프 판정과
+    // forceRepair 전달을 되돌려도 전체 스위트가 초록불이었다(뮤테이션 실측).
     try {
-      for (const { ref, refIndex } of gateTargets) {
-        // #R37: syncGate.refs 는 모달을 열 때의 스냅샷이다. 루프 매 회차에 live 로 다시 판단한다 —
-        //   스냅샷을 넘기면 그 사이 끝난 sync 의 entityId 를 못 보고 재업로드로 빠져 중복이 생긴다.
-        //   (referencesRef 는 매 렌더 갱신되는 동기 최신값. scenesHook.references 는 이 async 루프에서 stale.)
-        const live = ref.id != null
-          ? referencesRef.current.find(r => r.id === ref.id)
-          : referencesRef.current[refIndex]
-        const decision = resolveSyncTarget(live)
-        if (decision.action === 'skip') {
-          if (decision.reason === 'already-synced') {
-            ok++
-            // ⚠️ live 를 patchedRefs 에 병합해야 한다 — 이 배열이 생성에 넘어가는 authoritative refs 다
-            //   (useAutomation currentRefsOverride). 안 하면 "동기화 성공"이라 보고해놓고 생성에는
-            //   entity 없는 클릭 시점 stale ref 가 넘어가 멘션이 안 붙는다.
-            patchedRefs = patchAt(patchedRefs, ref, refIndex, live)
-          } else {
-            fail++
-            console.warn('[App] sync-gate skip:', ref?.name, decision.reason)
-          }
-          continue
-        }
-        const res = await syncRefToFlow(decision.ref, genAPI.uploadReference, {
-          projectId: syncFlowProjectId,
-          scopeToken: syncScope,
-          refIndex,
-          // patch publish 를 flight 안에서 실행 — React setter 전에 같은 stale ref 가 재진입하는 창 제거.
-          publishResult: async (syncResult) => {
-            if (!syncResult.patch) return
-            patchedRefs = patchAt(patchedRefs, ref, refIndex, syncResult.patch)
-            updateReferences(prev => patchAt(prev, ref, refIndex, syncResult.patch))
-          },
-        })
-        const synced = res.ok && isRefSynced(res.patch ? { ...ref, ...res.patch } : ref)
-        if (synced) ok++
-        else { fail++; console.warn('[App] sync-gate sync incomplete for', ref?.name, res.error || res.patch?.flowNameSyncStatus) }
-      }
-      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
-      // required mention sync 는 all-or-nothing. 하나라도 실패하면 혼합 resolved/unresolved 는 하드 에러,
-      // all-unresolved+mediaId 는 plain-image 로 조용히 degrade 하므로 원래 생성을 시작하지 않는다.
-      const completion = planSyncGateCompletion(ok, fail)
-      if (!completion.proceed) {
-        toast.error(t('toast.flowSyncIncomplete', { ok, fail }))
-        return
-      }
-      toast.success(t('toast.flowSyncGenerationStarting', { ok }))
-      const proceed = syncGate.proceed
-      setSyncGate(null)
-      proceed?.(patchedRefs)
+      await runSyncGate({ gate: myGate }, {
+        getReferences: () => referencesRef.current || [],
+        getProjectName: () => projectNameRef.current,
+        isProjectLoading: () => projectLoadingRef.current,
+        getFlowProjectId: () => flowProjectIdRef.current,
+        getScopeToken: () => `${modeRef.current ?? ''}::${settings.projectName ?? ''}`,
+        syncRef: (ref, opts) => syncRefToFlow(ref, genAPI.uploadReference, opts),
+        publishRefs: updateReferences,
+        refreshComposer: () => {
+          const scopeToken = `${modeRef.current ?? ''}::${projectNameRef.current ?? ''}`
+          return runFlowComposerRefresh({
+            projectId: flowProjectIdRef.current,
+            scopeToken,
+            shouldRun: () => `${modeRef.current ?? ''}::${projectNameRef.current ?? ''}` === scopeToken,
+          })
+        },
+        onIncomplete: ({ ok, fail }) => toast.error(t('toast.flowSyncIncomplete', { ok, fail })),
+        onSuccess: ({ ok }) => toast.success(t('toast.flowSyncGenerationStarting', { ok })),
+        finish: (patchedRefs) => finishSyncGate(myGate, patchedRefs),
+        abort: (reason) => abortSyncGate(myGate, reason),
+      })
+    } catch (e) {
+      // 예기치 못한 예외로도 대기자를 남기지 않는다 — 남기면 모달이 화면에 그대로 있고
+      // 그 promise 를 기다리던 생성 큐가 영영 멈춘다.
+      console.error('[App] sync-gate failed:', e)
+      toast.error(t('toast.flowSyncIncomplete', { ok: 0, fail: myGate.refs?.length ?? 0 }))
+      abortSyncGate(myGate, 'sync-error')
     } finally {
-      setSyncGateBusy(false)
+      endSyncGateWork()
     }
   }
   const handleSyncGateCancel = () => {
     if (syncGateBusy) return
-    syncGate?.onCancel?.()
-    setSyncGate(null)
+    cancelSyncGate(syncGate)
   }
 
-  // ref batch는 generatingRefs.length만으로 부족 — preparingRefs(폴더/토큰 체크 ~ 첫 submit 사이)와
-  // stoppingRefs(중지 진행 중)도 "실행 중"에 포함해야 한다. 안 그러면 그 구간에 MCP가 batch 다시
-  // 호출 시 stop-restart 우회하고 동시에 두 batch가 진행되는 회귀 발생.
-  const refBatchRunning = preparingRefs || stoppingRefs || generatingRefs.length > 0
+  // ref batch는 generatingRefs.length만으로 부족 — refBatchActive가 batch-global preflight부터
+  // 아이템별 auth와 정리까지 덮고, stoppingRefs는 중지 정리 창을 잇는다.
+  const refBatchRunning = refBatchActive || stoppingRefs || generatingRefs.length > 0
 
   // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
   // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
   const handleStop = () => {
+    // 실행 중인 개별 씬(type: scene)은 그대로 두고, 공유 큐에서 아직 시작하지 않은
+    // 씬 배치만 reject한다. queue reject는 start(...).finally / emptyRefGate finally로
+    // 이어져 hasPendingBatch latch도 해제된다.
+    generationQueue.clearQueue?.('scene_batch')
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
     if (shouldStopRefWork({ refBatchRunning, gatePhase: emptyRefGate?.phase })) stopGenerateAllRefs()
@@ -1968,10 +2023,10 @@ function App() {
     selectedStyleRefId, setSelectedStyleRefId,
     refreshReviews, audioReviews,
     importByPath, audioPackage,
-    automationState: { isRunning, isPaused, progress, status, statusMessage },
+    automationState: { isRunning, isSceneBatchQueued, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
     refBatchRunning,
-    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning
+    isRunning: isRunning || isSceneBatchQueued || videoAutomation.isRunning || refBatchRunning
   })
 
   // 어느 자동화든 실행 중이면 true
@@ -1979,6 +2034,23 @@ function App() {
   //   편집/프로젝트 액션이 열려 있던 비일관성 차단. (anyRunning 은 videoRetryInFlightRef 를 제외하지만,
   //   #R24-2 로 모드 토글 차단용 반응형 videoRetryRunning 은 별도로 modeBusy 에 포함된다.)
   const anyRunning = isRunning || videoAutomation.isRunning || hasPendingBatch
+  // 개별 씬 생성은 MCP·프로그램 배치를 공유 큐에 대기시킬 수 있어야 한다. 로직 가드가 아니라
+  // 사용자가 동시에 scene batch를 넣을 수 있는 UI 진입점만 공통으로 차단한다.
+  const uiSceneBatchBlocked = !!generatingSceneId
+  // Header의 프로젝트/모드 액션과 네이티브 File 메뉴가 같은 전체 busy 계약을 쓴다.
+  const fullProjectBusy = anyRunning || refBatchRunning || videoRetryRunning || uiSceneBatchBlocked || thumbnailGenerating || galleryUploading
+
+  // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
+  // Recent 항목은 work folder 단위로 구분되므로 현재 work folder 경로도 함께 전달.
+  useMenuActions({
+    activeProject: settings.saveMode === 'folder' ? settings.projectName : null,
+    workFolder: settings.saveMode === 'folder' ? (localStorage.getItem('workFolderPath') || null) : null,
+    onNewProject: () => openSettings('storage'),
+    onOpenProject: handleProjectChange,
+    onShowModeSelector: clearMode,
+    busy: fullProjectBusy,
+    busyMessage: t('modeInfo.busySwitch'),
+  })
 
   // 생성 중: 가장 최근 생성된 이미지 씬으로 모니터를 점프 → "만들어지는 걸 본다".
   // (씬에 SRT/길이 타이밍이 있어야 위치 계산 가능 — 없으면 그대로 둠)
@@ -2050,8 +2122,8 @@ function App() {
           setPaywallReason('upgrade')
           setShowPaywallModal(true)
         }}
-        disabled={anyRunning || refBatchRunning || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
-        modeBusy={isRunning || videoAutomation.isRunning || refBatchRunning || hasPendingBatch || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
+        disabled={fullProjectBusy}
+        modeBusy={fullProjectBusy}
         storyActive={activeView === 'story'}
         onStoryClick={() => setActiveView(v => v === 'story' ? 'generate' : 'story')}
       />
@@ -2117,7 +2189,7 @@ function App() {
             </button> */}
             <button
               className={`tab tab-icon ${showReferences ? 'active' : ''}`}
-              onClick={() => setShowReferences(!showReferences)}
+              onClick={() => setOpenByUser(!showReferences)}
               title={t('tabs.references')}
             >
               🖼️ <span className="tab-label">Ref</span> ({references.length})
@@ -2143,6 +2215,7 @@ function App() {
         {showReferences && (
           <ReferencePanel
             references={references}
+            scenes={scenes}
             aspectRatio={settings.aspectRatio}
             appMode={mode}
             onUpdate={updateReferences}
@@ -2158,6 +2231,8 @@ function App() {
             generatingRefs={generatingRefs}
             stoppingRefs={stoppingRefs}
             preparingRefs={preparingRefs}
+            refBatchActive={refBatchActive}
+            refBatchRunning={refBatchRunning}
             hasPendingBatch={hasPendingBatch}
             selectedStyleRefId={selectedStyleRefId}
             onStyleRefChange={setSelectedStyleRefId}
@@ -2186,6 +2261,7 @@ function App() {
           {activeTab === 'text' && (
             <PromptInput
               value={scenes.map(s => s.prompt).join('\n')}
+              busyLines={imageBusyLines}
               onChange={handleTextChange}
               disabled={anyRunning}
               references={scenesHook.references}
@@ -2205,6 +2281,7 @@ function App() {
               // 비디오 prompt 가 편집 순간 다른 씬으로 당겨지는 회귀를 막는다. 마지막 trailing
               // 빈 줄만 정리해서 표시 깔끔하게.
               value={scenes.map(s => s.videoT2VPrompt || '').join('\n').replace(/\n+$/, '')}
+              busyLines={videoBusyLines}
               onChange={handleVideoTextChange}
               disabled={anyRunning}
               references={(scenesHook.references || []).filter(isUsableVideoReference)}
@@ -2382,7 +2459,9 @@ function App() {
                         ((activeTab === 'text' || activeTab === 'list') && scenes.length === 0) ||
                         (activeTab === 'video-text' && videoScenes.length === 0) ||
                         (activeTab === 'frame-to-video' && framePairs.length === 0) ||
-                        hasPendingBatch
+                        hasPendingBatch ||
+                        refBatchRunning ||
+                        uiSceneBatchBlocked
                       }
                     >
                       {(() => {
@@ -2400,7 +2479,7 @@ function App() {
                           <>
                             {emoji}{label && ` ${label}`}
                             {' ▸ '}
-                            <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); pendingStyleForceRef.current = false; setShowStylePicker(true) }}>
+                            <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); pendingStyleForceRef.current = false; pendingStyleSourceRef.current = 'ui'; setShowStylePicker(true) }}>
                               🎨{startChipLabelVisible(startTier) ? ` ${startStyleLabel}` : ''}
                             </span>
                           </>
@@ -2410,8 +2489,11 @@ function App() {
                     {/* 전체 재생성 ▾ — split-button 으로 생성 버튼에 붙는다 */}
                     {showGenerateMenu && (
                       <GenerateMenu
-                        onForceRegenerate={() => handleStart(undefined, { force: true })}
-                        disabled={hasPendingBatch}
+                        onForceRegenerate={() => {
+                          if (uiSceneBatchBlocked) return
+                          handleStart(undefined, { force: true })
+                        }}
+                        disabled={hasPendingBatch || refBatchRunning || uiSceneBatchBlocked}
                       />
                     )}
                   </div>
@@ -2437,7 +2519,7 @@ function App() {
               onClick={() => {
                 // 큐 대기(hasPendingBatch, isRunning 아직 false) 구간에도 노출될 수 있으니
                 // snapshot 을 덮기 전에 먼저 차단 — Start 버튼의 disabled 조건과 동일선상.
-                if (anyRunning || hasPendingBatch) return
+                if (anyRunning || hasPendingBatch || uiSceneBatchBlocked) return
                 // ⚠️ 직접 바인딩(`onClick={retryErrors}`) 시 React SyntheticEvent 가
                 //    options 인자로 들어가서 projectName 누락 → start() 가 'Untitled' 로
                 //    폴백 → 모든 저장이 다른 프로젝트로 잘못 가는 데이터 손실 회귀.
@@ -2560,7 +2642,7 @@ function App() {
               onRetry={(id) => {
                 // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
                 // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
-                if (anyRunning || hasPendingBatch) return
+                if (anyRunning || hasPendingBatch || uiSceneBatchBlocked) return
                 const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                   ? settings.seedNo : null
                 // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
@@ -2664,7 +2746,7 @@ function App() {
             onRetry={(id) => {
               // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
               // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
-              if (anyRunning || hasPendingBatch) return
+              if (anyRunning || hasPendingBatch || uiSceneBatchBlocked) return
               const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                 ? settings.seedNo : null
               // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
@@ -3006,9 +3088,11 @@ function App() {
           selectedId={selectedStyleRefId}
           onSelect={(id) => {
             setSelectedStyleRefId(id)
+            const startSource = pendingStyleSourceRef.current
             if (id) {
               setShowStylePicker(false)
-              handleStart(id, { force: pendingStyleForceRef.current })
+              if (!guardSceneBatchStart(startSource)) return
+              handleStart(id, { force: pendingStyleForceRef.current, source: startSource })
               return
             }
             // 자동 카드 (id === null) — availability는 styleResolver가 탭별로 판단:
@@ -3017,7 +3101,8 @@ function App() {
             // requireStyle=false면 어느 탭이든 통과.
             if (styleResolver.autoAvailable || !settings.requireStyle) {
               setShowStylePicker(false)
-              handleStart(null, { force: pendingStyleForceRef.current })
+              if (!guardSceneBatchStart(startSource)) return
+              handleStart(null, { force: pendingStyleForceRef.current, source: startSource })
             } else {
               toast.warning(t('toast.autoMatchNoMatchesPickStyle'))
             }
@@ -3069,6 +3154,15 @@ function App() {
           setSceneToDelete(null)
         }}
         onCancel={() => setSceneToDelete(null)}
+        t={t}
+      />
+
+      {/* Flow 자동 생성 실패 후, Flow 가 baseline 과 다른 프로젝트를 보고 있을 때 뜬다.
+          연결하면 그 Flow 프로젝트에 앞으로의 캐릭터·씬이 만들어진다(자동 채택은 하지 않는다). */}
+      <FlowProjectAdoptModal
+        projectId={flowAdoptPrompt.candidate}
+        onConfirm={flowAdoptPrompt.confirm}
+        onCancel={flowAdoptPrompt.cancel}
         t={t}
       />
 

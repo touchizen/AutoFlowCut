@@ -45,6 +45,17 @@ describe('clearedImageFields — 이미지 제거 시 entity 도 함께 비운�
     expect(clearedImageFields()).toEqual({
       data: null, filePath: null, mediaId: null, caption: null, dataStorage: null,
       entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null,
+      status: 'pending', errorMessage: null, errorKind: null, error: null,
+    })
+  })
+
+  it('done/error 상태도 pending 으로 되돌리고 이전 오류를 지운다', () => {
+    const ref = {
+      id: 2, status: 'done', errorMessage: 'old message', errorKind: 'old-kind', error: new Error('old'),
+    }
+
+    expect({ ...ref, ...clearedImageFields() }).toMatchObject({
+      status: 'pending', errorMessage: null, errorKind: null, error: null,
     })
   })
 

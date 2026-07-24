@@ -1268,6 +1268,34 @@ describe('useFlowEngine (#R33) — staleMention propagation', () => {
 // ---------------------------------------------------------------------------
 // #R33: planMentionRouting / planUnresolvedMentionFallback — pure unit tests
 // ---------------------------------------------------------------------------
+// 개별 씬 생성이 이 결과를 보고 "동기화 후 재시도"를 제안한다 — 문자열이 아니라 필드로 판정한다.
+describe('generateImage: 미해결 멘션 결과 계약', () => {
+  it('하드 실패면 errorKind 와 unresolvedNames 를 함께 돌려준다', async () => {
+    const { result } = renderHook(() => useFlowEngine({ mode: 'flow', projectId: 'p' }))
+    const refs = [
+      { id: 1, name: 'hero', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' },
+      { id: 2, name: 'king', type: 'character', entityId: 'e2', flowNameSyncStatus: 'failed', mediaId: 'km' },
+    ]
+    const res = await result.current.generateImage('@hero and @king', [], { references: refs })
+    expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('unresolved-mentions')
+    expect(res.unresolvedNames).toEqual(['king'])
+  })
+
+  // 배치는 submitGeneration 을 쓴다 — 두 진입점이 같은 계약이어야 호출부가 하나로 복구할 수 있다.
+  it('submitGeneration 도 같은 계약으로 돌려준다', async () => {
+    const { result } = renderHook(() => useFlowEngine({ mode: 'flow', projectId: 'p' }))
+    const refs = [
+      { id: 1, name: 'hero', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' },
+      { id: 2, name: 'king', type: 'character', entityId: 'e2', flowNameSyncStatus: 'failed', mediaId: 'km' },
+    ]
+    const res = await result.current.submitGeneration('@hero and @king', [], { references: refs })
+    expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('unresolved-mentions')
+    expect(res.unresolvedNames).toEqual(['king'])
+  })
+})
+
 describe('#R33: planMentionRouting (pure)', () => {
   const synced = { id: 1, name: 'hero', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' }
   const unsyncedMedia = { id: 2, name: 'king', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: 'km' }
@@ -1305,11 +1333,24 @@ describe('#R33: planMentionRouting (pure)', () => {
     expect(r.error).toContain('king')
   })
 
+  // 호출부가 "무엇을 고쳐야 하나"를 알아야 그 자리에서 동기화를 제안할 수 있다. 사람이 읽는
+  // 에러 문자열을 파싱해서 이름을 캐내면 파서가 둘이 되고 문구를 바꾸는 순간 조용히 깨진다.
+  it('error carries the unresolved names as data, not only in the message', () => {
+    const r = planMentionRouting('@hero and @king', [], [synced, unsyncedMedia])
+    expect(r.unresolvedNames).toEqual(['king'])
+  })
+
+  it('braced unresolved name is carried whole', () => {
+    const r = planMentionRouting('@{도둑 우두머리} 등장', [], [synced])
+    expect(r.unresolvedNames).toEqual(['도둑 우두머리'])
+  })
+
   it('braced unresolved error reports the full inner name', () => {
     const r = planMentionRouting('@{도둑 우두머리} 등장', [], [synced])
     expect(r).toEqual({
       kind: 'error',
       error: 'Unresolved @mention(s): 도둑 우두머리',
+      unresolvedNames: ['도둑 우두머리'],
     })
   })
 

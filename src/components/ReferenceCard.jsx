@@ -6,12 +6,13 @@ import { useState, useRef, useEffect } from 'react'
 import { REFERENCE_TYPES } from '../config/defaults'
 import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
+import { applyEntityRegistrationPatch, clearedImageFields } from '../utils/refEntityRegistration'
 import { needsComposerRefresh, refBadgeState, isSyncInFlight } from '../utils/flowCharacterSync'
-import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
+import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import HoverImageBalloon from './HoverImageBalloon'
 import LazyImage from './LazyImage'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
+import { toast } from './Toast'
 
 export default function ReferenceCard({
   reference,
@@ -28,6 +29,7 @@ export default function ReferenceCard({
   getScopeToken,  // #R34-fix: live 스코프 토큰(부모 ReferencePanel 제공). 업로드 중 프로젝트/모드 전환 감지.
   appMode,        // 배지 판정용 — Flow 엔티티 동기화는 flow 모드의 character 에만 의미가 있다.
   flowProjectId = null,
+  refBatchRunning = false,
 }) {
   const cardRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -53,6 +55,11 @@ export default function ReferenceCard({
   // 파일 처리 공통 함수
   const processFile = async (file) => {
     if (!file || !file.type.startsWith('image/')) return
+    if (refBatchRunning) {
+      console.warn('[ReferenceCard] ref batch running — ignoring direct upload:', reference?.name)
+      toast.info(t('reference.batchUploadBlocked'))
+      return
+    }
     // #R37: 이 ref 의 동기화/업로드가 이미 진행 중이면 새 업로드를 시작하지 않는다. 진행 중인 캐릭터
     //   sync 위로 파일을 드롭하거나 빠르게 두 번 드롭하면 /characters 업로드가 겹쳐 Flow 가 동명의
     //   entity 를 하나 더 만든다(중복의 또 다른 출구). 공유 flowView DOM 충돌(ERR_ABORTED)도 막는다.
@@ -190,9 +197,15 @@ export default function ReferenceCard({
         errorMessage: finalErrorMessage,
       })
 
-      // #R33: 캐릭터 entity 등록 직후 'Untitled Character' stale 캐시/멘션 피커 옛 이름 방지(비차단).
-      //   main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
-      if (needsComposerRefresh(reference, uploadResult)) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      // #R33: 캐릭터 entity 등록 직후 목록 캐시/멘션 피커의 옛 이름 방지(비차단).
+      //   상세 DOM 반영 성공값만으로 마지막 목록 캐시까지 갱신됐다고 보지 않는다.
+      if (needsComposerRefresh(reference, uploadResult)) {
+        // 현재 replace-upload 작업이 tail 을 놓은 뒤 실행돼야 하므로 여기서는 예약만 한다.
+        void runFlowComposerRefresh({
+          ...flowOperationOpts,
+          shouldRun: typeof getScopeToken === 'function' ? () => getScopeToken() === startScope : undefined,
+        }).catch(() => {})
+      }
      }
      // #R34-fix: onUpload reject/예외 시에도 finishUpload() 보장 + unhandled rejection 방지.
      try {
@@ -261,6 +274,7 @@ export default function ReferenceCard({
         type="file"
         ref={fileInputRef}
         accept="image/*"
+        disabled={refBatchRunning}
         onChange={handleFileSelect}
         style={{ display: 'none' }}
       />
@@ -294,7 +308,7 @@ export default function ReferenceCard({
           </button>
           {showRemoveMenu && (
             <div className="remove-menu" onMouseLeave={() => setShowRemoveMenu(false)}>
-              <button onClick={() => { setShowRemoveMenu(false); onUpdate(index, { ...reference, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }) }}>
+              <button onClick={() => { setShowRemoveMenu(false); onUpdate(index, { ...reference, ...clearedImageFields() }) }}>
                 {/* #R29-1: 이미지 제거 시 Flow 캐릭터 엔티티 필드도 비운다 — 안 그러면 sceneMentions 가
                     여전히 mention-eligible 로 보고 @name 이 옛 캐릭터를 주입한다(ReferenceDetailModal 과 동일 정책). */}
                 {t('reference.clearImage') || '이미지만 제거'}

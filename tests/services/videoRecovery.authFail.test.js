@@ -22,6 +22,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   window.removeEventListener('flow-login-expired', onAuthExpired)
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 
@@ -80,6 +81,26 @@ describe('recoverInFlightVideos — cross-engine guard (#R34-1)', () => {
       projectName: 'p', mode: 'api', checkVideoStatus, downloadVideo: vi.fn(), onFramePairUpdate: vi.fn(),
     })
     expect(checkVideoStatus).toHaveBeenCalled()
+  })
+
+  it('pending 작업 재점화 patch에 framePair 경과 시간 기준을 넣는다', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-23T00:00:00Z'))
+    const onFramePairUpdate = vi.fn()
+
+    await recoverInFlightVideos({
+      framePairs: [{ id: 'fp_1', generationId: API_OP, status: 'pending' }],
+      projectName: 'p',
+      mode: 'api',
+      checkVideoStatus: vi.fn().mockResolvedValue({ success: true, statuses: [{ status: 'pending' }] }),
+      downloadVideo: vi.fn(),
+      onFramePairUpdate,
+    })
+
+    expect(onFramePairUpdate).toHaveBeenCalledWith('fp_1', {
+      status: 'generating',
+      generatingStartedAt: Date.now(),
+    })
   })
 
   it('legacy: mode undefined → no engine filtering (back-compat)', async () => {

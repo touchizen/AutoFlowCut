@@ -60,18 +60,31 @@ describe('StoryView 자동 진행(전체 진행)', () => {
     expect(screen.getByRole('button', { name: /전체 진행/ })).toBeDisabled()
   })
 
-  it('Codex-Med: 제목 자동생성 실패로 scenes를 못 시작하면 자동 진행이 멈춘다(stuck 방지)', async () => {
+  it('C: 제목이 없어도 씬분리가 제목 자동생성(LLM) 없이 즉시 시작된다(전환이 제목 생성에 안 막힘)', async () => {
     const start = vi.fn()
-    // 제목 없음 + generateTitle 실패 → resolveTitle null → handleSplit false → autoRunning 해제
-    const p = pipeline(mkSteps(), { start, generateTitle: vi.fn().mockRejectedValue(new Error('boom')) })
+    // 제목 없음 → 예전엔 generateTitle을 기다려 전환이 막혔다. C에서는 제목을 안 만들고 바로 진행.
+    const generateTitle = vi.fn().mockResolvedValue({ title: 'T' })
+    const p = pipeline(mkSteps(), { start, generateTitle })
     p.state.input = { type: 'title', title: '' }
+    render(<StoryView pipeline={p} voices={[]} onClose={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '전체 진행' }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('scenes', expect.objectContaining({ scriptOverride: '대본 본문' })))
+    // 핵심: 제목 자동생성 LLM을 호출하지 않는다(이게 전환 지연의 원인이었다).
+    expect(generateTitle).not.toHaveBeenCalled()
+    // 빈 제목은 넘기지 않아 기존 state.input.title을 덮지 않는다.
+    expect(start.mock.calls.find((c) => c[0] === 'scenes')[1].title).toBeUndefined()
+  })
+
+  it('stuck 방지: scenes enqueue가 실패(busy)하면 자동 진행이 멈춘다', async () => {
+    const start = vi.fn().mockResolvedValue({ error: 'busy' })
+    const p = pipeline(mkSteps(), { start })
     render(<StoryView pipeline={p} voices={[]} onClose={vi.fn()} />)
     const btn = screen.getByRole('button', { name: '전체 진행' })
     fireEvent.click(btn)
-    // 실패 후 autoRunning이 풀려 버튼이 다시 활성(=stuck 아님)
+    await waitFor(() => expect(start).toHaveBeenCalledWith('scenes', expect.anything()))
+    // enqueue 실패 → handleSplit false → autoRunning 해제(버튼 다시 활성, stuck 아님)
     await waitFor(() => expect(btn).not.toBeDisabled())
-    expect(btn.textContent).toContain('전체 진행') // '자동 진행 중'이 아님
-    expect(start).not.toHaveBeenCalled()
+    expect(btn.textContent).toContain('전체 진행')
   })
 
   it('오디오 자동을 켜면 audio도 자동 실행 대상', async () => {

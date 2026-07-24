@@ -21,6 +21,7 @@ import {
   buildUploadImageBody,
   parseUploadImageResponse,
   buildCharactersUrl,
+  normalizeEntityDisplayName,
 } from '../../electron/flow-character-api.js'
 
 describe('buildCharactersUrl (A2 bound-project /characters URL)', () => {
@@ -105,6 +106,16 @@ describe('buildEntityRegisterBody', () => {
     expect(b.entity.entityInfo.displayName).toBe('싸이코')
     expect(b.entity.entityInfo.characterInfo.imageReferences).toEqual([{ workflowId: 'W1' }, {}])
     expect(b.updateMask).toBe('entityInfo.displayName,entityInfo.characterInfo.imageReferences')
+  })
+})
+
+describe('normalizeEntityDisplayName — 빈 이름 등록 차단 판정', () => {
+  it.each([undefined, null, '', '   '])('빈 값(%s)은 등록 가능한 이름이 아니다', (value) => {
+    expect(normalizeEntityDisplayName(value)).toBeNull()
+  })
+
+  it('이름이 있으면 기존 등록 동작을 바꾸지 않도록 원문을 돌려준다', () => {
+    expect(normalizeEntityDisplayName('  싸이코  ')).toBe('  싸이코  ')
   })
 })
 
@@ -256,4 +267,3 @@ describe('isStaleEntityErrorBody', () => {
     expect(isStaleEntityErrorBody('not json')).toBe(false)
   })
 })
-

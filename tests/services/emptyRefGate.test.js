@@ -46,6 +46,7 @@ const makeDeps = (over = {}) => {
       return { ok: true, outcome: 'completed', requestedKeys: ['id:ghost'], attemptedKeys: ['id:ghost'], succeededKeys: ['id:ghost'], skipped: [], failed: [], currentRefs: state.refs }
     }),
     openSyncGate: vi.fn(async () => ({ proceeded: true, patchedRefs: null })),
+    canStartScenes: vi.fn(() => true),
     startScenes: vi.fn(async opts => { calls.push('startScenes'); return opts }),
     toastM1Exclusions: vi.fn(),
     gateView: {
@@ -68,6 +69,19 @@ describe('runEmptyRefGateFlow — 빈카드 없음', () => {
     expect(deps.subscriptionPreGate).not.toHaveBeenCalled()  // 빈카드 있을 때만 사전 gate(§6.6)
     expect(deps.startScenes).toHaveBeenCalledTimes(1)
     expect(result.started).toBe(true)
+  })
+
+  it('launch 직전 live UI guard가 닫히면 씬 배치를 시작하지 않는다', async () => {
+    const deps = makeDeps({
+      getLiveRefs: () => [filledGhost],
+      canStartScenes: vi.fn(() => false),
+    })
+
+    const result = await runEmptyRefGateFlow(baseContext(), deps)
+
+    expect(deps.canStartScenes).toHaveBeenCalledTimes(1)
+    expect(deps.startScenes).not.toHaveBeenCalled()
+    expect(result).toEqual({ started: false, reason: 'scene-generation-active' })
   })
 })
 

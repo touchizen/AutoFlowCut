@@ -14,7 +14,7 @@ export function buildI2VScenePatch(newStatus, result = {}) {
   const patch = { videoI2VStatus: newStatus }
   // 경과 타이머용 타임스탬프 — T2V(videoT2VGeneratingStartedAt/EndedAt)와 동일 규칙.
   if (newStatus === 'generating') {
-    patch.videoI2VGeneratingStartedAt = Date.now()
+    patch.videoI2VGeneratingStartedAt = result?.generatingStartedAt ?? Date.now()
     patch.videoI2VGeneratingEndedAt = null
   } else if (newStatus === 'complete' || newStatus === 'error') {
     patch.videoI2VGeneratingEndedAt = Date.now()

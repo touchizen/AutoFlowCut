@@ -242,6 +242,7 @@ export async function recoverInFlightVideos({
         // 다음 폴링/사용자 액션에서 status 다시 체크.
         onFramePairUpdate(fp.id, {
           status: 'generating',
+          generatingStartedAt: Date.now(),
         })
       }
     }

@@ -166,6 +166,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
 
     expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
     expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.refBatchActive).toBe(true)
     expect(result.current.generatingRefs).toEqual([0])
     expect(result.current.stoppingRefs).toBe(false)
 
@@ -176,6 +177,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
       })
       await batchPromise
     })
+    expect(result.current.refBatchActive).toBe(false)
   })
 
   it('batch enqueue 전에 남은 stop은 새 batch 시작에서 stale로 버리고 정상 실행한다', async () => {
@@ -280,6 +282,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
     // Batch execute는 앞선 individual job 뒤에 대기 중이라 lifecycle state가 아직 비어 있다.
     // 이 창에서도 외부(App gate busy) Stop이 callback에 도달하면 queued stop version이 소비돼야 한다.
     expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.refBatchActive).toBe(false)
     expect(result.current.generatingRefs).toEqual([0])
 
     act(() => result.current.stopGenerateAllRefs())
@@ -363,6 +366,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
 
     // 실제 회귀 창: scene job만 실행 중이라 ref batch lifecycle state는 아직 하나도 켜지지 않는다.
     expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.refBatchActive).toBe(false)
     expect(result.current.generatingRefs).toEqual([])
     expect(result.current.stoppingRefs).toBe(false)
 
@@ -466,6 +470,7 @@ describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
 
     // P1 fix: cleanupPrepareAndReturn이 두 플래그 모두 false로
     expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.refBatchActive).toBe(false)
     expect(result.current.stoppingRefs).toBe(false)
   })
 
@@ -501,6 +506,7 @@ describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
 
     // 핵심 가드: throw에도 flags가 false로 정리됨
     expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.refBatchActive).toBe(false)
     expect(result.current.stoppingRefs).toBe(false)
   })
 })
@@ -599,6 +605,8 @@ describe('useReferenceGeneration — stop during batch', () => {
       state.some(r => r.id === 1 && r.status === 'error' && r.errorMessage === 'Timed out')
     )
     expect(errorState).toBeUndefined()
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.refBatchActive).toBe(false)
   })
 
   it('reverts stopped refs to pending status with no errorMessage', async () => {
