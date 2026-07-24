@@ -15,7 +15,7 @@ import { isStyleReference } from '../services/styleService'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { clampInt } from '../utils/clampInt'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
-import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
+import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { isReferenceImageEmpty, referenceGuardKey, sourceAvailable } from '../utils/refImageGuard'
 
@@ -39,7 +39,7 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
+export function useReferenceGeneration({ settings, references, scenes = [], scenesRef = null, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, selectedStyleRefIdRef = null, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
@@ -69,6 +69,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   }
   const referencesRef = useRef(references)
   referencesRef.current = references  // 매 렌더마다 최신 상태 반영
+  // 스타일 선택도 live ref 로 읽는다 — 배치/생성이 옛 렌더의 클로저로 stale selectedStyleRefId(null)를
+  //   읽어, 방금 픽커에서 고른 스타일이 첫 시도에 안 먹고 실사로 나가는 레이스를 없앤다.
+  //   App 이 setter 에서 동기 갱신하는 ref 를 우선한다(리렌더 전에도 최신값). 없으면(단위 테스트 등)
+  //   prop 기반 render-time ref 로 폴백한다.
+  const _ownSelectedStyleRefIdRef = useRef(selectedStyleRefId)
+  _ownSelectedStyleRefIdRef.current = selectedStyleRefId
+  const liveSelectedStyleRefIdRef = selectedStyleRefIdRef ?? _ownSelectedStyleRefIdRef
   const getLiveProjectName = () => projectNameRef?.current ?? settings.projectName
   const batchGeneratingRefCountsRef = useRef(new Map())
   const addBatchGeneratingRef = (index) => {
@@ -263,12 +270,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     //   안 그러면 이미지만 새것이고 id 는 옛 캐릭터를 가리켜, 이후 Sync 가 repair 로 빠져 옛 entity 만
     //   다시 PATCH 하고 새 이미지는 영영 업로드되지 않는다(ReferenceCard #R31-3 와 동일 정책).
     const entityPatch = entityPatchForNewImage({ ...ref, mediaId }, genResult)
-    // 서버엔 이름이 등록됐지만 SPA 가 옛 이름('제목 없는 캐릭터')을 캐시한 채면 @멘션이 새 이름을
-    //   못 찾는다. main 이 상세페이지 이름칸 타이핑으로 스토어를 갱신하지 못했을 때만(nameApplied:false)
-    //   기존 방식(프로젝트 나갔다 재진입)으로 폴백한다 — 성공했으면 그 왕복을 통째로 건너뛴다.
-    if (genResult?.entityId && genResult.nameApplied === false) {
-      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
-    }
+    // 상세 DOM의 nameApplied 성공 여부와 무관하게 목록/멘션 피커 캐시는 옛 이름을 유지할 수 있다.
+    // character entity가 생겼으면 generate-character 보호 구간이 settle 된 뒤 호출측이 refresh를 await한다.
+    const composerRefreshNeeded = !!genResult?.entityId
     const resolvedIndex = resolveReferenceIndex(
       referencesRef.current,
       index,
@@ -295,7 +299,11 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       current => ({ ...current, ...donePatch })
     )
     releaseBusy()
-    return { success: true, savedToMemory: filePath === null && settings.saveMode === 'folder' }
+    return {
+      success: true,
+      savedToMemory: filePath === null && settings.saveMode === 'folder',
+      composerRefreshNeeded,
+    }
   }
 
   // ─── 공통: effectiveStyleId 결정 ───
@@ -306,15 +314,20 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   const _resolveEffectiveStyleId = (overrideStyleId) => {
     // ref 도메인 — createStyleResolver의 ref-aware fallback 사용
     // (activeTab 무관 — ref 생성은 항상 동일 fallback chain)
+    // selectedStyleRefId 는 live ref 로 읽는다 — 방금 픽커에서 고른 값이 옛 클로저의 stale null 로
+    //   덮이지 않게(레이스: 첫 배치가 무스타일로 나가던 원인).
+    const liveSelectedStyleRefId = liveSelectedStyleRefIdRef.current
     const resolver = createStyleResolver({
       activeTab: 'list',  // value irrelevant for resolveEffectiveStyleIdForRef
+      // App/useScenes의 setter가 React commit 전에 동기 갱신하는 ref를 우선한다.
+      scenes: scenesRef?.current ?? scenes,
       references: referencesRef.current,
-      selectedStyleRefId,
+      selectedStyleRefId: liveSelectedStyleRefId,
       t,
       isKo: false,  // labels not used here
     })
     const effective = resolver.resolveEffectiveStyleIdForRef(overrideStyleId)
-    if (effective && !overrideStyleId && !selectedStyleRefId) {
+    if (effective && !overrideStyleId && !liveSelectedStyleRefId) {
       console.log('[StyleRef] Auto-detected style card:', effective)
     }
     return effective
@@ -354,6 +367,20 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     const releaseGeneratingBusy = () => {
       if (batchBusy) removeBatchGeneratingRef(index)
       else setGeneratingRefs(prev => prev.filter(i => i !== index))
+    }
+    let characterOperationTimedOut = false
+    let characterScopeToken = null
+    const failureGuardKey = guardKey ?? referenceGuardKey(ref)
+    const markFlowRefreshFailed = () => {
+      if (`flow::${getLiveProjectName() ?? ''}` !== characterScopeToken) return
+      const applyPatch = prev => patchReferenceByIdentity(
+        prev,
+        index,
+        failureGuardKey,
+        current => ({ ...current, flowNameSyncStatus: 'failed', registered: false })
+      )
+      referencesRef.current = applyPatch(referencesRef.current)
+      setReferences(prev => applyPatch(prev))
     }
 
     // 폴더 설정 + Flow 프로젝트 준비 + 토큰 확인 (배치 모드에서는 권한 체크 스킵)
@@ -422,7 +449,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
         const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId } })
 
         if (result.success && result.images?.length > 0) {
-          return await _processAndSaveImage(
+          const processed = await _processAndSaveImage(
             result.images,
             submitIndex,
             submitRef,
@@ -432,6 +459,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             index,
             batchBusy,
           )
+          // coordinator timeout은 호출자만 먼저 풀고 inner는 계속된다. 늦게 끝난 저장이 synced를
+          // 다시 쓰더라도 repair 경로가 사라지지 않게 마지막 상태를 failed로 되돌린다.
+          if (characterOperationTimedOut && processed?.success) markFlowRefreshFailed()
+          return processed
         } else if (!result.success) {
           const errorMsg = result.error || ''
           const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
@@ -464,10 +495,12 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       }
 
       if (genAPI?.mode === 'flow' && ref.type === 'character') {
+        const scopeToken = `flow::${getLiveProjectName() ?? ''}`
+        characterScopeToken = scopeToken
         const coordinated = await runFlowCharacterOperation({
           ref,
           projectId: flowProjectId,
-          scopeToken: `flow::${getLiveProjectName() ?? ''}`,
+          scopeToken,
           refIndex: index,
           operation: 'generate-character',
           task: generateAndPublish,
@@ -482,6 +515,40 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           ))
           return { success: false, busy: true, error: coordinated.error }
         }
+        // 단건/MCP는 지금 refresh까지 await한다. 배치는 모든 character op가 settle된 뒤
+        // outer character phase가 한 번만 refresh하도록 신호만 올린다.
+        if (batchBusy && coordinated?.composerRefreshNeeded) {
+          return { ...coordinated, composerRefreshScopeToken: scopeToken }
+        }
+        if (coordinated?.composerRefreshNeeded) {
+          addGeneratingBusy()
+          try {
+            const refreshResult = await runFlowComposerRefresh({
+              projectId: flowProjectId,
+              scopeToken,
+              shouldRun: () => `flow::${getLiveProjectName() ?? ''}` === scopeToken,
+            })
+            if (refreshResult?.success !== true) {
+              markFlowRefreshFailed()
+              return {
+                ...coordinated,
+                success: true,
+                refreshFailed: true,
+                error: refreshResult?.error || 'Composer refresh failed',
+              }
+            }
+          } catch (error) {
+            markFlowRefreshFailed()
+            return {
+              ...coordinated,
+              success: true,
+              refreshFailed: true,
+              error: error?.message || String(error),
+            }
+          } finally {
+            releaseGeneratingBusy()
+          }
+        }
         return coordinated
       }
       return await generateAndPublish()
@@ -490,6 +557,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const errorMsg = error.message || ''
       const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
+      const operationTimedOut = genAPI?.mode === 'flow'
+        && ref.type === 'character'
+        && errorMsg.includes('Flow character operation timed out')
+      if (operationTimedOut) {
+        characterOperationTimedOut = true
+        markFlowRefreshFailed()
+      }
       toast.error(t('toast.generateError', { error: error.message }))
       releaseGeneratingBusy()
       setReferences(prev => patchReferenceByIdentity(
@@ -501,7 +575,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       if (guardKey && resolveReferenceIndex(referencesRef.current, index, guardKey) < 0) {
         return { success: false, skipped: true, skipStage: 'not-found' }
       }
-      return { success: false, authError: isAuthError, serverError: isServerError }
+      return { success: false, authError: isAuthError, serverError: isServerError, operationTimedOut }
     }
 
     return { success: false }
@@ -596,6 +670,12 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     const targetKeySet = targetRefKeys == null ? null : new Set(targetRefKeys)
     const isTargeted = targetKeySet !== null
     const requestedKeys = targetRefKeys == null ? [] : [...targetRefKeys]
+    // batch가 선택한 targets와 Flow projectId는 시작 프로젝트에 묶여 있다. 중간에 live project가
+    // 바뀌어도 새 scope를 권위로 채택하지 않고, 이 authority에서 벗어나면 remaining work를 중단한다.
+    const batchFlowAuthority = {
+      scopeToken: `flow::${getLiveProjectName() ?? ''}`,
+      projectId: flowProjectId,
+    }
 
     // 선택 시 stable key도 같이 캡처한다. targeted batch가 오래 기다리는 동안 index는 이동할 수 있다.
     const pickTargets = (refMatches) => referencesRef.current
@@ -615,8 +695,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       .filter(Boolean)
 
     const styleTargets = pickTargets(isStyleReference)
-    const nonStyleTargets = pickTargets(ref => !isStyleReference(ref))
-    const allTargets = [...styleTargets, ...nonStyleTargets]
+    const isFlowCharacter = ref => genAPI?.mode === 'flow' && ref.type === 'character'
+    const characterTargets = pickTargets(ref => !isStyleReference(ref) && isFlowCharacter(ref))
+    const otherTargets = pickTargets(ref => !isStyleReference(ref) && !isFlowCharacter(ref))
+    const allTargets = [...styleTargets, ...characterTargets, ...otherTargets]
 
     // 구조화 결과 accumulator — 기존 setReferences 상태 갱신은 그대로 두고,
     // fail-closed 호출자가 읽을 lifecycle 결과만 별도로 집계한다.
@@ -624,6 +706,15 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     const attemptedKeys = new Set()
     const failedByKey = new Map()
     const skippedByKey = new Map()
+    const pendingComposerRefreshByKey = new Map()
+    let blockRemainingPhases = false
+    let batchScopeChanged = false
+    const isBatchScopeCurrent = () => genAPI?.mode !== 'flow'
+      || `flow::${getLiveProjectName() ?? ''}` === batchFlowAuthority.scopeToken
+    const blockForScopeChange = () => {
+      batchScopeChanged = true
+      blockRemainingPhases = true
+    }
     const recordFail = (key, stage, error) => {
       if (!failedByKey.has(key)) {
         failedByKey.set(key, { key, stage, error: error ?? null })
@@ -671,7 +762,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       }
 
       const stopped = allTargets.length > 0 &&
-        (stopRequestedRef.current || authStoppedRef.current)
+        (stopRequestedRef.current || authStoppedRef.current || batchScopeChanged)
       const failed = [...failedByKey.values()]
       const outcome = stopped
         ? 'stopped'
@@ -690,6 +781,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
         skipped: [...skippedByKey.values()],
         failed,
         currentRefs: referencesRef.current,
+        ...(batchScopeChanged ? { scopeChanged: true } : {}),
       }
     }
 
@@ -910,6 +1002,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       console.log('[GenerateAllRefs] Starting async batch for', targets.length, 'refs')
 
       for (const target of targets) {
+        if (!isBatchScopeCurrent()) {
+          blockForScopeChange()
+          break
+        }
         if (stopRequestedRef.current) {
           console.log('[GenerateAllRefs] Stop requested by user')
           toast.info(t('toast.batchStopped'))
@@ -950,9 +1046,28 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               recordSkip(target.key, direct.skipStage || 'not-found')
             } else if (direct?.busy) {
               recordFail(target.key, 'busy', direct.error)
+            } else if (direct?.operationTimedOut) {
+              recordFail(target.key, 'operation-timeout', direct.error || 'Character operation timed out')
+              if (options.reason !== 'm2-empty-reference-gate') toast.error(t('toast.flowCharacterOperationTimedOut'))
+              blockRemainingPhases = true
+              break
+            } else if (direct?.refreshFailed) {
+              recordFail(target.key, 'refresh', direct.error || 'Composer refresh failed')
+              if (options.reason !== 'm2-empty-reference-gate') toast.error(t('toast.flowComposerRefreshFailed'))
+              blockRemainingPhases = true
+              break
             } else if (direct?.success) {
               attemptedKeys.add(target.key)
               succeededKeys.add(target.key)
+              if (
+                direct.composerRefreshNeeded
+                && direct.composerRefreshScopeToken === batchFlowAuthority.scopeToken
+              ) {
+                pendingComposerRefreshByKey.set(target.key, {
+                  key: target.key,
+                  scopeToken: direct.composerRefreshScopeToken,
+                })
+              }
               submitFailCount = 0
             } else {
               recordFail(target.key, 'submit', direct?.error || 'Generation failed')
@@ -1133,15 +1248,88 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
     setPreparingRefs(false)
 
+    const pendingComposerRefreshesForBatchScope = () => {
+      return [...pendingComposerRefreshByKey.values()]
+        .filter(item => item.scopeToken === batchFlowAuthority.scopeToken)
+    }
+
+    const markPendingComposerRefreshesRepairable = (pendingRefreshes) => {
+      const repairableKeys = new Set(pendingRefreshes.map(item => item.key))
+      if (repairableKeys.size === 0) return
+      const markRepairable = prev => prev.map(ref =>
+        repairableKeys.has(referenceGuardKey(ref))
+          ? { ...ref, flowNameSyncStatus: 'failed', registered: false }
+          : ref
+      )
+      referencesRef.current = markRepairable(referencesRef.current)
+      setReferences(prev => markRepairable(prev))
+    }
+
+    const failPendingComposerRefreshes = (pendingRefreshes, stage, error) => {
+      markPendingComposerRefreshesRepairable(pendingRefreshes)
+      for (const item of pendingRefreshes) {
+        succeededKeys.delete(item.key)
+        recordFail(item.key, stage, error)
+      }
+    }
+
+    const refreshGeneratedCharacters = async () => {
+      const pendingRefreshes = pendingComposerRefreshesForBatchScope()
+      if (pendingRefreshes.length === 0) return
+      if (!isBatchScopeCurrent()) {
+        blockForScopeChange()
+        return
+      }
+      try {
+        const refreshResult = await runFlowComposerRefresh({
+          projectId: batchFlowAuthority.projectId,
+          scopeToken: batchFlowAuthority.scopeToken,
+          shouldRun: isBatchScopeCurrent,
+        })
+        if (refreshResult?.success === true) return
+        throw new Error(refreshResult?.error || 'Composer refresh failed')
+      } catch (error) {
+        if (!isBatchScopeCurrent()) {
+          blockForScopeChange()
+          return
+        }
+        failPendingComposerRefreshes(
+          pendingRefreshes,
+          'refresh',
+          error?.message || String(error),
+        )
+        if (options.reason !== 'm2-empty-reference-gate') {
+          toast.error(t('toast.flowComposerRefreshFailed'))
+        }
+        blockRemainingPhases = true
+      }
+    }
+
     // Phase 1: style refs first — they generate standalone (no style applied to a style ref).
     await runPhase(styleTargets, null)
+    if (!isBatchScopeCurrent()) blockForScopeChange()
 
-    // Phase 2: non-style refs — resolve style AFTER phase 1 so freshly-generated
-    // style cards are picked up by the auto-fallback. 스타일 단계 도중 사용자가
-    // 중단했다면 비스타일 단계는 통째로 건너뛴다 (중복 stop 토스트 + 무의미한 호출 방지).
-    if (!stopRequestedRef.current) {
+    // Phase 2: Flow character는 모두 생성한 뒤 composer cache를 한 번만 갱신한다.
+    // refresh가 끝나기 전에는 shared flowView를 쓰는 다음 non-character submit을 시작하지 않는다.
+    if (!stopRequestedRef.current && !blockRemainingPhases) {
       const batchEffectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
-      await runPhase(nonStyleTargets, batchEffectiveStyleId)
+      await runPhase(characterTargets, batchEffectiveStyleId)
+      if (!isBatchScopeCurrent()) blockForScopeChange()
+      if (!blockRemainingPhases) {
+        // Stop은 새 target 제출만 막는다. 이미 생성된 entity의 cache 반영은 반드시 마무리한다.
+        await refreshGeneratedCharacters()
+      } else if (!batchScopeChanged) {
+        // timeout된 inner가 coordinator tail을 계속 쥘 수 있어 refresh await는 금지한다.
+        // 그 전에 생성된 key만 repairable로 낮춰 다음 Sync에서 cache refresh를 재시도하게 한다.
+        failPendingComposerRefreshes(
+          pendingComposerRefreshesForBatchScope(),
+          'refresh-blocked',
+          'Composer refresh blocked by character operation failure',
+        )
+      }
+      if (!stopRequestedRef.current && !blockRemainingPhases) {
+        await runPhase(otherTargets, batchEffectiveStyleId)
+      }
     }
 
     await genAPI.clearGenerations()

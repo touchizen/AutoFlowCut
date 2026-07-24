@@ -169,7 +169,11 @@ export async function loadProjectWithResources(projectName) {
   const refsWithPaths = await mapInChunks(
     (result.data.references || []),
     async (ref) => {
-      if (ref.name) {
+      // 저장 상태가 명시적으로 빈 pending 이면 사용자가 이미지를 제거한 tombstone 으로 취급한다.
+      // references/<name>.* 파일은 비파괴적으로 남겨 두되, project.json 의 의도를 이름 기반
+      // 자동복구보다 우선하지 않으면 다음 reload 에서 지운 이미지가 status:'done' 으로 부활한다.
+      const explicitlyCleared = ref.status === 'pending' && !ref.data && !ref.filePath
+      if (ref.name && !explicitlyCleared) {
         // 항상 현재 프로젝트 폴더 기준으로 경로 재확인
         const pathResult = await fileSystemAPI.getResourcePath(projectName, 'references', ref.name)
         if (pathResult.success) {

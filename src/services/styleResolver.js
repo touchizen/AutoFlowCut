@@ -18,7 +18,7 @@
  */
 
 import { STYLE_PRESETS } from '../config/defaults'
-import { findAutoPromptStyle, findAutoStyle, inheritStyleIdFromCards, isStyleReference, previewStyleMatching } from './styleService'
+import { findAutoPromptStyle, findAutoStyle, findSceneTagStyle, inheritStyleIdFromCards, isStyleReference, previewStyleMatching } from './styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
 
 export function createStyleResolver({ activeTab, scenes = [], references = [], selectedStyleRefId, t, isKo }) {
@@ -125,14 +125,35 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
     return selectedStyleForContext ?? (isVideoText ? autoEffectiveStyleId : null)
   }
 
-  // 우선순위: override(명시적) → selectedStyleRefId(프로젝트 전체 스타일) → 카드들의 기억 →
-  //   findAutoStyle. 기억을 건너뛰고 findAutoStyle 로 가면, 스타일 카드를 추가하거나 순서가
-  //   바뀌는 것만으로 새 카드가 조용히 다른 스타일로 생성된다.
+  const deriveStyleIdFromScenes = () => {
+    // Ref 스타일은 실제 이미지 생성 입력(prompt가 있는 씬)만 상속 근거로 삼는다.
+    // prompt가 있는 tagless 씬은 아래에서 null이 되어 unanimity를 계속 veto한다.
+    const sourceScenes = scenes.filter(scene => scene?.prompt)
+    if (sourceScenes.length === 0) return null
+
+    const styleIds = sourceScenes.map(scene => {
+      const match = findSceneTagStyle(scene?.style_tag, references)
+      if (match?.source === 'ref' && match.style.id != null) return `ref:${match.style.id}`
+      // resolveSceneStyle도 prompt_en이 있어야 실제로 preset을 적용한다.
+      if (match?.source === 'preset' && match.style.prompt_en) return `preset:${match.style.id}`
+      return null
+    })
+    const firstStyleId = styleIds[0]
+    if (!firstStyleId || !styleIds.every(id => id === firstStyleId)) return null
+    return firstStyleId
+  }
+
+  // 우선순위: override(명시적) → selectedStyleRefId(프로젝트 전체 스타일) → 명시(non-null) 카드 기억 →
+  //   씬들의 단일 effective style 파생 → null 카드 기억(무스타일 fallback) → findAutoStyle.
+  // null 기억은 파생할 씬 스타일이 없을 때만 존중하고, non-null 기억은 의도적 선택이라 파생보다 우선한다.
   const resolveEffectiveStyleIdForRef = (override) => {
     if (override != null) return override
     if (selectedStyleRefId != null) return selectedStyleRefId
-    // styleId:null 도 정당한 기억("무스타일로 생성됨")이라 ?? 로 건너뛰면 안 된다.
     const inherited = inheritStyleIdFromCards(references)
+    if (inherited.found && inherited.styleId != null) return inherited.styleId
+    const derivedStyleId = deriveStyleIdFromScenes()
+    if (derivedStyleId) return derivedStyleId
+    // 파생이 abstain한 프로젝트에서는 styleId:null도 정당한 기억("무스타일로 생성됨")이다.
     if (inherited.found) return inherited.styleId
     return findAutoStyle(references)
   }

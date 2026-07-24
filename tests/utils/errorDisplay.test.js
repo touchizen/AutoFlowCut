@@ -45,6 +45,7 @@ const INTRODUCED_ERROR_KINDS = [
   'character-file-injection-failed',
   'character-upload-timeout',
   'character-upload-response-invalid',
+  'character-display-name-required',
   'flow-t2v-reference-images-unsupported',
   'story-empty-script',
   'story-sfx-library-unavailable',

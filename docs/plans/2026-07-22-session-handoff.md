@@ -202,6 +202,14 @@
    가장 넓은 발화 창이고, 위 2번 T2V epoch 문제의 주 발화 경로다. 두 리뷰어 합의로, 이 진입점들에
    게이트를 추가하더라도 epoch 가드는 소비자 쪽 단일 초크포인트로 계속 필요하다. 전환 진입점이
    여럿이고, preflight 창은 `hasPendingBatch`가 서기 전이라 busy만으로 덮을 수 없기 때문이다.
+4. `ReferenceDetailModal` 저장 continuation race (pre-existing). `handleSave`(`ReferenceDetailModal.jsx:230/272`)
+   가 디스크 저장 await 뒤 scope 확인 없이 `onUpdate/onClose` 를 publish 한다. 저장 await 중 프로젝트가
+   전환(`useProjectData.js:1336` 새 references 공개 → `:1423` projectName 변경)되고 양쪽에 같은 id 가
+   있으면, 옛 draft 가 새 프로젝트의 같은 id 카드를 덮는다(`ReferencePanel.jsx:204` id 기반 patch).
+   모달 key 에 projectName 을 넣어(`62676d32`) remount 는 되지만, **이미 시작된 async save 는 취소되지
+   않는다.** 위 3번 진입점 게이트와 같은 뿌리(비동기 continuation 의 scope 미확인) — 저장 시작 시점
+   token 을 캡처해 await 후 달라졌으면 publish 를 생략하는 소비자 쪽 가드가 정석. 버그2(스타일) 수정
+   과정에서 발견됐으나 그 스코프 밖이라 미룸.
 
 ## 이 세션에서 값비싸게 배운 것
 

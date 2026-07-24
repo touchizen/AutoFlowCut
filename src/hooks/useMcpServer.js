@@ -150,18 +150,30 @@ export function useMcpServer({
     // styleId 생략 시 호출 측에서 findAutoStyle fallback을 미리 적용해 override로 전달.
     // 그래야 useReferenceGeneration 내부의 selectedStyleRefId(UI 선택값)에 끌려가지 않음 —
     // MCP 정책: 자동화 호출은 UI 상태와 독립적이어야 함.
+    const runMcpGenerateRef = (index, styleId) => handleGenerateRef(index, false, styleId)
+      .then(result => {
+        if (!result?.refreshFailed) return result
+        const { error: _error, ...partialSuccess } = result
+        return {
+          ...partialSuccess,
+          success: true,
+          refreshFailed: true,
+          warning: 'Reference image generated, but Flow composer refresh did not complete. Do not regenerate; refresh or sync this reference.',
+        }
+      })
+      .catch(e => ({ success: false, error: e.message }))
     window.__mcpGenerateRef = (index, styleId) => {
       if (styleId === 'auto') {
         console.warn('[MCP] generate-reference received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
         const effective = findAutoStyle(referencesRef.current) ?? 'none'
-        return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
+        return runMcpGenerateRef(index, effective)
       } else if (styleId === 'none') {
         // 'none' sentinel — pass through to handler. styleService.applyStyle/_resolveEffectiveStyleId
         // recognize 'none' and skip all style application (prompt + ref override).
-        return handleGenerateRef(index, false, 'none').catch(e => ({ success: false, error: e.message }))
+        return runMcpGenerateRef(index, 'none')
       }
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current) ?? 'none'
-      return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
+      return runMcpGenerateRef(index, effective)
     }
     // styleId override (선택). 형식은 styleService와 동일.
     //   - 'auto' / 'none' / null / undefined / '': 그대로 forward (sentinel 의미 보존)

@@ -9,6 +9,7 @@ export const FLOW_CHARACTER_OPERATION_TIMEOUT_MS = 180000
 
 const activeByKey = new Map()
 let flowViewTail = Promise.resolve()
+const FLOW_COMPOSER_REFRESH_REF = { id: '__flow-composer-refresh__' }
 
 function scopePart(opts = {}) {
   const parts = []
@@ -47,13 +48,16 @@ function withTimeout(promise, timeoutMs) {
  * 공유 flowView 작업을 직렬 실행한다. 같은 key+operation 의 joinable 작업은 같은 결과에 합류한다.
  * task 또는 publishResult 는 상태 publish 까지 포함해야 한다 — 반환되는 순간 key 가 해제된다.
  */
-export function runFlowCharacterOperation({ ref, projectId, scopeToken, scope, refIndex, operation, join = false, timeoutMs, task, publishResult }) {
+export function runFlowCharacterOperation({ ref, projectId, scopeToken, scope, refIndex, operation, join = false, timeoutMs, task, publishResult, shouldRun }) {
   const opts = { projectId, scopeToken, scope, refIndex }
   const key = flowCharacterOperationKey(ref, opts)
   const current = activeByKey.get(key)
   if (current) {
     if (join && current.join && current.operation === operation) {
       if (typeof publishResult === 'function') current.publishers.push(publishResult)
+      if (current.shouldRuns) {
+        current.shouldRuns.push(typeof shouldRun === 'function' ? shouldRun : () => true)
+      }
       return current.promise
     }
     return Promise.resolve({ ok: false, busy: true, error: 'Flow character operation already in flight' })
@@ -64,6 +68,7 @@ export function runFlowCharacterOperation({ ref, projectId, scopeToken, scope, r
     operation,
     join,
     publishers: typeof publishResult === 'function' ? [publishResult] : [],
+    shouldRuns: typeof shouldRun === 'function' ? [shouldRun] : null,
     promise: null,
   }
   // #R37: 실제 작업(inner)과 호출자가 기다리는 promise 를 분리한다.
@@ -78,7 +83,13 @@ export function runFlowCharacterOperation({ ref, projectId, scopeToken, scope, r
   //   inner 는 결국 settle 한다 — 이 락은 그 위의 백스톱이다.
   const inner = (async () => {
     await previous
-    const result = await Promise.resolve().then(task)
+    const shouldSkip = entry.shouldRuns && !entry.shouldRuns.some((check) => {
+      try { return check() }
+      catch (_e) { return false }
+    })
+    const result = shouldSkip
+      ? { success: false, skipped: true, scopeChanged: true }
+      : await Promise.resolve().then(task)
     // joiner 는 서로 다른 React mirror(App gate local array, panel/modal state)를 가질 수 있다.
     // 등록된 publisher 를 모두 drain 해야 어느 caller 도 stale 결과로 다음 작업을 시작하지 않는다.
     let published = 0
@@ -99,4 +110,26 @@ export function runFlowCharacterOperation({ ref, projectId, scopeToken, scope, r
     if (activeByKey.get(key)?.promise === promise) activeByKey.delete(key)
   }).catch(() => {})
   return promise
+}
+
+/** 공유 flowView character 작업과 같은 tail 에서 composer 재진입을 직렬 실행한다. */
+export function runFlowComposerRefresh({ projectId, scopeToken, scope, timeoutMs, shouldRun } = {}) {
+  // refresh target 은 Flow projectId 다. pid 가 있으면 local project scope 가 달라도 같은 재진입으로
+  // 합류하고, pid 를 모를 때만 local scope 를 fallback key 로 쓴다.
+  const targetScope = projectId != null && projectId !== ''
+    ? { projectId }
+    : { scopeToken, scope }
+  return runFlowCharacterOperation({
+    ref: FLOW_COMPOSER_REFRESH_REF,
+    ...targetScope,
+    operation: 'refresh-composer',
+    join: true,
+    timeoutMs,
+    shouldRun,
+    task: () => {
+      const api = typeof window !== 'undefined' ? window.electronAPI : null
+      const payload = projectId != null && projectId !== '' ? { projectId } : undefined
+      return api?.refreshFlowComposer?.(payload)
+    },
+  })
 }
