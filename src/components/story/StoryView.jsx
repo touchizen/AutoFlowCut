@@ -1405,7 +1405,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 여전히 done — regenerateSegment와 같은 이유로, 무조건 null 대신 막혔을 때만 'audio'로 고정해
   // AudioKeyGateCard가 보이는 오디오 패널을 유지한다.
   const handleStepRedo = async () => {
-    if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(제목 확정+분리, 자체 viewedStep 처리)
+    if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(handleSplit이 자체 viewedStep 처리)
     if (redoStep === 'audio') {
       const result = await runAudioWithPreflight(buildStepParams(redoStep), (p) => start('audio', p))
       setViewedStep(result?.error === 'preflight-missing-key' ? 'audio' : null)
