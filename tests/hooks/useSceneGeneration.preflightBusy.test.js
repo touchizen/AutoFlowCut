@@ -81,4 +81,36 @@ describe('#R27-1: single-scene preflight is busy', () => {
     expect(result.current.generatingSceneId).toBeNull()
     expect(props.genAPI.generateImage).not.toHaveBeenCalled()
   })
+
+  it.each([
+    ['checkFolderPermission', (props) => {
+      guards.checkFolderPermission.mockRejectedValueOnce(new Error('folder IPC rejected'))
+    }, 'folder IPC rejected'],
+    ['checkAuthToken', (props) => {
+      guards.checkAuthToken.mockRejectedValueOnce(new Error('auth IPC rejected'))
+    }, 'auth IPC rejected'],
+    ['requestMentionSync', (props) => {
+      props.genAPI.mode = 'flow'
+      props.requestMentionSync = vi.fn()
+        .mockRejectedValueOnce(new Error('sync rejected'))
+        .mockResolvedValue({ proceeded: true, refs: [] })
+    }, 'sync rejected'],
+  ])('%s가 reject해도 busy를 finally에서 해제하고 다음 생성을 허용한다', async (_label, arrange, error) => {
+    const props = makeProps()
+    arrange(props)
+    const { result } = renderHook(() => useSceneGeneration(props))
+
+    await act(async () => {
+      await expect(result.current.handleGenerateScene('scene_1')).rejects.toThrow(error)
+    })
+
+    expect(result.current.generatingSceneId).toBeNull()
+    expect(props.genAPI.generateImage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await result.current.handleGenerateScene('scene_1')
+    })
+    expect(props.genAPI.generateImage).toHaveBeenCalledTimes(1)
+    expect(result.current.generatingSceneId).toBeNull()
+  })
 })

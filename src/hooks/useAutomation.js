@@ -31,6 +31,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
+  const [queuedSceneBatchCount, setQueuedSceneBatchCount] = useState(0)
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
@@ -509,7 +510,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
     setIsRunning(true)
     setIsPaused(false)
-    setStatus('running')
+    setStatus('preparing')
     
     // 대상 씬 결정:
     //   - sceneIndices 명시: 그 인덱스들 (retry/partial 호출)
@@ -691,6 +692,19 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         let nextIndex = 0
         let activeCount = 0
         let completedCount = 0
+        let timer = null
+        let settled = false
+
+        // Stop 이 이미 걸렸거나 투입 대기 중 걸려도, 진행 중 작업이 없으면 반드시 한 번 정산한다.
+        const settleIfDone = () => {
+          const allCompleted = completedCount >= refsToUpload.length
+          const stoppedAndIdle = stopRequestedRef.current && activeCount === 0
+          if (settled || (!allCompleted && !stoppedAndIdle)) return false
+          settled = true
+          if (timer !== null) clearInterval(timer)
+          resolve()
+          return true
+        }
 
         const tryLaunch = () => {
           while (activeCount < MAX_CONCURRENT && nextIndex < refsToUpload.length && !stopRequestedRef.current) {
@@ -707,18 +721,19 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
               if (!authStoppedRef.current) {
                 setStatusMessage(t('status.uploadingRefs', { current: uploadedCount, total: refsToUpload.length }))
               }
-              if (completedCount >= refsToUpload.length || stopRequestedRef.current) {
-                resolve()
-              }
+              settleIfDone()
             })
           }
         }
 
         // 1초 간격으로 투입
         tryLaunch() // 첫 번째 즉시
-        const timer = setInterval(() => {
+        if (settleIfDone()) return
+        timer = setInterval(() => {
+          if (settleIfDone()) return
           if (nextIndex >= refsToUpload.length || stopRequestedRef.current) {
             clearInterval(timer)
+            timer = null
             return
           }
           tryLaunch()
@@ -842,8 +857,17 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   // 큐를 통한 시작 — 정상 Start 와 retry 가 모두 이 경로를 타 ref/video 작업과 직렬화한다.
   // (queue 없으면 직접 start — 하위호환.)
   const startQueued = useCallback(async (options = {}) => {
+    // 호출별 marker로 정확히 한 번만 감소시킨다. 여러 MCP 호출이 겹쳐도 먼저 execute된
+    // 호출이 뒤의 queued 신호까지 지우지 않으며, enqueue reject/throw도 finally가 정산한다.
+    let waitingForExecute = false
+    const leaveQueue = () => {
+      if (!waitingForExecute) return
+      waitingForExecute = false
+      setQueuedSceneBatchCount(count => Math.max(0, count - 1))
+    }
     // #R12-6: start() 가 예기치 못하게 throw 해도 running/stopping UI 가 고착되지 않도록 가드.
     const guardedStart = async () => {
+      leaveQueue()
       try {
         return await start(options)
       } catch (e) {
@@ -858,6 +882,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     if (!generationQueue) {
       return guardedStart()
     }
+    waitingForExecute = true
+    setQueuedSceneBatchCount(count => count + 1)
     try {
       await generationQueue.enqueue({
         type: 'scene_batch',
@@ -866,6 +892,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       })
     } catch (err) {
       console.warn('[Automation] Queue rejected:', err.message)
+    } finally {
+      leaveQueue()
     }
   }, [generationQueue, start, t])
 
@@ -907,6 +935,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     isRunning,
     isPaused,
     isStopping,
+    isSceneBatchQueued: queuedSceneBatchCount > 0,
     progress,
     status,
     statusMessage,

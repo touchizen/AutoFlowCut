@@ -31,6 +31,7 @@ const INTRODUCED_ERROR_KINDS = [
   'agent-video-result-timeout',
   'flow-page-unreadable',
   'flow-project-changed',
+  'project-changed',
   'flow-project-open-failed',
   'character-composer-unavailable',
   'character-detail-composer-unavailable',
@@ -44,6 +45,7 @@ const INTRODUCED_ERROR_KINDS = [
   'character-file-injection-failed',
   'character-upload-timeout',
   'character-upload-response-invalid',
+  'character-display-name-required',
   'flow-t2v-reference-images-unsupported',
   'story-empty-script',
   'story-sfx-library-unavailable',
@@ -89,6 +91,13 @@ describe('resolveDisplayError', () => {
       expect(resolved).not.toBe(key)
       expect(resolved).not.toBe('diagnostic fallback')
     }
+  })
+
+  it.each([
+    ['en', en],
+    ['ko', ko],
+  ])('uses a mode-neutral project-changed message in the %s catalog', (_lang, catalog) => {
+    expect(catalog.errorSection.kind['project-changed']).not.toMatch(/flow/i)
   })
 
   it('translates known errorKind via t(`errorSection.kind.<kind>`)', () => {

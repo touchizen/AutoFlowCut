@@ -111,7 +111,11 @@ export function planMentionRouting(prompt, referenceImages, references) {
       const fb = planUnresolvedMentionFallback(prompt, referenceImages, unresolved, references)
       if (fb) return { kind: 'image', prompt: fb.prompt, referenceImages: fb.referenceImages }
     }
-    return { kind: 'error', error: `Unresolved @mention(s): ${unresolved.map(u => u.name).join(', ')}` }
+    // 이름을 **데이터로도** 싣는다 — 호출부(개별 씬 생성)가 "무엇을 동기화하면 되는지" 알아야
+    // 그 자리에서 동기화를 제안할 수 있다. 사람이 읽는 문구를 파싱하게 두면 파서가 둘이 되고
+    // 문구를 바꾸는 순간 조용히 깨진다.
+    const unresolvedNames = unresolved.map(u => u.name)
+    return { kind: 'error', error: `Unresolved @mention(s): ${unresolvedNames.join(', ')}`, unresolvedNames }
   }
   if (hasMention) return { kind: 'scene', segments }
   return { kind: 'image', prompt, referenceImages: referenceImages || [] }
@@ -348,7 +352,11 @@ export function useFlowEngine(opts = {}) {
       if (isCharacterRefCall(callOpts)) return markAuth(await generateCharacterRef(prompt, callOpts, pid))
       // #R33: 멘션 라우팅을 단일 함수로 위임(멘션없음/scene/미해결폴백/실패).
       const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
-      if (routing.kind === 'error') return { success: false, error: routing.error }
+      // errorKind/unresolvedNames 를 함께 실어 보낸다 — 호출부가 문구 파싱 없이 "이 이름들을
+      // 동기화하면 된다"를 알고 그 자리에서 복구를 제안할 수 있다.
+      if (routing.kind === 'error') {
+        return { success: false, error: routing.error, errorKind: 'unresolved-mentions', unresolvedNames: routing.unresolvedNames || [] }
+      }
 
       if (routing.kind === 'scene') {
         const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
@@ -426,7 +434,11 @@ export function useFlowEngine(opts = {}) {
       }
       // #R33: 멘션 라우팅 단일 함수 위임(generateImage 와 동일 결정).
       const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
-      if (routing.kind === 'error') return { success: false, error: routing.error }
+      // errorKind/unresolvedNames 를 함께 실어 보낸다 — 호출부가 문구 파싱 없이 "이 이름들을
+      // 동기화하면 된다"를 알고 그 자리에서 복구를 제안할 수 있다.
+      if (routing.kind === 'error') {
+        return { success: false, error: routing.error, errorKind: 'unresolved-mentions', unresolvedNames: routing.unresolvedNames || [] }
+      }
 
       if (routing.kind === 'scene') {
         const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)

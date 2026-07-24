@@ -93,6 +93,9 @@ function commonBeforeEach() {
   fileSystemAPI.readHistoryMetadata.mockResolvedValue({ success: false })
   fileSystemAPI.getHistory.mockResolvedValue({ success: false, histories: [] })
   fileSystemAPI.ensurePermission.mockResolvedValue({ success: true })
+  // 실제 계약: project.json 이 없어도 success:true + data:null (isNew) 을 돌려준다.
+  // Case B 는 이 결과를 보고 "매핑 없음"을 확인한 뒤에야 새 Flow 프로젝트를 만든다.
+  fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
   fileSystemAPI.projectExists.mockResolvedValue(true)
   recoverInFlightVideos.mockResolvedValue(undefined)
 }

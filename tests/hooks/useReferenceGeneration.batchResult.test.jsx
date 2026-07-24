@@ -7,6 +7,7 @@ import { act, renderHook } from '@testing-library/react'
 
 const coordinatorMocks = vi.hoisted(() => ({
   runFlowCharacterOperation: vi.fn(),
+  runFlowComposerRefresh: vi.fn(),
 }))
 
 vi.mock('../../src/utils/guards', () => ({
@@ -42,6 +43,7 @@ vi.mock('../../src/utils/urls', () => ({
 
 vi.mock('../../src/utils/flowCharacterCoordinator', () => ({
   runFlowCharacterOperation: coordinatorMocks.runFlowCharacterOperation,
+  runFlowComposerRefresh: coordinatorMocks.runFlowComposerRefresh,
 }))
 
 import {
@@ -57,7 +59,13 @@ function setupHook({
   settingsOverrides = {},
   genOverrides = {},
   flowProjectReady = true,
+  electronAPIOverrides = {},
 }) {
+  window.electronAPI = {
+    ...(window.electronAPI || {}),
+    refreshFlowComposer: vi.fn().mockResolvedValue({ success: true }),
+    ...electronAPIOverrides,
+  }
   let liveRefs = references.map(ref => ({ ...ref }))
   let generationNo = 0
   const setReferences = vi.fn(updater => {
@@ -155,7 +163,10 @@ async function runTimedBatch(result, targetRefKeys) {
   }
 }
 
+let previousElectronAPI
+
 beforeEach(() => {
+  previousElectronAPI = window.electronAPI
   vi.clearAllMocks()
   checkAuthToken.mockResolvedValue(true)
   checkFlowProjectReady.mockReturnValue({ ok: true })
@@ -164,9 +175,13 @@ beforeEach(() => {
     name: 'test',
   })
   coordinatorMocks.runFlowCharacterOperation.mockImplementation(({ task }) => task())
+  coordinatorMocks.runFlowComposerRefresh.mockImplementation(() => (
+    window.electronAPI?.refreshFlowComposer?.()
+  ))
 })
 
 afterEach(() => {
+  window.electronAPI = previousElectronAPI
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -876,15 +891,10 @@ describe('useReferenceGeneration — structured batch result', () => {
     }
   })
 
-  it('Flow 혼합 batch에서 delete로 direct character와 충돌해도 async sibling marker를 유지한다', async () => {
-    const directFinished = deferred()
-    const firstSiblingCheck = deferred()
+  it('Flow character phase 뒤 async sibling 중 delete가 와도 busy marker를 유지한다', async () => {
     let siblingDone = false
-    let checkNo = 0
     coordinatorMocks.runFlowCharacterOperation.mockImplementationOnce(async ({ task }) => {
-      const directResult = await task()
-      directFinished.resolve()
-      return directResult
+      return task()
     })
     const {
       result,
@@ -911,11 +921,7 @@ describe('useReferenceGeneration — structured batch result', () => {
           success: true,
           generationId: 'g-sibling',
         }),
-        checkGeneration: vi.fn(() => {
-          checkNo += 1
-          if (checkNo === 1) return firstSiblingCheck.promise
-          return Promise.resolve({ success: true, completed: siblingDone })
-        }),
+        checkGeneration: vi.fn(() => Promise.resolve({ success: true, completed: siblingDone })),
         generateImage: vi.fn().mockResolvedValue({
           success: true,
           images: [{
@@ -942,6 +948,11 @@ describe('useReferenceGeneration — structured batch result', () => {
         })
         for (let i = 0; i < 15; i++) await Promise.resolve()
       })
+      expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
+      expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
+      expect(coordinatorMocks.runFlowCharacterOperation.mock.calls[0][0].refIndex).toBe(2)
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
       expect(genAPI.checkGeneration).toHaveBeenCalledTimes(1)
       expect(result.current.generatingRefs).toEqual([1])
 
@@ -949,14 +960,6 @@ describe('useReferenceGeneration — structured batch result', () => {
         const [, sibling, character] = getLiveRefs()
         replaceLiveRefs([sibling, character])
       })
-      await act(async () => {
-        firstSiblingCheck.resolve({ success: true, completed: false })
-        await directFinished.promise
-      })
-
-      expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
-      expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
-      expect(coordinatorMocks.runFlowCharacterOperation.mock.calls[0][0].refIndex).toBe(1)
       expect(result.current.generatingRefs).toEqual([1])
 
       siblingDone = true
@@ -967,7 +970,6 @@ describe('useReferenceGeneration — structured batch result', () => {
       expect(result.current.generatingRefs).toEqual([])
     } finally {
       siblingDone = true
-      firstSiblingCheck.resolve({ success: true, completed: false })
       if (batchPromise) {
         try {
           await act(async () => {

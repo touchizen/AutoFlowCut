@@ -85,7 +85,7 @@ export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
  * @param {Array}    params.audioReviews - 오디오 리뷰 배열
  * @param {Function} params.importByPath - 오디오 폴더 임포트
  * @param {object}   params.audioPackage - 오디오 패키지
- * @param {object}   params.automationState - { isRunning, isPaused, progress, status, statusMessage }
+ * @param {object}   params.automationState - { isRunning, isSceneBatchQueued, isPaused, progress, status, statusMessage }
  * @param {object}   params.videoAutomation - 비디오 자동화 상태
  * @param {Array}    params.generatingRefs - 생성 중인 레퍼런스 인덱스들
  */
@@ -151,18 +151,30 @@ export function useMcpServer({
     // styleId 생략 시 호출 측에서 findAutoStyle fallback을 미리 적용해 override로 전달.
     // 그래야 useReferenceGeneration 내부의 selectedStyleRefId(UI 선택값)에 끌려가지 않음 —
     // MCP 정책: 자동화 호출은 UI 상태와 독립적이어야 함.
+    const runMcpGenerateRef = (index, styleId) => handleGenerateRef(index, false, styleId)
+      .then(result => {
+        if (!result?.refreshFailed) return result
+        const { error: _error, ...partialSuccess } = result
+        return {
+          ...partialSuccess,
+          success: true,
+          refreshFailed: true,
+          warning: 'Reference image generated, but Flow composer refresh did not complete. Do not regenerate; refresh or sync this reference.',
+        }
+      })
+      .catch(e => ({ success: false, error: e.message }))
     window.__mcpGenerateRef = (index, styleId) => {
       if (styleId === 'auto') {
         console.warn('[MCP] generate-reference received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
         const effective = findAutoStyle(referencesRef.current) ?? 'none'
-        return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
+        return runMcpGenerateRef(index, effective)
       } else if (styleId === 'none') {
         // 'none' sentinel — pass through to handler. styleService.applyStyle/_resolveEffectiveStyleId
         // recognize 'none' and skip all style application (prompt + ref override).
-        return handleGenerateRef(index, false, 'none').catch(e => ({ success: false, error: e.message }))
+        return runMcpGenerateRef(index, 'none')
       }
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current) ?? 'none'
-      return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
+      return runMcpGenerateRef(index, effective)
     }
     // styleId override (선택). 형식은 styleService와 동일.
     //   - 'auto' / 'none' / null / undefined / '': 그대로 forward (sentinel 의미 보존)
@@ -499,7 +511,6 @@ export function useMcpServer({
     // options 유무와 관계없이 source:'mcp'를 합쳐 handleStart(effective, options)로 호출한다.
     //
     // Phase 2: 진행 중이면 자동 stop → waitForStopped → start. 확인 모달 없음 (MCP 자동화 의도 명확).
-    // timeout 시 restart abort, console.warn.
     //
     // Phase 2 sync: 명시 styleId ('preset:*', 'ref:*', plain id)면 selectedStyleRefId도 갱신
     // → Start 버튼 라벨이 새 스타일 자동 표시. 'auto'/'none'/생략은 UI 유지 (사용자 의도 보존).
@@ -561,7 +572,10 @@ export function useMcpServer({
     }
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {
-      const { isRunning, isPaused, progress, status, statusMessage } = automationState
+      const { isRunning, isSceneBatchQueued = false, isPaused, progress, status, statusMessage } = automationState
+      const sceneIsRunning = isRunning || isSceneBatchQueued
+      // renderer 내부의 이미지 preflight 상태는 유지하되 기존 MCP 외부 enum은 늘리지 않는다.
+      const externalAutomationStatus = status === 'preparing' ? 'running' : status
       // P2/P3 v2/v3: done 판정은 services/generationStatus의 공통 helper 사용.
       // status가 in-flight (pending/generating/error)면 image/mediaId 있어도 done에서 제외 —
       // force 재생성 중 progress가 100% stuck 회귀 차단.
@@ -584,12 +598,12 @@ export function useMcpServer({
       const refIsRunning = refBatchRunning || generatingRefs.length > 0
 
       return {
-        isRunning: isRunning || videoAutomation.isRunning || refIsRunning,
+        isRunning: sceneIsRunning || videoAutomation.isRunning || refIsRunning,
         isPaused: isPaused || videoAutomation.isPaused,
-        progress: isRunning ? progress : videoAutomation.progress,
+        progress: sceneIsRunning ? progress : videoAutomation.progress,
         total, done, pending, generating, error,
-        status: isRunning ? status : videoAutomation.status,
-        statusMessage: isRunning ? statusMessage : videoAutomation.statusMessage,
+        status: sceneIsRunning ? externalAutomationStatus : videoAutomation.status,
+        statusMessage: sceneIsRunning ? statusMessage : videoAutomation.statusMessage,
         ref: { total: refTotal, done: refDone, generating: refGenerating, pending: refPending, isRunning: refIsRunning }
       }
     }

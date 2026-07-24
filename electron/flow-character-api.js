@@ -12,6 +12,16 @@
  *   3) PATCH /v1/flow/entities 로 이름(멘션 토큰) 등록 (buildEntityRegisterBody, recaptcha 불필요).
  */
 
+/**
+ * Flow entity 등록에 쓸 이름을 정규화한다.
+ * 빈 이름을 서버에 보내면 Flow 가 "Untitled Character" 로 등록하므로, 호출측은 null 이면
+ * entity 를 만들기 전 중단해야 한다.
+ */
+export function normalizeEntityDisplayName(value) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  return value
+}
+
 /** flow/entities PATCH body — 캐릭터 이름(멘션) + 이미지 레퍼런스 등록. */
 export function buildEntityRegisterBody({ projectId, entityId, displayName, workflowId }) {
   return {

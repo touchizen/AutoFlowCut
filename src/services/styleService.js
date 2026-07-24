@@ -116,6 +116,40 @@ export function findAutoPromptStyle(references) {
 }
 
 /**
+ * scene.style_tag를 preset으로 해석하는 공용 파서.
+ * resolveSceneStyle, preview, Ref 파생이 모두 같은 splitTags/첫 매칭 규칙을 쓴다.
+ */
+export function findPresetForStyleTag(styleTag, presets = STYLE_PRESETS?.styles || []) {
+  const tokens = splitTags(styleTag)
+  if (tokens.length === 0) return null
+  return presets.find(preset =>
+    tokens.includes(preset.id?.toLowerCase()) ||
+    tokens.includes(preset.name_ko?.toLowerCase()) ||
+    tokens.includes(preset.name_en?.toLowerCase())
+  ) || null
+}
+
+/**
+ * scene.style_tag가 실제로 가리키는 스타일을 preview와 Ref 파생이 같은 순서로 해석한다.
+ * usable custom style ref가 preset보다 우선한다.
+ */
+export function findSceneTagStyle(styleTag, references = [], presets = STYLE_PRESETS?.styles || []) {
+  const tags = splitTags(styleTag)
+  if (tags.length === 0) return null
+
+  const ref = references.find(item =>
+    isStyleReference(item) &&
+    item.name &&
+    (item.prompt || item.data || item.filePath) &&
+    tags.includes(item.name.toLowerCase())
+  )
+  if (ref) return { source: 'ref', style: ref }
+
+  const preset = findPresetForStyleTag(styleTag, presets)
+  return preset ? { source: 'preset', style: preset } : null
+}
+
+/**
  * 스타일 ID를 기반으로 프롬프트를 합성하고, 스타일 이미지 레퍼런스를 반환
  *
  * @param {string} prompt - 원본 프롬프트
@@ -201,12 +235,7 @@ export function resolveSceneStyle(prompt, allMatched, selectedStyleRefId, refere
   // 1b. 매칭 레퍼런스 없으면 splitTags 토큰 기반으로 프리셋에서 찾기
   // (multi-tag `'cinematic, noir'`에서도 각 토큰이 preset과 매칭되면 첫 매칭 적용)
   if (appliedStyle === 'none' && styleTag) {
-    const tokens = splitTags(styleTag)
-    const preset = (STYLE_PRESETS?.styles || []).find(s =>
-      tokens.includes(s.id?.toLowerCase()) ||
-      tokens.includes(s.name_ko?.toLowerCase()) ||
-      tokens.includes(s.name_en?.toLowerCase())
-    )
+    const preset = findPresetForStyleTag(styleTag)
     if (preset?.prompt_en) {
       styledPrompt = `${prompt}, ${preset.prompt_en}`
       appliedStyle = `preset:${preset.id}`
@@ -262,11 +291,6 @@ export function resolveSeed(settings) {
 export function previewStyleMatching(scenes, references, opts = {}) {
   const presets = opts.presets ?? (STYLE_PRESETS?.styles || [])
   const isKo = opts.isKo !== false
-  // Production applies a style ref via either:
-  //   - resolveSceneStyle when r.prompt exists (concatenates into the prompt)
-  //   - matchedRefs injection when a GenAI-readable image source exists
-  // A ref with neither contributes nothing — drop it from preview.
-  const styleRefs = references.filter(r => isStyleReference(r) && r.name && (r.prompt || r.data || r.filePath))
 
   const matches = []
   const unmatched = []
@@ -278,20 +302,18 @@ export function previewStyleMatching(scenes, references, opts = {}) {
       continue
     }
 
-    const refMatch = styleRefs.find(r => tags.includes(r.name?.toLowerCase()))
-    if (refMatch) {
-      matches.push({ sceneId: scene.id, styleName: refMatch.name, source: 'ref' })
+    // Production applies a style ref via prompt 합성 또는 GenAI-readable image injection.
+    // 어느 쪽도 못 하는 placeholder는 preset fallback을 막지 않는다.
+    const tagStyle = findSceneTagStyle(scene.style_tag, references, presets)
+    if (tagStyle?.source === 'ref') {
+      matches.push({ sceneId: scene.id, styleName: tagStyle.style.name, source: 'ref' })
       continue
     }
 
     // Preset 매칭은 splitTags 토큰 기반 — multi-tag (`'cinematic, noir'`)에서도
     // 각 토큰이 preset과 매칭되면 첫 매칭 preset을 적용. 이전엔 raw `scene.style_tag`
     // 전체를 통째로 비교해 multi-tag preset이 누락됐다.
-    const preset = presets.find(p =>
-      tags.includes(p.id?.toLowerCase()) ||
-      tags.includes(p.name_ko?.toLowerCase()) ||
-      tags.includes(p.name_en?.toLowerCase())
-    )
+    const preset = tagStyle?.source === 'preset' ? tagStyle.style : null
     if (preset) {
       const styleName = isKo
         ? (preset.name_ko || preset.name_en || preset.id)

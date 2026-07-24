@@ -7,8 +7,9 @@ import { REFERENCE_TYPES, STYLE_PRESETS, RESOURCE } from '../config/defaults'
 import { resolveImageSrc, hasImageData } from '../utils/formatters'
 import { useImageUpload } from '../hooks/useImageUpload'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
+import { applyEntityRegistrationPatch, clearedImageFields } from '../utils/refEntityRegistration'
 import { syncRefToFlow, needsComposerRefresh, refBadgeState } from '../utils/flowCharacterSync'
+import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
@@ -18,8 +19,9 @@ import { isStyleReference } from '../services/styleService'
 import ErrorSection from './ErrorSection'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
 import { resolveDisplayError } from '../utils/errorDisplay'
+import { sourceAvailable } from '../utils/refImageGuard'
 
-export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
+export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, refBatchRunning = false, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], scenes = [], selectedStyleRefId = null, flowProjectId = null }) {
   const [editData, setEditData] = useState({ ...reference })
   // 스타일 팝업은 두 뜻으로 쓰인다: 스타일 카드의 '프리셋에서 채우기' vs 그 외 카드의 '적용할 스타일'.
   //   같은 위젯이 다른 뜻으로 동시에 뜨면 헷갈리므로 타입에 따라 하나만 연다.
@@ -31,6 +33,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   // #R9-5: 사용자가 모달에서 이미지를 로컬로 바꿨는지(미저장). dirty 면 prop→local 미디어 동기화를
   //   건너뛰어, 배경 자동화(on-demand 등록 등)가 reference.mediaId 를 바꿔도 미저장 편집을 덮지 않는다.
   const mediaDirtyRef = useRef(false)
+  // stale styleId 와 모달에서 사용자가 직접 고른 값을 구분한다. null 선택은 재생성 때 'none' override다.
+  const styleDirtyRef = useRef(false)
   // #R34: 업로드 시작 시 모달을 즉시 닫아 Flow UI 진행을 보이게 한다. 닫히면 onUploadComplete 가
   //   setEditData(언마운트됨) 대신 onUpdate(부모)로 결과를 반영하도록, 닫힘 여부 + 스냅샷을 ref 로 보관.
   const uploadClosingRef = useRef(false)
@@ -48,7 +52,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       caption: reference.caption,
       // 생성이 카드에 찍는 스타일 기억. 모달이 열린 채 배치가 돌면 prev 에는 없어서, 저장/재생성이
       //   editData 로 ref 를 통째로 교체할 때 기억이 지워진다(그럼 재생성이 전역 스타일로 샌다).
-      styleId: reference.styleId,
+      styleId: styleDirtyRef.current ? prev.styleId : reference.styleId,
     }))
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
@@ -145,7 +149,15 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       }
       // #R33: 캐릭터 entity 등록(entityId 수신) 직후 Flow SPA 새로고침 — 새 이름이 'Untitled' 로
       //   stale 하게 보이거나 멘션 피커가 옛 이름으로 뜨는 것을 방지(비차단).
-      if (result.entityId) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      if (needsComposerRefresh(reference, result)) {
+        // onUploadComplete 는 replace-upload 보호 구간 안이므로 현재 작업 뒤에 예약만 한다.
+        const refreshScope = getScopeToken()
+        void runFlowComposerRefresh({
+          projectId: flowProjectId,
+          scopeToken: refreshScope,
+          shouldRun: () => getScopeToken() === refreshScope,
+        }).catch(() => {})
+      }
     },
     // #R34: 업로드 시작 → 즉시 모달 닫기(Flow UI 진행 가시화). 결과는 위 onUploadComplete 가
     //   onUpdate 로 부모 ref 에 반영하므로 닫혀도 안전. 스냅샷으로 merge base 보존.
@@ -220,7 +232,16 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     }))
   }
   
+  const flowRenamePending = !!(
+    appMode === 'flow'
+    && editData.type === 'character'
+    && editData.entityId
+    && editData.name?.trim()
+    && editData.name !== reference.name
+  )
+
   const handleSave = async () => {
+    if (refBatchRunning && flowRenamePending) return
     // 이미지가 있고 파일로 저장 안 된 경우 (업로드된 이미지) 파일 저장
     if (editData.data && !editData.filePath && projectName) {
       try {
@@ -255,11 +276,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     // #R34: 이미 Flow 에 등록된(entityId) character 의 이름을 바꿔 저장하면 Flow entity 의
     //   displayName 도 재동기화한다(PATCH /flow/entities). 안 하면 앱 이름만 바뀌고 Flow/멘션
     //   피커는 옛 이름으로 남는다. 이름이 실제로 바뀐 경우에만, 백그라운드로 진행(저장은 즉시 닫힘).
-    const needsFlowRename = appMode === 'flow'
-      && editData.type === 'character'
-      && editData.entityId
-      && editData.name?.trim()
-      && editData.name !== reference.name
+    const needsFlowRename = flowRenamePending
     const renameSnapshot = needsFlowRename ? { entityId: editData.entityId, name: editData.name } : null
     const renameIdx = index
     const renameBase = { ...editData }
@@ -281,19 +298,41 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         try {
           // bound projectId 를 넘긴다 — 안 넘기면 main 이 projectIdFromUrl() 로 폴백해, Flow 웹뷰가
           //   다른 프로젝트로 드리프트했을 때 엉뚱한 프로젝트 컨텍스트로 PATCH/navigate 한다.
-          const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name, projectId: flowProjectId })
+          const res = await runFlowCharacterOperation({
+            ref: renameBase,
+            projectId: flowProjectId,
+            scopeToken: renameStartScope,
+            refIndex: renameIdx,
+            operation: 'rename',
+            task: () => window.electronAPI?.renameFlowCharacter?.({
+                entityId: renameSnapshot.entityId,
+                displayName: renameSnapshot.name,
+                projectId: flowProjectId,
+                patchOnly: getScopeToken() !== renameStartScope,
+              }),
+          })
           if (res?.success) {
-            // main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
-            if (!res.nameApplied) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+            if (getScopeToken() !== renameStartScope) {
+              console.warn('[ReferenceDetail] scope changed during queued rename — PATCH applied, skipping DOM result/refresh')
+              return
+            }
             toast.success(t('reference.flowRenameSuccess', { name: renameSnapshot.name }))
+            // nameApplied 는 상세 DOM 반영일 뿐 목록/picker 캐시 갱신까지 보장하지 않으므로 항상 재진입한다.
+            try {
+              await runFlowComposerRefresh({
+                projectId: flowProjectId,
+                scopeToken: renameStartScope,
+                shouldRun: () => getScopeToken() === renameStartScope,
+              })
+            } catch (_e) {}
           } else {
-            markFailed()
+            if (getScopeToken() === renameStartScope) markFailed()
             toast.error(t('reference.flowRenameFailed', {
               error: resolveDisplayError(t, res?.errorKind, res?.error || 'unknown'),
             }))
           }
         } catch (e) {
-          markFailed()
+          if (getScopeToken() === renameStartScope) markFailed()
           toast.error(t('reference.flowRenameError', { error: e?.message || String(e) }))
         }
       })()
@@ -343,18 +382,16 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   const selectedStylePickerId = currentPresetId ? `preset:${currentPresetId}` : null
   
   const typeInfo = REFERENCE_TYPES.find(t => t.value === editData.type) || REFERENCE_TYPES[0]
-  const isStyle = editData.type === 'style'
+  const isStyle = isStyleReference(editData)
 
-  // 이 카드가 어떤 스타일로 생성될지. styleId 키가 있으면 그게 카드의 기억이고(null = 무스타일),
-  //   없으면(새 카드) 전역 스타일 → 다른 카드들의 기억 → 자동 탐색 순으로 결정된다.
-  //   기억이 없을 땐 '자동: X' 로 표시해 지금 무엇이 적용될지 보이게 한다.
+  // 이미지가 있거나 이번 모달에서 직접 고른 카드는 styleId 를 기억으로 표시한다.
+  //   이미지 없는 미조작 카드는 stale styleId 가 있어도 생성 정책대로 전역 스타일을 '자동: X'로 표시한다.
   const styleRefs = references.filter(isStyleReference)
-  // 키 존재가 아니라 값으로 판정한다 — prop 동기화 effect 가 styleId:undefined 로 키를 만든다.
-  //   (undefined = 기억 없음, null = '무스타일로 생성됨'이라는 정당한 기억)
-  const hasStyleMemory = editData.styleId !== undefined
+  // undefined = 기억 없음. null 도 dirty/source 카드에서는 '무스타일'이라는 정당한 기억이다.
+  const hasStyleMemory = editData.styleId !== undefined && (styleDirtyRef.current || sourceAvailable(editData))
   const resolvedStyleId = hasStyleMemory
     ? editData.styleId
-    : createStyleResolver({ activeTab: 'list', scenes: [], references, selectedStyleRefId, t, isKo })
+    : createStyleResolver({ activeTab: 'list', scenes, references, selectedStyleRefId, t, isKo })
       .resolveEffectiveStyleIdForRef(null)
   const styleLabelFor = (id) => {
     if (!id || id === 'none') return t('reference.styleNone')
@@ -420,16 +457,22 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       }
       // busy/timeout 은 task/publish callback 이 실행되지 않는다 — 런타임 spinner 만 해제한다.
       if (!published) onUpdate(idx, { ...refSnapshot, syncing: false })
-      if (res.ok) {
-        // 이름을 SPA 에 못 넣었을 때만 새로고침(나갔다 재진입)한다.
-        if (needsComposerRefresh(refSnapshot, res.result)) {
-          try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
-        }
-        toast.success(t('reference.flowSyncSuccess', { name: refSnapshot.name }))
-      } else {
+      // refresh 는 Flow 프로젝트 재진입으로 수 초 걸릴 수 있으므로 성공 확인은 먼저 보여준다.
+      if (res.ok) toast.success(t('reference.flowSyncSuccess', { name: refSnapshot.name }))
+      else {
         toast.error(t('reference.flowSyncFailed', {
           error: resolveDisplayError(t, res.errorKind, res.error || 'unknown'),
         }))
+      }
+      // 등록 자체가 실패했어도 entity 가 생성됐다면 목록 캐시 갱신을 위해 재진입한다.
+      if (needsComposerRefresh(refSnapshot, res.result)) {
+        try {
+          await runFlowComposerRefresh({
+            projectId: flowProjectId,
+            scopeToken: startScope,
+            shouldRun: () => getScopeToken() === startScope,
+          })
+        } catch (_e) {}
       }
     })()
   }
@@ -448,7 +491,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       // (그렇지 않으면 useReferenceGeneration이 옛 references[index]를 읽어
       // noPrompt 경로 또는 옛 prompt로 생성하는 race 발생)
       // 주의: onUpdate → onGenerate 순서 유지 필수 (editData race-condition 우회)
-      onGenerate(index, false, null, editData)
+      const overrideStyleId = styleDirtyRef.current ? (editData.styleId ?? 'none') : null
+      onGenerate(index, false, overrideStyleId, editData)
       onClose()
     } catch (err) {
       console.error('[ReferenceDetail] Regenerate error:', err)
@@ -474,7 +518,14 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           )}
         </button>
       )}
-      <button className="btn-primary" onClick={handleSave}>{t('common.save')}</button>
+      <button
+        className="btn-primary"
+        onClick={handleSave}
+        disabled={refBatchRunning && flowRenamePending}
+        title={refBatchRunning && flowRenamePending ? t('reference.batchRenameBlocked') : undefined}
+      >
+        {t('common.save')}
+      </button>
     </>
   )
   
@@ -540,7 +591,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                       // #R10-8: 이미지 제거도 미저장 로컬 미디어 변경 → dirty(배경 prop 동기화가 되돌리지 않게).
                       mediaDirtyRef.current = true
                       // #R16-3: 이미지 제거 시 옛 entity 등록도 무효화(멘션이 옛 캐릭터를 가리키지 않게).
-                      setEditData(prev => ({ ...prev, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }))
+                      setEditData(prev => ({ ...prev, ...clearedImageFields() }))
                       setImageSize(null)
                     }}
                     title={t('reference.clearImage') || '이미지 제거'}
@@ -679,7 +730,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                     onClick={handleSync}
                     // #R37: 이미 동기화가 진행 중이면 막는다 — 모달은 닫고 백그라운드로 돌기 때문에
                     //   다시 눌리면 같은 ref 를 두 번 업로드하고 Flow 가 새 entity 를 또 만든다.
-                    disabled={!hasImageData(editData) || !!reference.syncing}
+                    disabled={!hasImageData(editData) || !!reference.syncing || refBatchRunning}
                     title={isKo ? '동기화 후 모달이 닫히고 백그라운드로 진행(@멘션/레퍼런스 복구)' : 'Closes modal and syncs in background'}
                   >
                     🔄 {isKo ? '동기화' : 'Sync'}
@@ -741,11 +792,11 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               <button onClick={() => setShowStyleDropdown(false)}>✕</button>
             </div>
             <StylePicker
-              selectedId={styleDropdownMode === 'apply' ? (resolvedStyleId || null) : selectedStylePickerId}
+              selectedId={styleDropdownMode === 'apply' ? (resolvedStyleId === 'none' ? null : resolvedStyleId) : selectedStylePickerId}
               onSelect={(id) => {
                 if (styleDropdownMode === 'apply') {
-                  // 카드의 스타일 기억을 바꾼다. 재생성은 ref.styleId 를 전역 선택보다 우선하므로
-                  //   저장만 하면 그대로 따라온다(override 를 따로 넘길 필요 없다).
+                  // stale 기억과 직접 선택을 구분해 재생성에서 명시 override 로 전달한다.
+                  styleDirtyRef.current = true
                   setEditData((prev) => ({ ...prev, styleId: id ?? null }))
                 } else {
                   handleStylePickerSelect(id)

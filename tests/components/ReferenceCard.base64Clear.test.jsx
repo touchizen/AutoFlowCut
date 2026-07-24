@@ -5,8 +5,14 @@
  * useAutomation.js 는 ref.data 없으면 ref.filePath 에서 읽는 fallback 이 이미 있어서 안전.
  * 디스크 저장 실패 시에는 기존처럼 data: base64 로 유지한다.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, act } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, renderHook, act } from '@testing-library/react'
+
+vi.mock('../../src/utils/guards', () => ({
+  checkAuthToken: vi.fn().mockResolvedValue(true),
+  checkFolderPermission: vi.fn().mockResolvedValue({ ok: true }),
+  checkFlowProjectReady: vi.fn().mockReturnValue({ ok: true }),
+}))
 
 // vi.mock factory 안에서 변수 참조 금지 (hoisting) → 모듈 인스턴스를 import 후 spy
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -40,6 +46,7 @@ global.FileReader = FakeFileReader
 
 import { fileSystemAPI } from '../../src/hooks/useFileSystem'
 import ReferenceCard from '../../src/components/ReferenceCard'
+import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
 
 const fakeFile = new File(['x'], 'photo.png', { type: 'image/png' })
 
@@ -67,6 +74,10 @@ describe('ReferenceCard — base64 clear after disk save (#3)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     fileSystemAPI.checkPermission.mockResolvedValue({ hasPermission: true })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('디스크 저장 성공 시 최종 onUpdate 는 data: null 을 전달한다', async () => {
@@ -129,7 +140,8 @@ describe('ReferenceCard — base64 clear after disk save (#3)', () => {
       id: 1, name: 'hero', category: 'character', type: 'character',
       data: 'data:image/png;base64,IMG', filePath: null, mediaId: 'med-1', caption: 'c',
       entityId: 'ent-1', workflowId: 'wf-1', registered: true, flowNameSyncStatus: 'synced',
-      status: 'done',
+      status: 'done', prompt: 'hero portrait',
+      errorMessage: 'old failure', errorKind: 'old-kind', error: 'old error',
     }
     const { container, getByText } = render(
       <ReferenceCard reference={charRef} index={0} onUpdate={onUpdate} onRemove={vi.fn()}
@@ -148,6 +160,40 @@ describe('ReferenceCard — base64 clear after disk save (#3)', () => {
     expect(patch.workflowId).toBeNull()
     expect(patch.registered).toBeNull()
     expect(patch.flowNameSyncStatus).toBeNull()
+    expect(patch.status).toBe('pending')
+    expect(patch.errorMessage).toBeNull()
+    expect(patch.errorKind).toBeNull()
+    expect(patch.error).toBeNull()
+
+    const genAPI = {
+      mode: 'api',
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'g-cleared' }),
+      checkGeneration: vi.fn().mockResolvedValue({ success: true, completed: true }),
+      collectGeneration: vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'generated' }] }),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const hook = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references: [patch],
+      setReferences: vi.fn(),
+      genAPI,
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: key => key,
+      generationQueue: null,
+    }))
+    vi.useFakeTimers()
+    let batchPromise
+    await act(async () => { batchPromise = hook.result.current.handleGenerateAllRefs() })
+    for (let i = 0; i < 20; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(16000) })
+    }
+    await act(async () => { await batchPromise })
+
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
+    expect(patch.status).toBe('pending')
   })
 
   it('projectName 없으면 저장 시도 안 하고 data: base64 유지', async () => {

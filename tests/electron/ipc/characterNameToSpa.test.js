@@ -101,6 +101,21 @@ describe('flow:rename-character — 이름을 SPA 스토어에도 반영', () =>
     expect(scripts.some(s => s.includes('name input not found'))).toBe(false)
   })
 
+  it('patchOnly면 서버 PATCH는 실행하고 상세 DOM navigation/타이핑은 건너뛴다', async () => {
+    const ipc = makeIpcMain()
+    const { deps, flowView } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+
+    const res = await rename(ipc, { patchOnly: true })
+
+    expect(res).toMatchObject({ success: true, nameApplied: false })
+    const patchCalls = deps.flowPageFetch.mock.calls.filter(([u]) => String(u).includes('entities'))
+    expect(patchCalls).toHaveLength(1)
+    expect(flowView.webContents.loadURL).not.toHaveBeenCalled()
+    const scripts = flowView.webContents.executeJavaScript.mock.calls.map(c => String(c[0]))
+    expect(scripts.some(s => s.includes('name input not found'))).toBe(false)
+  })
+
   it('상세 페이지 진입에 실패하면 nameApplied:false 로 폴백을 알린다', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps({ onDetailPage: false })

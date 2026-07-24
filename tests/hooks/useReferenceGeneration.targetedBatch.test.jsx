@@ -41,6 +41,7 @@ vi.mock('../../src/utils/urls', () => ({
 }))
 
 import { toast } from '../../src/components/Toast'
+import { checkAuthToken } from '../../src/utils/guards'
 import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
 
 const RESULT_KEYS = [
@@ -83,6 +84,8 @@ function setupHook({
   generationQueue = null,
   selectedStyleRefId = null,
   genOverrides = {},
+  settingsOverrides = {},
+  hookOverrides = {},
 }) {
   let liveRefs = references.map(ref => ({ ...ref }))
   let generationNo = 0
@@ -95,6 +98,10 @@ function setupHook({
     mode: 'api',
     getAccessToken: vi.fn().mockResolvedValue('token'),
     clearTokenCache: vi.fn(),
+    generateImage: vi.fn().mockResolvedValue({
+      success: true,
+      images: [{ base64: 'generated-image', mediaId: 'generated-media' }],
+    }),
     submitGeneration: vi.fn(async (prompt, styleRefImages, options) => {
       generationNo += 1
       submitOrder.push(prompt)
@@ -115,21 +122,32 @@ function setupHook({
     ...genOverrides,
   }
 
-  const { result } = renderHook(() => useReferenceGeneration({
-    settings: {
-      saveMode: 'project',
-      imageBatchCount: 1,
-      concurrency: 5,
-    },
-    references: liveRefs,
-    setReferences,
-    genAPI,
-    addPendingSave: vi.fn(),
-    openSettings: vi.fn(),
-    t: key => key,
-    selectedStyleRefId,
-    generationQueue,
-  }))
+  const stateLog = []
+  const { result } = renderHook(() => {
+    const value = useReferenceGeneration({
+      settings: {
+        saveMode: 'project',
+        imageBatchCount: 1,
+        concurrency: 5,
+        ...settingsOverrides,
+      },
+      references: liveRefs,
+      setReferences,
+      genAPI,
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: key => key,
+      selectedStyleRefId,
+      generationQueue,
+      ...hookOverrides,
+    })
+    stateLog.push({
+      refBatchActive: value.refBatchActive,
+      preparingRefs: value.preparingRefs,
+      generatingRefs: value.generatingRefs,
+    })
+    return value
+  })
 
   return {
     result,
@@ -137,8 +155,15 @@ function setupHook({
     setReferences,
     submitOrder,
     submitCalls,
+    stateLog,
     getLiveRefs: () => liveRefs,
   }
+}
+
+const deferred = () => {
+  let resolve
+  const promise = new Promise(r => { resolve = r })
+  return { promise, resolve }
 }
 
 // batchOrder.test.jsx와 같은 방식으로 제출 게이트와 마지막 drain poll을 진행한다.
@@ -174,6 +199,7 @@ async function callBatch(result, overrideStyleId = null, options = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  checkAuthToken.mockResolvedValue(true)
 })
 
 afterEach(() => {
@@ -523,5 +549,162 @@ describe('useReferenceGeneration — style pass-through', () => {
     expect(submitOrder).toEqual(['ghost portrait, watercolor'])
     expect(submitOrder[0]).not.toContain('other portrait')
     expect(submitOrder[0]).not.toContain('Film noir')
+  })
+})
+
+describe('useReferenceGeneration — Ref batch 전체 수명', () => {
+  it('두 Flow character의 아이템 auth 창과 아이템 사이에도 refBatchActive가 끊기지 않는다', async () => {
+    const firstItemAuth = deferred()
+    const secondItemAuth = deferred()
+    checkAuthToken
+      .mockResolvedValueOnce(true)
+      .mockReturnValueOnce(firstItemAuth.promise)
+      .mockReturnValueOnce(secondItemAuth.promise)
+
+    const { result, genAPI, stateLog } = setupHook({
+      references: [
+        { id: 'first', type: 'character', prompt: 'first portrait', status: 'pending' },
+        { id: 'second', type: 'character', prompt: 'second portrait', status: 'pending' },
+      ],
+      genOverrides: { mode: 'flow' },
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:first', 'id:second'],
+      })
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+
+    expect(checkAuthToken).toHaveBeenCalledTimes(2)
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.generatingRefs).toEqual([])
+    expect(result.current.refBatchActive).toBe(true)
+
+    await act(async () => {
+      firstItemAuth.resolve(true)
+      for (let i = 0; i < 12; i++) await Promise.resolve()
+    })
+
+    expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
+    expect(checkAuthToken).toHaveBeenCalledTimes(3)
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.generatingRefs).toEqual([])
+    expect(result.current.refBatchActive).toBe(true)
+
+    await act(async () => {
+      secondItemAuth.resolve(true)
+      await batchPromise
+    })
+
+    const firstActive = stateLog.findIndex(state => state.refBatchActive === true)
+    const lastActive = stateLog.findLastIndex(state => state.refBatchActive === true)
+    expect(firstActive).toBeGreaterThanOrEqual(0)
+    expect(stateLog.slice(firstActive, lastActive + 1).every(state => state.refBatchActive)).toBe(true)
+    expect(result.current.refBatchActive).toBe(false)
+    expect(result.current.preparingRefs).toBe(false)
+  })
+
+  it.each([
+    ['permission 조기 실패', {
+      settingsOverrides: { saveMode: 'folder' },
+      arrange: async () => {
+        const { fileSystemAPI } = await import('../../src/hooks/useFileSystem')
+        fileSystemAPI.ensurePermission.mockResolvedValueOnce({ error: 'not_set' })
+      },
+    }],
+    ['auth 조기 실패', {
+      arrange: async () => { checkAuthToken.mockResolvedValueOnce(false) },
+    }],
+    ['unexpected throw', {
+      settingsOverrides: { saveMode: 'folder' },
+      arrange: async () => {
+        const { fileSystemAPI } = await import('../../src/hooks/useFileSystem')
+        fileSystemAPI.ensurePermission.mockRejectedValueOnce(new Error('permission IPC failed'))
+      },
+      rejects: true,
+    }],
+  ])('%s 뒤에는 lifecycle flags를 모두 정리한다', async (_label, scenario) => {
+    await scenario.arrange()
+    const { result } = setupHook({
+      references: [{ id: 'target', type: 'scene', prompt: 'portrait', status: 'pending' }],
+      settingsOverrides: scenario.settingsOverrides,
+    })
+
+    await act(async () => {
+      const promise = result.current.handleGenerateAllRefs(null, { targetRefKeys: ['id:target'] })
+      if (scenario.rejects) await expect(promise).rejects.toThrow('permission IPC failed')
+      else await promise
+    })
+
+    expect(result.current.refBatchActive).toBe(false)
+    expect(result.current.preparingRefs).toBe(false)
+  })
+
+  it('target 0건은 beforeBatchActivation 대기 중에도 두 lifecycle flag를 한 번도 켜지 않는다', async () => {
+    const activationGate = deferred()
+    const beforeBatchActivation = vi.fn(() => activationGate.promise)
+    const { result, stateLog } = setupHook({
+      references: [{ id: 'filled', type: 'scene', prompt: 'filled', data: 'image', status: 'done' }],
+      hookOverrides: { beforeBatchActivation },
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs(null, { targetRefKeys: ['id:filled'] })
+      for (let i = 0; i < 5; i++) await Promise.resolve()
+    })
+
+    expect(beforeBatchActivation).toHaveBeenCalledTimes(1)
+    expect(result.current.refBatchActive).toBe(false)
+    expect(result.current.preparingRefs).toBe(false)
+
+    await act(async () => {
+      activationGate.resolve()
+      await batchPromise
+    })
+    expect(stateLog.some(state => state.refBatchActive || state.preparingRefs)).toBe(false)
+  })
+
+  it('queued Stop은 beforeBatchActivation 대기 중과 stopped 반환까지 두 lifecycle flag를 켜지 않는다', async () => {
+    const queueGate = deferred()
+    const activationGate = deferred()
+    const beforeBatchActivation = vi.fn(() => activationGate.promise)
+    const generationQueue = {
+      enqueue: vi.fn(async job => {
+        await queueGate.promise
+        return job.execute()
+      }),
+    }
+    const { result, stateLog } = setupHook({
+      references: [{ id: 'target', type: 'scene', prompt: 'portrait', status: 'pending' }],
+      generationQueue,
+      hookOverrides: { beforeBatchActivation },
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs(null, { targetRefKeys: ['id:target'] })
+      await Promise.resolve()
+      result.current.stopGenerateAllRefs()
+      queueGate.resolve()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+
+    expect(beforeBatchActivation).toHaveBeenCalledTimes(1)
+    expect(result.current.refBatchActive).toBe(false)
+    expect(result.current.preparingRefs).toBe(false)
+
+    let batchResult
+    await act(async () => {
+      activationGate.resolve()
+      batchResult = await batchPromise
+    })
+
+    expect(batchResult.outcome).toBe('stopped')
+    expect(stateLog.some(state => state.refBatchActive || state.preparingRefs)).toBe(false)
+    expect(result.current.refBatchActive).toBe(false)
+    expect(result.current.preparingRefs).toBe(false)
   })
 })

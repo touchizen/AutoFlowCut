@@ -54,7 +54,6 @@ const syncProceed = sliceBetween(
   'const handleSyncGateProceed',
   'const handleSyncGateCancel'
 )
-const stylePicker = sliceBetween('<StylePicker', '{showAudioResult &&')
 const emptyRefModal = sliceBetween(
   '{emptyRefGate && (',
   '{/* #R34: 생성 전 미동기화'
@@ -65,7 +64,11 @@ const handleStopImpl = sliceBetween(
 )
 const referencePanel = sliceBetween(
   '<ReferencePanel',
-  '<PreviewMonitor'
+  '/>'
+)
+const referenceGenerationHook = sliceBetween(
+  'useReferenceGeneration({',
+  'const { isOpen: showReferences'
 )
 
 describe('App empty reference gate wiring', () => {
@@ -81,9 +84,30 @@ describe('App empty reference gate wiring', () => {
     expect(tagProceed).not.toContain('initialTargetScenes:')
   })
 
-  it('sync-proceed의 authoritative seed는 referencesRef.current다', () => {
-    expect(syncProceed).toContain('let patchedRefs = referencesRef.current')
-    expect(syncProceed).not.toContain('let patchedRefs = scenesHook.references')
+  // 실행부는 services/syncGateRun 으로 옮겼고 그 동작은 tests/services/syncGateRun.test.js 가
+  // **실행해서** 검증한다. 여기선 App 이 authoritative 한 값(동기 최신 ref)을 주입하는지만 본다 —
+  // scenesHook.references 를 주면 async 루프에서 stale 이다.
+  // 실행부/판정은 services 로 옮겼고 그 동작은 실행 테스트가 검증한다. 여기 남은 위험은 하나뿐 —
+  // App 이 그 서비스에 **렌더 클로저**를 바인딩하는 것. 이 수정 전체가 바로 그 병이었다.
+  // (live ref 대신 클로저를 주면 await 를 건넌 판정이 옛 값을 본다.)
+  it('실행부에 동기 최신값(ref)을 주입한다 — 렌더 클로저 금지', () => {
+    expect(syncProceed).toContain('getReferences: () => referencesRef.current')
+    expect(syncProceed).toContain('getProjectName: () => projectNameRef.current')
+    expect(syncProceed).toContain('isProjectLoading: () => projectLoadingRef.current')
+    expect(syncProceed).not.toContain('getReferences: () => scenesHook.references')
+    expect(syncProceed).not.toContain('isProjectLoading: () => projectLoading\n')
+  })
+
+  it('게이트는 여는 시점의 프로젝트를 새긴다', () => {
+    expect(source).toContain('scope: projectNameRef.current')
+  })
+
+  it('요청 판정에도 같은 동기 최신값을 준다', () => {
+    const start = source.indexOf('const requestMentionSync')
+    const handler = source.slice(start, source.indexOf('// Scene 재생성', start))
+    expect(handler).toContain('getReferences: () => referencesRef.current')
+    expect(handler).toContain('getProjectName: () => projectNameRef.current')
+    expect(handler).toContain('isProjectLoading: () => projectLoadingRef.current')
   })
 
   it('M2 coordinator는 Flow 이미지 배치에서만 호출된다', () => {
@@ -137,16 +161,6 @@ describe('App empty reference gate wiring', () => {
     expect(tagProceed).toContain('getEmptyRefGateDeps(__startSource)')
   })
 
-  it('StylePicker 선택은 handleStart로 재진입해 M2 guard를 다시 통과한다 (§11.8)', () => {
-    expect(stylePicker).toContain(
-      'handleStart(id, { force: pendingStyleForceRef.current })'
-    )
-    expect(stylePicker).toContain(
-      'handleStart(null, { force: pendingStyleForceRef.current })'
-    )
-    expect(stylePicker).not.toContain('automationStartRef.current(')
-  })
-
   // busy 에는 모달 자체가 없다 — 모달이 열려 있으면 layout.js 가 Flow WebContentsView 를 0×0 으로
   // 줄여 sendInputEvent 기반 DOM 자동화가 죽는다(자기가 기다리는 생성을 자기가 막는 데드락).
   // 큐 대기/아이템 preflight 에서는 refBatchRunning 이 잠시 false 여도 gate phase 는 계속 busy 다.
@@ -166,5 +180,17 @@ describe('App empty reference gate wiring', () => {
 
   it('gate pending latch를 ReferencePanel 진입점 비활성화에 전달한다', () => {
     expect(referencePanel).toContain('hasPendingBatch={hasPendingBatch}')
+  })
+
+  it('Ref 스타일 resolver가 씬 style_tag를 읽도록 scenes를 generation hook에 전달한다', () => {
+    expect(referenceGenerationHook).toMatch(/\bscenes\b/)
+  })
+
+  it('같은 tick queue 실행도 최신 씬을 읽도록 useScenes의 동기 scenesRef를 전달한다', () => {
+    expect(referenceGenerationHook).toContain('scenesRef: scenesHook.scenesRef')
+  })
+
+  it('상세 모달 라벨도 같은 씬 파생을 쓰도록 scenes를 ReferencePanel에 전달한다', () => {
+    expect(referencePanel).toContain('scenes={scenes}')
   })
 })

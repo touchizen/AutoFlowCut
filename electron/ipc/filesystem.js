@@ -221,6 +221,19 @@ async function pathExists(p) {
 }
 
 /**
+ * Read a JSON file, or null when it is missing or unparseable.
+ * 손상된 project.json 을 읽다 throw 하면 저장 자체가 실패한다 — 읽기 실패는 "이전 값 없음"으로
+ * 취급하고 쓰기는 진행한다(다음 쓰기가 파일을 정상화한다).
+ */
+async function readJsonOrNull(p) {
+  try {
+    return JSON.parse(await fs.readFile(p, 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+/**
  * Try to read + parse W4-3 SFX prompt list (`08_sfx_list.md` / `08_sfx_목록.md`).
  * Returns a plain object `{ [filenameStem]: meta }` for IPC structured-clone safety,
  * or `null` if no file found. Never throws.
@@ -407,7 +420,18 @@ export function registerFilesystemIPC(ipcMain) {
     return withProjectWriteLock(jsonPath, async () => {
       try {
         await fs.mkdir(path.join(workFolder, project), { recursive: true })
-        await fs.writeFile(jsonPath, JSON.stringify(data, null, 2), 'utf-8')
+        // flowProjectId 는 **merge 전용 키**다. full save 의 payload 는 renderer 가 payload 를
+        // 만든 시점의 값이라, write-lock 뒤에서 순서가 뒤집히면 그 사이 merge 로 저장된 최신
+        // 매핑을 옛 값(또는 키 누락)으로 덮어쓴다 — merge 성공을 보고 생성 게이트를 연 renderer
+        // 는 그걸 알 수 없다. 그래서 파일이 이미 있으면 디스크 값이 항상 이긴다. 설정/해제는
+        // 둘 다 merge-project-data 로만 한다(persistFlowProjectId / clearDeadFlowMapping).
+        const next = { ...data }
+        const prev = await readJsonOrNull(jsonPath)
+        if (prev) {
+          if ('flowProjectId' in prev) next.flowProjectId = prev.flowProjectId
+          else delete next.flowProjectId
+        }
+        await fs.writeFile(jsonPath, JSON.stringify(next, null, 2), 'utf-8')
         return { success: true }
       } catch (error) {
         return { success: false, error: error.message }
@@ -422,11 +446,16 @@ export function registerFilesystemIPC(ipcMain) {
     const jsonPath = path.join(workFolder, project, 'project.json')
     return withProjectWriteLock(jsonPath, async () => {
       try {
-        if (!(await pathExists(jsonPath))) {
-          return { success: false, error: 'project_json_missing' }
+        // 파일이 없으면 패치만으로 만든다. 반환값을 실패로 두면(옛 동작) 최초 저장이 실패한
+        // 프로젝트는 저장 재시도가 통과할 길이 없어 flowProjectReady 가 영구히 닫힌다.
+        // ⚠️ "없음"과 "깨짐"은 다르다 — 파싱 실패는 여기서 throw 되어 실패로 반환된다.
+        //    깨진 project.json 을 패치만 든 파일로 덮으면 씬/레퍼런스가 통째로 날아간다.
+        let data = {}
+        if (await pathExists(jsonPath)) {
+          data = JSON.parse(await fs.readFile(jsonPath, 'utf-8'))
+        } else {
+          await fs.mkdir(path.join(workFolder, project), { recursive: true })
         }
-        const text = await fs.readFile(jsonPath, 'utf-8')
-        const data = JSON.parse(text)
         const merged = { ...data, ...(patch || {}) }
         await fs.writeFile(jsonPath, JSON.stringify(merged, null, 2), 'utf-8')
         return { success: true }

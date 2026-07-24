@@ -1405,7 +1405,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 여전히 done — regenerateSegment와 같은 이유로, 무조건 null 대신 막혔을 때만 'audio'로 고정해
   // AudioKeyGateCard가 보이는 오디오 패널을 유지한다.
   const handleStepRedo = async () => {
-    if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(제목 확정+분리, 자체 viewedStep 처리)
+    if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(handleSplit이 자체 viewedStep 처리)
     if (redoStep === 'audio') {
       const result = await runAudioWithPreflight(buildStepParams(redoStep), (p) => start('audio', p))
       setViewedStep(result?.error === 'preflight-missing-key' ? 'audio' : null)
@@ -1467,16 +1467,18 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     start('script', { continue: base, options: currentOptions() })
   }
 
-  // §0.4 분리시작 — 편집본 저장 + 씬 분리 단일 액션. 제목 비면 자동생성 먼저(§3).
+  // §0.4 분리시작 — 편집본 저장 + 씬 분리 단일 액션.
+  // 제목은 선택 메타데이터(재오픈 hydrate·표시용)라 씬분리를 막지 않는다. 예전엔 제목이 비면
+  //   화면전환 전에 generateTitle(LLM)을 기다려, 대본을 임포트해 제목이 없는 경로에서 전환이
+  //   제목 생성 대기에 인질로 잡혔다. 이제 현재 제목(있으면 그대로, 없으면 빈 값)으로 즉시 전환한다.
+  //   제목 자동생성은 하지 않는다 — 원하면 사용자가 제목칸에 직접 입력한다.
   const handleSplit = async () => {
-    const resolved = await resolveTitle()
-    if (resolved == null) return false // 제목 자동생성 실패 → 실행 안 함(자동 진행이 이걸로 멈춤)
-    // resolveTitle이 생성한 title을 main source of truth에 커밋 — 없으면 재오픈 hydrate가 제목을 잃는다.
     setScriptPhase(null)
     // 재분리에서는 currentStep이 audio 이후일 수 있어 null로 비우면 그 패널로 튄다.
     setViewedStep('scenes')
     try {
-      const res = await start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
+      // title이 있으면 넘겨 state.input.title로 보존(재오픈 복원), 비면 undefined로 두어 덮지 않는다.
+      const res = await start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: title.trim() || undefined })
       setViewedStep(null)
       return !res?.error // busy 등 enqueue 실패면 false
     } catch {

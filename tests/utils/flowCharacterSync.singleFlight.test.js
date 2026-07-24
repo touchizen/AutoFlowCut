@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { syncRefToFlow, isSyncInFlight } from '../../src/utils/flowCharacterSync'
+import * as flowCharacterCoordinator from '../../src/utils/flowCharacterCoordinator'
 
 async function flushOperationStart() {
   await Promise.resolve()
@@ -159,6 +160,67 @@ describe('single-flight — 같은 ref 동시 동기화는 업로드를 한 번�
     expect(publishA).toHaveBeenCalledTimes(1)
     expect(publishB).toHaveBeenCalledTimes(1)
     expect(isSyncInFlight(joinedChar, { projectId: 'project-publishers' })).toBe(false)
+  })
+
+  it('composer refresh 는 진행 중인 character 작업 뒤에 대기하고 같은 대상 요청은 한 번으로 합류한다', async () => {
+    let resolveUpload
+    const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
+    window.electronAPI = { ...(window.electronAPI || {}), refreshFlowComposer }
+    const active = syncRefToFlow(
+      { ...char, id: 40 },
+      vi.fn(() => new Promise(resolve => { resolveUpload = resolve })),
+      { projectId: 'project-refresh', scopeToken: 'flow::local-refresh' },
+    )
+    await flushOperationStart()
+
+    expect(typeof flowCharacterCoordinator.runFlowComposerRefresh).toBe('function')
+    const refreshA = flowCharacterCoordinator.runFlowComposerRefresh({
+      projectId: 'project-refresh',
+      scopeToken: 'flow::local-refresh',
+    })
+    const refreshB = flowCharacterCoordinator.runFlowComposerRefresh({
+      projectId: 'project-refresh',
+      scopeToken: 'flow::another-local-project',
+    })
+    await flushOperationStart()
+
+    const refreshStartedWhileCharacterActive = refreshFlowComposer.mock.calls.length > 0
+    const sameTargetJoined = refreshA === refreshB
+
+    resolveUpload({ success: true, entityId: 'e1', workflowId: 'w1', mediaId: 'm1', registered: true })
+    await active
+    await Promise.all([refreshA, refreshB])
+
+    expect(refreshStartedWhileCharacterActive).toBe(false)
+    expect(sameTargetJoined).toBe(true)
+    expect(refreshFlowComposer).toHaveBeenCalledTimes(1)
+    expect(refreshFlowComposer).toHaveBeenCalledWith({ projectId: 'project-refresh' })
+  })
+
+  it('대기 중 scope 가 바뀌어 요청이 stale 해지면 composer refresh task를 시작하지 않는다', async () => {
+    let resolveUpload
+    let currentScope = 'flow::project-a'
+    const refreshFlowComposer = vi.fn().mockResolvedValue({ success: true })
+    window.electronAPI = { ...(window.electronAPI || {}), refreshFlowComposer }
+    const active = syncRefToFlow(
+      { ...char, id: 41 },
+      vi.fn(() => new Promise(resolve => { resolveUpload = resolve })),
+      { projectId: 'project-blocking-refresh', scopeToken: currentScope },
+    )
+    await flushOperationStart()
+
+    const refresh = flowCharacterCoordinator.runFlowComposerRefresh({
+      projectId: 'project-a',
+      scopeToken: currentScope,
+      shouldRun: () => currentScope === 'flow::project-a',
+    })
+    currentScope = 'flow::project-b'
+    resolveUpload({ success: true, entityId: 'e1', workflowId: 'w1', mediaId: 'm1', registered: true })
+    await active
+    const refreshResult = await refresh
+
+    expect(refreshFlowComposer).not.toHaveBeenCalled()
+    expect(refreshResult).toMatchObject({ skipped: true, scopeChanged: true })
   })
 
   // #R37: 타임아웃은 **호출자만** 풀어준다. 락은 유지한다.

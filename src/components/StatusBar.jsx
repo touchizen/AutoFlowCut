@@ -29,7 +29,7 @@ export default function StatusBar({ progress, status, message, scenes = [], prog
   // 부분 실패(done 인데 실패 있음)는 success(초록)로 보이지 않게 warning 색.
   const statusClass = (status === 'done' && errorCount > 0) ? 'warning' : baseStatusClass
 
-  const isActive = status === 'running' || status === 'uploading'
+  const isActive = status === 'preparing' || status === 'running' || status === 'uploading'
 
   return (
     <div className={`status-bar ${statusClass}`}>
