@@ -757,13 +757,13 @@ const {
 // ─── Monkey-patch path: inject pending values into the Flow page ──────────────
 // #R15-5: arming 결과를 반환한다(성공/실패) — 호출부(image/T2V/I2V)가 실패 시 생성을 중단해
 //   미주입(잘못된 seed/aspect/ref/i2v) 요청이 나가지 않게 한다.
-async function setFlowPageInject({ seed, aspectRatio, references, i2v, duration, videoModel, genTag }) {
+async function setFlowPageInject({ seed, aspectRatio, videoAspectRatio, references, i2v, duration, videoModel, genTag }) {
   const flowView = modeController.getFlowView()
   if (!flowView) return { success: false, error: 'Flow view not ready' }
   // duration/videoModel 은 T2V OmniFlash 강제·길이최적화용 — 페이지측이 inject.duration/
   //   inject.videoModel 로 읽는다. 단일 contract(flow-inject-payload)로 set/clear 필드 일치.
   // #R35: genTag 는 seed 를 안 건드리고 요청↔생성 correlation 을 하기 위한 고유 태그(응답 보고에 실림).
-  const payload = buildFlowInjectPayload({ seed, aspectRatio, references, i2v, duration, videoModel, genTag })
+  const payload = buildFlowInjectPayload({ seed, aspectRatio, videoAspectRatio, references, i2v, duration, videoModel, genTag })
   try {
     // #R16-1: payload 를 쓰고 fetch 패치 설치 여부를 함께 확인한다 — 패치가 없으면(주입 무효)
     //   success 로 보고하지 않는다(호출부가 미주입 생성을 막을 수 있게).

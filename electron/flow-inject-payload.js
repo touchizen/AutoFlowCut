@@ -10,11 +10,25 @@
  *   genTag(#R35: 이 요청을 특정 async 생성에 correlate 하는 고유 태그 — 응답 보고에 실려 나감)
  */
 
+// '9:16'/'16:9'(또는 이미 VIDEO_ASPECT_RATIO_*) → 비디오 요청 body(requests[].aspectRatio) enum.
+// Flow 가 설정 패널을 통합 탭 UI 로 바꿔 DOM 화면비 세터(applyAgentDefaults)가 비디오에 적용되지
+// 않게 됐다 — 대신 이 값을 요청에 직접 주입해 DOM 과 무관하게 화면비를 싣는다(이미지의
+// imageAspectRatio 주입 미러). 매칭 불가(빈 값 등)면 null → 요청 미수정(Flow 기본값 유지).
+export function toVideoAspectEnum(ratio) {
+  if (typeof ratio !== 'string' || !ratio.trim()) return null
+  if (ratio.startsWith('VIDEO_ASPECT_RATIO_')) return ratio
+  if (ratio === '9:16' || /PORTRAIT|9\s*[:x]?\s*16/i.test(ratio)) return 'VIDEO_ASPECT_RATIO_PORTRAIT'
+  if (ratio === '16:9' || /LANDSCAPE|16\s*[:x]?\s*9/i.test(ratio)) return 'VIDEO_ASPECT_RATIO_LANDSCAPE'
+  return null
+}
+
 /** 주입 arm payload — 누락/undefined 필드는 null(= 미수정). */
-export function buildFlowInjectPayload({ seed, aspectRatio, references, i2v, duration, videoModel, genTag } = {}) {
+export function buildFlowInjectPayload({ seed, aspectRatio, videoAspectRatio, references, i2v, duration, videoModel, genTag } = {}) {
   return {
     seed:        seed        ?? null,
     aspectRatio: aspectRatio ?? null,
+    // 비디오 요청 requests[].aspectRatio 로 주입할 VIDEO_ASPECT_RATIO_* enum(이미지의 aspectRatio 와 별개).
+    videoAspectRatio: videoAspectRatio ?? null,
     references:  references  ?? null,
     i2v:         i2v         ?? null,
     duration:    duration    ?? null,
