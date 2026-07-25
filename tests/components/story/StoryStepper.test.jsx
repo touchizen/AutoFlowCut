@@ -147,6 +147,30 @@ describe('StoryStepper 진행 레일(번호 + 연결선)', () => {
     }
   })
 
+  // 임포트 경로는 대본을 먼저 저장(script done)하고 시놉시스 게이트로 들어간다. 그 동안 레일이
+  // "대본 완료 → 씬 분리로 진행"으로 보이면 아직 게이트에 서 있는 사용자에게 거짓 진행이 된다.
+  it('시놉시스 게이트에 머무는 동안에는 대본이 done 이어도 흐름을 채우지 않는다', () => {
+    const steps = { script: { status: 'done' }, scenes: { status: 'pending' }, audio: { status: 'pending' }, prompts: { status: 'pending' } }
+    render(<StoryStepper steps={steps} currentStep="scenes" activeStep="synopsis"
+      synopsisEnabled synopsisDone={false} onStepClick={vi.fn()} />)
+    const lines = [...document.querySelectorAll('.story-rail-line')]
+    expect(lines.every((l) => !l.classList.contains('filled'))).toBe(true)
+  })
+
+  it('리서치 게이트도 마찬가지로 흐름을 채우지 않는다', () => {
+    const steps = { script: { status: 'done' }, scenes: { status: 'pending' }, audio: { status: 'pending' }, prompts: { status: 'pending' } }
+    render(<StoryStepper steps={steps} currentStep="scenes" activeStep="research"
+      researchEnabled researchDone={false} onStepClick={vi.fn()} />)
+    expect([...document.querySelectorAll('.story-rail-line')].some((l) => l.classList.contains('filled'))).toBe(false)
+  })
+
+  it('게이트를 통과(확정)했으면 게이트 탭을 보고 있어도 흐름은 채워진다', () => {
+    const steps = { script: { status: 'done' }, scenes: { status: 'pending' }, audio: { status: 'pending' }, prompts: { status: 'pending' } }
+    render(<StoryStepper steps={steps} currentStep="scenes" activeStep="synopsis"
+      synopsisEnabled synopsisDone onStepClick={vi.fn()} />)
+    expect(document.querySelectorAll('.story-rail-line')[0].classList.contains('filled')).toBe(true)
+  })
+
   it('연결선은 앞 스텝이 완료면 채워진다(진행 방향 표시)', () => {
     const steps = { script: { status: 'done' }, scenes: { status: 'running' }, audio: { status: 'pending' }, prompts: { status: 'pending' } }
     render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={vi.fn()} />)

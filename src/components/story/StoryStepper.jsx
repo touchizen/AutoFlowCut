@@ -75,6 +75,11 @@ export default function StoryStepper({
   useEffect(() => { if (!showAutoControl && autoOpen) setAutoOpen(false) }, [showAutoControl, autoOpen])
   const autoOnCount = showAutoControl ? AUTO_STEPS.filter((k) => autoSteps[k]).length : 0
 
+  // 아직 통과하지 못한 게이트에 서 있는가. 임포트 경로는 대본을 먼저 저장(script done)한 뒤
+  //   시놉시스 게이트로 들어가므로, 그 동안 레일을 채우면 "대본 끝나고 씬 분리로 넘어가는 중"이라는
+  //   거짓 진행이 보인다. 확정(done)한 게이트를 다시 열어본 경우는 해당 없음 — 흐름은 그대로 채운다.
+  const parkedAtGate = (researchEnabled && !researchDone) || (synopsisEnabled && !synopsisDone)
+
   // 진입 탭(설정/리서치/시놉시스) — 실행 상태가 없는 텍스트 탭. setup 은 항상 활성.
   const gateTabs = [
     { key: SETUP_KEY, meta: SETUP_META, enabled: true, done: false },
@@ -126,7 +131,7 @@ export default function StoryStepper({
           const label = t(`story.step.${key}`, meta.label)
           const clickable = (status === 'done' || key === currentStep) && clickableBase
           const statusText = t(`story.status.${status}`, STATUS_LABEL[status] || status)
-          const prevDone = i > 0 && (steps?.[STEP_ORDER[i - 1]]?.status === 'done')
+          const prevDone = i > 0 && !parkedAtGate && (steps?.[STEP_ORDER[i - 1]]?.status === 'done')
           return (
             <div className="story-rail-cell" key={key}>
               {i > 0 && <span className={`story-rail-line${prevDone ? ' filled' : ''}`} aria-hidden="true" />}
