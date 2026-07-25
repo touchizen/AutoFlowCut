@@ -1825,6 +1825,8 @@ function App() {
           mode: 'i2v',
           framePairs: resolvedPairs,
           projectName,
+          // 화면비(설정>씬) 공용값 — 안 실으면 landscape 기본값으로 고정돼 9:16/16:9가 무시된다(T2V와 동일).
+          aspectRatio: settings.aspectRatio,
           saveMode: settings.saveMode,
           videoResolution: settings.videoResolution || '720p',
           videoModel: settings.videoModelF2V,

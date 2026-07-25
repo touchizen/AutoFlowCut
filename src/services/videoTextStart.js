@@ -60,6 +60,10 @@ export function buildVideoTextStartPayload({
       scenes,
       seed,
       projectName,
+      // 화면비(설정>씬)는 이미지·비디오 공용 — 안 실으면 useVideoAutomation 이 하드코딩
+      //   기본값(VIDEO_ASPECT_RATIO_LANDSCAPE)으로 떨어져 9:16/16:9 선택이 무시된다.
+      //   값('9:16'/'16:9')은 Flow(aspectSuffix)·API(Veo) 양쪽에서 그대로 소비된다.
+      aspectRatio: settings.aspectRatio,
       saveMode: settings.saveMode,
       videoResolution: settings.videoResolution || '720p',
       videoModel: settings.videoModelT2V,
