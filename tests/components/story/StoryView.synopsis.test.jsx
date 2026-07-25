@@ -50,8 +50,8 @@ const reopenedTitleUnconfirmed = (over = {}) => {
   return p
 }
 
-const pillOf = (label) => screen.getByText(label).closest('.story-step-pill')
-const queryPill = (label) => screen.queryByText(label)?.closest('.story-step-pill') ?? null
+const pillOf = (label) => screen.getByText(label).closest('.story-gate-tab, .story-rail-step')
+const queryPill = (label) => screen.queryByText(label)?.closest('.story-gate-tab, .story-rail-step') ?? null
 
 // §v2.12 B: pill 자리는 항상 렌더(숨김 폐지) — 활성/비활성만 상태로 가른다.
 // 활성: type∈{title,pasted} 신규(charactersConfirmed≠undefined). 비활성: imported/legacy.
@@ -60,11 +60,12 @@ describe('시놉시스 pill 렌더/활성 조건 (§v2.10/§v2.11 → §v2.12 B)
     render(<StoryView pipeline={reopenedTitleUnconfirmed()} />)
     const pill = pillOf('시놉시스')
     expect(pill).toBeTruthy()
-    expect(pill.querySelector('.story-step-dot')).toBeNull()
+    // 진입 탭은 실행 스텝의 상태 자리를 갖지 않는다.
+    expect(pill.querySelector('.story-rail-num')).toBeNull()
     expect(pill.classList.contains('story-step-disabled')).toBe(false)
-    // 설정(0)·리서치(1) 뒤 · 대본 앞(2)
-    const pills = [...document.querySelectorAll('.story-step-pill')]
-    expect(pills.indexOf(pill)).toBe(2)
+    // 설정(0)·리서치(1) 뒤 — 진입 탭 세 번째
+    const gates = [...document.querySelectorAll('.story-gate-tab')]
+    expect(gates.indexOf(pill)).toBe(2)
   })
 
   it('input.type=pasted + charactersConfirmed=false → 시놉시스 pill 활성', () => {
