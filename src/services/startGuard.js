@@ -11,6 +11,74 @@ export function isStartBlocked({ isRunning, videoRunning, hasPendingBatch, retry
   )
 }
 
+// Upscayl 시작은 같은 이미지 파일을 건드리는 생성 작업만 역방향으로 막는다.
+export function isUpscaylStartBlocked({
+  isRunning,
+  isSceneBatchQueued,
+  hasPendingBatch,
+  startInFlight,
+  generatingSceneId,
+  videoRunning,
+  videoRetryInFlight,
+  refBatchRunning,
+  gatePhase,
+}) {
+  return !!(
+    isRunning
+    || isSceneBatchQueued
+    || hasPendingBatch
+    || startInFlight
+    || generatingSceneId
+    || videoRunning
+    || videoRetryInFlight
+    || refBatchRunning
+    || gatePhase === 'busy'
+  )
+}
+
+// App의 anyRunning 계약 — 썸네일/갤러리 작업은 포함하지 않는다.
+export function isAnyRunning({ isRunning, videoRunning, hasPendingBatch, upscaylRunning }) {
+  return !!(
+    isRunning
+    || videoRunning
+    || hasPendingBatch
+    || upscaylRunning
+  )
+}
+
+// MCP stop/wait용 aggregate — batch-status의 별도 ref 재계산과 섞지 않는다.
+export function isMcpRunning({ isRunning, isSceneBatchQueued, videoRunning, refBatchRunning, upscaylRunning }) {
+  return !!(
+    isRunning
+    || isSceneBatchQueued
+    || videoRunning
+    || refBatchRunning
+    || upscaylRunning
+  )
+}
+
+// App의 fullProjectBusy는 anyRunning 위에 프로젝트 액션 차단 신호를 더한다.
+export function isProjectBusy({
+  isRunning,
+  videoRunning,
+  hasPendingBatch,
+  upscaylRunning,
+  refBatchRunning,
+  videoRetryRunning,
+  generatingSceneId,
+  thumbnailGenerating,
+  galleryUploading,
+}) {
+  return !!(
+    isAnyRunning({ isRunning, videoRunning, hasPendingBatch, upscaylRunning })
+    || refBatchRunning
+    || videoRetryRunning
+    || generatingSceneId
+    || thumbnailGenerating
+    || galleryUploading
+  )
+}
+
 // handleStop 이 ref 작업을 중단할지.
 //
 // refBatchRunning(preparing/stopping/generating) 만으로는 부족하다 — 빈 레퍼런스 gate 가

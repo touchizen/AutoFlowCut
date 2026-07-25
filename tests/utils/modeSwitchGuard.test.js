@@ -33,6 +33,20 @@ describe('canSwitchMode', () => {
   it('defaults hasPendingBatch to false (backward-compat: old callers omit it)', () => {
     expect(canSwitchMode({ isRunning: false, videoRunning: false, refBatchRunning: false })).toBe(true)
   })
+
+  it('keeps ignoring signals that only fullProjectBusy considers busy', () => {
+    expect(canSwitchMode({
+      isRunning: false,
+      videoRunning: false,
+      refBatchRunning: false,
+      hasPendingBatch: false,
+      upscaylRunning: true,
+      videoRetryRunning: true,
+      generatingSceneId: 'scene_1',
+      thumbnailGenerating: true,
+      galleryUploading: true,
+    })).toBe(true)
+  })
 })
 
 describe('shouldApplyModeScopedUpdate (#R23-7)', () => {
