@@ -28,11 +28,15 @@ export function useUpscayl({
   projectNameRef,
   saveImage,
   upscaylAPI,
+  isBusy,
   options = {},
 }) {
   const [state, setState] = useState(INITIAL_STATE)
   const runningRef = useRef(false)
   const cancelledRef = useRef(false)
+  // App이 최신 busy predicate를 넘겨도 startBatch는 stale closure 없이 현재 함수를 읽는다.
+  const isBusyRef = useRef(isBusy)
+  isBusyRef.current = isBusy
   const apiRef = useRef(upscaylAPI)
   apiRef.current = upscaylAPI || globalThis.window?.upscaylAPI
 
@@ -54,6 +58,9 @@ export function useUpscayl({
 
   const startBatch = useCallback(async (targetSceneIds, optionOverride) => {
     if (runningRef.current) return { ok: false, error: 'busy' }
+    if (typeof isBusyRef.current === 'function' && isBusyRef.current()) {
+      return { ok: false, error: 'busy' }
+    }
 
     const { targets, skipped } = computeUpscaylTargets(scenes, targetSceneIds)
     const capturedProject = projectNameRef.current

@@ -26,21 +26,113 @@ function setup({
   cancel = vi.fn().mockResolvedValue({ ok: true }),
   saveImage = vi.fn().mockResolvedValue({ success: true, path: '/saved/scene.png' }),
   updateScene = vi.fn(),
+  isBusy,
 } = {}) {
   const upscaylAPI = { run, cancel }
-  const hook = renderHook(() => useUpscayl({
-    scenes,
-    updateScene,
-    projectNameRef,
-    saveImage,
-    upscaylAPI,
-    options: OPTIONS,
-  }))
-  return { ...hook, projectNameRef, upscaylAPI, saveImage, updateScene }
+  const hook = renderHook(
+    ({ busyCheck }) => useUpscayl({
+      scenes,
+      updateScene,
+      projectNameRef,
+      saveImage,
+      upscaylAPI,
+      options: OPTIONS,
+      ...(busyCheck ? { isBusy: busyCheck } : {}),
+    }),
+    { initialProps: { busyCheck: isBusy } },
+  )
+  return { ...hook, projectNameRef, upscaylAPI, saveImage, updateScene, isBusy }
 }
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe('useUpscayl 외부 busy guard', () => {
+  it('외부가 busy면 target/path 캡처·state 변경·IPC 없이 busy를 반환한다', async () => {
+    const readImagePath = vi.fn(() => '/project/scenes/scene_1.png')
+    const guardedScene = {
+      id: 'scene_1',
+      status: 'done',
+      get imagePath() { return readImagePath() },
+    }
+    const readProjectName = vi.fn(() => 'project-a')
+    const projectNameRef = {}
+    Object.defineProperty(projectNameRef, 'current', { get: readProjectName })
+    const isBusy = vi.fn(() => true)
+    const harness = setup({ scenes: [guardedScene], projectNameRef, isBusy })
+    let response
+
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toEqual({ ok: false, error: 'busy' })
+    expect(isBusy).toHaveBeenCalledTimes(1)
+    expect(readImagePath).not.toHaveBeenCalled()
+    expect(readProjectName).not.toHaveBeenCalled()
+    expect(harness.upscaylAPI.run).not.toHaveBeenCalled()
+    expect(harness.upscaylAPI.cancel).not.toHaveBeenCalled()
+    expect(harness.saveImage).not.toHaveBeenCalled()
+    expect(harness.updateScene).not.toHaveBeenCalled()
+    expect(harness.result.current).toMatchObject({
+      running: false,
+      current: 0,
+      currentSceneId: null,
+      total: 0,
+      completed: 0,
+      failures: [],
+      skipped: 0,
+      cancelled: false,
+      stopped: false,
+      startedAt: null,
+      durationMs: null,
+    })
+  })
+
+  it('외부 busy 콜백을 주입하지 않으면 기존처럼 배치를 실행한다', async () => {
+    const harness = setup()
+    let response
+
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toMatchObject({ ok: true, completed: 1 })
+    expect(harness.upscaylAPI.run).toHaveBeenCalledTimes(1)
+    expect(harness.updateScene).toHaveBeenCalledTimes(1)
+  })
+
+  it('자체 실행 중이면 외부 busy 콜백보다 먼저 거절한다', async () => {
+    const runGate = deferred()
+    const isBusy = vi.fn(() => false)
+    const harness = setup({ run: vi.fn(() => runGate.promise), isBusy })
+    let firstBatch
+
+    act(() => { firstBatch = harness.result.current.startBatch() })
+    await waitFor(() => expect(harness.upscaylAPI.run).toHaveBeenCalledTimes(1))
+    expect(isBusy).toHaveBeenCalledTimes(1)
+
+    let response
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toEqual({ ok: false, error: 'busy' })
+    expect(isBusy).toHaveBeenCalledTimes(1)
+
+    runGate.resolve({ ok: false, error: 'stopped' })
+    await act(async () => { await firstBatch })
+  })
+
+  it('rerender로 교체된 최신 외부 busy 콜백을 읽는다', async () => {
+    const staleCheck = vi.fn(() => false)
+    const latestCheck = vi.fn(() => true)
+    const harness = setup({ isBusy: staleCheck })
+
+    harness.rerender({ busyCheck: latestCheck })
+    let response
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toEqual({ ok: false, error: 'busy' })
+    expect(staleCheck).not.toHaveBeenCalled()
+    expect(latestCheck).toHaveBeenCalledTimes(1)
+    expect(harness.upscaylAPI.run).not.toHaveBeenCalled()
+  })
 })
 
 describe('useUpscayl 대상 선정과 성공', () => {

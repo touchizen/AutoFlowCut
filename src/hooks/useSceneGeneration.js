@@ -37,6 +37,11 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     // 큐에 들어간 뒤 Upscayl이 시작될 수도 있으므로 실제 실행 직전에도 live ref로 확인한다.
     if (upscaylRunningRef.current) return { success: false, error: 'busy' }
 
+    const rejectUpscaylBusy = () => {
+      toast.warning(t('videoAutomation.busy') || 'Generation already running')
+      return { success: false, error: 'busy' }
+    }
+
     const baseScene = scenes.find(s => s.id === sceneId)
     const scene = (baseScene && sceneOverride) ? { ...baseScene, ...sceneOverride } : baseScene
     if (!scene?.prompt) {
@@ -75,6 +80,9 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       if (gate && gate.proceeded === false) return
       if (gate?.refs) effectiveRefs = gate.refs
     }
+
+    // auth/sync await 동안 시작된 Upscayl을 status 변경과 엔진 제출 직전에 다시 막는다.
+    if (upscaylRunningRef.current) return rejectUpscaylBusy()
 
     // generatingStartedAt 을 새로 찍는다 — 안 그러면 이전 생성의 stale 시작시각이 남아
     //   경과시간이 엉뚱하게(예: 1분인데 1시간 25분) 표시된다. (배치/레퍼런스 경로는 이미 세팅.)
@@ -149,7 +157,13 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       if (unresolvedNames.length > 0 && genAPI?.mode === 'flow' && requestMentionSync) {
         const recovery = await requestMentionSync({ scene, names: unresolvedNames, projectName: settings.projectName })
         if (recovery?.proceeded) {
-          result = await callEngine(recovery.refs || effectiveRefs)
+          // recovery gate 대기 중 Upscayl이 시작돼도 두 번째 엔진 제출은 금지한다.
+          if (upscaylRunningRef.current) {
+            // 첫 실패는 아래에서 finalize해야 scene이 generating으로 고착되지 않는다.
+            rejectUpscaylBusy()
+          } else {
+            result = await callEngine(recovery.refs || effectiveRefs)
+          }
         }
       }
 
