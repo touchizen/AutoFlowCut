@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { geminiRateLimiter } from '../../../../electron/api/tts/gemini.js'
+
+// 분당 한도는 모듈 공유라 파일이 커지면 진짜로 1분을 기다리게 된다.
+beforeEach(() => geminiRateLimiter.reset())
 import { createElevenLabsAdapter } from '../../../../electron/api/tts/elevenlabs.js'
 import { createGoogleTtsAdapter } from '../../../../electron/api/tts/googletts.js'
 import { createGeminiAdapter, deriveVoiceSeed } from '../../../../electron/api/tts/gemini.js'

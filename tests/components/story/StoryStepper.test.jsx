@@ -157,11 +157,14 @@ describe('StoryStepper 진행 레일(번호 + 연결선)', () => {
     expect(lines.every((l) => !l.classList.contains('filled'))).toBe(true)
   })
 
-  it('리서치 게이트도 마찬가지로 흐름을 채우지 않는다', () => {
+  // 리서치는 건너뛰기가 정상 경로라 파이프라인을 막지 않는다. researchEnabled 는 단계와 무관하게
+  // (title 경로면) 계속 참이므로, 이걸 '멈춰 있음'으로 읽으면 건너뛴 프로젝트는 흐름이 영원히
+  // 회색으로 남는다. 시놉시스만 확정되면 진행은 진행대로 보여야 한다.
+  it('리서치를 건너뛴(미확정) 프로젝트도 시놉시스만 확정됐으면 흐름을 채운다', () => {
     const steps = { script: { status: 'done' }, scenes: { status: 'pending' }, audio: { status: 'pending' }, prompts: { status: 'pending' } }
-    render(<StoryStepper steps={steps} currentStep="scenes" activeStep="research"
-      researchEnabled researchDone={false} onStepClick={vi.fn()} />)
-    expect([...document.querySelectorAll('.story-rail-line')].some((l) => l.classList.contains('filled'))).toBe(false)
+    render(<StoryStepper steps={steps} currentStep="scenes" activeStep="scenes"
+      researchEnabled researchDone={false} synopsisEnabled synopsisDone onStepClick={vi.fn()} />)
+    expect(document.querySelectorAll('.story-rail-line')[0].classList.contains('filled')).toBe(true)
   })
 
   it('게이트를 통과(확정)했으면 게이트 탭을 보고 있어도 흐름은 채워진다', () => {

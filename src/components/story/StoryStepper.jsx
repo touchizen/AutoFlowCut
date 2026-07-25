@@ -77,8 +77,11 @@ export default function StoryStepper({
 
   // 아직 통과하지 못한 게이트에 서 있는가. 임포트 경로는 대본을 먼저 저장(script done)한 뒤
   //   시놉시스 게이트로 들어가므로, 그 동안 레일을 채우면 "대본 끝나고 씬 분리로 넘어가는 중"이라는
-  //   거짓 진행이 보인다. 확정(done)한 게이트를 다시 열어본 경우는 해당 없음 — 흐름은 그대로 채운다.
-  const parkedAtGate = (researchEnabled && !researchDone) || (synopsisEnabled && !synopsisDone)
+  //   거짓 진행이 보인다. 확정한 시놉시스를 다시 열어본 경우는 해당 없음 — 흐름은 그대로 채운다.
+  // 리서치는 넣지 않는다: 건너뛰기가 정상 경로라 파이프라인을 막지 않고, researchEnabled 는 단계와
+  //   무관하게 참으로 남아(title 경로) 건너뛴 프로젝트의 흐름을 영원히 회색으로 만든다. 리서치 단계에
+  //   있다면 시놉시스도 아직 미확정이라 아래 조건이 이미 덮는다.
+  const parkedAtGate = synopsisEnabled && !synopsisDone
 
   // 진입 탭(설정/리서치/시놉시스) — 실행 상태가 없는 텍스트 탭. setup 은 항상 활성.
   const gateTabs = [

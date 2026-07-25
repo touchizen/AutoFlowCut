@@ -60,6 +60,16 @@ describe('createRateLimiter', () => {
     }
   })
 
+  it('이미 대기 중일 때 중단되면 타이머를 기다리지 않고 즉시 깨어난다', async () => {
+    // sleep 이 영원히 안 끝나도(실제 60초 타이머 대역) abort 가 오면 바로 풀려야 한다.
+    const limiter = createRateLimiter({ limit: 1, windowMs: 60000, now: () => 0, sleep: () => new Promise(() => {}) })
+    await limiter.acquire()
+    const ctrl = new AbortController()
+    const pending = limiter.acquire(ctrl.signal)
+    ctrl.abort()
+    await expect(pending).rejects.toThrow(/abort/i)
+  })
+
   it('대기 중 중단되면 기다림을 멈추고 throw 한다', async () => {
     const clock = fakeClock()
     const limiter = createRateLimiter({ limit: 1, windowMs: 60000, ...clock })

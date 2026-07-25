@@ -1398,8 +1398,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
         // 결과를 반드시 본다 — 예전엔 버려서, main 이 거절하면(키 없음/busy/대사 없음) 토스트도
         //   상태 변화도 없이 버튼이 죽은 것처럼 보였다. 화자별로 오디오를 다 채운 뒤 진행을 눌렀을
         //   때가 정확히 그 경우다: 전체 실행은 화자별 실행과 달리 SFX provider 키까지 요구한다.
-        const result = await runAudioWithPreflight(buildStepParams(currentStep), (p) => start('audio', p))
+        // 화면 전환은 클릭 즉시 한다 — start()는 스텝 전체가 끝나야 resolve 하므로, await 뒤로
+        //   미루면 몇 분 뒤 사용자가 보던 다른 탭에서 갑자기 끌려나온다.
         setScriptPhase(null)
+        setViewedStep(null)
+        const result = await runAudioWithPreflight(buildStepParams(currentStep), (p) => start('audio', p))
         if (result?.error === 'preflight-missing-key') {
           // 게이트 카드는 오디오 패널 안에 있다 — 다른 화면으로 넘기면 안내를 못 본다.
           setViewedStep('audio')
@@ -1409,10 +1412,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           toast.error(result.error === 'busy'
             ? t('story.audio.busyRetry', 'Another task is running. Try again in a moment.')
             : errorText(result.error, result.error))
-          setViewedStep(null)
-          return
         }
-        setViewedStep(null)
         return
       }
       start(currentStep, buildStepParams(currentStep))

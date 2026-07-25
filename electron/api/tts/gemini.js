@@ -126,6 +126,16 @@ function pcmToWav(pcm, { rate = 24000, channels = 1, bits = 16 } = {}) {
 export const GEMINI_TTS_RPM_LIMIT = 10
 const RATE_WINDOW_MS = 60000
 
+// 대기 도중 중단되면 즉시 깨어난다 — 타이머가 끝날 때까지 붙잡혀 있지 않게.
+function raceAbort(promise, signal) {
+  if (!signal) return promise
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new Error('Gemini TTS rate wait aborted'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
 /**
  * 슬라이딩 윈도우 요청 제한. windowMs 안에서 limit 회를 넘지 않게 acquire() 가 기다린다.
  * now/sleep 주입으로 테스트한다(실제로 1분을 기다리지 않게).
@@ -147,7 +157,8 @@ export function createRateLimiter({
         while (stamps.length && t - stamps[0] >= windowMs) stamps.shift()
         // 검사와 기록 사이에 await 가 없어야 동시 호출이 한도를 넘겨 통과하지 않는다.
         if (stamps.length < limit) { stamps.push(t); return }
-        await sleep(Math.max(1, windowMs - (t - stamps[0])))
+        // 대기는 중단과 경합시킨다 — 안 그러면 정지를 눌러도 남은 창(최대 1분)을 다 기다린다.
+        await raceAbort(sleep(Math.max(1, windowMs - (t - stamps[0]))), signal)
       }
     },
   }
