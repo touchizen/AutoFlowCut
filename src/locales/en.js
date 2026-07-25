@@ -1102,6 +1102,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   upscayl: {
     title: 'Upscale images with Upscayl',
     button: 'Upscale',
+    busyTooltip: 'You can upscale after generation finishes',
     checking: 'Checking for Upscayl...',
     notInstalled: 'Upscayl is not installed',
     noModels: 'Upscayl models were not found',

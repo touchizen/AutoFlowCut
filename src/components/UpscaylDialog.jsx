@@ -37,6 +37,8 @@ export default function UpscaylDialog({
   detectState,
   onDetect,
   onLocate,
+  upscaylBusy = false,
+  upscaylBusyTooltip,
 }) {
   const { t } = useI18n()
   const [options, setOptions] = useState(loadOptions)
@@ -184,7 +186,12 @@ export default function UpscaylDialog({
     footer = (
       <>
         <button className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
-        <button className="btn-primary" onClick={handleStart} disabled={targetInfo.targets.length === 0 || models.length === 0}>
+        <button
+          className="btn-primary"
+          onClick={handleStart}
+          disabled={upscaylBusy || targetInfo.targets.length === 0 || models.length === 0}
+          title={upscaylBusy ? upscaylBusyTooltip : undefined}
+        >
           {t('upscayl.start')}
         </button>
       </>

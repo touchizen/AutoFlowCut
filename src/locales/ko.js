@@ -1101,6 +1101,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   upscayl: {
     title: 'Upscayl 이미지 업스케일',
     button: '업스케일',
+    busyTooltip: '생성 작업이 끝난 뒤 업스케일할 수 있어요',
     checking: 'Upscayl 확인 중...',
     notInstalled: 'Upscayl이 설치되어 있지 않습니다',
     noModels: 'Upscayl 모델을 찾지 못했습니다',

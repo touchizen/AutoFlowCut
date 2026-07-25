@@ -47,7 +47,14 @@ import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
-import { computeGuardAvailable, isStartBlocked, shouldStopRefWork } from './services/startGuard'
+import {
+  computeGuardAvailable,
+  isAnyRunning,
+  isProjectBusy,
+  isStartBlocked,
+  isUpscaylStartBlocked,
+  shouldStopRefWork,
+} from './services/startGuard'
 import {
   buildEmptyRefGateDeps,
   nonInteractiveGateView,
@@ -436,12 +443,29 @@ function App() {
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
   const saveUpscaylImage = useCallback((...args) => fileSystemAPI.saveImage(...args), [])
+  // useUpscayl은 App 뒤쪽에서 채운 최신 render 신호와 same-tick latch ref를 매 호출 시 읽는다.
+  const upscaylBusySignalsRef = useRef({})
+  const isUpscaylBusy = useCallback(() => {
+    const signals = upscaylBusySignalsRef.current
+    return isUpscaylStartBlocked({
+      isRunning: signals.isRunning,
+      isSceneBatchQueued: signals.isSceneBatchQueued,
+      hasPendingBatch: signals.hasPendingBatch,
+      startInFlight: signals.startInFlightRef?.current,
+      generatingSceneId: signals.generatingSceneId,
+      videoRunning: signals.videoRunning,
+      videoRetryInFlight: signals.videoRetryInFlightRef?.current,
+      refBatchRunning: signals.refBatchRunning,
+      gatePhase: signals.gatePhase,
+    })
+  }, [])
   const upscayl = useUpscayl({
     scenes,
     updateScene: scenesHook.updateScene,
     projectNameRef,
     saveImage: saveUpscaylImage,
     upscaylAPI: window.upscaylAPI,
+    isBusy: isUpscaylBusy,
     options: { model: 'ultrasharp-4x', scale: 2 },
   })
   const handleUpscaylDetect = useCallback(async () => {
@@ -2078,6 +2102,19 @@ function App() {
   // ref batch는 generatingRefs.length만으로 부족 — refBatchActive가 batch-global preflight부터
   // 아이템별 auth와 정리까지 덮고, stoppingRefs는 중지 정리 창을 잇는다.
   const refBatchRunning = refBatchActive || stoppingRefs || generatingRefs.length > 0
+  upscaylBusySignalsRef.current = {
+    isRunning,
+    isSceneBatchQueued,
+    hasPendingBatch,
+    startInFlightRef,
+    generatingSceneId,
+    videoRunning: videoAutomation.isRunning,
+    videoRetryInFlightRef,
+    refBatchRunning,
+    gatePhase: emptyRefGate?.phase,
+  }
+  const upscaylBusy = isUpscaylBusy()
+  const upscaylBusyTooltip = t('upscayl.busyTooltip')
 
   // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
   // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
@@ -2115,12 +2152,27 @@ function App() {
   // #R13-14: 큐 대기(hasPendingBatch) 구간도 busy 로 본다 — isRunning 으로 뒤집기 전 windows 에서
   //   편집/프로젝트 액션이 열려 있던 비일관성 차단. (anyRunning 은 videoRetryInFlightRef 를 제외하지만,
   //   #R24-2 로 모드 토글 차단용 반응형 videoRetryRunning 은 별도로 modeBusy 에 포함된다.)
-  const anyRunning = isRunning || videoAutomation.isRunning || hasPendingBatch || upscayl.running
+  const anyRunning = isAnyRunning({
+    isRunning,
+    videoRunning: videoAutomation.isRunning,
+    hasPendingBatch,
+    upscaylRunning: upscayl.running,
+  })
   // 개별 씬 생성은 MCP·프로그램 배치를 공유 큐에 대기시킬 수 있어야 한다. 로직 가드가 아니라
   // 사용자가 동시에 scene batch를 넣을 수 있는 UI 진입점만 공통으로 차단한다.
   const uiSceneBatchBlocked = !!generatingSceneId
   // Header의 프로젝트/모드 액션과 네이티브 File 메뉴가 같은 전체 busy 계약을 쓴다.
-  const fullProjectBusy = anyRunning || refBatchRunning || videoRetryRunning || uiSceneBatchBlocked || thumbnailGenerating || galleryUploading
+  const fullProjectBusy = isProjectBusy({
+    isRunning,
+    videoRunning: videoAutomation.isRunning,
+    hasPendingBatch,
+    upscaylRunning: upscayl.running,
+    refBatchRunning,
+    videoRetryRunning,
+    generatingSceneId,
+    thumbnailGenerating,
+    galleryUploading,
+  })
 
   // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
   // Recent 항목은 work folder 단위로 구분되므로 현재 work folder 경로도 함께 전달.
@@ -2443,6 +2495,8 @@ function App() {
               references={references}
               styleThumbnails={styleThumbnails}
               onUpscaleClick={openUpscayl}
+              upscaylBusy={upscaylBusy}
+              upscaylBusyTooltip={upscaylBusyTooltip}
             />
           )}
           {activeTab === 'audio' && (
@@ -2696,7 +2750,12 @@ function App() {
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <BottomPanelTabs view={bottomPanelView} onChange={setBottomPanelView} t={t} />
-              <BottomPanelActions onUpscale={() => openUpscayl()} t={t} />
+              <BottomPanelActions
+                onUpscale={() => openUpscayl()}
+                upscaylBusy={upscaylBusy}
+                upscaylBusyTooltip={upscaylBusyTooltip}
+                t={t}
+              />
             </div>
             {bottomPanelView === 'timeline' ? (
               <LiveTimeline
@@ -2904,6 +2963,8 @@ function App() {
           references={references}
           styleThumbnails={styleThumbnails}
           onUpscaleClick={openUpscayl}
+          upscaylBusy={upscaylBusy}
+          upscaylBusyTooltip={upscaylBusyTooltip}
         />
       )}
 
@@ -3236,6 +3297,8 @@ function App() {
         detectState={upscaylDetectState}
         onDetect={handleUpscaylDetect}
         onLocate={handleUpscaylLocate}
+        upscaylBusy={upscaylBusy}
+        upscaylBusyTooltip={upscaylBusyTooltip}
       />
 
       <DeleteSceneConfirmModal

@@ -29,6 +29,8 @@ export default function SceneDetailModal({
   references = [],
   styleThumbnails = {},
   onUpscaleClick,
+  upscaylBusy = false,
+  upscaylBusyTooltip,
 }) {
   const [editData, setEditData] = useState({ ...scene })
   const [histories, setHistories] = useState([])
@@ -236,7 +238,12 @@ export default function SceneDetailModal({
         </button>
       )}
       {onUpscaleClick && (
-        <button className="btn-upscale" onClick={handleUpscale} disabled={!editData.imagePath || isGenerating}>
+        <button
+          className="btn-upscale"
+          onClick={handleUpscale}
+          disabled={upscaylBusy || !editData.imagePath || isGenerating}
+          title={upscaylBusy ? upscaylBusyTooltip : undefined}
+        >
           {t('sceneDetail.upscale')}
         </button>
       )}

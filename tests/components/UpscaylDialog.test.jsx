@@ -98,6 +98,40 @@ describe('UpscaylDialog 준비 상태', () => {
     expect(screen.getByLabelText('4x')).not.toBeChecked()
   })
 
+  it('App busy면 Start가 disabled+tooltip이고 busy 해제 시 활성화된다', () => {
+    const batch = upscayl()
+    const view = renderDialog({
+      upscayl: batch,
+      upscaylBusy: true,
+      upscaylBusyTooltip: 'You can upscale after generation finishes',
+    })
+    const busyStart = screen.getByRole('button', { name: 'Start' })
+
+    expect(busyStart).toBeDisabled()
+    expect(busyStart).toHaveAttribute('title', 'You can upscale after generation finishes')
+    fireEvent.click(busyStart)
+    expect(batch.startBatch).not.toHaveBeenCalled()
+
+    view.rerender(
+      <I18nProvider>
+        <UpscaylDialog
+          isOpen
+          onClose={vi.fn()}
+          targetSceneIds={null}
+          upscayl={batch}
+          detectState={{ ok: true, platform: 'darwin', models: ['ultrasharp-4x'] }}
+          onDetect={vi.fn()}
+          onLocate={vi.fn()}
+          upscaylBusy={false}
+          upscaylBusyTooltip="You can upscale after generation finishes"
+        />
+      </I18nProvider>,
+    )
+    const enabledStart = screen.getByRole('button', { name: 'Start' })
+    expect(enabledStart).toBeEnabled()
+    expect(enabledStart).not.toHaveAttribute('title')
+  })
+
   it('기억한 모델이 없으면 첫 모델로 폴백하고 선택/배율을 기억해 Start에 전달한다', async () => {
     localStorage.setItem('upscaylOptions', JSON.stringify({ model: 'missing-model', scale: 2 }))
     const batch = upscayl()

@@ -4,7 +4,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-export default function BottomPanelActions({ items, onUpscale, t = (key) => key }) {
+export default function BottomPanelActions({
+  items,
+  onUpscale,
+  upscaylBusy = false,
+  upscaylBusyTooltip,
+  t = (key) => key,
+}) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef(null)
   const triggerRef = useRef(null)
@@ -12,6 +18,8 @@ export default function BottomPanelActions({ items, onUpscale, t = (key) => key 
     id: 'image-upscale',
     label: `⬆️ ${t('bottomPanel.imageUpscale')}`,
     onSelect: onUpscale,
+    disabled: upscaylBusy,
+    disabledTooltip: upscaylBusyTooltip,
   }]
 
   useEffect(() => {
@@ -35,6 +43,7 @@ export default function BottomPanelActions({ items, onUpscale, t = (key) => key 
   }, [open])
 
   const selectItem = (item) => {
+    if (item.disabled) return
     setOpen(false)
     item.onSelect?.()
   }
@@ -84,6 +93,8 @@ export default function BottomPanelActions({ items, onUpscale, t = (key) => key 
               key={item.id}
               type="button"
               role="menuitem"
+              disabled={item.disabled}
+              title={item.disabled ? item.disabledTooltip : undefined}
               onClick={() => selectItem(item)}
               style={{
                 display: 'block',
@@ -91,9 +102,9 @@ export default function BottomPanelActions({ items, onUpscale, t = (key) => key 
                 padding: '7px 10px',
                 border: 0,
                 background: 'transparent',
-                color: '#ddd',
+                color: item.disabled ? '#666' : '#ddd',
                 borderRadius: '4px',
-                cursor: 'pointer',
+                cursor: item.disabled ? 'not-allowed' : 'pointer',
                 fontSize: '12px',
                 textAlign: 'left',
                 whiteSpace: 'nowrap',

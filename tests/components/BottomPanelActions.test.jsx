@@ -5,6 +5,7 @@ import BottomPanelActions from '../../src/components/BottomPanelActions'
 const t = (key) => ({
   'bottomPanel.actionsMenu': 'Bottom panel actions',
   'bottomPanel.imageUpscale': 'Image Upscale',
+  'upscayl.busyTooltip': 'You can upscale after generation finishes',
 }[key] || key)
 
 describe('BottomPanelActions', () => {
@@ -35,6 +36,39 @@ describe('BottomPanelActions', () => {
 
     expect(onUpscale).toHaveBeenCalledWith()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('Upscayl busy면 항목만 disabled+tooltip이고 해제되면 다시 활성화된다', () => {
+    const onUpscale = vi.fn()
+    const view = render(
+      <BottomPanelActions
+        onUpscale={onUpscale}
+        upscaylBusy
+        upscaylBusyTooltip="You can upscale after generation finishes"
+        t={t}
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: 'Bottom panel actions' })
+    fireEvent.click(trigger)
+    const busyItem = screen.getByRole('menuitem', { name: '⬆️ Image Upscale' })
+
+    expect(trigger).toBeEnabled()
+    expect(busyItem).toBeDisabled()
+    expect(busyItem).toHaveAttribute('title', 'You can upscale after generation finishes')
+    fireEvent.click(busyItem)
+    expect(onUpscale).not.toHaveBeenCalled()
+
+    view.rerender(
+      <BottomPanelActions
+        onUpscale={onUpscale}
+        upscaylBusy={false}
+        upscaylBusyTooltip="You can upscale after generation finishes"
+        t={t}
+      />,
+    )
+    const enabledItem = screen.getByRole('menuitem', { name: '⬆️ Image Upscale' })
+    expect(enabledItem).toBeEnabled()
+    expect(enabledItem).not.toHaveAttribute('title')
   })
 
   it('외부를 클릭하면 메뉴를 닫는다', () => {
