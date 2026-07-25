@@ -6,7 +6,8 @@
  * 빠뜨리면) 주입이 조용히 no-op 된다 — 실제로 T2V OmniFlash 모델강제·길이최적화가 누락됐었다.
  *
  * 페이지측(electron/flow-page-injection.js)이 읽는 필드:
- *   seed, aspectRatio, references, i2v(객체), duration(t2v 길이접미사), videoModel(t2v OmniFlash 강제),
+ *   seed, aspectRatio(이미지 imageAspectRatio), videoAspectRatio(비디오 requests[].aspectRatio),
+ *   references, i2v(객체), duration(t2v 길이접미사), videoModel(t2v OmniFlash 강제),
  *   genTag(#R35: 이 요청을 특정 async 생성에 correlate 하는 고유 태그 — 응답 보고에 실려 나감)
  */
 

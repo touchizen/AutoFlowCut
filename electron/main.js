@@ -775,7 +775,7 @@ async function setFlowPageInject({ seed, aspectRatio, videoAspectRatio, referenc
       return { success: false, error: 'fetch patch not installed' }
     }
     console.log('[Flow Inject] __autoflowcut_inject__ set:', {
-      seed: payload.seed, aspectRatio: payload.aspectRatio,
+      seed: payload.seed, aspectRatio: payload.aspectRatio, videoAspectRatio: payload.videoAspectRatio,
       refs: payload.references?.length ?? 0, i2v: !!payload.i2v,
     })
     return { success: true }
