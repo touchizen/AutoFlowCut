@@ -89,8 +89,7 @@ export const FLOW_PAGE_INJECTION = /* js */ `
   window.__autoflowcut_inject__ = Object.assign(
     {
       seed: null,        // number | null — injected into every request in the batch
-      aspectRatio: null, // string | null — IMAGE_ASPECT_RATIO_* enum value (image requests)
-      videoAspectRatio: null, // string | null — VIDEO_ASPECT_RATIO_* enum (video requests[].aspectRatio)
+      aspectRatio: null, // string | null — IMAGE_ASPECT_RATIO_* enum value
       references: null,  // array | null  — referenceImages for batchGenerateImages
       i2v: null,         // object | null — { startImageMediaId, endImageMediaId?, i2vUrl, i2vStartEndUrl, duration? }
       duration: null,    // number | null — OmniFlash t2v 길이 접미사 최적화(_Ns). i2v 는 i2v.duration 사용.
@@ -221,13 +220,9 @@ export const FLOW_PAGE_INJECTION = /* js */ `
           const { changed, usesEndImage } = injectI2VBody(body, inject.i2v)
           if (changed) {
             injectionApplied = true
-            // Also apply seed + 화면비(설정>씬) if specified — I2V 요청 requests[].aspectRatio 직접 주입
-            //   (DOM 세터가 Flow 패널 개편으로 비디오에 안 걸리므로. T2V/R2V 분기 미러.)
-            if (Array.isArray(body.requests)) {
-              for (const req of body.requests) {
-                if (inject.seed != null) req.seed = inject.seed
-                if (inject.videoAspectRatio) req.aspectRatio = inject.videoAspectRatio
-              }
+            // Also apply seed if specified
+            if (inject.seed != null && Array.isArray(body.requests)) {
+              for (const req of body.requests) req.seed = inject.seed
             }
             _init = { ..._init, body: JSON.stringify(body) }
 
@@ -252,7 +247,7 @@ export const FLOW_PAGE_INJECTION = /* js */ `
         //   #R36-ref: @멘션 R2V(ReferenceImages) 도 여기서 처리 — 별도 엔드포인트라 이게 없으면 duration
         //     주입이 스킵돼 Flow 기본 abra_r2v_8s(8초) 로 나간다. r2v 는 t2v 가 아닌 r2v 키를 강제한다.
         } else if (
-          (inject.seed != null || inject.duration != null || inject.videoAspectRatio) && !inject.i2v && (
+          (inject.seed != null || inject.duration != null) && !inject.i2v && (
             url.includes(URL_VIDEO_T2V) ||
             url.includes(URL_VIDEO_I2V) ||
             url.includes(URL_VIDEO_I2V_END) ||
@@ -267,9 +262,6 @@ export const FLOW_PAGE_INJECTION = /* js */ `
             const forceOmni = isOmniFlashModel(inject.videoModel)  // 앱이 OmniFlash 면 abra 키 강제
             for (const req of body.requests) {
               if (inject.seed != null) req.seed = inject.seed
-              // 화면비(설정>씬) — Flow 설정 패널이 통합 UI 로 바뀌어 DOM 세터가 비디오에 안 걸리므로
-              //   요청 body 에 직접 주입한다(이미지 imageAspectRatio 미러). 없으면 미수정(Flow 기본값).
-              if (inject.videoAspectRatio) req.aspectRatio = inject.videoAspectRatio
               req.videoModelKey = forceOmni
                 ? omniFlashKey(isRef ? 'r2v' : 't2v', inject.duration)
                 : applyOmniDuration(req.videoModelKey, inject.duration)  // OmniFlash 만 효과, 그 외 no-op

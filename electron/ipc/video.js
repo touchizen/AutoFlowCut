@@ -16,7 +16,6 @@ import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
 import { AGENT_CHAT_CLOSE_SELECTOR } from '../flow-agent-toggle.js'
 import { isOmniFlashModel } from '../video-model-rules.js'
 import { injectComposeSegments } from '../flow-compose-mention.js'
-import { toVideoAspectEnum } from '../flow-inject-payload.js'
 
 // #R36: 비디오 제출 응답(batchAsyncGenerateVideo* → operation id) 캡처 타임아웃. 원래 30s 였으나
 //   @멘션(entity 참조) 비디오 등에서 초기 응답이 30s 를 넘겨 조기 실패(멈춤)하는 사례가 있어, 이미지
@@ -226,7 +225,7 @@ export function registerVideoIPC(ipcMain, deps) {
       // #R8-8: seed monkey-patch inject 는 네비게이션/모드전환 이후(reload 가 끝난 뒤)에 설정 —
       //   클릭으로 발사될 batchAsyncGenerateVideoText 요청이 이 seed 를 확실히 싣는다.
       // #R15-5: arming 실패 시 중단(미주입 seed 로 생성 방지).
-      { const _ir = await setFlowPageInject?.({ seed: _seedValue, aspectRatio: null, videoAspectRatio: toVideoAspectEnum(aspectRatio), references: null, i2v: null, duration, videoModel: model })
+      { const _ir = await setFlowPageInject?.({ seed: _seedValue, aspectRatio: null, references: null, i2v: null, duration, videoModel: model })
         if (_ir && _ir.success === false) return { success: false, error: `Flow inject arming failed: ${_ir.error || 'unknown'}`, retry: true } }
 
       // 2. 프롬프트 입력 (이미지와 동일한 Slate 에디터 사용)
@@ -697,7 +696,6 @@ export function registerVideoIPC(ipcMain, deps) {
       const _i2vInjRes = await setFlowPageInject?.({
         seed:        _seedValue,
         aspectRatio: null,
-        videoAspectRatio: toVideoAspectEnum(aspectRatio),
         references:  null,
         i2v:         i2vConfig,
       })
