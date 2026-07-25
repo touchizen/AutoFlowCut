@@ -22,6 +22,18 @@
   gap: 12px;
   flex-shrink: 0;
   margin-bottom: 10px;       /* 아래 내용과 분리 */
+  container-type: inline-size;   /* 아래 @container — 창이 아니라 스텝퍼 폭 기준으로 라벨을 접는다 */
+}
+
+/* 좁아지면 라벨을 잘라 "대…"로 만드는 대신 아예 접고 번호만 남긴다.
+   지금 보고 있는 단계만 이름을 유지해 어디인지 알 수 있게 한다(전체 이름은 title 로 남아 있다). */
+@container (max-width: 680px) {
+  .story-rail-step:not(.active) .story-rail-label { display: none; }
+}
+@container (max-width: 460px) {
+  /* 더 좁으면 진입 탭도 자리를 양보한다 — 이름은 접지 않는다(설정 탭은 이름이 전부라 빈 상자가 된다). */
+  .story-stepper { gap: 8px; }
+  .story-gate-tab { padding: 0 7px; }
 }
 
 /* ── 진입 탭(설정/리서치/시놉시스) — 레일 왼쪽의 조용한 텍스트 탭 ── */
@@ -29,13 +41,16 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;            /* 레일과 액션이 자리를 잃지 않게 진입 탭도 줄어든다 */
+  min-width: 0;
 }
 
 .story-gate-tab {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
   height: 26px;
   padding: 0 10px;
   border-radius: 6px;
@@ -43,6 +58,11 @@
   font-size: 0.78rem;
   color: var(--text-secondary);
   white-space: nowrap;
+}
+.story-gate-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .story-gate-tab.active {
   background: var(--bg-secondary);
@@ -91,7 +111,10 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  flex: 0 0 auto;
+  /* 반드시 줄어들 수 있어야 한다 — 0 0 auto 면 폭이 모자랄 때 셀끼리 겹치고
+     레일이 오른쪽 액션(자동/전체 진행) 위로 넘친다. */
+  flex: 0 1 auto;
+  min-width: 0;
   padding: 5px 4px;
   border-radius: 6px;
   white-space: nowrap;
@@ -114,6 +137,7 @@
 .story-rail-label {
   font-size: 0.82rem;
   color: var(--text-secondary);
+  min-width: 0;              /* 없으면 flex 아이템이 내용 폭을 고집해 ellipsis 가 안 걸린다 */
   overflow: hidden;
   text-overflow: ellipsis;
 }

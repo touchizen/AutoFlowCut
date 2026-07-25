@@ -147,7 +147,8 @@ export default function StoryStepper({
                 <span className="story-rail-num" title={statusText} aria-label={statusText}>
                   {status === 'done' ? '✓' : i + 1}
                 </span>
-                <span className="story-rail-label">{label}</span>
+                {/* 좁은 폭에선 라벨이 줄거나 숨으므로(아래 CSS) 전체 이름은 title 로 남긴다. */}
+                <span className="story-rail-label" title={label}>{label}</span>
               </div>
             </div>
           )

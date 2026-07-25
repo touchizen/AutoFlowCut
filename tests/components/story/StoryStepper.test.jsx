@@ -140,6 +140,13 @@ describe('StoryStepper 진행 레일(번호 + 연결선)', () => {
     // 상태는 접근성 라벨로도 읽힌다(색에만 의존하지 않는다).
     expect(railOf('씬 분리').querySelector('.story-rail-num').getAttribute('aria-label')).toBe('진행 중')
   })
+  it('좁은 폭에서 라벨이 접히거나 잘려도 전체 이름을 title 로 남긴다', () => {
+    render(<StoryStepper steps={allDone} currentStep="prompts" onStepClick={vi.fn()} />)
+    for (const label of ['대본', '씬 분리', '오디오', '프롬프트']) {
+      expect(railOf(label).querySelector('.story-rail-label').getAttribute('title')).toBe(label)
+    }
+  })
+
   it('연결선은 앞 스텝이 완료면 채워진다(진행 방향 표시)', () => {
     const steps = { script: { status: 'done' }, scenes: { status: 'running' }, audio: { status: 'pending' }, prompts: { status: 'pending' } }
     render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={vi.fn()} />)
