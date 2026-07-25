@@ -186,6 +186,17 @@ export function registerVideoIPC(ipcMain, deps) {
       if (_vmodeRes && _vmodeRes.success === false) {
         return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
+      // 화면비는 이 DOM 클릭이 유일한 수단이다(CDP 사용 금지 — request injection 백업이 없다).
+      //   못 찾거나 클릭이 안 먹은 채로 제출하면 9:16 배치가 통째로 패널의 옛 화면비로 생성된다.
+      //   유료 생성이라 조용한 오출력보다 멈추는 편이 낫다. tab_not_found 는 Flow UI 가 또 바뀐
+      //   구조적 실패라 재시도해도 같으므로 retry 하지 않는다.
+      if (_vmodeRes && (_vmodeRes.aspect === 'tab_not_found' || _vmodeRes.aspect === 'click_unconfirmed')) {
+        return {
+          success: false,
+          error: `Flow aspect ratio not applied (${_vmodeRes.aspect}) — refusing to generate at the wrong aspect`,
+          retry: _vmodeRes.aspect === 'click_unconfirmed',
+        }
+      }
 
       // 화면비(설정>씬)는 위 configureFlowMode 가 같은 열린 메뉴에서 적용한다(Flow 새 통합 패널에서
       //   작동하는 경로). 비디오 모델은 요청 주입(videoModel/OmniFlash)이 담당한다. 구
@@ -557,6 +568,17 @@ export function registerVideoIPC(ipcMain, deps) {
       try { _vmodeRes = await configureFlowMode("VIDEO", 1, aspectRatio) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
       if (_vmodeRes && _vmodeRes.success === false) {
         return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
+      }
+      // 화면비는 이 DOM 클릭이 유일한 수단이다(CDP 사용 금지 — request injection 백업이 없다).
+      //   못 찾거나 클릭이 안 먹은 채로 제출하면 9:16 배치가 통째로 패널의 옛 화면비로 생성된다.
+      //   유료 생성이라 조용한 오출력보다 멈추는 편이 낫다. tab_not_found 는 Flow UI 가 또 바뀐
+      //   구조적 실패라 재시도해도 같으므로 retry 하지 않는다.
+      if (_vmodeRes && (_vmodeRes.aspect === 'tab_not_found' || _vmodeRes.aspect === 'click_unconfirmed')) {
+        return {
+          success: false,
+          error: `Flow aspect ratio not applied (${_vmodeRes.aspect}) — refusing to generate at the wrong aspect`,
+          retry: _vmodeRes.aspect === 'click_unconfirmed',
+        }
       }
 
       // 화면비는 위 configureFlowMode 가 적용(t2v 와 동일). 구 applyAgentDefaults(video) 는 새

@@ -3,12 +3,16 @@
  *
  * Maps a project aspect ratio to Flow's Radix Tabs trigger id suffix.
  *
- * Generation correctness is guaranteed by cdp-image-inject.js (it rewrites
- * requests[].imageAspectRatio in the outgoing batchGenerateImages body). This
- * suffix is only used to ALSO click Flow's own aspect-ratio tab so the in-Flow
- * result preview isn't squished — see `configureFlowMode` in ipc/shared.js,
- * which clicks the tab while the settings menu is still open (Radix unmounts
- * the menu content once closed, so it must happen there).
+ * For IMAGE generation, correctness is also backed by the image inject path.
+ * For VIDEO there is no such backup: CDP is off limits here, and injecting the
+ * aspect into the video request body was tried and reverted because Flow then
+ * failed the job outright (8821c558 → 8305e773). So for video this tab click is
+ * the ONLY thing that decides the output aspect — its callers must treat a
+ * failed click as a failed generation, not as cosmetics.
+ *
+ * See `configureFlowMode` in ipc/shared.js, which clicks the tab while the
+ * settings menu is still open (Radix unmounts the menu content once closed, so
+ * it must happen there).
  */
 
 /**

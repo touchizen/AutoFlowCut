@@ -61,3 +61,60 @@ describe('#R30-1: configureFlowMode failure aborts video submit', () => {
     expect(deps.setFlowPageInject).toHaveBeenCalled()
   })
 })
+
+// CDP 는 사용 금지라 화면비를 보장하던 request injection 이 없다 — Flow 설정 패널의 탭 클릭이
+// 유일한 수단이다. 그 클릭이 실패했는데 success:true 로 넘어가면, 9:16 로 요청한 배치가 통째로
+// 16:9 로 생성된다(유료 생성이라 조용한 오출력이 시끄러운 실패보다 훨씬 나쁘다).
+describe('화면비 탭 클릭 실패는 제출을 막는다', () => {
+  const cases = [
+    ['flow:generate-video-t2v', { token: 't', prompt: 'p', projectId: 'pid', videoBatchCount: 1, aspectRatio: '9:16' }],
+    ['flow:generate-video-i2v', { token: 't', prompt: 'p', startImageMediaId: 'm', projectId: 'pid', videoBatchCount: 1, aspectRatio: '9:16' }],
+  ]
+
+  for (const [channel, payload] of cases) {
+    it(`${channel}: 탭을 못 찾으면(tab_not_found) 중단한다`, async () => {
+      const ipc = makeIpcMain()
+      const deps = makeDeps({ success: true, aspect: 'tab_not_found' })
+      registerVideoIPC(ipc, deps)
+      const r = await ipc.invoke(channel, payload)
+      expect(r.success).toBe(false)
+      expect(r.error).toMatch(/aspect|화면비/i)
+      expect(deps.setFlowPageInject).not.toHaveBeenCalled()
+    })
+
+    it(`${channel}: 클릭이 반영 안 되면(click_unconfirmed) 중단한다`, async () => {
+      const ipc = makeIpcMain()
+      const deps = makeDeps({ success: true, aspect: 'click_unconfirmed' })
+      registerVideoIPC(ipc, deps)
+      const r = await ipc.invoke(channel, payload)
+      expect(r.success).toBe(false)
+      expect(deps.setFlowPageInject).not.toHaveBeenCalled()
+    })
+  }
+
+  it('이미 그 화면비면(already_set) 그대로 진행한다', async () => {
+    const ipc = makeIpcMain()
+    const deps = makeDeps({ success: true, aspect: 'already_set' })
+    registerVideoIPC(ipc, deps)
+    await ipc.invoke('flow:generate-video-t2v', { token: 't', prompt: 'p', projectId: 'pid', videoBatchCount: 1, aspectRatio: '9:16' }).catch(() => {})
+    expect(deps.setFlowPageInject).toHaveBeenCalled()
+  })
+
+  it('화면비를 요청하지 않았으면(skipped) 막지 않는다', async () => {
+    const ipc = makeIpcMain()
+    const deps = makeDeps({ success: true, aspect: 'skipped' })
+    registerVideoIPC(ipc, deps)
+    await ipc.invoke('flow:generate-video-t2v', { token: 't', prompt: 'p', projectId: 'pid', videoBatchCount: 1 }).catch(() => {})
+    expect(deps.setFlowPageInject).toHaveBeenCalled()
+  })
+
+  // 화면비 인자가 실제로 Flow 설정 경로까지 도달하는지 — 이 단언이 없어서 인자를 빼도 전 스위트가
+  // 초록이었다(이미지 경로에는 있던 단언이 비디오 경로에만 없었다).
+  it('요청한 화면비를 configureFlowMode 로 넘긴다', async () => {
+    const ipc = makeIpcMain()
+    const deps = makeDeps({ success: true, aspect: 'clicked' })
+    registerVideoIPC(ipc, deps)
+    await ipc.invoke('flow:generate-video-t2v', { token: 't', prompt: 'p', projectId: 'pid', videoBatchCount: 1, aspectRatio: '9:16' }).catch(() => {})
+    expect(deps.configureFlowMode).toHaveBeenCalledWith('VIDEO', 1, '9:16')
+  })
+})
