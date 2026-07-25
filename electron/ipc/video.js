@@ -179,7 +179,10 @@ export function registerVideoIPC(ipcMain, deps) {
       //   영상을 생성하지만 extractVideoGenerationId 는 1 개 id 만 회수해 나머지 유료 결과가 추적/복구
       //   불가로 유실된다(quota 낭비). 멀티-비디오 캡처가 구현되기 전까진 1 로 클램프.
       let _vmodeRes = null
-      try { _vmodeRes = await configureFlowMode("VIDEO", 1) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
+      // #aspect: 화면비(설정>씬)를 여기서 적용한다 — configureFlowMode 는 설정 메뉴를 연 채로
+      //   모드/배치/화면비 탭을 한 번에 클릭하는, Flow 새 통합 패널에서도 작동하는 경로다.
+      //   (applyAgentDefaults/findAgentSettingsPanel 은 새 패널에서 panel_not_found 로 죽는다.)
+      try { _vmodeRes = await configureFlowMode("VIDEO", 1, aspectRatio) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
       if (_vmodeRes && _vmodeRes.success === false) {
         return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
@@ -555,7 +558,10 @@ export function registerVideoIPC(ipcMain, deps) {
       // #R30-1: 모드 전환 명시적 {success:false} 면 제출 중단(t2v 와 동일 — 잘못된 quota/timeout 방지).
       // #R31-1: 배치 1 로 고정(멀티-비디오 결과 미추적 → 유료 유실 방지, t2v 와 동일).
       let _vmodeRes = null
-      try { _vmodeRes = await configureFlowMode("VIDEO", 1) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
+      // #aspect: 화면비(설정>씬)를 여기서 적용한다 — configureFlowMode 는 설정 메뉴를 연 채로
+      //   모드/배치/화면비 탭을 한 번에 클릭하는, Flow 새 통합 패널에서도 작동하는 경로다.
+      //   (applyAgentDefaults/findAgentSettingsPanel 은 새 패널에서 panel_not_found 로 죽는다.)
+      try { _vmodeRes = await configureFlowMode("VIDEO", 1, aspectRatio) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
       if (_vmodeRes && _vmodeRes.success === false) {
         return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
