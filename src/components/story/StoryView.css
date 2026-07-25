@@ -960,7 +960,9 @@
 
 /* ghost 행이 늘어나는 동안만 StoryView가 붙이는 viewport. 완료 표는 wrapper 없이 기존 렌더 유지. */
 .story-stream-table {
-  max-height: min(52vh, 520px);
+  /* 화면 높이를 따라간다 — 예전엔 min(52vh, 520px) 이라 px 팔이 vh 를 덮어써서
+     4K 에서도 1080p 와 똑같이 520px 에 묶였다(목록이 안 길어짐). */
+  max-height: 52vh;
   overflow-y: auto;
   /* prompts auto-scroll(frontier 행 offsetTop 기반)이 이 컨테이너를 offsetParent 로 삼도록 —
      없으면 offsetTop 이 바깥 positioned 조상 기준이라 스크롤 계산이 틀어져 화면이 "고정"된다. */
@@ -1190,7 +1192,7 @@
 
 .story-progress-log {
   width: min(720px, 100%);
-  max-height: 220px;
+  max-height: clamp(220px, 30vh, 60vh);   /* 큰 화면에선 로그도 같이 길어진다 */
   overflow-y: auto;
   border: 1px solid var(--border-color);
   border-radius: 6px;
