@@ -209,15 +209,28 @@ export function buildAgentDefaultsScript(opts = {}) {
       }
 
       if (OPTS.video) {
-        const sec = sections.video;
-        if (!sec) { result.video = { error: 'section_not_found' }; }
-        else {
-          result.video = {
-            aspect: setAspect(sec, OPTS.video.aspectSuffix),
-            count: setCount(sec, OPTS.video.count),
-            model: await setModel(sec, OPTS.video.model),
-          };
+        // Flow 가 설정 패널을 [이미지|동영상] 모드 탭 + (활성 모드의) 단일 화면비/개수/모델 컨트롤로
+        //   통합했다. Radix 탭은 활성 모드만 렌더하므로, 비디오 기본값을 세팅하려면 먼저 '동영상'
+        //   모드 탭을 눌러 비디오 컨트롤을 띄운 뒤 적용한다.
+        //   #aspect-mismatch: 화면비를 요청 body 주입으로 강제하면 패널(파생 필드)과 어긋나 async
+        //   비디오 job 이 FAILED 로 죽는다 — 그래서 패널(DOM)을 단일 소스로 두고 여기서만 맞춘다.
+        const videoModeTab = Array.from(panel.querySelectorAll('button[role="tab"]'))
+          .find((b) => (b.id || '').endsWith('-trigger-VIDEO') && isVis(b));
+        let mode = 'no_mode_tab';
+        if (videoModeTab) {
+          if (isActive(videoModeTab)) { mode = 'already'; }
+          else { humanClick(videoModeTab); await sleep(250); mode = 'clicked'; }
         }
+        // 옛 패널(별도 섹션)이면 sections.video, 새 통합 패널이면 패널 전체를 스코프로.
+        //   화면비/개수 탭은 id suffix('-trigger-PORTRAIT' 등)로 매칭하므로 모드 전환 후 패널
+        //   스코프에서도 비디오 탭만 정확히 잡힌다(모드 탭·개수 탭과 suffix 가 겹치지 않는다).
+        const sec = sections.video || panel;
+        result.video = {
+          mode,
+          aspect: setAspect(sec, OPTS.video.aspectSuffix),
+          count: setCount(sec, OPTS.video.count),
+          model: await setModel(sec, OPTS.video.model),
+        };
       }
 
       if (OPTS.save) {
