@@ -410,7 +410,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   //   (key, fallback) 규약이라 fallback 없이 부르면 undefined 를 줘서, 번역 없는 errorKind 가
   //   빈 토스트/빈 배너로 표시됐다. 키를 fallback 으로 넘겨 그 규약을 복원한다.
   const errorText = useCallback(
-    (kind, error) => resolveDisplayError((key) => t(key, key), kind, error) || (error ? String(error) : null),
+    (kind, error) => resolveDisplayError((key) => t(key, key), kind, error),
     [t],
   )
   const hasI18n = useHasI18n()
