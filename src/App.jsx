@@ -1010,6 +1010,11 @@ function App() {
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
     settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
+    // rendered snapshot 으로 충분 — Upscayl start 는 UpscaylDialog 클릭이 유일 caller라
+    // runningRef set 과 running commit 이 같은 클릭 task 에 완료된다. generation 트리거(다른
+    // 클릭/MCP)는 별개 task 라 항상 commit 후 실행돼 same-tick interleave 가 불가능하다.
+    // ⚠️ MCP/agent 가 upscale 을 트리거하게 되면 이 세 곳(여기·handleStop·rejectUpscaylWrite)을
+    //    isRunningNow() live latch 로 전환해야 한다.
     upscaylRunning: upscayl.running,
     requestMentionSync,
   })
@@ -2134,7 +2139,7 @@ function App() {
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
     if (shouldStopRefWork({ refBatchRunning, gatePhase: emptyRefGate?.phase })) stopGenerateAllRefs()
-    if (upscayl.running) void upscayl.cancel()
+    if (upscayl.running) void upscayl.cancel()  // rendered OK: Upscayl start=UI 클릭 유일(위 single-scene 주석 참조)
   }
 
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)

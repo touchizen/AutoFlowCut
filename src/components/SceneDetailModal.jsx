@@ -49,6 +49,9 @@ export default function SceneDetailModal({
   const { lang } = useI18n()
   const isKo = lang === 'ko'
   const rejectUpscaylWrite = () => {
+    // rendered snapshot 으로 충분 — Upscayl start 는 UpscaylDialog 클릭이 유일 caller라 runningRef
+    // set 과 running commit 이 같은 클릭 task 에 완료된다. 이 write(restore/save/regen)는 별개 task
+    // 라 항상 commit 후 실행돼 same-tick 이 불가하다. MCP/agent upscale 추가 시 live latch 로 전환 필요.
     if (!upscaylRunning) return false
     toast.warning(t('upscayl.blockedByUpscayl') || 'An upscale is running — try again after it finishes')
     return true
