@@ -35,6 +35,7 @@ describe('buildVideoI2VStartOptions', () => {
       concurrency: 3,
       flowPacingMinMs: 5000,
       flowPacingMaxMs: 12000,
+      aspectRatio: undefined,
       seed: 123,
     })
     expect(options.generationSettings).toBe(settings)
@@ -69,6 +70,7 @@ describe('buildVideoI2VStartOptions', () => {
       concurrency: 4,
       flowPacingMinMs: undefined,
       flowPacingMaxMs: undefined,
+      aspectRatio: undefined,
       seed: null,
     })
   })
@@ -94,6 +96,7 @@ describe('buildVideoI2VStartOptions', () => {
       'concurrency',
       'flowPacingMinMs',
       'flowPacingMaxMs',
+      'aspectRatio',
       'seed',
     ])
   })

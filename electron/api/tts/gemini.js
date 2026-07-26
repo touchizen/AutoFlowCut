@@ -121,10 +121,58 @@ function pcmToWav(pcm, { rate = 24000, channels = 1, bits = 16 } = {}) {
   return Buffer.concat([header, pcm])
 }
 
-export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
+// Gemini TTS 무료 티어는 분당 요청 수가 제한된다(기본 10 RPM). 넘기면 429 로 실패해
+//   "오디오 에러"로 보이므로, 넘기기 전에 우리가 먼저 기다린다.
+export const GEMINI_TTS_RPM_LIMIT = 10
+const RATE_WINDOW_MS = 60000
+
+// 대기 도중 중단되면 즉시 깨어난다 — 타이머가 끝날 때까지 붙잡혀 있지 않게.
+function raceAbort(promise, signal) {
+  if (!signal) return promise
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new Error('Gemini TTS rate wait aborted'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
+/**
+ * 슬라이딩 윈도우 요청 제한. windowMs 안에서 limit 회를 넘지 않게 acquire() 가 기다린다.
+ * now/sleep 주입으로 테스트한다(실제로 1분을 기다리지 않게).
+ */
+export function createRateLimiter({
+  limit = GEMINI_TTS_RPM_LIMIT,
+  windowMs = RATE_WINDOW_MS,
+  now = () => Date.now(),
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
+  const stamps = []          // 창 안에 남아 있는 요청 시각
+  return {
+    // 공유 리미터는 프로세스 수명 내내 살아 있다 — 테스트가 서로의 예산을 갉아먹지 않게 비운다.
+    reset() { stamps.length = 0 },
+    async acquire(signal) {
+      for (;;) {
+        if (signal?.aborted) throw new Error('Gemini TTS rate wait aborted')
+        const t = now()
+        while (stamps.length && t - stamps[0] >= windowMs) stamps.shift()
+        // 검사와 기록 사이에 await 가 없어야 동시 호출이 한도를 넘겨 통과하지 않는다.
+        if (stamps.length < limit) { stamps.push(t); return }
+        // 대기는 중단과 경합시킨다 — 안 그러면 정지를 눌러도 남은 창(최대 1분)을 다 기다린다.
+        await raceAbort(sleep(Math.max(1, windowMs - (t - stamps[0]))), signal)
+      }
+    },
+  }
+}
+
+// 어댑터는 호출마다 새로 만들어진다(createTtsAdapter) — 한도는 모듈 스코프에서 공유해야
+//   배치·개별 재생성·미리듣기가 같은 예산을 나눠 쓴다. 테스트는 reset() 으로 창을 비운다.
+export const geminiRateLimiter = createRateLimiter()
+const sharedRateLimiter = geminiRateLimiter
+
+export function createGeminiAdapter({ getKey, fetch, provider = 'gemini', rateLimiter = sharedRateLimiter }) {
   return {
     capabilities() {
-      return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
+      return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2, requestsPerMinute: GEMINI_TTS_RPM_LIMIT }
     },
     listVoices() {
       return KNOWN_VOICES.map((v) => ({ ...v }))
@@ -160,6 +208,8 @@ export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || DEFAULT_VOICE } } },
           },
         })
+        // 분당 한도 게이트 — 재시도도 별개의 요청이라 매 fetch 앞에서 슬롯을 잡는다.
+        await rateLimiter.acquire(signal)
         const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

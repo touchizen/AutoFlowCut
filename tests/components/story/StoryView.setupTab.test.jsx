@@ -14,7 +14,7 @@ const pipeline = (over = {}) => ({
   ...over,
 })
 
-const pillOf = (label) => screen.getByText(label).closest('.story-step-pill')
+const pillOf = (label) => screen.getByText(label).closest('.story-gate-tab, .story-rail-step')
 
 describe('StoryView 설정 탭', () => {
   it('fresh(대본 없음) 상태에서 설정 pill이 active + 설정 폼 표시', () => {

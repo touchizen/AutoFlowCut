@@ -11,6 +11,7 @@ const SHARED_VIDEO_START_KEYS = [
   'concurrency',
   'flowPacingMinMs',
   'flowPacingMaxMs',
+  'aspectRatio',
 ]
 
 function expectedSharedOptions(settings) {
@@ -22,6 +23,7 @@ function expectedSharedOptions(settings) {
     concurrency: settings.videoConcurrency || 4,
     flowPacingMinMs: settings.flowPacingMinMs,
     flowPacingMaxMs: settings.flowPacingMaxMs,
+    aspectRatio: settings.aspectRatio,
   }
 }
 
@@ -54,6 +56,7 @@ describe('sharedVideoStartOptions', () => {
       concurrency: 4,
       flowPacingMinMs: undefined,
       flowPacingMaxMs: undefined,
+      aspectRatio: undefined,
     })
   })
 

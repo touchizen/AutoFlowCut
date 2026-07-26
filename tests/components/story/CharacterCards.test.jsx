@@ -22,6 +22,29 @@ describe('CharacterCards 렌더', () => {
     expect(screen.getByLabelText('프롬프트')).toHaveValue('young woman')
   })
 
+  // 프롬프트·역할 같은 칸은 값이 칸보다 길어 잘린다 — 마우스를 올리면 전문이 보여야 한다.
+  // 성별(select)·나이는 짧아 잘릴 일이 없으므로 대상이 아니다.
+  it('이름/출신/역할/프롬프트는 값 전문을 title 로 보여준다', () => {
+    const long = 'a weary young woman in a worn hanbok, soot on her cheeks, carrying a chipped clay bowl'
+    render(<CharacterCards characters={[char({ appearance: long, role: '몰락한 양반가의 장녀' })]} onChange={vi.fn()} />)
+    expect(screen.getByLabelText('프롬프트')).toHaveAttribute('title', long)
+    expect(screen.getByLabelText('역할')).toHaveAttribute('title', '몰락한 양반가의 장녀')
+    expect(screen.getByLabelText('이름')).toHaveAttribute('title', '리안')
+    expect(screen.getByLabelText('출신')).toHaveAttribute('title', '한국인')
+  })
+
+  it('값이 비면 빈 풍선이 뜨지 않게 title 을 붙이지 않는다', () => {
+    render(<CharacterCards characters={[char({ appearance: '', role: '' })]} onChange={vi.fn()} />)
+    expect(screen.getByLabelText('프롬프트')).not.toHaveAttribute('title')
+    expect(screen.getByLabelText('역할')).not.toHaveAttribute('title')
+  })
+
+  it('성별/나이에는 title 을 붙이지 않는다', () => {
+    render(<CharacterCards characters={[char()]} onChange={vi.fn()} />)
+    expect(screen.getByLabelText('성별')).not.toHaveAttribute('title')
+    expect(screen.getByLabelText('나이')).not.toHaveAttribute('title')
+  })
+
   it('성별 select는 male/female/unknown 3개 enum 값을 가진다(표시만 한국어)', () => {
     render(<CharacterCards characters={[char()]} onChange={vi.fn()} />)
     const options = [...screen.getByLabelText('성별').querySelectorAll('option')]

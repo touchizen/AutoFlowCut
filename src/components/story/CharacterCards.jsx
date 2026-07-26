@@ -39,6 +39,7 @@ export default function CharacterCards({ characters = [], onChange, disabled = f
             aria-label={t('story.synopsis.charName', '이름')}
             placeholder={t('story.synopsis.charName', '이름')}
             value={c.name}
+            title={c.name || undefined}
             disabled={disabled}
             onChange={(e) => update(i, { name: e.target.value, id: e.target.value.trim() })}
           />
@@ -59,6 +60,7 @@ export default function CharacterCards({ characters = [], onChange, disabled = f
             aria-label={t('story.synopsis.charEthnicity', '출신')}
             placeholder={t('story.synopsis.charEthnicity', '출신')}
             value={c.ethnicity ?? ''}
+            title={c.ethnicity || undefined}
             disabled={disabled}
             onChange={(e) => update(i, { ethnicity: e.target.value })}
           />
@@ -75,6 +77,7 @@ export default function CharacterCards({ characters = [], onChange, disabled = f
             aria-label={t('story.synopsis.charRole', '역할')}
             placeholder={t('story.synopsis.charRole', '역할')}
             value={c.role}
+            title={c.role || undefined}
             disabled={disabled}
             onChange={(e) => update(i, { role: e.target.value })}
           />
@@ -83,6 +86,7 @@ export default function CharacterCards({ characters = [], onChange, disabled = f
             aria-label={t('story.synopsis.charAppearance', '프롬프트')}
             placeholder={t('story.synopsis.charAppearance', '프롬프트')}
             value={c.appearance}
+            title={c.appearance || undefined}
             disabled={disabled}
             onChange={(e) => update(i, { appearance: e.target.value })}
           />

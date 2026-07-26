@@ -1,6 +1,6 @@
 .empty-reference-gate-modal {
   max-width: 560px;
-  max-height: min(760px, calc(100vh - 48px));
+  max-height: calc(100vh - 48px);
 }
 
 .empty-reference-gate-description {
@@ -13,7 +13,7 @@
 .empty-reference-gate-list {
   display: grid;
   gap: 10px;
-  max-height: 330px;
+  max-height: 42vh;
   margin: 0;
   padding: 0;
   overflow-y: auto;
@@ -81,7 +81,7 @@
 }
 
 .empty-reference-gate-failures {
-  max-height: 380px;
+  max-height: 45vh;
 }
 
 .empty-reference-gate-failure-detail {

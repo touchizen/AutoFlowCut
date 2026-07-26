@@ -40,11 +40,13 @@ describe('StoryView', () => {
     expect(screen.getByRole('alert')).not.toHaveTextContent('Legacy raw fallback')
   })
 
-  it('스텝퍼에 4단계와 상태 뱃지를 렌더한다', () => {
+  it('스텝퍼에 진입 탭 3개와 실행 스텝 4개를 순서대로 렌더한다', () => {
     const { container } = render(<StoryView pipeline={pipeline()} />)
-    const labels = [...container.querySelectorAll('.story-step-name')].map((el) => el.textContent)
-    // 리서치 spec §2.1: 리서치(①) 게이트 pill 삽입(설정 뒤·시놉시스 앞).
-    expect(labels).toEqual(['설정', '리서치', '시놉시스', '대본', '씬 분리', '오디오', '프롬프트'])
+    const gates = [...container.querySelectorAll('.story-gate-tab .story-gate-name')].map((el) => el.textContent)
+    const rail = [...container.querySelectorAll('.story-rail-step .story-rail-label')].map((el) => el.textContent)
+    // 리서치 spec §2.1: 리서치 게이트 삽입(설정 뒤·시놉시스 앞).
+    expect(gates).toEqual(['설정', '리서치', '시놉시스'])
+    expect(rail).toEqual(['대본', '씬 분리', '오디오', '프롬프트'])
   })
   it('제목 입력 후 시작하면 generateSynopsis가 stepMachine이 기대하는 shape로 호출된다', () => {
     const p = pipeline()

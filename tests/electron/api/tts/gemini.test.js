@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest'
-import { createGeminiAdapter, deriveVoiceSeed } from '../../../../electron/api/tts/gemini.js'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { createGeminiAdapter, deriveVoiceSeed, geminiRateLimiter } from '../../../../electron/api/tts/gemini.js'
+
+// 분당 한도는 모듈 공유라 테스트끼리 예산을 갉아먹는다(10회를 넘기면 진짜로 1분을 기다린다).
+beforeEach(() => geminiRateLimiter.reset())
 
 // 공용 fixture(중복 제거). 오디오 성공 응답 / 특정 400("tried to generate text").
 const audioResponse = (pcm) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) })

@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
   "version": "3.2.1",
-  "buildNumber": 1386,
+  "buildNumber": 1409,
   "description": "AutoFlowCut - Automate AI image and video creation with Google Gemini/Veo APIs for CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -42,7 +42,7 @@
   "license": "AGPL-3.0-only",
   "private": true,
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.220",
     "@fal-ai/client": "^1.10.1",
     "@lexical/react": "^0.45.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
