@@ -250,4 +250,54 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     // 세그먼트 목록(오디오 패널)에 그대로 남아 있다 — 다른 스텝으로 안 샜다.
     expect(screen.getByRole('button', { name: 's1-1 재생성' })).toBeTruthy()
   })
+  // 실측 회귀(2026-07-25): 오디오가 에러/부분(partial) 상태일 때 ▶ 진행 버튼은 handlePrimaryAction 을
+  // 타는데, 이 경로만 runAudioWithPreflight 의 결과를 버려서 main 이 거절해도 토스트·상태변화가
+  // 전혀 없었다 — 화자별로 오디오를 다 채운 뒤 진행을 눌러도 "아무 반응 없음"으로 보였다.
+  describe('진행 버튼(부분 실행 뒤)이 거절을 삼키지 않는다', () => {
+    const partialAudioPipeline = (over = {}) => pipeline({
+      state: {
+        // 화자별 개별 실행을 마친 상태 — 스텝은 pending(partial) 로 남는다.
+        steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'pending', partial: true }, prompts: { status: 'pending' } },
+        speakers: [{ id: 'narrator', name: '나레이션' }],
+      },
+      scenes: [{ storyId: 's1', segments: [{ id: 's1-1', speaker: 'narrator', text: '어느 날', status: 'done', audioPath: '/x/s1-1.wav' }] }],
+      ...over,
+    })
+
+    it('start 가 busy 로 거절하면 이유를 토스트로 알린다(무반응 금지)', async () => {
+      const start = vi.fn(async () => ({ error: 'busy' }))
+      const audioPreflight = vi.fn().mockResolvedValue({ providers: [], encryptionAvailable: true })
+      renderStory(partialAudioPipeline({ start, audioPreflight }))
+      goToAudioAndRun()
+
+      await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
+      expect(await screen.findByText(/실행 중|Another task/i)).toBeTruthy()
+    })
+
+    it('start 가 다른 이유로 거절해도 조용히 넘어가지 않는다', async () => {
+      const start = vi.fn(async () => ({ error: 'no-segments' }))
+      const audioPreflight = vi.fn().mockResolvedValue({ providers: [], encryptionAvailable: true })
+      renderStory(partialAudioPipeline({ start, audioPreflight }))
+      goToAudioAndRun()
+
+      await waitFor(() => expect(start).toHaveBeenCalled())
+      // 번역 키가 없는 코드는 원문 그대로라도 보여준다 — 삼키지 않는 것이 핵심.
+      expect(await screen.findByText(/no-segments/)).toBeTruthy()
+    })
+
+    it('preflight 가 막으면 오디오 패널에 남아 게이트 카드를 보여준다', async () => {
+      const start = vi.fn()
+      // 전체 실행은 화자별 실행과 달리 SFX provider 키까지 요구한다 — 여기서 갈린다.
+      const audioPreflight = vi.fn().mockResolvedValue({
+        providers: [{ provider: 'elevenlabs', keyId: 'elevenlabs', status: 'missing' }],
+        encryptionAvailable: true,
+      })
+      renderStory(partialAudioPipeline({ start, audioPreflight }))
+      goToAudioAndRun()
+
+      await waitFor(() => expect(audioPreflight).toHaveBeenCalled())
+      expect(await screen.findByText('ElevenLabs')).toBeTruthy()
+      expect(start).not.toHaveBeenCalled()
+    })
+  })
 })

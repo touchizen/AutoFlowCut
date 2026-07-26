@@ -474,7 +474,7 @@
   position: relative;
   width: 100%;
   min-height: 120px;
-  max-height: 200px;
+  max-height: 30vh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -501,7 +501,7 @@
 
 .ref-detail-preview img {
   max-width: 100%;
-  max-height: 200px;
+  max-height: 30vh;
   object-fit: contain;
 }
 
@@ -699,7 +699,7 @@
   color: var(--text-secondary);
   line-height: 1.4;
   min-height: 60px;
-  max-height: 200px;
+  max-height: 30vh;
   overflow-y: auto;
   resize: vertical;
   width: 100%;

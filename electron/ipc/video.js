@@ -179,22 +179,29 @@ export function registerVideoIPC(ipcMain, deps) {
       //   영상을 생성하지만 extractVideoGenerationId 는 1 개 id 만 회수해 나머지 유료 결과가 추적/복구
       //   불가로 유실된다(quota 낭비). 멀티-비디오 캡처가 구현되기 전까진 1 로 클램프.
       let _vmodeRes = null
-      try { _vmodeRes = await configureFlowMode("VIDEO", 1) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
+      // #aspect: 화면비(설정>씬)를 여기서 적용한다 — configureFlowMode 는 설정 메뉴를 연 채로
+      //   모드/배치/화면비 탭을 한 번에 클릭하는, Flow 새 통합 패널에서도 작동하는 경로다.
+      //   (applyAgentDefaults/findAgentSettingsPanel 은 새 패널에서 panel_not_found 로 죽는다.)
+      try { _vmodeRes = await configureFlowMode("VIDEO", 1, aspectRatio) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
       if (_vmodeRes && _vmodeRes.success === false) {
         return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
-
-      // (v2) Flow 비디오 모델 + 화면비 적용 — 에이전트 설정 패널(동적 모델 목록 반영). 컴포즈 주입 전.
-      // #R33: 화면비(설정>씬)는 이미지·비디오 공용. 이미지는 monkey-patch inject 로, 비디오는 이
-      //   패널(aspectSuffix)로 적용한다 — aspectRatio 를 안 넘기면 컴포저 기본값(잘못된 비율)으로 나간다.
-      if (applyAgentDefaults) {
-        // #R34-fix(2): best-effort(warn) — 패널 미발견/필드 미적용으로 생성을 막지 않는다.
-        try {
-          const _md = await applyAgentDefaults({ video: { model, aspectRatio } })
-          if (!_md?.success) console.warn('[Flow Video] applyAgentDefaults(video) not applied:', _md?.error)
-          else if (_md.applied === false) console.warn('[Flow Video] applyAgentDefaults(video): panel found but not fully applied')
-        } catch (e) { console.warn('[Flow Video] applyAgentDefaults(video) error:', e.message) }
+      // 화면비는 이 DOM 클릭이 유일한 수단이다(CDP 사용 금지 — request injection 백업이 없다).
+      //   못 찾거나 클릭이 안 먹은 채로 제출하면 9:16 배치가 통째로 패널의 옛 화면비로 생성된다.
+      //   유료 생성이라 조용한 오출력보다 멈추는 편이 낫다. tab_not_found 는 Flow UI 가 또 바뀐
+      //   구조적 실패라 재시도해도 같으므로 retry 하지 않는다.
+      if (_vmodeRes && (_vmodeRes.aspect === 'tab_not_found' || _vmodeRes.aspect === 'click_unconfirmed')) {
+        return {
+          success: false,
+          error: `Flow aspect ratio not applied (${_vmodeRes.aspect}) — refusing to generate at the wrong aspect`,
+          retry: _vmodeRes.aspect === 'click_unconfirmed',
+        }
       }
+
+      // 화면비(설정>씬)는 위 configureFlowMode 가 같은 열린 메뉴에서 적용한다(Flow 새 통합 패널에서
+      //   작동하는 경로). 비디오 모델은 요청 주입(videoModel/OmniFlash)이 담당한다. 구
+      //   applyAgentDefaults(video) 는 새 패널에서 findAgentSettingsPanel 이 panel_not_found 로 죽어
+      //   (매 생성마다 3회 재시도 지연/로그 노이즈) 화면비·모델 어느 것도 적용하지 못했으므로 제거했다.
       } else {
         // [Agent ON — Maps 그라운딩/주소 기반] 토글 ON 유지 + autoApprove. 모드 탭 없어 configureFlowMode 생략.
         // ⚠️ 라이브 검증 필요(셀렉터/타이밍/DOM 수집).
@@ -555,20 +562,27 @@ export function registerVideoIPC(ipcMain, deps) {
       // #R30-1: 모드 전환 명시적 {success:false} 면 제출 중단(t2v 와 동일 — 잘못된 quota/timeout 방지).
       // #R31-1: 배치 1 로 고정(멀티-비디오 결과 미추적 → 유료 유실 방지, t2v 와 동일).
       let _vmodeRes = null
-      try { _vmodeRes = await configureFlowMode("VIDEO", 1) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
+      // #aspect: 화면비(설정>씬)를 여기서 적용한다 — configureFlowMode 는 설정 메뉴를 연 채로
+      //   모드/배치/화면비 탭을 한 번에 클릭하는, Flow 새 통합 패널에서도 작동하는 경로다.
+      //   (applyAgentDefaults/findAgentSettingsPanel 은 새 패널에서 panel_not_found 로 죽는다.)
+      try { _vmodeRes = await configureFlowMode("VIDEO", 1, aspectRatio) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
       if (_vmodeRes && _vmodeRes.success === false) {
         return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
-
-      // (v2) Flow 비디오 모델 + 화면비 적용 (I2V — t2v 와 동일). #R33: aspectRatio(설정>씬) 전달.
-      if (applyAgentDefaults) {
-        // #R34-fix(2): best-effort(warn) — 패널 미발견/필드 미적용으로 생성을 막지 않는다.
-        try {
-          const _md = await applyAgentDefaults({ video: { model, aspectRatio } })
-          if (!_md?.success) console.warn('[Flow Video I2V] applyAgentDefaults(video) not applied:', _md?.error)
-          else if (_md.applied === false) console.warn('[Flow Video I2V] applyAgentDefaults(video): panel found but not fully applied')
-        } catch (e) { console.warn('[Flow Video I2V] applyAgentDefaults error:', e.message) }
+      // 화면비는 이 DOM 클릭이 유일한 수단이다(CDP 사용 금지 — request injection 백업이 없다).
+      //   못 찾거나 클릭이 안 먹은 채로 제출하면 9:16 배치가 통째로 패널의 옛 화면비로 생성된다.
+      //   유료 생성이라 조용한 오출력보다 멈추는 편이 낫다. tab_not_found 는 Flow UI 가 또 바뀐
+      //   구조적 실패라 재시도해도 같으므로 retry 하지 않는다.
+      if (_vmodeRes && (_vmodeRes.aspect === 'tab_not_found' || _vmodeRes.aspect === 'click_unconfirmed')) {
+        return {
+          success: false,
+          error: `Flow aspect ratio not applied (${_vmodeRes.aspect}) — refusing to generate at the wrong aspect`,
+          retry: _vmodeRes.aspect === 'click_unconfirmed',
+        }
       }
+
+      // 화면비는 위 configureFlowMode 가 적용(t2v 와 동일). 구 applyAgentDefaults(video) 는 새
+      //   통합 패널에서 panel_not_found 로 죽어 아무것도 적용 못 했으므로 제거했다.
 
       // 2. 프롬프트 입력 (T2V와 동일한 Slate 에디터 사용)
       promptBounds = flowView.getBounds()

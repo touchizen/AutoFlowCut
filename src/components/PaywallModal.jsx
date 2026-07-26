@@ -18,7 +18,9 @@ export function PaywallModal({ isOpen, onClose, reason = 'trial_expired' }) {
   const { subscription, isAuthenticated } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [selectedInterval, setSelectedInterval] = useState('year') // 기본: 연간 (더 저렴)
+  // 기본: 월간 — 모달을 열자마자 보이는 금액이 연간 총액($99.99)이면 부담스럽게 읽힌다.
+  //   더 저렴한 연간은 토글과 할인 배지로 안내하고, 고르는 건 사용자에게 맡긴다.
+  const [selectedInterval, setSelectedInterval] = useState('month')
   const [prices, setPrices] = useState([
     { priceId: null, amount: 9.99, currency: 'USD', interval: 'month', productName: 'Pro Monthly' },
     { priceId: null, amount: 99.99, currency: 'USD', interval: 'year', productName: 'Pro Yearly' }

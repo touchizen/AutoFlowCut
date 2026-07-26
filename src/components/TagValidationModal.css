@@ -16,7 +16,7 @@
 }
 
 .tag-validation-list {
-  max-height: 360px;
+  max-height: 45vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

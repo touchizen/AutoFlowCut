@@ -52,7 +52,7 @@
   color: var(--text-primary, #e5e7eb);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 200px;
+  max-height: clamp(200px, 28vh, 50vh);
   overflow-y: auto;
   background: rgba(0, 0, 0, 0.18);
   padding: 8px 10px;
