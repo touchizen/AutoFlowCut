@@ -5,6 +5,7 @@ import './ShoppingPanel.css'
 const SHOPPING_ERROR_MESSAGES = Object.freeze({
   'invalid-project-path': '프로젝트 폴더를 열 수 없습니다.',
   'project-context-not-ready': '작업 폴더를 준비하고 있습니다. 잠시 후 다시 시도해 주세요.',
+  'project-open-failed': '프로젝트를 여는 중 오류가 발생했습니다(저장 파일 손상 등). 다시 시도해 주세요.',
   'story-workflow-requires-step-machine': '쇼핑 숏츠 프로젝트가 아닙니다.',
   'stale-token': '프로젝트가 전환되었습니다. 다시 시도해 주세요.',
   'product-unsupported': '지원하지 않는 상품 페이지입니다.',

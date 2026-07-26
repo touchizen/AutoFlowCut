@@ -54,6 +54,27 @@ describe('shopping IPC', () => {
     expect(result.state.state).toBe('empty')
   })
 
+  it('shopping:open — 손상된 plan.json은 reject 대신 {error}로 fail-closed한다 (R5 F1-사촌)', async () => {
+    // shoppingPlanStore.readState 는 ENOENT 만 default 로 흡수하고 손상 JSON 은 throw → planMachine.open →
+    // coordinator create 경계로 새면 open reject → auto-open unhandled rejection + 침묵 죽은 뷰.
+    await mkdir(path.join(projectDir, 'shopping'), { recursive: true })
+    await writeFile(path.join(projectDir, 'shopping', 'plan.json'), '{ corrupt !!!')
+
+    const result = await ipc.invoke('shopping:open', { projectPath: projectDir })
+
+    expect(result).toEqual({ error: 'project-open-failed' })
+  })
+
+  it('shopping:open — plan.json 스키마 드리프트(snapshot 키 없음)도 {error}로 fail-closed한다 (R5 F1-사촌)', async () => {
+    // 앱 버전 간 스키마 변화의 현실적 트리거: assertShoppingPlanStoreState 가 TypeError throw.
+    await mkdir(path.join(projectDir, 'shopping'), { recursive: true })
+    await writeFile(path.join(projectDir, 'shopping', 'plan.json'), JSON.stringify({ oldSchema: true }))
+
+    const result = await ipc.invoke('shopping:open', { projectPath: projectDir })
+
+    expect(result).toEqual({ error: 'project-open-failed' })
+  })
+
   it('submit-product는 URL을 fetchProduct에 전달하고 fact_review 상태를 저장한다', async () => {
     const { projectToken } = await ipc.invoke('shopping:open', { projectPath: projectDir })
     const canonicalProjectDir = await realpath(projectDir)
