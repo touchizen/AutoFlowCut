@@ -610,7 +610,7 @@
 }
 
 .tag-batch-style-picker {
-  max-height: 360px;
+  max-height: 45vh;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -625,7 +625,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 240px;
+  max-height: 32vh;
   overflow-y: auto;
   margin-bottom: 16px;
 }

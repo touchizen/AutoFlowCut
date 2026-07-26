@@ -417,6 +417,13 @@ export default function StoryView({
   onReloadVoices = null,
 }) {
   const t = useSafeT()
+  // resolveDisplayError 는 "키가 없으면 키를 돌려주는" i18n 규약의 t 를 기대한다. useSafeT 는
+  //   (key, fallback) 규약이라 fallback 없이 부르면 undefined 를 줘서, 번역 없는 errorKind 가
+  //   빈 토스트/빈 배너로 표시됐다. 키를 fallback 으로 넘겨 그 규약을 복원한다.
+  const errorText = useCallback(
+    (kind, error) => resolveDisplayError((key) => t(key, key), kind, error),
+    [t],
+  )
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
@@ -1295,7 +1302,7 @@ export default function StoryView({
     // done 을 지키려고). 그래서 오류 배너도 안 뜬다 — 여기서 안 띄우면 버튼이 무반응으로 보인다.
     // 단 runStep이 이미 토스트한 거절(fixed-scenes-stale/image-first)은 재토스트하지 않는다(이중토스트 방지).
     if (result?.error) {
-      if (!runStepRefuses(result.error)) toast.error(resolveDisplayError(t, result.error, result.error))
+      if (!runStepRefuses(result.error)) toast.error(errorText(result.error, result.error))
       return
     }
     if (result?.partialAudioRun) {
@@ -1348,7 +1355,7 @@ export default function StoryView({
       const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
       if (r?.busy) { toast.error(t('story.audio.busy')); return }
       if (r?.error) {
-        toast.error(t('story.audio.testFailed', { error: resolveDisplayError(t, r.error, r.error) }))
+        toast.error(t('story.audio.testFailed', { error: errorText(r.error, r.error) }))
         return
       }
       const seg = r?.segments?.find((s) => s.id === segId)
@@ -1497,10 +1504,29 @@ export default function StoryView({
       // M3b-2b: audio만 pre-flight 게이트를 거친다 — missing 키가 있으면 여기서 실행하지 않고
       // AudioKeyGateCard로 안내한다(그 외 스텝은 게이트 대상이 아니라 원래대로 직접 실행).
       if (currentStep === 'audio') {
-        runAudioWithPreflight(buildStepParams(currentStep), (p) => runStep('audio', p))
-      } else {
-        runStep(currentStep, buildStepParams(currentStep))
+        // 결과를 반드시 본다 — 예전엔 버려서, main 이 거절하면(키 없음/busy/대사 없음) 토스트도
+        //   상태 변화도 없이 버튼이 죽은 것처럼 보였다. 화자별로 오디오를 다 채운 뒤 진행을 눌렀을
+        //   때가 정확히 그 경우다: 전체 실행은 화자별 실행과 달리 SFX provider 키까지 요구한다.
+        // 화면 전환은 클릭 즉시 한다 — start()는 스텝 전체가 끝나야 resolve 하므로, await 뒤로
+        //   미루면 몇 분 뒤 사용자가 보던 다른 탭에서 갑자기 끌려나온다.
+        setScriptPhase(null)
+        setViewedStep(null)
+        const result = await runAudioWithPreflight(buildStepParams(currentStep), (p) => start('audio', p))
+        if (result?.error === 'preflight-missing-key') {
+          // 게이트 카드는 오디오 패널 안에 있다 — 다른 화면으로 넘기면 안내를 못 본다.
+          setViewedStep('audio')
+          return
+        }
+        if (result?.error) {
+          toast.error(result.error === 'busy'
+            ? t('story.audio.busyRetry', 'Another task is running. Try again in a moment.')
+            : errorText(result.error, result.error))
+        }
+        return
       }
+      // 비오디오 스텝은 D24a 거절 토스트를 담당하는 runStep을 거친다. 아래에서 bare start를
+      // 다시 호출하지 않아 같은 스텝이 두 번 실행되지 않는다.
+      runStep(currentStep, buildStepParams(currentStep))
       // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
       setScriptPhase(null)
       // 진행 액션은 현재 단계로 화면을 되돌린다 — done 스텝을 보던 중이면 viewedStep이
@@ -1682,7 +1708,7 @@ export default function StoryView({
   const splitSummary = sceneGranularity === 'segment'
     ? t('story.scenes.summarySegment', '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할')
     : `${t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준')} · ${sceneMinSec}~${sceneMaxSec}${t('story.form.sceneSecUnit', '초')}`
-  const stepDisplayError = resolveDisplayError(t, stepData.errorKind, stepData.error)
+  const stepDisplayError = errorText(stepData.errorKind, stepData.error)
   // 씬 기준 목표 길이(min~max초) 입력 — 설정 폼과 '씬 재분리' 바에서 공용. segment 모드에선 숨김.
   const renderSceneSec = () => sceneGranularity !== 'scene' ? null : (
     <div className="story-scene-sec">

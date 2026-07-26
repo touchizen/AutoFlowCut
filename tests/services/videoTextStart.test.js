@@ -82,6 +82,7 @@ describe('videoTextStart', () => {
         seedLocked: true,
         seedNo: 123,
         saveMode: 'memory',
+        aspectRatio: '9:16',
         videoResolution: '1080p',
         videoModelT2V: 'veo-3.1-fast-generate-preview',
         videoBatchCount: 2,
@@ -98,6 +99,7 @@ describe('videoTextStart', () => {
       seed: 123,
       projectName: 'demo',
       saveMode: 'memory',
+      aspectRatio: '9:16',
       videoResolution: '1080p',
       videoModel: 'veo-3.1-fast-generate-preview',
       videoBatchCount: 2,
@@ -136,5 +138,20 @@ describe('videoTextStart', () => {
       referenceImages: [],
       targetDuration: 3,
     })
+  })
+
+  // 회귀: 설정>씬의 화면비(settings.aspectRatio)가 T2V start 페이로드에 실려야 한다. 안 실으면
+  // useVideoAutomation 이 하드코딩 기본값(landscape)으로 떨어져 9:16/16:9 선택이 무시됐다.
+  it('carries settings.aspectRatio into the T2V start payload (9:16/16:9 no longer ignored)', () => {
+    for (const ratio of ['9:16', '16:9']) {
+      const { startOptions } = buildVideoTextStartPayload({
+        videoScenes: [{ id: 'vscene_1', prompt: 'pan' }],
+        references: [],
+        settings: { aspectRatio: ratio, saveMode: 'memory', videoResolution: '720p', videoModelT2V: 'veo-3.1-fast-generate-preview' },
+        projectName: 'demo',
+        warn: vi.fn(),
+      })
+      expect(startOptions.aspectRatio).toBe(ratio)
+    }
   })
 })

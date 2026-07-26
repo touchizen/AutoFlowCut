@@ -406,6 +406,8 @@ describe('image-first ④ 자동 진행 교착 방지(audio 강제)', () => {
   it('오디오 자동 토글은 image-first에서 끌 수 없다(checked + disabled)', async () => {
     const st = imageFirstState({ charactersConfirmed: true })
     render(<StoryView pipeline={pipeline(st)} voices={[]} onClose={vi.fn()} />)
+    // 자동 토글은 요약 버튼 팝오버 안에 있다(main 리팩터) — 먼저 연다.
+    fireEvent.click(document.querySelector('.story-auto-summary'))
     const auto = screen.getByLabelText('오디오 자동')
     expect(auto).toBeChecked()
     expect(auto).toBeDisabled()
@@ -416,6 +418,7 @@ describe('image-first ④ 자동 진행 교착 방지(audio 강제)', () => {
     render(
       <StoryView pipeline={pipeline(st, { scriptText: '', charactersConfirmed: undefined, characters: [] })} voices={[]} onClose={vi.fn()} />,
     )
+    fireEvent.click(document.querySelector('.story-auto-summary'))
     const auto = screen.getByLabelText('오디오 자동')
     expect(auto).not.toBeChecked()
     expect(auto).not.toBeDisabled()
