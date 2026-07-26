@@ -105,7 +105,15 @@ export async function resolveWorkflowProjectContext({
     return { error: 'invalid-project-path' }
   }
 
-  const workflowType = await readWorkflowType(canonicalProjectPath)
+  // readWorkflowType 은 ENOENT 만 'story' 로 흡수하고 손상 JSON(SyntaxError)/EACCES/EISDIR 등은 throw 한다.
+  // 이 호출은 realpath try 밖이라, throw 가 새면 F1 과 동일하게 open reject → 침묵 죽은 뷰가 된다(R4).
+  // revalidate(아래)는 이미 try 안에서 {error} 로 변환하므로 resolve 도 대칭으로 fail-closed 한다.
+  let workflowType
+  try {
+    workflowType = await readWorkflowType(canonicalProjectPath)
+  } catch {
+    return { error: 'invalid-project-path' }
+  }
   const workflowTypeError = workflowTypeMismatch(expectedWorkflowType, workflowType)
   if (workflowTypeError) return { error: workflowTypeError }
 

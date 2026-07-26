@@ -211,6 +211,26 @@ describe('story IPC', () => {
     expect(r).toEqual({ error: 'project-context-not-ready' })
   })
 
+  it('story:open — project.json이 손상돼 readWorkflowType가 throw해도 {error}로 fail-closed한다 (R4 F1-형제)', async () => {
+    // readWorkflowType 은 ENOENT 만 story 로 흡수하고 손상 JSON(SyntaxError)/EACCES 등은 throw 한다.
+    // 이 호출이 resolve 의 try 밖이면 F1 과 동일하게 open reject → 침묵 죽은 뷰가 된다.
+    const corruptDir = await mkdtemp(path.join(tmpdir(), 'story-corrupt-'))
+    await writeFile(path.join(corruptDir, 'project.json'), '{ corrupt json !!!')
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => null,
+      getActiveWorkFolder: () => path.dirname(corruptDir),
+      llm,
+      listClaudeModels: async () => [],
+      listCodexModels: async () => [],
+    })
+
+    const r = await ipc2.invoke('story:open', { projectPath: corruptDir })
+
+    expect(r).toEqual({ error: 'invalid-project-path' })
+  })
+
   it('story:open — work folder 내부 symlink가 외부를 가리키면 realpath containment로 거부한다', async () => {
     const workFolder = await mkdtemp(path.join(tmpdir(), 'story-symlink-work-'))
     const outside = await mkdtemp(path.join(tmpdir(), 'story-symlink-outside-'))
