@@ -35,6 +35,16 @@ async function readWorkflowType(projectPath) {
   }
 }
 
+function workflowTypeMismatch(expectedWorkflowType, workflowType) {
+  if (expectedWorkflowType === 'story' && workflowType !== 'story') {
+    return 'shopping-workflow-requires-plan-machine'
+  }
+  if (expectedWorkflowType === 'shopping-short' && workflowType !== 'shopping-short') {
+    return 'story-workflow-requires-step-machine'
+  }
+  return null
+}
+
 export async function resolveWorkflowProjectContext({
   projectPath,
   getActiveWorkFolder,
@@ -47,7 +57,16 @@ export async function resolveWorkflowProjectContext({
     || hasParentSegment(projectPath)
   ) return { error: 'invalid-project-path' }
 
-  const activeWorkFolder = await getActiveWorkFolder?.()
+  // getActiveWorkFolder 는 getVerifiedContext 로 승격되면서 미확정/ENOENT(폴더 삭제)/identity
+  // 불일치에 throw 한다. open 의 `await validate()` 와 IPC 핸들러엔 catch 가 없어, throw 가 그대로
+  // 새어나가면 story:open/shopping:open invoke 가 reject → renderer unhandled rejection + openError
+  // 미설정으로 "침묵하는 죽은 뷰"가 된다(R3 F1). throw 를 {error} 계약으로 되돌려 fail-closed 유지.
+  let activeWorkFolder
+  try {
+    activeWorkFolder = await getActiveWorkFolder?.()
+  } catch {
+    return { error: 'project-context-not-ready' }
+  }
   const workFolder = typeof activeWorkFolder === 'string'
     ? activeWorkFolder
     : activeWorkFolder?.path
@@ -87,12 +106,8 @@ export async function resolveWorkflowProjectContext({
   }
 
   const workflowType = await readWorkflowType(canonicalProjectPath)
-  if (expectedWorkflowType === 'story' && workflowType !== 'story') {
-    return { error: 'shopping-workflow-requires-plan-machine' }
-  }
-  if (expectedWorkflowType === 'shopping-short' && workflowType !== 'shopping-short') {
-    return { error: 'story-workflow-requires-step-machine' }
-  }
+  const workflowTypeError = workflowTypeMismatch(expectedWorkflowType, workflowType)
+  if (workflowTypeError) return { error: workflowTypeError }
 
   return {
     projectPath: canonicalProjectPath,
@@ -100,6 +115,7 @@ export async function resolveWorkflowProjectContext({
     projectIdentity,
     workFolderIdentity,
     workflowType,
+    expectedWorkflowType,
   }
 }
 
@@ -112,15 +128,25 @@ export async function revalidateWorkflowProjectContext(context) {
   ) return { error: 'invalid-project-path' }
 
   try {
-    const [projectIdentity, workFolderIdentity] = await Promise.all([
+    const [projectIdentity, workFolderIdentity, workflowType] = await Promise.all([
       inspectExactDirectory(context.projectPath),
       inspectExactDirectory(context.workFolder),
+      readWorkflowType(context.projectPath),
     ])
     if (
       !sameIdentity(projectIdentity, context.projectIdentity)
       || !sameIdentity(workFolderIdentity, context.workFolderIdentity)
       || !isWithinWorkFolder(context.projectPath, context.workFolder)
     ) return { error: 'invalid-project-path' }
+    if (
+      workflowType !== context.workflowType
+      || workflowType !== context.expectedWorkflowType
+    ) {
+      return {
+        error: workflowTypeMismatch(context.expectedWorkflowType, workflowType)
+          || 'invalid-project-path',
+      }
+    }
   } catch {
     return { error: 'invalid-project-path' }
   }

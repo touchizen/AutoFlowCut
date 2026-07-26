@@ -245,6 +245,23 @@ describe('main-owned workflow session coordinator', () => {
     expect(stepMachineMocks.createStepMachine).toHaveBeenCalledTimes(1)
   })
 
+  it('story:open validation 뒤 project workflow marker가 바뀌면 machine을 생성하지 않는다', async () => {
+    await ipc.invoke('story:open', { projectPath: storyDir })
+    const abortGate = deferred()
+    storyMachine.abort.mockImplementationOnce(async () => {
+      await abortGate.promise
+      return { ok: true }
+    })
+    const reopening = ipc.invoke('story:open', { projectPath: storyDir })
+    await vi.waitFor(() => expect(storyMachine.abort).toHaveBeenCalledTimes(1))
+
+    await writeFile(path.join(storyDir, 'project.json'), JSON.stringify({ workflowType: 'shopping-short' }))
+    abortGate.resolve()
+
+    await expect(reopening).resolves.toEqual({ error: 'shopping-workflow-requires-plan-machine' })
+    expect(stepMachineMocks.createStepMachine).toHaveBeenCalledTimes(1)
+  })
+
   it('hung abort는 bounded deadline 뒤 다음 workflow open을 막지 않는다', async () => {
     const local = createWorkflowSessionCoordinator({ abortTimeoutMs: 5 })
     await local.open('story', {
@@ -274,9 +291,13 @@ describe('main-owned workflow session coordinator', () => {
     expect(outcome).toEqual({ projectToken: 'shopping-token' })
   })
 
-  it('invalidate 요청이 느린 validate 창의 active epoch를 즉시 stale로 만든다', async () => {
+  it('validate 대기 중 invalidate되면 candidate를 만들거나 publish하지 않는다', async () => {
     const local = createWorkflowSessionCoordinator()
     const validateGate = deferred()
+    const createCandidate = vi.fn(async () => ({
+      machine: {}, token: 'shopping-token', abort: vi.fn(),
+      result: { projectToken: 'shopping-token' },
+    }))
     await local.open('story', {
       validate: async () => ({ projectPath: storyDir }),
       create: async () => ({
@@ -285,9 +306,7 @@ describe('main-owned workflow session coordinator', () => {
     })
     const opening = local.open('shopping', {
       validate: () => validateGate.promise,
-      create: async () => ({
-        machine: {}, token: 'shopping-token', abort: vi.fn(), result: { projectToken: 'shopping-token' },
-      }),
+      create: createCandidate,
     })
     await Promise.resolve()
 
@@ -295,8 +314,10 @@ describe('main-owned workflow session coordinator', () => {
     expect(local.capture('story', 'story-token')).toBeNull()
 
     validateGate.resolve({ projectPath: shoppingDir })
-    await opening
+    await expect(opening).resolves.toEqual({ error: 'stale-token' })
     await invalidating
+    expect(createCandidate).not.toHaveBeenCalled()
+    expect(local.current('shopping')).toBeNull()
   })
 
   it('create 중 invalidate로 epoch가 바뀌면 candidate를 publish하지 않는다', async () => {

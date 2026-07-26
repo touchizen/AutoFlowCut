@@ -46,7 +46,9 @@ export function createWorkflowSessionCoordinator({ abortTimeoutMs = DEFAULT_ABOR
   return {
     open(workflowType, { validate, revalidate, create }) {
       return withTransitionLock(async () => {
+        const validationEpoch = epoch
         let context = await validate()
+        if (epoch !== validationEpoch) return { error: 'stale-token' }
         if (context?.error) return context
 
         const openingEpoch = ++epoch

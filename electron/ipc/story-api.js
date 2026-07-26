@@ -62,7 +62,6 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     if (
       !session
       || session.token !== payload?.projectToken
-      || !workflowSessions.isCurrent(session)
     ) return
     const win = getWindow?.()
     if (win && !win.isDestroyed()) win.webContents.send(channel, payload)

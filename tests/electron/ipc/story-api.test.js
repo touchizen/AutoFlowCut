@@ -192,6 +192,25 @@ describe('story IPC', () => {
     expect(r).toEqual({ error: 'project-context-not-ready' })
   })
 
+  it('story:open — getActiveWorkFolder가 throw해도 reject 대신 {error}로 fail-closed한다 (R3 F1)', async () => {
+    // getVerifiedContext 로 승격된 getActiveWorkFolder 는 미확정/폴더삭제(ENOENT)/identity 불일치에
+    // throw 한다. throw 가 open/IPC 로 새면 invoke reject → renderer unhandled rejection + 침묵 죽은 뷰.
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => null,
+      getActiveWorkFolder: () => { throw new Error('ENOENT: work folder deleted') },
+      llm,
+      listClaudeModels: async () => [],
+      listCodexModels: async () => [],
+    })
+
+    // reject 하면 이 await 가 throw → 테스트 실패. {error} 계약이 유지돼야 한다.
+    const r = await ipc2.invoke('story:open', { projectPath: dir })
+
+    expect(r).toEqual({ error: 'project-context-not-ready' })
+  })
+
   it('story:open — work folder 내부 symlink가 외부를 가리키면 realpath containment로 거부한다', async () => {
     const workFolder = await mkdtemp(path.join(tmpdir(), 'story-symlink-work-'))
     const outside = await mkdtemp(path.join(tmpdir(), 'story-symlink-outside-'))

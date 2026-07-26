@@ -32,11 +32,12 @@ export function createWorkFolderAuthority({ onChange } = {}) {
     confirm(candidate) {
       const task = confirmationLock.then(async () => {
         const next = await canonicalDirectory(candidate)
-        if (canonicalPath && (canonicalPath !== next.path || !sameIdentity(identity, next.identity))) {
-          await onChange?.({ previousPath: canonicalPath, nextPath: next.path })
-        }
+        const previousPath = canonicalPath
+        const changed = previousPath
+          && (previousPath !== next.path || !sameIdentity(identity, next.identity))
         canonicalPath = next.path
         identity = next.identity
+        if (changed) await onChange?.({ previousPath, nextPath: next.path })
         return canonicalPath
       })
       confirmationLock = task.then(() => undefined, () => undefined)

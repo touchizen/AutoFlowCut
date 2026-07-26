@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -99,6 +99,32 @@ describe('main-owned work-folder authority', () => {
     await rename(selected, moved)
     await mkdir(selected)
     await expect(authority.getVerifiedContext()).rejects.toThrow('invalid-work-folder')
+  })
+
+  it('authority 변경은 onChange 호출 전에 새 path와 identity를 publish한다', async () => {
+    const previous = path.join(root, 'previous-work-folder')
+    const next = path.join(root, 'next-work-folder')
+    await mkdir(previous)
+    await mkdir(next)
+    const nextInfo = await stat(next)
+    let observedContext
+    let localAuthority
+    const onChange = vi.fn(async () => {
+      observedContext = await localAuthority.getVerifiedContext()
+    })
+    localAuthority = createWorkFolderAuthority({ onChange })
+    await localAuthority.confirm(previous)
+
+    await localAuthority.confirm(next)
+
+    expect(onChange).toHaveBeenCalledWith({
+      previousPath: await realpath(previous),
+      nextPath: await realpath(next),
+    })
+    expect(observedContext).toEqual({
+      path: await realpath(next),
+      identity: { dev: nextInfo.dev, ino: nextInfo.ino },
+    })
   })
 
   it('authority가 채워진 뒤 renderer가 보낸 다른 경로는 저장하지 않는다', async () => {
