@@ -370,9 +370,9 @@ export default function Header({
             type="button"
             className={`btn-settings ${storyActive ? 'active' : ''}`}
             onClick={onStoryClick}
-            data-tooltip={workflowType === 'shopping-short' ? '쇼핑 숏츠' : (t('header.story') || 'Story')}
+            data-tooltip={workflowType === 'shopping-short' ? t('header.shoppingShorts') : (t('header.story') || 'Story')}
           >
-            {workflowType === 'shopping-short' ? '🛍 쇼핑 숏츠' : '📖 Story'}
+            {workflowType === 'shopping-short' ? `🛍 ${t('header.shoppingShorts')}` : '📖 Story'}
           </button>
         )}
 

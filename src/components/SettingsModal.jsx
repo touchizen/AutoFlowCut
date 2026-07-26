@@ -102,6 +102,7 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
             workFolder={workFolder}
             onSelectFolder={handleSelectFolder}
             onProjectChange={onProjectChange}
+            onClose={onClose}
             highlight={highlight}
             t={t}
           />

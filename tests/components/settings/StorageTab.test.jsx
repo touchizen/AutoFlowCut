@@ -30,7 +30,7 @@ import { toast } from '../../../src/components/Toast'
 
 const t = (k) => k
 
-function renderStorageTab(onProjectChange = vi.fn()) {
+function renderStorageTab(onProjectChange = vi.fn(), onClose = vi.fn()) {
   const setLocalSettings = vi.fn()
   render(
     <StorageTab
@@ -39,11 +39,12 @@ function renderStorageTab(onProjectChange = vi.fn()) {
       workFolder={{ name: 'WorkFolder', error: null }}
       onSelectFolder={vi.fn()}
       onProjectChange={onProjectChange}
+      onClose={onClose}
       highlight={false}
       t={t}
     />,
   )
-  return { onProjectChange, setLocalSettings }
+  return { onProjectChange, onClose, setLocalSettings }
 }
 
 beforeEach(() => {
@@ -101,7 +102,8 @@ describe('StorageTab — New Project aspect ratio', () => {
   })
 
   it('쇼핑 숏츠를 선택하면 workflowType과 고정 9:16으로 생성한다', async () => {
-    const { onProjectChange } = renderStorageTab()
+    const onProjectChange = vi.fn().mockResolvedValue({ success: true, workflowType: 'shopping-short' })
+    const { onClose } = renderStorageTab(onProjectChange)
     fireEvent.click(await screen.findByTitle('settings.createProject'))
 
     fireEvent.change(screen.getByLabelText('콘텐츠 타입'), {
@@ -121,6 +123,7 @@ describe('StorageTab — New Project aspect ratio', () => {
         isNewProject: true,
       })
     })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('blocks creating a project whose name already exists (no ratio override)', async () => {

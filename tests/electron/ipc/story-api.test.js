@@ -1,11 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
 import { defaultStoryState } from '../../../electron/story/storyStore.js'
 import { ProviderAuthError, MissingProviderKeyError } from '../../../electron/api/keyErrors.js'
+import { resolveWorkflowProjectContext } from '../../../electron/ipc/workflowProjectContext.js'
 
 // manifest 를 심는 픽스처는 audio 스텝이 성공한 상태여야 현실과 맞는다 — manifest 는 조립
 // (전체 성공) 경로에서만 쓰인다. done 이 아닌데 manifest 가 남은 경우는 옛 실행의 잔재라
@@ -210,6 +211,64 @@ describe('story IPC', () => {
     const r = await ipc2.invoke('story:open', { projectPath: linkedProject })
 
     expect(r).toEqual({ error: 'invalid-project-path' })
+  })
+
+  it('workflow context는 work-folder와 project directory의 dev/ino identity를 snapshot한다', async () => {
+    const workFolder = await mkdtemp(path.join(tmpdir(), 'story-identity-work-'))
+    const projectDir = path.join(workFolder, 'identity-project')
+    await mkdir(projectDir)
+    await writeFile(path.join(projectDir, 'project.json'), JSON.stringify({ workflowType: 'story' }))
+
+    const context = await resolveWorkflowProjectContext({
+      projectPath: projectDir,
+      getActiveWorkFolder: () => workFolder,
+      expectedWorkflowType: 'story',
+    })
+    const [workInfo, projectInfo] = await Promise.all([stat(workFolder), stat(projectDir)])
+
+    expect(context.workFolderIdentity).toEqual({ dev: workInfo.dev, ino: workInfo.ino })
+    expect(context.projectIdentity).toEqual({ dev: projectInfo.dev, ino: projectInfo.ino })
+  })
+
+  it('workflow context는 verified work-folder authority context를 입력으로 받는다', async () => {
+    const workFolder = await mkdtemp(path.join(tmpdir(), 'story-authority-context-'))
+    const projectDir = path.join(workFolder, 'project')
+    await mkdir(projectDir)
+    const workInfo = await stat(workFolder)
+
+    const context = await resolveWorkflowProjectContext({
+      projectPath: projectDir,
+      getActiveWorkFolder: () => ({
+        path: workFolder,
+        identity: { dev: workInfo.dev, ino: workInfo.ino },
+      }),
+      expectedWorkflowType: 'story',
+    })
+
+    expect(context.error).toBeUndefined()
+    expect(context.workFolderIdentity).toEqual({ dev: workInfo.dev, ino: workInfo.ino })
+  })
+
+  it('validated project path가 같은 문자열의 다른 inode로 교체되면 revalidate가 거부한다', async () => {
+    const workFolder = await mkdtemp(path.join(tmpdir(), 'story-project-rebind-'))
+    const projectDir = path.join(workFolder, 'project')
+    const moved = path.join(workFolder, 'original-project')
+    await mkdir(projectDir)
+    await writeFile(path.join(projectDir, 'project.json'), JSON.stringify({ workflowType: 'story' }))
+    const context = await resolveWorkflowProjectContext({
+      projectPath: projectDir,
+      getActiveWorkFolder: () => workFolder,
+      expectedWorkflowType: 'story',
+    })
+
+    const contextModule = await import('../../../electron/ipc/workflowProjectContext.js')
+    expect(contextModule.revalidateWorkflowProjectContext).toBeTypeOf('function')
+    await import('node:fs/promises').then(({ rename }) => rename(projectDir, moved))
+    await mkdir(projectDir)
+    await writeFile(path.join(projectDir, 'project.json'), JSON.stringify({ workflowType: 'story' }))
+
+    await expect(contextModule.revalidateWorkflowProjectContext(context))
+      .resolves.toEqual({ error: 'invalid-project-path' })
   })
 
   // C1-a: audio 스텝은 tts/probe를 필요로 한다(stepMachine.js). story-api가 createStepMachine에

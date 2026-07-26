@@ -22,6 +22,7 @@ export default {
     language: '언어',
     menu: '메뉴',
     story: '스토리',
+    shoppingShorts: '쇼핑 숏츠',
     projectDeleteFailed: '프로젝트 삭제 실패: {error}',
   },
   

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -70,5 +70,50 @@ describe('main-owned work-folder authority', () => {
     expect(result).toMatchObject({ success: true, path: await realpath(selected) })
     expect(authority.getCanonicalPath()).toBe(await realpath(selected))
     await rm(selected, { recursive: true, force: true })
+  })
+
+  it('confirmed path를 다른 inode의 directory로 재바인드하면 authority match를 거부한다', async () => {
+    const selected = path.join(root, 'selected-work-folder')
+    const moved = path.join(root, 'moved-original')
+    await mkdir(selected)
+    await authority.confirm(selected)
+
+    await rename(selected, moved)
+    await mkdir(selected)
+
+    expect(await authority.matches(selected)).toBe(false)
+  })
+
+  it('verified context는 confirmed dev/ino를 반환하고 재바인드 뒤에는 거부한다', async () => {
+    const selected = path.join(root, 'verified-work-folder')
+    const moved = path.join(root, 'verified-original')
+    await mkdir(selected)
+    const selectedInfo = await import('node:fs/promises').then(({ stat }) => stat(selected))
+    await authority.confirm(selected)
+
+    await expect(authority.getVerifiedContext()).resolves.toEqual({
+      path: await realpath(selected),
+      identity: { dev: selectedInfo.dev, ino: selectedInfo.ino },
+    })
+
+    await rename(selected, moved)
+    await mkdir(selected)
+    await expect(authority.getVerifiedContext()).rejects.toThrow('invalid-work-folder')
+  })
+
+  it('authority가 채워진 뒤 renderer가 보낸 다른 경로는 저장하지 않는다', async () => {
+    const selected = path.join(root, 'selected-work-folder')
+    const forged = path.join(root, 'renderer-forged-folder')
+    await mkdir(selected)
+    await mkdir(forged)
+    await authority.confirm(selected)
+
+    const result = await ipc.invoke('fs:save-work-folder', {
+      workFolderPath: forged,
+      workFolderName: 'forged',
+    })
+
+    expect(result).toEqual({ success: false, error: 'unconfirmed-work-folder' })
+    expect(authority.getCanonicalPath()).toBe(await realpath(selected))
   })
 })

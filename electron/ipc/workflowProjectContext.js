@@ -10,6 +10,20 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
 }
 
+function identityOf(info) {
+  return { dev: info.dev, ino: info.ino }
+}
+
+function sameIdentity(left, right) {
+  return left?.dev === right?.dev && left?.ino === right?.ino
+}
+
+async function inspectExactDirectory(candidate) {
+  const info = await fs.lstat(candidate)
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('invalid-project-path')
+  return identityOf(info)
+}
+
 async function readWorkflowType(projectPath) {
   try {
     const raw = await fs.readFile(path.join(projectPath, 'project.json'), 'utf8')
@@ -33,13 +47,21 @@ export async function resolveWorkflowProjectContext({
     || hasParentSegment(projectPath)
   ) return { error: 'invalid-project-path' }
 
-  const workFolder = await getActiveWorkFolder?.()
+  const activeWorkFolder = await getActiveWorkFolder?.()
+  const workFolder = typeof activeWorkFolder === 'string'
+    ? activeWorkFolder
+    : activeWorkFolder?.path
+  const confirmedWorkFolderIdentity = typeof activeWorkFolder === 'object'
+    ? activeWorkFolder?.identity
+    : null
   if (typeof workFolder !== 'string' || !workFolder) {
     return { error: 'project-context-not-ready' }
   }
 
   let canonicalProjectPath
   let canonicalWorkFolder
+  let projectIdentity
+  let workFolderIdentity
   try {
     const canonicalPaths = await Promise.all([
       fs.realpath(path.normalize(projectPath)),
@@ -48,12 +70,14 @@ export async function resolveWorkflowProjectContext({
     canonicalProjectPath = canonicalPaths[0]
     canonicalWorkFolder = canonicalPaths[1]
     const [projectStat, workFolderStat] = await Promise.all([
-      fs.stat(canonicalProjectPath),
-      fs.stat(canonicalWorkFolder),
+      inspectExactDirectory(canonicalProjectPath),
+      inspectExactDirectory(canonicalWorkFolder),
     ])
-    if (!projectStat.isDirectory() || !workFolderStat.isDirectory()) {
+    if (confirmedWorkFolderIdentity && !sameIdentity(workFolderStat, confirmedWorkFolderIdentity)) {
       return { error: 'invalid-project-path' }
     }
+    projectIdentity = projectStat
+    workFolderIdentity = workFolderStat
   } catch {
     return { error: 'invalid-project-path' }
   }
@@ -73,6 +97,33 @@ export async function resolveWorkflowProjectContext({
   return {
     projectPath: canonicalProjectPath,
     workFolder: canonicalWorkFolder,
+    projectIdentity,
+    workFolderIdentity,
     workflowType,
   }
+}
+
+export async function revalidateWorkflowProjectContext(context) {
+  if (
+    typeof context?.projectPath !== 'string'
+    || typeof context?.workFolder !== 'string'
+    || !context.projectIdentity
+    || !context.workFolderIdentity
+  ) return { error: 'invalid-project-path' }
+
+  try {
+    const [projectIdentity, workFolderIdentity] = await Promise.all([
+      inspectExactDirectory(context.projectPath),
+      inspectExactDirectory(context.workFolder),
+    ])
+    if (
+      !sameIdentity(projectIdentity, context.projectIdentity)
+      || !sameIdentity(workFolderIdentity, context.workFolderIdentity)
+      || !isWithinWorkFolder(context.projectPath, context.workFolder)
+    ) return { error: 'invalid-project-path' }
+  } catch {
+    return { error: 'invalid-project-path' }
+  }
+
+  return context
 }

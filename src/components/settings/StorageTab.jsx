@@ -282,6 +282,7 @@ export default function StorageTab({
   workFolder,
   onSelectFolder,
   onProjectChange,
+  onClose,
   highlight,
   t
 }) {
@@ -368,6 +369,7 @@ export default function StorageTab({
             if (res && res.success === false) {
               setLocalSettings(s => ({ ...s, ...prev }))
             }
+            if (res?.success && workflowType === 'shopping-short') onClose?.()
             return res
           }}
           t={t}

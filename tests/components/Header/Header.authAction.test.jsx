@@ -20,6 +20,7 @@ vi.mock('../../../src/hooks/useI18n', () => ({
       'header.checking': '확인 중',
       'header.authenticated': '인증됨',
       'header.unavailable': '지원 안 됨',
+      'header.shoppingShorts': 'TRANSLATED SHOPPING SHORTS',
       'header.waitingLogin': '로그인 대기',
       'toast.flowLoginHint': 'Flow 창에서 로그인',
     }[k] || k),
@@ -140,7 +141,7 @@ describe('Header workflow entry label', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /🛍 쇼핑 숏츠/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /🛍 TRANSLATED SHOPPING SHORTS/ })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /📖 Story/ })).toBeNull()
   })
 })

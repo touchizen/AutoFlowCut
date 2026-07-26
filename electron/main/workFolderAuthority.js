@@ -6,23 +6,37 @@ async function canonicalDirectory(candidate) {
     throw new Error('invalid-work-folder')
   }
   const canonicalPath = await fs.realpath(path.normalize(candidate))
-  const info = await fs.stat(canonicalPath)
-  if (!info.isDirectory()) throw new Error('invalid-work-folder')
-  return canonicalPath
+  const info = await exactDirectory(canonicalPath)
+  return {
+    path: canonicalPath,
+    identity: info.identity,
+  }
+}
+
+function sameIdentity(left, right) {
+  return left?.dev === right?.dev && left?.ino === right?.ino
+}
+
+async function exactDirectory(candidate) {
+  const info = await fs.lstat(candidate)
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('invalid-work-folder')
+  return { identity: { dev: info.dev, ino: info.ino } }
 }
 
 export function createWorkFolderAuthority({ onChange } = {}) {
   let canonicalPath = null
+  let identity = null
   let confirmationLock = Promise.resolve()
 
   return {
     confirm(candidate) {
       const task = confirmationLock.then(async () => {
-        const nextPath = await canonicalDirectory(candidate)
-        if (canonicalPath && canonicalPath !== nextPath) {
-          await onChange?.({ previousPath: canonicalPath, nextPath })
+        const next = await canonicalDirectory(candidate)
+        if (canonicalPath && (canonicalPath !== next.path || !sameIdentity(identity, next.identity))) {
+          await onChange?.({ previousPath: canonicalPath, nextPath: next.path })
         }
-        canonicalPath = nextPath
+        canonicalPath = next.path
+        identity = next.identity
         return canonicalPath
       })
       confirmationLock = task.then(() => undefined, () => undefined)
@@ -31,13 +45,21 @@ export function createWorkFolderAuthority({ onChange } = {}) {
     async matches(candidate) {
       if (!canonicalPath) return false
       try {
-        return (await canonicalDirectory(candidate)) === canonicalPath
+        const candidateDirectory = await canonicalDirectory(candidate)
+        return candidateDirectory.path === canonicalPath
+          && sameIdentity(candidateDirectory.identity, identity)
       } catch {
         return false
       }
     },
     getCanonicalPath() {
       return canonicalPath
+    },
+    async getVerifiedContext() {
+      if (!canonicalPath || !identity) throw new Error('invalid-work-folder')
+      const current = await exactDirectory(canonicalPath)
+      if (!sameIdentity(current.identity, identity)) throw new Error('invalid-work-folder')
+      return { path: canonicalPath, identity: { ...identity } }
     },
   }
 }

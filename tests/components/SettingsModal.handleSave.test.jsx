@@ -23,7 +23,9 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
     selectWorkFolder: vi.fn().mockResolvedValue({ success: false }),
   },
 }))
-vi.mock('../../src/components/settings/StorageTab', () => ({ default: () => null }))
+vi.mock('../../src/components/settings/StorageTab', () => ({
+  default: ({ onClose }) => <button onClick={onClose}>close-from-storage</button>,
+}))
 vi.mock('../../src/components/settings/SceneTab', () => ({ default: () => null }))
 vi.mock('../../src/components/settings/DisplayTab', () => ({ default: () => null }))
 vi.mock('../../src/components/settings/McpTab', () => ({ default: () => null }))
@@ -57,5 +59,20 @@ describe('SettingsModal.handleSave layout sync', () => {
     // (호출하면 ratio 0.8 이 0.5 로 덮이는 회귀 — dead block 이 살아있을 때 발생)
     expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
     expect(onSave).toHaveBeenCalledWith({ layoutMode: 'split-right', splitRatio: 0.8 })
+  })
+
+  it('passes the modal onClose callback through to StorageTab', () => {
+    const onClose = vi.fn()
+    render(
+      <SettingsModal
+        settings={{ saveMode: 'folder' }}
+        onSave={vi.fn()}
+        onClose={onClose}
+      />
+    )
+
+    fireEvent.click(screen.getByText('close-from-storage'))
+
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

@@ -298,7 +298,7 @@ registerStoryIPC(ipcMain, {
   getWindow: () => mainWindow,
   llm: storyLlm,
   loadMetaPrompt,
-  getActiveWorkFolder: () => workFolderAuthority.getCanonicalPath(),
+  getActiveWorkFolder: () => workFolderAuthority.getVerifiedContext(),
   workflowSessions,
   tts: ttsFor('typecast'), // 기본 어댑터(동시성/폴백)
   ttsFor, // 화자별 provider 라우팅
@@ -310,7 +310,7 @@ registerStoryIPC(ipcMain, {
 // Shopping pipeline IPC (product crawl + app-native plan machine).
 registerShoppingIPC(ipcMain, {
   getWindow: () => mainWindow,
-  getActiveWorkFolder: () => workFolderAuthority.getCanonicalPath(),
+  getActiveWorkFolder: () => workFolderAuthority.getVerifiedContext(),
   workflowSessions,
 })
 

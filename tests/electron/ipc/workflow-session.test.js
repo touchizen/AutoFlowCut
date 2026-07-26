@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -38,6 +38,7 @@ describe('main-owned workflow session coordinator', () => {
   let coordinator
   let storyMachine
   let shoppingMachine
+  let sent
 
   beforeEach(async () => {
     vi.resetAllMocks()
@@ -51,6 +52,7 @@ describe('main-owned workflow session coordinator', () => {
     await writeFile(path.join(shoppingDir, 'project.json'), JSON.stringify({ workflowType: 'shopping-short' }))
 
     coordinator = createWorkflowSessionCoordinator()
+    sent = []
     storyMachine = {
       projectToken: 'story-token',
       open: vi.fn(async () => ({ projectToken: 'story-token', state: {} })),
@@ -68,7 +70,10 @@ describe('main-owned workflow session coordinator', () => {
 
     registerStoryIPC(ipc, {
       keyStore: { getKey: () => 'key' },
-      getWindow: () => null,
+      getWindow: () => ({
+        isDestroyed: () => false,
+        webContents: { send: (channel, payload) => sent.push({ channel, payload }) },
+      }),
       getActiveWorkFolder: () => workFolder,
       llm: {},
       listClaudeModels: async () => [],
@@ -112,27 +117,39 @@ describe('main-owned workflow session coordinator', () => {
     expect(shoppingMachine.submitProduct).not.toHaveBeenCalled()
   })
 
-  it('story:abort는 active session을 폐기해 같은 token의 늦은 명령을 막는다', async () => {
+  it('story:abort는 현재 operation만 취소하고 같은 session/token으로 재시작할 수 있다', async () => {
     const { projectToken } = await ipc.invoke('story:open', { projectPath: storyDir })
 
     await expect(ipc.invoke('story:abort', { projectToken })).resolves.toEqual({ ok: true })
-    const stale = await ipc.invoke('story:start', { projectToken, step: 'script', params: {} })
+    const restarted = await ipc.invoke('story:start', { projectToken, step: 'script', params: {} })
 
-    expect(stale).toEqual({ error: 'stale-token' })
-    expect(storyMachine.start).not.toHaveBeenCalled()
+    expect(restarted).toEqual({ operationId: 'story-operation' })
+    expect(storyMachine.abort).toHaveBeenCalledTimes(1)
+    expect(storyMachine.start).toHaveBeenCalledTimes(1)
   })
 
-  it('shopping:abort는 active session을 폐기해 같은 token의 늦은 명령을 막는다', async () => {
+  it('shopping:abort는 현재 operation만 취소하고 같은 session/token으로 재시작할 수 있다', async () => {
     const { projectToken } = await ipc.invoke('shopping:open', { projectPath: shoppingDir })
 
     await expect(ipc.invoke('shopping:abort', { projectToken })).resolves.toEqual({ ok: true })
-    const stale = await ipc.invoke('shopping:submit-product', {
+    const restarted = await ipc.invoke('shopping:submit-product', {
       projectToken,
       url: 'https://www.coupang.com/vp/products/1',
     })
 
-    expect(stale).toEqual({ error: 'stale-token' })
-    expect(shoppingMachine.submitProduct).not.toHaveBeenCalled()
+    expect(restarted).toEqual({ ok: true, operationId: 'shopping-operation' })
+    expect(shoppingMachine.abort).toHaveBeenCalledTimes(1)
+    expect(shoppingMachine.submitProduct).toHaveBeenCalledTimes(1)
+  })
+
+  it('Story→Shopping 전환 후 옛 Story machine emit은 current-session gate에서 차단한다', async () => {
+    const opened = await ipc.invoke('story:open', { projectPath: storyDir })
+    const oldEmit = stepMachineMocks.createStepMachine.mock.calls[0][0].emit
+
+    await ipc.invoke('shopping:open', { projectPath: shoppingDir })
+    oldEmit('story:state', { projectToken: opened.projectToken, state: { leaked: true } })
+
+    expect(sent).toEqual([])
   })
 
   it('서로 다른 workflow open도 하나의 lock에서 직렬화하고 후보는 open 완료 전 publish하지 않는다', async () => {
@@ -190,6 +207,155 @@ describe('main-owned workflow session coordinator', () => {
       workflowType: 'shopping',
       token: 'shopping-token',
     })
+  })
+
+  it('validate snapshot을 previous abort 뒤 create 직전에 revalidate하고 오류면 create하지 않는다', async () => {
+    const local = createWorkflowSessionCoordinator()
+    const create = vi.fn()
+    const revalidate = vi.fn(async () => ({ error: 'invalid-project-path' }))
+
+    const result = await local.open('story', {
+      validate: async () => ({ projectPath: storyDir, projectIdentity: { dev: 1, ino: 1 } }),
+      revalidate,
+      create,
+    })
+
+    expect(result).toEqual({ error: 'invalid-project-path' })
+    expect(revalidate).toHaveBeenCalledWith(expect.objectContaining({ projectPath: storyDir }))
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('story:open validation 뒤 project directory를 재바인드하면 machine을 생성하지 않는다', async () => {
+    await ipc.invoke('story:open', { projectPath: storyDir })
+    const abortGate = deferred()
+    storyMachine.abort.mockImplementationOnce(async () => {
+      await abortGate.promise
+      return { ok: true }
+    })
+    const reopening = ipc.invoke('story:open', { projectPath: storyDir })
+    await vi.waitFor(() => expect(storyMachine.abort).toHaveBeenCalledTimes(1))
+
+    const moved = path.join(workFolder, 'story-project-original')
+    await rename(storyDir, moved)
+    await mkdir(storyDir)
+    await writeFile(path.join(storyDir, 'project.json'), JSON.stringify({ workflowType: 'story' }))
+    abortGate.resolve()
+
+    await expect(reopening).resolves.toEqual({ error: 'invalid-project-path' })
+    expect(stepMachineMocks.createStepMachine).toHaveBeenCalledTimes(1)
+  })
+
+  it('hung abort는 bounded deadline 뒤 다음 workflow open을 막지 않는다', async () => {
+    const local = createWorkflowSessionCoordinator({ abortTimeoutMs: 5 })
+    await local.open('story', {
+      validate: async () => ({ projectPath: storyDir }),
+      create: async () => ({
+        machine: {},
+        token: 'story-token',
+        abort: () => new Promise(() => {}),
+        result: { projectToken: 'story-token' },
+      }),
+    })
+
+    const opening = local.open('shopping', {
+      validate: async () => ({ projectPath: shoppingDir }),
+      create: async () => ({
+        machine: {},
+        token: 'shopping-token',
+        abort: vi.fn(),
+        result: { projectToken: 'shopping-token' },
+      }),
+    })
+    const outcome = await Promise.race([
+      opening,
+      new Promise((resolve) => setTimeout(() => resolve('test-timeout'), 50)),
+    ])
+
+    expect(outcome).toEqual({ projectToken: 'shopping-token' })
+  })
+
+  it('invalidate 요청이 느린 validate 창의 active epoch를 즉시 stale로 만든다', async () => {
+    const local = createWorkflowSessionCoordinator()
+    const validateGate = deferred()
+    await local.open('story', {
+      validate: async () => ({ projectPath: storyDir }),
+      create: async () => ({
+        machine: {}, token: 'story-token', abort: vi.fn(), result: { projectToken: 'story-token' },
+      }),
+    })
+    const opening = local.open('shopping', {
+      validate: () => validateGate.promise,
+      create: async () => ({
+        machine: {}, token: 'shopping-token', abort: vi.fn(), result: { projectToken: 'shopping-token' },
+      }),
+    })
+    await Promise.resolve()
+
+    const invalidating = local.invalidate()
+    expect(local.capture('story', 'story-token')).toBeNull()
+
+    validateGate.resolve({ projectPath: shoppingDir })
+    await opening
+    await invalidating
+  })
+
+  it('create 중 invalidate로 epoch가 바뀌면 candidate를 publish하지 않는다', async () => {
+    const local = createWorkflowSessionCoordinator()
+    const createGate = deferred()
+    const createStarted = deferred()
+    const candidateAbort = vi.fn(async () => ({ ok: true }))
+    const opening = local.open('story', {
+      validate: async () => ({ projectPath: storyDir }),
+      create: async () => {
+        createStarted.resolve()
+        await createGate.promise
+        return {
+          machine: {}, token: 'candidate-token', abort: candidateAbort,
+          result: { projectToken: 'candidate-token' },
+        }
+      },
+    })
+    await createStarted.promise
+
+    const invalidating = local.invalidate()
+    createGate.resolve()
+
+    await expect(opening).resolves.toEqual({ error: 'stale-token' })
+    await invalidating
+    expect(candidateAbort).toHaveBeenCalledTimes(1)
+    expect(local.capture('story', 'candidate-token')).toBeNull()
+  })
+
+  it('previous abort 대기 중 invalidate되면 stale context로 candidate를 생성하지 않는다', async () => {
+    const local = createWorkflowSessionCoordinator()
+    const abortGate = deferred()
+    const previousAbort = vi.fn(async () => {
+      await abortGate.promise
+      return { ok: true }
+    })
+    await local.open('story', {
+      validate: async () => ({ projectPath: storyDir }),
+      create: async () => ({
+        machine: {}, token: 'story-token', abort: previousAbort,
+        result: { projectToken: 'story-token' },
+      }),
+    })
+    const createCandidate = vi.fn(async () => ({
+      machine: {}, token: 'shopping-token', abort: vi.fn(),
+      result: { projectToken: 'shopping-token' },
+    }))
+    const opening = local.open('shopping', {
+      validate: async () => ({ projectPath: shoppingDir }),
+      create: createCandidate,
+    })
+    await vi.waitFor(() => expect(previousAbort).toHaveBeenCalledTimes(1))
+
+    const invalidating = local.invalidate()
+    abortGate.resolve()
+
+    await expect(opening).resolves.toEqual({ error: 'stale-token' })
+    await invalidating
+    expect(createCandidate).not.toHaveBeenCalled()
   })
 
   it('work-folder authority가 바뀌면 이전 폴더 session을 폐기해 옛 token을 막는다', async () => {

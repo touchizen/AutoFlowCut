@@ -22,6 +22,7 @@ export default {
     language: 'Language',
     menu: 'Menu',
     story: 'Story',
+    shoppingShorts: 'Shopping Shorts',
     projectDeleteFailed: 'Failed to delete project: {error}',
   },
   

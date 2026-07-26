@@ -9,7 +9,7 @@ import { createContentAddressedStaging, createFetchProduct } from '../shopping/f
 import { createPlanMachine } from '../shopping/planMachine.js'
 import { createShoppingPlanStore } from '../shopping/shoppingPlanStore.js'
 import { createWorkflowSessionCoordinator } from './workflowSessionCoordinator.js'
-import { resolveWorkflowProjectContext } from './workflowProjectContext.js'
+import { resolveWorkflowProjectContext, revalidateWorkflowProjectContext } from './workflowProjectContext.js'
 
 const unavailableInThisSlice = async () => {
   throw new Error('shopping-plan-step-not-available')
@@ -60,6 +60,7 @@ export function registerShoppingIPC(ipcMain, {
         getActiveWorkFolder,
         expectedWorkflowType: 'shopping-short',
       }),
+      revalidate: revalidateWorkflowProjectContext,
       create: async ({ context }) => {
         const deps = {
           fetchProduct: fetchProductFn,
@@ -86,6 +87,5 @@ export function registerShoppingIPC(ipcMain, {
     if (result?.ok) await emitState(session, result.operationId)
     return result
   }))
-  ipcMain.handle('shopping:abort', (_event, { projectToken } = {}) =>
-    workflowSessions.abort('shopping', projectToken))
+  ipcMain.handle('shopping:abort', guarded((_payload, session) => session.machine.abort(session.token)))
 }

@@ -201,7 +201,7 @@ export async function readAudioPackage(projectPath) {
   return { manifest, lastPushedRevision: st?.lastPushedRevision ?? 0 }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null, cutAudio = cutMp3ToWavSegments, sceneSplitExperiment = null }) {
+export function createStepMachine({ projectPath, llm, emit, isCurrent = () => true, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null, cutAudio = cutMp3ToWavSegments, sceneSplitExperiment = null }) {
   const store = createStoryStore(projectPath)
   // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
   const resolveTts = (provider) => (ttsFor ? ttsFor(provider) : tts)
@@ -311,6 +311,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   const anyRunning = () => startInFlight || previewing || !!synopsisController || !!researchController
     || Object.values(state?.steps || {}).some((s) => s.status === 'running')
   let previewing = false // synthPreview 진행 중 — 배치/다른 preview와의 경쟁 직렬화(Codex-TTS HIGH2)
+  let previewController = null
+  let previewTask = null
   // §3.3/§v2.8 M4: generateSynopsis side action 전용 controller — step/preview/synopsis 상호배제 +
   // abort 대칭(machine.abort()가 synopsis도 중단)의 기준.
   let synopsisController = null
@@ -2036,8 +2038,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // scenes.json에 세그먼트 단위로 병합한다.
       if (anyRunning()) return { busy: true }
       previewing = true
+      const myGeneration = abortGeneration
+      const myController = new AbortController()
+      previewController = myController
+      const isStale = () => abortGeneration !== myGeneration
+        || myController.signal.aborted
+        || !isCurrent()
+      const run = (async () => {
       try {
         const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+        if (isStale()) return { aborted: true }
         if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
         assertSegmentIdsValid(scenesJson.scenes) // Codex-TTS MED4: 파일명에 seg.id 사용 → path traversal 방어
         const ids = new Set(segmentIds)
@@ -2053,10 +2063,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         for (const seg of targets) {
           const voice = voiceOf(seg.speaker)
           if (!voice || typeof voice.voiceId !== 'string' || !voice.voiceId) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
-          const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: effectiveEmotion(seg) })
+          const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: effectiveEmotion(seg), signal: myController.signal })
+          if (isStale()) return { aborted: true }
           const rel = `audio/segments/${seg.id}.${format}`
           await store.saveBinary(rel, audio)
+          if (isStale()) return { aborted: true }
           const durationMs = await probe(path.join(projectPath, 'story', rel))
+          if (isStale()) return { aborted: true }
           if (durationMs <= 0) throw new Error(`audio measurement failed for segment ${seg.id}`)
           results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, voiceKey: ttsVoiceKey(voice, effectiveEmotion(seg)) })
         }
@@ -2064,15 +2077,19 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           // 배치 audio 스텝과 동일한 소스 해석/지문(reuse가 배치와 호환되도록).
           const source = sfxSources?.[seg.id] || seg.sourceMode || 'elevenlabs'
           const sfxKey = `${source}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
-          const { audio, format } = await sfxFor(source).generate({ description: seg.description, durationSeconds: seg.durationHint ?? null })
+          const { audio, format } = await sfxFor(source).generate({ description: seg.description, durationSeconds: seg.durationHint ?? null, signal: myController.signal })
+          if (isStale()) return { aborted: true }
           const rel = `audio/segments/${seg.id}.${format}`
           await store.saveBinary(rel, audio)
+          if (isStale()) return { aborted: true }
           const durationMs = await probe(path.join(projectPath, 'story', rel))
+          if (isStale()) return { aborted: true }
           if (durationMs <= 0) throw new Error(`audio measurement failed for segment ${seg.id}`)
           results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, sfxKey, sourceMode: source })
         }
         // 커밋 직전 최신 scenes.json 재로드 후 세그먼트 단위 병합(동시 변경 클로버 방지, 재그룹 없음).
         const latest = JSON.parse((await store.loadText('scenes.json')) || 'null') || scenesJson
+        if (isStale()) return { aborted: true }
         const updated = latest.scenes.map((sc) => ({
           ...sc,
           segments: (sc.segments || []).map((g) => {
@@ -2086,12 +2103,24 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
             }
           }),
         }))
+        if (isStale()) return { aborted: true }
         await store.saveText('scenes.json', JSON.stringify({ scenes: updated }, null, 2))
+        if (isStale()) return { aborted: true }
         if (!state) state = await store.load()
-        send('story:state', { state, scenes: updated, scriptText: (await store.loadText('script.md')) || '' })
+        const scriptText = (await store.loadText('script.md')) || ''
+        if (isStale()) return { aborted: true }
+        send('story:state', { state, scenes: updated, scriptText })
         return { ok: true, segments: [...results.entries()].map(([id, r]) => ({ id, ...r })) }
       } finally {
+        if (previewController === myController) previewController = null
         previewing = false
+      }
+      })()
+      previewTask = run
+      try {
+        return await run
+      } finally {
+        if (previewTask === run) previewTask = null
       }
     },
     // 제목 생성 side action — synopsis/research 와 같은 controller 패턴.
@@ -2656,9 +2685,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
       return { operationId, ...(partialAudioRunCompleted ? { partialAudioRun: true } : {}) }
     },
-    async abort() {
+    async abort({ awaitQuiescence = false } = {}) {
       abortGeneration += 1 // 아직 controller 를 못 잡은 start(사전검사 중)도 물러나게 한다
       controller?.abort()
+      previewController?.abort()
+      const pendingPreview = previewTask
       // §3.3: synopsis side action도 대칭 중단 — 프로젝트 전환/open cleanup 경로 공용.
       synopsisController?.abort()
       // 제목 생성도 대칭 중단 — 없으면 프로젝트 전환 후에도 이전 프로젝트의 호출이 살아남는다.
@@ -2678,6 +2709,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // 중단 버튼이 사라지지 않고 "생성 중"이 유지된다(작업 자체는 controller.abort로 멈춤).
         send('story:state', { state })
       }
+      if (awaitQuiescence && pendingPreview) await pendingPreview.catch(() => {})
+      return { ok: true }
     },
     async ackPush({ pushRevision, ok, reason }) {
       if (ok) {

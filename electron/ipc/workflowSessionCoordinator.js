@@ -1,4 +1,6 @@
-export function createWorkflowSessionCoordinator() {
+const DEFAULT_ABORT_TIMEOUT_MS = 2_000
+
+export function createWorkflowSessionCoordinator({ abortTimeoutMs = DEFAULT_ABORT_TIMEOUT_MS } = {}) {
   let active = null
   let epoch = 0
   let transitionLock = Promise.resolve()
@@ -19,24 +21,46 @@ export function createWorkflowSessionCoordinator() {
     return active
   }
 
+  const abortBounded = async (session) => {
+    let deadline
+    const timedOut = new Promise((resolve) => {
+      deadline = setTimeout(() => resolve({ ok: true, abortTimedOut: true }), abortTimeoutMs)
+    })
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => session.abort()).catch(() => ({ ok: true })),
+        timedOut,
+      ])
+    } finally {
+      clearTimeout(deadline)
+    }
+  }
+
   const invalidateActive = async () => {
     const previous = active
     if (!previous) return { ok: true }
     active = null
-    epoch += 1
-    return (await previous.abort()) ?? { ok: true }
+    return (await abortBounded(previous)) ?? { ok: true }
   }
 
   return {
-    open(workflowType, { validate, create }) {
+    open(workflowType, { validate, revalidate, create }) {
       return withTransitionLock(async () => {
-        const context = await validate()
+        let context = await validate()
         if (context?.error) return context
 
         const openingEpoch = ++epoch
         const previous = active
         active = null
-        if (previous) await previous.abort()
+        if (previous) await abortBounded(previous)
+        if (epoch !== openingEpoch) return { error: 'stale-token' }
+
+        if (revalidate) {
+          const checked = await revalidate(context)
+          if (checked?.error) return checked
+          context = checked || context
+          if (epoch !== openingEpoch) return { error: 'stale-token' }
+        }
 
         let candidate
         try {
@@ -47,7 +71,7 @@ export function createWorkflowSessionCoordinator() {
         }
 
         if (epoch !== openingEpoch) {
-          await candidate.abort()
+          await abortBounded(candidate)
           return { error: 'stale-token' }
         }
 
@@ -59,14 +83,10 @@ export function createWorkflowSessionCoordinator() {
     isCurrent(session) {
       return active === session && session?.epoch === epoch
     },
-    abort(workflowType, token) {
-      return withTransitionLock(async () => {
-        const session = capture(workflowType, token)
-        if (!session) return { error: 'stale-token' }
-        return invalidateActive()
-      })
-    },
     invalidate() {
+      // Epoch invalidation is eager, while cleanup remains serialized. This makes capture/isCurrent
+      // fail immediately even when an earlier transition is awaiting validate/create.
+      epoch += 1
       return withTransitionLock(invalidateActive)
     },
     current(workflowType) {

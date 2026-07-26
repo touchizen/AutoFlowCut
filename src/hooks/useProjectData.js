@@ -1479,6 +1479,8 @@ export function useProjectData({
         }
       }
 
+      if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
+
       // project.json workflow marker 저장 시도가 끝난 뒤에만 renderer workflow를 publish한다.
       // shopping:open의 디스크 권위 gate가 marker 쓰기보다 먼저 달려 신규 프로젝트가 dead-end가
       // 되는 것을 막는다. 저장 실패여도 기존 전환 semantics는 유지하고 open이 구조화 오류를 표시한다.

@@ -16,7 +16,7 @@ import { DEFAULT_STORY_LLM, STORY_LLM_OPTIONS, setActiveStoryLlmCatalog } from '
 import { buildClaudeStoryLlmOptions, buildCodexStoryLlmOptions, resolveStoryLlmCatalog } from '../api/llm/storyLlmDiscovery.js'
 import { listCodexModels as defaultListCodexModels } from '../api/llm/codexAppServer.js'
 import { createWorkflowSessionCoordinator } from './workflowSessionCoordinator.js'
-import { resolveWorkflowProjectContext } from './workflowProjectContext.js'
+import { resolveWorkflowProjectContext, revalidateWorkflowProjectContext } from './workflowProjectContext.js'
 
 // M2 오디오 사전점검(§4.1/§4.3): audioPreflight()가 계산한 필요 provider 목록을 provider별
 // 키 상태(store/fallback/missing)로 매핑하는 순수 함수 — IPC 핸들러에서 분리해 단위 테스트한다.
@@ -58,6 +58,12 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   const defaultVoiceCfg = defaultVoice || { provider: 'typecast', voiceId: 'tc_6436dbbb602bde66c6b39504' }
 
   const emit = (channel, payload) => {
+    const session = workflowSessions.current('story')
+    if (
+      !session
+      || session.token !== payload?.projectToken
+      || !workflowSessions.isCurrent(session)
+    ) return
     const win = getWindow?.()
     if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
   }
@@ -108,13 +114,19 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
         getActiveWorkFolder,
         expectedWorkflowType: 'story',
       }),
+      revalidate: revalidateWorkflowProjectContext,
       create: async ({ context }) => {
-        const nextMachine = createStepMachine({ projectPath: context.projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt, tts: ttsAdapter, ttsFor, probe: probeFn, defaultVoice: defaultVoiceCfg, sfxFor, youtube: youtubeApi, factCheck: factCheckFn })
+        let nextMachine
+        const isCurrent = () => {
+          const session = workflowSessions.current('story')
+          return session?.machine === nextMachine && workflowSessions.isCurrent(session)
+        }
+        nextMachine = createStepMachine({ projectPath: context.projectPath, llm, emit, isCurrent, getApiKey: () => keyStore.getKey(), loadMetaPrompt, tts: ttsAdapter, ttsFor, probe: probeFn, defaultVoice: defaultVoiceCfg, sfxFor, youtube: youtubeApi, factCheck: factCheckFn })
         const opened = await nextMachine.open()
         return {
           machine: nextMachine,
           token: opened.projectToken,
-          abort: () => nextMachine.abort(),
+          abort: () => nextMachine.abort({ awaitQuiescence: true }),
           result: opened,
         }
       },
@@ -122,8 +134,7 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
 
   ipcMain.handle('story:get-state', guarded(async (_payload, currentMachine) => currentMachine.getState()))
   ipcMain.handle('story:start', guarded(({ step, params }, currentMachine) => currentMachine.start(step, params)))
-  ipcMain.handle('story:abort', (_event, { projectToken } = {}) =>
-    workflowSessions.abort('story', projectToken))
+  ipcMain.handle('story:abort', guarded((_payload, currentMachine) => currentMachine.abort()))
   ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }, currentMachine) =>
     currentMachine.ackPush({ operationId, pushRevision, ok, reason })))
   // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.

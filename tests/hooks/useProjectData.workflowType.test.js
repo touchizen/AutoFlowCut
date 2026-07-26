@@ -294,4 +294,48 @@ describe('project.workflowType persistence', () => {
     expect(bootstrapPayload.workflowType).toBe('shopping-short')
     expect(result.current.workflowType).toBe('shopping-short')
   })
+
+  it('fresh-project save await 중 supersede되면 옛 workflow/settings를 publish하지 않는다', async () => {
+    // StorageTab가 폴더를 먼저 만든 실제 생성 경로: directory는 존재하지만 project.json은 비어 있다.
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null, isNew: true })
+    let resolveFirstBootstrap
+    const firstBootstrap = new Promise((resolve) => { resolveFirstBootstrap = resolve })
+    fileSystemAPI.saveProjectData.mockImplementation((projectName) => (
+      projectName === 'slow-shopping' ? firstBootstrap : Promise.resolve({ success: true })
+    ))
+    const setSettings = vi.fn()
+    const { result } = renderHook(() => useProjectData(hookProps({ setSettings })))
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+    fileSystemAPI.saveProjectData.mockClear()
+    setSettings.mockClear()
+
+    let slowSwitch
+    await act(async () => {
+      slowSwitch = result.current.handleProjectChange('slow-shopping', {
+        isNewProject: true,
+        aspectRatio: '9:16',
+        workflowType: 'shopping-short',
+      })
+      await vi.waitFor(() => expect(fileSystemAPI.saveProjectData)
+        .toHaveBeenCalledWith('slow-shopping', expect.any(Object)))
+    })
+
+    await act(async () => {
+      await result.current.handleProjectChange('fast-story', {
+        isNewProject: true,
+        aspectRatio: '16:9',
+        workflowType: 'story',
+      })
+    })
+    const publishCountAfterFastSwitch = setSettings.mock.calls.length
+
+    await act(async () => {
+      resolveFirstBootstrap({ success: true })
+      await slowSwitch
+    })
+
+    expect(setSettings).toHaveBeenCalledTimes(publishCountAfterFastSwitch)
+    expect(result.current.workflowType).toBe('story')
+  })
 })
