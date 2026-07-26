@@ -31,7 +31,11 @@ async function defaultDecodeDataUrl(spec, name) {
   const buf = Buffer.from(b64, 'base64')
   // Buffer.from(base64) 는 잘못된 문자열도 조용히 0바이트로 만들 수 있어 쓰기 전에 닫는다.
   if (buf.length === 0) throw new Error(`render: decoded media is empty (${name})`)
-  const out = path.join(os.tmpdir(), `render_${name}.${ext}`)
+  // 긴 sceneId/filename 조합이 파일명 컴포넌트 한도(대개 255)를 넘겨 ENAMETOOLONG 나는 걸 막는다.
+  // name 은 sanitizeName(\W+→_)을 거쳐 [A-Za-z0-9_] 뿐이라 surrogate 걱정 없이 앞부분(jobPrefix+
+  // sceneId 로 유일성 유지)만 남기고 자른다. 'render_' + name + '.' + ext 여유로 160자 캡.
+  const safeName = name.length > 160 ? name.slice(0, 160) : name
+  const out = path.join(os.tmpdir(), `render_${safeName}.${ext}`)
   await writeFile(out, buf)
   return out
 }

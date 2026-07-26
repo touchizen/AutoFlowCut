@@ -90,6 +90,35 @@ describe('resolveAndValidateInputs', () => {
     }
   })
 
+  it('caps the temp filename for a very long sceneId/filename (no ENAMETOOLONG)', async () => {
+    const longId = 'scene_' + 'x'.repeat(400)
+    const p = prepared()
+    p.renderVideoSegments = [{ sceneId: longId, source: 'i2v', inSec: 0, outSec: 1 }]
+    p.mediaFiles[1] = {
+      sceneId: longId,
+      type: 'video',
+      source: 'i2v',
+      filename: 'y'.repeat(300) + '.mp4',
+      path: 'data:video/mp4;base64,AQIDBA==',
+    }
+
+    const r = await resolveAndValidateInputs(p, {
+      existsSync: (value) => ['/img1.png', '/sfx1.wav', '/nar.mp3'].includes(value),
+      probeDurationMs: async () => 30000,
+      jobId: 'j',
+    })
+
+    try {
+      const video = r.videos.get(`${longId}:i2v`)
+      const base = String(video).split(/[/\\]/).pop()
+      expect(base.length).toBeLessThanOrEqual(255)
+      expect(base).toMatch(/^render_.*\.mp4$/)
+      expect(fs.readFileSync(video)).toEqual(Buffer.from([1, 2, 3, 4]))
+    } finally {
+      await Promise.all(r.tempFiles.map((file) => fs.promises.unlink(file).catch(() => {})))
+    }
+  })
+
   it('decodes selected raw WebM fallback to a webm temp file', async () => {
     const p = prepared()
     const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(64)]).toString('base64')
