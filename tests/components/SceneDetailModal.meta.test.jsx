@@ -18,6 +18,16 @@ const mockRestoreFromHistory = vi.fn()
 const mockGetImageSizeFromBase64 = vi.fn()
 const mockToastWarning = vi.fn()
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
     getHistory: (...a) => mockGetHistory(...a),
@@ -180,6 +190,44 @@ describe('SceneDetailModal — 재생성 후 editData 동기화', () => {
 })
 
 describe('SceneDetailModal — history 복원 시 메타 반영', () => {
+  it('history restore 전체 await를 live latch로 직렬화하고 실패해도 latch를 해제한다', async () => {
+    const restoreGate = deferred()
+    const restoreInFlightRef = { current: false }
+    mockGetHistory.mockResolvedValue({
+      success: true,
+      histories: [{ filename: 'scene_1.png', engine: 'flow' }],
+    })
+    mockReadHistoryFile.mockResolvedValue({
+      success: true,
+      data: 'data:image/png;base64,history',
+      metadata: null,
+    })
+    mockRestoreFromHistory.mockImplementation(() => restoreGate.promise)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={vi.fn()}
+        onClose={vi.fn()}
+        t={(key) => key}
+        projectName="proj"
+        restoreInFlightRef={restoreInFlightRef}
+      />
+    )
+
+    await waitFor(() => expect(document.querySelector('.history-item')).toBeInTheDocument())
+    fireEvent.click(document.querySelector('.history-item'))
+    await waitFor(() => expect(mockRestoreFromHistory).toHaveBeenCalledTimes(1))
+    expect(restoreInFlightRef.current).toBe(true)
+
+    fireEvent.click(document.querySelector('.history-item'))
+    expect(mockRestoreFromHistory).toHaveBeenCalledTimes(1)
+
+    restoreGate.reject(new Error('copy failed'))
+    await waitFor(() => expect(restoreInFlightRef.current).toBe(false))
+  })
+
   it('Upscayl 실행 중에는 history 디스크 복원을 거부하고 원인을 알린다', async () => {
     mockGetHistory.mockResolvedValue({
       success: true,

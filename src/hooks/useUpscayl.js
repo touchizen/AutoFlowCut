@@ -24,6 +24,7 @@ function errorMessage(error, fallback) {
 
 export function useUpscayl({
   scenes,
+  scenesRef: providedScenesRef = null,
   updateScene,
   projectNameRef,
   saveImage,
@@ -34,6 +35,11 @@ export function useUpscayl({
   const [state, setState] = useState(INITIAL_STATE)
   const runningRef = useRef(false)
   const cancelledRef = useRef(false)
+  // App의 동기 live ref를 우선 읽고, 독립 사용자는 최신 render 씬으로 폴백한다.
+  const renderedScenesRef = useRef(scenes)
+  renderedScenesRef.current = scenes
+  const scenesSourceRef = useRef(providedScenesRef)
+  scenesSourceRef.current = providedScenesRef
   const isRunningNow = useCallback(() => runningRef.current, [])
   // App이 최신 busy predicate를 넘겨도 startBatch는 stale closure 없이 현재 함수를 읽는다.
   const isBusyRef = useRef(isBusy)
@@ -63,7 +69,8 @@ export function useUpscayl({
       return { ok: false, error: 'busy' }
     }
 
-    const { targets, skipped } = computeUpscaylTargets(scenes, targetSceneIds)
+    const currentScenes = scenesSourceRef.current?.current ?? renderedScenesRef.current
+    const { targets, skipped } = computeUpscaylTargets(currentScenes, targetSceneIds)
     const capturedProject = projectNameRef.current
     const { model, scale } = optionOverride || options
     const startedAt = Date.now()
@@ -172,7 +179,7 @@ export function useUpscayl({
       stopped,
       cancelled: cancelledRef.current,
     }
-  }, [scenes, updateScene, projectNameRef, saveImage, options.model, options.scale])
+  }, [updateScene, projectNameRef, saveImage, options.model, options.scale])
 
   return { ...state, scenes, startBatch, cancel, isRunningNow }
 }

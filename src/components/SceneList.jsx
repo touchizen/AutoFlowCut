@@ -411,6 +411,7 @@ export default function SceneList({
   upscaylBusy = false,
   upscaylBusyTooltip,
   upscaylRunning = false,
+  restoreInFlightRef = null,
 }) {
   const { t } = useI18n()
   const [detailModal, setDetailModal] = useState({ open: false, scene: null })
@@ -706,6 +707,7 @@ export default function SceneList({
           upscaylBusy={upscaylBusy}
           upscaylBusyTooltip={upscaylBusyTooltip}
           upscaylRunning={upscaylRunning}
+          restoreInFlightRef={restoreInFlightRef}
         />
       )}
 

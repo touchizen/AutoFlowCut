@@ -22,6 +22,7 @@ export function isUpscaylStartBlocked({
   videoRetryInFlight,
   refBatchRunning,
   gatePhase,
+  restoreInFlight,
 }) {
   return !!(
     isRunning
@@ -33,6 +34,7 @@ export function isUpscaylStartBlocked({
     || videoRetryInFlight
     || refBatchRunning
     || gatePhase === 'busy'
+    || restoreInFlight
   )
 }
 

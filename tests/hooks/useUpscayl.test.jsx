@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useUpscayl } from '../../src/hooks/useUpscayl.js'
+import { isUpscaylStartBlocked } from '../../src/services/startGuard.js'
 
 const OPTIONS = { model: 'ultrasharp-4x', scale: 4 }
 
@@ -27,19 +28,21 @@ function setup({
   saveImage = vi.fn().mockResolvedValue({ success: true, path: '/saved/scene.png' }),
   updateScene = vi.fn(),
   isBusy,
+  scenesRef,
 } = {}) {
   const upscaylAPI = { run, cancel }
   const hook = renderHook(
-    ({ busyCheck }) => useUpscayl({
-      scenes,
+    ({ busyCheck, currentScenes = scenes }) => useUpscayl({
+      scenes: currentScenes,
       updateScene,
       projectNameRef,
       saveImage,
       upscaylAPI,
       options: OPTIONS,
       ...(busyCheck ? { isBusy: busyCheck } : {}),
+      ...(scenesRef ? { scenesRef } : {}),
     }),
-    { initialProps: { busyCheck: isBusy } },
+    { initialProps: { busyCheck: isBusy, currentScenes: scenes } },
   )
   return { ...hook, projectNameRef, upscaylAPI, saveImage, updateScene, isBusy }
 }
@@ -49,6 +52,22 @@ afterEach(() => {
 })
 
 describe('useUpscayl 외부 busy guard', () => {
+  it('history restore live latch가 켜져 있으면 React commit 전에도 startBatch를 거절한다', async () => {
+    const restoreInFlightRef = { current: true }
+    const harness = setup({
+      isBusy: () => isUpscaylStartBlocked({
+        restoreInFlight: restoreInFlightRef.current,
+      }),
+    })
+    let response
+
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toEqual({ ok: false, error: 'busy' })
+    expect(harness.upscaylAPI.run).not.toHaveBeenCalled()
+    expect(harness.updateScene).not.toHaveBeenCalled()
+  })
+
   it('live running reader는 state commit과 무관하게 내부 latch를 읽는다', async () => {
     const runGate = deferred()
     const harness = setup({ run: vi.fn(() => runGate.promise) })
@@ -152,6 +171,44 @@ describe('useUpscayl 외부 busy guard', () => {
 })
 
 describe('useUpscayl 대상 선정과 성공', () => {
+  it('scene writer가 live ref를 동기 갱신하면 React rerender 전 startBatch도 새 imagePath를 읽는다', async () => {
+    const scenesRef = { current: [scene('scene_1', { imagePath: '/old.png' })] }
+    const harness = setup({ scenes: scenesRef.current, scenesRef })
+    const startBatchBeforeUpdate = harness.result.current.startBatch
+
+    scenesRef.current = [scene('scene_1', { imagePath: '/same-tick-new.png' })]
+    await act(async () => { await startBatchBeforeUpdate(['scene_1']) })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: '/same-tick-new.png',
+    }))
+    expect(harness.updateScene).toHaveBeenCalledWith('scene_1', expect.any(Object))
+  })
+
+  it('startBatch 함수가 만들어진 뒤 scene이 갱신돼도 호출 시점의 새 imagePath를 읽는다', async () => {
+    const harness = setup({
+      scenes: [
+        scene('scene_1', { imagePath: '/old.png' }),
+        scene('scene_2'),
+      ],
+    })
+    const startBatchBeforeUpdate = harness.result.current.startBatch
+
+    harness.rerender({
+      busyCheck: undefined,
+      currentScenes: [
+        scene('scene_2'),
+        scene('scene_1', { imagePath: '/new.png' }),
+      ],
+    })
+    await act(async () => { await startBatchBeforeUpdate(['scene_1']) })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: '/new.png',
+    }))
+    expect(harness.updateScene).toHaveBeenCalledWith('scene_1', expect.any(Object))
+  })
+
   it('완료+파일경로+미업스케일 씬만 처리하고 나머지는 skipped로 센다', async () => {
     const harness = setup({
       scenes: [

@@ -60,6 +60,27 @@ const FOUR = [
 ]
 
 describe('useAutomation 동시성 윈도우', () => {
+  it('force preflight 중 live Upscayl latch가 켜지면 done scene을 pending으로 리셋하지 않는다', async () => {
+    const upscaylRunningRef = { current: false }
+    const { hook, updateScene, submitGeneration } = setupHook([
+      { id: 's1', prompt: 'first', status: 'done', imagePath: '/old-1.png' },
+      { id: 's2', prompt: 'second', status: 'error', imagePath: '/old-2.png' },
+    ], {
+      getAccessToken: vi.fn().mockImplementation(async () => {
+        upscaylRunningRef.current = true
+        return 'tok'
+      }),
+      isUpscaylRunning: () => upscaylRunningRef.current,
+    })
+
+    await act(async () => {
+      await hook.result.current.start({ projectName: 'p', saveMode: 'memory', force: true })
+    })
+
+    expect(updateScene.mock.calls.filter(([, patch]) => patch?.status === 'pending')).toEqual([])
+    expect(submitGeneration).not.toHaveBeenCalled()
+  })
+
   it('씬 dispatch 직전 live Upscayl 신호가 켜지면 남은 배치를 stop으로 끝낸다', async () => {
     const upscaylRunning = { current: false }
     const submitGeneration = vi.fn(async () => {

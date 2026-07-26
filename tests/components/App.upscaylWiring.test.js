@@ -65,12 +65,14 @@ describe('App Upscayl wiring', () => {
     expect(app).toContain("import { useUpscayl } from './hooks/useUpscayl'")
     expect(app).toContain("import { fileSystemAPI } from './hooks/useFileSystem'")
     expect(app.match(/= useUpscayl\(/g)).toHaveLength(1)
-    expect(app).toContain('projectNameRef,')
-    expect(app).toContain('saveImage: saveUpscaylImage,')
-    expect(app).toContain('upscaylAPI: window.upscaylAPI,')
+    const hook = sourceBlock(app, 'const upscayl = useUpscayl', 'const handleUpscaylDetect')
+    expect(hook).toContain('projectNameRef,')
+    expect(hook).toContain('scenesRef: scenesHook.scenesRef,')
+    expect(hook).toContain('saveImage: saveUpscaylImage,')
+    expect(hook).toContain('upscaylAPI: window.upscaylAPI,')
   })
 
-  it('useUpscayl isBusy가 App의 최신 9개 신호를 실제 predicate로 판정한다', () => {
+  it('useUpscayl isBusy가 App의 최신 10개 신호를 실제 predicate로 판정한다', () => {
     expect(app).toContain("isUpscaylStartBlocked,")
     expect(app).toContain('isBusy: isUpscaylBusy,')
 
@@ -85,6 +87,7 @@ describe('App Upscayl wiring', () => {
       'videoRetryInFlight: signals.videoRetryInFlightRef?.current',
       'refBatchRunning: signals.refBatchRunning',
       'gatePhase: signals.gatePhase',
+      'restoreInFlight: signals.restoreInFlightRef?.current',
     ].forEach((operand) => expect(reader).toContain(operand))
 
     const assignment = sourceBlock(app, 'upscaylBusySignalsRef.current = {', 'const upscaylBusy =')
@@ -98,6 +101,7 @@ describe('App Upscayl wiring', () => {
       'videoRetryInFlightRef,',
       'refBatchRunning,',
       'gatePhase: emptyRefGate?.phase',
+      'restoreInFlightRef,',
     ].forEach((operand) => expect(assignment).toContain(operand))
 
     const signalsRef = { current: {
@@ -110,11 +114,15 @@ describe('App Upscayl wiring', () => {
       videoRetryInFlightRef: { current: false },
       refBatchRunning: false,
       gatePhase: null,
+      restoreInFlightRef: { current: false },
     } }
     const callback = loadUpscaylBusyCallback(signalsRef)
 
     expect(callback()).toBe(false)
     signalsRef.current.startInFlightRef.current = true
+    expect(callback()).toBe(true)
+    signalsRef.current.startInFlightRef.current = false
+    signalsRef.current.restoreInFlightRef.current = true
     expect(callback()).toBe(true)
   })
 
@@ -129,6 +137,7 @@ describe('App Upscayl wiring', () => {
       videoRetryInFlightRef: { current: false },
       refBatchRunning: false,
       gatePhase: null,
+      restoreInFlightRef: { current: false },
     } }
     const upscaylBusy = loadUpscaylBusyValue(loadUpscaylBusyCallback(signalsRef))
 
@@ -205,6 +214,9 @@ describe('App Upscayl wiring', () => {
     expect(directSceneDetail).toContain('upscaylRunning={upscayl.running}')
     expect(sceneListHost).toContain('upscaylRunning={upscayl.running}')
     expect(nestedSceneDetail).toContain('upscaylRunning={upscaylRunning}')
+    expect(directSceneDetail).toContain('restoreInFlightRef={restoreInFlightRef}')
+    expect(sceneListHost).toContain('restoreInFlightRef={restoreInFlightRef}')
+    expect(nestedSceneDetail).toContain('restoreInFlightRef={restoreInFlightRef}')
   })
 
   it('Upscayl busy tooltip locale이 ko/en에 실제 문구로 존재한다', async () => {
@@ -218,9 +230,16 @@ describe('App Upscayl wiring', () => {
     expect(story).not.toContain('onUpscaleClick')
   })
 
-  it('배치·단일 씬 생성 진입점이 Upscayl 실행 상태를 busy로 공유한다', () => {
+  it('배치는 live latch, 단일 씬은 rendered 상태로 Upscayl busy를 공유한다', () => {
     expect(app).toContain('upscaylRunning: upscayl.running,')
-    expect(app).toContain('retryInFlight: videoRetryInFlightRef.current,\n      upscaylRunning: upscayl.running,')
+    expect(app).toContain('retryInFlight: videoRetryInFlightRef.current,\n      upscaylRunning: upscayl.isRunningNow(),')
+  })
+
+  it('배치 시작 admission은 rendered running snapshot 대신 live Upscayl latch를 읽는다', () => {
+    const handleStartImpl = sourceBlock(app, 'const handleStartImpl', 'const handleStart =')
+
+    expect(handleStartImpl).toContain('upscaylRunning: upscayl.isRunningNow(),')
+    expect(handleStartImpl).not.toContain('upscaylRunning: upscayl.running,')
   })
 
   it('upscayl.blockedByUpscayl toast 키가 en/ko 로케일에 모두 존재한다', async () => {

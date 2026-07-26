@@ -444,6 +444,7 @@ function App() {
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
   const saveUpscaylImage = useCallback((...args) => fileSystemAPI.saveImage(...args), [])
+  const restoreInFlightRef = useRef(false)
   // useUpscayl은 App 뒤쪽에서 채운 최신 render 신호와 same-tick latch ref를 매 호출 시 읽는다.
   const upscaylBusySignalsRef = useRef({})
   const isUpscaylBusy = useCallback(() => {
@@ -458,10 +459,12 @@ function App() {
       videoRetryInFlight: signals.videoRetryInFlightRef?.current,
       refBatchRunning: signals.refBatchRunning,
       gatePhase: signals.gatePhase,
+      restoreInFlight: signals.restoreInFlightRef?.current,
     })
   }, [])
   const upscayl = useUpscayl({
     scenes,
+    scenesRef: scenesHook.scenesRef,
     updateScene: scenesHook.updateScene,
     projectNameRef,
     saveImage: saveUpscaylImage,
@@ -1558,7 +1561,7 @@ function App() {
       videoRunning: videoAutomation.isRunning,
       hasPendingBatch,
       retryInFlight: videoRetryInFlightRef.current,
-      upscaylRunning: upscayl.running,
+      upscaylRunning: upscayl.isRunningNow(),
       refBatchRunning,
     })) return
     const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
@@ -2116,6 +2119,7 @@ function App() {
     videoRetryInFlightRef,
     refBatchRunning,
     gatePhase: emptyRefGate?.phase,
+    restoreInFlightRef,
   }
   const upscaylBusy = isUpscaylBusy()
   const upscaylBusyTooltip = t('upscayl.busyTooltip')
@@ -2510,6 +2514,7 @@ function App() {
               upscaylBusy={upscaylBusy}
               upscaylBusyTooltip={upscaylBusyTooltip}
               upscaylRunning={upscayl.running}
+              restoreInFlightRef={restoreInFlightRef}
             />
           )}
           {activeTab === 'audio' && (
@@ -2979,6 +2984,7 @@ function App() {
           upscaylBusy={upscaylBusy}
           upscaylBusyTooltip={upscaylBusyTooltip}
           upscaylRunning={upscayl.running}
+          restoreInFlightRef={restoreInFlightRef}
         />
       )}
 

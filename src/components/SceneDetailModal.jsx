@@ -2,7 +2,7 @@
  * SceneDetailModal - 씬 상세 모달 (레퍼런스 상세와 유사한 구조)
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { formatTime, getImageSizeFromBase64, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { STYLE_PRESETS, UI, RESOURCE } from '../config/defaults'
@@ -32,6 +32,7 @@ export default function SceneDetailModal({
   upscaylBusy = false,
   upscaylBusyTooltip,
   upscaylRunning = false,
+  restoreInFlightRef = null,
 }) {
   const [editData, setEditData] = useState({ ...scene })
   const [histories, setHistories] = useState([])
@@ -43,6 +44,8 @@ export default function SceneDetailModal({
   // 복원했지만 메타가 비어 있으면 명시적 null 을 그대로 노출 — backfilledMeta 로 fallback 하면
   // 이전 history 의 stale 메타가 다시 보이고 저장값(null)과 어긋난다.
   const [restoredMeta, setRestoredMeta] = useState(null)
+  const localRestoreInFlightRef = useRef(false)
+  const activeRestoreInFlightRef = restoreInFlightRef || localRestoreInFlightRef
   const { lang } = useI18n()
   const isKo = lang === 'ko'
   const rejectUpscaylWrite = () => {
@@ -125,10 +128,13 @@ export default function SceneDetailModal({
   // "media/image_scene_N.jpg" placeholder 경로가 박히고 → Media Not Found 발생.
   const handleRestoreHistory = async (historyItem) => {
     if (rejectUpscaylWrite()) return
+    if (activeRestoreInFlightRef.current) return
     if (!projectName || !scene.id) {
       toast.error(t('imageHistory.restoreFailed') || 'Restore failed')
       return
     }
+    // 파일 교체부터 로컬 메타 반영까지 Upscayl 시작과 겹치지 않게 live latch로 묶는다.
+    activeRestoreInFlightRef.current = true
     try {
       const histExt = historyItem.filename?.match(/\.(png|jpg|jpeg|webp|gif)$/i)?.[1]?.toLowerCase() || 'png'
       const currentFilename = `${scene.id}.${histExt}`
@@ -185,6 +191,8 @@ export default function SceneDetailModal({
     } catch (err) {
       console.error('[SceneDetail] Restore history failed:', err)
       toast.error(err.message)
+    } finally {
+      activeRestoreInFlightRef.current = false
     }
   }
   
