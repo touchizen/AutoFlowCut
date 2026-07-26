@@ -39,6 +39,7 @@ describe('story:open workflowType gate', () => {
     registerStoryIPC(ipc, {
       keyStore: { getKey: () => 'k' },
       getWindow: () => null,
+      getActiveWorkFolder: () => path.dirname(dir),
       llm: {},
       listClaudeModels: async () => [],
       listCodexModels: async () => [],

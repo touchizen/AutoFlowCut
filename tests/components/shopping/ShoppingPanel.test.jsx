@@ -15,6 +15,7 @@ function makePipeline(overrides = {}) {
     submitting: false,
     error: null,
     openError: null,
+    open: vi.fn(async () => ({ projectToken: 'token' })),
     submitProduct: vi.fn(async () => ({ ok: true })),
     ...overrides,
   }
@@ -86,5 +87,24 @@ describe('ShoppingPanel', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('상품 정보를 가져올 수 없습니다')
     expect(screen.getByRole('alert')).toHaveTextContent('Required product image is unavailable')
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('shopping:open 오류 코드를 한국어로 표시하고 재시도 버튼을 제공한다', async () => {
+    const pipeline = makePipeline({ openError: 'invalid-project-path' })
+    render(<ShoppingPanel pipeline={pipeline} />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('프로젝트 폴더를 열 수 없습니다')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('invalid-project-path')
+    fireEvent.click(screen.getByRole('button', { name: '프로젝트 다시 열기' }))
+
+    await act(async () => {})
+    expect(pipeline.open).toHaveBeenCalledTimes(1)
+  })
+
+  it('stale-token 내부 코드를 사용자에게 그대로 노출하지 않는다', () => {
+    render(<ShoppingPanel pipeline={makePipeline({ error: 'stale-token' })} />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('프로젝트가 전환되었습니다')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('stale-token')
   })
 })

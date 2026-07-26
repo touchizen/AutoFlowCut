@@ -451,6 +451,7 @@ function admitImage(body, mimeType) {
 }
 
 export async function safeHttpFetch(rawUrl, policy, {
+  signal: externalSignal,
   resolveDns = defaultResolveDns,
   createRequest = defaultCreateRequest,
   now = Date.now,
@@ -458,13 +459,24 @@ export async function safeHttpFetch(rawUrl, policy, {
   clearTimer = clearTimeout,
 } = {}) {
   validatePolicy(policy)
+  if (externalSignal?.aborted) {
+    throw externalSignal.reason || new DOMException('The operation was aborted', 'AbortError')
+  }
   const deadline = now() + DEADLINE_MS
   const controller = new AbortController()
-  const deadlineTimer = setTimer(() => controller.abort(deadlineError()), DEADLINE_MS)
+  const forwardExternalAbort = () => {
+    controller.abort(
+      externalSignal.reason || new DOMException('The operation was aborted', 'AbortError'),
+    )
+  }
+  externalSignal?.addEventListener('abort', forwardExternalAbort, { once: true })
+  if (externalSignal?.aborted) forwardExternalAbort()
+  let deadlineTimer
   let currentUrl = rawUrl
   let redirects = 0
 
   try {
+    deadlineTimer = setTimer(() => controller.abort(deadlineError()), DEADLINE_MS)
     while (true) {
       remainingTime(deadline, now)
       const url = validateUrl(currentUrl, policy)
@@ -526,6 +538,7 @@ export async function safeHttpFetch(rawUrl, policy, {
       }
     }
   } finally {
-    clearTimer(deadlineTimer)
+    if (deadlineTimer !== undefined) clearTimer(deadlineTimer)
+    externalSignal?.removeEventListener('abort', forwardExternalAbort)
   }
 }

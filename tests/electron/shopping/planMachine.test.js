@@ -102,6 +102,7 @@ function makePlan() {
 
 function makeProductSnapshot() {
   return {
+    status: 'ok',
     snapshotId: 'snapshot-1',
     sourceFacts: [
       { id: 'fact-1', field: 'name', value: '테스트 상품' },
@@ -345,6 +346,36 @@ describe('planMachine 6-state workflow', () => {
     await expect(machine.submitProduct(token, 'https://www.coupang.com/vp/products/2'))
       .resolves.toEqual({ error: 'invalid-transition' })
     expect(deps.fetchProduct).not.toHaveBeenCalled()
+  })
+
+  it('unsupported 상품은 구조화 오류로 반환하고 empty를 유지해 정상 URL 재시도를 허용한다', async () => {
+    const unsupported = {
+      status: 'unsupported',
+      trust: 'untrusted-web-data',
+      reason: 'Required product image is unavailable',
+    }
+    const { machine, deps, token } = await openMachine({
+      deps: {
+        fetchProduct: vi.fn()
+          .mockResolvedValueOnce(unsupported)
+          .mockResolvedValueOnce(makeProductSnapshot()),
+      },
+    })
+
+    await expect(machine.submitProduct(token, 'https://www.coupang.com/vp/products/unsupported'))
+      .resolves.toEqual({
+        error: 'product-unsupported',
+        reason: 'Required product image is unavailable',
+      })
+    expect(await machine.getState()).toMatchObject({ state: 'empty', snapshot: null })
+
+    await expect(machine.submitProduct(token, 'https://www.coupang.com/vp/products/valid'))
+      .resolves.toMatchObject({ ok: true })
+    expect(await machine.getState()).toMatchObject({
+      state: 'fact_review',
+      snapshot: makeProductSnapshot(),
+    })
+    expect(deps.fetchProduct).toHaveBeenCalledTimes(2)
   })
 })
 

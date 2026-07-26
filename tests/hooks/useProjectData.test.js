@@ -419,7 +419,7 @@ describe('handleProjectChange — aspect ratio', () => {
       ret = await result.current.handleProjectChange('new', { aspectRatio: '9:16', isNewProject: true })
     })
 
-    expect(ret).toEqual({ aspectRatio: '9:16', success: true })
+    expect(ret).toEqual({ aspectRatio: '9:16', workflowType: 'story', success: true })
     const updater = setSettings.mock.calls.at(-1)[0]
     expect(updater({ aspectRatio: '16:9' })).toMatchObject({ aspectRatio: '9:16' })
   })
@@ -437,7 +437,7 @@ describe('handleProjectChange — aspect ratio', () => {
       ret = await result.current.handleProjectChange('other')
     })
 
-    expect(ret).toEqual({ aspectRatio: '9:16', success: true })
+    expect(ret).toEqual({ aspectRatio: '9:16', workflowType: 'story', success: true })
   })
 
   it('falls back to 16:9 — not the previous project — when project.json has no aspectRatio', async () => {
@@ -456,7 +456,7 @@ describe('handleProjectChange — aspect ratio', () => {
       ret = await result.current.handleProjectChange('legacy_project')
     })
 
-    expect(ret).toEqual({ aspectRatio: '16:9', success: true })
+    expect(ret).toEqual({ aspectRatio: '16:9', workflowType: 'story', success: true })
     const updater = setSettings.mock.calls.at(-1)[0]
     expect(updater({ aspectRatio: '9:16' })).toMatchObject({ aspectRatio: '16:9' })
   })

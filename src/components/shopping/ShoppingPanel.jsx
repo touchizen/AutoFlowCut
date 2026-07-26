@@ -2,6 +2,22 @@ import { useMemo, useState } from 'react'
 
 import './ShoppingPanel.css'
 
+const SHOPPING_ERROR_MESSAGES = Object.freeze({
+  'invalid-project-path': '프로젝트 폴더를 열 수 없습니다.',
+  'project-context-not-ready': '작업 폴더를 준비하고 있습니다. 잠시 후 다시 시도해 주세요.',
+  'story-workflow-requires-step-machine': '쇼핑 숏츠 프로젝트가 아닙니다.',
+  'stale-token': '프로젝트가 전환되었습니다. 다시 시도해 주세요.',
+  'product-unsupported': '지원하지 않는 상품 페이지입니다.',
+  'product-fetch-failed': '상품 정보를 가져오지 못했습니다.',
+  'shopping-workflow-disabled': '쇼핑 숏츠 프로젝트를 먼저 열어 주세요.',
+})
+
+export function shoppingErrorMessage(error) {
+  const code = typeof error === 'string' ? error : error?.error
+  if (!code) return null
+  return SHOPPING_ERROR_MESSAGES[code] || '쇼핑 숏츠 작업을 처리하지 못했습니다. 다시 시도해 주세요.'
+}
+
 function formatPrice(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
   return `${new Intl.NumberFormat('ko-KR').format(value)}원`
@@ -35,7 +51,10 @@ export default function ShoppingPanel({ pipeline }) {
   const unsupportedError = snapshot?.status === 'unsupported'
     ? `상품 정보를 가져올 수 없습니다: ${snapshot.reason || '지원하지 않는 상품 페이지입니다.'}`
     : null
-  const visibleError = unsupportedError || localError || pipeline.error || pipeline.openError
+  const visibleError = unsupportedError
+    || localError
+    || shoppingErrorMessage(pipeline.error)
+    || shoppingErrorMessage(pipeline.openError)
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -48,9 +67,22 @@ export default function ShoppingPanel({ pipeline }) {
     setPending(true)
     try {
       const result = await pipeline.submitProduct(value)
-      if (result?.error) setLocalError(`상품 정보를 가져올 수 없습니다: ${result.error}`)
+      if (result?.error) setLocalError(shoppingErrorMessage(result.error))
     } catch (error) {
-      setLocalError(`상품 정보를 가져올 수 없습니다: ${error?.message || 'product-fetch-failed'}`)
+      setLocalError(shoppingErrorMessage(error?.message || 'product-fetch-failed'))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const handleRetryOpen = async () => {
+    setLocalError(null)
+    setPending(true)
+    try {
+      const result = await pipeline.open()
+      if (result?.error) setLocalError(shoppingErrorMessage(result.error))
+    } catch {
+      setLocalError(shoppingErrorMessage('product-fetch-failed'))
     } finally {
       setPending(false)
     }
@@ -81,7 +113,16 @@ export default function ShoppingPanel({ pipeline }) {
         </div>
       </form>
 
-      {visibleError && <div className="shopping-panel__error" role="alert">{visibleError}</div>}
+      {visibleError && (
+        <div className="shopping-panel__error" role="alert">
+          <span>{visibleError}</span>
+          {pipeline.openError && (
+            <button type="button" onClick={handleRetryOpen} disabled={loading}>
+              프로젝트 다시 열기
+            </button>
+          )}
+        </div>
+      )}
 
       {product && (
         <article className="shopping-product" aria-busy={loading}>

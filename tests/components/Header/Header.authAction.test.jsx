@@ -111,6 +111,40 @@ describe('Header project selector — disabled contract (#R26-2/#R26-3)', () => 
   })
 })
 
+describe('Header workflow entry label', () => {
+  beforeEach(() => {
+    mockMode = 'api'
+    window.electronAPI = { onFlowStatus: vi.fn().mockReturnValue(() => {}) }
+  })
+
+  it('story project는 Story 진입점으로 표시한다', () => {
+    render(
+      <Header
+        onSettings={vi.fn()}
+        authReady={true}
+        workflowType="story"
+        onStoryClick={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /📖 Story/ })).toBeTruthy()
+  })
+
+  it('shopping-short project는 쇼핑 숏츠 진입점으로 표시한다', () => {
+    render(
+      <Header
+        onSettings={vi.fn()}
+        authReady={true}
+        workflowType="shopping-short"
+        onStoryClick={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /🛍 쇼핑 숏츠/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /📖 Story/ })).toBeNull()
+  })
+})
+
 describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
   beforeEach(() => {
     mockMode = 'api'

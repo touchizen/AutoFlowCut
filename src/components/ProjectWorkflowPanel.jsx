@@ -6,6 +6,14 @@ export default function ProjectWorkflowPanel({
   shoppingPipeline,
   storyContent,
 }) {
+  if (workflowType === undefined) {
+    return (
+      <div className="story-guard" role="status">
+        <p>프로젝트 유형을 확인하고 있습니다...</p>
+      </div>
+    )
+  }
+
   if (workflowType === 'shopping-short') {
     return shoppingProjectPath ? (
       <div className="main-panel">

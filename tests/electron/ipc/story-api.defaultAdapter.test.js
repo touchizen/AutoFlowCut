@@ -34,6 +34,7 @@ beforeEach(async () => {
   registerStoryIPC(ipc, {
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+    getActiveWorkFolder: () => path.dirname(dir),
     llm,
     // tts 미주입 — 실앱 기본 경로(default Typecast 어댑터)를 그대로 탄다.
   })

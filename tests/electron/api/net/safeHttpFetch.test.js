@@ -626,6 +626,66 @@ describe('safeHttpFetch absolute deadline', () => {
   })
 })
 
+describe('safeHttpFetch external cancellation', () => {
+  it('rejects an already-aborted external signal before timer, DNS, or transport', async () => {
+    const controller = new AbortController()
+    const reason = new Error('shopping session aborted')
+    controller.abort(reason)
+    const resolveDns = vi.fn(async () => [{ address: '93.184.216.34', family: 4 }])
+    const createRequest = makeTransport([htmlResponse()])
+    const setTimer = vi.fn()
+
+    await expect(safeHttpFetch('https://www.coupang.com/x', HTML_FETCH_POLICY, {
+      signal: controller.signal,
+      resolveDns,
+      createRequest,
+      setTimer,
+    })).rejects.toBe(reason)
+
+    expect(setTimer).not.toHaveBeenCalled()
+    expect(resolveDns).not.toHaveBeenCalled()
+    expect(createRequest).not.toHaveBeenCalled()
+  })
+
+  it('propagates the external abort reason while DNS is pending', async () => {
+    const controller = new AbortController()
+    const reason = new Error('user cancelled shopping fetch')
+    const resolveDns = vi.fn(() => new Promise(() => {}))
+    const promise = safeHttpFetch('https://www.coupang.com/x', HTML_FETCH_POLICY, {
+      signal: controller.signal,
+      resolveDns,
+      createRequest: vi.fn(),
+      setTimer: vi.fn(() => ({ fakeTimer: true })),
+      clearTimer: vi.fn(),
+    })
+    await vi.waitFor(() => expect(resolveDns).toHaveBeenCalledTimes(1))
+
+    controller.abort(reason)
+    const outcome = await Promise.race([
+      promise.then(() => 'resolved', (error) => error),
+      new Promise((resolve) => setImmediate(() => resolve('external abort ignored'))),
+    ])
+
+    expect(outcome).toBe(reason)
+  })
+
+  it('removes the external abort listener after a successful fetch', async () => {
+    const controller = new AbortController()
+    const add = vi.spyOn(controller.signal, 'addEventListener')
+    const remove = vi.spyOn(controller.signal, 'removeEventListener')
+
+    await safeHttpFetch('https://www.coupang.com/x', HTML_FETCH_POLICY, {
+      signal: controller.signal,
+      resolveDns: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+      createRequest: makeTransport([htmlResponse()]),
+    })
+
+    const abortListener = add.mock.calls.find(([event]) => event === 'abort')?.[1]
+    expect(abortListener).toEqual(expect.any(Function))
+    expect(remove).toHaveBeenCalledWith('abort', abortListener)
+  })
+})
+
 describe('safeHttpFetch streaming and decoded byte caps', () => {
   it('uses the policy limits required for HTML and images', () => {
     expect(HTML_FETCH_POLICY.maxBytes).toBe(2 * 1024 * 1024)

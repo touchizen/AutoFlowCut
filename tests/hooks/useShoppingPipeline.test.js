@@ -72,6 +72,32 @@ describe('useShoppingPipeline', () => {
     expect(window.electronAPI.shoppingAbort).toHaveBeenCalledWith({ projectToken: 'token-A' })
   })
 
+  it('A open이 늦게 resolve된 사이 B path로 바뀌면 A token을 채택하지 않고 abort한다', async () => {
+    let resolveOpenA
+    window.electronAPI.shoppingOpen = vi.fn(({ projectPath }) => (
+      projectPath === '/A'
+        ? new Promise((resolve) => { resolveOpenA = resolve })
+        : Promise.resolve({ projectToken: 'token-B', state: { state: 'empty' } })
+    ))
+    const { result, rerender } = renderHook(
+      ({ projectPath }) => useShoppingPipeline({ projectPath, enabled: true }),
+      { initialProps: { projectPath: '/A' } },
+    )
+
+    let openingA
+    act(() => { openingA = result.current.open() })
+    rerender({ projectPath: '/B' })
+    await act(async () => {
+      resolveOpenA({ projectToken: 'token-A', state: { state: 'fact_review' } })
+      await openingA
+    })
+
+    expect(window.electronAPI.shoppingAbort).toHaveBeenCalledWith({ projectToken: 'token-A' })
+    expect(result.current.state).toBeNull()
+    await act(() => result.current.getState())
+    expect(window.electronAPI.shoppingGetState).not.toHaveBeenCalled()
+  })
+
   it('disabled면 shopping event listener를 등록하지 않는다', () => {
     renderHook(() => useShoppingPipeline({ projectPath: null, enabled: false }))
 

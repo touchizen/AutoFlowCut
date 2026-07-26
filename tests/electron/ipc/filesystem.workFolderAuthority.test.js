@@ -1,0 +1,74 @@
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+const electronMocks = vi.hoisted(() => ({
+  userDataPath: '',
+  showOpenDialog: vi.fn(),
+}))
+
+vi.mock('child_process', () => ({
+  execFile: vi.fn((_cmd, _args, _opts, callback) => callback(new Error('no ffprobe'), '', '')),
+  execSync: vi.fn(),
+}))
+
+vi.mock('electron', () => ({
+  app: { getPath: () => electronMocks.userDataPath },
+  dialog: { showOpenDialog: electronMocks.showOpenDialog },
+}))
+
+import { createWorkFolderAuthority } from '../../../electron/main/workFolderAuthority.js'
+import { registerFilesystemIPC } from '../../../electron/ipc/filesystem.js'
+
+function fakeIpcMain() {
+  const handlers = new Map()
+  return {
+    handle: (channel, handler) => handlers.set(channel, handler),
+    invoke: (channel, payload) => handlers.get(channel)({}, payload),
+  }
+}
+
+describe('main-owned work-folder authority', () => {
+  let root
+  let ipc
+  let authority
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'work-folder-authority-'))
+    electronMocks.userDataPath = root
+    electronMocks.showOpenDialog.mockReset()
+    ipc = fakeIpcMain()
+    authority = createWorkFolderAuthority()
+    registerFilesystemIPC(ipc, { workFolderAuthority: authority })
+  })
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('renderer가 임의로 보낸 save-work-folder 경로는 authority로 승격하지 않는다', async () => {
+    const arbitrary = await mkdtemp(path.join(tmpdir(), 'renderer-work-folder-'))
+
+    const result = await ipc.invoke('fs:save-work-folder', {
+      workFolderPath: arbitrary,
+      workFolderName: 'forged',
+    })
+
+    expect(result).toEqual({ success: false, error: 'unconfirmed-work-folder' })
+    expect(authority.getCanonicalPath()).toBeNull()
+    await rm(arbitrary, { recursive: true, force: true })
+  })
+
+  it('native picker가 고른 directory만 canonical authority로 소유한다', async () => {
+    const selected = await mkdtemp(path.join(tmpdir(), 'picker-work-folder-'))
+    electronMocks.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [selected] })
+
+    const result = await ipc.invoke('fs:select-work-folder')
+
+    expect(result).toMatchObject({ success: true, path: await realpath(selected) })
+    expect(authority.getCanonicalPath()).toBe(await realpath(selected))
+    await rm(selected, { recursive: true, force: true })
+  })
+})

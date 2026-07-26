@@ -197,6 +197,16 @@ export function createPlanMachine({ store, deps } = {}) {
       finishOperation(operation)
       return { error: 'product-snapshot-invalid' }
     }
+    if (snapshot.status !== 'ok') {
+      finishOperation(operation)
+      if (snapshot.status === 'unsupported') {
+        return {
+          error: 'product-unsupported',
+          reason: typeof snapshot.reason === 'string' ? snapshot.reason : 'Unsupported product page',
+        }
+      }
+      return { error: 'product-snapshot-invalid' }
+    }
 
     let persisted = false
     await store.update((state) => {

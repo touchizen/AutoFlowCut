@@ -1,35 +1,15 @@
 /**
- * Shopping pipeline IPC. Mirrors Story's project-path and token session rules
- * without sharing either workflow's active machine.
+ * Shopping pipeline IPC. Shares Story's main-owned session coordinator so only
+ * one workflow machine/token can remain active across workflow transitions.
  */
 import * as fs from 'node:fs/promises'
-import path from 'node:path'
 
 import { safeHttpFetch } from '../api/net/safeHttpFetch.js'
 import { createContentAddressedStaging, createFetchProduct } from '../shopping/fetchProduct.js'
 import { createPlanMachine } from '../shopping/planMachine.js'
 import { createShoppingPlanStore } from '../shopping/shoppingPlanStore.js'
-
-function hasParentSegment(value) {
-  return value.split(/[\\/]/).includes('..')
-}
-
-async function validateProjectPath(projectPath) {
-  if (typeof projectPath !== 'string' || !projectPath) return false
-  if (!path.isAbsolute(projectPath) || hasParentSegment(projectPath)) return false
-  const normalized = path.normalize(projectPath)
-  if (hasParentSegment(normalized)) return false
-  try {
-    return (await fs.stat(normalized)).isDirectory()
-  } catch {
-    return false
-  }
-}
-
-function isWithinWorkFolder(projectPath, workFolder) {
-  const relative = path.relative(workFolder, projectPath)
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
-}
+import { createWorkflowSessionCoordinator } from './workflowSessionCoordinator.js'
+import { resolveWorkflowProjectContext } from './workflowProjectContext.js'
 
 const unavailableInThisSlice = async () => {
   throw new Error('shopping-plan-step-not-available')
@@ -46,11 +26,8 @@ export function registerShoppingIPC(ipcMain, {
   randomUUID,
   createStore = createShoppingPlanStore,
   createMachine = createPlanMachine,
+  workflowSessions = createWorkflowSessionCoordinator(),
 } = {}) {
-  let machine = null
-  let projectToken = null
-  let openLock = Promise.resolve()
-
   const fetchProductFn = fetchProduct || createFetchProduct({
     httpFetch,
     imageFetch,
@@ -58,53 +35,57 @@ export function registerShoppingIPC(ipcMain, {
     now,
   })
 
-  const emitState = async (operationId) => {
+  const emitState = async (session, operationId) => {
     const win = getWindow?.()
     if (!win || win.isDestroyed()) return
-    const state = await machine.getState()
-    win.webContents.send('shopping:state', { projectToken, operationId, state })
+    const state = await session.machine.getState()
+    if (!workflowSessions.isCurrent(session) || win.isDestroyed()) return
+    win.webContents.send('shopping:state', {
+      projectToken: session.token,
+      operationId,
+      state,
+    })
   }
 
   const guarded = (handler) => async (_event, payload = {}) => {
-    if (!machine || payload.projectToken !== projectToken) return { error: 'stale-token' }
-    return handler(payload)
+    const session = workflowSessions.capture('shopping', payload.projectToken)
+    if (!session) return { error: 'stale-token' }
+    return handler(payload, session)
   }
 
-  ipcMain.handle('shopping:open', (_event, { projectPath } = {}) => {
-    const task = openLock.then(async () => {
-      if (!(await validateProjectPath(projectPath))) return { error: 'invalid-project-path' }
-      const activeWorkFolder = getActiveWorkFolder()
-      if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) {
-        return { error: 'invalid-project-path' }
-      }
+  ipcMain.handle('shopping:open', (_event, { projectPath } = {}) =>
+    workflowSessions.open('shopping', {
+      validate: () => resolveWorkflowProjectContext({
+        projectPath,
+        getActiveWorkFolder,
+        expectedWorkflowType: 'shopping-short',
+      }),
+      create: async ({ context }) => {
+        const deps = {
+          fetchProduct: fetchProductFn,
+          generatePlan: unavailableInThisSlice,
+          materialize: unavailableInThisSlice,
+          generate: unavailableInThisSlice,
+          now,
+          ...(randomUUID ? { randomUUID } : {}),
+        }
+        const nextMachine = createMachine({ store: createStore(context.projectPath), deps })
+        const opened = await nextMachine.open(context.projectPath)
+        return {
+          machine: nextMachine,
+          token: opened.projectToken,
+          abort: () => nextMachine.abort(opened.projectToken),
+          result: opened,
+        }
+      },
+    }))
 
-      if (machine && projectToken) await machine.abort(projectToken)
-      machine = null
-      projectToken = null
-
-      const deps = {
-        fetchProduct: fetchProductFn,
-        generatePlan: unavailableInThisSlice,
-        materialize: unavailableInThisSlice,
-        generate: unavailableInThisSlice,
-        now,
-        ...(randomUUID ? { randomUUID } : {}),
-      }
-      const nextMachine = createMachine({ store: createStore(projectPath), deps })
-      const opened = await nextMachine.open(projectPath)
-      machine = nextMachine
-      projectToken = opened.projectToken
-      return opened
-    })
-    openLock = task.then(() => undefined, () => undefined)
-    return task
-  })
-
-  ipcMain.handle('shopping:get-state', guarded(() => machine.getState()))
-  ipcMain.handle('shopping:submit-product', guarded(async ({ url }) => {
-    const result = await machine.submitProduct(projectToken, url)
-    if (result?.ok) await emitState(result.operationId)
+  ipcMain.handle('shopping:get-state', guarded((_payload, session) => session.machine.getState()))
+  ipcMain.handle('shopping:submit-product', guarded(async ({ url }, session) => {
+    const result = await session.machine.submitProduct(session.token, url)
+    if (result?.ok) await emitState(session, result.operationId)
     return result
   }))
-  ipcMain.handle('shopping:abort', guarded(() => machine.abort(projectToken)))
+  ipcMain.handle('shopping:abort', (_event, { projectToken } = {}) =>
+    workflowSessions.abort('shopping', projectToken))
 }

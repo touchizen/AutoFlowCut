@@ -312,7 +312,7 @@ export function safeResourceName(name) {
   return String(name).replace(/[^a-zA-Z0-9\uAC00-\uD7A3_-]/g, '_')
 }
 
-export function registerFilesystemIPC(ipcMain) {
+export function registerFilesystemIPC(ipcMain, { workFolderAuthority } = {}) {
 
   // ----------------------------------------------------------
   // -1. fs:get-saved-work-folder — config 파일에서 저장된 작업폴더 읽기
@@ -320,7 +320,14 @@ export function registerFilesystemIPC(ipcMain) {
   ipcMain.handle('fs:get-saved-work-folder', async () => {
     const config = await readWorkFolderConfig()
     if (config?.path) {
-      return { success: true, path: config.path, name: config.name || path.basename(config.path) }
+      try {
+        const confirmedPath = workFolderAuthority
+          ? await workFolderAuthority.confirm(config.path)
+          : config.path
+        return { success: true, path: confirmedPath, name: config.name || path.basename(confirmedPath) }
+      } catch {
+        return { success: false, error: 'Saved work folder is unavailable' }
+      }
     }
     return { success: false, error: 'No saved work folder' }
   })
@@ -329,7 +336,21 @@ export function registerFilesystemIPC(ipcMain) {
   // -0. fs:save-work-folder — 작업폴더를 config 파일에 영속 저장
   // ----------------------------------------------------------
   ipcMain.handle('fs:save-work-folder', async (_event, { workFolderPath, workFolderName }) => {
-    await writeWorkFolderConfig(workFolderPath, workFolderName)
+    let confirmedPath = workFolderPath
+    if (workFolderAuthority) {
+      if (!workFolderAuthority.getCanonicalPath()) {
+        const saved = await readWorkFolderConfig()
+        if (!saved?.path) return { success: false, error: 'unconfirmed-work-folder' }
+        try { await workFolderAuthority.confirm(saved.path) } catch {
+          return { success: false, error: 'unconfirmed-work-folder' }
+        }
+      }
+      if (!(await workFolderAuthority.matches(workFolderPath))) {
+        return { success: false, error: 'unconfirmed-work-folder' }
+      }
+      confirmedPath = workFolderAuthority.getCanonicalPath()
+    }
+    await writeWorkFolderConfig(confirmedPath, workFolderName || path.basename(confirmedPath))
     return { success: true }
   })
 
@@ -346,7 +367,11 @@ export function registerFilesystemIPC(ipcMain) {
       // 폴더가 없으면 생성
       await fs.mkdir(defaultFolder, { recursive: true })
 
-      return { success: true, path: defaultFolder, name: 'AutoFlowCut' }
+      const confirmedPath = workFolderAuthority
+        ? await workFolderAuthority.confirm(defaultFolder)
+        : defaultFolder
+      if (workFolderAuthority) await writeWorkFolderConfig(confirmedPath, 'AutoFlowCut')
+      return { success: true, path: confirmedPath, name: 'AutoFlowCut' }
     } catch (error) {
       return { success: false, error: error.message }
     }
@@ -365,8 +390,11 @@ export function registerFilesystemIPC(ipcMain) {
         return { success: false, error: 'cancelled' }
       }
 
-      const selectedPath = result.filePaths[0]
+      const selectedPath = workFolderAuthority
+        ? await workFolderAuthority.confirm(result.filePaths[0])
+        : result.filePaths[0]
       const name = path.basename(selectedPath)
+      if (workFolderAuthority) await writeWorkFolderConfig(selectedPath, name)
 
       return { success: true, path: selectedPath, name }
     } catch (error) {

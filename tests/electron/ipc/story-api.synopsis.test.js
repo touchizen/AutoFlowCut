@@ -30,6 +30,7 @@ beforeEach(async () => {
   registerStoryIPC(ipc, {
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: (ch, payload) => sent.push({ ch, payload }) } , isDestroyed: () => false }),
+    getActiveWorkFolder: () => path.dirname(dir),
     llm,
   })
 })

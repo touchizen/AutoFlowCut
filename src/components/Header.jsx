@@ -33,6 +33,7 @@ export default function Header({
   onUpgradeClick,
   disabled = false,  // 생성 중일 때 프로젝트 전환 비활성화
   modeBusy = false,  // 배치 생성 중일 때 모드 전환 차단
+  workflowType = 'story',
   storyActive = false,   // Story 뷰 진입 상태(버튼 active 표시)
   onStoryClick,           // Story 뷰 진입/복귀 토글
 }) {
@@ -369,9 +370,9 @@ export default function Header({
             type="button"
             className={`btn-settings ${storyActive ? 'active' : ''}`}
             onClick={onStoryClick}
-            data-tooltip={t('header.story') || 'Story'}
+            data-tooltip={workflowType === 'shopping-short' ? '쇼핑 숏츠' : (t('header.story') || 'Story')}
           >
-            📖 Story
+            {workflowType === 'shopping-short' ? '🛍 쇼핑 숏츠' : '📖 Story'}
           </button>
         )}
 

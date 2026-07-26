@@ -606,6 +606,7 @@ export function useProjectData({
 
   // 복원 진행 중 플래그 — auto-save가 복원 중에 project.json을 덮어쓰는 것을 방지
   const isRestoringRef = useRef(false)
+  const warnedUnresolvedWorkflowSaveRef = useRef(false)
   // #R5-2: 빠른 프로젝트 전환 레이스 가드 — 최신 스위치만 상태를 적용하고 이전 스위치는 버린다.
   const loadEpochRef = useRef(0)
   // #R3-2: tryAutoRestore 완료 후 true. ref 에서 state 로 변환 — state 변경이
@@ -1302,7 +1303,9 @@ export function useProjectData({
    *   성공 여부. success=false 면 호출부가 optimistic 한 projectName 갱신을 롤백한다.
    */
   const handleProjectChange = async (newProjectName, opts = {}) => {
-    if (newProjectName === settings.projectName) return { aspectRatio: settings.aspectRatio, success: true }
+    if (newProjectName === settings.projectName) {
+      return { aspectRatio: settings.aspectRatio, workflowType, success: true }
+    }
 
     // 프로젝트가 바뀌면 이전 프로젝트에서 arm 된 채택은 무효다 — 그대로 두면 새 프로젝트를 여는
     // 도중에 채택이 발화해 엉뚱한 project.json 에 id 를 쓸 수 있다.
@@ -1453,16 +1456,12 @@ export function useProjectData({
       if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
       const resolvedAspectRatio = nextAspectRatio || DEFAULT_ASPECT_RATIO
       const resolvedWorkflowType = nextWorkflowType
-      setWorkflowType(resolvedWorkflowType)
-      setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: resolvedAspectRatio }))
-      switched = true // 여기까지 왔으면 앱은 새 프로젝트로 전환됨
 
       // 5. 신규/빈 프로젝트는 project.json 을 즉시 생성한다. autosave 는 빈 프로젝트를
       //    건너뛰므로(useAutoSave), 그러지 않으면 화면비 등 프로젝트 메타가 유실된다.
       //    이 저장은 자체 try/catch 로 감싼다 — {success:false} 든 reject 든 둘 다
-      //    onSaveError 로 알리고, 바깥 catch 로 보내지 않는다. 전환은 step 4 에서
-      //    이미 끝났으므로(switched=true), reject 가 바깥 catch 로 새면 "전환 성공인데
-      //    메타 저장만 조용히 실패" 가 된다.
+      //    onSaveError 로 알리고, 바깥 catch 로 보내지 않는다. marker 저장 시도 뒤에
+      //    renderer 상태를 publish하므로 reject가 바깥 catch로 새면 전환 자체가 막힌다.
       if (isFreshProject) {
         try {
           const res = await saveCurrentProject(
@@ -1480,7 +1479,14 @@ export function useProjectData({
         }
       }
 
-      return { aspectRatio: resolvedAspectRatio, success: true }
+      // project.json workflow marker 저장 시도가 끝난 뒤에만 renderer workflow를 publish한다.
+      // shopping:open의 디스크 권위 gate가 marker 쓰기보다 먼저 달려 신규 프로젝트가 dead-end가
+      // 되는 것을 막는다. 저장 실패여도 기존 전환 semantics는 유지하고 open이 구조화 오류를 표시한다.
+      setWorkflowType(resolvedWorkflowType)
+      setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: resolvedAspectRatio }))
+      switched = true // 여기까지 왔으면 앱은 새 프로젝트로 전환됨
+
+      return { aspectRatio: resolvedAspectRatio, workflowType: resolvedWorkflowType, success: true }
     } catch (e) {
       // 전환 도중 예외 — 상태는 finally 에서 정리된다. switched 로 "실제로 전환됐는지"를
       // 알려, 호출부(StorageTab)가 optimistic 한 projectName 갱신을 롤백할 수 있게 한다.
@@ -1508,7 +1514,13 @@ export function useProjectData({
   // scenes/srtTrack(및 settings) 을 명시로 넘기면 그 값을, 안 넘기면(undefined) 현재
   // closure 값(hook 의 최신 render 상태)을 사용해 표준 saveCurrentProject 를 호출한다.
   const buildProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) => {
-    if (workflowType === undefined) return undefined
+    if (workflowType === undefined) {
+      if (!warnedUnresolvedWorkflowSaveRef.current) {
+        warnedUnresolvedWorkflowSaveRef.current = true
+        console.warn('[ProjectData] Save skipped: workflowType unresolved')
+      }
+      return undefined
+    }
     return saveCurrentProject(
       settingsOverride || settings,
       scenesArg !== undefined ? scenesArg : scenes,

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
@@ -34,6 +34,7 @@ beforeEach(async () => {
   registerStoryIPC(ipc, {
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: (ch, p) => sent.push({ ch, p }) }, isDestroyed: () => false }),
+    getActiveWorkFolder: () => path.dirname(dir),
     llm,
     // 실제 CLI/app-server 를 띄우지 않는다. []는 "조회 실패" → 정적 카탈로그 폴백.
     listClaudeModels: async () => [],
@@ -174,10 +175,41 @@ describe('story IPC', () => {
     expect(r.projectToken).toBeTruthy()
   })
 
-  it('story:open — activeWorkFolder가 없으면(활성화 전) 기존 검증만 적용한다(하위호환)', async () => {
-    // 기본 beforeEach의 ipc는 getActiveWorkFolder를 넘기지 않는다 → 항상 null 취급
-    const r = await ipc.invoke('story:open', { projectPath: dir })
-    expect(r.error).toBeUndefined()
+  it('story:open — main work-folder context가 없으면 fail-closed한다', async () => {
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => null,
+      getActiveWorkFolder: () => null,
+      llm,
+      listClaudeModels: async () => [],
+      listCodexModels: async () => [],
+    })
+
+    const r = await ipc2.invoke('story:open', { projectPath: dir })
+
+    expect(r).toEqual({ error: 'project-context-not-ready' })
+  })
+
+  it('story:open — work folder 내부 symlink가 외부를 가리키면 realpath containment로 거부한다', async () => {
+    const workFolder = await mkdtemp(path.join(tmpdir(), 'story-symlink-work-'))
+    const outside = await mkdtemp(path.join(tmpdir(), 'story-symlink-outside-'))
+    await writeFile(path.join(outside, 'project.json'), JSON.stringify({ workflowType: 'story' }))
+    const linkedProject = path.join(workFolder, 'linked-project')
+    await symlink(outside, linkedProject, 'dir')
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => null,
+      getActiveWorkFolder: () => workFolder,
+      llm,
+      listClaudeModels: async () => [],
+      listCodexModels: async () => [],
+    })
+
+    const r = await ipc2.invoke('story:open', { projectPath: linkedProject })
+
+    expect(r).toEqual({ error: 'invalid-project-path' })
   })
 
   // C1-a: audio 스텝은 tts/probe를 필요로 한다(stepMachine.js). story-api가 createStepMachine에
@@ -190,6 +222,7 @@ describe('story IPC', () => {
     registerStoryIPC(ipc2, {
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      getActiveWorkFolder: () => path.dirname(dir),
       llm: {
         generateScript: vi.fn(async () => ({ scriptMd: '#' })),
         splitScenes: vi.fn(async () => ({
@@ -219,6 +252,7 @@ describe('story IPC', () => {
     registerStoryIPC(ipc2, {
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      getActiveWorkFolder: () => path.dirname(dir),
       llm: {
         generateScript: vi.fn(async () => ({ scriptMd: '#' })),
         splitScenes: vi.fn(async () => ({
@@ -356,6 +390,7 @@ describe('story IPC', () => {
     registerStoryIPC(ipc2, {
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      getActiveWorkFolder: () => path.dirname(dir),
       llm: {
         generateScript: vi.fn(async () => ({ scriptMd: '#' })),
         splitScenes: vi.fn(async () => ({
@@ -386,6 +421,7 @@ describe('story IPC', () => {
     registerStoryIPC(ipc2, {
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      getActiveWorkFolder: () => path.dirname(dir),
       llm: {
         generateScript: vi.fn(async () => ({ scriptMd: '#' })),
         splitScenes: vi.fn(async () => ({
@@ -417,6 +453,7 @@ describe('story IPC', () => {
     registerStoryIPC(ipc2, {
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      getActiveWorkFolder: () => path.dirname(dir),
       llm: {
         generateScript: vi.fn(async () => ({ scriptMd: '#' })),
         splitScenes: vi.fn(async () => ({

@@ -142,6 +142,7 @@ describe('project.workflowType persistence', () => {
   })
 
   it('does not full-save while auto-restore workflowType is unresolved', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     localStorage.setItem('autoflowcut_settings', JSON.stringify({
       projectName: 'unreadable-project',
       saveMode: 'folder',
@@ -155,9 +156,14 @@ describe('project.workflowType persistence', () => {
     fileSystemAPI.saveProjectData.mockClear()
     await act(async () => {
       await result.current.saveCurrentProject()
+      await result.current.saveCurrentProject()
     })
 
     expect(fileSystemAPI.saveProjectData).not.toHaveBeenCalled()
+    expect(warn.mock.calls.filter(([message]) => (
+      message === '[ProjectData] Save skipped: workflowType unresolved'
+    ))).toHaveLength(1)
+    warn.mockRestore()
   })
 
   it('switch during pending shopping restore does not erase the disk workflow marker', async () => {

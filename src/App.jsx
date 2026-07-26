@@ -15,6 +15,7 @@ import { useProjectData } from './hooks/useProjectData'
 import { useStoryPipeline } from './hooks/useStoryPipeline'
 import { useStoryAutoOpen } from './hooks/useStoryAutoOpen'
 import { useShoppingPipeline } from './hooks/useShoppingPipeline'
+import { useWorkflowProjectChange } from './hooks/useWorkflowProjectChange'
 import { STORY_TTS_PROVIDERS } from './config/storyTtsProviders'
 import StoryView from './components/story/StoryView'
 import ProjectWorkflowPanel from './components/ProjectWorkflowPanel'
@@ -118,6 +119,7 @@ import PreviewMonitor from './components/PreviewMonitor'
 import { getSceneTimeRangeMs } from './components/AudioTimeline/useAudioTimeline'
 import { resolveStorySrtEntries, withStoryAudio } from './utils/storyAudioPackage'
 import { hasImageData } from './utils/formatters'
+import { deriveWorkflowPaths } from './utils/workflowPaths'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
@@ -578,6 +580,10 @@ function App() {
     onSaveError: () => toast.error(t('toast.projectSaveFailed')),
     mode, // flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화 (api 모드에서는 flowProjectReady 항상 true)
   })
+  const handleWorkflowProjectChange = useWorkflowProjectChange({
+    changeProject: handleProjectChange,
+    setActiveView,
+  })
 
   // #R3-1: flowProjectId ref 동기화 — engineFlow 가 IPC 호출 시 최신 bound id 를 사용한다.
   // (useEffect 대신 렌더 중 직접 갱신 — getFlowProjectId() 는 동기 호출이므로 최신값 필요)
@@ -591,8 +597,7 @@ function App() {
     : null
   const isStoryWorkflow = workflowType === 'story'
   const isShoppingWorkflow = workflowType === 'shopping-short'
-  const storyProjectPath = isStoryWorkflow ? projectRootPath : null
-  const shoppingProjectPath = isShoppingWorkflow ? projectRootPath : null
+  const { storyProjectPath, shoppingProjectPath } = deriveWorkflowPaths(workflowType, projectRootPath)
   // V2/Codex-High: story push 핸들러는 직렬화돼야 한다 — 연속 push가 겹치면 (a) 렌더 클로저의
   // 옛 references로 upsert해 중복 id/카드 유실, (b) whole-snapshot 저장이 순서 역전돼 옛 저장이
   // 새 저장을 덮어씀. referencesRef(동기 최신)로 upsert하고, pushQueueRef로 한 번에 하나씩 처리한다.
@@ -2068,7 +2073,7 @@ function App() {
     srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
     handleGenerateRef, handleGenerateScene,
     handleGenerateAllRefs, handleStart, handleStop,
-    handleProjectChange, handleExportConfirm, handleExportPremiere,
+    handleProjectChange: handleWorkflowProjectChange, handleExportConfirm, handleExportPremiere,
     selectedStyleRefId, setSelectedStyleRefId,
     refreshReviews, audioReviews,
     importByPath, audioPackage,
@@ -2095,7 +2100,7 @@ function App() {
     activeProject: settings.saveMode === 'folder' ? settings.projectName : null,
     workFolder: settings.saveMode === 'folder' ? (localStorage.getItem('workFolderPath') || null) : null,
     onNewProject: () => openSettings('storage'),
-    onOpenProject: handleProjectChange,
+    onOpenProject: handleWorkflowProjectChange,
     onShowModeSelector: clearMode,
     busy: fullProjectBusy,
     busyMessage: t('modeInfo.busySwitch'),
@@ -2160,7 +2165,7 @@ function App() {
         authReady={authReady}
         onAuthRecovered={handleAuthRecovered}
         projectName={settings.projectName}
-        onProjectChange={handleProjectChange}
+        onProjectChange={handleWorkflowProjectChange}
         onNewProject={() => openSettings('storage')}
         saveMode={settings.saveMode}
         // NOTE(#6): onLoginClick → setShowAuthModal (Google/subscription auth).
@@ -2173,6 +2178,7 @@ function App() {
         }}
         disabled={fullProjectBusy}
         modeBusy={fullProjectBusy}
+        workflowType={workflowType}
         storyActive={activeView === 'story'}
         onStoryClick={() => setActiveView(v => v === 'story' ? 'generate' : 'story')}
       />
@@ -2980,7 +2986,7 @@ function App() {
         <SettingsModal
           settings={settings}
           initialTab={settingsTab}
-          onProjectChange={handleProjectChange}
+          onProjectChange={handleWorkflowProjectChange}
           availableModels={availableModels}
           appMode={mode}
           // §4.7 R3: "모든 저장 wrapper가 App-level 리로드를 공유한다" — Settings › API Keys에서
