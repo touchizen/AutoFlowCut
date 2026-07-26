@@ -222,8 +222,22 @@ describe('App Upscayl wiring', () => {
     // isMcpRunning({ ... }) 인자 블록만 추출([^}] = 첫 } 전까지)해 다른 predicate 의
     // upscaylRunning 라인까지 매치하는 non-greedy 오탐을 막는다.
     const mcpArgs = app.match(/isRunning: isMcpRunning\(\{([^}]*)\}\)/)?.[1] || ''
-    expect(mcpArgs).toContain('upscaylRunning: upscayl.running,')
+    // 5 operand 전부 검증 — 하나라도 드롭되면 stop/wait aggregate 가 조용히 빠져 drift 재발.
+    expect(mcpArgs).toContain('isRunning,')
     expect(mcpArgs).toContain('isSceneBatchQueued,')
+    expect(mcpArgs).toContain('videoRunning: videoAutomation.isRunning,')
+    expect(mcpArgs).toContain('refBatchRunning,')
+    expect(mcpArgs).toContain('upscaylRunning: upscayl.running,')
+  })
+
+  it('upscayl.blockedByUpscayl toast 키가 en/ko 로케일에 모두 존재한다', async () => {
+    // t(key)=key echo mock 이라 문구 자체는 회귀에 안 걸린다 — 실제 로케일에 키가 있는지 직접 확인.
+    const en = (await import('../../src/locales/en.js')).default
+    const ko = (await import('../../src/locales/ko.js')).default
+    expect(typeof en.upscayl.blockedByUpscayl).toBe('string')
+    expect(en.upscayl.blockedByUpscayl.length).toBeGreaterThan(0)
+    expect(typeof ko.upscayl.blockedByUpscayl).toBe('string')
+    expect(ko.upscayl.blockedByUpscayl.length).toBeGreaterThan(0)
   })
 
   it('두 이미지 Results clear 경로가 Upscayl 메타데이터까지 초기화한다', () => {
