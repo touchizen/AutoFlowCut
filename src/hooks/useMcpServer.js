@@ -598,7 +598,8 @@ export function useMcpServer({
       const refIsRunning = refBatchRunning || generatingRefs.length > 0
 
       return {
-        isRunning: sceneIsRunning || videoAutomation.isRunning || refIsRunning,
+        // stop/wait aggregate도 포함해야 Upscayl-only 실행을 idle로 잘못 보고하지 않는다.
+        isRunning: isRunningRef.current || sceneIsRunning || videoAutomation.isRunning || refIsRunning,
         isPaused: isPaused || videoAutomation.isPaused,
         progress: sceneIsRunning ? progress : videoAutomation.progress,
         total, done, pending, generating, error,

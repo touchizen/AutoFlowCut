@@ -1,11 +1,15 @@
-// @vitest-environment node
+// @vitest-environment jsdom
 import fs from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import path from 'node:path'
+import { createElement } from 'react'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import BottomPanelActions from '../../src/components/BottomPanelActions.jsx'
 import { isUpscaylStartBlocked } from '../../src/services/startGuard.js'
 
-const app = fs.readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8')
-const story = fs.readFileSync(new URL('../../src/components/story/StoryView.jsx', import.meta.url), 'utf8')
-const sceneList = fs.readFileSync(new URL('../../src/components/SceneList.jsx', import.meta.url), 'utf8')
+const app = fs.readFileSync(path.join(process.cwd(), 'src/App.jsx'), 'utf8')
+const story = fs.readFileSync(path.join(process.cwd(), 'src/components/story/StoryView.jsx'), 'utf8')
+const sceneList = fs.readFileSync(path.join(process.cwd(), 'src/components/SceneList.jsx'), 'utf8')
 
 function openingTags(source, name) {
   return [...source.matchAll(new RegExp(`<${name}\\b[\\s\\S]*?\\/>`, 'g'))].map((match) => match[0])
@@ -27,6 +31,33 @@ function loadUpscaylBusyCallback(signalsRef) {
     'isUpscaylStartBlocked',
     `return () => {${match[1]}\n}`,
   )(signalsRef, isUpscaylStartBlocked)
+}
+
+function loadUpscaylBusyValue(isUpscaylBusy) {
+  const match = app.match(/const upscaylBusy = ([^\n]+)/)
+  expect(match).not.toBeNull()
+  return Function('isUpscaylBusy', `return (${match[1]})`)(isUpscaylBusy)
+}
+
+function runHandleStop(overrides = {}) {
+  const match = app.match(/const handleStop = \(\) => \{([\s\S]*?)\n  \}\n\n  \/\/ MCP HTTP 서버/)
+  expect(match).not.toBeNull()
+
+  const deps = {
+    generationQueue: { clearQueue: vi.fn() },
+    isRunning: false,
+    stop: vi.fn(),
+    videoAutomation: { isRunning: false, stop: vi.fn() },
+    shouldStopRefWork: vi.fn(() => false),
+    refBatchRunning: false,
+    emptyRefGate: null,
+    stopGenerateAllRefs: vi.fn(),
+    upscayl: { running: false, cancel: vi.fn() },
+    ...overrides,
+  }
+
+  Function(...Object.keys(deps), match[1])(...Object.values(deps))
+  return deps
 }
 
 describe('App Upscayl wiring', () => {
@@ -85,6 +116,45 @@ describe('App Upscayl wiring', () => {
     expect(callback()).toBe(false)
     signalsRef.current.startInFlightRef.current = true
     expect(callback()).toBe(true)
+  })
+
+  it('App에서 계산한 scene busy가 BottomPanel Upscale 항목의 disabled까지 흐른다', () => {
+    const signalsRef = { current: {
+      isRunning: false,
+      isSceneBatchQueued: false,
+      hasPendingBatch: false,
+      startInFlightRef: { current: false },
+      generatingSceneId: 'scene_1',
+      videoRunning: false,
+      videoRetryInFlightRef: { current: false },
+      refBatchRunning: false,
+      gatePhase: null,
+    } }
+    const upscaylBusy = loadUpscaylBusyValue(loadUpscaylBusyCallback(signalsRef))
+
+    render(createElement(BottomPanelActions, {
+      onUpscale: vi.fn(),
+      upscaylBusy,
+      upscaylBusyTooltip: 'busy',
+      t: (key) => ({
+        'bottomPanel.actionsMenu': 'Bottom panel actions',
+        'bottomPanel.imageUpscale': 'Image Upscale',
+      })[key] || key,
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'Bottom panel actions' }))
+
+    expect(screen.getByRole('menuitem', { name: '⬆️ Image Upscale' })).toBeDisabled()
+  })
+
+  it.each([
+    ['실행 중', true, 1],
+    ['idle', false, 0],
+  ])('handleStop은 Upscayl이 %s일 때 cancel 호출 횟수가 %d다', (_label, running, count) => {
+    const cancel = vi.fn()
+
+    runHandleStop({ upscayl: { running, cancel } })
+
+    expect(cancel).toHaveBeenCalledTimes(count)
   })
 
   it('App anyRunning/fullProjectBusy를 M-A predicate로 1:1 파생한다', () => {

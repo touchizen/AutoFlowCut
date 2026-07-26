@@ -2118,7 +2118,7 @@ function App() {
   const upscaylBusy = isUpscaylBusy()
   const upscaylBusyTooltip = t('upscayl.busyTooltip')
 
-  // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
+  // Handle stop — 활성 자동화 중지 (scene + video + ref batch + Upscayl 모두 cover).
   // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
   const handleStop = () => {
     // 실행 중인 개별 씬(type: scene)은 그대로 두고, 공유 큐에서 아직 시작하지 않은
@@ -2128,6 +2128,7 @@ function App() {
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
     if (shouldStopRefWork({ refBatchRunning, gatePhase: emptyRefGate?.phase })) stopGenerateAllRefs()
+    if (upscayl.running) void upscayl.cancel()
   }
 
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)

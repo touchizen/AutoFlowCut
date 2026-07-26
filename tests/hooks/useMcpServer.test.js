@@ -644,6 +644,38 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     vi.useRealTimers()
   })
 
+  it('Upscayl-only stop은 hook finally가 running을 내린 뒤 scene batch를 restart한다', async () => {
+    vi.useFakeTimers()
+    const cancelUpscayl = vi.fn()
+    const handleStart = vi.fn()
+    const handleStop = vi.fn(() => cancelUpscayl())
+    let upscaylRunning = true
+
+    function Wrapper() {
+      return useMcpServer(makeProps({
+        // App의 stop/wait aggregate에서 Upscayl만 true인 상태.
+        isRunning: upscaylRunning,
+        handleStart,
+        handleStop,
+      }))
+    }
+    const { rerender } = renderHook(Wrapper)
+
+    const callPromise = window.__mcpStartBatch('preset:noir', { force: true })
+    expect(handleStop).toHaveBeenCalledTimes(1)
+    expect(cancelUpscayl).toHaveBeenCalledTimes(1)
+    expect(handleStart).not.toHaveBeenCalled()
+
+    // useUpscayl.cancel() 이후 batch finally가 running=false로 정리한 render를 재현한다.
+    upscaylRunning = false
+    rerender()
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true, source: 'mcp' })
+    vi.useRealTimers()
+  })
+
   it('__mcpStartBatch waitForStopped timeout: handleStart NOT called', async () => {
     vi.useFakeTimers()
     const handleStart = vi.fn()
@@ -817,6 +849,27 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(window.__mcpBatchStatus().ref.isRunning).toBe(true)
 
     // Cleanup
+    result.unmount()
+  })
+
+  it('__mcpBatchStatus는 Upscayl만 실행 중이어도 top-level isRunning=true를 보고한다', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      // App이 전달하는 stop/wait aggregate: scene/video/ref는 idle이고 Upscayl만 active.
+      isRunning: true,
+      automationState: {
+        isRunning: false,
+        isSceneBatchQueued: false,
+        isPaused: false,
+        progress: { current: 0, total: 0 },
+        status: 'idle',
+        statusMessage: '',
+      },
+      videoAutomation: { isRunning: false, isPaused: false },
+      refBatchRunning: false,
+      generatingRefs: [],
+    })))
+
+    expect(window.__mcpBatchStatus().isRunning).toBe(true)
     result.unmount()
   })
 
