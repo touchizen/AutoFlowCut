@@ -119,6 +119,32 @@ describe('resolveAndValidateInputs', () => {
     }
   })
 
+  it('caps a pathological long mime subtype so the extension stays bounded', async () => {
+    const p = prepared()
+    p.renderVideoSegments = [{ sceneId: 'scene_1', source: 'i2v', inSec: 0, outSec: 1 }]
+    p.mediaFiles[1] = {
+      sceneId: 'scene_1',
+      type: 'video',
+      source: 'i2v',
+      filename: 'clip',
+      path: `data:video/${'x'.repeat(300)};base64,AQIDBA==`,
+    }
+
+    const r = await resolveAndValidateInputs(p, {
+      existsSync: (value) => ['/img1.png', '/sfx1.wav', '/nar.mp3'].includes(value),
+      probeDurationMs: async () => 30000,
+      jobId: 'j',
+    })
+
+    try {
+      const video = r.videos.get('scene_1:i2v')
+      const ext = String(video).split('.').pop()
+      expect(ext.length).toBeLessThanOrEqual(8)
+    } finally {
+      await Promise.all(r.tempFiles.map((file) => fs.promises.unlink(file).catch(() => {})))
+    }
+  })
+
   it('decodes selected raw WebM fallback to a webm temp file', async () => {
     const p = prepared()
     const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(64)]).toString('base64')

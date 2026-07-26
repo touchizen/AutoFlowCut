@@ -24,9 +24,10 @@ function pickDataSpec(value) {
 async function defaultDecodeDataUrl(spec, name) {
   const m = /^data:(image|video)\/([a-zA-Z0-9.+-]+);base64,(.*)$/s.exec(spec)
   const fallbackExt = m?.[1] === 'video' ? 'mp4' : 'png'
-  const ext = m
+  // mime subtype 은 정규식상 길이 무제한이라 확장자도 캡한다 — 안 그러면 파일명이 255를 넘을 수 있다.
+  const ext = (m
     ? m[2].replace(/[^a-z0-9]/gi, '') || fallbackExt
-    : rawMediaExtension(spec) || 'png'
+    : rawMediaExtension(spec) || 'png').slice(0, 8)
   const b64 = m ? m[3] : spec
   const buf = Buffer.from(b64, 'base64')
   // Buffer.from(base64) 는 잘못된 문자열도 조용히 0바이트로 만들 수 있어 쓰기 전에 닫는다.

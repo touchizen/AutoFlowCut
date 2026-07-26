@@ -218,7 +218,9 @@ describe('App Upscayl wiring', () => {
   it('배치·단일 씬·MCP 생성 진입점이 Upscayl 실행 상태를 busy로 공유한다', () => {
     expect(app).toContain('upscaylRunning: upscayl.running,')
     expect(app).toContain('retryInFlight: videoRetryInFlightRef.current,\n      upscaylRunning: upscayl.running,')
-    expect(app).toContain('isRunning: isRunning || isSceneBatchQueued || videoAutomation.isRunning || refBatchRunning || upscayl.running')
+    // MCP stop/wait aggregate 는 isMcpRunning predicate 로 파생하되 upscayl.running 을 반영해야 한다.
+    expect(app).toContain('isRunning: isMcpRunning({')
+    expect(app).toMatch(/isMcpRunning\(\{[\s\S]*?upscaylRunning: upscayl\.running,[\s\S]*?\}\)/)
   })
 
   it('두 이미지 Results clear 경로가 Upscayl 메타데이터까지 초기화한다', () => {

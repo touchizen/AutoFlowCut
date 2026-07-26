@@ -38,7 +38,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     if (upscaylRunningRef.current) return { success: false, error: 'busy' }
 
     const rejectUpscaylBusy = () => {
-      toast.warning(t('videoAutomation.busy') || 'Generation already running')
+      // 원인은 생성 중복이 아니라 Upscayl 진행이다 — 원인을 맞게 알린다.
+      toast.warning(t('upscayl.blockedByUpscayl') || 'An upscale is running — try again after it finishes')
       return { success: false, error: 'busy' }
     }
 

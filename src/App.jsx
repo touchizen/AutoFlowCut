@@ -50,6 +50,7 @@ import { isSceneGenerationDone } from './services/generationStatus'
 import {
   computeGuardAvailable,
   isAnyRunning,
+  isMcpRunning,
   isProjectBusy,
   isStartBlocked,
   isUpscaylStartBlocked,
@@ -2148,7 +2149,13 @@ function App() {
     automationState: { isRunning, isSceneBatchQueued, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
     refBatchRunning,
-    isRunning: isRunning || isSceneBatchQueued || videoAutomation.isRunning || refBatchRunning || upscayl.running,
+    isRunning: isMcpRunning({
+      isRunning,
+      isSceneBatchQueued,
+      videoRunning: videoAutomation.isRunning,
+      refBatchRunning,
+      upscaylRunning: upscayl.running,
+    }),
   })
 
   // 어느 자동화든 실행 중이면 true

@@ -105,7 +105,7 @@ describe('useSceneGeneration Upscayl busy guard', () => {
     expect(response).toEqual({ success: false, error: 'busy' })
     expect(props.genAPI.generateImage).not.toHaveBeenCalled()
     expect(props.scenesHook.updateScene).not.toHaveBeenCalled()
-    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.busy')
+    expect(toast.warning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
     expect(result.current.generatingSceneId).toBeNull()
   })
 
@@ -135,7 +135,7 @@ describe('useSceneGeneration Upscayl busy guard', () => {
     expect(response).toEqual({ success: false, error: 'busy' })
     expect(props.genAPI.generateImage).not.toHaveBeenCalled()
     expect(props.scenesHook.updateScene).not.toHaveBeenCalled()
-    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.busy')
+    expect(toast.warning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
     expect(result.current.generatingSceneId).toBeNull()
   })
 
@@ -173,7 +173,7 @@ describe('useSceneGeneration Upscayl busy guard', () => {
 
     expect(generateImage).toHaveBeenCalledTimes(1)
     expect(finalizeGeneratedImage).toHaveBeenCalledWith(expect.objectContaining({ result: unresolvedResult }))
-    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.busy')
+    expect(toast.warning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
     expect(result.current.generatingSceneId).toBeNull()
   })
 })
