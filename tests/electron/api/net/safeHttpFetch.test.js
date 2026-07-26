@@ -669,6 +669,26 @@ describe('safeHttpFetch external cancellation', () => {
     expect(outcome).toBe(reason)
   })
 
+  it('removes the external abort listener after an aborted fetch', async () => {
+    const controller = new AbortController()
+    const add = vi.spyOn(controller.signal, 'addEventListener')
+    const remove = vi.spyOn(controller.signal, 'removeEventListener')
+    const promise = safeHttpFetch('https://www.coupang.com/x', HTML_FETCH_POLICY, {
+      signal: controller.signal,
+      resolveDns: vi.fn(() => new Promise(() => {})),
+      createRequest: vi.fn(),
+      setTimer: vi.fn(() => ({ fakeTimer: true })),
+      clearTimer: vi.fn(),
+    })
+
+    controller.abort(new DOMException('stopped', 'AbortError'))
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+
+    const abortListener = add.mock.calls.find(([event]) => event === 'abort')?.[1]
+    expect(abortListener).toEqual(expect.any(Function))
+    expect(remove).toHaveBeenCalledWith('abort', abortListener)
+  })
+
   it('removes the external abort listener after a successful fetch', async () => {
     const controller = new AbortController()
     const add = vi.spyOn(controller.signal, 'addEventListener')

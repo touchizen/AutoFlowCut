@@ -14,6 +14,7 @@ vi.mock('../../../electron/story/stepMachine.js', () => stepMachineMocks)
 import { registerShoppingIPC } from '../../../electron/ipc/shopping-api.js'
 import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
 import { createWorkflowSessionCoordinator } from '../../../electron/ipc/workflowSessionCoordinator.js'
+import { createWorkFolderAuthority } from '../../../electron/main/workFolderAuthority.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
@@ -137,9 +138,13 @@ describe('main-owned workflow session coordinator', () => {
   it('서로 다른 workflow open도 하나의 lock에서 직렬화하고 후보는 open 완료 전 publish하지 않는다', async () => {
     const local = createWorkflowSessionCoordinator()
     const storyGate = deferred()
+    const abortGate = deferred()
     const order = []
     const story = {
-      abort: vi.fn(async () => { order.push('story-abort') }),
+      abort: vi.fn(async () => {
+        order.push('story-abort')
+        await abortGate.promise
+      }),
     }
     const shoppingCreate = vi.fn(async () => {
       order.push('shopping-open')
@@ -174,6 +179,10 @@ describe('main-owned workflow session coordinator', () => {
     expect(shoppingCreate).not.toHaveBeenCalled()
     storyGate.resolve()
 
+    await vi.waitFor(() => expect(order).toEqual(['story-open', 'story-abort']))
+    expect(shoppingCreate).not.toHaveBeenCalled()
+    abortGate.resolve()
+
     await Promise.all([openingStory, openingShopping])
     expect(order).toEqual(['story-open', 'story-abort', 'shopping-open'])
     expect(local.capture('story', 'story-token')).toBeNull()
@@ -181,5 +190,36 @@ describe('main-owned workflow session coordinator', () => {
       workflowType: 'shopping',
       token: 'shopping-token',
     })
+  })
+
+  it('work-folder authority가 바뀌면 이전 폴더 session을 폐기해 옛 token을 막는다', async () => {
+    const authority = createWorkFolderAuthority({
+      onChange: () => coordinator.invalidate(),
+    })
+    await authority.confirm(workFolder)
+
+    const isolatedIpc = fakeIpcMain()
+    registerStoryIPC(isolatedIpc, {
+      keyStore: { getKey: () => 'key' },
+      getWindow: () => null,
+      getActiveWorkFolder: () => authority.getCanonicalPath(),
+      llm: {},
+      listClaudeModels: async () => [],
+      listCodexModels: async () => [],
+      workflowSessions: coordinator,
+    })
+    const { projectToken } = await isolatedIpc.invoke('story:open', { projectPath: storyDir })
+    const nextWorkFolder = await mkdtemp(path.join(tmpdir(), 'workflow-session-next-'))
+
+    await authority.confirm(nextWorkFolder)
+    const stale = await isolatedIpc.invoke('story:start', {
+      projectToken,
+      step: 'script',
+      params: {},
+    })
+
+    expect(storyMachine.abort).toHaveBeenCalledTimes(1)
+    expect(stale).toEqual({ error: 'stale-token' })
+    expect(storyMachine.start).not.toHaveBeenCalled()
   })
 })

@@ -41,8 +41,8 @@ export const fileSystemAPI = {
     try {
       const result = await window.electronAPI.selectWorkFolder()
 
-      if (!result || result.canceled) {
-        return { success: false, error: 'cancelled' }
+      if (!result || result.canceled || result.success === false) {
+        return { success: false, error: result?.error || 'cancelled' }
       }
 
       // result: { path, name } from main process
@@ -80,7 +80,7 @@ export const fileSystemAPI = {
 
   /**
    * Check if we have permission to access the work folder.
-   * In Electron desktop, permission is always granted if the folder is set.
+   * Electron main이 저장 config/native picker로 확인한 폴더일 때만 허용한다.
    */
   async checkPermission() {
     const path = localStorage.getItem('workFolderPath')
@@ -97,8 +97,22 @@ export const fileSystemAPI = {
         return { success: false, error: 'folder_deleted', hasPermission: false, name }
       }
     } catch (e) {
-      // If IPC is unavailable, trust localStorage
-      console.warn('[FileSystem] checkFolderExists IPC unavailable, trusting localStorage')
+      console.warn('[FileSystem] checkFolderExists IPC unavailable')
+      return { success: false, error: 'not_set', hasPermission: false, name }
+    }
+
+    // 디스크에 존재하는 것만으로는 부족하다. main이 저장 config/native picker로 확인한
+    // canonical work folder와 일치해야 workflow open의 권위가 준비된 것이다.
+    try {
+      const confirmed = await window.electronAPI.saveWorkFolder({
+        workFolderPath: path,
+        workFolderName: name || '',
+      })
+      if (confirmed?.success === false) {
+        return { success: false, error: 'not_set', hasPermission: false, name }
+      }
+    } catch {
+      return { success: false, error: 'not_set', hasPermission: false, name }
     }
 
     return { success: true, hasPermission: true, name }
@@ -152,9 +166,6 @@ export const fileSystemAPI = {
       } catch (e) {
         console.warn('[FileSystem] Failed to set default work folder:', e.message)
       }
-    } else {
-      // localStorage에 있으면 config 파일에도 동기화 (최초 1회)
-      try { await window.electronAPI.saveWorkFolder({ workFolderPath: existing, workFolderName: localStorage.getItem('workFolderName') || '' }) } catch {}
     }
     return this.checkPermission()
   },

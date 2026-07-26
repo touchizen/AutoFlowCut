@@ -19,6 +19,14 @@ export function createWorkflowSessionCoordinator() {
     return active
   }
 
+  const invalidateActive = async () => {
+    const previous = active
+    if (!previous) return { ok: true }
+    active = null
+    epoch += 1
+    return (await previous.abort()) ?? { ok: true }
+  }
+
   return {
     open(workflowType, { validate, create }) {
       return withTransitionLock(async () => {
@@ -55,10 +63,11 @@ export function createWorkflowSessionCoordinator() {
       return withTransitionLock(async () => {
         const session = capture(workflowType, token)
         if (!session) return { error: 'stale-token' }
-        active = null
-        epoch += 1
-        return (await session.abort()) ?? { ok: true }
+        return invalidateActive()
       })
+    },
+    invalidate() {
+      return withTransitionLock(invalidateActive)
     },
     current(workflowType) {
       return active?.workflowType === workflowType && active.epoch === epoch ? active : null

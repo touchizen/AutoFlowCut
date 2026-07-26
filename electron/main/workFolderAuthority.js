@@ -11,13 +11,22 @@ async function canonicalDirectory(candidate) {
   return canonicalPath
 }
 
-export function createWorkFolderAuthority() {
+export function createWorkFolderAuthority({ onChange } = {}) {
   let canonicalPath = null
+  let confirmationLock = Promise.resolve()
 
   return {
-    async confirm(candidate) {
-      canonicalPath = await canonicalDirectory(candidate)
-      return canonicalPath
+    confirm(candidate) {
+      const task = confirmationLock.then(async () => {
+        const nextPath = await canonicalDirectory(candidate)
+        if (canonicalPath && canonicalPath !== nextPath) {
+          await onChange?.({ previousPath: canonicalPath, nextPath })
+        }
+        canonicalPath = nextPath
+        return canonicalPath
+      })
+      confirmationLock = task.then(() => undefined, () => undefined)
+      return task
     },
     async matches(candidate) {
       if (!canonicalPath) return false

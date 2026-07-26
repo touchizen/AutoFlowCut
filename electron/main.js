@@ -149,11 +149,13 @@ const API_HEADERS = {
 
 let mainWindow = null
 let mcpHttpServer = null // MCP HTTP 서버 인스턴스
-// 저장 config/native picker/default-folder만 이 권위를 갱신한다. renderer payload는 후보일 뿐
-// workflow open 경로 검증의 기준이 될 수 없다.
-const workFolderAuthority = createWorkFolderAuthority()
 // Story/Shopping이 공유하는 단일 active machine/token/epoch + 공용 open lock.
 const workflowSessions = createWorkflowSessionCoordinator()
+// 저장 config/native picker/default-folder만 이 권위를 갱신한다. renderer payload는 후보일 뿐
+// workflow open 경로 검증의 기준이 될 수 없다. 권위가 바뀌면 이전 폴더 session도 같은 lock에서 폐기한다.
+const workFolderAuthority = createWorkFolderAuthority({
+  onChange: () => workflowSessions.invalidate(),
+})
 
 let capturedProjectId = null // Flow 네트워크에서 자동 캡처된 projectId
 let capturedApiOrigin = null // #R33: Flow 가 실제로 쓴 생성 API origin(region 대응). null 이면 BASE_API_URL fallback.
