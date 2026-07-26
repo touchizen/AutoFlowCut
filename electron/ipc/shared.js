@@ -768,8 +768,9 @@ export function createSharedHelpers(ctx) {
             // 모드/배치와 같은 메뉴 안의 Radix Tabs. id 접미사로 구분하며,
             // endsWith 는 정확 접미사 매칭이라 '-trigger-PORTRAIT'(9:16) 가
             // '-trigger-PORTRAIT_3_4'(3:4) 를 잘못 잡지 않는다.
-            // best-effort — 못 찾거나 전환 실패해도 ok 에는 영향 없음 (실제 생성 화면비는
-            // CDP request injection 이 보장; 이 단계는 Flow 프리뷰 표시 교정용일 뿐).
+            // 결과는 aspect 로 돌려주고 ok 자체는 내리지 않는다 — 화면비를 요청하지 않은
+            // 호출자(이미지 등)까지 막지 않기 위함이다. 다만 비디오에는 CDP injection 백업이
+            // 없으므로(사용 금지), video.js 는 tab_not_found/click_unconfirmed 를 실패로 처리한다.
             let aspectMethod = 'skipped';
             const aspectSuffix = ${aspectTabSuffix ? `'${aspectTabSuffix}'` : 'null'};
             if (aspectSuffix) {
@@ -990,8 +991,13 @@ export function createSharedHelpers(ctx) {
   // ─── applyAgentDefaults ───────────────────────────────────────
   /**
    * Set Flow's "에이전트 설정" panel image/video generation defaults
-   * (aspect ratio, batch count, model) and click 저장. Replaces the legacy
-   * popup-menu path (configureFlowMode) which no longer matches Flow's UI.
+   * (aspect ratio, batch count, model) and click 저장.
+   *
+   * ⚠️ Flow's unified settings panel broke this path: findAgentSettingsPanel
+   * requires two aspect tablists and the new panel renders one, so it exits
+   * panel_not_found. configureFlowMode is the working path for mode/batch/aspect;
+   * this is kept only for the Agent-ON branch (autoApprove), which still needs
+   * live verification.
    *
    * @param {object} opts
    * @param {{aspectRatio?:string,count?:number,model?:string}} [opts.image]

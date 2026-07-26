@@ -82,7 +82,7 @@ const reopenedTitle = (pOver = {}) => {
   return p
 }
 
-const pillOf = (label) => screen.getByText(label).closest('.story-step-pill')
+const pillOf = (label) => screen.getByText(label).closest('.story-gate-tab, .story-rail-step')
 
 describe('리서치 pill 활성/비활성 + 라우팅 (§2.1/§3.6)', () => {
   it('신규 title 경로(charactersConfirmed≠undefined)면 pill 활성 — 클릭 시 research phase 진입', () => {

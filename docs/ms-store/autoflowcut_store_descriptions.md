@@ -220,6 +220,14 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v3.2.1 — Story UI cleanup and steadier generation.
+
+The Story stepper now reads clearly: entry tabs are separated, the direction of progress is shown, and labels no longer overlap in narrow windows. Lists and panels grow with the window instead of staying at a fixed size.
+
+Audio and video generation are more reliable. Gemini TTS now respects its per-minute request limit instead of failing partway through a batch, the audio progress button no longer stops responding, and empty error messages are gone. Video generation now stops when the aspect ratio hasn't been applied, so you no longer end up with clips in the wrong aspect.
+
+Also: the payment screen shows the monthly price first, and the Claude Agent SDK is updated to 0.3.220.
+
 v3.1.0 — Story audio, redone. Per-speaker regeneration, consistent Gemini voices, and 20+ fixes.
 
 Enter each provider's key right where audio generation asks for it — all API keys now live in one Settings tab (Gemini, Typecast, ElevenLabs, Google TTS). Right-click any speaker to regenerate all of their lines with a new voice. Gemini TTS now keeps each speaker sounding the same from line to line with a per-voice seed, and no longer breaks on short lines or emotion tags.
@@ -458,6 +466,16 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v3.2.1 — Story UI 정리와 생성 안정성
+
+- Story 스텝퍼 진행 표시 개선(진입 탭 분리·진행 방향 표시·좁은 창 라벨 겹침)
+- 화면 크기에 맞춰 늘어나는 목록·패널
+- Gemini TTS 분당 요청 한도 준수로 오디오 생성 실패 방지
+- 오디오 진행 버튼 무반응 및 빈 오류 메시지 수정
+- 비디오 화면비 미적용 시 생성 중단으로 잘못된 결과물 방지
+- 결제 화면 월간 요금 우선 표시
+- Claude Agent SDK 0.3.220 적용
+
 v3.1.0 — Story 오디오, 다시 만들었습니다. 성우 단위 재생성, 일관된 Gemini 음성, 그리고 20여 건 수정.
 
 오디오 생성에 필요한 provider 키를 그 자리에서 바로 입력하세요 — 모든 API 키가 이제 설정의 "API 키" 탭 하나로 모였습니다(Gemini · Typecast · ElevenLabs · Google TTS). 성우를 우클릭하면 그 화자의 대사 전체를 새 음성으로 다시 생성합니다. Gemini TTS는 성우별 고정 seed로 같은 화자가 문장이 달라도 같은 목소리를 유지하고, 짧은 문장이나 감정 표현에서도 더 이상 깨지지 않습니다.
@@ -601,6 +619,14 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 
 ### What's New
 ```
+v3.2.1 — Story UIの整理と、より安定した生成。
+
+Storyステッパーが見やすくなりました。エントリータブが分離され、進行方向が表示され、狭いウィンドウでもラベルが重なりません。リストとパネルも固定サイズのままではなく、ウィンドウに合わせて広がります。
+
+音声と動画の生成がより安定しました。Gemini TTSが1分あたりのリクエスト上限を守るようになり、バッチの途中で失敗しなくなりました。音声の進捗ボタンが反応しなくなる問題と、空のエラーメッセージも解消しています。動画は画面比が適用されていない場合に生成を中止するため、意図しない画面比の結果物が出力されません。
+
+その他：決済画面で月額料金を先に表示、Claude Agent SDKを0.3.220に更新しました。
+
 v3.1.0 — Storyの音声を作り直しました。話者単位の再生成、一貫したGemini音声、そして20件以上の修正。
 
 音声生成に必要なプロバイダーのキーを、その場で直接入力できます — すべてのAPIキーが設定の「APIキー」タブ1つにまとまりました（Gemini・Typecast・ElevenLabs・Google TTS）。話者を右クリックすると、その話者のセリフ全体を新しい音声で再生成します。Gemini TTSは話者ごとの固定シードで、同じ話者が文章が変わっても同じ声を保ち、短い文章や感情表現でも壊れなくなりました。
@@ -739,6 +765,14 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
+v3.2.1 — Aufgeräumte Story-UI und zuverlässigere Generierung.
+
+Der Story-Stepper ist jetzt klar lesbar: Einstiegs-Tabs sind getrennt, die Fortschrittsrichtung wird angezeigt, und Labels überlappen in schmalen Fenstern nicht mehr. Listen und Panels wachsen mit dem Fenster mit, statt auf einer festen Größe zu bleiben.
+
+Audio- und Videogenerierung laufen zuverlässiger. Gemini TTS hält jetzt das Anfragelimit pro Minute ein, statt mitten im Batch fehlzuschlagen; der Audio-Fortschrittsbutton reagiert wieder, und leere Fehlermeldungen sind verschwunden. Die Videogenerierung bricht ab, wenn das Seitenverhältnis nicht angewendet wurde — so entstehen keine Clips mehr im falschen Format.
+
+Außerdem: Auf dem Zahlungsbildschirm wird der Monatspreis zuerst angezeigt, und das Claude Agent SDK wurde auf 0.3.220 aktualisiert.
+
 v3.1.0 — Story-Audio, neu gemacht. Regenerierung pro Sprecher, konsistente Gemini-Stimmen und 20+ Fixes.
 
 Geben Sie den Schlüssel des jeweiligen Anbieters genau dort ein, wo die Audiogenerierung ihn verlangt — alle API-Schlüssel liegen jetzt in einem einzigen Einstellungen-Tab (Gemini, Typecast, ElevenLabs, Google TTS). Rechtsklick auf einen Sprecher regeneriert alle seine Zeilen mit einer neuen Stimme. Gemini TTS hält dank eines Seeds pro Stimme denselben Sprecher von Zeile zu Zeile gleich klingend und bricht bei kurzen Zeilen oder Emotions-Tags nicht mehr ab.

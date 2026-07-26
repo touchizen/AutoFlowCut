@@ -90,9 +90,9 @@ describe('StoryView 자동 진행(전체 진행)', () => {
   it('오디오 자동을 켜면 audio도 자동 실행 대상', async () => {
     const start = vi.fn()
     render(<StoryView pipeline={pipeline(mkSteps({ scenes: { status: 'done' } }), { start })} voices={[]} onClose={vi.fn()} />)
-    // 오디오 자동 체크(currentStep=audio 탭 pill 안 인라인 자동 체크박스)
-    const audioPill = screen.getByText('오디오').closest('.story-step-pill')
-    fireEvent.click(audioPill.querySelector('input[type=checkbox]'))
+    // 오디오 자동 체크 — 자동 토글은 스텝퍼 오른쪽 '자동 N' 팝오버 안에 있다.
+    fireEvent.click(document.querySelector('.story-auto-summary'))
+    fireEvent.click(screen.getByLabelText('오디오 자동'))
     fireEvent.click(screen.getByRole('button', { name: /전체 진행/ }))
     await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
   })

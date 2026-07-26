@@ -19,109 +19,235 @@
 .story-stepper {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   flex-shrink: 0;
-  margin-bottom: 8px;        /* 아래 내용과 분리 — 스크롤바가 붙어 답답해 보이지 않게 */
+  margin-bottom: 10px;       /* 아래 내용과 분리 */
+  container-type: inline-size;   /* 아래 @container — 창이 아니라 스텝퍼 폭 기준으로 라벨을 접는다 */
 }
 
-/* 칩 한 줄 — 줄바꿈 없이 좌우 스크롤. 넘치면 얇은 스크롤바만. */
-.story-stepper-track {
+/* 좁아지면 라벨을 잘라 "대…"로 만드는 대신 아예 접고 번호만 남긴다.
+   지금 보고 있는 단계만 이름을 유지해 어디인지 알 수 있게 한다(전체 이름은 title 로 남아 있다). */
+@container (max-width: 680px) {
+  .story-rail-step:not(.active) .story-rail-label { display: none; }
+}
+@container (max-width: 460px) {
+  /* 더 좁으면 진입 탭도 자리를 양보한다 — 이름은 접지 않는다(설정 탭은 이름이 전부라 빈 상자가 된다). */
+  .story-stepper { gap: 8px; }
+  .story-gate-tab { padding: 0 7px; }
+}
+
+/* ── 진입 탭(설정/리서치/시놉시스) — 레일 왼쪽의 조용한 텍스트 탭 ── */
+.story-stepper-gates {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1 1 auto;
+  gap: 2px;
+  flex: 0 1 auto;            /* 레일과 액션이 자리를 잃지 않게 진입 탭도 줄어든다 */
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  flex-wrap: nowrap;
-  padding-bottom: 8px;        /* 스크롤바(6px) 전용 여백 — 스크롤바가 칩을 침범하지 않게 */
-  scrollbar-width: thin;
 }
-.story-stepper-track::-webkit-scrollbar { height: 6px; }
-.story-stepper-track::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 999px; }
-.story-stepper-track::-webkit-scrollbar-track { background: transparent; }
 
-.story-step-pill {
+.story-gate-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;             /* 높이/폭 고정 → track 에서 스크롤 */
-  height: 34px;              /* 모든 칩 높이 통일 */
-  padding: 0 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  background: var(--bg-secondary);
-  font-size: 0.85rem;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.78rem;
   color: var(--text-secondary);
   white-space: nowrap;
 }
-
-.story-step-pill.active {
-  border-color: var(--primary-color);
+.story-gate-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.story-gate-tab.active {
+  background: var(--bg-secondary);
   color: var(--text-color);
-  background: rgba(66, 153, 225, 0.14);                        /* 폴백(= --primary-color) */
-  background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+  font-weight: 600;
+}
+.story-gate-check {
+  font-size: 0.72rem;
+  color: var(--success-color, #48bb78);
+}
+
+/* 진입 탭과 실행 스텝의 경계 */
+.story-stepper-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border-color);
+  flex: 0 0 auto;
+}
+
+/* ── 실행 스텝 레일 — 번호 + 연결선 ── */
+.story-stepper-rail {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.story-rail-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.story-rail-cell:not(:first-child) {
+  flex: 1 1 auto;             /* 연결선이 남는 폭을 흡수 → 창이 좁아도 스크롤 없이 줄어든다 */
+}
+.story-rail-line {
+  flex: 1 1 auto;
+  height: 2px;
+  min-width: 12px;
+  margin: 0 4px;
+  border-radius: 2px;
+  background: var(--border-color);
+}
+.story-rail-line.filled { background: var(--success-color, #48bb78); }
+
+.story-rail-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  /* 반드시 줄어들 수 있어야 한다 — 0 0 auto 면 폭이 모자랄 때 셀끼리 겹치고
+     레일이 오른쪽 액션(자동/전체 진행) 위로 넘친다. */
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 5px 4px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+/* 상태를 담는 번호 자리 — 별도 색 점을 대체한다. */
+.story-rail-num {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.story-rail-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  min-width: 0;              /* 없으면 flex 아이템이 내용 폭을 고집해 ellipsis 가 안 걸린다 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.story-step-done .story-rail-num {
+  background: var(--success-color, #48bb78);
+  border-color: var(--success-color, #48bb78);
+  color: #12281a;
+}
+.story-step-running .story-rail-num {
+  border-color: var(--primary-color, #4299e1);
+  color: var(--primary-color, #4299e1);
+  box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.18);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 18%, transparent);
+}
+.story-step-error .story-rail-num {
+  border-color: var(--error-color, #f56565);
+  color: var(--error-color, #f56565);
+}
+.story-rail-step.active .story-rail-label {
+  color: var(--text-color);
+  font-weight: 700;
 }
 
 .story-step-clickable {
   cursor: pointer;
 }
-.story-step-clickable:hover {
-  border-color: var(--primary-color);
+.story-gate-tab.story-step-clickable:hover {
+  background: color-mix(in srgb, var(--text-color) 6%, transparent);
   color: var(--text-color);
 }
-
-/* 상태 점 — 텍스트 배지 대신(대기/진행/완료/오류). 실행 스텝(대본~프롬프트)에만. */
-.story-step-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: #7a8290;
-}
-.story-dot-pending { background: #7a8290; }
-.story-dot-running { background: var(--primary-color, #4299e1); }
-.story-dot-done { background: var(--success-color, #48bb78); }
-.story-dot-error { background: var(--error-color, #f56565); }
+.story-rail-step.story-step-clickable:hover .story-rail-label { color: var(--text-color); }
+.story-rail-step.story-step-clickable:hover .story-rail-num { border-color: var(--primary-color); }
 
 /* 세그먼트 2줄 — 대화 + (감정) */
 .story-seg-cell { display: flex; flex-direction: column; gap: 2px; }
 .story-seg-text { }
 .story-seg-emotion { font-size: 0.8em; opacity: 0.7; }
 
-/* 자동 진행 — 칩 안 인라인 미니 토글(대기 스텝의 자동 실행 on/off). on 이면 파란 강조. */
-.story-step-auto {
+/* ── 스텝퍼 오른쪽 액션(자동 요약 + 전체 진행) ── */
+.story-stepper-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* 자동 진행 — 요약 버튼 하나로 모으고, 개별 스텝 on/off 는 팝오버에서. */
+.story-auto-wrap { position: relative; flex: 0 0 auto; }
+.story-auto-summary {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  margin-left: 2px;
-  padding: 1px 7px;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
   border: 1px solid var(--border-color);
-  border-radius: 999px;
-  font-size: 0.7rem;
-  color: var(--text-secondary);
+  border-radius: 6px;
   background: var(--bg-color);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.75rem;
   cursor: pointer;
-  line-height: 1.4;
+  white-space: nowrap;
 }
-.story-step-auto.on {
+.story-auto-summary.on {
   color: var(--primary-color);
   border-color: var(--primary-color);
-  background: rgba(66, 153, 225, 0.12);              /* = --primary-color */
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
 }
-.story-step-auto input { cursor: pointer; margin: 0; width: 11px; height: 11px; }
+.story-auto-count { font-variant-numeric: tabular-nums; font-weight: 700; }
 
-/* 'Run all' — track 밖 오른쪽 고정(track flex:1 이 밀어냄). */
+.story-auto-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 132px;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.story-auto-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.story-auto-item:hover { background: color-mix(in srgb, var(--text-color) 7%, transparent); color: var(--text-color); }
+.story-auto-item input { cursor: pointer; margin: 0; width: 12px; height: 12px; }
+
+/* 'Run all' — 스텝퍼 오른쪽 끝 고정. */
 .story-step-runall {
   flex: 0 0 auto;
   align-self: center;
-  padding: 6px 14px;
+  height: 28px;
+  padding: 0 14px;
   border: 1px solid var(--primary-color, #4a7cff);
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--primary-color, #4a7cff);
   color: #fff;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -192,18 +318,10 @@
   border-style: solid;
 }
 
-/* §v2.12 B: 비활성 pill(시놉시스 — imported/legacy 경로) — 회색, 클릭 불가. */
+/* §v2.12 B: 비활성 진입 탭(시놉시스 — imported/legacy 경로) — 회색, 클릭 불가. */
 .story-step-disabled {
   opacity: 0.45;
   cursor: default;
-}
-
-.story-step-icon {
-  font-size: 0.8rem;
-}
-
-.story-step-name {
-  font-weight: 600;
 }
 
 /* ── 에러 배너 ── */
@@ -842,7 +960,9 @@
 
 /* ghost 행이 늘어나는 동안만 StoryView가 붙이는 viewport. 완료 표는 wrapper 없이 기존 렌더 유지. */
 .story-stream-table {
-  max-height: min(52vh, 520px);
+  /* 화면 높이를 따라간다 — 예전엔 min(52vh, 520px) 이라 px 팔이 vh 를 덮어써서
+     4K 에서도 1080p 와 똑같이 520px 에 묶였다(목록이 안 길어짐). */
+  max-height: 52vh;
   overflow-y: auto;
   /* prompts auto-scroll(frontier 행 offsetTop 기반)이 이 컨테이너를 offsetParent 로 삼도록 —
      없으면 offsetTop 이 바깥 positioned 조상 기준이라 스크롤 계산이 틀어져 화면이 "고정"된다. */
@@ -1072,7 +1192,7 @@
 
 .story-progress-log {
   width: min(720px, 100%);
-  max-height: 220px;
+  max-height: clamp(220px, 30vh, 60vh);   /* 큰 화면에선 로그도 같이 길어진다 */
   overflow-y: auto;
   border: 1px solid var(--border-color);
   border-radius: 6px;
