@@ -40,6 +40,17 @@ const goToAudioAndRun = () => {
   fireEvent.click(screen.getByRole('button', { name: '오디오 실행' })) // primary action
 }
 
+const gateThenResolved = () => vi.fn()
+  .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }], encryptionAvailable: true })
+  .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'resolved-store' }], encryptionAvailable: true })
+
+const saveGateKey = async () => {
+  await screen.findByText('Typecast')
+  const input = document.querySelector('.audio-key-gate input[type="password"]')
+  fireEvent.change(input, { target: { value: 'sk-abc' } })
+  fireEvent.click(screen.getByRole('button', { name: /저장|Save/i }))
+}
+
 describe('StoryView — 오디오 pre-flight 키 게이트', () => {
   beforeEach(() => {
     mockSaveKey.mockReset()
@@ -147,6 +158,20 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     expect(await screen.findByText(/fixed-scenes-stale/)).toBeTruthy()
   })
 
+  it('화자 실행은 키 저장 후 retry가 대사 없음으로 거절돼도 사유를 보여준다', async () => {
+    const start = vi.fn().mockResolvedValue({ error: 'story-audio-speaker-empty' })
+    const audioPreflight = gateThenResolved()
+    mockSaveKey.mockResolvedValue({ success: true })
+
+    renderStory(pipeline({ start, audioPreflight }), { onReloadVoices: vi.fn(async () => {}) })
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.click(screen.getByRole('button', { name: '나레이션만 생성' }))
+    await saveGateKey()
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.objectContaining({ onlySpeaker: 'narrator' })))
+    expect(await screen.findByText(/생성할 대사가 없습니다/)).toBeTruthy()
+  })
+
   // Finding3(리뷰): 세그먼트 단건 "테스트"도 배치 실행과 같은 preflight 게이트를 거쳐야 한다 —
   // 안 거치면 missing key일 때 ttsPreview의 IPC 거절이 errorKind 없는 raw 토스트로 샌다.
   it('세그먼트 "테스트"도 preflight를 거친다 — missing 키면 ttsPreview를 안 부르고 게이트 카드를 보여준다', async () => {
@@ -195,6 +220,47 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     expect(await screen.findByText('Typecast')).toBeTruthy() // 게이트 카드가 여전히 보인다
     expect(start).not.toHaveBeenCalled()
     // 오디오 패널을 벗어나 다른 스텝(프롬프트 등)으로 새지 않았다 — redo 버튼이 그대로 남아 있다.
+    expect(screen.getByRole('button', { name: /오디오 다시 생성/ })).toBeTruthy()
+  })
+
+  it('오디오 다시 생성은 키 저장 후 retry가 거절돼도 사유와 오디오 패널을 유지한다', async () => {
+    const start = vi.fn().mockResolvedValue({ error: 'audio-redo-refused' })
+    const audioPreflight = gateThenResolved()
+    mockSaveKey.mockResolvedValue({ success: true })
+
+    renderStory(pipeline({
+      start,
+      audioPreflight,
+      state: {
+        steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'done' }, prompts: { status: 'pending' } },
+        speakers: [{ id: 'narrator', name: '나레이션' }],
+      },
+    }), { onReloadVoices: vi.fn(async () => {}) })
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.click(screen.getByRole('button', { name: /오디오 다시 생성/ }))
+    await saveGateKey()
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
+    expect(await screen.findByText('audio-redo-refused')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /오디오 다시 생성/ })).toBeTruthy()
+  })
+
+  it('오디오 다시 생성은 직접 실행이 거절돼도 오디오 패널을 유지한다', async () => {
+    const start = vi.fn().mockResolvedValue({ error: 'audio-redo-refused' })
+    const audioPreflight = vi.fn().mockResolvedValue({ providers: [], encryptionAvailable: true })
+
+    renderStory(pipeline({
+      start,
+      audioPreflight,
+      state: {
+        steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'done' }, prompts: { status: 'pending' } },
+        speakers: [{ id: 'narrator', name: '나레이션' }],
+      },
+    }))
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.click(screen.getByRole('button', { name: /오디오 다시 생성/ }))
+
+    expect(await screen.findByText('audio-redo-refused')).toBeTruthy()
     expect(screen.getByRole('button', { name: /오디오 다시 생성/ })).toBeTruthy()
   })
 
@@ -274,6 +340,48 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     // 세그먼트 목록(오디오 패널)에 그대로 남아 있다 — 다른 스텝으로 안 샜다.
     expect(screen.getByRole('button', { name: 's1-1 재생성' })).toBeTruthy()
   })
+
+  // 세그먼트 재생성은 의도적 silent site — 직접 경로가 busy/거절에 토스트하지 않으므로(6 silent
+  // sites 계약) deferred retry도 대칭으로 침묵해야 한다(F1 비대칭 없음). runStep이 스스로 토스트하는
+  // fixed-scenes-stale/image-first 거절만 예외인데 여기선 해당 없음.
+  it('세그먼트 재생성은 키 저장 후 retry가 거절돼도(silent site) 사유를 토스트하지 않는다', async () => {
+    const start = vi.fn().mockResolvedValue({ error: 'segment-regenerate-refused' })
+    const audioPreflight = gateThenResolved()
+    mockSaveKey.mockResolvedValue({ success: true })
+
+    renderStory(pipeline({
+      start,
+      audioPreflight,
+      state: {
+        steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'done' }, prompts: { status: 'pending' } },
+        speakers: [{ id: 'narrator', name: '나레이션' }],
+      },
+      scenes: [{ storyId: 's1', segments: [{ id: 's1-1', speaker: 'narrator', text: '어느 날', status: 'done', audioPath: '/x/s1-1.wav' }] }],
+    }), { onReloadVoices: vi.fn(async () => {}) })
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.click(screen.getByRole('button', { name: 's1-1 재생성' }))
+    await saveGateKey()
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.objectContaining({ regenerate: ['s1-1'] })))
+    expect(screen.queryByText('segment-regenerate-refused')).toBeNull()
+  })
+
+  it('자동 진행은 키 저장 후 audio retry가 busy면 이유를 보여주고 멈춘다', async () => {
+    const start = vi.fn().mockResolvedValue({ error: 'busy' })
+    const audioPreflight = gateThenResolved()
+    mockSaveKey.mockResolvedValue({ success: true })
+
+    renderStory(pipeline({ start, audioPreflight }), { onReloadVoices: vi.fn(async () => {}) })
+    fireEvent.click(screen.getByRole('button', { name: '자동' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '오디오 자동' }))
+    fireEvent.click(screen.getByRole('button', { name: '전체 진행' }))
+    await saveGateKey()
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
+    expect(await screen.findByText(/다른 작업이 실행 중/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '전체 진행' })).toBeEnabled()
+  })
+
   // 실측 회귀(2026-07-25): 오디오가 에러/부분(partial) 상태일 때 ▶ 진행 버튼은 handlePrimaryAction 을
   // 타는데, 이 경로만 runAudioWithPreflight 의 결과를 버려서 main 이 거절해도 토스트·상태변화가
   // 전혀 없었다 — 화자별로 오디오를 다 채운 뒤 진행을 눌러도 "아무 반응 없음"으로 보였다.

@@ -532,6 +532,17 @@ export default function StoryView({
     toastAudioResult(res)
     return res
   }
+  // runStep 기반 오디오 실행은 fixed-scenes-stale/image-first 거절을 runStep이 이미 토스트한다.
+  // 그 집합만 제외하고 primary와 같은 busy/generic 표면화를 재사용한다.
+  const handleAudioRunError = (result) => {
+    if (runStepRefuses(result?.error)) return
+    toastAudioResult(result)
+  }
+  const runHandledAudioStep = async (params) => {
+    const res = await runStep('audio', params)
+    handleAudioRunError(res)
+    return res
+  }
 
   const [autoRunning, setAutoRunning] = useState(false)
   // script 패널(대본 스트리밍/편집기·중단)은 "지금 진행 스텝(currentStep)"이 아니라 "script 스텝 자체"의
@@ -1283,8 +1294,10 @@ export default function StoryView({
   // (보통 prompts)를 가리킨다. 그래서 setViewedStep(null)이면 displayStep이 currentStep=prompts로
   // 떨어져 화면이 prompts로 새어나간다(재생성 성공이든 preflight 막힘이든 동일). 항상 'audio'로
   // 고정해 오디오 패널(성공 시 세그먼트 목록/재생성, 막힘 시 AudioKeyGateCard)을 유지한다.
-  // (스텝 전체 redo인 handleStepRedo는 "다음으로 진행"이 맞아 별개로 null을 유지한다.)
+  // (스텝 전체 redo인 handleStepRedo는 성공하면 "다음으로 진행", 오류면 audio를 유지한다.)
   const regenerateSegment = async (segId) => {
+    // 세그먼트 단건 재생성은 의도적 silent site — busy/미생성 거절에 토스트하지 않는다(6 silent
+    // sites 계약). 직접·지연(키저장 후 retry) 경로 모두 runStep만 거쳐 대칭이라 F1 비대칭이 없다.
     await runAudioWithPreflight(buildAudioParams([segId]), (p) => runStep('audio', p))
     setScriptPhase(null)
     setViewedStep('audio')
@@ -1296,14 +1309,7 @@ export default function StoryView({
   // 파괴적 재생성의 동의 화면이 틀린다.
   const countSpeakerSegments = (sp) =>
     (scenes || []).flatMap((s) => s.segments || []).filter((g) => (g.type || 'narration') === 'narration' && speakerByRef(g.speaker)?.id === sp?.id).length
-  // force=true면 그 화자의 이미 done인 세그먼트까지 강제 재생성(regenerateSpeaker). 좌클릭(force=false)은
-  // 기존 "미생성분만 채우기".
-  const runSpeakerAudio = async (sp, { force = false } = {}) => {
-    // 콜백은 runStep이다(start 아님) — preflight 차단 후 키 저장→재시도(runAudioWithPreflight의 저장된
-    // retry)는 runSpeakerAudio를 안 거치고 콜백만 단독 실행하므로, 그 경로의 거절 피드백은 콜백이 스스로
-    // 토스트해야 한다(runStep). 대신 직접 경로에서 아래 result.error 토스트와 겹치는 거절(runStepRefuses)은
-    // 여기서 재토스트하지 않아 이중토스트를 막는다.
-    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) }, (p) => runStep('audio', p))
+  const handleSpeakerResult = (result, sp, force) => {
     // preflight가 막은 경우엔 게이트 카드가 이미 안내하므로 별도 토스트 없이 조용히 돌아간다.
     if (result?.error === 'preflight-missing-key') return
     // busy: 좌클릭 fill-missing은 실행 중 화자 맵이 안 보여 사용자가 만든 상황이 아니라 조용하다.
@@ -1329,6 +1335,21 @@ export default function StoryView({
         { speaker },
       ))
     }
+  }
+  // force=true면 그 화자의 이미 done인 세그먼트까지 강제 재생성(regenerateSpeaker). 좌클릭(force=false)은
+  // 기존 "미생성분만 채우기".
+  const runSpeakerAudio = async (sp, { force = false } = {}) => {
+    // 키 저장 후 retry는 runSpeakerAudio가 아니라 저장된 callback만 다시 돈다. 결과 처리를 callback이
+    // 소유해야 직접·지연 경로가 force/busy/generic/partial 규칙을 똑같이 적용한다.
+    const result = await runAudioWithPreflight(
+      { ...buildAudioParams(), onlySpeaker: sp.id, ...(force ? { regenerateSpeaker: true } : {}) },
+      async (p) => {
+        const res = await runStep('audio', p)
+        handleSpeakerResult(res, sp, force)
+        return res
+      },
+    )
+    if (result?.error === 'preflight-missing-key') return
   }
 
   // audio 타임라인 프리뷰 — story 세그먼트를 화자별 voices audioPackage로 변환해 기존 AudioTimeline
@@ -1548,14 +1569,14 @@ export default function StoryView({
   }
 
   // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
-  // Finding2(리뷰): audio 재실행이 preflight에 막히면(missing key) start()가 안 불려 steps.audio는
-  // 여전히 done — regenerateSegment와 같은 이유로, 무조건 null 대신 막혔을 때만 'audio'로 고정해
-  // AudioKeyGateCard가 보이는 오디오 패널을 유지한다.
+  // Finding2(리뷰): audio 재실행이 실패하면 start()가 상태를 안 바꾸는 거절도 있고, preflight missing은
+  // start()조차 안 불려 steps.audio가 done인 채다. 이때 viewedStep을 비우면 다음 미완료 패널로 튀므로
+  // 모든 오류는 audio를 유지하고, 성공했을 때만 다음 단계로 진행한다.
   const handleStepRedo = async () => {
     if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(handleSplit이 자체 viewedStep 처리)
     if (redoStep === 'audio') {
-      const result = await runAudioWithPreflight(buildStepParams(redoStep), (p) => runStep('audio', p))
-      setViewedStep(result?.error === 'preflight-missing-key' ? 'audio' : null)
+      const result = await runAudioWithPreflight(buildStepParams(redoStep), runHandledAudioStep)
+      setViewedStep(result?.error ? 'audio' : null)
       return
     }
     runStep(redoStep, buildStepParams(redoStep))
@@ -1650,11 +1671,21 @@ export default function StoryView({
       return
     }
     setScriptPhase(null); setViewedStep(null)
-    // M3b-2b: audio는 pre-flight 게이트를 거친다 — missing 키면 'preflight-missing-key'가 res.error로
-    // 와서 아래 stuck 방지 로직이 자동 진행을 멈춘다(키가 없는데 계속 재시도하면 안 됨).
-    const res = step === 'audio'
-      ? await runAudioWithPreflight(buildStepParams(step), (p) => runStep('audio', p))
-      : await runStep(step, buildStepParams(step))
+    if (step === 'audio') {
+      // 실제 실행 오류 처리는 저장되는 callback의 소유다. 그래야 키 저장 후 retry도 busy 피드백과
+      // auto-stop을 잃지 않는다. 최초 preflight 차단만 callback이 안 도므로 호출부에서 한 번 멈춘다.
+      const res = await runAudioWithPreflight(buildStepParams(step), async (p) => {
+        const audioResult = await runStep('audio', p)
+        if (audioResult?.error) {
+          setAutoRunning(false)
+          handleAudioRunError(audioResult)
+        }
+        return audioResult
+      })
+      if (res?.error === 'preflight-missing-key') setAutoRunning(false)
+      return
+    }
+    const res = await runStep(step, buildStepParams(step))
     if (res?.error) setAutoRunning(false) // busy 등 상태전이 없음 → 멈춤
   }
   const handleRunAll = () => { if (canRunAll) setAutoRunning(true) }
