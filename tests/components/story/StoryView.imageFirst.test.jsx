@@ -6,7 +6,7 @@
  * ② 불법 control 전면 비노출: setup primary/검수 토글 · 대본 검수/다시쓰기/이어쓰기/분리시작 ·
  *    씬 검수/재분리 · 프롬프트 검수/재생성 (렌더는 되는데 handler가 거절되는 죽은 버튼 금지).
  * ③ 거절 표면(runStep): fixed-scenes-immutable / fixed-audio-required / fixed-scenes-stale →
- *    toast 정확히 1회. 나머지 6개 silent site는 busy/unconfirmed에 toast 0회(기존 의미 보존).
+ *    toast 정확히 1회. 나머지 5개 silent site는 busy/unconfirmed에 toast 0회(기존 의미 보존).
  * ④ 교착 방지: image-first는 prompts가 audio done을 요구한다 — 자동 audio를 렌더 시점에 강제 on.
  * ⑤ fixedSceneError → role='alert' 재발행/취소 패널.
  */
@@ -318,7 +318,7 @@ describe('image-first ③ 거절 표면(runStep) — toast 정확히 1회', () =
     expect(toast.error.mock.calls[0][0]).toContain('fixed-scenes-stale')
   })
 
-  it('audio-first에서 6개 silent site는 busy/unconfirmed에 toast를 띄우지 않는다', async () => {
+  it('audio-first에서 5개 silent site는 busy/unconfirmed에 toast를 띄우지 않는다', async () => {
     const busy = () => vi.fn().mockResolvedValue({ error: 'busy' })
 
     // (1) 대본 수동 검수 (2) 다시쓰기 (3) 이어쓰기 — editor
@@ -332,17 +332,10 @@ describe('image-first ③ 거절 표면(runStep) — toast 정확히 1회', () =
     await waitFor(() => expect(editorStart).toHaveBeenCalledTimes(3))
     unmount()
 
-    // (4) 세그먼트 재생성 — audio 패널
-    const segStart = busy()
-    const segState = audioFirstState({ charactersConfirmed: true, steps: { audio: { status: 'done' } } })
-    const seg = render(<StoryView pipeline={pipeline(segState, { start: segStart })} voices={[]} onClose={vi.fn()} />)
-    clickTab('오디오')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'g1 재생성' })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: 'g1 재생성' }))
-    await waitFor(() => expect(segStart).toHaveBeenCalledWith('audio', expect.anything()))
-    seg.unmount()
+    // (세그먼트 재생성은 더 이상 silent site가 아니다 — 명시적 액션이라 busy/generic을 표면화한다.
+    //  그 회귀 핀은 storyAudioGate.test.jsx로 옮겼다.)
 
-    // (5) 붙여넣기 시작 — setup [✨ 시작] (scriptText 있음)
+    // (4) 붙여넣기 시작 — setup [✨ 시작] (scriptText 있음)
     const pasteStart = busy()
     const pasteState = audioFirstState({ steps: { script: { status: 'pending' }, scenes: { status: 'pending' } }, input: { type: 'pasted', title: 'T' }, charactersConfirmed: undefined })
     const paste = render(
@@ -354,7 +347,7 @@ describe('image-first ③ 거절 표면(runStep) — toast 정확히 1회', () =
     await waitFor(() => expect(pasteStart).toHaveBeenCalledWith('script', expect.objectContaining({ pastedScript: expect.any(String) })))
     paste.unmount()
 
-    // (6) title 시놉시스 확정 → start('script')
+    // (5) title 시놉시스 확정 → start('script')
     const confirmStart = busy()
     const confirmState = audioFirstState({ steps: { script: { status: 'pending' }, scenes: { status: 'pending' } }, charactersConfirmed: false })
     render(

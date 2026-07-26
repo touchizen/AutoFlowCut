@@ -341,10 +341,9 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     expect(screen.getByRole('button', { name: 's1-1 재생성' })).toBeTruthy()
   })
 
-  // 세그먼트 재생성은 의도적 silent site — 직접 경로가 busy/거절에 토스트하지 않으므로(6 silent
-  // sites 계약) deferred retry도 대칭으로 침묵해야 한다(F1 비대칭 없음). runStep이 스스로 토스트하는
-  // fixed-scenes-stale/image-first 거절만 예외인데 여기선 해당 없음.
-  it('세그먼트 재생성은 키 저장 후 retry가 거절돼도(silent site) 사유를 토스트하지 않는다', async () => {
+  // 세그먼트 단건 재생성은 명시적 액션 — busy/generic 거절이 무반응이면 dead-click이라 사유를
+  // 표면화한다(speaker force-busy와 같은 레이스). 직접·지연 경로 대칭.
+  it('세그먼트 재생성은 키 저장 후 retry가 거절돼도 사유를 보여준다', async () => {
     const start = vi.fn().mockResolvedValue({ error: 'segment-regenerate-refused' })
     const audioPreflight = gateThenResolved()
     mockSaveKey.mockResolvedValue({ success: true })
@@ -363,7 +362,7 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     await saveGateKey()
 
     await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.objectContaining({ regenerate: ['s1-1'] })))
-    expect(screen.queryByText('segment-regenerate-refused')).toBeNull()
+    expect(await screen.findByText('segment-regenerate-refused')).toBeTruthy()
   })
 
   it('자동 진행은 키 저장 후 audio retry가 busy면 이유를 보여주고 멈춘다', async () => {
@@ -380,6 +379,26 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
     expect(await screen.findByText(/다른 작업이 실행 중/)).toBeTruthy()
     expect(screen.getByRole('button', { name: '전체 진행' })).toBeEnabled()
+  })
+
+  // 게이트 없는(preflight ok) 직접 경로도 audio busy면 auto-run을 멈추고 이유를 보여준다. 리팩터가
+  // caller의 `if(res?.error) setAutoRunning(false)`를 audio에서 걷어내 callback으로 옮겼으므로, 이
+  // 핀이 callback의 setAutoRunning(false)를 직접 지킨다(deferred 핀은 게이트 sentinel이 이미 멈춰 못 뭄).
+  it('자동 진행은 게이트 없이 audio가 직접 busy면 멈추고 이유를 보여준다', async () => {
+    const start = vi.fn().mockResolvedValue({ error: 'busy' })
+    const audioPreflight = vi.fn().mockResolvedValue({
+      providers: [{ provider: 'typecast', keyId: 'typecast', status: 'resolved-store' }],
+      encryptionAvailable: true,
+    })
+
+    renderStory(pipeline({ start, audioPreflight }))
+    fireEvent.click(screen.getByRole('button', { name: '자동' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '오디오 자동' }))
+    fireEvent.click(screen.getByRole('button', { name: '전체 진행' }))
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
+    expect(await screen.findByText(/다른 작업이 실행 중/)).toBeTruthy()
+    await waitFor(() => expect(screen.getByRole('button', { name: '전체 진행' })).toBeEnabled())
   })
 
   // 실측 회귀(2026-07-25): 오디오가 에러/부분(partial) 상태일 때 ▶ 진행 버튼은 handlePrimaryAction 을

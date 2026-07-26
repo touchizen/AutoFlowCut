@@ -1296,9 +1296,10 @@ export default function StoryView({
   // 고정해 오디오 패널(성공 시 세그먼트 목록/재생성, 막힘 시 AudioKeyGateCard)을 유지한다.
   // (스텝 전체 redo인 handleStepRedo는 성공하면 "다음으로 진행", 오류면 audio를 유지한다.)
   const regenerateSegment = async (segId) => {
-    // 세그먼트 단건 재생성은 의도적 silent site — busy/미생성 거절에 토스트하지 않는다(6 silent
-    // sites 계약). 직접·지연(키저장 후 retry) 경로 모두 runStep만 거쳐 대칭이라 F1 비대칭이 없다.
-    await runAudioWithPreflight(buildAudioParams([segId]), (p) => runStep('audio', p))
+    // 명시적 단건 액션인데 busy 거절에 무반응이면 dead-click이다 — 버튼 가드(isRunning||previewBusy)는
+    // synopsis/research 사이드태스크 busy를 못 본다(speaker force-busy 주석과 같은 레이스). 그래서
+    // busy/generic을 표면화한다. runStep이 스스로 무는 fixed-scenes-stale/image-first만 예외.
+    await runAudioWithPreflight(buildAudioParams([segId]), runHandledAudioStep)
     setScriptPhase(null)
     setViewedStep('audio')
   }
