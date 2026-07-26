@@ -27,7 +27,7 @@ import {
   flowImageInjectable,
 } from '../utils/refImageGuard'
 
-export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
+export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null, isUpscaylRunning = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -58,6 +58,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   // Set true when batch stops due to authFailed sentinel — prevents the normal
   // stopRequestedRef final-status logic from overwriting 'error' with 'stopped'.
   const authStoppedRef = useRef(false)
+  // Upscayl 내부 latch reader를 보존해 React commit 전 same-tick 시작도 dispatch에서 본다.
+  const isUpscaylRunningRef = useRef(isUpscaylRunning)
+  isUpscaylRunningRef.current = isUpscaylRunning
 
   // generateImage 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
   // 단일 씬 동기 호출이 필요해지면 genAPI.generateImage 으로 직접 접근.
@@ -271,6 +274,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         }
       }
       if (stopRequestedRef.current) break
+
+      // 씬 상태를 generating으로 바꾸기 직전 live latch 재검사 — hit 씬과 이후 씬은 손대지 않는다.
+      if (isUpscaylRunningRef.current?.()) {
+        stopRequestedRef.current = true
+        break
+      }
 
       const scene = applyM1MentionExclusions(
         targetScenes[i],

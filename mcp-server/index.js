@@ -23,7 +23,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
 import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, preserveSceneRuntimeFields } from './lib/csv.js';
-import { handleExportCapcutTool, handleExportPremiereTool } from './lib/toolResponses.js';
+import { handleExportCapcutTool, handleExportPremiereTool, handleUpdateSceneTool } from './lib/toolResponses.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
 
@@ -1301,15 +1301,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'app_update_scene': {
-        const port = args.port || 3210;
-        const res = await appFetch(port, 'POST', '/api/update', {
-          type: 'update-scene',
-          index: args.index,
-          fields: args.fields,
-        });
-        return {
-          content: [{ type: 'text', text: `씬 [${args.index}] 수정 완료: ${JSON.stringify(args.fields)}` }],
-        };
+        return handleUpdateSceneTool(args, appFetch);
       }
 
       case 'app_generate_reference': {

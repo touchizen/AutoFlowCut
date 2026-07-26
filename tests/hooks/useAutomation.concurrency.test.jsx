@@ -23,19 +23,23 @@ vi.mock('../../src/services/imageFinalize', () => ({ processAsyncSceneResult: vi
 vi.mock('../../src/utils/sceneFilters', () => ({ filterPendingScenes: vi.fn((scenes) => scenes) }))
 
 function setupHook(scenes, overrides = {}) {
-  const submitGeneration = vi.fn().mockImplementation(async () => ({ success: true, generationId: `gen-${++gid}` }))
   let gid = 0
+  const submitGeneration = overrides.submitGeneration || vi.fn().mockImplementation(async () => ({ success: true, generationId: `gen-${++gid}` }))
   const genAPI = {
     submitGeneration,
     checkGeneration: overrides.checkGeneration || vi.fn().mockResolvedValue({ completed: false }),
     collectGeneration: overrides.collectGeneration || vi.fn().mockResolvedValue({ success: true, images: [{ id: 'i', mediaId: 'm' }] }),
     clearGenerations: vi.fn().mockResolvedValue(undefined),
     uploadReference: vi.fn(),
-    getAccessToken: vi.fn().mockResolvedValue('tok'),
+    getAccessToken: overrides.getAccessToken || vi.fn().mockResolvedValue('tok'),
   }
   const updateScene = vi.fn()
   const scenesHook = { scenes, references: [], updateScene, getMatchingReferences: vi.fn(() => []) }
-  const hook = renderHook(() => useAutomation(genAPI, scenesHook, null, null, null, (k) => k, null, null, null))
+  const hook = renderHook(() => useAutomation(
+    genAPI, scenesHook, null, null, null, (k) => k, null, null, null,
+    'api', true, false, null, null, false, null, undefined, null,
+    overrides.isUpscaylRunning,
+  ))
   return { hook, submitGeneration, genAPI, updateScene }
 }
 
@@ -56,6 +60,35 @@ const FOUR = [
 ]
 
 describe('useAutomation 동시성 윈도우', () => {
+  it('씬 dispatch 직전 live Upscayl 신호가 켜지면 남은 배치를 stop으로 끝낸다', async () => {
+    const upscaylRunning = { current: false }
+    const submitGeneration = vi.fn(async () => {
+      // 첫 씬 결과가 끝난 같은 tick에 Upscayl이 시작된 상황 — React snapshot보다 빠르다.
+      upscaylRunning.current = true
+      return { success: true, images: [{ id: 'i', mediaId: 'm' }] }
+    })
+    const { hook, updateScene } = setupHook([
+      { id: 's1', prompt: 'first', status: 'pending' },
+      { id: 's2', prompt: 'second', status: 'pending' },
+    ], {
+      submitGeneration,
+      isUpscaylRunning: () => upscaylRunning.current,
+    })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory' })
+    })
+    await act(async () => { await startPromise })
+
+    expect(submitGeneration).toHaveBeenCalledTimes(1)
+    expect(submitGeneration).toHaveBeenCalledWith('first', expect.any(Array), expect.any(Object))
+    expect(updateScene.mock.calls.some(([id]) => id === 's2')).toBe(false)
+    expect(updateScene).not.toHaveBeenCalledWith('s1', expect.objectContaining({ status: 'pending' }))
+    expect(hook.result.current).toMatchObject({ isRunning: false, isStopping: false })
+    expect(['preparing', 'uploading', 'running']).not.toContain(hook.result.current.status)
+  })
+
   it('in-flight 가 concurrency 를 넘지 않음 (완료 없으면 추가 제출 차단)', async () => {
     // checkGeneration 이 계속 미완료 → window 가 concurrency 에서 멈춤
     const { hook, submitGeneration } = setupHook(FOUR)

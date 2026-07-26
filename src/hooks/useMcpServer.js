@@ -64,6 +64,26 @@ export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
   })
 }
 
+function applyMcpSceneUpdate({ data, setScenes, isUpscaylRunning }) {
+  const fields = data?.fields || {}
+  const replacesImage = 'image' in fields || 'imagePath' in fields
+  if (replacesImage && isUpscaylRunning()) {
+    return { success: false, error: 'busy' }
+  }
+
+  // 이미지 교체는 UI writer와 같은 baseline reset 계약을 쓴다. 비이미지는 그대로 merge한다.
+  const patch = replacesImage
+    ? {
+        ...baseImageReplacementPatch(fields),
+        ...('donePrompt' in fields ? {} : { donePrompt: null }),
+      }
+    : fields
+  setScenes(prev => prev.map((scene, index) => (
+    index === data.index ? { ...scene, ...patch } : scene
+  )))
+  return { success: true }
+}
+
 
 /**
  * @param {object} params
@@ -102,12 +122,18 @@ export function useMcpServer({
   importByPath, audioPackage,
   automationState, videoAutomation, generatingRefs,
   isRunning = false,  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
-  refBatchRunning = false  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  refBatchRunning = false,  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  isUpscaylRunning = null,
 }) {
   // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
   const referencesRef = useRef(references)
   useEffect(() => { referencesRef.current = references }, [references])
+  const setScenesRef = useRef(setScenes)
+  setScenesRef.current = setScenes
+  // Upscayl 내부 latch reader 자체를 ref로 보존 — React commit 전 same-tick 시작도 HTTP dispatch가 본다.
+  const isUpscaylRunningRef = useRef(isUpscaylRunning)
+  isUpscaylRunningRef.current = isUpscaylRunning
 
   // Phase 2: isRunning을 ref로 mirror — global 핸들러 closure가 polling 시 최신 값 읽음.
   const isRunningRef = useRef(isRunning)
@@ -144,6 +170,11 @@ export function useMcpServer({
       ready: isReferenceUploadedDone({ ...rest, data }),
     }))
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
+    window.__mcpUpdateScene = (data) => applyMcpSceneUpdate({
+      data,
+      setScenes: setScenesRef.current,
+      isUpscaylRunning: () => !!isUpscaylRunningRef.current?.(),
+    })
     // styleId override를 직접 받음 (전역 상태 setSelectedStyleRefId + setTimeout race 회피).
     // styleId 형식은 normalizeStyleId로 정규화됨 ('ref:*' / 'preset:*' / plain → 'preset:*' / null).
     // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — caller-side fallback만 사용.
@@ -281,6 +312,7 @@ export function useMcpServer({
     return () => {
       delete window.__mcpGetReferences
       delete window.__mcpGetScenes
+      delete window.__mcpUpdateScene
       delete window.__mcpGenerateRef
       delete window.__mcpGenerateScene
       delete window.__mcpSetStyle
@@ -438,18 +470,9 @@ export function useMcpServer({
           console.log('[MCP] srtTrack replaced via HTTP:', data.srtTrack.length)
         }
       } else if (data.type === 'update-scene') {
-        const fields = data.fields || {}
-        const replacesImage = 'image' in fields || 'imagePath' in fields
-        // 이미지 교체 = 새 baseline → 명시 안 된 marker 는 클리어: 업스케일(upscaledAt/upscaled_size)은
-        // baseImageReplacementPatch, donePrompt(main 되돌림 done 복원 기준)도 함께. 명시값은 보존.
-        const patch = replacesImage
-          ? {
-              ...baseImageReplacementPatch(fields),
-              ...('donePrompt' in fields ? {} : { donePrompt: null }),
-            }
-          : fields
-        setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...patch } : s))
-        console.log('[MCP] Scene', data.index, 'updated via HTTP')
+        const result = window.__mcpUpdateScene?.(data)
+        if (result?.success) console.log('[MCP] Scene', data.index, 'updated via HTTP')
+        else console.warn('[MCP] Scene image update refused:', result?.error || 'handler-unavailable')
       } else if (data.type === 'generate-reference') {
         console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)
         // styleId를 override로 직접 전달 — 전역 selectedStyleRefId 오염 없음, race 없음.

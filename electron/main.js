@@ -15,7 +15,7 @@ import { registerRenderIPC } from './ipc/render.js'
 import { resolveFfmpegPath, isRuntimePackaged } from './render/ffmpegPath.js'
 import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
-import { registerMcpIPC } from './ipc/mcp.js'
+import { dispatchMcpUpdate, registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { createUpscaylPathStore, registerUpscaylIPC } from './ipc/upscayl.js'
 import { registerStoryIPC } from './ipc/story-api.js'
@@ -1108,9 +1108,9 @@ function startMcpHttpServer(port) {
         if (req.method === 'POST' && pathname === '/api/update') {
           const data = JSON.parse(body)
           if (mainWindow) {
-            mainWindow.webContents.send('mcp-update', data)
-            res.writeHead(200)
-            res.end(JSON.stringify({ success: true }))
+            const updateResponse = await dispatchMcpUpdate(mainWindow.webContents, data)
+            res.writeHead(updateResponse.status)
+            res.end(JSON.stringify(updateResponse.body))
           } else {
             res.writeHead(503)
             res.end(JSON.stringify({ error: 'App not ready' }))

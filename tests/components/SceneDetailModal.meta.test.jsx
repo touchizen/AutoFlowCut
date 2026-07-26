@@ -16,6 +16,7 @@ const mockGetHistory = vi.fn()
 const mockReadHistoryFile = vi.fn()
 const mockRestoreFromHistory = vi.fn()
 const mockGetImageSizeFromBase64 = vi.fn()
+const mockToastWarning = vi.fn()
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -37,7 +38,7 @@ vi.mock('../../src/hooks/useI18n', () => ({
 
 // formatRelativeTime fallback 까지 그대로 가니 toast 모킹
 vi.mock('../../src/components/Toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
+  toast: { success: vi.fn(), error: vi.fn(), warning: (...args) => mockToastWarning(...args), info: vi.fn() }
 }))
 
 // MediaMetaBar 가 toast 를 사용 — 위에서 잡힘.
@@ -179,6 +180,37 @@ describe('SceneDetailModal — 재생성 후 editData 동기화', () => {
 })
 
 describe('SceneDetailModal — history 복원 시 메타 반영', () => {
+  it('Upscayl 실행 중에는 history 디스크 복원을 거부하고 원인을 알린다', async () => {
+    mockGetHistory.mockResolvedValue({
+      success: true,
+      histories: [{ filename: 'scene_1.png', engine: 'flow' }],
+    })
+    mockReadHistoryFile.mockResolvedValue({
+      success: true,
+      data: 'data:image/png;base64,history',
+      metadata: null,
+    })
+    const onUpdate = vi.fn()
+
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={onUpdate}
+        onClose={vi.fn()}
+        t={(key) => key}
+        projectName="proj"
+        upscaylRunning
+      />
+    )
+
+    await waitFor(() => expect(document.querySelector('.history-item')).toBeInTheDocument())
+    fireEvent.click(document.querySelector('.history-item'))
+
+    expect(mockRestoreFromHistory).not.toHaveBeenCalled()
+    expect(onUpdate).not.toHaveBeenCalled()
+    expect(mockToastWarning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
+  })
+
   it('history 복원은 크기/cachebuster를 새로 계산하고 Upscayl 표식을 지운다', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1800000000000)
     // history 1건 + metadata 포함
@@ -315,6 +347,54 @@ describe('SceneDetailModal — 이미지 삭제', () => {
       upscaledAt: null,
       upscaled_size: null,
     }))
+  })
+})
+
+describe('SceneDetailModal — Upscayl writer guard', () => {
+  it('Upscayl 실행 중 Save는 scene image snapshot을 쓰거나 모달을 닫지 않는다', () => {
+    const onUpdate = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={onUpdate}
+        onClose={onClose}
+        t={(key) => key}
+        projectName="proj"
+        upscaylRunning
+      />
+    )
+
+    fireEvent.click(screen.getByText('sceneDetail.save'))
+
+    expect(onUpdate).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(mockToastWarning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
+  })
+
+  it('Upscayl 실행 중 Regenerate는 선행 save·생성·close를 모두 거부한다', () => {
+    const onUpdate = vi.fn()
+    const onGenerate = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={onUpdate}
+        onClose={onClose}
+        onGenerate={onGenerate}
+        isGenerating={false}
+        t={(key) => key}
+        projectName="proj"
+        upscaylRunning
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /sceneDetail\.regenerate/ }))
+
+    expect(onUpdate).not.toHaveBeenCalled()
+    expect(onGenerate).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(mockToastWarning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
   })
 })
 

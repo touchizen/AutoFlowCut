@@ -202,6 +202,9 @@ describe('App Upscayl wiring', () => {
       expect(tag).toContain('upscaylBusy={upscaylBusy}')
       expect(tag).toContain('upscaylBusyTooltip={upscaylBusyTooltip}')
     }
+    expect(directSceneDetail).toContain('upscaylRunning={upscayl.running}')
+    expect(sceneListHost).toContain('upscaylRunning={upscayl.running}')
+    expect(nestedSceneDetail).toContain('upscaylRunning={upscaylRunning}')
   })
 
   it('Upscayl busy tooltip locale이 ko/en에 실제 문구로 존재한다', async () => {
@@ -215,19 +218,9 @@ describe('App Upscayl wiring', () => {
     expect(story).not.toContain('onUpscaleClick')
   })
 
-  it('배치·단일 씬·MCP 생성 진입점이 Upscayl 실행 상태를 busy로 공유한다', () => {
+  it('배치·단일 씬 생성 진입점이 Upscayl 실행 상태를 busy로 공유한다', () => {
     expect(app).toContain('upscaylRunning: upscayl.running,')
     expect(app).toContain('retryInFlight: videoRetryInFlightRef.current,\n      upscaylRunning: upscayl.running,')
-    // MCP stop/wait aggregate 는 isMcpRunning predicate 로 파생하되 upscayl.running 을 반영해야 한다.
-    // isMcpRunning({ ... }) 인자 블록만 추출([^}] = 첫 } 전까지)해 다른 predicate 의
-    // upscaylRunning 라인까지 매치하는 non-greedy 오탐을 막는다.
-    const mcpArgs = app.match(/isRunning: isMcpRunning\(\{([^}]*)\}\)/)?.[1] || ''
-    // 5 operand 전부 검증 — 하나라도 드롭되면 stop/wait aggregate 가 조용히 빠져 drift 재발.
-    expect(mcpArgs).toContain('isRunning,')
-    expect(mcpArgs).toContain('isSceneBatchQueued,')
-    expect(mcpArgs).toContain('videoRunning: videoAutomation.isRunning,')
-    expect(mcpArgs).toContain('refBatchRunning,')
-    expect(mcpArgs).toContain('upscaylRunning: upscayl.running,')
   })
 
   it('upscayl.blockedByUpscayl toast 키가 en/ko 로케일에 모두 존재한다', async () => {

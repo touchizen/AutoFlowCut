@@ -3,11 +3,19 @@ import fs from 'fs'
 import { writeFile, unlink } from 'fs/promises'
 import os from 'os'
 import path from 'path'
+import { createHash } from 'node:crypto'
 import { probeDurationMs as realProbe } from '../story/audioProbe.js'
 import { rawMediaExtension } from '../../src/exporters/mediaSignatures.js'
 
 // 파일명 안전화 — 한 곳에서만 정의(중복 방지).
 const sanitizeName = (s) => String(s).replace(/\W+/g, '_')
+
+function capDecodeTempName(name) {
+  if (name.length <= 160) return name
+  // source/scene 구분자가 잘려도 full 이름의 결정적 suffix가 남아 같은 job 내 충돌을 막는다.
+  const hash = createHash('sha256').update(name).digest('hex')
+  return `${name.slice(0, 160 - hash.length - 1)}_${hash}`
+}
 
 // data: URL 또는 raw base64 문자열을 임시 파일로 decode(main 소유). 파일 경로/http 는 null.
 function pickDataSpec(value) {
@@ -33,9 +41,9 @@ async function defaultDecodeDataUrl(spec, name) {
   // Buffer.from(base64) 는 잘못된 문자열도 조용히 0바이트로 만들 수 있어 쓰기 전에 닫는다.
   if (buf.length === 0) throw new Error(`render: decoded media is empty (${name})`)
   // 긴 sceneId/filename 조합이 파일명 컴포넌트 한도(대개 255)를 넘겨 ENAMETOOLONG 나는 걸 막는다.
-  // name 은 sanitizeName(\W+→_)을 거쳐 [A-Za-z0-9_] 뿐이라 surrogate 걱정 없이 앞부분(jobPrefix+
-  // sceneId 로 유일성 유지)만 남기고 자른다. 'render_' + name + '.' + ext 여유로 160자 캡.
-  const safeName = name.length > 160 ? name.slice(0, 160) : name
+  // name 은 sanitizeName(\W+→_)을 거쳐 [A-Za-z0-9_] 뿐이라 code-unit cap도 안전하다.
+  // 'render_' + name + '.' + ext 여유로 160자 캡.
+  const safeName = capDecodeTempName(name)
   const out = path.join(os.tmpdir(), `render_${safeName}.${ext}`)
   await writeFile(out, buf)
   return out

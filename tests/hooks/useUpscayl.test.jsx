@@ -49,6 +49,22 @@ afterEach(() => {
 })
 
 describe('useUpscayl 외부 busy guard', () => {
+  it('live running reader는 state commit과 무관하게 내부 latch를 읽는다', async () => {
+    const runGate = deferred()
+    const harness = setup({ run: vi.fn(() => runGate.promise) })
+
+    expect(harness.result.current.isRunningNow).toBeTypeOf('function')
+    expect(harness.result.current.isRunningNow()).toBe(false)
+
+    let batch
+    act(() => { batch = harness.result.current.startBatch() })
+    expect(harness.result.current.isRunningNow()).toBe(true)
+
+    runGate.resolve({ ok: false, error: 'stopped' })
+    await act(async () => { await batch })
+    expect(harness.result.current.isRunningNow()).toBe(false)
+  })
+
   it('외부가 busy면 target/path 캡처·state 변경·IPC 없이 busy를 반환한다', async () => {
     const readImagePath = vi.fn(() => '/project/scenes/scene_1.png')
     const guardedScene = {

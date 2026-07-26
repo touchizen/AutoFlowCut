@@ -31,6 +31,7 @@ export default function SceneDetailModal({
   onUpscaleClick,
   upscaylBusy = false,
   upscaylBusyTooltip,
+  upscaylRunning = false,
 }) {
   const [editData, setEditData] = useState({ ...scene })
   const [histories, setHistories] = useState([])
@@ -44,6 +45,11 @@ export default function SceneDetailModal({
   const [restoredMeta, setRestoredMeta] = useState(null)
   const { lang } = useI18n()
   const isKo = lang === 'ko'
+  const rejectUpscaylWrite = () => {
+    if (!upscaylRunning) return false
+    toast.warning(t('upscayl.blockedByUpscayl') || 'An upscale is running — try again after it finishes')
+    return true
+  }
 
   // scene prop이 변경되면 editData 업데이트 (재생성 완료 시).
   // image/imagePath/status 외에 메타 필드(seed, generatedAt, model, image_size, mediaId)도
@@ -118,6 +124,7 @@ export default function SceneDetailModal({
   // imagePath를 null로 두면 export 시 base64 fallback 브랜치를 타서 CapCut에
   // "media/image_scene_N.jpg" placeholder 경로가 박히고 → Media Not Found 발생.
   const handleRestoreHistory = async (historyItem) => {
+    if (rejectUpscaylWrite()) return
     if (!projectName || !scene.id) {
       toast.error(t('imageHistory.restoreFailed') || 'Restore failed')
       return
@@ -183,6 +190,7 @@ export default function SceneDetailModal({
   
   // 저장
   const handleSave = () => {
+    if (rejectUpscaylWrite()) return
     onUpdate(scene.id, editData)
     onClose()
   }
@@ -191,6 +199,7 @@ export default function SceneDetailModal({
   const handleRegenerate = () => {
     console.log('[SceneDetail] Regenerate clicked')
     if (!onGenerate) return
+    if (rejectUpscaylWrite()) return
     // Issue #4: 모달에서 편집한 내용(prompt/characters/style_tag 등)을 먼저 영속 — 재생성이 저장을
     //   안 하면 편집이 사라지고 모달을 다시 열면 옛 값이 보인다.
     if (onUpdate) onUpdate(scene.id, editData)

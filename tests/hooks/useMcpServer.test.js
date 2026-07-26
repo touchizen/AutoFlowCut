@@ -59,7 +59,63 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     delete window.__mcpStartBatch
     delete window.__mcpSetStyle
     delete window.__mcpExportCapcut
+    delete window.__mcpUpdateScene
     delete window.electronAPI
+  })
+
+  it('__mcpUpdateScene은 active Upscayl의 imagePath write를 busy로 거부한다', () => {
+    const setScenes = vi.fn()
+    const running = { current: false }
+    renderHook(() => useMcpServer(makeProps({
+      setScenes,
+      isUpscaylRunning: () => running.current,
+    })))
+    // React rerender 없이 내부 latch만 켜져도 HTTP dispatch 순간에 보여야 한다.
+    running.current = true
+
+    const result = window.__mcpUpdateScene?.({
+      type: 'update-scene',
+      index: 0,
+      fields: { imagePath: '/replacement.png' },
+    })
+
+    expect(result).toEqual({ success: false, error: 'busy' })
+    expect(setScenes).not.toHaveBeenCalled()
+  })
+
+  it('__mcpUpdateScene은 idle일 때 imagePath write와 기존 replacement patch를 적용한다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes, isUpscaylRunning: () => false })))
+
+    const result = window.__mcpUpdateScene?.({
+      type: 'update-scene',
+      index: 0,
+      fields: { imagePath: '/replacement.png' },
+    })
+
+    expect(result).toEqual({ success: true })
+    expect(setScenes).toHaveBeenCalledTimes(1)
+    const next = setScenes.mock.calls[0][0]([{
+      id: 'scene_1', imagePath: '/old.png', upscaledAt: 10, donePrompt: 'old',
+    }])
+    expect(next[0]).toMatchObject({
+      imagePath: '/replacement.png', upscaledAt: null, donePrompt: null,
+    })
+  })
+
+  it('__mcpUpdateScene은 active Upscayl이어도 subtitle 같은 비이미지 수정은 통과시킨다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes, isUpscaylRunning: () => true })))
+
+    const result = window.__mcpUpdateScene?.({
+      type: 'update-scene',
+      index: 0,
+      fields: { subtitle: 'kept working' },
+    })
+
+    expect(result).toEqual({ success: true })
+    const next = setScenes.mock.calls[0][0]([{ id: 'scene_1', subtitle: 'old' }])
+    expect(next[0]).toMatchObject({ subtitle: 'kept working' })
   })
 
   it('registers __mcpGenerateRef on mount', () => {

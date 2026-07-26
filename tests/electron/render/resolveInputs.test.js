@@ -235,6 +235,7 @@ describe('resolveAndValidateInputs', () => {
     try {
       const image = r.images.get('scene_1')
       expect(image).toMatch(/\.png$/)
+      expect(path.basename(image)).toBe('render_image_png_regression_scene_1_s1_png.png')
       expect(fs.readFileSync(image)).toEqual(Buffer.from([1, 2, 3, 4]))
     } finally {
       await Promise.all(r.tempFiles.map((file) => fs.promises.unlink(file).catch(() => {})))
@@ -302,5 +303,55 @@ describe('resolveAndValidateInputs', () => {
     const decodeDataUrl = async (_spec, name) => { seen.push(name); return `/tmp/${name}.png` }
     await resolveAndValidateInputs(p, { ...deps(['/sfx1.wav', '/nar.mp3']), decodeDataUrl, jobId: 'render_Proj_7' })
     expect(seen[0]).toMatch(/^render_Proj_7_/)
+  })
+
+  it('160자 cap 뒤 source가 달라도 결정적인 distinct temp path를 만든다', async () => {
+    const p = prepared()
+    const longSceneId = `scene_${'a'.repeat(190)}`
+    p.renderVideoSegments = [
+      { sceneId: longSceneId, source: 'i2v', inSec: 0, outSec: 1 },
+      { sceneId: longSceneId, source: 't2v', inSec: 0, outSec: 1 },
+    ]
+    p.mediaFiles = [
+      p.mediaFiles[0],
+      {
+        sceneId: longSceneId,
+        type: 'video',
+        source: 'i2v',
+        filename: 'clip.mp4',
+        path: 'data:video/mp4;base64,AQIDBA==',
+      },
+      {
+        sceneId: longSceneId,
+        type: 'video',
+        source: 't2v',
+        filename: 'clip.mp4',
+        path: 'data:video/mp4;base64,BQYHCA==',
+      },
+    ]
+    const options = {
+      existsSync: (value) => ['/img1.png', '/sfx1.wav', '/nar.mp3'].includes(value),
+      probeDurationMs: async () => 30000,
+      jobId: 'long_source_collision',
+    }
+    const tempPaths = new Set()
+
+    try {
+      const first = await resolveAndValidateInputs(p, options)
+      first.tempFiles.forEach(file => tempPaths.add(file))
+      const firstI2v = first.videos.get(`${longSceneId}:i2v`)
+      const firstT2v = first.videos.get(`${longSceneId}:t2v`)
+
+      expect(firstI2v).not.toBe(firstT2v)
+      expect(fs.readFileSync(firstI2v)).toEqual(Buffer.from([1, 2, 3, 4]))
+      expect(fs.readFileSync(firstT2v)).toEqual(Buffer.from([5, 6, 7, 8]))
+
+      const second = await resolveAndValidateInputs(p, options)
+      second.tempFiles.forEach(file => tempPaths.add(file))
+      expect(second.videos.get(`${longSceneId}:i2v`)).toBe(firstI2v)
+      expect(second.videos.get(`${longSceneId}:t2v`)).toBe(firstT2v)
+    } finally {
+      await Promise.all([...tempPaths].map(file => fs.promises.unlink(file).catch(() => {})))
+    }
   })
 })

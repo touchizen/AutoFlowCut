@@ -45,3 +45,26 @@ export async function handleExportPremiereTool(args = {}, fetcher) {
   const res = await fetcher(port, 'POST', '/api/export-premiere')
   return exportPremiereToolResponse(res)
 }
+
+export function updateSceneToolResponse(res, args = {}) {
+  if (isFailedAppResponse(res)) {
+    return {
+      content: [{ type: 'text', text: `씬 [${args.index}] 수정 실패 (${res?.status ?? 'unknown'}): ${getAppResponseError(res)}` }],
+      isError: true,
+    }
+  }
+
+  return {
+    content: [{ type: 'text', text: `씬 [${args.index}] 수정 완료: ${JSON.stringify(args.fields)}` }],
+  }
+}
+
+export async function handleUpdateSceneTool(args = {}, fetcher) {
+  const port = args.port || 3210
+  const res = await fetcher(port, 'POST', '/api/update', {
+    type: 'update-scene',
+    index: args.index,
+    fields: args.fields,
+  })
+  return updateSceneToolResponse(res, args)
+}

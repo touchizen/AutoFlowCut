@@ -34,6 +34,7 @@ export function useUpscayl({
   const [state, setState] = useState(INITIAL_STATE)
   const runningRef = useRef(false)
   const cancelledRef = useRef(false)
+  const isRunningNow = useCallback(() => runningRef.current, [])
   // App이 최신 busy predicate를 넘겨도 startBatch는 stale closure 없이 현재 함수를 읽는다.
   const isBusyRef = useRef(isBusy)
   isBusyRef.current = isBusy
@@ -173,5 +174,5 @@ export function useUpscayl({
     }
   }, [scenes, updateScene, projectNameRef, saveImage, options.model, options.scale])
 
-  return { ...state, scenes, startBatch, cancel }
+  return { ...state, scenes, startBatch, cancel, isRunningNow }
 }

@@ -8,6 +8,9 @@ const appMocks = vi.hoisted(() => {
   const loadEpochRef = { current: 0 }
   const state = {
     mode: 'api',
+    automationRunning: false,
+    videoRunning: false,
+    upscaylRunning: false,
     generatingSceneId: null,
     preparingRefs: false,
     refBatchActive: false,
@@ -260,7 +263,7 @@ vi.mock('../../src/hooks/useGenerationQueue', () => ({
 }))
 vi.mock('../../src/hooks/useAutomation', () => ({
   useAutomation: () => ({
-    isRunning: false,
+    isRunning: appMocks.state.automationRunning,
     isPaused: false,
     isStopping: false,
     isSceneBatchQueued: appMocks.state.isSceneBatchQueued,
@@ -276,7 +279,7 @@ vi.mock('../../src/hooks/useAutomation', () => ({
 }))
 vi.mock('../../src/hooks/useVideoAutomation', () => ({
   useVideoAutomation: () => ({
-    isRunning: false,
+    isRunning: appMocks.state.videoRunning,
     isPaused: false,
     progress: 0,
     status: 'idle',
@@ -285,6 +288,25 @@ vi.mock('../../src/hooks/useVideoAutomation', () => ({
     togglePause: appMocks.noop,
     stop: appMocks.noop,
     retryErrors: appMocks.noop,
+  }),
+}))
+vi.mock('../../src/hooks/useUpscayl', () => ({
+  useUpscayl: ({ scenes }) => ({
+    running: appMocks.state.upscaylRunning,
+    current: 0,
+    currentSceneId: null,
+    total: 0,
+    completed: 0,
+    failures: [],
+    skipped: 0,
+    cancelled: false,
+    stopped: false,
+    startedAt: null,
+    durationMs: null,
+    scenes,
+    startBatch: appMocks.asyncNoop,
+    cancel: appMocks.asyncNoop,
+    isRunningNow: () => appMocks.state.upscaylRunning,
   }),
 }))
 vi.mock('../../src/hooks/useMenuActions', () => ({
@@ -420,6 +442,9 @@ describe('App prompt busyLines wiring', () => {
     cleanup()
     appMocks.state.generatingSceneId = null
     appMocks.state.mode = 'api'
+    appMocks.state.automationRunning = false
+    appMocks.state.videoRunning = false
+    appMocks.state.upscaylRunning = false
     appMocks.loadEpochRef.current = 0
     appMocks.state.preparingRefs = false
     appMocks.state.refBatchActive = false
@@ -900,6 +925,28 @@ describe('App prompt busyLines wiring', () => {
 
     expect(appMocks.state.mcpProps.automationState.isSceneBatchQueued).toBe(true)
     expect(appMocks.state.mcpProps.isRunning).toBe(true)
+  })
+
+  it.each([
+    ['scene running', () => { appMocks.state.automationRunning = true }],
+    ['scene queued', () => { appMocks.state.isSceneBatchQueued = true }],
+    ['video running', () => { appMocks.state.videoRunning = true }],
+    ['reference running', () => { appMocks.state.refBatchActive = true }],
+    ['Upscayl running', () => { appMocks.state.upscaylRunning = true }],
+  ])('MCP running aggregate는 %s 단독 신호도 runtime에서 보존한다', (_label, activate) => {
+    activate()
+    render(<App />)
+
+    expect(appMocks.state.mcpProps.isRunning).toBe(true)
+    if (appMocks.state.upscaylRunning) {
+      expect(appMocks.state.mcpProps.isUpscaylRunning()).toBe(true)
+    }
+  })
+
+  it('MCP running aggregate는 다섯 신호가 모두 idle이면 false다', () => {
+    render(<App />)
+
+    expect(appMocks.state.mcpProps.isRunning).toBe(false)
   })
 
   it('개별 씬 생성 중 신호를 네이티브 프로젝트 메뉴의 busy로 전달한다', () => {

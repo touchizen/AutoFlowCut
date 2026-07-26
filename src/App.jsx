@@ -933,7 +933,8 @@ function App() {
     isAuthenticated,
     () => setShowAuthModal(true),
     subscription?.status,   // #5/#8: loading/error 상태 전달 — 미확인 subscription 에서 진행 금지
-    refreshSubscription     // #6: consume 성공 시 1회 refresh (stale 방지)
+    refreshSubscription,    // #6: consume 성공 시 1회 refresh (stale 방지)
+    upscayl.isRunningNow,   // commit 전 시작도 배치 dispatch가 live latch로 차단
   )
 
   // 비디오 자동화 — 동일 이유로 useProjectData 이후 선언.
@@ -2149,6 +2150,7 @@ function App() {
     automationState: { isRunning, isSceneBatchQueued, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
     refBatchRunning,
+    isUpscaylRunning: upscayl.isRunningNow,
     isRunning: isMcpRunning({
       isRunning,
       isSceneBatchQueued,
@@ -2507,6 +2509,7 @@ function App() {
               onUpscaleClick={openUpscayl}
               upscaylBusy={upscaylBusy}
               upscaylBusyTooltip={upscaylBusyTooltip}
+              upscaylRunning={upscayl.running}
             />
           )}
           {activeTab === 'audio' && (
@@ -2975,6 +2978,7 @@ function App() {
           onUpscaleClick={openUpscayl}
           upscaylBusy={upscaylBusy}
           upscaylBusyTooltip={upscaylBusyTooltip}
+          upscaylRunning={upscayl.running}
         />
       )}
 

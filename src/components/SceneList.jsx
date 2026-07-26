@@ -410,6 +410,7 @@ export default function SceneList({
   onUpscaleClick,
   upscaylBusy = false,
   upscaylBusyTooltip,
+  upscaylRunning = false,
 }) {
   const { t } = useI18n()
   const [detailModal, setDetailModal] = useState({ open: false, scene: null })
@@ -704,6 +705,7 @@ export default function SceneList({
           onUpscaleClick={onUpscaleClick}
           upscaylBusy={upscaylBusy}
           upscaylBusyTooltip={upscaylBusyTooltip}
+          upscaylRunning={upscaylRunning}
         />
       )}
 

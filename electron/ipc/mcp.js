@@ -10,6 +10,37 @@ import { app } from 'electron'
 
 const MCP_NAME = 'autoflowcut'
 
+const isSceneImageWrite = (data) => data?.type === 'update-scene' && !!data.fields && (
+  Object.prototype.hasOwnProperty.call(data.fields, 'image') ||
+  Object.prototype.hasOwnProperty.call(data.fields, 'imagePath')
+)
+
+export async function dispatchMcpUpdate(webContents, data) {
+  // 비이미지 수정은 기존 fire-and-forget IPC 경로를 보존한다.
+  if (!isSceneImageWrite(data)) {
+    webContents.send('mcp-update', data)
+    return { status: 200, body: { success: true } }
+  }
+
+  // JSON을 JS 식에 넣을 때 U+2028/U+2029도 escape해 사용자 필드가 script를 깨지 않게 한다.
+  const payload = JSON.stringify(data)
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+  const script = `JSON.stringify(window.__mcpUpdateScene?.(${payload}) ?? { success: false, error: 'handler-unavailable' })`
+
+  try {
+    const raw = await webContents.executeJavaScript(script)
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (result?.success) return { status: 200, body: result }
+    return {
+      status: result?.error === 'busy' ? 409 : 503,
+      body: { success: false, error: result?.error || 'handler-unavailable' },
+    }
+  } catch (error) {
+    return { status: 503, body: { success: false, error: error?.message || 'renderer-unavailable' } }
+  }
+}
+
 function getClaudeConfigPath() {
   return path.join(os.homedir(), '.claude.json')
 }
