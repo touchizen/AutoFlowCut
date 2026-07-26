@@ -219,8 +219,11 @@ describe('App Upscayl wiring', () => {
     expect(app).toContain('upscaylRunning: upscayl.running,')
     expect(app).toContain('retryInFlight: videoRetryInFlightRef.current,\n      upscaylRunning: upscayl.running,')
     // MCP stop/wait aggregate 는 isMcpRunning predicate 로 파생하되 upscayl.running 을 반영해야 한다.
-    expect(app).toContain('isRunning: isMcpRunning({')
-    expect(app).toMatch(/isMcpRunning\(\{[\s\S]*?upscaylRunning: upscayl\.running,[\s\S]*?\}\)/)
+    // isMcpRunning({ ... }) 인자 블록만 추출([^}] = 첫 } 전까지)해 다른 predicate 의
+    // upscaylRunning 라인까지 매치하는 non-greedy 오탐을 막는다.
+    const mcpArgs = app.match(/isRunning: isMcpRunning\(\{([^}]*)\}\)/)?.[1] || ''
+    expect(mcpArgs).toContain('upscaylRunning: upscayl.running,')
+    expect(mcpArgs).toContain('isSceneBatchQueued,')
   })
 
   it('두 이미지 Results clear 경로가 Upscayl 메타데이터까지 초기화한다', () => {
