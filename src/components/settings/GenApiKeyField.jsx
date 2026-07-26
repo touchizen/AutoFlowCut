@@ -14,13 +14,15 @@ export default function GenApiKeyField({
   getKeyUrl,
   extraNote,
   validateOnSave = true,
-  savedToastKey = 'settings.apiKeySaved',
+  savedToastKey,
   t,
 }) {
   const { byProvider, encryptionAvailable, loading, validateKey, saveKey, clearKey } = useApiKey()
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
   const hasKey = !!byProvider?.[provider]
+  const resolvedSavedToastKey = savedToastKey
+    ?? (validateOnSave ? 'settings.apiKeySaved' : 'settings.apiKeySavedUnverified')
 
   const onSave = async () => {
     const candidate = keyInput.trim()
@@ -43,7 +45,7 @@ export default function GenApiKeyField({
     setBusy(false)
     if (result?.success) {
       setKeyInput('')
-      toast.success(t(savedToastKey))
+      toast.success(t(resolvedSavedToastKey))
     } else {
       toast.error(t('settings.apiKeySaveFailed', { error: result?.error || '' }))
     }

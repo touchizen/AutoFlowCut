@@ -46,8 +46,8 @@ describe('GenApiKeyField', () => {
     clearKey.mockResolvedValue({ success: true })
   })
 
-  it('validated OpenAI save uses the verified message', async () => {
-    renderField()
+  it('validateOnSave=true uses the verified message', async () => {
+    renderField({ validateOnSave: true })
     const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"OpenAI"}')
 
     fireEvent.change(input, { target: { value: '  sk-openai  ' } })
@@ -77,12 +77,11 @@ describe('GenApiKeyField', () => {
     expect(toast.error).toHaveBeenCalledWith('settings.apiKeyInvalid:{"error":"bad key"}')
   })
 
-  it('unvalidated fal save uses the shared unverified message', async () => {
+  it('validateOnSave=false without savedToastKey uses the unverified message', async () => {
     renderField({
       provider: 'fal',
       label: 'fal.ai',
       validateOnSave: false,
-      savedToastKey: 'settings.apiKeySavedUnverified',
     })
     const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"fal.ai"}')
 

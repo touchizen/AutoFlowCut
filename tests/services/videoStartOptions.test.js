@@ -23,7 +23,7 @@ function expectedSharedOptions(settings) {
     concurrency: settings.videoConcurrency || 4,
     flowPacingMinMs: settings.flowPacingMinMs,
     flowPacingMaxMs: settings.flowPacingMaxMs,
-    aspectRatio: settings.aspectRatio,
+    aspectRatio: settings.aspectRatio || '16:9',
   }
 }
 
@@ -56,8 +56,17 @@ describe('sharedVideoStartOptions', () => {
       concurrency: 4,
       flowPacingMinMs: undefined,
       flowPacingMaxMs: undefined,
-      aspectRatio: undefined,
+      aspectRatio: '16:9',
     })
+  })
+
+  it.each([
+    ['empty settings', {}, '16:9'],
+    ['empty aspect ratio', { aspectRatio: '' }, '16:9'],
+    ['portrait aspect ratio', { aspectRatio: '9:16' }, '9:16'],
+    ['landscape aspect ratio', { aspectRatio: '16:9' }, '16:9'],
+  ])('%s uses a Flow-mappable aspect ratio', (_case, settings, expected) => {
+    expect(sharedVideoStartOptions(settings).aspectRatio).toBe(expected)
   })
 
   it.each([

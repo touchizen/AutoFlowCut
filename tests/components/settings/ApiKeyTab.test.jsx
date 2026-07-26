@@ -131,6 +131,9 @@ describe('ApiKeyTab (consolidated list)', () => {
       'wavespeed',
       'higgsfield',
     ])
+    for (const provider of GENERATION_API_KEY_PROVIDERS) {
+      expect(provider).not.toHaveProperty('provisional')
+    }
   })
 
   it('renders Gemini and every configured generation provider (anti-drift)', () => {
@@ -191,7 +194,32 @@ describe('ApiKeyTab (consolidated list)', () => {
     },
   )
 
-  it('fal saves without no-op validation and uses the shared unverified message', async () => {
+  it.each(GENERATION_API_KEY_PROVIDERS.filter(({ validateOnSave }) => validateOnSave === false))(
+    'every validateOnSave:false provider structurally renders the unverified save toast without an override ($id)',
+    async (provider) => {
+      expect(provider).not.toHaveProperty('savedToastKey')
+
+      render(<ApiKeyTab t={t} />)
+      const input = screen.getByPlaceholderText(`settings.ttsKeyPlaceholder:{"label":"${provider.label}"}`)
+      const key = `${provider.id}-key`
+      let candidate = key
+
+      fireEvent.change(input, { target: { value: key } })
+      if (provider.credentialType === 'key-secret') {
+        const secretInput = screen.getByPlaceholderText('settings.higgsfieldSecretPlaceholder')
+        fireEvent.change(secretInput, { target: { value: `${provider.id}-secret` } })
+        candidate = `${key}:${provider.id}-secret`
+      }
+      fireEvent.click(saveButtonFor(input))
+
+      await vi.waitFor(() => expect(saveKeyGenai).toHaveBeenCalledWith(candidate, provider.id))
+      expect(validateKey).not.toHaveBeenCalled()
+      expect(toast.success).toHaveBeenCalledWith('settings.apiKeySavedUnverified')
+      expect(toast.success).not.toHaveBeenCalledWith('settings.apiKeySaved')
+    },
+  )
+
+  it('fal saves without no-op validation', async () => {
     render(<ApiKeyTab t={t} />)
     const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"fal.ai"}')
 
@@ -200,8 +228,6 @@ describe('ApiKeyTab (consolidated list)', () => {
 
     await vi.waitFor(() => expect(saveKeyGenai).toHaveBeenCalledWith('fal-secret', 'fal'))
     expect(validateKey).not.toHaveBeenCalled()
-    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySavedUnverified')
-    expect(toast.success).not.toHaveBeenCalledWith('settings.apiKeySaved')
   })
 
   it('combines Higgsfield key and secret as key:secret for validation and storage', async () => {

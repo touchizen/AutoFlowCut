@@ -246,7 +246,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       videoModel,
       videoProvider = 'google',
       generationSettings: suppliedGenerationSettings = null,
-      aspectRatio = 'VIDEO_ASPECT_RATIO_LANDSCAPE',
+      aspectRatio = '16:9',
       duration = 8,
       videoBatchCount = 1,
       seed = null,

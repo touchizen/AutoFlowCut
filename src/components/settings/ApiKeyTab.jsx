@@ -12,7 +12,6 @@ export const GENERATION_API_KEY_PROVIDERS = [
     id: 'openai',
     label: 'OpenAI',
     url: 'https://platform.openai.com/api-keys',
-    provisional: false,
     validateOnSave: true,
     noteKey: 'settings.openaiKeyNote',
   },
@@ -20,7 +19,6 @@ export const GENERATION_API_KEY_PROVIDERS = [
     id: 'grok',
     label: 'Grok (xAI)',
     url: 'https://console.x.ai/',
-    provisional: true,
     validateOnSave: true,
     noteKey: 'settings.grokKeyNote',
   },
@@ -28,9 +26,7 @@ export const GENERATION_API_KEY_PROVIDERS = [
     id: 'fal',
     label: 'fal.ai',
     url: 'https://fal.ai/dashboard/keys',
-    provisional: true,
     validateOnSave: false,
-    savedToastKey: 'settings.apiKeySavedUnverified',
     noteKey: 'settings.falKeyNote',
   },
   {
@@ -38,7 +34,6 @@ export const GENERATION_API_KEY_PROVIDERS = [
     label: 'WaveSpeed',
     // PROVISIONAL — re-verify the exact WaveSpeed key-management URL with the M5 real-key smoke.
     url: 'https://wavespeed.ai/dashboard/api-keys',
-    provisional: true,
     validateOnSave: true,
     noteKey: 'settings.wavespeedKeyNote',
   },
@@ -47,7 +42,6 @@ export const GENERATION_API_KEY_PROVIDERS = [
     label: 'Higgsfield',
     // PROVISIONAL — re-verify the exact Higgsfield credential-management URL with the M6 real-key smoke.
     url: 'https://platform.higgsfield.ai/',
-    provisional: true,
     validateOnSave: true,
     credentialType: 'key-secret',
     noteKey: 'settings.higgsfieldKeyNote',

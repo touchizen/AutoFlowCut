@@ -21,6 +21,9 @@ export default function HiggsfieldApiKeyField({
   const [secretInput, setSecretInput] = useState('')
   const [busy, setBusy] = useState(false)
   const hasKey = !!byProvider?.[provider]
+  const savedToastKey = validateOnSave
+    ? 'settings.apiKeySaved'
+    : 'settings.apiKeySavedUnverified'
 
   const onSave = async () => {
     const key = keyInput.trim()
@@ -46,7 +49,7 @@ export default function HiggsfieldApiKeyField({
     if (result?.success) {
       setKeyInput('')
       setSecretInput('')
-      toast.success(t('settings.apiKeySaved'))
+      toast.success(t(savedToastKey))
     } else {
       toast.error(t('settings.apiKeySaveFailed', { error: result?.error || '' }))
     }

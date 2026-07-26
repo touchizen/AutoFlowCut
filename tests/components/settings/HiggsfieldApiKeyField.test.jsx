@@ -69,4 +69,25 @@ describe('HiggsfieldApiKeyField', () => {
     await vi.waitFor(() => expect(sharedFieldProps.current.keyInput).toBe(''))
     expect(sharedFieldProps.current.secondaryInput.value).toBe('')
   })
+
+  it('validateOnSave=false uses the unverified save toast', async () => {
+    render(
+      <HiggsfieldApiKeyField
+        provider="higgsfield"
+        label="Higgsfield"
+        getKeyUrl="https://platform.higgsfield.ai/"
+        validateOnSave={false}
+        t={t}
+      />,
+    )
+
+    act(() => sharedFieldProps.current.onKeyInput('hf-key'))
+    act(() => sharedFieldProps.current.secondaryInput.onChange('hf-secret'))
+    fireEvent.click(screen.getByTestId('shared-api-key-field'))
+
+    await vi.waitFor(() => expect(saveKey).toHaveBeenCalledWith('hf-key:hf-secret', 'higgsfield'))
+    expect(validateKey).not.toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySavedUnverified')
+    expect(toast.success).not.toHaveBeenCalledWith('settings.apiKeySaved')
+  })
 })
