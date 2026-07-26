@@ -123,6 +123,30 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
     expect(screen.getByText('Typecast')).toBeTruthy()
   })
 
+  // 4차 머지 리뷰(Codex High): 키 저장 후 이어지는 retry가 start 거절(fixed-scenes-stale 등)을
+  // 삼키면 안 된다. 직접 경로는 결과를 보고 토스트하지만, 게이트→저장→retry의 지연 경로가 bare
+  // start를 다시 돌리며 결과를 버려 "토스트 0"이던 회귀를 잡는다(직접·지연 경로 단일 오너).
+  it('키 저장 후 retry한 실행이 start 거절을 반환하면 조용히 넘어가지 않는다', async () => {
+    const start = vi.fn().mockResolvedValue({ error: 'fixed-scenes-stale' })
+    const onReloadVoices = vi.fn(async () => {})
+    const audioPreflight = vi.fn()
+      .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }], encryptionAvailable: true })
+      .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'resolved-store' }], encryptionAvailable: true })
+    mockSaveKey.mockResolvedValue({ success: true })
+
+    renderStory(pipeline({ start, audioPreflight }), { onReloadVoices })
+    goToAudioAndRun()
+    await screen.findByText('Typecast')
+    expect(start).not.toHaveBeenCalled()
+
+    const input = document.querySelector('.audio-key-gate input[type="password"]')
+    fireEvent.change(input, { target: { value: 'sk-abc' } })
+    fireEvent.click(screen.getByRole('button', { name: /저장|Save/i }))
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
+    expect(await screen.findByText(/fixed-scenes-stale/)).toBeTruthy()
+  })
+
   // Finding3(리뷰): 세그먼트 단건 "테스트"도 배치 실행과 같은 preflight 게이트를 거쳐야 한다 —
   // 안 거치면 missing key일 때 ttsPreview의 IPC 거절이 errorKind 없는 raw 토스트로 샌다.
   it('세그먼트 "테스트"도 preflight를 거친다 — missing 키면 ttsPreview를 안 부르고 게이트 카드를 보여준다', async () => {

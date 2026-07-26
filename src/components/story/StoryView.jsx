@@ -517,6 +517,22 @@ export default function StoryView({
     return res
   }
 
+  // 진행(primary) 오디오 실행의 결과 토스트 — 단일 오너. 직접 경로와 게이트→키저장→retry의 지연
+  // 경로가 이 하나를 공유한다(지연 경로가 결과를 버려 거절 토스트가 0회이던 4차 머지 회귀 방지).
+  // primary는 runStep이 아니라 bare start를 쓰므로 모든 거절을 여기서 표면화한다(preflight 센티넬만
+  // 제외 — 그건 runAudioWithPreflight가 게이트 카드로 처리한다).
+  const toastAudioResult = (result) => {
+    if (!result?.error || result.error === 'preflight-missing-key') return
+    toast.error(result.error === 'busy'
+      ? t('story.audio.busyRetry', 'Another task is running. Try again in a moment.')
+      : errorText(result.error, result.error))
+  }
+  const runAudioStep = async (params) => {
+    const res = await start('audio', params)
+    toastAudioResult(res)
+    return res
+  }
+
   const [autoRunning, setAutoRunning] = useState(false)
   // script 패널(대본 스트리밍/편집기·중단)은 "지금 진행 스텝(currentStep)"이 아니라 "script 스텝 자체"의
   // running 여부로 판단해야 한다 — 안 그러면 scenes/prompts running 중 대본 탭에서 빈 스트리밍이 뜬다(F2재검토).
@@ -1511,16 +1527,12 @@ export default function StoryView({
         //   미루면 몇 분 뒤 사용자가 보던 다른 탭에서 갑자기 끌려나온다.
         setScriptPhase(null)
         setViewedStep(null)
-        const result = await runAudioWithPreflight(buildStepParams(currentStep), (p) => start('audio', p))
+        // runAudioStep이 결과를 스스로 토스트한다 — runAudioWithPreflight가 store하는 retry도
+        // 같은 콜백이라 키저장 후 지연 실행의 거절까지 표면화된다(직접·지연 경로 단일 오너).
+        const result = await runAudioWithPreflight(buildStepParams(currentStep), runAudioStep)
         if (result?.error === 'preflight-missing-key') {
           // 게이트 카드는 오디오 패널 안에 있다 — 다른 화면으로 넘기면 안내를 못 본다.
           setViewedStep('audio')
-          return
-        }
-        if (result?.error) {
-          toast.error(result.error === 'busy'
-            ? t('story.audio.busyRetry', 'Another task is running. Try again in a moment.')
-            : errorText(result.error, result.error))
         }
         return
       }
