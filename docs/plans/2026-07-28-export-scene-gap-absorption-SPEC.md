@@ -1,6 +1,29 @@
 # 스펙 — 내보내기: 씬 사이 간격을 앞 씬에 흡수 (2026-07-28)
 
-상태: **v7 — 라운드 5 반영 완료, 라운드 6(확인용) 대기** (구현 착수 전)
+상태: **v8 — 라운드 6 반영 완료, 라운드 7 대기** (구현 착수 전)
+
+> v8 변경 (라운드 6 — Codex NO-GO 6 건 / Fable CONDITIONAL GO 5 건. **정면 충돌 1 건을 코드로 판정**):
+> ① **`boundaryOf` 옵션 폐기**(§4.5). Codex F1 은 "기존 R13 계약은 `scene.duration` 이고 픽스처가
+> `duration 3 / end−start 5` 라 `boundaryOf` 가 클램프를 없앤다", Fable F3 는 "라이브 경로는 항상
+> `duration === endTime − startTime` 이라 무해" 로 **정반대**였다. 실측 판정: **Fable 이 사실 관계에서
+> 맞고**(`SceneList.jsx:136-139`, `useScenes.js:303-306`, `parsers.js:325-327` 세 writer 모두 둘을 함께
+> 갱신), **Codex 가 결론에서 맞다**(그러므로 `boundaryOf` 는 디폴트와 동어반복이고 R13 계약만
+> 흐트러뜨린다). → **경계 `:162-164` 를 아예 안 건드린다.** 라운드 5 ①의 진짜 수정은
+> "경계에 `durationOf` 를 쓰지 않는 것" 이었다. 부수 효과로 "호출부가 `boundaryOf` 를 빠뜨리는"
+> 뮤턴트(23 개를 전부 통과하던 것 — Codex #2)가 **존재 자체를 안 하게** 된다.
+> ② **클립 상한을 `slot − srcOff` → `source_duration`** 으로(§4.2, Codex #3). v7 상한은
+> **긴 영상만 무음 간격을 덮게** 해서 §4.2 자기 원칙("오버레이가 간격까지 늘어나면 안 된다")과
+> 모순이었다. `min(video, srcDur)` 는 현행과 **바이트 동일**이기도 하다. 뮤테이션 #7·#19 방향 반전,
+> #22 를 짧은/긴 두 분기(#22·#22b)로 분리.
+> ③ **누적 지점이 셋이다**(Fable F1). `srtTrack.js:154-157` 의 **빈-라인 분기**가 v7 이 핀한
+> `:178-183` 밖에 있고 `parsers.js:301` 로 도달 가능 → 사이드카에서 drift 부활. 뮤테이션 #24 신설.
+> ④ **뮤테이션 #21 은 ①마지막-씬-shrink 픽스처로 못 죽는다**(Fable F2, 등가 뮤턴트) →
+> **②CSV 교차 라인**을 필수로, ①은 #20 전용으로 각각 핀.
+> ⑤ **`reason` 리터럴 4 → 5**(Fable F5, `endTime <= startTime` 에 배정이 없었다).
+> ⑥ **`console.warn` 이 여전히 paper claim** 이었다(Codex #4, 라운드 4 지적이 미반영) → §7.2 단언 + §8 행.
+> ⑦ 문서 정정: §3 앵커 `:1109` → **`:1108`**(두 리뷰어 일치), §3.1 "네 곳/6 개" 오락가락 → **6 개**로 통일,
+> §4.7 반쪽 정정 마무리, §4.5 의 "경계는 `start_{i+1}`" 은 **v6 잔재라 산술이 틀렸다**(자체 발견 —
+> v8 에서 경계는 `endTime_i` 이고 `endTime_i ≤ start_{i+1}` 이라 R13 목적은 더 강하게 달성된다).
 
 > v7 변경 (라운드 5 — 두 리뷰어가 같은 두 건에 수렴 + Codex 1 건 추가):
 > ① **누적 길이와 클램프 경계를 분리한다.** v6 은 `durationOf` 하나를 `rebaseSrtTrackToScenes` 의
@@ -199,12 +222,11 @@
 당겨붙이고, 그 누적이 정확히 이번 사건의 drift 다. 현행 버그는 "간격을 잘못 처리한 것"이 아니라
 **"간격을 처리하지 않은 것"** 이다.
 
-**실험 부산물(구현 시 유의)**: CapCut 드래프트는 같은 JSON 을 **네 곳**에 들고 있다 —
-`draft_info.json`, `Timelines/<UUID>/draft_info.json`, `.../template-2.tmp`, `.../draft_info.json.bak`.
-정확히는 **6 개 파일**이다 — 위 넷에 더해 `.bak` 이 두 벌(root/timeline). 내용이 동일한 짝은
-`draft_info.json` ×2, `template-2.tmp` ×2, `.bak` ×2 이다.
+**실험 부산물(구현 시 유의)**: CapCut 드래프트는 같은 JSON 을 **6 개 파일**에 들고 있다 —
+`draft_info.json` ×2 (root + `Timelines/<UUID>/`), `template-2.tmp` ×2, `.bak` ×2.
 첫 시도에서 위쪽 하나만 고쳐 실험이 무효가 됐다. 이 스펙은 **요청(request)** 을 고치므로 해당
-없지만, 나중에 드래프트 후처리를 검토한다면 반드시 네 곳을 맞춰야 한다.
+없지만, 나중에 드래프트 후처리를 검토한다면 반드시 **여섯 곳 전부**를 맞춰야 한다.
+(v7 은 같은 문단에서 "네 곳"→"6 개"→"네 곳"으로 오락가락했다 — 라운드 6 Codex #7.)
 
 **프리미어는 구멍을 지원한다** — 이론상 프리미어만 (a) 가 가능하지만, 같은 프로젝트가 포맷마다
 다른 타임라인이 되고 작업량이 두 배다. 평균 간격 0.39 s 대비 **일관성이 더 값지다** → 세 포맷 모두 (b).
@@ -213,7 +235,9 @@
 `cum(i) = start_i` 가 되어 **모든 씬이 자기 `startTime` 에 정확히 시작한다. drift = 0.**
 (a) 와 (b) 는 씬 시작 시각이 한 프레임도 다르지 않다 — 차이는 **간격에 무엇이 보이는가** 뿐이다.
 (a) 가 추가로 어려운 이유는 오직 하나: GCF 에 **씬별 시작 시각 입력이 없다**
-(`whisk2capcut/functions/index.suffixed.js:1109` 이 `currentTimeUs2 += durationUs` 로 누적만 한다)
+(`whisk2capcut/functions/index.suffixed.js:1108` 이 `currentTimeUs2 += durationUs` 로 누적만 한다.
+`:1109` 는 `totalDuration += durationUs` 다 — v7 은 여기서 앵커가 한 줄 어긋나 있었다,
+라운드 6 두 리뷰어 일치)
 → 두 GCF 에 필드와 배치 로직을 새로 넣어야 한다. (b) 는 앱 한 곳으로 같은 결과를 얻는다.
 
 **핵심 성질 2 — 간격 없는 프로젝트에선 no-op.** `next.startTime - startTime === duration` 이므로
@@ -311,19 +335,42 @@ capcut GCF 의 `Math.round(overlay.durationMs * 1000)`(`index.suffixed.js:1160`,
 
 | 줄 | 표현식 | 쓰는 값 | 이유 |
 |---|---|---|---|
-| `:178` | `Math.min(videoDuration, ???)` | **`slot − source_offset`** | 영상이 슬롯을 넘으면 안 된다. **`slot` 만 쓰면 offset 만큼 다음 씬을 덮는다** — v4 가 만든 회귀(라운드 4 두 리뷰어 일치) |
+| `:178` | `Math.min(videoDuration, ???)` | **`source_duration`** (= 캡 적용 후의 `srcDur`) | 오버레이는 **발화 구간만** 덮는다. v7 의 `slot − source_offset` 은 **긴 영상이 무음 간격까지 덮게 해 §4.2 자기 원칙과 모순**이었다(라운드 6 Codex #3) — 아래 참고 |
 | `:179` | `videoDuration < ???` | **`source_duration`** | "짧은가"의 기준은 발화 구간 |
 | `:180` | `cumulativeTime + ??? + (??? - videoDuration)` | **`source_offset`** + **`source_duration`** | 뒤쪽 배치가 무음으로 밀리면 안 되고, 첫 씬은 발화 구간 시작부터 재야 한다 |
 | `:181` | `else cumulativeTime` (영상이 길면 처음부터) | **`cumulativeTime + source_offset`** | 같은 이유 |
 
-- **불변식**: `startMs + clipDuration <= cumulativeTime + slot`.
-  `clip = Math.min(video, slot − srcOff)` 만으로는 **부족하다** — 짧은-영상 분기의 시작이
-  `cum + srcOff + (srcDur − video)` 라서 `srcDur` 가 크면 슬롯을 벗어난다
-  (예: slot 10 / srcOff 0 / **srcDur 50** / video 2 → 끝이 `cum + 50`. 라운드 5 두 리뷰어 일치).
-  → **`srcDur` 도 캡한다**: `srcDur = Math.min(srcDur, slot − srcOff)`.
-  `srcOff >= slot` 인 요청은 `srcOff = 0` 으로 강등한다.
-  앱이 emit 하는 값은 `useSlots` 술어(`end_i <= start_{i+1}`)가 이미 `srcOff + srcDur <= slot` 을
-  보장하므로 이 캡은 **구형·잘못된 요청 방어용**이다.
+**⚠️ v8 결정 — 클립 상한은 `slot − srcOff` 가 아니라 `srcDur` 다** (라운드 6 Codex #3 채택).
+
+v7 은 `:178` 을 `Math.min(video, slot − srcOff)` 로 정했는데 **§4.2 자기 원칙과 모순**이다.
+§4.2 의 존재 이유는 "영상 오버레이가 무음 간격까지 늘어나면 안 된다"인데, 그 상한은
+**긴 영상만 예외적으로 간격을 덮게** 만든다:
+
+| 픽스처 (srcDur 4 / slot 6 / srcOff 0, 뒤에 2 s 간격) | 현행 | v7 (`slot−srcOff`) | v8 (`srcDur`) |
+|---|---|---|---|
+| 영상 2 s (짧음) | `cum+2 ~ cum+4` — 간격은 이미지 | 동일 | 동일 |
+| 영상 12 s (김) | `cum+0 ~ cum+4` | `cum+0 ~ **cum+6**` — 간격을 영상이 덮음 | `cum+0 ~ cum+4` |
+
+짧은-영상 분기는 **이미 발화 구간 끝에서 끝난다**(설계상 뒤쪽 배치). 긴-영상만 간격을 덮으면
+같은 씬에서 영상 길이에 따라 간격의 내용물이 달라진다. 원칙을 하나로 고정한다:
+**오버레이 = 발화 구간, 간격 = 앞 이미지 hold.** (b)안 철학과도 일치한다.
+
+부수 이득: `min(video, srcDur)` 는 현행과 **바이트 동일**이다 — 현행 `sceneDuration` 은
+`s.duration` 이고 라이브 경로에서 `s.duration === endTime − startTime === srcDur` 이므로
+클립 길이가 전혀 안 변한다. v7 은 간격 있는 프로젝트의 긴 영상 클립을 **말없이 늘렸다**.
+
+- **불변식**: `startMs + clipDuration <= cumulativeTime + slot`. v8 상한에서 두 분기 모두 닫힌다:
+  - 짧은 분기: `start = cum + srcOff + (srcDur − video)`, `clip = video`
+    → 끝 `= cum + srcOff + srcDur ≤ cum + slot`
+  - 긴 분기: `start = cum + srcOff`, `clip = min(video, srcDur) ≤ srcDur`
+    → 끝 `≤ cum + srcOff + srcDur ≤ cum + slot`
+  마지막 부등식은 **`srcOff + srcDur <= slot` 에 전적으로 의존한다.** 앱이 emit 하는 값은
+  `useSlots` 술어(`end_i <= start_{i+1}`)가 이를 보장하지만, **구형·잘못된 요청은 보장하지 않는다**
+  → 소비자가 직접 캡한다:
+  - `srcOff >= slot` 인 요청은 `srcOff = 0` 으로 강등한다.
+  - `srcDur = Math.min(srcDur, slot − srcOff)` (예: slot 10 / srcOff 0 / **srcDur 50** / video 2 →
+    캡 없으면 끝이 `cum + 50`. 라운드 5 두 리뷰어 일치)
+  이 두 방어가 있어야 위 부등식이 요청 내용과 무관하게 성립한다.
 - 구형 요청 하위호환 + 방어:
   `const srcDur = Number.isFinite(scene.source_duration) && scene.source_duration > 0 ? scene.source_duration : sceneDuration`
   `const srcOff = Number.isFinite(scene.source_offset) && scene.source_offset >= 0 ? scene.source_offset : 0`
@@ -377,30 +424,60 @@ GCF 쪽도 셋 다 같은 누적 패턴이라 슬롯이 그대로 흐른다 (라
 
 ```
 rebaseSrtTrackToScenes(srtTrack, scenes,
-    { preserveUnlinked, durationOf, boundaryOf, initialCumulative })
+    { preserveUnlinked, durationOf, initialCumulative })
 
   // :149  let cumulative = 0
   //   →   let cumulative = Number(initialCumulative) || 0
   //
-  // 누적용 길이 (:153 의 sceneDuration 이 :178-183 누적에 쓰이는 자리)
+  // 누적용 길이 — 신규 지역변수. :153 의 sceneDuration 은 **그대로 둔다**.
   //   advance = Number(durationOf ? durationOf(scene) : scene?.duration) || 0
   //
-  // ⚠️ 클램프 경계는 **별도 값** (:162-164)
-  //   span    = Number(boundaryOf ? boundaryOf(scene) : scene?.duration) || 0
-  //   sceneBoundary = span > 0 ? cumulative + span : Infinity
+  // advance 로 바꿔야 하는 자리는 **누적 지점 전부 = 세 곳**:
+  //   (1) :155  빈-라인 분기   cumulative += sceneDuration   →  += advance
+  //   (2) :179  if (sceneDuration > 0) cumulative += sceneDuration
+  //             →  if (advance > 0) cumulative += advance
+  //   (3) :182-183 else 의 lineSpan 폴백은 그대로(advance === 0 일 때만 도달)
+  //
+  // ⚠️ 클램프 경계 (:162-164) 는 **손대지 않는다** — 계속 scene.duration 이다.
+  //   const sceneBoundary = sceneDuration > 0 ? cumulative + sceneDuration : Infinity
 ```
 
-⚠️ **v6 은 이 둘을 한 값으로 묶어 R13 보호를 잃었다**(라운드 5, 두 리뷰어 일치).
-슬롯을 경계에도 쓰면 경계가 `start_{i+1}` 이 되어, 사용자가 duration 을 줄여도(`endTime` 만 앞당겨짐)
-자막이 안 잘린다 — `tests/utils/srtTrack.rebaseClamp.test.js` 가 요구하는 동작이 **프로덕션 경로에서만
-사라진다**(그 테스트는 옵션 없이 직접 호출하므로 계속 초록 = paper fix).
+⚠️ **v6 은 슬롯을 경계에도 써서 R13 보호를 잃었다**(라운드 5, 두 리뷰어 일치).
+경계가 `start_{i+1}` 이 되어, 사용자가 duration 을 줄여도 자막이 안 잘린다 —
+`tests/utils/srtTrack.rebaseClamp.test.js` 가 요구하는 동작이 **프로덕션 경로에서만 사라진다**
+(그 테스트는 옵션 없이 직접 호출하므로 계속 초록 = paper fix).
 
-**호출부가 넘기는 값**:
-- `durationOf` → `srtSlots[i]` (누적: `cumulative` 가 `start_i` 로 텔레스코핑)
-- `boundaryOf` → `endTime_i − startTime_i` (경계: 씬 **자기** span. 수동으로 줄이면 그만큼 줄어든다)
+⚠️ **v7 의 `boundaryOf` 옵션은 v8 에서 폐기한다** (라운드 6, Codex F1 + Fable F3 를 코드로 판정).
+v7 은 경계를 `endTime_i − startTime_i` 로 바꾸는 새 옵션을 넣었는데, **실측 결과 불필요하고 유해하다**:
 
-identity 는 그대로다 — 불변식을 만족하는 씬은 `lastLine.endTime === endTime_i` 라
-`absEnd ≤ cumulative + span` 이 되어 클램프가 no-op 이다.
+- **불필요**: `duration` 과 `endTime` 을 쓰는 **모든 라이브 writer 가 둘을 함께 갱신**한다 →
+  `duration === endTime − startTime` 이 항상 성립한다. 실측 3 곳:
+  `src/components/SceneList.jsx:136-139`(`duration` 과 `endTime: scene.startTime + duration` 동시 대입),
+  `src/hooks/useScenes.js:303-306`(`duration = lastLine.endTime − firstLine.startTime`),
+  `src/utils/parsers.js:325-327`(`duration: groupEnd − groupStart`).
+  따라서 `boundaryOf` 는 라이브 데이터에서 디폴트(`scene.duration`)와 **항상 같은 값**이다.
+- **유해**: R13 의 기존 계약은 `scene.duration` 이고 `srtTrack.rebaseClamp.test.js:17` 픽스처가
+  바로 `{ duration: 3, startTime: 0, endTime: 5 }` — **`duration ≠ endTime − startTime`** 이다.
+  (라이브 경로가 만들지 못하는 손수 만든 픽스처지만, 그게 그 함수의 계약이다.)
+  `boundaryOf = endTime − startTime` 를 넘기면 그 계약이 프로덕션 경로에서만 5 로 바뀐다.
+- **부수 이득**: 옵션이 없으면 "호출부가 `boundaryOf` 전달을 빠뜨리는" 뮤턴트가 **존재 자체를 안 한다**
+  (Codex 라운드 6 #2 — v7 에서는 그 뮤턴트가 23 개 테스트를 전부 통과했다).
+
+**호출부가 넘기는 값**: `durationOf` → `srtSlots[i]` (누적: `cumulative` 가 `start_i` 로 텔레스코핑).
+경계는 옵션 없음 — 현행 `scene.duration` 유지.
+
+⚠️ **누적 지점이 셋이라는 것이 핵심이다**(라운드 6 Fable F1). v7 은 §8 에서 `:178-183` 만 핀했는데,
+`:154-157` 의 **빈-라인 분기**(`sceneLines.length === 0` → `cumulative += sceneDuration; continue`)가
+누적 지점인데 그 범위 밖이다. 도달 가능하다: `parsers.js:301` 이 빈 subtitle 행의 라인 생성을
+건너뛰므로 `:319-327` 이 **유한한 `startTime`/`endTime` + `srtLineIds: []`** 인 씬을 만든다.
+`useSlots` 술어는 시각만 보고 linkage 는 안 보므로 그 씬은 슬롯 프로젝트에 그대로 들어온다.
+`:178-183` 만 고치면 라인 없는 중간 씬이 `srtSlot` 대신 `scene.duration` 으로 전진해
+**그 뒤 모든 씬의 사이드카가 (slot − duration) 누적만큼 이르다** — 이 스펙이 잡으려는 drift 가
+사이드카에서 부활한다.
+
+identity 는 그대로다 — 불변식을 만족하는 씬은 `lastLine.endTime === endTime_i` 이고
+라이브 경로에서 `duration_i === endTime_i − startTime_i` 이므로
+`absEnd ≤ cumulative + duration_i = endTime_i` 가 되어 클램프가 no-op 이다.
 
 이러면 `cumulative` 가 `start_0` 에서 시작해 `start_i` 로 텔레스코핑하고,
 `absStart = start_i + (line.start − originalStart) = line.start` → **모든 씬에서 정확히 identity**.
@@ -437,8 +514,13 @@ SRT 임포트/재임포트 경로는 이걸 세우지만(`useScenes.js:302-306`)
 해당 씬 사이드카로 한정된다). 대신:
 - **identity 는 "위 불변식이 성립하는 씬에 한해" 성립한다**고 범위를 좁혀 명시한다.
 - 불변식이 깨진 씬에서는 **기존 `sceneBoundary` 클램프 동작이 그대로 유지된다**
-  (`srtTrack.js:175`). 슬롯 하에서 경계는 `start_i + srtSlot_i = start_{i+1}` 이므로
-  **"다음 씬 이미지 위로 자막이 넘지 않는다"는 R13 의 원래 목적은 계속 달성된다.**
+  (`srtTrack.js:175`).
+  ⚠️ **v7 의 이 문장은 v6 잔재라 산술이 틀렸다**(라운드 6 자체 발견). v6 은 경계에 슬롯을 써서
+  `start_i + srtSlot_i = start_{i+1}` 이었지만, **v8 은 경계를 안 건드리므로**
+  경계 = `cumulative + duration_i` = `start_i + duration_i` = **`endTime_i`** 다.
+  `endTime_i ≤ start_{i+1}`(`useSlots` 의 겹침 금지 항)이므로 **`start_{i+1}` 보다 엄격하고**,
+  따라서 "다음 씬 이미지 위로 자막이 넘지 않는다"는 R13 의 원래 목적은 **더 강하게** 달성된다.
+  이 부등식이 §7.4 클램프 픽스처 선택(②만 유효)의 이유이기도 하다.
 - §7.4 는 identity 테스트와 **클램프 유지 테스트를 분리**한다.
 
 **`generateSRT` 폴백도 같은 병** — `src/exporters/capcut.js:79-90` 은 `image_duration` 을 누적하되
@@ -466,7 +548,8 @@ srtTrack 경로는 `Math.min` 클램프만 하고 **늘리지 않는다**(`:175`
 ### 4.7 확정 — 슬롯이 **수동 duration 조절을 덮어쓴다** (v5 신설 / v6 확정)
 
 라운드 4 조사 중 드러났고 **두 리뷰어 모두 명시하지 않은** 결과다.
-**v6 에서 "불가피한 귀결"로 확정**했다(§3.1 실측) — 사용자 결정 사항이 아니다.
+**결론: "명시적 filler 를 이번 범위 밖으로 두었기에 hold 를 택한 결정"** 이다(라운드 5 정정, 사용자 승인 완료).
+v6 의 "플랫폼이 강제한 불가피" 는 과장이었다 — 아래 근거 문단 참고.
 
 `SceneList` 의 duration 입력(`SceneList.jsx:134-146`)은 `duration` 과 `endTime` 만 바꾸고
 **다음 씬의 `startTime` 은 건드리지 않는다.** 그런데 슬롯은 `next.startTime − cur.startTime` 이므로,
@@ -476,8 +559,9 @@ srtTrack 경로는 `Math.min` 클램프만 하고 **늘리지 않는다**(`:175`
 |---|---|---|
 | 씬 A 를 5 s → 3 s 로 줄임 | 타임라인이 2 s 짧아지고 **뒤 씬이 전부 당겨진다** | 타임라인 불변. **A 가 여전히 5 s 구간을 차지**한다(뒤 2 s 는 A 이미지 유지) |
 
-이건 (b) 의 정의상 **불가피하다** — "씬 시작이 `startTime` 에 정확히 맞는다"와 "수동 duration 이
+이건 (b) 의 정의상 그렇다 — "씬 시작이 `startTime` 에 정확히 맞는다"와 "수동 duration 이
 타임라인을 줄인다"는 동시에 성립할 수 없다. SRT 가 타임라인의 source of truth 가 되기 때문이다.
+(비는 2 s 를 **무엇으로 채우는가**는 여전히 선택지가 있다 — 아래 참고.)
 
 **해석**: 수동 duration 은 이제 "이미지가 몇 초 보이나"가 아니라 "발화 구간이 어디까지인가"
 (=`source_duration`, 영상 오버레이 배치 기준)를 뜻하게 된다.
@@ -523,7 +607,9 @@ const sortedScenes = [...scenes].sort((a, b) =>
    유지되는 게 맞다(빈 화면 방지). §6 의 pending 스펙과 상호작용하는 지점이라 테스트로 고정한다.
 6. **`endTime` 이 다음 씬 `startTime` 보다 큼**(겹침) — `end_i <= start_{i+1}` 항 위반 →
    **프로젝트 전체 폴백**. (v2 는 이 항이 술어에 없어 실제로는 통과했다 — 라운드 2 BLOCKER.)
-7. **영상 오버레이가 슬롯보다 길다** — 슬롯 길이에서 잘린다(`Math.min`, §4.2 `:178`).
+7. **영상 오버레이가 씬 발화 구간보다 길다** — `source_duration` 에서 잘린다(`Math.min`, §4.2 `:178`).
+   간격은 **영상이 아니라 앞 이미지가** 채운다(v8 — v7 은 여기서 `slot − offset` 으로 잘라
+   긴 영상만 간격을 덮게 했다).
 8. **재배열 후 SRT 재임포트된 프로젝트** — `startTime` 이 배열 순서와 어긋남 → **전체 폴백**(§4.1).
    현행 동작 유지. (`moveScene` 단독은 `recalculateTimesArr` 로 순차 재작성되어 오히려 gapless 다.)
    단 CapCut 최종 순서는 §4.6 참고 — GCF 가 ID 로 재정렬한다.
@@ -569,10 +655,19 @@ const sortedScenes = [...scenes].sort((a, b) =>
   (raw `s.duration` 만 쓰면 undefined — 라운드 2)
 - **전체 폴백 시 슬롯 배열 == `s.duration || settings.defaultDuration || 3` 배열**
   (raw `s.duration` 배열이 아니다 — 라운드 3 지적)
-- **`reason` 계약**: 각 폴백 케이스가 지정된 `reason` 리터럴을 반환한다
-  (`'non-finite-times'` / `'not-monotonic'` / `'overlap'` / `'non-positive-slot'`).
+- **`reason` 계약**: 각 폴백 케이스가 지정된 `reason` 리터럴을 반환한다.
+  **리터럴은 폴백 케이스와 1:1 로 다섯 개다** (v7 은 넷뿐이라 `endTime <= startTime` 에 배정된
+  리터럴이 없었다 — 라운드 6 Fable F5. 그 케이스는 슬롯이 여전히 양수라 `'non-positive-slot'` 도 아니다):
+  | 케이스 | `reason` |
+  |---|---|
+  | `startTime`/`endTime` 이 비유한 또는 `startTime < 0` | `'non-finite-times'` |
+  | `endTime <= startTime` (자기 span 0/음수) | `'non-positive-span'` |
+  | `startTime` 이 배열 순서와 어긋남 | `'not-monotonic'` |
+  | `end_i > start_{i+1}` | `'overlap'` |
+  | 슬롯이 비유한 또는 `<= 0` | `'non-positive-slot'` |
   §9.2 가 이 계약을 약속만 하고 테스트를 안 걸어둬 **그 자체가 paper claim** 이었다(라운드 5)
-- **`boundaryOf` 분리**: 씬 자기 span 을 반환한다 — `srtSlot` 과 **다른 값**인 픽스처로 고정
+- ⚠️ **`boundaryOf` 는 v8 에서 폐기됐다**(§4.5) — 이 항목의 v7 테스트는 삭제한다.
+  `sceneSlots` 는 `imageSlots` / `srtSlots` / `sourceOffsets` / `sourceDurations` 만 산출한다.
 
 ### 7.2 훅 — `tests/hooks/useExport.gap.test.jsx` (신규)
 - **회귀 재현**: 간격 픽스처 → exporter 가 받은 `image_duration` **배열 전체**가 기대값과 일치
@@ -588,12 +683,16 @@ const sortedScenes = [...scenes].sort((a, b) =>
   ① 폴백 프로젝트 + 자체 길이 없는 영상 → **레거시 값(3)**  ② 슬롯 프로젝트 + 자체 길이 없는 영상
   → **`source_duration`** (뮤테이션 #8)
 - 세 경로(CapCut/프리미어/Vrew) 모두 같은 슬롯을 받는다
+- **폴백 시 `console.warn` 이 `reason` 을 실어 호출된다** — `vi.spyOn(console, 'warn')` 로 단언.
+  §9.2 가 "호출부가 `console.warn` 한다"고 약속했는데 §8 에도 §7 에도 없어 **paper claim** 이었다
+  (라운드 4 가 지적했는데 v7 에서 안 고쳐졌다 — 라운드 6 Codex #4 재지적)
 
 ### 7.3 영상 오버레이 (§4.2)
 `tests/exporters/prepareCloudRequest.gap.test.js` (신규)
 - 슬롯 10 s / source 4 s / 영상 2 s → `startMs` = 슬롯시작 **+2 s** (source 기준),
   **+8 s 아님**(슬롯 기준으로 밀리면 실패)
-- 영상 12 s / 슬롯 10 s → `durationMs` 가 **10 s 로 잘린다**(엣지 7)
+- **긴 영상은 `source_duration` 에서 잘린다**(v8 §4.2): 슬롯 10 s / source 6 s / 영상 12 s →
+  `durationMs` = **6 s**. 슬롯 기준이면 10 s (뮤테이션 #7 — 픽스처가 `source ≠ slot` 이어야 죽는다)
 - 자체 길이 없는 영상 + `source_duration` 있음 → source 길이를 받는다
 - 자체 길이 없는 영상 + **`source_duration` 없음(폴백 씬)** → **슬롯**을 받는다(0 이 아니다 → 증발 금지)
 - `source_duration` 없는 **구형 요청** → 현행 동작(슬롯 기준)
@@ -601,11 +700,15 @@ const sortedScenes = [...scenes].sort((a, b) =>
   (소비자 방어, 뮤테이션 #9). ⚠️ NaN 픽스처는 **`video < slot`** 이어야 한다 —
   아니면 healthy 경로도 else 분기로 가 같은 결과라 뮤턴트가 산다(라운드 4)
 - **`source_offset: NaN` / `Infinity` / 음수 / `>= slot` → `0` 으로 강등**(뮤테이션 #18)
-- **`source_duration` 이 슬롯보다 큰 잘못된 요청**: slot 10 / srcOff 0 / **source 50** / video 2 →
-  `startMs + durationMs <= 슬롯 끝`. 캡이 없으면 끝이 `cum + 50` 이 된다(뮤테이션 #22)
+- **`source_duration` 이 슬롯보다 큰 잘못된 요청 — 짧은 분기**: slot 10 / srcOff 0 / **source 50** /
+  video 2 → `srcDur` 가 10 으로 캡되어 `startMs = 8 s`, `durationMs = 2 s`, 끝 = 슬롯 끝.
+  캡이 없으면 `startMs = 48 s` 로 슬롯을 통째로 벗어난다(뮤테이션 #22)
+- **같은 잘못된 요청 — 긴 분기**: slot 10 / srcOff 0 / **source 50** / **video 100** →
+  `durationMs = 10 s`(캡된 srcDur). 캡이 없으면 50 s (뮤테이션 #22b)
 - **긴 영상 + offset**: 슬롯 0–10 / offset 5 / source 4 / **영상 12** →
-  `startMs = 5 s`, `durationMs = **5 s**`(= `slot − offset`), 즉 **끝이 슬롯 끝(10 s)을 안 넘는다**.
-  `Math.min(video, slot)` 이면 15 s 까지 뻗어 다음 씬을 덮는다 (뮤테이션 #19)
+  `startMs = 5 s`, `durationMs = **4 s**`(= `source_duration`), 끝 = **9 s** — 슬롯 끝(10 s)을 안 넘는다.
+  v7 의 `slot − offset` 이면 5 s 라 끝이 정확히 10 s 가 되어 **무음 간격 1 s 를 영상이 덮는다**
+  (v8 §4.2 결정). `Math.min(video, slot)` 이면 15 s 까지 뻗어 다음 씬을 덮는다 (뮤테이션 #19)
 - **`source_offset` 이 있는 첫 씬**: 슬롯 0–10 / offset 5 / source 4 / 영상 2 →
   `startMs` = **7 s** (offset 무시하면 2 s — 뮤테이션 #16)
 
@@ -618,12 +721,20 @@ const sortedScenes = [...scenes].sort((a, b) =>
   `durationOf` 를 무시해도 값이 같아 **뮤테이션 #10** 이 산다(라운드 3).
 - `initialCumulative` 만 빼면 첫 씬 자막이 `start_0` 만큼 앞당겨진다(회귀 재현)
 - **클램프 유지(§4.5 결정)** — ⚠️ 픽스처를 정확히 골라야 한다(라운드 5: v6 문구로는 클램프가
-  **아예 발동하지 않아** 뮤테이션 #20 이 산다). 비-마지막 씬은 SRT 임포트상
-  `lastLine.endTime <= start_{i+1}` 이라 경계가 `start_{i+1}` 이면 `Math.min` 이 no-op 이다.
-  **둘 중 하나로 고정**:
-  ① **마지막 씬 shrink** — `boundaryOf` 가 줄어든 span 이라 라인(10–15)이 줄어든 `endTime`(13)으로 클램프
-  ② **CSV 교차 라인** — 씬 A(0–5)/B(10–15), A 연결 라인 0–12 → 5 로 클램프
-  ①이 `srtTrack.rebaseClamp.test.js` 의 의도와 직결되므로 ①을 필수, ②를 추가로 둔다
+  **아예 발동하지 않아** 뮤테이션 #20 이 산다).
+  **필수 픽스처 = ② CSV 교차 라인**: 씬 `A(0–5, duration 5)` / `B(10–15, duration 5)`,
+  A 에 연결된 라인이 `0–12` (CSV 행 순서 뒤섞임 → `parsers.js:317-327` 이 `groupEnd = 5` 로 씬을 만들고
+  라인은 12 까지 뻗는다). 경계 = `cumulative(0) + duration(5)` = **5** → 라인이 **5 로 클램프**.
+  뮤턴트(경계에 `durationOf`=srtSlot 10 사용)는 **10** 을 내므로 죽는다.
+- ⚠️ **v7 이 "필수"로 지정한 ① 마지막 씬 shrink 는 뮤테이션 #21 을 못 죽인다**(라운드 6 Fable F2).
+  마지막 씬은 §4.1 규칙상 `srtSlot_last = endTime − startTime` 이고 `SceneList` 가 shrink 시
+  `endTime = startTime + duration` 을 함께 쓰므로 `srtSlot_last === duration` — **등가 뮤턴트**다.
+  ①은 #20(경계를 Infinity 로)만 죽인다. → **①은 #20 전용, ②는 #21 전용**으로 각각 핀한다.
+- **⚠️ 라인 없는 중간 씬**(라운드 6 Fable F1, `srtTrack.js:154-157`) —
+  `A(0–5, 라인 있음) / B(6–9, srtLineIds: [], duration 3) / C(10–15, 라인 있음)` +
+  A–B 사이 간격. C 의 사이드카 자막이 **원본 절대 시각과 같아야** 한다.
+  빈-라인 분기가 `scene.duration` 으로 전진하면 C 부터 `(srtSlot_B − duration_B)` 만큼 이르다
+  (뮤테이션 #24). 도달 경로는 `parsers.js:301`(빈 subtitle 행은 라인 생성 안 함).
 - **폴백 사이드카(훅 레벨)**: `useSlots=false` 픽스처(**첫 원소 `startTime ≠ 0`**, 예 `[C(100–105), A(0–5)]`,
   SRT linkage 있음, `audioPackage` 없음) → exporter 가 받은 `project.srtTrack` 이 **현행 리터럴과 동일**
   (뮤테이션 #17 — 7.4 의 다른 항목들은 함수를 직접 불러 훅의 게이트를 못 문다. 라운드 4)
@@ -632,7 +743,9 @@ const sortedScenes = [...scenes].sort((a, b) =>
 - `generateSRT` 가 **영상 있는 씬에서도 슬롯을 누적**한다(`video.duration` 로 대체하지 않는다).
   픽스처는 **영상 길이 ≠ 슬롯**이어야 뮤테이션 #11 이 죽는다
 - **EN 사이드카**도 같이 고쳐진다(항상 이 폴백 경로) — `_subtitle_en.srt` 시각 단언
-- **기존 `tests/exporters/capcut.test.js:178`** 의 "영상 길이/기본 5 s" 기대값을 새 동작으로 갱신
+- **기존 `tests/exporters/capcut.test.js` 의 "video duration override" 블록 두 개**
+  (`:178` "uses video duration when video exists", `:197` "falls back to default 5s")의 기대값을
+  새 동작으로 갱신 — 둘 다 실재함을 확인했다
 - **통합**: 간격 픽스처로 내보내면 사이드카 SRT 의 마지막 자막 시각이 **원본과 같다**
   (수정 전에는 80 초 이르다)
 
@@ -645,7 +758,7 @@ const sortedScenes = [...scenes].sort((a, b) =>
 | 4 | 전체 폴백 → 씬 단위 폴백 | 7.1 전체 폴백 배열 비교 |
 | 5 | `source_duration` 을 슬롯과 같은 값으로 (**emit 지점**) | **7.2** `source_duration` 단언(슬롯 ≠ source 픽스처). 7.3 은 DTO 를 손으로 만들어 훅을 안 타므로 이 뮤테이션을 못 문다 — 라운드 3 |
 | 6 | `:180` 오프셋이 슬롯을 쓰게 | 7.3 `+2 s` 단언 |
-| 7 | `:178` `Math.min` 이 source 를 쓰게 | 7.3 자르기 — 픽스처를 **슬롯 10 / source 6 / 영상 12** 로. source==slot 이면 뮤턴트가 산다(라운드 2) |
+| 7 | `:178` `Math.min` 이 **슬롯**을 쓰게 (v8 에서 방향이 뒤집혔다 — 정답이 source 다) | 7.3 자르기 — 픽스처 **슬롯 10 / source 6 / 영상 12** → 6 s 여야 한다. source==slot 이면 뮤턴트가 산다(라운드 2) |
 | 8 | 영상 폴백 체인에서 마지막 항 제거 (`\|\| slotDuration`) | **7.2 훅 레벨**에서 `project.scenes[].videos[].duration` 단언. (7.3 은 `prepareCloudRequest` 를 직접 부르므로 `useExport` 안의 이 뮤테이션을 못 문다 — 라운드 2) |
 | 9 | **소비자**의 `Number.isFinite(src) && src > 0` 방어 제거 | 7.3 `NaN` 요청 → 슬롯 폴백. (emit 쪽 `유한 && >0` 검사는 `useSlots` 술어가 이미 보장해 **등가 뮤턴트**다 — 라운드 3 지적으로 소비자 쪽으로 이동) |
 | 10 | `durationOf` 를 무시하고 `scene.duration` 사용 | 7.4 identity |
@@ -657,11 +770,13 @@ const sortedScenes = [...scenes].sort((a, b) =>
 | 16 | `source_offset` 을 항상 0 으로 | 7.3 첫 씬 `startMs = 7 s` |
 | 17 | rebase 옵션 전달의 `useSlots` 게이트 제거 | 7.4 **훅 레벨** 폴백 사이드카 리터럴 비교 |
 | 18 | `source_offset` 소비자 방어 제거 | 7.3 NaN/음수/`>= slot` offset |
-| 19 | 클립 상한을 `slot − offset` → `slot` 으로 | 7.3 긴 영상 + offset (끝이 슬롯을 넘는다) |
-| 20 | 클램프 유지 로직 제거(슬롯일 때 경계 무한대) | 7.4 클램프 유지 **①마지막 씬 shrink** 픽스처 |
-| 21 | `boundaryOf` 를 무시하고 `durationOf`(슬롯)를 경계에도 사용 | 7.4 클램프 유지 (v6 의 실제 결함) |
-| 22 | 소비자의 `srcDur` 캡 제거 | 7.3 `source_duration: 50` / slot 10 / video 2 → 오버레이가 슬롯을 안 넘는다 |
-| 23 | `reason` 을 항상 같은 문자열로 | 7.1 reason 리터럴 |
+| 19 | 클립 상한을 `source_duration` → `slot` 으로 | 7.3 긴 영상 + offset (`durationMs` 가 4 s 가 아니라 5 s 가 되고, 무음 간격을 영상이 덮는다) |
+| 20 | 클램프 유지 로직 제거(슬롯일 때 경계 무한대) | 7.4 클램프 **①마지막 씬 shrink** 픽스처 (**#20 전용**) |
+| 21 | 경계 `:162-164` 에 `durationOf`(슬롯)를 사용 (= v6 의 실제 결함) | 7.4 클램프 **②CSV 교차 라인** 픽스처 (**#21 전용** — ①은 등가 뮤턴트다, 라운드 6 F2) |
+| 22 | 소비자의 `srcDur` 캡 제거 — **짧은 분기** | 7.3 `source 50` / slot 10 / video 2 → `startMs` 가 48 이 아니라 8 |
+| 22b | 소비자의 `srcDur` 캡 제거 — **긴 분기** | 7.3 `source 50` / slot 10 / video 100 → `durationMs` 가 50 이 아니라 10 |
+| 23 | `reason` 을 항상 같은 문자열로 | 7.1 reason 리터럴 **5 종** 교차 단언 |
+| 24 | **빈-라인 분기(`srtTrack.js:155`)가 `advance` 대신 `scene.duration` 으로 전진** | 7.4 라운드 6 F1 픽스처 (`B` 가 `srtLineIds: []`, `C` 자막이 원본 시각과 같아야) |
 
 ---
 
@@ -669,10 +784,10 @@ const sortedScenes = [...scenes].sort((a, b) =>
 
 | 파일 | 변경 |
 |---|---|
-| `src/services/sceneSlots.js` | **신규** — `useSlots` 판정 + **`imageSlots` / `srtSlots` / `sourceOffsets`** 산출 |
-| `src/hooks/useExport.js` | `:137` 슬롯 사용, `:141` 영상 폴백 체인, `:151` 부근 **`source_duration` + `source_offset`**(둘 다 `useSlots` 게이트), `:129-133` rebase 에 **`durationOf` + `initialCumulative`(useSlots 게이트)** 전달 |
-| `src/utils/srtTrack.js` | `rebaseSrtTrackToScenes` 에 `durationOf` + **`boundaryOf`** + `initialCumulative` 옵션 (`:149` 시드, `:153` 길이, `:162-164` 경계, `:168` absStart, `:178-183` 누적) |
-| `src/exporters/prepareCloudRequest.js` | `:178-181` 줄 단위로 슬롯/source/offset 분리 + **offset 검증** + **클립 상한 `slot − offset`** |
+| `src/services/sceneSlots.js` | **신규** — `useSlots` 판정(+ `reason` 5 종) + **`imageSlots` / `srtSlots` / `sourceOffsets` / `sourceDurations`** 산출. `boundaryOf` 용 산출은 **없다**(v8) |
+| `src/hooks/useExport.js` | `:137` 슬롯 사용, `:141` 영상 폴백 체인, `:151` 부근 **`source_duration` + `source_offset`**(둘 다 `useSlots` 게이트), `:129-133` rebase 에 **`durationOf` + `initialCumulative`(useSlots 게이트)** 전달, **폴백 시 `console.warn(reason)`** |
+| `src/utils/srtTrack.js` | `rebaseSrtTrackToScenes` 에 `durationOf` + `initialCumulative` 옵션. 손대는 곳: `:149` 시드, **누적 지점 셋** (`:155` 빈-라인 분기 / `:179` 주 누적 / `:182-183` lineSpan 폴백 게이트를 `advance > 0` 로). ⚠️ **`:162-164` 경계는 손대지 않는다** — `scene.duration` 유지(§4.5, v8). `boundaryOf` 옵션은 **폐기** |
+| `src/exporters/prepareCloudRequest.js` | `:178-181` 줄 단위로 슬롯/source/offset 분리 + **offset 검증** + **`srcDur` 캡(`slot − srcOff`)** + **클립 상한 `srcDur`** |
 | `src/exporters/capcut.js` | `generateSRT`(`:79-90`) 누적을 항상 슬롯으로 |
 | `tests/services/sceneSlots.test.js` | **신규** |
 | `tests/hooks/useExport.gap.test.jsx` | **신규** |
@@ -700,8 +815,10 @@ SFX 경로에 **도달조차 하지 않는다**. audioPackage/story 의 timed SF
    범위 안이다.
 2. **전체 폴백이 걸리면 버그가 그대로 남는다** — 의도된 안전한 후퇴.
    `computeSceneSlots` 가 `{ useSlots: false, reason: '...' }` 를 반환하고 호출부가 `console.warn`
-   한다. **`reason` 문자열 계약과 그 단위 테스트를 §7.1 에 포함한다**(v4 는 계약도 테스트도 없는
-   paper claim 이었다 — 라운드 4).
+   한다. **`reason` 문자열 계약(5 종)과 그 단위 테스트는 §7.1**, **`console.warn` 호출 단언은 §7.2**,
+   **`console.warn` 자체는 §8 의 `useExport.js` 행**에 있다 — 셋 다 실재해야 한다.
+   (v4 는 계약도 테스트도 없는 paper claim 이었고, v7 은 라운드 4 지적 후에도 `console.warn` 쪽이
+   §7·§8 어디에도 없어 **여전히 paper claim 이었다** — 라운드 6 Codex #4.)
 3. **자막 길이** — srtTrack 경로는 **원본 길이 유지**(간격 동안 자막 없음), `generateSRT` 폴백
    경로만 슬롯 전체를 덮는다(§4.5). v4 의 "간격 동안 유지" 단정은 전자에 대해 틀렸다.
 4. **pending 스펙과의 순서** — §6. 이 스펙을 먼저 구현한다.
@@ -743,15 +860,27 @@ SFX 경로에 **도달조차 하지 않는다**. audioPackage/story 의 timed SF
 
 ---
 
-## 11. 라운드 6 (확인용) 에 묻고 싶은 것
+## 11. 라운드 7 에 묻고 싶은 것
 
-라운드 5 의 지적을 전부 반영했다. **설계 변경은 ①(경계 분리) 하나**이고 나머지는 방어·테스트·문장이다.
+라운드 6 의 지적을 전부 반영했다. **설계 변경은 두 개**(①`boundaryOf` 폐기, ②클립 상한 = `source_duration`)
+이고 나머지는 누락 표면·픽스처·문장이다. 두 변경 모두 v7 대비 **단순해졌다**.
 
-1. **§4.5 의 `durationOf` / `boundaryOf` 분리**가 R13 클램프를 정말 보존하나?
-   identity(불변식 만족 씬)와 클램프(수동 shrink 씬)가 **동시에** 성립하는지 픽스처로 확인해줘.
-2. **§4.2 의 `srcDur` 캡**으로 오버레이가 슬롯을 벗어나는 모든 경우가 닫혔나?
-   두 분기(`:180` 짧은 영상 / `:181` 긴 영상) 각각에서.
-3. **§4.7 의 정정**("불가피" → "filler 를 범위 밖으로 둔 결정")이 이제 정확한가?
-4. **§7 의 23 개 뮤테이션**이 각각 짝지은 테스트로 실제로 죽나? 특히 #20·#21·#22·#23.
-5. **§8** 이 `boundaryOf` 까지 포함해 완전한가?
-6. **구현 착수해도 되나?** 아직이면 **코드 전에 반드시 고칠 것만** 골라줘.
+1. **`boundaryOf` 폐기가 옳은가?** 근거는 "라이브 writer 세 곳이 `duration` 과 `endTime` 을 함께
+   갱신하므로 `duration === endTime − startTime` 이 불변" 이다
+   (`SceneList.jsx:136-139` / `useScenes.js:303-306` / `parsers.js:325-327`).
+   **이 불변을 깨는 네 번째 writer 가 있나?** 있으면 폐기가 틀린다 — 직접 찾아서 반증해줘.
+   (`grep` 으로 `duration:` 또는 `endTime:` 을 쓰는 모든 씬 갱신 지점을 훑을 것.)
+2. **클립 상한 = `source_duration` 이 옳은가?**(§4.2 표) v7 의 `slot − srcOff` 는 긴 영상만
+   무음 간격을 덮게 했다. v8 은 "오버레이 = 발화 구간, 간격 = 앞 이미지 hold" 로 통일하고
+   현행과 바이트 동일이다. **반대 논거가 있나?**(예: 간격에서 영상이 끊겨 이미지로 컷백하는 게
+   더 나쁘다는 연출 논거) 있으면 근거와 함께.
+3. **오버레이가 슬롯을 벗어나는 경우가 전부 닫혔나?** 두 분기(`:180` 짧은 / `:181` 긴) 각각에서,
+   `srcOff` 강등 + `srcDur` 캡 + `clip = min(video, srcDur)` 조합으로. 산술로 보여줘.
+4. **누적 지점이 정말 셋뿐인가?**(§4.5) `srtTrack.js` 에서 `cumulative` 를 전진시키는 지점을
+   **전부** 세어봐. 넷째가 있으면 그게 finding 이다.
+5. **§7 의 뮤테이션 25 개**(#1~#24 + #22b)가 각각 짝지은 테스트로 실제로 죽나?
+   특히 **#7·#19(방향이 v8 에서 반전됨)**, **#20/#21(픽스처 분리)**, **#24(신규)**.
+   등가 뮤턴트가 남아 있으면 지적해줘.
+6. **§8 이 완전한가?** `boundaryOf` 폐기와 `console.warn` 추가 후 기준으로.
+7. **구현 착수해도 되나?** 아직이면 **코드 전에 반드시 고칠 것만** 골라줘 —
+   테스트를 쓰면서 고쳐도 되는 것과 구분해서.
