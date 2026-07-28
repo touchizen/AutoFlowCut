@@ -16,6 +16,7 @@ import { resolveDisplayError } from '../utils/errorDisplay'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
 import { isSceneGenerationDone } from '../services/generationStatus'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
+import { computeSceneSlots } from '../services/sceneSlots'
 
 function isExportableScene(scene) {
   return isSceneGenerationDone(scene) && hasExportableMedia(scene)
@@ -121,24 +122,44 @@ export function useExport({
     if (!settings.projectName) {
       console.warn('[useExport] settings.projectName missing — falling back to "Untitled"')
     }
+    // 씬 사이 무음 간격을 앞 씬에 흡수한다 — 슬롯을 누적하면 cum(i) === start_i 가
+    // 되어 이미지가 내레이션보다 앞서지 않는다. 시각이 성립하지 않는 프로젝트는
+    // 전체 폴백(all-or-nothing)해서 현행과 바이트 동일하게 동작한다.
+    const slots = computeSceneSlots(validScenes, settings)
+    if (!slots.useSlots && validScenes.length > 0) {
+      console.warn(`[useExport] scene slots unavailable (${slots.reason}) — falling back to legacy durations`)
+    }
     return {
       name: settings.projectName || 'Untitled',
       // 'portrait' / 'landscape' — GCF가 기대하는 값.
       format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
       // Phase 5 + R1 + R8 review fix: srtTrack 을 validScenes 순서로 rebase.
+      // 슬롯일 때만 누적 길이(srtSlots)와 시드(start_0)를 넘긴다 — 폴백 프로젝트에
+      // 넘기면 사이드카 시작 시각이 현행과 달라진다.
       srtTrack: rebaseSrtTrackToScenes(
         pruneSrtTrackToScenes(srtTrack, validScenes, { preserveUnlinked: true }),
         validScenes,
-        { preserveUnlinked: true }
+        {
+          preserveUnlinked: true,
+          ...(slots.useSlots ? {
+            durationOf: (_scene, i) => slots.srtSlots[i],
+            initialCumulative: Number(validScenes[0].startTime) || 0,
+          } : {}),
+        }
       ),
       // P1 review fix: prune/rebase 전 원본 srtTrack 도 보존.
       rawSrtTrack: srtTrack,
-      scenes: validScenes.map(s => {
-        const sceneDuration = s.duration || settings.defaultDuration || 3
+      scenes: validScenes.map((s, i) => {
+        // 슬롯 = 다음 씬 시작까지(간격 흡수). 폴백이면 기존 레거시 값 그대로.
+        const sceneDuration = slots.imageSlots[i]
+        // 씬 자기 길이 — 영상 오버레이는 슬롯이 아니라 이걸 기준으로 배치된다.
+        const sourceDuration = slots.useSlots ? slots.sourceDurations[i] : null
         const videos = resolveExportVideos(s).map(v => ({
           source: v.source,
           path: v.path || v.data,
-          duration: v.duration || sceneDuration || 0,
+          // 자체 길이 없는 영상은 발화 구간 → 슬롯 순으로 폴백한다. 0 으로 두면
+          // prepareCloudRequest 의 `videoDuration <= 0 continue` 에서 증발한다.
+          duration: v.duration || sourceDuration || sceneDuration || 0,
         }))
 
         return {
@@ -150,6 +171,11 @@ export function useExport({
           image_fallback: s.image,
           image_duration: sceneDuration,
           image_size: s.image_size || null,
+          // ── 영상 오버레이 배치 기준 (슬롯일 때만) ──
+          ...(slots.useSlots ? {
+            source_duration: sourceDuration,
+            source_offset: slots.sourceOffsets[i],
+          } : {}),
           // ── 영상 (0~2개, 하이브리드: i2v 앞 / t2v 뒤) ──
           videos,
           // ── 자막 ──
