@@ -1,6 +1,28 @@
 # 스펙 — 내보내기: 씬 사이 간격을 앞 씬에 흡수 (2026-07-28)
 
-상태: **v9 — 라운드 7 반영 완료, 라운드 8(확인용) 대기** (구현 착수 전)
+상태: **v10 — 라운드 8 반영 완료. 두 리뷰어 CONDITIONAL GO, 조건 전부 반영 → 구현 착수 가능**
+
+> v10 변경 (라운드 8 — **설계·동작 findings 0**. 두 리뷰어가 각각 독립으로 확인해준 것:
+> 수정 표면 전수(전진 지점 7 곳: `prepareCloudRequest.js:120/:202`, `capcut.js:83/:100`,
+> `srtTrack.js:155/:180/:183`) 전부 커버됨 · §4.1 검사 순서와 도달불가 증명 건전 ·
+> #25/#26 이 호출부 누락만 정확히 물고 나머지는 초록 · `normalizeScene` 우회 경로 0 건 ·
+> 남은 등가 뮤턴트 없음. 아래는 전부 **문서 정합**이고 설계 변경은 0 건이다):
+> ① ⚠️ **v9 의 뮤턴트 계수가 틀렸다 — 라운드 7 에서 두 리뷰어가 함께 틀렸고 라운드 8 에서 함께 뒤집었다.**
+> `#7`(상한→`slot`)과 `#19`(상한→`slot − srcOff`)는 **같은 줄의 서로 다른 뮤턴트**다
+> (`slot 10/source 4/srcOff 5/video 12` → healthy 4 / #7 10 / #19 5). **확정: 코드 뮤테이션 28 종,
+> 실행 케이스 29 개.** 수용 기준을 이 숫자로 못 박는다.
+> ② **`#16` 을 emitter/consumer 로 분리**(같은 병의 재발 — 라운드 3 #5 와 동형).
+> v9 는 emitter 뮤테이션(`useExport` 가 offset 을 0 으로)을 **7.3(소비자 테스트)** 에 걸었는데
+> 7.3 은 DTO 를 손으로 만들어 훅을 안 탄다 → `#16`(emitter, 7.2) / **`#16b` 신설**(소비자가 배치에서
+> offset 을 무시, 7.3). `#18` 은 *방어*만 물고 *사용*은 안 문다.
+> ③ **"reason 5 종" 잔재 제거**(두 리뷰어 일치). §4.1/§7.1 은 이미 "도달 가능한 4 종"으로 확정했는데
+> 뮤테이션 #23 · §8 · §9.2 에 "5 종"이 남아 구현자가 **도달 불가한 계약 테스트**를 쓰게 돼 있었다.
+> ④ **`|| duration` 은 span 이 딱 0 일 때만 발동한다**(음수는 JS 에서 truthy — 두 리뷰어 일치).
+> v9 의 "0/음수" 서술이 JS 의미론과 어긋났다. 결론(=`boundaryOf` 폐기)은 그대로.
+> ⑤ **핵심 성질 2 의 범위를 좁혔다**(Fable F3): no-op 은 "간격 없음" **만으로는 부족하고**
+> `start_0 === 0` 이 필요하다 — 이번 사건 프로젝트가 정확히 `start_0 = 0.1` 이다.
+> §7.1 no-op 픽스처에 `start_0 = 0` 을 핀.
+> ⑥ 구현 노트: `generateSRT` 두 분기를 슬롯으로 고치면 `videoMap` 조회가 dead code 가 된다 → 같이 정리.
 
 > v9 변경 (라운드 7 — 두 리뷰어 모두 CONDITIONAL GO. 설계 골격은 둘 다 "건전" 판정, 남은 건 표면·계약):
 > ① **`generateSRT` 의 누적 지점도 둘이었다**(Fable F1, 실측 확인). `capcut.js:79-84` 의
@@ -261,8 +283,12 @@
 라운드 6 두 리뷰어 일치)
 → 두 GCF 에 필드와 배치 로직을 새로 넣어야 한다. (b) 는 앱 한 곳으로 같은 결과를 얻는다.
 
-**핵심 성질 2 — 간격 없는 프로젝트에선 no-op.** `next.startTime - startTime === duration` 이므로
-산출물이 바뀌지 않는다. 기존 정상 프로젝트 무영향의 근거이고, 테스트로 고정한다.
+**핵심 성질 2 — 간격이 없고 `start_0 === 0` 인 프로젝트에선 no-op.**
+`next.startTime - startTime === duration` 이므로 산출물이 바뀌지 않는다.
+⚠️ **`start_0 === 0` 조건이 필요하다**(라운드 8 Fable F3). 첫 씬 슬롯은 `next.startTime − 0` 이라
+간격이 0 이어도 선두 오프셋이 있으면 첫 씬이 `start_0` 만큼 자란다 — 그게 엣지 4 의 **의도된 흡수**이고
+이번 사건 프로젝트가 정확히 그 모양(`start_0 = 0.1`)이다. §7.1 의 no-op 픽스처는 `start_0 = 0` 으로 핀한다.
+기존 정상 프로젝트 무영향의 근거이고, 테스트로 고정한다.
 
 ---
 
@@ -504,9 +530,11 @@ v7 은 경계를 `endTime_i − startTime_i` 로 바꾸는 새 옵션을 넣었�
     **duration 을 재파생**한다.
   - `src/hooks/useScenes.js:115` — `setScenes` 래퍼가 **모든 배열 쓰기**(프로젝트 로드 ·
     MCP · story push · CSV · UI 갱신 전부)를 `normalizeScene` 에 통과시킨다.
-  → 손편집된 `project.json` 조차 **로드 시점에 불변이 강제된다.** 유일한 탈출구는
-  `endTime − startTime` 이 0/음수라 `|| duration` 이 발동하는 경우인데, 그건 정확히
-  `useSlots` 의 `'non-positive-span'` 폴백 케이스다.
+  → 손편집된 `project.json` 조차 **로드 시점에 불변이 강제된다.**
+  ⚠️ 정확히는 `|| duration` 이 발동하는 건 **span 이 딱 0 일 때뿐**이다 — JS 에서 음수는 truthy 라
+  음수 span 은 그대로 `duration` 이 되어 오히려 불변이 성립한다(라운드 8 두 리뷰어 일치).
+  `NaN` 은 `:35`/`:39` 가드가 막는다. 어느 쪽이든 **0/음수 span 은 검사 2 `'non-positive-span'` 으로
+  전체 폴백**하므로 결론은 그대로다.
   - 개별 writer 들(`SceneList.jsx:136-139`, `useScenes.js:303-306`, `parsers.js:325-327`,
     `SceneDetailModal.jsx:350-356`)도 모두 불변 보존형이지만, **보장의 출처는 정규화**다.
   따라서 `boundaryOf` 는 라이브 데이터에서 디폴트(`scene.duration`)와 **항상 같은 값**이다.
@@ -704,7 +732,8 @@ const sortedScenes = [...scenes].sort((a, b) =>
 ### 7.1 단위 — `tests/services/sceneSlots.test.js` (신규)
 `src/services/sceneSlots.js` 로 분리한 순수 함수를 문다.
 - 간격 있는 3 씬 → 슬롯 배열이 **리터럴 기대값과 정확히 일치**
-- **간격 없는 3 씬 → 슬롯 == 원래 duration** (no-op 성질, 리터럴 비교)
+- **간격 없고 `start_0 = 0` 인 3 씬 → 슬롯 == 원래 duration** (no-op 성질, 리터럴 비교).
+  ⚠️ `start_0 ≠ 0` 이면 첫 씬이 자라는 게 **정답**이다(엣지 4) — 픽스처에 `start_0 = 0` 을 핀할 것(라운드 8 F3)
 - 마지막 씬 → `endTime - startTime`
 - 첫 씬 `startTime=0.1` → 슬롯이 `next.startTime - 0`
 - **불변식: 이미지 슬롯 합계 == 마지막 `endTime`**
@@ -834,10 +863,15 @@ const sortedScenes = [...scenes].sort((a, b) =>
 ### 7.5 뮤테이션 (커밋 후 실측)
 | # | 뮤테이션 | 죽어야 하는 테스트 |
 |---|---|---|
-> ⚠️ **개수 정직하게**(라운드 7 Fable F4 + Codex #4): 아래 표는 **뮤턴트 24 종**이다.
-> `#22`/`#22b` 는 **같은 한 줄(`srcDur` 캡) 제거**를 두 분기에서 검사하는 것이고,
-> `#7`/`#19` 도 **같은 한 줄(`:178` 상한)** 이다 — `#19` 는 v7 잔재 방향(`slot − srcOff`)으로 재정의해
-> 구분한다. "25 개" 는 세는 방식의 문제였지 커버리지 구멍이 아니다.
+> ⚠️ **개수 — 라운드 8 에서 v9 의 계수가 틀린 것으로 판정됐다.**
+> v9 는 라운드 7 의 "`#7 ≡ #19` 는 같은 뮤턴트" 를 채택했는데 **두 리뷰어가 라운드 8 에서 함께 뒤집었다**:
+> 같은 **줄**이지만 값이 갈린다 — `slot 10 / source 4 / srcOff 5 / video 12` 에서
+> healthy `min(12,4)=4`, `#7 min(12,10)=10`, `#19 min(12,5)=5`. **서로 다른 뮤턴트다.**
+> (`#22`/`#22b` 만 진짜로 같은 삭제를 두 분기에서 검사하는 것이다.)
+>
+> **확정 계수**: 코드 뮤테이션 **28 종**, 실행 테스트 케이스 **29 개**(`#22b` 가 `#22` 의 두 번째 분기).
+> 수용 기준은 **29 개 전부 killed**. 이 숫자를 뮤테이션 보고서에 그대로 쓴다 —
+> 안 그러면 하나를 실행하지 않고도 "전부 killed" 라고 보고하게 된다(라운드 8 Codex #1).
 
 | 1 | 마지막 씬도 `next.startTime - startTime` 로 | 7.1 마지막 씬 (⚠️ 픽스처의 마지막 씬에 `s.duration` 이 없어야 죽는다 — 라운드 7 F5) |
 | 2 | 첫 씬 오프셋 흡수 제거 | 7.1 첫 씬 / 불변식 |
@@ -855,7 +889,8 @@ const sortedScenes = [...scenes].sort((a, b) =>
 | 13 | `source_duration`/`source_offset` 의 `useSlots` 게이트 제거 | 7.2 **겹침/재배열 폴백** 픽스처에서 필드 부재 |
 | 14 | `initialCumulative` 무시 | 7.4 identity (`start_0 = 0.1` 픽스처) |
 | 15 | 레거시 폴백을 raw `s.duration` 으로 | 7.1 `defaultDuration = 7` 케이스 |
-| 16 | `source_offset` 을 항상 0 으로 | 7.3 첫 씬 `startMs = 7 s` |
+| 16 | **emitter**(`useExport.js`)가 `source_offset` 을 항상 0 으로 | **7.2 훅 레벨** `source_offset` 단언. ⚠️ v9 는 이 행을 7.3 에 걸었는데 **7.3 은 DTO 를 손으로 만들어 훅을 안 타므로 emitter 뮤테이션을 못 문다**(라운드 8 Codex #1, 라운드 3 의 #5 와 같은 병) |
+| 16b | **소비자**(`prepareCloudRequest.js:180-181`)가 배치에서 `source_offset` 을 무시 | 7.3 첫 씬 `startMs = 7 s` (offset 무시하면 2 s). #18 은 *방어*만 물고 *사용*은 안 문다 |
 | 17 | rebase 옵션 전달의 `useSlots` 게이트 제거 | 7.4 **훅 레벨** 폴백 사이드카 리터럴 비교 |
 | 18 | `source_offset` 소비자 방어 제거 | 7.3 NaN/음수/`>= slot` offset |
 | 19 | 클립 상한을 `source_duration` → **`slot − srcOff`**(v7 잔재 방향)로 | 7.3 긴 영상 + offset (`durationMs` 가 4 s 가 아니라 5 s 가 되고, 무음 간격 1 s 를 영상이 덮는다) |
@@ -863,7 +898,7 @@ const sortedScenes = [...scenes].sort((a, b) =>
 | 21 | 경계 `:162-164` 에 `durationOf`(슬롯)를 사용 (= v6 의 실제 결함) | 7.4 클램프 **②CSV 교차 라인** 픽스처 (**#21 전용** — ①은 등가 뮤턴트다, 라운드 6 F2) |
 | 22 | 소비자의 `srcDur` 캡 제거 — **짧은 분기** | 7.3 `source 50` / slot 10 / video 2 → `startMs` 가 48 이 아니라 8 |
 | 22b | 소비자의 `srcDur` 캡 제거 — **긴 분기** | 7.3 `source 50` / slot 10 / video 100 → `durationMs` 가 50 이 아니라 10 |
-| 23 | `reason` 을 항상 같은 문자열로 | 7.1 reason 리터럴 **5 종** 교차 단언 |
+| 23 | `reason` 을 항상 같은 문자열로 | 7.1 reason 리터럴 **도달 가능한 4 종** 교차 단언(§4.1). 5 번째(`'non-positive-slot'`)는 도달 불가라 계약 테스트가 없다 — 4 종으로도 죽는다 |
 | 24 | **빈-라인 분기(`srtTrack.js:155`)가 `advance` 대신 `scene.duration` 으로 전진** | 7.4 라운드 6 F1 픽스처 (`B` 가 `srtLineIds: []`, `C` 자막이 원본 시각과 같아야) |
 | 25 | **호출부**(`useExport.js:129`)에서 `durationOf` 전달 제거 | 7.4 **성공 경로 사이드카(훅 레벨)** — 라운드 7 Codex #1 |
 | 26 | **호출부**에서 `initialCumulative` 전달 제거 | 7.4 **성공 경로 사이드카(훅 레벨)** (첫 씬이 `start_0` 만큼 이르다) |
@@ -874,11 +909,11 @@ const sortedScenes = [...scenes].sort((a, b) =>
 
 | 파일 | 변경 |
 |---|---|
-| `src/services/sceneSlots.js` | **신규** — `useSlots` 판정(+ `reason` 5 종) + **`imageSlots` / `srtSlots` / `sourceOffsets` / `sourceDurations`** 산출. `boundaryOf` 용 산출은 **없다**(v8) |
+| `src/services/sceneSlots.js` | **신규** — `useSlots` 판정(+ `reason`: 도달 가능 4 종 + 방어용 `'non-positive-slot'`) + **`imageSlots` / `srtSlots` / `sourceOffsets` / `sourceDurations`** 산출. `boundaryOf` 용 산출은 **없다**(v8) |
 | `src/hooks/useExport.js` | `:137` 슬롯 사용, `:141` 영상 폴백 체인, `:151` 부근 **`source_duration` + `source_offset`**(둘 다 `useSlots` 게이트), `:129-133` rebase 에 **`durationOf` + `initialCumulative`(useSlots 게이트)** 전달, **폴백 시 `console.warn(reason)`** |
 | `src/utils/srtTrack.js` | `rebaseSrtTrackToScenes` 에 `durationOf` + `initialCumulative` 옵션. 손대는 곳: `:149` 시드, **누적 지점 셋** (`:155` 빈-라인 분기 / `:179` 주 누적 / `:182-183` lineSpan 폴백 게이트를 `advance > 0` 로). ⚠️ **`:162-164` 경계는 손대지 않는다** — `scene.duration` 유지(§4.5, v8). `boundaryOf` 옵션은 **폐기** |
 | `src/exporters/prepareCloudRequest.js` | `:178-181` 줄 단위로 슬롯/source/offset 분리 + **offset 검증** + **`srcDur` 캡(`slot − srcOff`)** + **클립 상한 `srcDur`** |
-| `src/exporters/capcut.js` | `generateSRT` 누적을 항상 슬롯으로 — **두 지점 모두**: `:80-83`(자막 없는 씬 skip 분기) **과** `:88-90`(주 분기). 같은 식이 복제돼 있다(라운드 7 F1) |
+| `src/exporters/capcut.js` | `generateSRT` 누적을 항상 슬롯으로 — **두 지점 모두**: `:80-83`(자막 없는 씬 skip 분기) **과** `:88-90`(주 분기). 같은 식이 복제돼 있다(라운드 7 F1). 부수: 두 분기가 슬롯을 쓰면 `videoMap` 조회(`:58-63`, `:79`, `:87`)가 **이 변경이 만든 dead code** 가 된다 → 같이 정리(라운드 8 Fable 구현 노트) |
 | `tests/services/sceneSlots.test.js` | **신규** |
 | `tests/hooks/useExport.gap.test.jsx` | **신규** |
 | `tests/exporters/prepareCloudRequest.gap.test.js` | **신규** |
@@ -905,7 +940,7 @@ SFX 경로에 **도달조차 하지 않는다**. audioPackage/story 의 timed SF
    범위 안이다.
 2. **전체 폴백이 걸리면 버그가 그대로 남는다** — 의도된 안전한 후퇴.
    `computeSceneSlots` 가 `{ useSlots: false, reason: '...' }` 를 반환하고 호출부가 `console.warn`
-   한다. **`reason` 문자열 계약(5 종)과 그 단위 테스트는 §7.1**, **`console.warn` 호출 단언은 §7.2**,
+   한다. **`reason` 문자열 계약(도달 가능 4 종 — §4.1 검사 순서가 계약이다)과 그 단위 테스트는 §7.1**, **`console.warn` 호출 단언은 §7.2**,
    **`console.warn` 자체는 §8 의 `useExport.js` 행**에 있다 — 셋 다 실재해야 한다.
    (v4 는 계약도 테스트도 없는 paper claim 이었고, v7 은 라운드 4 지적 후에도 `console.warn` 쪽이
    §7·§8 어디에도 없어 **여전히 paper claim 이었다** — 라운드 6 Codex #4.)
