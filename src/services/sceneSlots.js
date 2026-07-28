@@ -76,6 +76,8 @@ export function computeSceneSlots(scenes, settings = {}) {
  * @returns {string|null} 폴백 사유. null 이면 슬롯 사용.
  */
 function validateForSlots(scenes) {
+  // 빈 배열은 스펙의 ∀-검사를 공허하게 통과하지만, 슬롯 경로가 scenes[0] 을
+  // 역참조하므로 폴백시킨다. 산출물은 [] 로 동일하고 warn 도 호출부가 막는다.
   if (scenes.length === 0) return 'non-finite-times'
 
   // 1) 시각 자체가 성립하는가

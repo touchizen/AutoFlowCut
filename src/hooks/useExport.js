@@ -26,6 +26,8 @@ export function useExport({
   settings,
   scenes,
   srtTrack = [],
+  // 상위 `project.videos` 페이로드를 없애면서 현재는 읽지 않는다. 훅의 입력
+  // 계약이라 시그니처는 유지한다(App.jsx 가 계속 넘긴다).
   videoScenes = [],
   framePairs = [],
   openSettings,
@@ -185,29 +187,10 @@ export function useExport({
           title: s.title || ''
         }
       }),
-      videos: [
-        // T2V 비디오 (videoScenes)
-        ...videoScenes
-          .filter(vs => (vs.status === 'done' || vs.status === 'complete') && (vs.video || vs.videoPath))
-          .map(vs => ({
-            id: vs.id,
-            video_path: vs.videoPath || vs.video,
-            prompt: vs.prompt || '',
-            source: 't2v',
-          })),
-        // F→V 비디오 (framePairs)
-        ...framePairs
-          .filter(p => p.status === 'complete' && (p.base64 || p.videoPath))
-          .map(p => ({
-            id: p.id,
-            video_path: p.videoPath || p.base64,
-            scene_id: p.ownerSceneId || null,
-            from_scene: p.startSceneId || null,
-            to_scene: p.endSceneId || null,
-            prompt: p.prompt || '',
-            source: 'i2v',
-          })),
-      ]
+      // NOTE: 상위 `videos` 배열은 제거했다. 유일한 소비자가 generateSRT 의
+      // videoMap(영상 길이로 자막 시각을 대체하던 것)이었는데, 누적이 항상
+      // 슬롯이 되면서 그 조회 자체가 사라졌다. 영상은 씬 단위 `scene.videos`
+      // (resolveExportVideos)로만 하류에 전달된다.
     }
   }
 

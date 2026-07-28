@@ -10,7 +10,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 
 const mockExportCapcut = vi.fn()
-vi.mock('../../src/exporters/capcut.js', () => ({
+vi.mock('../../src/exporters/capcut.js', async (importActual) => ({
+  ...(await importActual()),
   exportCapcut: (...args) => mockExportCapcut(...args)
 }))
 const mockExportPremiere = vi.fn()
@@ -34,6 +35,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
 }))
 
 import { useExport } from '../../src/hooks/useExport'
+import { generateSRT } from '../../src/exporters/capcut'
 
 const settings = { projectName: 'P', aspectRatio: '16:9', defaultDuration: 3 }
 
@@ -122,6 +124,24 @@ describe('useExport — image_duration 이 슬롯이다', () => {
     const msgs = warn.mock.calls.map(c => c.join(' '))
     expect(msgs.some(m => m.includes('overlap'))).toBe(true)
     warn.mockRestore()
+  })
+})
+
+describe('useExport — 필터로 빠진 씬 (스펙 §5 엣지 5)', () => {
+  it('슬롯은 validScenes 기준이다 — 빠진 씬 구간은 앞 이미지가 유지된다', () => {
+    // X 는 pending + 미디어 없음 → isExportableScene 탈락.
+    // 슬롯을 필터 **전** 배열로 계산하면 A 가 6 이 되고 인덱스가 밀려
+    // 그 뒤 전 씬이 어긋난다 (실제로 405 개 테스트를 통과하던 생존 뮤턴트).
+    return exportedProject([
+      scene('A', 0, 5),
+      { id: 'X', status: 'pending', startTime: 6, endTime: 9, duration: 3 },
+      scene('B', 10, 15)
+    ]).then(project => {
+      expect(project.scenes.map(s => s.id)).toEqual(['A', 'B'])
+      expect(project.scenes.map(s => s.image_duration)).toEqual([10, 5])
+      expect(project.scenes.map(s => s.source_duration)).toEqual([5, 5])
+      expect(project.scenes.map(s => s.source_offset)).toEqual([0, 0])
+    })
   })
 })
 
@@ -227,6 +247,22 @@ describe('useExport — 사이드카 SRT rebase 배선', () => {
     ])
   })
 
+  it('핸드오프: 훅이 만든 project 를 진짜 generateSRT 에 넣으면 원본 시각이 나온다', async () => {
+    // exporter 를 mock 한 단언은 project.srtTrack 에서 끝난다 — 그 뒤
+    // capcutCloud → generateSRT → _subtitle_ko.srt 로 가는 seam 은 안 물린다.
+    // generateSRT 를 실제 모듈로 돌려 그 구간을 합성으로 문다.
+    // ⚠️ 이 픽스처는 raw 와 rebased 를 **구분하지 못한다** — 슬롯 경로에서
+    // rebase 가 identity 라 둘이 같은 값이기 때문이다(그게 이 수정의 성질이다).
+    // 그 구분은 아래 폴백 핸드오프 테스트가 한다.
+    const project = await exportedProject(linked, { srtTrack })
+
+    const srt = generateSRT(project, 'ko')
+
+    expect(srt).toContain('00:00:00,100 --> 00:00:05,000')
+    expect(srt).toContain('00:00:06,000 --> 00:00:09,000')
+    expect(srt).toContain('00:00:10,000 --> 00:00:15,000')
+  })
+
   it('폴백 경로: 사이드카가 현행 리터럴과 동일하다 (뮤테이션 #17)', async () => {
     // [C(100–105), A(0–5)] — 재배열 후 SRT 재임포트 모양. 게이트가 없으면
     // initialCumulative = 100 이 전달돼 사이드카가 100 초에서 시작한다.
@@ -245,5 +281,24 @@ describe('useExport — 사이드카 SRT rebase 배선', () => {
       ['c1', 0, 5],
       ['a1', 5, 10]
     ])
+  })
+
+  it('폴백 핸드오프: generateSRT 가 rebased 트랙을 쓴다 (raw 가 아니다)', async () => {
+    // 재배열 프로젝트에서만 raw ≠ rebased 라 이 seam 이 구분된다.
+    // raw 를 쓰면 c1 이 100 초에서 시작한다.
+    const fbTrack = [
+      { id: 'c1', startTime: 100, endTime: 105, text: 'C' },
+      { id: 'a1', startTime: 0, endTime: 5, text: 'A' }
+    ]
+    const fbScenes = [
+      scene('C', 100, 105, { srtLineIds: ['c1'] }),
+      scene('A', 0, 5, { srtLineIds: ['a1'] })
+    ]
+
+    const srt = generateSRT(await exportedProject(fbScenes, { srtTrack: fbTrack }), 'ko')
+
+    expect(srt).toContain('00:00:00,000 --> 00:00:05,000')
+    expect(srt).toContain('00:00:05,000 --> 00:00:10,000')
+    expect(srt).not.toContain('00:01:40,000')
   })
 })
