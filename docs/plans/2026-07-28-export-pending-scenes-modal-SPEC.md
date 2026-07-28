@@ -1,0 +1,618 @@
+# 스펙 — 내보내기: 이미지가 있는 pending 씬 포함/배제 선택 (2026-07-28)
+
+상태: **v5 — 리뷰 라운드 4 반영 완료. 두 리뷰어 조건부 GO 의 조건을 모두 충족** (구현 착수 가능)
+브랜치: `fix/export-pending-scenes-modal` (base `main` @ 4b3742c8)
+
+> v2 변경 요약: 리뷰 라운드 1(Fable 5 / Codex 독립 2건)에서 MAJOR 3건이 나왔고 전부 실측 확인됐다.
+> ① 전부-pending 프로젝트는 **내보내기 버튼 자체가 비활성/미렌더**라 §5.1이 paper fix 였음 → §3.3 신설.
+> ② 모달의 **소유자·삽입 지점**이 안 정해져 있어 구현자가 `handleExportConfirm` 안에 넣으면 자동화가
+> 데드락 → §4.3 에서 소유자를 `ExportModal` 로 못 박고 상태기계를 명시.
+> ③ `includePending` 이 MCP 로 **도달 불가**(스키마·바디·화이트리스트 3중 차단) → §4.5 신설.
+> 그 외: 실행 경로는 4개가 아니라 **3개**(:56은 preflight), Vrew base64 취급, 테스트 반증력 보강, 앵커 정정.
+>
+> v3 변경 요약: 라운드 2(두 리뷰어 독립)에서 MAJOR 3건이 또 일치했다.
+> ① **Vrew `requirePath` 가 카운트에만 걸려 실행 필터엔 없다** → 여전히 paper fix (§4.4·§5.4 배선).
+> ② **`ExportModal` 은 항상 마운트라 `pendingChoice` 가 닫기/재오픈을 살아남는다**(`:185` 는 `return null`
+> 일 뿐) + 비동기 preflight 가 닫힌 뒤 resolve → §4.3 에 리셋·attempt 토큰 추가.
+> ③ **Header 테스트로는 `App.jsx:2146` 뮤테이션을 못 죽인다**(prop 이 불리언) → 순수 술어
+> `hasExportAccess` 추출, 못 무는 뮤테이션은 정직하게 격하(§7.3·§7.6).
+> 그 외: §8 에 로케일·CSS·기존 테스트 누락, MCP 테스트 비대칭, SRT 단언이 `preserveUnlinked` 로
+> 헐거움, 관찰 지점(exporter mock) 미지정, 앵커 재정정.
+>
+> v4 변경 요약: 라운드 3 에서 상태기계 구멍 2 건이 또 일치했다.
+> ① **외부 닫힘**(`App.jsx:3019` 업그레이드 클릭이 `setShowExportModal(false)`)에서 `attemptRef` 가
+> 무효화되지 않고 step 3 의 `!isOpen` 은 closure 라 항상 true → **paywall 뒤에서 유령 내보내기**.
+> ② preflight 의 reject·정상 조기 return 이 `phase` 를 `'preflight'` 에 **영구 잠금**.
+> ③ `phase` 를 React state 로 두면 동기 latch 가 아니다 → **`phaseRef`** 로.
+> ④ `eligible` 이 export 되지 않아 분류기·실행 필터가 **여전히 재조합**될 수 있었다 → export 강제.
+> ⑤ `ready + pendingWithImage` **단순 연결이 씬 순서를 뒤집는다** → 원본 순서 보존 필수.
+> ⑥ **App 테스트 하네스는 실재한다**(`tests/components/App.*.test.jsx` 7 개,
+> `App.promptBusyLines.test.jsx:360` 이 Header 를 mock, `:416` 에서 import, `:453` 에서 첫 렌더) —
+> v3 의 "App 은 하네스가 없다" 는 **사실 오류**였다. `App.jsx:2146` 도 뮤테이션으로 잡는다.
+
+---
+
+## 1. 사건
+
+사용자가 `Untitled` 프로젝트를 CapCut 으로 내보냈는데 **첫 씬 하나만** 내보내지고 나머지 518 개가
+조용히 빠졌다. 프리미어도 동일(사용자가 처음엔 "프리미어는 된다"고 했다가 착각이었다고 정정).
+
+### 실측 데이터 (`~/Documents/AutoFlowCut/Untitled/project.json`)
+
+| 항목 | 값 |
+|---|---|
+| 씬 수 | 519 |
+| `status` | **done 1 (scene_1) / pending 518** |
+| `imagePath` 보유 | 519 / 519 |
+| 실제 PNG 파일 | 519 / 519 (`Untitled/scenes/`) 존재 |
+| `donePrompt` | 1 / 519 |
+| `image_size` | 1 / 519 |
+| `mediaId` | 2 / 519 |
+| `generatingStartedAt` | 3 / 519 (2026-07-28 04:16~04:17) |
+| `error` | 0 / 519 |
+| PNG mtime | 2026-07-24 |
+
+- **이 프로젝트는 타인(Windows)에게서 받은 것.** `~/Documents/AutoFlowCut/Untitled.zip` 안의
+  도착 시점 스냅샷 `project.json` 의 `imagePath` 가 `C:\Users\ADMIN\Documents\AutoFlowCut\Untitled\scenes\scene_2.png`
+  형태이고, **그 스냅샷이 이미 done 1 / pending 518** 이었다. 전송 과정에서 깨진 게 아니다.
+- 내보내진 `Untitled_subtitle_ko.srt` 는 225 B — scene_1 의 자막 3 줄뿐. `project.srtTrack` 은 1304 개.
+- 같은 머신의 정상 프로젝트는 잘 나간다: `무한야담ep03` 186/186 done, `야담02` 152/152 done.
+
+**"왜 518 개가 pending 인가"는 이 스펙의 범위가 아니다** (보낸 사람 쪽 이력이라 확인 불가).
+이 스펙은 **그 상태의 프로젝트를 받았을 때 앱이 어떻게 행동해야 하는가**만 다룬다.
+
+---
+
+## 2. 근본 원인 (앵커 전부 실측 확인)
+
+1. 로드 시 `src/hooks/useProjectData.js:112-166` 이 씬마다
+   `fileSystemAPI.getResourcePath(projectName, 'scenes', scene.id)` 로 파일을 찾는다.
+2. 찾으면 `imagePath: pathResult.path` 를 **무조건** 채우고(`:132`),
+   `preservePending = scene.status === 'pending'`(`:127`),
+   `restoredStatus = preserveError ? 'error' : (preservePending ? 'pending' : 'done')`(`:128`) —
+   **pending 은 pending 으로 남고 imagePath 만 로컬 경로로 갱신**된다.
+   (참고: `image-missing` 에러는 파일이 돌아오면 자동으로 done 으로 치유된다 — `:121-122`.)
+3. UI 썸네일은 `imagePath` 기반(`src/components/SceneList.jsx:58` `resolveImageSrc(scene)`),
+   상태 배지는 별개(`:45-50` `statusIcon`). → **519 개가 전부 그림이 보이고 배지만 ⏳**.
+4. 내보내기는 `isExportableScene = isSceneGenerationDone(scene) && hasExportableMedia(scene)`
+   (`src/hooks/useExport.js:20-22`). `isSceneGenerationDone`(`src/services/generationStatus.js:17-24`)은
+   status 가 `pending`/`generating`/`error` 면 **false**. → 518 개 탈락.
+   `hasExportableMedia`(`src/utils/sceneMedia.js:50-53`)는 `image || imagePath` 라 519 개 모두 true.
+5. 필터를 쓰는 곳은 4 군데지만 **성격이 다르다**:
+   - `useExport.js:56` — `handleExportClick` 의 **preflight 가드** (사용자가 아직 아무것도 안 골랐다)
+   - `useExport.js:190` (CapCut) / `:297` (프리미어) / `:389` (Vrew) — **실제 실행 경로 3 개**
+6. 걸러진 씬 배열이 그대로 DTO 가 된다: `buildExportProject(validScenes)` 호출은
+   `useExport.js:218`(CapCut), `:320`(프리미어), `:411`(Vrew). `buildExportProject`(`:120-186`)는
+   1:1 매핑만 하고 추가 필터가 없다.
+7. 하류에도 씬을 떨구는 곳이 하나 있지만 이번 건과 무관하다:
+   `src/exporters/prepareCloudRequest.js:120` 이 `!imagePath && !fallback` 이면 skip —
+   pending+이미지 씬은 여기를 통과한다. `capcut.js` / `capcutCloud.js` / `premiereCloud.js` /
+   `vrewCloud.js` / `vrewPacker.js` 어디에도 `status` 재필터는 없다(리뷰 2 인이 각각 확인).
+8. **탈락이 조용하다**: `handleExportConfirm` 은 `validScenes.length === 0` 일 때만 경고
+   (`useExport.js:191-195`). 519 개 중 1 개가 통과하면 그 가드를 지나간다. `:56-59` 도 동일.
+9. 2 의 pending 보존은 **의도된 것**이다. `useProjectData.js:123-126` 주석: 프롬프트를 바꿔
+   재생성 대기 중인 씬을 디스크의 옛 이미지로 done 처리하면 "새 프롬프트 + 옛 이미지"가
+   done 으로 보이는 거짓말이 된다(실측 버그였음).
+
+→ **내보내기 코드는 데이터대로 동작했다.** 결함은 (a) 화면(=imagePath)과 내보내기(=status)의
+판정 기준이 갈리는데 그 사실이 사용자에게 안 드러나는 것, (b) 대량 탈락이 무음인 것.
+
+---
+
+## 3. 목표 / 비목표 / 접근 차단 (신설)
+
+### 3.1 목표
+- 이미지 파일이 있는 pending 씬이 있으면 **내보내기 전에 알리고 고르게 한다**.
+- 사용자가 그 씬들을 **포함해서 내보낼 수 있게** 한다.
+- 자동화(MCP/HTTP) 경로가 모달에 걸려 멈추지 않게 한다.
+
+### 3.2 비목표
+- 로드 시 `status` 자동 승격(= §2.9 의 false-done 버그 재발).
+- "왜 pending 이 되었나" 규명, 발신자 측 수정.
+- 크로스머신 프로젝트 import 기능 신설.
+- `image_size` 부재로 인한 내보내기 속도 개선(§9 리스크에만 기록).
+- `vrewPacker` 의 base64 미지원 해소 — §5.4 에서 **회피**만 한다(후속 권고는 §5.4 말미).
+
+### 3.3 ⚠️ 접근 차단 — 이걸 같이 안 고치면 전체가 무의미하다
+
+전부-pending 프로젝트는 **내보내기 버튼에 도달조차 못 한다.** 라운드 1 에서 두 리뷰어가 각각 발견.
+
+- `src/App.jsx:2146` — `hasImages={scenes.some(isSceneGenerationDone)}` →
+  `src/components/Header.jsx:381` — `disabled={!hasImages}`.
+  ready 0 이면 헤더 `ExportSplitButton` 이 **비활성**. 클릭 자체가 안 된다.
+- `src/App.jsx:2448-2456` — 하단 버튼은 `canExport = hasScenes && hasRun && !anyRunning &&
+  doneCount >= requiredCount` 이고 `hasRun = scenes.some(s => s.status === 'done' || s.status === 'error')`.
+  전부 pending 이면 `hasRun` false + `doneCount` 0 → `:2539` 의 조건부 렌더에서 **아예 안 그려진다**.
+
+**변경**
+- `App.jsx:2146` 의 `hasImages` 를 **순수 술어 `hasExportAccess(scenes)`**(§4.1) 호출로 바꾼다.
+  식을 App 안에 인라인하지 않는 이유: `Header` 는 불리언 prop 만 받으므로(`Header.jsx:24`)
+  Header 테스트로는 이 식을 검증할 수 없고, App 은 테스트 하네스가 없다. 술어를 밖으로 빼야
+  단위 테스트가 실제로 문다(라운드 2 지적).
+- **하단 `canExport` 바는 건드리지 않는다.** 그건 "생성 진척도"를 뜻하는 별개 UI 이고,
+  헤더 진입점 하나면 접근이 확보된다. 손대면 진척 표시 의미가 흐려진다.
+- **다른 `isSceneGenerationDone` 소비처는 절대 건드리지 않는다** — `src/components/StatusBar.jsx:13`,
+  `src/hooks/useMcpServer.js:570`, `src/App.jsx:2448` 은 카운트/진척이지 게이트가 아니다.
+
+---
+
+## 4. 설계
+
+### 4.1 씬 분류 (순수 함수, 신규 모듈)
+
+`src/services/exportSelection.js`
+
+```js
+// ── 단일 술어. 분류기와 실행 필터가 **반드시 이 함수를 호출**한다(재조합 금지) ──
+isRealPath(v) → boolean
+  // 항상 boolean(빈 문자열에 '' 를 반환하면 안 된다).
+  // **파일 경로 모양만** 통과 — 화이트리스트로 판정한다:
+  //   POSIX 절대경로 '/…'  |  Windows 'C:\…' 또는 '\\server\share\…'  |  'file://…'
+  // 스킴 블랙리스트(data:/http:/https:/blob:)만으로는 **raw base64 문자열이 통과**한다
+  // → 결국 vrew.js:72 의 fs.readFile 에서 죽는다(라운드 4 지적).
+
+isPendingExportEligible(scene, { requirePath = false }) → boolean
+  // scene.status === 'pending' && (requirePath ? isRealPath(scene.imagePath)
+  //                                            : hasExportableMedia(scene))
+
+classifyExportScenes(scenes, { requirePath = false } = {}) → {
+  ready:            Scene[],  // isSceneGenerationDone && hasExportableMedia
+  pendingWithImage: Scene[],  // isPendingExportEligible(scene, { requirePath })
+  unusable:         Scene[],  // 나머지
+}
+
+// 실행 선택도 같은 모듈이 소유한다 — useExport 가 술어를 재조합하지 않게.
+selectExportScenes(scenes, { includePending = false, requirePath = false }) → Scene[]
+  // scenes.filter(s => isSceneGenerationDone(s) && hasExportableMedia(s)
+  //                 || (includePending && isPendingExportEligible(s, { requirePath })))
+
+// 게이트 전용 순수 술어 — App.jsx:2146 이 이걸 호출한다(§3.3)
+hasExportAccess(scenes) → boolean   // ready.length + pendingWithImage.length > 0
+```
+
+- **`pending` 만 대상.** `error` 는 생성 실패라 디스크 이미지를 신뢰할 수 없고(`image-missing` 은
+  §2.2 처럼 이미 자동 치유되므로 남은 error 는 진짜 실패), `generating` 은 산출물 미확정.
+- **"이미지 있음" = `hasExportableMedia` 재사용.** 파일 실존을 다시 확인하지 않는다 — 로드 시
+  `useProjectData` 가 확인했고(없으면 `errorKind:'image-missing'` + `imagePath:null`),
+  518 회 IPC 재확인은 비용만 크다.
+- 세 배열은 **상호배타 + 합집합 = 입력 전체** (테스트로 고정, 개수 + 원소 동일성).
+- ⚠️ **원본 순서 보존.** `selectExportScenes` 는 **원본 배열을 `filter` 한다.**
+  `ready.concat(pendingWithImage)` 로 만들면 `[pending A, done B]` 가 `[B, A]` 로 뒤집혀
+  영상 순서와 `rebaseSrtTrackToScenes`(`src/utils/srtTrack.js:150`)의 자막 재배치가 어긋난다
+  (라운드 3 지적). 길이·ID 포함 단언만으로는 이 오류가 통과한다 → **순서 단언 필수**(§7.1).
+- ⚠️ **`requirePath` 는 truthy 검사가 아니다.** `imagePath` 자체가 data URI 일 수 있다.
+  `isRealPath` 는 항상 boolean 을 반환한다(빈 문자열에 `''` 를 반환하면 안 된다).
+
+### 4.2 모달 (3 버튼)
+
+`pendingWithImageCount > 0` 일 때만 뜬다. 0 이면 종전과 **완전히 동일한 흐름**.
+
+⚠️ **어느 카운트로 게이트하는지 못 박는다**: `format === 'vrew'` 면 **`pathOnly`**, 그 외는
+`default`. 게이트·문구·실행 필터가 전부 같은 값을 봐야 한다. 안 그러면 base64 전용 pending 만
+있는 프로젝트에서 Vrew 모달이 "N개 포함"이라 말해놓고 실제로는 0 개를 포함한다 —
+이번 사건의 "숫자와 실제 대상이 갈림"이 그대로 재발한다(라운드 3 지적).
+
+문구 — 라운드 1 지적 반영: "아직 생성되지 않은" 은 프롬프트를 고쳐 재생성 대기 중인 씬에는
+거짓말이다. 상태와 위험을 같이 말한다.
+
+```
+전체 519개 씬 중 518개가 미생성(pending) 상태입니다. 이미지 파일은 있지만,
+프롬프트를 수정한 뒤 아직 재생성하지 않은 옛 이미지일 수 있습니다.
+
+[포함]  [배제]  [취소]
+```
+
+"전체 N" 은 **`totalSceneCount` prop** 으로 받는다. `readyCount + pendingWithImageCount` 로는
+`unusable` 이 빠져 숫자가 틀리고, Vrew 는 `requirePath` 때문에 pending 카운트가 달라진다
+(라운드 2 지적).
+
+| 버튼 | 동작 |
+|---|---|
+| **포함** | `ready + pendingWithImage` 로 내보낸다 (`includePending: true`) |
+| **배제** | `ready` 만 내보낸다 (`includePending: false` = 현행) |
+| **취소** | 내보내기를 시작하지 않는다. **`ExportModal` 은 열린 채로 남는다**(옵션을 고치고 다시 시도할 수 있게). 어떤 파일도 쓰지 않고 토스트도 안 띄운다 |
+
+- **매번 묻는다.** localStorage 에 기억시키지 않는다 — 기억시키면 다음 프로젝트에서 낡은
+  이미지가 조용히 섞여 이 사건과 같은 무음 사고가 된다.
+
+### 4.3 모달의 소유자와 상태기계 (v3 보강 — 가장 중요)
+
+> **하드 제약: `useExport` 의 어떤 핸들러도 사용자 입력을 기다려선 안 된다.**
+> `handleExportConfirm` 은 MCP 진입점이기도 하다(`src/hooks/useMcpServer.js:232` CapCut,
+> `:273` 프리미어 — `:273` 은 `handleExportPremiere` 호출이다). 거기서 모달을 await 하면
+> `/api/export-capcut` 이 영원히 응답하지 않는다(레포 금지사항: 자동화 중 모달).
+> 따라서 **분류와 모달은 `ExportModal` 컴포넌트가 소유**하고, `includePending` 은 오직
+> **데이터로만** 핸들러에 전달된다. 이 배치가 §3.1 의 자동화 안전을 *구조적으로* 보장한다.
+
+`ExportModal`(`src/components/ExportModal.jsx`)의 현실:
+- props 에 `scenes` 가 **없다**(`:42`). → **신규 prop 필요**.
+- 내부 `format` state 를 갖고 사용자가 모달 안에서 포맷을 **바꿀 수 있다**(`:53`).
+  따라서 바깥 `exportFormat` 을 신뢰하면 안 된다.
+- 실행 콜백이 **3 개**다: `onExport`(CapCut, `:328`), `onExportPremiere`(`:247`),
+  `onExportVrew`(`:283`). App 이 그대로 세 핸들러에 배선한다(`src/App.jsx:3004-3006`).
+- 프리미어/Vrew 는 콜백 전에 **설치 확인 + 덮어쓰기 `window.confirm`** 을 먼저 한다(`:222-287`).
+
+**상태기계** (ExportModal 내부, UI 전용)
+
+`ExportModal` 은 **항상 마운트**돼 있고(`src/App.jsx:3001`) 닫히면 `if (!isOpen) return null`
+(`:185`)일 뿐이다 — **state 가 살아남는다**. 이미 같은 이유로 `format` 을
+`useLayoutEffect([isOpen])`(`:96-97`)에서 재초기화하고 있다. `pendingChoice` 도 같은 취급이 필요하다.
+
+```
+attemptRef: useRef(0)         // 동기 latch. 매 Export 클릭마다 ++
+phaseRef:   useRef('idle')    // 'idle'|'preflight'|'choosing'|'dispatching'  ← ref 다
+isOpenRef:  useRef(isOpen)    // ⚠️ 렌더마다 `isOpenRef.current = isOpen` 동기화 필수.
+                              //    useRef(isOpen) 은 최초값만 잡는다(라운드 4 지적).
+pendingChoice: null | { attempt, kind: 'capcut'|'premiere'|'vrew', options }   // 렌더용 state
+```
+
+> **`phase` 는 반드시 ref 다.** React state 는 동기 latch 가 아니라 같은 flush 안의 두 클릭이
+> 둘 다 통과한다(라운드 3 지적). 렌더가 필요하면 ref 와 state 를 함께 갱신하되 **판정은 ref 로** 한다.
+> `isOpen` 도 마찬가지 — async handler 가 캡처한 closure 값은 모달이 열려 있던 시점의 것이라
+> **항상 true** 여서 닫힘 감지에 쓸 수 없다.
+
+1. Export 클릭 → `phase !== 'idle'` 이면 **즉시 무시**(동기 latch). 아니면 `const my = ++attemptRef`,
+   `phase='preflight'`.
+2. 기존 검증·설치확인·덮어쓰기 `window.confirm` 을 **먼저** 통과시킨다.
+   (프리미어 `:230` / Vrew `:255` / CapCut `:306` 이 전부 **비동기**다.)
+   "포함"을 고른 뒤 덮어쓰기에서 거절당하면 취소 의미가 꼬이므로 순서는 이것으로 고정.
+3. **모든 await 직후** `if (my !== attemptRef.current || !isOpenRef.current) return` —
+   닫힌 뒤 resolve 한 stale attempt 를 버린다.
+   (v3 는 `!isOpen` 을 썼는데 그건 **closure 라 절대 안 걸리는 죽은 코드**였다 — 라운드 3.)
+4. `pendingWithImageCount === 0` → `phase='dispatching'` 후 해당 콜백 즉시 호출. 끝.
+5. `> 0` → `setPendingChoice({ attempt: my, kind, options })`, `phase='choosing'`.
+   콜백은 **아직 부르지 않는다**.
+6. `choosing` 동안 Export 버튼과 포맷 전환 탭을 **비활성화**한다.
+   (현재 Export 버튼은 `disabled={loading || ((format==='premiere'||format==='vrew') && !premiereWorkFolder)}`
+   (`:728`)라 `choosing` 을 모른다 → 그대로 두면 뒤에서 또 눌린다.)
+7. 포함/배제 → `phaseRef='dispatching'` + `setPendingChoice(null)` 을 **먼저** 하고, 그 다음
+   `pendingChoice.kind` 에 맞는 콜백을 `{ ...pendingChoice.options, includePending }` 으로 호출.
+   콜백이 throw/reject 해도 `phaseRef` 는 `idle` 로 되돌린다(finally) — 안 그러면 모달이 잠긴다.
+
+   ⚠️ **핸들러 전체를 try/finally 로 감싼다.** `dispatching`/`choosing` 으로 **전이하지 못한
+   모든 종료**는 `phaseRef='idle'` 로 복귀해야 한다.
+   단 **finally 는 attempt 토큰으로 가드한다**: `if (my === attemptRef.current && phaseRef.current === 'preflight')`
+   일 때만 리셋. 안 그러면 `A preflight → 닫기 → 재오픈 → B preflight → A resolve` 순서에서
+   **A 의 finally 가 B 의 latch 를 풀어버린다**(라운드 4 지적). 실제 코드의 조기 return 이 여럿이다:
+   경로 비어있음(`ExportModal.jsx:300`), 미설치, 덮어쓰기 거절(`:243`), 그리고 **reject 가능한**
+   설치확인(`:231`). v3 는 finally 를 콜백에만 걸어서 이 경로들이 `phase` 를 `'preflight'` 에
+   **영구 잠금**했다 — 모달을 닫았다 열어야만 풀리는 소프트락(라운드 3 지적).
+8. 취소 → `setPendingChoice(null)`, `phase='idle'`. 콜백 호출 없음. `ExportModal` 은 열린 채.
+9. **닫기 일원화** — 백드롭(`ExportModal.jsx:335`, `onClick={loading ? undefined : onClose}`),
+   X(`:385`), footer 취소(`:722`)가 지금은 `onClose` 를 직접 부른다. `handleClose()` 하나로 모아
+   `++attemptRef`, `pendingChoice=null`, `phaseRef='idle'` 후 `onClose()`.
+   **백드롭의 `loading` 가드는 보존한다.** (v3 가 백드롭을 `:735` 라 적었는데 그건 닫는 `</div>` —
+   앵커 정정.)
+10. **`isOpen` 이 false 가 되면** `:96-97` 자리의 effect 에서 **`++attemptRef`** 와 함께
+    `pendingChoice=null`, `phaseRef='idle'` 로 리셋한다.
+    ⚠️ **attemptRef 증가가 핵심이다.** 외부 닫힘이 실재한다 — `src/App.jsx:3019` 의
+    `onUpgradeClick` 이 `setShowExportModal(false)` 를 직접 부르고, 업그레이드 버튼은 preflight
+    중에도 눌린다(step 6 은 Export 버튼·포맷 탭만 막는다). v3 는 여기서 attempt 를 안 올려서
+    **paywall 이 뜬 뒤에 내보내기가 발사**될 수 있었다(라운드 3, 두 리뷰어 일치).
+    (Esc 닫기는 현재 없다. 추가하면 반드시 `handleClose` 를 타야 한다.)
+11. **`dispatching` 중 닫기** — 이미 발사된 콜백은 취소하지 않는다. 이후 모달 닫기 소유권은
+    `useExport`(`:268`/`:364`/`:453`)에 있다.
+    ⚠️ **step 9·10 과의 우선순위**: 닫기 시 `phaseRef` 를 무조건 `'idle'` 로 만들면 step 11 과
+    모순된다(라운드 4 지적). **`phaseRef.current === 'dispatching'` 이면 닫기는 phase 를 건드리지
+    않는다** — `pendingChoice` 만 비우고 `++attemptRef` 는 그대로 수행한다. phase 해제는 오직
+    dispatch 콜백의 finally 가 한다. 이래야 재진입 방지와 닫기 리셋이 양립한다.
+
+"소비-후-호출"(7)만으로는 부족하다는 것이 라운드 2 의 결론이다 — React 상태 갱신은 동기 latch 가
+아니므로 `attemptRef` 와 `phase` 가 실제 exactly-once 를 보장한다.
+
+**신규 prop**: `readyCount = 0`, `totalSceneCount = 0`,
+`pendingWithImageCount = { default: 0, pathOnly: 0 }`.
+⚠️ **기본값을 반드시 준다** — 기존 `tests/components/ExportModal.test.jsx` 는 새 prop 을 안 넘긴다.
+`undefined > 0` 이 false 라 우연히 살지만, 명시적 기본값이 없으면 구조분해에서 터진다(라운드 3).
+씬 배열 519 개를 모달에 통째로 넘기지 않는다 — 모달은 표시만 하고 분류는 App 이 한 번 수행한다.
+`pathOnly` 는 Vrew 전용(§5.4) — 포맷에 따라 표시 숫자가 달라지므로 두 값이 필요하다.
+`totalSceneCount` 는 §4.2 문구의 "전체 N" 용.
+
+### 4.4 `includePending` 배선 (실행 경로 3 개)
+
+- **`useExport` 는 술어를 재조합하지 않는다.** 로컬 `isExportableScene` 을 없애고
+  `selectExportScenes(scenes, { includePending, requirePath })`(§4.1)를 **호출**한다.
+  v3 는 "같은 것을 쓴다"고 문장으로만 말하고 `eligible` 을 export 하지 않아, 구현자가 동일 논리를
+  두 번 쓰는 게 자연스러웠다 — 그게 라운드 2 MAJOR 1 의 재발 경로다(라운드 3 지적).
+- **실행 경로 3 개**: `useExport.js:190`(CapCut) / `:297`(프리미어) / `:389`(Vrew).
+- **Vrew 만 `requirePath: true`**(`:389`). 모달 게이트도 같은 값(`pathOnly`)을 쓴다(§4.2).
+- `useExport.js:56`(`handleExportClick`)은 **옵션을 받지 않는다.** 사용자가 아직 아무것도 안 골랐다.
+  여기서 바뀌는 것은 **가드의 기준**뿐: `ready` → `ready + pendingWithImage`.
+  (라운드 1 지적: "네 경로 모두 옵션을 존중한다"는 이 경로에 대해 반증 불가능한 문장이었다.)
+
+### 4.5 자동화(MCP/HTTP) 경로 — 3 중 차단 해소 (v2 신설)
+
+현재 `includePending` 은 **어디로도 도달하지 못한다.** 세 곳 전부 고쳐야 한다.
+
+| # | 파일 | 현재 | 변경 |
+|---|---|---|---|
+| 1 | `mcp-server/index.js:584-601` | `export_capcut`/`export_premiere` inputSchema 가 `port` 만 받음 | `includePending: boolean` 추가 |
+| 2 | `mcp-server/lib/toolResponses.js:24-28`, `:43-47` | `fetcher(port,'POST',path)` — **바디 없음** | 바디로 `{ includePending }` 전달 |
+| 3 | `src/hooks/useMcpServer.js:220-230`, `:261-271` | `exportOptions` 를 **화이트리스트로 재구성**해 `options.includePending` 이 버려짐 | `includePending: options.includePending === true` 추가 |
+
+- **기본값 `false`** — 현행 동작 유지. 자동화의 의미가 조용히 바뀌면 안 된다.
+- HTTP 바디는 `electron/main.js:1258-1260`(CapCut) / `:1279-1281`(프리미어) 에서
+  `JSON.parse(body)` → `executeJavaScript` 로 그대로 전달되므로 **추가 변경이 없다**.
+  (`:1257` / `:1277` 은 `if (mainWindow)` 줄이다 — v2 앵커 재정정.)
+- `mcp-server/lib/appClient.js:15` 의 `appFetch(port, method, pathname, body = null)` 는
+  **이미 바디를 받는다**. appClient 는 건드릴 필요 없다(구현자 과잉 방지).
+- **MCP 경로는 모달을 절대 띄우지 않는다.** §4.3 의 소유자 배치로 구조적으로 보장된다.
+
+### 4.6 동작 표
+
+| pendingWithImage | ready | 경로 | 결과 |
+|---|---|---|---|
+| 0 | ≥1 | UI | 모달 없음, 종전대로 |
+| ≥1 | ≥1 | UI | 3버튼 모달 → 포함/배제/취소 |
+| ≥1 | **0** | UI | 헤더 버튼이 **활성**(§3.3) → 3버튼 모달. **"배제" 선택 시 내보낼 게 0** → 기존 "생성된 이미지 없음" 경고 |
+| 0 | 0 | UI | 헤더 버튼 비활성 (종전) |
+| 임의 | 임의 | MCP/HTTP | 모달 없음, `includePending` 옵션대로(기본 false) |
+
+---
+
+## 5. 엣지 케이스
+
+1. **ready 0 / pendingWithImage ≥1** — §3.3 의 `hasImages` 변경 + `useExport.js:56` 가드 기준
+   변경이 **둘 다** 있어야 도달 가능. 하나만 하면 paper fix.
+2. **취소 반환값** — UI 레이어에서 취소하면 **어떤 핸들러도 호출되지 않으므로 반환값이라는
+   개념 자체가 없다**. (v1 의 `{ success:false, cancelled:true }` 문장은 삭제 — 소비자가 없다.
+   `ExportModal` 은 콜백 반환값을 쓰지 않는다.)
+3. **포함 시 자막** — pendingWithImage 씬도 `subtitle` 을 가지므로 SRT rebase
+   (`rebaseSrtTrackToScenes`, `useExport.js:129-133`)에 함께 들어간다. 이번 사건의 225 B SRT 가
+   정상 길이로 회복되는지가 검증 포인트(§7 에서 **SRT 내용**을 단언한다).
+4. **Vrew + base64 전용 이미지** — `hasExportableMedia` 는 `image`(base64)도 통과시키지만,
+   Vrew 경로는 base64 를 파일 경로로 취급해 **내보내기 전체가 죽는다**:
+   `buildExportProject` 가 base64 를 `image_path` 에 넣고(`useExport.js:149`; `:148` 은 `media_path`) →
+   `prepareCloudRequest.js:117`·`:159` 가 그대로 `mediaFiles[].path` 로 옮기고 →
+   `src/exporters/vrewPacker.js:121` 의 `sourceForItem` 이 `item?.path ? { filePath: item.path } : null`
+   로 **data URI 를 filePath 로 만들고** → `electron/ipc/vrew.js:67` 의 `filePath` 분기가
+   `:72` 에서 `fs.readFile(dataURI)` 로 하드 실패한다(ENAMETOOLONG/ENOENT).
+   `vrewPacker.js:118-119` 주석은 "인라인 base64 는 발생하지 않음"이라고 **가정**하고 있다 —
+   포함 기능은 그 가정을 깰 수 있다.
+   → **Vrew 실행 필터에 `requirePath: true`**(§4.4). `isRealPath` 로 `data:` 접두를 배제한다(§4.1).
+   `imagePath` truthy 검사만으로는 부족하다 — `imagePath` 자체가 data URI 일 수 있다.
+
+   **후속 권고(이번 범위 밖)**: `electron/ipc/vrew.js:75` 는 이미 `{data}` 분기를 갖고 있으므로,
+   `sourceForItem` 이 data URI 를 `{data}` 로 넘기게 고치면 이 회피 자체가 불필요해진다.
+   done 씬에도 있는 **선존 제약**이라 이번 버그 수정과 분리한다.
+5. **영상만 있고 이미지 없는 pending 씬** — `hasExportableMedia` false → `unusable`. 종전과 동일
+   (의도적, `sceneMedia.js:36-47` 주석 참고. 단 그 주석이 가리키는 "capcutCloud line 135" 는
+   드리프트됐고 실제 skip 은 `prepareCloudRequest.js:120` 이다 — 주석 정정은 별건).
+
+---
+
+## 6. 명시적으로 하지 않는 것과 그 이유
+
+| 안 | 왜 안 하나 |
+|---|---|
+| 로드 시 pending+이미지를 done 으로 승격 | `useProjectData.js:123-126` 이 막으려던 false-done 버그 재발 |
+| pending 일 때 `imagePath` 를 안 붙이기 | UI 와 내보내기는 일치하지만 "디스크에 이미지가 있다"는 정보가 사라진다. 이번 사건에서 그 썸네일이 유일한 단서였다 |
+| `donePrompt` 로 "외부 유입" 자동 판별 | **두 리뷰어가 독립적으로 반대.** `donePrompt` 는 프로비넌스 표지가 아니다 — 로컬 강제 재생성 중에도 보존되고(`:125-126`), 구버전 프로젝트엔 아예 없다. 부재 ⇒ 외부도 아니고 안전도 아니다. **행동 결정에 쓰지 않는다.** 모달 문구를 풍부하게 하는 용도로만 검토 가능(이번 범위 밖) |
+| 선택 기억(localStorage) | 다음 프로젝트에서 낡은 이미지가 무음으로 섞인다 |
+| 하단 `canExport` 바 완화 | 진척 표시 의미가 흐려진다. 헤더 진입점 하나로 접근 확보 충분(§3.3) |
+
+---
+
+## 7. 테스트 계획 (TDD — 실패 테스트 먼저)
+
+> ⚠️ 기존 `tests/hooks/useExport.test.js` 는 **`useExport` 를 import 조차 하지 않고**(`:8`)
+> 필터링을 테스트 안에서 재구현한다(`:31`). **그 파일 스타일로 확장하면 제품이 깨진 채 초록불이 뜬다.**
+> 신규 훅 테스트는 `renderHook(useExport)` 로 실제 훅을 돌린다 — 참고: `tests/hooks/useExport.refresh.test.jsx:53`.
+>
+> ⚠️ **관찰 지점을 명시한다.** `buildExportProject` 는 훅 내부 함수라 직접 못 본다.
+> `vi.mock('../../src/exporters/capcut.js')` 등으로 exporter 를 mock 하고
+> **`exportCapcut` 이 받은 `project.scenes` / `project.srtTrack`** 을 단언한다.
+
+### 7.1 단위 — `tests/services/exportSelection.test.js` (신규)
+- done / pending+이미지 / 미디어없음 3 분할이 정확하다
+- 세 배열이 상호배타·합집합=입력 전체 — **개수 + 원소 동일성(identity)** 단언
+- `generating`·`error` 는 이미지가 있어도 `pendingWithImage` 에 안 들어간다
+- 이미지 없는 `pending` 은 `unusable`
+- `requirePath:true` → **base64 전용**(`image` 만, 또는 `imagePath` 가 `data:` URI) pending 씬 제외
+- `hasExportAccess(scenes)`: ready 0 + pendingWithImage ≥1 → **true**, 둘 다 0 → false
+
+### 7.2 훅 — `tests/hooks/useExport.pending.test.jsx` (신규, renderHook)
+- **회귀 재현**: pending+이미지 518 + done 1 → `includePending:false` 면 exporter 가 받은
+  `project.scenes.length === 1`
+- `includePending:true` → `=== 519`
+- **실행 경로 3 개 각각** 옵션을 존중한다(CapCut/프리미어/Vrew) — 한 경로만 고치는 회귀를 잡는다
+- **Vrew 전용**: `includePending:true` 여도 제외된다 — 픽스처에 **두 변형 모두** 넣는다:
+  (a) `image`(base64) 만 있는 씬, (b) **`imagePath` 자체가 `data:` URI** 인 씬.
+  (b) 가 없으면 `requirePath` 를 truthy 검사로 약화시킨 뮤턴트(#10)가 산다 — 라운드 3 지적
+- **원본 순서 보존**: `[pending A, done B]` 입력 → exporter 가 받은 `project.scenes` 가 `[A, B]`
+  (`ready.concat(pending)` 이면 `[B, A]` 가 된다)
+- `handleExportClick` 이 ready 0 / pendingWithImage ≥1 에서 **조기 반환하지 않는다**
+- **옵션 생략 호출**: `selectExportScenes(scenes, {})` — `includePending` 을 **아예 안 넘겼을 때**
+  ready 만 반환한다. MCP 는 `includePending: false` 를 명시 전달하므로 이 단위 테스트가 없으면
+  기본 파라미터 뮤테이션(#1)이 산다(라운드 4 지적)
+- **`includePending:false` + ready 0** → `{ success:false }` + `toast.warning` (§4.6 표 3행의 훅쪽 절반)
+- **SRT 정확 단언**: `includePending:true` 일 때 exporter 가 받은 `project.srtTrack` 에
+  pending 씬들의 **subtitle id 가 실제로 포함**된다. "1 개 씬 분량이 아니다" 식의 느슨한 단언은
+  `pruneSrtTrackToScenes(..., { preserveUnlinked: true })`(`useExport.js:129-133`) 때문에
+  unlinked 라인만으로도 통과할 수 있다.
+
+### 7.3 접근 게이트 (§3.3)
+- `tests/services/exportSelection.test.js` 의 `hasExportAccess` 케이스(7.1) — 술어 자체.
+- `tests/components/Header/…` — `hasImages` prop → 버튼 활성/비활성 계약.
+- **`tests/components/App.exportAccess.test.jsx` (신규)** — **App 배선을 실제로 문다.**
+  v3 는 "App 에 하네스가 없다"며 눈검증으로 격하했는데 **사실 오류였다**:
+  `tests/components/App.*.test.jsx` 가 **6 개**(+`AppFlowSplitLayout.test.jsx`) 있고,
+  `App.promptBusyLines.test.jsx:360` 이
+  `vi.mock('../../src/components/Header', () => ({ default: () => null }))` 로 Header 를 mock 한 뒤
+  `:416` 에서 App 을 import 하고 `:453` 에서 처음 렌더한다. 같은 패턴으로 **Header mock 이 받은 props 를 캡처**하고,
+  `status:'pending'` + `imagePath` 씬만 주입해 `hasImages === true` 를 단언하면
+  `App.jsx:2146` 원복 뮤테이션이 죽는다.
+
+### 7.4 통합 — `tests/components/ExportModal.pendingChoice.test.jsx` (기존 `ExportModal.test.jsx` 와 별도)
+- pendingWithImage > 0 → 3버튼 모달이 뜬다 / 0 → **안 뜬다**(잔소리 금지)
+- **포함** → 해당 콜백이 `includePending:true` 로 호출 / **배제** → `false`
+- **취소** → **어떤 콜백도 호출 안 됨**, `ExportModal` 은 열린 채
+- **포맷 전환**: CapCut 으로 열어 모달 안에서 프리미어로 바꾼 뒤 포함 → **프리미어 콜백**이 불린다
+- **이중 발화**: `choosing` 중 Export 버튼과 포맷 탭이 **disabled** 다(속성 단언) + 클릭해도
+  설치확인/덮어쓰기 검사가 **재실행되지 않는다**(호출 횟수 단언)
+- **닫기 리셋**: 3버튼 모달 중 백드롭/X/footer 취소로 닫고 재오픈 → 3버튼 모달이 **떠 있지 않다**
+- **stale attempt**: **`pendingWithImageCount === 0` 픽스처**(= 즉시 dispatch 경로)로
+  설치확인 promise 를 붙잡아 둔 채 모달을 닫고 그 뒤 resolve → **콜백 미호출**.
+  (pending>0 픽스처면 resolve 가 콜백이 아니라 `setPendingChoice` 로 가서 단언이 **공허하게
+  통과**한다 — 라운드 3 지적)
+- **외부 닫힘(prop-driven)**: `isOpen` 을 false 로 **rerender** 해서 닫는다(백드롭/X 를 안 탄다).
+  `App.jsx:3019` 업그레이드 경로가 이 모양이다.
+  ⚠️ **순서를 반드시 `닫기 → 재오픈 → preflight resolve` 로 한다.**
+  `닫기 → resolve → 재오픈` 순서면 `isOpenRef` 가 대신 막아줘서 **`++attemptRef` 를 제거한
+  뮤턴트(#7)가 살아남는다**(두 리뷰어 모두 지적). 재오픈 후에는 `isOpenRef` 가 다시 true 라
+  **attempt 토큰만이** stale 을 가른다 → resolve 후 콜백 미호출 + 3버튼 모달 없음을 단언.
+- **preflight reject**: 설치확인이 reject → 다시 Export 를 눌렀을 때 **설치확인이 2 회째 호출**된다
+  (버튼은 preflight 중에도 원래 enabled 라 "누를 수 있다"만으론 뮤테이션 #13 이 산다 — 라운드 4)
+- **조기 return 후 재시도**: 미설치 / 덮어쓰기 거절 후 재클릭 시에도 **2 회째 호출**을 단언
+- **dispatch 중 닫기**: 콜백이 pending 인 채 모달을 닫아도 **재진입이 안 된다**(§4.3 step 11)
+- **동기 이중 클릭**: `idle` 에서 같은 act 안에 Export 를 2 회 → preflight 가 **1 회만** 시작된다
+- **콜백 throw**: 포함 후 콜백이 reject 해도 `phase` 가 풀려 다시 Export 를 누를 수 있다
+- 프리미어/Vrew 의 덮어쓰기 `window.confirm` 이 3버튼 모달보다 **먼저** 뜬다
+
+### 7.5 자동화 (§4.5) — 대칭으로
+> ⚠️ **하네스 지정**: 기존 `tests/hooks/useMcpServer.test.js` 는 `handleExportConfirm` 을
+> **mock 으로 주입**한다 — 그 스타일로는 "exporter 가 받은 개수"를 볼 수 없어 뮤테이션 #1 이 산다.
+> `tests/hooks/useMcpServer.export.test.jsx` (신규)에서 **real `useExport` 를 주입**하고
+> exporter 를 mock 해 결과 개수를 관찰한다.
+- `window.__mcpExportCapcut()` / `__mcpExportPremiere()` 둘 다 pendingWithImage 가 있어도
+  **모달 없이** 진행하고, exporter 가 받은 씬 수가 **ready 개수와 정확히 같다**
+  (단순히 "옵션이 false 로 전달됐다" 가 아니라 **결과 개수**를 봐야 기본값 뮤테이션이 죽는다)
+- `__mcpExportCapcut({ includePending:true })` / `__mcpExportPremiere({ includePending:true })`
+  둘 다 실제로 포함해서 진행한다 — **화이트리스트 재구성**(`useMcpServer.js:220`,`:261`)을 무는 테스트
+- `tests/mcp-server/toolResponses.test.js` (기존): `handleExportCapcutTool` /
+  `handleExportPremiereTool` 이 바디에 `includePending` 을 실어 보낸다
+  (⚠️ 기존 3-인자 기대값이 깨지므로 **같이 고쳐야 한다**)
+- `mcp-server/index.js` 의 `export_capcut` / `export_premiere` **스키마 두 개 모두**
+  `includePending` 을 노출한다
+
+### 7.6 뮤테이션 (커밋 후 실측)
+| # | 뮤테이션 (정확한 지점) | 죽어야 하는 테스트 |
+|---|---|---|
+| 1 | `selectExportScenes` 의 `includePending` **기본 파라미터**를 `true` 로 | **7.2 옵션 생략 호출** (7.5 는 MCP 가 false 를 명시 전달해 못 문다) |
+| 2 | 모달 게이트 `> 0` → `>= 0` | 7.4 잔소리 금지 |
+| 3 | 실행 경로 3 개 중 하나만 `includePending` 전달 제거 | 7.2 경로별 |
+| 4 | 취소 분기를 배제와 동일하게 | 7.4 취소 |
+| 5 | `pendingChoice.kind` → 바깥 `exportFormat` | 7.4 포맷 전환 |
+| 6a | `phaseRef` → React state 로 환원 | 7.4 동기 이중 클릭 (preflight 호출 **1 회** 단언) |
+| 6b | `attemptRef` → React state 로 환원 | 7.4 stale attempt (재오픈-후-resolve) |
+| 7 | `isOpen=false` effect 의 `++attemptRef` 제거 | 7.4 **외부 닫힘(prop-driven)** |
+| 8 | Vrew 실행 필터의 `requirePath` 제거 | 7.2 Vrew (a)(b) 두 변형 |
+| 9 | `hasExportAccess` 를 `ready.length > 0` 로 원복 | 7.1 술어 |
+| 10 | `isRealPath` 를 truthy 검사로 약화 | 7.2 Vrew **(b) data-URI imagePath** |
+| 11 | `App.jsx:2146` 을 `scenes.some(isSceneGenerationDone)` 로 원복 | **7.3 App 배선 테스트** |
+| 12 | `selectExportScenes` 를 `ready.concat(pendingWithImage)` 로 | 7.2 원본 순서 보존 |
+| 13 | preflight 조기 return/ reject 경로의 `finally` 제거 | 7.4 reject·조기 return 후 **설치확인 2 회째 호출** |
+| 14 | finally 의 attempt-토큰 가드 제거 | 7.4 `A preflight → 닫기 → 재오픈 → B preflight → A resolve` 에서 B 생존 |
+| 15 | 닫기 시 `dispatching` 에서도 `phaseRef='idle'` 로 | 7.4 dispatch 중 닫기 → 재진입 불가 |
+
+**의도적으로 뺀 것**: "`setPendingChoice(null)` 을 콜백 뒤로 이동" — 동기 flush 하에서 관찰상
+동등해 짝지을 테스트가 없다(라운드 2). #6·#13 이 그 자리를 대신한다.
+
+**v4 에서 해소**: v3 가 "뮤테이션으로 못 잡는다"고 선언했던 `App.jsx:2146` 은 App 하네스가
+실재하므로 #11 로 **잡는다**(라운드 3).
+
+---
+
+## 8. 변경 파일 목록 (구현 범위 확정)
+
+| 파일 | 변경 |
+|---|---|
+| `src/services/exportSelection.js` | **신규** — `isRealPath` / `isPendingExportEligible` / `classifyExportScenes` / **`selectExportScenes`** / `hasExportAccess` |
+| `src/hooks/useExport.js` | **로컬 `isExportableScene`(`:20-22`) 삭제** 후 `selectExportScenes` 호출로 대체(재조합 금지). 실행 3 경로(`:190`,`:297`,`:389`)가 `includePending` 수용, Vrew 는 `requirePath:true`; `:56` 가드는 `hasExportAccess` 기준 |
+| `src/App.jsx` | `:2146` → `hasExportAccess(scenes)`; `ExportModal` 에 카운트 prop 3 종 전달 |
+| `src/components/ExportModal.jsx` | `attemptRef`/`phase`/`pendingChoice` 상태기계, 3버튼 모달, 액션 비활성화, `handleClose` 일원화, `isOpen` 리셋 |
+| `src/components/ExportModal.css` | 3버튼 모달 스타일 |
+| `src/locales/ko.js`, `src/locales/en.js` | 모달 문구 i18n 키 (없으면 raw key 가 화면에 노출된다) |
+| `src/hooks/useMcpServer.js` | `:220-230`, `:261-271` 에 `includePending` 통과 |
+| `mcp-server/index.js` | `:584-601` 스키마 2 개에 `includePending` |
+| `mcp-server/lib/toolResponses.js` | `:24-28`, `:43-47` 바디 전달 |
+| `tests/mcp-server/toolResponses.test.js` | **기존 수정** — 3-인자 기대값이 바디 추가로 깨진다 |
+| `tests/services/exportSelection.test.js` | **신규** |
+| `tests/hooks/useExport.pending.test.jsx` | **신규** (renderHook + exporter mock) |
+| `tests/components/ExportModal.pendingChoice.test.jsx` | **신규** |
+| `tests/components/App.exportAccess.test.jsx` | **신규** — Header mock 이 받은 `hasImages` 단언 |
+| `tests/hooks/useMcpServer.export.test.jsx` | **신규** — real `useExport` 주입 + exporter mock |
+| `tests/mcp-server/index.schema.test.js` | **신규** — `export_capcut`/`export_premiere` 스키마에 `includePending` |
+| `tests/components/Header/ExportButton.gate.test.jsx` | **신규** — `hasImages` prop → 버튼 활성/비활성 계약 (`tests/components/Header/` 디렉터리 실재) |
+
+**건드리지 않는다**: `src/hooks/useProjectData.js`(로드 의미론 불변), `src/services/generationStatus.js`,
+`src/components/StatusBar.jsx`, `src/exporters/*`(vrewPacker 후속 권고는 §5.4), `electron/main.js`,
+`mcp-server/lib/appClient.js`(이미 바디를 받는다).
+
+---
+
+## 9. 리스크
+
+1. **속도** — 518 개 씬에 `image_size` 가 없어 `prepareCloudRequest.js:125-137` 이 이미지를 하나씩
+   디코드하고 실패 시 1024×1024 폴백(`:145-146`). 눈에 띄게 느려질 수 있다. 기능은 동작하므로
+   이번 범위에서 고치지 않고 실측 후 별건.
+2. **모달 피로** — 조건을 잘못 잡으면 정상 프로젝트에서도 뜬다. `> 0` + 잔소리 금지 테스트로 방어.
+3. **자동화 파손** — MCP 경로에 모달이 새면 `/api/export-capcut` 이 응답을 못 한다.
+   §4.3 소유자 배치(구조) + §7.5 전용 테스트로 이중 방어.
+4. **포함이 만드는 잘못된 결과물** — 프롬프트를 고쳐 재생성 대기 중인 씬을 "포함"하면 옛 이미지가
+   나간다. 모달 문구(§4.2)가 유일한 방어다.
+5. **App 게이트 회귀** — `App.jsx:2146` 배선. v3 는 "뮤테이션으로 못 잡는다"고 했으나 **오류였고**,
+   §7.3 의 App 배선 테스트 + 뮤테이션 #11 로 **잡는다**. 눈검증은 보조 수단이다.
+
+---
+
+## 10. 리뷰 findings 처리 내역
+
+### 라운드 1
+| # | 심각도 | 내용 | 처리 |
+|---|---|---|---|
+| 1 | MAJOR | 전부-pending 이면 내보내기 버튼이 비활성/미렌더 → §5.1 이 paper fix | §3.3 신설 |
+| 2 | MAJOR | 모달 소유자·삽입 지점 미지정 → 자동화 데드락 위험, 포맷 전환/이중 발화/취소 반환값/prop 부재 | §4.3 신설 |
+| 3 | MAJOR | `includePending` 이 MCP 로 도달 불가(3중 차단) | §4.5 신설 |
+| 4 | MINOR | "네 호출부" 부정확 — `:56` 은 preflight | §2.5 / §4.4 정정 |
+| 5 | P2 | Vrew 가 base64 를 파일 경로로 취급 | §5.4 + `requirePath` |
+| 6 | P2 | 기존 `useExport.test.js` 가 훅을 import 안 함 → vacuous | §7 서두 경고 |
+| 7 | P3 | 앵커 드리프트 | 정정 |
+
+### 라운드 2 (두 리뷰어 독립, MAJOR 3 건 일치)
+| # | 심각도 | 내용 | 처리 |
+|---|---|---|---|
+| 1 | MAJOR | `requirePath` 가 **카운트에만** 걸려 실행 필터엔 없음 → 여전히 paper fix. 게다가 `imagePath` 자체가 data URI 일 수 있어 truthy 검사로는 부족 | §4.1 `isRealPath`, §4.4 Vrew 배선, §5.4 재작성, 뮤테이션 #8·#10 |
+| 2 | MAJOR | `ExportModal` 이 항상 마운트라 `pendingChoice` 가 닫기/재오픈을 살아남음(`:185` 는 `return null`). 비동기 preflight(`:230`/`:255`/`:306`)가 닫힌 뒤 resolve 하면 유령 내보내기 | §4.3 `attemptRef`/`phase`/`handleClose`/`isOpen` 리셋, 7.4 닫기·stale·throw 테스트, 뮤테이션 #6·#7 |
+| 3 | MAJOR | Header 테스트는 불리언 prop 만 받아 `App.jsx:2146` 뮤테이션을 못 죽임 | 순수 술어 `hasExportAccess` 추출(§4.1·§3.3), 7.1 로 이동, **못 잡는 것은 §7.6·§11 에 정직하게 명시** |
+| 4 | P2 | §8 에 로케일·CSS·기존 `toolResponses.test.js` 누락 | §8 보강 |
+| 5 | P2 | MCP 테스트 비대칭(프리미어 없음), 기본값 뮤테이션은 **결과 개수**를 봐야 죽음 | §7.5 재작성 |
+| 6 | P2 | SRT 단언이 `preserveUnlinked` 로 헐거움 / 관찰 지점(exporter mock) 미지정 | §7 서두 + §7.2 |
+| 7 | P2 | "`setPendingChoice` 순서 이동" 뮤테이션은 관찰 불가 | 목록에서 제거, #6 으로 대체 + throw 테스트 |
+| 8 | P3 | `main.js:1257/:1277` 은 `if (mainWindow)` 줄, 바디 전달은 `:1258-1260`/`:1279-1281`. `vrew.js:67` 은 조건, `readFile` 은 `:72` | §4.5 · §5.4 정정 |
+| 9 | NIT | Export 버튼 disabled 조건은 `loading` 단독이 아님 | §4.3 정정 |
+| 10 | NIT | `appClient.js:15` 는 이미 바디를 받음 | §4.5 · §8 명시 |
+
+### 라운드 3 (두 리뷰어 독립, 상태기계 구멍 일치)
+| # | 심각도 | 내용 | 처리 |
+|---|---|---|---|
+| 1 | MAJOR | 외부 닫힘(`App.jsx:3019` 업그레이드)에서 `attemptRef` 미무효화 + step 3 의 `!isOpen` 은 closure 라 죽은 코드 → **paywall 뒤 유령 내보내기** | §4.3 step 3 `isOpenRef`/`attemptRef.current`, step 10 `++attemptRef`, 7.4 prop-driven 닫힘 테스트, 뮤테이션 #7 |
+| 2 | MAJOR | preflight 의 reject·조기 return 이 `phase` 를 영구 잠금(`:231` reject, `:243` 거절, `:300` 빈 경로) | §4.3 step 7 전체 try/finally, 7.4 reject·조기 return 재시도, 뮤테이션 #13 |
+| 3 | MAJOR | `phase` 가 React state 면 동기 latch 가 아니다 | `phaseRef` 로 전환, 7.4 동기 이중 클릭, 뮤테이션 #6 |
+| 4 | MAJOR | `eligible` 미export → 분류기·실행 필터 재조합 여지 | `isPendingExportEligible`/`selectExportScenes` export(§4.1), §4.4 재작성 |
+| 5 | MAJOR | **App 하네스는 실재한다** — v3 의 "없다"는 사실 오류(`App.promptBusyLines.test.jsx:360/:416`) | §7.3 App 배선 테스트 신설, 뮤테이션 #11 로 승격 |
+| 6 | P2 | `ready.concat(pendingWithImage)` 가 씬 **순서를 뒤집는다** → 자막 rebase 어긋남 | §4.1 filter 강제, 7.2 순서 단언, 뮤테이션 #12 |
+| 7 | P2 | `isRealPath` 가 boolean 아님 + http/raw base64 통과 | §4.1 계약 강화, 7.2 (b) data-URI 픽스처, 뮤테이션 #10 |
+| 8 | P2 | Vrew 게이트/문구가 default vs pathOnly 미지정 | §4.2 에 `format==='vrew' → pathOnly` 명시 |
+| 9 | P2 | stale 테스트가 pending>0 픽스처면 공허 통과 / #7 짝이 handleClose 만 탐 | 7.4 픽스처 고정 + prop-driven 테스트 |
+| 10 | P2 | §7.5 하네스가 handler mock 이라 결과 개수 관찰 불가 | 7.5 서두에 real `useExport` 주입 명시 |
+| 11 | P3 | 신규 prop 기본값 미지정 → 기존 `ExportModal.test.jsx` 영향 | §4.3 기본값 명시 |
+| 12 | P3 | 앵커: 백드롭은 `:335`(`:735` 는 닫는 div, `loading` 가드 있음), base64→`image_path` 는 `:149` | §4.3 · §5.4 정정 |
+
+**두 리뷰어가 일치한 판단**: `donePrompt` 자동 판별 반대, `pending` 만 대상 유지 찬성,
+하단 `canExport` 바 비변경 찬성, 자동화 진입점은 CapCut/프리미어 MCP·HTTP 둘뿐,
+§2 근본 원인 체인은 흠 없음, §4.5 자동화 절은 라운드 2 기준 완전.
+
+---
+
+## 11. 라운드 4 (확인용) 에 묻고 싶은 것
+
+라운드 3 의 지적을 전부 반영했다. 이번 라운드는 **새 설계 논의가 아니라 반영 확인**이다.
+
+1. §4.3 의 `attemptRef` / `phaseRef` / `isOpenRef` / 전체 try-finally / step 10 `++attemptRef`
+   조합으로 라운드 3 F1·F2(외부 닫힘 유령 dispatch, preflight 소프트락)가 **실제로** 막히나?
+2. §4.1 의 `isPendingExportEligible` / `selectExportScenes` export 로 분류기·실행 필터의
+   드리프트가 **구조적으로** 봉쇄됐나? `useExport` 에 재조합 여지가 남아 있나?
+3. §7.6 의 13 개 뮤테이션이 각각 짝지은 테스트로 **실제로** 죽나? 특히 #6·#7·#10·#12·#13.
+4. §8 목록이 이제 완전한가?
+5. **구현 착수해도 되나?** 아직 아니라면 **코드 작성 전에 반드시 고쳐야 할 것만** 골라줘.
