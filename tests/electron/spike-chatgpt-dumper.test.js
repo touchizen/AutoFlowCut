@@ -12,9 +12,12 @@ describe('CHATGPT_DUMPER string contract', () => {
   it('uses the forwarded log prefix', () => {
     expect(CHATGPT_DUMPER).toContain('[autoflowcut CGPT DUMP]')
   })
-  it('captures targeted send buttons plus button-level icon fallbacks', () => {
-    expect(CHATGPT_DUMPER).toContain('button[data-testid*="send" i], button[aria-label*="send" i], form button[type="submit"]')
-    expect(CHATGPT_DUMPER).toContain('button:has(svg)')
+  it('captures composer-scoped buttons and all data-testid buttons (no sidebar truncation)', () => {
+    // 컴포저 영역 스코프 + data-testid 전량 — 전역 slice(사이드바 truncation) 사용 금지
+    expect(CHATGPT_DUMPER).toContain('composerButtons')
+    expect(CHATGPT_DUMPER).toContain('testidButtons')
+    expect(CHATGPT_DUMPER).toContain("querySelector('#prompt-textarea')")
+    expect(CHATGPT_DUMPER).not.toContain('button:has(svg)')  // 잘리는 전역 fallback 제거
     expect(CHATGPT_DUMPER).not.toContain('button svg')
   })
   it('caps result image candidates at 16', () => {

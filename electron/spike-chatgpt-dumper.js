@@ -24,10 +24,21 @@ export const CHATGPT_DUMPER = /* js */ `
         ts: Date.now(),
         // 넓은 후보군 — 저자가 덤프에서 실제 셀렉터를 고른다.
         composer: pick('textarea, [contenteditable="true"], [data-testid*="prompt" i], .ProseMirror'),
-        sendButtons: [
-          ...Array.from(document.querySelectorAll('button[data-testid*="send" i], button[aria-label*="send" i], form button[type="submit"]')).map(ser),
-          ...Array.from(document.querySelectorAll('button:has(svg)')).slice(0, 12).map(ser),
-        ],
+        // 전송버튼: 사이드바 truncation을 피하려고 (1) 컴포저 영역(form/근접 조상) 안의 버튼 전부
+        //   + (2) data-testid 달린 버튼 전량(위치 무관, 언어 무관)으로 잡는다. 한국어 UI라 aria-label
+        //   'send' 매칭이 안 되고 전역 slice가 사이드바로 차버려 진짜 전송버튼을 놓쳤던 문제 해결.
+        composerButtons: (() => {
+          const c = document.querySelector('#prompt-textarea')
+            || document.querySelector('[contenteditable="true"]')
+            || document.querySelector('textarea');
+          if (!c) return [];
+          const root = c.closest('form')
+            || c.closest('[class*="composer" i]')
+            || c.parentElement?.parentElement?.parentElement?.parentElement
+            || document.body;
+          return Array.from(root.querySelectorAll('button')).map(ser);
+        })(),
+        testidButtons: Array.from(document.querySelectorAll('button[data-testid], [role="button"][data-testid]')).map(ser),
         images: pick('main img, [data-testid*="image" i] img, canvas, a[download] img', 16),
       };
       try { console.log(P, JSON.stringify(out).slice(0, 2000)); } catch (e) {}
