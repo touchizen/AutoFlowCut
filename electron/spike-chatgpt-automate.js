@@ -83,10 +83,17 @@ export const PAGE_FNS = /* js */ `
     }));
     const snapshot = (tag) => {
       const imgs = collect();
-      const last = document.images && document.images.length ? document.images[document.images.length - 1] : null;
+      const mainImgs = document.querySelectorAll('main img');
+      const last = mainImgs.length
+        ? mainImgs[mainImgs.length - 1]
+        : (document.images && document.images.length ? document.images[document.images.length - 1] : null);
       try { if (last && last.scrollIntoView) last.scrollIntoView({ block: 'end' }); } catch (e) {}
       try { console.log(P, tag, imgs.length); } catch (e) {}
-      return { imgs: imgs };
+      return {
+        imgs: imgs,
+        href: location.href,
+        alerts: document.querySelectorAll('[role="alert"]').length,
+      };
     };
 
     window.__cg_baseline__ = function () { return snapshot('baseline'); };
@@ -273,6 +280,7 @@ export async function runGenerateStateMachine(view, prompt, deps) {
   if (!Array.isArray(base.value?.imgs)) return contextFail('baseline returned a malformed value')
   const baseIds = baselineIdsOf(base.value.imgs)
   const excluded = new Set(baseIds)   // baseline + 제출 확인 전에 관측된 id 전부
+  log.info?.(P, 'baseline href:', base.value.href)
   log.info?.(P, 'baseline estuary ids:', baseIds.length)
 
   // 2) 주입 A(execCommand) → 실패 시 B(sendInputEvent) + 별도 verify(재-inject 금지).
@@ -309,6 +317,7 @@ export async function runGenerateStateMachine(view, prompt, deps) {
   let submittedAck = false
   let enterTried = false
   let lastPollId = null
+  let alertsWarned = false
   for (;;) {
     await sleep(Math.min(cadenceMs, Math.max(remaining(), 0)))
     if (expired()) break
@@ -344,10 +353,12 @@ export async function runGenerateStateMachine(view, prompt, deps) {
             try { enter(view) } catch (e) { log.error?.(P, 'Enter fallback threw:', e?.message || e) }
             enterTried = true
             submitMethod = 'enter'
-          } else {
+          } else if (ack2.composerCleared === true) {
             log.info?.(P, 'Enter fallback skipped — prompt is gone on re-check')
             enterTried = true
-            if (ack2.composerCleared === true) submittedAck = true
+            submittedAck = true
+          } else {
+            log.info?.(P, 'Enter fallback deferred — ack2 re-check indeterminate')
           }
         }
       }
@@ -358,6 +369,12 @@ export async function runGenerateStateMachine(view, prompt, deps) {
       const lost = await contextCheck()
       if (lost) return { ok: false, stage: 'context', detail: lost }
       continue
+    }
+    const alerts = Number(pollR.value?.alerts)
+    if (!alertsWarned && alerts > 0) {
+      alertsWarned = true
+      // log 은 main.js 가 { error, info } 만 넘긴다 — warn 을 쓰면 실앱에서 조용히 사라진다.
+      log.info?.(P, 'WARN page alerts detected:', alerts, 'href:', pollR.value?.href)
     }
     if (!Array.isArray(pollR.value?.imgs)) return contextFail('poll returned a malformed value')
     const imgs = pollR.value.imgs
@@ -371,7 +388,7 @@ export async function runGenerateStateMachine(view, prompt, deps) {
     }
     const p = pickNewCdnImage([...excluded], imgs)
     if (p && lastPollId === p.id) {
-      log.info?.(P, `accepted image id=${p.id} ${p.w}x${p.h} inject=${injectMethod} submit=${submitMethod} src=${p.src}`)
+      log.info?.(P, `accepted image id=${p.id} ${p.w}x${p.h} inject=${injectMethod} submit=${submitMethod} href=${pollR.value.href} src=${p.src}`)
       return { ok: true, src: p.src, id: p.id, injectMethod, submitMethod }
     }
     lastPollId = p ? p.id : null

@@ -11,7 +11,7 @@ export const AUTH_PROBE = /* js */ `(() => {
 })()`
 
 export function isLoggedIn(probe) {
-  return probe?.composer === true
+  return probe?.composer === true && probe?.loginCta !== true
 }
 
 // 첫 G(직전 L/D/T/F 없이)는 loadURL 직후라 프로브가 로드 중에 돌아 거짓 미로그인이 난다.

@@ -21,8 +21,9 @@ describe('AUTH_PROBE executed in jsdom', () => {
 })
 
 describe('isLoggedIn', () => {
-  it('is true only when the composer exists', () => {
-    expect(isLoggedIn({ composer: true, loginCta: true })).toBe(true)
+  it('requires a composer without a logged-out login CTA', () => {
+    expect(isLoggedIn({ composer: true, loginCta: false })).toBe(true)
+    expect(isLoggedIn({ composer: true, loginCta: true })).toBe(false)
     expect(isLoggedIn({ composer: false, loginCta: false })).toBe(false)
     expect(isLoggedIn(null)).toBe(false)
     expect(isLoggedIn({ error: 'boom' })).toBe(false)

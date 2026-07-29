@@ -175,7 +175,7 @@ describe('Cmd+Alt+Shift+G (generate)', () => {
     const scripts = deps.executeInView.mock.calls.map(([, s2]) => s2)
     expect(scripts[0]).toBe(AUTH_PROBE)
     expect(scripts.findIndex((s2) => s2.includes('__cg_baseline__('))).toBeGreaterThan(0)
-    expect(sessionFetch).toHaveBeenCalledWith(CDNSRC)
+    expect(sessionFetch).toHaveBeenCalledWith(CDNSRC, { credentials: 'include' })
     expect(deps.fs.mkdirSync).toHaveBeenCalledWith('/UD/spike-chatgpt', { recursive: true })
     const written = deps.fs.writeFileSync.mock.calls[0][0]
     expect(written).toMatch(/\/UD\/spike-chatgpt\/generated-\d+\.png$/)
@@ -210,6 +210,42 @@ describe('Cmd+Alt+Shift+G (generate)', () => {
     await expect(registered.get('Cmd+Alt+Shift+G')()).resolves.toBeUndefined()
     expect(deps.log.error).toHaveBeenCalledWith('[spike] generate threw:', 'boom')
     expect(deps.fs.writeFileSync).not.toHaveBeenCalled()
+  })
+
+  it('ignores a concurrent G run and allows a later run after completion', async () => {
+    const { deps, registered } = makeGDeps()
+    const execute = deps.executeInView
+    let markBaselineStarted
+    let releaseBaseline
+    const baselineStarted = new Promise((resolve) => { markBaselineStarted = resolve })
+    const baselineHeld = new Promise((resolve) => { releaseBaseline = resolve })
+    let held = false
+    deps.executeInView = vi.fn(async (view, script) => {
+      if (!held && String(script).includes('__cg_baseline__(')) {
+        held = true
+        markBaselineStarted()
+        await baselineHeld
+      }
+      return execute(view, script)
+    })
+    registerSpikeShortcuts(deps)
+    const generate = registered.get('Cmd+Alt+Shift+G')
+
+    const first = generate()
+    await baselineStarted
+    await generate()
+
+    expect(deps.executeInView.mock.calls.filter(([, script]) => String(script).includes('__cg_baseline__('))).toHaveLength(1)
+    expect(deps.fs.writeFileSync).not.toHaveBeenCalled()
+    expect(deps.log.info).toHaveBeenCalledWith('[spike] generate already running — ignoring')
+
+    releaseBaseline()
+    await first
+    expect(deps.fs.writeFileSync).toHaveBeenCalledTimes(1)
+
+    await generate()
+    expect(deps.executeInView.mock.calls.filter(([, script]) => String(script).includes('__cg_baseline__('))).toHaveLength(2)
+    expect(deps.fs.writeFileSync).toHaveBeenCalledTimes(2)
   })
 
   it('leaves L/D/T/F ungated (Phase 1 contract)', async () => {

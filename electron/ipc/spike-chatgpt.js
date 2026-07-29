@@ -22,6 +22,7 @@ export function registerSpikeShortcuts(deps) {
   }
 
   const ensure = () => ensureChatgptView(state, { makeView, disposeView })
+  let generating = false
 
   const dump = (name) => async () => {
     try {
@@ -41,6 +42,11 @@ export function registerSpikeShortcuts(deps) {
 
   // G: 하드코딩 프롬프트로 이미지 1장 생성·저장(스파이크 종료 조건). G만 로그인 게이트.
   reg('Cmd+Alt+Shift+G', async () => {
+    if (generating) {
+      log.info('[spike] generate already running — ignoring')
+      return
+    }
+    generating = true
     try {
       const view = ensure()
       ensureVisibleAndFocused(view, getMainWindow())
@@ -61,6 +67,8 @@ export function registerSpikeShortcuts(deps) {
       log.info('[spike] image saved:', p)
     } catch (e) {
       log.error('[spike] generate threw:', e?.message || e)
+    } finally {
+      generating = false
     }
   })
 }

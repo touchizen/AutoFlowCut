@@ -32,6 +32,8 @@ function makeHarness(handlers) {
     sleep: async (ms) => { t += ms },
     typeText: vi.fn(),
     enter: vi.fn(),
+    // main.js 는 { error, info } 만 넘긴다(main.js:1629) — 여기에 warn 을 두면
+    // 실앱에서 조용히 사라지는 log.warn 호출이 테스트에서는 통과해버린다.
     log: { info: vi.fn(), error: vi.fn() },
     advance: (ms) => { t += ms },
   }
@@ -56,6 +58,29 @@ describe('runGenerateStateMachine — happy path', () => {
     expect(h.typeText).not.toHaveBeenCalled()
     expect(h.enter).not.toHaveBeenCalled()
     expect(h.counts.__cg_verify__).toBeUndefined()   // A 성공이면 verify 안 씀
+  })
+
+  it('logs href checkpoints and warns once for alerts without changing acceptance', async () => {
+    const baselineHref = 'https://chatgpt.com/'
+    const acceptedHref = 'https://chatgpt.com/c/thread-1'
+    const h = makeHarness({
+      __cg_baseline__: { imgs: [], href: baselineHref, alerts: 0 },
+      __cg_inject__: { textMatches: true, submitPresent: true },
+      __cg_clickSubmit__: { clicked: true },
+      __cg_submitAck__: ACK_SUBMITTED,
+      __cg_poll__: { imgs: [loaded('new1')], href: acceptedHref, alerts: 2 },
+    })
+    const r = await runGenerateStateMachine({}, PROMPT, h)
+
+    expect(r.ok).toBe(true)
+    expect(h.log.info.mock.calls.filter((args) => args[1] === 'baseline href:')).toEqual([
+      ['[spike]', 'baseline href:', baselineHref],
+    ])
+    const warnCalls = h.log.info.mock.calls.filter((args) => String(args[1]).startsWith('WARN page alerts detected:'))
+    expect(warnCalls).toHaveLength(1)   // 매 폴링마다가 아니라 딱 한 번
+    expect(h.log.info).toHaveBeenCalledWith('[spike]', 'WARN page alerts detected:', 2, 'href:', acceptedHref)
+    const acceptedLog = h.log.info.mock.calls.find((args) => String(args[1]).includes('accepted image'))
+    expect(acceptedLog?.[1]).toContain(`href=${acceptedHref}`)
   })
 })
 
@@ -195,6 +220,21 @@ describe('submit fallback — Enter', () => {
     })
     const r = await runGenerateStateMachine({}, PROMPT, h)
     expect(h.enter).toHaveBeenCalledTimes(1)   // 나중 사이클에서 재검증 성공 → Enter 발화
+    expect(r.stage).toBe('submit')
+  })
+
+  it('retries the Enter fallback after indeterminate ack2 re-checks', async () => {
+    const indeterminate = { composerCleared: false, submitPresent: true, stillHasPrompt: false }
+    const h = makeHarness({
+      __cg_baseline__: { imgs: [] },
+      __cg_inject__: { textMatches: true, submitPresent: true },
+      __cg_clickSubmit__: { clicked: true },
+      // ack2 호출 n=2,5 는 컴포저 재마운트 중이라 불확정. n=8 에서 프롬프트가 다시 확인된다.
+      __cg_submitAck__: (n) => (n === 2 || n === 5 ? indeterminate : ACK_NOT_SUBMITTED),
+      __cg_poll__: { imgs: [] },
+    })
+    const r = await runGenerateStateMachine({}, PROMPT, h)
+    expect(h.enter).toHaveBeenCalledTimes(1)
     expect(r.stage).toBe('submit')
   })
 

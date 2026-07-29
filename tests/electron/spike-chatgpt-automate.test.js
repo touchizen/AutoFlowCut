@@ -231,6 +231,29 @@ describe('page functions executed in jsdom', () => {
     expect(window.__cg_poll__().imgs).toHaveLength(2)
   })
 
+  it('snapshot reports href/alerts and scroll-pins the last image inside main', () => {
+    setup({ images: [
+      { src: `${CDNU}?id=main1&sig=1` },
+      { src: `${CDNU}?id=main2&sig=1` },
+      { src: 'https://chatgpt.com/footer-avatar.png' },
+    ] })
+    const [mainFirst, mainLast, footer] = [...document.images]
+    const main = document.createElement('main')
+    main.append(mainFirst, mainLast)
+    document.body.append(main, footer)
+    mainFirst.scrollIntoView = vi.fn()
+    mainLast.scrollIntoView = vi.fn()
+    footer.scrollIntoView = vi.fn()
+    document.body.insertAdjacentHTML('beforeend', '<div role="alert"></div><div role="alert"></div>')
+
+    const snapshot = window.__cg_baseline__()
+    expect(snapshot).toMatchObject({ href: window.location.href, alerts: 2 })
+    expect(snapshot.imgs).toHaveLength(3)
+    expect(mainLast.scrollIntoView).toHaveBeenCalledWith({ block: 'end' })
+    expect(mainFirst.scrollIntoView).not.toHaveBeenCalled()
+    expect(footer.scrollIntoView).not.toHaveBeenCalled()
+  })
+
   it('serializes every image — no slice cap (stale-acceptance guard)', () => {
     const many = Array.from({ length: 45 }, (_, i) => ({ src: `${CDNU}?id=i${i}&sig=1` }))
     setup({ images: many })

@@ -18,10 +18,14 @@ export function extFromContentType(contentType, src = '') {
 
 export async function saveImage(app, view, src, fs, deps = {}) {
   const { now = () => Date.now() } = deps
-  const res = await view.webContents.session.fetch(src)
+  const res = await view.webContents.session.fetch(src, { credentials: 'include' })
   if (!res || res.ok !== true) throw new Error(`[spike] image fetch failed: ${res ? res.status : 'no-response'}`)
+  const contentType = res.headers?.get?.('content-type')
+  if (!String(contentType || '').toLowerCase().trim().startsWith('image/')) {
+    throw new Error(`[spike] image fetch returned non-image content-type: ${contentType || 'missing'}`)
+  }
   const buf = Buffer.from(await res.arrayBuffer())
-  const ext = extFromContentType(res.headers?.get?.('content-type'), src)
+  const ext = extFromContentType(contentType, src)
   const dir = spikeDir(app)
   fs.mkdirSync(dir, { recursive: true })   // 신규 디렉토리 — 없으면 ENOENT
   const p = path.join(dir, `generated-${now()}.${ext}`)
