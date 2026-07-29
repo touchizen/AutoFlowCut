@@ -44,7 +44,7 @@ import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
-import { hasExportAccess } from './services/exportSelection'
+import { hasExportAccess, buildExportModalCounts } from './services/exportSelection'
 import { computeGuardAvailable, isStartBlocked, shouldStopRefWork } from './services/startGuard'
 import {
   buildEmptyRefGateDeps,
@@ -3002,6 +3002,7 @@ function App() {
       <ExportModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
+        {...buildExportModalCounts(scenes)}
         onExport={handleExportConfirm}
         onExportPremiere={handleExportPremiere}
         onExportVrew={handleExportVrew}
