@@ -3,12 +3,9 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  HTML_FETCH_POLICY,
-  IMAGE_FETCH_POLICY,
-} from '../../../electron/api/net/safeHttpFetch.js'
+import { IMAGE_FETCH_POLICY } from '../../../electron/api/net/safeHttpFetch.js'
 import {
   createContentAddressedStaging,
   createFetchProduct,
@@ -16,16 +13,11 @@ import {
 
 const PRODUCT_URL = 'https://www.coupang.com/vp/products/9593899670'
 const FETCHED_AT = '2026-07-23T09:10:11.000Z'
+const IMAGE_URLS = [1, 2, 3, 4, 5].map((index) => (
+  `https://thumbnail${index}.coupangcdn.com/image/product-${index}.jpg`
+))
 
-let fixtureHtml
 const temporaryDirectories = []
-
-beforeAll(async () => {
-  fixtureHtml = await readFile(
-    path.join(process.cwd(), 'tests', 'fixtures', 'shopping', 'coupang-product.html'),
-    'utf8',
-  )
-})
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => (
@@ -50,25 +42,49 @@ function makeImageResponse(url) {
   }
 }
 
-async function createSubject({ html = fixtureHtml, imageFetch } = {}) {
+function productExtraction(overrides = {}) {
+  return {
+    status: 'ok',
+    trust: 'untrusted-web-data',
+    sourceUrl: PRODUCT_URL,
+    product: {
+      name: '댄트롤 딥 클린 비듬샴푸',
+      priceKrw: 29800,
+      currency: 'KRW',
+    },
+    sourceFacts: [{
+      field: 'name',
+      value: '댄트롤 딥 클린 비듬샴푸',
+      sourceKind: 'dom',
+      sourceUrl: PRODUCT_URL,
+      jsonPathOrProperty: 'document:title',
+      verification: 'page-rendered',
+      trust: 'untrusted-web-data',
+    }],
+    imageUrls: IMAGE_URLS,
+    ...overrides,
+  }
+}
+
+async function createSubject({ extraction = productExtraction(), cdpProductFetch, imageFetch } = {}) {
   const projectPath = await makeTempProject()
-  const httpFetch = vi.fn(async () => ({
-    body: Buffer.from(html),
-    mimeType: 'text/html',
-    statusCode: 200,
-    url: PRODUCT_URL,
-  }))
+  const effectiveCdpProductFetch = cdpProductFetch || vi.fn(async () => extraction)
   const effectiveImageFetch = imageFetch || vi.fn(async (url) => makeImageResponse(url))
   const staging = createContentAddressedStaging({
     fs: { mkdir, readFile, writeFile },
   })
   const fetchProduct = createFetchProduct({
-    httpFetch,
+    cdpProductFetch: effectiveCdpProductFetch,
     imageFetch: effectiveImageFetch,
     staging,
     now: () => FETCHED_AT,
   })
-  return { fetchProduct, httpFetch, imageFetch: effectiveImageFetch, projectPath }
+  return {
+    fetchProduct,
+    cdpProductFetch: effectiveCdpProductFetch,
+    imageFetch: effectiveImageFetch,
+    projectPath,
+  }
 }
 
 function collectUnsafeSummaryValues(value, pathName = '$', found = []) {
@@ -87,8 +103,8 @@ function collectUnsafeSummaryValues(value, pathName = '$', found = []) {
 }
 
 describe('createFetchProduct', () => {
-  it('fetches the captured Coupang fixture through fixed policies and returns a stamped byte-free summary', async () => {
-    const { fetchProduct, httpFetch, imageFetch, projectPath } = await createSubject()
+  it('stamps a CDP DOM extraction into a byte-free snapshot and stages images through fixed policy', async () => {
+    const { fetchProduct, cdpProductFetch, imageFetch, projectPath } = await createSubject()
     const controller = new AbortController()
 
     const result = await fetchProduct(PRODUCT_URL, {
@@ -103,7 +119,6 @@ describe('createFetchProduct', () => {
       fetchedAt: FETCHED_AT,
       product: {
         name: expect.stringContaining('비듬샴푸'),
-        sku: '9593899670-28671723349',
         priceKrw: 29800,
       },
     })
@@ -113,7 +128,8 @@ describe('createFetchProduct', () => {
         id: expect.stringMatching(/^fact-[0-9a-f]{64}$/),
         field: 'name',
         fetchedAt: FETCHED_AT,
-        verification: 'page-asserted',
+        sourceKind: 'dom',
+        verification: 'page-rendered',
         trust: 'untrusted-web-data',
       }),
     ]))
@@ -131,9 +147,8 @@ describe('createFetchProduct', () => {
     expect(collectUnsafeSummaryValues(result)).toEqual([])
     expect(JSON.stringify(result)).not.toMatch(/;base64,|<html|application\/ld\+json/i)
 
-    expect(httpFetch).toHaveBeenCalledWith(
+    expect(cdpProductFetch).toHaveBeenCalledWith(
       PRODUCT_URL,
-      HTML_FETCH_POLICY,
       { signal: controller.signal },
     )
     expect(imageFetch).toHaveBeenCalledTimes(5)
@@ -240,10 +255,10 @@ describe('createFetchProduct', () => {
   })
 
   it.each([
-    ['name', '<meta property="og:image" content="https://thumbnail.coupangcdn.com/image/product.jpg">'],
-    ['image', '<meta property="og:title" content="상품명">'],
-  ])('returns unsupported when the required %s is absent', async (_field, html) => {
-    const { fetchProduct, imageFetch, projectPath } = await createSubject({ html })
+    ['name', productExtraction({ product: {}, sourceFacts: [] })],
+    ['image', productExtraction({ imageUrls: [] })],
+  ])('returns unsupported when the required %s is absent', async (_field, extraction) => {
+    const { fetchProduct, imageFetch, projectPath } = await createSubject({ extraction })
 
     const result = await fetchProduct(PRODUCT_URL, { projectPath })
 

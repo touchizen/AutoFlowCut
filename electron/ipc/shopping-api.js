@@ -19,7 +19,7 @@ export function registerShoppingIPC(ipcMain, {
   getWindow,
   getActiveWorkFolder = () => null,
   fetchProduct,
-  httpFetch = safeHttpFetch,
+  cdpProductFetch,
   imageFetch = safeHttpFetch,
   staging,
   now = () => new Date(),
@@ -29,7 +29,7 @@ export function registerShoppingIPC(ipcMain, {
   workflowSessions = createWorkflowSessionCoordinator(),
 } = {}) {
   const fetchProductFn = fetchProduct || createFetchProduct({
-    httpFetch,
+    cdpProductFetch,
     imageFetch,
     staging: staging || createContentAddressedStaging({ fs }),
     now,

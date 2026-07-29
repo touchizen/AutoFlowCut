@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { registerShoppingIPC } from '../../../electron/ipc/shopping-api.js'
-import { safeHttpFetch } from '../../../electron/api/net/safeHttpFetch.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
@@ -102,6 +101,69 @@ describe('shopping IPC', () => {
     })
   })
 
+  it('default fetchProduct path는 CDP 추출 뒤 안전 이미지 staging으로 snapshot을 조립한다', async () => {
+    const isolatedIpc = fakeIpcMain()
+    const sourceUrl = 'https://www.coupang.com/vp/products/1'
+    const imageUrl = 'https://thumbnail.coupangcdn.com/image/product.jpg'
+    const cdpProductFetch = vi.fn(async () => ({
+      status: 'ok',
+      trust: 'untrusted-web-data',
+      sourceUrl,
+      product: { name: 'CDP 상품', priceKrw: 7200, currency: 'KRW' },
+      sourceFacts: [{
+        field: 'name',
+        value: 'CDP 상품',
+        sourceKind: 'dom',
+        sourceUrl,
+        verification: 'page-rendered',
+        trust: 'untrusted-web-data',
+      }],
+      imageUrls: [imageUrl],
+    }))
+    const imageFetch = vi.fn(async () => ({
+      body: Buffer.from('image bytes'),
+      mimeType: 'image/jpeg',
+      width: 800,
+      height: 800,
+      url: imageUrl,
+    }))
+    const staging = { stageImage: vi.fn(async () => ({ path: '/staged/image.jpg' })) }
+    const legacyHttpFetch = vi.fn(async () => {
+      throw new Error('legacy HTML path used')
+    })
+    registerShoppingIPC(isolatedIpc, {
+      getActiveWorkFolder: () => workFolder,
+      cdpProductFetch,
+      httpFetch: legacyHttpFetch,
+      imageFetch,
+      staging,
+      now: () => '2026-07-23T09:00:00.000Z',
+    })
+    const { projectToken } = await isolatedIpc.invoke('shopping:open', { projectPath: projectDir })
+
+    const submitted = await isolatedIpc.invoke('shopping:submit-product', {
+      projectToken,
+      url: sourceUrl,
+    })
+    const state = await isolatedIpc.invoke('shopping:get-state', { projectToken })
+
+    expect(submitted).toMatchObject({ ok: true })
+    expect(cdpProductFetch).toHaveBeenCalledWith(sourceUrl, {
+      signal: expect.any(AbortSignal),
+    })
+    expect(legacyHttpFetch).not.toHaveBeenCalled()
+    expect(imageFetch).toHaveBeenCalledTimes(1)
+    expect(staging.stageImage).toHaveBeenCalledTimes(1)
+    expect(state).toMatchObject({
+      state: 'fact_review',
+      snapshot: {
+        status: 'ok',
+        product: { name: 'CDP 상품', priceKrw: 7200, currency: 'KRW' },
+        images: [expect.objectContaining({ sourceUrl: imageUrl })],
+      },
+    })
+  })
+
   it('stale token은 fetchProduct side effect 전에 거부한다', async () => {
     await ipc.invoke('shopping:open', { projectPath: projectDir })
 
@@ -138,6 +200,7 @@ describe('shopping IPC', () => {
     const isolatedIpc = fakeIpcMain()
     const createMachine = vi.fn()
     registerShoppingIPC(isolatedIpc, {
+      fetchProduct: vi.fn(),
       getActiveWorkFolder: () => null,
       createMachine,
     })
@@ -183,6 +246,7 @@ describe('shopping IPC', () => {
       .mockReturnValueOnce(machineB)
     const raceIpc = fakeIpcMain()
     registerShoppingIPC(raceIpc, {
+      fetchProduct: vi.fn(),
       getWindow: () => ({ isDestroyed: () => false, webContents: { send } }),
       getActiveWorkFolder: () => workFolder,
       createMachine,
@@ -205,19 +269,16 @@ describe('shopping IPC', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  it('shopping:abort가 실제 safeHttpFetch의 진행 중 DNS 요청까지 중단한다', async () => {
-    const resolveDns = vi.fn(() => new Promise(() => {}))
-    const createRequest = vi.fn()
-    const httpFetch = (url, policy, { signal }) => safeHttpFetch(url, policy, {
-      signal,
-      resolveDns,
-      createRequest,
-    })
+  it('shopping:abort가 진행 중 CDP 추출 signal까지 전달된다', async () => {
+    const cdpProductFetch = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }))
     const abortIpc = fakeIpcMain()
     registerShoppingIPC(abortIpc, {
       getActiveWorkFolder: () => workFolder,
-      httpFetch,
-      imageFetch: httpFetch,
+      cdpProductFetch,
+      imageFetch: vi.fn(),
+      staging: { stageImage: vi.fn() },
     })
     const { projectToken } = await abortIpc.invoke('shopping:open', { projectPath: projectDir })
 
@@ -225,15 +286,14 @@ describe('shopping IPC', () => {
       projectToken,
       url: 'https://www.coupang.com/vp/products/1',
     })
-    await vi.waitFor(() => expect(resolveDns).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(cdpProductFetch).toHaveBeenCalledTimes(1))
     await expect(abortIpc.invoke('shopping:abort', { projectToken }))
       .resolves.toEqual({ ok: true })
     const outcome = await Promise.race([
       submitting,
-      new Promise((resolve) => setImmediate(() => resolve({ error: 'abort-did-not-reach-http' }))),
+      new Promise((resolve) => setImmediate(() => resolve({ error: 'abort-did-not-reach-cdp' }))),
     ])
 
     expect(outcome).toEqual({ error: 'aborted' })
-    expect(createRequest).not.toHaveBeenCalled()
   })
 })

@@ -54,6 +54,7 @@ const BASELINE = new Map([
   ['character.js', 'A2 캐릭터 업로드 실행 버튼(만들기/실행). 캐릭터 페이지 DOM 미관측 — arrow_forward 폴백이 있으나 정확도가 떨어진다.'],
   ['flow-api.js', '프로젝트 진입 버튼(새 프로젝트/시작). 영어 키워드(new/start/enter)가 함께 있으나 일본어·아랍어는 못 잡는다.'],
   ['main.js', 'Flow 진입/새 프로젝트 버튼(flow로 만들기/새 프로젝트). 영어 키워드가 함께 있으나 일본어·아랍어는 못 잡는다. 프로젝트 홈 DOM 은 확보돼 있으니(New project 버튼) 구조 앵커로 옮길 수 있다.'],
+  ['cdpProductFetch.js', '쿠팡 Akamai 차단 페이지의 고정 신호(쿠팡!/Access Denied) 탐지. 번역되는 Flow UI 조작 앵커가 아니라 fail-closed 판정이다.'],
 ])
 
 function jsFiles(dir) {

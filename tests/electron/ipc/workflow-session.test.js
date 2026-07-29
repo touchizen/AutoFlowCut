@@ -81,6 +81,7 @@ describe('main-owned workflow session coordinator', () => {
       workflowSessions: coordinator,
     })
     registerShoppingIPC(ipc, {
+      fetchProduct: vi.fn(),
       getWindow: () => null,
       getActiveWorkFolder: () => workFolder,
       createMachine: () => shoppingMachine,

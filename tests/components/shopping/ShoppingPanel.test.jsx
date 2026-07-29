@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ShoppingPanel from '../../../src/components/shopping/ShoppingPanel.jsx'
@@ -18,8 +18,6 @@ function makePipeline(overrides = {}) {
     open: vi.fn(async () => ({ projectToken: 'token' })),
     submitProduct: vi.fn(async () => ({ ok: true })),
     abort: vi.fn(async () => ({ ok: true })),
-    crawlStatus: null,
-    setCrawlViewBounds: vi.fn(),
     ...overrides,
   }
 }
@@ -128,97 +126,31 @@ describe('ShoppingPanel', () => {
     expect(screen.getByRole('alert')).not.toHaveTextContent('stale-token')
   })
 
-  it('크롤 중 보이는 Chromium용 placeholder bounds와 status를 전달한다', async () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      x: 12,
-      y: 34,
-      width: 640,
-      height: 480,
-      top: 34,
-      right: 652,
-      bottom: 514,
-      left: 12,
-      toJSON: () => ({}),
+  it('설치 브라우저가 없으면 설치 또는 수동 입력 안내를 표시한다', () => {
+    render(<ShoppingPanel pipeline={makePipeline({ error: 'no-browser-found' })} />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Chrome/Brave')
+    expect(screen.getByRole('alert')).toHaveTextContent('설치')
+    expect(screen.getByRole('alert')).toHaveTextContent('수동 입력')
+  })
+
+  it('크롤 중 별도 브라우저 안내와 취소 버튼만 표시하고 bounds를 보내지 않는다', () => {
+    const legacyBoundsSender = vi.fn()
+    const pipeline = makePipeline({
+      submitting: true,
+      setCrawlViewBounds: legacyBoundsSender,
     })
-    const pipeline = makePipeline({ submitting: true, crawlStatus: 'challenge' })
 
     render(<ShoppingPanel pipeline={pipeline} />)
 
-    expect(screen.getByTestId('shopping-crawl-placeholder')).toHaveAttribute(
-      'data-crawl-status',
-      'challenge',
-    )
-    await waitFor(() => expect(pipeline.setCrawlViewBounds).toHaveBeenCalledWith({
-      x: 12,
-      y: 34,
-      width: 640,
-      height: 480,
-    }))
-  })
-
-  it('크롤 중 패널이 unmount되면 네이티브 crawl view를 0×0으로 숨긴다', async () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      x: 12,
-      y: 34,
-      width: 640,
-      height: 480,
-      top: 34,
-      right: 652,
-      bottom: 514,
-      left: 12,
-      toJSON: () => ({}),
-    })
-    const pipeline = makePipeline({ submitting: true, crawlStatus: 'challenge' })
-    const { unmount } = render(<ShoppingPanel pipeline={pipeline} />)
-    await waitFor(() => expect(pipeline.setCrawlViewBounds).toHaveBeenCalledWith({
-      x: 12,
-      y: 34,
-      width: 640,
-      height: 480,
-    }))
-    pipeline.setCrawlViewBounds.mockClear()
-
-    unmount()
-
-    expect(pipeline.setCrawlViewBounds).toHaveBeenCalledOnce()
-    expect(pipeline.setCrawlViewBounds).toHaveBeenCalledWith({
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-    })
-  })
-
-  it('submit IPC 전에 placeholder를 commit하고 bounds를 먼저 전송한다', async () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      x: 12,
-      y: 34,
-      width: 640,
-      height: 480,
-      top: 34,
-      right: 652,
-      bottom: 514,
-      left: 12,
-      toJSON: () => ({}),
-    })
-    const request = deferred()
-    const pipeline = makePipeline({ submitProduct: vi.fn(() => request.promise) })
-    render(<ShoppingPanel pipeline={pipeline} />)
-
-    fireEvent.change(screen.getByLabelText('상품 URL'), {
-      target: { value: 'https://www.coupang.com/vp/products/1' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '상품 불러오기' }))
-
-    await waitFor(() => expect(pipeline.setCrawlViewBounds).toHaveBeenCalled())
-    expect(pipeline.setCrawlViewBounds.mock.invocationCallOrder[0]).toBeLessThan(
-      pipeline.submitProduct.mock.invocationCallOrder[0],
-    )
-    await act(async () => { request.resolve({ ok: true }); await request.promise })
+    expect(screen.getByText('별도 브라우저 창에서 상품을 확인하고 있습니다.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '크롤 취소' })).toBeTruthy()
+    expect(screen.queryByTestId('shopping-crawl-placeholder')).toBeNull()
+    expect(legacyBoundsSender).not.toHaveBeenCalled()
   })
 
   it('크롤 중 취소 버튼으로 기존 shopping abort를 호출한다', async () => {
-    const pipeline = makePipeline({ submitting: true, crawlStatus: 'challenge' })
+    const pipeline = makePipeline({ submitting: true })
     render(<ShoppingPanel pipeline={pipeline} />)
 
     fireEvent.click(screen.getByRole('button', { name: '크롤 취소' }))

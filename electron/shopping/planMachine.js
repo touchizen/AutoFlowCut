@@ -186,6 +186,7 @@ export function createPlanMachine({ store, deps } = {}) {
         return { error: 'aborted' }
       }
       finishOperation(operation)
+      if (error?.code === 'no-browser-found') return { error: 'no-browser-found' }
       return { error: 'product-fetch-failed', message: error.message }
     }
 

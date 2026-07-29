@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 
-import { parseCoupangProduct } from '../api/commerce/coupangParser.js'
-import {
-  HTML_FETCH_POLICY,
-  IMAGE_FETCH_POLICY,
-} from '../api/net/safeHttpFetch.js'
+import { IMAGE_FETCH_POLICY } from '../api/net/safeHttpFetch.js'
 import { canonicalStringify } from './planCanonical.js'
 
 const TRUST = 'untrusted-web-data'
@@ -54,8 +50,10 @@ function isAdmittedImage(response) {
   )
 }
 
-function assertFactoryInputs({ httpFetch, imageFetch, staging, now }) {
-  if (typeof httpFetch !== 'function') throw new TypeError('httpFetch must be a function')
+function assertFactoryInputs({ cdpProductFetch, imageFetch, staging, now }) {
+  if (typeof cdpProductFetch !== 'function') {
+    throw new TypeError('cdpProductFetch must be a function')
+  }
   if (typeof imageFetch !== 'function') throw new TypeError('imageFetch must be a function')
   if (typeof now !== 'function') throw new TypeError('now must be a function')
   const stageImage = typeof staging === 'function' ? staging : staging?.stageImage
@@ -116,7 +114,7 @@ export function createContentAddressedStaging({ fs } = {}) {
 
 /**
  * @param {{
- *   httpFetch: Function,
+ *   cdpProductFetch: Function,
  *   imageFetch: Function,
  *   staging: Function|{stageImage: Function},
  *   now: Function,
@@ -124,27 +122,28 @@ export function createContentAddressedStaging({ fs } = {}) {
  * @returns {(url: string, context: {projectPath: string, signal?: AbortSignal}) => Promise<object>}
  */
 export function createFetchProduct(dependencies = {}) {
-  const { httpFetch, imageFetch, staging, now } = dependencies
+  const { cdpProductFetch, imageFetch, staging, now } = dependencies
   const stageImage = assertFactoryInputs(dependencies)
 
   return async function fetchProduct(url, { projectPath, signal } = {}) {
     abortIfNeeded(signal)
     const fetchedAt = normalizeFetchedAt(now())
-    const htmlResponse = await httpFetch(url, HTML_FETCH_POLICY, { signal })
+    const parsed = await cdpProductFetch(url, { signal })
     abortIfNeeded(signal)
 
-    let html
-    try {
-      html = asBytes(htmlResponse?.body).toString('utf8')
-    } catch {
-      return unsupported('Product HTML could not be decoded')
-    }
-
-    const sourceUrl = typeof htmlResponse?.url === 'string' && htmlResponse.url
-      ? htmlResponse.url
-      : url
-    const parsed = parseCoupangProduct(html, { sourceUrl })
     if (parsed.status !== 'ok') return parsed
+    if (
+      !parsed.product
+      || typeof parsed.product.name !== 'string'
+      || !parsed.product.name.trim()
+      || !Array.isArray(parsed.sourceFacts)
+      || !Array.isArray(parsed.imageUrls)
+    ) {
+      return unsupported('Required product name or image is unavailable')
+    }
+    const sourceUrl = typeof parsed.sourceUrl === 'string' && parsed.sourceUrl
+      ? parsed.sourceUrl
+      : url
 
     const sourceFacts = parsed.sourceFacts.map((fact, index) => {
       const stamped = { ...fact, fetchedAt }

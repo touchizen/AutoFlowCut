@@ -377,6 +377,21 @@ describe('planMachine 6-state workflow', () => {
     })
     expect(deps.fetchProduct).toHaveBeenCalledTimes(2)
   })
+
+  it('설치 브라우저가 없으면 전용 오류를 반환하고 empty 상태를 유지한다', async () => {
+    const browserError = Object.assign(new Error('no-browser-found'), {
+      code: 'no-browser-found',
+    })
+    const { machine, token } = await openMachine({
+      deps: {
+        fetchProduct: vi.fn(async () => { throw browserError }),
+      },
+    })
+
+    await expect(machine.submitProduct(token, 'https://www.coupang.com/vp/products/1'))
+      .resolves.toEqual({ error: 'no-browser-found' })
+    expect(await machine.getState()).toMatchObject({ state: 'empty', snapshot: null })
+  })
 })
 
 describe('plan revision reset', () => {

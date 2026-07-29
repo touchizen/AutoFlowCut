@@ -140,11 +140,12 @@ describe('preload contract', () => {
       'shoppingGetState',
       'shoppingSubmitProduct',
       'shoppingAbort',
-      'shoppingSetCrawlViewBounds',
       'onShoppingEvent',
     ]))
-    expect(preloadText).toMatch(/const shoppingChannels = \['shopping:state', 'shopping:crawl-status'\]/)
-    expect(preloadText).toMatch(/shopping:crawl-view-bounds/)
+    expect(preloadKeys.has('shoppingSetCrawlViewBounds')).toBe(false)
+    expect(preloadText).toMatch(/const shoppingChannels = \['shopping:state'\]/)
+    expect(preloadText).not.toMatch(/shopping:crawl-status/)
+    expect(preloadText).not.toMatch(/shopping:crawl-view-bounds/)
   })
 
   // 슬라이스4(§3.4 + §v2.8 M1): synopsis IPC 브릿지 + 이벤트 화이트리스트

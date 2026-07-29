@@ -1,3 +1,8 @@
+// [[autoflowcut-preserve-agent-source]]
+// Preserved reference only: the Shopping runtime now uses user-installed browser CDP.
+// This Electron WebContentsView crawler is intentionally unused and must not be deleted.
+import { createChromeFingerprintHeaders } from './browserFingerprint.js'
+
 const JSON_LD_LIMIT = 512 * 1024
 const JSON_LD_COUNT_LIMIT = 32
 const META_CONTENT_LIMIT = 5_000
@@ -277,19 +282,6 @@ export function buildMinimalProductHtml(extraction, maxBytes = PARSER_HTML_LIMIT
   return pieces.join('')
 }
 
-function chromeUserAgent() {
-  const chromeVersion = process.versions.chrome
-  if (typeof chromeVersion !== 'string' || !/^\d+(?:\.\d+){3}$/.test(chromeVersion)) {
-    throw new Error('Chromium version unavailable')
-  }
-  const platform = process.platform === 'darwin'
-    ? 'Macintosh; Intel Mac OS X 10_15_7'
-    : process.platform === 'win32'
-      ? 'Windows NT 10.0; Win64; x64'
-      : 'X11; Linux x86_64'
-  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
-}
-
 function normalizeBounds(bounds) {
   if (!bounds || typeof bounds !== 'object') throw new Error('crawl view bounds unavailable')
   const normalized = {}
@@ -534,7 +526,11 @@ export function createBrowserProductFetch({
       record.downloadHandler = (event) => event.preventDefault()
       webContents.session?.on?.('will-download', record.downloadHandler)
 
-      webContents.setUserAgent(chromeUserAgent())
+      const fingerprintHeaders = createChromeFingerprintHeaders({
+        chromeVersion: process.versions.chrome,
+        platform: process.platform,
+      })
+      webContents.setUserAgent(fingerprintHeaders['User-Agent'])
       record.view.setBounds(normalizeBounds(getBounds()))
       record.win.contentView.addChildView(record.view)
       record.attached = true

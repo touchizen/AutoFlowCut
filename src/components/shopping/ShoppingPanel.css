@@ -11,7 +11,6 @@
 .shopping-panel__header,
 .shopping-panel__form,
 .shopping-panel__crawl-controls,
-.shopping-panel__crawl-placeholder,
 .shopping-product,
 .shopping-panel__error {
   width: min(860px, 100%);
@@ -79,24 +78,17 @@
   opacity: 0.65;
 }
 
-.shopping-panel__crawl-placeholder {
-  box-sizing: border-box;
-  height: 480px;
-  overflow: hidden;
-  border: 1px solid var(--border-color, #3a3f49);
-  border-radius: 12px;
-  color: var(--text-secondary, #aeb5c2);
-  background: var(--bg-secondary, #21242a);
-}
-
 .shopping-panel__crawl-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
   box-sizing: border-box;
   margin-top: 20px;
-  padding: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color, #3a3f49);
+  border-radius: 10px;
   color: var(--text-secondary, #aeb5c2);
+  background: var(--bg-secondary, #21242a);
 }
 
 .shopping-panel__crawl-controls button {

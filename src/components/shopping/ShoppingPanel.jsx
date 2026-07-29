@@ -1,9 +1,6 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
+import { useMemo, useState } from 'react'
 
 import './ShoppingPanel.css'
-
-const HIDDEN_CRAWL_BOUNDS = Object.freeze({ x: 0, y: 0, width: 0, height: 0 })
 
 const SHOPPING_ERROR_MESSAGES = Object.freeze({
   'invalid-project-path': '프로젝트 폴더를 열 수 없습니다.',
@@ -13,6 +10,7 @@ const SHOPPING_ERROR_MESSAGES = Object.freeze({
   'stale-token': '프로젝트가 전환되었습니다. 다시 시도해 주세요.',
   'product-unsupported': '지원하지 않는 상품 페이지입니다.',
   'product-fetch-failed': '상품 정보를 가져오지 못했습니다.',
+  'no-browser-found': '크롤에 Chrome/Brave가 필요합니다. 설치하거나 상품 정보를 수동 입력해 주세요.',
   'shopping-workflow-disabled': '쇼핑 숏츠 프로젝트를 먼저 열어 주세요.',
 })
 
@@ -44,31 +42,11 @@ export default function ShoppingPanel({ pipeline }) {
   const [pending, setPending] = useState(false)
   const [crawlPending, setCrawlPending] = useState(false)
   const [localError, setLocalError] = useState(null)
-  const crawlPlaceholderRef = useRef(null)
   const snapshot = pipeline.state?.snapshot
   const product = snapshot?.status === 'ok' ? snapshot.product : null
   const loading = pending || pipeline.submitting
   const crawlActive = crawlPending || pipeline.submitting
 
-  useLayoutEffect(() => {
-    const element = crawlPlaceholderRef.current
-    if (!crawlActive || !element || !pipeline.setCrawlViewBounds) return undefined
-    const sendBounds = () => {
-      const { x, y, width, height } = element.getBoundingClientRect()
-      if (width > 0 && height > 0) pipeline.setCrawlViewBounds({ x, y, width, height })
-    }
-    sendBounds()
-    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(sendBounds) : null
-    observer?.observe(element)
-    window.addEventListener('resize', sendBounds)
-    window.addEventListener('scroll', sendBounds, true)
-    return () => {
-      observer?.disconnect()
-      window.removeEventListener('resize', sendBounds)
-      window.removeEventListener('scroll', sendBounds, true)
-      pipeline.setCrawlViewBounds(HIDDEN_CRAWL_BOUNDS)
-    }
-  }, [crawlActive, pipeline.setCrawlViewBounds])
   const selectedImage = useMemo(() => {
     if (!snapshot?.images?.length) return null
     const selectedId = snapshot.selectedImageIds?.[0]
@@ -91,12 +69,8 @@ export default function ShoppingPanel({ pipeline }) {
       return
     }
     setLocalError(null)
-    // The native view attaches synchronously in main. Commit the placeholder and
-    // send its bounds before invoking the crawl so the first frame lands correctly.
-    flushSync(() => {
-      setPending(true)
-      setCrawlPending(true)
-    })
+    setPending(true)
+    setCrawlPending(true)
     try {
       const result = await pipeline.submitProduct(value)
       if (result?.error && result.error !== 'aborted') {
@@ -153,20 +127,10 @@ export default function ShoppingPanel({ pipeline }) {
       </form>
 
       {crawlActive && (
-        <>
-          <div className="shopping-panel__crawl-controls">
-            <span>쿠팡 상품 페이지를 확인하고 있습니다.</span>
-            <button type="button" onClick={handleAbort}>크롤 취소</button>
-          </div>
-          <div
-            ref={crawlPlaceholderRef}
-            className="shopping-panel__crawl-placeholder"
-            data-testid="shopping-crawl-placeholder"
-            data-crawl-status={pipeline.crawlStatus || 'loading'}
-            aria-label="쿠팡 상품 페이지 확인"
-            aria-busy="true"
-          />
-        </>
+        <div className="shopping-panel__crawl-controls" aria-live="polite">
+          <span>별도 브라우저 창에서 상품을 확인하고 있습니다.</span>
+          <button type="button" onClick={handleAbort}>크롤 취소</button>
+        </div>
       )}
 
       {visibleError && (

@@ -19,7 +19,6 @@ beforeEach(() => {
     })),
     shoppingSubmitProduct: vi.fn(async () => ({ ok: true, operationId: 'operation-1' })),
     shoppingAbort: vi.fn(async () => ({ ok: true })),
-    shoppingSetCrawlViewBounds: vi.fn(),
     onShoppingEvent: vi.fn((channel, callback) => {
       listeners[channel] = callback
       return () => { delete listeners[channel] }
@@ -117,18 +116,16 @@ describe('useShoppingPipeline', () => {
     expect(window.electronAPI.onShoppingEvent).not.toHaveBeenCalled()
   })
 
-  it('crawl status를 구독하고 placeholder bounds를 main으로 전달한다', async () => {
+  it('제거된 crawl status와 bounds 계약을 노출하지 않는다', () => {
     const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
 
-    act(() => listeners['shopping:crawl-status']?.('challenge'))
-    act(() => result.current.setCrawlViewBounds({ x: 10, y: 20, width: 640, height: 480 }))
-
-    expect(result.current.crawlStatus).toBe('challenge')
-    expect(window.electronAPI.shoppingSetCrawlViewBounds).toHaveBeenCalledWith({
-      x: 10,
-      y: 20,
-      width: 640,
-      height: 480,
-    })
+    expect(window.electronAPI.onShoppingEvent).toHaveBeenCalledOnce()
+    expect(window.electronAPI.onShoppingEvent).toHaveBeenCalledWith(
+      'shopping:state',
+      expect.any(Function),
+    )
+    expect(listeners['shopping:crawl-status']).toBeUndefined()
+    expect(result.current).not.toHaveProperty('crawlStatus')
+    expect(result.current).not.toHaveProperty('setCrawlViewBounds')
   })
 })
