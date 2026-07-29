@@ -1,6 +1,30 @@
 # 스펙 — 내보내기: 이미지가 있는 pending 씬 포함/배제 선택 (2026-07-28)
 
-상태: **v8 — 라운드 7 반영 완료, 라운드 8(확인용) 대기** (구현 착수 전)
+상태: **v9 — 라운드 8 반영 + 스코프 컷 완료. 구현 착수** (라운드 9 없음)
+
+> v9 변경 (라운드 8 — **두 리뷰어가 독립적으로 "스코프를 줄여라"에 도달**. 8 라운드 만에
+> findings 가 아니라 *방향* 에 대한 합의가 나왔다):
+> ① ⚠️ **Vrew 를 이번 범위에서 제외**(§3.4, 사용자 결정). `isRealPath` 는 **오직 Vrew 때문에
+> 존재**하고 라운드 4→5→7→8 **네 라운드 연속으로 구멍이 나온 유일한 규칙**이다
+> (raw base64 → `file://` → JPEG `/9j/` → forward-slash UNC). 모양 검사로는 끝이 나지 않는다.
+> 컷으로 사라진 것: `isRealPath`/`requirePath`/`pathOnly`/경로 행렬/await 사이트 2 곳/뮤테이션 5 행.
+> **Vrew 는 현행 유지** — 오늘과 동일 동작이므로 악화 없음(§9 0-b).
+> ② **모달 상태기계는 자르지 않는다.** Codex 는 미루자고 했지만 Fable 이 옳다 — 모달 없이는
+> `includePending` 이 UI 에서 도달 불가라 헤더 버튼만 켜지고 518 개는 여전히 무음 탈락한다.
+> Codex 자신도 "배선만 배포하는 건 사용자 문제 해결이 아니다"라고 썼다. 기계 설계는 3 라운드째 안정.
+> ③ **stale 가드를 사이트별 전수 테이블로**(라운드 8 F1). 라운드 6·7·8 이 매번 사이트를 하나씩
+> 찾아낸 이유가 **스펙이 그물을 산문으로 열거**해서다 → `describe.each([P1, P2, C1])` 로 클래스를
+> 구조적으로 닫는다. `#15` 도 닫기 경로 둘 다 픽스처로.
+> ④ **fail-open catch 뒤에도 stale 가드 필요**(Codex). CapCut 설치확인 reject 는
+> `ExportModal.jsx:319-322` 가 삼키고 진행하므로 `닫기→재오픈→reject` 에서 stale dispatch 가 된다.
+> ⑤ **문구 픽스처에 `readyCount = 2` 를 못 박는다**(Fable F2). 4 로 잡으면 금지식
+> `ready + pending` 도 7 을 내놓아 **#24 가 공허하게 통과**한다.
+> ⑥ **`persistOptions()` 위치 확정 + 그물**(Fable F4) — 기존 `ExportModal.test.jsx` 23 개 중
+> `saveSettings` 단언이 0 개라 리팩터가 조용히 떨어뜨린다.
+> ⑦ 원장 **26 행**(ID 는 8·10·22·23 결번, 재번호 안 함). 계수를 네 번 틀렸으므로 **행을 센다.**
+>
+> **라운드 9 는 돌리지 않는다.** 두 리뷰어 모두 "남은 검증은 코드-후 뮤테이션 실측이 진짜 심판"
+> 이라는 데 동의했고, 설계 구멍은 라운드 5 가 마지막이었다.
 
 > v8 변경 (라운드 7 — Fable CONDITIONAL GO(필수 1건) / Codex **NO-GO**(6건).
 > Codex 가 Fable 이 못 본 걸 셋 더 찾았고 **그중 하나는 테스트 그물이 아니라 설계 규칙의 구멍**이다):
@@ -185,6 +209,7 @@
 - 크로스머신 프로젝트 import 기능 신설.
 - `image_size` 부재로 인한 내보내기 속도 개선(§9 리스크에만 기록).
 - `vrewPacker` 의 base64 미지원 해소 — §5.4 에서 **회피**만 한다(후속 권고는 §5.4 말미).
+- ⚠️ **Vrew 의 `includePending` 자체** (v9 에서 스코프 컷, 아래 §3.4).
 
 ### 3.3 ⚠️ 접근 차단 — 이걸 같이 안 고치면 전체가 무의미하다
 
@@ -207,6 +232,33 @@
 - **다른 `isSceneGenerationDone` 소비처는 절대 건드리지 않는다** — `src/components/StatusBar.jsx:13`,
   `src/hooks/useMcpServer.js:570`, `src/App.jsx:2448` 은 카운트/진척이지 게이트가 아니다.
 
+### 3.4 ⚠️ Vrew 는 이번 범위 밖 (v9 스코프 컷 — 사용자 결정)
+
+**Vrew 는 현행 동작을 그대로 유지한다**: 항상 ready 만 내보내고, Vrew 탭에서는 3버튼 모달이
+뜨지 않는다. `includePending` 은 **CapCut / 프리미어 두 경로만** 지원한다.
+
+**근거 — 라운드 8 에서 두 리뷰어가 독립적으로 같은 결론에 도달했다.**
+`isRealPath` 는 **오직 Vrew 때문에 존재한다**(CapCut/프리미어는 base64 를 `prepareCloudRequest`
+가 소화한다). 그리고 그건 **네 라운드 연속으로 구멍이 나온 유일한 규칙**이다:
+
+| 라운드 | 뚫린 입력 |
+|---|---|
+| 4 | raw base64 가 스킴 블랙리스트를 통과 |
+| 5 | `file://` 가 `fs.readFile` 에서 ENOENT |
+| 7 | **JPEG base64 `/9j/…` 가 POSIX 절대경로 arm 을 통과** |
+| 8 | forward-slash UNC `//server/share/…` 가 같은 arm 을 통과 |
+
+원 사건은 CapCut/프리미어이고, Vrew 는 `isRealPath` 로는 닫을 수 없는 문제
+(파일 가독성 검증, `vrewPacker` 의 base64 미지원)를 끌고 들어온다. **모양 검사로는 끝이 없다** —
+진짜 해법은 실존/가독성 검증인데 그건 §3.2 의 비목표다.
+
+**이 컷으로 사라지는 것**: `isRealPath` 전체, `requirePath` 옵션, `pathOnly` 카운트/게이트/문구,
+§7.1 경로 행렬, stale await 사이트 5 곳 중 **V1·V2 두 곳**, 뮤테이션 **#8·#10·#21·#22·#23·#25 여섯 종**.
+
+**받아들이는 귀결**: Vrew 사용자에게는 pending 씬의 무음 탈락이 **그대로 남는다**.
+그건 **오늘과 동일한 동작**이므로 이번 변경이 무엇을 악화시키지는 않는다.
+후속으로 별건 처리한다(§9).
+
 ---
 
 ## 4. 설계
@@ -217,47 +269,27 @@
 
 ```js
 // ── 단일 술어. 분류기와 실행 필터가 **반드시 이 함수를 호출**한다(재조합 금지) ──
-isRealPath(v) → boolean
-  // 항상 boolean(빈 문자열에 '' 를 반환하면 안 된다).
-  // ⚠️ **순서가 중요하다. raw base64 를 먼저 걷어낸 뒤** 화이트리스트를 본다:
-  //   1) isRawBase64Media(v) 면 → false            (src/exporters/mediaSignatures.js:63)
-  //   2) POSIX 절대경로 '/…' | Windows 'C:\…' | UNC '\\server\share\…' → true
-  //   3) 나머지 → false
-  //
-  // ⚠️ **화이트리스트만으로는 JPEG base64 가 통과한다**(라운드 7 BLOCKER, 실측).
-  //   JPEG base64 는 **`/9j/4AAQSkZJRg…` 로 시작**하므로 `startsWith('/')` 가 true 다.
-  //   그대로 통과시키면 vrew.js:72 의 fs.readFile 에서 ENOENT → **Vrew 전체 중단**.
-  //   PNG(`iVBORw0…`)만 음성 픽스처로 두면 이 구멍이 안 보인다 — PNG 는 '/' 로 시작하지 않는다.
-  //   해법은 새 규칙을 만드는 게 아니라 **기존 detector 재사용**이다:
-  //   `isRawBase64Media('/9j/4AAQ…') === true`, `isRawBase64Media('/Users/a/x.png') === false`
-  //   (직접 실행해 확인). 스킴 블랙리스트(data:/http:/https:/blob:)만으로는 부족하다(라운드 4).
-  //
-  // ⚠️ **`file://` 는 화이트리스트에 넣지 않는다** (라운드 5 BLOCKER, 실측).
-  //   경로는 vrewPacker.js:121 `sourceForItem` → { filePath: item.path } →
-  //   electron/ipc/vrew.js:72 `fs.readFile(normalized.filePath)` 로 **문자열 그대로** 흐른다.
-  //   `fs.readFile('file:///etc/hosts')` 는 **ENOENT** 다(직접 확인).
-  //   즉 file URL 을 통과시키면 그 씬이 선택을 지난 뒤 **Vrew 내보내기 전체가 죽는다.**
-  //   §3.2 가 vrewPacker 수정을 비목표로 뒀으므로 정답은 **회피** — 화이트리스트에서 뺀다.
-  //   (나중에 file URL 을 지원하려면 §8 에 Vrew 쪽 URL 정규화 구현+테스트가 추가돼야 한다.)
+// ⚠️ v9 스코프 컷(§3.4): `isRealPath` / `requirePath` 는 **삭제**됐다.
+//    Vrew 가 유일한 소비자였고, 그 규칙은 네 라운드 연속 뚫렸다.
+//    Vrew 는 현행 유지(ready-only) — 분류기·선택기 어디에도 포맷 분기가 없다.
 
 // ── ready 술어도 단일 지점이다 (라운드 5 MAJOR — 두 곳에서 재조합되고 있었다) ──
 isReadyExportEligible(scene) → boolean
   // isSceneGenerationDone(scene) && hasExportableMedia(scene)
 
-isPendingExportEligible(scene, { requirePath = false }) → boolean
-  // scene.status === 'pending' && (requirePath ? isRealPath(scene.imagePath)
-  //                                            : hasExportableMedia(scene))
+isPendingExportEligible(scene) → boolean
+  // scene.status === 'pending' && hasExportableMedia(scene)
 
-classifyExportScenes(scenes, { requirePath = false } = {}) → {
+classifyExportScenes(scenes) → {
   ready:            Scene[],  // isReadyExportEligible(scene)
-  pendingWithImage: Scene[],  // isPendingExportEligible(scene, { requirePath })
+  pendingWithImage: Scene[],  // isPendingExportEligible(scene)
   unusable:         Scene[],  // 나머지
 }
 
 // 실행 선택도 같은 모듈이 소유한다 — useExport 가 술어를 재조합하지 않게.
-selectExportScenes(scenes, { includePending = false, requirePath = false }) → Scene[]
+selectExportScenes(scenes, { includePending = false }) → Scene[]
   // scenes.filter(s => isReadyExportEligible(s)
-  //                 || (includePending && isPendingExportEligible(s, { requirePath })))
+  //                 || (includePending && isPendingExportEligible(s)))
   // ⚠️ 두 함수가 **같은 두 술어 함수를 호출**해야 한다. 식을 각자 인라인하면
   //    "분류기가 센 숫자"와 "실행이 고른 집합"이 갈리는 이번 사건의 병이 재발한다.
   //    §7.1 에 분류기-선택기 **parity 테스트**를 둔다.
@@ -276,17 +308,14 @@ hasExportAccess(scenes) → boolean   // ready.length + pendingWithImage.length 
   `ready.concat(pendingWithImage)` 로 만들면 `[pending A, done B]` 가 `[B, A]` 로 뒤집혀
   영상 순서와 `rebaseSrtTrackToScenes`(`src/utils/srtTrack.js:149`)의 자막 재배치가 어긋난다
   (라운드 3 지적). 길이·ID 포함 단언만으로는 이 오류가 통과한다 → **순서 단언 필수**(§7.1).
-- ⚠️ **`requirePath` 는 truthy 검사가 아니다.** `imagePath` 자체가 data URI 일 수 있다.
-  `isRealPath` 는 항상 boolean 을 반환한다(빈 문자열에 `''` 를 반환하면 안 된다).
 
 ### 4.2 모달 (3 버튼)
 
 `pendingWithImageCount > 0` 일 때만 뜬다. 0 이면 종전과 **완전히 동일한 흐름**.
 
-⚠️ **어느 카운트로 게이트하는지 못 박는다**: `format === 'vrew'` 면 **`pathOnly`**, 그 외는
-`default`. 게이트·문구·실행 필터가 전부 같은 값을 봐야 한다. 안 그러면 base64 전용 pending 만
-있는 프로젝트에서 Vrew 모달이 "N개 포함"이라 말해놓고 실제로는 0 개를 포함한다 —
-이번 사건의 "숫자와 실제 대상이 갈림"이 그대로 재발한다(라운드 3 지적).
+⚠️ **Vrew 탭에서는 뜨지 않는다**(§3.4). 카운트는 하나(`pendingWithImageCount`)뿐이고
+**게이트·문구·실행 필터가 전부 그 하나를 본다** — v8 까지의 `default`/`pathOnly` 이원화는
+Vrew 컷과 함께 사라졌다. 값이 갈릴 여지 자체를 없앤 것이 이 컷의 핵심 이득이다.
 
 문구 — 라운드 1 지적 반영: "아직 생성되지 않은" 은 프롬프트를 고쳐 재생성 대기 중인 씬에는
 거짓말이다. 상태와 위험을 같이 말한다.
@@ -299,8 +328,7 @@ hasExportAccess(scenes) → boolean   // ready.length + pendingWithImage.length 
 ```
 
 "전체 N" 은 **`totalSceneCount` prop** 으로 받는다. `readyCount + pendingWithImageCount` 로는
-`unusable` 이 빠져 숫자가 틀리고, Vrew 는 `requirePath` 때문에 pending 카운트가 달라진다
-(라운드 2 지적).
+`unusable` 이 빠져 숫자가 틀리다(라운드 2 지적).
 
 | 버튼 | 동작 |
 |---|---|
@@ -430,18 +458,16 @@ async function dispatch(kind, options, includePending) {
 "소비-후-호출"(7)만으로는 부족하다는 것이 라운드 2 의 결론이다 — React 상태 갱신은 동기 latch 가
 아니므로 `attemptRef` 와 `phase` 가 실제 exactly-once 를 보장한다.
 
-**신규 prop**: `readyCount = 0`, `totalSceneCount = 0`,
-`pendingWithImageCount = { default: 0, pathOnly: 0 }`.
+**신규 prop**: `readyCount = 0`, `totalSceneCount = 0`, `pendingWithImageCount = 0`.
 ⚠️ **기본값을 반드시 준다** — 기존 `tests/components/ExportModal.test.jsx` 는 새 prop 을 안 넘긴다.
 `undefined > 0` 이 false 라 우연히 살지만, 명시적 기본값이 없으면 구조분해에서 터진다(라운드 3).
 씬 배열 519 개를 모달에 통째로 넘기지 않는다 — 모달은 표시만 하고 분류는 App 이 한 번 수행한다.
-`pathOnly` 는 Vrew 전용(§5.4) — 포맷에 따라 표시 숫자가 달라지므로 두 값이 필요하다.
-`totalSceneCount` 는 §4.2 문구의 "전체 N" 용.
+`totalSceneCount` 는 §4.2 문구의 "전체 N" 용. (v8 까지 있던 `pathOnly` 는 §3.4 컷으로 삭제.)
 
 ### 4.4 `includePending` 배선 (실행 경로 3 개)
 
 - **`useExport` 는 술어를 재조합하지 않는다.** 로컬 `isExportableScene` 을 없애고
-  `selectExportScenes(scenes, { includePending, requirePath })`(§4.1)를 **호출**한다.
+  `selectExportScenes(scenes, { includePending })`(§4.1)를 **호출**한다.
   v3 는 "같은 것을 쓴다"고 문장으로만 말하고 `eligible` 을 export 하지 않아, 구현자가 동일 논리를
   두 번 쓰는 게 자연스러웠다 — 그게 라운드 2 MAJOR 1 의 재발 경로다(라운드 3 지적).
 - **실행 경로 3 개**: `useExport.js:199`(CapCut) / `:306`(프리미어) / `:398`(Vrew).
@@ -473,7 +499,8 @@ async function dispatch(kind, options, includePending) {
    `console.warn` 뿐이고 사용자에게는 무음, 그리고 **버그 B(drift + 마지막 씬 폭주)가 부활**한다.
    사건 프로젝트(Untitled 519 씬)는 519/519 시각이 유효·단조·비겹침이라 안전함을 확인했지만,
    **일반 보장은 아니다** → §9 리스크로 기록하고 §7.2 가 테스트로 고정한다.
-- **Vrew 만 `requirePath: true`**(`:398`). 모달 게이트도 같은 값(`pathOnly`)을 쓴다(§4.2).
+- **Vrew(`:398`) 는 옵션을 받지 않는다** — 항상 ready-only(§3.4). 실행 경로는 **CapCut(`:199`)과
+  프리미어(`:306`) 둘**만 `includePending` 을 수용한다.
 - `useExport.js:59`(`handleExportClick`)은 **옵션을 받지 않는다.** 사용자가 아직 아무것도 안 골랐다.
   여기서 바뀌는 것은 **가드의 기준**뿐: `ready` → `ready + pendingWithImage`.
   (라운드 1 지적: "네 경로 모두 옵션을 존중한다"는 이 경로에 대해 반증 불가능한 문장이었다.)
@@ -527,7 +554,8 @@ async function dispatch(kind, options, includePending) {
    `:72` 에서 `fs.readFile(dataURI)` 로 하드 실패한다(ENAMETOOLONG/ENOENT).
    `vrewPacker.js:119-120` 주석은 "인라인 base64 는 발생하지 않음"이라고 **가정**하고 있다 —
    포함 기능은 그 가정을 깰 수 있다.
-   → **Vrew 실행 필터에 `requirePath: true`**(§4.4). `isRealPath` 로 `data:` 접두를 배제한다(§4.1).
+   → **v9 스코프 컷(§3.4): Vrew 는 `includePending` 을 지원하지 않는다.** 항상 ready-only 라
+     이 경로에 base64 pending 이 들어갈 일이 없다. 근본 해소는 후속 별건.
    `imagePath` truthy 검사만으로는 부족하다 — `imagePath` 자체가 data URI 일 수 있다.
 
    **후속 권고(이번 범위 밖)**: `electron/ipc/vrew.js:75` 는 이미 `{data}` 분기를 갖고 있으므로,
@@ -563,22 +591,6 @@ async function dispatch(kind, options, includePending) {
 
 ### 7.1 단위 — `tests/services/exportSelection.test.js` (신규)
 
-⚠️ **`isRealPath` 경로 행렬**(라운드 6 — v6 는 `data:` 만 잡아서 `file://` 재허용 뮤턴트가 살았다).
-양성/음성을 표로 못 박는다:
-
-| 입력 | 기대 | 이유 |
-|---|---|---|
-| `/Users/a/x.png` | **true** | POSIX 절대경로 |
-| `C:\Users\a\x.png` | **true** | Windows 드라이브 |
-| `\\server\share\x.png` | **true** | UNC |
-| `file:///Users/a/x.png` | **false** | `fs.readFile` 이 URL 을 해석하지 않는다 — **실측 ENOENT**. 통과시키면 Vrew 전체가 죽는다 |
-| `data:image/png;base64,…` | **false** | 스킴 |
-| `iVBORw0KGgo…` (PNG raw base64) | **false** | 화이트리스트에 안 걸린다 |
-| **`/9j/4AAQSkZJRg…` (JPEG raw base64)** | **false** | ⚠️ **`/` 로 시작해 POSIX arm 을 통과한다.** `isRawBase64Media` 선검사가 유일한 방어다(라운드 7). 이 케이스가 없으면 그 선검사를 지운 뮤턴트(#23)가 산다 |
-| `./scenes/x.png`, `scenes/x.png` | **false** | 상대경로. `fs.readFile` 은 cwd 기준으로 **엉뚱한 파일을 열 수도** 있다 |
-| `~/x.png` | **false** | Node 는 `~` 를 확장하지 않는다 → ENOENT |
-| `''` / `null` / `undefined` / 숫자 | **false** (boolean 이어야 한다) | `''` 를 반환하면 안 된다 |
-
 ⚠️ **분류기-선택기 parity**(라운드 6 — §4.1 이 약속만 하고 §7.1 에 없었다):
 - `selectExportScenes(scenes, { includePending: false })` **=== `classifyExportScenes(scenes).ready`**
 - `selectExportScenes(scenes, { includePending: true })` **=== `ready ∪ pendingWithImage`, 원본 순서**
@@ -588,7 +600,6 @@ async function dispatch(kind, options, includePending) {
 - 세 배열이 상호배타·합집합=입력 전체 — **개수 + 원소 동일성(identity)** 단언
 - `generating`·`error` 는 이미지가 있어도 `pendingWithImage` 에 안 들어간다
 - 이미지 없는 `pending` 은 `unusable`
-- `requirePath:true` → **base64 전용**(`image` 만, 또는 `imagePath` 가 `data:` URI) pending 씬 제외
 - `hasExportAccess(scenes)`: ready 0 + pendingWithImage ≥1 → **true**, 둘 다 0 → false
 
 ### 7.2 훅 — `tests/hooks/useExport.pending.test.jsx` (신규, renderHook)
@@ -596,9 +607,7 @@ async function dispatch(kind, options, includePending) {
   `project.scenes.length === 1`
 - `includePending:true` → `=== 519`
 - **실행 경로 3 개 각각** 옵션을 존중한다(CapCut/프리미어/Vrew) — 한 경로만 고치는 회귀를 잡는다
-- **Vrew 전용**: `includePending:true` 여도 제외된다 — 픽스처에 **두 변형 모두** 넣는다:
-  (a) `image`(base64) 만 있는 씬, (b) **`imagePath` 자체가 `data:` URI** 인 씬.
-  (b) 가 없으면 `requirePath` 를 truthy 검사로 약화시킨 뮤턴트(#10)가 산다 — 라운드 3 지적
+- **Vrew 는 옵션을 무시한다**(§3.4): `includePending:true` 를 줘도 Vrew 산출물은 ready-only 다
 - **원본 순서 보존**: `[pending A, done B]` 입력 → exporter 가 받은 `project.scenes` 가 `[A, B]`
   (`ready.concat(pending)` 이면 `[B, A]` 가 된다)
 - `handleExportClick` 이 ready 0 / pendingWithImage ≥1 에서 **조기 반환하지 않는다**
@@ -635,27 +644,24 @@ async function dispatch(kind, options, includePending) {
 - **(a) 배선** — `tests/components/App.exportAccess.test.jsx`: `ExportModal` 을 **stub mock** 해서
   받은 prop 만 캡처한다. App 이 무엇을 넘기는지가 관심사다.
 - **(b) 게이트** — `tests/components/ExportModal.pendingChoice.test.jsx`: **실제 컴포넌트를 렌더**하고
-  prop 을 직접 준다. 게이트가 포맷에 따라 `default`/`pathOnly` 중 무엇을 보는지가 관심사다.
+  prop 을 직접 준다. 게이트와 문구가 카운트를 어떻게 쓰는지가 관심사다.
 
 (a) 로 검증하는 것:
 
-- `totalSceneCount` / `readyCount` / `pendingWithImageCount.default` / `.pathOnly` 가
-  **분류 결과와 일치**한다 (리터럴 단언).
+- `totalSceneCount` / `readyCount` / `pendingWithImageCount` 가 **분류 결과와 일치**한다 (리터럴 단언).
 - **이게 없으면 구현자가 카운트 prop 을 통째로 빠뜨려도 전부 초록이다** — §4.3 이 기본값 0 을
   요구하므로 `undefined > 0` 이 아니라 `0 > 0` 이 되어 **3버튼 모달이 영원히 안 뜬다.**
   ExportModal 자체 테스트는 prop 을 직접 주므로 이 누락을 못 문다(뮤테이션 #20).
 (b) 로 검증하는 것 — **실제 `ExportModal` 렌더**:
-- **Vrew UI 게이트**: `pendingWithImageCount = { default: 1, pathOnly: 0 }` 에서
-  **CapCut 은 3버튼 모달을 띄우고 Vrew 는 안 띄운다.** 게이트가 항상 `.default` 를 보면
-  base64 전용 pending 을 "포함 가능"이라 표시해놓고 실행에서는 제외한다 — 이번 사건의
-  "숫자와 실제 대상이 갈림"이 그대로 재발한다(뮤테이션 #21).
+- **Vrew 탭에서는 3버튼 모달이 뜨지 않는다**(§3.4). 같은 pending 카운트에서 CapCut 은 뜬다.
 - ⚠️ **문구(copy) 단언**(라운드 7 두 리뷰어 일치 — §4.2 는 "게이트·문구·실행 필터가 전부 같은 값을
   본다"고 하는데 **문구만 그물이 없었다**). 서로 구별되는 리터럴로 픽스처를 잡는다:
-  `totalSceneCount = 7`, `default = 3`, `pathOnly = 1` →
-  - CapCut 모달 텍스트에 **"7"** 과 **"3"** 이 나온다
-  - Vrew 모달 텍스트에 **"7"** 과 **"1"** 이 나온다
-  `readyCount + pendingWithImageCount` 로 전체를 계산하는 오구현(§4.2 가 명시적으로 금지한 식)이나
-  Vrew 문구가 `.default` 를 쓰는 오구현이 여기서 죽는다(뮤테이션 #24·#25).
+  **`totalSceneCount = 7`, `readyCount = 2`, `pendingWithImageCount = 3`** →
+  모달 텍스트에 **"7"** 과 **"3"** 이 나온다.
+  ⚠️ **`readyCount` 를 반드시 2 로 박는다**(라운드 8 Fable F2). 4 로 잡으면 §4.2 가 금지한 식
+  `readyCount + pendingWithImageCount` 도 **7** 을 내놓아 **#24 가 공허하게 통과**한다.
+  2 면 `2+3=5 ≠ 7` 이라 갈린다.
+  ⚠️ 맨 숫자 substring 단언은 모달의 다른 숫자와 충돌하므로 **보간 구문째로**(예: "중 3개") 단언한다.
 - **로케일 키 실재**: 렌더된 텍스트에 `raw i18n key`(예: `export.pendingChoice.`)가 **나타나지 않는다**.
   키를 빠뜨리면 화면에 키가 그대로 노출된다(§8 이 이미 지목한 위험인데 그물이 없었다).
 
@@ -693,11 +699,21 @@ async function dispatch(kind, options, includePending) {
   `닫기 → resolve → 재오픈` 순서면 `isOpenRef` 가 대신 막아줘서 **`++attemptRef` 를 제거한
   뮤턴트(#7)가 살아남는다**(두 리뷰어 모두 지적). 재오픈 후에는 `isOpenRef` 가 다시 true 라
   **attempt 토큰만이** stale 을 가른다 → resolve 후 콜백 미호출 + 3버튼 모달 없음을 단언.
-- ⚠️ **두 번째 await 뒤의 stale 가드**(라운드 7 Codex): §4.3 step 3 은 "**모든** await 직후"라고
-  하는데 §7.4 는 **설치확인 promise 만** 붙잡는다. 프리미어/Vrew 는 그 뒤에
-  `checkFolderExists`(`ExportModal.jsx:242`/`:278`)를 **한 번 더 await** 하므로, 그 자리의 가드를
-  지운 뮤턴트가 전부 통과한다. → **두 번째 await 를 붙잡은 채 닫기 → 재오픈 → resolve** 픽스처를
-  따로 둔다. 단언: 콜백 미호출 + 3버튼 모달 없음 (뮤테이션 #26).
+- ⚠️ **stale 가드는 사이트별로 전수 테이블화한다**(라운드 8 F1 — 이게 라운드 6·7·8 이 매번
+  하나씩 찾아낸 그 클래스를 **구조적으로** 닫는 방법이다. 인스턴스를 하나씩 추가하면
+  사이트 하나당 라운드 하나가 계속 든다).
+  §4.3 step 3 은 "**모든** await 직후"인데 실제 suspension point 는 **세 곳**이다(Vrew 컷 후):
+  | # | 사이트 | 앵커 |
+  |---|---|---|
+  | P1 | 프리미어 설치확인 | `ExportModal.jsx:231` |
+  | P2 | 프리미어 폴더확인 | `ExportModal.jsx:242` |
+  | C1 | CapCut 설치확인 | `ExportModal.jsx:308` |
+  (Vrew 의 V1 `:257` / V2 `:278` 은 §3.4 컷으로 이번 범위 밖. `:291`/`:295` 는 하위 핸들러 래퍼라
+  별도 지점이 아니고, `window.confirm` 은 동기다.)
+  → **`describe.each([P1, P2, C1])`** 로 "붙잡기 → 닫기 → 재오픈 → resolve" 를 **세 번** 돌린다.
+  단언: 콜백 미호출 + 3버튼 모달 없음 (뮤테이션 #26 — 짝 설명에 **"3 사이트 전수"** 를 명기한다).
+- ⚠️ **`#15` 도 닫기 경로가 둘이다** — `handleClose`(백드롭/X/footer)와 `isOpen=false` effect.
+  픽스처를 **둘 다** 돌린다. 하나만 쓰면 뮤턴트가 어느 쪽 가드를 지우느냐에 따라 산다(라운드 8 F1).
 - ⚠️ **`dispatching` 중 잠금**(라운드 7 Codex): §4.3 step 6 은 `phaseRef !== 'idle'` 전 구간을
   잠그라는데 §7.4 는 `choosing` 과 preflight 만 본다. **dispatch 중에 Export 버튼·포맷 탭이
   여전히 disabled** 임을 단언한다 — 안 그러면 진행 중인 프리미어 내보내기를 Vrew 로 표시하는
@@ -706,6 +722,10 @@ async function dispatch(kind, options, includePending) {
   요구하는데, 그 리팩터가 정확히 `ExportModal.jsx:335` 의 `onClick={loading ? undefined : onClose}`
   를 날리기 쉽다. **dispatch(loading) 중 백드롭 클릭 → 모달이 그대로 열려 있고 리셋도 없다**
   (뮤테이션 #28).
+- ⚠️ **fail-open catch 뒤에도 stale 가드가 필요하다**(라운드 8 Codex): CapCut 설치확인의 reject 는
+  `ExportModal.jsx:319-322` 가 **삼키고 그대로 진행**한다. 그래서 `닫기 → 재오픈 → 설치확인 reject`
+  순서면 await 다음 줄의 가드를 **건너뛰고** stale attempt 가 dispatch 할 수 있다.
+  → 그 순서의 픽스처를 두고 **콜백 미호출**을 단언한다 (뮤테이션 #25).
 - **preflight reject**: 설치확인이 reject → 다시 Export 를 눌렀을 때 **설치확인이 2 회째 호출**된다
   (버튼은 preflight 중에도 원래 enabled 라 "누를 수 있다"만으론 뮤테이션 #13 이 산다 — 라운드 4)
 - **조기 return 후 재시도**: 미설치 / 덮어쓰기 거절 후 재클릭 시에도 **2 회째 호출**을 단언
@@ -726,6 +746,11 @@ async function dispatch(kind, options, includePending) {
   붙잡은 채 Vrew 탭 클릭 → 탭이 **disabled** 이고(속성 단언), resolve 후 불리는 콜백은
   **`onExportPremiere`** 다.
 - **동기 이중 클릭**: `idle` 에서 같은 act 안에 Export 를 2 회 → preflight 가 **1 회만** 시작된다
+- ⚠️ **`persistOptions()` 위치**(라운드 8 Fable F4): 현재 `ExportModal.jsx:246`/`:282`/`:326` 에서
+  **발사 직전에만** 저장한다. §4.3 이 그 자리를 재작성하므로 위치를 못 박는다 —
+  **공통 `dispatch` 안, 콜백 호출 직전**. 단언: 포함/배제 → `saveSettings` 호출 /
+  **취소 → 미호출**. 기존 `ExportModal.test.jsx` 는 23 개 테스트 중 `saveSettings` 단언이 **0 개**라
+  이 리팩터가 조용히 떨어뜨리기 쉽다 (뮤테이션 #29).
 - **콜백 throw**: 포함 후 콜백이 reject 해도 `phase` 가 풀려 다시 Export 를 누를 수 있다
 - 프리미어/Vrew 의 덮어쓰기 `window.confirm` 이 3버튼 모달보다 **먼저** 뜬다
 
@@ -756,9 +781,7 @@ async function dispatch(kind, options, includePending) {
 | 6a | `phaseRef` → React state 로 환원 | 7.4 동기 이중 클릭 (preflight 호출 **1 회** 단언) |
 | 6b | `attemptRef` → React state 로 환원 | 7.4 **외부 닫힘(prop-driven)** 의 `닫기 → 재오픈 → resolve` 순서. ⚠️ v5 는 "stale attempt" 불릿에 짝지었는데 그 픽스처엔 **재오픈이 없어** `isOpenRef` 가 대신 막아 뮤턴트가 산다(라운드 5) |
 | 7 | `isOpen=false` effect 의 `++attemptRef` 제거 | 7.4 **외부 닫힘(prop-driven)** |
-| 8 | Vrew 실행 필터의 `requirePath` 제거 | 7.2 Vrew (a)(b) 두 변형 |
 | 9 | `hasExportAccess` 를 `ready.length > 0` 로 원복 | 7.1 술어 |
-| 10 | `isRealPath` 를 truthy 검사로 약화 | 7.2 Vrew **(b) data-URI imagePath** |
 | 11 | `App.jsx:2146` 을 `scenes.some(isSceneGenerationDone)` 로 원복 | **7.3 App 배선 테스트** |
 | 12 | `selectExportScenes` 를 `ready.concat(pendingWithImage)` 로 | 7.2 원본 순서 보존 |
 | 13 | preflight 조기 return/ reject 경로의 `finally` 제거 | 7.4 reject·조기 return 후 **설치확인 2 회째 호출** |
@@ -769,16 +792,19 @@ async function dispatch(kind, options, includePending) {
 | 18 | `computeSceneSlots(selectExportScenes(...))` → `computeSceneSlots(scenes)` | 7.2 **슬롯 정합 리터럴**(혼합 픽스처). 개수·ID 단언만으로는 통과한다 |
 | 19 | step 4(pending 0)가 공통 `dispatch` 대신 콜백 직접 호출 | 7.4 **pending 없는 평범한 내보내기 → 성공 → 재오픈 → 다시 내보내기 가능** (v5 는 여기서 `dispatching` 에 잠겼다). ⚠️ **변형 B**(phase 전이 없이 직접 호출)는 이 테스트를 통과한다 — 그건 **#15 의 pending-0 픽스처**가 죽인다(라운드 6 F2) |
 | 20 | App 이 `ExportModal` 에 카운트 prop 을 안 넘김 | **7.3-a** prop 캡처 리터럴 (기본값 0 이라 다른 테스트는 전부 초록이다) |
-| 21 | 모달 게이트가 포맷과 무관하게 `.default` 사용 | **7.3-a** `{default:1, pathOnly:0}` → CapCut 묻고 Vrew 안 묻는다 |
-| 22 | `isRealPath` 가 `file://` 를 다시 허용 | **7.1 경로 행렬** 음성 케이스 (v6 는 `data:` 만 잡아 이 뮤턴트가 살았다) |
-| 23 | `isRealPath` 의 **`isRawBase64Media` 선검사 제거** | **7.1 `/9j/4AAQ…` 음성 케이스**. PNG(`iVB…`)만으로는 안 죽는다 — PNG 는 `/` 로 시작하지 않아 화이트리스트가 대신 막는다(라운드 7 BLOCKER) |
-| 24 | 모달 문구가 `totalSceneCount` 대신 `readyCount + pendingWithImageCount` | **7.3-a(b) 문구 단언** (total=7 / default=3 / pathOnly=1 픽스처) |
-| 25 | Vrew 문구가 `pathOnly` 대신 `.default` | **7.3-a(b) 문구 단언** — Vrew 텍스트에 "1" 이 아니라 "3" 이 나온다 |
+| 21 | Vrew 탭에서도 3버튼 모달을 띄움 | **7.3-a(b)** Vrew 는 안 뜬다 (§3.4) |
+| 24 | 모달 문구가 `totalSceneCount` 대신 `readyCount + pendingWithImageCount` | **7.3-a(b) 문구 단언** (total=7 / **ready=2** / pending=3 픽스처 — ready 를 4 로 잡으면 공허) |
+| 25 | **CapCut 설치확인 fail-open catch(`ExportModal.jsx:319-322`) 뒤의 stale 가드 제거** | 7.4 `닫기 → 재오픈 → 설치확인 **reject**` 순서 (라운드 8 Codex — reject 는 삼켜지고 진행하므로 catch 뒤에도 가드가 필요하다) |
 | 26 | **두 번째 await**(`checkFolderExists`) 뒤의 stale 가드 제거 | 7.4 두 번째 await 붙잡고 닫기→재오픈→resolve |
 | 27 | 잠금 범위에서 `dispatching` 제외 | 7.4 dispatch 중 버튼·탭 disabled 단언 |
 | 28 | 백드롭의 `loading` 가드 제거 | 7.4 dispatch 중 백드롭 클릭 |
+| 29 | `persistOptions()` 를 dispatch 밖으로/취소 경로로 이동 | 7.4 포함·배제 → `saveSettings` 호출 / 취소 → 미호출 (라운드 8 Fable F4) |
 
-**개수 정직하게 — 29 종**: `#1~#15` 는 `#6` 분리로 **16 행**, 거기에 `#16~#28` **13 행**을 더한다.
+**개수 정직하게 — 26 종** (v9 기준): Vrew 컷으로 **5 행이 삭제**(구 #8·#10·#22·#25 + 구 #21 대체)되고
+라운드 8 에서 **2 행이 추가**(#25 reject-후-가드, #29 persistOptions)됐다.
+ID 는 **연속이 아니다** — `#8`·`#10`·`#22`·`#23` 은 Vrew 컷으로 삭제됐다(ID 는 교차 참조가 많아
+재번호하지 않는다). 행을 세면 **26**, ID 최댓값은 29 다. 헷갈리면 **행을 센다.**
+⚠️ **구현 직전에 표의 `^| ` 행을 기계 계수**해서 이 숫자를 갱신할 것 —
 ⚠️ **계수를 세 번 연달아 틀렸다** — v5 "13", v6 "19", v7 "22". v7 은 v6 의 틀린 19 에 3 을 더했다.
 **행을 기계적으로 세어서** 쓴다. 이 숫자가 뮤테이션 보고서의 **수용 기준**이므로,
 틀리면 한둘을 안 돌리고 "전부 killed" 라고 보고하게 된다 — 그게 이 기준이 존재하는 이유다.
@@ -801,7 +827,7 @@ async function dispatch(kind, options, includePending) {
 
 | 파일 | 변경 |
 |---|---|
-| `src/services/exportSelection.js` | **신규** — `isRealPath`(**`file://` 제외**) / **`isReadyExportEligible`** / `isPendingExportEligible` / `classifyExportScenes` / **`selectExportScenes`** / `hasExportAccess` |
+| `src/services/exportSelection.js` | **신규** — `isReadyExportEligible` / `isPendingExportEligible` / `classifyExportScenes` / **`selectExportScenes`** / `hasExportAccess`. ⚠️ `isRealPath`/`requirePath` 는 **없다**(§3.4 Vrew 컷) |
 | `src/hooks/useExport.js` | **로컬 `isExportableScene`(`:21-23`) 삭제** 후 `selectExportScenes` 호출로 대체(재조합 금지). 실행 3 경로(`:199`,`:306`,`:398`)가 `includePending` 수용, Vrew 는 `requirePath:true`; `:59` 가드는 `hasExportAccess` 기준. **dead import 제거**: `hasExportableMedia`(`:14`)·`isSceneGenerationDone`(`:17`) 은 삭제된 술어에서만 쓰였다(`resolveExportVideos`/`getExportFilePaths` 는 유지) — 안 지우면 재조합 재료가 남는다(라운드 5) |
 | `src/App.jsx` | `:2146` → `hasExportAccess(scenes)`; `ExportModal` 에 카운트 prop 3 종 전달 |
 | `src/components/ExportModal.jsx` | `attemptRef`/`phase`/`pendingChoice` 상태기계, 3버튼 모달, 액션 비활성화, `handleClose` 일원화, `isOpen` 리셋 |
@@ -811,7 +837,7 @@ async function dispatch(kind, options, includePending) {
 | `mcp-server/index.js` | `:584-601` 스키마 2 개에 `includePending` |
 | `mcp-server/lib/toolResponses.js` | `:24-28`, `:43-47` 바디 전달 |
 | `tests/mcp-server/toolResponses.test.js` | **기존 수정** — 3-인자 기대값이 바디 추가로 깨진다 |
-| `tests/hooks/useExport.refresh.test.jsx` | **기존 수정(필수)** — `:224` "pending 상태의 stale imagePath 만 있으면 export 모달을 열지 않는다" 가 `showExportModal === false` + `toast.warning('toast.noGeneratedImages')` 를 단언한다. `staleScene` 은 `status:'pending'` + `imagePath:'/tmp/old.png'`(실경로라 `isRealPath` 도 통과) → **새 접근 게이트와 정반대**라 구현 즉시 깨진다. 기대값을 "**모달이 열리고 경고가 없다**"로 바꾼다. 같은 파일의 "confirm 기본 배제" 테스트는 **유지**한다(라운드 6 Codex) |
+| `tests/hooks/useExport.refresh.test.jsx` | **기존 수정(필수)** — `:224` "pending 상태의 stale imagePath 만 있으면 export 모달을 열지 않는다" 가 `showExportModal === false` + `toast.warning('toast.noGeneratedImages')` 를 단언한다. `staleScene` 은 `status:'pending'` + `imagePath:'/tmp/old.png'` → **새 접근 게이트와 정반대**라 구현 즉시 깨진다. 기대값을 "**모달이 열리고 경고가 없다**"로 바꾼다. 같은 파일의 "confirm 기본 배제" 테스트는 **유지**한다(라운드 6 Codex) |
 | `tests/services/exportSelection.test.js` | **신규** |
 | `tests/hooks/useExport.pending.test.jsx` | **신규** (renderHook + exporter mock) |
 | `tests/components/ExportModal.pendingChoice.test.jsx` | **신규** |
@@ -829,7 +855,13 @@ async function dispatch(kind, options, includePending) {
 
 ## 9. 리스크
 
-0-a. ⚠️ **`isRealPath` 는 모양 검사이지 실존 검사가 아니다**(라운드 6).
+0-b. ⚠️ **Vrew 사용자는 pending 무음 탈락이 그대로 남는다**(§3.4 컷). **오늘과 동일한 동작**이라
+   이번 변경이 악화시키는 건 없지만, 후속 별건으로 처리해야 한다. 근본 해소는 `vrewPacker` 의
+   base64 지원 또는 실존/가독성 검증이고, **모양 검사(`isRealPath`)로는 닫히지 않는다** —
+   네 라운드 연속으로 뚫린 것이 그 증거다.
+
+0-a. ⚠️ **(v9 에서 삭제됨 — `isRealPath` 자체가 사라졌다)** 아래는 기록용.
+   ~~`isRealPath` 는 모양 검사이지 실존 검사가 아니다~~(라운드 6).
    `C:\…` / UNC 는 macOS 에서 열리지 않고, 퍼센트 인코딩된 절대경로도 리터럴로 취급돼 ENOENT 다.
    보통은 도달하지 않는다 — `useProjectData.js:117-136` 이 로드 때 `imagePath` 를 로컬 실경로로
    재작성하거나 `null` 로 만든다. **단 하나의 구멍**: `:115` `if (scene.id)` 때문에 **id 없는 씬은
@@ -907,15 +939,20 @@ async function dispatch(kind, options, includePending) {
 
 ---
 
-## 11. 라운드 8 에 묻고 싶은 것
+## 11. 구현 노트 (라운드 9 대신)
 
-1. **설계 규칙에 아직 구멍이 있나?** 라운드 7 은 여섯 라운드 만에 처음으로 *테스트 그물이 아니라
-   규칙 자체*의 구멍(JPEG base64)을 찾았다. `isRealPath` 를 다시 공격해줘 — `isRawBase64Media`
-   선검사를 통과하면서 `fs.readFile` 에서 죽는 입력이 더 있나?
-2. **§7.3-a 분리가 옳게 됐나?** (a) stub mock 배선 / (b) 실제 렌더 게이트·문구.
-   각 뮤턴트(#20·#21·#24·#25)가 **어느 쪽 테스트에서** 죽는지 짚어줘.
-3. **29 종 계수가 맞나?** 행을 직접 세어줘. 세 번 틀렸다.
-4. **§4.3 의 await 지점을 전수로 세어줘** — step 3 이 "모든 await 직후"라는데 실제 await 가
-   몇 개이고 각각 §7.4 에 대응이 있나. 이게 라운드 7 의 ④ 였다.
-5. **구현 착수해도 되나?** 라운드 7 의 코드-전 필수는 양쪽 합쳐 6 건이었다(라운드 6 은 5 건).
-   **줄지 않으면 스코프가 안 잡힌 신호**이므로, 그 경우 "스코프를 어떻게 줄여야 하는가"를 답해줘.
+라운드 8 에서 두 리뷰어 모두 **"라운드 9 없이 구현 착수"** 를 권고했다. 근거:
+- **설계 구멍은 라운드 5 가 마지막**이었다. 6~8 은 전부 "규칙은 맞는데 그물이 없다"였고,
+  그 클래스는 v9 ③ 의 전수 테이블이 구조적으로 닫는다.
+- 남은 검증은 **코드-후 뮤테이션 실측**이 진짜 심판이다.
+
+**구현 순서**
+1. `src/services/exportSelection.js` + `tests/services/exportSelection.test.js` (§7.1)
+2. `useExport` 교체 (§4.4) + `tests/hooks/useExport.pending.test.jsx` (§7.2)
+   — ⚠️ 슬롯 정합 리터럴(§4.4-a)과 `useSlots` 유지 단언을 여기서 같이
+3. 접근 게이트 (§3.3) + §7.3 / §7.3-a(a)
+4. `ExportModal` 상태기계 (§4.3) + §7.3-a(b) / §7.4 — **stale 가드는 `describe.each`**
+5. MCP 3 곳 (§4.5) + §7.5
+6. 전체 스위트 → **커밋** → 뮤테이션 26 행 실측 → 구현 리뷰 loop
+
+**착수 전 마지막 확인**: §7.6 표의 `^| ` 행을 기계 계수해 26 이 맞는지 본다(네 번 틀렸다).
