@@ -5,7 +5,8 @@ const main = readFileSync(resolve(process.cwd(), 'electron/main.js'), 'utf8')
 
 describe('main.js spike wiring', () => {
   it('calls registerSpikeShortcuts inside whenReady after createWindow', () => {
-    const readyIndex = main.indexOf('app.whenReady')
+    // '.then' 으로 앵커 — 204줄의 'app.whenReady' 주석이 아니라 실제 whenReady().then 블록에 매칭.
+    const readyIndex = main.indexOf('app.whenReady().then')
     const createWindowIndex = main.indexOf('createWindow()', readyIndex)
     const registerCallIndex = main.indexOf('registerSpikeShortcuts(', readyIndex)
     expect(readyIndex).toBeGreaterThanOrEqual(0)
