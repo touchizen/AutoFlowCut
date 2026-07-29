@@ -11,16 +11,12 @@ import { useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
-import { resolveExportVideos, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
+import { resolveExportVideos, getExportFilePaths } from '../utils/sceneMedia'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
-import { isSceneGenerationDone } from '../services/generationStatus'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
 import { computeSceneSlots } from '../services/sceneSlots'
-
-function isExportableScene(scene) {
-  return isSceneGenerationDone(scene) && hasExportableMedia(scene)
-}
+import { selectExportScenes, hasExportAccess } from '../services/exportSelection'
 
 export function useExport({
   settings,
@@ -56,8 +52,9 @@ export function useExport({
       setExportFormat(format)
       try { localStorage.setItem('lastExportFormat', format) } catch {}
     }
-    const validScenes = scenes.filter(isExportableScene)
-    if (validScenes.length === 0) {
+    // 사용자가 아직 아무것도 안 골랐으므로 여기서는 "모달에 도달할 자격"만 본다 —
+    // 이미지가 있는 pending 씬만 있는 프로젝트도 통과해야 모달에서 고를 수 있다.
+    if (!hasExportAccess(scenes)) {
       toast.warning(t('toast.noGeneratedImages'))
       return
     }
@@ -195,8 +192,8 @@ export function useExport({
   }
 
   // Handle export confirm from modal
-  const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const validScenes = scenes.filter(isExportableScene)
+  const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize, includePending = false }) => {
+    const validScenes = selectExportScenes(scenes, { includePending })
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)
@@ -302,8 +299,8 @@ export function useExport({
   // Handle Premiere export (mirror of handleExportConfirm).
   // capcutProjectNumber 는 .prproj 를 쓸 출력 폴더 경로로 재사용된다.
   // Premiere 자막은 XML 에 embed 되므로 SRT sidecar / 앱 실행 단계는 없다.
-  const handleExportPremiere = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const validScenes = scenes.filter(isExportableScene)
+  const handleExportPremiere = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize, includePending = false }) => {
+    const validScenes = selectExportScenes(scenes, { includePending })
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)
@@ -394,8 +391,11 @@ export function useExport({
 
   // Handle Vrew export (local generator + local zip packaging).
   // capcutProjectNumber 는 .vrew 를 쓸 출력 폴더 경로로 재사용된다.
+  // Vrew 는 includePending 을 지원하지 않는다 — 항상 ready 만 내보낸다.
+  // vrewPacker 가 base64 를 파일 경로로 취급해서, 경로 모양만 보는 검사로는
+  // 안전하게 거를 수 없었다(리뷰에서 네 라운드 연속 구멍이 나왔다). 별건.
   const handleExportVrew = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const validScenes = scenes.filter(isExportableScene)
+    const validScenes = selectExportScenes(scenes)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)
