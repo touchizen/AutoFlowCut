@@ -220,6 +220,14 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v3.2.2 — Export timeline fixes
+
+- Silent gaps between scenes are no longer dropped on export — images used to creep ahead of the narration by up to a minute in a long project
+- The last scene no longer stretches to fill the timeline — the same drift, arriving all at once at the end
+- Scenes that have an image but are still pending are no longer left out without warning — export now asks whether to include them
+- The export button is reachable even when every scene is still pending
+- Applies to CapCut, Premiere and Vrew. Automation (MCP/HTTP) can pass the choice too; the default is to exclude.
+
 v3.2.1 — Story UI cleanup and steadier generation.
 
 The Story stepper now reads clearly: entry tabs are separated, the direction of progress is shown, and labels no longer overlap in narrow windows. Lists and panels grow with the window instead of staying at a fixed size.
@@ -466,6 +474,14 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v3.2.2 — 내보내기 타임라인 수정
+
+- 씬 사이 무음이 내보내기에서 사라져 이미지가 앞서가던 문제 수정(긴 프로젝트에서 최대 1분 어긋남)
+- 마지막 씬이 타임라인 끝까지 늘어나던 문제 수정(위 어긋남이 마지막에 한꺼번에 몰린 결과)
+- 이미지가 있는데 미생성(pending) 상태인 씬이 경고 없이 빠지던 문제 수정 — 포함 여부 확인 추가
+- 모든 씬이 pending일 때 내보내기 버튼이 눌리지 않던 문제 수정
+- CapCut·Premiere·Vrew 공통 적용, 자동화(MCP/HTTP)에서도 포함 여부 지정 가능(기본값 제외)
+
 v3.2.1 — Story UI 정리와 생성 안정성
 
 - Story 스텝퍼 진행 표시 개선(진입 탭 분리·진행 방향 표시·좁은 창 라벨 겹침)
@@ -619,6 +635,14 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 
 ### What's New
 ```
+v3.2.2 — エクスポートのタイムライン修正
+
+- シーン間の無音がエクスポートで失われ、画像がナレーションより先行する問題を修正（長いプロジェクトで最大1分のずれ）
+- 最後のシーンがタイムラインの最後まで引き伸ばされる問題を修正（上記のずれが最後にまとめて現れたもの）
+- 画像はあるが未生成（pending）のシーンが警告なく除外される問題を修正 — 含めるかどうかを確認するようになりました
+- すべてのシーンがpendingのとき、エクスポートボタンが押せない問題を修正
+- CapCut・Premiere・Vrewに共通で適用。自動化（MCP/HTTP）からも指定可能、既定は除外。
+
 v3.2.1 — Story UIの整理と、より安定した生成。
 
 Storyステッパーが見やすくなりました。エントリータブが分離され、進行方向が表示され、狭いウィンドウでもラベルが重なりません。リストとパネルも固定サイズのままではなく、ウィンドウに合わせて広がります。
@@ -765,6 +789,14 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
+v3.2.2 — Korrekturen an der Export-Timeline
+
+- Stille Lücken zwischen Szenen gehen beim Export nicht mehr verloren — Bilder liefen der Erzählung in langen Projekten um bis zu eine Minute voraus
+- Die letzte Szene wird nicht mehr bis zum Ende der Timeline gedehnt — derselbe Versatz, der sich am Schluss auf einmal zeigte
+- Szenen, die ein Bild haben, aber noch ausstehen, werden nicht mehr ohne Warnung ausgelassen — der Export fragt jetzt nach, ob sie einbezogen werden sollen
+- Der Export-Button ist auch dann erreichbar, wenn alle Szenen noch ausstehen
+- Gilt für CapCut, Premiere und Vrew. Auch die Automatisierung (MCP/HTTP) kann die Wahl übergeben; Standard ist Ausschließen.
+
 v3.2.1 — Aufgeräumte Story-UI und zuverlässigere Generierung.
 
 Der Story-Stepper ist jetzt klar lesbar: Einstiegs-Tabs sind getrennt, die Fortschrittsrichtung wird angezeigt, und Labels überlappen in schmalen Fenstern nicht mehr. Listen und Panels wachsen mit dem Fenster mit, statt auf einer festen Größe zu bleiben.
