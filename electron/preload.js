@@ -156,8 +156,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   shoppingGetState: (params) => ipcRenderer.invoke('shopping:get-state', params),
   shoppingSubmitProduct: (params) => ipcRenderer.invoke('shopping:submit-product', params),
   shoppingAbort: (params) => ipcRenderer.invoke('shopping:abort', params),
+  shoppingSetCrawlViewBounds: (bounds) => ipcRenderer.send('shopping:crawl-view-bounds', bounds),
   onShoppingEvent: (channel, cb) => {
-    const shoppingChannels = ['shopping:state']
+    const shoppingChannels = ['shopping:state', 'shopping:crawl-status']
     if (!shoppingChannels.includes(channel)) return () => {}
     const listener = (_event, payload) => cb(payload)
     ipcRenderer.on(channel, listener)

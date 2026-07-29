@@ -45,13 +45,30 @@ export function updateBounds(mainWindow, flowView) {
   }
 }
 
+function updateShoppingCrawlBounds(shoppingView, shoppingBounds) {
+  if (!shoppingView) return
+  if (modalVisible) {
+    shoppingView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    return
+  }
+  if (shoppingBounds) shoppingView.setBounds(shoppingBounds)
+}
+
 /**
  * 레이아웃 관련 IPC 핸들러 등록
  * @param {ipcMain} ipcMain
  * @param {Function} getMainWindow - mainWindow getter
  * @param {Function} getFlowView - flowView getter
+ * @param {Function} getShoppingCrawlView - shopping crawl view getter
+ * @param {Function} getShoppingCrawlBounds - last admitted renderer bounds getter
  */
-export function registerLayoutIPC(ipcMain, getMainWindow, getFlowView) {
+export function registerLayoutIPC(
+  ipcMain,
+  getMainWindow,
+  getFlowView,
+  getShoppingCrawlView = () => null,
+  getShoppingCrawlBounds = () => null,
+) {
   ipcMain.handle('app:set-layout', (event, { mode, ratio }) => {
     layoutMode = mode || 'split-left'
     if (ratio !== undefined) splitRatio = Math.max(0.2, Math.min(0.8, ratio))
@@ -101,6 +118,7 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getFlowView) {
   ipcMain.handle('app:set-modal-visible', (event, { visible }) => {
     modalVisible = visible
     updateBounds(getMainWindow(), getFlowView())
+    updateShoppingCrawlBounds(getShoppingCrawlView(), getShoppingCrawlBounds())
     // 모달이 열릴 때 키보드 포커스를 메인 renderer로 되돌린다.
     // Flow WebContentsView를 0×0으로 줄여도 네이티브 포커스는 그대로 남아
     // (Electron은 뷰 간 포커스 자동 전환을 안 함), 모달 입력창에 키 입력이

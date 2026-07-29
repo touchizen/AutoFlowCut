@@ -19,6 +19,7 @@ beforeEach(() => {
     })),
     shoppingSubmitProduct: vi.fn(async () => ({ ok: true, operationId: 'operation-1' })),
     shoppingAbort: vi.fn(async () => ({ ok: true })),
+    shoppingSetCrawlViewBounds: vi.fn(),
     onShoppingEvent: vi.fn((channel, callback) => {
       listeners[channel] = callback
       return () => { delete listeners[channel] }
@@ -52,6 +53,18 @@ describe('useShoppingPipeline', () => {
       snapshot: { product: { name: '테스트 상품' } },
     })
     expect(result.current.submitting).toBe(false)
+  })
+
+  it('사용자 abort 결과는 일반 크롤 오류로 저장하지 않는다', async () => {
+    window.electronAPI.shoppingSubmitProduct = vi.fn(async () => ({ error: 'aborted' }))
+    const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
+    await act(() => result.current.open())
+
+    let response
+    await act(async () => { response = await result.current.submitProduct('https://www.coupang.com/vp/products/1') })
+
+    expect(response).toEqual({ error: 'aborted' })
+    expect(result.current.error).toBeNull()
   })
 
   it('projectPath 전환 render에서 token을 즉시 무효화해 늦은 이벤트를 drop한다', async () => {
@@ -102,5 +115,20 @@ describe('useShoppingPipeline', () => {
     renderHook(() => useShoppingPipeline({ projectPath: null, enabled: false }))
 
     expect(window.electronAPI.onShoppingEvent).not.toHaveBeenCalled()
+  })
+
+  it('crawl status를 구독하고 placeholder bounds를 main으로 전달한다', async () => {
+    const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
+
+    act(() => listeners['shopping:crawl-status']?.('challenge'))
+    act(() => result.current.setCrawlViewBounds({ x: 10, y: 20, width: 640, height: 480 }))
+
+    expect(result.current.crawlStatus).toBe('challenge')
+    expect(window.electronAPI.shoppingSetCrawlViewBounds).toHaveBeenCalledWith({
+      x: 10,
+      y: 20,
+      width: 640,
+      height: 480,
+    })
   })
 })

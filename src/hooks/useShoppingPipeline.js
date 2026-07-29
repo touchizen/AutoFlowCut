@@ -5,6 +5,7 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
   const [openError, setOpenError] = useState(null)
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const [crawlStatus, setCrawlStatus] = useState(null)
   const tokenRef = useRef(null)
   const prevPathRef = useRef(projectPath)
   const pendingResetRef = useRef(null)
@@ -25,6 +26,7 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
     setOpenError(null)
     setError(null)
     setSubmitting(false)
+    setCrawlStatus(null)
     if (oldToken) {
       window.electronAPI?.shoppingAbort?.({ projectToken: oldToken })?.catch?.(() => {})
     }
@@ -34,10 +36,17 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
     if (!enabled) return
     const api = window.electronAPI
     if (!api?.onShoppingEvent) return
-    return api.onShoppingEvent('shopping:state', (payload) => {
+    const unsubscribeState = api.onShoppingEvent('shopping:state', (payload) => {
       if (payload?.projectToken !== tokenRef.current) return
       if (payload.state) setState(payload.state)
     })
+    const unsubscribeStatus = api.onShoppingEvent('shopping:crawl-status', (status) => {
+      if (['loading', 'challenge', 'extracting'].includes(status)) setCrawlStatus(status)
+    })
+    return () => {
+      unsubscribeState?.()
+      unsubscribeStatus?.()
+    }
   }, [enabled])
 
   const open = useCallback(async () => {
@@ -80,6 +89,7 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
     const requestedToken = tokenRef.current
     if (!requestedToken) return { error: 'stale-token' }
     setSubmitting(true)
+    setCrawlStatus(null)
     setError(null)
     try {
       const result = await window.electronAPI.shoppingSubmitProduct({
@@ -88,7 +98,7 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
       })
       if (requestedPath !== prevPathRef.current || requestedToken !== tokenRef.current) return result
       if (result?.error) {
-        setError(result.error)
+        if (result.error !== 'aborted') setError(result.error)
         return result
       }
       await getState()
@@ -110,14 +120,20 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
     return window.electronAPI.shoppingAbort({ projectToken: tokenRef.current })
   }, [])
 
+  const setCrawlViewBounds = useCallback((bounds) => {
+    window.electronAPI?.shoppingSetCrawlViewBounds?.(bounds)
+  }, [])
+
   return {
     state,
     openError,
     error,
     submitting,
+    crawlStatus,
     open,
     getState,
     submitProduct,
     abort,
+    setCrawlViewBounds,
   }
 }

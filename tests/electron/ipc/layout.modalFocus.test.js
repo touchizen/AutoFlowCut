@@ -25,15 +25,24 @@ function setup() {
 
   const focus = vi.fn()
   const setBounds = vi.fn()
+  const shoppingSetBounds = vi.fn()
+  const shoppingBounds = { x: 40, y: 80, width: 640, height: 480 }
   const mainWindow = {
     webContents: { focus, send: vi.fn() },
     getContentBounds: () => ({ width: 1200, height: 800 }),
     contentView: {},
   }
   const flowView = { setBounds, webContents: {} }
+  const shoppingView = { setBounds: shoppingSetBounds, webContents: {} }
 
-  registerLayoutIPC(ipcMain, () => mainWindow, () => flowView)
-  return { handlers, focus, setBounds }
+  registerLayoutIPC(
+    ipcMain,
+    () => mainWindow,
+    () => flowView,
+    () => shoppingView,
+    () => shoppingBounds,
+  )
+  return { handlers, focus, setBounds, shoppingSetBounds, shoppingBounds }
 }
 
 beforeEach(() => {
@@ -63,6 +72,23 @@ describe('app:set-modal-visible', () => {
     await handlers['app:set-modal-visible']({}, { visible: true })
 
     expect(setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+  })
+
+  it('collapses the shopping crawl view to 0×0 while a modal is visible', async () => {
+    const { handlers, shoppingSetBounds } = setup()
+
+    await handlers['app:set-modal-visible']({}, { visible: true })
+
+    expect(shoppingSetBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+  })
+
+  it('restores the shopping crawl view bounds when the modal closes', async () => {
+    const { handlers, shoppingSetBounds, shoppingBounds } = setup()
+    await handlers['app:set-modal-visible']({}, { visible: true })
+
+    await handlers['app:set-modal-visible']({}, { visible: false })
+
+    expect(shoppingSetBounds).toHaveBeenLastCalledWith(shoppingBounds)
   })
 
   it('survives a missing main window without throwing', async () => {

@@ -17,6 +17,8 @@ import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { registerStoryIPC } from './ipc/story-api.js'
 import { registerShoppingIPC } from './ipc/shopping-api.js'
+import { createBrowserProductFetch } from './shopping/browserProductFetch.js'
+import { normalizeShoppingCrawlBounds } from './shopping/crawlViewBounds.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
@@ -33,7 +35,7 @@ import { applyGenderOverlay } from './api/tts/genderOverlay.js'
 import { createVoicePreviewService } from './api/tts/voicePreviewService.js'
 import { ssrfSafeFetch } from './api/net/ssrfSafeFetch.js'
 import { voiceKey } from '../src/utils/voiceKey.js'
-import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
+import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, getModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
@@ -149,6 +151,9 @@ const API_HEADERS = {
 
 let mainWindow = null
 let mcpHttpServer = null // MCP HTTP 서버 인스턴스
+let shoppingCrawlView = null
+let shoppingCrawlBounds = { x: 170, y: 240, width: 860, height: 480 }
+const SHOPPING_CRAWL_HIDDEN_BOUNDS = { x: 0, y: 0, width: 0, height: 0 }
 // Story/Shopping이 공유하는 단일 active machine/token/epoch + 공용 open lock.
 const workflowSessions = createWorkflowSessionCoordinator()
 // 저장 config/native picker/default-folder만 이 권위를 갱신한다. renderer payload는 후보일 뿐
@@ -292,6 +297,20 @@ const sfxFor = (provider) => {
 
 const storyLlm = createStoryLlmRouter({ claude: llmClaude, codex: llmCodex })
 
+ipcMain.on('shopping:crawl-view-bounds', (event, bounds) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return
+  const admitted = normalizeShoppingCrawlBounds(
+    bounds,
+    mainWindow.getContentBounds(),
+    mainWindow.webContents.zoomFactor,
+  )
+  if (!admitted) return
+  shoppingCrawlBounds = admitted
+  try {
+    shoppingCrawlView?.setBounds(getModalVisible() ? SHOPPING_CRAWL_HIDDEN_BOUNDS : admitted)
+  } catch {}
+})
+
 // Story pipeline IPC (script/scenes/audio/prompts 스텝 머신 + preload 브릿지).
 registerStoryIPC(ipcMain, {
   keyStore: genaiKeyStore,
@@ -310,6 +329,28 @@ registerStoryIPC(ipcMain, {
 // Shopping pipeline IPC (product crawl + app-native plan machine).
 registerShoppingIPC(ipcMain, {
   getWindow: () => mainWindow,
+  httpFetch: createBrowserProductFetch({
+    getWindow: () => mainWindow,
+    createView: () => {
+      shoppingCrawlView = new WebContentsView({
+        webPreferences: {
+          partition: 'persist:shopping',
+          contextIsolation: true,
+          sandbox: true,
+        },
+      })
+      return shoppingCrawlView
+    },
+    getBounds: () => getModalVisible() ? SHOPPING_CRAWL_HIDDEN_BOUNDS : shoppingCrawlBounds,
+    emitStatus: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('shopping:crawl-status', status)
+      }
+    },
+    onViewClosed: (view) => {
+      if (shoppingCrawlView === view) shoppingCrawlView = null
+    },
+  }),
   getActiveWorkFolder: () => workFolderAuthority.getVerifiedContext(),
   workflowSessions,
 })
@@ -730,7 +771,13 @@ const modeController = createModeController(() => mainWindow, makeFlowView)
 modeController.register(ipcMain)
 
 // Layout, modal, sleep, open-external, show-in-folder IPC.
-registerLayoutIPC(ipcMain, () => mainWindow, modeController.getFlowView)
+registerLayoutIPC(
+  ipcMain,
+  () => mainWindow,
+  modeController.getFlowView,
+  () => shoppingCrawlView,
+  () => shoppingCrawlBounds,
+)
 
 // Agent 토글 not_found 진단 저장기 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만
 //   신뢰할 수 있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다.
