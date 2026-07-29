@@ -11,6 +11,7 @@ import {
 } from '../../../electron/shopping/browserProductFetch.js'
 
 const PRODUCT_URL = 'https://www.coupang.com/vp/products/123?itemId=456'
+const WARMUP_URL = 'https://www.coupang.com/'
 
 function productExtraction(overrides = {}) {
   return {
@@ -31,28 +32,45 @@ function productExtraction(overrides = {}) {
   }
 }
 
-function makeView({ readiness = [true], extraction = productExtraction(), loadURL } = {}) {
+function makeView({
+  readiness = [true],
+  extraction = productExtraction(),
+  loadURL,
+  warmupCookies = [],
+  gateReadinessUntilProduct = true,
+} = {}) {
   const webContentsHandlers = new Map()
   const sessionHandlers = new Map()
   const readinessQueue = [...readiness]
+  let productNavigationStarted = false
   const session = {
     setPermissionRequestHandler: vi.fn(),
     on: vi.fn((event, handler) => sessionHandlers.set(event, handler)),
     removeListener: vi.fn((event, handler) => {
       if (sessionHandlers.get(event) === handler) sessionHandlers.delete(event)
     }),
+    cookies: {
+      get: vi.fn(async () => warmupCookies),
+    },
   }
+  const performLoad = loadURL || (async () => {})
   const webContents = {
     session,
     setUserAgent: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     on: vi.fn((event, handler) => webContentsHandlers.set(event, handler)),
-    loadURL: vi.fn(loadURL || (async () => {})),
+    loadURL: vi.fn(async (url) => {
+      if (/^\/vp\/products\/\d+\/?$/.test(new URL(url).pathname)) {
+        productNavigationStarted = true
+      }
+      return performLoad(url)
+    }),
     executeJavaScript: vi.fn(async (source) => {
       if (source.includes('const properties = new Set')) {
         return typeof extraction === 'function' ? extraction(source) : extraction
       }
       if (source.includes('document.querySelector')) {
+        if (gateReadinessUntilProduct && !productNavigationStarted) return false
         const value = readinessQueue.shift()
         return typeof value === 'function' ? value(source) : value
       }
@@ -76,6 +94,11 @@ function makeHarness({
   pollIntervalMs = 1,
   challengeAfterMs = 15_000,
   hardTimeoutMs,
+  warmupUrl,
+  warmupSettleMs = 3,
+  warmupCookieTimeoutMs = 5,
+  getWarmupCookie = vi.fn(() => [{ name: '_abck' }]),
+  injectWarmupCookie = true,
   onViewClosed = vi.fn(),
   getBounds = () => ({ x: 10, y: 20, width: 640, height: 480 }),
 } = {}) {
@@ -87,7 +110,7 @@ function makeHarness({
   const win = { isDestroyed: vi.fn(() => false), contentView }
   const statuses = []
   const createView = vi.fn(() => pendingViews.shift().view)
-  const fetch = createBrowserProductFetch({
+  const factoryOptions = {
     getWindow: () => win,
     createView,
     getBounds,
@@ -96,9 +119,22 @@ function makeHarness({
     ...(now ? { now } : {}),
     pollIntervalMs,
     challengeAfterMs,
+    warmupSettleMs,
+    warmupCookieTimeoutMs,
     ...(hardTimeoutMs === undefined ? {} : { hardTimeoutMs }),
-  })
-  return { fetch, createView, contentView, statuses, win, onViewClosed }
+    ...(warmupUrl === undefined ? {} : { warmupUrl }),
+  }
+  if (injectWarmupCookie) factoryOptions.getWarmupCookie = getWarmupCookie
+  const fetch = createBrowserProductFetch(factoryOptions)
+  return {
+    fetch,
+    createView,
+    contentView,
+    statuses,
+    win,
+    onViewClosed,
+    getWarmupCookie,
+  }
 }
 
 beforeEach(() => {
@@ -200,6 +236,276 @@ describe('validateInitialProductUrl', () => {
 })
 
 describe('createBrowserProductFetch', () => {
+  it.each([
+    [{ warmupUrl: 'https://example.com/' }, 'warmupUrl'],
+    [{ warmupSettleMs: -1 }, 'warmupSettleMs'],
+    [{ warmupCookieTimeoutMs: 0 }, 'warmupCookieTimeoutMs'],
+    [{ getWarmupCookie: 'invalid' }, 'getWarmupCookie'],
+  ])('잘못된 워밍업 설정 %j을 거부한다', (options, expectedMessage) => {
+    expect(() => makeHarness(options)).toThrow(expectedMessage)
+  })
+
+  it('홈 did-finish 뒤 같은 뷰에서 상품 URL을 순서대로 로드한다', async () => {
+    vi.useFakeTimers()
+    let finishWarmup
+    const fake = makeView({
+      loadURL: (url) => url === WARMUP_URL
+        ? new Promise((resolve) => { finishWarmup = resolve })
+        : Promise.resolve(),
+    })
+    const harness = makeHarness({ views: [fake] })
+    const controller = new AbortController()
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, { signal: controller.signal })
+    let response
+    promise.then((value) => { response = value }, () => {})
+
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([WARMUP_URL])
+
+      finishWarmup()
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(promise).resolves.toMatchObject({ url: PRODUCT_URL })
+      expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([
+        WARMUP_URL,
+        PRODUCT_URL,
+      ])
+    } finally {
+      if (!response) {
+        controller.abort()
+        await promise.catch(() => {})
+      }
+    }
+  })
+
+  it('워밍업 DOM이 상품처럼 보여도 요청 상품 loadURL 전에는 probe하지 않는다', async () => {
+    vi.useFakeTimers()
+    let finishWarmup
+    const fake = makeView({
+      gateReadinessUntilProduct: false,
+      loadURL: (url) => url === WARMUP_URL
+        ? new Promise((resolve) => { finishWarmup = resolve })
+        : Promise.resolve(),
+    })
+    const harness = makeHarness({ views: [fake] })
+    const controller = new AbortController()
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, { signal: controller.signal })
+    let response
+    let rejection
+    promise.then((value) => { response = value }, (error) => { rejection = error })
+
+    try {
+      await vi.advanceTimersByTimeAsync(1)
+      expect(response).toBeUndefined()
+      expect(rejection).toBeUndefined()
+      expect(fake.webContents.executeJavaScript).not.toHaveBeenCalled()
+      expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([WARMUP_URL])
+
+      finishWarmup()
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(promise).resolves.toMatchObject({ url: PRODUCT_URL })
+    } finally {
+      if (!response) {
+        controller.abort()
+        await promise.catch(() => {})
+      }
+    }
+  })
+
+  it('_abck가 나타나면 settle deadline 전에 상품 로드로 진행한다', async () => {
+    vi.useFakeTimers()
+    const getWarmupCookie = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{ name: '_abck' }])
+    const fake = makeView()
+    const harness = makeHarness({
+      views: [fake],
+      getWarmupCookie,
+      warmupSettleMs: 5,
+      warmupCookieTimeoutMs: 10,
+    })
+    const controller = new AbortController()
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, { signal: controller.signal })
+    let response
+    promise.then((value) => { response = value }, () => {})
+
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([WARMUP_URL])
+      expect(getWarmupCookie).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(getWarmupCookie).toHaveBeenCalledTimes(2)
+      expect(fake.webContents.loadURL).toHaveBeenLastCalledWith(PRODUCT_URL)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(promise).resolves.toMatchObject({ url: PRODUCT_URL })
+    } finally {
+      if (!response) {
+        controller.abort()
+        await promise.catch(() => {})
+      }
+    }
+  })
+
+  it('cookie reader가 실패하거나 쿠키가 없어도 settle 경과 뒤 상품으로 진행한다', async () => {
+    vi.useFakeTimers()
+    const getWarmupCookie = vi.fn()
+      .mockRejectedValueOnce(new Error('cookie API unavailable'))
+      .mockResolvedValue(undefined)
+    const fake = makeView()
+    const harness = makeHarness({
+      views: [fake],
+      getWarmupCookie,
+      warmupSettleMs: 3,
+      warmupCookieTimeoutMs: 10,
+    })
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, {})
+
+    await vi.advanceTimersByTimeAsync(2)
+    expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([WARMUP_URL])
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fake.webContents.loadURL).toHaveBeenLastCalledWith(PRODUCT_URL)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(promise).resolves.toMatchObject({ url: PRODUCT_URL })
+  })
+
+  it('cookie timeout이 settle보다 먼저 오면 해당 상한에서 best-effort 상품 로드한다', async () => {
+    vi.useFakeTimers()
+    const fake = makeView()
+    const harness = makeHarness({
+      views: [fake],
+      getWarmupCookie: vi.fn(async () => []),
+      warmupSettleMs: 10,
+      warmupCookieTimeoutMs: 2,
+    })
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, {})
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([WARMUP_URL])
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fake.webContents.loadURL).toHaveBeenLastCalledWith(PRODUCT_URL)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(promise).resolves.toMatchObject({ url: PRODUCT_URL })
+  })
+
+  it('warmupUrl=null이면 홈과 cookie reader를 건너뛰고 상품을 바로 로드한다', async () => {
+    vi.useFakeTimers()
+    const getWarmupCookie = vi.fn(async () => [{ name: '_abck' }])
+    const fake = makeView()
+    const harness = makeHarness({ views: [fake], warmupUrl: null, getWarmupCookie })
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, {})
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(promise).resolves.toMatchObject({ url: PRODUCT_URL })
+    expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([PRODUCT_URL])
+    expect(getWarmupCookie).not.toHaveBeenCalled()
+  })
+
+  it('워밍업 settle 중 abort하면 상품을 열지 않고 뷰를 정리한다', async () => {
+    vi.useFakeTimers()
+    const fake = makeView()
+    const harness = makeHarness({
+      views: [fake],
+      getWarmupCookie: vi.fn(async () => []),
+      warmupSettleMs: 5,
+      warmupCookieTimeoutMs: 10,
+    })
+    const controller = new AbortController()
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, { signal: controller.signal })
+    let rejection
+    promise.catch((error) => { rejection = error })
+
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([WARMUP_URL])
+      controller.abort()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(rejection).toMatchObject({ name: 'AbortError' })
+
+      expect(fake.webContents.loadURL).not.toHaveBeenCalledWith(PRODUCT_URL)
+      expect(harness.contentView.removeChildView).toHaveBeenCalledWith(fake.view)
+      expect(fake.webContents.close).toHaveBeenCalledOnce()
+    } finally {
+      if (!rejection) {
+        controller.abort()
+        await promise.catch(() => {})
+      }
+    }
+  })
+
+  it('워밍업도 전체 hard timeout 예산을 넘기면 상품 없이 종료한다', async () => {
+    vi.useFakeTimers()
+    const fake = makeView()
+    const harness = makeHarness({
+      views: [fake],
+      getWarmupCookie: vi.fn(() => new Promise(() => {})),
+      warmupSettleMs: 10,
+      warmupCookieTimeoutMs: 10,
+      hardTimeoutMs: 3,
+    })
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, {})
+    const rejected = expect(promise).rejects.toMatchObject({
+      code: 'product-fetch-timeout',
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([WARMUP_URL])
+    await vi.advanceTimersByTimeAsync(3)
+    await rejected
+
+    expect(fake.webContents.loadURL).not.toHaveBeenCalledWith(PRODUCT_URL)
+    expect(fake.webContents.close).toHaveBeenCalledOnce()
+  })
+
+  it('홈 loadURL의 실제 네트워크 오류는 상품 poll 전에 즉시 실패한다', async () => {
+    vi.useFakeTimers()
+    const networkError = Object.assign(new Error('ERR_NAME_NOT_RESOLVED'), {
+      code: 'ERR_NAME_NOT_RESOLVED',
+    })
+    const fake = makeView({
+      loadURL: async (url) => {
+        if (url === WARMUP_URL) throw networkError
+      },
+    })
+    const harness = makeHarness({ views: [fake] })
+    const controller = new AbortController()
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, { signal: controller.signal })
+    let rejection
+    promise.catch((error) => { rejection = error })
+
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(rejection).toMatchObject({
+        code: 'product-fetch-failed',
+        cause: networkError,
+      })
+      expect(fake.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual([WARMUP_URL])
+      expect(fake.webContents.executeJavaScript).not.toHaveBeenCalled()
+    } finally {
+      if (!rejection) {
+        controller.abort()
+        await promise.catch(() => {})
+      }
+    }
+  })
+
+  it('getWarmupCookie 미주입 시 view session의 _abck cookie reader를 사용한다', async () => {
+    vi.useFakeTimers()
+    const fake = makeView({ warmupCookies: [{ name: '_abck', value: 'ready' }] })
+    const harness = makeHarness({ views: [fake], injectWarmupCookie: false })
+    const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, {})
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(promise).resolves.toMatchObject({ url: PRODUCT_URL })
+    expect(fake.session.cookies.get).toHaveBeenCalledWith({
+      url: 'https://www.coupang.com',
+      name: '_abck',
+    })
+  })
+
   it('보이는 격리 뷰를 붙이고 readiness 뒤 추출한 뒤 같은 finally에서 닫는다', async () => {
     const fake = makeView()
     const harness = makeHarness({ views: [fake] })
@@ -396,7 +702,7 @@ describe('createBrowserProductFetch', () => {
       readiness: [true],
       loadURL: async () => { throw networkError },
     })
-    const harness = makeHarness({ views: [fake] })
+    const harness = makeHarness({ views: [fake], warmupUrl: null })
     const controller = new AbortController()
     const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, {
       signal: controller.signal,
@@ -460,7 +766,7 @@ describe('createBrowserProductFetch', () => {
       readiness: [true],
       loadURL: () => new Promise(() => {}),
     })
-    const harness = makeHarness({ views: [fake] })
+    const harness = makeHarness({ views: [fake], warmupUrl: null })
     const controller = new AbortController()
     const promise = harness.fetch(PRODUCT_URL, HTML_FETCH_POLICY, { signal: controller.signal })
     let response

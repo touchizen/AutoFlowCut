@@ -5,6 +5,8 @@ const META_VALUES_PER_PROPERTY = 20
 const SOURCE_URL_LIMIT = 2_048
 const PARSER_HTML_LIMIT = 2 * 1024 * 1024
 const PRODUCT_PATH = /^\/vp\/products\/\d+\/?$/
+const DEFAULT_WARMUP_URL = 'https://www.coupang.com/'
+const WARMUP_COOKIE_URL = 'https://www.coupang.com'
 const FAIL_FAST_NETWORK_ERROR_CODES = new Set([
   'ERR_NAME_NOT_RESOLVED',
   'ERR_INTERNET_DISCONNECTED',
@@ -157,6 +159,31 @@ function allowedNavigationUrl(rawUrl) {
   } catch {
     return false
   }
+}
+
+function normalizeWarmupUrl(rawUrl) {
+  if (rawUrl === null) return null
+  let url
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    throw new TypeError('warmupUrl must be a Coupang homepage URL or null')
+  }
+  const hostname = url.hostname.toLowerCase()
+  if (
+    typeof rawUrl !== 'string'
+    || url.protocol !== 'https:'
+    || url.port
+    || url.username
+    || url.password
+    || url.hash
+    || url.search
+    || (hostname !== 'coupang.com' && hostname !== 'www.coupang.com')
+    || url.pathname !== '/'
+  ) {
+    throw new TypeError('warmupUrl must be a Coupang homepage URL or null')
+  }
+  return url.toString()
 }
 
 function escapeMetaContent(value) {
@@ -351,6 +378,10 @@ export function createBrowserProductFetch({
   pollIntervalMs = 500,
   challengeAfterMs = 15_000,
   hardTimeoutMs = 120_000,
+  warmupUrl = DEFAULT_WARMUP_URL,
+  warmupSettleMs = 6_000,
+  warmupCookieTimeoutMs = 12_000,
+  getWarmupCookie,
 } = {}) {
   if (typeof getWindow !== 'function') throw new TypeError('getWindow must be a function')
   if (typeof createView !== 'function') throw new TypeError('createView must be a function')
@@ -368,6 +399,16 @@ export function createBrowserProductFetch({
   }
   if (!Number.isFinite(hardTimeoutMs) || hardTimeoutMs <= 0) {
     throw new TypeError('hardTimeoutMs must be positive')
+  }
+  const admittedWarmupUrl = normalizeWarmupUrl(warmupUrl)
+  if (!Number.isFinite(warmupSettleMs) || warmupSettleMs < 0) {
+    throw new TypeError('warmupSettleMs must not be negative')
+  }
+  if (!Number.isFinite(warmupCookieTimeoutMs) || warmupCookieTimeoutMs <= 0) {
+    throw new TypeError('warmupCookieTimeoutMs must be positive')
+  }
+  if (getWarmupCookie !== undefined && typeof getWarmupCookie !== 'function') {
+    throw new TypeError('getWarmupCookie must be a function')
   }
 
   let lease = 0
@@ -499,16 +540,21 @@ export function createBrowserProductFetch({
       record.attached = true
       sendStatus('loading')
       remainingHardTimeout()
+      let productLoadStarted = false
 
-      Promise.resolve()
-        .then(() => webContents.loadURL(initialUrl.toString()))
-        .catch((error) => {
-          if (record.cleaned || record.controller.signal.aborted) return
+      const loadPage = async (url) => {
+        try {
+          await waitForOperation(
+            Promise.resolve().then(() => webContents.loadURL(url)),
+            record,
+            signal,
+            isActive,
+          )
+          return true
+        } catch (error) {
+          throwIfStopped()
           if (FAIL_FAST_NETWORK_ERROR_CODES.has(error?.code)) {
-            const failure = crawlFailure('product-fetch-failed', error)
-            record.controller.abort(failure)
-            cleanup()
-            return
+            throw crawlFailure('product-fetch-failed', error)
           }
           // Unverified in this environment: Electron 36 is expected to reject rendered 4xx
           // pages, and Coupang may serve its usable challenge UI as 403/429. Readiness—not
@@ -517,6 +563,82 @@ export function createBrowserProductFetch({
             '[Shopping crawl] loadURL rejected; readiness polling continues:',
             error?.message,
           )
+          return false
+        }
+      }
+
+      const waitForWarmupCookie = async () => {
+        const warmupStartedAt = Number(now())
+        if (!Number.isFinite(warmupStartedAt)) throw new TypeError('now() must return a timestamp')
+        const warmupBudgetMs = Math.min(warmupSettleMs, warmupCookieTimeoutMs)
+        let cookieSeen = false
+        let cookieReadPromise = null
+        const readWarmupCookie = getWarmupCookie
+          ? () => getWarmupCookie(record.view)
+          : () => webContents.session?.cookies?.get?.({
+            url: WARMUP_COOKIE_URL,
+            name: '_abck',
+          })
+        const startCookieRead = () => {
+          if (cookieReadPromise) return cookieReadPromise
+          cookieReadPromise = Promise.resolve()
+            .then(readWarmupCookie)
+            .then((cookies) => {
+              if (
+                isActive()
+                && !record.cleaned
+                && Array.isArray(cookies)
+                && cookies.some((cookie) => cookie?.name === '_abck')
+              ) {
+                cookieSeen = true
+              }
+            })
+            .catch(() => {})
+            .finally(() => { cookieReadPromise = null })
+          return cookieReadPromise
+        }
+
+        while (true) {
+          throwIfStopped()
+          const hardRemaining = remainingHardTimeout()
+          if (cookieSeen) return
+
+          const elapsed = Number(now()) - warmupStartedAt
+          if (!Number.isFinite(elapsed)) throw new TypeError('now() must return a timestamp')
+          const remainingWarmup = warmupBudgetMs - elapsed
+          if (remainingWarmup <= 0) return
+          const pollPromise = waitForPoll(
+            Math.max(1, Math.min(pollIntervalMs, Math.ceil(remainingWarmup), Math.ceil(hardRemaining))),
+            record, signal, isActive,
+          ).then(() => 'poll')
+          const winner = await Promise.race([
+            startCookieRead().then(() => 'cookie-read'),
+            pollPromise,
+          ])
+          throwIfStopped()
+          if (cookieSeen) return
+          // A fast empty/failed cookie read must not spin; retain the requested poll cadence.
+          if (winner === 'cookie-read') await pollPromise
+        }
+      }
+
+      Promise.resolve()
+        .then(async () => {
+          if (admittedWarmupUrl) {
+            const warmupLoaded = await loadPage(admittedWarmupUrl)
+            throwIfStopped()
+            remainingHardTimeout()
+            if (warmupLoaded) await waitForWarmupCookie()
+          }
+          throwIfStopped()
+          remainingHardTimeout()
+          productLoadStarted = true
+          await loadPage(initialUrl.toString())
+        })
+        .catch((error) => {
+          if (record.cleaned || record.controller.signal.aborted) return
+          record.controller.abort(error)
+          cleanup()
         })
 
       let challenged = false
@@ -530,6 +652,7 @@ export function createBrowserProductFetch({
         )
         throwIfStopped()
         remainingHardTimeout()
+        if (!productLoadStarted) continue
         let ready = false
         try {
           ready = Boolean(await waitForOperation(

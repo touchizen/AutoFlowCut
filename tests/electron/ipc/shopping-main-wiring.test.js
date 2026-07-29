@@ -16,6 +16,7 @@ describe('shopping IPC main wiring', () => {
     expect(source).toMatch(/ipcMain\.on\('shopping:crawl-view-bounds'/)
     expect(source).toMatch(/normalizeShoppingCrawlBounds\(\s*bounds,\s*mainWindow\.getContentBounds\(\),\s*mainWindow\.webContents\.zoomFactor,?\s*\)/)
     expect(source).toMatch(/shopping:crawl-status/)
+    expect(source).toMatch(/getWarmupCookie: \(view\) => view\.webContents\.session\.cookies\.get\(\{\s*url: 'https:\/\/www\.coupang\.com',\s*name: '_abck',?\s*\}\)/)
     expect(source).toMatch(/onViewClosed: \(view\) => \{[\s\S]*?shoppingCrawlView === view[\s\S]*?shoppingCrawlView = null/)
     expect(source).toMatch(/registerLayoutIPC\([\s\S]*?\(\) => shoppingCrawlView,[\s\S]*?\(\) => shoppingCrawlBounds,[\s\S]*?\)/)
     expect(source).not.toMatch(/app:project-activated[\s\S]{0,180}activeWorkFolder\s*=/)

@@ -342,6 +342,10 @@ registerShoppingIPC(ipcMain, {
       return shoppingCrawlView
     },
     getBounds: () => getModalVisible() ? SHOPPING_CRAWL_HIDDEN_BOUNDS : shoppingCrawlBounds,
+    getWarmupCookie: (view) => view.webContents.session.cookies.get({
+      url: 'https://www.coupang.com',
+      name: '_abck',
+    }),
     emitStatus: (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('shopping:crawl-status', status)
