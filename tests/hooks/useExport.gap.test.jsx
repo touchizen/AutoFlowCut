@@ -3,9 +3,8 @@
  *
  * buildExportProject 는 훅 내부 함수라 직접 못 본다 → `exportCapcut` 만 mock 하고
  * 그것이 받은 project 를 단언한다. 훅은 renderHook 으로 실제로 돌린다.
- * ⚠️ `capcut.js` 는 **부분 mock** 이다 — `generateSRT` 는 진짜 모듈을 쓴다
- * (사이드카 핸드오프를 합성으로 물기 위해). default export 도 함께 덮어써서
- * 나중에 default 로 import 하는 테스트가 실제 네트워크 경로를 타지 않게 한다.
+ * 사이드카가 실제 파일 바이트가 되기까지의 구간은 여기 몫이 아니다 —
+ * `tests/exporters/capcutCloud.sidecarSeam.test.js` 가 공개 진입점부터 IPC 까지 문다.
  * 기대값은 전부 리터럴로 박는다 (새 코드를 두 번 돌려 비교하면 공허하게 통과).
  */
 
@@ -13,11 +12,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 
 const mockExportCapcut = vi.fn()
-vi.mock('../../src/exporters/capcut.js', async (importActual) => {
-  const actual = await importActual()
-  const exportCapcut = (...args) => mockExportCapcut(...args)
-  return { ...actual, exportCapcut, default: { ...actual.default, exportCapcut } }
-})
+vi.mock('../../src/exporters/capcut.js', () => ({
+  exportCapcut: (...args) => mockExportCapcut(...args)
+}))
 const mockExportPremiere = vi.fn()
 vi.mock('../../src/exporters/premiere.js', () => ({
   exportPremiere: (...args) => mockExportPremiere(...args)
@@ -39,7 +36,6 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
 }))
 
 import { useExport } from '../../src/hooks/useExport'
-import { generateSRT } from '../../src/exporters/capcut'
 
 const settings = { projectName: 'P', aspectRatio: '16:9', defaultDuration: 3 }
 
@@ -249,22 +245,6 @@ describe('useExport — 사이드카 SRT rebase 배선', () => {
     ])
   })
 
-  it('핸드오프: 훅이 만든 project 를 진짜 generateSRT 에 넣으면 원본 시각이 나온다', async () => {
-    // exporter 를 mock 한 단언은 project.srtTrack 에서 끝난다 — 그 뒤
-    // capcutCloud → generateSRT → _subtitle_ko.srt 로 가는 seam 은 안 물린다.
-    // generateSRT 를 실제 모듈로 돌려 그 구간을 합성으로 문다.
-    // ⚠️ 이 픽스처는 raw 와 rebased 를 **구분하지 못한다** — 슬롯 경로에서
-    // rebase 가 identity 라 둘이 같은 값이기 때문이다(그게 이 수정의 성질이다).
-    // 그 구분은 아래 폴백 핸드오프 테스트가 한다.
-    const project = await exportedProject(linked, { srtTrack })
-
-    const srt = generateSRT(project, 'ko')
-
-    expect(srt).toContain('00:00:00,100 --> 00:00:05,000')
-    expect(srt).toContain('00:00:06,000 --> 00:00:09,000')
-    expect(srt).toContain('00:00:10,000 --> 00:00:15,000')
-  })
-
   it('폴백 경로: 사이드카가 현행 리터럴과 동일하다 (뮤테이션 #17)', async () => {
     // [C(100–105), A(0–5)] — 재배열 후 SRT 재임포트 모양. 게이트가 없으면
     // initialCumulative = 100 이 전달돼 사이드카가 100 초에서 시작한다.
@@ -285,22 +265,4 @@ describe('useExport — 사이드카 SRT rebase 배선', () => {
     ])
   })
 
-  it('폴백 핸드오프: generateSRT 가 rebased 트랙을 쓴다 (raw 가 아니다)', async () => {
-    // 재배열 프로젝트에서만 raw ≠ rebased 라 이 seam 이 구분된다.
-    // raw 를 쓰면 c1 이 100 초에서 시작한다.
-    const fbTrack = [
-      { id: 'c1', startTime: 100, endTime: 105, text: 'C' },
-      { id: 'a1', startTime: 0, endTime: 5, text: 'A' }
-    ]
-    const fbScenes = [
-      scene('C', 100, 105, { srtLineIds: ['c1'] }),
-      scene('A', 0, 5, { srtLineIds: ['a1'] })
-    ]
-
-    const srt = generateSRT(await exportedProject(fbScenes, { srtTrack: fbTrack }), 'ko')
-
-    expect(srt).toContain('00:00:00,000 --> 00:00:05,000')
-    expect(srt).toContain('00:00:05,000 --> 00:00:10,000')
-    expect(srt).not.toContain('00:01:40,000')
-  })
 })
