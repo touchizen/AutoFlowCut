@@ -271,8 +271,36 @@
 없지만, 나중에 드래프트 후처리를 검토한다면 반드시 **여섯 곳 전부**를 맞춰야 한다.
 (v7 은 같은 문단에서 "네 곳"→"6 개"→"네 곳"으로 오락가락했다 — 라운드 6 Codex #7.)
 
+### 3.2 ⚠️ 이 버그는 **CapCut Only 가 아니다** (2026-07-29 사용자 질문 → 실측)
+
+사용자가 "CapCut Only 라 프리미어에선 간격이 그대로 있어야 맞지 않나" 라고 물었다.
+**전제가 틀렸다.** 세 GCF 를 직접 열어 확인했다:
+
+| GCF | 배치 코드 | `startTime` 참조 |
+|---|---|---|
+| CapCut | `index.suffixed.js:1108` `currentTimeUs2 += durationUs` | — |
+| 프리미어 | `whisk2premiere/functions/src/premiereExport.js:1033-1045` — `let pos = 0; start: pos; pos += dur` | **0 회** |
+| Vrew | `exportToVrew/functions/src/vrewExport.js:176-182` — `let cursor = 0; startMs = cursor` | **0 회** |
+
+셋 다 순차 누적이고 **아무도 `startTime` 을 안 읽는다.** 게다가 프리미어 GCF 에는 CapCut 의
+마지막-씬 연장이 주석까지 달고 **그대로 복제**돼 있다 —
+`premiereExport.js:1049` *"Last-scene extension (CapCut parity, index.suffixed.js ~L1065-1087)"*,
+`:1082` `placed[placed.length - 1].end = contentEndTicks`.
+
+→ **프리미어로 내보냈어도 이미지가 80 s 앞서고 마지막 씬이 부풀었다.** 세 포맷 모두 고쳐야 했고
+(b) 가 셋 다 고친다. 사건이 CapCut 에서 먼저 보인 건 그 프로젝트를 CapCut 으로 열었기 때문이다.
+
+**남는 진짜 선택지는 "간격을 무엇으로 채우나" 하나뿐이다.**
+- CapCut: 선택지 없음 (§3.1 실측 — 구멍을 지우고 당겨붙인다)
+- 프리미어: **구멍 표현 가능**. 하려면 `premiereExport.js` 가 `startTime` 을 읽고 배치하도록
+  **GCF 수정이 필요하다**(현재 참조 0 회). 앱만으론 안 된다 — 이게 아래 "작업량 두 배"의 실체다.
+- **사용자 결정(2026-07-29): 세 포맷 모두 hold 유지.** 216 곳에서 평균 0.39 s 암전은 깜빡임으로
+  보일 수 있고, drift 는 이미 0 이다. 검은 화면을 원하면 `gapFill='black'` 미래 옵션 + 프리미어
+  GCF 작업으로 별건 처리한다.
+
 **프리미어는 구멍을 지원한다** — 이론상 프리미어만 (a) 가 가능하지만, 같은 프로젝트가 포맷마다
-다른 타임라인이 되고 작업량이 두 배다. 평균 간격 0.39 s 대비 **일관성이 더 값지다** → 세 포맷 모두 (b).
+다른 타임라인이 되고 작업량이 두 배다(위 §3.2 = GCF 크로스레포).
+평균 간격 0.39 s 대비 **일관성이 더 값지다** → 세 포맷 모두 (b).
 
 **핵심 성질 1 — 배치는 (a) 와 완전히 동일하다.** `slot_i = start_{i+1} - start_i` 를 누적하면
 `cum(i) = start_i` 가 되어 **모든 씬이 자기 `startTime` 에 정확히 시작한다. drift = 0.**
