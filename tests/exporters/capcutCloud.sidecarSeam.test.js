@@ -7,7 +7,10 @@
  * `writeSrtToWorkFolder`)이 raw 트랙이나 씬 폴백으로 새면 **모든 테스트가 초록인 채로**
  * 최종 `_subtitle_ko.srt` 만 다시 어긋난다.
  *
- * 여기서는 함수를 실제로 구동하고 IPC 가 받은 **파일 내용**을 단언한다.
+ * 여기서는 **공개 진입점 `exportCapcut`** 부터 실제로 구동하고 IPC 가 받은
+ * **파일 내용**을 단언한다. `exportCapcutPackageCloud` 를 직접 부르면
+ * `exportCapcut → exportCapcutPackageCloud` 위임(옵션 전달)이 무주공산으로 남는다 —
+ * 실측으로 옵션을 통째로 버리는 뮤턴트가 3247 개 테스트를 통과했다(라운드 3).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -18,7 +21,7 @@ vi.mock('../../src/exporters/callExportFunction', () => ({
   })),
 }))
 
-import { exportCapcutPackageCloud } from '../../src/exporters/capcutCloud'
+import { exportCapcut } from '../../src/exporters/capcut'
 
 const writeSrt = vi.fn(async ({ filename }) => ({ success: true, filePath: `/work/p/${filename}` }))
 
@@ -56,7 +59,7 @@ describe('capcutCloud — 사이드카는 rebase 된 project.srtTrack 을 쓴다
       ],
     }
 
-    await exportCapcutPackageCloud(project, { capcutProjectNumber: '/draft/1', subtitleOption: 'ko' })
+    await exportCapcut(project, { capcutProjectNumber: '/draft/1', subtitleOption: 'ko' })
 
     const srt = koContent()
     expect(srt).toContain('00:00:00,000 --> 00:00:05,000')
@@ -76,7 +79,7 @@ describe('capcutCloud — 사이드카는 rebase 된 project.srtTrack 을 쓴다
       ],
     }
 
-    await exportCapcutPackageCloud(project, { capcutProjectNumber: '/draft/1', subtitleOption: 'en' })
+    await exportCapcut(project, { capcutProjectNumber: '/draft/1', subtitleOption: 'en' })
 
     const en = writeSrt.mock.calls.map(c => c[0]).find(a => a.filename.endsWith('_subtitle_en.srt'))?.content
     expect(en).toContain('00:00:00,000 --> 00:00:06,000')
