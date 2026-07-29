@@ -16,15 +16,16 @@ export function isAliveAndOnOrigin(view) {
 // idempotent: 살아있고 chatgpt.com origin이면 재사용(재-loadURL 금지 — D/T/F 상태 소실 방지).
 // 아니면(없음/파괴/blank/off-origin) 새로 만든다. makeView는 attach 전 loadURL(CHATGPT_URL)까지 수행.
 export function ensureChatgptView(state, deps) {
-  const { makeView, isAliveAndOnOrigin: alive = isAliveAndOnOrigin } = deps
+  const { makeView, isAliveAndOnOrigin: alive = isAliveAndOnOrigin, disposeView = () => {} } = deps
   if (alive(state.view)) return state.view
+  if (state.view) disposeView(state.view)
   state.view = makeView()
   return state.view
 }
 
 export function ensureVisibleAndFocused(view, mainWindow, _deps = {}) {
   mainWindow.contentView.addChildView(view)
-  const wb = mainWindow.getBounds()
+  const wb = mainWindow.getContentBounds()
   view.setBounds({ x: 0, y: 0, width: wb.width, height: wb.height })
   mainWindow.focus()
   view.webContents.focus()

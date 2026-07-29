@@ -5,7 +5,7 @@ function makeDeps(overrides = {}) {
   const registered = new Map()
   const globalShortcut = { register: vi.fn((accel, cb) => { registered.set(accel, cb); return true }) }
   const view = { webContents: { getURL: () => 'https://chatgpt.com', isDestroyed: () => false, focus: vi.fn() }, setBounds: vi.fn() }
-  const mainWindow = { contentView: { addChildView: vi.fn() }, focus: vi.fn(), getBounds: () => ({ x: 0, y: 0, width: 1000, height: 700 }) }
+  const mainWindow = { contentView: { addChildView: vi.fn() }, focus: vi.fn(), getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 700 }) }
   return {
     registered,
     deps: {
@@ -65,6 +65,16 @@ describe('registerSpikeShortcuts', () => {
     expect(deps.fs.writeFileSync.mock.calls[0][0]).toContain('dom-dump-result.json')
   })
 
+  it('D handler logs a tagged failure without saving when executeInView rejects', async () => {
+    const executeInView = vi.fn(async () => { throw new Error('navigation aborted') })
+    const { deps, registered } = makeDeps({ executeInView })
+    registerSpikeShortcuts(deps)
+    await registered.get('Cmd+Alt+Shift+D')()
+    expect(deps.log.error).toHaveBeenCalledWith('[spike] dump failed:', 'composer-empty', 'navigation aborted')
+    expect(deps.fs.writeFileSync).not.toHaveBeenCalled()
+    expect(deps.log.info).not.toHaveBeenCalled()
+  })
+
   it('L handler shows the view (attach+focus), no dump', async () => {
     const { deps, registered } = makeDeps()
     registerSpikeShortcuts(deps)
@@ -72,5 +82,15 @@ describe('registerSpikeShortcuts', () => {
     expect(deps.getMainWindow().contentView.addChildView).toHaveBeenCalled()
     expect(deps.executeInView).not.toHaveBeenCalled()
     expect(deps.fs.writeFileSync).not.toHaveBeenCalled()
+  })
+
+  it('L handler disposes an off-origin stale view before recreating', async () => {
+    const staleView = { webContents: { getURL: () => 'https://auth.openai.com/login', isDestroyed: () => false } }
+    const disposeView = vi.fn()
+    const { deps, registered } = makeDeps({ state: { view: staleView }, disposeView })
+    registerSpikeShortcuts(deps)
+    await registered.get('Cmd+Alt+Shift+L')()
+    expect(disposeView).toHaveBeenCalledWith(staleView)
+    expect(deps.makeView).toHaveBeenCalledOnce()
   })
 })

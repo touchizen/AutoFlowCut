@@ -12,6 +12,14 @@ describe('CHATGPT_DUMPER string contract', () => {
   it('uses the forwarded log prefix', () => {
     expect(CHATGPT_DUMPER).toContain('[autoflowcut CGPT DUMP]')
   })
+  it('captures targeted send buttons plus button-level icon fallbacks', () => {
+    expect(CHATGPT_DUMPER).toContain('button[data-testid*="send" i], button[aria-label*="send" i], form button[type="submit"]')
+    expect(CHATGPT_DUMPER).toContain('button:has(svg)')
+    expect(CHATGPT_DUMPER).not.toContain('button svg')
+  })
+  it('caps result image candidates at 16', () => {
+    expect(CHATGPT_DUMPER).toMatch(/images:\s*pick\([^\n]+,\s*16\)/)
+  })
   it('contains no Node/CDP tokens (runs in page context)', () => {
     expect(CHATGPT_DUMPER).not.toMatch(/\brequire\s*\(/)
     expect(CHATGPT_DUMPER).not.toMatch(/\bprocess\./)

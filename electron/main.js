@@ -1617,8 +1617,12 @@ app.whenReady().then(() => {
         if (message.includes('[autoflowcut CGPT')) console.log('[CGPT Page]', message)
       })
       view.webContents.on('did-fail-load', (_e, code, desc, url) => console.error('[CGPT] did-fail-load', code, desc, url))
-      view.webContents.loadURL(CHATGPT_URL)
+      view.webContents.loadURL(CHATGPT_URL).catch(() => {})
       return view
+    },
+    disposeView: (v) => {
+      try { mainWindow.contentView.removeChildView(v) } catch {}
+      try { v.webContents.close() } catch {}
     },
     executeInView: (view, script) => view.webContents.executeJavaScript(script),
     fs: fsSync,

@@ -18,14 +18,17 @@ export const CHATGPT_DUMPER = /* js */ `
           role: el.getAttribute?.('role') || null,
         };
       };
-      const pick = (sel) => Array.from(document.querySelectorAll(sel)).slice(0, 8).map(ser);
+      const pick = (sel, limit = 8) => Array.from(document.querySelectorAll(sel)).slice(0, limit).map(ser);
       const out = {
         url: location.href,
         ts: Date.now(),
         // 넓은 후보군 — 저자가 덤프에서 실제 셀렉터를 고른다.
         composer: pick('textarea, [contenteditable="true"], [data-testid*="prompt" i], .ProseMirror'),
-        sendButtons: pick('button[data-testid*="send" i], button[aria-label*="send" i], form button[type="submit"], button svg'),
-        images: pick('main img, [data-testid*="image" i] img, canvas, a[download] img'),
+        sendButtons: [
+          ...Array.from(document.querySelectorAll('button[data-testid*="send" i], button[aria-label*="send" i], form button[type="submit"]')).map(ser),
+          ...Array.from(document.querySelectorAll('button:has(svg)')).slice(0, 12).map(ser),
+        ],
+        images: pick('main img, [data-testid*="image" i] img, canvas, a[download] img', 16),
       };
       try { console.log(P, JSON.stringify(out).slice(0, 2000)); } catch (e) {}
       return out;
