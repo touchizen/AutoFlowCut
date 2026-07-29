@@ -221,11 +221,35 @@ describe('handleExportClick — loading 윈도우 paywall 차단 (P2-3 후속)',
     expect(result.current.showExportModal).toBe(false)
   })
 
-  it('pending 상태의 stale imagePath 만 있으면 export 모달을 열지 않는다', () => {
+  // 옛 동작: pending 이면 이미지가 있어도 모달을 안 열었다 — 그래서 519 씬 중 518 개가
+  // 조용히 빠졌다. 이제는 열어서 사용자가 포함/배제를 고를 수 있어야 한다.
+  it('pending 이어도 이미지가 있으면 export 모달을 연다 (사용자가 고른다)', () => {
     const { result } = renderHook(() =>
       useExport({
         settings: baseSettings,
         scenes: [staleScene],
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn()
+      })
+    )
+
+    act(() => {
+      result.current.handleExportClick()
+    })
+
+    expect(result.current.showExportModal).toBe(true)
+    expect(mockToastWarning).not.toHaveBeenCalled()
+  })
+
+  it('이미지가 정말 없으면 종전대로 모달을 안 열고 경고한다', () => {
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: [{ id: 's-empty', status: 'pending' }],
         openSettings: vi.fn(),
         isAuthenticated: true,
         subscription: { status: 'trial', canExport: true },

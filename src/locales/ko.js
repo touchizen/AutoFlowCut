@@ -1119,6 +1119,13 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   
   // Export 모달
   exportModal: {
+    // 이미지가 있는데 status 가 pending 인 씬 — 화면에는 보이지만 내보내기에서
+    // 빠지던 것들이다. "아직 생성되지 않은" 이라고만 쓰면 프롬프트를 고쳐 재생성
+    // 대기 중인 씬에는 거짓말이라, 상태와 위험을 같이 말한다.
+    pendingChoiceMessage: '전체 {total}개 씬 중 {pending}개가 미생성(pending) 상태입니다.',
+    pendingChoiceCaveat: '이미지 파일은 있지만, 프롬프트를 수정한 뒤 아직 재생성하지 않은 옛 이미지일 수 있습니다.',
+    pendingChoiceInclude: '포함',
+    pendingChoiceExclude: '배제',
     title: 'CapCut 내보내기',
     premiereTitle: 'Premiere로 내보내기',
     vrewTitle: 'Vrew로 내보내기',
