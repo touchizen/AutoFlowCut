@@ -1209,6 +1209,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   
   // Export Modal
   exportModal: {
+    pendingChoiceMessage: '{pending} of {total} scenes are still pending.',
+    pendingChoiceCaveat: 'They have image files, but those may be old renders from before you edited the prompt.',
+    pendingChoiceInclude: 'Include',
+    pendingChoiceExclude: 'Exclude',
     title: 'Export to CapCut',
     premiereTitle: 'Export to Premiere',
     vrewTitle: 'Export to Vrew',

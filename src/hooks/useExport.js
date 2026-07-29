@@ -11,22 +11,21 @@ import { useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
-import { resolveExportVideos, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
+import { resolveExportVideos, getExportFilePaths } from '../utils/sceneMedia'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
-import { isSceneGenerationDone } from '../services/generationStatus'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
 import { checkFixedSceneConsistency } from '../../electron/story/fixedScenes.js'
 import { pairFixedSlots } from '../../electron/story/sceneResolver.js'
-
-function isExportableScene(scene) {
-  return isSceneGenerationDone(scene) && hasExportableMedia(scene)
-}
+import { computeSceneSlots } from '../services/sceneSlots'
+import { selectExportScenes, hasExportAccess, isReadyExportEligible } from '../services/exportSelection'
 
 export function useExport({
   settings,
   scenes,
   srtTrack = [],
+  // 상위 `project.videos` 페이로드를 없애면서 현재는 읽지 않는다. 훅의 입력
+  // 계약이라 시그니처는 유지한다(App.jsx 가 계속 넘긴다).
   videoScenes = [],
   framePairs = [],
   openSettings,
@@ -86,7 +85,7 @@ export function useExport({
     // export는 slot-missing" 발산이 생긴다 (스펙 §2.4 단일 resolver 계약).
     const fixedRendererScenes = pairFixedSlots(projectFixedSceneState.fixedScenes, scenes)
     const missing = projectFixedSceneState.fixedScenes.flatMap((slot, index) => (
-      fixedRendererScenes[index] && isExportableScene(fixedRendererScenes[index]) ? [] : [slot.ordinal]
+      fixedRendererScenes[index] && isReadyExportEligible(fixedRendererScenes[index]) ? [] : [slot.ordinal]
     ))
     if (missing.length > 0) {
       toast.warning(t('toast.fixedSlotMissing', { ordinals: missing.join(', ') }))
@@ -96,8 +95,8 @@ export function useExport({
   }
 
   const exportableScenesFor = (admission) => admission?.fixedRendererScenes
-    ? admission.fixedRendererScenes.filter(isExportableScene)
-    : scenes.filter(isExportableScene)
+    ? admission.fixedRendererScenes.filter(isReadyExportEligible)
+    : scenes.filter(isReadyExportEligible)
 
   // Handle export button click - open modal.
   // split 드롭다운/본체에서 유효 포맷을 넘기면 기억(없거나 깨진 값이면 기존 유지).
@@ -108,8 +107,10 @@ export function useExport({
       setExportFormat(format)
       try { localStorage.setItem('lastExportFormat', format) } catch {}
     }
-    const validScenes = exportableScenesFor(admission)
-    if (validScenes.length === 0) {
+    // 모달 도달성만 본다(선택은 confirm에서). admitFixedExport가 위에서 fixed 정합/준비/슬롯을
+    // 이미 게이트했다 — fixed면 여기 hasExportAccess는 항상 참이고, legacy면 이미지 있는 pending
+    // 씬만 있는 프로젝트도 모달에 도달해 고를 수 있게 통과시킨다.
+    if (!hasExportAccess(scenes)) {
       toast.warning(t('toast.noGeneratedImages'))
       return
     }
@@ -176,24 +177,44 @@ export function useExport({
     if (!settings.projectName) {
       console.warn('[useExport] settings.projectName missing — falling back to "Untitled"')
     }
+    // 씬 사이 무음 간격을 앞 씬에 흡수한다 — 슬롯을 누적하면 cum(i) === start_i 가
+    // 되어 이미지가 내레이션보다 앞서지 않는다. 시각이 성립하지 않는 프로젝트는
+    // 전체 폴백(all-or-nothing)해서 현행과 바이트 동일하게 동작한다.
+    const slots = computeSceneSlots(validScenes, settings)
+    if (!slots.useSlots && validScenes.length > 0) {
+      console.warn(`[useExport] scene slots unavailable (${slots.reason}) — falling back to legacy durations`)
+    }
     return {
       name: settings.projectName || 'Untitled',
       // 'portrait' / 'landscape' — GCF가 기대하는 값.
       format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
       // Phase 5 + R1 + R8 review fix: srtTrack 을 validScenes 순서로 rebase.
+      // 슬롯일 때만 누적 길이(srtSlots)와 시드(start_0)를 넘긴다 — 폴백 프로젝트에
+      // 넘기면 사이드카 시작 시각이 현행과 달라진다.
       srtTrack: rebaseSrtTrackToScenes(
         pruneSrtTrackToScenes(srtTrack, validScenes, { preserveUnlinked: true }),
         validScenes,
-        { preserveUnlinked: true }
+        {
+          preserveUnlinked: true,
+          ...(slots.useSlots ? {
+            durationOf: (_scene, i) => slots.srtSlots[i],
+            initialCumulative: Number(validScenes[0].startTime) || 0,
+          } : {}),
+        }
       ),
       // P1 review fix: prune/rebase 전 원본 srtTrack 도 보존.
       rawSrtTrack: srtTrack,
-      scenes: validScenes.map(s => {
-        const sceneDuration = s.duration || settings.defaultDuration || 3
+      scenes: validScenes.map((s, i) => {
+        // 슬롯 = 다음 씬 시작까지(간격 흡수). 폴백이면 기존 레거시 값 그대로.
+        const sceneDuration = slots.imageSlots[i]
+        // 씬 자기 길이 — 영상 오버레이는 슬롯이 아니라 이걸 기준으로 배치된다.
+        const sourceDuration = slots.useSlots ? slots.sourceDurations[i] : null
         const videos = resolveExportVideos(s).map(v => ({
           source: v.source,
           path: v.path || v.data,
-          duration: v.duration || sceneDuration || 0,
+          // 자체 길이 없는 영상은 발화 구간 → 슬롯 순으로 폴백한다. 0 으로 두면
+          // prepareCloudRequest 의 `videoDuration <= 0 continue` 에서 증발한다.
+          duration: v.duration || sourceDuration || sceneDuration || 0,
         }))
 
         return {
@@ -205,6 +226,11 @@ export function useExport({
           image_fallback: s.image,
           image_duration: sceneDuration,
           image_size: s.image_size || null,
+          // ── 영상 오버레이 배치 기준 (슬롯일 때만) ──
+          ...(slots.useSlots ? {
+            source_duration: sourceDuration,
+            source_offset: slots.sourceOffsets[i],
+          } : {}),
           // ── 영상 (0~2개, 하이브리드: i2v 앞 / t2v 뒤) ──
           videos,
           // ── 자막 ──
@@ -214,37 +240,22 @@ export function useExport({
           title: s.title || ''
         }
       }),
-      videos: [
-        // T2V 비디오 (videoScenes)
-        ...videoScenes
-          .filter(vs => (vs.status === 'done' || vs.status === 'complete') && (vs.video || vs.videoPath))
-          .map(vs => ({
-            id: vs.id,
-            video_path: vs.videoPath || vs.video,
-            prompt: vs.prompt || '',
-            source: 't2v',
-          })),
-        // F→V 비디오 (framePairs)
-        ...framePairs
-          .filter(p => p.status === 'complete' && (p.base64 || p.videoPath))
-          .map(p => ({
-            id: p.id,
-            video_path: p.videoPath || p.base64,
-            scene_id: p.ownerSceneId || null,
-            from_scene: p.startSceneId || null,
-            to_scene: p.endSceneId || null,
-            prompt: p.prompt || '',
-            source: 'i2v',
-          })),
-      ]
+      // NOTE: 상위 `videos` 배열은 제거했다. 유일한 소비자가 generateSRT 의
+      // videoMap(영상 길이로 자막 시각을 대체하던 것)이었는데, 누적이 항상
+      // 슬롯이 되면서 그 조회 자체가 사라졌다. 영상은 씬 단위 `scene.videos`
+      // (resolveExportVideos)로만 하류에 전달된다.
     }
   }
 
   // Handle export confirm from modal
-  const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
+  const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize, includePending = false }) => {
     const admission = admitFixedExport()
     if (admission?.success === false) return admission
-    const validScenes = exportableScenesFor(admission)
+    // fixed(image-first)는 admission이 resolve한 fixed set이 계약이라 includePending이 없다.
+    // legacy면 사용자가 모달에서 고른 includePending으로 ready(+pending) 씬을 선택한다.
+    const validScenes = admission?.fixedRendererScenes
+      ? exportableScenesFor(admission)
+      : selectExportScenes(scenes, { includePending })
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)
@@ -350,10 +361,12 @@ export function useExport({
   // Handle Premiere export (mirror of handleExportConfirm).
   // capcutProjectNumber 는 .prproj 를 쓸 출력 폴더 경로로 재사용된다.
   // Premiere 자막은 XML 에 embed 되므로 SRT sidecar / 앱 실행 단계는 없다.
-  const handleExportPremiere = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
+  const handleExportPremiere = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize, includePending = false }) => {
     const admission = admitFixedExport()
     if (admission?.success === false) return admission
-    const validScenes = exportableScenesFor(admission)
+    const validScenes = admission?.fixedRendererScenes
+      ? exportableScenesFor(admission)
+      : selectExportScenes(scenes, { includePending })
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)
@@ -444,10 +457,16 @@ export function useExport({
 
   // Handle Vrew export (local generator + local zip packaging).
   // capcutProjectNumber 는 .vrew 를 쓸 출력 폴더 경로로 재사용된다.
+  // Vrew 는 includePending 을 지원하지 않는다 — 항상 ready 만 내보낸다.
+  // vrewPacker 가 base64 를 파일 경로로 취급해서, 경로 모양만 보는 검사로는
+  // 안전하게 거를 수 없었다(리뷰에서 네 라운드 연속 구멍이 나왔다). 별건.
   const handleExportVrew = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
     const admission = admitFixedExport()
     if (admission?.success === false) return admission
-    const validScenes = exportableScenesFor(admission)
+    // Vrew는 includePending 미지원(주석 위) — legacy면 항상 ready만 내보낸다.
+    const validScenes = admission?.fixedRendererScenes
+      ? exportableScenesFor(admission)
+      : selectExportScenes(scenes)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)
