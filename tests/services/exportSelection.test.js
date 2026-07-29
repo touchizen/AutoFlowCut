@@ -165,4 +165,13 @@ describe('exportSelection — buildExportModalCounts (모달 표시용)', () => 
       totalSceneCount: 0, readyCount: 0, pendingWithImageCount: 0,
     })
   })
+
+  it('fixedMode 면 pending+image 가 있어도 pendingWithImageCount=0 이다 (fixed 는 포함 선택 없음)', () => {
+    const scenes = [done('a'), done('b'), pendingWithImage('c')]
+    expect(buildExportModalCounts(scenes, { fixedMode: true })).toEqual({
+      totalSceneCount: 3, readyCount: 2, pendingWithImageCount: 0,
+    })
+    // 기본(비-fixed)은 그대로 센다.
+    expect(buildExportModalCounts(scenes).pendingWithImageCount).toBe(1)
+  })
 })

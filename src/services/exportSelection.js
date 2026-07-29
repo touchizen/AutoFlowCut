@@ -84,12 +84,15 @@ export function hasExportAccess(scenes) {
  * `totalSceneCount` 는 **씬 전체**다. `ready + pendingWithImage` 로 계산하면
  * unusable 이 빠져 사용자에게 틀린 숫자를 보여준다.
  */
-export function buildExportModalCounts(scenes) {
+export function buildExportModalCounts(scenes, { fixedMode = false } = {}) {
   const list = Array.isArray(scenes) ? scenes : []
   const { ready, pendingWithImage } = classifyExportScenes(list)
   return {
     totalSceneCount: list.length,
     readyCount: ready.length,
-    pendingWithImageCount: pendingWithImage.length,
+    // fixed(image-first) 프로젝트는 admission 이 resolve 한 fixed set 만 내보내고 useExport 가
+    // includePending 을 무시한다 — 여분 pending 씬을 "포함" 대상으로 세면 모달이 답이 무시되는
+    // 포함/제외 질문을 띄운다. fixedMode 면 0 으로 눌러 그 질문 자체를 억제한다(카운트 소스 게이트).
+    pendingWithImageCount: fixedMode ? 0 : pendingWithImage.length,
   }
 }

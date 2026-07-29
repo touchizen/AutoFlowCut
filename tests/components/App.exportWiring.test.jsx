@@ -55,7 +55,19 @@ const appMocks = vi.hoisted(() => {
     listFlowProjects: asyncNoop,
     capabilities: {},
   }
-  return { noop, asyncNoop, loadEpochRef, captured, scenesHook, genAPI }
+  // useImageFirstImportWindow 제어용 — fixedSceneState 를 image-first 로 몰아 fixed 프로젝트의
+  // 모달 카운트 게이트(pendingWithImageCount=0)를 검증한다. 기본 null 이라 기존 테스트는 불변.
+  const fixedImportHook = {
+    isImporting: false,
+    isImportingRef: { current: false },
+    beginImageFirstImport: noop,
+    endImageFirstImport: noop,
+    fixedSceneState: null,
+    fixedSceneStateRef: { current: null },
+    setFixedSceneState: noop,
+    applyImageFirstImportCommit: noop,
+  }
+  return { noop, asyncNoop, loadEpochRef, captured, scenesHook, genAPI, fixedImportHook }
 })
 
 vi.mock('../../src/hooks/useI18n', () => ({
@@ -149,6 +161,10 @@ vi.mock('../../src/hooks/useAvailableModels', () => ({
   useAvailableModels: () => ({ imageModels: [], videoModels: [], loading: false, source: 'static', refetch: appMocks.noop }),
 }))
 vi.mock('../../src/hooks/useScenes', () => ({ useScenes: () => appMocks.scenesHook }))
+vi.mock('../../src/hooks/useImageFirstImportWindow', () => ({
+  useImageFirstImportWindow: () => appMocks.fixedImportHook,
+  default: () => appMocks.fixedImportHook,
+}))
 vi.mock('../../src/hooks/useVideoScenes', () => ({
   useVideoScenes: () => ({
     videoScenes: [],
@@ -341,6 +357,8 @@ describe('App export wiring — Header.hasImages / ExportModal 카운트', () =>
     appMocks.scenesHook.scenes = []
     appMocks.scenesHook.scenesRef.current = []
     appMocks.loadEpochRef.current = 0
+    appMocks.fixedImportHook.fixedSceneState = null
+    appMocks.fixedImportHook.fixedSceneStateRef.current = null
   })
 
   // ⭐ 원래 버그 그 자체 — 519 씬 프로젝트에서 518 개가 pending + imagePath 였다.
@@ -413,5 +431,22 @@ describe('App export wiring — Header.hasImages / ExportModal 카운트', () =>
     expect(exportModalProps.totalSceneCount).toBe(2)
     expect(exportModalProps.readyCount).toBe(1)
     expect(exportModalProps.pendingWithImageCount).toBe(0)
+  })
+
+  // ⭐ 5차 머지 조합 갭(Codex+Fable 수렴): fixed(image-first) 프로젝트는 fixed set 만 내보내고
+  // useExport 가 includePending 을 무시한다. 그런데 App 이 fixedMode 를 안 넘기면 여분의
+  // pending+image 씬 때문에 모달이 "답이 무시되는 포함/제외 질문"을 띄운다. App 은 image-first 면
+  // pendingWithImageCount=0 으로 눌러 그 질문 자체가 안 뜨게 해야 한다.
+  it('fixed(image-first) 프로젝트면 여분 pending+image 가 있어도 pendingWithImageCount=0 을 넘긴다', () => {
+    appMocks.fixedImportHook.fixedSceneState = { sceneMode: 'image-first', fixedScenes: [] }
+    const { exportModalProps } = renderAppWithScenes([
+      { id: 'd1', prompt: 'p', status: 'done', imagePath: '/work/d1.png' },
+      { id: 'd2', prompt: 'p', status: 'done', imagePath: '/work/d2.png' },
+      { id: 'p1', prompt: 'p', status: 'pending', imagePath: '/work/p1.png' }, // 여분 pending+image
+    ])
+
+    expect(exportModalProps.totalSceneCount).toBe(3)
+    expect(exportModalProps.readyCount).toBe(2)
+    expect(exportModalProps.pendingWithImageCount).toBe(0) // fixed면 포함/제외 질문 억제
   })
 })

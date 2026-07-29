@@ -94,10 +94,6 @@ export function useExport({
     return { success: true, fixedRendererScenes }
   }
 
-  const exportableScenesFor = (admission) => admission?.fixedRendererScenes
-    ? admission.fixedRendererScenes.filter(isReadyExportEligible)
-    : scenes.filter(isReadyExportEligible)
-
   // Handle export button click - open modal.
   // split 드롭다운/본체에서 유효 포맷을 넘기면 기억(없거나 깨진 값이면 기존 유지).
   const handleExportClick = (format) => {
@@ -254,7 +250,7 @@ export function useExport({
     // fixed(image-first)는 admission이 resolve한 fixed set이 계약이라 includePending이 없다.
     // legacy면 사용자가 모달에서 고른 includePending으로 ready(+pending) 씬을 선택한다.
     const validScenes = admission?.fixedRendererScenes
-      ? exportableScenesFor(admission)
+      ? admission.fixedRendererScenes.filter(isReadyExportEligible)
       : selectExportScenes(scenes, { includePending })
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
@@ -365,7 +361,7 @@ export function useExport({
     const admission = admitFixedExport()
     if (admission?.success === false) return admission
     const validScenes = admission?.fixedRendererScenes
-      ? exportableScenesFor(admission)
+      ? admission.fixedRendererScenes.filter(isReadyExportEligible)
       : selectExportScenes(scenes, { includePending })
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
@@ -465,7 +461,7 @@ export function useExport({
     if (admission?.success === false) return admission
     // Vrew는 includePending 미지원(주석 위) — legacy면 항상 ready만 내보낸다.
     const validScenes = admission?.fixedRendererScenes
-      ? exportableScenesFor(admission)
+      ? admission.fixedRendererScenes.filter(isReadyExportEligible)
       : selectExportScenes(scenes)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))

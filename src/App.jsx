@@ -3827,7 +3827,7 @@ function App() {
       <ExportModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
-        {...buildExportModalCounts(scenes)}
+        {...buildExportModalCounts(scenes, { fixedMode: fixedSceneState?.sceneMode === 'image-first' })}
         onExport={handleExportConfirm}
         onExportPremiere={handleExportPremiere}
         onExportVrew={handleExportVrew}
