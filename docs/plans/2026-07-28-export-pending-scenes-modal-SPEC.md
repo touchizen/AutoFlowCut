@@ -1,6 +1,28 @@
 # 스펙 — 내보내기: 이미지가 있는 pending 씬 포함/배제 선택 (2026-07-28)
 
-상태: **v7 — 라운드 6 반영 완료, 라운드 7(확인용) 대기** (구현 착수 전)
+상태: **v8 — 라운드 7 반영 완료, 라운드 8(확인용) 대기** (구현 착수 전)
+
+> v8 변경 (라운드 7 — Fable CONDITIONAL GO(필수 1건) / Codex **NO-GO**(6건).
+> Codex 가 Fable 이 못 본 걸 셋 더 찾았고 **그중 하나는 테스트 그물이 아니라 설계 규칙의 구멍**이다):
+> ① **BLOCKER — JPEG base64 가 화이트리스트를 통과한다.** JPEG base64 는 `/9j/4AAQSkZJRg…` 로
+> 시작해서 **POSIX 절대경로 arm 을 그대로 통과**한다 → `vrew.js:72` 의 `fs.readFile` 에서 ENOENT →
+> **Vrew 전체 중단**. v7 의 음성 픽스처가 PNG(`iVB…`) 하나뿐이라 안 보였다(PNG 는 `/` 로 시작 안 함).
+> 해법은 새 규칙이 아니라 **기존 detector 재사용** — `isRawBase64Media`(`mediaSignatures.js:63`)를
+> 선검사로. 실측: `/9j/…` → true, `/Users/a/x.png` → false. 뮤테이션 #23 + 경로 행렬에 케이스 추가.
+> ② **MAJOR — §7.3-a 가 자기모순이었다.** "`ExportModal` 을 mock" 해놓고 그 안의 게이트를
+> 검증하라고 했다 — stub mock 이면 게이트 코드가 실행조차 안 된다. **(a) App 배선(stub mock) /
+> (b) 게이트·문구(실제 렌더)** 두 테스트로 분리.
+> ③ **MAJOR — 문구(copy)에 그물이 없었다**(두 리뷰어 일치). §4.2 는 "게이트·문구·실행 필터가
+> 전부 같은 값"이라는데 문구만 아무도 안 봤다 → 구별 리터럴(total 7 / default 3 / pathOnly 1)로
+> 단언 + 로케일 키 노출 검사. 뮤테이션 #24·#25.
+> ④ **MAJOR — step 3 "모든 await 직후" 중 두 번째 await 가 무방비.** 프리미어/Vrew 는
+> `checkFolderExists`(`ExportModal.jsx:242`/`:278`)를 한 번 더 await 하는데 §7.4 는 설치확인만
+> 붙잡았다 → 두 번째 await 픽스처 추가, 뮤테이션 #26.
+> ⑤ **MINOR — `dispatching` 중 잠금과 백드롭 `loading` 가드가 미검증** → 뮤테이션 #27·#28.
+> ⑥ **계수를 세 번 연달아 틀렸다** (v5 13 / v6 19 / v7 22). v7 은 v6 의 틀린 19 에 3 을 더했다.
+> **행을 기계적으로 세어 29** 로 확정하고, 알려진 등가 뮤턴트도 명시적으로 기록한다.
+> ⑦ 앵커 nit: `:154-177` → map `:154-189`, `sourceOffsets` 읽기 `:179`.
+
 
 > v7 변경 (라운드 6 — 두 리뷰어 모두 CONDITIONAL GO. **설계 자체는 다섯 라운드 만에 처음으로
 > 손추적에서 구멍이 안 나왔다** — 남은 건 전부 "테스트 그물이 없어 뮤턴트가 산다" 류다):
@@ -197,10 +219,18 @@
 // ── 단일 술어. 분류기와 실행 필터가 **반드시 이 함수를 호출**한다(재조합 금지) ──
 isRealPath(v) → boolean
   // 항상 boolean(빈 문자열에 '' 를 반환하면 안 된다).
-  // **로컬 파일 경로 모양만** 통과 — 화이트리스트로 판정한다:
-  //   POSIX 절대경로 '/…'  |  Windows 'C:\…' 또는 '\\server\share\…'
-  // 스킴 블랙리스트(data:/http:/https:/blob:)만으로는 **raw base64 문자열이 통과**한다
-  // → 결국 vrew.js:72 의 fs.readFile 에서 죽는다(라운드 4 지적).
+  // ⚠️ **순서가 중요하다. raw base64 를 먼저 걷어낸 뒤** 화이트리스트를 본다:
+  //   1) isRawBase64Media(v) 면 → false            (src/exporters/mediaSignatures.js:63)
+  //   2) POSIX 절대경로 '/…' | Windows 'C:\…' | UNC '\\server\share\…' → true
+  //   3) 나머지 → false
+  //
+  // ⚠️ **화이트리스트만으로는 JPEG base64 가 통과한다**(라운드 7 BLOCKER, 실측).
+  //   JPEG base64 는 **`/9j/4AAQSkZJRg…` 로 시작**하므로 `startsWith('/')` 가 true 다.
+  //   그대로 통과시키면 vrew.js:72 의 fs.readFile 에서 ENOENT → **Vrew 전체 중단**.
+  //   PNG(`iVBORw0…`)만 음성 픽스처로 두면 이 구멍이 안 보인다 — PNG 는 '/' 로 시작하지 않는다.
+  //   해법은 새 규칙을 만드는 게 아니라 **기존 detector 재사용**이다:
+  //   `isRawBase64Media('/9j/4AAQ…') === true`, `isRawBase64Media('/Users/a/x.png') === false`
+  //   (직접 실행해 확인). 스킴 블랙리스트(data:/http:/https:/blob:)만으로는 부족하다(라운드 4).
   //
   // ⚠️ **`file://` 는 화이트리스트에 넣지 않는다** (라운드 5 BLOCKER, 실측).
   //   경로는 vrewPacker.js:121 `sourceForItem` → { filePath: item.path } →
@@ -425,7 +455,7 @@ async function dispatch(kind, options, includePending) {
 `buildExportProject`(`useExport.js:123-195`)는 이제:
 - `computeSceneSlots(validScenes, settings)` 로 슬롯을 구하고(`:130`),
 - `validScenes.map((s, i) => ...)` 안에서 `slots.imageSlots[i]` / `sourceDurations[i]` /
-  `sourceOffsets[i]` 를 **인덱스로** 읽고(`:154-177`),
+  `sourceOffsets[i]` 를 **인덱스로** 읽고(map 은 `:154-189`, `sourceOffsets` 읽기는 `:179`),
 - `rebaseSrtTrackToScenes` 에 `durationOf: (_scene, i) => slots.srtSlots[i]` 와
   `initialCumulative: Number(validScenes[0].startTime) || 0` 을 넘긴다(`:141-151`).
 
@@ -543,7 +573,8 @@ async function dispatch(kind, options, includePending) {
 | `\\server\share\x.png` | **true** | UNC |
 | `file:///Users/a/x.png` | **false** | `fs.readFile` 이 URL 을 해석하지 않는다 — **실측 ENOENT**. 통과시키면 Vrew 전체가 죽는다 |
 | `data:image/png;base64,…` | **false** | 스킴 |
-| `iVBORw0KGgo…` (raw base64) | **false** | 화이트리스트라 애초에 안 걸린다 |
+| `iVBORw0KGgo…` (PNG raw base64) | **false** | 화이트리스트에 안 걸린다 |
+| **`/9j/4AAQSkZJRg…` (JPEG raw base64)** | **false** | ⚠️ **`/` 로 시작해 POSIX arm 을 통과한다.** `isRawBase64Media` 선검사가 유일한 방어다(라운드 7). 이 케이스가 없으면 그 선검사를 지운 뮤턴트(#23)가 산다 |
 | `./scenes/x.png`, `scenes/x.png` | **false** | 상대경로. `fs.readFile` 은 cwd 기준으로 **엉뚱한 파일을 열 수도** 있다 |
 | `~/x.png` | **false** | Node 는 `~` 를 확장하지 않는다 → ENOENT |
 | `''` / `null` / `undefined` / 숫자 | **false** (boolean 이어야 한다) | `''` 를 반환하면 안 된다 |
@@ -598,17 +629,35 @@ async function dispatch(kind, options, includePending) {
 
 ### 7.3-a ⚠️ App → ExportModal 카운트 배선 (라운드 6 BLOCKER — v6 에 테스트가 없었다)
 
-`tests/components/App.exportAccess.test.jsx` 에 함께 둔다. **ExportModal 을 mock 해서 받은 prop 을 캡처**한다.
+⚠️ **두 테스트로 나눈다**(라운드 7 Codex — v7 은 "ExportModal 을 mock" 해놓고 그 안의 게이트를
+검증하라고 해서 **자기모순**이었다. stub mock 이면 게이트 코드가 실행조차 안 된다):
+
+- **(a) 배선** — `tests/components/App.exportAccess.test.jsx`: `ExportModal` 을 **stub mock** 해서
+  받은 prop 만 캡처한다. App 이 무엇을 넘기는지가 관심사다.
+- **(b) 게이트** — `tests/components/ExportModal.pendingChoice.test.jsx`: **실제 컴포넌트를 렌더**하고
+  prop 을 직접 준다. 게이트가 포맷에 따라 `default`/`pathOnly` 중 무엇을 보는지가 관심사다.
+
+(a) 로 검증하는 것:
 
 - `totalSceneCount` / `readyCount` / `pendingWithImageCount.default` / `.pathOnly` 가
   **분류 결과와 일치**한다 (리터럴 단언).
 - **이게 없으면 구현자가 카운트 prop 을 통째로 빠뜨려도 전부 초록이다** — §4.3 이 기본값 0 을
   요구하므로 `undefined > 0` 이 아니라 `0 > 0` 이 되어 **3버튼 모달이 영원히 안 뜬다.**
   ExportModal 자체 테스트는 prop 을 직접 주므로 이 누락을 못 문다(뮤테이션 #20).
-- **Vrew UI 게이트**: `pendingWithImageCount = { default: 1, pathOnly: 0 }` 픽스처에서
+(b) 로 검증하는 것 — **실제 `ExportModal` 렌더**:
+- **Vrew UI 게이트**: `pendingWithImageCount = { default: 1, pathOnly: 0 }` 에서
   **CapCut 은 3버튼 모달을 띄우고 Vrew 는 안 띄운다.** 게이트가 항상 `.default` 를 보면
   base64 전용 pending 을 "포함 가능"이라 표시해놓고 실행에서는 제외한다 — 이번 사건의
   "숫자와 실제 대상이 갈림"이 그대로 재발한다(뮤테이션 #21).
+- ⚠️ **문구(copy) 단언**(라운드 7 두 리뷰어 일치 — §4.2 는 "게이트·문구·실행 필터가 전부 같은 값을
+  본다"고 하는데 **문구만 그물이 없었다**). 서로 구별되는 리터럴로 픽스처를 잡는다:
+  `totalSceneCount = 7`, `default = 3`, `pathOnly = 1` →
+  - CapCut 모달 텍스트에 **"7"** 과 **"3"** 이 나온다
+  - Vrew 모달 텍스트에 **"7"** 과 **"1"** 이 나온다
+  `readyCount + pendingWithImageCount` 로 전체를 계산하는 오구현(§4.2 가 명시적으로 금지한 식)이나
+  Vrew 문구가 `.default` 를 쓰는 오구현이 여기서 죽는다(뮤테이션 #24·#25).
+- **로케일 키 실재**: 렌더된 텍스트에 `raw i18n key`(예: `export.pendingChoice.`)가 **나타나지 않는다**.
+  키를 빠뜨리면 화면에 키가 그대로 노출된다(§8 이 이미 지목한 위험인데 그물이 없었다).
 
 ### 7.3 접근 게이트 (§3.3)
 - `tests/services/exportSelection.test.js` 의 `hasExportAccess` 케이스(7.1) — 술어 자체.
@@ -644,6 +693,19 @@ async function dispatch(kind, options, includePending) {
   `닫기 → resolve → 재오픈` 순서면 `isOpenRef` 가 대신 막아줘서 **`++attemptRef` 를 제거한
   뮤턴트(#7)가 살아남는다**(두 리뷰어 모두 지적). 재오픈 후에는 `isOpenRef` 가 다시 true 라
   **attempt 토큰만이** stale 을 가른다 → resolve 후 콜백 미호출 + 3버튼 모달 없음을 단언.
+- ⚠️ **두 번째 await 뒤의 stale 가드**(라운드 7 Codex): §4.3 step 3 은 "**모든** await 직후"라고
+  하는데 §7.4 는 **설치확인 promise 만** 붙잡는다. 프리미어/Vrew 는 그 뒤에
+  `checkFolderExists`(`ExportModal.jsx:242`/`:278`)를 **한 번 더 await** 하므로, 그 자리의 가드를
+  지운 뮤턴트가 전부 통과한다. → **두 번째 await 를 붙잡은 채 닫기 → 재오픈 → resolve** 픽스처를
+  따로 둔다. 단언: 콜백 미호출 + 3버튼 모달 없음 (뮤테이션 #26).
+- ⚠️ **`dispatching` 중 잠금**(라운드 7 Codex): §4.3 step 6 은 `phaseRef !== 'idle'` 전 구간을
+  잠그라는데 §7.4 는 `choosing` 과 preflight 만 본다. **dispatch 중에 Export 버튼·포맷 탭이
+  여전히 disabled** 임을 단언한다 — 안 그러면 진행 중인 프리미어 내보내기를 Vrew 로 표시하는
+  변형이 산다 (뮤테이션 #27).
+- ⚠️ **백드롭의 `loading` 가드 보존**(라운드 7 Fable F3): §4.3 step 9 가 `handleClose` 일원화를
+  요구하는데, 그 리팩터가 정확히 `ExportModal.jsx:335` 의 `onClick={loading ? undefined : onClose}`
+  를 날리기 쉽다. **dispatch(loading) 중 백드롭 클릭 → 모달이 그대로 열려 있고 리셋도 없다**
+  (뮤테이션 #28).
 - **preflight reject**: 설치확인이 reject → 다시 Export 를 눌렀을 때 **설치확인이 2 회째 호출**된다
   (버튼은 preflight 중에도 원래 enabled 라 "누를 수 있다"만으론 뮤테이션 #13 이 산다 — 라운드 4)
 - **조기 return 후 재시도**: 미설치 / 덮어쓰기 거절 후 재클릭 시에도 **2 회째 호출**을 단언
@@ -709,11 +771,23 @@ async function dispatch(kind, options, includePending) {
 | 20 | App 이 `ExportModal` 에 카운트 prop 을 안 넘김 | **7.3-a** prop 캡처 리터럴 (기본값 0 이라 다른 테스트는 전부 초록이다) |
 | 21 | 모달 게이트가 포맷과 무관하게 `.default` 사용 | **7.3-a** `{default:1, pathOnly:0}` → CapCut 묻고 Vrew 안 묻는다 |
 | 22 | `isRealPath` 가 `file://` 를 다시 허용 | **7.1 경로 행렬** 음성 케이스 (v6 는 `data:` 만 잡아 이 뮤턴트가 살았다) |
+| 23 | `isRealPath` 의 **`isRawBase64Media` 선검사 제거** | **7.1 `/9j/4AAQ…` 음성 케이스**. PNG(`iVB…`)만으로는 안 죽는다 — PNG 는 `/` 로 시작하지 않아 화이트리스트가 대신 막는다(라운드 7 BLOCKER) |
+| 24 | 모달 문구가 `totalSceneCount` 대신 `readyCount + pendingWithImageCount` | **7.3-a(b) 문구 단언** (total=7 / default=3 / pathOnly=1 픽스처) |
+| 25 | Vrew 문구가 `pathOnly` 대신 `.default` | **7.3-a(b) 문구 단언** — Vrew 텍스트에 "1" 이 아니라 "3" 이 나온다 |
+| 26 | **두 번째 await**(`checkFolderExists`) 뒤의 stale 가드 제거 | 7.4 두 번째 await 붙잡고 닫기→재오픈→resolve |
+| 27 | 잠금 범위에서 `dispatching` 제외 | 7.4 dispatch 중 버튼·탭 disabled 단언 |
+| 28 | 백드롭의 `loading` 가드 제거 | 7.4 dispatch 중 백드롭 클릭 |
 
-**개수 정직하게**: 위 원장은 **22 종**이다 — `#1~#15` 는 `#6` 분리로 **16 행**이고 거기에
-`#16~#22` 를 더한다. v5 는 "13", v6 는 "19" 라 썼는데 **둘 다 계수 착오**다(라운드 6 Codex 지적).
-계수를 뮤테이션 보고서의 수용 기준으로 그대로 쓴다 — 안 그러면 한둘을 안 돌리고
-"전부 killed" 라고 보고하게 된다.
+**개수 정직하게 — 29 종**: `#1~#15` 는 `#6` 분리로 **16 행**, 거기에 `#16~#28` **13 행**을 더한다.
+⚠️ **계수를 세 번 연달아 틀렸다** — v5 "13", v6 "19", v7 "22". v7 은 v6 의 틀린 19 에 3 을 더했다.
+**행을 기계적으로 세어서** 쓴다. 이 숫자가 뮤테이션 보고서의 **수용 기준**이므로,
+틀리면 한둘을 안 돌리고 "전부 killed" 라고 보고하게 된다 — 그게 이 기준이 존재하는 이유다.
+
+**알려진 등가 뮤턴트(의도적으로 원장에서 제외, 라운드 6·7 확인)**:
+- `#5` 의 자매 — dispatch 가 `pendingChoice.kind` 대신 모달의 live `format` 을 읽는 변형.
+  `#17` 의 잠금이 preflight 부터 format 을 얼려서 **관찰상 등가**다. (`#5` 자체 = 바깥
+  `exportFormat` prop 을 읽는 변형은 포맷 전환 테스트로 죽는다.)
+- `#19` 변형 B 는 등가가 **아니다** — `#15` 의 pending-0 픽스처가 죽인다(§7.4).
 
 **의도적으로 뺀 것**: "`setPendingChoice(null)` 을 콜백 뒤로 이동" — 동기 flush 하에서 관찰상
 동등해 짝지을 테스트가 없다(라운드 2). #6·#13 이 그 자리를 대신한다.
@@ -833,18 +907,15 @@ async function dispatch(kind, options, includePending) {
 
 ---
 
-## 11. 라운드 7 에 묻고 싶은 것
+## 11. 라운드 8 에 묻고 싶은 것
 
-라운드 6 의 지적을 양쪽 전부 반영했다. **설계 변경은 0 건** — 두 리뷰어 모두 상태기계·`file://`
-제외·슬롯 불변식·잠금 범위를 손추적으로 통과시켰다. v7 의 변경은 전부 **테스트 그물과 계수**다.
-
-1. **테스트 그물이 이제 닫혔나?** 라운드 5·6 이 연달아 "명세는 맞는데 그걸 무는 테스트가 없다"를
-   찾아냈다(#14, #19 변형 B, #20·#21·#22). §7 전체에서 **명세돼 있는데 짝 테스트가 없는 항목**을
-   한 번 더 훑어줘. 특히 §4.3 의 11 단계 중 테스트에 대응이 없는 step 이 있나.
-2. **22 종 계수가 이제 맞나?** 행을 직접 세어보고, 각 행이 짝 테스트로 죽는지 확인해줘.
-   등가 뮤턴트가 남아 있으면 지적해줘.
-3. **§8 이 완전한가?** `useExport.refresh.test.jsx` 를 넣은 뒤 기준으로 — 이 변경으로 깨지는
-   **다른 기존 테스트가 더 있나?** (`grep` 으로 `noGeneratedImages` / `showExportModal` /
-   `isSceneGenerationDone` 를 단언하는 테스트를 훑어줄 것)
-4. **구현 착수해도 되나?** 아직이면 **코드 전에 반드시 고칠 것만** 골라줘.
-   라운드 6 의 코드-전 필수는 양쪽 합쳐 5 건이었다. 그보다 줄지 않으면 스코프가 안 잡힌 신호다.
+1. **설계 규칙에 아직 구멍이 있나?** 라운드 7 은 여섯 라운드 만에 처음으로 *테스트 그물이 아니라
+   규칙 자체*의 구멍(JPEG base64)을 찾았다. `isRealPath` 를 다시 공격해줘 — `isRawBase64Media`
+   선검사를 통과하면서 `fs.readFile` 에서 죽는 입력이 더 있나?
+2. **§7.3-a 분리가 옳게 됐나?** (a) stub mock 배선 / (b) 실제 렌더 게이트·문구.
+   각 뮤턴트(#20·#21·#24·#25)가 **어느 쪽 테스트에서** 죽는지 짚어줘.
+3. **29 종 계수가 맞나?** 행을 직접 세어줘. 세 번 틀렸다.
+4. **§4.3 의 await 지점을 전수로 세어줘** — step 3 이 "모든 await 직후"라는데 실제 await 가
+   몇 개이고 각각 §7.4 에 대응이 있나. 이게 라운드 7 의 ④ 였다.
+5. **구현 착수해도 되나?** 라운드 7 의 코드-전 필수는 양쪽 합쳐 6 건이었다(라운드 6 은 5 건).
+   **줄지 않으면 스코프가 안 잡힌 신호**이므로, 그 경우 "스코프를 어떻게 줄여야 하는가"를 답해줘.
