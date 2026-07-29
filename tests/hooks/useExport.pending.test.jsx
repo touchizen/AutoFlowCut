@@ -117,6 +117,14 @@ describe('useExport — 실행 경로별 옵션 수용', () => {
     expect(mockExportPremiere.mock.calls[0][0].scenes.map(s => s.id)).toEqual(['d', 'p'])
   })
 
+  it('프리미어: 배제하면 ready 만 나간다 (사용자가 "배제" 를 누른 경우)', async () => {
+    const { result } = run(scenes)
+    await act(async () => {
+      await result.current.handleExportPremiere({ ...confirmArgs, includePending: false })
+    })
+    expect(mockExportPremiere.mock.calls[0][0].scenes.map(s => s.id)).toEqual(['d'])
+  })
+
   it('Vrew 는 옵션을 무시한다 — 항상 ready-only (스펙 §3.4)', async () => {
     const { result } = run(scenes)
     await act(async () => {

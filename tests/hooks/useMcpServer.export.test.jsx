@@ -12,8 +12,9 @@ import { renderHook } from '@testing-library/react'
 // exporter 만 mock 하고 **진짜 useExport** 를 주입한다 — 핸들러를 mock 하면
 // 옵션이 전달됐다는 것만 보이고 "실제로 몇 씬이 나갔는가" 를 못 본다.
 const mockExportCapcut = vi.fn()
+const mockExportPremiere = vi.fn()
 vi.mock('../../src/exporters/capcut.js', () => ({ exportCapcut: (...a) => mockExportCapcut(...a) }))
-vi.mock('../../src/exporters/premiere.js', () => ({ exportPremiere: vi.fn().mockResolvedValue({ success: true }) }))
+vi.mock('../../src/exporters/premiere.js', () => ({ exportPremiere: (...a) => mockExportPremiere(...a) }))
 vi.mock('../../src/exporters/vrew.js', () => ({ exportVrew: vi.fn().mockResolvedValue({ success: true }) }))
 vi.mock('../../src/components/Toast', () => ({
   toast: { warning: vi.fn(), success: vi.fn(), info: vi.fn(), error: vi.fn() }
@@ -53,6 +54,7 @@ function makeProps() {
 beforeEach(() => {
   vi.clearAllMocks()
   mockExportCapcut.mockResolvedValue({ success: true, targetPath: '/out' })
+  mockExportPremiere.mockResolvedValue({ success: true, targetPath: '/out' })
   handleExportConfirm.mockResolvedValue({ success: true, targetPath: '/out' })
   handleExportPremiere.mockResolvedValue({ success: true, targetPath: '/out' })
   localStorage.setItem('exportSettings', '{}')
@@ -160,6 +162,25 @@ describe('useMcpServer — 자동화가 실제로 내보내는 씬 수', () => {
     await window.__mcpExportCapcut({ capcutProjectNumber: '/d/1', includePending: true })
 
     expect(mockExportCapcut.mock.calls[0][0].scenes.map(s => s.id)).toEqual(['d', 'p1', 'p2'])
+  })
+
+  // ⚠️ 프리미어도 **반드시** 같은 단언을 받아야 한다. CapCut 만 세면
+  // 프리미어 경로에 `{ includePending: true }` 를 박아넣는 뮤턴트가 전 스위트를
+  // 통과한다(실측). 그건 사용자가 "배제" 를 눌렀는데 pending 이 나가는 것이다.
+  it('프리미어도 기본은 ready 만 나간다', async () => {
+    mountWithRealExport()
+
+    await window.__mcpExportPremiere({ capcutProjectNumber: '/d/1' })
+
+    expect(mockExportPremiere.mock.calls[0][0].scenes.map(s => s.id)).toEqual(['d'])
+  })
+
+  it('프리미어도 includePending:true 면 함께 나간다', async () => {
+    mountWithRealExport()
+
+    await window.__mcpExportPremiere({ capcutProjectNumber: '/d/1', includePending: true })
+
+    expect(mockExportPremiere.mock.calls[0][0].scenes.map(s => s.id)).toEqual(['d', 'p1', 'p2'])
   })
 
   it('자동화 경로는 모달을 띄우지 않는다 — 훅만으로 완결된다', async () => {
