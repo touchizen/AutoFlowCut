@@ -56,6 +56,9 @@ describe('registerSpikeShortcuts', () => {
     expect(deps.fs.mkdirSync).toHaveBeenCalledWith('/UD/spike-chatgpt', { recursive: true })
     const writtenPath = deps.fs.writeFileSync.mock.calls[0][0]
     expect(writtenPath).toContain('dom-dump-composer-empty.json')
+    // 성공 로그의 양성 대조군 — 이게 없으면 실패 케이스의 not.toHaveBeenCalledWith('[spike] dump saved:')
+    // 가 문자열이 바뀌는 순간 아무것도 안 물고 통과한다.
+    expect(deps.log.info).toHaveBeenCalledWith('[spike] dump saved:', writtenPath)
   })
 
   it('F handler saves result snapshot', async () => {
