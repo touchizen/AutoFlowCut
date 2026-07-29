@@ -158,7 +158,9 @@ export function callPage(fnName, ...args) {
 // ── main 측 trusted 입력(fallback) ──────────────────────────────────
 // 하드코딩 프롬프트는 ASCII 로 고정한다: fallback B 가 char 이벤트로 한 글자씩 치는데
 // 비-ASCII(한글)는 IME 경유라 신뢰할 수 없다(플랜 D2).
-export const SPIKE_PROMPT = 'a single red apple on a white background'
+// 이미지 생성을 **명시적으로** 요구해야 한다 — 명사구만 던지면 ChatGPT 가 텍스트로 답해
+// 이미지가 영영 안 나오고, 상태기계는 120s 를 폴링하다 'poll deadline' 으로 끝난다.
+export const SPIKE_PROMPT = 'Generate an image of a single red apple on a white background'
 
 export function clearComposerAndType(view, text) {
   const wc = view.webContents

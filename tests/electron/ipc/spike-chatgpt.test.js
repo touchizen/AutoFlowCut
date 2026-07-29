@@ -72,7 +72,8 @@ describe('registerSpikeShortcuts', () => {
     await registered.get('Cmd+Alt+Shift+D')()
     expect(deps.log.error).toHaveBeenCalledWith('[spike] dump failed:', 'composer-empty', 'navigation aborted')
     expect(deps.fs.writeFileSync).not.toHaveBeenCalled()
-    expect(deps.log.info).not.toHaveBeenCalled()
+    // 원래 의도 = "성공 로그가 없다". 등록 로그(전체 info 금지)까지 막던 걸 그 의도로 좁힌다.
+    expect(deps.log.info).not.toHaveBeenCalledWith('[spike] dump saved:', expect.anything())
   })
 
   it('L handler shows the view (attach+focus), no dump', async () => {
@@ -246,6 +247,42 @@ describe('Cmd+Alt+Shift+G (generate)', () => {
     await generate()
     expect(deps.executeInView.mock.calls.filter(([, script]) => String(script).includes('__cg_baseline__('))).toHaveLength(2)
     expect(deps.fs.writeFileSync).toHaveBeenCalledTimes(2)
+  })
+
+  it('a stalled image download cannot pin the in-flight guard forever', async () => {
+    // fetch/arrayBuffer 에는 자체 타임아웃이 없다 — 여기서 안 막으면 finally 가 영영 안 돌아
+    // generating 이 true 로 남고 이후 모든 G 가 "already running" 만 찍는다(재시작 전까지).
+    const { deps, registered, view } = makeGDeps()
+    deps.saveTimeoutMs = 5
+    view.webContents.session.fetch = vi.fn(() => new Promise(() => {}))   // 영원히 pending
+    registerSpikeShortcuts(deps)
+    const generate = registered.get('Cmd+Alt+Shift+G')
+
+    await generate()
+    expect(deps.log.error).toHaveBeenCalledWith('[spike] generate threw:', expect.stringContaining('eval timeout'))
+
+    // 가드가 풀렸는지 = 다음 G 가 실제로 다시 돈다
+    view.webContents.session.fetch = vi.fn(async () => ({
+      ok: true, status: 200,
+      headers: { get: () => 'image/png' },
+      arrayBuffer: async () => new Uint8Array([9]).buffer,
+    }))
+    await generate()
+    expect(deps.fs.writeFileSync).toHaveBeenCalledTimes(1)
+    expect(deps.log.info).not.toHaveBeenCalledWith('[spike] generate already running — ignoring')
+  })
+
+  it('logs that the shortcuts were registered (gate-off vs broken-handler is otherwise silent)', () => {
+    const { deps } = makeGDeps()
+    registerSpikeShortcuts(deps)
+    expect(deps.log.info).toHaveBeenCalledWith('[spike] shortcuts registered: Cmd+Alt+Shift+L/D/T/F/G')
+  })
+
+  it('logs nothing at all when the dev gate is off', () => {
+    const { deps } = makeDeps({ env: {} })
+    registerSpikeShortcuts(deps)
+    expect(deps.log.info).not.toHaveBeenCalled()
+    expect(deps.log.error).not.toHaveBeenCalled()
   })
 
   it('leaves L/D/T/F ungated (Phase 1 contract)', async () => {

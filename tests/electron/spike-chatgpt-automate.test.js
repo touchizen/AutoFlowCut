@@ -354,6 +354,10 @@ describe('withEvalTimeout', () => {
 })
 
 describe('SPIKE_PROMPT', () => {
+  it('explicitly asks for an image (a bare noun phrase gets answered with text)', () => {
+    expect(SPIKE_PROMPT.toLowerCase()).toMatch(/\bimage\b/)
+    expect(SPIKE_PROMPT.toLowerCase()).toMatch(/^(generate|create|draw|make)\b/)
+  })
   it('is ASCII-only so sendInputEvent char typing can reproduce it', () => {
     // 타입 단언이 먼저 — 정규식은 undefined 도 'undefined' 로 강제 변환해 통과시킨다.
     expect(typeof SPIKE_PROMPT).toBe('string')

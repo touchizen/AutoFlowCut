@@ -3,7 +3,7 @@ import { ensureChatgptView, ensureVisibleAndFocused } from '../spike-chatgpt-vie
 import { CHATGPT_DUMPER } from '../spike-chatgpt-dumper.js'
 import { saveDump } from '../spike-chatgpt-storage.js'
 import { ensureLoggedIn, whenLoaded } from '../spike-chatgpt-authprobe.js'
-import { runGenerateStateMachine, SPIKE_PROMPT } from '../spike-chatgpt-automate.js'
+import { runGenerateStateMachine, SPIKE_PROMPT, withEvalTimeout } from '../spike-chatgpt-automate.js'
 import { saveImage } from '../spike-chatgpt-image.js'
 
 // dev 전용. 게이트 통과 시에만 L/D/T/F 등록. 전부 무게이트(로그인/셀렉터 전에도 덤프 가능).
@@ -11,7 +11,7 @@ import { saveImage } from '../spike-chatgpt-image.js'
 export function registerSpikeShortcuts(deps) {
   const {
     app, env, globalShortcut, getMainWindow, makeView, disposeView, state,
-    executeInView, fs, log, generateOptions = {}, probeOptions = {},
+    executeInView, fs, log, generateOptions = {}, probeOptions = {}, saveTimeoutMs = 30000,
   } = deps
   if (!isSpikeEnabled(app, env)) return
 
@@ -63,7 +63,9 @@ export function registerSpikeShortcuts(deps) {
         log.error('[spike] generate failed:', r.stage, r.detail || '')
         return
       }
-      const p = await saveImage(app, view, r.src, fs)
+      // fetch/arrayBuffer 는 자체 타임아웃이 없다 — 여기서 안 막으면 stall 한 다운로드가
+      // finally 에 도달 못 해 generating 이 영구히 true 로 남는다(재시작 전까지 G 무력화).
+      const p = await withEvalTimeout(saveImage(app, view, r.src, fs), saveTimeoutMs)
       log.info('[spike] image saved:', p)
     } catch (e) {
       log.error('[spike] generate threw:', e?.message || e)
@@ -71,4 +73,8 @@ export function registerSpikeShortcuts(deps) {
       generating = false
     }
   })
+
+  // 게이트가 꺼졌거나 env 가 electron main 까지 안 넘어오면 G 는 아무 출력 없이 무반응이다
+  // — "게이트 off" 와 "핸들러 고장"을 구분할 수 있게 등록 사실을 남긴다.
+  log.info('[spike] shortcuts registered: Cmd+Alt+Shift+L/D/T/F/G')
 }

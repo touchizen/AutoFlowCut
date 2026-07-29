@@ -31,6 +31,10 @@ describe('extFromContentType', () => {
   it('ignores charset/parameters and case', () => {
     expect(extFromContentType('Image/WEBP; charset=binary')).toBe('webp')
   })
+  it('covers every image/* the gate lets through (gif/avif must not become .png)', () => {
+    expect(extFromContentType('image/gif')).toBe('gif')
+    expect(extFromContentType('image/avif')).toBe('avif')
+  })
   it('falls back to the src extension, then png', () => {
     expect(extFromContentType(null, 'https://x/y/a.webp?sig=1')).toBe('webp')
     expect(extFromContentType('application/octet-stream', 'https://x/y/a.jpeg')).toBe('jpg')

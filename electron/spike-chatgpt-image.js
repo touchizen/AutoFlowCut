@@ -8,7 +8,9 @@ export function extFromContentType(contentType, src = '') {
   if (t === 'image/png') return 'png'
   if (t === 'image/jpeg' || t === 'image/jpg') return 'jpg'
   if (t === 'image/webp') return 'webp'
-  const m = String(src || '').match(/\.(png|jpe?g|webp)(?:[?#]|$)/i)
+  if (t === 'image/gif') return 'gif'
+  if (t === 'image/avif') return 'avif'
+  const m = String(src || '').match(/\.(png|jpe?g|webp|gif|avif)(?:[?#]|$)/i)
   if (m) {
     const e = m[1].toLowerCase()
     return e === 'jpeg' ? 'jpg' : e
