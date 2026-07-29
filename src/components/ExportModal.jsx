@@ -324,6 +324,9 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
 
   const handlePendingChoice = async (includePending) => {
     const choice = pendingChoice
+    // 같은 flush 안의 이중 클릭 방어. 실제 브라우저에선 첫 클릭이 다이얼로그를
+    // unmount 시켜 두 번째가 닿지 않으므로 관찰상 거의 등가이고, 뮤테이션으로
+    // 죽지 않는다 — #25 와 같은 부류다. 규칙을 지켜 남긴다.
     if (!choice || phaseRef.current !== 'choosing') return
     await dispatch(choice.kind, choice.options, includePending)
   }

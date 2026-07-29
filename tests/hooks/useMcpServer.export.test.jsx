@@ -8,7 +8,27 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
+
+// exporter 만 mock 하고 **진짜 useExport** 를 주입한다 — 핸들러를 mock 하면
+// 옵션이 전달됐다는 것만 보이고 "실제로 몇 씬이 나갔는가" 를 못 본다.
+const mockExportCapcut = vi.fn()
+vi.mock('../../src/exporters/capcut.js', () => ({ exportCapcut: (...a) => mockExportCapcut(...a) }))
+vi.mock('../../src/exporters/premiere.js', () => ({ exportPremiere: vi.fn().mockResolvedValue({ success: true }) }))
+vi.mock('../../src/exporters/vrew.js', () => ({ exportVrew: vi.fn().mockResolvedValue({ success: true }) }))
+vi.mock('../../src/components/Toast', () => ({
+  toast: { warning: vi.fn(), success: vi.fn(), info: vi.fn(), error: vi.fn() }
+}))
+vi.mock('../../src/hooks/useI18n', () => ({
+  default: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
+  useI18n: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() })
+}))
+vi.mock('../../src/hooks/useFileSystem', () => ({
+  fileSystemAPI: { ensurePermission: vi.fn().mockResolvedValue({ hasPermission: true }) },
+  default: () => ({})
+}))
+
 import { useMcpServer } from '../../src/hooks/useMcpServer'
+import { useExport } from '../../src/hooks/useExport'
 
 const handleExportConfirm = vi.fn()
 const handleExportPremiere = vi.fn()
@@ -32,6 +52,7 @@ function makeProps() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockExportCapcut.mockResolvedValue({ success: true, targetPath: '/out' })
   handleExportConfirm.mockResolvedValue({ success: true, targetPath: '/out' })
   handleExportPremiere.mockResolvedValue({ success: true, targetPath: '/out' })
   localStorage.setItem('exportSettings', '{}')
@@ -87,5 +108,65 @@ describe('useMcpServer — includePending 통과', () => {
     expect(handleExportPremiere).toHaveBeenLastCalledWith(
       expect.objectContaining({ includePending: true })
     )
+  })
+})
+
+// ── 결과 개수까지 본다 (스펙 §7.5: real useExport 주입) ────────────────
+describe('useMcpServer — 자동화가 실제로 내보내는 씬 수', () => {
+  const scene = (id, status) => ({
+    id, status, image: 'data:image/png;base64,x',
+    startTime: 0, endTime: 5, duration: 5,
+  })
+  // done 1 + pending+이미지 2 — 시각은 아래에서 겹치지 않게 다시 준다.
+  const scenes = [
+    { ...scene('d', 'done'), startTime: 0, endTime: 5, duration: 5 },
+    { ...scene('p1', 'pending'), startTime: 5, endTime: 9, duration: 4 },
+    { ...scene('p2', 'pending'), startTime: 9, endTime: 15, duration: 6 },
+  ]
+
+  function mountWithRealExport() {
+    return renderHook(() => {
+      const exportHook = useExport({
+        settings: { projectName: 'P', aspectRatio: '16:9', defaultDuration: 3 },
+        scenes,
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'active', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn(),
+      })
+      useMcpServer({
+        ...makeProps(),
+        scenes,
+        handleExportConfirm: exportHook.handleExportConfirm,
+        handleExportPremiere: exportHook.handleExportPremiere,
+      })
+      return exportHook
+    })
+  }
+
+  it('기본은 ready 만 나간다', async () => {
+    mountWithRealExport()
+
+    await window.__mcpExportCapcut({ capcutProjectNumber: '/d/1' })
+
+    expect(mockExportCapcut.mock.calls[0][0].scenes.map(s => s.id)).toEqual(['d'])
+  })
+
+  it('includePending:true 면 pending 씬도 함께 나간다', async () => {
+    mountWithRealExport()
+
+    await window.__mcpExportCapcut({ capcutProjectNumber: '/d/1', includePending: true })
+
+    expect(mockExportCapcut.mock.calls[0][0].scenes.map(s => s.id)).toEqual(['d', 'p1', 'p2'])
+  })
+
+  it('자동화 경로는 모달을 띄우지 않는다 — 훅만으로 완결된다', async () => {
+    const { result } = mountWithRealExport()
+
+    await window.__mcpExportCapcut({ capcutProjectNumber: '/d/1' })
+
+    expect(result.current.showExportModal).toBe(false)
   })
 })

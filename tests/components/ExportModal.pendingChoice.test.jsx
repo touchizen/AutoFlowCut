@@ -129,6 +129,17 @@ describe('ExportModal — 문구가 어느 카운트를 쓰는가', () => {
     expect(msg.textContent).not.toContain('"total":5')
   })
 
+  it('로케일 플레이스홀더가 컴포넌트가 넘기는 이름과 맞는다', async () => {
+    // i18n 을 mock 해서 vars 를 관찰하므로, ko.js 의 `{total}` 이 `{count}` 로
+    // 개명되면 화면에 리터럴 중괄호가 나가는데 다른 테스트는 아무것도 안 죽는다.
+    const ko = (await import('../../src/locales/ko.js')).default
+    const en = (await import('../../src/locales/en.js')).default
+    for (const m of [ko, en]) {
+      expect(m.exportModal.pendingChoiceMessage).toContain('{total}')
+      expect(m.exportModal.pendingChoiceMessage).toContain('{pending}')
+    }
+  })
+
   it('문구 키가 로케일에 실재한다 (raw key 노출 금지)', async () => {
     const ko = await import('../../src/locales/ko.js')
     const en = await import('../../src/locales/en.js')
