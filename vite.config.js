@@ -59,7 +59,12 @@ export default defineConfig(({ command, mode }) => {
               // preload.cjs / flow-preload.cjs 가 main 리빌드마다 지워진다.
               emptyOutDir: command === 'build',
               rollupOptions: {
-                external: ['electron']
+                // puppeteer-core(쿠팡 CDP 크롤)는 무겁고 dynamic require 가 많아 번들하지 않고
+                // 런타임에 node_modules 에서 require 한다. 특히 ws 의 선택적 네이티브 의존성
+                // bufferutil/utf-8-validate 는 번들되면 optional require 가 하드 import 로 바뀌어
+                // "Could not resolve bufferutil" 로드 실패를 낸다 — external 로 빼면 ws 의 try/catch
+                // 폴백(순수 JS)이 정상 동작한다.
+                external: ['electron', 'puppeteer-core', 'bufferutil', 'utf-8-validate']
               }
             },
             // ⚠️ main 프로세스에서는 console 을 지우지 않는다. @sentry/electron 은
