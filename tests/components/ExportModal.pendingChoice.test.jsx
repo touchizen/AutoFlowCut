@@ -186,6 +186,22 @@ describe('ExportModal — 3버튼 동작', () => {
     expect(saveSettings).toHaveBeenCalled()
   })
 
+  it('고른 뒤 포맷이 바뀌어도 고를 때의 포맷으로 발사된다', async () => {
+    // pendingChoice.kind 대신 live format 을 읽으면 여기서 갈린다. 탭은 choosing
+    // 중에 잠기지만, 잠금이 약해지는 회귀와 독립적으로 kind 를 고정해야 한다.
+    const props = { ...baseProps(), initialFormat: 'premiere' }
+    const { rerender } = await renderModal(props)
+    await clickExport()
+
+    // 진입 포맷이 바뀌면서 리렌더 — 모달이 열린 채라 format state 는 유지되지만,
+    // 구현이 live format 을 읽는다면 이 리렌더가 그것을 바꿀 수 있다.
+    await act(async () => { rerender(<ExportModal {...props} initialFormat="capcut" />) })
+    await act(async () => { fireEvent.click(screen.getByText('exportModal.pendingChoiceInclude')) })
+
+    expect(onExportPremiere).toHaveBeenCalled()
+    expect(onExport).not.toHaveBeenCalled()
+  })
+
   it('포맷 전환: 모달 안에서 프리미어로 바꾸면 프리미어 콜백이 불린다', async () => {
     await renderModal(baseProps())
 
@@ -256,6 +272,34 @@ const STALE_SITES = [
 ]
 
 describe.each(STALE_SITES)('ExportModal — stale 가드 (%s)', (_label, fmt, api, resolved) => {
+  // ⚠️ "발사되지 않는다" 만 보면 개별 가드를 지워도 **뒤의 가드나 최종 백스톱이 대신
+  // 잡아서** 뮤턴트가 산다. 각 가드가 실제로 막는 것은 *그 다음 단계의 부작용* 이다 —
+  // 닫힌 시도가 confirm/alert/openExternal 을 띄우거나 폴더를 더 조회하면 안 된다.
+  it('붙잡은 지점 이후의 부작용이 일어나지 않는다', async () => {
+    const d = deferred()
+    window.electronAPI[api] = vi.fn().mockReturnValue(d.promise)
+    // 이 시도가 계속 진행되면 반드시 지나가는 지점들
+    window.electronAPI.checkFolderExists = api === 'checkFolderExists'
+      ? window.electronAPI.checkFolderExists
+      : vi.fn().mockResolvedValue({ exists: true })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const props = { ...baseProps(), initialFormat: fmt }
+    const { rerender } = await renderModal(props)
+
+    await act(async () => { fireEvent.click(screen.getByText(/exportModal\.export$/)) })
+    await act(async () => { rerender(<ExportModal {...props} isOpen={false} />) })
+    await act(async () => { rerender(<ExportModal {...props} isOpen />) })
+    const foldersBefore = window.electronAPI.checkFolderExists.mock.calls.length
+    await act(async () => { d.resolve(resolved) })
+
+    // 미설치/덮어쓰기 confirm 이 뜨면 안 되고, 폴더를 더 조회해서도 안 된다.
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(window.electronAPI.checkFolderExists.mock.calls.length).toBe(foldersBefore)
+    expect(onExport).not.toHaveBeenCalled()
+    expect(onExportPremiere).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
   it('붙잡기 → 닫기 → 재오픈 → resolve 면 발사되지 않는다', async () => {
     const d = deferred()
     window.electronAPI[api] = vi.fn().mockReturnValue(d.promise)
@@ -326,6 +370,47 @@ describe('ExportModal — 소프트락 방지', () => {
     await clickExport()
 
     expect(onExport).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('ExportModal — latch 수명 (A/B 인터리브)', () => {
+  // 가드 없이도 B 는 결국 dispatch 하므로 "B 가 산다" 만 보면 안 죽는다.
+  // 관찰 가능한 건 **세 번째 클릭이 막히는가** 뿐이다.
+  it('A 가 늦게 resolve 해도 B 의 latch 를 풀지 않는다', async () => {
+    const a = deferred(); const b = deferred()
+    window.electronAPI.checkCapcutInstalled = vi.fn()
+      .mockReturnValueOnce(a.promise)
+      .mockReturnValueOnce(b.promise)
+      .mockResolvedValue({ installed: true })
+    const props = baseProps()
+    const { rerender } = await renderModal(props)
+
+    await act(async () => { fireEvent.click(screen.getByText(/exportModal\.export$/)) })   // A
+    await act(async () => { rerender(<ExportModal {...props} isOpen={false} />) })
+    await act(async () => { rerender(<ExportModal {...props} isOpen />) })
+    await act(async () => { fireEvent.click(screen.getByText(/exportModal\.export$/)) })   // B
+    await act(async () => { a.resolve({ installed: true }) })                              // A 늦게 도착
+
+    // B 가 아직 preflight 중이므로 세 번째 클릭은 막혀야 한다.
+    await act(async () => { fireEvent.click(screen.getByText(/exportModal\.export$/)) })
+    expect(window.electronAPI.checkCapcutInstalled).toHaveBeenCalledTimes(2)
+    b.resolve({ installed: true })
+  })
+
+  it('dispatch 중 닫아도 콜백이 settle 하기 전엔 재진입이 안 된다', async () => {
+    const d = deferred()
+    onExport.mockReturnValue(d.promise)
+    const props = { ...baseProps(), pendingWithImageCount: 0 }
+    const { rerender } = await renderModal(props)
+
+    await act(async () => { fireEvent.click(screen.getByText(/exportModal\.export$/)) })
+    await act(async () => { rerender(<ExportModal {...props} isOpen={false} />) })
+    await act(async () => { rerender(<ExportModal {...props} isOpen />) })
+    // 아직 pending — 여기서 또 누르면 이중 내보내기가 된다.
+    await act(async () => { fireEvent.click(screen.getByText(/exportModal\.export$/)) })
+
+    expect(onExport).toHaveBeenCalledTimes(1)
+    await act(async () => { d.resolve({ success: true }) })
   })
 })
 
