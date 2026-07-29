@@ -445,8 +445,13 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
         }
       } catch (err) {
         console.warn('[ExportModal] CapCut install check failed:', err)
-        // Don't block export on check failure. ⚠️ 삼킨 뒤에도 stale 검사는 한다 —
+        // Don't block export on check failure. 삼킨 뒤에도 stale 검사는 한다 —
         // fail-open 이라 여기서 안 보면 닫힌 뒤 재개될 수 있다.
+        //
+        // 측정 결과 이 한 줄은 **등가 뮤턴트**다: 지우면 handleExport 의 최종
+        // isAlive 백스톱이 어차피 잡고, 그 사이에 관찰 가능한 일이 없다. 다른
+        // 사이트들과 달리 뒤따르는 대화상자가 없기 때문. 규칙("모든 await 직후")을
+        // 깨서 다음 사람이 헷갈리게 두느니 남긴다.
       }
       if (!isAlive(my)) return null
     }
