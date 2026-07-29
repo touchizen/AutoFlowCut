@@ -266,9 +266,9 @@ describe('ExportModal — 잠금', () => {
 // ── stale 가드: 사이트별 전수 ─────────────────────────────────────────
 // 인스턴스를 하나씩 추가하면 사이트 하나당 라운드가 하나씩 든다. 표로 돌린다.
 const STALE_SITES = [
-  ['CapCut 설치확인', 'capcut', 'checkCapcutInstalled', { installed: true }],
-  ['프리미어 설치확인', 'premiere', 'checkPremiereInstalled', { installed: true }],
-  ['프리미어 폴더확인', 'premiere', 'checkFolderExists', { exists: false }],
+  ['CapCut 설치확인', 'capcut', 'checkCapcutInstalled', { installed: false }],
+  ['프리미어 설치확인', 'premiere', 'checkPremiereInstalled', { installed: false }],
+  ['프리미어 폴더확인', 'premiere', 'checkFolderExists', { exists: true }],
 ]
 
 describe.each(STALE_SITES)('ExportModal — stale 가드 (%s)', (_label, fmt, api, resolved) => {
@@ -278,26 +278,36 @@ describe.each(STALE_SITES)('ExportModal — stale 가드 (%s)', (_label, fmt, ap
   it('붙잡은 지점 이후의 부작용이 일어나지 않는다', async () => {
     const d = deferred()
     window.electronAPI[api] = vi.fn().mockReturnValue(d.promise)
-    // 이 시도가 계속 진행되면 반드시 지나가는 지점들
-    window.electronAPI.checkFolderExists = api === 'checkFolderExists'
-      ? window.electronAPI.checkFolderExists
-      : vi.fn().mockResolvedValue({ exists: true })
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const props = { ...baseProps(), initialFormat: fmt }
     const { rerender } = await renderModal(props)
 
     await act(async () => { fireEvent.click(screen.getByText(/exportModal\.export$/)) })
     await act(async () => { rerender(<ExportModal {...props} isOpen={false} />) })
     await act(async () => { rerender(<ExportModal {...props} isOpen />) })
-    const foldersBefore = window.electronAPI.checkFolderExists.mock.calls.length
     await act(async () => { d.resolve(resolved) })
 
-    // 미설치/덮어쓰기 confirm 이 뜨면 안 되고, 폴더를 더 조회해서도 안 된다.
+    // resolve 값은 살아있는 시도라면 반드시 대화상자를 띄우는 것들이다
+    // (미설치 안내 / 덮어쓰기 확인). 닫힌 시도는 아무것도 띄우면 안 된다.
     expect(confirmSpy).not.toHaveBeenCalled()
-    expect(window.electronAPI.checkFolderExists.mock.calls.length).toBe(foldersBefore)
+    expect(alertSpy).not.toHaveBeenCalled()
+    expect(window.electronAPI.openExternal).not.toHaveBeenCalled()
     expect(onExport).not.toHaveBeenCalled()
     expect(onExportPremiere).not.toHaveBeenCalled()
-    confirmSpy.mockRestore()
+    confirmSpy.mockRestore(); alertSpy.mockRestore()
+  })
+
+  it('살아있는 시도였다면 그 대화상자가 실제로 뜬다 (위 단언이 공허하지 않다는 증거)', async () => {
+    window.electronAPI[api] = vi.fn().mockResolvedValue(resolved)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    await renderModal({ ...baseProps(), initialFormat: fmt })
+
+    await clickExport()
+
+    expect(confirmSpy.mock.calls.length + alertSpy.mock.calls.length).toBeGreaterThan(0)
+    confirmSpy.mockRestore(); alertSpy.mockRestore()
   })
 
   it('붙잡기 → 닫기 → 재오픈 → resolve 면 발사되지 않는다', async () => {
