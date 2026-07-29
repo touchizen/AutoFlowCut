@@ -1,8 +1,11 @@
 /**
  * useExport — 씬 사이 간격 흡수 배선 (스펙 v10 §4.1·§4.2·§4.5 / §7.2·§7.4)
  *
- * buildExportProject 는 훅 내부 함수라 직접 못 본다 → exporter 를 mock 하고
- * `exportCapcut` 이 받은 project 를 단언한다. 훅은 renderHook 으로 실제로 돌린다.
+ * buildExportProject 는 훅 내부 함수라 직접 못 본다 → `exportCapcut` 만 mock 하고
+ * 그것이 받은 project 를 단언한다. 훅은 renderHook 으로 실제로 돌린다.
+ * ⚠️ `capcut.js` 는 **부분 mock** 이다 — `generateSRT` 는 진짜 모듈을 쓴다
+ * (사이드카 핸드오프를 합성으로 물기 위해). default export 도 함께 덮어써서
+ * 나중에 default 로 import 하는 테스트가 실제 네트워크 경로를 타지 않게 한다.
  * 기대값은 전부 리터럴로 박는다 (새 코드를 두 번 돌려 비교하면 공허하게 통과).
  */
 
@@ -10,10 +13,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 
 const mockExportCapcut = vi.fn()
-vi.mock('../../src/exporters/capcut.js', async (importActual) => ({
-  ...(await importActual()),
-  exportCapcut: (...args) => mockExportCapcut(...args)
-}))
+vi.mock('../../src/exporters/capcut.js', async (importActual) => {
+  const actual = await importActual()
+  const exportCapcut = (...args) => mockExportCapcut(...args)
+  return { ...actual, exportCapcut, default: { ...actual.default, exportCapcut } }
+})
 const mockExportPremiere = vi.fn()
 vi.mock('../../src/exporters/premiere.js', () => ({
   exportPremiere: (...args) => mockExportPremiere(...args)
@@ -175,12 +179,11 @@ describe('useExport — source_duration / source_offset emit', () => {
 })
 
 describe('useExport — 영상 길이 폴백 체인', () => {
-  const t2v = { id: 'A', videoPath: '/v.mp4', status: 'done', prompt: '' }
-
+  // 영상은 `scene.videoT2V` → resolveExportVideos 로만 들어온다. 상위 `videos`
+  // 페이로드를 없애면서 `videoScenes` prop 은 훅이 더 이상 읽지 않으므로 픽스처에서 뺀다.
   it('슬롯 프로젝트 + 자체 길이 없는 영상 → source_duration 을 받는다', async () => {
     const project = await exportedProject(
-      [scene('A', 0.1, 5, { videoT2V: '/v.mp4' }), scene('B', 6, 9), scene('C', 10, 15)],
-      { videoScenes: [t2v] }
+      [scene('A', 0.1, 5, { videoT2V: '/v.mp4' }), scene('B', 6, 9), scene('C', 10, 15)]
     )
 
     const withVideo = project.scenes.find(s => s.videos.length > 0)
@@ -192,8 +195,7 @@ describe('useExport — 영상 길이 폴백 체인', () => {
       [
         { ...scene('A', 0, 10, { videoT2V: '/v.mp4' }), duration: 3 },
         scene('B', 5, 8)
-      ],
-      { videoScenes: [t2v] }
+      ]
     )
 
     const withVideo = project.scenes.find(s => s.videos.length > 0)
