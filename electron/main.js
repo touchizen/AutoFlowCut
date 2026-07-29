@@ -17,6 +17,7 @@ import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { registerStoryIPC } from './ipc/story-api.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
+import { registerSpikeShortcuts } from './ipc/spike-chatgpt.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
 import { createStoryLlmRouter } from './api/llm/storyLlmRouter.js'
@@ -49,6 +50,7 @@ import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
+import { CHATGPT_URL } from './spike-chatgpt-view.js'
 import { buildKeyResolvers } from './main/keyResolvers.js'
 import * as Sentry from '@sentry/electron/main'
 
@@ -1599,6 +1601,29 @@ app.whenReady().then(() => {
   ipcMain.handle('app:set-locale', (_e, { lang } = {}) => { try { setMenuLocale(lang) } catch {} ; return { ok: true } })
 
   createWindow()
+
+  // ── ChatGPT 자동화 스파이크 (macOS dev 전용, AUTOFLOWCUT_SPIKE=1) ──
+  const spikeState = { view: null }
+  registerSpikeShortcuts({
+    app,
+    env: process.env,
+    globalShortcut,
+    getMainWindow: () => mainWindow,
+    state: spikeState,
+    // makeView: persist:chatgpt WebContentsView 생성 + loadURL + console-forward (Flow 전용 결합 미복사)
+    makeView: () => {
+      const view = new WebContentsView({ webPreferences: { partition: 'persist:chatgpt', contextIsolation: true } })
+      view.webContents.on('console-message', (_e, _l, message) => {
+        if (message.includes('[autoflowcut CGPT')) console.log('[CGPT Page]', message)
+      })
+      view.webContents.on('did-fail-load', (_e, code, desc, url) => console.error('[CGPT] did-fail-load', code, desc, url))
+      view.webContents.loadURL(CHATGPT_URL)
+      return view
+    },
+    executeInView: (view, script) => view.webContents.executeJavaScript(script),
+    fs: fsSync,
+    log: { error: (...a) => console.error(...a), info: (...a) => console.log(...a) },
+  })
 
   // 진단: Cmd/Ctrl+Shift+E → 현재 Flow 웹뷰의 인터랙티브 요소 + bodyHTML 을 데스크톱에
   //   타임스탬프 JSON 파일로 덤프. 라이브 셀렉터(예: 에이전트 챗 패널 닫기 버튼)를 추측 없이
