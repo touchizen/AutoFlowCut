@@ -29,8 +29,8 @@ const settings = { projectName: 'P', aspectRatio: '9:16', defaultDuration: 3 }
 const scenes = [{ id: 'scene_1', prompt: 'p', imagePath: '/tmp/a.png', status: 'done' }]
 const renderArgs = { scaleMode: 'fit', kenBurns: false, kenBurnsMode: 'random', kenBurnsCycle: 5, kenBurnsScaleMin: 100, kenBurnsScaleMax: 130, subtitleOption: 'none', subtitleFontSize: 8, renderMode: 'final', renderBurnSubtitle: true }
 
-const renderExport = () => renderHook(() => useExport({
-  settings, scenes,
+const renderExport = ({ exportScenes = scenes } = {}) => renderHook(() => useExport({
+  settings, scenes: exportScenes,
   openSettings: vi.fn(),
   isAuthenticated: true,
   subscription: { status: 'trial', canExport: true },
@@ -86,5 +86,33 @@ describe('useExport.handleExportRender', () => {
 
     expect(exportRenderVideo.mock.calls[0][2]).not.toHaveProperty('confirmOverlays')
     expect(window.confirm).not.toHaveBeenCalled()
+  })
+
+  it('passes a source_offset-shifted segment through the self-render entry point', async () => {
+    window.electronAPI = {
+      storyLoadAudioPackage: vi.fn(async () => null),
+      renderMp4: vi.fn(async () => ({ ok: true, outPath: '/o.mp4' })),
+      onRenderProgress: vi.fn(() => () => {}),
+    }
+    const exportScenes = [
+      {
+        id: 'scene_1', imagePath: '/tmp/a.png', status: 'done',
+        startTime: 1, endTime: 5, duration: 4,
+        videoI2VPath: '/tmp/v.mp4', videoI2VDuration: 2,
+      },
+      {
+        id: 'scene_2', imagePath: '/tmp/b.png', status: 'done',
+        startTime: 6, endTime: 9, duration: 3,
+      },
+    ]
+    const { result } = renderExport({ exportScenes })
+
+    await act(async () => { await result.current.handleExportRender(renderArgs) })
+
+    const project = exportRenderVideo.mock.calls[0][0]
+    expect(project.scenes[0].image_duration).toBe(6)
+    expect(project.renderVideoSegments).toEqual([
+      { sceneId: 'scene_1', source: 'i2v', inSec: 3, outSec: 5 },
+    ])
   })
 })

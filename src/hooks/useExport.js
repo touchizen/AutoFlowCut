@@ -170,10 +170,18 @@ export function useExport({
         const sceneDuration = slots.imageSlots[i]
         // 씬 자기 길이 — 영상 오버레이는 슬롯이 아니라 이걸 기준으로 배치된다.
         const sourceDuration = slots.useSlots ? slots.sourceDurations[i] : null
+        const off = slots.useSlots ? (slots.sourceOffsets[i] || 0) : 0
         const rawVideos = resolveExportVideos(s)
         const segBasis = sourceDuration || sceneDuration
         const segment = computeExportVideoSegment({ videos: rawVideos, sceneDurationSec: segBasis })
-        if (segment) renderVideoSegments.push({ sceneId: s.id, ...segment })
+        if (segment) {
+          renderVideoSegments.push({
+            sceneId: s.id,
+            source: segment.source,
+            inSec: segment.inSec + off,
+            outSec: segment.outSec + off,
+          })
+        }
         // 모니터의 Ken Burns gate는 배치 가능한 segment가 아니라 비디오 존재 여부다.
         renderSceneMeta[s.id] = { hasVideo: rawVideos.length > 0 }
 
