@@ -84,7 +84,7 @@ describe('mcp-server toolResponses', () => {
 
     const result = await handleExportCapcutTool({ port: 4321 }, fetcher)
 
-    expect(fetcher).toHaveBeenCalledWith(4321, 'POST', '/api/export-capcut')
+    expect(fetcher).toHaveBeenCalledWith(4321, 'POST', '/api/export-capcut', { includePending: false })
     expect(result.isError).toBe(true)
     expect(result.content[0].text).toContain('No generated images')
   })
@@ -119,7 +119,39 @@ describe('mcp-server toolResponses', () => {
 
     const result = await handleExportPremiereTool({ port: 4321 }, fetcher)
 
-    expect(fetcher).toHaveBeenCalledWith(4321, 'POST', '/api/export-premiere')
+    expect(fetcher).toHaveBeenCalledWith(4321, 'POST', '/api/export-premiere', { includePending: false })
     expect(result.isError).toBeUndefined()
+  })
+})
+
+// pending 씬 포함 옵션이 MCP 를 통과해 앱까지 도달하는지 — 스키마·바디·화이트리스트
+// 세 곳이 전부 막고 있어서 예전에는 어디로도 가지 못했다.
+describe('mcp-server toolResponses — includePending 전달', () => {
+  it('기본은 false 다 (자동화 의미가 조용히 바뀌면 안 된다)', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+
+    await handleExportCapcutTool({ port: 3210 }, fetcher)
+    await handleExportPremiereTool({ port: 3210 }, fetcher)
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, 3210, 'POST', '/api/export-capcut', { includePending: false })
+    expect(fetcher).toHaveBeenNthCalledWith(2, 3210, 'POST', '/api/export-premiere', { includePending: false })
+  })
+
+  it('true 를 주면 그대로 바디에 실린다', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+
+    await handleExportCapcutTool({ port: 3210, includePending: true }, fetcher)
+    await handleExportPremiereTool({ port: 3210, includePending: true }, fetcher)
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, 3210, 'POST', '/api/export-capcut', { includePending: true })
+    expect(fetcher).toHaveBeenNthCalledWith(2, 3210, 'POST', '/api/export-premiere', { includePending: true })
+  })
+
+  it("truthy 문자열 같은 건 true 로 안 친다 (=== true)", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+
+    await handleExportCapcutTool({ port: 3210, includePending: 'yes' }, fetcher)
+
+    expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-capcut', { includePending: false })
   })
 })

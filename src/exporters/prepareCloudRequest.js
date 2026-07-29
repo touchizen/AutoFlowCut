@@ -165,8 +165,27 @@ export async function prepareCloudRequest(project, options = {}) {
     });
 
     // 영상 오버레이 (하이브리드: 씬당 0~2개. i2v=trackIndex 1 앞(위 트랙) / t2v=0 뒤).
-    // 영상이 짧으면 씬 뒤쪽 배치, 길면 처음부터 씬 길이만큼 자름. GCF 가 trackIndex 별로
-    // 트랙을 분리(없으면 0 → 단일 트랙 하위호환).
+    // 영상이 짧으면 발화 구간 뒤쪽 배치, 길면 발화 구간 시작부터 그 길이만큼 자름.
+    // GCF 가 trackIndex 별로 트랙을 분리(없으면 0 → 단일 트랙 하위호환).
+    //
+    // ⚠️ 기준은 sceneDuration(=슬롯)이 아니라 발화 구간이다. 슬롯은 다음 씬 시작까지
+    // 무음 간격을 흡수해 늘어나 있으므로, 슬롯으로 재면 짧은 영상이 무음 구간으로
+    // 밀리고 긴 영상이 간격을 덮는다. 간격은 앞 이미지가 hold 한다.
+    //   srcOff = 슬롯 시작 ~ 발화 시작 (첫 씬만 ≠ 0 — 선두 오프셋 흡수분)
+    //   srcDur = 씬 자기 길이
+    // 구형 요청(필드 없음)은 슬롯으로 폴백해 현행과 동일하게 동작한다.
+    // ?? 만으로는 NaN/Infinity 를 못 막으므로 isFinite 로 검사한다.
+    let srcOff = Number.isFinite(scene.source_offset) && scene.source_offset >= 0
+      ? scene.source_offset
+      : 0;
+    if (srcOff >= sceneDuration) srcOff = 0;
+    let srcDur = Number.isFinite(scene.source_duration) && scene.source_duration > 0
+      ? scene.source_duration
+      : sceneDuration;
+    // 앱이 emit 하는 값은 useSlots 술어(end_i <= start_{i+1})가 srcOff + srcDur <= slot 을
+    // 이미 보장한다. 이 캡은 구형·잘못된 요청 방어용 — 없으면 오버레이가 슬롯을 벗어나
+    // 다음 씬 화면을 덮는다.
+    srcDur = Math.min(srcDur, sceneDuration - srcOff);
     const sceneVideos = scene.videos || [];
     for (const v of sceneVideos) {
       const videoPath = v.path;
@@ -175,10 +194,10 @@ export async function prepareCloudRequest(project, options = {}) {
 
       // i2v·t2v 동시 export 시 파일명 충돌 방지 — data URL 분기는 sceneId 기반이므로 source 포함.
       const videoFilename = getFilename(videoPath, `${sceneId}_${v.source}`, 'video');
-      const clipDuration = Math.min(videoDuration, sceneDuration); // 씬 길이 초과 시 자름
-      const videoStartMs = videoDuration < sceneDuration
-        ? cumulativeTime + (sceneDuration - videoDuration) * 1000  // 짧으면 뒤쪽
-        : cumulativeTime;  // 길면 처음부터
+      const clipDuration = Math.min(videoDuration, srcDur); // 발화 구간 초과 시 자름
+      const videoStartMs = videoDuration < srcDur
+        ? cumulativeTime + (srcOff + srcDur - videoDuration) * 1000  // 짧으면 발화 구간 뒤쪽
+        : cumulativeTime + srcOff * 1000;  // 길면 발화 구간 시작부터
 
       cloudVideoOverlays.push({
         sceneId,

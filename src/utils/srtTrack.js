@@ -128,13 +128,27 @@ export function createSrtTrackFromScenes(scenes) {
  *   - 씬 내부 라인은 원본 startTime 의 상대 offset 보존 (라인 간 gap 유지)
  *   - scenes 가 참조하지 않는 라인은 결과에서 제외 (prune 역할 겸함)
  *
+ * 슬롯 옵션 (export gap-absorption): durationOf 로 누적 길이를 씬의 슬롯
+ * (= next.startTime - cur.startTime) 으로 바꾸고 initialCumulative 로 start_0
+ * 를 시드하면 cumulative 가 start_i 로 telescoping 해서 결과가 원본 절대 시각과
+ * 같아진다. 두 옵션을 안 넘기면 현행 동작 그대로다.
+ *
+ * ⚠️ 클램프 경계는 이 옵션들과 무관하게 scene.duration 을 쓴다. 슬롯을 경계에도
+ * 쓰면 경계가 다음 씬 시작이 되어, 사용자가 duration 을 줄여도 자막이 안 잘린다
+ * (R13 보호가 프로덕션 경로에서만 사라진다 — 이 파일의 rebaseClamp 테스트는
+ * 옵션 없이 호출하므로 계속 초록이라 못 잡는다).
+ *
  * @param {Array} srtTrack
  * @param {Array} scenes
+ * @param {object} [options]
+ * @param {boolean} [options.preserveUnlinked]
+ * @param {(scene: object, index: number) => number} [options.durationOf] 누적용 길이
+ * @param {number} [options.initialCumulative] cumulative 시드
  * @returns {Array} rebased srtTrack 라인 (scenes 순서대로)
  */
 export function rebaseSrtTrackToScenes(srtTrack, scenes, options = {}) {
   if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
-  const { preserveUnlinked = false } = options
+  const { preserveUnlinked = false, durationOf, initialCumulative } = options
   // R19 review fix: 빈 scenes 분기도 preserveUnlinked 존중.
   if (!Array.isArray(scenes) || scenes.length === 0) {
     return preserveUnlinked ? srtTrack : []
@@ -146,13 +160,16 @@ export function rebaseSrtTrackToScenes(srtTrack, scenes, options = {}) {
   if (!hasLinkage) return preserveUnlinked ? srtTrack : []
   const lineMap = new Map(srtTrack.map(l => [l.id, l]))
   const out = []
-  let cumulative = 0
-  for (const scene of scenes) {
+  let cumulative = Number(initialCumulative) || 0
+  for (let sceneIndex = 0; sceneIndex < scenes.length; sceneIndex++) {
+    const scene = scenes[sceneIndex]
     const ids = scene?.srtLineIds || []
     const sceneLines = ids.map(id => lineMap.get(id)).filter(Boolean)
     const sceneDuration = Number(scene?.duration) || 0
+    // 누적용 길이는 경계와 별개다 — durationOf 가 있으면 슬롯, 없으면 현행.
+    const advance = Number(durationOf ? durationOf(scene, sceneIndex) : scene?.duration) || 0
     if (sceneLines.length === 0) {
-      cumulative += sceneDuration
+      cumulative += advance
       continue
     }
     const originalStart = Number(sceneLines[0].startTime) || 0
@@ -175,9 +192,9 @@ export function rebaseSrtTrackToScenes(srtTrack, scenes, options = {}) {
         endTime: Math.min(absEnd, sceneBoundary),
       })
     }
-    // 씬 길이는 명시된 duration 우선, 없으면 line span
-    if (sceneDuration > 0) {
-      cumulative += sceneDuration
+    // 씬 길이는 명시된 duration(슬롯이면 슬롯) 우선, 없으면 line span
+    if (advance > 0) {
+      cumulative += advance
     } else {
       const lineSpan = (Number(sceneLines[sceneLines.length - 1].endTime) || 0) - originalStart
       cumulative += lineSpan

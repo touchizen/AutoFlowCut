@@ -505,3 +505,61 @@
 .export-modal-content::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
+
+/* ── pending 씬 포함/배제 다이얼로그 ──────────────────────────────────
+   내보내기 모달 위에 겹쳐 뜬다. 형제로 나란히 놓이면 뒤의 옵션이 계속
+   클릭 가능해서, preflight 때 캡처한 옵션과 사용자가 나중에 바꾼 값이
+   갈린다 — 그래서 자체 백드롭으로 덮는다. */
+.pending-choice-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+  padding: 20px;
+}
+
+.pending-choice {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.pending-choice-message {
+  margin: 0 0 8px;
+  color: #eee;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* 낡은 이미지일 수 있다는 경고 — 결정에 필요한 정보라 죽이지 않되,
+   본문보다는 한 단계 낮춘다. */
+.pending-choice-caveat {
+  margin: 0 0 20px;
+  color: #b0b0b0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pending-choice-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.pending-choice-actions .export-btn {
+  flex: 1 1 auto;
+  min-width: 88px;
+}

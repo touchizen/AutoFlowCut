@@ -28,7 +28,6 @@ export async function exportCapcut(project, options = {}) {
  */
 export function generateSRT(project, lang = 'ko') {
   const scenes = project.scenes || [];
-  const videos = project.videos || [];
 
   // Phase 5 + C1 review fix: srtTrack 은 단일 언어 (보통 ko narration). lang='ko'
   // 만 srtTrack 사용. lang='en' 요청은 scene.subtitle_en 폴백 (옛 동작) — 그렇지
@@ -50,18 +49,6 @@ export function generateSRT(project, lang = 'ko') {
     return srt.trim();
   }
 
-  // 비디오가 커버하는 씬 매핑.
-  // scene_id (= framePair.ownerSceneId — owner-binding canonical) 우선,
-  // 없으면 legacy from_scene (= startSceneId, mutable) 폴백.
-  // 사용자가 start 이미지 dropdown 만 바꿔도 비디오는 owner 씬에 묶여야 자막
-  // 타이밍이 정확한 씬에 attach 됨.
-  const videoMap = {};
-  videos.forEach(video => {
-    if (!video.video_path) return;
-    const sceneKey = video.scene_id ?? video.from_scene;
-    if (sceneKey) videoMap[sceneKey] = video;
-  });
-
   let srtContent = '';
   let index = 1;
   let currentTimeMs = 0;
@@ -70,24 +57,20 @@ export function generateSRT(project, lang = 'ko') {
   // 사용자가 moveScene 으로 [scene_2, scene_3, scene_1] 순서로 바꿔도 SRT 가 ID 정렬
   // 하면 자막 타이밍이 시각 순서와 어긋남 (CapCut export 는 array 순서 사용 → 불일치).
   // scenes 배열 순서 = 타임라인 순서.
+  //
+  // 누적은 항상 image_duration(=슬롯)이다. 예전에는 영상이 있는 씬만
+  // `video.duration || 5` 로 대체했는데, 슬롯이 타임라인의 유일한 기준이라
+  // 영상 씬을 지날 때마다 자막이 이미지와 어긋났다. 두 분기(자막 없는 씬 skip /
+  // 주 분기)가 각각 전진하므로 둘 다 슬롯을 쓴다.
   for (const scene of scenes) {
     const subtitle = lang === 'ko' ? scene.subtitle_ko : scene.subtitle_en;
+    const durationMs = (scene.image_duration || 3) * 1000;
 
-    // 자막이 없으면 스킵
+    // 자막이 없으면 스킵 — duration 만 더하고 넘어감
     if (!subtitle || !subtitle.trim()) {
-      // duration만 더하고 넘어감
-      const video = videoMap[scene.id];
-      const durationMs = video
-        ? (video.duration || 5) * 1000
-        : (scene.image_duration || 3) * 1000;
       currentTimeMs += durationMs;
       continue;
     }
-
-    const video = videoMap[scene.id];
-    const durationMs = video
-      ? (video.duration || 5) * 1000
-      : (scene.image_duration || 3) * 1000;
 
     const startTime = formatSRTTime(currentTimeMs);
     const endTime = formatSRTTime(currentTimeMs + durationMs);

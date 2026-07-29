@@ -172,10 +172,14 @@ describe('generateSRT', () => {
   })
 
   // ============================================================
-  // Video duration override
+  // Slot accumulation (gap-absorption spec §4.5)
+  //
+  // 예전에는 영상이 있는 씬만 `video.duration || 5` 로 대체했는데, 슬롯이
+  // 타임라인의 유일한 기준이라 영상 씬을 지날 때마다 자막이 이미지와 어긋났다.
+  // 이제 항상 image_duration(=슬롯)을 누적한다.
   // ============================================================
-  describe('video duration override', () => {
-    it('uses video duration when video exists for scene', () => {
+  describe('slot accumulation ignores video duration', () => {
+    it('uses the slot, not the video duration, when a video exists for the scene', () => {
       const project = {
         scenes: [
           { id: 'scene_1', subtitle_ko: 'With video', image_duration: 3 },
@@ -188,13 +192,13 @@ describe('generateSRT', () => {
 
       const srt = generateSRT(project, 'ko')
 
-      // scene_1 should use video duration (10s)
-      expect(srt).toContain('00:00:00,000 --> 00:00:10,000')
-      // scene_2 should start at 10s and use image_duration (4s)
-      expect(srt).toContain('00:00:10,000 --> 00:00:14,000')
+      // scene_1 uses its slot (3s), not the video duration (10s)
+      expect(srt).toContain('00:00:00,000 --> 00:00:03,000')
+      expect(srt).toContain('00:00:03,000 --> 00:00:07,000')
+      expect(srt).not.toContain('00:00:00,000 --> 00:00:10,000')
     })
 
-    it('falls back to default 5s for video without explicit duration', () => {
+    it('uses the slot, not the 5s default, for a video without explicit duration', () => {
       const project = {
         scenes: [
           { id: 'scene_1', subtitle_ko: 'Has video', image_duration: 3 },
@@ -206,8 +210,8 @@ describe('generateSRT', () => {
 
       const srt = generateSRT(project, 'ko')
 
-      // video without duration defaults to 5s
-      expect(srt).toContain('00:00:00,000 --> 00:00:05,000')
+      expect(srt).toContain('00:00:00,000 --> 00:00:03,000')
+      expect(srt).not.toContain('00:00:00,000 --> 00:00:05,000')
     })
 
     it('falls back to default 3s for scene without image_duration', () => {
