@@ -8,6 +8,7 @@
 
 // 공식 문서/가격 URL. cost 는 중립 근사치 — 정확한 티어/해상도별 가격은 PRICING_URL 참고.
 import { FLOW_MODELS } from '../engine/flowModels'
+import { isFlowTarget, isChatgptTarget } from './appRoute.js'
 import { VEO_RES_HD, VEO_RES_HD_4K } from '../utils/videoModels'
 
 const IMAGE_DOCS_URL = 'https://ai.google.dev/gemini-api/docs/image-generation'
@@ -195,7 +196,10 @@ export function pickValidModel(list, id, defaultId) {
  * @param {object} settings
  * @param {string} [mode] - 현재 앱 모드 ('api' | 'flow'). 미지정이면 api 모드처럼 동작.
  */
-export function computeModelHeal(availableModels, settings, mode) {
+export function computeModelHeal(availableModels, settings, mode, sessionTarget = 'flow') {
+  const flowTargetActive = isFlowTarget({ mode, sessionTarget })
+  if (isChatgptTarget({ mode, sessionTarget })) return {}
+
   // stale-catalog guard: 카탈로그가 로딩 중이면 heal 건너뜀 (Fix B)
   if (availableModels?.loading) return {}
 
@@ -209,21 +213,21 @@ export function computeModelHeal(availableModels, settings, mode) {
   //   직전 flow-static(stale) 카탈로그로 실행될 수 있다 → 이때 권위로 보면 복원된 API 스냅샷을
   //   Flow id 로 덮어쓴다. mode 불일치면 보존.
   const source = availableModels?.source
-  const flowStaticAuthoritative = source === 'flow-static' && mode === 'flow'
+  const flowStaticAuthoritative = source === 'flow-static' && flowTargetActive
   if (source && source !== 'dynamic' && !flowStaticAuthoritative) return {}
 
   // §5.12 heal 경계: 선택된 image provider 목록으로만 그 provider 모델을 heal.
   // Google 동적 /models 는 google 모델만 권위 — 비-google(openai) 선택 시 image heal 스킵(카탈로그 권위).
   // 단 Flow 모드는 google 전용이라 provider 설정과 무관하게 heal 유지(mode 우선).
   const imageProvider = settings?.generation?.image?.provider ?? 'google'
-  const healImageModel = mode === 'flow' || imageProvider === 'google'
+  const healImageModel = flowTargetActive || imageProvider === 'google'
   const out = {}
   const { imageModels, videoModels } = availableModels || {}
   if (healImageModel && imageModels && imageModels !== IMAGE_MODELS) {
     // Flow 모드 이미지 기본값 = 'Nano Banana 2' (라벨 매칭 — 스크랩 id 'Nano Banana 2'/정적
     //   id 'flow_image_generate' 둘 다 라벨로 잡힌다). 목록에 없으면 API 기본/첫 항목으로 수렴.
     let imgDefaultId = DEFAULT_IMAGE_MODEL_ID
-    if (mode === 'flow') {
+    if (flowTargetActive) {
       // 'Nano Banana 2' 를 id(스크랩 value) 또는 label 로 찾는다. 라벨엔 '🍌 ' 이모지 prefix 가
       //   붙어 정확매칭(=== 'nano banana 2')이 실패했다 → 재시작 heal 이 첫 항목(Pro)으로 떨어졌다.
       //   \b 로 'Nano Banana 25' 같은 오매칭은 막고, Pro/무관 항목은 '2' 없어 안 걸린다.
@@ -240,8 +244,8 @@ export function computeModelHeal(availableModels, settings, mode) {
     // Flow 모드는 google 전용이라 provider 무관하게 heal(mode 우선, image heal 과 동일 규칙).
     const t2vProvider = settings?.generation?.video?.t2v?.provider ?? 'google'
     const i2vProvider = settings?.generation?.video?.i2v?.provider ?? 'google'
-    const healT2V = mode === 'flow' || t2vProvider === 'google'
-    const healI2V = mode === 'flow' || i2vProvider === 'google'
+    const healT2V = flowTargetActive || t2vProvider === 'google'
+    const healI2V = flowTargetActive || i2vProvider === 'google'
 
     if (healT2V) {
       const t2v = pickValidModel(videoModels, settings.videoModelT2V, DEFAULT_VIDEO_MODEL_ID)
@@ -252,7 +256,7 @@ export function computeModelHeal(availableModels, settings, mode) {
     //   T2V/F2V 둘 다 같은 4개 패밀리에서 고른다. F2V 기본값은 목록 첫 패밀리(저장값 무효 시).
     if (healI2V) {
       let f2vDefaultId = DEFAULT_VIDEO_MODEL_ID
-      if (mode === 'flow' && videoModels.length > 0) {
+      if (flowTargetActive && videoModels.length > 0) {
         f2vDefaultId = videoModels[0].id
       }
       const f2v = pickValidModel(videoModels, settings.videoModelF2V, f2vDefaultId)

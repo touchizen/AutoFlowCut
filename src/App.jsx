@@ -28,6 +28,7 @@ import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
 import { useAvailableModels } from './hooks/useAvailableModels'
 import { computeModelHeal, computeModeSwitch } from './config/genModels'
+import { isFlowTarget } from './config/appRoute.js'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
@@ -186,7 +187,8 @@ function App() {
     () => ({ batchRemaining: subscription?.batchRemaining, batchUnlimited: subscription?.batchUnlimited }),
     [subscription?.batchRemaining, subscription?.batchUnlimited]
   )
-  const { mode, clearMode } = useMode()
+  const { mode, sessionTarget = 'flow', clearMode } = useMode()
+  const flowTargetActive = isFlowTarget({ mode, sessionTarget })
   const generationQueue = useGenerationQueue()
 
   // Auth/Payment Modals
@@ -319,8 +321,8 @@ function App() {
 
   // Flow Agent(Maps 그라운딩) 모드를 main 에 push — generate 핸들러가 ensureAgentOn/Off 분기에 사용.
   useEffect(() => {
-    window.electronAPI?.setFlowAgentMode?.({ on: !!settings.flowAgentOn })?.catch?.(() => {})
-  }, [settings.flowAgentOn])
+    if (flowTargetActive) window.electronAPI?.setFlowAgentMode?.({ on: !!settings.flowAgentOn })?.catch?.(() => {})
+  }, [settings.flowAgentOn, flowTargetActive])
 
   // 상단 프리뷰 모니터 상태/효과/핸들러 — useMonitor 훅이 캡슐화(렌더는 <PreviewMonitor>).
   const {
@@ -391,7 +393,7 @@ function App() {
 
   // 라이브 /models 로 채운 사용 가능 모델 목록(설정 드롭다운 + stale 저장값 치유에 공유).
   // mode를 dep에 추가(I1): mode 전환 시 해당 모드의 엔진에서 /models 를 재조회한다.
-  const availableModels = useAvailableModels(genAPI, mode)
+  const availableModels = useAvailableModels(genAPI, mode, sessionTarget)
 
   // Flow 모드 모델 동적 목록은 앱 시작 시 Flow 페이지가 아직 로딩(navigating) 중이라
   //   1회차 스크랩이 빈손 → 정적 폴백에 고정될 수 있다. 두 시점에 재시도한다:
@@ -400,8 +402,8 @@ function App() {
   const refetchModels = availableModels.refetch
   const modelsSource = availableModels.source
   useEffect(() => {
-    if (showSettings && mode === 'flow' && modelsSource !== 'dynamic') refetchModels?.()
-  }, [showSettings, mode, modelsSource, refetchModels])
+    if (showSettings && flowTargetActive && modelsSource !== 'dynamic') refetchModels?.()
+  }, [showSettings, flowTargetActive, modelsSource, refetchModels])
 
   // 모드 전환 시 per-mode 모델 선택을 스냅샷/복원 (C3).
   // 이전 모드 → 현재 모드로 전환될 때마다: prevMode의 선택을 modelsByMode[prevMode]에 저장하고,
@@ -433,10 +435,10 @@ function App() {
   useEffect(() => {
     if (availableModels.loading) return
     setSettings(prev => {
-      const heal = computeModelHeal(availableModels, prev, mode)
+      const heal = computeModelHeal(availableModels, prev, mode, sessionTarget)
       return Object.keys(heal).length ? { ...prev, ...heal } : prev
     })
-  }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
+  }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode, sessionTarget])
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
   const imageBusyLines = useMemo(
@@ -511,7 +513,13 @@ function App() {
   // modeRef: listener 재구독 없이 현재 mode 를 읽기 위해 ref 로 추적한다.
   // (useEffect deps 에 mode 를 넣으면 mode 변경마다 listener 를 재등록해야 함)
   const modeRef = useRef(mode)
-  useEffect(() => { modeRef.current = mode }, [mode])
+  const sessionTargetRef = useRef(sessionTarget)
+  const flowTargetActiveRef = useRef(flowTargetActive)
+  useEffect(() => {
+    modeRef.current = mode
+    sessionTargetRef.current = sessionTarget
+    flowTargetActiveRef.current = flowTargetActive
+  }, [mode, sessionTarget, flowTargetActive])
 
   // Flow 모드 인증 완료 이벤트 — main 이 flow-status { authenticated: true } 를 보내면
   // authReady 를 올린다. optional-chaining 으로 jsdom / api 모드에서는 no-op.
@@ -520,7 +528,7 @@ function App() {
   // authReady 를 올려 api-unauth 를 가리는 것을 방지한다(#R2-6).
   useEffect(() => {
     const off = window.electronAPI?.onFlowStatus?.((status) => {
-      if (status?.authenticated && modeRef.current === 'flow') setAuthReady(true)
+      if (status?.authenticated && flowTargetActiveRef.current) setAuthReady(true)
     })
     return () => { off?.() }
   }, [])
@@ -588,6 +596,7 @@ function App() {
     genAPI,
     onSaveError: () => toast.error(t('toast.projectSaveFailed')),
     mode, // flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화 (api 모드에서는 flowProjectReady 항상 true)
+    sessionTarget,
   })
 
   // #R3-1: flowProjectId ref 동기화 — engineFlow 가 IPC 호출 시 최신 bound id 를 사용한다.
@@ -837,8 +846,8 @@ function App() {
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
   //   아직 dynamic 을 못 받았을 때만 — 이미 받았으면 반복 스크랩 생략.
   useEffect(() => {
-    if (mode === 'flow' && flowProjectReady && modelsSource !== 'dynamic') refetchModels?.()
-  }, [mode, flowProjectReady, modelsSource, refetchModels])
+    if (flowTargetActive && flowProjectReady && modelsSource !== 'dynamic') refetchModels?.()
+  }, [flowTargetActive, flowProjectReady, modelsSource, refetchModels])
 
   // Flow 바인딩이 막혀 생성이 차단된 동안 회복을 주기적으로 시도한다: 저장만 실패했으면 저장을
   // 재시도하고, 바인딩이 안 열렸으면 재바인딩을 요청하고, 사용자가 Flow 에서 다른 프로젝트를
@@ -846,7 +855,7 @@ function App() {
   // 채택은 항상 사용자 확인을 거친다 — 훅은 후보를 찾으면 needs-confirm 을 돌려주고, 그때 확인
   // 모달을 띄운다(폴링/일시정지/취소 쿨다운/확인 대상 고정은 useFlowAdoptPrompt 안에 있다).
   const flowAdoptPrompt = useFlowAdoptPrompt({
-    mode, flowProjectReady, projectLoading,
+    mode, sessionTarget, flowProjectReady, projectLoading,
     projectName: settings.projectName,
     tryAdopt: tryAdoptFlowProject,
     // 채택이 실패하면(에러 페이지, 저장 실패 등) 조용히 묻지 않는다 — 사용자는 연결됐다고 믿는다.
@@ -1392,7 +1401,7 @@ function App() {
       ))) {
         videoRetryInFlightRef.current = false
         setVideoRetryRunning(false)
-        if (modeRef.current === 'flow') {
+        if (flowTargetActiveRef.current) {
           toast.warning(getAuthRequiredMessage('flow', t))
         } else {
           window.dispatchEvent(new CustomEvent('flow-login-expired'))
@@ -1508,11 +1517,12 @@ function App() {
     // Flow 모드는 Flow 뷰/onFlowStatus 에서 인증을 처리하므로 BYOK 모달을 열지 않는다.
     if (!(await runOuterStartAuthPreflight({
       appMode: modeRef.current,
+      sessionTarget: sessionTargetRef.current,
       getAccessToken: genAPI.getAccessToken,
     }))) {
       // #R8-4: getAccessToken await 동안 flow 로 전환됐을 수 있으니 stale closure `mode` 가
       //   아니라 현재 모드(modeRef)로 BYOK 모달 여부를 판단한다(flow 에서 BYOK 모달 방지).
-      if (modeRef.current !== 'flow') {
+      if (!flowTargetActiveRef.current) {
         setShowApiKeyModal(true)
       } else {
         toast.warning(getAuthRequiredMessage('flow', t))
@@ -1548,7 +1558,7 @@ function App() {
 
     // R2-2: flow 모드에서 Flow 프로젝트 진입이 확인되지 않으면 batch 시작 차단.
     // API 모드에서 flowProjectReady는 항상 true → no-op.
-    if (mode === 'flow') {
+    if (flowTargetActive) {
       const readyCheck = checkFlowProjectReady(flowProjectReady, t)
       if (!readyCheck.ok) return
     }
@@ -1643,20 +1653,22 @@ function App() {
         // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 id + 라벨 모두 시작 시점 snapshot
         setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
         if (modeRef.current === 'flow') {
-          const { force: _force, ...startOptionsWithoutSceneIds } = startOptions
-          const gateResult = await runEmptyRefGateFlow({
-            startMode,
-            projectName,
-            force,
-            initialTargetSceneIds: targetScenes.map(scene => scene.id),
-            selectedStyleRefId: effectiveStyleId,
-            startOptionsWithoutSceneIds,
-          }, getEmptyRefGateDeps(source))
-          // 모달 대기 중 다른 경로가 대상 씬을 모두 완료했으면 기존 완료 안내를 재사용한다.
-          if (gateResult.reason === 'no-live-targets') {
-            toast.warning(t('toast.allScenesGenerated'))
+          if (flowTargetActiveRef.current) {
+            const { force: _force, ...startOptionsWithoutSceneIds } = startOptions
+            const gateResult = await runEmptyRefGateFlow({
+              startMode,
+              projectName,
+              force,
+              initialTargetSceneIds: targetScenes.map(scene => scene.id),
+              selectedStyleRefId: effectiveStyleId,
+              startOptionsWithoutSceneIds,
+            }, getEmptyRefGateDeps(source))
+            // 모달 대기 중 다른 경로가 대상 씬을 모두 완료했으면 기존 완료 안내를 재사용한다.
+            if (gateResult.reason === 'no-live-targets') {
+              toast.warning(t('toast.allScenesGenerated'))
+            }
+            break
           }
-          break
         }
         // API 모드는 M2 미노출 — 기존 scene start 경로를 그대로 유지한다(§11.12).
         setHasPendingBatch(true)
@@ -1683,7 +1695,7 @@ function App() {
           srtTrack: scenesHook.srtTrack,
           settings,
           projectName,
-          appMode: mode,  // #R36: Flow 모드면 @멘션을 컴포저 칩(segments)으로 처리
+          appMode: flowTargetActive ? 'flow' : 'api',  // #R36: Flow 모드면 @멘션을 컴포저 칩(segments)으로 처리
           styleLabel: styleResolver.resolveLabelForId(effectiveStyleId),
           warn: console.warn,
           onReferenceLimitWarning: (limit) => {
@@ -1694,7 +1706,7 @@ function App() {
         // #R36-fix(Codex R2[1]): Flow 모드에서 미해결 @멘션(오타/없는 캐릭터/동기화 실패 잔여)이 남으면
         //   chip/ref 없이 raw "@name" 텍스트로 나가 잘못된 영상+quota 낭비 → 시작을 막는다. sync gate
         //   proceed 후 재빌드에도 동일 적용(이 클로저를 재사용하므로).
-        if (mode === 'flow' && Array.isArray(videoTextMissing) && videoTextMissing.length > 0) {
+        if (flowTargetActive && Array.isArray(videoTextMissing) && videoTextMissing.length > 0) {
           toast.error(t('toast.videoUnknownMentions', { names: `@${videoTextMissing.join(', @')}` }))
           return
         }
@@ -1739,7 +1751,7 @@ function App() {
         // #R36-fix(Codex R1[2]): Flow 모드 T2V 도 이미지 씬과 동일한 미동기화 @멘션 가드. 미동기화 캐릭터를
         //   먼저 동기화(칩으로 넣을 수 있게)한 뒤 patchedRefs 로 페이로드를 재빌드해 생성한다. 안 하면
         //   미동기화 @king 이 chip/ref 없이 텍스트로 나가 잘못된 영상 + quota 낭비.
-        if (mode === 'flow') {
+        if (flowTargetActive) {
           // 이미지 배치와 **같은 셀렉터**를 쓴다. T2V 페이로드는 parseSceneMentions(case-sensitive,
           //   조사/공백 관용)로 칩을 붙이는데 게이트만 다른 매처로 고르면, `@hero`/`Hero` 는 동기화만
           //   시켜 놓고 칩이 안 붙고 `@문지기가` 는 게이트가 아예 안 열린다. 수리 불가 ref 제외도 포함.
@@ -1765,7 +1777,7 @@ function App() {
         // OmniFlash 는 종료 프레임 미지원 — UI 는 End Image 를 비활성화하지만 state 의
         //   pair.endSceneId 는 남는다. 제출 payload 에서 끝 프레임을 strip 하지 않으면
         //   engineFlow 가 숨겨진 끝 이미지를 먼저 업로드하려다 실패해 start-only 생성을 막는다.
-        const omniNoEndFrame = mode === 'flow' && isOmniFlashModel(settings.videoModelF2V)
+        const omniNoEndFrame = flowTargetActive && isOmniFlashModel(settings.videoModelF2V)
         const resolvedPairs = selectedFramePairs.map(p => {
           // gallery:: prefix면 mediaId 직접 추출, 아니면 씬에서 resolve
           const startIsGallery = p.startSceneId?.startsWith(GALLERY_PFX)
@@ -1882,9 +1894,10 @@ function App() {
       // #R9-4: 인증 재확인(모달 사이 키 변경/만료 가능). flow 는 BYOK 모달 대신 Flow 뷰가 처리.
       if (!(await runOuterStartAuthPreflight({
         appMode: modeRef.current,
+        sessionTarget: sessionTargetRef.current,
         getAccessToken: genAPI.getAccessToken,
       }))) {
-        if (modeRef.current !== 'flow') {
+        if (!flowTargetActiveRef.current) {
           setShowApiKeyModal(true)
         } else {
           toast.warning(getAuthRequiredMessage('flow', t))
@@ -1899,7 +1912,7 @@ function App() {
         setPendingStartOptions(null)
         return
       }
-      if (modeRef.current === 'flow') {
+      if (flowTargetActiveRef.current) {
         const readyCheck = checkFlowProjectReady(flowProjectReady, t)
         if (!readyCheck.ok) { setPendingStartOptions(null); return }
       }
@@ -1907,27 +1920,29 @@ function App() {
       const sid = opts.selectedStyleRefId
       setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
       if (modeRef.current === 'flow') {
-        // #M2: tag modal 대기 중 바뀐 scene 상태를 useScenes의 동기 ref에서 다시 읽어 최초 의도 ID를
-        // 새로 만든다. pendingStartOptions에는 설정만 남기고 과거 scene/M1 판정은 재사용하지 않는다.
-        const liveScenes = scenesHook.scenesRef.current
-        const liveTargetScenes = opts.force
-          ? liveScenes.filter(scene => scene.prompt)
-          : filterPendingScenes(liveScenes)
-        const { force = false, ...startOptionsWithoutSceneIds } = opts
-        setPendingStartOptions(null)
-        const gateResult = await runEmptyRefGateFlow({
-          startMode: __startMode,
-          projectName: opts.projectName,
-          force,
-          initialTargetSceneIds: liveTargetScenes.map(scene => scene.id),
-          selectedStyleRefId: sid,
-          startOptionsWithoutSceneIds,
-        }, getEmptyRefGateDeps(__startSource))
-        // 태그 모달까지 기다리는 동안 대상이 사라진 경우도 direct Start와 같은 안내를 낸다.
-        if (gateResult.reason === 'no-live-targets') {
-          toast.warning(t('toast.allScenesGenerated'))
+        if (flowTargetActiveRef.current) {
+          // #M2: tag modal 대기 중 바뀐 scene 상태를 useScenes의 동기 ref에서 다시 읽어 최초 의도 ID를
+          // 새로 만든다. pendingStartOptions에는 설정만 남기고 과거 scene/M1 판정은 재사용하지 않는다.
+          const liveScenes = scenesHook.scenesRef.current
+          const liveTargetScenes = opts.force
+            ? liveScenes.filter(scene => scene.prompt)
+            : filterPendingScenes(liveScenes)
+          const { force = false, ...startOptionsWithoutSceneIds } = opts
+          setPendingStartOptions(null)
+          const gateResult = await runEmptyRefGateFlow({
+            startMode: __startMode,
+            projectName: opts.projectName,
+            force,
+            initialTargetSceneIds: liveTargetScenes.map(scene => scene.id),
+            selectedStyleRefId: sid,
+            startOptionsWithoutSceneIds,
+          }, getEmptyRefGateDeps(__startSource))
+          // 태그 모달까지 기다리는 동안 대상이 사라진 경우도 direct Start와 같은 안내를 낸다.
+          if (gateResult.reason === 'no-live-targets') {
+            toast.warning(t('toast.allScenesGenerated'))
+          }
+          return
         }
-        return
       }
       // API 모드는 M2 미노출 — 기존 tag proceed 직접 시작을 유지한다(§11.12).
       if (!guardSceneBatchStart(__startSource)) {
@@ -2313,7 +2328,7 @@ function App() {
               onShowSceneDetail={(scene) => setSelectedScene(scene)}
               onVideoRetry={handleVideoRetry}
               disabled={anyRunning}
-              endImageDisabled={mode === 'flow' && isOmniFlashModel(settings.videoModelF2V)}
+              endImageDisabled={flowTargetActive && isOmniFlashModel(settings.videoModelF2V)}
               t={t}
               galleryItems={galleryItems}
               galleryLoading={galleryLoading}
@@ -2628,7 +2643,7 @@ function App() {
                 onTrackDrop={handleTrackDrop}
                 onSceneUpdate={scenesHook.updateScene}
                 disabled={anyRunning}
-                onTitleClick={mode === 'flow' ? () => setMonitorOverlayOpen(o => !o) : null}
+                onTitleClick={flowTargetActive ? () => setMonitorOverlayOpen(o => !o) : null}
                 titleActive={monitorOverlayOpen}
               />
             ) : (
@@ -2937,7 +2952,7 @@ function App() {
           initialTab={settingsTab}
           onProjectChange={handleProjectChange}
           availableModels={availableModels}
-          appMode={mode}
+          appMode={flowTargetActive ? 'flow' : 'api'}
           // §4.7 R3: "모든 저장 wrapper가 App-level 리로드를 공유한다" — Settings › API Keys에서
           // provider 키를 저장하면 그 provider의 목소리 목록을 다시 긁는다. Story가 안 열려 있으면
           // (voices가 안 쓰이면) best-effort로 조용히 끝난다 — 무해하다.
