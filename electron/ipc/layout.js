@@ -15,15 +15,15 @@ let dragToken = 0
 let powerSaveBlockerId = null
 
 /**
- * Flow WebContentsView 위치/크기를 현재 레이아웃에 맞게 업데이트
+ * 활성 세션 WebContentsView(Flow 또는 ChatGPT) 위치/크기를 현재 레이아웃에 맞게 업데이트
  * @param {BrowserWindow} mainWindow
- * @param {WebContentsView} flowView
+ * @param {WebContentsView} sessionView
  */
-export function updateBounds(mainWindow, flowView) {
-  if (!mainWindow || !flowView) return
+export function updateBounds(mainWindow, sessionView) {
+  if (!mainWindow || !sessionView) return
 
   if (modalVisible || dragging) {
-    flowView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    sessionView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     return
   }
 
@@ -32,16 +32,16 @@ export function updateBounds(mainWindow, flowView) {
 
   if (layoutMode === 'split-left') {
     const splitPos = Math.round(width * splitRatio)
-    flowView.setBounds({ x: 0, y: 0, width: splitPos - GAP, height })
+    sessionView.setBounds({ x: 0, y: 0, width: splitPos - GAP, height })
   } else if (layoutMode === 'split-right') {
     const splitPos = Math.round(width * splitRatio)
-    flowView.setBounds({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height })
+    sessionView.setBounds({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height })
   } else if (layoutMode === 'split-top') {
     const splitPos = Math.round(height * splitRatio)
-    flowView.setBounds({ x: 0, y: 0, width, height: splitPos - GAP })
+    sessionView.setBounds({ x: 0, y: 0, width, height: splitPos - GAP })
   } else if (layoutMode === 'split-bottom') {
     const splitPos = Math.round(height * splitRatio)
-    flowView.setBounds({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP })
+    sessionView.setBounds({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP })
   }
 }
 
@@ -49,13 +49,13 @@ export function updateBounds(mainWindow, flowView) {
  * 레이아웃 관련 IPC 핸들러 등록
  * @param {ipcMain} ipcMain
  * @param {Function} getMainWindow - mainWindow getter
- * @param {Function} getFlowView - flowView getter
+ * @param {Function} getActiveSessionView - 현재 routed 세션 view(Flow/ChatGPT) getter
  */
-export function registerLayoutIPC(ipcMain, getMainWindow, getFlowView) {
+export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) {
   ipcMain.handle('app:set-layout', (event, { mode, ratio }) => {
     layoutMode = mode || 'split-left'
     if (ratio !== undefined) splitRatio = Math.max(0.2, Math.min(0.8, ratio))
-    updateBounds(getMainWindow(), getFlowView())
+    updateBounds(getMainWindow(), getActiveSessionView())
     const mw = getMainWindow()
     if (mw) {
       mw.webContents.send('layout-changed', { mode: layoutMode, splitRatio })
@@ -66,31 +66,31 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getFlowView) {
   ipcMain.handle('app:update-split', (event, { ratio }) => {
     if (!getMainWindow()) return
     splitRatio = Math.max(0.2, Math.min(0.8, ratio))
-    updateBounds(getMainWindow(), getFlowView())
+    updateBounds(getMainWindow(), getActiveSessionView())
     return { success: true, splitRatio }
   })
 
-  // A′: 드래그 시작 — Flow 를 스냅샷으로 뜬 뒤 0×0 으로 접어 흔들림을 없앤다. 렌더러가 이 스냅샷을
-  //   DOM 으로 그려 드래그 중에도 Flow 가 그대로 있는 것처럼 보이게 한다. 접기 전에 캡처(0×0 캡처 방지).
+  // A′: 드래그 시작 — 활성 세션 뷰를 스냅샷으로 뜬 뒤 0×0 으로 접어 흔들림을 없앤다. 렌더러가 이
+  //   스냅샷을 DOM 으로 그려 드래그 중에도 뷰가 그대로 있는 것처럼 보이게 한다. 접기 전에 캡처(0×0 캡처 방지).
   ipcMain.handle('app:flow-drag-start', async () => {
-    const flowView = getFlowView()
+    const sessionView = getActiveSessionView()
     const token = ++dragToken
     let snapshot = null
-    if (flowView) {
-      try { snapshot = (await flowView.webContents.capturePage()).toDataURL() } catch { /* 캡처 실패 시 스냅샷 없이 접기만 */ }
+    if (sessionView) {
+      try { snapshot = (await sessionView.webContents.capturePage()).toDataURL() } catch { /* 캡처 실패 시 스냅샷 없이 접기만 */ }
     }
-    // 캡처 도중 drag-end(또는 새 start)가 오면 token 이 바뀐다 → 접지 않는다(Flow 가 접힌 채 남는 것 방지).
+    // 캡처 도중 drag-end(또는 새 start)가 오면 token 이 바뀐다 → 접지 않는다(뷰가 접힌 채 남는 것 방지).
     if (token !== dragToken) return { snapshot }
     dragging = true
-    updateBounds(getMainWindow(), getFlowView())
+    updateBounds(getMainWindow(), getActiveSessionView())
     return { snapshot }
   })
 
-  // A′: 드래그 종료 — 접기 해제 후 최종 비율로 Flow 복원. 진행 중인 start 의 지연 접기도 무효화(token++).
+  // A′: 드래그 종료 — 접기 해제 후 최종 비율로 뷰 복원. 진행 중인 start 의 지연 접기도 무효화(token++).
   ipcMain.handle('app:flow-drag-end', () => {
     dragToken++
     dragging = false
-    updateBounds(getMainWindow(), getFlowView())
+    updateBounds(getMainWindow(), getActiveSessionView())
     return { success: true }
   })
 
@@ -100,7 +100,7 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getFlowView) {
 
   ipcMain.handle('app:set-modal-visible', (event, { visible }) => {
     modalVisible = visible
-    updateBounds(getMainWindow(), getFlowView())
+    updateBounds(getMainWindow(), getActiveSessionView())
     // 모달이 열릴 때 키보드 포커스를 메인 renderer로 되돌린다.
     // Flow WebContentsView를 0×0으로 줄여도 네이티브 포커스는 그대로 남아
     // (Electron은 뷰 간 포커스 자동 전환을 안 함), 모달 입력창에 키 입력이

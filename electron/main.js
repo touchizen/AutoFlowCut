@@ -34,6 +34,9 @@ import { ssrfSafeFetch } from './api/net/ssrfSafeFetch.js'
 import { voiceKey } from '../src/utils/voiceKey.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
+import {
+  reservedSessionWebPreferences, installReservedSessionSecurity,
+} from './sessionViewSecurity.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
 import { initSentryMain } from './sentry-init.js'
@@ -198,9 +201,9 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  // Re-size the Flow WebContentsView whenever the window is resized (§3.4).
+  // Re-size the active session WebContentsView (Flow or reserved) whenever the window is resized (§3.4).
   // modeController is module-scope (created before app.whenReady) so it's always in scope here.
-  mainWindow.on('resize', () => updateBounds(mainWindow, modeController.getFlowView()))
+  mainWindow.on('resize', () => updateBounds(mainWindow, modeController.getActiveSessionView()))
 }
 
 // === IPC Handlers ===
@@ -710,12 +713,24 @@ function makeFlowView() {
   return view
 }
 
-// Mode controller wires mode:set IPC + lazy Flow view creation/attachment.
-const modeController = createModeController(() => mainWindow, makeFlowView)
+// Reserved (P1: ChatGPT) session view factory — empty shell, no URL load, no
+// Flow preload, isolated partition + locked-down security policy. Only called
+// when route:set targets 'chatgpt'.
+function makeReservedSessionView() {
+  const view = new WebContentsView({ webPreferences: reservedSessionWebPreferences() })
+  installReservedSessionSecurity(view, view.webContents.session)
+  return view
+}
+
+// Mode controller wires route:set/mode:set IPC + lazy session view creation/attachment.
+const modeController = createModeController(() => mainWindow, makeFlowView, {
+  createSessionView: (target) => target === 'flow' ? makeFlowView() : makeReservedSessionView(),
+  updateViewBounds: updateBounds,
+})
 modeController.register(ipcMain)
 
 // Layout, modal, sleep, open-external, show-in-folder IPC.
-registerLayoutIPC(ipcMain, () => mainWindow, modeController.getFlowView)
+registerLayoutIPC(ipcMain, () => mainWindow, modeController.getActiveSessionView)
 
 // Agent 토글 not_found 진단 저장기 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만
 //   신뢰할 수 있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다.
@@ -849,6 +864,7 @@ ipcMain.handle('flow:set-agent-mode', (_e, { on } = {}) => { flowAgentOn = !!on;
 // ─── Flow API IPC handlers (all four modules) ───────────────────────────────
 const flowAPIDeps = {
   getFlowView: modeController.getFlowView,
+  getSessionTarget: modeController.getSessionTarget,
   getFlowAgentOn: () => flowAgentOn,
   // #R25-4: quota 를 쓰는 submit/upscale 핸들러가 API 모드에서 stale 호출로 Flow quota 를
   //   소모하지 않도록 현재 모드를 노출한다.
