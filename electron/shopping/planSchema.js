@@ -224,13 +224,18 @@ function validateSourceFact(fact, path, errors) {
   ) {
     addError(errors, `${path}.value must be a non-empty JSON scalar`)
   }
-  checkEnum(fact.sourceKind, `${path}.sourceKind`, ['jsonld', 'og', 'manual'], errors)
+  checkEnum(fact.sourceKind, `${path}.sourceKind`, ['jsonld', 'og', 'dom', 'manual'], errors)
   if (fact.sourceUrl !== undefined) checkUrl(fact.sourceUrl, `${path}.sourceUrl`, errors)
   if (fact.jsonPathOrProperty !== undefined) {
     checkString(fact.jsonPathOrProperty, `${path}.jsonPathOrProperty`, errors, { nonEmpty: true })
   }
   checkString(fact.fetchedAt, `${path}.fetchedAt`, errors, { nonEmpty: true })
-  checkEnum(fact.verification, `${path}.verification`, ['page-asserted', 'user-asserted'], errors)
+  checkEnum(
+    fact.verification,
+    `${path}.verification`,
+    ['page-asserted', 'page-rendered', 'user-asserted'],
+    errors,
+  )
   checkEnum(fact.trust, `${path}.trust`, ['untrusted-web-data'], errors)
 }
 

@@ -87,5 +87,26 @@ export function registerShoppingIPC(ipcMain, {
     if (result?.ok) await emitState(session, result.operationId)
     return result
   }))
+  ipcMain.handle('shopping:set-fact-decisions', guarded(async ({ factDecisions, prohibitedClaims }, session) => {
+    const result = await session.machine.setFactDecisions(
+      session.token,
+      factDecisions,
+      prohibitedClaims,
+    )
+    if (result?.ok) await emitState(session, result.operationId)
+    return result
+  }))
+  ipcMain.handle('shopping:draft-plan', guarded(async ({ options }, session) => {
+    const result = await session.machine.draftPlan(session.token, options)
+    if (result?.ok) await emitState(session, result.operationId)
+    return result
+  }))
+  // Renderer draft replacement stays closed until crawl source-fact cross-validation,
+  // shared claim-meaning validation, and exact A/B preservation ship together.
+  ipcMain.handle('shopping:approve-plan', guarded(async (_payload, session) => {
+    const result = await session.machine.approvePlan(session.token)
+    if (result?.ok) await emitState(session, result.operationId)
+    return result
+  }))
   ipcMain.handle('shopping:abort', guarded((_payload, session) => session.machine.abort(session.token)))
 }

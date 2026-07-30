@@ -62,9 +62,9 @@ function sanitizeSourceFact(fact) {
     !id
     || !field
     || value === undefined
-    || !['jsonld', 'og', 'manual'].includes(sourceKind)
+    || !['jsonld', 'og', 'dom', 'manual'].includes(sourceKind)
     || !fetchedAt
-    || !['page-asserted', 'user-asserted'].includes(verification)
+    || !['page-asserted', 'page-rendered', 'user-asserted'].includes(verification)
     || trust !== 'untrusted-web-data'
   ) return undefined
 

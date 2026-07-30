@@ -18,6 +18,9 @@ beforeEach(() => {
       snapshot: { status: 'ok', product: { name: '테스트 상품' } },
     })),
     shoppingSubmitProduct: vi.fn(async () => ({ ok: true, operationId: 'operation-1' })),
+    shoppingSetFactDecisions: vi.fn(async () => ({ ok: true })),
+    shoppingDraftPlan: vi.fn(async () => ({ ok: true, operationId: 'operation-draft' })),
+    shoppingApprovePlan: vi.fn(async () => ({ ok: true, operationId: 'operation-approve' })),
     shoppingAbort: vi.fn(async () => ({ ok: true })),
     onShoppingEvent: vi.fn((channel, callback) => {
       listeners[channel] = callback
@@ -52,6 +55,125 @@ describe('useShoppingPipeline', () => {
       snapshot: { product: { name: '테스트 상품' } },
     })
     expect(result.current.submitting).toBe(false)
+  })
+
+  it('setFactDecisions는 현재 token과 schema-shaped A/B를 전달하고 state를 갱신한다', async () => {
+    const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
+    await act(() => result.current.open())
+    const factDecisions = [
+      { sourceFactId: 'fact-1', decision: 'allowed', confirmedAt: '2026-07-30T06:00:00.000Z' },
+    ]
+    const prohibitedClaims = [
+      { id: 'ban-1', text: '과장 효능', reason: '사용자 B 확정' },
+    ]
+
+    await act(() => result.current.setFactDecisions(factDecisions, prohibitedClaims))
+
+    expect(window.electronAPI.shoppingSetFactDecisions).toHaveBeenCalledWith({
+      projectToken: 'token-A',
+      factDecisions,
+      prohibitedClaims,
+    })
+    expect(window.electronAPI.shoppingGetState).toHaveBeenLastCalledWith({ projectToken: 'token-A' })
+    expect(result.current.pendingAction).toBeNull()
+  })
+
+  it('draftPlan은 options만 전달하고 실행 중 action을 노출한다', async () => {
+    let resolveDraft
+    window.electronAPI.shoppingDraftPlan = vi.fn(() => new Promise((resolve) => { resolveDraft = resolve }))
+    const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
+    await act(() => result.current.open())
+
+    let drafting
+    act(() => { drafting = result.current.draftPlan({ targetHint: '30대', emphasis: '가격' }) })
+
+    expect(result.current.pendingAction).toBe('draft-plan')
+    expect(window.electronAPI.shoppingDraftPlan).toHaveBeenCalledWith({
+      projectToken: 'token-A',
+      options: { targetHint: '30대', emphasis: '가격' },
+    })
+    await act(async () => {
+      resolveDraft({ ok: true, operationId: 'operation-draft' })
+      await drafting
+    })
+    expect(result.current.pendingAction).toBeNull()
+  })
+
+  it('read-only 씬표에서는 renderer draft 교체 메서드를 노출하지 않는다', async () => {
+    const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
+    await act(() => result.current.open())
+
+    expect(result.current).not.toHaveProperty('setPlanDraft')
+  })
+
+  it('approvePlan은 caller hash 없이 현재 token만 전달한다', async () => {
+    const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
+    await act(() => result.current.open())
+
+    await act(() => result.current.approvePlan())
+
+    expect(window.electronAPI.shoppingApprovePlan).toHaveBeenCalledWith({
+      projectToken: 'token-A',
+    })
+  })
+
+  it('plan command 오류를 inline error state로 보존한다', async () => {
+    window.electronAPI.shoppingDraftPlan = vi.fn(async () => ({ error: 'plan-draft-invalid' }))
+    const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
+    await act(() => result.current.open())
+
+    await act(() => result.current.draftPlan())
+
+    expect(result.current.error).toBe('plan-draft-invalid')
+    expect(result.current.pendingAction).toBeNull()
+  })
+
+  it('approvePlan side action 실패 뒤에도 먼저 저장된 approvedHash를 durable state에서 다시 읽는다', async () => {
+    window.electronAPI.shoppingApprovePlan = vi.fn(async () => ({ error: 'materialization-failed' }))
+    window.electronAPI.shoppingGetState = vi.fn(async ({ projectToken }) => ({
+      projectToken,
+      state: 'plan_review',
+      currentPlanHash: 'main-plan-hash',
+      approvedHash: 'main-plan-hash',
+      pendingMaterialization: { operationId: 'materialize-1', revision: 2 },
+      snapshot: { scenes: [] },
+    }))
+    const { result } = renderHook(() => useShoppingPipeline({ projectPath: '/A', enabled: true }))
+    await act(() => result.current.open())
+
+    await act(() => result.current.approvePlan())
+
+    expect(window.electronAPI.shoppingGetState).toHaveBeenCalledWith({ projectToken: 'token-A' })
+    expect(result.current.state).toMatchObject({
+      state: 'plan_review',
+      currentPlanHash: 'main-plan-hash',
+      approvedHash: 'main-plan-hash',
+      pendingMaterialization: { operationId: 'materialize-1' },
+    })
+    expect(result.current.error).toBe('materialization-failed')
+  })
+
+  it('in-flight draftPlan 결과는 projectPath 전환 뒤 새 프로젝트 state와 error를 바꾸지 않는다', async () => {
+    let resolveDraft
+    window.electronAPI.shoppingDraftPlan = vi.fn(() => new Promise((resolve) => { resolveDraft = resolve }))
+    const { result, rerender } = renderHook(
+      ({ projectPath }) => useShoppingPipeline({ projectPath, enabled: true }),
+      { initialProps: { projectPath: '/A' } },
+    )
+    await act(() => result.current.open())
+    let drafting
+    act(() => { drafting = result.current.draftPlan() })
+
+    rerender({ projectPath: '/B' })
+    await act(async () => {
+      resolveDraft({ error: 'plan-draft-invalid' })
+      await drafting
+    })
+
+    expect(result.current.state).toBeNull()
+    expect(result.current.error).toBeNull()
+    expect(result.current.pendingAction).toBeNull()
+    expect(window.electronAPI.shoppingAbort).toHaveBeenCalledWith({ projectToken: 'token-A' })
   })
 
   it('사용자 abort 결과는 일반 크롤 오류로 저장하지 않는다', async () => {

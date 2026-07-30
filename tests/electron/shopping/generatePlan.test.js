@@ -126,6 +126,82 @@ function makeDraft() {
 }
 
 describe('createGeneratePlan', () => {
+  it('round-trips a CDP DOM/page-rendered snapshot through A/B decisions and draft validation', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    for (const fact of facts) {
+      fact.sourceKind = 'dom'
+      fact.verification = 'page-rendered'
+      fact.jsonPathOrProperty = `document:${fact.field}`
+    }
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+    let state = defaultShoppingPlanState()
+    const store = {
+      load: vi.fn(async () => structuredClone(state)),
+      update: vi.fn(async (updater) => {
+        const next = await updater(structuredClone(state))
+        if (next) state = structuredClone(next)
+        return structuredClone(state)
+      }),
+    }
+    const snapshot = {
+      status: 'ok',
+      snapshotId: 'snapshot-1',
+      product: { name: '승인 상품명' },
+      sourceFacts: facts,
+      images: [{ id: 'image-1' }],
+      selectedImageIds: ['image-1'],
+    }
+    const machine = createPlanMachine({
+      store,
+      deps: {
+        fetchProduct: vi.fn(async () => snapshot),
+        generatePlan,
+        materialize: vi.fn(),
+        generate: vi.fn(),
+        now: vi.fn(() => '2026-07-23T09:00:00.000Z'),
+        randomUUID: vi.fn(() => 'operation-1'),
+      },
+    })
+    const { projectToken } = await machine.open('/tmp/shopping-dom-provenance')
+
+    await expect(machine.submitProduct(projectToken, 'https://www.coupang.com/vp/products/1'))
+      .resolves.toMatchObject({ ok: true })
+    await expect(machine.setFactDecisions(
+      projectToken,
+      decisions.factDecisions,
+      decisions.prohibitedClaims,
+    )).resolves.toMatchObject({ ok: true })
+    await expect(machine.draftPlan(projectToken)).resolves.toMatchObject({ ok: true })
+
+    expect(llm.generateShoppingPlan).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ sourceKind: 'dom', verification: 'page-rendered' }),
+      ]),
+      shoppingAssets,
+      expect.objectContaining({ factDecisions: decisions.factDecisions }),
+    )
+    await expect(machine.getState()).resolves.toMatchObject({
+      state: 'plan_review',
+      snapshot: { schemaVersion: 'shopping-plan/3-appnative' },
+    })
+  })
+
+  it('does not auto-allow a page-rendered fact when the user excludes it', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[0].sourceKind = 'dom'
+    facts[0].verification = 'page-rendered'
+    decisions.factDecisions[0].decision = 'excluded'
+    draft.factDecisions[0].decision = 'excluded'
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: expect.arrayContaining([expect.stringContaining('references excluded fact')]),
+    })
+  })
+
   it('passes only bounded source facts, fixed assets, and confirmed A/B constraints to the LLM', async () => {
     const { facts, decisions, draft } = makeDraft()
     facts[0].rawHtml = RAW_HTML_SENTINEL

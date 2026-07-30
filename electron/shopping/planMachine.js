@@ -22,6 +22,11 @@ const REVISION_STATES = new Set([
 ])
 const GENERATION_STATES = new Set(['materialized', 'generating', 'review_required'])
 const REQUIRED_DEPENDENCIES = ['fetchProduct', 'generatePlan', 'materialize', 'generate', 'now']
+const MAX_FACT_DECISIONS = 30
+const MAX_PROHIBITED_CLAIMS = 30
+const MAX_FACT_REVIEW_ID_LENGTH = 160
+const MAX_FACT_REVIEW_CONFIRMED_AT_LENGTH = 100
+const MAX_PROHIBITED_CLAIM_TEXT_LENGTH = 2000
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -29,6 +34,53 @@ function isRecord(value) {
 
 function clone(value) {
   return structuredClone(value)
+}
+
+function hasExactKeys(value, keys) {
+  if (!isRecord(value)) return false
+  const actualKeys = Object.keys(value)
+  return actualKeys.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
+}
+
+function isBoundedNonEmptyString(value, maxLength) {
+  return typeof value === 'string'
+    && value.trim().length > 0
+    && value.length <= maxLength
+}
+
+function inspectFactReviewInput(factDecisions, prohibitedClaims) {
+  if (
+    !Array.isArray(factDecisions)
+    || factDecisions.length > MAX_FACT_DECISIONS
+    || !Array.isArray(prohibitedClaims)
+    || prohibitedClaims.length > MAX_PROHIBITED_CLAIMS
+  ) return { error: 'fact-decisions-invalid' }
+
+  const factIds = new Set()
+  for (const decision of factDecisions) {
+    if (
+      !hasExactKeys(decision, ['sourceFactId', 'decision', 'confirmedAt'])
+      || !isBoundedNonEmptyString(decision.sourceFactId, MAX_FACT_REVIEW_ID_LENGTH)
+      || !['allowed', 'excluded'].includes(decision.decision)
+      || !isBoundedNonEmptyString(decision.confirmedAt, MAX_FACT_REVIEW_CONFIRMED_AT_LENGTH)
+      || factIds.has(decision.sourceFactId)
+    ) return { error: 'fact-decisions-invalid' }
+    factIds.add(decision.sourceFactId)
+  }
+
+  const prohibitedIds = new Set()
+  for (const prohibited of prohibitedClaims) {
+    if (
+      !hasExactKeys(prohibited, ['id', 'text', 'reason'])
+      || !isBoundedNonEmptyString(prohibited.id, MAX_FACT_REVIEW_ID_LENGTH)
+      || !isBoundedNonEmptyString(prohibited.text, MAX_PROHIBITED_CLAIM_TEXT_LENGTH)
+      || !isBoundedNonEmptyString(prohibited.reason, MAX_PROHIBITED_CLAIM_TEXT_LENGTH)
+      || prohibitedIds.has(prohibited.id)
+    ) return { error: 'fact-decisions-invalid' }
+    prohibitedIds.add(prohibited.id)
+  }
+
+  return null
 }
 
 function inspectDraft(draft) {
@@ -226,13 +278,16 @@ export function createPlanMachine({ store, deps } = {}) {
   async function setFactDecisions(token, factDecisions, prohibitedClaims = []) {
     const stale = tokenError(token)
     if (stale) return stale
+    const invalidInput = inspectFactReviewInput(factDecisions, prohibitedClaims)
+    if (invalidInput) return invalidInput
+    const operationId = randomUUID()
 
     let outcome = { error: 'invalid-transition' }
     await store.update((state) => {
       if (!REVISION_STATES.has(state.state) || !isRecord(state.snapshot)) return null
 
       if (state.state === 'fact_review') {
-        outcome = { ok: true, revision: state.revision }
+        outcome = { ok: true, operationId, revision: state.revision }
         return {
           ...state,
           snapshot: {
@@ -254,13 +309,14 @@ export function createPlanMachine({ store, deps } = {}) {
         return null
       }
       if (inspected.currentPlanHash === state.currentPlanHash) {
-        outcome = { ok: true, unchanged: true, revision: state.revision }
+        outcome = { ok: true, operationId, unchanged: true, revision: state.revision }
         return null
       }
 
       invalidateActiveOperation()
       outcome = {
         ok: true,
+        operationId,
         planHash: inspected.currentPlanHash,
         revision: state.revision + 1,
       }

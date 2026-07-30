@@ -296,4 +296,111 @@ describe('shopping IPC', () => {
 
     expect(outcome).toEqual({ error: 'aborted' })
   })
+
+  it.each([
+    {
+      channel: 'shopping:set-fact-decisions',
+      method: 'setFactDecisions',
+      payload: {
+        factDecisions: [{ sourceFactId: 'fact-1', decision: 'allowed', confirmedAt: '2026-07-30T06:00:00.000Z' }],
+        prohibitedClaims: [{ id: 'ban-1', text: '과장 효능', reason: '사용자 B 확정' }],
+      },
+      expectedArgs: [
+        'token-command',
+        [{ sourceFactId: 'fact-1', decision: 'allowed', confirmedAt: '2026-07-30T06:00:00.000Z' }],
+        [{ id: 'ban-1', text: '과장 효능', reason: '사용자 B 확정' }],
+      ],
+    },
+    {
+      channel: 'shopping:draft-plan',
+      method: 'draftPlan',
+      payload: { options: { targetHint: '30대 1인 가구', emphasis: '가격' } },
+      expectedArgs: ['token-command', { targetHint: '30대 1인 가구', emphasis: '가격' }],
+    },
+    {
+      channel: 'shopping:approve-plan',
+      method: 'approvePlan',
+      payload: { callerHash: 'renderer-must-not-control-this', expectedHash: 'also-forbidden' },
+      expectedArgs: ['token-command'],
+    },
+  ])('$channel은 main token으로 $method을 호출하고 성공 state를 emit한다', async ({
+    channel,
+    method,
+    payload,
+    expectedArgs,
+  }) => {
+    const commandIpc = fakeIpcMain()
+    const send = vi.fn()
+    const command = vi.fn(async () => ({ ok: true, operationId: `operation-${method}` }))
+    const machine = {
+      open: vi.fn(async () => ({ projectToken: 'token-command', state: { state: 'fact_review' } })),
+      abort: vi.fn(async () => ({ ok: true })),
+      getState: vi.fn(async () => ({ state: 'plan_review', snapshot: { scenes: [] } })),
+      submitProduct: vi.fn(),
+      setFactDecisions: vi.fn(),
+      draftPlan: vi.fn(),
+      setPlanDraft: vi.fn(),
+      approvePlan: vi.fn(),
+      [method]: command,
+    }
+    registerShoppingIPC(commandIpc, {
+      fetchProduct: vi.fn(),
+      getWindow: () => ({ isDestroyed: () => false, webContents: { send } }),
+      getActiveWorkFolder: () => workFolder,
+      createMachine: vi.fn(() => machine),
+    })
+    await commandIpc.invoke('shopping:open', { projectPath: projectDir })
+
+    const result = await commandIpc.invoke(channel, {
+      projectToken: 'token-command',
+      ...payload,
+    })
+
+    expect(result).toMatchObject({ ok: true })
+    expect(command).toHaveBeenCalledOnce()
+    expect(command).toHaveBeenCalledWith(...expectedArgs)
+    expect(machine.getState).toHaveBeenCalledOnce()
+    expect(send).toHaveBeenCalledWith('shopping:state', {
+      projectToken: 'token-command',
+      operationId: `operation-${method}`,
+      state: { state: 'plan_review', snapshot: { scenes: [] } },
+    })
+  })
+
+  it.each([
+    ['shopping:set-fact-decisions', 'setFactDecisions', { factDecisions: [], prohibitedClaims: [] }],
+    ['shopping:draft-plan', 'draftPlan', { options: {} }],
+    ['shopping:approve-plan', 'approvePlan', {}],
+  ])('%s는 stale token을 machine mutation과 state emit 전에 거부한다', async (channel, method, payload) => {
+    const commandIpc = fakeIpcMain()
+    const send = vi.fn()
+    const machine = {
+      open: vi.fn(async () => ({ projectToken: 'token-command', state: { state: 'fact_review' } })),
+      abort: vi.fn(async () => ({ ok: true })),
+      getState: vi.fn(async () => ({ state: 'fact_review' })),
+      submitProduct: vi.fn(),
+      setFactDecisions: vi.fn(),
+      draftPlan: vi.fn(),
+      setPlanDraft: vi.fn(),
+      approvePlan: vi.fn(),
+    }
+    registerShoppingIPC(commandIpc, {
+      fetchProduct: vi.fn(),
+      getWindow: () => ({ isDestroyed: () => false, webContents: { send } }),
+      getActiveWorkFolder: () => workFolder,
+      createMachine: vi.fn(() => machine),
+    })
+    await commandIpc.invoke('shopping:open', { projectPath: projectDir })
+
+    const result = await commandIpc.invoke(channel, { projectToken: 'stale-token', ...payload })
+
+    expect(result).toEqual({ error: 'stale-token' })
+    expect(machine[method]).not.toHaveBeenCalled()
+    expect(machine.getState).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('read-only 씬표에서는 renderer draft 교체 IPC를 등록하지 않는다', () => {
+    expect(ipc.handlers.has('shopping:set-plan-draft')).toBe(false)
+  })
 })

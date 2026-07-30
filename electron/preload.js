@@ -155,6 +155,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   shoppingOpen: (params) => ipcRenderer.invoke('shopping:open', params),
   shoppingGetState: (params) => ipcRenderer.invoke('shopping:get-state', params),
   shoppingSubmitProduct: (params) => ipcRenderer.invoke('shopping:submit-product', params),
+  shoppingSetFactDecisions: (params) => ipcRenderer.invoke('shopping:set-fact-decisions', params),
+  shoppingDraftPlan: (params) => ipcRenderer.invoke('shopping:draft-plan', params),
+  shoppingApprovePlan: (params) => ipcRenderer.invoke('shopping:approve-plan', params),
   shoppingAbort: (params) => ipcRenderer.invoke('shopping:abort', params),
   onShoppingEvent: (channel, cb) => {
     const shoppingChannels = ['shopping:state']

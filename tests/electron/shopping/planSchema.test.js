@@ -30,7 +30,7 @@ function personaPrompt(dialogue) {
   return `Presenter ${PROMPT_PHRASES[0]}, ${PROMPT_PHRASES[1]} "${dialogue}", ${PROMPT_PHRASES.slice(2).join(', ')}`
 }
 
-function makePlan(sceneCount = 5) {
+function makeCrawlShapePlan(sceneCount = 5) {
   const claims = []
   const factDecisions = []
   const scenes = []
@@ -108,8 +108,8 @@ function makePlan(sceneCount = 5) {
   }
 }
 
-function makeManualPlan() {
-  const plan = makePlan()
+function makeManualPlan(sceneCount = 5) {
+  const plan = makeCrawlShapePlan(sceneCount)
   plan.product = {
     mode: 'manual',
     title: '수동 입력 상품',
@@ -128,6 +128,12 @@ function makeManualPlan() {
     attachmentIds: ['image-1'],
   }
   return plan
+}
+
+// Generic schema tests use self-contained manual facts. The crawl-shaped helper above is
+// limited to product-shape assertions because this validator has no snapshot to ground IDs.
+function makePlan(sceneCount = 5) {
+  return makeManualPlan(sceneCount)
 }
 
 function result(plan) {
@@ -178,6 +184,14 @@ describe('validateShoppingPlanDraft — schema', () => {
     expectValid(makeManualPlan())
   })
 
+  it('accepts honest DOM/page-rendered source-fact provenance', () => {
+    const plan = makeManualPlan()
+    plan.product.facts[0].sourceKind = 'dom'
+    plan.product.facts[0].verification = 'page-rendered'
+
+    expectValid(plan)
+  })
+
   const unknownKeyMutations = [
     ['root', (plan) => { plan.currentPlanHash = 'caller-hash' }, '$.currentPlanHash'],
     ['crawl product', (plan) => { plan.product.title = 'unknown here' }, '$.product.title'],
@@ -193,7 +207,7 @@ describe('validateShoppingPlanDraft — schema', () => {
   ]
 
   it.each(unknownKeyMutations)('rejects additionalProperties at %s', (_label, mutate, path) => {
-    const plan = _label === 'manual source fact' ? makeManualPlan() : makePlan()
+    const plan = _label === 'crawl product' ? makeCrawlShapePlan() : makePlan()
     mutate(plan)
     expectInvalid(plan, `${path} is not allowed`)
   })
@@ -231,7 +245,7 @@ describe('validateShoppingPlanDraft — schema', () => {
     ['attachment minimum', (plan) => { plan.product.attachmentIds = [] }],
     ['attachment maximum', (plan) => { plan.product.attachmentIds = Array.from({ length: 6 }, (_, i) => `a-${i}`) }],
   ])('enforces product array bounds: %s', (label, mutate) => {
-    const plan = label.startsWith('manual') || label.startsWith('attachment') ? makeManualPlan() : makePlan()
+    const plan = label.startsWith('selected') ? makeCrawlShapePlan() : makePlan()
     mutate(plan)
     expectInvalid(plan, 'must contain')
   })
@@ -259,8 +273,8 @@ describe('validateShoppingPlanDraft — schema', () => {
   const nonCanonicalIdOrEnumMutations = [
     ['schemaVersion', makePlan, (plan) => { plan.schemaVersion += ' ' }, '$.schemaVersion'],
     ['product mode', makePlan, (plan) => { plan.product.mode += ' ' }, '$.product.mode'],
-    ['snapshotId', makePlan, (plan) => { plan.product.snapshotId = ` ${plan.product.snapshotId}` }, '$.product.snapshotId'],
-    ['selectedImageIds item', makePlan, (plan) => { plan.product.selectedImageIds[0] += ' ' }, '$.product.selectedImageIds[0]'],
+    ['snapshotId', makeCrawlShapePlan, (plan) => { plan.product.snapshotId = ` ${plan.product.snapshotId}` }, '$.product.snapshotId'],
+    ['selectedImageIds item', makeCrawlShapePlan, (plan) => { plan.product.selectedImageIds[0] += ' ' }, '$.product.selectedImageIds[0]'],
     ['manual SKU', makeManualPlan, (plan) => { plan.product.sku = `\t${plan.product.sku}` }, '$.product.sku'],
     ['manual source fact id', makeManualPlan, (plan) => { plan.product.facts[0].id += ' ' }, '$.product.facts[0].id'],
     ['manual source fact field', makeManualPlan, (plan) => { plan.product.facts[0].field = ` ${plan.product.facts[0].field}` }, '$.product.facts[0].field'],
@@ -291,7 +305,7 @@ describe('validateShoppingPlanDraft — schema', () => {
 
   const acceptedHashCollisionVariants = [
     ['selectedImageIds/productImageId', () => {
-      const first = makePlan()
+      const first = makeCrawlShapePlan()
       first.product.selectedImageIds.push('image-1 ')
       first.scenes[0].productImageId = 'image-1 '
       const second = structuredClone(first)
@@ -331,7 +345,7 @@ describe('validateShoppingPlanDraft — schema', () => {
     ['non-array scene claimIds', (plan) => { plan.scenes[0].claimIds = 'claim-1' }],
     ['null scene', (plan) => { plan.scenes[0] = null }],
   ])('returns validation errors instead of throwing for malformed %s', (_label, mutate) => {
-    const plan = makePlan()
+    const plan = _label === 'non-array selectedImageIds' ? makeCrawlShapePlan() : makePlan()
     mutate(plan)
     expect(() => result(plan)).not.toThrow()
     expect(result(plan).valid).toBe(false)

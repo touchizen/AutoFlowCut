@@ -348,6 +348,112 @@ describe('planMachine 6-state workflow', () => {
     expect(deps.fetchProduct).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['factDecisions non-array', {}, []],
+    ['factDecisions non-record entry', [null], []],
+    ['factDecisions invalid record shape', [{
+      sourceFactId: 'fact-1',
+      decision: 'auto-approved',
+      confirmedAt: '2026-07-30T06:00:00.000Z',
+    }], []],
+    ['factDecisions extra key', [{
+      sourceFactId: 'fact-1',
+      decision: 'allowed',
+      confirmedAt: '2026-07-30T06:00:00.000Z',
+      note: 'renderer-only',
+    }], []],
+    ['factDecisions duplicate ID', [0, 1].map(() => ({
+      sourceFactId: 'fact-1',
+      decision: 'allowed',
+      confirmedAt: '2026-07-30T06:00:00.000Z',
+    })), []],
+    ['factDecisions sourceFactId over limit', [{
+      sourceFactId: 'f'.repeat(161),
+      decision: 'allowed',
+      confirmedAt: '2026-07-30T06:00:00.000Z',
+    }], []],
+    ['factDecisions confirmedAt over limit', [{
+      sourceFactId: 'fact-1',
+      decision: 'allowed',
+      confirmedAt: '2'.repeat(101),
+    }], []],
+    ['prohibitedClaims non-array', [], {}],
+    ['prohibitedClaims non-record entry', [], ['금지 주장']],
+    ['prohibitedClaims invalid record shape', [], [{ id: 'ban-1', text: '', reason: '사용자 B 확정' }]],
+    ['prohibitedClaims duplicate ID', [], [0, 1].map(() => ({
+      id: 'ban-1',
+      text: '금지 주장',
+      reason: '사용자 B 확정',
+    }))],
+    ['prohibitedClaims id over limit', [], [{
+      id: 'b'.repeat(161),
+      text: '금지 주장',
+      reason: '사용자 B 확정',
+    }]],
+    ['prohibitedClaims text over limit', [], [{
+      id: 'ban-1',
+      text: '금'.repeat(2001),
+      reason: '사용자 B 확정',
+    }]],
+    ['prohibitedClaims reason over limit', [], [{
+      id: 'ban-1',
+      text: '금지 주장',
+      reason: '사'.repeat(2001),
+    }]],
+    ['factDecisions over limit', Array.from({ length: 31 }, (_, index) => ({
+      sourceFactId: `fact-${index}`,
+      decision: 'allowed',
+      confirmedAt: '2026-07-30T06:00:00.000Z',
+    })), []],
+    ['prohibitedClaims over limit', [], Array.from({ length: 31 }, (_, index) => ({
+      id: `ban-${index}`,
+      text: `금지 주장 ${index}`,
+      reason: '사용자 B 확정',
+    }))],
+  ])('fact_review 입력의 %s를 durable update 전에 거부한다', async (_label, factDecisions, prohibitedClaims) => {
+    const { machine, store, token } = await openMachine()
+    await machine.submitProduct(token, 'https://www.coupang.com/vp/products/1')
+    const before = await machine.getState()
+    store.update.mockClear()
+
+    await expect(machine.setFactDecisions(token, factDecisions, prohibitedClaims))
+      .resolves.toEqual({ error: 'fact-decisions-invalid' })
+
+    expect(store.update).not.toHaveBeenCalled()
+    expect(await machine.getState()).toEqual(before)
+  })
+
+  it('fact_review 사실 저장은 emit 대칭용 operationId를 반환한다', async () => {
+    const { machine, token } = await openMachine()
+    await machine.submitProduct(token, 'https://www.coupang.com/vp/products/1')
+    const decisions = [{
+      sourceFactId: 'fact-1',
+      decision: 'allowed',
+      confirmedAt: '2026-07-30T06:00:00.000Z',
+    }]
+
+    await expect(machine.setFactDecisions(token, decisions, []))
+      .resolves.toMatchObject({ ok: true, operationId: expect.any(String) })
+  })
+
+  it('fact_review 필드별 문자열 경계는 generatePlan 입력 계약과 일치한다', async () => {
+    const { machine, token } = await openMachine()
+    await machine.submitProduct(token, 'https://www.coupang.com/vp/products/1')
+    const decisions = [{
+      sourceFactId: 'f'.repeat(160),
+      decision: 'excluded',
+      confirmedAt: '2'.repeat(100),
+    }]
+    const prohibitedClaims = [{
+      id: 'b'.repeat(160),
+      text: '금'.repeat(2000),
+      reason: '사'.repeat(2000),
+    }]
+
+    await expect(machine.setFactDecisions(token, decisions, prohibitedClaims))
+      .resolves.toMatchObject({ ok: true, operationId: expect.any(String) })
+  })
+
   it('unsupported 상품은 구조화 오류로 반환하고 empty를 유지해 정상 URL 재시도를 허용한다', async () => {
     const unsupported = {
       status: 'unsupported',

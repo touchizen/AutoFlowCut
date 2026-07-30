@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ShoppingPanel from '../../../src/components/shopping/ShoppingPanel.jsx'
@@ -17,8 +17,89 @@ function makePipeline(overrides = {}) {
     openError: null,
     open: vi.fn(async () => ({ projectToken: 'token' })),
     submitProduct: vi.fn(async () => ({ ok: true })),
+    setFactDecisions: vi.fn(async () => ({ ok: true })),
+    draftPlan: vi.fn(async () => ({ ok: true })),
+    approvePlan: vi.fn(async () => ({ ok: true, planHash: 'plan-hash-1' })),
     abort: vi.fn(async () => ({ ok: true })),
+    pendingAction: null,
     ...overrides,
+  }
+}
+
+function factReviewState() {
+  return {
+    state: 'fact_review',
+    snapshot: {
+      status: 'ok',
+      snapshotId: 'snapshot-1',
+      product: { name: '테스트 무선 청소기', priceKrw: 29800 },
+      images: [{ id: 'image-1', sourceUrl: 'https://image.coupangcdn.com/product.jpg' }],
+      selectedImageIds: ['image-1'],
+      sourceFacts: [
+        {
+          id: 'fact-name',
+          field: 'name',
+          value: '테스트 무선 청소기',
+          sourceKind: 'dom',
+          verification: 'page-rendered',
+        },
+        {
+          id: 'fact-price',
+          field: 'priceKrw',
+          value: 29800,
+          sourceKind: 'dom',
+          verification: 'page-rendered',
+        },
+      ],
+    },
+  }
+}
+
+function planReviewState({ approved = false } = {}) {
+  const currentPlanHash = 'abc123currentplanhash'
+  return {
+    state: 'plan_review',
+    currentPlanHash,
+    approvedHash: approved ? currentPlanHash : null,
+    pendingMaterialization: approved ? { operationId: 'materialize-1', revision: 2 } : null,
+    snapshot: {
+      persona: {
+        name: '민지',
+        role: 'presenter',
+        gender: 'female',
+        ageBand: '30s',
+        ethnicity: 'Korean',
+        appearance: '단정한 검은 단발과 베이지 셔츠',
+      },
+      claims: [
+        { id: 'claim-1', text: '테스트 무선 청소기', claimType: 'product_identity', sourceFactIds: ['fact-name'] },
+        { id: 'claim-2', text: '29,800원', claimType: 'numeric_fact', sourceFactIds: ['fact-price'] },
+      ],
+      scenes: [
+        {
+          sceneKey: 'S01',
+          visualType: 'product_still',
+          visualDescription: '승인된 실제 제품 정면 이미지',
+          productImageId: 'image-1',
+          dialogueText: '',
+          subtitleText: '테스트 무선 청소기',
+          claimIds: ['claim-1'],
+          timelineDurationMs: 2000,
+          generationDurationSec: 0,
+        },
+        {
+          sceneKey: 'S02',
+          visualType: 'persona_i2v',
+          visualDescription: '진행자가 제품을 소개한다',
+          productImageId: 'image-1',
+          dialogueText: '29,800원',
+          subtitleText: '29,800원',
+          claimIds: ['claim-2'],
+          timelineDurationMs: 4000,
+          generationDurationSec: 4,
+        },
+      ],
+    },
   }
 }
 
@@ -170,5 +251,145 @@ describe('ShoppingPanel', () => {
     await act(async () => {})
 
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('fact_review에서 모든 사실의 명시적 A/제외 결정과 B 금지 주장을 저장한 뒤 draft 버튼을 연다', async () => {
+    const pipeline = makePipeline({ state: factReviewState() })
+    render(<ShoppingPanel pipeline={pipeline} />)
+
+    expect(screen.getByRole('heading', { name: 'A/B 사실확인' })).toBeTruthy()
+    expect(screen.queryByLabelText('상품 URL')).toBeNull()
+    expect(screen.getAllByText('dom · page-rendered')).toHaveLength(2)
+    expect(screen.getByText('웹페이지에 표시된 값도 자동 승인되지 않습니다.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'A/B 사실확인 저장' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '대본·씬표 생성' })).toBeDisabled()
+
+    const allowed = screen.getAllByRole('radio', { name: 'A · 대본에 사용' })
+    const excluded = screen.getAllByRole('radio', { name: '사용 안 함' })
+    fireEvent.click(allowed[0])
+    fireEvent.click(excluded[1])
+    fireEvent.change(screen.getByLabelText('금지 주장 1'), {
+      target: { value: '흡입력이 업계 최고다' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'A/B 사실확인 저장' }))
+
+    await waitFor(() => expect(pipeline.setFactDecisions).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          sourceFactId: 'fact-name',
+          decision: 'allowed',
+          confirmedAt: expect.any(String),
+        }),
+        expect.objectContaining({
+          sourceFactId: 'fact-price',
+          decision: 'excluded',
+          confirmedAt: expect.any(String),
+        }),
+      ],
+      [{ id: 'prohibited-1', text: '흡입력이 업계 최고다', reason: '사용자 B 확정' }],
+    ))
+    expect(screen.getByRole('button', { name: '대본·씬표 생성' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: '대본·씬표 생성' }))
+    await waitFor(() => expect(pipeline.draftPlan).toHaveBeenCalledWith({}))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('A/B 저장 실패 뒤 같은 snapshot을 재독해도 미저장 입력을 보존한다', async () => {
+    const initialState = factReviewState()
+    const pipeline = makePipeline({
+      state: initialState,
+      setFactDecisions: vi.fn(async () => ({ error: 'fact-decision-failed' })),
+    })
+    const { rerender } = render(<ShoppingPanel pipeline={pipeline} />)
+
+    const allowed = screen.getAllByRole('radio', { name: 'A · 대본에 사용' })
+    const excluded = screen.getAllByRole('radio', { name: '사용 안 함' })
+    fireEvent.click(allowed[0])
+    fireEvent.click(excluded[1])
+    fireEvent.change(screen.getByLabelText('금지 주장 1'), {
+      target: { value: '검증되지 않은 최고 표현' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'A/B 사실확인 저장' }))
+    await waitFor(() => expect(pipeline.setFactDecisions).toHaveBeenCalledOnce())
+
+    rerender(<ShoppingPanel pipeline={{
+      ...pipeline,
+      state: structuredClone(initialState),
+      error: 'fact-decision-failed',
+    }} />)
+
+    expect(screen.getAllByRole('radio', { name: 'A · 대본에 사용' })[0]).toBeChecked()
+    expect(screen.getAllByRole('radio', { name: '사용 안 함' })[1]).toBeChecked()
+    expect(screen.getByLabelText('금지 주장 1')).toHaveValue('검증되지 않은 최고 표현')
+  })
+
+  it('plan_review에서 persona·대본·claim과 스펙의 7개 씬표 컬럼을 표시한다', () => {
+    render(<ShoppingPanel pipeline={makePipeline({ state: planReviewState() })} />)
+
+    expect(screen.getByRole('heading', { name: '대본·씬표 검토' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '민지' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '대본' })).toBeTruthy()
+    for (const column of ['씬', '시간', 'visualType', '실사 asset', '대사·자막', 'claim', '생성 길이']) {
+      expect(screen.getByRole('columnheader', { name: column })).toBeTruthy()
+    }
+    expect(screen.getByText('0.0–2.0초')).toBeTruthy()
+    expect(screen.getByText('2.0–6.0초')).toBeTruthy()
+    expect(screen.getByText('승인된 실제 제품 정면 이미지')).toBeTruthy()
+    expect(screen.getByText('claim-2 · 29,800원')).toBeTruthy()
+    expect(screen.getByText('4초')).toBeTruthy()
+    expect(screen.queryByLabelText('상품 URL')).toBeNull()
+  })
+
+  it('씬표 실사 asset 셀에 productImageId와 빈 값 placeholder를 표시한다', () => {
+    const state = planReviewState()
+    state.snapshot.scenes[1].productImageId = ''
+    render(<ShoppingPanel pipeline={makePipeline({ state })} />)
+
+    const rows = screen.getAllByRole('row')
+    expect(within(rows[1]).getByText('image-1')).toBeTruthy()
+    expect(within(rows[2]).getByText('미지정')).toBeTruthy()
+  })
+
+  it('plan_review 승인 버튼은 hash 인자 없이 pipeline approvePlan을 호출한다', async () => {
+    const pipeline = makePipeline({ state: planReviewState() })
+    render(<ShoppingPanel pipeline={pipeline} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '이 씬표로 생성 승인' }))
+
+    await waitFor(() => expect(pipeline.approvePlan).toHaveBeenCalledWith())
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('main 승인 hash가 current plan과 같으면 승인·물질화 대기 상태를 인라인 표시한다', () => {
+    const state = planReviewState({ approved: true })
+    render(<ShoppingPanel pipeline={makePipeline({ state })} />)
+
+    expect(screen.getByText('씬표 승인 완료 · 물질화 대기')).toBeTruthy()
+    expect(screen.getByText(state.currentPlanHash)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '이 씬표로 생성 승인' })).toBeDisabled()
+  })
+
+  it('승인 뒤 물질화 실패면 matching hash여도 approvePlan 재시도를 연다', async () => {
+    const pipeline = makePipeline({
+      state: planReviewState({ approved: true }),
+      error: 'materialization-failed',
+    })
+    render(<ShoppingPanel pipeline={pipeline} />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('물질화를 시작하지 못했습니다')
+    const retry = screen.getByRole('button', { name: '물질화 다시 시도' })
+    expect(retry).toBeEnabled()
+
+    fireEvent.click(retry)
+
+    await waitFor(() => expect(pipeline.approvePlan).toHaveBeenCalledTimes(1))
+  })
+
+  it('새 plan 오류 코드를 내부 코드 없이 인라인 메시지로 표시한다', () => {
+    render(<ShoppingPanel pipeline={makePipeline({ error: 'plan-draft-invalid' })} />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('대본·씬표 형식')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('plan-draft-invalid')
   })
 })

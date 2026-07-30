@@ -139,9 +139,14 @@ describe('preload contract', () => {
       'shoppingOpen',
       'shoppingGetState',
       'shoppingSubmitProduct',
+      'shoppingSetFactDecisions',
+      'shoppingDraftPlan',
+      'shoppingApprovePlan',
       'shoppingAbort',
       'onShoppingEvent',
     ]))
+    expect(preloadKeys.has('shoppingSetPlanDraft')).toBe(false)
+    expect(preloadText).not.toMatch(/shopping:set-plan-draft/)
     expect(preloadKeys.has('shoppingSetCrawlViewBounds')).toBe(false)
     expect(preloadText).toMatch(/const shoppingChannels = \['shopping:state'\]/)
     expect(preloadText).not.toMatch(/shopping:crawl-status/)

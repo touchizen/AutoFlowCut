@@ -5,9 +5,11 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
   const [openError, setOpenError] = useState(null)
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const [pendingAction, setPendingAction] = useState(null)
   const tokenRef = useRef(null)
   const prevPathRef = useRef(projectPath)
   const pendingResetRef = useRef(null)
+  const actionOwnerRef = useRef(0)
 
   // Invalidate the old token during render. A passive effect is too late: an
   // event from the previous project can arrive between render and cleanup.
@@ -25,6 +27,8 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
     setOpenError(null)
     setError(null)
     setSubmitting(false)
+    setPendingAction(null)
+    actionOwnerRef.current += 1
     if (oldToken) {
       window.electronAPI?.shoppingAbort?.({ projectToken: oldToken })?.catch?.(() => {})
     }
@@ -108,6 +112,70 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
     }
   }, [getState, projectPath])
 
+  const runPlanAction = useCallback(async (action, invoke, fallbackError) => {
+    const requestedPath = projectPath
+    const requestedToken = tokenRef.current
+    if (!requestedToken) return { error: 'stale-token' }
+    const owner = actionOwnerRef.current + 1
+    actionOwnerRef.current = owner
+    setPendingAction(action)
+    setError(null)
+    try {
+      const result = await invoke(requestedToken)
+      if (requestedPath !== prevPathRef.current || requestedToken !== tokenRef.current) return result
+      if (result?.error) {
+        if (result.error !== 'aborted') {
+          // approvePlan persists the main-computed approvedHash before its M3
+          // materialization side action completes. A side-action error can
+          // therefore coexist with a valid durable mutation; re-read it.
+          if (result.error !== 'stale-token') await getState()
+          if (requestedPath === prevPathRef.current && requestedToken === tokenRef.current) {
+            setError(result.error)
+          }
+        }
+        return result
+      }
+      await getState()
+      return result
+    } catch (cause) {
+      const code = cause?.message || fallbackError
+      if (requestedPath === prevPathRef.current && requestedToken === tokenRef.current) {
+        setError(code)
+      }
+      return { error: code }
+    } finally {
+      if (
+        requestedPath === prevPathRef.current
+        && requestedToken === tokenRef.current
+        && actionOwnerRef.current === owner
+      ) {
+        setPendingAction(null)
+      }
+    }
+  }, [getState, projectPath])
+
+  const setFactDecisions = useCallback((factDecisions, prohibitedClaims = []) => runPlanAction(
+    'set-fact-decisions',
+    (projectToken) => window.electronAPI.shoppingSetFactDecisions({
+      projectToken,
+      factDecisions,
+      prohibitedClaims,
+    }),
+    'fact-decision-failed',
+  ), [runPlanAction])
+
+  const draftPlan = useCallback((options = {}) => runPlanAction(
+    'draft-plan',
+    (projectToken) => window.electronAPI.shoppingDraftPlan({ projectToken, options }),
+    'plan-generation-failed',
+  ), [runPlanAction])
+
+  const approvePlan = useCallback(() => runPlanAction(
+    'approve-plan',
+    (projectToken) => window.electronAPI.shoppingApprovePlan({ projectToken }),
+    'materialization-failed',
+  ), [runPlanAction])
+
   const abort = useCallback(() => {
     if (!tokenRef.current) return Promise.resolve({ error: 'stale-token' })
     return window.electronAPI.shoppingAbort({ projectToken: tokenRef.current })
@@ -118,9 +186,13 @@ export function useShoppingPipeline({ projectPath, enabled = true }) {
     openError,
     error,
     submitting,
+    pendingAction,
     open,
     getState,
     submitProduct,
+    setFactDecisions,
+    draftPlan,
+    approvePlan,
     abort,
   }
 }

@@ -17,7 +17,7 @@ export default function ProjectWorkflowPanel({
   if (workflowType === 'shopping-short') {
     return shoppingProjectPath ? (
       <div className="main-panel">
-        <ShoppingPanel pipeline={shoppingPipeline} />
+        <ShoppingPanel key={shoppingProjectPath} pipeline={shoppingPipeline} />
       </div>
     ) : (
       <div className="story-guard">
