@@ -1,31 +1,45 @@
-/**
- * useAppMode — 생성 모드('api' | 'flow') 상태 + localStorage 영속.
- * 미선택은 null (최초 실행 → ModeSelector 노출 신호).
- */
 import { useState, useCallback } from 'react'
+import {
+  MODE_STORAGE_KEY, VALID_MODES, loadRoute, parseRoute,
+  saveRoute, clearRoute,
+} from '../config/appRoute.js'
 
-export const MODE_STORAGE_KEY = 'autoflowcut_mode'
-export const VALID_MODES = ['api', 'flow']
+export { MODE_STORAGE_KEY, VALID_MODES }
 
 export function loadMode() {
-  const saved = localStorage.getItem(MODE_STORAGE_KEY)
-  return VALID_MODES.includes(saved) ? saved : null
+  return loadRoute()?.mode ?? null
 }
 
 export function useAppMode() {
-  const [mode, setModeState] = useState(() => loadMode())
+  const [route, setRouteState] = useState(() => loadRoute())
 
-  const setMode = useCallback((next) => {
-    if (!VALID_MODES.includes(next)) return
-    localStorage.setItem(MODE_STORAGE_KEY, next)
-    setModeState(next)
+  const setRoute = useCallback((next) => {
+    const accepted = parseRoute(next)
+    if (!accepted) return
+    saveRoute(localStorage, accepted)
+    setRouteState(accepted)
   }, [])
 
-  // 모드 선택 해제 → null. ModeGate 가 다시 ModeSelector(피커)를 노출.
+  const setMode = useCallback((mode) => {
+    if (!VALID_MODES.includes(mode)) return
+    setRouteState((current) => {
+      const accepted = { mode, sessionTarget: current?.sessionTarget ?? 'flow' }
+      saveRoute(localStorage, accepted)
+      return accepted
+    })
+  }, [])
+
   const clearMode = useCallback(() => {
-    localStorage.removeItem(MODE_STORAGE_KEY)
-    setModeState(null)
+    clearRoute(localStorage)
+    setRouteState(null)
   }, [])
 
-  return { mode, setMode, clearMode }
+  return {
+    route,
+    mode: route?.mode ?? null,
+    sessionTarget: route?.sessionTarget ?? 'flow',
+    setRoute,
+    setMode,
+    clearMode,
+  }
 }
