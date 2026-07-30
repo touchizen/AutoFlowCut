@@ -12,10 +12,12 @@ export default {
     settings: '설정',
     login: '로그인',
     apiKey: 'API 키',
-    flowLogin: '로그인',
+    flowLogin: 'Flow 로그인',
     authenticated: 'API 키 설정됨',
     apiAuthenticated: 'API 키 설정됨',
     flowAuthenticated: 'Flow 로그인됨',
+    chatgptLogin: 'ChatGPT 로그인',
+    chatgptAuthenticated: 'ChatGPT 로그인됨',
     checking: '확인 중...',
     waitingLogin: '로그인 대기 중...',
     unavailable: '지원되지 않는 지역',
@@ -42,12 +44,12 @@ export default {
     selectSub: '나중에 상단 토글로 언제든 바꿀 수 있어요.',
     busySwitch: '생성 중에는 전환할 수 없어요',
     flow: {
-      name: 'Flow 로그인 모드',
-      desc: 'Google Flow 로그인으로 생성',
-      audience: '👤 초보자 추천 · 가볍게 시작',
-      price: '💰 무료 생성 가능 · 정액제(상대적으로 저렴)',
+      name: '로그인 모드',
+      desc: 'Google Flow · ChatGPT 계정 세션으로 생성',
+      audience: '👤 계정 세션으로 간편하게 시작',
+      price: '💰 구독 계정 기반 · 정액제',
       speed: '🐢 느림 — 100장에 최소 30분 이상',
-      setup: '🔑 Google 계정 로그인만 있으면 됨',
+      setup: '🔑 Google Flow 또는 ChatGPT 계정 로그인',
     },
     api: {
       name: 'API 키 모드',
@@ -58,6 +60,8 @@ export default {
       extra: '✨ 다른 생성 모델 추가 예정\n무료) 고성능 이미지 생성 모델 등등..\n유료) Kling, Seedance 등',
     },
   },
+
+  sessionTarget: { flow: 'Google Flow', chatgpt: 'ChatGPT' },
 
   // 탭
   bottomPanel: {
@@ -894,11 +898,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     skillsInstallFailed: '스킬 설치 실패: {error}',
 
     // 화면 레이아웃
-    layoutMode: '레이아웃',
-    layoutSplitLeft: 'Flow 왼쪽',
-    layoutSplitRight: 'Flow 오른쪽',
-    layoutSplitTop: 'Flow 상단',
-    layoutSplitBottom: 'Flow 하단',
+    layoutMode: '세션 화면 배치',
+    layoutSplitLeft: '세션 화면 왼쪽',
+    layoutSplitRight: '세션 화면 오른쪽',
+    layoutSplitTop: '세션 화면 상단',
+    layoutSplitBottom: '세션 화면 하단',
     layoutModeHint: '경계를 드래그하면 비율 조절 · 더블클릭 50:50',
     preventSleep: '화면 꺼짐 방지',
     preventSleepOn: '활성화됨',

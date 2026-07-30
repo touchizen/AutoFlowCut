@@ -12,10 +12,12 @@ export default {
     settings: 'Settings',
     login: 'Login',
     apiKey: 'API Key',
-    flowLogin: 'Login',
+    flowLogin: 'Flow login',
     authenticated: 'API key set',
     apiAuthenticated: 'API key set',
     flowAuthenticated: 'Flow logged in',
+    chatgptLogin: 'ChatGPT login',
+    chatgptAuthenticated: 'ChatGPT logged in',
     checking: 'Checking...',
     waitingLogin: 'Waiting for login...',
     unavailable: 'Region not supported',
@@ -42,12 +44,12 @@ export default {
     selectSub: 'You can switch anytime later with the top toggle.',
     busySwitch: "Can't switch while generating",
     flow: {
-      name: 'Flow Login Mode',
-      desc: 'Generate via Google Flow login',
-      audience: '👤 Great for beginners · easy start',
-      price: '💰 Free generation · relatively cheap subscription',
+      name: 'Login Mode',
+      desc: 'Generate with a Google Flow or ChatGPT account session',
+      audience: '👤 Start easily with an account session',
+      price: '💰 Subscription account · flat-rate billing',
       speed: '🐢 Slower — 30 min+ for 100 images',
-      setup: '🔑 Only needs a Google account login',
+      setup: '🔑 Sign in to Google Flow or ChatGPT',
     },
     api: {
       name: 'API Key Mode',
@@ -58,6 +60,8 @@ export default {
       extra: '✨ More generation models coming\nFree) high-quality image models, etc.\nPaid) Kling, Seedance, etc.',
     },
   },
+
+  sessionTarget: { flow: 'Google Flow', chatgpt: 'ChatGPT' },
 
   // Tabs
   bottomPanel: {
@@ -895,11 +899,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     skillsInstallFailed: 'Skill install failed: {error}',
 
     // Display layout
-    layoutMode: 'Layout',
-    layoutSplitLeft: 'Flow Left',
-    layoutSplitRight: 'Flow Right',
-    layoutSplitTop: 'Flow Top',
-    layoutSplitBottom: 'Flow Bottom',
+    layoutMode: 'Session view layout',
+    layoutSplitLeft: 'Session view left',
+    layoutSplitRight: 'Session view right',
+    layoutSplitTop: 'Session view top',
+    layoutSplitBottom: 'Session view bottom',
     layoutModeHint: 'Drag the divider to resize · double-click for 50:50',
     preventSleep: 'Prevent Sleep',
     preventSleepOn: 'Enabled',

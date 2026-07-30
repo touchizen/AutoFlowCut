@@ -7,7 +7,9 @@ import { useI18n } from '../hooks/useI18n'
 import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { useMode } from '../contexts/ModeContext'
+import { isFlowTarget, isChatgptTarget } from '../config/appRoute.js'
 import { flowLayoutForMode } from '../utils/appLayout'
+import { SESSION_TARGET_INFO } from './modeInfo.js'
 import { UserMenu } from './UserMenu'
 import ModeToggle from './ModeToggle'
 import LanguagePicker from './LanguagePicker'
@@ -37,7 +39,11 @@ export default function Header({
   onStoryClick,           // Story 뷰 진입/복귀 토글
 }) {
   const { t, lang, changeLang, languages } = useI18n()
-  const { mode } = useMode()
+  const { mode, sessionTarget = 'flow' } = useMode()
+  const flowTargetActive = isFlowTarget({ mode, sessionTarget })
+  const chatgptTargetActive = isChatgptTarget({ mode, sessionTarget })
+  const loginLabelKey = SESSION_TARGET_INFO[sessionTarget]?.loginKey || 'header.flowLogin'
+  const authenticatedLabelKey = SESSION_TARGET_INFO[sessionTarget]?.authenticatedKey || 'header.flowAuthenticated'
   const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting'
   const [showProjectDropdown, setShowProjectDropdown] = useState(false)
   const [showDrawer, setShowDrawer] = useState(false)
@@ -52,7 +58,11 @@ export default function Header({
   // #R14-5: flow 지역 제한(unavailable) sticky 플래그 — flow 모드에서 폴링/authReady 가 덮지 않게.
   const flowUnavailableRef = useRef(false)
   const modeRef = useRef(mode)
-  useEffect(() => { modeRef.current = mode }, [mode])
+  const flowTargetActiveRef = useRef(flowTargetActive)
+  useEffect(() => {
+    modeRef.current = mode
+    flowTargetActiveRef.current = flowTargetActive
+  }, [mode, flowTargetActive])
   // #R9-7: setup 에서 true 로 되돌린다 — StrictMode 의 cleanup→재실행 후에도 mounted 가 false 로
   //   고착되지 않게(고착되면 dev 에서 checkAuth 결과가 버려지고 onAuthRecovered 가 안 뜬다).
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
@@ -63,20 +73,20 @@ export default function Header({
     //   복구된 상태에서 다시 unauthenticated 로 뒤집지 못하게 한다.
     authCheckSeqRef.current += 1
     // #R14-5: flow 모드의 unavailable(지역 제한)은 authReady/폴링으로 덮지 않는다(sticky).
-    if (flowUnavailableRef.current && mode === 'flow') return
+    if (flowUnavailableRef.current && flowTargetActive) return
     if (authReady) {
       setAuthStatus('authenticated')
       stopPolling()
     } else {
       setAuthStatus('unauthenticated')
     }
-  }, [authReady, mode])
+  }, [authReady, flowTargetActive])
 
   // Flow 지역 제한 감지 — #R7-17: flow 모드일 때만 반영(늦게 도착한 unavailable 이 api 모드 배지를
   //   가리지 않게). mode 를 dep 에 넣어 재구독 + 핸들러가 현재 mode 를 본다.
   useEffect(() => {
     const handleFlowStatus = (data) => {
-      if (data?.unavailable && mode === 'flow') {
+      if (data?.unavailable && flowTargetActive) {
         flowUnavailableRef.current = true // #R14-5: sticky
         authCheckSeqRef.current += 1       // 진행 중인 폴링 결과 무효화
         setAuthStatus('unavailable')
@@ -89,15 +99,15 @@ export default function Header({
       off?.()
       stopPolling()
     }
-  }, [mode])
+  }, [flowTargetActive])
 
   // #R7-17: API 모드로 전환 시 flow-unavailable 잔상 제거 → authReady 기준으로 되돌린다.
   useEffect(() => {
-    if (mode !== 'flow') {
+    if (!flowTargetActive) {
       flowUnavailableRef.current = false // #R14-5: flow 떠나면 sticky 해제
       setAuthStatus(s => (s === 'unavailable' ? (authReady ? 'authenticated' : 'unauthenticated') : s))
     }
-  }, [mode, authReady])
+  }, [flowTargetActive, authReady])
   
   // authReady prop에만 의존 — 독립적인 checkAuth 제거
   // (기존: !authReady일 때 quickCheck → 캐시된 만료 토큰을 유효로 오판하는 경합 조건 발생)
@@ -145,8 +155,9 @@ export default function Header({
   }, [projectName])
   
   const checkAuth = async (quickCheck = false) => {
+    if (chatgptTargetActive) return
     // #R15-3: flow 모드의 sticky unavailable 은 'checking' 으로도 덮지 않는다(조기 반환).
-    if (flowUnavailableRef.current && modeRef.current === 'flow') return
+    if (flowUnavailableRef.current && flowTargetActiveRef.current) return
     if (!getAccessToken) {
       setAuthStatus('unauthenticated')
       return
@@ -161,13 +172,13 @@ export default function Header({
       const token = await getAccessToken(false, quickCheck)
       // #R8-7/#R11-7/#R14-5: 언마운트/모드변경/오래된 호출/flow-unavailable 이면 결과 무시.
       if (!mountedRef.current || modeRef.current !== startMode || mySeq !== authCheckSeqRef.current) return
-      if (flowUnavailableRef.current && modeRef.current === 'flow') return
+      if (flowUnavailableRef.current && flowTargetActiveRef.current) return
       setAuthStatus(token ? 'authenticated' : 'unauthenticated')
       // Token came back via badge-click re-check → tell App so authReady recovers.
       if (token) onAuthRecovered?.()
     } catch (e) {
       if (!mountedRef.current || modeRef.current !== startMode || mySeq !== authCheckSeqRef.current) return
-      if (flowUnavailableRef.current && modeRef.current === 'flow') return // #R15-3
+      if (flowUnavailableRef.current && flowTargetActiveRef.current) return // #R15-3
       setAuthStatus('unauthenticated')
     }
   }
@@ -188,29 +199,26 @@ export default function Header({
   //   사용자가 Flow 창에서 직접 Google 계정으로 로그인할 수 있게 안내한다.
   //   useFlowEvents 가 'flow-login-expired' 이벤트를 무시하므로 직접 IPC 호출.
   const openFlow = async () => {
-    if (mode === 'flow') {
-      // Re-attach Flow WebContentsView and ensure split layout is visible.
-      // 레이아웃은 flowLayoutForMode 기본값(split-left = Flow 왼쪽). Shell 이 단일 소유자.
-      // #R14-10: setMode/setLayout 을 await 하고, 실패 시 안내/폴링을 시작하지 않는다(뷰 미부착 상태에서
-      //   로그인 안내/폴링은 오해를 부른다). 실패는 toast 로 알린다.
-      try {
-        await window.electronAPI?.setMode?.({ mode: 'flow' })
-        const layout = flowLayoutForMode('flow')
-        if (layout) await window.electronAPI?.setLayout?.(layout)
-      } catch (e) {
-        console.warn('[Header] flow re-attach failed:', e?.message)
-        toast.error?.(t('toast.flowReattachFailed'))
-        return
-      }
-      // #R15-2: await 동안 모드 전환/언마운트됐으면 안내/폴링을 시작하지 않는다(stale flow polling 방지).
-      if (!mountedRef.current || modeRef.current !== 'flow') return
-      toast.info(t('toast.flowLoginHint'))
-      // #R7-16: 재연결 후 인증 상태를 능동적으로 폴링 — flow-status 이벤트가 안 와도
-      //   사용자가 Flow 창에서 로그인 완료하면 배지가 🟢 로 회복되도록.
-      startAuthPolling()
-    } else {
-      onSettings?.('apiKey')
+    if (!flowTargetActive) return
+    // Re-attach Flow WebContentsView and ensure split layout is visible.
+    // 레이아웃은 flowLayoutForMode 기본값(split-left = Flow 왼쪽). Shell 이 단일 소유자.
+    // #R14-10: setMode/setLayout 을 await 하고, 실패 시 안내/폴링을 시작하지 않는다(뷰 미부착 상태에서
+    //   로그인 안내/폴링은 오해를 부른다). 실패는 toast 로 알린다.
+    try {
+      await window.electronAPI?.setMode?.({ mode: 'flow' })
+      const layout = flowLayoutForMode('flow')
+      if (layout) await window.electronAPI?.setLayout?.(layout)
+    } catch (e) {
+      console.warn('[Header] flow re-attach failed:', e?.message)
+      toast.error?.(t('toast.flowReattachFailed'))
+      return
     }
+    // #R15-2: await 동안 모드 전환/언마운트됐으면 안내/폴링을 시작하지 않는다(stale flow polling 방지).
+    if (!mountedRef.current || !flowTargetActiveRef.current) return
+    toast.info(t('toast.flowLoginHint'))
+    // #R7-16: 재연결 후 인증 상태를 능동적으로 폴링 — flow-status 이벤트가 안 와도
+    //   사용자가 Flow 창에서 로그인 완료하면 배지가 🟢 로 회복되도록.
+    startAuthPolling()
   }
 
   // #R7-16: Flow 로그인 회복용 짧은 인증 폴링. 인증되면 authReady→effect 가 stopPolling.
@@ -260,9 +268,15 @@ export default function Header({
     setShowProjectDropdown(false)
   }
 
-  const authActionLabel = mode === 'flow' ? t('header.flowLogin') : t('header.apiKey')
+  const handleUnauthenticated = () => {
+    if (mode === 'api') return onSettings?.('apiKey')
+    if (flowTargetActive) return openFlow()
+    if (chatgptTargetActive) return undefined
+  }
+
+  const authActionLabel = mode === 'api' ? t('header.apiKey') : t(loginLabelKey)
   const authActionIcon = mode === 'flow' ? '👤' : '🔑'
-  const authenticatedLabel = mode === 'flow' ? t('header.flowAuthenticated') : t('header.apiAuthenticated')
+  const authenticatedLabel = mode === 'api' ? t('header.apiAuthenticated') : t(authenticatedLabelKey)
   
   return (
     <>
@@ -346,7 +360,7 @@ export default function Header({
             </span>
           )}
           {authStatus === 'unauthenticated' && (
-            <button className="auth-btn" onClick={openFlow} data-tooltip={authActionLabel}>
+            <button className="auth-btn" onClick={handleUnauthenticated} data-tooltip={authActionLabel}>
               {authActionIcon} {authActionLabel}
             </button>
           )}

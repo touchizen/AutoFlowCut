@@ -28,9 +28,24 @@ export const MODE_INFO = {
   },
 }
 
+export const SESSION_TARGET_INFO = {
+  flow: {
+    nameKey: 'sessionTarget.flow',
+    loginKey: 'header.flowLogin',
+    authenticatedKey: 'header.flowAuthenticated',
+  },
+  chatgpt: {
+    nameKey: 'sessionTarget.chatgpt',
+    loginKey: 'header.chatgptLogin',
+    authenticatedKey: 'header.chatgptAuthenticated',
+  },
+}
+
+export const targetLabelKey = (target) => SESSION_TARGET_INFO[target]?.nameKey || ''
+
 /** 툴팁용 멀티라인 문자열: "이름\n• feat\n• feat …" */
 export function modeTooltip(mode, t) {
   const info = MODE_INFO[mode]
   if (!info) return ''
-  return [t(info.nameKey), ...info.featKeys.map((k) => t(k))].join('\n')
+  return [t(info.nameKey), ...info.featKeys.map((key) => t(key))].join('\n')
 }

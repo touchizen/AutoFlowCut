@@ -7,7 +7,7 @@
  */
 import { useMode } from '../contexts/ModeContext'
 import { useI18n } from '../hooks/useI18n'
-import { modeTooltip } from './modeInfo'
+import { MODE_INFO, modeTooltip } from './modeInfo'
 import './ModeToggle.css'
 
 export default function ModeToggle({ busy = false }) {
@@ -31,7 +31,7 @@ export default function ModeToggle({ busy = false }) {
         title={titleFor('api')}
         onClick={() => setMode('api')}
       >
-        API
+        {t(MODE_INFO.api.nameKey)}
       </button>
       <button
         type="button"
@@ -42,7 +42,7 @@ export default function ModeToggle({ busy = false }) {
         title={titleFor('flow')}
         onClick={() => setMode('flow')}
       >
-        Flow
+        {t(MODE_INFO.flow.nameKey)}
       </button>
     </div>
   )

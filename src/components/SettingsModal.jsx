@@ -23,7 +23,7 @@ const TABS = [
   { id: 'mcp', icon: '🔌', labelKey: 'settings.tabMcp' }
 ]
 
-export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange, availableModels = {}, appMode, onKeySaved }) {
+export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange, availableModels = {}, appMode, sessionTarget = 'flow', onKeySaved }) {
   const { t } = useI18n()
   // 모델 선택 옵션 — App 에서 라이브 /models 로 채워 내려줌(undefined 면 SceneTab 이 정적 폴백).
   const [activeTab, setActiveTab] = useState(initialTab || 'storage')
@@ -118,6 +118,7 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
             setLocalSettings={setLocalSettings}
             t={t}
             appMode={appMode}
+            sessionTarget={sessionTarget}
             imageModels={appMode === 'flow' ? availableModels.imageModels : imageModelsForProvider(localSettings.generation?.image?.provider, availableModels.imageModels)}
             videoModels={availableModels.videoModels}
           />

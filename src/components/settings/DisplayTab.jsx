@@ -40,7 +40,7 @@ export default function DisplayTab({ t, appMode }) {
 
   return (
     <div className="tab-panel">
-      {/* Flow split 레이아웃 방향 — Flow 모드 전용 */}
+      {/* 로그인 모드의 active session view 레이아웃 */}
       {appMode === 'flow' && (
         <div className="setting-row">
           <label className="setting-label" style={{ margin: 0 }}>{t('settings.layoutMode')}</label>

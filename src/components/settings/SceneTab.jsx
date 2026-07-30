@@ -6,7 +6,9 @@ import AspectRatioSelector from './AspectRatioSelector'
 import ModelSelector from './ModelSelector'
 import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL, defaultImageModelForProvider, defaultVideoModelForProvider, imageModelsForProvider, listSupportedImageProviders, listSupportedVideoProviders, videoModelsForProvider } from '../../config/genModels'
 import { DEFAULTS } from '../../config/defaults'
+import { isFlowTarget } from '../../config/appRoute.js'
 import { computeImageProviderSwitch } from '../../utils/imageProviderSwitch'
+import { targetLabelKey } from '../modeInfo.js'
 
 // provider 선택 UI는 catalog provisional flag가 단일 권위다. Registry에는 fal이 양쪽에
 // 등록돼 persisted 설정이 라우팅되지만 real-key smoke 전에는 supported 목록에서 제외된다.
@@ -57,20 +59,26 @@ const VIDEO_RESOLUTION_OPTIONS = [
 ]
 
 // imageModels/videoModels: 라이브 /models 로 채운 동적 목록(상위에서 주입). 없으면 정적 카탈로그.
-export default function SceneTab({ localSettings, setLocalSettings, t, imageModels = IMAGE_MODELS, videoModels = VIDEO_MODELS, imageProviders = SUPPORTED_IMAGE_PROVIDERS, videoProviders = SUPPORTED_VIDEO_PROVIDERS, appMode }) {
-  // 모델 출처 구분 배지 — Flow 모드면 Flow 패널(동적), 그 외 API(BYOK) 모델임을 타이틀에 표시.
+export default function SceneTab({
+  localSettings, setLocalSettings, t,
+  imageModels = IMAGE_MODELS, videoModels = VIDEO_MODELS,
+  imageProviders = SUPPORTED_IMAGE_PROVIDERS, videoProviders = SUPPORTED_VIDEO_PROVIDERS,
+  appMode, sessionTarget = 'flow',
+}) {
+  const flowTargetActive = isFlowTarget({ mode: appMode, sessionTarget })
   const modeBadge = appMode
-    ? <span className={`model-mode-badge model-mode-${appMode}`}>{appMode === 'flow' ? 'Flow' : 'API'}</span>
+    ? <span className={`model-mode-badge model-mode-${appMode}`}>
+        {appMode === 'flow' ? t(targetLabelKey(sessionTarget)) : t('modeInfo.api.name')}
+      </span>
     : null
-  // Flow 모드는 Gemini 구독 기반 → 구독 페이지. API(BYOK) 모드는 종량제 → API 과금 페이지.
-  const priceUrl = appMode === 'flow' ? FLOW_PRICING_URL : PRICING_URL
+  const priceUrl = flowTargetActive ? FLOW_PRICING_URL : (appMode === 'api' ? PRICING_URL : null)
   const visibleImageProviders = (imageProviders || []).filter((provider) => SUPPORTED_IMAGE_PROVIDER_IDS.has(provider))
   const visibleVideoProviders = (videoProviders || []).filter((provider) => SUPPORTED_VIDEO_PROVIDER_IDS.has(provider))
-  const imageProvider = appMode === 'flow' ? 'google' : (localSettings.generation?.image?.provider ?? 'google')
+  const imageProvider = flowTargetActive ? 'google' : (localSettings.generation?.image?.provider ?? 'google')
   const visibleImageModels = imageModelsForProvider(imageProvider, imageModels)
   const imageDefaultModel = defaultImageModelForProvider(imageProvider) ?? DEFAULT_IMAGE_MODEL_ID
-  const t2vProvider = appMode === 'flow' ? 'google' : (localSettings.generation?.video?.t2v?.provider ?? 'google')
-  const i2vProvider = appMode === 'flow' ? 'google' : (localSettings.generation?.video?.i2v?.provider ?? 'google')
+  const t2vProvider = flowTargetActive ? 'google' : (localSettings.generation?.video?.t2v?.provider ?? 'google')
+  const i2vProvider = flowTargetActive ? 'google' : (localSettings.generation?.video?.i2v?.provider ?? 'google')
   const t2vModels = videoModelsForProvider(t2vProvider, videoModels)
   const i2vModels = videoModelsForProvider(i2vProvider, videoModels)
   const t2vDefaultModel = defaultVideoModelForProvider(t2vProvider) ?? DEFAULT_VIDEO_MODEL_ID
@@ -117,7 +125,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
 
       {/* 이미지/비디오 동시 생성 수 — API 모드 전용. Flow 는 안티봇 페이싱(아래)이 throttle 이라
           동시성 설정이 무의미해 숨긴다. */}
-      {appMode !== 'flow' && (
+      {!flowTargetActive && (
         <>
           {/* 이미지 동시 생성 수 (1~15) */}
           <div className="setting-row">
@@ -154,7 +162,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       )}
 
       {/* Flow 안티봇 페이싱 — Flow 모드 전용. 제출 사이 랜덤 대기 min~max(초). 값은 ms 로 저장. */}
-      {appMode === 'flow' && (
+      {flowTargetActive && (
         <div className="setting-row">
           <label className="setting-label">{t('settings.flowPacing')}</label>
           <div className="threshold-input-group">
@@ -208,7 +216,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       </div>
 
       {/* Flow Agent (Maps 그라운딩) — Flow 모드 전용. ON 이면 Agent ON 경로(주소 기반 생성). */}
-      {appMode === 'flow' && (
+      {flowTargetActive && (
         <div className="setting-row">
           <label className="setting-label">{t('settings.flowAgentMode')} {modeBadge}</label>
           <div className="batch-selector">
@@ -236,7 +244,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
           settings.imageBatchCount/videoBatchCount 를 그대로 사용한다. API(BYOK)에선
           Gemini=호출당 1장 / Veo=operation당 1개라 무의미 → 숨김. 회귀 가드: SceneTab.test.jsx
           (#5d8a349 에서 API-only 시절 통째 삭제됐다가 dual-mode 로 복원된 이력). */}
-      {appMode === 'flow' && (
+      {flowTargetActive && (
         <div className="settings-section">
           <h3>{t('settings.batchSettings')} {modeBadge}</h3>
 
@@ -313,7 +321,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       </div>
       <div className="settings-section">
         <h3>{t('settings.modelVideoT2VTitle')} {modeBadge}</h3>
-        {appMode !== 'flow' && visibleVideoProviders.length > 1 && (
+        {!flowTargetActive && visibleVideoProviders.length > 1 && (
           <div className="batch-count-buttons" role="group" aria-label={t('settings.videoProviderT2VTitle')}>
             {visibleVideoProviders.map((provider) => (
               <button
@@ -348,7 +356,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
       </div>
       <div className="settings-section">
         <h3>{t('settings.modelVideoF2VTitle')} {modeBadge}</h3>
-        {appMode !== 'flow' && visibleVideoProviders.length > 1 && (
+        {!flowTargetActive && visibleVideoProviders.length > 1 && (
           <div className="batch-count-buttons" role="group" aria-label={t('settings.videoProviderI2VTitle')}>
             {visibleVideoProviders.map((provider) => (
               <button
