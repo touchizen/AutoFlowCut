@@ -16,6 +16,7 @@ import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
 import { AGENT_CHAT_CLOSE_SELECTOR } from '../flow-agent-toggle.js'
 import { isOmniFlashModel } from '../video-model-rules.js'
 import { injectComposeSegments } from '../flow-compose-mention.js'
+import { gateFlowSideEffectIpc } from './flowTargetGate.js'
 
 // #R36: 비디오 제출 응답(batchAsyncGenerateVideo* → operation id) 캡처 타임아웃. 원래 30s 였으나
 //   @멘션(entity 참조) 비디오 등에서 초기 응답이 30s 를 넘겨 조기 실패(멈춤)하는 사례가 있어, 이미지
@@ -29,6 +30,7 @@ const VIDEO_RESPONSE_TIMEOUT_MS = 120000
  * @param {object} deps - Shared dependencies from main process
  */
 export function registerVideoIPC(ipcMain, deps) {
+  ipcMain = gateFlowSideEffectIpc(ipcMain, deps)
   const {
     getFlowView, getMainWindow, trustedClickOnFlowView, sessionFetch, flowPageFetch,
     parseFlowResponse, getRecaptchaToken, configureFlowMode, switchFlowToVideoMode, ensureAgentOff, ensureAgentOn, ensureOnProjectComposer, applyAgentDefaults,

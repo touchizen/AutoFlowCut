@@ -28,6 +28,7 @@ import {
   buildCharactersUrl,
   normalizeEntityDisplayName,
 } from '../flow-character-api.js'
+import { gateFlowSideEffectIpc } from './flowTargetGate.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
 import { EDITOR_SELECTOR, appendSceneText, insertSceneMention, injectComposeSegments } from '../flow-compose-mention.js'
 import { FLOW_APPLY_NAME_PROBE, FLOW_BACK_BTN_EXPR } from '../flow-character-name.js'
@@ -84,6 +85,7 @@ const GENERATE_BTN_SELECTOR = `(function(){
 })()`
 
 export function registerCharacterIPC(ipcMain, deps) {
+  ipcMain = gateFlowSideEffectIpc(ipcMain, deps)
   const {
     getFlowView, getMainWindow, trustedClickOnFlowView, flowPageFetch,
     parseFlowResponse, getCapturedProjectId, ensureOnProjectComposer,

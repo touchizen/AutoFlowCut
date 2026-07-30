@@ -10,8 +10,10 @@ import { updateBounds } from './layout.js'
 import { AGENT_TOGGLE_SELECTOR } from '../flow-agent-toggle.js'
 import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS } from '../flowOpenRetry.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
+import { gateFlowSideEffectIpc } from './flowTargetGate.js'
 
 export function registerDomIPC(ipcMain, deps) {
+  ipcMain = gateFlowSideEffectIpc(ipcMain, deps)
   const { getFlowView, getMainWindow, trustedClickOnFlowView, FLOW_URL, getCurrentMode } = deps
 
   // #R28-2: API 모드 전환 후에도 flowView 가 보존되므로, mode 게이트 없이 open/new-project 를

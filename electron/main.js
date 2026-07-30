@@ -47,6 +47,7 @@ import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-pa
 import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
+import { guardFlowSideEffect } from './ipc/flowTargetGate.js'
 import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
@@ -834,7 +835,13 @@ async function getApiBase() {
 // NOTE: flow:set-startup-project is registered by modeController.register(ipcMain) in mode.js.
 // No duplicate handler here.
 
-ipcMain.handle('flow:report-response', (event, payload) => {
+// P1: mode+target 이 flow+chatgpt 면 이 두 handler 도 원격 Flow 상태를 건드리므로 gate 대상.
+const mainFlowRouteDeps = {
+  getCurrentMode: modeController.getCurrentMode,
+  getSessionTarget: modeController.getSessionTarget,
+}
+
+ipcMain.handle('flow:report-response', guardFlowSideEffect(mainFlowRouteDeps, (event, payload) => {
   const flowView = modeController.getFlowView()
   if (!flowView || event.sender !== flowView.webContents) {
     return { ok: false, error: 'unauthorized sender' }
@@ -854,12 +861,12 @@ ipcMain.handle('flow:report-response', (event, payload) => {
     getPendingVideoGeneration: () => pendingVideoGeneration,
     setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
   })
-})
+}))
 
 // Flow Agent(Maps 그라운딩) 모드 — 렌더러 설정(flowAgentOn)을 flow:set-agent-mode 로 push.
 // generate 핸들러가 이 값으로 ensureAgentOn vs ensureAgentOff 를 분기한다. 기본 OFF.
 let flowAgentOn = false
-ipcMain.handle('flow:set-agent-mode', (_e, { on } = {}) => { flowAgentOn = !!on; return { ok: true, flowAgentOn } })
+ipcMain.handle('flow:set-agent-mode', guardFlowSideEffect(mainFlowRouteDeps, (_e, { on } = {}) => { flowAgentOn = !!on; return { ok: true, flowAgentOn } }))
 
 // ─── Flow API IPC handlers (all four modules) ───────────────────────────────
 const flowAPIDeps = {

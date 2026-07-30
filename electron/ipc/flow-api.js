@@ -16,6 +16,7 @@ import { createGenerationTimeout } from '../flow-generation-timeout.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
 import { createMutex } from '../asyncMutex.js'
 import { VIDEO_DOWNLOAD_TIMEOUT_MS, IMAGE_UPSCALE_TIMEOUT_MS } from '../flow-download-config.js'
+import { gateFlowSideEffectIpc } from './flowTargetGate.js'
 
 /**
  * Register all Flow API IPC handlers.
@@ -24,6 +25,7 @@ import { VIDEO_DOWNLOAD_TIMEOUT_MS, IMAGE_UPSCALE_TIMEOUT_MS } from '../flow-dow
  * @param {object} deps - Shared dependencies injected from main process
  */
 export function registerFlowAPIIPC(ipcMain, deps) {
+  ipcMain = gateFlowSideEffectIpc(ipcMain, deps)
   const {
     getFlowView, getMainWindow, trustedClickOnFlowView, sessionFetch, flowPageFetch,
     parseFlowResponse, getRecaptchaToken, extractMediaIds, extractFifeUrls,
