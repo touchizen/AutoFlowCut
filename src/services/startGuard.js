@@ -1,3 +1,5 @@
+import { isFlowTarget } from '../config/appRoute.js'
+
 // handleStart 초입 guard — hasPendingBatch는 M2 failure 모달이 열린 동안 유지되어 MCP
 // stop-restart의 scene start 재호출을 막는 latch다.
 export function isStartBlocked({ isRunning, videoRunning, hasPendingBatch, retryInFlight, refBatchRunning }) {
@@ -13,8 +15,8 @@ export function isStartBlocked({ isRunning, videoRunning, hasPendingBatch, retry
 // API mode resolves credentials per scene/provider inside the generation hooks. Running a
 // provider-less preflight here would implicitly ask for Google's key and block an otherwise
 // valid OpenAI/Grok-only batch. Flow keeps its existing outer authentication check.
-export async function runOuterStartAuthPreflight({ appMode, getAccessToken }) {
-  if (appMode !== 'flow') return true
+export async function runOuterStartAuthPreflight({ appMode, sessionTarget = 'flow', getAccessToken }) {
+  if (!isFlowTarget({ mode: appMode, sessionTarget })) return true
   return !!(await getAccessToken(false, true))
 }
 

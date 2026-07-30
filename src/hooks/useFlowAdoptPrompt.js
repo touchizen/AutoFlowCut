@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { isFlowTarget } from '../config/appRoute.js'
 import { shouldPromptAdopt, ADOPT_PROMPT_COOLDOWN_MS, ADOPT_RETRY_COOLDOWN_MS } from '../utils/flowAdoptPrompt'
 
 /** 쿨다운 키: 거절은 (로컬 프로젝트, Flow 프로젝트) 쌍에 대한 것이다. */
@@ -25,7 +26,8 @@ export const ADOPT_POLL_MS = 5000
  *          tryAdopt: (opts?: object) => Promise<object>, intervalMs?: number}} params
  * @returns {{candidate: string|null, confirm: () => Promise<void>, cancel: () => void}}
  */
-export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, projectName, tryAdopt, onAdoptFailed, intervalMs = ADOPT_POLL_MS }) {
+export function useFlowAdoptPrompt({ mode, sessionTarget = 'flow', flowProjectReady, projectLoading, projectName, tryAdopt, onAdoptFailed, intervalMs = ADOPT_POLL_MS }) {
+  const flowTargetActive = isFlowTarget({ mode, sessionTarget })
   // ⚠️ tryAdopt 는 매 render 새 함수라 deps 에 넣으면 리렌더마다(재생 중 playhead 등) interval 이
   //    리셋돼 영원히 안 터진다. ref 로 최신 함수만 들고 deps 에서 뺀다.
   const adoptRef = useRef(tryAdopt)
@@ -41,11 +43,11 @@ export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, pro
     // 확인이 무의미해진 상태면 모달을 닫는다: 관측한 프로젝트를 떠났거나, flow 를 떠났거나,
     // 그 사이 다른 경로로 바인딩이 열렸거나. 열어 두면 사용자는 X 에 연결했다고 믿는데 앱은
     // 이미 다른 프로젝트에 바인딩돼 있고, 승인은 조용히 무시된다.
-    if (candidate && (candidate.projectName !== projectName || mode !== 'flow' || flowProjectReady)) {
+    if (candidate && (candidate.projectName !== projectName || !flowTargetActive || flowProjectReady)) {
       setCandidate(null)
       return
     }
-    if (mode !== 'flow' || flowProjectReady || candidate || projectLoading || !projectName) return
+    if (!flowTargetActive || flowProjectReady || candidate || projectLoading || !projectName) return
     const timer = setInterval(async () => {
       const r = await adoptRef.current?.()
       if (r?.reason !== 'needs-confirm' || !r.projectId) return
@@ -54,7 +56,7 @@ export function useFlowAdoptPrompt({ mode, flowProjectReady, projectLoading, pro
       }
     }, intervalMs)
     return () => clearInterval(timer)
-  }, [mode, flowProjectReady, candidate, projectLoading, projectName, intervalMs])
+  }, [flowTargetActive, flowProjectReady, candidate, projectLoading, projectName, intervalMs])
 
   const confirm = async () => {
     // 사용자가 승인한 것은 "그때 보여준 ID" 다 — 확인 사이에 Flow 가 옮겨갔으면 채택되지 않는다.

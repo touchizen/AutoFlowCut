@@ -9,6 +9,7 @@ import { recoverInFlightVideos } from '../services/videoRecovery'
 import { migrateLegacyProject } from '../utils/srtTrack'
 import { stripReferencesForSave } from '../utils/projectPersist'
 import { buildI2VScenePatch } from '../utils/i2vScenePatch'
+import { isFlowTarget } from '../config/appRoute.js'
 
 // 프로젝트 화면비는 project.json 에 프로젝트별로 저장된다. project.json 에 값이
 // 없으면(기능 추가 전 프로젝트 등) 직전 프로젝트 값을 물려받지 않고 이 기본값으로
@@ -508,8 +509,10 @@ export function useProjectData({
   onAudioSwitch,
   genAPI = null,
   onSaveError = null, // 프로젝트 저장 실패 시 호출 (인자: 에러 메시지)
-  mode = 'api', // 'flow' | 'api' — flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화
+  mode = 'api', // 'flow' | 'api' — 저장 토큰, Flow project gate는 아래 selector가 결정
+  sessionTarget = 'flow',
 }) {
+  const flowTargetActive = isFlowTarget({ mode, sessionTarget })
   // CONTRACT: runtime callers must provide the synchronous framePairs mirror. The array fallback
   // below exists only for legacy/test callers and can observe a stale render closure during recovery.
   if (import.meta.env.DEV && !framePairsRef && !warnedMissingFramePairsRef) {
@@ -624,6 +627,7 @@ export function useProjectData({
   // #R14-3: restore/switch 의 flow 분기는 await 뒤에 실행되므로 closure `mode` 가 stale 일 수 있다.
   //   modeRef 로 최신 mode 를 읽어, 그 사이 api 로 전환됐으면 flow readiness 를 적용하지 않게 한다.
   const modeRef = useRef(mode)
+  const flowTargetActiveRef = useRef(flowTargetActive)
   // 자동 생성(Case B)이 실패한 시점에 Flow 가 보고 있던 프로젝트 id. 이후 현재 id 가 이 값과
   // "달라지면" 사용자가 Flow 에서 직접 새 프로젝트로 들어간 것이므로 채택한다(newFlowProject 가
   // 새 프로젝트를 판정할 때 쓰는 preId 기법과 동일). 같으면 Flow 가 이전 프로젝트에 머문 것이라
@@ -667,7 +671,10 @@ export function useProjectData({
   // 완료되면 엉뚱한 project.json 에 id 를 쓴다). render closure 대신 최신값을 ref 로 본다.
   const projectNameRef = useRef(settings?.projectName)
   projectNameRef.current = settings?.projectName
-  useEffect(() => { modeRef.current = mode }, [mode])
+  useEffect(() => {
+    modeRef.current = mode
+    flowTargetActiveRef.current = flowTargetActive
+  }, [mode, flowTargetActive])
 
   // Flow 모드 전용: saved flowProjectId 를 main process 에 즉시 알림 (startup gate 용).
   // main 이 없는 환경(jsdom, api 모드)에서는 optional-chaining 으로 no-op.
@@ -731,7 +738,7 @@ export function useProjectData({
     // 이미 올바른 projectName 으로 썼고, 다음 mode-entry 가 Case A 로 이어받는다).
     if (pendingPersistRef.current.get(projectName) === pendingId) pendingPersistRef.current.delete(projectName)
     // await 뒤 재검사 — 저장하는 사이 모드 이탈/프로젝트 전환이 있었으면 state 를 건드리지 않는다.
-    if (modeRef.current !== 'flow' || projectNameRef.current !== projectName
+    if (!flowTargetActiveRef.current || projectNameRef.current !== projectName
       || loadEpochRef.current !== startEpoch) return { ok: false, reason: 'superseded' }
     // ⚠️ ready 를 여기서 열지 않는다. 저장은 매핑이 디스크에 있다는 증명일 뿐, Flow 뷰가 지금 그
     //    프로젝트를 보고 있다는 증명이 아니다(다른 프로젝트를 들렀다 온 사이 Flow 는 다른 곳에
@@ -755,7 +762,7 @@ export function useProjectData({
    *   그리고 project.json 저장이 성공한 **뒤에만** readiness 를 연다(fail-open 금지).
    */
   const tryAdoptFlowProject = async (opts = {}) => {
-    if (modeRef.current !== 'flow') return { ok: false, reason: 'not-flow' }
+    if (!flowTargetActiveRef.current) return { ok: false, reason: 'not-flow' }
     if (adoptInFlightRef.current) return { ok: false, reason: 'in-flight' }
     const projectName = projectNameRef.current
     if (!projectName) return { ok: false, reason: 'no-project' }
@@ -794,7 +801,7 @@ export function useProjectData({
     // 시작 시점의 arm **바로 그것**이 아직 유효한가. 값 비교가 아니라 identity 비교여야 한다 —
     // 그 사이 해제됐다 같은 값으로 다시 arm 된 것은 다른 arm 이다(ABA).
     const startToken = adoptArmTokenRef.current
-    const stillCurrent = () => modeRef.current === 'flow' && adoptArmTokenRef.current === startToken
+    const stillCurrent = () => flowTargetActiveRef.current && adoptArmTokenRef.current === startToken
       && projectNameRef.current === projectName && loadEpochRef.current === startEpoch
     adoptInFlightRef.current = true
     try {
@@ -906,7 +913,7 @@ export function useProjectData({
   //   상태로 API 모드로 전환해도 단일 ref/scene 가드가 계속 차단되는 문제 방지.
   //   mode가 'flow'가 아닐 때는 flowProjectReady가 항상 true여야 한다.
   useEffect(() => {
-    if (mode !== 'flow') {
+    if (!flowTargetActive) {
       setFlowProjectReady(true)
       // #R8-3: flow 를 떠나면 confirmed 바인딩 리셋 — 재진입 시 Flow 뷰가 재연결되므로 재검증.
       confirmedBindingRef.current = null
@@ -917,7 +924,7 @@ export function useProjectData({
       // pendingPersistRef 는 지우지 않는다 — 그 Flow 프로젝트는 로컬 프로젝트 소유이고,
       // api 로 나갔다 돌아와도 여전히 유효하다(버리면 Case B 가 두 번째 프로젝트를 만든다).
     }
-  }, [mode])
+  }, [flowTargetActive])
 
   // Codex #2 fix: mode-entry Flow project binding.
   // When mode transitions to 'flow' with a project loaded:
@@ -928,9 +935,9 @@ export function useProjectData({
   //   1. On initial mount in flow mode (if project already loaded)
   //   2. On mode change → 'flow'
   //   3. On project load while in flow mode (flowProjectId changes from null to value, or projectName changes)
-  // Guard: only fires when mode==='flow' and a project is loaded (settings.projectName truthy).
+  // Guard: only fires for the canonical Flow target with a loaded project (settings.projectName truthy).
   useEffect(() => {
-    if (mode !== 'flow') return
+    if (!flowTargetActive) return
     // #R7-1: 프로젝트 전환이 커밋 중(projectLoading)일 때는 바인딩하지 않는다. 전환은
     //   flowProjectId 를 projectName 보다 먼저 set 하므로, 이 사이에 effect 가 돌면 새
     //   flowProjectId 를 (아직 옛) projectName 에 바인딩/persist 하는 race 가 생긴다.
@@ -963,7 +970,7 @@ export function useProjectData({
         setFlowProjectReady(false)
         try {
           const r = await window.electronAPI?.openFlowProject?.({ flowProjectId })
-          if (!cancelled) await applyOpenResult(r, flowProjectId, currentProjectName, () => !cancelled && modeRef.current === 'flow')
+          if (!cancelled) await applyOpenResult(r, flowProjectId, currentProjectName, () => !cancelled && flowTargetActiveRef.current)
         } catch {
           if (!cancelled) {
             setFlowProjectReady(false)
@@ -1005,7 +1012,7 @@ export function useProjectData({
         } catch (e) {
           console.warn('[ProjectData] mode-entry: project.json 확인 실패:', e.message)
         }
-        if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch) return
+        if (cancelled || !flowTargetActiveRef.current || loadEpochRef.current !== startEpoch) return
         if (meta?.success !== true) {
           // 생성 차단을 유지한 채 폴링의 재바인딩 요청을 기다린다(빈 프로젝트 양산 금지).
           console.warn('[ProjectData] mode-entry: project.json 을 읽지 못해 생성을 보류한다')
@@ -1043,7 +1050,7 @@ export function useProjectData({
             if (saved && pendingPersistRef.current.get(currentProjectName) === r.projectId) {
               pendingPersistRef.current.delete(currentProjectName)
             }
-            if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch) return
+            if (cancelled || !flowTargetActiveRef.current || loadEpochRef.current !== startEpoch) return
             if (!saved) {
               // 프로젝트는 이미 만들어졌다 — 새로 만들 필요 없이 저장만 재시도하면 된다.
               // App 의 5초 폴링(tryAdoptFlowProject)이 이 pending 을 처리한다.
@@ -1076,7 +1083,7 @@ export function useProjectData({
             } catch { baseline = undefined }
             // ⚠️ await 뒤 재검사 — 이 사이 프로젝트 전환/모드 이탈이 일어났으면 arm 을 되살리면 안 된다
             //    (전환이 지운 arm 을 늦은 응답이 복구해 다른 프로젝트에 채택이 발화한다).
-            if (cancelled || modeRef.current !== 'flow' || loadEpochRef.current !== startEpoch
+            if (cancelled || !flowTargetActiveRef.current || loadEpochRef.current !== startEpoch
               || projectNameRef.current !== currentProjectName) return
             adoptPreIdRef.current = baseline
             adoptArmTokenRef.current = newArmToken(currentProjectName, startEpoch)
@@ -1085,7 +1092,7 @@ export function useProjectData({
           // ⚠️ resolved-failure 와 같은 소유권 가드 — 전환은 arm 을 지우고 epoch 를 올린 뒤
           //    cleanup 이 커밋되기 전에 이 rejection 이 도착할 수 있다. 그대로 arm 하면 이전
           //    프로젝트의 arm 이 남아 폴링이 stale-arm 만 돌려주고 재바인딩도 못 한다(고착).
-          if (!cancelled && modeRef.current === 'flow'
+          if (!cancelled && flowTargetActiveRef.current
             && projectNameRef.current === currentProjectName
             && loadEpochRef.current === startEpoch) {
             setFlowProjectReady(false)
@@ -1119,7 +1126,7 @@ export function useProjectData({
   // #R7-1: projectLoading 도 dep — 전환 완료(false) 시 재실행해 일관 상태로 바인딩.
   // bindNonce: 폴링(tryAdoptFlowProject)이 재바인딩을 요청하면 이 effect 가 다시 돈다 —
   //   바인딩의 소유자를 이 effect 하나로 유지하기 위한 유일한 재시도 통로다.
-  }, [mode, flowProjectId, settings.projectName, hydrated, projectLoading, bindNonce])
+  }, [flowTargetActive, flowProjectId, settings.projectName, hydrated, projectLoading, bindNonce])
 
   // 마운트 시 자동 복원: 폴더가 설정되어 있으면 이전 프로젝트 로드
   useEffect(() => {
@@ -1204,7 +1211,7 @@ export function useProjectData({
         // R3-P1/§3.3.1: 복원 시 저장된 Flow 프로젝트로 진입 + ready gate.
         // flow 모드에서만 활성화 — api 모드에서는 flowProjectReady 를 true 로 유지한다
         // (openFlowProject 가 null 을 반환해 isFlowOpenConfirmed → false 로 생성이 막히는 것을 방지).
-        if (loaded.flowProjectId && modeRef.current === 'flow') {
+        if (loaded.flowProjectId && flowTargetActiveRef.current) {
           setFlowProjectReady(false)
           let confirmed = false
           try {
@@ -1215,10 +1222,10 @@ export function useProjectData({
               console.log('[ProjectData] tryAutoRestore: superseded after openFlowProject, skipping readiness/recovery')
               return
             }
-            confirmed = await applyOpenResult(r, loaded.flowProjectId, prevProjectName, () => myRestoreEpoch === loadEpochRef.current && modeRef.current === 'flow')
+            confirmed = await applyOpenResult(r, loaded.flowProjectId, prevProjectName, () => myRestoreEpoch === loadEpochRef.current && flowTargetActiveRef.current)
           } catch {
             // #R7-3: superseded(전환이 사이에 시작)면 readiness 를 건드리지 않는다 — 최신 전환이 소유.
-            if (myRestoreEpoch === loadEpochRef.current && modeRef.current === 'flow') setFlowProjectReady(false)
+            if (myRestoreEpoch === loadEpochRef.current && flowTargetActiveRef.current) setFlowProjectReady(false)
             // #R10-3: 오픈이 throw 했으니 confirmed 기록(있다면)을 지워 mode-entry 가 재오픈하게 한다.
             const cb = confirmedBindingRef.current
             if (cb && cb.projectName === prevProjectName && cb.flowProjectId === loaded.flowProjectId) confirmedBindingRef.current = null
@@ -1226,7 +1233,7 @@ export function useProjectData({
           }
           // #R4-1: Flow 모드에서는 open 확인된 경우에만 복구 실행 — 확인 안 되면 이전/죽은 프로젝트로 폴링할 위험.
           if (confirmed) triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, prevProjectName)
-        } else if (modeRef.current === 'flow') {
+        } else if (flowTargetActiveRef.current) {
           // #R6-5: Flow 모드 + 저장된 flowProjectId 없음 → mode-entry effect(Case B)가
           // newFlowProject 로 새 Flow 프로젝트를 establish 할 때까지 생성 차단 유지.
           // 여기서 true 로 열면 새 프로젝트가 생기기 전에 생성이 허용되는 race 가 생긴다.
@@ -1305,7 +1312,7 @@ export function useProjectData({
     isRestoringRef.current = true
     setProjectLoading(true)
     // flow 모드에서만 전환 시작 시 생성 차단 — api 모드에서는 항상 true 유지
-    if (mode === 'flow') setFlowProjectReady(false)
+    if (flowTargetActive) setFlowProjectReady(false)
     let switched = false // step 4(setSettings)까지 도달했는지 — 실패 반환값 판정용
     try {
       // 1. 현재 프로젝트 데이터 저장
@@ -1357,21 +1364,21 @@ export function useProjectData({
           // 전환 시작 시 false 로 닫고, 진입 확인 후 true 로 연다.
           // flow 모드에서만 활성화 — api 모드에서는 flowProjectReady 를 true 로 유지한다
           // (openFlowProject 가 null 을 반환해 isFlowOpenConfirmed → false 로 생성이 막히는 것을 방지).
-          if (loaded.flowProjectId && modeRef.current === 'flow') {
+          if (loaded.flowProjectId && flowTargetActiveRef.current) {
             let confirmed = false
             try {
               const r = await window.electronAPI?.openFlowProject?.({ flowProjectId: loaded.flowProjectId })
               // #R5-2: openFlowProject await 후 확인
               if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
-              confirmed = await applyOpenResult(r, loaded.flowProjectId, newProjectName, () => !superseded() && modeRef.current === 'flow')
+              confirmed = await applyOpenResult(r, loaded.flowProjectId, newProjectName, () => !superseded() && flowTargetActiveRef.current)
             } catch {
               // #R7-3: superseded 면 readiness 를 건드리지 않는다 — 최신 전환이 소유.
-              if (!superseded() && modeRef.current === 'flow') setFlowProjectReady(false)
+              if (!superseded() && flowTargetActiveRef.current) setFlowProjectReady(false)
               console.warn('[ProjectData] openFlowProject failed — generation blocked until retry')
             }
             // #R4-1: Flow 모드에서는 open 확인된 경우에만 복구 — 미확인이면 이전 프로젝트로 폴링 위험.
             if (confirmed && !superseded()) triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, newProjectName)
-          } else if (modeRef.current === 'flow') {
+          } else if (flowTargetActiveRef.current) {
             // #R7-2(R6-5 sibling): Flow 모드 + 저장된 flowProjectId 없음 → mode-entry effect(Case B)가
             // newFlowProject 로 establish 할 때까지 생성 차단 유지(여기서 true 로 열면 새 프로젝트
             // 생성 전 생성 허용 race). 확인된 바인딩이 없으므로 복구도 실행하지 않는다(#R5-1).
@@ -1392,7 +1399,7 @@ export function useProjectData({
           setFlowProjectId(null)
           declareStartup(null)  // #R24-1: hint 를 현재(매핑 없는) 프로젝트로 동기화
           // #R7-2: api → 즉시 true; flow → mode-entry Case B 가 establish 할 때까지 false 유지.
-          setFlowProjectReady(modeRef.current !== 'flow')
+          setFlowProjectReady(!flowTargetActiveRef.current)
           isFreshProject = true
           console.log('[App] Empty project:', newProjectName)
         }
@@ -1408,7 +1415,7 @@ export function useProjectData({
         setFlowProjectId(null)
         declareStartup(null)  // #R24-1: 새 프로젝트는 아직 Flow 매핑 없음 — hint 도 null 로 동기화
         // #R7-2: api → 즉시 true; flow → mode-entry Case B 가 establish 할 때까지 false 유지.
-        setFlowProjectReady(modeRef.current !== 'flow')
+        setFlowProjectReady(!flowTargetActiveRef.current)
         isFreshProject = true
         console.log('[App] New project created:', newProjectName)
       }
@@ -1458,7 +1465,7 @@ export function useProjectData({
       // #R17-6: flow 모드에선 확인된 바인딩이 없으므로 true 로 풀지 않는다(미확인 프로젝트 생성 방지).
       //   재바인딩은 mode-entry effect 가 처리한다.
       // #R6-7: superseded(이전) 전환은 readiness 를 건드리지 않는다 — 최신 전환이 소유.
-      if (!superseded()) setFlowProjectReady(modeRef.current !== 'flow')
+      if (!superseded()) setFlowProjectReady(!flowTargetActiveRef.current)
       return { aspectRatio: settings.aspectRatio, success: switched }
     } finally {
       // throw 여부와 무관하게 복원/로딩 플래그를 해제한다. 안 그러면 isRestoringRef 가
