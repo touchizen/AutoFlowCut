@@ -55,7 +55,11 @@ describe('route:set atomic session view lifecycle', () => {
 
   it('invalid route has no route or view side effect', async () => {
     const { handlers, ctl, contentView, bounds } = setup()
+    await handlers['route:set']({}, { mode: 'flow', sessionTarget: 'chatgpt' })
     const before = ctl.getCurrentRoute()
+    contentView.addChildView.mockClear()
+    contentView.removeChildView.mockClear()
+    bounds.mockClear()
     expect(await handlers['route:set']({}, { mode: 'flow', sessionTarget: 'wat' }))
       .toEqual({ ok: false, error: 'invalid-route' })
     expect(ctl.getCurrentRoute()).toEqual(before)
@@ -84,6 +88,7 @@ describe('route:set atomic session view lifecycle', () => {
     expect(await handlers['mode:set']({}, { mode: 'flow' })).toEqual({ ok: true, mode: 'flow' })
     expect(ctl.getSessionTarget()).toBe('chatgpt')
     expect(await handlers['mode:set']({}, {})).toEqual({ ok: false, error: 'invalid-route' })
+    expect(ctl.getCurrentRoute()).toEqual({ mode: 'flow', sessionTarget: 'chatgpt' })
   })
 
   it('flow+chatgpt never creates or attaches the Flow view', async () => {
