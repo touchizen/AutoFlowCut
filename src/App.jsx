@@ -311,13 +311,13 @@ function App() {
   // 단일 소유자라(드래그/영속), 여기 setLayout 은 진입 시 Flow 뷰가 곧장 자리잡게 하는 fallback —
   // Shell 의 effect(부모)가 직후 저장값으로 덮어쓴다(자식 effect 가 먼저 → 부모가 나중).
   useEffect(() => {
-    if (mode) {
+    if (mode && (mode !== 'flow' || flowTargetActive)) {
       // #R13-11: IPC 실패가 unhandled rejection 으로 새지 않게 catch (UI 는 그대로 진행).
       window.electronAPI?.setMode?.({ mode })?.catch?.((e) => console.warn('[App] setMode failed:', e?.message))
       const layout = flowLayoutForMode(mode)
       if (layout) window.electronAPI?.setLayout?.(layout)?.catch?.((e) => console.warn('[App] setLayout failed:', e?.message))
     }
-  }, [mode])
+  }, [mode, flowTargetActive])
 
   // Flow Agent(Maps 그라운딩) 모드를 main 에 push — generate 핸들러가 ensureAgentOn/Off 분기에 사용.
   useEffect(() => {
@@ -520,6 +520,11 @@ function App() {
     sessionTargetRef.current = sessionTarget
     flowTargetActiveRef.current = flowTargetActive
   }, [mode, sessionTarget, flowTargetActive])
+  const refuseIfSessionTargetUnsupported = useCallback(() => {
+    if (modeRef.current !== 'flow' || flowTargetActiveRef.current) return false
+    toast.warning(t('toast.sessionTargetUnsupported'))
+    return true
+  }, [t])
 
   // Flow 모드 인증 완료 이벤트 — main 이 flow-status { authenticated: true } 를 보내면
   // authReady 를 올린다. optional-chaining 으로 jsdom / api 모드에서는 no-op.
@@ -897,7 +902,15 @@ function App() {
     refreshSubscription     // #6: consume 성공 시 1회 refresh
   )
 
-  const { isRunning, isPaused, isStopping, isSceneBatchQueued, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
+  const { isRunning, isPaused, isStopping, isSceneBatchQueued, progress, status, statusMessage, start, togglePause, stop, retryErrors: retryErrorsUnsafe } = automation
+  const retryErrors = useCallback((...args) => {
+    if (refuseIfSessionTargetUnsupported()) return Promise.resolve()
+    return retryErrorsUnsafe(...args)
+  }, [retryErrorsUnsafe, refuseIfSessionTargetUnsupported])
+  const retryScene = useCallback((...args) => {
+    if (refuseIfSessionTargetUnsupported()) return Promise.resolve()
+    return automation.retryScene(...args)
+  }, [automation.retryScene, refuseIfSessionTargetUnsupported])
   // #M2: 모달/ref batch 대기 뒤 scene launch가 과거 render의 start closure를 부르지 않게 한다.
   const automationStartRef = useRef(start)
   automationStartRef.current = start
@@ -920,13 +933,25 @@ function App() {
   }, [isRunning, videoAutomation.isRunning])
 
   // Style Thumbnails
-  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
+  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails: generateThumbnailsUnsafe, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
+  const generateThumbnails = useCallback((...args) => {
+    if (refuseIfSessionTargetUnsupported()) return
+    return generateThumbnailsUnsafe(...args)
+  }, [generateThumbnailsUnsafe, refuseIfSessionTargetUnsupported])
 
   // Reference 생성
-  const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
+  const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef: handleGenerateRefUnsafe, handleGenerateAllRefs: handleGenerateAllRefsUnsafe, stopGenerateAllRefs } = useReferenceGeneration({
     settings, references, scenes, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, selectedStyleRefIdRef, styleThumbnails, generationQueue, flowProjectReady,
     scenesRef: scenesHook.scenesRef, flowProjectId: _flowProjectId, projectNameRef,
   })
+  const handleGenerateRef = useCallback((...args) => {
+    if (refuseIfSessionTargetUnsupported()) return
+    return handleGenerateRefUnsafe(...args)
+  }, [handleGenerateRefUnsafe, refuseIfSessionTargetUnsupported])
+  const handleGenerateAllRefs = useCallback((...args) => {
+    if (refuseIfSessionTargetUnsupported()) return
+    return handleGenerateAllRefsUnsafe(...args)
+  }, [handleGenerateAllRefsUnsafe, refuseIfSessionTargetUnsupported])
 
   const { isOpen: showReferences, setOpenByUser } = useRefPanelVisibility({
     refBatchActive,
@@ -956,10 +981,14 @@ function App() {
   }), [openSyncGate, t])
 
   // Scene 재생성
-  const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
+  const { generatingSceneId, handleGenerateScene: handleGenerateSceneUnsafe } = useSceneGeneration({
     settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
     requestMentionSync,
   })
+  const handleGenerateScene = useCallback((...args) => {
+    if (refuseIfSessionTargetUnsupported()) return
+    return handleGenerateSceneUnsafe(...args)
+  }, [handleGenerateSceneUnsafe, refuseIfSessionTargetUnsupported])
   const generatingSceneIdRef = useRef(generatingSceneId)
   generatingSceneIdRef.current = generatingSceneId
   const guardSceneBatchStart = (source = 'ui') => {
@@ -1321,6 +1350,7 @@ function App() {
    */
   const handleVideoRetry = useCallback(async (item, opts = {}) => {
     if (!item) return
+    if (refuseIfSessionTargetUnsupported()) return
     // #R30-4: timeline/scene-media 모달은 씬 미디어 id(t2v_N/i2v_N)로 연다. 재생성은 실제 generation
     //   아이템(vscene_N / fp_N)을 리셋해야 한다 — 안 그러면 updateVideoScene 매퍼가 t2v_/i2v_ 를 몰라
     //   no-op 이 되어 "재생성" 이 아무것도 안 한다. (t2v_N↔vscene_N, i2v_N↔fp_N: SceneList/LiveTimeline 매핑)
@@ -1432,7 +1462,7 @@ function App() {
     // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
     onUpdate(item.id, 'pending', { error: null })
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
-  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t])
+  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t, refuseIfSessionTargetUnsupported])
 
   const styleResolver = createStyleResolver({
     activeTab,
@@ -1668,6 +1698,9 @@ function App() {
               toast.warning(t('toast.allScenesGenerated'))
             }
             break
+          } else {
+            refuseIfSessionTargetUnsupported()
+            break
           }
         }
         // API 모드는 M2 미노출 — 기존 scene start 경로를 그대로 유지한다(§11.12).
@@ -1677,6 +1710,7 @@ function App() {
       }
 
       case 'video-text': {
+        if (refuseIfSessionTargetUnsupported()) break
         // Text to Video — 선택된 videoScenes만 실행 (선택 검증은 상단에서 처리)
         const selectedVideoScenes = videoScenes.filter(s => s.selected !== false)
 
@@ -1770,6 +1804,7 @@ function App() {
       }
 
       case 'frame-to-video': {
+        if (refuseIfSessionTargetUnsupported()) break
         // Frame to Video — 선택된 framePairs만 실행
         // Frame to Video — 선택된 framePairs만 실행 (선택 검증은 상단에서 처리)
         const selectedFramePairs = framePairs.filter(p => p.selected !== false)
@@ -1941,6 +1976,10 @@ function App() {
           if (gateResult.reason === 'no-live-targets') {
             toast.warning(t('toast.allScenesGenerated'))
           }
+          return
+        } else {
+          refuseIfSessionTargetUnsupported()
+          setPendingStartOptions(null)
           return
         }
       }
@@ -2235,6 +2274,7 @@ function App() {
             appMode={mode}
             onUpdate={updateReferences}
             onUpload={async (...args) => {
+              if (refuseIfSessionTargetUnsupported()) return { success: false, error: 'unsupported_session_target' }
               const readyCheck = checkFlowProjectReady(flowProjectReady, t)
               if (!readyCheck.ok) return { success: false, error: 'flow_project_not_ready' }
               return genAPI.uploadReference(...args)
@@ -2666,7 +2706,7 @@ function App() {
                 setRunningGenMode('image')
                 // 큐 대기 구간 중복 enqueue 방지 — 정상 Start 와 동일하게 pending 플래그.
                 setHasPendingBatch(true)
-                automation.retryScene(id, {
+                retryScene(id, {
                   projectName: ensureProjectName(),
                   saveMode: settings.saveMode,
                   imageBatchCount: settings.imageBatchCount || 1,
@@ -2770,7 +2810,7 @@ function App() {
               setRunningGenMode('image')
               // 큐 대기 구간 중복 enqueue 방지 — 정상 Start 와 동일하게 pending 플래그.
               setHasPendingBatch(true)
-              automation.retryScene(id, {
+              retryScene(id, {
                 projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
                 imageBatchCount: settings.imageBatchCount || 1,
