@@ -241,13 +241,25 @@ describe('createCdpProductFetch', () => {
         }),
       ]),
       imageUrls: [
-        'https://thumbnail1.coupangcdn.com/image/product-a.jpg',
-        'https://thumbnail2.coupangcdn.com/image/product-b.webp',
-        'https://thumbnail3.coupangcdn.com/image/product-c.png',
-        'https://thumbnail4.coupangcdn.com/image/product-d.jpg',
-        'https://thumbnail5.coupangcdn.com/image/product-e.jpg',
+        'https://thumbnail.coupangcdn.com/thumbnails/remote/492x492ex/image/retail/images/236629279350126-product-a.jpg',
+        'https://thumbnail.coupangcdn.com/thumbnails/remote/492x492ex/image/retail/images/998877665544332-product-b.jpg',
+        'https://thumbnail.coupangcdn.com/thumbnails/remote/292x292ex/image/vendor_inventory/88aa/product-c.jpg',
+        'https://thumbnail.coupangcdn.com/image/retail/images/776655443322110-product-d.jpg',
+        'https://thumbnail.coupangcdn.com/thumbnails/remote/360x360ex/image/retail/images/665544332211009-product-e.jpg',
       ],
     })
+    expect(result.imageUrls).toHaveLength(5)
+    expect(result.imageUrls.every((imageUrl) => (
+      imageUrl.startsWith('https://')
+      && !imageUrl.includes('assets.coupangcdn.com')
+      && !imageUrl.includes('/image/coupang/common/')
+      && !imageUrl.toLowerCase().includes('logo')
+      && (
+        imageUrl.includes('/thumbnails/remote/')
+        || imageUrl.includes('/vendor_inventory/')
+        || imageUrl.includes('/image/retail/images/')
+      )
+    ))).toBe(true)
     expect(harness.browser.close).toHaveBeenCalledTimes(1)
     await expect(access(launchOptions.userDataDir)).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -395,6 +407,32 @@ describe('createCdpProductFetch', () => {
     expect(result).toMatchObject({
       status: 'ok',
       product: { name: 'Apple - iPad' },
+    })
+  })
+
+  it('promotes an http og:image product URL to absolute HTTPS', async () => {
+    const harness = createBrowserHarness(`
+      <!doctype html><html><head>
+        <title>HTTP OG 상품</title>
+        <meta property="og:image" content="http://thumbnail.coupangcdn.com/thumbnails/remote/492x492ex/image/retail/images/http-og-product.jpg">
+      </head><body>
+        <strong class="total-price">9,900원</strong>
+      </body></html>
+    `)
+    const cdpProductFetch = createCdpProductFetch({
+      launchBrowser: harness.launchBrowser,
+      findBrowserExecutable: async () => '/Applications/Google Chrome',
+      warmupMs: 0,
+      extractTimeoutMs: 10,
+    })
+
+    const result = await cdpProductFetch(PRODUCT_URL, {})
+
+    expect(result).toMatchObject({
+      status: 'ok',
+      imageUrls: [
+        'https://thumbnail.coupangcdn.com/thumbnails/remote/492x492ex/image/retail/images/http-og-product.jpg',
+      ],
     })
   })
 

@@ -356,30 +356,79 @@ export function createCdpProductFetch({
             '[class*="ListPrice"]',
           ]))
 
-          const imageUrls = []
-          const seenImages = new Set()
-          for (const image of document.querySelectorAll('img[src*="coupangcdn.com"]')) {
-            if (imageUrls.length >= 5) break
+          const imageCandidates = []
+          const imageIndexByBaseKey = new Map()
+          const normalizeProductImage = (rawSource, isOg) => {
+            let normalizedSource = String(rawSource || '').trim()
+            if (!normalizedSource) return undefined
+            if (normalizedSource.startsWith('//')) {
+              normalizedSource = `https:${normalizedSource}`
+            } else if (/^http:/iu.test(normalizedSource)) {
+              normalizedSource = `https:${normalizedSource.slice(5)}`
+            }
+
             let imageUrl
             try {
-              imageUrl = new URL(image.currentSrc || image.src, location.href)
+              imageUrl = new URL(normalizedSource, location.href)
             } catch {
-              continue
+              return undefined
             }
             const hostname = imageUrl.hostname.toLowerCase()
-            const source = imageUrl.toString()
-            const lowerSource = source.toLowerCase()
+            const pathname = imageUrl.pathname.toLowerCase()
+            const isCoupangCdn = hostname === 'coupangcdn.com'
+              || hostname.endsWith('.coupangcdn.com')
+            const isProductPath = pathname.includes('/thumbnails/remote/')
+              || pathname.includes('/vendor_inventory/')
+              || pathname.includes('/image/retail/images/')
+            const isExcluded = hostname === 'assets.coupangcdn.com'
+              || pathname.includes('/image/coupang/common/')
+              || pathname.includes('/error/')
+              || pathname.includes('err-')
+              || pathname.includes('logo')
             if (
               imageUrl.protocol !== 'https:'
-              || (hostname !== 'coupangcdn.com' && !hostname.endsWith('.coupangcdn.com'))
-              || lowerSource.includes('/error/')
-              || lowerSource.includes('err-')
-              || lowerSource.includes('logo-coupang')
-              || seenImages.has(source)
-            ) continue
-            seenImages.add(source)
-            imageUrls.push(source)
+              || !isCoupangCdn
+              || !isProductPath
+              || isExcluded
+            ) return undefined
+
+            const sizeMatch = pathname.match(/\/thumbnails\/remote\/(\d+)x(\d+)ex\//u)
+            const pixelArea = sizeMatch ? Number(sizeMatch[1]) * Number(sizeMatch[2]) : 0
+            const baseKey = pathname.replace(
+              /^\/thumbnails\/remote\/\d+x\d+ex(?=\/)/u,
+              '',
+            )
+            return {
+              source: imageUrl.toString(),
+              baseKey,
+              pixelArea,
+              isOg: isOg === true,
+            }
           }
+          const admitProductImage = (candidate) => {
+            if (!candidate) return
+            const existingIndex = imageIndexByBaseKey.get(candidate.baseKey)
+            if (existingIndex === undefined) {
+              imageIndexByBaseKey.set(candidate.baseKey, imageCandidates.length)
+              imageCandidates.push(candidate)
+              return
+            }
+            const existing = imageCandidates[existingIndex]
+            if (!existing.isOg && (candidate.isOg || candidate.pixelArea > existing.pixelArea)) {
+              imageCandidates[existingIndex] = candidate
+            }
+          }
+
+          const ogImage = document.querySelector('meta[property="og:image"]')
+            ?.getAttribute('content')
+          admitProductImage(normalizeProductImage(ogImage, true))
+          for (const image of document.images) {
+            const source = image.currentSrc || image.getAttribute('src') || image.src
+            admitProductImage(normalizeProductImage(source, false))
+          }
+          const imageUrls = imageCandidates
+            .slice(0, 5)
+            .map((candidate) => candidate.source)
 
           return {
             errorPage: false,
