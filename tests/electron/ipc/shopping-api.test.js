@@ -46,6 +46,34 @@ beforeEach(async () => {
 })
 
 describe('shopping IPC', () => {
+  it('주입된 real generatePlan을 machine deps에 설치하고 M3/M4 side action은 stub으로 둔다', async () => {
+    const isolatedIpc = fakeIpcMain()
+    const generatePlan = vi.fn(async () => ({ schemaVersion: 'shopping-plan/3-appnative' }))
+    const machine = {
+      open: vi.fn(async () => ({ projectToken: 'token-real-plan', state: { state: 'empty' } })),
+      abort: vi.fn(async () => ({ ok: true })),
+    }
+    const createMachine = vi.fn(() => machine)
+    registerShoppingIPC(isolatedIpc, {
+      fetchProduct: vi.fn(),
+      generatePlan,
+      getActiveWorkFolder: () => workFolder,
+      createMachine,
+    })
+
+    await isolatedIpc.invoke('shopping:open', { projectPath: projectDir })
+
+    const deps = createMachine.mock.calls[0][0].deps
+    expect(deps.generatePlan).toBe(generatePlan)
+    expect(deps.usageTracker).toEqual(expect.objectContaining({
+      addDelta: expect.any(Function),
+      snapshot: expect.any(Function),
+    }))
+    expect(deps.usageTracker.snapshot()).toEqual({ input: 0, output: 0 })
+    await expect(deps.materialize()).rejects.toThrow('shopping-plan-step-not-available')
+    await expect(deps.generate()).rejects.toThrow('shopping-plan-step-not-available')
+  })
+
   it('shopping:open은 새 projectToken과 empty 상태를 반환한다', async () => {
     const result = await ipc.invoke('shopping:open', { projectPath: projectDir })
 

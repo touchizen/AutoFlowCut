@@ -5,6 +5,7 @@
 import * as fs from 'node:fs/promises'
 
 import { safeHttpFetch } from '../api/net/safeHttpFetch.js'
+import { createUsageTracker } from '../api/llm/usageTracker.js'
 import { createContentAddressedStaging, createFetchProduct } from '../shopping/fetchProduct.js'
 import { createPlanMachine } from '../shopping/planMachine.js'
 import { createShoppingPlanStore } from '../shopping/shoppingPlanStore.js'
@@ -19,6 +20,7 @@ export function registerShoppingIPC(ipcMain, {
   getWindow,
   getActiveWorkFolder = () => null,
   fetchProduct,
+  generatePlan,
   cdpProductFetch,
   imageFetch = safeHttpFetch,
   staging,
@@ -26,6 +28,7 @@ export function registerShoppingIPC(ipcMain, {
   randomUUID,
   createStore = createShoppingPlanStore,
   createMachine = createPlanMachine,
+  usageTrackerFactory = createUsageTracker,
   workflowSessions = createWorkflowSessionCoordinator(),
 } = {}) {
   const fetchProductFn = fetchProduct || createFetchProduct({
@@ -62,9 +65,11 @@ export function registerShoppingIPC(ipcMain, {
       }),
       revalidate: revalidateWorkflowProjectContext,
       create: async ({ context }) => {
+        const usageTracker = usageTrackerFactory()
         const deps = {
           fetchProduct: fetchProductFn,
-          generatePlan: unavailableInThisSlice,
+          generatePlan: generatePlan || unavailableInThisSlice,
+          usageTracker,
           materialize: unavailableInThisSlice,
           generate: unavailableInThisSlice,
           now,

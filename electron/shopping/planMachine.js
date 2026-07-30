@@ -83,6 +83,22 @@ function inspectFactReviewInput(factDecisions, prohibitedClaims) {
   return null
 }
 
+function groundedFactIdsForState(state) {
+  const snapshot = state.snapshot
+  const sourceFacts = Array.isArray(snapshot?.sourceFacts)
+    ? snapshot.sourceFacts
+    : Array.isArray(snapshot?.facts) ? snapshot.facts : null
+  if (sourceFacts) {
+    return new Set(sourceFacts.map((fact) => fact?.id).filter((id) => typeof id === 'string' && id))
+  }
+  if (snapshot?.product?.mode === 'manual' && Array.isArray(snapshot.product.facts)) {
+    return new Set(snapshot.product.facts.map((fact) => fact?.id).filter((id) => typeof id === 'string' && id))
+  }
+  // A crawl draft stores only snapshot/image references. Its durable decisions were admitted
+  // by createGeneratePlan against the original sourceFacts, so they are the restart-safe ID set.
+  return new Set((snapshot?.factDecisions || []).map(({ sourceFactId }) => sourceFactId))
+}
+
 function inspectDraft(draft) {
   const validation = validateShoppingPlanDraft(draft)
   if (!validation.valid) {
@@ -285,6 +301,11 @@ export function createPlanMachine({ store, deps } = {}) {
     let outcome = { error: 'invalid-transition' }
     await store.update((state) => {
       if (!REVISION_STATES.has(state.state) || !isRecord(state.snapshot)) return null
+      const groundedFactIds = groundedFactIdsForState(state)
+      if (factDecisions.some(({ sourceFactId }) => !groundedFactIds.has(sourceFactId))) {
+        outcome = { error: 'fact-decisions-invalid' }
+        return null
+      }
 
       if (state.state === 'fact_review') {
         outcome = { ok: true, operationId, revision: state.revision }
@@ -341,10 +362,18 @@ export function createPlanMachine({ store, deps } = {}) {
       factDecisions: sourceSnapshot.factDecisions || [],
       prohibitedClaims: sourceSnapshot.prohibitedClaims || [],
     }
+    const planContext = {
+      mode: 'crawl',
+      snapshotId: sourceSnapshot.snapshotId,
+      selectedImageIds: clone(sourceSnapshot.selectedImageIds),
+      product: clone(sourceSnapshot.product),
+    }
     let draft
     try {
       draft = await deps.generatePlan(facts, decisions, {
         ...options,
+        planContext,
+        usageTracker: deps.usageTracker,
         signal: operation.controller.signal,
         projectPath,
         projectToken,
@@ -356,12 +385,23 @@ export function createPlanMachine({ store, deps } = {}) {
         return { error: 'aborted' }
       }
       finishOperation(operation)
+      if (error?.code === 'shopping-llm-key-missing') {
+        return { error: 'shopping-llm-key-missing' }
+      }
       return { error: 'plan-generation-failed', message: error.message }
     }
 
     if (!isCurrentOperation(operation)) {
       finishOperation(operation)
       return { error: 'aborted' }
+    }
+
+    if (draft?.error === 'plan-draft-invalid' && Array.isArray(draft.validationErrors)) {
+      finishOperation(operation)
+      return {
+        error: 'plan-draft-invalid',
+        validationErrors: clone(draft.validationErrors),
+      }
     }
 
     const inspected = inspectDraft(draft)

@@ -110,7 +110,12 @@ export async function generateSynopsis(input, opts = {}, { onDelta, signal, fetc
   return splitSynopsisOutput(full)
 }
 
-async function structuredCall(prompt, schema, opts, { signal, fetchImpl = fetch, delay = defaultDelay }) {
+export async function structuredCall(prompt, schema, opts, {
+  signal,
+  fetchImpl = fetch,
+  delay = defaultDelay,
+  onUsage,
+} = {}) {
   const call = async () => {
     const res = await fetchImpl(`${BASE}/${opts.model}:generateContent`, {
       method: 'POST',
@@ -123,6 +128,15 @@ async function structuredCall(prompt, schema, opts, { signal, fetchImpl = fetch,
     })
     if (!res.ok) throw new HttpError(res.status, await res.text())
     const data = await res.json()
+    const usage = data?.usageMetadata
+    if (usage && onUsage) {
+      try {
+        onUsage({
+          input: usage.promptTokenCount || 0,
+          output: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0),
+        })
+      } catch { /* best-effort: usage accounting must not break generation */ }
+    }
     return JSON.parse(data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '')
   }
   try {

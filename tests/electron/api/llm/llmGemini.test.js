@@ -13,6 +13,7 @@ import {
   reviewPrompts,
   revisePrompts,
 } from '../../../../electron/api/llm/llmGemini.js'
+import * as llmGeminiModule from '../../../../electron/api/llm/llmGemini.js'
 
 // SSE 응답 mock: streamGenerateContent는 "data: {json}\n\n" 라인 스트림
 function sseResponse(chunks) {
@@ -143,6 +144,65 @@ describe('splitScenes', () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(httpErrorResponse(400, 'bad request'))
     await expect(splitScenes('# 대본', OPTS, { fetchImpl })).rejects.toThrow(/400/)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('structuredCall usage', () => {
+  it('Gemini usageMetadata를 호출별 input/output delta로 보고한다', async () => {
+    expect(typeof llmGeminiModule.structuredCall).toBe('function')
+    const onUsage = vi.fn()
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ value: 'ok' }) }] } }],
+      usageMetadata: { promptTokenCount: 123, candidatesTokenCount: 45, thoughtsTokenCount: 17 },
+    }), { status: 200 }))
+
+    await expect(llmGeminiModule.structuredCall(
+      'PROMPT',
+      {
+        type: 'OBJECT',
+        properties: { value: { type: 'STRING' } },
+        required: ['value'],
+      },
+      OPTS,
+      { fetchImpl, onUsage },
+    )).resolves.toEqual({ value: 'ok' })
+
+    expect(onUsage).toHaveBeenCalledWith({ input: 123, output: 62 })
+  })
+
+  it('JSON parse 재시도 양쪽의 thinking 포함 usage를 모두 delta로 보고한다', async () => {
+    const onUsage = vi.fn()
+    const response = (text, usageMetadata) => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text }] } }],
+      usageMetadata,
+    }), { status: 200 })
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(response('not-json', {
+        promptTokenCount: 10,
+        candidatesTokenCount: 2,
+        thoughtsTokenCount: 3,
+      }))
+      .mockResolvedValueOnce(response(JSON.stringify({ value: 'ok' }), {
+        promptTokenCount: 11,
+        candidatesTokenCount: 4,
+        thoughtsTokenCount: 5,
+      }))
+
+    await llmGeminiModule.structuredCall(
+      'PROMPT',
+      {
+        type: 'OBJECT',
+        properties: { value: { type: 'STRING' } },
+        required: ['value'],
+      },
+      OPTS,
+      { fetchImpl, onUsage },
+    )
+
+    expect(onUsage.mock.calls.map(([usage]) => usage)).toEqual([
+      { input: 10, output: 5 },
+      { input: 11, output: 9 },
+    ])
   })
 })
 

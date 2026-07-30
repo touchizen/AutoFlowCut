@@ -55,13 +55,17 @@ function factReviewState() {
   }
 }
 
-function planReviewState({ approved = false } = {}) {
+function planReviewState({ approved = false, materializationFailed = false } = {}) {
   const currentPlanHash = 'abc123currentplanhash'
   return {
     state: 'plan_review',
     currentPlanHash,
     approvedHash: approved ? currentPlanHash : null,
-    pendingMaterialization: approved ? { operationId: 'materialize-1', revision: 2 } : null,
+    pendingMaterialization: approved ? {
+      operationId: 'materialize-1',
+      revision: 2,
+      expectedMaterializationDigest: materializationFailed ? null : 'materialization-digest-1',
+    } : null,
     snapshot: {
       persona: {
         name: '민지',
@@ -372,7 +376,7 @@ describe('ShoppingPanel', () => {
 
   it('승인 뒤 물질화 실패면 matching hash여도 approvePlan 재시도를 연다', async () => {
     const pipeline = makePipeline({
-      state: planReviewState({ approved: true }),
+      state: planReviewState({ approved: true, materializationFailed: true }),
       error: 'materialization-failed',
     })
     render(<ShoppingPanel pipeline={pipeline} />)
@@ -386,10 +390,51 @@ describe('ShoppingPanel', () => {
     await waitFor(() => expect(pipeline.approvePlan).toHaveBeenCalledTimes(1))
   })
 
+  it('재마운트로 transient error가 사라져도 durable pending materialization으로 재시도를 연다', () => {
+    const failedState = planReviewState({ approved: true, materializationFailed: true })
+    const first = render(<ShoppingPanel pipeline={makePipeline({
+      state: failedState,
+      error: 'materialization-failed',
+    })} />)
+    first.unmount()
+
+    render(<ShoppingPanel pipeline={makePipeline({
+      state: structuredClone(failedState),
+      error: null,
+    })} />)
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('씬표 승인 완료 · 물질화 재시도 필요')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '물질화 다시 시도' })).toBeEnabled()
+  })
+
   it('새 plan 오류 코드를 내부 코드 없이 인라인 메시지로 표시한다', () => {
     render(<ShoppingPanel pipeline={makePipeline({ error: 'plan-draft-invalid' })} />)
 
     expect(screen.getByRole('alert')).toHaveTextContent('대본·씬표 형식')
     expect(screen.getByRole('alert')).not.toHaveTextContent('plan-draft-invalid')
+  })
+
+  it('Gemini 키가 없으면 설정의 API 키 입력 위치와 재시도를 인라인 안내한다', async () => {
+    const state = factReviewState()
+    state.snapshot.factDecisions = state.snapshot.sourceFacts.map(({ id }) => ({
+      sourceFactId: id,
+      decision: 'allowed',
+      confirmedAt: '2026-07-30T00:00:00.000Z',
+    }))
+
+    render(<ShoppingPanel pipeline={makePipeline({
+      state,
+      error: 'shopping-llm-key-missing',
+    })} />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('설정')
+    expect(screen.getByRole('alert')).toHaveTextContent('API 키')
+    expect(screen.getByRole('alert')).toHaveTextContent('Gemini')
+    expect(screen.getByRole('alert')).toHaveTextContent('다시 시도')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '대본·씬표 생성' })).toBeEnabled()
+    })
   })
 })

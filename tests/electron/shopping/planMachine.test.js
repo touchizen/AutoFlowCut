@@ -104,9 +104,12 @@ function makeProductSnapshot() {
   return {
     status: 'ok',
     snapshotId: 'snapshot-1',
+    product: { name: '테스트 상품', priceKrw: 19900 },
     sourceFacts: [
       { id: 'fact-1', field: 'name', value: '테스트 상품' },
-      { id: 'fact-2', field: 'price', value: 19900 },
+      { id: 'fact-2', field: 'priceKrw', value: 19900 },
+      { id: 'fact-3', field: 'description', value: '승인 정보 3' },
+      { id: 'fact-4', field: 'description', value: '승인 정보 4' },
     ],
     selectedImageIds: ['image-1'],
   }
@@ -437,10 +440,15 @@ describe('planMachine 6-state workflow', () => {
   })
 
   it('fact_review 필드별 문자열 경계는 generatePlan 입력 계약과 일치한다', async () => {
-    const { machine, token } = await openMachine()
+    const sourceFactId = 'f'.repeat(160)
+    const snapshot = makeProductSnapshot()
+    snapshot.sourceFacts[0].id = sourceFactId
+    const { machine, token } = await openMachine({
+      deps: { fetchProduct: vi.fn(async () => snapshot) },
+    })
     await machine.submitProduct(token, 'https://www.coupang.com/vp/products/1')
     const decisions = [{
-      sourceFactId: 'f'.repeat(160),
+      sourceFactId,
       decision: 'excluded',
       confirmedAt: '2'.repeat(100),
     }]
@@ -452,6 +460,27 @@ describe('planMachine 6-state workflow', () => {
 
     await expect(machine.setFactDecisions(token, decisions, prohibitedClaims))
       .resolves.toMatchObject({ ok: true, operationId: expect.any(String) })
+  })
+
+  it('crawl plan_review factDecision 병합은 기존 grounded ID 밖의 allowed decision을 hash 전에 거부한다', async () => {
+    const initial = reviewedState('plan_review')
+    const { machine, store, token } = await openMachine({ initial })
+    const before = await machine.getState()
+    store.update.mockClear()
+    const injected = [
+      ...initial.snapshot.factDecisions,
+      {
+        sourceFactId: 'fact-not-in-crawl-snapshot',
+        decision: 'allowed',
+        confirmedAt: '2026-07-30T09:30:00.000Z',
+      },
+    ]
+
+    await expect(machine.setFactDecisions(token, injected, initial.snapshot.prohibitedClaims))
+      .resolves.toEqual({ error: 'fact-decisions-invalid' })
+
+    expect(await machine.getState()).toEqual(before)
+    expect(store.writtenCount()).toBe(0)
   })
 
   it('unsupported 상품은 구조화 오류로 반환하고 empty를 유지해 정상 URL 재시도를 허용한다', async () => {
@@ -1046,7 +1075,15 @@ describe('session, abort, and dependency isolation', () => {
     expect(deps.generatePlan).toHaveBeenCalledWith(
       makeProductSnapshot().sourceFacts,
       expect.objectContaining({ factDecisions: makePlan().factDecisions }),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        planContext: {
+          mode: 'crawl',
+          snapshotId: 'snapshot-1',
+          selectedImageIds: ['image-1'],
+          product: { name: '테스트 상품', priceKrw: 19900 },
+        },
+      }),
     )
 
     const approval = await machine.approvePlan(token)
@@ -1067,6 +1104,53 @@ describe('session, abort, and dependency isolation', () => {
       ['S02'],
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
+  })
+
+  it('draftPlan은 caller planContext를 무시하고 admitted crawl snapshot context를 주입한다', async () => {
+    const { machine, deps, token } = await openMachine()
+    await machine.submitProduct(token, 'https://www.coupang.com/vp/products/1')
+    await machine.setFactDecisions(token, makePlan().factDecisions, makePlan().prohibitedClaims)
+
+    await machine.draftPlan(token, {
+      planContext: {
+        mode: 'crawl',
+        snapshotId: 'renderer-forged',
+        selectedImageIds: ['renderer-forged'],
+        product: { name: 'renderer-forged' },
+      },
+    })
+
+    expect(deps.generatePlan.mock.calls[0][2].planContext).toEqual({
+      mode: 'crawl',
+      snapshotId: 'snapshot-1',
+      selectedImageIds: ['image-1'],
+      product: { name: '테스트 상품', priceKrw: 19900 },
+    })
+  })
+
+  it('draftPlan은 project-scoped usageTracker를 caller override 없이 전달한다', async () => {
+    const usageTracker = { addDelta: vi.fn(), snapshot: vi.fn(() => ({ input: 0, output: 0 })) }
+    const forged = { addDelta: vi.fn(), snapshot: vi.fn() }
+    const { machine, deps, token } = await openMachine({ deps: { usageTracker } })
+    await machine.submitProduct(token, 'https://www.coupang.com/vp/products/1')
+    await machine.setFactDecisions(token, makePlan().factDecisions, makePlan().prohibitedClaims)
+
+    await machine.draftPlan(token, { usageTracker: forged })
+
+    expect(deps.generatePlan.mock.calls[0][2].usageTracker).toBe(usageTracker)
+  })
+
+  it('shopping LLM 키 없음 코드는 generic plan-generation-failed로 뭉개지 않는다', async () => {
+    const error = Object.assign(new Error('missing'), { code: 'shopping-llm-key-missing' })
+    const { machine, token } = await openMachine({
+      deps: { generatePlan: vi.fn(async () => { throw error }) },
+    })
+    await machine.submitProduct(token, 'https://www.coupang.com/vp/products/1')
+    await machine.setFactDecisions(token, makePlan().factDecisions, makePlan().prohibitedClaims)
+
+    await expect(machine.draftPlan(token)).resolves.toEqual({
+      error: 'shopping-llm-key-missing',
+    })
   })
 
   it('uses store.update for every durable mutation and never calls blind save', async () => {

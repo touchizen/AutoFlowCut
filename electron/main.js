@@ -19,6 +19,8 @@ import { registerGenaiIPC } from './ipc/genai-api.js'
 import { registerStoryIPC } from './ipc/story-api.js'
 import { registerShoppingIPC } from './ipc/shopping-api.js'
 import { createCdpProductFetch, findBrowserExecutable } from './shopping/cdpProductFetch.js'
+import { createGeneratePlan } from './shopping/generatePlan.js'
+import { createGeminiShoppingLlm } from './shopping/shoppingLlmGemini.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
@@ -293,6 +295,10 @@ const sfxFor = (provider) => {
 }
 
 const storyLlm = createStoryLlmRouter({ claude: llmClaude, codex: llmCodex })
+const shoppingLlm = createGeminiShoppingLlm({
+  getApiKey: () => genaiKeyStore.getKey(),
+})
+const generateShoppingPlan = createGeneratePlan({ llm: shoppingLlm })
 
 // Story pipeline IPC (script/scenes/audio/prompts 스텝 머신 + preload 브릿지).
 registerStoryIPC(ipcMain, {
@@ -312,6 +318,7 @@ registerStoryIPC(ipcMain, {
 // Shopping pipeline IPC (product crawl + app-native plan machine).
 registerShoppingIPC(ipcMain, {
   getWindow: () => mainWindow,
+  generatePlan: generateShoppingPlan,
   cdpProductFetch: createCdpProductFetch({
     launchBrowser: (options) => puppeteer.launch(options),
     findBrowserExecutable,

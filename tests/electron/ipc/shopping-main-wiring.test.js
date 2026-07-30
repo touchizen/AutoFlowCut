@@ -18,4 +18,13 @@ describe('shopping IPC main wiring', () => {
     expect(source).not.toMatch(/shoppingCrawlView|shoppingCrawlBounds|shopping:crawl-view-bounds/)
     expect(source).not.toMatch(/app:project-activated[\s\S]{0,180}activeWorkFolder\s*=/)
   })
+
+  it('encrypted Gemini BYOK에서 shopping structured LLM과 generatePlan을 조립해 DI한다', () => {
+    expect(source).toContain("import { createGeneratePlan } from './shopping/generatePlan.js'")
+    expect(source).toContain("import { createGeminiShoppingLlm } from './shopping/shoppingLlmGemini.js'")
+    expect(source).toMatch(/const shoppingLlm = createGeminiShoppingLlm\(\{\s*getApiKey: \(\) => genaiKeyStore\.getKey\(\),\s*\}\)/)
+    expect(source).not.toMatch(/const shoppingLlmUsage = createUsageTracker\(\)/)
+    expect(source).toMatch(/const generateShoppingPlan = createGeneratePlan\(\{ llm: shoppingLlm \}\)/)
+    expect(source).toMatch(/registerShoppingIPC\(ipcMain, \{[\s\S]*?generatePlan: generateShoppingPlan,[\s\S]*?workflowSessions,[\s\S]*?\}\)/)
+  })
 })

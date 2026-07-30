@@ -18,6 +18,7 @@ const SHOPPING_ERROR_MESSAGES = Object.freeze({
   'fact-decisions-invalid': 'A/B 사실확인 입력 형식이나 개수를 확인해 주세요.',
   'plan-draft-invalid': '대본·씬표 형식이 올바르지 않습니다. 사실확인과 생성 결과를 다시 확인해 주세요.',
   'plan-generation-failed': '대본·씬표를 생성하지 못했습니다.',
+  'shopping-llm-key-missing': 'Gemini API 키가 없습니다. 설정 > API 키에서 입력한 뒤 다시 시도해 주세요.',
   'materialization-failed': '씬표 승인은 저장됐지만 물질화를 시작하지 못했습니다.',
   'materialization-invalid': '물질화 결과를 확인하지 못했습니다.',
 })
@@ -175,12 +176,11 @@ export default function ShoppingPanel({ pipeline }) {
     pipeline.state?.approvedHash
     && pipeline.state.approvedHash === pipeline.state.currentPlanHash,
   )
-  const pipelineErrorCode = typeof pipeline.error === 'string'
-    ? pipeline.error
-    : pipeline.error?.error
+  const pendingMaterialization = pipeline.state?.pendingMaterialization
   const materializationRetry = workflowState === 'plan_review'
     && approvalMatches
-    && pipelineErrorCode === 'materialization-failed'
+    && Boolean(pendingMaterialization)
+    && !pendingMaterialization.expectedMaterializationDigest
 
   const handleSubmit = async (event) => {
     event.preventDefault()

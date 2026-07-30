@@ -51,10 +51,24 @@ const SOURCE_FACT_KEYS = [
   'verification',
   'trust',
 ]
-
-const REQUIRED_CLAIM_KEYS = CLAIM_KEYS.filter((key) => key !== 'formula')
-const REQUIRED_SOURCE_FACT_KEYS = SOURCE_FACT_KEYS.filter((key) => !['sourceUrl', 'jsonPathOrProperty'].includes(key))
-const ALLOWED_CLAIM_TYPES = new Set([
+const FACT_DECISION_KEYS = ['sourceFactId', 'decision', 'confirmedAt']
+const PROHIBITED_CLAIM_KEYS = ['id', 'text', 'reason']
+const CRAWL_PRODUCT_KEYS = ['mode', 'snapshotId', 'selectedImageIds']
+const MANUAL_PRODUCT_KEYS = ['mode', 'title', 'sku', 'sourceUrl', 'facts', 'attachmentIds']
+const SCHEMA_VERSION = 'shopping-plan/3-appnative'
+const SOURCE_KIND_VALUES = ['jsonld', 'og', 'dom', 'manual']
+const VERIFICATION_VALUES = ['page-asserted', 'page-rendered', 'user-asserted']
+const TRUST_VALUES = ['untrusted-web-data']
+const FACT_DECISION_VALUES = ['allowed', 'excluded']
+const PERSONA_ROLE_VALUES = ['presenter']
+const PERSONA_GENDER_VALUES = ['female', 'male']
+const PERSONA_AGE_BAND_VALUES = ['20s', '30s', '40s', '50s', '60s']
+const PERSONA_ETHNICITY_VALUES = ['Korean']
+const TEMPLATE_ID_VALUES = ['price-info-v1', 'problem-info-v1']
+const STYLE_ID_VALUES = ['shopping-ugc-presenter-v1']
+const SCENE_KEY_VALUES = ['S01', 'S02', 'S03', 'S04', 'S05', 'S06', 'S07', 'S08']
+const VISUAL_TYPE_VALUES = ['product_still', 'persona_i2v']
+const CLAIM_TYPE_VALUES = [
   'product_identity',
   'page_fact',
   'numeric_fact',
@@ -62,7 +76,11 @@ const ALLOWED_CLAIM_TYPES = new Set([
   'editorial_fit',
   'cta',
   'disclosure',
-])
+]
+
+const REQUIRED_CLAIM_KEYS = CLAIM_KEYS.filter((key) => key !== 'formula')
+const REQUIRED_SOURCE_FACT_KEYS = SOURCE_FACT_KEYS.filter((key) => !['sourceUrl', 'jsonPathOrProperty'].includes(key))
+const ALLOWED_CLAIM_TYPES = new Set(CLAIM_TYPE_VALUES)
 const FACT_REQUIRED_CLAIM_TYPES = new Set([
   'product_identity',
   'page_fact',
@@ -82,6 +100,105 @@ const PROMPT_PHRASES = [
 const GRAPHEME_LIMITS = new Map([[4, 18], [6, 30], [8, 42]])
 const FORBIDDEN_EVIDENCE_PHRASES = ['직접 확인해봤습니다', '첫 느낌', '문의가 많았습니다']
 const SEGMENTER = new Intl.Segmenter('ko', { granularity: 'grapheme' })
+const GENERATION_CONSTANTS = Object.freeze({
+  provider: 'google',
+  imageModel: 'gemini-3.1-flash-image',
+  videoModel: 'veo-3.1-fast-generate-preview',
+  aspectRatio: '9:16',
+  videoResolution: '720p',
+  speechMode: 'veo-native-ko',
+  productStillAudio: 'none',
+  subtitleTiming: 'scene-block',
+  dialoguePolicyVersion: 'shopping-veo-dialogue-v1',
+})
+
+function responseObject(properties, required = Object.keys(properties)) {
+  return { type: 'OBJECT', properties, required }
+}
+
+function responseArray(items, options = {}) {
+  return { type: 'ARRAY', items, ...options }
+}
+
+const RESPONSE_STRING = Object.freeze({ type: 'STRING' })
+const RESPONSE_INTEGER = Object.freeze({ type: 'INTEGER' })
+
+// M2b-3's real adapter accepts main-owned crawl planContext only. Keeping this legacy
+// Gemini Schema branch-specific avoids type-less anyOf nodes that responseSchema rejects.
+const PRODUCT_RESPONSE_SCHEMA = responseObject({
+  mode: { type: 'STRING', enum: ['crawl'] },
+  snapshotId: RESPONSE_STRING,
+  selectedImageIds: responseArray(RESPONSE_STRING, { minItems: 1, maxItems: 5 }),
+}, CRAWL_PRODUCT_KEYS)
+
+/**
+ * Gemini structured-output schema for one ShoppingPlanDraftInput.
+ * Relational constraints remain in validateShoppingPlanDraft/createGeneratePlan.
+ */
+export const SHOPPING_PLAN_RESPONSE_SCHEMA = responseObject({
+  schemaVersion: { type: 'STRING', enum: [SCHEMA_VERSION] },
+  product: PRODUCT_RESPONSE_SCHEMA,
+  factDecisions: responseArray(responseObject({
+    sourceFactId: RESPONSE_STRING,
+    decision: { type: 'STRING', enum: FACT_DECISION_VALUES },
+    confirmedAt: RESPONSE_STRING,
+  }, FACT_DECISION_KEYS), { maxItems: 30 }),
+  prohibitedClaims: responseArray(responseObject({
+    id: RESPONSE_STRING,
+    text: RESPONSE_STRING,
+    reason: RESPONSE_STRING,
+  }, PROHIBITED_CLAIM_KEYS), { maxItems: 30 }),
+  persona: responseObject({
+    id: RESPONSE_STRING,
+    name: RESPONSE_STRING,
+    role: { type: 'STRING', enum: PERSONA_ROLE_VALUES },
+    gender: { type: 'STRING', enum: PERSONA_GENDER_VALUES },
+    ageBand: { type: 'STRING', enum: PERSONA_AGE_BAND_VALUES },
+    ethnicity: { type: 'STRING', enum: PERSONA_ETHNICITY_VALUES },
+    appearance: RESPONSE_STRING,
+  }, PERSONA_KEYS),
+  creative: responseObject({
+    templateId: { type: 'STRING', enum: TEMPLATE_ID_VALUES },
+    styleId: { type: 'STRING', enum: STYLE_ID_VALUES },
+  }, CREATIVE_KEYS),
+  generation: responseObject({
+    provider: { type: 'STRING', enum: [GENERATION_CONSTANTS.provider] },
+    imageModel: { type: 'STRING', enum: [GENERATION_CONSTANTS.imageModel] },
+    videoModel: { type: 'STRING', enum: [GENERATION_CONSTANTS.videoModel] },
+    aspectRatio: { type: 'STRING', enum: [GENERATION_CONSTANTS.aspectRatio] },
+    videoResolution: { type: 'STRING', enum: [GENERATION_CONSTANTS.videoResolution] },
+    videoSeedBase: RESPONSE_STRING,
+    speechMode: { type: 'STRING', enum: [GENERATION_CONSTANTS.speechMode] },
+    productStillAudio: { type: 'STRING', enum: [GENERATION_CONSTANTS.productStillAudio] },
+    subtitleTiming: { type: 'STRING', enum: [GENERATION_CONSTANTS.subtitleTiming] },
+    dialoguePolicyVersion: { type: 'STRING', enum: [GENERATION_CONSTANTS.dialoguePolicyVersion] },
+  }, GENERATION_KEYS),
+  claims: responseArray(responseObject({
+    id: RESPONSE_STRING,
+    text: RESPONSE_STRING,
+    claimType: { type: 'STRING', enum: CLAIM_TYPE_VALUES },
+    sourceFactIds: responseArray(RESPONSE_STRING),
+    formula: RESPONSE_STRING,
+  }, REQUIRED_CLAIM_KEYS), { minItems: 1 }),
+  scenes: responseArray(responseObject({
+    sceneKey: { type: 'STRING', enum: SCENE_KEY_VALUES },
+    visualType: { type: 'STRING', enum: VISUAL_TYPE_VALUES },
+    visualDescription: RESPONSE_STRING,
+    productImageId: RESPONSE_STRING,
+    dialogueText: RESPONSE_STRING,
+    subtitleText: RESPONSE_STRING,
+    claimIds: responseArray(RESPONSE_STRING, { minItems: 1 }),
+    timelineDurationMs: RESPONSE_INTEGER,
+    // Legacy Gemini responseSchema supports enum only for STRING. Runtime validation below
+    // remains authoritative for the discrete 0/4/6/8 duration grid.
+    generationDurationSec: RESPONSE_INTEGER,
+    trim: {
+      ...responseObject({ startMs: RESPONSE_INTEGER, endMs: RESPONSE_INTEGER }),
+      nullable: true,
+    },
+    videoPrompt: RESPONSE_STRING,
+  }, SCENE_KEYS), { minItems: 5, maxItems: 8 }),
+}, PLAN_KEYS)
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -224,7 +341,7 @@ function validateSourceFact(fact, path, errors) {
   ) {
     addError(errors, `${path}.value must be a non-empty JSON scalar`)
   }
-  checkEnum(fact.sourceKind, `${path}.sourceKind`, ['jsonld', 'og', 'dom', 'manual'], errors)
+  checkEnum(fact.sourceKind, `${path}.sourceKind`, SOURCE_KIND_VALUES, errors)
   if (fact.sourceUrl !== undefined) checkUrl(fact.sourceUrl, `${path}.sourceUrl`, errors)
   if (fact.jsonPathOrProperty !== undefined) {
     checkString(fact.jsonPathOrProperty, `${path}.jsonPathOrProperty`, errors, { nonEmpty: true })
@@ -233,10 +350,10 @@ function validateSourceFact(fact, path, errors) {
   checkEnum(
     fact.verification,
     `${path}.verification`,
-    ['page-asserted', 'page-rendered', 'user-asserted'],
+    VERIFICATION_VALUES,
     errors,
   )
-  checkEnum(fact.trust, `${path}.trust`, ['untrusted-web-data'], errors)
+  checkEnum(fact.trust, `${path}.trust`, TRUST_VALUES, errors)
 }
 
 function validateProduct(product, errors) {
@@ -250,9 +367,7 @@ function validateProduct(product, errors) {
   checkCanonicalIdOrEnum(product.mode, '$.product.mode', errors, { nonEmpty: true })
   if (!crawl && !manual) addError(errors, '$.product.mode must be "crawl" or "manual"')
 
-  const keys = crawl
-    ? ['mode', 'snapshotId', 'selectedImageIds']
-    : ['mode', 'title', 'sku', 'sourceUrl', 'facts', 'attachmentIds']
+  const keys = crawl ? CRAWL_PRODUCT_KEYS : MANUAL_PRODUCT_KEYS
   const required = crawl ? keys : keys.filter((key) => !['sku', 'sourceUrl'].includes(key))
   checkObject(product, '$.product', keys, required, errors)
 
@@ -303,12 +418,12 @@ function validateFactDecisions(decisions, manualFactIds, errors) {
     if (!checkObject(
       decision,
       path,
-      ['sourceFactId', 'decision', 'confirmedAt'],
-      ['sourceFactId', 'decision', 'confirmedAt'],
+      FACT_DECISION_KEYS,
+      FACT_DECISION_KEYS,
       errors,
     )) continue
     checkCanonicalIdOrEnum(decision.sourceFactId, `${path}.sourceFactId`, errors, { nonEmpty: true })
-    checkEnum(decision.decision, `${path}.decision`, ['allowed', 'excluded'], errors)
+    checkEnum(decision.decision, `${path}.decision`, FACT_DECISION_VALUES, errors)
     checkString(decision.confirmedAt, `${path}.confirmedAt`, errors, { nonEmpty: true })
 
     if (typeof decision.sourceFactId === 'string') {
@@ -332,7 +447,7 @@ function validateProhibitedClaims(prohibitedClaims, errors) {
   for (let index = 0; index < prohibitedClaims.length; index += 1) {
     const prohibited = prohibitedClaims[index]
     const path = `$.prohibitedClaims[${index}]`
-    if (!checkObject(prohibited, path, ['id', 'text', 'reason'], ['id', 'text', 'reason'], errors)) continue
+    if (!checkObject(prohibited, path, PROHIBITED_CLAIM_KEYS, PROHIBITED_CLAIM_KEYS, errors)) continue
     checkCanonicalIdOrEnum(prohibited.id, `${path}.id`, errors, { nonEmpty: true })
     checkString(prohibited.text, `${path}.text`, errors, { nonEmpty: true })
     checkString(prohibited.reason, `${path}.reason`, errors, { nonEmpty: true })
@@ -351,32 +466,21 @@ function validatePersona(persona, errors) {
   if (!checkObject(persona, '$.persona', PERSONA_KEYS, PERSONA_KEYS, errors)) return
   checkCanonicalIdOrEnum(persona.id, '$.persona.id', errors, { nonEmpty: true })
   for (const key of ['name', 'appearance']) checkString(persona[key], `$.persona.${key}`, errors, { nonEmpty: true })
-  checkEnum(persona.role, '$.persona.role', ['presenter'], errors)
-  checkEnum(persona.gender, '$.persona.gender', ['female', 'male'], errors)
-  checkEnum(persona.ageBand, '$.persona.ageBand', ['20s', '30s', '40s', '50s', '60s'], errors)
-  checkEnum(persona.ethnicity, '$.persona.ethnicity', ['Korean'], errors)
+  checkEnum(persona.role, '$.persona.role', PERSONA_ROLE_VALUES, errors)
+  checkEnum(persona.gender, '$.persona.gender', PERSONA_GENDER_VALUES, errors)
+  checkEnum(persona.ageBand, '$.persona.ageBand', PERSONA_AGE_BAND_VALUES, errors)
+  checkEnum(persona.ethnicity, '$.persona.ethnicity', PERSONA_ETHNICITY_VALUES, errors)
 }
 
 function validateCreative(creative, errors) {
   if (!checkObject(creative, '$.creative', CREATIVE_KEYS, CREATIVE_KEYS, errors)) return
-  checkEnum(creative.templateId, '$.creative.templateId', ['price-info-v1', 'problem-info-v1'], errors)
-  checkEnum(creative.styleId, '$.creative.styleId', ['shopping-ugc-presenter-v1'], errors)
+  checkEnum(creative.templateId, '$.creative.templateId', TEMPLATE_ID_VALUES, errors)
+  checkEnum(creative.styleId, '$.creative.styleId', STYLE_ID_VALUES, errors)
 }
 
 function validateGeneration(generation, errors) {
   if (!checkObject(generation, '$.generation', GENERATION_KEYS, GENERATION_KEYS, errors)) return
-  const constants = {
-    provider: 'google',
-    imageModel: 'gemini-3.1-flash-image',
-    videoModel: 'veo-3.1-fast-generate-preview',
-    aspectRatio: '9:16',
-    videoResolution: '720p',
-    speechMode: 'veo-native-ko',
-    productStillAudio: 'none',
-    subtitleTiming: 'scene-block',
-    dialoguePolicyVersion: 'shopping-veo-dialogue-v1',
-  }
-  for (const [key, expected] of Object.entries(constants)) {
+  for (const [key, expected] of Object.entries(GENERATION_CONSTANTS)) {
     checkEnum(generation[key], `$.generation.${key}`, [expected], errors)
   }
   checkString(generation.videoSeedBase, '$.generation.videoSeedBase', errors, { nonEmpty: true })
@@ -436,7 +540,7 @@ function validateSceneShape(scene, index, selectedProductImageIds, errors) {
   if (scene.sceneKey !== expectedSceneKey) {
     addError(errors, `${path}.sceneKey must be ${expectedSceneKey}`)
   }
-  checkEnum(scene.visualType, `${path}.visualType`, ['product_still', 'persona_i2v'], errors)
+  checkEnum(scene.visualType, `${path}.visualType`, VISUAL_TYPE_VALUES, errors)
   checkString(scene.visualDescription, `${path}.visualDescription`, errors, { nonEmpty: true })
   checkCanonicalIdOrEnum(scene.productImageId, `${path}.productImageId`, errors, { nonEmpty: true })
   if (typeof scene.productImageId === 'string' && !selectedProductImageIds.has(scene.productImageId)) {
@@ -615,7 +719,7 @@ export function validateShoppingPlanDraft(draft) {
   const errors = []
   if (!checkObject(draft, '$', PLAN_KEYS, PLAN_KEYS, errors)) return { valid: false, errors }
 
-  checkEnum(draft.schemaVersion, '$.schemaVersion', ['shopping-plan/3-appnative'], errors)
+  checkEnum(draft.schemaVersion, '$.schemaVersion', [SCHEMA_VERSION], errors)
   const { selectedProductImageIds, manualFactIds } = validateProduct(draft.product, errors)
   const decisionByFactId = validateFactDecisions(draft.factDecisions, manualFactIds, errors)
   const prohibitedClaims = validateProhibitedClaims(draft.prohibitedClaims, errors)

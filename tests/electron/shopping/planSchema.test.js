@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  SHOPPING_PLAN_RESPONSE_SCHEMA,
   countNonWhitespaceGraphemes,
   normalizeClaimCoverageText,
   validateShoppingPlanDraft,
@@ -25,6 +26,86 @@ const SECURITY_IGNORABLES = [
   ['BOM U+FEFF', '\uFEFF'],
   ['HANGUL FILLER U+3164', '\u3164'],
 ]
+
+describe('SHOPPING_PLAN_RESPONSE_SCHEMA', () => {
+  it('runtime draft 계약의 top-level과 모든 strict object key를 그대로 기술한다', () => {
+    const schema = SHOPPING_PLAN_RESPONSE_SCHEMA
+    const topLevelKeys = [
+      'schemaVersion',
+      'product',
+      'factDecisions',
+      'prohibitedClaims',
+      'persona',
+      'creative',
+      'generation',
+      'claims',
+      'scenes',
+    ]
+
+    expect(schema.type).toBe('OBJECT')
+    expect(Object.keys(schema.properties)).toEqual(topLevelKeys)
+    expect(schema.required).toEqual(topLevelKeys)
+
+    const product = schema.properties.product
+    expect(product.type).toBe('OBJECT')
+    expect(product).not.toHaveProperty('anyOf')
+    expect(Object.keys(product.properties)).toEqual(['mode', 'snapshotId', 'selectedImageIds'])
+    expect(product.required).toEqual(['mode', 'snapshotId', 'selectedImageIds'])
+    expect(product.properties.mode.enum).toEqual(['crawl'])
+
+    expect(Object.keys(schema.properties.persona.properties)).toEqual([
+      'id', 'name', 'role', 'gender', 'ageBand', 'ethnicity', 'appearance',
+    ])
+    expect(Object.keys(schema.properties.generation.properties)).toEqual([
+      'provider', 'imageModel', 'videoModel', 'aspectRatio', 'videoResolution',
+      'videoSeedBase', 'speechMode', 'productStillAudio', 'subtitleTiming',
+      'dialoguePolicyVersion',
+    ])
+    expect(Object.keys(schema.properties.claims.items.properties)).toEqual([
+      'id', 'text', 'claimType', 'sourceFactIds', 'formula',
+    ])
+    expect(schema.properties.claims.items.required).toEqual([
+      'id', 'text', 'claimType', 'sourceFactIds',
+    ])
+    expect(Object.keys(schema.properties.scenes.items.properties)).toEqual([
+      'sceneKey', 'visualType', 'visualDescription', 'productImageId',
+      'dialogueText', 'subtitleText', 'claimIds', 'timelineDurationMs',
+      'generationDurationSec', 'trim', 'videoPrompt',
+    ])
+    expect(schema.properties.scenes.items.required)
+      .toEqual(Object.keys(schema.properties.scenes.items.properties))
+  })
+
+  it('validator의 enum·scene count·nullable trim 계약을 responseSchema에도 고정한다', () => {
+    const schema = SHOPPING_PLAN_RESPONSE_SCHEMA
+    const scene = schema.properties.scenes.items.properties
+
+    expect(schema.properties.schemaVersion.enum).toEqual(['shopping-plan/3-appnative'])
+    expect(schema.properties.scenes).toMatchObject({ minItems: 5, maxItems: 8 })
+    expect(scene.sceneKey.enum).toEqual(['S01', 'S02', 'S03', 'S04', 'S05', 'S06', 'S07', 'S08'])
+    expect(scene.visualType.enum).toEqual(['product_still', 'persona_i2v'])
+    expect(scene.generationDurationSec).toEqual({ type: 'INTEGER' })
+    expect(scene.trim).toMatchObject({ type: 'OBJECT', nullable: true })
+    expect(schema.properties.persona.properties.ethnicity.enum).toEqual(['Korean'])
+    expect(schema.properties.claims.items.properties.claimType.enum).toEqual([
+      'product_identity', 'page_fact', 'numeric_fact', 'derived_numeric',
+      'editorial_fit', 'cta', 'disclosure',
+    ])
+  })
+
+  it('legacy Gemini responseSchema에는 API가 지원하는 문자열 enum만 보낸다', () => {
+    const visit = (schema) => {
+      if (!schema || typeof schema !== 'object') return
+      expect(schema.type).toEqual(expect.any(String))
+      if (schema.enum) expect(schema.enum.every((value) => typeof value === 'string')).toBe(true)
+      for (const child of Object.values(schema.properties || {})) visit(child)
+      visit(schema.items)
+    }
+
+    expect(JSON.stringify(SHOPPING_PLAN_RESPONSE_SCHEMA)).not.toContain('anyOf')
+    visit(SHOPPING_PLAN_RESPONSE_SCHEMA)
+  })
+})
 
 function personaPrompt(dialogue) {
   return `Presenter ${PROMPT_PHRASES[0]}, ${PROMPT_PHRASES[1]} "${dialogue}", ${PROMPT_PHRASES.slice(2).join(', ')}`
