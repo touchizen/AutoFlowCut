@@ -132,13 +132,15 @@ describe('createGeminiShoppingLlm', () => {
       'tomorrowDelivery',
       'brand',
       'category',
-      'ratingValue',
     ]) {
       expect(prompt).toContain(field)
     }
+    expect(prompt).not.toContain('ratingValue')
     expect(prompt).toContain('first 2 seconds')
     expect(prompt).toContain('social-proof hook')
     expect(prompt).toContain('reviewCount or monthlyPurchaseCount')
+    expect(prompt).toContain('must use only their fieldFormats')
+    expect(prompt).toContain('generic template placeholders')
     expect(prompt).toContain('price or derived-discount hook')
     expect(prompt).toContain('rocket or tomorrow-delivery convenience')
     expect(prompt).toContain('deliveryType and tomorrowDelivery are independent facts')

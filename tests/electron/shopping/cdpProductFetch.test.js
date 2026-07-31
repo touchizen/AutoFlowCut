@@ -228,10 +228,8 @@ describe('createCdpProductFetch', () => {
         reviewCount: 142539,
         monthlyPurchaseCount: 9000,
         deliveryType: 'rocket',
-        tomorrowDelivery: true,
         brand: '오뚜기',
         category: '컵라면',
-        ratingValue: 4.8,
       },
       sourceFacts: expect.arrayContaining([
         expect.objectContaining({
@@ -252,10 +250,8 @@ describe('createCdpProductFetch', () => {
           ['reviewCount', 142539],
           ['monthlyPurchaseCount', 9000],
           ['deliveryType', 'rocket'],
-          ['tomorrowDelivery', true],
           ['brand', '오뚜기'],
           ['category', '컵라면'],
-          ['ratingValue', 4.8],
         ].map(([field, value]) => expect.objectContaining({
           field,
           value,
@@ -272,6 +268,10 @@ describe('createCdpProductFetch', () => {
       ],
     })
     expect(result.imageUrls).toHaveLength(5)
+    expect(result.product).not.toHaveProperty('ratingValue')
+    expect(result.product).not.toHaveProperty('tomorrowDelivery')
+    expect(result.sourceFacts.some((fact) => fact.field === 'ratingValue')).toBe(false)
+    expect(result.sourceFacts.some((fact) => fact.field === 'tomorrowDelivery')).toBe(false)
     expect(result.imageUrls.every((imageUrl) => (
       imageUrl.startsWith('https://')
       && !imageUrl.includes('assets.coupangcdn.com')
@@ -420,7 +420,6 @@ describe('createCdpProductFetch', () => {
         <p>0 개 상품평</p>
         <p>한 달간 999,999,999명 이상 구매했어요</p>
         <p>로켓 혜택 · 모레 도착</p>
-        <span class="rating-star-num" style="width: 120%"></span>
         <img src="https://thumbnail.coupangcdn.com/image/product.jpg">
       </body></html>
     `)
@@ -450,7 +449,63 @@ describe('createCdpProductFetch', () => {
       'deliveryType',
       'tomorrowDelivery',
       'brand',
-      'ratingValue',
+    ]) {
+      expect(result.product).not.toHaveProperty(field)
+      expect(result.sourceFacts.some((fact) => fact.field === field)).toBe(false)
+    }
+  })
+
+  it.each([
+    '[1+1] 실속 상품',
+    '[특가] 실속 상품',
+  ])('does not infer a brand from the promotional name prefix %s', async (productName) => {
+    const harness = createBrowserHarness(`
+      <!doctype html><html><head><title>${productName} | 쿠팡</title></head><body>
+        <section class="prod-buy">
+          <strong class="total-price">7,200원</strong>
+        </section>
+        <img src="https://thumbnail.coupangcdn.com/image/product.jpg">
+      </body></html>
+    `)
+    const cdpProductFetch = createCdpProductFetch({
+      launchBrowser: harness.launchBrowser,
+      findBrowserExecutable: async () => '/Applications/Google Chrome',
+      warmupMs: 0,
+      extractTimeoutMs: 10,
+    })
+
+    const result = await cdpProductFetch(PRODUCT_URL, {})
+
+    expect(result.product).not.toHaveProperty('brand')
+    expect(result.sourceFacts.some((fact) => fact.field === 'brand')).toBe(false)
+  })
+
+  it('omits selling facts found only outside a price-anchored buybox', async () => {
+    const harness = createBrowserHarness(`
+      <!doctype html><html><head><title>추천 노이즈 검증 상품 | 쿠팡</title></head><body>
+        <strong class="total-price">7,200원</strong>
+        <aside class="recommendation-carousel">
+          <p>99,999 개 상품평</p>
+          <p>한 달간 50,000명 이상 구매했어요</p>
+          <p>로켓프레시 · 내일(토) 8/1 도착</p>
+        </aside>
+        <img src="https://thumbnail.coupangcdn.com/image/product.jpg">
+      </body></html>
+    `)
+    const cdpProductFetch = createCdpProductFetch({
+      launchBrowser: harness.launchBrowser,
+      findBrowserExecutable: async () => '/Applications/Google Chrome',
+      warmupMs: 0,
+      extractTimeoutMs: 10,
+    })
+
+    const result = await cdpProductFetch(PRODUCT_URL, {})
+
+    for (const field of [
+      'reviewCount',
+      'monthlyPurchaseCount',
+      'deliveryType',
+      'tomorrowDelivery',
     ]) {
       expect(result.product).not.toHaveProperty(field)
       expect(result.sourceFacts.some((fact) => fact.field === field)).toBe(false)
@@ -465,8 +520,10 @@ describe('createCdpProductFetch', () => {
   ])('keeps delivery kind and tomorrow arrival independently for %s', async (deliveryText, expected) => {
     const harness = createBrowserHarness(`
       <!doctype html><html><head><title>배송 검증 상품 | 쿠팡</title></head><body>
-        <strong class="total-price">7,200원</strong>
-        <p>${deliveryText}</p>
+        <section class="prod-buy">
+          <strong class="total-price">7,200원</strong>
+          <p>${deliveryText}</p>
+        </section>
         <img src="https://thumbnail.coupangcdn.com/image/product.jpg">
       </body></html>
     `)

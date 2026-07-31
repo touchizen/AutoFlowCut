@@ -242,7 +242,6 @@ const NEW_SOURCE_FACT_CASES = [
   ['tomorrowDelivery', true],
   ['brand', '오뚜기'],
   ['category', '컵라면'],
-  ['ratingValue', 4.8],
 ]
 
 function setPersonaScene(plan, index, durationSec = 4) {
@@ -286,13 +285,20 @@ describe('validateShoppingPlanDraft — schema', () => {
     ['discountPercent', 100],
     ['deliveryType', 'sameDay'],
     ['tomorrowDelivery', false],
-    ['ratingValue', 5.1],
   ])('rejects an invalid %s source fact value', (field, value) => {
     const plan = makePlan()
     plan.product.facts[1].field = field
     plan.product.facts[1].value = value
 
     expectInvalid(plan, '$.product.facts[1].value')
+  })
+
+  it('rejects the untrustworthy rendered ratingValue field', () => {
+    const plan = makePlan()
+    plan.product.facts[1].field = 'ratingValue'
+    plan.product.facts[1].value = 4.8
+
+    expectInvalid(plan, '$.product.facts[1].field must be')
   })
 
   it.each([5, 8])('accepts the scene-count boundary %i', (sceneCount) => {

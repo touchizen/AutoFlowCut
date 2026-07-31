@@ -71,7 +71,6 @@ export const SOURCE_FACT_FIELD_VALUES = Object.freeze([
   'tomorrowDelivery',
   'brand',
   'category',
-  'ratingValue',
 ])
 const FACT_DECISION_KEYS = ['sourceFactId', 'decision', 'confirmedAt']
 const PROHIBITED_CLAIM_KEYS = ['id', 'text', 'reason']
@@ -150,7 +149,7 @@ export function isValidSourceFactValue(field, value) {
     return ['rocket', 'rocketFresh', 'standard'].includes(value)
   }
   if (field === 'tomorrowDelivery') return value === true
-  if (field === 'ratingValue' || field === 'rating.value') {
+  if (field === 'rating.value') {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 5
   }
   if (field === 'rating.count') {

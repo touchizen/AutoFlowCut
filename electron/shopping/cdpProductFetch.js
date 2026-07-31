@@ -356,9 +356,9 @@ export function createCdpProductFetch({
             const parsed = Number(normalized.replaceAll(',', ''))
             return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
           }
-          const firstText = (selectors) => {
+          const firstText = (selectors, root = document) => {
             for (const selector of selectors) {
-              const value = textOf(document.querySelector(selector))
+              const value = textOf(root.querySelector(selector))
               if (value) return value
             }
             return ''
@@ -376,11 +376,21 @@ export function createCdpProductFetch({
           }
 
           // Provisional selectors — 사용자 눈검증서 실제 DOM으로 확정.
-          const priceKrw = parseKrw(firstText([
+          const priceSelectors = [
             '.total-price',
             '[class*="price"] strong',
             '[class*="Price"]',
-          ])) || labeledKrw(['쿠팡\\s*판매가', '판매가', '할인가', '쿠팡가']) || bodyPrices[0]
+          ]
+          const buyBoxSelector = '.prod-buy, [data-testid="product-buy-box"], [data-product-buy-box], [class*="product-buy" i], [class*="buy-box" i], [class*="buybox" i]'
+          let priceElement
+          for (const selector of priceSelectors) {
+            priceElement = Array.from(document.querySelectorAll(selector))
+              .find((element) => element.closest(buyBoxSelector))
+            if (priceElement) break
+          }
+          const priceKrw = parseKrw(textOf(priceElement))
+            || labeledKrw(['쿠팡\\s*판매가', '판매가', '할인가', '쿠팡가'])
+            || bodyPrices[0]
           // 셀렉터 miss 시 첫 `원` 값은 배송비/적립금일 수 있어 사용자 눈검증서 확인 필요.
           // Provisional selectors — 사용자 눈검증서 실제 DOM으로 확정.
           const listPriceKrw = parseKrw(firstText([
@@ -391,21 +401,28 @@ export function createCdpProductFetch({
             '[class*="ListPrice"]',
           ])) || labeledKrw(['표시\\s*정가', '정상가', '정가'])
 
+          // Main-product selling facts must be anchored to the selected sale price.
+          // If there is no recognized buybox ancestor, fail closed instead of
+          // borrowing social proof or delivery promises from recommendations.
+          const buyBox = priceElement?.closest(buyBoxSelector)
+          const buyBoxText = String(buyBox?.innerText || buyBox?.textContent || '')
+            .replace(/\s+/gu, ' ')
+            .trim()
           const reviewCount = parseGroupedInteger(
-            bodyText.match(/([\d,]+)\s*개\s*상품평/u)?.[1],
+            buyBoxText.match(/([\d,]+)\s*개\s*상품평/u)?.[1],
           )
           const monthlyPurchaseCount = parseGroupedInteger(
-            bodyText.match(/한\s*달간\s*([\d,]+)명\s*이상\s*구매/u)?.[1],
+            buyBoxText.match(/한\s*달간\s*([\d,]+)명\s*이상\s*구매/u)?.[1],
           )
-          const deliveryType = /로켓\s*프레시/u.test(bodyText)
+          const deliveryType = /로켓\s*프레시/u.test(buyBoxText)
             ? 'rocketFresh'
-            : /로켓\s*배송/u.test(bodyText)
+            : /로켓\s*배송/u.test(buyBoxText)
               ? 'rocket'
-              : /일반\s*배송\s*상품/u.test(bodyText)
+              : /일반\s*배송\s*상품/u.test(buyBoxText)
                 ? 'standard'
                 : undefined
           const tomorrowDelivery = /내일(?:\([^)]{1,10}\))?\s*(?:\d{1,2}\s*[/.-]\s*\d{1,2}\s*)?도착/u
-            .test(bodyText)
+            .test(buyBoxText)
             ? true
             : undefined
 
@@ -424,33 +441,15 @@ export function createCdpProductFetch({
           const breadcrumbs = breadcrumbElements
             .map((element) => textOf(element))
             .filter((value, index, values) => value && value !== values[index - 1])
-          const category = breadcrumbs.at(-1)
-          const breadcrumbBrand = breadcrumbs.at(-2)
-          const explicitBrand = firstText([
+          const breadcrumbLeaf = breadcrumbs.at(-1)
+          const category = breadcrumbLeaf === name ? breadcrumbs.at(-2) : breadcrumbLeaf
+          const explicitBrand = buyBox ? firstText([
             '[itemprop="brand"]',
             '.prod-brand-name',
             '[class*="brand-name"]',
             '[class*="BrandName"]',
-          ]).replace(/^브랜드\s*[:：]?\s*/u, '')
-          const bracketBrand = name.match(/^\[([^\]]+)\]/u)?.[1]
-          const brand = explicitBrand
-            || (
-              breadcrumbBrand
-              && (name === breadcrumbBrand || name.startsWith(`${breadcrumbBrand} `))
-                ? breadcrumbBrand
-                : ''
-            )
-            || bracketBrand
-            || undefined
-
-          const ratingElement = document.querySelector('.rating-star-num')
-          const ratingWidth = Number(
-            ratingElement?.getAttribute('style')
-              ?.match(/(?:^|;)\s*width\s*:\s*(\d+(?:\.\d+)?)\s*%/iu)?.[1],
-          )
-          const ratingValue = Number.isFinite(ratingWidth) && ratingWidth > 0 && ratingWidth <= 100
-            ? Math.round((ratingWidth / 20) * 10) / 10
-            : undefined
+          ], buyBox).replace(/^브랜드\s*[:：]?\s*/u, '') : ''
+          const brand = explicitBrand || undefined
 
           const imageCandidates = []
           const imageIndexByBaseKey = new Map()
@@ -538,7 +537,6 @@ export function createCdpProductFetch({
             tomorrowDelivery,
             brand,
             category,
-            ratingValue,
             imageUrls,
           }
         }), signal)
@@ -578,13 +576,6 @@ export function createCdpProductFetch({
           if (brand) product.brand = brand
           const category = admittedProductLabel(extraction.category)
           if (category && category !== '쿠팡홈') product.category = category
-          if (
-            Number.isFinite(extraction.ratingValue)
-            && extraction.ratingValue > 0
-            && extraction.ratingValue <= 5
-          ) {
-            product.ratingValue = extraction.ratingValue
-          }
           const sourceUrl = typeof extraction.sourceUrl === 'string'
             ? extraction.sourceUrl
             : initialUrl.toString()

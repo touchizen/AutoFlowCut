@@ -27,6 +27,14 @@ function setClaimText(draft, claimIndex, text) {
   }
 }
 
+function setClaimSceneDuration(draft, claimIndex, durationSec) {
+  const claim = draft.claims[claimIndex]
+  const scene = draft.scenes.find(({ claimIds }) => claimIds.includes(claim.id))
+  scene.generationDurationSec = durationSec
+  scene.timelineDurationMs = durationSec * 1000
+  scene.trim = { startMs: 0, endMs: durationSec * 1000 }
+}
+
 function makeDiscountDraft(percent, formula = DISCOUNT_PERCENT_FORMULA) {
   const value = makeDraft()
   value.facts[1].field = 'priceKrw'
@@ -151,7 +159,6 @@ function planContextFor(facts, overrides = {}) {
     'tomorrowDelivery',
     'brand',
     'category',
-    'ratingValue',
   ]) {
     const fact = facts.find((candidate) => candidate.field === field)
     if (fact) product[field] = fact.value
@@ -259,7 +266,6 @@ describe('createGeneratePlan', () => {
     ['tomorrowDelivery', true],
     ['brand', '오뚜기'],
     ['category', '컵라면'],
-    ['ratingValue', 4.8],
   ])('keeps approved %s in the sanitized main-owned planContext', async (field, value) => {
     const { facts, decisions, draft } = makeDraft()
     facts[1].field = field
@@ -727,7 +733,6 @@ describe('createGeneratePlan', () => {
     ['reviewCount', 142539, '상품평 142,539개', '상품평 50개'],
     ['monthlyPurchaseCount', 9000, '한 달간 9,000명 이상 구매', '한 달간 50명 이상 구매'],
     ['listPriceKrw', 8680, '정가는 8,680원', '정가는 50,000원'],
-    ['ratingValue', 4.8, '평점은 4.8점', '평점은 5점'],
   ])('round-trips exact %s copy and rejects an invented number', async (
     field,
     value,
@@ -758,6 +763,63 @@ describe('createGeneratePlan', () => {
     await expect(inventedGeneratePlan(invented.facts, invented.decisions)).resolves.toMatchObject({
       error: 'plan-draft-invalid',
       validationErrors: [expect.stringContaining('numeric tokens')],
+    })
+  })
+
+  it.each([
+    ['reviewCount', 142539],
+    ['monthlyPurchaseCount', 9000],
+  ])('rejects %s laundered through the calculated unit-price placeholder', async (field, value) => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[1].field = field
+    facts[1].value = value
+    draft.claims[1].claimType = 'numeric_fact'
+    setClaimText(draft, 1, `표시 정보로 계산한 단위 가격은 ${value.toLocaleString('en-US')}입니다.`)
+    setClaimSceneDuration(draft, 1, 6)
+    const generatePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => draft) },
+    })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('controlled source-fact copy')],
+    })
+  })
+
+  it('rejects reviewCount laundered through the approved-price hook placeholder', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[1].field = 'priceKrw'
+    facts[1].value = 7200
+    facts[2].field = 'reviewCount'
+    facts[2].value = 142539
+    draft.claims[1].claimType = 'numeric_fact'
+    draft.claims[1].sourceFactIds = ['fact-2', 'fact-3']
+    setClaimText(draft, 1, '7,200이 142,539?')
+    draft.claims[2].claimType = 'numeric_fact'
+    setClaimText(draft, 2, '상품평 142,539개')
+    const generatePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => draft) },
+    })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('controlled source-fact copy')],
+    })
+  })
+
+  it('rejects bare reviewCount outside its field-specific formats', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[1].field = 'reviewCount'
+    facts[1].value = 142539
+    draft.claims[1].claimType = 'numeric_fact'
+    setClaimText(draft, 1, '142,539')
+    const generatePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => draft) },
+    })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('controlled source-fact copy')],
     })
   })
 
@@ -990,6 +1052,25 @@ describe('createGeneratePlan', () => {
   it('fails closed before the LLM when a source-fact value contains a raw HTML document', async () => {
     const { facts, decisions, draft } = makeDraft()
     facts[0].value = RAW_HTML_SENTINEL
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGroundedGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('unknown source fact')],
+    })
+    expect(llm.generateShoppingPlan).not.toHaveBeenCalled()
+  })
+
+  it('fails closed before the LLM for an out-of-range manual source-fact value', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[1] = {
+      ...facts[1],
+      field: 'reviewCount',
+      value: 100_000_001,
+      sourceKind: 'manual',
+      verification: 'user-asserted',
+    }
     const llm = { generateShoppingPlan: vi.fn(async () => draft) }
     const generatePlan = createGroundedGeneratePlan({ llm })
 

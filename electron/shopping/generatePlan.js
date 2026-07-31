@@ -30,6 +30,9 @@ const SCRIPT_COPY_TEMPLATES = Object.freeze(
     template.scenes.map(({ copy }) => copy)
   )),
 )
+const FIELD_FORMAT_ONLY_FACT_FIELDS = new Set(
+  SHOPPING_PLAN_COPY_CONTRACT.factCopyPolicy.fieldFormatOnlyFields,
+)
 const TEMPLATE_PLACEHOLDER_PATTERN = /\[[^\]]+\]/g
 const PLAN_CONTEXT_PRODUCT_FIELDS = Object.freeze([
   'name',
@@ -43,7 +46,6 @@ const PLAN_CONTEXT_PRODUCT_FIELDS = Object.freeze([
   'tomorrowDelivery',
   'brand',
   'category',
-  'ratingValue',
 ])
 
 export const SHOPPING_PLAN_META_PROMPT = `You are the planning engine for a Korean shopping short.
@@ -371,8 +373,13 @@ function matchesFieldSpecificCopy(text, facts) {
 }
 
 function isGroundedFactCopy(text, facts) {
-  const renderings = referencedFactRenderings(facts)
-  if (renderings.has(text) || matchesFieldSpecificCopy(text, facts)) return true
+  if (matchesFieldSpecificCopy(text, facts)) return true
+
+  const freelyRenderableFacts = facts.filter(
+    (fact) => !FIELD_FORMAT_ONLY_FACT_FIELDS.has(fact.field),
+  )
+  const renderings = referencedFactRenderings(freelyRenderableFacts)
+  if (renderings.has(text)) return true
   return SCRIPT_COPY_TEMPLATES.some((template) => matchesTemplateCopy(text, template, renderings))
 }
 

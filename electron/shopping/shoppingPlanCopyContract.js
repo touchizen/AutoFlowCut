@@ -3,6 +3,10 @@ export const SHOPPING_PLAN_COPY_CONTRACT = Object.freeze({
   factCopyPolicy: Object.freeze({
     allowExactReferencedValue: true,
     allowSuppliedScriptTemplateSubstitution: true,
+    fieldFormatOnlyFields: Object.freeze([
+      'reviewCount',
+      'monthlyPurchaseCount',
+    ]),
     fieldFormats: Object.freeze({
       priceKrw: Object.freeze([
         '판매가는 {value}원',
@@ -20,10 +24,6 @@ export const SHOPPING_PLAN_COPY_CONTRACT = Object.freeze({
       monthlyPurchaseCount: Object.freeze([
         '한 달간 {value}명 이상 구매',
         '한 달간 {value}명 이상 구매했어요',
-      ]),
-      ratingValue: Object.freeze([
-        '평점은 {value}점',
-        '별점은 {value}점',
       ]),
       tomorrowDelivery: Object.freeze([
         '내일 도착',
