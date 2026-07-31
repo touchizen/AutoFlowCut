@@ -1623,6 +1623,27 @@ app.whenReady().then(() => {
 
   createWindow()
 
+  // R1 is an operator-run spike, never a product route. Keep even its module
+  // outside the runtime path unless the exact macOS development gate is on.
+  const isDevRuntime = Boolean(process.env.VITE_DEV_SERVER_URL) || !app.isPackaged
+  if (process.platform === 'darwin' && isDevRuntime && process.env.AUTOFLOWCUT_SPIKE === '1') {
+    void import('./spikes/chatgptR1Upload.js').then(({ registerChatgptR1Harness }) => {
+      registerChatgptR1Harness({
+        app,
+        globalShortcut,
+        WebContentsView,
+        getMainWindow: () => mainWindow,
+        reservedSessionWebPreferences,
+        installReservedSessionSecurity,
+      })
+    }).catch((error) => {
+      console.warn('[ChatGPTR1] harness registration failed', {
+        name: typeof error?.name === 'string' ? error.name : 'Error',
+        code: typeof error?.code === 'string' ? error.code : undefined,
+      })
+    })
+  }
+
   // 진단: Cmd/Ctrl+Shift+E → 현재 Flow 웹뷰의 인터랙티브 요소 + bodyHTML 을 데스크톱에
   //   타임스탬프 JSON 파일로 덤프. 라이브 셀렉터(예: 에이전트 챗 패널 닫기 버튼)를 추측 없이
   //   실제 마크업에서 확보하려는 용도. (수동 콘솔 붙여넣기 대체)
