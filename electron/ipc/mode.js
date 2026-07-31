@@ -26,8 +26,21 @@ const routesEqual = (left, right) => (
   left?.mode === right?.mode && left?.sessionTarget === right?.sessionTarget
 )
 
+export function isChatgptP2DevGateEnabled({
+  platform,
+  isPackaged,
+  viteDevServerUrl,
+  chatgptP2Flag,
+} = {}) {
+  return platform === 'darwin' &&
+    (Boolean(viteDevServerUrl) || !isPackaged) &&
+    chatgptP2Flag === '1'
+}
+
 export function createModeController(getMainWindow, createFlowView, options = {}) {
   const views = new Map()
+  const startedSessionViews = new WeakSet()
+  const targetRegistry = options.targetRegistry || null
   const configuredInitialRoute = parseRoute(options.initialRoute)
   let currentRoute = configuredInitialRoute || { mode: 'api', sessionTarget: 'flow' }
   let attachedView = options.initialAttachedView || null
@@ -52,9 +65,58 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     views.set(configuredInitialRoute.sessionTarget, attachedView)
   }
 
+  if (targetRegistry?.table) {
+    for (const target of Object.keys(targetRegistry.table)) {
+      const definition = targetRegistry.get(target)
+      definition?.onSessionStatusChanged?.((status) => {
+        const sender = getMainWindow()?.webContents
+        if (sender && typeof sender.send === 'function') {
+          sender.send('session-target:status-changed', status)
+        }
+      })
+    }
+  }
+
   function getOrCreateView(target) {
     if (!views.has(target)) views.set(target, createSessionView(target))
     return views.get(target)
+  }
+
+  function startInitialSessionLoad(target, view) {
+    if (target !== 'chatgpt' || !view || startedSessionViews.has(view)) return
+    if (!isChatgptP2DevGateEnabled(options.chatgptDevGate)) return
+    const definition = targetRegistry?.get(target)
+    if (!definition?.startUrl || typeof view.webContents?.loadURL !== 'function') return
+    startedSessionViews.add(view)
+    try {
+      Promise.resolve(view.webContents.loadURL(definition.startUrl)).catch((error) => {
+        console.warn('[ChatGPT] initial load failed', {
+          name: typeof error?.name === 'string' ? error.name : 'Error',
+        })
+      })
+    } catch (error) {
+      console.warn('[ChatGPT] initial load failed', {
+        name: typeof error?.name === 'string' ? error.name : 'Error',
+      })
+    }
+  }
+
+  const getTargetDefinition = (target) => (
+    typeof target === 'string' && targetRegistry?.has(target)
+      ? targetRegistry.get(target)
+      : null
+  )
+
+  const ensureSession = async (target = currentRoute.sessionTarget) => {
+    const definition = getTargetDefinition(target)
+    if (!definition || typeof definition.ensureSession !== 'function') return null
+    return definition.ensureSession()
+  }
+
+  const getSessionStatus = (target = currentRoute.sessionTarget) => {
+    const definition = getTargetDefinition(target)
+    if (!definition || typeof definition.getSessionStatus !== 'function') return null
+    return definition.getSessionStatus()
   }
 
   const adoptedResult = (extra = {}) => ({
@@ -183,6 +245,8 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       }
       assertRouteRevision(accepted, committedRevision)
       if (win && nextView) updateViewBounds(win, nextView)
+      assertRouteRevision(accepted, committedRevision)
+      if (nextView) startInitialSessionLoad(accepted.sessionTarget, nextView)
     } catch {
       if (win && attachedView === nextView && nextView) {
         try { win.contentView.removeChildView(nextView) } catch {}
@@ -240,6 +304,20 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       )
       return result.ok ? { ok: true, mode: result.route.mode } : result
     })
+    const isTrustedRenderer = (event) => (
+      Boolean(event?.sender) && event.sender === getMainWindow()?.webContents
+    )
+    const isKnownTarget = (target) => (
+      typeof target === 'string' && targetRegistry?.has(target) === true
+    )
+    ipcMain.handle('session-target:get-status', (event, target) => {
+      if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
+      return getSessionStatus(target)
+    })
+    ipcMain.handle('session-target:reconnect', async (event, target) => {
+      if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
+      return ensureSession(target)
+    })
     ipcMain.handle('flow:set-startup-project', (_event, payload = {}) => {
       startupHint = payload.flowProjectId || null
       return { ok: true }
@@ -253,6 +331,8 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     getCurrentMode: () => currentRoute.mode,
     getSessionTarget: () => currentRoute.sessionTarget || 'flow',
     getCurrentRoute: () => ({ ...currentRoute }),
+    ensureSession,
+    getSessionStatus,
     getActiveSessionView,
     getFlowView: () => getActiveSessionView('flow'),
     isFlowTargetActive: () => currentRoute.mode === 'flow' && currentRoute.sessionTarget === 'flow',

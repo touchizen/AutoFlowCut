@@ -37,6 +37,8 @@ import { createModeController } from './ipc/mode.js'
 import {
   reservedSessionWebPreferences, installReservedSessionSecurity,
 } from './sessionViewSecurity.js'
+import { createTargetRegistry } from './webtargets/index.js'
+import { createChatgptTarget } from './webtargets/chatgpt/index.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
 import { initSentryMain } from './sentry-init.js'
@@ -714,14 +716,18 @@ function makeFlowView() {
   return view
 }
 
-// Reserved (P1: ChatGPT) session view factory — empty shell, no URL load, no
-// Flow preload, isolated partition + locked-down security policy. Only called
-// when route:set targets 'chatgpt'.
-function makeReservedSessionView() {
-  const view = new WebContentsView({ webPreferences: reservedSessionWebPreferences() })
-  installReservedSessionSecurity(view, view.webContents.session)
-  return view
-}
+const chatgptTarget = createChatgptTarget({
+  WebContentsView,
+  reservedSessionWebPreferences,
+  installReservedSessionSecurity,
+})
+const sessionTargetRegistry = createTargetRegistry({ chatgpt: chatgptTarget })
+const chatgptDevGate = Object.freeze({
+  platform: process.platform,
+  isPackaged: app.isPackaged,
+  viteDevServerUrl: process.env.VITE_DEV_SERVER_URL,
+  chatgptP2Flag: process.env.AUTOFLOWCUT_CHATGPT_P2,
+})
 
 // Mode controller wires route:set/mode:set IPC + lazy session view creation/attachment.
 // Task 16 barrier owner is deliberately a required, awaited no-op until the real
@@ -731,7 +737,14 @@ const routeSessionJobs = Object.freeze({
   awaitIdle: async () => {},
 })
 const modeController = createModeController(() => mainWindow, makeFlowView, {
-  createSessionView: (target) => target === 'flow' ? makeFlowView() : makeReservedSessionView(),
+  createSessionView: (target) => {
+    if (target === 'flow') return makeFlowView()
+    const view = sessionTargetRegistry.createView(target)
+    if (!view) throw new Error(`session-view-unavailable:${target}`)
+    return view
+  },
+  targetRegistry: sessionTargetRegistry,
+  chatgptDevGate,
   updateViewBounds: updateBounds,
   sessionJobs: routeSessionJobs,
   requireRendererQuiesce: true,

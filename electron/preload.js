@@ -171,6 +171,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Route controller — canonical {mode, sessionTarget} route (route:set handler in electron/ipc/mode.js).
   setRoute: (params) => ipcRenderer.invoke('route:set', params),
+  getSessionTargetStatus: (target) => ipcRenderer.invoke('session-target:get-status', target),
+  reconnectSession: (target) => ipcRenderer.invoke('session-target:reconnect', target),
+  onSessionTargetStatus: (callback) => {
+    const handler = (_, status) => callback(status)
+    ipcRenderer.on('session-target:status-changed', handler)
+    return () => ipcRenderer.removeListener('session-target:status-changed', handler)
+  },
   onRouteQuiesceRequest: (callback) => {
     const handler = (_, request) => callback(request)
     ipcRenderer.on('route:quiesce-request', handler)
