@@ -14,6 +14,8 @@ const DEFAULT_NAV_TIMEOUT_MS = 40_000
 const DEFAULT_EXTRACT_TIMEOUT_MS = 15_000
 const EXTRACT_POLL_MS = 750
 const BROWSER_CLOSE_TIMEOUT_MS = 5_000
+const MAX_RENDERED_COUNT = 100_000_000
+const MAX_PRODUCT_LABEL_CHARS = 80
 const execFileAsync = promisify(execFile)
 
 const MAC_EXECUTABLES = Object.freeze([
@@ -205,6 +207,23 @@ function createSourceFacts(product, imageUrls, sourceUrl) {
   return facts
 }
 
+function admittedRenderedCount(value) {
+  return Number.isSafeInteger(value) && value > 0 && value <= MAX_RENDERED_COUNT
+    ? value
+    : undefined
+}
+
+function admittedProductLabel(value) {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.replace(/\s+/gu, ' ').trim()
+  if (
+    !trimmed
+    || trimmed.length > MAX_PRODUCT_LABEL_CHARS
+    || /[\p{Cc}\p{Cf}<>{}\[\]]/u.test(trimmed)
+  ) return undefined
+  return trimmed
+}
+
 export function validateCoupangProductUrl(rawUrl) {
   if (
     typeof rawUrl !== 'string'
@@ -303,7 +322,9 @@ export function createCdpProductFetch({
         // self-contained so bundler/minifier symbol names cannot leak into it.
         const extraction = await abortable(page.evaluate(() => {
           const textOf = (element) => (element?.textContent || '').replace(/\s+/gu, ' ').trim()
-          const bodyText = textOf(document.body)
+          const bodyText = String(document.body?.innerText || document.body?.textContent || '')
+            .replace(/\s+/gu, ' ')
+            .trim()
           const title = String(document.title || '').trim()
           const errorImage = Array.from(document.images).some((image) => {
             const source = String(image.currentSrc || image.src || '').toLowerCase()
@@ -329,6 +350,12 @@ export function createCdpProductFetch({
             const parsed = Number(match[1].replace(/[^\d]/gu, ''))
             return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
           }
+          const parseGroupedInteger = (value) => {
+            const normalized = String(value || '').trim()
+            if (!/^(?:\d{1,3}(?:,\d{3})+|\d+)$/u.test(normalized)) return undefined
+            const parsed = Number(normalized.replaceAll(',', ''))
+            return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
+          }
           const firstText = (selectors) => {
             for (const selector of selectors) {
               const value = textOf(document.querySelector(selector))
@@ -339,13 +366,21 @@ export function createCdpProductFetch({
           const bodyPrices = Array.from(bodyText.matchAll(/(\d[\d,\s]*)\s*원/gu))
             .map((match) => Number(match[1].replace(/[^\d]/gu, '')))
             .filter((value) => Number.isSafeInteger(value) && value > 0)
+          const labeledKrw = (labels) => {
+            for (const label of labels) {
+              const match = bodyText.match(new RegExp(`${label}\\s*[:：]?\\s*(\\d[\\d,\\s]*)\\s*원`, 'u'))
+              const parsed = parseKrw(match?.[0])
+              if (parsed) return parsed
+            }
+            return undefined
+          }
 
           // Provisional selectors — 사용자 눈검증서 실제 DOM으로 확정.
           const priceKrw = parseKrw(firstText([
             '.total-price',
             '[class*="price"] strong',
             '[class*="Price"]',
-          ])) || bodyPrices[0]
+          ])) || labeledKrw(['쿠팡\\s*판매가', '판매가', '할인가', '쿠팡가']) || bodyPrices[0]
           // 셀렉터 miss 시 첫 `원` 값은 배송비/적립금일 수 있어 사용자 눈검증서 확인 필요.
           // Provisional selectors — 사용자 눈검증서 실제 DOM으로 확정.
           const listPriceKrw = parseKrw(firstText([
@@ -354,7 +389,68 @@ export function createCdpProductFetch({
             '[class*="original-price"]',
             '[class*="list-price"]',
             '[class*="ListPrice"]',
-          ]))
+          ])) || labeledKrw(['표시\\s*정가', '정상가', '정가'])
+
+          const reviewCount = parseGroupedInteger(
+            bodyText.match(/([\d,]+)\s*개\s*상품평/u)?.[1],
+          )
+          const monthlyPurchaseCount = parseGroupedInteger(
+            bodyText.match(/한\s*달간\s*([\d,]+)명\s*이상\s*구매/u)?.[1],
+          )
+          const deliveryType = /로켓\s*프레시/u.test(bodyText)
+            ? 'rocketFresh'
+            : /로켓\s*배송/u.test(bodyText)
+              ? 'rocket'
+              : /일반\s*배송\s*상품/u.test(bodyText)
+                ? 'standard'
+                : undefined
+          const tomorrowDelivery = /내일(?:\([^)]{1,10}\))?\s*(?:\d{1,2}\s*[/.-]\s*\d{1,2}\s*)?도착/u
+            .test(bodyText)
+            ? true
+            : undefined
+
+          const breadcrumb = document.querySelector(
+            '[aria-label*="breadcrumb" i], .breadcrumb, [class*="breadcrumb" i]',
+          )
+          let breadcrumbElements = breadcrumb
+            ? Array.from(breadcrumb.querySelectorAll('a'))
+            : []
+          if (breadcrumb && breadcrumbElements.length < 2) {
+            breadcrumbElements = Array.from(breadcrumb.querySelectorAll('li'))
+          }
+          if (breadcrumb && breadcrumbElements.length < 2) {
+            breadcrumbElements = Array.from(breadcrumb.children)
+          }
+          const breadcrumbs = breadcrumbElements
+            .map((element) => textOf(element))
+            .filter((value, index, values) => value && value !== values[index - 1])
+          const category = breadcrumbs.at(-1)
+          const breadcrumbBrand = breadcrumbs.at(-2)
+          const explicitBrand = firstText([
+            '[itemprop="brand"]',
+            '.prod-brand-name',
+            '[class*="brand-name"]',
+            '[class*="BrandName"]',
+          ]).replace(/^브랜드\s*[:：]?\s*/u, '')
+          const bracketBrand = name.match(/^\[([^\]]+)\]/u)?.[1]
+          const brand = explicitBrand
+            || (
+              breadcrumbBrand
+              && (name === breadcrumbBrand || name.startsWith(`${breadcrumbBrand} `))
+                ? breadcrumbBrand
+                : ''
+            )
+            || bracketBrand
+            || undefined
+
+          const ratingElement = document.querySelector('.rating-star-num')
+          const ratingWidth = Number(
+            ratingElement?.getAttribute('style')
+              ?.match(/(?:^|;)\s*width\s*:\s*(\d+(?:\.\d+)?)\s*%/iu)?.[1],
+          )
+          const ratingValue = Number.isFinite(ratingWidth) && ratingWidth > 0 && ratingWidth <= 100
+            ? Math.round((ratingWidth / 20) * 10) / 10
+            : undefined
 
           const imageCandidates = []
           const imageIndexByBaseKey = new Map()
@@ -436,6 +532,13 @@ export function createCdpProductFetch({
             name,
             priceKrw,
             listPriceKrw,
+            reviewCount,
+            monthlyPurchaseCount,
+            deliveryType,
+            tomorrowDelivery,
+            brand,
+            category,
+            ratingValue,
             imageUrls,
           }
         }), signal)
@@ -446,14 +549,41 @@ export function createCdpProductFetch({
             product.priceKrw = extraction.priceKrw
             product.currency = 'KRW'
           }
-          if (Number.isSafeInteger(extraction.listPriceKrw) && extraction.listPriceKrw > 0) {
+          if (
+            product.priceKrw
+            && Number.isSafeInteger(extraction.listPriceKrw)
+            && extraction.listPriceKrw > product.priceKrw
+          ) {
             product.listPriceKrw = extraction.listPriceKrw
           }
           if (product.priceKrw && product.listPriceKrw) {
             const derivedDiscount = Math.round((1 - product.priceKrw / product.listPriceKrw) * 100)
-            if (derivedDiscount >= 0 && derivedDiscount <= 100) {
+            if (derivedDiscount > 0 && derivedDiscount < 100) {
               product.discountPercent = derivedDiscount
             }
+          }
+          if (admittedRenderedCount(extraction.reviewCount) !== undefined) {
+            product.reviewCount = extraction.reviewCount
+          }
+          if (admittedRenderedCount(extraction.monthlyPurchaseCount) !== undefined) {
+            product.monthlyPurchaseCount = extraction.monthlyPurchaseCount
+          }
+          if (['rocket', 'rocketFresh', 'standard'].includes(extraction.deliveryType)) {
+            product.deliveryType = extraction.deliveryType
+          }
+          if (extraction.tomorrowDelivery === true) {
+            product.tomorrowDelivery = true
+          }
+          const brand = admittedProductLabel(extraction.brand)
+          if (brand) product.brand = brand
+          const category = admittedProductLabel(extraction.category)
+          if (category && category !== '쿠팡홈') product.category = category
+          if (
+            Number.isFinite(extraction.ratingValue)
+            && extraction.ratingValue > 0
+            && extraction.ratingValue <= 5
+          ) {
+            product.ratingValue = extraction.ratingValue
           }
           const sourceUrl = typeof extraction.sourceUrl === 'string'
             ? extraction.sourceUrl

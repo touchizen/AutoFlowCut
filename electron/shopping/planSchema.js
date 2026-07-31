@@ -52,6 +52,27 @@ const SOURCE_FACT_KEYS = [
   'verification',
   'trust',
 ]
+export const SOURCE_FACT_FIELD_VALUES = Object.freeze([
+  'name',
+  'sku',
+  'description',
+  'imageUrls',
+  'priceKrw',
+  'listPriceKrw',
+  'discountPercent',
+  'currency',
+  'availability',
+  'url',
+  'rating.value',
+  'rating.count',
+  'reviewCount',
+  'monthlyPurchaseCount',
+  'deliveryType',
+  'tomorrowDelivery',
+  'brand',
+  'category',
+  'ratingValue',
+])
 const FACT_DECISION_KEYS = ['sourceFactId', 'decision', 'confirmedAt']
 const PROHIBITED_CLAIM_KEYS = ['id', 'text', 'reason']
 const CRAWL_PRODUCT_KEYS = ['mode', 'snapshotId', 'selectedImageIds']
@@ -112,6 +133,35 @@ const GENERATION_CONSTANTS = Object.freeze({
   subtitleTiming: 'scene-block',
   dialoguePolicyVersion: 'shopping-veo-dialogue-v1',
 })
+const MAX_RENDERED_COUNT = 100_000_000
+
+export function isValidSourceFactValue(field, value) {
+  if (!SOURCE_FACT_FIELD_VALUES.includes(field)) return false
+  if (field === 'reviewCount' || field === 'monthlyPurchaseCount') {
+    return Number.isSafeInteger(value) && value > 0 && value <= MAX_RENDERED_COUNT
+  }
+  if (field === 'priceKrw' || field === 'listPriceKrw') {
+    return Number.isSafeInteger(value) && value > 0
+  }
+  if (field === 'discountPercent') {
+    return Number.isSafeInteger(value) && value > 0 && value < 100
+  }
+  if (field === 'deliveryType') {
+    return ['rocket', 'rocketFresh', 'standard'].includes(value)
+  }
+  if (field === 'tomorrowDelivery') return value === true
+  if (field === 'ratingValue' || field === 'rating.value') {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 5
+  }
+  if (field === 'rating.count') {
+    return Number.isSafeInteger(value) && value >= 0
+  }
+  return (
+    ['string', 'number', 'boolean'].includes(typeof value)
+    && (typeof value !== 'number' || Number.isFinite(value))
+    && (typeof value !== 'string' || Boolean(value.trim()))
+  )
+}
 
 function responseObject(properties, required = Object.keys(properties)) {
   return { type: 'OBJECT', properties, required }
@@ -355,13 +405,15 @@ function normalizeSecurityComparisonText(value) {
 function validateSourceFact(fact, path, errors) {
   if (!checkObject(fact, path, SOURCE_FACT_KEYS, REQUIRED_SOURCE_FACT_KEYS, errors)) return
   checkCanonicalIdOrEnum(fact.id, `${path}.id`, errors, { nonEmpty: true })
-  checkCanonicalIdOrEnum(fact.field, `${path}.field`, errors, { nonEmpty: true })
+  checkEnum(fact.field, `${path}.field`, SOURCE_FACT_FIELD_VALUES, errors)
   if (
     !['string', 'number', 'boolean'].includes(typeof fact.value)
     || (typeof fact.value === 'number' && !Number.isFinite(fact.value))
     || (typeof fact.value === 'string' && !fact.value.trim())
   ) {
     addError(errors, `${path}.value must be a non-empty JSON scalar`)
+  } else if (!isValidSourceFactValue(fact.field, fact.value)) {
+    addError(errors, `${path}.value is not valid for source fact field ${fact.field}`)
   }
   checkEnum(fact.sourceKind, `${path}.sourceKind`, SOURCE_KIND_VALUES, errors)
   if (fact.sourceUrl !== undefined) checkUrl(fact.sourceUrl, `${path}.sourceUrl`, errors)

@@ -90,7 +90,8 @@ describe('createGeminiShoppingLlm', () => {
     expect(prompt).toContain('Emit exactly one product_identity claim')
     expect(prompt).toContain('Its text must equal "접지 상품명"')
     expect(prompt).toContain('sourceFactIds must equal ["fact-name"]')
-    expect(prompt).toContain('Never emit another product or brand name anywhere')
+    expect(prompt).toContain('Never emit another product name anywhere')
+    expect(prompt).toContain('A brand mention must use an allowed brand sourceFact')
     expect(prompt).toContain('The one final CTA claim text must equal')
     expect(prompt).toContain('"고정 안전 CTA" exactly')
     expect(prompt).toContain('disclosure claim text must be exactly one of')
@@ -122,6 +123,29 @@ describe('createGeminiShoppingLlm', () => {
     expect(prompt).toContain('total timelineDurationMs sum must be <60000')
     expect(prompt).toContain('first 2000ms must contain')
     expect(prompt).toContain('CTA claim must overlap the final 3000ms')
+    for (const field of [
+      'reviewCount',
+      'monthlyPurchaseCount',
+      'listPriceKrw',
+      'discountPercent',
+      'deliveryType',
+      'tomorrowDelivery',
+      'brand',
+      'category',
+      'ratingValue',
+    ]) {
+      expect(prompt).toContain(field)
+    }
+    expect(prompt).toContain('first 2 seconds')
+    expect(prompt).toContain('social-proof hook')
+    expect(prompt).toContain('reviewCount or monthlyPurchaseCount')
+    expect(prompt).toContain('price or derived-discount hook')
+    expect(prompt).toContain('rocket or tomorrow-delivery convenience')
+    expect(prompt).toContain('deliveryType and tomorrowDelivery are independent facts')
+    expect(prompt).toContain('Use only facts whose sourceFactIds are allowed')
+    expect(prompt).toContain('Copy every number exactly')
+    expect(prompt).toContain('natural Korean sales dialogue')
+    expect(prompt).toContain('Never use discountPercent as a direct numeric_fact')
     for (const values of Object.values(SHOPPING_PLAN_COPY_CONTRACT.visualDescriptions)) {
       for (const value of values) expect(prompt).toContain(value)
     }

@@ -13,6 +13,34 @@ export const SHOPPING_PLAN_COPY_CONTRACT = Object.freeze({
         '정가는 {value}원',
         '표시 정가는 {value}원',
       ]),
+      reviewCount: Object.freeze([
+        '상품평 {value}개',
+        '{value}개 상품평',
+      ]),
+      monthlyPurchaseCount: Object.freeze([
+        '한 달간 {value}명 이상 구매',
+        '한 달간 {value}명 이상 구매했어요',
+      ]),
+      ratingValue: Object.freeze([
+        '평점은 {value}점',
+        '별점은 {value}점',
+      ]),
+      tomorrowDelivery: Object.freeze([
+        '내일 도착',
+      ]),
+      brand: Object.freeze([
+        '{value} 브랜드',
+      ]),
+      category: Object.freeze([
+        '{value} 제품',
+      ]),
+    }),
+    fieldValueFormats: Object.freeze({
+      deliveryType: Object.freeze({
+        rocket: Object.freeze(['로켓배송 상품']),
+        rocketFresh: Object.freeze(['로켓프레시 상품']),
+        standard: Object.freeze(['일반배송 상품']),
+      }),
     }),
   }),
   derivedDiscountFormats: Object.freeze([

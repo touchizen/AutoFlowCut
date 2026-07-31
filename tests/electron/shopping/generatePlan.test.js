@@ -139,7 +139,20 @@ function makeDraft() {
 
 function planContextFor(facts, overrides = {}) {
   const product = {}
-  for (const field of ['name', 'priceKrw', 'listPriceKrw', 'discountPercent', 'currency']) {
+  for (const field of [
+    'name',
+    'priceKrw',
+    'listPriceKrw',
+    'discountPercent',
+    'currency',
+    'reviewCount',
+    'monthlyPurchaseCount',
+    'deliveryType',
+    'tomorrowDelivery',
+    'brand',
+    'category',
+    'ratingValue',
+  ]) {
     const fact = facts.find((candidate) => candidate.field === field)
     if (fact) product[field] = fact.value
   }
@@ -237,6 +250,49 @@ describe('createGeneratePlan', () => {
       product: { name: '승인 상품명' },
     })
     expect(JSON.stringify(constraints)).not.toContain('must-not-reach-model')
+  })
+
+  it.each([
+    ['reviewCount', 142539],
+    ['monthlyPurchaseCount', 9000],
+    ['deliveryType', 'rocket'],
+    ['tomorrowDelivery', true],
+    ['brand', '오뚜기'],
+    ['category', '컵라면'],
+    ['ratingValue', 4.8],
+  ])('keeps approved %s in the sanitized main-owned planContext', async (field, value) => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[1].field = field
+    facts[1].value = value
+    setClaimText(draft, 1, String(value))
+    const planContext = planContextFor(facts)
+    planContext.product[field] = value
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+
+    await generatePlan(facts, decisions, { planContext })
+
+    expect(llm.generateShoppingPlan).toHaveBeenCalledOnce()
+    expect(llm.generateShoppingPlan.mock.calls[0][2].planContext.product[field]).toBe(value)
+  })
+
+  it('rejects a new planContext fact whose value does not match sourceFacts', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[1].field = 'reviewCount'
+    facts[1].value = 142539
+    const llm = { generateShoppingPlan: vi.fn(async () => draft) }
+    const generatePlan = createGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions, {
+      planContext: {
+        ...planContextFor(facts),
+        product: { name: '승인 상품명', reviewCount: 50 },
+      },
+    })).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('planContext.product.reviewCount')],
+    })
+    expect(llm.generateShoppingPlan).not.toHaveBeenCalled()
   })
 
   it('main-owned project usageTracker만 모델 constraints에 전달한다', async () => {
@@ -664,6 +720,132 @@ describe('createGeneratePlan', () => {
     await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
       error: 'plan-draft-invalid',
       validationErrors: [expect.stringContaining('numeric tokens')],
+    })
+  })
+
+  it.each([
+    ['reviewCount', 142539, '상품평 142,539개', '상품평 50개'],
+    ['monthlyPurchaseCount', 9000, '한 달간 9,000명 이상 구매', '한 달간 50명 이상 구매'],
+    ['listPriceKrw', 8680, '정가는 8,680원', '정가는 50,000원'],
+    ['ratingValue', 4.8, '평점은 4.8점', '평점은 5점'],
+  ])('round-trips exact %s copy and rejects an invented number', async (
+    field,
+    value,
+    groundedText,
+    inventedText,
+  ) => {
+    const grounded = makeDraft()
+    grounded.facts[1].field = field
+    grounded.facts[1].value = value
+    grounded.draft.claims[1].claimType = 'numeric_fact'
+    setClaimText(grounded.draft, 1, groundedText)
+    const groundedGeneratePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => grounded.draft) },
+    })
+
+    await expect(groundedGeneratePlan(grounded.facts, grounded.decisions))
+      .resolves.toEqual(grounded.draft)
+
+    const invented = makeDraft()
+    invented.facts[1].field = field
+    invented.facts[1].value = value
+    invented.draft.claims[1].claimType = 'numeric_fact'
+    setClaimText(invented.draft, 1, inventedText)
+    const inventedGeneratePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => invented.draft) },
+    })
+
+    await expect(inventedGeneratePlan(invented.facts, invented.decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('numeric tokens')],
+    })
+  })
+
+  it.each([
+    ['deliveryType', 'rocket', '로켓배송 상품'],
+    ['deliveryType', 'rocketFresh', '로켓프레시 상품'],
+    ['deliveryType', 'standard', '일반배송 상품'],
+    ['tomorrowDelivery', true, '내일 도착'],
+    ['brand', '오뚜기', '오뚜기 브랜드'],
+    ['category', '컵라면', '컵라면 제품'],
+  ])('allows controlled Korean copy for %s=%s', async (field, value, text) => {
+    const grounded = makeDraft()
+    grounded.facts[1].field = field
+    grounded.facts[1].value = value
+    setClaimText(grounded.draft, 1, text)
+    const generatePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => grounded.draft) },
+    })
+
+    await expect(generatePlan(grounded.facts, grounded.decisions)).resolves.toEqual(grounded.draft)
+  })
+
+  it('rejects a direct discountPercent numeric_fact even when its number is exact', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    facts[1].field = 'discountPercent'
+    facts[1].value = 17
+    draft.claims[1].claimType = 'numeric_fact'
+    setClaimText(draft, 1, '17%')
+    const generatePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => draft) },
+    })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('discountPercent')],
+    })
+  })
+
+  it('rejects a derived discount that references anything beyond sale and list prices', async () => {
+    const { facts, decisions, draft } = makeDiscountDraft(57)
+    const extraFact = {
+      ...facts[3],
+      id: 'fact-5',
+      field: 'discountPercent',
+      value: 57,
+    }
+    const extraDecision = {
+      sourceFactId: 'fact-5',
+      decision: 'allowed',
+      confirmedAt: '2026-07-23T09:04:00.000Z',
+    }
+    facts.push(extraFact)
+    decisions.factDecisions.push(extraDecision)
+    draft.factDecisions.push(structuredClone(extraDecision))
+    draft.claims[1].sourceFactIds.push('fact-5')
+    const generatePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => draft) },
+    })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('exactly priceKrw and listPriceKrw')],
+    })
+  })
+
+  it('accepts a main-derived 17% discount and rejects a 50% mutation', async () => {
+    const grounded = makeDiscountDraft(17)
+    grounded.facts[1].value = 7200
+    grounded.facts[2].value = 8680
+    setClaimText(grounded.draft, 2, '정가는 8,680원')
+    const groundedGeneratePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => grounded.draft) },
+    })
+
+    await expect(groundedGeneratePlan(grounded.facts, grounded.decisions))
+      .resolves.toEqual(grounded.draft)
+
+    const invented = makeDiscountDraft(50)
+    invented.facts[1].value = 7200
+    invented.facts[2].value = 8680
+    setClaimText(invented.draft, 2, '정가는 8,680원')
+    const inventedGeneratePlan = createGroundedGeneratePlan({
+      llm: { generateShoppingPlan: vi.fn(async () => invented.draft) },
+    })
+
+    await expect(inventedGeneratePlan(invented.facts, invented.decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: [expect.stringContaining('derived_numeric')],
     })
   })
 

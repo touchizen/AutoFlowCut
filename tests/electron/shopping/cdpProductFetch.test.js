@@ -222,9 +222,16 @@ describe('createCdpProductFetch', () => {
       product: {
         name: '오뚜기 컵누들 매콤한맛 37.8g, 6개',
         priceKrw: 7200,
-        listPriceKrw: 9000,
-        discountPercent: 20,
+        listPriceKrw: 8680,
+        discountPercent: 17,
         currency: 'KRW',
+        reviewCount: 142539,
+        monthlyPurchaseCount: 9000,
+        deliveryType: 'rocket',
+        tomorrowDelivery: true,
+        brand: '오뚜기',
+        category: '컵라면',
+        ratingValue: 4.8,
       },
       sourceFacts: expect.arrayContaining([
         expect.objectContaining({
@@ -239,6 +246,22 @@ describe('createCdpProductFetch', () => {
           sourceKind: 'dom',
           verification: 'page-rendered',
         }),
+        ...[
+          ['listPriceKrw', 8680],
+          ['discountPercent', 17],
+          ['reviewCount', 142539],
+          ['monthlyPurchaseCount', 9000],
+          ['deliveryType', 'rocket'],
+          ['tomorrowDelivery', true],
+          ['brand', '오뚜기'],
+          ['category', '컵라면'],
+          ['ratingValue', 4.8],
+        ].map(([field, value]) => expect.objectContaining({
+          field,
+          value,
+          sourceKind: 'dom',
+          verification: 'page-rendered',
+        })),
       ]),
       imageUrls: [
         'https://thumbnail.coupangcdn.com/thumbnails/remote/492x492ex/image/retail/images/236629279350126-product-a.jpg',
@@ -331,7 +354,7 @@ describe('createCdpProductFetch', () => {
     })
   })
 
-  it('uses only the first body price when provisional selectors are absent', async () => {
+  it('uses labeled body sale and list prices despite nearby numeric noise', async () => {
     const harness = createBrowserHarness(`
       <!doctype html><html><head><title></title></head><body>
         <h1>본문 가격 폴백 상품</h1>
@@ -353,11 +376,11 @@ describe('createCdpProductFetch', () => {
       product: {
         name: '본문 가격 폴백 상품',
         priceKrw: 7200,
+        listPriceKrw: 9000,
+        discountPercent: 20,
         currency: 'KRW',
       },
     }))
-    expect(result.product).not.toHaveProperty('listPriceKrw')
-    expect(result.product).not.toHaveProperty('discountPercent')
   })
 
   it('derives the discount from selector-backed sale and list prices', async () => {
@@ -386,6 +409,83 @@ describe('createCdpProductFetch', () => {
         discountPercent: 20,
       },
     })
+  })
+
+  it('omits independently unproven or out-of-range rendered facts', async () => {
+    const harness = createBrowserHarness(`
+      <!doctype html><html><head><title>범위 검증 상품 | 쿠팡</title></head><body>
+        <nav class="breadcrumb"><a>쿠팡홈</a><a>식품</a><a>라면</a><a>컵라면</a></nav>
+        <strong class="total-price">7,200원</strong>
+        <span class="origin-price">7,100원</span>
+        <p>0 개 상품평</p>
+        <p>한 달간 999,999,999명 이상 구매했어요</p>
+        <p>로켓 혜택 · 모레 도착</p>
+        <span class="rating-star-num" style="width: 120%"></span>
+        <img src="https://thumbnail.coupangcdn.com/image/product.jpg">
+      </body></html>
+    `)
+    const cdpProductFetch = createCdpProductFetch({
+      launchBrowser: harness.launchBrowser,
+      findBrowserExecutable: async () => '/Applications/Google Chrome',
+      warmupMs: 0,
+      extractTimeoutMs: 10,
+    })
+
+    const result = await cdpProductFetch(PRODUCT_URL, {})
+
+    expect(result).toMatchObject({
+      status: 'ok',
+      product: {
+        name: '범위 검증 상품',
+        priceKrw: 7200,
+        currency: 'KRW',
+        category: '컵라면',
+      },
+    })
+    for (const field of [
+      'listPriceKrw',
+      'discountPercent',
+      'reviewCount',
+      'monthlyPurchaseCount',
+      'deliveryType',
+      'tomorrowDelivery',
+      'brand',
+      'ratingValue',
+    ]) {
+      expect(result.product).not.toHaveProperty(field)
+      expect(result.sourceFacts.some((fact) => fact.field === field)).toBe(false)
+    }
+  })
+
+  it.each([
+    ['로켓프레시 · 내일 도착', { deliveryType: 'rocketFresh', tomorrowDelivery: true }],
+    ['일반 배송 상품 · 모레 도착', { deliveryType: 'standard' }],
+    ['판매자 배송 · 내일(금) 8/1 도착', { tomorrowDelivery: true }],
+    ['일반배송 안내를 확인하세요 · 모레 도착', {}],
+  ])('keeps delivery kind and tomorrow arrival independently for %s', async (deliveryText, expected) => {
+    const harness = createBrowserHarness(`
+      <!doctype html><html><head><title>배송 검증 상품 | 쿠팡</title></head><body>
+        <strong class="total-price">7,200원</strong>
+        <p>${deliveryText}</p>
+        <img src="https://thumbnail.coupangcdn.com/image/product.jpg">
+      </body></html>
+    `)
+    const cdpProductFetch = createCdpProductFetch({
+      launchBrowser: harness.launchBrowser,
+      findBrowserExecutable: async () => '/Applications/Google Chrome',
+      warmupMs: 0,
+      extractTimeoutMs: 10,
+    })
+
+    const result = await cdpProductFetch(PRODUCT_URL, {})
+
+    expect(result.product).toEqual(expect.objectContaining(expected))
+    if (!Object.hasOwn(expected, 'deliveryType')) {
+      expect(result.product).not.toHaveProperty('deliveryType')
+    }
+    if (!Object.hasOwn(expected, 'tomorrowDelivery')) {
+      expect(result.product).not.toHaveProperty('tomorrowDelivery')
+    }
   })
 
   it('preserves a product name containing a spaced hyphen without a Coupang marker', async () => {

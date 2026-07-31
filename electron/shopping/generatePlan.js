@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 
 import { shoppingAssets } from './assets/index.js'
-import { validateShoppingPlanDraft } from './planSchema.js'
+import { isValidSourceFactValue, validateShoppingPlanDraft } from './planSchema.js'
 import {
   SHOPPING_PLAN_COPY_CONTRACT,
   controlledPersonaVideoPrompt,
@@ -37,6 +37,13 @@ const PLAN_CONTEXT_PRODUCT_FIELDS = Object.freeze([
   'listPriceKrw',
   'discountPercent',
   'currency',
+  'reviewCount',
+  'monthlyPurchaseCount',
+  'deliveryType',
+  'tomorrowDelivery',
+  'brand',
+  'category',
+  'ratingValue',
 ])
 
 export const SHOPPING_PLAN_META_PROMPT = `You are the planning engine for a Korean shopping short.
@@ -87,6 +94,7 @@ function sanitizeSourceFact(fact) {
     !id
     || !field
     || value === undefined
+    || !isValidSourceFactValue(field, value)
     || !['jsonld', 'og', 'dom', 'manual'].includes(sourceKind)
     || !fetchedAt
     || !['page-asserted', 'page-rendered', 'user-asserted'].includes(verification)
@@ -350,10 +358,14 @@ function matchesTemplateCopy(text, template, renderings) {
 
 function matchesFieldSpecificCopy(text, facts) {
   for (const fact of facts) {
-    if (typeof fact.value !== 'number') continue
-    const grouped = new Intl.NumberFormat('en-US', { maximumFractionDigits: 20 }).format(fact.value)
+    const grouped = typeof fact.value === 'number'
+      ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 20 }).format(fact.value)
+      : String(fact.value)
     const formats = SHOPPING_PLAN_COPY_CONTRACT.factCopyPolicy.fieldFormats[fact.field] || []
     if (formats.some((format) => fillShoppingCopyFormat(format, 'value', grouped) === text)) return true
+    const valueFormats = SHOPPING_PLAN_COPY_CONTRACT.factCopyPolicy
+      .fieldValueFormats[fact.field]?.[String(fact.value)] || []
+    if (valueFormats.includes(text)) return true
   }
   return false
 }
@@ -385,6 +397,9 @@ function validateClaimMeaning(claim, referencedFacts, planContext) {
   const claimTokens = extractNumericTokens(claim.text)
 
   if (claim.claimType !== 'derived_numeric') {
+    if (referencedFacts.some((fact) => fact.field === 'discountPercent')) {
+      return `claim ${claim.id} discountPercent copy requires derived_numeric price facts`
+    }
     const factTokens = unionNumericTokens(referencedFacts)
     for (const token of claimTokens) {
       if (!factTokens.has(token)) {
@@ -401,6 +416,11 @@ function validateClaimMeaning(claim, referencedFacts, planContext) {
 
   if (claim.formula !== DISCOUNT_PERCENT_FORMULA) {
     return `claim ${claim.id} derived_numeric formula is not supported`
+  }
+
+  const derivedFields = referencedFacts.map((fact) => fact.field).sort()
+  if (!isDeepStrictEqual(derivedFields, ['listPriceKrw', 'priceKrw'])) {
+    return `claim ${claim.id} derived_numeric must reference exactly priceKrw and listPriceKrw`
   }
 
   const salePrice = findSingleNumericFact(referencedFacts, 'priceKrw')

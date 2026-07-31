@@ -233,6 +233,18 @@ function expectInvalid(plan, messagePart) {
   expect(validation.errors.join('\n')).toContain(messagePart)
 }
 
+const NEW_SOURCE_FACT_CASES = [
+  ['reviewCount', 142539],
+  ['monthlyPurchaseCount', 9000],
+  ['listPriceKrw', 8680],
+  ['discountPercent', 17],
+  ['deliveryType', 'rocket'],
+  ['tomorrowDelivery', true],
+  ['brand', '오뚜기'],
+  ['category', '컵라면'],
+  ['ratingValue', 4.8],
+]
+
 function setPersonaScene(plan, index, durationSec = 4) {
   const scene = plan.scenes[index]
   scene.visualType = 'persona_i2v'
@@ -253,6 +265,36 @@ function setPersonaDialogue(plan, index, text) {
 }
 
 describe('validateShoppingPlanDraft — schema', () => {
+  it.each(NEW_SOURCE_FACT_CASES)('accepts the supported source fact %s', (field, value) => {
+    const plan = makePlan()
+    plan.product.facts[1].field = field
+    plan.product.facts[1].value = value
+
+    expectValid(plan)
+  })
+
+  it('rejects an unknown source fact field', () => {
+    const plan = makePlan()
+    plan.product.facts[1].field = 'modelInventedField'
+
+    expectInvalid(plan, '$.product.facts[1].field must be')
+  })
+
+  it.each([
+    ['reviewCount', 0],
+    ['monthlyPurchaseCount', 100_000_001],
+    ['discountPercent', 100],
+    ['deliveryType', 'sameDay'],
+    ['tomorrowDelivery', false],
+    ['ratingValue', 5.1],
+  ])('rejects an invalid %s source fact value', (field, value) => {
+    const plan = makePlan()
+    plan.product.facts[1].field = field
+    plan.product.facts[1].value = value
+
+    expectInvalid(plan, '$.product.facts[1].value')
+  })
+
   it.each([5, 8])('accepts the scene-count boundary %i', (sceneCount) => {
     expectValid(makePlan(sceneCount))
   })
