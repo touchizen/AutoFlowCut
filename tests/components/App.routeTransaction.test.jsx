@@ -1,7 +1,17 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import * as AppModule from '../../src/App.jsx'
+import { ModeProvider, useMode } from '../../src/contexts/ModeContext.jsx'
+import ModeToggle from '../../src/components/ModeToggle.jsx'
+import {
+  MODE_STORAGE_KEY,
+  SESSION_TARGET_STORAGE_KEY,
+} from '../../src/config/appRoute.js'
+
+vi.mock('../../src/hooks/useI18n', () => ({
+  useI18n: () => ({ t: (key) => key }),
+}))
 
 const deferred = () => {
   let resolve
@@ -91,6 +101,19 @@ const requestInjectedRoute = (route) => {
 const currentRoute = () => renderedRoute
 const currentEngine = () => renderedEngine
 
+function AppOwnedModeToggle({ setRoute }) {
+  const modeState = useMode()
+  useEffect(() => {
+    if (!modeState.route) modeState.setRoute(flowRoute())
+  }, [modeState.route, modeState.setRoute])
+  const requestRoute = AppModule.useAppRouteTransaction({
+    route: modeState.route,
+    commitRoute: modeState.setRoute,
+    setRoute,
+  })
+  return <ModeToggle onRouteRequest={requestRoute} />
+}
+
 beforeEach(() => {
   localStorage.clear()
   injectedRequest = null
@@ -99,6 +122,32 @@ beforeEach(() => {
 })
 
 afterEach(() => cleanup())
+
+it('keeps the real mode toggle on non-default Flow until App adopts a successful route', async () => {
+  localStorage.setItem(MODE_STORAGE_KEY, 'flow')
+  localStorage.setItem(SESSION_TARGET_STORAGE_KEY, 'flow')
+  const failed = deferred()
+  const setRoute = vi.fn(() => failed.promise)
+  render(
+    <ModeProvider>
+      <AppOwnedModeToggle setRoute={setRoute} />
+    </ModeProvider>,
+  )
+
+  fireEvent.click(await screen.findByTestId('mode-toggle-api'))
+  expect(screen.getByTestId('mode-toggle-flow')).toHaveAttribute('aria-pressed', 'true')
+  expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe('flow')
+
+  failed.resolve({ ok: false, error: 'route-quiesce-failed', route: flowRoute(), revision: 1 })
+  await waitFor(() => expect(setRoute).toHaveBeenCalledTimes(1))
+  expect(screen.getByTestId('mode-toggle-flow')).toHaveAttribute('aria-pressed', 'true')
+  expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe('flow')
+
+  setRoute.mockResolvedValueOnce({ ok: true, route: apiRoute(), revision: 2 })
+  fireEvent.click(screen.getByTestId('mode-toggle-api'))
+  await waitFor(() => expect(screen.getByTestId('mode-toggle-api')).toHaveAttribute('aria-pressed', 'true'))
+  expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe('api')
+})
 
 it('keeps renderer context, storage, main view, and engine on non-default Flow when route:set fails', async () => {
   const api = routeFailureHarness({

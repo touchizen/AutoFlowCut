@@ -724,9 +724,17 @@ function makeReservedSessionView() {
 }
 
 // Mode controller wires route:set/mode:set IPC + lazy session view creation/attachment.
+// Task 16 barrier owner is deliberately a required, awaited no-op until the real
+// session-job coordinator replaces it in Task 10.
+const routeSessionJobs = Object.freeze({
+  cancelAll: async () => {},
+  awaitIdle: async () => {},
+})
 const modeController = createModeController(() => mainWindow, makeFlowView, {
   createSessionView: (target) => target === 'flow' ? makeFlowView() : makeReservedSessionView(),
   updateViewBounds: updateBounds,
+  sessionJobs: routeSessionJobs,
+  requireRendererQuiesce: true,
 })
 modeController.register(ipcMain)
 

@@ -381,7 +381,7 @@ export default function Header({
           tooltip={t('header.language')}
         />
 
-        <ModeToggle busy={modeBusy} />
+        <ModeToggle busy={modeBusy} onRouteRequest={onRouteRequest} />
 
         {onStoryClick && (
           <button

@@ -172,6 +172,32 @@ export function useAppRouteTransaction({ route, commitRoute, setRoute }) {
   }, [commitRoute, setRoute])
 }
 
+export function useRouteQuiesceBridge(
+  routeQuiesceOwnerRef,
+  electronAPI = globalThis.window?.electronAPI,
+) {
+  useEffect(() => {
+    const off = electronAPI?.onRouteQuiesceRequest?.(async (request) => {
+      const receipt = {
+        requestId: request?.requestId,
+        fromRevision: request?.fromRevision,
+      }
+      try {
+        routeQuiesceOwnerRef.current?.stop()
+        await routeQuiesceOwnerRef.current?.awaitIdle()
+        electronAPI?.sendRouteQuiesceReceipt?.({ ...receipt, ok: true })
+      } catch (error) {
+        electronAPI?.sendRouteQuiesceReceipt?.({
+          ...receipt,
+          ok: false,
+          error: error?.message || 'renderer-flow-quiesce-failed',
+        })
+      }
+    })
+    return () => off?.()
+  }, [electronAPI, routeQuiesceOwnerRef])
+}
+
 function App() {
   const { t, lang } = useI18n()
   const isKo = t('common.cancel') === '취소'  // 간단한 언어 감지 (ReferencePanel 과 동일)
@@ -2117,26 +2143,7 @@ function App() {
     },
   }
 
-  useEffect(() => {
-    const off = window.electronAPI?.onRouteQuiesceRequest?.(async (request) => {
-      const receipt = {
-        requestId: request?.requestId,
-        fromRevision: request?.fromRevision,
-      }
-      try {
-        routeQuiesceOwnerRef.current?.stop()
-        await routeQuiesceOwnerRef.current?.awaitIdle()
-        window.electronAPI?.sendRouteQuiesceReceipt?.({ ...receipt, ok: true })
-      } catch (error) {
-        window.electronAPI?.sendRouteQuiesceReceipt?.({
-          ...receipt,
-          ok: false,
-          error: error?.message || 'renderer-flow-quiesce-failed',
-        })
-      }
-    })
-    return () => off?.()
-  }, [])
+  useRouteQuiesceBridge(routeQuiesceOwnerRef)
 
   // quiesce listener가 먼저 설치된 다음 stored/current route를 main에 adopt한다. 이 순서를
   // 뒤집으면 초기 IPC가 빠른 환경에서 첫 request를 놓쳐 main timeout까지 view 전환이 막힌다.

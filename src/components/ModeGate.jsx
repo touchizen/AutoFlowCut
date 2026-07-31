@@ -9,8 +9,21 @@ import { useModalVisibility } from '../hooks/useModalVisibility'
 import ModeSelector from './ModeSelector'
 
 export default function ModeGate({ children }) {
-  const { mode, setMode } = useMode()
+  const { mode, sessionTarget = 'flow', setRoute } = useMode()
   useModalVisibility(!mode)
-  if (!mode) return <ModeSelector onSelect={setMode} />
+  const requestInitialRoute = async (nextMode) => {
+    const nextRoute = { mode: nextMode, sessionTarget }
+    if (typeof window.electronAPI?.setRoute !== 'function') {
+      setRoute(nextRoute)
+      return
+    }
+    try {
+      const result = await window.electronAPI.setRoute(nextRoute)
+      if (result?.ok === true && result.route) setRoute(result.route)
+    } catch {
+      // Main rejection leaves the first-run selector open.
+    }
+  }
+  if (!mode) return <ModeSelector onSelect={requestInitialRoute} />
   return children
 }

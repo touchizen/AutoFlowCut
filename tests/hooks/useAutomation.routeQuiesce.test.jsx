@@ -1,5 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
+import { useRef } from 'react'
+import { useRouteQuiesceBridge } from '../../src/App.jsx'
 import { useAutomation } from '../../src/hooks/useAutomation.js'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -43,6 +45,15 @@ const renderRunningFlowAutomation = ({ flowEffectGate }) => {
   const events = []
   const started = deferred()
   const stopRequested = deferred()
+  let requestFromMain
+  const sendReceipt = vi.fn(() => events.push('route-quiesce-receipt'))
+  const electronAPI = {
+    onRouteQuiesceRequest: vi.fn((callback) => {
+      requestFromMain = callback
+      return vi.fn()
+    }),
+    sendRouteQuiesceReceipt: sendReceipt,
+  }
   const genAPI = {
     submitGeneration: vi.fn(async () => {
       events.push('flow:start')
@@ -63,10 +74,26 @@ const renderRunningFlowAutomation = ({ flowEffectGate }) => {
     getMatchingReferences: vi.fn(() => []),
     updateReferences: vi.fn(),
   }
-  const hook = renderHook(() => useAutomation(
-    genAPI, scenesHook, null, null, null, (key) => key,
-    null, null, null, 'flow', true,
-  ))
+  const hook = renderHook(() => {
+    const automation = useAutomation(
+      genAPI, scenesHook, null, null, null, (key) => key,
+      null, null, null, 'flow', true,
+    )
+    const ownerRef = useRef(null)
+    ownerRef.current = {
+      stop: () => {
+        events.push('flow:stop-requested')
+        automation.stop()
+        stopRequested.resolve()
+      },
+      awaitIdle: async () => {
+        await automation.awaitIdle()
+        events.push('flow:idle')
+      },
+    }
+    useRouteQuiesceBridge(ownerRef, electronAPI)
+    return automation
+  })
 
   act(() => {
     void hook.result.current.start({
@@ -75,7 +102,6 @@ const renderRunningFlowAutomation = ({ flowEffectGate }) => {
     })
   })
 
-  const sendReceipt = vi.fn()
   const automation = {
     waitUntilStopRequested: () => stopRequested.promise,
   }
@@ -84,23 +110,7 @@ const renderRunningFlowAutomation = ({ flowEffectGate }) => {
     requestFromMain: async (request) => {
       await started.promise
       events.push('route-quiesce')
-      act(() => {
-        events.push('flow:stop-requested')
-        hook.result.current.stop()
-      })
-      const idlePromise = hook.result.current.awaitIdle?.()
-      if (!idlePromise) {
-        events.push('flow:idle')
-        sendReceipt(request)
-        events.push('route-quiesce-receipt')
-        stopRequested.resolve()
-        return
-      }
-      stopRequested.resolve()
-      await idlePromise
-      events.push('flow:idle')
-      sendReceipt(request)
-      events.push('route-quiesce-receipt')
+      await act(async () => requestFromMain(request))
     },
   }
   return { automation, routeBridge, events }

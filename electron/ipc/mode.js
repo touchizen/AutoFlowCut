@@ -15,7 +15,9 @@
 import { resolveStartupProjectDecision } from '../startupProject.js'
 import { parseRoute } from '../../src/config/appRoute.js'
 
-const NOOP_SESSION_JOBS = Object.freeze({
+// Only sender-less legacy IPC unit harnesses receive this owner. Direct calls and
+// real Electron IPC must provide the production-owned sessionJobs port.
+const LEGACY_NO_SENDER_SESSION_JOBS = Object.freeze({
   cancelAll: async () => {},
   awaitIdle: async () => {},
 })
@@ -40,11 +42,10 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     return createFlowView()
   })
   const updateViewBounds = options.updateViewBounds || (() => {})
-  const sessionJobs = Object.hasOwn(options, 'sessionJobs')
-    ? options.sessionJobs
-    : NOOP_SESSION_JOBS
+  const hasSessionJobs = Object.hasOwn(options, 'sessionJobs')
+  const sessionJobs = hasSessionJobs ? options.sessionJobs : null
 
-  if (!sessionJobs || typeof sessionJobs.cancelAll !== 'function' || typeof sessionJobs.awaitIdle !== 'function') {
+  if (hasSessionJobs && (!sessionJobs || typeof sessionJobs.cancelAll !== 'function' || typeof sessionJobs.awaitIdle !== 'function')) {
     throw new TypeError('sessionJobs.cancelAll/awaitIdle are required')
   }
   if (attachedView && configuredInitialRoute?.mode === 'flow') {
@@ -78,7 +79,10 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     }
 
     const sender = getMainWindow()?.webContents
-    if (!sender || typeof sender.send !== 'function') return
+    if (!sender || typeof sender.send !== 'function') {
+      if (options.requireRendererQuiesce) throw new Error('route-quiesce-sender-unavailable')
+      return
+    }
 
     const timeoutMs = Number.isFinite(options.quiesceTimeoutMs) ? options.quiesceTimeoutMs : 30_000
     await new Promise((resolve, reject) => {
@@ -110,7 +114,7 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     })
   }
 
-  const performRouteTransition = async (payload) => {
+  const performRouteTransition = async (payload, sessionJobOwner) => {
     const envelope = payload && typeof payload === 'object' && !Array.isArray(payload) && payload.to
       ? payload
       : null
@@ -128,14 +132,17 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     const routeChanges = !routesEqual(previousRoute, accepted)
 
     if (routeChanges) {
+      if (!sessionJobOwner) {
+        return adoptedResult({ ok: false, error: 'route-session-jobs-required' })
+      }
       try {
         await requestRendererQuiesce({ requestId, fromRevision: previousRevision, to: accepted })
       } catch {
         return adoptedResult({ ok: false, error: 'route-quiesce-failed' })
       }
       try {
-        await sessionJobs.cancelAll({ requestId, fromRevision: previousRevision, to: { ...accepted } })
-        await sessionJobs.awaitIdle({ requestId, fromRevision: previousRevision, to: { ...accepted } })
+        await sessionJobOwner.cancelAll({ requestId, fromRevision: previousRevision, to: { ...accepted } })
+        await sessionJobOwner.awaitIdle({ requestId, fromRevision: previousRevision, to: { ...accepted } })
       } catch {
         return adoptedResult({ ok: false, error: 'route-session-jobs-failed' })
       }
@@ -151,20 +158,30 @@ export function createModeController(getMainWindow, createFlowView, options = {}
 
     const previousView = attachedView
     const attachmentChanges = previousView !== nextView
+    const assertRouteRevision = (expectedRoute, expectedRevision) => {
+      if (!routesEqual(currentRoute, expectedRoute) || routeRevision !== expectedRevision) {
+        throw new Error('stale-route-revision')
+      }
+    }
     try {
+      assertRouteRevision(previousRoute, previousRevision)
       if (win && attachmentChanges && previousView) {
         win.contentView.removeChildView(previousView)
         attachedView = null
       }
 
+      assertRouteRevision(previousRoute, previousRevision)
       currentRoute = accepted
       if (routeChanges) routeRevision += 1
+      const committedRevision = routeRevision
       options.onRouteCommitted?.({ ...currentRoute }, routeRevision)
 
+      assertRouteRevision(accepted, committedRevision)
       if (win && attachmentChanges && nextView) {
         win.contentView.addChildView(nextView)
         attachedView = nextView
       }
+      assertRouteRevision(accepted, committedRevision)
       if (win && nextView) updateViewBounds(win, nextView)
     } catch {
       if (win && attachedView === nextView && nextView) {
@@ -185,11 +202,15 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     return adoptedResult({ ok: true })
   }
 
-  function setRoute(payload) {
-    const run = () => performRouteTransition(payload)
+  function enqueueRoute(payload, sessionJobOwner) {
+    const run = () => performRouteTransition(payload, sessionJobOwner)
     const pending = transitionQueue.then(run, run)
     transitionQueue = pending.then(() => undefined, () => undefined)
     return pending
+  }
+
+  function setRoute(payload) {
+    return enqueueRoute(payload, sessionJobs)
   }
 
   function register(ipcMain) {
@@ -201,17 +222,22 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       else pending.resolve()
     })
     ipcMain.handle('route:set', async (event, payload) => {
-      const result = await setRoute(payload)
+      const owner = sessionJobs || (!event?.sender ? LEGACY_NO_SENDER_SESSION_JOBS : null)
+      const result = await enqueueRoute(payload, owner)
       if (event?.sender) return result
       if (result.ok) return { ok: true, route: result.route }
       const { route: _route, revision: _revision, ...legacyResult } = result
       return legacyResult
     })
-    ipcMain.handle('mode:set', async (_event, payload) => {
+    ipcMain.handle('mode:set', async (event, payload) => {
       if (!payload || typeof payload !== 'object' || !['flow', 'api'].includes(payload.mode)) {
         return { ok: false, error: 'invalid-route' }
       }
-      const result = await setRoute({ mode: payload.mode, sessionTarget: currentRoute.sessionTarget || 'flow' })
+      const owner = sessionJobs || (!event?.sender ? LEGACY_NO_SENDER_SESSION_JOBS : null)
+      const result = await enqueueRoute(
+        { mode: payload.mode, sessionTarget: currentRoute.sessionTarget || 'flow' },
+        owner,
+      )
       return result.ok ? { ok: true, mode: result.route.mode } : result
     })
     ipcMain.handle('flow:set-startup-project', (_event, payload = {}) => {

@@ -1,6 +1,6 @@
 /**
  * ModeSelector — 최초 실행 시 생성 모드 선택 피커.
- * 선택 시 onSelect(mode) 호출 (상위가 useMode().setMode 로 영속).
+ * 선택 시 onSelect(mode) 호출 (상위 route transaction 성공 뒤 영속).
  *
  * - 각 카드에 장단점(대상/가격/속도/특징)을 노출 (modeInfo + i18n).
  * - 우상단 언어 선택(LanguagePicker) — 첫 화면에서도 자기 언어로 읽을 수 있게.
