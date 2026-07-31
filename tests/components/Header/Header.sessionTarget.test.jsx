@@ -25,12 +25,12 @@ vi.mock('../../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'f
 import Header from '../../../src/components/Header.jsx'
 
 it('ChatGPT target shows its label and never calls legacy Flow reattach', () => {
-  window.electronAPI = { setMode: vi.fn(), setLayout: vi.fn(), onFlowStatus: vi.fn(() => () => {}) }
+  window.electronAPI = { setRoute: vi.fn(), setLayout: vi.fn(), onFlowStatus: vi.fn(() => () => {}) }
   render(<Header authReady={false} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />)
   // 버튼은 `{authActionIcon} {authActionLabel}`(Header.jsx:350)을 렌더해 접근성 이름이
   // '👤 ChatGPT 로그인' 이다 — 정확 문자열 매칭은 절대 안 맞는다(기존 테스트도 정규식을 쓴다).
   fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
-  expect(window.electronAPI.setMode).not.toHaveBeenCalled()
+  expect(window.electronAPI.setRoute).not.toHaveBeenCalled()
   expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
 })
 

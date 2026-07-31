@@ -28,7 +28,7 @@ import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
 import { useAvailableModels } from './hooks/useAvailableModels'
 import { computeModelHeal, computeModeSwitch } from './config/genModels'
-import { isFlowTarget } from './config/appRoute.js'
+import { isFlowTarget, parseRoute } from './config/appRoute.js'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
@@ -140,6 +140,38 @@ import ImportProcessingOverlay from './components/ImportProcessingOverlay'
 import { useAuth } from './contexts/AuthContext'
 import { useImportProcessing } from './hooks/useImportProcessing'
 
+export function useAppRouteTransaction({ route, commitRoute, setRoute }) {
+  const requestSequenceRef = useRef(0)
+  const adoptedRevisionRef = useRef(-1)
+  const routeRef = useRef(route)
+  routeRef.current = route
+
+  return useCallback(async (next) => {
+    const accepted = parseRoute(next)
+    if (!accepted) return { ok: false, error: 'invalid-route', route: routeRef.current }
+
+    const requestSequence = ++requestSequenceRef.current
+    let result
+    try {
+      result = typeof setRoute === 'function'
+        ? await setRoute(accepted)
+        : { ok: false, error: 'route-api-unavailable', route: routeRef.current }
+    } catch (error) {
+      result = { ok: false, error: error?.message || 'route-set-failed', route: routeRef.current }
+    }
+
+    if (requestSequence !== requestSequenceRef.current || result?.ok !== true) return result
+    const adopted = parseRoute(result.route)
+    if (!adopted) return { ok: false, error: 'invalid-adopted-route', route: routeRef.current }
+    const revision = Number.isInteger(result.revision) ? result.revision : null
+    if (revision != null && revision < adoptedRevisionRef.current) return result
+    if (revision != null) adoptedRevisionRef.current = revision
+    routeRef.current = adopted
+    commitRoute?.(adopted)
+    return result
+  }, [commitRoute, setRoute])
+}
+
 function App() {
   const { t, lang } = useI18n()
   const isKo = t('common.cancel') === '취소'  // 간단한 언어 감지 (ReferencePanel 과 동일)
@@ -188,8 +220,25 @@ function App() {
     [subscription?.batchRemaining, subscription?.batchUnlimited]
   )
   const { mode, sessionTarget = 'flow', clearMode } = useMode()
+  const { setRoute: commitRoute } = useMode()
   const flowTargetActive = isFlowTarget({ mode, sessionTarget })
   const generationQueue = useGenerationQueue()
+  const route = useMemo(() => mode ? { mode, sessionTarget } : null, [mode, sessionTarget])
+  const invokeMainRoute = useCallback(async (next) => {
+    if (typeof window.electronAPI?.setRoute === 'function') {
+      return window.electronAPI.setRoute(next)
+    }
+    // 이전 preload를 띄운 개발/HMR 창에서만 mode-only route를 유지한다. target 전환은
+    // canonical route API 없이는 안전하게 표현할 수 없으므로 fail closed한다.
+    const legacyCanRepresentRoute = next.mode === 'api' || next.sessionTarget === 'flow'
+    const legacyModeSetter = window.electronAPI?.['set' + 'Mode']
+    if (!legacyCanRepresentRoute || typeof legacyModeSetter !== 'function') {
+      return { ok: false, error: 'route-api-unavailable', route }
+    }
+    const legacy = await legacyModeSetter({ mode: next.mode })
+    return legacy?.ok ? { ok: true, route: next } : legacy
+  }, [route])
+  const requestRoute = useAppRouteTransaction({ route, commitRoute, setRoute: invokeMainRoute })
 
   // Auth/Payment Modals
   const [showAuthModal, setShowAuthModal] = useState(false)
@@ -310,15 +359,6 @@ function App() {
   // In flow mode, request the default split layout (split-left = Flow 왼쪽). Shell 이 레이아웃의
   // 단일 소유자라(드래그/영속), 여기 setLayout 은 진입 시 Flow 뷰가 곧장 자리잡게 하는 fallback —
   // Shell 의 effect(부모)가 직후 저장값으로 덮어쓴다(자식 effect 가 먼저 → 부모가 나중).
-  useEffect(() => {
-    if (mode && (mode !== 'flow' || flowTargetActive)) {
-      // #R13-11: IPC 실패가 unhandled rejection 으로 새지 않게 catch (UI 는 그대로 진행).
-      window.electronAPI?.setMode?.({ mode })?.catch?.((e) => console.warn('[App] setMode failed:', e?.message))
-      const layout = flowLayoutForMode(mode)
-      if (layout) window.electronAPI?.setLayout?.(layout)?.catch?.((e) => console.warn('[App] setLayout failed:', e?.message))
-    }
-  }, [mode, flowTargetActive])
-
   // Flow Agent(Maps 그라운딩) 모드를 main 에 push — generate 핸들러가 ensureAgentOn/Off 분기에 사용.
   useEffect(() => {
     if (flowTargetActive) window.electronAPI?.setFlowAgentMode?.({ on: !!settings.flowAgentOn })?.catch?.(() => {})
@@ -2063,6 +2103,55 @@ function App() {
     if (shouldStopRefWork({ refBatchRunning, gatePhase: emptyRefGate?.phase })) stopGenerateAllRefs()
   }
 
+  const routeQuiesceOwnerRef = useRef(null)
+  routeQuiesceOwnerRef.current = {
+    busy: isRunning || isSceneBatchQueued || videoAutomation.isRunning || refBatchRunning || hasPendingBatch,
+    stop: handleStop,
+    awaitIdle: async () => {
+      await automation.awaitIdle?.()
+      const idle = await waitUntil(
+        () => !routeQuiesceOwnerRef.current?.busy,
+        { timeoutMs: 30_000, intervalMs: 20 },
+      )
+      if (!idle) throw new Error('renderer-flow-idle-timeout')
+    },
+  }
+
+  useEffect(() => {
+    const off = window.electronAPI?.onRouteQuiesceRequest?.(async (request) => {
+      const receipt = {
+        requestId: request?.requestId,
+        fromRevision: request?.fromRevision,
+      }
+      try {
+        routeQuiesceOwnerRef.current?.stop()
+        await routeQuiesceOwnerRef.current?.awaitIdle()
+        window.electronAPI?.sendRouteQuiesceReceipt?.({ ...receipt, ok: true })
+      } catch (error) {
+        window.electronAPI?.sendRouteQuiesceReceipt?.({
+          ...receipt,
+          ok: false,
+          error: error?.message || 'renderer-flow-quiesce-failed',
+        })
+      }
+    })
+    return () => off?.()
+  }, [])
+
+  // quiesce listener가 먼저 설치된 다음 stored/current route를 main에 adopt한다. 이 순서를
+  // 뒤집으면 초기 IPC가 빠른 환경에서 첫 request를 놓쳐 main timeout까지 view 전환이 막힌다.
+  useEffect(() => {
+    if (!route) return
+    requestRoute(route).then((result) => {
+      if (!result?.ok) {
+        console.warn('[App] setRoute failed:', result?.error)
+        return
+      }
+      const layout = flowLayoutForMode(result.route.mode)
+      if (layout) window.electronAPI?.setLayout?.(layout)?.catch?.((e) => console.warn('[App] setLayout failed:', e?.message))
+    }).catch((e) => console.warn('[App] setRoute failed:', e?.message))
+  }, [route, requestRoute])
+
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
   // isRunning: scene OR ref(prepare/stop/generating) OR video — Phase 2 auto stop-restart 트리거.
   useMcpServer({
@@ -2157,6 +2246,7 @@ function App() {
         </div>
       )}
       <Header
+        onRouteRequest={requestRoute}
         onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}
         onExport={handleExportClick}
         exportFormat={exportFormat}

@@ -2,7 +2,7 @@
  * #R5-3 / #R6-9 — Header unauth action is mode-aware.
  *
  * API mode  → clicking the unauth button opens apiKey settings (onSettings('apiKey')).
- * Flow mode → clicking the unauth button calls electronAPI.setMode + setLayout + shows toast.
+ * Flow mode → clicking the unauth button calls electronAPI.setRoute + setLayout + shows toast.
  *             Does NOT dispatch 'flow-login-expired'. Does NOT call onSettings('apiKey').
  */
 
@@ -85,7 +85,7 @@ function renderHeader(onSettings = vi.fn()) {
 describe('Header project selector — disabled contract (#R26-2/#R26-3)', () => {
   beforeEach(() => {
     mockMode = 'api'
-    window.electronAPI = { setMode: vi.fn(), setLayout: vi.fn(), onFlowStatus: vi.fn().mockReturnValue(() => {}) }
+    window.electronAPI = { setRoute: vi.fn(), setLayout: vi.fn(), onFlowStatus: vi.fn().mockReturnValue(() => {}) }
   })
 
   function renderWithDisabled(disabled) {
@@ -117,7 +117,7 @@ describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
     toastInfo.mockClear()
     // Reset electronAPI stubs
     window.electronAPI = {
-      setMode: vi.fn(),
+      setRoute: vi.fn(),
       setLayout: vi.fn(),
       onFlowStatus: vi.fn().mockReturnValue(() => {}),
     }
@@ -160,7 +160,7 @@ describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
     window.removeEventListener('flow-login-expired', listener)
   })
 
-  it('Flow mode: unauth button calls electronAPI.setMode (NOT flow-login-expired) (#R6-9)', async () => {
+  it('Flow mode: unauth button calls electronAPI.setRoute (NOT flow-login-expired) (#R6-9)', async () => {
     mockMode = 'flow'
     const listener = vi.fn()
     window.addEventListener('flow-login-expired', listener)
@@ -169,9 +169,9 @@ describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /로그인/i }))
 
-    // #R14-10: openFlow 가 setMode/setLayout 을 await 하므로 microtask flush 후 검증.
-    // Must call setMode to re-attach Flow WebContentsView
-    await waitFor(() => expect(window.electronAPI.setMode).toHaveBeenCalledWith({ mode: 'flow' }))
+    // #R14-10: openFlow 가 setRoute/setLayout 을 await 하므로 microtask flush 후 검증.
+    // Must call setRoute to re-attach Flow WebContentsView
+    await waitFor(() => expect(window.electronAPI.setRoute).toHaveBeenCalledWith({ mode: 'flow', sessionTarget: 'flow' }))
     // Must call setLayout to show the split pane — 기본 split-left (Flow 왼쪽, Shell split 복원)
     await waitFor(() => expect(window.electronAPI.setLayout).toHaveBeenCalledWith({ mode: 'split-left', ratio: 0.5 }))
     // Must NOT dispatch the ignored event

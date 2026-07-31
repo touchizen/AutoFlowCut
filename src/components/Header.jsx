@@ -33,6 +33,7 @@ export default function Header({
   saveMode,
   onLoginClick,
   onUpgradeClick,
+  onRouteRequest,
   disabled = false,  // 생성 중일 때 프로젝트 전환 비활성화
   modeBusy = false,  // 배치 생성 중일 때 모드 전환 차단
   storyActive = false,   // Story 뷰 진입 상태(버튼 active 표시)
@@ -205,7 +206,11 @@ export default function Header({
     // #R14-10: setMode/setLayout 을 await 하고, 실패 시 안내/폴링을 시작하지 않는다(뷰 미부착 상태에서
     //   로그인 안내/폴링은 오해를 부른다). 실패는 toast 로 알린다.
     try {
-      await window.electronAPI?.setMode?.({ mode: 'flow' })
+      const currentRoute = { mode, sessionTarget }
+      const result = onRouteRequest
+        ? await onRouteRequest(currentRoute)
+        : await window.electronAPI?.setRoute?.(currentRoute)
+      if (result && result.ok === false) throw new Error(result.error || 'route-set-failed')
       const layout = flowLayoutForMode('flow')
       if (layout) await window.electronAPI?.setLayout?.(layout)
     } catch (e) {

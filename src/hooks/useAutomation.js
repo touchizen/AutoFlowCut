@@ -48,6 +48,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   }, [t, status, isRunning])
   
   const stopRequestedRef = useRef(false)
+  const activeRunsRef = useRef(new Set())
   const pausedRef = useRef(false)
   const completedCountRef = useRef(0)
   const errorCountRef = useRef(0)
@@ -937,6 +938,22 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     }
   }, [generationQueue, start, t])
 
+  const startTracked = useCallback((options = {}) => {
+    const pending = startQueued(options)
+    activeRunsRef.current.add(pending)
+    void pending.then(
+      () => activeRunsRef.current.delete(pending),
+      () => activeRunsRef.current.delete(pending),
+    )
+    return pending
+  }, [startQueued])
+
+  const awaitIdle = useCallback(async () => {
+    while (activeRunsRef.current.size > 0) {
+      await Promise.allSettled([...activeRunsRef.current])
+    }
+  }, [])
+
   /**
    * 특정 씬 재시도 — startQueued 경유(정상 Start 와 동일한 queue 직렬화).
    */
@@ -979,7 +996,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     progress,
     status,
     statusMessage,
-    start: startQueued,
+    start: startTracked,
+    awaitIdle,
     togglePause,
     stop,
     retryScene,

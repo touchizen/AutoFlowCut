@@ -171,6 +171,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Route controller — canonical {mode, sessionTarget} route (route:set handler in electron/ipc/mode.js).
   setRoute: (params) => ipcRenderer.invoke('route:set', params),
+  onRouteQuiesceRequest: (callback) => {
+    const handler = (_, request) => callback(request)
+    ipcRenderer.on('route:quiesce-request', handler)
+    return () => ipcRenderer.removeListener('route:quiesce-request', handler)
+  },
+  sendRouteQuiesceReceipt: (payload) => ipcRenderer.send('route:quiesce-receipt', payload),
   // Mode controller — attaches/detaches Flow WebContentsView (mode:set handler in electron/ipc/mode.js).
   // Restored: was dropped during M4 T5 preload rewrite (review C1).
   setMode: (params) => ipcRenderer.invoke('mode:set', params),

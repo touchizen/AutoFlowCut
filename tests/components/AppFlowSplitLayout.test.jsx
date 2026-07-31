@@ -26,7 +26,7 @@ import { computeAppClass, flowLayoutForMode, isHorizontalSplit, clampSplitRatio,
 function ModeEffectProbe({ mode }) {
   useEffect(() => {
     if (mode) {
-      window.electronAPI?.setMode?.({ mode })
+      window.electronAPI?.setRoute?.({ mode, sessionTarget: 'flow' })
       const layout = flowLayoutForMode(mode)
       if (layout) window.electronAPI?.setLayout?.(layout)
     }
@@ -119,20 +119,20 @@ describe('split layout pure helpers (Flow split resizer 복원)', () => {
 })
 
 describe('Mode useEffect — setLayout IPC calls (§3.4)', () => {
-  let mockSetMode
+  let mockSetRoute
   let mockSetLayout
 
   beforeEach(() => {
-    mockSetMode = vi.fn()
+    mockSetRoute = vi.fn()
     mockSetLayout = vi.fn()
-    window.electronAPI = { setMode: mockSetMode, setLayout: mockSetLayout }
+    window.electronAPI = { setRoute: mockSetRoute, setLayout: mockSetLayout }
   })
 
   it('flow mode → calls setLayout({ mode: "split-left", ratio: 0.5 })', async () => {
     await act(async () => {
       render(<ModeEffectProbe mode="flow" />)
     })
-    expect(mockSetMode).toHaveBeenCalledWith({ mode: 'flow' })
+    expect(mockSetRoute).toHaveBeenCalledWith({ mode: 'flow', sessionTarget: 'flow' })
     expect(mockSetLayout).toHaveBeenCalledWith({ mode: 'split-left', ratio: 0.5 })
   })
 
@@ -140,15 +140,15 @@ describe('Mode useEffect — setLayout IPC calls (§3.4)', () => {
     await act(async () => {
       render(<ModeEffectProbe mode="api" />)
     })
-    expect(mockSetMode).toHaveBeenCalledWith({ mode: 'api' })
+    expect(mockSetRoute).toHaveBeenCalledWith({ mode: 'api', sessionTarget: 'flow' })
     expect(mockSetLayout).not.toHaveBeenCalled()
   })
 
-  it('null mode → neither setMode nor setLayout called (guard)', async () => {
+  it('null mode → neither setRoute nor setLayout called (guard)', async () => {
     await act(async () => {
       render(<ModeEffectProbe mode={null} />)
     })
-    expect(mockSetMode).not.toHaveBeenCalled()
+    expect(mockSetRoute).not.toHaveBeenCalled()
     expect(mockSetLayout).not.toHaveBeenCalled()
   })
 
