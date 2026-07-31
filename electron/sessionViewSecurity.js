@@ -34,9 +34,17 @@ export function isReservedNavigationAllowed(rawUrl) {
 }
 
 export function installReservedSessionSecurity(view, electronSession) {
-  const guard = (event, url) => { if (!isReservedNavigationAllowed(url)) event.preventDefault() }
-  view.webContents.on('will-navigate', guard)
-  view.webContents.on('will-redirect', guard)
+  const guardNavigation = (event, url) => { if (!isReservedNavigationAllowed(url)) event.preventDefault() }
+  const guardFrameNavigation = (details) => {
+    if (isReservedNavigationAllowed(details.url)) return
+    details.preventDefault()
+    let origin = '<invalid-origin>'
+    try { origin = new URL(details.url).origin } catch { /* Never log the unparsed URL. */ }
+    console.warn('[ReservedSession] Blocked frame navigation', { origin })
+  }
+  view.webContents.on('will-navigate', guardNavigation)
+  view.webContents.on('will-redirect', guardNavigation)
+  view.webContents.on('will-frame-navigate', guardFrameNavigation)
   view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   electronSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
   electronSession.setPermissionCheckHandler(() => false)

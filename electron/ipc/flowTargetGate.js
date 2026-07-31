@@ -24,14 +24,15 @@ export const FLOW_SIDE_EFFECT_CHANNELS = new Set([
   'flow:new-project', 'flow:dom-execute', 'flow:dom-click-enter-tool',
   'flow:dom-send-prompt', 'flow:dom-show-flow',
   'flow:report-response', 'flow:set-agent-mode',
+  'flow:list-agent-models', 'flow:validate-token',
+  'flow:list-projects', 'flow:fetch-gallery',
 ])
 
 export const FLOW_READ_ONLY_CHANNELS = new Set([
   'flow:check-video-status',
-  'flow:extract-project-id', 'flow:list-agent-models',
+  'flow:extract-project-id',
   'flow:check-generation', 'flow:collect-generation',
   'flow:fetch-media', 'flow:download-video-url',
-  'flow:validate-token', 'flow:list-projects', 'flow:fetch-gallery',
   'flow:dom-get-url', 'flow:dump-settings',
   'flow:dom-snapshot-blobs', 'flow:dom-scan-images', 'flow:dom-blob-to-base64',
 ])
