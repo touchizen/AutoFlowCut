@@ -2,11 +2,11 @@
 
 ## Scope
 
-M2b-3 replaces the shopping plan-generation stub with one Gemini structured-output call. It also closes two carried review findings: durable materialization retry discovery and crawl fact-decision grounding during a `plan_review` merge. Materialization and paid image/video generation remain stubs for M3/M4.
+M2b-3 replaces the shopping plan-generation stub with one Gemini JSON-mode call. It also closes two carried review findings: durable materialization retry discovery and crawl fact-decision grounding during a `plan_review` merge. Materialization and paid image/video generation remain stubs for M3/M4.
 
 ## Model choice
 
-Use Gemini `generateContent` with `responseMimeType: application/json` and a response schema derived from `planSchema.js`. The app already owns an encrypted Gemini BYOK key, and `llmGemini.structuredCall` already provides abort, JSON parsing, and bounded retry behavior. Claude and Codex can produce good prose, but their local-login transports and structured-output fallback paths add failure modes that do not help a single strict JSON draft. A Claude-to-Gemini hybrid would add a second paid call and create another point where confirmed A/B values or grounded claims could drift.
+Use Gemini 2.5 Flash `generateContent` with `responseMimeType: application/json` and no API `responseSchema`. Live measurement showed that Gemini 2.5 Pro is unavailable to new users and that Flash rejects the complete ShoppingPlan schema as having too many serving states, even after removing enums. A dedicated `llmGemini.jsonModeCall` preserves abort, JSON parsing, usage, and bounded retry behavior without changing Story's `structuredCall`. Claude/Codex or a hybrid would add transports, cost, and A/B drift points without solving the serving constraint.
 
 ## Architecture and data flow
 
@@ -18,7 +18,7 @@ Use Gemini `generateContent` with `responseMimeType: application/json` and a res
 
 Caller-supplied options cannot override it. `createGeneratePlan` sanitizes this context, verifies that the product summary is represented by the sanitized source facts, and passes the frozen result to `llm.generateShoppingPlan` with the existing meta prompt, confirmed A/B values, assets, and optional direction fields.
 
-The Gemini adapter serializes source facts, asset versions/digests/data, confirmed decisions, prohibited claims, and `planContext` into a prompt that labels web-derived strings as untrusted data. It asks Gemini 2.5 Pro for one schema-constrained draft and returns the parsed object unchanged. The adapter resolves the API key only at call time through `genaiKeyStore`, forwards the abort signal, and records every Gemini response's prompt, candidate, and thinking tokens in the project-scoped `usageTracker` owned by the shopping IPC session. Retry responses are each counted.
+The Gemini adapter serializes source facts, asset versions/digests/data, confirmed decisions, prohibited claims, `planContext`, the preserved schema shape, runtime-only enums, validator-adjacent relational rules, and the shared copy contract into a prompt that labels web-derived strings as untrusted data. The relational rules spell out scene order, still/persona timing, dialogue limits, claim coverage, the first-two-second hook, and final CTA placement. It asks Gemini 2.5 Flash for one JSON draft and returns the parsed object unchanged. The adapter resolves the API key only at call time through `genaiKeyStore`, forwards the abort signal, and records every Gemini response's prompt, candidate, and thinking tokens in the project-scoped `usageTracker` owned by the shopping IPC session. Retry responses are each counted.
 
 The current crawl draft schema deliberately stores only product references (`mode`, `snapshotId`, `selectedImageIds`), not duplicate `name`/price fields. Therefore product grounding has three layers:
 
@@ -30,7 +30,7 @@ This prevents the model from inventing a product name, price, snapshot ID, or im
 
 ## Response schema
 
-`planSchema.js` remains the single contract source. Shared plan/product/persona/creative/generation/claim/scene key arrays and enums feed both the runtime validator and an exported `SHOPPING_PLAN_RESPONSE_SCHEMA`. The exported Gemini schema deliberately describes the crawl branch accepted by M2b-3, with an explicit `type` on every legacy `responseSchema` node, string-only enums, exact required keys, nullable trim, scene count, and scene keys. The runtime validator still supports the manual branch for its separate future entry path. Runtime validation remains authoritative for relational rules and numeric duration grids that the legacy Gemini schema cannot express, including A/B equality, claim coverage, exact scene ordering, timing grids, and product-context grounding.
+`planSchema.js` remains the single contract source. Shared plan/product/persona/creative/generation/claim/scene key arrays and enums feed both the runtime validator and the preserved `SHOPPING_PLAN_RESPONSE_SCHEMA`. The schema describes the crawl branch with exact required keys, JSON types, nullable trim, enums, scene count, and scene keys, but is serialized as prompt instructions rather than sent to Gemini's constrained decoder. The runtime validator remains authoritative for the manual branch and all relational rules: A/B equality, claim coverage, scene order, timing grids, copy constraints, and product-context grounding.
 
 ## Error and recovery behavior
 

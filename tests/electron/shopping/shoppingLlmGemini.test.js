@@ -56,13 +56,13 @@ describe('createGeminiShoppingLlm', () => {
     const draft = { schemaVersion: 'shopping-plan/3-appnative' }
     const usageTracker = createUsageTracker()
     const signal = new AbortController().signal
-    const structuredCall = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+    const jsonCall = vi.fn(async (_prompt, _opts, ctx) => {
       ctx.onUsage({ input: 321, output: 123 })
       return draft
     })
     const llm = createGeminiShoppingLlm({
       getApiKey: vi.fn(() => 'gemini-secret-key'),
-      structuredCall,
+      jsonCall,
       usageTracker,
       model: 'gemini-shopping-test',
     })
@@ -70,8 +70,9 @@ describe('createGeminiShoppingLlm', () => {
     await expect(llm.generateShoppingPlan(facts, assets, { ...constraints, signal }))
       .resolves.toBe(draft)
 
-    expect(structuredCall).toHaveBeenCalledOnce()
-    const [prompt, schema, opts, ctx] = structuredCall.mock.calls[0]
+    expect(jsonCall).toHaveBeenCalledOnce()
+    expect(jsonCall.mock.calls[0]).toHaveLength(3)
+    const [prompt, opts, ctx] = jsonCall.mock.calls[0]
     expect(prompt).toContain('STRICT SHOPPING META PROMPT')
     expect(prompt).toContain('접지 상품명')
     expect(prompt).toContain('fact-name')
@@ -92,14 +93,39 @@ describe('createGeminiShoppingLlm', () => {
     expect(prompt).toContain('Never emit another product or brand name anywhere')
     expect(prompt).toContain('The one final CTA claim text must equal')
     expect(prompt).toContain('"고정 안전 CTA" exactly')
+    expect(prompt).toContain('disclosure claim text must be exactly one of')
+    expect(prompt).toContain('이 영상은 AI로 생성되었습니다.')
+    expect(prompt).toContain('제휴 링크를 통해 수익을 얻을 수 있습니다.')
+    expect(prompt).toContain('Never use any of these exact forbidden experience/social-proof phrases')
+    expect(prompt).toContain('직접 확인해봤습니다')
+    expect(prompt).toContain('첫 느낌')
+    expect(prompt).toContain('문의가 많았습니다')
     expect(prompt).toContain("Every number there must already occur in that scene's claim text")
     expect(prompt).toContain(JSON.stringify(SHOPPING_PLAN_COPY_CONTRACT))
     expect(prompt).toContain(JSON.stringify(SHOPPING_PLAN_COPY_CONTRACT.personaVideoPromptTemplate))
+    expect(prompt).toContain('Output JSON contract')
+    expect(prompt).toContain(JSON.stringify(SHOPPING_PLAN_RESPONSE_SCHEMA))
+    expect(prompt).toContain('"generationDurationSec":[0,4,6,8]')
+    expect(prompt).toContain('"claimType"')
+    expect(prompt).toContain('"derived_numeric"')
+    expect(prompt).toContain('"sceneKey"')
+    expect(prompt).toContain('"S08"')
+    expect(prompt).toContain('draft.product must contain exactly mode, snapshotId, selectedImageIds')
+    expect(prompt).toContain('planContext.product is grounding-only data')
+    expect(prompt).toContain('derived_numeric is the only claimType that may contain formula')
+    expect(prompt).toContain('scenes[index].sceneKey must equal S01 through S08 in array order')
+    expect(prompt).toContain('product_still requires dialogueText="", generationDurationSec=0')
+    expect(prompt).toContain('persona_i2v requires subtitleText===dialogueText')
+    expect(prompt).toContain('4s<=18, 6s<=30, 8s<=42')
+    expect(prompt).toContain('Every claim id must be referenced by exactly one scene')
+    expect(prompt).toContain('consecutive product_still timelineDurationMs sum must be <=5000')
+    expect(prompt).toContain('total timelineDurationMs sum must be <60000')
+    expect(prompt).toContain('first 2000ms must contain')
+    expect(prompt).toContain('CTA claim must overlap the final 3000ms')
     for (const values of Object.values(SHOPPING_PLAN_COPY_CONTRACT.visualDescriptions)) {
       for (const value of values) expect(prompt).toContain(value)
     }
     expect(prompt).not.toContain('gemini-secret-key')
-    expect(schema).toBe(SHOPPING_PLAN_RESPONSE_SCHEMA)
     expect(opts).toEqual({ apiKey: 'gemini-secret-key', model: 'gemini-shopping-test' })
     expect(ctx.signal).toBe(signal)
     expect(ctx.onUsage).toEqual(expect.any(Function))
@@ -109,28 +135,28 @@ describe('createGeminiShoppingLlm', () => {
 
   it('저장된 Gemini 키가 없으면 전용 코드로 모델 호출 전에 실패한다', async () => {
     const { facts, assets, constraints } = inputs()
-    const structuredCall = vi.fn()
+    const jsonCall = vi.fn()
     const llm = createGeminiShoppingLlm({
       getApiKey: vi.fn(() => null),
-      structuredCall,
+      jsonCall,
     })
 
     await expect(llm.generateShoppingPlan(facts, assets, constraints))
       .rejects.toMatchObject({ code: 'shopping-llm-key-missing' })
-    expect(structuredCall).not.toHaveBeenCalled()
+    expect(jsonCall).not.toHaveBeenCalled()
   })
 
   it('project-scoped usageTracker가 있으면 adapter fallback 대신 그 세션에 누산한다', async () => {
     const { facts, assets, constraints } = inputs()
     const fallbackTracker = createUsageTracker()
     const projectTracker = createUsageTracker()
-    const structuredCall = vi.fn(async (_prompt, _schema, _opts, ctx) => {
+    const jsonCall = vi.fn(async (_prompt, _opts, ctx) => {
       ctx.onUsage({ input: 20, output: 10 })
       return { schemaVersion: 'shopping-plan/3-appnative' }
     })
     const llm = createGeminiShoppingLlm({
       getApiKey: () => 'gemini-secret-key',
-      structuredCall,
+      jsonCall,
       usageTracker: fallbackTracker,
     })
 
@@ -145,8 +171,8 @@ describe('createGeminiShoppingLlm', () => {
     const controller = new AbortController()
     controller.abort(new DOMException('stop', 'AbortError'))
     const getApiKey = vi.fn(() => 'unused')
-    const structuredCall = vi.fn()
-    const llm = createGeminiShoppingLlm({ getApiKey, structuredCall })
+    const jsonCall = vi.fn()
+    const llm = createGeminiShoppingLlm({ getApiKey, jsonCall })
 
     await expect(llm.generateShoppingPlan(facts, assets, {
       ...constraints,
@@ -154,10 +180,10 @@ describe('createGeminiShoppingLlm', () => {
     })).rejects.toMatchObject({ name: 'AbortError' })
 
     expect(getApiKey).not.toHaveBeenCalled()
-    expect(structuredCall).not.toHaveBeenCalled()
+    expect(jsonCall).not.toHaveBeenCalled()
   })
 
-  it('기본 모델은 품질 우선 Gemini 2.5 Pro로 고정한다', () => {
-    expect(DEFAULT_SHOPPING_LLM_MODEL).toBe('gemini-2.5-pro')
+  it('기본 모델은 라이브 generateContent가 가능한 Gemini 2.5 Flash로 고정한다', () => {
+    expect(DEFAULT_SHOPPING_LLM_MODEL).toBe('gemini-3.6-flash')
   })
 })

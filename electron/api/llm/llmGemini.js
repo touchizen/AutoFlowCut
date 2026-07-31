@@ -1,7 +1,8 @@
 /**
  * Gemini 텍스트 LLM 어댑터 — 스펙 §5. genai.js(이미지/비디오)와 별개 신규 모듈.
  * 스트리밍(generateScript)은 streamGenerateContent SSE를 청크 단위로 점진 파싱해
- * onDelta를 실시간 호출한다. structured output은 responseSchema.
+ * onDelta를 실시간 호출한다. Story structured output은 responseSchema를 쓰고,
+ * shopping의 큰 draft는 jsonModeCall로 JSON MIME만 요청한다.
  * 재시도(스펙 §7): JSON 파싱 실패 → 즉시 1회 재요청 / HTTP 429·5xx → 1초 백오프 후
  * 1회 재시도 / 그 외 HTTP 에러(400 등) → 재시도 없이 throw / abort → 즉시 throw.
  * 키는 헤더(x-goog-api-key)로만 전달.
@@ -151,6 +152,53 @@ export async function structuredCall(prompt, schema, opts, {
       throw e // 400 등 그 외 HTTP 에러는 재시도 없이 throw
     }
     return await call() // JSON 파싱 실패는 즉시 1회 재요청
+  }
+}
+
+// Shopping plans use JSON MIME mode without responseSchema. Gemini 2.5 Flash rejects the
+// complete ShoppingPlan schema because its constrained-decoding state space is too large.
+// Keep this separate from structuredCall: Story callers still depend on responseSchema.
+export async function jsonModeCall(prompt, opts, {
+  signal,
+  fetchImpl = fetch,
+  delay = defaultDelay,
+  onUsage,
+} = {}) {
+  const call = async () => {
+    const res = await fetchImpl(`${BASE}/${opts.model}:generateContent`, {
+      method: 'POST',
+      headers: headers(opts.apiKey),
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json' },
+      }),
+      signal,
+    })
+    if (!res.ok) throw new HttpError(res.status, await res.text())
+    const data = await res.json()
+    const usage = data?.usageMetadata
+    if (usage && onUsage) {
+      try {
+        onUsage({
+          input: usage.promptTokenCount || 0,
+          output: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0),
+        })
+      } catch { /* best-effort: usage accounting must not break generation */ }
+    }
+    return JSON.parse(data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '')
+  }
+  try {
+    return await call()
+  } catch (error) {
+    if (signal?.aborted) throw error
+    if (error instanceof HttpError) {
+      if (error.status === 429 || error.status >= 500) {
+        await delay(1000)
+        return await call()
+      }
+      throw error
+    }
+    return await call()
   }
 }
 

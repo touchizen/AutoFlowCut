@@ -1,4 +1,5 @@
 import { normalizeCanonicalString, trimAsciiEdges } from './planCanonical.js'
+import { SHOPPING_PLAN_COPY_CONTRACT } from './shoppingPlanCopyContract.js'
 
 const PLAN_KEYS = [
   'schemaVersion',
@@ -98,7 +99,7 @@ const PROMPT_PHRASES = [
   'no on-screen text',
 ]
 const GRAPHEME_LIMITS = new Map([[4, 18], [6, 30], [8, 42]])
-const FORBIDDEN_EVIDENCE_PHRASES = ['직접 확인해봤습니다', '첫 느낌', '문의가 많았습니다']
+const FORBIDDEN_EVIDENCE_PHRASES = SHOPPING_PLAN_COPY_CONTRACT.forbiddenEvidencePhrases
 const SEGMENTER = new Intl.Segmenter('ko', { granularity: 'grapheme' })
 const GENERATION_CONSTANTS = Object.freeze({
   provider: 'google',
@@ -123,8 +124,9 @@ function responseArray(items, options = {}) {
 const RESPONSE_STRING = Object.freeze({ type: 'STRING' })
 const RESPONSE_INTEGER = Object.freeze({ type: 'INTEGER' })
 
-// M2b-3's real adapter accepts main-owned crawl planContext only. Keeping this legacy
-// Gemini Schema branch-specific avoids type-less anyOf nodes that responseSchema rejects.
+// M2b-3's real adapter accepts main-owned crawl planContext only. Keep this legacy Gemini
+// Schema branch-specific for prompt-contract reuse and a future serving-limit recheck.
+// It is not currently sent as responseSchema: Gemini rejects this structure as too many states.
 const PRODUCT_RESPONSE_SCHEMA = responseObject({
   mode: { type: 'STRING', enum: ['crawl'] },
   snapshotId: RESPONSE_STRING,
@@ -132,7 +134,8 @@ const PRODUCT_RESPONSE_SCHEMA = responseObject({
 }, CRAWL_PRODUCT_KEYS)
 
 /**
- * Gemini structured-output schema for one ShoppingPlanDraftInput.
+ * Preserved Gemini schema for one ShoppingPlanDraftInput. The current shopping adapter
+ * serializes it into the prompt but does not send it as generationConfig.responseSchema.
  * Relational constraints remain in validateShoppingPlanDraft/createGeneratePlan.
  */
 export const SHOPPING_PLAN_RESPONSE_SCHEMA = responseObject({
@@ -199,6 +202,25 @@ export const SHOPPING_PLAN_RESPONSE_SCHEMA = responseObject({
     videoPrompt: RESPONSE_STRING,
   }, SCENE_KEYS), { minItems: 5, maxItems: 8 }),
 }, PLAN_KEYS)
+
+// Prompt-only relational rules that the JSON shape cannot express. Keep these beside the
+// runtime validator so schema-less Gemini JSON mode receives the same fail-closed contract.
+export const SHOPPING_PLAN_RUNTIME_PROMPT_RULES = Object.freeze([
+  'derived_numeric is the only claimType that may contain formula; it must equal "round((listPriceKrw-priceKrw)/listPriceKrw*100)". Every other claim must omit formula.',
+  'Claim ids, sourceFactIds within a claim, sceneKey values, and claimIds within a scene must be unique.',
+  'scenes[index].sceneKey must equal S01 through S08 in array order: index 0 is S01, index 1 is S02, and so on.',
+  'product_still requires dialogueText="", generationDurationSec=0, trim=null, videoPrompt="", non-empty subtitleText, and timelineDurationMs from 1000 through 3000.',
+  'persona_i2v requires subtitleText===dialogueText, generationDurationSec in [4,6,8], timelineDurationMs===generationDurationSec*1000, and trim={startMs:0,endMs:timelineDurationMs}.',
+  'persona_i2v dialogueText non-whitespace grapheme limits are 4s<=18, 6s<=30, 8s<=42.',
+  'Every persona_i2v videoPrompt must contain its exact dialogueText exactly once and otherwise use the exact controlled template.',
+  'consecutive product_still timelineDurationMs sum must be <=5000.',
+  'Every claim id must be referenced by exactly one scene; no missing, repeated, or unknown claimIds are allowed.',
+  'For each scene, concatenate claim text in claimIds order. After the contract whitespace normalization, product_still subtitleText and persona_i2v dialogueText/subtitleText must equal that concatenation exactly.',
+  'Scene approved text must not overlap any prohibitedClaims text or contain direct-experience/social-proof phrases.',
+  'total timelineDurationMs sum must be <60000.',
+  'The first 2000ms must contain at least one allowed fact-grounded product_identity, page_fact, numeric_fact, derived_numeric, or editorial_fit claim.',
+  'A CTA claim must overlap the final 3000ms of the total timeline.',
+])
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)

@@ -19,6 +19,15 @@ export const SHOPPING_PLAN_COPY_CONTRACT = Object.freeze({
     '{percent}% 할인',
     '정가 대비 {percent}% 할인',
   ]),
+  safeDisclosureTexts: Object.freeze([
+    '이 영상은 AI로 생성되었습니다.',
+    '제휴 링크를 통해 수익을 얻을 수 있습니다.',
+  ]),
+  forbiddenEvidencePhrases: Object.freeze([
+    '직접 확인해봤습니다',
+    '첫 느낌',
+    '문의가 많았습니다',
+  ]),
   visualDescriptions: Object.freeze({
     product_still: Object.freeze([
       '실제 제품 이미지',

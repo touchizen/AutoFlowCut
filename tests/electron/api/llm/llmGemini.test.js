@@ -206,6 +206,90 @@ describe('structuredCall usage', () => {
   })
 })
 
+describe('jsonModeCall', () => {
+  it('application/json만 요청하고 responseSchema는 전송하지 않으며 usage와 abort를 보존한다', async () => {
+    expect(typeof llmGeminiModule.jsonModeCall).toBe('function')
+    if (typeof llmGeminiModule.jsonModeCall !== 'function') return
+
+    const signal = new AbortController().signal
+    const onUsage = vi.fn()
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ value: 'ok' }) }] } }],
+      usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 7, thoughtsTokenCount: 3 },
+    }), { status: 200 }))
+
+    await expect(llmGeminiModule.jsonModeCall(
+      'PROMPT',
+      { apiKey: 'json-mode-key', model: 'gemini-2.5-flash' },
+      { signal, fetchImpl, onUsage },
+    )).resolves.toEqual({ value: 'ok' })
+
+    const [url, request] = fetchImpl.mock.calls[0]
+    const body = JSON.parse(request.body)
+    expect(url).toContain('/gemini-2.5-flash:generateContent')
+    expect(url).not.toContain('json-mode-key')
+    expect(request.headers['x-goog-api-key']).toBe('json-mode-key')
+    expect(request.signal).toBe(signal)
+    expect(body.generationConfig).toEqual({ responseMimeType: 'application/json' })
+    expect(body.generationConfig).not.toHaveProperty('responseSchema')
+    expect(onUsage).toHaveBeenCalledWith({ input: 12, output: 10 })
+  })
+
+  it('비정형 JSON을 1회 재요청하고 두 응답 usage를 모두 누산한다', async () => {
+    expect(typeof llmGeminiModule.jsonModeCall).toBe('function')
+    if (typeof llmGeminiModule.jsonModeCall !== 'function') return
+
+    const response = (text, usageMetadata) => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text }] } }],
+      usageMetadata,
+    }), { status: 200 })
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(response('not-json', {
+        promptTokenCount: 10, candidatesTokenCount: 2, thoughtsTokenCount: 3,
+      }))
+      .mockResolvedValueOnce(response(JSON.stringify({ value: 'ok' }), {
+        promptTokenCount: 11, candidatesTokenCount: 4, thoughtsTokenCount: 5,
+      }))
+    const onUsage = vi.fn()
+
+    await expect(llmGeminiModule.jsonModeCall(
+      'PROMPT',
+      { apiKey: 'key', model: 'gemini-2.5-flash' },
+      { fetchImpl, onUsage },
+    )).resolves.toEqual({ value: 'ok' })
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(onUsage.mock.calls.map(([usage]) => usage)).toEqual([
+      { input: 10, output: 5 },
+      { input: 11, output: 9 },
+    ])
+  })
+
+  it('429는 1초 백오프 후 한 번 재시도하고 400은 재시도하지 않는다', async () => {
+    const success = jsonResponse({ value: 'ok' })
+    const retryFetch = vi.fn()
+      .mockResolvedValueOnce(httpErrorResponse(429, 'rate limited'))
+      .mockResolvedValueOnce(success)
+    const delay = vi.fn(async () => {})
+
+    await expect(llmGeminiModule.jsonModeCall(
+      'PROMPT',
+      { apiKey: 'key', model: 'gemini-2.5-flash' },
+      { fetchImpl: retryFetch, delay },
+    )).resolves.toEqual({ value: 'ok' })
+    expect(retryFetch).toHaveBeenCalledTimes(2)
+    expect(delay).toHaveBeenCalledWith(1000)
+
+    const rejectedFetch = vi.fn().mockResolvedValue(httpErrorResponse(400, 'bad request'))
+    await expect(llmGeminiModule.jsonModeCall(
+      'PROMPT',
+      { apiKey: 'key', model: 'gemini-2.5-flash' },
+      { fetchImpl: rejectedFetch },
+    )).rejects.toThrow(/Gemini 400/)
+    expect(rejectedFetch).toHaveBeenCalledOnce()
+  })
+})
+
 describe('writePrompts', () => {
   it('sceneNo로 매칭해 프롬프트를 채운다', async () => {
     const scenes = [{ storyId: 'u1', sceneNo: 1, segments: [] }]

@@ -76,7 +76,7 @@ describe('SHOPPING_PLAN_RESPONSE_SCHEMA', () => {
       .toEqual(Object.keys(schema.properties.scenes.items.properties))
   })
 
-  it('validator의 enum·scene count·nullable trim 계약을 responseSchema에도 고정한다', () => {
+  it('validator의 enum·scene count·nullable trim 계약을 보존된 prompt-shape에도 고정한다', () => {
     const schema = SHOPPING_PLAN_RESPONSE_SCHEMA
     const scene = schema.properties.scenes.items.properties
 
@@ -93,7 +93,7 @@ describe('SHOPPING_PLAN_RESPONSE_SCHEMA', () => {
     ])
   })
 
-  it('legacy Gemini responseSchema에는 API가 지원하는 문자열 enum만 보낸다', () => {
+  it('후속 serving-limit 재검토용 legacy schema는 호환 가능한 문자열 enum만 보존한다', () => {
     const visit = (schema) => {
       if (!schema || typeof schema !== 'object') return
       expect(schema.type).toEqual(expect.any(String))

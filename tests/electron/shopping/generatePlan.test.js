@@ -5,6 +5,7 @@ import { shoppingAssets } from '../../../electron/shopping/assets/index.js'
 import { createGeneratePlan } from '../../../electron/shopping/generatePlan.js'
 import { createPlanMachine } from '../../../electron/shopping/planMachine.js'
 import { validateShoppingPlanDraft } from '../../../electron/shopping/planSchema.js'
+import { createGeminiShoppingLlm } from '../../../electron/shopping/shoppingLlmGemini.js'
 import { defaultShoppingPlanState } from '../../../electron/shopping/shoppingPlanStore.js'
 
 const RAW_HTML_SENTINEL = '<html><script>RAW_HTML_MUST_NOT_REACH_LLM</script></html>'
@@ -160,6 +161,45 @@ function createGroundedGeneratePlan({ llm }) {
 }
 
 describe('createGeneratePlan', () => {
+  it('Gemini JSON mode adapter의 정상 object가 strict 접지 게이트를 통과한다', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    const jsonCall = vi.fn(async () => structuredClone(draft))
+    const llm = createGeminiShoppingLlm({ getApiKey: () => 'test-key', jsonCall })
+    const generatePlan = createGroundedGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions)).resolves.toEqual(draft)
+    expect(jsonCall).toHaveBeenCalledOnce()
+  })
+
+  it('Gemini JSON mode adapter가 반환한 날조 이미지 ID도 strict 접지 게이트가 거부한다', async () => {
+    const { facts, decisions, draft } = makeDraft()
+    draft.scenes[0].productImageId = 'image-invented-in-json-mode'
+    const llm = createGeminiShoppingLlm({
+      getApiKey: () => 'test-key',
+      jsonCall: vi.fn(async () => structuredClone(draft)),
+    })
+    const generatePlan = createGroundedGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: ['scene references unknown product image image-invented-in-json-mode'],
+    })
+  })
+
+  it('Gemini JSON mode adapter의 부분 JSON object는 strict gates가 안전 거부한다', async () => {
+    const { facts, decisions } = makeDraft()
+    const llm = createGeminiShoppingLlm({
+      getApiKey: () => 'test-key',
+      jsonCall: vi.fn(async () => ({ schemaVersion: 'shopping-plan/3-appnative' })),
+    })
+    const generatePlan = createGroundedGeneratePlan({ llm })
+
+    await expect(generatePlan(facts, decisions)).resolves.toMatchObject({
+      error: 'plan-draft-invalid',
+      validationErrors: expect.arrayContaining([expect.stringContaining('product')]),
+    })
+  })
+
   it('main-owned planContext가 없으면 모델 호출 전에 fail closed한다', async () => {
     const { facts, decisions, draft } = makeDraft()
     const llm = { generateShoppingPlan: vi.fn(async () => draft) }

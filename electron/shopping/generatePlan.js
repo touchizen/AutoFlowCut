@@ -19,10 +19,7 @@ const MAX_PRODUCT_IMAGES = 5
 const RAW_HTML_DOCUMENT_PATTERN = /<(?:!doctype|html|head|body|script|meta)\b/i
 const DISCOUNT_PERCENT_FORMULA = 'round((listPriceKrw-priceKrw)/listPriceKrw*100)'
 const SAFE_CTA_TEXT = shoppingAssets.scriptTemplates.data.rules.cta
-const SAFE_DISCLOSURE_TEXTS = new Set([
-  '이 영상은 AI로 생성되었습니다.',
-  '제휴 링크를 통해 수익을 얻을 수 있습니다.',
-])
+const SAFE_DISCLOSURE_TEXTS = new Set(SHOPPING_PLAN_COPY_CONTRACT.safeDisclosureTexts)
 const FACT_COPY_CLAIM_TYPES = new Set(SHOPPING_PLAN_COPY_CONTRACT.factCopyClaimTypes)
 const CONTROLLED_VISUAL_DESCRIPTIONS = Object.freeze(Object.fromEntries(
   Object.entries(SHOPPING_PLAN_COPY_CONTRACT.visualDescriptions)
