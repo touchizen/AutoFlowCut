@@ -28,7 +28,7 @@ import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
 import { useAvailableModels } from './hooks/useAvailableModels'
 import { computeModelHeal, computeModeSwitch } from './config/genModels'
-import { isFlowTarget, parseRoute } from './config/appRoute.js'
+import { isFlowTarget, isChatgptTarget, parseRoute } from './config/appRoute.js'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
@@ -139,6 +139,7 @@ import SrtImportConflictModal from './components/SrtImportConflictModal'
 import ImportProcessingOverlay from './components/ImportProcessingOverlay'
 import { useAuth } from './contexts/AuthContext'
 import { useImportProcessing } from './hooks/useImportProcessing'
+import { useTargetAuthReady } from './hooks/useTargetAuthReady'
 
 export function useAppRouteTransaction({ route, commitRoute, setRoute }) {
   const requestSequenceRef = useRef(0)
@@ -248,6 +249,27 @@ function App() {
   const { mode, sessionTarget = 'flow', clearMode } = useMode()
   const { setRoute: commitRoute } = useMode()
   const flowTargetActive = isFlowTarget({ mode, sessionTarget })
+  const chatgptTargetActive = isChatgptTarget({ mode, sessionTarget })
+  const [apiAuthReady, setApiAuthReady] = useState(false)
+  const {
+    authReadyByTarget,
+    authReady: sessionTargetAuthReady,
+    setTargetReady,
+  } = useTargetAuthReady(sessionTarget)
+  const authReady = mode === 'flow' ? sessionTargetAuthReady : apiAuthReady
+  const modeRef = useRef(mode)
+  const sessionTargetRef = useRef(sessionTarget)
+  const flowTargetActiveRef = useRef(flowTargetActive)
+  modeRef.current = mode
+  sessionTargetRef.current = sessionTarget
+  flowTargetActiveRef.current = flowTargetActive
+  const setAuthReady = useCallback((ready) => {
+    if (modeRef.current === 'flow') {
+      setTargetReady(sessionTargetRef.current, ready)
+    } else {
+      setApiAuthReady(Boolean(ready))
+    }
+  }, [setTargetReady])
   const generationQueue = useGenerationQueue()
   const route = useMemo(() => mode ? { mode, sessionTarget } : null, [mode, sessionTarget])
   const invokeMainRoute = useCallback(async (next) => {
@@ -347,7 +369,6 @@ function App() {
   const [srtImportPending, setSrtImportPending] = useState(null)
   const { processing: importProcessing, spinnerVisible: importSpinnerVisible, runImportProcessing } = useImportProcessing()
   const [showAudioResult, setShowAudioResult] = useState(false)
-  const [authReady, setAuthReady] = useState(false)
   // True after handleAuthError fires — disables the auto-recovery effect at line ~165
   // that would otherwise immediately re-extract a token from the webview and flip
   // authReady back to true (making the header revert from "Login" to green dot in
@@ -534,10 +555,12 @@ function App() {
     let cancelled = false
     if (scenes.length > 0 && !authReady && !authInvalidatedRef.current) {
       const startMode = modeRef.current
+      const startSessionTarget = sessionTargetRef.current
+      if (startMode === 'flow' && startSessionTarget !== 'flow') return undefined
       // #R7-6: 현재 엔진(genAPIRef) + stale-result guard — 모드가 바뀌면 옛 토큰 체크가
       //   새 모드를 authed 로 오인하지 않게(R6-10/11 과 동일 패턴).
       genAPIRef.current.getAccessToken(false, true).then(token => {
-        if (cancelled || modeRef.current !== startMode) return
+        if (cancelled || modeRef.current !== startMode || sessionTargetRef.current !== startSessionTarget) return
         if (token) setAuthReady(true)
       }).catch(() => {})
     }
@@ -548,10 +571,12 @@ function App() {
   // (시작 화면을 제거했으므로 이 mount 체크가 그 역할을 대신한다.)
   useEffect(() => {
     const startMode = modeRef.current
+    const startSessionTarget = sessionTargetRef.current
     let cancelled = false
+    if (startMode === 'flow' && startSessionTarget !== 'flow') return undefined
     // #R7-6: 현재 엔진 + stale-result guard (모드가 바뀐 뒤 늦게 resolve 돼도 무시).
     genAPIRef.current.getAccessToken(false, true).then(token => {
-      if (cancelled || modeRef.current !== startMode) return
+      if (cancelled || modeRef.current !== startMode || sessionTargetRef.current !== startSessionTarget) return
       if (token) setAuthReady(true)
     }).catch(() => {})
     return () => { cancelled = true }
@@ -569,23 +594,13 @@ function App() {
         // #R8-5: recheck 도중 flow 로 전환됐으면 옛 api 결과로 authReady 를 set 하지 않는다.
         if (modeRef.current !== startMode) return
         authInvalidatedRef.current = false
-        setAuthReady(!!token)
+        setApiAuthReady(!!token)
       }).catch(() => {})
     }
     window.addEventListener('byok-key-changed', onKeyChanged)
     return () => window.removeEventListener('byok-key-changed', onKeyChanged)
   }, [])
 
-  // modeRef: listener 재구독 없이 현재 mode 를 읽기 위해 ref 로 추적한다.
-  // (useEffect deps 에 mode 를 넣으면 mode 변경마다 listener 를 재등록해야 함)
-  const modeRef = useRef(mode)
-  const sessionTargetRef = useRef(sessionTarget)
-  const flowTargetActiveRef = useRef(flowTargetActive)
-  useEffect(() => {
-    modeRef.current = mode
-    sessionTargetRef.current = sessionTarget
-    flowTargetActiveRef.current = flowTargetActive
-  }, [mode, sessionTarget, flowTargetActive])
   const refuseIfSessionTargetUnsupported = useCallback(() => {
     if (modeRef.current !== 'flow' || flowTargetActiveRef.current) return false
     toast.warning(t('toast.sessionTargetUnsupported'))
@@ -599,26 +614,19 @@ function App() {
   // authReady 를 올려 api-unauth 를 가리는 것을 방지한다(#R2-6).
   useEffect(() => {
     const off = window.electronAPI?.onFlowStatus?.((status) => {
-      if (status?.authenticated && flowTargetActiveRef.current) setAuthReady(true)
+      if (status?.authenticated && flowTargetActiveRef.current) setTargetReady('flow', true)
     })
     return () => { off?.() }
-  }, [])
+  }, [setTargetReady])
 
-  // Codex #6 fix: reset authReady on mode change so stale auth from previous mode
-  // doesn't mask unauthenticated state in the new mode.
-  // - Switching to 'flow': reset authReady to false so onFlowStatus can re-establish it.
-  //   (If user was authenticated in api mode, that doesn't mean Flow is authenticated.)
-  //   authInvalidatedRef is also reset so auto-recovery can proceed normally.
-  // - Switching to 'api': reset authReady to false, then immediately recheck BYOK key.
-  //   (If user was authenticated in flow mode, we need to verify the api key still exists.)
+  // API key readiness remains mode-scoped. Session readiness is preserved independently in
+  // authReadyByTarget, so a Flow ↔ ChatGPT route round-trip cannot relabel one target's auth.
   useEffect(() => {
     const prevMode = prevModeForAuthRef.current
     prevModeForAuthRef.current = mode
     if (!prevMode || prevMode === mode) return // initial mount or no change → noop
 
-    // Mode actually changed — reset auth state for the incoming mode
     authInvalidatedRef.current = false
-    setAuthReady(false)
 
     // #R6-10: stale-result guard. flow→api→flow 처럼 빠르게 재전환되면, api 분기에서
     // 시작한 getAccessToken 이 늦게 resolve 되며 (이미 flow 로 돌아온) authReady 를
@@ -626,13 +634,12 @@ function App() {
     let cancelled = false
     if (mode === 'api') {
       // Re-verify BYOK key for api mode
+      setApiAuthReady(false)
       genAPI.getAccessToken(false, true).then(token => {
         if (cancelled) return
-        setAuthReady(!!token)
-      }).catch(() => { if (!cancelled) setAuthReady(false) })
+        setApiAuthReady(!!token)
+      }).catch(() => { if (!cancelled) setApiAuthReady(false) })
     }
-    // flow mode: authReady will be restored by onFlowStatus authenticated:true
-    // (the existing effect above handles this)
     return () => { cancelled = true }
   }, [mode])
 
@@ -1586,6 +1593,15 @@ function App() {
       refBatchRunning,
     })) return
     const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
+    if (
+      isImageBatchStart &&
+      modeRef.current === 'flow' &&
+      sessionTargetRef.current === 'chatgpt' &&
+      authReadyByTarget.chatgpt !== true
+    ) {
+      toast.warning(t('header.chatgptLogin'))
+      return
+    }
     const imageTargetScenes = isImageBatchStart
       ? (force ? scenes.filter(scene => scene.prompt) : filterPendingScenes(scenes))
       : []
@@ -2260,6 +2276,7 @@ function App() {
         hasImages={scenes.some(isSceneGenerationDone)}
         getAccessToken={genAPI.getAccessToken}
         authReady={authReady}
+        authReadyByTarget={authReadyByTarget}
         onAuthRecovered={handleAuthRecovered}
         projectName={settings.projectName}
         onProjectChange={handleProjectChange}
@@ -2604,6 +2621,7 @@ function App() {
                   <div className={`generate-split ${showGenerateMenu ? 'has-menu' : ''}`}>
                     <button
                       ref={startBtnRef}
+                      data-testid={(activeTab === 'text' || activeTab === 'list') ? 'image-start' : undefined}
                       className={`btn-primary ${canExport ? 'half' : ''}`}
                       onClick={() => handleStart()}
                       title={t('actions.start')}
@@ -2613,7 +2631,8 @@ function App() {
                         (activeTab === 'frame-to-video' && framePairs.length === 0) ||
                         hasPendingBatch ||
                         refBatchRunning ||
-                        uiSceneBatchBlocked
+                        uiSceneBatchBlocked ||
+                        ((activeTab === 'text' || activeTab === 'list') && chatgptTargetActive && !authReady)
                       }
                     >
                       {(() => {

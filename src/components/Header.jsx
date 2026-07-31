@@ -25,7 +25,8 @@ export default function Header({
   exportFormat = 'capcut',
   hasImages,
   getAccessToken,
-  authReady,
+  authReady: authReadyProp,
+  authReadyByTarget,
   onAuthRecovered,  // App.authReady=false 후 re-auth 성공 시 호출 — App이 invalidation 풀고 authReady=true 복구
   projectName,
   onProjectChange,
@@ -43,6 +44,9 @@ export default function Header({
   const { mode, sessionTarget = 'flow' } = useMode()
   const flowTargetActive = isFlowTarget({ mode, sessionTarget })
   const chatgptTargetActive = isChatgptTarget({ mode, sessionTarget })
+  const authReady = mode === 'flow' && authReadyByTarget
+    ? authReadyByTarget[sessionTarget] === true
+    : Boolean(authReadyProp)
   const loginLabelKey = SESSION_TARGET_INFO[sessionTarget]?.loginKey || 'header.flowLogin'
   const authenticatedLabelKey = SESSION_TARGET_INFO[sessionTarget]?.authenticatedKey || 'header.flowAuthenticated'
   const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting'

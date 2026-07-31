@@ -7,9 +7,11 @@ const appMocks = vi.hoisted(() => {
   const state = {
     mode: 'flow',
     sessionTarget: 'chatgpt',
+    sessionStatus: { target: 'chatgpt', status: 'ready', ready: true, revision: 1 },
     tagErrors: [],
     framePanelProps: null,
   }
+  const sessionStatusListeners = new Set()
   const loadEpochRef = { current: 0 }
   const flowGenerateImage = vi.fn(async () => ({ success: true }))
   const sceneBatchStart = vi.fn(async options => flowGenerateImage(options))
@@ -52,6 +54,11 @@ const appMocks = vi.hoisted(() => {
     noop,
     asyncNoop,
     state,
+    sessionStatusListeners,
+    emitSessionStatus(status) {
+      state.sessionStatus = status
+      for (const listener of sessionStatusListeners) listener(status)
+    },
     loadEpochRef,
     flowGenerateImage,
     sceneBatchStart,
@@ -342,6 +349,8 @@ describe('App flow + chatgpt target gate', () => {
     localStorage.clear()
     appMocks.state.mode = 'flow'
     appMocks.state.sessionTarget = 'chatgpt'
+    appMocks.state.sessionStatus = { target: 'chatgpt', status: 'ready', ready: true, revision: 1 }
+    appMocks.sessionStatusListeners.clear()
     appMocks.state.tagErrors = []
     appMocks.state.framePanelProps = null
     appMocks.loadEpochRef.current = 0
@@ -353,6 +362,13 @@ describe('App flow + chatgpt target gate', () => {
     window.electronAPI = {
       setMode: vi.fn(async () => ({ ok: true })),
       setLayout: vi.fn(async () => ({ ok: true })),
+      getSessionTargetStatus: vi.fn(async (target) => (
+        target === 'chatgpt' ? appMocks.state.sessionStatus : null
+      )),
+      onSessionTargetStatus: vi.fn((listener) => {
+        appMocks.sessionStatusListeners.add(listener)
+        return () => appMocks.sessionStatusListeners.delete(listener)
+      }),
     }
   })
 
@@ -389,7 +405,9 @@ describe('App flow + chatgpt target gate', () => {
   it('flow + chatgpt Start does not reach the Flow image engine seam', async () => {
     render(<App />)
 
-    fireEvent.click(screen.getByTitle('actions.start'))
+    const start = screen.getByTitle('actions.start')
+    await waitFor(() => expect(start).toBeEnabled())
+    fireEvent.click(start)
 
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
@@ -405,16 +423,69 @@ describe('App flow + chatgpt target gate', () => {
     await waitFor(() => expect(appMocks.flowGenerateImage).toHaveBeenCalledTimes(1))
   })
 
+  it('does not reuse Flow token readiness as ChatGPT readiness on a target round-trip', async () => {
+    appMocks.state.sessionTarget = 'flow'
+    appMocks.state.sessionStatus = {
+      target: 'chatgpt', status: 'session-blocked', ready: false, revision: 2,
+    }
+    const { rerender } = render(<App />)
+    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalled())
+
+    appMocks.state.sessionTarget = 'chatgpt'
+    rerender(<App />)
+    const start = screen.getByTestId('image-start')
+    await waitFor(() => expect(start).toBeDisabled())
+
+    act(() => appMocks.emitSessionStatus({
+      target: 'chatgpt', status: 'ready', ready: true, revision: 3,
+    }))
+    expect(start).toBeEnabled()
+
+    appMocks.state.sessionTarget = 'flow'
+    rerender(<App />)
+    appMocks.state.sessionTarget = 'chatgpt'
+    rerender(<App />)
+    expect(screen.getByTestId('image-start')).toBeEnabled()
+  })
+
   it('flow + chatgpt blocks tag-validation Proceed before the Flow image engine seam', async () => {
     appMocks.state.tagErrors = [{ sceneIndex: 0, missingTags: ['hero'] }]
     render(<App />)
 
-    fireEvent.click(screen.getByTitle('actions.start'))
+    const start = screen.getByTitle('actions.start')
+    await waitFor(() => expect(start).toBeEnabled())
+    fireEvent.click(start)
     fireEvent.click(await screen.findByRole('button', { name: 'tag-proceed' }))
 
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
     expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+  })
+
+  it.each([
+    'login-required',
+    'challenge',
+    'rate-limited',
+    'session-blocked',
+    'unknown',
+  ])('closes ChatGPT image admission when status is %s after a ready positive control', async (status) => {
+    render(<App />)
+    const start = screen.getByTitle('actions.start')
+
+    await waitFor(() => expect(start).toBeEnabled())
+    fireEvent.click(start)
+    await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported'))
+    appMocks.toastWarning.mockClear()
+
+    act(() => appMocks.emitSessionStatus({
+      target: 'chatgpt', status, ready: true, revision: 2,
+    }))
+    expect(start).toBeDisabled()
+
+    fireEvent.click(start)
+    await act(async () => { await Promise.resolve() })
+    expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
+    expect(appMocks.toastWarning).not.toHaveBeenCalled()
   })
 
   it('flow + chatgpt blocks text-to-video before the Flow video engine seam', async () => {

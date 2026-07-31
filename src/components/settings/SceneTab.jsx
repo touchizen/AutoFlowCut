@@ -6,7 +6,7 @@ import AspectRatioSelector from './AspectRatioSelector'
 import ModelSelector from './ModelSelector'
 import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL, defaultImageModelForProvider, defaultVideoModelForProvider, imageModelsForProvider, listSupportedImageProviders, listSupportedVideoProviders, videoModelsForProvider } from '../../config/genModels'
 import { DEFAULTS } from '../../config/defaults'
-import { isFlowTarget } from '../../config/appRoute.js'
+import { isFlowTarget, sourceForStage } from '../../config/appRoute.js'
 import { computeImageProviderSwitch } from '../../utils/imageProviderSwitch'
 import { targetLabelKey } from '../modeInfo.js'
 
@@ -18,6 +18,20 @@ const SUPPORTED_IMAGE_PROVIDER_IDS = new Set(SUPPORTED_IMAGE_PROVIDERS)
 // 등록돼 persisted 설정이 라우팅되지만 real-key smoke 전에는 이 목록에서 제외된다.
 const SUPPORTED_VIDEO_PROVIDERS = listSupportedVideoProviders()
 const SUPPORTED_VIDEO_PROVIDER_IDS = new Set(SUPPORTED_VIDEO_PROVIDERS)
+
+const priceUrlForSource = (source) => {
+  if (source === 'flow') return FLOW_PRICING_URL
+  if (source === 'api') return PRICING_URL
+  return null
+}
+
+const priceForSelection = (source, models, selected, fallback) => {
+  if (source === 'chatgpt') return 'ChatGPT plan'
+  const list = models || []
+  const selectedModel = list.find((model) => model.id === selected)
+  const fallbackModel = list.find((model) => model.id === fallback)
+  return (selectedModel || fallbackModel)?.cost || ''
+}
 
 function computeVideoProviderSwitch(settings, stage, newProvider) {
   const modelKey = stage === 't2v' ? 'videoModelT2V' : 'videoModelF2V'
@@ -65,13 +79,31 @@ export default function SceneTab({
   imageProviders = SUPPORTED_IMAGE_PROVIDERS, videoProviders = SUPPORTED_VIDEO_PROVIDERS,
   appMode, sessionTarget = 'flow',
 }) {
-  const flowTargetActive = isFlowTarget({ mode: appMode, sessionTarget })
-  const modeBadge = appMode
-    ? <span className={`model-mode-badge model-mode-${appMode}`}>
-        {appMode === 'flow' ? t(targetLabelKey(sessionTarget)) : t('modeInfo.api.name')}
+  const route = { mode: appMode, sessionTarget }
+  const flowTargetActive = isFlowTarget(route)
+  const stageSources = {
+    image: sourceForStage(route, 'image'),
+    t2v: sourceForStage(route, 't2v'),
+    i2v: sourceForStage(route, 'i2v'),
+  }
+  const providerLabel = (source) => {
+    if (source === 'flow') return t(targetLabelKey('flow'))
+    if (source === 'chatgpt') return t(targetLabelKey('chatgpt'))
+    if (source === 'api') return t('modeInfo.api.name')
+    return ''
+  }
+  const providerBadge = (stage, includeTestId = true) => {
+    const source = stageSources[stage]
+    if (!source) return null
+    return (
+      <span
+        className={`model-mode-badge model-mode-${source === 'chatgpt' ? 'flow' : source}`}
+        data-testid={includeTestId ? `${stage}-provider-badge` : undefined}
+      >
+        {providerLabel(source)}
       </span>
-    : null
-  const priceUrl = flowTargetActive ? FLOW_PRICING_URL : (appMode === 'api' ? PRICING_URL : null)
+    )
+  }
   const visibleImageProviders = (imageProviders || []).filter((provider) => SUPPORTED_IMAGE_PROVIDER_IDS.has(provider))
   const visibleVideoProviders = (videoProviders || []).filter((provider) => SUPPORTED_VIDEO_PROVIDER_IDS.has(provider))
   const imageProvider = flowTargetActive ? 'google' : (localSettings.generation?.image?.provider ?? 'google')
@@ -79,10 +111,23 @@ export default function SceneTab({
   const imageDefaultModel = defaultImageModelForProvider(imageProvider) ?? DEFAULT_IMAGE_MODEL_ID
   const t2vProvider = flowTargetActive ? 'google' : (localSettings.generation?.video?.t2v?.provider ?? 'google')
   const i2vProvider = flowTargetActive ? 'google' : (localSettings.generation?.video?.i2v?.provider ?? 'google')
-  const t2vModels = videoModelsForProvider(t2vProvider, videoModels)
-  const i2vModels = videoModelsForProvider(i2vProvider, videoModels)
+  const effectiveVideoModels = (
+    (stageSources.t2v === 'api' || stageSources.i2v === 'api') && !(videoModels || []).length
+  ) ? VIDEO_MODELS : videoModels
+  const t2vModels = videoModelsForProvider(t2vProvider, effectiveVideoModels)
+  const i2vModels = videoModelsForProvider(i2vProvider, effectiveVideoModels)
   const t2vDefaultModel = defaultVideoModelForProvider(t2vProvider) ?? DEFAULT_VIDEO_MODEL_ID
   const i2vDefaultModel = defaultVideoModelForProvider(i2vProvider) ?? DEFAULT_VIDEO_MODEL_ID
+  const stagePrices = {
+    image: priceForSelection(stageSources.image, visibleImageModels, localSettings.imageModel, imageDefaultModel),
+    t2v: priceForSelection(stageSources.t2v, t2vModels, localSettings.videoModelT2V, t2vDefaultModel),
+    i2v: priceForSelection(stageSources.i2v, i2vModels, localSettings.videoModelF2V, i2vDefaultModel),
+  }
+  const providerPrice = (stage) => (
+    <span className="model-provider-price" data-testid={`${stage}-provider-price`}>
+      {stagePrices[stage]}
+    </span>
+  )
   return (
     <div className="tab-panel">
       {/* 프로젝트 화면비: 롱폼(16:9) / 숏폼(9:16) — 생성·카드·CapCut export 에 반영 */}
@@ -218,7 +263,7 @@ export default function SceneTab({
       {/* Flow Agent (Maps 그라운딩) — Flow 모드 전용. ON 이면 Agent ON 경로(주소 기반 생성). */}
       {flowTargetActive && (
         <div className="setting-row">
-          <label className="setting-label">{t('settings.flowAgentMode')} {modeBadge}</label>
+          <label className="setting-label">{t('settings.flowAgentMode')} {providerBadge('image', false)}</label>
           <div className="batch-selector">
             <button
               data-testid="flow-agent-off"
@@ -246,7 +291,7 @@ export default function SceneTab({
           (#5d8a349 에서 API-only 시절 통째 삭제됐다가 dual-mode 로 복원된 이력). */}
       {flowTargetActive && (
         <div className="settings-section">
-          <h3>{t('settings.batchSettings')} {modeBadge}</h3>
+          <h3>{t('settings.batchSettings')} {providerBadge('image', false)}</h3>
 
           <div className="setting-row">
             <label className="setting-label">{t('settings.imageBatchCount')}</label>
@@ -286,7 +331,7 @@ export default function SceneTab({
 
       {/* 생성 모델 선택 — T2I / T2V / F2V 각각 (옵션마다 특징·비용 표시) */}
       <div className="settings-section">
-        <h3>{t('settings.modelImageTitle')} {modeBadge}</h3>
+        <h3>{t('settings.modelImageTitle')} {providerBadge('image')} {providerPrice('image')}</h3>
         {/* 전역 image provider 선택(§5.8) — API 모드에서만(Flow 는 google 전용). 전환 시 provider별 기억 모델 복원 */}
         {appMode !== 'flow' && visibleImageProviders.length > 1 && (
           <div className="batch-count-buttons" role="group" aria-label={t('settings.imageProviderTitle')}>
@@ -316,11 +361,11 @@ export default function SceneTab({
             modelsByProvider: { ...s.modelsByProvider, [s.generation?.image?.provider ?? 'google']: id },
           }))}
           t={t}
-          priceUrl={priceUrl}
+          priceUrl={priceUrlForSource(stageSources.image)}
         />
       </div>
       <div className="settings-section">
-        <h3>{t('settings.modelVideoT2VTitle')} {modeBadge}</h3>
+        <h3>{t('settings.modelVideoT2VTitle')} {providerBadge('t2v')} {providerPrice('t2v')}</h3>
         {!flowTargetActive && visibleVideoProviders.length > 1 && (
           <div className="batch-count-buttons" role="group" aria-label={t('settings.videoProviderT2VTitle')}>
             {visibleVideoProviders.map((provider) => (
@@ -351,11 +396,11 @@ export default function SceneTab({
             },
           }))}
           t={t}
-          priceUrl={priceUrl}
+          priceUrl={priceUrlForSource(stageSources.t2v)}
         />
       </div>
       <div className="settings-section">
-        <h3>{t('settings.modelVideoF2VTitle')} {modeBadge}</h3>
+        <h3>{t('settings.modelVideoF2VTitle')} {providerBadge('i2v')} {providerPrice('i2v')}</h3>
         {!flowTargetActive && visibleVideoProviders.length > 1 && (
           <div className="batch-count-buttons" role="group" aria-label={t('settings.videoProviderI2VTitle')}>
             {visibleVideoProviders.map((provider) => (
@@ -386,7 +431,7 @@ export default function SceneTab({
             },
           }))}
           t={t}
-          priceUrl={priceUrl}
+          priceUrl={priceUrlForSource(stageSources.i2v)}
         />
       </div>
 

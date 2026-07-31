@@ -1,10 +1,14 @@
-import { it, expect, vi } from 'vitest'
+import { beforeEach, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+
+const headerState = vi.hoisted(() => ({ sessionTarget: 'chatgpt' }))
 
 vi.mock('../../../src/hooks/useI18n', () => ({ useI18n: () => ({
   t: (k) => ({
     'header.chatgptLogin': 'ChatGPT 로그인',
     'header.chatgptAuthenticated': 'ChatGPT 로그인됨',
+    'header.flowLogin': 'Flow 로그인',
+    'header.flowAuthenticated': 'Flow 로그인됨',
     'header.apiKey': 'API 키',
   }[k] || k),
   // ⚠️ 빈 배열 금지: Header 는 LanguagePicker 를 무조건 렌더하고
@@ -20,9 +24,11 @@ vi.mock('../../../src/components/SideDrawer', () => ({ SideDrawer: () => null })
 vi.mock('../../../src/components/Modal', () => ({ default: () => null }))
 vi.mock('../../../src/components/ExportSplitButton', () => ({ default: () => null }))
 vi.mock('../../../src/components/Toast', () => ({ toast: { info: vi.fn() } }))
-vi.mock('../../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'flow', sessionTarget: 'chatgpt' }) }))
+vi.mock('../../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'flow', sessionTarget: headerState.sessionTarget }) }))
 
 import Header from '../../../src/components/Header.jsx'
+
+beforeEach(() => { headerState.sessionTarget = 'chatgpt' })
 
 it('ChatGPT target shows its label and never calls legacy Flow reattach', () => {
   window.electronAPI = { setRoute: vi.fn(), setLayout: vi.fn(), onFlowStatus: vi.fn(() => () => {}) }
@@ -34,10 +40,19 @@ it('ChatGPT target shows its label and never calls legacy Flow reattach', () => 
   expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
 })
 
-it('ChatGPT target uses the target-specific authenticated label', async () => {
+it('keeps Flow readiness out of the ChatGPT auth chip on a target round-trip', async () => {
   window.electronAPI = { onFlowStatus: vi.fn(() => () => {}) }
-  const { container } = render(<Header authReady={true} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />)
+  headerState.sessionTarget = 'flow'
+  const authReadyByTarget = { flow: true, chatgpt: false }
+  const { container, rerender } = render(
+    <Header authReadyByTarget={authReadyByTarget} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />,
+  )
   await waitFor(() => expect(container.querySelector('.auth-badge.authenticated')).toBeTruthy())
   expect(container.querySelector('.auth-badge.authenticated').getAttribute('data-tooltip'))
-    .toBe('ChatGPT 로그인됨')
+    .toBe('Flow 로그인됨')
+
+  headerState.sessionTarget = 'chatgpt'
+  rerender(<Header authReadyByTarget={authReadyByTarget} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />)
+  await waitFor(() => expect(screen.getByRole('button', { name: /ChatGPT 로그인/ })).toBeTruthy())
+  expect(container.querySelector('.auth-badge.authenticated')).toBeNull()
 })
