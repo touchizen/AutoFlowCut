@@ -3,6 +3,7 @@
  */
 
 import { powerSaveBlocker, shell } from 'electron'
+import { SESSION_TARGET_STRIP_HEIGHT } from '../../src/utils/appLayout.js'
 
 let layoutMode = 'split-left'
 let splitRatio = 0.5
@@ -19,7 +20,7 @@ let powerSaveBlockerId = null
  * @param {BrowserWindow} mainWindow
  * @param {WebContentsView} sessionView
  */
-export function updateBounds(mainWindow, sessionView) {
+export function updateBounds(mainWindow, sessionView, { sessionTargetStripEnabled = false } = {}) {
   if (!mainWindow || !sessionView) return
 
   if (modalVisible || dragging) {
@@ -29,19 +30,28 @@ export function updateBounds(mainWindow, sessionView) {
 
   const { width, height } = mainWindow.getContentBounds()
   const GAP = 3
+  const belowSessionStrip = (bounds) => {
+    if (!sessionTargetStripEnabled) return bounds
+    const inset = Math.min(SESSION_TARGET_STRIP_HEIGHT, Math.max(0, bounds.height))
+    return {
+      ...bounds,
+      y: bounds.y + inset,
+      height: Math.max(0, bounds.height - inset),
+    }
+  }
 
   if (layoutMode === 'split-left') {
     const splitPos = Math.round(width * splitRatio)
-    sessionView.setBounds({ x: 0, y: 0, width: splitPos - GAP, height })
+    sessionView.setBounds(belowSessionStrip({ x: 0, y: 0, width: splitPos - GAP, height }))
   } else if (layoutMode === 'split-right') {
     const splitPos = Math.round(width * splitRatio)
-    sessionView.setBounds({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height })
+    sessionView.setBounds(belowSessionStrip({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height }))
   } else if (layoutMode === 'split-top') {
     const splitPos = Math.round(height * splitRatio)
-    sessionView.setBounds({ x: 0, y: 0, width, height: splitPos - GAP })
+    sessionView.setBounds(belowSessionStrip({ x: 0, y: 0, width, height: splitPos - GAP }))
   } else if (layoutMode === 'split-bottom') {
     const splitPos = Math.round(height * splitRatio)
-    sessionView.setBounds({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP })
+    sessionView.setBounds(belowSessionStrip({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP }))
   }
 }
 
@@ -51,11 +61,12 @@ export function updateBounds(mainWindow, sessionView) {
  * @param {Function} getMainWindow - mainWindow getter
  * @param {Function} getActiveSessionView - 현재 routed 세션 view(Flow/ChatGPT) getter
  */
-export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) {
+export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView, options = {}) {
+  const applyViewBounds = options.updateViewBounds || updateBounds
   ipcMain.handle('app:set-layout', (event, { mode, ratio }) => {
     layoutMode = mode || 'split-left'
     if (ratio !== undefined) splitRatio = Math.max(0.2, Math.min(0.8, ratio))
-    updateBounds(getMainWindow(), getActiveSessionView())
+    applyViewBounds(getMainWindow(), getActiveSessionView())
     const mw = getMainWindow()
     if (mw) {
       mw.webContents.send('layout-changed', { mode: layoutMode, splitRatio })
@@ -66,7 +77,7 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) 
   ipcMain.handle('app:update-split', (event, { ratio }) => {
     if (!getMainWindow()) return
     splitRatio = Math.max(0.2, Math.min(0.8, ratio))
-    updateBounds(getMainWindow(), getActiveSessionView())
+    applyViewBounds(getMainWindow(), getActiveSessionView())
     return { success: true, splitRatio }
   })
 
@@ -82,7 +93,7 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) 
     // 캡처 도중 drag-end(또는 새 start)가 오면 token 이 바뀐다 → 접지 않는다(뷰가 접힌 채 남는 것 방지).
     if (token !== dragToken) return { snapshot }
     dragging = true
-    updateBounds(getMainWindow(), getActiveSessionView())
+    applyViewBounds(getMainWindow(), getActiveSessionView())
     return { snapshot }
   })
 
@@ -90,7 +101,7 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) 
   ipcMain.handle('app:flow-drag-end', () => {
     dragToken++
     dragging = false
-    updateBounds(getMainWindow(), getActiveSessionView())
+    applyViewBounds(getMainWindow(), getActiveSessionView())
     return { success: true }
   })
 
@@ -100,7 +111,7 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) 
 
   ipcMain.handle('app:set-modal-visible', (event, { visible }) => {
     modalVisible = visible
-    updateBounds(getMainWindow(), getActiveSessionView())
+    applyViewBounds(getMainWindow(), getActiveSessionView())
     // 모달이 열릴 때 키보드 포커스를 메인 renderer로 되돌린다.
     // Flow WebContentsView를 0×0으로 줄여도 네이티브 포커스는 그대로 남아
     // (Electron은 뷰 간 포커스 자동 전환을 안 함), 모달 입력창에 키 입력이

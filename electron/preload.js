@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
   showInFolder: (filePath) => ipcRenderer.invoke('app:show-in-folder', { filePath }),
   notifyOS: (payload) => ipcRenderer.invoke('notify:os', payload),
+  getDevFlags: () => ipcRenderer.invoke('app:get-dev-flags'),
 
   // Layout
   setLayout: (params) => ipcRenderer.invoke('app:set-layout', params),

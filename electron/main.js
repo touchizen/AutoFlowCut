@@ -33,7 +33,7 @@ import { createVoicePreviewService } from './api/tts/voicePreviewService.js'
 import { ssrfSafeFetch } from './api/net/ssrfSafeFetch.js'
 import { voiceKey } from '../src/utils/voiceKey.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
-import { createModeController } from './ipc/mode.js'
+import { createModeController, isChatgptP2DevGateEnabled } from './ipc/mode.js'
 import {
   reservedSessionWebPreferences, installReservedSessionSecurity,
 } from './sessionViewSecurity.js'
@@ -206,7 +206,7 @@ function createWindow() {
 
   // Re-size the active session WebContentsView (Flow or reserved) whenever the window is resized (§3.4).
   // modeController is module-scope (created before app.whenReady) so it's always in scope here.
-  mainWindow.on('resize', () => updateBounds(mainWindow, modeController.getActiveSessionView()))
+  mainWindow.on('resize', () => updateSessionViewBounds(mainWindow, modeController.getActiveSessionView()))
 }
 
 // === IPC Handlers ===
@@ -728,6 +728,10 @@ const chatgptDevGate = Object.freeze({
   viteDevServerUrl: process.env.VITE_DEV_SERVER_URL,
   chatgptP2Flag: process.env.AUTOFLOWCUT_CHATGPT_P2,
 })
+const chatgptTargetComboEnabled = isChatgptP2DevGateEnabled(chatgptDevGate)
+const updateSessionViewBounds = (window, view) => updateBounds(window, view, {
+  sessionTargetStripEnabled: chatgptTargetComboEnabled,
+})
 
 // Mode controller wires route:set/mode:set IPC + lazy session view creation/attachment.
 // Task 16 barrier owner is deliberately a required, awaited no-op until the real
@@ -745,14 +749,16 @@ const modeController = createModeController(() => mainWindow, makeFlowView, {
   },
   targetRegistry: sessionTargetRegistry,
   chatgptDevGate,
-  updateViewBounds: updateBounds,
+  updateViewBounds: updateSessionViewBounds,
   sessionJobs: routeSessionJobs,
   requireRendererQuiesce: true,
 })
 modeController.register(ipcMain)
 
 // Layout, modal, sleep, open-external, show-in-folder IPC.
-registerLayoutIPC(ipcMain, () => mainWindow, modeController.getActiveSessionView)
+registerLayoutIPC(ipcMain, () => mainWindow, modeController.getActiveSessionView, {
+  updateViewBounds: updateSessionViewBounds,
+})
 
 // Agent 토글 not_found 진단 저장기 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만
 //   신뢰할 수 있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다.

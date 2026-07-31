@@ -63,6 +63,19 @@ export default {
 
   sessionTarget: { flow: 'Google Flow', chatgpt: 'ChatGPT' },
 
+  targetCombo: {
+    ariaLabel: '세션 타깃',
+    authReady: '로그인됨',
+    authRequired: '로그인 필요',
+    busy: '생성 중에는 타깃을 전환할 수 없어요',
+    switchFailed: '세션 타깃을 전환하지 못했어요: {error}',
+    chatgptLimitations: {
+      referencesUnmeasured: '레퍼런스 업로드 지원은 아직 측정되지 않아 레퍼런스 이미지 작업이 차단돼요.',
+      batchCountOne: '요청당 이미지 1장만 가능해요(batchCount는 1로 고정).',
+      seedUnavailable: '고정 seed를 사용할 수 없어요.',
+    },
+  },
+
   // 탭
   bottomPanel: {
     timeline: '타임라인',

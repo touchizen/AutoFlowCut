@@ -17,13 +17,21 @@ import { AuthProvider } from './contexts/AuthContext'
 import { ToastProvider } from './components/Toast'
 import { QuotaExhaustedModalProvider } from './components/QuotaExhaustedModal'
 import { ModeProvider, useMode } from './contexts/ModeContext'
+import { DevFlagsProvider, useDevFlags } from './contexts/DevFlagsContext'
 import ModeGate from './components/ModeGate'
 import App from './App'
-import { isHorizontalSplit, splitAppStyle, splitFlowStyle, splitResizerStyle } from './utils/appLayout'
+import {
+  isHorizontalSplit,
+  splitAppStyle,
+  splitFlowStyle,
+  splitResizerStyle,
+  splitSessionTargetStripStyle,
+} from './utils/appLayout'
 import { useSplitLayout } from './hooks/useSplitLayout'
 
 function ShellContent() {
   const { mode } = useMode()
+  const { chatgptTargetCombo } = useDevFlags()
   const isFlow = mode === 'flow'
 
   const shellRef = useRef(null)
@@ -53,6 +61,14 @@ function ShellContent() {
       <div className="app-content-split" style={splitAppStyle(layoutMode, splitRatio)}>
         <App />
       </div>
+
+      {chatgptTargetCombo && (
+        <div
+          id="session-target-strip-root"
+          className="session-target-strip-root"
+          style={splitSessionTargetStripStyle(layoutMode, splitRatio)}
+        />
+      )}
 
       {/* A′: 드래그 중 접힌 Flow 자리에 정지 스냅샷을 그려 "그대로 있는 것처럼" 보이게 한다.
           object-fit:cover + left/top 고정 → 크기만 따라가고 콘텐츠는 왜곡 없이 클리핑. */}
@@ -95,15 +111,17 @@ export default function Shell() {
   return (
     <ModeProvider>
       <I18nProvider>
-        <AuthProvider>
-          <ToastProvider>
-            <QuotaExhaustedModalProvider>
-              <ModeGate>
-                <ShellContent />
-              </ModeGate>
-            </QuotaExhaustedModalProvider>
-          </ToastProvider>
-        </AuthProvider>
+        <DevFlagsProvider>
+          <AuthProvider>
+            <ToastProvider>
+              <QuotaExhaustedModalProvider>
+                <ModeGate>
+                  <ShellContent />
+                </ModeGate>
+              </QuotaExhaustedModalProvider>
+            </ToastProvider>
+          </AuthProvider>
+        </DevFlagsProvider>
       </I18nProvider>
     </ModeProvider>
   )

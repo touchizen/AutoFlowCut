@@ -310,6 +310,10 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     const isKnownTarget = (target) => (
       typeof target === 'string' && targetRegistry?.has(target) === true
     )
+    ipcMain.handle('app:get-dev-flags', async (event) => ({
+      chatgptTargetCombo: isTrustedRenderer(event) &&
+        isChatgptP2DevGateEnabled(options.chatgptDevGate),
+    }))
     ipcMain.handle('session-target:get-status', (event, target) => {
       if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
       return getSessionStatus(target)

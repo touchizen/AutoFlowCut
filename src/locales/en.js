@@ -63,6 +63,19 @@ export default {
 
   sessionTarget: { flow: 'Google Flow', chatgpt: 'ChatGPT' },
 
+  targetCombo: {
+    ariaLabel: 'Session target',
+    authReady: 'Logged in',
+    authRequired: 'Login required',
+    busy: "Can't switch targets while generating",
+    switchFailed: 'Could not switch session target: {error}',
+    chatgptLimitations: {
+      referencesUnmeasured: 'Reference upload support has not been measured, so reference-image workflows are blocked.',
+      batchCountOne: 'One image per request (batch count is fixed to 1).',
+      seedUnavailable: 'Fixed seed is unavailable.',
+    },
+  },
+
   // Tabs
   bottomPanel: {
     timeline: 'Timeline',

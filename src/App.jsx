@@ -99,6 +99,7 @@ import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessage
 
 // Components
 import Header from './components/Header'
+import { SessionTargetComboPortal } from './components/TargetCombo'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import GenerateMenu from './components/GenerateMenu'
@@ -2256,6 +2257,11 @@ function App() {
 
   return (
     <div className={computeAppClass(mode)}>
+      <SessionTargetComboPortal
+        busy={fullProjectBusy}
+        authReadyByTarget={authReadyByTarget}
+        onRouteRequest={requestRoute}
+      />
       <QAProgressBanner />
       <ImportProcessingOverlay
         processing={importProcessing}
