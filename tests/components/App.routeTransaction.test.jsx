@@ -89,9 +89,9 @@ const renderApp = ({ electronAPI, initialRoute }) => {
   render(<RouteTransactionProbe electronAPI={electronAPI} initialRoute={initialRoute} />)
 }
 
-const requestInjectedRoute = (route) => {
+const requestInjectedRoute = (route, options) => {
   let pending
-  act(() => { pending = injectedRequest(route) })
+  act(() => { pending = injectedRequest(route, options) })
   return pending.then(async (result) => {
     await act(async () => {})
     return result
@@ -161,6 +161,24 @@ it('keeps renderer context, storage, main view, and engine on non-default Flow w
   expect(api.mainRoute()).toEqual(flowRoute())
   expect(api.attachedView()).toBe('flow')
   expect(currentEngine().routeOwner).toBe('flow')
+})
+
+it('reconciles a failed stored-route boot to the main route without weakening interactive failure preservation', async () => {
+  const storedRoute = { mode: 'flow', sessionTarget: 'flow' }
+  const mainRoute = { mode: 'api', sessionTarget: 'flow' }
+  const api = routeFailureHarness({
+    initialRoute: mainRoute,
+    result: { ok: false, error: 'route-quiesce-failed', route: mainRoute, revision: 0 },
+  })
+  renderApp({ electronAPI: api, initialRoute: storedRoute })
+
+  await requestInjectedRoute(storedRoute, { reconcileOnFailure: true, boot: true })
+
+  expect(screen.getByTestId('current-route')).toHaveTextContent('api+flow')
+  expect(localStorage.getItem('route')).toBe(JSON.stringify(mainRoute))
+  expect(currentEngine().routeOwner).toBe('api')
+  expect(api.mainRoute()).toEqual(mainRoute)
+  expect(api.attachedView()).toBeNull()
 })
 
 it('commits and persists only the latest adopted success route', async () => {

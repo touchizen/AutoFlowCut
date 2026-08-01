@@ -30,14 +30,39 @@ import Header from '../../../src/components/Header.jsx'
 
 beforeEach(() => { headerState.sessionTarget = 'chatgpt' })
 
-it('ChatGPT target shows its label and never calls legacy Flow reattach', () => {
-  window.electronAPI = { setRoute: vi.fn(), setLayout: vi.fn(), onFlowStatus: vi.fn(() => () => {}) }
+it('ChatGPT login action reattaches its route then uses the target reconnect port', async () => {
+  const events = []
+  window.electronAPI = {
+    setRoute: vi.fn(async (route) => { events.push(`route:${route.mode}+${route.sessionTarget}`); return { ok: true, route } }),
+    reconnectSession: vi.fn(async (target) => { events.push(`reconnect:${target}`); return { target, status: 'login-required', ready: false, revision: 7 } }),
+    setLayout: vi.fn(),
+    onFlowStatus: vi.fn(() => () => {}),
+  }
   render(<Header authReady={false} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />)
   // 버튼은 `{authActionIcon} {authActionLabel}`(Header.jsx:350)을 렌더해 접근성 이름이
   // '👤 ChatGPT 로그인' 이다 — 정확 문자열 매칭은 절대 안 맞는다(기존 테스트도 정규식을 쓴다).
   fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
-  expect(window.electronAPI.setRoute).not.toHaveBeenCalled()
+
+  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
+  expect(events).toEqual(['route:flow+chatgpt', 'reconnect:chatgpt'])
   expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
+})
+
+it('ChatGPT authenticated badge rechecks the target without requesting a Flow token', async () => {
+  const getAccessToken = vi.fn(async () => 'flow-token')
+  window.electronAPI = {
+    setRoute: vi.fn(async (route) => ({ ok: true, route })),
+    reconnectSession: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true, revision: 9 })),
+    onFlowStatus: vi.fn(() => () => {}),
+  }
+  const { container } = render(
+    <Header authReady={true} getAccessToken={getAccessToken} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />,
+  )
+
+  fireEvent.click(container.querySelector('.auth-badge.authenticated'))
+
+  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
+  expect(getAccessToken).not.toHaveBeenCalled()
 })
 
 it('keeps Flow readiness out of the ChatGPT auth chip on a target round-trip', async () => {

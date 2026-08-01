@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import ModeToggle from '../../src/components/ModeToggle.jsx'
 import SceneTab from '../../src/components/settings/SceneTab.jsx'
 import DisplayTab from '../../src/components/settings/DisplayTab.jsx'
@@ -58,6 +60,23 @@ describe('mode/target labels', () => {
     expect(screen.getByTestId('t2v-provider-badge')).toHaveTextContent('Google Flow')
     expect(screen.getByTestId('i2v-provider-badge')).toHaveTextContent('Google Flow')
     expect(document.querySelectorAll('[title="https://one.google.com/about/google-ai-plans/"]')).toHaveLength(3)
+  })
+
+  it('does not render empty provider-price spans for the existing Flow route', () => {
+    const unpricedImages = imageModels.map(({ cost: _cost, ...model }) => model)
+    const unpricedVideos = videoModels.map(({ cost: _cost, ...model }) => model)
+    render(<SceneTab localSettings={settings} setLocalSettings={vi.fn()} t={t} appMode="flow" sessionTarget="flow" imageModels={unpricedImages} videoModels={unpricedVideos} />)
+
+    expect(screen.queryByTestId('image-provider-price')).toBeNull()
+    expect(screen.queryByTestId('t2v-provider-price')).toBeNull()
+    expect(screen.queryByTestId('i2v-provider-price')).toBeNull()
+    expect(screen.getByTestId('image-provider-badge')).toHaveTextContent('Google Flow')
+  })
+
+  it('defines presentation for non-empty provider prices alongside the existing badge style', async () => {
+    const css = await readFile(path.join(process.cwd(), 'src', 'App.css'), 'utf8')
+    expect(css).toMatch(/\.model-mode-badge\s*\{/)
+    expect(css).toMatch(/\.model-provider-price\s*\{/)
   })
 
   it('keeps all three stages on API labels, prices, and price links for the existing API route', () => {

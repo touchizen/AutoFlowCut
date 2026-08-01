@@ -69,6 +69,7 @@ describe('trustedClickOnFlowView — bounds ownership', () => {
     layout.setLayoutMode('split-left')
     layout.setSplitRatio(0.2)
     layout.setModalVisible(false)
+    layout.setSessionTargetStripEnabled(false)
   })
 
   it('does not resurrect the Flow pane over a modal that opened mid-click', async () => {
@@ -123,5 +124,23 @@ describe('trustedClickOnFlowView — bounds ownership', () => {
     // Both finished with the pane back at the user's width — neither restored the other's
     // temporary offscreen bounds.
     expect(flowView.getBounds().width).toBe(253)   // 1280 * 0.2 - GAP
+  })
+
+  it('keeps the target strip inset after an ordinary bare trusted-click restore', async () => {
+    layout.setLayoutMode('split-right')
+    layout.setSplitRatio(0.27)
+    layout.setSessionTargetStripEnabled(true)
+    const { ctx, flowView, mainWindow } = makeCtx({ coordsByCall: OUT_THEN_IN })
+    const { trustedClickOnFlowView } = createSharedHelpers(ctx)
+
+    // Positive control: the strip-aware layout is visibly inset before automation enlarges it.
+    layout.updateBounds(mainWindow, flowView, { sessionTargetStripEnabled: true })
+    expect(flowView.getBounds()).toMatchObject({ y: 44, height: 978 })
+
+    await trustedClickOnFlowView('document.querySelector("button")')
+
+    // trustedClickOnFlowView restores through a bare updateBounds call. The process-wide flag
+    // must keep that call—and every other legacy relayout caller—strip-aware.
+    expect(flowView.getBounds()).toMatchObject({ y: 44, height: 978 })
   })
 })

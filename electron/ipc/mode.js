@@ -32,6 +32,9 @@ export function isChatgptP2DevGateEnabled({
   viteDevServerUrl,
   chatgptP2Flag,
 } = {}) {
+  // VITE_DEV_SERVER_URL is the canonical dev-launch signal. predev renames the Electron binary,
+  // which can make app.isPackaged report true; retaining this OR is deliberate for the P2 spike.
+  // The exact env value and darwin check still prevent ordinary packaged selectability (§10).
   return platform === 'darwin' &&
     (Boolean(viteDevServerUrl) || !isPackaged) &&
     chatgptP2Flag === '1'
@@ -83,22 +86,23 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     return views.get(target)
   }
 
-  function startInitialSessionLoad(target, view) {
+  async function startInitialSessionLoad(target, view) {
     if (target !== 'chatgpt' || !view || startedSessionViews.has(view)) return
     if (!isChatgptP2DevGateEnabled(options.chatgptDevGate)) return
     const definition = targetRegistry?.get(target)
     if (!definition?.startUrl || typeof view.webContents?.loadURL !== 'function') return
     startedSessionViews.add(view)
     try {
-      Promise.resolve(view.webContents.loadURL(definition.startUrl)).catch((error) => {
-        console.warn('[ChatGPT] initial load failed', {
-          name: typeof error?.name === 'string' ? error.name : 'Error',
-        })
-      })
+      await view.webContents.loadURL(definition.startUrl)
+      return true
     } catch (error) {
+      // The view/session is deliberately preserved, but a transient navigation failure must not
+      // poison it for the process lifetime. A later route entry or explicit reconnect can retry.
+      startedSessionViews.delete(view)
       console.warn('[ChatGPT] initial load failed', {
         name: typeof error?.name === 'string' ? error.name : 'Error',
       })
+      return false
     }
   }
 
@@ -151,6 +155,9 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       return
     }
 
+    // Explicit owner unregister rejects immediately below. A renderer that disappears without
+    // cleanup has no trustworthy receipt channel, so the bounded 30 s timeout intentionally stays
+    // as a fail-closed last resort: no route/view commit occurs while ownership is ambiguous.
     const timeoutMs = Number.isFinite(options.quiesceTimeoutMs) ? options.quiesceTimeoutMs : 30_000
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -185,8 +192,17 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     const envelope = payload && typeof payload === 'object' && !Array.isArray(payload) && payload.to
       ? payload
       : null
-    const accepted = parseRoute(envelope ? envelope.to : payload)
+    let accepted = parseRoute(envelope ? envelope.to : payload)
     if (!accepted) return { ok: false, error: 'invalid-route' }
+    const chatgptGateConfigured = Object.hasOwn(options, 'chatgptDevGate')
+    if (accepted.sessionTarget === 'chatgpt' && chatgptGateConfigured &&
+        !isChatgptP2DevGateEnabled(options.chatgptDevGate)) {
+      if (envelope?.boot === true) {
+        accepted = { ...accepted, sessionTarget: 'flow' }
+      } else {
+        return adoptedResult({ ok: false, error: 'session-target-disabled' })
+      }
+    }
     if (envelope && Number.isInteger(envelope.fromRevision) && envelope.fromRevision !== routeRevision) {
       return adoptedResult({ ok: true, stale: true })
     }
@@ -254,7 +270,7 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       assertRouteRevision(accepted, committedRevision)
       if (win && nextView) updateViewBounds(win, nextView)
       assertRouteRevision(accepted, committedRevision)
-      if (nextView) startInitialSessionLoad(accepted.sessionTarget, nextView)
+      if (nextView) void startInitialSessionLoad(accepted.sessionTarget, nextView)
     } catch {
       if (win && attachedView === nextView && nextView) {
         try { win.contentView.removeChildView(nextView) } catch {}
@@ -351,6 +367,9 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     })
     ipcMain.handle('session-target:reconnect', async (event, target) => {
       if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
+      const view = views.get(target)
+      view?.webContents?.focus?.()
+      await startInitialSessionLoad(target, view)
       return ensureSession(target)
     })
     ipcMain.handle('flow:set-startup-project', (_event, payload = {}) => {

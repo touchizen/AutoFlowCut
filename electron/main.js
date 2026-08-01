@@ -32,7 +32,7 @@ import { applyGenderOverlay } from './api/tts/genderOverlay.js'
 import { createVoicePreviewService } from './api/tts/voicePreviewService.js'
 import { ssrfSafeFetch } from './api/net/ssrfSafeFetch.js'
 import { voiceKey } from '../src/utils/voiceKey.js'
-import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
+import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, setSessionTargetStripEnabled, updateBounds } from './ipc/layout.js'
 import { createModeController, isChatgptP2DevGateEnabled } from './ipc/mode.js'
 import {
   reservedSessionWebPreferences, installReservedSessionSecurity,
@@ -151,6 +151,7 @@ const API_HEADERS = {
 }
 
 let mainWindow = null
+let chatgptR1HarnessControls = null
 let mcpHttpServer = null // MCP HTTP 서버 인스턴스
 // 렌더러가 app:project-activated로 마지막 보고한 작업 폴더 — story:open의 projectPath가
 // 이 하위인지 검증하는 데 쓰인다(story-api.js의 getActiveWorkFolder dep).
@@ -206,7 +207,7 @@ function createWindow() {
 
   // Re-size the active session WebContentsView (Flow or reserved) whenever the window is resized (§3.4).
   // modeController is module-scope (created before app.whenReady) so it's always in scope here.
-  mainWindow.on('resize', () => updateSessionViewBounds(mainWindow, modeController.getActiveSessionView()))
+  mainWindow.on('resize', () => updateBounds(mainWindow, modeController.getActiveSessionView()))
 }
 
 // === IPC Handlers ===
@@ -729,9 +730,7 @@ const chatgptDevGate = Object.freeze({
   chatgptP2Flag: process.env.AUTOFLOWCUT_CHATGPT_P2,
 })
 const chatgptTargetComboEnabled = isChatgptP2DevGateEnabled(chatgptDevGate)
-const updateSessionViewBounds = (window, view) => updateBounds(window, view, {
-  sessionTargetStripEnabled: chatgptTargetComboEnabled,
-})
+setSessionTargetStripEnabled(chatgptTargetComboEnabled)
 
 // Mode controller wires route:set/mode:set IPC + lazy session view creation/attachment.
 // Task 16 barrier owner is deliberately a required, awaited no-op until the real
@@ -749,16 +748,14 @@ const modeController = createModeController(() => mainWindow, makeFlowView, {
   },
   targetRegistry: sessionTargetRegistry,
   chatgptDevGate,
-  updateViewBounds: updateSessionViewBounds,
+  updateViewBounds: updateBounds,
   sessionJobs: routeSessionJobs,
   requireRendererQuiesce: true,
 })
 modeController.register(ipcMain)
 
 // Layout, modal, sleep, open-external, show-in-folder IPC.
-registerLayoutIPC(ipcMain, () => mainWindow, modeController.getActiveSessionView, {
-  updateViewBounds: updateSessionViewBounds,
-})
+registerLayoutIPC(ipcMain, () => mainWindow, modeController.getActiveSessionView)
 
 // Agent 토글 not_found 진단 저장기 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만
 //   신뢰할 수 있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다.
@@ -1655,13 +1652,33 @@ app.whenReady().then(() => {
   const isDevRuntime = Boolean(process.env.VITE_DEV_SERVER_URL) || !app.isPackaged
   if (process.platform === 'darwin' && isDevRuntime && process.env.AUTOFLOWCUT_SPIKE === '1') {
     void import('./spikes/chatgptR1Upload.js').then(({ registerChatgptR1Harness }) => {
-      registerChatgptR1Harness({
+      chatgptR1HarnessControls = registerChatgptR1Harness({
         app,
         globalShortcut,
         WebContentsView,
         getMainWindow: () => mainWindow,
         reservedSessionWebPreferences,
         installReservedSessionSecurity,
+        // Spike-only full-window ownership: temporarily remove the routed product view so the
+        // harness never stacks two native WebContentsViews. Close restores only the same route/view.
+        suspendProductSessionView: () => {
+          if (!mainWindow || modeController.getCurrentMode() !== 'flow') return null
+          const suspendedRoute = modeController.getCurrentRoute()
+          const suspendedView = modeController.getActiveSessionView()
+          if (!suspendedView) return null
+          try { mainWindow.contentView.removeChildView(suspendedView) } catch { return null }
+          let restored = false
+          return () => {
+            if (restored || !mainWindow) return
+            restored = true
+            const currentRoute = modeController.getCurrentRoute()
+            if (currentRoute.mode !== suspendedRoute.mode ||
+                currentRoute.sessionTarget !== suspendedRoute.sessionTarget ||
+                modeController.getActiveSessionView() !== suspendedView) return
+            mainWindow.contentView.addChildView(suspendedView)
+            updateBounds(mainWindow, suspendedView)
+          }
+        },
       })
     }).catch((error) => {
       console.warn('[ChatGPTR1] harness registration failed', {

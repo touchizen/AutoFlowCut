@@ -2,6 +2,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 export const CHATGPT_R1_SHORTCUT = 'CommandOrControl+Shift+R'
+export const CHATGPT_R1_CAPTURE_SHORTCUT = 'CommandOrControl+Shift+S'
+export const CHATGPT_R1_RESET_SHORTCUT = 'CommandOrControl+Shift+B'
+export const CHATGPT_R1_NEXT_SHORTCUT = 'CommandOrControl+Shift+Right'
+export const CHATGPT_R1_CLOSE_SHORTCUT = 'CommandOrControl+Shift+X'
 export const CHATGPT_R1_URL = 'https://chatgpt.com/'
 export const BLOCKED_LOGIN_SIGNAL = 'BLOCKED: human ChatGPT login required'
 
@@ -132,12 +136,15 @@ function createHarness({
   logger,
   writeEvidence,
   wait,
+  suspendProductSessionView,
 }) {
   let view = null
   let status = 'idle'
   let blockedReported = false
   let readyReported = false
   let authenticationProbe = null
+  let attached = false
+  let restoreProductSessionView = null
 
   const getState = () => ({ status })
 
@@ -182,15 +189,25 @@ function createHarness({
   }
 
   function attachViewToWindow(nextView) {
+    if (attached) return
     const mainWindow = getMainWindow()
     if (!mainWindow) throw new Error('ChatGPT R1 requires an open main window')
-    mainWindow.contentView.addChildView(nextView)
-    const [width, height] = mainWindow.getContentSize()
-    nextView.setBounds({ x: 0, y: 0, width, height })
+    restoreProductSessionView = suspendProductSessionView?.() || null
+    try {
+      mainWindow.contentView.addChildView(nextView)
+      const [width, height] = mainWindow.getContentSize()
+      nextView.setBounds({ x: 0, y: 0, width, height })
+      attached = true
+    } catch (error) {
+      restoreProductSessionView?.()
+      restoreProductSessionView = null
+      throw error
+    }
   }
 
   async function open() {
     if (view) {
+      attachViewToWindow(view)
       view.webContents.focus()
       return probeAuthentication()
     }
@@ -256,7 +273,19 @@ function createHarness({
     return probeAuthentication()
   }
 
-  return { open, probeAuthentication, captureEvidence, resetConversation, getState, getView: () => view }
+  function close() {
+    if (!view || !attached) return { status: 'idle' }
+    const mainWindow = getMainWindow()
+    try { mainWindow?.contentView?.removeChildView?.(view) } catch { /* spike close still restores product view */ }
+    attached = false
+    const restore = restoreProductSessionView
+    restoreProductSessionView = null
+    restore?.()
+    status = 'idle'
+    return { status: 'idle' }
+  }
+
+  return { open, close, probeAuthentication, captureEvidence, resetConversation, getState, getView: () => view }
 }
 
 /**
@@ -275,6 +304,7 @@ export function registerChatgptR1Harness({
   logger = console,
   writeEvidence = writeEvidenceFiles,
   wait = waitFor,
+  suspendProductSessionView = () => null,
 }) {
   if (!isChatgptR1HarnessEnabled({
     platform,
@@ -291,20 +321,65 @@ export function registerChatgptR1Harness({
     logger,
     writeEvidence,
     wait,
+    suspendProductSessionView,
   })
-  const registered = globalShortcut.register(CHATGPT_R1_SHORTCUT, () => harness.open())
+  let caseIndex = 0
+  let repetition = 1
+  const getMeasurementCursor = () => ({
+    caseId: R1_CASE_MATRIX[caseIndex].id,
+    repetition,
+  })
+  const announceCursor = () => {
+    const cursor = getMeasurementCursor()
+    logger.log(`[ChatGPTR1] selected ${cursor.caseId} repetition ${cursor.repetition}`)
+    return cursor
+  }
+  const advanceMeasurement = () => {
+    repetition += 1
+    if (repetition > R1_CASE_MATRIX[caseIndex].repetitions) {
+      repetition = 1
+      caseIndex = (caseIndex + 1) % R1_CASE_MATRIX.length
+    }
+    return announceCursor()
+  }
+  const captureCurrentEvidence = () => {
+    const cursor = getMeasurementCursor()
+    return harness.captureEvidence({
+      ...cursor,
+      events: [{ at: new Date().toISOString(), event: 'OPERATOR_CAPTURE' }],
+    })
+  }
+  const resetAndAdvance = async () => {
+    const result = await harness.resetConversation()
+    if (result?.status === 'ready') advanceMeasurement()
+    return result
+  }
+  const controls = [
+    [CHATGPT_R1_SHORTCUT, () => harness.open()],
+    [CHATGPT_R1_CAPTURE_SHORTCUT, captureCurrentEvidence],
+    [CHATGPT_R1_RESET_SHORTCUT, resetAndAdvance],
+    [CHATGPT_R1_NEXT_SHORTCUT, resetAndAdvance],
+    [CHATGPT_R1_CLOSE_SHORTCUT, () => harness.close()],
+  ]
+  const registered = controls.every(([shortcut, callback]) => globalShortcut.register(shortcut, callback))
   if (!registered) {
     logger.error('[ChatGPTR1] shortcut registration failed')
     return { registered: false }
   }
 
-  logger.log(`[ChatGPTR1] harness armed; press ${CHATGPT_R1_SHORTCUT}`)
+  logger.log(`[ChatGPTR1] harness armed; open ${CHATGPT_R1_SHORTCUT}; capture ${CHATGPT_R1_CAPTURE_SHORTCUT}; reset/advance ${CHATGPT_R1_RESET_SHORTCUT}; next ${CHATGPT_R1_NEXT_SHORTCUT}; close ${CHATGPT_R1_CLOSE_SHORTCUT}`)
+  announceCursor()
   return {
     registered: true,
     shortcut: CHATGPT_R1_SHORTCUT,
     open: harness.open,
     captureEvidence: harness.captureEvidence,
+    captureCurrentEvidence,
     resetConversation: harness.resetConversation,
+    resetAndAdvance,
+    advanceMeasurement,
+    close: harness.close,
     getState: harness.getState,
+    getMeasurementCursor,
   }
 }

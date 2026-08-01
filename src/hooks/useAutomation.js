@@ -955,13 +955,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   }, [])
 
   /**
-   * 특정 씬 재시도 — startQueued 경유(정상 Start 와 동일한 queue 직렬화).
+   * 특정 씬 재시도 — startTracked 경유(정상 Start 와 동일한 queue 직렬화 + quiesce 추적).
    */
   const retryScene = useCallback(async (sceneId, options = {}) => {
     if (!scenes.some(s => s.id === sceneId)) return
     // id 로 전달 — queue 대기 중 scenes 재정렬/삭제가 있어도 실행 시점에 올바른 씬을 resolve.
-    await startQueued({ ...options, sceneIds: [sceneId] })
-  }, [scenes, startQueued])
+    await startTracked({ ...options, sceneIds: [sceneId] })
+  }, [scenes, startTracked])
 
   /**
    * 에러 씬들만 재시도 — startQueued 경유.
@@ -985,8 +985,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
     if (errorIds.length === 0) return
 
-    await startQueued({ ...options, sceneIds: errorIds })
-  }, [scenes, startQueued, mode, flowProjectReady, t])
+    await startTracked({ ...options, sceneIds: errorIds })
+  }, [scenes, startTracked, mode, flowProjectReady, t])
 
   return {
     isRunning,

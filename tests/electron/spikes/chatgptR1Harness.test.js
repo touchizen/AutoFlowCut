@@ -28,7 +28,7 @@ function makeSetup({
   const listeners = new Map()
   const electronSession = { id: 'persist:chatgpt' }
   let authState = { composerReady }
-  let shortcutCallback = null
+  const shortcutCallbacks = new Map()
 
   const webContents = {
     session: electronSession,
@@ -51,13 +51,16 @@ function makeSetup({
   }
 
   const mainWindow = {
-    contentView: { addChildView: vi.fn(() => events.push('addChildView')) },
+    contentView: {
+      addChildView: vi.fn(() => events.push('addChildView')),
+      removeChildView: vi.fn(() => events.push('removeChildView')),
+    },
     getContentSize: vi.fn(() => [1200, 900]),
   }
   const globalShortcut = {
     register: vi.fn((accelerator, callback) => {
       events.push('globalShortcut.register')
-      shortcutCallback = callback
+      shortcutCallbacks.set(accelerator, callback)
       return true
     }),
   }
@@ -73,6 +76,11 @@ function makeSetup({
   const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const writeEvidence = vi.fn()
   const wait = vi.fn(async () => {})
+  const restoreProductSessionView = vi.fn(() => events.push('restoreProductSessionView'))
+  const suspendProductSessionView = vi.fn(() => {
+    events.push('suspendProductSessionView')
+    return restoreProductSessionView
+  })
 
   const registration = registerChatgptR1Harness({
     app: { isPackaged },
@@ -89,6 +97,7 @@ function makeSetup({
     logger,
     writeEvidence,
     wait,
+    suspendProductSessionView,
   })
 
   return {
@@ -103,7 +112,10 @@ function makeSetup({
     installReservedSessionSecurity,
     logger,
     writeEvidence,
-    invokeShortcut: async () => shortcutCallback?.(),
+    suspendProductSessionView,
+    restoreProductSessionView,
+    shortcutCallbacks,
+    invokeShortcut: async (accelerator = CHATGPT_R1_SHORTCUT) => shortcutCallbacks.get(accelerator)?.(),
     setAuthState: (next) => { authState = next },
   }
 }
@@ -142,10 +154,12 @@ describe('ChatGPT R1 dev harness gate and secure view', () => {
     await setup.invokeShortcut()
 
     expect(setup.events).toEqual([
-      'globalShortcut.register',
+      'globalShortcut.register', 'globalShortcut.register', 'globalShortcut.register',
+      'globalShortcut.register', 'globalShortcut.register',
       'reservedSessionWebPreferences',
       'WebContentsView',
       'installReservedSessionSecurity',
+      'suspendProductSessionView',
       'addChildView',
       'setBounds',
       'loadURL',
@@ -236,6 +250,49 @@ describe('ChatGPT R1 dev harness gate and secure view', () => {
     expect(main).toContain("const isDevRuntime = Boolean(process.env.VITE_DEV_SERVER_URL) || !app.isPackaged")
     expect(main).toContain("process.platform === 'darwin' && isDevRuntime && process.env.AUTOFLOWCUT_SPIKE === '1'")
     expect(main).toContain("import('./spikes/chatgptR1Upload.js')")
+    expect(main).toContain('chatgptR1HarnessControls = registerChatgptR1Harness({')
+    expect(main).toContain('suspendProductSessionView: () =>')
+  })
+
+  it('registers a real operator control loop that captures and advances non-default matrix repetitions', async () => {
+    const setup = makeSetup({ composerReady: true })
+    expect([...setup.shortcutCallbacks.keys()]).toEqual([
+      'CommandOrControl+Shift+R',
+      'CommandOrControl+Shift+S',
+      'CommandOrControl+Shift+B',
+      'CommandOrControl+Shift+Right',
+      'CommandOrControl+Shift+X',
+    ])
+    await setup.invokeShortcut()
+
+    await setup.invokeShortcut('CommandOrControl+Shift+Right')
+    await setup.invokeShortcut('CommandOrControl+Shift+Right')
+    await setup.invokeShortcut('CommandOrControl+Shift+S')
+
+    expect(setup.writeEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      caseId: 'AUTH-FRESH',
+      repetition: 3,
+      events: [expect.objectContaining({ event: 'OPERATOR_CAPTURE' })],
+    }))
+    await setup.invokeShortcut('CommandOrControl+Shift+B')
+    expect(setup.webContents.loadURL).toHaveBeenCalledTimes(4)
+    expect(setup.registration.getMeasurementCursor()).toEqual({
+      caseId: 'ATTACH-FILE-INPUT-SINGLE', repetition: 1,
+    })
+  })
+
+  it('closes the full-window spike, restores the product session view, and can reopen the same secure view', async () => {
+    const setup = makeSetup({ composerReady: true })
+    await setup.invokeShortcut()
+
+    await setup.invokeShortcut('CommandOrControl+Shift+X')
+    expect(setup.events).toContain('removeChildView')
+    expect(setup.restoreProductSessionView).toHaveBeenCalledOnce()
+
+    await setup.invokeShortcut()
+    expect(setup.createdViews).toHaveLength(1)
+    expect(setup.installReservedSessionSecurity).toHaveBeenCalledOnce()
+    expect(setup.events.filter((event) => event === 'addChildView')).toHaveLength(2)
   })
 
   it('resets each repetition to a blank conversation without replacing or weakening the secure view', async () => {

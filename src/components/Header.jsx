@@ -230,6 +230,21 @@ export default function Header({
     startAuthPolling()
   }
 
+  const reconnectChatgpt = async () => {
+    if (!chatgptTargetActive) return
+    try {
+      const currentRoute = { mode, sessionTarget }
+      const routeResult = onRouteRequest
+        ? await onRouteRequest(currentRoute)
+        : await window.electronAPI?.setRoute?.(currentRoute)
+      if (routeResult && routeResult.ok === false) throw new Error(routeResult.error || 'route-set-failed')
+      const status = await window.electronAPI?.reconnectSession?.('chatgpt')
+      if (status?.ready === true) onAuthRecovered?.()
+    } catch (error) {
+      console.warn('[Header] ChatGPT reconnect failed:', error?.message)
+    }
+  }
+
   // #R7-16: Flow 로그인 회복용 짧은 인증 폴링. 인증되면 authReady→effect 가 stopPolling.
   const startAuthPolling = () => {
     stopPolling()
@@ -280,7 +295,7 @@ export default function Header({
   const handleUnauthenticated = () => {
     if (mode === 'api') return onSettings?.('apiKey')
     if (flowTargetActive) return openFlow()
-    if (chatgptTargetActive) return undefined
+    if (chatgptTargetActive) return reconnectChatgpt()
   }
 
   const authActionLabel = mode === 'api' ? t('header.apiKey') : t(loginLabelKey)
@@ -356,7 +371,11 @@ export default function Header({
             <span className="auth-badge checking" data-tooltip={t('header.checking')}>⏳</span>
           )}
           {authStatus === 'authenticated' && (
-            <span className="auth-badge authenticated" data-tooltip={authenticatedLabel} onClick={checkAuth}>🟢</span>
+            <span
+              className="auth-badge authenticated"
+              data-tooltip={authenticatedLabel}
+              onClick={chatgptTargetActive ? reconnectChatgpt : checkAuth}
+            >🟢</span>
           )}
           {authStatus === 'unavailable' && (
             <span className="auth-badge unavailable" data-tooltip={t('header.unavailable')}>

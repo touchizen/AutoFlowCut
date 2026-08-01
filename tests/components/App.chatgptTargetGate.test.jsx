@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useSplitLayout } from '../../src/hooks/useSplitLayout.js'
 
 const appMocks = vi.hoisted(() => {
   const noop = vi.fn()
@@ -17,6 +18,7 @@ const appMocks = vi.hoisted(() => {
   const sceneBatchStart = vi.fn(async options => flowGenerateImage(options))
   const videoStart = vi.fn(async () => ({ success: true }))
   const toastWarning = vi.fn()
+  const commitRoute = vi.fn()
   const scenes = [
     { id: 'scene_1', prompt: 'a test scene', videoT2VPrompt: 'a test video', status: 'pending' },
   ]
@@ -64,6 +66,7 @@ const appMocks = vi.hoisted(() => {
     sceneBatchStart,
     videoStart,
     toastWarning,
+    commitRoute,
     scenes,
     scenesHook,
     genAPI,
@@ -86,6 +89,7 @@ vi.mock('../../src/contexts/ModeContext', () => ({
     mode: appMocks.state.mode,
     sessionTarget: appMocks.state.sessionTarget,
     clearMode: appMocks.noop,
+    setRoute: appMocks.commitRoute,
   }),
 }))
 vi.mock('../../src/contexts/AuthContext', () => ({
@@ -344,6 +348,52 @@ vi.mock('../../src/components/story/StoryView', () => ({ default: () => null }))
 
 import App from '../../src/App'
 
+const shellRef = {
+  current: {
+    getBoundingClientRect: () => ({
+      left: 0, top: 0, right: 1200, bottom: 900, width: 1200, height: 900,
+    }),
+  },
+}
+
+function SplitLayoutOwner() {
+  const layout = useSplitLayout({ isFlow: appMocks.state.mode === 'flow', shellRef })
+  return (
+    <>
+      <output data-testid="owned-layout">{layout.layoutMode}:{layout.splitRatio}</output>
+      <App />
+    </>
+  )
+}
+
+function installLayoutEchoAPI(setRoute = vi.fn(async (payload) => {
+  const route = payload?.to || payload
+  return { ok: true, route, revision: 1 }
+})) {
+  const listeners = new Set()
+  const events = []
+  window.electronAPI = {
+    setRoute,
+    setMode: vi.fn(async () => ({ ok: true })),
+    setLayout: vi.fn(async ({ mode, ratio }) => {
+      events.push(`layout:${mode}:${ratio}`)
+      // Electron IPC/event delivery is asynchronous. Keeping the echo on a microtask is what
+      // makes this harness exercise the child-effect → parent-effect ordering contract.
+      queueMicrotask(() => {
+        for (const listener of listeners) listener({ mode, splitRatio: ratio })
+      })
+      return { success: true, mode, splitRatio: ratio }
+    }),
+    onLayoutChanged: vi.fn((listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }),
+    getSessionTargetStatus: vi.fn(async () => appMocks.state.sessionStatus),
+    onSessionTargetStatus: vi.fn(() => () => {}),
+  }
+  return { events, setRoute }
+}
+
 describe('App flow + chatgpt target gate', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -358,8 +408,10 @@ describe('App flow + chatgpt target gate', () => {
     appMocks.sceneBatchStart.mockClear()
     appMocks.videoStart.mockClear()
     appMocks.toastWarning.mockClear()
+    appMocks.commitRoute.mockClear()
     appMocks.genAPI.getAccessToken.mockClear().mockResolvedValue('token')
     window.electronAPI = {
+      setRoute: vi.fn(async (payload) => ({ ok: true, route: payload?.to || payload, revision: 1 })),
       setMode: vi.fn(async () => ({ ok: true })),
       setLayout: vi.fn(async () => ({ ok: true })),
       getSessionTargetStatus: vi.fn(async (target) => (
@@ -377,29 +429,97 @@ describe('App flow + chatgpt target gate', () => {
     delete window.electronAPI
   })
 
-  it('flow + chatgpt does not push the legacy Flow attach IPC', async () => {
+  it('flow + chatgpt adopts the canonical route without the legacy mode IPC', async () => {
     render(<App />)
 
-    await act(async () => { await Promise.resolve() })
+    await waitFor(() => expect(window.electronAPI.setRoute).toHaveBeenCalledWith({
+      to: { mode: 'flow', sessionTarget: 'chatgpt' }, boot: true,
+    }))
 
+    expect(window.electronAPI.setMode).not.toHaveBeenCalled()
+  })
+
+  it('flow + flow adopts the canonical route without the legacy mode IPC', async () => {
+    appMocks.state.sessionTarget = 'flow'
+    render(<App />)
+
+    await waitFor(() => expect(window.electronAPI.setRoute).toHaveBeenCalledWith({
+      to: { mode: 'flow', sessionTarget: 'flow' }, boot: true,
+    }))
+    expect(window.electronAPI.setMode).not.toHaveBeenCalled()
+    expect(window.electronAPI.setLayout).toHaveBeenCalled()
+  })
+
+  it('api adopts the canonical route without the legacy mode IPC', async () => {
+    appMocks.state.mode = 'api'
+    render(<App />)
+
+    await waitFor(() => expect(window.electronAPI.setRoute).toHaveBeenCalledWith({
+      to: { mode: 'api', sessionTarget: 'chatgpt' }, boot: true,
+    }))
     expect(window.electronAPI.setMode).not.toHaveBeenCalled()
     expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
   })
 
-  it('flow + flow keeps pushing the legacy Flow attach IPC', async () => {
-    appMocks.state.sessionTarget = 'flow'
-    render(<App />)
+  it.each([
+    ['flow', { mode: 'split-right', ratio: 0.71 }],
+    ['chatgpt', { mode: 'split-bottom', ratio: 0.63 }],
+  ])('does not invoke a hidden legacy mode fallback for %s when route:set is unavailable', async (sessionTarget, savedLayout) => {
+    appMocks.state.sessionTarget = sessionTarget
+    localStorage.setItem('layoutSettings', JSON.stringify(savedLayout))
+    delete window.electronAPI.setRoute
 
-    await waitFor(() => expect(window.electronAPI.setMode).toHaveBeenCalledWith({ mode: 'flow' }))
-    expect(window.electronAPI.setLayout).toHaveBeenCalled()
+    render(<App />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(window.electronAPI.setMode).not.toHaveBeenCalled()
   })
 
-  it('api keeps pushing the legacy detach IPC for any target', async () => {
-    appMocks.state.mode = 'api'
-    render(<App />)
+  it.each([
+    { mode: 'split-right', ratio: 0.71 },
+    { mode: 'split-top', ratio: 0.64 },
+    { mode: 'split-bottom', ratio: 0.59 },
+    { mode: 'split-left', ratio: 0.76 },
+  ])('preserves the saved non-default layout on login-mode launch: $mode/$ratio', async (savedLayout) => {
+    appMocks.state.sessionTarget = 'flow'
+    localStorage.setItem('layoutSettings', JSON.stringify(savedLayout))
+    installLayoutEchoAPI()
 
-    await waitFor(() => expect(window.electronAPI.setMode).toHaveBeenCalledWith({ mode: 'api' }))
-    expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
+    render(<SplitLayoutOwner />)
+
+    await waitFor(() => expect(screen.getByTestId('owned-layout')).toHaveTextContent(
+      `${savedLayout.mode}:${savedLayout.ratio}`,
+    ))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(JSON.parse(localStorage.getItem('layoutSettings'))).toEqual(savedLayout)
+    expect(screen.getByTestId('owned-layout')).toHaveTextContent(`${savedLayout.mode}:${savedLayout.ratio}`)
+  })
+
+  it('preserves the saved layout across a target-only switch and an api-to-flow mode entry', async () => {
+    const savedLayout = { mode: 'split-bottom', ratio: 0.67 }
+    localStorage.setItem('layoutSettings', JSON.stringify(savedLayout))
+    const { events } = installLayoutEchoAPI()
+    const view = render(<SplitLayoutOwner />)
+    await waitFor(() => expect(screen.getByTestId('owned-layout')).toHaveTextContent('split-bottom:0.67'))
+
+    events.length = 0
+    appMocks.state.sessionTarget = 'flow'
+    view.rerender(<SplitLayoutOwner />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(JSON.parse(localStorage.getItem('layoutSettings'))).toEqual(savedLayout)
+    expect(events).not.toContain('layout:split-left:0.5')
+
+    events.length = 0
+    appMocks.state.mode = 'api'
+    view.rerender(<SplitLayoutOwner />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    appMocks.state.mode = 'flow'
+    view.rerender(<SplitLayoutOwner />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(events).toContain('layout:split-left:0.5')
+    expect(JSON.parse(localStorage.getItem('layoutSettings'))).toEqual(savedLayout)
+    expect(screen.getByTestId('owned-layout')).toHaveTextContent('split-bottom:0.67')
   })
 
   it('flow + chatgpt Start does not reach the Flow image engine seam', async () => {

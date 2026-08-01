@@ -148,7 +148,7 @@ export function useAppRouteTransaction({ route, commitRoute, setRoute }) {
   const routeRef = useRef(route)
   routeRef.current = route
 
-  return useCallback(async (next) => {
+  return useCallback(async (next, options = {}) => {
     const accepted = parseRoute(next)
     if (!accepted) return { ok: false, error: 'invalid-route', route: routeRef.current }
 
@@ -156,13 +156,15 @@ export function useAppRouteTransaction({ route, commitRoute, setRoute }) {
     let result
     try {
       result = typeof setRoute === 'function'
-        ? await setRoute(accepted)
+        ? await setRoute(options.boot ? { to: accepted, boot: true } : accepted)
         : { ok: false, error: 'route-api-unavailable', route: routeRef.current }
     } catch (error) {
       result = { ok: false, error: error?.message || 'route-set-failed', route: routeRef.current }
     }
 
-    if (requestSequence !== requestSequenceRef.current || result?.ok !== true) return result
+    if (requestSequence !== requestSequenceRef.current) return result
+    const reconcileFailure = options.reconcileOnFailure === true && result?.ok !== true
+    if (result?.ok !== true && !reconcileFailure) return result
     const adopted = parseRoute(result.route)
     if (!adopted) return { ok: false, error: 'invalid-adopted-route', route: routeRef.current }
     const revision = Number.isInteger(result.revision) ? result.revision : null
@@ -279,18 +281,10 @@ function App() {
   const generationQueue = useGenerationQueue()
   const route = useMemo(() => mode ? { mode, sessionTarget } : null, [mode, sessionTarget])
   const invokeMainRoute = useCallback(async (next) => {
-    if (typeof window.electronAPI?.setRoute === 'function') {
-      return window.electronAPI.setRoute(next)
-    }
-    // 이전 preload를 띄운 개발/HMR 창에서만 mode-only route를 유지한다. target 전환은
-    // canonical route API 없이는 안전하게 표현할 수 없으므로 fail closed한다.
-    const legacyCanRepresentRoute = next.mode === 'api' || next.sessionTarget === 'flow'
-    const legacyModeSetter = window.electronAPI?.['set' + 'Mode']
-    if (!legacyCanRepresentRoute || typeof legacyModeSetter !== 'function') {
+    if (typeof window.electronAPI?.setRoute !== 'function') {
       return { ok: false, error: 'route-api-unavailable', route }
     }
-    const legacy = await legacyModeSetter({ mode: next.mode })
-    return legacy?.ok ? { ok: true, route: next } : legacy
+    return window.electronAPI.setRoute(next)
   }, [route])
   const requestRoute = useAppRouteTransaction({ route, commitRoute, setRoute: invokeMainRoute })
 
@@ -2169,15 +2163,28 @@ function App() {
 
   // quiesce listener가 먼저 설치된 다음 stored/current route를 main에 adopt한다. 이 순서를
   // 뒤집으면 초기 IPC가 빠른 환경에서 첫 request를 놓쳐 main timeout까지 view 전환이 막힌다.
+  const previousLayoutModeRef = useRef(null)
+  const bootRouteRequestRef = useRef(true)
   useEffect(() => {
     if (!route) return
-    requestRoute(route).then((result) => {
+    const enteringFlow = route.mode === 'flow' && previousLayoutModeRef.current !== 'flow'
+    previousLayoutModeRef.current = route.mode
+    // Shell/useSplitLayout 이 저장 레이아웃의 단일 소유자다. 진입 기본값은 child effect 에서
+    // 동기 push 해야 뒤이어 도는 Shell parent effect 의 저장값이 최종 승자가 된다. IPC 응답 뒤에
+    // 보내면 저장값을 덮고 echo 가 localStorage 까지 오염시킨다. target-only 변경에는 보내지 않는다.
+    if (enteringFlow) {
+      const layout = flowLayoutForMode(route.mode)
+      if (layout) window.electronAPI?.setLayout?.(layout)?.catch?.((e) => console.warn('[App] setLayout failed:', e?.message))
+    }
+    const isBootRequest = bootRouteRequestRef.current
+    bootRouteRequestRef.current = false
+    requestRoute(route, {
+      boot: isBootRequest,
+      reconcileOnFailure: isBootRequest,
+    }).then((result) => {
       if (!result?.ok) {
         console.warn('[App] setRoute failed:', result?.error)
-        return
       }
-      const layout = flowLayoutForMode(result.route.mode)
-      if (layout) window.electronAPI?.setLayout?.(layout)?.catch?.((e) => console.warn('[App] setLayout failed:', e?.message))
     }).catch((e) => console.warn('[App] setRoute failed:', e?.message))
   }, [route, requestRoute])
 

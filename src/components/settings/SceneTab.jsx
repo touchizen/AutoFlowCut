@@ -123,11 +123,15 @@ export default function SceneTab({
     t2v: priceForSelection(stageSources.t2v, t2vModels, localSettings.videoModelT2V, t2vDefaultModel),
     i2v: priceForSelection(stageSources.i2v, i2vModels, localSettings.videoModelF2V, i2vDefaultModel),
   }
-  const providerPrice = (stage) => (
-    <span className="model-provider-price" data-testid={`${stage}-provider-price`}>
-      {stagePrices[stage]}
-    </span>
-  )
+  const providerPrice = (stage) => {
+    const price = stagePrices[stage]
+    if (!price) return null
+    return (
+      <span className="model-provider-price" data-testid={`${stage}-provider-price`}>
+        {price}
+      </span>
+    )
+  }
   return (
     <div className="tab-panel">
       {/* 프로젝트 화면비: 롱폼(16:9) / 숏폼(9:16) — 생성·카드·CapCut export 에 반영 */}

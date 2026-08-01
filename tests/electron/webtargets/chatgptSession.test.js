@@ -48,6 +48,12 @@ const createViewDeps = (listeners = new Map()) => {
   }
 }
 
+const deferred = () => {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 describe('ChatGPT fail-closed session port', () => {
   it('leaves the unmeasured DOM predicate as a blocked injection point', async () => {
     const deps = createViewDeps()
@@ -96,6 +102,38 @@ describe('ChatGPT fail-closed session port', () => {
     expect(target.getSessionStatus()).toEqual({
       target: 'chatgpt', status: 'ready', ready: true, revision: 1,
     })
+  })
+
+  it.each([
+    ['ready', 'login-required'],
+    ['session-blocked', 'ready'],
+  ])('publishes only the newest overlapping probe: stale %s, newest %s', async (staleStatus, newestStatus) => {
+    const first = deferred()
+    const second = deferred()
+    const target = createChatgptTarget({
+      ...createViewDeps(),
+      probeSession: vi.fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => second.promise),
+    })
+    const changed = vi.fn()
+    target.onSessionStatusChanged(changed)
+
+    const staleProbe = target.ensureSession()
+    const newestProbe = target.ensureSession()
+    second.resolve(newestStatus)
+    await newestProbe
+    first.resolve(staleStatus)
+    await staleProbe
+
+    expect(target.getSessionStatus()).toEqual({
+      target: 'chatgpt',
+      status: newestStatus,
+      ready: newestStatus === 'ready',
+      revision: 1,
+    })
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ status: newestStatus }))
   })
 })
 

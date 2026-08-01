@@ -2505,3 +2505,11 @@ html, body {
 }
 .model-mode-flow { background: #6366f1; color: #fff; }
 .model-mode-api { background: #2d8a4e; color: #fff; }
+.model-provider-price {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
+}

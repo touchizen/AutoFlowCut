@@ -42,16 +42,21 @@ export function createChatgptTarget({
     revision: 0,
   }
   const statusListeners = new Set()
+  let latestProbeSequence = 0
 
   const getSessionStatus = () => ({ ...sessionStatus })
 
   async function ensureSession() {
+    const probeSequence = ++latestProbeSequence
     let probeResult
     try {
       probeResult = await probeSession(view)
     } catch {
       probeResult = BLOCKED_STATUS
     }
+    // Freshness is invocation order, not completion order. did-finish-load, admission, and
+    // explicit reconnect can overlap; an older observation must never publish after a newer one.
+    if (probeSequence !== latestProbeSequence) return getSessionStatus()
     const status = normaliseSessionStatus(probeResult)
     const ready = status === 'ready'
     if (status !== sessionStatus.status || ready !== sessionStatus.ready) {

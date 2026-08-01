@@ -8,6 +8,7 @@ import { SESSION_TARGET_STRIP_HEIGHT } from '../../src/utils/appLayout.js'
 let layoutMode = 'split-left'
 let splitRatio = 0.5
 let modalVisible = false
+let sessionTargetStripEnabled = false
 // 드래그 중 Flow 뷰 접기(A′) — 네이티브 뷰가 마우스 이벤트를 가로채 리사이즈가 흔들리므로,
 // 드래그 동안 Flow 를 0×0 으로 접고 렌더러가 정지 스냅샷을 대신 그린다. dragToken 은 캡처(async)
 // 도중 drag-end 가 와서 Flow 가 접힌 채 남는 레이스를 막는다.
@@ -20,8 +21,12 @@ let powerSaveBlockerId = null
  * @param {BrowserWindow} mainWindow
  * @param {WebContentsView} sessionView
  */
-export function updateBounds(mainWindow, sessionView, { sessionTargetStripEnabled = false } = {}) {
+export function updateBounds(mainWindow, sessionView, options = {}) {
   if (!mainWindow || !sessionView) return
+
+  const stripEnabled = Object.hasOwn(options, 'sessionTargetStripEnabled')
+    ? options.sessionTargetStripEnabled === true
+    : sessionTargetStripEnabled
 
   if (modalVisible || dragging) {
     sessionView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
@@ -31,7 +36,7 @@ export function updateBounds(mainWindow, sessionView, { sessionTargetStripEnable
   const { width, height } = mainWindow.getContentBounds()
   const GAP = 3
   const belowSessionStrip = (bounds) => {
-    if (!sessionTargetStripEnabled) return bounds
+    if (!stripEnabled) return bounds
     const inset = Math.min(SESSION_TARGET_STRIP_HEIGHT, Math.max(0, bounds.height))
     return {
       ...bounds,
@@ -61,8 +66,8 @@ export function updateBounds(mainWindow, sessionView, { sessionTargetStripEnable
  * @param {Function} getMainWindow - mainWindow getter
  * @param {Function} getActiveSessionView - 현재 routed 세션 view(Flow/ChatGPT) getter
  */
-export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView, options = {}) {
-  const applyViewBounds = options.updateViewBounds || updateBounds
+export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) {
+  const applyViewBounds = updateBounds
   ipcMain.handle('app:set-layout', (event, { mode, ratio }) => {
     layoutMode = mode || 'split-left'
     if (ratio !== undefined) splitRatio = Math.max(0.2, Math.min(0.8, ratio))
@@ -173,3 +178,4 @@ export function getSplitRatio() { return splitRatio }
 export function setSplitRatio(ratio) { splitRatio = ratio }
 export function getModalVisible() { return modalVisible }
 export function setModalVisible(visible) { modalVisible = visible }
+export function setSessionTargetStripEnabled(enabled) { sessionTargetStripEnabled = enabled === true }

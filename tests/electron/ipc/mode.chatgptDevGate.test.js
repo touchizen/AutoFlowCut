@@ -75,7 +75,7 @@ describe('P2 ChatGPT view load gate', () => {
     expect(isChatgptP2DevGateEnabled(gate)).toBe(expected)
   })
 
-  it('never loads when any gate leg is absent, with a valid-gate positive control', async () => {
+  it('rejects explicit ChatGPT routes when any gate leg is absent, with a valid-gate positive control', async () => {
     const invalidGates = [
       makeGate({ chatgptP2Flag: undefined }),
       makeGate({ isPackaged: true, viteDevServerUrl: '' }),
@@ -83,9 +83,11 @@ describe('P2 ChatGPT view load gate', () => {
     ]
     for (const gate of invalidGates) {
       const negative = gateHarness(gate)
-      await negative.controller.setRoute(chatgptRoute())
+      const result = await negative.controller.setRoute(chatgptRoute())
+      expect(result).toMatchObject({ ok: false, error: 'session-target-disabled', route: flowRoute() })
       expect(negative.loadURL).not.toHaveBeenCalled()
-      expect(negative.controller.getCurrentRoute()).toEqual(chatgptRoute())
+      expect(negative.target.createView).not.toHaveBeenCalled()
+      expect(negative.controller.getCurrentRoute()).toEqual(flowRoute())
     }
 
     const positive = gateHarness(makeGate({
@@ -95,6 +97,17 @@ describe('P2 ChatGPT view load gate', () => {
     await positive.controller.setRoute(chatgptRoute())
     expect(positive.loadURL).toHaveBeenCalledOnce()
     expect(positive.loadURL).toHaveBeenCalledWith('https://chatgpt.com/')
+  })
+
+  it('normalizes a disabled persisted ChatGPT boot route to Flow without creating a blank view', async () => {
+    const setup = gateHarness(makeGate({ chatgptP2Flag: undefined }))
+
+    const result = await setup.controller.setRoute({ to: chatgptRoute(), boot: true })
+
+    expect(result).toMatchObject({ ok: true, route: flowRoute() })
+    expect(setup.controller.getCurrentRoute()).toEqual(flowRoute())
+    expect(setup.target.createView).not.toHaveBeenCalled()
+    expect(setup.loadURL).not.toHaveBeenCalled()
   })
 
   it('does not create or load a view until route:set actually selects ChatGPT', async () => {
@@ -119,6 +132,24 @@ describe('P2 ChatGPT view load gate', () => {
     expect(setup.controller.getActiveSessionView('chatgpt')).toBe(firstView)
     expect(setup.target.createView).toHaveBeenCalledOnce()
     expect(setup.loadURL).toHaveBeenCalledOnce()
+  })
+
+  it('retries a preserved ChatGPT view after one transient initial load failure', async () => {
+    const setup = gateHarness(makeGate())
+    setup.loadURL
+      .mockRejectedValueOnce(Object.assign(new Error('temporary network failure'), { code: 'ENETDOWN' }))
+      .mockResolvedValueOnce(undefined)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await setup.controller.setRoute(chatgptRoute())
+    await Promise.resolve()
+    await setup.controller.setRoute({ mode: 'api', sessionTarget: 'chatgpt' })
+    await setup.controller.setRoute(chatgptRoute())
+
+    expect(setup.target.createView).toHaveBeenCalledOnce()
+    expect(setup.loadURL).toHaveBeenCalledTimes(2)
+    expect(setup.loadURL).toHaveBeenLastCalledWith('https://chatgpt.com/')
+    warn.mockRestore()
   })
 
   it('installs the real two-argument security policy before the first URL load', async () => {

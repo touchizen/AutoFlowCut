@@ -41,7 +41,7 @@ const deferred = () => {
 const flowRoute = () => ({ mode: 'flow', sessionTarget: 'flow' })
 const chatgptRoute = () => ({ mode: 'flow', sessionTarget: 'chatgpt' })
 
-const renderRunningFlowAutomation = ({ flowEffectGate }) => {
+const renderRunningFlowAutomation = ({ flowEffectGate, startMethod = 'start' }) => {
   const events = []
   const started = deferred()
   const stopRequested = deferred()
@@ -68,7 +68,7 @@ const renderRunningFlowAutomation = ({ flowEffectGate }) => {
     getAccessToken: vi.fn().mockResolvedValue('token'),
   }
   const scenesHook = {
-    scenes: [{ id: 'scene-1', prompt: 'portrait', status: 'pending' }],
+    scenes: [{ id: 'scene-1', prompt: 'portrait', status: startMethod === 'retryErrors' ? 'error' : 'pending' }],
     references: [],
     updateScene: vi.fn(),
     getMatchingReferences: vi.fn(() => []),
@@ -95,15 +95,22 @@ const renderRunningFlowAutomation = ({ flowEffectGate }) => {
     return automation
   })
 
+  let initialPromise
   act(() => {
-    void hook.result.current.start({
+    const options = {
       projectName: 'route-quiesce', saveMode: 'memory',
       flowPacingMinMs: 0, flowPacingMaxMs: 0,
-    })
+    }
+    initialPromise = startMethod === 'retry'
+      ? hook.result.current.retryScene('scene-1', options)
+      : startMethod === 'retryErrors'
+        ? hook.result.current.retryErrors(options)
+        : hook.result.current.start(options)
   })
 
   const automation = {
     waitUntilStopRequested: () => stopRequested.promise,
+    initialPromise: () => initialPromise,
   }
   const routeBridge = {
     sendReceipt,
@@ -125,5 +132,23 @@ it('does not acknowledge route quiesce until real renderer-owned Flow automation
   expect(routeBridge.sendReceipt).not.toHaveBeenCalled()
   flowEffectGate.resolve()
   await pending
+  expect(events).toEqual(['flow:start', 'route-quiesce', 'flow:stop-requested', 'flow:idle', 'route-quiesce-receipt'])
+})
+
+it.each([
+  ['retryScene', 'retry'],
+  ['retryErrors', 'retryErrors'],
+])('tracks %s in awaitIdle so a retry cannot outlive the renderer quiesce receipt', async (_label, startMethod) => {
+  const flowEffectGate = deferred()
+  const { automation, routeBridge, events } = renderRunningFlowAutomation({ flowEffectGate, startMethod })
+  const pending = routeBridge.requestFromMain({ requestId: 'route-retry', from: flowRoute(), to: chatgptRoute() })
+
+  await automation.waitUntilStopRequested()
+  await act(async () => { await Promise.resolve(); await Promise.resolve() })
+  expect(events).toEqual(['flow:start', 'route-quiesce', 'flow:stop-requested'])
+  expect(routeBridge.sendReceipt).not.toHaveBeenCalled()
+
+  flowEffectGate.resolve()
+  await Promise.all([automation.initialPromise(), pending])
   expect(events).toEqual(['flow:start', 'route-quiesce', 'flow:stop-requested', 'flow:idle', 'route-quiesce-receipt'])
 })
