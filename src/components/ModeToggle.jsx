@@ -8,6 +8,7 @@
 import { useMode } from '../contexts/ModeContext'
 import { useI18n } from '../hooks/useI18n'
 import { MODE_INFO, modeTooltip } from './modeInfo'
+import { toast } from './Toast'
 import './ModeToggle.css'
 
 export default function ModeToggle({ busy = false, onRouteRequest = null }) {
@@ -15,24 +16,35 @@ export default function ModeToggle({ busy = false, onRouteRequest = null }) {
   const { t } = useI18n()
   if (!mode) return null
 
+  const surfaceFailure = (error) => {
+    toast.error(t('modeInfo.switchFailed', {
+      error: error || 'route-set-failed',
+    }))
+  }
+
   const requestMode = async (nextMode) => {
     if (nextMode === mode) return
     const nextRoute = { mode: nextMode, sessionTarget }
     try {
       if (onRouteRequest) {
-        await onRouteRequest(nextRoute)
+        const result = await onRouteRequest(nextRoute)
+        if (result?.ok !== true) surfaceFailure(result?.error)
         return
       }
       if (typeof window.electronAPI?.setRoute === 'function') {
         const result = await window.electronAPI.setRoute(nextRoute)
-        if (result?.ok === true && result.route) setRoute(result.route)
+        if (result?.ok === true && result.route) {
+          setRoute(result.route)
+        } else {
+          surfaceFailure(result?.error || 'invalid-adopted-route')
+        }
         return
       }
       // Browser-only/component-test compatibility. Packaged Electron always owns
       // adoption through route:set (preload exposes setRoute).
       setRoute(nextRoute)
-    } catch {
-      // Main rejection leaves renderer state/storage untouched.
+    } catch (error) {
+      surfaceFailure(error?.message || 'route-set-failed')
     }
   }
 

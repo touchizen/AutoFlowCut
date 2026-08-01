@@ -43,6 +43,7 @@ export default {
     selectTitle: '생성 방식을 선택하세요',
     selectSub: '나중에 상단 토글로 언제든 바꿀 수 있어요.',
     busySwitch: '생성 중에는 전환할 수 없어요',
+    switchFailed: '생성 모드를 전환하지 못했어요: {error}',
     flow: {
       name: '로그인 모드',
       desc: 'Google Flow · ChatGPT 계정 세션으로 생성',

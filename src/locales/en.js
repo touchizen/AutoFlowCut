@@ -43,6 +43,7 @@ export default {
     selectTitle: 'Choose how to generate',
     selectSub: 'You can switch anytime later with the top toggle.',
     busySwitch: "Can't switch while generating",
+    switchFailed: 'Could not switch generation mode: {error}',
     flow: {
       name: 'Login Mode',
       desc: 'Generate with a Google Flow or ChatGPT account session',

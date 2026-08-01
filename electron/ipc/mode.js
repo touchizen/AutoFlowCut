@@ -48,6 +48,7 @@ export function createModeController(getMainWindow, createFlowView, options = {}
   let startupHint // undefined=미선언, null=없음, string=저장 id
   let routeRequestSequence = 0
   let transitionQueue = Promise.resolve()
+  let rendererQuiesceOwner = null
   const pendingRendererQuiesce = new Map()
 
   const createSessionView = options.createSessionView || ((target) => {
@@ -125,7 +126,11 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     revision: routeRevision,
   })
 
-  const requestRendererQuiesce = async ({ requestId, fromRevision, to }) => {
+  const requestRendererQuiesce = async (
+    { requestId, fromRevision, to },
+    required = Boolean(options.rendererAutomation || options.requireRendererQuiesce),
+  ) => {
+    if (!required) return
     const request = {
       requestId,
       from: { ...currentRoute },
@@ -176,7 +181,7 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     })
   }
 
-  const performRouteTransition = async (payload, sessionJobOwner) => {
+  const performRouteTransition = async (payload, sessionJobOwner, rendererQuiesceRequired) => {
     const envelope = payload && typeof payload === 'object' && !Array.isArray(payload) && payload.to
       ? payload
       : null
@@ -198,7 +203,10 @@ export function createModeController(getMainWindow, createFlowView, options = {}
         return adoptedResult({ ok: false, error: 'route-session-jobs-required' })
       }
       try {
-        await requestRendererQuiesce({ requestId, fromRevision: previousRevision, to: accepted })
+        await requestRendererQuiesce(
+          { requestId, fromRevision: previousRevision, to: accepted },
+          rendererQuiesceRequired,
+        )
       } catch {
         return adoptedResult({ ok: false, error: 'route-quiesce-failed' })
       }
@@ -266,8 +274,8 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     return adoptedResult({ ok: true })
   }
 
-  function enqueueRoute(payload, sessionJobOwner) {
-    const run = () => performRouteTransition(payload, sessionJobOwner)
+  function enqueueRoute(payload, sessionJobOwner, rendererQuiesceRequired) {
+    const run = () => performRouteTransition(payload, sessionJobOwner, rendererQuiesceRequired)
     const pending = transitionQueue.then(run, run)
     transitionQueue = pending.then(() => undefined, () => undefined)
     return pending
@@ -278,6 +286,31 @@ export function createModeController(getMainWindow, createFlowView, options = {}
   }
 
   function register(ipcMain) {
+    const isTrustedRenderer = (event) => (
+      Boolean(event?.sender) && event.sender === getMainWindow()?.webContents
+    )
+    const rendererQuiesceRequiredFor = (event) => (
+      options.rendererAutomation
+        ? true
+        : Boolean(
+          options.requireRendererQuiesce &&
+          event?.sender &&
+          event.sender === rendererQuiesceOwner
+        )
+    )
+    ipcMain.on?.('route:quiesce-owner', (event, payload = {}) => {
+      if (payload.present === true) {
+        if (isTrustedRenderer(event)) rendererQuiesceOwner = event.sender
+        return
+      }
+      if (payload.present !== false || event?.sender !== rendererQuiesceOwner) return
+      rendererQuiesceOwner = null
+      for (const pending of pendingRendererQuiesce.values()) {
+        if (pending.sender === event.sender) {
+          pending.reject(new Error('route-quiesce-owner-unregistered'))
+        }
+      }
+    })
     ipcMain.on?.('route:quiesce-receipt', (event, payload = {}) => {
       const pending = pendingRendererQuiesce.get(payload.requestId)
       if (!pending) return
@@ -287,7 +320,7 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     })
     ipcMain.handle('route:set', async (event, payload) => {
       const owner = sessionJobs || (!event?.sender ? LEGACY_NO_SENDER_SESSION_JOBS : null)
-      const result = await enqueueRoute(payload, owner)
+      const result = await enqueueRoute(payload, owner, rendererQuiesceRequiredFor(event))
       if (event?.sender) return result
       if (result.ok) return { ok: true, route: result.route }
       const { route: _route, revision: _revision, ...legacyResult } = result
@@ -301,12 +334,10 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       const result = await enqueueRoute(
         { mode: payload.mode, sessionTarget: currentRoute.sessionTarget || 'flow' },
         owner,
+        rendererQuiesceRequiredFor(event),
       )
       return result.ok ? { ok: true, mode: result.route.mode } : result
     })
-    const isTrustedRenderer = (event) => (
-      Boolean(event?.sender) && event.sender === getMainWindow()?.webContents
-    )
     const isKnownTarget = (target) => (
       typeof target === 'string' && targetRegistry?.has(target) === true
     )

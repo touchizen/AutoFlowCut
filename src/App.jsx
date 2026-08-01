@@ -179,7 +179,8 @@ export function useRouteQuiesceBridge(
   electronAPI = globalThis.window?.electronAPI,
 ) {
   useEffect(() => {
-    const off = electronAPI?.onRouteQuiesceRequest?.(async (request) => {
+    if (typeof electronAPI?.onRouteQuiesceRequest !== 'function') return undefined
+    const off = electronAPI.onRouteQuiesceRequest(async (request) => {
       const receipt = {
         requestId: request?.requestId,
         fromRevision: request?.fromRevision,
@@ -196,7 +197,11 @@ export function useRouteQuiesceBridge(
         })
       }
     })
-    return () => off?.()
+    electronAPI.setRouteQuiesceOwner?.(true)
+    return () => {
+      electronAPI.setRouteQuiesceOwner?.(false)
+      off?.()
+    }
   }, [electronAPI, routeQuiesceOwnerRef])
 }
 
