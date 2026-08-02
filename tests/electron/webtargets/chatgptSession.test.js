@@ -55,6 +55,11 @@ const deferred = () => {
   return { promise, resolve }
 }
 
+const afterMicrotasks = async (value, turns = 50) => {
+  for (let i = 0; i < turns; i += 1) await Promise.resolve()
+  return value
+}
+
 const runProbeInHtml = (source, html) => {
   const dom = new JSDOM(`<body>${html}</body>`)
   try {
@@ -94,6 +99,120 @@ describe('ChatGPT fail-closed session port', () => {
       'eval:logged-in-fixture',
       'chip:ready:true:1',
     ])
+  })
+
+  it('re-probes the hydrating first-open DOM before publishing a logged-in user status', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixtures = [
+        '<main data-fixture="first-open-react-shell"></main>',
+        '<div id="prompt-textarea" data-fixture="hydrated-logged-in-user"></div>',
+      ]
+      const eventLog = []
+      const executeJavaScript = vi.fn(async (source) => {
+        const fixture = fixtures.shift()
+        eventLog.push(`eval:${fixture}`)
+        return runProbeInHtml(source, fixture)
+      })
+      const target = createChatgptTarget(createDefaultProbeDeps(executeJavaScript))
+      target.onSessionStatusChanged((status) => eventLog.push(`status:${status.status}`))
+      target.createView()
+
+      const firstOpenProbe = target.ensureSession()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(target.getSessionStatus()).toEqual({
+        target: 'chatgpt', status: 'session-blocked', ready: false, revision: 0,
+      })
+      expect(eventLog).toEqual([
+        'eval:<main data-fixture="first-open-react-shell"></main>',
+      ])
+
+      await vi.advanceTimersByTimeAsync(499)
+      expect(executeJavaScript).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(firstOpenProbe).resolves.toEqual({
+        target: 'chatgpt', status: 'ready', ready: true, revision: 1,
+      })
+      expect(eventLog).toEqual([
+        'eval:<main data-fixture="first-open-react-shell"></main>',
+        'eval:<div id="prompt-textarea" data-fixture="hydrated-logged-in-user"></div>',
+        'status:ready',
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('fails closed after five well-formed unmeasured DOM results and a ready positive control', async () => {
+    vi.useFakeTimers()
+    try {
+      let evaluation = 0
+      const eventLog = []
+      const executeJavaScript = vi.fn(async (source) => {
+        evaluation += 1
+        const fixture = evaluation === 1
+          ? '<div id="prompt-textarea" data-fixture="exhaustion-ready-control"></div>'
+          : `<main data-fixture="ambiguous-attempt-${evaluation - 1}"></main>`
+        eventLog.push(`eval:${evaluation}:${fixture}`)
+        return runProbeInHtml(source, fixture)
+      })
+      const target = createChatgptTarget(createDefaultProbeDeps(executeJavaScript))
+      target.onSessionStatusChanged((status) => eventLog.push(`status:${status.status}`))
+      target.createView()
+
+      await expect(target.ensureSession()).resolves.toMatchObject({ status: 'ready', ready: true })
+      const exhaustedProbe = target.ensureSession()
+      await vi.advanceTimersByTimeAsync(2_000)
+      await expect(exhaustedProbe).resolves.toMatchObject({
+        status: 'session-blocked', ready: false,
+      })
+      expect(executeJavaScript).toHaveBeenCalledTimes(6)
+      expect(eventLog.filter((entry) => entry.startsWith('status:'))).toEqual([
+        'status:ready',
+        'status:session-blocked',
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('resolves a measured login CTA immediately after a ready positive control', async () => {
+    vi.useFakeTimers()
+    let loginProbe
+    try {
+      const fixtures = [
+        '<div id="prompt-textarea" data-fixture="login-immediate-ready-control"></div>',
+        '<div id="prompt-textarea" data-fixture="login-immediate-composer"></div><button data-testid="login-button" data-fixture="login-immediate-cta">Log in</button>',
+      ]
+      const eventLog = []
+      const executeJavaScript = vi.fn(async (source) => {
+        const fixture = fixtures.shift()
+        eventLog.push(`eval:${fixture}`)
+        return runProbeInHtml(source, fixture)
+      })
+      const target = createChatgptTarget(createDefaultProbeDeps(executeJavaScript))
+      target.onSessionStatusChanged((status) => eventLog.push(`status:${status.status}`))
+      target.createView()
+
+      await expect(target.ensureSession()).resolves.toMatchObject({ status: 'ready', ready: true })
+      loginProbe = target.ensureSession()
+      const settledStatus = await Promise.race([
+        loginProbe,
+        afterMicrotasks({ status: 'not-settled-before-retry-timer', ready: false }),
+      ])
+
+      expect(settledStatus).toMatchObject({ status: 'login-required', ready: false })
+      expect(executeJavaScript).toHaveBeenCalledTimes(2)
+      expect(eventLog.filter((entry) => entry.startsWith('status:'))).toEqual([
+        'status:ready',
+        'status:login-required',
+      ])
+      await loginProbe
+    } finally {
+      await vi.runAllTimersAsync()
+      await loginProbe
+      vi.useRealTimers()
+    }
   })
 
   it('maps a login CTA to login-required even if a composer is also present', async () => {
@@ -247,6 +366,116 @@ describe('ChatGPT fail-closed session port', () => {
       'status:ready',
     ])
     expect(target.getSessionStatus()).toMatchObject({ status: 'ready', ready: true })
+  })
+
+  it('closes the load-listener registration race when loading flips on the recheck', async () => {
+    vi.useFakeTimers()
+    let raceProbe
+    try {
+      const eventLog = []
+      const loadingStates = [true, false]
+      const webContents = {
+        session: { fixture: 'registration-race-session' },
+        isLoading: vi.fn(() => {
+          const loading = loadingStates.shift()
+          eventLog.push(`loading:${loading}`)
+          return loading
+        }),
+        executeJavaScript: vi.fn(async (source) => {
+          eventLog.push('eval:registration-race-ready-control')
+          return runProbeInHtml(
+            source,
+            '<div id="prompt-textarea" data-fixture="registration-race-ready-control"></div>',
+          )
+        }),
+        on: vi.fn((name) => eventLog.push(`listen:${name}`)),
+        removeListener: vi.fn((name) => eventLog.push(`remove:${name}`)),
+      }
+      const view = { webContents }
+      const target = createChatgptTarget({
+        WebContentsView: class { constructor() { return view } },
+        reservedSessionWebPreferences: () => ({ partition: 'persist:chatgpt' }),
+        installReservedSessionSecurity: vi.fn(),
+      })
+      target.createView()
+
+      raceProbe = target.ensureSession()
+      const settledStatus = await Promise.race([
+        raceProbe,
+        afterMicrotasks({ status: 'not-settled-without-load-event-or-timer' }),
+      ])
+
+      expect(settledStatus).toEqual({
+        target: 'chatgpt', status: 'ready', ready: true, revision: 1,
+      })
+      expect(eventLog).toEqual([
+        'listen:did-finish-load',
+        'loading:true',
+        'listen:did-finish-load',
+        'listen:did-fail-load',
+        'loading:false',
+        'remove:did-finish-load',
+        'remove:did-fail-load',
+        'eval:registration-race-ready-control',
+      ])
+      await raceProbe
+    } finally {
+      await vi.runAllTimersAsync()
+      await raceProbe
+      vi.useRealTimers()
+    }
+  })
+
+  it('fails closed when the load wait times out after a ready positive control', async () => {
+    vi.useFakeTimers()
+    try {
+      let loading = false
+      const eventLog = []
+      const handlers = new Map()
+      const webContents = {
+        session: { fixture: 'load-timeout-session' },
+        isLoading: vi.fn(() => {
+          eventLog.push(`loading:${loading}`)
+          return loading
+        }),
+        executeJavaScript: vi.fn(async (source) => {
+          eventLog.push('eval:load-timeout-ready-control')
+          return runProbeInHtml(
+            source,
+            '<div id="prompt-textarea" data-fixture="load-timeout-ready-control"></div>',
+          )
+        }),
+        on: vi.fn((name, listener) => {
+          eventLog.push(`listen:${name}`)
+          if (!handlers.has(name)) handlers.set(name, new Set())
+          handlers.get(name).add(listener)
+        }),
+        removeListener: vi.fn((name, listener) => handlers.get(name)?.delete(listener)),
+      }
+      const view = { webContents }
+      const target = createChatgptTarget({
+        WebContentsView: class { constructor() { return view } },
+        reservedSessionWebPreferences: () => ({ partition: 'persist:chatgpt' }),
+        installReservedSessionSecurity: vi.fn(),
+      })
+      target.createView()
+
+      await expect(target.ensureSession()).resolves.toMatchObject({ status: 'ready', ready: true })
+      loading = true
+      const timedProbe = target.ensureSession()
+      await vi.advanceTimersByTimeAsync(14_999)
+      expect(target.getSessionStatus()).toMatchObject({ status: 'ready', ready: true })
+      expect(webContents.executeJavaScript).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(timedProbe).resolves.toMatchObject({
+        status: 'session-blocked', ready: false,
+      })
+      expect(eventLog.filter((entry) => entry.startsWith('eval:'))).toEqual([
+        'eval:load-timeout-ready-control',
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('maps every unknown probe result to session-blocked after a ready positive control', async () => {

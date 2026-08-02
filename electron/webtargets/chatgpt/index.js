@@ -9,6 +9,8 @@ export const CHATGPT_ALLOWED_ORIGINS = RESERVED_ALLOWED_ORIGINS
 const BLOCKED_STATUS = 'session-blocked'
 const LOAD_WAIT_TIMEOUT_MS = 15_000
 const PROBE_EVALUATION_TIMEOUT_MS = 10_000
+const AUTH_PROBE_ATTEMPTS = 5
+const AUTH_PROBE_INTERVAL_MS = 500
 const RECOGNISED_SESSION_STATUSES = new Set([
   'ready',
   'login-required',
@@ -27,11 +29,16 @@ function isLoggedIn(probe) {
   return probe?.composer === true && probe?.loginCta !== true
 }
 
+function isUnmeasuredProbe(probe) {
+  return probe?.composer === false && probe?.loginCta === false
+}
+
 function statusFromAuthProbe(probe) {
   if (typeof probe?.composer !== 'boolean' || typeof probe?.loginCta !== 'boolean') {
     return BLOCKED_STATUS
   }
-  return isLoggedIn(probe) ? 'ready' : 'login-required'
+  if (isLoggedIn(probe)) return 'ready'
+  return probe.loginCta ? 'login-required' : BLOCKED_STATUS
 }
 
 function withTimeout(operation, timeoutMs) {
@@ -85,9 +92,15 @@ async function measuredSessionProbe(view) {
     if (!webContents || typeof webContents.executeJavaScript !== 'function') return BLOCKED_STATUS
     if (!await whenLoaded(view)) return BLOCKED_STATUS
 
-    const evaluation = Promise.resolve().then(() => webContents.executeJavaScript(AUTH_PROBE))
-    const probe = await withTimeout(evaluation, PROBE_EVALUATION_TIMEOUT_MS)
-    return statusFromAuthProbe(probe)
+    for (let attempt = 0; attempt < AUTH_PROBE_ATTEMPTS; attempt += 1) {
+      const evaluation = Promise.resolve().then(() => webContents.executeJavaScript(AUTH_PROBE))
+      const probe = await withTimeout(evaluation, PROBE_EVALUATION_TIMEOUT_MS)
+      if (!isUnmeasuredProbe(probe)) return statusFromAuthProbe(probe)
+      if (attempt < AUTH_PROBE_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, AUTH_PROBE_INTERVAL_MS))
+      }
+    }
+    return BLOCKED_STATUS
   } catch {
     return BLOCKED_STATUS
   }
