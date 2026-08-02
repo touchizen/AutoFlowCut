@@ -7,6 +7,8 @@ export const CHATGPT_START_URL = 'https://chatgpt.com/'
 export const CHATGPT_ALLOWED_ORIGINS = RESERVED_ALLOWED_ORIGINS
 
 const BLOCKED_STATUS = 'session-blocked'
+const LOAD_WAIT_TIMEOUT_MS = 15_000
+const PROBE_EVALUATION_TIMEOUT_MS = 10_000
 const RECOGNISED_SESSION_STATUSES = new Set([
   'ready',
   'login-required',
@@ -15,9 +17,81 @@ const RECOGNISED_SESSION_STATUSES = new Set([
   BLOCKED_STATUS,
 ])
 
-// R1 injection point: replace this only with an approved loginSignalSurface /
-// sessionStateSignals probe. It deliberately does not inspect ChatGPT DOM or URL.
-const unmeasuredSessionProbe = async () => BLOCKED_STATUS
+const AUTH_PROBE = /* js */ `(() => {
+  const composer = !!document.querySelector('#prompt-textarea');
+  const loginCta = !!(document.querySelector('[data-testid="login-button"]') || document.querySelector('a[href*="/auth/login"]'));
+  return { composer: composer, loginCta: loginCta };
+})()`
+
+function isLoggedIn(probe) {
+  return probe?.composer === true && probe?.loginCta !== true
+}
+
+function statusFromAuthProbe(probe) {
+  if (typeof probe?.composer !== 'boolean' || typeof probe?.loginCta !== 'boolean') {
+    return BLOCKED_STATUS
+  }
+  return isLoggedIn(probe) ? 'ready' : 'login-required'
+}
+
+function withTimeout(operation, timeoutMs) {
+  let timeoutId
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('session-probe-timeout')), timeoutMs)
+  })
+  return Promise.race([operation, timeout]).finally(() => clearTimeout(timeoutId))
+}
+
+function whenLoaded(view, { timeoutMs = LOAD_WAIT_TIMEOUT_MS } = {}) {
+  const webContents = view?.webContents
+  if (!webContents || typeof webContents.isLoading !== 'function') return Promise.resolve(false)
+
+  try {
+    if (!webContents.isLoading()) return Promise.resolve(true)
+  } catch {
+    return Promise.resolve(false)
+  }
+  if (typeof webContents.on !== 'function') return Promise.resolve(false)
+
+  return new Promise((resolve) => {
+    let settled = false
+    let timer
+    const finish = (loaded) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { webContents.removeListener?.('did-finish-load', onFinish) } catch {}
+      try { webContents.removeListener?.('did-fail-load', onFail) } catch {}
+      resolve(loaded)
+    }
+    const onFinish = () => finish(true)
+    const onFail = () => finish(false)
+    timer = setTimeout(() => finish(false), timeoutMs)
+
+    try {
+      webContents.on('did-finish-load', onFinish)
+      webContents.on('did-fail-load', onFail)
+      // The load can finish between the first isLoading check and listener registration.
+      if (!webContents.isLoading()) finish(true)
+    } catch {
+      finish(false)
+    }
+  })
+}
+
+async function measuredSessionProbe(view) {
+  try {
+    const webContents = view?.webContents
+    if (!webContents || typeof webContents.executeJavaScript !== 'function') return BLOCKED_STATUS
+    if (!await whenLoaded(view)) return BLOCKED_STATUS
+
+    const evaluation = Promise.resolve().then(() => webContents.executeJavaScript(AUTH_PROBE))
+    const probe = await withTimeout(evaluation, PROBE_EVALUATION_TIMEOUT_MS)
+    return statusFromAuthProbe(probe)
+  } catch {
+    return BLOCKED_STATUS
+  }
+}
 
 function normaliseSessionStatus(probeResult) {
   const candidate = typeof probeResult === 'string'
@@ -30,7 +104,7 @@ export function createChatgptTarget({
   WebContentsView,
   reservedSessionWebPreferences,
   installReservedSessionSecurity,
-  probeSession = unmeasuredSessionProbe,
+  probeSession = measuredSessionProbe,
   createAdapter = () => null,
   logger = console,
 } = {}) {

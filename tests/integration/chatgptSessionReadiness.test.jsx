@@ -3,7 +3,14 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { createModeController } from '../../electron/ipc/mode.js'
 import { createTargetRegistry } from '../../electron/webtargets/index.js'
 import { createChatgptTarget } from '../../electron/webtargets/chatgpt/index.js'
+import TargetCombo from '../../src/components/TargetCombo.jsx'
+import { ModeProvider } from '../../src/contexts/ModeContext.jsx'
+import { I18nProvider } from '../../src/hooks/useI18n.jsx'
 import { useTargetAuthReady } from '../../src/hooks/useTargetAuthReady.js'
+import {
+  MODE_STORAGE_KEY,
+  SESSION_TARGET_STORAGE_KEY,
+} from '../../src/config/appRoute.js'
 
 const preloadBridge = vi.hoisted(() => {
   const exposed = {}
@@ -39,11 +46,18 @@ beforeAll(async () => {
 function chatgptSessionRuntimeHarness() {
   const viewListeners = new Map()
   const observedStatuses = []
-  const probeResults = ['ready', 'unapproved-r1-signal']
-  const probeSession = vi.fn(async () => probeResults.shift())
+  let probeCount = 0
   const view = {
     webContents: {
       session: {},
+      isLoading: vi.fn(() => false),
+      executeJavaScript: vi.fn(async (source) => {
+        probeCount += 1
+        if (probeCount > 1) throw new Error('fixture-evaluation-failed')
+        const pageDocument = document.implementation.createHTMLDocument('chatgpt-fixture')
+        pageDocument.body.innerHTML = '<div id="prompt-textarea" data-fixture="logged-in"></div>'
+        return new Function('document', `return (${source})`)(pageDocument) // eslint-disable-line no-new-func
+      }),
       on: vi.fn((name, listener) => viewListeners.set(name, listener)),
     },
   }
@@ -51,7 +65,6 @@ function chatgptSessionRuntimeHarness() {
     WebContentsView: class { constructor() { return view } },
     reservedSessionWebPreferences: () => ({ partition: 'persist:chatgpt' }),
     installReservedSessionSecurity: vi.fn(),
-    probeSession,
   })
   target.createView()
 
@@ -92,23 +105,40 @@ function chatgptSessionRuntimeHarness() {
 }
 
 function ImageAdmission({ electronAPI }) {
-  const { authReady } = useTargetAuthReady('chatgpt', electronAPI)
-  return <button type="button" data-testid="image-start" disabled={!authReady}>start</button>
+  const { authReady, authReadyByTarget } = useTargetAuthReady('chatgpt', electronAPI)
+  return (
+    <>
+      <TargetCombo enabled authReadyByTarget={authReadyByTarget} />
+      <button type="button" data-testid="image-start" disabled={!authReady}>start</button>
+    </>
+  )
 }
 
 describe('ChatGPT session readiness integration', () => {
   it('drives did-finish-load and reconnect through main status, preload contract, and image admission', async () => {
+    localStorage.setItem(MODE_STORAGE_KEY, 'flow')
+    localStorage.setItem(SESSION_TARGET_STORAGE_KEY, 'chatgpt')
+    localStorage.setItem('autoflowcut_lang', 'ko')
     const runtime = chatgptSessionRuntimeHarness()
-    render(<ImageAdmission electronAPI={runtime.preloadAPI} />)
+    render(
+      <I18nProvider>
+        <ModeProvider>
+          <ImageAdmission electronAPI={runtime.preloadAPI} />
+        </ModeProvider>
+      </I18nProvider>,
+    )
 
     expect(screen.getByTestId('image-start')).toBeDisabled()
+    expect(screen.getByTestId('target-auth-chip-current')).toHaveTextContent('로그인 필요')
 
     await act(async () => { await runtime.emitDidFinishLoad() })
     await waitFor(() => expect(screen.getByTestId('image-start')).toBeEnabled())
+    expect(screen.getByTestId('target-auth-chip-current')).toHaveTextContent('로그인됨')
     expect(preloadBridge.invoke).toHaveBeenCalledWith('session-target:get-status', 'chatgpt')
 
     await act(async () => { await runtime.preloadAPI.reconnectSession('chatgpt') })
     expect(screen.getByTestId('image-start')).toBeDisabled()
+    expect(screen.getByTestId('target-auth-chip-current')).toHaveTextContent('로그인 필요')
     expect(preloadBridge.invoke).toHaveBeenCalledWith('session-target:reconnect', 'chatgpt')
     expect(runtime.observedStatuses()).toEqual([
       { target: 'chatgpt', status: 'ready', ready: true, revision: 1 },

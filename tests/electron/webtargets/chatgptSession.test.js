@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeAll, describe, it, expect, vi } from 'vitest'
+import { JSDOM } from 'jsdom'
 import { createModeController } from '../../../electron/ipc/mode.js'
 import { createTargetRegistry } from '../../../electron/webtargets/index.js'
 import { createChatgptTarget } from '../../../electron/webtargets/chatgpt/index.js'
@@ -54,16 +55,198 @@ const deferred = () => {
   return { promise, resolve }
 }
 
+const runProbeInHtml = (source, html) => {
+  const dom = new JSDOM(`<body>${html}</body>`)
+  try {
+    return new Function('document', `return (${source})`)(dom.window.document) // eslint-disable-line no-new-func
+  } finally {
+    dom.window.close()
+  }
+}
+
+const createDefaultProbeDeps = (executeJavaScript, listeners = new Map()) => {
+  const deps = createViewDeps(listeners)
+  Object.assign(deps.view.webContents, {
+    isLoading: vi.fn(() => false),
+    executeJavaScript,
+  })
+  return deps
+}
+
 describe('ChatGPT fail-closed session port', () => {
-  it('leaves the unmeasured DOM predicate as a blocked injection point', async () => {
-    const deps = createViewDeps()
+  it('maps the measured logged-in DOM to ready and publishes the chip-facing status event', async () => {
+    const eventLog = []
+    const executeJavaScript = vi.fn(async (source) => {
+      eventLog.push('eval:logged-in-fixture')
+      return runProbeInHtml(source, '<div id="prompt-textarea" contenteditable="true"></div>')
+    })
+    const deps = createDefaultProbeDeps(executeJavaScript)
     const target = createChatgptTarget(deps)
+    target.onSessionStatusChanged((status) => {
+      eventLog.push(`chip:${status.status}:${status.ready}:${status.revision}`)
+    })
     target.createView()
+
+    await expect(target.ensureSession()).resolves.toEqual({
+      target: 'chatgpt', status: 'ready', ready: true, revision: 1,
+    })
+    expect(eventLog).toEqual([
+      'eval:logged-in-fixture',
+      'chip:ready:true:1',
+    ])
+  })
+
+  it('maps a login CTA to login-required even if a composer is also present', async () => {
+    const fixtures = [
+      '<div id="prompt-textarea"></div>',
+      '<div id="prompt-textarea"></div><button data-testid="login-button">Log in</button>',
+      '<a href="/auth/login?fixture=measured-logged-out">Log in</a>',
+    ]
+    const eventLog = []
+    const executeJavaScript = vi.fn(async (source) => {
+      const fixture = fixtures.shift()
+      eventLog.push(`eval:${fixture}`)
+      return runProbeInHtml(source, fixture)
+    })
+    const target = createChatgptTarget(createDefaultProbeDeps(executeJavaScript))
+    target.onSessionStatusChanged((status) => eventLog.push(`status:${status.status}`))
+    target.createView()
+
+    await expect(target.ensureSession()).resolves.toMatchObject({ status: 'ready', ready: true })
+    await expect(target.ensureSession()).resolves.toMatchObject({ status: 'login-required', ready: false })
+    await expect(target.ensureSession()).resolves.toMatchObject({ status: 'login-required', ready: false })
+    expect(eventLog.filter((entry) => entry.startsWith('status:'))).toEqual([
+      'status:ready',
+      'status:login-required',
+    ])
+  })
+
+  it('fails closed for an unrecognised evaluation result after a measured ready positive control', async () => {
+    const executeJavaScript = vi.fn()
+      .mockImplementationOnce(async (source) => runProbeInHtml(
+        source,
+        '<div id="prompt-textarea" data-fixture="positive-control"></div>',
+      ))
+      .mockResolvedValueOnce({
+        composer: 'rendered-but-not-boolean',
+        loginCta: false,
+        fixture: 'non-default-unrecognised-shape',
+      })
+    const target = createChatgptTarget(createDefaultProbeDeps(executeJavaScript))
+    target.createView()
+
+    await expect(target.ensureSession()).resolves.toMatchObject({ status: 'ready', ready: true })
+    await expect(target.ensureSession()).resolves.toMatchObject({
+      status: 'session-blocked', ready: false,
+    })
+  })
+
+  it('fails closed when evaluation throws after a measured ready positive control', async () => {
+    const executeJavaScript = vi.fn()
+      .mockImplementationOnce(async (source) => runProbeInHtml(
+        source,
+        '<div id="prompt-textarea" data-fixture="throw-positive-control"></div>',
+      ))
+      .mockRejectedValueOnce(new Error('fixture-context-destroyed'))
+    const target = createChatgptTarget(createDefaultProbeDeps(executeJavaScript))
+    target.createView()
+
+    await expect(target.ensureSession()).resolves.toMatchObject({ status: 'ready', ready: true })
+    await expect(target.ensureSession()).resolves.toMatchObject({
+      status: 'session-blocked', ready: false,
+    })
+  })
+
+  it('bounds a hung evaluation and fails closed after a measured ready positive control', async () => {
+    vi.useFakeTimers()
+    try {
+      const executeJavaScript = vi.fn()
+        .mockImplementationOnce(async (source) => runProbeInHtml(
+          source,
+          '<div id="prompt-textarea" data-fixture="timeout-positive-control"></div>',
+        ))
+        .mockImplementationOnce(() => new Promise(() => {}))
+      const target = createChatgptTarget(createDefaultProbeDeps(executeJavaScript))
+      target.createView()
+
+      await expect(target.ensureSession()).resolves.toMatchObject({ status: 'ready', ready: true })
+      const timedProbe = target.ensureSession()
+      await vi.advanceTimersByTimeAsync(10_000)
+      await expect(timedProbe).resolves.toMatchObject({
+        status: 'session-blocked', ready: false,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('fails closed without a view and has a measured ready positive control once the view exists', async () => {
+    const executeJavaScript = vi.fn(async (source) => runProbeInHtml(
+      source,
+      '<div id="prompt-textarea" data-fixture="post-missing-view-control"></div>',
+    ))
+    const deps = createDefaultProbeDeps(executeJavaScript)
+    const target = createChatgptTarget(deps)
 
     await expect(target.ensureSession()).resolves.toEqual({
       target: 'chatgpt', status: 'session-blocked', ready: false, revision: 0,
     })
-    expect(deps.view.webContents).not.toHaveProperty('executeJavaScript')
+    target.createView()
+    await expect(target.ensureSession()).resolves.toEqual({
+      target: 'chatgpt', status: 'ready', ready: true, revision: 1,
+    })
+  })
+
+  it('waits out an in-flight load instead of publishing a false login-required result', async () => {
+    const eventLog = []
+    const handlers = new Map()
+    let loading = true
+    const webContents = {
+      session: { fixture: 'reserved-chatgpt-session' },
+      isLoading: vi.fn(() => {
+        eventLog.push(`loading:${loading}`)
+        return loading
+      }),
+      executeJavaScript: vi.fn(async (source) => {
+        eventLog.push(`eval:${loading ? 'mid-load' : 'loaded'}`)
+        return runProbeInHtml(source, loading
+          ? '<a href="/auth/login?fixture=mid-load-false-negative">Log in</a>'
+          : '<div id="prompt-textarea" data-fixture="loaded-session"></div>')
+      }),
+      on: vi.fn((name, listener) => {
+        eventLog.push(`listen:${name}`)
+        if (!handlers.has(name)) handlers.set(name, new Set())
+        handlers.get(name).add(listener)
+      }),
+      removeListener: vi.fn((name, listener) => handlers.get(name)?.delete(listener)),
+    }
+    const view = { webContents }
+    const target = createChatgptTarget({
+      WebContentsView: class { constructor() { return view } },
+      reservedSessionWebPreferences: () => ({ partition: 'persist:chatgpt' }),
+      installReservedSessionSecurity: vi.fn(),
+    })
+    target.onSessionStatusChanged((status) => eventLog.push(`status:${status.status}`))
+    target.createView()
+
+    const probeIssuedMidLoad = target.ensureSession()
+    for (let i = 0; i < 8; i += 1) await Promise.resolve()
+    expect(eventLog.filter((entry) => entry.startsWith('eval:'))).toEqual([])
+    expect(eventLog.filter((entry) => entry.startsWith('status:'))).toEqual([])
+
+    loading = false
+    const loadCallbacks = [...(handlers.get('did-finish-load') || [])]
+    await Promise.all(loadCallbacks.map((listener) => listener()))
+    await probeIssuedMidLoad
+
+    expect(eventLog.filter((entry) => entry.startsWith('eval:'))).toEqual([
+      'eval:loaded',
+      'eval:loaded',
+    ])
+    expect(eventLog.filter((entry) => entry.startsWith('status:'))).toEqual([
+      'status:ready',
+    ])
+    expect(target.getSessionStatus()).toMatchObject({ status: 'ready', ready: true })
   })
 
   it('maps every unknown probe result to session-blocked after a ready positive control', async () => {
