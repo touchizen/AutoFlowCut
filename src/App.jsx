@@ -157,15 +157,16 @@ export function useAppRouteTransaction({ route, commitRoute, setRoute }) {
     try {
       result = typeof setRoute === 'function'
         ? await setRoute(options.boot ? { to: accepted, boot: true } : accepted)
-        : { ok: false, error: 'route-api-unavailable', route: routeRef.current }
+        : { ok: false, error: 'route-api-unavailable' }
     } catch (error) {
-      result = { ok: false, error: error?.message || 'route-set-failed', route: routeRef.current }
+      result = { ok: false, error: error?.message || 'route-set-failed' }
     }
 
     if (requestSequence !== requestSequenceRef.current) return result
     const reconcileFailure = options.reconcileOnFailure === true && result?.ok !== true
     if (result?.ok !== true && !reconcileFailure) return result
     const adopted = parseRoute(result.route)
+    if (reconcileFailure && !adopted) return result
     if (!adopted) return { ok: false, error: 'invalid-adopted-route', route: routeRef.current }
     const revision = Number.isInteger(result.revision) ? result.revision : null
     if (revision != null && revision < adoptedRevisionRef.current) return result
@@ -282,10 +283,10 @@ function App() {
   const route = useMemo(() => mode ? { mode, sessionTarget } : null, [mode, sessionTarget])
   const invokeMainRoute = useCallback(async (next) => {
     if (typeof window.electronAPI?.setRoute !== 'function') {
-      return { ok: false, error: 'route-api-unavailable', route }
+      return { ok: false, error: 'route-api-unavailable' }
     }
     return window.electronAPI.setRoute(next)
-  }, [route])
+  }, [])
   const requestRoute = useAppRouteTransaction({ route, commitRoute, setRoute: invokeMainRoute })
 
   // Auth/Payment Modals

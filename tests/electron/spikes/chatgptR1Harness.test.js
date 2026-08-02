@@ -4,10 +4,15 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   BLOCKED_LOGIN_SIGNAL,
+  CHATGPT_R1_CAPTURE_SHORTCUT,
+  CHATGPT_R1_CLOSE_SHORTCUT,
   CHATGPT_R1_SHORTCUT,
+  R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL,
   R1_CASE_MATRIX,
   isChatgptR1HarnessEnabled,
+  loadR1MeasurementRuntime,
   registerChatgptR1Harness,
+  writeR1ResultFile,
 } from '../../../electron/spikes/chatgptR1Upload.js'
 import {
   buildBoundedSizeSearch,
@@ -23,6 +28,8 @@ function makeSetup({
   viteDevServerUrl = '',
   spikeFlag = '1',
   composerReady = false,
+  shortcutRegistrationFailure = null,
+  measurementRuntime = null,
 } = {}) {
   const events = []
   const listeners = new Map()
@@ -60,8 +67,13 @@ function makeSetup({
   const globalShortcut = {
     register: vi.fn((accelerator, callback) => {
       events.push('globalShortcut.register')
+      if (accelerator === shortcutRegistrationFailure) return false
       shortcutCallbacks.set(accelerator, callback)
       return true
+    }),
+    unregister: vi.fn((accelerator) => {
+      events.push('globalShortcut.unregister')
+      shortcutCallbacks.delete(accelerator)
     }),
   }
   const reservedSessionWebPreferences = vi.fn(() => {
@@ -74,7 +86,8 @@ function makeSetup({
     expect(session).toBe(electronSession)
   })
   const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() }
-  const writeEvidence = vi.fn()
+  const writeEvidence = vi.fn(async ({ caseId, repetition, phase }) => ({ caseId, repetition, phase }))
+  const writeResult = vi.fn(async () => '/runtime/r1-result.md')
   const wait = vi.fn(async () => {})
   const restoreProductSessionView = vi.fn(() => events.push('restoreProductSessionView'))
   const suspendProductSessionView = vi.fn(() => {
@@ -96,8 +109,10 @@ function makeSetup({
     installReservedSessionSecurity,
     logger,
     writeEvidence,
+    writeResult,
     wait,
     suspendProductSessionView,
+    measurementRuntime,
   })
 
   return {
@@ -112,6 +127,7 @@ function makeSetup({
     installReservedSessionSecurity,
     logger,
     writeEvidence,
+    writeResult,
     suspendProductSessionView,
     restoreProductSessionView,
     shortcutCallbacks,
@@ -146,6 +162,27 @@ describe('ChatGPT R1 dev harness gate and secure view', () => {
 
     expect(setup.createdViews).toHaveLength(1)
     expect(setup.webContents.loadURL).toHaveBeenCalledOnce()
+    expect(setup.globalShortcut.unregister).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['an intermediate shortcut conflicts', CHATGPT_R1_CAPTURE_SHORTCUT],
+    ['the close shortcut conflicts', CHATGPT_R1_CLOSE_SHORTCUT],
+  ])('rolls back every acquired R1 shortcut when %s', async (_label, shortcutRegistrationFailure) => {
+    const setup = makeSetup({ shortcutRegistrationFailure })
+
+    expect(setup.registration).toEqual({ registered: false })
+    expect(setup.globalShortcut.register).toHaveBeenCalledTimes(5)
+    expect(setup.globalShortcut.unregister.mock.calls.map(([accelerator]) => accelerator)).toEqual(
+      [...setup.globalShortcut.register.mock.calls]
+        .map(([accelerator]) => accelerator)
+        .filter((accelerator) => accelerator !== shortcutRegistrationFailure),
+    )
+    expect(setup.shortcutCallbacks.size).toBe(0)
+
+    await setup.invokeShortcut()
+    expect(setup.createdViews).toHaveLength(0)
+    expect(setup.webContents.loadURL).not.toHaveBeenCalled()
   })
 
   it('calls the P1 preferences factory and real two-argument security installer before any load', async () => {
@@ -310,6 +347,172 @@ describe('ChatGPT R1 dev harness gate and secure view', () => {
   it('requires at least three independent conversations for every matrix case', () => {
     expect(R1_CASE_MATRIX.length).toBeGreaterThan(0)
     expect(R1_CASE_MATRIX.every(({ repetitions }) => repetitions >= 3)).toBe(true)
+  })
+
+  it('reports an explicit measurement blocker after login when no runtime-observed adapter exists', async () => {
+    const setup = makeSetup({ composerReady: true })
+
+    await setup.invokeShortcut()
+    const result = await setup.registration.awaitMeasurement()
+
+    expect(result).toEqual({
+      status: 'blocked',
+      signal: R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL,
+      missing: [
+        'getSafetyCeilingBytes',
+        'observeSurface',
+        'executeCase',
+        'reviewCase',
+        'finalize',
+      ],
+    })
+    expect(setup.logger.warn).toHaveBeenCalledWith(R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL)
+    expect(setup.writeEvidence).not.toHaveBeenCalled()
+    expect(setup.writeResult).not.toHaveBeenCalled()
+  })
+
+  it('loads only an explicitly configured local runtime adapter for the real spike path', async () => {
+    const importModule = vi.fn(async () => ({ default: { source: 'runtime-module' } }))
+
+    await expect(loadR1MeasurementRuntime({ modulePath: '' }, {
+      cwd: '/workspace',
+      importModule,
+    })).resolves.toBeNull()
+    expect(importModule).not.toHaveBeenCalled()
+
+    await expect(loadR1MeasurementRuntime({ modulePath: './observed-runtime.mjs' }, {
+      cwd: '/workspace',
+      importModule,
+    })).resolves.toEqual({ source: 'runtime-module' })
+    expect(importModule).toHaveBeenCalledWith('file:///workspace/observed-runtime.mjs')
+    await expect(loadR1MeasurementRuntime({ modulePath: 'https://example.test/runtime.mjs' }, {
+      cwd: '/workspace',
+      importModule,
+    })).rejects.toThrow('local filesystem path')
+    expect(importModule).toHaveBeenCalledOnce()
+  })
+
+  it('automatically executes every matrix repetition with runtime-authored facts, fixtures, and size ladder', async () => {
+    const measurementEvents = []
+    const observedSurface = {
+      mechanism: 'runtime-observed-mechanism',
+      selector: '[runtime-observed-selector]',
+      uploadReadySignal: 'runtime-observed-ready-signal',
+    }
+    const measurementRuntime = {
+      getSafetyCeilingBytes: vi.fn(async () => 512 * 1024),
+      observeSurface: vi.fn(async () => {
+        measurementEvents.push('observe-surface')
+        return observedSurface
+      }),
+      executeCase: vi.fn(async ({ caseId, repetition, surface }) => {
+        measurementEvents.push(`execute:${caseId}:r${repetition}`)
+        expect(surface).toBe(observedSurface)
+        return {
+          outcome: 'runtime-observed-outcome',
+          events: [{ at: '2026-08-02T00:00:00.000Z', event: 'RUNTIME_OBSERVATION' }],
+        }
+      }),
+      reviewCase: vi.fn(async ({ caseId, repetition }) => ({
+        verdict: `operator-runtime-review:${caseId}:r${repetition}`,
+      })),
+      finalize: vi.fn(async ({ journal }) => {
+        measurementEvents.push(`finalize:${journal.length}`)
+        return {
+          outcome: 'R1-E',
+          supported: false,
+          mechanism: observedSurface.mechanism,
+          observedDomSurface: observedSurface.selector,
+          acceptedMimeTypes: ['image/png', 'image/jpeg'],
+          largestVerifiedBytes: 256 * 1024,
+          firstRejectedBytes: 512 * 1024,
+          supportedMaxBytes: 256 * 1024,
+          boundaryReproducible: false,
+          maxCount: 1,
+          uploadReadySignal: observedSurface.uploadReadySignal,
+          loginSignalSurface: 'runtime-observed-login-signal',
+          sessionStateSignals: ['runtime-observed-session-state'],
+          observedRedirectOrigins: ['https://chatgpt.com'],
+          minRepetitions: 3,
+          failureModes: ['runtime-observed-failure'],
+        }
+      }),
+    }
+    const setup = makeSetup({ composerReady: true, measurementRuntime })
+    setup.writeResult.mockImplementation(async () => {
+      measurementEvents.push('write-result')
+      return '/runtime/r1-result.md'
+    })
+
+    await setup.invokeShortcut()
+    const result = await setup.registration.awaitMeasurement()
+
+    const expectedAttempts = R1_CASE_MATRIX.reduce((sum, entry) => sum + entry.repetitions, 0)
+    expect(result).toEqual(expect.objectContaining({
+      status: 'completed',
+      resultPath: '/runtime/r1-result.md',
+    }))
+    expect(measurementRuntime.executeCase).toHaveBeenCalledTimes(expectedAttempts)
+    expect(measurementRuntime.reviewCase).toHaveBeenCalledTimes(expectedAttempts)
+    expect(setup.writeEvidence).toHaveBeenCalledTimes(expectedAttempts * 2)
+    expect(setup.webContents.loadURL).toHaveBeenCalledTimes(expectedAttempts + 1)
+    expect(measurementEvents.slice(-2)).toEqual([`finalize:${expectedAttempts}`, 'write-result'])
+
+    const attemptedCases = measurementRuntime.executeCase.mock.calls.map(([attempt]) => (
+      `${attempt.caseId}:r${attempt.repetition}`
+    ))
+    expect(attemptedCases).toEqual(R1_CASE_MATRIX.flatMap(({ id, repetitions }) => (
+      Array.from({ length: repetitions }, (_unused, index) => `${id}:r${index + 1}`)
+    )))
+    const firstAttempt = measurementRuntime.executeCase.mock.calls[0][0]
+    expect(firstAttempt.fixtures.png).toEqual(expect.objectContaining({
+      name: 'reference-a.png', mime: 'image/png', bytes: expect.any(Buffer),
+    }))
+    expect(firstAttempt.fixtures.jpeg).toEqual(expect.objectContaining({
+      name: 'reference-b.jpg', mime: 'image/jpeg', bytes: expect.any(Buffer),
+    }))
+    expect(firstAttempt.sizeLadder.map(({ bytes }) => bytes.length)).toEqual([
+      256 * 1024,
+      512 * 1024,
+    ])
+  })
+
+  it('writes a complete runtime-authored R1 result without retaining redirect paths or queries', async () => {
+    const fileSystem = {
+      mkdir: vi.fn(async () => {}),
+      writeFile: vi.fn(async () => {}),
+    }
+    const result = {
+      outcome: 'R1-E',
+      supported: false,
+      mechanism: 'runtime mechanism',
+      observedDomSurface: 'runtime surface',
+      acceptedMimeTypes: ['image/png'],
+      largestVerifiedBytes: 262144,
+      firstRejectedBytes: 524288,
+      supportedMaxBytes: 262144,
+      boundaryReproducible: false,
+      maxCount: 1,
+      uploadReadySignal: 'runtime signal',
+      loginSignalSurface: 'runtime login signal',
+      sessionStateSignals: ['runtime session state'],
+      observedRedirectOrigins: ['https://example.test/private?token=SECRET'],
+      minRepetitions: 3,
+      failureModes: ['runtime failure'],
+    }
+
+    await writeR1ResultFile({ result, journal: [] }, {
+      resultPath: '/tmp/chatgpt-r1-result.md',
+      fileSystem,
+    })
+
+    expect(fileSystem.mkdir).toHaveBeenCalledWith('/tmp', { recursive: true })
+    const report = fileSystem.writeFile.mock.calls[0][1]
+    expect(report).toContain('Outcome: R1-E')
+    expect(report).toContain('Mechanism: runtime mechanism')
+    expect(report).toContain('Minimum repetitions: 3')
+    expect(report).toContain('Observed redirect origins: https://example.test')
+    expect(report).not.toMatch(/private|SECRET|token=/)
   })
 })
 

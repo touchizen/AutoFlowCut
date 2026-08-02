@@ -2,7 +2,7 @@
  * Header Component - 상단 바
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
@@ -60,10 +60,21 @@ export default function Header({
   const mountedRef = useRef(true)
   // #R11-7: 겹치는 auth 폴링 중 최신 호출만 반영하기 위한 시퀀스 카운터.
   const authCheckSeqRef = useRef(0)
+  const chatgptReconnectSeqRef = useRef(0)
   // #R14-5: flow 지역 제한(unavailable) sticky 플래그 — flow 모드에서 폴링/authReady 가 덮지 않게.
   const flowUnavailableRef = useRef(false)
   const modeRef = useRef(mode)
   const flowTargetActiveRef = useRef(flowTargetActive)
+  const liveRouteRef = useRef({ mode, sessionTarget, version: 0 })
+  useLayoutEffect(() => {
+    if (liveRouteRef.current.mode !== mode || liveRouteRef.current.sessionTarget !== sessionTarget) {
+      liveRouteRef.current = {
+        mode,
+        sessionTarget,
+        version: liveRouteRef.current.version + 1,
+      }
+    }
+  }, [mode, sessionTarget])
   useEffect(() => {
     modeRef.current = mode
     flowTargetActiveRef.current = flowTargetActive
@@ -231,14 +242,28 @@ export default function Header({
   }
 
   const reconnectChatgpt = async () => {
-    if (!chatgptTargetActive) return
+    const startRoute = liveRouteRef.current
+    if (!isChatgptTarget(startRoute)) return
+    const requestSequence = ++chatgptReconnectSeqRef.current
+    const isLiveRequest = () => (
+      mountedRef.current &&
+      requestSequence === chatgptReconnectSeqRef.current &&
+      liveRouteRef.current.version === startRoute.version &&
+      liveRouteRef.current.mode === startRoute.mode &&
+      liveRouteRef.current.sessionTarget === startRoute.sessionTarget
+    )
     try {
-      const currentRoute = { mode, sessionTarget }
       const routeResult = onRouteRequest
-        ? await onRouteRequest(currentRoute)
-        : await window.electronAPI?.setRoute?.(currentRoute)
+        ? await onRouteRequest({ mode: startRoute.mode, sessionTarget: startRoute.sessionTarget })
+        : await window.electronAPI?.setRoute?.({ mode: startRoute.mode, sessionTarget: startRoute.sessionTarget })
       if (routeResult && routeResult.ok === false) throw new Error(routeResult.error || 'route-set-failed')
+      if (!isLiveRequest()) return
+      if (routeResult?.route && (
+        routeResult.route.mode !== startRoute.mode ||
+        routeResult.route.sessionTarget !== startRoute.sessionTarget
+      )) return
       const status = await window.electronAPI?.reconnectSession?.('chatgpt')
+      if (!isLiveRequest()) return
       if (status?.ready === true) onAuthRecovered?.()
     } catch (error) {
       console.warn('[Header] ChatGPT reconnect failed:', error?.message)

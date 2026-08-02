@@ -1,5 +1,5 @@
 import { beforeEach, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 const headerState = vi.hoisted(() => ({ sessionTarget: 'chatgpt' }))
 
@@ -30,6 +30,12 @@ import Header from '../../../src/components/Header.jsx'
 
 beforeEach(() => { headerState.sessionTarget = 'chatgpt' })
 
+const deferred = () => {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 it('ChatGPT login action reattaches its route then uses the target reconnect port', async () => {
   const events = []
   window.electronAPI = {
@@ -50,19 +56,99 @@ it('ChatGPT login action reattaches its route then uses the target reconnect por
 
 it('ChatGPT authenticated badge rechecks the target without requesting a Flow token', async () => {
   const getAccessToken = vi.fn(async () => 'flow-token')
+  const onAuthRecovered = vi.fn()
   window.electronAPI = {
     setRoute: vi.fn(async (route) => ({ ok: true, route })),
     reconnectSession: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true, revision: 9 })),
     onFlowStatus: vi.fn(() => () => {}),
   }
   const { container } = render(
-    <Header authReady={true} getAccessToken={getAccessToken} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />,
+    <Header
+      authReady={true}
+      getAccessToken={getAccessToken}
+      onSettings={vi.fn()}
+      onAuthRecovered={onAuthRecovered}
+    />,
   )
 
   fireEvent.click(container.querySelector('.auth-badge.authenticated'))
 
   await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
   expect(getAccessToken).not.toHaveBeenCalled()
+  expect(onAuthRecovered).toHaveBeenCalledOnce()
+})
+
+it('does not start ChatGPT reconnect when the live target changes while route adoption is pending', async () => {
+  const routeGate = deferred()
+  const onAuthRecovered = vi.fn()
+  const onRouteRequest = vi.fn(() => routeGate.promise)
+  window.electronAPI = {
+    reconnectSession: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true })),
+    onFlowStatus: vi.fn(() => () => {}),
+  }
+  const { rerender } = render(
+    <Header
+      authReady={false}
+      onSettings={vi.fn()}
+      onRouteRequest={onRouteRequest}
+      onAuthRecovered={onAuthRecovered}
+    />,
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
+  await waitFor(() => expect(onRouteRequest).toHaveBeenCalledOnce())
+  headerState.sessionTarget = 'flow'
+  rerender(
+    <Header
+      authReady={false}
+      onSettings={vi.fn()}
+      onRouteRequest={onRouteRequest}
+      onAuthRecovered={onAuthRecovered}
+    />,
+  )
+  await act(async () => {
+    routeGate.resolve({ ok: true, route: { mode: 'flow', sessionTarget: 'chatgpt' } })
+    await routeGate.promise
+  })
+
+  expect(window.electronAPI.reconnectSession).not.toHaveBeenCalled()
+  expect(onAuthRecovered).not.toHaveBeenCalled()
+})
+
+it('does not apply a delayed ChatGPT ready result after the live target changes', async () => {
+  const reconnectGate = deferred()
+  const onAuthRecovered = vi.fn()
+  window.electronAPI = {
+    reconnectSession: vi.fn(() => reconnectGate.promise),
+    onFlowStatus: vi.fn(() => () => {}),
+  }
+  const onRouteRequest = vi.fn(async (route) => ({ ok: true, route }))
+  const { rerender } = render(
+    <Header
+      authReady={false}
+      onSettings={vi.fn()}
+      onRouteRequest={onRouteRequest}
+      onAuthRecovered={onAuthRecovered}
+    />,
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
+  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
+  headerState.sessionTarget = 'flow'
+  rerender(
+    <Header
+      authReady={false}
+      onSettings={vi.fn()}
+      onRouteRequest={onRouteRequest}
+      onAuthRecovered={onAuthRecovered}
+    />,
+  )
+  await act(async () => {
+    reconnectGate.resolve({ target: 'chatgpt', status: 'ready', ready: true })
+    await reconnectGate.promise
+  })
+
+  expect(onAuthRecovered).not.toHaveBeenCalled()
 })
 
 it('keeps Flow readiness out of the ChatGPT auth chip on a target round-trip', async () => {

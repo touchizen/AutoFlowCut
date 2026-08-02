@@ -26,6 +26,7 @@ const apiRoute = () => ({ mode: 'api', sessionTarget: 'flow' })
 let injectedRequest = null
 let renderedRoute = null
 let renderedEngine = null
+let routeCommitEvents = []
 
 const routeFailureHarness = ({ initialRoute, result }) => {
   let mainRoute = initialRoute
@@ -67,6 +68,7 @@ const concurrentRouteHarness = () => {
 function RouteTransactionProbe({ electronAPI, initialRoute }) {
   const [route, setRoute] = useState(initialRoute)
   const commitRoute = useCallback((next) => {
+    routeCommitEvents.push(next)
     localStorage.setItem('route', JSON.stringify(next))
     setRoute(next)
   }, [])
@@ -119,6 +121,7 @@ beforeEach(() => {
   injectedRequest = null
   renderedRoute = null
   renderedEngine = null
+  routeCommitEvents = []
 })
 
 afterEach(() => cleanup())
@@ -177,6 +180,31 @@ it('reconciles a failed stored-route boot to the main route without weakening in
   expect(screen.getByTestId('current-route')).toHaveTextContent('api+flow')
   expect(localStorage.getItem('route')).toBe(JSON.stringify(mainRoute))
   expect(currentEngine().routeOwner).toBe('api')
+  expect(api.mainRoute()).toEqual(mainRoute)
+  expect(api.attachedView()).toBeNull()
+})
+
+it.each([
+  ['the route API is unavailable', undefined],
+  ['the route IPC rejects', vi.fn(async () => { throw new Error('route-ipc-rejected') })],
+])('does not reconcile a failed stored-route boot from the renderer echo when %s', async (_label, setRoute) => {
+  const storedRoute = chatgptRoute()
+  const mainRoute = apiRoute()
+  const api = {
+    setRoute,
+    mainRoute: () => mainRoute,
+    attachedView: () => null,
+  }
+  renderApp({ electronAPI: api, initialRoute: storedRoute })
+
+  const result = await requestInjectedRoute(storedRoute, { reconcileOnFailure: true, boot: true })
+
+  expect(result).toEqual(expect.objectContaining({ ok: false }))
+  expect(result).not.toHaveProperty('route')
+  expect(routeCommitEvents).toEqual([])
+  expect(screen.getByTestId('current-route')).toHaveTextContent('flow+chatgpt')
+  expect(localStorage.getItem('route')).toBe(JSON.stringify(storedRoute))
+  expect(currentEngine().routeOwner).toBe('chatgpt')
   expect(api.mainRoute()).toEqual(mainRoute)
   expect(api.attachedView()).toBeNull()
 })
