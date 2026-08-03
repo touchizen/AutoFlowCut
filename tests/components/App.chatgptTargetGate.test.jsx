@@ -11,6 +11,8 @@ const appMocks = vi.hoisted(() => {
     sessionStatus: { target: 'chatgpt', status: 'ready', ready: true, revision: 1 },
     tagErrors: [],
     framePanelProps: null,
+    referencePanelProps: null,
+    showReferences: false,
   }
   const sessionStatusListeners = new Set()
   const loadEpochRef = { current: 0 }
@@ -22,6 +24,8 @@ const appMocks = vi.hoisted(() => {
       : flowGenerateImage(options)
   ))
   const videoStart = vi.fn(async () => ({ success: true }))
+  const folderPermissionCheck = vi.fn(async () => ({ ok: true }))
+  const thumbnailGenerate = vi.fn(async () => [])
   const toastWarning = vi.fn()
   const commitRoute = vi.fn()
   const scenes = [
@@ -71,6 +75,8 @@ const appMocks = vi.hoisted(() => {
     chatgptGenerateImage,
     sceneBatchStart,
     videoStart,
+    folderPermissionCheck,
+    thumbnailGenerate,
     toastWarning,
     commitRoute,
     scenes,
@@ -265,7 +271,7 @@ vi.mock('../../src/hooks/useStyleThumbnails', () => ({
     generating: false,
     stopping: false,
     progress: 0,
-    generateThumbnails: appMocks.asyncNoop,
+    generateThumbnails: appMocks.thumbnailGenerate,
     stopGenerating: appMocks.noop,
     deleteThumbnail: appMocks.noop,
   }),
@@ -282,7 +288,10 @@ vi.mock('../../src/hooks/useReferenceGeneration', () => ({
   }),
 }))
 vi.mock('../../src/hooks/useRefPanelVisibility', () => ({
-  useRefPanelVisibility: () => ({ isOpen: false, setOpenByUser: appMocks.noop }),
+  useRefPanelVisibility: () => ({
+    isOpen: appMocks.state.showReferences,
+    setOpenByUser: value => { appMocks.state.showReferences = value },
+  }),
 }))
 vi.mock('../../src/hooks/useSceneGeneration', () => ({
   useSceneGeneration: () => ({ generatingSceneId: null, handleGenerateScene: appMocks.noop }),
@@ -307,7 +316,7 @@ vi.mock('../../src/hooks/useImportProcessing', () => ({
 }))
 vi.mock('../../src/utils/guards', async importOriginal => {
   const actual = await importOriginal()
-  return { ...actual, checkFolderPermission: vi.fn(async () => ({ ok: true })) }
+  return { ...actual, checkFolderPermission: (...args) => appMocks.folderPermissionCheck(...args) }
 })
 vi.mock('../../src/utils/tagMatch', async importOriginal => {
   const actual = await importOriginal()
@@ -321,7 +330,9 @@ vi.mock('../../src/components/ResultsTable', () => ({ default: () => null }))
 vi.mock('../../src/components/FrameToVideoPanel', () => ({
   default: props => { appMocks.state.framePanelProps = props; return null },
 }))
-vi.mock('../../src/components/ReferencePanel', () => ({ default: () => null }))
+vi.mock('../../src/components/ReferencePanel', () => ({
+  default: props => { appMocks.state.referencePanelProps = props; return null },
+}))
 vi.mock('../../src/components/SettingsModal', () => ({ default: () => null }))
 vi.mock('../../src/components/ImportModal', () => ({ default: () => null }))
 vi.mock('../../src/components/StatusBar', () => ({ default: () => null }))
@@ -409,11 +420,15 @@ describe('App flow + chatgpt target gate', () => {
     appMocks.sessionStatusListeners.clear()
     appMocks.state.tagErrors = []
     appMocks.state.framePanelProps = null
+    appMocks.state.referencePanelProps = null
+    appMocks.state.showReferences = false
     appMocks.loadEpochRef.current = 0
     appMocks.flowGenerateImage.mockClear()
     appMocks.chatgptGenerateImage.mockClear()
     appMocks.sceneBatchStart.mockClear()
     appMocks.videoStart.mockClear()
+    appMocks.folderPermissionCheck.mockReset().mockResolvedValue({ ok: true })
+    appMocks.thumbnailGenerate.mockReset().mockResolvedValue([])
     appMocks.toastWarning.mockClear()
     appMocks.commitRoute.mockClear()
     appMocks.genAPI.getAccessToken.mockClear().mockResolvedValue('token')
@@ -544,6 +559,41 @@ describe('App flow + chatgpt target gate', () => {
     expect(appMocks.toastWarning).not.toHaveBeenCalledWith('toast.sessionTargetUnsupported')
   })
 
+  it('aborts instead of crossing from ChatGPT to Flow while Start preflight is pending', async () => {
+    render(<App />)
+    const positiveStart = screen.getByTitle('actions.start')
+    await waitFor(() => expect(positiveStart).toBeEnabled())
+    fireEvent.click(positiveStart)
+    await waitFor(() => expect(appMocks.chatgptGenerateImage).toHaveBeenCalledOnce())
+
+    cleanup()
+    appMocks.sceneBatchStart.mockClear()
+    appMocks.chatgptGenerateImage.mockClear()
+    appMocks.flowGenerateImage.mockClear()
+    let releaseFolderCheck
+    appMocks.folderPermissionCheck.mockImplementationOnce(() => new Promise(resolve => {
+      releaseFolderCheck = resolve
+    }))
+    appMocks.state.sessionTarget = 'chatgpt'
+    const view = render(<App />)
+    const pendingStart = screen.getByTitle('actions.start')
+    await waitFor(() => expect(pendingStart).toBeEnabled())
+    fireEvent.click(pendingStart)
+    await waitFor(() => expect(releaseFolderCheck).toEqual(expect.any(Function)))
+
+    appMocks.state.sessionTarget = 'flow'
+    view.rerender(<App />)
+    await act(async () => {
+      releaseFolderCheck({ ok: true })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(appMocks.chatgptGenerateImage).not.toHaveBeenCalled()
+    expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+  })
+
   it('flow + flow Start still reaches the Flow image engine seam', async () => {
     appMocks.state.sessionTarget = 'flow'
     render(<App />)
@@ -598,9 +648,9 @@ describe('App flow + chatgpt target gate', () => {
     expect(screen.getByTestId('image-start')).toBeEnabled()
   })
 
-  it('flow + chatgpt blocks tag-validation Proceed before the Flow image engine seam', async () => {
+  it('keeps tag-validation Proceed on its original ChatGPT target and aborts a switch to Flow', async () => {
     appMocks.state.tagErrors = [{ sceneIndex: 0, missingTags: ['hero'] }]
-    render(<App />)
+    const positive = render(<App />)
 
     const start = screen.getByTitle('actions.start')
     await waitFor(() => expect(start).toBeEnabled())
@@ -612,6 +662,46 @@ describe('App flow + chatgpt target gate', () => {
     expect(appMocks.chatgptGenerateImage).toHaveBeenCalledOnce()
     expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce()
     expect(appMocks.toastWarning).not.toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+
+    cleanup()
+    appMocks.sceneBatchStart.mockClear()
+    appMocks.chatgptGenerateImage.mockClear()
+    appMocks.flowGenerateImage.mockClear()
+    appMocks.state.sessionTarget = 'chatgpt'
+    const switched = render(<App />)
+    const switchedStart = screen.getByTitle('actions.start')
+    await waitFor(() => expect(switchedStart).toBeEnabled())
+    fireEvent.click(switchedStart)
+    await screen.findByRole('button', { name: 'tag-proceed' })
+    appMocks.state.sessionTarget = 'flow'
+    switched.rerender(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'tag-proceed' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(appMocks.chatgptGenerateImage).not.toHaveBeenCalled()
+    expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+  })
+
+  it('allows custom style-thumbnail definitions because they still submit text-only image prompts', async () => {
+    appMocks.state.showReferences = true
+    render(<App />)
+    await waitFor(() => expect(appMocks.state.referencePanelProps).toBeTruthy())
+    const customDefinitions = [{ id: 'custom-style-positive', prompt: 'etched copper and blue enamel' }]
+
+    await act(async () => {
+      await appMocks.state.referencePanelProps.onGenerateThumbnails(
+        ['preset-positive-control'],
+        customDefinitions,
+      )
+    })
+
+    expect(appMocks.thumbnailGenerate).toHaveBeenCalledWith(
+      ['preset-positive-control'],
+      customDefinitions,
+      expect.any(Function),
+    )
+    expect(appMocks.toastWarning).not.toHaveBeenCalledWith('toast.chatgptReferencesUnsupported')
   })
 
   it.each([

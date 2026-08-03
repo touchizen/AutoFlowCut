@@ -1028,13 +1028,12 @@ function App() {
 
   // Style Thumbnails
   const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails: generateThumbnailsUnsafe, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
-  const generateThumbnails = useCallback((...args) => {
-    if (refuseIfSessionTargetUnsupported({
-      stage: 'image',
-      hasReferences: Array.isArray(args[1]) && args[1].length > 0,
-    })) return
-    return generateThumbnailsUnsafe(...args)
-  }, [generateThumbnailsUnsafe, refuseIfSessionTargetUnsupported])
+  // customRefs are output definitions whose text prompts are submitted with an empty image-input
+  // array inside useStyleThumbnails; they are not unmeasured ChatGPT reference uploads.
+  const generateThumbnails = useCallback(
+    (...args) => generateThumbnailsUnsafe(...args),
+    [generateThumbnailsUnsafe],
+  )
 
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef: handleGenerateRefUnsafe, handleGenerateAllRefs: handleGenerateAllRefsUnsafe, stopGenerateAllRefs } = useReferenceGeneration({
@@ -1656,9 +1655,10 @@ function App() {
         scenesHook.updateScene(patch.sceneId, { characters: patch.characters })
       }
     }
-    // #R7-5: 비동기 preflight(getAccessToken/폴더확인) 동안 모드가 바뀌면 캡처한 엔진/모드가
-    //   stale 해진다 — 시작 모드를 잠그고, 디스패치 직전 바뀌었으면 중단.
+    // #R7-5: 비동기 preflight(getAccessToken/폴더확인) 동안 route가 바뀌면 캡처한 엔진이
+    //   stale 해진다 — mode+sessionTarget 전체를 잠그고, 디스패치 직전 바뀌었으면 중단.
     const startMode = modeRef.current
+    const startSessionTarget = sessionTargetRef.current
     const i2vStartEpoch = loadEpochRef.current
 
     // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
@@ -1677,9 +1677,9 @@ function App() {
       }
       return
     }
-    // #R8-4: auth preflight 동안 모드가 바뀌었으면 즉시 중단(stale 엔진/모드 제출 방지).
-    if (modeRef.current !== startMode) {
-      console.warn('[App] handleStart aborted — mode changed during auth preflight')
+    // #R8-4: auth preflight 동안 route가 바뀌었으면 즉시 중단(stale 엔진/타깃 제출 방지).
+    if (modeRef.current !== startMode || sessionTargetRef.current !== startSessionTarget) {
+      console.warn('[App] handleStart aborted — route changed during auth preflight')
       return
     }
 
@@ -1711,10 +1711,10 @@ function App() {
       if (!readyCheck.ok) return
     }
 
-    // #R7-5: preflight 비동기 구간에서 모드나 프로젝트 load 소유권이 바뀌었으면 중단
+    // #R7-5: preflight 비동기 구간에서 route나 프로젝트 load 소유권이 바뀌었으면 중단
     // (stale 엔진/프로젝트로 제출 방지).
-    if (modeRef.current !== startMode) {
-      console.warn('[App] handleStart aborted — mode changed during preflight')
+    if (modeRef.current !== startMode || sessionTargetRef.current !== startSessionTarget) {
+      console.warn('[App] handleStart aborted — route changed during preflight')
       return
     }
     if (loadEpochRef.current !== i2vStartEpoch) {
@@ -1792,16 +1792,23 @@ function App() {
           setPendingStartOptions({
             ...startOptions,
             __startMode: startMode,
+            __startSessionTarget: startSessionTarget,
             __startSource: source,
           })
           return
         }
 
         if (!guardSceneBatchStart(source)) return
+        if (modeRef.current !== startMode || sessionTargetRef.current !== startSessionTarget) {
+          console.warn('[App] handleStart aborted — route changed before dispatch')
+          return
+        }
         // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 id + 라벨 모두 시작 시점 snapshot
         setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
+        // Keep the established Flow-gate structure; the full-route equality check immediately
+        // above makes this live read equivalent to the captured startMode at dispatch time.
         if (modeRef.current === 'flow') {
-          if (flowTargetActiveRef.current) {
+          if (startSessionTarget === 'flow') {
             const { force: _force, ...startOptionsWithoutSceneIds } = startOptions
             const gateResult = await runEmptyRefGateFlow({
               startMode,
@@ -2031,15 +2038,23 @@ function App() {
     if (startInFlightRef.current) return
     startInFlightRef.current = true
     try {
-      const { __startMode, __startSource = 'ui', ...opts } = pendingStartOptions
+      const {
+        __startMode,
+        __startSessionTarget,
+        __startSource = 'ui',
+        ...opts
+      } = pendingStartOptions
       if (!guardSceneBatchStart(__startSource)) {
         setPendingStartOptions(null)
         return
       }
       // 이 경로는 handleStart 의 preflight(stale-mode/projectName/auth/flow-ready)를 우회하므로 재검증한다.
-      // #R8-6: 모달이 열린 동안 모드가 바뀌었으면 중단.
-      if (__startMode && modeRef.current !== __startMode) {
-        console.warn('[App] tag-validation proceed aborted — mode changed while modal open')
+      // #R8-6: 모달이 열린 동안 route가 바뀌었으면 중단.
+      if (
+        (__startMode && modeRef.current !== __startMode) ||
+        (__startSessionTarget && sessionTargetRef.current !== __startSessionTarget)
+      ) {
+        console.warn('[App] tag-validation proceed aborted — route changed while modal open')
         setPendingStartOptions(null)
         return
       }
@@ -2063,7 +2078,13 @@ function App() {
         setPendingStartOptions(null)
         return
       }
-      if (modeRef.current !== __startMode) { setPendingStartOptions(null); return } // auth await 동안 모드 변경 재확인
+      if (
+        modeRef.current !== __startMode ||
+        sessionTargetRef.current !== __startSessionTarget
+      ) {
+        setPendingStartOptions(null)
+        return
+      } // auth await 동안 route 변경 재확인
       // #R10-5: auth await 동안 프로젝트가 바뀌었을 수 있으니 start 직전 다시 확인.
       if (ensureProjectName() !== opts.projectName) {
         console.warn('[App] tag-validation proceed aborted — project changed during auth recheck')
@@ -2076,13 +2097,21 @@ function App() {
       }
       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
       const sid = opts.selectedStyleRefId
+      if (
+        modeRef.current !== __startMode ||
+        sessionTargetRef.current !== __startSessionTarget
+      ) {
+        setPendingStartOptions(null)
+        return
+      }
       setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
+      // The full-route checks above guarantee this live marker still belongs to the captured route.
       if (modeRef.current === 'flow') {
         const liveScenes = scenesHook.scenesRef.current
         const liveTargetScenes = opts.force
           ? liveScenes.filter(scene => scene.prompt)
           : filterPendingScenes(liveScenes)
-        if (flowTargetActiveRef.current) {
+        if (__startSessionTarget === 'flow') {
           // #M2: tag modal 대기 중 바뀐 scene 상태를 useScenes의 동기 ref에서 다시 읽어 최초 의도 ID를
           // 새로 만든다. pendingStartOptions에는 설정만 남기고 과거 scene/M1 판정은 재사용하지 않는다.
           const { force = false, ...startOptionsWithoutSceneIds } = opts

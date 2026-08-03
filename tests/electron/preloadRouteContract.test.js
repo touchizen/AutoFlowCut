@@ -7,4 +7,5 @@ it('preload exposes additive setRoute and keeps setMode', () => {
   const source = fs.readFileSync('electron/preload.js', 'utf8')
   expect(source).toContain("setRoute: (params) => ipcRenderer.invoke('route:set', params)")
   expect(source).toContain("setMode: (params) => ipcRenderer.invoke('mode:set', params)")
+  expect(source).toContain("chatgptCancelGenerations: () => ipcRenderer.invoke('chatgpt:cancel-generations')")
 })

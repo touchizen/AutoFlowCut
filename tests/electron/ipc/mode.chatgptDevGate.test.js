@@ -215,6 +215,8 @@ function generationHarness({
     observe: vi.fn(async () => ({ success: true, completed: true })),
     collect: vi.fn(async () => ({ success: true, images: [{ filePath: '/saved/positive.png' }] })),
     clear: vi.fn(async () => ({ success: true })),
+    cancelAll: vi.fn(async () => ({ success: true })),
+    awaitIdle: vi.fn(async () => {}),
   }
   const ensureSession = vi.fn(async () => session)
   const target = {
@@ -230,19 +232,20 @@ function generationHarness({
     webContents: sender,
     contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
   }
+  const sessionJobs = { cancelAll: vi.fn(async () => {}), awaitIdle: vi.fn(async () => {}) }
   const controller = createModeController(() => mainWindow, vi.fn(), {
     initialRoute: route,
     targetRegistry: registry,
     createSessionView: (name) => registry.createView(name),
     chatgptDevGate: gate,
-    sessionJobs: { cancelAll: vi.fn(async () => {}), awaitIdle: vi.fn(async () => {}) },
+    sessionJobs,
     rendererAutomation: { requestQuiesce: vi.fn(async () => {}) },
   })
   controller.register({
     handle: (channel, handler) => { handlers[channel] = handler },
     on: vi.fn(),
   })
-  return { handlers, sender, adapter, ensureSession, target, controller }
+  return { handlers, sender, adapter, ensureSession, target, controller, sessionJobs }
 }
 
 describe('ChatGPT generation IPC route and session gate', () => {
@@ -257,11 +260,40 @@ describe('ChatGPT generation IPC route and session gate', () => {
     )
 
     expect(result).toEqual({ success: true, generationId: 'chatgpt-job-positive' })
-    expect(setup.ensureSession).toHaveBeenCalledOnce()
+    expect(setup.ensureSession).not.toHaveBeenCalled()
     expect(setup.adapter.submit).toHaveBeenCalledWith(expect.objectContaining({
       prompt: 'Generate a jade lighthouse image',
       referenceImages: [],
     }))
+  })
+
+  it('hands an accepted request to the cancellable adapter without awaiting an outer session probe', async () => {
+    const ready = generationHarness()
+    await expect(ready.handlers['chatgpt:submit-generation'](
+      { sender: ready.sender },
+      { prompt: 'adapter ownership positive control', referenceImages: [] },
+    )).resolves.toMatchObject({ success: true })
+    expect(ready.adapter.submit).toHaveBeenCalledOnce()
+
+    const events = []
+    let releaseProbe
+    const probe = new Promise(resolve => { releaseProbe = resolve })
+    const blocked = generationHarness({ session: probe })
+    blocked.adapter.submit.mockImplementation(async () => {
+      events.push('adapter-submit')
+      return { success: true, generationId: 'outer-probe-bypassed' }
+    })
+    const pending = blocked.handlers['chatgpt:submit-generation'](
+      { sender: blocked.sender },
+      { prompt: 'outer probe must not own this request', referenceImages: [] },
+    )
+    await Promise.resolve()
+    events.push(`adapter-calls:${blocked.adapter.submit.mock.calls.length}`)
+    releaseProbe({ target: 'chatgpt', status: 'ready', ready: true, revision: 8 })
+
+    await expect(pending).resolves.toMatchObject({ success: true, generationId: 'outer-probe-bypassed' })
+    expect(blocked.ensureSession).not.toHaveBeenCalled()
+    expect(events).toEqual(['adapter-submit', 'adapter-calls:1'])
   })
 
   it('refuses measured-route requests carrying references before adapter submission', async () => {
@@ -289,7 +321,76 @@ describe('ChatGPT generation IPC route and session gate', () => {
     expect(setup.adapter.submit).not.toHaveBeenCalled()
   })
 
-  it('refuses a non-ready session clearly and never submits, after a ready positive control', async () => {
+  it('fails closed on a malformed non-array reference envelope instead of coercing it away', async () => {
+    const setup = generationHarness()
+    await expect(setup.handlers['chatgpt:submit-generation'](
+      { sender: setup.sender },
+      { prompt: 'empty-array positive control', referenceImages: [] },
+    )).resolves.toMatchObject({ success: true })
+    expect(setup.adapter.submit).toHaveBeenCalledOnce()
+    setup.adapter.submit.mockClear()
+
+    const refused = await setup.handlers['chatgpt:submit-generation'](
+      { sender: setup.sender },
+      { prompt: 'malformed reference must not submit', referenceImages: { data: 'opaque-reference' } },
+    )
+
+    expect(refused).toMatchObject({
+      success: false,
+      errorKind: 'chatgpt-reference-images-unmeasured',
+    })
+    expect(setup.adapter.submit).not.toHaveBeenCalled()
+  })
+
+  it('binds admitted jobs to the exact ChatGPT route revision at observe and collect time', async () => {
+    const setup = generationHarness()
+    const submit = await setup.handlers['chatgpt:submit-generation'](
+      { sender: setup.sender },
+      { prompt: 'route-owned positive control', referenceImages: [] },
+    )
+    await expect(setup.handlers['chatgpt:observe-generation'](
+      { sender: setup.sender },
+      submit.generationId,
+    )).resolves.toMatchObject({ success: true, completed: true })
+    expect(setup.adapter.observe).toHaveBeenCalledOnce()
+
+    await setup.controller.setRoute({ mode: 'api', sessionTarget: 'chatgpt' })
+    await setup.controller.setRoute(chatgptRoute())
+    setup.adapter.observe.mockClear()
+    setup.adapter.collect.mockClear()
+
+    const observed = await setup.handlers['chatgpt:observe-generation'](
+      { sender: setup.sender },
+      submit.generationId,
+    )
+    const collected = await setup.handlers['chatgpt:collect-generation'](
+      { sender: setup.sender },
+      submit.generationId,
+    )
+
+    expect(observed).toMatchObject({ success: false, errorKind: 'chatgpt-generation-route-changed' })
+    expect(collected).toMatchObject({ success: false, errorKind: 'chatgpt-generation-route-changed' })
+    expect(setup.adapter.observe).not.toHaveBeenCalled()
+    expect(setup.adapter.collect).not.toHaveBeenCalled()
+  })
+
+  it('exposes an admitted cancellation IPC that reaches the active ChatGPT adapter', async () => {
+    const setup = generationHarness()
+    await expect(setup.handlers['chatgpt:clear-generations'](
+      { sender: setup.sender },
+    )).resolves.toMatchObject({ success: true })
+    expect(setup.adapter.clear).toHaveBeenCalledOnce()
+
+    expect(typeof setup.handlers['chatgpt:cancel-generations']).toBe('function')
+    const cancelled = await setup.handlers['chatgpt:cancel-generations'](
+      { sender: setup.sender },
+    )
+
+    expect(cancelled).toMatchObject({ success: true })
+    expect(setup.adapter.cancelAll).toHaveBeenCalledOnce()
+  })
+
+  it('forwards a non-ready refusal from the adapter after a ready positive control', async () => {
     const ready = generationHarness()
     expect(typeof ready.handlers['chatgpt:submit-generation']).toBe('function')
     if (typeof ready.handlers['chatgpt:submit-generation'] !== 'function') return
@@ -302,6 +403,12 @@ describe('ChatGPT generation IPC route and session gate', () => {
     const blocked = generationHarness({
       session: { target: 'chatgpt', status: 'login-required', ready: false, revision: 7 },
     })
+    blocked.adapter.submit.mockResolvedValue({
+      success: false,
+      error: 'ChatGPT session is not ready (login-required)',
+      errorKind: 'chatgpt-session-not-ready',
+      sessionStatus: 'login-required',
+    })
     const result = await blocked.handlers['chatgpt:submit-generation'](
       { sender: blocked.sender },
       { prompt: 'must not type', referenceImages: [] },
@@ -313,7 +420,8 @@ describe('ChatGPT generation IPC route and session gate', () => {
       sessionStatus: 'login-required',
     })
     expect(result.error).toMatch(/session|login/i)
-    expect(blocked.adapter.submit).not.toHaveBeenCalled()
+    expect(blocked.adapter.submit).toHaveBeenCalledOnce()
+    expect(blocked.ensureSession).not.toHaveBeenCalled()
   })
 
   it('keeps generation unreachable without the dev flag, with an enabled-gate positive control', async () => {

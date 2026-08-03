@@ -893,7 +893,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     if (generationQueue?.clearQueue) {
       generationQueue.clearQueue()
     }
-  }, [t, generationQueue])
+    // ChatGPT submit stays main-owned until the bounded page/fetch job finishes. Only that engine
+    // advertises active cancellation; Flow/API behavior remains on their existing stop paths.
+    if (genAPI.cancelsActiveOnStop === true && typeof genAPI.setStopRequested === 'function') {
+      void Promise.resolve(genAPI.setStopRequested(true)).catch((error) => {
+        console.warn('[Automation] active generation cancellation failed:', error?.message)
+      })
+    }
+  }, [t, generationQueue, genAPI])
   
   // 큐를 통한 시작 — 정상 Start 와 retry 가 모두 이 경로를 타 ref/video 작업과 직렬화한다.
   // (queue 없으면 직접 start — 하위호환.)

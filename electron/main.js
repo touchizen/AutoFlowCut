@@ -737,11 +737,10 @@ const chatgptTargetComboEnabled = isChatgptP2DevGateEnabled(chatgptDevGate)
 setSessionTargetStripEnabled(chatgptTargetComboEnabled)
 
 // Mode controller wires route:set/mode:set IPC + lazy session view creation/attachment.
-// Task 16 barrier owner is deliberately a required, awaited no-op until the real
-// session-job coordinator replaces it in Task 10.
+// Target switches cancel and drain the same product adapter used by generation IPC.
 const routeSessionJobs = Object.freeze({
-  cancelAll: async () => {},
-  awaitIdle: async () => {},
+  cancelAll: async () => chatgptTarget.createAdapter().cancelAll(),
+  awaitIdle: async () => chatgptTarget.createAdapter().awaitIdle(),
 })
 const modeController = createModeController(() => mainWindow, makeFlowView, {
   createSessionView: (target) => {

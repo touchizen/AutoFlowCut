@@ -53,6 +53,7 @@ export function createModeController(getMainWindow, createFlowView, options = {}
   let transitionQueue = Promise.resolve()
   let rendererQuiesceOwner = null
   const pendingRendererQuiesce = new Map()
+  const chatgptGenerationOwners = new Map()
 
   const createSessionView = options.createSessionView || ((target) => {
     if (target !== 'flow') throw new Error(`session-view-unavailable:${target}`)
@@ -384,37 +385,60 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       }
       return null
     }
+    const generationRouteChangedRefusal = () => ({
+      success: false,
+      errorKind: 'chatgpt-generation-route-changed',
+      error: 'ChatGPT generation no longer belongs to the active route.',
+    })
+    const captureChatgptGenerationOwner = () => ({
+      route: { ...currentRoute },
+      revision: routeRevision,
+      target: 'chatgpt',
+    })
+    const generationOwnerMatches = (owner) => (
+      owner?.target === 'chatgpt' &&
+      owner.revision === routeRevision &&
+      routesEqual(owner.route, currentRoute) &&
+      currentRoute.sessionTarget === owner.target
+    )
+    const admittedGenerationRefusal = (generationId) => {
+      const owner = chatgptGenerationOwners.get(generationId)
+      return owner && !generationOwnerMatches(owner) ? generationRouteChangedRefusal() : null
+    }
     const chatgptAdapter = () => getTargetDefinition('chatgpt')?.createAdapter?.() || null
     ipcMain.handle('chatgpt:submit-generation', async (event, request = {}) => {
       const refused = chatgptGenerationAdmission(event)
       if (refused) return refused
-      const referenceImages = Array.isArray(request.referenceImages) ? request.referenceImages : []
+      const admittedOwner = captureChatgptGenerationOwner()
+      const referenceImages = request.referenceImages == null ? [] : request.referenceImages
       // Reference upload has no measured product surface; never silently discard these bytes.
-      if (referenceImages.length > 0) {
+      if (!Array.isArray(referenceImages) || referenceImages.length > 0) {
         return {
           success: false,
           errorKind: 'chatgpt-reference-images-unmeasured',
           error: 'ChatGPT reference image upload is not measured and remains unavailable.',
         }
       }
-      const session = await ensureSession('chatgpt')
-      if (session?.ready !== true) {
-        return {
-          success: false,
-          errorKind: 'chatgpt-session-not-ready',
-          error: 'ChatGPT session is not ready. Log in and reconnect before generating.',
-          sessionStatus: session?.status || 'session-blocked',
-        }
-      }
+      if (!generationOwnerMatches(admittedOwner)) return generationRouteChangedRefusal()
       const adapter = chatgptAdapter()
       if (!adapter || typeof adapter.submit !== 'function') {
         return { success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.' }
       }
-      return adapter.submit({ ...request, referenceImages })
+      const result = await adapter.submit({ ...request, referenceImages })
+      if (!generationOwnerMatches(admittedOwner)) {
+        await adapter.cancelAll?.()
+        return generationRouteChangedRefusal()
+      }
+      if (result?.success === true && typeof result.generationId === 'string') {
+        chatgptGenerationOwners.set(result.generationId, admittedOwner)
+      }
+      return result
     })
     ipcMain.handle('chatgpt:observe-generation', async (event, generationId) => {
       const refused = chatgptGenerationAdmission(event)
       if (refused) return refused
+      const ownershipRefused = admittedGenerationRefusal(generationId)
+      if (ownershipRefused) return ownershipRefused
       const adapter = chatgptAdapter()
       return adapter?.observe?.(generationId) || {
         success: false, completed: true, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
@@ -423,16 +447,32 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     ipcMain.handle('chatgpt:collect-generation', async (event, generationId) => {
       const refused = chatgptGenerationAdmission(event)
       if (refused) return refused
+      const ownershipRefused = admittedGenerationRefusal(generationId)
+      if (ownershipRefused) return ownershipRefused
       const adapter = chatgptAdapter()
-      return adapter?.collect?.(generationId) || {
+      const result = await adapter?.collect?.(generationId) || {
         success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
       }
+      if (result?.errorKind !== 'chatgpt-generation-pending') {
+        chatgptGenerationOwners.delete(generationId)
+      }
+      return result
     })
     ipcMain.handle('chatgpt:clear-generations', async (event) => {
       const refused = chatgptGenerationAdmission(event)
       if (refused) return refused
       const adapter = chatgptAdapter()
-      return adapter?.clear?.() || {
+      const result = await adapter?.clear?.() || {
+        success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
+      }
+      if (result?.success === true) chatgptGenerationOwners.clear()
+      return result
+    })
+    ipcMain.handle('chatgpt:cancel-generations', async (event) => {
+      const refused = chatgptGenerationAdmission(event)
+      if (refused) return refused
+      const adapter = chatgptAdapter()
+      return adapter?.cancelAll?.() || {
         success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
       }
     })

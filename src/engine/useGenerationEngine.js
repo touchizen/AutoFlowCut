@@ -34,6 +34,8 @@ export function createStageRoutedEngine(route, { api, flow, chatgpt }) {
   for (const method of VIDEO_METHODS) routed[method] = video[method]
   routed.getAccessToken = image.getAccessToken || base.getAccessToken
   routed.clearTokenCache = image.clearTokenCache || base.clearTokenCache
+  routed.setStopRequested = image.setStopRequested || base.setStopRequested
+  routed.cancelsActiveOnStop = image.cancelsActiveOnStop === true
   return routed
 }
 

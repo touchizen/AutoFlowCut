@@ -4,6 +4,7 @@ import * as generationEngine from '../../src/engine/useGenerationEngine.js'
 function member(label) {
   return {
     label,
+    cancelsActiveOnStop: label === 'chatgpt',
     generateImage: vi.fn(async () => label),
     submitGeneration: vi.fn(async () => label),
     checkGeneration: vi.fn(async () => label),
@@ -13,6 +14,7 @@ function member(label) {
     generateVideoI2V: vi.fn(async () => label),
     checkVideoStatus: vi.fn(async () => label),
     downloadVideo: vi.fn(async () => label),
+    setStopRequested: vi.fn(async () => label),
   }
 }
 
@@ -64,5 +66,30 @@ describe('stage-routed generation engine', () => {
 
     await expect(routed.generateImage('image positive control', [])).resolves.toBe('chatgpt')
     expect(chatgpt.generateImage).toHaveBeenCalledOnce()
+  })
+
+  it('routes active-image cancellation to ChatGPT while flow+flow remains on the Flow no-op port', async () => {
+    if (!expectRouter()) return
+    const api = member('api')
+    const flow = member('flow')
+    const chatgpt = member('chatgpt')
+    const routed = generationEngine.createStageRoutedEngine(
+      { mode: 'flow', sessionTarget: 'chatgpt' },
+      { api, flow, chatgpt },
+    )
+
+    await expect(routed.setStopRequested(true)).resolves.toBe('chatgpt')
+    expect(chatgpt.setStopRequested).toHaveBeenCalledWith(true)
+    expect(api.setStopRequested).not.toHaveBeenCalled()
+    expect(flow.setStopRequested).not.toHaveBeenCalled()
+    expect(routed.cancelsActiveOnStop).toBe(true)
+
+    const control = generationEngine.createStageRoutedEngine(
+      { mode: 'flow', sessionTarget: 'flow' },
+      { api, flow, chatgpt },
+    )
+    await expect(control.setStopRequested(true)).resolves.toBe('flow')
+    expect(flow.setStopRequested).toHaveBeenCalledWith(true)
+    expect(control.cancelsActiveOnStop).toBe(false)
   })
 })

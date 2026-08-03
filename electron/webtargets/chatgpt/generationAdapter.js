@@ -17,7 +17,8 @@ export function norm(value) {
 }
 
 export function buildImagePrompt(prompt) {
-  return `Generate an image based on the following prompt:\n${norm(prompt)}`
+  const scene = norm(prompt).replace(/\s*[\r\n]\s*/g, ' ')
+  return `Generate an image based on the following prompt: ${scene}`
 }
 
 export function idOf(src) {
@@ -149,13 +150,41 @@ export function pressEnter(view) {
   webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
 }
 
-export function withEvalTimeout(operation, timeoutMs) {
+function abortError() {
+  const error = new Error('operation-aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+function withAbortSignal(operation, signal) {
+  if (!signal) return Promise.resolve(operation)
+  if (signal.aborted) return Promise.reject(abortError())
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortError())
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(operation).then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+export function withEvalTimeout(operation, timeoutMs, { signal, onTimeout } = {}) {
   let timer
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`operation-timeout:${timeoutMs}`)), timeoutMs)
+    timer = setTimeout(() => {
+      try { onTimeout?.() } catch {}
+      reject(new Error(`operation-timeout:${timeoutMs}`))
+    }, timeoutMs)
   })
   Promise.resolve(operation).catch(() => {})
-  return Promise.race([operation, timeout]).finally(() => clearTimeout(timer))
+  return Promise.race([withAbortSignal(operation, signal), timeout]).finally(() => clearTimeout(timer))
 }
 
 function originOf(value) {
@@ -185,8 +214,12 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
     maxContextResets = 2,
     evalTimeoutMs = 15_000,
     reprobeTimeoutMs = 5_000,
+    signal,
   } = deps
   const prefix = '[ChatGPT Generation]'
+  const cancelled = () => signal?.aborted === true
+  const cancellationFailure = () => ({ ok: false, stage: 'cancel', detail: 'cancelled' })
+  if (cancelled()) return cancellationFailure()
   const startedAt = now()
   const remaining = () => deadlineMs - (now() - startedAt)
   const expired = () => remaining() <= 0
@@ -195,12 +228,19 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
   let contextResets = 0
 
   const evalFn = async (fn, ...args) => {
+    if (cancelled()) return { ok: false, cancelled: true }
     const budget = Math.max(1, Math.min(evalTimeoutMs, remaining()))
     try {
-      const value = await withEvalTimeout(executeInView(view, callPage(fn, ...args)), budget)
+      const value = await withEvalTimeout(
+        executeInView(view, callPage(fn, ...args)),
+        budget,
+        { signal },
+      )
+      if (cancelled()) return { ok: false, cancelled: true }
       streaks.set(fn, 0)
       return { ok: true, value }
     } catch (error) {
+      if (cancelled() || error?.name === 'AbortError') return { ok: false, cancelled: true }
       streaks.set(fn, (streaks.get(fn) || 0) + 1)
       log.error?.(prefix, 'page evaluation rejected', {
         origin: originOf(view?.webContents?.getURL?.()),
@@ -212,21 +252,29 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
 
   const evalWithRetry = async (fn, ...args) => {
     for (let attempt = 0; attempt < maxRejectStreak; attempt += 1) {
+      if (cancelled()) return { ok: false, cancelled: true }
       if (expired()) break
       const result = await evalFn(fn, ...args)
+      if (result.cancelled) return result
       if (result.ok) return result
       if (expired() || attempt === maxRejectStreak - 1) break
-      await sleep(Math.min(cadenceMs, Math.max(remaining(), 0)))
+      try {
+        await withAbortSignal(sleep(Math.min(cadenceMs, Math.max(remaining(), 0))), signal)
+      } catch (error) {
+        if (cancelled() || error?.name === 'AbortError') return { ok: false, cancelled: true }
+        throw error
+      }
     }
     return { ok: false }
   }
 
   const safeReprobe = async () => {
-    if (expired()) return false
+    if (expired() || cancelled()) return false
     try {
       return await withEvalTimeout(
         Promise.resolve().then(() => reprobe()),
         Math.max(1, Math.min(reprobeTimeoutMs, remaining())),
+        { signal },
       )
     } catch {
       return false
@@ -246,13 +294,15 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
   }
 
   const baseline = await evalWithRetry('__cg_baseline__')
+  if (baseline.cancelled || cancelled()) return cancellationFailure()
   if (!baseline.ok) return contextFailure('baseline-rejected')
   if (!Array.isArray(baseline.value?.imgs)) return contextFailure('baseline-malformed')
   const excluded = new Set(baselineIdsOf(baseline.value.imgs))
-  log.info?.(prefix, 'baseline ready', { origin: originOf(baseline.value?.href), imageCount: excluded.size })
+  log.info?.(prefix, 'baseline ready', { origin: originOf(baseline.value?.href) })
 
   let injectMethod = 'execCommand'
   const injectedA = await evalWithRetry('__cg_inject__', prompt)
+  if (injectedA.cancelled || cancelled()) return cancellationFailure()
   if (!injectedA.ok) return contextFailure('inject-rejected')
   if (typeof injectedA.value?.textMatches !== 'boolean') return contextFailure('inject-malformed')
   let injected = injectedA.value.textMatches === true
@@ -269,6 +319,7 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
       return { ok: false, stage: 'inject', detail: `trusted-input-${errorNameOf(error)}` }
     }
     const verified = await evalWithRetry('__cg_verify__', prompt)
+    if (verified.cancelled || cancelled()) return cancellationFailure()
     if (!verified.ok) return contextFailure('verify-rejected')
     if (typeof verified.value?.textMatches !== 'boolean') return contextFailure('verify-malformed')
     injected = verified.value.textMatches === true
@@ -276,7 +327,8 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
   if (!injected) return { ok: false, stage: 'inject', detail: 'composer-text-mismatch' }
 
   let submitMethod = 'click'
-  await evalFn('__cg_clickSubmit__')
+  const clicked = await evalFn('__cg_clickSubmit__')
+  if (clicked.cancelled || cancelled()) return cancellationFailure()
   let notSubmittedStreak = 0
   let submittedAck = false
   let enterTried = false
@@ -284,10 +336,17 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
   let alertsLogged = false
 
   for (;;) {
-    await sleep(Math.min(cadenceMs, Math.max(remaining(), 0)))
+    try {
+      await withAbortSignal(sleep(Math.min(cadenceMs, Math.max(remaining(), 0))), signal)
+    } catch (error) {
+      if (cancelled() || error?.name === 'AbortError') return cancellationFailure()
+      throw error
+    }
+    if (cancelled()) return cancellationFailure()
     if (expired()) break
 
     const acknowledgement = await evalFn('__cg_submitAck__', prompt)
+    if (acknowledgement.cancelled || cancelled()) return cancellationFailure()
     if (!acknowledgement.ok) {
       notSubmittedStreak = 0
       const lost = await contextCheck()
@@ -301,6 +360,7 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
 
       if (notSubmittedStreak >= 2 && submitMethod === 'click' && !enterTried && !submittedAck) {
         const recheck = await evalFn('__cg_submitAck__', prompt)
+        if (recheck.cancelled || cancelled()) return cancellationFailure()
         if (!recheck.ok) {
           const lost = await contextCheck()
           if (lost) return { ok: false, stage: 'context', detail: lost }
@@ -316,6 +376,7 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
     }
 
     const poll = await evalFn('__cg_poll__')
+    if (poll.cancelled || cancelled()) return cancellationFailure()
     if (!poll.ok) {
       const lost = await contextCheck()
       if (lost) return { ok: false, stage: 'context', detail: lost }
@@ -339,9 +400,6 @@ export async function runGenerateStateMachine(view, prompt, deps = {}) {
     if (candidate && lastPollId === candidate.id) {
       log.info?.(prefix, 'image accepted', {
         origin: originOf(candidate.src),
-        id: candidate.id,
-        width: candidate.w,
-        height: candidate.h,
       })
       return {
         ok: true,
@@ -379,27 +437,41 @@ export async function saveImage(view, src, deps = {}) {
     outputDir = path.join(os.tmpdir(), 'autoflowcut-chatgpt'),
     now = () => Date.now(),
     timeoutMs = 60_000,
+    signal,
   } = deps
   if (!CDN_RE.test(String(src))) throw new Error('chatgpt-image-source-unmeasured')
-  const response = await withEvalTimeout(
-    view.webContents.session.fetch(src, { credentials: 'include' }),
-    timeoutMs,
-  )
-  if (!response?.ok) throw new Error(`chatgpt-image-fetch-status-${response?.status || 'missing'}`)
-  const mimeType = String(response.headers?.get?.('content-type') || '').toLowerCase().split(';')[0].trim()
-  if (!mimeType.startsWith('image/')) throw new Error('chatgpt-image-fetch-non-image')
-  const bytes = Buffer.from(await withEvalTimeout(response.arrayBuffer(), timeoutMs))
-  const extension = extFromContentType(mimeType, src)
-  fs.mkdirSync(outputDir, { recursive: true })
-  const filePath = path.join(outputDir, `generated-${now()}.${extension}`)
-  fs.writeFileSync(filePath, bytes)
-  const base64 = bytes.toString('base64')
-  return {
-    filePath,
-    mimeType,
-    base64,
-    dataUrl: `data:${mimeType};base64,${base64}`,
-    mediaId: null,
+  const controller = new AbortController()
+  const relayAbort = () => controller.abort()
+  if (signal?.aborted) controller.abort()
+  else signal?.addEventListener('abort', relayAbort, { once: true })
+  try {
+    const response = await withEvalTimeout(
+      view.webContents.session.fetch(src, { credentials: 'include', signal: controller.signal }),
+      timeoutMs,
+      { signal, onTimeout: () => controller.abort() },
+    )
+    if (!response?.ok) throw new Error(`chatgpt-image-fetch-status-${response?.status || 'missing'}`)
+    const mimeType = String(response.headers?.get?.('content-type') || '').toLowerCase().split(';')[0].trim()
+    if (!mimeType.startsWith('image/')) throw new Error('chatgpt-image-fetch-non-image')
+    const bytes = Buffer.from(await withEvalTimeout(
+      response.arrayBuffer(),
+      timeoutMs,
+      { signal, onTimeout: () => controller.abort() },
+    ))
+    const extension = extFromContentType(mimeType, src)
+    fs.mkdirSync(outputDir, { recursive: true })
+    const filePath = path.join(outputDir, `generated-${now()}.${extension}`)
+    fs.writeFileSync(filePath, bytes)
+    const base64 = bytes.toString('base64')
+    return {
+      filePath,
+      mimeType,
+      base64,
+      dataUrl: `data:${mimeType};base64,${base64}`,
+      mediaId: null,
+    }
+  } finally {
+    signal?.removeEventListener('abort', relayAbort)
   }
 }
 
@@ -414,6 +486,18 @@ const sessionRefusal = (status) => ({
   errorKind: 'chatgpt-session-not-ready',
   error: 'ChatGPT session is not ready. Log in and reconnect before generating.',
   sessionStatus: status || 'session-blocked',
+})
+
+const optionRefusal = (errorKind, option) => ({
+  success: false,
+  errorKind,
+  error: `ChatGPT ${option} control is not measured, so this request was not submitted.`,
+})
+
+const cancellationRefusal = () => ({
+  success: false,
+  errorKind: 'chatgpt-generation-cancelled',
+  error: 'ChatGPT image generation was cancelled.',
 })
 
 export function createChatgptGenerationAdapter({
@@ -432,8 +516,21 @@ export function createChatgptGenerationAdapter({
   let tail = Promise.resolve()
 
   const run = async (job) => {
+    if (job.controller.signal.aborted) {
+      Object.assign(job, { state: 'cancelled', result: cancellationRefusal() })
+      return
+    }
     job.state = 'running'
-    const freshSession = await ensureSession?.()
+    let freshSession
+    try {
+      freshSession = await withAbortSignal(Promise.resolve().then(() => ensureSession?.()), job.controller.signal)
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        Object.assign(job, { state: 'cancelled', result: cancellationRefusal() })
+        return
+      }
+      throw error
+    }
     if (!freshSession?.ready) {
       Object.assign(job, { state: 'failed', result: sessionRefusal(freshSession?.status) })
       return
@@ -449,14 +546,25 @@ export function createChatgptGenerationAdapter({
         reprobe: async () => (await ensureSession?.())?.ready === true,
         log: logger,
         ...generateOptions,
+        signal: job.controller.signal,
       })
       if (!generated.ok) {
-        job.state = 'failed'
-        job.result = {
-          success: false,
-          errorKind: `chatgpt-generation-${generated.stage || 'failed'}`,
-          error: `ChatGPT image generation failed during ${generated.stage || 'generation'}.`,
+        if (generated.stage === 'cancel' || job.controller.signal.aborted) {
+          Object.assign(job, { state: 'cancelled', result: cancellationRefusal() })
+          return
         }
+        logger.error?.('[ChatGPT Generation]', 'job failed', {
+          origin: originOf(view?.webContents?.getURL?.()),
+          errorName: generated.detail || `stage-${generated.stage || 'failed'}`,
+        })
+        Object.assign(job, {
+          state: 'failed',
+          result: {
+            success: false,
+            errorKind: `chatgpt-generation-${generated.stage || 'failed'}`,
+            error: `ChatGPT image generation failed during ${generated.stage || 'generation'}.`,
+          },
+        })
         return
       }
       const saved = await saveImage(view, generated.src, {
@@ -464,6 +572,7 @@ export function createChatgptGenerationAdapter({
         outputDir: getOutputDir(),
         now,
         timeoutMs: saveTimeoutMs,
+        signal: job.controller.signal,
       })
       job.state = 'completed'
       job.result = {
@@ -471,6 +580,10 @@ export function createChatgptGenerationAdapter({
         images: [{ ...saved, id: generated.id }],
       }
     } catch (error) {
+      if (error?.name === 'AbortError' || job.controller.signal.aborted) {
+        Object.assign(job, { state: 'cancelled', result: cancellationRefusal() })
+        return
+      }
       logger.error?.('[ChatGPT Generation]', 'job failed', {
         origin: originOf(view?.webContents?.getURL?.()),
         errorName: errorNameOf(error),
@@ -485,26 +598,39 @@ export function createChatgptGenerationAdapter({
   }
 
   const submit = async (request = {}) => {
-    const referenceImages = Array.isArray(request.referenceImages) ? request.referenceImages : []
-    if (referenceImages.length > 0) return referenceRefusal()
+    const referenceImages = request.referenceImages == null ? [] : request.referenceImages
+    if (!Array.isArray(referenceImages) || referenceImages.length > 0) return referenceRefusal()
+    if (request.batchCount != null && request.batchCount !== 1) {
+      return optionRefusal('chatgpt-batch-count-unmeasured', 'batch count')
+    }
+    if (request.aspectRatio != null) {
+      return optionRefusal('chatgpt-aspect-ratio-unmeasured', 'aspect ratio')
+    }
+    if (request.seed != null) {
+      return optionRefusal('chatgpt-seed-unmeasured', 'seed')
+    }
     if (!norm(request.prompt)) {
       return { success: false, errorKind: 'chatgpt-prompt-required', error: 'A text prompt is required.' }
     }
-    const session = await ensureSession?.()
-    if (!session?.ready) return sessionRefusal(session?.status)
     const generationId = createId()
-    const job = { generationId, state: 'queued', request: { ...request, referenceImages }, result: null }
+    const job = {
+      generationId,
+      state: 'queued',
+      request: { ...request, referenceImages },
+      result: null,
+      controller: new AbortController(),
+    }
     jobs.set(generationId, job)
     tail = tail.then(() => run(job), () => run(job))
     await tail
-    if (job.state === 'failed') return job.result
+    if (job.state === 'failed' || job.state === 'cancelled') return job.result
     return { success: true, generationId }
   }
 
   const observe = async (generationId) => {
     const job = jobs.get(generationId)
     if (!job) return { success: false, completed: true, errorKind: 'chatgpt-generation-not-found', error: 'ChatGPT generation was not found.' }
-    if (job.state === 'failed') return { ...job.result, completed: true, state: job.state }
+    if (job.state === 'failed' || job.state === 'cancelled') return { ...job.result, completed: true, state: job.state }
     return { success: true, completed: job.state === 'completed', state: job.state }
   }
 
@@ -512,7 +638,7 @@ export function createChatgptGenerationAdapter({
     const job = jobs.get(generationId)
     if (!job) return { success: false, errorKind: 'chatgpt-generation-not-found', error: 'ChatGPT generation was not found.' }
     if (job.state !== 'completed') {
-      return job.state === 'failed'
+      return job.state === 'failed' || job.state === 'cancelled'
         ? job.result
         : { success: false, errorKind: 'chatgpt-generation-pending', error: 'ChatGPT generation is still pending.' }
     }
@@ -527,11 +653,19 @@ export function createChatgptGenerationAdapter({
     return { success: true }
   }
 
+  const cancelAll = async () => {
+    for (const job of jobs.values()) {
+      if (job.state === 'queued' || job.state === 'running') job.controller.abort()
+    }
+    return { success: true }
+  }
+
   return Object.freeze({
     submit,
     observe,
     collect,
     clear,
+    cancelAll,
     awaitIdle: () => tail,
   })
 }

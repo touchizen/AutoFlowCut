@@ -41,7 +41,7 @@ const deferred = () => {
 const flowRoute = () => ({ mode: 'flow', sessionTarget: 'flow' })
 const chatgptRoute = () => ({ mode: 'flow', sessionTarget: 'chatgpt' })
 
-const renderRunningFlowAutomation = ({ flowEffectGate, startMethod = 'start' }) => {
+const renderRunningFlowAutomation = ({ flowEffectGate, startMethod = 'start', cancelActiveOnStop = false }) => {
   const events = []
   const started = deferred()
   const stopRequested = deferred()
@@ -66,6 +66,12 @@ const renderRunningFlowAutomation = ({ flowEffectGate, startMethod = 'start' }) 
     clearGenerations: vi.fn().mockResolvedValue(undefined),
     uploadReference: vi.fn(),
     getAccessToken: vi.fn().mockResolvedValue('token'),
+    cancelsActiveOnStop: cancelActiveOnStop,
+    setStopRequested: vi.fn(async (value) => {
+      if (value !== true) return
+      events.push('chatgpt:cancel-active')
+      flowEffectGate.resolve()
+    }),
   }
   const scenesHook = {
     scenes: [{ id: 'scene-1', prompt: 'portrait', status: startMethod === 'retryErrors' ? 'error' : 'pending' }],
@@ -120,7 +126,7 @@ const renderRunningFlowAutomation = ({ flowEffectGate, startMethod = 'start' }) 
       await act(async () => requestFromMain(request))
     },
   }
-  return { automation, routeBridge, events }
+  return { automation, routeBridge, events, genAPI }
 }
 
 it('does not acknowledge route quiesce until real renderer-owned Flow automation is stopped and idle', async () => {
@@ -151,4 +157,29 @@ it.each([
   flowEffectGate.resolve()
   await Promise.all([automation.initialPromise(), pending])
   expect(events).toEqual(['flow:start', 'route-quiesce', 'flow:stop-requested', 'flow:idle', 'route-quiesce-receipt'])
+})
+
+it('cancels a ChatGPT-owned active submit before acknowledging target-switch quiesce', async () => {
+  const submitGate = deferred()
+  const { automation, routeBridge, events, genAPI } = renderRunningFlowAutomation({
+    flowEffectGate: submitGate,
+    cancelActiveOnStop: true,
+  })
+  const pending = routeBridge.requestFromMain({ requestId: 'route-chatgpt-cancel', from: chatgptRoute(), to: flowRoute() })
+
+  await automation.waitUntilStopRequested()
+  await act(async () => { await Promise.resolve(); await Promise.resolve() })
+  // Keep the pre-fix test bounded; after the fix this resolve is already idempotently done by cancellation.
+  submitGate.resolve()
+  await Promise.all([automation.initialPromise(), pending])
+
+  expect(genAPI.setStopRequested).toHaveBeenCalledWith(true)
+  expect(events).toEqual([
+    'flow:start',
+    'route-quiesce',
+    'flow:stop-requested',
+    'chatgpt:cancel-active',
+    'flow:idle',
+    'route-quiesce-receipt',
+  ])
 })

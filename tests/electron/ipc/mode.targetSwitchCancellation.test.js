@@ -71,9 +71,9 @@ const makeController = (deps) => createModeController(
 )
 
 describe('route:set target switch cancellation — P1 landmine', () => {
-  it('injects an explicit awaited no-op session owner in the production main path', () => {
+  it('injects the real ChatGPT adapter cancellation owner in the production main path', () => {
     const source = fs.readFileSync('electron/main.js', 'utf8')
-    expect(source).toMatch(/const routeSessionJobs = Object\.freeze\(\{[\s\S]*?cancelAll: async \(\) => \{\},[\s\S]*?awaitIdle: async \(\) => \{\},[\s\S]*?\}\)/)
+    expect(source).toMatch(/const routeSessionJobs = Object\.freeze\(\{[\s\S]*?cancelAll: async \(\) => chatgptTarget\.createAdapter\(\)\.cancelAll\(\),[\s\S]*?awaitIdle: async \(\) => chatgptTarget\.createAdapter\(\)\.awaitIdle\(\),[\s\S]*?\}\)/)
     expect(source).toMatch(/createModeController\([\s\S]*?sessionJobs: routeSessionJobs,[\s\S]*?\}\)/)
   })
 

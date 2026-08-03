@@ -178,6 +178,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chatgptObserveGeneration: (generationId) => ipcRenderer.invoke('chatgpt:observe-generation', generationId),
   chatgptCollectGeneration: (generationId) => ipcRenderer.invoke('chatgpt:collect-generation', generationId),
   chatgptClearGenerations: () => ipcRenderer.invoke('chatgpt:clear-generations'),
+  chatgptCancelGenerations: () => ipcRenderer.invoke('chatgpt:cancel-generations'),
   onSessionTargetStatus: (callback) => {
     const handler = (_, status) => callback(status)
     ipcRenderer.on('session-target:status-changed', handler)

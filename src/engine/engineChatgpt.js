@@ -15,6 +15,12 @@ const referenceRefusal = () => ({
   error: 'ChatGPT reference image upload is not measured and remains unavailable.',
 })
 
+const optionRefusal = (errorKind, option) => ({
+  success: false,
+  errorKind,
+  error: `ChatGPT ${option} control is not measured, so this request was not submitted.`,
+})
+
 export function createChatgptEngine({
   electronAPI = api(),
   now = () => Date.now(),
@@ -23,7 +29,18 @@ export function createChatgptEngine({
   pollMs = DEFAULT_POLL_MS,
 } = {}) {
   const submitGeneration = async (prompt, referenceImages = [], options = {}) => {
-    if (Array.isArray(referenceImages) && referenceImages.length > 0) return referenceRefusal()
+    if (referenceImages != null && (!Array.isArray(referenceImages) || referenceImages.length > 0)) {
+      return referenceRefusal()
+    }
+    if (options.batchCount != null && options.batchCount !== 1) {
+      return optionRefusal('chatgpt-batch-count-unmeasured', 'batch count')
+    }
+    if (options.aspectRatio != null) {
+      return optionRefusal('chatgpt-aspect-ratio-unmeasured', 'aspect ratio')
+    }
+    if (options.seed != null) {
+      return optionRefusal('chatgpt-seed-unmeasured', 'seed')
+    }
     if (typeof electronAPI?.chatgptSubmitGeneration !== 'function') return unavailable('generation')
     return electronAPI.chatgptSubmitGeneration({
       prompt,
@@ -85,7 +102,12 @@ export function createChatgptEngine({
     upscaleImage: async () => unavailable('image upscale'),
     fetchGallery: async () => unavailable('gallery'),
     listFlowProjects: async () => unavailable('Flow projects'),
-    setStopRequested: () => {},
+    cancelsActiveOnStop: true,
+    setStopRequested: async (value) => {
+      if (value !== true) return { success: true }
+      if (typeof electronAPI?.chatgptCancelGenerations !== 'function') return unavailable('cancellation')
+      return electronAPI.chatgptCancelGenerations()
+    },
   }
 }
 
