@@ -575,9 +575,11 @@ export function createChatgptGenerationAdapter({
         signal: job.controller.signal,
       })
       job.state = 'completed'
+      // C2: the estuary content id stays main-process-only. Nothing in the renderer consumes
+      // it (finalize reads base64/dataUrl/filePath/mediaId), so it must not cross IPC.
       job.result = {
         success: true,
-        images: [{ ...saved, id: generated.id }],
+        images: [saved],
       }
     } catch (error) {
       if (error?.name === 'AbortError' || job.controller.signal.aborted) {
@@ -637,10 +639,14 @@ export function createChatgptGenerationAdapter({
   const collect = async (generationId) => {
     const job = jobs.get(generationId)
     if (!job) return { success: false, errorKind: 'chatgpt-generation-not-found', error: 'ChatGPT generation was not found.' }
+    // C4: every terminal collect (completed/failed/cancelled) deletes the entry — otherwise
+    // cancelled jobs and their route-orphaned owner-map entries accumulate for the session.
+    if (job.state === 'failed' || job.state === 'cancelled') {
+      jobs.delete(generationId)
+      return job.result
+    }
     if (job.state !== 'completed') {
-      return job.state === 'failed' || job.state === 'cancelled'
-        ? job.result
-        : { success: false, errorKind: 'chatgpt-generation-pending', error: 'ChatGPT generation is still pending.' }
+      return { success: false, errorKind: 'chatgpt-generation-pending', error: 'ChatGPT generation is still pending.' }
     }
     jobs.delete(generationId)
     return job.result
@@ -648,7 +654,9 @@ export function createChatgptGenerationAdapter({
 
   const clear = async () => {
     for (const [generationId, job] of jobs) {
-      if (job.state === 'completed' || job.state === 'failed') jobs.delete(generationId)
+      if (job.state === 'completed' || job.state === 'failed' || job.state === 'cancelled') {
+        jobs.delete(generationId)
+      }
     }
     return { success: true }
   }

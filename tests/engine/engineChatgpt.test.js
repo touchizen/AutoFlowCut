@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createChatgptEngine } from '../../src/engine/engineChatgpt.js'
 
-function engineHarness() {
+function engineHarness(deps = {}) {
   const events = []
   const electronAPI = {
     chatgptSubmitGeneration: vi.fn(async (request) => {
@@ -13,7 +13,7 @@ function engineHarness() {
       return { success: true }
     }),
   }
-  return { engine: createChatgptEngine({ electronAPI }), electronAPI, events }
+  return { engine: createChatgptEngine({ electronAPI, ...deps }), electronAPI, events }
 }
 
 describe('ChatGPT renderer engine measured request contract', () => {
@@ -39,7 +39,7 @@ describe('ChatGPT renderer engine measured request contract', () => {
     expect(h.events).toEqual(['submit:empty-array positive control'])
   })
 
-  it('refuses batch, aspect-ratio, and seed controls that the spike never measured', async () => {
+  it('refuses explicit batch and seed opt-ins that the spike never measured', async () => {
     const h = engineHarness()
     await expect(h.engine.submitGeneration(
       'measured options positive control',
@@ -49,7 +49,6 @@ describe('ChatGPT renderer engine measured request contract', () => {
 
     const cases = [
       [{ batchCount: 4 }, 'chatgpt-batch-count-unmeasured'],
-      [{ batchCount: 1, aspectRatio: '16:9' }, 'chatgpt-aspect-ratio-unmeasured'],
       [{ batchCount: 1, seed: 314159 }, 'chatgpt-seed-unmeasured'],
     ]
     for (const [options, errorKind] of cases) {
@@ -57,6 +56,58 @@ describe('ChatGPT renderer engine measured request contract', () => {
         .resolves.toMatchObject({ success: false, errorKind })
     }
     expect(h.events).toEqual(['submit:measured options positive control'])
+  })
+
+  it('submits the app-default settings shape by omitting aspect-ratio/provider/model plumbing', async () => {
+    const notices = []
+    const h = engineHarness({ onAspectRatioIgnored: () => notices.push('aspect-ratio-ignored') })
+
+    // Positive control — no aspectRatio in options → no notice, submission goes through.
+    await expect(h.engine.submitGeneration('no-aspect positive control', [], { batchCount: 1 }))
+      .resolves.toMatchObject({ success: true })
+    expect(notices).toEqual([])
+
+    // The exact option object every real caller (useAutomation/useSceneGeneration/
+    // useReferenceGeneration) sends with the useAppSettings defaults.
+    const submitted = await h.engine.submitGeneration('settings-shaped submission', [], {
+      batchCount: 1,
+      seed: null,
+      aspectRatio: '16:9',
+      model: 'gemini-nonstandard-model',
+      provider: 'google',
+      references: [{ id: 'ref-non-default', name: 'unused-here' }],
+    })
+
+    expect(submitted).toMatchObject({ success: true, generationId: 'engine-chatgpt-positive' })
+    expect(h.events).toEqual([
+      'submit:no-aspect positive control',
+      'submit:settings-shaped submission',
+    ])
+    const request = h.electronAPI.chatgptSubmitGeneration.mock.calls[1][0]
+    expect('aspectRatio' in request).toBe(false)
+    expect('provider' in request).toBe(false)
+    expect('model' in request).toBe(false)
+    expect(request.referenceImages).toEqual([])
+    expect(notices).toEqual(['aspect-ratio-ignored'])
+  })
+
+  it('announces the dropped aspect ratio through the window event the app listens to', async () => {
+    const windowNotices = []
+    const listener = () => windowNotices.push('window-notice')
+    window.addEventListener('chatgpt-aspect-ratio-ignored', listener)
+    try {
+      const h = engineHarness()
+      await expect(h.engine.submitGeneration('no-notice positive control', [], { batchCount: 1 }))
+        .resolves.toMatchObject({ success: true })
+      expect(windowNotices).toEqual([])
+
+      await expect(h.engine.submitGeneration('noticed submission', [], { batchCount: 1, aspectRatio: '9:16' }))
+        .resolves.toMatchObject({ success: true })
+
+      expect(windowNotices).toEqual(['window-notice'])
+    } finally {
+      window.removeEventListener('chatgpt-aspect-ratio-ignored', listener)
+    }
   })
 
   it('maps Stop=true to the ChatGPT cancellation IPC and leaves Stop=false inert', async () => {

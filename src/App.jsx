@@ -602,6 +602,19 @@ function App() {
     return () => window.removeEventListener('byok-key-changed', onKeyChanged)
   }, [])
 
+  // C1: ChatGPT 타깃은 화면비를 제어하지 못한다(스파이크 실측: 정사각 출력만). 엔진이 프로젝트
+  // 화면비를 제출에서 제거할 때마다 이 이벤트를 쏘고, 여기서 세션당 한 번만 알린다(씬마다 아님).
+  const chatgptAspectNoticeShownRef = useRef(false)
+  useEffect(() => {
+    const onAspectRatioIgnored = () => {
+      if (chatgptAspectNoticeShownRef.current) return
+      chatgptAspectNoticeShownRef.current = true
+      toast.warning(t('toast.chatgptAspectRatioIgnored'))
+    }
+    window.addEventListener('chatgpt-aspect-ratio-ignored', onAspectRatioIgnored)
+    return () => window.removeEventListener('chatgpt-aspect-ratio-ignored', onAspectRatioIgnored)
+  }, [t])
+
   const refuseIfSessionTargetUnsupported = useCallback(({ stage = 'image', hasReferences = false } = {}) => {
     if (modeRef.current !== 'flow' || flowTargetActiveRef.current) return false
     if (stage === 'image' && hasReferences !== true) return false

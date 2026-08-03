@@ -484,6 +484,38 @@ describe('ChatGPT measured generation state machine', () => {
     })
   })
 
+  it('keeps the estuary content id out of the collected IPC payload', async () => {
+    if (!expectMeasuredMachine()) return
+    const h = adapterHarness({
+      handlers: {
+        __cg_baseline__: { imgs: [] },
+        __cg_inject__: { textMatches: true, submitPresent: true },
+        __cg_clickSubmit__: { clicked: true },
+        __cg_submitAck__: submitted,
+        __cg_poll__: { imgs: [loaded('estuary-content-id-must-not-cross-ipc')] },
+      },
+      createId: () => 'ipc-payload-privacy-job',
+    })
+
+    await expect(h.adapter.submit({
+      prompt: 'a payload-privacy control scene',
+      referenceImages: [],
+      batchCount: 1,
+    })).resolves.toEqual({ success: true, generationId: 'ipc-payload-privacy-job' })
+    const collected = await h.adapter.collect('ipc-payload-privacy-job')
+
+    // Positive control: the payload still carries everything the renderer consumes.
+    expect(collected.success).toBe(true)
+    expect(collected.images[0]).toMatchObject({
+      filePath: '/adapter-harness-staging/generated-1700000000099.png',
+      base64: expect.any(String),
+      dataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+    })
+    // The content-correlating estuary id must not cross IPC in the event/result payload.
+    expect(collected.images[0]).not.toHaveProperty('id')
+    expect(JSON.stringify(collected)).not.toContain('estuary-content-id-must-not-cross-ipc')
+  })
+
   it('fails closed on a malformed non-array reference envelope after an empty-array positive control', async () => {
     if (!expectMeasuredMachine()) return
     let nextId = 0
@@ -600,6 +632,65 @@ describe('ChatGPT measured generation state machine', () => {
     expect(fetchSignal).toBeInstanceOf(AbortSignal)
     expect(fetchSignal.aborted).toBe(true)
     expect(events).toEqual(['fetch-start', 'cancel-request', 'idle'])
+  })
+
+  it('deletes a cancelled job on terminal collect instead of leaking it for the session', async () => {
+    if (!expectMeasuredMachine()) return
+    const fetch = vi.fn(() => new Promise(() => {}))
+    const h = adapterHarness({ fetch, createId: () => 'reap-on-collect-job' })
+
+    const pending = h.adapter.submit({
+      prompt: 'cancel then collect twice',
+      referenceImages: [],
+      batchCount: 1,
+    })
+    await waitForCall(fetch)
+    // Positive control: an active (running) job must survive clear().
+    await expect(h.adapter.clear()).resolves.toEqual({ success: true })
+    await expect(h.adapter.observe('reap-on-collect-job')).resolves.toMatchObject({
+      success: true, completed: false, state: 'running',
+    })
+
+    await h.adapter.cancelAll()
+    await expect(pending).resolves.toMatchObject({
+      success: false, errorKind: 'chatgpt-generation-cancelled',
+    })
+
+    // First collect returns the terminal cancellation result…
+    await expect(h.adapter.collect('reap-on-collect-job')).resolves.toMatchObject({
+      success: false, errorKind: 'chatgpt-generation-cancelled',
+    })
+    // …and the terminal collect deletes the entry: a second collect finds nothing.
+    await expect(h.adapter.collect('reap-on-collect-job')).resolves.toMatchObject({
+      success: false, errorKind: 'chatgpt-generation-not-found',
+    })
+  })
+
+  it('clear() reaps a cancelled job that was never collected', async () => {
+    if (!expectMeasuredMachine()) return
+    const fetch = vi.fn(() => new Promise(() => {}))
+    const h = adapterHarness({ fetch, createId: () => 'reap-on-clear-job' })
+
+    const pending = h.adapter.submit({
+      prompt: 'cancel then clear without collecting',
+      referenceImages: [],
+      batchCount: 1,
+    })
+    await waitForCall(fetch)
+    await h.adapter.cancelAll()
+    await expect(pending).resolves.toMatchObject({
+      success: false, errorKind: 'chatgpt-generation-cancelled',
+    })
+    // Positive control: before clear() the cancelled job is still observable.
+    await expect(h.adapter.observe('reap-on-clear-job')).resolves.toMatchObject({
+      completed: true, state: 'cancelled',
+    })
+
+    await expect(h.adapter.clear()).resolves.toEqual({ success: true })
+
+    await expect(h.adapter.observe('reap-on-clear-job')).resolves.toMatchObject({
+      success: false, errorKind: 'chatgpt-generation-not-found',
+    })
   })
 
   it('owns cancellation before the session probe resolves and never evaluates the page', async () => {

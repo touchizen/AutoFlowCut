@@ -730,6 +730,24 @@ describe('App flow + chatgpt target gate', () => {
     expect(appMocks.toastWarning).not.toHaveBeenCalled()
   })
 
+  it('surfaces the aspect-ratio limitation once per session, not once per scene', async () => {
+    render(<App />)
+    await act(async () => { await Promise.resolve() })
+
+    // The ChatGPT engine fires this event for every scene whose submission drops the
+    // project aspect ratio — a batch of scenes must still produce a single notice.
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('chatgpt-aspect-ratio-ignored'))
+      window.dispatchEvent(new CustomEvent('chatgpt-aspect-ratio-ignored'))
+      window.dispatchEvent(new CustomEvent('chatgpt-aspect-ratio-ignored'))
+      await Promise.resolve()
+    })
+
+    const aspectNotices = appMocks.toastWarning.mock.calls
+      .filter((call) => call[0] === 'toast.chatgptAspectRatioIgnored')
+    expect(aspectNotices).toHaveLength(1)
+  })
+
   it('flow + chatgpt blocks text-to-video before the Flow video engine seam', async () => {
     render(<App />)
 
