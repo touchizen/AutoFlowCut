@@ -33,18 +33,36 @@ export function isReservedNavigationAllowed(rawUrl) {
   try { return RESERVED_ALLOWED_ORIGINS.includes(new URL(rawUrl).origin) } catch { return false }
 }
 
+// Origin only, never the raw URL — reserved-session URLs carry signed paths/queries.
+function toLoggableOrigin(rawUrl) {
+  try { return new URL(rawUrl).origin } catch { return '<invalid-origin>' }
+}
+
 export function installReservedSessionSecurity(view, electronSession) {
-  const guardNavigation = (event, url) => { if (!isReservedNavigationAllowed(url)) event.preventDefault() }
+  // Every blocked exit logs — a silently prevented main-frame hop leaves the view blank
+  // with zero diagnostics. `kind` distinguishes will-navigate from will-redirect so the
+  // sequence of a login/challenge hop is readable in the terminal.
+  const guardNavigation = (kind) => (event, url) => {
+    if (isReservedNavigationAllowed(url)) return
+    event.preventDefault()
+    console.warn('[ReservedSession] Blocked main-frame navigation', { kind, origin: toLoggableOrigin(url) })
+  }
   const guardFrameNavigation = (details) => {
     if (isReservedNavigationAllowed(details.url)) return
     details.preventDefault()
-    let origin = '<invalid-origin>'
-    try { origin = new URL(details.url).origin } catch { /* Never log the unparsed URL. */ }
-    console.warn('[ReservedSession] Blocked frame navigation', { origin })
+    console.warn('[ReservedSession] Blocked frame navigation', { origin: toLoggableOrigin(details.url) })
   }
-  view.webContents.on('will-navigate', guardNavigation)
-  view.webContents.on('will-redirect', guardNavigation)
+  view.webContents.on('will-navigate', guardNavigation('will-navigate'))
+  view.webContents.on('will-redirect', guardNavigation('will-redirect'))
   view.webContents.on('will-frame-navigate', guardFrameNavigation)
+  // A failed load looks identical to a blocked navigation from the outside (blank view) —
+  // log it distinctly so the two get different fixes. errorDescription is a Chromium net
+  // error name (e.g. ERR_NAME_NOT_RESOLVED), never page/user content.
+  view.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    console.warn('[ReservedSession] did-fail-load', {
+      errorCode, errorDescription, isMainFrame, origin: toLoggableOrigin(validatedURL),
+    })
+  })
   view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   electronSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
   electronSession.setPermissionCheckHandler(() => false)

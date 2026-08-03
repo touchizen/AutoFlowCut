@@ -15,6 +15,17 @@ let sessionTargetStripEnabled = false
 let dragging = false
 let dragToken = 0
 let powerSaveBlockerId = null
+// 세션 타깃(ChatGPT) 뷰가 "빈 화면"일 때 원인 3종(차단된 내비/로드 실패/잘못된 bounds)을 한
+// 런에서 구분하려면 geometry 가 관측 가능해야 한다. strip inset 이 적용되는 동안 최종 bounds 를
+// 변경 시 1회만 로그(숫자만 — URL/내용 없음).
+let lastLoggedBoundsKey = null
+
+function logSessionBoundsIfChanged(bounds) {
+  const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`
+  if (key === lastLoggedBoundsKey) return
+  lastLoggedBoundsKey = key
+  console.log('[SessionView] bounds', bounds)
+}
 
 /**
  * 활성 세션 WebContentsView(Flow 또는 ChatGPT) 위치/크기를 현재 레이아웃에 맞게 업데이트
@@ -28,8 +39,15 @@ export function updateBounds(mainWindow, sessionView, options = {}) {
     ? options.sessionTargetStripEnabled === true
     : sessionTargetStripEnabled
 
+  // strip 활성(=세션 타깃 뷰) 동안 최종 적용 bounds 를 변경 시 1회 로그. 0×0 접힘도 로그해야
+  //   "뷰가 크기 0" 인 빈 화면을 진단할 수 있다. setBounds 값 자체는 이전과 동일(가시성만 추가).
+  const applyBounds = (bounds) => {
+    if (stripEnabled) logSessionBoundsIfChanged(bounds)
+    sessionView.setBounds(bounds)
+  }
+
   if (modalVisible || dragging) {
-    sessionView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    applyBounds({ x: 0, y: 0, width: 0, height: 0 })
     return
   }
 
@@ -47,16 +65,16 @@ export function updateBounds(mainWindow, sessionView, options = {}) {
 
   if (layoutMode === 'split-left') {
     const splitPos = Math.round(width * splitRatio)
-    sessionView.setBounds(belowSessionStrip({ x: 0, y: 0, width: splitPos - GAP, height }))
+    applyBounds(belowSessionStrip({ x: 0, y: 0, width: splitPos - GAP, height }))
   } else if (layoutMode === 'split-right') {
     const splitPos = Math.round(width * splitRatio)
-    sessionView.setBounds(belowSessionStrip({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height }))
+    applyBounds(belowSessionStrip({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height }))
   } else if (layoutMode === 'split-top') {
     const splitPos = Math.round(height * splitRatio)
-    sessionView.setBounds(belowSessionStrip({ x: 0, y: 0, width, height: splitPos - GAP }))
+    applyBounds(belowSessionStrip({ x: 0, y: 0, width, height: splitPos - GAP }))
   } else if (layoutMode === 'split-bottom') {
     const splitPos = Math.round(height * splitRatio)
-    sessionView.setBounds(belowSessionStrip({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP }))
+    applyBounds(belowSessionStrip({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP }))
   }
 }
 
