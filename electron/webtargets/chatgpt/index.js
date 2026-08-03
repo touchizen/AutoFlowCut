@@ -2,6 +2,26 @@ import {
   RESERVED_ALLOWED_ORIGINS,
   RESERVED_SESSION_PARTITION,
 } from '../../sessionViewSecurity.js'
+import { createChatgptGenerationAdapter } from './generationAdapter.js'
+
+export {
+  SELECTORS,
+  CDN_RE,
+  norm,
+  buildImagePrompt,
+  idOf,
+  baselineIdsOf,
+  pickNewCdnImage,
+  PAGE_FNS,
+  callPage,
+  clearComposerAndType,
+  pressEnter,
+  withEvalTimeout,
+  runGenerateStateMachine,
+  extFromContentType,
+  saveImage,
+  createChatgptGenerationAdapter,
+} from './generationAdapter.js'
 
 export const CHATGPT_START_URL = 'https://chatgpt.com/'
 export const CHATGPT_ALLOWED_ORIGINS = RESERVED_ALLOWED_ORIGINS
@@ -46,6 +66,7 @@ function withTimeout(operation, timeoutMs) {
   const timeout = new Promise((_, reject) => {
     timeoutId = setTimeout(() => reject(new Error('session-probe-timeout')), timeoutMs)
   })
+  Promise.resolve(operation).catch(() => {})
   return Promise.race([operation, timeout]).finally(() => clearTimeout(timeoutId))
 }
 
@@ -118,10 +139,12 @@ export function createChatgptTarget({
   reservedSessionWebPreferences,
   installReservedSessionSecurity,
   probeSession = measuredSessionProbe,
-  createAdapter = () => null,
+  createAdapter,
+  adapterOptions = {},
   logger = console,
 } = {}) {
   let view = null
+  let productAdapter = null
   let sessionStatus = {
     target: 'chatgpt',
     status: BLOCKED_STATUS,
@@ -184,7 +207,18 @@ export function createChatgptTarget({
     startUrl: CHATGPT_START_URL,
     allowedOrigins: CHATGPT_ALLOWED_ORIGINS,
     createView,
-    createAdapter: (...args) => createAdapter(...args),
+    createAdapter: (...args) => {
+      if (typeof createAdapter === 'function') return createAdapter(...args)
+      if (!productAdapter) {
+        productAdapter = createChatgptGenerationAdapter({
+          ...adapterOptions,
+          getView: () => view,
+          ensureSession,
+          logger,
+        })
+      }
+      return productAdapter
+    },
     ensureSession,
     getSessionStatus,
     onSessionStatusChanged(listener) {

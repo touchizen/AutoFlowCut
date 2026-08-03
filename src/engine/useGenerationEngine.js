@@ -8,22 +8,57 @@
  * 반환: { mode, capabilities, ready, ...엔진 계약(§3.1.1) }
  */
 import { useGenAPI } from '../hooks/useGenAPI'
+import { parseRoute, sourceForStage } from '../config/appRoute.js'
 import { createEngineApi } from './engineApi'
+import { createChatgptEngine } from './engineChatgpt.js'
 import { useFlowEngine } from './engineFlow'
 
-export function useGenerationEngine(mode, genApiOptions) {
+const IMAGE_METHODS = [
+  'generateImage', 'submitGeneration', 'checkGeneration', 'collectGeneration',
+  'clearGenerations', 'uploadReference', 'upscaleImage',
+]
+const VIDEO_METHODS = [
+  'generateVideoT2V', 'generateVideoI2V', 'checkVideoStatus',
+  'downloadVideo', 'upscaleVideo',
+]
+
+export function createStageRoutedEngine(route, { api, flow, chatgpt }) {
+  const parsed = parseRoute(route)
+  if (!parsed) return api
+  const member = (source) => ({ api, flow, chatgpt })[source]
+  const image = member(sourceForStage(parsed, 'image'))
+  const video = member(sourceForStage(parsed, 't2v'))
+  const base = parsed.mode === 'api' ? api : (parsed.sessionTarget === 'flow' ? flow : api)
+  const routed = { ...base }
+  for (const method of IMAGE_METHODS) routed[method] = image[method]
+  for (const method of VIDEO_METHODS) routed[method] = video[method]
+  routed.getAccessToken = image.getAccessToken || base.getAccessToken
+  routed.clearTokenCache = image.clearTokenCache || base.clearTokenCache
+  return routed
+}
+
+export function useGenerationEngine(modeOrRoute, genApiOptions = {}) {
   const genAPI = useGenAPI(genApiOptions)
   const engineApi = createEngineApi(genAPI)
   // 두 훅 모두 무조건 호출 (React Hook 규칙 — 조건부 호출 금지)
   // #R3-1: genApiOptions.getFlowProjectId (lazy getter) 또는 flowProjectId (static) 를 전달.
   // App 에서 flowProjectIdRef 를 통해 최신 바운드 id 를 제공한다.
   const engineFlow = useFlowEngine({ ...genApiOptions })
-  const active = mode === 'flow' ? engineFlow : engineApi
+  const route = typeof modeOrRoute === 'string'
+    ? { mode: modeOrRoute, sessionTarget: genApiOptions.sessionTarget || 'flow' }
+    : modeOrRoute
+  const parsed = parseRoute(route) || { mode: 'api', sessionTarget: 'flow' }
+  const engineChatgpt = createChatgptEngine({ electronAPI: globalThis.window?.electronAPI })
+  const active = createStageRoutedEngine(parsed, {
+    api: engineApi,
+    flow: engineFlow,
+    chatgpt: engineChatgpt,
+  })
   return {
-    mode,
+    mode: parsed.mode,
     capabilities: {
-      needsFlowView: mode === 'flow',   // 분할뷰/WebContentsView (M3/M5)
-      hasFlowArchive: mode === 'flow',  // 아카이브 버튼 게이팅 (M5)
+      needsFlowView: parsed.mode === 'flow',
+      hasFlowArchive: parsed.mode === 'flow' && parsed.sessionTarget === 'flow',
     },
     ready: !!active.accessToken,  // 인증 준비됨(api='byok' truthy, flow=raw bearer truthy, null→false)
     ...active,

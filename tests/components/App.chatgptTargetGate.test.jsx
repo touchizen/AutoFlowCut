@@ -15,7 +15,12 @@ const appMocks = vi.hoisted(() => {
   const sessionStatusListeners = new Set()
   const loadEpochRef = { current: 0 }
   const flowGenerateImage = vi.fn(async () => ({ success: true }))
-  const sceneBatchStart = vi.fn(async options => flowGenerateImage(options))
+  const chatgptGenerateImage = vi.fn(async () => ({ success: true }))
+  const sceneBatchStart = vi.fn(async options => (
+    state.sessionTarget === 'chatgpt'
+      ? chatgptGenerateImage(options)
+      : flowGenerateImage(options)
+  ))
   const videoStart = vi.fn(async () => ({ success: true }))
   const toastWarning = vi.fn()
   const commitRoute = vi.fn()
@@ -63,6 +68,7 @@ const appMocks = vi.hoisted(() => {
     },
     loadEpochRef,
     flowGenerateImage,
+    chatgptGenerateImage,
     sceneBatchStart,
     videoStart,
     toastWarning,
@@ -405,11 +411,13 @@ describe('App flow + chatgpt target gate', () => {
     appMocks.state.framePanelProps = null
     appMocks.loadEpochRef.current = 0
     appMocks.flowGenerateImage.mockClear()
+    appMocks.chatgptGenerateImage.mockClear()
     appMocks.sceneBatchStart.mockClear()
     appMocks.videoStart.mockClear()
     appMocks.toastWarning.mockClear()
     appMocks.commitRoute.mockClear()
     appMocks.genAPI.getAccessToken.mockClear().mockResolvedValue('token')
+    appMocks.scenesHook.getMatchingReferences.mockReset().mockReturnValue([])
     window.electronAPI = {
       setRoute: vi.fn(async (payload) => ({ ok: true, route: payload?.to || payload, revision: 1 })),
       setMode: vi.fn(async () => ({ ok: true })),
@@ -522,7 +530,7 @@ describe('App flow + chatgpt target gate', () => {
     expect(screen.getByTestId('owned-layout')).toHaveTextContent('split-bottom:0.67')
   })
 
-  it('flow + chatgpt Start does not reach the Flow image engine seam', async () => {
+  it('flow + chatgpt text-only Start reaches image automation instead of the old generic refusal', async () => {
     render(<App />)
 
     const start = screen.getByTitle('actions.start')
@@ -530,8 +538,10 @@ describe('App flow + chatgpt target gate', () => {
     fireEvent.click(start)
 
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce()
+    expect(appMocks.chatgptGenerateImage).toHaveBeenCalledOnce()
     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+    expect(appMocks.toastWarning).not.toHaveBeenCalledWith('toast.sessionTargetUnsupported')
   })
 
   it('flow + flow Start still reaches the Flow image engine seam', async () => {
@@ -541,6 +551,26 @@ describe('App flow + chatgpt target gate', () => {
     fireEvent.click(screen.getByTitle('actions.start'))
 
     await waitFor(() => expect(appMocks.flowGenerateImage).toHaveBeenCalledTimes(1))
+  })
+
+  it('flow + chatgpt refuses an image request carrying references with the measured reason', async () => {
+    render(<App />)
+    const positiveStart = screen.getByTitle('actions.start')
+    await waitFor(() => expect(positiveStart).toBeEnabled())
+    fireEvent.click(positiveStart)
+    await waitFor(() => expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce())
+
+    cleanup()
+    appMocks.sceneBatchStart.mockClear()
+    appMocks.scenesHook.getMatchingReferences.mockReturnValue([{ id: 'ref-positive', data: 'not-empty' }])
+    render(<App />)
+    const refusedStart = screen.getByTitle('actions.start')
+    await waitFor(() => expect(refusedStart).toBeEnabled())
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptReferencesUnsupported')
   })
 
   it('does not reuse Flow token readiness as ChatGPT readiness on a target round-trip', async () => {
@@ -554,7 +584,7 @@ describe('App flow + chatgpt target gate', () => {
     appMocks.state.sessionTarget = 'chatgpt'
     rerender(<App />)
     const start = screen.getByTestId('image-start')
-    await waitFor(() => expect(start).toBeDisabled())
+    await waitFor(() => expect(screen.getByTestId('image-start')).toBeDisabled())
 
     act(() => appMocks.emitSessionStatus({
       target: 'chatgpt', status: 'ready', ready: true, revision: 3,
@@ -579,7 +609,9 @@ describe('App flow + chatgpt target gate', () => {
 
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+    expect(appMocks.chatgptGenerateImage).toHaveBeenCalledOnce()
+    expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce()
+    expect(appMocks.toastWarning).not.toHaveBeenCalledWith('toast.sessionTargetUnsupported')
   })
 
   it.each([
@@ -594,15 +626,15 @@ describe('App flow + chatgpt target gate', () => {
 
     await waitFor(() => expect(start).toBeEnabled())
     fireEvent.click(start)
-    await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported'))
+    await waitFor(() => expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce())
     appMocks.toastWarning.mockClear()
 
     act(() => appMocks.emitSessionStatus({
       target: 'chatgpt', status, ready: true, revision: 2,
     }))
-    expect(start).toBeDisabled()
+    await waitFor(() => expect(screen.getByTestId('image-start')).toBeDisabled())
 
-    fireEvent.click(start)
+    fireEvent.click(screen.getByTestId('image-start'))
     await act(async () => { await Promise.resolve() })
     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
     expect(appMocks.toastWarning).not.toHaveBeenCalled()
@@ -616,7 +648,7 @@ describe('App flow + chatgpt target gate', () => {
 
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(appMocks.videoStart).not.toHaveBeenCalled()
-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptVideoUsesApi')
   })
 
   it('flow + chatgpt blocks frame-to-video before the Flow video engine seam', async () => {
@@ -637,7 +669,7 @@ describe('App flow + chatgpt target gate', () => {
 
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(appMocks.videoStart).not.toHaveBeenCalled()
-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptVideoUsesApi')
   })
 
   it('flow + chatgpt video retry does not extract a Flow access token', async () => {
@@ -656,6 +688,6 @@ describe('App flow + chatgpt target gate', () => {
     })
 
     expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(accessTokenCallsBeforeRetry)
-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptVideoUsesApi')
   })
 })

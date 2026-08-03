@@ -721,6 +721,10 @@ const chatgptTarget = createChatgptTarget({
   WebContentsView,
   reservedSessionWebPreferences,
   installReservedSessionSecurity,
+  adapterOptions: {
+    fs: fsSync,
+    getOutputDir: () => path.join(app.getPath('temp'), 'autoflowcut-chatgpt'),
+  },
 })
 const sessionTargetRegistry = createTargetRegistry({ chatgpt: chatgptTarget })
 const chatgptDevGate = Object.freeze({

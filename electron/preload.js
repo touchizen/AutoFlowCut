@@ -174,6 +174,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setRoute: (params) => ipcRenderer.invoke('route:set', params),
   getSessionTargetStatus: (target) => ipcRenderer.invoke('session-target:get-status', target),
   reconnectSession: (target) => ipcRenderer.invoke('session-target:reconnect', target),
+  chatgptSubmitGeneration: (request) => ipcRenderer.invoke('chatgpt:submit-generation', request),
+  chatgptObserveGeneration: (generationId) => ipcRenderer.invoke('chatgpt:observe-generation', generationId),
+  chatgptCollectGeneration: (generationId) => ipcRenderer.invoke('chatgpt:collect-generation', generationId),
+  chatgptClearGenerations: () => ipcRenderer.invoke('chatgpt:clear-generations'),
   onSessionTargetStatus: (callback) => {
     const handler = (_, status) => callback(status)
     ipcRenderer.on('session-target:status-changed', handler)

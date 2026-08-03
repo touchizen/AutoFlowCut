@@ -88,7 +88,7 @@ describe('ChatGPT target definition', () => {
     expect(setup.view.webContents).not.toHaveProperty('loadURL')
   })
 
-  it('keeps adapter construction as an explicit unimplemented injection point', () => {
+  it('constructs the product adapter by default while preserving explicit factory injection', () => {
     const injectedAdapter = vi.fn((input) => ({ input }))
     const setup = targetHarness()
     const target = createChatgptTarget({
@@ -98,7 +98,11 @@ describe('ChatGPT target definition', () => {
       createAdapter: injectedAdapter,
     })
 
-    expect(setup.target.createAdapter()).toBeNull()
+    expect(setup.target.createAdapter()).toEqual(expect.objectContaining({
+      submit: expect.any(Function),
+      observe: expect.any(Function),
+      collect: expect.any(Function),
+    }))
     expect(target.createAdapter('measured-later')).toEqual({ input: 'measured-later' })
     expect(injectedAdapter).toHaveBeenCalledOnce()
   })

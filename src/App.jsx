@@ -467,7 +467,7 @@ function App() {
 
   // 생성 엔진 facade(§3.1). mode에 따라 어댑터 선택(M2=api 항등, Flow는 M4).
   // 변수명 genAPI 유지(하위 소비자 호출부 불변) — 값은 이제 engine facade.
-  const genAPI = useGenerationEngine(mode, {
+  const genAPI = useGenerationEngine(route, {
     onAuthError: handleAuthError,
     getProjectName: () => settings.projectName,
     // #R3-1: lazy getter — engineFlow 가 IPC 호출 시점에 최신 bound id 를 읽는다.
@@ -602,11 +602,23 @@ function App() {
     return () => window.removeEventListener('byok-key-changed', onKeyChanged)
   }, [])
 
-  const refuseIfSessionTargetUnsupported = useCallback(() => {
+  const refuseIfSessionTargetUnsupported = useCallback(({ stage = 'image', hasReferences = false } = {}) => {
     if (modeRef.current !== 'flow' || flowTargetActiveRef.current) return false
-    toast.warning(t('toast.sessionTargetUnsupported'))
+    if (stage === 'image' && hasReferences !== true) return false
+    toast.warning(t(
+      stage === 'image'
+        ? 'toast.chatgptReferencesUnsupported'
+        : 'toast.chatgptVideoUsesApi'
+    ))
     return true
   }, [t])
+
+  const imageRequestCarriesReferences = useCallback((targetScenes = [], styleId = null) => {
+    if (typeof styleId === 'string' && styleId.startsWith('ref:')) return true
+    return targetScenes.some((scene) => (
+      (scenesHook.getMatchingReferences(scene) || []).length > 0
+    ))
+  }, [scenesHook.getMatchingReferences])
 
   // Flow 모드 인증 완료 이벤트 — main 이 flow-status { authenticated: true } 를 보내면
   // authReady 를 올린다. optional-chaining 으로 jsdom / api 모드에서는 no-op.
@@ -978,13 +990,21 @@ function App() {
 
   const { isRunning, isPaused, isStopping, isSceneBatchQueued, progress, status, statusMessage, start, togglePause, stop, retryErrors: retryErrorsUnsafe } = automation
   const retryErrors = useCallback((...args) => {
-    if (refuseIfSessionTargetUnsupported()) return Promise.resolve()
+    const targets = scenes.filter(scene => scene.status === 'error')
+    if (refuseIfSessionTargetUnsupported({
+      stage: 'image',
+      hasReferences: imageRequestCarriesReferences(targets, selectedStyleRefId),
+    })) return Promise.resolve()
     return retryErrorsUnsafe(...args)
-  }, [retryErrorsUnsafe, refuseIfSessionTargetUnsupported])
+  }, [retryErrorsUnsafe, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
   const retryScene = useCallback((...args) => {
-    if (refuseIfSessionTargetUnsupported()) return Promise.resolve()
+    const target = scenes.find(scene => scene.id === args[0])
+    if (refuseIfSessionTargetUnsupported({
+      stage: 'image',
+      hasReferences: imageRequestCarriesReferences(target ? [target] : [], selectedStyleRefId),
+    })) return Promise.resolve()
     return automation.retryScene(...args)
-  }, [automation.retryScene, refuseIfSessionTargetUnsupported])
+  }, [automation.retryScene, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
   // #M2: 모달/ref batch 대기 뒤 scene launch가 과거 render의 start closure를 부르지 않게 한다.
   const automationStartRef = useRef(start)
   automationStartRef.current = start
@@ -1009,7 +1029,10 @@ function App() {
   // Style Thumbnails
   const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails: generateThumbnailsUnsafe, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
   const generateThumbnails = useCallback((...args) => {
-    if (refuseIfSessionTargetUnsupported()) return
+    if (refuseIfSessionTargetUnsupported({
+      stage: 'image',
+      hasReferences: Array.isArray(args[1]) && args[1].length > 0,
+    })) return
     return generateThumbnailsUnsafe(...args)
   }, [generateThumbnailsUnsafe, refuseIfSessionTargetUnsupported])
 
@@ -1019,13 +1042,21 @@ function App() {
     scenesRef: scenesHook.scenesRef, flowProjectId: _flowProjectId, projectNameRef,
   })
   const handleGenerateRef = useCallback((...args) => {
-    if (refuseIfSessionTargetUnsupported()) return
+    const styleId = args[2] ?? selectedStyleRefId
+    if (refuseIfSessionTargetUnsupported({
+      stage: 'image',
+      hasReferences: typeof styleId === 'string' && styleId.startsWith('ref:'),
+    })) return
     return handleGenerateRefUnsafe(...args)
-  }, [handleGenerateRefUnsafe, refuseIfSessionTargetUnsupported])
+  }, [handleGenerateRefUnsafe, refuseIfSessionTargetUnsupported, selectedStyleRefId])
   const handleGenerateAllRefs = useCallback((...args) => {
-    if (refuseIfSessionTargetUnsupported()) return
+    const styleId = args[0] ?? selectedStyleRefId
+    if (refuseIfSessionTargetUnsupported({
+      stage: 'image',
+      hasReferences: typeof styleId === 'string' && styleId.startsWith('ref:'),
+    })) return
     return handleGenerateAllRefsUnsafe(...args)
-  }, [handleGenerateAllRefsUnsafe, refuseIfSessionTargetUnsupported])
+  }, [handleGenerateAllRefsUnsafe, refuseIfSessionTargetUnsupported, selectedStyleRefId])
 
   const { isOpen: showReferences, setOpenByUser } = useRefPanelVisibility({
     refBatchActive,
@@ -1060,9 +1091,13 @@ function App() {
     requestMentionSync,
   })
   const handleGenerateScene = useCallback((...args) => {
-    if (refuseIfSessionTargetUnsupported()) return
+    const target = scenes.find(scene => scene.id === args[0])
+    if (refuseIfSessionTargetUnsupported({
+      stage: 'image',
+      hasReferences: imageRequestCarriesReferences(target ? [target] : [], args[1] ?? selectedStyleRefId),
+    })) return
     return handleGenerateSceneUnsafe(...args)
-  }, [handleGenerateSceneUnsafe, refuseIfSessionTargetUnsupported])
+  }, [handleGenerateSceneUnsafe, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
   const generatingSceneIdRef = useRef(generatingSceneId)
   generatingSceneIdRef.current = generatingSceneId
   const guardSceneBatchStart = (source = 'ui') => {
@@ -1424,7 +1459,7 @@ function App() {
    */
   const handleVideoRetry = useCallback(async (item, opts = {}) => {
     if (!item) return
-    if (refuseIfSessionTargetUnsupported()) return
+    if (refuseIfSessionTargetUnsupported({ stage: 'video' })) return
     // #R30-4: timeline/scene-media 모달은 씬 미디어 id(t2v_N/i2v_N)로 연다. 재생성은 실제 generation
     //   아이템(vscene_N / fp_N)을 리셋해야 한다 — 안 그러면 updateVideoScene 매퍼가 t2v_/i2v_ 를 몰라
     //   no-op 이 되어 "재생성" 이 아무것도 안 한다. (t2v_N↔vscene_N, i2v_N↔fp_N: SceneList/LiveTimeline 매핑)
@@ -1782,7 +1817,12 @@ function App() {
             }
             break
           } else {
-            refuseIfSessionTargetUnsupported()
+            if (refuseIfSessionTargetUnsupported({
+              stage: 'image',
+              hasReferences: imageRequestCarriesReferences(targetScenes, effectiveStyleId),
+            })) break
+            setHasPendingBatch(true)
+            start(startOptions).finally(() => setHasPendingBatch(false))
             break
           }
         }
@@ -1793,7 +1833,7 @@ function App() {
       }
 
       case 'video-text': {
-        if (refuseIfSessionTargetUnsupported()) break
+        if (refuseIfSessionTargetUnsupported({ stage: 'video' })) break
         // Text to Video — 선택된 videoScenes만 실행 (선택 검증은 상단에서 처리)
         const selectedVideoScenes = videoScenes.filter(s => s.selected !== false)
 
@@ -1887,7 +1927,7 @@ function App() {
       }
 
       case 'frame-to-video': {
-        if (refuseIfSessionTargetUnsupported()) break
+        if (refuseIfSessionTargetUnsupported({ stage: 'video' })) break
         // Frame to Video — 선택된 framePairs만 실행
         // Frame to Video — 선택된 framePairs만 실행 (선택 검증은 상단에서 처리)
         const selectedFramePairs = framePairs.filter(p => p.selected !== false)
@@ -2038,13 +2078,13 @@ function App() {
       const sid = opts.selectedStyleRefId
       setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
       if (modeRef.current === 'flow') {
+        const liveScenes = scenesHook.scenesRef.current
+        const liveTargetScenes = opts.force
+          ? liveScenes.filter(scene => scene.prompt)
+          : filterPendingScenes(liveScenes)
         if (flowTargetActiveRef.current) {
           // #M2: tag modal 대기 중 바뀐 scene 상태를 useScenes의 동기 ref에서 다시 읽어 최초 의도 ID를
           // 새로 만든다. pendingStartOptions에는 설정만 남기고 과거 scene/M1 판정은 재사용하지 않는다.
-          const liveScenes = scenesHook.scenesRef.current
-          const liveTargetScenes = opts.force
-            ? liveScenes.filter(scene => scene.prompt)
-            : filterPendingScenes(liveScenes)
           const { force = false, ...startOptionsWithoutSceneIds } = opts
           setPendingStartOptions(null)
           const gateResult = await runEmptyRefGateFlow({
@@ -2061,7 +2101,15 @@ function App() {
           }
           return
         } else {
-          refuseIfSessionTargetUnsupported()
+          if (refuseIfSessionTargetUnsupported({
+            stage: 'image',
+            hasReferences: imageRequestCarriesReferences(liveTargetScenes, sid),
+          })) {
+            setPendingStartOptions(null)
+            return
+          }
+          setHasPendingBatch(true)
+          start(opts).finally(() => setHasPendingBatch(false))
           setPendingStartOptions(null)
           return
         }
@@ -2407,7 +2455,9 @@ function App() {
             appMode={mode}
             onUpdate={updateReferences}
             onUpload={async (...args) => {
-              if (refuseIfSessionTargetUnsupported()) return { success: false, error: 'unsupported_session_target' }
+              if (refuseIfSessionTargetUnsupported({ stage: 'image', hasReferences: true })) {
+                return { success: false, error: 'chatgpt_reference_images_unmeasured' }
+              }
               const readyCheck = checkFlowProjectReady(flowProjectReady, t)
               if (!readyCheck.ok) return { success: false, error: 'flow_project_not_ready' }
               return genAPI.uploadReference(...args)

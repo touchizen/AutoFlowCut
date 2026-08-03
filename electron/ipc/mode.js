@@ -372,6 +372,70 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       await startInitialSessionLoad(target, view)
       return ensureSession(target)
     })
+    const chatgptGenerationAdmission = (event) => {
+      if (!isTrustedRenderer(event)) {
+        return { success: false, errorKind: 'chatgpt-unauthorized-sender', error: 'ChatGPT generation sender is not authorized.' }
+      }
+      if (!isChatgptP2DevGateEnabled(options.chatgptDevGate)) {
+        return { success: false, errorKind: 'chatgpt-target-disabled', error: 'ChatGPT generation is disabled outside the opted-in development route.' }
+      }
+      if (currentRoute.mode !== 'flow' || currentRoute.sessionTarget !== 'chatgpt') {
+        return { success: false, errorKind: 'chatgpt-route-inactive', error: 'ChatGPT generation requires the active ChatGPT session target.' }
+      }
+      return null
+    }
+    const chatgptAdapter = () => getTargetDefinition('chatgpt')?.createAdapter?.() || null
+    ipcMain.handle('chatgpt:submit-generation', async (event, request = {}) => {
+      const refused = chatgptGenerationAdmission(event)
+      if (refused) return refused
+      const referenceImages = Array.isArray(request.referenceImages) ? request.referenceImages : []
+      // Reference upload has no measured product surface; never silently discard these bytes.
+      if (referenceImages.length > 0) {
+        return {
+          success: false,
+          errorKind: 'chatgpt-reference-images-unmeasured',
+          error: 'ChatGPT reference image upload is not measured and remains unavailable.',
+        }
+      }
+      const session = await ensureSession('chatgpt')
+      if (session?.ready !== true) {
+        return {
+          success: false,
+          errorKind: 'chatgpt-session-not-ready',
+          error: 'ChatGPT session is not ready. Log in and reconnect before generating.',
+          sessionStatus: session?.status || 'session-blocked',
+        }
+      }
+      const adapter = chatgptAdapter()
+      if (!adapter || typeof adapter.submit !== 'function') {
+        return { success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.' }
+      }
+      return adapter.submit({ ...request, referenceImages })
+    })
+    ipcMain.handle('chatgpt:observe-generation', async (event, generationId) => {
+      const refused = chatgptGenerationAdmission(event)
+      if (refused) return refused
+      const adapter = chatgptAdapter()
+      return adapter?.observe?.(generationId) || {
+        success: false, completed: true, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
+      }
+    })
+    ipcMain.handle('chatgpt:collect-generation', async (event, generationId) => {
+      const refused = chatgptGenerationAdmission(event)
+      if (refused) return refused
+      const adapter = chatgptAdapter()
+      return adapter?.collect?.(generationId) || {
+        success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
+      }
+    })
+    ipcMain.handle('chatgpt:clear-generations', async (event) => {
+      const refused = chatgptGenerationAdmission(event)
+      if (refused) return refused
+      const adapter = chatgptAdapter()
+      return adapter?.clear?.() || {
+        success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
+      }
+    })
     ipcMain.handle('flow:set-startup-project', (_event, payload = {}) => {
       startupHint = payload.flowProjectId || null
       return { ok: true }

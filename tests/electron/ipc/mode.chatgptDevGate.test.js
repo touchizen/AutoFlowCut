@@ -202,3 +202,138 @@ describe('P2 ChatGPT view load gate', () => {
     ])
   })
 })
+
+function generationHarness({
+  gate = makeGate(),
+  route = chatgptRoute(),
+  session = { target: 'chatgpt', status: 'ready', ready: true, revision: 4 },
+} = {}) {
+  const handlers = {}
+  const sender = { send: vi.fn() }
+  const adapter = {
+    submit: vi.fn(async () => ({ success: true, generationId: 'chatgpt-job-positive' })),
+    observe: vi.fn(async () => ({ success: true, completed: true })),
+    collect: vi.fn(async () => ({ success: true, images: [{ filePath: '/saved/positive.png' }] })),
+    clear: vi.fn(async () => ({ success: true })),
+  }
+  const ensureSession = vi.fn(async () => session)
+  const target = {
+    id: 'chatgpt',
+    startUrl: 'https://chatgpt.com/',
+    createView: vi.fn(() => ({ webContents: { loadURL: vi.fn() } })),
+    createAdapter: vi.fn(() => adapter),
+    ensureSession,
+    getSessionStatus: vi.fn(() => session),
+  }
+  const registry = createTargetRegistry({ chatgpt: target })
+  const mainWindow = {
+    webContents: sender,
+    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+  }
+  const controller = createModeController(() => mainWindow, vi.fn(), {
+    initialRoute: route,
+    targetRegistry: registry,
+    createSessionView: (name) => registry.createView(name),
+    chatgptDevGate: gate,
+    sessionJobs: { cancelAll: vi.fn(async () => {}), awaitIdle: vi.fn(async () => {}) },
+    rendererAutomation: { requestQuiesce: vi.fn(async () => {}) },
+  })
+  controller.register({
+    handle: (channel, handler) => { handlers[channel] = handler },
+    on: vi.fn(),
+  })
+  return { handlers, sender, adapter, ensureSession, target, controller }
+}
+
+describe('ChatGPT generation IPC route and session gate', () => {
+  it('submits a text-only image request on the enabled flow+chatgpt route', async () => {
+    const setup = generationHarness()
+    expect(typeof setup.handlers['chatgpt:submit-generation']).toBe('function')
+    if (typeof setup.handlers['chatgpt:submit-generation'] !== 'function') return
+
+    const result = await setup.handlers['chatgpt:submit-generation'](
+      { sender: setup.sender },
+      { prompt: 'Generate a jade lighthouse image', referenceImages: [] },
+    )
+
+    expect(result).toEqual({ success: true, generationId: 'chatgpt-job-positive' })
+    expect(setup.ensureSession).toHaveBeenCalledOnce()
+    expect(setup.adapter.submit).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: 'Generate a jade lighthouse image',
+      referenceImages: [],
+    }))
+  })
+
+  it('refuses measured-route requests carrying references before adapter submission', async () => {
+    const setup = generationHarness()
+    expect(typeof setup.handlers['chatgpt:submit-generation']).toBe('function')
+    if (typeof setup.handlers['chatgpt:submit-generation'] !== 'function') return
+
+    await expect(setup.handlers['chatgpt:submit-generation'](
+      { sender: setup.sender },
+      { prompt: 'positive text-only control', referenceImages: [] },
+    )).resolves.toMatchObject({ success: true })
+    expect(setup.adapter.submit).toHaveBeenCalledOnce()
+    setup.adapter.submit.mockClear()
+
+    const refused = await setup.handlers['chatgpt:submit-generation'](
+      { sender: setup.sender },
+      { prompt: 'must not submit', referenceImages: [{ data: 'non-default-reference' }] },
+    )
+
+    expect(refused).toMatchObject({
+      success: false,
+      errorKind: 'chatgpt-reference-images-unmeasured',
+    })
+    expect(refused.error).toMatch(/reference/i)
+    expect(setup.adapter.submit).not.toHaveBeenCalled()
+  })
+
+  it('refuses a non-ready session clearly and never submits, after a ready positive control', async () => {
+    const ready = generationHarness()
+    expect(typeof ready.handlers['chatgpt:submit-generation']).toBe('function')
+    if (typeof ready.handlers['chatgpt:submit-generation'] !== 'function') return
+    await expect(ready.handlers['chatgpt:submit-generation'](
+      { sender: ready.sender },
+      { prompt: 'ready control', referenceImages: [] },
+    )).resolves.toMatchObject({ success: true })
+    expect(ready.adapter.submit).toHaveBeenCalledOnce()
+
+    const blocked = generationHarness({
+      session: { target: 'chatgpt', status: 'login-required', ready: false, revision: 7 },
+    })
+    const result = await blocked.handlers['chatgpt:submit-generation'](
+      { sender: blocked.sender },
+      { prompt: 'must not type', referenceImages: [] },
+    )
+
+    expect(result).toMatchObject({
+      success: false,
+      errorKind: 'chatgpt-session-not-ready',
+      sessionStatus: 'login-required',
+    })
+    expect(result.error).toMatch(/session|login/i)
+    expect(blocked.adapter.submit).not.toHaveBeenCalled()
+  })
+
+  it('keeps generation unreachable without the dev flag, with an enabled-gate positive control', async () => {
+    const enabled = generationHarness()
+    expect(typeof enabled.handlers['chatgpt:submit-generation']).toBe('function')
+    if (typeof enabled.handlers['chatgpt:submit-generation'] !== 'function') return
+    await expect(enabled.handlers['chatgpt:submit-generation'](
+      { sender: enabled.sender },
+      { prompt: 'enabled control', referenceImages: [] },
+    )).resolves.toMatchObject({ success: true })
+
+    const disabled = generationHarness({ gate: makeGate({ chatgptP2Flag: undefined }) })
+    const before = disabled.controller.getCurrentRoute()
+    const result = await disabled.handlers['chatgpt:submit-generation'](
+      { sender: disabled.sender },
+      { prompt: 'disabled must not submit', referenceImages: [] },
+    )
+
+    expect(result).toMatchObject({ success: false, errorKind: 'chatgpt-target-disabled' })
+    expect(disabled.adapter.submit).not.toHaveBeenCalled()
+    expect(disabled.controller.getCurrentRoute()).toEqual(before)
+  })
+})
