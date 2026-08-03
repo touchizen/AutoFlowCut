@@ -11,6 +11,7 @@ import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { resolveMentions } from '../utils/mentionParser'
 import { getAuthRequiredMessage } from '../utils/authMessages'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
+import { effectiveSeedFrom } from '../services/startOptions'
 
 /**
  * @param {object} deps
@@ -95,10 +96,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         : overrideStyleId === 'none' ? 'none'
         : overrideStyleId == null ? null
         : overrideStyleId
-      // seedLocked && seedNo 가 숫자일 때만 고정 seed, 그 외엔 Flow 자체 랜덤
-      const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-        ? settings.seedNo
-        : null
+      // seed 파생은 startOptions.effectiveSeedFrom 단일 소스 — 인라인 복제 금지.
+      const seed = effectiveSeedFrom(settings)
 
       // 첫 호출과 재시도가 **같은 방식으로** payload 를 만든다. 두 벌로 두면 한쪽만 갱신돼
       // 조용히 어긋난다 — 실제로 resolveSceneStyle 은 matchedRefs 에 스타일 ref 이미지를 밀어

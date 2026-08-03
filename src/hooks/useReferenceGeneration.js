@@ -12,6 +12,7 @@ import { tryUpscaleImage } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 import { createStyleResolver } from '../services/styleResolver'
 import { isStyleReference } from '../services/styleService'
+import { effectiveSeedFrom } from '../services/startOptions'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
 import { clampInt } from '../utils/clampInt'
@@ -439,9 +440,8 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
       // 스타일 준비 (공통 함수)
       const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, effectiveStyleId, '[Reference]')
 
-      const refSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-        ? settings.seedNo
-        : null
+      // seed 파생은 startOptions.effectiveSeedFrom 단일 소스 — 인라인 복제 금지.
+      const refSeed = effectiveSeedFrom(settings)
       const generateAndPublish = async () => {
         const submitIndex = resolveReferenceIndex(
           referencesRef.current,
@@ -1106,9 +1106,8 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
 
           const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, effectiveStyleId, '[GenerateAllRefs]')
 
-          const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-            ? settings.seedNo
-            : null
+          // seed 파생은 startOptions.effectiveSeedFrom 단일 소스 — 인라인 복제 금지.
+          const batchSeed = effectiveSeedFrom(settings)
           // prepare/동시성 대기 사이 MCP delete/reorder가 가능하므로 실제 submit 바로 앞에서 다시 찾는다.
           currentTarget = resolveBatchTarget(target, index)
           if (!currentTarget) {
