@@ -60,6 +60,7 @@ import { shouldSkipStaleF0Gender } from './services/genderGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { buildVideoTextStartPayload } from './services/videoTextStart'
 import { buildVideoI2VStartOptions } from './services/videoI2VStart'
+import { buildImageStartOptions } from './services/startOptions'
 import {
   buildVideoRetryFramePairPatch,
   buildVideoRetryScenePatch,
@@ -602,17 +603,18 @@ function App() {
     return () => window.removeEventListener('byok-key-changed', onKeyChanged)
   }, [])
 
-  // C1: ChatGPT 타깃은 화면비를 제어하지 못한다(스파이크 실측: 정사각 출력만). 엔진이 프로젝트
-  // 화면비를 제출에서 제거할 때마다 이 이벤트를 쏘고, 여기서 세션당 한 번만 알린다(씬마다 아님).
-  const chatgptAspectNoticeShownRef = useRef(false)
+  // C1: ChatGPT 타깃은 화면비도 seed 도 제어하지 못한다(스파이크 실측: 정사각 출력만, seed 미측정).
+  // 엔진이 프로젝트 화면비/seed 를 제출에서 제거할 때마다 이 이벤트를 쏘고, 여기서 세션당
+  // 한 번만 하나의 정직한 메시지로 알린다(씬마다 아님, 필드마다 토스트 아님).
+  const chatgptUnmeasuredNoticeShownRef = useRef(false)
   useEffect(() => {
-    const onAspectRatioIgnored = () => {
-      if (chatgptAspectNoticeShownRef.current) return
-      chatgptAspectNoticeShownRef.current = true
-      toast.warning(t('toast.chatgptAspectRatioIgnored'))
+    const onUnmeasuredOptionsIgnored = () => {
+      if (chatgptUnmeasuredNoticeShownRef.current) return
+      chatgptUnmeasuredNoticeShownRef.current = true
+      toast.warning(t('toast.chatgptUnmeasuredOptionsIgnored'))
     }
-    window.addEventListener('chatgpt-aspect-ratio-ignored', onAspectRatioIgnored)
-    return () => window.removeEventListener('chatgpt-aspect-ratio-ignored', onAspectRatioIgnored)
+    window.addEventListener('chatgpt-unmeasured-options-ignored', onUnmeasuredOptionsIgnored)
+    return () => window.removeEventListener('chatgpt-unmeasured-options-ignored', onUnmeasuredOptionsIgnored)
   }, [t])
 
   const refuseIfSessionTargetUnsupported = useCallback(({ stage = 'image', hasReferences = false } = {}) => {
@@ -1772,26 +1774,9 @@ function App() {
           }
         }
 
-        // seedLocked && seedNo 가 숫자일 때만 고정 seed 사용, 그 외엔 Flow 랜덤
-        const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-          ? settings.seedNo
-          : null
-        const startOptions = {
-          projectName,
-          saveMode: settings.saveMode,
-          concurrency: settings.concurrency || 5,
-          flowPacingMinMs: settings.flowPacingMinMs,
-          flowPacingMaxMs: settings.flowPacingMaxMs,
-          imageBatchCount: settings.imageBatchCount || 1,
-          imageUpscale: settings.imageUpscale || 'off',
-          aspectRatio: settings.aspectRatio,
-          imageModel: settings.imageModel,
-          imageProvider: settings.generation?.image?.provider ?? 'google',
-          generationSettings: settings,
-          selectedStyleRefId: effectiveStyleId,
-          seed: effectiveSeed,
-          force,
-        }
+        // 시작 옵션 파생은 services/startOptions 가 단일 소스 — 통합 테스트가 같은 함수로
+        // "앱이 실제로 보내는 기본값"을 엔진 가드에 흘려보낸다 (aspectRatio/seed 사건 재발 방지).
+        const startOptions = buildImageStartOptions(settings, { projectName, effectiveStyleId, force })
 
         // 태그 검증: 이미지 생성 대상 씬만 검사. 단 sceneIndex 는 원본 scenes 배열의 인덱스로
         // 와야 모달의 "#N" 표시가 실제 씬 번호와 일치한다 (filter 옵션으로 전달).

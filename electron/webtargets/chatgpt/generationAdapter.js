@@ -625,7 +625,13 @@ export function createChatgptGenerationAdapter({
     jobs.set(generationId, job)
     tail = tail.then(() => run(job), () => run(job))
     await tail
-    if (job.state === 'failed' || job.state === 'cancelled') return job.result
+    // C4: a failed/cancelled submit returns its terminal result HERE and never hands the
+    // renderer a generationId — nobody can ever collect it. Reap it on this terminal path
+    // (same rule as collect's) instead of parking it until an unrelated clear().
+    if (job.state === 'failed' || job.state === 'cancelled') {
+      jobs.delete(generationId)
+      return job.result
+    }
     return { success: true, generationId }
   }
 

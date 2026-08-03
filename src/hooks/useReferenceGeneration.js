@@ -114,7 +114,17 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
     stopRequestVersionRef.current += 1
     stopRequestedRef.current = true
     setStoppingRefs(pendingRefBatchCallsRef.current > 0)
-  }, [])
+    // C3: ChatGPT submissions stay main-owned until the bounded page/fetch job finishes.
+    // Only that engine advertises active cancellation — same chain as useAutomation.stop()
+    // and useStyleThumbnails.stopGenerating (setStopRequested(true) →
+    // chatgpt:cancel-generations → adapter cancelAll). Flow/API engines keep their
+    // existing renderer-local stop path (stopRequestedRef only).
+    if (genAPI?.cancelsActiveOnStop === true && typeof genAPI.setStopRequested === 'function') {
+      void Promise.resolve(genAPI.setStopRequested(true)).catch((error) => {
+        console.warn('[GenerateRef] active generation cancellation failed:', error?.message)
+      })
+    }
+  }, [genAPI])
 
   // ─── 공통: 스타일 레퍼런스 준비 ───
   // 개별 생성과 배치 생성 모두에서 사용. 프리셋 썸네일은 캐시 miss 시 자동 업로드.

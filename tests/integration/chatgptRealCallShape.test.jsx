@@ -1,12 +1,19 @@
 /**
- * C1 regression net — the REAL scene-submission call shape against the REAL ChatGPT adapter.
+ * C1/C2 regression net — the REAL default settings through the REAL chain.
  *
- * The App-gate test mocks the batch at the useAutomation seam and the engine tests only pass
- * aspectRatio in negative cases, so a renderer-side refusal of the app-default
- * `aspectRatio: '16:9'` (always present via useAppSettings) killed every real generation while
- * the whole suite stayed green. This test drives the real useAutomation hook with the real
- * createChatgptEngine and the real createChatgptGenerationAdapter, using the exact option
- * object App builds from settings, and asserts the submission actually reaches the adapter.
+ * Five "green suite, dead app" Criticals in this milestone shared one shape: a guard written
+ * against a hand-shaped fixture that never matched what the app actually sends (dead first-run
+ * picker, combo under native view, auth probe stub, aspectRatio refusal, seed refusal). Each
+ * slipped through because unit fixtures defaulted the poisoned field to a passing value
+ * (e.g. `seed: null` while the real useAppSettings default is seedLocked:true + numeric seedNo).
+ *
+ * This test refuses to hand-shape anything on that axis:
+ *  - the settings object comes from the REAL useAppSettings hook (first-run defaults),
+ *  - the start options come from the REAL buildImageStartOptions App.jsx calls,
+ *  - the submission runs through the REAL useAutomation → createChatgptEngine →
+ *    createChatgptGenerationAdapter chain,
+ * and asserts the submission actually reaches the adapter's page evaluation and completes.
+ * Any new refusal that fires on an app-default field breaks this test immediately.
  */
 import { describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
@@ -29,6 +36,8 @@ vi.mock('../../src/services/imageFinalize', () => ({
 }))
 
 import { useAutomation } from '../../src/hooks/useAutomation'
+import { useAppSettings } from '../../src/hooks/useAppSettings'
+import { buildImageStartOptions } from '../../src/services/startOptions'
 import { createChatgptEngine } from '../../src/engine/engineChatgpt.js'
 import { createChatgptGenerationAdapter } from '../../electron/webtargets/chatgpt/generationAdapter.js'
 
@@ -110,46 +119,47 @@ function makeScenesHook() {
   }
 }
 
-// The exact option object App.jsx handleStart builds from useAppSettings defaults
-// (aspectRatio '16:9' is a default, so it is ALWAYS a string on every submission).
-const appDefaultStartOptions = (overrides = {}) => ({
-  projectName: 'real-chain-project',
-  saveMode: 'folder',
-  concurrency: 5,
-  flowPacingMinMs: 0,
-  flowPacingMaxMs: 0,
-  imageBatchCount: 1,
-  imageUpscale: 'off',
-  aspectRatio: '16:9',
-  imageModel: 'gemini-3-pro-image-preview',
-  imageProvider: 'google',
-  generationSettings: {
-    generation: { image: { provider: 'google' } },
-    modelsByProvider: { google: 'gemini-3-pro-image-preview' },
-  },
-  selectedStyleRefId: null,
-  seed: null,
-  force: false,
-  ...overrides,
-})
+// The REAL first-run settings object and the REAL App.jsx handleStart derivation — no field
+// is hand-shaped, so a default value the guards refuse cannot hide behind a fixture again.
+function realDefaultStartOptions(patchSettings = null) {
+  window.localStorage.removeItem('autoflowcut_settings')
+  const { result } = renderHook(() => useAppSettings())
+  if (patchSettings) act(() => { result.current.setSettings((prev) => ({ ...prev, ...patchSettings })) })
+  return buildImageStartOptions(result.current.settings, {
+    projectName: 'real-chain-project',
+    effectiveStyleId: null,
+    force: false,
+  })
+}
 
-describe('ChatGPT target — real call shape from settings through the real adapter', () => {
-  it('a scene submission carrying the settings aspectRatio reaches the adapter and completes', async () => {
+describe('ChatGPT target — real default settings through the real adapter chain', () => {
+  it('a stock-settings scene submission reaches the adapter and completes', async () => {
     finalizeResults.length = 0
     const h = realChainHarness()
     const { scenesHook, updates } = makeScenesHook()
-    const engine = createChatgptEngine({ electronAPI: h.electronAPI })
+    const notices = []
+    const engine = createChatgptEngine({
+      electronAPI: h.electronAPI,
+      onUnmeasuredOptionsIgnored: () => notices.push('unmeasured-options-ignored'),
+    })
+
+    const startOptions = realDefaultStartOptions()
+    // Reality check on the fixture itself: the app default is a NUMBER seed (seedLocked:true +
+    // random seedNo) and a STRING aspect ratio — the exact values earlier waves' fixtures nulled.
+    expect(Number.isFinite(startOptions.seed)).toBe(true)
+    expect(startOptions.aspectRatio).toBe('16:9')
+    expect(startOptions.imageBatchCount).toBe(1)
 
     const { result } = renderHook(() => useAutomation(
       engine, scenesHook, null, null, null, (key) => key, null, null, null, 'flow', true,
     ))
 
     await act(async () => {
-      await result.current.start(appDefaultStartOptions())
+      await result.current.start(startOptions)
     })
 
-    // Before the C1 fix this refused inside the renderer with
-    // errorKind 'chatgpt-aspect-ratio-unmeasured' and never touched the adapter.
+    // Before the C1 fixes this refused inside the renderer ('chatgpt-aspect-ratio-unmeasured'
+    // in wave 2, 'chatgpt-seed-unmeasured' in wave 3) and never touched the adapter.
     expect(updates.filter((u) => u.status === 'error')).toEqual([])
     expect(h.executeInView).toHaveBeenCalled()
     expect(h.fs.writeFileSync).toHaveBeenCalledOnce()
@@ -161,30 +171,39 @@ describe('ChatGPT target — real call shape from settings through the real adap
     // …and (C2) the estuary content id never crosses the IPC payload into the renderer.
     expect(JSON.stringify(finalizeResults[0])).not.toContain(ESTUARY_ID)
 
-    // The C1 core: the IPC request itself no longer carries the settings plumbing.
+    // The C1 core: none of the settings plumbing rides the IPC request.
     const request = h.electronAPI.chatgptSubmitGeneration.mock.calls[0][0]
     expect('aspectRatio' in request).toBe(false)
+    expect('seed' in request).toBe(false)
     expect('provider' in request).toBe(false)
     expect('model' in request).toBe(false)
+    // One honest notice covers everything this target cannot control — not one per field.
+    expect(notices).toEqual(['unmeasured-options-ignored'])
   })
 
-  it('an explicit seed opt-in is still refused through the same real chain', async () => {
+  it('an explicit batch-count opt-in is still refused through the same real chain', async () => {
     finalizeResults.length = 0
     const h = realChainHarness()
     const { scenesHook, updates } = makeScenesHook()
-    const engine = createChatgptEngine({ electronAPI: h.electronAPI })
+    const engine = createChatgptEngine({
+      electronAPI: h.electronAPI,
+      onUnmeasuredOptionsIgnored: () => {},
+    })
+
+    // Non-default by explicit user choice — the only way batchCount !== 1 can happen.
+    const startOptions = realDefaultStartOptions({ imageBatchCount: 4 })
+    expect(startOptions.imageBatchCount).toBe(4)
 
     const { result } = renderHook(() => useAutomation(
       engine, scenesHook, null, null, null, (key) => key, null, null, null, 'flow', true,
     ))
 
     await act(async () => {
-      // seedLocked user: settings.seedNo is a number → seed rides the same option object.
-      await result.current.start(appDefaultStartOptions({ seed: 271828 }))
+      await result.current.start(startOptions)
     })
 
     expect(updates.filter((u) => u.status === 'error')).toEqual([
-      expect.objectContaining({ id: 'scene-real-chain', errorKind: 'chatgpt-seed-unmeasured' }),
+      expect.objectContaining({ id: 'scene-real-chain', errorKind: 'chatgpt-batch-count-unmeasured' }),
     ])
     expect(h.executeInView).not.toHaveBeenCalled()
     expect(finalizeResults).toHaveLength(0)

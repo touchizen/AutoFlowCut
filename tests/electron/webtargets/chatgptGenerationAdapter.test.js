@@ -634,56 +634,73 @@ describe('ChatGPT measured generation state machine', () => {
     expect(events).toEqual(['fetch-start', 'cancel-request', 'idle'])
   })
 
-  it('deletes a cancelled job on terminal collect instead of leaking it for the session', async () => {
+  it('reaps a cancelled job on submit\'s own terminal return instead of parking it for the session', async () => {
     if (!expectMeasuredMachine()) return
     const fetch = vi.fn(() => new Promise(() => {}))
-    const h = adapterHarness({ fetch, createId: () => 'reap-on-collect-job' })
+    const h = adapterHarness({ fetch, createId: () => 'reap-on-submit-job' })
 
     const pending = h.adapter.submit({
-      prompt: 'cancel then collect twice',
+      prompt: 'cancel during the stalled fetch',
       referenceImages: [],
       batchCount: 1,
     })
     await waitForCall(fetch)
-    // Positive control: an active (running) job must survive clear().
+    // Positive control: an active (running) job must survive clear() and stay observable —
+    // proving the not-found assertions below measure the reap, not a dead harness.
     await expect(h.adapter.clear()).resolves.toEqual({ success: true })
-    await expect(h.adapter.observe('reap-on-collect-job')).resolves.toMatchObject({
+    await expect(h.adapter.observe('reap-on-submit-job')).resolves.toMatchObject({
       success: true, completed: false, state: 'running',
     })
 
     await h.adapter.cancelAll()
+    // C4: submit's terminal return IS the delivery of the cancelled result — the renderer never
+    // receives a generationId for it, so nobody can ever collect it. It must be reaped right
+    // there, not persist until an unrelated clear() (the thumbnail-cancel leak).
     await expect(pending).resolves.toMatchObject({
       success: false, errorKind: 'chatgpt-generation-cancelled',
     })
-
-    // First collect returns the terminal cancellation result…
-    await expect(h.adapter.collect('reap-on-collect-job')).resolves.toMatchObject({
-      success: false, errorKind: 'chatgpt-generation-cancelled',
+    await expect(h.adapter.observe('reap-on-submit-job')).resolves.toMatchObject({
+      success: false, errorKind: 'chatgpt-generation-not-found',
     })
-    // …and the terminal collect deletes the entry: a second collect finds nothing.
-    await expect(h.adapter.collect('reap-on-collect-job')).resolves.toMatchObject({
+    await expect(h.adapter.collect('reap-on-submit-job')).resolves.toMatchObject({
       success: false, errorKind: 'chatgpt-generation-not-found',
     })
   })
 
-  it('clear() reaps a cancelled job that was never collected', async () => {
+  it('reaps a failed job on submit\'s own terminal return through the same path', async () => {
     if (!expectMeasuredMachine()) return
-    const fetch = vi.fn(() => new Promise(() => {}))
-    const h = adapterHarness({ fetch, createId: () => 'reap-on-clear-job' })
+    const h = adapterHarness({
+      handlers: {
+        __cg_baseline__: { imgs: [], href: 'https://chatgpt.com/c/reap-failed' },
+        __cg_inject__: { textMatches: false, submitPresent: true },
+      },
+      createId: () => 'reap-failed-submit-job',
+    })
 
-    const pending = h.adapter.submit({
-      prompt: 'cancel then clear without collecting',
+    // Non-ASCII prompt forces the measured fail-closed inject refusal inside run().
+    await expect(h.adapter.submit({
+      prompt: '실패로 끝나는 프롬프트',
       referenceImages: [],
       batchCount: 1,
+    })).resolves.toMatchObject({ success: false, errorKind: 'chatgpt-generation-inject' })
+
+    await expect(h.adapter.observe('reap-failed-submit-job')).resolves.toMatchObject({
+      success: false, errorKind: 'chatgpt-generation-not-found',
     })
-    await waitForCall(fetch)
-    await h.adapter.cancelAll()
-    await expect(pending).resolves.toMatchObject({
-      success: false, errorKind: 'chatgpt-generation-cancelled',
-    })
-    // Positive control: before clear() the cancelled job is still observable.
+  })
+
+  it('clear() reaps a completed job the renderer abandoned without collecting', async () => {
+    if (!expectMeasuredMachine()) return
+    const h = adapterHarness({ createId: () => 'reap-on-clear-job' })
+
+    await expect(h.adapter.submit({
+      prompt: 'complete then clear without collecting',
+      referenceImages: [],
+      batchCount: 1,
+    })).resolves.toMatchObject({ success: true, generationId: 'reap-on-clear-job' })
+    // Positive control: before clear() the completed job is still observable.
     await expect(h.adapter.observe('reap-on-clear-job')).resolves.toMatchObject({
-      completed: true, state: 'cancelled',
+      success: true, completed: true, state: 'completed',
     })
 
     await expect(h.adapter.clear()).resolves.toEqual({ success: true })
