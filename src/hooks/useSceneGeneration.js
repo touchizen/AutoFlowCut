@@ -12,6 +12,7 @@ import { resolveMentions } from '../utils/mentionParser'
 import { getAuthRequiredMessage } from '../utils/authMessages'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 import { effectiveSeedFrom } from '../services/startOptions'
+import { sourceForStage } from '../config/appRoute'
 
 /**
  * @param {object} deps
@@ -22,7 +23,7 @@ import { effectiveSeedFrom } from '../services/startOptions'
  *   반환: proceeded=false 면 사용자가 취소한 것(생성하지 않는다), refs 가 있으면 그것이
  *   authoritative refs 다(React state 는 같은 tick 에 stale).
  */
-export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true, requestMentionSync }) {
+export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true, requestMentionSync, route = null }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
 
   // 핵심 생성 로직
@@ -42,6 +43,11 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     }
     const resolvedGeneration = resolveSceneImageProvider(scene, settings)
     if (resolvedGeneration.warning) console.warn('[Scene]', resolvedGeneration.warning)
+    // ChatGPT 타깃은 페이지가 실제 모델명을 노출하지 않는다 — API 해석 모델을 기록하면 ResultsTable 이
+    //   다른 엔진의 모델("Nano Banana 2" 등)을 표시하는 거짓 라벨. imageFinalize 의 Flow 'flow' 관례처럼
+    //   엔진 식별자('chatgpt')를 기록한다. 판정은 엔진 라우팅과 같은 권위(sourceForStage) —
+    //   Flow/API 경로는 resolvedGeneration.model 그대로.
+    const recordedModel = sourceForStage(route, 'image') === 'chatgpt' ? 'chatgpt' : resolvedGeneration.model
 
     // #R27-1: preflight(folder/ready/auth) await 동안에도 busy 로 표시한다. 안 그러면 그 창에서
     //   project/mode 전환이 허용돼, 전환 뒤 stale 엔진으로 생성하고 결과를 현재 프로젝트의 씬
@@ -126,7 +132,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         return genAPI.generateImage(styledPrompt, matchedRefs, {
           batchCount: settings.imageBatchCount, seed,
           aspectRatio: settings.aspectRatio,
-          model: resolvedGeneration.model,
+          model: recordedModel,
           provider: resolvedGeneration.provider,
           references: refs,
         })
@@ -164,7 +170,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         seed,
         // 선택 모델을 기록 — 안 넘기면 imageFinalize 기본값 'flow' 로 저장돼 ResultsTable 에
         //   엔진ID 가 뜬다(응답이 더 구체적 model 을 주면 그게 우선). batch 경로와 일관.
-        model: resolvedGeneration.model,
+        //   ChatGPT 타깃은 엔진 식별자('chatgpt') — 위 recordedModel 참고.
+        model: recordedModel,
         logPrefix: '[Scene]'
       })
       scenesHook.updateScene(sceneId, sceneUpdate)
@@ -205,7 +212,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   // R2-5: flowProjectReady missing from dep array → stale closure could allow
   // generation when not ready, or block after recovery. Adding it here ensures
   // the callback sees the current value on every invocation.
-  }, [settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, flowProjectReady, requestMentionSync])
+  }, [settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, flowProjectReady, requestMentionSync, route])
 
   // 큐를 통한 생성. overrideStyleId 선택 — MCP `app_generate_scene(sceneId, styleId)`에서 사용.
   // sceneOverride 선택 — 상세 모달 재생성이 방금 편집한 스냅샷(editData)을 명시 전달(Issue #4/#5).

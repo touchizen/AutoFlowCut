@@ -20,6 +20,7 @@ import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessag
 import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { isReferenceImageEmpty, referenceGuardKey, sourceAvailable } from '../utils/refImageGuard'
+import { sourceForStage } from '../config/appRoute'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -41,8 +42,13 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, scenes = [], scenesRef = null, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, selectedStyleRefIdRef = null, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null }) {
+export function useReferenceGeneration({ settings, references, scenes = [], scenesRef = null, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, selectedStyleRefIdRef = null, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null, beforeBatchActivation = null, route = null }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
+  // ChatGPT 타깃은 페이지가 실제 모델명을 노출하지 않는다 — API 선택 모델(settings.imageModel)을
+  //   기록하면 다른 엔진의 모델을 표시하는 거짓 라벨. imageFinalize 의 Flow 'flow' 관례처럼
+  //   엔진 식별자('chatgpt')를 기록한다. 판정은 엔진 라우팅과 같은 권위(sourceForStage) —
+  //   Flow('flow')/API(모델 id) 경로는 #R32-3 계약 그대로.
+  const chatgptImageRoute = sourceForStage(route, 'image') === 'chatgpt'
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
   const [refBatchActive, setRefBatchActive] = useState(false)  // 실제 target이 있는 batch execute 전체 수명
@@ -243,8 +249,10 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
       const refName = ref.name || `ref_${index + 1}`
       // #R32-3: 엔진 라벨/provenance 를 실제 모드로 — API(BYOK) ref 를 'flow' 로 잘못 라벨하던 것을 고친다.
       //   Flow 모드는 'flow', API 모드는 선택된 이미지 모델 id(없으면 'api'). model 도 메타에 기록.
-      const engineLabel = genAPI?.mode === 'flow' ? 'flow' : (settings.imageModel || 'api')
-      const metadata = { mediaId, caption, category: ref.category, model: settings.imageModel || null }
+      //   ChatGPT 타깃(mode==='flow'+sessionTarget==='chatgpt')은 엔진 식별자 'chatgpt' —
+      //   mode 분기보다 먼저 판정해야 'flow'+API 모델로 오기록되지 않는다.
+      const engineLabel = chatgptImageRoute ? 'chatgpt' : (genAPI?.mode === 'flow' ? 'flow' : (settings.imageModel || 'api'))
+      const metadata = { mediaId, caption, category: ref.category, model: chatgptImageRoute ? 'chatgpt' : (settings.imageModel || null) }
       const permission = await fileSystemAPI.ensurePermission()
       console.log(logPrefix, 'Permission:', permission, 'projectName:', projectName, 'refName:', refName)
 
@@ -457,7 +465,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
           : ref
         // #R32-2: 선택된 이미지 모델(settings.imageModel)을 전달 — 안 넘기면 useGenAPI 가 DEFAULT 로
         //   폴백해 비-기본 BYOK 모델 선택이 ref 생성에 반영되지 않는다(씬 생성과 동일하게 model 전달).
-        const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, provider: settings.generation?.image?.provider ?? 'google', purpose: 'reference', ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId } })
+        const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: chatgptImageRoute ? 'chatgpt' : settings.imageModel, provider: settings.generation?.image?.provider ?? 'google', purpose: 'reference', ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId } })
 
         if (result.success && result.images?.length > 0) {
           const processed = await _processAndSaveImage(
@@ -1115,7 +1123,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
             continue
           }
           ;({ index, ref } = currentTarget)
-          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, provider: settings.generation?.image?.provider ?? 'google', purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
+          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: chatgptImageRoute ? 'chatgpt' : settings.imageModel, provider: settings.generation?.image?.provider ?? 'google', purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
 
           if (submitResult?.success && submitResult.generationId) {
             attemptedKeys.add(target.key)

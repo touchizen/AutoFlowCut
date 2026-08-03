@@ -991,7 +991,8 @@ function App() {
     isAuthenticated,
     () => setShowAuthModal(true),
     subscription?.status,   // #5/#8: loading/error 상태 전달 — 미확인 subscription 에서 진행 금지
-    refreshSubscription     // #6: consume 성공 시 1회 refresh (stale 방지)
+    refreshSubscription,    // #6: consume 성공 시 1회 refresh (stale 방지)
+    route                   // ChatGPT 타깃 판정(sourceForStage) — model 스탬프를 엔진 라우팅과 일치시킴
   )
 
   // 비디오 자동화 — 동일 이유로 useProjectData 이후 선언.
@@ -1054,6 +1055,7 @@ function App() {
   const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef: handleGenerateRefUnsafe, handleGenerateAllRefs: handleGenerateAllRefsUnsafe, stopGenerateAllRefs } = useReferenceGeneration({
     settings, references, scenes, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, selectedStyleRefIdRef, styleThumbnails, generationQueue, flowProjectReady,
     scenesRef: scenesHook.scenesRef, flowProjectId: _flowProjectId, projectNameRef,
+    route,  // ChatGPT 타깃 판정(sourceForStage) — engineLabel/metadata.model 스탬프
   })
   const handleGenerateRef = useCallback((...args) => {
     const styleId = args[2] ?? selectedStyleRefId
@@ -1103,6 +1105,7 @@ function App() {
   const { generatingSceneId, handleGenerateScene: handleGenerateSceneUnsafe } = useSceneGeneration({
     settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
     requestMentionSync,
+    route,  // ChatGPT 타깃 판정(sourceForStage) — model 스탬프를 엔진 라우팅과 일치시킴
   })
   const handleGenerateScene = useCallback((...args) => {
     const target = scenes.find(scene => scene.id === args[0])

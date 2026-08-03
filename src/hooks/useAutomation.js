@@ -28,8 +28,9 @@ import {
 } from '../utils/refImageGuard'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
+import { sourceForStage } from '../config/appRoute'
 
-export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
+export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null, route = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -329,10 +330,16 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
       const resolvedGeneration = resolveSceneImageProvider(scene, generationSettings)
       if (resolvedGeneration.warning) console.warn('[Automation]', resolvedGeneration.warning)
-      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: resolvedGeneration.model, provider: resolvedGeneration.provider, references: effectiveRefs })
+      // ChatGPT 타깃은 페이지가 실제 모델명을 노출하지 않는다 — API 해석 모델(resolvedGeneration.model,
+      //   예: "Nano Banana 2")을 기록하면 ResultsTable 이 다른 엔진의 모델을 표시하는 거짓 라벨이 된다.
+      //   imageFinalize 의 Flow 'flow' 관례처럼 엔진 식별자('chatgpt')를 기록한다. 판정은 엔진 라우팅과
+      //   같은 권위(sourceForStage) — Flow/API 경로는 기존 그대로. provider 는 item timeout 등
+      //   실행 정책에 쓰이므로 건드리지 않는다.
+      const recordedModel = sourceForStage(route, 'image') === 'chatgpt' ? 'chatgpt' : resolvedGeneration.model
+      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: recordedModel, provider: resolvedGeneration.provider, references: effectiveRefs })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
-        pendingQueue.push({ generationId: submitResult.generationId, scene, model: resolvedGeneration.model, provider: resolvedGeneration.provider, submittedAt: _now, originalSubmittedAt: _now })
+        pendingQueue.push({ generationId: submitResult.generationId, scene, model: recordedModel, provider: resolvedGeneration.provider, submittedAt: _now, originalSubmittedAt: _now })
         consecutiveErrors = 0
         console.log('[Automation] Submitted scene', scene.id, '→', submitResult.generationId)
       } else if (submitResult.success && Array.isArray(submitResult.images) && submitResult.images.length > 0) {
@@ -341,7 +348,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         //   이미지가 버려지고, 에러 씬으로 남아 다음 배치/재생성에서 또 생성된다(중복 생성).
         consecutiveErrors = 0
         let finalizeOk = false
-        try { finalizeOk = await processAsyncResult(scene, submitResult, resolvedGeneration.model) }
+        try { finalizeOk = await processAsyncResult(scene, submitResult, recordedModel) }
         catch (finErr) {
           console.error('[Automation] Finalize error (sync) for scene', scene.id, ':', finErr.message)
           updateScene(scene.id, { status: 'error', error: finErr.message, errorKind: null })
@@ -869,7 +876,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
   // #R8-10: onComplete 도 dep — 누락 시 완료 시점에 stale save 콜백을 호출할 수 있다.
   // subscriptionBatch/onPaywall/isAuthenticated/onLoginRequired: 배치 게이트 — 구독/인증 상태 변경 시 최신값 반영.
-  }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, updateReferences, t, onOpenSettings, mode, flowProjectReady, onComplete, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription])
+  }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, updateReferences, t, onOpenSettings, mode, flowProjectReady, onComplete, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription, route])
   
   /**
    * 일시정지/재개
