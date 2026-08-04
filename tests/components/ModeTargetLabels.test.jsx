@@ -17,7 +17,7 @@ const t = (key) => ({
 }[key] || key)
 
 vi.mock('../../src/contexts/ModeContext.jsx', () => ({
-  useMode: () => ({ mode: 'flow', setMode: vi.fn() }),
+  useMode: () => ({ mode: 'flow', sessionTarget: 'flow', setRoute: vi.fn() }),
 }))
 vi.mock('../../src/hooks/useI18n', () => ({ useI18n: () => ({ t }) }))
 
@@ -34,9 +34,16 @@ const videoModels = [
 ]
 
 describe('mode/target labels', () => {
-  it('ModeToggle says Flow Login Mode', () => {
+  it('ModeToggle segments stay short literals; the full name lives in the tooltip', () => {
     render(<ModeToggle />)
-    expect(screen.getByText('Flow 로그인 모드')).toBeTruthy()
+    const flowBtn = screen.getByTestId('mode-toggle-flow')
+    const apiBtn = screen.getByTestId('mode-toggle-api')
+    expect(flowBtn.textContent).toBe('Flow')
+    expect(apiBtn.textContent).toBe('API')
+    expect(screen.queryByText('Flow 로그인 모드')).toBeNull()
+    // 긴 이름은 hover 툴팁이 계속 보유한다.
+    expect(flowBtn.title).toContain('Flow 로그인 모드')
+    expect(apiBtn.title).toContain('API 키 모드')
   })
 
   it('keeps image, T2V, and I2V on their Flow labels for the Flow route', () => {

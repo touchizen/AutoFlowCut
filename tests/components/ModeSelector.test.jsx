@@ -33,6 +33,12 @@ describe('ModeSelector', () => {
     expect(onSelect).toHaveBeenCalledWith('api')
   })
 
+  it('mode cards keep the full localized names', () => {
+    renderSel()
+    expect(within(screen.getByTestId('mode-select-flow')).getByText('Flow Login Mode')).toBeInTheDocument()
+    expect(within(screen.getByTestId('mode-select-api')).getByText('API Key Mode')).toBeInTheDocument()
+  })
+
   it('shows pros/cons (audience · price · speed) on each card', () => {
     renderSel()
     const flow = within(screen.getByTestId('mode-select-flow'))

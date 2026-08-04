@@ -21,6 +21,16 @@ describe('ModeToggle', () => {
     expect(screen.queryByTestId('mode-toggle-api')).toBe(null)
   })
 
+  it('segment labels are the short literals, not the localized long names', () => {
+    localStorage.setItem(MODE_STORAGE_KEY, 'flow')
+    renderWithProvider()
+    // 세그먼트 토글은 컴팩트 리터럴만 — 긴 이름(nameKey)은 툴팁/피커 전용.
+    expect(screen.getByTestId('mode-toggle-api').textContent).toBe('API')
+    expect(screen.getByTestId('mode-toggle-flow').textContent).toBe('Flow')
+    expect(screen.queryByText(en.modeInfo.flow.name)).toBe(null)
+    expect(screen.queryByText(en.modeInfo.api.name)).toBe(null)
+  })
+
   it('shows the active mode and switches on click', () => {
     localStorage.setItem(MODE_STORAGE_KEY, 'api')
     renderWithProvider()

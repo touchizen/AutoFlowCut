@@ -7,7 +7,7 @@
  */
 import { useMode } from '../contexts/ModeContext'
 import { useI18n } from '../hooks/useI18n'
-import { MODE_INFO, modeTooltip } from './modeInfo'
+import { modeTooltip } from './modeInfo'
 import { toast } from './Toast'
 import './ModeToggle.css'
 
@@ -64,7 +64,7 @@ export default function ModeToggle({ busy = false, onRouteRequest = null }) {
         title={titleFor('api')}
         onClick={() => { void requestMode('api') }}
       >
-        {t(MODE_INFO.api.nameKey)}
+        API
       </button>
       <button
         type="button"
@@ -75,7 +75,7 @@ export default function ModeToggle({ busy = false, onRouteRequest = null }) {
         title={titleFor('flow')}
         onClick={() => { void requestMode('flow') }}
       >
-        {t(MODE_INFO.flow.nameKey)}
+        Flow
       </button>
     </div>
   )
