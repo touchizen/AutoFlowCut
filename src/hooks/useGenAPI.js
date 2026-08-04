@@ -180,6 +180,9 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         model: effectiveModel,
         provider,
         actualAspectRatio: result.actualAspectRatio ?? null,
+        // seed 를 IPC 로 보내지 않으므로 "적용된 입력 없음"을 선언한다 → finalize 가 설정 seed 를
+        // 거짓 기록하지 않는다. 어댑터가 seed 를 지원하게 되면 여기서 { seed } 를 채워야 한다
+        // (top-level seed echo 는 위 mapper 가 per-image 로만 옮기므로 그것도 함께 손볼 것).
         appliedInputs: {},
       }
     } catch (error) {
