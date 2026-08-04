@@ -48,13 +48,13 @@ function ipcHarness() {
   }
 }
 
-describe('P1 negative gate: flow + chatgpt', () => {
+describe('negative gate: flow mode with a non-Flow session target', () => {
   it('refuses every classified Flow side effect before touching the Flow view', async () => {
     const { ipc, handlers } = ipcHarness()
     const getFlowView = vi.fn(() => ({ webContents: {} }))
     const deps = {
       getCurrentMode: () => 'flow',
-      getSessionTarget: () => 'chatgpt',
+      getSessionTarget: () => 'reserved-target',
       getFlowView,
       getMainWindow: () => null,
     }
@@ -82,7 +82,7 @@ describe('P1 negative gate: flow + chatgpt', () => {
     const mutation = vi.fn(() => ({ ok: true }))
     const guarded = guardFlowSideEffect({
       getCurrentMode: () => 'flow',
-      getSessionTarget: () => 'chatgpt',
+      getSessionTarget: () => 'reserved-target',
     }, mutation)
     expect(await guarded({}, {})).toEqual(FLOW_INACTIVE_RESULT)
     expect(mutation).not.toHaveBeenCalled()

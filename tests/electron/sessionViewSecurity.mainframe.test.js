@@ -2,7 +2,7 @@
 // @vitest-environment node
 //
 // The main-frame guard (will-navigate / will-redirect) used to preventDefault SILENTLY —
-// a real ChatGPT session hopping through a non-allowlisted origin left the view blank with
+// a real reserved session hopping through a non-allowlisted origin left the view blank with
 // zero diagnostics. These tests pin the diagnostics: every blocked main-frame exit logs
 // (origin only, never the signed path/query), and did-fail-load on the reserved view logs
 // the error code + failed origin so a failed load is distinguishable from a blocked hop.
@@ -25,6 +25,11 @@ const electronSession = () => ({
   setPermissionCheckHandler: vi.fn(),
 })
 
+const ALLOWED_ORIGINS = ['https://target.example', 'https://auth.target.example']
+const install = (view, session) => (
+  installReservedSessionSecurity(view, session, { allowedOrigins: ALLOWED_ORIGINS })
+)
+
 const blockedMainFrameLogs = (warn) =>
   warn.mock.calls.filter(([msg]) => String(msg).includes('Blocked main-frame navigation'))
 
@@ -35,7 +40,7 @@ afterEach(() => { warn.mockRestore() })
 describe('main-frame navigation guard diagnostics', () => {
   it('logs exactly one blocked entry for a blocked will-navigate, and still prevents it', () => {
     const view = fakeView()
-    installReservedSessionSecurity(view, electronSession())
+    install(view, electronSession())
     const preventDefault = vi.fn()
 
     view.listeners.get('will-navigate')({ preventDefault }, 'https://sso.example/login')
@@ -49,7 +54,7 @@ describe('main-frame navigation guard diagnostics', () => {
 
   it('distinguishes will-redirect from will-navigate in the blocked log', () => {
     const view = fakeView()
-    installReservedSessionSecurity(view, electronSession())
+    install(view, electronSession())
     const preventDefault = vi.fn()
 
     view.listeners.get('will-redirect')({ preventDefault }, 'https://openai.com/challenge')
@@ -63,11 +68,11 @@ describe('main-frame navigation guard diagnostics', () => {
 
   it('POSITIVE CONTROL: an allowed main-frame navigation produces no blocked log and no preventDefault', () => {
     const view = fakeView()
-    installReservedSessionSecurity(view, electronSession())
+    install(view, electronSession())
     const preventDefault = vi.fn()
 
-    view.listeners.get('will-navigate')({ preventDefault }, 'https://chatgpt.com/c/abc')
-    view.listeners.get('will-redirect')({ preventDefault }, 'https://auth.openai.com/authorize')
+    view.listeners.get('will-navigate')({ preventDefault }, 'https://target.example/c/abc')
+    view.listeners.get('will-redirect')({ preventDefault }, 'https://auth.target.example/authorize')
 
     expect(preventDefault).not.toHaveBeenCalled()
     expect(blockedMainFrameLogs(warn)).toHaveLength(0)
@@ -75,7 +80,7 @@ describe('main-frame navigation guard diagnostics', () => {
 
   it('logs origin only — never the signed path, query, or fragment', () => {
     const view = fakeView()
-    installReservedSessionSecurity(view, electronSession())
+    install(view, electronSession())
 
     view.listeners.get('will-navigate')(
       { preventDefault: vi.fn() },
@@ -93,7 +98,7 @@ describe('main-frame navigation guard diagnostics', () => {
 
   it('logs <invalid-origin> for an unparseable blocked URL instead of echoing it', () => {
     const view = fakeView()
-    installReservedSessionSecurity(view, electronSession())
+    install(view, electronSession())
 
     view.listeners.get('will-navigate')({ preventDefault: vi.fn() }, 'not a url with token=SECRET')
 
@@ -106,18 +111,18 @@ describe('main-frame navigation guard diagnostics', () => {
 describe('reserved view did-fail-load diagnostics', () => {
   it('logs the error code and failed origin only — never the full URL', () => {
     const view = fakeView()
-    installReservedSessionSecurity(view, electronSession())
+    install(view, electronSession())
     const handler = view.listeners.get('did-fail-load')
     expect(handler).toBeTypeOf('function')
 
-    handler({}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://chatgpt.com/backend/private?sig=SECRET', true)
+    handler({}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://target.example/backend/private?sig=SECRET', true)
 
     const logs = warn.mock.calls.filter(([msg]) => String(msg).includes('did-fail-load'))
     expect(logs).toHaveLength(1)
     const flat = JSON.stringify(logs[0])
     expect(flat).toContain('-105')
     expect(flat).toContain('ERR_NAME_NOT_RESOLVED')
-    expect(flat).toContain('https://chatgpt.com')
+    expect(flat).toContain('https://target.example')
     expect(flat).not.toMatch(/backend|private|SECRET/)
     // A failed load must not read as a blocked navigation — they need different fixes.
     expect(blockedMainFrameLogs(warn)).toHaveLength(0)
@@ -125,9 +130,9 @@ describe('reserved view did-fail-load diagnostics', () => {
 
   it('marks whether the failure was the main frame', () => {
     const view = fakeView()
-    installReservedSessionSecurity(view, electronSession())
+    install(view, electronSession())
 
-    view.listeners.get('did-fail-load')({}, -106, 'ERR_INTERNET_DISCONNECTED', 'https://chatgpt.com/', false)
+    view.listeners.get('did-fail-load')({}, -106, 'ERR_INTERNET_DISCONNECTED', 'https://target.example/', false)
 
     const logs = warn.mock.calls.filter(([msg]) => String(msg).includes('did-fail-load'))
     expect(logs).toHaveLength(1)

@@ -1,8 +1,7 @@
 /**
- * C3 — the thumbnail Stop must cancel an active ChatGPT job through the same
- * cancellation chain useAutomation.stop() uses (cancelsActiveOnStop → setStopRequested(true)
- * → chatgpt:cancel-generations → adapter cancelAll). Engines that do not advertise
- * cancellation (Flow/API) must stay untouched.
+ * Thumbnail Stop — stopGenerating must halt the preset loop before the next
+ * submission, and it stays on the renderer-local stop path (stopRequestedRef):
+ * no engine-side cancellation call is issued.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
@@ -25,7 +24,7 @@ afterEach(() => {
   delete window.electronAPI
 })
 
-function gatedGenAPI({ cancelsActiveOnStop }) {
+function gatedGenAPI() {
   const events = []
   let release
   const generateImage = vi.fn(() => {
@@ -35,7 +34,6 @@ function gatedGenAPI({ cancelsActiveOnStop }) {
   const genAPI = {
     generateImage,
     mode: 'flow',
-    ...(cancelsActiveOnStop ? { cancelsActiveOnStop: true } : {}),
     setStopRequested: vi.fn(async (value) => {
       events.push(`cancel:${value}`)
       return { success: true }
@@ -44,40 +42,29 @@ function gatedGenAPI({ cancelsActiveOnStop }) {
   return { genAPI, events, releaseActive: (value) => release(value) }
 }
 
-async function runStopScenario({ cancelsActiveOnStop }) {
-  vi.useFakeTimers()
-  const h = gatedGenAPI({ cancelsActiveOnStop })
-  const { result } = renderHook(() => useStyleThumbnails(h.genAPI, { flowProjectReady: true }))
+describe('useStyleThumbnails Stop', () => {
+  it('stops the preset loop before the next submission without engine-side cancellation', async () => {
+    vi.useFakeTimers()
+    const h = gatedGenAPI()
+    const { result } = renderHook(() => useStyleThumbnails(h.genAPI, { flowProjectReady: true }))
 
-  let run
-  act(() => { run = result.current.generateThumbnails(['stop-chain-a', 'stop-chain-b'], [], (key) => key) })
-  await act(async () => { await Promise.resolve() })
-  expect(h.events).toEqual(['generate:start'])
+    let run
+    act(() => { run = result.current.generateThumbnails(['stop-chain-a', 'stop-chain-b'], [], (key) => key) })
+    await act(async () => { await Promise.resolve() })
+    expect(h.events).toEqual(['generate:start'])
 
-  act(() => { result.current.stopGenerating() })
+    act(() => { result.current.stopGenerating() })
+    expect(result.current.stopping).toBe(true)
 
-  await act(async () => {
-    h.releaseActive({ success: false, errorKind: 'chatgpt-generation-cancelled', error: 'cancelled' })
-    await vi.advanceTimersByTimeAsync(5000)
-  })
-  await act(async () => { await run })
+    await act(async () => {
+      h.releaseActive({ success: false, error: 'cancelled' })
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+    await act(async () => { await run })
 
-  // Stop actually stopped the loop: the second preset was never submitted.
-  expect(h.genAPI.generateImage).toHaveBeenCalledTimes(1)
-  return h
-}
-
-describe('useStyleThumbnails Stop — active ChatGPT job cancellation', () => {
-  it('wires Stop through setStopRequested(true) when the engine advertises active cancellation', async () => {
-    const h = await runStopScenario({ cancelsActiveOnStop: true })
-
-    expect(h.events).toEqual(['generate:start', 'cancel:true'])
-    expect(h.genAPI.setStopRequested).toHaveBeenCalledExactlyOnceWith(true)
-  })
-
-  it('leaves engines without cancelsActiveOnStop on their existing stop path', async () => {
-    const h = await runStopScenario({ cancelsActiveOnStop: false })
-
+    // Stop actually stopped the loop: the second preset was never submitted,
+    // and the renderer-local stop never issued an engine cancellation call.
+    expect(h.genAPI.generateImage).toHaveBeenCalledTimes(1)
     expect(h.events).toEqual(['generate:start'])
     expect(h.genAPI.setStopRequested).not.toHaveBeenCalled()
   })

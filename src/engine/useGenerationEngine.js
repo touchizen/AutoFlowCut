@@ -10,7 +10,6 @@
 import { useGenAPI } from '../hooks/useGenAPI'
 import { parseRoute, sourceForStage } from '../config/appRoute.js'
 import { createEngineApi } from './engineApi'
-import { createChatgptEngine } from './engineChatgpt.js'
 import { useFlowEngine } from './engineFlow'
 
 const IMAGE_METHODS = [
@@ -22,20 +21,19 @@ const VIDEO_METHODS = [
   'downloadVideo', 'upscaleVideo',
 ]
 
-export function createStageRoutedEngine(route, { api, flow, chatgpt }) {
+export function createStageRoutedEngine(route, { api, flow }) {
   const parsed = parseRoute(route)
   if (!parsed) return api
-  const member = (source) => ({ api, flow, chatgpt })[source]
+  const member = (source) => ({ api, flow })[source]
   const image = member(sourceForStage(parsed, 'image'))
   const video = member(sourceForStage(parsed, 't2v'))
-  const base = parsed.mode === 'api' ? api : (parsed.sessionTarget === 'flow' ? flow : api)
+  const base = parsed.mode === 'api' ? api : flow
   const routed = { ...base }
   for (const method of IMAGE_METHODS) routed[method] = image[method]
   for (const method of VIDEO_METHODS) routed[method] = video[method]
   routed.getAccessToken = image.getAccessToken || base.getAccessToken
   routed.clearTokenCache = image.clearTokenCache || base.clearTokenCache
   routed.setStopRequested = image.setStopRequested || base.setStopRequested
-  routed.cancelsActiveOnStop = image.cancelsActiveOnStop === true
   return routed
 }
 
@@ -50,11 +48,9 @@ export function useGenerationEngine(modeOrRoute, genApiOptions = {}) {
     ? { mode: modeOrRoute, sessionTarget: genApiOptions.sessionTarget || 'flow' }
     : modeOrRoute
   const parsed = parseRoute(route) || { mode: 'api', sessionTarget: 'flow' }
-  const engineChatgpt = createChatgptEngine({ electronAPI: globalThis.window?.electronAPI })
   const active = createStageRoutedEngine(parsed, {
     api: engineApi,
     flow: engineFlow,
-    chatgpt: engineChatgpt,
   })
   return {
     mode: parsed.mode,

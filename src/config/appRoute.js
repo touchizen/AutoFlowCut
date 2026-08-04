@@ -1,7 +1,10 @@
 export const MODE_STORAGE_KEY = 'autoflowcut_mode'
 export const SESSION_TARGET_STORAGE_KEY = 'autoflowcut_session_target'
 export const VALID_MODES = Object.freeze(['api', 'flow'])
-export const VALID_SESSION_TARGETS = Object.freeze(['flow', 'chatgpt'])
+// Session targets with a registered implementation. Flow is currently the only one; a future
+// target must ship its view/adapter registration before it earns an entry here — parseRoute
+// rejects unknown values and normalizeStoredRoute recovers stored ones to 'flow'.
+export const VALID_SESSION_TARGETS = Object.freeze(['flow'])
 
 const validMode = (value) => VALID_MODES.includes(value)
 const validTarget = (value) => VALID_SESSION_TARGETS.includes(value)
@@ -57,15 +60,8 @@ export const isFlowTarget = (route) => {
   const parsed = parseRoute(route)
   return parsed?.mode === 'flow' && parsed.sessionTarget === 'flow'
 }
-export const isChatgptTarget = (route) => {
-  const parsed = parseRoute(route)
-  return parsed?.mode === 'flow' && parsed.sessionTarget === 'chatgpt'
-}
-
 export function sourceForStage(route, stage) {
   const parsed = parseRoute(route)
   if (!parsed || !['image', 't2v', 'i2v'].includes(stage)) return null
-  if (parsed.mode === 'api') return 'api'
-  if (parsed.sessionTarget === 'flow') return 'flow'
-  return stage === 'image' ? 'chatgpt' : 'api'
+  return parsed.mode === 'api' ? 'api' : 'flow'
 }

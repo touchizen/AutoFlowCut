@@ -4,11 +4,11 @@ import { useFlowAdoptPrompt, ADOPT_POLL_MS } from '../../src/hooks/useFlowAdoptP
 
 afterEach(() => vi.useRealTimers())
 
-it('flow+chatgpt never polls Flow project adoption', async () => {
+it('a non-Flow session target never polls Flow project adoption', async () => {
   vi.useFakeTimers()
   const tryAdopt = vi.fn()
   renderHook(() => useFlowAdoptPrompt({
-    mode: 'flow', sessionTarget: 'chatgpt', flowProjectReady: false,
+    mode: 'flow', sessionTarget: 'reserved-target', flowProjectReady: false,
     projectLoading: false, projectName: 'p', tryAdopt,
   }))
   await act(() => vi.advanceTimersByTimeAsync(ADOPT_POLL_MS * 3))

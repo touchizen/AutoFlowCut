@@ -1,5 +1,5 @@
 /**
- * 세션 뷰(Flow/ChatGPT) 수명 컨트롤러 (§3.4 레이아웃 분기 + §3.3.1 startup 게이트).
+ * 세션 뷰(Flow 등 로그인 세션 타깃) 수명 컨트롤러 (§3.4 레이아웃 분기 + §3.3.1 startup 게이트).
  *
  * route:set({mode, sessionTarget}) → 정규 route 단일 진입점. 대상 세션 WebContentsView를
  *   lazy 생성(파티션별 보존) 후 detach → attach → bounds 순서로 원자적 전환.
@@ -26,23 +26,8 @@ const routesEqual = (left, right) => (
   left?.mode === right?.mode && left?.sessionTarget === right?.sessionTarget
 )
 
-export function isChatgptP2DevGateEnabled({
-  platform,
-  isPackaged,
-  viteDevServerUrl,
-  chatgptP2Flag,
-} = {}) {
-  // VITE_DEV_SERVER_URL is the canonical dev-launch signal. predev renames the Electron binary,
-  // which can make app.isPackaged report true; retaining this OR is deliberate for the P2 spike.
-  // The exact env value and darwin check still prevent ordinary packaged selectability (§10).
-  return platform === 'darwin' &&
-    (Boolean(viteDevServerUrl) || !isPackaged) &&
-    chatgptP2Flag === '1'
-}
-
 export function createModeController(getMainWindow, createFlowView, options = {}) {
   const views = new Map()
-  const startedSessionViews = new WeakSet()
   const targetRegistry = options.targetRegistry || null
   const configuredInitialRoute = parseRoute(options.initialRoute)
   let currentRoute = configuredInitialRoute || { mode: 'api', sessionTarget: 'flow' }
@@ -53,7 +38,6 @@ export function createModeController(getMainWindow, createFlowView, options = {}
   let transitionQueue = Promise.resolve()
   let rendererQuiesceOwner = null
   const pendingRendererQuiesce = new Map()
-  const chatgptGenerationOwners = new Map()
 
   const createSessionView = options.createSessionView || ((target) => {
     if (target !== 'flow') throw new Error(`session-view-unavailable:${target}`)
@@ -87,37 +71,11 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     return views.get(target)
   }
 
-  async function startInitialSessionLoad(target, view) {
-    if (target !== 'chatgpt' || !view || startedSessionViews.has(view)) return
-    if (!isChatgptP2DevGateEnabled(options.chatgptDevGate)) return
-    const definition = targetRegistry?.get(target)
-    if (!definition?.startUrl || typeof view.webContents?.loadURL !== 'function') return
-    startedSessionViews.add(view)
-    try {
-      await view.webContents.loadURL(definition.startUrl)
-      return true
-    } catch (error) {
-      // The view/session is deliberately preserved, but a transient navigation failure must not
-      // poison it for the process lifetime. A later route entry or explicit reconnect can retry.
-      startedSessionViews.delete(view)
-      console.warn('[ChatGPT] initial load failed', {
-        name: typeof error?.name === 'string' ? error.name : 'Error',
-      })
-      return false
-    }
-  }
-
   const getTargetDefinition = (target) => (
     typeof target === 'string' && targetRegistry?.has(target)
       ? targetRegistry.get(target)
       : null
   )
-
-  const ensureSession = async (target = currentRoute.sessionTarget) => {
-    const definition = getTargetDefinition(target)
-    if (!definition || typeof definition.ensureSession !== 'function') return null
-    return definition.ensureSession()
-  }
 
   const getSessionStatus = (target = currentRoute.sessionTarget) => {
     const definition = getTargetDefinition(target)
@@ -193,17 +151,8 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     const envelope = payload && typeof payload === 'object' && !Array.isArray(payload) && payload.to
       ? payload
       : null
-    let accepted = parseRoute(envelope ? envelope.to : payload)
+    const accepted = parseRoute(envelope ? envelope.to : payload)
     if (!accepted) return { ok: false, error: 'invalid-route' }
-    const chatgptGateConfigured = Object.hasOwn(options, 'chatgptDevGate')
-    if (accepted.sessionTarget === 'chatgpt' && chatgptGateConfigured &&
-        !isChatgptP2DevGateEnabled(options.chatgptDevGate)) {
-      if (envelope?.boot === true) {
-        accepted = { ...accepted, sessionTarget: 'flow' }
-      } else {
-        return adoptedResult({ ok: false, error: 'session-target-disabled' })
-      }
-    }
     if (envelope && Number.isInteger(envelope.fromRevision) && envelope.fromRevision !== routeRevision) {
       return adoptedResult({ ok: true, stale: true })
     }
@@ -271,7 +220,6 @@ export function createModeController(getMainWindow, createFlowView, options = {}
       assertRouteRevision(accepted, committedRevision)
       if (win && nextView) updateViewBounds(win, nextView)
       assertRouteRevision(accepted, committedRevision)
-      if (nextView) void startInitialSessionLoad(accepted.sessionTarget, nextView)
     } catch {
       if (win && attachedView === nextView && nextView) {
         try { win.contentView.removeChildView(nextView) } catch {}
@@ -358,123 +306,9 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     const isKnownTarget = (target) => (
       typeof target === 'string' && targetRegistry?.has(target) === true
     )
-    ipcMain.handle('app:get-dev-flags', async (event) => ({
-      chatgptTargetCombo: isTrustedRenderer(event) &&
-        isChatgptP2DevGateEnabled(options.chatgptDevGate),
-    }))
     ipcMain.handle('session-target:get-status', (event, target) => {
       if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
       return getSessionStatus(target)
-    })
-    ipcMain.handle('session-target:reconnect', async (event, target) => {
-      if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
-      const view = views.get(target)
-      view?.webContents?.focus?.()
-      await startInitialSessionLoad(target, view)
-      return ensureSession(target)
-    })
-    const chatgptGenerationAdmission = (event) => {
-      if (!isTrustedRenderer(event)) {
-        return { success: false, errorKind: 'chatgpt-unauthorized-sender', error: 'ChatGPT generation sender is not authorized.' }
-      }
-      if (!isChatgptP2DevGateEnabled(options.chatgptDevGate)) {
-        return { success: false, errorKind: 'chatgpt-target-disabled', error: 'ChatGPT generation is disabled outside the opted-in development route.' }
-      }
-      if (currentRoute.mode !== 'flow' || currentRoute.sessionTarget !== 'chatgpt') {
-        return { success: false, errorKind: 'chatgpt-route-inactive', error: 'ChatGPT generation requires the active ChatGPT session target.' }
-      }
-      return null
-    }
-    const generationRouteChangedRefusal = () => ({
-      success: false,
-      errorKind: 'chatgpt-generation-route-changed',
-      error: 'ChatGPT generation no longer belongs to the active route.',
-    })
-    const captureChatgptGenerationOwner = () => ({
-      route: { ...currentRoute },
-      revision: routeRevision,
-      target: 'chatgpt',
-    })
-    const generationOwnerMatches = (owner) => (
-      owner?.target === 'chatgpt' &&
-      owner.revision === routeRevision &&
-      routesEqual(owner.route, currentRoute) &&
-      currentRoute.sessionTarget === owner.target
-    )
-    const admittedGenerationRefusal = (generationId) => {
-      const owner = chatgptGenerationOwners.get(generationId)
-      return owner && !generationOwnerMatches(owner) ? generationRouteChangedRefusal() : null
-    }
-    const chatgptAdapter = () => getTargetDefinition('chatgpt')?.createAdapter?.() || null
-    ipcMain.handle('chatgpt:submit-generation', async (event, request = {}) => {
-      const refused = chatgptGenerationAdmission(event)
-      if (refused) return refused
-      const admittedOwner = captureChatgptGenerationOwner()
-      const referenceImages = request.referenceImages == null ? [] : request.referenceImages
-      // Reference upload has no measured product surface; never silently discard these bytes.
-      if (!Array.isArray(referenceImages) || referenceImages.length > 0) {
-        return {
-          success: false,
-          errorKind: 'chatgpt-reference-images-unmeasured',
-          error: 'ChatGPT reference image upload is not measured and remains unavailable.',
-        }
-      }
-      if (!generationOwnerMatches(admittedOwner)) return generationRouteChangedRefusal()
-      const adapter = chatgptAdapter()
-      if (!adapter || typeof adapter.submit !== 'function') {
-        return { success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.' }
-      }
-      const result = await adapter.submit({ ...request, referenceImages })
-      if (!generationOwnerMatches(admittedOwner)) {
-        await adapter.cancelAll?.()
-        return generationRouteChangedRefusal()
-      }
-      if (result?.success === true && typeof result.generationId === 'string') {
-        chatgptGenerationOwners.set(result.generationId, admittedOwner)
-      }
-      return result
-    })
-    ipcMain.handle('chatgpt:observe-generation', async (event, generationId) => {
-      const refused = chatgptGenerationAdmission(event)
-      if (refused) return refused
-      const ownershipRefused = admittedGenerationRefusal(generationId)
-      if (ownershipRefused) return ownershipRefused
-      const adapter = chatgptAdapter()
-      return adapter?.observe?.(generationId) || {
-        success: false, completed: true, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
-      }
-    })
-    ipcMain.handle('chatgpt:collect-generation', async (event, generationId) => {
-      const refused = chatgptGenerationAdmission(event)
-      if (refused) return refused
-      const ownershipRefused = admittedGenerationRefusal(generationId)
-      if (ownershipRefused) return ownershipRefused
-      const adapter = chatgptAdapter()
-      const result = await adapter?.collect?.(generationId) || {
-        success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
-      }
-      if (result?.errorKind !== 'chatgpt-generation-pending') {
-        chatgptGenerationOwners.delete(generationId)
-      }
-      return result
-    })
-    ipcMain.handle('chatgpt:clear-generations', async (event) => {
-      const refused = chatgptGenerationAdmission(event)
-      if (refused) return refused
-      const adapter = chatgptAdapter()
-      const result = await adapter?.clear?.() || {
-        success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
-      }
-      if (result?.success === true) chatgptGenerationOwners.clear()
-      return result
-    })
-    ipcMain.handle('chatgpt:cancel-generations', async (event) => {
-      const refused = chatgptGenerationAdmission(event)
-      if (refused) return refused
-      const adapter = chatgptAdapter()
-      return adapter?.cancelAll?.() || {
-        success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
-      }
     })
     ipcMain.handle('flow:set-startup-project', (_event, payload = {}) => {
       startupHint = payload.flowProjectId || null
@@ -489,7 +323,6 @@ export function createModeController(getMainWindow, createFlowView, options = {}
     getCurrentMode: () => currentRoute.mode,
     getSessionTarget: () => currentRoute.sessionTarget || 'flow',
     getCurrentRoute: () => ({ ...currentRoute }),
-    ensureSession,
     getSessionStatus,
     getActiveSessionView,
     getFlowView: () => getActiveSessionView('flow'),

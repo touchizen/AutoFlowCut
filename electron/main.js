@@ -32,13 +32,9 @@ import { applyGenderOverlay } from './api/tts/genderOverlay.js'
 import { createVoicePreviewService } from './api/tts/voicePreviewService.js'
 import { ssrfSafeFetch } from './api/net/ssrfSafeFetch.js'
 import { voiceKey } from '../src/utils/voiceKey.js'
-import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, setSessionTargetStripEnabled, updateBounds } from './ipc/layout.js'
-import { createModeController, isChatgptP2DevGateEnabled } from './ipc/mode.js'
-import {
-  reservedSessionWebPreferences, installReservedSessionSecurity,
-} from './sessionViewSecurity.js'
+import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
+import { createModeController } from './ipc/mode.js'
 import { createTargetRegistry } from './webtargets/index.js'
-import { createChatgptTarget } from './webtargets/chatgpt/index.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
 import { initSentryMain } from './sentry-init.js'
@@ -151,7 +147,6 @@ const API_HEADERS = {
 }
 
 let mainWindow = null
-let chatgptR1HarnessControls = null
 let mcpHttpServer = null // MCP HTTP 서버 인스턴스
 // 렌더러가 app:project-activated로 마지막 보고한 작업 폴더 — story:open의 projectPath가
 // 이 하위인지 검증하는 데 쓰인다(story-api.js의 getActiveWorkFolder dep).
@@ -717,30 +712,25 @@ function makeFlowView() {
   return view
 }
 
-const chatgptTarget = createChatgptTarget({
-  WebContentsView,
-  reservedSessionWebPreferences,
-  installReservedSessionSecurity,
-  adapterOptions: {
-    fs: fsSync,
-    getOutputDir: () => path.join(app.getPath('temp'), 'autoflowcut-chatgpt'),
-  },
-})
-const sessionTargetRegistry = createTargetRegistry({ chatgpt: chatgptTarget })
-const chatgptDevGate = Object.freeze({
-  platform: process.platform,
-  isPackaged: app.isPackaged,
-  viteDevServerUrl: process.env.VITE_DEV_SERVER_URL,
-  chatgptP2Flag: process.env.AUTOFLOWCUT_CHATGPT_P2,
-})
-const chatgptTargetComboEnabled = isChatgptP2DevGateEnabled(chatgptDevGate)
-setSessionTargetStripEnabled(chatgptTargetComboEnabled)
+// Flow is the only session target; a future target registers its definition here and the
+// route/registry plumbing (mode.js) picks it up without further wiring.
+const sessionTargetRegistry = createTargetRegistry({})
 
 // Mode controller wires route:set/mode:set IPC + lazy session view creation/attachment.
-// Target switches cancel and drain the same product adapter used by generation IPC.
+// Target switches cancel and drain every registered target adapter before the view swap —
+// with no registered targets this is a structural no-op, but the barrier ordering
+// (quiesce → cancelAll → awaitIdle → detach → commit → attach) stays live and tested.
 const routeSessionJobs = Object.freeze({
-  cancelAll: async () => chatgptTarget.createAdapter().cancelAll(),
-  awaitIdle: async () => chatgptTarget.createAdapter().awaitIdle(),
+  cancelAll: async () => {
+    for (const name of Object.keys(sessionTargetRegistry.table)) {
+      await sessionTargetRegistry.createAdapter(name)?.cancelAll?.()
+    }
+  },
+  awaitIdle: async () => {
+    for (const name of Object.keys(sessionTargetRegistry.table)) {
+      await sessionTargetRegistry.createAdapter(name)?.awaitIdle?.()
+    }
+  },
 })
 const modeController = createModeController(() => mainWindow, makeFlowView, {
   createSessionView: (target) => {
@@ -750,7 +740,6 @@ const modeController = createModeController(() => mainWindow, makeFlowView, {
     return view
   },
   targetRegistry: sessionTargetRegistry,
-  chatgptDevGate,
   updateViewBounds: updateBounds,
   sessionJobs: routeSessionJobs,
   requireRendererQuiesce: true,
@@ -862,7 +851,7 @@ async function getApiBase() {
 // NOTE: flow:set-startup-project is registered by modeController.register(ipcMain) in mode.js.
 // No duplicate handler here.
 
-// P1: mode+target 이 flow+chatgpt 면 이 두 handler 도 원격 Flow 상태를 건드리므로 gate 대상.
+// 이 두 handler 도 원격 Flow 상태를 건드리므로 route(mode+target) gate 대상.
 const mainFlowRouteDeps = {
   getCurrentMode: modeController.getCurrentMode,
   getSessionTarget: modeController.getSessionTarget,
@@ -1649,47 +1638,6 @@ app.whenReady().then(() => {
   ipcMain.handle('app:set-locale', (_e, { lang } = {}) => { try { setMenuLocale(lang) } catch {} ; return { ok: true } })
 
   createWindow()
-
-  // R1 is an operator-run spike, never a product route. Keep even its module
-  // outside the runtime path unless the exact macOS development gate is on.
-  const isDevRuntime = Boolean(process.env.VITE_DEV_SERVER_URL) || !app.isPackaged
-  if (process.platform === 'darwin' && isDevRuntime && process.env.AUTOFLOWCUT_SPIKE === '1') {
-    void import('./spikes/chatgptR1Upload.js').then(({ registerChatgptR1Harness }) => {
-      chatgptR1HarnessControls = registerChatgptR1Harness({
-        app,
-        globalShortcut,
-        WebContentsView,
-        getMainWindow: () => mainWindow,
-        reservedSessionWebPreferences,
-        installReservedSessionSecurity,
-        // Spike-only full-window ownership: temporarily remove the routed product view so the
-        // harness never stacks two native WebContentsViews. Close restores only the same route/view.
-        suspendProductSessionView: () => {
-          if (!mainWindow || modeController.getCurrentMode() !== 'flow') return null
-          const suspendedRoute = modeController.getCurrentRoute()
-          const suspendedView = modeController.getActiveSessionView()
-          if (!suspendedView) return null
-          try { mainWindow.contentView.removeChildView(suspendedView) } catch { return null }
-          let restored = false
-          return () => {
-            if (restored || !mainWindow) return
-            restored = true
-            const currentRoute = modeController.getCurrentRoute()
-            if (currentRoute.mode !== suspendedRoute.mode ||
-                currentRoute.sessionTarget !== suspendedRoute.sessionTarget ||
-                modeController.getActiveSessionView() !== suspendedView) return
-            mainWindow.contentView.addChildView(suspendedView)
-            updateBounds(mainWindow, suspendedView)
-          }
-        },
-      })
-    }).catch((error) => {
-      console.warn('[ChatGPTR1] harness registration failed', {
-        name: typeof error?.name === 'string' ? error.name : 'Error',
-        code: typeof error?.code === 'string' ? error.code : undefined,
-      })
-    })
-  }
 
   // 진단: Cmd/Ctrl+Shift+E → 현재 Flow 웹뷰의 인터랙티브 요소 + bodyHTML 을 데스크톱에
   //   타임스탬프 JSON 파일로 덤프. 라이브 셀렉터(예: 에이전트 챗 패널 닫기 버튼)를 추측 없이

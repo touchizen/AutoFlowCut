@@ -10,7 +10,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { IMAGE_MODELS, VIDEO_MODELS, categorizeApiModels } from '../config/genModels'
-import { isFlowTarget, isChatgptTarget } from '../config/appRoute.js'
+import { isFlowTarget } from '../config/appRoute.js'
 import { FLOW_STATIC_MODELS } from '../engine/flowModels'
 
 // Flow 모드 정적 목록 — 동적 스크랩(Flow UI drift 로 깨짐)을 버리고 미리 추출한 정적 목록을 쓴다.
@@ -20,7 +20,6 @@ const FLOW_STATIC = FLOW_STATIC_MODELS
 
 export function useAvailableModels(genAPI, mode, sessionTarget = 'flow') {
   const flowTargetActive = isFlowTarget({ mode, sessionTarget })
-  const chatgptTargetActive = isChatgptTarget({ mode, sessionTarget })
   const [state, setState] = useState({
     imageModels: IMAGE_MODELS,
     videoModels: VIDEO_MODELS,
@@ -43,13 +42,6 @@ export function useAvailableModels(genAPI, mode, sessionTarget = 'flow') {
       const myRun = ++runSeqRef.current
       // unmount(cancelled) 또는 더 최신 요청이 시작됐으면(superseded) 응답 무시.
       const stale = () => cancelled || myRun !== runSeqRef.current
-      if (chatgptTargetActive) {
-        if (!stale()) setState({
-          imageModels: [], videoModels: [], loading: false,
-          error: null, source: 'session-target-unavailable',
-        })
-        return
-      }
       // Flow 모드: 동적 스크랩(에이전트 설정 패널 DOM)은 Flow UI 변경 때마다 panel_not_found 로
       //   깨진다(라이브 확인 2026-06-27). 매번 긁는 대신 미리 추출한 정적 FLOW_MODELS 를 그대로 쓴다 —
       //   목록이 Flow UI drift 에 영향받지 않아 안정적. (모델 갱신 시 FLOW_MODELS 만 수정.)
@@ -103,7 +95,7 @@ export function useAvailableModels(genAPI, mode, sessionTarget = 'flow') {
       window.removeEventListener('byok-key-changed', onKeyChanged)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listModels, mode, flowTargetActive, chatgptTargetActive])
+  }, [listModels, mode, flowTargetActive])
 
   // 외부 재조회 트리거(Flow 준비됨/설정 모달 오픈 등). Flow 스크랩이 마운트 타이밍에 빈손이어도
   //   페이지가 settle 된 뒤 다시 긁어 동적 목록을 채운다.

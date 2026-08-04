@@ -8,7 +8,6 @@ import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL
 import { DEFAULTS } from '../../config/defaults'
 import { isFlowTarget, sourceForStage } from '../../config/appRoute.js'
 import { computeImageProviderSwitch } from '../../utils/imageProviderSwitch'
-import { targetLabelKey } from '../modeInfo.js'
 
 // provider 선택 UI는 catalog provisional flag가 단일 권위다. Registry에는 fal이 양쪽에
 // 등록돼 persisted 설정이 라우팅되지만 real-key smoke 전에는 supported 목록에서 제외된다.
@@ -26,7 +25,6 @@ const priceUrlForSource = (source) => {
 }
 
 const priceForSelection = (source, models, selected, fallback) => {
-  if (source === 'chatgpt') return 'ChatGPT plan'
   const list = models || []
   const selectedModel = list.find((model) => model.id === selected)
   const fallbackModel = list.find((model) => model.id === fallback)
@@ -87,8 +85,7 @@ export default function SceneTab({
     i2v: sourceForStage(route, 'i2v'),
   }
   const providerLabel = (source) => {
-    if (source === 'flow') return t(targetLabelKey('flow'))
-    if (source === 'chatgpt') return t(targetLabelKey('chatgpt'))
+    if (source === 'flow') return 'Google Flow'
     if (source === 'api') return t('modeInfo.api.name')
     return ''
   }
@@ -97,7 +94,7 @@ export default function SceneTab({
     if (!source) return null
     return (
       <span
-        className={`model-mode-badge model-mode-${source === 'chatgpt' ? 'flow' : source}`}
+        className={`model-mode-badge model-mode-${source}`}
         data-testid={includeTestId ? `${stage}-provider-badge` : undefined}
       >
         {providerLabel(source)}

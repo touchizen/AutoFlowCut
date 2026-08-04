@@ -1,10 +1,10 @@
 /**
- * P1 target-aware fail-closed gate for Flow remote side effects.
+ * Target-aware fail-closed gate for Flow remote side effects.
  *
- * When the route is login-mode-but-ChatGPT-target (mode='flow', sessionTarget='chatgpt'),
+ * Unless the route is exactly login-mode-with-Flow-target (mode='flow', sessionTarget='flow'),
  * every remote Google-Flow side effect must be refused before the handler body runs and
  * before the Flow view is looked up. Read-only channels and main-local state (e.g.
- * flow:set-startup-project) are intentionally out of scope for P1.
+ * flow:set-startup-project) are intentionally out of scope.
  */
 
 export const FLOW_INACTIVE_RESULT = Object.freeze({

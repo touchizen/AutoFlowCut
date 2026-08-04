@@ -1,20 +1,19 @@
-import { beforeEach, it, expect, vi } from 'vitest'
-import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
-
-const headerState = vi.hoisted(() => ({ sessionTarget: 'chatgpt' }))
+/**
+ * Per-target auth readiness in the Header (the Flow bug useTargetAuthReady fixed):
+ * in login mode the auth chip must read authReadyByTarget[sessionTarget], never the
+ * mode-level authReady prop — so another mode/target's readiness cannot relabel Flow's chip.
+ */
+import { it, expect, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
 
 vi.mock('../../../src/hooks/useI18n', () => ({ useI18n: () => ({
   t: (k) => ({
-    'header.chatgptLogin': 'ChatGPT 로그인',
-    'header.chatgptAuthenticated': 'ChatGPT 로그인됨',
-    'header.flowLogin': 'Flow 로그인',
+    'header.flowLogin': '로그인',
     'header.flowAuthenticated': 'Flow 로그인됨',
     'header.apiKey': 'API 키',
   }[k] || k),
   // ⚠️ 빈 배열 금지: Header 는 LanguagePicker 를 무조건 렌더하고
-  //    LanguagePicker 는 `languages.find(...) || languages[0]` 의 `.country` 를 읽는다 →
-  //    빈 배열이면 두 테스트가 단언 전에 render 에서 TypeError 로 죽는다.
-  //    기존 Header.authAction.test.jsx:28 과 같은 fixture 를 쓴다.
+  //    LanguagePicker 는 `languages.find(...) || languages[0]` 의 `.country` 를 읽는다.
   lang: 'ko', changeLang: vi.fn(), languages: [{ code: 'ko', name: 'KO', country: 'kr' }],
 }) }))
 vi.mock('../../../src/hooks/useFileSystem', () => ({ fileSystemAPI: { listProjects: vi.fn().mockResolvedValue({ success: true, projects: [] }) } }))
@@ -24,146 +23,35 @@ vi.mock('../../../src/components/SideDrawer', () => ({ SideDrawer: () => null })
 vi.mock('../../../src/components/Modal', () => ({ default: () => null }))
 vi.mock('../../../src/components/ExportSplitButton', () => ({ default: () => null }))
 vi.mock('../../../src/components/Toast', () => ({ toast: { info: vi.fn() } }))
-vi.mock('../../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'flow', sessionTarget: headerState.sessionTarget }) }))
+vi.mock('../../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'flow', sessionTarget: 'flow' }) }))
 
 import Header from '../../../src/components/Header.jsx'
 
-beforeEach(() => { headerState.sessionTarget = 'chatgpt' })
-
-const deferred = () => {
-  let resolve
-  const promise = new Promise((done) => { resolve = done })
-  return { promise, resolve }
-}
-
-it('ChatGPT login action reattaches its route then uses the target reconnect port', async () => {
-  const events = []
-  window.electronAPI = {
-    setRoute: vi.fn(async (route) => { events.push(`route:${route.mode}+${route.sessionTarget}`); return { ok: true, route } }),
-    reconnectSession: vi.fn(async (target) => { events.push(`reconnect:${target}`); return { target, status: 'login-required', ready: false, revision: 7 } }),
-    setLayout: vi.fn(),
-    onFlowStatus: vi.fn(() => () => {}),
-  }
-  render(<Header authReady={false} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />)
-  // 버튼은 `{authActionIcon} {authActionLabel}`(Header.jsx:350)을 렌더해 접근성 이름이
-  // '👤 ChatGPT 로그인' 이다 — 정확 문자열 매칭은 절대 안 맞는다(기존 테스트도 정규식을 쓴다).
-  fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
-
-  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
-  expect(events).toEqual(['route:flow+chatgpt', 'reconnect:chatgpt'])
-  expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
-})
-
-it('ChatGPT authenticated badge rechecks the target without requesting a Flow token', async () => {
-  const getAccessToken = vi.fn(async () => 'flow-token')
-  const onAuthRecovered = vi.fn()
-  window.electronAPI = {
-    setRoute: vi.fn(async (route) => ({ ok: true, route })),
-    reconnectSession: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true, revision: 9 })),
-    onFlowStatus: vi.fn(() => () => {}),
-  }
+it('login-mode auth chip reads the per-target readiness map, not the mode-level prop', async () => {
+  window.electronAPI = { onFlowStatus: vi.fn(() => () => {}) }
   const { container } = render(
     <Header
-      authReady={true}
-      getAccessToken={getAccessToken}
+      authReady={true} // stale mode-level value — must NOT drive the chip in login mode
+      authReadyByTarget={{ flow: false }}
       onSettings={vi.fn()}
-      onAuthRecovered={onAuthRecovered}
+      onAuthRecovered={vi.fn()}
     />,
   )
-
-  fireEvent.click(container.querySelector('.auth-badge.authenticated'))
-
-  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
-  expect(getAccessToken).not.toHaveBeenCalled()
-  expect(onAuthRecovered).toHaveBeenCalledOnce()
+  await waitFor(() => expect(screen.getByRole('button', { name: /로그인/ })).toBeTruthy())
+  expect(container.querySelector('.auth-badge.authenticated')).toBeNull()
 })
 
-it('does not start ChatGPT reconnect when the live target changes while route adoption is pending', async () => {
-  const routeGate = deferred()
-  const onAuthRecovered = vi.fn()
-  const onRouteRequest = vi.fn(() => routeGate.promise)
-  window.electronAPI = {
-    reconnectSession: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true })),
-    onFlowStatus: vi.fn(() => () => {}),
-  }
-  const { rerender } = render(
-    <Header
-      authReady={false}
-      onSettings={vi.fn()}
-      onRouteRequest={onRouteRequest}
-      onAuthRecovered={onAuthRecovered}
-    />,
-  )
-
-  fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
-  await waitFor(() => expect(onRouteRequest).toHaveBeenCalledOnce())
-  headerState.sessionTarget = 'flow'
-  rerender(
-    <Header
-      authReady={false}
-      onSettings={vi.fn()}
-      onRouteRequest={onRouteRequest}
-      onAuthRecovered={onAuthRecovered}
-    />,
-  )
-  await act(async () => {
-    routeGate.resolve({ ok: true, route: { mode: 'flow', sessionTarget: 'chatgpt' } })
-    await routeGate.promise
-  })
-
-  expect(window.electronAPI.reconnectSession).not.toHaveBeenCalled()
-  expect(onAuthRecovered).not.toHaveBeenCalled()
-})
-
-it('does not apply a delayed ChatGPT ready result after the live target changes', async () => {
-  const reconnectGate = deferred()
-  const onAuthRecovered = vi.fn()
-  window.electronAPI = {
-    reconnectSession: vi.fn(() => reconnectGate.promise),
-    onFlowStatus: vi.fn(() => () => {}),
-  }
-  const onRouteRequest = vi.fn(async (route) => ({ ok: true, route }))
-  const { rerender } = render(
-    <Header
-      authReady={false}
-      onSettings={vi.fn()}
-      onRouteRequest={onRouteRequest}
-      onAuthRecovered={onAuthRecovered}
-    />,
-  )
-
-  fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
-  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
-  headerState.sessionTarget = 'flow'
-  rerender(
-    <Header
-      authReady={false}
-      onSettings={vi.fn()}
-      onRouteRequest={onRouteRequest}
-      onAuthRecovered={onAuthRecovered}
-    />,
-  )
-  await act(async () => {
-    reconnectGate.resolve({ target: 'chatgpt', status: 'ready', ready: true })
-    await reconnectGate.promise
-  })
-
-  expect(onAuthRecovered).not.toHaveBeenCalled()
-})
-
-it('keeps Flow readiness out of the ChatGPT auth chip on a target round-trip', async () => {
+it('shows the authenticated chip when the Flow target itself is ready', async () => {
   window.electronAPI = { onFlowStatus: vi.fn(() => () => {}) }
-  headerState.sessionTarget = 'flow'
-  const authReadyByTarget = { flow: true, chatgpt: false }
-  const { container, rerender } = render(
-    <Header authReadyByTarget={authReadyByTarget} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />,
+  const { container } = render(
+    <Header
+      authReady={false}
+      authReadyByTarget={{ flow: true }}
+      onSettings={vi.fn()}
+      onAuthRecovered={vi.fn()}
+    />,
   )
   await waitFor(() => expect(container.querySelector('.auth-badge.authenticated')).toBeTruthy())
   expect(container.querySelector('.auth-badge.authenticated').getAttribute('data-tooltip'))
     .toBe('Flow 로그인됨')
-
-  headerState.sessionTarget = 'chatgpt'
-  rerender(<Header authReadyByTarget={authReadyByTarget} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />)
-  await waitFor(() => expect(screen.getByRole('button', { name: /ChatGPT 로그인/ })).toBeTruthy())
-  expect(container.querySelector('.auth-badge.authenticated')).toBeNull()
 })

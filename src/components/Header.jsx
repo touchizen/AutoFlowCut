@@ -2,14 +2,13 @@
  * Header Component - 상단 바
  */
 
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { useMode } from '../contexts/ModeContext'
-import { isFlowTarget, isChatgptTarget } from '../config/appRoute.js'
+import { isFlowTarget } from '../config/appRoute.js'
 import { flowLayoutForMode } from '../utils/appLayout'
-import { SESSION_TARGET_INFO } from './modeInfo.js'
 import { UserMenu } from './UserMenu'
 import ModeToggle from './ModeToggle'
 import LanguagePicker from './LanguagePicker'
@@ -43,12 +42,11 @@ export default function Header({
   const { t, lang, changeLang, languages } = useI18n()
   const { mode, sessionTarget = 'flow' } = useMode()
   const flowTargetActive = isFlowTarget({ mode, sessionTarget })
-  const chatgptTargetActive = isChatgptTarget({ mode, sessionTarget })
+  // Auth readiness stays per-target (authReadyByTarget) so a future session target cannot
+  // relabel Flow's auth state; Flow is currently the only registered target.
   const authReady = mode === 'flow' && authReadyByTarget
     ? authReadyByTarget[sessionTarget] === true
     : Boolean(authReadyProp)
-  const loginLabelKey = SESSION_TARGET_INFO[sessionTarget]?.loginKey || 'header.flowLogin'
-  const authenticatedLabelKey = SESSION_TARGET_INFO[sessionTarget]?.authenticatedKey || 'header.flowAuthenticated'
   const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting'
   const [showProjectDropdown, setShowProjectDropdown] = useState(false)
   const [showDrawer, setShowDrawer] = useState(false)
@@ -60,21 +58,10 @@ export default function Header({
   const mountedRef = useRef(true)
   // #R11-7: 겹치는 auth 폴링 중 최신 호출만 반영하기 위한 시퀀스 카운터.
   const authCheckSeqRef = useRef(0)
-  const chatgptReconnectSeqRef = useRef(0)
   // #R14-5: flow 지역 제한(unavailable) sticky 플래그 — flow 모드에서 폴링/authReady 가 덮지 않게.
   const flowUnavailableRef = useRef(false)
   const modeRef = useRef(mode)
   const flowTargetActiveRef = useRef(flowTargetActive)
-  const liveRouteRef = useRef({ mode, sessionTarget, version: 0 })
-  useLayoutEffect(() => {
-    if (liveRouteRef.current.mode !== mode || liveRouteRef.current.sessionTarget !== sessionTarget) {
-      liveRouteRef.current = {
-        mode,
-        sessionTarget,
-        version: liveRouteRef.current.version + 1,
-      }
-    }
-  }, [mode, sessionTarget])
   useEffect(() => {
     modeRef.current = mode
     flowTargetActiveRef.current = flowTargetActive
@@ -171,7 +158,6 @@ export default function Header({
   }, [projectName])
   
   const checkAuth = async (quickCheck = false) => {
-    if (chatgptTargetActive) return
     // #R15-3: flow 모드의 sticky unavailable 은 'checking' 으로도 덮지 않는다(조기 반환).
     if (flowUnavailableRef.current && flowTargetActiveRef.current) return
     if (!getAccessToken) {
@@ -241,35 +227,6 @@ export default function Header({
     startAuthPolling()
   }
 
-  const reconnectChatgpt = async () => {
-    const startRoute = liveRouteRef.current
-    if (!isChatgptTarget(startRoute)) return
-    const requestSequence = ++chatgptReconnectSeqRef.current
-    const isLiveRequest = () => (
-      mountedRef.current &&
-      requestSequence === chatgptReconnectSeqRef.current &&
-      liveRouteRef.current.version === startRoute.version &&
-      liveRouteRef.current.mode === startRoute.mode &&
-      liveRouteRef.current.sessionTarget === startRoute.sessionTarget
-    )
-    try {
-      const routeResult = onRouteRequest
-        ? await onRouteRequest({ mode: startRoute.mode, sessionTarget: startRoute.sessionTarget })
-        : await window.electronAPI?.setRoute?.({ mode: startRoute.mode, sessionTarget: startRoute.sessionTarget })
-      if (routeResult && routeResult.ok === false) throw new Error(routeResult.error || 'route-set-failed')
-      if (!isLiveRequest()) return
-      if (routeResult?.route && (
-        routeResult.route.mode !== startRoute.mode ||
-        routeResult.route.sessionTarget !== startRoute.sessionTarget
-      )) return
-      const status = await window.electronAPI?.reconnectSession?.('chatgpt')
-      if (!isLiveRequest()) return
-      if (status?.ready === true) onAuthRecovered?.()
-    } catch (error) {
-      console.warn('[Header] ChatGPT reconnect failed:', error?.message)
-    }
-  }
-
   // #R7-16: Flow 로그인 회복용 짧은 인증 폴링. 인증되면 authReady→effect 가 stopPolling.
   const startAuthPolling = () => {
     stopPolling()
@@ -320,12 +277,11 @@ export default function Header({
   const handleUnauthenticated = () => {
     if (mode === 'api') return onSettings?.('apiKey')
     if (flowTargetActive) return openFlow()
-    if (chatgptTargetActive) return reconnectChatgpt()
   }
 
-  const authActionLabel = mode === 'api' ? t('header.apiKey') : t(loginLabelKey)
+  const authActionLabel = mode === 'api' ? t('header.apiKey') : t('header.flowLogin')
   const authActionIcon = mode === 'flow' ? '👤' : '🔑'
-  const authenticatedLabel = mode === 'api' ? t('header.apiAuthenticated') : t(authenticatedLabelKey)
+  const authenticatedLabel = mode === 'api' ? t('header.apiAuthenticated') : t('header.flowAuthenticated')
   
   return (
     <>
@@ -399,7 +355,7 @@ export default function Header({
             <span
               className="auth-badge authenticated"
               data-tooltip={authenticatedLabel}
-              onClick={chatgptTargetActive ? reconnectChatgpt : checkAuth}
+              onClick={checkAuth}
             >🟢</span>
           )}
           {authStatus === 'unavailable' && (

@@ -4,7 +4,6 @@ import * as generationEngine from '../../src/engine/useGenerationEngine.js'
 function member(label) {
   return {
     label,
-    cancelsActiveOnStop: label === 'chatgpt',
     generateImage: vi.fn(async () => label),
     submitGeneration: vi.fn(async () => label),
     checkGeneration: vi.fn(async () => label),
@@ -24,72 +23,59 @@ function expectRouter() {
 }
 
 describe('stage-routed generation engine', () => {
-  it('routes text-only image generation to ChatGPT with flow+flow as the untouched positive control', async () => {
+  it('routes every stage to Flow on the flow route', async () => {
     if (!expectRouter()) return
     const api = member('api')
     const flow = member('flow')
-    const chatgpt = member('chatgpt')
 
     const routed = generationEngine.createStageRoutedEngine(
-      { mode: 'flow', sessionTarget: 'chatgpt' },
-      { api, flow, chatgpt },
-    )
-    await expect(routed.submitGeneration('measured text prompt', [], { batchCount: 1 }))
-      .resolves.toBe('chatgpt')
-    expect(chatgpt.submitGeneration).toHaveBeenCalledOnce()
-    expect(flow.submitGeneration).not.toHaveBeenCalled()
-
-    const control = generationEngine.createStageRoutedEngine(
       { mode: 'flow', sessionTarget: 'flow' },
-      { api, flow, chatgpt },
+      { api, flow },
     )
-    await expect(control.submitGeneration('same prompt', [], { batchCount: 1 })).resolves.toBe('flow')
+    await expect(routed.submitGeneration('a scene prompt', [])).resolves.toBe('flow')
+    await expect(routed.generateVideoT2V('a motion prompt')).resolves.toBe('flow')
     expect(flow.submitGeneration).toHaveBeenCalledOnce()
+    expect(flow.generateVideoT2V).toHaveBeenCalledOnce()
+    expect(api.submitGeneration).not.toHaveBeenCalled()
+    expect(api.generateVideoT2V).not.toHaveBeenCalled()
   })
 
-  it('routes video on flow+chatgpt to the API provider, never ChatGPT', async () => {
+  it('routes every stage to the API member on the api route', async () => {
     if (!expectRouter()) return
     const api = member('api')
     const flow = member('flow')
-    const chatgpt = member('chatgpt')
     const routed = generationEngine.createStageRoutedEngine(
-      { mode: 'flow', sessionTarget: 'chatgpt' },
-      { api, flow, chatgpt },
+      { mode: 'api', sessionTarget: 'flow' },
+      { api, flow },
     )
-
-    await expect(routed.generateVideoT2V('video prompt')).resolves.toBe('api')
+    await expect(routed.generateImage('image prompt', [])).resolves.toBe('api')
     await expect(routed.generateVideoI2V('motion prompt')).resolves.toBe('api')
-    expect(api.generateVideoT2V).toHaveBeenCalledOnce()
-    expect(api.generateVideoI2V).toHaveBeenCalledOnce()
-    expect(chatgpt.generateVideoT2V).not.toHaveBeenCalled()
-    expect(chatgpt.generateVideoI2V).not.toHaveBeenCalled()
-
-    await expect(routed.generateImage('image positive control', [])).resolves.toBe('chatgpt')
-    expect(chatgpt.generateImage).toHaveBeenCalledOnce()
+    expect(flow.generateImage).not.toHaveBeenCalled()
+    expect(flow.generateVideoI2V).not.toHaveBeenCalled()
   })
 
-  it('routes active-image cancellation to ChatGPT while flow+flow remains on the Flow no-op port', async () => {
+  it('falls back to the API member for an unparseable route', async () => {
     if (!expectRouter()) return
     const api = member('api')
     const flow = member('flow')
-    const chatgpt = member('chatgpt')
     const routed = generationEngine.createStageRoutedEngine(
-      { mode: 'flow', sessionTarget: 'chatgpt' },
-      { api, flow, chatgpt },
+      { mode: 'flow', sessionTarget: 'not-registered' },
+      { api, flow },
     )
+    await expect(routed.generateImage('image prompt', [])).resolves.toBe('api')
+    expect(flow.generateImage).not.toHaveBeenCalled()
+  })
 
-    await expect(routed.setStopRequested(true)).resolves.toBe('chatgpt')
-    expect(chatgpt.setStopRequested).toHaveBeenCalledWith(true)
-    expect(api.setStopRequested).not.toHaveBeenCalled()
-    expect(flow.setStopRequested).not.toHaveBeenCalled()
-    expect(routed.cancelsActiveOnStop).toBe(true)
-
-    const control = generationEngine.createStageRoutedEngine(
+  it('keeps stop routing aligned with the image stage owner', async () => {
+    if (!expectRouter()) return
+    const api = member('api')
+    const flow = member('flow')
+    const routed = generationEngine.createStageRoutedEngine(
       { mode: 'flow', sessionTarget: 'flow' },
-      { api, flow, chatgpt },
+      { api, flow },
     )
-    await expect(control.setStopRequested(true)).resolves.toBe('flow')
+    await expect(routed.setStopRequested(true)).resolves.toBe('flow')
     expect(flow.setStopRequested).toHaveBeenCalledWith(true)
-    expect(control.cancelsActiveOnStop).toBe(false)
+    expect(api.setStopRequested).not.toHaveBeenCalled()
   })
 })

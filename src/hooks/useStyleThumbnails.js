@@ -287,16 +287,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
   const stopGenerating = useCallback(() => {
     stopRequestedRef.current = true
     setStopping(true)
-    // C3: ChatGPT submissions stay main-owned until the bounded page/fetch job finishes.
-    // Only that engine advertises active cancellation — same chain as useAutomation.stop()
-    // (setStopRequested(true) → chatgpt:cancel-generations → adapter cancelAll).
-    // Flow/API engines keep their existing stop path (stopRequestedRef only).
-    if (genAPI?.cancelsActiveOnStop === true && typeof genAPI.setStopRequested === 'function') {
-      void Promise.resolve(genAPI.setStopRequested(true)).catch((error) => {
-        console.warn('[StyleThumbnails] active generation cancellation failed:', error?.message)
-      })
-    }
-  }, [genAPI])
+  }, [])
 
   // 개별 썸네일 삭제
   const deleteThumbnail = useCallback(async (presetId) => {

@@ -1,27 +1,24 @@
 /**
- * Reserved (P1: ChatGPT) session view security policy.
+ * Reserved session view security policy (target-agnostic foundation).
  *
- * The reserved view is an empty shell in P1 — no URL load, no ChatGPT selectors,
- * no navigation/automation code. It exists only so the route/layout plumbing has
+ * A reserved session view is an empty shell — no URL load, no page selectors, no
+ * navigation/automation code. It exists only so the route/layout plumbing has
  * something concrete to attach. It must never receive the Flow preload or any
  * Flow security exception (contextIsolation/sandbox/webSecurity stay locked down,
  * no `preload` key at all).
  *
- * Navigation is allowed only to the measured-minimum origin set (chatgpt.com +
- * auth.openai.com) and is compared by parsed origin, never by substring match.
- * window-open is always denied — never handed to the external browser. Every
- * permission request/check is denied.
+ * A future session target supplies its own partition and measured-minimum origin
+ * set. Navigation is allowed only to those origins and is compared by parsed
+ * origin, never by substring match. window-open is always denied — never handed
+ * to the external browser. Every permission request/check is denied.
  */
 
-export const RESERVED_SESSION_PARTITION = 'persist:chatgpt'
-export const RESERVED_ALLOWED_ORIGINS = Object.freeze([
-  'https://chatgpt.com',
-  'https://auth.openai.com',
-])
-
-export function reservedSessionWebPreferences() {
+export function reservedSessionWebPreferences(partition) {
+  if (typeof partition !== 'string' || !partition) {
+    throw new TypeError('reservedSessionWebPreferences requires a partition')
+  }
   return {
-    partition: RESERVED_SESSION_PARTITION,
+    partition,
     contextIsolation: true,
     sandbox: true,
     nodeIntegration: false,
@@ -29,8 +26,9 @@ export function reservedSessionWebPreferences() {
   }
 }
 
-export function isReservedNavigationAllowed(rawUrl) {
-  try { return RESERVED_ALLOWED_ORIGINS.includes(new URL(rawUrl).origin) } catch { return false }
+export function isReservedNavigationAllowed(rawUrl, allowedOrigins) {
+  if (!Array.isArray(allowedOrigins)) return false
+  try { return allowedOrigins.includes(new URL(rawUrl).origin) } catch { return false }
 }
 
 // Origin only, never the raw URL — reserved-session URLs carry signed paths/queries.
@@ -38,17 +36,20 @@ function toLoggableOrigin(rawUrl) {
   try { return new URL(rawUrl).origin } catch { return '<invalid-origin>' }
 }
 
-export function installReservedSessionSecurity(view, electronSession) {
+export function installReservedSessionSecurity(view, electronSession, { allowedOrigins } = {}) {
+  if (!Array.isArray(allowedOrigins)) {
+    throw new TypeError('installReservedSessionSecurity requires allowedOrigins')
+  }
   // Every blocked exit logs — a silently prevented main-frame hop leaves the view blank
   // with zero diagnostics. `kind` distinguishes will-navigate from will-redirect so the
   // sequence of a login/challenge hop is readable in the terminal.
   const guardNavigation = (kind) => (event, url) => {
-    if (isReservedNavigationAllowed(url)) return
+    if (isReservedNavigationAllowed(url, allowedOrigins)) return
     event.preventDefault()
     console.warn('[ReservedSession] Blocked main-frame navigation', { kind, origin: toLoggableOrigin(url) })
   }
   const guardFrameNavigation = (details) => {
-    if (isReservedNavigationAllowed(details.url)) return
+    if (isReservedNavigationAllowed(details.url, allowedOrigins)) return
     details.preventDefault()
     console.warn('[ReservedSession] Blocked frame navigation', { origin: toLoggableOrigin(details.url) })
   }

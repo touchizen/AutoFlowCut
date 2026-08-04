@@ -32,10 +32,7 @@ describe('genModels — modelLabel', () => {
     expect(modelLabel('')).toBeNull()
   })
 
-  it('엔진 식별자 "chatgpt" 는 사용자 라벨 "ChatGPT" 로 표시 (raw slug 금지)', () => {
-    // ChatGPT 타깃은 페이지가 모델명을 노출하지 않아 model 에 엔진 식별자만 기록된다.
-    expect(modelLabel('chatgpt')).toBe('ChatGPT')
-    // POSITIVE CONTROL: 기존 카탈로그/Flow 관례는 그대로.
+  it('카탈로그 라벨과 Flow 관례를 유지', () => {
     expect(modelLabel('gemini-3.1-flash-image')).toBe('Nano Banana 2')
     expect(modelLabel('flow')).toBe('flow')
   })

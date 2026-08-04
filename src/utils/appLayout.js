@@ -33,7 +33,6 @@ export function flowLayoutForMode(mode) {
 
 export const DEFAULT_SPLIT_MODE = 'split-left'
 export const DEFAULT_SPLIT_RATIO = 0.5
-export const SESSION_TARGET_STRIP_HEIGHT = 44
 
 export function isHorizontalSplit(mode) {
   return mode === 'split-left' || mode === 'split-right'
@@ -80,17 +79,6 @@ export function splitFlowStyle(mode, ratio) {
   if (mode === 'split-top') return { ...base, top: 0, left: 0, width: '100%', height: flowPct }
   if (mode === 'split-bottom') return { ...base, top: appPct, left: 0, width: '100%', height: flowPct }
   return { ...base, inset: 0 }
-}
-
-/** Renderer-owned chrome occupying the top of the active session pane. */
-export function splitSessionTargetStripStyle(mode, ratio) {
-  const pane = splitFlowStyle(mode, ratio)
-  if (pane.display === 'none') return pane
-  return {
-    ...pane,
-    height: `${SESSION_TARGET_STRIP_HEIGHT}px`,
-    zIndex: 2,
-  }
 }
 
 /** 드래그 리사이저 스타일(absolute, Flow/App 경계). */

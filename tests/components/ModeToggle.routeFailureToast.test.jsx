@@ -19,7 +19,7 @@ beforeEach(() => {
   localStorage.clear()
   localStorage.setItem('autoflowcut_lang', 'en')
   localStorage.setItem(MODE_STORAGE_KEY, 'api')
-  localStorage.setItem(SESSION_TARGET_STORAGE_KEY, 'chatgpt')
+  localStorage.setItem(SESSION_TARGET_STORAGE_KEY, 'flow')
 })
 
 describe('ModeToggle route failure feedback', () => {
@@ -28,7 +28,7 @@ describe('ModeToggle route failure feedback', () => {
     window.electronAPI = {
       setRoute: vi.fn().mockResolvedValue({
         ok: true,
-        route: { mode: 'flow', sessionTarget: 'chatgpt' },
+        route: { mode: 'flow', sessionTarget: 'flow' },
         revision: 29,
       }),
     }
@@ -58,6 +58,6 @@ describe('ModeToggle route failure feedback', () => {
     })
     expect(screen.getByTestId('mode-toggle-api')).toHaveAttribute('aria-pressed', 'true')
     expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe('api')
-    expect(localStorage.getItem(SESSION_TARGET_STORAGE_KEY)).toBe('chatgpt')
+    expect(localStorage.getItem(SESSION_TARGET_STORAGE_KEY)).toBe('flow')
   })
 })

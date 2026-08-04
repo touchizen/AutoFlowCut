@@ -20,7 +20,6 @@ const deferred = () => {
 }
 
 const flowRoute = () => ({ mode: 'flow', sessionTarget: 'flow' })
-const chatgptRoute = () => ({ mode: 'flow', sessionTarget: 'chatgpt' })
 const apiRoute = () => ({ mode: 'api', sessionTarget: 'flow' })
 
 let injectedRequest = null
@@ -158,7 +157,7 @@ it('keeps renderer context, storage, main view, and engine on non-default Flow w
     result: { ok: false, error: 'route-quiesce-failed', route: { mode: 'flow', sessionTarget: 'flow' } },
   })
   renderApp({ electronAPI: api, initialRoute: flowRoute() })
-  await requestInjectedRoute(chatgptRoute())
+  await requestInjectedRoute(apiRoute())
   expect(screen.getByTestId('current-route')).toHaveTextContent('flow+flow')
   expect(localStorage.getItem('route')).toBe(JSON.stringify(flowRoute()))
   expect(api.mainRoute()).toEqual(flowRoute())
@@ -188,7 +187,7 @@ it.each([
   ['the route API is unavailable', undefined],
   ['the route IPC rejects', vi.fn(async () => { throw new Error('route-ipc-rejected') })],
 ])('does not reconcile a failed stored-route boot from the renderer echo when %s', async (_label, setRoute) => {
-  const storedRoute = chatgptRoute()
+  const storedRoute = flowRoute()
   const mainRoute = apiRoute()
   const api = {
     setRoute,
@@ -202,9 +201,9 @@ it.each([
   expect(result).toEqual(expect.objectContaining({ ok: false }))
   expect(result).not.toHaveProperty('route')
   expect(routeCommitEvents).toEqual([])
-  expect(screen.getByTestId('current-route')).toHaveTextContent('flow+chatgpt')
+  expect(screen.getByTestId('current-route')).toHaveTextContent('flow+flow')
   expect(localStorage.getItem('route')).toBe(JSON.stringify(storedRoute))
-  expect(currentEngine().routeOwner).toBe('chatgpt')
+  expect(currentEngine().routeOwner).toBe('flow')
   expect(api.mainRoute()).toEqual(mainRoute)
   expect(api.attachedView()).toBeNull()
 })
@@ -212,10 +211,10 @@ it.each([
 it('commits and persists only the latest adopted success route', async () => {
   const api = concurrentRouteHarness()
   renderApp({ electronAPI: api, initialRoute: flowRoute() })
-  const first = requestInjectedRoute(chatgptRoute())
+  const first = requestInjectedRoute(flowRoute())
   const second = requestInjectedRoute(apiRoute())
   api.resolveSecond({ ok: true, route: apiRoute(), revision: 3 })
-  api.resolveFirst({ ok: true, route: chatgptRoute(), revision: 2 })
+  api.resolveFirst({ ok: true, route: flowRoute(), revision: 2 })
   await Promise.all([first, second])
   expect(currentRoute()).toEqual(apiRoute())
   expect(localStorage.getItem('route')).toBe(JSON.stringify(apiRoute()))

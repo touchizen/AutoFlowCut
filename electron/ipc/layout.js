@@ -3,78 +3,44 @@
  */
 
 import { powerSaveBlocker, shell } from 'electron'
-import { SESSION_TARGET_STRIP_HEIGHT } from '../../src/utils/appLayout.js'
 
 let layoutMode = 'split-left'
 let splitRatio = 0.5
 let modalVisible = false
-let sessionTargetStripEnabled = false
 // 드래그 중 Flow 뷰 접기(A′) — 네이티브 뷰가 마우스 이벤트를 가로채 리사이즈가 흔들리므로,
 // 드래그 동안 Flow 를 0×0 으로 접고 렌더러가 정지 스냅샷을 대신 그린다. dragToken 은 캡처(async)
 // 도중 drag-end 가 와서 Flow 가 접힌 채 남는 레이스를 막는다.
 let dragging = false
 let dragToken = 0
 let powerSaveBlockerId = null
-// 세션 타깃(ChatGPT) 뷰가 "빈 화면"일 때 원인 3종(차단된 내비/로드 실패/잘못된 bounds)을 한
-// 런에서 구분하려면 geometry 가 관측 가능해야 한다. strip inset 이 적용되는 동안 최종 bounds 를
-// 변경 시 1회만 로그(숫자만 — URL/내용 없음).
-let lastLoggedBoundsKey = null
-
-function logSessionBoundsIfChanged(bounds) {
-  const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`
-  if (key === lastLoggedBoundsKey) return
-  lastLoggedBoundsKey = key
-  console.log('[SessionView] bounds', bounds)
-}
 
 /**
- * 활성 세션 WebContentsView(Flow 또는 ChatGPT) 위치/크기를 현재 레이아웃에 맞게 업데이트
+ * 활성 세션 WebContentsView(Flow) 위치/크기를 현재 레이아웃에 맞게 업데이트
  * @param {BrowserWindow} mainWindow
  * @param {WebContentsView} sessionView
  */
-export function updateBounds(mainWindow, sessionView, options = {}) {
+export function updateBounds(mainWindow, sessionView) {
   if (!mainWindow || !sessionView) return
 
-  const stripEnabled = Object.hasOwn(options, 'sessionTargetStripEnabled')
-    ? options.sessionTargetStripEnabled === true
-    : sessionTargetStripEnabled
-
-  // strip 활성(=세션 타깃 뷰) 동안 최종 적용 bounds 를 변경 시 1회 로그. 0×0 접힘도 로그해야
-  //   "뷰가 크기 0" 인 빈 화면을 진단할 수 있다. setBounds 값 자체는 이전과 동일(가시성만 추가).
-  const applyBounds = (bounds) => {
-    if (stripEnabled) logSessionBoundsIfChanged(bounds)
-    sessionView.setBounds(bounds)
-  }
-
   if (modalVisible || dragging) {
-    applyBounds({ x: 0, y: 0, width: 0, height: 0 })
+    sessionView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     return
   }
 
   const { width, height } = mainWindow.getContentBounds()
   const GAP = 3
-  const belowSessionStrip = (bounds) => {
-    if (!stripEnabled) return bounds
-    const inset = Math.min(SESSION_TARGET_STRIP_HEIGHT, Math.max(0, bounds.height))
-    return {
-      ...bounds,
-      y: bounds.y + inset,
-      height: Math.max(0, bounds.height - inset),
-    }
-  }
-
   if (layoutMode === 'split-left') {
     const splitPos = Math.round(width * splitRatio)
-    applyBounds(belowSessionStrip({ x: 0, y: 0, width: splitPos - GAP, height }))
+    sessionView.setBounds({ x: 0, y: 0, width: splitPos - GAP, height })
   } else if (layoutMode === 'split-right') {
     const splitPos = Math.round(width * splitRatio)
-    applyBounds(belowSessionStrip({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height }))
+    sessionView.setBounds({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height })
   } else if (layoutMode === 'split-top') {
     const splitPos = Math.round(height * splitRatio)
-    applyBounds(belowSessionStrip({ x: 0, y: 0, width, height: splitPos - GAP }))
+    sessionView.setBounds({ x: 0, y: 0, width, height: splitPos - GAP })
   } else if (layoutMode === 'split-bottom') {
     const splitPos = Math.round(height * splitRatio)
-    applyBounds(belowSessionStrip({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP }))
+    sessionView.setBounds({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP })
   }
 }
 
@@ -82,7 +48,7 @@ export function updateBounds(mainWindow, sessionView, options = {}) {
  * 레이아웃 관련 IPC 핸들러 등록
  * @param {ipcMain} ipcMain
  * @param {Function} getMainWindow - mainWindow getter
- * @param {Function} getActiveSessionView - 현재 routed 세션 view(Flow/ChatGPT) getter
+ * @param {Function} getActiveSessionView - 현재 routed 세션 view(Flow) getter
  */
 export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) {
   const applyViewBounds = updateBounds
@@ -196,4 +162,3 @@ export function getSplitRatio() { return splitRatio }
 export function setSplitRatio(ratio) { splitRatio = ratio }
 export function getModalVisible() { return modalVisible }
 export function setModalVisible(visible) { modalVisible = visible }
-export function setSessionTargetStripEnabled(enabled) { sessionTargetStripEnabled = enabled === true }

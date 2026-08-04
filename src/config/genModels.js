@@ -8,7 +8,7 @@
 
 // 공식 문서/가격 URL. cost 는 중립 근사치 — 정확한 티어/해상도별 가격은 PRICING_URL 참고.
 import { FLOW_MODELS } from '../engine/flowModels'
-import { isFlowTarget, isChatgptTarget } from './appRoute.js'
+import { isFlowTarget } from './appRoute.js'
 import { VEO_RES_HD, VEO_RES_HD_4K } from '../utils/videoModels'
 
 const IMAGE_DOCS_URL = 'https://ai.google.dev/gemini-api/docs/image-generation'
@@ -128,13 +128,8 @@ export function listSupportedVideoProviders() {
 
 /** API 모델 id → 사람이 읽는 라벨. 카탈로그에 없으면 id 그대로, falsy 면 null.
  *  ResultsTable / 상세 모달의 모델 표시에 사용. */
-// 엔진 식별자 → 표시 라벨. ChatGPT 타깃은 페이지가 실제 모델명을 노출하지 않아
-// model 에 엔진 식별자('chatgpt')만 기록된다(imageFinalize 의 Flow 'flow' 관례와 동일)
-// — 사용자에겐 raw slug 대신 'ChatGPT' 로 표시한다. 브랜드명이라 locale 무관.
-const ENGINE_ID_LABELS = { chatgpt: 'ChatGPT' }
 export function modelLabel(id) {
   if (!id) return null
-  if (ENGINE_ID_LABELS[id]) return ENGINE_ID_LABELS[id]
   const all = [...IMAGE_MODELS, ...VIDEO_MODELS]
   return all.find(m => m.id === id)?.label || id
 }
@@ -203,7 +198,6 @@ export function pickValidModel(list, id, defaultId) {
  */
 export function computeModelHeal(availableModels, settings, mode, sessionTarget = 'flow') {
   const flowTargetActive = isFlowTarget({ mode, sessionTarget })
-  if (isChatgptTarget({ mode, sessionTarget })) return {}
 
   // stale-catalog guard: 카탈로그가 로딩 중이면 heal 건너뜀 (Fix B)
   if (availableModels?.loading) return {}

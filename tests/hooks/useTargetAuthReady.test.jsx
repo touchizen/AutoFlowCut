@@ -3,33 +3,35 @@ import { describe, expect, it, vi } from 'vitest'
 import { useTargetAuthReady } from '../../src/hooks/useTargetAuthReady.js'
 
 describe('useTargetAuthReady', () => {
-  it('keeps readiness isolated by session target across route changes', () => {
+  it('keeps readiness keyed by session target across route changes', () => {
     const { result, rerender } = renderHook(
       ({ target }) => useTargetAuthReady(target, null),
-      { initialProps: { target: 'chatgpt' } },
+      { initialProps: { target: 'flow' } },
     )
 
-    act(() => result.current.setTargetReady('chatgpt', true))
-    rerender({ target: 'flow' })
     expect(result.current.authReady).toBe(false)
-
     act(() => result.current.setTargetReady('flow', true))
-    rerender({ target: 'chatgpt' })
     expect(result.current.authReady).toBe(true)
-    expect(result.current.authReadyByTarget).toEqual({ flow: true, chatgpt: true })
+
+    // An unregistered target reads as not-ready and never inherits Flow's readiness.
+    rerender({ target: 'other-target' })
+    expect(result.current.authReady).toBe(false)
+    expect(result.current.authReadyByTarget).toEqual({ flow: true })
+
+    rerender({ target: 'flow' })
+    expect(result.current.authReady).toBe(true)
   })
 
-  it.each(['unknown', 'toString', '__proto__'])(
-    'preserves a non-default map for a setter call without an own known target: %s',
+  it.each(['unknown', 'chatgpt', 'toString', '__proto__'])(
+    'preserves the map for a setter call without an own known target: %s',
     (target) => {
       const { result } = renderHook(() => useTargetAuthReady('flow', null))
       act(() => result.current.setTargetReady('flow', true))
-      act(() => result.current.setTargetReady('chatgpt', true))
-      expect(result.current.authReadyByTarget).toEqual({ flow: true, chatgpt: true })
+      expect(result.current.authReadyByTarget).toEqual({ flow: true })
 
       act(() => result.current.setTargetReady(target, false))
 
-      expect(result.current.authReadyByTarget).toEqual({ flow: true, chatgpt: true })
+      expect(result.current.authReadyByTarget).toEqual({ flow: true })
     },
   )
 
@@ -37,26 +39,24 @@ describe('useTargetAuthReady', () => {
     let listener
     const electronAPI = {
       getSessionTargetStatus: vi.fn(async () => ({
-        target: 'chatgpt', status: 'ready', ready: true, revision: 5,
+        target: 'flow', status: 'ready', ready: true, revision: 5,
       })),
       onSessionTargetStatus: vi.fn((callback) => {
         listener = callback
         return vi.fn()
       }),
     }
-    const { result } = renderHook(() => useTargetAuthReady('chatgpt', electronAPI))
+    const { result } = renderHook(() => useTargetAuthReady('flow', electronAPI))
 
     await waitFor(() => expect(result.current.authReady).toBe(true))
-    act(() => result.current.setTargetReady('flow', true))
-    expect(result.current.authReadyByTarget).toEqual({ flow: true, chatgpt: true })
 
-    act(() => listener({ target: 'chatgpt', status: 'session-blocked', ready: false, revision: 4 }))
-    expect(result.current.authReadyByTarget).toEqual({ flow: true, chatgpt: true })
+    act(() => listener({ target: 'flow', status: 'session-blocked', ready: false, revision: 4 }))
+    expect(result.current.authReadyByTarget).toEqual({ flow: true })
 
-    act(() => listener({ target: 'chatgpt', status: 'challenge', ready: true, revision: 6 }))
-    expect(result.current.authReadyByTarget).toEqual({ flow: true, chatgpt: false })
+    act(() => listener({ target: 'flow', status: 'challenge', ready: true, revision: 6 }))
+    expect(result.current.authReadyByTarget).toEqual({ flow: false })
 
     act(() => listener({ target: '__proto__', status: 'ready', ready: true, revision: 7 }))
-    expect(result.current.authReadyByTarget).toEqual({ flow: true, chatgpt: false })
+    expect(result.current.authReadyByTarget).toEqual({ flow: false })
   })
 })

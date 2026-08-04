@@ -1,6 +1,6 @@
 /**
  * startOptions — App.jsx handleStart 가 settings 로부터 이미지 배치 시작 옵션을 만드는
- * 단일 소스. 통합 테스트(chatgptRealCallShape)가 이 함수를 그대로 사용해, 엔진/어댑터의
+ * 단일 소스. 통합 테스트(realDefaultsCallShape)가 이 함수를 그대로 사용해, 엔진/어댑터의
  * 가드가 "앱이 실제로 보내는 기본값"과 어긋나는 클래스(aspectRatio/seed 사건)를
  * 하드코딩 fixture 드리프트 없이 잡는다. 여기 필드를 바꾸면 그 테스트가 실제 경로를 다시 잰다.
  */

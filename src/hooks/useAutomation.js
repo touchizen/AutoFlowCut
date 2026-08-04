@@ -28,9 +28,8 @@ import {
 } from '../utils/refImageGuard'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
-import { sourceForStage } from '../config/appRoute'
 
-export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null, route = null) {
+export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -330,12 +329,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
       const resolvedGeneration = resolveSceneImageProvider(scene, generationSettings)
       if (resolvedGeneration.warning) console.warn('[Automation]', resolvedGeneration.warning)
-      // ChatGPT 타깃은 페이지가 실제 모델명을 노출하지 않는다 — API 해석 모델(resolvedGeneration.model,
-      //   예: "Nano Banana 2")을 기록하면 ResultsTable 이 다른 엔진의 모델을 표시하는 거짓 라벨이 된다.
-      //   imageFinalize 의 Flow 'flow' 관례처럼 엔진 식별자('chatgpt')를 기록한다. 판정은 엔진 라우팅과
-      //   같은 권위(sourceForStage) — Flow/API 경로는 기존 그대로. provider 는 item timeout 등
-      //   실행 정책에 쓰이므로 건드리지 않는다.
-      const recordedModel = sourceForStage(route, 'image') === 'chatgpt' ? 'chatgpt' : resolvedGeneration.model
+      const recordedModel = resolvedGeneration.model
       const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: recordedModel, provider: resolvedGeneration.provider, references: effectiveRefs })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
@@ -876,7 +870,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
   // #R8-10: onComplete 도 dep — 누락 시 완료 시점에 stale save 콜백을 호출할 수 있다.
   // subscriptionBatch/onPaywall/isAuthenticated/onLoginRequired: 배치 게이트 — 구독/인증 상태 변경 시 최신값 반영.
-  }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, updateReferences, t, onOpenSettings, mode, flowProjectReady, onComplete, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription, route])
+  }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, updateReferences, t, onOpenSettings, mode, flowProjectReady, onComplete, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription])
   
   /**
    * 일시정지/재개
@@ -900,14 +894,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     if (generationQueue?.clearQueue) {
       generationQueue.clearQueue()
     }
-    // ChatGPT submit stays main-owned until the bounded page/fetch job finishes. Only that engine
-    // advertises active cancellation; Flow/API behavior remains on their existing stop paths.
-    if (genAPI.cancelsActiveOnStop === true && typeof genAPI.setStopRequested === 'function') {
-      void Promise.resolve(genAPI.setStopRequested(true)).catch((error) => {
-        console.warn('[Automation] active generation cancellation failed:', error?.message)
-      })
-    }
-  }, [t, generationQueue, genAPI])
+  }, [t, generationQueue])
   
   // 큐를 통한 시작 — 정상 Start 와 retry 가 모두 이 경로를 타 ref/video 작업과 직렬화한다.
   // (queue 없으면 직접 start — 하위호환.)

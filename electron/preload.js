@@ -5,7 +5,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
   showInFolder: (filePath) => ipcRenderer.invoke('app:show-in-folder', { filePath }),
   notifyOS: (payload) => ipcRenderer.invoke('notify:os', payload),
-  getDevFlags: () => ipcRenderer.invoke('app:get-dev-flags'),
 
   // Layout
   setLayout: (params) => ipcRenderer.invoke('app:set-layout', params),
@@ -173,12 +172,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Route controller — canonical {mode, sessionTarget} route (route:set handler in electron/ipc/mode.js).
   setRoute: (params) => ipcRenderer.invoke('route:set', params),
   getSessionTargetStatus: (target) => ipcRenderer.invoke('session-target:get-status', target),
-  reconnectSession: (target) => ipcRenderer.invoke('session-target:reconnect', target),
-  chatgptSubmitGeneration: (request) => ipcRenderer.invoke('chatgpt:submit-generation', request),
-  chatgptObserveGeneration: (generationId) => ipcRenderer.invoke('chatgpt:observe-generation', generationId),
-  chatgptCollectGeneration: (generationId) => ipcRenderer.invoke('chatgpt:collect-generation', generationId),
-  chatgptClearGenerations: () => ipcRenderer.invoke('chatgpt:clear-generations'),
-  chatgptCancelGenerations: () => ipcRenderer.invoke('chatgpt:cancel-generations'),
   onSessionTargetStatus: (callback) => {
     const handler = (_, status) => callback(status)
     ipcRenderer.on('session-target:status-changed', handler)

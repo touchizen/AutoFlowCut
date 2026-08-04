@@ -28,7 +28,7 @@ import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
 import { useAvailableModels } from './hooks/useAvailableModels'
 import { computeModelHeal, computeModeSwitch } from './config/genModels'
-import { isFlowTarget, isChatgptTarget, parseRoute } from './config/appRoute.js'
+import { isFlowTarget, parseRoute } from './config/appRoute.js'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
@@ -100,7 +100,6 @@ import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessage
 
 // Components
 import Header from './components/Header'
-import { SessionTargetComboPortal } from './components/TargetCombo'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import GenerateMenu from './components/GenerateMenu'
@@ -259,7 +258,6 @@ function App() {
   const { mode, sessionTarget = 'flow', clearMode } = useMode()
   const { setRoute: commitRoute } = useMode()
   const flowTargetActive = isFlowTarget({ mode, sessionTarget })
-  const chatgptTargetActive = isChatgptTarget({ mode, sessionTarget })
   const [apiAuthReady, setApiAuthReady] = useState(false)
   const {
     authReadyByTarget,
@@ -603,38 +601,6 @@ function App() {
     return () => window.removeEventListener('byok-key-changed', onKeyChanged)
   }, [])
 
-  // C1: ChatGPT 타깃은 화면비도 seed 도 제어하지 못한다(스파이크 실측: 정사각 출력만, seed 미측정).
-  // 엔진이 프로젝트 화면비/seed 를 제출에서 제거할 때마다 이 이벤트를 쏘고, 여기서 세션당
-  // 한 번만 하나의 정직한 메시지로 알린다(씬마다 아님, 필드마다 토스트 아님).
-  const chatgptUnmeasuredNoticeShownRef = useRef(false)
-  useEffect(() => {
-    const onUnmeasuredOptionsIgnored = () => {
-      if (chatgptUnmeasuredNoticeShownRef.current) return
-      chatgptUnmeasuredNoticeShownRef.current = true
-      toast.warning(t('toast.chatgptUnmeasuredOptionsIgnored'))
-    }
-    window.addEventListener('chatgpt-unmeasured-options-ignored', onUnmeasuredOptionsIgnored)
-    return () => window.removeEventListener('chatgpt-unmeasured-options-ignored', onUnmeasuredOptionsIgnored)
-  }, [t])
-
-  const refuseIfSessionTargetUnsupported = useCallback(({ stage = 'image', hasReferences = false } = {}) => {
-    if (modeRef.current !== 'flow' || flowTargetActiveRef.current) return false
-    if (stage === 'image' && hasReferences !== true) return false
-    toast.warning(t(
-      stage === 'image'
-        ? 'toast.chatgptReferencesUnsupported'
-        : 'toast.chatgptVideoUsesApi'
-    ))
-    return true
-  }, [t])
-
-  const imageRequestCarriesReferences = useCallback((targetScenes = [], styleId = null) => {
-    if (typeof styleId === 'string' && styleId.startsWith('ref:')) return true
-    return targetScenes.some((scene) => (
-      (scenesHook.getMatchingReferences(scene) || []).length > 0
-    ))
-  }, [scenesHook.getMatchingReferences])
-
   // Flow 모드 인증 완료 이벤트 — main 이 flow-status { authenticated: true } 를 보내면
   // authReady 를 올린다. optional-chaining 으로 jsdom / api 모드에서는 no-op.
   // onFlowStatus 는 unsubscribe 함수를 반환하므로 cleanup 에서 호출한다.
@@ -648,7 +614,7 @@ function App() {
   }, [setTargetReady])
 
   // API key readiness remains mode-scoped. Session readiness is preserved independently in
-  // authReadyByTarget, so a Flow ↔ ChatGPT route round-trip cannot relabel one target's auth.
+  // authReadyByTarget, so a route round-trip cannot relabel one target's auth.
   useEffect(() => {
     const prevMode = prevModeForAuthRef.current
     prevModeForAuthRef.current = mode
@@ -991,8 +957,7 @@ function App() {
     isAuthenticated,
     () => setShowAuthModal(true),
     subscription?.status,   // #5/#8: loading/error 상태 전달 — 미확인 subscription 에서 진행 금지
-    refreshSubscription,    // #6: consume 성공 시 1회 refresh (stale 방지)
-    route                   // ChatGPT 타깃 판정(sourceForStage) — model 스탬프를 엔진 라우팅과 일치시킴
+    refreshSubscription     // #6: consume 성공 시 1회 refresh (stale 방지)
   )
 
   // 비디오 자동화 — 동일 이유로 useProjectData 이후 선언.
@@ -1004,23 +969,8 @@ function App() {
     refreshSubscription     // #6: consume 성공 시 1회 refresh
   )
 
-  const { isRunning, isPaused, isStopping, isSceneBatchQueued, progress, status, statusMessage, start, togglePause, stop, retryErrors: retryErrorsUnsafe } = automation
-  const retryErrors = useCallback((...args) => {
-    const targets = scenes.filter(scene => scene.status === 'error')
-    if (refuseIfSessionTargetUnsupported({
-      stage: 'image',
-      hasReferences: imageRequestCarriesReferences(targets, selectedStyleRefId),
-    })) return Promise.resolve()
-    return retryErrorsUnsafe(...args)
-  }, [retryErrorsUnsafe, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
-  const retryScene = useCallback((...args) => {
-    const target = scenes.find(scene => scene.id === args[0])
-    if (refuseIfSessionTargetUnsupported({
-      stage: 'image',
-      hasReferences: imageRequestCarriesReferences(target ? [target] : [], selectedStyleRefId),
-    })) return Promise.resolve()
-    return automation.retryScene(...args)
-  }, [automation.retryScene, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
+  const { isRunning, isPaused, isStopping, isSceneBatchQueued, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
+  const retryScene = automation.retryScene
   // #M2: 모달/ref batch 대기 뒤 scene launch가 과거 render의 start closure를 부르지 않게 한다.
   const automationStartRef = useRef(start)
   automationStartRef.current = start
@@ -1043,36 +993,13 @@ function App() {
   }, [isRunning, videoAutomation.isRunning])
 
   // Style Thumbnails
-  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails: generateThumbnailsUnsafe, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
-  // customRefs are output definitions whose text prompts are submitted with an empty image-input
-  // array inside useStyleThumbnails; they are not unmeasured ChatGPT reference uploads.
-  const generateThumbnails = useCallback(
-    (...args) => generateThumbnailsUnsafe(...args),
-    [generateThumbnailsUnsafe],
-  )
+  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
 
   // Reference 생성
-  const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef: handleGenerateRefUnsafe, handleGenerateAllRefs: handleGenerateAllRefsUnsafe, stopGenerateAllRefs } = useReferenceGeneration({
+  const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
     settings, references, scenes, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, selectedStyleRefIdRef, styleThumbnails, generationQueue, flowProjectReady,
     scenesRef: scenesHook.scenesRef, flowProjectId: _flowProjectId, projectNameRef,
-    route,  // ChatGPT 타깃 판정(sourceForStage) — engineLabel/metadata.model 스탬프
   })
-  const handleGenerateRef = useCallback((...args) => {
-    const styleId = args[2] ?? selectedStyleRefId
-    if (refuseIfSessionTargetUnsupported({
-      stage: 'image',
-      hasReferences: typeof styleId === 'string' && styleId.startsWith('ref:'),
-    })) return
-    return handleGenerateRefUnsafe(...args)
-  }, [handleGenerateRefUnsafe, refuseIfSessionTargetUnsupported, selectedStyleRefId])
-  const handleGenerateAllRefs = useCallback((...args) => {
-    const styleId = args[0] ?? selectedStyleRefId
-    if (refuseIfSessionTargetUnsupported({
-      stage: 'image',
-      hasReferences: typeof styleId === 'string' && styleId.startsWith('ref:'),
-    })) return
-    return handleGenerateAllRefsUnsafe(...args)
-  }, [handleGenerateAllRefsUnsafe, refuseIfSessionTargetUnsupported, selectedStyleRefId])
 
   const { isOpen: showReferences, setOpenByUser } = useRefPanelVisibility({
     refBatchActive,
@@ -1102,19 +1029,10 @@ function App() {
   }), [openSyncGate, t])
 
   // Scene 재생성
-  const { generatingSceneId, handleGenerateScene: handleGenerateSceneUnsafe } = useSceneGeneration({
+  const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
     settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
     requestMentionSync,
-    route,  // ChatGPT 타깃 판정(sourceForStage) — model 스탬프를 엔진 라우팅과 일치시킴
   })
-  const handleGenerateScene = useCallback((...args) => {
-    const target = scenes.find(scene => scene.id === args[0])
-    if (refuseIfSessionTargetUnsupported({
-      stage: 'image',
-      hasReferences: imageRequestCarriesReferences(target ? [target] : [], args[1] ?? selectedStyleRefId),
-    })) return
-    return handleGenerateSceneUnsafe(...args)
-  }, [handleGenerateSceneUnsafe, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
   const generatingSceneIdRef = useRef(generatingSceneId)
   generatingSceneIdRef.current = generatingSceneId
   const guardSceneBatchStart = (source = 'ui') => {
@@ -1476,7 +1394,6 @@ function App() {
    */
   const handleVideoRetry = useCallback(async (item, opts = {}) => {
     if (!item) return
-    if (refuseIfSessionTargetUnsupported({ stage: 'video' })) return
     // #R30-4: timeline/scene-media 모달은 씬 미디어 id(t2v_N/i2v_N)로 연다. 재생성은 실제 generation
     //   아이템(vscene_N / fp_N)을 리셋해야 한다 — 안 그러면 updateVideoScene 매퍼가 t2v_/i2v_ 를 몰라
     //   no-op 이 되어 "재생성" 이 아무것도 안 한다. (t2v_N↔vscene_N, i2v_N↔fp_N: SceneList/LiveTimeline 매핑)
@@ -1588,7 +1505,7 @@ function App() {
     // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
     onUpdate(item.id, 'pending', { error: null })
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
-  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t, refuseIfSessionTargetUnsupported])
+  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t])
 
   const styleResolver = createStyleResolver({
     activeTab,
@@ -1646,15 +1563,6 @@ function App() {
       refBatchRunning,
     })) return
     const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
-    if (
-      isImageBatchStart &&
-      modeRef.current === 'flow' &&
-      sessionTargetRef.current === 'chatgpt' &&
-      authReadyByTarget.chatgpt !== true
-    ) {
-      toast.warning(t('header.chatgptLogin'))
-      return
-    }
     const imageTargetScenes = isImageBatchStart
       ? (force ? scenes.filter(scene => scene.prompt) : filterPendingScenes(scenes))
       : []
@@ -1809,30 +1717,20 @@ function App() {
         // Keep the established Flow-gate structure; the full-route equality check immediately
         // above makes this live read equivalent to the captured startMode at dispatch time.
         if (modeRef.current === 'flow') {
-          if (startSessionTarget === 'flow') {
-            const { force: _force, ...startOptionsWithoutSceneIds } = startOptions
-            const gateResult = await runEmptyRefGateFlow({
-              startMode,
-              projectName,
-              force,
-              initialTargetSceneIds: targetScenes.map(scene => scene.id),
-              selectedStyleRefId: effectiveStyleId,
-              startOptionsWithoutSceneIds,
-            }, getEmptyRefGateDeps(source))
-            // 모달 대기 중 다른 경로가 대상 씬을 모두 완료했으면 기존 완료 안내를 재사용한다.
-            if (gateResult.reason === 'no-live-targets') {
-              toast.warning(t('toast.allScenesGenerated'))
-            }
-            break
-          } else {
-            if (refuseIfSessionTargetUnsupported({
-              stage: 'image',
-              hasReferences: imageRequestCarriesReferences(targetScenes, effectiveStyleId),
-            })) break
-            setHasPendingBatch(true)
-            start(startOptions).finally(() => setHasPendingBatch(false))
-            break
+          const { force: _force, ...startOptionsWithoutSceneIds } = startOptions
+          const gateResult = await runEmptyRefGateFlow({
+            startMode,
+            projectName,
+            force,
+            initialTargetSceneIds: targetScenes.map(scene => scene.id),
+            selectedStyleRefId: effectiveStyleId,
+            startOptionsWithoutSceneIds,
+          }, getEmptyRefGateDeps(source))
+          // 모달 대기 중 다른 경로가 대상 씬을 모두 완료했으면 기존 완료 안내를 재사용한다.
+          if (gateResult.reason === 'no-live-targets') {
+            toast.warning(t('toast.allScenesGenerated'))
           }
+          break
         }
         // API 모드는 M2 미노출 — 기존 scene start 경로를 그대로 유지한다(§11.12).
         setHasPendingBatch(true)
@@ -1841,7 +1739,6 @@ function App() {
       }
 
       case 'video-text': {
-        if (refuseIfSessionTargetUnsupported({ stage: 'video' })) break
         // Text to Video — 선택된 videoScenes만 실행 (선택 검증은 상단에서 처리)
         const selectedVideoScenes = videoScenes.filter(s => s.selected !== false)
 
@@ -1935,7 +1832,6 @@ function App() {
       }
 
       case 'frame-to-video': {
-        if (refuseIfSessionTargetUnsupported({ stage: 'video' })) break
         // Frame to Video — 선택된 framePairs만 실행
         // Frame to Video — 선택된 framePairs만 실행 (선택 검증은 상단에서 처리)
         const selectedFramePairs = framePairs.filter(p => p.selected !== false)
@@ -2112,37 +2008,23 @@ function App() {
         const liveTargetScenes = opts.force
           ? liveScenes.filter(scene => scene.prompt)
           : filterPendingScenes(liveScenes)
-        if (__startSessionTarget === 'flow') {
-          // #M2: tag modal 대기 중 바뀐 scene 상태를 useScenes의 동기 ref에서 다시 읽어 최초 의도 ID를
-          // 새로 만든다. pendingStartOptions에는 설정만 남기고 과거 scene/M1 판정은 재사용하지 않는다.
-          const { force = false, ...startOptionsWithoutSceneIds } = opts
-          setPendingStartOptions(null)
-          const gateResult = await runEmptyRefGateFlow({
-            startMode: __startMode,
-            projectName: opts.projectName,
-            force,
-            initialTargetSceneIds: liveTargetScenes.map(scene => scene.id),
-            selectedStyleRefId: sid,
-            startOptionsWithoutSceneIds,
-          }, getEmptyRefGateDeps(__startSource))
-          // 태그 모달까지 기다리는 동안 대상이 사라진 경우도 direct Start와 같은 안내를 낸다.
-          if (gateResult.reason === 'no-live-targets') {
-            toast.warning(t('toast.allScenesGenerated'))
-          }
-          return
-        } else {
-          if (refuseIfSessionTargetUnsupported({
-            stage: 'image',
-            hasReferences: imageRequestCarriesReferences(liveTargetScenes, sid),
-          })) {
-            setPendingStartOptions(null)
-            return
-          }
-          setHasPendingBatch(true)
-          start(opts).finally(() => setHasPendingBatch(false))
-          setPendingStartOptions(null)
-          return
+        // #M2: tag modal 대기 중 바뀐 scene 상태를 useScenes의 동기 ref에서 다시 읽어 최초 의도 ID를
+        // 새로 만든다. pendingStartOptions에는 설정만 남기고 과거 scene/M1 판정은 재사용하지 않는다.
+        const { force = false, ...startOptionsWithoutSceneIds } = opts
+        setPendingStartOptions(null)
+        const gateResult = await runEmptyRefGateFlow({
+          startMode: __startMode,
+          projectName: opts.projectName,
+          force,
+          initialTargetSceneIds: liveTargetScenes.map(scene => scene.id),
+          selectedStyleRefId: sid,
+          startOptionsWithoutSceneIds,
+        }, getEmptyRefGateDeps(__startSource))
+        // 태그 모달까지 기다리는 동안 대상이 사라진 경우도 direct Start와 같은 안내를 낸다.
+        if (gateResult.reason === 'no-live-targets') {
+          toast.warning(t('toast.allScenesGenerated'))
         }
+        return
       }
       // API 모드는 M2 미노출 — 기존 tag proceed 직접 시작을 유지한다(§11.12).
       if (!guardSceneBatchStart(__startSource)) {
@@ -2348,11 +2230,6 @@ function App() {
 
   return (
     <div className={computeAppClass(mode)}>
-      <SessionTargetComboPortal
-        busy={fullProjectBusy}
-        authReadyByTarget={authReadyByTarget}
-        onRouteRequest={requestRoute}
-      />
       <QAProgressBanner />
       <ImportProcessingOverlay
         processing={importProcessing}
@@ -2485,9 +2362,6 @@ function App() {
             appMode={mode}
             onUpdate={updateReferences}
             onUpload={async (...args) => {
-              if (refuseIfSessionTargetUnsupported({ stage: 'image', hasReferences: true })) {
-                return { success: false, error: 'chatgpt_reference_images_unmeasured' }
-              }
               const readyCheck = checkFlowProjectReady(flowProjectReady, t)
               if (!readyCheck.ok) return { success: false, error: 'flow_project_not_ready' }
               return genAPI.uploadReference(...args)
@@ -2730,8 +2604,7 @@ function App() {
                         (activeTab === 'frame-to-video' && framePairs.length === 0) ||
                         hasPendingBatch ||
                         refBatchRunning ||
-                        uiSceneBatchBlocked ||
-                        ((activeTab === 'text' || activeTab === 'list') && chatgptTargetActive && !authReady)
+                        uiSceneBatchBlocked
                       }
                     >
                       {(() => {

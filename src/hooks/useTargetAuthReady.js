@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const EMPTY_AUTH_READY = Object.freeze({ flow: false, chatgpt: false })
+// Per-target auth readiness: one key per registered session target. Flow is currently the
+// only one; a future target adds its key here and inherits the revision-guarded status flow.
+const EMPTY_AUTH_READY = Object.freeze({ flow: false })
 
 const isKnownTarget = (target) => Object.hasOwn(EMPTY_AUTH_READY, target)
 
@@ -9,7 +11,7 @@ export function useTargetAuthReady(
   electronAPI = globalThis.window?.electronAPI,
 ) {
   const [authReadyByTarget, setAuthReadyByTarget] = useState(EMPTY_AUTH_READY)
-  const revisionsRef = useRef({ flow: -1, chatgpt: -1 })
+  const revisionsRef = useRef({ flow: -1 })
 
   const setTargetReady = useCallback((eventTarget, ready) => {
     if (!isKnownTarget(eventTarget)) return

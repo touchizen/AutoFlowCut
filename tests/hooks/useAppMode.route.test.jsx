@@ -17,23 +17,32 @@ describe('useAppMode canonical route compatibility', () => {
 
   it('setRoute persists both keys atomically in hook state', () => {
     const { result } = renderHook(() => useAppMode())
-    act(() => result.current.setRoute({ mode: 'flow', sessionTarget: 'chatgpt' }))
-    expect(result.current.route).toEqual({ mode: 'flow', sessionTarget: 'chatgpt' })
+    act(() => result.current.setRoute({ mode: 'flow', sessionTarget: 'flow' }))
+    expect(result.current.route).toEqual({ mode: 'flow', sessionTarget: 'flow' })
     expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe('flow')
-    expect(localStorage.getItem(SESSION_TARGET_STORAGE_KEY)).toBe('chatgpt')
+    expect(localStorage.getItem(SESSION_TARGET_STORAGE_KEY)).toBe('flow')
+  })
+
+  it('a stored target without an implementation recovers to Flow instead of wedging boot', () => {
+    localStorage.setItem(MODE_STORAGE_KEY, 'flow')
+    localStorage.setItem(SESSION_TARGET_STORAGE_KEY, 'chatgpt')
+    const { result } = renderHook(() => useAppMode())
+    expect(result.current.route).toEqual({ mode: 'flow', sessionTarget: 'flow' })
   })
 
   it('legacy setMode preserves an existing target', () => {
     localStorage.setItem(MODE_STORAGE_KEY, 'api')
-    localStorage.setItem(SESSION_TARGET_STORAGE_KEY, 'chatgpt')
+    localStorage.setItem(SESSION_TARGET_STORAGE_KEY, 'flow')
     const { result } = renderHook(() => useAppMode())
     act(() => result.current.setMode('flow'))
-    expect(result.current.route).toEqual({ mode: 'flow', sessionTarget: 'chatgpt' })
+    expect(result.current.route).toEqual({ mode: 'flow', sessionTarget: 'flow' })
   })
 
   it('invalid setRoute/setMode is a no-op and clearMode removes both keys', () => {
     const { result } = renderHook(() => useAppMode())
     act(() => result.current.setRoute({ mode: 'flow', sessionTarget: 'wat' }))
+    expect(result.current.route).toBeNull()
+    act(() => result.current.setRoute({ mode: 'flow', sessionTarget: 'chatgpt' }))
     expect(result.current.route).toBeNull()
     act(() => result.current.setMode('flow'))
     act(() => result.current.clearMode())

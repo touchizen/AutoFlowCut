@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   MODE_STORAGE_KEY, SESSION_TARGET_STORAGE_KEY,
   parseRoute, normalizeStoredRoute, loadRoute, serializeRoute,
-  isSessionMode, isFlowTarget, isChatgptTarget, sourceForStage,
+  isSessionMode, isFlowTarget, sourceForStage,
 } from '../../src/config/appRoute.js'
 
 function storage(values = {}) {
@@ -12,26 +12,27 @@ function storage(values = {}) {
 describe('stored route normalization — §10 table (1)', () => {
   it.each([
     [null, null, null],
-    [null, 'chatgpt', null],
+    [null, 'stale-target', null],
     ['flow', null, { mode: 'flow', sessionTarget: 'flow' }],
     ['flow', 'flow', { mode: 'flow', sessionTarget: 'flow' }],
-    ['flow', 'chatgpt', { mode: 'flow', sessionTarget: 'chatgpt' }],
     ['api', null, { mode: 'api', sessionTarget: 'flow' }],
-    ['api', 'chatgpt', { mode: 'api', sessionTarget: 'chatgpt' }],
-    ['unknown', 'chatgpt', null],
+    ['unknown', 'flow', null],
   ])('mode=%s target=%s → %j', (mode, target, expected) => {
     expect(normalizeStoredRoute(mode, target, vi.fn())).toEqual(expected)
   })
 
-  it.each([['flow'], ['api']])('invalid target is recovered to flow and logged for %s', (mode) => {
+  // A previously stored target that no longer has an implementation (e.g. the removed
+  // 'chatgpt' value) must recover to flow instead of wedging the boot route.
+  it.each([['flow'], ['api']])('unregistered stored target is recovered to flow and logged for %s', (mode) => {
     const log = vi.fn()
+    expect(normalizeStoredRoute(mode, 'chatgpt', log)).toEqual({ mode, sessionTarget: 'flow' })
     expect(normalizeStoredRoute(mode, 'bogus', log)).toEqual({ mode, sessionTarget: 'flow' })
-    expect(log).toHaveBeenCalledOnce()
+    expect(log).toHaveBeenCalledTimes(2)
   })
 
   it('loadRoute reads only the two canonical keys', () => {
-    const s = storage({ [MODE_STORAGE_KEY]: 'flow', [SESSION_TARGET_STORAGE_KEY]: 'chatgpt' })
-    expect(loadRoute(s)).toEqual({ mode: 'flow', sessionTarget: 'chatgpt' })
+    const s = storage({ [MODE_STORAGE_KEY]: 'flow', [SESSION_TARGET_STORAGE_KEY]: 'flow' })
+    expect(loadRoute(s)).toEqual({ mode: 'flow', sessionTarget: 'flow' })
     expect(s.getItem.mock.calls).toEqual([[MODE_STORAGE_KEY], [SESSION_TARGET_STORAGE_KEY]])
   })
 })
@@ -39,8 +40,8 @@ describe('stored route normalization — §10 table (1)', () => {
 describe('strict route and selectors', () => {
   it.each([
     [{ mode: 'flow', sessionTarget: 'flow' }, true],
-    [{ mode: 'flow', sessionTarget: 'chatgpt' }, true],
     [{ mode: 'api', sessionTarget: 'flow' }, true],
+    [{ mode: 'flow', sessionTarget: 'chatgpt' }, false],
     [{ mode: 'wat', sessionTarget: 'flow' }, false],
     [{ mode: 'flow' }, false],
     [null, false],
@@ -54,23 +55,20 @@ describe('strict route and selectors', () => {
 
   it.each([
     [{ mode: 'api', sessionTarget: 'flow' }, 'image', 'api'],
-    [{ mode: 'api', sessionTarget: 'chatgpt' }, 't2v', 'api'],
+    [{ mode: 'api', sessionTarget: 'flow' }, 't2v', 'api'],
     [{ mode: 'flow', sessionTarget: 'flow' }, 'image', 'flow'],
     [{ mode: 'flow', sessionTarget: 'flow' }, 't2v', 'flow'],
     [{ mode: 'flow', sessionTarget: 'flow' }, 'i2v', 'flow'],
-    [{ mode: 'flow', sessionTarget: 'chatgpt' }, 'image', 'chatgpt'],
-    [{ mode: 'flow', sessionTarget: 'chatgpt' }, 't2v', 'api'],
-    [{ mode: 'flow', sessionTarget: 'chatgpt' }, 'i2v', 'api'],
-    [{ mode: 'flow', sessionTarget: 'chatgpt' }, 'unknown', null],
+    [{ mode: 'flow', sessionTarget: 'flow' }, 'unknown', null],
+    [{ mode: 'flow', sessionTarget: 'not-registered' }, 'image', null],
   ])('sourceForStage(%j, %s) → %s', (route, stage, source) => {
     expect(sourceForStage(route, stage)).toBe(source)
   })
 
   it('keeps mode and target predicates distinct', () => {
-    const route = { mode: 'api', sessionTarget: 'chatgpt' }
-    expect(isSessionMode(route)).toBe(false)
-    expect(isFlowTarget(route)).toBe(false)
-    expect(isChatgptTarget(route)).toBe(false)
-    expect(isChatgptTarget({ ...route, mode: 'flow' })).toBe(true)
+    expect(isSessionMode({ mode: 'api', sessionTarget: 'flow' })).toBe(false)
+    expect(isSessionMode({ mode: 'flow', sessionTarget: 'flow' })).toBe(true)
+    expect(isFlowTarget({ mode: 'api', sessionTarget: 'flow' })).toBe(false)
+    expect(isFlowTarget({ mode: 'flow', sessionTarget: 'flow' })).toBe(true)
   })
 })
