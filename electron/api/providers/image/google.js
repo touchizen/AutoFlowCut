@@ -41,6 +41,15 @@ function buildReferenceParts(referenceImages = []) {
     }))
 }
 
+function abortResult() {
+  return {
+    success: false,
+    error: 'Operation aborted',
+    errorKind: 'aborted',
+    aborted: true,
+  }
+}
+
 /**
  * 이미지 생성 (gemini-3.1-flash-image).
  *
@@ -55,7 +64,14 @@ function buildReferenceParts(referenceImages = []) {
  * @returns {Promise<{success:boolean, images?:Array<{base64:string,mimeType:string,dataUrl:string}>, error?:string}>}
  */
 export async function generateImage(
-  { apiKey, prompt, referenceImages = [], aspectRatio = DEFAULT_ASPECT_RATIO, model = DEFAULT_IMAGE_MODEL } = {},
+  {
+    apiKey,
+    prompt,
+    referenceImages = [],
+    aspectRatio = DEFAULT_ASPECT_RATIO,
+    model = DEFAULT_IMAGE_MODEL,
+    signal,
+  } = {},
   deps = {}
 ) {
   if (!apiKey) return { success: false, error: 'No API key' }
@@ -85,9 +101,10 @@ export async function generateImage(
   try {
     const { response, data } = await genaiFetch(
       `${GENAI_BASE}/models/${model}:generateContent`,
-      { apiKey, method: 'POST', body },
+      { apiKey, method: 'POST', body, ...(signal ? { signal } : {}) },
       deps
     )
+    if (signal?.aborted) return abortResult()
 
     if (data?.error) {
       return { success: false, error: formatGoogleApiError(data.error) }
@@ -121,6 +138,7 @@ export async function generateImage(
     }
     return { success: false, error: 'No image was generated' }
   } catch (error) {
+    if (signal?.aborted) return abortResult()
     return { success: false, error: error?.message || String(error) }
   }
 }

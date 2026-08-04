@@ -7,7 +7,18 @@ import {
   falImageProvider,
   generateImage,
 } from '../../../../../electron/api/providers/image/fal.js'
-import { downloadPolicy, validateKey } from '../../../../../electron/api/providers/falClient.js'
+import { downloadPolicy, fetchFalAsset, validateKey } from '../../../../../electron/api/providers/falClient.js'
+
+const ABORT_RESULT = {
+  success: false,
+  error: 'Operation aborted',
+  errorKind: 'aborted',
+  aborted: true,
+}
+
+const abortError = (message = 'Operation aborted') => Object.assign(new Error(message), {
+  name: 'AbortError',
+})
 
 // fal alone mocks an SDK client; no vi.mock hoisting is needed because adapters
 // accept `{ client }`. The signed asset fetch remains independently injectable.
@@ -363,9 +374,7 @@ describe('fal image provider — run to completion', () => {
     controller.abort()
 
     await expect(operation).resolves.toEqual({
-      success: false,
-      error: 'Operation aborted',
-      errorKind: 'transient',
+      ...ABORT_RESULT,
     })
   })
 
@@ -451,9 +460,7 @@ describe('fal image provider — run to completion', () => {
       prompt: 'abort',
       signal: controller.signal,
     }, { client, fetchImpl: vi.fn(), pollIntervalMs: 0, maxAttempts: 10 })).resolves.toEqual({
-      success: false,
-      error: 'Operation aborted',
-      errorKind: 'transient',
+      ...ABORT_RESULT,
     })
     expect(status).toHaveBeenCalledTimes(1)
     expect(client.queue.submit).toHaveBeenCalledWith(DEFAULT_FAL_IMAGE_MODEL, {
@@ -486,5 +493,332 @@ describe('fal image provider — run to completion', () => {
       errorKind: 'auth',
     })
     expect(client.config).not.toHaveBeenCalled()
+  })
+})
+
+describe('fal image provider — Stage A server cancellation', () => {
+  function expectOneServerCancel(client, originalSignal, requestId = 'img-req') {
+    expect(client.queue.cancel).toHaveBeenCalledTimes(1)
+    expect(client.queue.cancel).toHaveBeenCalledWith(DEFAULT_FAL_IMAGE_MODEL, {
+      requestId,
+      abortSignal: expect.any(AbortSignal),
+    })
+    const cancelSignal = client.queue.cancel.mock.calls[0][1].abortSignal
+    expect(cancelSignal).not.toBe(originalSignal)
+    return cancelSignal
+  }
+
+  it(':78 pre-submit abort는 D4로 끝나며 client/server cancel을 호출하지 않는다', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const client = makeClient({ cancel: vi.fn() })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      prompt: 'already stopped',
+      signal: controller.signal,
+    }, { client })).resolves.toEqual(ABORT_RESULT)
+    expect(client.config).not.toHaveBeenCalled()
+    expect(client.queue.submit).not.toHaveBeenCalled()
+    expect(client.queue.cancel).not.toHaveBeenCalled()
+  })
+
+  it('poll precheck abort는 관측한 requestId를 fresh signal로 정확히 1회 취소한다', async () => {
+    const controller = new AbortController()
+    const submitted = {}
+    Object.defineProperty(submitted, 'request_id', {
+      get() {
+        controller.abort()
+        return 'img-precheck'
+      },
+    })
+    const client = makeClient({
+      submit: vi.fn().mockResolvedValue(submitted),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      prompt: 'precheck',
+      signal: controller.signal,
+    }, { client })).resolves.toEqual(ABORT_RESULT)
+    expectOneServerCancel(client, controller.signal, 'img-precheck')
+    expect(client.queue.status).not.toHaveBeenCalled()
+  })
+
+  it('status await 직후 abort는 server cancel 1회와 D4로 수렴한다', async () => {
+    const controller = new AbortController()
+    const status = vi.fn(() => ({
+      then(resolve) {
+        resolve({ status: 'IN_PROGRESS', request_id: 'img-req' })
+        queueMicrotask(() => controller.abort())
+      },
+    }))
+    const client = makeClient({
+      status,
+      cancel: vi.fn().mockResolvedValue(undefined),
+    })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      prompt: 'status abort',
+      signal: controller.signal,
+    }, { client, maxAttempts: 2 })).resolves.toEqual(ABORT_RESULT)
+    expectOneServerCancel(client, controller.signal)
+    expect(status).toHaveBeenCalledTimes(1)
+  })
+
+  it('result await 직후 abort는 server cancel 1회와 D4로 수렴한다', async () => {
+    const controller = new AbortController()
+    const result = vi.fn(() => ({
+      then(resolve) {
+        resolve({ data: { images: [{ url: 'https://fal.media/unused.png' }] } })
+        queueMicrotask(() => controller.abort())
+      },
+    }))
+    const client = makeClient({
+      status: vi.fn().mockResolvedValue({ status: 'COMPLETED' }),
+      result,
+      cancel: vi.fn().mockResolvedValue(undefined),
+    })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      prompt: 'result abort',
+      signal: controller.signal,
+    }, { client })).resolves.toEqual(ABORT_RESULT)
+    expectOneServerCancel(client, controller.signal)
+    expect(result).toHaveBeenCalledTimes(1)
+  })
+
+  it('inner catch가 signal abort를 받으면 server cancel 1회와 D4로 수렴한다', async () => {
+    const controller = new AbortController()
+    const client = makeClient({
+      status: vi.fn(() => {
+        controller.abort()
+        throw abortError('status aborted')
+      }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      prompt: 'inner abort',
+      signal: controller.signal,
+    }, { client })).resolves.toEqual(ABORT_RESULT)
+    expectOneServerCancel(client, controller.signal)
+  })
+
+  it('poll delay의 outer catch abort도 server cancel 1회와 D4로 수렴한다', async () => {
+    const controller = new AbortController()
+    const client = makeClient({
+      status: vi.fn().mockResolvedValue({ status: 'IN_PROGRESS' }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    })
+    const operation = generateImage({
+      apiKey: 'fal-key',
+      prompt: 'delay abort',
+      signal: controller.signal,
+    }, { client, pollIntervalMs: 10000, timeoutMs: 20000 })
+    await vi.waitFor(() => expect(client.queue.status).toHaveBeenCalledTimes(1))
+
+    controller.abort()
+
+    await expect(operation).resolves.toEqual(ABORT_RESULT)
+    expectOneServerCancel(client, controller.signal)
+  })
+
+  it('post-download signal recheck도 server cancel 1회와 D4로 수렴한다', async () => {
+    const controller = new AbortController()
+    const client = makeClient({
+      status: vi.fn().mockResolvedValue({ status: 'COMPLETED' }),
+      result: vi.fn().mockResolvedValue({
+        data: { images: [{ url: 'https://fal.media/post-download.png', content_type: 'image/png' }] },
+      }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    })
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: vi.fn().mockResolvedValue(Uint8Array.from([1, 2, 3]).buffer),
+      headers: {
+        get: vi.fn(() => {
+          controller.abort()
+          return 'image/png'
+        }),
+      },
+    })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      prompt: 'asset abort',
+      signal: controller.signal,
+    }, { client, fetchImpl })).resolves.toEqual(ABORT_RESULT)
+    expectOneServerCancel(client, controller.signal)
+  })
+
+  it('submit가 abort 뒤 늦게 resolve해도 미관측 requestId는 cancel하지 않는다', async () => {
+    const controller = new AbortController()
+    let resolveSubmit
+    const client = makeClient({
+      submit: vi.fn(() => new Promise((resolve) => { resolveSubmit = resolve })),
+      cancel: vi.fn(),
+    })
+    const operation = generateImage({
+      apiKey: 'fal-key',
+      prompt: 'late submit',
+      signal: controller.signal,
+    }, { client, timeoutMs: 10000 })
+    await vi.waitFor(() => expect(client.queue.submit).toHaveBeenCalledTimes(1))
+
+    controller.abort()
+    await expect(operation).resolves.toEqual(ABORT_RESULT)
+    resolveSubmit({ request_id: 'too-late' })
+    await Promise.resolve()
+    expect(client.queue.cancel).not.toHaveBeenCalled()
+  })
+
+  it('queue.cancel sync throw도 숨기고 D4를 유지한다', async () => {
+    const controller = new AbortController()
+    const submitted = {}
+    Object.defineProperty(submitted, 'request_id', {
+      get() {
+        controller.abort()
+        return 'img-cancel-throws'
+      },
+    })
+    const client = makeClient({
+      submit: vi.fn().mockResolvedValue(submitted),
+      cancel: vi.fn(() => { throw new Error('cancel failed') }),
+    })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      signal: controller.signal,
+    }, { client })).resolves.toEqual(ABORT_RESULT)
+    expectOneServerCancel(client, controller.signal, 'img-cancel-throws')
+  })
+
+  it('queue.cancel SDK await와 transport를 5초에 함께 bound하고 late reject를 흡수한다', async () => {
+    vi.useFakeTimers()
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      const controller = new AbortController()
+      const submitted = {}
+      Object.defineProperty(submitted, 'request_id', {
+        get() {
+          controller.abort()
+          return 'img-slow-cancel'
+        },
+      })
+      let rejectCancel
+      let freshSignal
+      let removeSpy
+      const client = makeClient({
+        submit: vi.fn().mockResolvedValue(submitted),
+        cancel: vi.fn((_endpoint, { abortSignal }) => {
+          freshSignal = abortSignal
+          removeSpy = vi.spyOn(freshSignal, 'removeEventListener')
+          return new Promise((_resolve, reject) => { rejectCancel = reject })
+        }),
+      })
+      let settled
+      const operation = generateImage({
+        apiKey: 'fal-key',
+        signal: controller.signal,
+      }, { client }).then(value => { settled = value })
+      for (let turn = 0; turn < 20 && client.queue.cancel.mock.calls.length === 0; turn += 1) {
+        await Promise.resolve()
+      }
+      expect(client.queue.cancel).toHaveBeenCalledTimes(1)
+      expect(freshSignal).not.toBe(controller.signal)
+      expect(freshSignal.aborted).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(4999)
+      expect(settled).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(1)
+      await operation
+
+      expect(settled).toEqual(ABORT_RESULT)
+      expect(freshSignal.aborted).toBe(true)
+      expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function))
+      expect(vi.getTimerCount()).toBe(0)
+      rejectCancel(new Error('late SDK rejection'))
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+      vi.useRealTimers()
+    }
+  })
+
+  it('signal 없는 bare AbortError는 server cancel 없이 legacy transient shape을 유지한다', async () => {
+    const client = makeClient({
+      status: vi.fn().mockRejectedValue(abortError('legacy bare abort')),
+      cancel: vi.fn(),
+    })
+
+    await expect(generateImage({
+      apiKey: 'fal-key',
+      prompt: 'legacy',
+    }, { client })).resolves.toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'transient',
+    })
+    expect(client.queue.cancel).not.toHaveBeenCalled()
+  })
+})
+
+describe('fetchFalAsset — Stage A signal contract', () => {
+  it('signal을 fetch init에 조건부로 붙이고 fetch abort는 rethrow한다', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn((_url, init) => {
+      expect(init).toEqual({ headers: {}, signal: controller.signal })
+      controller.abort()
+      return Promise.reject(abortError('asset fetch aborted'))
+    })
+
+    await expect(fetchFalAsset('https://fal.media/abort.png', {
+      fetchImpl,
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('error-body JSON parse 중 abort를 falFailure로 삼키지 않고 rethrow한다', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: vi.fn(() => {
+        controller.abort()
+        return Promise.reject(abortError('asset json aborted'))
+      }),
+    })
+
+    await expect(fetchFalAsset('https://fal.media/error.png', {
+      fetchImpl,
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('arrayBuffer 중 abort를 falFailure로 삼키지 않고 rethrow한다', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: vi.fn(() => {
+        controller.abort()
+        return Promise.reject(abortError('asset bytes aborted'))
+      }),
+      headers: { get: vi.fn() },
+    })
+
+    await expect(fetchFalAsset('https://fal.media/bytes.png', {
+      fetchImpl,
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' })
   })
 })

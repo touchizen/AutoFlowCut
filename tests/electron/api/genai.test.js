@@ -84,6 +84,64 @@ describe('genai — generateImage', () => {
     })
   })
 
+  it('signal을 fetch까지 전달하고 실제 signal abort는 D4로 반환한다', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn((_url, init) => {
+      expect(init.signal).toBe(controller.signal)
+      controller.abort()
+      return Promise.reject(Object.assign(new Error('fetch aborted'), { name: 'AbortError' }))
+    })
+
+    await expect(generateImage({
+      apiKey: 'k',
+      prompt: 'cancel google',
+      signal: controller.signal,
+    }, { fetchImpl })).resolves.toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'aborted',
+      aborted: true,
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('body parse 중 signal abort도 기존 empty-response 매핑 전에 D4로 반환한다', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn(() => {
+        controller.abort()
+        return Promise.reject(Object.assign(new Error('parse aborted'), { name: 'AbortError' }))
+      }),
+    })
+
+    await expect(generateImage({
+      apiKey: 'k',
+      prompt: 'cancel parse',
+      signal: controller.signal,
+    }, { fetchImpl })).resolves.toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'aborted',
+      aborted: true,
+    })
+  })
+
+  it('signal 없는 bare AbortError는 기존 재시도와 plain 실패 shape을 유지한다', async () => {
+    const fetchImpl = vi.fn((_url, init) => {
+      expect(init).not.toHaveProperty('signal')
+      return Promise.reject(Object.assign(new Error('bare abort'), { name: 'AbortError' }))
+    })
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+
+    await expect(generateImage({ apiKey: 'k', prompt: 'legacy' }, {
+      fetchImpl,
+      sleepImpl,
+    })).resolves.toEqual({ success: false, error: 'bare abort' })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
   it('올바른 endpoint + 모델 + 키 헤더로 호출 (URL 에 key= 노출 안 함)', async () => {
     const fetchImpl = mockFetchOnce(jsonRes(IMG_PART()))
     await generateImage({ apiKey: 'SECRET', prompt: 'a cat' }, { fetchImpl })

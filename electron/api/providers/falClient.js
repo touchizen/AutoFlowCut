@@ -134,17 +134,23 @@ async function safeJson(response) {
 /** Download a trusted fal signed asset without attaching provider credentials. */
 export async function fetchFalAsset(
   assetUrl,
-  { fetchImpl, defaultMimeType = 'application/octet-stream' } = {}
+  { fetchImpl, defaultMimeType = 'application/octet-stream', signal } = {}
 ) {
   const policyError = originError(assetUrl)
   if (policyError) return { success: false, error: policyError, errorKind: 'invalid-config' }
 
   const doFetch = fetchImpl ?? fetch
   try {
+    if (signal?.aborted) throw abortError()
     // authMode:none is load-bearing: never attach the fal key to this signed CDN URL.
-    const response = await doFetch(assetUrl, { headers: {} })
+    const response = await doFetch(assetUrl, {
+      headers: {},
+      ...(signal ? { signal } : {}),
+    })
+    if (signal?.aborted) throw abortError()
     if (!response?.ok) {
       const body = await safeJson(response)
+      if (signal?.aborted) throw abortError()
       const error = Object.assign(
         new Error(nestedMessage(body) || `HTTP ${response?.status ?? '?'}`),
         { status: response?.status, body },
@@ -152,9 +158,11 @@ export async function fetchFalAsset(
       return falFailure(error)
     }
     const bytes = await response.arrayBuffer()
+    if (signal?.aborted) throw abortError()
     const mimeType = response.headers?.get?.('content-type') || defaultMimeType
     return { success: true, base64: Buffer.from(bytes).toString('base64'), mimeType }
   } catch (error) {
+    if (signal?.aborted) throw abortError()
     return falFailure(error)
   }
 }

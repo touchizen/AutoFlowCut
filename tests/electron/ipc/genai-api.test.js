@@ -58,7 +58,7 @@ describe('genai-api — 채널 등록', () => {
     expect(ipc.channels()).toEqual(
       expect.arrayContaining([
         'genai:get-key-status', 'genai:set-key', 'genai:clear-key', 'genai:validate-key',
-        'genai:generate-image', 'genai:generate-video', 'genai:check-video-status', 'genai:download-video',
+        'genai:generate-image', 'genai:cancel', 'genai:generate-video', 'genai:check-video-status', 'genai:download-video',
         'genai:list-providers',
       ])
     )
@@ -72,6 +72,33 @@ describe('genai-api — 채널 등록', () => {
       image: [{ id: 'google' }, { id: 'openai' }, { id: 'fal' }],
       video: [{ id: 'google' }, { id: 'grok' }, { id: 'fal' }, { id: 'wavespeed' }, { id: 'higgsfield' }],
     })
+  })
+
+  it('cancel은 같은 dispatcher registry에 얇게 위임하고 exact public shape을 반환한다', async () => {
+    let resolveFetch
+    const fetchImpl = vi.fn(() => new Promise((resolve) => { resolveFetch = resolve }))
+    const ipc = makeIpcMain()
+    registerGenaiIPC(ipc, {
+      genaiKeyStore: makeKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      fetchImpl,
+    })
+    const generation = ipc.invoke('genai:generate-image', {
+      prompt: 'pending',
+      cancelScope: 'run:ipc',
+    })
+
+    expect(await ipc.invoke('genai:cancel', { scope: 'run:ipc' })).toEqual({
+      success: true,
+      aborted: 1,
+    })
+    expect(await ipc.invoke('genai:cancel', {})).toEqual({
+      success: true,
+      aborted: 0,
+    })
+
+    resolveFetch(jsonRes(IMG))
+    await generation
   })
 })
 

@@ -33,6 +33,32 @@ export const MAX_429_RETRY_DELAY_MS = 30000
 // retryDelay 위에 더하는 소량 jitter — 다중 클라이언트 동시 재시도(thundering herd) 완화.
 const RETRY_JITTER_MS = 500
 
+function abortError() {
+  return Object.assign(new Error('Operation aborted'), { name: 'AbortError' })
+}
+
+async function waitBeforeRetry(ms, sleepImpl, signal) {
+  if (!signal) {
+    await sleepImpl(ms)
+    return
+  }
+  if (signal.aborted) throw abortError()
+
+  let abortHandler
+  const abortPromise = new Promise((_, reject) => {
+    abortHandler = () => reject(abortError())
+    signal.addEventListener?.('abort', abortHandler, { once: true })
+  })
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => sleepImpl(ms)),
+      abortPromise,
+    ])
+  } finally {
+    signal.removeEventListener?.('abort', abortHandler)
+  }
+}
+
 /** 일시적 과부하 응답인지 — 503 / UNAVAILABLE / "overloaded". 429(quota)는 제외(아래 별도 처리). */
 function isTransientOverload(response, data) {
   if (response?.status === 503) return true
@@ -72,10 +98,14 @@ export function parseRetryDelayMs(data) {
  */
 export async function genaiFetch(
   url,
-  { apiKey, method = 'GET', body = null } = {},
+  { apiKey, method = 'GET', body = null, signal } = {},
   { fetchImpl = fetch, sleepImpl = defaultSleep, maxRetries = RETRY_BACKOFF_MS.length, random = Math.random } = {}
 ) {
-  const init = { method, headers: { 'x-goog-api-key': apiKey } }
+  const init = {
+    method,
+    headers: { 'x-goog-api-key': apiKey },
+    ...(signal ? { signal } : {}),
+  }
   if (body != null) {
     init.headers['Content-Type'] = 'application/json'
     init.body = JSON.stringify(body)
@@ -87,19 +117,32 @@ export async function genaiFetch(
     try {
       response = await fetchImpl(url, init)
     } catch (e) {
-      if (attempt < maxRetries) { await sleepImpl(RETRY_BACKOFF_MS[attempt]); attempt += 1; continue }
+      if (signal?.aborted) throw e
+      if (attempt < maxRetries) {
+        await waitBeforeRetry(RETRY_BACKOFF_MS[attempt], sleepImpl, signal)
+        attempt += 1
+        continue
+      }
       throw e
     }
     const data = await safeJson(response)
     if (isTransientOverload(response, data) && attempt < maxRetries) {
-      await sleepImpl(RETRY_BACKOFF_MS[attempt]); attempt += 1; continue
+      await waitBeforeRetry(RETRY_BACKOFF_MS[attempt], sleepImpl, signal)
+      attempt += 1
+      continue
     }
     // 429 RPM/IPM 순간초과 — RetryInfo.retryDelay 가 짧을 때만 그 지연만큼 재시도.
     // retryDelay 없음/김(=일일소진·billing) 은 재시도 없이 그대로 반환 → downstream quota-stop.
     if (response?.status === 429 && attempt < maxRetries) {
       const serverDelay = parseRetryDelayMs(data)
       if (serverDelay != null && serverDelay <= MAX_429_RETRY_DELAY_MS) {
-        await sleepImpl(serverDelay + Math.floor(random() * RETRY_JITTER_MS)); attempt += 1; continue
+        await waitBeforeRetry(
+          serverDelay + Math.floor(random() * RETRY_JITTER_MS),
+          sleepImpl,
+          signal,
+        )
+        attempt += 1
+        continue
       }
     }
     return { response, data }

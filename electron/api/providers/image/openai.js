@@ -22,6 +22,15 @@ const DEFAULT_IMAGE_ASPECT = IMAGE_ASPECT_MAP['1:1']
 const TRANSIENT_STATUSES = new Set([500, 502, 503, 504])
 const SAFETY_SIGNAL = /content[ _-]?policy|safety|moderation/i
 
+function abortResult() {
+  return {
+    success: false,
+    error: 'Operation aborted',
+    errorKind: 'aborted',
+    aborted: true,
+  }
+}
+
 function mapImageAspect(aspectRatio) {
   const normalized = typeof aspectRatio === 'string' ? aspectRatio.trim() : ''
   return Object.hasOwn(IMAGE_ASPECT_MAP, normalized)
@@ -140,6 +149,7 @@ export async function generateImage(
     referenceImages = [],
     aspectRatio,
     model = DEFAULT_OPENAI_IMAGE_MODEL,
+    signal,
   } = {},
   { fetchImpl } = {}
 ) {
@@ -162,7 +172,7 @@ export async function generateImage(
     ? `${OPENAI_BASE}/images/edits`
     : `${OPENAI_BASE}/images/generations`
   const headers = { Authorization: `Bearer ${apiKey}` }
-  const init = { method: 'POST', headers }
+  const init = { method: 'POST', headers, ...(signal ? { signal } : {}) }
 
   if (hasReferences) {
     init.body = buildEditForm({
@@ -184,6 +194,7 @@ export async function generateImage(
   try {
     const response = await doFetch(url, init)
     const data = await safeJson(response)
+    if (signal?.aborted) return abortResult()
 
     if (!response?.ok || data?.error) {
       return {
@@ -208,6 +219,7 @@ export async function generateImage(
       actualAspectRatio,
     }
   } catch (error) {
+    if (signal?.aborted) return abortResult()
     return {
       success: false,
       error: error?.message || String(error),

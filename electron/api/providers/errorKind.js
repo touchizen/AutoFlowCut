@@ -6,6 +6,7 @@ export const ERROR_KINDS = [
   'forbidden',
   'quota',
   'transient',
+  'aborted',
   'safety',
   'invalid-config',
   'invalid-input',

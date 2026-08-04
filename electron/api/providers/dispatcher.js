@@ -1,4 +1,5 @@
 import { validateApiKey, listModels as listModelsFromGenai } from '../genai.js'
+import { createCancelRegistry } from './cancelRegistry.js'
 import { classifyGoogleErrorKind } from './errorKind.js'
 import { decodeHandle, encodeHandle } from './handle.js'
 import { getImageProvider, getVideoProvider, listProviders } from './index.js'
@@ -19,6 +20,15 @@ function unknownProvider(provider) {
 // 일관 부착(checkVideoStatus 의 per-item 'auth' 와 동일 의미, M1 비-google 등록 시 비대칭 방지).
 function noApiKey() {
   return { success: false, error: 'No API key', errorKind: 'auth' }
+}
+
+function abortResult() {
+  return {
+    success: false,
+    error: 'Operation aborted',
+    errorKind: 'aborted',
+    aborted: true,
+  }
 }
 
 function attachErrorKind(res, provider) {
@@ -52,33 +62,48 @@ export function createDispatcher({
   multiKeyStore,
   engineDeps = {},
   registry = defaultRegistry,
+  cancelRegistry = createCancelRegistry(),
 } = {}) {
   const keyDeps = { genaiKeyStore, multiKeyStore }
 
   return {
     async generateImage(params = {}) {
-      const providerId = params.provider || 'google'
-      const provider = registry.getImageProvider(providerId)
-      if (!provider) return unknownProvider(providerId)
+      const { signal, release } = cancelRegistry.register(params.cancelScope)
+      try {
+        if (signal?.aborted) return abortResult()
 
-      const keyOps = resolveKeyOps(providerId, keyDeps)
-      if (!keyOps) return unknownProvider(providerId)
+        const providerId = params.provider || 'google'
+        const provider = registry.getImageProvider(providerId)
+        if (!provider) return unknownProvider(providerId)
 
-      const apiKey = keyOps.getKey()
-      if (!apiKey) return noApiKey()
+        const keyOps = resolveKeyOps(providerId, keyDeps)
+        if (!keyOps) return unknownProvider(providerId)
 
-      const { prompt, referenceImages, aspectRatio, model } = params
-      const res = await provider.generateImage({
-        apiKey,
-        prompt,
-        referenceImages,
-        aspectRatio,
-        model,
-      }, engineDeps)
-      // §2.2/§5.9: 성공 이미지에 actualAspectRatio 를 항상 실어 표면화(값 or null).
-      // 근사 provider(openai 16:9→3:2)는 값, 정확 provider(google)는 undefined→null.
-      if (res?.success) res.actualAspectRatio = res.actualAspectRatio ?? null
-      return attachErrorKind(res, providerId)
+        const apiKey = keyOps.getKey()
+        if (!apiKey) return noApiKey()
+
+        const { prompt, referenceImages, aspectRatio, model } = params
+        const providerParams = {
+          apiKey,
+          prompt,
+          referenceImages,
+          aspectRatio,
+          model,
+          ...(signal ? { signal } : {}),
+        }
+        const res = await provider.generateImage(providerParams, engineDeps)
+        // §2.2/§5.9: 성공 이미지에 actualAspectRatio 를 항상 실어 표면화(값 or null).
+        // 근사 provider(openai 16:9→3:2)는 값, 정확 provider(google)는 undefined→null.
+        if (res?.success) res.actualAspectRatio = res.actualAspectRatio ?? null
+        return attachErrorKind(res, providerId)
+      } finally {
+        release()
+      }
+    },
+
+    cancel({ scope } = {}) {
+      const { aborted } = cancelRegistry.cancel(scope)
+      return { success: true, aborted }
     },
 
     async submitVideo(params = {}) {

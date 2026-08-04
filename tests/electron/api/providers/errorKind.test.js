@@ -11,6 +11,7 @@ describe('Google provider errorKind taxonomy', () => {
       'forbidden',
       'quota',
       'transient',
+      'aborted',
       'safety',
       'invalid-config',
       'invalid-input',

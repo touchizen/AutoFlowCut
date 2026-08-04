@@ -132,6 +132,13 @@ describe('preload contract', () => {
     expect(preloadKeys.has('storyListLlmOptions')).toBe(true)
   })
 
+  it('genaiCancel은 genai:cancel IPC를 params 그대로 호출한다', () => {
+    const preloadText = fs.readFileSync(preloadPath, 'utf8')
+    expect(preloadText).toMatch(
+      /genaiCancel:\s*\(params\)\s*=>\s*ipcRenderer\.invoke\('genai:cancel',\s*params\)/
+    )
+  })
+
   // 슬라이스4(§3.4 + §v2.8 M1): synopsis IPC 브릿지 + 이벤트 화이트리스트
   it('storyGenerateSynopsis / storyConfirmSynopsis are in preload (synopsis IPC bridges)', () => {
     const preloadText = fs.readFileSync(preloadPath, 'utf8')

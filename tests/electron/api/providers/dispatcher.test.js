@@ -641,6 +641,105 @@ describe('createDispatcher — security and keys', () => {
   })
 })
 
+describe('createDispatcher — image cancellation', () => {
+  it('scope registration signal만 provider에 전달하고 finally에서 release를 정확히 1회 호출한다', async () => {
+    const controller = new AbortController()
+    const release = vi.fn()
+    const cancelRegistry = {
+      register: vi.fn(() => ({ signal: controller.signal, release })),
+      cancel: vi.fn(() => ({ aborted: 0 })),
+    }
+    const generateImage = vi.fn().mockResolvedValue({ success: true, images: [] })
+    const google = { id: 'google', kind: 'image', generateImage }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ image: { google } }),
+      cancelRegistry,
+    })
+
+    await dispatcher.generateImage({ prompt: 'cat', cancelScope: 'run:signal' })
+
+    expect(cancelRegistry.register).toHaveBeenCalledWith('run:signal')
+    expect(generateImage).toHaveBeenCalledWith({
+      apiKey: 'STORED_GOOGLE_KEY',
+      prompt: 'cat',
+      referenceImages: undefined,
+      aspectRatio: undefined,
+      model: undefined,
+      signal: controller.signal,
+    }, {})
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('이미 취소된 scope는 key/provider 해석 전에 D4로 끝나고 release는 finally만 소유한다', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const release = vi.fn()
+    const cancelRegistry = {
+      register: vi.fn(() => ({ signal: controller.signal, release })),
+      cancel: vi.fn(() => ({ aborted: 0 })),
+    }
+    const genaiKeyStore = makeGenaiKeyStore()
+    const registry = makeRegistry()
+    const dispatcher = createDispatcher({
+      genaiKeyStore,
+      multiKeyStore: makeMultiKeyStore(),
+      registry,
+      cancelRegistry,
+    })
+
+    await expect(dispatcher.generateImage({ prompt: 'late', cancelScope: 'run:late' })).resolves.toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'aborted',
+      aborted: true,
+    })
+    expect(registry.getImageProvider).not.toHaveBeenCalled()
+    expect(genaiKeyStore.getKey).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('provider throw에도 release를 정확히 1회 호출한다', async () => {
+    const release = vi.fn()
+    const cancelRegistry = {
+      register: vi.fn(() => ({ signal: new AbortController().signal, release })),
+      cancel: vi.fn(() => ({ aborted: 0 })),
+    }
+    const providerError = new Error('provider exploded')
+    const google = { id: 'google', kind: 'image', generateImage: vi.fn().mockRejectedValue(providerError) }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry({ image: { google } }),
+      cancelRegistry,
+    })
+
+    await expect(dispatcher.generateImage({ cancelScope: 'run:throw' })).rejects.toBe(providerError)
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancel은 registry 결과를 exact public shape으로 정규화한다', () => {
+    const cancelRegistry = {
+      register: vi.fn(),
+      cancel: vi.fn()
+        .mockReturnValueOnce({ aborted: 3 })
+        .mockReturnValueOnce({ aborted: 0 }),
+    }
+    const dispatcher = createDispatcher({
+      genaiKeyStore: makeGenaiKeyStore(),
+      multiKeyStore: makeMultiKeyStore(),
+      registry: makeRegistry(),
+      cancelRegistry,
+    })
+
+    expect(dispatcher.cancel({ scope: 'run:cancel' })).toEqual({ success: true, aborted: 3 })
+    expect(dispatcher.cancel()).toEqual({ success: true, aborted: 0 })
+    expect(cancelRegistry.cancel).toHaveBeenNthCalledWith(1, 'run:cancel')
+    expect(cancelRegistry.cancel).toHaveBeenNthCalledWith(2, undefined)
+  })
+})
+
 describe('createDispatcher — actualAspectRatio 보강 (§2.2/§5.9)', () => {
   it('google 성공(actualAspectRatio 없음) → null 보강', async () => {
     const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'B' }] })

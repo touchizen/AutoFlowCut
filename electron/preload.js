@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   genaiListModels: (params) => ipcRenderer.invoke('genai:list-models', params),
   genaiListProviders: () => ipcRenderer.invoke('genai:list-providers'),
   genaiGenerateImage: (params) => ipcRenderer.invoke('genai:generate-image', params),
+  genaiCancel: (params) => ipcRenderer.invoke('genai:cancel', params),
   genaiGenerateVideo: (params) => ipcRenderer.invoke('genai:generate-video', params),
   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
   genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),

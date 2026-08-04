@@ -47,6 +47,7 @@ export function registerGenaiIPC(ipcMain, { genaiKeyStore, multiKeyStore, fetchI
   //   { success, images: [{ base64, mimeType, dataUrl }], error }
   // 단, 키는 renderer 에서 받지 않고 main 의 keyStore 에서 꺼낸다.
   ipcMain.handle('genai:generate-image', (_e, params) => dispatcher.generateImage(params || {}))
+  ipcMain.handle('genai:cancel', (_e, params) => dispatcher.cancel(params || {}))
 
   // --- 생성 (비디오) ---------------------------------------------------------
   //

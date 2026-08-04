@@ -238,6 +238,62 @@ describe('OpenAI image provider', () => {
     })
   })
 
+  it('signal을 RequestInit에 전달하고 실제 signal abort는 기존 transient 매핑 전에 D4로 반환한다', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn((_url, init) => {
+      expect(init.signal).toBe(controller.signal)
+      controller.abort()
+      return Promise.reject(Object.assign(new Error('fetch aborted'), { name: 'AbortError' }))
+    })
+
+    await expect(generateImage({
+      apiKey: 'sk-cancel',
+      prompt: 'cancel openai',
+      signal: controller.signal,
+    }, { fetchImpl })).resolves.toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'aborted',
+      aborted: true,
+    })
+  })
+
+  it('body parse 중 signal abort도 HTTP/empty 결과 매핑 전에 D4로 반환한다', async () => {
+    const controller = new AbortController()
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn(() => {
+        controller.abort()
+        return Promise.reject(Object.assign(new Error('parse aborted'), { name: 'AbortError' }))
+      }),
+    })
+
+    await expect(generateImage({
+      apiKey: 'sk-cancel',
+      prompt: 'cancel parse',
+      signal: controller.signal,
+    }, { fetchImpl })).resolves.toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'aborted',
+      aborted: true,
+    })
+  })
+
+  it('signal 없는 bare AbortError는 signal own-property 없이 legacy transient shape을 유지한다', async () => {
+    const fetchImpl = vi.fn((_url, init) => {
+      expect(init).not.toHaveProperty('signal')
+      return Promise.reject(Object.assign(new Error('bare abort'), { name: 'AbortError' }))
+    })
+
+    await expect(generateImage({ apiKey: 'sk-legacy', prompt: 'legacy' }, { fetchImpl })).resolves.toEqual({
+      success: false,
+      error: 'bare abort',
+      errorKind: 'transient',
+    })
+  })
+
   it('응답에 이미지 데이터가 없으면 명시적인 other 실패를 반환한다', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ data: [] }))
 

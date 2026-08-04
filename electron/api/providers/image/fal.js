@@ -23,6 +23,7 @@ export const DEFAULT_FAL_IMAGE_MAX_ATTEMPTS = Math.ceil(
   DEFAULT_FAL_IMAGE_TIMEOUT_MS / DEFAULT_FAL_IMAGE_POLL_INTERVAL_MS,
 ) + 1
 const FAL_IMAGE_TIMEOUT_ERROR = 'fal image polling timed out'
+const FAL_CANCEL_TIMEOUT_MS = 5000
 
 const IMAGE_SIZE_BY_ASPECT = Object.freeze({
   // PROVISIONAL — verify fal image_size mapping with a real fal key (M4 real-key gate).
@@ -34,6 +35,15 @@ const IMAGE_SIZE_BY_ASPECT = Object.freeze({
 })
 
 function abortFailure() {
+  return {
+    success: false,
+    error: 'Operation aborted',
+    errorKind: 'aborted',
+    aborted: true,
+  }
+}
+
+function legacyAbortFailure() {
   return { success: false, error: 'Operation aborted', errorKind: 'transient' }
 }
 
@@ -74,6 +84,10 @@ export async function generateImage(
     timeoutMs = DEFAULT_FAL_IMAGE_TIMEOUT_MS,
   } = {}
 ) {
+  let sdk
+  let requestId
+  let cancelPromise = null
+
   if (!apiKey) return { success: false, error: 'No API key', errorKind: 'auth' }
   if (signal?.aborted) return abortFailure()
   if (!Array.isArray(referenceImages)) {
@@ -123,8 +137,42 @@ export async function generateImage(
     output_format: 'png',
   }
 
+  const cancelServerOnce = () => {
+    if (cancelPromise) return cancelPromise
+    cancelPromise = (async () => {
+      if (!sdk || !requestId) return
+
+      const controller = new AbortController()
+      let timeoutId
+      let onAbort
+      const deadline = new Promise((resolve) => {
+        onAbort = resolve
+        controller.signal.addEventListener('abort', onAbort, { once: true })
+        timeoutId = setTimeout(() => controller.abort(), FAL_CANCEL_TIMEOUT_MS)
+      })
+      const transport = Promise.resolve()
+        .then(() => sdk.queue.cancel(selectedModel, {
+          requestId,
+          abortSignal: controller.signal,
+        }))
+        .catch(() => undefined)
+      try {
+        await Promise.race([transport, deadline])
+      } finally {
+        clearTimeout(timeoutId)
+        controller.signal.removeEventListener('abort', onAbort)
+      }
+    })()
+    return cancelPromise
+  }
+
+  const abortWithServerCancel = async () => {
+    await cancelServerOnce()
+    return abortFailure()
+  }
+
   try {
-    const sdk = configureFalClient(apiKey, client)
+    sdk = configureFalClient(apiKey, client)
     const submitted = await withFalDeadline(
       () => sdk.queue.submit(
         selectedModel,
@@ -132,7 +180,7 @@ export async function generateImage(
       ),
       { deadline, signal, timeoutMessage: FAL_IMAGE_TIMEOUT_ERROR },
     )
-    const requestId = submitted?.request_id
+    requestId = submitted?.request_id
     if (typeof requestId !== 'string' || requestId.length === 0) {
       return { success: false, error: 'fal request ID not returned', errorKind: 'other' }
     }
@@ -140,7 +188,7 @@ export async function generateImage(
     let attempt = 0
     while (Date.now() < deadline && attempt < attemptsLimit) {
       attempt += 1
-      if (signal?.aborted) return abortFailure()
+      if (signal?.aborted) return abortWithServerCancel()
 
       try {
         const status = await withFalDeadline(
@@ -150,7 +198,7 @@ export async function generateImage(
           ),
           { deadline, signal, timeoutMessage: FAL_IMAGE_TIMEOUT_ERROR },
         )
-        if (signal?.aborted) return abortFailure()
+        if (signal?.aborted) return abortWithServerCancel()
 
         if (isFalCompletedStatus(status?.status)) {
           const result = await withFalDeadline(
@@ -160,7 +208,7 @@ export async function generateImage(
             ),
             { deadline, signal, timeoutMessage: FAL_IMAGE_TIMEOUT_ERROR },
           )
-          if (signal?.aborted) return abortFailure()
+          if (signal?.aborted) return abortWithServerCancel()
           const image = firstImageFromResult(result)
           if (!image.url) {
             return { success: false, error: 'Image URL not found in fal result', errorKind: 'other' }
@@ -169,9 +217,11 @@ export async function generateImage(
             () => fetchFalAsset(image.url, {
               fetchImpl,
               defaultMimeType: image.contentType || 'image/png',
+              ...(signal ? { signal } : {}),
             }),
             { deadline, signal, timeoutMessage: FAL_IMAGE_TIMEOUT_ERROR },
           )
+          if (signal?.aborted) return abortWithServerCancel()
           if (!downloaded.success) return downloaded
           return {
             success: true,
@@ -192,7 +242,8 @@ export async function generateImage(
           }
         }
       } catch (error) {
-        if (signal?.aborted || error?.name === 'AbortError') return abortFailure()
+        if (signal?.aborted) return abortWithServerCancel()
+        if (error?.name === 'AbortError') return legacyAbortFailure()
         if (isFalDeadlineError(error)) throw error
         if (classifyFalError(error) !== 'transient') throw error
       }
@@ -214,7 +265,8 @@ export async function generateImage(
       errorKind: 'transient',
     }
   } catch (error) {
-    if (signal?.aborted || error?.name === 'AbortError') return abortFailure()
+    if (signal?.aborted) return abortWithServerCancel()
+    if (error?.name === 'AbortError') return legacyAbortFailure()
     return falFailure(error)
   }
 }
