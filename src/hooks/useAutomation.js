@@ -133,7 +133,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     }
     // quota stop 은 공통 모듈 — stopRequestedRef 마킹 + listeners (queue, 모달) 자동 발사.
     // queue clear 는 useGenerationQueue 가 자체 subscribe 해서 처리하므로 caller 책임 X.
-    // 이미 submit 한 in-flight 는 마저 collect 시도 (운 좋게 결과 오면 살림).
+    // Stop 뒤 미수집 in-flight 는 collect 를 건너뛰고 stop cleanup 에서 pending 으로 복원된다.
     const triggerQuotaStop = () => emitQuotaStop({ stopRequestedRef, scope: 'Automation' })
 
     const updateProgressMsg = (current) => {
