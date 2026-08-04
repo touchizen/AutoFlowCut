@@ -35,9 +35,12 @@ describe('createCancelRegistry', () => {
   })
 
   it('release는 해당 controller만 지우고 마지막 release에서 빈 bucket을 삭제한다', () => {
-    const registry = createCancelRegistry()
+    const activeByScope = new Map()
+    const registry = createCancelRegistry({ activeByScope })
     const first = registry.register('run:release')
     const second = registry.register('run:release')
+
+    expect(activeByScope.size).toBe(1)
 
     first.release()
     first.release()
@@ -46,8 +49,10 @@ describe('createCancelRegistry', () => {
     expect(second.signal.aborted).toBe(true)
 
     const only = registry.register('run:empty')
+    expect(activeByScope.size).toBe(1)
     only.release()
     only.release()
+    expect(activeByScope.size).toBe(0)
     expect(registry.cancel('run:empty')).toEqual({ aborted: 0 })
     expect(only.signal.aborted).toBe(false)
   })

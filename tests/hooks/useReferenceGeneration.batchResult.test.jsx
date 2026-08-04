@@ -75,6 +75,7 @@ function setupHook({
     mode: 'api',
     getAccessToken: vi.fn().mockResolvedValue('token'),
     clearTokenCache: vi.fn(),
+    cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
     generateImage: vi.fn().mockResolvedValue({
       success: true,
       images: [{ base64: 'direct-image', mediaId: 'direct-media' }],

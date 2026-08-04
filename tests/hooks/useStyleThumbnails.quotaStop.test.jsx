@@ -92,7 +92,8 @@ describe('useStyleThumbnails — custom-loop quota stop', () => {
       error: 'Resource has been exhausted (e.g. check quota).',
       errorKind: 'other',
     })
-    const { result } = renderHook(() => useStyleThumbnails({ generateImage }))
+    const cancelGeneration = vi.fn().mockResolvedValue({ success: true, aborted: 0 })
+    const { result } = renderHook(() => useStyleThumbnails({ generateImage, cancelGeneration }))
 
     await act(async () => {
       await result.current.generateThumbnails([], [

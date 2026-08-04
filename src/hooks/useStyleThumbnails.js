@@ -339,7 +339,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
       setStopping(false)
       finishRun(run)
     }
-  }, [genAPI, thumbnails, flowProjectReady, imageProvider, imageModel])
+  }, [genAPI, thumbnails, flowProjectReady])
 
   const stopGenerating = useCallback(() => {
     stopRequestedRef.current = true

@@ -57,6 +57,7 @@ describe('useSceneGeneration — 모델 전달', () => {
     expect(generateImage).toHaveBeenCalledTimes(1)
     const opts = generateImage.mock.calls[0][2]
     expect(opts.model).toBe('gemini-3-pro-image')
+    expect(Object.hasOwn(opts, 'cancelScope')).toBe(false)
   })
 
   // M1 F2: 단일 씬 재생성도 전역 image provider 를 전달해야 openai 로 라우팅된다(안 그러면 google 오라우팅).

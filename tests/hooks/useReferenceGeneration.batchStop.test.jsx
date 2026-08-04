@@ -62,6 +62,7 @@ function setupHook({ checkGenerationImpl }) {
   const genAPI = {
     getAccessToken: vi.fn().mockResolvedValue('token'),
     clearTokenCache: vi.fn(),
+    cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
     submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'g-1' }),
     checkGeneration: vi.fn(async () => {
       await checkGenerationImpl?.(hookHandle)
@@ -98,6 +99,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
     const genAPI = {
       getAccessToken: vi.fn().mockResolvedValue('token'),
       clearTokenCache: vi.fn(),
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       generateImage: vi.fn(() => individualResult.promise),
     }
     const { result } = renderHook(() => useReferenceGeneration({
@@ -141,6 +143,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
     const genAPI = {
       getAccessToken: vi.fn().mockResolvedValue('token'),
       clearTokenCache: vi.fn(),
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       submitGeneration: vi.fn(() => submitResult.promise),
       clearGenerations: vi.fn().mockResolvedValue(undefined),
     }
@@ -190,6 +193,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
     const genAPI = {
       getAccessToken: vi.fn().mockResolvedValue('token'),
       clearTokenCache: vi.fn(),
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       submitGeneration: vi.fn().mockResolvedValue({
         success: false,
         error: 'submit reached',
@@ -242,6 +246,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
       mode: 'api',
       getAccessToken: vi.fn().mockResolvedValue('token'),
       clearTokenCache: vi.fn(),
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       generateImage: vi.fn(() => individualResult.promise),
       submitGeneration: vi.fn().mockResolvedValue({
         success: false,
@@ -325,6 +330,7 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
       mode: 'api',
       getAccessToken: vi.fn().mockResolvedValue('token'),
       clearTokenCache: vi.fn(),
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       submitGeneration: vi.fn().mockResolvedValue({
         success: false,
         error: 'queued batch should not submit',
@@ -744,6 +750,7 @@ describe('useReferenceGeneration — stop during batch', () => {
     const genAPI = {
       getAccessToken: vi.fn().mockResolvedValue('token'),
       clearTokenCache: vi.fn(),
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       submitGeneration: vi.fn().mockResolvedValue({ success: false, authFailed: true, error: 'Auth expired' }),
       checkGeneration: vi.fn().mockResolvedValue({ success: true, completed: false }),
       clearGenerations: vi.fn().mockResolvedValue(undefined),

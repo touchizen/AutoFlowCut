@@ -699,6 +699,45 @@ describe('fal image provider — Stage A server cancellation', () => {
     expectOneServerCancel(client, controller.signal, 'img-cancel-throws')
   })
 
+  it('queue.cancel 성공 직후 5초 timer와 listener를 정리하고 fresh signal을 abort하지 않는다', async () => {
+    vi.useFakeTimers()
+    try {
+      const controller = new AbortController()
+      const submitted = {}
+      Object.defineProperty(submitted, 'request_id', {
+        get() {
+          controller.abort()
+          return 'img-fast-cancel'
+        },
+      })
+      let freshSignal
+      const client = makeClient({
+        submit: vi.fn().mockResolvedValue(submitted),
+        cancel: vi.fn((_endpoint, { abortSignal }) => {
+          freshSignal = abortSignal
+          return Promise.resolve()
+        }),
+      })
+
+      await expect(generateImage({
+        apiKey: 'fal-key',
+        signal: controller.signal,
+      }, { client })).resolves.toEqual(ABORT_RESULT)
+
+      expect(client.queue.cancel).toHaveBeenCalledTimes(1)
+      expect(freshSignal).not.toBe(controller.signal)
+      expect(freshSignal.aborted).toBe(false)
+      expect(vi.getTimerCount()).toBe(0)
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(freshSignal.aborted).toBe(false)
+      expect(client.queue.cancel).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('queue.cancel SDK await와 transport를 5초에 함께 bound하고 late reject를 흡수한다', async () => {
     vi.useFakeTimers()
     const unhandled = vi.fn()

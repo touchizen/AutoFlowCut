@@ -4,8 +4,7 @@ function isValidScope(scope) {
   return typeof scope === 'string' && scope.length > 0
 }
 
-export function createCancelRegistry({ maxCancelledScopes = 64 } = {}) {
-  const activeByScope = new Map()
+export function createCancelRegistry({ maxCancelledScopes = 64, activeByScope = new Map() } = {}) {
   const cancelledScopes = new Set()
   const cancelledFifo = []
   const parsedLimit = Number(maxCancelledScopes)
