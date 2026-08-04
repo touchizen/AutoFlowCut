@@ -39,6 +39,7 @@ describe('useStyleThumbnails — Flow auth failure guidance', () => {
   it('preset authFailed shows Flow auth guidance, not API-key guidance', async () => {
     const genAPI = {
       mode: 'flow',
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       generateImage: vi.fn().mockResolvedValue({ success: false, authFailed: true, error: 'Auth expired' }),
     }
     const { result } = renderHook(() => useStyleThumbnails(genAPI, { flowProjectReady: true }))
@@ -49,11 +50,13 @@ describe('useStyleThumbnails — Flow auth failure guidance', () => {
 
     expect(toastError).toHaveBeenCalledWith('Flow에 로그인 후 다시 시도해주세요.')
     expect(toastError).not.toHaveBeenCalledWith('API 키를 확인해주세요.')
+    expect(genAPI.cancelGeneration).toHaveBeenCalledTimes(1)
   })
 
   it('custom authFailed shows Flow auth guidance, not API-key guidance', async () => {
     const genAPI = {
       mode: 'flow',
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       generateImage: vi.fn().mockResolvedValue({ success: false, authFailed: true, error: 'Auth expired' }),
     }
     const { result } = renderHook(() => useStyleThumbnails(genAPI, { flowProjectReady: true }))
@@ -68,5 +71,6 @@ describe('useStyleThumbnails — Flow auth failure guidance', () => {
 
     expect(toastError).toHaveBeenCalledWith('Flow에 로그인 후 다시 시도해주세요.')
     expect(toastError).not.toHaveBeenCalledWith('API 키를 확인해주세요.')
+    expect(genAPI.cancelGeneration).toHaveBeenCalledTimes(1)
   })
 })

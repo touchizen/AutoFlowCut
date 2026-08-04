@@ -781,7 +781,9 @@ export function useFlowEngine(opts = {}) {
     stopRequestedRef.current = !!value
   }, [])
 
-  // --- 반환 (21키 계약) -------------------------------------------------------
+  const cancelGeneration = useCallback(async () => ({ success: true, aborted: 0 }), [])
+
+  // --- 반환 (22키 계약) -------------------------------------------------------
 
   return {
     // 값 필드
@@ -813,6 +815,7 @@ export function useFlowEngine(opts = {}) {
     listFlowProjects,
     // 정지 제어
     setStopRequested,
+    cancelGeneration,
   }
 }
 

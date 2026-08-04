@@ -69,6 +69,7 @@ function makeFlowAPI(overrides = {}) {
     clearGenerations: vi.fn().mockResolvedValue(undefined),
     uploadReference: vi.fn().mockResolvedValue({ success: true, mediaId: 'ref-media-1' }),
     getAccessToken: vi.fn().mockResolvedValue('fake-token'),
+    cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
     ...overrides,
   }
 }
@@ -116,6 +117,7 @@ describe('useAutomation — auth failure during uploadReference', () => {
 
     // The batch must not proceed to scene generation
     expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    expect(genAPI.cancelGeneration).toHaveBeenCalledTimes(1)
   }, 15000)
 
   it('sets status to "error" when uploadReference authFailed fires', async () => {
@@ -209,6 +211,7 @@ describe('useAutomation — auth failure during submitGeneration (#R10-6)', () =
 
     // submitGeneration called once (s1) — batch broke before s2
     expect(submitGeneration).toHaveBeenCalledTimes(1)
+    expect(genAPI.cancelGeneration).toHaveBeenCalledTimes(1)
     expect(result.current.status).toBe('error')
     const authCalls = updateScene.mock.calls.filter(([id, patch]) => id === 's1' && patch?.errorKind === 'auth')
     expect(authCalls.length).toBeGreaterThanOrEqual(1)

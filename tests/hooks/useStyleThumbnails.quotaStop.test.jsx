@@ -38,6 +38,7 @@ describe('useStyleThumbnails — custom-loop quota stop', () => {
   it('K3: custom result errorKind quota stops on non-matching error text', async () => {
     // generateImage 이 항상 quota 에러 반환.
     const genAPI = {
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
       generateImage: vi.fn().mockResolvedValue({
         success: false,
         error: 'Too Many Requests',
@@ -64,6 +65,7 @@ describe('useStyleThumbnails — custom-loop quota stop', () => {
 
     // generated=0 이라 success toast 는 안 떠야 함.
     expect(toastSuccess).not.toHaveBeenCalled()
+    expect(genAPI.cancelGeneration).toHaveBeenCalledTimes(1)
   })
 
   it('K3: preset result errorKind quota stops on non-matching error text', async () => {
@@ -72,7 +74,8 @@ describe('useStyleThumbnails — custom-loop quota stop', () => {
       error: 'Too Many Requests',
       errorKind: 'quota',
     })
-    const { result } = renderHook(() => useStyleThumbnails({ generateImage }))
+    const cancelGeneration = vi.fn().mockResolvedValue({ success: true, aborted: 0 })
+    const { result } = renderHook(() => useStyleThumbnails({ generateImage, cancelGeneration }))
 
     await act(async () => {
       await result.current.generateThumbnails(['p1'], [], (k) => k)
@@ -80,6 +83,7 @@ describe('useStyleThumbnails — custom-loop quota stop', () => {
 
     expect(generateImage).toHaveBeenCalledTimes(1)
     expect(toastInfo).toHaveBeenCalledWith('reference.thumbnailStopped')
+    expect(cancelGeneration).toHaveBeenCalledTimes(1)
   })
 
   it('K3: result errorKind other overrides quota-looking text', async () => {

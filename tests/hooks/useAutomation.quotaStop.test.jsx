@@ -52,12 +52,13 @@ function setupHook(overrides = {}) {
   const clearGenerations = vi.fn().mockResolvedValue(undefined)
   const uploadReference = vi.fn()
   const getAccessToken = vi.fn().mockResolvedValue('fake-token')
+  const cancelGeneration = vi.fn().mockResolvedValue({ success: true, aborted: 0 })
   const updateScene = vi.fn()
   const getMatchingReferences = vi.fn(() => [])
 
   const genAPI = {
     submitGeneration, checkGeneration, collectGeneration,
-    clearGenerations, uploadReference, getAccessToken,
+    clearGenerations, uploadReference, getAccessToken, cancelGeneration,
     ...(overrides.genAPI || {}),
   }
 
@@ -94,7 +95,7 @@ afterEach(() => {
 
 describe('useAutomation quota-exhausted stop', () => {
   it('K3: submit result errorKind quota stops on non-matching error text', async () => {
-    const { hook, submitGeneration, updateScene } = setupHook()
+    const { hook, genAPI, submitGeneration, updateScene } = setupHook()
 
     // fal classifies this opaque text as quota; the string alone is not a quota signal.
     submitGeneration.mockResolvedValueOnce({
@@ -114,6 +115,7 @@ describe('useAutomation quota-exhausted stop', () => {
     expect(submitGeneration).toHaveBeenCalledTimes(1)
     // Modal triggered exactly once.
     expect(showMock).toHaveBeenCalledTimes(1)
+    expect(genAPI.cancelGeneration).toHaveBeenCalledTimes(1)
     // s1 marked as error with the quota error string.
     const s1Error = updateScene.mock.calls.find(
       ([id, upd]) => id === 's1' && upd?.status === 'error' && upd?.error === 'Too Many Requests'

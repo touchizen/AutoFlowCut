@@ -4,19 +4,31 @@
  * genai IPC mock 을 관통: 인증(BYOK), 이미지 동기 생성 + async 에뮬레이션,
  * 레퍼런스 base64 해석, 비디오 매핑, Flow 전용 기능의 graceful degrade.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useGenAPI } from '../../src/hooks/useGenAPI'
 import { DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
+import { isScopeCancelled, nextCancelScope } from '../../src/utils/cancelScope'
 
 const IMG_RESULT = {
   success: true,
   images: [{ base64: 'ABC', mimeType: 'image/png', dataUrl: 'data:image/png;base64,ABC' }],
 }
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 beforeEach(() => {
   window.electronAPI.genaiGetKeyStatus.mockResolvedValue({ hasKey: true, encryptionAvailable: true })
   window.electronAPI.genaiGenerateImage.mockResolvedValue(IMG_RESULT)
+  window.electronAPI.genaiCancel.mockResolvedValue({ success: true, aborted: 0 })
   window.electronAPI.genaiGenerateVideo.mockResolvedValue({ success: true, generationId: 'op1' })
   window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({ success: true, statuses: [] })
   window.electronAPI.genaiDownloadVideo.mockResolvedValue({ success: true, base64: 'VID' })
@@ -51,6 +63,66 @@ describe('useGenAPI — 인증(BYOK)', () => {
 })
 
 describe('useGenAPI — 이미지', () => {
+  it('cancelScope가 없으면 IPC payload에 새 own-property를 만들지 않는다', async () => {
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => { await result.current.generateImage('plain', []) })
+
+    const payload = window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0]
+    expect(Object.hasOwn(payload, 'cancelScope')).toBe(false)
+  })
+
+  it('cancelScope를 IPC payload까지 관통하고 handoff 직후 renderer sender를 release한다', async () => {
+    const scope = nextCancelScope('scenes')
+    const ipc = deferred()
+    window.electronAPI.genaiGenerateImage.mockReturnValueOnce(ipc.promise)
+    const { result } = renderHook(() => useGenAPI())
+
+    let generation
+    act(() => {
+      generation = result.current.generateImage('scoped', [], { cancelScope: scope })
+    })
+    await waitFor(() => expect(window.electronAPI.genaiGenerateImage).toHaveBeenCalled())
+
+    expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].cancelScope).toBe(scope)
+    expect(isScopeCancelled(scope)).toBe(false)
+    ipc.resolve(IMG_RESULT)
+    await act(async () => { await generation })
+  })
+
+  it('reference preflight 중 cancel하면 tombstone을 먼저 세우고 IPC 직전 gate에서 D4로 끝낸다', async () => {
+    localStorage.setItem('workFolderPath', '/work')
+    const read = deferred()
+    window.electronAPI.readResource.mockReturnValueOnce(read.promise)
+    const cancelObserved = []
+    window.electronAPI.genaiCancel.mockImplementationOnce(async ({ scope }) => {
+      cancelObserved.push(isScopeCancelled(scope))
+      return { success: true, aborted: 0 }
+    })
+    const scope = nextCancelScope('refs')
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+
+    let generation
+    act(() => {
+      generation = result.current.generateImage('late sender', [{ name: 'hero' }], { cancelScope: scope })
+    })
+    await waitFor(() => expect(window.electronAPI.readResource).toHaveBeenCalled())
+    await act(async () => { await result.current.cancelGeneration(scope) })
+    read.resolve({ success: true, data: 'REF' })
+
+    let generated
+    await act(async () => { generated = await generation })
+    expect(cancelObserved).toEqual([true])
+    expect(generated).toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'aborted',
+      aborted: true,
+    })
+    expect(window.electronAPI.genaiGenerateImage).not.toHaveBeenCalled()
+    expect(isScopeCancelled(scope)).toBe(false)
+  })
+
   it('generateImage: 레퍼런스 base64 해석 후 전달 + 결과 매핑', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let r
@@ -134,6 +206,19 @@ describe('useGenAPI — 이미지', () => {
     })
   })
 
+  it('submitGeneration: cancelScope를 재조립 options에서 잃지 않는다', async () => {
+    const scope = nextCancelScope('scenes')
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => {
+      await result.current.submitGeneration('p', [], { cancelScope: scope })
+    })
+
+    await waitFor(() => {
+      expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].cancelScope).toBe(scope)
+    })
+  })
+
   it('submit → check → collect 비동기 에뮬레이션', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let sub
@@ -163,6 +248,24 @@ describe('useGenAPI — 이미지', () => {
     await act(async () => { await result.current.clearGenerations() })
     const r = await result.current.collectGeneration(sub.generationId)
     expect(r.success).toBe(false)
+  })
+
+  it('clearGenerations 뒤 늦게 끝난 entry를 Map에 되살리지 않는다', async () => {
+    const ipc = deferred()
+    window.electronAPI.genaiGenerateImage.mockReturnValueOnce(ipc.promise)
+    const { result } = renderHook(() => useGenAPI())
+    let sub
+
+    await act(async () => { sub = await result.current.submitGeneration('p', []) })
+    await waitFor(() => expect(window.electronAPI.genaiGenerateImage).toHaveBeenCalled())
+    await act(async () => { await result.current.clearGenerations() })
+    ipc.resolve(IMG_RESULT)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(await result.current.collectGeneration(sub.generationId)).toEqual({
+      success: false,
+      error: 'Generation not found',
+    })
   })
 })
 

@@ -50,6 +50,7 @@ function setupHook({ refs, genOverrides = {} }) {
     mode: 'api',
     getAccessToken: vi.fn().mockResolvedValue('token'),
     clearTokenCache: vi.fn(),
+    cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 0 }),
     generateImage: vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'image' }] }),
     submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' }),
     checkGeneration: vi.fn().mockResolvedValue({ success: true, completed: true }),
@@ -90,7 +91,7 @@ afterEach(() => {
 
 describe('useReferenceGeneration — provider quota classification', () => {
   it('L1: direct generation forwards an opaque quota result object', async () => {
-    const { hook } = setupHook({
+    const { hook, genAPI } = setupHook({
       refs: [{ id: 1, prompt: 'a', type: 'character', status: 'pending' }],
       genOverrides: {
         generateImage: vi.fn().mockResolvedValue({
@@ -106,6 +107,7 @@ describe('useReferenceGeneration — provider quota classification', () => {
     })
 
     expect(quotaShowMock).toHaveBeenCalledTimes(1)
+    expect(genAPI.cancelGeneration).toHaveBeenCalledTimes(1)
   })
 
   it('L1: direct generation honors authoritative errorKind other', async () => {

@@ -111,7 +111,7 @@ describe('resolveEffectiveProjectId (#R3-1)', () => {
 })
 
 describe('useFlowEngine — engine contract', () => {
-  it('satisfies the 21-key engine contract', () => {
+  it('satisfies the 22-key engine contract', () => {
     const { result } = renderHook(() => useFlowEngine())
     assertEngineContract(result.current)
   })
@@ -446,6 +446,17 @@ describe('useFlowEngine — setStopRequested (renderer-local)', () => {
   it('setStopRequested is a function (contract satisfied)', () => {
     const { result } = renderHook(() => useFlowEngine())
     expect(typeof result.current.setStopRequested).toBe('function')
+  })
+})
+
+describe('useFlowEngine — cancelGeneration', () => {
+  it('Flow mode에서는 IPC 없이 정규화된 no-op 결과를 반환한다', async () => {
+    const { result } = renderHook(() => useFlowEngine())
+
+    await expect(result.current.cancelGeneration('scenes:any')).resolves.toEqual({
+      success: true,
+      aborted: 0,
+    })
   })
 })
 

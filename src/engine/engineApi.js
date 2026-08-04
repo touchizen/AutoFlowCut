@@ -51,6 +51,7 @@ export function createEngineApi(genAPI) {
     listFlowProjects: genAPI.listFlowProjects,
     // 정지 제어
     setStopRequested: genAPI.setStopRequested,
+    cancelGeneration: genAPI.cancelGeneration,
   }
 }
 

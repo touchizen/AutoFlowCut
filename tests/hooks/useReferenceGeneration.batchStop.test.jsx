@@ -681,6 +681,58 @@ describe('useReferenceGeneration — stop during batch', () => {
     expect(silentPending).toBeUndefined()
   })
 
+  it('check auth origin만 auth error로 남고 취소된 미수집 sibling은 pending으로 복원한다', async () => {
+    vi.useFakeTimers()
+    let liveRefs = [
+      { id: 'sibling', prompt: 'sibling', type: 'scene', status: 'pending' },
+      { id: 'origin', prompt: 'origin', type: 'scene', status: 'pending' },
+    ]
+    const setReferences = vi.fn(updater => {
+      liveRefs = typeof updater === 'function' ? updater(liveRefs) : updater
+    })
+    let generationNo = 0
+    let checkNo = 0
+    const genAPI = {
+      mode: 'api',
+      cancelGeneration: vi.fn().mockResolvedValue({ success: true, aborted: 2 }),
+      submitGeneration: vi.fn(async () => ({ success: true, generationId: `g-${++generationNo}` })),
+      checkGeneration: vi.fn(async () => {
+        checkNo += 1
+        if (checkNo === 1) return { success: true, completed: false }
+        return { success: false, authFailed: true, error: 'Auth expired' }
+      }),
+      collectGeneration: vi.fn(),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1, concurrency: 5 },
+      references: liveRefs,
+      setReferences,
+      genAPI,
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: key => key,
+      generationQueue: null,
+    }))
+
+    let batchPromise
+    act(() => { batchPromise = result.current.handleGenerateAllRefs() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+    let batchResult
+    await act(async () => { batchResult = await batchPromise })
+
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(2)
+    expect(genAPI.cancelGeneration).toHaveBeenCalledTimes(1)
+    expect(batchResult.outcome).toBe('stopped')
+    expect(liveRefs.find(ref => ref.id === 'origin')).toMatchObject({
+      status: 'error', errorKind: 'auth',
+    })
+    expect(liveRefs.find(ref => ref.id === 'sibling')).toMatchObject({
+      status: 'pending', errorMessage: null, errorKind: null,
+    })
+    vi.useRealTimers()
+  })
+
   it('#R25-5: submit authFailed marks the failed ref errorKind:auth (not just pendingQueue refs)', async () => {
     const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
     const setRefCalls = []

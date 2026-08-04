@@ -10,6 +10,8 @@ import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { checkFlowProjectReady } from '../utils/guards'
 import { getAuthErrorMessage } from '../utils/authMessages'
+import { nextCancelScope } from '../utils/cancelScope'
+import { isAbortedResult } from '../utils/isAbortedResult'
 
 const THUMBNAIL_PROMPT_PREFIX = 'A serene landscape with mountains and a river'
 
@@ -89,6 +91,23 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
   const [stopping, setStopping] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const stopRequestedRef = useRef(false)
+  const activeRunsRef = useRef(new Set())
+  const cancelGenerationRef = useRef(genAPI?.cancelGeneration)
+  cancelGenerationRef.current = genAPI?.cancelGeneration
+  const beginRun = () => {
+    const run = { scope: nextCancelScope('styleThumbs'), cancelSent: false }
+    activeRunsRef.current.add(run)
+    return run
+  }
+  const finishRun = (run) => activeRunsRef.current.delete(run)
+  const cancelActiveScopeOnce = (run) => {
+    if (!run || run.cancelSent) return
+    run.cancelSent = true
+    void Promise.resolve(cancelGenerationRef.current?.(run.scope)).catch(() => {})
+  }
+  const cancelActiveRuns = () => {
+    for (const run of [...activeRunsRef.current]) cancelActiveScopeOnce(run)
+  }
 
   // 앱 시작 시 저장된 썸네일 로드
   useEffect(() => {
@@ -141,6 +160,8 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
       return
     }
 
+    const run = beginRun()
+
     stopRequestedRef.current = false
     setStopping(false)
     setGenerating(true)
@@ -149,6 +170,9 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
     let generated = 0
     let stopped = false
     const authErrorMessage = () => getAuthErrorMessage(genAPI?.mode, t)
+    const customResults = []
+
+    try {
 
     // Phase 1: 프리셋 썸네일 생성
     for (const presetId of targetIds) {
@@ -164,9 +188,21 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
       console.log(`[StyleThumbnails] Generating preset ${presetId}: ${prompt}`)
 
       try {
-        const result = await genAPI.generateImage(prompt, [], { batchCount: 1, provider: imageProvider, model: imageModel })
+        if (run.cancelSent) {
+          stopped = true
+          break
+        }
+        const result = await genAPI.generateImage(prompt, [], {
+          batchCount: 1,
+          provider: imageProvider,
+          model: imageModel,
+          cancelScope: run.scope,
+        })
 
-        if (result.success && result.images?.length > 0) {
+        if (isAbortedResult(result)) {
+          stopped = true
+          break
+        } else if (result.success && result.images?.length > 0) {
           const firstImage = result.images[0]
           const imageData = firstImage.base64 || firstImage
           const dataUrl = imageData.startsWith('data:') ? imageData : `data:image/png;base64,${imageData}`
@@ -186,12 +222,14 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
           console.warn(`[StyleThumbnails] Failed to generate ${presetId}:`, result.error)
           // #R21-4: 인증 실패면 죽은 토큰이니 남은 스타일을 계속 돌리지 않고 즉시 중단.
           if (result.authFailed) {
+            cancelActiveScopeOnce(run)
             toast.error(authErrorMessage())
             window.dispatchEvent(new CustomEvent('flow-login-expired'))
             stopped = true
             break
           }
           if (isQuotaExhaustedError(result)) {
+            cancelActiveScopeOnce(run)
             emitQuotaStop({ scope: 'StyleThumbnails(preset)' })
             stopped = true
             break
@@ -200,11 +238,13 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
       } catch (e) {
         console.error(`[StyleThumbnails] Error generating ${presetId}:`, e)
         if (isQuotaExhaustedError(e)) {
+          cancelActiveScopeOnce(run)
           emitQuotaStop({ scope: 'StyleThumbnails(preset)' })
           stopped = true
           break
         }
         if (e.message?.includes('401') || e.message?.includes('auth')) {
+          cancelActiveScopeOnce(run)
           toast.error(authErrorMessage())
           stopped = true
           break
@@ -216,7 +256,6 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
     }
 
     // Phase 2: 커스텀 스타일 레퍼런스 생성
-    const customResults = []
     if (!stopped) {
       for (const ref of customTargets) {
         if (stopRequestedRef.current) {
@@ -230,9 +269,21 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
         console.log(`[StyleThumbnails] Generating custom style "${ref.name}": ${prompt}`)
 
         try {
-          const result = await genAPI.generateImage(prompt, [], { batchCount: 1, provider: imageProvider, model: imageModel })
+          if (run.cancelSent) {
+            stopped = true
+            break
+          }
+          const result = await genAPI.generateImage(prompt, [], {
+            batchCount: 1,
+            provider: imageProvider,
+            model: imageModel,
+            cancelScope: run.scope,
+          })
 
-          if (result.success && result.images?.length > 0) {
+          if (isAbortedResult(result)) {
+            stopped = true
+            break
+          } else if (result.success && result.images?.length > 0) {
             const firstImage = result.images[0]
             const imageData = firstImage.base64 || firstImage
             const dataUrl = imageData.startsWith('data:') ? imageData : `data:image/png;base64,${imageData}`
@@ -240,11 +291,13 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
             generated++
           } else if (!result.success && result.authFailed) {
             // #R21-4: 인증 실패 → 즉시 중단.
+            cancelActiveScopeOnce(run)
             toast.error(authErrorMessage())
             window.dispatchEvent(new CustomEvent('flow-login-expired'))
             stopped = true
             break
           } else if (!result.success && isQuotaExhaustedError(result)) {
+            cancelActiveScopeOnce(run)
             emitQuotaStop({ scope: 'StyleThumbnails(custom)' })
             stopped = true
             break
@@ -252,11 +305,13 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
         } catch (e) {
           console.error(`[StyleThumbnails] Error generating custom "${ref.name}":`, e)
           if (isQuotaExhaustedError(e)) {
+            cancelActiveScopeOnce(run)
             emitQuotaStop({ scope: 'StyleThumbnails(custom)' })
             stopped = true
             break
           }
           if (e.message?.includes('401') || e.message?.includes('auth')) {
+            cancelActiveScopeOnce(run)
             toast.error(authErrorMessage())
             stopped = true
             break
@@ -274,18 +329,21 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
       toast.info(t?.('reference.thumbnailStopped') || 'Thumbnail generation stopped')
     }
 
-    setGenerating(false)
-    setStopping(false)
-
     if (generated > 0) {
       toast.success(t?.('reference.thumbnailComplete', { count: generated }) || `${generated} thumbnails generated`)
     }
 
     return customResults  // 커스텀 스타일 결과 반환 → App에서 References 업데이트
-  }, [genAPI, thumbnails, flowProjectReady])
+    } finally {
+      setGenerating(false)
+      setStopping(false)
+      finishRun(run)
+    }
+  }, [genAPI, thumbnails, flowProjectReady, imageProvider, imageModel])
 
   const stopGenerating = useCallback(() => {
     stopRequestedRef.current = true
+    cancelActiveRuns()
     setStopping(true)
   }, [])
 

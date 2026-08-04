@@ -667,7 +667,7 @@ describe('useReferenceGeneration — Ref batch 전체 수명', () => {
     expect(stateLog.some(state => state.refBatchActive || state.preparingRefs)).toBe(false)
   })
 
-  it('queued Stop은 beforeBatchActivation 대기 중과 stopped 반환까지 두 lifecycle flag를 켜지 않는다', async () => {
+  it('queued Stop은 beforeBatchActivation에 진입하지 않고 두 lifecycle flag 없이 즉시 stopped 된다', async () => {
     const queueGate = deferred()
     const activationGate = deferred()
     const beforeBatchActivation = vi.fn(() => activationGate.promise)
@@ -692,13 +692,12 @@ describe('useReferenceGeneration — Ref batch 전체 수명', () => {
       for (let i = 0; i < 8; i++) await Promise.resolve()
     })
 
-    expect(beforeBatchActivation).toHaveBeenCalledTimes(1)
+    expect(beforeBatchActivation).not.toHaveBeenCalled()
     expect(result.current.refBatchActive).toBe(false)
     expect(result.current.preparingRefs).toBe(false)
 
     let batchResult
     await act(async () => {
-      activationGate.resolve()
       batchResult = await batchPromise
     })
 

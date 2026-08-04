@@ -29,6 +29,7 @@ import {
 import { isStyleReference } from '../services/styleService'
 import { isAuthError } from '../utils/authError'
 import { cleanBase64, detectImageType } from '../utils/urls'
+import { beginScopeSend, isScopeCancelled, markScopeCancelled } from '../utils/cancelScope'
 
 // base64 또는 data URL 문자열 → Veo inline 이미지 { mimeType, data } (없으면 null).
 // 일부 인코더는 base64 를 76자마다 줄바꿈하므로 공백/개행을 제거한 뒤 처리한다.
@@ -143,7 +144,8 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
    * @returns {{success, images:[{base64, mimeType, mediaId}], error}}
    *   base64 필드는 data URL — downstream 은 cleanBase64 로 저장, 그대로 표시.
    */
-  const generateImage = useCallback(async (prompt, referenceImages = [], { aspectRatio, model, provider } = {}) => {
+  const generateImage = useCallback(async (prompt, referenceImages = [], { aspectRatio, model, provider, cancelScope } = {}) => {
+    const finishScopeSend = beginScopeSend(cancelScope)
     // 선택 모델(없으면 기본). API 호출에 쓰고, 결과에도 실어 finalize 가 item.model 로
     // 기록하게 한다 — 그래야 ResultsTable/상세 모달의 모델 표시가 'flow' 가 아닌 실제 모델이 됨.
     // 비-google provider(openai 등)는 gemini 기본을 강제하지 않는다 — model 미지정이면
@@ -151,7 +153,19 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     const effectiveModel = model || (provider && provider !== 'google' ? undefined : DEFAULT_IMAGE_MODEL_ID)
     try {
       const refs = await resolveReferenceImages(referenceImages, { projectName: projectName() })
-      const result = await window.electronAPI.genaiGenerateImage({ prompt, referenceImages: refs, aspectRatio, model: effectiveModel, provider })
+      if (isScopeCancelled(cancelScope)) {
+        return { success: false, error: 'Operation aborted', errorKind: 'aborted', aborted: true }
+      }
+      const ipcPromise = window.electronAPI.genaiGenerateImage({
+        prompt,
+        referenceImages: refs,
+        aspectRatio,
+        model: effectiveModel,
+        provider,
+        ...(cancelScope ? { cancelScope } : {}),
+      })
+      finishScopeSend()
+      const result = await ipcPromise
       if (!result?.success) return markAuthFailure(result || { success: false, error: 'Unknown error' })
       const images = (result.images || []).map((im) => ({
         base64: im.dataUrl || im.base64,
@@ -162,21 +176,42 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
       return { success: true, images, model: effectiveModel, provider, actualAspectRatio: result.actualAspectRatio ?? null }
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
+    } finally {
+      finishScopeSend()
     }
   }, [])
 
   // 비동기 제출 — 동기 생성을 fire-and-forget 으로 감싸 in-flight 에 저장
   const submitGeneration = useCallback(async (prompt, referenceImages = [], options = {}) => {
     const id = `gen_${++counterRef.current}`
-    inflightRef.current.set(id, { status: 'pending', result: null })
+    const entry = { status: 'pending', result: null }
+    inflightRef.current.set(id, entry)
     // 의도적으로 await 안 함 (fire-and-forget)
     // 배치 경로는 options.imageModel 로 모델을 넘긴다 → generateImage 의 model 로 매핑.
     // options.provider(전역 image provider) 도 관통 — 미지정이면 undefined→google.
-    generateImage(prompt, referenceImages, { aspectRatio: options.aspectRatio, model: options.imageModel ?? options.model, provider: options.provider })
-      .then((result) => inflightRef.current.set(id, { status: 'done', result }))
-      .catch((e) => inflightRef.current.set(id, { status: 'done', result: { success: false, error: e?.message || String(e) } }))
+    generateImage(prompt, referenceImages, {
+      aspectRatio: options.aspectRatio,
+      model: options.imageModel ?? options.model,
+      provider: options.provider,
+      ...(options.cancelScope ? { cancelScope: options.cancelScope } : {}),
+    })
+      .then((result) => {
+        if (inflightRef.current.get(id) !== entry) return
+        entry.status = 'done'
+        entry.result = result
+      })
+      .catch((e) => {
+        if (inflightRef.current.get(id) !== entry) return
+        entry.status = 'done'
+        entry.result = { success: false, error: e?.message || String(e) }
+      })
     return { success: true, generationId: id }
   }, [generateImage])
+
+  const cancelGeneration = useCallback(async (scope) => {
+    markScopeCancelled(scope)
+    return window.electronAPI.genaiCancel({ scope })
+  }, [])
 
   const checkGeneration = useCallback(async (generationId) => {
     const entry = inflightRef.current.get(generationId)
@@ -363,6 +398,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     fetchGallery,
     listFlowProjects,
     setStopRequested,
+    cancelGeneration,
   }
 }
 
