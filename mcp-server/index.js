@@ -591,6 +591,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          includePending: {
+            type: 'boolean',
+            description: '이미지 파일은 있지만 status 가 pending 인 씬도 포함할지 (기본: false). 프롬프트를 고친 뒤 재생성하지 않은 옛 이미지일 수 있습니다.',
+          },
         },
       },
     },
@@ -601,6 +605,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          includePending: {
+            type: 'boolean',
+            description: '이미지 파일은 있지만 status 가 pending 인 씬도 포함할지 (기본: false). 프롬프트를 고친 뒤 재생성하지 않은 옛 이미지일 수 있습니다.',
+          },
         },
       },
     },

@@ -44,6 +44,7 @@ import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
+import { hasExportAccess, buildExportModalCounts } from './services/exportSelection'
 import {
   computeGuardAvailable,
   isStartBlocked,
@@ -2106,7 +2107,7 @@ function App() {
         onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}
         onExport={handleExportClick}
         exportFormat={exportFormat}
-        hasImages={scenes.some(isSceneGenerationDone)}
+        hasImages={hasExportAccess(scenes)}
         getAccessToken={genAPI.getAccessToken}
         authReady={authReady}
         onAuthRecovered={handleAuthRecovered}
@@ -2972,6 +2973,7 @@ function App() {
       <ExportModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
+        {...buildExportModalCounts(scenes)}
         onExport={handleExportConfirm}
         onExportPremiere={handleExportPremiere}
         onExportVrew={handleExportVrew}

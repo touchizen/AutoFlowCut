@@ -241,7 +241,9 @@ export function useMcpServer({
           kenBurnsScaleMin: (options.kenBurnsScaleMin || saved.kenBurnsScaleMin || 100) / 100,
           kenBurnsScaleMax: (options.kenBurnsScaleMax || saved.kenBurnsScaleMax || 130) / 100,
           subtitleOption: options.subtitleOption || (saved.includeSubtitle !== false ? 'ko' : 'none'),
-          subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8
+          subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8,
+          // 자동화는 기본 false — 옵션을 명시해야만 pending 씬이 섞인다.
+          includePending: options.includePending === true
         }
         // 3. handleExportConfirm 호출
         const exportResult = await handleExportConfirm(exportOptions)
@@ -282,7 +284,9 @@ export function useMcpServer({
           kenBurnsScaleMin: (options.kenBurnsScaleMin || saved.kenBurnsScaleMin || 100) / 100,
           kenBurnsScaleMax: (options.kenBurnsScaleMax || saved.kenBurnsScaleMax || 130) / 100,
           subtitleOption: options.subtitleOption || (saved.includeSubtitle !== false ? 'ko' : 'none'),
-          subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8
+          subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8,
+          // 자동화는 기본 false — 옵션을 명시해야만 pending 씬이 섞인다.
+          includePending: options.includePending === true
         }
         // 3. handleExportPremiere 호출
         const exportResult = await handleExportPremiere(exportOptions)

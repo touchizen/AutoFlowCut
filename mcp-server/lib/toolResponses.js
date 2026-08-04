@@ -33,7 +33,7 @@ export function exportCapcutToolResponse(res) {
 
 export async function handleExportCapcutTool(args = {}, fetcher) {
   const port = args.port || 3210
-  const res = await fetcher(port, 'POST', '/api/export-capcut')
+  const res = await fetcher(port, 'POST', '/api/export-capcut', { includePending: args.includePending === true })
   return exportCapcutToolResponse(res)
 }
 
@@ -52,6 +52,6 @@ export function exportPremiereToolResponse(res) {
 
 export async function handleExportPremiereTool(args = {}, fetcher) {
   const port = args.port || 3210
-  const res = await fetcher(port, 'POST', '/api/export-premiere')
+  const res = await fetcher(port, 'POST', '/api/export-premiere', { includePending: args.includePending === true })
   return exportPremiereToolResponse(res)
 }
