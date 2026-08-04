@@ -64,7 +64,10 @@ export async function finalizeGeneratedImage({
   const effectiveModel = firstImage.model ?? result.model ?? model
   // result 에서 직접 받은 seed 가 있으면 우선 (Flow 가 랜덤 seed 를 반환하는 경우 등 대비),
   // 없으면 호출자가 넘긴 effectiveSeed 사용.
-  const effectiveSeed = firstImage.seed ?? result.seed ?? seed ?? null
+  const declared = result?.appliedInputs
+  const effectiveSeed = firstImage.seed
+    ?? result.seed
+    ?? (declared ? (declared.seed ?? null) : (seed ?? null))
 
   // 업스케일
   const upscaled = await tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix)

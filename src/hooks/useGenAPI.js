@@ -172,8 +172,16 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         mimeType: im.mimeType,
         mediaId: null, // 공식 API 는 Flow mediaId 가 없음 → 업스케일/I2V 자동 skip
         actualAspectRatio: im.actualAspectRatio ?? result.actualAspectRatio ?? null,
+        ...(im.seed !== undefined ? { seed: im.seed } : {}),
       }))
-      return { success: true, images, model: effectiveModel, provider, actualAspectRatio: result.actualAspectRatio ?? null }
+      return {
+        success: true,
+        images,
+        model: effectiveModel,
+        provider,
+        actualAspectRatio: result.actualAspectRatio ?? null,
+        appliedInputs: {},
+      }
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
     } finally {

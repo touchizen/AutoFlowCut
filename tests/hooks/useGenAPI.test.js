@@ -141,6 +141,8 @@ describe('useGenAPI — 이미지', () => {
     })
     // base64 필드는 data URL, mediaId 는 null (업스케일 자동 skip), actualAspectRatio 표면화(§2.4)
     expect(r.images[0]).toEqual({ base64: 'data:image/png;base64,ABC', mimeType: 'image/png', mediaId: null, actualAspectRatio: null })
+    expect(r.appliedInputs).toEqual({})
+    expect('seed' in r.appliedInputs).toBe(false)
   })
 
   it('generateImage: provider 를 IPC 로 관통 + 비-google 은 gemini 기본 강제 안 함', async () => {
@@ -233,6 +235,8 @@ describe('useGenAPI — 이미지', () => {
     const col = await result.current.collectGeneration(sub.generationId)
     expect(col.success).toBe(true)
     expect(col.images[0].base64).toBe('data:image/png;base64,ABC')
+    expect(col.appliedInputs).toEqual({})
+    expect('seed' in col.appliedInputs).toBe(false)
   })
 
   it('collectGeneration: 미완료/없음 처리', async () => {

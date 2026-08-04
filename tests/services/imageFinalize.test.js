@@ -134,6 +134,42 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
   })
 })
 
+describe('finalizeGeneratedImage — appliedInputs seed truth table', () => {
+  const ABSENT = Symbol('appliedInputs absent')
+  const cases = [
+    ['first-image echo wins', 7, undefined, {}, 3, 7],
+    ['top-level echo wins', undefined, 9, {}, 3, 9],
+    ['declared empty rejects caller fallback', undefined, undefined, {}, 3, null],
+    ['declared seed is recorded', undefined, undefined, { seed: 5 }, 3, 5],
+    ['declared undefined seed becomes null', undefined, undefined, { seed: undefined }, 3, null],
+    ['undeclared result keeps legacy caller fallback', undefined, undefined, ABSENT, 3, 3],
+    ['undeclared result with no caller seed stays null', undefined, undefined, ABSENT, undefined, null],
+    ['first-image echo preserves zero', 0, undefined, {}, 3, 0],
+    ['top-level echo preserves zero', undefined, 0, {}, 3, 0],
+    ['declared seed preserves zero', undefined, undefined, { seed: 0 }, 3, 0],
+  ]
+
+  it.each(cases)('%s', async (_name, firstSeed, resultSeed, appliedInputs, callerSeed, expected) => {
+    const firstImage = { base64: TINY_BASE64, mediaId: 'm1' }
+    if (firstSeed !== undefined) firstImage.seed = firstSeed
+    const result = { success: true, images: [firstImage] }
+    if (resultSeed !== undefined) result.seed = resultSeed
+    if (appliedInputs !== ABSENT) result.appliedInputs = appliedInputs
+
+    const res = await finalizeGeneratedImage({
+      result,
+      genAPI: {},
+      saveMode: 'none',
+      projectName: 'truth-table',
+      sceneId: 'scene_1',
+      prompt: 'a cat',
+      seed: callerSeed,
+    })
+
+    expect(res.sceneUpdate.seed).toBe(expected)
+  })
+})
+
 describe('processAsyncSceneResult — useAutomation batch error counting contract', () => {
   // useAutomation 의 collect 루프는 이 함수의 boolean 반환값으로 errorCountRef 를 증감한다.
   // result.success 만 보고 카운트하면 "이미지는 받았는데 디스크 저장 실패" 케이스가
