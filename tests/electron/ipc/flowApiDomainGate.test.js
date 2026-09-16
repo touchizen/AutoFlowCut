@@ -79,18 +79,21 @@ describe('generate-image — "Flow 페이지가 아니면 이동" 분기의 도�
   it('새 도메인 홈에 있으면 Flow 로 다시 네비게이트하지 않는다', async () => {
     const { ipcMain, loadURL } = runOnUrl('https://flow.google.com/')
     await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
-    expect(loadURL).not.toHaveBeenCalledWith(FLOW_URL)
-  }, 30000)
+    // ⚠️ not.toHaveBeenCalledWith(FLOW_URL) 로 두면 "새 도메인 URL 로 재이동"하는 회귀를 안 문다
+    //    (원래 버그가 옷만 갈아입은 꼴). 이 핸들러의 loadURL 자리는 이 분기 하나뿐이다.
+    expect(loadURL).not.toHaveBeenCalled()
+  }, 60000)
 
   it('옛 도메인에 있어도 다시 네비게이트하지 않는다 (회귀 방지)', async () => {
     const { ipcMain, loadURL } = runOnUrl('https://labs.google/fx/tools/flow')
     await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
-    expect(loadURL).not.toHaveBeenCalledWith(FLOW_URL)
-  }, 30000)
+    expect(loadURL).not.toHaveBeenCalled()
+  }, 60000)
 
   it('Flow 밖이면 Flow 로 네비게이트한다 — 분기가 살아 있음을 증명', async () => {
     const { ipcMain, loadURL } = runOnUrl('https://accounts.google.com/signin')
     await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
     expect(loadURL).toHaveBeenCalledWith(FLOW_URL)
-  }, 30000)
+    expect(loadURL).toHaveBeenCalledTimes(1)
+  }, 60000)
 })

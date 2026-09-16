@@ -122,6 +122,10 @@ describe('isFlowFrameOrigin (#R23-2)', () => {
     expect(isFlowFrameOrigin('http://labs.google/fx')).toBe(false)  // wrong scheme
     expect(isFlowFrameOrigin('https://flow.google.com.evil.com/x')).toBe(false)
     expect(isFlowFrameOrigin('http://flow.google.com/')).toBe(false)  // wrong scheme
+    expect(isFlowFrameOrigin('https://flow.google.com:444/')).toBe(false)  // wrong port
+    // 로그인 리다이렉트가 실제로 착지하는 곳 — "https 이고 *.google.com 이면 통과" 로
+    //   느슨해진 구현을 이 리터럴이 잡는다.
+    expect(isFlowFrameOrigin('https://accounts.google.com/signin')).toBe(false)
   })
 
   it('rejects empty/invalid/non-string urls', () => {
