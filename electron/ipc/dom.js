@@ -9,6 +9,7 @@ import { screen } from 'electron'
 import { updateBounds } from './layout.js'
 import { AGENT_TOGGLE_SELECTOR } from '../flow-agent-toggle.js'
 import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS } from '../flowOpenRetry.js'
+import { flowBaseFromUrl, flowProjectUrl, onProjectComposerUrl } from '../flowUrl.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 
 export function registerDomIPC(ipcMain, deps) {
@@ -77,10 +78,9 @@ export function registerDomIPC(ipcMain, deps) {
     }
     try {
       const cur = flowView.webContents.getURL() || ''
-      // 현재 URL 에서 /tools/flow 까지의 base(로케일 포함) 추출, 없으면 기본.
-      const m = cur.match(/^(.*\/tools\/flow)(\/|$)/)
-      const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
-      const target = `${base}/project/${flowProjectId}`
+      // base 추출과 컴포저 판정은 flowUrl.js 가 소유한다 — 옛/새 도메인을 둘 다 안다.
+      const base = flowBaseFromUrl(cur)
+      const target = flowProjectUrl(base, flowProjectId)
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
       // 페이지가 진짜 대상 프로젝트로 로드됐는지 확인 — URL 일치 + 에러 텍스트 없음.
       //   (URL 만 보면 "문제가 발생했습니다" 에러 페이지도 success 로 오판 → false positive.)
@@ -94,12 +94,7 @@ export function registerDomIPC(ipcMain, deps) {
         // ⚠️ 경로 끝이면서 **컴포저** 여야 한다. (/[^/]*)?$ 로만 두면 /characters·/settings 도 통과해,
         //    캐릭터 작업 후 그 페이지에 머문 상태를 "프로젝트 열림"으로 승인한다(컴포저는 없는데).
         //    ensureOnProjectComposer 와 같은 허용 목록을 쓴다.
-        let onTargetUrl = false
-        try {
-          const pn = new URL(urlNow).pathname
-          const m = pn.match(new RegExp(`/tools/flow/project/${flowProjectId}(/[^/]*)?$`))
-          onTargetUrl = !!m && ['', '/', '/all-media'].includes(m[1] || '')
-        } catch { onTargetUrl = false }
+        const onTargetUrl = onProjectComposerUrl(urlNow, flowProjectId)
         return { urlNow, onTargetUrl, isErrorPage: isFlowErrorPage(page), probeOk, page }
       }
 

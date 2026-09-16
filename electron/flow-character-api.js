@@ -201,7 +201,7 @@ export function buildCharactersUrl(currentUrl, projectId = null) {
     const m2 = u.match(/^(.*)\/project\/[0-9a-fA-F-]{36}/)
     if (m2) return m2[1] + '/project/' + projectId + '/characters'
     // 최후 폴백: Flow 가 아직 안 떴어도(빈 URL 등) 앱 고정 base 로 진입 가능하게.
-    return 'https://labs.google/fx/tools/flow/project/' + projectId + '/characters'
+    return 'https://flow.google.com/project/' + projectId + '/characters'
   }
   const m = u.match(/^(.*\/project\/[0-9a-fA-F-]{36})/)
   return m ? m[1] + '/characters' : null

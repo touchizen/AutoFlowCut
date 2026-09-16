@@ -29,6 +29,7 @@ import {
   normalizeEntityDisplayName,
 } from '../flow-character-api.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
+import { flowBaseFromUrl, flowProjectUrl } from '../flowUrl.js'
 import { EDITOR_SELECTOR, appendSceneText, insertSceneMention, injectComposeSegments } from '../flow-compose-mention.js'
 import { FLOW_APPLY_NAME_PROBE, FLOW_BACK_BTN_EXPR } from '../flow-character-name.js'
 import { screen } from 'electron'
@@ -188,9 +189,7 @@ export function registerCharacterIPC(ipcMain, deps) {
   function characterDetailUrl(entityId, projectIdOverride) {
     const cur = (getFlowView() && getFlowView().webContents.getURL()) || ''
     if (projectIdOverride) {
-      const fm = cur.match(/^(.*\/tools\/flow)(\/|$)/)
-      const base = fm ? fm[1] : 'https://labs.google/fx/tools/flow'
-      return `${base}/project/${projectIdOverride}/character/${entityId}`
+      return `${flowProjectUrl(flowBaseFromUrl(cur), projectIdOverride)}/character/${entityId}`
     }
     const m = cur.match(/^(.*\/project\/[0-9a-f-]{36})/)
     return m ? `${m[1]}/character/${entityId}` : null

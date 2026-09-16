@@ -7,7 +7,7 @@
  * (SSE) — NO separate batchGenerateImages request fires — so the legacy
  * response-interception collection never completes. Each generated result instead
  * renders as a project edit card:
- *   <a href=".../tools/flow/project/<id>/edit/<id>">
+ *   <a href=".../project/<id>/edit/<id>">   (flow.google.com, or legacy /tools/flow/...)
  *     <img src=".../media.getMediaUrlRedirect?name=<UUID>">
  *   </a>
  * The `name` UUID IS the mediaId; the src is a cookie-auth fetchable URL.
@@ -37,7 +37,13 @@ export function scanGeneratedImages(doc) {
     if (!m) continue
     const link = im.closest && im.closest('a[href]')
     const href = (link && link.getAttribute('href')) || ''
-    if (/\/tools\/flow\/project\/[^/]+\/edit\//.test(href)) out.push({ mediaId: m[1], src })
+    // Flow lives at two layouts: flow.google.com/project/<id>/edit/<id> (current) and
+    // labs.google/<locale?>/fx/tools/flow/project/<id>/edit/<id> (legacy, still redirects).
+    // This function is stringified into the page, so it cannot import the URL helper.
+    const path = href.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '')
+    const isEditCard = /^\/project\/[^/]+\/edit\//.test(path)
+      || /\/tools\/flow\/project\/[^/]+\/edit\//.test(path)
+    if (isEditCard) out.push({ mediaId: m[1], src })
   }
   return out
 }

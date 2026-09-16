@@ -12,6 +12,7 @@ import { buildAgentDefaultsScript, buildListModelsScript } from '../flow-agent-d
 import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR, AGENT_TOGGLE_DIAGNOSTIC } from '../flow-agent-toggle.js'
 import { buildSelectModeScript } from '../flow-mode-tab.js'
 import { FLOW_PAGE_PROBE_JS, isFlowErrorPage } from '../flowOpenRetry.js'
+import { flowBaseFromUrl, flowProjectUrl, onProjectComposerUrl as isOnProjectComposerUrl } from '../flowUrl.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { updateBounds } from './layout.js'
@@ -1128,13 +1129,12 @@ export function createSharedHelpers(ctx) {
     if (!page || !isFlowErrorPage(page)) return { ok: true }
 
     console.warn('[Flow Guard] project URL but page is not loaded (error/landing) — recovering via home')
-    const m = safeUrl(flowView).match(/^(.*\/tools\/flow)(\/|$)/)
-    const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
+    const base = flowBaseFromUrl(safeUrl(flowView))
     // loadURL 은 파괴된 webContents 에서 **동기로** throw 한다 — .catch() 는 promise rejection 만 잡는다.
     const safeLoad = async (u) => { try { await flowView.webContents.loadURL(u) } catch { /* 파괴/중단 */ } }
     await safeLoad(base)
     await new Promise((r) => setTimeout(r, 1500))
-    await safeLoad(`${base}/project/${projectId}`)
+    await safeLoad(flowProjectUrl(base, projectId))
     await new Promise((r) => setTimeout(r, 2000))
 
     // ⚠️ 페이지가 "리치"하다는 것만으로 복구를 선언하면 안 된다 — home 화면도 인터랙티브 요소가
@@ -1168,23 +1168,9 @@ export function createSharedHelpers(ctx) {
   //   아니므로 거기에 프롬프트를 주입하면 안 된다 — 모르면 막고 진단을 남긴다.
   const COMPOSER_SUBPATHS = new Set(['', '/', '/all-media'])
 
-  function onProjectComposerUrl(url, projectId) {
-    // ⚠️ substring 으로 보면 "…/tools/flow/?next=/project/<id>"(쿼리), "/archive/project/<id>"(다른 라우트),
-    //    "/project/<id>-suffix"(다른 id), 심지어 다른 origin 도 통과한다 — 전부 실측으로 확인됐다.
-    //    origin 과 pathname 을 정확히 본다.
-    // ⚠️ projectId 는 **한 경로 세그먼트** 여야 한다. 저장값에 '/' 가 섞이면("abc/characters")
-    //    /project/abc/characters 가 통째로 id 로 매칭돼 캐릭터 페이지를 컴포저로 승인한다.
-    if (!/^[A-Za-z0-9._~-]+$/.test(String(projectId))) return false
-    let u
-    try { u = new URL(url) } catch { return false }
-    if (u.hostname.toLowerCase() !== 'labs.google') return false
-    // ⚠️ projectId 를 정규식에 그대로 넣으면 저장값이 "[" 같을 때 SyntaxError 로 **던진다** —
-    //    가드가 {ok:false} 를 반환하는 대신 reject 된다. 이스케이프한다.
-    const esc = String(projectId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const m = u.pathname.match(new RegExp(`/tools/flow/project/${esc}(/[^/]*)?$`))
-    if (!m) return false
-    return COMPOSER_SUBPATHS.has(m[1] || '')
-  }
+  // 판정은 electron/flowUrl.js 가 소유한다 — 같은 규칙이 dom.js 프로브에도 필요해서
+  // 복제돼 있었고, Flow 도메인이 옮겨갔을 때 두 곳이 따로 틀렸다.
+  const onProjectComposerUrl = isOnProjectComposerUrl
 
   /** getURL 은 뷰/렌더러가 파괴되면 throw 한다 — 가드가 {ok:false} 대신 reject 되면 안 된다. */
   function safeUrl(flowView) {
@@ -1199,6 +1185,7 @@ export function createSharedHelpers(ctx) {
     // Falsy projectId → lenient fallback: any /project/ or /tools/flow/ page is acceptable.
     if (!projectId) {
       const onSomePage = currentUrl.includes('/project/') || currentUrl.includes('/tools/flow/')
+        || (() => { try { return new URL(currentUrl).hostname.toLowerCase() === 'flow.google.com' } catch { return false } })()
       return onSomePage
         ? { ok: true }
         : { ok: false, error: 'Not on a Flow project page' }
@@ -1218,9 +1205,7 @@ export function createSharedHelpers(ctx) {
     }
 
     // Not on the target project — attempt navigation (same logic as flow:open-project in dom.js).
-    const m = currentUrl.match(/^(.*\/tools\/flow)(\/|$)/)
-    const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
-    const target = `${base}/project/${projectId}`
+    const target = flowProjectUrl(flowBaseFromUrl(currentUrl), projectId)
     console.log('[Flow Guard] Not on target project, navigating:', target)
     try {
       await flowView.webContents.loadURL(target).catch((e) =>

@@ -243,6 +243,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       console.log('[Flow API] [DOM+Net] Current Flow URL:', currentUrl)
 
       const hasProject = currentUrl.includes('/project/') || currentUrl.includes('/tools/flow/')
+        || currentUrl.startsWith('https://flow.google.com/')
       // ⚠️ document.querySelector('textarea') 로 판정하면 안 된다 — Flow 는 숨은
       //   <textarea id="g-recaptcha-response"> 를 항상 갖고 있어 죽은 페이지(에러/랜딩)에서도
       //   true 가 된다. 그러면 아래 준비/부트스트랩 블록이 통째로 스킵되고, 컴포저가 없는 페이지에서
