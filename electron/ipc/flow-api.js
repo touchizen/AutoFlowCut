@@ -14,6 +14,7 @@ import { SUBMIT_PROBE, shouldProceed, SUBMIT_ENABLED_PROBE } from '../flow-submi
 import { GENERATED_IMG_PROBE, planDomImageAssignments, clampImageBatchCount } from '../flow-media-collect.js'
 import { createGenerationTimeout } from '../flow-generation-timeout.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
+import { isFlowPageUrl } from '../flowUrl.js'
 import { createMutex } from '../asyncMutex.js'
 import { VIDEO_DOWNLOAD_TIMEOUT_MS, IMAGE_UPSCALE_TIMEOUT_MS } from '../flow-download-config.js'
 
@@ -243,7 +244,6 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       console.log('[Flow API] [DOM+Net] Current Flow URL:', currentUrl)
 
       const hasProject = currentUrl.includes('/project/') || currentUrl.includes('/tools/flow/')
-        || currentUrl.startsWith('https://flow.google.com/')
       // ⚠️ document.querySelector('textarea') 로 판정하면 안 된다 — Flow 는 숨은
       //   <textarea id="g-recaptcha-response"> 를 항상 갖고 있어 죽은 페이지(에러/랜딩)에서도
       //   true 가 된다. 그러면 아래 준비/부트스트랩 블록이 통째로 스킵되고, 컴포저가 없는 페이지에서
@@ -258,8 +258,8 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
         // Flow 랜딩 페이지면: Enter tool 버튼 클릭으로 프로젝트 생성
         if (!currentUrl.includes('/project/')) {
-          // 이미 Flow 페이지가 아니면 로드
-          if (!currentUrl.includes('labs.google/fx')) {
+          // 이미 Flow 페이지가 아니면 로드 (두 도메인 배치 모두 Flow 로 친다)
+          if (!isFlowPageUrl(currentUrl)) {
             console.log('[Flow API] Navigating to Flow...')
             await flowView.webContents.loadURL(FLOW_URL)
             await new Promise(r => setTimeout(r, 3000))

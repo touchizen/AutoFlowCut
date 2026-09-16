@@ -1164,10 +1164,6 @@ export function createSharedHelpers(ctx) {
    * ⚠️ 초기 체크에만 이 제외가 있었고 복구·폴링 경로는 단순 includes 라, 대기 중 사용자가
    *    /characters 로 넘어가면 그 페이지를 "대상 프로젝트"로 승인했다. 한 곳에서 판정한다.
    */
-  // Flow 컴포저로 인정하는 하위 경로. 그 외(/characters, /settings, 알 수 없는 라우트)는 컴포저가
-  //   아니므로 거기에 프롬프트를 주입하면 안 된다 — 모르면 막고 진단을 남긴다.
-  const COMPOSER_SUBPATHS = new Set(['', '/', '/all-media'])
-
   // 판정은 electron/flowUrl.js 가 소유한다 — 같은 규칙이 dom.js 프로브에도 필요해서
   // 복제돼 있었고, Flow 도메인이 옮겨갔을 때 두 곳이 따로 틀렸다.
   const onProjectComposerUrl = isOnProjectComposerUrl

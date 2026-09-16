@@ -26,18 +26,41 @@ function isValidProjectId(projectId) {
 }
 
 /**
+ * 옛 도메인의 Flow 경로. 로케일은 **`/fx` 뒤** 에 온다(`/fx/ko/tools/flow`) —
+ * `buildCharactersUrl`(flow-character-api.js)과 라이브 픽스처가 그 배치다.
+ */
+const LEGACY_FLOW_PATH = /^\/fx(?:\/[a-z]{2})?\/tools\/flow(?=\/|$)/
+
+/**
  * 현재 URL 에서 프로젝트 URL 을 만들 base 를 뽑는다.
- * 옛 도메인은 로케일이 섞일 수 있어(`/ko/fx/tools/flow`) 그 부분을 보존한다.
+ * 옛 도메인은 로케일이 섞일 수 있어(`/fx/ko/tools/flow`) 그 부분을 보존한다.
+ *
+ * ⚠️ 호스트는 **정확히** 비교한다 — 문자열 매칭이면 `notlabs.google` 이나
+ *    `labs.google.evil.com` 을 base 로 받아들여 그 외부 호스트로 네비게이트한다.
  */
 export function flowBaseFromUrl(url) {
-  const s = String(url ?? '')
-  const legacy = s.match(/^(https?:\/\/[^/]*labs\.google(?:\/[^/]+)*?\/fx\/tools\/flow)(\/|$|\?|#)/)
-  if (legacy) return legacy[1]
-  try {
-    const u = new URL(s)
-    if (u.hostname.toLowerCase() === FLOW_HOST) return `${u.protocol}//${u.host}`
-  } catch { /* 빈 문자열·상대경로 등 */ }
+  let u
+  try { u = new URL(String(url ?? '')) } catch { return FLOW_BASE }  // 빈 문자열·상대경로 등
+  const host = u.hostname.toLowerCase()
+  if (host === FLOW_HOST) return `${u.protocol}//${u.host}`
+  if (host === LEGACY_HOST) {
+    const m = u.pathname.match(LEGACY_FLOW_PATH)
+    if (m) return `${u.protocol}//${u.host}${m[0]}`
+  }
   return FLOW_BASE
+}
+
+/**
+ * 이 URL 이 **Flow 앱 안** 인가 (특정 프로젝트인지는 안 본다).
+ * "Flow 페이지가 아니면 Flow 로 이동" 분기가 쓴다 — 옛 도메인만 알면 새 도메인 홈에서
+ * "Flow 가 아니다"로 보고 옛 URL 로 되돌아간다.
+ */
+export function isFlowPageUrl(url) {
+  let u
+  try { u = new URL(String(url ?? '')) } catch { return false }
+  const host = u.hostname.toLowerCase()
+  if (host === FLOW_HOST) return true
+  return host === LEGACY_HOST && /^\/fx(?=\/|$)/.test(u.pathname)
 }
 
 /** base 뒤에 프로젝트 경로를 붙인다. */

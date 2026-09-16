@@ -19,13 +19,16 @@ import { createOwnedCollectionTimer, isStaleResponse, isVideoSubmitEndpoint } fr
 //   sender webContents 일치만으론 부족하다 — 동일 view 가 다른(공격자) 페이지로
 //   네비게이트되면 flow-preload 브리지(flowReportResponse)가 그대로 노출돼 임의 페이지가
 //   생성 응답을 위조해 pending capture 를 attacker payload 로 resolve 할 수 있다.
-//   합법 Flow 페이지는 https://labs.google origin 에서만 동작하므로 그 origin 으로 제한한다.
-const FLOW_FRAME_ORIGIN = 'https://labs.google'
+//   합법 Flow 페이지는 아래 origin 에서만 동작하므로 그 origin 으로 제한한다.
+//   ⚠️ Google 이 Flow 를 flow.google.com 으로 옮겼다(2026-09). 새 origin 을 빼면 페이지가
+//   보고한 생성 응답이 **전부** 여기서 버려져 pending capture 가 타임아웃까지 매달린다.
+//   origin 비교라 scheme·port 까지 정확히 본다(http:· :444 는 통과 못 한다).
+const FLOW_FRAME_ORIGINS = new Set(['https://labs.google', 'https://flow.google.com'])
 
 export function isFlowFrameOrigin(frameUrl) {
   if (typeof frameUrl !== 'string' || !frameUrl) return false
   try {
-    return new URL(frameUrl).origin === FLOW_FRAME_ORIGIN
+    return FLOW_FRAME_ORIGINS.has(new URL(frameUrl).origin)
   } catch {
     return false
   }

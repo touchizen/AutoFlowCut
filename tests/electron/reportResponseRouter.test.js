@@ -108,10 +108,20 @@ describe('isFlowFrameOrigin (#R23-2)', () => {
     expect(isFlowFrameOrigin('https://labs.google/fx/api/auth/session')).toBe(true)
   })
 
+  // Google 이 Flow 를 flow.google.com 으로 옮겼다. 이 origin 을 안 받으면 페이지가 보고한
+  // 생성 응답이 전부 'unauthorized origin' 으로 버려져 pending capture 가 타임아웃까지 매달린다
+  // (증상이 "열기 무한 반복"에서 "생성이 영영 안 끝남"으로 바뀔 뿐이다).
+  it('accepts the new Flow domain origin', () => {
+    expect(isFlowFrameOrigin('https://flow.google.com/')).toBe(true)
+    expect(isFlowFrameOrigin('https://flow.google.com/project/134cf5b5-6a64-47b8-8709-6de4c6b0e44c')).toBe(true)
+  })
+
   it('rejects other origins (navigated/compromised page)', () => {
     expect(isFlowFrameOrigin('https://evil.example/fx/tools/flow')).toBe(false)
     expect(isFlowFrameOrigin('https://labs.google.evil.com/x')).toBe(false)
     expect(isFlowFrameOrigin('http://labs.google/fx')).toBe(false)  // wrong scheme
+    expect(isFlowFrameOrigin('https://flow.google.com.evil.com/x')).toBe(false)
+    expect(isFlowFrameOrigin('http://flow.google.com/')).toBe(false)  // wrong scheme
   })
 
   it('rejects empty/invalid/non-string urls', () => {

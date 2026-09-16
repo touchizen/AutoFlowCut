@@ -10,7 +10,7 @@
  * 폴링이 mode-entry 를 다시 돌려 무한히 재시도한다(사용자 제보 로그의 그 반복).
  */
 import { describe, it, expect } from 'vitest'
-import { flowBaseFromUrl, flowProjectUrl, onProjectComposerUrl } from '../../electron/flowUrl.js'
+import { flowBaseFromUrl, flowProjectUrl, isFlowPageUrl, onProjectComposerUrl } from '../../electron/flowUrl.js'
 
 const ID = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 
@@ -20,10 +20,21 @@ describe('flowBaseFromUrl — 현재 URL 에서 프로젝트 URL 을 만들 base
     expect(flowBaseFromUrl('https://flow.google.com/')).toBe('https://flow.google.com')
   })
 
+  // ⚠️ 실제 로케일 배치는 **`/fx/ko/tools/flow`** 다 — 로케일이 `/fx` **뒤** 에 온다.
+  //    (라이브 픽스처 tests/fixtures/flow-live-dom-20260714.js:18, flow-character-api.js:199)
+  //    `/ko/fx/tools/flow` 는 존재하지 않는 배치라, 그걸 검사하면 "로케일을 보존한다"는 성질이
+  //    깨져도 통과하는 공허한 테스트가 된다.
   it('옛 도메인 — 로케일 포함 base 를 보존한다', () => {
     expect(flowBaseFromUrl('https://labs.google/fx/tools/flow/')).toBe('https://labs.google/fx/tools/flow')
-    expect(flowBaseFromUrl('https://labs.google/ko/fx/tools/flow/project/x'))
-      .toBe('https://labs.google/ko/fx/tools/flow')
+    expect(flowBaseFromUrl('https://labs.google/fx/ko/tools/flow/project/x'))
+      .toBe('https://labs.google/fx/ko/tools/flow')
+    expect(flowBaseFromUrl('https://labs.google/fx/ja/tools/flow'))
+      .toBe('https://labs.google/fx/ja/tools/flow')
+  })
+
+  it('닮은 호스트를 옛 도메인으로 받아주지 않는다', () => {
+    expect(flowBaseFromUrl('https://notlabs.google/fx/tools/flow/project/x')).toBe('https://flow.google.com')
+    expect(flowBaseFromUrl('https://labs.google.evil.com/fx/tools/flow')).toBe('https://flow.google.com')
   })
 
   it('알 수 없는 URL 은 새 도메인으로 폴백한다 (옛 도메인은 어차피 리다이렉트된다)', () => {
@@ -78,5 +89,31 @@ describe('onProjectComposerUrl — 대상 프로젝트의 컴포저인가', () =
     expect(onProjectComposerUrl('', ID)).toBe(false)
     expect(onProjectComposerUrl(null, ID)).toBe(false)
     expect(onProjectComposerUrl(`https://flow.google.com/project/${ID}`, '')).toBe(false)
+  })
+})
+
+describe('isFlowPageUrl — 지금 Flow 앱 위에 있는가 (프로젝트 여부와 무관)', () => {
+  // flow-api 의 "Flow 페이지가 아니면 Flow 로 이동" 분기가 쓰는 판정.
+  // 옛 도메인만 알면 새 도메인 홈에서 "Flow 가 아니다"로 보고 옛 URL 로 되돌아간다.
+  it('새 도메인의 홈·프로젝트를 인정한다', () => {
+    expect(isFlowPageUrl('https://flow.google.com/')).toBe(true)
+    expect(isFlowPageUrl(`https://flow.google.com/project/${ID}`)).toBe(true)
+    expect(isFlowPageUrl('https://flow.google.com/about')).toBe(true)
+  })
+
+  it('옛 도메인의 /fx 하위를 계속 인정한다', () => {
+    expect(isFlowPageUrl('https://labs.google/fx/tools/flow')).toBe(true)
+    expect(isFlowPageUrl('https://labs.google/fx/ko/tools/flow')).toBe(true)
+    expect(isFlowPageUrl('https://labs.google/fx')).toBe(true)
+  })
+
+  it('Flow 가 아닌 곳은 거부한다', () => {
+    expect(isFlowPageUrl('https://labs.google/')).toBe(false)          // /fx 밖
+    expect(isFlowPageUrl('https://labs.google/fxtra/tools')).toBe(false) // 세그먼트 경계
+    expect(isFlowPageUrl('https://notlabs.google/fx/tools/flow')).toBe(false)
+    expect(isFlowPageUrl('https://flow.google.com.evil.com/project/x')).toBe(false)
+    expect(isFlowPageUrl('https://accounts.google.com/signin')).toBe(false)
+    expect(isFlowPageUrl('')).toBe(false)
+    expect(isFlowPageUrl(null)).toBe(false)
   })
 })
