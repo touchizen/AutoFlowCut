@@ -99,6 +99,7 @@ function harness(o = {}) {
   const trustedClickOnFlowView = vi.fn(async (_sel, opts) => {
     trace.push('click:' + (opts?.step || '?'))
     if (opts?.step === 'compose-submit') { trace.push('armed:' + pendingGenerations.size); if (onSubmit) await onSubmit(page, pendingGenerations) }
+    if (opts?.step === 'compose-submit' && o.clickResult) return o.clickResult
     return { success: o.clickSuccess ?? true }
   })
   const sessionFetch = o.fetch || vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, headers: { get: () => 'image/png' } }))
@@ -460,6 +461,23 @@ describe('flow:generate-image (angular) — 비동기 + check/collect + 마감',
     const r = await settle(h.generate({ asyncMode: true }))
     expect(failBoundUnfinished(h.pendingGenerations)).toBe(1)
     expect(await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })).toMatchObject({ success: false, errorKind: 'flow-submit-lost' })
+  })
+
+  // M2-R1 F4(b): 이미지도 같은 꼴 — dispatched 클릭 실패는 gen 을 지우지 않고 waiter/마감 경로(늦은 send 는 바인딩, 없으면 not-sent + postClick).
+  it('dispatched 클릭 실패: 늦은 send/loadend → 정상 images; send 없음 → 15s 뒤 flow-submit-not-sent + postClick; 비동기는 gen 을 armed 로 둔다', async () => {
+    const late = harness({ onSubmit: null, clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
+    const pLate = late.generate()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(late.pendingGenerations.size).toBe(1)
+    late.page.send(); late.page.loadend()
+    expect(await settle(pLate, 20000)).toMatchObject({ success: true, images: [{ mediaId: '<uuid#5>' }] })
+    const none = harness({ onSubmit: null, clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
+    expect(await settle(none.generate(), 20000)).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', postClick: true })
+    expect(none.pendingGenerations.size).toBe(0)
+    const asyncH = harness({ onSubmit: null, clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
+    const ra = await settle(asyncH.generate({ asyncMode: true }))
+    expect(ra).toMatchObject({ success: true, submitted: true })
+    expect(asyncH.pendingGenerations.has(ra.generationId)).toBe(true)
   })
 
   it('collect 는 미완료면 "not completed yet"(삭제 없음)', async () => {

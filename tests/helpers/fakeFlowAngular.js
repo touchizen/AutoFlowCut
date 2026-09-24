@@ -10,6 +10,7 @@
 //   opts.modelSubmenu          : (M2-2) 모델 메뉴 항목 클릭이 트리거 라벨을 바꾸지 않고 **하위 메뉴**만 연다(라이브 메뉴 항목엔
 //                                mat-mdc-menu-trigger·aria-expanded 가 있어 하위 메뉴가 달려 있다 — 내용 미관측)
 //   opts.modelMenuItems        : (M2-2) 메뉴 항목 목록 덮어쓰기(요청 모델이 없는 메뉴 — model-not-offered 케이스)
+//   opts.escapeLeavesMenus     : (M2-R1 F6) Escape 가 패널 pane 만 닫고 열린 메뉴 pane 은 남긴다
 // 리스너는 document/body 에 붙으므로 테스트마다 disposeFakeAngular() 로 이전 것을 abort 한다.
 import { buildSettingsPanel, buildModelMenu } from '../fixtures/flow-live-dom-20260924.js'
 
@@ -89,9 +90,18 @@ export function installFakeAngular(doc, opts = {}) {
     }
   }, { signal })
   // CDK 오버레이 흉내: body 의 keydown 에서 keyCode===27 일 때만 닫는다(key:'Escape' 만으로는 안 닫힌다).
+  //   M2-R1 F6: 실제 오버레이는 **스택**(패널 → 모델 메뉴 → 하위 메뉴) — Escape 하나는 맨 위 pane 하나만 닫는다. 마지막 pane 이 닫히면
+  //   컨테이너도 사라진다. opts.escapeLeavesMenus 면 메뉴 pane 은 Escape 에 안 닫힌다("패널은 닫혔는데 메뉴가 남는" 케이스).
   doc.body.addEventListener('keydown', (e) => {
     log.push(`keydown:${e.key}:${e.keyCode}`)
-    if (e.keyCode === 27 && !opts.stickyPanel) doc.querySelector('.cdk-overlay-container')?.remove()
+    if (e.keyCode !== 27 || opts.stickyPanel) return
+    const container = doc.querySelector('.cdk-overlay-container')
+    if (!container) return
+    const panes = Array.from(container.querySelectorAll('.cdk-overlay-pane'))
+    const closable = opts.escapeLeavesMenus ? panes.filter((p) => !p.querySelector('[role="menu"]')) : panes
+    const top = closable[closable.length - 1]
+    if (top) top.remove()
+    if (!container.querySelector('.cdk-overlay-pane')) container.remove()
   }, { signal })
   return log
 }

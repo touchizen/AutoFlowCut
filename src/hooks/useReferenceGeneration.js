@@ -1162,7 +1162,8 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               authStoppedRef.current = true
               window.dispatchEvent(new CustomEvent('flow-login-expired'))
               // R2-2#2: Flow 모드의 flow-login-expired 는 로그만 남긴다(useFlowEvents) — 왜 멈췄는지 사람 문구로 알린다.
-              toast.error(t('toast.generateFailed', { error: displayResultError(submitResult, 'Submit failed') }))
+              // M2-R1 F14(B8): API 모드는 그 이벤트가 이미 API 키 모달을 연다 — 토스트까지 띄우면 이중 알림.
+              if (genAPI?.mode === 'flow') toast.error(t('toast.generateFailed', { error: displayResultError(submitResult, 'Submit failed') }))
             }
             removeBatchGeneratingRef(busyIndex)
             // #R25-5: authFailed 면 errorKind:'auth' 도 남겨 안정적 auth 표식 유지.

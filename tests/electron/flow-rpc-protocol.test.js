@@ -5,6 +5,8 @@
 // 위치 핀은 docs/handoffs/evidence/2026-09-24-flow-batchexecute-rpcids.md 의 검증표 그대로 —
 // 스키마 적응 없음: 위치가 바뀌면 FlowRpcShapeError 로 닫힌다(입력 내용은 메시지에 싣지 않는다).
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   FlowRpcError, FlowRpcShapeError,
   parseBatchexecuteResponse, parseImageGenerateResponse,
@@ -412,6 +414,13 @@ describe('M2-1 modelKeyMatches — 카탈로그 표 기반 진리표(HTrJv 사�
     ['veo_3_1_t2v_lite', { model: LITE, duration: 8 }],
     ['veo_3_1_t2v_lite_4s', { model: LITE, duration: 4 }],
     ['veo_3_1_t2v_lite_6s', { model: LITE, duration: 6 }],
+    // M2-R1 F13(B7): 카탈로그(HTrJv, S 11행)에 있는 키만 — portrait 형제 판정은 **등급별**(Lite 8s 엔 portrait 형제가 없다 → 9:16 요청도 이 키로 답한다),
+    //   Quality 6s 도 형제 없음, 큐 토큰은 위치·조합 무관 중립(`_ultra` 단독, `_6s_relaxed`, `_portrait_ultra`). t2v 키엔 `_low_priority` 가 없다(미발명).
+    ['veo_3_1_t2v_lite', { model: LITE, duration: 8, ratio: '9:16' }],
+    ['veo_3_1_t2v_quality_6s', { model: QUALITY, duration: 6, ratio: '9:16' }],
+    ['veo_3_1_t2v_fast_ultra', { model: FAST, duration: 8, ratio: '16:9' }],
+    ['veo_3_1_t2v_fast_6s_relaxed', { model: FAST, duration: 6, ratio: '16:9' }],
+    ['veo_3_1_t2v_fast_portrait_ultra', { model: FAST, duration: 8, ratio: '9:16' }],
   ]
   const falsy = [
     ['abra_r2v_6s', { model: OMNI, duration: 6, ratio: '16:9' }],
@@ -437,5 +446,42 @@ describe('M2-1 modelKeyMatches — 카탈로그 표 기반 진리표(HTrJv 사�
   it('표시 라벨 변형: 패널 라벨 "Omni 1.1 Flash" 와 abra_* 내부키도 Omni 로 본다', () => {
     expect(modelKeyMatches('abra_t2v_6s', { model: 'Omni 1.1 Flash', duration: 6 })).toBe(true)
     expect(modelKeyMatches('abra_t2v_6s', { model: 'abra_t2v_6s', duration: 6 })).toBe(true)
+  })
+})
+
+// M2-R1 F12(A12): 렌더러 `error:'rpc-shape:<rpcid>@<path>'` 의 경로엔 숫자가 든다 — §3 "error 문구의 숫자 금지" 의 **명시 예외**(코드 변경 없음).
+//   예외가 성립하는 조건을 핀한다: 경로 인덱스는 한두 자리라 `\b40[13]\b`·`\b5\d\d\b`(isFlowAuthError 의 401/403, HTTP 5xx 오인) 를 만들 수 없다.
+//   정적(소스의 [n] 리터럴 전부 < 100 — jwpduf 의 동적 [2][i] 는 id 당 1회 폴이라 i=0) + 동적(실제 shape 실패 문구의 모든 숫자 < 100).
+describe('M2-R1 F12 rpc-shape 경로 인덱스 < 100 (숫자 금지 규칙의 예외 조건)', () => {
+  const SRC = ['electron/flow-rpc-protocol.js', 'electron/ipc/flow-angular.js', 'electron/flow-rpc-router.js']
+  it('정적: 프로토콜·핸들러·라우터 소스의 [n] 리터럴은 전부 < 100', () => {
+    let total = 0
+    for (const rel of SRC) {
+      const src = readFileSync(fileURLToPath(new URL('../../' + rel, import.meta.url)), 'utf8')
+      const idx = [...src.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]))
+      total += idx.length
+      for (const n of idx) expect(n, `${rel} [${n}]`).toBeLessThan(100)
+    }
+    expect(total).toBeGreaterThan(20)
+  })
+  it('동적: 실제 shape 실패들의 rpc-shape 문구 — 숫자 전부 < 100, \\b40[13]\\b·\\b5\\d\\d\\b 불일치, auth 오진 없음', () => {
+    const errors = []
+    const grab = (fn) => { try { fn() } catch (e) { errors.push(e) } }
+    grab(() => parseImageGenerateResponse([[[UUID5, null, '<uuid#6>', null, null, null, [[null, 1, null, null, null, null, 1, 'x', 29, null, null, 'y', null, 'https://flow-content.google/image/<uuid#5>?Signature=S', 3, null, null, UUID5]]]]]))
+    grab(() => { const p = samplePayload('YhhmEf'); delete p[3][0][7][0][12]; parseVideoSubmitResponse(p) })
+    grab(() => parseVideoStatusResponse([null, null, null]))
+    grab(() => { const p = samplePayload('jwpduf'); p[2][0][0] = 5; parseVideoStatusResponse(p) })
+    grab(() => { const p = samplePayload('as29s'); p[7][0][8] = 'https://evil.example/v'; parseMediaRecord(p) })
+    grab(() => parseBatchexecuteResponse('garbage', 'nzlxg'))
+    expect(errors).toHaveLength(6)
+    for (const err of errors) {
+      expect(err).toBeInstanceOf(FlowRpcShapeError)
+      const res = rpcErrorToRendererResult(err)
+      expect(res.error).toMatch(/^rpc-shape:[A-Za-z0-9]+@/)
+      for (const n of (res.error.match(/\d+/g) || []).map(Number)) expect(n, res.error).toBeLessThan(100)
+      expect(res.error).not.toMatch(/\b40[13]\b|\b5\d\d\b/)
+      expect(isFlowAuthError(res)).toBe(false)
+      expect(markFlowAuthFailure(res)).not.toHaveProperty('authFailed')
+    }
   })
 })

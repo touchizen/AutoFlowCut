@@ -1397,7 +1397,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
       'character-upload-failed': 'Flow could not upload the character image. Reopen the Characters page and try again.',
       'flow-t2v-reference-images-unsupported': 'Flow text-to-video does not support reference images. Use image-to-video with frames, or remove the references.',
       // R2-2#7: the remaining renderer-made kinds the widened scan found (no params)
-      'download-entitlement': 'Download not allowed — this video was not saved. Upgrade to Pro, then use Retry to download it.',
+      'download-entitlement': 'Download not allowed — this result was not saved. Upgrade to Pro, then use Retry to download it.',   // M2-R1 F10: shared by images and videos — media-neutral
       'stopped': 'Stopped by user — submitted video operations may still be running. Use Retry later or restart the app for auto-recovery.',
       'unresolved-mentions': 'Could not find the @mentioned character(s) in Flow. Verify or sync the character in the Ref tab and try again.',
       'story-empty-script': 'Scenes cannot be created from an empty script. Add script text and try again.',

@@ -166,6 +166,19 @@ describe('flow:check-video-status (angular) — 폴', () => {
     expect(r5.statuses[0]).toMatchObject({ status: 'complete', mediaId: UUID11 })
   })
 
+  // M2-R1 F11(d)(A11): "성공하면 리셋" 을 정말 핀한다 — 실패 2 → 성공(리셋) → 실패 3 은 아직 pending, 4회째 failed. (리셋이 없으면 성공 뒤 두 번째
+  //   실패에서 이미 4회가 돼 일찍 failed 로 떨어진다.)
+  it('as29s 실패 2 → 성공(리셋) → 실패 3 → 여전히 pending, 4회째 → failed(mediaId)', async () => {
+    const bad = { status: 500, text: 'oops' }
+    const h = harness({ as29s: [bad, bad, { status: 200, text: asBody() }, bad, bad, bad, bad] })
+    const pend = { status: 'pending', pollError: 'flow-rpc-error', rpcStatus: 500 }
+    expect((await h.check()).statuses[0]).toEqual(pend)
+    expect((await h.check()).statuses[0]).toEqual(pend)
+    expect((await h.check()).statuses[0]).toMatchObject({ status: 'complete', mediaId: UUID11 })
+    for (let i = 0; i < 3; i++) expect((await h.check()).statuses[0]).toEqual(pend)
+    expect((await h.check()).statuses[0]).toEqual({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed', mediaId: UUID11 })
+  })
+
   it.each([
     ['jwpduf HTTP 401', { jwpduf: [{ status: 401, text: '' }] }, { rpcStatus: 401 }],
     ['jwpduf code 16', { jwpduf: [{ status: 200, text: respBodyFailure('jwpduf', 16) }] }, { rpcCode: 16 }],
@@ -194,6 +207,36 @@ describe('flow:check-video-status (angular) — 폴', () => {
     expect(r.statuses[0]).toMatchObject({ status: 'pending', pollError: 'flow-rpc-error' })
     expect(h.rpcCalls.map((c) => c[0])).toEqual(['jwpduf'])
   })
+
+  // M2-R1 F7(A7): (a) 입력 id 마다 정확히 하나, 입력 순서 — 무효 id 를 걸러내면 statuses 가 짧아져 engineFlow 의 index-zip 이 aligned=false 로
+  //   전원 pending(120×10s)으로 묶는다. 무효 id 는 회수할 게 없으니 {failed, flow-video-fetch-failed}(mediaId 없음). (b) "폴한 id 의 레코드 없음"
+  //   (삭제·옛 세션의 generating 잔존)은 as29s 처럼 유계 — 3회 pending+pollError, 4회째 {failed, …, mediaId:id}; 레코드가 오면 카운터 리셋.
+  it('[유효, "", 유효] → statuses 3개 입력 순서 정렬(무효는 failed/fetch-failed, mediaId 없음); jwpduf 는 유효 id 만; 세션 게이트 실패도 입력 순서 유지', async () => {
+    const h = harness({ jwpduf: [{ status: 200, text: pollBodyWithState(2, '<uuid#21>') }, { status: 200, text: sample('jwpduf').respBody }] })
+    const r = await h.check(['<uuid#21>', '', UUID11])
+    expect(r.success).toBe(true)
+    expect(r.statuses).toHaveLength(3)
+    expect(r.statuses[0]).toEqual({ status: 'pending' })
+    expect(r.statuses[1]).toEqual({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed' })
+    expect(r.statuses[1]).not.toHaveProperty('mediaId')
+    expect(r.statuses[2]).toMatchObject({ status: 'complete', mediaId: UUID11 })
+    expect(h.rpcCalls.map((c) => c[0])).toEqual(['jwpduf', 'jwpduf', 'as29s'])
+    const g = harness({ wiz: false })
+    expect(await g.check(['', UUID11])).toEqual({ success: true, statuses: [{ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed' }, { status: 'pending', pollError: 'flow-session-missing' }] })
+  })
+
+  it('레코드 없음 ×2 → 레코드(pending, 리셋) → 없음 ×3 은 pending+pollError, 4회째 {failed, flow-video-fetch-failed, mediaId:id}', async () => {
+    const none = { status: 200, text: pollBodyWithState(2, '<uuid#99>') }
+    const found = { status: 200, text: pollBodyWithState(2) }
+    const h = harness({ jwpduf: [none, none, found, none, none, none, none, found] })
+    const pend = { status: 'pending', pollError: 'flow-rpc-error' }
+    expect((await h.check()).statuses[0]).toEqual(pend)
+    expect((await h.check()).statuses[0]).toEqual(pend)
+    expect((await h.check()).statuses[0]).toEqual({ status: 'pending' })          // 레코드가 왔다 — 카운터 리셋
+    for (let i = 0; i < 3; i++) expect((await h.check()).statuses[0]).toEqual(pend)
+    expect((await h.check()).statuses[0]).toEqual({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed', mediaId: UUID11 })
+    expect(h.rpcCalls.every((c) => c[0] === 'jwpduf')).toBe(true)
+  })
 })
 
 describe('flow:check-video-status (angular) — 진입', () => {
@@ -203,12 +246,22 @@ describe('flow:check-video-status (angular) — 진입', () => {
     expect(h.rpcCalls).toEqual([])
   })
 
-  it('accounts.google.com → flow-session-missing + authFailed(페이지 스크립트 미실행); WIZ 없음 → wiz-missing', async () => {
+  // M2-R1 F3(A3/B3): 세션 게이트 실패는 일시적일 수 있다(뷰 재로드 중 WIZ 없음·다른 페이지) — 최상위 authFailed 로 닫으면 훅이 이미
+  //   과금된 pending 전부를 errorKind:'auth'(mediaId null) 로 잃는다. 요청 id 마다 {pending, pollError:'flow-session-missing'} 로
+  //   항목별 폴 예산만 소모한다. authFailed 는 읽기 RPC 의 HTTP 401 / code 16 만.
+  it('세션 게이트 실패(accounts.google.com / WIZ 없음) → 최상위 authFailed 아님 — 요청 id 마다 {pending, pollError:flow-session-missing}, success:true', async () => {
     const a = harness({ url: 'https://accounts.google.com/signin' })
-    expect(await a.check()).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true })
+    const ra = await a.check(['<uuid#21>', UUID11])
+    expect(ra).toEqual({ success: true, statuses: [{ status: 'pending', pollError: 'flow-session-missing' }, { status: 'pending', pollError: 'flow-session-missing' }] })
     expect(a.executeJavaScript).not.toHaveBeenCalled()
     const b = harness({ wiz: false })
-    expect(await b.check()).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'wiz-missing', authFailed: true })
+    const rb = await b.check()
+    expect(rb).toEqual({ success: true, statuses: [{ status: 'pending', pollError: 'flow-session-missing' }] })
     expect(b.rpcCalls).toEqual([])
+    for (const r of [ra, rb]) {
+      expect(r).not.toHaveProperty('authFailed')
+      expect(JSON.stringify(r)).not.toMatch(/wiz-missing|not-on-flow/)
+      expect(markFlowAuthFailure(r)).not.toHaveProperty('authFailed')
+    }
   })
 })

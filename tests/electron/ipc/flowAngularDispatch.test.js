@@ -52,13 +52,26 @@ describe('video.js — t2v / check-video-status 는 Flow 모드에서 angular(M2
     expect(deps.trustedClickOnFlowView).not.toHaveBeenCalled()
   })
 
+  // M2-R1 F11(c)(B2): video.js 가 resolution 을 angular.generateVideoT2V 에 넘긴다(M2-3 배관) — 핸들러의 첫 로그(세션 게이트 전)가 그 값을 찍는다.
+  it('generate-video-t2v: video.js 가 resolution 을 angular 로 넘긴다(핸들러 진입 로그에 resolution 값)', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const { deps } = makeDeps('https://flow.google.com/project/x')
+      const ipc = makeIpcMain(); registerVideoIPC(ipc, deps)
+      await ipc.invoke('flow:generate-video-t2v', { token: null, prompt: 'p', projectId: 'p', model: 'Omni Flash', aspectRatio: '16:9', duration: 6, resolution: '1080p' })
+      const entry = logSpy.mock.calls.find((c) => String(c[0]).includes('[Flow Video T2V] [Angular] generate-video-t2v:'))
+      expect(entry).toBeTruthy()
+      expect(entry[1]).toMatchObject({ resolution: '1080p', model: 'Omni Flash', duration: 6 })
+    } finally { logSpy.mockRestore() }
+  })
+
   it('check-video-status → angular 세션 게이트(옛 "No token" 아님), API 모드는 옛 게이트', async () => {
     const { deps } = makeDeps('https://flow.google.com/project/x')
     const ipc = makeIpcMain(); registerVideoIPC(ipc, deps)
     const r = await ipc.invoke('flow:check-video-status', { token: null, generationIds: ['g1'], projectId: 'p' })
-    // M2-5: 스텁이 본문으로 — WIZ 전역이 없는 문서면 세션 게이트에서 닫힌다
-    expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'wiz-missing', authFailed: true })
-    expect(r.error).not.toMatch(/token/i)
+    // M2-5: 스텁이 본문으로 — WIZ 전역이 없는 문서면 세션 게이트에서 닫힌다. M2-R1 F3: 최상위 authFailed 가 아니라 항목별 pollError.
+    expect(r).toEqual({ success: true, statuses: [{ status: 'pending', pollError: 'flow-session-missing' }] })
+    expect(JSON.stringify(r)).not.toMatch(/token/i)
     const api = makeDeps('https://flow.google.com/project/x', 'api')
     const ipc2 = makeIpcMain(); registerVideoIPC(ipc2, api.deps)
     const r2 = await ipc2.invoke('flow:generate-video-t2v', { token: 't', prompt: 'p', projectId: 'p' })

@@ -13,6 +13,7 @@ import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
 import { failBoundUnfinished } from '../../../electron/flow-rpc-router.js'
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
+import { isQuotaExhaustedError } from '../../../src/utils/quotaStop.js'
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure } from '../../fixtures/flow-batchexecute-samples.js'
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
@@ -44,6 +45,7 @@ function harness(o = {}) {
   const credits = Array.isArray(o.credits) ? [...o.credits] : [1050]
   let injectedPrompt = null
   let settingsTargets = null
+  const creditReadsAt = []
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
     if (s.includes('__af_settings_driver__')) {
@@ -62,6 +64,7 @@ function harness(o = {}) {
     if (s.includes('WIZ_global_data.SNlM0e')) { trace.push('wiz'); return o.wiz ?? true }
     if (s.includes('"nzlxg"')) {
       trace.push('credits')
+      creditReadsAt.push(Date.now())
       const next = credits.length > 1 ? credits.shift() : credits[0]
       if (next instanceof Error) throw next
       if (typeof next === 'number') return { status: 200, text: creditsBody(next) }
@@ -109,6 +112,7 @@ function harness(o = {}) {
   const trustedClickOnFlowView = vi.fn(async (_sel, opts) => {
     trace.push('click:' + (opts?.step || '?'))
     if (opts?.step === 'compose-submit') { trace.push('armed:' + pendingGenerations.size); if (onSubmit) await onSubmit(page, pendingGenerations) }
+    if (opts?.step === 'compose-submit' && o.clickResult) return o.clickResult
     return { success: o.clickSuccess ?? true }
   })
   const sessionFetch = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, headers: { get: () => 'video/mp4' } }))
@@ -136,7 +140,7 @@ function harness(o = {}) {
   const generate = (p = {}) => ipcMain.invoke('flow:generate-video-t2v', {
     token: null, prompt: PROMPT, projectId: PROJECT, model: 'Omni Flash', aspectRatio: '16:9', duration: 6, resolution: '720p', videoBatchCount: 1, seed: null, segments: null, ...p,
   })
-  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, targets: () => settingsTargets }
+  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, targets: () => settingsTargets, creditReadsAt }
 }
 
 /** 가짜 시계에서 핸들러 promise 를 굴린다(ensureAgentOff 의 350ms sleep · 마감 타이머 등). */
@@ -298,11 +302,13 @@ describe('flow:generate-video-t2v (angular) — 200 뒤의 거부 (postClick + r
 })
 
 describe('flow:generate-video-t2v (angular) — 마감·크레딧', () => {
-  it('send 없이 15s + 크레딧 불변(1050→1050) → flow-submit-not-sent + postClick (크레딧 두 번 읽음)', async () => {
+  it('send 없이 15s + 크레딧 불변(1050→1050) → flow-submit-not-sent + postClick (크레딧 두 번 읽음 — 재판독은 마감이 울릴 때)', async () => {
     const h = harness({ onSubmit: null, credits: [1050, 1050] })
     const r = await settle(h.generate(), 20000)
     expect(r).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', error: 'flow-submit-not-sent', postClick: true })
     expect(h.trace.filter((x) => x === 'credits')).toHaveLength(2)
+    // M2-R1 F4(d): 재판독은 arm 직후가 아니라 send 마감(15s)이 울린 뒤 — 늦은 send 가 과금했는지 볼 시간을 준다
+    expect(h.creditReadsAt[1] - h.creditReadsAt[0]).toBeGreaterThanOrEqual(15000)
     expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'submit:flow-submit-not-sent')).toBe(true)
     expect(h.pendingGenerations.size).toBe(0)
   })
@@ -328,6 +334,34 @@ describe('flow:generate-video-t2v (angular) — 마감·크레딧', () => {
     expect(r).toMatchObject({ success: false, errorKind: 'flow-submit-lost', postClick: true })
   })
 
+  // M2-R1 F4(b)(c) (A4/B5): mouseDown 이 나간 뒤의 클릭 실패(dispatched)는 페이지가 제출(과금)했을 수 있다 — gen 을 지우지 않고 waiter/마감
+  //   경로로 간다. send 마감은 클릭이 **돌아온 뒤**에 arm(클릭은 뮤텍스 대기 포함 30s 까지 걸릴 수 있다). 클릭 중 이미 바인딩됐으면 재arm 없음.
+  it('dispatched 클릭 실패 + 늦은 send/loadend(2s 뒤) → gen 이 바인딩돼 정상 결과; 늦은 send 없음 → 15s 뒤 flow-submit-not-sent + postClick + 크레딧 재판독', async () => {
+    const late = harness({ onSubmit: null, clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
+    const pLate = late.generate()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(late.pendingGenerations.size).toBe(1)          // gen 은 아직 armed(지워지지 않았다)
+    late.page.send(); late.page.loadend()
+    const rLate = await settle(pLate, 20000)
+    expect(rLate).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    const none = harness({ onSubmit: null, credits: [1050, 1050], clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
+    const rNone = await settle(none.generate(), 20000)
+    expect(rNone).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', error: 'flow-submit-not-sent', postClick: true })
+    expect(none.trace.filter((x) => x === 'credits')).toHaveLength(2)
+    expect(none.pendingGenerations.size).toBe(0)
+  })
+
+  it('느린 클릭(20s, 뮤텍스 대기) 뒤 25s 에 send 가 오면 여전히 바인딩된다 — send 마감은 클릭이 돌아온 뒤 15s', async () => {
+    const h = harness({ onSubmit: async () => { await new Promise((r) => setTimeout(r, 20000)) } })
+    const p = h.generate()
+    await vi.advanceTimersByTimeAsync(25000)
+    expect(h.pendingGenerations.size).toBe(1)
+    h.page.send(); h.page.loadend()
+    const r = await settle(p, 20000)
+    expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    expect(h.trace.filter((x) => x === 'credits')).toHaveLength(1)
+  })
+
   it('클릭 전 크레딧 판독 실패(nzlxg HTTP 500) → 클릭 없이 중립 flow-rpc-error(rpcStatus) — postClick 없음(fail-closed)', async () => {
     const h = harness({ credits: [{ status: 500, text: 'oops' }] })
     const r = await settle(h.generate())
@@ -335,6 +369,28 @@ describe('flow:generate-video-t2v (angular) — 마감·크레딧', () => {
     expect(h.trace).not.toContain('click:compose-submit')
     expect(h.trace).not.toContain('settings-driver')
     expect(isFlowAuthError(r)).toBe(false)
+  })
+
+  // M2-R1 F5(A5/B4): (a) nzlxg 모양이 바뀌어 크레딧이 숫자가 아니면(creditsBefore null) 클릭 전에 거부 — null 로 진행하면 not-sent→lost 격상이
+  //   조용히 꺼진다(fail-closed 위반). (b) 읽기 RPC 의 code 8 은 중립 flow-rpc-error(rpcCode 필드) — 'RESOURCE_EXHAUSTED' 문구를 실으면 훅의
+  //   quota 감지가 **읽기**에서 발화해 배치를 멈춘다(D5: 읽기 code 8 은 일시).
+  it('크레딧 모양 드리프트(payload[0] 가 숫자 아님) → 클릭 전 flow-rpc-error, 로그 "credits read shape unexpected", postClick 없음', async () => {
+    const h = harness({ credits: [{ status: 200, text: respBodyWithPayload('nzlxg', ['1050', 1, 2, 2, null, '1050']) }] })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.trace).not.toContain('settings-driver')
+    expect(logged()).toMatch(/credits read shape unexpected/)
+    expect(logged()).not.toMatch(/credits before=null/)
+  })
+
+  it('클릭 전 크레딧 판독의 실패 프레임 code 8 → 중립 {flow-rpc-error, rpcCode:8} — RESOURCE_EXHAUSTED 문구 없음(quota 감지 미발화), 클릭 없음', async () => {
+    const h = harness({ credits: [{ status: 200, text: respBodyFailure('nzlxg', 8) }] })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error', rpcCode: 8 })
+    expect(isQuotaExhaustedError(r)).toBe(false)
+    expect(isQuotaExhaustedError(r.error)).toBe(false)
+    expect(h.trace).not.toContain('click:compose-submit')
   })
 })
 
@@ -389,9 +445,22 @@ describe('flow:generate-video-t2v (angular) — 클릭 전 거부(postClick 없�
     const r = await settle(h.generate({ resolution: '1080p' }))
     expect(r).toEqual({ success: false, errorKind: 'flow-resolution-not-offered', error: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
     expect(h.trace).not.toContain('click:compose-submit')
+    // M2-R1 F11(b)(A11/B2): 요청 해상도가 드라이버까지 그대로 간다 — 핸들러가 720p 로 다운그레이드하면 과금되는 720p 영상이 조용히 나온다.
+    expect(h.targets().resolution).toBe('1080p')
     const call = h.onDomFailure.mock.calls.find((c) => String(c[0]).startsWith('settings:'))
     expect(call).toBeTruthy()
     expect(JSON.stringify(call[1])).not.toContain(PROMPT)
+  })
+
+  // M2-R1 F11(a)(A11/B2): 해상도 미지정/무효는 렌더러 배관 결함 — 720p 기본값을 주면 1080p 요청이 720p 로 과금된다. 클릭 전 거부.
+  it.each([[undefined], [''], [null]])('resolution=%s → 클릭 전 flow-settings-not-applied(720p 기본값 없음), 로그 "resolution missing", 설정 드라이버·클릭 없음', async (resolution) => {
+    const h = harness()
+    const r = await settle(h.generate({ resolution }))
+    expect(r).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied' })
+    expect(h.trace).not.toContain('settings-driver')
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.targets()).toBeNull()
+    expect(logged()).toMatch(/resolution missing/)
   })
 
   it('설정 실패(flow-settings-not-applied, input-mode-not-material) → 클릭 없음', async () => {
@@ -409,6 +478,7 @@ describe('flow:generate-video-t2v (angular) — 클릭 전 거부(postClick 없�
     expect(r).toMatchObject({ success: false, errorKind: 'generate-button-click-failed' })
     expect(r).not.toHaveProperty('postClick')
     expect(h.pendingGenerations.size).toBe(0)
+    expect(h.trace.filter((x) => x === 'credits')).toHaveLength(1)   // M2-R1 F4: 미발송 실패는 마감·재판독 경로를 타지 않는다
   })
 
   it('API 모드 → Flow inactive (뷰 미접근)', async () => {

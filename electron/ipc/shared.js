@@ -151,7 +151,8 @@ export function createSharedHelpers(ctx) {
         if (opts.required && onDomFailure) {
           await onDomFailure(`trusted-click:${opts.step || 'unknown'}`, { reason: 'timeout', error: e.message }).catch(() => {})
         }
-        return { success: false, error: e.message }
+        // M2-R1 F4(a): mouseDown 이 이미 나갔으면 클릭이 됐을 수 있다(페이지가 제출·과금) — dispatched 로 알린다.
+        return { success: false, error: e.message, ...(token.dispatched ? { dispatched: true } : {}) }
       } finally {
         clearTimeout(timer)
       }
@@ -312,6 +313,9 @@ export function createSharedHelpers(ctx) {
       }
 
       if (token.aborted) return { success: false, error: 'aborted' }
+      // M2-R1 F4(a): 여기서부터의 실패(뷰 접힘·throw·타임아웃)는 "클릭이 안 됐다"가 아니라 "됐을 수 있다" — 페이지가 제출(과금)했을 수
+      //   있으므로 결과에 dispatched:true 를 실어 호출부가 gen 을 지우지 않고 waiter/마감 경로로 가게 한다.
+      token.dispatched = true
       flowView.webContents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 80))
 
@@ -326,7 +330,7 @@ export function createSharedHelpers(ctx) {
         if (opts.required) {
           await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'bounds-changed-mid-click', { coords })
         }
-        return { success: false, error: 'View bounds changed mid-click' }
+        return { success: false, error: 'View bounds changed mid-click', dispatched: true }   // M2-R1 F4(a)
       }
 
       console.log('[TrustedClick] Click events sent at (' + coords.x + ', ' + coords.y + ')')
@@ -339,7 +343,7 @@ export function createSharedHelpers(ctx) {
       if (opts.required) {
         await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'threw', { error: e.message })
       }
-      return { success: false, error: e.message }
+      return { success: false, error: e.message, ...(token.dispatched ? { dispatched: true } : {}) }   // M2-R1 F4(a)
     } finally {
       // bounds 복원 — 스냅샷을 되돌리는 게 아니라 레이아웃 상태에서 "다시 계산"한다.
       //   클릭이 도는 ~1초 사이에 사용자가 모달을 열거나(→ Flow 를 0×0 으로 숨겨야 함) 스플리터를

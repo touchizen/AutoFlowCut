@@ -53,6 +53,9 @@ const randomSleep = (min, max) =>
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
+// M2-R1 F8(A8): 배치 전체에 걸리는 설정계 클릭 전 거부 — 같은 kind+params 가 연속 2번이면 나머지 항목도 같은 결과라 종결한다.
+const REPEATABLE_PRECLICK_KINDS = new Set(['flow-resolution-not-offered', 'flow-settings-not-applied', 'flow-agent-off-failed', 'flow-capture-not-installed', 'flow-agent-mode-unsupported'])
+
 // Auth failures are handled centrally by useFlowAPI's withAuthRetry wrapper
 // (see useFlowAPI.js — wrapper shim calls clearTokenCache + the App-level
 // handleAuthError on 2nd 401). This hook only consumes the `authFailed` sentinel
@@ -68,6 +71,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
   const authErrorMessage = () => getAuthErrorMessage(appMode, t)
   // R1#1: Flow 세션 판정 이유(flowSessionReason)로 로그인 안내 vs 세션 확인 실패 안내를 고른다.
   const authRequiredMessage = () => getAuthRequiredMessage(appMode, t, genAPI?.flowSessionReason?.())
+  // M2-R1 F3(A3): authFailed 결과의 error 가 기계 토큰(errorKind 동반 — 'wiz-missing'·'not-on-flow'·'flow-rpc-error')이면 항목·상태 문구는
+  //   인증 안내다(useAutomation/useReferenceGeneration 과 같은 규칙). kind 없는 옛 결과("Auth expired …")는 error 그대로.
+  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
 
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
@@ -319,6 +325,10 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     pausedRef.current = false
     let authStopped = false   // set true on authFailed break — prevents fall-through 'done' status
     let terminalStopped = false  // R1#8: flow-feature-unsupported 로 종결(상태·문구는 break 자리에서 확정)
+    // M2-R1 F8(A8): 종결 문구 — pending 이 남아 폴 루프가 돌면 "Polling…" 이 덮어쓰므로 끝에서 다시 세운다.
+    let terminalMessage = null
+    // M2-R1 F8: 직전 항목의 클릭 전 거부 서명(kind|params JSON). 같은 서명이 연속 2번이면 나머지를 그 kind 로 닫는다(제출 성공·다른 결과면 리셋).
+    let lastPreClickRefusal = null
     setIsRunning(true)
     setIsPaused(false)
     setStatus('running')
@@ -557,6 +567,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         if (genResult.success && genResult.generationId) {
           pending.set(item.id, { generationId: genResult.generationId, polls: 0 })
           nextFreshIdx++
+          lastPreClickRefusal = null   // M2-R1 F8
           // fresh 제출은 effectiveVideoModel 로 생성됐으므로 로컬 item.model 도 갱신한다.
           //   완료 시 downloadAndSaveVideo→pickVideoMetadata 가 item.model 을 우선 쓰는데,
           //   regen(완료 쌍 재생성) 항목은 item-build(310)에서 보존된 옛 p.model 을 들고 있어
@@ -580,12 +591,19 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             video: null,
             base64: null,
             generatedAt: null,
+            // M2-R1 F2: 옛 런의 kind·params·거부 id 를 지운다 — 안 지우면 새 런의 실패 문구가 stale kind 로 그려지거나
+            //   거부 id 가 다음 결과에 남는다(App 화이트리스트는 'key in result' 라 null 도 통과한다).
+            error: null,
+            errorKind: null,
+            errorParams: null,
+            rejectedMediaId: null,
+            rejectedMediaIds: null,
           })
           console.log(`[VideoAutomation] ✅ Submitted ${i + 1}/${total}: ${genResult.generationId.substring(0, 16)}...`)
         } else if (genResult?.authFailed) {
           // Auth errors handled via withAuthRetry's authFailed sentinel.
           // 토큰 사망 — 이 항목 + 남은 freshGen 전부 auth error. 이미 제출된 pending 은 post-loop 에서 마감.
-          const authErr = genResult.error || authErrorMessage()
+          const authErr = authFailureText(genResult)   // M2-R1 F3
           for (let j = i; j < freshGen.length; j++) {
             onItemUpdate?.(freshGen[j].id, 'error', { error: authErr, errorKind: 'auth' })
             videoErrorCount++
@@ -606,8 +624,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           }
           nextFreshIdx = freshGen.length
           terminalStopped = true
+          terminalMessage = `⚠️ ${t('errorSection.kind.flow-feature-unsupported')}`
           setStatus('error')
-          setStatusMessage(`⚠️ ${t('errorSection.kind.flow-feature-unsupported')}`)
+          setStatusMessage(terminalMessage)
           console.warn('[VideoAutomation] ❌ Submit flow-feature-unsupported — stopping batch')
           return
         } else {
@@ -633,6 +652,29 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             submitHaltRef.current = genResult.errorKind || 'flow-rpc-error'
             console.warn(`[VideoAutomation] ⛔ Submit halted after a post-click failure (${submitHaltRef.current}) — pending items continue`)
             return
+          }
+          // M2-R1 F8(A8): 배치 전체에 걸린 설정계 클릭 전 거부(1080p 요청·에이전트 칩·캡처 미설치 등)가 **같은 kind + 같은 params 로 연속 2번**이면
+          //   나머지 freshGen 도 같은 결과다 — 항목마다 7~15s 페이싱으로 반복하지 않고(30씬이면 5~9분) 여기서 그 kind/params 로 닫고 종결한다
+          //   (flow-feature-unsupported 분기와 같은 꼴). 첫 번째는 다음 항목이 한 번 더 시도한다.
+          if (REPEATABLE_PRECLICK_KINDS.has(genResult?.errorKind)) {
+            const sig = `${genResult.errorKind}|${JSON.stringify(genResult.errorParams ?? {})}`
+            if (lastPreClickRefusal === sig) {
+              const same = { error: genResult.error || genResult.errorKind, errorKind: genResult.errorKind, ...(genResult.errorParams ? { errorParams: genResult.errorParams } : {}) }
+              for (let j = nextFreshIdx; j < freshGen.length; j++) {
+                onItemUpdate?.(freshGen[j].id, 'error', same)
+                videoErrorCount++
+              }
+              nextFreshIdx = freshGen.length
+              terminalStopped = true
+              terminalMessage = `⚠️ ${t(`errorSection.kind.${genResult.errorKind}`, genResult.errorParams || {})}`
+              setStatus('error')
+              setStatusMessage(terminalMessage)
+              console.warn(`[VideoAutomation] ❌ Same pre-click refusal twice in a row (${genResult.errorKind}) — closing the remaining items without pacing`)
+              return
+            }
+            lastPreClickRefusal = sig
+          } else {
+            lastPreClickRefusal = null
           }
         }
 
@@ -707,7 +749,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       // The wrapper already fired onAuthError + cleared cache. Mark all pending items
       // as auth-error and break immediately — no point polling on a dead token.
       if (result?.authFailed) {
-        const authErr = result.error || authErrorMessage()
+        const authErr = authFailureText(result)   // M2-R1 F3
         for (const [itemId] of pending) {
           onItemUpdate?.(itemId, 'error', { error: authErr, errorKind: 'auth' })
           videoErrorCount++  // fillWindow auth 경로·아래 freshGen 루프와 동일하게 집계 (progress.errorCount 일관성)
@@ -746,7 +788,10 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
       // statuses[] 내부 'failed' 만 보는 기존 코드는 batch 전체가 server-side 에러로 떨어진
       // 경우를 못 잡아 max polls 까지 무한정 polling 후 timeout 처리.
-      if (!result.success && _maybeTriggerQuotaStop(result.error)) break
+      // M2-R1 F9(A9/B9): Flow 는 **읽기** 결과로 quota 를 발화하지 않고(D5: 읽기 code 8 은 일시) break 도 하지 않는다 — Flow 의 quota 경로는
+      //   stopRequestedRef 를 세우지 않아 break 하면 pending 이 꼬리의 "Polling timeout" 으로 묻힌다. 아래 else 가 전 항목 pollError 1회(예산 −1)로
+      //   보고 계속 폴링한다. 비-Flow 는 그대로.
+      if (!result.success && appMode !== 'flow' && _maybeTriggerQuotaStop(result.error)) break
 
       if (result.success && result.statuses) {
         // statuses 배열은 genIds 순서와 동일 → 인덱스로 매칭
@@ -834,14 +879,21 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             // 같은 model/seed 로 수동 재시도할 수 있게 메타 보존.
             // (download 실패 경로와 동일한 우선순위 — item 의 원래 메타 우선.)
             const item = items.find(i => i.id === itemId)
+            // M2-R1 F1(A1/B1): main 의 kind·params 를 그대로 남기고, flow-video-fetch-failed 처럼 mediaId 를 실은 실패는 mediaId 도 보존한다 —
+            //   제출 패치가 mediaId 를 null 로 지웠으므로 여기서 다시 쓰지 않으면 download-only 분류(error+generationId+mediaId)에 걸리지 않아
+            //   다음 Start/Retry 가 이미 완성돼 과금된 영상을 다시 제출한다. generationId 도 함께(App 은 truthy 만 머지).
             onItemUpdate?.(itemId, 'error', {
               error: statusInfo.error || 'Video generation failed',
+              errorKind: statusInfo.errorKind ?? null,
+              ...(statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
+              ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
+              generationId: submission.generationId,
               ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
             })
             videoErrorCount++  // 서버 generation 실패도 집계
             pending.delete(itemId)
             console.warn(`[VideoAutomation] ❌ Generation failed: ${submission.generationId.substring(0, 16)}`)
-            _maybeTriggerQuotaStop(statusInfo.error)
+            if (appMode !== 'flow') _maybeTriggerQuotaStop(statusInfo.error)   // M2-R1 F9: 읽기 결과로는 quota 를 발화하지 않는다
 
           } else {
             // 'pending' / 'processing' — per-item 폴링 예산 소진. 초과 시 슬롯 영구 점유 방지 위해 timeout.
@@ -926,6 +978,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
 
     if (authStopped || terminalStopped) {
       // Status + message already set at the break site — do not overwrite.
+      // M2-R1 F8: 제출 시점 종결 뒤 pending 이 드레인됐으면 폴 루프의 "Polling…" 이 문구를 덮었다 — 종결 문구를 다시 세운다.
+      if (terminalMessage) setStatusMessage(terminalMessage)
     } else if (stopRequestedRef.current) {
       setStatus('stopped')
       // poll 단계에서 quota 로 멈춘 경우에도 첫 submit path 와 동일한 quotaStopped 메시지.

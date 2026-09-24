@@ -271,24 +271,31 @@ export function createFlowAngular(deps) {
       }
       waiter = new Promise((resolve) => { gen.waiter = { resolve } })
       deps.pendingGenerations.set(generationId, gen)
-      armDeadline(gen, 'send')
 
       // 7. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
       click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit' })
       return null
     })
     if (early) return early
-    if (!click?.success) {
+    // M2-R1 F4(b): mouseDown 이 나가기 전의 실패만 "클릭 없음"(gen 삭제). dispatched 면 페이지가 제출했을 수 있다 — gen 을 armed 로 두고
+    //   waiter/마감 경로로(늦은 send 는 바인딩, 없으면 not-sent).
+    if (!click?.success && !click?.dispatched) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
       deps.pendingGenerations.delete(generationId)
       return kindResult('generate-button-click-failed')
     }
+    const dispatchedOnly = !click?.success
+    if (dispatchedOnly) console.warn(`[Flow API] [Angular] click failed after dispatch gen=${generationId.slice(-8)} — keeping gen armed`)
+    // M2-R1 F4(c): send 마감(15s)은 클릭이 돌아온 **뒤**에 arm — 클릭은 뮤텍스 대기 포함 30s 까지 걸릴 수 있어 클릭 전에 arm 하면 정상 send 가
+    //   마감에 잘린다. 클릭 중 이미 send 가 바인딩됐거나 완료됐으면 재arm 하지 않는다.
+    if (!gen.completed && gen.sentAt == null) armDeadline(gen, 'send')
     console.log(`[Flow API] [Angular] submitted gen=${generationId.slice(-8)} async=${!!asyncMode}`)
     if (asyncMode) return { success: true, generationId, submitted: true }
 
     await waiter
     deps.pendingGenerations.delete(generationId)
-    return collectRpcGen(gen)
+    const collected = await collectRpcGen(gen)
+    return collected.success || !dispatchedOnly ? collected : { ...collected, postClick: true }
   }
 
   /** flow:check-generation 의 rpc 분기 — DOM 폴백 없음. */
@@ -368,14 +375,19 @@ export function createFlowAngular(deps) {
     if (deps.getFlowAgentOn && deps.getFlowAgentOn()) return kindResult('flow-agent-mode-unsupported')
     // 이중 방어(엔진 게이트가 먼저 거른다): @멘션 칩 영상은 새 Flow 미지원.
     if (Array.isArray(segments) && segments.length > 0) return kindResult('flow-mention-chips-unsupported')
+    // M2-R1 F11(a)(A11/B2): 해상도 미지정/무효는 렌더러 배관 결함 — 720p 기본값을 주면 1080p 요청이 조용히 720p 로 과금된다. 클릭 전 거부.
+    if (typeof resolution !== 'string' || !resolution.trim()) {
+      console.warn('[Flow Video T2V] [Angular] resolution missing → flow-settings-not-applied')
+      return kindResult('flow-settings-not-applied')
+    }
 
     const projectCheck = await deps.ensureOnProjectComposer(flowView, projectId)
     if (!projectCheck?.ok) {
       return { success: false, errorKind: projectCheck?.errorKind || 'flow-project-open-failed', error: projectCheck?.error || 'flow-project-open-failed' }
     }
 
-    // 요청 설정 — 해상도 미지정은 720p(패널 기본), 개수는 항상 1(videoBatchCount 무시 — P3).
-    const want = { model, duration: Number(duration), ratio: aspectRatio || null, resolution: String(resolution || '720p') }
+    // 요청 설정 — 해상도는 요청값 그대로(기본값 없음), 개수는 항상 1(videoBatchCount 무시 — P3).
+    const want = { model, duration: Number(duration), ratio: aspectRatio || null, resolution: String(resolution) }
     let generationId = null
     let gen = null
     let waiter = null
@@ -403,7 +415,17 @@ export function createFlowAngular(deps) {
         creditsBefore = creditsOf(await callFlowRpc(flowView, 'nzlxg', []))
       } catch (e) {
         console.warn(`[Flow Video T2V] [Angular] credits read failed before click kind=${(e && e.kind) || 'error'}`)
-        return rpcErrorToRendererResult(e)
+        // M2-R1 F5(A5/B4): 읽기 RPC 실패는 중립 — code 8 도 'RESOURCE_EXHAUSTED' 문구를 싣지 않는다(훅의 quota 감지가 **읽기**에서 발화해
+        //   배치를 멈추면 안 된다 — D5: 읽기 code 8 은 일시). rpcCode/rpcStatus 필드는 그대로.
+        const mapped = rpcErrorToRendererResult(e)
+        if (mapped.error === 'RESOURCE_EXHAUSTED') mapped.error = 'flow-rpc-error'
+        return mapped
+      }
+      if (creditsBefore === null) {
+        // M2-R1 F5: nzlxg 모양 드리프트(payload[0] 가 숫자 아님) — null 로 진행하면 not-sent→lost 격상이 조용히 꺼진다. 클릭 전에 거부(fail-closed).
+        console.warn('[Flow Video T2V] [Angular] credits read shape unexpected — refusing before click')
+        void report('rpc-shape:nzlxg@[0]', 'shape', { rpc: 'nzlxg' })
+        return kindResult('flow-rpc-error')
       }
       console.log(`[Flow Video T2V] [Angular] credits before=${creditsBefore}`)
 
@@ -443,18 +465,25 @@ export function createFlowAngular(deps) {
       }
       waiter = new Promise((resolve) => { gen.waiter = { resolve } })
       deps.pendingGenerations.set(generationId, gen)
-      armDeadline(gen, 'send')
 
       // 8. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
       click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit' })
       return null
     })
     if (early) return early
-    if (!click?.success) {
+    // M2-R1 F4(b)(A4/B5): mouseDown 이 나가기 전의 실패만 "클릭 없음"(gen 삭제, postClick 없음). dispatched 면 페이지가 제출(과금)했을 수
+    //   있다 — gen 을 armed 로 두고 waiter/마감 경로로(늦은 send 는 바인딩, 없으면 not-sent + 크레딧 재판독 → lost 격상). finishVideoGen 이
+    //   모든 실패에 postClick:true 를 단다.
+    if (!click?.success && !click?.dispatched) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
       deps.pendingGenerations.delete(generationId)
       return kindResult('generate-button-click-failed')
     }
+    if (!click?.success) console.warn(`[Flow Video T2V] [Angular] click failed after dispatch gen=${generationId.slice(-8)} — keeping gen armed (postClick)`)
+    // M2-R1 F4(c)(d): send 마감(15s)은 클릭이 돌아온 **뒤**에 arm — 클릭은 뮤텍스 대기 포함 30s 까지 걸릴 수 있어 클릭 전에 arm 하면 정상 send 가
+    //   마감에 잘리고 과금된 영상이 not-sent("다시 시도")로 둔갑한다. 클릭 중 이미 send 가 바인딩됐거나 완료됐으면 재arm 하지 않는다.
+    //   not-sent 의 크레딧 재판독은 이 마감이 울린 뒤(finishVideoGen)라 arm 직후가 아니다.
+    if (!gen.completed && gen.sentAt == null) armDeadline(gen, 'send')
     console.log(`[Flow Video T2V] [Angular] clicked gen=${generationId.slice(-8)} — waiting for YhhmEf`)
     await waiter
     deps.pendingGenerations.delete(generationId)
@@ -464,6 +493,11 @@ export function createFlowAngular(deps) {
   /** as29s 연속 실패 수(mediaId 별) — 3회까지 pending, 4회째 flow-video-fetch-failed. 성공하면 리셋. */
   const as29sFailures = new Map()
   const AS29S_MAX_FAILURES = 3
+  /** M2-R1 F7(A7): jwpduf 가 폴한 id 의 레코드를 안 주는 횟수(id 별) — 같은 유계(3회 pending, 4회째 fetch-failed + mediaId). 레코드가 오면 리셋. */
+  const noRecordFailures = new Map()
+  /** M2-R1 F7: 무효 id(문자열 아님·빈 문자열)는 회수할 것이 없다 — mediaId 없이 failed. 입력 id 마다 정확히 하나의 status(순서 유지). */
+  const isValidId = (x) => typeof x === 'string' && x.length > 0
+  const invalidIdStatus = () => ({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed' })
   /** 미지 상태 warn 은 id·상태당 1회. */
   const unknownStateWarned = new Set()
   /** 읽기 RPC 실패 → 항목 결과(pending + pollError, 코드/상태는 필드). */
@@ -475,21 +509,33 @@ export function createFlowAngular(deps) {
 
   /** flow:check-video-status(Flow 모드) — M2-5. token 없이(페이지 컨텍스트 XHR 이 쿠키·at 을 든다). */
   async function checkVideoStatus(payload = {}) {
-    const ids = (Array.isArray(payload.generationIds) ? payload.generationIds : []).filter((x) => typeof x === 'string' && x)
+    // M2-R1 F7: 입력 id 마다 정확히 하나의 status 를 입력 순서로 — 무효 id 를 걸러내 statuses 가 짧아지면 engineFlow 의 index-zip 이
+    //   aligned=false 로 전원(완료된 과금 항목 포함) pending 에 묶는다.
+    const ids = Array.isArray(payload.generationIds) ? payload.generationIds : []
     const flowView = deps.getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     const gate = await sessionGate(flowView)
-    if (gate) return gate
+    if (gate) {
+      // M2-R1 F3(A3/B3): 폴의 세션 게이트 실패(다른 페이지·WIZ 없음)는 일시적일 수 있다(뷰 재로드 중) — 최상위 authFailed 로 닫으면 훅이
+      //   이미 과금된 pending 전부를 errorKind:'auth'(mediaId null, 회수 불가) 로 잃는다. 요청 id 마다 {pending, pollError} 로 항목별 폴 예산만
+      //   소모한다. authFailed 는 읽기 RPC 의 HTTP 401 / code 16 만(아래 rpcErrorToRendererResult).
+      console.warn(`[Flow VideoStatus] [Angular] session gate failed reason=${gate.error} → pollError for ${ids.length} ids`)
+      return { success: true, statuses: ids.map((id) => (isValidId(id) ? { status: 'pending', pollError: 'flow-session-missing' } : invalidIdStatus())) }
+    }
     if (ids.length === 0) return { success: true, statuses: [] }
 
     const statuses = []
     for (const id of ids) {
+      if (!isValidId(id)) {
+        console.warn('[Flow VideoStatus] [Angular] invalid generation id → flow-video-fetch-failed')
+        statuses.push(invalidIdStatus())
+        continue
+      }
       // 1. jwpduf — id 당 1회. 레코드의 mediaId 가 폴한 id 와 다르면 오배정하지 않고 폴 실패로 본다.
       let record = null
       try {
         const { records } = parseVideoStatusResponse(await callFlowRpc(flowView, 'jwpduf', [null, null, [[id]]]))
         record = records.find((r) => r.mediaId === id) || null
-        if (!record) throw new FlowRpcShapeError('jwpduf response has no record for the polled media', { rpcid: 'jwpduf', path: '[2]' })
       } catch (e) {
         const mapped = rpcErrorToRendererResult(e)
         if (mapped.authFailed) return mapped
@@ -498,6 +544,22 @@ export function createFlowAngular(deps) {
         statuses.push(pollErrorStatus(mapped))
         continue
       }
+      if (!record) {
+        // M2-R1 F7: 폴한 id 의 레코드 없음(삭제·옛 세션 잔존·미지 id) — 영원한 일시 실패로 두면 그 항목 하나가 배치를 20분 붙잡는다.
+        //   as29s 와 같은 유계: 3회 pending+pollError, 4회째 fetch-failed(+mediaId — 회수 시도는 남긴다).
+        const n = (noRecordFailures.get(id) || 0) + 1
+        noRecordFailures.set(id, n)
+        void report('rpc-shape:jwpduf@[2]', 'shape', { rpc: 'jwpduf' })
+        console.warn(`[Flow VideoStatus] [Angular] ${short(id)} no record for the polled media n=${n}`)
+        if (n > AS29S_MAX_FAILURES) {
+          noRecordFailures.delete(id)
+          statuses.push({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed', mediaId: id })
+        } else {
+          statuses.push(pollErrorStatus({}))
+        }
+        continue
+      }
+      noRecordFailures.delete(id)
       const st = mediaStateToStatus(record.state)
       if (st === 'pending') {
         console.log(`[Flow VideoStatus] [Angular] ${short(id)} state=${record.state} → pending`)

@@ -389,13 +389,43 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
     expect(r2).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-not-offered' })
   })
 
-  it('항목 클릭이 하위 메뉴만 열면(트리거 라벨 불변·두 번째 role=menu) Escape 후 model-submenu-unknown — model-not-reflected 가 아니다', async () => {
+  // M2-R1 F6(A6/B6): 오버레이는 스택(패널·메뉴·하위 메뉴) — Escape 하나는 맨 위만 닫는다. "닫힘" = 라디오 소멸 **그리고** [role=menu] 없음이라
+  //   하위 메뉴 케이스는 Escape 3번(재스캔마다)이고, 패널만 닫히고 메뉴가 남으면 closed:false 로 돌아가 main 이 트리거를 trusted 재클릭한다.
+  it('항목 클릭이 하위 메뉴만 열면(트리거 라벨 불변·두 번째 role=menu) Escape ×3(하위 메뉴→메뉴→패널) 후 model-submenu-unknown, closed:true', async () => {
     const doc = mount(videoPage())
     const log = installFakeAngular(doc, { modelSubmenu: true })
     const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 6, model: 'Veo 3.1 - Fast' }, noSleep)
     expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-submenu-unknown', closed: true })
-    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'keydown:Escape:27'])
+    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'keydown:Escape:27', 'keydown:Escape:27', 'keydown:Escape:27'])
     expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+  })
+
+  it('패널은 닫혔는데 메뉴가 남으면(Escape 가 메뉴를 못 닫음) closed:false — 열린 메뉴는 "닫힘"이 아니다; 효과 없는 Escape 뒤엔 더 보내지 않는다', async () => {
+    const doc = mount(videoPage())
+    const log = installFakeAngular(doc, { modelSubmenu: true, escapeLeavesMenus: true })
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 6, model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r).toMatchObject({ ok: false, reason: 'model-submenu-unknown', closed: false })
+    expect(log.filter((x) => x.startsWith('keydown:')).length).toBe(2)   // 1: 패널 닫힘(메뉴 남음) · 2: 변화 없음 → 중단
+    expect(scanSettingsPanel(doc).ok).toBe(false)                 // 패널(라디오)은 사라졌지만
+    expect(doc.querySelectorAll('[role="menu"]').length).toBe(2)   // 메뉴·하위 메뉴가 남아 있다
+  })
+
+  it('applyComposerSettings(main) + 실제 드라이버: 패널만 닫히고 메뉴가 남으면 closed:false → 트리거 trusted 재클릭(settings-trigger-close)', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const doc = mount(videoPage())
+      installFakeAngular(doc, { modelSubmenu: true, escapeLeavesMenus: true })
+      const calls = []
+      const flowView = { webContents: { executeJavaScript: vi.fn(async (js) => window.eval(js)) } }
+      const trustedClickOnFlowView = vi.fn(async (_sel, o) => { calls.push(`trusted:${o?.step}`); return { success: true } })
+      const p = applyComposerSettings(flowView, { ...VIDEO_TARGET, duration: 6, model: 'Veo 3.1 - Fast' }, { trustedClickOnFlowView })
+      let r
+      p.then((v) => { r = v })
+      for (let t = 0; t < 30000 && r === undefined; t += 100) await vi.advanceTimersByTimeAsync(100)
+      expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-submenu-unknown' })
+      expect(calls).toEqual(['trusted:settings-trigger', 'trusted:settings-trigger-close'])
+    } finally { warn.mockRestore(); vi.useRealTimers() }
   })
 
   it('applyComposerSettings(main) 영상: §4 M2 한 줄 로그 + 닫힌 요약 crop_9_16 검증(Omni 9:16 은 패널이 보장)', async () => {

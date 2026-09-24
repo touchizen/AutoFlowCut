@@ -217,10 +217,14 @@ export async function settingsDriverCore(doc, targets, deps) {
   // 패널 닫기 — CDK 오버레이는 **document.body 의 keydown 을 keyCode===27** 로 판정한다(R1#3; 2026-09-24 실기: document 에
   //   key:'Escape' 만 보낸 옛 코드는 못 닫았고 트리거 재클릭이 닫았다). 초기화 사전이 keyCode/which 를 무시하는 엔진을
   //   위해 값을 직접 박는다. 안 닫히면 closed:false — main 이 트리거를 trusted 재클릭한다.
-  //   M2-2: 모델 메뉴·하위 메뉴가 패널 위에 겹쳐 있을 수 있다(오버레이 스택) — 패널이 남아 있고 열린 [role=menu] 가 아직
-  //   있을 때만 Escape 를 더 보낸다(최대 3번). 메뉴가 없으면 한 번으로 끝(옛 동작 그대로).
+  //   M2-2/M2-R1 F6(A6/B6): 모델 메뉴·하위 메뉴가 패널 위에 겹쳐 있을 수 있다(CDK 오버레이 **스택** — Escape 하나는 맨 위 하나만 닫는다).
+  //   "닫힘" = 패널 라디오 소멸 **그리고** 열린 [role=menu] 없음. 그때까지 Escape 를 더 보낸다(최대 3 = 하위 메뉴·메뉴·패널, 보낼 때마다
+  //   재스캔). 패널만 닫히고 메뉴가 남으면 false — 열린 메뉴가 다음 생성의 트리거 hit-test 를 막으므로 main 이 트리거를 trusted 재클릭한다.
+  const closedNow = () => !scan(doc).ok && !doc.querySelector('[role="menu"]')
+  const overlayDepth = () => (scan(doc).ok ? 1 : 0) + doc.querySelectorAll('[role="menu"]').length
   const closePanel = async () => {
     for (let n = 0; n < 3; n++) {
+      const before = overlayDepth()   // Escape 를 보내기 **전**의 깊이(동기 핸들러가 즉시 닫아도 변화를 본다)
       try {
         const win = doc.defaultView
         const KE = win && win.KeyboardEvent ? win.KeyboardEvent : KeyboardEvent
@@ -230,8 +234,9 @@ export async function settingsDriverCore(doc, targets, deps) {
         }
         ;(doc.body || doc).dispatchEvent(ev)
       } catch (_e) { return false }
-      if (await waitFor(() => !scan(doc).ok, 1500)) return true
-      if (!doc.querySelector('[role="menu"]')) return false
+      const changed = await waitFor(() => closedNow() || overlayDepth() < before, 1500)
+      if (closedNow()) return true
+      if (!changed) return false   // 이 Escape 가 아무것도 안 닫았다 — 더 보내도 소용없다(main 의 트리거 재클릭이 맡는다)
     }
     return false
   }

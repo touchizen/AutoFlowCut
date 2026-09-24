@@ -36,12 +36,12 @@ const AUTH_RESULT = { success: false, authFailed: true, errorKind: 'flow-session
 const t = (k, p) => (p && p.error !== undefined ? `${k}:${p.error}` : k)
 const AUTH_TEXT = 'Auth error. Please login to Flow and try again.'   // getAuthErrorMessage('flow', t) 의 폴백(t 가 키를 돌려주므로)
 
-function setupHook({ generateImage, submitGeneration, refType = 'character' }) {
+function setupHook({ generateImage, submitGeneration, refType = 'character', mode = 'flow' }) {
   window.electronAPI = { ...(window.electronAPI || {}), refreshFlowComposer: vi.fn().mockResolvedValue({ success: true }) }
   let liveRefs = [{ id: 'hero', type: refType, prompt: 'hero portrait', status: 'pending' }]
   const setReferences = vi.fn((updater) => { liveRefs = typeof updater === 'function' ? updater(liveRefs) : updater })
   const genAPI = {
-    mode: 'flow',
+    mode,
     getAccessToken: vi.fn().mockResolvedValue('flow-session'),
     flowSessionReason: vi.fn(() => null),
     clearTokenCache: vi.fn(),
@@ -98,5 +98,31 @@ describe('useReferenceGeneration — authFailed 결과의 문구', () => {
     const { result, getLiveRefs } = setupHook({ generateImage: vi.fn().mockResolvedValue({ success: false, authFailed: true, error: 'Auth expired — please re-login to Flow' }) })
     await act(async () => { await result.current.handleGenerateRef(0) })
     expect(getLiveRefs()[0]).toMatchObject({ status: 'error', errorKind: 'auth', errorMessage: 'Auth expired — please re-login to Flow' })
+  })
+})
+
+// M2-R1 F14(B8): 배치 submit 의 authFailed 토스트는 Flow 모드만 — API 모드는 flow-login-expired 가 이미 API 키 모달을 연다(useFlowEvents) 라 이중 알림.
+describe('useReferenceGeneration — 배치 submit authFailed 토스트는 Flow 모드만', () => {
+  const loginExpired = () => new Promise((resolve) => { window.addEventListener('flow-login-expired', () => resolve(true), { once: true }) })
+
+  it('API 모드: flow-login-expired 는 발화(키 모달), 토스트는 없다', async () => {
+    const fired = loginExpired()
+    const submitGeneration = vi.fn().mockResolvedValue(AUTH_RESULT)
+    const { result } = setupHook({ submitGeneration, refType: 'place', mode: 'api' })
+    await act(async () => { await result.current.handleGenerateAllRefs() })
+    expect(submitGeneration).toHaveBeenCalledTimes(1)
+    expect(await fired).toBe(true)
+    expect(toastMock.error.mock.calls.some((c) => String(c[0]).startsWith('toast.generateFailed'))).toBe(false)
+  })
+
+  it('Flow 모드: flow-login-expired 발화 + 토스트(사람 문구) 1회', async () => {
+    const fired = loginExpired()
+    const submitGeneration = vi.fn().mockResolvedValue(AUTH_RESULT)
+    const { result } = setupHook({ submitGeneration, refType: 'place', mode: 'flow' })
+    await act(async () => { await result.current.handleGenerateAllRefs() })
+    expect(await fired).toBe(true)
+    const calls = toastMock.error.mock.calls.filter((c) => String(c[0]).startsWith('toast.generateFailed'))
+    expect(calls).toHaveLength(1)
+    expect(String(calls[0][0])).toContain(AUTH_TEXT)
   })
 })

@@ -69,3 +69,15 @@ describe.each([['en', en], ['ko', ko]])('%s — flow.google.com 재작업 로케
     expect(placeholders(text)).toEqual((PARAMS[kind] || []).slice().sort())
   })
 })
+
+// M2-R1 F10(A10): download-entitlement 는 이미지(imageFinalize)와 영상이 같이 쓰는 kind — 문구가 매체를 말하면 이미지 씬에 "영상" 안내가 뜬다.
+describe('errorSection.kind.download-entitlement 는 매체 중립', () => {
+  it('ko: "영상/비디오" 없음, 정본 문구', () => {
+    expect(ko.errorSection.kind['download-entitlement']).toBe('다운로드 권한이 없어 이 결과를 저장하지 않았습니다. Pro로 업그레이드한 뒤 Retry로 다시 받을 수 있습니다.')
+    expect(ko.errorSection.kind['download-entitlement']).not.toMatch(/영상|비디오|이미지/)
+  })
+  it('en: no "video"/"image", canonical wording', () => {
+    expect(en.errorSection.kind['download-entitlement']).toBe('Download not allowed — this result was not saved. Upgrade to Pro, then use Retry to download it.')
+    expect(en.errorSection.kind['download-entitlement']).not.toMatch(/\b(video|image)\b/i)
+  })
+})
