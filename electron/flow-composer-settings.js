@@ -345,10 +345,18 @@ export async function applyComposerSettings(flowView, opts, deps) {
       if (!c || !c.success) { steps = r.steps || {}; await closeLeftOpen(); return fail('settings-radio-click-failed:' + n.group) }
     }
     r = await runDriver()
+    // R2-2#3: trusted 클릭 뒤 재실행도 needs-trusted(모드 라디오 재렌더 → 다른 라디오도 합성 클릭 무시) — needs-trusted 는
+    //   패널을 일부러 열어 두고(closed 없음) 나오므로 여기서 닫고 실패한다. 한 번 더 돌리지 않는다(무한 루프 방지).
+    if (r && Array.isArray(r.needsTrusted) && r.needsTrusted.length) {
+      steps = r.steps || {}
+      await closeLeftOpen()
+      return fail('needs-trusted:' + r.needsTrusted[0].group)
+    }
   }
   steps = (r && r.steps) || {}
   if (!r || !r.ok) {
-    if (!r || r.closed === false) await closeLeftOpen()
+    // closed:true 가 아니면(false 또는 없음) 열려 있다고 보고 닫는다(R2-2#3).
+    if (!r || r.closed !== true) await closeLeftOpen()
     const kind = r?.kind || 'flow-settings-not-applied'
     const reason = r?.reason || kind
     console.warn(`[Flow Settings] ${mode} ${formatSteps(steps)} ok=false reason=${reason}`)

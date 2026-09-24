@@ -573,6 +573,20 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           setStatusMessage(`🔐 ${authErrorMessage()}`)
           console.warn(`[VideoAutomation] ❌ Submit authFailed: token dead, stopping batch`)
           return
+        } else if (genResult?.errorKind === 'flow-feature-unsupported') {
+          // R2-2#2: 제출 시점의 flow-feature-unsupported 도 종결 — 폴링 루프(아래 R1#8)와 같은 규칙. 항목마다 7~15초
+          //   페이싱을 두고 하나씩 실패시키면 30항목 배치가 5분을 허비한다. 이 항목 + 남은 freshGen 전부 그 kind 로 닫고 반환.
+          const unsupported = { error: genResult.error || 'flow-feature-unsupported', errorKind: 'flow-feature-unsupported' }
+          for (let j = i; j < freshGen.length; j++) {
+            onItemUpdate?.(freshGen[j].id, 'error', unsupported)
+            videoErrorCount++
+          }
+          nextFreshIdx = freshGen.length
+          terminalStopped = true
+          setStatus('error')
+          setStatusMessage(`⚠️ ${t('errorSection.kind.flow-feature-unsupported')}`)
+          console.warn('[VideoAutomation] ❌ Submit flow-feature-unsupported — stopping batch')
+          return
         } else {
           // 일반 실패 — 이 항목만 error 처리하고 다음 진행. quota 면 batch stop.
           // #R36-fix(Codex R1[3]): @멘션 칩 삽입 실패(staleMention) 를 App 으로 전파 → ref 를 failed 로
@@ -607,7 +621,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // in-flight 도 없고 제출도 0건 — auth/quota/일반 실패 구분 후 조기 종료.
     if (pending.size === 0) {
       setIsRunning(false)
-      if (authStopped) {
+      if (authStopped || terminalStopped) {
         // Status + message already set at the submit break site — do not overwrite.
       } else if (quotaStoppedRef.current) {
         // local ref — 모달 dismiss 와 무관하게 이번 batch 의 stop 사유를 정확히 판별.

@@ -4,6 +4,8 @@
  * 씬 경로(R1#6/R2#5, useAutomation.authFailureText)와 같은 규칙: authFailed 결과에 errorKind 가 있으면(새 Flow 의
  * flow-session-missing 등 — error 는 'not-on-flow'/'wiz-missing' 같은 이유 토큰) 저장 errorMessage 와 토스트 문구는
  * authErrorMessage() 다. 단일 ref(handleGenerateRef)·배치(handleGenerateAllRefs) 둘 다.
+ * 배치의 submitGeneration 자리는 Flow 모드에서 character 가 아닌 ref 만 탄다(character 는 단건 경로 _executeGenerateRef 로
+ * 우회, :1067) — 배치 케이스는 place ref 로 그 자리를 실제로 지난다.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
@@ -34,9 +36,9 @@ const AUTH_RESULT = { success: false, authFailed: true, errorKind: 'flow-session
 const t = (k, p) => (p && p.error !== undefined ? `${k}:${p.error}` : k)
 const AUTH_TEXT = 'Auth error. Please login to Flow and try again.'   // getAuthErrorMessage('flow', t) 의 폴백(t 가 키를 돌려주므로)
 
-function setupHook({ generateImage, submitGeneration }) {
+function setupHook({ generateImage, submitGeneration, refType = 'character' }) {
   window.electronAPI = { ...(window.electronAPI || {}), refreshFlowComposer: vi.fn().mockResolvedValue({ success: true }) }
-  let liveRefs = [{ id: 'hero', type: 'character', prompt: 'hero portrait', status: 'pending' }]
+  let liveRefs = [{ id: 'hero', type: refType, prompt: 'hero portrait', status: 'pending' }]
   const setReferences = vi.fn((updater) => { liveRefs = typeof updater === 'function' ? updater(liveRefs) : updater })
   const genAPI = {
     mode: 'flow',
@@ -79,9 +81,12 @@ describe('useReferenceGeneration — authFailed 결과의 문구', () => {
   })
 
   it('배치 ref: submitGeneration 의 같은 결과 → errorKind:auth + 사람 문구, 토스트에 기계 토큰 없음', async () => {
-    const { result, setReferences } = setupHook({ submitGeneration: vi.fn().mockResolvedValue(AUTH_RESULT) })
+    const submitGeneration = vi.fn().mockResolvedValue(AUTH_RESULT)
+    const { result, setReferences, genAPI } = setupHook({ submitGeneration, refType: 'place' })
     await act(async () => { await result.current.handleGenerateAllRefs() })
-    const patches = setReferences.mock.calls.map(([u]) => (typeof u === 'function' ? u([{ id: 'hero', type: 'character', prompt: 'hero portrait', status: 'generating' }]) : u))
+    expect(submitGeneration).toHaveBeenCalledTimes(1)   // 배치의 submitGeneration 자리를 지났다(직접 경로가 아니다)
+    expect(genAPI.generateImage).not.toHaveBeenCalled()
+    const patches = setReferences.mock.calls.map(([u]) => (typeof u === 'function' ? u([{ id: 'hero', type: 'place', prompt: 'hero portrait', status: 'generating' }]) : u))
     const marked = patches.flat().find((r) => r.id === 'hero' && r.status === 'error' && r.errorKind === 'auth')
     expect(marked).toBeTruthy()
     expect(marked.errorMessage).toBe(AUTH_TEXT)

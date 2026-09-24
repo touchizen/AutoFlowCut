@@ -468,3 +468,16 @@
 | 38 | R1#13/R2#10 | 디스패치 테스트는 `makeDeps` 가 만든 flowView 의 `loadURL`/`executeJavaScript` 를 본다; 도메인 게이트 하네스는 WIZ true 로 세션 게이트를 지나고 `errorKind !== 'flow-session-missing'` 을 단언. | |
 | 39 | R2#4 | 하네스에서 옛 deps 스파이를 실제 헬퍼 **뒤에** 스프레드. 뮤테이션(핸들러가 `configureFlowMode` 호출) 으로 "미호출" 단언이 빨개짐을 확인 후 복구. | |
 | 40 | 실기 관찰 | `closeAgentPanels`(ensureAgentOff 의 선제 정리)는 옛 챗/설정 닫기 버튼을 `!!(selector)` 프로브로 확인한 뒤에만 trusted 클릭한다 — 새 DOM 에 없는 버튼을 매번 누르며 남기던 "[TrustedClick] Button not found" 2건과 bounds 왕복이 사라진다. | 브리프의 "trivial to skip on the new host" 조건에 해당해 포함. |
+
+## 12. 구현 메모 (M2)
+
+### 12.0 회수 — M1 R2 부록의 빨간 10단언을 초록으로 (2026-09-25, 메인 루프)
+
+`cd306346` 이 실패 테스트만 먼저 써 둔 4벌(10단언)의 구현. 부록(`briefs/2026-09-25/fable-m1-r2-addendum.md`) #2·#3·#5·#8 에 해당하며, 나머지 #1·#4·#6·#7 은 M2 저자가 #45~#48 로 잇는다.
+
+| # | 부록 | 내용 | 비고 |
+|---|---|---|---|
+| 41 | #2 (O1#2/O2#1) | 레퍼런스 훅에 씬 경로와 같은 `authFailureText`(kind 동반 authFailed → `authErrorMessage()`, kind 없는 옛 결과는 error 그대로). 저장 errorMessage 3곳(단일 `handleGenerateRef`·배치 collect·배치 submit)과 `displayResultError` 가 쓴다. 배치 submit 의 authFailed 는 `toast.generateFailed` 도 띄운다 — Flow 모드의 `flow-login-expired` 는 `useFlowEvents` 가 로그만 남기므로 전엔 왜 멈췄는지 아무 표시가 없었다. | **테스트 픽스처 수정**: Flow 모드의 character ref 는 배치에서도 단건 경로(`_executeGenerateRef`, `:1067`)로 우회해 `submitGeneration` 을 안 부른다(`generateImage` 미정의로 `result.success` TypeError). 배치 케이스는 place ref 로 그 자리를 실제로 지나고 `submitGeneration` 1회·`generateImage` 0회를 단언. |
+| 42 | #3 (O1#3/O2#4) | `applyComposerSettings`: trusted 라디오 클릭 뒤 재실행이 다시 needs-trusted 면(모드 라디오 재렌더) 트리거 재클릭으로 닫고 `needs-trusted:<group>` 실패 — 재실행은 1회뿐(무한 루프 없음). 실패 결과의 닫기 조건은 `closed !== true`(needs-trusted 는 `closed` 없이 열어 두고 나온다). | |
+| 43 | #5 (O2#2) | `useVideoAutomation.fillWindow`: 제출 결과가 `flow-feature-unsupported` 면 폴링 루프(#26)와 같은 종결 — 이 항목 + 남은 freshGen 전부 그 kind, 페이싱 없이 반환, `terminalStopped`. 제출 0건 조기 종료 분기는 `authStopped \|\| terminalStopped` 일 때 상태·문구를 덮어쓰지 않는다. | M2 가 스텁을 대체해도 다른 미지원 kind 에 그대로 쓰인다. |
+| 44 | #8 (O2#7) | 넓어진 kind 스캔(`kindResult('…')`/`errorKind:'…'` 접두 무관 + shared/video/flow-api/character 소스)이 찾은 렌더러 kind 셋 `download-entitlement`·`stopped`·`unresolved-mentions` 의 ko/en 문구(params 없음). | 셋 다 free-form error 가 있어 유출은 없었고, 표시는 kind 문구로 바뀐다. `unresolved-mentions` 의 이름 목록은 `useSceneGeneration` 의 멘션 동기화 제안이 `unresolvedNames` 로 따로 받는다. |

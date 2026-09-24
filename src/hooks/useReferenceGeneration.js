@@ -54,10 +54,13 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   const authErrorMessage = () => getAuthErrorMessage(genAPI?.mode, t)
   const authRequiredMessage = () => getAuthRequiredMessage(genAPI?.mode, t, genAPI?.flowSessionReason?.())
   const resultErrorKind = (result) => result?.authFailed ? 'auth' : (result?.errorKind ?? null)
+  // R2-2#2(O1#2/O2#1): 씬 경로(useAutomation.authFailureText)와 같은 규칙 — authFailed 결과에 errorKind 가 있으면(새 Flow 의
+  //   flow-session-missing 등, error 는 'not-on-flow'/'wiz-missing' 같은 이유 토큰) 저장 문구·토스트는 사람 문구다.
+  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
   const displayResultError = (result, fallback) => resolveDisplayError(
     t,
     resultErrorKind(result),
-    result?.error || fallback,
+    result?.authFailed ? authFailureText(result) : (result?.error || fallback),
     result?.errorParams,
   )
   // M1-10: 비-스타일 ref 만 업스케일하므로 그때만 엔진 게이트에 설정을 넘긴다(Flow 모드는 제출 전에 거부).
@@ -481,7 +484,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
             current => ({
                 ...current,
                 status: 'error',
-                errorMessage: result.error || 'Generation failed',
+                errorMessage: result.authFailed ? authFailureText(result) : (result.error || 'Generation failed'),
                 errorKind: (result.authFailed || isAuthError) ? 'auth' : (result.errorKind ?? null),
                 ...(result.errorParams ? { errorParams: result.errorParams } : {}),
               })
@@ -622,7 +625,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
         current => ({
             ...current,
             status: 'error',
-            errorMessage: result.error || 'Generation failed',
+            errorMessage: result.authFailed ? authFailureText(result) : (result.error || 'Generation failed'),
             errorKind: resultErrorKind(result),
           })
       ))
@@ -1158,6 +1161,8 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               stopRequestedRef.current = true
               authStoppedRef.current = true
               window.dispatchEvent(new CustomEvent('flow-login-expired'))
+              // R2-2#2: Flow 모드의 flow-login-expired 는 로그만 남긴다(useFlowEvents) — 왜 멈췄는지 사람 문구로 알린다.
+              toast.error(t('toast.generateFailed', { error: displayResultError(submitResult, 'Submit failed') }))
             }
             removeBatchGeneratingRef(busyIndex)
             // #R25-5: authFailed 면 errorKind:'auth' 도 남겨 안정적 auth 표식 유지.
@@ -1168,7 +1173,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               current => ({
                   ...current,
                   status: 'error',
-                  errorMessage: submitResult?.error || 'Submit failed',
+                  errorMessage: submitResult?.authFailed ? authFailureText(submitResult) : (submitResult?.error || 'Submit failed'),
                   errorKind: resultErrorKind(submitResult),
                   ...(submitResult?.errorParams ? { errorParams: submitResult.errorParams } : {}),
                 })
