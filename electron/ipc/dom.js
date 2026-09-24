@@ -8,7 +8,7 @@
 import { screen } from 'electron'
 import { updateBounds } from './layout.js'
 import { AGENT_TOGGLE_SELECTOR } from '../flow-agent-toggle.js'
-import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS } from '../flowOpenRetry.js'
+import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS, waitForProjectLoaded, OPEN_SETTLE_TIMEOUT_MS } from '../flowOpenRetry.js'
 import { flowBaseFromUrl, flowProjectUrl, onProjectComposerUrl } from '../flowUrl.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { FIND_NEW_PROJECT_BUTTON_JS } from '../flow-new-project-button.js'
@@ -99,11 +99,10 @@ export function registerDomIPC(ipcMain, deps) {
         return { urlNow, onTargetUrl, isErrorPage: isFlowErrorPage(page), probeOk, page }
       }
 
-      // 이미 그 프로젝트 URL 이면 페이지만 확인(로딩이면 1.5s 대기 후 재확인).
+      // 이미 그 프로젝트 URL 이면 페이지만 확인 — 그려질 때까지(최대 OPEN_SETTLE_TIMEOUT_MS) 기다린다.
       if (cur.includes(`/project/${flowProjectId}`)) {
-        let p = await probe()
-        if (!p.onTargetUrl || p.isErrorPage) { await sleep(1500); p = await probe() }
-        if (p.onTargetUrl && !p.isErrorPage) return { success: true, already: true, url: p.urlNow }
+        const p = await waitForProjectLoaded(probe, { timeoutMs: OPEN_SETTLE_TIMEOUT_MS, sleep })
+        if (p.loaded) return { success: true, already: true, url: p.urlNow }
         // 에러면 아래 재네비 경로로 떨어진다.
       }
 
@@ -111,8 +110,10 @@ export function registerDomIPC(ipcMain, deps) {
       const MAX_ATTEMPTS = 2 // 최초 1 + 재시도 1
       await flowView.webContents.loadURL(target).catch((e) => console.warn('[Flow Project] loadURL failed:', e.message))
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        await sleep(2000) // 로드/에러 표시 안정화 대기
-        const p = await probe()
+        // 새 flow.google.com 은 미디어 목록이 5~6초 뒤에 와 컴포저가 늦게 그려진다(2026-09-24 캡처) —
+        //   고정 2초 뒤 한 번 검사하면 로딩 중 페이지를 에러로 오판한다. 그려질 때까지 폴링(상한 15s).
+        await sleep(1000)
+        const p = await waitForProjectLoaded(probe, { timeoutMs: OPEN_SETTLE_TIMEOUT_MS, sleep })
         const action = decideFlowOpenAction({ onTargetUrl: p.onTargetUrl, isErrorPage: p.isErrorPage, attempt, maxAttempts: MAX_ATTEMPTS })
         if (action === 'success') return { success: true, url: p.urlNow }
         if (action === 'fail') {

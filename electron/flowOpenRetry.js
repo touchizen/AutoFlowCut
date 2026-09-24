@@ -75,3 +75,29 @@ export function decideFlowOpenAction({ onTargetUrl, isErrorPage, attempt, maxAtt
 export function isDeadMappingFailure({ onTargetUrl, isErrorPage, probeOk = true }) {
   return !!(onTargetUrl && isErrorPage && probeOk)
 }
+
+/** 컴포저가 그려질 때까지 기다리는 상한(ms). 2026-09-24 캡처(flow.google.com): 문서 로드 뒤 RPC 응답은
+ *  1~2초, 미디어 목록(Zzl0ze)은 5~6초 뒤에 오고 컴포저는 그 뒤에 그려진다. 15초면 느린 회선도 덮는다. */
+export const OPEN_SETTLE_TIMEOUT_MS = 15000
+
+/**
+ * 페이지가 "대상 프로젝트의 컴포저"로 안정될 때까지 probe 를 반복한다(순수 — probe/sleep/now 주입).
+ *   옛 open-project 는 loadURL 2초 뒤 **한 번만** 검사해, 아직 안 그려진 페이지(인터랙티브 7개: 숨은
+ *   reCAPTCHA textarea 등)를 에러 페이지로 오판했다 → 홈 경유 재시도 → dead=true → flowProjectReady
+ *   false 고착(2026-09-24 실기). 살아 있으면 즉시 반환하고, 마감(timeoutMs)까지 intervalMs 마다 다시 본다.
+ * @param {() => Promise<{onTargetUrl:boolean,isErrorPage:boolean}>} probe
+ * @returns {Promise<object>} 마지막 관찰 + { loaded, attempts }
+ */
+export async function waitForProjectLoaded(probe, { timeoutMs = OPEN_SETTLE_TIMEOUT_MS, intervalMs = 1000, sleep, now = Date.now } = {}) {
+  const wait = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)))
+  const loaded = (p) => !!(p && p.onTargetUrl && !p.isErrorPage)
+  const deadline = now() + timeoutMs
+  let p = await probe()
+  let attempts = 1
+  while (!loaded(p) && now() < deadline) {
+    await wait(intervalMs)
+    p = await probe()
+    attempts++
+  }
+  return { ...p, loaded: loaded(p), attempts }
+}
