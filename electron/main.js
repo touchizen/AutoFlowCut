@@ -46,6 +46,7 @@ import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
 import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
+import { createBearerStore, bearerFromHeaders, isFlowApiRequest } from './flow-bearer-capture.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
@@ -125,6 +126,7 @@ const sentryMain = initSentryMain()
 // === Flow API URLs ===
 const FLOW_URL = 'https://labs.google/fx/tools/flow'
 const SESSION_URL = 'https://labs.google/fx/api/auth/session'
+const flowBearerStore = createBearerStore()
 const BASE_API_URL = 'https://aisandbox-pa.googleapis.com/v1'
 const GENERATE_URL = `${BASE_API_URL}/flowMedia:batchGenerateImages`
 const UPLOAD_URL = `${BASE_API_URL}/flow/uploadImage`
@@ -371,6 +373,41 @@ function makeFlowView() {
     view.webContents.executeJavaScript(FLOW_PAGE_INJECTION).catch(() => {})
   })
 
+  // Flow 페이지가 스스로 보내는 aisandbox 요청의 Bearer 를 잡아둔다 — flow.google.com 에는 세션 API 가
+  //   없어(2026-09-23) readFlowSession 이 이 값을 세션 대용으로 쓴다. 페이지 로드 시점 요청까지 보인다.
+  const flowNetHostsSeen = new Set()
+  view.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: ['<all_urls>'] },
+    (details, callback) => {
+      try {
+        const bearer = bearerFromHeaders(details.requestHeaders)
+        if (bearer && isFlowApiRequest(details.url)) flowBearerStore.set(bearer)
+        // AUTOFLOWCUT_NET_TRACE=1 일 때만 진단 로그를 찍는다 — 요청마다 나가는 로그는 프로덕션 콘솔과
+        //   Sentry breadcrumb(consoleIntegration) 소음이 된다. 값은 절대 찍지 않는다(scheme 단어만).
+        if (process.env.AUTOFLOWCUT_NET_TRACE === '1') {
+          const host = new URL(details.url).hostname
+          const pathname = new URL(details.url).pathname
+          const authHeader = Object.entries(details.requestHeaders || {}).find(([k]) => k.toLowerCase() === 'authorization')
+          const scheme = authHeader ? String(authHeader[1]).split(/\s+/)[0] : 'none'
+          // 호스트+인증방식별 1회 — 새 도메인이 어떤 인증(Bearer/SAPISIDHASH/없음)을 어디로 보내는지.
+          const key = `${host} ${scheme}`
+          if (!flowNetHostsSeen.has(key)) {
+            flowNetHostsSeen.add(key)
+            console.log('[Flow Net] host seen:', host, 'auth:', scheme, details.method, pathname.slice(0, 60))
+          }
+          // API 성격 요청을 전부 찍는다(method/host/path/scheme/type). 새 Flow 는 fetch 가 아니라
+          //   XHR 로 생성을 보내 페이지 주입(fetch) 캡처에 안 잡힌다 — 이 로그가 그걸 증명했다.
+          const apiLike = details.method !== 'GET' || /rpc|api|generate|batch|video|media|project|flow/i.test(pathname)
+          const assetHost = /gstatic|fonts\.|googleusercontent|googlevideo|analytics|googletagmanager|recaptcha/i.test(host + pathname)
+          if (apiLike && !assetHost) {
+            console.log('[Flow Net] req:', details.method, host, pathname.slice(0, 110), 'auth:', scheme, 'type:', details.resourceType)
+          }
+        }
+      } catch { /* 캡처 실패는 요청에 영향 없음 */ }
+      callback({ requestHeaders: details.requestHeaders })
+    }
+  )
+
   // Flow 페이지 네트워크에서 projectId 자동 캡처
   view.webContents.session.webRequest.onBeforeRequest(
     { urls: ['*://*/*'] },
@@ -540,11 +577,7 @@ function makeFlowView() {
         }
 
         // 2단계: 토큰 확인 (로그인 여부 체크)
-        const sessionData = await view.webContents.executeJavaScript(`
-          fetch('${SESSION_URL}')
-            .then(r => r.ok ? r.text() : null)
-            .catch(() => null)
-        `)
+        const sessionData = await readFlowSession(view)
         if (!sessionData) {
           console.log('[Flow API] No session data — user not logged in yet')
           return
@@ -740,6 +773,9 @@ function flowDiagSink() {
 const helpers = createSharedHelpers({
   getFlowView: modeController.getFlowView,
   getMainWindow: () => mainWindow,
+  // 세션 API 가 없는 새 도메인용 폴백 — 페이지 요청에서 잡아둔 Bearer (flow-bearer-capture.js)
+  getCapturedSessionText: () => flowBearerStore.sessionText(),
+  getCapturedBearerAgeMs: () => flowBearerStore.ageMs(),
   constants: {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
   },
@@ -748,7 +784,7 @@ const helpers = createSharedHelpers({
   onDomFailure: (step, detail) => flowDiagSink()(step, detail),
 })
 const {
-  trustedClickOnFlowView, parseFlowResponse, sessionFetch, flowPageFetch,
+  trustedClickOnFlowView, parseFlowResponse, readFlowSession, sessionFetch, flowPageFetch,
   getRecaptchaToken, extractMediaIds, extractFifeUrls, extractBase64Images,
   fetchMediaAsBase64, configureFlowMode, switchFlowToVideoMode, applyAgentDefaults,
   ensureAgentOff, selectFlowModeTab,
@@ -872,6 +908,7 @@ const flowAPIDeps = {
   setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
   getEnterToolClicked: () => enterToolClicked,
   setEnterToolClicked: (v) => { enterToolClicked = v },
+  readFlowSession,
   // URL constants
   SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
   API_HEADERS, GENERATE_URL, BASE_API_URL,

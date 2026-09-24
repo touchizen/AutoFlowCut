@@ -37,6 +37,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     setFlowPageInject, clearFlowPageInject,
     getCurrentMode,
     getApiBase, // #R33: region 대응 동적 API base (uploadImage 호스트)
+    readFlowSession, // 세션은 페이지 origin 후보 → 옛 주소 순으로 읽는다(flow-session.js)
     SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
     API_HEADERS, GENERATE_URL, BASE_API_URL,
   } = deps
@@ -90,11 +91,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     if (!flowView) return { success: false, error: 'Flow view not ready' }
 
     try {
-      const sessionData = await flowView.webContents.executeJavaScript(`
-        fetch('${SESSION_URL}')
-          .then(r => r.ok ? r.text() : null)
-          .catch(() => null)
-      `)
+      const sessionData = await readFlowSession(flowView)
 
       // ⚠️ 세션 본문은 절대 찍지 않는다 — access_token 과 이메일이 들어있고, Sentry 의
       //   consoleIntegration 이 main 콘솔을 breadcrumb 으로 걷어가므로 그대로 전송된다.
@@ -352,9 +349,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // 0.5. 토큰 자동 추출 (DOM 모드에서 token=null로 호출될 때)
       if (!token) {
         try {
-          const sessionData = await flowView.webContents.executeJavaScript(
-            `fetch('${SESSION_URL}').then(r => r.ok ? r.text() : null).catch(() => null)`
-          )
+          const sessionData = await readFlowSession(flowView)
           if (sessionData) {
             const parsed = parseFlowResponse(sessionData) || JSON.parse(sessionData)
             token = parsed?.access_token || parsed?.accessToken || null

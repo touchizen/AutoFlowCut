@@ -7,6 +7,7 @@
  * These are used by flow-api.js, video.js, dom.js via deps injection from main.js.
  */
 
+import { sessionUrlCandidates, buildSessionProbeJs } from '../flow-session.js'
 import { aspectRatioTabSuffix } from '../flow-aspect-ratio-ui.js'
 import { buildAgentDefaultsScript, buildListModelsScript } from '../flow-agent-defaults.js'
 import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR, AGENT_TOGGLE_DIAGNOSTIC } from '../flow-agent-toggle.js'
@@ -56,6 +57,9 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  */
 export function createSharedHelpers(ctx) {
   const { getFlowView, getMainWindow, constants, onDomFailure } = ctx
+  // 세션 API 가 없는 새 도메인용 폴백(main 의 flow-bearer-capture) — 없으면 폴백 없음.
+  const getCapturedSessionText = ctx.getCapturedSessionText ?? (() => null)
+  const getCapturedBearerAgeMs = ctx.getCapturedBearerAgeMs ?? (() => null)
   const flowPageFetchTimeoutMs = ctx.flowPageFetchTimeoutMs ?? FLOW_PAGE_FETCH_TIMEOUT_MS
 
   // 클릭 직렬화 — 두 클릭이 겹치면 서로의 임시(확대) bounds 를 자기 '원래 값'으로 스냅샷해
@@ -84,6 +88,26 @@ export function createSharedHelpers(ctx) {
   const {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
   } = constants
+
+  // ─── readFlowSession ──────────────────────────────────────────
+  /**
+   * Flow 뷰에서 세션 본문(access_token 포함)을 읽는다. 페이지 origin 의 same-origin 후보를 먼저,
+   * 옛 절대주소(SESSION_URL)를 마지막에 시도한다(flow-session.js). 토큰이 없으면 null.
+   * ⚠️ 본문은 절대 찍지 않는다 — 어느 후보가 답했는지만 로그한다.
+   */
+  async function readFlowSession(flowView) {
+    const candidates = sessionUrlCandidates(flowView.webContents.getURL(), SESSION_URL)
+    const r = await flowView.webContents.executeJavaScript(buildSessionProbeJs(candidates))
+    if (r && r.text) {
+      console.log('[Flow API] session probe: hit', r.url)
+      return r.text
+    }
+    // 세션 API 가 없는 도메인(flow.google.com) — 페이지 요청에서 잡아둔 Bearer 로 대신한다.
+    const captured = getCapturedSessionText()
+    console.log('[Flow API] session probe:', `miss (${candidates.length} candidates)`,
+      captured ? `→ captured bearer (age ${Math.round((getCapturedBearerAgeMs() || 0) / 1000)}s)` : '→ no captured bearer')
+    return captured
+  }
 
   // ─── trustedClickOnFlowView ───────────────────────────────────
   /**
@@ -1229,6 +1253,7 @@ export function createSharedHelpers(ctx) {
   return {
     trustedClickOnFlowView,
     parseFlowResponse,
+    readFlowSession,
     sessionFetch,
     flowPageFetch,
     getRecaptchaToken,
