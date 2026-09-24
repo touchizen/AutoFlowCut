@@ -7,6 +7,9 @@
 //   opts.modelReset 'on-count' : 뒤의 count 클릭이 duration 을 기본값으로 되돌린다(지연 리셋)
 //   opts.ignoreClicks          : 클릭에 반응하지 않는 그룹 이름 목록(합성 클릭을 무시하는 컨트롤 — needsTrusted 케이스)
 //   opts.stickyPanel           : Escape 로 닫히지 않는다
+//   opts.modelSubmenu          : (M2-2) 모델 메뉴 항목 클릭이 트리거 라벨을 바꾸지 않고 **하위 메뉴**만 연다(라이브 메뉴 항목엔
+//                                mat-mdc-menu-trigger·aria-expanded 가 있어 하위 메뉴가 달려 있다 — 내용 미관측)
+//   opts.modelMenuItems        : (M2-2) 메뉴 항목 목록 덮어쓰기(요청 모델이 없는 메뉴 — model-not-offered 케이스)
 // 리스너는 document/body 에 붙으므로 테스트마다 disposeFakeAngular() 로 이전 것을 abort 한다.
 import { buildSettingsPanel, buildModelMenu } from '../fixtures/flow-live-dom-20260924.js'
 
@@ -35,7 +38,8 @@ export function installFakeAngular(doc, opts = {}) {
     if (ligs.some((l) => /^crop_(16_9|9_16|landscape|square|portrait)$/.test(l))) return 'ratio'
     if (/^x\d$/.test(t)) return 'count'
     if (/\d+p/.test(t)) return 'resolution'
-    if (/초/.test(t)) return 'duration'
+    // M2-2: 길이 라벨은 로케일마다 다르다('4초'·'4s') — 드라이버와 같은 "앞자리 정수" 규칙으로 분류한다.
+    if (/^\d{1,2}\s*\D{0,8}$/.test(t)) return 'duration'
     return 'other'
   }
   const resetGroup = (group, key) => {
@@ -64,13 +68,19 @@ export function installFakeAngular(doc, opts = {}) {
       log.push('model-trigger')
       const open = btn.getAttribute('aria-expanded') === 'true'
       if (open) { doc.getElementById(btn.getAttribute('aria-controls'))?.closest('.cdk-overlay-pane')?.remove(); btn.setAttribute('aria-expanded', 'false'); btn.removeAttribute('aria-controls'); return }
-      doc.querySelector('.cdk-overlay-container').insertAdjacentHTML('beforeend', buildModelMenu('mat-menu-panel-20'))
+      doc.querySelector('.cdk-overlay-container').insertAdjacentHTML('beforeend', buildModelMenu('mat-menu-panel-20', opts.modelMenuItems))
       btn.setAttribute('aria-expanded', 'true'); btn.setAttribute('aria-controls', 'mat-menu-panel-20')
       return
     }
     if (btn.getAttribute('role') === 'menuitem') {
       const text = btn.querySelector('.mat-mdc-menu-item-text').textContent.trim()
       log.push(`model:${text.toLowerCase()}`)
+      if (opts.modelSubmenu) {
+        // 하위 메뉴만 뜬다 — 트리거 라벨은 그대로, 항목은 aria-expanded=true, 두 번째 [role=menu] 가 오버레이에 추가된다.
+        btn.setAttribute('aria-expanded', 'true')
+        doc.querySelector('.cdk-overlay-container').insertAdjacentHTML('beforeend', buildModelMenu('mat-menu-panel-21', ['Fast 720p', 'Fast 1080p']))
+        return
+      }
       const trigger = doc.querySelector('.flow-settings-panel button[aria-haspopup="menu"]')
       trigger.querySelector('.mdc-button__label').textContent = text
       trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-controls')

@@ -46,6 +46,7 @@ function harness(o = {}) {
       trace.push(bounds.width > 0 && bounds.height > 0 ? 'set-text:visible' : 'set-text:hidden')
       const m = s.match(/const text = (".*?");/)
       injectedPrompt = m ? JSON.parse(m[1]) : null
+      if (o.onSetText) o.onSetText()   // R2-2#7: 주입 도중 레이아웃 상태를 바꾸는 훅(모달 닫힘 등)
       return { ok: true }
     }
     if (s.includes('WIZ_global_data.SNlM0e')) { trace.push('wiz'); return o.wiz ?? true }
@@ -69,12 +70,19 @@ function harness(o = {}) {
   const flowView = {
     getBounds: () => ({ ...bounds }),
     setBounds: vi.fn((b) => { bounds = { ...b }; trace.push(`bounds:${b.width}x${b.height}`) }),
-    webContents: { executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(() => { trace.push('focus') }), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null },
+    webContents: {
+      executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(() => { trace.push('focus') }), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null,
+      // R2-2#1: DOM 단계 전에 뷰가 OS 포커스를 갖고 있었나 — 기본은 "아니다"(실기: 메인 창의 렌더러가 포커스를 갖는다).
+      isFocused: () => !!o.focused,
+    },
   }
-  const onDomFailure = vi.fn(async () => {})
+  // R2-2#1: 메인 창 — DOM 단계가 끝나면 포커스를 돌려받는 쪽. 호출 시각은 trace 로 본다.
+  const mainWindow = { getContentBounds: () => ({ width: 1280, height: 800 }), getBounds: () => ({ x: 0, y: 0 }), webContents: { focus: vi.fn(() => { trace.push('main-focus') }) } }
+  // R2-2#6: 진단 보고가 영영 settle 하지 않아도(먹통 Sentry/훅) collect 는 끝나야 한다.
+  const onDomFailure = o.domFailureHangs ? vi.fn(() => new Promise(() => {})) : vi.fn(async () => {})
   const helpers = createSharedHelpers({
     getFlowView: () => flowView,
-    getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }), getBounds: () => ({ x: 0, y: 0 }) }),
+    getMainWindow: () => mainWindow,
     constants: { SESSION_URL: '', MEDIA_REDIRECT_URL: '', RECAPTCHA_SITE_KEY: '', RECAPTCHA_ACTION: '' },
     onDomFailure,
   })
@@ -101,7 +109,7 @@ function harness(o = {}) {
   const ipcMain = makeIpcMain()
   registerFlowAPIIPC(ipcMain, {
     getFlowView: () => flowView,
-    getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }), getBounds: () => ({ x: 0, y: 0 }) }),
+    getMainWindow: () => mainWindow,
     getCurrentMode: () => o.mode ?? 'flow',
     getFlowAgentOn: () => !!o.flowAgentOn,
     parseFlowResponse: () => null, getEnterToolClicked: () => true, setEnterToolClicked: vi.fn(),
@@ -117,7 +125,7 @@ function harness(o = {}) {
     sessionFetch,
   })
   const generate = (p = {}) => ipcMain.invoke('flow:generate-image', { prompt: PROMPT, aspectRatio: '16:9', model: 'Nano Banana 2', projectId: PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p })
-  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView }
+  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow }
 }
 
 /** 가짜 시계에서 핸들러 promise 를 굴린다(ensureAgentOff 의 350ms sleep 등). */
@@ -459,5 +467,67 @@ describe('flow:generate-image (angular) — 비동기 + check/collect + 마감',
     const r = await settle(h.generate({ asyncMode: true }))
     expect(await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })).toMatchObject({ success: false, error: 'Generation not completed yet' })
     expect(h.pendingGenerations.has(r.generationId)).toBe(true)
+  })
+})
+
+// ─── R2-2 부록 #1 / #6 / #7 (플랜 §12 #45 · #47 · #48) ───────────────────────────────────────────────────────
+describe('flow:generate-image (angular) — 포커스 반환 (R2-2#1, §12 #45)', () => {
+  it('뷰가 넓고 이미 포커스를 갖고 있었으면(957×1022, isFocused) 메인 창에 포커스를 돌려주지 않는다', async () => {
+    const h = harness({ focused: true })
+    const r = await settle(h.generate())
+    expect(r.success).toBe(true)
+    expect(h.mainWindow.webContents.focus).not.toHaveBeenCalled()
+  })
+
+  it('뷰가 포커스를 갖고 있지 않았으면(보이는 뷰라도) 재판독·제출 클릭 뒤 메인 창에 포커스를 돌려준다', async () => {
+    const h = harness({ focused: false })
+    const r = await settle(h.generate())
+    expect(r.success).toBe(true)
+    expect(h.mainWindow.webContents.focus).toHaveBeenCalledTimes(1)
+    const t = h.trace
+    expect(idx(t, 'read-text')).toBeLessThan(idx(t, 'main-focus'))
+    expect(idx(t, 'click:compose-submit')).toBeLessThan(idx(t, 'main-focus'))
+  })
+
+  it('자동화 뷰포트에 들어갔으면 조기 반환(편집기 클릭 실패)에서도 레이아웃 원복 뒤 메인 창에 포커스를 돌려준다', async () => {
+    setModalVisible(true)
+    const h = harness({ hidden: true, focused: true })
+    h.trustedClickOnFlowView.mockImplementation(async (_sel, opts) => { h.trace.push('click:' + (opts?.step || '?')); return { success: opts?.step !== 'compose-editor' } })
+    let r
+    try { r = await settle(h.generate()) } finally { setModalVisible(false) }
+    expect(r).toMatchObject({ success: false, errorKind: 'text-injection-failed' })
+    expect(h.mainWindow.webContents.focus).toHaveBeenCalledTimes(1)
+    const t = h.trace
+    expect(t.lastIndexOf('bounds:0x0')).toBeLessThan(idx(t, 'main-focus'))
+    expect(idx(t, 'click:compose-editor')).toBeLessThan(idx(t, 'main-focus'))
+  })
+})
+
+describe('flow:generate-image (angular) — report() 는 collect 를 막지 않는다 (R2-2#6, §12 #47)', () => {
+  it('onDomFailure 가 영영 settle 하지 않아도 flow-submit-not-sent gen 의 collect 는 끝난다', async () => {
+    const h = harness({ onSubmit: null, domFailureHangs: true })
+    const r = await settle(h.generate({ asyncMode: true }))
+    await vi.advanceTimersByTimeAsync(15000 + 10)
+    expect(h.pendingGenerations.get(r.generationId)).toMatchObject({ completed: true, error: 'flow-submit-not-sent' })
+    let collected = null
+    h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId }).then((c) => { collected = c })
+    for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(100)
+    expect(collected).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', error: 'flow-submit-not-sent' })
+    expect(h.onDomFailure).toHaveBeenCalledWith('submit:flow-submit-not-sent', expect.objectContaining({ reason: 'flow-submit-not-sent' }))
+  })
+})
+
+describe('flow:generate-image (angular) — 숨은 뷰의 원복은 스냅샷이 아니라 레이아웃이다 (R2-2#7, §12 #48)', () => {
+  it('주입 도중 모달이 닫히면(setModalVisible(false)) 최종 bounds 는 0×0 이 아니라 스플릿 레이아웃이다', async () => {
+    setModalVisible(true)
+    const h = harness({ hidden: true, onSetText: () => setModalVisible(false) })
+    let r
+    try { r = await settle(h.generate()) } finally { setModalVisible(false) }
+    expect(r.success).toBe(true)
+    // layout.js 기본 split-left · ratio 0.5 · GAP 3 · 창 1280×800 → {0,0,637,800}
+    expect(h.flowView.getBounds()).toEqual({ x: 0, y: 0, width: 637, height: 800 })
+    const t = h.trace
+    expect(t.filter((x) => x.startsWith('bounds:')).at(-1)).toBe('bounds:637x800')
+    expect(t.lastIndexOf('bounds:637x800')).toBeGreaterThan(idx(t, 'click:compose-submit'))
   })
 })

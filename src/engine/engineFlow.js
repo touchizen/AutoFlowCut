@@ -507,7 +507,8 @@ export function useFlowEngine(opts = {}) {
 
   // --- 비디오 생성 ------------------------------------------------------------
 
-  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, _resolution, _referenceImages, callOpts = {}) => {
+  // M2-3: resolution 은 IPC 까지 간다 — 새 Flow 의 패널이 {360p, 720p} 만 내밀므로 main 이 클릭 전에 flow-resolution-not-offered 로 닫는다.
+  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, _referenceImages, callOpts = {}) => {
     try {
       // #R36: Flow @멘션 T2V 는 레퍼런스 이미지 대신 컴포저 @칩(segments)으로 캐릭터 entity 를 넣는다
       //   (이미지 씬과 동일). segments 가 있으면 chip 경로 → ref 미지원 가드를 건너뛴다.
@@ -531,6 +532,7 @@ export function useFlowEngine(opts = {}) {
         model,
         aspectRatio,
         duration,
+        resolution,
         videoBatchCount: callOpts.videoBatchCount,
         seed,
       }))

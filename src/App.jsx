@@ -1732,6 +1732,11 @@ function App() {
               // null 값 보존 — success 시 stale error 메시지 clear.
               ...(result && 'error' in result ? { error: result.error } : {}),
               ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+              // M2-5(T6): kind 별 params 와 거부 미디어 id 도 통과 — 빠지면 ResultsTable 이 {expected} 플레이스홀더를 그대로 보이고,
+              //   거부 id 가 mediaId 로 둔갑하지 않게 rejectedMediaId(s) 로만 남긴다.
+              ...(result && 'errorParams' in result ? { errorParams: result.errorParams } : {}),
+              ...(result && 'rejectedMediaId' in result ? { rejectedMediaId: result.rejectedMediaId } : {}),
+              ...(result && 'rejectedMediaIds' in result ? { rejectedMediaIds: result.rejectedMediaIds } : {}),
             })
 
             // #R36-fix(Codex R1[3]): T2V @멘션 칩이 stale(Flow 에서 캐릭터 삭제 등)면 그 ref 를 'failed' 로
@@ -1865,6 +1870,10 @@ function App() {
                 // null 값 보존 — success 시 stale error 메시지 clear.
                 ...(result && 'error' in result ? { error: result.error } : {}),
                 ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+                // M2-5(T6): 영상 훅 공용 — kind 별 params·거부 미디어 id 통과(t2v 와 동일)
+                ...(result && 'errorParams' in result ? { errorParams: result.errorParams } : {}),
+                ...(result && 'rejectedMediaId' in result ? { rejectedMediaId: result.rejectedMediaId } : {}),
+                ...(result && 'rejectedMediaIds' in result ? { rejectedMediaIds: result.rejectedMediaIds } : {}),
               } : p
             ))
 

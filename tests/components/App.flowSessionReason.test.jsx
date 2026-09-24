@@ -7,6 +7,10 @@
  * 세션을 다시 로그인한다. 진짜 App 을 flow 모드로 렌더하고 handleStart 를 불러 토스트 문구를 본다.
  *
  * 하네스: tests/components/App.exportWiring.test.jsx 의 mock 세트를 그대로(모드·genAPI·toast·MCP 관측만 다르다).
+ *
+ * R2-2#4(§12 #46): 같은 이유가 영상 단일 재시도(ResultsTable 의 onVideoRetry → handleVideoRetry 의 download-only 프리플라이트)와
+ *   태그 검증 모달의 진행(TagValidationModal 의 onProceed → handleTagValidationProceed 의 인증 재확인)에도 닿는다.
+ * M2-5(T6): videoAutomation.start 의 onItemUpdate 화이트리스트가 errorParams·rejectedMediaId(s) 를 updateVideoScene 패치로 통과시킨다.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -16,8 +20,12 @@ const appMocks = vi.hoisted(() => {
   const noop = vi.fn()
   const asyncNoop = vi.fn(async () => null)
   const loadEpochRef = { current: 0 }
-  const captured = { headerProps: null, exportModalProps: null, mcpProps: null }
+  const captured = { headerProps: null, exportModalProps: null, mcpProps: null, resultsTableProps: null, tagModalProps: null, videoStart: null }
   const toast = { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
+  // R2-2#4 / M2-5: 영상 씬·패치 관측
+  const videoScenes = []
+  const updateVideoScene = vi.fn()
+  const videoStart = vi.fn(async (opts) => { captured.videoStart = opts })
   // 기본 fixture — 아무 씬도 없는 상태로 mount 한 뒤 테스트마다 갈아끼운다.
   const scenesHook = {
     scenes: [],
@@ -52,7 +60,7 @@ const appMocks = vi.hoisted(() => {
     listFlowProjects: asyncNoop,
     capabilities: {},
   }
-  return { noop, asyncNoop, loadEpochRef, captured, scenesHook, genAPI, toast }
+  return { noop, asyncNoop, loadEpochRef, captured, scenesHook, genAPI, toast, videoScenes, updateVideoScene, videoStart }
 })
 
 vi.mock('../../src/hooks/useI18n', () => ({
@@ -142,11 +150,11 @@ vi.mock('../../src/hooks/useAvailableModels', () => ({
 vi.mock('../../src/hooks/useScenes', () => ({ useScenes: () => appMocks.scenesHook }))
 vi.mock('../../src/hooks/useVideoScenes', () => ({
   useVideoScenes: () => ({
-    videoScenes: [],
+    videoScenes: appMocks.videoScenes,
     setVideoScenes: appMocks.noop,
     toggleSelect: appMocks.noop,
     toggleSelectAll: appMocks.noop,
-    updateVideoScene: appMocks.noop,
+    updateVideoScene: appMocks.updateVideoScene,
   }),
 }))
 vi.mock('../../src/hooks/useAudioImport', () => ({
@@ -214,7 +222,7 @@ vi.mock('../../src/hooks/useVideoAutomation', () => ({
     progress: 0,
     status: 'idle',
     statusMessage: '',
-    start: appMocks.asyncNoop,
+    start: appMocks.videoStart,   // M2-5: App 이 넘기는 onItemUpdate(화이트리스트)를 붙잡는다
     togglePause: appMocks.noop,
     stop: appMocks.noop,
     retryErrors: appMocks.noop,
@@ -285,7 +293,8 @@ vi.mock('../../src/components/ExportModal', () => ({
 
 vi.mock('../../src/components/PromptInput', () => ({ default: () => null }))
 vi.mock('../../src/components/SceneList', () => ({ default: () => null }))
-vi.mock('../../src/components/ResultsTable', () => ({ default: () => null }))
+// R2-2#4: 영상 표의 onVideoRetry(handleVideoRetry) 를 붙잡는다 — 이미지 표(onVideoRetry 없음)는 무시.
+vi.mock('../../src/components/ResultsTable', () => ({ default: props => { if (props?.onVideoRetry) appMocks.captured.resultsTableProps = props; return null } }))
 vi.mock('../../src/components/FrameToVideoPanel', () => ({ default: () => null }))
 vi.mock('../../src/components/ReferencePanel', () => ({ default: () => null }))
 vi.mock('../../src/components/SettingsModal', () => ({ default: () => null }))
@@ -297,7 +306,7 @@ vi.mock('../../src/components/ResizeHandle', () => ({ default: () => null }))
 vi.mock('../../src/components/ExportSplitButton', () => ({ default: () => null }))
 vi.mock('../../src/components/AuthModal', () => ({ AuthModal: () => null }))
 vi.mock('../../src/components/PaywallModal', () => ({ PaywallModal: () => null }))
-vi.mock('../../src/components/TagValidationModal', () => ({ default: () => null }))
+vi.mock('../../src/components/TagValidationModal', () => ({ default: props => { appMocks.captured.tagModalProps = props; return null } }))
 vi.mock('../../src/components/EmptyReferenceGateModal', () => ({ default: () => null }))
 vi.mock('../../src/components/StoreRatingModal', () => ({ default: () => null }))
 vi.mock('../../src/components/AudioResultModal', () => ({ default: () => null }))
@@ -317,7 +326,15 @@ vi.mock('../../src/components/story/StoryView', () => ({ default: () => null }))
 
 import App from '../../src/App'
 
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(() => {
+  cleanup(); vi.clearAllMocks()
+  appMocks.genAPI.flowSessionReason.mockReturnValue('rpc:http:500')
+  appMocks.genAPI.getAccessToken.mockImplementation(async () => null)   // clearAllMocks 는 구현을 되돌리지 않는다
+  appMocks.scenesHook.scenes = []; appMocks.scenesHook.scenesRef.current = []
+  appMocks.videoScenes.length = 0
+  appMocks.captured.resultsTableProps = null; appMocks.captured.tagModalProps = null; appMocks.captured.videoStart = null
+  localStorage.removeItem('autoflowcut_bottomPanelView')
+})
 
 describe('App Start 프리플라이트 — Flow 세션 이유', () => {
   it('세션 판정 실패(rpc:http:500)면 이유가 든 안내를 띄운다 — "Flow 로그인" 안내가 아니다', async () => {
@@ -341,5 +358,61 @@ describe('App Start 프리플라이트 — Flow 세션 이유', () => {
     const msg = appMocks.toast.warning.mock.calls[0][0]
     expect(msg).toMatch(/Flow login required|toast\.flowLoginRequired/)
     expect(msg).not.toContain('wiz-missing')
+  })
+})
+
+// ── R2-2#4 (§12 #46): 영상 재시도 · 태그 진행 자리도 같은 이유를 쓴다 ────────────────────────────────────────────
+describe('App — 영상 재시도(onVideoRetry)와 태그 진행(onProceed)의 Flow 세션 이유 (R2-2#4)', () => {
+  it('ResultsTable 의 onVideoRetry(download-only 항목) 프리플라이트가 세션 미준비(rpc:http:500)면 이유가 든 안내 — 로그인 안내가 아니다', async () => {
+    appMocks.videoScenes.push({ id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: 'g1', mediaId: 'm1' })
+    localStorage.setItem('autoflowcut_bottomPanelView', 'table')   // 하단 패널 기본은 타임라인 — 표 뷰여야 ResultsTable 이 그려진다
+    render(<App />)
+    // 영상 표는 영상 탭에서만 렌더된다 — 탭 오버라이드 Start 로 탭을 옮긴다(세션 미준비라 Start 자체는 안내 뒤 멈춘다).
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'video-text' }) })
+    appMocks.toast.warning.mockClear()
+    const props = appMocks.captured.resultsTableProps
+    expect(props?.onVideoRetry).toBeTypeOf('function')
+    await act(async () => { await props.onVideoRetry({ id: 'vscene_1', generationId: 'g1', mediaId: 'm1' }) })
+    expect(appMocks.genAPI.getAccessToken).toHaveBeenCalled()
+    expect(appMocks.toast.warning).toHaveBeenCalledTimes(1)
+    const msg = appMocks.toast.warning.mock.calls[0][0]
+    expect(msg).toContain('rpc:http:500')
+    expect(msg).not.toMatch(/Flow login required|toast\.flowLoginRequired/)
+  })
+
+  it('TagValidationModal 의 onProceed 인증 재확인이 세션 미준비(rpc:http:500)면 이유가 든 안내', async () => {
+    // 태그 오류가 있는 씬 → 첫 handleStart(세션 준비됨)는 모달을 띄우고 멈춘다 → onProceed 에서 세션이 죽었다.
+    appMocks.scenesHook.scenes = [{ id: 'scene_1', prompt: 'a', status: 'pending', characters: 'ghost' }]
+    appMocks.scenesHook.scenesRef.current = appMocks.scenesHook.scenes
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')   // 마운트 재확인도 이 값을 본다
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart() })
+    expect(appMocks.captured.tagModalProps?.onProceed).toBeTypeOf('function')
+    expect(appMocks.toast.warning).not.toHaveBeenCalled()
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => null)   // 모달이 떠 있는 동안 세션이 죽었다
+    await act(async () => { await appMocks.captured.tagModalProps.onProceed() })
+    expect(appMocks.toast.warning).toHaveBeenCalledTimes(1)
+    const msg = appMocks.toast.warning.mock.calls[0][0]
+    expect(msg).toContain('rpc:http:500')
+    expect(msg).not.toMatch(/Flow login required|toast\.flowLoginRequired/)
+  })
+})
+
+// ── M2-5 (T6): App 의 영상 onItemUpdate 화이트리스트 ────────────────────────────────────────────────────────────
+describe('App — videoAutomation.start 의 onItemUpdate 화이트리스트가 errorParams·rejectedMediaId(s) 를 통과시킨다 (M2-5)', () => {
+  it('거부 패치 → updateVideoScene 에 errorParams·rejectedMediaId; count-mismatch → rejectedMediaIds; mediaId 키는 없다', async () => {
+    appMocks.videoScenes.push({ id: 'vscene_1', prompt: 'p', selected: true })
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'video-text' }) })
+    const start = appMocks.captured.videoStart
+    expect(start?.onItemUpdate).toBeTypeOf('function')
+    act(() => { start.onItemUpdate('vscene_1', 'error', { error: 'flow-video-settings-mismatch', errorKind: 'flow-video-settings-mismatch', errorParams: { expected: 'a', actual: 'b' }, rejectedMediaId: 'rm' }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'error', errorKind: 'flow-video-settings-mismatch', errorParams: { expected: 'a', actual: 'b' }, rejectedMediaId: 'rm' }))
+    expect(appMocks.updateVideoScene.mock.calls.at(-1)[1]).not.toHaveProperty('mediaId')
+    act(() => { start.onItemUpdate('vscene_1', 'error', { error: 'flow-video-count-mismatch', errorKind: 'flow-video-count-mismatch', rejectedMediaIds: ['a', 'b'] }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ errorKind: 'flow-video-count-mismatch', rejectedMediaIds: ['a', 'b'] }))
+    act(() => { start.onItemUpdate('vscene_3', 'error', { error: 'flow-batch-halted', errorKind: 'flow-batch-halted', errorParams: { cause: 'flow-video-settings-mismatch' } }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_3', expect.objectContaining({ errorKind: 'flow-batch-halted', errorParams: { cause: 'flow-video-settings-mismatch' } }))
   })
 })

@@ -190,7 +190,8 @@ describe('minified SETTINGS_DRIVER_JS — 가짜 Angular 위에서 모드 전환
   it('image 패널 → video 목표(모드 전환 → 재스캔 → 모델 메뉴 선택 → 동기 리셋된 duration 재클릭) 가 minified 에서도 ok', async () => {
     for (const M of [settings, plainSettings]) {
       const { r, log, doc } = await drive(M, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Veo 3.1 - Fast' }, { modelReset: 'sync' })
-      expect(r).toMatchObject({ ok: true, closed: true, steps: { mode: 'clicked', model: 'clicked', ratio: 'already(crop_16_9)', duration: 'clicked', resolution: 'already', count: 'already' } })
+      // M2-2: 영상 step 라벨은 값을 단다(§4 M2 로그) + 입력방식 검증
+      expect(r).toMatchObject({ ok: true, closed: true, steps: { mode: 'clicked(videocam)', model: 'clicked', ratio: 'already(crop_16_9)', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)', input: 'material' } })
       expect(log).toEqual(['mode:videocam', 'model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
       expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
     }

@@ -115,9 +115,11 @@ describe('planSettingsClicks', () => {
       expect(p.ok).toBe(true)
       expect(p.model).toEqual({ select: true, requested: 'Veo 3.1 - Fast' })
       expect(p.clicks.map((c) => `${c.group}:${c.ligature || c.label}`)).toEqual(['duration:8초', 'count:x1'])
-      expect(p.steps).toMatchObject({ ratio: 'already(crop_16_9)', resolution: 'already' })
+      // M2-2: 영상 단계는 값을 라벨로 단다(§4 M2 로그: resolution=already(720p) count=…(x1) duration=…(8))
+      expect(p.steps).toMatchObject({ ratio: 'already(crop_16_9)', resolution: 'already(720p)', duration: 'clicked(8)', count: 'clicked(x1)' })
     }
-    expect(planSettingsClicks(s, { mode: 'video', model: 'Omni 1.1 Flash' }, 2)).toMatchObject({ ok: true, steps: { model: 'verified' } })
+    // M2-2: 영상 모델이 트리거와 맞으면 already(이미지의 verified 와 구분 — §4 M2 로그 model=already)
+    expect(planSettingsClicks(s, { mode: 'video', model: 'Omni 1.1 Flash' }, 2)).toMatchObject({ ok: true, steps: { model: 'already' } })
   })
 })
 
@@ -147,7 +149,7 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     const log = installFakeAngular(doc, { modelReset: 'sync' })
     const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Veo 3.1 - Fast' }, noSleep)
     expect(r.ok).toBe(true)
-    expect(r.steps).toMatchObject({ mode: 'clicked', model: 'clicked', ratio: 'already(crop_16_9)', duration: 'clicked', resolution: 'already', count: 'already' })
+    expect(r.steps).toMatchObject({ mode: 'clicked(videocam)', model: 'clicked', ratio: 'already(crop_16_9)', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)', input: 'material' })
     expect(log).toEqual(['mode:videocam', 'model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
     const s = scanSettingsPanel(doc)
     expect(s.ok).toBe(false)   // 닫혔다
@@ -290,5 +292,127 @@ describe('applyComposerSettings — main 측(트리거 trusted 클릭 → 드라
     expect(none.trustedClickOnFlowView).not.toHaveBeenCalled()
     const bad = harness({ driver: null, trusted: false })
     expect(await applyComposerSettings(bad.flowView, { mode: 'image' }, bad.deps)).toMatchObject({ ok: false, reason: 'settings-trigger-click-failed' })
+  })
+})
+
+// ─── M2-2 영상 단계 ──────────────────────────────────────────────────────────────────────────────────────────
+//   이미지 픽스처에서 {mode:'video', ratio, duration, resolution, model:'Omni Flash'}(count 미지정) → phase1 videocam → 재스캔 →
+//   ratio already · duration click(8) · resolution already · count 는 항상 x1(설정+검증) · model already(패널 'Omni 1.1 Flash' ~
+//   요청 'Omni Flash') · 입력방식 chrome_extension 검증(input=material). {360p,720p} 밖 해상도는 모델과 무관하게 클릭 전 거부.
+//   모델 메뉴는 트리거 클릭 → aria-expanded 대기 → 그때의 aria-controls 로 document.getElementById(픽스처는 닫힌 채 시작).
+//   하위 메뉴만 뜨면 Escape 후 model-submenu-unknown, 항목이 없으면 model-not-offered.
+describe('M2-2 설정 드라이버 영상 단계', () => {
+  const VIDEO_TARGET = { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', model: 'Omni Flash' }
+  // 영어 로케일 변형(라벨만 다르다 — 리거처·앞자리 정수 규칙은 같다)
+  const englishize = (html) => html.replace(/초</g, 's<').replace(/>이미지</g, '>Image<').replace(/>동영상</g, '>Video<').replace(/>프레임</g, '>Frames<').replace(/>소재</g, '>Ingredients<')
+
+  it('planSettingsClicks 영상: 요청 "Omni Flash" 는 패널 "Omni 1.1 Flash" 와 맞는다 → model already, select 계획 없음', () => {
+    const s = scanSettingsPanel(mount(videoPage()))
+    const p = planSettingsClicks(s, { mode: 'video', model: 'Omni Flash' }, 2)
+    expect(p.ok).toBe(true)
+    expect(p.model).toBeNull()
+    expect(p.steps.model).toBe('already')
+    // 다른 패밀리는 여전히 select 계획(느슨한 매칭이 Veo 를 Omni 로 오인하지 않는다)
+    expect(planSettingsClicks(s, { mode: 'video', model: 'Veo 3.1 - Fast' }, 2).model).toEqual({ select: true, requested: 'Veo 3.1 - Fast' })
+  })
+
+  it.each([[undefined], [3]])('runSettingsDriver 이미지 픽스처 → 영상 목표(count=%s): mode clicked(videocam) → 재스캔 → duration 만 클릭, count 는 x1, model already, input material', async (count) => {
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc)
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, count }, noSleep)
+    expect(r).toMatchObject({ ok: true, closed: true })
+    expect(r.steps).toEqual({ mode: 'clicked(videocam)', ratio: 'already(crop_16_9)', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)', model: 'already', input: 'material' })
+    expect(log).toEqual(['mode:videocam', 'duration:8초', 'keydown:Escape:27'])
+  })
+
+  it('ratio 9:16 → crop_9_16 클릭; 잔여 x2 패널 → x1 클릭 후 검증(clicked(x1))', async () => {
+    const doc = mount(videoPage({ checked: { count: 'x2' } }))
+    const log = installFakeAngular(doc)
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, ratio: '9:16', duration: 6 }, noSleep)
+    expect(r).toMatchObject({ ok: true, steps: { mode: 'already(videocam)', ratio: 'clicked(crop_9_16)', duration: 'already(6)', count: 'clicked(x1)', model: 'already', input: 'material' } })
+    expect(log).toEqual(['ratio:crop_9_16', 'count:x1', 'keydown:Escape:27'])
+  })
+
+  it('영어 변형(Video/Frames/Ingredients/8s) 도 같은 계획·같은 결과', async () => {
+    const doc = mount(englishize(HEAD + IMAGE_COMPOSER_KO + buildSettingsPanel({ mode: 'video' })))
+    const log = installFakeAngular(doc)
+    const r = await runSettingsDriver(doc, VIDEO_TARGET, noSleep)
+    expect(r).toMatchObject({ ok: true, steps: { mode: 'already(videocam)', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)', model: 'already', input: 'material' } })
+    expect(log).toEqual(['duration:8s', 'keydown:Escape:27'])
+  })
+
+  it('resolution 1080p 는 패널이 1080p 를 내밀어도, 모델이 Veo Fast 여도 클릭 전 flow-resolution-not-offered {requested}', () => {
+    const s = scanSettingsPanel(mount(videoPage()))
+    // 패널 사본에 1080p 옵션을 끼워 넣는다 — {360p, 720p} 밖은 관측된 적이 없어 패널이 내밀어도 거부한다(T7)
+    s.groups.resolution.options.push({ el: s.groups.resolution.options[1].el, name: s.groups.resolution.name, label: '1080p', ligature: null, checked: false })
+    const p = planSettingsClicks(s, { ...VIDEO_TARGET, resolution: '1080p', model: 'Veo 3.1 - Fast' }, 2)
+    expect(p).toEqual({ ok: false, kind: 'flow-resolution-not-offered', params: { requested: '1080p' }, reason: 'resolution-not-offered:1080p', clicks: [] })
+    expect(p.model).toBeUndefined()
+  })
+
+  it('runSettingsDriver: resolution 1080p + Veo Fast → 모델 메뉴 클릭 없이 flow-resolution-not-offered 로 닫는다', async () => {
+    const doc = mount(videoPage())
+    const log = installFakeAngular(doc)
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, resolution: '1080p', model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-resolution-not-offered', params: { requested: '1080p' }, closed: true })
+    expect(log).toEqual(['keydown:Escape:27'])
+  })
+
+  it('실패 사유: ratio 4:3 → ratio-not-offered:4:3 · duration 5 → duration-not-offered:5 (영상 패널엔 없다)', () => {
+    const s = scanSettingsPanel(mount(videoPage()))
+    expect(planSettingsClicks(s, { ...VIDEO_TARGET, ratio: '4:3' }, 2)).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'ratio-not-offered:4:3' })
+    expect(planSettingsClicks(s, { ...VIDEO_TARGET, duration: 5 }, 2)).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'duration-not-offered:5' })
+  })
+
+  it('입력방식이 crop_free(프레임) 로 체크된 사본 → input-mode-not-material(클릭 없음); 그룹이 없으면 group-not-found:inputMode', async () => {
+    const doc = mount(videoPage({ checked: { inputMode: 'crop_free' } }))
+    const log = installFakeAngular(doc)
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 6 }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'input-mode-not-material', closed: true })
+    expect(log).toEqual(['keydown:Escape:27'])
+    const s = scanSettingsPanel(mount(videoPage()))
+    delete s.groups.inputMode
+    expect(planSettingsClicks(s, { ...VIDEO_TARGET, duration: 6 }, 2)).toMatchObject({ ok: false, reason: 'group-not-found:inputMode' })
+  })
+
+  it('모델 메뉴: 닫힌 트리거(aria-controls 없음) 클릭 → aria-expanded 대기 → aria-controls 로 메뉴 → 항목 클릭 → clicked; 메뉴에 없으면 model-not-offered', async () => {
+    const doc = mount(videoPage())
+    expect(doc.querySelector('.flow-settings-panel button[aria-haspopup="menu"]').hasAttribute('aria-controls')).toBe(false)
+    const log = installFakeAngular(doc)
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 6, model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r).toMatchObject({ ok: true, steps: { model: 'clicked', mode: 'already(videocam)', input: 'material' } })
+    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'keydown:Escape:27'])
+    // 항목 없음
+    const doc2 = mount(videoPage())
+    installFakeAngular(doc2, { modelMenuItems: ['Omni 1.1 Flash', 'Veo 3.1 - Lite'] })
+    const r2 = await runSettingsDriver(doc2, { ...VIDEO_TARGET, duration: 6, model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r2).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-not-offered' })
+  })
+
+  it('항목 클릭이 하위 메뉴만 열면(트리거 라벨 불변·두 번째 role=menu) Escape 후 model-submenu-unknown — model-not-reflected 가 아니다', async () => {
+    const doc = mount(videoPage())
+    const log = installFakeAngular(doc, { modelSubmenu: true })
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 6, model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-submenu-unknown', closed: true })
+    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'keydown:Escape:27'])
+    expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+  })
+
+  it('applyComposerSettings(main) 영상: §4 M2 한 줄 로그 + 닫힌 요약 crop_9_16 검증(Omni 9:16 은 패널이 보장)', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const calls = []
+      const executeJavaScript = vi.fn(async (script) => {
+        const s = String(script)
+        if (s.includes('__af_settings_driver__')) { calls.push('driver'); return { ok: true, closed: true, steps: { mode: 'clicked(videocam)', ratio: 'clicked(crop_9_16)', duration: 'already(6)', resolution: 'already(720p)', count: 'already(x1)', model: 'already', input: 'material' } } }
+        if (s.includes('settings-summary')) { calls.push('summary'); return { text: '동영상 · 720p · 6초 x1', ligatures: ['crop_9_16'] } }
+        return null
+      })
+      const trustedClickOnFlowView = vi.fn(async (_sel, o) => { calls.push(`trusted:${o?.step}`); return { success: true } })
+      const r = await applyComposerSettings({ webContents: { executeJavaScript } }, { mode: 'video', ratio: '9:16', count: 3, model: 'Omni Flash', duration: 6, resolution: '720p' }, { trustedClickOnFlowView })
+      expect(r.ok).toBe(true)
+      expect(calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'summary'])
+      expect(log.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('[Flow Settings] video mode=clicked(videocam) ratio=clicked(crop_9_16) duration=already(6) resolution=already(720p) count=already(x1) model=already input=material ok=true')
+    } finally { log.mockRestore() }
   })
 })

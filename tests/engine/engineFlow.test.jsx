@@ -1052,6 +1052,38 @@ describe('useFlowEngine — 세션 준비 후 IPC 페이로드의 token 은 항�
   })
 })
 
+// M2-3: 해상도를 엔진 → IPC 로 넘긴다(옛 경로는 _resolution 을 버렸다 — 플랜 1-3). 패널에 없는 값(1080p)은 main 이 클릭 전에
+//   flow-resolution-not-offered {requested} 로 닫는다(M2-2) — 그 판정이 서려면 값이 IPC 에 실려야 한다.
+describe('useFlowEngine — M2-3 generateVideoT2V 는 resolution 을 IPC 페이로드에 싣는다', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFlowGenerateVideoT2V.mockResolvedValue({ success: true, generationId: 'gv1', creditsLeft: 1040 })
+  })
+
+  it("generateVideoT2V('p','Omni Flash','16:9',6,null,'1080p',[],{}) → 페이로드 {resolution:'1080p', token:null, model, aspectRatio, duration}", async () => {
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.generateVideoT2V('p', 'Omni Flash', '16:9', 6, null, '1080p', [], {}) })
+    expect(res).toEqual({ success: true, generationId: 'gv1', creditsLeft: 1040 })
+    expect(mockFlowGenerateVideoT2V).toHaveBeenCalledTimes(1)
+    expect(mockFlowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '1080p', token: null, prompt: 'p', model: 'Omni Flash', aspectRatio: '16:9', duration: 6, segments: null })
+  })
+
+  it('main 의 flow-resolution-not-offered {requested} · postClick · rejectedMediaId 결과는 그대로 통과한다(markAuth 가 덮지 않는다)', async () => {
+    mockFlowGenerateVideoT2V.mockResolvedValueOnce({ success: false, errorKind: 'flow-resolution-not-offered', error: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.generateVideoT2V('p', 'Omni Flash', '16:9', 6, null, '1080p', [], {}) })
+    expect(res).toEqual({ success: false, errorKind: 'flow-resolution-not-offered', error: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
+    mockFlowGenerateVideoT2V.mockResolvedValueOnce({ success: false, errorKind: 'flow-video-settings-mismatch', error: 'flow-video-settings-mismatch', errorParams: { expected: 'a', actual: 'b' }, rejectedMediaId: 'rm', postClick: true })
+    await act(async () => { res = await result.current.generateVideoT2V('p', 'Omni Flash', '16:9', 6, null, '720p', [], {}) })
+    expect(res).toMatchObject({ errorKind: 'flow-video-settings-mismatch', rejectedMediaId: 'rm', postClick: true })
+    expect(res).not.toHaveProperty('authFailed')
+    expect(res).not.toHaveProperty('mediaId')
+    expect(res).not.toHaveProperty('generationId')
+  })
+})
+
 describe('useFlowEngine — #R36 T2V @멘션 segments', () => {
   beforeEach(() => {
     vi.clearAllMocks()

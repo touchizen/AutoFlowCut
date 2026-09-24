@@ -81,10 +81,21 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
   // 재사용(서버 멱등=무료), 다른 프로젝트는 분리돼 무임승차 불가.
   const batchIdByProjectRef = useRef(new Map())
 
+  // M2-5(D8-6): Flow 의 "새 제출만 중단" — 제출 결과가 postClick:true 이거나 rejectedMediaId(s) 를 실었거나 quota(code 8) 면 여기에
+  //   원인 kind 를 적고 fillWindow 가 더 제출하지 않는다. 이미 제출된 pending 은 끝까지 폴링·다운로드한다(stopRequestedRef 는 사용자
+  //   중지 전용 — 그걸 세우면 꼬리(아래)가 pending 을 'stopped' 로 덮어 과금된 영상이 회수되지 않는다). start() 마다 리셋.
+  const submitHaltRef = useRef(null)
+
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
+  //   Flow 모드는 stopRequestedRef 없이(submitHalt 경로) — 리스너(모달·큐 비우기)는 그대로 발화한다(U1/V1).
   const _maybeTriggerQuotaStop = (err) => {
     if (!isQuotaExhaustedError(err)) return false
     quotaStoppedRef.current = true
+    if (appMode === 'flow') {
+      submitHaltRef.current = submitHaltRef.current || 'flow-rpc-error'
+      emitQuotaStop({ scope: 'VideoAutomation' })
+      return true
+    }
     emitQuotaStop({ stopRequestedRef, scope: 'VideoAutomation' })
     return true
   }
@@ -304,6 +315,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
 
     stopRequestedRef.current = false
     quotaStoppedRef.current = false
+    submitHaltRef.current = null
     pausedRef.current = false
     let authStopped = false   // set true on authFailed break — prevents fall-through 'done' status
     let terminalStopped = false  // R1#8: flow-feature-unsupported 로 종결(상태·문구는 break 자리에서 확정)
@@ -513,12 +525,23 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     let nextFreshIdx = 0            // 다음 제출할 freshGen 인덱스
     const maxPollsPerItem = TIMING.VIDEO_MAX_POLL_COUNT
 
-    // 슬롯이 빌 때까지 freshGen 제출. auth → authStopped, quota → stopRequested 설정 후 반환.
+    // M2-5: 드레인 뒤(또는 제출 0건 조기 종료 때) 미제출 항목을 halt kind 로 표시 — 실패 항목의 kind·params 를 물려받지 않는다.
+    const markHalted = () => {
+      if (!submitHaltRef.current) return
+      for (let j = nextFreshIdx; j < freshGen.length; j++) {
+        onItemUpdate?.(freshGen[j].id, 'error', { error: 'flow-batch-halted', errorKind: 'flow-batch-halted', errorParams: { cause: submitHaltRef.current } })
+        videoErrorCount++
+      }
+      nextFreshIdx = freshGen.length
+    }
+    const haltedMessage = () => `⚠️ ${t('errorSection.kind.flow-batch-halted', { cause: submitHaltRef.current })}`
+
+    // 슬롯이 빌 때까지 freshGen 제출. auth → authStopped, quota → stopRequested(Flow 는 submitHalt) 설정 후 반환.
     const fillWindow = async () => {
       // Flow(Agent OFF)는 동시성 윈도우 대신 제출 사이 20~40초 페이싱으로 throttle → 캡 무시.
       const ignoreCap = appMode === 'flow'
       while ((ignoreCap || pending.size < concurrency) && nextFreshIdx < freshGen.length) {
-        if (stopRequestedRef.current || authStopped) return
+        if (stopRequestedRef.current || authStopped || submitHaltRef.current) return
         await waitIfPaused()
         if (stopRequestedRef.current) return
 
@@ -591,15 +614,26 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           // 일반 실패 — 이 항목만 error 처리하고 다음 진행. quota 면 batch stop.
           // #R36-fix(Codex R1[3]): @멘션 칩 삽입 실패(staleMention) 를 App 으로 전파 → ref 를 failed 로
           //   마킹(self-heal, 이미지 자동화와 동일). 안 그러면 삭제된 캐릭터로 매번 같은 실패 반복.
+          // M2-5: kind 별 params 와 거부 미디어 id 는 그대로 — **mediaId/generationId 는 절대 기록하지 않는다**(download-only 분류가 문다).
+          const rejected = genResult?.postClick === true || genResult?.rejectedMediaId != null || Array.isArray(genResult?.rejectedMediaIds)
           onItemUpdate?.(item.id, 'error', {
             error: genResult.error,
             errorKind: genResult.errorKind ?? null,
+            ...(genResult.errorParams ? { errorParams: genResult.errorParams } : {}),
+            ...(genResult.rejectedMediaId != null ? { rejectedMediaId: genResult.rejectedMediaId } : {}),
+            ...(Array.isArray(genResult.rejectedMediaIds) ? { rejectedMediaIds: genResult.rejectedMediaIds } : {}),
             ...(genResult.staleMention ? { staleMention: genResult.staleMention } : {}),
           })
           videoErrorCount++
           nextFreshIdx++
           console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)
           if (_maybeTriggerQuotaStop(genResult.error)) return
+          if (rejected) {
+            // M2-5(D8-6): 클릭 뒤 실패·거부 id 를 실은 결과 → 새 제출만 중단(태그로 판정 — kind 목록이 아니다). pending 은 계속.
+            submitHaltRef.current = genResult.errorKind || 'flow-rpc-error'
+            console.warn(`[VideoAutomation] ⛔ Submit halted after a post-click failure (${submitHaltRef.current}) — pending items continue`)
+            return
+          }
         }
 
         // Flow 반봇 페이싱 — 다음 제출 전 랜덤 대기(기본 7~15초, 설정에서 조정). 이미지 자동화와 동일. API 는 대기 없음.
@@ -617,6 +651,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
 
     // 초기 윈도우 채우기
     await fillWindow()
+    // M2-5: halt 로 첫 윈도우가 닫혔으면 미제출 항목을 지금 표시한다 — Flow 는 ignoreCap 이라 fresh 전부가 이 첫 윈도우에서 제출되므로
+    //   halt 는 여기서만 생긴다(폴 루프의 fillWindow 는 no-op). 그 뒤 pending 은 끝까지 폴링·다운로드한다.
+    markHalted()
 
     // in-flight 도 없고 제출도 0건 — auth/quota/일반 실패 구분 후 조기 종료.
     if (pending.size === 0) {
@@ -628,6 +665,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         // 전역 isQuotaBlocked() 보면 사용자가 모달을 1초 안에 닫는 경우 race 로 'done' 표시되는 회귀.
         setStatus('stopped')
         setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'API generation limit reached — stopped'}`)
+      } else if (submitHaltRef.current) {
+        setStatus('error')
+        setStatusMessage(haltedMessage())
       } else if (stopRequestedRef.current) {
         setStatus('stopped')
         setStatusMessage(t('status.stopped'))
@@ -895,6 +935,13 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       } else {
         setStatusMessage(t('status.stopped'))
       }
+    } else if (quotaStoppedRef.current) {
+      // M2-5: Flow quota 는 stopRequestedRef 없이 드레인했다 — 최종 문구는 quota.
+      setStatus('stopped')
+      setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'API generation limit reached — stopped'}`)
+    } else if (submitHaltRef.current) {
+      setStatus('error')
+      setStatusMessage(haltedMessage())
     } else {
       setStatus('done')
       const parts = []

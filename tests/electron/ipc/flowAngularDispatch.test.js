@@ -1,7 +1,7 @@
 // @vitest-environment node
 //
 // M1-12 — 디스패치: Flow 모드의 generate-image · generate-video-t2v · check-video-status 는 URL 과 무관하게 angular
-//   핸들러로 간다. 영상 둘의 angular 본문은 M2 — M1 에서는 fail-closed 스텁(flow-feature-unsupported:<name>)이라
+//   핸들러로 간다. 영상 둘의 angular 본문은 M2-4·M2-5 — 세션 게이트(WIZ 없음 → flow-session-missing)가 먼저라
 //   옛 'No token' 같은 무의미 실패로 20분 폴링이 도는 일이 없다. accounts.google.com/blank 의 generate-image 는
 //   flow-session-missing(+authFailed). 옛 핸들러 코드는 남지만 도달 불가(옛 deps 미호출로 증명).
 import { describe, it, expect, vi } from 'vitest'
@@ -41,21 +41,23 @@ describe('unsupportedOnAngular (순수)', () => {
   })
 })
 
-describe('video.js — t2v / check-video-status 는 Flow 모드에서 angular(M1 스텁)', () => {
-  it.each(['https://flow.google.com/project/x', 'https://labs.google/fx/tools/flow/project/x'])('%s: generate-video-t2v → flow-feature-unsupported:generate-video-t2v, 옛 deps 미호출', async (url) => {
+describe('video.js — t2v / check-video-status 는 Flow 모드에서 angular(M2-4 · M2-5 본문)', () => {
+  // M2-4: 스텁이 본문으로 바뀌었다 — WIZ 전역이 없는 문서(executeJavaScript → null)면 세션 게이트에서 닫힌다(옛 'No token' 아님).
+  it.each(['https://flow.google.com/project/x', 'https://labs.google/fx/tools/flow/project/x'])('%s: generate-video-t2v → angular 세션 게이트(flow-session-missing + authFailed), 옛 deps 미호출', async (url) => {
     const { deps, legacy } = makeDeps(url)
     const ipc = makeIpcMain(); registerVideoIPC(ipc, deps)
     const r = await ipc.invoke('flow:generate-video-t2v', { token: null, prompt: 'p', projectId: 'p', model: 'veo', aspectRatio: '16:9', duration: 6 })
-    expect(r).toEqual({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:generate-video-t2v' })
+    expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'wiz-missing', authFailed: true })
     for (const fn of Object.values(legacy)) expect(fn).not.toHaveBeenCalled()
     expect(deps.trustedClickOnFlowView).not.toHaveBeenCalled()
   })
 
-  it('check-video-status → 스텁(옛 "No token" 아님), API 모드는 옛 게이트', async () => {
+  it('check-video-status → angular 세션 게이트(옛 "No token" 아님), API 모드는 옛 게이트', async () => {
     const { deps } = makeDeps('https://flow.google.com/project/x')
     const ipc = makeIpcMain(); registerVideoIPC(ipc, deps)
     const r = await ipc.invoke('flow:check-video-status', { token: null, generationIds: ['g1'], projectId: 'p' })
-    expect(r).toEqual({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:check-video-status' })
+    // M2-5: 스텁이 본문으로 — WIZ 전역이 없는 문서면 세션 게이트에서 닫힌다
+    expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'wiz-missing', authFailed: true })
     expect(r.error).not.toMatch(/token/i)
     const api = makeDeps('https://flow.google.com/project/x', 'api')
     const ipc2 = makeIpcMain(); registerVideoIPC(ipc2, api.deps)

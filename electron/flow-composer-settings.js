@@ -13,7 +13,12 @@
  *
  * 흐름(main applyComposerSettings): 트리거 trusted 클릭 → **단일 executeJavaScript**(SETTINGS_DRIVER_JS):
  *   스캔 → phase1 모드 → 반영 대기·재스캔 → phase2: 모델(이미지 검증 / 영상 메뉴 선택 → 안정 대기·재스캔·재계획)
- *   → 비율 → 길이 → 해상도 → 개수 → **최종 재판독**(단계 통과만으로 ok 를 내지 않는다) → Escape 로 닫기.
+ *   → 비율 → 길이 → 해상도 → 개수 → (영상) 입력방식 검증 → **최종 재판독**(단계 통과만으로 ok 를 내지 않는다) → Escape 로 닫기.
+ * M2-2 영상 단계: 해상도는 {360p, 720p} 밖이면 모델과 무관하게 클릭 전 flow-resolution-not-offered(관측된 적 없는 값은 패널이
+ *   내밀어도 거부) · 개수는 항상 x1 · 모델 라벨은 토큰 부분열로 맞춘다("Omni Flash" ~ "Omni 1.1 Flash") · 입력방식은 건드리지
+ *   않고 chrome_extension(소재) 이 체크됐는지만 본다(input-mode-not-material) · 메뉴 항목 클릭이 하위 메뉴만 열면
+ *   (라이브 항목엔 mat-mdc-menu-trigger 가 달려 있다, 내용 미관측) model-submenu-unknown. 영상 step 라벨은 값을 단다
+ *   (§4 M2 로그: mode=clicked(videocam) duration=already(6) resolution=already(720p) count=already(x1) model=already input=material).
  *   합성 클릭을 무시한 라디오는 needsTrusted 로 돌려주고 main 이 그것만 trusted 클릭한 뒤 드라이버를 다시 돌린다.
  *   닫힘 실패는 트리거 재클릭 → 그래도 열려 있으면 panel-not-closed. 닫힌 요약의 리거처가 요청 비율과 다르면 ratio-not-reflected.
  *
@@ -101,7 +106,20 @@ export function scanSettingsPanel(doc) {
 export function planSettingsClicks(scan, targets, phase) {
   const RATIO = { '16:9': 'crop_16_9', '9:16': 'crop_9_16', '4:3': 'crop_landscape', '1:1': 'crop_square', '3:4': 'crop_portrait' }
   const norm = (s) => String(s || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+  // M2-2: 모델 라벨 매칭 — 정규화 부분문자열이거나, 요청 토큰이 패널 토큰의 **부분열**이면 같은 모델("omni flash" ⊂ "omni 1.1 flash";
+  //   "veo 3.1 fast" ⊄ "veo 3.1 lite"). 자기완결(settingsDriverCore 에도 같은 사본).
+  const labelMatches = (label, want) => {
+    const l = norm(label); const w = norm(want)
+    if (!w) return false
+    if (l.includes(w)) return true
+    const toks = (x) => x.split(/\s+/).filter((k) => /[\p{L}\p{N}]/u.test(k))
+    const lt = toks(l); const wt = toks(w)
+    let i = 0
+    for (const k of lt) if (i < wt.length && k === wt[i]) i++
+    return wt.length > 0 && i === wt.length
+  }
   const t = targets || {}
+  const video = t.mode === 'video'
   const steps = {}
   const clicks = []
   const fail = (reason) => ({ ok: false, kind: 'flow-settings-not-applied', reason, clicks: [] })
@@ -120,21 +138,26 @@ export function planSettingsClicks(scan, targets, phase) {
     }
   }
   if (phase === 1) {
-    const lig = t.mode === 'video' ? 'videocam' : 'image'
+    const lig = video ? 'videocam' : 'image'
     const r = want('mode', (o) => o.ligature === lig, 'mode-not-offered:' + (t.mode || 'image'))
     if (r.err) return r.err
-    apply('mode', r, null)
+    apply('mode', r, video ? lig : null)
     return { ok: true, clicks, steps }
+  }
+  // M2-2(T7): {360p, 720p} 밖 해상도는 모델과 무관하게 클릭 전 거부 — 패널이 내밀어도(미관측) 받지 않는다.
+  if (video && t.resolution !== undefined) {
+    const res = String(t.resolution).toLowerCase()
+    if (res !== '360p' && res !== '720p') return { ok: false, kind: 'flow-resolution-not-offered', params: { requested: String(t.resolution) }, reason: 'resolution-not-offered:' + t.resolution, clicks: [] }
   }
   let model = null
   if (t.model != null && t.model !== '') {
     if (!scan.model || !scan.model.trigger) return fail('model-trigger-not-found')
-    const matches = scan.model.label.includes(norm(t.model))
-    if (t.mode !== 'video') {
+    const matches = labelMatches(scan.model.label, t.model)
+    if (!video) {
       if (!matches) return { ok: false, kind: 'flow-image-model-mismatch', params: { requested: String(t.model), panel: scan.model.display }, clicks: [] }
       steps.model = 'verified'
     } else if (matches) {
-      steps.model = 'verified'
+      steps.model = 'already'
     } else {
       model = { select: true, requested: String(t.model) }
     }
@@ -146,25 +169,32 @@ export function planSettingsClicks(scan, targets, phase) {
     if (r.err) return r.err
     apply('ratio', r, lig)
   }
-  if (t.mode === 'video' && t.duration !== undefined) {
+  if (video && t.duration !== undefined) {
     const digits = String(t.duration).replace(/\D/g, '')
     const r = want('duration', (o) => o.label.replace(/\D/g, '') === digits, 'duration-not-offered:' + t.duration)
     if (r.err) return r.err
-    apply('duration', r, null)
+    apply('duration', r, digits)
   }
-  if (t.mode === 'video' && t.resolution !== undefined) {
+  if (video && t.resolution !== undefined) {
     const res = String(t.resolution).toLowerCase()
     const g = scan.groups.resolution
     if (!g) return fail('group-not-found:resolution')
     const opt = g.options.find((o) => o.label.toLowerCase() === res)
     if (!opt) return { ok: false, kind: 'flow-resolution-not-offered', params: { requested: String(t.resolution) }, reason: 'resolution-not-offered:' + t.resolution, clicks: [] }
-    apply('resolution', { g, opt }, null)
+    apply('resolution', { g, opt }, res)
   }
-  if (t.mode === 'video' || t.count !== undefined) {
-    const label = t.mode === 'video' ? 'x1' : 'x' + Number(t.count)
+  if (video || t.count !== undefined) {
+    const label = video ? 'x1' : 'x' + Number(t.count)
     const r = want('count', (o) => o.label.toLowerCase() === label, 'count-not-offered:' + label)
     if (r.err) return r.err
-    apply('count', r, null)
+    apply('count', r, video ? label : null)
+  }
+  // M2-2: 영상 입력방식은 건드리지 않되 소재(chrome_extension) 가 체크돼 있어야 한다 — 프레임(crop_free) 이면 i2v 로 나간다(미지원).
+  if (video) {
+    const g = scan.groups.inputMode
+    if (!g) return fail('group-not-found:inputMode')
+    if (!g.checked || g.checked.ligature !== 'chrome_extension') return fail('input-mode-not-material')
+    steps.input = 'material'
   }
   return { ok: true, clicks, steps, model }
 }
@@ -187,17 +217,23 @@ export async function settingsDriverCore(doc, targets, deps) {
   // 패널 닫기 — CDK 오버레이는 **document.body 의 keydown 을 keyCode===27** 로 판정한다(R1#3; 2026-09-24 실기: document 에
   //   key:'Escape' 만 보낸 옛 코드는 못 닫았고 트리거 재클릭이 닫았다). 초기화 사전이 keyCode/which 를 무시하는 엔진을
   //   위해 값을 직접 박는다. 안 닫히면 closed:false — main 이 트리거를 trusted 재클릭한다.
+  //   M2-2: 모델 메뉴·하위 메뉴가 패널 위에 겹쳐 있을 수 있다(오버레이 스택) — 패널이 남아 있고 열린 [role=menu] 가 아직
+  //   있을 때만 Escape 를 더 보낸다(최대 3번). 메뉴가 없으면 한 번으로 끝(옛 동작 그대로).
   const closePanel = async () => {
-    try {
-      const win = doc.defaultView
-      const KE = win && win.KeyboardEvent ? win.KeyboardEvent : KeyboardEvent
-      const ev = new KE('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true, composed: true })
-      for (const k of ['keyCode', 'which']) {
-        if (ev[k] !== 27) { try { Object.defineProperty(ev, k, { value: 27, configurable: true }) } catch (_e) { /* 읽기 전용 — 그대로 보낸다 */ } }
-      }
-      ;(doc.body || doc).dispatchEvent(ev)
-    } catch (_e) { return false }
-    return waitFor(() => !scan(doc).ok, 1500)
+    for (let n = 0; n < 3; n++) {
+      try {
+        const win = doc.defaultView
+        const KE = win && win.KeyboardEvent ? win.KeyboardEvent : KeyboardEvent
+        const ev = new KE('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true, composed: true })
+        for (const k of ['keyCode', 'which']) {
+          if (ev[k] !== 27) { try { Object.defineProperty(ev, k, { value: 27, configurable: true }) } catch (_e) { /* 읽기 전용 — 그대로 보낸다 */ } }
+        }
+        ;(doc.body || doc).dispatchEvent(ev)
+      } catch (_e) { return false }
+      if (await waitFor(() => !scan(doc).ok, 1500)) return true
+      if (!doc.querySelector('[role="menu"]')) return false
+    }
+    return false
   }
   // 실패 결과 — needs-trusted(main 이 그 라디오를 trusted 클릭한 뒤 다시 돈다) 만 패널을 열어 두고, 나머지는 닫고 나온다.
   const fail = async (reason, extra, keepOpen) => {
@@ -207,6 +243,17 @@ export async function settingsDriverCore(doc, targets, deps) {
   }
   const failPlan = async (p) => Object.assign(await fail(p.reason || p.kind), { kind: p.kind || 'flow-settings-not-applied' }, p.params ? { params: p.params } : {})
   const norm = (s) => String(s || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+  // M2-2: planSettingsClicks 의 labelMatches 와 같은 규칙(자기완결 — 이름으로 부르지 않는다).
+  const labelMatches = (label, want) => {
+    const l = norm(label); const w = norm(want)
+    if (!w) return false
+    if (l.includes(w)) return true
+    const toks = (x) => x.split(/\s+/).filter((k) => /[\p{L}\p{N}]/u.test(k))
+    const lt = toks(l); const wt = toks(w)
+    let i = 0
+    for (const k of lt) if (i < wt.length && k === wt[i]) i++
+    return wt.length > 0 && i === wt.length
+  }
   const ICON_SEL = "mat-icon, i, span[class*='symbols'], [class*='google-symbols']"
 
   let s = scan(doc)
@@ -234,16 +281,21 @@ export async function settingsDriverCore(doc, targets, deps) {
     const opened = await waitFor(() => trigger.getAttribute('aria-expanded') === 'true' && !!trigger.getAttribute('aria-controls') && !!doc.getElementById(trigger.getAttribute('aria-controls')), 3000)
     if (!opened) return fail('model-menu-not-open')
     const menu = doc.getElementById(trigger.getAttribute('aria-controls'))
-    const wantLabel = norm(p2.model.requested)
+    const wantLabel = p2.model.requested
     const item = Array.from(menu.querySelectorAll('[role="menuitem"]')).find((el) => {
       const clone = el.cloneNode(true)
       Array.from(clone.querySelectorAll(ICON_SEL)).forEach((i) => i.remove())
-      return norm(clone.textContent).includes(wantLabel)
+      return labelMatches(clone.textContent, wantLabel)
     })
     if (!item) { try { trigger.click() } catch (_e) { /* 메뉴 닫기 실패는 무시 */ } return fail('model-not-offered') }
     item.click()
-    const applied = await waitFor(() => { const n = scan(doc); return n.ok && !!n.model && !!n.model.label && n.model.label.includes(wantLabel) && !n.model.expanded }, 3000)
-    if (!applied) return fail('model-not-reflected')
+    const applied = await waitFor(() => { const n = scan(doc); return n.ok && !!n.model && !!n.model.label && labelMatches(n.model.label, wantLabel) && !n.model.expanded }, 3000)
+    if (!applied) {
+      // M2-2: 항목이 하위 메뉴만 열었다(항목 aria-expanded=true 또는 두 번째 role=menu) — 내용 미관측이라 더 가지 않는다.
+      //   fail() 의 Escape(최대 3번) 가 하위 메뉴·메뉴·패널을 차례로 닫는다.
+      const submenu = item.getAttribute('aria-expanded') === 'true' || doc.querySelectorAll('[role="menu"]').length > 1
+      return fail(submenu ? 'model-submenu-unknown' : 'model-not-reflected')
+    }
     modelClicked = true
     await sleep(150)   // 안정 대기 — 모델 변경이 길이/해상도 그룹을 리셋·교체할 수 있다
     s = scan(doc)
@@ -310,7 +362,7 @@ export function FIND_RADIO_JS(name, key) {
 })(${JSON.stringify(String(name))}, ${JSON.stringify(String(key))})`
 }
 
-const STEP_ORDER = ['mode', 'ratio', 'duration', 'resolution', 'count', 'model']
+const STEP_ORDER = ['mode', 'ratio', 'duration', 'resolution', 'count', 'model', 'input']
 function formatSteps(steps) {
   return STEP_ORDER.filter((k) => steps && steps[k]).map((k) => `${k}=${steps[k]}`).join(' ')
 }
