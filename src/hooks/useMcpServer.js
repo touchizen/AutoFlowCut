@@ -14,6 +14,9 @@ import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 import { clearedImageFields } from '../utils/refEntityRegistration'
 
+// start-scene-batch `mode` → handleStart 탭 오버라이드. 없거나 모르는 값이면 현재 UI 탭 그대로.
+const MCP_BATCH_MODE_TAB = { video: 'video-text', image: 'text' }
+
 /**
  * MCP load_csv(update-references) 병합. CSV 는 prompt/type/category 의 authoritative 소스지만,
  * 생성이 카드에 남긴 런타임 사실은 CSV 에 없다 — 여기서 보존하지 않으면 조용히 지워진다.
@@ -101,7 +104,9 @@ export function useMcpServer({
   importByPath, audioPackage,
   automationState, videoAutomation, generatingRefs,
   isRunning = false,  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
-  refBatchRunning = false  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  refBatchRunning = false,  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  // batch-status 진단용 — preflight 에서 조용히 return 한 이유(Flow 준비/탭)를 밖에서 볼 수 있게.
+  mode, flowProjectReady, activeTab,
 }) {
   // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
@@ -452,8 +457,12 @@ export function useMcpServer({
         console.log('[MCP] Open project requested:', data.projectName)
         window.__mcpOpenProject?.(data.projectName)
       } else if (data.type === 'start-scene-batch') {
-        console.log('[MCP] Scene batch generation start requested, styleId:', data.styleId, 'force:', data.force)
-        window.__mcpStartBatch?.(data.styleId, data.force ? { force: true } : undefined)
+        console.log('[MCP] Scene batch generation start requested, styleId:', data.styleId, 'force:', data.force, 'mode:', data.mode)
+        const batchOptions = {
+          ...(data.force ? { force: true } : {}),
+          ...(data.mode ? { mode: data.mode } : {}),
+        }
+        window.__mcpStartBatch?.(data.styleId, Object.keys(batchOptions).length ? batchOptions : undefined)
       } else if (data.type === 'start-ref-batch') {
         console.log('[MCP] Reference batch generation start requested, styleId:', data.styleId, 'force:', data.force)
         window.__mcpStartRefBatch?.(data.styleId, data.force ? { force: true } : undefined)
@@ -507,9 +516,13 @@ export function useMcpServer({
     // → Start 버튼 라벨이 새 스타일 자동 표시. 'auto'/'none'/생략은 UI 유지 (사용자 의도 보존).
     window.__mcpStartBatch = async (styleId, options) => {
       // ref로 항상 최신 handleStart 호출 — stop 후 stale `isRunning=true` 가드에 막히는 회귀 방지.
+      // mode('video'|'image')는 handleStart 의 tab 오버라이드로 변환 — 에이전트가 UI 탭과 무관하게 T2V 배치를 돌릴 수 있게.
+      const { mode, ...restOptions } = options || {}
+      const tab = MCP_BATCH_MODE_TAB[mode]
       const callHandleStart = effective => handleStartRef.current?.(effective, {
-        ...(options || {}),
+        ...restOptions,
         source: 'mcp',
+        ...(tab ? { tab } : {}),
       })
       const resolveEffective = () => {
         if (styleId === 'auto') return null
@@ -588,7 +601,20 @@ export function useMcpServer({
       // 중복 batch 진행 가능 (auto stop-restart 우회).
       const refIsRunning = refBatchRunning || generatingRefs.length > 0
 
+      // T2V 카운트 — videoT2VPrompt 있는 씬만, videoT2VStatus 기준 (image status 와 별개).
+      const videoEligible = scenes.filter(s => s.videoT2VPrompt)
+      const videoCount = st => videoEligible.filter(s => s.videoT2VStatus === st).length
+      const video = {
+        total: videoEligible.length,
+        done: videoCount('complete'),
+        generating: videoCount('generating'),
+        error: videoCount('error'),
+        pending: videoEligible.filter(s => !s.videoT2VStatus || s.videoT2VStatus === 'pending').length,
+      }
+
       return {
+        app: { mode, flowProjectReady, activeTab },
+        video,
         isRunning: sceneIsRunning || videoAutomation.isRunning || refIsRunning,
         isPaused: isPaused || videoAutomation.isPaused,
         progress: sceneIsRunning ? progress : videoAutomation.progress,
@@ -604,5 +630,5 @@ export function useMcpServer({
       delete window.__mcpStopBatch
       delete window.__mcpBatchStatus
     }
-  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning])
+  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning, mode, flowProjectReady, activeTab])
 }

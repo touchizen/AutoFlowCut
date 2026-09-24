@@ -1479,7 +1479,10 @@ function App() {
     gateView: source === 'mcp' ? nonInteractiveGateView : emptyRefGateView,
   })
   const handleStartImpl = async (overrideStyleId = undefined, options = {}) => {
-    const { force = false, source = 'ui' } = options
+    const { force = false, source = 'ui', tab: tabOverride = null } = options
+    // MCP 가 tab 을 지정하면(mode:'video' → T2V) 현재 UI 탭 대신 그 탭으로 돌고 UI 도 맞춰 옮긴다.
+    const startTab = tabOverride || activeTab
+    if (tabOverride && tabOverride !== activeTab) setActiveTab(tabOverride)
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     // #R12-11: 다운로드-only 비디오 retry 진행 중에도 Start 차단(같은 아이템 경합 방지).
     if (isStartBlocked({
@@ -1489,7 +1492,7 @@ function App() {
       retryInFlight: videoRetryInFlightRef.current,
       refBatchRunning,
     })) return
-    const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
+    const isImageBatchStart = startTab === 'text' || startTab === 'list'
     const imageTargetScenes = isImageBatchStart
       ? (force ? scenes.filter(scene => scene.prompt) : filterPendingScenes(scenes))
       : []
@@ -1532,16 +1535,16 @@ function App() {
     }
 
     // 생성 모드 snapshot — 라이브 그리드가 탭 이동과 무관하게 이 값을 쓴다.
-    setRunningGenMode(genModeForTab(activeTab))
+    setRunningGenMode(genModeForTab(startTab))
 
     // 선택 검증 (폴더 확인보다 먼저)
-    if (activeTab === 'video-text') {
+    if (startTab === 'video-text') {
       if (videoScenes.filter(s => s.selected !== false).length === 0) {
         toast.warning(t('videoSelection.noneSelected'))
         return
       }
     }
-    if (activeTab === 'frame-to-video') {
+    if (startTab === 'frame-to-video') {
       if (framePairs.filter(p => p.selected !== false).length === 0) {
         toast.warning(t('videoSelection.noneSelected'))
         return
@@ -1573,7 +1576,7 @@ function App() {
 
     const projectName = ensureProjectName()
 
-    switch (activeTab) {
+    switch (startTab) {
       case 'text':
       case 'list': {
         // 이미지 생성 — 가드 순서: (1) 생성 대상 0개면 즉시 안내 (스타일 선택 요구하지 않음),
@@ -2051,6 +2054,7 @@ function App() {
   // isRunning: scene OR ref(prepare/stop/generating) OR video — Phase 2 auto stop-restart 트리거.
   useMcpServer({
     settings,
+    mode, flowProjectReady, activeTab,  // batch-status 진단 필드
     scenes, setScenes,
     references, setReferences,
     // Phase 11: MCP 가 srtTrack 동기화할 수 있게 setter 전달
