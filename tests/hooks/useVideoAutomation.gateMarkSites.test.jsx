@@ -4,6 +4,8 @@
  * H6 는 "이 배치의 consumeGate.ensure() 가 ok 를 돌려준 뒤 종결되는 pending 항목의 **모든** 패치" 에 마커를 싣는다고 했지만 stop 꼬리·failed 분기·항목별 타임아웃의 `...gateMark()` 는
  * 어떤 테스트도 지키지 않았다(셋을 지워도 tests/hooks·components·services 357 파일 초록 — 리뷰 B4). 그 자리가 빠지면: N개 Start → 첫 항목 완료(배치 소비됨) → Stop → 남은 항목은
  * 마커 없이 stopped 로 남아 다음 Start 의 Phase 0 이 같은 배치의 다운로드에 consumeBatchDownload 를 **한 번 더** 부른다(이중 과금).
+ * M2-R5 J4(B3): 남은 두 자리 — 폴 최상위 authFailed 패치(:799)와 최상위 폴 실패 120회 예산 소진 패치(:966) — 도 핀 없이 남아 있었다(둘 다 지워도 tests/hooks 176 파일 + App 초록).
+ *   첫 항목 다운로드(소비됨) → 로그아웃 → pending 항목의 auth 패치에 마커 없음 → 다음 Start 의 Phase 0 이 게이트로 보내 consumeBatchDownload 를 두 번째로 부른다.
  */
 import { renderHook, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -109,5 +111,36 @@ describe('useVideoAutomation — 게이트 통과 뒤 종결 자리마다 downlo
     await run(h, SCENES(2), 30000)
     expect(consumeBatchDownload).toHaveBeenCalledTimes(1)
     expect(last(h, 'vscene_2')).toEqual(['error', expect.objectContaining({ errorKind: 'flow-video-not-found', generationId: 'gen-2', mediaId: 'gen-2', downloadGated: true })])
+  })
+
+  // M2-R5 J4(B3): 남은 두 자리. 첫 폴은 gen-1 complete(게이트 소비) · gen-2 pending, 그 뒤 폴은 최상위 실패.
+  const firstThen = (later) => (ids, i) => (i === 0 ? { success: true, statuses: ids.map((gid) => (gid === 'gen-1' ? COMPLETE(gid) : PENDING(gid))) } : later)
+
+  it('(c) 게이트 통과 뒤 폴 최상위 authFailed(세션 격상) → pending 항목의 auth 패치(mediaId 동반)가 마커를 든다 → 다시 Start 해도 consumeBatchDownload 총 1회 (M2-R5 J4)', async () => {
+    const h = setup(firstThen({ success: false, authFailed: true, errorKind: 'flow-session-missing', error: 'flow-session-missing' }))
+    await run(h, SCENES(2), 30000)
+    expect(consumeBatchDownload).toHaveBeenCalledTimes(1)
+    expect(last(h, 'vscene_2')).toEqual(['error', expect.objectContaining({ errorKind: 'auth', generationId: 'gen-2', mediaId: 'gen-2', downloadGated: true })])
+    expect(h.hook.result.current.status).toBe('error')
+    const merged2 = mergeLikeApp(h, 'vscene_2', { id: 'vscene_2', prompt: 'p2' })
+    clearCounters(h)
+    await run(h, [merged2], 5000)
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(consumeBatchDownload).toHaveBeenCalledTimes(1)   // 같은 배치의 다운로드 — 두 번째 소비 없음
+  })
+
+  it('(d) 게이트 통과 뒤 최상위 success:false 폴 ×120(예산 소진, F9 는 break 하지 않는다) → fetch-failed + mediaId 패치가 마커를 든다 → 다시 Start 해도 consumeBatchDownload 총 1회 (M2-R5 J4)', async () => {
+    const h = setup(firstThen({ success: false, error: 'server error' }))
+    await run(h, SCENES(2), 125 * 10000, 10000)
+    expect(consumeBatchDownload).toHaveBeenCalledTimes(1)
+    expect(h.checkVideoStatus).toHaveBeenCalledTimes(120)
+    expect(last(h, 'vscene_2')).toEqual(['error', expect.objectContaining({ errorKind: 'flow-video-fetch-failed', generationId: 'gen-2', mediaId: 'gen-2', downloadGated: true })])
+    const merged2 = mergeLikeApp(h, 'vscene_2', { id: 'vscene_2', prompt: 'p2' })
+    clearCounters(h)
+    await run(h, [merged2], 5000)
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(consumeBatchDownload).toHaveBeenCalledTimes(1)
   })
 })

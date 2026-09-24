@@ -9,10 +9,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { registerVideoIPC } from '../../../electron/ipc/video.js'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
-import { sample, samplePayload, respBodyWithPayload, respBodyFailure } from '../../fixtures/flow-batchexecute-samples.js'
+import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../../fixtures/flow-batchexecute-samples.js'
 
 const FLOW_URL_OK = 'https://flow.google.com/project/134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
-const UUID11 = '<uuid#11>'
+const UUID11 = maskedUuid(11)   // M2-R5 J2: 픽스처의 <uuid#11> 은 로더가 UUID 모양으로 푼다
 
 function makeIpcMain() {
   const handlers = new Map()
@@ -97,7 +97,7 @@ describe('flow:check-video-status (angular) — 폴', () => {
     const h = harness({ jwpduf: [{ status: 200, text: firstPollBody() }] })
     const r = await h.check()
     expect(r).toEqual({ success: true, statuses: [{ status: 'pending' }] })
-    expect(h.rpcCalls).toEqual([['jwpduf', '[null,null,[["<uuid#11>"]]]']])
+    expect(h.rpcCalls).toEqual([['jwpduf', `[null,null,[["${UUID11}"]]]`]])
     expect(logged()).toMatch(/\[Flow VideoStatus\] \[Angular\] \S{1,8} state=2 → pending/)
     expect(h.sessionFetch).not.toHaveBeenCalled()
   })
@@ -115,7 +115,7 @@ describe('flow:check-video-status (angular) — 폴', () => {
     expect(r.statuses[0]).toMatchObject({ status: 'complete', mediaId: UUID11 })
     expect(r.statuses[0].videoUrl).toMatch(/^https:\/\/flow-content\.google\/video\//)
     expect(r.statuses[0]).not.toHaveProperty('error')
-    expect(h.rpcCalls).toEqual([['jwpduf', '[null,null,[["<uuid#11>"]]]'], ['as29s', '["<uuid#11>"]']])
+    expect(h.rpcCalls).toEqual([['jwpduf', `[null,null,[["${UUID11}"]]]`], ['as29s', `["${UUID11}"]`]])
     const L = logged()
     expect(L).toMatch(/\[Flow VideoStatus\] \[Angular\] \S{1,8} state=3 → complete, as29s host=flow-content\.google/)
     expect(L).not.toContain('Signature')

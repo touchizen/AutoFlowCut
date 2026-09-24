@@ -11,6 +11,7 @@
 
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { downloadVideoBase64 } from './videoDownload'
+import { isFlowMediaId } from '../utils/flowMediaId'   // M2-R5 J2: 훅·App·파서와 공유하는 Flow 미디어 id 술어(UUID)
 
 /**
  * 다운로드 + 저장 (useVideoAutomation의 Phase 3 로직과 동일)
@@ -115,10 +116,10 @@ export async function recoverInFlightVideos({
   //   현재 mode 의 엔진(genAPI.checkVideoStatus)으로 다른 엔진 id 를 폴링하면 'failed' 로 돌아와
   //   영구히 error 마킹되고(이후 recovery 가 generating/pending 만 보므로 skip) 완료된 Flow 잡이
   //   고아가 된다. 엔진이 안 맞으면 폴링하지 않고 그대로 둬, 올바른 모드의 recovery 가 처리하게 한다.
-  const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || '').trim())
+  //   M2-R5 J2: 지역 isUuid 대신 공유 술어 isFlowMediaId(훅 submittedFlow · App chargedFlowItem · 파서와 같은 모양).
   const engineMatches = (genId) => {
     if (mode !== 'api' && mode !== 'flow') return true  // mode 미지정(legacy) → 필터 안 함
-    return mode === 'flow' ? isUuid(genId) : !isUuid(genId)  // flow=UUID, api=operationName
+    return mode === 'flow' ? isFlowMediaId(genId) : !isFlowMediaId(genId)  // flow=UUID, api=operationName
   }
   // 복구 대상: generationId 있음 + videoPath 없음 + status가 generating/pending + 엔진 일치
   const candidates = framePairs.filter(fp =>

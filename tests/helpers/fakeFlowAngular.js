@@ -13,6 +13,10 @@
 //   opts.escapeLeavesMenus     : (M2-R1 F6) Escape 가 패널 pane 만 닫고 열린 메뉴 pane 은 남긴다
 //   opts.modelSelectDurations  : (M2-R3 H4) 모델 항목 클릭이 길이 그룹을 이 라벨 목록으로 갈아끼운다(모델마다 길이 옵션이 다르다 — 현재 체크값이 목록에 있으면 유지)
 //   opts.modelSelectDelayMs    : (M2-R4 I7) 그 교체를 클릭 뒤 N ms 지나서 한다(라이브 페이지의 늦은 재렌더 — 고정 150ms 대기가 놓치는 경우)
+//   opts.modelSelectTwoStepMs  : (M2-R5 J6) 두 단계 재렌더 — 길이 그룹을 클릭 즉시 **떼고** N ms 뒤 modelSelectDurations 로 다시 붙인다(라이브 Angular 가 새 모델의 옵션을
+//                                불러오는 동안 그룹이 잠깐 사라지는 경우 — "그룹 없음" 스캔을 안정으로 세면 group-not-found:duration)
+//   opts.modelSelectInterim    : (M2-R5 J6) 두 단계 재렌더 사이의 **중간** 상태 {durations, atMs} — 최종 교체(modelSelectTwoStepMs) 전 atMs 에 다른 옵션 집합이 잠깐 붙는다
+//                                (연속 3회 미만의 과도 상태 — 첫 이탈 스캔이나 연속 2회에서 멈추면 중간 옵션으로 계획해 duration-not-offered)
 // 리스너는 document/body 에 붙으므로 테스트마다 disposeFakeAngular() 로 이전 것을 abort 한다.
 import { buildSettingsPanel, buildModelMenu, buildDurationGroup } from '../fixtures/flow-live-dom-20260924.js'
 
@@ -96,8 +100,26 @@ export function installFakeAngular(doc, opts = {}) {
           const group = radios[0]?.closest('mat-button-toggle-group')
           if (group) group.outerHTML = buildDurationGroup(opts.modelSelectDurations, checkedNow)
         }
+        // M2-R5 J6: 두 단계 재렌더 — 그룹을 먼저 떼고(자리에 주석 마커) N ms 뒤 새 옵션으로 같은 자리에 다시 붙인다
+        if (opts.modelSelectTwoStepMs > 0) {
+          const radios = Array.from(doc.querySelectorAll('button[role="radio"]')).filter((x) => groupOf(x) === 'duration')
+          const checkedNow = (radios.find((x) => x.getAttribute('aria-checked') === 'true')?.textContent || '').replace(/\s+/g, ' ').trim()
+          const group = radios[0]?.closest('mat-button-toggle-group')
+          if (group) {
+            let slot = doc.createComment('duration-group-pending')
+            group.parentNode.replaceChild(slot, group)
+            const put = (labels) => {
+              const tpl = doc.createElement('template')
+              tpl.innerHTML = buildDurationGroup(labels, checkedNow)
+              const el = tpl.content.firstElementChild
+              slot.parentNode.replaceChild(el, slot)
+              slot = el
+            }
+            if (opts.modelSelectInterim) setTimeout(() => put(opts.modelSelectInterim.durations), opts.modelSelectInterim.atMs)
+            setTimeout(() => put(opts.modelSelectDurations), opts.modelSelectTwoStepMs)
+          }
         // M2-R4 I7: 지연 교체 — 라이브 Angular 가 그룹을 나중에 다시 그리는 경우
-        if (opts.modelSelectDelayMs > 0) setTimeout(swapDurations, opts.modelSelectDelayMs)
+        } else if (opts.modelSelectDelayMs > 0) setTimeout(swapDurations, opts.modelSelectDelayMs)
         else swapDurations()
       }
     }

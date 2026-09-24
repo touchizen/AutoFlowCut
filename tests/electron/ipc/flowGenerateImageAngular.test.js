@@ -11,7 +11,7 @@ import { routeReportResponse, buildReportCtx } from '../../../electron/reportRes
 import { failBoundUnfinished } from '../../../electron/flow-rpc-router.js'
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
 import { setModalVisible } from '../../../electron/ipc/layout.js'
-import { sample, samplePayload, respBodyWithPayload, respBodyFailure } from '../../fixtures/flow-batchexecute-samples.js'
+import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../../fixtures/flow-batchexecute-samples.js'
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 const FLOW_URL_OK = `https://flow.google.com/project/${PROJECT}`
@@ -152,9 +152,9 @@ describe('flow:generate-image (angular) — 동기', () => {
   it('성공: images[0] {base64, mediaId, width 1376, height 768, seed}; sessionFetch 는 헤더 없이 1회; 순서 단언; 로그 형식', async () => {
     const h = harness()
     const r = await settle(h.generate())
-    expect(r).toEqual({ success: true, images: [{ base64: 'data:image/png;base64,AQID', mediaId: '<uuid#5>', width: 1376, height: 768, seed: 1687588041 }] })
+    expect(r).toEqual({ success: true, images: [{ base64: 'data:image/png;base64,AQID', mediaId: maskedUuid(5), width: 1376, height: 768, seed: 1687588041 }] })
     expect(h.sessionFetch).toHaveBeenCalledTimes(1)
-    expect(h.sessionFetch.mock.calls[0]).toEqual([expect.stringMatching(/^https:\/\/flow-content\.google\/image\/<uuid#5>\?/)])
+    expect(h.sessionFetch.mock.calls[0]).toEqual([expect.stringMatching(new RegExp('^https://flow-content\\.google/image/' + maskedUuid(5) + '\\?'))])
     const t = h.trace
     expect(idx(t, 'agent-probe')).toBeGreaterThanOrEqual(0)
     expect(idx(t, 'agent-probe')).toBeLessThan(idx(t, 'capture-probe'))
@@ -173,7 +173,7 @@ describe('flow:generate-image (angular) — 동기', () => {
     // R1#11: gen id 는 뒤 8자(앞 8자는 항상 "gen-1790")
     expect(logged()).toMatch(/\[Flow API\] \[Angular\] submitted gen=\S+ async=false/)
     expect(logged()).not.toMatch(/submitted gen=gen-1790/)
-    // 마스킹 픽스처의 <uuid#5> 는 '#' 때문에 URL 조각이 된다 — 호스트와 바이트 수, 그리고 서명이 없음을 본다.
+    // 호스트·미디어 id 앞 8자·바이트 수만, 그리고 서명이 없음을 본다(M2-R5 J2: 픽스처 id 는 로더가 UUID 모양으로 푼다).
     expect(logged()).toMatch(/\[Flow API\] \[AsyncCollect\] download host=flow-content\.google media=\S{1,8} bytes=3/)
     expect(logged()).not.toContain(PROMPT)
     expect(logged()).not.toContain('Signature')
@@ -427,7 +427,7 @@ describe('flow:generate-image (angular) — 비동기 + check/collect + 마감',
     expect(st).toMatchObject({ success: true, completed: true, via: 'rpc' })
     expect(h.trace).not.toContain('dom-image-probe')
     const c = await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })
-    expect(c).toMatchObject({ success: true, images: [{ mediaId: '<uuid#5>', width: 1376, height: 768 }] })
+    expect(c).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5), width: 1376, height: 768 }] })
     expect(h.pendingGenerations.has(r.generationId)).toBe(false)
   })
 
@@ -470,7 +470,7 @@ describe('flow:generate-image (angular) — 비동기 + check/collect + 마감',
     await vi.advanceTimersByTimeAsync(2000)
     expect(late.pendingGenerations.size).toBe(1)
     late.page.send(); late.page.loadend()
-    expect(await settle(pLate, 20000)).toMatchObject({ success: true, images: [{ mediaId: '<uuid#5>' }] })
+    expect(await settle(pLate, 20000)).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
     const none = harness({ onSubmit: null, clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
     expect(await settle(none.generate(), 20000)).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', postClick: true })
     expect(none.pendingGenerations.size).toBe(0)

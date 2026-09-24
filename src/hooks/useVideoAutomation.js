@@ -29,6 +29,7 @@ import { partitionDownloadOnly } from './downloadOnlyGate'
 import { batchStartGate } from './batchStartGate'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
+import { isFlowMediaId as isFlowShapedId, isLegacyFlowGenerationFailure } from '../utils/flowMediaId'   // M2-R5 J2: App·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
 // 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치).
@@ -362,6 +363,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             mediaId: s.mediaId,
             videoPath: s.videoPath,
             downloadGated: !!s.downloadGated,   // M2-R3 H6: 배치 다운로드 권한 마커(Phase 0 게이트 판정)
+            legacyFailure: isLegacyFlowGenerationFailure(s),   // M2-R5 J3: 옛 서버측 생성 실패(error PUBLIC_ERROR_* · kind 없음 · 미디어 없음) — 출처 분류에서 제외(items 는 error/errorKind 를 안 실으므로 여기서 판정)
             seed: s.seed ?? seed ?? null,
             model: s.model ? canonicalVideoModel(s.model) : effectiveVideoModel,
             // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
@@ -393,6 +395,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             mediaId: p.mediaId,
             videoPath: p.videoPath,
             downloadGated: !!p.downloadGated,   // M2-R3 H6
+            legacyFailure: isLegacyFlowGenerationFailure(p),   // M2-R5 J3
             seed: p.seed ?? seed ?? null,
             // t2v(279)와 동일: 저장된 p.model 을 보존하고 없을 때만 현재 선택으로 폴백한다.
             //   download-only/in-flight 복구 항목은 서버가 옛 모델로 생성한 메타를 그대로 들고 있어야
@@ -447,8 +450,10 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // M2-R4 I4(A3): 출처엔 **엔진 모양**도 든다 — Flow 의 generationId 는 UUID(recoverInFlightVideos 의 #R34-1 필터와 같은 모양). API(Veo) 의 operation 이름
     //   (`models/veo…/operations/…`)을 든 항목(재시작 뒤 pending·API stop/타임아웃의 error)은 Flow 가 과금한 제출이 아니다 — in-flight 로 잡으면 jwpduf 가 4회 레코드 없음
     //   → flow-video-not-found(+mediaId=operation 이름)로 닫혀 양 모드에서 영원히 download-only 가 된다. Flow 모양이 아니면 status 규칙(fresh / API 의 error+ids download-only)으로.
-    const isFlowShapedId = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || '').trim())
-    const submittedFlow = (it) => appMode === 'flow' && it.status !== 'complete' && isFlowShapedId(it.generationId) && !it.videoPath
+    // M2-R5 J2: 지역 정규식 사본 대신 src/utils/flowMediaId 의 공유 술어(App chargedFlowItem · videoRecovery #R34-1 · 파서 [3][0][0] 과 같은 모양).
+    // M2-R5 J3(B2): 옛 서버측 생성 실패 행(error PUBLIC_ERROR_* · errorKind null · mediaId null · videoPath 없음)은 미디어가 없어 폴 대상이 아니다 — 출처 분류에서 빼 status 규칙(error+mediaId 없음 → fresh)으로.
+    //   전엔 in-flight 로 잡혀 jwpduf 레코드 없음 ×3 → flow-video-not-found(+mediaId=G)로 영원히 download-only 가 됐다(H3 이후). App chargedFlowItem 도 같은 제외.
+    const submittedFlow = (it) => appMode === 'flow' && it.status !== 'complete' && isFlowShapedId(it.generationId) && !it.videoPath && !it.legacyFailure
     const downloadOnly = items.filter(it => (submittedFlow(it)
       ? !!it.mediaId
       : it.status === 'error' && it.generationId && it.mediaId && !it.videoPath))

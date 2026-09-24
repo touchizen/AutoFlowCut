@@ -14,12 +14,12 @@ import { routeReportResponse, buildReportCtx } from '../../../electron/reportRes
 import { failBoundUnfinished } from '../../../electron/flow-rpc-router.js'
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
 import { isQuotaExhaustedError } from '../../../src/utils/quotaStop.js'
-import { sample, samplePayload, respBodyWithPayload, respBodyFailure } from '../../fixtures/flow-batchexecute-samples.js'
+import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../../fixtures/flow-batchexecute-samples.js'
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 const FLOW_URL_OK = `https://flow.google.com/project/${PROJECT}`
 const PROMPT = '왕이 궁전 내부를 산책하는 영상'
-const UUID11 = '<uuid#11>'
+const UUID11 = maskedUuid(11)   // M2-R5 J2: 픽스처의 <uuid#11> 은 로더가 UUID 모양으로 푼다
 const DOC = 'e'.repeat(32)
 const NOW_S = 1790240102.5
 

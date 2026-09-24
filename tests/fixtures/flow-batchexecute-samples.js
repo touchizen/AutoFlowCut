@@ -12,10 +12,19 @@ const SAMPLES_PATH = fileURLToPath(new URL(
   '../../docs/handoffs/evidence/2026-09-24-flow-batchexecute-samples.masked.jsonl', import.meta.url,
 ))
 
+/**
+ * M2-R5 J2: 마스킹 토큰 `<uuid#N>` → 결정적 UUID 모양. 파서(parseVideoSubmitResponse [3][0][0])와 렌더러 분류(훅 submittedFlow · App chargedFlowItem · 복구 #R34-1)가
+ *   같은 Flow 미디어 id 모양(UUID)을 요구하므로 픽스처의 id 도 그 모양이어야 한다. 테스트는 리터럴 대신 maskedUuid(N) 으로 기대값을 만든다.
+ */
+export function maskedUuid(n) {
+  return String(n).padStart(8, '0') + '-0000-4000-8000-000000000000'
+}
+const unmaskUuids = (text) => text.replace(/<uuid#(\d+)>/g, (_m, n) => maskedUuid(n))
+
 let cache = null
 function load() {
   if (cache) return cache
-  cache = readFileSync(SAMPLES_PATH, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l))
+  cache = readFileSync(SAMPLES_PATH, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(unmaskUuids(l)))
   return cache
 }
 

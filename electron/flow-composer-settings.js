@@ -265,16 +265,22 @@ export async function settingsDriverCore(doc, targets, deps) {
   // M2-R4 I7(B5): 모델 클릭 뒤 길이/해상도/개수 그룹은 라이브 Angular 가 **나중에** 다시 그릴 수 있다 — 고정 sleep(150) 은 그보다 늦은 재렌더를 놓쳐 옛 모델의 옵션으로 다시
   //   계획한다(H4 가 고치려던 그 경우). "연속 두 스캔이 같다" 만으로는 교체 **전** DOM 도 50ms 만에 같다고 통과하므로, 클릭 전 서명에서 **벗어난 뒤** 연속 두 스캔이 같을 때까지
   //   기다린다(≤1.5s — 그룹이 정말 같은 모델 전환은 상한에서 진행). 서명은 세 그룹의 옵션(리거처·라벨·체크)이다. 자기완결.
+  // M2-R5 J6(A3): 과도 상태는 안정이 아니다 — 라이브 Angular 는 새 모델의 옵션을 불러오는 동안 그룹을 잠깐 뗐다가 다시 붙일 수 있는데, 실패한 스캔·그룹 없는 스캔의
+  //   자리표시('scan-failed'·'-')를 서명으로 세면 그 상태가 "서명 이탈 + 연속 동일" 을 만족해 ~100ms 뒤 재계획이 group-not-found:duration 으로 실패했다. 이제 서명은 스캔이
+  //   성공했고 세 그룹이 전부 있을 때만(아니면 null) 있고, 서명 이탈 뒤 **연속 3회 동일**(≈150ms)에 안정으로 본다. 상한 1.5s 는 그대로.
   const groupSig = (n) => {
-    if (!n || !n.ok) return 'scan-failed'
+    if (!n || !n.ok) return null
     const kinds = ['duration', 'resolution', 'count']
-    return kinds.map((k) => { const g = n.groups[k]; return g ? g.options.map((o) => (o.ligature || '') + '|' + o.label + '|' + (o.checked ? 1 : 0)).join(',') : '-' }).join(';')
+    if (!kinds.every((k) => !!n.groups[k])) return null
+    return kinds.map((k) => n.groups[k].options.map((o) => (o.ligature || '') + '|' + o.label + '|' + (o.checked ? 1 : 0)).join(',')).join(';')
   }
   const waitGroupsSettled = async (preSig) => {
     let prev = null
+    let same = 0   // 직전 스캔과 같은 서명이 이어진 횟수(서명 없는 스캔은 0 으로 되돌린다)
     for (let i = 0; i < 30; i++) {
       const cur = groupSig(scan(doc))
-      if (cur !== preSig && cur === prev) return
+      same = cur != null && cur === prev ? same + 1 : 0
+      if (cur != null && cur !== preSig && same >= 2) return   // 연속 3회 동일(현재 + 직전 2회)
       prev = cur
       await sleep(50)
     }
@@ -418,11 +424,15 @@ export async function applyComposerSettings(flowView, opts, deps) {
   const closeLeftOpen = () => deps.trustedClickOnFlowView(FIND_SETTINGS_TRIGGER_JS, { required: false, step: 'settings-trigger-close' })
   let r = await runDriver()
   if (r && Array.isArray(r.needsTrusted) && r.needsTrusted.length) {
+    const firstSteps = r.steps || {}
     for (const n of r.needsTrusted) {
       const c = await deps.trustedClickOnFlowView(FIND_RADIO_JS(n.name, n.ligature || n.label), { required: true, step: 'settings-radio' })
       if (!c || !c.success) { steps = r.steps || {}; await closeLeftOpen(); return fail('settings-radio-click-failed:' + n.group) }
     }
     r = await runDriver()
+    // M2-R5 J5(B4): 첫 실행이 모델을 바꿨으면(model=clicked) 재실행은 이미 바뀐 모델을 already 로 본다 — 병합 steps·[Flow Settings] 로그는 첫 실행의 전환을 지킨다
+    //   (§12.2 무과금 프로브의 통과 조건 steps.model==='clicked'; I7 은 클릭 뒤 거부 경로만 지켰다).
+    if (firstSteps.model === 'clicked' && r && r.steps && r.steps.model === 'already') r = { ...r, steps: { ...r.steps, model: 'clicked' } }
     // R2-2#3: trusted 클릭 뒤 재실행도 needs-trusted(모드 라디오 재렌더 → 다른 라디오도 합성 클릭 무시) — needs-trusted 는
     //   패널을 일부러 열어 두고(closed 없음) 나오므로 여기서 닫고 실패한다. 한 번 더 돌리지 않는다(무한 루프 방지).
     if (r && Array.isArray(r.needsTrusted) && r.needsTrusted.length) {

@@ -1,5 +1,8 @@
 /**
  * loadProjectWithResources — 과금된 새 제출(generationId 있음 · mediaId null · videoPath null)에 옛 파일을 다시 붙이지 않는다 (M2-R4 I2, B1)
+ * M2-R5 J1(A1 + B6): 가드에서 `mediaId == null` 항을 뺀다 — G1(b) 이후 제출된 항목의 **모든** Flow 종결 패치(stop·폴 타임아웃·폴 auth·not-found·권한 거부·다운로드 실패)가
+ *   mediaId = generationId 를 쓰므로, mediaId 를 든 비완료 행(download-only)도 로더가 옛 t2v_N.mp4 를 붙여 complete 로 올리면 복구도 Phase 0 도 G 를 받지 않고 다음 Start 가
+ *   재제출(10크레딧)한다. generationId 가 있고 videoPath 가 없는 비완료 행은 mediaId 유무와 무관하게 그대로 둔다(in-flight 든 download-only 든 Phase 0 몫). fp_2 회귀 핀은 뒤집는다.
  *
  * 돈 규칙(H3): Flow 의 제출된 항목은 YhhmEf 200 순간 과금됐고 generationId 가 곧 미디어 id — generationId 가 있고 videoPath 가 없으면 절대 새 제출이 아니다.
  * 재시작 경로의 구멍: 전체 Start(또는 Regenerate → Start)가 디스크에 t2v_N.mp4 가 있는 씬을 재생성하면 제출 패치는 {generating, generationId:G_new, mediaId:null,
@@ -92,13 +95,53 @@ describe('loadProjectWithResources — 새 제출(generationId · mediaId null �
     expect(loaded.framePairs[0].base64).toBeUndefined()
   })
 
-  it('회귀 방지: mediaId 를 든 완료 항목(다운로드 끝남)과 옛 stale 경로는 그대로 현재 폴더로 리맵돼 complete — 정상 로드 경로 불변', async () => {
+  it('회귀 방지: mediaId 를 든 완료 항목(다운로드 끝남)의 옛 stale 경로는 그대로 현재 폴더로 리맵돼 complete — 정상 로드 경로 불변; pending + G + mediaId:G + videoPath:null 은 붙이지 **않는다**(M2-R5 J1 — 재시작이 남긴 download-only 모양, 디스크 파일은 옛 것)', async () => {
     persist({
       videoScenes: [{ id: 'vscene_2', prompt: 'p2', videoSaveId: 't2v_2', status: 'complete', generationId: G_OLD, mediaId: G_OLD, videoPath: '/old-folder/videos/t2v_2.mp4' }],
       framePairs: [{ id: 'fp_2', startSceneId: 'scene_2', prompt: 'p', videoSaveId: 'i2v_2', status: 'pending', generationId: G_OLD, mediaId: G_OLD, videoPath: null }],
     })
     const loaded = await loadProjectWithResources('proj')
     expect(loaded.videoScenes[0]).toMatchObject({ status: 'complete', videoPath: '/proj/videos/t2v_2.mp4', generationId: G_OLD, mediaId: G_OLD })
-    expect(loaded.framePairs[0]).toMatchObject({ status: 'complete', videoPath: '/proj/videos/i2v_2.mp4' })
+    expect(loaded.framePairs[0]).toMatchObject({ status: 'pending', generationId: G_OLD, mediaId: G_OLD, videoPath: null })
+    expect(loaded.framePairs[0].base64).toBeUndefined()
+    expect(loaded.framePairs[0].status).not.toBe('complete')
+  })
+})
+
+// ── M2-R5 J1 (A1 + B6): mediaId 를 든 비완료 행도 그대로 — 그리고 남은 두 절(complete 제외 · videoPath 절)의 핀 ────────────────────────────────
+describe('loadProjectWithResources — generationId 있고 videoPath 없는 비완료 행은 mediaId 유무와 무관하게 그대로 둔다 (M2-R5 J1)', () => {
+  it('(a) 중단된 행 {error, stopped, G, mediaId:G, videoPath:null} + 디스크의 옛 t2v_1.mp4 → 로드 결과는 error·videoPath null·video 없음(complete 아님); 실제 훅은 제출 0·retryVideoDownload 1 — 옛 파일이 결과로 보이지 않는다', async () => {
+    persist({ videoScenes: [{ id: 'vscene_1', prompt: 'p1', videoSaveId: 't2v_1', status: 'error', error: 'Stopped by user', errorKind: 'stopped', generationId: G_NEW, mediaId: G_NEW, videoPath: null }] })
+    const loaded = await loadProjectWithResources('proj')
+    const vs = loaded.videoScenes[0]
+    expect(vs).toMatchObject({ id: 'vscene_1', status: 'error', errorKind: 'stopped', generationId: G_NEW, mediaId: G_NEW, videoPath: null })
+    expect(vs.video).toBeUndefined()
+    expect(vs.status).not.toBe('complete')
+    // 실제 로더 출력 → 실제 훅(Flow): download-only — 제출 0, 폴 0, retryVideoDownload 1(G_new 의 미디어)
+    const h = setupHook()
+    await run(h, loaded.videoScenes)
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(h.checkVideoStatus).not.toHaveBeenCalled()
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(retryVideoDownload.mock.calls[0][0].item).toMatchObject({ id: 'vscene_1', generationId: G_NEW, mediaId: G_NEW })
+  })
+
+  it('(a2) I2V(framePairs) 같은 모양 {error, stopped, G, mediaId:G, videoPath:null} → videoPath 붙이지 않고 complete 로 올리지 않는다(error 유지), base64 없음', async () => {
+    persist({ framePairs: [{ id: 'fp_1', startSceneId: 'scene_1', prompt: 'p', videoSaveId: 'i2v_1', status: 'error', errorKind: 'stopped', generationId: G_NEW, mediaId: G_NEW, videoPath: null }] })
+    const loaded = await loadProjectWithResources('proj')
+    expect(loaded.framePairs[0]).toMatchObject({ id: 'fp_1', status: 'error', errorKind: 'stopped', generationId: G_NEW, mediaId: G_NEW, videoPath: null })
+    expect(loaded.framePairs[0].base64).toBeUndefined()
+  })
+
+  it('(b) 옛 complete + G + mediaId:null + videoPath:null(memory 모드 행) → 여전히 리맵돼 complete 유지 — complete 제외 절의 핀', async () => {
+    persist({ videoScenes: [{ id: 'vscene_3', prompt: 'p3', videoSaveId: 't2v_3', status: 'complete', generationId: G_OLD, mediaId: null, videoPath: null }] })
+    const loaded = await loadProjectWithResources('proj')
+    expect(loaded.videoScenes[0]).toMatchObject({ id: 'vscene_3', status: 'complete', videoPath: '/proj/videos/t2v_3.mp4', generationId: G_OLD })
+  })
+
+  it('(c) error + G + mediaId:null + stale videoPath → 현재 폴더로 리맵된다 — videoPath 절의 핀', async () => {
+    persist({ videoScenes: [{ id: 'vscene_4', prompt: 'p4', videoSaveId: 't2v_4', status: 'error', generationId: G_OLD, mediaId: null, videoPath: '/old-folder/videos/t2v_4.mp4' }] })
+    const loaded = await loadProjectWithResources('proj')
+    expect(loaded.videoScenes[0]).toMatchObject({ id: 'vscene_4', videoPath: '/proj/videos/t2v_4.mp4', generationId: G_OLD })
   })
 })

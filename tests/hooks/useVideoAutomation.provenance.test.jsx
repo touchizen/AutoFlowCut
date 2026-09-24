@@ -123,6 +123,25 @@ describe('useVideoAutomation Phase 0 — Flow 모드 출처 분류 (M2-R3 H3)', 
     expect(h2.generateVideoT2V).not.toHaveBeenCalled()
   })
 
+  // M2-R5 J3(B2): 옛 서버측 생성 실패 행 — 사용자 실데이터 모양 {error:'PUBLIC_ERROR_DANGER_FILTER', errorKind null, UUID generationId, mediaId/videoPath null}(야담02 fp_5 · 무한야담ep03 vscene_1/fp_1/fp_2,
+  //   디스크 파일 없음). 미디어가 만들어진 적이 없어 폴 대상이 아니다 — H3 의 출처 분류가 in-flight 로 잡아 jwpduf 레코드 없음 ×3 → flow-video-not-found + mediaId=G 로 영원히 download-only 가 됐다.
+  //   과금된 in-flight 로 세지 않는다: Start 는 재제출(프롬프트를 고친 뒤 다시 생성할 수 있어야 한다).
+  it('(g) Flow 모드, 옛 서버측 생성 실패 행(error PUBLIC_ERROR_* · errorKind null · UUID G · mediaId null · videoPath null) → fresh 제출, G 를 폴하지 않는다; 같은 문구라도 mediaId 가 있으면 download-only 그대로 (M2-R5 J3)', async () => {
+    const h = setup('flow')
+    await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'error', error: 'PUBLIC_ERROR_DANGER_FILTER', errorKind: null, generationId: G, mediaId: null, videoPath: null }])
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(1)
+    expect(retryVideoDownload).not.toHaveBeenCalled()
+    expect(h.checkVideoStatus.mock.calls.flat(2)).not.toContain(G)
+    expect(h.checkVideoStatus.mock.calls[0][0]).toEqual(['gen-new-1'])
+    expect(last(h, 'vscene_1')).toEqual(['complete', expect.objectContaining({ generationId: 'gen-new-1', mediaId: 'gen-new-1' })])
+    // 대조군: 같은 문구라도 mediaId 를 든 행은 download-only(제외는 옛 실패 모양 넷 — errorKind null·PUBLIC_ERROR_*·mediaId null·videoPath 없음 — 에만)
+    vi.clearAllMocks()
+    const h2 = setup('flow')
+    await run(h2, [{ id: 'vscene_1', prompt: 'p1', status: 'error', error: 'PUBLIC_ERROR_DANGER_FILTER', errorKind: null, generationId: G, mediaId: G, videoPath: null }])
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(h2.generateVideoT2V).not.toHaveBeenCalled()
+  })
+
   it('(e) API 모드는 status 규칙 그대로: pending + generationId(mediaId null) → fresh 제출', async () => {
     const h = setup('api')
     await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'pending', generationId: 'op-old', mediaId: null, videoPath: null }])

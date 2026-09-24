@@ -18,10 +18,10 @@ import {
 import { isFlowAuthError, markFlowAuthFailure } from '../../src/engine/engineFlow.js'
 import { isQuotaExhaustedError } from '../../src/utils/quotaStop.js'
 import {
-  sample, reencodeRequestBody, samplePayload, respBodyWithPayload, respBodyFailure,
+  sample, reencodeRequestBody, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid,
 } from '../fixtures/flow-batchexecute-samples.js'
 
-const UUID5 = '<uuid#5>'
+const UUID5 = maskedUuid(5)   // M2-R5 J2: 픽스처의 <uuid#5> 는 로더가 UUID 모양으로 푼다
 const PROMPT = '궁정안에 있는 왕'
 
 describe('parseBatchexecuteResponse — )]}\' 접두 + 줄 단위 프레임', () => {
@@ -77,7 +77,7 @@ describe('parseImageGenerateResponse — ogiZ0b 위치 핀', () => {
     const { results } = parseImageGenerateResponse(samplePayload('ogiZ0b'))
     expect(results).toHaveLength(1)
     expect(results[0]).toMatchObject({ mediaId: UUID5, seed: 1687588041, width: 1376, height: 768, echo: [PROMPT] })
-    expect(results[0].url).toMatch(/^https:\/\/flow-content\.google\/image\/<uuid#5>\?/)
+    expect(results[0].url.startsWith('https://flow-content.google/image/' + UUID5 + '?')).toBe(true)
   })
 
   it('[0][0][6][2](치수) 삭제 → "ogiZ0b response shape changed at [0][0][6][2]"', () => {
@@ -237,7 +237,7 @@ describe('describeMediaUrl — 로그용 요약(호스트 + 미디어 id 앞 8�
 
 // ─── M2-1 영상 파서 + 표 기반 모델키 ────────────────────────────────────────────────────────────────
 const VIDEO_PROMPT = '왕이 궁전 내부를 산책하는 영상'
-const UUID11 = '<uuid#11>'
+const UUID11 = maskedUuid(11)   // M2-R5 J2: 픽스처의 <uuid#11> 은 로더가 UUID 모양으로 푼다
 /** R:143-149 첫 폴(상태 [2], 크레딧 null, 바이트 없음) — jwpduf 샘플(마지막 폴)에서 역산한 사본. */
 function firstPollPayload() {
   const p = samplePayload('jwpduf')
@@ -341,6 +341,21 @@ describe('M2-1 parseVideoSubmitResponse — 단일 레코드, 필수는 [3].leng
     expect(err).toMatchObject({ kind: 'shape', path: '[3]' })
     expect(err).not.toHaveProperty('rejectedMediaId')
     expect(err).not.toHaveProperty('rejectedMediaIds')
+  })
+  // M2-R5 J2(A2): [3][0][0] 은 문자열이기만 하면 통과했다 — 렌더러 분류(훅 submittedFlow I4 · App chargedFlowItem · 복구 #R34-1)는 UUID 모양에 묶여 있으므로 모양이 다른
+  //   id 는 재시작 뒤 fresh 로 잡혀 재제출된다(돈에 fail-open). 파서가 먼저 같은 모양을 요구해 분류와 파서가 한 모양을 말하게 한다. 검증 안 된 값은 밖으로 안 나간다(메시지·rejectedMediaId 없음).
+  it('[3][0][0] 이 UUID 모양이 아니면(operation 이름·사용자 텍스트·URL·대시 없는 hex) shape [3][0][0], rejectedMediaId 없음, 메시지에 그 값 없음; 픽스처 id 는 통과 (M2-R5 J2)', () => {
+    for (const bad of ['models/veo-3.1-fast-generate-preview/operations/op1', 'not a uuid 사용자 텍스트', 'https://evil.example/x', '0f3b9c1e5d2a4b7c8e9f0a1b2c3d4e5f', 'CLIENT_1234']) {
+      const p = samplePayload('YhhmEf'); p[3][0][0] = bad
+      let err
+      try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+      expect(err, bad).toBeInstanceOf(FlowRpcShapeError)
+      expect(err).toMatchObject({ kind: 'shape', rpcid: 'YhhmEf', path: '[3][0][0]' })
+      expect(err).not.toHaveProperty('rejectedMediaId')
+      expect(err.message).not.toContain(bad)
+    }
+    expect(parseVideoSubmitResponse(samplePayload('YhhmEf')).mediaId).toBe(UUID11)
+    expect(UUID11).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
   })
   it('[3][0][0] 이 문자열이 아니면 shape [3][0][0], rejectedMediaId 없음', () => {
     const p = samplePayload('YhhmEf'); p[3][0][0] = 7

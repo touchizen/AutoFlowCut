@@ -11,7 +11,7 @@ import {
   failBoundUnfinished, routeRpcSend, routeRpcLoadend, routeRpcReport, markDeadline, armDeadline,
   SEND_DEADLINE_S, LOADEND_DEADLINE_S,
 } from '../../electron/flow-rpc-router.js'
-import { sample, samplePayload, respBodyWithPayload, respBodyFailure } from '../fixtures/flow-batchexecute-samples.js'
+import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 
 const NOW_S = 1790240102.5
 const DOC_A = 'a'.repeat(32)
@@ -156,7 +156,7 @@ describe('routeRpcLoadend — {doc, seq} 매칭·파싱·완료', () => {
     expect(routeRpcLoadend(endEv(), new Map([['g', g]]))).toEqual({ ok: true, completed: 'g' })
     expect(g.completed).toBe(true)
     expect(g.error).toBeNull()
-    expect(g.results[0]).toMatchObject({ mediaId: '<uuid#5>', width: 1376, height: 768, seed: 1687588041 })
+    expect(g.results[0]).toMatchObject({ mediaId: maskedUuid(5), width: 1376, height: 768, seed: 1687588041 })
     expect(g.results[0].url).toMatch(/^https:\/\/flow-content\.google\/image\//)
     expect(resolve).toHaveBeenCalledTimes(1)
     expect(g.deadlines).toEqual({})
@@ -196,7 +196,7 @@ describe('routeRpcLoadend — {doc, seq} 매칭·파싱·완료', () => {
     routeRpcLoadend(endEv({ seq: 2, responseText: respBodyWithPayload('ogiZ0b', p2) }), map)
     routeRpcLoadend(endEv({ seq: 1 }), map)
     expect(g2.results[0].mediaId).toBe('<uuid#9>')
-    expect(g1.results[0].mediaId).toBe('<uuid#5>')
+    expect(g1.results[0].mediaId).toBe(maskedUuid(5))
   })
 
   it('만료(마감)된 gen 은 completed+error 라 늦은 loadend 는 duplicate — 에러 유지', () => {
@@ -262,7 +262,7 @@ describe('routeRpcLoadend — YhhmEf(영상 제출)', () => {
   it('gen 에 {mediaId, creditsLeft, modelKey} 를 싣고 완료', () => {
     const g = vgen()
     routeRpcLoadend(vend(), new Map([['v', g]]))
-    expect(g).toMatchObject({ completed: true, error: null, mediaId: '<uuid#11>', creditsLeft: 1040, modelKey: 'abra_t2v_6s' })
+    expect(g).toMatchObject({ completed: true, error: null, mediaId: maskedUuid(11), creditsLeft: 1040, modelKey: 'abra_t2v_6s' })
   })
 
   it('[3] 이 2개인 사본 → flow-video-count-mismatch + rejectedMediaIds 2개, mediaId 없음', () => {
@@ -271,7 +271,7 @@ describe('routeRpcLoadend — YhhmEf(영상 제출)', () => {
     p[3].push(second)
     const g = vgen()
     routeRpcLoadend(vend({ responseText: respBodyWithPayload('YhhmEf', p) }), new Map([['v', g]]))
-    expect(g).toMatchObject({ completed: true, error: 'flow-video-count-mismatch', errorKind: 'flow-video-count-mismatch', rejectedMediaIds: ['<uuid#11>', '<uuid#12>'] })
+    expect(g).toMatchObject({ completed: true, error: 'flow-video-count-mismatch', errorKind: 'flow-video-count-mismatch', rejectedMediaIds: [maskedUuid(11), '<uuid#12>'] })
     expect(g.mediaId).toBeUndefined()
   })
 })

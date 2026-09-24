@@ -19,6 +19,7 @@
  *
  * tests/electron/flow-rpc-protocol.test.js
  */
+import { isFlowMediaId } from '../src/utils/flowMediaId.js'   // M2-R5 J2: 렌더러 분류(훅·App·복구)와 같은 Flow 미디어 id 술어(main 이 src/utils 를 쓰는 선례: main.js 의 voiceKey)
 
 export class FlowRpcError extends Error {
   /**
@@ -186,7 +187,9 @@ export function parseVideoSubmitResponse(payload) {
   const rec = list[0]
   if (!Array.isArray(rec)) throw shapeError(RPC, '[3][0]')
   const mediaId = rec[0]
-  if (typeof mediaId !== 'string' || !mediaId) throw shapeError(RPC, '[3][0][0]')
+  // M2-R5 J2(A2): [3][0][0] 은 **UUID 모양**이어야 한다 — 훅·App·복구의 과금 분류가 그 모양에 묶여 있으므로 다른 모양을 통과시키면 재시작 뒤 fresh 로 잡혀 재제출된다(돈에 fail-open).
+  //   검증 안 된 값은 메시지에도 rejectedMediaId 에도 싣지 않는다.
+  if (!isFlowMediaId(mediaId)) throw shapeError(RPC, '[3][0][0]')
   const rejected = (path) => Object.assign(shapeError(RPC, path), { rejectedMediaId: mediaId })
   const g0 = Array.isArray(rec[7]) && Array.isArray(rec[7][0]) ? rec[7][0] : null
   if (!g0) throw rejected('[3][0][7][0]')

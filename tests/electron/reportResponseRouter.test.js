@@ -4,7 +4,7 @@
 //   /status 응답이 pending T2V/I2V capture 를 resolve 하지 않아야 한다(이전 substring 버그 회귀 가드).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { routeReportResponse, isFlowFrameOrigin, buildReportCtx } from '../../electron/reportResponseRouter.js'
-import { sample as rpcSample } from '../fixtures/flow-batchexecute-samples.js'
+import { sample as rpcSample, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 
 const T2V = 'https://x/video:batchAsyncGenerateVideoText'
 const UPSCALE = 'https://x/video:batchAsyncGenerateVideoUpsampleVideo'
@@ -227,7 +227,7 @@ describe('routeReportResponse — batchexecute 위임 (M1-4)', () => {
     expect(routeReportResponse({ kind: 'batchexecute', doc: DOC, rpcid: 'ogiZ0b', seq: 1, status: 200, responseText: rpcSample('ogiZ0b').respBody, endedAt: 1790240123 }, ctx))
       .toEqual({ ok: true, completed: 'gen-1' })
     expect(g.completed).toBe(true)
-    expect(g.results[0]).toMatchObject({ mediaId: '<uuid#5>', width: 1376, height: 768 })
+    expect(g.results[0]).toMatchObject({ mediaId: maskedUuid(5), width: 1376, height: 768 })
   })
 
   it('옛 URL 페이로드는 rpc gen 이 맵에 있어도 불변 경로로 간다(rpc gen 은 손대지 않는다)', () => {

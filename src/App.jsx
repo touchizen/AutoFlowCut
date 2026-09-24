@@ -83,6 +83,7 @@ import { toast } from './components/Toast'
 import { syncRefToFlow } from './utils/flowCharacterSync'
 import { runFlowComposerRefresh } from './utils/flowCharacterCoordinator'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
+import { isFlowMediaId, isLegacyFlowGenerationFailure } from './utils/flowMediaId'   // M2-R5 J2: 훅·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
 
 // Components
 import Header from './components/Header'
@@ -1400,7 +1401,12 @@ function App() {
     // M2-R4 I1(A1 = B3): Flow 의 generationId 는 곧 미디어 id(YhhmEf 200 순간 과금) — mediaId 가 없어도(옛 auth/stopped/타임아웃 패치, provenance (c)/(c2) 모양)
     //   파일이 없는 항목은 과금된 제출이라 plain Retry 도 이 download-only 경로로 간다(retryVideoDownload 는 generationId 로 폴한다 — mediaId 불필요).
     //   전엔 아래 slow path 가 generationId·mediaId 를 null 로 지워 다음 Start 가 재제출(10크레딧 이중 과금)했다. id 를 지우는 건 Regenerate(forceRegenerate)뿐.
-    const chargedFlowItem = startMode === 'flow' && !!item.generationId && !item.videoPath
+    // M2-R5 J2(A2 = B1 + B5): 훅 submittedFlow(I4)·복구 #R34-1 과 같은 **엔진 모양** 필터(isFlowMediaId — UUID) — API operation 이름을 든 행(API 모드의 stop/실패가 남긴 모양)은
+    //   Flow 가 과금한 제출이 아니므로 slow path(pending 리셋). 안 그러면 retryVideoDownload 가 jwpduf 에 operation 이름을 보내 4회째 flow-video-not-found(+mediaId=operation
+    //   이름)로 양 모드에서 영원히 download-only 가 된다. API 모드·파일(videoPath) 있는 행도 slow path 그대로.
+    // M2-R5 J3(B2): 옛 서버측 생성 실패 행(error PUBLIC_ERROR_* · errorKind null · mediaId null · videoPath 없음 — 사용자 실데이터에 4행)은 미디어가 없어 폴 대상이 아니다 — 훅 submittedFlow 와
+    //   같은 제외로 slow path(pending 리셋)에 보내 프롬프트를 고친 뒤 Retry 로 다시 생성할 수 있게 한다(전엔 "still pending" ×3 → flow-video-not-found 로 영원히 download-only).
+    const chargedFlowItem = startMode === 'flow' && isFlowMediaId(item.generationId) && !item.videoPath && !isLegacyFlowGenerationFailure(item)
     if (!opts.forceRegenerate && item.generationId && (item.mediaId || chargedFlowItem)) {
       // #R12-11/#R13-8: 첫 await(getAccessToken) 전에 in-flight 를 세팅 — 같은 tick 의 중복 Retry/
       //   Retry+Start 가 auth await 동안 busy 가드를 통과하는 것을 막는다. 모든 종료 경로에서 해제.

@@ -26,6 +26,7 @@ const appMocks = vi.hoisted(() => {
   const videoScenes = []
   const updateVideoScene = vi.fn()
   const videoStart = vi.fn(async (opts) => { captured.videoStart = opts })
+  const modeState = { current: 'flow' }   // M2-R5 J2: 테스트가 'api' 로 바꿔 API 모드 하네스를 만든다(afterEach 가 되돌린다)
   // 기본 fixture — 아무 씬도 없는 상태로 mount 한 뒤 테스트마다 갈아끼운다.
   const scenesHook = {
     scenes: [],
@@ -61,14 +62,14 @@ const appMocks = vi.hoisted(() => {
     listFlowProjects: asyncNoop,
     capabilities: {},
   }
-  return { noop, asyncNoop, loadEpochRef, captured, scenesHook, genAPI, toast, videoScenes, updateVideoScene, videoStart }
+  return { noop, asyncNoop, loadEpochRef, captured, scenesHook, genAPI, toast, videoScenes, updateVideoScene, videoStart, modeState }
 })
 
 vi.mock('../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (key) => key, lang: 'ko' }),
 }))
 vi.mock('../../src/components/Toast', () => ({ toast: appMocks.toast }))
-vi.mock('../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'flow', clearMode: appMocks.noop }) }))
+vi.mock('../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: appMocks.modeState.current, clearMode: appMocks.noop }) }))
 vi.mock('../../src/contexts/AuthContext', () => ({
   useAuth: () => ({
     isAuthenticated: true,
@@ -335,6 +336,7 @@ afterEach(() => {
   appMocks.scenesHook.scenes = []; appMocks.scenesHook.scenesRef.current = []
   appMocks.videoScenes.length = 0
   appMocks.captured.resultsTableProps = null; appMocks.captured.tagModalProps = null; appMocks.captured.videoStart = null; appMocks.captured.ftvProps = null
+  appMocks.modeState.current = 'flow'
   localStorage.removeItem('autoflowcut_bottomPanelView')
 })
 
@@ -420,13 +422,16 @@ describe('App — Regenerate(forceRegenerate) 는 generationId·mediaId 를 null
   })
 })
 
+const FLOW_G = '0f3b9c1e-5d2a-4b7c-8e9f-0a1b2c3d4e5f'   // M2-R5 J2: 과금된 Flow 제출 id 는 UUID 모양(훅 I4 · 복구 #R34-1 · App 이 같은 술어를 쓴다)
+const VEO_OP = 'models/veo-3.1-fast-generate-preview/operations/op1'   // API(Veo) operation 이름 — Flow 가 만든 id 가 아니다
+
 // ── M2-R4 I1 (A1 = B3): plain Retry 는 과금된 Flow 항목의 id 를 지우지 않는다 ─────────────────────────────────────────
 // Flow 의 generationId 는 곧 미디어 id(YhhmEf 200 순간 과금). error + generationId + mediaId:null(옛 auth/stopped/타임아웃 패치 — provenance (c)/(c2) 의 모양)에
 //   ResultsTable 은 "Retry"(canDownloadOnly=false)를 보인다. H3 의 slow path 는 그 클릭에 generationId·mediaId 를 null 로 지워 다음 Start 가 재제출(10크레딧 이중 과금)했다.
 //   plain Retry 는 download-only 경로(retryVideoDownload — generationId 로 폴)로 가고, id 를 지우는 건 Regenerate(forceRegenerate)뿐이다.
 describe('App — plain Retry(onVideoRetry) 는 Flow 의 generationId 를 지우지 않고 폴한다 (M2-R4 I1)', () => {
-  it('error + generationId + mediaId:null 항목의 onVideoRetry(item) → checkVideoStatus([g1]) 폴, 패치 어디에도 generationId:null 없음, 재제출 안내 토스트 없음', async () => {
-    const item = { id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: 'g1', mediaId: null, videoPath: null, errorKind: 'auth' }
+  it('error + generationId(UUID) + mediaId:null 항목의 onVideoRetry(item) → checkVideoStatus([G]) 폴, 패치 어디에도 generationId:null 없음, 재제출 안내 토스트 없음', async () => {
+    const item = { id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: FLOW_G, mediaId: null, videoPath: null, errorKind: 'auth' }   // M2-R5 J2: id 는 Flow 모양
     appMocks.videoScenes.push(item)
     localStorage.setItem('autoflowcut_bottomPanelView', 'table')
     appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')
@@ -437,7 +442,7 @@ describe('App — plain Retry(onVideoRetry) 는 Flow 의 generationId 를 지우
     expect(props?.onVideoRetry).toBeTypeOf('function')
     appMocks.updateVideoScene.mockClear(); appMocks.toast.info.mockClear()
     await act(async () => { await props.onVideoRetry({ ...item }) })
-    expect(appMocks.genAPI.checkVideoStatus).toHaveBeenCalledWith(['g1'])
+    expect(appMocks.genAPI.checkVideoStatus).toHaveBeenCalledWith([FLOW_G])
     expect(appMocks.genAPI.generateVideoT2V).not.toHaveBeenCalled()
     const patches = appMocks.updateVideoScene.mock.calls.filter((c) => c[0] === 'vscene_1').map((c) => c[1])
     expect(patches.length).toBeGreaterThan(0)
@@ -448,7 +453,65 @@ describe('App — plain Retry(onVideoRetry) 는 Flow 의 generationId 를 지우
     expect(appMocks.toast.info).not.toHaveBeenCalled()   // 'videoAutomation.needsRegen' (Start 를 누르라는 안내) 없음
     // App 이 머지한 최종 모양 — 여전히 generationId 를 든 error 항목(videoPath 없음) → 다음 Start 는 provenance (c) 대로 폴링한다(useVideoAutomation.provenance.test.jsx)
     const merged = patches.reduce((s, p) => ({ ...s, ...p }), item)
-    expect(merged).toMatchObject({ status: 'error', generationId: 'g1', mediaId: null, videoPath: null })
+    expect(merged).toMatchObject({ status: 'error', generationId: FLOW_G, mediaId: null, videoPath: null })
+  })
+})
+
+// ── M2-R5 J2 (A2 = B1 + B5): chargedFlowItem 은 훅 submittedFlow·복구 #R34-1 과 같은 Flow 미디어 id 술어(UUID 모양)를 쓴다 ────────────────────────────
+// I1 의 fast path 조건엔 엔진 모양 필터가 없었다 — Flow 모드에서 API operation 이름을 든 error 행(API 모드의 stop/실패가 남긴 모양)의 plain Retry 가 retryVideoDownload 로 가
+//   jwpduf 에 operation 이름을 보내고(레코드 없음 ×3 "still pending" → 4회째 flow-video-not-found + mediaId=operation 이름) 양 모드에서 영원히 download-only 가 됐다.
+//   §12.6 #92 의 "API 모드·Flow 의 파일 있는 항목은 불변" 도 핀이 없었다(B5: `!!item.generationId` 변이가 살아남는다).
+describe('App — plain Retry 의 download-only 조건은 Flow 모양(UUID) id 에만, API 모드·파일 있는 행은 slow path (M2-R5 J2)', () => {
+  async function mountVideoTable(item, mode = 'flow') {
+    appMocks.modeState.current = mode
+    appMocks.videoScenes.push(item)
+    localStorage.setItem('autoflowcut_bottomPanelView', 'table')
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')
+    appMocks.genAPI.checkVideoStatus.mockResolvedValue({ success: true, statuses: [{ status: 'pending' }] })
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'video-text' }) })
+    const props = appMocks.captured.resultsTableProps
+    expect(props?.onVideoRetry).toBeTypeOf('function')
+    appMocks.updateVideoScene.mockClear(); appMocks.genAPI.checkVideoStatus.mockClear(); appMocks.genAPI.getAccessToken.mockClear(); appMocks.toast.info.mockClear()
+    return props
+  }
+  /** slow path: 인증 프리플라이트·상태조회 없이 pending 으로 되돌리고 id 를 지운다(재생성 안내 토스트). */
+  const expectSlowPath = (id) => {
+    expect(appMocks.genAPI.checkVideoStatus).not.toHaveBeenCalled()
+    expect(appMocks.genAPI.getAccessToken).not.toHaveBeenCalled()
+    expect(appMocks.updateVideoScene).toHaveBeenCalledTimes(1)
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith(id, expect.objectContaining({ status: 'pending', generationId: null, mediaId: null }))
+    expect(appMocks.toast.info).toHaveBeenCalledTimes(1)
+  }
+
+  it('Flow 모드: API operation 이름을 든 error 행(mediaId null) 의 plain Retry → slow path — checkVideoStatus 없음, pending·id null', async () => {
+    const item = { id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: VEO_OP, mediaId: null, videoPath: null }
+    const props = await mountVideoTable(item, 'flow')
+    await act(async () => { await props.onVideoRetry({ ...item }) })
+    expectSlowPath('vscene_1')
+  })
+
+  it('API 모드 하네스: error + operation 이름 + mediaId:null 의 Retry → slow path(pending·id null), checkVideoStatus 없음 (§12.6 #92 "API 모드 불변" 의 핀)', async () => {
+    const item = { id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: VEO_OP, mediaId: null, videoPath: null }
+    const props = await mountVideoTable(item, 'api')
+    await act(async () => { await props.onVideoRetry({ ...item }) })
+    expectSlowPath('vscene_1')
+  })
+
+  it('Flow 행 error + UUID + mediaId:null + videoPath:"/x.mp4" 의 plain Retry → slow path (파일 있는 항목은 과금된 download-only 가 아니다)', async () => {
+    const item = { id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: FLOW_G, mediaId: null, videoPath: '/x.mp4' }
+    const props = await mountVideoTable(item, 'flow')
+    await act(async () => { await props.onVideoRetry({ ...item }) })
+    expectSlowPath('vscene_1')
+  })
+
+  // M2-R5 J3(B2): 옛 서버측 생성 실패 행(사용자 실데이터 모양 — error 'PUBLIC_ERROR_DANGER_FILTER', errorKind null, UUID G, mediaId/videoPath null)은 미디어가 없어 폴 대상이 아니다.
+  //   I1 은 이 행의 plain Retry 도 retryVideoDownload 로 보내 "still pending" ×3 → flow-video-not-found 로 영원히 download-only 가 됐다 — 프롬프트를 고치고 Retry 하는 한 번의 길이 막혔다.
+  it('Flow 행 error PUBLIC_ERROR_DANGER_FILTER + errorKind null + UUID + mediaId:null + videoPath:null 의 plain Retry → slow path(pending·id null) — 다시 생성할 수 있다 (M2-R5 J3)', async () => {
+    const item = { id: 'vscene_1', prompt: 'p', selected: true, status: 'error', error: 'PUBLIC_ERROR_DANGER_FILTER', errorKind: null, generationId: FLOW_G, mediaId: null, videoPath: null }
+    const props = await mountVideoTable(item, 'flow')
+    await act(async () => { await props.onVideoRetry({ ...item }) })
+    expectSlowPath('vscene_1')
   })
 })
 

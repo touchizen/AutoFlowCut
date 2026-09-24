@@ -12,7 +12,7 @@ import { createSharedHelpers } from '../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../electron/reportResponseRouter.js'
 import { failBoundUnfinished } from '../../electron/flow-rpc-router.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../../electron/flow-rpc-capture.js'
-import { sample, reencodeRequestBody } from '../fixtures/flow-batchexecute-samples.js'
+import { sample, reencodeRequestBody, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 const URL_OK = `https://flow.google.com/project/${PROJECT}`
@@ -127,7 +127,7 @@ describe('파이프라인 (a): 주입 → flowReportResponse → 라우터 → c
     const h = harness()
     const r = await settle(h.generate())
     expect(r.success).toBe(true)
-    expect(r.images[0]).toMatchObject({ mediaId: '<uuid#5>', width: 1376, height: 768, seed: 1687588041 })
+    expect(r.images[0]).toMatchObject({ mediaId: maskedUuid(5), width: 1376, height: 768, seed: 1687588041 })
     expect(h.doc.windowObject.electronAPI.flowReportResponse).toHaveBeenCalledTimes(2)
     const kinds = h.doc.windowObject.electronAPI.flowReportResponse.mock.calls.map((c) => c[0].kind)
     expect(kinds).toEqual(['batchexecute-send', 'batchexecute'])
@@ -143,7 +143,7 @@ describe('파이프라인 (a): 주입 → flowReportResponse → 라우터 → c
     page.submit()   // 페이지가 이제 보낸다(send → loadend)
     expect(await h.ipcMain.invoke('flow:check-generation', { generationId: r.generationId })).toMatchObject({ completed: true, via: 'rpc' })
     const c = await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })
-    expect(c.images[0]).toMatchObject({ mediaId: '<uuid#5>', width: 1376, height: 768 })
+    expect(c.images[0]).toMatchObject({ mediaId: maskedUuid(5), width: 1376, height: 768 })
   })
 
   it('문서 전환: 바인딩 중 새 컨텍스트에 재주입 + failBoundUnfinished → 첫 gen 은 flow-submit-lost, 새 문서의 send 는 새 gen 에만 바인딩', async () => {

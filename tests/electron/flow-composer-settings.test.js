@@ -414,6 +414,34 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
     expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
   })
 
+  // M2-R5 J6(A3): I7 의 "클릭 전 서명에서 벗어난 뒤 연속 두 스캔 동일" 은 과도 상태도 안정으로 셌다 — 라이브 Angular 가 새 모델의 옵션을 불러오는 동안 길이 그룹을 잠깐 **떼면**
+  //   그 "그룹 없음" 스캔(groupSig 의 '-' 자리표시)이 서명 이탈로 잡혀 ~100ms 뒤 재계획이 group-not-found:duration 으로 실패했다(클릭 전이라 과금은 없지만 §12.2 프로브·실기 모델 전환이 깨진다).
+  //   이제 스캔은 성공했고 세 그룹(duration/resolution/count)이 전부 있어야만 서명이 있고, 서명 이탈 뒤 연속 3회 동일(≈150ms)에 안정으로 본다(≤1.5s).
+  it('두 단계 재렌더(길이 그룹 제거 → 300ms 뒤 새 옵션으로 재추가): 그룹 없는 스캔은 안정으로 세지 않아 group-not-found 없이 duration clicked(8), ok:true (M2-R5 J6)', async () => {
+    const doc = mount(videoPage({ durations: ['4초', '6초'] }))
+    const log = installFakeAngular(doc, { modelSelectDurations: ['4초', '6초', '8초', '10초'], modelSelectTwoStepMs: 300 })
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 8, model: 'Veo 3.1 - Fast' })   // 실제 sleep — 제거·재추가가 실제 시간이다
+    expect(String(r.reason || '')).not.toMatch(/group-not-found/)   // 성공이면 reason 이 없다
+    expect(r).toMatchObject({ ok: true, closed: true })
+    expect(r.steps).toMatchObject({ model: 'clicked', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)' })
+    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
+  })
+
+  // 연속 3회 규칙의 핀 — 결정적 시계(deps.sleep 이 가짜 타이머를 전진; waitFor·안정 대기 전부 그 sleep 을 쓴다): 제거(0ms) → 중간 옵션 ['4초'](300ms) → 최종(400ms).
+  //   스캔은 50ms 간격이라 중간 상태는 2회(300·350)만 보인다 — 첫 이탈 스캔(300)이나 연속 2회(350)에서 멈추면 ['4초'] 로 계획해 duration-not-offered:8; 3회(500)면 최종 옵션.
+  it('세 단계(제거 → 300ms 중간 옵션 → 400ms 최종 옵션): 연속 3회 미만의 중간 상태는 안정이 아니다 → 최종 옵션으로 duration clicked(8), ok:true (M2-R5 J6)', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(videoPage({ durations: ['4초', '6초'] }))
+      const log = installFakeAngular(doc, { modelSelectDurations: ['4초', '6초', '8초', '10초'], modelSelectTwoStepMs: 400, modelSelectInterim: { durations: ['4초'], atMs: 300 } })
+      const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 8, model: 'Veo 3.1 - Fast' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(String(r.reason || '')).not.toMatch(/duration-not-offered|group-not-found/)
+      expect(r).toMatchObject({ ok: true, closed: true })
+      expect(r.steps).toMatchObject({ model: 'clicked', duration: 'clicked(8)' })
+      expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
+    } finally { vi.useRealTimers() }
+  })
+
   it('클릭 뒤 거부(목표 모델에도 8초 없음 → duration-not-offered:8)도 steps.model:clicked 를 보고한다 — 모델은 이미 바뀌었다', async () => {
     const doc = mount(videoPage({ durations: ['4초', '6초'] }))
     const log = installFakeAngular(doc, { modelSelectDurations: ['4초', '6초'] })
@@ -492,5 +520,37 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
       expect(calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'summary'])
       expect(log.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('[Flow Settings] video mode=clicked(videocam) ratio=clicked(crop_9_16) duration=already(6) resolution=already(720p) count=already(x1) model=already input=material ok=true')
     } finally { log.mockRestore() }
+  })
+
+  // M2-R5 J5(B4): I7 은 클릭 뒤 거부 경로에서만 모델 전환을 지켰다. needs-trusted 경로 — 첫 실행이 모델을 바꾸고(model=clicked) 길이 라디오가 합성 클릭을 무시해 needs-trusted 로
+  //   나오면 main 이 그 라디오를 trusted 클릭하고 드라이버를 다시 돌리는데, 재실행은 이미 바뀐 모델을 already 로 보고한다 → 병합 steps·[Flow Settings] 로그가 model=already 로 남아
+  //   §12.2 무과금 프로브(통과 조건 steps.model==='clicked')가 ok:true 인데도 통과도 실패도 아니었다. 첫 실행의 clicked 를 지킨다.
+  it('needs-trusted 재실행이 model=already 를 보고해도 첫 실행의 model=clicked 를 지킨다 — 병합 steps 와 [Flow Settings] 로그 (M2-R5 J5)', async () => {
+    vi.useFakeTimers()
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const doc = mount(videoPage({ durations: ['4초', '6초'] }))
+      const fakeLog = installFakeAngular(doc, { modelSelectDurations: ['4초', '6초', '8초', '10초'], ignoreClicks: ['duration'] })
+      const calls = []
+      const flowView = { webContents: { executeJavaScript: vi.fn(async (js) => window.eval(js)) } }
+      const trustedClickOnFlowView = vi.fn(async (sel, o) => {
+        calls.push(`trusted:${o?.step}`)
+        if (o?.step === 'settings-radio') {
+          // trusted 클릭 흉내: 가짜 Angular 는 duration 의 합성 클릭을 무시하므로 aria-checked 를 직접 옮긴다(FIND_RADIO_JS 가 고른 그 라디오)
+          const el = window.eval(sel)
+          expect(el?.textContent.replace(/\s+/g, ' ').trim()).toBe('8초')
+          doc.querySelectorAll(`button[role="radio"][name="${el.getAttribute('name')}"]`).forEach((b) => b.setAttribute('aria-checked', String(b === el)))
+        }
+        return { success: true }
+      })
+      const p = applyComposerSettings(flowView, { mode: 'video', duration: 8, resolution: '720p', model: 'Veo 3.1 - Fast' }, { trustedClickOnFlowView })
+      let r
+      p.then((v) => { r = v })
+      for (let t = 0; t < 30000 && r === undefined; t += 100) await vi.advanceTimersByTimeAsync(100)
+      expect(calls).toEqual(['trusted:settings-trigger', 'trusted:settings-radio'])
+      expect(fakeLog.slice(0, 3)).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'duration:8초'])   // 첫 실행: 모델 전환 + 무시된 길이 클릭
+      expect(r).toMatchObject({ ok: true, steps: { model: 'clicked', duration: 'already(8)', resolution: 'already(720p)', count: 'already(x1)', input: 'material' } })
+      expect(log.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/\[Flow Settings\] video .*model=clicked.* ok=true/)
+    } finally { log.mockRestore(); vi.useRealTimers() }
   })
 })
