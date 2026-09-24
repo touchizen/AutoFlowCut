@@ -3,4 +3,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 contextBridge.exposeInMainWorld('electronAPI', {
   flowReportResponse: (payload) => ipcRenderer.invoke('flow:report-response', payload),
+  // 진단 트레이스(AUTOFLOWCUT_NET_TRACE=1) — XHR/fetch 요청·응답을 main 이 JSONL 로 남긴다. 꺼져 있으면 main 이 거절.
+  flowReportXhr: (payload) => ipcRenderer.invoke('flow:report-xhr', payload),
 })

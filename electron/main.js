@@ -47,6 +47,8 @@ import { createSharedHelpers } from './ipc/shared.js'
 import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 import { createBearerStore, bearerFromHeaders, isFlowApiRequest } from './flow-bearer-capture.js'
+import { FLOW_XHR_CAPTURE_INJECTION } from './flow-xhr-capture.js'
+import { isNetTraceOn, netTraceFilePath, decodeUploadData, buildTraceLine, summarizeTraceEntry } from './flow-net-trace.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
@@ -127,6 +129,30 @@ const sentryMain = initSentryMain()
 const FLOW_URL = 'https://labs.google/fx/tools/flow'
 const SESSION_URL = 'https://labs.google/fx/api/auth/session'
 const flowBearerStore = createBearerStore()
+
+// ─── AUTOFLOWCUT_NET_TRACE=1 — Flow 페이지 네트워크 진단 트레이스(관측 전용) ───
+//   새 flow.google.com 은 생성 RPC 를 XHR(batchexecute)로 보내 fetch 몽키패치가 못 본다(2026-09-23).
+//   켜져 있으면 (1) 페이지에 XHR 캡처를 주입하고(flow-xhr-capture.js) (2) webRequest 에서 batchexecute
+//   요청 본문을 (3) flow:report-xhr 로 응답까지 받아 JSONL 한 줄씩 append 한다. 꺼져 있으면 아무것도
+//   안 한다 — 생성 로직 무관. 파일: AUTOFLOWCUT_NET_TRACE_FILE 또는 바탕화면(flow-net-trace.js).
+const NET_TRACE_ON = isNetTraceOn(process.env)
+const NET_TRACE_INJECTION = 'window.__autoflowcut_net_trace__ = true;\n' + FLOW_XHR_CAPTURE_INJECTION
+let netTraceFile = null
+function appendNetTrace(entry) {
+  if (!NET_TRACE_ON) return
+  try {
+    if (!netTraceFile) {
+      netTraceFile = netTraceFilePath(process.env, app.getPath('desktop'))
+      console.log('[Flow Net] trace file:', netTraceFile)
+    }
+    fsSync.appendFileSync(netTraceFile, buildTraceLine(entry) + '\n')
+    console.log('[Flow Net] trace:', summarizeTraceEntry(entry))
+  } catch (e) { console.warn('[Flow Net] trace write failed:', e.message) }
+}
+function injectNetTrace(view) {
+  if (!NET_TRACE_ON || !view || view.webContents.isDestroyed()) return
+  view.webContents.executeJavaScript(NET_TRACE_INJECTION).catch(() => {})
+}
 const BASE_API_URL = 'https://aisandbox-pa.googleapis.com/v1'
 const GENERATE_URL = `${BASE_API_URL}/flowMedia:batchGenerateImages`
 const UPLOAD_URL = `${BASE_API_URL}/flow/uploadImage`
@@ -371,7 +397,12 @@ function makeFlowView() {
     }
     // Re-inject fetch monkey-patch on SPA navigation (guard flag ensures idempotency)
     view.webContents.executeJavaScript(FLOW_PAGE_INJECTION).catch(() => {})
+    injectNetTrace(view)
   })
+
+  // AUTOFLOWCUT_NET_TRACE: 페이지 스크립트가 첫 XHR 을 쏘기 전에 잡아야 초기 RPC(프로젝트 데이터·미디어
+  //   목록)까지 보인다 — did-finish-load 는 늦다. 주입은 idempotent.
+  view.webContents.on('dom-ready', () => injectNetTrace(view))
 
   // Flow 페이지가 스스로 보내는 aisandbox 요청의 Bearer 를 잡아둔다 — flow.google.com 에는 세션 API 가
   //   없어(2026-09-23) readFlowSession 이 이 값을 세션 대용으로 쓴다. 페이지 로드 시점 요청까지 보인다.
@@ -384,7 +415,7 @@ function makeFlowView() {
         if (bearer && isFlowApiRequest(details.url)) flowBearerStore.set(bearer)
         // AUTOFLOWCUT_NET_TRACE=1 일 때만 진단 로그를 찍는다 — 요청마다 나가는 로그는 프로덕션 콘솔과
         //   Sentry breadcrumb(consoleIntegration) 소음이 된다. 값은 절대 찍지 않는다(scheme 단어만).
-        if (process.env.AUTOFLOWCUT_NET_TRACE === '1') {
+        if (NET_TRACE_ON) {
           const host = new URL(details.url).hostname
           const pathname = new URL(details.url).pathname
           const authHeader = Object.entries(details.requestHeaders || {}).find(([k]) => k.toLowerCase() === 'authorization')
@@ -412,6 +443,11 @@ function makeFlowView() {
   view.webContents.session.webRequest.onBeforeRequest(
     { urls: ['*://*/*'] },
     (details, callback) => {
+      // AUTOFLOWCUT_NET_TRACE: batchexecute 요청 본문(f.req/at)은 여기서 — 페이지 주입보다 먼저 나간
+      //   요청도 보인다(응답은 못 보므로 XHR 훅이 따로 보고한다).
+      if (NET_TRACE_ON && details.url.includes('batchexecute')) {
+        appendNetTrace({ source: 'webRequest', method: details.method, url: details.url, resourceType: details.resourceType, reqBody: decodeUploadData(details.uploadData) })
+      }
       if (details.url.includes('aisandbox') || details.url.includes('googleapis.com/v1')) {
         const pidMatch = details.url.match(/projects\/([a-f0-9-]{36})/)
         if (pidMatch && !capturedProjectId) {
@@ -471,6 +507,7 @@ function makeFlowView() {
     } catch (e) {
       console.warn('[Flow] fetch injection failed:', e.message)
     }
+    injectNetTrace(view)
 
     try {
       await view.webContents.executeJavaScript(FLOW_SETTINGS_DUMPER)
@@ -875,6 +912,17 @@ ipcMain.handle('flow:report-response', (event, payload) => {
     getPendingVideoGeneration: () => pendingVideoGeneration,
     setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
   })
+})
+
+// ─── flow:report-xhr — 진단 트레이스(AUTOFLOWCUT_NET_TRACE=1) 페이지 → main ───
+//   report-response 와 같은 sender/origin 검증. 트레이스가 꺼져 있으면 무조건 거절(파일도 안 만든다).
+ipcMain.handle('flow:report-xhr', (event, payload) => {
+  if (!NET_TRACE_ON) return { ok: false, error: 'trace off' }
+  const flowView = modeController.getFlowView()
+  if (!flowView || event.sender !== flowView.webContents) return { ok: false, error: 'unauthorized sender' }
+  if (!isFlowFrameOrigin(event.senderFrame?.url)) return { ok: false, error: 'unauthorized origin' }
+  appendNetTrace(payload && typeof payload === 'object' ? payload : { source: 'invalid' })
+  return { ok: true }
 })
 
 // Flow Agent(Maps 그라운딩) 모드 — 렌더러 설정(flowAgentOn)을 flow:set-agent-mode 로 push.
