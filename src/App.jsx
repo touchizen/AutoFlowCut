@@ -1740,7 +1740,8 @@ function App() {
               ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
               ...(result && 'base64' in result ? { video: result.base64 } : {}),
               ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
-              ...(result?.generationId ? { generationId: result.generationId } : {}),
+              // M2-R6 K1(A1 = B1): 명시적 null 도 통과(mediaId 와 같은 규칙) — 훅이 fresh 항목의 옛 Flow 모양 id 를 제출 전/미제출 종결 패치에서 null 로 지운다.
+              ...(result && 'generationId' in result ? { generationId: result.generationId } : {}),
               ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
               ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
               ...(result?.duration ? { duration: result.duration } : {}),
@@ -1880,7 +1881,7 @@ function App() {
                 // 의도적으로 null 로 지우는 흐름 지원 (regen 후 recovery 후보 포함되도록).
                 ...(result && 'base64' in result ? { video: result.base64, base64: result.base64 } : {}),
                 ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
-                ...(result?.generationId ? { generationId: result.generationId } : {}),
+                ...(result && 'generationId' in result ? { generationId: result.generationId } : {}),   // M2-R6 K1: 명시적 null 통과(t2v 와 동일)
                 ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
                 ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
                 ...(result?.duration ? { duration: result.duration } : {}),

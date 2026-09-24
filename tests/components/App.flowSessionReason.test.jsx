@@ -513,6 +513,15 @@ describe('App — plain Retry 의 download-only 조건은 Flow 모양(UUID) id �
     await act(async () => { await props.onVideoRetry({ ...item }) })
     expectSlowPath('vscene_1')
   })
+
+  // M2-R6 K3(A3 = B2): chargedFlowItem 의 `startMode === 'flow'` 항엔 핀이 없었다 — 위 "API 모드 하네스" 핀은 operation 이름이라 isFlowMediaId 가 어느 모드에서든 거부한다
+  //   (모드 항만 빼도 초록). 모드 항이 빠지면 API 모드에서 UUID 를 든 Flow 행(error + G + mediaId null + videoPath null)의 plain Retry 가 API 엔진으로 retryVideoDownload 에 간다.
+  it('API 모드 하네스: error + UUID(FLOW_G) + mediaId:null + videoPath:null 의 plain Retry → slow path(pending·id null), checkVideoStatus·getAccessToken 없음 (M2-R6 K3)', async () => {
+    const item = { id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: FLOW_G, mediaId: null, videoPath: null, errorKind: 'stopped' }
+    const props = await mountVideoTable(item, 'api')
+    await act(async () => { await props.onVideoRetry({ ...item }) })
+    expectSlowPath('vscene_1')
+  })
 })
 
 // ── M2-5 (T6): App 의 영상 onItemUpdate 화이트리스트 ────────────────────────────────────────────────────────────
@@ -590,6 +599,46 @@ describe('App — i2v 화이트리스트와 fp 재시도가 downloadGated 를 �
     await act(async () => { await appMocks.captured.ftvProps.onVideoRetry({ id: 'fp_1', generationId: 'g1', mediaId: 'm1', status: 'error', downloadGated: true }, { forceRegenerate: true }) })
     expect(fpNow('fp_1')).toMatchObject({ status: 'pending', generationId: null, mediaId: null, downloadGated: null, error: null, errorKind: null })
     expect(appMocks.genAPI.getAccessToken).not.toHaveBeenCalled()   // slow path
+  })
+})
+
+// ── M2-R6 K1 (A1 = B1): 두 배치 화이트리스트(t2v·i2v)는 명시적 generationId:null 을 통과시킨다 ────────────────────────────────────────
+// 훅은 fresh 항목이 든 옛 Flow 모양 generationId(J3 legacy 행 등)를 제출 전 'generating' 패치와 미제출 종결 패치에서 {generationId:null, mediaId:null} 로 지운다
+//   (useVideoAutomation.staleFlowIds.test.jsx). 화이트리스트가 truthy generationId 만 머지하면(옛 규칙) 그 null 이 씬에 닿지 않아 옛 G 가 남고, 한 번의 실패 뒤
+//   행이 {error, errorKind:X, G, mediaId:null} 이 되어 다음 Start/Retry 가 과금된 in-flight 로 잡는다. mediaId 와 같은 'generationId' in result 규칙.
+describe('App — videoAutomation.start 의 두 화이트리스트가 명시적 generationId:null 을 통과시킨다 (M2-R6 K1)', () => {
+  it('t2v: generating 패치 {generationId:null, mediaId:null} → updateVideoScene 에 generationId:null 이 닿는다', async () => {
+    appMocks.videoScenes.push({ id: 'vscene_1', prompt: 'p', selected: true, status: 'error', error: 'PUBLIC_ERROR_DANGER_FILTER', errorKind: null, generationId: FLOW_G, mediaId: null, videoPath: null })
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'video-text' }) })
+    const start = appMocks.captured.videoStart
+    expect(start?.onItemUpdate).toBeTypeOf('function')
+    act(() => { start.onItemUpdate('vscene_1', 'generating', { generationId: null, mediaId: null }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'generating', generationId: null, mediaId: null }))
+    // 종결 패치의 null 도(markHalted 가 미제출 legacy 행에 싣는 모양)
+    act(() => { start.onItemUpdate('vscene_1', 'error', { error: 'flow-batch-halted', errorKind: 'flow-batch-halted', errorParams: { cause: 'flow-video-settings-mismatch' }, generationId: null, mediaId: null }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'error', errorKind: 'flow-batch-halted', generationId: null, mediaId: null }))
+    // truthy 는 전과 같이 통과
+    act(() => { start.onItemUpdate('vscene_1', 'generating', { generationId: '<uuid#13>', mediaId: null }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ generationId: '<uuid#13>' }))
+  })
+
+  it('i2v: generating 패치 {generationId:null, mediaId:null} → framePairs 의 옛 G 가 null 로 지워진다', async () => {
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'frame-to-video' }) })
+    expect(appMocks.captured.ftvProps?.onUpdate).toBeTypeOf('function')
+    const fp = { id: 'fp_1', startSceneId: 'scene_1', prompt: 'p', selected: true, status: 'error', error: 'PUBLIC_ERROR_DANGER_FILTER', errorKind: null, generationId: FLOW_G, mediaId: null, videoPath: null }
+    act(() => { appMocks.captured.ftvProps.onUpdate([fp]) })
+    appMocks.captured.videoStart = null
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'frame-to-video' }) })
+    const start = appMocks.captured.videoStart
+    expect(start?.mode).toBe('i2v')
+    act(() => { start.onItemUpdate('fp_1', 'generating', { generationId: null, mediaId: null }) })
+    expect(appMocks.captured.ftvProps.framePairs.find((p) => p.id === 'fp_1')).toMatchObject({ status: 'generating', generationId: null, mediaId: null })
+    act(() => { start.onItemUpdate('fp_1', 'generating', { generationId: '<uuid#13>', mediaId: null }) })
+    expect(appMocks.captured.ftvProps.framePairs.find((p) => p.id === 'fp_1')).toMatchObject({ generationId: '<uuid#13>' })
   })
 })
 

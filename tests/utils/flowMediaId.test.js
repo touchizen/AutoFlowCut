@@ -15,6 +15,15 @@ describe('isFlowMediaId — UUID 모양만 Flow 미디어 id', () => {
       expect(isFlowMediaId(v), String(v)).toBe(false)
     }
   })
+  // M2-R6 K5(B4): 위 음성 케이스엔 UUID 가 **안에 든** 값이 없어 `^…$` 앵커를 지워도 초록이었다. 앵커 없는 규칙이면 파서가 UUID 를 품은 어떤 [3][0][0] 이든 과금 id 로 받고
+  //   훅·App·복구가 `…/operations/<uuid>` 를 Flow 과금 항목으로 다룬다. 통째로 UUID 인 값만(양끝 공백은 trim) true.
+  it('UUID 가 안에 든 값(operation 이름 뒤·앞뒤 글자·경로 안)은 false — 앵커 핀 (M2-R6 K5)', () => {
+    const G = '0f3b9c1e-5d2a-4b7c-8e9f-0a1b2c3d4e5f'
+    for (const v of ['models/veo-3.1-fast-generate-preview/operations/' + G, G + 'x', 'x' + G, 'projects/' + G + '/x', G + ' ' + G]) {
+      expect(isFlowMediaId(v), v).toBe(false)
+    }
+    expect(isFlowMediaId(G)).toBe(true)
+  })
 })
 
 // M2-R5 J3(B2): 옛 서버측 생성 실패 행(Flow 정책/위험 필터 문구가 error 에 그대로, kind 없음, 미디어 없음) — 과금된 in-flight 가 아니다.

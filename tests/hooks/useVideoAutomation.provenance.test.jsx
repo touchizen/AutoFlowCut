@@ -37,16 +37,24 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 function setup(appMode = 'flow') {
   let n = 0
   const generateVideoT2V = vi.fn(async () => ({ success: true, generationId: `gen-new-${++n}`, creditsLeft: 1040 }))
+  const generateVideoI2V = vi.fn(async () => ({ success: true, generationId: `gen-new-${++n}`, creditsLeft: 1040 }))   // M2-R6 K2: i2v 쌍둥이 핀용(같은 카운터)
   const checkVideoStatus = vi.fn(async (ids) => ({ success: true, statuses: ids.map(COMPLETE) }))
   const downloadVideo = vi.fn(async () => ({ success: true, base64: 'data:video/mp4;base64,AQID' }))
-  const genAPI = { generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus, downloadVideo, upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token'), flowSessionReason: vi.fn(() => null) }
+  const genAPI = { generateVideoT2V, generateVideoI2V, checkVideoStatus, downloadVideo, upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token'), flowSessionReason: vi.fn(() => null) }
   const onItemUpdate = vi.fn()
   const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null, null, appMode))
-  return { hook, genAPI, onItemUpdate, generateVideoT2V, checkVideoStatus, downloadVideo }
+  return { hook, genAPI, onItemUpdate, generateVideoT2V, generateVideoI2V, checkVideoStatus, downloadVideo }
 }
 async function run(h, scenes, ms = 20000) {
   let p
   await act(async () => { p = h.hook.result.current.start({ ...OPTS, scenes, onItemUpdate: h.onItemUpdate }) })
+  for (let t = 0; t < ms; t += 500) await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+  await act(async () => { await p })
+}
+/** M2-R6 K2: i2v 입력(framePairs) — 시작 프레임은 Flow mediaId(_startMediaId)로 직접(디스크 폴백 없음). */
+async function runI2V(h, framePairs, ms = 20000) {
+  let p
+  await act(async () => { p = h.hook.result.current.start({ ...OPTS, mode: 'i2v', framePairs, onItemUpdate: h.onItemUpdate }) })
   for (let t = 0; t < ms; t += 500) await act(async () => { await vi.advanceTimersByTimeAsync(500) })
   await act(async () => { await p })
 }
@@ -140,6 +148,27 @@ describe('useVideoAutomation Phase 0 — Flow 모드 출처 분류 (M2-R3 H3)', 
     await run(h2, [{ id: 'vscene_1', prompt: 'p1', status: 'error', error: 'PUBLIC_ERROR_DANGER_FILTER', errorKind: null, generationId: G, mediaId: G, videoPath: null }])
     expect(retryVideoDownload).toHaveBeenCalledTimes(1)
     expect(h2.generateVideoT2V).not.toHaveBeenCalled()
+  })
+
+  // M2-R6 K2(A2 = B3): (g) 와 App J3 핀은 T2V 뿐이었다 — i2v 매핑의 `legacyFailure: isLegacyFlowGenerationFailure(p)` 를 false 로 바꿔도 전 스위트 초록(사용자 실데이터
+  //   legacy 5행 중 3행이 framePair). 같은 실데이터 모양의 framePair 로 fresh 제출·G 미폴을 핀하고, mediaId:G 대조군은 download-only 그대로.
+  it('(g-i2v) I2V 도 같다: framePair 옛 실패 행(error PUBLIC_ERROR_* · errorKind null · UUID G · mediaId null · videoPath null) → fresh 제출(generateVideoI2V 1), G 를 폴하지 않는다; mediaId:G 대조군은 download-only (M2-R6 K2)', async () => {
+    const fp = (extra) => ({ id: 'fp_1', prompt: 'p1', startSceneId: 'scene_1', _startMediaId: 'm-START', status: 'error', error: 'PUBLIC_ERROR_DANGER_FILTER', errorKind: null, generationId: G, mediaId: null, videoPath: null, ...extra })
+    const h = setup('flow')
+    await runI2V(h, [fp()])
+    expect(h.generateVideoI2V).toHaveBeenCalledTimes(1)
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(retryVideoDownload).not.toHaveBeenCalled()
+    expect(h.checkVideoStatus.mock.calls.flat(2)).not.toContain(G)
+    expect(h.checkVideoStatus.mock.calls[0][0]).toEqual(['gen-new-1'])
+    expect(last(h, 'fp_1')).toEqual(['complete', expect.objectContaining({ generationId: 'gen-new-1', mediaId: 'gen-new-1' })])
+    // 대조군: 같은 문구라도 mediaId 를 든 framePair 는 download-only
+    vi.clearAllMocks()
+    const h2 = setup('flow')
+    await runI2V(h2, [fp({ mediaId: G })])
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(retryVideoDownload.mock.calls[0][0].item).toMatchObject({ id: 'fp_1', generationId: G, mediaId: G })
+    expect(h2.generateVideoI2V).not.toHaveBeenCalled()
   })
 
   it('(e) API 모드는 status 규칙 그대로: pending + generationId(mediaId null) → fresh 제출', async () => {

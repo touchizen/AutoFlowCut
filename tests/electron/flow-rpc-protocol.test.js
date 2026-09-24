@@ -344,8 +344,10 @@ describe('M2-1 parseVideoSubmitResponse — 단일 레코드, 필수는 [3].leng
   })
   // M2-R5 J2(A2): [3][0][0] 은 문자열이기만 하면 통과했다 — 렌더러 분류(훅 submittedFlow I4 · App chargedFlowItem · 복구 #R34-1)는 UUID 모양에 묶여 있으므로 모양이 다른
   //   id 는 재시작 뒤 fresh 로 잡혀 재제출된다(돈에 fail-open). 파서가 먼저 같은 모양을 요구해 분류와 파서가 한 모양을 말하게 한다. 검증 안 된 값은 밖으로 안 나간다(메시지·rejectedMediaId 없음).
-  it('[3][0][0] 이 UUID 모양이 아니면(operation 이름·사용자 텍스트·URL·대시 없는 hex) shape [3][0][0], rejectedMediaId 없음, 메시지에 그 값 없음; 픽스처 id 는 통과 (M2-R5 J2)', () => {
-    for (const bad of ['models/veo-3.1-fast-generate-preview/operations/op1', 'not a uuid 사용자 텍스트', 'https://evil.example/x', '0f3b9c1e5d2a4b7c8e9f0a1b2c3d4e5f', 'CLIENT_1234']) {
+  it('[3][0][0] 이 UUID 모양이 아니면(operation 이름·사용자 텍스트·URL·대시 없는 hex·UUID 를 품은 값) shape [3][0][0], rejectedMediaId 없음, 메시지에 그 값 없음; 픽스처 id 는 통과 (M2-R5 J2 · M2-R6 K5)', () => {
+    // M2-R6 K5(B4): UUID 를 **품은** 값 넷 — 술어의 ^…$ 앵커가 없으면 파서가 이들을 과금 id 로 받는다(전엔 이 목록에 내장 UUID 가 없어 앵커를 지워도 초록).
+    const embedded = ['models/veo-3.1-fast-generate-preview/operations/' + UUID11, UUID11 + 'x', 'x' + UUID11, 'projects/' + UUID11 + '/x']
+    for (const bad of ['models/veo-3.1-fast-generate-preview/operations/op1', 'not a uuid 사용자 텍스트', 'https://evil.example/x', '0f3b9c1e5d2a4b7c8e9f0a1b2c3d4e5f', 'CLIENT_1234', ...embedded]) {
       const p = samplePayload('YhhmEf'); p[3][0][0] = bad
       let err
       try { parseVideoSubmitResponse(p) } catch (e) { err = e }

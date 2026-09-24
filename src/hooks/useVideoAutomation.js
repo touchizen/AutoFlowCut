@@ -461,6 +461,14 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     const inFlight = items.filter(it => !downloadOnlyIds.has(it.id) && (submittedFlow(it) ? !it.mediaId : isInFlightItem(it)))
     const inFlightIds = new Set(inFlight.map(it => it.id))
     const freshGen = items.filter(it => !downloadOnlyIds.has(it.id) && !inFlightIds.has(it.id))
+    // M2-R6 K1(A1 = B1): fresh 로 분류된 항목이 든 **옛 Flow 모양 generationId**(J3 의 legacy 행 · 메모리 모드의 complete+G+mediaId 행 등, videoPath 없음)는 제출 전
+    //   'generating' 패치와 미제출 항목의 종결 패치(markHalted · 제출 unsupported · 제출 auth · 같은 거부 2연속)가 {generationId:null, mediaId:null} 로 지운다.
+    //   안 지우면 어떤 비성공 패치도 {error, errorKind} 만 써서 행이 {error, errorKind:X, G, mediaId:null} 이 되고 J3 술어(errorKind null)에서 벗어나 다음 Start/Retry 가
+    //   과금된 in-flight 로 잡아 G 를 폴한다(jwpduf 레코드 없음 ×3 → flow-video-not-found + mediaId=G → 영원히 download-only). App 의 두 화이트리스트(t2v·i2v)는
+    //   명시적 null 을 통과시킨다('generationId' in result). 폴 루프의 미제출 loop(폴 auth·폴 unsupported)는 Flow 에서 항상 비어 있다(ignoreCap 으로 첫 윈도우가
+    //   전부 제출하거나 halt/종결이 nextFreshIdx 를 끝으로 보낸다) — 손대지 않는다. 클릭 뒤 거부 등 항목 i 자신의 실패 패치는 제출 전 패치가 이미 지웠다.
+    const hasStaleFlowId = (it) => appMode === 'flow' && isFlowShapedId(it.generationId) && !it.videoPath
+    const staleIdClear = (it) => (hasStaleFlowId(it) ? { generationId: null, mediaId: null } : {})
 
     const batchStartedAt = Date.now()
     setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: batchStartedAt })
@@ -578,7 +586,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     const markHalted = () => {
       if (!submitHaltRef.current) return
       for (let j = nextFreshIdx; j < freshGen.length; j++) {
-        onItemUpdate?.(freshGen[j].id, 'error', { error: 'flow-batch-halted', errorKind: 'flow-batch-halted', errorParams: { cause: submitHaltRef.current } })
+        onItemUpdate?.(freshGen[j].id, 'error', { error: 'flow-batch-halted', errorKind: 'flow-batch-halted', errorParams: { cause: submitHaltRef.current }, ...staleIdClear(freshGen[j]) })   // M2-R6 K1
         videoErrorCount++
       }
       nextFreshIdx = freshGen.length
@@ -597,7 +605,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         const i = nextFreshIdx
         const item = freshGen[i]
         setStatusMessage(`📤 ${t('videoAutomation.submitting') || 'Submitting'} ${i + 1}/${freshGen.length} — "${(item.prompt || '').substring(0, 30)}..."`)
-        onItemUpdate?.(item.id, 'generating')
+        // M2-R6 K1: 옛 Flow 모양 id 를 든 fresh 항목은 여기서 id 를 지운다 — 이 뒤의 어떤 실패 패치도 옛 G 를 남기지 않는다.
+        if (hasStaleFlowId(item)) onItemUpdate?.(item.id, 'generating', staleIdClear(item))
+        else onItemUpdate?.(item.id, 'generating')
 
         const genResult = await submitVideoItem(item, mode, {
           videoModel: effectiveVideoModel, aspectRatio, duration, videoBatchCount, seed, projectName, videoResolution
@@ -645,7 +655,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           // 토큰 사망 — 이 항목 + 남은 freshGen 전부 auth error. 이미 제출된 pending 은 post-loop 에서 마감.
           const authErr = authFailureText(genResult)   // M2-R1 F3
           for (let j = i; j < freshGen.length; j++) {
-            onItemUpdate?.(freshGen[j].id, 'error', { error: authErr, errorKind: 'auth' })
+            onItemUpdate?.(freshGen[j].id, 'error', { error: authErr, errorKind: 'auth', ...staleIdClear(freshGen[j]) })   // M2-R6 K1
             videoErrorCount++
           }
           nextFreshIdx = freshGen.length
@@ -669,7 +679,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           //   페이싱을 두고 하나씩 실패시키면 30항목 배치가 5분을 허비한다. 이 항목 + 남은 freshGen 전부 그 kind 로 닫고 반환.
           const unsupported = { error: genResult.error || 'flow-feature-unsupported', errorKind: 'flow-feature-unsupported' }
           for (let j = i; j < freshGen.length; j++) {
-            onItemUpdate?.(freshGen[j].id, 'error', unsupported)
+            onItemUpdate?.(freshGen[j].id, 'error', { ...unsupported, ...staleIdClear(freshGen[j]) })   // M2-R6 K1
             videoErrorCount++
           }
           nextFreshIdx = freshGen.length
@@ -711,7 +721,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             if (lastPreClickRefusal === sig) {
               const same = { error: genResult.error || genResult.errorKind, errorKind: genResult.errorKind, ...(genResult.errorParams ? { errorParams: genResult.errorParams } : {}) }
               for (let j = nextFreshIdx; j < freshGen.length; j++) {
-                onItemUpdate?.(freshGen[j].id, 'error', same)
+                onItemUpdate?.(freshGen[j].id, 'error', { ...same, ...staleIdClear(freshGen[j]) })   // M2-R6 K1
                 videoErrorCount++
               }
               nextFreshIdx = freshGen.length

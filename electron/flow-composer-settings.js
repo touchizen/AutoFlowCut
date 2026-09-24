@@ -432,7 +432,9 @@ export async function applyComposerSettings(flowView, opts, deps) {
     r = await runDriver()
     // M2-R5 J5(B4): 첫 실행이 모델을 바꿨으면(model=clicked) 재실행은 이미 바뀐 모델을 already 로 본다 — 병합 steps·[Flow Settings] 로그는 첫 실행의 전환을 지킨다
     //   (§12.2 무과금 프로브의 통과 조건 steps.model==='clicked'; I7 은 클릭 뒤 거부 경로만 지켰다).
-    if (firstSteps.model === 'clicked' && r && r.steps && r.steps.model === 'already') r = { ...r, steps: { ...r.steps, model: 'clicked' } }
+    // M2-R6 K4(A4): already 만이 아니다 — 재실행이 clicked 를 보고하지 않는 모든 경우(already · phase 2 전 실패로 steps.model 없음 · needs-trusted 재발(R2-2#3))에
+    //   첫 실행의 clicked 를 지킨다. 모델 전환은 첫 실행이 실제로 한 일이라 재실행이 어떻게 끝나든 steps·ok=false 로그에 남아야 한다.
+    if (firstSteps.model === 'clicked' && r && (!r.steps || r.steps.model !== 'clicked')) r = { ...r, steps: { ...(r.steps || {}), model: 'clicked' } }
     // R2-2#3: trusted 클릭 뒤 재실행도 needs-trusted(모드 라디오 재렌더 → 다른 라디오도 합성 클릭 무시) — needs-trusted 는
     //   패널을 일부러 열어 두고(closed 없음) 나오므로 여기서 닫고 실패한다. 한 번 더 돌리지 않는다(무한 루프 방지).
     if (r && Array.isArray(r.needsTrusted) && r.needsTrusted.length) {

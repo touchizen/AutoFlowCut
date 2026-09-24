@@ -276,6 +276,37 @@ describe('applyComposerSettings — main 측(트리거 trusted 클릭 → 드라
     expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'trusted:settings-radio', 'driver', 'trusted:settings-trigger-close'])
   })
 
+  // M2-R6 K4(A4): J5 는 재실행의 model=already 만 clicked 로 되돌렸다. R2-2#3 의 "재실행도 needs-trusted"(모드 라디오 재렌더) 와 첫 스캔에서 실패한 재실행은 phase 2 전에
+  //   돌아와 steps.model 이 없다 → 병합 steps·[Flow Settings] ok=false 로그가 첫 실행의 모델 전환을 떨궜다(§12.2 무과금 프로브: 모델은 실제로 바뀌었는데 통과도 정의된 실패도 아니다).
+  //   첫 실행이 clicked 를 보고했고 재실행이 clicked 를 보고하지 않으면(already·없음·needs-trusted 재발) 언제나 clicked 를 지킨다.
+  it('needs-trusted 재실행이 다시 needs-trusted(모드 라디오 재렌더)로 나와 model 을 보고하지 않아도 첫 실행의 model=clicked 를 지킨다 — 병합 steps 와 ok=false 로그 (M2-R6 K4)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      let n = 0
+      const h = harness({ driver: () => (++n === 1
+        ? { ok: false, needsTrusted: [{ group: 'duration', name: 'mat-button-toggle-group-31', label: '8초' }], steps: { mode: 'already(videocam)', model: 'clicked' } }
+        : { ok: false, needsTrusted: [{ group: 'mode', name: 'mat-button-toggle-group-29', label: '동영상', ligature: 'videocam' }], steps: { mode: 'already(videocam)' } }) })
+      const r = await applyComposerSettings(h.flowView, { mode: 'video', duration: 8, model: 'Veo 3.1 - Fast' }, h.deps)
+      expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'needs-trusted:mode', steps: { mode: 'already(videocam)', model: 'clicked' } })
+      expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'trusted:settings-radio', 'driver', 'trusted:settings-trigger-close'])
+      expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('[Flow Settings] video mode=already(videocam) model=clicked ok=false reason=needs-trusted:mode')
+    } finally { warn.mockRestore() }
+  })
+
+  it('needs-trusted 재실행이 첫 스캔에서 실패해(panel-not-open, steps 비어 있음) 돌아와도 첫 실행의 model=clicked 를 지킨다 (M2-R6 K4)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      let n = 0
+      const h = harness({ driver: () => (++n === 1
+        ? { ok: false, needsTrusted: [{ group: 'duration', name: 'mat-button-toggle-group-31', label: '8초' }], steps: { mode: 'already(videocam)', model: 'clicked' } }
+        : { ok: false, kind: 'flow-settings-not-applied', reason: 'panel-not-open', steps: {}, closed: false }) })
+      const r = await applyComposerSettings(h.flowView, { mode: 'video', duration: 8, model: 'Veo 3.1 - Fast' }, h.deps)
+      expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'panel-not-open', steps: { model: 'clicked' } })
+      expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'trusted:settings-radio', 'driver', 'trusted:settings-trigger-close'])
+      expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('[Flow Settings] video model=clicked ok=false reason=panel-not-open')
+    } finally { warn.mockRestore() }
+  })
+
   it('closed:false → 트리거 재클릭 → 아직 열려 있으면 panel-not-closed', async () => {
     const h = harness({ driver: { ok: true, closed: false, steps: { mode: 'already', ratio: 'already(crop_16_9)' } }, panelOpenAfterReclick: true })
     const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '16:9' }, h.deps)
