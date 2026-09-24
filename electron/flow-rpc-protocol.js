@@ -14,12 +14,16 @@
  * decodeFReqInner / extractSubmitPrompts / normalizePrompt 는 페이지 컨텍스트 주입 문자열에도
  * toString() 으로 직렬화된다 → 자기완결(모듈 스코프·다른 헬퍼 참조 금지, 브라우저 전역만).
  *
+ * M2-1(영상): parseVideoSubmitRequest / parseVideoSubmitResponse(단일 레코드, 거부 id 동반 throw) / parseMediaRecord /
+ * parseVideoStatusResponse / mediaStateToStatus / modelKeyMatches(HTrJv 카탈로그 표 기반 — 플랜 D8-7).
+ *
  * tests/electron/flow-rpc-protocol.test.js
  */
 
 export class FlowRpcError extends Error {
   /**
-   * @param {'rpc'|'er'|'http'|'network'|'shape'|'download'} kind
+   * @param {'rpc'|'er'|'http'|'network'|'shape'|'download'|'video-count'} kind
+   *   video-count 는 YhhmEf 응답의 레코드 수 ≠ 1 — 에러 객체에 rejectedMediaIds([3][i][0] 전부)를 싣는다.
    * @param {{code?: number|null, status?: number|null, reason?: string|null, message?: string}} [detail]
    *   reason 은 network 계열의 원인 표식('timeout'|'wiz-missing'|'xhr-error'|'execute-failed') — 내용 없음.
    */
@@ -89,7 +93,8 @@ export function parseBatchexecuteResponse(text, rpcid) {
   throw new FlowRpcShapeError(rpcid + ' response frame missing', { rpcid })
 }
 
-const IMAGE_MEDIA_HOST = 'flow-content.google'
+/** 생성물(이미지·mp4 서명 URL) 호스트 — 다른 호스트면 shape 로 닫는다. */
+const MEDIA_HOST = 'flow-content.google'
 
 function isPosInt(n) { return Number.isInteger(n) && n > 0 }
 
@@ -126,7 +131,7 @@ export function parseImageGenerateResponse(payload) {
     if (typeof url !== 'string') throw shapeError(RPC, p + '[6][0][13]')
     let host = null
     try { host = new URL(url).hostname } catch (_e) { host = null }
-    if (host !== IMAGE_MEDIA_HOST) {
+    if (host !== MEDIA_HOST) {
       throw new FlowRpcShapeError(RPC + ' image url host mismatch' + (host ? ' host=' + host : ''), { rpcid: RPC, path: p + '[6][0][13]' })
     }
     const dims = holder[2]
@@ -138,32 +143,160 @@ export function parseImageGenerateResponse(payload) {
 }
 
 /**
- * YhhmEf(영상 제출) payload → { creditsLeft, records:[{ mediaId, state, echo, modelKey, ratioEnum }] }.
- *   payload[1] 크레딧(중간 폴은 null 가능) · payload[3][i] 영상 레코드: mediaId [0], 상태 [5][8][0](6→2→3, 없으면
- *   null — 완료 판정은 상태 폴이 한다), 원 프롬프트 [5][6][2][0][2], 모델키 [7][0][12], 종횡비 enum [7][0][16].
+ * YhhmEf(영상 제출) 요청 inner → { prompt, modelKey, ratioEnum }.
+ *   item = inner[0][0]: 프롬프트 세그먼트 [0][2][0](요청 프롬프트와 같은 꼴, ' ' 결합), 모델키 [1](예 abra_t2v_6s), 종횡비 enum [2].
+ *   경로 표기는 'req…' 접두(응답 경로와 구분). 앱은 이 요청을 만들지 않는다 — 캡처된 본문의 판독 전용.
+ */
+export function parseVideoSubmitRequest(inner) {
+  const RPC = 'YhhmEf'
+  const item = Array.isArray(inner) && Array.isArray(inner[0]) ? inner[0][0] : null
+  if (!Array.isArray(item)) throw shapeError(RPC, 'req[0][0]')
+  const segs = echoSegments(Array.isArray(item[0]) ? item[0][2] : null)
+  if (segs.length === 0) throw shapeError(RPC, 'req[0][0][0][2]')
+  const modelKey = item[1]
+  if (typeof modelKey !== 'string' || !modelKey) throw shapeError(RPC, 'req[0][0][1]')
+  const ratioEnum = item[2]
+  if (typeof ratioEnum !== 'number') throw shapeError(RPC, 'req[0][0][2]')
+  return { prompt: segs.join(' '), modelKey, ratioEnum }
+}
+
+/**
+ * YhhmEf(영상 제출) payload → { mediaId, modelKey, creditsLeft, state, echo, ratioEnum, warnings } — 레코드는 정확히 하나(D8-6).
+ *   필수는 셋뿐: [3].length(=1) · [3][0][0] mediaId · [3][0][7][0][12] 모델키. 나머지는 optional 이고 없으면 warnings 토큰
+ *   ('credits-missing' [1] · 'state-missing' [3][0][5][8][0] · 'echo-missing' [3][0][5][6][2][0][2]) — 내용 없는 고정 문자열.
+ *   [3].length ≠ 1 → FlowRpcError{kind:'video-count', rejectedMediaIds}. mediaId 를 읽은 뒤의 shape 실패는 항상
+ *   rejectedMediaId 를 든다(200 뒤의 거부 — 훅이 download-only 로 물지 않게 mediaId/generationId 로는 절대 안 나간다).
  */
 export function parseVideoSubmitResponse(payload) {
   const RPC = 'YhhmEf'
   if (!Array.isArray(payload)) throw shapeError(RPC, '[]')
-  const credits = payload[1]
-  if (credits != null && typeof credits !== 'number') throw shapeError(RPC, '[1]')
   const list = payload[3]
   if (!Array.isArray(list) || list.length === 0) throw shapeError(RPC, '[3]')
-  const records = list.map((rec, i) => {
-    const p = '[3][' + i + ']'
-    if (!Array.isArray(rec)) throw shapeError(RPC, p)
-    const mediaId = rec[0]
-    if (typeof mediaId !== 'string' || !mediaId) throw shapeError(RPC, p + '[0]')
-    const meta = Array.isArray(rec[5]) ? rec[5] : null
-    const state = meta && Array.isArray(meta[8]) && typeof meta[8][0] === 'number' ? meta[8][0] : null
-    const echo = echoSegments(meta && meta[6] && meta[6][2] && meta[6][2][0] ? meta[6][2][0][2] : null)
-    const g0 = Array.isArray(rec[7]) && Array.isArray(rec[7][0]) ? rec[7][0] : null
-    if (!g0) throw shapeError(RPC, p + '[7][0]')
-    const modelKey = g0[12]
-    if (typeof modelKey !== 'string' || !modelKey) throw shapeError(RPC, p + '[7][0][12]')
-    return { mediaId, state, echo, modelKey, ratioEnum: typeof g0[16] === 'number' ? g0[16] : null }
-  })
-  return { creditsLeft: credits == null ? null : credits, records }
+  if (list.length !== 1) {
+    const err = new FlowRpcError('video-count', { message: RPC + ' response has ' + list.length + ' video records' })
+    err.rejectedMediaIds = list.map((rec) => (Array.isArray(rec) && typeof rec[0] === 'string' ? rec[0] : null)).filter(Boolean)
+    throw err
+  }
+  const rec = list[0]
+  if (!Array.isArray(rec)) throw shapeError(RPC, '[3][0]')
+  const mediaId = rec[0]
+  if (typeof mediaId !== 'string' || !mediaId) throw shapeError(RPC, '[3][0][0]')
+  const rejected = (path) => Object.assign(shapeError(RPC, path), { rejectedMediaId: mediaId })
+  const g0 = Array.isArray(rec[7]) && Array.isArray(rec[7][0]) ? rec[7][0] : null
+  if (!g0) throw rejected('[3][0][7][0]')
+  const modelKey = g0[12]
+  if (typeof modelKey !== 'string' || !modelKey) throw rejected('[3][0][7][0][12]')
+  const warnings = []
+  const creditsLeft = typeof payload[1] === 'number' ? payload[1] : null
+  if (creditsLeft == null) warnings.push('credits-missing')
+  const meta = Array.isArray(rec[5]) ? rec[5] : null
+  const state = meta && Array.isArray(meta[8]) && typeof meta[8][0] === 'number' ? meta[8][0] : null
+  if (state == null) warnings.push('state-missing')
+  const echo = echoSegments(meta && meta[6] && meta[6][2] && meta[6][2][0] ? meta[6][2][0][2] : null)
+  if (echo.length === 0) warnings.push('echo-missing')
+  return { mediaId, modelKey, creditsLeft, state, echo, ratioEnum: typeof g0[16] === 'number' ? g0[16] : null, warnings }
+}
+
+/**
+ * 미디어 레코드(jwpduf `[2][i]` · as29s 루트) → { mediaId, state, bytes, videoUrl }.
+ *   mediaId [0](필수) · 상태 [5][8][0](없으면 null → 폴이 unknown 으로) · 바이트 [5][13] · mp4 서명 URL [7][0][8](없으면 null,
+ *   있으면 호스트 flow-content.google 필수 — 서명은 메시지에 싣지 않는다). 완료 폴의 모델키 재검사는 없다(D8-6).
+ * @param {{rpcid?: string, path?: string}} [ctx] 경로 접두(jwpduf 는 '[2][i]', as29s 는 루트)
+ */
+export function parseMediaRecord(rec, ctx) {
+  const RPC = (ctx && ctx.rpcid) || 'as29s'
+  const base = (ctx && ctx.path) || ''
+  if (!Array.isArray(rec)) throw shapeError(RPC, base || '[]')
+  const mediaId = rec[0]
+  if (typeof mediaId !== 'string' || !mediaId) throw shapeError(RPC, base + '[0]')
+  const meta = Array.isArray(rec[5]) ? rec[5] : null
+  const state = meta && Array.isArray(meta[8]) && typeof meta[8][0] === 'number' ? meta[8][0] : null
+  const bytes = meta && typeof meta[13] === 'number' ? meta[13] : null
+  const g0 = Array.isArray(rec[7]) && Array.isArray(rec[7][0]) ? rec[7][0] : null
+  let videoUrl = null
+  if (g0 && g0[8] != null) {
+    if (typeof g0[8] !== 'string') throw shapeError(RPC, base + '[7][0][8]')
+    let host = null
+    try { host = new URL(g0[8]).hostname } catch (_e) { host = null }
+    if (host !== MEDIA_HOST) {
+      throw new FlowRpcShapeError(RPC + ' video url host mismatch' + (host ? ' host=' + host : ''), { rpcid: RPC, path: base + '[7][0][8]' })
+    }
+    videoUrl = g0[8]
+  }
+  return { mediaId, state, bytes, videoUrl }
+}
+
+/** jwpduf(상태 폴) payload `[null, credits|null, [records]]` → { creditsLeft, records }. 중간 폴은 [1]=null(R:143-149). */
+export function parseVideoStatusResponse(payload) {
+  const RPC = 'jwpduf'
+  if (!Array.isArray(payload)) throw shapeError(RPC, '[]')
+  const list = payload[2]
+  if (!Array.isArray(list)) throw shapeError(RPC, '[2]')
+  const creditsLeft = typeof payload[1] === 'number' ? payload[1] : null
+  const records = list.map((rec, i) => parseMediaRecord(rec, { rpcid: RPC, path: '[2][' + i + ']' }))
+  return { creditsLeft, records }
+}
+
+/** 상태 [5][8][0] → 'pending'(6 제출됨·2 생성중) | 'complete'(3) | 'unknown'(그 외·null — 폴이 pending+unknownState 로). */
+export function mediaStateToStatus(state) {
+  if (state === 6 || state === 2) return 'pending'
+  if (state === 3) return 'complete'
+  return 'unknown'
+}
+
+/** 요청 모델 라벨 → { family:'abra'|'veo_3_1', tier:null|'fast'|'lite'|'quality' }. 모르면 null(fail-closed). */
+function videoModelSpec(model) {
+  const s = String(model || '')
+  if (/omni.*flash/i.test(s) || /^abra[_-]/i.test(s)) return { family: 'abra', tier: null }
+  if (/veo/i.test(s)) {
+    const tier = /lite/i.test(s) ? 'lite' : /fast/i.test(s) ? 'fast' : /quality/i.test(s) ? 'quality' : null
+    return tier ? { family: 'veo_3_1', tier } : null
+  }
+  return null
+}
+const KEY_TIER_TOKENS = new Set(['fast', 'lite', 'quality'])
+const KEY_QUEUE_TOKENS = new Set(['ultra', 'relaxed', 'low', 'priority'])
+/** portrait 형제가 있는 base(카탈로그 사실): veo Quality 8s(`veo_3_1_t2v`)·Fast 8s(`veo_3_1_t2v_fast`) 뿐. */
+function hasPortraitSibling(spec, duration) {
+  return spec.family === 'veo_3_1' && duration === 8 && (spec.tier === 'quality' || spec.tier === 'fast')
+}
+
+/**
+ * 응답 모델키가 요청 {model, duration, ratio, resolution} 과 맞는가 — HTrJv 카탈로그 **표 기반**(플랜 D8-7, 추론 없음):
+ *   패밀리(abra ↔ Omni Flash · veo_3_1 ↔ Veo 3.1) + `_t2v` 세그먼트 필수(r2v/i2v/extend/edit 거부)
+ *   + 길이 토큰 `(\d+)s` 는 있으면 일치·없으면 8 + 등급 토큰(fast|lite|quality)은 veo 만, 없으면 quality
+ *   + `_portrait` 는 portrait 형제가 있는 base 에서만 9:16 ↔ 토큰 일치(형제가 있는데 토큰이 없으면 9:16 요청은 거부)
+ *   + 큐 토큰 `_ultra|_relaxed|_low_priority` 중립 + `_360p` 는 요청 해상도와 일치(없으면 720p).
+ *   모르는 토큰·모르는 라벨·길이 없음은 false(fail-closed). Omni 의 비율은 키에 없다 — 패널이 보장(D7).
+ */
+export function modelKeyMatches(key, want) {
+  if (typeof key !== 'string' || !want) return false
+  const spec = videoModelSpec(want.model)
+  if (!spec) return false
+  const wantDur = Number(want.duration)
+  if (!Number.isFinite(wantDur)) return false
+  const wantRes = String(want.resolution || '720p').toLowerCase()
+  const m = /^(abra|veo_3_1)_([a-z0-9]+)((?:_[a-z0-9]+)*)$/.exec(key)
+  if (!m || m[1] !== spec.family || m[2] !== 't2v') return false
+  let duration = 8
+  let tier = null
+  let portrait = false
+  let res = '720p'
+  for (const tok of m[3].split('_').filter(Boolean)) {
+    const d = /^(\d+)s$/.exec(tok)
+    if (d) { duration = Number(d[1]); continue }
+    if (KEY_TIER_TOKENS.has(tok)) { if (spec.family !== 'veo_3_1' || tier) return false; tier = tok; continue }
+    if (tok === 'portrait') { if (spec.family !== 'veo_3_1') return false; portrait = true; continue }
+    if (tok === '360p') { res = '360p'; continue }
+    if (KEY_QUEUE_TOKENS.has(tok)) continue
+    return false
+  }
+  if (duration !== wantDur) return false
+  if (spec.family === 'veo_3_1' && (tier || 'quality') !== spec.tier) return false
+  if (res !== wantRes) return false
+  const wantPortrait = String(want.ratio || '') === '9:16'
+  if (portrait) return hasPortraitSibling(spec, duration) && wantPortrait
+  return !(wantPortrait && hasPortraitSibling(spec, duration))
 }
 
 /**
@@ -259,7 +392,8 @@ export function ratioOk(width, height, ratio) {
  * FlowRpcError → 렌더러 결과. 문구 중립(숫자·auth 단어 없음), 코드·상태는 별도 필드.
  *   rpc/er code 8 → error:'RESOURCE_EXHAUSTED'(quotaStop 감지용) · code 16 → authFailed
  *   http/network → rpcStatus, 401 만 authFailed · download → flow-download-error + httpStatus
- *   shape → error:'rpc-shape:<rpcid>@<path>' · 그 외 예외 → 중립 flow-rpc-error(메시지 미노출)
+ *   shape → error:'rpc-shape:<rpcid>@<path>'(+rejectedMediaId 가 있으면 통과) · video-count → flow-video-count-mismatch
+ *   + rejectedMediaIds · 그 외 예외 → 중립 flow-rpc-error(메시지 미노출)
  */
 export function rpcErrorToRendererResult(err) {
   const base = { success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error' }
@@ -267,8 +401,13 @@ export function rpcErrorToRendererResult(err) {
   if (kind === 'download') {
     return { success: false, errorKind: 'flow-download-error', error: 'flow-download-error', httpStatus: typeof err.status === 'number' ? err.status : null }
   }
+  if (kind === 'video-count') {
+    return { success: false, errorKind: 'flow-video-count-mismatch', error: 'flow-video-count-mismatch', rejectedMediaIds: Array.isArray(err.rejectedMediaIds) ? err.rejectedMediaIds : [] }
+  }
   if (kind === 'shape') {
-    return { ...base, error: 'rpc-shape:' + (err.rpcid || '?') + '@' + (err.path || '?') }
+    const res = { ...base, error: 'rpc-shape:' + (err.rpcid || '?') + '@' + (err.path || '?') }
+    if (typeof err.rejectedMediaId === 'string') res.rejectedMediaId = err.rejectedMediaId
+    return res
   }
   if (kind === 'rpc' || kind === 'er') {
     const code = typeof err.code === 'number' ? err.code : null

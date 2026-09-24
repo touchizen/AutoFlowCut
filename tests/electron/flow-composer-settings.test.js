@@ -264,6 +264,13 @@ describe('applyComposerSettings — main 측(트리거 trusted 클릭 → 드라
     expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'trusted:settings-radio', 'trusted:settings-trigger-close'])
   })
 
+  it('needsTrusted 가 재실행에서도 needsTrusted 면(모드 라디오 → 재렌더 → 비율 라디오) 패널을 트리거 재클릭으로 닫고 실패 (R2-2#3)', async () => {
+    const h = harness({ driver: () => ({ ok: false, needsTrusted: [{ group: 'ratio', name: 'mat-button-toggle-group-27', label: '9:16', ligature: 'crop_9_16' }], steps: { mode: 'clicked' } }) })
+    const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '9:16' }, h.deps)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'needs-trusted:ratio' })
+    expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'trusted:settings-radio', 'driver', 'trusted:settings-trigger-close'])
+  })
+
   it('closed:false → 트리거 재클릭 → 아직 열려 있으면 panel-not-closed', async () => {
     const h = harness({ driver: { ok: true, closed: false, steps: { mode: 'already', ratio: 'already(crop_16_9)' } }, panelOpenAfterReclick: true })
     const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '16:9' }, h.deps)

@@ -162,17 +162,11 @@ export function routeRpcLoadend(ev, pendingGenerations) {
       console.log(`[Flow RPC] ogiZ0b seq=${ev.seq} results=${results.length} ${results[0].width}x${results[0].height}`)
       settleGen(gen, { results })
     } else if (gen.rpc === 'YhhmEf') {
+      // 레코드 수 ≠ 1(video-count + rejectedMediaIds)·200 뒤 shape(+rejectedMediaId) 는 파서가 throw → catch 가 매핑(M2-1).
       const v = parseVideoSubmitResponse(payload)
-      warnEchoMismatch(gen, ev.seq, v.records[0] && v.records[0].echo)
-      if (v.records.length !== 1) {
-        console.warn(`[Flow RPC] YhhmEf seq=${ev.seq} video count mismatch got=${v.records.length}`)
-        settleGen(gen, {
-          error: 'flow-video-count-mismatch', errorKind: 'flow-video-count-mismatch',
-          rejectedMediaIds: v.records.map((r) => r.mediaId), creditsLeft: v.creditsLeft,
-        })
-        return { ok: true, completed: id }
-      }
-      settleGen(gen, { mediaId: v.records[0].mediaId, creditsLeft: v.creditsLeft, modelKey: v.records[0].modelKey, results: v.records })
+      warnEchoMismatch(gen, ev.seq, v.echo)
+      if (v.warnings.length) console.warn(`[Flow RPC] YhhmEf seq=${ev.seq} warnings=${v.warnings.join(',')}`)
+      settleGen(gen, { mediaId: v.mediaId, creditsLeft: v.creditsLeft, modelKey: v.modelKey, warnings: v.warnings })
     } else {
       throw new FlowRpcError('shape', { message: 'unsupported rpc ' + String(gen.rpc) })
     }

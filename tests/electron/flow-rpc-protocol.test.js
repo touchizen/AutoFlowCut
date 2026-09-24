@@ -10,6 +10,8 @@ import {
   parseBatchexecuteResponse, parseImageGenerateResponse,
   decodeFReqInner, extractSubmitPrompts, normalizePrompt, ratioOk,
   rpcErrorToRendererResult, describeMediaUrl,
+  parseVideoSubmitRequest, parseVideoSubmitResponse, parseMediaRecord, parseVideoStatusResponse,
+  mediaStateToStatus, modelKeyMatches,
 } from '../../electron/flow-rpc-protocol.js'
 import { isFlowAuthError, markFlowAuthFailure } from '../../src/engine/engineFlow.js'
 import { isQuotaExhaustedError } from '../../src/utils/quotaStop.js'
@@ -228,5 +230,212 @@ describe('describeMediaUrl — 로그용 요약(호스트 + 미디어 id 앞 8�
   it('깨진 URL → ? 표식', () => {
     expect(describeMediaUrl('not a url')).toEqual({ host: '?', media: '?' })
     expect(describeMediaUrl(null)).toEqual({ host: '?', media: '?' })
+  })
+})
+
+// ─── M2-1 영상 파서 + 표 기반 모델키 ────────────────────────────────────────────────────────────────
+const VIDEO_PROMPT = '왕이 궁전 내부를 산책하는 영상'
+const UUID11 = '<uuid#11>'
+/** R:143-149 첫 폴(상태 [2], 크레딧 null, 바이트 없음) — jwpduf 샘플(마지막 폴)에서 역산한 사본. */
+function firstPollPayload() {
+  const p = samplePayload('jwpduf')
+  p[1] = null
+  p[2][0][5] = p[2][0][5].slice(0, 10)
+  p[2][0][5][8] = [2]
+  return p
+}
+
+describe('M2-1 parseVideoSubmitRequest — YhhmEf 요청 inner 위치 핀', () => {
+  it('S2 inner → {prompt, modelKey:"abra_t2v_6s", ratioEnum:2}', () => {
+    const inner = decodeFReqInner(reencodeRequestBody(sample('YhhmEf').reqBody)).inner
+    expect(parseVideoSubmitRequest(inner)).toEqual({ prompt: VIDEO_PROMPT, modelKey: 'abra_t2v_6s', ratioEnum: 2 })
+  })
+  it('모델키 자리([0][0][1])가 문자열이 아니면 shape 에러(경로 req[0][0][1])', () => {
+    const inner = decodeFReqInner(reencodeRequestBody(sample('YhhmEf').reqBody)).inner
+    inner[0][0][1] = null
+    let err
+    try { parseVideoSubmitRequest(inner) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(FlowRpcShapeError)
+    expect(err).toMatchObject({ rpcid: 'YhhmEf', path: 'req[0][0][1]' })
+    expect(err.message).not.toContain(VIDEO_PROMPT)
+  })
+})
+
+describe('M2-1 parseVideoSubmitResponse — 단일 레코드, 필수는 [3].length·[3][0][0]·[3][0][7][0][12] 뿐', () => {
+  it('S2 → {mediaId:"<uuid#11>", modelKey:"abra_t2v_6s", creditsLeft:1040, state:6, echo:[프롬프트], warnings:[]}', () => {
+    const v = parseVideoSubmitResponse(samplePayload('YhhmEf'))
+    expect(v).toEqual({ mediaId: UUID11, modelKey: 'abra_t2v_6s', creditsLeft: 1040, state: 6, echo: [VIDEO_PROMPT], ratioEnum: 2, warnings: [] })
+    expect(v).not.toHaveProperty('records')
+  })
+  it('[3][0][5][8] 삭제 사본 → 성공 + state:null + warnings:["state-missing"]', () => {
+    const p = samplePayload('YhhmEf'); delete p[3][0][5][8]
+    expect(parseVideoSubmitResponse(p)).toMatchObject({ mediaId: UUID11, modelKey: 'abra_t2v_6s', state: null, warnings: ['state-missing'] })
+  })
+  it('[1] null → creditsLeft:null + warnings:["credits-missing"]', () => {
+    const p = samplePayload('YhhmEf'); p[1] = null
+    expect(parseVideoSubmitResponse(p)).toMatchObject({ mediaId: UUID11, creditsLeft: null, warnings: ['credits-missing'] })
+  })
+  it('메아리 누락([3][0][5][6] 삭제) → 성공 + echo:[] + warnings:["echo-missing"]', () => {
+    const p = samplePayload('YhhmEf'); delete p[3][0][5][6]
+    expect(parseVideoSubmitResponse(p)).toMatchObject({ mediaId: UUID11, echo: [], warnings: ['echo-missing'] })
+  })
+  it('긴 프롬프트 픽스처: 제목 [2][0][3][0] 이 잘려도 echo([3][0][5][6][2][0][2]) 는 전체', () => {
+    const long = ('왕이 궁전 내부를 아주 천천히 산책하며 창밖의 정원을 바라보는 영상, ').repeat(6).trim()
+    const p = samplePayload('YhhmEf')
+    p[2][0][3][0] = long.slice(0, 40)
+    p[3][0][5][1] = long.slice(0, 40)
+    p[3][0][5][6][2][0][2] = [[[long]]]
+    const v = parseVideoSubmitResponse(p)
+    expect(v.echo).toEqual([long])
+    expect(v.warnings).toEqual([])
+  })
+  it('[3] 2개 → throws FlowRpcError{kind:"video-count"} + rejectedMediaIds 2개(순서 유지)', () => {
+    const p = samplePayload('YhhmEf')
+    const second = JSON.parse(JSON.stringify(p[3][0])); second[0] = '<uuid#12>'
+    p[3].push(second)
+    let err
+    try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(FlowRpcError)
+    expect(err).toMatchObject({ kind: 'video-count', rejectedMediaIds: [UUID11, '<uuid#12>'] })
+    expect(err).not.toHaveProperty('rejectedMediaId')
+  })
+  it('[3][0][7][0][12] 삭제 → shape 에러(그 경로) + rejectedMediaId:"<uuid#11>"', () => {
+    const p = samplePayload('YhhmEf'); delete p[3][0][7][0][12]
+    let err
+    try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(FlowRpcShapeError)
+    expect(err).toMatchObject({ rpcid: 'YhhmEf', path: '[3][0][7][0][12]', rejectedMediaId: UUID11 })
+    expect(err.message).toBe('YhhmEf response shape changed at [3][0][7][0][12]')
+  })
+  it('[3][0][7] 삭제 → shape [3][0][7][0] + rejectedMediaId', () => {
+    const p = samplePayload('YhhmEf'); delete p[3][0][7]
+    let err
+    try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+    expect(err).toMatchObject({ kind: 'shape', path: '[3][0][7][0]', rejectedMediaId: UUID11 })
+  })
+  it('[3] 비어 있음 → shape [3], rejectedMediaId 없음', () => {
+    const p = samplePayload('YhhmEf'); p[3] = []
+    let err
+    try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+    expect(err).toMatchObject({ kind: 'shape', path: '[3]' })
+    expect(err).not.toHaveProperty('rejectedMediaId')
+    expect(err).not.toHaveProperty('rejectedMediaIds')
+  })
+  it('[3][0][0] 이 문자열이 아니면 shape [3][0][0], rejectedMediaId 없음', () => {
+    const p = samplePayload('YhhmEf'); p[3][0][0] = 7
+    let err
+    try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+    expect(err).toMatchObject({ kind: 'shape', path: '[3][0][0]' })
+    expect(err).not.toHaveProperty('rejectedMediaId')
+  })
+  it('응답 텍스트에서 바로: parseBatchexecuteResponse → parseVideoSubmitResponse', () => {
+    const v = parseVideoSubmitResponse(parseBatchexecuteResponse(sample('YhhmEf').respBody, 'YhhmEf'))
+    expect(v).toMatchObject({ mediaId: UUID11, modelKey: 'abra_t2v_6s', creditsLeft: 1040 })
+  })
+})
+
+describe('M2-1 rpcErrorToRendererResult — 거부 id 통과', () => {
+  it('video-count → flow-video-count-mismatch + rejectedMediaIds(mediaId/generationId 키 없음)', () => {
+    const p = samplePayload('YhhmEf')
+    const second = JSON.parse(JSON.stringify(p[3][0])); second[0] = '<uuid#12>'
+    p[3].push(second)
+    let err
+    try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+    const res = rpcErrorToRendererResult(err)
+    expect(res).toEqual({ success: false, errorKind: 'flow-video-count-mismatch', error: 'flow-video-count-mismatch', rejectedMediaIds: [UUID11, '<uuid#12>'] })
+    expect(isFlowAuthError(res)).toBe(false)
+  })
+  it('rejectedMediaId 를 든 shape 에러 → 결과에도 rejectedMediaId (경로 표기 유지)', () => {
+    const p = samplePayload('YhhmEf'); delete p[3][0][7][0][12]
+    let err
+    try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+    expect(rpcErrorToRendererResult(err)).toEqual({ success: false, errorKind: 'flow-rpc-error', error: 'rpc-shape:YhhmEf@[3][0][7][0][12]', rejectedMediaId: UUID11 })
+  })
+})
+
+describe('M2-1 parseMediaRecord / parseVideoStatusResponse / mediaStateToStatus', () => {
+  it('R 첫 폴 → creditsLeft:null, records[0] {mediaId, state:2, bytes:null, videoUrl:null}', () => {
+    const v = parseVideoStatusResponse(firstPollPayload())
+    expect(v).toEqual({ creditsLeft: null, records: [{ mediaId: UUID11, state: 2, bytes: null, videoUrl: null }] })
+  })
+  it('S3 마지막 폴 → creditsLeft:1040, {state:3, bytes:2613641, videoUrl:null}', () => {
+    const v = parseVideoStatusResponse(samplePayload('jwpduf'))
+    expect(v).toEqual({ creditsLeft: 1040, records: [{ mediaId: UUID11, state: 3, bytes: 2613641, videoUrl: null }] })
+  })
+  it('S4 as29s 레코드 → videoUrl ^https://flow-content.google/video/ + bytes', () => {
+    const r = parseMediaRecord(samplePayload('as29s'))
+    expect(r).toMatchObject({ mediaId: UUID11, state: 3, bytes: 2613641 })
+    expect(r.videoUrl).toMatch(/^https:\/\/flow-content\.google\/video\//)
+  })
+  it('videoUrl 호스트가 flow-content.google 이 아니면 shape [7][0][8] (서명은 메시지에 없다)', () => {
+    const p = samplePayload('as29s')
+    p[7][0][8] = 'https://evil.example/video/x?Signature=SIGSECRET'
+    let err
+    try { parseMediaRecord(p) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(FlowRpcShapeError)
+    expect(err).toMatchObject({ rpcid: 'as29s', path: '[7][0][8]' })
+    expect(err.message).not.toContain('SIGSECRET')
+  })
+  it('[0] 이 문자열이 아니면 shape [0]; 상태 없음([5][8] 삭제) → state:null', () => {
+    const bad = samplePayload('as29s'); bad[0] = null
+    expect(() => parseMediaRecord(bad)).toThrow(FlowRpcShapeError)
+    const noState = samplePayload('as29s'); delete noState[5][8]
+    expect(parseMediaRecord(noState)).toMatchObject({ mediaId: UUID11, state: null })
+  })
+  it('parseVideoStatusResponse: [2] 가 배열이 아니면 shape jwpduf@[2]; 빈 배열 → records:[]; 레코드 경로는 [2][i]…', () => {
+    expect(() => parseVideoStatusResponse([null, null, null])).toThrow(/jwpduf response shape changed at \[2\]/)
+    expect(parseVideoStatusResponse([null, null, []])).toEqual({ creditsLeft: null, records: [] })
+    const p = samplePayload('jwpduf'); p[2][0][0] = 5
+    let err
+    try { parseVideoStatusResponse(p) } catch (e) { err = e }
+    expect(err).toMatchObject({ rpcid: 'jwpduf', path: '[2][0][0]' })
+  })
+  it('mediaStateToStatus: 6·2 → pending, 3 → complete, 9·null → unknown', () => {
+    expect(mediaStateToStatus(6)).toBe('pending')
+    expect(mediaStateToStatus(2)).toBe('pending')
+    expect(mediaStateToStatus(3)).toBe('complete')
+    expect(mediaStateToStatus(9)).toBe('unknown')
+    expect(mediaStateToStatus(null)).toBe('unknown')
+  })
+})
+
+describe('M2-1 modelKeyMatches — 카탈로그 표 기반 진리표(HTrJv 사실)', () => {
+  const OMNI = 'Omni Flash', FAST = 'Veo 3.1 - Fast', LITE = 'Veo 3.1 - Lite', QUALITY = 'Veo 3.1 - Quality'
+  const truthy = [
+    ['abra_t2v_6s', { model: OMNI, duration: 6, ratio: '9:16', resolution: '720p' }],
+    ['abra_t2v_6s', { model: OMNI, duration: 6, ratio: '16:9' }],
+    ['veo_3_1_t2v', { model: QUALITY, duration: 8, ratio: '16:9' }],
+    ['veo_3_1_t2v_fast_ultra_relaxed', { model: FAST, duration: 8, ratio: '16:9' }],
+    ['veo_3_1_t2v_fast_6s', { model: FAST, duration: 6, ratio: '9:16' }],
+    ['veo_3_1_t2v_fast_portrait_ultra_relaxed', { model: FAST, duration: 8, ratio: '9:16' }],
+    ['abra_t2v_6s_360p', { model: OMNI, duration: 6, ratio: '16:9', resolution: '360p' }],
+    ['veo_3_1_t2v_lite', { model: LITE, duration: 8 }],
+    ['veo_3_1_t2v_lite_4s', { model: LITE, duration: 4 }],
+    ['veo_3_1_t2v_lite_6s', { model: LITE, duration: 6 }],
+  ]
+  const falsy = [
+    ['abra_r2v_6s', { model: OMNI, duration: 6, ratio: '16:9' }],
+    ['abra_i2v_6s', { model: OMNI, duration: 6, ratio: '16:9' }],
+    ['abra_t2v_6s_360p', { model: OMNI, duration: 6, ratio: '16:9', resolution: '720p' }],
+    ['abra_t2v_6s', { model: OMNI, duration: 8 }],
+    ['veo_3_1_t2v_fast_ultra_relaxed', { model: QUALITY, duration: 8 }],
+    ['veo_3_1_t2v_fast_ultra_relaxed', { model: FAST, duration: 8, ratio: '9:16' }],
+    ['veo_3_1_t2v_quality_6s', { model: FAST, duration: 6 }],
+    ['veo_3_1_t2v_lite_6s', { model: FAST, duration: 6 }],
+    ['veo_3_1_t2v', { model: LITE, duration: 8 }],
+  ]
+  it.each(truthy)('true: %s ↔ %o', (key, want) => { expect(modelKeyMatches(key, want)).toBe(true) })
+  it.each(falsy)('false: %s ↔ %o', (key, want) => { expect(modelKeyMatches(key, want)).toBe(false) })
+  it('fail-closed: 모르는 토큰·모르는 모델 라벨·길이 없음·1080p 요청은 전부 false', () => {
+    expect(modelKeyMatches('abra_t2v_6s_hdr', { model: OMNI, duration: 6 })).toBe(false)
+    expect(modelKeyMatches('abra_edit', { model: OMNI, duration: 8 })).toBe(false)
+    expect(modelKeyMatches('veo_3_1_t2v', { model: 'veo-3', duration: 8 })).toBe(false)
+    expect(modelKeyMatches('abra_t2v_6s', { model: OMNI })).toBe(false)
+    expect(modelKeyMatches('abra_t2v_6s', { model: OMNI, duration: 6, resolution: '1080p' })).toBe(false)
+    expect(modelKeyMatches(null, { model: OMNI, duration: 6 })).toBe(false)
+  })
+  it('표시 라벨 변형: 패널 라벨 "Omni 1.1 Flash" 와 abra_* 내부키도 Omni 로 본다', () => {
+    expect(modelKeyMatches('abra_t2v_6s', { model: 'Omni 1.1 Flash', duration: 6 })).toBe(true)
+    expect(modelKeyMatches('abra_t2v_6s', { model: 'abra_t2v_6s', duration: 6 })).toBe(true)
   })
 })

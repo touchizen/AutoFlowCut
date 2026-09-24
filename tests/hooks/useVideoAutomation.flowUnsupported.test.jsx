@@ -44,3 +44,35 @@ describe('useVideoAutomation — 폴링의 flow-feature-unsupported', () => {
     expect(hook.result.current.statusMessage).not.toMatch(/Polling/)
   })
 })
+
+describe('useVideoAutomation — 제출 시점의 flow-feature-unsupported (R2-2#2)', () => {
+  it('첫 제출이 flow-feature-unsupported 면 종결: 제출 1회, 페이싱 대기 없음, 3항목 전부 그 kind 로 error, status error', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:generate-video-t2v' })
+    const checkVideoStatus = vi.fn()
+    const genAPI = { generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus, upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('flow-session') }
+    const onItemUpdate = vi.fn()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null, null, 'flow'))
+    let done = false
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v', scenes: [{ id: 'vscene_1', prompt: 'p1' }, { id: 'vscene_2', prompt: 'p2' }, { id: 'vscene_3', prompt: 'p3' }],
+        projectName: 'test', saveMode: 'folder', videoModel: 'Omni Flash', aspectRatio: '16:9', duration: 6, videoResolution: '720p', videoBatchCount: 1, seed: null,
+        concurrency: 1, onItemUpdate,
+      })
+      startPromise.then(() => { done = true })
+    })
+    // Flow 페이싱(최소 7초) 없이 끝나야 한다 — 1초만 흘린다.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(done).toBe(true)
+    await act(async () => { await startPromise })
+
+    expect(generateVideoT2V).toHaveBeenCalledTimes(1)
+    expect(checkVideoStatus).not.toHaveBeenCalled()
+    const errored = onItemUpdate.mock.calls.filter(([, s]) => s === 'error')
+    expect(new Set(errored.map(([id]) => id))).toEqual(new Set(['vscene_1', 'vscene_2', 'vscene_3']))
+    for (const [, , patch] of errored) expect(patch).toMatchObject({ errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:generate-video-t2v' })
+    expect(hook.result.current.status).toBe('error')
+    expect(hook.result.current.statusMessage).toContain('errorSection.kind.flow-feature-unsupported')
+  })
+})

@@ -1,6 +1,7 @@
-// M1-9 / R1#10 / R2#11: flow.google.com 재작업의 로케일 키 — 세션 확인 토스트 + errorSection.kind.*.
-//   kind 목록은 손으로 적지 않고 **코드가 만드는 kind** 에서 뽑는다(errorKind: '…' · kindResult('…') · kind: 'flow-…' ·
-//   settleGen 의 error/errorKind) — 새 kind 를 코드에 넣고 문구를 빠뜨리면 여기서 빨개진다.
+// M1-9 / R1#10 / R2#11 / R2-2#7: flow.google.com 재작업의 로케일 키 — 세션 확인 토스트 + errorSection.kind.*.
+//   kind 목록은 손으로 적지 않고 **코드가 만드는 kind** 에서 뽑는다(errorKind: '…' · kindResult('…') 는 접두 무관,
+//   kind: 'flow-…' · settleGen 의 error/errorKind 는 flow- 접두) — 새 kind 를 코드에 넣고 문구를 빠뜨리면 여기서 빨개진다.
+//   스캔 범위엔 렌더러로 그대로 통과되는 main 의 kind 생산자(shared.js 의 projectCheck · video.js · flow-api.js · character.js)도 든다.
 //   kind 별 params 는 플랜 §3 공통 규칙의 고정표: flow-resolution-not-offered {requested} · flow-image-model-mismatch
 //   {requested, panel} · flow-video-settings-mismatch {expected, actual} · flow-batch-halted {cause} · 나머지 {} —
 //   문구의 {…} 는 그 표의 params 만 쓴다(그 외 플레이스홀더가 있으면 렌더에 그대로 새어 나온다).
@@ -28,8 +29,9 @@ const PLANNED = [
 const SOURCES = [
   'electron/flow-rpc-router.js', 'electron/flow-rpc-protocol.js', 'electron/flow-composer-settings.js', 'electron/ipc/flow-angular.js',
   'src/engine/engineFlow.js', 'src/utils/imageProcessing.js', 'src/hooks/useAutomation.js', 'src/hooks/useVideoAutomation.js', 'src/hooks/useSceneGeneration.js', 'src/hooks/useReferenceGeneration.js',
+  'electron/ipc/shared.js', 'electron/ipc/video.js', 'electron/ipc/flow-api.js', 'electron/ipc/character.js',
 ]
-const PATTERNS = [/errorKind:\s*'(flow-[a-z0-9-]+)'/g, /kindResult\('(flow-[a-z0-9-]+)'/g, /\bkind:\s*'(flow-[a-z0-9-]+)'/g, /error:\s*'(flow-[a-z0-9-]+)'/g, /\b(?:send|loadend):\s*'(flow-[a-z0-9-]+)'/g]
+const PATTERNS = [/errorKind:\s*'([a-z0-9-]+)'/g, /kindResult\('([a-z0-9-]+)'/g, /\bkind:\s*'(flow-[a-z0-9-]+)'/g, /error:\s*'(flow-[a-z0-9-]+)'/g, /\b(?:send|loadend):\s*'(flow-[a-z0-9-]+)'/g]
 
 export function kindsProducedByCode() {
   const found = new Set()
@@ -46,7 +48,9 @@ const placeholders = (s) => [...new Set([...String(s).matchAll(/\{(\w+)\}/g)].ma
 describe('코드가 만드는 kind 를 정말 뽑았나(스캔 자체의 검증)', () => {
   it('라우터·핸들러의 kind 가 목록에 있다 — flow-rpc-multi-batch · flow-generation-cleared · flow-submit-lost · flow-aspect-mismatch', () => {
     const found = kindsProducedByCode()
-    for (const k of ['flow-rpc-multi-batch', 'flow-generation-cleared', 'flow-submit-lost', 'flow-submit-not-sent', 'flow-aspect-mismatch', 'flow-capture-not-installed', 'flow-image-model-mismatch', 'flow-upscale-unsupported']) {
+    for (const k of ['flow-rpc-multi-batch', 'flow-generation-cleared', 'flow-submit-lost', 'flow-submit-not-sent', 'flow-aspect-mismatch', 'flow-capture-not-installed', 'flow-image-model-mismatch', 'flow-upscale-unsupported',
+      // R2-2#7: flow- 접두가 아닌 핸들러 kind 와 projectCheck 통과 kind 도 잡는다
+      'text-injection-failed', 'generate-button-unavailable', 'generate-button-click-failed', 'flow-agent-off-failed', 'flow-project-open-failed', 'flow-page-unreadable', 'flow-project-changed']) {
       expect(found.has(k), k).toBe(true)
     }
     expect(KINDS.length).toBeGreaterThanOrEqual(PLANNED.length + 2)
