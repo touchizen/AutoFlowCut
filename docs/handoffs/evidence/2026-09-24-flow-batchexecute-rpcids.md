@@ -194,6 +194,22 @@ uuid 번호는 **이 섹션 안에서만** 일관(`<uuid#1>` = 프로젝트 id).
 5. **인증 게이트**: 세션 토큰 대신 "프로젝트 컴포저 진입(`flowProjectReady`)" 으로. 크레딧은 `nzlxg` 로 읽을 수 있다(영상만 차감).
 6. 위치 기반 배열(protobuf 순서)이라 **Google 이 바꾸면 깨진다** — rpcid·필드 위치를 이 문서의 샘플 픽스처로 테스트에 박아 깨짐을 바로 알게 할 것.
 
+## 6. 컴포저 DOM (관측: 프로젝트 화면 덤프 2회 — 영상 모드·이미지 모드, 2026-09-24)
+
+파일: `2026-09-24-flow-composer-dom-video-mode.elements.json`, `…-image-mode.elements.json`(uuid 마스킹, bodyHtml 제외).
+
+| 요소 | 셀렉터 후보 | 관측값 |
+|---|---|---|
+| 프롬프트 입력 | `div.ProseMirror[contenteditable=true]` | 빈 입력, 포커스 시 `ProseMirror-focused` |
+| 생성 버튼 | `button.generate-icon-button[type=submit]`, `aria-label="생성 시작"`, 아이콘 `arrow_forward` | 입력이 비면 `disabled` |
+| 설정 트리거(모드·모델·비율·개수) | `button.settings-trigger-button`, `aria-label="설정 트리거"` | 영상: `동영상 · 720p · 6초 crop_16_9 x1`, 이미지: `🍌 Nano Banana 2 crop_16_9 x1` |
+| 생성물 카드 라벨 | `div.footer-left[role=button]` | `image` 아이콘 + 이름 |
+| reCAPTCHA | `textarea.g-recaptcha-response` (숨김) | 페이지에 로드돼 있음 |
+
+- 기존 코드(`electron/ipc/video.js`, `main.js`)의 `contenteditable`·`arrow_forward`·`생성 시작` 셀렉터가 새 마크업에서도 그대로 맞는다 → **DOM 층은 대부분 살아 있고, 끊긴 건 네트워크 층**이라는 핸드오프 판단과 일치.
+- 설정 패널(모델·비율·길이 선택지)은 오버레이라 두 덤프 모두 **닫힌 상태**(overlay pane 0). 모드/모델/비율을 앱이 바꾸려면 패널을 연 상태의 덤프가 1회 더 필요.
+- `aria-label` 이 한국어(`hl=ko`)라 로케일 의존 — 셀렉터는 클래스·아이콘 리거처 우선.
+
 ## 5. 재현
 ```bash
 cd ~/workspace/AutoFlowCut-bugfix
