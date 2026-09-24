@@ -24,7 +24,9 @@ vi.mock('../../src/components/ErrorSection', () => ({ default: () => null }))
 vi.mock('../../src/components/MediaMetaBar', () => ({ default: () => null }))
 vi.mock('../../src/components/PromptInput', () => ({ default: () => null }))
 vi.mock('../../src/utils/mediaMeta', () => ({
-  fetchLatestHistoryMeta: vi.fn().mockResolvedValue(null),
+  // 실제 fetchLatestHistoryMeta 는 항상 객체(`{}`)를 돌려준다(src/utils/mediaMeta.js). null 을 주면
+  //   backfill effect 가 meta.seed 에서 터져 unhandled rejection 으로 스위트 전체를 빨갛게 만든다.
+  fetchLatestHistoryMeta: vi.fn().mockResolvedValue({}),
   estimateBase64FileSize: vi.fn(() => 0),
 }))
 vi.mock('../../src/utils/videoSrc', () => ({
