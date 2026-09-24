@@ -83,7 +83,13 @@ beforeEach(() => {
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
-afterEach(() => { logSpy.mockRestore(); warnSpy.mockRestore(); errSpy.mockRestore() })
+afterEach(() => { logSpy.mockRestore(); warnSpy.mockRestore(); errSpy.mockRestore(); vi.restoreAllMocks() })
+/** M2-R3 H7: 핸들러의 Date.now 를 손시계로 — 게이트 연속 실패의 경과 시간 판정(≥25s)을 폴 간격(10s)·동시 호출로 검사한다. */
+function clock(start = 1790240102500) {
+  let t = start
+  vi.spyOn(Date, 'now').mockImplementation(() => t)
+  return { tick: (ms) => { t += ms } }
+}
 const logged = () => [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errSpy.mock.calls].map((c) => c.map(String).join(' ')).join('\n')
 
 describe('flow:check-video-status (angular) — 폴', () => {
@@ -271,26 +277,72 @@ describe('flow:check-video-status (angular) — 진입', () => {
   // M2-R2 G2(A2): 게이트 실패가 **연속 3회**(≈30s)면 뷰 재로드가 아니라 실제 로그아웃(accounts.google.com 에 앉음)이다 — 최상위
   //   {success:false, authFailed, flow-session-missing}(error 에 raw reason 없음)으로 배치를 끝내 로그인 안내를 띄운다. 그 전엔 120×10s 를
   //   "Polling…" 으로 흘리고 원인 없는 "Polling timeout" 으로 닫았다. 지나가는 게이트가 있으면 카운터 리셋(F3 의 일시 실패 허용 유지), 발화 뒤에도 리셋.
-  it('세션 게이트 실패 ×2 → 항목별 pollError; 통과(리셋); 실패 ×2 → pollError; 3회째 → 최상위 authFailed(flow-session-missing, raw reason 없음); 발화 뒤 다음 실패는 다시 1회째', async () => {
-    const h = harness({ wiz: [false, false, true, false, false, false, false] })
+  //   M2-R3 H7(B3): 폴 루프의 10s 간격으로 — 발화 조건은 연속 ≥3회 **그리고** 첫 실패로부터 ≥25s(아래 H7 블록) → 10s 간격에선 4회째(첫 실패 30s 뒤)가 발화한다.
+  it('세션 게이트 실패 ×2 → 항목별 pollError; 통과(리셋); 실패 ×3(0·10·20s) → pollError; 4회째(30s) → 최상위 authFailed(flow-session-missing, raw reason 없음); 발화 뒤 다음 실패는 다시 1회째', async () => {
+    const c = clock()
+    const h = harness({ wiz: [false, false, true, false, false, false, false, false] })
     const pend = { success: true, statuses: [{ status: 'pending', pollError: 'flow-session-missing' }] }
-    expect(await h.check()).toEqual(pend)
-    expect(await h.check()).toEqual(pend)
-    expect((await h.check()).statuses[0]).toMatchObject({ status: 'complete', mediaId: UUID11 })   // 통과 — 리셋
-    expect(await h.check()).toEqual(pend)
-    expect(await h.check()).toEqual(pend)
-    const r = await h.check()
+    const poll = async () => { const r = await h.check(); c.tick(10000); return r }
+    expect(await poll()).toEqual(pend)
+    expect(await poll()).toEqual(pend)
+    expect((await poll()).statuses[0]).toMatchObject({ status: 'complete', mediaId: UUID11 })   // 통과 — 리셋
+    expect(await poll()).toEqual(pend)
+    expect(await poll()).toEqual(pend)
+    expect(await poll()).toEqual(pend)   // 3회째지만 20s — 아직
+    const r = await poll()
     expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true })
     expect(JSON.stringify(r)).not.toMatch(/wiz-missing|not-on-flow/)
     expect(markFlowAuthFailure(r).authFailed).toBe(true)
-    expect(await h.check()).toEqual(pend)
+    expect(await poll()).toEqual(pend)
   })
 
-  it('not-on-flow(accounts.google.com) 도 같은 셈 — 3회째 최상위 authFailed, executeJavaScript 미호출', async () => {
+  it('not-on-flow(accounts.google.com) 도 같은 셈 — 10s 간격 4회째(30s) 최상위 authFailed, executeJavaScript 미호출', async () => {
+    const c = clock()
     const h = harness({ url: 'https://accounts.google.com/signin' })
-    expect(await h.check()).toMatchObject({ success: true })
-    expect(await h.check()).toMatchObject({ success: true })
-    expect(await h.check()).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true })
+    const poll = async () => { const r = await h.check(); c.tick(10000); return r }
+    expect(await poll()).toMatchObject({ success: true })
+    expect(await poll()).toMatchObject({ success: true })
+    expect(await poll()).toMatchObject({ success: true })
+    expect(await poll()).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true })
     expect(h.executeJavaScript).not.toHaveBeenCalled()
+  })
+})
+
+// M2-R3 H7(B3): gateFailures 는 핸들러 인스턴스의 **호출** 수라 폴 라운드도 시간도 아니다 — Phase 0 의 병렬 retryVideoDownload 5개가 한 번의 일시 게이트 실패에
+//   [pollError, pollError, AUTH, …] 를 받았고(스크래치 재현), 배치 사이·수동 Retry 의 잔여 카운트도 더해졌다. 발화 조건을 "연속 ≥3회 **그리고** 첫 실패로부터 ≥25s"
+//   (firstFailedAt) 로 — 10s 폴 루프의 3회째(≈30s)는 그대로 발화하고, 동시 호출·짧은 재시도는 항목별 pollError 로만 남는다. 통과하면 둘 다 리셋.
+describe('flow:check-video-status (angular) — 게이트 격상은 횟수 + 경과 시간 (M2-R3 H7)', () => {
+  const PEND = { success: true, statuses: [{ status: 'pending', pollError: 'flow-session-missing' }] }
+  const AUTH = { success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true }
+
+  it('한 번의 게이트 실패 동안 동시 호출 5개(Phase 0 병렬 재시도) → 전부 항목별 pollError, authFailed 없음', async () => {
+    clock()
+    const h = harness({ wiz: false })
+    const rs = await Promise.all([1, 2, 3, 4, 5].map(() => h.check()))
+    for (const r of rs) expect(r).toEqual(PEND)
+  })
+
+  it('5s 안의 실패 3회(2s 간격) → 아직 pollError; 실패가 이어져 첫 실패로부터 25s 를 넘는 순간 authFailed; 발화 뒤 리셋', async () => {
+    const c = clock()
+    const h = harness({ wiz: false })
+    for (let i = 0; i < 3; i++) { expect(await h.check()).toEqual(PEND); c.tick(2000) }   // 0s · 2s · 4s → 6s
+    expect(await h.check()).toEqual(PEND); c.tick(10000)                                    // 6s → 16s
+    expect(await h.check()).toEqual(PEND); c.tick(10000)                                    // 16s → 26s
+    expect(await h.check()).toEqual(AUTH)                                                   // 26s ≥ 25s, 6회째
+    expect(await h.check()).toEqual(PEND)                                                   // 발화 뒤 다시 1회째
+  })
+
+  it('30s 에 걸친 실패 3회(15s 간격) → 3회째 authFailed; 사이에 통과가 있으면 시각도 리셋돼 다시 25s 가 필요하다', async () => {
+    const c = clock()
+    const h = harness({ wiz: [false, false, false, true, false, false, false, false] })
+    expect(await h.check()).toEqual(PEND); c.tick(15000)
+    expect(await h.check()).toEqual(PEND); c.tick(15000)
+    expect(await h.check()).toEqual(AUTH)
+    expect((await h.check()).statuses[0]).toMatchObject({ status: 'complete', mediaId: UUID11 })   // 통과 — 횟수·시각 리셋
+    c.tick(60000)
+    expect(await h.check()).toEqual(PEND); c.tick(1000)   // 새 첫 실패(시각은 여기부터)
+    expect(await h.check()).toEqual(PEND); c.tick(1000)
+    expect(await h.check()).toEqual(PEND); c.tick(30000)  // 3회째지만 2s 경과 — 아직
+    expect(await h.check()).toEqual(AUTH)                 // 4회째, 32s 경과
   })
 })

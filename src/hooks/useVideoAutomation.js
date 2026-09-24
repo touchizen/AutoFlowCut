@@ -361,6 +361,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             generationId: s.generationId,
             mediaId: s.mediaId,
             videoPath: s.videoPath,
+            downloadGated: !!s.downloadGated,   // M2-R3 H6: 배치 다운로드 권한 마커(Phase 0 게이트 판정)
             seed: s.seed ?? seed ?? null,
             model: s.model ? canonicalVideoModel(s.model) : effectiveVideoModel,
             // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
@@ -391,6 +392,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             generationId: p.generationId,
             mediaId: p.mediaId,
             videoPath: p.videoPath,
+            downloadGated: !!p.downloadGated,   // M2-R3 H6
             seed: p.seed ?? seed ?? null,
             // t2v(279)와 동일: 저장된 p.model 을 보존하고 없을 때만 현재 선택으로 폴백한다.
             //   download-only/in-flight 복구 항목은 서버가 옛 모델로 생성한 메타를 그대로 들고 있어야
@@ -422,6 +424,11 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           refreshSubscription?.().catch(e => console.warn('[VideoAutomation] refreshSubscription failed:', e?.message))
         })
       : { ensure: async () => ({ ok: true }) }
+    // M2-R3 H6(B2): 배치 다운로드 권한 마커 — 이 배치의 consumeGate.ensure() 가 ok 를 돌려준 뒤 종결되는 pending 항목의 모든 패치에 downloadGated:true 를 싣는다
+    //   (complete·다운로드 실패·failed·타임아웃·폴 auth·stop 꼬리). Phase 0 은 마커 없는 download-only 만 게이트로 보낸다. 즉시 'generating' 패치로 찍지 않는 이유:
+    //   App 화이트리스트가 generating 에 generatingStartedAt 을 다시 찍어 경과 타이머가 튄다. 새 제출의 generating 패치는 마커를 null 로 지운다(새 배치는 새 권한).
+    let batchGateOk = false
+    const gateMark = () => (batchGateOk ? { downloadGated: true } : {})
 
     // ═══════════════════════════════════════════
     // Phase 0: 분류 — download-only / in-flight / fresh
@@ -432,11 +439,17 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     //    → 이전 세션에서 제출만 됐고 결과 못 받음 (recovery 가 status 확인 후 'generating' 유지).
     //      재제출 없이 Phase 2 polling 에 합류 → 서버가 complete 되면 다운로드만.
     // 3. freshGen: 그 외 — 새 generation 제출 필요.
-    const downloadOnly = items.filter(it =>
-      it.status === 'error' && it.generationId && it.mediaId && !it.videoPath
-    )
+    // M2-R3 H3(A3/B1): Flow 모드는 status 가 아니라 **출처**로 분류한다 — generationId 가 있고 videoPath 가 없으면(complete 제외) 이미 제출(=YhhmEf 200, 과금)된
+    //   항목이다: mediaId 있으면 download-only, 없으면 in-flight(폴). status 는 보지 않는다(재시작 뒤 resetGeneratingItem 의 pending · 옛 auth/거부 패치의 error ·
+    //   중단된 재다운로드의 generating · stopped 전부). 복구(recoverInFlightVideos)는 Flow 프로젝트 open 이 확인돼야만 돌고 다시 돌지 않으므로 status 로 분류하면
+    //   pending+generationId 가 fresh 로 잡혀 과금된 영상을 다시 제출한다. Regenerate/Clear 만 generationId·mediaId 를 null 로 지워 fresh 로 만든다.
+    //   API 모드는 기존 status 규칙 그대로(isInFlightItem · error+ids 만 download-only).
+    const submittedFlow = (it) => appMode === 'flow' && it.status !== 'complete' && !!it.generationId && !it.videoPath
+    const downloadOnly = items.filter(it => (submittedFlow(it)
+      ? !!it.mediaId
+      : it.status === 'error' && it.generationId && it.mediaId && !it.videoPath))
     const downloadOnlyIds = new Set(downloadOnly.map(it => it.id))
-    const inFlight = items.filter(it => !downloadOnlyIds.has(it.id) && isInFlightItem(it))
+    const inFlight = items.filter(it => !downloadOnlyIds.has(it.id) && (submittedFlow(it) ? !it.mediaId : isInFlightItem(it)))
     const inFlightIds = new Set(inFlight.map(it => it.id))
     const freshGen = items.filter(it => !downloadOnlyIds.has(it.id) && !inFlightIds.has(it.id))
 
@@ -452,24 +465,26 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       setStatusMessage(`⚡ Re-downloading ${downloadOnly.length} server-succeeded videos...`)
       console.log(`[VideoAutomation] Phase 0: download-only for ${downloadOnly.length} items`)
 
-      // Split: items with errorKind='download-entitlement' were NEVER charged (consume was denied
-      // mid-batch). They must pass through the gate before re-downloading. All other download-only
-      // items are ordinary save-failures that were already charged — they re-download for free.
-      const { deniedRetry, plainRedownload } = partitionDownloadOnly(downloadOnly)
-
-      // Gate check for never-charged (denied) items — one consume call covers the whole batch.
-      let deniedGateOk = true // optimistic; only matters if deniedRetry is non-empty
-      if (deniedRetry.length > 0) {
+      // M2-R3 H6(B2): 게이트를 지나야 하는 항목 = download-entitlement(거부됐던 것) + downloadGated 마커 없는 것(G1(b) 의 stopped/타임아웃/폴 auth 등 — 그 배치의
+      //   게이트를 한 번도 지난 적이 없다). 마커 있는 항목만 무료 재다운로드. 게이트는 배치당 1회(consumeGate 캐시): 거부 → download-entitlement(id 유지, 다운로드 없음),
+      //   ok → 마커를 찍고 진행. 항목별 Retry(App handleVideoRetry → retryVideoDownload 직행)는 그대로 게이트 없음.
+      const { gated, ungated } = partitionDownloadOnly(downloadOnly)
+      let gateOk = true
+      if (gated.length > 0) {
         const { ok } = await consumeGate.ensure()
-        deniedGateOk = ok
+        gateOk = ok
         if (!ok) {
-          console.warn(`[VideoAutomation] Phase 0: consume denied — skipping ${deniedRetry.length} denied-retry items`)
-          videoErrorCount += deniedRetry.length
+          console.warn(`[VideoAutomation] Phase 0: consume denied — ${gated.length} items marked download-entitlement (no download)`)
+          for (const it of gated) {
+            onItemUpdate?.(it.id, 'error', { error: 'Download entitlement denied — upgrade to download this batch', errorKind: 'download-entitlement', generationId: it.generationId, mediaId: it.mediaId })
+          }
+          videoErrorCount += gated.length
+        } else {
+          batchGateOk = true
+          for (const it of gated) onItemUpdate?.(it.id, it.status || 'error', { downloadGated: true })
         }
       }
-
-      // Build the effective download list: plain items always included; denied items only if gate ok.
-      const toDownload = deniedGateOk ? downloadOnly : plainRedownload
+      const toDownload = gateOk ? downloadOnly : ungated
 
       const CONCURRENCY = 5
       for (let i = 0; i < toDownload.length; i += CONCURRENCY) {
@@ -483,6 +498,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           projectName,
           saveMode,
           videoResolution,
+          authErrorText: authErrorMessage,   // M2-R3 H5: kind 동반 authFailed 의 항목 문구는 인증 안내(raw 토큰 금지)
         }).catch(err => ({ success: false, error: String(err?.message || err) }))))
 
         for (const r of results) {
@@ -492,10 +508,15 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
 
         // #R25-3: download-only retry 가 authFailed 면 토큰이 죽었으니 남은 chunk 를 죽은 인증으로
         //   계속 두드리지 않고 즉시 중단한다. authStopped 로 표시해 fall-through 'done' 을 막는다.
-        if (results.some(r => r?.authFailed)) {
+        const authRes = results.find(r => r?.authFailed)
+        if (authRes) {
           console.warn('[VideoAutomation] Phase 0 download-only authFailed — stopping batch')
           stopRequestedRef.current = true
           authStopped = true
+          // M2-R3 H5(A5/B3): 멈추는 자리에서 status·문구를 세운다 — 조기 종료 분기(download-only 만)에만 두면 in-flight 가 섞인 배치는 꼬리의 auth 패치 뒤에도
+          //   status 가 'running'("⚡ Re-downloading…") 으로 남는다(isRunning 은 false). 문구는 authFailureText 규칙(kind 동반 → 인증 안내, kind 없는 옛 결과 → error).
+          setStatus('error')
+          setStatusMessage(`🔐 ${authFailureText(authRes)}`)
           break
         }
       }
@@ -607,6 +628,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             errorParams: null,
             rejectedMediaId: null,
             rejectedMediaIds: null,
+            downloadGated: null,   // M2-R3 H6: 새 제출 — 옛 배치의 다운로드 권한 마커를 지운다
           })
           console.log(`[VideoAutomation] ✅ Submitted ${i + 1}/${total}: ${genResult.generationId.substring(0, 16)}...`)
         } else if (genResult?.authFailed) {
@@ -770,7 +792,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       if (result?.authFailed) {
         const authErr = authFailureText(result)   // M2-R1 F3
         for (const [itemId, submission] of pending) {
-          onItemUpdate?.(itemId, 'error', { error: authErr, errorKind: 'auth', ...flowMediaLink(submission) })   // M2-R2 G1(b)
+          onItemUpdate?.(itemId, 'error', { error: authErr, errorKind: 'auth', ...flowMediaLink(submission), ...gateMark() })   // M2-R2 G1(b) · M2-R3 H6
           videoErrorCount++  // fillWindow auth 경로·아래 freshGen 루프와 동일하게 집계 (progress.errorCount 일관성)
         }
         // 아직 제출 안 한 freshGen 도 동일 auth error
@@ -849,6 +871,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               onPaywall?.()
               continue
             }
+            batchGateOk = true   // M2-R3 H6: 이 배치의 다운로드 권한이 확인됐다 — 이후 종결 패치가 마커를 든다
 
             const dlResult = await downloadAndSaveVideo(
               statusInfo.mediaId,
@@ -867,6 +890,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
                 // 이전 실패에서 남은 error 메시지 clear (success 이후 stale 표시 방지)
                 error: null,
                 errorKind: null,
+                ...gateMark(),   // M2-R3 H6
               })
               completedCount++
               console.log(`[VideoAutomation] ✅ Downloaded & saved: ${itemId}`)
@@ -887,6 +911,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
                 ...(dlResult.videoSaveId ? { videoSaveId: dlResult.videoSaveId } : {}),
                 generationId: submission.generationId,
                 ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
+                ...gateMark(),   // M2-R3 H6
               })
               videoErrorCount++  // 다운로드 실패도 errorCount 에 집계
               console.warn(`[VideoAutomation] ❌ Download failed: ${itemId}`, errMsg)
@@ -908,6 +933,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
               generationId: submission.generationId,
               ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
+              ...gateMark(),   // M2-R3 H6
             })
             videoErrorCount++  // 서버 generation 실패도 집계
             pending.delete(itemId)
@@ -918,7 +944,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             // 'pending' / 'processing' — per-item 폴링 예산 소진. 초과 시 슬롯 영구 점유 방지 위해 timeout.
             submission.polls++
             if (submission.polls >= maxPollsPerItem) {
-              onItemUpdate?.(itemId, 'error', { error: 'Polling timeout — video generation took too long', ...flowTimeoutPatch(submission) })   // M2-R2 G1(b)
+              onItemUpdate?.(itemId, 'error', { error: 'Polling timeout — video generation took too long', ...flowTimeoutPatch(submission), ...gateMark() })   // M2-R2 G1(b) · M2-R3 H6
               videoErrorCount++
               pending.delete(itemId)
               console.warn(`[VideoAutomation] ⏱️ Poll timeout: ${itemId}`)
@@ -933,7 +959,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         for (const [itemId, submission] of Array.from(pending.entries())) {
           submission.polls++
           if (submission.polls >= maxPollsPerItem) {
-            onItemUpdate?.(itemId, 'error', { error: `Polling failed — ${result.error || 'server error'}`, ...flowTimeoutPatch(submission) })   // M2-R2 G1(b)
+            onItemUpdate?.(itemId, 'error', { error: `Polling failed — ${result.error || 'server error'}`, ...flowTimeoutPatch(submission), ...gateMark() })   // M2-R2 G1(b) · M2-R3 H6
             videoErrorCount++
             pending.delete(itemId)
           }
@@ -961,7 +987,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         // (auth 가 폴링 중 터지면 위에서 pending.clear() 했으므로 여기 안 옴.)
         const authMsg = authErrorMessage()
         for (const [itemId, submission] of pending) {
-          onItemUpdate?.(itemId, 'error', { error: authMsg, errorKind: 'auth', ...flowMediaLink(submission) })   // M2-R2 G1(b)
+          onItemUpdate?.(itemId, 'error', { error: authMsg, errorKind: 'auth', ...flowMediaLink(submission), ...gateMark() })   // M2-R2 G1(b) · M2-R3 H6
           videoErrorCount++
         }
       } else if (stopRequestedRef.current) {
@@ -978,12 +1004,13 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             generationId: submission.generationId,
             ...flowMediaLink(submission),   // M2-R2 G1(b): Flow 는 mediaId 도 — Retry 가 download-only 로
             ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
+            ...gateMark(),   // M2-R3 H6
           })
         }
       } else {
         // 정상 루프 종료인데 pending 잔여 (이론상 per-item timeout 으로 안 와야 함) — 안전 timeout.
         for (const [itemId, submission] of pending) {
-          onItemUpdate?.(itemId, 'error', { error: 'Polling timeout — video generation took too long', ...flowTimeoutPatch(submission) })   // M2-R2 G1(b)
+          onItemUpdate?.(itemId, 'error', { error: 'Polling timeout — video generation took too long', ...flowTimeoutPatch(submission), ...gateMark() })   // M2-R2 G1(b) · M2-R3 H6
           videoErrorCount++
         }
       }

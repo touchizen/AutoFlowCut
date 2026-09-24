@@ -117,6 +117,9 @@ describe('useVideoAutomation — auth failure during polling', () => {
     )
     expect(authErrorCalls.length).toBeGreaterThanOrEqual(1)
     expect(authErrorCalls[0][0]).toBe('vscene_1')
+    // M2-R3 H8(B4): API 모드의 폴 auth 패치엔 Flow 의 mediaId 링크(G1(b))가 없다 — Veo operation 이름이 mediaId 가 되면 download-only 로 오분류된다
+    expect(authErrorCalls[0][2]).not.toHaveProperty('mediaId')
+    expect(authErrorCalls[0][2].errorKind).toBe('auth')
   })
 
   it('poll authFailed 시 pending 항목도 progress.errorCount 에 집계', async () => {

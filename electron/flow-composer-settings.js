@@ -149,7 +149,6 @@ export function planSettingsClicks(scan, targets, phase) {
     const res = String(t.resolution).toLowerCase()
     if (res !== '360p' && res !== '720p') return { ok: false, kind: 'flow-resolution-not-offered', params: { requested: String(t.resolution) }, reason: 'resolution-not-offered:' + t.resolution, clicks: [] }
   }
-  let model = null
   if (t.model != null && t.model !== '') {
     if (!scan.model || !scan.model.trigger) return fail('model-trigger-not-found')
     const matches = labelMatches(scan.model.label, t.model)
@@ -159,7 +158,10 @@ export function planSettingsClicks(scan, targets, phase) {
     } else if (matches) {
       steps.model = 'already'
     } else {
-      model = { select: true, requested: String(t.model) }
+      // M2-R3 H4(A4): 모델을 바꿔야 하면 클릭 전 계획은 **모델뿐** — 길이·해상도·개수는 현재 모델의 옵션이라 여기서 실패시키면(예: 10초 없는 모델에서 Omni Flash 로)
+      //   목표 모델이 제공하는 값을 클릭도 전에 거부한다. 모델 클릭 → 안정 대기 → 재스캔 → 재계획(select 없음)이 나머지 그룹을 검증한다.
+      //   {360p,720p} 밖 해상도 게이트(카탈로그 고정)는 위에서 먼저 걸렸다.
+      return { ok: true, clicks: [], steps, model: { select: true, requested: String(t.model) } }
     }
   }
   if (t.ratio !== undefined) {
@@ -196,7 +198,7 @@ export function planSettingsClicks(scan, targets, phase) {
     if (!g.checked || g.checked.ligature !== 'chrome_extension') return fail('input-mode-not-material')
     steps.input = 'material'
   }
-  return { ok: true, clicks, steps, model }
+  return { ok: true, clicks, steps, model: null }
 }
 
 /**

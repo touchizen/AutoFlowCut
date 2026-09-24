@@ -398,6 +398,26 @@ describe('App — 영상 재시도(onVideoRetry)와 태그 진행(onProceed)의 
   })
 })
 
+// ── M2-R3 H3 (A3): Regenerate 는 항목을 fresh 로 만든다 ─────────────────────────────────────────────────────────────
+// Flow 모드 Phase 0 은 출처(generationId 있음 + videoPath 없음)로 분류한다 — Regenerate(handleVideoRetry forceRegenerate 의 slow path)가 generationId·mediaId 를
+//   남기면 재생성이 download-only/in-flight 로 잡혀 새 생성이 안 된다. Regenerate/Clear 만이 항목을 fresh 로 만든다.
+describe('App — Regenerate(forceRegenerate) 는 generationId·mediaId 를 null 로 지운다 (M2-R3 H3)', () => {
+  it('download-only 항목의 onVideoRetry(item, {forceRegenerate:true}) → updateVideoScene 패치 {status:pending, error:null, generationId:null, mediaId:null}, 상태 확인·다운로드 없음', async () => {
+    appMocks.videoScenes.push({ id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: 'g1', mediaId: 'm1' })
+    localStorage.setItem('autoflowcut_bottomPanelView', 'table')
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'video-text' }) })
+    const props = appMocks.captured.resultsTableProps
+    expect(props?.onVideoRetry).toBeTypeOf('function')
+    appMocks.updateVideoScene.mockClear(); appMocks.genAPI.getAccessToken.mockClear()
+    await act(async () => { await props.onVideoRetry({ id: 'vscene_1', generationId: 'g1', mediaId: 'm1', status: 'error' }, { forceRegenerate: true }) })
+    expect(appMocks.updateVideoScene).toHaveBeenCalledTimes(1)
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'pending', error: null, generationId: null, mediaId: null, downloadGated: null }))   // downloadGated: M2-R3 H6
+    expect(appMocks.genAPI.getAccessToken).not.toHaveBeenCalled()   // slow path — download-only 프리플라이트가 아니다
+    expect(appMocks.genAPI.checkVideoStatus).not.toHaveBeenCalled()
+  })
+})
+
 // ── M2-5 (T6): App 의 영상 onItemUpdate 화이트리스트 ────────────────────────────────────────────────────────────
 describe('App — videoAutomation.start 의 onItemUpdate 화이트리스트가 errorParams·rejectedMediaId(s) 를 통과시킨다 (M2-5)', () => {
   it('거부 패치 → updateVideoScene 에 errorParams·rejectedMediaId; count-mismatch → rejectedMediaIds; mediaId 키는 없다', async () => {
@@ -430,6 +450,11 @@ describe('App — videoAutomation.start 의 onItemUpdate 화이트리스트가 e
     expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'error', errorKind: 'flow-video-fetch-failed', mediaId: '<uuid#11>', generationId: '<uuid#11>' }))
     act(() => { start.onItemUpdate('vscene_1', 'error', { error: 'Stopped by user', errorKind: 'stopped', generationId: '<uuid#12>', mediaId: '<uuid#12>' }) })
     expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'error', errorKind: 'stopped', mediaId: '<uuid#12>', generationId: '<uuid#12>' }))
+    // M2-R3 H6(B2): 배치 다운로드 권한 마커 downloadGated 도 통과(true 와 null 둘 다 — 제출 패치가 null 로 지운다)
+    act(() => { start.onItemUpdate('vscene_1', 'error', { error: 'Stopped by user', errorKind: 'stopped', generationId: '<uuid#12>', mediaId: '<uuid#12>', downloadGated: true }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ downloadGated: true }))
+    act(() => { start.onItemUpdate('vscene_1', 'generating', { generationId: '<uuid#13>', mediaId: null, downloadGated: null }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'generating', downloadGated: null }))
   })
 })
 
@@ -450,6 +475,7 @@ describe('App — 영상 onClearMedia 는 errorParams·rejectedMediaId(s) 도 �
     expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({
       status: 'pending', mediaId: null, generationId: null, videoPath: null, error: null, errorKind: null,
       errorParams: null, rejectedMediaId: null, rejectedMediaIds: null,
+      downloadGated: null,   // M2-R3 H6: 배치 다운로드 권한 마커도 정리
     }))
   })
 })

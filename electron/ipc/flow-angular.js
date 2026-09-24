@@ -508,6 +508,10 @@ export function createFlowAngular(deps) {
   /** M2-R2 G2(A2): 폴의 세션 게이트 **연속** 실패 수(핸들러 인스턴스) — 3회째(≈30s)면 뷰 재로드가 아니라 실제 로그아웃이다. 통과·발화 시 리셋. */
   let gateFailures = 0
   const GATE_MAX_FAILURES = 3
+  /** M2-R3 H7(B3): 호출 수만으로는 Phase 0 의 병렬 재시도 5개·짧은 재시도·배치 사이 잔여 카운트가 한 번의 일시 실패를 authFailed 로 격상시킨다 — 첫 실패 시각을 적어 두고
+   *  "연속 ≥3회 **그리고** 첫 실패로부터 ≥25s" 일 때만 발화(10s 폴 루프에선 4회째 = 첫 실패 30s 뒤). 통과·발화 시 시각도 리셋. */
+  let gateFirstFailedAt = null
+  const GATE_MIN_SPAN_MS = 25000
   /** 미지 상태 warn 은 id·상태당 1회. */
   const unknownStateWarned = new Set()
   /** 읽기 RPC 실패 → 항목 결과(pending + pollError, 코드/상태는 필드). */
@@ -532,15 +536,20 @@ export function createFlowAngular(deps) {
       // M2-R2 G2(A2): 연속 3회째는 실제 로그아웃(accounts.google.com 에 앉음)으로 보고 최상위 authFailed 로 배치를 끝낸다 — 안 그러면 훅이 120×10s 를
       //   "Polling…" 으로 흘리고 원인 없는 "Polling timeout" 으로 닫는다. error 에 raw reason 토큰은 싣지 않는다. 발화 뒤 카운터 리셋(다음 배치의 첫 일시 실패가 바로 auth 가 되지 않게).
       gateFailures++
-      if (gateFailures >= GATE_MAX_FAILURES) {
+      const now = Date.now()
+      if (gateFirstFailedAt == null) gateFirstFailedAt = now
+      const spanS = Math.round((now - gateFirstFailedAt) / 1000)
+      if (gateFailures >= GATE_MAX_FAILURES && now - gateFirstFailedAt >= GATE_MIN_SPAN_MS) {
+        console.warn(`[Flow VideoStatus] [Angular] session gate failed ${gateFailures}x in a row over ${spanS}s reason=${gate.error} → authFailed`)
         gateFailures = 0
-        console.warn(`[Flow VideoStatus] [Angular] session gate failed ${GATE_MAX_FAILURES}x in a row reason=${gate.error} → authFailed`)
+        gateFirstFailedAt = null
         return { success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true }
       }
-      console.warn(`[Flow VideoStatus] [Angular] session gate failed reason=${gate.error} n=${gateFailures} → pollError for ${ids.length} ids`)
+      console.warn(`[Flow VideoStatus] [Angular] session gate failed reason=${gate.error} n=${gateFailures} span=${spanS}s → pollError for ${ids.length} ids`)
       return { success: true, statuses: ids.map((id) => (isValidId(id) ? { status: 'pending', pollError: 'flow-session-missing' } : invalidIdStatus())) }
     }
     gateFailures = 0
+    gateFirstFailedAt = null
     if (ids.length === 0) return { success: true, statuses: [] }
 
     const statuses = []

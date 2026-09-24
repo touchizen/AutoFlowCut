@@ -98,6 +98,9 @@ describe('useVideoAutomation — user stop cleanup', () => {
     const [stoppedId, , stoppedPatch] = stoppedCall
     expect(stoppedId).toBe('vscene_1')
     expect(stoppedPatch.generationId).toBe('gen_user_stop')
+    // M2-R3 H8(B4): API 모드(기본 appMode)의 stopped 패치엔 Flow 의 mediaId 링크(G1(b) flowMediaLink)가 없다 — Veo operation 이름이 mediaId 로 둔갑하면
+    //   다음 Start 가 download-only 로 잘못 분류되고 Flow 문구("Could not fetch … from Flow")가 뜬다.
+    expect(stoppedPatch).not.toHaveProperty('mediaId')
     // 메시지가 비어 있지 않아야 한다 (사용자가 무엇이 일어났는지 알 수 있도록)
     expect(typeof stoppedPatch.error).toBe('string')
     expect(stoppedPatch.error.length).toBeGreaterThan(0)
@@ -141,5 +144,8 @@ describe('useVideoAutomation — user stop cleanup', () => {
     expect(timeoutCall).toBeTruthy()
     // 자연 timeout 케이스는 errorKind='stopped' 가 아니어야 한다
     expect(timeoutCall[2].errorKind).not.toBe('stopped')
+    // M2-R3 H8(B4): API 모드의 타임아웃 패치엔 Flow 전용 kind(flow-video-fetch-failed)도 mediaId 도 없다(G1(b) flowTimeoutPatch 는 Flow 만)
+    expect(timeoutCall[2].errorKind).not.toBe('flow-video-fetch-failed')
+    expect(timeoutCall[2]).not.toHaveProperty('mediaId')
   })
 })

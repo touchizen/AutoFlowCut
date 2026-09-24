@@ -108,16 +108,19 @@ describe('planSettingsClicks', () => {
     expect(planSettingsClicks(noRatio, { mode: 'image', ratio: '16:9' }, 2)).toMatchObject({ ok: false, reason: 'group-not-found:ratio' })
   })
 
-  it('phase2 영상: count 는 항상 x1(미정의·3 모두), 모델 다르면 select 계획, 같으면 verified', () => {
+  it('phase2 영상: count 는 항상 x1(미정의·3 모두), 모델 같으면 already 로 나머지 계획; 모델 다르면 select 계획 **만**(길이·해상도·개수는 클릭 뒤 재계획 — M2-R3 H4)', () => {
     const s = scanSettingsPanel(mount(videoPage({ checked: { count: 'x2' } })))
     for (const count of [undefined, 3]) {
-      const p = planSettingsClicks(s, { mode: 'video', count, ratio: '16:9', duration: 8, resolution: '720p', model: 'Veo 3.1 - Fast' }, 2)
+      const p = planSettingsClicks(s, { mode: 'video', count, ratio: '16:9', duration: 8, resolution: '720p', model: 'Omni 1.1 Flash' }, 2)
       expect(p.ok).toBe(true)
-      expect(p.model).toEqual({ select: true, requested: 'Veo 3.1 - Fast' })
+      expect(p.model).toBeNull()
       expect(p.clicks.map((c) => `${c.group}:${c.ligature || c.label}`)).toEqual(['duration:8초', 'count:x1'])
       // M2-2: 영상 단계는 값을 라벨로 단다(§4 M2 로그: resolution=already(720p) count=…(x1) duration=…(8))
-      expect(p.steps).toMatchObject({ ratio: 'already(crop_16_9)', resolution: 'already(720p)', duration: 'clicked(8)', count: 'clicked(x1)' })
+      expect(p.steps).toMatchObject({ model: 'already', ratio: 'already(crop_16_9)', resolution: 'already(720p)', duration: 'clicked(8)', count: 'clicked(x1)' })
     }
+    // M2-R3 H4(A4): 모델을 바꿔야 하면 클릭 전 계획은 모델뿐 — 현재 모델의 길이/해상도/개수로 실패시키지 않는다(목표 모델이 제공할 수 있다).
+    const q = planSettingsClicks(s, { mode: 'video', count: 3, ratio: '16:9', duration: 8, resolution: '720p', model: 'Veo 3.1 - Fast' }, 2)
+    expect(q).toEqual({ ok: true, clicks: [], steps: {}, model: { select: true, requested: 'Veo 3.1 - Fast' } })
     // M2-2: 영상 모델이 트리거와 맞으면 already(이미지의 verified 와 구분 — §4 M2 로그 model=already)
     expect(planSettingsClicks(s, { mode: 'video', model: 'Omni 1.1 Flash' }, 2)).toMatchObject({ ok: true, steps: { model: 'already' } })
   })
@@ -373,6 +376,30 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
     const s = scanSettingsPanel(mount(videoPage()))
     delete s.groups.inputMode
     expect(planSettingsClicks(s, { ...VIDEO_TARGET, duration: 6 }, 2)).toMatchObject({ ok: false, reason: 'group-not-found:inputMode' })
+  })
+
+  // M2-R3 H4(A4): 현재 모델(Omni)의 패널엔 8초가 없고 요청 모델(Veo Fast)은 8초를 제공한다 — 옛 드라이버는 모델 클릭 **전**에 현재 패널로 전체를 계획해 duration-not-offered:8 로
+  //   거부했다. 모델을 바꿔야 하면 클릭 전 계획은 모델뿐이고, 클릭 → 안정 대기 → 재스캔 → 재계획이 길이/해상도/개수를 검증한다. {360p,720p} 게이트는 여전히 클릭 전.
+  it('현재 모델엔 8초 없음 · 목표 모델(Veo Fast)엔 있음 → 모델 클릭 뒤 재계획으로 duration clicked(8), ok:true; 같은 픽스처 1080p 는 모델 클릭 없이 flow-resolution-not-offered', async () => {
+    const doc = mount(videoPage({ durations: ['4초', '6초'] }))
+    expect(scanSettingsPanel(doc).groups.duration.options.map((o) => o.label)).toEqual(['4초', '6초'])
+    const log = installFakeAngular(doc, { modelSelectDurations: ['4초', '6초', '8초', '10초'] })
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 8, model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r).toMatchObject({ ok: true, closed: true })
+    expect(r.steps).toEqual({ mode: 'already(videocam)', model: 'clicked', ratio: 'already(crop_16_9)', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)', input: 'material' })
+    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
+    // 1080p: 카탈로그 고정 게이트가 모델 클릭보다 먼저
+    const doc2 = mount(videoPage({ durations: ['4초', '6초'] }))
+    const log2 = installFakeAngular(doc2, { modelSelectDurations: ['4초', '6초', '8초', '10초'] })
+    const r2 = await runSettingsDriver(doc2, { ...VIDEO_TARGET, duration: 8, resolution: '1080p', model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r2).toMatchObject({ ok: false, kind: 'flow-resolution-not-offered', params: { requested: '1080p' }, closed: true })
+    expect(log2).toEqual(['keydown:Escape:27'])
+    // 목표 모델도 8초를 안 주면(모델 클릭 뒤 재계획) duration-not-offered:8 — 모델은 이미 바뀐 채
+    const doc3 = mount(videoPage({ durations: ['4초', '6초'] }))
+    const log3 = installFakeAngular(doc3, { modelSelectDurations: ['4초', '6초'] })
+    const r3 = await runSettingsDriver(doc3, { ...VIDEO_TARGET, duration: 8, model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r3).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'duration-not-offered:8', closed: true })
+    expect(log3).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'keydown:Escape:27'])
   })
 
   it('모델 메뉴: 닫힌 트리거(aria-controls 없음) 클릭 → aria-expanded 대기 → aria-controls 로 메뉴 → 항목 클릭 → clicked; 메뉴에 없으면 model-not-offered', async () => {

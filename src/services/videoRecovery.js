@@ -172,7 +172,8 @@ export async function recoverInFlightVideos({
           expired++
         }
       }
-      // 일시적 오류면 그대로 둠 ('generating' 유지)
+      // 일시적 오류면 그대로 둠 — status 는 손대지 않는다(로드 뒤라 보통 'pending'). M2-R3 H3: Flow 모드 Phase 0 은 generationId 있음 + videoPath 없음(출처)으로
+      //   in-flight 를 잡으므로 여기서 'generating' 으로 되돌릴 필요가 없다(authFailed·예외 분기도 같다 — generationId 만 남기면 된다).
       continue
     }
 
@@ -230,9 +231,16 @@ export async function recoverInFlightVideos({
           console.warn(`${logPrefix} Recovery download exception for ${fp.id}:`, e.message)
         }
       } else if (statusInfo.status === 'failed') {
+        // M2-R3 H2(A2/B1): G3 의 retryVideoDownload failed 분기와 같은 모양 — kind·params 를 올리고(없으면 null), mediaId 는 답에 있을 때만, generationId 유지.
+        //   프로젝트를 여러 번 다시 열면 main 의 as29s/no-record 4회 유계에 닿아 {failed, flow-video-fetch-failed|not-found, mediaId} 가 온다 — mediaId·kind 를
+        //   버리면 과금된 미디어가 error+generationId+mediaId:null 로 남아 다음 Start 가 재제출(10크레딧)한다. 머지 뒤 download-only 로 분류돼야 한다.
         onFramePairUpdate(fp.id, {
           status: 'error',
           error: statusInfo.error || 'Video generation failed',
+          errorKind: statusInfo.errorKind ?? null,
+          ...(statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
+          ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
+          generationId: fp.generationId,
           generatingEndedAt: Date.now(),
         })
         expired++
@@ -281,6 +289,7 @@ export async function retryVideoDownload({
   projectName = '',
   saveMode = 'folder',
   videoResolution = '1080p',
+  authErrorText = null,    // M2-R3 H5: kind 동반 authFailed 의 항목 문구(문자열 | () => 문자열) — 호출자의 인증 안내(getAuthErrorMessage)
 }) {
   if (!item?.generationId) {
     const error = 'Cannot retry: missing generationId'
@@ -312,10 +321,16 @@ export async function retryVideoDownload({
   // #R24-3: checkVideoStatus 가 authFailed 를 표면화하면(success:true + statuses:[]) 아래
   //   statuses[0]===undefined 분기가 "Generation expired" 로 오보한다. 인증 만료를 정확히 보고.
   if (statusResult?.authFailed) {
-    const msg = statusResult.error || 'Auth expired — please re-login to Flow'
+    // M2-R3 H5(A5/B3): kind 를 동반한 authFailed(flow-session-missing 격상·읽기 RPC 401/16 의 flow-rpc-error)의 error 는 기계 토큰 — 그대로 쓰면 resolveDisplayError
+    //   (errorKind:'auth' → error 그대로) 가 표에 raw 토큰을 그린다. 훅의 authFailureText 와 같은 규칙: kind 동반이면 인증 안내 문구(없으면 기본 문구), kind 없는 옛
+    //   결과는 error 그대로. 결과에도 errorKind:'auth' 를 실어 훅이 같은 규칙으로 상태 문구를 만들게 한다.
+    const DEFAULT_AUTH_TEXT = 'Auth expired — please re-login to Flow'
+    const kindBearing = !!statusResult.errorKind
+    const authText = typeof authErrorText === 'function' ? authErrorText() : authErrorText
+    const msg = kindBearing ? (authText || DEFAULT_AUTH_TEXT) : (statusResult.error || DEFAULT_AUTH_TEXT)
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flow-login-expired'))
     onUpdate?.(item.id, 'error', { error: msg, errorKind: 'auth', generatingEndedAt: Date.now() })
-    return { success: false, error: msg, authFailed: true }
+    return { success: false, error: msg, authFailed: true, ...(kindBearing ? { errorKind: 'auth' } : {}) }
   }
 
   if (!statusResult?.success || !Array.isArray(statusResult.statuses)) {

@@ -1337,8 +1337,9 @@ function App() {
             ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
             ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
             ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
-            ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
-            ...(result?.generationId ? { generationId: result.generationId } : {}),
+            // M2-R3 H3: Regenerate 의 null 도 통과('X' in result) — 재시도 패치의 id 는 항상 truthy 라 의미 변화 없음
+            ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
+            ...(result && 'generationId' in result ? { generationId: result.generationId } : {}),
             ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
             ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
             ...(result?.duration ? { duration: result.duration } : {}),
@@ -1348,6 +1349,7 @@ function App() {
             // 'error'/'errorKind' in result 패턴 — null 값도 patch 에 포함시켜 stale error 메시지 clear.
             ...(result && 'error' in result ? { error: result.error } : {}),
             ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+            ...(result && 'downloadGated' in result ? { downloadGated: result.downloadGated } : {}),   // M2-R3 H6: Regenerate 가 null 로 지운다
           } : p
         ))
         // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
@@ -1361,8 +1363,9 @@ function App() {
           ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
           ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
           ...(result?.base64 ? { video: result.base64 } : {}),
-          ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
-          ...(result?.generationId ? { generationId: result.generationId } : {}),
+          // M2-R3 H3: Regenerate 의 null 도 통과('X' in result)
+          ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
+          ...(result && 'generationId' in result ? { generationId: result.generationId } : {}),
           ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
           ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
           ...(result?.duration ? { duration: result.duration } : {}),
@@ -1372,6 +1375,7 @@ function App() {
           // null 값도 적용해 stale error clear (success 분기 patch 가 작동하도록).
           ...(result && 'error' in result ? { error: result.error } : {}),
           ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+          ...(result && 'downloadGated' in result ? { downloadGated: result.downloadGated } : {}),   // M2-R3 H6: Regenerate 가 null 로 지운다
         })
         if (newStatus === 'complete' && result?.base64) {
           const sceneId = id.replace('vscene_', 'scene_')
@@ -1422,6 +1426,7 @@ function App() {
         projectName,
         saveMode: settings.saveMode || 'folder',
         videoResolution: settings.videoResolution || '720p',
+        authErrorText: () => getAuthErrorMessage(startMode, t),   // M2-R3 H5: kind 동반 authFailed 의 항목 문구는 인증 안내(raw 토큰 금지)
       }).catch(err => {
         console.error('[handleVideoRetry] Unexpected error:', err)
         onUpdate(item.id, 'error', { error: String(err?.message || err) })
@@ -1430,7 +1435,9 @@ function App() {
     }
 
     // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
-    onUpdate(item.id, 'pending', { error: null })
+    // M2-R3 H3(A3): Regenerate 는 generationId·mediaId 도 null — Flow 모드 Phase 0 은 출처(generationId 있음 + videoPath 없음)로 분류하므로 id 를 남기면
+    //   재생성이 in-flight/download-only 로 잡혀 새 생성이 안 된다. Regenerate/Clear 만이 항목을 fresh 로 만든다(옛 videoPath 폴백은 그대로).
+    onUpdate(item.id, 'pending', { error: null, errorKind: null, generationId: null, mediaId: null, downloadGated: null })   // downloadGated: M2-R3 H6
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
   }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t])
 
@@ -1737,6 +1744,8 @@ function App() {
               ...(result && 'errorParams' in result ? { errorParams: result.errorParams } : {}),
               ...(result && 'rejectedMediaId' in result ? { rejectedMediaId: result.rejectedMediaId } : {}),
               ...(result && 'rejectedMediaIds' in result ? { rejectedMediaIds: result.rejectedMediaIds } : {}),
+              // M2-R3 H6(B2): 배치 다운로드 권한 마커(true / 제출 패치의 null 둘 다) — Phase 0 재다운로드 게이트 판정
+              ...(result && 'downloadGated' in result ? { downloadGated: result.downloadGated } : {}),
             })
 
             // #R36-fix(Codex R1[3]): T2V @멘션 칩이 stale(Flow 에서 캐릭터 삭제 등)면 그 ref 를 'failed' 로
@@ -1874,6 +1883,7 @@ function App() {
                 ...(result && 'errorParams' in result ? { errorParams: result.errorParams } : {}),
                 ...(result && 'rejectedMediaId' in result ? { rejectedMediaId: result.rejectedMediaId } : {}),
                 ...(result && 'rejectedMediaIds' in result ? { rejectedMediaIds: result.rejectedMediaIds } : {}),
+                ...(result && 'downloadGated' in result ? { downloadGated: result.downloadGated } : {}),   // M2-R3 H6
               } : p
             ))
 
@@ -2746,6 +2756,8 @@ function App() {
               generatedAt: null, seed: null, model: null, error: null, errorKind: null, videoSaveId: null,
               // M2-R2 G8(B7): kind 별 params·거부 미디어 id 도 정리(F2 가 더한 videoT2V* 필드) — 안 지우면 project.json 에 stale 값이 남는다.
               errorParams: null, rejectedMediaId: null, rejectedMediaIds: null,
+              // M2-R3 H6: 배치 다운로드 권한 마커도 정리
+              downloadGated: null,
               // per-clip toggle 도 reset — stale disabled 가 project.json 에 남아 history 복원 등
               // path 재부착 경로와 만나면 새 영상이 숨겨짐. (FIELD_MAP 미매핑 → scene.videoT2VDisabled 로 직행)
               videoT2VDisabled: null,
@@ -2773,6 +2785,7 @@ function App() {
               base64: null, video: null, videoPath: null, videoSaveId: null,
               // recovery 식별자 — reload 시 in-flight 로 안 잡히도록 둘 다 null
               generationId: null, mediaId: null,
+              downloadGated: null,   // M2-R3 H6: 배치 다운로드 권한 마커도 정리
               // 상태/에러 — pending 으로 되돌리고 stale error 제거
               status: 'pending', error: null, errorKind: null,
               // timing / 메타 — history 모달에 stale 값 표시 안 되도록

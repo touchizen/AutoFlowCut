@@ -66,7 +66,7 @@ function modelTrigger(label, { expanded = false, controls = null } = {}) {
  * 열린 설정 패널. mode 'image' | 'video'. checked 로 각 그룹의 선택값(리거처 또는 텍스트)을 바꾼다.
  * offset 은 자동 번호(id/name) 셔플, material:false 는 Material 이 아닌 라디오(input-mode-not-material 케이스).
  */
-export function buildSettingsPanel({ mode = 'image', checked = {}, offset = 0, model, material = true } = {}) {
+export function buildSettingsPanel({ mode = 'image', checked = {}, offset = 0, model, material = true, durations = null } = {}) {
   const c = { mode: mode === 'video' ? 'videocam' : 'image', ratio: 'crop_16_9', count: 'x1', inputMode: 'chrome_extension', resolution: '720p', duration: '6초', ...checked }
   const parts = [toggleGroup(GROUPS.mode, c.mode, offset, material)]
   if (mode === 'video') {
@@ -74,13 +74,20 @@ export function buildSettingsPanel({ mode = 'image', checked = {}, offset = 0, m
     parts.push(toggleGroup(GROUPS.ratioVideo, c.ratio, offset, material))
     parts.push(modelTrigger(model || 'Omni 1.1 Flash'))
     parts.push(toggleGroup(GROUPS.resolution, c.resolution, offset, material))
-    parts.push(toggleGroup(GROUPS.duration, c.duration, offset, material))
+    // M2-R3 H4: durations 로 현재 모델의 길이 옵션을 바꿀 수 있다(예: 8초 없는 모델)
+    parts.push(durations ? buildDurationGroup(durations, c.duration, offset, material) : toggleGroup(GROUPS.duration, c.duration, offset, material))
   } else {
     parts.push(toggleGroup(GROUPS.ratioImage, c.ratio, offset, material))
     parts.push(modelTrigger(model || '🍌 Nano Banana 2'))
   }
   parts.push(toggleGroup(GROUPS.count, c.count, offset, material))
   return `<div class="cdk-overlay-container"><div class="cdk-overlay-pane"><div class="flow-settings-panel">${parts.map((p) => `<div class="setting-row">${p}</div>`).join('')}</div></div></div>`
+}
+
+/** M2-R3 H4: 길이 그룹만(라벨 목록으로) — 모델 선택이 길이 옵션을 갈아끼우는 가짜 Angular 가 쓴다. checked 가 목록에 없으면 첫 항목. */
+export function buildDurationGroup(labels, checkedLabel, offset = 0, material = true) {
+  const spec = { group: GROUPS.duration.group, ids: labels.map((_, i) => GROUPS.duration.ids[0] + i), options: labels.map((l) => [null, l]) }
+  return toggleGroup(spec, labels.includes(checkedLabel) ? checkedLabel : labels[0], offset, material)
 }
 
 /** 열린 모델 메뉴(video-model-menu 덤프): div#mat-menu-panel-N[role=menu] > button.mat-mdc-menu-item[role=menuitem]. */

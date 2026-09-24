@@ -71,6 +71,18 @@ describe('useVideoScenes — errorParams / rejectedMediaId(s) 는 videoT2V* 로 
     expect(vs.rejectedMediaIds).toEqual(['<uuid#11>', '<uuid#12>'])
   })
 
+  // M2-R3 H6(B2): 배치 다운로드 권한 마커 — videoT2VDownloadGated 로 매핑·derived·clear
+  it('downloadGated 는 videoT2VDownloadGated 로 매핑되고 derived 로 돌아오며 clearVideoScenes 가 비운다; 이미지 씬 최상위엔 남지 않는다', async () => {
+    const { result } = setupHook([SCENE()])
+    await act(async () => { result.current.videoScenesHook.updateVideoScene('vscene_1', { downloadGated: true }) })
+    const scene = result.current.scenesHook.scenes[0]
+    expect(scene).not.toHaveProperty('downloadGated')
+    expect(scene.videoT2VDownloadGated).toBe(true)
+    expect(result.current.videoScenesHook.videoScenes[0].downloadGated).toBe(true)
+    await act(async () => { result.current.videoScenesHook.clearVideoScenes() })
+    expect(result.current.scenesHook.scenes[0].videoT2VDownloadGated).toBeNull()
+  })
+
   it('clearVideoScenes 는 세 필드도 비운다', async () => {
     const { result } = setupHook([{ ...SCENE(), videoT2VErrorParams: { requested: '1080p' }, videoT2VRejectedMediaId: '<uuid#11>', videoT2VRejectedMediaIds: ['<uuid#11>'] }])
     expect(result.current.videoScenesHook.videoScenes[0].errorParams).toEqual({ requested: '1080p' })

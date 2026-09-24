@@ -11,8 +11,9 @@
 //                                mat-mdc-menu-trigger·aria-expanded 가 있어 하위 메뉴가 달려 있다 — 내용 미관측)
 //   opts.modelMenuItems        : (M2-2) 메뉴 항목 목록 덮어쓰기(요청 모델이 없는 메뉴 — model-not-offered 케이스)
 //   opts.escapeLeavesMenus     : (M2-R1 F6) Escape 가 패널 pane 만 닫고 열린 메뉴 pane 은 남긴다
+//   opts.modelSelectDurations  : (M2-R3 H4) 모델 항목 클릭이 길이 그룹을 이 라벨 목록으로 갈아끼운다(모델마다 길이 옵션이 다르다 — 현재 체크값이 목록에 있으면 유지)
 // 리스너는 document/body 에 붙으므로 테스트마다 disposeFakeAngular() 로 이전 것을 abort 한다.
-import { buildSettingsPanel, buildModelMenu } from '../fixtures/flow-live-dom-20260924.js'
+import { buildSettingsPanel, buildModelMenu, buildDurationGroup } from '../fixtures/flow-live-dom-20260924.js'
 
 let fakeAngularAbort = null
 
@@ -87,6 +88,12 @@ export function installFakeAngular(doc, opts = {}) {
       trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-controls')
       btn.closest('.cdk-overlay-pane').remove()
       if (opts.modelReset === 'sync') { resetGroup('duration', '6초'); resetGroup('resolution', '720p') }
+      if (Array.isArray(opts.modelSelectDurations)) {
+        const radios = Array.from(doc.querySelectorAll('button[role="radio"]')).filter((x) => groupOf(x) === 'duration')
+        const checkedNow = (radios.find((x) => x.getAttribute('aria-checked') === 'true')?.textContent || '').replace(/\s+/g, ' ').trim()
+        const group = radios[0]?.closest('mat-button-toggle-group')
+        if (group) group.outerHTML = buildDurationGroup(opts.modelSelectDurations, checkedNow)
+      }
     }
   }, { signal })
   // CDK 오버레이 흉내: body 의 keydown 에서 keyCode===27 일 때만 닫는다(key:'Escape' 만으로는 안 닫힌다).

@@ -8,7 +8,8 @@
  *     않는다(그건 꼬리가 pending 을 'stopped' 로 덮는다). 다 빠진 뒤 미제출 항목은 flow-batch-halted {cause:<halt kind>}.
  *   - quota(code 8) 도 같은 길: quotaStoppedRef + submitHalt + emitQuotaStop 1회(모달·큐 리스너 발화), stopRequestedRef 없이.
  *   - 폴 한 번이 {pending, pollError} 여도 폴링은 계속(항목 예산 −1).
- *   - 두 번째 start() 는 App 머지 상태(옛 generationId 잔존, mediaId null)로 — 거부 항목은 다시 제출, fetch-failed 항목은 download-only.
+ *   - 두 번째 start() 는 App 머지 상태로 — 거부 항목(generationId 없음)은 다시 제출, fetch-failed 항목은 download-only.
+ *     M2-R3 H3: Flow 모드 Phase 0 은 출처로 분류한다(generationId 있음 + videoPath 없음 = 이미 과금된 제출 → mediaId 유무로 download-only/in-flight, status 무관).
  */
 import { renderHook, act, render } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -88,6 +89,7 @@ function mergeLikeApp(h, id, base) {
       ...(r && 'errorParams' in r ? { errorParams: r.errorParams } : {}),
       ...(r && 'rejectedMediaId' in r ? { rejectedMediaId: r.rejectedMediaId } : {}),
       ...(r && 'rejectedMediaIds' in r ? { rejectedMediaIds: r.rejectedMediaIds } : {}),
+      ...(r && 'downloadGated' in r ? { downloadGated: r.downloadGated } : {}),   // M2-R3 H6
     }
   }
   return s
@@ -175,10 +177,12 @@ describe('useVideoAutomation — Flow 거부 결과는 새 제출만 멈춘다 (
     expect(h.hook.result.current.status).toBe('done')
   })
 
-  it('두 번째 start(App 머지 상태): 거부 항목(옛 generationId 잔존·mediaId null) 은 다시 제출 — download-only 가 아니다', async () => {
+  // M2-R3 H3: 거부 결과는 generationId 를 쓰지 않으므로 거부 항목은 generationId 없이 남는다 → fresh. (옛 generationId 가 **남아 있는** 항목은 이전에 과금된 제출이라
+  //   H3 의 출처 분류가 폴링한다 — useVideoAutomation.provenance.test.jsx (c). 이 핀의 옛 픽스처 `generationId:'gen-old'` 는 그 규칙과 충돌해 null 로 바꿨다.)
+  it('두 번째 start(App 머지 상태): 거부 항목(generationId 없음 — 거부 id 는 rejectedMediaId 로만·mediaId null) 은 다시 제출 — download-only 가 아니다', async () => {
     const h = setup()
     const merged = [
-      { id: 'vscene_2', prompt: 'p2', status: 'error', generationId: 'gen-old', mediaId: null, videoPath: null, error: 'flow-video-settings-mismatch', errorKind: 'flow-video-settings-mismatch', errorParams: MISMATCH.errorParams, rejectedMediaId: UUID11 },
+      { id: 'vscene_2', prompt: 'p2', status: 'error', generationId: null, mediaId: null, videoPath: null, error: 'flow-video-settings-mismatch', errorKind: 'flow-video-settings-mismatch', errorParams: MISMATCH.errorParams, rejectedMediaId: UUID11 },
     ]
     await run(h, merged)
     expect(h.generateVideoT2V).toHaveBeenCalledTimes(1)
@@ -188,9 +192,9 @@ describe('useVideoAutomation — Flow 거부 결과는 새 제출만 멈춘다 (
     const submitted = patches(h, 'vscene_2').find(([st, p]) => st === 'generating' && p.generationId)
     expect(submitted).toBeTruthy()
     expect(submitted[1]).toMatchObject({ error: null, errorKind: null, errorParams: null, rejectedMediaId: null, rejectedMediaIds: null })
-    // 거부됐던 id 로는 상태 폴·다운로드를 부르지 않는다
+    // 거부됐던 id 로는 상태 폴을 부르지 않는다 — 폴은 새 제출의 id 만
     for (const c of h.checkVideoStatus.mock.calls) expect(c[0]).not.toContain(UUID11)
-    for (const c of h.downloadVideo.mock.calls) expect(String(c[0])).not.toContain('gen-old')
+    expect(h.checkVideoStatus.mock.calls[0][0]).toEqual(['gen-1'])
     expect(last(h, 'vscene_2')[0]).toBe('complete')
   })
 
@@ -406,7 +410,44 @@ describe('useVideoAutomation — Flow 의 과금된 pending 은 어떤 종결에
       { id: 'vscene_2', prompt: 'p2', status: 'generating', generationId: 'gen-9', mediaId: null, videoPath: null },
     ], 5000)
     expect(h.generateVideoT2V).not.toHaveBeenCalled()
-    expect(last(h, 'vscene_2')).toEqual(['error', { error: AUTH_TEXT, errorKind: 'auth', generationId: 'gen-9', mediaId: 'gen-9' }])
+    // downloadGated: M2-R3 H6 — Phase 0 의 게이트(여기선 무게이트 → ok)를 지난 배치라 꼬리 패치가 마커를 든다
+    expect(last(h, 'vscene_2')).toEqual(['error', { error: AUTH_TEXT, errorKind: 'auth', generationId: 'gen-9', mediaId: 'gen-9', downloadGated: true }])
+    expect(h.hook.result.current.isRunning).toBe(false)
+  })
+})
+
+// M2-R3 H5(A5/B3): Phase 0 의 download-only 재시도가 authFailed 로 멈추면(#R25-3) 옛 코드는 download-only **만** 있을 때만 조기 종료 분기에서 status 를 세웠다 — in-flight 가 섞인
+//   배치는 꼬리에서 auth 패치만 쓰고 status 가 'running'(문구 "⚡ Re-downloading…") 으로 남았다(isRunning 은 false). 멈추는 자리에서 status error + authFailureText 를 세운다.
+//   retryVideoDownload 에는 authErrorText(인증 문구 함수)를 넘겨 kind 동반 authFailed 의 항목 문구가 raw 토큰이 되지 않게 한다.
+describe('useVideoAutomation — Phase 0 authFailed 의 status·문구 (M2-R3 H5)', () => {
+  const AUTH_TEXT = 'Auth error. Please login to Flow and try again.'
+  const MIXED = [
+    { id: 'vscene_1', prompt: 'p1', status: 'error', generationId: 'gen-0', mediaId: 'gen-0', videoPath: null },
+    { id: 'vscene_2', prompt: 'p2', status: 'generating', generationId: 'gen-9', mediaId: null, videoPath: null },
+  ]
+
+  it('download-only + in-flight 혼합: 재시도 authFailed(kind 동반 → errorKind:auth) → status error + 인증 문구, isRunning false, raw 토큰·Re-downloading 없음; in-flight 는 auth+mediaId', async () => {
+    retryVideoDownload.mockResolvedValueOnce({ success: false, authFailed: true, error: AUTH_TEXT, errorKind: 'auth' })
+    const h = setup()
+    await run(h, MIXED, 5000)
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(h.checkVideoStatus).not.toHaveBeenCalled()
+    expect(last(h, 'vscene_2')).toEqual(['error', { error: AUTH_TEXT, errorKind: 'auth', generationId: 'gen-9', mediaId: 'gen-9', downloadGated: true }])   // downloadGated: M2-R3 H6
+    expect(h.hook.result.current.isRunning).toBe(false)
+    expect(h.hook.result.current.status).toBe('error')
+    expect(h.hook.result.current.statusMessage).toContain(AUTH_TEXT)
+    expect(h.hook.result.current.statusMessage).not.toMatch(/Re-downloading|flow-session-missing|flow-rpc-error|wiz-missing/)
+    // 훅은 서비스에 인증 문구 함수를 넘긴다(kind 동반 authFailed 의 항목 문구가 raw 토큰이 되지 않게)
+    expect(retryVideoDownload.mock.calls[0][0].authErrorText).toBeTypeOf('function')
+    expect(retryVideoDownload.mock.calls[0][0].authErrorText()).toBe(AUTH_TEXT)
+  })
+
+  it('kind 없는 옛 authFailed 결과는 그 error 문구가 상태 문구(authFailureText 규칙), status error', async () => {
+    retryVideoDownload.mockResolvedValueOnce({ success: false, authFailed: true, error: 'Auth expired — please re-login to Flow' })
+    const h = setup()
+    await run(h, MIXED, 5000)
+    expect(h.hook.result.current.status).toBe('error')
+    expect(h.hook.result.current.statusMessage).toContain('Auth expired — please re-login to Flow')
     expect(h.hook.result.current.isRunning).toBe(false)
   })
 })
@@ -474,6 +515,35 @@ describe('useVideoAutomation — flow-settings-not-applied 는 배치 전체 rea
     expect(h.generateVideoT2V).toHaveBeenCalledTimes(4)
     expect(last(h, 'vscene_4')[0]).toBe('complete')
   })
+
+  // M2-R3 H9(B5): G4 는 배치 전체 이유 둘·항목별 이유 둘만 핀했다 — resolution-missing 을 빼거나(F11 의 렌더러 배관 결함이 항목마다 7~15s 로 배치 전체를 끌고 간다),
+  //   input-mode/submenu/menu-not-open 을 빼거나, 항목별 패밀리를 넣는(needs-trusted 두 번에 남은 항목이 전부 닫힌다) 변이가 전부 살아남았다. 여섯·다섯 전부를 돈다.
+  it.each(['model-not-offered', 'ratio-not-offered:4:3', 'input-mode-not-material', 'model-submenu-unknown', 'model-menu-not-open', 'resolution-missing'])(
+    '배치 전체 이유 %s ×2 → 종결: 제출 2회, 4항목 전부 그 kind, status error + kind 문구', async (reason) => {
+      const h = setup({ submit: { p1: NOT_APPLIED(reason), p2: NOT_APPLIED(reason) } })
+      await run(h, DUR)
+      expect(h.generateVideoT2V).toHaveBeenCalledTimes(2)
+      for (const id of ['vscene_1', 'vscene_2', 'vscene_3', 'vscene_4']) expect(last(h, id)).toEqual(['error', { error: 'flow-settings-not-applied', errorKind: 'flow-settings-not-applied' }])
+      expect(patches(h, 'vscene_3').some(([st]) => st === 'generating')).toBe(false)
+      expect(h.hook.result.current.status).toBe('error')
+      expect(h.hook.result.current.statusMessage).toContain('errorSection.kind.flow-settings-not-applied')
+    })
+
+  it.each(['duration-not-offered:10', 'not-checked:duration', 'needs-trusted:ratio', 'settings-trigger-click-failed', 'panel-not-closed'])(
+    '항목별 이유 %s: ×2 여도 종결하지 않고(4회 제출, #3·#4 complete, status done) 배치 전체 이유 사이에 끼면 연속을 리셋한다', async (reason) => {
+      const a = setup({ submit: { p1: NOT_APPLIED(reason), p2: NOT_APPLIED(reason) } })
+      await run(a, DUR)
+      expect(a.generateVideoT2V).toHaveBeenCalledTimes(4)
+      expect(last(a, 'vscene_1')).toEqual(['error', { error: 'flow-settings-not-applied', errorKind: 'flow-settings-not-applied' }])
+      expect(last(a, 'vscene_3')[0]).toBe('complete')
+      expect(last(a, 'vscene_4')[0]).toBe('complete')
+      expect(a.hook.result.current.status).toBe('done')
+      // 리셋: [model-not-offered, R, model-not-offered, ok] → 4회 제출(같은 배치 전체 이유가 연속이 아니게 된다)
+      const b = setup({ submit: { p1: NOT_APPLIED('model-not-offered'), p2: NOT_APPLIED(reason), p3: NOT_APPLIED('model-not-offered') } })
+      await run(b, DUR)
+      expect(b.generateVideoT2V).toHaveBeenCalledTimes(4)
+      expect(last(b, 'vscene_4')[0]).toBe('complete')
+    })
 })
 
 // M2-R2 G7(B4): §12.3 #68/#69 가 주장한 F8/F9 동작 중 핀이 없던 넷 — (a) 해상도 아닌 kind 의 연속 거부도 종결 (b) 다른 kind 가 끼면 리셋 (c) pending 드레인 뒤에도

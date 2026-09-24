@@ -309,6 +309,23 @@ describe('M2-1 parseVideoSubmitResponse — 단일 레코드, 필수는 [3].leng
     expect(err).toMatchObject({ rpcid: 'YhhmEf', path: '[3][0][7][0][12]', rejectedMediaId: UUID11 })
     expect(err.message).toBe('YhhmEf response shape changed at [3][0][7][0][12]')
   })
+  // M2-R3 H1(A1): [3][0][7][0][12] 는 문자열이기만 하면 통과했다 — 응답 모양이 바뀌어 그 자리에 사용자 텍스트(프롬프트·URL)가 오면 핸들러가 modelKey= 로
+  //   그대로 로그·진단에 싣는다. 모델키 문법(/^[a-z0-9_]{1,64}$/)을 지키지 않으면 shape 실패(+rejectedMediaId — 과금됐지만 검증 불가) 로 닫고 값은 절대 밖으로 안 나간다.
+  it('[3][0][7][0][12] 가 모델키 문법이 아니면(공백·유니코드·URL) shape 에러 + rejectedMediaId, 메시지에 그 값 없음; 카탈로그 키는 통과', () => {
+    const USER_TEXT = '왕이 궁전 내부를 산책 https://evil.example/x?y=1 Hello World'
+    for (const bad of [USER_TEXT, 'abra t2v', 'Abra_T2V', 'abra-t2v', '', 'a'.repeat(65)]) {
+      const p = samplePayload('YhhmEf'); p[3][0][7][0][12] = bad
+      let err
+      try { parseVideoSubmitResponse(p) } catch (e) { err = e }
+      expect(err, JSON.stringify(bad)).toBeInstanceOf(FlowRpcShapeError)
+      expect(err).toMatchObject({ rpcid: 'YhhmEf', path: '[3][0][7][0][12]', rejectedMediaId: UUID11 })
+      if (bad) expect(err.message).not.toContain(bad)
+    }
+    for (const good of ['abra_t2v_6s', 'veo_3_1_t2v_fast_ultra_relaxed', 'veo_3_1_t2v_fast_portrait_ultra_relaxed', 'abra_t2v_6s_360p']) {
+      const p = samplePayload('YhhmEf'); p[3][0][7][0][12] = good
+      expect(parseVideoSubmitResponse(p).modelKey).toBe(good)
+    }
+  })
   it('[3][0][7] 삭제 → shape [3][0][7][0] + rejectedMediaId', () => {
     const p = samplePayload('YhhmEf'); delete p[3][0][7]
     let err

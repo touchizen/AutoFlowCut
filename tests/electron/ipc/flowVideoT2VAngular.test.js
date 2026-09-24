@@ -275,6 +275,20 @@ describe('flow:generate-video-t2v (angular) — 200 뒤의 거부 (postClick + r
     expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'rpc-shape:YhhmEf@[3][0][7][0][12]')).toBe(true)
   })
 
+  // M2-R3 H1(A1, BLOCKER): [3][0][7][0][12] 에 사용자 텍스트가 오면(응답 모양 변화) 옛 코드는 문자열 검사만 통과시켜 mismatch 경로가 `modelKey=<텍스트>` 를
+  //   main 로그·reportDomFailure·errorParams.actual 에 그대로 실었다. 파서가 모델키 문법을 검증해 shape 실패(+rejectedMediaId)로 닫으므로 값은 어디에도 안 나간다.
+  it('[3][0][7][0][12] 에 사용자 텍스트(공백·유니코드·URL) → rpc-shape 실패 + rejectedMediaId + postClick; 그 텍스트는 console.*·onDomFailure·결과 어디에도 없다', async () => {
+    const USER_TEXT = '왕이 궁전 내부를 산책 https://evil.example/x?y=1 Hello World'
+    const h = harness({ onSubmit: (page) => { page.send(); page.loadend({ responseText: respBodyWithPayload('YhhmEf', payloadWithModelKey(USER_TEXT)) }) } })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-rpc-error', error: 'rpc-shape:YhhmEf@[3][0][7][0][12]', rejectedMediaId: UUID11, postClick: true })
+    expect(JSON.stringify(r)).not.toContain('evil.example')
+    expect(logged()).not.toContain('evil.example')
+    expect(logged()).not.toContain('Hello World')
+    expect(JSON.stringify(h.onDomFailure.mock.calls)).not.toContain('evil.example')
+    expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'rpc-shape:YhhmEf@[3][0][7][0][12]')).toBe(true)
+  })
+
   it.each([
     ['실패 프레임 code 8', { responseText: respBodyFailure('YhhmEf', 8) }, { error: 'RESOURCE_EXHAUSTED', errorKind: 'flow-rpc-error', rpcCode: 8 }, false],
     ['실패 프레임 code 7', { responseText: respBodyFailure('YhhmEf', 7) }, { error: 'flow-rpc-error', rpcCode: 7 }, false],
