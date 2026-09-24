@@ -415,4 +415,41 @@ describe('App — videoAutomation.start 의 onItemUpdate 화이트리스트가 e
     act(() => { start.onItemUpdate('vscene_3', 'error', { error: 'flow-batch-halted', errorKind: 'flow-batch-halted', errorParams: { cause: 'flow-video-settings-mismatch' } }) })
     expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_3', expect.objectContaining({ errorKind: 'flow-batch-halted', errorParams: { cause: 'flow-video-settings-mismatch' } }))
   })
+
+  // M2-R2 G6(B3): 훅의 F1 fetch-failed 패치 {error, errorKind, mediaId, generationId} 와 G1(b) 의 stopped/auth/timeout 패치는 **'error' 상태로** mediaId 를 싣는다 —
+  //   App 이 그걸 씬에 넘겨야 download-only(error+generationId+mediaId)가 성립해 다음 Start 가 재제출(10크레딧) 대신 재다운로드한다. "거부 id 는 mediaId 로 못 간다"
+  //   (M2-5)를 지키려는 방어 편집(`newStatus !== 'error' && 'mediaId' in result`)이 F1/G1 을 조용히 깬다 — 이 핀이 문다. flowRejected 의 mergeLikeApp 은 이 화이트리스트의 손 사본.
+  it('error 상태의 fetch-failed / stopped 패치도 mediaId·generationId 가 updateVideoScene 에 닿는다 (M2-R2 G6)', async () => {
+    appMocks.videoScenes.push({ id: 'vscene_1', prompt: 'p', selected: true })
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'video-text' }) })
+    const start = appMocks.captured.videoStart
+    expect(start?.onItemUpdate).toBeTypeOf('function')
+    act(() => { start.onItemUpdate('vscene_1', 'error', { error: 'flow-video-fetch-failed', errorKind: 'flow-video-fetch-failed', mediaId: '<uuid#11>', generationId: '<uuid#11>' }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'error', errorKind: 'flow-video-fetch-failed', mediaId: '<uuid#11>', generationId: '<uuid#11>' }))
+    act(() => { start.onItemUpdate('vscene_1', 'error', { error: 'Stopped by user', errorKind: 'stopped', generationId: '<uuid#12>', mediaId: '<uuid#12>' }) })
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'error', errorKind: 'stopped', mediaId: '<uuid#12>', generationId: '<uuid#12>' }))
+  })
+})
+
+// ── M2-R2 G8 (B7): 영상 표의 Clear ────────────────────────────────────────────────────────────────────────────────────
+// onClearMedia 는 error/errorKind 만 지우고 F2 가 더한 errorParams·rejectedMediaId(s) 는 남겼다 — project.json 에 stale videoT2V* 가 남는다(다음 generating 패치가
+//   지우기 전까지). 셋도 null 로(FIELD_MAP 으로 videoT2V* 에 닿는다).
+describe('App — 영상 onClearMedia 는 errorParams·rejectedMediaId(s) 도 비운다 (M2-R2 G8)', () => {
+  it('ResultsTable(영상) 의 onClearMedia → updateVideoScene 패치에 errorParams/rejectedMediaId/rejectedMediaIds: null (+ 기존 media/error 필드)', async () => {
+    appMocks.videoScenes.push({ id: 'vscene_1', prompt: 'p', selected: true, status: 'error', errorKind: 'flow-video-settings-mismatch', errorParams: { expected: 'a', actual: 'b' }, rejectedMediaId: 'rm' })
+    localStorage.setItem('autoflowcut_bottomPanelView', 'table')
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'video-text' }) })
+    const props = appMocks.captured.resultsTableProps
+    expect(props?.onClearMedia).toBeTypeOf('function')
+    appMocks.updateVideoScene.mockClear()
+    act(() => { props.onClearMedia('vscene_1') })
+    expect(appMocks.updateVideoScene).toHaveBeenCalledTimes(1)
+    expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({
+      status: 'pending', mediaId: null, generationId: null, videoPath: null, error: null, errorKind: null,
+      errorParams: null, rejectedMediaId: null, rejectedMediaIds: null,
+    }))
+  })
 })

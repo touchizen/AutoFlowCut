@@ -2744,6 +2744,8 @@ function App() {
               status: 'pending', selected: false,
               // 비디오 메타도 정리 — 상세 모달/저장에 이전 비디오 메타 잔류 방지.
               generatedAt: null, seed: null, model: null, error: null, errorKind: null, videoSaveId: null,
+              // M2-R2 G8(B7): kind 별 params·거부 미디어 id 도 정리(F2 가 더한 videoT2V* 필드) — 안 지우면 project.json 에 stale 값이 남는다.
+              errorParams: null, rejectedMediaId: null, rejectedMediaIds: null,
               // per-clip toggle 도 reset — stale disabled 가 project.json 에 남아 history 복원 등
               // path 재부착 경로와 만나면 새 영상이 숨겨짐. (FIELD_MAP 미매핑 → scene.videoT2VDisabled 로 직행)
               videoT2VDisabled: null,

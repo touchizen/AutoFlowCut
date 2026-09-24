@@ -378,7 +378,7 @@ export function createFlowAngular(deps) {
     // M2-R1 F11(a)(A11/B2): 해상도 미지정/무효는 렌더러 배관 결함 — 720p 기본값을 주면 1080p 요청이 조용히 720p 로 과금된다. 클릭 전 거부.
     if (typeof resolution !== 'string' || !resolution.trim()) {
       console.warn('[Flow Video T2V] [Angular] resolution missing → flow-settings-not-applied')
-      return kindResult('flow-settings-not-applied')
+      return kindResult('flow-settings-not-applied', { reason: 'resolution-missing' })   // M2-R2 G4: 배치 전체 이유 — 훅의 F8 서명용 reason
     }
 
     const projectCheck = await deps.ensureOnProjectComposer(flowView, projectId)
@@ -433,7 +433,14 @@ export function createFlowAngular(deps) {
       const settings = await applyComposerSettings(flowView, { mode: 'video', ratio: aspectRatio, count: 1, model, duration: want.duration, resolution: want.resolution }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
       if (!settings.ok) {
         await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps })
-        return { success: false, errorKind: settings.kind || 'flow-settings-not-applied', error: settings.kind || 'flow-settings-not-applied', ...(settings.params ? { errorParams: settings.params } : {}) }
+        // M2-R2 G4(B2): flow-settings-not-applied 는 params 가 {} 라 훅의 F8 서명(kind+params)이 항상 같다 — 드라이버 reason 을 **params 아닌** 필드로 실어
+        //   훅이 배치 전체 이유(model-/ratio-not-offered·input-mode·submenu·menu-not-open)만 종결하게 한다. 렌더되지 않는다(errorParams 는 그대로 없음).
+        const kind = settings.kind || 'flow-settings-not-applied'
+        return {
+          success: false, errorKind: kind, error: kind,
+          ...(settings.params ? { errorParams: settings.params } : {}),
+          ...(kind === 'flow-settings-not-applied' && settings.reason ? { reason: String(settings.reason) } : {}),
+        }
       }
 
       // 5. 편집기 — OS 포커스 → 신뢰 클릭 캐럿 → 주입 → 재판독
@@ -498,6 +505,9 @@ export function createFlowAngular(deps) {
   /** M2-R1 F7: 무효 id(문자열 아님·빈 문자열)는 회수할 것이 없다 — mediaId 없이 failed. 입력 id 마다 정확히 하나의 status(순서 유지). */
   const isValidId = (x) => typeof x === 'string' && x.length > 0
   const invalidIdStatus = () => ({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed' })
+  /** M2-R2 G2(A2): 폴의 세션 게이트 **연속** 실패 수(핸들러 인스턴스) — 3회째(≈30s)면 뷰 재로드가 아니라 실제 로그아웃이다. 통과·발화 시 리셋. */
+  let gateFailures = 0
+  const GATE_MAX_FAILURES = 3
   /** 미지 상태 warn 은 id·상태당 1회. */
   const unknownStateWarned = new Set()
   /** 읽기 RPC 실패 → 항목 결과(pending + pollError, 코드/상태는 필드). */
@@ -519,9 +529,18 @@ export function createFlowAngular(deps) {
       // M2-R1 F3(A3/B3): 폴의 세션 게이트 실패(다른 페이지·WIZ 없음)는 일시적일 수 있다(뷰 재로드 중) — 최상위 authFailed 로 닫으면 훅이
       //   이미 과금된 pending 전부를 errorKind:'auth'(mediaId null, 회수 불가) 로 잃는다. 요청 id 마다 {pending, pollError} 로 항목별 폴 예산만
       //   소모한다. authFailed 는 읽기 RPC 의 HTTP 401 / code 16 만(아래 rpcErrorToRendererResult).
-      console.warn(`[Flow VideoStatus] [Angular] session gate failed reason=${gate.error} → pollError for ${ids.length} ids`)
+      // M2-R2 G2(A2): 연속 3회째는 실제 로그아웃(accounts.google.com 에 앉음)으로 보고 최상위 authFailed 로 배치를 끝낸다 — 안 그러면 훅이 120×10s 를
+      //   "Polling…" 으로 흘리고 원인 없는 "Polling timeout" 으로 닫는다. error 에 raw reason 토큰은 싣지 않는다. 발화 뒤 카운터 리셋(다음 배치의 첫 일시 실패가 바로 auth 가 되지 않게).
+      gateFailures++
+      if (gateFailures >= GATE_MAX_FAILURES) {
+        gateFailures = 0
+        console.warn(`[Flow VideoStatus] [Angular] session gate failed ${GATE_MAX_FAILURES}x in a row reason=${gate.error} → authFailed`)
+        return { success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true }
+      }
+      console.warn(`[Flow VideoStatus] [Angular] session gate failed reason=${gate.error} n=${gateFailures} → pollError for ${ids.length} ids`)
       return { success: true, statuses: ids.map((id) => (isValidId(id) ? { status: 'pending', pollError: 'flow-session-missing' } : invalidIdStatus())) }
     }
+    gateFailures = 0
     if (ids.length === 0) return { success: true, statuses: [] }
 
     const statuses = []
@@ -546,14 +565,16 @@ export function createFlowAngular(deps) {
       }
       if (!record) {
         // M2-R1 F7: 폴한 id 의 레코드 없음(삭제·옛 세션 잔존·미지 id) — 영원한 일시 실패로 두면 그 항목 하나가 배치를 20분 붙잡는다.
-        //   as29s 와 같은 유계: 3회 pending+pollError, 4회째 fetch-failed(+mediaId — 회수 시도는 남긴다).
+        //   as29s 와 같은 유계: 3회 pending+pollError, 4회째 종결(+mediaId — 회수 시도는 남긴다).
+        // M2-R2 G3(B6): 4회째는 fetch-failed("Flow 에서 확인 뒤 다시 시도") 가 아니라 자기 kind flow-video-not-found — Flow 에 그 미디어가 없다(삭제·옛 id)는 뜻이라
+        //   Retry 를 반복해도 같다; 문구가 재생성을 가리킨다. mediaId 는 그대로 둔다(과금 안전 — Start 가 재제출하지 않고, 새 생성은 Regenerate 만).
         const n = (noRecordFailures.get(id) || 0) + 1
         noRecordFailures.set(id, n)
         void report('rpc-shape:jwpduf@[2]', 'shape', { rpc: 'jwpduf' })
         console.warn(`[Flow VideoStatus] [Angular] ${short(id)} no record for the polled media n=${n}`)
         if (n > AS29S_MAX_FAILURES) {
           noRecordFailures.delete(id)
-          statuses.push({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed', mediaId: id })
+          statuses.push({ status: 'failed', errorKind: 'flow-video-not-found', error: 'flow-video-not-found', mediaId: id })
         } else {
           statuses.push(pollErrorStatus({}))
         }

@@ -56,20 +56,25 @@ function setup({ submit = {}, polls = defaultPolls } = {}) {
   return { hook, genAPI, onItemUpdate, generateVideoT2V, checkVideoStatus, downloadVideo }
 }
 const SCENES3 = [{ id: 'vscene_1', prompt: 'p1' }, { id: 'vscene_2', prompt: 'p2' }, { id: 'vscene_3', prompt: 'p3' }]
-async function run(h, scenes, ms = 40000) {
-  let p
-  await act(async () => {
-    p = h.hook.result.current.start({
-      mode: 't2v', scenes, projectName: 'proj', saveMode: 'folder', videoModel: 'Omni Flash', aspectRatio: '16:9', duration: 6, videoResolution: '720p',
-      videoBatchCount: 1, seed: null, concurrency: 5, flowPacingMinMs: 1000, flowPacingMaxMs: 1000, onItemUpdate: h.onItemUpdate,
-    })
-  })
-  for (let t = 0; t < ms; t += 500) await act(async () => { await vi.advanceTimersByTimeAsync(500) })
-  await act(async () => { await p })
+const OPTS = { mode: 't2v', projectName: 'proj', saveMode: 'folder', videoModel: 'Omni Flash', aspectRatio: '16:9', duration: 6, videoResolution: '720p', videoBatchCount: 1, seed: null, concurrency: 5, flowPacingMinMs: 1000, flowPacingMaxMs: 1000 }
+/** start() 를 부르고 그 promise 를 객체에 담아 돌려준다(stop 등 중간 개입이 필요한 테스트용 — async 함수가 promise 를 직접 return 하면 그걸 기다려 버린다). */
+async function begin(h, scenes, extra = {}) {
+  const started = {}
+  await act(async () => { started.promise = h.hook.result.current.start({ ...OPTS, scenes, onItemUpdate: h.onItemUpdate, ...extra }) })
+  return started
+}
+async function run(h, scenes, ms = 40000, step = 500) {
+  const { promise } = await begin(h, scenes)
+  for (let t = 0; t < ms; t += step) await act(async () => { await vi.advanceTimersByTimeAsync(step) })
+  await act(async () => { await promise })
 }
 const patches = (h, id) => h.onItemUpdate.mock.calls.filter((c) => c[0] === id).map((c) => [c[1], c[2] || {}])
 const last = (h, id) => patches(h, id).at(-1)
-/** App.jsx t2v onItemUpdate 화이트리스트(:1719-1739)와 같은 규칙으로 훅 패치를 씬 상태로 접는다(두 번째 start 의 입력). */
+/**
+ * App.jsx t2v onItemUpdate 화이트리스트(:1719-1739)와 같은 규칙으로 훅 패치를 씬 상태로 접는다(두 번째 start 의 입력).
+ * M2-R2 G6(B3): 손 사본이다 — App 의 실제 화이트리스트는 tests/components/App.flowSessionReason.test.jsx 의 T6 블록(M2-5 + G6: 'error' 상태의 mediaId·generationId
+ *   통과)이 핀한다. App 의 목록을 바꾸면 그 핀과 이 함수를 같이 고쳐라.
+ */
 function mergeLikeApp(h, id, base) {
   let s = { ...base }
   for (const [status, r] of patches(h, id)) {
@@ -228,10 +233,10 @@ describe('useVideoAutomation — authFailed 결과의 문구(authFailureText)', 
     noRawToken(h)
   })
 
-  it('폴 authFailed(kind 동반): pending 항목이 errorKind:auth + 인증 문구, raw 토큰 없음', async () => {
+  it('폴 authFailed(kind 동반): pending 항목이 errorKind:auth + 인증 문구 + mediaId/generationId(M2-R2 G1(b)), raw 토큰 없음', async () => {
     const h = setup({ polls: () => AUTH })
     await run(h, [SCENES3[0]], 5000)
-    expect(last(h, 'vscene_1')).toEqual(['error', { error: AUTH_TEXT, errorKind: 'auth' }])
+    expect(last(h, 'vscene_1')).toEqual(['error', { error: AUTH_TEXT, errorKind: 'auth', generationId: 'gen-1', mediaId: 'gen-1' }])
     expect(h.hook.result.current.status).toBe('error')
     noRawToken(h)
   })
@@ -302,6 +307,215 @@ describe('useVideoAutomation — Flow 최상위 폴 실패는 pollError 1회(M2-
     expect(h.downloadVideo).toHaveBeenCalledTimes(1)
     expect(last(h, 'vscene_1')[0]).toBe('complete')
     expect(patches(h, 'vscene_1').some(([, p]) => /Polling timeout/.test(String(p.error || '')))).toBe(false)
+    expect(h.hook.result.current.status).toBe('done')
+  })
+})
+
+// M2-R2 G1 (A1/B1): Flow 의 generationId 는 곧 mediaId — YhhmEf 가 200 을 돌려준 순간 과금됐고 그 id 로 영상을 받는다. 그래서
+//   (a) 제출 시점의 authFailed(세션 게이트 not-on-flow/wiz-missing — 뷰 재로드 중 일시적일 수 있다 — 또는 클릭 전 nzlxg 의 401/16)는 **새 제출만**
+//       멈추고(submitHalt) 이미 제출된 pending 은 끝까지 폴링·다운로드한다(authStopped 없음). 최종 status 는 error + 인증 문구.
+//   (b) pending 항목의 **모든** 종결 패치(사용자 stop·폴 타임아웃·폴 authFailed·꼬리)가 mediaId:generationId 를 실어 App 머지 뒤
+//       download-only(error+generationId+mediaId)로 분류된다 — 다음 Start/Retry 는 retryVideoDownload, 재제출(10크레딧)은 없다.
+describe('useVideoAutomation — Flow 의 과금된 pending 은 어떤 종결에서도 download-only 로 남는다 (M2-R2 G1)', () => {
+  const AUTH_TEXT = 'Auth error. Please login to Flow and try again.'
+  const GATE = { success: false, authFailed: true, errorKind: 'flow-session-missing', error: 'wiz-missing' }
+  const AUTH401 = { success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error', authFailed: true, rpcStatus: 401 }
+  const GATE_POLL = (ids) => ({ success: true, statuses: ids.map((gid) => ({ generationId: gid, status: 'pending', pollError: 'flow-session-missing' })) })
+  const DOWNLOAD_ONLY_1 = { status: 'error', generationId: 'gen-1', mediaId: 'gen-1', videoPath: null }
+  /** 두 번째 start — App 머지 상태를 입력으로, 카운터를 비우고 돌린다. */
+  const secondStart = async (h, merged) => {
+    h.onItemUpdate.mockClear(); h.generateVideoT2V.mockClear(); h.checkVideoStatus.mockClear(); retryVideoDownload.mockClear()
+    await run(h, merged)
+  }
+  const expectDownloadOnly = (h) => {
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(retryVideoDownload.mock.calls[0][0].item).toMatchObject({ id: 'vscene_1', generationId: 'gen-1', mediaId: 'gen-1' })
+  }
+
+  it('(a) 2항목: #2 제출이 세션 게이트 authFailed → #1 은 계속 폴링돼 complete+다운로드, #2 는 auth(mediaId/generationId 없음), status error + 인증 문구; 두 번째 start(실패 항목만)는 #1 을 재제출하지 않는다', async () => {
+    const h = setup({ submit: { p2: GATE } })
+    await run(h, SCENES3.slice(0, 2))
+    expect(h.generateVideoT2V.mock.calls.map((c) => c[0])).toEqual(['p1', 'p2'])
+    expect(h.checkVideoStatus).toHaveBeenCalledTimes(2)
+    expect(h.checkVideoStatus.mock.calls[0][0]).toEqual(['gen-1'])
+    expect(h.downloadVideo).toHaveBeenCalledTimes(1)
+    expect(last(h, 'vscene_1')[0]).toBe('complete')
+    expect(last(h, 'vscene_1')[1]).toMatchObject({ mediaId: UUID11, generationId: 'gen-1', videoPath: '/proj/videos/t2v_1.mp4' })
+    expect(patches(h, 'vscene_1').some(([, p]) => p.errorKind === 'auth')).toBe(false)
+    expect(last(h, 'vscene_2')).toEqual(['error', { error: AUTH_TEXT, errorKind: 'auth' }])
+    expect(h.hook.result.current.status).toBe('error')
+    expect(h.hook.result.current.statusMessage).toContain(AUTH_TEXT)
+    expect(h.hook.result.current.statusMessage).not.toMatch(/wiz-missing|Downloading|Polling/)
+    // 두 번째 start: App 머지 상태의 실패 항목만(전체 Start 는 complete 도 재생성하는 설계라 회수된 #1 은 제외) — 과금된 #1 이 error 로 남았다면 여기서 재제출된다
+    const merged = ['vscene_1', 'vscene_2'].map((id, i) => mergeLikeApp(h, id, { id, prompt: `p${i + 1}` }))
+    expect(merged[0]).toMatchObject({ status: 'complete', generationId: 'gen-1', mediaId: UUID11, videoPath: '/proj/videos/t2v_1.mp4' })
+    expect(merged[1]).toMatchObject({ status: 'error', errorKind: 'auth' })
+    expect(merged[1].generationId).toBeUndefined()
+    await secondStart(h, merged.filter((sc) => sc.status === 'error'))
+    expect(h.generateVideoT2V.mock.calls.map((c) => c[0])).toEqual(['p2'])
+    expect(retryVideoDownload).not.toHaveBeenCalled()
+  })
+
+  it('(b) Stop 중간: stopped 패치가 mediaId:generationId 를 실어 → App 머지 뒤 두 번째 start 는 retryVideoDownload(재제출 없음)', async () => {
+    const h = setup({ polls: (ids) => ({ success: true, statuses: ids.map(PENDING) }) })
+    const { promise } = await begin(h, [SCENES3[0]])
+    await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+    act(() => { h.hook.result.current.stop() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+    await act(async () => { await promise })
+    expect(last(h, 'vscene_1')).toEqual(['error', expect.objectContaining({ errorKind: 'stopped', generationId: 'gen-1', mediaId: 'gen-1' })])
+    expect(h.hook.result.current.status).toBe('stopped')
+    const merged = mergeLikeApp(h, 'vscene_1', { id: 'vscene_1', prompt: 'p1' })
+    expect(merged).toMatchObject(DOWNLOAD_ONLY_1)
+    await secondStart(h, [merged])
+    expectDownloadOnly(h)
+  })
+
+  it.each([
+    ['{pending, pollError:flow-session-missing} ×120', GATE_POLL],
+    ['최상위 {success:false} ×120 (F9 경로)', () => ({ success: false, error: 'temporary server error' })],
+  ])('(b) 폴 예산 소진(%s) → 항목은 flow-video-fetch-failed + mediaId:generationId → 두 번째 start 는 download-only', async (_l, polls) => {
+    const h = setup({ polls })
+    await run(h, [SCENES3[0]], 125 * 10000, 10000)
+    expect(h.checkVideoStatus).toHaveBeenCalledTimes(120)
+    expect(last(h, 'vscene_1')).toEqual(['error', expect.objectContaining({ errorKind: 'flow-video-fetch-failed', generationId: 'gen-1', mediaId: 'gen-1' })])
+    expect(h.hook.result.current.status).toBe('done')
+    const merged = mergeLikeApp(h, 'vscene_1', { id: 'vscene_1', prompt: 'p1' })
+    expect(merged).toMatchObject({ ...DOWNLOAD_ONLY_1, errorKind: 'flow-video-fetch-failed' })
+    await secondStart(h, [merged])
+    expectDownloadOnly(h)
+  })
+
+  it('(b) 폴 authFailed(실제 401): pending 항목 패치가 mediaId:generationId 를 유지 → 두 번째 start 는 download-only', async () => {
+    const h = setup({ polls: () => AUTH401 })
+    await run(h, [SCENES3[0]], 5000)
+    expect(last(h, 'vscene_1')).toEqual(['error', { error: AUTH_TEXT, errorKind: 'auth', generationId: 'gen-1', mediaId: 'gen-1' }])
+    expect(h.hook.result.current.status).toBe('error')
+    const merged = mergeLikeApp(h, 'vscene_1', { id: 'vscene_1', prompt: 'p1' })
+    expect(merged).toMatchObject({ ...DOWNLOAD_ONLY_1, errorKind: 'auth' })
+    await secondStart(h, [merged])
+    expectDownloadOnly(h)
+  })
+
+  it('(b) 꼬리 auth: Phase 0 download-only 가 authFailed 로 멈추면 in-flight 항목의 auth 패치도 mediaId:generationId', async () => {
+    retryVideoDownload.mockResolvedValueOnce({ success: false, authFailed: true, error: 'flow-rpc-error' })
+    const h = setup()
+    await run(h, [
+      { id: 'vscene_1', prompt: 'p1', status: 'error', generationId: 'gen-0', mediaId: 'gen-0', videoPath: null },
+      { id: 'vscene_2', prompt: 'p2', status: 'generating', generationId: 'gen-9', mediaId: null, videoPath: null },
+    ], 5000)
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(last(h, 'vscene_2')).toEqual(['error', { error: AUTH_TEXT, errorKind: 'auth', generationId: 'gen-9', mediaId: 'gen-9' }])
+    expect(h.hook.result.current.isRunning).toBe(false)
+  })
+})
+
+// M2-R2 G3(B6): 4회째 "레코드 없음" 은 flow-video-not-found — 훅 패치가 kind+mediaId 를 남기고(F1 분기), 표엔 그 kind 문구(재생성 안내)가 보이며 raw kind 토큰은
+//   없다. mediaId 가 남아 있으므로 다음 Start 는 download-only(재제출 없음) — Regenerate 만이 새 생성이다.
+describe('useVideoAutomation — flow-video-not-found 는 kind 문구로 보이고 download-only 로 남는다 (M2-R2 G3)', () => {
+  it('폴 {failed, flow-video-not-found, mediaId} → 항목 kind+mediaId+generationId; ResultsTable 텍스트에 재생성 안내(raw kind 없음); 두 번째 start 는 retryVideoDownload', async () => {
+    const h = setup({ polls: (ids) => ({ success: true, statuses: ids.map((gid) => ({ generationId: gid, status: 'failed', errorKind: 'flow-video-not-found', error: 'flow-video-not-found', mediaId: gid })) }) })
+    await run(h, [SCENES3[0]])
+    const [s1, p1] = last(h, 'vscene_1')
+    expect(s1).toBe('error')
+    expect(p1).toMatchObject({ errorKind: 'flow-video-not-found', mediaId: 'gen-1', generationId: 'gen-1' })
+    const { container } = render(<I18nProvider><ResultsTable items={[{ id: 'vscene_1', prompt: 'p1', status: 'error', ...p1 }]} mediaType="video" onVideoRetry={vi.fn()} /></I18nProvider>)
+    const text = container.querySelector('.prompt-error')?.textContent || ''
+    expect(text).toMatch(/Regenerate|재생성/)
+    expect(text).not.toContain('flow-video-not-found')
+    expect(text).not.toMatch(/\{\w+\}/)
+    const merged = mergeLikeApp(h, 'vscene_1', { id: 'vscene_1', prompt: 'p1' })
+    expect(merged).toMatchObject({ status: 'error', generationId: 'gen-1', mediaId: 'gen-1', videoPath: null, errorKind: 'flow-video-not-found' })
+    h.onItemUpdate.mockClear(); h.generateVideoT2V.mockClear(); retryVideoDownload.mockClear()
+    await run(h, [merged])
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+  })
+})
+
+// M2-R2 G4(B2): flow-settings-not-applied 는 params 가 {} 라 F8 서명이 항상 같았다 — 10초 씬 둘이 duration-not-offered 로 거부되면 6초·8초 씬까지 그 kind 로
+//   닫혔다(재실행해도 순서가 같아 영영 못 간다). main 이 드라이버 reason 을 필드로 실어 주고, 훅은 **배치 전체 이유**(model-not-offered·ratio-not-offered:*·
+//   input-mode-not-material·model-submenu-unknown·model-menu-not-open·resolution-missing)만 종결 후보로 센다. 항목별 이유(duration-not-offered:*·not-checked:*·
+//   needs-trusted:*·settings-trigger-*·panel-not-closed)는 절대 종결하지 않는다(연속 셈도 리셋). 서명엔 reason 도 든다.
+describe('useVideoAutomation — flow-settings-not-applied 는 배치 전체 reason 만 종결한다 (M2-R2 G4)', () => {
+  const NOT_APPLIED = (reason) => ({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason })
+  const DUR = [{ id: 'vscene_1', prompt: 'p1', targetDuration: 10 }, { id: 'vscene_2', prompt: 'p2', targetDuration: 10 }, { id: 'vscene_3', prompt: 'p3', targetDuration: 6 }, { id: 'vscene_4', prompt: 'p4', targetDuration: 8 }]
+
+  it('duration-not-offered:10 ×2(항목별) → 6초·8초 항목은 그대로 제출돼 complete', async () => {
+    const h = setup({ submit: { p1: NOT_APPLIED('duration-not-offered:10'), p2: NOT_APPLIED('duration-not-offered:10') } })
+    await run(h, DUR)
+    expect(h.generateVideoT2V.mock.calls.map((c) => [c[0], c[3]])).toEqual([['p1', 10], ['p2', 10], ['p3', 6], ['p4', 8]])
+    expect(last(h, 'vscene_1')).toEqual(['error', { error: 'flow-settings-not-applied', errorKind: 'flow-settings-not-applied' }])
+    expect(last(h, 'vscene_3')[0]).toBe('complete')
+    expect(last(h, 'vscene_4')[0]).toBe('complete')
+    expect(h.hook.result.current.status).toBe('done')
+  })
+
+  it('model-not-offered ×2(배치 전체) → 종결: 제출 2회, 4항목 전부 그 kind, status error + kind 문구', async () => {
+    const h = setup({ submit: { p1: NOT_APPLIED('model-not-offered'), p2: NOT_APPLIED('model-not-offered') } })
+    await run(h, DUR)
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(2)
+    for (const id of ['vscene_1', 'vscene_2', 'vscene_3', 'vscene_4']) expect(last(h, id)).toEqual(['error', { error: 'flow-settings-not-applied', errorKind: 'flow-settings-not-applied' }])
+    expect(h.hook.result.current.status).toBe('error')
+    expect(h.hook.result.current.statusMessage).toContain('errorSection.kind.flow-settings-not-applied')
+  })
+
+  it('배치 전체 이유라도 reason 이 다르면(ratio-not-offered:4:3 → model-not-offered) 연속이 아니다 — 계속 제출', async () => {
+    const h = setup({ submit: { p1: NOT_APPLIED('ratio-not-offered:4:3'), p2: NOT_APPLIED('model-not-offered') } })
+    await run(h, SCENES3)
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(3)
+    expect(last(h, 'vscene_3')[0]).toBe('complete')
+  })
+
+  it('항목별 이유가 사이에 끼면 리셋: [model-not-offered, not-checked:duration, model-not-offered, 성공] → 4회 제출', async () => {
+    const h = setup({ submit: { p1: NOT_APPLIED('model-not-offered'), p2: NOT_APPLIED('not-checked:duration'), p3: NOT_APPLIED('model-not-offered') } })
+    await run(h, DUR)
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(4)
+    expect(last(h, 'vscene_4')[0]).toBe('complete')
+  })
+})
+
+// M2-R2 G7(B4): §12.3 #68/#69 가 주장한 F8/F9 동작 중 핀이 없던 넷 — (a) 해상도 아닌 kind 의 연속 거부도 종결 (b) 다른 kind 가 끼면 리셋 (c) pending 드레인 뒤에도
+//   최종 문구는 kind 문구 (d) Flow 의 failed 상태 문구로 quota 를 발화하지 않는다. 각각의 변이(집합 축소·리셋 삭제·문구 복원 삭제·가드 삭제)가 물어야 한다.
+describe('useVideoAutomation — F8/F9 핀 보강 (M2-R2 G7)', () => {
+  const NOT_OFFERED = { success: false, errorKind: 'flow-resolution-not-offered', error: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } }
+  const SCENES4 = [...SCENES3, { id: 'vscene_4', prompt: 'p4' }]
+
+  it('(a) flow-agent-off-failed ×2(해상도 아닌 kind)도 종결 — 제출 2회, #3 그 kind, status error + kind 문구', async () => {
+    const OFF = { success: false, errorKind: 'flow-agent-off-failed', error: 'flow-agent-off-failed' }
+    const h = setup({ submit: { p1: OFF, p2: OFF } })
+    await run(h, SCENES3)
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(2)
+    expect(last(h, 'vscene_3')).toEqual(['error', { error: 'flow-agent-off-failed', errorKind: 'flow-agent-off-failed' }])
+    expect(h.hook.result.current.status).toBe('error')
+    expect(h.hook.result.current.statusMessage).toContain('errorSection.kind.flow-agent-off-failed')
+  })
+
+  it('(b) 거부 → 다른 kind → 같은 거부는 연속이 아니다(리셋) — 4항목 전부 제출, #4 complete', async () => {
+    const h = setup({ submit: { p1: NOT_OFFERED, p2: { success: false, errorKind: 'text-injection-failed', error: 'text-injection-failed' }, p3: NOT_OFFERED } })
+    await run(h, SCENES4)
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(4)
+    expect(last(h, 'vscene_4')[0]).toBe('complete')
+  })
+
+  it('(c) [ok, 거부, 거부]: pending #1 이 드레인(다운로드)된 뒤 최종 statusMessage 는 kind 문구 — 다운로드 문구가 아니다', async () => {
+    const h = setup({ submit: { p2: NOT_OFFERED, p3: NOT_OFFERED } })
+    await run(h, SCENES3)
+    expect(last(h, 'vscene_1')[0]).toBe('complete')
+    expect(h.downloadVideo).toHaveBeenCalledTimes(1)
+    expect(h.hook.result.current.status).toBe('error')
+    expect(h.hook.result.current.statusMessage).toContain('errorSection.kind.flow-resolution-not-offered')
+    expect(h.hook.result.current.statusMessage).not.toMatch(/Downloading|Polling|flow-content/)
+  })
+
+  it('(d) Flow 의 failed 상태가 error:RESOURCE_EXHAUSTED 여도 quota 리스너는 발화하지 않는다(읽기 결과) — 항목 error, status done', async () => {
+    const listener = vi.fn()
+    subscribeQuotaStop(listener)
+    const h = setup({ polls: (ids) => ({ success: true, statuses: ids.map((gid) => ({ generationId: gid, status: 'failed', error: 'RESOURCE_EXHAUSTED' })) }) })
+    await run(h, [SCENES3[0]])
+    expect(listener).not.toHaveBeenCalled()
+    expect(last(h, 'vscene_1')).toEqual(['error', expect.objectContaining({ error: 'RESOURCE_EXHAUSTED' })])
     expect(h.hook.result.current.status).toBe('done')
   })
 })

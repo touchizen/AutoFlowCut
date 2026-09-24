@@ -19,7 +19,7 @@ vi.mock('electron', () => ({
 const { createSharedHelpers } = await import('../../../electron/ipc/shared.js')
 const layout = await import('../../../electron/ipc/layout.js')
 
-function makeCtx({ coords, onBeforeClick, onMouseDown, onMouseUp }) {
+function makeCtx({ coords, onBeforeClick, onMouseDown, onMouseUp, hitTestHangs = false }) {
   let current = { x: 0, y: 0, width: 637, height: 1022 }
   const collapse = () => { current = { x: 0, y: 0, width: 0, height: 0 } }
   const flowView = {
@@ -28,7 +28,7 @@ function makeCtx({ coords, onBeforeClick, onMouseDown, onMouseUp }) {
     webContents: {
       executeJavaScript: vi.fn(async (s) => {
         const src = String(s)
-        if (src.includes('elementFromPoint')) return { ok: true, why: 'ok' }
+        if (src.includes('elementFromPoint')) return hitTestHangs ? new Promise(() => {}) : { ok: true, why: 'ok' }   // M2-R2 G5: 먹통 렌더러의 hit-test
         if (src.includes('getBoundingClientRect')) return coords
         return null
       }),
@@ -141,6 +141,39 @@ describe('trustedClickOnFlowView — mouseDown 뒤의 실패는 dispatched:true'
       const r = await p
       expect(r).toMatchObject({ success: false, dispatched: true })
       expect(r.error).toMatch(/timed out/)
+    } finally { vi.useRealTimers() }
+  })
+})
+
+// M2-R2 G5 (A3=B5): dispatched 는 **mouseDown 직전**에만 선다. 그 전의 실패 — mouseMove 의 sendInputEvent throw, hit-test 가 매달린 채 30s 타임아웃 — 는 클릭이
+//   나간 적이 없으니 dispatched 없음이어야 T2V 가 gen 을 지우고 generate-button-click-failed 로 다음 항목을 잇는다(dispatched 면 15s 를 기다려 flow-submit-not-sent
+//   +postClick 으로 배치를 멈춘다). 기존 "mouseDown 전 접힘" 케이스는 bounds 조기 반환이라 플래그를 읽지 않아, 플래그를 mouseMove 위로 옮긴 변이도 초록이었다.
+describe('trustedClickOnFlowView — mouseDown 전의 실패는 dispatched 없음 (M2-R2 G5)', () => {
+  beforeEach(() => { layout.setLayoutMode('split-left'); layout.setSplitRatio(0.5); layout.setModalVisible(false) })
+  const COORDS = { x: 100, y: 50, width: 40, height: 40, visible: true }
+
+  it('mouseMove 의 sendInputEvent 가 throw → {success:false}, dispatched 없음, mouseDown 없음, onDomFailure(threw)', async () => {
+    const { ctx, flowView, onDomFailure } = makeCtx({ coords: COORDS, onBeforeClick: () => { throw new Error('render frame gone') } })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+    expect(r.success).toBe(false)
+    expect(r).not.toHaveProperty('dispatched')
+    expect(downs(flowView)).toHaveLength(0)
+    expect(onDomFailure).toHaveBeenCalledWith('trusted-click:compose-submit', expect.objectContaining({ reason: 'threw' }))
+  })
+
+  it('hit-test 가 매달린 채 30s 타임아웃 → {success:false, timed out}, dispatched 없음, mouseDown 없음', async () => {
+    vi.useFakeTimers()
+    try {
+      const { ctx, flowView } = makeCtx({ coords: COORDS, hitTestHangs: true })
+      const p = createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(flowView.webContents.sendInputEvent.mock.calls.map(([e]) => e.type)).toEqual(['mouseMove'])
+      await vi.advanceTimersByTimeAsync(30_000)
+      const r = await p
+      expect(r.success).toBe(false)
+      expect(r.error).toMatch(/timed out/)
+      expect(r).not.toHaveProperty('dispatched')
+      expect(downs(flowView)).toHaveLength(0)
     } finally { vi.useRealTimers() }
   })
 })

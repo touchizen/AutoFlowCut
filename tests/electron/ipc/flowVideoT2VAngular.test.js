@@ -456,17 +456,22 @@ describe('flow:generate-video-t2v (angular) — 클릭 전 거부(postClick 없�
   it.each([[undefined], [''], [null]])('resolution=%s → 클릭 전 flow-settings-not-applied(720p 기본값 없음), 로그 "resolution missing", 설정 드라이버·클릭 없음', async (resolution) => {
     const h = harness()
     const r = await settle(h.generate({ resolution }))
-    expect(r).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied' })
+    // M2-R2 G4(B2): F11 거부도 드라이버 reason 과 같은 자리에 'resolution-missing' — 훅의 F8 서명이 배치 전체 이유로 안다.
+    expect(r).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'resolution-missing' })
     expect(h.trace).not.toContain('settings-driver')
     expect(h.trace).not.toContain('click:compose-submit')
     expect(h.targets()).toBeNull()
     expect(logged()).toMatch(/resolution missing/)
   })
 
-  it('설정 실패(flow-settings-not-applied, input-mode-not-material) → 클릭 없음', async () => {
+  // M2-R2 G4(B2): flow-settings-not-applied 는 params 가 {} 라 F8 서명(kind+params)이 항상 같다 — 드라이버 reason 을 **params 가 아닌** 필드 reason 으로 실어
+  //   훅이 배치 전체 이유(model-/ratio-not-offered·input-mode·submenu·menu-not-open·resolution-missing)만 종결하게 한다. 렌더되지 않는다(errorParams 없음).
+  it('설정 실패(flow-settings-not-applied, input-mode-not-material) → 클릭 없음, reason 필드(errorParams 없음)', async () => {
     const h = harness({ settings: { ok: false, kind: 'flow-settings-not-applied', reason: 'input-mode-not-material', steps: {} } })
-    expect(await settle(h.generate())).toMatchObject({ success: false, errorKind: 'flow-settings-not-applied' })
+    expect(await settle(h.generate())).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'input-mode-not-material' })
     expect(h.trace).not.toContain('click:compose-submit')
+    const d = harness({ settings: { ok: false, reason: 'duration-not-offered:10', steps: {} } })
+    expect(await settle(d.generate())).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'duration-not-offered:10' })
   })
 
   it('편집기 불일치 → text-injection-failed; 제출 버튼 비활성 → generate-button-unavailable; 클릭 실패 → generate-button-click-failed(맵 비움)', async () => {

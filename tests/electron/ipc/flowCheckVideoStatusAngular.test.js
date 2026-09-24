@@ -44,11 +44,12 @@ function harness(o = {}) {
   const url = o.url ?? FLOW_URL_OK
   const jw = Array.isArray(o.jwpduf) ? [...o.jwpduf] : [{ status: 200, text: sample('jwpduf').respBody }]
   const as = Array.isArray(o.as29s) ? [...o.as29s] : [{ status: 200, text: asBody() }]
+  const wizSeq = Array.isArray(o.wiz) ? [...o.wiz] : [o.wiz ?? true]   // M2-R2 G2: 폴마다 다른 WIZ 판정(배열이면 순서대로, 마지막 값 유지)
   const rpcCalls = []
   const next = (q) => (q.length > 1 ? q.shift() : q[0])
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
-    if (s.includes('WIZ_global_data.SNlM0e')) return o.wiz ?? true
+    if (s.includes('WIZ_global_data.SNlM0e')) return next(wizSeq)
     const m = s.match(/rpcid: "(jwpduf|as29s|nzlxg)", payload: (.*?), wiz: wiz/)
     if (m) {
       rpcCalls.push([m[1], m[2]])
@@ -225,7 +226,9 @@ describe('flow:check-video-status (angular) — 폴', () => {
     expect(await g.check(['', UUID11])).toEqual({ success: true, statuses: [{ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed' }, { status: 'pending', pollError: 'flow-session-missing' }] })
   })
 
-  it('레코드 없음 ×2 → 레코드(pending, 리셋) → 없음 ×3 은 pending+pollError, 4회째 {failed, flow-video-fetch-failed, mediaId:id}', async () => {
+  // M2-R2 G3(B6): "레코드 없음" 은 Flow 에 그 미디어가 없다는 뜻(삭제·옛 id) — fetch-failed("다시 시도") 가 아니라 자기 kind flow-video-not-found
+  //   ("Flow 에 더 이상 없음, 재생성") 로 닫는다. mediaId 는 그대로(과금 안전 — Start 가 재제출하지 않는다). 무효 id 는 fetch-failed 유지(:220).
+  it('레코드 없음 ×2 → 레코드(pending, 리셋) → 없음 ×3 은 pending+pollError, 4회째 {failed, flow-video-not-found, mediaId:id}', async () => {
     const none = { status: 200, text: pollBodyWithState(2, '<uuid#99>') }
     const found = { status: 200, text: pollBodyWithState(2) }
     const h = harness({ jwpduf: [none, none, found, none, none, none, none, found] })
@@ -234,7 +237,7 @@ describe('flow:check-video-status (angular) — 폴', () => {
     expect((await h.check()).statuses[0]).toEqual(pend)
     expect((await h.check()).statuses[0]).toEqual({ status: 'pending' })          // 레코드가 왔다 — 카운터 리셋
     for (let i = 0; i < 3; i++) expect((await h.check()).statuses[0]).toEqual(pend)
-    expect((await h.check()).statuses[0]).toEqual({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'flow-video-fetch-failed', mediaId: UUID11 })
+    expect((await h.check()).statuses[0]).toEqual({ status: 'failed', errorKind: 'flow-video-not-found', error: 'flow-video-not-found', mediaId: UUID11 })
     expect(h.rpcCalls.every((c) => c[0] === 'jwpduf')).toBe(true)
   })
 })
@@ -263,5 +266,31 @@ describe('flow:check-video-status (angular) — 진입', () => {
       expect(JSON.stringify(r)).not.toMatch(/wiz-missing|not-on-flow/)
       expect(markFlowAuthFailure(r)).not.toHaveProperty('authFailed')
     }
+  })
+
+  // M2-R2 G2(A2): 게이트 실패가 **연속 3회**(≈30s)면 뷰 재로드가 아니라 실제 로그아웃(accounts.google.com 에 앉음)이다 — 최상위
+  //   {success:false, authFailed, flow-session-missing}(error 에 raw reason 없음)으로 배치를 끝내 로그인 안내를 띄운다. 그 전엔 120×10s 를
+  //   "Polling…" 으로 흘리고 원인 없는 "Polling timeout" 으로 닫았다. 지나가는 게이트가 있으면 카운터 리셋(F3 의 일시 실패 허용 유지), 발화 뒤에도 리셋.
+  it('세션 게이트 실패 ×2 → 항목별 pollError; 통과(리셋); 실패 ×2 → pollError; 3회째 → 최상위 authFailed(flow-session-missing, raw reason 없음); 발화 뒤 다음 실패는 다시 1회째', async () => {
+    const h = harness({ wiz: [false, false, true, false, false, false, false] })
+    const pend = { success: true, statuses: [{ status: 'pending', pollError: 'flow-session-missing' }] }
+    expect(await h.check()).toEqual(pend)
+    expect(await h.check()).toEqual(pend)
+    expect((await h.check()).statuses[0]).toMatchObject({ status: 'complete', mediaId: UUID11 })   // 통과 — 리셋
+    expect(await h.check()).toEqual(pend)
+    expect(await h.check()).toEqual(pend)
+    const r = await h.check()
+    expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true })
+    expect(JSON.stringify(r)).not.toMatch(/wiz-missing|not-on-flow/)
+    expect(markFlowAuthFailure(r).authFailed).toBe(true)
+    expect(await h.check()).toEqual(pend)
+  })
+
+  it('not-on-flow(accounts.google.com) 도 같은 셈 — 3회째 최상위 authFailed, executeJavaScript 미호출', async () => {
+    const h = harness({ url: 'https://accounts.google.com/signin' })
+    expect(await h.check()).toMatchObject({ success: true })
+    expect(await h.check()).toMatchObject({ success: true })
+    expect(await h.check()).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true })
+    expect(h.executeJavaScript).not.toHaveBeenCalled()
   })
 })

@@ -337,7 +337,16 @@ export async function retryVideoDownload({
 
   if (statusInfo.status === 'failed') {
     const msg = statusInfo.error || 'Video generation failed'
-    onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+    // M2-R2 G3(B6): 상태 핸들러가 kind 를 실은 failed(flow-video-not-found: Flow 에 그 미디어가 없음)를 답하면 그 kind·params 를 그대로 올린다 — 안 그러면 표에
+    //   raw kind 토큰이 뜬다. kind 없으면 null 로 stale kind 를 지운다(훅의 F1 failed 분기와 같은 모양). mediaId 는 답에 있을 때만 다시 쓴다(과금 안전 — download-only 유지).
+    onUpdate?.(item.id, 'error', {
+      error: msg,
+      errorKind: statusInfo.errorKind ?? null,
+      ...(statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
+      ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
+      generationId: item.generationId,
+      generatingEndedAt: Date.now(),
+    })
     return { success: false, error: msg }
   }
 
