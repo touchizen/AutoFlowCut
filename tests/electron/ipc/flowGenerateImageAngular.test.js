@@ -33,7 +33,7 @@ function harness(o = {}) {
   const url = o.url ?? FLOW_URL_OK
   const trace = []
   // R2#1: 뷰 bounds 는 가변 — hidden 변형은 0×0 에서 시작하고 setBounds 가 갱신한다(실제 WebContentsView 처럼).
-  let bounds = o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
+  let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
   const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
   const agentSeq = Array.isArray(o.agent) ? [...o.agent] : null
   let injectedPrompt = null
@@ -188,10 +188,31 @@ describe('flow:generate-image (angular) — 동기', () => {
     expect(t).toContain('set-text:visible')
     expect(t).not.toContain('set-text:hidden')
     expect(idx(t, 'set-text:visible')).toBeLessThan(idx(t, 'read-text'))
-    // 재판독 뒤 레이아웃(updateBounds) 으로 원복 — 마지막 setBounds 는 read-text 뒤, submit 클릭 전.
+    // 자동화 뷰포트는 DOM 단계 전체(에이전트 OFF → 설정 → 편집기 → 제출 클릭)를 덮는다 — 마지막 setBounds(레이아웃 원복)는
+    //   submit 클릭 뒤. 그 전엔 신뢰 클릭 헬퍼가 0×0 을 다시 키우고 접는 왕복이 없다.
     const lastBounds = t.map((x, i) => [x, i]).filter(([x]) => x.startsWith('bounds:')).at(-1)[1]
-    expect(lastBounds).toBeGreaterThan(idx(t, 'read-text'))
-    expect(lastBounds).toBeLessThan(idx(t, 'click:compose-submit'))
+    expect(lastBounds).toBeGreaterThan(idx(t, 'click:compose-submit'))
+    expect(firstEnlarge).toBeLessThan(idx(t, 'agent-probe'))
+  })
+
+  // 2026-09-25 실기: 스플릿 뷰가 597×872 였고 flow.google.com 이 그 폭에선 에이전트 칩을 렌더하지 않아
+  //   ensureAgentOff 가 not_found → flow-agent-off-failed 로 멈췄다(957×1022 에선 통과). 좁은 뷰도 숨은 뷰처럼
+  //   DOM 단계 동안 화면 밖 정본 크기로 둔다.
+  it('좁은 뷰(597×872): 에이전트 OFF 확인 전에 화면 밖 정본 크기(≥ 최소 폭)로 키우고, 제출 클릭 뒤 레이아웃으로 원복한다', async () => {
+    const h = harness({ bounds: { x: 0, y: 0, width: 597, height: 872 } })
+    const r = await settle(h.generate())
+    expect(r.success).toBe(true)
+    const t = h.trace
+    const firstEnlarge = t.findIndex((x) => /^bounds:\d+x\d+$/.test(x))
+    expect(firstEnlarge).toBeGreaterThanOrEqual(0)
+    const [w, hgt] = t[firstEnlarge].replace('bounds:', '').split('x').map(Number)
+    expect(w).toBeGreaterThanOrEqual(700)
+    expect(hgt).toBeGreaterThanOrEqual(600)
+    expect(firstEnlarge).toBeLessThan(idx(t, 'agent-probe'))
+    expect(idx(t, 'agent-probe')).toBeLessThan(idx(t, 'settings-driver'))
+    const lastBounds = t.map((x, i) => [x, i]).filter(([x]) => x.startsWith('bounds:')).at(-1)[1]
+    expect(lastBounds).toBeGreaterThan(idx(t, 'click:compose-submit'))
+    expect(logged()).toMatch(/\[Flow API\] \[Angular\] view narrow 597x872 → automation viewport \d+x\d+ offscreen/)
   })
 
   it('숨은 뷰: 편집기 클릭이 실패해도 bounds 를 원복한다(0×0 으로 — 모달이 열려 있으므로)', async () => {

@@ -17,7 +17,7 @@
 import { screen } from 'electron'
 import { isFlowPageUrl, isLegacyFlowUrl } from '../flowUrl.js'
 import { updateBounds } from './layout.js'
-import { computeOffscreenBounds } from '../offscreen-bounds.js'
+import { computeOffscreenBounds, needsAutomationViewport, automationViewportSize } from '../offscreen-bounds.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../flow-rpc-capture.js'
 import { armDeadline, settleGen } from '../flow-rpc-router.js'
 import { normalizePrompt, describeMediaUrl } from '../flow-rpc-protocol.js'
@@ -157,82 +157,90 @@ export function createFlowAngular(deps) {
       return { success: false, errorKind: projectCheck?.errorKind || 'flow-project-open-failed', error: projectCheck?.error || 'flow-project-open-failed' }
     }
 
-    // 1. 에이전트 OFF (ON 이면 페이지가 streamChat 로 보내 캡처가 안 잡힌다)
-    const agent = await deps.ensureAgentOff()
-    if (!agent?.success) return kindResult('flow-agent-off-failed')
-
-    // 2. 캡처 주입 설치 확인 — 없으면 주입 → 재프로브
-    let armed = false
-    try { armed = !!(await exec(flowView, CAPTURE_FLAG_PROBE)) } catch (_e) { armed = false }
-    if (!armed) {
-      try { await exec(flowView, FLOW_RPC_CAPTURE_INJECTION) } catch (_e) { /* 아래 재프로브가 판정 */ }
-      try { armed = !!(await exec(flowView, CAPTURE_FLAG_PROBE)) } catch (_e) { armed = false }
-    }
-    if (!armed) {
-      await report('rpc-capture', 'not-installed')
-      return kindResult('flow-capture-not-installed')
-    }
-
-    // 3. 설정 패널 — 모드(이미지)·비율·개수, 모델은 검증만
-    const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
-    if (!settings.ok) {
-      await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps })
-      return { success: false, errorKind: settings.kind || 'flow-settings-not-applied', error: settings.kind || 'flow-settings-not-applied', ...(settings.params ? { errorParams: settings.params } : {}) }
-    }
-
-    // 4. 편집기 — 뷰가 0×0(모달 열림·드래그 중)이면 execCommand('insertText') 가 no-op 이라(옛 flow-api.js "execCommand 방식이
-    //    작동하려면 flowView가 보여야 함") 화면 밖으로 키워 두고, OS 포커스를 준 뒤 신뢰 클릭으로 캐럿 → 주입 → 재판독.
-    //    키운 뷰는 재판독까지 유지하고 finally 에서 레이아웃(updateBounds)으로 원복한다. 보이는 뷰는 손대지 않는다(R2#1;
-    //    실기 게이트는 957×1022 로 통과). 신뢰 클릭은 자기가 키운 경우에만 되돌리므로 여기서 키운 뷰를 접지 않는다.
+    // 자동화 뷰포트 — 숨었거나(0×0: 모달·드래그) 좁은(< AUTOMATION_MIN_WIDTH) 뷰는 DOM 단계(에이전트 OFF → 캡처 → 설정 →
+    //   편집기 → 제출 클릭) 동안 화면 밖 정본 크기로 둔다. flow.google.com 은 좁은 폭에서 에이전트 칩 등 컴포저 컨트롤을
+    //   아예 렌더하지 않는다(2026-09-25 실기: 597px 에서 chip 0개 → not_found, 957px 정상). execCommand 주입도 보이는
+    //   뷰를 요구한다(옛 flow-api.js "execCommand 방식이 작동하려면 flowView가 보여야 함"). 끝나면 finally 에서 레이아웃
+    //   (updateBounds — 유일한 진실)으로 원복한다. 넓은 보이는 뷰는 손대지 않는다(실기 게이트 957×1022 통과).
+    //   신뢰 클릭 헬퍼는 자기가 키운(0×0) 경우에만 되돌리므로 여기서 키운 뷰를 중간에 접지 않는다.
     const startBounds = flowView.getBounds ? flowView.getBounds() : null
-    const wasHidden = !startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)
-    let readBack = null
+    const viewport = needsAutomationViewport(startBounds)
+    if (viewport) {
+      const mainWindow = deps.getMainWindow()
+      const size = automationViewportSize(mainWindow.getContentBounds())
+      const displays = (screen && typeof screen.getAllDisplays === 'function') ? screen.getAllDisplays() : []
+      flowView.setBounds(computeOffscreenBounds(displays, mainWindow.getBounds().x, size.width, size.height))
+      await sleep(300)
+      const why = (!startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)) ? 'hidden' : 'narrow'
+      console.log(`[Flow API] [Angular] view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} offscreen`)
+    }
+    let generationId = null
+    let gen = null
+    let waiter = null
+    let click = null
     try {
-      if (wasHidden) {
-        const mainWindow = deps.getMainWindow()
-        const { width, height } = mainWindow.getContentBounds()
-        const displays = (screen && typeof screen.getAllDisplays === 'function') ? screen.getAllDisplays() : []
-        flowView.setBounds(computeOffscreenBounds(displays, mainWindow.getBounds().x, width, height))
-        await sleep(300)
-        console.log('[Flow API] [Angular] view was hidden — enlarged offscreen for text injection')
+      // 1. 에이전트 OFF (ON 이면 페이지가 streamChat 로 보내 캡처가 안 잡힌다)
+      const agent = await deps.ensureAgentOff()
+      if (!agent?.success) return kindResult('flow-agent-off-failed')
+
+      // 2. 캡처 주입 설치 확인 — 없으면 주입 → 재프로브
+      let armed = false
+      try { armed = !!(await exec(flowView, CAPTURE_FLAG_PROBE)) } catch (_e) { armed = false }
+      if (!armed) {
+        try { await exec(flowView, FLOW_RPC_CAPTURE_INJECTION) } catch (_e) { /* 아래 재프로브가 판정 */ }
+        try { armed = !!(await exec(flowView, CAPTURE_FLAG_PROBE)) } catch (_e) { armed = false }
       }
+      if (!armed) {
+        await report('rpc-capture', 'not-installed')
+        return kindResult('flow-capture-not-installed')
+      }
+
+      // 3. 설정 패널 — 모드(이미지)·비율·개수, 모델은 검증만
+      const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
+      if (!settings.ok) {
+        await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps })
+        return { success: false, errorKind: settings.kind || 'flow-settings-not-applied', error: settings.kind || 'flow-settings-not-applied', ...(settings.params ? { errorParams: settings.params } : {}) }
+      }
+
+      // 4. 편집기 — OS 포커스를 준 뒤 신뢰 클릭으로 캐럿 → 주입 → 재판독(주입 실패는 재판독이 잡는다).
       try { flowView.webContents.focus() } catch (_e) { /* 포커스 실패는 재판독이 잡는다 */ }
       await sleep(120)
       const focus = await deps.trustedClickOnFlowView(FIND_PROMPT_EDITOR_JS, { required: true, step: 'compose-editor' })
       if (!focus?.success) return kindResult('text-injection-failed')
       await sleep(120)
+      let readBack = null
       try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
       try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
+      const normPrompt = normalizePrompt(prompt)
+      if (normalizePrompt(readBack || '') !== normPrompt) {
+        await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
+        return kindResult('text-injection-failed')
+      }
+
+      // 5. 제출 가능(텍스트가 등록돼 버튼이 활성)
+      let enabled = false
+      try { enabled = !!(await exec(flowView, SUBMIT_ENABLED_PROBE)) } catch (_e) { enabled = false }
+      if (!enabled) return kindResult('generate-button-unavailable')
+
+      // 6. arm — 클릭 전에 gen 을 맵에 넣는다(캡처의 send 가 바인딩할 후보). 초 단위 시각.
+      generationId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      gen = {
+        rpc: 'ogiZ0b', doc: null, seq: null, sentAt: null, normPrompt, wantRatio: aspectRatio || null, wantModelKey: null,
+        results: null, error: null, errorKind: null, completed: false, allowDomFallback: false, waiter: null, deadlines: {},
+        setAt: Date.now() / 1000, generationId, expectedCount: Number(batchCount) || 1,
+      }
+      waiter = new Promise((resolve) => { gen.waiter = { resolve } })
+      deps.pendingGenerations.set(generationId, gen)
+      armDeadline(gen, 'send')
+
+      // 7. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
+      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit' })
     } finally {
-      if (wasHidden) {
+      if (viewport) {
         updateBounds(deps.getMainWindow(), flowView)
         await sleep(200)
       }
     }
-    const normPrompt = normalizePrompt(prompt)
-    if (normalizePrompt(readBack || '') !== normPrompt) {
-      await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
-      return kindResult('text-injection-failed')
-    }
-
-    // 5. 제출 가능(텍스트가 등록돼 버튼이 활성)
-    let enabled = false
-    try { enabled = !!(await exec(flowView, SUBMIT_ENABLED_PROBE)) } catch (_e) { enabled = false }
-    if (!enabled) return kindResult('generate-button-unavailable')
-
-    // 6. arm — 클릭 전에 gen 을 맵에 넣는다(캡처의 send 가 바인딩할 후보). 초 단위 시각.
-    const generationId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const gen = {
-      rpc: 'ogiZ0b', doc: null, seq: null, sentAt: null, normPrompt, wantRatio: aspectRatio || null, wantModelKey: null,
-      results: null, error: null, errorKind: null, completed: false, allowDomFallback: false, waiter: null, deadlines: {},
-      setAt: Date.now() / 1000, generationId, expectedCount: Number(batchCount) || 1,
-    }
-    const waiter = new Promise((resolve) => { gen.waiter = { resolve } })
-    deps.pendingGenerations.set(generationId, gen)
-    armDeadline(gen, 'send')
-
-    // 7. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
-    const click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit' })
     if (!click?.success) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
       deps.pendingGenerations.delete(generationId)

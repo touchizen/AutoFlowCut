@@ -26,3 +26,36 @@ describe('computeOffscreenBounds', () => {
     expect(computeOffscreenBounds([], 100, 1200, 800)).toEqual({ x: 1400, y: 0, width: 1200, height: 800 })
   })
 })
+
+// 2026-09-25 실기: flow.google.com 은 뷰 폭이 좁으면(597px, Material handset 분기점 600 미만) 에이전트 칩 등 컴포저
+//   컨트롤을 아예 렌더하지 않아 ensureAgentOff 가 not_found 로 fail-closed 됐다. 957px 에선 정상. DOM 자동화 단계는
+//   숨은(0×0) 뷰뿐 아니라 좁은 뷰도 화면 밖 정본 크기로 두고 돌린다.
+import { needsAutomationViewport, automationViewportSize, AUTOMATION_MIN_WIDTH, AUTOMATION_MIN_HEIGHT } from '../../electron/offscreen-bounds.js'
+
+describe('needsAutomationViewport — 숨었거나 좁으면 자동화 뷰포트가 필요하다', () => {
+  it('0×0(모달·드래그) 과 없음(null) 은 필요', () => {
+    expect(needsAutomationViewport({ x: 0, y: 0, width: 0, height: 0 })).toBe(true)
+    expect(needsAutomationViewport(null)).toBe(true)
+  })
+  it('597×872(실기 실패 폭) 은 필요, 957×1022(실기 통과 폭) 은 불필요', () => {
+    expect(needsAutomationViewport({ x: 0, y: 0, width: 597, height: 872 })).toBe(true)
+    expect(needsAutomationViewport({ x: 0, y: 0, width: 957, height: 1022 })).toBe(false)
+  })
+  it('경계값: 최소 폭·높이 미만만 필요', () => {
+    expect(needsAutomationViewport({ x: 0, y: 0, width: AUTOMATION_MIN_WIDTH, height: AUTOMATION_MIN_HEIGHT })).toBe(false)
+    expect(needsAutomationViewport({ x: 0, y: 0, width: AUTOMATION_MIN_WIDTH - 1, height: AUTOMATION_MIN_HEIGHT })).toBe(true)
+    expect(needsAutomationViewport({ x: 0, y: 0, width: AUTOMATION_MIN_WIDTH, height: AUTOMATION_MIN_HEIGHT - 1 })).toBe(true)
+  })
+})
+
+describe('automationViewportSize — 창 콘텐츠 크기 이상, 최소값 이상', () => {
+  it('넓은 창은 창 크기 그대로', () => {
+    expect(automationViewportSize({ width: 1280, height: 800 })).toEqual({ width: 1280, height: 800 })
+  })
+  it('작은 창은 최소값으로 올린다', () => {
+    expect(automationViewportSize({ width: 500, height: 400 })).toEqual({ width: AUTOMATION_MIN_WIDTH, height: AUTOMATION_MIN_HEIGHT })
+  })
+  it('창 정보가 없어도 최소값', () => {
+    expect(automationViewportSize(null)).toEqual({ width: AUTOMATION_MIN_WIDTH, height: AUTOMATION_MIN_HEIGHT })
+  })
+})
