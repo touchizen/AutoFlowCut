@@ -52,13 +52,16 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   //   되돌리지만, auth-stop 은 죽은 인증을 숨긴 채 재시도 루프가 돌지 않도록 error(auth)로 남긴다.
   const authStoppedRef = useRef(false)
   const authErrorMessage = () => getAuthErrorMessage(genAPI?.mode, t)
-  const authRequiredMessage = () => getAuthRequiredMessage(genAPI?.mode, t)
+  const authRequiredMessage = () => getAuthRequiredMessage(genAPI?.mode, t, genAPI?.flowSessionReason?.())
   const resultErrorKind = (result) => result?.authFailed ? 'auth' : (result?.errorKind ?? null)
   const displayResultError = (result, fallback) => resolveDisplayError(
     t,
     resultErrorKind(result),
     result?.error || fallback,
+    result?.errorParams,
   )
+  // M1-10: 비-스타일 ref 만 업스케일하므로 그때만 엔진 게이트에 설정을 넘긴다(Flow 모드는 제출 전에 거부).
+  const upscaleOptFor = (ref) => (isStyleReference(ref) ? undefined : (settings.imageUpscale || 'off'))
 
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
   const _maybeTriggerQuotaStop = (err) => {
@@ -446,7 +449,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
           : ref
         // #R32-2: 선택된 이미지 모델(settings.imageModel)을 전달 — 안 넘기면 useGenAPI 가 DEFAULT 로
         //   폴백해 비-기본 BYOK 모델 선택이 ref 생성에 반영되지 않는다(씬 생성과 동일하게 model 전달).
-        const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId } })
+        const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', imageUpscale: upscaleOptFor(submitRef), ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId } })
 
         if (result.success && result.images?.length > 0) {
           const processed = await _processAndSaveImage(
@@ -480,6 +483,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
                 status: 'error',
                 errorMessage: result.error || 'Generation failed',
                 errorKind: (result.authFailed || isAuthError) ? 'auth' : (result.errorKind ?? null),
+                ...(result.errorParams ? { errorParams: result.errorParams } : {}),
               })
           ))
           return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
@@ -570,7 +574,12 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
         prev,
         index,
         guardKey,
-        current => ({ ...current, status: 'error', errorMessage: error.message || 'Generation error', ...(isAuthError ? { errorKind: 'auth' } : {}) })
+        current => ({
+          ...current, status: 'error', errorMessage: error.message || 'Generation error',
+          ...(isAuthError ? { errorKind: 'auth' } : {}),
+          // M1-10: 업스케일 백스톱(tryUpscaleImage 의 flow-upscale-unsupported) 같은 kind 있는 예외는 kind/params 보존.
+          ...(error?.errorKind ? { errorKind: error.errorKind, errorParams: error.errorParams || {} } : {}),
+        })
       ))
       if (guardKey && resolveReferenceIndex(referencesRef.current, index, guardKey) < 0) {
         return { success: false, skipped: true, skipStage: 'not-found' }
@@ -987,6 +996,22 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               'collect',
               e?.message || String(e)
             )
+            // M1-10 백스톱: 후처리 예외(예: tryUpscaleImage 의 flow-upscale-unsupported)는 결과가 이미 소비된 항목이다 —
+            //   ref 를 그 kind 로 error 표시, busy 해제, 큐에서 제거(settled). 안 그러면 180s 캡까지 pending 으로 돈다.
+            removeBatchGeneratingRef(pending.busyIndex)
+            setReferences(prev => patchReferenceByIdentity(
+              prev,
+              pending.index,
+              isTargeted ? pending.key : null,
+              current => ({
+                ...current,
+                status: 'error',
+                errorMessage: e?.message || 'Post-processing failed',
+                errorKind: e?.errorKind ?? null,
+                errorParams: e?.errorParams || {},
+              })
+            ))
+            succeeded.add(pending)
           }
         }, 5)
 
@@ -1105,7 +1130,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
             continue
           }
           ;({ index, ref } = currentTarget)
-          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
+          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', imageUpscale: upscaleOptFor(ref), ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
 
           if (submitResult?.success && submitResult.generationId) {
             attemptedKeys.add(target.key)
@@ -1142,6 +1167,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
                   status: 'error',
                   errorMessage: submitResult?.error || 'Submit failed',
                   errorKind: resultErrorKind(submitResult),
+                  ...(submitResult?.errorParams ? { errorParams: submitResult.errorParams } : {}),
                 })
             ))
 

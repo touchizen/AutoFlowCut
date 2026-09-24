@@ -344,3 +344,24 @@ describe('ResultsTable — video lazy mount', () => {
     expect(onShowDetail).toHaveBeenCalledWith(item)
   })
 })
+
+// M1-9: 훅이 만든 item 의 errorParams 가 4번째 인자로 번역문에 들어간다 — {requested} 같은 플레이스홀더가 보이면 배선 회귀.
+describe('ResultsTable — errorKind + errorParams (M1-9)', () => {
+  it('flow-resolution-not-offered {requested:"1080p"} → 인라인 에러에 1080p, 플레이스홀더 없음', () => {
+    const items = [baseItem({ status: 'error', error: 'flow-resolution-not-offered', errorKind: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })]
+    const { container } = wrap(<ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />)
+    const inline = container.querySelector('.prompt-error')
+    expect(inline.textContent).toContain('1080p')
+    expect(inline.textContent).not.toMatch(/\{\w+\}/)
+    expect(inline.textContent).not.toBe('flow-resolution-not-offered')
+  })
+
+  it('flow-image-model-mismatch {requested, panel} → 두 값 모두 보인다', () => {
+    const items = [baseItem({ status: 'error', error: 'flow-image-model-mismatch', errorKind: 'flow-image-model-mismatch', errorParams: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })]
+    const { container } = wrap(<ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />)
+    const text = container.querySelector('.prompt-error').textContent
+    expect(text).toContain('Nano Banana Pro')
+    expect(text).toContain('Nano Banana 2')
+    expect(text).not.toMatch(/\{\w+\}/)
+  })
+})

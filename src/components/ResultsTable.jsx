@@ -380,7 +380,7 @@ export default function ResultsTable({
    * Resolve the displayable error message for an item via the shared util —
    * keeps i18n / unknown-kind fallback policy aligned with ErrorSection.
    */
-  const getDisplayError = (item) => resolveDisplayError(t, item.errorKind, item.error)
+  const getDisplayError = (item) => resolveDisplayError(t, item.errorKind, item.error, item.errorParams)
 
   /**
    * Render the status cell for a given item

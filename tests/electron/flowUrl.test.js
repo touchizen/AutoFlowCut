@@ -10,7 +10,7 @@
  * 폴링이 mode-entry 를 다시 돌려 무한히 재시도한다(사용자 제보 로그의 그 반복).
  */
 import { describe, it, expect } from 'vitest'
-import { flowBaseFromUrl, flowProjectUrl, isFlowPageUrl, onProjectComposerUrl } from '../../electron/flowUrl.js'
+import { flowBaseFromUrl, flowProjectUrl, isFlowPageUrl, onProjectComposerUrl, urlForLog, isLegacyFlowUrl } from '../../electron/flowUrl.js'
 
 const ID = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 
@@ -115,5 +115,32 @@ describe('isFlowPageUrl — 지금 Flow 앱 위에 있는가 (프로젝트 여�
     expect(isFlowPageUrl('https://accounts.google.com/signin')).toBe(false)
     expect(isFlowPageUrl('')).toBe(false)
     expect(isFlowPageUrl(null)).toBe(false)
+  })
+})
+
+// M1-6: main 의 내비게이션 로그는 origin + pathname 만 — 쿼리(로그인 continue·계정 힌트)는 Sentry breadcrumb 으로 나간다.
+describe('urlForLog — 로그용 URL 은 origin + pathname 만', () => {
+  it('쿼리·해시를 버린다', () => {
+    expect(urlForLog('https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fflow.google.com&Email=someone%40example.com#x'))
+      .toBe('https://accounts.google.com/v3/signin/identifier')
+    expect(urlForLog('https://flow.google.com/project/134cf5b5-6a64-47b8-8709-6de4c6b0e44c')).toBe('https://flow.google.com/project/134cf5b5-6a64-47b8-8709-6de4c6b0e44c')
+  })
+  it('깨진 값은 표식만', () => {
+    expect(urlForLog('')).toBe('<invalid-url>')
+    expect(urlForLog(null)).toBe('<invalid-url>')
+    expect(urlForLog('about:blank')).toBe('about:blank')
+  })
+})
+
+// M1-12: 옛 도메인(labs.google/fx…) 판정 — 301 로 도달 불가지만 디스패치 로그·진단이 "옛 URL 인가" 를 안다.
+describe('isLegacyFlowUrl', () => {
+  it('labs.google/fx… 만 true — 새 도메인·로그인·깨진 값은 false', () => {
+    expect(isLegacyFlowUrl('https://labs.google/fx/tools/flow/project/x')).toBe(true)
+    expect(isLegacyFlowUrl('https://labs.google/fx/ko/tools/flow')).toBe(true)
+    expect(isLegacyFlowUrl('https://flow.google.com/project/x')).toBe(false)
+    expect(isLegacyFlowUrl('https://accounts.google.com/signin')).toBe(false)
+    expect(isLegacyFlowUrl('https://labs.google/other')).toBe(false)
+    expect(isLegacyFlowUrl('')).toBe(false)
+    expect(isLegacyFlowUrl(null)).toBe(false)
   })
 })

@@ -63,6 +63,24 @@ export function isFlowPageUrl(url) {
   return host === LEGACY_HOST && /^\/fx(?=\/|$)/.test(u.pathname)
 }
 
+/**
+ * 로그용 URL — origin + pathname 만(쿼리·해시 없음). 로그인 리다이렉트 URL 은 쿼리에 계정 힌트·continue 를
+ * 싣고, Sentry 는 main 콘솔을 breadcrumb 으로 가져간다. 깨진 값은 표식만.
+ */
+export function urlForLog(url) {
+  let u
+  try { u = new URL(String(url ?? '')) } catch { return '<invalid-url>' }
+  if (u.origin === 'null') return `${u.protocol}${u.pathname}`   // about:blank 등 — origin 이 없다
+  return `${u.origin}${u.pathname}`
+}
+
+/** 옛 도메인(labs.google/fx…)인가 — 301 로 도달 불가지만 디스패치 로그·진단이 "옛 URL 인가"를 안다(M1-12). */
+export function isLegacyFlowUrl(url) {
+  let u
+  try { u = new URL(String(url ?? '')) } catch { return false }
+  return u.hostname.toLowerCase() === LEGACY_HOST && /^\/fx(?=\/|$)/.test(u.pathname)
+}
+
 /** base 뒤에 프로젝트 경로를 붙인다. */
 export function flowProjectUrl(base, projectId) {
   return `${String(base).replace(/\/$/, '')}/project/${projectId}`

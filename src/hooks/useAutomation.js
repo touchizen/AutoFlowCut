@@ -36,7 +36,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
   const authErrorMessage = () => getAuthErrorMessage(mode, t)
-  const authRequiredMessage = () => getAuthRequiredMessage(mode, t)
+  // M1-10: Flow 세션 판정 이유(flowSessionReason)로 로그인 안내 vs 세션 확인 실패 안내를 고른다.
+  const authRequiredMessage = () => getAuthRequiredMessage(mode, t, genAPI?.flowSessionReason?.())
 
   // t 함수가 변경되면 초기 상태 메시지 업데이트
   useEffect(() => {
@@ -175,14 +176,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       for (const item of pendingQueue) {
         if (stopRequestedRef.current) { stillPending.push(item); continue }
         const elapsed = Date.now() - item.submittedAt
-        if (elapsed > ITEM_TIMEOUT) {
-          console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
-          updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
-          errorCountRef.current++
-          completedCountRef.current++
-          updateProgressMsg(completedCountRef.current)
-          continue
-        }
+        // M1-13 (D4): main 의 마감(send 15s / loadend 100s = 115s < ITEM_TIMEOUT 120s)이 먼저 kind 를 정한다 —
+        //   ITEM_TIMEOUT 을 checkGeneration **앞**에 두면 페이싱 뒤 첫 재확인이 120s 를 넘긴 씬에서 'Generation timeout'
+        //   (errorKind null) 이 main 의 flow-submit-lost 를 덮는다. 먼저 묻고, main 이 미완료라고 할 때만 타임아웃.
         try {
           const st = await checkGeneration(item.generationId)
           // #R23-4: checkGeneration 자체가 401/403 → authFailed 를 표면화할 수 있다(완료 안 돼도).
@@ -239,6 +235,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             if (!finalizeOk) {
               errorCountRef.current++
             }
+            completedCountRef.current++
+            updateProgressMsg(completedCountRef.current)
+          } else if (elapsed > ITEM_TIMEOUT) {
+            console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
+            updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
+            errorCountRef.current++
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
           } else {
@@ -322,7 +324,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, references: effectiveRefs })
+      // M1-10: 엔진 게이트 재료 — 필터 **전** 매칭 개수(filePath 만 있는 ref 도 "레퍼런스가 있는 씬")와 업스케일 설정.
+      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, references: effectiveRefs, matchedRefCount: allMatched.length, imageUpscale })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })

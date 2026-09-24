@@ -99,6 +99,7 @@ export function createSharedHelpers(ctx) {
     const candidates = sessionUrlCandidates(flowView.webContents.getURL(), SESSION_URL)
     const r = await flowView.webContents.executeJavaScript(buildSessionProbeJs(candidates))
     if (r && r.text) {
+      // safe-log: 후보 URL 은 앱 상수(sessionUrlCandidates) — 본문·토큰·사용자 내용 없음
       console.log('[Flow API] session probe: hit', r.url)
       return r.text
     }
@@ -1269,5 +1270,6 @@ export function createSharedHelpers(ctx) {
     ensureAgentOn,
     selectFlowModeTab,
     ensureOnProjectComposer,
+    reportDomFailure,   // M1-11: 새 Flow 핸들러(flow-angular.js)가 settings/shape/submit 실패를 내용 없이 보고한다
   }
 }

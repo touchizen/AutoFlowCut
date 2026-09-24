@@ -54,7 +54,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
     if (!readyCheck.ok) return
     if (!(await checkAuthToken(genAPI, t))) {
-      const message = getAuthRequiredMessage(genAPI?.mode, t)
+      const message = getAuthRequiredMessage(genAPI?.mode, t, genAPI?.flowSessionReason?.())
       scenesHook.updateScene(sceneId, { status: 'error', errorKind: 'auth', error: message })
       toast.warning(message)
       return
@@ -105,7 +105,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       //   — memory-only 레퍼런스는 ref.data 에만 base64 가 있어, 떨구면 디스크에 없는 ref 가 조용히
       //   빈 inlineData 로 넘어가 캐릭터 일관성이 깨진다.
       const callEngine = (refs) => {
-        const matchedRefs = scenesHook.getMatchingReferences(scene, refs)
+        const allMatched = scenesHook.getMatchingReferences(scene, refs)
+        const matchedRefs = allMatched
           .filter(r => r.mediaId || r.name || r.data || r.filePath)
           .map(r => ({
             category: r.category,
@@ -119,9 +120,11 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         // scene.prompt 그대로 전달 — strip 은 engineApi.generateImage 내부에서 수행.
         // scene 은 sceneOverride 가 병합된 fresh 스냅샷 — prompt/style_tag 모두 편집본을 반영.
         const { styledPrompt } = resolveSceneStyle(scene.prompt, [], effectiveOverride, refs, matchedRefs, scene.style_tag)
+        // M1-10: 엔진 게이트 재료 — 필터 전 매칭 개수 + 업스케일 설정(Flow 모드에서 미지원이면 제출 전에 거부된다).
         return genAPI.generateImage(styledPrompt, matchedRefs, {
           batchCount: settings.imageBatchCount, seed,
           aspectRatio: settings.aspectRatio, model: settings.imageModel, references: refs,
+          matchedRefCount: allMatched.length, imageUpscale: settings.imageUpscale || 'off',
         })
       }
 

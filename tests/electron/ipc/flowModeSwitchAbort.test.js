@@ -1,4 +1,9 @@
 // @vitest-environment node
+// ⚠️ M1-12(2026-09-24 flow.google.com 재작업): 이 파일이 구동하는 옛 labs.google 핸들러 경로는 Flow 모드에서
+//    도달 불가다(generate-image/t2v/check-video-status 는 angular 디스패치, 나머지 9개는 flow-feature-unsupported 단락).
+//    옛 핸들러 본문은 후속 정리 대상이라 남겨 두었고, 그 코드만 검증하는 이 스위트는 그 정리 때 함께 삭제한다.
+//    새 경로의 계약은 tests/electron/ipc/flowGenerateImageAngular.test.js · flowFeatureUnsupported.test.js ·
+//    flowAngularDispatch.test.js 가 핀한다.
 //
 // #R30-1: a Flow compose mode-switch that fails after internal retries (configureFlowMode →
 // {success:false}) must ABORT the submit, not proceed — otherwise an image submit goes out as a
@@ -30,7 +35,7 @@ function makeDeps(configureResult) {
   }
 }
 
-describe('#R30-1: configureFlowMode failure aborts video submit', () => {
+describe.skip('#R30-1: configureFlowMode failure aborts video submit', () => {
   it('t2v aborts when configureFlowMode returns {success:false}', async () => {
     const ipc = makeIpcMain()
     const deps = makeDeps({ success: false, error: 'Mode VIDEO not set after 3 attempts' })
@@ -65,7 +70,7 @@ describe('#R30-1: configureFlowMode failure aborts video submit', () => {
 // CDP 는 사용 금지라 화면비를 보장하던 request injection 이 없다 — Flow 설정 패널의 탭 클릭이
 // 유일한 수단이다. 그 클릭이 실패했는데 success:true 로 넘어가면, 9:16 로 요청한 배치가 통째로
 // 16:9 로 생성된다(유료 생성이라 조용한 오출력이 시끄러운 실패보다 훨씬 나쁘다).
-describe('화면비 탭 클릭 실패는 제출을 막는다', () => {
+describe.skip('화면비 탭 클릭 실패는 제출을 막는다', () => {
   const cases = [
     ['flow:generate-video-t2v', { token: 't', prompt: 'p', projectId: 'pid', videoBatchCount: 1, aspectRatio: '9:16' }],
     ['flow:generate-video-i2v', { token: 't', prompt: 'p', startImageMediaId: 'm', projectId: 'pid', videoBatchCount: 1, aspectRatio: '9:16' }],

@@ -82,8 +82,10 @@ describe('generate-image readiness on a dead Flow page', () => {
     const res = await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
 
     // It must stop on "the page isn't ready", NOT wander into the Agent toggle and blame it.
+    // M1-12: Flow 모드는 무조건 angular 핸들러 — 준비 판정은 WIZ 전역(batchexecute 의 at 토큰)이다. 이 죽은 페이지는
+    //   WIZ 프로브가 null 이라 flow-session-missing 으로 닫히고, 에이전트 토글은 건드리지 않는다.
     expect(res.success).toBe(false)
-    expect(res.error).toMatch(/not ready|열지 못했습니다|준비/i)
+    expect(res).toMatchObject({ errorKind: 'flow-session-missing', authFailed: true })
     expect(ensureAgentOff).not.toHaveBeenCalled()
-  }, 20000)   // readiness poll is 10 s by design — this asserts it runs, not that it is fast
+  }, 20000)
 })

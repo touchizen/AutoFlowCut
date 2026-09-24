@@ -90,10 +90,12 @@ describe('generate-image — "Flow 페이지가 아니면 이동" 분기의 도�
     expect(loadURL).not.toHaveBeenCalled()
   }, 60000)
 
-  it('Flow 밖이면 Flow 로 네비게이트한다 — 분기가 살아 있음을 증명', async () => {
+  // M1-12: Flow 모드의 generate-image 는 무조건 flow.google.com(angular) 핸들러다 — Flow 밖(로그인 페이지)이면
+  //   네비게이트하지 않고 flow-session-missing(+authFailed) 으로 닫는다(렌더러가 로그인 안내). 옛 "Flow 로 이동" 분기는 도달 불가.
+  it('Flow 밖이면 네비게이트 대신 flow-session-missing 으로 닫는다 (M1-12)', async () => {
     const { ipcMain, loadURL } = runOnUrl('https://accounts.google.com/signin')
-    await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
-    expect(loadURL).toHaveBeenCalledWith(FLOW_URL)
-    expect(loadURL).toHaveBeenCalledTimes(1)
+    const r = await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
+    expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true })
+    expect(loadURL).not.toHaveBeenCalled()
   }, 60000)
 })

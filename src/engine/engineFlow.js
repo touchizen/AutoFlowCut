@@ -7,7 +7,8 @@
  * 계약 단일 진실원: tests/engine/engineContract.js (assertEngineContract)
  *
  * 핵심 매핑:
- *   - getAccessToken: flowExtractToken → flowValidateToken → raw bearer token 반환('byok' 아님)
+ *   - getAccessToken: flowSessionStatus(ready?) → 센티널 'flow-session' 반환(토큰 아님 — flow.google.com 엔 세션 API 도
+ *     Bearer 도 없다). IPC 페이로드의 token 은 항상 null. 준비 안 됨 → null + flowSessionReason()
  *   - listModels: IPC 없음 → FLOW_MODELS 정적 목록 반환
  *   - generateImage: flowGenerateImage(asyncMode:false)
  *   - submitGeneration: flowGenerateImage(asyncMode:true)
@@ -17,7 +18,7 @@
  *   - setStopRequested: renderer-local ref (IPC 없음)
  *
  * window.electronAPI.flow* 의존 메서드 목록 (Task 5 preload가 노출해야 하는 이름들):
- *   flowExtractToken, flowValidateToken, flowExtractProjectId,
+ *   flowSessionStatus, flowExtractProjectId,
  *   flowGenerateImage, flowCheckGeneration, flowCollectGeneration, flowClearGenerations,
  *   flowUploadReference, flowGenerateCharacter, flowUploadCharacterEntity,
  *   flowFetchMedia,
@@ -174,6 +175,20 @@ export function markFlowAuthFailure(res) {
   return isFlowAuthError(res) ? { ...res, authFailed: true } : res
 }
 
+// M1-10: 새 Flow(flow.google.com) 입력 게이트 — 레퍼런스 이미지·@멘션·업스케일·업로드는 아직 미지원이라 DOM 을
+//   건드리기 전에 거부한다(Flow 모드 무조건). 호출부는 필터 **전** 매칭 개수(matchedRefCount)를 넘긴다 —
+//   filePath 만 있는 ref 는 주입 필터에서 빠져도 "레퍼런스가 있는 씬"이다.
+const FLOW_UPLOAD_UNSUPPORTED = true
+const REFERENCES_UNSUPPORTED = () => ({ success: false, errorKind: 'flow-references-unsupported', error: 'flow-references-unsupported' })
+export function flowInputGate(referenceImages, callOpts = {}) {
+  if (callOpts.imageUpscale && callOpts.imageUpscale !== 'off') {
+    return { success: false, errorKind: 'flow-upscale-unsupported', error: 'flow-upscale-unsupported' }
+  }
+  if ((callOpts.matchedRefCount || 0) > 0) return REFERENCES_UNSUPPORTED()
+  if (Array.isArray(referenceImages) && referenceImages.length > 0) return REFERENCES_UNSUPPORTED()
+  return null
+}
+
 // Ref 탭 캐릭터 카드는 Flow 의 /characters 컴포저에서 바로 생성한다. 메인 컴포저("모든 미디어")에서
 // 만들면 그냥 미디어일 뿐이라, entity 로 쓰려면 그 이미지를 /characters 에 다시 업로드해야 한다
 // (= Ref 탭 '동기화' 버튼). flowGenerateCharacter 는 생성과 동시에 entityId 를 돌려줘 그 왕복을 없앤다.
@@ -223,7 +238,11 @@ export function useFlowEngine(opts = {}) {
 
   // #R4-3: accessToken을 ref로도 추적 — useCallback 클로저의 stale state 방지.
   // setAccessToken(state)와 동시에 ref도 갱신해 같은 렌더 내 IPC 호출에서 즉시 사용 가능.
+  // M1-10: flow.google.com 에는 토큰이 없다 — state 는 준비 센티널('flow-session') 이고 ref 는 항상 null(IPC token:null).
   const accessTokenRef = useRef(null)
+  // M1-10: 마지막 flow:session-status 의 reason(wiz-missing | not-on-flow | flow-inactive | rpc:http:<n> | rpc:er:<n> | timeout).
+  //   준비되면 null. 훅들이 getAuthRequiredMessage(mode, t, reason) 에 넘겨 이유별 안내를 고른다.
+  const sessionReasonRef = useRef(null)
 
   // #R7-8: extracted projectId 도 ref 로 추적 — getAccessToken 직후 같은 call-chain 의 생성이
   //   state(projectId, 리렌더 후에야 갱신) 대신 ref 로 최신 추출 id 를 읽게 한다. bound id 가
@@ -271,42 +290,41 @@ export function useFlowEngine(opts = {}) {
   // --- 인증 ------------------------------------------------------------------
 
   /**
-   * Flow 토큰 추출 + 검증. 유효하면 raw bearer 반환, 아니면 null.
-   * 'byok' sentinel 사용 안 함 — Flow는 실제 bearer token.
+   * Flow 세션 판정(M1-10). flow.google.com 에는 세션 API 도 Bearer 도 없다 — main 의 flow:session-status 가
+   * Flow 페이지 URL + WIZ 전역 + nzlxg(크레딧) 로 판정한다. 준비되면 센티널 'flow-session'(useGenerationEngine.ready 용,
+   * 토큰 아님), 아니면 null 이고 flowSessionReason() 이 이유를 돌려준다. accessTokenRef 는 항상 null(IPC token:null).
    */
   const getAccessToken = useCallback(async () => {
+    let status
     try {
-      const extracted = await api().flowExtractToken()
-      if (!extracted?.success || !extracted.token) {
-        accessTokenRef.current = null
-        setAccessToken(null)
-        return null
-      }
-      const validated = await api().flowValidateToken({ token: extracted.token })
-      if (!validated?.valid) {
-        accessTokenRef.current = null
-        setAccessToken(null)
-        return null
-      }
-      accessTokenRef.current = extracted.token
-      setAccessToken(extracted.token)
-      // I3: 토큰 성공 후 projectId도 추출 (optional IPC — 없으면 무시)
-      try {
-        const pidResult = await api().flowExtractProjectId?.({ liveOnly: false })
-        // #R7-8: ref 를 동기 갱신 → 같은 call-chain 의 생성이 즉시 사용. state 도 함께(소비자 호환).
-        extractedProjectIdRef.current = pidResult?.projectId || null
-        setProjectId(pidResult?.projectId || null)
-      } catch {
-        extractedProjectIdRef.current = null
-        setProjectId(null)
-      }
-      return extracted.token
+      status = await api().flowSessionStatus()
     } catch {
+      status = { ready: false, reason: 'timeout' }
+    }
+    if (!status?.ready) {
+      sessionReasonRef.current = status?.reason || 'timeout'
       accessTokenRef.current = null
       setAccessToken(null)
       return null
     }
+    sessionReasonRef.current = null
+    accessTokenRef.current = null
+    setAccessToken('flow-session')
+    // I3: 세션 준비 후 projectId도 추출 (optional IPC — 없으면 무시)
+    try {
+      const pidResult = await api().flowExtractProjectId?.({ liveOnly: false })
+      // #R7-8: ref 를 동기 갱신 → 같은 call-chain 의 생성이 즉시 사용. state 도 함께(소비자 호환).
+      extractedProjectIdRef.current = pidResult?.projectId || null
+      setProjectId(pidResult?.projectId || null)
+    } catch {
+      extractedProjectIdRef.current = null
+      setProjectId(null)
+    }
+    return 'flow-session'
   }, [])
+
+  /** 마지막 세션 판정의 이유(준비되면 null). */
+  const flowSessionReason = useCallback(() => sessionReasonRef.current, [])
 
   const clearTokenCache = useCallback(() => {
     accessTokenRef.current = null
@@ -350,6 +368,9 @@ export function useFlowEngine(opts = {}) {
       const pid = effectiveProjectId()
       // 캐릭터 ref 는 자기 외형 프롬프트라 @멘션 라우팅 대상이 아니다 — 라우팅 전에 가른다.
       if (isCharacterRefCall(callOpts)) return markAuth(await generateCharacterRef(prompt, callOpts, pid))
+      // M1-10: flow.google.com 미지원 입력은 DOM 조작 전에 거부(Flow 모드 무조건).
+      const gate = flowInputGate(referenceImages, callOpts)
+      if (gate) return gate
       // #R33: 멘션 라우팅을 단일 함수로 위임(멘션없음/scene/미해결폴백/실패).
       const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
       // errorKind/unresolvedNames 를 함께 실어 보낸다 — 호출부가 문구 파싱 없이 "이 이름들을
@@ -357,6 +378,8 @@ export function useFlowEngine(opts = {}) {
       if (routing.kind === 'error') {
         return { success: false, error: routing.error, errorKind: 'unresolved-mentions', unresolvedNames: routing.unresolvedNames || [] }
       }
+      // M1-10: 해결된 @멘션(scene 라우팅)·미해결 멘션의 이미지 폴백(ref 주입)은 새 Flow 에서 미지원.
+      if (routing.kind === 'scene' || (routing.referenceImages || []).length > 0) return REFERENCES_UNSUPPORTED()
 
       if (routing.kind === 'scene') {
         const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
@@ -432,6 +455,9 @@ export function useFlowEngine(opts = {}) {
         })
         return { success: true, generationId }
       }
+      // M1-10: flow.google.com 미지원 입력은 DOM 조작 전에 거부(Flow 모드 무조건).
+      const gate = flowInputGate(referenceImages, callOpts)
+      if (gate) return gate
       // #R33: 멘션 라우팅 단일 함수 위임(generateImage 와 동일 결정).
       const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
       // errorKind/unresolvedNames 를 함께 실어 보낸다 — 호출부가 문구 파싱 없이 "이 이름들을
@@ -439,6 +465,8 @@ export function useFlowEngine(opts = {}) {
       if (routing.kind === 'error') {
         return { success: false, error: routing.error, errorKind: 'unresolved-mentions', unresolvedNames: routing.unresolvedNames || [] }
       }
+      // M1-10: 해결된 @멘션(scene 라우팅)·미해결 멘션의 이미지 폴백(ref 주입)은 새 Flow 에서 미지원.
+      if (routing.kind === 'scene' || (routing.referenceImages || []).length > 0) return REFERENCES_UNSUPPORTED()
 
       if (routing.kind === 'scene') {
         const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
@@ -561,6 +589,8 @@ export function useFlowEngine(opts = {}) {
    * 그 외 → flowUploadReference (plain 경로)
    */
   const uploadReference = useCallback(async (base64, meta = {}) => {
+    // M1-10: 새 Flow(flow.google.com) 에서 레퍼런스 업로드는 미지원 — IPC 없이 거부(uploadImage/entity 경로는 옛 호스트).
+    if (FLOW_UPLOAD_UNSUPPORTED) return REFERENCES_UNSUPPORTED()
     try {
       const pid = effectiveProjectId()
       if (meta?.type === 'character') {
@@ -598,6 +628,8 @@ export function useFlowEngine(opts = {}) {
       // #R36: Flow @멘션 T2V 는 레퍼런스 이미지 대신 컴포저 @칩(segments)으로 캐릭터 entity 를 넣는다
       //   (이미지 씬과 동일). segments 가 있으면 chip 경로 → ref 미지원 가드를 건너뛴다.
       const _segments = Array.isArray(callOpts.segments) && callOpts.segments.length > 0 ? callOpts.segments : null
+      // M1-10: 새 Flow 에서 @멘션 칩(segments) 영상은 미지원 — 제출 전 거부.
+      if (_segments) return { success: false, errorKind: 'flow-mention-chips-unsupported', error: 'flow-mention-chips-unsupported' }
       // #R17-10: Flow DOM T2V 는 reference image 주입 미지원. segments(chip) 도 아닌 실제 ref 이미지가
       //   넘어오면 잘못된(레퍼런스 없는) 영상 방지 위해 fail-fast.
       if (!_segments && Array.isArray(_referenceImages) && _referenceImages.length > 0) {
@@ -709,6 +741,14 @@ export function useFlowEngine(opts = {}) {
           mediaId: s.mediaId || null,
           error: s.error || null,
           progress: s.progress || null,
+          // M1-10: 새 경로(flow-angular)의 항목 필드 — kind·params·거부 미디어·미지 상태·폴 실패는 그대로 통과.
+          ...(s.errorKind !== undefined ? { errorKind: s.errorKind } : {}),
+          ...(s.errorParams !== undefined ? { errorParams: s.errorParams } : {}),
+          ...(s.rejectedMediaId !== undefined ? { rejectedMediaId: s.rejectedMediaId } : {}),
+          ...(s.unknownState !== undefined ? { unknownState: s.unknownState } : {}),
+          ...(s.pollError !== undefined ? { pollError: s.pollError } : {}),
+          ...(s.rpcCode !== undefined ? { rpcCode: s.rpcCode } : {}),
+          ...(s.rpcStatus !== undefined ? { rpcStatus: s.rpcStatus } : {}),
         }
       })
       // #R11-3: 개별 status 에 인증 에러가 섞여 있으면 top-level authFailed 로 올려 배치를 중단시킨다
@@ -790,6 +830,7 @@ export function useFlowEngine(opts = {}) {
     // 인증
     getAccessToken,
     clearTokenCache,
+    flowSessionReason,
     // 모델
     listModels,
     // 이미지

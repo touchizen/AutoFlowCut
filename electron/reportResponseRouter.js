@@ -14,6 +14,22 @@
  */
 import { routeBatchImageResponse } from './ipc/generationMatch.js'
 import { createOwnedCollectionTimer, isStaleResponse, isVideoSubmitEndpoint } from './flow-generation-timeout.js'
+import { routeRpcReport } from './flow-rpc-router.js'
+
+/**
+ * main 의 pending 상태 접근자 → routeReportResponse ctx. main.js 와 파이프라인 테스트가 같은 모양을 쓴다.
+ * @param {{getPendingGeneration, setPendingGeneration, pendingGenerations, getPendingVideoGeneration, setPendingVideoGeneration, now?}} state
+ */
+export function buildReportCtx(state) {
+  return {
+    getPendingGeneration: state.getPendingGeneration,
+    setPendingGeneration: state.setPendingGeneration,
+    pendingGenerations: state.pendingGenerations,
+    getPendingVideoGeneration: state.getPendingVideoGeneration,
+    setPendingVideoGeneration: state.setPendingVideoGeneration,
+    now: typeof state.now === 'function' ? state.now : () => Date.now() / 1000,
+  }
+}
 
 // #R23-2: flow:report-response 의 발신 프레임 origin 검증.
 //   sender webContents 일치만으론 부족하다 — 동일 view 가 다른(공격자) 페이지로
@@ -35,6 +51,8 @@ export function isFlowFrameOrigin(frameUrl) {
 }
 
 export function routeReportResponse(payload, ctx) {
+  // M1-4: flow.google.com batchexecute 캡처(flow-rpc-capture.js) 는 url 대신 kind 를 싣는다 — 첫 줄에서 위임.
+  if (payload && typeof payload.kind === 'string' && payload.kind.startsWith('batchexecute')) return routeRpcReport(payload, ctx)
   const { url, body, status, requestBody, reqStartedAt, genTag } = payload || {}
   if (!url) return { ok: false }
   // #R31-4: 본문이 비어도 에러 status(>=400)면 계속 처리한다 — 안 그러면 빈 본문 401/403/429/5xx 가
@@ -69,10 +87,12 @@ export function routeReportResponse(payload, ctx) {
       }
       return { ok: true, matchedByGenTag: true }
     }
+    // M1-4: 새 경로(rpc) gen 은 옛 matcher 의 후보가 아니다 — responses/promptKey 가 없어 매칭되면 터진다.
+    const legacyGens = new Map([...(ctx.pendingGenerations || [])].filter(([, g]) => !(g && g.rpc)))
     const route = routeBatchImageResponse({
       hasSyncPending: !!ctx.getPendingGeneration(),
       syncSetAt: ctx.getPendingGeneration()?.setAt,
-      pendingGenerations: ctx.pendingGenerations,
+      pendingGenerations: legacyGens,
       requestBody,
       reqStartedAt,
     })

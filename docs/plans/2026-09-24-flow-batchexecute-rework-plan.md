@@ -416,3 +416,31 @@
 
 집계(R4): 수용 10 · 수정 수용 1(V4) · 기각 0.
 
+
+## 11. 구현 메모 (M1)
+
+구현 중 플랜과 달라진 점·플랜이 정하지 않은 결정. 번호는 M1 작업 번호.
+
+| # | 작업 | 내용 | 이유 |
+|---|---|---|---|
+| 1 | 순서 | M1-5(파이프라인 통합) 를 M1-11 뒤에 작성했다. 파일·내용은 플랜대로. | 통합 테스트의 `registerFlowAPIIPC` 하네스가 angular 이미지 핸들러(M1-11)·설정 드라이버(M1-8)·DOM 파인더(M1-7)를 필요로 한다. |
+| 2 | M1-1 | `FlowRpcError` 에 `reason`('timeout'·'wiz-missing'·'xhr-error'·'execute-failed'·'no-result') 필드를 추가. 문구는 여전히 중립(`flow rpc network failure (timeout)`). | M1-9 의 세션 이유 `timeout` 을 network 계열에서 구분하려면 kind 만으로 부족. |
+| 3 | M1-1 | shape 실패의 렌더러 `error` 는 `rpc-shape:<rpcid>@<path>`(D8-9 의 reportDomFailure 표기와 동일). `FlowRpcShapeError` 가 `{rpcid, path}` 를 싣는다. | 플랜은 `rpc-shape:…` 만 적었다. 경로엔 숫자가 들어가지만(`[0][0][6][2]`) `\b401\b` 류엔 걸리지 않음을 테스트가 핀. |
+| 4 | M1-1 | `echo`(원 프롬프트 메아리)와 `seed` 는 shape 실패로 닫지 않는다(없으면 `[]`/`null`). mediaId·url·치수·(영상) 모델키만 엄격. | 메아리는 warn 전용(D4)이라 그 위치가 바뀌어도 200 응답을 버리면 안 된다. |
+| 5 | M1-3 | 캡처 주입은 `XMLHttpRequest` 가 없으면 설치 플래그를 세우지 않는다(재시도 가능). loadend 페이로드에 `rpcid` 도 실었다. | 플래그만 세우고 패치를 못 하면 핸들러의 클릭 전 프로브가 거짓 양성이 된다. |
+| 6 | M1-3 | main.js 배선 검증은 소스 정책 테스트(`flow-rpc-capture-wiring.test.js`)로 핀했다(주입 3자리·`did-navigate`/`render-process-gone` 의 `failBoundUnfinished`·`did-start-navigation` 미접촉·`buildReportCtx`). | main.js 는 Electron 부팅 없이 실행할 수 없다. |
+| 7 | M1-4 | `routeRpcSend` 의 `multi:true` 는 선택된 후보 gen 을 `flow-rpc-multi-batch` 로 닫는다(후보가 없으면 unbound). `routeReportResponse` 의 옛 URL 경로는 rpc gen 을 옛 matcher 후보에서 제외한다. | rpc gen 은 `responses`/`promptKey` 가 없어 옛 matcher 에 잡히면 `g.responses.push` 에서 터진다(테스트로 재현). |
+| 8 | M1-6 | `CONTENT_BEARING` 확장으로 걸린 기존 로그 5곳: main.js 의 URL 로그 2곳은 `urlForLog`(origin+pathname) 로, `flow:download-video-url` 은 플랜대로, `shared.js` 세션 프로브 URL·`flow-page-injection.js` i2v 리다이렉트 경로 조각은 `safe-log:` 표식(각각 앱 상수 / `/v1/` 뒤 API 경로만). | 플랜은 식별자 추가만 적었다. |
+| 9 | M1-8 | 드라이버 본체 `settingsDriverCore(doc, targets, deps)` 는 `scan`/`plan`/`sleep` 을 **값으로** 받는다(호출 지점 조합 규칙). 모드 라디오가 합성 클릭에 반응하지 않으면 그것도 `needsTrusted` 로 돌려준다. `waitFor` 는 반복 횟수 기반(50ms 단위)이라 테스트의 no-op sleep 에서 즉시 끝난다. | 자기완결 규칙 + 테스트 속도. |
+| 10 | M1-9 | `flow:session-status` 의 reason 어휘를 플랜 목록에 더해 `rpc:network:<why>`·`rpc:shape` 까지 두었다(둘 다 `flowSessionCheckFailed` 안내). `resolveDisplayError` 는 `{…}` 가 남으면 `error || null`. `not-ready` 는 캐시하지 않는다. | 미지 이유를 로그인 안내로 오분류하지 않기 위해. |
+| 11 | M1-10 | `tests/engine/engineFlow.test.jsx` 는 getAccessToken 블록 외에도 **해결된 @멘션 scene 라우팅·미해결 멘션 이미지 폴백·staleMention·uploadReference 라우팅·T2V segments·무효 mediaId 필터** 스위트를 게이트 계약(`flow-references-unsupported`/`flow-mention-chips-unsupported`)으로 교체·삭제했다. 미해결 멘션(`unresolved-mentions`) 계약은 유지. | 그 스위트들은 플랜 D3 가 M1 에서 미지원으로 정한 동작을 단언했다. |
+| 12 | M1-10 | 게이트는 `flowInputGate(referenceImages, callOpts)`(업스케일 → matchedRefCount → referenceImages 순) + 라우팅 뒤 `scene`/주입 ref 검사. `tryUpscaleImage` 는 `flow-feature-unsupported` 만 throw(`errorParams:{}` 동봉), 그 외 실패는 기존대로 원본. `useReferenceGeneration` 배치 백스톱은 후처리 예외 항목을 `succeeded`(settled) 로 취급해 큐에서 뺀다. | 플랜 D8-2 그대로, 구현 위치만 명시. |
+| 13 | M1-10 | `useReferenceGeneration` 배치 테스트는 scene 타입 ref 로 `submitGeneration` 경로를 검증한다. | Flow 모드의 캐릭터 ref 배치는 단건 경로(`generateImage`)를 재사용한다(`_executeBatchRefs`). |
+| 14 | M1-11 | 제출 가능 프로브 실패는 기존 kind `generate-button-unavailable`, 클릭 실패는 `generate-button-click-failed` 를 재사용(둘 다 로케일 있음). `flow:clear-generations` 로 settle 된 대기자는 `flow-generation-cleared`(로케일 키 없음 — 배치 종료·중지 시 내부 정리용, 표시되면 `error` 문구 그대로). `[Flow API] [Angular] image WxH ratio=ok` 로그에 `count=<n>` 을 덧붙였다(§4 접두 그대로). | 새 kind 를 늘리지 않으려고. |
+| 15 | M1-11 | 편집기 주입은 `SET_EDITOR_TEXT_JS`(포커스 → 전체 선택 → delete → `execCommand('insertText')`) 뒤 `READ_EDITOR_TEXT_JS` 재판독을 `normalizePrompt` 로 비교한다. 편집기 캐럿은 `FIND_PROMPT_EDITOR_JS` 신뢰 클릭. | ProseMirror 는 contenteditable 네이티브 입력을 DOMObserver 로 받는다 — 실기 게이트에서 `text-injection-failed` 가 나면 이 자리. |
+| 16 | M1-11/12 | 옛 `flow:generate-image` 경로를 검증하던 `flowApiComposerReadiness`(죽은 페이지의 readiness 문구) 와 `flowApiDomainGate`(Flow 밖이면 네비게이트) 의 두 케이스를 새 계약(`flow-session-missing`+`authFailed`, 네비게이트 없음, 에이전트 토글 미접촉)으로 고쳤다. | Flow 모드는 무조건 angular 디스패치(D3). |
+| 17 | M1-12 | `generate-video-t2v`·`check-video-status` 는 Flow 모드에서 angular 로 가되 M1 은 fail-closed 스텁(`flow-feature-unsupported:generate-video-t2v` / `:check-video-status`). video.js 는 자기 `createFlowAngular(deps)` 를 만든다. `isLegacyFlowUrl` 은 angular 세션 게이트의 경고 로그에 쓴다. | M2 가 본문으로 교체. 옛 `'No token'` 무의미 실패·20분 폴링 방지. |
+| 18 | M1-12 | 옛 핸들러 **만** 검증하던 스위트 5개(`flowGenerateImageAgentScope`·`flowModeSwitchAbort`·`mentionFailureRouting`·`generateSceneAspect`·`generateCharacterAspect`, 56 테스트)는 `describe.skip` + 사유 주석으로 남겼다. | 그 코드는 Flow 모드에서 도달 불가(D3 "후속 정리 대상"). 옛 핸들러 본문을 지우는 후속 정리에서 함께 삭제. |
+| 19 | M1-13 | 렌더러 통합은 파일 둘: `useAutomation.flowAngular.test.jsx`(게이트 재료, finalize 모킹) · `useAutomation.flowAngularPipeline.test.jsx`(실제 `useFlowEngine`+`useAutomation`+`imageFinalize`) — 모듈 모킹이 충돌해서. 페이싱 시나리오는 3씬 · 60s(설정 상한) · 제출 IPC 1s(가짜 시계) 로 첫 씬 재확인을 121s 에 놓아 옛 순서가 `Generation timeout` 을 내는 것을 재현했다(60s 정확히면 120.0s 라 `>` 에 안 걸려 옛 순서도 통과 — 실기에선 await 오버헤드가 그 몇 ms 를 만든다). | 플랜의 "2씬 + 60s" 는 재현이 안 됐다. |
+| 20 | M1-14a | 모듈별(`flow-rpc-capture`·`flow-rpc-client`·`flow-composer-dom`·`flow-agent-toggle`·`flow-composer-settings`·`ipc/flow-angular`) esbuild `--minify` 번들. main.js 통째 번들은 electron import 때문에 불가. | — |
+| 21 | 로그 | 세션 판정·설정·캡처·라우터·다운로드 로그는 §4 의 문구를 접두로 유지하되 뒤에 숫자 필드를 덧붙인 곳이 있다(`ratio=ok count=1`, `bound=<8>`, `bytes=<n>`). | 진단 편의. 내용(프롬프트·URL·토큰) 없음은 `noUserContentInLogs` 가 지킨다. |

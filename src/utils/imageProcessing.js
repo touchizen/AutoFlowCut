@@ -21,8 +21,14 @@ export async function tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix = '
       console.log(logPrefix, 'Upscale success')
       return upResult.data
     }
+    // M1-10 (D8-2): 새 Flow(flow.google.com) 는 업스케일을 지원하지 않는다 — "원본 사용"으로 삼키면 사용자가 2k 를
+    //   켜 둔 채 조용히 원본을 받는다. 그 kind 만은 throw 로 올려 항목이 flow-upscale-unsupported 로 실패하게 한다.
+    if (upResult.errorKind === 'flow-feature-unsupported') {
+      throw Object.assign(new Error('flow-upscale-unsupported'), { errorKind: 'flow-upscale-unsupported', errorParams: {} })
+    }
     console.warn(logPrefix, 'Upscale failed, using original:', upResult.error)
   } catch (e) {
+    if (e?.errorKind === 'flow-upscale-unsupported') throw e
     console.warn(logPrefix, 'Upscale error, using original:', e.message)
   }
   return null

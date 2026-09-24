@@ -154,3 +154,56 @@ describe('resolveDisplayError', () => {
     expect(resolveDisplayError(T_EN, '', 'free form')).toBe('free form')
   })
 })
+
+// M1-9: errorParams — kind 별 고정 params 표(플랜 §3 공통 규칙). 번역문에 {…} 가 남으면 free-form error 로 폴백.
+describe('resolveDisplayError — errorParams (M1-9)', () => {
+  const tParams = (key, params = {}) => {
+    const table = {
+      'errorSection.kind.flow-resolution-not-offered': 'Flow does not offer {requested}.',
+      'errorSection.kind.flow-image-model-mismatch': 'requested {requested}, panel {panel}',
+      'errorSection.kind.flow-rpc-error': 'Flow request failed.',
+    }
+    const v = table[key]
+    if (!v) return key
+    return v.replace(/\{(\w+)\}/g, (m, k) => (params[k] !== undefined ? params[k] : m))
+  }
+
+  it('params 를 t(key, params) 로 넘겨 번역문에 값이 들어간다', () => {
+    expect(resolveDisplayError(tParams, 'flow-resolution-not-offered', 'raw', { requested: '1080p' })).toBe('Flow does not offer 1080p.')
+    expect(resolveDisplayError(tParams, 'flow-image-model-mismatch', 'raw', { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' })).toBe('requested Nano Banana Pro, panel Nano Banana 2')
+  })
+
+  it('{…} 가 남으면(params 누락) free-form error 로 폴백, error 도 없으면 null', () => {
+    expect(resolveDisplayError(tParams, 'flow-resolution-not-offered', 'raw', {})).toBe('raw')
+    expect(resolveDisplayError(tParams, 'flow-resolution-not-offered', 'raw')).toBe('raw')
+    expect(resolveDisplayError(tParams, 'flow-resolution-not-offered', null, {})).toBeNull()
+  })
+
+  it('params 가 필요 없는 kind 는 4번째 인자와 무관', () => {
+    expect(resolveDisplayError(tParams, 'flow-rpc-error', 'raw', undefined)).toBe('Flow request failed.')
+    expect(resolveDisplayError(tParams, 'flow-rpc-error', 'raw', { requested: 'x' })).toBe('Flow request failed.')
+  })
+
+  it('실제 로케일(en/ko)에서 kind 별 params 표대로 값이 들어가고 플레이스홀더가 남지 않는다', () => {
+    const mk = (locale) => (key, params = {}) => {
+      const v = key.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), locale)
+      if (typeof v !== 'string') return key
+      return v.replace(/\{(\w+)\}/g, (m, k) => (params[k] !== undefined ? params[k] : m))
+    }
+    for (const locale of [en, ko]) {
+      const t = mk(locale)
+      const a = resolveDisplayError(t, 'flow-resolution-not-offered', 'raw', { requested: '1080p' })
+      expect(a).toContain('1080p'); expect(a).not.toMatch(/\{\w+\}/)
+      const b = resolveDisplayError(t, 'flow-image-model-mismatch', 'raw', { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' })
+      expect(b).toContain('Nano Banana Pro'); expect(b).toContain('Nano Banana 2'); expect(b).not.toMatch(/\{\w+\}/)
+      const c = resolveDisplayError(t, 'flow-video-settings-mismatch', 'raw', { expected: 'veo_3_1_t2v_fast', actual: 'abra_t2v_6s' })
+      expect(c).toContain('veo_3_1_t2v_fast'); expect(c).toContain('abra_t2v_6s'); expect(c).not.toMatch(/\{\w+\}/)
+      const d = resolveDisplayError(t, 'flow-batch-halted', 'raw', { cause: 'flow-video-settings-mismatch' })
+      expect(d).toContain('flow-video-settings-mismatch'); expect(d).not.toMatch(/\{\w+\}/)
+      for (const kind of ['flow-session-missing', 'flow-settings-not-applied', 'flow-upscale-unsupported', 'flow-aspect-mismatch', 'flow-video-count-mismatch', 'flow-video-fetch-failed', 'flow-submit-lost', 'flow-submit-not-sent', 'flow-capture-not-installed', 'flow-references-unsupported', 'flow-mention-chips-unsupported', 'flow-agent-mode-unsupported', 'flow-feature-unsupported', 'flow-rpc-error', 'flow-download-error']) {
+        const m = resolveDisplayError(t, kind, 'raw', {})
+        expect(m, kind).not.toBe('raw'); expect(m, kind).not.toMatch(/\{\w+\}/)
+      }
+    }
+  })
+})

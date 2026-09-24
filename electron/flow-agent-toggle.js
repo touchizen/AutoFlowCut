@@ -34,7 +34,12 @@ export function isToggleOn(el) {
  * control; ambiguity fails closed.
  */
 export function findAgentToggle(doc) {
-  const editor = doc.querySelector("[data-slate-editor='true']")
+  // flow.google.com(Angular, 2026-09): 컴포저의 에이전트 칩은 클래스가 안정적이다 — 정확히 하나일 때만 믿는다.
+  const chips = Array.from(doc.querySelectorAll('button.agent-mode-chip[aria-pressed]'))
+  if (chips.length === 1) return chips[0]
+  if (chips.length > 1) return null
+  // 옛 Slate 컴포저(labs.google) — 편집기 조상에서 상태 컨트롤을 찾는다.
+  const editor = doc.querySelector("[data-slate-editor='true']") || doc.querySelector('div.ProseMirror[contenteditable="true"]')
   if (!editor) return null
   const STATE_SELECTOR = 'button[aria-pressed], [role="switch"][aria-checked], [role="checkbox"][aria-checked]'
   let candidates = []
@@ -71,7 +76,7 @@ export const AGENT_TOGGLE_SELECTOR = `(function() {
 export function scanAgentToggleCandidates(doc) {
   const win = doc.defaultView
   const STATE_SELECTOR = 'button[aria-pressed], [role="switch"][aria-checked], [role="checkbox"][aria-checked]'
-  const editor = doc.querySelector("[data-slate-editor='true']")
+  const editor = doc.querySelector("[data-slate-editor='true']") || doc.querySelector('div.ProseMirror[contenteditable="true"]')
   let scoped = []
   if (editor) {
     for (let scope = editor.parentElement; scope && scope !== doc.body && scope !== doc.documentElement; scope = scope.parentElement) {
@@ -117,6 +122,7 @@ export function scanAgentToggleCandidates(doc) {
       // 컴포즈 에디터가 떠 있는지 — 없으면 페이지가 아직 안 그려진 것(하이드레이션/뷰포트 문제)이고,
       // 있는데도 토글이 없으면 Flow 마크업이 바뀐 것이다. 이 한 줄이 두 원인을 가른다.
       hasComposeEditor: !!(doc.querySelector("[data-slate-editor='true']")
+        || doc.querySelector('div.ProseMirror[contenteditable="true"]')
         || doc.querySelector("div[role='textbox'][contenteditable='true']")),
     },
   }

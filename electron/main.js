@@ -44,10 +44,13 @@ import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-pa
 import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
-import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
+import { routeReportResponse, isFlowFrameOrigin, buildReportCtx } from './reportResponseRouter.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
+import { urlForLog } from './flowUrl.js'
 import { createBearerStore, bearerFromHeaders, isFlowApiRequest } from './flow-bearer-capture.js'
 import { FLOW_XHR_CAPTURE_INJECTION } from './flow-xhr-capture.js'
+import { FLOW_RPC_CAPTURE_INJECTION } from './flow-rpc-capture.js'
+import { failBoundUnfinished } from './flow-rpc-router.js'
 import { isNetTraceOn, netTraceFilePath, decodeUploadData, buildTraceLine, summarizeTraceEntry } from './flow-net-trace.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
@@ -152,6 +155,14 @@ function appendNetTrace(entry) {
 function injectNetTrace(view) {
   if (!NET_TRACE_ON || !view || view.webContents.isDestroyed()) return
   view.webContents.executeJavaScript(NET_TRACE_INJECTION).catch(() => {})
+}
+// flow.google.com 제출 RPC(ogiZ0b/YhhmEf) 캡처 — 프로덕션, 항상 켜짐. 멱등(문서 플래그). 페이지 스크립트가
+//   첫 XHR 을 쏘기 전에 설치돼야 해서 dom-ready 에서도 주입한다. 핸들러는 클릭 전에 설치 플래그를 프로브한다.
+function injectRpcCapture(view) {
+  if (!view || view.webContents.isDestroyed()) return
+  view.webContents.executeJavaScript(FLOW_RPC_CAPTURE_INJECTION).catch((e) => {
+    console.warn('[Flow RPC] capture injection failed:', e?.message)
+  })
 }
 const BASE_API_URL = 'https://aisandbox-pa.googleapis.com/v1'
 const GENERATE_URL = `${BASE_API_URL}/flowMedia:batchGenerateImages`
@@ -364,6 +375,10 @@ function makeFlowView() {
 
   // 지역 제한 조기 감지 (did-navigate는 did-finish-load보다 먼저 발생)
   view.webContents.on('did-navigate', (_, url) => {
+    // 문서 커밋 — 이전 문서에 바인딩된 미완료 gen 의 응답은 영영 오지 않는다 → flow-submit-lost 로 닫는다.
+    //   (did-start-navigation 은 취소될 수 있어 여기서만.) 미바인딩 armed gen 은 새 문서의 send 를 기다린다.
+    const lost = failBoundUnfinished(pendingGenerations)
+    if (lost) console.warn('[Flow RPC] did-navigate: bound unfinished generations lost =', lost)
     if (url.includes('unsupported-country')) {
       console.log('[Flow] Region unavailable detected early (did-navigate)')
       const win = mainWindow
@@ -384,7 +399,8 @@ function makeFlowView() {
 
   // SPA pushState/replaceState 내비게이션 캡처
   view.webContents.on('did-navigate-in-page', (_, url) => {
-    console.log('[Flow] did-navigate-in-page:', url)
+    const where = urlForLog(url)   // 쿼리 없이 — 로그인 리다이렉트 쿼리는 계정 힌트를 싣는다
+    console.log('[Flow] did-navigate-in-page:', where)
     const win = mainWindow
     if (win) win.webContents.send('flow-status', { loaded: true, url, loggedIn: url.includes('labs.google/fx') })
     const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
@@ -398,11 +414,21 @@ function makeFlowView() {
     // Re-inject fetch monkey-patch on SPA navigation (guard flag ensures idempotency)
     view.webContents.executeJavaScript(FLOW_PAGE_INJECTION).catch(() => {})
     injectNetTrace(view)
+    injectRpcCapture(view)
   })
 
   // AUTOFLOWCUT_NET_TRACE: 페이지 스크립트가 첫 XHR 을 쏘기 전에 잡아야 초기 RPC(프로젝트 데이터·미디어
   //   목록)까지 보인다 — did-finish-load 는 늦다. 주입은 idempotent.
-  view.webContents.on('dom-ready', () => injectNetTrace(view))
+  view.webContents.on('dom-ready', () => {
+    injectNetTrace(view)
+    injectRpcCapture(view)
+  })
+
+  // 렌더러 크래시 — 이 문서의 XHR 은 끝났다. 바인딩된 미완료 gen 을 flow-submit-lost 로 닫는다(사유는 상태어만).
+  view.webContents.on('render-process-gone', (_e, details) => {
+    const lost = failBoundUnfinished(pendingGenerations)
+    console.warn('[Flow RPC] render-process-gone reason=', details?.reason, 'lost =', lost)
+  })
 
   // Flow 페이지가 스스로 보내는 aisandbox 요청의 Bearer 를 잡아둔다 — flow.google.com 에는 세션 API 가
   //   없어(2026-09-23) readFlowSession 이 이 값을 세션 대용으로 쓴다. 페이지 로드 시점 요청까지 보인다.
@@ -474,7 +500,8 @@ function makeFlowView() {
   // ─── did-finish-load bootstrap: injection / landing / consent / token / startup-gate / enter-tool ───
   view.webContents.on('did-finish-load', async () => {
     const url = view.webContents.getURL()
-    console.log('[Flow] did-finish-load:', url)
+    const where = urlForLog(url)   // 쿼리 없이
+    console.log('[Flow] did-finish-load:', where)
     if (!url || url === 'about:blank') return
 
     // #R23-3: Flow 부트스트랩은 여러 await 를 거친다. 그 사이 사용자가 API 모드로 전환하면
@@ -508,6 +535,7 @@ function makeFlowView() {
       console.warn('[Flow] fetch injection failed:', e.message)
     }
     injectNetTrace(view)
+    injectRpcCapture(view)
 
     try {
       await view.webContents.executeJavaScript(FLOW_SETTINGS_DUMPER)
@@ -905,13 +933,13 @@ ipcMain.handle('flow:report-response', (event, payload) => {
   // #R33: 페이지가 보낸 생성 API 요청의 origin 을 캡처해 직접 호출 호스트를 region 에 맞춘다.
   const _apiOrigin = captureApiOrigin(payload?.url)
   if (_apiOrigin) capturedApiOrigin = _apiOrigin
-  return routeReportResponse(payload, {
+  return routeReportResponse(payload, buildReportCtx({
     getPendingGeneration: () => pendingGeneration,
     setPendingGeneration: (v) => { pendingGeneration = v },
     pendingGenerations,
     getPendingVideoGeneration: () => pendingVideoGeneration,
     setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
-  })
+  }))
 })
 
 // ─── flow:report-xhr — 진단 트레이스(AUTOFLOWCUT_NET_TRACE=1) 페이지 → main ───

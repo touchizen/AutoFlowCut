@@ -1,0 +1,382 @@
+// @vitest-environment node
+//
+// M1-11 — flow.google.com(Angular) 이미지 핸들러. 하네스는 **실제 createSharedHelpers(ctx)**(onDomFailure 스파이) 를
+// deps 에 스프레드한다(main.js 와 동일) — reportDomFailure 는 그 객체에서 온다. trustedClickOnFlowView 만 가짜로
+// 바꿔 제출 클릭이 "페이지의 send/loadend" 를 라우터로 흘리게 한다(실제 주입 문자열은 M1-5 파이프라인이 돈다).
+//   순서: 세션(URL·WIZ) → 에이전트 모드/레퍼런스 거부 → 프로젝트 → ensureAgentOff → 캡처 플래그 → 설정 → 편집기 → 제출 가능 → arm → 클릭
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
+import { createSharedHelpers } from '../../../electron/ipc/shared.js'
+import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
+import { failBoundUnfinished } from '../../../electron/flow-rpc-router.js'
+import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
+import { sample, samplePayload, respBodyWithPayload, respBodyFailure } from '../../fixtures/flow-batchexecute-samples.js'
+
+const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
+const FLOW_URL_OK = `https://flow.google.com/project/${PROJECT}`
+const PROMPT = '궁정안에 있는 왕'
+const DOC = 'f'.repeat(32)
+const NOW_S = 1790240102.5
+
+function makeIpcMain() {
+  const handlers = new Map()
+  return { handle: (c, fn) => handlers.set(c, fn), invoke: (c, p) => handlers.get(c)({}, p) }
+}
+
+/**
+ * @param {object} o
+ *   url · wiz · agent(프로브 결과 | 순서 배열 | 'throw') · captureFlag(프로브 결과 순서) · settings(드라이버 결과)
+ *   · summary · editorText(읽기 결과, 기본 = 주입한 프롬프트) · submitEnabled · flowAgentOn · mode · fetch(sessionFetch 응답)
+ */
+function harness(o = {}) {
+  const url = o.url ?? FLOW_URL_OK
+  const trace = []
+  const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
+  const agentSeq = Array.isArray(o.agent) ? [...o.agent] : null
+  let injectedPrompt = null
+  const executeJavaScript = vi.fn(async (script) => {
+    const s = String(script)
+    // 마커 있는 스크립트 먼저 — 설정 드라이버도 `const scan =` 을 품고 있어 진단 프로브 검사와 겹친다.
+    if (s.includes('__af_settings_driver__')) { trace.push('settings-driver'); return o.settings ?? { ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'already(crop_16_9)', count: 'already' } } }
+    if (s.includes('__af_settings_panel_open__')) return false
+    if (s.includes('__af_set_editor_text__')) {
+      trace.push('set-text')
+      const m = s.match(/const text = (".*?");/)
+      injectedPrompt = m ? JSON.parse(m[1]) : null
+      return { ok: true }
+    }
+    if (s.includes('WIZ_global_data.SNlM0e')) { trace.push('wiz'); return o.wiz ?? true }
+    if (s.includes('elementFromPoint')) return { ok: true, why: 'ok' }
+    if (s.includes('const scan =')) return { candidates: [], context: { lang: 'ko' } }
+    if (s.includes('const find =')) {
+      trace.push('agent-probe')
+      if (o.agent === 'throw') throw new Error('Script failed to execute')
+      if (agentSeq) return agentSeq.length > 1 ? agentSeq.shift() : agentSeq[0]
+      return o.agent ?? { found: true, on: false }
+    }
+    if (s.includes('batchexecute capture installed')) { trace.push('capture-inject'); return undefined }
+    if (s.startsWith('!!window.__autoflowcut_rpc_capture__')) { trace.push('capture-probe'); return captureFlags.length > 1 ? captureFlags.shift() : captureFlags[0] }
+    if (s.includes('settings-summary')) { trace.push('summary'); return o.summary ?? { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_16_9'] } }
+    if (s.includes("querySelectorAll('p')")) { trace.push('read-text'); return o.editorText !== undefined ? o.editorText : injectedPrompt }
+    if (s.includes('aria-disabled')) { trace.push('submit-enabled'); return o.submitEnabled ?? true }
+    if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
+    if (s.includes('getMediaUrlRedirect')) { trace.push('dom-image-probe'); return [] }
+    return null
+  })
+  const flowView = {
+    getBounds: () => ({ x: 0, y: 0, width: 957, height: 1022 }),
+    setBounds: vi.fn(),
+    webContents: { executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null },
+  }
+  const onDomFailure = vi.fn(async () => {})
+  const helpers = createSharedHelpers({
+    getFlowView: () => flowView,
+    getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }), getBounds: () => ({ x: 0, y: 0 }) }),
+    constants: { SESSION_URL: '', MEDIA_REDIRECT_URL: '', RECAPTCHA_SITE_KEY: '', RECAPTCHA_ACTION: '' },
+    onDomFailure,
+  })
+  const pendingGenerations = new Map()
+  const ctx = buildReportCtx({
+    getPendingGeneration: () => null, setPendingGeneration: () => {}, pendingGenerations,
+    getPendingVideoGeneration: () => null, setPendingVideoGeneration: () => {},
+  })
+  const page = {
+    send: (over = {}) => routeReportResponse({ kind: 'batchexecute-send', doc: DOC, rpcid: 'ogiZ0b', rpcids: ['ogiZ0b'], seq: 1, prompts: [PROMPT], sentAt: Date.now() / 1000, ...over }, ctx),
+    loadend: (over = {}) => routeReportResponse({ kind: 'batchexecute', doc: DOC, rpcid: 'ogiZ0b', seq: 1, status: 200, responseText: sample('ogiZ0b').respBody, endedAt: Date.now() / 1000, ...over }, ctx),
+  }
+  const onSubmit = o.onSubmit === undefined ? (() => { page.send(); page.loadend() }) : o.onSubmit
+  const trustedClickOnFlowView = vi.fn(async (_sel, opts) => {
+    trace.push('click:' + (opts?.step || '?'))
+    if (opts?.step === 'compose-submit') { trace.push('armed:' + pendingGenerations.size); if (onSubmit) await onSubmit(page, pendingGenerations) }
+    return { success: o.clickSuccess ?? true }
+  })
+  const sessionFetch = o.fetch || vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, headers: { get: () => 'image/png' } }))
+  const legacy = {
+    configureFlowMode: vi.fn(async () => ({ success: true })), setFlowPageInject: vi.fn(async () => ({ success: true })), clearFlowPageInject: vi.fn(async () => {}),
+    applyAgentDefaults: vi.fn(async () => ({ success: true })), getRecaptchaToken: vi.fn(async () => null),
+  }
+  const ipcMain = makeIpcMain()
+  registerFlowAPIIPC(ipcMain, {
+    getFlowView: () => flowView,
+    getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }) }),
+    getCurrentMode: () => o.mode ?? 'flow',
+    getFlowAgentOn: () => !!o.flowAgentOn,
+    parseFlowResponse: () => null, getEnterToolClicked: () => true, setEnterToolClicked: vi.fn(),
+    setCapturedProjectId: vi.fn(), getCapturedProjectId: () => null,
+    pendingGenerations, collectedMediaIds: new Set(),
+    getPendingGeneration: () => null, setPendingGeneration: vi.fn(),
+    flowPageFetch: vi.fn(), extractMediaIds: () => [], extractFifeUrls: () => [], extractBase64Images: () => [],
+    fetchMediaAsBase64: vi.fn(), listAgentModels: vi.fn(), selectFlowModeTab: vi.fn(),
+    getApiBase: () => 'https://labs.google/fx/api/trpc', FLOW_URL: 'https://labs.google/fx/tools/flow',
+    ...legacy,
+    ...helpers,                 // 실제 헬퍼(ensureAgentOff · ensureOnProjectComposer · reportDomFailure …)
+    trustedClickOnFlowView,     // 클릭만 가짜 — 제출 클릭이 페이지 이벤트를 라우터로 흘린다
+    sessionFetch,
+  })
+  const generate = (p = {}) => ipcMain.invoke('flow:generate-image', { prompt: PROMPT, aspectRatio: '16:9', model: 'Nano Banana 2', projectId: PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p })
+  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView }
+}
+
+/** 가짜 시계에서 핸들러 promise 를 굴린다(ensureAgentOff 의 350ms sleep 등). */
+async function settle(promise, maxMs = 5000) {
+  let done = false
+  const p = promise.then((v) => { done = true; return v })
+  for (let t = 0; t < maxMs && !done; t += 100) await vi.advanceTimersByTimeAsync(100)
+  return p
+}
+
+let logSpy, warnSpy, errSpy
+beforeEach(() => {
+  vi.useFakeTimers({ now: NOW_S * 1000 })
+  logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+})
+afterEach(() => { vi.useRealTimers(); logSpy.mockRestore(); warnSpy.mockRestore(); errSpy.mockRestore() })
+const logged = () => [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errSpy.mock.calls].map((c) => c.map(String).join(' ')).join('\n')
+const idx = (arr, tag) => arr.findIndex((x) => x === tag || x.startsWith(tag))
+
+describe('flow:generate-image (angular) — 동기', () => {
+  it('성공: images[0] {base64, mediaId, width 1376, height 768, seed}; sessionFetch 는 헤더 없이 1회; 순서 단언; 로그 형식', async () => {
+    const h = harness()
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: true, images: [{ base64: 'data:image/png;base64,AQID', mediaId: '<uuid#5>', width: 1376, height: 768, seed: 1687588041 }] })
+    expect(h.sessionFetch).toHaveBeenCalledTimes(1)
+    expect(h.sessionFetch.mock.calls[0]).toEqual([expect.stringMatching(/^https:\/\/flow-content\.google\/image\/<uuid#5>\?/)])
+    const t = h.trace
+    expect(idx(t, 'agent-probe')).toBeGreaterThanOrEqual(0)
+    expect(idx(t, 'agent-probe')).toBeLessThan(idx(t, 'capture-probe'))
+    expect(idx(t, 'capture-probe')).toBeLessThan(idx(t, 'settings-driver'))
+    expect(idx(t, 'settings-driver')).toBeLessThan(idx(t, 'set-text'))
+    expect(idx(t, 'set-text')).toBeLessThan(idx(t, 'read-text'))
+    expect(idx(t, 'read-text')).toBeLessThan(idx(t, 'submit-enabled'))
+    expect(idx(t, 'submit-enabled')).toBeLessThan(idx(t, 'click:compose-submit'))
+    expect(t).toContain('armed:1')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/\[Flow API\] \[Angular\] image 1376x768 ratio=ok/)
+    // 마스킹 픽스처의 <uuid#5> 는 '#' 때문에 URL 조각이 된다 — 호스트와 바이트 수, 그리고 서명이 없음을 본다.
+    expect(logged()).toMatch(/\[Flow API\] \[AsyncCollect\] download host=flow-content\.google media=\S{1,8} bytes=3/)
+    expect(logged()).not.toContain(PROMPT)
+    expect(logged()).not.toContain('Signature')
+    for (const fn of Object.values(h.legacy)) expect(fn).not.toHaveBeenCalled()
+    expect(h.trace).not.toContain('dom-image-probe')
+  })
+
+  it('편집기 텍스트가 프롬프트와 다르면 text-injection-failed — 클릭 없음', async () => {
+    const h = harness({ editorText: '다른 텍스트' })
+    const r = await settle(h.generate())
+    expect(r).toMatchObject({ success: false, errorKind: 'text-injection-failed' })
+    expect(h.trace).not.toContain('click:compose-submit')
+  })
+
+  it('제출 버튼이 비활성이면 generate-button-unavailable — 클릭 없음', async () => {
+    const h = harness({ submitEnabled: false })
+    const r = await settle(h.generate())
+    expect(r).toMatchObject({ success: false, errorKind: 'generate-button-unavailable' })
+    expect(h.trace).not.toContain('click:compose-submit')
+  })
+
+  it('치수 불일치(9:16 요청, 1376x768 응답) → flow-aspect-mismatch, sessionFetch 미호출', async () => {
+    const h = harness({ summary: { text: 'x', ligatures: ['crop_9_16'] } })
+    const r = await settle(h.generate({ aspectRatio: '9:16' }))
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-aspect-mismatch', error: 'flow-aspect-mismatch' })
+    expect(h.sessionFetch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['실패 프레임 code 8', { responseText: respBodyFailure('ogiZ0b', 8) }, { error: 'RESOURCE_EXHAUSTED', errorKind: 'flow-rpc-error', rpcCode: 8 }, false],
+    ['실패 프레임 code 7', { responseText: respBodyFailure('ogiZ0b', 7) }, { error: 'flow-rpc-error', rpcCode: 7 }, false],
+    ['실패 프레임 code 16', { responseText: respBodyFailure('ogiZ0b', 16) }, { error: 'flow-rpc-error', rpcCode: 16, authFailed: true }, true],
+    ['HTTP 403', { status: 403, responseText: 'Forbidden' }, { error: 'flow-rpc-error', rpcStatus: 403 }, false],
+    ['HTTP 401', { status: 401, responseText: '' }, { error: 'flow-rpc-error', rpcStatus: 401, authFailed: true }, true],
+  ])('%s → 매핑 결과, authFailed 는 401/16 만', async (_l, loadendOver, expected, auth) => {
+    const h = harness({ onSubmit: (page) => { page.send(); page.loadend(loadendOver) } })
+    const r = await settle(h.generate())
+    expect(r.success).toBe(false)
+    expect(r).toMatchObject(expected)
+    expect(!!r.authFailed).toBe(auth)
+    expect(isFlowAuthError(r)).toBe(false)
+    expect(!!markFlowAuthFailure(r).authFailed).toBe(auth)
+    expect(h.sessionFetch).not.toHaveBeenCalled()
+  })
+
+  it('다운로드 403 → {error:"flow-download-error", httpStatus:403}, authFailed 없음', async () => {
+    const fetch = vi.fn(async () => ({ ok: false, status: 403, arrayBuffer: async () => new ArrayBuffer(0), headers: { get: () => null } }))
+    const h = harness({ fetch })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-download-error', error: 'flow-download-error', httpStatus: 403 })
+    expect(isFlowAuthError(r)).toBe(false)
+  })
+
+  it('파서 shape 실패 → rpc-shape 에러 + onDomFailure(내용 없음)', async () => {
+    const p = samplePayload('ogiZ0b'); p[0][0][6].splice(2, 1)
+    const h = harness({ onSubmit: (page) => { page.send(); page.loadend({ responseText: respBodyWithPayload('ogiZ0b', p) }) } })
+    const r = await settle(h.generate())
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-rpc-error', error: 'rpc-shape:ogiZ0b@[0][0][6][2]' })
+    expect(h.onDomFailure).toHaveBeenCalled()
+    const call = h.onDomFailure.mock.calls.find((c) => String(c[0]).startsWith('rpc-shape'))
+    expect(call[0]).toBe('rpc-shape:ogiZ0b@[0][0][6][2]')
+    expect(JSON.stringify(call[1])).not.toContain(PROMPT)
+  })
+
+  it('clear-generations 가 대기 중인 동기 생성을 flow-generation-cleared 로 settle 한다', async () => {
+    const h = harness({ onSubmit: null })   // 페이지가 send 만 하고 응답이 없다고 가정 — 아무것도 안 함
+    const p = h.generate()
+    for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(100)   // ensureAgentOff 의 350ms 등을 지나 arm 까지
+    expect(h.pendingGenerations.size).toBe(1)
+    await h.ipcMain.invoke('flow:clear-generations', {})
+    const r = await settle(p)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-generation-cleared' })
+    expect(h.pendingGenerations.size).toBe(0)
+  })
+})
+
+describe('flow:generate-image (angular) — 진입 거부(DOM 미접근)', () => {
+  it('accounts.google.com → flow-session-missing + authFailed, 페이지 스크립트 미실행', async () => {
+    const h = harness({ url: 'https://accounts.google.com/v3/signin/identifier?continue=x' })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true })
+    expect(h.executeJavaScript).not.toHaveBeenCalled()
+    expect(h.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
+  it('옛 도메인(labs.google/fx) 은 legacy 경고 로그 + WIZ 판정(없으면 wiz-missing)', async () => {
+    const h = harness({ url: 'https://labs.google/fx/tools/flow/project/x', wiz: false })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'wiz-missing', authFailed: true })
+    expect(logged()).toContain('legacy labs.google URL')
+    expect(h.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
+  it('WIZ 없음 → flow-session-missing(wiz-missing) + authFailed, 클릭 없음', async () => {
+    const h = harness({ wiz: false })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'wiz-missing', authFailed: true })
+    expect(h.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
+  it('flowAgentOn → flow-agent-mode-unsupported (에이전트 프로브·클릭 없음)', async () => {
+    const h = harness({ flowAgentOn: true })
+    const r = await settle(h.generate())
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-agent-mode-unsupported' })
+    expect(h.trace).not.toContain('agent-probe')
+    expect(h.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
+  it('referenceImages 비어있지 않음 → flow-references-unsupported (이중 방어)', async () => {
+    const h = harness()
+    const r = await settle(h.generate({ referenceImages: [{ mediaId: 'm' }] }))
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-references-unsupported' })
+    expect(h.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
+  it('API 모드 → Flow inactive (뷰 미접근)', async () => {
+    const h = harness({ mode: 'api' })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, error: 'Flow inactive (API mode)' })
+    expect(h.executeJavaScript).not.toHaveBeenCalled()
+  })
+})
+
+describe('flow:generate-image (angular) — 에이전트·캡처·설정', () => {
+  it.each([
+    ['still ON', [{ found: true, on: true }, { found: true, on: true }]],
+    ['not_found', { found: false }],
+    ['probe throws', 'throw'],
+  ])('ensureAgentOff 실패(%s) → flow-agent-off-failed, 제출 클릭 없음', async (_l, agent) => {
+    const h = harness({ agent })
+    const r = await settle(h.generate(), 20000)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-agent-off-failed' })
+    expect(h.trace).not.toContain('click:compose-submit')
+  })
+
+  it('칩 ON → trusted click 후 재프로브 OFF → 진행', async () => {
+    const h = harness({ agent: [{ found: true, on: true }, { found: true, on: false }] })
+    const r = await settle(h.generate())
+    expect(r.success).toBe(true)
+    // ensureAgentOff 는 헬퍼 내부의 실제 trustedClickOnFlowView 를 쓴다(하네스 가짜가 아님) — 실제 마우스 이벤트로 관찰.
+    expect(h.flowView.webContents.sendInputEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'mouseDown' }))
+    expect(h.trace).toContain('click:compose-submit')
+  })
+
+  it('캡처 미설치 → 주입 → 재프로브 → 그래도 없으면 flow-capture-not-installed(클릭 없음); 재프로브 성공이면 진행', async () => {
+    const bad = harness({ captureFlag: [false, false] })
+    const r1 = await settle(bad.generate())
+    expect(r1).toMatchObject({ success: false, errorKind: 'flow-capture-not-installed' })
+    expect(bad.trace).toContain('capture-inject')
+    expect(bad.trace).not.toContain('click:compose-submit')
+    const good = harness({ captureFlag: [false, true] })
+    const r2 = await settle(good.generate())
+    expect(r2.success).toBe(true)
+    expect(good.trace).toContain('capture-inject')
+  })
+
+  it('설정 실패(flow-image-model-mismatch) → params 포함, 클릭 없음, onDomFailure(settings:…) 내용 없음', async () => {
+    const h = harness({ settings: { ok: false, kind: 'flow-image-model-mismatch', reason: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, steps: { mode: 'already' } } })
+    const r = await settle(h.generate({ model: 'Nano Banana Pro' }))
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-image-model-mismatch', error: 'flow-image-model-mismatch', errorParams: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })
+    expect(h.trace).not.toContain('click:compose-submit')
+    const call = h.onDomFailure.mock.calls.find((c) => String(c[0]).startsWith('settings:'))
+    expect(call).toBeTruthy()
+    expect(JSON.stringify(call[1])).not.toContain(PROMPT)
+  })
+
+  it('설정 실패(flow-settings-not-applied, reason) → 클릭 없음', async () => {
+    const h = harness({ settings: { ok: false, kind: 'flow-settings-not-applied', reason: 'ratio-not-offered:21:9', steps: {} } })
+    const r = await settle(h.generate({ aspectRatio: '21:9' }))
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-settings-not-applied' })
+    expect(h.trace).not.toContain('click:compose-submit')
+  })
+})
+
+describe('flow:generate-image (angular) — 비동기 + check/collect + 마감', () => {
+  it('제출 → {generationId, submitted}; check(completed, DOM 프로브 없음) → collect(images, 맵에서 제거)', async () => {
+    const h = harness({ onSubmit: null })
+    const r = await settle(h.generate({ asyncMode: true }))
+    expect(r).toMatchObject({ success: true, submitted: true })
+    expect(r.generationId).toMatch(/^gen-/)
+    let st = await h.ipcMain.invoke('flow:check-generation', { generationId: r.generationId })
+    expect(st).toMatchObject({ success: true, completed: false, via: 'rpc' })
+    h.page.send(); h.page.loadend()
+    st = await h.ipcMain.invoke('flow:check-generation', { generationId: r.generationId })
+    expect(st).toMatchObject({ success: true, completed: true, via: 'rpc' })
+    expect(h.trace).not.toContain('dom-image-probe')
+    const c = await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })
+    expect(c).toMatchObject({ success: true, images: [{ mediaId: '<uuid#5>', width: 1376, height: 768 }] })
+    expect(h.pendingGenerations.has(r.generationId)).toBe(false)
+  })
+
+  it('send 없이 15s → gen 은 맵에 남고 completed+flow-submit-not-sent → check completed → collect 그 kind, 그 뒤 삭제', async () => {
+    const h = harness({ onSubmit: null })
+    const r = await settle(h.generate({ asyncMode: true }))
+    await vi.advanceTimersByTimeAsync(15000 + 10)
+    const gen = h.pendingGenerations.get(r.generationId)
+    expect(gen).toMatchObject({ completed: true, error: 'flow-submit-not-sent' })
+    expect(await h.ipcMain.invoke('flow:check-generation', { generationId: r.generationId })).toMatchObject({ completed: true })
+    expect(await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', error: 'flow-submit-not-sent' })
+    expect(h.pendingGenerations.has(r.generationId)).toBe(false)
+  })
+
+  it('send 뒤 loadend 없이 100s → flow-submit-lost', async () => {
+    const h = harness({ onSubmit: (page) => { page.send() } })
+    const r = await settle(h.generate({ asyncMode: true }))
+    await vi.advanceTimersByTimeAsync(99000)
+    expect(h.pendingGenerations.get(r.generationId).completed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })).toMatchObject({ success: false, errorKind: 'flow-submit-lost' })
+  })
+
+  it('커밋 네비게이션(failBoundUnfinished) → flow-submit-lost', async () => {
+    const h = harness({ onSubmit: (page) => { page.send() } })
+    const r = await settle(h.generate({ asyncMode: true }))
+    expect(failBoundUnfinished(h.pendingGenerations)).toBe(1)
+    expect(await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })).toMatchObject({ success: false, errorKind: 'flow-submit-lost' })
+  })
+
+  it('collect 는 미완료면 "not completed yet"(삭제 없음)', async () => {
+    const h = harness({ onSubmit: null })
+    const r = await settle(h.generate({ asyncMode: true }))
+    expect(await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })).toMatchObject({ success: false, error: 'Generation not completed yet' })
+    expect(h.pendingGenerations.has(r.generationId)).toBe(true)
+  })
+})

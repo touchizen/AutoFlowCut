@@ -173,8 +173,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setMode: (params) => ipcRenderer.invoke('mode:set', params),
 
   // Flow DOM automation bridges (Flow mode)
-  flowExtractToken: () => ipcRenderer.invoke('flow:extract-token'),
-  flowValidateToken: (payload) => ipcRenderer.invoke('flow:validate-token', payload),
+  flowSessionStatus: () => ipcRenderer.invoke('flow:session-status'),  // M1-9: flow.google.com 세션 판정(토큰 없음)
   flowExtractProjectId: (opts) => ipcRenderer.invoke('flow:extract-project-id', opts),
   flowGenerateImage: (payload) => ipcRenderer.invoke('flow:generate-image', payload),
   flowCheckGeneration: (payload) => ipcRenderer.invoke('flow:check-generation', payload),

@@ -51,6 +51,8 @@ export async function finalizeGeneratedImage({
         status: 'error',
         error: result.error || 'No images',
         errorKind: result.authFailed ? 'auth' : (result.errorKind ?? null),
+        // M1-10: kind 별 params(예: flow-resolution-not-offered {requested}) 보존 — 없으면 {} 로 비워 stale params 차단.
+        errorParams: result.errorParams || {},
       },
     }
   }
@@ -66,8 +68,18 @@ export async function finalizeGeneratedImage({
   // 없으면 호출자가 넘긴 effectiveSeed 사용.
   const effectiveSeed = firstImage.seed ?? result.seed ?? seed ?? null
 
-  // 업스케일
-  const upscaled = await tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix)
+  // 업스케일 — M1-10 백스톱: 새 Flow 의 업스케일 미지원은 tryUpscaleImage 가 flow-upscale-unsupported 로 throw 한다.
+  //   삼키지 않고 그 kind 로 씬을 실패시킨다(저장 없음). 그 외 예외는 그대로 전파.
+  let upscaled = null
+  try {
+    upscaled = await tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix)
+  } catch (e) {
+    if (!e?.errorKind) throw e
+    return {
+      success: false,
+      sceneUpdate: { status: 'error', error: e.message || e.errorKind, errorKind: e.errorKind, errorParams: e.errorParams || {} },
+    }
+  }
   if (upscaled) imageData = upscaled
 
   // 이미지 크기 추출
@@ -142,6 +154,7 @@ export async function finalizeGeneratedImage({
       // 그대로 남으면 ErrorSection/ResultsTable 이 계속 에러 메시지를 띄운다 — 명시 클리어.
       error: null,
       errorKind: null,
+      errorParams: {},
       image: imagePath ? null : imageData,
       imagePath: imagePath || null,
       mediaId,

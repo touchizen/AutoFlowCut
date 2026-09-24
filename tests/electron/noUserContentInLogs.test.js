@@ -41,6 +41,9 @@ const CONTENT_BEARING = new RegExp(
     'diag', 'text', 'textButtons', 'body', 'bodyHtml', 'html', 'value',
     // filesystem layout — absolute paths carry the account name
     'path', 'filePath', 'tempDir', 'savePath', 'outputPath', 'workFolder', 'workFolderPath', 'dir',
+    // M1-6: flow.google.com batchexecute — 요청 inner(프롬프트·레퍼런스 blob)·응답 본문·서명 URL·프롬프트 메아리·
+    //   WIZ 전역(at 토큰). 길이·id 앞 8자·상태 코드만 찍는다.
+    'reqInner', 'responseText', 'url', 'responseBody', 'prompts', 'normPrompt', 'echo', 'inner', 'wiz', 'at',
   ].join('|') + ')\\b',
 )
 

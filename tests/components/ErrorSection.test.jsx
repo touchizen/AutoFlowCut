@@ -140,3 +140,13 @@ describe('ErrorSection', () => {
     })
   })
 })
+
+// M1-9: errorParams prop → resolveDisplayError 4번째 인자.
+describe('ErrorSection — errorParams (M1-9)', () => {
+  it('flow-resolution-not-offered + {requested:"1080p"} → 1080p 가 보이고 플레이스홀더 없음', () => {
+    const { container } = wrap(<ErrorSection error="flow-resolution-not-offered" errorKind="flow-resolution-not-offered" errorParams={{ requested: '1080p' }} />)
+    const text = container.querySelector('.error-section').textContent
+    expect(text).toContain('1080p')
+    expect(text).not.toMatch(/\{\w+\}/)
+  })
+})

@@ -233,6 +233,7 @@ export const FLOW_PAGE_INJECTION = /* js */ `
               ? inject.i2v.i2vStartEndUrl
               : inject.i2v.i2vUrl
             if (targetUrl && url !== targetUrl) {
+              // safe-log: /v1/ 뒤 API 경로 조각만(쿼리·본문 없음) — 페이지 콘솔은 scrubBreadcrumb 이 통째로 버린다
               console.log('[Flow Inject] i2v redirect:', url.split('/v1/').pop(), '→', targetUrl.split('/v1/').pop())
               // Don't early-return — re-target so the main fetch+capture path applies the new URL.
               _input = targetUrl
