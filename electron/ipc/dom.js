@@ -11,6 +11,7 @@ import { AGENT_TOGGLE_SELECTOR } from '../flow-agent-toggle.js'
 import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS } from '../flowOpenRetry.js'
 import { flowBaseFromUrl, flowProjectUrl, onProjectComposerUrl } from '../flowUrl.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
+import { FIND_NEW_PROJECT_BUTTON_JS } from '../flow-new-project-button.js'
 
 export function registerDomIPC(ipcMain, deps) {
   const { getFlowView, getMainWindow, trustedClickOnFlowView, FLOW_URL, getCurrentMode } = deps
@@ -153,14 +154,9 @@ export function registerDomIPC(ipcMain, deps) {
       deps.setEnterToolClicked?.(true)
       await flowView.webContents.loadURL(FLOW_URL)
       await new Promise((r) => setTimeout(r, 2000)) // home 렌더 대기
-      const addBtnSelector = `(function(){
-        try {
-          const xr = document.evaluate("//button[.//i[normalize-space(text())='add_2']] | (//button[.//i[normalize-space(.)='add_2']])", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-          if (xr.singleNodeValue) return xr.singleNodeValue;
-        } catch {}
-        for (const b of document.querySelectorAll('button')) { const i = b.querySelector('i'); if (i && (i.textContent.trim()==='add_2'||i.textContent.trim()==='add')) return b; }
-        return null;
-      })()`
+      // 버튼 파인더는 flow-new-project-button.js 가 소유한다 — 옛(<i>add_2</i>)·새(flow.google.com
+      //   material-symbols add FAB) 마크업을 둘 다 알고, jsdom 테스트로 고정돼 있다.
+      const addBtnSelector = FIND_NEW_PROJECT_BUTTON_JS
       // #R15-6/#R16-2: 클릭 "전"에 project id 를 기록한다(클릭 후 빠른 네비로 이미 새 id 가 떠
       //   preId 가 새 id 가 되면 루프가 영원히 다른 id 를 기다린다). 클릭 성공도 요구한다.
       //   (home 이 직전 프로젝트로 리다이렉트돼 있으면 stale id 를 잘못 바인딩할 수 있다.)
