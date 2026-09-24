@@ -262,6 +262,23 @@ export async function settingsDriverCore(doc, targets, deps) {
     return wt.length > 0 && i === wt.length
   }
   const ICON_SEL = "mat-icon, i, span[class*='symbols'], [class*='google-symbols']"
+  // M2-R4 I7(B5): 모델 클릭 뒤 길이/해상도/개수 그룹은 라이브 Angular 가 **나중에** 다시 그릴 수 있다 — 고정 sleep(150) 은 그보다 늦은 재렌더를 놓쳐 옛 모델의 옵션으로 다시
+  //   계획한다(H4 가 고치려던 그 경우). "연속 두 스캔이 같다" 만으로는 교체 **전** DOM 도 50ms 만에 같다고 통과하므로, 클릭 전 서명에서 **벗어난 뒤** 연속 두 스캔이 같을 때까지
+  //   기다린다(≤1.5s — 그룹이 정말 같은 모델 전환은 상한에서 진행). 서명은 세 그룹의 옵션(리거처·라벨·체크)이다. 자기완결.
+  const groupSig = (n) => {
+    if (!n || !n.ok) return 'scan-failed'
+    const kinds = ['duration', 'resolution', 'count']
+    return kinds.map((k) => { const g = n.groups[k]; return g ? g.options.map((o) => (o.ligature || '') + '|' + o.label + '|' + (o.checked ? 1 : 0)).join(',') : '-' }).join(';')
+  }
+  const waitGroupsSettled = async (preSig) => {
+    let prev = null
+    for (let i = 0; i < 30; i++) {
+      const cur = groupSig(scan(doc))
+      if (cur !== preSig && cur === prev) return
+      prev = cur
+      await sleep(50)
+    }
+  }
 
   let s = scan(doc)
   if (!s.ok) return fail(s.reason)
@@ -283,6 +300,7 @@ export async function settingsDriverCore(doc, targets, deps) {
   if (!p2.ok) return failPlan(p2)
   let modelClicked = false
   if (p2.model && p2.model.select) {
+    const preSig = groupSig(s)   // M2-R4 I7: 클릭 전 그룹 서명
     const trigger = s.model.trigger
     trigger.click()
     const opened = await waitFor(() => trigger.getAttribute('aria-expanded') === 'true' && !!trigger.getAttribute('aria-controls') && !!doc.getElementById(trigger.getAttribute('aria-controls')), 3000)
@@ -304,7 +322,8 @@ export async function settingsDriverCore(doc, targets, deps) {
       return fail(submenu ? 'model-submenu-unknown' : 'model-not-reflected')
     }
     modelClicked = true
-    await sleep(150)   // 안정 대기 — 모델 변경이 길이/해상도 그룹을 리셋·교체할 수 있다
+    steps.model = 'clicked'   // M2-R4 I7: 클릭 뒤 거부(재계획 실패)도 모델 전환을 steps·로그에 보고한다(§12.2 무과금 프로브의 통과 조건)
+    await waitGroupsSettled(preSig)   // M2-R4 I7: 안정 대기 — 모델 변경이 길이/해상도/개수 그룹을 리셋·교체할 수 있다(고정 150ms 아님)
     s = scan(doc)
     if (!s.ok) return fail(s.reason)
     p2 = plan(s, t, 2)

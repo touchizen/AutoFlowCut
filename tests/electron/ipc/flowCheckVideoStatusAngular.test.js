@@ -342,7 +342,47 @@ describe('flow:check-video-status (angular) — 게이트 격상은 횟수 + 경
     c.tick(60000)
     expect(await h.check()).toEqual(PEND); c.tick(1000)   // 새 첫 실패(시각은 여기부터)
     expect(await h.check()).toEqual(PEND); c.tick(1000)
-    expect(await h.check()).toEqual(PEND); c.tick(30000)  // 3회째지만 2s 경과 — 아직
-    expect(await h.check()).toEqual(AUTH)                 // 4회째, 32s 경과
+    expect(await h.check()).toEqual(PEND); c.tick(10000)  // 3회째지만 2s 경과 — 아직 (M2-R4 I3: 다음 실패까지 20s 넘게 비면 새 연속이라 10s 폴 간격으로 잇는다)
+    expect(await h.check()).toEqual(PEND); c.tick(10000)  // 12s
+    expect(await h.check()).toEqual(PEND); c.tick(10000)  // 22s
+    expect(await h.check()).toEqual(AUTH)                 // 6회째, 32s 경과
+  })
+})
+
+// M2-R4 I3(A2 = B2): H7 의 연속은 시간으로 만료되지 않았다 — gateFirstFailedAt 은 통과·발화 때만 리셋되므로 옛 실패 하나(Stop 직전 마지막 폴·수동 Retry)가 ≥25s 조건을 영원히 참으로 두고,
+//   10분 뒤 뷰 재로드 한 번에 Phase 0 의 병렬 재시도 5개 중 둘째가 "3회째·600s" 로 최상위 authFailed 가 됐다(B3 재현). 이제 lastFailedAt 을 적어 직전 실패에서 20s 넘게 지난 실패는
+//   새 연속(횟수·첫 시각 리셋)이고, 직전 실패에서 1s 안의 호출(동시 재시도)은 한 번으로 센다. 횟수 조건(≥3)은 그래서 1s 안 연쇄 호출(수십 항목의 Phase 0 청크 연속)에서만 시간과 갈라진다.
+describe('flow:check-video-status (angular) — 게이트 연속은 시간으로 만료되고 동시 호출은 한 번 (M2-R4 I3)', () => {
+  const PEND = { success: true, statuses: [{ status: 'pending', pollError: 'flow-session-missing' }] }
+  const AUTH = { success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true }
+
+  it('옛 실패 1회 → 10분 뒤 한 번의 재로드 동안 동시 호출 5개(Phase 0 병렬 재시도) → 전부 항목별 pollError, authFailed 없음', async () => {
+    const c = clock()
+    const h = harness({ wiz: false })
+    expect(await h.check()).toEqual(PEND)   // Stop 직전의 마지막 폴 — 통과 없이 남는다
+    c.tick(600000)
+    const rs = await Promise.all([1, 2, 3, 4, 5].map(() => h.check()))
+    expect(rs).toEqual([PEND, PEND, PEND, PEND, PEND])
+    c.tick(1500)   // 재로드가 끝나기 전 다음 재시도(같은 연속·다른 순간) — 옛 실패가 첫 시각으로 살아 있으면 여기서 authFailed 가 된다
+    expect(await h.check()).toEqual(PEND)
+  })
+
+  it('30s 떨어진 실패 2회 → 둘 다 pollError(새 연속); 그 뒤 10s 간격으로 이어지면 두 번째 실패를 첫 시각으로 4회째(30s)에 authFailed', async () => {
+    const c = clock()
+    const h = harness({ wiz: false })
+    expect(await h.check()).toEqual(PEND); c.tick(30000)
+    expect(await h.check()).toEqual(PEND); c.tick(10000)   // 30s 뒤 — 새 연속의 1회째(첫 시각 30s)
+    expect(await h.check()).toEqual(PEND); c.tick(10000)   // 2회째 40s
+    expect(await h.check()).toEqual(PEND); c.tick(10000)   // 3회째 50s(20s 경과 — 아직)
+    expect(await h.check()).toEqual(AUTH)                  // 4회째 60s(30s 경과)
+  })
+
+  it('횟수 조건: 1s 안의 연쇄 호출(500ms 간격 ×53, 26s)은 한 번의 실패로 세어 시간이 지나도 pollError; 10s 간격의 폴이 이어지면 3회째에 authFailed', async () => {
+    const c = clock()
+    const h = harness({ wiz: false })
+    for (let i = 0; i < 53; i++) { expect(await h.check(), `call ${i}`).toEqual(PEND); c.tick(500) }   // 0 → 26.5s, 횟수 1
+    c.tick(10000)
+    expect(await h.check()).toEqual(PEND); c.tick(10000)   // 2회째(36.5s)
+    expect(await h.check()).toEqual(AUTH)                  // 3회째(46.5s ≥ 25s)
   })
 })

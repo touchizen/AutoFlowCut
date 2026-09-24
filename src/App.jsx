@@ -1397,7 +1397,11 @@ function App() {
     //   forceRegenerate 면 fast-path 를 건너뛰고 아래 slow-path 로 가 status 를 'pending' 으로 되돌린다
     //   → 분류상 download-only(status==='error')도 in-flight(status==='generating')도 아니라 freshGen
     //   으로 잡혀, 다음 Start 가 새로 생성한다(기존 영상은 덮어쓰기 전까지 폴백 유지).
-    if (!opts.forceRegenerate && item.generationId && item.mediaId) {
+    // M2-R4 I1(A1 = B3): Flow 의 generationId 는 곧 미디어 id(YhhmEf 200 순간 과금) — mediaId 가 없어도(옛 auth/stopped/타임아웃 패치, provenance (c)/(c2) 모양)
+    //   파일이 없는 항목은 과금된 제출이라 plain Retry 도 이 download-only 경로로 간다(retryVideoDownload 는 generationId 로 폴한다 — mediaId 불필요).
+    //   전엔 아래 slow path 가 generationId·mediaId 를 null 로 지워 다음 Start 가 재제출(10크레딧 이중 과금)했다. id 를 지우는 건 Regenerate(forceRegenerate)뿐.
+    const chargedFlowItem = startMode === 'flow' && !!item.generationId && !item.videoPath
+    if (!opts.forceRegenerate && item.generationId && (item.mediaId || chargedFlowItem)) {
       // #R12-11/#R13-8: 첫 await(getAccessToken) 전에 in-flight 를 세팅 — 같은 tick 의 중복 Retry/
       //   Retry+Start 가 auth await 동안 busy 가드를 통과하는 것을 막는다. 모든 종료 경로에서 해제.
       videoRetryInFlightRef.current = true
@@ -1434,7 +1438,8 @@ function App() {
       return
     }
 
-    // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
+    // Slow path: Regenerate, 또는 (API 모드·Flow 의 파일 있는 항목) generationId/mediaId 없음 — reset to pending; user clicks Start Generation to regenerate
+    // M2-R4 I1: Flow 의 과금된 항목(generationId 있음·videoPath 없음)은 위 fast path 가 받으므로 여기엔 forceRegenerate 로만 온다 — id 를 지우는 유일한 자리.
     // M2-R3 H3(A3): Regenerate 는 generationId·mediaId 도 null — Flow 모드 Phase 0 은 출처(generationId 있음 + videoPath 없음)로 분류하므로 id 를 남기면
     //   재생성이 in-flight/download-only 로 잡혀 새 생성이 안 된다. Regenerate/Clear 만이 항목을 fresh 로 만든다(옛 videoPath 폴백은 그대로).
     onUpdate(item.id, 'pending', { error: null, errorKind: null, generationId: null, mediaId: null, downloadGated: null })   // downloadGated: M2-R3 H6

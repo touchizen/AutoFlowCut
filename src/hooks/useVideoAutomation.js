@@ -444,7 +444,11 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     //   중단된 재다운로드의 generating · stopped 전부). 복구(recoverInFlightVideos)는 Flow 프로젝트 open 이 확인돼야만 돌고 다시 돌지 않으므로 status 로 분류하면
     //   pending+generationId 가 fresh 로 잡혀 과금된 영상을 다시 제출한다. Regenerate/Clear 만 generationId·mediaId 를 null 로 지워 fresh 로 만든다.
     //   API 모드는 기존 status 규칙 그대로(isInFlightItem · error+ids 만 download-only).
-    const submittedFlow = (it) => appMode === 'flow' && it.status !== 'complete' && !!it.generationId && !it.videoPath
+    // M2-R4 I4(A3): 출처엔 **엔진 모양**도 든다 — Flow 의 generationId 는 UUID(recoverInFlightVideos 의 #R34-1 필터와 같은 모양). API(Veo) 의 operation 이름
+    //   (`models/veo…/operations/…`)을 든 항목(재시작 뒤 pending·API stop/타임아웃의 error)은 Flow 가 과금한 제출이 아니다 — in-flight 로 잡으면 jwpduf 가 4회 레코드 없음
+    //   → flow-video-not-found(+mediaId=operation 이름)로 닫혀 양 모드에서 영원히 download-only 가 된다. Flow 모양이 아니면 status 규칙(fresh / API 의 error+ids download-only)으로.
+    const isFlowShapedId = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || '').trim())
+    const submittedFlow = (it) => appMode === 'flow' && it.status !== 'complete' && isFlowShapedId(it.generationId) && !it.videoPath
     const downloadOnly = items.filter(it => (submittedFlow(it)
       ? !!it.mediaId
       : it.status === 'error' && it.generationId && it.mediaId && !it.videoPath))

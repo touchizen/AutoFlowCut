@@ -20,7 +20,7 @@ const appMocks = vi.hoisted(() => {
   const noop = vi.fn()
   const asyncNoop = vi.fn(async () => null)
   const loadEpochRef = { current: 0 }
-  const captured = { headerProps: null, exportModalProps: null, mcpProps: null, resultsTableProps: null, tagModalProps: null, videoStart: null }
+  const captured = { headerProps: null, exportModalProps: null, mcpProps: null, resultsTableProps: null, tagModalProps: null, videoStart: null, ftvProps: null }
   const toast = { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
   // R2-2#4 / M2-5: 영상 씬·패치 관측
   const videoScenes = []
@@ -56,6 +56,7 @@ const appMocks = vi.hoisted(() => {
     flowSessionReason: vi.fn(() => 'rpc:http:500'),
     checkVideoStatus: vi.fn(),
     downloadVideo: vi.fn(),
+    generateVideoT2V: vi.fn(),   // M2-R4 I1: plain Retry 가 재제출로 새면 여기서 보인다
     fetchGallery: vi.fn(async () => ({ success: true, items: [] })),
     listFlowProjects: asyncNoop,
     capabilities: {},
@@ -295,7 +296,8 @@ vi.mock('../../src/components/PromptInput', () => ({ default: () => null }))
 vi.mock('../../src/components/SceneList', () => ({ default: () => null }))
 // R2-2#4: 영상 표의 onVideoRetry(handleVideoRetry) 를 붙잡는다 — 이미지 표(onVideoRetry 없음)는 무시.
 vi.mock('../../src/components/ResultsTable', () => ({ default: props => { if (props?.onVideoRetry) appMocks.captured.resultsTableProps = props; return null } }))
-vi.mock('../../src/components/FrameToVideoPanel', () => ({ default: () => null }))
+// M2-R4 I6: F→V 패널의 props(framePairs·onUpdate=setFramePairs·onVideoRetry)를 붙잡는다 — i2v 화이트리스트와 fp 재시도 패치가 App 의 framePairs 상태에 닿는지 본다.
+vi.mock('../../src/components/FrameToVideoPanel', () => ({ default: props => { appMocks.captured.ftvProps = props; return null } }))
 vi.mock('../../src/components/ReferencePanel', () => ({ default: () => null }))
 vi.mock('../../src/components/SettingsModal', () => ({ default: () => null }))
 vi.mock('../../src/components/ImportModal', () => ({ default: () => null }))
@@ -332,7 +334,7 @@ afterEach(() => {
   appMocks.genAPI.getAccessToken.mockImplementation(async () => null)   // clearAllMocks 는 구현을 되돌리지 않는다
   appMocks.scenesHook.scenes = []; appMocks.scenesHook.scenesRef.current = []
   appMocks.videoScenes.length = 0
-  appMocks.captured.resultsTableProps = null; appMocks.captured.tagModalProps = null; appMocks.captured.videoStart = null
+  appMocks.captured.resultsTableProps = null; appMocks.captured.tagModalProps = null; appMocks.captured.videoStart = null; appMocks.captured.ftvProps = null
   localStorage.removeItem('autoflowcut_bottomPanelView')
 })
 
@@ -418,6 +420,38 @@ describe('App — Regenerate(forceRegenerate) 는 generationId·mediaId 를 null
   })
 })
 
+// ── M2-R4 I1 (A1 = B3): plain Retry 는 과금된 Flow 항목의 id 를 지우지 않는다 ─────────────────────────────────────────
+// Flow 의 generationId 는 곧 미디어 id(YhhmEf 200 순간 과금). error + generationId + mediaId:null(옛 auth/stopped/타임아웃 패치 — provenance (c)/(c2) 의 모양)에
+//   ResultsTable 은 "Retry"(canDownloadOnly=false)를 보인다. H3 의 slow path 는 그 클릭에 generationId·mediaId 를 null 로 지워 다음 Start 가 재제출(10크레딧 이중 과금)했다.
+//   plain Retry 는 download-only 경로(retryVideoDownload — generationId 로 폴)로 가고, id 를 지우는 건 Regenerate(forceRegenerate)뿐이다.
+describe('App — plain Retry(onVideoRetry) 는 Flow 의 generationId 를 지우지 않고 폴한다 (M2-R4 I1)', () => {
+  it('error + generationId + mediaId:null 항목의 onVideoRetry(item) → checkVideoStatus([g1]) 폴, 패치 어디에도 generationId:null 없음, 재제출 안내 토스트 없음', async () => {
+    const item = { id: 'vscene_1', prompt: 'p', selected: true, status: 'error', generationId: 'g1', mediaId: null, videoPath: null, errorKind: 'auth' }
+    appMocks.videoScenes.push(item)
+    localStorage.setItem('autoflowcut_bottomPanelView', 'table')
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')
+    appMocks.genAPI.checkVideoStatus.mockResolvedValue({ success: true, statuses: [{ status: 'pending' }] })   // 아직 생성 중
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'video-text' }) })
+    const props = appMocks.captured.resultsTableProps
+    expect(props?.onVideoRetry).toBeTypeOf('function')
+    appMocks.updateVideoScene.mockClear(); appMocks.toast.info.mockClear()
+    await act(async () => { await props.onVideoRetry({ ...item }) })
+    expect(appMocks.genAPI.checkVideoStatus).toHaveBeenCalledWith(['g1'])
+    expect(appMocks.genAPI.generateVideoT2V).not.toHaveBeenCalled()
+    const patches = appMocks.updateVideoScene.mock.calls.filter((c) => c[0] === 'vscene_1').map((c) => c[1])
+    expect(patches.length).toBeGreaterThan(0)
+    for (const p of patches) {
+      expect(p, JSON.stringify(p)).not.toMatchObject({ generationId: null })
+      expect(p).not.toMatchObject({ status: 'pending' })   // slow path 의 "pending 으로 되돌림" 이 아니다
+    }
+    expect(appMocks.toast.info).not.toHaveBeenCalled()   // 'videoAutomation.needsRegen' (Start 를 누르라는 안내) 없음
+    // App 이 머지한 최종 모양 — 여전히 generationId 를 든 error 항목(videoPath 없음) → 다음 Start 는 provenance (c) 대로 폴링한다(useVideoAutomation.provenance.test.jsx)
+    const merged = patches.reduce((s, p) => ({ ...s, ...p }), item)
+    expect(merged).toMatchObject({ status: 'error', generationId: 'g1', mediaId: null, videoPath: null })
+  })
+})
+
 // ── M2-5 (T6): App 의 영상 onItemUpdate 화이트리스트 ────────────────────────────────────────────────────────────
 describe('App — videoAutomation.start 의 onItemUpdate 화이트리스트가 errorParams·rejectedMediaId(s) 를 통과시킨다 (M2-5)', () => {
   it('거부 패치 → updateVideoScene 에 errorParams·rejectedMediaId; count-mismatch → rejectedMediaIds; mediaId 키는 없다', async () => {
@@ -455,6 +489,44 @@ describe('App — videoAutomation.start 의 onItemUpdate 화이트리스트가 e
     expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ downloadGated: true }))
     act(() => { start.onItemUpdate('vscene_1', 'generating', { generationId: '<uuid#13>', mediaId: null, downloadGated: null }) })
     expect(appMocks.updateVideoScene).toHaveBeenLastCalledWith('vscene_1', expect.objectContaining({ status: 'generating', downloadGated: null }))
+  })
+})
+
+// ── M2-R4 I6 (B4): i2v 화이트리스트와 fp 재시도(handleVideoRetry)의 downloadGated 통과 ────────────────────────────────────────
+// H6 의 두 자리(App.jsx i2v start 의 setFramePairs 화이트리스트 · handleVideoRetry 의 fp onUpdate)는 어떤 테스트도 지키지 않았다 — 빠지면 Stop 뒤 fp 행이 마커 없이 남아
+//   다음 Start 의 Phase 0 이 같은 배치의 다운로드에 consumeBatchDownload 를 다시 부르고, Regenerate 가 옛 마커를 못 지워 새 배치의 다운로드가 게이트를 건너뛴다.
+describe('App — i2v 화이트리스트와 fp 재시도가 downloadGated 를 통과시킨다 (M2-R4 I6)', () => {
+  /** 탭을 F→V 로 옮겨 패널(props 관측)을 띄운 뒤 onUpdate(=setFramePairs) 로 쌍을 심는다. 첫 Start 는 선택 0 으로 멈추지만 탭은 옮겨진다. */
+  async function seedFramePair(fp) {
+    appMocks.genAPI.getAccessToken.mockImplementation(async () => 'flow-session')
+    render(<App />)
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'frame-to-video' }) })
+    expect(appMocks.captured.ftvProps?.onUpdate).toBeTypeOf('function')
+    act(() => { appMocks.captured.ftvProps.onUpdate([fp]) })
+    expect(appMocks.captured.ftvProps.framePairs).toEqual([fp])
+  }
+  const fpNow = (id) => appMocks.captured.ftvProps.framePairs.find((p) => p.id === id)
+
+  it('i2v start 의 onItemUpdate: error 패치의 downloadGated:true 와 generating 패치의 null 둘 다 framePairs 에 닿는다', async () => {
+    await seedFramePair({ id: 'fp_1', startSceneId: 'scene_1', prompt: 'p', selected: true, status: 'pending' })
+    appMocks.captured.videoStart = null
+    await act(async () => { await appMocks.captured.mcpProps.handleStart(undefined, { tab: 'frame-to-video' }) })
+    const start = appMocks.captured.videoStart
+    expect(start?.mode).toBe('i2v')
+    expect(start?.onItemUpdate).toBeTypeOf('function')
+    act(() => { start.onItemUpdate('fp_1', 'error', { error: 'Stopped by user', errorKind: 'stopped', generationId: '<uuid#12>', mediaId: '<uuid#12>', downloadGated: true }) })
+    expect(fpNow('fp_1')).toMatchObject({ status: 'error', errorKind: 'stopped', generationId: '<uuid#12>', mediaId: '<uuid#12>', downloadGated: true })
+    act(() => { start.onItemUpdate('fp_1', 'generating', { generationId: '<uuid#13>', mediaId: null, downloadGated: null }) })
+    expect(fpNow('fp_1')).toMatchObject({ status: 'generating', generationId: '<uuid#13>', mediaId: null, downloadGated: null })
+  })
+
+  it('fp 행의 onVideoRetry(item, {forceRegenerate:true}) → framePairs 패치에 downloadGated:null(+generationId/mediaId null, pending)', async () => {
+    await seedFramePair({ id: 'fp_1', startSceneId: 'scene_1', prompt: 'p', selected: true, status: 'error', generationId: 'g1', mediaId: 'm1', downloadGated: true })
+    expect(appMocks.captured.ftvProps.onVideoRetry).toBeTypeOf('function')
+    appMocks.genAPI.getAccessToken.mockClear()
+    await act(async () => { await appMocks.captured.ftvProps.onVideoRetry({ id: 'fp_1', generationId: 'g1', mediaId: 'm1', status: 'error', downloadGated: true }, { forceRegenerate: true }) })
+    expect(fpNow('fp_1')).toMatchObject({ status: 'pending', generationId: null, mediaId: null, downloadGated: null, error: null, errorKind: null })
+    expect(appMocks.genAPI.getAccessToken).not.toHaveBeenCalled()   // slow path
   })
 })
 

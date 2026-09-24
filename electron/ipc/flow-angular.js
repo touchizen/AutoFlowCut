@@ -512,6 +512,12 @@ export function createFlowAngular(deps) {
    *  "연속 ≥3회 **그리고** 첫 실패로부터 ≥25s" 일 때만 발화(10s 폴 루프에선 4회째 = 첫 실패 30s 뒤). 통과·발화 시 시각도 리셋. */
   let gateFirstFailedAt = null
   const GATE_MIN_SPAN_MS = 25000
+  /** M2-R4 I3(A2 = B2): 연속은 시간으로 만료된다 — 첫 시각은 통과·발화 때만 리셋됐으므로 옛 실패 하나(Stop 직전 마지막 폴·수동 Retry)가 ≥25s 를 영원히 참으로 두고, 10분 뒤 재로드 한 번에
+   *  Phase 0 병렬 재시도 5개 중 둘째가 최상위 authFailed 가 됐다. 직전 실패(lastFailedAt)에서 20s(10s 폴 간격보다 길게) 넘게 지난 실패는 새 연속(횟수·첫 시각 리셋)이고,
+   *  직전 실패에서 1s 안의 호출(동시 재시도 5개·연쇄 청크)은 같은 실패로 한 번만 센다 — 횟수 조건(≥3)이 시간과 갈라지는 자리. */
+  let gateLastFailedAt = null
+  const GATE_STREAK_GAP_MS = 20000
+  const GATE_BURST_MS = 1000
   /** 미지 상태 warn 은 id·상태당 1회. */
   const unknownStateWarned = new Set()
   /** 읽기 RPC 실패 → 항목 결과(pending + pollError, 코드/상태는 필드). */
@@ -535,14 +541,18 @@ export function createFlowAngular(deps) {
       //   소모한다. authFailed 는 읽기 RPC 의 HTTP 401 / code 16 만(아래 rpcErrorToRendererResult).
       // M2-R2 G2(A2): 연속 3회째는 실제 로그아웃(accounts.google.com 에 앉음)으로 보고 최상위 authFailed 로 배치를 끝낸다 — 안 그러면 훅이 120×10s 를
       //   "Polling…" 으로 흘리고 원인 없는 "Polling timeout" 으로 닫는다. error 에 raw reason 토큰은 싣지 않는다. 발화 뒤 카운터 리셋(다음 배치의 첫 일시 실패가 바로 auth 가 되지 않게).
-      gateFailures++
       const now = Date.now()
+      // M2-R4 I3: 직전 실패에서 20s 넘게 비었으면 새 연속; 1s 안이면 같은 실패(한 번만 센다)
+      if (gateLastFailedAt != null && now - gateLastFailedAt > GATE_STREAK_GAP_MS) { gateFailures = 0; gateFirstFailedAt = null }
+      if (gateFailures === 0 || now - gateLastFailedAt >= GATE_BURST_MS) gateFailures++
+      gateLastFailedAt = now
       if (gateFirstFailedAt == null) gateFirstFailedAt = now
       const spanS = Math.round((now - gateFirstFailedAt) / 1000)
       if (gateFailures >= GATE_MAX_FAILURES && now - gateFirstFailedAt >= GATE_MIN_SPAN_MS) {
         console.warn(`[Flow VideoStatus] [Angular] session gate failed ${gateFailures}x in a row over ${spanS}s reason=${gate.error} → authFailed`)
         gateFailures = 0
         gateFirstFailedAt = null
+        gateLastFailedAt = null
         return { success: false, errorKind: 'flow-session-missing', error: 'flow-session-missing', authFailed: true }
       }
       console.warn(`[Flow VideoStatus] [Angular] session gate failed reason=${gate.error} n=${gateFailures} span=${spanS}s → pollError for ${ids.length} ids`)
@@ -550,6 +560,7 @@ export function createFlowAngular(deps) {
     }
     gateFailures = 0
     gateFirstFailedAt = null
+    gateLastFailedAt = null   // M2-R4 I3
     if (ids.length === 0) return { success: true, statuses: [] }
 
     const statuses = []

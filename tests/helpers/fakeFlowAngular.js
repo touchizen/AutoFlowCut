@@ -12,6 +12,7 @@
 //   opts.modelMenuItems        : (M2-2) 메뉴 항목 목록 덮어쓰기(요청 모델이 없는 메뉴 — model-not-offered 케이스)
 //   opts.escapeLeavesMenus     : (M2-R1 F6) Escape 가 패널 pane 만 닫고 열린 메뉴 pane 은 남긴다
 //   opts.modelSelectDurations  : (M2-R3 H4) 모델 항목 클릭이 길이 그룹을 이 라벨 목록으로 갈아끼운다(모델마다 길이 옵션이 다르다 — 현재 체크값이 목록에 있으면 유지)
+//   opts.modelSelectDelayMs    : (M2-R4 I7) 그 교체를 클릭 뒤 N ms 지나서 한다(라이브 페이지의 늦은 재렌더 — 고정 150ms 대기가 놓치는 경우)
 // 리스너는 document/body 에 붙으므로 테스트마다 disposeFakeAngular() 로 이전 것을 abort 한다.
 import { buildSettingsPanel, buildModelMenu, buildDurationGroup } from '../fixtures/flow-live-dom-20260924.js'
 
@@ -89,10 +90,15 @@ export function installFakeAngular(doc, opts = {}) {
       btn.closest('.cdk-overlay-pane').remove()
       if (opts.modelReset === 'sync') { resetGroup('duration', '6초'); resetGroup('resolution', '720p') }
       if (Array.isArray(opts.modelSelectDurations)) {
-        const radios = Array.from(doc.querySelectorAll('button[role="radio"]')).filter((x) => groupOf(x) === 'duration')
-        const checkedNow = (radios.find((x) => x.getAttribute('aria-checked') === 'true')?.textContent || '').replace(/\s+/g, ' ').trim()
-        const group = radios[0]?.closest('mat-button-toggle-group')
-        if (group) group.outerHTML = buildDurationGroup(opts.modelSelectDurations, checkedNow)
+        const swapDurations = () => {
+          const radios = Array.from(doc.querySelectorAll('button[role="radio"]')).filter((x) => groupOf(x) === 'duration')
+          const checkedNow = (radios.find((x) => x.getAttribute('aria-checked') === 'true')?.textContent || '').replace(/\s+/g, ' ').trim()
+          const group = radios[0]?.closest('mat-button-toggle-group')
+          if (group) group.outerHTML = buildDurationGroup(opts.modelSelectDurations, checkedNow)
+        }
+        // M2-R4 I7: 지연 교체 — 라이브 Angular 가 그룹을 나중에 다시 그리는 경우
+        if (opts.modelSelectDelayMs > 0) setTimeout(swapDurations, opts.modelSelectDelayMs)
+        else swapDurations()
       }
     }
   }, { signal })

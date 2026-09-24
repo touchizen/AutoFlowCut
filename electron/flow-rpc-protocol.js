@@ -167,8 +167,11 @@ export function parseVideoSubmitRequest(inner) {
  *   [3].length ≠ 1 → FlowRpcError{kind:'video-count', rejectedMediaIds}. mediaId 를 읽은 뒤의 shape 실패는 항상
  *   rejectedMediaId 를 든다(200 뒤의 거부 — 훅이 download-only 로 물지 않게 mediaId/generationId 로는 절대 안 나간다).
  */
-/** M2-R3 H1: YhhmEf 응답 모델키 문법 — 로그·진단에 실어도 되는 유일한 모양. */
-const MODEL_KEY_SYNTAX = /^[a-z0-9_]{1,64}$/
+/** M2-R3 H1: YhhmEf 응답 모델키 문법 — 로그·진단에 실어도 되는 유일한 모양.
+ *  M2-R4 I5(A4): 소문자 한 단어(`sunset`·`dragon_king`)도 옛 문법을 지났다 — HTrJv 카탈로그 샘플의 영상 키는 전부 모델 패밀리 접두로 시작한다
+ *  (evidence/2026-09-24-flow-batchexecute-samples.masked.jsonl: `abra_t2v_6s` · `veo_3_1_t2v_*` · `omni_flash_i2v_*_first_last`) → `abra_`·`veo_`·`omni_` 접두 필수, 전체 ≤64자. */
+const MODEL_KEY_SYNTAX = /^(abra|veo|omni)_[a-z0-9_]+$/
+const MODEL_KEY_MAX_LEN = 64
 
 export function parseVideoSubmitResponse(payload) {
   const RPC = 'YhhmEf'
@@ -191,7 +194,7 @@ export function parseVideoSubmitResponse(payload) {
   // M2-R3 H1(A1): 모델키는 **문법**까지 검증한다(/^[a-z0-9_]{1,64}$/ — 카탈로그 키 전부 소문자·숫자·밑줄). 응답 모양이 바뀌어 그 자리에 사용자 텍스트가 오면
   //   문자열 검사만으론 통과해 핸들러가 modelKey= 로 로그·진단·errorParams.actual 에 실어 나른다. 문법 밖은 shape 실패(+rejectedMediaId — 과금됐지만
   //   검증 불가) 로 닫고, 값은 에러 메시지에도 넣지 않는다.
-  if (typeof modelKey !== 'string' || !MODEL_KEY_SYNTAX.test(modelKey)) throw rejected('[3][0][7][0][12]')
+  if (typeof modelKey !== 'string' || modelKey.length > MODEL_KEY_MAX_LEN || !MODEL_KEY_SYNTAX.test(modelKey)) throw rejected('[3][0][7][0][12]')   // M2-R4 I5: 접두 + 길이
   const warnings = []
   const creditsLeft = typeof payload[1] === 'number' ? payload[1] : null
   if (creditsLeft == null) warnings.push('credits-missing')

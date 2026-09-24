@@ -6,6 +6,9 @@
  * 옛 분류는 status 로 봤다(in-flight = 'generating' 만, download-only = 'error' 만): 앱을 껐다 켜면(복구는 Flow 프로젝트 open 이 확인돼야만 돌고 다시 돌지 않는다)
  * pending+generationId 가 fresh 로 잡혀 과금된 영상을 다시 제출했다. Regenerate/Clear 만 generationId·mediaId 를 null 로 지워 fresh 로 만든다.
  * API 모드는 기존 status 규칙 그대로(pending+generationId 는 fresh).
+ * M2-R4 I4(A3): 출처 분류는 **엔진 모양**도 본다 — Flow 의 generationId 는 UUID(recoverInFlightVideos 의 #R34-1 필터와 같은 모양). API(Veo) 의 operation 이름
+ *   (`models/veo/operations/…`)을 든 항목이 Flow 모드에서 Start 되면 전엔 in-flight 로 잡혀 jwpduf 가 4회 레코드 없음 → flow-video-not-found(+mediaId=operation 이름)로
+ *   닫혔다(양 모드에서 영원히 download-only). 그 항목은 이 라운드 전처럼 fresh 다. 픽스처 id 는 그래서 UUID.
  */
 import { renderHook, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -23,6 +26,8 @@ vi.mock('../../src/utils/videoMetadata', () => ({ pickVideoMetadata: vi.fn(() =>
 import { retryVideoDownload } from '../../src/services/videoRecovery'
 
 const SIGNED = 'https://flow-content.google/video/<uuid#11>?Expires=1&KeyName=k&Signature=SIG'
+const G = '0f3b9c1e-5d2a-4b7c-8e9f-0a1b2c3d4e5f'   // M2-R4 I4: 과금된 Flow 제출 id 는 UUID 모양
+const OP = 'models/veo-3.1-fast-generate-preview/operations/op-old-1'   // API(Veo) operation 이름 — Flow 가 만든 id 가 아니다
 const COMPLETE = (gid) => ({ generationId: gid, status: 'complete', mediaId: gid, videoUrl: SIGNED, error: null })
 const OPTS = { mode: 't2v', projectName: 'proj', saveMode: 'folder', videoModel: 'Omni Flash', aspectRatio: '16:9', duration: 6, videoResolution: '720p', videoBatchCount: 1, seed: null, concurrency: 5, flowPacingMinMs: 1000, flowPacingMaxMs: 1000 }
 
@@ -59,33 +64,33 @@ const expectPolledNotSubmitted = (h, gid) => {
 describe('useVideoAutomation Phase 0 — Flow 모드 출처 분류 (M2-R3 H3)', () => {
   it('(a) 재시작 뒤 resetGeneratingItem 모양(pending + generationId, mediaId null, 복구 미실행) → 폴링(in-flight), 재제출 없음', async () => {
     // 제출 패치가 남긴 persisted 상태(generating + generationId, mediaId/videoPath null) → 로드 시 resetGeneratingItem 이 pending 으로 내린다
-    const persisted = { id: 'vscene_1', prompt: 'p1', status: 'generating', generationId: 'gen-charged', mediaId: null, videoPath: null, generatingStartedAt: 123 }
+    const persisted = { id: 'vscene_1', prompt: 'p1', status: 'generating', generationId: G, mediaId: null, videoPath: null, generatingStartedAt: 123 }
     const restored = resetGeneratingItem(persisted)
-    expect(restored).toMatchObject({ status: 'pending', generationId: 'gen-charged', mediaId: null })
+    expect(restored).toMatchObject({ status: 'pending', generationId: G, mediaId: null })
     const h = setup('flow')
     await run(h, [restored])
-    expectPolledNotSubmitted(h, 'gen-charged')
+    expectPolledNotSubmitted(h, G)
   })
 
   it('(b) generating + generationId + mediaId(중단된 download-only 재시도) → download-only(retryVideoDownload), 제출·폴 없음', async () => {
     const h = setup('flow')
-    await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'generating', generationId: 'gen-charged', mediaId: 'gen-charged', videoPath: null }])
+    await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'generating', generationId: G, mediaId: G, videoPath: null }])
     expect(h.generateVideoT2V).not.toHaveBeenCalled()
     expect(h.checkVideoStatus).not.toHaveBeenCalled()
     expect(retryVideoDownload).toHaveBeenCalledTimes(1)
-    expect(retryVideoDownload.mock.calls[0][0].item).toMatchObject({ id: 'vscene_1', generationId: 'gen-charged', mediaId: 'gen-charged' })
+    expect(retryVideoDownload.mock.calls[0][0].item).toMatchObject({ id: 'vscene_1', generationId: G, mediaId: G })
   })
 
   it('(c) error + generationId + mediaId:null(옛 auth 패치·거부 kind 잔존) → 폴링(in-flight), 재제출 없음', async () => {
     const h = setup('flow')
-    await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'error', generationId: 'gen-charged', mediaId: null, videoPath: null, error: 'Auth error. Please login to Flow and try again.', errorKind: 'auth' }])
-    expectPolledNotSubmitted(h, 'gen-charged')
+    await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'error', generationId: G, mediaId: null, videoPath: null, error: 'Auth error. Please login to Flow and try again.', errorKind: 'auth' }])
+    expectPolledNotSubmitted(h, G)
   })
 
   it('(c2) stopped 도 같다: error/stopped + generationId, mediaId null(옛 G1(b) 이전 패치) → 폴링', async () => {
     const h = setup('flow')
-    await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'error', generationId: 'gen-charged', mediaId: null, videoPath: null, errorKind: 'stopped' }])
-    expectPolledNotSubmitted(h, 'gen-charged')
+    await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'error', generationId: G, mediaId: null, videoPath: null, errorKind: 'stopped' }])
+    expectPolledNotSubmitted(h, G)
   })
 
   it('(d) Regenerate/Clear 로 generationId·mediaId 가 null 인 항목(옛 videoPath 폴백은 남아도) → fresh 제출', async () => {
@@ -101,6 +106,21 @@ describe('useVideoAutomation Phase 0 — Flow 모드 출처 분류 (M2-R3 H3)', 
     await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'complete', generationId: 'gen-old', mediaId: 'gen-old', videoPath: '/proj/videos/t2v_1.mp4' }])
     expect(h.generateVideoT2V).toHaveBeenCalledTimes(1)
     expect(retryVideoDownload).not.toHaveBeenCalled()
+  })
+
+  it('(f) Flow 모드에서 API operation 이름의 generationId(mediaId null, videoPath null) → Flow 가 만든 제출이 아니다 → fresh 제출(폴링·download-only 아님) (M2-R4 I4)', async () => {
+    const h = setup('flow')
+    await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'pending', generationId: OP, mediaId: null, videoPath: null }])
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(1)
+    expect(retryVideoDownload).not.toHaveBeenCalled()
+    expect(h.checkVideoStatus.mock.calls.flat(2)).not.toContain(OP)   // operation 이름을 jwpduf 로 폴하지 않는다
+    expect(h.checkVideoStatus.mock.calls[0][0]).toEqual(['gen-new-1'])
+    // error 상태 + operation 이름 + mediaId(API 의 download-only 모양)는 API 규칙(error+ids)대로 download-only — 엔진 필터는 in-flight 오분류만 막는다
+    vi.clearAllMocks()
+    const h2 = setup('flow')
+    await run(h2, [{ id: 'vscene_1', prompt: 'p1', status: 'error', generationId: OP, mediaId: OP, videoPath: null }])
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(h2.generateVideoT2V).not.toHaveBeenCalled()
   })
 
   it('(e) API 모드는 status 규칙 그대로: pending + generationId(mediaId null) → fresh 제출', async () => {

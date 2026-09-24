@@ -311,9 +311,11 @@ describe('M2-1 parseVideoSubmitResponse — 단일 레코드, 필수는 [3].leng
   })
   // M2-R3 H1(A1): [3][0][7][0][12] 는 문자열이기만 하면 통과했다 — 응답 모양이 바뀌어 그 자리에 사용자 텍스트(프롬프트·URL)가 오면 핸들러가 modelKey= 로
   //   그대로 로그·진단에 싣는다. 모델키 문법(/^[a-z0-9_]{1,64}$/)을 지키지 않으면 shape 실패(+rejectedMediaId — 과금됐지만 검증 불가) 로 닫고 값은 절대 밖으로 안 나간다.
-  it('[3][0][7][0][12] 가 모델키 문법이 아니면(공백·유니코드·URL) shape 에러 + rejectedMediaId, 메시지에 그 값 없음; 카탈로그 키는 통과', () => {
+  //   M2-R4 I5(A4): 소문자 한 단어(`sunset`·`dragon_king`)도 옛 문법을 지나 flow-angular 의 로그·report·errorParams.actual 에 실렸다 — HTrJv 카탈로그 샘플의 영상 키는 전부
+  //   모델 패밀리 접두 `abra_`·`veo_`·`omni_`(evidence/2026-09-24-flow-batchexecute-samples.masked.jsonl: abra_t2v_6s · veo_3_1_t2v_* · omni_flash_i2v_*_first_last)로 시작한다 → 접두 필수, ≤64자.
+  it('[3][0][7][0][12] 가 모델키 문법이 아니면(공백·유니코드·URL·접두 없는 소문자 단어) shape 에러 + rejectedMediaId, 메시지에 그 값 없음; 카탈로그 키는 통과', () => {
     const USER_TEXT = '왕이 궁전 내부를 산책 https://evil.example/x?y=1 Hello World'
-    for (const bad of [USER_TEXT, 'abra t2v', 'Abra_T2V', 'abra-t2v', '', 'a'.repeat(65)]) {
+    for (const bad of [USER_TEXT, 'abra t2v', 'Abra_T2V', 'abra-t2v', '', 'a'.repeat(65), 'sunset', 'dragon_king', 'abra', 'veo_', 'abra_' + 'x'.repeat(60), 'xabra_t2v_6s']) {
       const p = samplePayload('YhhmEf'); p[3][0][7][0][12] = bad
       let err
       try { parseVideoSubmitResponse(p) } catch (e) { err = e }
@@ -321,7 +323,7 @@ describe('M2-1 parseVideoSubmitResponse — 단일 레코드, 필수는 [3].leng
       expect(err).toMatchObject({ rpcid: 'YhhmEf', path: '[3][0][7][0][12]', rejectedMediaId: UUID11 })
       if (bad) expect(err.message).not.toContain(bad)
     }
-    for (const good of ['abra_t2v_6s', 'veo_3_1_t2v_fast_ultra_relaxed', 'veo_3_1_t2v_fast_portrait_ultra_relaxed', 'abra_t2v_6s_360p']) {
+    for (const good of ['abra_t2v_6s', 'veo_3_1_t2v_fast_ultra_relaxed', 'veo_3_1_t2v_fast_portrait_ultra_relaxed', 'abra_t2v_6s_360p', 'omni_flash_i2v_8s_first_last', 'veo_2_1_fast_d_15_t2v', 'abra_' + 'x'.repeat(59)]) {
       const p = samplePayload('YhhmEf'); p[3][0][7][0][12] = good
       expect(parseVideoSubmitResponse(p).modelKey).toBe(good)
     }

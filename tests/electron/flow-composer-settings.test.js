@@ -402,6 +402,27 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
     expect(log3).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'keydown:Escape:27'])
   })
 
+  // M2-R4 I7(B5): (1) 가짜 Angular 는 길이 그룹을 클릭 핸들러 안에서 동기로 갈아끼웠고 프로덕션은 고정 sleep(150) 뒤 재스캔했다 — 라이브 그룹이 그보다 늦게 다시 그려지면 옛 모델의
+  //   옵션으로 다시 계획한다(H4 가 고치려던 바로 그 경우인데 어떤 테스트도 못 보였다). 고정 대기 대신 유계 안정 대기(클릭 전 서명에서 벗어난 뒤 연속 두 스캔 동일, ≤1.5s).
+  //   (2) steps.model='clicked' 는 클릭 뒤 재계획이 성공해야 붙었다 — 클릭 뒤 거부는 모델 전환을 steps·로그에서 빠뜨려 §12.2 무과금 프로브(통과 조건 steps.model==='clicked')가 통과도 실패도 아니었다.
+  it('지연 교체(300ms): 모델 클릭 뒤 길이 그룹이 늦게 갈아끼워져도 안정 대기가 새 그룹을 보고 duration clicked(8), ok:true (duration-not-offered:8 아님)', async () => {
+    const doc = mount(videoPage({ durations: ['4초', '6초'] }))
+    const log = installFakeAngular(doc, { modelSelectDurations: ['4초', '6초', '8초', '10초'], modelSelectDelayMs: 300 })
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 8, model: 'Veo 3.1 - Fast' })   // 실제 sleep — 지연이 실제 시간이다
+    expect(r).toMatchObject({ ok: true, closed: true })
+    expect(r.steps).toMatchObject({ model: 'clicked', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)' })
+    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
+  })
+
+  it('클릭 뒤 거부(목표 모델에도 8초 없음 → duration-not-offered:8)도 steps.model:clicked 를 보고한다 — 모델은 이미 바뀌었다', async () => {
+    const doc = mount(videoPage({ durations: ['4초', '6초'] }))
+    const log = installFakeAngular(doc, { modelSelectDurations: ['4초', '6초'] })
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 8, model: 'Veo 3.1 - Fast' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'duration-not-offered:8', closed: true })
+    expect(r.steps).toMatchObject({ mode: 'already(videocam)', model: 'clicked' })
+    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'keydown:Escape:27'])
+  })
+
   it('모델 메뉴: 닫힌 트리거(aria-controls 없음) 클릭 → aria-expanded 대기 → aria-controls 로 메뉴 → 항목 클릭 → clicked; 메뉴에 없으면 model-not-offered', async () => {
     const doc = mount(videoPage())
     expect(doc.querySelector('.flow-settings-panel button[aria-haspopup="menu"]').hasAttribute('aria-controls')).toBe(false)
