@@ -1,0 +1,1171 @@
+{
+ "url": "https://flow.google.com/project/<uuid#1>",
+ "title": "Google Flow - 9월 24 - 12:07",
+ "elements": [
+  {
+   "tag": "div",
+   "class": "glue-cookie-notification-bar",
+   "id": "glue-cookie-notification-bar-1",
+   "aria-hidden": "true",
+   "aria-labelledby": "glue-cookie-notification-bar-1-label",
+   "inert": "true",
+   "role": "region",
+   "data-nosnippet": "",
+   "tabindex": "-1",
+   "text": "flow.google.com 은(는) 서비스 제공 및 서비스 품질 개선과 트래픽 분석을 위해 쿠키를 사용합니다. 동의 시 광고를 게재하고 표시되",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "href": "https://policies.google.com/technologies/cookies?hl=ko",
+   "class": "glue-cookie-notification-bar__more",
+   "rel": "noopener",
+   "aria-describedby": "glue-cookie-notification-bar-1-label",
+   "target": "_blank",
+   "aria-label": "Google에서 쿠키를 사용하는 방법을 자세히 알아보세요. 새 탭에서 열립니다.",
+   "text": "자세히 알아보세요",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "class": "glue-cookie-notification-bar__accept",
+   "text": "동의함",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "class": "glue-cookie-notification-bar__reject",
+   "text": "나중에",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "class": "skip-to-content-link",
+   "href": "#main-content",
+   "text": "Skip to main content",
+   "icons": [],
+   "rect": {
+    "x": 8,
+    "y": -1022,
+    "w": 182,
+    "h": 42
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3407108599": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger back-button mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "홈",
+   "text": "home",
+   "icons": [
+    "home"
+   ],
+   "rect": {
+    "x": 20,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "input",
+   "_ngcontent-ng-c381404976": "",
+   "type": "text",
+   "aria-label": "수정 가능한 텍스트",
+   "class": "editable-text-input",
+   "size": "14",
+   "placeholder": "",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 68,
+    "y": 25,
+    "w": 40,
+    "h": 26
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3795873158": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger more-options-button mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "프로젝트 옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-2",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 108,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c2280349507": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger icon-button-inside-search-input search-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "검색",
+   "text": "search",
+   "icons": [
+    "search"
+   ],
+   "rect": {
+    "x": 152,
+    "y": 21,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "input",
+   "_ngcontent-ng-c2280349507": "",
+   "type": "text",
+   "aria-label": "검색",
+   "class": "search-input",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 192,
+    "y": 25,
+    "w": 382,
+    "h": 26
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c2280349507": "",
+   "cdkoverlayorigin": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger filter-button mat-unthemed flow-icon-button-primary flow-button-small flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "필터링 및 정렬 옵션",
+   "aria-expanded": "false",
+   "text": "filter_list",
+   "icons": [
+    "filter_list"
+   ],
+   "rect": {
+    "x": 586,
+    "y": 18,
+    "w": 42,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3795873158": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "mattooltip": "미디어 추가",
+   "aria-label": "미디어 메뉴 추가",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-3",
+   "cdk-describedby-host": "ng-1",
+   "text": "add",
+   "icons": [
+    "add"
+   ],
+   "rect": {
+    "x": 628,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3795873158": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "mattooltip": "제품 도움말",
+   "aria-label": "제품 도움말",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "text": "help",
+   "icons": [
+    "help"
+   ],
+   "rect": {
+    "x": 674,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3795873158": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "mattooltip": "설정 보기",
+   "aria-label": "타일 그리드 설정",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-4",
+   "cdk-describedby-host": "ng-1",
+   "text": "settings_2",
+   "icons": [
+    "settings_2"
+   ],
+   "rect": {
+    "x": 720,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "maticonbutton": "",
+   "flow-icon-button": "",
+   "aria-label": "옵션 더보기",
+   "mattooltip": "옵션 더보기",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 766,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c3355568650": "",
+   "role": "button",
+   "tabindex": "0",
+   "aria-label": "계정 세부정보",
+   "class": "header-user-button has-tier",
+   "text": "PRO",
+   "icons": [],
+   "rect": {
+    "x": 818,
+    "y": 14,
+    "w": 107,
+    "h": 48
+   }
+  },
+  {
+   "tag": "a",
+   "class": "gb_C gb_9a gb_8",
+   "aria-expanded": "false",
+   "aria-label": "Google 계정: Gordon Ahn  \n(<email>)",
+   "href": "https://accounts.google.com/SignOutOptions?hl=ko&continue=https://flow.google.com/project/<uuid#1>&ec=GBRA7QU",
+   "tabindex": "0",
+   "role": "button",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 876,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "a",
+   "_ngcontent-ng-c163001": "",
+   "mat-list-item": "",
+   "routerlinkactive": "",
+   "class": "mat-mdc-list-item mdc-list-item mat-mdc-tooltip-trigger mat-mdc-list-item-interactive mdc-list-item--with-leading-icon mat-mdc-tooltip-disabled mat-mdc-list-item-single-line mdc-list-item--with-one-line",
+   "aria-disabled": "false",
+   "href": "/project/<uuid#1>/tools",
+   "text": "apps_spark_2도구",
+   "icons": [
+    "apps_spark_2"
+   ],
+   "rect": {
+    "x": 16,
+    "y": 352,
+    "w": 215,
+    "h": 48
+   }
+  },
+  {
+   "tag": "a",
+   "_ngcontent-ng-c163001": "",
+   "mat-list-item": "",
+   "flow-trash-drop-zone": "",
+   "class": "mat-mdc-list-item mdc-list-item mat-mdc-tooltip-trigger trash-item mat-mdc-list-item-interactive mdc-list-item--with-leading-icon mat-mdc-tooltip-disabled mat-mdc-list-item-single-line mdc-list-item--with-one-line",
+   "aria-disabled": "false",
+   "text": "delete휴지통",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 16,
+    "y": 873,
+    "w": 215,
+    "h": 48
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c3795873158": "",
+   "cdkvirtualscrollingelement": "",
+   "tabindex": "0",
+   "class": "cdk-virtual-scrollable page-container",
+   "text": "play_circlefavoriteredomore_vertplay_circle왕이 궁전 내부를 산책하는 영상favoriteredomore_ver",
+   "icons": [
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image"
+   ],
+   "rect": {
+    "x": 232,
+    "y": 0,
+    "w": 717,
+    "h": 1022
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 88,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 88,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-8",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 88,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c1167746210": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circle왕이 궁전 내부를 산책하는 영상",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 427,
+    "w": 169,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 485,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 485,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-8",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 485,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c1167746210": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageKing inside royal court",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 824,
+    "w": 147,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 882,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 882,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c2595417712": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-8",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 882,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c1167746210": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageKing in royal palace",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 1220,
+    "w": 131,
+    "h": 18
+   }
+  },
+  {
+   "tag": "div",
+   "contenteditable": "true",
+   "translate": "no",
+   "class": "ProseMirror",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 198,
+    "y": 909,
+    "w": 560,
+    "h": 20
+   }
+  },
+  {
+   "tag": "button",
+   "maticonbutton": "",
+   "type": "button",
+   "aria-haspopup": "true",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger add-menu-trigger mat-unthemed",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "프롬프트 상자에 소재 추가",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-14",
+   "cdk-describedby-host": "ng-1",
+   "text": "add",
+   "icons": [
+    "add"
+   ],
+   "rect": {
+    "x": 190,
+    "y": 949,
+    "w": 32,
+    "h": 32
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3408718981": "",
+   "class": "agent-mode-chip",
+   "aria-pressed": "false",
+   "text": "에이전트",
+   "icons": [],
+   "rect": {
+    "x": 232,
+    "y": 951,
+    "w": 70,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c420413500": "",
+   "matbutton": "",
+   "flow-button": "",
+   "aria-label": "설정 트리거",
+   "cdkoverlayorigin": "",
+   "class": "mdc-button mat-mdc-button-base settings-trigger-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-small",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "text": "동영상 · 720p · 6초 crop_16_9 x1",
+   "icons": [
+    "crop_16_9"
+   ],
+   "rect": {
+    "x": 584,
+    "y": 949,
+    "w": 150,
+    "h": 32
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3667650687": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "type": "submit",
+   "aria-label": "생성 시작",
+   "cdkoverlayorigin": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base generate-icon-button mat-unthemed flow-icon-button-secondary flow-button-small flow-icon-button-no-touch-target mat-mdc-button-disabled",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "disabled": "true",
+   "text": "arrow_forward",
+   "icons": [
+    "arrow_forward"
+   ],
+   "rect": {
+    "x": 738,
+    "y": 949,
+    "w": 32,
+    "h": 32
+   }
+  },
+  {
+   "tag": "textarea",
+   "id": "g-recaptcha-response-100000",
+   "name": "g-recaptcha-response",
+   "class": "g-recaptcha-response",
+   "style": "width: 250px; height: 40px; border: 1px solid rgb(193, 193, 193); margin: 10px 25px; padding: 0px; resize: none; display: none;",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-85-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-28",
+   "text": "image이미지",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 446,
+    "y": 618,
+    "w": 140,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-86-button",
+   "role": "radio",
+   "tabindex": "0",
+   "aria-checked": "true",
+   "name": "mat-button-toggle-group-28",
+   "text": "videocam동영상",
+   "icons": [
+    "videocam"
+   ],
+   "rect": {
+    "x": 586,
+    "y": 618,
+    "w": 140,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-96-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-30",
+   "text": "crop_free프레임",
+   "icons": [
+    "crop_free"
+   ],
+   "rect": {
+    "x": 446,
+    "y": 656,
+    "w": 140,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-97-button",
+   "role": "radio",
+   "tabindex": "0",
+   "aria-checked": "true",
+   "name": "mat-button-toggle-group-30",
+   "text": "chrome_extension소재",
+   "icons": [
+    "chrome_extension"
+   ],
+   "rect": {
+    "x": 586,
+    "y": 656,
+    "w": 140,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-91-button",
+   "role": "radio",
+   "tabindex": "0",
+   "aria-checked": "true",
+   "name": "mat-button-toggle-group-27",
+   "text": "crop_16_916:9",
+   "icons": [
+    "crop_16_9"
+   ],
+   "rect": {
+    "x": 446,
+    "y": 698,
+    "w": 140,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-95-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-27",
+   "text": "crop_9_169:16",
+   "icons": [
+    "crop_9_16"
+   ],
+   "rect": {
+    "x": 586,
+    "y": 698,
+    "w": 140,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c4152561270": "",
+   "flow-button": "",
+   "matbutton": "",
+   "aria-label": "모델 제품군 선택",
+   "class": "mdc-button mat-mdc-button-base mat-mdc-menu-trigger mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-medium",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "aria-haspopup": "menu",
+   "aria-expanded": "true",
+   "aria-controls": "mat-menu-panel-20",
+   "text": "Omni 1.1 Flash arrow_drop_down",
+   "icons": [
+    "arrow_drop_down"
+   ],
+   "rect": {
+    "x": 446,
+    "y": 745,
+    "w": 280,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-98-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-31",
+   "text": "360pinfo",
+   "icons": [
+    "info"
+   ],
+   "rect": {
+    "x": 446,
+    "y": 783,
+    "w": 140,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-99-button",
+   "role": "radio",
+   "tabindex": "0",
+   "aria-checked": "true",
+   "name": "mat-button-toggle-group-31",
+   "text": "720p",
+   "icons": [],
+   "rect": {
+    "x": 586,
+    "y": 783,
+    "w": 140,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-100-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-32",
+   "text": "4초",
+   "icons": [],
+   "rect": {
+    "x": 446,
+    "y": 821,
+    "w": 69,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-101-button",
+   "role": "radio",
+   "tabindex": "0",
+   "aria-checked": "true",
+   "name": "mat-button-toggle-group-32",
+   "text": "6초",
+   "icons": [],
+   "rect": {
+    "x": 516,
+    "y": 821,
+    "w": 69,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-102-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-32",
+   "text": "8초",
+   "icons": [],
+   "rect": {
+    "x": 586,
+    "y": 821,
+    "w": 69,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-103-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-32",
+   "text": "10초",
+   "icons": [],
+   "rect": {
+    "x": 656,
+    "y": 821,
+    "w": 69,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-87-button",
+   "role": "radio",
+   "tabindex": "0",
+   "aria-checked": "true",
+   "name": "mat-button-toggle-group-29",
+   "text": "x1",
+   "icons": [],
+   "rect": {
+    "x": 446,
+    "y": 859,
+    "w": 69,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-88-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-29",
+   "text": "x2",
+   "icons": [],
+   "rect": {
+    "x": 516,
+    "y": 859,
+    "w": 69,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-89-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-29",
+   "text": "x3",
+   "icons": [],
+   "rect": {
+    "x": 586,
+    "y": 859,
+    "w": 69,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "type": "button",
+   "class": "mat-button-toggle-button mat-focus-indicator",
+   "id": "mat-button-toggle-90-button",
+   "role": "radio",
+   "tabindex": "-1",
+   "aria-checked": "false",
+   "name": "mat-button-toggle-group-29",
+   "text": "x4",
+   "icons": [],
+   "rect": {
+    "x": 656,
+    "y": 859,
+    "w": 69,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "_ngcontent-ng-c2660442052": "",
+   "target": "_blank",
+   "rel": "noopener noreferrer",
+   "class": "credit-cost-link",
+   "href": "https://support.google.com/googleone?p=g1_ai_credit_menu",
+   "text": "10 크레딧",
+   "icons": [],
+   "rect": {
+    "x": 548,
+    "y": 905,
+    "w": 47,
+    "h": 15
+   }
+  },
+  {
+   "tag": "div",
+   "tabindex": "-1",
+   "role": "menu",
+   "class": "mat-mdc-menu-panel flow-menu-panel flow-model-picker-panel mat-menu-above mat-menu-after",
+   "id": "mat-menu-panel-20",
+   "style": "transform-origin: left bottom;",
+   "text": "volume_upOmni 1.1 Flashvolume_upVeo 3.1 - Litevolume_upVeo 3.1 - Fastvolume_upVe",
+   "icons": [
+    "volume_up",
+    "volume_up",
+    "volume_up",
+    "volume_up"
+   ],
+   "rect": {
+    "x": 446,
+    "y": 569,
+    "w": 280,
+    "h": 176
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3298597619": "",
+   "mat-menu-item": "",
+   "class": "mat-mdc-menu-item mat-focus-indicator mat-mdc-menu-trigger mat-mdc-tooltip-trigger flow-internal-menu-item mat-mdc-tooltip-disabled",
+   "role": "menuitem",
+   "tabindex": "0",
+   "aria-expanded": "false",
+   "text": "volume_upOmni 1.1 Flash",
+   "icons": [
+    "volume_up"
+   ],
+   "rect": {
+    "x": 466,
+    "y": 585,
+    "w": 236,
+    "h": 24
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3298597619": "",
+   "mat-menu-item": "",
+   "class": "mat-mdc-menu-item mat-focus-indicator mat-mdc-menu-trigger mat-mdc-tooltip-trigger flow-internal-menu-item mat-mdc-tooltip-disabled",
+   "role": "menuitem",
+   "tabindex": "0",
+   "aria-expanded": "false",
+   "text": "volume_upVeo 3.1 - Lite",
+   "icons": [
+    "volume_up"
+   ],
+   "rect": {
+    "x": 466,
+    "y": 625,
+    "w": 236,
+    "h": 24
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3298597619": "",
+   "mat-menu-item": "",
+   "class": "mat-mdc-menu-item mat-focus-indicator mat-mdc-menu-trigger mat-mdc-tooltip-trigger flow-internal-menu-item mat-mdc-tooltip-disabled",
+   "role": "menuitem",
+   "tabindex": "0",
+   "aria-expanded": "false",
+   "text": "volume_upVeo 3.1 - Fast",
+   "icons": [
+    "volume_up"
+   ],
+   "rect": {
+    "x": 466,
+    "y": 665,
+    "w": 236,
+    "h": 24
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3298597619": "",
+   "mat-menu-item": "",
+   "class": "mat-mdc-menu-item mat-focus-indicator mat-mdc-menu-trigger mat-mdc-tooltip-trigger flow-internal-menu-item mat-mdc-tooltip-disabled",
+   "role": "menuitem",
+   "tabindex": "0",
+   "aria-expanded": "false",
+   "text": "volume_upVeo 3.1 - Quality",
+   "icons": [
+    "volume_up"
+   ],
+   "rect": {
+    "x": 466,
+    "y": 705,
+    "w": 236,
+    "h": 24
+   }
+  }
+ ]
+}

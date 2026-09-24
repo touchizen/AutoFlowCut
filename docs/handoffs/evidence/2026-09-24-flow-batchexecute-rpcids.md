@@ -227,7 +227,8 @@ uuid 번호는 **이 섹션 안에서만** 일관(`<uuid#1>` = 프로젝트 id).
 
 - 관측한 T2V 요청(`YhhmEf`)의 모델 키는 `abra_t2v_6s` — 패널의 `Omni 1.1 Flash` + `6초` 와 대응. 입력 방식이 `소재` 여도 소재가 없으면 t2v 키로 나갔다.
 - **기존 설정 코드와 호환 안 됨**: `electron/flow-agent-defaults.js` 는 옛 labs.google 패널(Radix Tabs `-trigger-LANDSCAPE` id 접미사, `tune` 아이콘 설정 버튼)을 전제한다. 새 패널은 Material 토글이라 그 셀렉터는 조용히 no-op 될 것이다. 모델 트리거의 `aria-haspopup="menu"` 만 겹친다. 반면 프롬프트 입력·생성 버튼은 호환(위 표).
-- 남은 관측: 모델 드롭다운을 **연 상태** 덤프(메뉴 항목 라벨). 모델 키 ↔ 표시명은 `HTrJv` 카탈로그에 있다(§2).
+- 영상 모델 메뉴(연 상태, `…-video-model-menu.elements.json`): `div.mat-mdc-menu-panel.flow-model-picker-panel[role=menu]` 안에 `button.mat-mdc-menu-item[role=menuitem]` 4개 — `Omni 1.1 Flash` · `Veo 3.1 - Lite` · `Veo 3.1 - Fast` · `Veo 3.1 - Quality`(각각 아이콘 `volume_up`). 항목마다 `mat-mdc-menu-trigger`·`aria-expanded` 가 있어 **하위 메뉴가 달려 있다**(내용 미캡처). 모델 키 ↔ 표시명은 `HTrJv` 카탈로그(§2).
+- 컴포저에 에이전트 토글 `button` 텍스트 `에이전트`, `aria-pressed="false"` 가 있다. 이미지 모델 메뉴와 `소재 추가` 팝업은 미캡처.
 - `aria-label` 이 한국어(`hl=ko`)라 로케일 의존 — 셀렉터는 클래스·아이콘 리거처 우선.
 
 ## 5. 재현
