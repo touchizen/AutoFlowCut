@@ -14,7 +14,10 @@
  *
  * tests/electron/ipc/flowGenerateImageAngular.test.js · tests/electron/flowRpcPipeline.test.js
  */
+import { screen } from 'electron'
 import { isFlowPageUrl, isLegacyFlowUrl } from '../flowUrl.js'
+import { updateBounds } from './layout.js'
+import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../flow-rpc-capture.js'
 import { armDeadline, settleGen } from '../flow-rpc-router.js'
 import { normalizePrompt, describeMediaUrl } from '../flow-rpc-protocol.js'
@@ -63,12 +66,10 @@ export function unsupportedOnAngular(name) {
   return { success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:' + String(name) }
 }
 
-/** M1-12: Flow 모드면 URL 과 무관하게 angular 로 간다(옛 labs.google 은 301 이라 옛 분기는 도달 불가). */
-export function dispatchAngular(getCurrentMode) {
-  return !getCurrentMode || getCurrentMode() === 'flow'
-}
-
 const kindResult = (kind, extra) => ({ success: false, errorKind: kind, error: kind, ...(extra || {}) })
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+/** 제출 단계의 실패 kind — D8-9 의 reportDomFailure('submit:<kind>') 대상(내용 없음). */
+const SUBMIT_FAILURE_KINDS = new Set(['flow-submit-not-sent', 'flow-submit-lost', 'flow-rpc-multi-batch'])
 
 /**
  * @param {object} deps flow-api.js 의 deps(main.js flowAPIDeps 와 동일 모양). 필요한 것: getFlowView, getFlowAgentOn,
@@ -96,6 +97,7 @@ export function createFlowAngular(deps) {
   async function collectRpcGen(gen) {
     if (gen.error) {
       if (typeof gen.error === 'string' && gen.error.startsWith('rpc-shape:')) await report(gen.error, 'shape', { rpc: gen.rpc })
+      else if (SUBMIT_FAILURE_KINDS.has(gen.errorKind)) await report(`submit:${gen.errorKind}`, gen.errorKind, { rpc: gen.rpc, bound: gen.doc != null })
       return {
         success: false,
         errorKind: gen.errorKind || 'flow-rpc-error',
@@ -112,19 +114,22 @@ export function createFlowAngular(deps) {
     const images = []
     for (const r of results) {
       const { host, media } = describeMediaUrl(r.url)
-      let res
+      let buffer
+      let contentType = 'image/png'
+      // R1#9: 본문 읽기(arrayBuffer)·base64 도 try 안 — 밖에 두면 IPC 가 reject 되고 비동기 경로는 gen 이 이미 지워져 이미지를 잃는다.
       try {
-        res = await deps.sessionFetch(r.url)
+        const res = await deps.sessionFetch(r.url)
+        if (!res || !res.ok) {
+          console.warn(`[Flow API] [AsyncCollect] download failed host=${host} media=${media} status=${res ? res.status : 0}`)
+          return { success: false, errorKind: 'flow-download-error', error: 'flow-download-error', httpStatus: res ? res.status : 0 }
+        }
+        buffer = await res.arrayBuffer()
+        contentType = (res.headers && res.headers.get && res.headers.get('content-type')) || 'image/png'
       } catch (e) {
+        // safe-log: e.name 은 예외 클래스 이름(TypeError 등) — 사용자 내용이 아니다
         console.warn(`[Flow API] [AsyncCollect] download error host=${host} media=${media} reason=${e?.name || 'Error'}`)
         return { success: false, errorKind: 'flow-download-error', error: 'flow-download-error', httpStatus: 0 }
       }
-      if (!res || !res.ok) {
-        console.warn(`[Flow API] [AsyncCollect] download failed host=${host} media=${media} status=${res ? res.status : 0}`)
-        return { success: false, errorKind: 'flow-download-error', error: 'flow-download-error', httpStatus: res ? res.status : 0 }
-      }
-      const buffer = await res.arrayBuffer()
-      const contentType = (res.headers && res.headers.get && res.headers.get('content-type')) || 'image/png'
       console.log(`[Flow API] [AsyncCollect] download host=${host} media=${media} bytes=${buffer.byteLength}`)
       images.push({
         base64: `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`,
@@ -175,12 +180,35 @@ export function createFlowAngular(deps) {
       return { success: false, errorKind: settings.kind || 'flow-settings-not-applied', error: settings.kind || 'flow-settings-not-applied', ...(settings.params ? { errorParams: settings.params } : {}) }
     }
 
-    // 4. 편집기 — 신뢰 클릭으로 캐럿 → 주입 → 재판독(정규화 비교)
-    const focus = await deps.trustedClickOnFlowView(FIND_PROMPT_EDITOR_JS, { required: true, step: 'compose-editor' })
-    if (!focus?.success) return kindResult('text-injection-failed')
-    try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
+    // 4. 편집기 — 뷰가 0×0(모달 열림·드래그 중)이면 execCommand('insertText') 가 no-op 이라(옛 flow-api.js "execCommand 방식이
+    //    작동하려면 flowView가 보여야 함") 화면 밖으로 키워 두고, OS 포커스를 준 뒤 신뢰 클릭으로 캐럿 → 주입 → 재판독.
+    //    키운 뷰는 재판독까지 유지하고 finally 에서 레이아웃(updateBounds)으로 원복한다. 보이는 뷰는 손대지 않는다(R2#1;
+    //    실기 게이트는 957×1022 로 통과). 신뢰 클릭은 자기가 키운 경우에만 되돌리므로 여기서 키운 뷰를 접지 않는다.
+    const startBounds = flowView.getBounds ? flowView.getBounds() : null
+    const wasHidden = !startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)
     let readBack = null
-    try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
+    try {
+      if (wasHidden) {
+        const mainWindow = deps.getMainWindow()
+        const { width, height } = mainWindow.getContentBounds()
+        const displays = (screen && typeof screen.getAllDisplays === 'function') ? screen.getAllDisplays() : []
+        flowView.setBounds(computeOffscreenBounds(displays, mainWindow.getBounds().x, width, height))
+        await sleep(300)
+        console.log('[Flow API] [Angular] view was hidden — enlarged offscreen for text injection')
+      }
+      try { flowView.webContents.focus() } catch (_e) { /* 포커스 실패는 재판독이 잡는다 */ }
+      await sleep(120)
+      const focus = await deps.trustedClickOnFlowView(FIND_PROMPT_EDITOR_JS, { required: true, step: 'compose-editor' })
+      if (!focus?.success) return kindResult('text-injection-failed')
+      await sleep(120)
+      try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
+      try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
+    } finally {
+      if (wasHidden) {
+        updateBounds(deps.getMainWindow(), flowView)
+        await sleep(200)
+      }
+    }
     const normPrompt = normalizePrompt(prompt)
     if (normalizePrompt(readBack || '') !== normPrompt) {
       await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
@@ -210,7 +238,7 @@ export function createFlowAngular(deps) {
       deps.pendingGenerations.delete(generationId)
       return kindResult('generate-button-click-failed')
     }
-    console.log(`[Flow API] [Angular] submitted gen=${generationId.slice(0, 8)} async=${!!asyncMode}`)
+    console.log(`[Flow API] [Angular] submitted gen=${generationId.slice(-8)} async=${!!asyncMode}`)
     if (asyncMode) return { success: true, generationId, submitted: true }
 
     await waiter

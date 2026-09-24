@@ -246,24 +246,6 @@ describe.skip('flow character IPC coded failure responses', () => {
     })
   })
 
-  it.each([
-    ['flow:register-character-entity', { entityId: 'e', workflowId: 'w', displayName: 'private name' }],
-    ['flow:rename-character', { entityId: 'e', displayName: 'private name' }],
-  ])('%s returns a coded missing-session failure', async (channel, payload) => {
-    const ipc = makeIpcMain()
-    const { deps } = makeDeps()
-    registerCharacterIPC(ipc, deps)
-
-    const res = await ipc.invoke(channel, { ...payload, projectId: PID })
-
-    expect(res).toMatchObject({
-      success: false,
-      errorKind: 'flow-access-token-unavailable',
-      error: 'Flow access token unavailable',
-    })
-    expect(res.error).not.toContain('private name')
-  })
-
   it('upload returns a coded invalid-response failure without the response body', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps({
@@ -373,5 +355,27 @@ describe.skip('flow:generate-character — SPA 캐시에 이름 반영', () => {
     const scripts = flowView.webContents.executeJavaScript.mock.calls.map(c => String(c[0]))
     expect(scripts.some(s => s.includes('name input not found'))).toBe(false)
     expect(res.nameApplied).toBe(false)
+  })
+})
+
+// R2#7: register/rename 은 M1-12 의 단락 대상이 아니다 — flow.google.com 에서도 렌더러(flowCharacterSync.js)가 닿는 살아 있는
+//   핸들러라, 코드화된 세션 실패 계약(내용 없음)은 계속 검증한다. (위 describe.skip 은 도달 불가 코드만 덮는다.)
+describe('flow character session-coded failures (live on flow.google.com)', () => {
+  it.each([
+    ['flow:register-character-entity', { entityId: 'e', workflowId: 'w', displayName: 'private name' }],
+    ['flow:rename-character', { entityId: 'e', displayName: 'private name' }],
+  ])('%s returns a coded missing-session failure', async (channel, payload) => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke(channel, { ...payload, projectId: PID })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'flow-access-token-unavailable',
+      error: 'Flow access token unavailable',
+    })
+    expect(res.error).not.toContain('private name')
   })
 })

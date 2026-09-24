@@ -55,13 +55,49 @@ function jsFiles(dir) {
   })
 }
 
+/**
+ * A template literal's quoted text is a format string, but its `${…}` expressions ARE arguments.
+ * R2#8: stripping the whole literal hid every `${ev.prompts[0]}`-style leak (all M1 log lines are template
+ * literals). Keep the expressions (brace-depth aware, so `${JSON.stringify({a})}` survives) and drop the text.
+ */
+function keepTemplateExpressions(src) {
+  let out = ''
+  let i = 0
+  while (i < src.length) {
+    const ch = src[i]
+    if (ch !== '`') { out += ch; i++; continue }
+    // inside a template literal
+    i++
+    const exprs = []
+    while (i < src.length && src[i] !== '`') {
+      if (src[i] === '$' && src[i + 1] === '{') {
+        i += 2
+        let depth = 1
+        let expr = ''
+        while (i < src.length && depth > 0) {
+          if (src[i] === '{') depth++
+          else if (src[i] === '}') { depth--; if (depth === 0) { i++; break } }
+          expr += src[i]
+          i++
+        }
+        exprs.push(expr)
+      } else {
+        i++
+      }
+    }
+    i++ // closing backtick
+    out += '(' + exprs.join(', ') + ')'
+  }
+  return out
+}
+
 /** console.log('...', a, b) — the arguments, minus anything that is already safe. */
 function consoleCallArgs(line) {
   const m = line.match(/console\.(log|warn|error|info)\s*\(([\s\S]*)$/)
   if (!m) return null
-  return m[2]
+  return keepTemplateExpressions(m[2])
     // A format string mentioning the word "prompt" is not a leak.
-    .replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""').replace(/`[^`]*`/g, '``')
+    .replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""')
     // A trailing // comment is not what gets logged.
     .replace(/\/\/.*$/, '')
     // Taking a LENGTH of the content is the fix, not the leak: prompt?.length, (promptKey || '').length
@@ -69,6 +105,18 @@ function consoleCallArgs(line) {
     // A basename is the filename without the account-bearing directories — that is the fix too.
     .replace(/(?:path\.)?basename\([^)]*\)/g, 'BASE')
 }
+
+describe('the guard itself (R2#8)', () => {
+  it('keeps `${…}` expressions of a template literal as arguments — a prompt interpolated into a log line is caught', () => {
+    const args = consoleCallArgs("console.log(`[Flow RPC] send seq=${ev.seq} prompt=${ev.prompts[0]}`)")
+    expect(args).toMatch(CONTENT_BEARING)
+    expect(consoleCallArgs("console.warn(`[Flow RPC] send seq=${ev.seq} bound=${short(id)}`)")).not.toMatch(CONTENT_BEARING)
+    // 중괄호가 중첩된 표현식도 잘리지 않는다
+    expect(consoleCallArgs("console.log(`x ${JSON.stringify({ name: n })} done`)")).toMatch(CONTENT_BEARING)
+    // 텍스트만 있는 템플릿은 인자가 아니다
+    expect(consoleCallArgs("console.log(`prompt injected`)")).not.toMatch(CONTENT_BEARING)
+  })
+})
 
 describe('main-process logs must not carry user content', () => {
   it('no console.* in electron/ logs a prompt, name, caption, or user path', () => {

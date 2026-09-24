@@ -996,22 +996,25 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               'collect',
               e?.message || String(e)
             )
-            // M1-10 백스톱: 후처리 예외(예: tryUpscaleImage 의 flow-upscale-unsupported)는 결과가 이미 소비된 항목이다 —
-            //   ref 를 그 kind 로 error 표시, busy 해제, 큐에서 제거(settled). 안 그러면 180s 캡까지 pending 으로 돈다.
-            removeBatchGeneratingRef(pending.busyIndex)
-            setReferences(prev => patchReferenceByIdentity(
-              prev,
-              pending.index,
-              isTargeted ? pending.key : null,
-              current => ({
-                ...current,
-                status: 'error',
-                errorMessage: e?.message || 'Post-processing failed',
-                errorKind: e?.errorKind ?? null,
-                errorParams: e?.errorParams || {},
-              })
-            ))
-            succeeded.add(pending)
+            // M1-10 백스톱: kind 를 실은 후처리 예외(tryUpscaleImage 의 flow-upscale-unsupported)만 종결이다 — 결과가 이미
+            //   소비된 항목이라 ref 를 그 kind 로 error 표시, busy 해제, 큐에서 제거(settled). 안 그러면 180s 캡까지 pending 으로
+            //   돈다. kind 없는 예외(디스크 오류 등)는 기존대로 큐에 남겨 타임아웃/사용자 중지(pending 복귀) 정리에 맡긴다(R1#14).
+            if (e?.errorKind) {
+              removeBatchGeneratingRef(pending.busyIndex)
+              setReferences(prev => patchReferenceByIdentity(
+                prev,
+                pending.index,
+                isTargeted ? pending.key : null,
+                current => ({
+                  ...current,
+                  status: 'error',
+                  errorMessage: e?.message || 'Post-processing failed',
+                  errorKind: e.errorKind,
+                  errorParams: e?.errorParams || {},
+                })
+              ))
+              succeeded.add(pending)
+            }
           }
         }, 5)
 

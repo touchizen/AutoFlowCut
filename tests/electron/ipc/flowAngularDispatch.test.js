@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
 import { registerVideoIPC } from '../../../electron/ipc/video.js'
-import { dispatchAngular, unsupportedOnAngular } from '../../../electron/ipc/flow-angular.js'
+import { unsupportedOnAngular } from '../../../electron/ipc/flow-angular.js'
 
 function makeIpcMain() {
   const handlers = new Map()
@@ -35,12 +35,7 @@ function makeDeps(url, mode = 'flow') {
   return { deps, legacy, flowView }
 }
 
-describe('dispatchAngular / unsupportedOnAngular (순수)', () => {
-  it('Flow 모드면 무조건 true(URL 무관), API 모드면 false', () => {
-    expect(dispatchAngular(() => 'flow')).toBe(true)
-    expect(dispatchAngular(() => 'api')).toBe(false)
-    expect(dispatchAngular(undefined)).toBe(true)
-  })
+describe('unsupportedOnAngular (순수)', () => {
   it('unsupportedOnAngular(name) 계약', () => {
     expect(unsupportedOnAngular('upscale-image')).toEqual({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:upscale-image' })
   })
@@ -71,11 +66,13 @@ describe('video.js — t2v / check-video-status 는 Flow 모드에서 angular(M1
 
 describe('flow-api.js — generate-image 디스패치', () => {
   it.each(['https://accounts.google.com/signin', 'about:blank', ''])('%s → flow-session-missing + authFailed (옛 "No token"/네비게이트 아님)', async (url) => {
-    const { deps, legacy } = makeDeps(url)
+    const { deps, legacy, flowView } = makeDeps(url)
     const ipc = makeIpcMain(); registerFlowAPIIPC(ipc, deps)
     const r = await ipc.invoke('flow:generate-image', { prompt: 'p', projectId: 'p' })
     expect(r).toEqual({ success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true })
-    expect(deps.flowView?.webContents?.loadURL || vi.fn()).not.toHaveBeenCalled()
+    // R1#13/R2#10: makeDeps 가 만든 그 flowView 의 loadURL 을 본다(deps.flowView 는 없다 — 예전 단언은 새 vi.fn() 을 봤다)
+    expect(flowView.webContents.loadURL).not.toHaveBeenCalled()
+    expect(flowView.webContents.executeJavaScript).not.toHaveBeenCalled()
     for (const fn of Object.values(legacy)) expect(fn).not.toHaveBeenCalled()
   })
 })

@@ -20,11 +20,12 @@ import * as plainSettings from '../../electron/flow-composer-settings.js'
 import * as plainAngular from '../../electron/ipc/flow-angular.js'
 import * as plainProtocol from '../../electron/flow-rpc-protocol.js'
 import { sample, reencodeRequestBody } from '../fixtures/flow-batchexecute-samples.js'
-import { PAGE_IMAGE_KO, PAGE_VIDEO_KO, CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, buildSettingsPanel } from '../fixtures/flow-live-dom-20260924.js'
+import { PAGE_IMAGE_KO, PAGE_VIDEO_KO, CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel } from '../fixtures/flow-live-dom-20260924.js'
 
 const SRC = (rel) => fileURLToPath(new URL(rel, import.meta.url))
 async function loadMinified(rel) {
-  const out = buildSync({ entryPoints: [SRC(rel)], bundle: true, minify: true, format: 'esm', write: false, platform: 'node' })
+  // electron 은 vite 빌드처럼 external — 번들에 인라인하면 electron/index.js 가 path.txt 를 찾다 throw 한다.
+  const out = buildSync({ entryPoints: [SRC(rel)], bundle: true, minify: true, format: 'esm', write: false, platform: 'node', external: ['electron'] })
   const dir = mkdtempSync(join(tmpdir(), 'flow-inj-min-'))
   const file = join(dir, 'bundle.mjs')
   writeFileSync(file, out.outputFiles[0].text)
@@ -166,5 +167,55 @@ describe('정적 규칙: 직렬화되는 헬퍼는 서로를 이름으로 부르
       if (other === name) continue
       expect(body, `${name} → ${other}`).not.toMatch(new RegExp(`\\b${other}\\s*\\(`))
     }
+  })
+})
+
+// R2#9: 페이지 표현식 형태의 드라이버(minified) 가 **모드 전환·모델 메뉴 분기**까지 돈다 — 가짜 Angular 를 JSDOM 문서에
+//   설치하고 image 패널에서 video 목표를 준다. 모듈 스코프 이름(ratioLigature 등)을 드라이버 본문이 부르면 여기서 터진다.
+describe('minified SETTINGS_DRIVER_JS — 가짜 Angular 위에서 모드 전환 + 모델 메뉴 + 지연 리셋', () => {
+  let settings
+  beforeAll(async () => { settings = await loadMinified('../../electron/flow-composer-settings.js') })
+
+  async function drive(M, targets, opts, page = PROJECT_MENU_BUTTON + CARD_MENU_BUTTONS + IMAGE_COMPOSER_KO + buildSettingsPanel({ mode: 'image' })) {
+    const { installFakeAngular, disposeFakeAngular } = await import('../helpers/fakeFlowAngular.js')
+    const dom = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only' })
+    dom.window.Element.prototype.getBoundingClientRect = () => ({ width: 100, height: 30 })
+    const log = installFakeAngular(dom.window.document, opts)
+    try {
+      const r = await dom.window.eval(M.SETTINGS_DRIVER_JS(targets))
+      return { r, log, doc: dom.window.document }
+    } finally { disposeFakeAngular() }
+  }
+
+  it('image 패널 → video 목표(모드 전환 → 재스캔 → 모델 메뉴 선택 → 동기 리셋된 duration 재클릭) 가 minified 에서도 ok', async () => {
+    for (const M of [settings, plainSettings]) {
+      const { r, log, doc } = await drive(M, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Veo 3.1 - Fast' }, { modelReset: 'sync' })
+      expect(r).toMatchObject({ ok: true, closed: true, steps: { mode: 'clicked', model: 'clicked', ratio: 'already(crop_16_9)', duration: 'clicked', resolution: 'already', count: 'already' } })
+      expect(log).toEqual(['mode:videocam', 'model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
+      expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+    }
+  }, 30000)
+
+  it('지연 리셋(b) 도 minified 에서 not-checked:duration 으로 닫힌다 (video 패널, count x2 → x1 클릭이 duration 을 되돌린다)', async () => {
+    const page = PROJECT_MENU_BUTTON + CARD_MENU_BUTTONS + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', checked: { count: 'x2' } })
+    const { r } = await drive(settings, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni 1.1 Flash' }, { modelReset: 'on-count' }, page)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:duration', closed: true })
+  }, 30000)
+})
+
+describe('정적 규칙(확장, R2#9): 드라이버·주입 헬퍼 본문은 모듈 스코프 이름을 부르지 않는다', () => {
+  const MODULE_NAMES = ['ratioLigature', 'formatSteps', 'RATIO_LIGATURE', 'STEP_ORDER', 'applyComposerSettings', 'runSettingsDriver', 'SETTINGS_DRIVER_JS', 'FIND_RADIO_JS', 'SETTINGS_PANEL_OPEN_JS', 'READ_SETTINGS_SUMMARY_JS', 'FIND_SETTINGS_TRIGGER_JS', 'FLOW_RPC_CAPTURE_ALLOWLIST', 'FLOW_RPC_ALLOWLIST', 'FLOW_RPC_TIMEOUT_MS', 'RPC_PATH']
+  const serialized = {
+    scanSettingsPanel: plainSettings.scanSettingsPanel, planSettingsClicks: plainSettings.planSettingsClicks, settingsDriverCore: plainSettings.settingsDriverCore, isSettingsPanelOpen: plainSettings.isSettingsPanelOpen,
+    readWizGlobals: plainClient.readWizGlobals, buildRpcRequest: plainClient.buildRpcRequest,
+    decodeFReqInner: plainProtocol.decodeFReqInner, extractSubmitPrompts: plainProtocol.extractSubmitPrompts, normalizePrompt: plainProtocol.normalizePrompt,
+  }
+  it.each(Object.keys(serialized))('%s', (name) => {
+    const body = serialized[name].toString()
+    for (const id of MODULE_NAMES) expect(body, `${name} → ${id}`).not.toMatch(new RegExp(`\\b${id}\\b`))
+  })
+  it('SETTINGS_DRIVER_JS · FLOW_RPC_CALL_JS · FLOW_RPC_CAPTURE_INJECTION 문자열도 모듈 스코프 이름을 참조하지 않는다', () => {
+    const strings = [plainSettings.SETTINGS_DRIVER_JS({ mode: 'image' }), plainClient.FLOW_RPC_CALL_JS('nzlxg', '[]'), plainCapture.FLOW_RPC_CAPTURE_INJECTION]
+    for (const s of strings) for (const id of MODULE_NAMES) expect(s).not.toMatch(new RegExp(`\\b${id}\\b`))
   })
 })

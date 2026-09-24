@@ -1352,6 +1352,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // Fetch media by ID (mediaId → redirect → base64)
   ipcMain.handle('flow:fetch-media', async (event, { token, mediaId }) => {
+    if (flowActive()) return unsupportedOnAngular('fetch-media')  // R1#7: 옛 호스트 로직 — 새 Flow 에서 도달 불가
     if (!token) return { success: false, error: 'No token' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
 
@@ -1389,6 +1390,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       return { success: true, base64 }
     } catch (e) {
       // 예외 메시지는 URL(서명 포함)을 실을 수 있다 — 이름만.
+      // safe-log: e.name 은 예외 클래스 이름(TypeError 등) — 사용자 내용이 아니다
       console.error(`[Flow VideoDownload] error host=${host} media=${media} reason=${e?.name || 'Error'}`)
       return { success: false, error: 'flow-download-error', errorKind: 'flow-download-error', httpStatus: 0 }
     }
@@ -1403,6 +1405,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     //   돌 수 있어 Flow quota 를 쓴다. API 모드 전환 후 stale 호출이 보존된 Flow view 를 구동해
     //   quota 를 소모하지 않도록 게이트한다. (API 모드 비디오 다운로드는 engineApi 경로라 무관.)
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
+    if (flowActive()) return unsupportedOnAngular('dom-download-video')  // R1#7: 옛 DOM 다운로드 메뉴 — 새 Flow 에서 도달 불가(M2 는 서명 URL)
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
@@ -1939,6 +1942,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // 사용자의 Flow 프로젝트(=날짜별 세션) 목록을 가져온다.
   // 응답: result.data.json.result.projects[] → {projectId, projectInfo, creationTime}
   ipcMain.handle('flow:list-projects', async (event, { token, pageSize = 20 } = {}) => {
+    if (flowActive()) return unsupportedOnAngular('list-projects')  // R1#7: labs.google trpc — "List projects HTTP 401" 문구가 markAuth 를 오발동시켰다
     try {
       const input = JSON.stringify({ json: { pageSize, toolName: 'PINHOLE' } })
       const url = `https://labs.google/fx/api/trpc/project.searchUserProjects?input=${encodeURIComponent(input)}`

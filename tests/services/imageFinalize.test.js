@@ -241,6 +241,24 @@ describe('finalizeGeneratedImage — errorParams 보존 + 업스케일 백스톱
     expect(fileSystemAPI.saveImage).not.toHaveBeenCalled()
   })
 
+  it('authFailed + 기계 토큰 error(flow-session-missing) 에 authErrorText 가 오면 그 문구를 저장한다 (R1#6/R2#5)', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'auth', error: 'AUTH TEXT' })
+  })
+
+  it('authFailed 인데 errorKind 가 없는 옛 결과는 error 문구를 그대로 둔다(#R26-6 유지)', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, error: 'Auth expired', authFailed: true, images: [] },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ errorKind: 'auth', error: 'Auth expired' })
+  })
+
   it('성공 sceneUpdate 도 errorParams 를 비운다', async () => {
     const res = await finalizeGeneratedImage({
       result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },

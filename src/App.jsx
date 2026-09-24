@@ -1402,7 +1402,7 @@ function App() {
         videoRetryInFlightRef.current = false
         setVideoRetryRunning(false)
         if (modeRef.current === 'flow') {
-          toast.warning(getAuthRequiredMessage('flow', t))
+          toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
         } else {
           window.dispatchEvent(new CustomEvent('flow-login-expired'))
         }
@@ -1524,7 +1524,7 @@ function App() {
       if (modeRef.current !== 'flow') {
         setShowApiKeyModal(true)
       } else {
-        toast.warning(getAuthRequiredMessage('flow', t))
+        toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
       }
       return
     }
@@ -1928,7 +1928,7 @@ function App() {
         if (modeRef.current !== 'flow') {
           setShowApiKeyModal(true)
         } else {
-          toast.warning(getAuthRequiredMessage('flow', t))
+          toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
         }
         setPendingStartOptions(null)
         return

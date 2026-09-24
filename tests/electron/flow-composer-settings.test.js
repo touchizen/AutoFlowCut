@@ -11,8 +11,9 @@ import {
   FIND_RADIO_JS, applyComposerSettings,
 } from '../../electron/flow-composer-settings.js'
 import {
-  CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel, buildModelMenu,
+  CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel,
 } from '../fixtures/flow-live-dom-20260924.js'
+import { installFakeAngular, disposeFakeAngular } from '../helpers/fakeFlowAngular.js'
 
 const ONE_CARD = CARD_MENU_BUTTONS.slice(0, CARD_MENU_BUTTONS.indexOf('</div>') + '</div>'.length)
 const CARDS7 = ONE_CARD.repeat(7)
@@ -24,83 +25,9 @@ function mount(html) { document.body.innerHTML = html; return document }
 const imagePage = (o = {}) => HEAD + IMAGE_COMPOSER_KO + buildSettingsPanel({ mode: 'image', ...o })
 const videoPage = (o = {}) => HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', ...o })
 
-/**
- * 가짜 Angular — 라디오 클릭은 그룹 안 aria-checked 를 옮기고, 모드 클릭은 패널을 통째로 갈아끼우며,
- * 모델 트리거는 메뉴를 열고 메뉴 항목은 트리거 라벨을 바꾼다. Escape 는 패널을 닫는다.
- *   opts.modelReset 'sync'      : 모델 항목 클릭 핸들러가 duration/resolution 을 즉시 기본값(6초/720p)으로 되돌린다
- *   opts.modelReset 'on-count'  : 뒤의 count 클릭이 duration 을 기본값으로 되돌린다(지연 리셋)
- *   opts.ignoreClicks          : 클릭에 반응하지 않는 그룹 이름 목록(합성 클릭을 무시하는 컨트롤 — needsTrusted 케이스.
- *                                jsdom 의 el.click() 은 isTrusted 가 true 라 플래그로는 흉내 못 낸다)
- *   opts.stickyPanel           : Escape 로 닫히지 않는다
- * 리스너는 document 에 붙으므로 테스트마다 이전 것을 abort 한다(누적되면 이전 테스트의 리셋 규칙이 섞인다).
- */
-let fakeAngularAbort = null
-function installFakeAngular(doc, opts = {}) {
-  if (fakeAngularAbort) fakeAngularAbort.abort()
-  fakeAngularAbort = new AbortController()
-  const signal = fakeAngularAbort.signal
-  const log = []
-  const setChecked = (btn) => {
-    const name = btn.getAttribute('name')
-    doc.querySelectorAll(`button[role="radio"][name="${name}"]`).forEach((b) => b.setAttribute('aria-checked', String(b === btn)))
-  }
-  const groupOf = (btn) => {
-    const t = (btn.textContent || '').replace(/\s+/g, ' ').trim()
-    const ligs = Array.from(btn.querySelectorAll('mat-icon')).map((i) => i.textContent.trim())
-    if (ligs.some((l) => l === 'image' || l === 'videocam')) return 'mode'
-    if (ligs.some((l) => /^crop_(16_9|9_16|landscape|square|portrait)$/.test(l))) return 'ratio'
-    if (/^x\d$/.test(t)) return 'count'
-    if (/\d+p/.test(t)) return 'resolution'
-    if (/초/.test(t)) return 'duration'
-    return 'other'
-  }
-  const resetGroup = (group, key) => {
-    const b = Array.from(doc.querySelectorAll('button[role="radio"]')).find((x) => groupOf(x) === group && (x.textContent.includes(key)))
-    if (b) setChecked(b)
-  }
-  doc.addEventListener('click', (e) => {
-    const btn = e.target.closest('button')
-    if (!btn) return
-    if (btn.getAttribute('role') === 'radio') {
-      const g = groupOf(btn)
-      const label = Array.from(btn.querySelectorAll('mat-icon')).map((i) => i.textContent.trim())[0] || btn.textContent.replace(/\s+/g, ' ').trim()
-      log.push(`${g}:${label}`)
-      if ((opts.ignoreClicks || []).includes(g)) return
-      if (g === 'mode') {
-        const toVideo = label === 'videocam'
-        const overlay = doc.querySelector('.cdk-overlay-container')
-        overlay.outerHTML = buildSettingsPanel({ mode: toVideo ? 'video' : 'image', offset: 40 })
-        return
-      }
-      setChecked(btn)
-      if (opts.modelReset === 'on-count' && g === 'count') resetGroup('duration', '6초')
-      return
-    }
-    if (btn.getAttribute('aria-haspopup') === 'menu' && btn.closest('.flow-settings-panel')) {
-      log.push('model-trigger')
-      const open = btn.getAttribute('aria-expanded') === 'true'
-      if (open) { doc.getElementById(btn.getAttribute('aria-controls'))?.closest('.cdk-overlay-pane')?.remove(); btn.setAttribute('aria-expanded', 'false'); btn.removeAttribute('aria-controls'); return }
-      doc.querySelector('.cdk-overlay-container').insertAdjacentHTML('beforeend', buildModelMenu('mat-menu-panel-20'))
-      btn.setAttribute('aria-expanded', 'true'); btn.setAttribute('aria-controls', 'mat-menu-panel-20')
-      return
-    }
-    if (btn.getAttribute('role') === 'menuitem') {
-      const text = btn.querySelector('.mat-mdc-menu-item-text').textContent.trim()
-      log.push(`model:${text.toLowerCase()}`)
-      const trigger = doc.querySelector('.flow-settings-panel button[aria-haspopup="menu"]')
-      trigger.querySelector('.mdc-button__label').textContent = text
-      trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-controls')
-      btn.closest('.cdk-overlay-pane').remove()
-      if (opts.modelReset === 'sync') { resetGroup('duration', '6초'); resetGroup('resolution', '720p') }
-    }
-  }, { signal })
-  doc.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !opts.stickyPanel) doc.querySelector('.cdk-overlay-container')?.remove()
-  }, { signal })
-  return log
-}
+// 가짜 Angular 는 tests/helpers/fakeFlowAngular.js(공용 — minified 드라이버 테스트도 같은 것을 쓴다).
 
-beforeEach(() => { document.body.innerHTML = ''; if (fakeAngularAbort) { fakeAngularAbort.abort(); fakeAngularAbort = null } })
+beforeEach(() => { document.body.innerHTML = ''; disposeFakeAngular() })
 
 describe('scanSettingsPanel — 라디오 최소 공통 조상 + 내용 분류', () => {
   it('이미지 패널: mode/ratio/count 그룹, 스코프 안 모델 트리거만(카드·프로젝트 메뉴 버튼 제외)', () => {
@@ -200,7 +127,8 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     const log = installFakeAngular(doc)
     const r = await runSettingsDriver(doc, { mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana 2' }, noSleep)
     expect(r).toMatchObject({ ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'clicked(crop_9_16)', count: 'clicked' } })
-    expect(log).toEqual(['ratio:crop_9_16', 'count:x2'])
+    // R1#3: Escape 는 body 의 keydown 으로, keyCode/which 27 을 싣는다(CDK 오버레이의 판정 조건).
+    expect(log).toEqual(['ratio:crop_9_16', 'count:x2', 'keydown:Escape:27'])
     expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
   })
 
@@ -208,8 +136,10 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     const doc = mount(imagePage())
     const log = installFakeAngular(doc)
     const r = await runSettingsDriver(doc, { mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana Pro' }, noSleep)
-    expect(r).toMatchObject({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })
-    expect(log).toEqual([])
+    expect(r).toMatchObject({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, closed: true })
+    // R1#3: 실패 경로도 패널을 닫고 나온다(열어 둔 채 돌아오면 다음 클릭이 오버레이에 막힌다).
+    expect(log).toEqual(['keydown:Escape:27'])
+    expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
   })
 
   it('(a) 동기 리셋: 모드 전환 → 재스캔 → 모델 메뉴 선택 → duration 이 되돌아가 모델 뒤에 다시 클릭 → ok', async () => {
@@ -218,7 +148,7 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Veo 3.1 - Fast' }, noSleep)
     expect(r.ok).toBe(true)
     expect(r.steps).toMatchObject({ mode: 'clicked', model: 'clicked', ratio: 'already(crop_16_9)', duration: 'clicked', resolution: 'already', count: 'already' })
-    expect(log).toEqual(['mode:videocam', 'model-trigger', 'model:veo 3.1 - fast', 'duration:8초'])
+    expect(log).toEqual(['mode:videocam', 'model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
     const s = scanSettingsPanel(doc)
     expect(s.ok).toBe(false)   // 닫혔다
   })
@@ -227,7 +157,19 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     const doc = mount(videoPage({ checked: { count: 'x2' } }))
     installFakeAngular(doc, { modelReset: 'on-count' })
     const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni 1.1 Flash' }, noSleep)
-    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:duration' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:duration', closed: true })
+    expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+  })
+
+  it('needs-trusted 는 패널을 열어 둔다 — main 이 그 라디오를 trusted 클릭한 뒤 드라이버를 다시 돌린다', async () => {
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc, { ignoreClicks: ['ratio'] })
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '9:16', model: 'Nano Banana 2' }, noSleep)
+    expect(r.ok).toBe(false)
+    expect(r.needsTrusted).toHaveLength(1)
+    expect(r.closed).toBeUndefined()
+    expect(log).not.toContain('keydown:Escape:27')
+    expect(doc.querySelector('.cdk-overlay-container')).not.toBeNull()
   })
 
   it('합성 클릭을 무시하는 라디오 → needsTrusted 목록(name·label)으로 보고', async () => {
@@ -251,8 +193,8 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     const log = installFakeAngular(doc)
     const js = SETTINGS_DRIVER_JS({ mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana 2' })
     const r = await run(js)
-    expect(r).toMatchObject({ ok: true, steps: { ratio: 'clicked(crop_9_16)', count: 'clicked', model: 'verified' } })
-    expect(log).toEqual(['ratio:crop_9_16', 'count:x2'])
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { ratio: 'clicked(crop_9_16)', count: 'clicked', model: 'verified' } })
+    expect(log).toEqual(['ratio:crop_9_16', 'count:x2', 'keydown:Escape:27'])
     // 선언(function scanSettingsPanel(...)) 말고는 이름 호출이 없다 — minify 가 이름을 뭉개도 안전
     const calls = js.replace(/function (scanSettingsPanel|planSettingsClicks|settingsDriverCore)\(/g, '')
     expect(calls).not.toMatch(/\b(scanSettingsPanel|planSettingsClicks|settingsDriverCore)\(/)
@@ -298,10 +240,28 @@ describe('applyComposerSettings — main 측(트리거 trusted 클릭 → 드라
   })
 
   it('kind/params 실패는 그대로 전달(모델 불일치), 요약 재검증 없음', async () => {
-    const h = harness({ driver: { ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, steps: { mode: 'already' } } })
+    const h = harness({ driver: { ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, steps: { mode: 'already' }, closed: true } })
     const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '9:16', model: 'Nano Banana Pro' }, h.deps)
     expect(r).toEqual({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, reason: 'flow-image-model-mismatch', steps: { mode: 'already' } })
     expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver'])
+  })
+
+  it('실패 결과가 closed:false 면(드라이버의 Escape 가 안 먹음) 트리거를 trusted 재클릭해 닫고 실패 kind 는 그대로 (R1#3)', async () => {
+    const h = harness({ driver: { ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:duration', steps: { mode: 'clicked' }, closed: false } })
+    const r = await applyComposerSettings(h.flowView, { mode: 'video', duration: 8 }, h.deps)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:duration' })
+    expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'trusted:settings-trigger-close'])
+  })
+
+  it('needsTrusted 의 trusted 클릭이 실패하면 트리거 재클릭으로 패널을 닫고 settings-radio-click-failed', async () => {
+    let n = 0
+    const h = harness({ driver: () => (++n === 1
+      ? { ok: false, needsTrusted: [{ group: 'ratio', name: 'mat-button-toggle-group-27', label: '9:16', ligature: 'crop_9_16' }], steps: {} }
+      : { ok: true, closed: true, steps: {} }) })
+    h.trustedClickOnFlowView.mockImplementation(async (sel, o) => { h.calls.push(`trusted:${o?.step}`); return { success: o?.step !== 'settings-radio' } })
+    const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '9:16' }, h.deps)
+    expect(r).toMatchObject({ ok: false, reason: 'settings-radio-click-failed:ratio' })
+    expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'trusted:settings-radio', 'trusted:settings-trigger-close'])
   })
 
   it('closed:false → 트리거 재클릭 → 아직 열려 있으면 panel-not-closed', async () => {

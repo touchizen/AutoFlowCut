@@ -246,13 +246,13 @@ export function describeMediaUrl(url) {
   }
 }
 
-/** 치수가 요청 종횡비('16:9' 등)와 맞는가(5% 허용). 치수 없음·비율 문자열 아님 → false. */
+/** 치수가 요청 종횡비('16:9' 등)와 맞는가(±3% 허용 — 플랜 §2 D4; 1376×768 은 16:9 에서 +0.8%). 치수 없음·비율 문자열 아님 → false. */
 export function ratioOk(width, height, ratio) {
   if (!(width > 0) || !(height > 0)) return false
   const m = /^(\d+):(\d+)$/.exec(String(ratio || ''))
   if (!m) return false
   const want = Number(m[1]) / Number(m[2])
-  return Math.abs(width / height - want) / want <= 0.05
+  return Math.abs(width / height - want) / want <= 0.03
 }
 
 /**

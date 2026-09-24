@@ -10,6 +10,7 @@ import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
 import { failBoundUnfinished } from '../../../electron/flow-rpc-router.js'
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
+import { setModalVisible } from '../../../electron/ipc/layout.js'
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure } from '../../fixtures/flow-batchexecute-samples.js'
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
@@ -31,6 +32,8 @@ function makeIpcMain() {
 function harness(o = {}) {
   const url = o.url ?? FLOW_URL_OK
   const trace = []
+  // R2#1: 뷰 bounds 는 가변 — hidden 변형은 0×0 에서 시작하고 setBounds 가 갱신한다(실제 WebContentsView 처럼).
+  let bounds = o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
   const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
   const agentSeq = Array.isArray(o.agent) ? [...o.agent] : null
   let injectedPrompt = null
@@ -40,7 +43,7 @@ function harness(o = {}) {
     if (s.includes('__af_settings_driver__')) { trace.push('settings-driver'); return o.settings ?? { ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'already(crop_16_9)', count: 'already' } } }
     if (s.includes('__af_settings_panel_open__')) return false
     if (s.includes('__af_set_editor_text__')) {
-      trace.push('set-text')
+      trace.push(bounds.width > 0 && bounds.height > 0 ? 'set-text:visible' : 'set-text:hidden')
       const m = s.match(/const text = (".*?");/)
       injectedPrompt = m ? JSON.parse(m[1]) : null
       return { ok: true }
@@ -64,9 +67,9 @@ function harness(o = {}) {
     return null
   })
   const flowView = {
-    getBounds: () => ({ x: 0, y: 0, width: 957, height: 1022 }),
-    setBounds: vi.fn(),
-    webContents: { executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null },
+    getBounds: () => ({ ...bounds }),
+    setBounds: vi.fn((b) => { bounds = { ...b }; trace.push(`bounds:${b.width}x${b.height}`) }),
+    webContents: { executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(() => { trace.push('focus') }), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null },
   }
   const onDomFailure = vi.fn(async () => {})
   const helpers = createSharedHelpers({
@@ -98,7 +101,7 @@ function harness(o = {}) {
   const ipcMain = makeIpcMain()
   registerFlowAPIIPC(ipcMain, {
     getFlowView: () => flowView,
-    getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }) }),
+    getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }), getBounds: () => ({ x: 0, y: 0 }) }),
     getCurrentMode: () => o.mode ?? 'flow',
     getFlowAgentOn: () => !!o.flowAgentOn,
     parseFlowResponse: () => null, getEnterToolClicked: () => true, setEnterToolClicked: vi.fn(),
@@ -108,8 +111,8 @@ function harness(o = {}) {
     flowPageFetch: vi.fn(), extractMediaIds: () => [], extractFifeUrls: () => [], extractBase64Images: () => [],
     fetchMediaAsBase64: vi.fn(), listAgentModels: vi.fn(), selectFlowModeTab: vi.fn(),
     getApiBase: () => 'https://labs.google/fx/api/trpc', FLOW_URL: 'https://labs.google/fx/tools/flow',
-    ...legacy,
     ...helpers,                 // 실제 헬퍼(ensureAgentOff · ensureOnProjectComposer · reportDomFailure …)
+    ...legacy,                  // R2#4: 옛 deps 스파이는 실제 헬퍼 **뒤에** — 앞에 두면 실제 configureFlowMode 가 스파이를 덮어 "미호출" 단언이 공허해진다
     trustedClickOnFlowView,     // 클릭만 가짜 — 제출 클릭이 페이지 이벤트를 라우터로 흘린다
     sessionFetch,
   })
@@ -147,19 +150,71 @@ describe('flow:generate-image (angular) — 동기', () => {
     expect(idx(t, 'agent-probe')).toBeGreaterThanOrEqual(0)
     expect(idx(t, 'agent-probe')).toBeLessThan(idx(t, 'capture-probe'))
     expect(idx(t, 'capture-probe')).toBeLessThan(idx(t, 'settings-driver'))
-    expect(idx(t, 'settings-driver')).toBeLessThan(idx(t, 'set-text'))
-    expect(idx(t, 'set-text')).toBeLessThan(idx(t, 'read-text'))
+    expect(idx(t, 'settings-driver')).toBeLessThan(idx(t, 'focus'))
+    expect(idx(t, 'focus')).toBeLessThan(idx(t, 'click:compose-editor'))
+    expect(idx(t, 'click:compose-editor')).toBeLessThan(idx(t, 'set-text:visible'))
+    expect(idx(t, 'set-text:visible')).toBeLessThan(idx(t, 'read-text'))
+    // R2#1: 보이는 뷰(957×1022)는 손대지 않는다 — 실기 게이트가 이 경로로 통과했다.
+    expect(h.flowView.setBounds).not.toHaveBeenCalled()
     expect(idx(t, 'read-text')).toBeLessThan(idx(t, 'submit-enabled'))
     expect(idx(t, 'submit-enabled')).toBeLessThan(idx(t, 'click:compose-submit'))
     expect(t).toContain('armed:1')
     expect(h.pendingGenerations.size).toBe(0)
     expect(logged()).toMatch(/\[Flow API\] \[Angular\] image 1376x768 ratio=ok/)
+    // R1#11: gen id 는 뒤 8자(앞 8자는 항상 "gen-1790")
+    expect(logged()).toMatch(/\[Flow API\] \[Angular\] submitted gen=\S+ async=false/)
+    expect(logged()).not.toMatch(/submitted gen=gen-1790/)
     // 마스킹 픽스처의 <uuid#5> 는 '#' 때문에 URL 조각이 된다 — 호스트와 바이트 수, 그리고 서명이 없음을 본다.
     expect(logged()).toMatch(/\[Flow API\] \[AsyncCollect\] download host=flow-content\.google media=\S{1,8} bytes=3/)
     expect(logged()).not.toContain(PROMPT)
     expect(logged()).not.toContain('Signature')
     for (const fn of Object.values(h.legacy)) expect(fn).not.toHaveBeenCalled()
     expect(h.trace).not.toContain('dom-image-probe')
+  })
+
+  // 뷰가 0×0 인 실제 상황 = 모달(씬 상세)이 열려 있거나 드래그 중 — 레이아웃의 updateBounds 가 0×0 을 유지한다.
+  //   그 상태를 layout 의 modalVisible 로 만든다(안 그러면 헬퍼의 복원(updateBounds)이 split 크기로 되살려 "숨음"이 사라진다).
+  it('숨은 뷰(0×0): 편집기 클릭 전에 화면 밖으로 키우고 OS 포커스 → 주입·재판독 동안 보이는 상태 → 끝나면 레이아웃으로 원복 (R2#1)', async () => {
+    setModalVisible(true)
+    const h = harness({ hidden: true })
+    let r
+    try { r = await settle(h.generate()) } finally { setModalVisible(false) }
+    expect(r.success).toBe(true)
+    const t = h.trace
+    const firstEnlarge = t.findIndex((x) => /^bounds:\d+x\d+$/.test(x) && !x.endsWith('0x0'))
+    expect(firstEnlarge).toBeGreaterThanOrEqual(0)
+    expect(firstEnlarge).toBeLessThan(idx(t, 'focus'))
+    expect(idx(t, 'focus')).toBeLessThan(idx(t, 'click:compose-editor'))
+    expect(t).toContain('set-text:visible')
+    expect(t).not.toContain('set-text:hidden')
+    expect(idx(t, 'set-text:visible')).toBeLessThan(idx(t, 'read-text'))
+    // 재판독 뒤 레이아웃(updateBounds) 으로 원복 — 마지막 setBounds 는 read-text 뒤, submit 클릭 전.
+    const lastBounds = t.map((x, i) => [x, i]).filter(([x]) => x.startsWith('bounds:')).at(-1)[1]
+    expect(lastBounds).toBeGreaterThan(idx(t, 'read-text'))
+    expect(lastBounds).toBeLessThan(idx(t, 'click:compose-submit'))
+  })
+
+  it('숨은 뷰: 편집기 클릭이 실패해도 bounds 를 원복한다(0×0 으로 — 모달이 열려 있으므로)', async () => {
+    setModalVisible(true)
+    const h = harness({ hidden: true })
+    h.trustedClickOnFlowView.mockImplementation(async (_sel, opts) => { h.trace.push('click:' + (opts?.step || '?')); return { success: opts?.step !== 'compose-editor' } })
+    let r
+    try { r = await settle(h.generate()) } finally { setModalVisible(false) }
+    expect(r).toMatchObject({ success: false, errorKind: 'text-injection-failed' })
+    const t = h.trace
+    const enlarge = t.findIndex((x) => /^bounds:\d+x\d+$/.test(x) && !x.endsWith('0x0'))
+    expect(enlarge).toBeGreaterThanOrEqual(0)
+    expect(enlarge).toBeLessThan(idx(t, 'click:compose-editor'))
+    const restore = t.lastIndexOf('bounds:0x0')
+    expect(restore).toBeGreaterThan(idx(t, 'click:compose-editor'))
+    expect(h.flowView.getBounds()).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+  })
+
+  it('다운로드 본문 읽기 실패(arrayBuffer reject) → flow-download-error httpStatus 0, IPC 는 reject 하지 않는다 (R1#9)', async () => {
+    const fetch = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => { throw new Error('socket hang up') }, headers: { get: () => 'image/png' } }))
+    const h = harness({ fetch })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-download-error', error: 'flow-download-error', httpStatus: 0 })
   })
 
   it('편집기 텍스트가 프롬프트와 다르면 text-injection-failed — 클릭 없음', async () => {
@@ -355,6 +410,10 @@ describe('flow:generate-image (angular) — 비동기 + check/collect + 마감',
     expect(await h.ipcMain.invoke('flow:check-generation', { generationId: r.generationId })).toMatchObject({ completed: true })
     expect(await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', error: 'flow-submit-not-sent' })
     expect(h.pendingGenerations.has(r.generationId)).toBe(false)
+    // R1#5 (D8-9): 제출 마감은 submit:<kind> 로 보고된다 — 내용 없이.
+    const call = h.onDomFailure.mock.calls.find((c) => c[0] === 'submit:flow-submit-not-sent')
+    expect(call).toBeTruthy()
+    expect(JSON.stringify(call[1])).not.toContain(PROMPT)
   })
 
   it('send 뒤 loadend 없이 100s → flow-submit-lost', async () => {
@@ -364,6 +423,7 @@ describe('flow:generate-image (angular) — 비동기 + check/collect + 마감',
     expect(h.pendingGenerations.get(r.generationId).completed).toBe(false)
     await vi.advanceTimersByTimeAsync(1100)
     expect(await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })).toMatchObject({ success: false, errorKind: 'flow-submit-lost' })
+    expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'submit:flow-submit-lost')).toBe(true)
   })
 
   it('커밋 네비게이션(failBoundUnfinished) → flow-submit-lost', async () => {

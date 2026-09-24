@@ -131,9 +131,10 @@ describe('routeRpcSend — 후보 선택·바인딩', () => {
     expect(g).toMatchObject({ completed: true, error: 'flow-submit-lost', errorKind: 'flow-submit-lost' })
   })
 
-  it('로그: [Flow RPC] ogiZ0b send doc=<8> seq=<n> bound=<8> — 프롬프트 없음', () => {
+  it('로그: [Flow RPC] ogiZ0b send doc=<8> seq=<n> bound=<id 뒤 8자> — 프롬프트 없음 (R1#11: 앞 8자는 항상 gen-1790)', () => {
     routeRpcSend(sendEv(), new Map([['gen-1790240100-abcdef', gen()]]))
-    expect(logged()).toMatch(/\[Flow RPC\] ogiZ0b send doc=a{8} seq=1 bound=gen-1790/)
+    expect(logged()).toMatch(/\[Flow RPC\] ogiZ0b send doc=a{8} seq=1 bound=0-abcdef/)
+    expect(logged()).not.toMatch(/bound=gen-1790/)
     expect(logged()).not.toContain(PROMPT)
   })
 
@@ -161,6 +162,15 @@ describe('routeRpcLoadend — {doc, seq} 매칭·파싱·완료', () => {
     expect(g.deadlines).toEqual({})
     expect(logged()).toMatch(/\[Flow RPC\] ogiZ0b loadend seq=1 status=200/)
     expect(logged()).not.toContain('Signature')
+  })
+
+  it('결과 개수 ≠ expectedCount → 숫자만 warn, 완료는 정상 (R1#12)', () => {
+    const g = gen({ doc: DOC_A, seq: 1, expectedCount: 2 })
+    routeRpcLoadend(endEv(), new Map([['g', g]]))
+    expect(g).toMatchObject({ completed: true, error: null })
+    expect(g.results).toHaveLength(1)
+    expect(logged()).toMatch(/ogiZ0b seq=1 count mismatch got=1 want=2/)
+    expect(logged()).not.toContain(PROMPT)
   })
 
   it('치수 ↔ wantRatio 불일치 → flow-aspect-mismatch (wantRatio 없으면 검사 생략)', () => {

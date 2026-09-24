@@ -18,7 +18,7 @@ import { routeRpcReport } from './flow-rpc-router.js'
 
 /**
  * main 의 pending 상태 접근자 → routeReportResponse ctx. main.js 와 파이프라인 테스트가 같은 모양을 쓴다.
- * @param {{getPendingGeneration, setPendingGeneration, pendingGenerations, getPendingVideoGeneration, setPendingVideoGeneration, now?}} state
+ * @param {{getPendingGeneration, setPendingGeneration, pendingGenerations, getPendingVideoGeneration, setPendingVideoGeneration}} state
  */
 export function buildReportCtx(state) {
   return {
@@ -27,7 +27,6 @@ export function buildReportCtx(state) {
     pendingGenerations: state.pendingGenerations,
     getPendingVideoGeneration: state.getPendingVideoGeneration,
     setPendingVideoGeneration: state.setPendingVideoGeneration,
-    now: typeof state.now === 'function' ? state.now : () => Date.now() / 1000,
   }
 }
 

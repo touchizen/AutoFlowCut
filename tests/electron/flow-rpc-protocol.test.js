@@ -165,6 +165,11 @@ describe('ratioOk', () => {
   it('768×1376 / 16:9 → false', () => { expect(ratioOk(768, 1376, '16:9')).toBe(false) })
   it('1024×1024 / 1:1 → true', () => { expect(ratioOk(1024, 1024, '1:1')).toBe(true) })
   it('치수 null → false', () => { expect(ratioOk(null, null, '16:9')).toBe(false) })
+  it('허용 오차는 ±3% (R1#12): 2% 어긋남은 true, 4% 는 false', () => {
+    expect(ratioOk(1813, 1000, '16:9')).toBe(true)    // 1.813 / 1.7778 = +2.0%
+    expect(ratioOk(1849, 1000, '16:9')).toBe(false)   // +4.0%
+    expect(ratioOk(1000, 1849, '9:16')).toBe(false)
+  })
 })
 
 describe('rpcErrorToRendererResult — 문구에 숫자·auth 단어 없음, 코드·상태는 별도 필드', () => {

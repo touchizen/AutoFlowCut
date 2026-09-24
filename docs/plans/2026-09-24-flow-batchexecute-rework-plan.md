@@ -444,3 +444,27 @@
 | 19 | M1-13 | 렌더러 통합은 파일 둘: `useAutomation.flowAngular.test.jsx`(게이트 재료, finalize 모킹) · `useAutomation.flowAngularPipeline.test.jsx`(실제 `useFlowEngine`+`useAutomation`+`imageFinalize`) — 모듈 모킹이 충돌해서. 페이싱 시나리오는 3씬 · 60s(설정 상한) · 제출 IPC 1s(가짜 시계) 로 첫 씬 재확인을 121s 에 놓아 옛 순서가 `Generation timeout` 을 내는 것을 재현했다(60s 정확히면 120.0s 라 `>` 에 안 걸려 옛 순서도 통과 — 실기에선 await 오버헤드가 그 몇 ms 를 만든다). | 플랜의 "2씬 + 60s" 는 재현이 안 됐다. |
 | 20 | M1-14a | 모듈별(`flow-rpc-capture`·`flow-rpc-client`·`flow-composer-dom`·`flow-agent-toggle`·`flow-composer-settings`·`ipc/flow-angular`) esbuild `--minify` 번들. main.js 통째 번들은 electron import 때문에 불가. | — |
 | 21 | 로그 | 세션 판정·설정·캡처·라우터·다운로드 로그는 §4 의 문구를 접두로 유지하되 뒤에 숫자 필드를 덧붙인 곳이 있다(`ratio=ok count=1`, `bound=<8>`, `bytes=<n>`). | 진단 편의. 내용(프롬프트·URL·토큰) 없음은 `noUserContentInLogs` 가 지킨다. |
+
+### 11.1 리뷰 1라운드 반영 (2026-09-25, R1 = 일반 축 · R2 = 테스트/배선 축)
+
+| # | 리뷰 | 내용 | 비고 |
+|---|---|---|---|
+| 22 | R1#3 | 설정 패널 닫기는 **document.body 에 keyCode/which 27** 의 keydown(초기화 사전이 무시하면 defineProperty 로 박는다). 드라이버는 실패 경로도 닫고 결과에 `closed` 를 싣는다(needs-trusted 만 열어 둠 — main 이 라디오를 trusted 클릭한 뒤 다시 돈다). main 은 실패 결과 `closed:false` 와 라디오 클릭 실패 때 트리거를 trusted 재클릭(`settings-trigger-close`)한다. 가짜 Angular 는 body 의 keyCode 27 만 듣는다. | 실기(09-24 23:55): 옛 Escape 는 무효, 재클릭이 닫았다. |
+| 23 | R2#1 | 편집기 단계 전에 뷰가 0×0(모달·드래그)이면 화면 밖으로 키우고(`computeOffscreenBounds`, `screen` 없으면 폴백) `webContents.focus()` + 120ms 뒤 캐럿 클릭 → 주입 → 재판독까지 유지, finally 에서 `updateBounds` 로 원복. 보이는 뷰는 손대지 않는다. 테스트는 layout 의 `modalVisible` 로 "숨음" 을 재현한다(헬퍼의 복원이 split 크기로 되살리는 것을 막기 위해). | 실기 게이트는 보이는 뷰(957×1022)로 통과 — 그 경로 무변경. |
+| 24 | R1#12 | 종횡비 허용 오차 0.05 → **0.03**; 결과 개수 ≠ `expectedCount` 는 숫자만 warn(`count mismatch got=<n> want=<n>`), 실패 아님. | 플랜 D4 ±3%. |
+| 25 | R1#7 | `flow:list-projects`·`flow:fetch-media`·`flow:dom-download-video` 도 Flow 모드 단락(`flow-feature-unsupported:<name>`) — 옛 호스트 문구("List projects HTTP 401")가 `markAuth` 를 오발동시켰다. 단락 총 12개. | dom-download 는 `flowActive` 게이트 뒤에 둬 API 모드 계약 유지. |
+| 26 | R1#8 | 영상 훅: `check-video-status` 의 `flow-feature-unsupported` 는 **종결** — 전 항목(pending + 미제출) error(kind 유지), 폴 1회, `terminalStopped` 로 완료 문구 덮어쓰기 방지. I2V 프레임 업로드 실패의 `errorKind` 통과. | M1 스텁을 일시 실패로 보면 120회 폴링. |
+| 27 | R1#6/R2#5 | authFailed 결과의 error 가 기계 토큰(`not-on-flow`·`flow-rpc-error`, kind 동반)이면 씬/상태 문구는 인증 안내(`authFailureText`; `imageFinalize` 는 호출자가 넘기는 `authErrorText`). kind 없는 옛 결과("Auth expired …")는 그대로(#R26-6). 단일 씬 토스트는 `resolveDisplayError` 로. | `errorKind:'auth'` 분류는 유지(배치 중단·정리 로직이 본다). |
+| 28 | R1#10/R2#11 | `flow-rpc-multi-batch`·`flow-generation-cleared` 로케일 문구 추가. 키 테스트는 손 목록 대신 **코드 스캔**(`errorKind:'…'`·`kindResult('…')`·`kind:'flow-…'`·`error:'flow-…'`·`send/loadend:'…'`) ∪ 플랜 목록. | §11 #14 의 "flow-generation-cleared 로케일 없음" 을 뒤집는다. |
+| 29 | R1#15/R2#7 | engineFlow 의 도달 불가 `routing.kind==='scene'` 분기·로컬 맵 scene 저장·`FLOW_UPLOAD_UNSUPPORTED` 본문, `dispatchAngular`, `buildReportCtx.now` 삭제. `generateCharacterAspect` 의 register/rename 두 행은 live describe 로(그 핸들러는 단락 대상이 아니다). | 나머지 4개 skip 스위트는 옛 본문 정리 때 함께 삭제. |
+| 30 | R2#8 | `noUserContentInLogs` 가 템플릿 리터럴의 `${…}` 를 인자로 본다(중첩 중괄호 안전). 새로 걸린 2곳은 `e?.name`(예외 클래스명) — `safe-log:` 표식. 그 외 실제 유출 없음. | |
+| 31 | R2#9 | 가짜 Angular 를 `tests/helpers/fakeFlowAngular.js` 로 공용화(문서 realm 의 AbortController). minified 드라이버를 모드 전환·모델 메뉴·동기/지연 리셋까지 구동; 정적 규칙에 모듈 스코프 이름(ratioLigature·formatSteps·RATIO_LIGATURE·STEP_ORDER…) 목록. esbuild 는 `electron` external(flow-angular 가 `screen` 을 import). | |
+| 32 | R1#1/R2#3 | App 3곳(Start·영상 재시도·태그 진행)과 useVideoAutomation 에 `genAPI.flowSessionReason?.()` 전달. App 테스트는 `useMcpServer` 가 받는 `handleStart` 로 진짜 프리플라이트를 구동한다(Header 는 handleStart 를 직접 받지 않는다). | |
+| 33 | R1#2/R2#2 | useAutomation 제출 실패 3패치(auth·quota·일반)에 `errorParams`(없으면 `{}`). 파이프라인 테스트가 비동기 제출의 모델 불일치 → ResultsTable 에 두 모델명. | |
+| 34 | R1#14 | 레퍼런스 배치 백스톱은 `errorKind` 있는 예외만 종결; kind 없는 예외는 큐에 남아 타임아웃/중지(pending 복귀) 정리. | |
+| 35 | R1#5 | `collectRpcGen` 이 `submit:flow-submit-not-sent`·`submit:flow-submit-lost`·`submit:flow-rpc-multi-batch` 를 `reportDomFailure` 로 보고(내용 없음). | D8-9. |
+| 36 | R1#9 | 다운로드 본문 읽기(`arrayBuffer`)·base64 도 try 안 — 실패는 `flow-download-error httpStatus:0`, IPC reject 없음. | |
+| 37 | R1#11 | gen id 로그는 뒤 8자(`shortId`) — 앞 8자는 항상 `gen-1790`. | |
+| 38 | R1#13/R2#10 | 디스패치 테스트는 `makeDeps` 가 만든 flowView 의 `loadURL`/`executeJavaScript` 를 본다; 도메인 게이트 하네스는 WIZ true 로 세션 게이트를 지나고 `errorKind !== 'flow-session-missing'` 을 단언. | |
+| 39 | R2#4 | 하네스에서 옛 deps 스파이를 실제 헬퍼 **뒤에** 스프레드. 뮤테이션(핸들러가 `configureFlowMode` 호출) 으로 "미호출" 단언이 빨개짐을 확인 후 복구. | |
+| 40 | 실기 관찰 | `closeAgentPanels`(ensureAgentOff 의 선제 정리)는 옛 챗/설정 닫기 버튼을 `!!(selector)` 프로브로 확인한 뒤에만 trusted 클릭한다 — 새 DOM 에 없는 버튼을 매번 누르며 남기던 "[TrustedClick] Button not found" 2건과 bounds 왕복이 사라진다. | 브리프의 "trivial to skip on the new host" 조건에 해당해 포함. |

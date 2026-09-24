@@ -8,9 +8,12 @@
  */
 import { renderHook, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { render } from '@testing-library/react'
 import { useAutomation } from '../../src/hooks/useAutomation'
 import { useFlowEngine } from '../../src/engine/engineFlow'
 import { __resetQuotaStopForTests } from '../../src/utils/quotaStop'
+import ResultsTable from '../../src/components/ResultsTable'
+import { I18nProvider } from '../../src/hooks/useI18n'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -129,12 +132,41 @@ describe('useAutomation × useFlowEngine — collect 결과 kind', () => {
     expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'error', errorKind: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
   })
 
-  it('collect authFailed(HTTP 401 명시) → 배치 중단(status error, 씬 errorKind auth)', async () => {
+  it('collect authFailed(HTTP 401 명시) → 배치 중단(status error, 씬 errorKind auth) — 문구는 기계 토큰이 아니라 인증 안내 (R1#6/R2#5)', async () => {
     api.flowCollectGeneration.mockResolvedValue({ success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error', rpcStatus: 401, authFailed: true })
     const { hook, updateScene } = setup({ scenes: [SCENE('s1', 'a'), SCENE('s2', 'b')] })
     await runStart(hook)
-    expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'error', errorKind: 'auth' })
+    const s1 = lastPatch(updateScene, 's1')
+    expect(s1).toMatchObject({ status: 'error', errorKind: 'auth' })
+    expect(s1.error).not.toBe('flow-rpc-error')
+    expect(s1.error).toMatch(/Auth error|status\.flowAuthErrorStopped/)
     expect(hook.result.current.auto.status).toBe('error')
+    expect(hook.result.current.auto.statusMessage).not.toBe('flow-rpc-error')
+  })
+
+  it('제출 시 authFailed(flow-session-missing / not-on-flow) → 씬 error 문구도 인증 안내', async () => {
+    api.flowGenerateImage.mockResolvedValue({ success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true })
+    const { hook, updateScene } = setup()
+    await runStart(hook)
+    const s1 = lastPatch(updateScene, 's1')
+    expect(s1).toMatchObject({ status: 'error', errorKind: 'auth' })
+    expect(s1.error).not.toBe('not-on-flow')
+    expect(s1.error).toMatch(/Auth error|status\.flowAuthErrorStopped/)
+  })
+
+  it('제출 시 flow-image-model-mismatch(비동기 제출 결과) → 씬 패치에 errorParams, ResultsTable 에 두 모델명 (R1#2/R2#2)', async () => {
+    api.flowGenerateImage.mockResolvedValue({ success: false, errorKind: 'flow-image-model-mismatch', error: 'flow-image-model-mismatch', errorParams: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })
+    const { hook, updateScene } = setup()
+    await runStart(hook, { imageModel: 'Nano Banana Pro' })
+    const s1 = lastPatch(updateScene, 's1')
+    expect(s1).toMatchObject({ status: 'error', errorKind: 'flow-image-model-mismatch', errorParams: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })
+    const item = { id: 's1', prompt: 'a', ...s1 }
+    const { container } = render(<I18nProvider><ResultsTable items={[item]} mediaType="image" onRetry={vi.fn()} /></I18nProvider>)
+    const text = container.querySelector('.prompt-error').textContent
+    expect(text).toContain('Nano Banana Pro')
+    expect(text).toContain('Nano Banana 2')
+    expect(text).not.toMatch(/\{\w+\}/)
+    expect(text).not.toBe('flow-image-model-mismatch')
   })
 })
 

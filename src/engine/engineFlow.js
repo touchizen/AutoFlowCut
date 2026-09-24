@@ -178,7 +178,6 @@ export function markFlowAuthFailure(res) {
 // M1-10: 새 Flow(flow.google.com) 입력 게이트 — 레퍼런스 이미지·@멘션·업스케일·업로드는 아직 미지원이라 DOM 을
 //   건드리기 전에 거부한다(Flow 모드 무조건). 호출부는 필터 **전** 매칭 개수(matchedRefCount)를 넘긴다 —
 //   filePath 만 있는 ref 는 주입 필터에서 빠져도 "레퍼런스가 있는 씬"이다.
-const FLOW_UPLOAD_UNSUPPORTED = true
 const REFERENCES_UNSUPPORTED = () => ({ success: false, errorKind: 'flow-references-unsupported', error: 'flow-references-unsupported' })
 export function flowInputGate(referenceImages, callOpts = {}) {
   if (callOpts.imageUpscale && callOpts.imageUpscale !== 'off') {
@@ -381,41 +380,7 @@ export function useFlowEngine(opts = {}) {
       // M1-10: 해결된 @멘션(scene 라우팅)·미해결 멘션의 이미지 폴백(ref 주입)은 새 Flow 에서 미지원.
       if (routing.kind === 'scene' || (routing.referenceImages || []).length > 0) return REFERENCES_UNSUPPORTED()
 
-      if (routing.kind === 'scene') {
-        const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
-        // #R7-7(R6-2 sibling): pass opts (aspectRatio/seed/model/batchCount/references) through.
-        const res = await api().flowGenerateScene({
-          prompt,
-          segments: routing.segments,
-          projectId: pid,
-          aspectRatio: callOpts.aspectRatio,
-          seed: callOpts.seed,
-          model: callOpts.model,
-          batchCount: callOpts.batchCount,
-          references: callOpts.references,
-          gapReferences,
-        })
-        // map flow:generate-scene return to generateImage contract: { success, images }
-        // #R22-2: base64 이미지가 없으면 fail-closed — base64:null 복구 엔트리는 downstream finalize 가
-        //   실제 이미지 데이터를 기대해 깨진다. success:true + 빈 이미지로 'No images' 도 막는다.
-        const imgs = res?.images || []
-        if (res?.success && imgs.length === 0) {
-          return {
-            success: false,
-            errorKind: res?.errorKind,
-            error: res?.error || 'Scene generation returned no usable image',
-          }
-        }
-        return markAuth({
-          success: !!res?.success,
-          images: imgs,
-          errorKind: res?.errorKind,
-          error: res?.error || undefined,
-          // #R33: 멘션 피커 누락(Flow 삭제) 신호 전파 → 호출측이 ref 를 'failed' 로 마킹(self-heal).
-          staleMention: res?.staleMention,
-        })
-      }
-      // routing.kind === 'image' — 일반 생성 또는 #R33 미해결 멘션 이미지 폴백(@스트립 + ref 주입)
+      // routing.kind === 'image' — 평문 프롬프트만 여기 온다(레퍼런스는 위에서 거부됐다).
       return markAuth(await api().flowGenerateImage({
         token: effectiveToken(),
         prompt: routing.prompt,
@@ -423,7 +388,7 @@ export function useFlowEngine(opts = {}) {
         seed: callOpts.seed,
         model: callOpts.model,
         projectId: pid,
-        referenceImages: (routing.referenceImages || []).filter(flowImageInjectable),
+        referenceImages: [],
         batchCount: callOpts.batchCount,
         asyncMode: false,
       }))
@@ -468,67 +433,7 @@ export function useFlowEngine(opts = {}) {
       // M1-10: 해결된 @멘션(scene 라우팅)·미해결 멘션의 이미지 폴백(ref 주입)은 새 Flow 에서 미지원.
       if (routing.kind === 'scene' || (routing.referenceImages || []).length > 0) return REFERENCES_UNSUPPORTED()
 
-      if (routing.kind === 'scene') {
-        const gapReferences = computeSceneGapReferences(referenceImages, routing.segments)
-        // #R6-2: pass opts (aspectRatio, seed, model, batchCount) into flowGenerateScene
-        // #R35: 멘션 씬도 비동기 제출(asyncMode). Agent OFF 는 컴포저 블록 없이 클릭 후 즉시 반환 →
-        //   응답은 배경(pendingGenerations)에서 수집 → 씬들이 병렬로 생성된다. Agent ON 은 컴포저
-        //   monkey-patch intercept 가 안 먹어 여전히 동기 DOM 수집(images 반환).
-        const res = await api().flowGenerateScene({
-          prompt,
-          segments: routing.segments,
-          projectId: pid,
-          aspectRatio: callOpts.aspectRatio,
-          seed: callOpts.seed,
-          model: callOpts.model,
-          batchCount: callOpts.batchCount,
-          references: callOpts.references,
-          gapReferences,
-          asyncMode: true,
-        })
-
-        if (!res?.success) {
-          // #R8-11: 인증 에러면 authFailed 센티넬 부여(배치 즉시 중단).
-          // #R33: 멘션 피커 누락(Flow 삭제) 신호 전파 → 호출측이 ref 를 'failed' 로 마킹(self-heal).
-          return markAuth({
-            success: false,
-            errorKind: res?.errorKind,
-            error: res?.error || 'Scene generation failed',
-            staleMention: res?.staleMention,
-          })
-        }
-
-        // #R35: Agent OFF 비동기 제출 → 서버 수집용 generationId 를 그대로 반환. checkGeneration/
-        //   collectGeneration 이 localResultsRef 미스 → flow:check/collect-generation(pendingGenerations)
-        //   폴링으로 이미지를 회수한다(멘션없는 async 이미지와 동일 경로).
-        if (res.generationId) {
-          return { success: true, generationId: res.generationId }
-        }
-
-        // Agent ON(또는 동기 폴백): images 를 바로 받음 → 로컬 맵에 저장(기존 동작, 즉시 완료).
-        // #R22-2: base64 이미지가 없으면 fail-closed(조용한 빈 success 방지).
-        const images = res.images || []
-        if (images.length === 0) {
-          return {
-            success: false,
-            errorKind: res.errorKind,
-            error: res.error || 'Scene generation returned no usable image',
-          }
-        }
-
-        // #R6-1: store result in local map so check/collectGeneration can find it
-        localIdCounterRef.current += 1
-        const generationId = `scene-${localIdCounterRef.current}`
-        localResultsRef.current.set(generationId, {
-          images,
-          model: callOpts.model,
-          workflowId: res.workflowId,
-        })
-
-        return { success: true, generationId }
-      }
-
-      // routing.kind === 'image' — 일반 생성 또는 #R33 미해결 멘션 이미지 폴백(@스트립 + ref 주입)
+      // routing.kind === 'image' — 평문 프롬프트만 여기 온다(레퍼런스는 위에서 거부됐다).
       return markAuth(await api().flowGenerateImage({
         token: effectiveToken(),
         prompt: routing.prompt,
@@ -536,7 +441,7 @@ export function useFlowEngine(opts = {}) {
         seed: callOpts.seed,
         model: callOpts.model,
         projectId: pid,
-        referenceImages: (routing.referenceImages || []).filter(flowImageInjectable),
+        referenceImages: [],
         batchCount: callOpts.batchCount,
         asyncMode: true,
       }))
@@ -588,30 +493,9 @@ export function useFlowEngine(opts = {}) {
    * meta.type === 'character' → flowUploadCharacterEntity (entity 경로)
    * 그 외 → flowUploadReference (plain 경로)
    */
-  const uploadReference = useCallback(async (base64, meta = {}) => {
-    // M1-10: 새 Flow(flow.google.com) 에서 레퍼런스 업로드는 미지원 — IPC 없이 거부(uploadImage/entity 경로는 옛 호스트).
-    if (FLOW_UPLOAD_UNSUPPORTED) return REFERENCES_UNSUPPORTED()
-    try {
-      const pid = effectiveProjectId()
-      if (meta?.type === 'character') {
-        return markAuth(await api().flowUploadCharacterEntity({
-          token: effectiveToken(),
-          base64,
-          projectId: pid,
-          displayName: meta.name,
-          category: meta.category,
-          refId: meta.refId,
-        }))
-      }
-      return markAuth(await api().flowUploadReference({
-        token: effectiveToken(),
-        base64,
-        projectId: pid,
-      }))
-    } catch (error) {
-      return markAuth({ success: false, error: error?.message || String(error) })
-    }
-  }, [accessToken, projectId])
+  // M1-10: 새 Flow(flow.google.com) 에서 레퍼런스 업로드는 미지원 — IPC 없이 거부(uploadImage/entity 경로는 옛 호스트).
+  //   M2 이후 지원되면 여기서 flowUploadReference/flowUploadCharacterEntity 로 다시 배선한다.
+  const uploadReference = useCallback(async (_base64, _meta = {}) => REFERENCES_UNSUPPORTED(), [])
 
   const fetchMedia = useCallback(async (mediaId) => {
     try {
@@ -679,14 +563,15 @@ export function useFlowEngine(opts = {}) {
       let startMediaId = startImage
       let endMediaId = endImage
 
+      // R1#8: 업로드 실패의 errorKind(flow-feature-unsupported 등)를 떨구지 않는다 — 훅이 종결/일시를 kind 로 가른다.
       if (isBase64Frame(startImage)) {
         const up = await uploadFrame(startImage)
-        if (!up?.mediaId) return { success: false, error: up?.error || 'startImage upload failed', authFailed: up?.authFailed }
+        if (!up?.mediaId) return { success: false, error: up?.error || 'startImage upload failed', authFailed: up?.authFailed, ...(up?.errorKind ? { errorKind: up.errorKind } : {}) }
         startMediaId = up.mediaId
       }
       if (endImage != null && isBase64Frame(endImage)) {
         const up = await uploadFrame(endImage)
-        if (!up?.mediaId) return { success: false, error: up?.error || 'endImage upload failed', authFailed: up?.authFailed }
+        if (!up?.mediaId) return { success: false, error: up?.error || 'endImage upload failed', authFailed: up?.authFailed, ...(up?.errorKind ? { errorKind: up.errorKind } : {}) }
         endMediaId = up.mediaId
       }
 

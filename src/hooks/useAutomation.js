@@ -36,6 +36,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
   const authErrorMessage = () => getAuthErrorMessage(mode, t)
+  // R1#6/R2#5: 새 Flow 의 authFailed 결과는 error 가 기계 토큰(not-on-flow · flow-rpc-error)이다 — kind 가 있으면 사람 문구로.
+  //   옛 결과(kind 없음, "Auth expired …" 같은 문구)는 그대로 둔다.
+  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
   // M1-10: Flow 세션 판정 이유(flowSessionReason)로 로그인 안내 vs 세션 확인 실패 안내를 고른다.
   const authRequiredMessage = () => getAuthRequiredMessage(mode, t, genAPI?.flowSessionReason?.())
 
@@ -157,6 +160,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         scene, result,
         genAPI, imageUpscale, saveMode, projectName, seed, model: imageModel,
         updateScene,
+        authErrorText: authErrorMessage(),   // R1#6: authFailed 의 기계 토큰 대신 사람 문구
         gate: consumeGate,  // 배치당 1회 consume 보장 (undefined 면 processAsyncSceneResult 가 no-op 사용)
         logPrefix: '[Automation]',
       })
@@ -186,14 +190,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           //   onAuthError 는 withAuthRetry wrapper 가 이미 발화 — 여기서 또 발화하지 않는다.
           if (st.authFailed) {
             console.warn('[Automation] checkGeneration authFailed — stopping batch:', st.error)
-            updateScene(item.scene.id, { status: 'error', error: st.error || authErrorMessage(), errorKind: 'auth' })
+            updateScene(item.scene.id, { status: 'error', error: authFailureText(st), errorKind: 'auth' })
             errorCountRef.current++
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
             stopRequestedRef.current = true
             authStoppedRef.current = true
             setStatus('error')
-            setStatusMessage(st.error || authErrorMessage())
+            setStatusMessage(authFailureText(st))
             continue
           }
           if (st.completed) {
@@ -202,14 +206,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             // onAuthError was already fired by the withAuthRetry wrapper; don't fire again.
             if (result.authFailed) {
               console.warn('[Automation] collectGeneration authFailed — stopping batch:', result.error)
-              updateScene(item.scene.id, { status: 'error', error: result.error || authErrorMessage(), errorKind: 'auth' })
+              updateScene(item.scene.id, { status: 'error', error: authFailureText(result), errorKind: 'auth' })
               errorCountRef.current++
               completedCountRef.current++
               updateProgressMsg(completedCountRef.current)
               stopRequestedRef.current = true
               authStoppedRef.current = true
               setStatus('error')
-              setStatusMessage(result.error || authErrorMessage())
+              setStatusMessage(authFailureText(result))
               continue
             }
             if (!result.success && isQuotaExhaustedError(result.error)) {
@@ -361,25 +365,27 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         // #R10-6: 인증 실패 센티넬 — 토큰이 죽었으니 즉시 배치 중단(collect/upload 경로와 동일 처리).
         if (submitResult.authFailed) {
           console.warn('[Automation] submitGeneration authFailed — stopping batch:', submitResult.error)
-          updateScene(scene.id, { status: 'error', error: submitResult.error || authErrorMessage(), errorKind: 'auth' })
+          updateScene(scene.id, { status: 'error', error: authFailureText(submitResult), errorKind: 'auth', errorParams: submitResult.errorParams || {} })
           errorCountRef.current++
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
           stopRequestedRef.current = true
           authStoppedRef.current = true
           setStatus('error')
-          setStatusMessage(submitResult.error || authErrorMessage())
+          setStatusMessage(authFailureText(submitResult))
           break
         }
+        // R1#2/R2#2: 제출 실패의 kind 별 params(flow-image-model-mismatch {requested, panel} 등)를 씬에 남긴다 — 비동기 배치는
+        //   모델 불일치가 항상 제출 결과로 온다. 없으면 {} 로 비워 stale params 를 막는다.
         if (isQuotaExhaustedError(submitResult.error)) {
-          updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null })
+          updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null, errorParams: submitResult.errorParams || {} })
           errorCountRef.current++
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
           triggerQuotaStop()
           break
         }
-        updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null })
+        updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null, errorParams: submitResult.errorParams || {} })
         errorCountRef.current++
         completedCountRef.current++
         updateProgressMsg(completedCountRef.current)
@@ -676,7 +682,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             stopRequestedRef.current = true
             authStoppedRef.current = true
             setStatus('error')
-            setStatusMessage(result.error || authErrorMessage())
+            setStatusMessage(authFailureText(result))
             return
           }
           if (result.error?.includes('429') && attempt < MAX_RETRIES) {

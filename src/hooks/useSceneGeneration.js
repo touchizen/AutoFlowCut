@@ -9,7 +9,8 @@ import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { resolveMentions } from '../utils/mentionParser'
-import { getAuthRequiredMessage } from '../utils/authMessages'
+import { getAuthRequiredMessage, getAuthErrorMessage } from '../utils/authMessages'
+import { resolveDisplayError } from '../utils/errorDisplay'
 
 /**
  * @param {object} deps
@@ -161,7 +162,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         // 선택 모델을 기록 — 안 넘기면 imageFinalize 기본값 'flow' 로 저장돼 ResultsTable 에
         //   엔진ID 가 뜬다(응답이 더 구체적 model 을 주면 그게 우선). batch 경로와 일관.
         model: settings.imageModel,
-        logPrefix: '[Scene]'
+        logPrefix: '[Scene]',
+        authErrorText: getAuthErrorMessage(genAPI?.mode, t),   // R1#6: authFailed 의 기계 토큰 대신 사람 문구
       })
       scenesHook.updateScene(sceneId, sceneUpdate)
       if (success) {
@@ -173,7 +175,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         if (isQuotaExhaustedError(failErr)) {
           emitQuotaStop({ scope: 'SceneGen' })
         } else {
-          toast.error(t('toast.sceneGenerateFailed', { error: sceneUpdate.error || 'Unknown error' }))
+          // R1#6: 토스트도 kind 문구로(기계 토큰 그대로 띄우지 않는다) — 표시 정책은 resolveDisplayError 한 곳.
+          toast.error(t('toast.sceneGenerateFailed', { error: resolveDisplayError(t, sceneUpdate.errorKind, sceneUpdate.error, sceneUpdate.errorParams) || 'Unknown error' }))
         }
       }
     } catch (error) {

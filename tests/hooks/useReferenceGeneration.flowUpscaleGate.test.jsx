@@ -61,7 +61,7 @@ beforeEach(() => {
   coordinatorMocks.runFlowCharacterOperation.mockImplementation(({ task }) => task())
   coordinatorMocks.runFlowComposerRefresh.mockImplementation(() => window.electronAPI?.refreshFlowComposer?.())
 })
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); tryUpscaleImage.mockReset() })   // mockRejectedValue 는 clearAllMocks 로 안 지워진다 — 다음 테스트로 새면 kind 없는 거부가 180s 를 돌린다
 
 describe('단일 ref (handleGenerateRef)', () => {
   it('캐릭터 ref: callOpts.imageUpscale 이 설정값(2k)으로 간다', async () => {
@@ -90,6 +90,25 @@ describe('단일 ref (handleGenerateRef)', () => {
 })
 
 // Flow 모드의 캐릭터 ref 배치는 단건 경로(generateImage)를 재사용한다 — submitGeneration 경로는 비-캐릭터(scene) ref 로 검증.
+describe('배치 백스톱의 범위 (R1#14)', () => {
+  it('kind 없는 후처리 예외(디스크 오류 등)는 종결이 아니다 — 큐에 남고, 사용자 중지는 pending 으로 되돌린다', async () => {
+    tryUpscaleImage.mockRejectedValue(new Error('EIO: disk error'))
+    const { result, getLiveRefs } = setupHook({ references: [{ id: 'bg', type: 'scene', category: 'scene', prompt: 'castle courtyard', status: 'pending' }] })
+    vi.useFakeTimers()
+    let p
+    await act(async () => { p = result.current.handleGenerateAllRefs(null, { targetRefKeys: ['id:bg'] }) })
+    for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+    // 아직 배치 진행 중 — ref 는 error 로 확정되지 않았고 busy 다
+    expect(getLiveRefs()[0].status).not.toBe('error')
+    expect(result.current.refBatchActive).toBe(true)
+    await act(async () => { result.current.stopGenerateAllRefs() })
+    for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+    await act(async () => { await p })
+    expect(getLiveRefs()[0].status).toBe('pending')
+    expect(getLiveRefs()[0].errorKind).toBeFalsy()
+  })
+})
+
 describe('배치 (handleGenerateAllRefs)', () => {
   const SCENE_REF = { id: 'bg', type: 'scene', category: 'scene', prompt: 'castle courtyard', status: 'pending' }
 

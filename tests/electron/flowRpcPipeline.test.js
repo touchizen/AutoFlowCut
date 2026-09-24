@@ -90,15 +90,17 @@ function harness({ onSubmit, summary } = {}) {
   const sessionFetch = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, headers: { get: () => 'image/png' } }))
   const ipcMain = makeIpcMain()
   registerFlowAPIIPC(ipcMain, {
-    getFlowView: () => flowView, getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }) }),
+    getFlowView: () => flowView, getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }), getBounds: () => ({ x: 0, y: 0 }) }),
     getCurrentMode: () => 'flow', getFlowAgentOn: () => false,
     parseFlowResponse: () => null, getEnterToolClicked: () => true, setEnterToolClicked: vi.fn(),
     setCapturedProjectId: vi.fn(), getCapturedProjectId: () => null, pendingGenerations, collectedMediaIds: new Set(),
     getPendingGeneration: () => null, setPendingGeneration: vi.fn(), flowPageFetch: vi.fn(),
     extractMediaIds: () => [], extractFifeUrls: () => [], extractBase64Images: () => [], fetchMediaAsBase64: vi.fn(),
     listAgentModels: vi.fn(), selectFlowModeTab: vi.fn(), getApiBase: () => 'https://labs.google/fx/api/trpc', FLOW_URL: 'https://labs.google/fx/tools/flow',
+    ...helpers,
+    // R2#4: 옛 deps 스파이는 실제 헬퍼 뒤에(앞에 두면 실제 configureFlowMode 가 덮는다)
     configureFlowMode: vi.fn(), setFlowPageInject: vi.fn(), clearFlowPageInject: vi.fn(async () => {}), applyAgentDefaults: vi.fn(), getRecaptchaToken: vi.fn(),
-    ...helpers, trustedClickOnFlowView, sessionFetch,
+    trustedClickOnFlowView, sessionFetch,
   })
   const api = {
     ipcMain, pendingGenerations, sessionFetch,

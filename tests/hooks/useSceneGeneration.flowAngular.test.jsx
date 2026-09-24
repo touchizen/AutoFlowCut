@@ -41,7 +41,7 @@ beforeEach(() => {
 })
 afterEach(() => { vi.restoreAllMocks() })
 
-function setup({ scene = { id: 'scene_1', prompt: '궁정안에 있는 왕' }, references = [], settings = {} } = {}) {
+function setup({ scene = { id: 'scene_1', prompt: '궁정안에 있는 왕' }, references = [], settings = {}, t = (k) => k } = {}) {
   const updateScene = vi.fn()
   const scenesHook = { references, updateScene, getMatchingReferences: vi.fn(() => references) }
   const hook = renderHook(() => {
@@ -49,7 +49,7 @@ function setup({ scene = { id: 'scene_1', prompt: '궁정안에 있는 왕' }, r
     const gen = useSceneGeneration({
       settings: { imageModel: 'Nano Banana 2', aspectRatio: '16:9', imageBatchCount: 1, saveMode: 'folder', projectName: 'proj', imageUpscale: 'off', ...settings },
       scenes: [scene], scenesHook, genAPI: { ...engine, mode: 'flow' },
-      openSettings: vi.fn(), setSelectedScene: vi.fn(), t: (k) => k, generationQueue: null,
+      openSettings: vi.fn(), setSelectedScene: vi.fn(), t, generationQueue: null,
     })
     return { engine, gen }
   })
@@ -99,6 +99,29 @@ describe('useSceneGeneration × useFlowEngine', () => {
     await act(async () => { await hook.result.current.gen.handleGenerateScene('scene_1') })
     expect(api.flowGenerateImage).not.toHaveBeenCalled()
     expect(lastPatch(updateScene)).toMatchObject({ status: 'error', errorKind: 'flow-upscale-unsupported' })
+  })
+
+  it('핸들러의 authFailed(flow-session-missing / not-on-flow) → 씬 error 는 인증 안내 문구, 토스트도 그 문구 (R1#6/R2#5)', async () => {
+    api.flowGenerateImage.mockResolvedValue({ success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true })
+    const t = vi.fn((k) => k)
+    const { hook, updateScene } = setup({ t })
+    await act(async () => { await hook.result.current.gen.handleGenerateScene('scene_1') })
+    const patch = lastPatch(updateScene)
+    expect(patch).toMatchObject({ status: 'error', errorKind: 'auth' })
+    expect(patch.error).not.toBe('not-on-flow')
+    expect(patch.error).toMatch(/Auth error|status\.flowAuthErrorStopped/)
+    const toastCall = t.mock.calls.find((c) => c[0] === 'toast.sceneGenerateFailed')
+    expect(toastCall).toBeTruthy()
+    expect(toastCall[1].error).toBe(patch.error)
+  })
+
+  it('kind 실패의 토스트는 kind 문구(resolveDisplayError) — 기계 토큰을 그대로 띄우지 않는다', async () => {
+    api.flowGenerateImage.mockResolvedValue({ success: false, errorKind: 'flow-capture-not-installed', error: 'flow-capture-not-installed' })
+    const t = vi.fn((k, params) => (k === 'errorSection.kind.flow-capture-not-installed' ? 'MONITOR MISSING' : k))
+    const { hook } = setup({ t })
+    await act(async () => { await hook.result.current.gen.handleGenerateScene('scene_1') })
+    const toastCall = t.mock.calls.find((c) => c[0] === 'toast.sceneGenerateFailed')
+    expect(toastCall[1].error).toBe('MONITOR MISSING')
   })
 
   it('핸들러 실패의 errorParams(flow-image-model-mismatch) 가 씬 패치에 실린다', async () => {

@@ -639,6 +639,17 @@ describe('useFlowEngine — generateVideoI2V: base64 upload (Fix #1)', () => {
     expect(res.generationId).toBe('vid-1')
   })
 
+  it('R1#8: frame upload failure keeps its errorKind (flow-feature-unsupported) on the result', async () => {
+    mockFlowUploadReference.mockResolvedValueOnce({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:upload-reference' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.generateVideoI2V('a video prompt', 'data:image/png;base64,abc123', null, 'veo-model', '9:16', 5, 0, null, {})
+    })
+    expect(res).toMatchObject({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:upload-reference' })
+    expect(mockFlowGenerateVideoI2V).not.toHaveBeenCalled()
+  })
+
   it('#R9-3: propagates authFailed when a frame upload returns an auth error', async () => {
     mockFlowUploadReference.mockResolvedValueOnce({ success: false, error: '401 Unauthorized' })
     const { result } = renderHook(() => useFlowEngine())

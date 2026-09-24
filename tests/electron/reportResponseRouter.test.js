@@ -241,7 +241,7 @@ describe('routeReportResponse — batchexecute 위임 (M1-4)', () => {
     expect(g).toMatchObject({ doc: null, completed: false, results: null })
   })
 
-  it('buildReportCtx(state) 는 main 의 상태 접근자를 그대로 ctx 로 — now 기본은 초', () => {
+  it('buildReportCtx(state) 는 main 의 상태 접근자를 그대로 ctx 로 (다른 필드는 만들지 않는다)', () => {
     let pg = null; let pv = null
     const pendingGenerations = new Map()
     const ctx = buildReportCtx({
@@ -251,6 +251,6 @@ describe('routeReportResponse — batchexecute 위임 (M1-4)', () => {
     ctx.setPendingGeneration({ setAt: 1 }); expect(ctx.getPendingGeneration()).toEqual({ setAt: 1 })
     ctx.setPendingVideoGeneration({ setAt: 2 }); expect(ctx.getPendingVideoGeneration()).toEqual({ setAt: 2 })
     expect(ctx.pendingGenerations).toBe(pendingGenerations)
-    expect(Math.abs(ctx.now() - Date.now() / 1000)).toBeLessThan(5)
+    expect(Object.keys(ctx).sort()).toEqual(['getPendingGeneration', 'getPendingVideoGeneration', 'pendingGenerations', 'setPendingGeneration', 'setPendingVideoGeneration'])
   })
 })

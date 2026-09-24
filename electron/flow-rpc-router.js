@@ -32,6 +32,8 @@ export const LOADEND_DEADLINE_S = 100
 const DEADLINE_ERROR = { send: 'flow-submit-not-sent', loadend: 'flow-submit-lost' }
 
 const short = (s) => String(s ?? '').slice(0, 8)
+// gen id 는 `gen-<ms>-<rand>` 라 앞 8자가 항상 "gen-1790" — 뒤 8자(끝 ms 두 자리 + 난수)가 씬을 가른다(R1#11).
+const shortId = (s) => String(s ?? '').slice(-8)
 const isDoc = (d) => typeof d === 'string' && /^[0-9a-f]{32}$/.test(d)
 const isSeq = (n) => Number.isInteger(n) && n > 0
 
@@ -112,7 +114,7 @@ export function routeRpcSend(ev, pendingGenerations) {
   if (ev.multi) {
     // 한 배치에 rpc 가 여럿 — 페이지가 제출을 다른 RPC 와 묶었다(미관측 모양). 닫는다(fail-closed).
     settleGen(gen, { error: 'flow-rpc-multi-batch', errorKind: 'flow-rpc-multi-batch' })
-    console.warn(`[Flow RPC] ${ev.rpcid} send seq=${ev.seq} multi-batch rpcids=${Array.isArray(ev.rpcids) ? ev.rpcids.length : '?'} → failed ${short(id)}`)
+    console.warn(`[Flow RPC] ${ev.rpcid} send seq=${ev.seq} multi-batch rpcids=${Array.isArray(ev.rpcids) ? ev.rpcids.length : '?'} → failed ${shortId(id)}`)
     return { ok: true, failed: id, error: 'flow-rpc-multi-batch' }
   }
   gen.doc = ev.doc
@@ -120,7 +122,7 @@ export function routeRpcSend(ev, pendingGenerations) {
   gen.sentAt = ev.sentAt
   if (gen.deadlines && gen.deadlines.send) { clearTimeout(gen.deadlines.send); delete gen.deadlines.send }
   armDeadline(gen, 'loadend')
-  console.log(`[Flow RPC] ${ev.rpcid} send doc=${short(ev.doc)} seq=${ev.seq} bound=${short(id)}`)
+  console.log(`[Flow RPC] ${ev.rpcid} send doc=${short(ev.doc)} seq=${ev.seq} bound=${shortId(id)}`)
   return { ok: true, bound: id }
 }
 
@@ -154,6 +156,9 @@ export function routeRpcLoadend(ev, pendingGenerations) {
           return { ok: true, completed: id }
         }
       }
+      // 개수 불일치는 실패가 아니다(요청 x1 에 1장이 정상; 여분은 collect 가 그대로 돌려준다) — 숫자만 warn(R1#12).
+      const want = Number(gen.expectedCount) || 1
+      if (results.length !== want) console.warn(`[Flow RPC] ogiZ0b seq=${ev.seq} count mismatch got=${results.length} want=${want}`)
       console.log(`[Flow RPC] ogiZ0b seq=${ev.seq} results=${results.length} ${results[0].width}x${results[0].height}`)
       settleGen(gen, { results })
     } else if (gen.rpc === 'YhhmEf') {

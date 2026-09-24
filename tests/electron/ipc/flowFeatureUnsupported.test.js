@@ -17,7 +17,7 @@ function makeDeps(url = 'https://flow.google.com/project/x') {
   return {
     getFlowView, getCurrentMode: () => 'flow', getMainWindow: () => null, getFlowAgentOn: () => false,
     sessionFetch: vi.fn(), trustedClickOnFlowView: vi.fn(), pendingGenerations: new Map(),
-    getCapturedProjectId: () => 'x',
+    getCapturedProjectId: () => 'x', fetchMediaAsBase64: vi.fn(),
   }
 }
 
@@ -26,6 +26,10 @@ const CASES = {
     ['flow:upscale-image', 'upscale-image', { token: null, mediaId: 'm', projectId: 'p', resolution: '2k' }],
     ['flow:upload-reference', 'upload-reference', { token: null, base64: 'b', projectId: 'p' }],
     ['flow:fetch-gallery', 'fetch-gallery', { token: null, projectId: 'p' }],
+    // R1#7: 옛 호스트 로직이 Flow 모드에서 아직 닿던 셋 — "List projects HTTP 401" 같은 문구가 markAuth 를 오발동시킨다
+    ['flow:list-projects', 'list-projects', { token: null, pageSize: 20 }],
+    ['flow:fetch-media', 'fetch-media', { token: null, mediaId: 'm' }],
+    ['flow:dom-download-video', 'dom-download-video', { mediaId: 'm', resolution: '720p' }],
   ]],
   video: [registerVideoIPC, [
     ['flow:upscale-video', 'upscale-video', { token: null, mediaId: 'm', projectId: 'p' }],

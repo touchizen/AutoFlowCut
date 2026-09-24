@@ -179,13 +179,33 @@ export async function settingsDriverCore(doc, targets, deps) {
   const sleep = deps.sleep
   const t = targets || {}
   const steps = {}
-  const fail = (reason, extra) => Object.assign({ ok: false, kind: 'flow-settings-not-applied', reason, steps }, extra || {})
-  const failPlan = (p) => Object.assign(fail(p.reason || p.kind), { kind: p.kind || 'flow-settings-not-applied' }, p.params ? { params: p.params } : {})
   const waitFor = async (pred, ms) => {
     const n = Math.max(1, Math.ceil(ms / 50))
     for (let i = 0; i < n; i++) { if (pred()) return true; await sleep(50) }
     return pred()
   }
+  // 패널 닫기 — CDK 오버레이는 **document.body 의 keydown 을 keyCode===27** 로 판정한다(R1#3; 2026-09-24 실기: document 에
+  //   key:'Escape' 만 보낸 옛 코드는 못 닫았고 트리거 재클릭이 닫았다). 초기화 사전이 keyCode/which 를 무시하는 엔진을
+  //   위해 값을 직접 박는다. 안 닫히면 closed:false — main 이 트리거를 trusted 재클릭한다.
+  const closePanel = async () => {
+    try {
+      const win = doc.defaultView
+      const KE = win && win.KeyboardEvent ? win.KeyboardEvent : KeyboardEvent
+      const ev = new KE('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true, composed: true })
+      for (const k of ['keyCode', 'which']) {
+        if (ev[k] !== 27) { try { Object.defineProperty(ev, k, { value: 27, configurable: true }) } catch (_e) { /* 읽기 전용 — 그대로 보낸다 */ } }
+      }
+      ;(doc.body || doc).dispatchEvent(ev)
+    } catch (_e) { return false }
+    return waitFor(() => !scan(doc).ok, 1500)
+  }
+  // 실패 결과 — needs-trusted(main 이 그 라디오를 trusted 클릭한 뒤 다시 돈다) 만 패널을 열어 두고, 나머지는 닫고 나온다.
+  const fail = async (reason, extra, keepOpen) => {
+    const r = Object.assign({ ok: false, kind: 'flow-settings-not-applied', reason, steps }, extra || {})
+    if (!keepOpen) r.closed = await closePanel()
+    return r
+  }
+  const failPlan = async (p) => Object.assign(await fail(p.reason || p.kind), { kind: p.kind || 'flow-settings-not-applied' }, p.params ? { params: p.params } : {})
   const norm = (s) => String(s || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
   const ICON_SEL = "mat-icon, i, span[class*='symbols'], [class*='google-symbols']"
 
@@ -199,7 +219,7 @@ export async function settingsDriverCore(doc, targets, deps) {
     const c = p1.clicks[0]
     c.el.click()
     const reflected = await waitFor(() => { const n = scan(doc); return n.ok && !!n.groups.mode && !!n.groups.mode.checked && n.groups.mode.checked.ligature === c.ligature }, 3000)
-    if (!reflected) return fail('needs-trusted', { needsTrusted: [{ group: 'mode', name: c.name, label: c.label, ligature: c.ligature }] })
+    if (!reflected) return fail('needs-trusted', { needsTrusted: [{ group: 'mode', name: c.name, label: c.label, ligature: c.ligature }] }, true)
     await sleep(100)
     s = scan(doc)
     if (!s.ok) return fail(s.reason)
@@ -240,7 +260,7 @@ export async function settingsDriverCore(doc, targets, deps) {
     const ok = await waitFor(() => c.el.getAttribute('aria-checked') === 'true', 1500)
     if (!ok) needsTrusted.push({ group: c.group, name: c.name, label: c.label, ligature: c.ligature })
   }
-  if (needsTrusted.length) return fail('needs-trusted', { needsTrusted })
+  if (needsTrusted.length) return fail('needs-trusted', { needsTrusted }, true)
   // 최종 재판독 — 뒤의 클릭이 앞 그룹을 되돌렸을 수 있다
   await sleep(100)
   s = scan(doc)
@@ -249,12 +269,8 @@ export async function settingsDriverCore(doc, targets, deps) {
   if (!v.ok) return failPlan(v)
   if (v.model && v.model.select) return fail('not-checked:model')
   if (v.clicks.length) return fail('not-checked:' + v.clicks[0].group)
-  // 닫기 — Escape(합성). 안 닫히면 main 이 트리거를 다시 trusted 클릭한다.
-  try {
-    const KE = doc.defaultView && doc.defaultView.KeyboardEvent ? doc.defaultView.KeyboardEvent : KeyboardEvent
-    doc.dispatchEvent(new KE('keydown', { key: 'Escape', bubbles: true }))
-  } catch (_e) { /* 이벤트 생성 실패 — closed:false 로 보고 */ }
-  const closed = await waitFor(() => !scan(doc).ok, 1500)
+  // 닫기 — body 의 Escape(keyCode 27). 안 닫히면 main 이 트리거를 다시 trusted 클릭한다.
+  const closed = await closePanel()
   return { ok: true, steps, closed }
 }
 
@@ -318,17 +334,21 @@ export async function applyComposerSettings(flowView, opts, deps) {
   if (!summary) return fail('settings-trigger-not-found')
   const click = await deps.trustedClickOnFlowView(FIND_SETTINGS_TRIGGER_JS, { required: true, step: 'settings-trigger' })
   if (!click || !click.success) return fail('settings-trigger-click-failed')
-  const runDriver = () => exec(SETTINGS_DRIVER_JS(targets)).catch(() => ({ ok: false, reason: 'driver-threw', steps: {} }))
+  const runDriver = () => exec(SETTINGS_DRIVER_JS(targets)).catch(() => ({ ok: false, reason: 'driver-threw', steps: {}, closed: false }))
+  // 실패로 돌아왔는데 패널이 열려 있으면(Escape 무효·needs-trusted 뒤 실패) 트리거를 trusted 재클릭해 닫는다 — 열어 두면
+  //   다음 생성의 클릭이 오버레이에 막힌다. 실패 kind 는 그대로(R1#3).
+  const closeLeftOpen = () => deps.trustedClickOnFlowView(FIND_SETTINGS_TRIGGER_JS, { required: false, step: 'settings-trigger-close' })
   let r = await runDriver()
   if (r && Array.isArray(r.needsTrusted) && r.needsTrusted.length) {
     for (const n of r.needsTrusted) {
       const c = await deps.trustedClickOnFlowView(FIND_RADIO_JS(n.name, n.ligature || n.label), { required: true, step: 'settings-radio' })
-      if (!c || !c.success) { steps = r.steps || {}; return fail('settings-radio-click-failed:' + n.group) }
+      if (!c || !c.success) { steps = r.steps || {}; await closeLeftOpen(); return fail('settings-radio-click-failed:' + n.group) }
     }
     r = await runDriver()
   }
   steps = (r && r.steps) || {}
   if (!r || !r.ok) {
+    if (!r || r.closed === false) await closeLeftOpen()
     const kind = r?.kind || 'flow-settings-not-applied'
     const reason = r?.reason || kind
     console.warn(`[Flow Settings] ${mode} ${formatSteps(steps)} ok=false reason=${reason}`)

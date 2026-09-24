@@ -1,8 +1,12 @@
-// M1-9: flow.google.com 재작업이 도입한 로케일 키 — 세션 확인 토스트 + errorSection.kind.* 18개.
+// M1-9 / R1#10 / R2#11: flow.google.com 재작업의 로케일 키 — 세션 확인 토스트 + errorSection.kind.*.
+//   kind 목록은 손으로 적지 않고 **코드가 만드는 kind** 에서 뽑는다(errorKind: '…' · kindResult('…') · kind: 'flow-…' ·
+//   settleGen 의 error/errorKind) — 새 kind 를 코드에 넣고 문구를 빠뜨리면 여기서 빨개진다.
 //   kind 별 params 는 플랜 §3 공통 규칙의 고정표: flow-resolution-not-offered {requested} · flow-image-model-mismatch
 //   {requested, panel} · flow-video-settings-mismatch {expected, actual} · flow-batch-halted {cause} · 나머지 {} —
 //   문구의 {…} 는 그 표의 params 만 쓴다(그 외 플레이스홀더가 있으면 렌더에 그대로 새어 나온다).
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import en from '../../src/locales/en'
 import ko from '../../src/locales/ko'
 
@@ -12,14 +16,42 @@ const PARAMS = {
   'flow-video-settings-mismatch': ['expected', 'actual'],
   'flow-batch-halted': ['cause'],
 }
-const KINDS = [
+/** 플랜이 정한 kind(코드가 아직 안 만드는 M2 kind 포함) — 코드에서 뽑은 것과 합집합. */
+const PLANNED = [
   'flow-session-missing', 'flow-settings-not-applied', 'flow-resolution-not-offered', 'flow-image-model-mismatch',
   'flow-upscale-unsupported', 'flow-aspect-mismatch', 'flow-video-settings-mismatch', 'flow-video-count-mismatch',
   'flow-video-fetch-failed', 'flow-submit-lost', 'flow-submit-not-sent', 'flow-capture-not-installed',
   'flow-references-unsupported', 'flow-mention-chips-unsupported', 'flow-agent-mode-unsupported',
   'flow-feature-unsupported', 'flow-rpc-error', 'flow-batch-halted', 'flow-download-error',
 ]
+/** kind 를 만드는 모듈(main + 렌더러). */
+const SOURCES = [
+  'electron/flow-rpc-router.js', 'electron/flow-rpc-protocol.js', 'electron/flow-composer-settings.js', 'electron/ipc/flow-angular.js',
+  'src/engine/engineFlow.js', 'src/utils/imageProcessing.js', 'src/hooks/useAutomation.js', 'src/hooks/useVideoAutomation.js', 'src/hooks/useSceneGeneration.js', 'src/hooks/useReferenceGeneration.js',
+]
+const PATTERNS = [/errorKind:\s*'(flow-[a-z0-9-]+)'/g, /kindResult\('(flow-[a-z0-9-]+)'/g, /\bkind:\s*'(flow-[a-z0-9-]+)'/g, /error:\s*'(flow-[a-z0-9-]+)'/g, /\b(?:send|loadend):\s*'(flow-[a-z0-9-]+)'/g]
+
+export function kindsProducedByCode() {
+  const found = new Set()
+  for (const rel of SOURCES) {
+    const src = readFileSync(fileURLToPath(new URL('../../' + rel, import.meta.url)), 'utf8')
+    for (const re of PATTERNS) for (const m of src.matchAll(re)) found.add(m[1])
+  }
+  return found
+}
+
+const KINDS = [...new Set([...PLANNED, ...kindsProducedByCode()])].sort()
 const placeholders = (s) => [...new Set([...String(s).matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort()   // 같은 param 을 두 번 써도 된다
+
+describe('코드가 만드는 kind 를 정말 뽑았나(스캔 자체의 검증)', () => {
+  it('라우터·핸들러의 kind 가 목록에 있다 — flow-rpc-multi-batch · flow-generation-cleared · flow-submit-lost · flow-aspect-mismatch', () => {
+    const found = kindsProducedByCode()
+    for (const k of ['flow-rpc-multi-batch', 'flow-generation-cleared', 'flow-submit-lost', 'flow-submit-not-sent', 'flow-aspect-mismatch', 'flow-capture-not-installed', 'flow-image-model-mismatch', 'flow-upscale-unsupported']) {
+      expect(found.has(k), k).toBe(true)
+    }
+    expect(KINDS.length).toBeGreaterThanOrEqual(PLANNED.length + 2)
+  })
+})
 
 describe.each([['en', en], ['ko', ko]])('%s — flow.google.com 재작업 로케일 키', (_lang, locale) => {
   it('toast.flowSessionCheckFailed 는 {reason} 을 쓴다', () => {

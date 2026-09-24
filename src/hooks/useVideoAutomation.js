@@ -66,7 +66,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
   const authErrorMessage = () => getAuthErrorMessage(appMode, t)
-  const authRequiredMessage = () => getAuthRequiredMessage(appMode, t)
+  // R1#1: Flow 세션 판정 이유(flowSessionReason)로 로그인 안내 vs 세션 확인 실패 안내를 고른다.
+  const authRequiredMessage = () => getAuthRequiredMessage(appMode, t, genAPI?.flowSessionReason?.())
 
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
@@ -305,6 +306,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     quotaStoppedRef.current = false
     pausedRef.current = false
     let authStopped = false   // set true on authFailed break — prevents fall-through 'done' status
+    let terminalStopped = false  // R1#8: flow-feature-unsupported 로 종결(상태·문구는 break 자리에서 확정)
     setIsRunning(true)
     setIsPaused(false)
     setStatus('running')
@@ -668,6 +670,25 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         setStatusMessage(`🔐 ${authErrorMessage()}`)
         break
       }
+      // R1#8: 새 Flow 의 fail-closed 스텁(flow-feature-unsupported) 은 **종결** 실패 — 일시 실패로 보면 이전 세션에서
+      //   generating 으로 남은 항목을 10초 × 120회 폴링한다. 한 번 보면 전원 그 kind 로 닫고 끝낸다.
+      if (!result.success && result.errorKind === 'flow-feature-unsupported') {
+        const unsupported = { error: result.error || 'flow-feature-unsupported', errorKind: 'flow-feature-unsupported' }
+        for (const [itemId] of pending) {
+          onItemUpdate?.(itemId, 'error', unsupported)
+          videoErrorCount++
+        }
+        for (let j = nextFreshIdx; j < freshGen.length; j++) {
+          onItemUpdate?.(freshGen[j].id, 'error', unsupported)
+          videoErrorCount++
+        }
+        nextFreshIdx = freshGen.length
+        pending.clear()
+        terminalStopped = true
+        setStatus('error')
+        setStatusMessage(`⚠️ ${t('errorSection.kind.flow-feature-unsupported')}`)
+        break
+      }
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
       // statuses[] 내부 'failed' 만 보는 기존 코드는 batch 전체가 server-side 에러로 떨어진
       // 경우를 못 잡아 max polls 까지 무한정 polling 후 timeout 처리.
@@ -849,7 +870,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     setIsPaused(false)
     setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt, endedAt: Date.now() })
 
-    if (authStopped) {
+    if (authStopped || terminalStopped) {
       // Status + message already set at the break site — do not overwrite.
     } else if (stopRequestedRef.current) {
       setStatus('stopped')

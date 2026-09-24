@@ -874,8 +874,11 @@ export function createSharedHelpers(ctx) {
   //   모두 닫는다(각각 no-op if 없음). 사용자 지정: OFF/ON 전환 시 둘 다 동시에 떠 있을 수 있어
   //   토글 가림 여부와 무관하게 선제적으로 강제 close 한다. (Escape 는 설정 패널을 못 닫아 X 클릭 병행.)
   async function closeAgentPanels(flowView) {
-    await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
-    await trustedClickOnFlowView(AGENT_SETTINGS_CLOSE_SELECTOR).catch(() => {})
+    // 새 flow.google.com 에는 옛 에이전트 챗/설정 닫기 버튼이 없다 — 있을 때만 trusted 클릭한다. 무조건 클릭하면 매 생성마다
+    //   "[TrustedClick] Button not found" 2건과 bounds 왕복(숨은 뷰면 확대/축소 2회)만 남는다(2026-09-24 실기 로그).
+    const present = (selector) => flowView.webContents.executeJavaScript(`!!(${selector})`).then(Boolean).catch(() => false)
+    if (await present(AGENT_CHAT_CLOSE_SELECTOR)) await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
+    if (await present(AGENT_SETTINGS_CLOSE_SELECTOR)) await trustedClickOnFlowView(AGENT_SETTINGS_CLOSE_SELECTOR).catch(() => {})
     await flowView.webContents.executeJavaScript(
       `try { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true, composed: true })); } catch (e) {}`
     ).catch(() => {})

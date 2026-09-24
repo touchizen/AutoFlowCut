@@ -20,6 +20,8 @@ function makeIpcMain() {
 /** 컴포저가 없는 페이지 — 준비 판정은 false, 순진한 textarea 프로브는 true. */
 const NO_COMPOSER = (script) => {
   const s = String(script)
+  // R2#10: WIZ 전역은 있다고 답한다 — 세션 게이트를 지나야 "네비게이트하지 않는다"가 도메인 판정을 실제로 검사한다.
+  if (s.includes('WIZ_global_data.SNlM0e')) return true
   if (s.includes('data-slate-editor')) return false
   if (s.includes("querySelector('textarea')")) return true
   return null
@@ -78,16 +80,19 @@ function runOnUrl(url) {
 describe('generate-image — "Flow 페이지가 아니면 이동" 분기의 도메인 판정', () => {
   it('새 도메인 홈에 있으면 Flow 로 다시 네비게이트하지 않는다', async () => {
     const { ipcMain, loadURL } = runOnUrl('https://flow.google.com/')
-    await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
+    const r = await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
     // ⚠️ not.toHaveBeenCalledWith(FLOW_URL) 로 두면 "새 도메인 URL 로 재이동"하는 회귀를 안 문다
     //    (원래 버그가 옷만 갈아입은 꼴). 이 핸들러의 loadURL 자리는 이 분기 하나뿐이다.
     expect(loadURL).not.toHaveBeenCalled()
+    // 세션 게이트를 **지나서** 판정된 것이어야 한다(R2#10) — 게이트에서 막혔으면 도메인 판정을 검사한 게 아니다.
+    expect(r.errorKind).not.toBe('flow-session-missing')
   }, 60000)
 
   it('옛 도메인에 있어도 다시 네비게이트하지 않는다 (회귀 방지)', async () => {
     const { ipcMain, loadURL } = runOnUrl('https://labs.google/fx/tools/flow')
-    await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
+    const r = await ipcMain.invoke('flow:generate-image', { prompt: 'x', projectId: null })
     expect(loadURL).not.toHaveBeenCalled()
+    expect(r.errorKind).not.toBe('flow-session-missing')
   }, 60000)
 
   // M1-12: Flow 모드의 generate-image 는 무조건 flow.google.com(angular) 핸들러다 — Flow 밖(로그인 페이지)이면
