@@ -207,7 +207,27 @@ uuid 번호는 **이 섹션 안에서만** 일관(`<uuid#1>` = 프로젝트 id).
 | reCAPTCHA | `textarea.g-recaptcha-response` (숨김) | 페이지에 로드돼 있음 |
 
 - 기존 코드(`electron/ipc/video.js`, `main.js`)의 `contenteditable`·`arrow_forward`·`생성 시작` 셀렉터가 새 마크업에서도 그대로 맞는다 → **DOM 층은 대부분 살아 있고, 끊긴 건 네트워크 층**이라는 핸드오프 판단과 일치.
-- 설정 패널(모델·비율·길이 선택지)은 오버레이라 두 덤프 모두 **닫힌 상태**(overlay pane 0). 모드/모델/비율을 앱이 바꾸려면 패널을 연 상태의 덤프가 1회 더 필요.
+- 설정 패널은 `설정 트리거` 를 누르면 뜨는 오버레이다. 닫힌 덤프 2개 + **연 덤프 2개**(`…-image-panel-open`, `…-video-panel-open`)를 받았다. bodyHtml 은 40000자에서 잘려 오버레이가 빠지지만 `elements` 에는 들어 있다.
+
+### 6-1. 설정 패널 (연 상태, 관측)
+
+모든 선택지는 Angular Material `button.mat-button-toggle-button[role=radio]` 이고 선택 여부는 `aria-checked="true"`. `id`(`mat-button-toggle-86-button`)·`name`(`mat-button-toggle-group-28`)은 **Angular 자동 번호라 불안정** → 아이콘 리거처와 텍스트로 찾아야 한다.
+
+| 그룹 | 이미지 모드 선택지 | 동영상 모드 선택지 | 식별 |
+|---|---|---|---|
+| 모드 | 이미지 / 동영상 | 이미지 / 동영상 | 아이콘 `image` / `videocam` |
+| 동영상 입력 방식 | – | 프레임 / **소재**(기본 선택) | 아이콘 `crop_free` / `chrome_extension` |
+| 비율 | 16:9 · 4:3 · 1:1 · 3:4 · 9:16 | 16:9 · 9:16 | 아이콘 `crop_16_9` `crop_landscape` `crop_square` `crop_portrait` `crop_9_16` |
+| 모델 | `🍌 Nano Banana 2 ▾` | `Omni 1.1 Flash ▾` | `button.mat-mdc-menu-trigger[aria-haspopup=menu]`, `aria-label="모델 제품군 선택"` — 메뉴 항목은 **미캡처** |
+| 해상도 | – | 360p(`info` 아이콘) / **720p** | 텍스트 |
+| 길이 | – | 4초 / **6초** / 8초 / 10초 | 텍스트 |
+| 개수 | **x1** / x2 / x3 / x4 | **x1** / x2 / x3 / x4 | 텍스트 |
+| 비용 | `a.credit-cost-link` = `0 크레딧` | `10 크레딧` | 네트워크 관측(1050→1040)과 일치 |
+| 소재 추가 | `button[aria-label="프롬프트 상자에 소재 추가"]`(아이콘 `add`) | 같음 | 레퍼런스 이미지 첨부 입구로 추정 |
+
+- 관측한 T2V 요청(`YhhmEf`)의 모델 키는 `abra_t2v_6s` — 패널의 `Omni 1.1 Flash` + `6초` 와 대응. 입력 방식이 `소재` 여도 소재가 없으면 t2v 키로 나갔다.
+- **기존 설정 코드와 호환 안 됨**: `electron/flow-agent-defaults.js` 는 옛 labs.google 패널(Radix Tabs `-trigger-LANDSCAPE` id 접미사, `tune` 아이콘 설정 버튼)을 전제한다. 새 패널은 Material 토글이라 그 셀렉터는 조용히 no-op 될 것이다. 모델 트리거의 `aria-haspopup="menu"` 만 겹친다. 반면 프롬프트 입력·생성 버튼은 호환(위 표).
+- 남은 관측: 모델 드롭다운을 **연 상태** 덤프(메뉴 항목 라벨). 모델 키 ↔ 표시명은 `HTrJv` 카탈로그에 있다(§2).
 - `aria-label` 이 한국어(`hl=ko`)라 로케일 의존 — 셀렉터는 클래스·아이콘 리거처 우선.
 
 ## 5. 재현
