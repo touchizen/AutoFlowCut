@@ -1,6 +1,6 @@
 # HANDOFF — Flow 모드(flow.google.com·batchexecute) 재작업: M1(이미지) 완료·실기 통과, M2(영상) 구현 중
 
-작성: 2026-09-25 01:15 · 워크트리 `~/workspace/AutoFlowCut-bugfix` · 브랜치 **`fix/flow-batchexecute`**(`main` `52c7930b` 에서 분기) · **전부 미푸시**(`main` 의 09-24 커밋 10개도 미푸시 — 푸시는 사용자 결정)
+작성: 2026-09-25 01:15(01:22 갱신: M2 WIP 커밋) · 워크트리 `~/workspace/AutoFlowCut-bugfix` · 브랜치 **`fix/flow-batchexecute`**(`main` `52c7930b` 에서 분기) · **전부 미푸시**(`main` 의 09-24 커밋 10개도 미푸시 — 푸시는 사용자 결정)
 이전 핸드오프: `docs/handoffs/2026-09-24-flow-batchexecute-migration-HANDOFF.md`(왜 깨졌나) · 관련 메모리: `autoflowcut-flow-moved-to-batchexecute`
 
 ---
@@ -35,12 +35,18 @@ cd ~/workspace/AutoFlowCut-bugfix && env -u ELECTRON_RUN_AS_NODE npx vitest run 
 ```
 마지막 판정(내 환경, `7670858b`): **727 파일 / 7756 테스트 초록, 4 파일·54 테스트 스킵**. 스킵은 새 호스트에서 도달 불가한 옛 핸들러 전용 스위트(`generateSceneAspect`, `flowModeSwitchAbort`, `mentionFailureRouting`, `flowGenerateImageAgentScope`; `generateCharacterAspect` 의 두 행은 다시 live) — 후속 정리에서 옛 코드와 함께 삭제(플랜 §11 #18).
 
-### 1-3. ⚠️ 작업 트리에 미커밋 변경이 있을 수 있다 — **M2 저자(Fable 서브에이전트)가 이 세션에서 돌고 있었다**
+### 1-3. M2 는 **부분 진행 상태로 WIP 커밋됨** — `cd306346` (2026-09-25 01:20, 저자 중단 시점)
 
-새 세션엔 그 에이전트가 없다. 시작할 때:
-1. `git status --short` 로 변경분을 본다. 있으면 `docs/plans/…rework-plan.md` 의 `## 12. 구현 메모 (M2)` 와 `### 11.1` 의 #41~#48(리뷰 2라운드 부록 8건)이 얼마나 채워졌는지 읽는다.
-2. `env -u ELECTRON_RUN_AS_NODE npx vitest run` 을 돌린다. 초록이고 §12 가 M2-1~M2-6 을 다 적었으면 그대로 커밋(영어 메시지) 후 §4 로. 빨강이거나 반쪽이면 **새 저자 브리프**(`docs/handoffs/briefs/2026-09-25/fable-m2-brief.md` 를 바탕으로 "이미 있는 것 + 남은 것"을 적어) 로 Fable 5.1 에게 이어받기(`Agent(model:'fable')`)를 시킨다 — 저자가 트리에서 도는 동안엔 커밋·뮤테이션 금지.
-3. 변경분이 없으면 M2 는 시작 전이다 — 같은 브리프로 처음부터.
+작업 트리는 **깨끗**하다(`git status` 비어 있음). 상태:
+- **완료·초록(84 테스트)**: M2-1 영상 파서 — `electron/flow-rpc-protocol.js` 의 `parseVideoSubmitRequest`, `parseVideoSubmitResponse`(필수는 `[3].length`·`[3][0][0]`·`[3][0][7][0][12]` 셋뿐, 상태·크레딧·메아리는 optional+warnings, 200 후 실패는 전부 `rejectedMediaId(s)`), `parseMediaRecord`, `parseVideoStatusResponse`, `mediaStateToStatus`, 표 기반 `modelKeyMatches`; `flow-rpc-router.js` 가 거부 id 를 결과로 통과.
+- **일부러 빨강(실패 테스트만 먼저 씀, 구현 미착수) — 전체 스위트는 정확히 이 10개 단언만 빨갛다**:
+  1. `tests/hooks/useReferenceGeneration.flowAuthText.test.jsx`(2) — 레퍼런스 훅의 authFailed 결과에 기계 토큰 대신 `authErrorMessage()`(부록 #2)
+  2. `tests/electron/flow-composer-settings.test.js` "needsTrusted 가 재실행에서도 needsTrusted 면 …"(1) — `r.closed !== true` 면 트리거 재클릭으로 닫기(부록 #3)
+  3. `tests/hooks/useVideoAutomation.flowUnsupported.test.jsx` "첫 제출이 flow-feature-unsupported 면 종결 …"(1) — 제출 시점 종결 분기(부록 #5)
+  4. `tests/locales/flowSessionKeys.test.js`(6 단언) — 넓어진 kind 스캔이 `download-entitlement`·`stopped`·`unresolved-mentions` 의 `errorSection.kind` 문구를 요구(부록 #8; ko/en 에 추가)
+- **미착수**: M2-2(설정 드라이버 영상 단계)·M2-3(해상도 전달)·M2-4(T2V 제출 핸들러)·M2-5(상태 폴링 핸들러+렌더러 보존)·M2-6(렌더러 통합), 부록 #1(포커스 반환)·#4(App 레벨 테스트)·#6(숨은 뷰 테스트 강화)·#7(`report` 비대기). 계획서 `## 12` 는 아직 없다.
+
+새 세션 첫 일: 위 10개 빨강을 먼저 초록으로(작고 기계적 — 메인 루프가 직접 해도 됨) → 그다음 M2-2~M2-6 을 Fable 5.1 에게 `docs/handoffs/briefs/2026-09-25/fable-m2-brief.md` + "이미 있는 것(M2-1)·남은 것" 을 적은 이어받기 브리프로 위임. 저자가 트리에서 도는 동안엔 커밋·뮤테이션 금지.
 
 ### 1-4. 정본 문서
 
