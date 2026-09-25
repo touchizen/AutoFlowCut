@@ -197,10 +197,10 @@ describe('minified SETTINGS_DRIVER_JS — 가짜 Angular 위에서 모드 전환
     }
   }, 30000)
 
-  it('지연 리셋(b) 도 minified 에서 not-checked:duration 으로 닫힌다 (video 패널, count x2 → x1 클릭이 duration 을 되돌린다)', async () => {
+  it('지연 리셋(b) 도 minified 에서 2차 패스로 다시 맞춰 ok (video 패널, count x2 → x1 클릭이 duration 을 되돌린다 — M2 실기)', async () => {
     const page = PROJECT_MENU_BUTTON + CARD_MENU_BUTTONS + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', checked: { count: 'x2' } })
     const { r } = await drive(settings, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni 1.1 Flash' }, { modelReset: 'on-count' }, page)
-    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:duration', closed: true })
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { duration: 'reclicked(8)' } })
   }, 30000)
 })
 

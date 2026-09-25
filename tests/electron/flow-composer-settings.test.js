@@ -158,13 +158,22 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     expect(s.ok).toBe(false)   // 닫혔다
   })
 
-  it('(b) 지연 리셋: count 클릭이 duration 을 되돌린다 → 최종 재판독 not-checked:duration (단계 통과만으로 ok 를 내지 않는다)', async () => {
+  it('(b) 지연 리셋: count 클릭이 duration 을 되돌린다 → 최종 재판독이 잡고 2차 패스로 다시 맞춘 뒤 재판독 ok (M2 실기: 모델 전환 뒤 비율 지연 리셋)', async () => {
     const doc = mount(videoPage({ checked: { count: 'x2' } }))
-    installFakeAngular(doc, { modelReset: 'on-count' })
+    const log = installFakeAngular(doc, { modelReset: 'on-count' })
     const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni 1.1 Flash' }, noSleep)
-    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:duration', closed: true })
-    expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { duration: 'reclicked(8)', count: 'clicked(x1)' } })
+    expect(log.filter((l) => l === 'duration:8초')).toHaveLength(2)   // 1차 + 2차 패스
+    expect(scanSettingsPanel(doc).ok).toBe(false)   // 닫혔다
   })
+
+  it('(b2) 계속 되돌리는 그룹은 2차 패스 뒤에도 어긋나 → not-checked:<group> (fail-closed, 단계 통과만으로 ok 를 내지 않는다)', async () => {
+    const doc = mount(videoPage({ checked: { ratio: 'crop_16_9' } }))
+    const log = installFakeAngular(doc, { lockGroup: 'ratio', lockTo: 'crop_16_9' })
+    const r = await runSettingsDriver(doc, { mode: 'video', ratio: '9:16', duration: 6, resolution: '720p', count: 1, model: 'Omni 1.1 Flash' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:ratio', closed: true })
+    expect(log.filter((l) => l === 'ratio:crop_9_16')).toHaveLength(2)
+  }, 10000)
 
   it('needs-trusted 는 패널을 열어 둔다 — main 이 그 라디오를 trusted 클릭한 뒤 드라이버를 다시 돌린다', async () => {
     const doc = mount(imagePage())

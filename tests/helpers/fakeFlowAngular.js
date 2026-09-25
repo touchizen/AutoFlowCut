@@ -5,6 +5,7 @@
 //   key:'Escape' 만 보낸 옛 드라이버는 패널을 못 닫았고 트리거 재클릭이 닫았다).
 //   opts.modelReset 'sync'     : 모델 항목 클릭 핸들러가 duration/resolution 을 즉시 기본값(6초/720p)으로 되돌린다
 //   opts.modelReset 'on-count' : 뒤의 count 클릭이 duration 을 기본값으로 되돌린다(지연 리셋)
+//   opts.lockGroup / lockTo    : 그 그룹은 클릭해도 ~60ms 뒤 lockTo 로 되돌아간다(계속 되돌리는 페이지)
 //   opts.ignoreClicks          : 클릭에 반응하지 않는 그룹 이름 목록(합성 클릭을 무시하는 컨트롤 — needsTrusted 케이스)
 //   opts.stickyPanel           : Escape 로 닫히지 않는다
 //   opts.modelSubmenu          : (M2-2) 모델 메뉴 항목 클릭이 트리거 라벨을 바꾸지 않고 **하위 메뉴**만 연다(라이브 메뉴 항목엔
@@ -69,6 +70,8 @@ export function installFakeAngular(doc, opts = {}) {
       }
       setChecked(btn)
       if (opts.modelReset === 'on-count' && g === 'count') resetGroup('duration', '6초')
+      // 실기: 페이지가 그룹을 계속 되돌린다(클릭 뒤 ~60ms) — 2차 패스로도 못 맞추면 fail-closed 여야 한다
+      if (opts.lockGroup === g) setTimeout(() => resetGroup(g, opts.lockTo), 60)
       return
     }
     if (btn.getAttribute('aria-haspopup') === 'menu' && btn.closest('.flow-settings-panel')) {

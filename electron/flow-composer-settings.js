@@ -381,10 +381,30 @@ export async function settingsDriverCore(doc, targets, deps) {
   await sleep(100)
   s = scan(doc)
   if (!s.ok) return fail(s.reason)
-  const v = plan(s, t, 2)
+  let v = plan(s, t, 2)
   if (!v.ok) return failPlan(v)
   if (v.model && v.model.select) return fail('not-checked:model')
-  if (v.clicks.length) return fail('not-checked:' + v.clicks[0].group)
+  // M2 실기(2026-09-25): 모델 전환(Veo → Omni) 뒤 Flow 가 비율을 **나중에** 되돌렸다(9:16 → 16:9) — 최종 재판독이 잡는다.
+  //   어긋난 그룹을 한 번 더 맞추고(2차 패스) 다시 판독한다. 그래도 어긋나면(계속 되돌리는 페이지) fail-closed.
+  if (v.clicks.length) {
+    await sleep(400)
+    s = scan(doc)
+    if (!s.ok) return fail(s.reason)
+    v = plan(s, t, 2)
+    if (!v.ok) return failPlan(v)
+    for (const c of v.clicks) {
+      c.el.click()
+      await waitFor(() => c.el.getAttribute('aria-checked') === 'true', 1500)
+      steps[c.group] = String((v.steps && v.steps[c.group]) || 'clicked').replace(/^clicked/, 'reclicked')
+    }
+    await sleep(300)
+    s = scan(doc)
+    if (!s.ok) return fail(s.reason)
+    v = plan(s, t, 2)
+    if (!v.ok) return failPlan(v)
+    if (v.model && v.model.select) return fail('not-checked:model')
+    if (v.clicks.length) return fail('not-checked:' + v.clicks[0].group)
+  }
   // 닫기 — body 의 Escape(keyCode 27). 안 닫히면 main 이 트리거를 다시 trusted 클릭한다.
   const closed = await closePanel()
   return { ok: true, steps, closed }
