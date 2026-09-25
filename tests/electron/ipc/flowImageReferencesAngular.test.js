@@ -153,6 +153,21 @@ describe('레퍼런스 이미지 — 클릭 뒤 검증 (D12)', () => {
     expect(b.h.sessionFetch).not.toHaveBeenCalled()
   })
 
+  // 코드 리뷰 R1-B1: 레퍼런스 = 중복 없는 집합 — 길이가 같고 원소가 전부 기대 안에 있어도 한 id 가 두 번이면 다른 레퍼런스(queen)는 안 실린 것이다.
+  it('send refs [U2,U2](길이 같고 원소는 기대 안 — 중복) → flow-references-mismatch, 다운로드 없음', async () => {
+    const { h } = setup({ send: { refs: [U(2), U(2)] } })
+    expect(await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)).toEqual(MISMATCH)
+    expect(h.sessionFetch).not.toHaveBeenCalled()
+  })
+
+  it('응답 되돌림 [U2,U2](중복) → 같은 거부', async () => {
+    const p = s3Payload(9)
+    p[0][0][6][0][15][3][0][1][2] = U(2)
+    const { h } = setup({ loadend: { responseText: respBodyWithPayload('ogiZ0b', p) } })
+    expect(await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)).toEqual(MISMATCH)
+    expect(h.sessionFetch).not.toHaveBeenCalled()
+  })
+
   it('요청은 맞고 응답 되돌림만 어긋남([15][3][0][0][2] = U9) → 같은 거부', async () => {
     const p = s3Payload(9)
     p[0][0][6][0][15][3][0][0][2] = U(9)
