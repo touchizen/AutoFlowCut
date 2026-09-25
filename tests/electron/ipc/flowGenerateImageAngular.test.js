@@ -113,6 +113,8 @@ function harness(o = {}) {
     trace.push('click:' + (opts?.step || '?'))
     // M2-FINAL Q1: 실제 헬퍼처럼 히트테스트 뒤·mouseDown 직전에 beforeDispatch 를 묻고 false·throw 면 미디스패치 거부(armed:/onSubmit 없음 = mouseDown 없음)
     if (typeof opts?.beforeDispatch === 'function') {
+      // M2-FINAL(Sonnet B1): 페이지가 **스스로** 제출한 뒤(사용자의 Enter 등 — 편집기가 비고 send·loadend 가 이미 바인딩) 관문이 판독하는 경우를 흉내
+      if (o.bindDuringDispatch && opts?.step === 'compose-submit') { page.send(); page.loadend() }
       let go = false
       try { go = !!(await opts.beforeDispatch()) } catch (_e) { go = false }
       if (!go) { trace.push('dispatch-refused'); return { success: false, error: 'Refused before dispatch' } }
@@ -837,6 +839,15 @@ describe('flow:generate-image (angular) — 방패 포커스의 단계 플래그
     expect(t[idx(t, 'capture-probe') + 1]).toBe('focus')
     expect(count(t, 'focus')).toBe(3)
     expect(count(t, 'main-focus')).toBe(2)
+  })
+
+  // M2-FINAL(Sonnet B1): 이미지도 같다 — 관문 거부 + 이미 바인딩·완료된 gen 은 지우지 않고 결과를 받는다.
+  it('(c) mouseDown 직전 재판독이 거부했지만 그 사이 페이지가 스스로 제출해 gen 이 바인딩·완료됐으면 gen 을 지우지 않고 결과(images)를 받는다', async () => {
+    const h = harness({ bounds: NARROW, editorText: [PROMPT, PROMPT, ''], bindDuringDispatch: true })
+    const r = await settle(h.generate())
+    expect(r).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
+    expect(h.trace).toContain('dispatch-refused')
+    expect(logged()).not.toMatch(/editor text changed between the hit-test and the mouseDown/)
   })
 
   it('(b) 히트테스트 뒤·mouseDown 직전의 재판독이 다르면 미디스패치 거부 → mouseDown·send 없음, gen 삭제(맵 0), 클릭 전 text-injection-failed(reason editor-changed-before-click), 보고 내용 없음', async () => {

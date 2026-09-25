@@ -716,3 +716,5 @@
 | 141 | Q4 (B3) | `releaseDomStage` 배선 핀: 핸들러 본문 들여쓰기 정확히 4칸 + `const lost = failBoundUnfinished(pendingGenerations)` 다음다음 줄(did-navigate·render-process-gone 둘 다). | 변이 2: unsupported-country 분기 안으로 이동 → red · render-process-gone 에서 `if (reason==='crashed')` 조건부 → red. |
 
 관찰: (1) 이번 라운드부터 저자가 Opus 다 — 리뷰어는 저자와 다른 모델(Sonnet)로 돌린다(Fable·Codex 모두 사용량 한도). (2) 세 번째 재판독은 클릭 도우미 안이라 워치독 체크포인트 밖이다 — 거기서 매달리면 `clickStarted` 가 이미 참이라 워치독은 결과를 덮지 않고 클릭 도우미의 30s 타임아웃(미디스패치)이 닫는다.
+
+| 142 | 최종 리뷰(Sonnet ×2) | A: **NO FINDINGS**(클릭 도우미의 predicate·타임아웃·abort, 거부 분기, 행선지 플래그, releaseDomStage 규칙, 변이 5 재현). B: **MINOR 1**(테스트 공백) — "관문 거부 + 그 사이 페이지가 스스로 제출해 gen 이 이미 바인딩·완료" 조합을 재현하는 테스트가 없어 보호 조건 `!(gen.doc != null \|\| gen.completed)` 를 지워도 초록이었다(지우면 과금된 결과를 버린다). 하네스에 `bindDuringDispatch`(관문 판독 전에 send·loadend) + 핸들러별 핀 1 — gen 을 지우지 않고 결과를 받는다. 제품 코드 변경 없음. | 변이(두 자리의 보호 조건 제거) → 2 red. |
