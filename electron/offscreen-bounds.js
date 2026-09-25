@@ -43,3 +43,14 @@ export function automationViewportSize(contentBounds) {
   return { width: Math.max(w, AUTOMATION_MIN_WIDTH), height: Math.max(h, AUTOMATION_MIN_HEIGHT) }
 }
 
+
+/**
+ * 창 **안** 제자리 자동화 뷰포트(x=0,y=0, 창 콘텐츠 크기 이상·최소값 이상). 순수.
+ *   2026-09-25 M2 실기: 화면 밖(x=1760) 1200×872 로 옮겨도 페이지 innerWidth 가 597 그대로 — 완전히 화면 밖인 뷰는
+ *   Chromium 이 다시 레이아웃하지 않아 에이전트 칩이 안 그려졌다(ensureAgentOff not_found). 보이는 뷰(957px)는 실기 통과.
+ *   DOM 단계 몇 초 동안 Flow 뷰가 앱 UI 를 덮고, finally 의 updateBounds 가 레이아웃으로 되돌린다.
+ */
+export function computeInPlaceBounds(contentBounds) {
+  const size = automationViewportSize(contentBounds)
+  return { x: 0, y: 0, width: size.width, height: size.height }
+}

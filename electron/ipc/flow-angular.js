@@ -21,10 +21,9 @@
  *
  * tests/electron/ipc/flowGenerateImageAngular.test.js · tests/electron/ipc/flowVideoT2VAngular.test.js · tests/electron/flowRpcPipeline.test.js
  */
-import { screen } from 'electron'
 import { isFlowPageUrl, isLegacyFlowUrl } from '../flowUrl.js'
 import { updateBounds } from './layout.js'
-import { computeOffscreenBounds, needsAutomationViewport, automationViewportSize } from '../offscreen-bounds.js'
+import { computeInPlaceBounds, needsAutomationViewport } from '../offscreen-bounds.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../flow-rpc-capture.js'
 import { armDeadline, settleGen } from '../flow-rpc-router.js'
 import {
@@ -117,7 +116,7 @@ export function createFlowAngular(deps) {
 
   /**
    * 자동화 뷰포트 + 포커스 반환 — DOM 단계 전체(에이전트 OFF → 캡처 → 설정 → 편집기 → 제출 클릭)를 감싼다. 이미지·영상 공용.
-   *   숨었거나(0×0: 모달·드래그) 좁은(< AUTOMATION_MIN_WIDTH) 뷰는 화면 밖 정본 크기로 둔다. flow.google.com 은 좁은 폭에서
+   *   숨었거나(0×0: 모달·드래그) 좁은(< AUTOMATION_MIN_WIDTH) 뷰는 창 안 제자리에서 창 콘텐츠 크기로 키운다. flow.google.com 은 좁은 폭에서
    *   에이전트 칩 등 컴포저 컨트롤을 아예 렌더하지 않는다(2026-09-25 실기: 597px 에서 chip 0개 → not_found, 957px 정상).
    *   execCommand 주입도 보이는 뷰를 요구한다. fn 이 어떻게 끝나든(정상·조기 반환·throw) finally 에서 레이아웃(updateBounds —
    *   유일한 진실)으로 원복한다. 넓은 보이는 뷰는 손대지 않는다(실기 게이트 957×1022 통과). 신뢰 클릭 헬퍼는 자기가 키운(0×0)
@@ -133,13 +132,15 @@ export function createFlowAngular(deps) {
     let hadFocus = false
     try { hadFocus = !!(flowView.webContents.isFocused && flowView.webContents.isFocused()) } catch (_e) { hadFocus = false }
     if (viewport) {
+      // M2 실기(2026-09-25, 597×872 스플릿): 화면 밖(x=1760) 1200×872 로 옮겨도 페이지 innerWidth 가 597 그대로 — 완전히
+      //   화면 밖인 뷰는 Chromium 이 다시 레이아웃하지 않는다(단위 테스트는 우리가 준 bounds 만 단언했다). 창 **안** 제자리
+      //   (x=0,y=0)에서 창 콘텐츠 크기로 키운다 — DOM 단계 몇 초 동안 Flow 뷰가 앱 UI 를 덮고 finally 가 레이아웃으로 되돌린다.
       const mainWindow = deps.getMainWindow()
-      const size = automationViewportSize(mainWindow.getContentBounds())
-      const displays = (screen && typeof screen.getAllDisplays === 'function') ? screen.getAllDisplays() : []
-      flowView.setBounds(computeOffscreenBounds(displays, mainWindow.getBounds().x, size.width, size.height))
+      const size = computeInPlaceBounds(mainWindow.getContentBounds())
+      flowView.setBounds(size)
       await sleep(300)
       const why = (!startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)) ? 'hidden' : 'narrow'
-      console.log(`${tag} view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} offscreen`)
+      console.log(`${tag} view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} in-place`)
     }
     try {
       return await fn()

@@ -230,7 +230,10 @@ describe('flow:generate-video-t2v (angular) — 성공 경로', () => {
     const lastBounds = t.map((x, i) => [x, i]).filter(([x]) => x.startsWith('bounds:')).at(-1)[1]
     expect(lastBounds).toBeGreaterThan(idx(t, 'click:compose-submit'))
     expect(idx(t, 'main-focus')).toBeGreaterThan(lastBounds)
-    expect(logged()).toMatch(/\[Flow Video T2V\] \[Angular\] view hidden 0x0 → automation viewport \d+x\d+ offscreen/)
+    expect(logged()).toMatch(/\[Flow Video T2V\] \[Angular\] view hidden 0x0 → automation viewport \d+x\d+ in-place/)
+    // 실기(2026-09-25): 화면 밖 bounds 는 페이지 크기를 못 바꿨다 — 첫 setBounds 는 창 안 제자리(x=0,y=0), 폭 ≥ 700.
+    expect(h.flowView.setBounds.mock.calls[0][0]).toMatchObject({ x: 0, y: 0 })
+    expect(h.flowView.setBounds.mock.calls[0][0].width).toBeGreaterThanOrEqual(700)
   })
 })
 

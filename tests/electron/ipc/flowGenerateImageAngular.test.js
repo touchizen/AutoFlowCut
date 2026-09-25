@@ -221,7 +221,10 @@ describe('flow:generate-image (angular) — 동기', () => {
     expect(idx(t, 'agent-probe')).toBeLessThan(idx(t, 'settings-driver'))
     const lastBounds = t.map((x, i) => [x, i]).filter(([x]) => x.startsWith('bounds:')).at(-1)[1]
     expect(lastBounds).toBeGreaterThan(idx(t, 'click:compose-submit'))
-    expect(logged()).toMatch(/\[Flow API\] \[Angular\] view narrow 597x872 → automation viewport \d+x\d+ offscreen/)
+    expect(logged()).toMatch(/\[Flow API\] \[Angular\] view narrow 597x872 → automation viewport \d+x\d+ in-place/)
+    // 실기(2026-09-25): 화면 밖 bounds 는 페이지 크기를 못 바꿨다 — 첫 setBounds 는 창 안 제자리(x=0,y=0), 폭 ≥ 700.
+    expect(h.flowView.setBounds.mock.calls[0][0]).toMatchObject({ x: 0, y: 0 })
+    expect(h.flowView.setBounds.mock.calls[0][0].width).toBeGreaterThanOrEqual(700)
   })
 
   it('숨은 뷰: 편집기 클릭이 실패해도 bounds 를 원복한다(0×0 으로 — 모달이 열려 있으므로)', async () => {
