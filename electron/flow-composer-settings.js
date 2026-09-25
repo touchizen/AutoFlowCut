@@ -286,6 +286,9 @@ export async function settingsDriverCore(doc, targets, deps) {
     }
   }
 
+  // M2 실기(2026-09-25, 2차 런): 트리거 클릭 직후 즉시 한 번 스캔하면 패널 애니메이션이 끝나기 전이라 panel-not-open 으로 닫혔다
+  //   (이미지 런은 타이밍 운으로 통과). 패널이 스캔 가능해질 때까지 유계 대기(≤3s) 뒤 판정.
+  await waitFor(() => scan(doc).ok, 3000)
   let s = scan(doc)
   if (!s.ok) return fail(s.reason)
   // phase 1 — 모드

@@ -621,3 +621,21 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
     } finally { log.mockRestore(); vi.useRealTimers() }
   })
 })
+
+// 2026-09-25 M2 실기(2차 런, 957×1022): 설정 트리거 trusted 클릭 직후 드라이버가 **즉시 한 번** 스캔해 패널 애니메이션이 끝나기 전에
+//   panel-not-open 으로 닫았다(같은 세션의 이미지 런 두 번은 타이밍 운으로 통과). 패널은 유계 대기(≤3s, 50ms 폴링)로 기다린다.
+describe('settingsDriverCore — 패널이 늦게 열려도 기다린다 (M2 실기)', () => {
+  it('트리거 클릭 400ms 뒤에 패널이 나타나면 ok', async () => {
+    const doc = mount(HEAD + IMAGE_COMPOSER_KO)   // 패널 없음(닫힌 상태)
+    const p = runSettingsDriver(doc, { mode: 'image' })   // 모드만 — 픽스처엔 가짜 Angular 가 없어 라디오 클릭 반영은 여기서 다루지 않는다
+    await new Promise((r) => setTimeout(r, 400))
+    doc.body.insertAdjacentHTML('beforeend', buildSettingsPanel({ mode: 'image' }))
+    const r = await p
+    expect(r).toMatchObject({ ok: true, steps: { mode: 'already' } })
+  })
+  it('3초가 지나도 패널이 없으면 panel-not-open', async () => {
+    const doc = mount(HEAD + IMAGE_COMPOSER_KO)
+    const r = await runSettingsDriver(doc, { mode: 'image' })
+    expect(r).toMatchObject({ ok: false, reason: 'panel-not-open' })
+  }, 10000)
+})
