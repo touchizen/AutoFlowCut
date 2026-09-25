@@ -1,7 +1,7 @@
-# 계획 — M3 레퍼런스: 레퍼런스 이미지 · @인라인 멘션 · 레퍼런스 영상(r2v)을 flow.google.com 에서 (2026-09-25, R2)
+# 계획 — M3 레퍼런스: 레퍼런스 이미지 · @인라인 멘션 · 레퍼런스 영상(r2v)을 flow.google.com 에서 (2026-09-25, R3)
 
 레포: `~/workspace/AutoFlowCut-bugfix` (worktree, 브랜치 `feat/flow-m3-references` — M2 `fix/flow-batchexecute` 위, HEAD `c2a815e0`)
-상태: **PLAN R2. 코드 변경 0.** 저자 Opus 5.5. R0 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용) · M3-0 프로브(P1–P9, 추가 확인 PR §4) · R0 뒤의 사용자 결정 · R1 리뷰(Sonnet 5 ×2 — A1·B1·B2·B3 수용)를 반영했다(§8). R0 의 `[분기]` 는 프로브로 전부 닫혔다.
+상태: **PLAN R3. 코드 변경 0.** 저자 Opus 5.5. R0 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용) · M3-0 프로브(P1–P9, 추가 확인 PR §4) · R0 뒤의 사용자 결정 · R1 리뷰(Sonnet 5 ×2 — A1·B1·B2·B3 수용) · R2 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용)를 반영했다(§8). R0 의 `[분기]` 는 프로브로 전부 닫혔다.
 증거: `docs/handoffs/evidence/2026-09-25-m3-references-capture.md`(**C**), `…-m3-samples.masked.jsonl`(**S3#n**, 행 1–20: 2 maseQ(파일 대화상자) · 3 ogiZ0b ref1 · 4 maseQ(붙여넣기) · 9 ogiZ0b ref2+멘션 · 10 MZZa6b Omni · 14 YhhmEf 대조군 · 15 MZZa6b Veo · 17 MZZa6b 인라인 멘션(P9) · 19 ogiZ0b 같은 미디어 두 번 멘션 · 20 MZZa6b 같은 미디어 두 번 멘션), `…-m3-dom-<단계>.elements.json`(**D3:<단계>**), 프로브 결과 `…-m3-probes.md`(**PR** P1–P9 · §4 추가 확인), 리뷰 처분 `docs/handoffs/briefs/2026-09-25/findings/m3-plan-r0.findings.md`, M2 계획서 `docs/plans/2026-09-24-flow-batchexecute-rework-plan.md`(**P2**, § 와 행 번호 #n), M2 핸드오프(**H2**), 킥오프(**K3**), HTrJv 카탈로그 = 09-24 샘플 11행(**CAT**, 20000자에서 잘림). **RAW** = 캡처 때 바탕화면에 남은 원본 DOM 덤프(저장소 밖, 마스킹해서 읽은 사실만).
 표기: **[관측]** 캡처·덤프·프로브에 있는 사실 · **[추정]** 관측에서 끌어낸 추론 · **[미상]** 아무도 본 적 없음.
 
@@ -51,7 +51,7 @@
 | 캡처 허용 목록 | `electron/flow-rpc-capture.js:24,30` — `{ogiZ0b, YhhmEf}` | **`MZZa6b`·`maseQ` 는 보이지 않는다** | D5·D10 |
 | 라우터 | `electron/flow-rpc-router.js:138`(rpc 동일만 후보) · `:42`(유예는 `YhhmEf` 만) · `:50-54`·`:179-183`(미바인딩 보고는 `YhhmEf` 만) · `:219-243`(파서 분기 ogiZ0b/YhhmEf) | — | D5·D10 |
 
-**지금 이미 있는 돈 구멍 — M3 에서만 닫는다(사용자 결정 5)** [추정 — 코드 경로로 판정, 실기 미재현]: 컴포저에 칩이 남은 채로 M2 T2V 가 제출되면 페이지는 `YhhmEf` 대신 `MZZa6b` 를 보낸다(C §2). 캡처는 `MZZa6b` 를 모르므로(`flow-rpc-capture.js:30`) gen(`rpc:'YhhmEf'`)은 바인딩되지 않고 15s 훅의 크레딧 재판독(`flow-angular.js:700-708`)이 감소를 보고 `flow-submit-lost` 로 닫는다 — 과금된 영상은 id 도 없이 사라지고 미바인딩 보고(`flow-rpc-router.js:179-183`)도 `YhhmEf` 만 본다. 이미지는 잔여 칩이 그대로 레퍼런스로 실린다(0크레딧). → D9 의 "칩 없음" 게이트와 D10 의 대체 rpc 바인딩을 **레퍼런스 없는 M1·M2 경로에도** 건다.
+**지금 이미 있는 돈 구멍 — M3 에서만 닫는다(사용자 결정 5)**: 컴포저에 칩이 있으면 프롬프트에 멘션이 없어도 페이지는 `YhhmEf` 대신 `MZZa6b` 를 보낸다 — [관측] 캡처 h1(Omni)·h2b(Veo)는 사용자가 ＋로 칩만 붙이고 평문 프롬프트로 제출한 것이고 둘 다 `MZZa6b` 로 나갔다(S3#10·#15). 페이지 입장에서 잔여 칩과 구별되지 않는다. 그 뒤는 코드 판독 사실이다: 캡처는 `MZZa6b` 를 모르므로(`flow-rpc-capture.js:30`) gen(`rpc:'YhhmEf'`)은 바인딩되지 않고 15s 훅의 크레딧 재판독(`flow-angular.js:700-708`)이 감소를 보고 `flow-submit-lost` 로 닫는다 — 과금된 영상은 id 도 없이 사라지고 미바인딩 보고(`flow-rpc-router.js:179-183`)도 `YhhmEf` 만 본다. 이미지는 잔여 칩이 그대로 레퍼런스로 실린다(0크레딧). → D9 의 "칩 없음" 게이트와 D10 의 대체 rpc 바인딩을 **레퍼런스 없는 M1·M2 경로에도** 건다.
 
 ### 1-2. 옛 레퍼런스 경로 — 재사용 / 사망
 
@@ -330,7 +330,7 @@
 - send `refs:[U9]` → `flow-references-mismatch`, `postClick:true`, **`sessionFetch` 미호출**; 되돌림만 어긋남 → 같음; 둘 다 `null` → 성공 + warn + `reportDomFailure('rpc-shape:ogiZ0b@refs')`.
 - 레퍼런스 없는 요청 + 잔여 칩 → 정리 후 진행; 정리 실패 → attach-failed, 클릭 없음; send `refs:[U3]`(요청 안 함) → mismatch.
 - mouseDown 직전 칩 +1 → 미디스패치 거부, gen 삭제, 클릭 전 실패(Q1).
-- **`referencePreflight` 배선 핀**(M3-10 과 같은 둘): `plan` 범위 밖 → `bad-plan`, executeJavaScript 는 WIZ 뿐 · ref 2개 + 영영 안 끝나는 드라이버 → 121s 에 타임아웃 없음, 360s 에 `dom-stage-timeout`(좀비는 클립보드·붙여넣기 없음). 헬퍼 자체(세 검사·`no-project-id`·레퍼런스 없음 = 120s)는 `tests/electron/ipc/flowReferencePreflight.test.js`(새)에서.
+- **`referencePreflight` 배선 핀**(M3-10 과 같은 둘): `plan` 범위 밖 → `bad-plan`, executeJavaScript 는 WIZ 뿐 · ref 2개 + 영영 안 끝나는 드라이버 → **359s 에 타임아웃 없음, 361s 에 `dom-stage-timeout`**(좀비는 클립보드·붙여넣기 없음). 헬퍼 자체는 `tests/electron/ipc/flowReferencePreflight.test.js`(새): `bad-plan`·`no-project-id` + 계산된 `timeoutMs` 를 **정확히** — ref 0개 120000 · 1개 240000 · 2개 360000 · 3개 480000(`120+60n`·refs 있으면 일률 360s 같은 식은 빨갛다).
 - 숨은 뷰(0×0) → 제자리 확장+방패 안에서 붙여넣기·애셋 창(`bounds:` trace 가 붙여넣기보다 앞).
 - 뮤테이션: `collectRpcGen` 레퍼런스 검증 삭제 → 빨강; `beforeDispatch` 칩 비교 삭제 → 빨강.
 
@@ -338,13 +338,15 @@
 - `@king` 1개 · Omni 4초 · 9:16: 인라인 멘션 컴포즈 → arm `rpc:'MZZa6b', altRpcs:['YhhmEf']`, `want.kind:'r2v'` → send/loadend S3#17 → `{success:true, generationId:U45, creditsLeft:857}`, 로그 `submitted media=00000045 creditsLeft=857 modelKey=abra_r2v_4s refs=1/1 mentions=1/1`.
 - **`@X … @X`**: 게이트 순서열 2·칩 1 → send/loadend S3#20 → `{success:true, generationId:U57, creditsLeft:850}`, `refs=1/1 mentions=2/2`.
 - 페이지가 `YhhmEf` 로 보냄 → `{success:false, errorKind:'flow-references-mismatch', rejectedMediaId, postClick:true}`, **`generationId`·`mediaId` 키 없음**. send `mentions:[]`(멘션이 빠짐) → mismatch.
-- **`referencePreflight` 배선 핀**(B1 — 영상의 `withAutomationViewport` 는 `:576` 의 별도 호출 자리): `plan` 범위 밖 → `bad-plan`, WIZ 외 executeJavaScript 0회 · ref 2개 + 영영 안 끝나는 드라이버 → 121s 에 타임아웃 없음, 360s 에 `dom-stage-timeout`. 뮤테이션: 영상 호출 자리에서 `timeoutMs` 를 빼면 121s 에 빨강.
+- **클릭 뒤 레퍼런스 부정 케이스**(M3-9 와 대칭): S3#17 인데 send `refs:[U9]`(`boundRpc==='MZZa6b'`) → `flow-references-mismatch`·`postClick:true`·`rejectedMediaId:U45`, `generationId`·`mediaId` 키 없음, 폴·다운로드 미호출; send `refs:[U2]`(맞음)인데 응답 되돌림 `[3][0][5][6][1][1][0][2]` 를 U9 로 바꾼 사본 → 같은 결과.
+- **중복 멘션 부정 케이스**: S3#20 인데 send `mentions:[U52]`(하나 빠짐) → mismatch — r2v 비교가 순서·중복을 보존한 동등 비교이지 집합·포함 비교가 아님을 증명.
+- **`referencePreflight` 배선 핀**(B1 — 영상의 `withAutomationViewport` 는 `:576` 의 별도 호출 자리): `plan` 범위 밖 → `bad-plan`, WIZ 외 executeJavaScript 0회 · ref 2개 + 영영 안 끝나는 드라이버 → 359s 에 타임아웃 없음, 361s 에 `dom-stage-timeout`. 뮤테이션: 영상 호출 자리에서 `timeoutMs` 를 빼면 빨강(120s 에 끝난다).
 - 모델키 `abra_t2v_4s` → `flow-video-settings-mismatch`; Veo Fast 16:9 에 `…_portrait` → 불일치.
 - refs + `Veo 3.1 - Quality` → `flow-references-model-unsupported {model}`, WIZ 외 executeJavaScript 0회; ref 4개 → `flow-references-too-many {max:3}` 동일.
-- 레퍼런스 없는 T2V: arm `altRpcs:['MZZa6b']`; 페이지가 `MZZa6b` → mismatch + `rejectedMediaId`(§1-1 돈 구멍 — lost 대신 id 가 남는다); 잔여 칩 → 정리 후 `YhhmEf`.
+- 레퍼런스 없는 T2V(백스톱): arm `rpc:'YhhmEf', altRpcs:['MZZa6b']`; 페이지가 **S3#10**(칩만·멘션 없는 실제 제출 — 잔여 칩 사고와 같은 모양)을 보냄 → mismatch + `rejectedMediaId:U30`(§1-1 돈 구멍 — lost 대신 id 가 남는다). 1차 방어: 잔여 칩 → 정리 후 `YhhmEf`(실기 G7). 백스톱은 정리가 칩을 지우므로 실기로는 일으킬 수 없다 — 이 단위 테스트가 실제 S3#10 모양으로 덮는다.
 - `MZZa6b` send 가 20s 에 옴 → 정상 바인딩(15s 훅은 크레딧 재판독만).
 - `video.js` 가 `refs`·`plan` 을 넘긴다(진입 로그 `refs=<n>` — 구조분해 누락이면 빨강).
-- 뮤테이션: `boundRpc` 비교 삭제 → 빨강; `altRpcs` 없이 arm → mismatch 케이스가 not-sent 로 빨강.
+- 뮤테이션: `boundRpc` 비교 삭제 → 빨강; `altRpcs` 없이 arm → mismatch 케이스가 not-sent 로 빨강; 멘션 비교를 `Set` 으로 접음 → 중복 멘션 부정 케이스 빨강; 되돌림 검사 삭제 → 되돌림 케이스 빨강.
 
 **M3-11 렌더러 계획·엔진** — `tests/utils/flowReferencePlan.test.js`(새), `tests/engine/engineFlow.test.jsx`(게이트 블록 교체), `tests/utils/videoPromptReferences.test.js` / `src/utils/flowReferencePlan.js`, `src/engine/engineFlow.js`, `src/utils/videoPromptReferences.js`
 - 계획: `'@king이 웃는다'` + pool `[king]` → `[{t:'mention',ref:0},{t:'text',text:'이 웃는다'}]`; `'@{Alice Smith} runs'` 정확 매칭; `'@ghost'` + pool 비어 있지 않음 → `unresolved-mentions`+`unresolvedNames:['ghost']`, pool 비어 있음 → 텍스트; `'a@b.com'` → 텍스트; **`@king … @king` → 멘션 세그먼트 둘·`refs` 하나**; 멘션 ref 원천 없음 → `flow-reference-source-missing`; 태그 queen → `attach:[1]`, 멘션된 king 은 attach 에 없음; 영상 유일 ref 4개 → too-many(`FLOW_R2V_REFERENCE_LIMIT`), 같은 ref 멘션 4번은 1개로 통과.
@@ -392,6 +394,7 @@
 - **G4 레퍼런스 영상(크레딧 — 매번 사용자 확인)** — Omni Flash · 4초 · 720p · 9:16, `@king` 인라인 1개(7크레딧). `generate-video-t2v: {…, refs:1, mentions:1}` → `credits before=<n>` → `[Flow Settings] video … ok=true` → 컴포즈 로그 → `[Flow RPC] MZZa6b send … refs=1 mentions=1` → `loadend status=200` → `submitted media=<8> creditsLeft=<n-7> modelKey=abra_r2v_4s refs=1/1 mentions=1/1` → 폴 → `complete` → `[Flow VideoDownload] … bytes=<n>`. mp4 720×1280.
 - **G5 회귀(0크레딧)** — 레퍼런스 없는 이미지 씬인데 사용자가 미리 칩 하나를 손으로 붙여 둔다 → `composer clear chips=1→0` → `ogiZ0b send … refs=0` → 정상.
 - **G6 클립보드 거부(0크레딧)** — Finder 에서 파일을 복사해 둔 채 새 ref 가 필요한 씬 → `flow-reference-clipboard-busy`, 붙여넣기 없음, 클립보드 그대로(Finder 에서 붙여넣기 가능).
+- **G7 잔여 칩 영상(선택, 7크레딧 — 사용자 확인)** — 레퍼런스 없는 T2V 씬(Omni 4초)인데 사용자가 미리 칩 하나를 손으로 붙여 둔다 → `composer clear chips=1→0` → `[Flow RPC] YhhmEf send …` → 정상 성공(§1-1 돈 구멍의 1차 방어를 실기로 증명). 백스톱(`MZZa6b` 바인딩 → mismatch)은 정리가 칩을 지워 실기로 일으킬 수 없다 — M3-10 이 실제 S3#10 모양으로 덮는다.
 - 전 게이트 공통: 로그에 프롬프트·파일명(`image.png` 포함)·경로·서명 URL·base64 0건; 실패 시 kind 는 D14 표 + `reason` 로그 한 줄.
 
 ---
@@ -465,6 +468,15 @@ D4(포커스 단계 삭제·관찰 즉시 복원·id img 대기) · D6(영속 JS
 | B2 | B | MAJOR | M3-13 의 "모델명·플레이스홀더 없음"이 D14 와 모순 | **수용** — 모델명 있음·`{model}` 토큰 없음 | M3-13 |
 | B3 | B | MINOR | M3-8 게이트에 "같은 개수 다른 id" 케이스가 없어 개수 비교 구현이 통과 | **수용** — 칩·멘션 각각 같은 개수/길이·id 하나 다른 픽스처 | M3-8 |
 
-### 8.5 R2 리뷰
+### 8.5 R2 리뷰 (A·B = Sonnet 5, 사본 분리)
+
+| # | 리뷰 | 등급 | 요지 | 처분 | 반영 위치 |
+|---|---|---|---|---|---|
+| A1 | A | MAJOR | §1-1 M2 돈 구멍이 [추정] — 실기 재현 없음 | **수정 수용** — 전제는 이미 관측(h1·h2b 는 칩만·멘션 없는 제출이고 `MZZa6b` 로 나갔다, S3#10·#15); 캡처가 `MZZa6b` 를 못 보는 부분은 코드 판독 사실. 선택 실기 G7 추가, 백스톱은 S3#10 단위 테스트로 | §1-1, M3-10, §5 G7 |
+| B1 | B | MAJOR | M3-10 에 r2v 클릭 뒤 잘못된 레퍼런스(요청·되돌림) 부정 케이스가 없다 | **수용** — S3#17 기반 `sentRefs` 불일치·되돌림 불일치 → mismatch·rejectedMediaId·다운로드 없음 | M3-10 |
+| B2 | B | MAJOR | M3-10 에 중복 멘션 부정 케이스가 없다 | **수용** — S3#20 + `mentions:[U52]` → mismatch, `Set` 접기 뮤테이션 | M3-10 |
+| B3 | B | MINOR | 워치독 식이 n=0·n=2(121s/360s)로만 괄호쳐져 `120+60n`·일률 360s 가 통과 | **수용** — 헬퍼가 n=1/2/3 을 240/360/480s 로 정확히, 배선 핀은 359s/361s | M3-9, M3-10 |
+
+### 8.6 R3 리뷰
 | # | 리뷰 | 등급 | 처분 | 반영 위치 | 비고 |
 |---|---|---|---|---|---|
