@@ -8,12 +8,13 @@
  */
 import { iterateMentions, resolveMentionPrefix } from './mentionParser'
 import { sourceAvailable } from './refImageGuard'
+import { FLOW_R2V_REFERENCE_LIMIT } from './flowR2vLimit.js'
 
 /**
  * D13: Flow 레퍼런스 영상(r2v, MZZa6b)의 유일 레퍼런스 상한 — CAT `[9]` 이 veo r2v 3·abra r2v 7 이고 영상 다중 레퍼런스는 미관측이라 낮은 쪽.
  *   API 모드 상수(genModels.js VIDEO_REFERENCE_IMAGE_LIMIT)와 묶지 않는다. 렌더러 계획(D3-7)과 main(D1)이 둘 다 막는다.
  */
-export const FLOW_R2V_REFERENCE_LIMIT = 3
+export { FLOW_R2V_REFERENCE_LIMIT }
 
 const fail = (kind, extra) => ({ success: false, errorKind: kind, error: kind, ...(extra || {}) })
 const lowerName = (r) => (r && r.name ? String(r.name).toLowerCase() : null)

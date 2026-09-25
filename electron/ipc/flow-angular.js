@@ -43,7 +43,7 @@ import { SUBMIT_ENABLED_PROBE } from '../flow-submit-gate.js'
 import { READ_COMPOSER_STATE_JS } from '../flow-composer-refs.js'
 import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
 import { refMediaCache } from '../flow-ref-media-cache.js'
-import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowReferencePlan.js'   // D13: 렌더러 계획과 같은 상한(main 이 src/utils 를 쓰는 선례 flow-rpc-protocol.js)
+import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowR2vLimit.js'   // D13: 렌더러 계획과 같은 상한 — import 없는 모듈(렌더러 계획 모듈을 끌어오면 React 훅까지 main 에 들어온다)
 
 /** 캡처 주입 설치 플래그 프로브(클릭 전). */
 export const CAPTURE_FLAG_PROBE = '!!window.__autoflowcut_rpc_capture__'

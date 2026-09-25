@@ -155,4 +155,13 @@ describe('레퍼런스 경로의 키 sendInputEvent 금지 (M3-15)', () => {
   it('main.js 에 키 sendInputEvent 가 0개다', () => {
     expect(MAIN).not.toMatch(KEY_SEND)
   })
+
+  // M3 D13: main 은 r2v 상한 상수 하나만 필요하다 — 렌더러 계획 모듈을 import 하면 가드 → 캐릭터 동기화 → React 훅(useFileSystem)까지
+  //   main 번들로 끌려 들어온다(C5 폐포 계산). 상수는 import 없는 모듈에서 가져온다.
+  it('flow-angular.js 의 import 폐포에 렌더러 훅·컴포넌트가 없다 — r2v 상한은 의존성 없는 모듈에서', () => {
+    const rel = importClosure(ELECTRON_DIR + 'ipc/flow-angular.js').map((abs) => abs.replace(REPO_DIR, ''))
+    expect(rel).toContain('src/utils/flowR2vLimit.js')
+    expect(rel.filter((p) => /^src\/(hooks|components|contexts)\//.test(p))).toEqual([])
+    expect(read(REPO_DIR + 'src/utils/flowR2vLimit.js')).not.toMatch(/^\s*import\s/m)
+  })
 })
