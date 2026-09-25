@@ -1,8 +1,8 @@
-# 계획 — M3 레퍼런스: 레퍼런스 이미지 · @인라인 멘션 · 레퍼런스 영상(r2v)을 flow.google.com 에서 (2026-09-25, R1)
+# 계획 — M3 레퍼런스: 레퍼런스 이미지 · @인라인 멘션 · 레퍼런스 영상(r2v)을 flow.google.com 에서 (2026-09-25, R2)
 
 레포: `~/workspace/AutoFlowCut-bugfix` (worktree, 브랜치 `feat/flow-m3-references` — M2 `fix/flow-batchexecute` 위, HEAD `c2a815e0`)
-상태: **PLAN R1. 코드 변경 0.** 저자 Opus 5.5. R0 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용) · M3-0 프로브(P1–P9) · R0 뒤의 사용자 결정을 반영했다(§8). R0 의 `[분기]` 는 프로브로 전부 닫혔다.
-증거: `docs/handoffs/evidence/2026-09-25-m3-references-capture.md`(**C**), `…-m3-samples.masked.jsonl`(**S3#n**, 행 1–16: 2 maseQ(파일 대화상자) · 3 ogiZ0b ref1 · 4 maseQ(붙여넣기) · 9 ogiZ0b ref2+멘션 · 10 MZZa6b Omni · 14 YhhmEf 대조군 · 15 MZZa6b Veo), `…-m3-dom-<단계>.elements.json`(**D3:<단계>**), 프로브 결과 `…-m3-probes.md`(**PR** P1–P9), 리뷰 처분 `docs/handoffs/briefs/2026-09-25/findings/m3-plan-r0.findings.md`, M2 계획서 `docs/plans/2026-09-24-flow-batchexecute-rework-plan.md`(**P2**, § 와 행 번호 #n), M2 핸드오프(**H2**), 킥오프(**K3**), HTrJv 카탈로그 = 09-24 샘플 11행(**CAT**, 20000자에서 잘림). **RAW** = 캡처 때 바탕화면에 남은 원본 DOM 덤프(저장소 밖, 마스킹해서 읽은 사실만).
+상태: **PLAN R2. 코드 변경 0.** 저자 Opus 5.5. R0 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용) · M3-0 프로브(P1–P9, 추가 확인 PR §4) · R0 뒤의 사용자 결정 · R1 리뷰(Sonnet 5 ×2 — A1·B1·B2·B3 수용)를 반영했다(§8). R0 의 `[분기]` 는 프로브로 전부 닫혔다.
+증거: `docs/handoffs/evidence/2026-09-25-m3-references-capture.md`(**C**), `…-m3-samples.masked.jsonl`(**S3#n**, 행 1–20: 2 maseQ(파일 대화상자) · 3 ogiZ0b ref1 · 4 maseQ(붙여넣기) · 9 ogiZ0b ref2+멘션 · 10 MZZa6b Omni · 14 YhhmEf 대조군 · 15 MZZa6b Veo · 17 MZZa6b 인라인 멘션(P9) · 19 ogiZ0b 같은 미디어 두 번 멘션 · 20 MZZa6b 같은 미디어 두 번 멘션), `…-m3-dom-<단계>.elements.json`(**D3:<단계>**), 프로브 결과 `…-m3-probes.md`(**PR** P1–P9 · §4 추가 확인), 리뷰 처분 `docs/handoffs/briefs/2026-09-25/findings/m3-plan-r0.findings.md`, M2 계획서 `docs/plans/2026-09-24-flow-batchexecute-rework-plan.md`(**P2**, § 와 행 번호 #n), M2 핸드오프(**H2**), 킥오프(**K3**), HTrJv 카탈로그 = 09-24 샘플 11행(**CAT**, 20000자에서 잘림). **RAW** = 캡처 때 바탕화면에 남은 원본 DOM 덤프(저장소 밖, 마스킹해서 읽은 사실만).
 표기: **[관측]** 캡처·덤프·프로브에 있는 사실 · **[추정]** 관측에서 끌어낸 추론 · **[미상]** 아무도 본 적 없음.
 
 ---
@@ -80,11 +80,11 @@
 2. **업로드** [관측 S3#2·#4, PR P1·P6·P8]: `maseQ` 요청 `[0][10][0]` reCAPTCHA · `[1]` base64 · `[2]` mime · `[8]` 파일명; 응답 `[0][0]` = 새 mediaId = `[1][3][4]`. 붙여넣기는 PNG(`image.png`)로 간다. `flowView.webContents.paste()` 가 **앱 창·Flow 뷰 모두 포커스 없음**과 **숨은 뷰(제자리 확장+방패)**에서 된다; 붙여넣기 관찰까지 1–4ms, 대상 편집기, `files=1`; **관찰 직후(2ms) 클립보드를 복원해도 업로드 정상**. 칩 수명: ~0.1s `aria-busy="true"`·img 없음 → ~7.9s busy 해제, **여전히 img 없음** → ~9.6s `flow-content` id img. 같은 이미지 두 번 → 새 id. 1×1·6000² 모두 7–9s. 파일 입력(`input[type=file]`)은 어떤 덤프에도 없다.
 3. **애셋 창** [관측 D3:a·g, PR P5]: 트리거 `button.add-menu-trigger`(열리면 `aria-expanded="true"`·아이콘 `close`), 탭 `[role=tab]` 리거처 `drive_folder_upload`(업로드)·`dashboard`(전체) 등, 전체 목록은 `cdk-virtual-scroll-viewport.asset-list-viewport`, 항목 `button.asset-item[role=option]`, 검색 `input.search-input`(`cdkfocusinitial`), 미리보기 `img.detail-preview-image`, `button.detail-add-to-prompt-btn` — **추가하면 창이 저절로 닫힌다**. **이번 페이지 세션에 올린 미디어만** 썸네일이 `flow-content.google/image/<mediaId>`; 앞 세션 업로드·대부분의 생성 이미지는 목록·미리보기 모두 불투명 `lh3…/asb/…`(RAW·P5). 불투명 항목을 추가해도 칩엔 진짜 id 가 뜬다. 앱 재시작 뒤 **처음 연 창**엔 24s 전에 붙여넣은 두 장이 없었고, 그 뒤엔 새 업로드가 즉시 맨 위에 id 썸네일로 떴다.
 4. **`@`** [관측 PR P4]: 캐럿 끝에서 `execCommand('insertText','@')` → 애셋 창이 열린다(신뢰 키도 열리지만 DOM 단계의 키 잠금이 keyDown 을 막는다). 한 번에 넣은 `mail a@b.com now`·`x (@`·`x @ y` 는 **안 열린다**. `@` 로 연 창은 ＋ 트리거 클릭으로 **안 닫히고** Escape 로 닫힌다 — Escape 는 `@` 뒤에 친 글자까지 지운다. `@` 뒤에 친 글자는 목록을 거르지 않는다.
-5. **멘션 노드** [관측 PR P3]: `<span class="mention-chip" data-mention-id="<mediaId>" data-reference-type="media" contenteditable="false"><애셋 이름></span>` — id 를 드러낸다. 삽입 뒤 **공백 한 칸이 자동으로 붙는다**. 멘션은 칩을 **추가**한다. 같은 미디어 두 번 멘션 = 노드 2개, 칩은 하나로 합쳐지고 순서가 끝으로 간다. 편집기 텍스트엔 라벨(붙여넣은 업로드는 `image.png`)이 들어간다.
+5. **멘션 노드** [관측 PR P3]: `<span class="mention-chip" data-mention-id="<mediaId>" data-reference-type="media" contenteditable="false"><애셋 이름></span>` — id 를 드러낸다. 삽입 뒤 **공백 한 칸이 자동으로 붙는다**. 멘션은 칩을 **추가**한다. 같은 미디어 두 번 멘션 = 노드 2개, 칩은 하나로 합쳐지고 순서가 끝으로 간다 — **요청에서도**(PR §4, S3#19·#20) 레퍼런스 목록은 1개(중복 제거), 멘션 세그먼트는 등장마다 순서대로, 응답 되돌림 1개. 멘션 뒤 자동 공백은 다음 텍스트 세그먼트의 앞 공백으로 실린다(`" walks with "`). 편집기 텍스트엔 라벨(붙여넣은 업로드는 `image.png`)이 들어간다.
 6. **칩·지우기** [관측 RAW bodyHtml, PR P2]: `flow-ingredient-bar > … > flow-image-ingredient-chip > button.chip-container[aria-busy] > div.chip-image-wrapper > img.chip-image` + `div.hover-icon-overlay > mat-icon(cancel)`. hover(mouseMove) 뒤 칩 클릭 = 그 칩만 제거. `div.top-right-actions > button.clear-button` = 칩·텍스트 모두 제거 — **단 애셋 창이 열린 동안엔 먹지 않는다**.
 7. **설정 × 칩** [관측 PR P7]: 칩·멘션이 있는 채로 이미지↔영상·Omni↔Veo 전환 — 칩·멘션 유지, 요약 정상.
 8. **이미지 요청** [관측 S3#3·#9 · 09-24 S 1행]: `[1][0][2]` 레퍼런스(`[id,null,null,null,1]`, 칩 순서), 없으면 `null`; `[1][0][8]` 세그먼트 — 멘션 `[null,[[id,"<이름>"]]]`, 텍스트 `["…"]`. 응답 `[0][0][6][0][15][3][0][i][2]` 가 레퍼런스를 되돌린다.
-9. **영상 요청** [관측 S3#10·#15·#14, PR P9]: `MZZa6b [0][0]` = `[<프롬프트>, [[null,id]…], <모델키>, 1, null, […]]`(`YhhmEf` 보다 `[1]` 이 끼어 모델키가 `[2]`). 인라인 멘션 프롬프트 `[0][0][0][2]` = `[[[null,[["<id>","<이름>"]]],[" …"]]]` — 이미지와 같은 세그먼트. 응답 모양은 `YhhmEf` 와 같고 세그먼트와 `[3][0][5][6][1][1][i][2]` 레퍼런스를 되돌린다. 크레딧 = 같은 길이 t2v(Omni 4초 7).
+9. **영상 요청** [관측 S3#10·#15·#14, PR P9]: `MZZa6b [0][0]` = `[<프롬프트>, [[null,id]…], <모델키>, 1, null, […]]`(`YhhmEf` 보다 `[1]` 이 끼어 모델키가 `[2]`). 인라인 멘션 프롬프트 `[0][0][0][2]` = `[[[null,[["<id>","<이름>"]]],[" …"]]]` — 이미지와 같은 세그먼트(S3#17, 두 번 멘션 S3#20). 응답 모양은 `YhhmEf` 와 같고 세그먼트와 `[3][0][5][6][1][1][i][2]` 레퍼런스를 되돌린다. 크레딧 = 같은 길이 t2v(Omni 4초 7).
 10. **CAT(r2v)** [관측 값]: `abra_r2v_{4,6,8,10}s[_360p]`, `veo_3_1_r2v_fast_{portrait,landscape}[_ultra[_relaxed]]`, `veo_3_1_r2v_lite`; Veo Quality r2v 키는 잘린 범위 안에 없다. 모델 항목 `[9]` = abra r2v 7, veo r2v 3, t2v `null` [추정: 레퍼런스 상한].
 11. **클립보드 형식** [관측 PR P1d]: 앱 텍스트창 `text/plain, text/html, application/x-lexical-editor` · 웹 서식 텍스트 `text/plain, text/html` · 미리보기 이미지 `image/png` · Finder 파일 `text/plain, text/uri-list`(+아이콘 이미지).
 
@@ -94,7 +94,8 @@
 
 ### D1. 디스패치와 게이트
 - **엔진**(`engineFlow.js`): `flowInputGate`(`:182-189`)는 업스케일 검사만 남긴다. `callOpts.purpose === 'reference'` + ref 이미지 → `flow-references-unsupported`(범위 밖). **`generateImage`(동기)와 `submitGeneration`(배치·MCP 비동기, `asyncMode:true` `:446`) 둘 다** D3 계획 → D2 바이트 해석 → IPC 페이로드 `{prompt, refs:[{base64, mime}], plan:{segments, attach}, referenceImages:[]}`(asyncMode 만 다르다). 캐릭터 ref 생성 분기(`:369`, `:405-422`)는 그대로. 호출자가 0 이 되는 `planMentionRouting`·`planUnresolvedMentionFallback`·`computeSceneGapReferences`(`:56-146`)는 grep 확인 뒤 테스트와 함께 지운다.
-- **main**: `generateImage`/`generateVideoT2V` 가 `refs`·`plan` 을 받는다. 옛 필드(`referenceImages` 비어 있지 않음 `flow-angular.js:364`, `segments` `:555`)는 계속 거부(이중 방어). `plan` 모양 검사(세그먼트 타입·인덱스 범위·문자열·개수 ≤ 64)는 DOM 조작 전 — 틀리면 `flow-reference-attach-failed` reason `bad-plan`. `video.js:122-125` 구조분해에 `refs, plan`.
+- **main**: `generateImage`/`generateVideoT2V` 가 `refs`·`plan` 을 받는다. 옛 필드(`referenceImages` 비어 있지 않음 `flow-angular.js:364`, `segments` `:555`)는 계속 거부(이중 방어). `video.js:122-125` 구조분해에 `refs, plan`.
+- **공통 사전 검사 = 이름 붙은 헬퍼 하나** `referencePreflight(flowView, {refs, plan})`(`flow-angular.js`) — `ensureOnProjectComposer` 뒤·DOM 단계 전에 두 핸들러가 부르고, 결과의 `timeoutMs` 를 각자의 `withAutomationViewport` 호출(이미지 `:378`, 영상 `:576` — 서로 다른 호출 자리)에 넘긴다: ① `plan` 모양(세그먼트 타입·인덱스 범위·문자열·개수 ≤ 64) → 아니면 `flow-reference-attach-failed` reason `bad-plan` ② `projectIdFromFlowUrl` → null 이면 `no-project-id` ③ `timeoutMs = DOM_STAGE_TIMEOUT_MS + 120s × 유일 ref 수`(D4). 레퍼런스가 없으면 ③ 만(= 기존 120s).
 - 영상 + refs: 모델이 r2v 지원 표(D11) 밖이면 `flow-references-model-unsupported {model}`, 유일 ref 가 `FLOW_R2V_REFERENCE_LIMIT`(D13) 초과면 `flow-references-too-many {max}` — 둘 다 세션 게이트 뒤·DOM 전.
 
 ### D2. 레퍼런스의 정체성 = 로컬 이미지 바이트(sha256)
@@ -108,7 +109,7 @@
 1. 토큰은 `iterateMentions`(`mentionParser.js:45-64`), 해석은 braced 정확 일치 / plain `resolveMentionPrefix`(`:106-116`) — `pool` 의 이름 있는 ref 전체(타입 무관). 맞은 접두만 멘션이고 남은 글자(한글 조사 `이`)는 텍스트.
 2. 해석 안 된 토큰: `pool` 에 이름 있는 ref 가 하나라도 있으면 기존 kind `unresolved-mentions` + `unresolvedNames`(옛 규칙 `sceneMentions.js:71-74` 를 타입 무관으로), 없으면 텍스트.
 3. 해석된 ref 에 이미지 원천이 없으면 `flow-reference-source-missing`.
-4. 같은 ref 를 여러 번 멘션해도 **등장마다 멘션**(P3: 노드 여럿·칩 하나).
+4. 같은 ref 를 여러 번 멘션해도 **등장마다 멘션** — [관측] 편집기(P3: 노드 여럿·칩 하나)와 요청(PR §4: 레퍼런스 1개, 멘션 세그먼트 등장마다) 모두.
 5. `attach` = `attached` 중 멘션되지 않은 것(정체성: `id`, 없으면 소문자 이름), 중복 제거. 원천 없는 첨부 ref → `flow-reference-source-missing`(배치는 D15 의 M1 제외 가드가 먼저 뺀다).
 6. `refs` = 유일 ref(멘션 첫 등장 순 → 첨부 순). 세그먼트는 인덱스로: `[{t:'text', text} | {t:'mention', ref:i}]`. 기대값: 칩 집합 = 모든 `refs`의 id, 멘션 순서열 = 멘션 세그먼트의 id(중복 포함).
 7. 영상: `refs.length > FLOW_R2V_REFERENCE_LIMIT` → `flow-references-too-many {max}`. 절차는 이미지와 같다(P9).
@@ -133,7 +134,7 @@
 13. **칩 검증**: loadend 뒤 ≤15s 동안 `img.chip-image` 의 id == `maseQ` 응답 id 인 칩이 생기고, 칩 수 = L0 + 1 이어야 한다. **`aria-busy="false"` 만으로는 안 된다**(P1a: busy 해제 뒤 ~2s 동안 img 가 없다). 아니면 `chip-no-id` / `chip-mismatch`.
 14. 세션 캐시 기록(D6) — 13 을 통과한 뒤에만.
 
-규칙: 업로드는 한 번에 하나(DOM 단계 자체가 `lastDomStage` 로 전역 직렬화 `flow-angular.js:92,228-238`). 워치독 예산 = `DOM_STAGE_TIMEOUT_MS`(`:83`, 120s) + 120s × 유일 ref 수 — `withAutomationViewport` 에 `timeoutMs` 인자. `isAborted()` 는 2·6·7 앞과 애셋 창 클릭마다 본다(좀비는 클립보드·붙여넣기를 하지 않는다). 업로드 실패는 전부 **클릭 전**(0크레딧, `postClick` 없음).
+규칙: 업로드는 한 번에 하나(DOM 단계 자체가 `lastDomStage` 로 전역 직렬화 `flow-angular.js:92,228-238`). 워치독 예산 = `DOM_STAGE_TIMEOUT_MS`(`:83`, 120s) + 120s × 유일 ref 수 — `referencePreflight`(D1)가 계산해 `withAutomationViewport` 의 `timeoutMs` 인자로. `isAborted()` 는 2·6·7 앞과 애셋 창 클릭마다 본다(좀비는 클립보드·붙여넣기를 하지 않는다). 업로드 실패는 전부 **클릭 전**(0크레딧, `postClick` 없음).
 
 **D4-c 클립보드 정책**(사용자 결정 4)
 - 스냅샷: `availableFormats()` 에 `text/uri-list` 가 있으면 **올리지 않는다**(파일 복사는 복원할 수 없다). 그 밖엔 `readText`·`readHTML`·`readRTF`·`readImage()`(비지 않으면 `toPNG()`) 중 있는 것만 보관 — 앱 전용 형식(`application/x-lexical-editor` 등)은 보관하지 않고, 멈추지도 않는다. 결과: 앱 텍스트창에서 복사한 것을 다시 앱에 붙이면 Lexical 서식 대신 text/html 로 붙는다(§6 #11).
@@ -190,7 +191,7 @@
 
 ### D12. 클릭 뒤 레퍼런스 검증
 - 근거 둘: **요청**(캡처 send 의 `refs`·`mentions`) · **응답 되돌림**(이미지 `[0][i][6][0][15][3][0][j][2]`, 영상 `[3][0][5][6][1][1][j][2]`).
-- 있는 근거는 전부 기대와 같아야 한다(레퍼런스 = 집합·개수, 멘션 = 순서열). **하나라도 어긋나면 거부**. 근거가 하나도 없으면(모양 드리프트) **수용 + warn + `reportDomFailure('rpc-shape:<rpc>@refs')`** — 클릭 뒤라 돈은 이미 나갔고 클릭 전 게이트(D9)가 칩·멘션을 증명했다.
+- 있는 근거는 전부 기대와 같아야 한다(레퍼런스 = 집합·개수, 멘션 = 중복을 보존한 순서열 — 같은 미디어 두 번 멘션이면 레퍼런스 1개·멘션 2개, [관측] PR §4). **하나라도 어긋나면 거부**. 근거가 하나도 없으면(모양 드리프트) **수용 + warn + `reportDomFailure('rpc-shape:<rpc>@refs')`** — 클릭 뒤라 돈은 이미 나갔고 클릭 전 게이트(D9)가 칩·멘션을 증명했다.
 - 이미지 거부: `{success:false, errorKind:'flow-references-mismatch', postClick:true}`, **다운로드 없음**(0크레딧).
 - 영상 거부: `+ rejectedMediaId`·`postClick:true`·`errorParams:{}`, `mediaId`/`generationId` 키 없음(P2 D8-6) → 훅의 `submitHalt` 가 새 제출만 멈춘다.
 - 로그(개수만): `refs verified request=<n> echo=<n>` / `refs mismatch request=<got>/<want> echo=<got>/<want>`.
@@ -249,6 +250,7 @@
 | P1d | 형식 목록(§1-4 ⑪) | D4-c(사용자 결정 4) |
 | P2 | 칩 hover+클릭 = 한 칩 제거, 지우기 = 전부, 창 열리면 지우기 불가 | D9 |
 | P3 | 멘션 노드 `span.mention-chip[data-mention-id]`, 칩 추가, 중복 멘션 허용, 자동 공백 | D3-4·D8·D9 |
+| PR §4 | 같은 미디어 두 번 멘션의 요청(이미지·영상): 레퍼런스 1개, 멘션 세그먼트 등장마다, 되돌림 1개(S3#19·#20 — 버린 프로브 도구의 가드된 생성 단계로 채움, 영상 7크레딧) | D3-4·D10·D12 |
 | P4 | `insertText('@')` 로 열림, 한 번에 넣은 텍스트 속 `@` 는 안 열림, `@` 창은 Escape 로만 닫힘 | D8·D7 |
 | P5 | 탭 리거처·가상 스크롤·미리보기 클래스·추가 시 자동 닫힘·**세션 범위 id 썸네일**·첫 창 누락 | D6·D7(사용자 결정 2) |
 | P6·P8 | 같은 이미지 = 새 id · 크기 무관 7–9s | D6·D4(전용 마감 없음) |
@@ -264,20 +266,20 @@
 ### 구현자 공통 규칙 (P2 §3 의 규칙 전부 + M3 추가)
 - P2 §3 그대로: 결과 계약 · kind→params 고정표(D14 로 확장) · 배치 중단 의미 · 마감·시각(초) · 주입 문자열 자기완결·멱등·minify 평가 · 로그 내용 금지 · 픽스처 재인코딩.
 - **작업마다**: 실패 테스트(빨간 단언 확인) → 최소 구현 → 파일 초록 → 전체 스위트 초록(`env -u ELECTRON_RUN_AS_NODE npx vitest run`) → 뮤테이션 1회 이상(빨강 확인 후 `cmp` 복구). 새 소스 핀은 줄머리 앵커(`^\s*…/m`, P2 §12.11 관찰 6).
-- **M3 픽스처**: 새 로더 `tests/fixtures/flow-m3-samples.js` — S3 를 `step`(+`rpcid`)로 고르고 `<uuid#n>` 을 `maskedUuid(n)`(`tests/fixtures/flow-batchexecute-samples.js:18-20`)로, 요청은 `reencodeRequestBody`(`:49-54`) 규칙으로. **P9 요청은 마스킹 샘플이 없다** → S3#10 사본의 `[0][0][0][2]` 를 PR P9 의 세그먼트 모양으로 바꿔 만든다(P9 샘플이 커밋되면 교체). DOM 픽스처 `tests/fixtures/flow-live-dom-m3.js` — RAW 칩 바·지우기·트리거 마크업(마스킹) + PR P3 멘션 span + P5 셀렉터(탭 리거처·`cdk-virtual-scroll-viewport`·`img.detail-preview-image`), **영어 변형**(탭 텍스트 "Uploads", 칩 aria-label "Ingredient")을 같이 — 파인더가 문구를 안 보는 증명.
+- **M3 픽스처**: 새 로더 `tests/fixtures/flow-m3-samples.js` — S3 를 `step`(+`rpcid`)로 고르고 `<uuid#n>` 을 `maskedUuid(n)`(`tests/fixtures/flow-batchexecute-samples.js:18-20`)로, 요청은 `reencodeRequestBody`(`:49-54`) 규칙으로. 영상 인라인 멘션은 S3#17, 같은 미디어 두 번 멘션은 S3#19(이미지)·S3#20(영상). DOM 픽스처 `tests/fixtures/flow-live-dom-m3.js` — RAW 칩 바·지우기·트리거 마크업(마스킹) + PR P3 멘션 span + P5 셀렉터(탭 리거처·`cdk-virtual-scroll-viewport`·`img.detail-preview-image`), **영어 변형**(탭 텍스트 "Uploads", 칩 aria-label "Ingredient")을 같이 — 파인더가 문구를 안 보는 증명.
 - **가짜 페이지** `tests/helpers/fakeFlowComposer.js`(새) — jsdom 문서에 칩 바·편집기·애셋 창을 그리고 **프로브에서 본 대로** 동작한다: ＋ 트리거 토글 · 탭 필터 · 항목 클릭(active·미리보기) · 추가(창 자동 닫힘; ＋ 창 = 칩 추가, `@` 창 = 멘션 span + 뒤 공백 + 칩 추가, 같은 미디어면 칩 병합·끝으로) · 캐럿 끝 `insertText` 가 정확히 `'@'` 일 때만 `@` 창을 연다 · `@` 창은 트리거 클릭 무반응·body 합성 Escape 로 닫힘(`@` 뒤 입력 삭제) · 지우기 버튼(창이 열려 있으면 무반응) · 칩 hover+클릭 제거 · 항목 썸네일: `sessionIds` 는 id img, 나머지 불투명 · `opts.firstOpenMissing`(첫 열기에 최신 업로드 누락) · 붙여넣기(관찰 리스너가 보는 `paste` + 새 칩: `busyMs` 동안 busy·img 없음 → `imgMs` 까지 busy 해제·img 없음 → id img) · 미리보기 id/불투명. 핸들러 하네스의 `executeJavaScript` 는 컴포저 스크립트를 이 문서의 `window.eval` 로 **실제로** 돌리고(P2 §12.3 #66·§12.7 #103 선례), 나머지(WIZ·캡처 프로브·설정 드라이버·에이전트)는 기존 하네스(`tests/electron/ipc/flowGenerateImageAngular.test.js:31-120`)처럼 마커로 라우팅한다. 신뢰 클릭 가짜는 표현식이 돌려준 요소에 mouseMove(hover)·click 을 보낸다.
 
 **M3-1 프로토콜(순수)** — `tests/electron/flow-rpc-protocol.test.js` / `electron/flow-rpc-protocol.js`
-- `extractSubmitRefs(rpcid, inner)`(새, 자기완결 — 캡처에 직렬화): S3#9 → `{refs:[U2,U3], mentions:[U2]}`; S3#3 → `{refs:[U2], mentions:[]}`; 09-24 S1(`[1][0][2]=null`) → `{refs:[], mentions:[]}`; S3#10 → `{refs:[U2], mentions:[]}`; P9 모양 사본 → `{refs:[U2], mentions:[U2]}`; S3#14 → `{refs:[], mentions:[]}`; `[1][0][2]` 가 문자열인 사본 · 비-UUID id · x2 항목 목록이 다른 사본 → `null`(빈 배열과 구분). `U<n>` = `maskedUuid(n)`.
-- `extractSubmitPrompts('MZZa6b', S3#10)` → `['The king walks slowly toward the camera']`(지금은 `[]`); P9 사본 → 텍스트 세그먼트만; `('ogiZ0b', S3#9)` 정규화 → `'and a queen in a garden'`.
+- `extractSubmitRefs(rpcid, inner)`(새, 자기완결 — 캡처에 직렬화): S3#9 → `{refs:[U2,U3], mentions:[U2]}`; S3#3 → `{refs:[U2], mentions:[]}`; 09-24 S1(`[1][0][2]=null`) → `{refs:[], mentions:[]}`; S3#10 → `{refs:[U2], mentions:[]}`; S3#17 → `{refs:[U2], mentions:[U2]}`; **S3#19 → `{refs:[U46], mentions:[U46,U46]}`, S3#20 → `{refs:[U52], mentions:[U52,U52]}`**(중복 보존 — 집합으로 접는 구현은 빨갛다); S3#14 → `{refs:[], mentions:[]}`; `[1][0][2]` 가 문자열인 사본 · 비-UUID id · x2 항목 목록이 다른 사본 → `null`(빈 배열과 구분). `U<n>` = `maskedUuid(n)`.
+- `extractSubmitPrompts('MZZa6b', S3#10)` → `['The king walks slowly toward the camera']`(지금은 `[]`); S3#17 → `[' walks toward the camera']`(텍스트만); `('ogiZ0b', S3#9)` 정규화 → `'and a queen in a garden'`; S3#19 정규화 → `'walks with in a garden'`.
 - `parseUploadResponse`: S3#4 → `{mediaId:U3}`, S3#2 → `{mediaId:U2}`; `[1][3][4]` 가 다른 사본·`[0][0]` 비-UUID → `/maseQ response shape changed at \[0\]\[0\]/`; `JSON.stringify(결과)` 에 `image.png`·`king.jpg`·`image/` 없음.
-- `parseVideoSubmitResponse(payload, 'MZZa6b')`: S3#10 → `{mediaId:U30, modelKey:'abra_r2v_4s', creditsLeft:904, refEcho:[U2]}`; S3#15 → `U40`·`veo_3_1_r2v_fast_portrait`·864; `[3][0][7][0][12]` 삭제 → 메시지 `MZZa6b response shape changed` + `rejectedMediaId:U30`; 되돌림 삭제 → 성공 + `refEcho:null`. 기존 `YhhmEf` 케이스 무변경.
-- `parseImageGenerateResponse`: S3#9 `refEcho` = `[U2,U3]`, S3#3 = `[U2]`, 09-24 S1 = `null`.
+- `parseVideoSubmitResponse(payload, 'MZZa6b')`: S3#10 → `{mediaId:U30, modelKey:'abra_r2v_4s', creditsLeft:904, refEcho:[U2]}`; S3#15 → `U40`·`veo_3_1_r2v_fast_portrait`·864; S3#20 → `U57`·850·`refEcho:[U52]`(하나); `[3][0][7][0][12]` 삭제 → 메시지 `MZZa6b response shape changed` + `rejectedMediaId:U30`; 되돌림 삭제 → 성공 + `refEcho:null`. 기존 `YhhmEf` 케이스 무변경.
+- `parseImageGenerateResponse`: S3#9 `refEcho` = `[U2,U3]`, S3#3 = `[U2]`, S3#19 = `[U46]`, 09-24 S1 = `null`.
 - `modelKeyMatches` r2v 진리표(CAT 키만): **true** `('abra_r2v_4s', Omni Flash,4,'9:16','720p',r2v)` · `('abra_r2v_6s_360p', Omni,6,'16:9','360p',r2v)` · `('veo_3_1_r2v_fast_portrait', Veo 3.1 - Fast,8,'9:16',r2v)` · `('veo_3_1_r2v_fast_landscape', Fast,8,'16:9',r2v)` · `('veo_3_1_r2v_fast_portrait_ultra_relaxed', Fast,8,'9:16',r2v)`; **false** `('abra_r2v_4s', …kind 생략)` · `('abra_t2v_4s', …r2v)` · `('veo_3_1_r2v_fast_portrait', Fast,8,'16:9',r2v)` · `('veo_3_1_r2v_fast_landscape', Fast,8,'9:16',r2v)` · `('veo_3_1_r2v_lite', Lite,8,r2v)` · `('abra_r2v_4s', Omni,6,r2v)` · `('abra_i2v_4s', …r2v)`. 기존 t2v 표 초록 유지. F12 핀(P2 §12.3 #72): 새 shape 경로 인덱스도 < 100.
-- 뮤테이션: 방향 토큰 검사 삭제 → landscape/portrait 행 빨강; 멘션 세그먼트를 텍스트로 셈 → S3#9·P9 빨강.
+- 뮤테이션: 방향 토큰 검사 삭제 → landscape/portrait 행 빨강; 멘션 세그먼트를 텍스트로 셈 → S3#9·#17 빨강; 멘션을 중복 제거 → S3#19·#20 빨강.
 
 **M3-2 캡처 주입** — `tests/electron/flow-rpc-capture.test.js`, `tests/electron/flow-injections-minified.test.js` / `electron/flow-rpc-capture.js`
-- vm+FakeXHR(`tests/electron/flow-xhr-capture.test.js:13-35` 방식): S3#10 재인코딩 → send `{rpcid:'MZZa6b', prompts:['The king…'], refs:[U2], mentions:[]}`; P9 사본 → `mentions:[U2]`; S3#9 → `refs:[U2,U3], mentions:[U2]`; S3#4(`maseQ`) → `{rpcid:'maseQ', prompts:[]}` 이고 `JSON.stringify(ev).length < 400`, `<b64`·`image.png`·`image/png`·`SECRET` 없음; `maseQ` loadend 는 `responseText` 를 싣는다; 옛 ogiZ0b/YhhmEf 이벤트는 `refs` 추가 외 무변경; `send` body 불변(세 rpc).
+- vm+FakeXHR(`tests/electron/flow-xhr-capture.test.js:13-35` 방식): S3#10 재인코딩 → send `{rpcid:'MZZa6b', prompts:['The king…'], refs:[U2], mentions:[]}`; S3#17 → `mentions:[U2]`; S3#9 → `refs:[U2,U3], mentions:[U2]`; S3#19 → `refs:[U46], mentions:[U46,U46]`; S3#20 → `refs:[U52], mentions:[U52,U52]`; S3#4(`maseQ`) → `{rpcid:'maseQ', prompts:[]}` 이고 `JSON.stringify(ev).length < 400`, `<b64`·`image.png`·`image/png`·`SECRET` 없음; `maseQ` loadend 는 `responseText` 를 싣는다; 옛 ogiZ0b/YhhmEf 이벤트는 `refs` 추가 외 무변경; `send` body 불변(세 rpc).
 - minified 번들에서 같은 페이로드. 뮤테이션: `maseQ` 도 디코드 → 길이·문자열 단언 빨강; 허용 목록에서 `MZZa6b` 제거 → 빨강.
 
 **M3-3 라우터** — `tests/electron/flow-rpc-router.test.js` / `electron/flow-rpc-router.js`
@@ -316,25 +318,27 @@
 - 앞 세션 업로드(불투명 항목)만 있는 ref → 불투명 항목 **클릭 없음**, 업로드.
 - 텍스트 세그먼트 `'@'`(창을 여는 가짜) → `at-sign-opened-picker`, arm·제출 없음; `'mail a@b.com now'` → 정상.
 - 검색창에 글자 → `picker-search-dirty`, 업로드·추가 없음. 미리보기 id 다름 → `preview-mismatch`; 미리보기 불투명 → 검사 생략·칩 id 로 확정.
-- 추가 뒤 여분 칩 → `chip-set-mismatch`; 멘션 순서 뒤바뀜 → `mention-mismatch`.
+- 추가 뒤 여분 칩 → `chip-set-mismatch`; **칩 개수는 같고 id 하나가 다름**(가짜가 m2 대신 m9 를 붙임) → `chip-set-mismatch`; 멘션 순서 뒤바뀜 → `mention-mismatch`; **멘션 순서열 길이는 같고 id 하나가 다름**(`[m0,m1,m9]`) → `mention-mismatch`. 넷 다 arm·제출 없음.
 - 시작 때 `@` 창이 열려 있음 → 트리거 클릭 무반응 → 합성 Escape → 닫힘 → 지우기 → 비워짐(창을 먼저 닫지 않고 지우기를 누르는 구현은 빨갛다); 칩만 남는 픽스처 → 칩 hover+클릭.
 - 애셋 창 첫 클릭 헛돔 → 1회 재클릭; 두 번 다 → `picker-not-open`. `@` 가 창을 안 엶 → `mention-trigger-not-working`. 같은 sha 두 ref → 업로드 1회.
-- 뮤테이션: 게이트 집합 비교를 개수 비교로 → "같은 개수 다른 id" 빨강; 다시 열기 삭제 → `firstOpenMissing` 이 업로드로 빨강; 텍스트 삽입 뒤 창 확인 삭제 → `'@'` 케이스 빨강.
+- 뮤테이션: 게이트 집합 비교를 개수 비교로 → "같은 개수 다른 id" 칩 케이스 빨강; 멘션 비교를 길이 비교로 → "같은 길이 다른 id" 멘션 케이스 빨강; 다시 열기 삭제 → `firstOpenMissing` 이 업로드로 빨강; 텍스트 삽입 뒤 창 확인 삭제 → `'@'` 케이스 빨강.
 
-**M3-9 이미지 핸들러** — `tests/electron/ipc/flowImageReferencesAngular.test.js`(새), `tests/electron/ipc/flowGenerateImageAngular.test.js`(칩 게이트·대체 경로 행) / `electron/ipc/flow-angular.js` `generateImage`·`collectRpcGen`·`makeDispatchGuard`·`editorChangedBeforeClick`·`withAutomationViewport(…, {timeoutMs})`
+**M3-9 이미지 핸들러** — `tests/electron/ipc/flowImageReferencesAngular.test.js`(새), `tests/electron/ipc/flowGenerateImageAngular.test.js`(칩 게이트·대체 경로 행) / `electron/ipc/flow-angular.js` `referencePreflight`·`generateImage`·`collectRpcGen`·`makeDispatchGuard`·`editorChangedBeforeClick`·`withAutomationViewport(…, {timeoutMs})`
 - 순서: 세션 → 에이전트 → 캡처 → 설정 → 캐럿 → 정리 → 사전 스캔 → (업로드 → 정리) → 컴포즈 → 게이트 → `focusMainWindow` → 제출 가능 → 재판독(텍스트+칩) → arm(`expectedRefs`,`expectedMentions`,`normPrompt`) → 신뢰 클릭(`beforeDispatch` 가 칩도 본다).
 - 동기·비동기(`asyncMode`) 둘 다: send(S3#9 이벤트) → loadend S3#9 → images, 로그 `refs verified request=2 echo=2`.
+- **`@X … @X`**(같은 ref 두 번 멘션): 게이트의 멘션 순서열 2개·칩 집합 1개 → arm `expectedMentions:[U46,U46]`, `expectedRefs:[U46]` → send/loadend S3#19 → 성공(`refs verified request=1 echo=1`, 멘션 2/2). send `mentions:[U46]`(하나 빠짐) → mismatch.
 - send `refs:[U9]` → `flow-references-mismatch`, `postClick:true`, **`sessionFetch` 미호출**; 되돌림만 어긋남 → 같음; 둘 다 `null` → 성공 + warn + `reportDomFailure('rpc-shape:ogiZ0b@refs')`.
 - 레퍼런스 없는 요청 + 잔여 칩 → 정리 후 진행; 정리 실패 → attach-failed, 클릭 없음; send `refs:[U3]`(요청 안 함) → mismatch.
 - mouseDown 직전 칩 +1 → 미디스패치 거부, gen 삭제, 클릭 전 실패(Q1).
-- 워치독: ref 2개 → 121s 에 타임아웃 없음, 360s 에 `dom-stage-timeout`; 좀비는 클립보드·붙여넣기 없음.
-- `projectIdFromFlowUrl` null → `no-project-id`, DOM 단계 진입 없음; `plan` 범위 밖 → `bad-plan`, executeJavaScript 는 WIZ 뿐.
+- **`referencePreflight` 배선 핀**(M3-10 과 같은 둘): `plan` 범위 밖 → `bad-plan`, executeJavaScript 는 WIZ 뿐 · ref 2개 + 영영 안 끝나는 드라이버 → 121s 에 타임아웃 없음, 360s 에 `dom-stage-timeout`(좀비는 클립보드·붙여넣기 없음). 헬퍼 자체(세 검사·`no-project-id`·레퍼런스 없음 = 120s)는 `tests/electron/ipc/flowReferencePreflight.test.js`(새)에서.
 - 숨은 뷰(0×0) → 제자리 확장+방패 안에서 붙여넣기·애셋 창(`bounds:` trace 가 붙여넣기보다 앞).
 - 뮤테이션: `collectRpcGen` 레퍼런스 검증 삭제 → 빨강; `beforeDispatch` 칩 비교 삭제 → 빨강.
 
 **M3-10 영상 핸들러(r2v)** — `tests/electron/ipc/flowVideoR2VAngular.test.js`(새), `tests/electron/ipc/flowVideoT2VAngular.test.js`(칩 게이트·대체 rpc 행), `tests/electron/ipc/flowAngularDispatch.test.js` / `flow-angular.js` `generateVideoT2V`·`finishVideoGen`, `electron/ipc/video.js:122-125`
-- `@king` 1개 · Omni 4초 · 9:16: 인라인 멘션 컴포즈 → arm `rpc:'MZZa6b', altRpcs:['YhhmEf']`, `want.kind:'r2v'` → send(P9 사본 이벤트, `mentions:[U2]`)/loadend S3#10 → `{success:true, generationId:U30, creditsLeft:904}`, 로그 `submitted media=00000030 creditsLeft=904 modelKey=abra_r2v_4s refs=1/1 mentions=1/1`.
+- `@king` 1개 · Omni 4초 · 9:16: 인라인 멘션 컴포즈 → arm `rpc:'MZZa6b', altRpcs:['YhhmEf']`, `want.kind:'r2v'` → send/loadend S3#17 → `{success:true, generationId:U45, creditsLeft:857}`, 로그 `submitted media=00000045 creditsLeft=857 modelKey=abra_r2v_4s refs=1/1 mentions=1/1`.
+- **`@X … @X`**: 게이트 순서열 2·칩 1 → send/loadend S3#20 → `{success:true, generationId:U57, creditsLeft:850}`, `refs=1/1 mentions=2/2`.
 - 페이지가 `YhhmEf` 로 보냄 → `{success:false, errorKind:'flow-references-mismatch', rejectedMediaId, postClick:true}`, **`generationId`·`mediaId` 키 없음**. send `mentions:[]`(멘션이 빠짐) → mismatch.
+- **`referencePreflight` 배선 핀**(B1 — 영상의 `withAutomationViewport` 는 `:576` 의 별도 호출 자리): `plan` 범위 밖 → `bad-plan`, WIZ 외 executeJavaScript 0회 · ref 2개 + 영영 안 끝나는 드라이버 → 121s 에 타임아웃 없음, 360s 에 `dom-stage-timeout`. 뮤테이션: 영상 호출 자리에서 `timeoutMs` 를 빼면 121s 에 빨강.
 - 모델키 `abra_t2v_4s` → `flow-video-settings-mismatch`; Veo Fast 16:9 에 `…_portrait` → 불일치.
 - refs + `Veo 3.1 - Quality` → `flow-references-model-unsupported {model}`, WIZ 외 executeJavaScript 0회; ref 4개 → `flow-references-too-many {max:3}` 동일.
 - 레퍼런스 없는 T2V: arm `altRpcs:['MZZa6b']`; 페이지가 `MZZa6b` → mismatch + `rejectedMediaId`(§1-1 돈 구멍 — lost 대신 id 가 남는다); 잔여 칩 → 정리 후 `YhhmEf`.
@@ -356,7 +360,7 @@
 - 영상 훅: `flow-references-model-unsupported` 두 번 연속 → 종결(제출 2회); `flow-reference-attach-failed` `chip-mismatch` 두 번 → 종결 안 함; `paste-not-observed` 두 번 → 종결.
 
 **M3-13 로케일·표시** — `tests/locales/flowSessionKeys.test.js`(`PARAMS` 에 `{model}`·`{max}`), `tests/utils/errorDisplay.test.js` / `src/locales/{ko,en}.js`
-- 새 kind 6개 ko/en(D14 표 그대로), 코드 스캔 kind 전부 문구 있음; `resolveDisplayError(t,'flow-references-model-unsupported',err,{model:'Veo 3.1 - Quality'})` 렌더 텍스트에 모델명·플레이스홀더 없음; `flow-references-unsupported` 새 문구.
+- 새 kind 6개 ko/en(D14 표 그대로), 코드 스캔 kind 전부 문구 있음; `resolveDisplayError(t,'flow-references-model-unsupported',err,{model:'Veo 3.1 - Quality'})` 렌더 텍스트에 **모델명이 있고** 리터럴 `{model}` 토큰은 남지 않는다(`too-many` 도 `{max:3}` → `3` 있음·`{max}` 없음); `flow-references-unsupported` 새 문구.
 
 **M3-14 파이프라인 통합** — `tests/electron/flowRpcPipeline.test.js`(확장), `tests/hooks/useAutomation.flowAngularPipeline.test.jsx`(확장), `tests/hooks/useVideoAutomation.flowAngular.test.jsx`(확장)
 - main: 실제 캡처 주입(vm+FakeXHR)이 S3#9 요청을 보내면 라우터가 `sentRefs`·`sentMentions` 로 바인딩 → loadend S3#9 → collect images; 기대를 `[U9]` 로 바꾸면 mismatch. S3#4 `maseQ` → 업로드 gen 완료(`gen.doc` = 주입 nonce).
@@ -452,6 +456,15 @@
 ### 8.3 프로브가 바꾼 설계(R0 → R1)
 D4(포커스 단계 삭제·관찰 즉시 복원·id img 대기) · D6(영속 JSON → 문서 범위 메모리) · D7(탭·가상 스크롤·미리보기 클래스·자동 닫힘·다시 열기·불투명 미시도·`@` 창 Escape 정리) · D8(신뢰 키·잠금 예외·`sendMentionTrigger` 삭제 → `insertText`, 텍스트 뒤 창 닫힘 확인) · D9(멘션 id 순서열 게이트·자동 공백 정규화·창 닫고 지우기·칩 hover 제거) · D3(중복 멘션 허용·영상 인라인) · §3 결과 표.
 
-### 8.4 R1 리뷰
+### 8.4 R1 리뷰 (A·B = Sonnet 5, 사본 분리 — 전부 수용)
+
+| # | 리뷰 | 등급 | 요지 | 처분 | 반영 위치 |
+|---|---|---|---|---|---|
+| A1 | A | MAJOR | 같은 미디어 두 번 멘션(D3-4·D10·D12)의 요청 모양이 미관측 | **수용** — 추가 확인으로 관측(PR §4, S3#19·#20: 레퍼런스 1개·멘션 세그먼트 등장마다·되돌림 1개) | §1-4 ⑤⑨, D3-4, D12, §3, M3-1·M3-2 픽스처, M3-9·M3-10 `@X … @X` |
+| B1 | B | MAJOR | M3-10 에 `bad-plan`·`no-project-id`·ref 수 비례 워치독 `timeoutMs` 가 M3-9 와 달리 없다(영상 `withAutomationViewport` 는 `:576` 별도 호출 자리) | **수용** — 이름 붙은 헬퍼 `referencePreflight` + 헬퍼 테스트 + 핸들러별 배선 핀 | D1, D4, M3-9, M3-10 |
+| B2 | B | MAJOR | M3-13 의 "모델명·플레이스홀더 없음"이 D14 와 모순 | **수용** — 모델명 있음·`{model}` 토큰 없음 | M3-13 |
+| B3 | B | MINOR | M3-8 게이트에 "같은 개수 다른 id" 케이스가 없어 개수 비교 구현이 통과 | **수용** — 칩·멘션 각각 같은 개수/길이·id 하나 다른 픽스처 | M3-8 |
+
+### 8.5 R2 리뷰
 | # | 리뷰 | 등급 | 처분 | 반영 위치 | 비고 |
 |---|---|---|---|---|---|
