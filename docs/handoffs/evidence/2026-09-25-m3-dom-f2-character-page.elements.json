@@ -1,0 +1,379 @@
+{
+ "url": "https://flow.google.com/project/<uuid#1>/character",
+ "title": "Google Flow - 9월 23 - 17:37",
+ "elements": [
+  {
+   "tag": "div",
+   "class": "glue-cookie-notification-bar",
+   "id": "glue-cookie-notification-bar-1",
+   "aria-hidden": "true",
+   "aria-labelledby": "glue-cookie-notification-bar-1-label",
+   "inert": "true",
+   "role": "region",
+   "data-nosnippet": "",
+   "tabindex": "-1",
+   "text": "flow.google.com 은(는) 서비스 제공 및 서비스 품질 개선과 트래픽 분석을 위해 쿠키를 사용합니다. 동의 시 광고를 게재하고 표시되",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "href": "https://policies.google.com/technologies/cookies?hl=ko",
+   "class": "glue-cookie-notification-bar__more",
+   "rel": "noopener",
+   "aria-describedby": "glue-cookie-notification-bar-1-label",
+   "target": "_blank",
+   "aria-label": "Google에서 쿠키를 사용하는 방법을 자세히 알아보세요. 새 탭에서 열립니다.",
+   "text": "자세히 알아보세요",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "class": "glue-cookie-notification-bar__accept",
+   "text": "동의함",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "class": "glue-cookie-notification-bar__reject",
+   "text": "나중에",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "class": "skip-to-content-link",
+   "href": "#main-content",
+   "text": "Skip to main content",
+   "icons": [],
+   "rect": {
+    "x": 8,
+    "y": -1022,
+    "w": 182,
+    "h": 42
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c4140191488": "",
+   "maticonbutton": "",
+   "flow-icon-button": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger back-button mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "뒤로",
+   "text": "arrow_back",
+   "icons": [
+    "arrow_back"
+   ],
+   "rect": {
+    "x": 12,
+    "y": 10,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3093713953": "",
+   "class": "preset-card",
+   "text": "괴짜강렬한 인상을 남기는 독특한 인물. 비틀린 매력의 신 스틸러",
+   "icons": [],
+   "rect": {
+    "x": 292,
+    "y": 224,
+    "w": 366,
+    "h": 80
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3093713953": "",
+   "class": "preset-card",
+   "text": "프로페셔널깔끔한 외모, 유창한 말솜씨, 유능함",
+   "icons": [],
+   "rect": {
+    "x": 292,
+    "y": 316,
+    "w": 366,
+    "h": 80
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3093713953": "",
+   "class": "preset-card",
+   "text": "와일드 카드인간뿐 아니라 모든 것이 캐릭터가 될 수 있다는 증거",
+   "icons": [],
+   "rect": {
+    "x": 292,
+    "y": 408,
+    "w": 366,
+    "h": 80
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3093713953": "",
+   "class": "preset-card",
+   "text": "익숙한 존재현실적이고 진정성 있으며 스토리에 공감을 자아내는 중심축",
+   "icons": [],
+   "rect": {
+    "x": 292,
+    "y": 500,
+    "w": 366,
+    "h": 80
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3093713953": "",
+   "class": "preset-card",
+   "text": "사악한 존재스크린을 장악하는 강력한 적대적 인물",
+   "icons": [],
+   "rect": {
+    "x": 292,
+    "y": 592,
+    "w": 366,
+    "h": 80
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3093713953": "",
+   "class": "preset-card",
+   "text": "환상적인 존재인간과 신화적 존재가 융합된 몽환적인 존재",
+   "icons": [],
+   "rect": {
+    "x": 292,
+    "y": 684,
+    "w": 366,
+    "h": 80
+   }
+  },
+  {
+   "tag": "div",
+   "contenteditable": "true",
+   "translate": "no",
+   "class": "ProseMirror",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 206,
+    "y": 877,
+    "w": 536,
+    "h": 20
+   }
+  },
+  {
+   "tag": "button",
+   "maticonbutton": "",
+   "type": "button",
+   "aria-haspopup": "true",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger add-menu-trigger mat-unthemed",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "프롬프트 상자에 소재 추가",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-57",
+   "cdk-describedby-host": "ng-1",
+   "text": "add",
+   "icons": [
+    "add"
+   ],
+   "rect": {
+    "x": 198,
+    "y": 917,
+    "w": 32,
+    "h": 32
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c883613886": "",
+   "type": "button",
+   "flow-button": "",
+   "matbutton": "",
+   "class": "mdc-button mat-mdc-button-base format-chip-button mdc-button--unelevated mat-mdc-unelevated-button mat-mdc-button-disabled mat-unthemed flow-button-primary flow-button-small flow-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-disabled": "",
+   "aria-label": "형식",
+   "disabled": "true",
+   "text": "personal_recommendations형식",
+   "icons": [
+    "personal_recommendations"
+   ],
+   "rect": {
+    "x": 238,
+    "y": 917,
+    "w": 65,
+    "h": 32
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c2613749729": "",
+   "matbutton": "",
+   "flow-button": "",
+   "aria-label": "설정 트리거",
+   "cdkoverlayorigin": "",
+   "class": "mdc-button mat-mdc-button-base settings-trigger-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-small flow-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "hidden": "",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c4134923319": "",
+   "flow-button": "",
+   "matbutton": "",
+   "class": "mdc-button mat-mdc-button-base mat-mdc-menu-trigger model-select-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-small flow-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "aria-label": "모델 제품군 선택",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "text": "🍌 Nano Banana 2 arrow_drop_down",
+   "icons": [
+    "arrow_drop_down"
+   ],
+   "rect": {
+    "x": 575,
+    "y": 917,
+    "w": 142,
+    "h": 32
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c4088038156": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "type": "submit",
+   "aria-label": "생성 시작",
+   "cdkoverlayorigin": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base generate-icon-button mat-mdc-button-disabled mat-unthemed flow-icon-button-secondary flow-button-small flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "mat-ripple-loader-disabled": "",
+   "disabled": "true",
+   "text": "arrow_forward",
+   "icons": [
+    "arrow_forward"
+   ],
+   "rect": {
+    "x": 722,
+    "y": 917,
+    "w": 32,
+    "h": 32
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c194061223": "",
+   "flow-button": "",
+   "matbutton": "",
+   "type": "button",
+   "class": "mdc-button mat-mdc-button-base create-character-footer-mode-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-large flow-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "text": "upload업로드",
+   "icons": [
+    "upload"
+   ],
+   "rect": {
+    "x": 187,
+    "y": 974,
+    "w": 284,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c194061223": "",
+   "flow-button": "",
+   "matbutton": "",
+   "type": "button",
+   "class": "mdc-button mat-mdc-button-base create-character-footer-mode-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-large flow-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "text": "add프로젝트에서 추가",
+   "icons": [
+    "add"
+   ],
+   "rect": {
+    "x": 479,
+    "y": 974,
+    "w": 284,
+    "h": 40
+   }
+  },
+  {
+   "tag": "textarea",
+   "id": "g-recaptcha-response-100000",
+   "name": "g-recaptcha-response",
+   "class": "g-recaptcha-response",
+   "style": "width: 250px; height: 40px; border: 1px solid rgb(193, 193, 193); margin: 10px 25px; padding: 0px; resize: none; display: none;",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "class": "gb_C gb_9a gb_8",
+   "aria-expanded": "false",
+   "aria-label": "Google 계정: <account-name>  \n(<email>)",
+   "href": "https://accounts.google.com/SignOutOptions?hl=ko&continue=https://flow.google.com/project/<uuid#1>&ec=GBRA7QU",
+   "tabindex": "0",
+   "role": "button",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 917,
+    "y": 0,
+    "w": 40,
+    "h": 40
+   }
+  }
+ ],
+ "chipImages": []
+}
