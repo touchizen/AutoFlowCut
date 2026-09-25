@@ -442,7 +442,7 @@ curl http://127.0.0.1:3210/api/batch-status
 - \`update-scene\`: 특정 씬 수정 (index + fields)
 - \`generate-reference\`: 레퍼런스 생성 트리거 (index + styleId?)
 - \`generate-scene\`: 씬 생성 트리거 (sceneId + styleId?)
-- \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force?)
+- \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force? + mode?: 'video'|'image' — 탭 오버라이드)
 - \`start-ref-batch\`: 레퍼런스 일괄 생성 시작 (styleId? + force?)`,
         requestBody: {
           required: true,
@@ -542,6 +542,7 @@ curl http://127.0.0.1:3210/api/batch-status
                 properties: {
                   styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "auto" (씬별 style_tag 매칭 명시) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback.', example: 'preset:korean-ani' },
                   force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만).', example: true },
+                  mode: { type: 'string', enum: ['video', 'image'], description: "선택. 'video'면 UI 탭과 무관하게 텍스트→영상(T2V) 배치(선택된 영상 씬만), 'image'면 이미지 배치. 생략 시 현재 UI 탭." },
                 },
               },
             },

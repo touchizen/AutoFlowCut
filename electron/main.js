@@ -1247,12 +1247,14 @@ function startMcpHttpServer(port) {
           if (mainWindow) {
             let styleId = null
             let force = false
+            let mode = null   // 'video' | 'image' — 렌더러(useMcpServer)의 탭 오버라이드. 없으면 현재 UI 탭.
             try {
               const parsed = JSON.parse(body)
               styleId = parsed.styleId || null
               force = !!parsed.force  // 선택, 기본 false. true면 완료된 씬도 재생성 대상에.
+              mode = typeof parsed.mode === 'string' ? parsed.mode : null
             } catch {}
-            mainWindow.webContents.send('mcp-update', { type: 'start-scene-batch', styleId, force })
+            mainWindow.webContents.send('mcp-update', { type: 'start-scene-batch', styleId, force, ...(mode ? { mode } : {}) })
             res.writeHead(200)
             // 응답에 styleId echo 안 함 — fire-and-forget이라 effective style은 renderer fallback이
             // 결정하므로(예: 첫 카드 자동 적용), main이 즉시 알 수 없음. 거짓 정보를 주는 것보다 안 주는 게 정직.
