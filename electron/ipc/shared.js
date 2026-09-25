@@ -301,6 +301,19 @@ export function createSharedHelpers(ctx) {
         return { success: false, error: `Target not at point (${hit.why})` }
       }
 
+      // M2-FINAL Q1(A1 = B1): 호출자의 **마지막** 관문 — 히트테스트 뒤·mouseDown 직전에 opts.beforeDispatch(async predicate) 를 한 번 묻는다. 제출 클릭은 재판독이 돌아온 뒤에도
+      //   뮤텍스·measure·mouseMove 100ms·히트테스트로 ≈200–300ms 를 더 쓰고, 그 사이 IME 조합(한글 2벌식)이 다시 포커스된 편집기에 붙을 수 있다 — 핸들러가 여기서 편집기를 다시 읽는다.
+      //   false·throw 는 **미디스패치** 거부(dispatched 없음, mouseDown·mouseUp 없음): 페이지가 제출했을 리 없으니 호출자는 gen 을 지운다. 이유는 상수, 보고는 호출자 몫(이중 보고 없음).
+      //   아래 bounds 재검사·aborted 검사는 동기라 predicate 뒤에 await 가 남지 않는다.
+      if (typeof opts.beforeDispatch === 'function') {
+        let go = false
+        try { go = !!(await opts.beforeDispatch()) } catch (_e) { go = false }
+        if (!go) {
+          console.warn('[TrustedClick] Refused before dispatch by the caller predicate')
+          return { success: false, error: 'Refused before dispatch' }
+        }
+      }
+
       // ⚠️ 좌표는 measure 시점의 bounds 기준이다. 위 100ms 사이에 모달이 열리면 layout 이 뷰를
       //   0×0 으로 접고(네이티브 뷰라 CSS 로 못 가리니 접는다), mouseDown/Up 은 아무 데도 안 닿는다.
       //   그런데도 success 를 반환하면 또 "아무것도 안 누르고 성공" 이다. 누르기 직전에 다시 본다.

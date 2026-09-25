@@ -80,13 +80,30 @@ describe('main.js — 문서가 죽으면 DOM 단계 직렬화를 푸는 배선 
     const nav = handlerBlock('did-navigate')
     expect(nav, 'did-navigate handler').toBeTruthy()
     expect(nav).toMatch(/^\s*releaseDomStage\('did-navigate'\)/m)
+    // M2-FINAL Q4(B3): 조건문 안으로 옮기면 교착(P1)이 조용히 돌아온다 — 핸들러 본문 들여쓰기(정확히 4칸) + failBoundUnfinished 다음다음 줄에 고정
+    expect(nav).toMatch(/^    const lost = failBoundUnfinished\(pendingGenerations\)\n    [^\n]*\n    releaseDomStage\('did-navigate'\)/m)
     const gone = handlerBlock('render-process-gone')
     expect(gone, 'render-process-gone handler').toBeTruthy()
     expect(gone).toMatch(/^\s*releaseDomStage\('render-process-gone'\)/m)
+    expect(gone).toMatch(/^    const lost = failBoundUnfinished\(pendingGenerations\)\n    [^\n]*\n    releaseDomStage\('render-process-gone'\)/m)   // M2-FINAL Q4
   })
   it('did-navigate-in-page(SPA) 와 did-start-navigation 은 풀지 않는다 — 문서가 살아 있다(취소될 수 있다)', () => {
     expect(handlerBlock('did-navigate-in-page')).not.toMatch(/releaseDomStage/)
     const start = handlerBlock('did-start-navigation')
     if (start) expect(start).not.toMatch(/releaseDomStage/)
+  })
+})
+
+// M2-FINAL Q1(A1 = B1): O5 의 방패 focus 핸들러는 제자리 뷰포트 내내 포커스를 Flow 뷰로 돌려보냈다 — P2 가 재판독 뒤 OS 포커스를 메인 창으로 옮겨도 사용자가 방패(창 아무 곳)를
+//   누르면 방패 → Flow 뷰 → Blink 가 ProseMirror 편집기에 문서 포커스를 되살려 IME 조합이 다시 프롬프트에 붙었다. 포커스 단계 플래그: 핸들러의 focusMainWindow 가
+//   deps.setShieldFocusTarget('main') 을 세우면 방패는 메인 창으로, 'flow'(방패 생성 시·finally 리셋)면 Flow 뷰로. 줄머리 앵커.
+describe('main.js — 방패 포커스의 단계 플래그 배선 (M2-FINAL Q1)', () => {
+  it("let shieldFocusTarget = 'flow' · makeInputShield 의 focus 핸들러는 'main' 이면 메인 창, 아니면 Flow 뷰 · flowAPIDeps.setShieldFocusTarget 이 'main'|'flow' 로 정규화해 세운다", () => {
+    expect(MAIN).toMatch(/^let shieldFocusTarget = 'flow'/m)
+    const b = fnBlock('makeInputShield')
+    expect(b, 'makeInputShield block').toBeTruthy()
+    expect(b).toMatch(/^\s*shield\.webContents\.on\('focus',\s*\(\)\s*=>\s*\{[^\n]*if \(shieldFocusTarget === 'main'\) win\.webContents\.focus\(\); else modeController\.getFlowView\(\)\?\.webContents\.focus\(\)/m)
+    const deps = MAIN.slice(MAIN.indexOf('const flowAPIDeps = {'), MAIN.indexOf('registerFlowAPIIPC(ipcMain, flowAPIDeps)'))
+    expect(deps).toMatch(/^\s*setShieldFocusTarget:\s*\(t\)\s*=>\s*\{\s*shieldFocusTarget = t === 'main' \? 'main' : 'flow'\s*\}/m)
   })
 })

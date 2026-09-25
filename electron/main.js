@@ -364,6 +364,10 @@ registerVrewIPC(ipcMain)
 //   makeFlowView 의 before-input-event 가 이 플래그를 보고 preventDefault 한다. 앱의 Angular 자동화는 executeJavaScript 와 **마우스** sendInputEvent(신뢰 클릭)뿐이고
 //   Escape 는 페이지 안 DOM 이벤트라 잠금이 자동화를 막지 않는다(키 sendInputEvent 는 옛 labs.google 멘션 경로에만 있고 Angular 에선 미지원으로 거부된다 — mainInputShieldWiring 핀).
 let automationKeyLock = false
+// M2-FINAL Q1(A1 = B1): 방패 focus 의 단계 플래그 — 'flow'(기본·방패 생성 시·DOM 단계 finally 리셋)면 O5 대로 Flow 뷰로, 'main'(핸들러의 focusMainWindow: 재판독 뒤 OS 포커스를
+//   메인 창으로 옮긴 뒤)이면 메인 창으로. P2 뒤에도 O5 가 방패 클릭마다 포커스를 Flow 뷰로 돌려보내 Blink 가 ProseMirror 편집기에 문서 포커스를 되살리고 IME 조합이 다시
+//   프롬프트에 붙었다(재판독~mouseDown 사이 ≈200–300ms). flowAPIDeps.setShieldFocusTarget 이 세운다.
+let shieldFocusTarget = 'flow'
 
 function makeInputShield() {
   const win = mainWindow
@@ -373,7 +377,8 @@ function makeInputShield() {
   shield.webContents.loadURL('about:blank').catch(() => {})
   // M2-CLOSE O5(A5): 사용자가 방패를 누르면 방패 webContents 가 OS 포커스를 가져간다 — 캐럿 클릭~주입 사이에 포커스가 빠지면 execCommand 주입이 안 먹어 재판독 불일치
   //   (text-injection-failed, 항목은 재시도로 유실). 포커스를 받는 즉시 Flow 뷰로 돌려준다(핸들러도 주입 직전에 focus 를 다시 건다).
-  shield.webContents.on('focus', () => { try { modeController.getFlowView()?.webContents.focus() } catch (_e) { /* 뷰가 이미 없을 수 있다 */ } })
+  // M2-FINAL Q1: 핸들러가 포커스를 메인 창으로 넘긴 뒤(shieldFocusTarget === 'main')엔 Flow 뷰가 아니라 메인 창으로 — 편집기가 포커스를 되찾지 않게.
+  shield.webContents.on('focus', () => { try { if (shieldFocusTarget === 'main') win.webContents.focus(); else modeController.getFlowView()?.webContents.focus() } catch (_e) { /* 뷰·창이 이미 없을 수 있다 */ } })
   win.contentView.addChildView(shield)
   const { width, height } = win.getContentBounds()
   shield.setBounds({ x: 0, y: 0, width, height })
@@ -1006,6 +1011,7 @@ const flowAPIDeps = {
   getMainWindow: () => mainWindow,
   createInputShield: makeInputShield,   // M2-LIVE N1: 제자리 자동화 뷰포트 동안의 입력 방패
   setAutomationKeyLock: (on) => { automationKeyLock = !!on },   // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금
+  setShieldFocusTarget: (t) => { shieldFocusTarget = t === 'main' ? 'main' : 'flow' },   // M2-FINAL Q1: 방패 focus 의 행선지(포커스 단계 플래그)
   // Shared helpers
   ...helpers,
   // Inject state helpers

@@ -177,3 +177,54 @@ describe('trustedClickOnFlowView — mouseDown 전의 실패는 dispatched 없�
     } finally { vi.useRealTimers() }
   })
 })
+
+// M2-FINAL Q1(A1 = B1): 호출자의 **마지막** 검사 — opts.beforeDispatch(async predicate) 를 히트테스트 뒤·mouseDown 직전에 한 번 묻는다(제출 클릭의 재판독~mouseDown 사이
+//   ≈200–300ms — 뮤텍스·measure·mouseMove 100ms·히트테스트 — 에 IME 조합이 편집기에 붙었으면 클릭을 내지 않는다). false·throw 는 **미디스패치** 거부(dispatched 없음,
+//   mouseDown·mouseUp 없음, 이유 상수) — 페이지가 제출했을 리 없으니 호출자는 gen 을 지운다. 보고는 호출자 몫(헬퍼는 onDomFailure 를 부르지 않는다 — 이중 보고 없음).
+describe('trustedClickOnFlowView — beforeDispatch 는 히트테스트 뒤·mouseDown 직전의 마지막 관문 (M2-FINAL Q1)', () => {
+  beforeEach(() => { layout.setLayoutMode('split-left'); layout.setSplitRatio(0.5); layout.setModalVisible(false) })
+  const COORDS = { x: 100, y: 50, width: 40, height: 40, visible: true }
+  const types = (flowView) => flowView.webContents.sendInputEvent.mock.calls.map(([e]) => e.type)
+
+  it('predicate 가 false → {success:false, error:"Refused before dispatch"}, dispatched 없음, mouseDown·mouseUp 없음(mouseMove 만), onDomFailure 없음', async () => {
+    const { ctx, flowView, onDomFailure } = makeCtx({ coords: COORDS })
+    const beforeDispatch = vi.fn(async () => false)
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit', beforeDispatch })
+    expect(r).toEqual({ success: false, error: 'Refused before dispatch' })
+    expect(r).not.toHaveProperty('dispatched')
+    expect(types(flowView)).toEqual(['mouseMove'])
+    expect(beforeDispatch).toHaveBeenCalledTimes(1)
+    expect(onDomFailure).not.toHaveBeenCalled()
+  })
+
+  it('predicate 가 throw → 같은 미디스패치 거부(fail-closed)', async () => {
+    const { ctx, flowView } = makeCtx({ coords: COORDS })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit', beforeDispatch: async () => { throw new Error('read failed') } })
+    expect(r).toEqual({ success: false, error: 'Refused before dispatch' })
+    expect(r).not.toHaveProperty('dispatched')
+    expect(types(flowView)).toEqual(['mouseMove'])
+  })
+
+  it('predicate 가 true → 호출 시점엔 히트테스트(elementFromPoint)가 이미 돌았고 mouseDown 은 아직 없다; 그 뒤 mouseDown·mouseUp → success', async () => {
+    const { ctx, flowView } = makeCtx({ coords: COORDS })
+    const seen = []
+    const beforeDispatch = vi.fn(async () => {
+      seen.push({
+        hitTests: flowView.webContents.executeJavaScript.mock.calls.filter(([s]) => String(s).includes('elementFromPoint')).length,
+        types: types(flowView),
+      })
+      return true
+    })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit', beforeDispatch })
+    expect(r).toMatchObject({ success: true })
+    expect(seen).toEqual([{ hitTests: 1, types: ['mouseMove'] }])
+    expect(types(flowView)).toEqual(['mouseMove', 'mouseDown', 'mouseUp'])
+  })
+
+  it('predicate 가 없으면 옛 동작 그대로(mouseDown·mouseUp → success)', async () => {
+    const { ctx, flowView } = makeCtx({ coords: COORDS })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+    expect(r).toMatchObject({ success: true })
+    expect(types(flowView)).toEqual(['mouseMove', 'mouseDown', 'mouseUp'])
+  })
+})

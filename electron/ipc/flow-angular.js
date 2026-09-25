@@ -96,10 +96,18 @@ export function _resetDomStageForTests() { lastDomStage = null }
  *   (정상 항목 뒤의 프로젝트 열기마다 잡음이 되지 않게). reason 은 상태어(이벤트 이름)만.
  */
 export function releaseDomStage(reason) {
-  const live = !!(lastDomStage && !lastDomStage.settled)
+  const rec = lastDomStage
+  if (!rec || rec.settled) { lastDomStage = null; return false }
+  // M2-FINAL Q2(A2): 워치독이 끊은 좀비만 즉시 비운다. **살아 있는** 단계(워치독 전)를 풀면 겹친 호출(배치 중 단일 재생성·레퍼런스)이 그 단계와 섞여 A 의 설정 클릭이 B 의
+  //   패널에 떨어진다 — docDead 로 표시만 하고, 그 단계의 워치독이 울리는 순간(withAutomationViewport) 비운다. settle 하면 원래대로 busy 대기가 풀린다.
+  if (rec.abortedAt == null) {
+    rec.docDead = true
+    console.log(`[Flow API] DOM stage kept (${reason}) — still running; released when its watchdog fires`)
+    return false
+  }
   lastDomStage = null
-  if (live) console.log(`[Flow API] DOM stage released (${reason})`)
-  return live
+  console.log(`[Flow API] DOM stage released (${reason})`)
+  return true
 }
 /** 직전 단계가 ms 안에 settle 하면 false, 아니면 true(아직 살아 있다). 타이머는 정리한다. */
 async function domStageBusy(prev, ms) {
@@ -134,7 +142,33 @@ export function createFlowAngular(deps) {
   // M2-LAST P2(B2): 재판독이 맞은 즉시 OS 포커스를 메인 창으로 — O1 의 before-input-event 잠금은 PreHandleKeyboardEvent 를 지나는 키만 막고, 입력기(macOS 2벌식 한글)가 처리한
   //   keydown 은 그 단계를 건너뛰어 조합 텍스트가 ImeSetComposition/ImeCommitText 로 포커스된 편집기에 붙는다(재판독~제출 mouseDown 사이 ≈150–300ms 의 음절이 프롬프트가 돼 과금).
   //   편집기가 포커스를 잃으면 붙을 곳이 없다. 제출 신뢰 클릭은 sendInputEvent 라 OS 포커스가 필요 없다. 잠금은 그대로(Enter·단축키). 실패는 흐름을 막지 않는다(직전 재판독이 방벽).
-  const focusMainWindow = () => { try { deps.getMainWindow()?.webContents?.focus() } catch (_e) { /* 창이 이미 없을 수 있다 */ } }
+  // M2-FINAL Q1(A1 = B1): 방패 focus 의 행선지 — 'flow'(방패 생성 시·finally 리셋)면 O5 대로 Flow 뷰, 'main'(넘긴 뒤)이면 메인 창. main 이 들고 있다.
+  const setShieldTarget = (t) => { try { deps.setShieldFocusTarget?.(t) } catch (_e) { /* 행선지 실패는 흐름을 막지 않는다 */ } }
+  const focusMainWindow = () => {
+    setShieldTarget('main')   // M2-FINAL Q1: 이 뒤로는 방패를 눌러도 편집기가 포커스를 되찾지 않는다
+    try { deps.getMainWindow()?.webContents?.focus() } catch (_e) { /* 창이 이미 없을 수 있다 */ }
+  }
+  /**
+   * M2-FINAL Q1(A1 = B1): 제출 신뢰 클릭의 beforeDispatch — 히트테스트 뒤·mouseDown 직전에 편집기를 마지막으로 재판독한다(재판독~mouseDown ≈200–300ms 사이의 IME 조합 음절).
+   *   다르면 false(미디스패치 거부) + holder.editorLen 기록. 호출자가 gen 을 지우고 클릭 전 실패로 닫는다. 로그·보고는 길이만.
+   */
+  const makeDispatchGuard = (flowView, normPrompt, holder) => async () => {
+    let text = null
+    try { text = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { text = null }
+    const norm = normalizePrompt(text || '')
+    if (norm === normPrompt) return true
+    holder.refused = true
+    holder.editorLen = norm.length
+    return false
+  }
+  /** M2-FINAL Q1: beforeDispatch 거부의 마감 — gen 을 지우고 클릭 전 text-injection-failed(reason editor-changed-before-click). */
+  async function refuseChangedAtDispatch(gen, generationId, tag, normPrompt, holder) {
+    settleGen(gen, { error: 'text-injection-failed', errorKind: 'text-injection-failed' })
+    deps.pendingGenerations.delete(generationId)
+    console.warn(`${tag} editor text changed between the hit-test and the mouseDown promptLen=${normPrompt.length} editorLen=${holder.editorLen} → refused before dispatch`)
+    await report('compose-text', 'editor-changed-before-click', { promptLen: normPrompt.length, editorLen: holder.editorLen })
+    return kindResult('text-injection-failed', { reason: 'editor-changed-before-click' })
+  }
   /**
    * M2-LAST P2: 제출 클릭 직전의 재판독 — 정규화한 편집기 텍스트가 프롬프트와 다르면(포커스를 옮기기 전에 붙은 조합 음절 등) 클릭 전 text-injection-failed(reason
    *   editor-changed-before-click — 항목 이유, 다음 항목이 재시도) 결과, 같으면 null. 호출자는 이 뒤에 동기 구간(arm)만 두고 바로 클릭한다. 로그·보고는 길이만.
@@ -230,6 +264,7 @@ export function createFlowAngular(deps) {
         const size = computeInPlaceBounds(mainWindow.getContentBounds())
         flowView.setBounds(size)
         // M2-LIVE N1: 제자리 확장 직후 입력 방패 — 뷰가 사용자 위에 있는 동안은 언제나 방패가 있다.
+        setShieldTarget('flow')   // M2-FINAL Q1: 넘기기 전의 방패 focus 는 O5 대로 Flow 뷰(주입이 포커스를 잃지 않게)
         try { shield = (typeof deps.createInputShield === 'function' && deps.createInputShield()) || null } catch (_e) { shield = null; console.warn(`${tag} input shield failed — continuing without it`) }
         await sleep(300)
         const why = (!startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)) ? 'hidden' : 'narrow'
@@ -238,7 +273,7 @@ export function createFlowAngular(deps) {
       const run = fn(ctl)
       run.catch(() => {})   // 워치독이 이긴 뒤의 zombie reject 는 unhandled 가 되면 안 된다(race 는 따로 구독한다)
       // M2-CLOSE O2: 다음 단계가 기다릴 대상(어느 쪽으로 끝나든 settle). M2-LAST P1: 워치독 시각(abortedAt)·settle 여부도 적는다(백스톱·releaseDomStage 의 판정).
-      const stage = { done: null, abortedAt: null, settled: false }
+      const stage = { done: null, abortedAt: null, settled: false, docDead: false }   // M2-FINAL Q2: docDead — 살아 있는 동안 문서가 죽었다
       stage.done = run.then(() => { stage.settled = true }, () => { stage.settled = true })
       lastDomStage = stage
       const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(DOM_STAGE_TIMEOUT), DOM_STAGE_TIMEOUT_MS) })
@@ -248,12 +283,15 @@ export function createFlowAngular(deps) {
       if (ctl.clickStarted) return await run
       ctl.aborted = true
       stage.abortedAt = Date.now()   // M2-LAST P1: 좀비의 나이 — 5분 넘으면 다음 단계가 버린다
+      // M2-FINAL Q2: 살아 있는 동안 문서가 죽었던 단계는 워치독이 울리는 지금 비운다(그 문서의 exec 는 영영 settle 하지 않는다).
+      if (stage.docDead && lastDomStage === stage) { lastDomStage = null; console.log('[Flow API] DOM stage released (doc-dead)') }
       console.warn(`${tag} DOM stage timed out after ${DOM_STAGE_TIMEOUT_MS / 1000}s before the submit click → refusing`)
       return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
     } finally {
       if (timer) clearTimeout(timer)
       // M2-LIVE N1: 방패는 레이아웃 복원 전에 — 뷰가 사용자 위에 있는 동안은 언제나 방패가 있다.
       if (shield) { try { shield.remove() } catch (_e) { /* 창이 이미 없을 수 있다 */ } }
+      setShieldTarget('flow')   // M2-FINAL Q1: 다음 단계의 기본값으로 되돌린다(방패를 내린 뒤)
       if (viewport) {
         updateBounds(deps.getMainWindow(), flowView)
         await sleep(200)
@@ -334,6 +372,8 @@ export function createFlowAngular(deps) {
     let gen = null
     let waiter = null
     let click = null
+    const dispatchGuard = { refused: false, editorLen: 0 }   // M2-FINAL Q1: 제출 클릭 mouseDown 직전 재판독의 거부 기록
+    let normPromptForGuard = ''
     // DOM 단계 — 자동화 뷰포트·포커스 반환 래퍼 안에서(조기 반환은 결과 객체로, 클릭까지 갔으면 null).
     const early = await withAutomationViewport(flowView, '[Flow API] [Angular]', async (ctl) => {
       const isAborted = () => ctl.aborted   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
@@ -376,6 +416,7 @@ export function createFlowAngular(deps) {
       try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
       try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
       const normPrompt = normalizePrompt(prompt)
+      normPromptForGuard = normPrompt   // M2-FINAL Q1: 클릭 뒤 거부 판정에서 쓴다
       if (normalizePrompt(readBack || '') !== normPrompt) {
         await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
         return kindResult('text-injection-failed')
@@ -403,7 +444,7 @@ export function createFlowAngular(deps) {
 
       // 7. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
       ctl.clickStarted = true   // M2-LIVE N1: 이제부터 워치독은 결과를 덮지 않는다
-      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit' })
+      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', beforeDispatch: makeDispatchGuard(flowView, normPrompt, dispatchGuard) })   // M2-FINAL Q1
       return null
     })
     if (early) return early
@@ -411,6 +452,9 @@ export function createFlowAngular(deps) {
     //   waiter/마감 경로로(늦은 send 는 바인딩, 없으면 not-sent).
     // M2-CLOSE O1(A1): 클릭 전에 이미 send 가 바인딩됐거나 완료된 gen(사용자의 Enter 등 페이지가 먼저 제출)은 디스패치된 것으로 본다 — 앱의 클릭이 disabled 버튼을
     //   미디스패치로 거부해도 gen 을 지우지 않고 post-click 경로로(과금된 결과를 버리지 않는다).
+    // M2-FINAL Q1(A1 = B1): mouseDown 직전 재판독이 달라 클릭 도우미가 미디스패치로 거부했으면(페이지가 제출했을 리 없다) gen 을 지우고 클릭 전 실패로 닫는다.
+    //   단, 그 사이 send 가 이미 바인딩됐거나 완료됐으면(사용자의 Enter 등) 아래 O1 경로로(과금된 결과를 버리지 않는다).
+    if (dispatchGuard.refused && !click?.success && !click?.dispatched && !(gen.doc != null || gen.completed)) return refuseChangedAtDispatch(gen, generationId, '[Flow API] [Angular]', normPromptForGuard, dispatchGuard)
     const boundBeforeClick = gen.doc != null || gen.completed
     if (!click?.success && !click?.dispatched && !boundBeforeClick) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
@@ -526,6 +570,8 @@ export function createFlowAngular(deps) {
     let gen = null
     let waiter = null
     let click = null
+    const dispatchGuard = { refused: false, editorLen: 0 }   // M2-FINAL Q1: 제출 클릭 mouseDown 직전 재판독의 거부 기록
+    let normPromptForGuard = ''
     let creditsBefore = null
     const early = await withAutomationViewport(flowView, '[Flow Video T2V] [Angular]', async (ctl) => {
       const isAborted = () => ctl.aborted   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
@@ -594,6 +640,7 @@ export function createFlowAngular(deps) {
       try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
       try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
       const normPrompt = normalizePrompt(prompt)
+      normPromptForGuard = normPrompt   // M2-FINAL Q1: 클릭 뒤 거부 판정에서 쓴다
       if (normalizePrompt(readBack || '') !== normPrompt) {
         await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
         return kindResult('text-injection-failed')
@@ -621,7 +668,7 @@ export function createFlowAngular(deps) {
 
       // 8. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
       ctl.clickStarted = true   // M2-LIVE N1: 이제부터 워치독은 결과를 덮지 않는다
-      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit' })
+      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', beforeDispatch: makeDispatchGuard(flowView, normPrompt, dispatchGuard) })   // M2-FINAL Q1
       return null
     })
     if (early) return early
@@ -630,6 +677,9 @@ export function createFlowAngular(deps) {
     //   모든 실패에 postClick:true 를 단다.
     // M2-CLOSE O1(A1): 클릭 전에 이미 send 가 바인딩됐거나 완료된 gen(사용자의 Enter 등 페이지가 먼저 제출)은 디스패치된 것으로 본다 — 앱의 클릭이 disabled 버튼을
     //   미디스패치로 거부해도 gen 을 지우지 않는다(지우면 과금된 영상이 고아가 되고 다음 Start 가 또 과금한다).
+    // M2-FINAL Q1(A1 = B1): mouseDown 직전 재판독이 달라 클릭 도우미가 미디스패치로 거부했으면(페이지가 제출했을 리 없다) gen 을 지우고 클릭 전 실패로 닫는다.
+    //   단, 그 사이 send 가 이미 바인딩됐거나 완료됐으면(사용자의 Enter 등) 아래 O1 경로로(과금된 결과를 버리지 않는다).
+    if (dispatchGuard.refused && !click?.success && !click?.dispatched && !(gen.doc != null || gen.completed)) return refuseChangedAtDispatch(gen, generationId, '[Flow Video T2V] [Angular]', normPromptForGuard, dispatchGuard)
     const boundBeforeClick = gen.doc != null || gen.completed
     if (!click?.success && !click?.dispatched && !boundBeforeClick) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })

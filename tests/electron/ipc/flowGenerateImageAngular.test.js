@@ -33,6 +33,11 @@ function makeIpcMain() {
 function harness(o = {}) {
   const url = o.url ?? FLOW_URL_OK
   const trace = []
+  // M2-FINAL Q1: main 의 shieldFocusTarget 흉내 — 핸들러가 setShieldFocusTarget 로 세운 행선지(기본 'flow'); 가짜 방패의 focus() 가 그 규칙대로 Flow 뷰/메인 창에 포커스를 준다.
+  //   o.shieldFocusAt = trace 태그 — 그 exec 가 돌 때 사용자가 방패를 누른 것처럼 방패 focus 를 일으킨다.
+  let shieldTarget = 'flow'
+  let lastShield = null
+  const tap = (tag) => { trace.push(tag); if (o.shieldFocusAt === tag && lastShield) lastShield.focus() }
   // R2#1: 뷰 bounds 는 가변 — hidden 변형은 0×0 에서 시작하고 setBounds 가 갱신한다(실제 WebContentsView 처럼).
   let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
   const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
@@ -67,10 +72,10 @@ function harness(o = {}) {
       return o.agent ?? { found: true, on: false }
     }
     if (s.includes('batchexecute capture installed')) { trace.push('capture-inject'); return undefined }
-    if (s.startsWith('!!window.__autoflowcut_rpc_capture__')) { trace.push('capture-probe'); return captureFlags.length > 1 ? captureFlags.shift() : captureFlags[0] }
+    if (s.startsWith('!!window.__autoflowcut_rpc_capture__')) { tap('capture-probe'); return captureFlags.length > 1 ? captureFlags.shift() : captureFlags[0] }
     if (s.includes('settings-summary')) { trace.push('summary'); if (summarySeq) return summarySeq.length > 1 ? summarySeq.shift() : summarySeq[0]; return o.summary ?? { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_16_9'] } }
     if (s.includes("querySelectorAll('p')")) { trace.push('read-text'); if (editorSeq) return editorSeq.length > 1 ? editorSeq.shift() : editorSeq[0]; return o.editorText !== undefined ? o.editorText : injectedPrompt }
-    if (s.includes('aria-disabled')) { trace.push('submit-enabled'); return o.submitEnabled ?? true }
+    if (s.includes('aria-disabled')) { tap('submit-enabled'); return o.submitEnabled ?? true }
     if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
     if (s.includes('getMediaUrlRedirect')) { trace.push('dom-image-probe'); return [] }
     return null
@@ -106,6 +111,12 @@ function harness(o = {}) {
   const onSubmit = o.onSubmit === undefined ? (() => { page.send(); page.loadend() }) : o.onSubmit
   const trustedClickOnFlowView = vi.fn(async (_sel, opts) => {
     trace.push('click:' + (opts?.step || '?'))
+    // M2-FINAL Q1: 실제 헬퍼처럼 히트테스트 뒤·mouseDown 직전에 beforeDispatch 를 묻고 false·throw 면 미디스패치 거부(armed:/onSubmit 없음 = mouseDown 없음)
+    if (typeof opts?.beforeDispatch === 'function') {
+      let go = false
+      try { go = !!(await opts.beforeDispatch()) } catch (_e) { go = false }
+      if (!go) { trace.push('dispatch-refused'); return { success: false, error: 'Refused before dispatch' } }
+    }
     if (opts?.step === 'compose-submit') { trace.push('armed:' + pendingGenerations.size); if (onSubmit) await onSubmit(page, pendingGenerations) }
     if (opts?.step === 'compose-submit' && o.clickResult) return o.clickResult
     return { success: o.clickSuccess ?? true }
@@ -116,7 +127,13 @@ function harness(o = {}) {
     applyAgentDefaults: vi.fn(async () => ({ success: true })), getRecaptchaToken: vi.fn(async () => null),
   }
   // M2-CLOSE O1/O3: main 의 createInputShield · setAutomationKeyLock 흉내 — 생성/제거·잠금/해제 시각을 trace 에(영상 하네스와 같은 꼴)
-  const createInputShield = vi.fn(() => { trace.push('shield:on'); return { remove: vi.fn(() => { trace.push('shield:off') }) } })
+  const createInputShield = vi.fn(() => {
+    trace.push('shield:on')
+    // M2-FINAL Q1: main 의 makeInputShield focus 핸들러 흉내 — 'main' 이면 메인 창(main-focus), 아니면 Flow 뷰(focus)
+    lastShield = { remove: vi.fn(() => { trace.push('shield:off') }), focus: () => { (shieldTarget === 'main' ? mainWindow : flowView).webContents.focus() } }
+    return lastShield
+  })
+  const setShieldFocusTarget = vi.fn((t) => { shieldTarget = t; trace.push('shield-target:' + t) })   // M2-FINAL Q1
   const setAutomationKeyLock = vi.fn((on) => { trace.push(on ? 'keylock:on' : 'keylock:off') })
   const ipcMain = makeIpcMain()
   registerFlowAPIIPC(ipcMain, {
@@ -137,9 +154,10 @@ function harness(o = {}) {
     sessionFetch,
     createInputShield,          // M2-CLOSE O3: 제자리 뷰포트 동안의 입력 방패(가짜)
     setAutomationKeyLock,       // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금(가짜)
+    setShieldFocusTarget,       // M2-FINAL Q1: 방패 focus 의 행선지(가짜)
   })
   const generate = (p = {}) => ipcMain.invoke('flow:generate-image', { prompt: PROMPT, aspectRatio: '16:9', model: 'Nano Banana 2', projectId: PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p })
-  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, createInputShield, setAutomationKeyLock }
+  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, createInputShield, setAutomationKeyLock, setShieldFocusTarget }
 }
 
 /** 가짜 시계에서 핸들러 promise 를 굴린다(ensureAgentOff 의 350ms sleep 등). */
@@ -649,6 +667,8 @@ describe('flow:generate-image (angular) — 워치독 · 좀비 · 방패 (M2-CL
     ['닫힌 요약 재판독(편집기 전 체크포인트)', () => ({ summary: [SUMMARY, new Promise((r) => setTimeout(() => r(SUMMARY), 121000))] }), ['focus', 'click:compose-editor', 'click:compose-submit']],
     ['제출 가능 프로브(arm 전 체크포인트)', () => ({ submitEnabled: new Promise((r) => setTimeout(() => r(true), 121000)) }), ['click:compose-submit']],
     ['편집기 재판독(arm 전 체크포인트)', () => ({ editorText: new Promise((r) => setTimeout(() => r(PROMPT), 121000)) }), ['click:compose-submit']],
+    // M2-FINAL Q3(B2): P2 의 두 번째 재판독(arm 체크포인트 앞)에 매달린 좀비 — 재판독이 체크포인트 아래로 옮겨지면 좀비가 arm·클릭한다
+    ['두 번째 재판독(P2 — arm 체크포인트 앞, 125s 에 풀림)', () => ({ editorText: [PROMPT, new Promise((r) => setTimeout(() => r(PROMPT), 125000))] }), ['click:compose-submit']],
   ])('(c) %s 에 매달렸다 121s 에 풀린 좀비 → 그 뒤 단계 없음·arm 없음·맵 0·shield:off 1회', async (_n, mk, absent) => {
     const h = harness({ bounds: NARROW, ...mk() })
     expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
@@ -700,7 +720,7 @@ describe('flow:generate-image (angular) — 클릭 전 OS 포커스 반환 · �
       const t = h.trace
       expect(idx(t, 'read-text')).toBeLessThan(idx(t, 'main-focus'))
       expect(idx(t, 'main-focus')).toBeLessThan(idx(t, 'submit-enabled'))
-      expect(count(t, 'read-text')).toBe(2)
+      expect(count(t, 'read-text')).toBe(3)   // M2-FINAL Q1: 세 번째 재판독은 제출 클릭 안(beforeDispatch — 히트테스트 뒤·mouseDown 직전)
       expect(t[idx(t, 'click:compose-submit') - 1]).toBe('read-text')
       // finally 의 반환은 그대로: 뷰포트에 들어갔거나 포커스가 없던 뷰면 클릭 뒤 한 번 더, 넓고 포커스 있던 뷰면 클릭 전 한 번뿐
       expect(count(t, 'main-focus')).toBe(o.focused ? 1 : 2)
@@ -783,5 +803,58 @@ describe('flow:generate-image (angular) — 클릭 전 거부는 키 잠금을 �
       expect(logged()).toMatch(/layout still dragging/)
       expect(h.setAutomationKeyLock).not.toHaveBeenCalled()
     } finally { setLayoutDragging(false) }
+  })
+})
+
+// M2-FINAL Q1(A1 = B1): 이미지도 같다 — (a) focusMainWindow 가 setShieldFocusTarget('main') 을 세워 그 뒤의 방패 focus 는 메인 창으로(방패 생성 시 'flow', finally 리셋),
+//   (b) 제출 신뢰 클릭의 beforeDispatch 가 히트테스트 뒤·mouseDown 직전에 편집기를 마지막으로 재판독해 다르면 미디스패치 거부 → gen 삭제 + 클릭 전 text-injection-failed.
+describe('flow:generate-image (angular) — 방패 포커스의 단계 플래그 · mouseDown 직전 마지막 재판독 (M2-FINAL Q1)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  const count = (t, tag) => t.filter((x) => x === tag).length
+
+  it('(a) 메인 창으로 넘긴 뒤(제출 가능 프로브 중)의 방패 focus 는 메인 창으로 — main-focus 뒤 제출 클릭까지 Flow focus 없음; shield-target flow → main → flow(리셋은 shield:off 뒤)', async () => {
+    const h = harness({ bounds: NARROW, shieldFocusAt: 'submit-enabled' })
+    expect(await settle(h.generate())).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
+    const t = h.trace
+    const handOff = idx(t, 'main-focus')
+    const click = idx(t, 'click:compose-submit')
+    expect(handOff).toBeGreaterThan(0)
+    expect(t.slice(handOff, click)).not.toContain('focus')
+    expect(t.slice(handOff, click).filter((x) => x === 'main-focus')).toHaveLength(2)
+    expect(count(t, 'main-focus')).toBe(3)
+    expect(t[idx(t, 'shield:on') - 1]).toBe('shield-target:flow')
+    expect(t[handOff - 1]).toBe('shield-target:main')
+    const lastTarget = t.map((x, i) => [x, i]).filter(([x]) => x.startsWith('shield-target:')).pop()
+    expect(lastTarget[0]).toBe('shield-target:flow')
+    expect(lastTarget[1]).toBeGreaterThan(idx(t, 'shield:off'))
+    expect(h.setShieldFocusTarget.mock.calls).toEqual([['flow'], ['main'], ['flow']])
+  })
+
+  it('(a 대조군) 넘기기 전(캡처 프로브 중)의 방패 focus 는 O5 대로 Flow 뷰로 — capture-probe 바로 뒤 focus, main-focus 는 2회', async () => {
+    const h = harness({ bounds: NARROW, shieldFocusAt: 'capture-probe' })
+    expect(await settle(h.generate())).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
+    const t = h.trace
+    expect(t[idx(t, 'capture-probe') + 1]).toBe('focus')
+    expect(count(t, 'focus')).toBe(3)
+    expect(count(t, 'main-focus')).toBe(2)
+  })
+
+  it('(b) 히트테스트 뒤·mouseDown 직전의 재판독이 다르면 미디스패치 거부 → mouseDown·send 없음, gen 삭제(맵 0), 클릭 전 text-injection-failed(reason editor-changed-before-click), 보고 내용 없음', async () => {
+    const h = harness({ bounds: NARROW, editorText: [PROMPT, PROMPT, PROMPT + '한'] })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'text-injection-failed', error: 'text-injection-failed', reason: 'editor-changed-before-click' })
+    expect(r).not.toHaveProperty('postClick')
+    expect(h.trace).toContain('click:compose-submit')
+    expect(h.trace).toContain('dispatch-refused')
+    expect(h.trace.filter((x) => x.startsWith('armed:'))).toEqual([])
+    expect(count(h.trace, 'read-text')).toBe(3)
+    expect(h.trace.indexOf('dispatch-refused')).toBeGreaterThan(h.trace.lastIndexOf('read-text'))
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'compose-text' && c[1]?.reason === 'editor-changed-before-click')).toBe(true)
+    expect(logged()).toMatch(/editor text changed between the hit-test and the mouseDown promptLen=\d+ editorLen=\d+ → refused before dispatch/)
+    for (const c of h.onDomFailure.mock.calls) expect(JSON.stringify(c)).not.toContain(PROMPT)
+    expect(logged()).not.toContain(PROMPT)
+    expect(h.trace.filter((x) => x === 'shield:off')).toHaveLength(1)
+    expect(h.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
   })
 })
