@@ -50,3 +50,19 @@ describe('closeAgentPanels — 옛 닫기 버튼은 있을 때만 trusted 클릭
     expect(scripts.some((s) => s.includes('scrollIntoView'))).toBe(true)
   })
 })
+
+// M2-CLOSE O2(A2): ensureAgentOff({ isAborted }) — flow-angular 의 워치독이 닫은 뒤의 좀비는 옛 닫기 버튼(있을 때)·Escape·토글 어느 것도 누르지 않는다.
+describe('ensureAgentOff({ isAborted }) — 워치독이 닫은 좀비는 페이지를 만지지 않는다 (M2-CLOSE O2)', () => {
+  it('옛 DOM(버튼 있음) + isAborted:true → 클릭 절차(측정) 없음·Escape exec 없음·마우스 이벤트 없음, {success:false, state:"aborted"}', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { helpers, scripts, flowView } = makeCtx({ closePresent: true })
+      const r = await helpers.ensureAgentOff({ isAborted: () => true })
+      expect(r).toEqual({ success: false, state: 'aborted' })
+      expect(scripts.some((s) => s.includes('scrollIntoView'))).toBe(false)
+      expect(scripts.some((s) => s.includes("key: 'Escape'"))).toBe(false)
+      expect(flowView.webContents.sendInputEvent).not.toHaveBeenCalled()
+      expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/ensureAgentOff: aborted by the DOM-stage watchdog — no toggle click/)
+    } finally { warn.mockRestore() }
+  })
+})

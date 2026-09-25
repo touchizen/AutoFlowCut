@@ -23,6 +23,8 @@
 //   opts.modelSelectFlapMs     : (M2-LIVE N2) 모델 항목 클릭 뒤 길이 그룹을 N ms 마다 두 옵션 집합으로 계속 갈아끼운다(영영 안정되지 않는 패널 — settings-not-settled)
 //   opts.modePanel             : (M2-LIVE N2, A2 시나리오) 모드 클릭이 갈아끼우는 패널의 buildSettingsPanel 옵션(예: {model:'Veo 3.1 - Fast', omit:['duration']})
 //   opts.modeInsertDurationMs  : (M2-LIVE N2, A2 시나리오) 모드 클릭 N ms 뒤 길이 그룹을 끼워 넣는다 — modeInsertDuration {labels, checked}
+//   opts.modelSelectRemoveGroups : (M2-CLOSE O6, B3) {afterMs} — **Veo** 항목 클릭이 해상도·길이 행을 없앤다(실기 2026-09-25: Veo 3.1 - Fast 패널엔 두 그룹이 없다).
+//                                afterMs 0 이면 동기, 아니면 N ms 뒤(Angular 의 늦은 재렌더). Omni → Veo 전환의 fixed(8)/fixed(720p) 경로를 재현한다
 // 리스너는 document/body 에 붙으므로 테스트마다 disposeFakeAngular() 로 이전 것을 abort 한다.
 import { buildSettingsPanel, buildModelMenu, buildDurationGroup, buildResolutionGroup } from '../fixtures/flow-live-dom-20260924.js'
 
@@ -118,6 +120,18 @@ export function installFakeAngular(doc, opts = {}) {
       trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-controls')
       btn.closest('.cdk-overlay-pane').remove()
       if (opts.modelReset === 'sync') { resetGroup('duration', '6초'); resetGroup('resolution', '720p') }
+      // M2-CLOSE O6(B3): Veo 항목 클릭이 길이·해상도 행을 없앤다 — afterMs 0 이면 동기, 아니면 N ms 뒤
+      if (opts.modelSelectRemoveGroups && /veo/i.test(text)) {
+        const remove = () => {
+          for (const g of ['duration', 'resolution']) {
+            const radios = Array.from(doc.querySelectorAll('button[role="radio"]')).filter((x) => groupOf(x) === g)
+            const row = radios[0] && (radios[0].closest('.setting-row') || radios[0].closest('mat-button-toggle-group'))
+            if (row) row.remove()
+          }
+        }
+        const ms = Number(opts.modelSelectRemoveGroups.afterMs) || 0
+        if (ms > 0) setTimeout(remove, ms); else remove()
+      }
       // M2-LIVE N2(B1 프로브): 그룹이 없던 패널(Veo)에서 Omni 로 — Angular 가 Omni 의 해상도·길이 그룹을 N ms 뒤에 그린다(체크값은 Flow 가 기억한 값)
       if (opts.modelSelectInsertGroupsMs > 0 && opts.modelSelectInsertGroups) {
         const g = opts.modelSelectInsertGroups

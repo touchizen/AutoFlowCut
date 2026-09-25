@@ -82,6 +82,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const DRAG_WAIT_MS = 5000
 const DOM_STAGE_TIMEOUT_MS = 120000
 const DOM_STAGE_TIMEOUT = Symbol('dom-stage-timeout')
+// M2-CLOSE O2(A2): DOM 단계 직렬화 — 직전 단계의 run(settle 하면 끝, reject 도 끝)을 모듈에 기록해 두고 새 단계가 ≤10s 기다린다. 이미지·영상 핸들러 인스턴스가
+//   같은 Flow 페이지를 만지므로 모듈 상태(인스턴스별이 아니라). 테스트는 _resetDomStageForTests 로 비운다.
+const DOM_STAGE_BUSY_WAIT_MS = 10000
+let lastDomStage = null
+export function _resetDomStageForTests() { lastDomStage = null }
+/** 직전 단계가 ms 안에 settle 하면 false, 아니면 true(아직 살아 있다). 타이머는 정리한다. */
+async function domStageBusy(prev, ms) {
+  let timer = null
+  try {
+    return await Promise.race([prev.then(() => false), new Promise((r) => { timer = setTimeout(() => r(true), ms) })])
+  } finally { if (timer) clearTimeout(timer) }
+}
 const short = (v) => String(v ?? '').slice(0, 8)
 /** nzlxg payload → 크레딧 잔량(숫자) 또는 null. */
 const creditsOf = (payload) => (Array.isArray(payload) && typeof payload[0] === 'number' ? payload[0] : null)
@@ -137,10 +149,21 @@ export function createFlowAngular(deps) {
    *   M2-LIVE N1(A8) 워치독: DOM 단계엔 개별 타임아웃이 없어(exec 는 무한) 먹통 렌더러가 제자리 뷰를 앱 위에 영영 남겼다 — 120s 에 같은 finally 를
    *   지나 클릭 전 dom-stage-timeout 으로 닫는다. 제출 클릭이 이미 나갔으면(ctl.clickStarted) 결과를 덮지 않고 기존 post-click 경로가 판정한다
    *   (신뢰 클릭 헬퍼는 자체 30s 상한이 있다). 버려진 fn 은 ctl.aborted 를 보고 arm·클릭 전에 멈춘다(좀비가 뒤늦게 제출하지 않게).
+   *   M2-CLOSE O1(A1): 방패는 포인터만 막는다 — 편집기 단계가 Flow 뷰에 OS 포커스를 주므로(넓은 뷰든 제자리든) 재판독~제출 클릭 사이의 타이핑이 프롬프트에 붙고 Enter 가
+   *   제출했다. 진입에 deps.setAutomationKeyLock(true)(main 의 before-input-event 가 preventDefault) 를 켜고 같은 finally 의 마지막에 끈다(정상·조기 반환·throw·워치독 전부).
+   *   M2-CLOSE O2(A2): 워치독이 버린 좀비는 체크포인트 사이(드라이버·ensureAgentOff 안)에서 페이지를 계속 만질 수 있어 다음 항목의 단계와 겹친다 — A 의 길이 클릭이 B 의
+   *   최종 재판독 뒤·closePanel 전에 떨어지면 B 가 A 의 길이로 과금·거부(배치 중단). 새 단계는 직전 단계의 run 이 settle 할 때까지 ≤10s(DOM_STAGE_BUSY_WAIT_MS) 기다리고,
+   *   그래도 살아 있으면 뷰포트·방패·프로브 없이 클릭 전 dom-stage-busy(항목 이유 — 다음 항목이 재시도). 좀비 쪽은 applyComposerSettings·ensureAgentOff 에 isAborted(ctl.aborted)를
+   *   넘겨 신뢰 클릭·드라이버 exec 마다 먼저 보게 한다.
    * @param {string} tag 로그 접두('[Flow API] [Angular]' | '[Flow Video T2V] [Angular]')
    * @param {(ctl:{aborted:boolean, clickStarted:boolean}) => Promise<any>} fn
    */
   async function withAutomationViewport(flowView, tag, fn) {
+    // M2-CLOSE O2: 직전 단계(좀비 포함)가 아직 살아 있으면 ≤10s 기다린다 — 뷰포트·방패보다 먼저(기다리는 동안 뷰를 키워 두지 않는다).
+    if (lastDomStage && await domStageBusy(lastDomStage, DOM_STAGE_BUSY_WAIT_MS)) {
+      console.warn(`${tag} DOM stage still busy after ${DOM_STAGE_BUSY_WAIT_MS / 1000}s → refusing before click`)
+      return kindResult('flow-settings-not-applied', { reason: 'dom-stage-busy' })
+    }
     // M2-LIVE N1: 드래그 중이면 먼저 드래그 끝을 기다린다(≤ DRAG_WAIT_MS) — 그 뒤에 bounds 를 읽어야 접힌 0×0 이 아니라 복원된 레이아웃을 본다.
     if (getLayoutDragging()) {
       const until = Date.now() + DRAG_WAIT_MS
@@ -155,24 +178,28 @@ export function createFlowAngular(deps) {
     let hadFocus = false
     try { hadFocus = !!(flowView.webContents.isFocused && flowView.webContents.isFocused()) } catch (_e) { hadFocus = false }
     let shield = null
-    if (viewport) {
-      // M2 실기(2026-09-25, 597×872 스플릿): 화면 밖(x=1760) 1200×872 로 옮겨도 페이지 innerWidth 가 597 그대로 — 완전히
-      //   화면 밖인 뷰는 Chromium 이 다시 레이아웃하지 않는다(단위 테스트는 우리가 준 bounds 만 단언했다). 창 **안** 제자리
-      //   (x=0,y=0)에서 창 콘텐츠 크기로 키운다 — DOM 단계 몇 초 동안 Flow 뷰가 앱 UI 를 덮고 finally 가 레이아웃으로 되돌린다.
-      const mainWindow = deps.getMainWindow()
-      const size = computeInPlaceBounds(mainWindow.getContentBounds())
-      flowView.setBounds(size)
-      // M2-LIVE N1: 제자리 확장 직후 입력 방패 — 뷰가 사용자 위에 있는 동안은 언제나 방패가 있다.
-      try { shield = (typeof deps.createInputShield === 'function' && deps.createInputShield()) || null } catch (_e) { shield = null; console.warn(`${tag} input shield failed — continuing without it`) }
-      await sleep(300)
-      const why = (!startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)) ? 'hidden' : 'narrow'
-      console.log(`${tag} view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} in-place${shield ? ' shielded' : ''}`)
-    }
     const ctl = { aborted: false, clickStarted: false }
     let timer = null
+    // M2-CLOSE O1: 키 입력 잠금은 DOM 단계 전체 — 뷰포트 확장(방패)보다 먼저 켜고 finally 의 마지막에 끈다(뷰포트 확장도 같은 try 안이라 어떤 출구든 푼다).
+    const setKeyLock = (on) => { try { deps.setAutomationKeyLock?.(on) } catch (_e) { /* 잠금 실패는 흐름을 막지 않는다 */ } }
+    setKeyLock(true)
     try {
+      if (viewport) {
+        // M2 실기(2026-09-25, 597×872 스플릿): 화면 밖(x=1760) 1200×872 로 옮겨도 페이지 innerWidth 가 597 그대로 — 완전히
+        //   화면 밖인 뷰는 Chromium 이 다시 레이아웃하지 않는다(단위 테스트는 우리가 준 bounds 만 단언했다). 창 **안** 제자리
+        //   (x=0,y=0)에서 창 콘텐츠 크기로 키운다 — DOM 단계 몇 초 동안 Flow 뷰가 앱 UI 를 덮고 finally 가 레이아웃으로 되돌린다.
+        const mainWindow = deps.getMainWindow()
+        const size = computeInPlaceBounds(mainWindow.getContentBounds())
+        flowView.setBounds(size)
+        // M2-LIVE N1: 제자리 확장 직후 입력 방패 — 뷰가 사용자 위에 있는 동안은 언제나 방패가 있다.
+        try { shield = (typeof deps.createInputShield === 'function' && deps.createInputShield()) || null } catch (_e) { shield = null; console.warn(`${tag} input shield failed — continuing without it`) }
+        await sleep(300)
+        const why = (!startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)) ? 'hidden' : 'narrow'
+        console.log(`${tag} view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} in-place${shield ? ' shielded' : ''}`)
+      }
       const run = fn(ctl)
       run.catch(() => {})   // 워치독이 이긴 뒤의 zombie reject 는 unhandled 가 되면 안 된다(race 는 따로 구독한다)
+      lastDomStage = run.then(() => {}, () => {})   // M2-CLOSE O2: 다음 단계가 기다릴 대상(어느 쪽으로 끝나든 settle)
       const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(DOM_STAGE_TIMEOUT), DOM_STAGE_TIMEOUT_MS) })
       const result = await Promise.race([run, timeout])
       if (result !== DOM_STAGE_TIMEOUT) return result
@@ -192,6 +219,7 @@ export function createFlowAngular(deps) {
       if (viewport || !hadFocus) {
         try { deps.getMainWindow()?.webContents?.focus() } catch (_e) { /* 창이 이미 없을 수 있다 */ }
       }
+      setKeyLock(false)   // M2-CLOSE O1: 포커스를 돌려준 뒤 마지막에 — 그 사이의 키 입력도 Flow 로 가지 않는다
     }
   }
 
@@ -266,8 +294,9 @@ export function createFlowAngular(deps) {
     let click = null
     // DOM 단계 — 자동화 뷰포트·포커스 반환 래퍼 안에서(조기 반환은 결과 객체로, 클릭까지 갔으면 null).
     const early = await withAutomationViewport(flowView, '[Flow API] [Angular]', async (ctl) => {
+      const isAborted = () => ctl.aborted   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
       // 1. 에이전트 OFF (ON 이면 페이지가 streamChat 로 보내 캡처가 안 잡힌다)
-      const agent = await deps.ensureAgentOff()
+      const agent = await deps.ensureAgentOff({ isAborted })
       if (!agent?.success) return kindResult('flow-agent-off-failed')
 
       // 2. 캡처 주입 설치 확인 — 없으면 주입 → 재프로브
@@ -284,7 +313,7 @@ export function createFlowAngular(deps) {
 
       // 3. 설정 패널 — 모드(이미지)·비율·개수, 모델은 검증만
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 워치독이 이미 닫았다(좀비)
-      const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
+      const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted })
       if (!settings.ok) {
         await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps, ...(settings.shape ? { shape: settings.shape } : {}) })
         return { success: false, errorKind: settings.kind || 'flow-settings-not-applied', error: settings.kind || 'flow-settings-not-applied', ...(settings.params ? { errorParams: settings.params } : {}) }
@@ -298,6 +327,7 @@ export function createFlowAngular(deps) {
       if (!focus?.success) return kindResult('text-injection-failed')
       await sleep(120)
       let readBack = null
+      try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
       try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
       try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
       const normPrompt = normalizePrompt(prompt)
@@ -330,13 +360,17 @@ export function createFlowAngular(deps) {
     if (early) return early
     // M2-R1 F4(b): mouseDown 이 나가기 전의 실패만 "클릭 없음"(gen 삭제). dispatched 면 페이지가 제출했을 수 있다 — gen 을 armed 로 두고
     //   waiter/마감 경로로(늦은 send 는 바인딩, 없으면 not-sent).
-    if (!click?.success && !click?.dispatched) {
+    // M2-CLOSE O1(A1): 클릭 전에 이미 send 가 바인딩됐거나 완료된 gen(사용자의 Enter 등 페이지가 먼저 제출)은 디스패치된 것으로 본다 — 앱의 클릭이 disabled 버튼을
+    //   미디스패치로 거부해도 gen 을 지우지 않고 post-click 경로로(과금된 결과를 버리지 않는다).
+    const boundBeforeClick = gen.doc != null || gen.completed
+    if (!click?.success && !click?.dispatched && !boundBeforeClick) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
       deps.pendingGenerations.delete(generationId)
       return kindResult('generate-button-click-failed')
     }
     const dispatchedOnly = !click?.success
-    if (dispatchedOnly) console.warn(`[Flow API] [Angular] click failed after dispatch gen=${generationId.slice(-8)} — keeping gen armed`)
+    if (dispatchedOnly && !click?.dispatched) console.warn(`[Flow API] [Angular] click refused but the gen is already bound or completed gen=${generationId.slice(-8)} — keeping it`)
+    else if (dispatchedOnly) console.warn(`[Flow API] [Angular] click failed after dispatch gen=${generationId.slice(-8)} — keeping gen armed`)
     // M2-R1 F4(c): send 마감(15s)은 클릭이 돌아온 **뒤**에 arm — 클릭은 뮤텍스 대기 포함 30s 까지 걸릴 수 있어 클릭 전에 arm 하면 정상 send 가
     //   마감에 잘린다. 클릭 중 이미 send 가 바인딩됐거나 완료됐으면 재arm 하지 않는다.
     if (!gen.completed && gen.sentAt == null) armDeadline(gen, 'send')
@@ -445,8 +479,9 @@ export function createFlowAngular(deps) {
     let click = null
     let creditsBefore = null
     const early = await withAutomationViewport(flowView, '[Flow Video T2V] [Angular]', async (ctl) => {
+      const isAborted = () => ctl.aborted   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
       // 1. 에이전트 OFF
-      const agent = await deps.ensureAgentOff()
+      const agent = await deps.ensureAgentOff({ isAborted })
       if (!agent?.success) return kindResult('flow-agent-off-failed')
 
       // 2. 캡처 주입 설치 확인 — 없으면 주입 → 재프로브
@@ -482,7 +517,7 @@ export function createFlowAngular(deps) {
 
       // 4. 설정 패널 — video · ratio · count 1 · model · duration · resolution({360p,720p} 밖은 클릭 전 거부)
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 워치독이 이미 닫았다(좀비)
-      const settings = await applyComposerSettings(flowView, { mode: 'video', ratio: aspectRatio, count: 1, model, duration: want.duration, resolution: want.resolution }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
+      const settings = await applyComposerSettings(flowView, { mode: 'video', ratio: aspectRatio, count: 1, model, duration: want.duration, resolution: want.resolution }, { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted })
       if (!settings.ok) {
         await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps, ...(settings.shape ? { shape: settings.shape } : {}) })
         // M2-R2 G4(B2): flow-settings-not-applied 는 params 가 {} 라 훅의 F8 서명(kind+params)이 항상 같다 — 드라이버 reason 을 **params 아닌** 필드로 실어
@@ -503,6 +538,7 @@ export function createFlowAngular(deps) {
       if (!focus?.success) return kindResult('text-injection-failed')
       await sleep(120)
       let readBack = null
+      try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
       try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
       try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
       const normPrompt = normalizePrompt(prompt)
@@ -536,12 +572,16 @@ export function createFlowAngular(deps) {
     // M2-R1 F4(b)(A4/B5): mouseDown 이 나가기 전의 실패만 "클릭 없음"(gen 삭제, postClick 없음). dispatched 면 페이지가 제출(과금)했을 수
     //   있다 — gen 을 armed 로 두고 waiter/마감 경로로(늦은 send 는 바인딩, 없으면 not-sent + 크레딧 재판독 → lost 격상). finishVideoGen 이
     //   모든 실패에 postClick:true 를 단다.
-    if (!click?.success && !click?.dispatched) {
+    // M2-CLOSE O1(A1): 클릭 전에 이미 send 가 바인딩됐거나 완료된 gen(사용자의 Enter 등 페이지가 먼저 제출)은 디스패치된 것으로 본다 — 앱의 클릭이 disabled 버튼을
+    //   미디스패치로 거부해도 gen 을 지우지 않는다(지우면 과금된 영상이 고아가 되고 다음 Start 가 또 과금한다).
+    const boundBeforeClick = gen.doc != null || gen.completed
+    if (!click?.success && !click?.dispatched && !boundBeforeClick) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
       deps.pendingGenerations.delete(generationId)
       return kindResult('generate-button-click-failed')
     }
-    if (!click?.success) console.warn(`[Flow Video T2V] [Angular] click failed after dispatch gen=${generationId.slice(-8)} — keeping gen armed (postClick)`)
+    if (!click?.success && !click?.dispatched) console.warn(`[Flow Video T2V] [Angular] click refused but the gen is already bound or completed gen=${generationId.slice(-8)} — keeping it`)
+    else if (!click?.success) console.warn(`[Flow Video T2V] [Angular] click failed after dispatch gen=${generationId.slice(-8)} — keeping gen armed (postClick)`)
     // M2-R1 F4(c)(d): send 마감(15s)은 클릭이 돌아온 **뒤**에 arm — 클릭은 뮤텍스 대기 포함 30s 까지 걸릴 수 있어 클릭 전에 arm 하면 정상 send 가
     //   마감에 잘리고 과금된 영상이 not-sent("다시 시도")로 둔갑한다. 클릭 중 이미 send 가 바인딩됐거나 완료됐으면 재arm 하지 않는다.
     //   not-sent 의 크레딧 재판독은 이 마감이 울린 뒤라 arm 직후가 아니다.

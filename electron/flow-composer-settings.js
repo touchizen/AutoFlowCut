@@ -487,16 +487,34 @@ function formatSteps(steps) {
   return STEP_ORDER.filter((k) => steps && steps[k]).map((k) => `${k}=${steps[k]}`).join(' ')
 }
 
+// M2-CLOSE O2(A2): 워치독이 닫은 뒤의 좀비가 던지는 sentinel — 본체의 exec/tclick 가드가 던지고 applyComposerSettings 가 결과로 바꾼다(페이지엔 더 이상 클릭·exec 없음).
+const DOM_STAGE_ABORTED = Symbol('dom-stage-aborted')
+
 /**
  * main: 설정 트리거 trusted 클릭 → 드라이버 1회(needsTrusted 면 그 라디오만 trusted 클릭 후 1회 더) → 닫힘·요약 검증.
  * @param {{mode:'image'|'video', ratio?, count?, model?, duration?, resolution?}} opts
- * @param {{trustedClickOnFlowView:Function}} deps
+ * @param {{trustedClickOnFlowView:Function, isAborted?:() => boolean}} deps — isAborted(M2-CLOSE O2): 신뢰 클릭·드라이버 exec 마다 먼저 본다(워치독이 닫은 좀비 차단)
  * @returns {{ok:boolean, steps:object, kind?:string, params?:object, reason?:string}}
  */
 export async function applyComposerSettings(flowView, opts, deps) {
+  try {
+    return await applyComposerSettingsBody(flowView, opts, deps)
+  } catch (e) {
+    if (e !== DOM_STAGE_ABORTED) throw e
+    // M2-CLOSE O2: 좀비 — 패널을 닫으려는 클릭도 내지 않는다(닫기도 클릭이다; 다음 항목의 트리거 재시도(N5)가 열린 패널을 처리한다). 결과는 호출자(좀비)가 버린다.
+    const mode = opts && opts.mode === 'video' ? 'video' : 'image'
+    console.warn(`[Flow Settings] ${mode} aborted by the DOM-stage watchdog — no further clicks or driver runs`)
+    return { ok: false, kind: 'flow-settings-not-applied', reason: 'dom-stage-aborted', steps: {} }
+  }
+}
+
+async function applyComposerSettingsBody(flowView, opts, deps) {
   const mode = opts && opts.mode === 'video' ? 'video' : 'image'
   const targets = { mode, ratio: opts?.ratio, count: opts?.count, model: opts?.model, duration: opts?.duration, resolution: opts?.resolution }
-  const exec = (js) => flowView.webContents.executeJavaScript(js, true)
+  // M2-CLOSE O2: 모든 페이지 접촉(exec·신뢰 클릭)은 이 둘을 지난다 — isAborted 면 동기 throw(await 식 안에서 던져 .catch 가 붙기 전에 빠져나온다)
+  const guard = () => { if (typeof deps.isAborted === 'function' && deps.isAborted()) throw DOM_STAGE_ABORTED }
+  const exec = (js) => { guard(); return flowView.webContents.executeJavaScript(js, true) }
+  const tclick = (sel, o) => { guard(); return deps.trustedClickOnFlowView(sel, o) }
   let steps = {}
   const fail = (reason, extra) => {
     console.warn(`[Flow Settings] ${mode} ${formatSteps(steps)} ok=false reason=${reason}`)
@@ -504,17 +522,17 @@ export async function applyComposerSettings(flowView, opts, deps) {
   }
   const summary = await exec(READ_SETTINGS_SUMMARY_JS).catch(() => null)
   if (!summary) return fail('settings-trigger-not-found')
-  const click = await deps.trustedClickOnFlowView(FIND_SETTINGS_TRIGGER_JS, { required: true, step: 'settings-trigger' })
+  const click = await tclick(FIND_SETTINGS_TRIGGER_JS, { required: true, step: 'settings-trigger' })
   if (!click || !click.success) return fail('settings-trigger-click-failed')
   const runDriver = () => exec(SETTINGS_DRIVER_JS(targets)).catch(() => ({ ok: false, reason: 'driver-threw', steps: {}, closed: false }))
   // 실패로 돌아왔는데 패널이 열려 있으면(Escape 무효·needs-trusted 뒤 실패) 트리거를 trusted 재클릭해 닫는다 — 열어 두면
   //   다음 생성의 클릭이 오버레이에 막힌다. 실패 kind 는 그대로(R1#3).
-  const closeLeftOpen = () => deps.trustedClickOnFlowView(FIND_SETTINGS_TRIGGER_JS, { required: false, step: 'settings-trigger-close' })
+  const closeLeftOpen = () => tclick(FIND_SETTINGS_TRIGGER_JS, { required: false, step: 'settings-trigger-close' })
   let r = await runDriver()
   if (r && Array.isArray(r.needsTrusted) && r.needsTrusted.length) {
     const firstSteps = r.steps || {}
     for (const n of r.needsTrusted) {
-      const c = await deps.trustedClickOnFlowView(FIND_RADIO_JS(n.name, n.ligature || n.label), { required: true, step: 'settings-radio' })
+      const c = await tclick(FIND_RADIO_JS(n.name, n.ligature || n.label), { required: true, step: 'settings-radio' })
       if (!c || !c.success) { steps = r.steps || {}; await closeLeftOpen(); return fail('settings-radio-click-failed:' + n.group) }
     }
     r = await runDriver()
@@ -541,7 +559,7 @@ export async function applyComposerSettings(flowView, opts, deps) {
     return Object.assign({ ok: false, kind, reason, steps }, r?.params ? { params: r.params } : {}, r?.shape ? { shape: r.shape } : {})
   }
   if (r.closed === false) {
-    await deps.trustedClickOnFlowView(FIND_SETTINGS_TRIGGER_JS, { required: true, step: 'settings-trigger-close' })
+    await tclick(FIND_SETTINGS_TRIGGER_JS, { required: true, step: 'settings-trigger-close' })
     const stillOpen = await exec(SETTINGS_PANEL_OPEN_JS).catch(() => true)
     if (stillOpen) return fail('panel-not-closed')
   }

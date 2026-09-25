@@ -877,12 +877,15 @@ export function createSharedHelpers(ctx) {
   // Agent 토글을 가릴 수 있는 두 패널(우측 대화"챗" 패널 + "에이전트 설정"(기본값) 패널)을
   //   모두 닫는다(각각 no-op if 없음). 사용자 지정: OFF/ON 전환 시 둘 다 동시에 떠 있을 수 있어
   //   토글 가림 여부와 무관하게 선제적으로 강제 close 한다. (Escape 는 설정 패널을 못 닫아 X 클릭 병행.)
-  async function closeAgentPanels(flowView) {
+  // M2-CLOSE O2: aborted(워치독이 닫은 좀비)면 페이지를 더 만지지 않는다 — 클릭·Escape 앞에서 각각 본다(프로브 exec 사이에 abort 가 올 수 있다).
+  async function closeAgentPanels(flowView, aborted = () => false) {
     // 새 flow.google.com 에는 옛 에이전트 챗/설정 닫기 버튼이 없다 — 있을 때만 trusted 클릭한다. 무조건 클릭하면 매 생성마다
     //   "[TrustedClick] Button not found" 2건과 bounds 왕복(숨은 뷰면 확대/축소 2회)만 남는다(2026-09-24 실기 로그).
     const present = (selector) => flowView.webContents.executeJavaScript(`!!(${selector})`).then(Boolean).catch(() => false)
-    if (await present(AGENT_CHAT_CLOSE_SELECTOR)) await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
-    if (await present(AGENT_SETTINGS_CLOSE_SELECTOR)) await trustedClickOnFlowView(AGENT_SETTINGS_CLOSE_SELECTOR).catch(() => {})
+    if (aborted()) return
+    if (await present(AGENT_CHAT_CLOSE_SELECTOR) && !aborted()) await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
+    if (await present(AGENT_SETTINGS_CLOSE_SELECTOR) && !aborted()) await trustedClickOnFlowView(AGENT_SETTINGS_CLOSE_SELECTOR).catch(() => {})
+    if (aborted()) return
     await flowView.webContents.executeJavaScript(
       `try { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true, composed: true })); } catch (e) {}`
     ).catch(() => {})
@@ -922,19 +925,25 @@ export function createSharedHelpers(ctx) {
     }
   }
 
-  async function ensureAgentOff() {
+  // M2-CLOSE O2(A2): opts.isAborted — flow-angular 의 워치독이 닫은 뒤의 좀비는 토글을 누르지 않는다(다음 항목이 OFF 를 확인한 뒤 칩을 뒤집을 수 있다).
+  //   패널 닫기 클릭·토글 클릭 앞에서 본다. 보고하지 않는 출구(좀비의 잡음 — 결과는 호출자가 버린다). 옛 호출자(인수 없음)는 그대로.
+  async function ensureAgentOff(opts = {}) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'No flowView' }
+    const aborted = () => { try { return typeof opts.isAborted === 'function' && !!opts.isAborted() } catch (_e) { return false } }
+    const abortedExit = () => { console.warn('[Flow API] ensureAgentOff: aborted by the DOM-stage watchdog — no toggle click'); return { success: false, state: 'aborted' } }
     try {
       // 선제적으로 대화창 + "에이전트 설정" 패널을 모두 닫는다(둘 다 떠 있을 수 있음).
-      await closeAgentPanels(flowView)
+      await closeAgentPanels(flowView, aborted)
       let probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       // 그래도 토글이 안 보이면(여전히 가림) 재시도하며 닫는다.
       for (let i = 0; i < 4 && (!probe || !probe.found); i++) {
+        if (aborted()) return abortedExit()
         console.log('[Flow API] ensureAgentOff: toggle hidden — closing covering panel attempt', i + 1)
-        await closeAgentPanels(flowView)
+        await closeAgentPanels(flowView, aborted)
         probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       }
+      if (aborted()) return abortedExit()   // M2-CLOSE O2: 프로브(무한 exec)에 매달렸다 돌아온 좀비 — OFF 여도 성공으로 흘려보내지 않는다(핸들러가 캡처 프로브로 가지 않게)
       if (!probe || !probe.found) {
         console.log('[Flow API] ensureAgentOff: toggle not found (panel close retries exhausted)')
         await reportAgentToggleFailure(flowView, 'ensureAgentOff', 'not_found')
@@ -944,6 +953,7 @@ export function createSharedHelpers(ctx) {
         console.log('[Flow API] ensureAgentOff: already OFF')
         return { success: true, state: 'already_off' }
       }
+      if (aborted()) return abortedExit()   // M2-CLOSE O2: 프로브가 매달렸다 돌아온 좀비
       // ON → Flow 의 토글은 synthetic 클릭(isTrusted:false)을 무시하므로 trusted click 으로 끈다.
       const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR, { required: true, step: 'agent-toggle-click' })
       await new Promise(r => setTimeout(r, 400))

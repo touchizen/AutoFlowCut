@@ -358,12 +358,21 @@ registerVrewIPC(ipcMain)
 //   Flow 뷰가 앱 UI 위에 있는 몇 초 동안 사용자의 클릭이 컴포저(제출 화살표·설정 라디오·미디어 카드)에 닿으면 과금·고아 미디어·잘못된 설정이 된다.
 //   contentView 에 Flow 뷰 **뒤에** 붙여 최상위가 되게 하고 창 콘텐츠 크기로 둔다. 앱의 신뢰 클릭은 flowView.webContents.sendInputEvent 라
 //   OS 히트테스트를 거치지 않아 방패 아래로 그대로 통한다. 페이지 스크립트 없음(sandbox, preload 없음, about:blank). remove() 가 떼고 닫는다.
+// M2-CLOSE O1(A1): DOM 단계(flow-angular withAutomationViewport) 동안 사용자의 **키 입력**을 Flow 뷰에 넣지 않는다 — 방패(N1)는 포인터만 막고, 편집기 주입이
+//   Flow 뷰에 OS 포커스를 주므로(넓은 뷰든 제자리든) 재판독~제출 클릭 사이의 타이핑이 프롬프트에 붙어 그대로 과금되고 Enter 는 페이지가 제출해 앱의 클릭이 빈손이 됐다.
+//   makeFlowView 의 before-input-event 가 이 플래그를 보고 preventDefault 한다. 앱의 Angular 자동화는 executeJavaScript 와 **마우스** sendInputEvent(신뢰 클릭)뿐이고
+//   Escape 는 페이지 안 DOM 이벤트라 잠금이 자동화를 막지 않는다(키 sendInputEvent 는 옛 labs.google 멘션 경로에만 있고 Angular 에선 미지원으로 거부된다 — mainInputShieldWiring 핀).
+let automationKeyLock = false
+
 function makeInputShield() {
   const win = mainWindow
   if (!win || !win.contentView) return null
   const shield = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } })
   shield.setBackgroundColor('#00000000')
   shield.webContents.loadURL('about:blank').catch(() => {})
+  // M2-CLOSE O5(A5): 사용자가 방패를 누르면 방패 webContents 가 OS 포커스를 가져간다 — 캐럿 클릭~주입 사이에 포커스가 빠지면 execCommand 주입이 안 먹어 재판독 불일치
+  //   (text-injection-failed, 항목은 재시도로 유실). 포커스를 받는 즉시 Flow 뷰로 돌려준다(핸들러도 주입 직전에 focus 를 다시 건다).
+  shield.webContents.on('focus', () => { try { modeController.getFlowView()?.webContents.focus() } catch (_e) { /* 뷰가 이미 없을 수 있다 */ } })
   win.contentView.addChildView(shield)
   const { width, height } = win.getContentBounds()
   shield.setBounds({ x: 0, y: 0, width, height })
@@ -387,6 +396,9 @@ function makeFlowView() {
       preload: path.join(__dirname, 'flow-preload.cjs'),
     },
   })
+
+  // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금(위 automationKeyLock — flowAPIDeps.setAutomationKeyLock 이 켜고 끈다)
+  view.webContents.on('before-input-event', (e) => { if (automationKeyLock) e.preventDefault() })
 
   // 페이지 console 로그를 main 콘솔에 forward (우리 prefix만 filtering)
   view.webContents.on('console-message', (_event, _level, message) => {
@@ -990,6 +1002,7 @@ const flowAPIDeps = {
   getCurrentMode: modeController.getCurrentMode,
   getMainWindow: () => mainWindow,
   createInputShield: makeInputShield,   // M2-LIVE N1: 제자리 자동화 뷰포트 동안의 입력 방패
+  setAutomationKeyLock: (on) => { automationKeyLock = !!on },   // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금
   // Shared helpers
   ...helpers,
   // Inject state helpers

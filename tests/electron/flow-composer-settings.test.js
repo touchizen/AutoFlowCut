@@ -261,6 +261,21 @@ describe('applyComposerSettings — main 측(트리거 trusted 클릭 → 드라
     expect(String(h.trustedClickOnFlowView.mock.calls[1][0])).toContain('mat-button-toggle-group-27')
   })
 
+  // M2-CLOSE O2(A2): deps.isAborted(워치독이 닫은 뒤의 좀비)는 신뢰 클릭·드라이버 exec 마다 먼저 본다 — 더 이상 페이지를 만지지 않고 dom-stage-aborted 로 돌아온다.
+  it('isAborted 가 처음부터 true 면 요약 exec·트리거 클릭·드라이버 없이 dom-stage-aborted (M2-CLOSE O2)', async () => {
+    const h = harness({ driver: { ok: true, closed: true, steps: {} } })
+    const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '9:16' }, { ...h.deps, isAborted: () => true })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'dom-stage-aborted' })
+    expect(h.calls).toEqual([])
+  })
+  it('첫 드라이버 실행이 needs-trusted 로 돌아온 사이 isAborted 가 true 가 되면 라디오 신뢰 클릭·재실행·닫기 클릭 없이 dom-stage-aborted (M2-CLOSE O2)', async () => {
+    let aborted = false
+    const h = harness({ driver: () => { aborted = true; return { ok: false, needsTrusted: [{ group: 'ratio', name: 'g', label: '9:16', ligature: 'crop_9_16' }], steps: {} } } })
+    const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '9:16' }, { ...h.deps, isAborted: () => aborted })
+    expect(r).toMatchObject({ ok: false, reason: 'dom-stage-aborted' })
+    expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver'])
+  })
+
   it('kind/params 실패는 그대로 전달(모델 불일치), 요약 재검증 없음', async () => {
     const h = harness({ driver: { ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, steps: { mode: 'already' }, closed: true } })
     const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '9:16', model: 'Nano Banana Pro' }, h.deps)
@@ -910,5 +925,22 @@ describe('M2-LIVE N2 — 없는 길이·해상도 그룹은 Veo 에서만, 없�
       const steps = { ...VEO_STEPS, duration: 'already(6)', resolution: 'already(720p)' }
       expect(await mainRun(steps, '동영상 · 720p · 6초 x1')).toEqual({ ok: true, steps })
     })
+  })
+})
+
+// M2-CLOSE O6(B3): Omni → Veo 모델 전환은 실기(결과 3·4)로만 통과했다 — 가짜 Angular 에 Veo 선택이 길이·해상도 그룹을 **없애는** 옵션이 없어 어떤 N2 핀도 그 경로를 안 밟았다.
+//   상한 안정 판정(마지막 3스캔의 패널 서명이 같고 클릭 전 서명에서 벗어남)에 "클릭 전엔 그룹이 있었는데 지금 없으면 미안정" 을 덧붙인 뮤턴트가 전체 스위트를 통과하면서
+//   모든 Omni→Veo 전환을 settings-not-settled 로 만들었다. 이제 동기(0ms)·늦은(300ms) 제거 둘 다 fixed(8)·fixed(720p) 로 ok, 길이·해상도 클릭 없음.
+describe('M2-CLOSE O6 — Omni → Veo 전환: 모델 항목 클릭이 길이·해상도 그룹을 없앤다 → fixed(8)·fixed(720p), 클릭 없음', () => {
+  const fakeSleep = { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) }
+  afterEach(() => { vi.useRealTimers() })
+  it.each([0, 300])('Omni 패널 → 목표 Veo 3.1 - Fast 8초/720p, 그룹 제거 %ims 뒤 → {ok, model:clicked, duration:fixed(8), resolution:fixed(720p)}', async (afterMs) => {
+    vi.useFakeTimers()
+    const doc = mount(videoPage())
+    const log = installFakeAngular(doc, { modelSelectRemoveGroups: { afterMs } })
+    const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', count: 1, model: 'Veo 3.1 - Fast', duration: 8, resolution: '720p' }, fakeSleep)
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { model: 'clicked', duration: 'fixed(8)', resolution: 'fixed(720p)', ratio: 'already(crop_16_9)', count: 'already(x1)', input: 'material' } })
+    expect(log).toEqual(['model-trigger', 'model:veo 3.1 - fast', 'keydown:Escape:27'])
+    expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
   })
 })

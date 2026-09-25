@@ -541,9 +541,9 @@ curl http://127.0.0.1:3210/api/batch-status
               schema: {
                 type: 'object',
                 properties: {
-                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "auto" (씬별 style_tag 매칭 명시) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback.', example: 'preset:korean-ani' },
-                  force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만).', example: true },
-                  mode: { type: 'string', enum: ['video', 'image'], description: "선택. 'video'면 UI 탭과 무관하게 텍스트→영상(T2V) 배치(선택된 영상 씬만), 'image'면 이미지 배치. 생략 시 현재 UI 탭." },
+                  styleId: { type: 'string', maxLength: 128, description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "auto" (씬별 style_tag 매칭 명시) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback. 문자열이 아니거나 128자를 넘으면 400.', example: 'preset:korean-ani' },
+                  force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만). boolean 이 아니면("false"·0 포함) 400.', example: true },
+                  mode: { type: 'string', enum: ['video', 'image'], description: "선택. 'video'면 UI 탭과 무관하게 텍스트→영상(T2V) 배치(선택된 영상 씬만), 'image'면 이미지 배치. 생략 시 현재 UI 탭. 본문이 비어 있지 않은데 JSON 객체가 아니면 400." },
                 },
               },
             },

@@ -9,6 +9,7 @@ import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
 import { failBoundUnfinished } from '../../../electron/flow-rpc-router.js'
+import { _resetDomStageForTests } from '../../../electron/ipc/flow-angular.js'   // M2-CLOSE O2: DOM 단계 직렬화 기록은 모듈 상태
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
 import { setModalVisible } from '../../../electron/ipc/layout.js'
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../../fixtures/flow-batchexecute-samples.js'
@@ -36,6 +37,7 @@ function harness(o = {}) {
   let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
   const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
   const agentSeq = Array.isArray(o.agent) ? [...o.agent] : null
+  const summarySeq = Array.isArray(o.summary) ? [...o.summary] : null   // M2-CLOSE O3: 요약 판독 순서(트리거 전 · 닫힌 뒤) — 마지막 값이 남는다
   let injectedPrompt = null
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
@@ -60,7 +62,7 @@ function harness(o = {}) {
     }
     if (s.includes('batchexecute capture installed')) { trace.push('capture-inject'); return undefined }
     if (s.startsWith('!!window.__autoflowcut_rpc_capture__')) { trace.push('capture-probe'); return captureFlags.length > 1 ? captureFlags.shift() : captureFlags[0] }
-    if (s.includes('settings-summary')) { trace.push('summary'); return o.summary ?? { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_16_9'] } }
+    if (s.includes('settings-summary')) { trace.push('summary'); if (summarySeq) return summarySeq.length > 1 ? summarySeq.shift() : summarySeq[0]; return o.summary ?? { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_16_9'] } }
     if (s.includes("querySelectorAll('p')")) { trace.push('read-text'); return o.editorText !== undefined ? o.editorText : injectedPrompt }
     if (s.includes('aria-disabled')) { trace.push('submit-enabled'); return o.submitEnabled ?? true }
     if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
@@ -107,6 +109,9 @@ function harness(o = {}) {
     configureFlowMode: vi.fn(async () => ({ success: true })), setFlowPageInject: vi.fn(async () => ({ success: true })), clearFlowPageInject: vi.fn(async () => {}),
     applyAgentDefaults: vi.fn(async () => ({ success: true })), getRecaptchaToken: vi.fn(async () => null),
   }
+  // M2-CLOSE O1/O3: main 의 createInputShield · setAutomationKeyLock 흉내 — 생성/제거·잠금/해제 시각을 trace 에(영상 하네스와 같은 꼴)
+  const createInputShield = vi.fn(() => { trace.push('shield:on'); return { remove: vi.fn(() => { trace.push('shield:off') }) } })
+  const setAutomationKeyLock = vi.fn((on) => { trace.push(on ? 'keylock:on' : 'keylock:off') })
   const ipcMain = makeIpcMain()
   registerFlowAPIIPC(ipcMain, {
     getFlowView: () => flowView,
@@ -124,9 +129,11 @@ function harness(o = {}) {
     ...legacy,                  // R2#4: 옛 deps 스파이는 실제 헬퍼 **뒤에** — 앞에 두면 실제 configureFlowMode 가 스파이를 덮어 "미호출" 단언이 공허해진다
     trustedClickOnFlowView,     // 클릭만 가짜 — 제출 클릭이 페이지 이벤트를 라우터로 흘린다
     sessionFetch,
+    createInputShield,          // M2-CLOSE O3: 제자리 뷰포트 동안의 입력 방패(가짜)
+    setAutomationKeyLock,       // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금(가짜)
   })
   const generate = (p = {}) => ipcMain.invoke('flow:generate-image', { prompt: PROMPT, aspectRatio: '16:9', model: 'Nano Banana 2', projectId: PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p })
-  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow }
+  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, createInputShield, setAutomationKeyLock }
 }
 
 /** 가짜 시계에서 핸들러 promise 를 굴린다(ensureAgentOff 의 350ms sleep 등). */
@@ -139,6 +146,7 @@ async function settle(promise, maxMs = 5000) {
 
 let logSpy, warnSpy, errSpy
 beforeEach(() => {
+  _resetDomStageForTests()   // M2-CLOSE O2: 앞 테스트가 남긴 좀비(영영 미해결 드라이버)가 다음 테스트의 단계를 막지 않게
   vi.useFakeTimers({ now: NOW_S * 1000 })
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -550,5 +558,112 @@ describe('flow:generate-image (angular) — 숨은 뷰의 원복은 스냅샷이
     const t = h.trace
     expect(t.filter((x) => x.startsWith('bounds:')).at(-1)).toBe('bounds:637x800')
     expect(t.lastIndexOf('bounds:637x800')).toBeGreaterThan(idx(t, 'click:compose-submit'))
+  })
+})
+
+// M2-CLOSE O1(A1): 이미지도 같은 래퍼 — DOM 단계 동안 키 입력 잠금(진입에 켜고 같은 finally 에서 끈다), 바인딩·완료된 gen 의 미디스패치 클릭 실패는 post-click 경로.
+describe('flow:generate-image (angular) — DOM 단계의 키 입력 잠금 · 바인딩된 gen 의 클릭 실패 (M2-CLOSE O1)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  const at = (t, tag) => t.findIndex((x) => x === tag)
+
+  it('좁은 뷰·넓은 뷰 둘 다: 잠금은 에이전트 프로브 전에 켜지고 제출 클릭 뒤 한 번 꺼진다', async () => {
+    for (const o of [{ bounds: NARROW }, {}]) {
+      const h = harness(o)
+      expect((await settle(h.generate())).success).toBe(true)
+      expect(at(h.trace, 'keylock:on')).toBeLessThan(idx(h.trace, 'agent-probe'))
+      expect(at(h.trace, 'keylock:off')).toBeGreaterThan(idx(h.trace, 'click:compose-submit'))
+      expect(h.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+    }
+  })
+
+  it('조기 반환(설정 실패)·throw(편집기 클릭 reject)·워치독(드라이버 매달림 120s) 전부 잠금을 정확히 한 번 푼다', async () => {
+    const early = harness({ bounds: NARROW, settings: { ok: false, kind: 'flow-settings-not-applied', reason: 'input-mode-not-material', steps: {} } })
+    expect((await settle(early.generate())).errorKind).toBe('flow-settings-not-applied')
+    expect(early.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+    const thrown = harness({ bounds: NARROW })
+    thrown.trustedClickOnFlowView.mockImplementation(async (_sel, opts) => { thrown.trace.push('click:' + (opts?.step || '?')); if (opts?.step === 'compose-editor') throw new Error('boom'); return { success: true } })
+    expect(await settle(thrown.generate().catch(() => 'threw'))).toBe('threw')
+    expect(thrown.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+    const hung = harness({ bounds: NARROW, settings: new Promise(() => {}) })
+    const p = hung.generate()
+    await vi.advanceTimersByTimeAsync(119000)
+    expect(hung.trace).not.toContain('keylock:off')
+    expect(await settle(p, 5000)).toMatchObject({ success: false, errorKind: 'flow-settings-not-applied', reason: 'dom-stage-timeout' })
+    expect(hung.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+  })
+
+  it('클릭 전에 send 가 바인딩된 gen(사용자의 Enter) → 미디스패치 클릭 실패에도 gen 을 지우지 않고 loadend 로 images; 완료된 gen 도 같다; 둘 다 아니면 click-failed', async () => {
+    const bound = harness({ onSubmit: (page) => { page.send(); setTimeout(() => page.loadend(), 2000) }, clickResult: { success: false, error: 'Target not at point (disabled)' } })
+    expect(await settle(bound.generate(), 10000)).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
+    expect(bound.pendingGenerations.size).toBe(0)
+    const done = harness({ clickResult: { success: false, error: 'Target not at point (disabled)' } })
+    expect(await settle(done.generate())).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
+    const none = harness({ onSubmit: null, clickResult: { success: false, error: 'Target not at point (other)' } })
+    expect(await settle(none.generate())).toMatchObject({ success: false, errorKind: 'generate-button-click-failed' })
+    expect(none.pendingGenerations.size).toBe(0)
+  })
+})
+
+// M2-CLOSE O3(B1/A3): 이미지 하네스엔 방패·워치독 핀이 하나도 없었다 — clickStarted 와 세 체크포인트 전부 지워도 초록. 워치독이 제출 클릭 중에 울리면(클릭은 30s + 뮤텍스)
+//   pre-click dom-stage-timeout 으로 돌아오는데 페이지는 제출·과금했고 gen 은 send 마감 없이 맵에 남아 배치가 같은 씬을 또 과금한다. 영상 스위트와 같은 핀을 이미지에도 둔다.
+describe('flow:generate-image (angular) — 워치독 · 좀비 · 방패 (M2-CLOSE O3)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  const at = (t, tag) => t.findIndex((x) => x === tag)
+
+  it('(b) 드라이버가 영영 매달리면 120s 에 같은 finally 로 방패 제거·레이아웃 복원 후 클릭 전 dom-stage-timeout — 제출 없음·맵 0', async () => {
+    const h = harness({ bounds: NARROW, settings: new Promise(() => {}) })
+    const p = h.generate()
+    await vi.advanceTimersByTimeAsync(119000)
+    expect(h.trace).not.toContain('shield:off')
+    const r = await settle(p, 5000)
+    expect(r).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'dom-stage-timeout' })
+    expect(at(h.trace, 'shield:off')).toBeGreaterThan(at(h.trace, 'shield:on'))
+    expect(h.flowView.getBounds()).toEqual({ x: 0, y: 0, width: 637, height: 800 })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/DOM stage timed out/)
+  })
+
+  it('(a) 제출 클릭이 이미 나간 뒤(클릭 125s)에 120s 가 지나면 timeout 이 아니라 정상 제출 경로(늦은 loadend → images) — 방패는 클릭 뒤 제거', async () => {
+    const h = harness({ bounds: NARROW, onSubmit: async (page) => { await new Promise((r) => setTimeout(r, 125000)); page.send(); page.loadend() } })
+    const r = await settle(h.generate(), 140000)
+    expect(r).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
+    expect(logged()).not.toMatch(/dom-stage-timeout|DOM stage timed out/)
+    expect(at(h.trace, 'shield:off')).toBeGreaterThan(idx(h.trace, 'click:compose-submit'))
+  })
+
+  // 매달리는 자리는 각 체크포인트 **직전**의 exec — 그 뒤의 것(드라이버 안)은 O2 의 isAborted 가드가 먼저 자른다. 체크포인트 앞에서 멈춘 좀비는 applyComposerSettings 를
+  //   부르지도 않으므로 좀비의 settings:dom-stage-aborted 진단 보고도 없다(잡음 없음).
+  const SUMMARY = { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_16_9'] }
+  it.each([
+    ['에이전트 프로브(설정 전 체크포인트)', () => ({ agent: new Promise((r) => setTimeout(() => r({ found: true, on: false }), 121000)) }), ['settings-driver', 'focus', 'click:compose-editor', 'click:compose-submit']],
+    ['캡처 플래그 프로브(설정 전 체크포인트)', () => ({ captureFlag: [new Promise((r) => setTimeout(() => r(true), 121000))] }), ['settings-driver', 'focus', 'click:compose-editor', 'click:compose-submit']],
+    ['설정 드라이버(O2 가드가 닫힌 요약 판독 앞에서 자른다)', () => ({ settings: new Promise((r) => setTimeout(() => r({ ok: true, closed: true, steps: {} }), 121000)) }), ['focus', 'click:compose-editor', 'click:compose-submit']],
+    ['닫힌 요약 재판독(편집기 전 체크포인트)', () => ({ summary: [SUMMARY, new Promise((r) => setTimeout(() => r(SUMMARY), 121000))] }), ['focus', 'click:compose-editor', 'click:compose-submit']],
+    ['제출 가능 프로브(arm 전 체크포인트)', () => ({ submitEnabled: new Promise((r) => setTimeout(() => r(true), 121000)) }), ['click:compose-submit']],
+    ['편집기 재판독(arm 전 체크포인트)', () => ({ editorText: new Promise((r) => setTimeout(() => r(PROMPT), 121000)) }), ['click:compose-submit']],
+  ])('(c) %s 에 매달렸다 121s 에 풀린 좀비 → 그 뒤 단계 없음·arm 없음·맵 0·shield:off 1회', async (_n, mk, absent) => {
+    const h = harness({ bounds: NARROW, ...mk() })
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    await vi.advanceTimersByTimeAsync(10000)
+    for (const tag of absent) expect(h.trace, tag).not.toContain(tag)
+    if (absent.includes('settings-driver')) expect(h.onDomFailure.mock.calls.map((c) => c[0])).not.toContain('settings:dom-stage-aborted')
+    expect(h.trace.filter((x) => x.startsWith('armed:'))).toEqual([])
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(h.trace.filter((x) => x === 'shield:off')).toHaveLength(1)
+  })
+})
+
+// M2-CLOSE O5(A5): 이미지도 같다 — 주입 exec 직전에 flowView.webContents.focus() 를 다시 건다.
+describe('flow:generate-image (angular) — 주입 직전 포커스 재확보 (M2-CLOSE O5)', () => {
+  it('SET_EDITOR_TEXT_JS 바로 앞의 trace 는 focus 다(편집기 클릭 뒤 두 번째 focus)', async () => {
+    const h = harness({ bounds: { x: 0, y: 0, width: 597, height: 872 } })
+    expect((await settle(h.generate())).success).toBe(true)
+    const t = h.trace
+    const inject = t.indexOf('set-text:visible')
+    expect(inject).toBeGreaterThan(0)
+    expect(t[inject - 1]).toBe('focus')
+    expect(t.filter((x) => x === 'focus')).toHaveLength(2)
+    expect(t.lastIndexOf('focus')).toBeGreaterThan(idx(t, 'click:compose-editor'))
   })
 })

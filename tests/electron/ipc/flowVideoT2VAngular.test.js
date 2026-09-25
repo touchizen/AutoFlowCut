@@ -12,6 +12,7 @@ import { registerVideoIPC } from '../../../electron/ipc/video.js'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
 import { failBoundUnfinished, _resetUnboundCloseRecordsForTests } from '../../../electron/flow-rpc-router.js'
+import { _resetDomStageForTests } from '../../../electron/ipc/flow-angular.js'   // M2-CLOSE O2: DOM 단계 직렬화 기록은 모듈 상태
 import { setLayoutDragging } from '../../../electron/ipc/layout.js'   // M2-LIVE N1: 드래그 중 진입
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
 import { isQuotaExhaustedError } from '../../../src/utils/quotaStop.js'
@@ -43,6 +44,7 @@ function harness(o = {}) {
   let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
   const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
   const agentSeq = Array.isArray(o.agent) ? [...o.agent] : null
+  const summarySeq = Array.isArray(o.summary) ? [...o.summary] : null   // M2-CLOSE O3: 요약 판독 순서(트리거 전 · 닫힌 뒤) — 마지막 값이 남는다
   const credits = Array.isArray(o.credits) ? [...o.credits] : [1050]
   let injectedPrompt = null
   let settingsTargets = null
@@ -81,7 +83,7 @@ function harness(o = {}) {
     }
     if (s.includes('batchexecute capture installed')) { trace.push('capture-inject'); return undefined }
     if (s.startsWith('!!window.__autoflowcut_rpc_capture__')) { trace.push('capture-probe'); return captureFlags.length > 1 ? captureFlags.shift() : captureFlags[0] }
-    if (s.includes('settings-summary')) { trace.push('summary'); return o.summary ?? { text: '동영상 · 720p · 6초 x1', ligatures: ['crop_16_9'] } }
+    if (s.includes('settings-summary')) { trace.push('summary'); if (summarySeq) return summarySeq.length > 1 ? summarySeq.shift() : summarySeq[0]; return o.summary ?? { text: '동영상 · 720p · 6초 x1', ligatures: ['crop_16_9'] } }
     if (s.includes("querySelectorAll('p')")) { trace.push('read-text'); return o.editorText !== undefined ? o.editorText : injectedPrompt }
     if (s.includes('aria-disabled')) { trace.push('submit-enabled'); return o.submitEnabled ?? true }
     if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
@@ -120,6 +122,8 @@ function harness(o = {}) {
   const sessionFetch = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, headers: { get: () => 'video/mp4' } }))
   // M2-LIVE N1: main 의 createInputShield 흉내 — 생성/제거를 trace 에 남긴다(shield:on / shield:off)
   const createInputShield = vi.fn(() => { trace.push('shield:on'); return { remove: vi.fn(() => { trace.push('shield:off') }) } })
+  // M2-CLOSE O1: main 의 setAutomationKeyLock 흉내 — 잠금/해제 시각을 trace 에(keylock:on / keylock:off)
+  const setAutomationKeyLock = vi.fn((on) => { trace.push(on ? 'keylock:on' : 'keylock:off') })
   const legacy = {
     configureFlowMode: vi.fn(async () => ({ success: true })), switchFlowToVideoMode: vi.fn(async () => ({ success: true })),
     setFlowPageInject: vi.fn(async () => ({ success: true })), clearFlowPageInject: vi.fn(async () => {}),
@@ -141,11 +145,12 @@ function harness(o = {}) {
     trustedClickOnFlowView,     // 클릭만 가짜 — 제출 클릭이 페이지 이벤트를 라우터로 흘린다
     sessionFetch,
     createInputShield,          // M2-LIVE N1: 제자리 뷰포트 동안의 입력 방패(가짜 — trace 로 생성·제거 시각을 본다)
+    setAutomationKeyLock,       // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금(가짜)
   })
   const generate = (p = {}) => ipcMain.invoke('flow:generate-video-t2v', {
     token: null, prompt: PROMPT, projectId: PROJECT, model: 'Omni Flash', aspectRatio: '16:9', duration: 6, resolution: '720p', videoBatchCount: 1, seed: null, segments: null, ...p,
   })
-  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, targets: () => settingsTargets, creditReadsAt, createInputShield }
+  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, targets: () => settingsTargets, creditReadsAt, createInputShield, setAutomationKeyLock }
 }
 
 /** 가짜 시계에서 핸들러 promise 를 굴린다(ensureAgentOff 의 350ms sleep · 마감 타이머 등). */
@@ -159,6 +164,7 @@ async function settle(promise, maxMs = 5000) {
 let logSpy, warnSpy, errSpy
 beforeEach(() => {
   _resetUnboundCloseRecordsForTests()   // M2-R8 M4: 라우터의 "최근 앱 닫힘" 기록은 모듈 상태
+  _resetDomStageForTests()              // M2-CLOSE O2: 앞 테스트가 남긴 좀비(영영 미해결 드라이버)가 다음 테스트의 단계를 막지 않게
   vi.useFakeTimers({ now: NOW_S * 1000 })
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -755,5 +761,183 @@ describe('flow:generate-video-t2v (angular) — 제자리 뷰포트의 입력 �
     expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
     expect(logged()).not.toMatch(/dom-stage-timeout|DOM stage timed out/)
     expect(at(h.trace, 'shield:off')).toBeGreaterThan(idx(h.trace, 'click:compose-submit'))
+  })
+})
+
+// M2-CLOSE O1(A1): 방패는 포인터만 막았다 — 편집기 단계가 Flow 뷰에 OS 포커스를 주므로(넓은 뷰든 제자리든) DOM 단계 동안 사용자의 타이핑이 프롬프트에 붙고 Enter 가 제출했다.
+//   main 의 before-input-event 잠금(deps.setAutomationKeyLock)을 래퍼 진입에 켜고 같은 finally 에서 끈다(정상·조기 반환·throw·워치독 전부). 그리고 클릭 전에 이미 send 가
+//   바인딩됐거나 완료된 gen(사용자의 Enter 가 제출한 경우)은 미디스패치 클릭 실패로 지우지 않고 post-click 경로로 판정한다 — 과금된 영상을 버리지 않는다.
+describe('flow:generate-video-t2v (angular) — DOM 단계의 키 입력 잠금 · 바인딩된 gen 의 클릭 실패 (M2-CLOSE O1)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  const at = (t, tag) => t.findIndex((x) => x === tag)
+  const count = (t, tag) => t.filter((x) => x === tag).length
+
+  it('좁은 뷰: 잠금은 진입(에이전트 프로브 전)에 켜지고 제출 클릭 뒤 finally 에서 한 번 꺼진다', async () => {
+    const h = harness({ bounds: NARROW })
+    expect((await settle(h.generate())).success).toBe(true)
+    const t = h.trace
+    expect(count(t, 'keylock:on')).toBe(1)
+    expect(count(t, 'keylock:off')).toBe(1)
+    expect(at(t, 'keylock:on')).toBeLessThan(idx(t, 'agent-probe'))
+    expect(at(t, 'keylock:off')).toBeGreaterThan(idx(t, 'click:compose-submit'))
+    expect(h.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+  })
+
+  it('넓은 보이는 뷰(957×1022)도 잠근다 — 방패는 없어도 편집기가 OS 포커스를 받는다', async () => {
+    const h = harness()
+    expect((await settle(h.generate())).success).toBe(true)
+    expect(h.trace).not.toContain('shield:on')
+    expect(at(h.trace, 'keylock:on')).toBeLessThan(idx(h.trace, 'agent-probe'))
+    expect(at(h.trace, 'keylock:off')).toBeGreaterThan(idx(h.trace, 'click:compose-submit'))
+    expect(h.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+  })
+
+  it('조기 반환(설정 실패)·throw(편집기 클릭 reject)·워치독(120s) 전부 잠금을 정확히 한 번 푼다 — 워치독은 방패 제거 뒤', async () => {
+    const early = harness({ bounds: NARROW, settings: { ok: false, kind: 'flow-settings-not-applied', reason: 'input-mode-not-material', steps: {} } })
+    expect((await settle(early.generate())).reason).toBe('input-mode-not-material')
+    expect(early.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+    const thrown = harness({ bounds: NARROW })
+    thrown.trustedClickOnFlowView.mockImplementation(async (_sel, opts) => { thrown.trace.push('click:' + (opts?.step || '?')); if (opts?.step === 'compose-editor') throw new Error('boom'); return { success: true } })
+    expect(await settle(thrown.generate().catch(() => 'threw'))).toBe('threw')
+    expect(thrown.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+    const hung = harness({ bounds: NARROW, settings: new Promise(() => {}) })
+    const p = hung.generate()
+    await vi.advanceTimersByTimeAsync(119000)
+    expect(hung.trace).toContain('keylock:on')
+    expect(hung.trace).not.toContain('keylock:off')
+    expect((await settle(p, 5000)).reason).toBe('dom-stage-timeout')
+    expect(hung.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+    expect(at(hung.trace, 'keylock:off')).toBeGreaterThan(at(hung.trace, 'shield:off'))
+  })
+
+  it('클릭 전에 페이지가 이미 제출해 send 가 바인딩된 gen(사용자의 Enter) → 제출 클릭이 disabled 버튼을 미디스패치로 거부해도 gen 을 지우지 않고 loadend 로 success(postClick 없음)', async () => {
+    const h = harness({ onSubmit: (page) => { page.send(); setTimeout(() => page.loadend(), 2000) }, clickResult: { success: false, error: 'Target not at point (disabled)' } })
+    const r = await settle(h.generate(), 10000)
+    expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/click refused but the gen is already bound or completed gen=\S{8} — keeping it/)
+    // 클릭 중 완료까지 된 gen(send+loadend) 도 같다
+    const done = harness({ clickResult: { success: false, error: 'Target not at point (disabled)' } })
+    expect(await settle(done.generate())).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    // 바인딩도 완료도 없는 미디스패치 실패는 그대로 generate-button-click-failed(gen 삭제)
+    const none = harness({ onSubmit: null, clickResult: { success: false, error: 'Target not at point (other)' } })
+    expect(await settle(none.generate())).toMatchObject({ success: false, errorKind: 'generate-button-click-failed' })
+    expect(none.pendingGenerations.size).toBe(0)
+  })
+})
+
+// M2-CLOSE O2(A2): 워치독이 버린 좀비가 페이지를 계속 만지면 다음 항목의 DOM 단계와 겹친다(A 의 길이 클릭이 B 의 최종 재판독 뒤에 떨어지면 B 가 A 의 길이로 과금·거부).
+//   (1) 새 단계는 직전 단계의 run 이 settle 할 때까지 ≤10s 기다리고, 그래도 살아 있으면 클릭 전 dom-stage-busy(항목 이유). (2) 좀비의 applyComposerSettings·ensureAgentOff 는
+//   isAborted 를 신뢰 클릭·드라이버 exec 마다 먼저 보고 더 이상 페이지를 만지지 않는다.
+describe('flow:generate-video-t2v (angular) — DOM 단계 직렬화 · 좀비의 클릭 차단 (M2-CLOSE O2)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  const count = (t, tag) => t.filter((x) => x === tag).length
+  const OK_SETTINGS = { ok: true, closed: true, steps: { mode: 'already(videocam)', ratio: 'already(crop_16_9)', duration: 'already(6)', resolution: 'already(720p)', count: 'already(x1)', model: 'already', input: 'material' } }
+
+  it('직전 단계의 좀비가 살아 있으면(드라이버 영영 미해결) 다음 항목은 10s 기다린 뒤 클릭 전 dom-stage-busy — bounds·방패·프로브·크레딧 없음', async () => {
+    const h = harness({ bounds: NARROW, settings: new Promise(() => {}) })
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    const setBoundsCalls = h.flowView.setBounds.mock.calls.length
+    const p2 = h.generate()
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(count(h.trace, 'wiz')).toBe(2)          // 세션 게이트는 지났고
+    expect(count(h.trace, 'agent-probe')).toBe(1)  // 아직 DOM 단계에 들어가지 않았다
+    const r2 = await settle(p2, 5000)
+    expect(r2).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'dom-stage-busy' })
+    expect(count(h.trace, 'agent-probe')).toBe(1)
+    expect(count(h.trace, 'shield:on')).toBe(1)
+    expect(count(h.trace, 'credits')).toBe(1)
+    expect(h.flowView.setBounds.mock.calls.length).toBe(setBoundsCalls)
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(logged()).toMatch(/DOM stage still busy after 10s → refusing before click/)
+  })
+
+  it('직전 단계의 좀비가 대기 중에 settle 하면(드라이버가 123s 에 돌아와 체크포인트에서 멈춤) 다음 항목은 기다렸다가 진행해 success', async () => {
+    let resolveDriver
+    const h = harness({ bounds: NARROW, settings: new Promise((r) => { resolveDriver = r }) })
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    const p2 = h.generate()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(count(h.trace, 'agent-probe')).toBe(1)
+    resolveDriver(OK_SETTINGS)   // 좀비가 돌아와 편집기 전 체크포인트에서 멈춘다 → run settle
+    const r2 = await settle(p2, 20000)
+    expect(r2).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    expect(count(h.trace, 'agent-probe')).toBe(2)
+    expect(count(h.trace, 'click:compose-submit')).toBe(1)
+    expect(count(h.trace, 'click:compose-editor')).toBe(1)   // 좀비는 편집기를 누르지 않았다
+    expect(logged()).not.toMatch(/still busy/)
+  })
+
+  it('설정 단계의 좀비(드라이버가 121s 에 needs-trusted 로 돌아옴)는 라디오 신뢰 클릭·드라이버 재실행·닫기 클릭을 내지 않는다', async () => {
+    const h = harness({ bounds: NARROW, settings: new Promise((r) => setTimeout(() => r({ ok: false, needsTrusted: [{ group: 'duration', name: 'mat-button-toggle-group-32', label: '8초' }], steps: {} }), 121000)) })
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(h.trace).not.toContain('click:settings-radio')
+    expect(h.trace).not.toContain('click:settings-trigger-close')
+    expect(count(h.trace, 'settings-driver')).toBe(1)
+    expect(h.trace).not.toContain('click:compose-editor')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/\[Flow Settings\] video aborted by the DOM-stage watchdog — no further clicks or driver runs/)
+  })
+
+  it('에이전트 단계의 좀비(프로브가 121s 에 ON 으로 돌아옴)는 토글 신뢰 클릭을 내지 않는다 — 캡처 프로브로도 가지 않는다', async () => {
+    const h = harness({ bounds: NARROW, agent: new Promise((r) => setTimeout(() => r({ found: true, on: true }), 121000)) })
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(h.trace).not.toContain('click:agent-toggle-click')
+    expect(h.trace).not.toContain('capture-probe')
+    expect(logged()).toMatch(/ensureAgentOff: aborted by the DOM-stage watchdog — no toggle click/)
+  })
+})
+
+// M2-CLOSE O3(A3/B2): 옛 좀비 핀은 드라이버를 121s 에 풀어 편집기 **전** 체크포인트에서 멈췄다 — arm 앞의 체크포인트(편집기 단계에서 워치독이 울린 경우의 유일한 방벽)는 지워도
+//   초록이었다. 편집기 단계(SUBMIT_ENABLED_PROBE·재판독 — 타임아웃 없는 executeJavaScript)에 매달렸다 풀린 좀비가 arm·제출하면 행은 이미 dom-stage-timeout 인데 과금된다.
+describe('flow:generate-video-t2v (angular) — 편집기 단계에서 워치독이 울린 좀비는 arm·제출하지 않는다 (M2-CLOSE O3)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  it.each([
+    ['SUBMIT_ENABLED_PROBE', () => ({ submitEnabled: new Promise((res) => setTimeout(() => res(true), 121000)) })],
+    ['편집기 재판독(READ_EDITOR_TEXT_JS)', () => ({ editorText: new Promise((res) => setTimeout(() => res(PROMPT), 121000)) })],
+  ])('%s 에 매달렸다 121s 에 풀린 좀비 → arm 없음·click:compose-submit 없음·맵 0·shield:off 1회, 결과는 dom-stage-timeout', async (_n, mk) => {
+    const h = harness({ bounds: NARROW, ...mk() })
+    const r = await settle(h.generate(), 125000)
+    expect(r).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(h.trace).toContain('click:compose-editor')   // 좀비는 편집기까지 갔다(워치독은 그 뒤에 울렸다)
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.trace.filter((x) => x.startsWith('armed:'))).toEqual([])
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(h.trace.filter((x) => x === 'shield:off')).toHaveLength(1)
+  })
+
+  // 나머지 두 체크포인트(설정 전 · 편집기 전)도 그 **직전**의 exec 에 매달린 좀비로 핀 — 드라이버 안에서 풀린 좀비는 O2 의 isAborted 가드가 먼저 자르므로 체크포인트를 못 본다.
+  const SUMMARY = { text: '동영상 · 720p · 6초 x1', ligatures: ['crop_16_9'] }
+  it.each([
+    ['크레딧 판독 nzlxg(설정 전 체크포인트)', () => ({ credits: [new Promise((r) => setTimeout(() => r({ status: 200, text: creditsBody(1050) }), 121000))] }), ['settings-driver', 'focus', 'click:compose-editor', 'click:compose-submit']],
+    ['닫힌 요약 재판독(편집기 전 체크포인트)', () => ({ summary: [SUMMARY, new Promise((r) => setTimeout(() => r(SUMMARY), 121000))] }), ['focus', 'click:compose-editor', 'click:compose-submit']],
+  ])('%s 에 매달렸다 121s 에 풀린 좀비 → 그 뒤 단계 없음·좀비의 settings 진단 보고 없음·맵 0·shield:off 1회', async (_n, mk, absent) => {
+    const h = harness({ bounds: NARROW, ...mk() })
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    await vi.advanceTimersByTimeAsync(10000)
+    for (const tag of absent) expect(h.trace, tag).not.toContain(tag)
+    if (absent.includes('settings-driver')) expect(h.onDomFailure.mock.calls.map((c) => c[0])).not.toContain('settings:dom-stage-aborted')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(h.trace.filter((x) => x === 'shield:off')).toHaveLength(1)
+  })
+})
+
+// M2-CLOSE O5(A5): 캐럿 클릭 뒤 주입 전에 사용자의 방패 클릭이 OS 포커스를 가져갈 수 있다 — 주입 exec 직전에 flowView.webContents.focus() 를 다시 건다.
+describe('flow:generate-video-t2v (angular) — 주입 직전 포커스 재확보 (M2-CLOSE O5)', () => {
+  it('SET_EDITOR_TEXT_JS 바로 앞의 trace 는 focus 다(편집기 클릭 뒤 두 번째 focus) — 좁은 뷰·넓은 뷰 둘 다', async () => {
+    for (const o of [{ bounds: { x: 0, y: 0, width: 597, height: 872 } }, {}]) {
+      const h = harness(o)
+      expect((await settle(h.generate())).success).toBe(true)
+      const t = h.trace
+      const inject = t.indexOf('set-text:visible')
+      expect(inject).toBeGreaterThan(0)
+      expect(t[inject - 1]).toBe('focus')
+      expect(t.filter((x) => x === 'focus')).toHaveLength(2)
+      expect(idx(t, 'focus')).toBeLessThan(idx(t, 'click:compose-editor'))   // 첫 focus 는 여전히 캐럿 클릭 전
+      expect(t.lastIndexOf('focus')).toBeGreaterThan(idx(t, 'click:compose-editor'))
+    }
   })
 })
