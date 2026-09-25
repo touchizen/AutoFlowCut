@@ -103,6 +103,7 @@ function harness(o = {}) {
   const ctx = buildReportCtx({
     getPendingGeneration: () => null, setPendingGeneration: () => {}, pendingGenerations,
     getPendingVideoGeneration: () => null, setPendingVideoGeneration: () => {},
+    reportDomFailure: helpers.reportDomFailure,   // M2-R7 L1: main.js 와 같이 — 라우터의 unbound YhhmEf loadend 보고
   })
   const page = {
     send: (over = {}) => routeReportResponse({ kind: 'batchexecute-send', doc: DOC, rpcid: 'YhhmEf', rpcids: ['YhhmEf'], seq: 1, prompts: [PROMPT], sentAt: Date.now() / 1000, ...over }, ctx),
@@ -316,24 +317,80 @@ describe('flow:generate-video-t2v (angular) — 200 뒤의 거부 (postClick + r
 })
 
 describe('flow:generate-video-t2v (angular) — 마감·크레딧', () => {
-  it('send 없이 15s + 크레딧 불변(1050→1050) → flow-submit-not-sent + postClick (크레딧 두 번 읽음 — 재판독은 마감이 울릴 때)', async () => {
-    const h = harness({ onSubmit: null, credits: [1050, 1050] })
-    const r = await settle(h.generate(), 20000)
-    expect(r).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', error: 'flow-submit-not-sent', postClick: true })
+  // M2-R7 L1(A1): send 마감 15s 는 최종이 아니다 — 페이지의 reCAPTCHA execute + batchexecute send 가 클릭 뒤 15s 를 넘기면(모달로 뷰가 0×0 이라 throttle ·
+  //   느린 네트워크) 전엔 gen 이 not-sent 로 닫혀 맵에서 지워지고 그 뒤의 send/loadend 는 unbound 로 버려졌다 — 서버는 10크레딧을 과금했는데 행은 id 없이
+  //   "다시 시도"(다음 Start 가 같은 씬에 또 10크레딧). 이제 15s 엔 크레딧만 재판독(줄었으면 즉시 lost)하고 클릭 뒤 100s 까지 바인딩 가능한 채로 기다린다;
+  //   100s 까지 send 가 없으면 not-sent 로 닫히고 마지막 재판독에서 줄었으면 lost.
+  it('send 없이 100s + 크레딧 불변(1050→1050→1050) → flow-submit-not-sent + postClick — 15s 엔 표시·재판독만(gen 은 맵에 남아 바인딩 가능), 100s 마감 뒤 마지막 재판독 (M2-R7 L1)', async () => {
+    const h = harness({ onSubmit: null, credits: [1050, 1050, 1050] })
+    const p = h.generate()
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(h.pendingGenerations.size).toBe(1)   // 전엔 15s 에 not-sent 로 닫혀 지워졌다
+    expect([...h.pendingGenerations.values()][0]).toMatchObject({ completed: false, sendDeadlinePassed: true, doc: null })
     expect(h.trace.filter((x) => x === 'credits')).toHaveLength(2)
-    // M2-R1 F4(d): 재판독은 arm 직후가 아니라 send 마감(15s)이 울린 뒤 — 늦은 send 가 과금했는지 볼 시간을 준다
+    const r = await settle(p, 120000)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', error: 'flow-submit-not-sent', postClick: true })
+    expect(h.trace.filter((x) => x === 'credits')).toHaveLength(3)
+    // M2-R1 F4(d): 첫 재판독은 arm 직후가 아니라 send 마감(15s)이 울린 뒤; 마지막 재판독은 100s 마감 뒤(M2-R7 L1)
     expect(h.creditReadsAt[1] - h.creditReadsAt[0]).toBeGreaterThanOrEqual(15000)
+    expect(h.creditReadsAt[2] - h.creditReadsAt[0]).toBeGreaterThanOrEqual(100000)
     expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'submit:flow-submit-not-sent')).toBe(true)
     expect(h.pendingGenerations.size).toBe(0)
   })
 
-  it('send 없이 15s + 크레딧 감소(1050→1040) → flow-submit-lost 로 격상 + postClick; 감소분은 로그 숫자로만(errorParams 없음)', async () => {
+  it('send 없이 15s + 크레딧 감소(1050→1040) → 유예 없이 즉시 flow-submit-lost 로 격상 + postClick(크레딧 두 번 — 100s 를 기다리지 않는다); 감소분은 로그 숫자로만(errorParams 없음)', async () => {
     const h = harness({ onSubmit: null, credits: [1050, 1040] })
     const r = await settle(h.generate(), 20000)
     expect(r).toMatchObject({ success: false, errorKind: 'flow-submit-lost', error: 'flow-submit-lost', postClick: true })
     expect(r).not.toHaveProperty('errorParams')
+    expect(h.trace.filter((x) => x === 'credits')).toHaveLength(2)
     expect(logged()).toMatch(/credits (dropped|delta).*before=1050 after=1040/)
     expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'submit:flow-submit-lost')).toBe(true)
+    expect(h.pendingGenerations.size).toBe(0)
+  })
+
+  it('send 없이 100s + 15s 재판독은 불변(1050) · 100s 마감 뒤 마지막 재판독에서 감소(1040) → flow-submit-lost 로 격상 + postClick (M2-R7 L1)', async () => {
+    const h = harness({ onSubmit: null, credits: [1050, 1050, 1040] })
+    const r = await settle(h.generate(), 120000)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-submit-lost', error: 'flow-submit-lost', postClick: true })
+    expect(h.trace.filter((x) => x === 'credits')).toHaveLength(3)
+    expect(logged()).toMatch(/credits dropped without a captured send before=1050 after=1040/)
+    expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'submit:flow-submit-lost')).toBe(true)
+  })
+
+  it('유예: 클릭 뒤 16s 의 send 가 바인딩되고 22s 의 loadend 로 {success:true, generationId} — 크레딧은 두 번(클릭 전 · 15s)만, submit: 보고 없음 (M2-R7 L1)', async () => {
+    let clickedAt = 0
+    const h = harness({ onSubmit: () => { clickedAt = Date.now() }, credits: [1050, 1050] })
+    const p = h.generate()
+    while (!clickedAt) await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(16000)
+    expect(h.pendingGenerations.size).toBe(1)
+    const gen = [...h.pendingGenerations.values()][0]
+    expect(gen).toMatchObject({ completed: false, sendDeadlinePassed: true, doc: null })
+    expect(h.trace.filter((x) => x === 'credits')).toHaveLength(2)
+    h.page.send()
+    expect(gen.doc).toBe(DOC)
+    await vi.advanceTimersByTimeAsync(6000)
+    h.page.loadend()
+    const r = await settle(p)
+    expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    expect(h.trace.filter((x) => x === 'credits')).toHaveLength(2)
+    expect(h.onDomFailure.mock.calls.filter((c) => String(c[0]).startsWith('submit:'))).toEqual([])
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/\[Flow Video T2V\] \[Angular\] submitted media=00000011 creditsLeft=1040 modelKey=abra_t2v_6s/)
+  })
+
+  it('바인딩 없는 YhhmEf loadend(UUID) → [Flow RPC] YhhmEf unbound loadend media=<8> + onDomFailure(submit:unbound-loadend, media 앞 8자) — 전체 id·프롬프트 없음, throw 없음 (M2-R7 L1)', async () => {
+    const h = harness({ onSubmit: null })
+    expect(h.page.loadend({ seq: 9 })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(logged()).toMatch(/\[Flow RPC\] YhhmEf unbound loadend media=00000011\b/)
+    await vi.advanceTimersByTimeAsync(100)
+    const call = h.onDomFailure.mock.calls.find((c) => c[0] === 'submit:unbound-loadend')
+    expect(call).toBeTruthy()
+    expect(call[1]).toMatchObject({ reason: 'unbound-loadend', rpc: 'YhhmEf', seq: 9, media: '00000011' })
+    const dumped = JSON.stringify(call[1]) + logged()
+    expect(dumped).not.toContain(UUID11)
+    expect(dumped).not.toContain(PROMPT)
   })
 
   it('send 뒤 loadend 없이 100s → flow-submit-lost + postClick', async () => {
@@ -350,7 +407,7 @@ describe('flow:generate-video-t2v (angular) — 마감·크레딧', () => {
 
   // M2-R1 F4(b)(c) (A4/B5): mouseDown 이 나간 뒤의 클릭 실패(dispatched)는 페이지가 제출(과금)했을 수 있다 — gen 을 지우지 않고 waiter/마감
   //   경로로 간다. send 마감은 클릭이 **돌아온 뒤**에 arm(클릭은 뮤텍스 대기 포함 30s 까지 걸릴 수 있다). 클릭 중 이미 바인딩됐으면 재arm 없음.
-  it('dispatched 클릭 실패 + 늦은 send/loadend(2s 뒤) → gen 이 바인딩돼 정상 결과; 늦은 send 없음 → 15s 뒤 flow-submit-not-sent + postClick + 크레딧 재판독', async () => {
+  it('dispatched 클릭 실패 + 늦은 send/loadend(2s 뒤) → gen 이 바인딩돼 정상 결과; 늦은 send 없음 → 100s 뒤 flow-submit-not-sent + postClick + 크레딧 재판독(15s·100s)', async () => {
     const late = harness({ onSubmit: null, clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
     const pLate = late.generate()
     await vi.advanceTimersByTimeAsync(2000)
@@ -358,10 +415,11 @@ describe('flow:generate-video-t2v (angular) — 마감·크레딧', () => {
     late.page.send(); late.page.loadend()
     const rLate = await settle(pLate, 20000)
     expect(rLate).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
-    const none = harness({ onSubmit: null, credits: [1050, 1050], clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
-    const rNone = await settle(none.generate(), 20000)
+    // M2-R7 L1: 늦은 send 없음 → 15s 재판독(불변) → 유예 → 100s 에 not-sent + 마지막 재판독(크레딧 세 번)
+    const none = harness({ onSubmit: null, credits: [1050, 1050, 1050], clickResult: { success: false, dispatched: true, error: 'View bounds changed mid-click' } })
+    const rNone = await settle(none.generate(), 120000)
     expect(rNone).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', error: 'flow-submit-not-sent', postClick: true })
-    expect(none.trace.filter((x) => x === 'credits')).toHaveLength(2)
+    expect(none.trace.filter((x) => x === 'credits')).toHaveLength(3)
     expect(none.pendingGenerations.size).toBe(0)
   })
 

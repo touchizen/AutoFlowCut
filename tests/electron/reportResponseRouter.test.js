@@ -252,5 +252,10 @@ describe('routeReportResponse — batchexecute 위임 (M1-4)', () => {
     ctx.setPendingVideoGeneration({ setAt: 2 }); expect(ctx.getPendingVideoGeneration()).toEqual({ setAt: 2 })
     expect(ctx.pendingGenerations).toBe(pendingGenerations)
     expect(Object.keys(ctx).sort()).toEqual(['getPendingGeneration', 'getPendingVideoGeneration', 'pendingGenerations', 'setPendingGeneration', 'setPendingVideoGeneration'])
+    // M2-R7 L1: reportDomFailure 는 state 가 함수로 줄 때만 ctx 에 실린다(라우터의 unbound YhhmEf loadend 보고용) — 없으면 옛 모양 그대로.
+    const report = () => {}
+    const ctx2 = buildReportCtx({ getPendingGeneration: () => pg, setPendingGeneration: (v) => { pg = v }, pendingGenerations, getPendingVideoGeneration: () => pv, setPendingVideoGeneration: (v) => { pv = v }, reportDomFailure: report })
+    expect(ctx2.reportDomFailure).toBe(report)
+    expect(Object.keys(ctx2).sort()).toEqual(['getPendingGeneration', 'getPendingVideoGeneration', 'pendingGenerations', 'reportDomFailure', 'setPendingGeneration', 'setPendingVideoGeneration'])
   })
 })

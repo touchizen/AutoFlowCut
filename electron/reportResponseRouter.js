@@ -18,7 +18,8 @@ import { routeRpcReport } from './flow-rpc-router.js'
 
 /**
  * main 의 pending 상태 접근자 → routeReportResponse ctx. main.js 와 파이프라인 테스트가 같은 모양을 쓴다.
- * @param {{getPendingGeneration, setPendingGeneration, pendingGenerations, getPendingVideoGeneration, setPendingVideoGeneration}} state
+ * @param {{getPendingGeneration, setPendingGeneration, pendingGenerations, getPendingVideoGeneration, setPendingVideoGeneration, reportDomFailure?}} state
+ *   reportDomFailure(선택) — M2-R7 L1: 라우터가 바인딩 없는 YhhmEf 200(UUID) 을 'submit:unbound-loadend' 로 보고할 때 쓴다(없으면 로그만).
  */
 export function buildReportCtx(state) {
   return {
@@ -27,6 +28,7 @@ export function buildReportCtx(state) {
     pendingGenerations: state.pendingGenerations,
     getPendingVideoGeneration: state.getPendingVideoGeneration,
     setPendingVideoGeneration: state.setPendingVideoGeneration,
+    ...(typeof state.reportDomFailure === 'function' ? { reportDomFailure: state.reportDomFailure } : {}),   // M2-R7 L1: 있을 때만(옛 ctx 모양 불변)
   }
 }
 

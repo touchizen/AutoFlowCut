@@ -6,9 +6,10 @@
 //             정규화 프롬프트 일치 중 최고령, 없으면 unbound. multi → flow-rpc-multi-batch.
 //   loadend : {doc, seq} 로 gen 을 찾아 파싱·완료. 같은 seq 라도 doc 이 다르면 남. 완료된 gen 은 duplicate.
 //   마감    : send 15s → flow-submit-not-sent, loadend 100s → flow-submit-lost. completed+error, 맵에 남는다.
+//             M2-R7 L1: 영상(YhhmEf)의 send 15s 는 표시(sendDeadlinePassed)+훅뿐 — 클릭 뒤 100s 까지 바인딩 가능(grace), 그때 not-sent.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
-  failBoundUnfinished, routeRpcSend, routeRpcLoadend, routeRpcReport, markDeadline, armDeadline,
+  failBoundUnfinished, routeRpcSend, routeRpcLoadend, routeRpcReport, markDeadline, armDeadline, settleGen,
   SEND_DEADLINE_S, LOADEND_DEADLINE_S,
 } from '../../electron/flow-rpc-router.js'
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
@@ -305,5 +306,104 @@ describe('routeRpcReport — kind 디스패치', () => {
     expect(routeRpcReport(endEv(), ctx)).toEqual({ ok: true, completed: 'g' })
     expect(routeRpcReport({ kind: 'batchexecute-other' }, ctx)).toEqual({ ok: false, reason: 'unknown kind' })
     expect(routeRpcReport(sendEv(), {})).toEqual({ ok: false, reason: 'invalid' })
+  })
+})
+
+// M2-R7 L1(A1): send 마감 15s 는 영상(YhhmEf)에선 최종이 아니다 — 페이지의 reCAPTCHA execute + batchexecute send 가 15s 를 넘기면(모달로 뷰가 0×0 이라
+//   throttle · 느린 네트워크) 전엔 gen 이 not-sent 로 닫혀(핸들러가 맵에서 지워) 그 뒤의 send/loadend 가 unbound 로 버려졌다 — 서버는 과금했는데 행은 id 없이
+//   "다시 시도". 이제 15s 엔 sendDeadlinePassed 표시 + onSendDeadline 훅(핸들러의 크레딧 재판독)뿐이고 클릭 뒤 100s(15+85)까지 바인딩 가능한 채로 둔다(grace 마감
+//   → not-sent). 이미지(ogiZ0b)는 위 '마감' 블록 그대로 15s 에 not-sent.
+describe('M2-R7 L1 — YhhmEf send 마감 유예(grace): 15s 는 표시·훅뿐, 클릭 뒤 100s 까지 바인딩 가능', () => {
+  const VPROMPT = '왕이 궁전 내부를 산책하는 영상'
+  const vgen = (over = {}) => gen({ rpc: 'YhhmEf', normPrompt: VPROMPT, wantRatio: undefined, ...over })
+  const vsend = (over = {}) => sendEv({ rpcid: 'YhhmEf', rpcids: ['YhhmEf'], prompts: [VPROMPT], ...over })
+  const vend = (over = {}) => endEv({ rpcid: 'YhhmEf', responseText: sample('YhhmEf').respBody, ...over })
+  const GRACE_S = LOADEND_DEADLINE_S - SEND_DEADLINE_S   // 85
+
+  it('(a) 15s: completed 아님 + sendDeadlinePassed + onSendDeadline 1회 + grace 타이머 → 16s 의 send 가 바인딩(grace 해제·loadend 100s·로그 late) → 22s 의 loadend 로 완료', () => {
+    const hook = vi.fn()
+    const g = vgen({ onSendDeadline: hook })
+    const map = new Map([['v', g]])
+    armDeadline(g, 'send')
+    vi.advanceTimersByTime(SEND_DEADLINE_S * 1000)
+    expect(g.completed).toBe(false)
+    expect(g).toMatchObject({ sendDeadlinePassed: true, error: null, doc: null })
+    expect(hook).toHaveBeenCalledTimes(1)
+    expect(g.deadlines.send).toBeUndefined()
+    expect(g.deadlines.grace).toBeTruthy()
+    expect(logged()).toMatch(new RegExp(`\\[Flow RPC\\] YhhmEf deadline send ${SEND_DEADLINE_S}s passed → grace ${GRACE_S}s`))
+    expect(logged()).not.toContain(VPROMPT)
+    vi.advanceTimersByTime(1000)
+    expect(routeRpcSend(vsend({ sentAt: NOW_S + 16 }), map)).toEqual({ ok: true, bound: 'v' })
+    expect(g).toMatchObject({ doc: DOC_A, seq: 1, sentAt: NOW_S + 16, completed: false })
+    expect(g.deadlines.grace).toBeUndefined()
+    expect(g.deadlines.loadend).toBeTruthy()
+    expect(logged()).toMatch(/\[Flow RPC\] YhhmEf send doc=a{8} seq=1 bound=v late/)
+    vi.advanceTimersByTime(6000)
+    expect(routeRpcLoadend(vend(), map)).toEqual({ ok: true, completed: 'v' })
+    expect(g).toMatchObject({ completed: true, error: null, mediaId: maskedUuid(11), creditsLeft: 1040, modelKey: 'abra_t2v_6s' })
+    expect(g.deadlines).toEqual({})
+    expect(map.has('v')).toBe(true)
+    // 유예 안의 바인딩은 loadend 마감(send 뒤 100s)을 정상대로 켠다 — 22s 에 완료됐으므로 더 이상 아무 마감도 울리지 않는다
+    vi.advanceTimersByTime(LOADEND_DEADLINE_S * 1000)
+    expect(g.error).toBeNull()
+  })
+
+  it('(b) send 없음: 100s 직전까지 completed 아님(훅 없이도 rpc 로 유예), 100s 에 flow-submit-not-sent(맵에 남는다), 그 뒤의 send 는 unbound', () => {
+    const g = vgen()
+    const map = new Map([['v', g]])
+    armDeadline(g, 'send')
+    vi.advanceTimersByTime(LOADEND_DEADLINE_S * 1000 - 1)
+    expect(g).toMatchObject({ completed: false, sendDeadlinePassed: true, error: null })
+    vi.advanceTimersByTime(1)
+    expect(g).toMatchObject({ completed: true, error: 'flow-submit-not-sent', errorKind: 'flow-submit-not-sent' })
+    expect(g.deadlines).toEqual({})
+    expect(map.has('v')).toBe(true)
+    expect(logged()).toMatch(new RegExp(`\\[Flow RPC\\] YhhmEf deadline grace ${GRACE_S}s → flow-submit-not-sent`))
+    expect(routeRpcSend(vsend({ sentAt: NOW_S + 101 }), map)).toEqual({ ok: true, dropped: 'unbound' })
+  })
+
+  it('(c) onSendDeadline 이 gen 을 닫으면(크레딧 감소 → flow-submit-lost) grace 타이머가 정리되고 100s 에 덮어쓰지 않는다; 훅이 throw/reject 해도 유예는 산다', () => {
+    const g = vgen({ onSendDeadline: (x) => settleGen(x, { error: 'flow-submit-lost', errorKind: 'flow-submit-lost' }) })
+    armDeadline(g, 'send')
+    vi.advanceTimersByTime(SEND_DEADLINE_S * 1000)
+    expect(g).toMatchObject({ completed: true, error: 'flow-submit-lost', sendDeadlinePassed: true })
+    expect(g.deadlines).toEqual({})
+    vi.advanceTimersByTime(LOADEND_DEADLINE_S * 1000)
+    expect(g).toMatchObject({ completed: true, error: 'flow-submit-lost' })
+    for (const bad of [() => { throw new Error('x') }, async () => { throw new Error('x') }]) {
+      const h = vgen({ onSendDeadline: bad })
+      const map = new Map([['h', h]])
+      armDeadline(h, 'send')
+      vi.advanceTimersByTime(SEND_DEADLINE_S * 1000 + 1000)
+      expect(h).toMatchObject({ completed: false, sendDeadlinePassed: true })
+      expect(routeRpcSend(vsend({ sentAt: NOW_S + 16 }), map)).toEqual({ ok: true, bound: 'h' })
+    }
+  })
+
+  it('(d) 바인딩 없는 YhhmEf 200 이 UUID 로 파싱되면 [Flow RPC] YhhmEf unbound loadend media=<8> + reportDomFailure(submit:unbound-loadend, 앞 8자만); 깨진 본문·비 200·이미지 rpc 는 throw 없이 기존 unbound 만', () => {
+    const report = vi.fn()
+    const map = new Map()
+    expect(routeRpcLoadend(vend({ seq: 9 }), map, { reportDomFailure: report })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(logged()).toMatch(/\[Flow RPC\] YhhmEf unbound loadend media=00000011\b/)
+    expect(logged()).not.toContain(maskedUuid(11))
+    expect(report).toHaveBeenCalledTimes(1)
+    expect(report).toHaveBeenCalledWith('submit:unbound-loadend', 'unbound-loadend', { rpc: 'YhhmEf', seq: 9, media: '00000011' })
+    expect(JSON.stringify(report.mock.calls)).not.toContain(maskedUuid(11))
+    warn.mockClear(); log.mockClear()
+    const none = vi.fn()
+    expect(() => routeRpcLoadend(vend({ seq: 10, responseText: 'garbage' }), map, { reportDomFailure: none })).not.toThrow()
+    expect(routeRpcLoadend(vend({ seq: 11, status: 500, responseText: '' }), map, { reportDomFailure: none })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(routeRpcLoadend(endEv({ seq: 12 }), map, { reportDomFailure: none })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(routeRpcLoadend(vend({ seq: 13 }), map)).toEqual({ ok: true, dropped: 'unbound' })   // report 없이도 로그는 남는다
+    expect(logged()).toMatch(/unbound loadend media=00000011/)
+    expect(logged().match(/unbound loadend media=/g)).toHaveLength(1)
+    expect(none).not.toHaveBeenCalled()
+    // report 가 throw/reject 해도 라우팅은 끝난다; routeRpcReport 는 ctx.reportDomFailure 를 넘긴다
+    expect(routeRpcLoadend(vend({ seq: 14 }), map, { reportDomFailure: () => { throw new Error('x') } })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(routeRpcLoadend(vend({ seq: 15 }), map, { reportDomFailure: async () => { throw new Error('x') } })).toEqual({ ok: true, dropped: 'unbound' })
+    const viaCtx = vi.fn()
+    expect(routeRpcReport(vend({ seq: 16 }), { pendingGenerations: map, reportDomFailure: viaCtx })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(viaCtx).toHaveBeenCalledWith('submit:unbound-loadend', 'unbound-loadend', { rpc: 'YhhmEf', seq: 16, media: '00000011' })
   })
 })

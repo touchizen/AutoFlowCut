@@ -939,6 +939,7 @@ ipcMain.handle('flow:report-response', (event, payload) => {
     pendingGenerations,
     getPendingVideoGeneration: () => pendingVideoGeneration,
     setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
+    reportDomFailure: helpers.reportDomFailure,   // M2-R7 L1: 바인딩 없는 YhhmEf 200(UUID) → submit:unbound-loadend(앞 8자만)
   }))
 })
 

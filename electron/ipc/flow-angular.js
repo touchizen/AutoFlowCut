@@ -86,6 +86,12 @@ const creditsOf = (payload) => (Array.isArray(payload) && typeof payload[0] === 
 const describeWant = (w) => `${w.model} ${w.duration}s ${w.ratio || '?'} ${w.resolution}`
 /** 제출 단계의 실패 kind — D8-9 의 reportDomFailure('submit:<kind>') 대상(내용 없음). */
 const SUBMIT_FAILURE_KINDS = new Set(['flow-submit-not-sent', 'flow-submit-lost', 'flow-rpc-multi-batch'])
+/** M2-R7 L1: 클릭 전 값보다 줄었나 — 줄었으면 로그(감소분은 숫자로만, params 없음) + true. 판정 불가(null)는 false. */
+function creditsDropped(before, after) {
+  if (before == null || after == null || after >= before) return false
+  console.warn(`[Flow Video T2V] [Angular] credits dropped without a captured send before=${before} after=${after} → flow-submit-lost`)
+  return true
+}
 
 /**
  * @param {object} deps flow-api.js 의 deps(main.js flowAPIDeps 와 동일 모양). 필요한 것: getFlowView, getFlowAgentOn,
@@ -319,23 +325,23 @@ export function createFlowAngular(deps) {
     return n
   }
 
+  /** M2-R7 L1: nzlxg 재판독(숫자 또는 null — 읽기 실패·모양 드리프트는 판정 불가). */
+  async function readCreditsAgain(flowView) {
+    try { return creditsOf(await callFlowRpc(flowView, 'nzlxg', [])) } catch (_e) { return null }
+  }
+
   /**
    * 제출 gen 이 settle 된 뒤의 판정(M2-4) — 클릭 뒤의 실패는 전부 postClick:true.
-   *   not-sent 는 크레딧을 다시 읽어 줄었으면 flow-submit-lost 로 격상(과금됐는데 미추적 — 감소분은 로그 숫자로만, params 없음).
+   *   not-sent(클릭 뒤 100s 까지 send 없음 — M2-R7 L1)는 크레딧을 마지막으로 다시 읽어 줄었으면 flow-submit-lost 로 격상(과금됐는데 미추적 — 감소분은 로그 숫자로만, params 없음).
    *   200 이면 응답 모델키를 표로 검증 — 불일치는 flow-video-settings-mismatch {expected, actual} + rejectedMediaId(새 제출 중단 신호).
    */
   async function finishVideoGen(flowView, gen, want, creditsBefore) {
     if (gen.error) {
       let errorKind = gen.errorKind || 'flow-rpc-error'
       let error = gen.error
-      if (errorKind === 'flow-submit-not-sent' && creditsBefore != null) {
-        let after = null
-        try { after = creditsOf(await callFlowRpc(flowView, 'nzlxg', [])) } catch (_e) { after = null }
-        if (after != null && after < creditsBefore) {
-          console.warn(`[Flow Video T2V] [Angular] credits dropped without a captured send before=${creditsBefore} after=${after} → flow-submit-lost`)
-          errorKind = 'flow-submit-lost'
-          error = 'flow-submit-lost'
-        }
+      if (errorKind === 'flow-submit-not-sent' && creditsBefore != null && creditsDropped(creditsBefore, await readCreditsAgain(flowView))) {
+        errorKind = 'flow-submit-lost'
+        error = 'flow-submit-lost'
       }
       // R2-2#6: 진단 보고는 기다리지 않는다.
       if (typeof error === 'string' && error.startsWith('rpc-shape:')) void report(error, 'shape', { rpc: gen.rpc })
@@ -489,7 +495,19 @@ export function createFlowAngular(deps) {
     if (!click?.success) console.warn(`[Flow Video T2V] [Angular] click failed after dispatch gen=${generationId.slice(-8)} — keeping gen armed (postClick)`)
     // M2-R1 F4(c)(d): send 마감(15s)은 클릭이 돌아온 **뒤**에 arm — 클릭은 뮤텍스 대기 포함 30s 까지 걸릴 수 있어 클릭 전에 arm 하면 정상 send 가
     //   마감에 잘리고 과금된 영상이 not-sent("다시 시도")로 둔갑한다. 클릭 중 이미 send 가 바인딩됐거나 완료됐으면 재arm 하지 않는다.
-    //   not-sent 의 크레딧 재판독은 이 마감이 울린 뒤(finishVideoGen)라 arm 직후가 아니다.
+    //   not-sent 의 크레딧 재판독은 이 마감이 울린 뒤라 arm 직후가 아니다.
+    // M2-R7 L1(A1): 그 send 마감은 영상에선 최종이 아니다 — 라우터가 gen 을 sendDeadlinePassed 로 표시하고 클릭 뒤 100s 까지 바인딩 가능하게 둔다(유예).
+    //   페이지의 reCAPTCHA execute + batchexecute send 가 15s 를 넘기는 경우(모달로 뷰가 0×0 이라 throttle · 느린 네트워크)에 전엔 gen 이 닫혀 맵에서 지워지고
+    //   그 뒤의 send/loadend 가 unbound 로 버려졌다 — 서버는 10크레딧을 과금했는데 행은 id 없이 "다시 시도"(다음 Start 가 같은 씬에 또 과금). 15s 시점의 훅은
+    //   크레딧을 한 번 재판독해 줄었으면 flow-submit-lost 로 즉시 닫고(과금됐는데 send 를 못 잡았다), 같으면 계속 기다린다: 유예 안의 늦은 send 는 정상 바인딩
+    //   → loadend → finishVideoGen. 재판독이 돌아오기 전에 send 가 바인딩됐으면 여기서 닫지 않는다(loadend 가 판정). 100s 까지 send 가 없으면 라우터가
+    //   not-sent 로 닫고 finishVideoGen 이 마지막으로 재판독한다.
+    gen.onSendDeadline = async () => {
+      const after = await readCreditsAgain(flowView)
+      if (gen.completed || gen.doc != null) return
+      if (creditsDropped(creditsBefore, after)) settleGen(gen, { error: 'flow-submit-lost', errorKind: 'flow-submit-lost' })
+      else console.log(`[Flow Video T2V] [Angular] send deadline passed gen=${generationId.slice(-8)} credits unchanged — waiting for a late send (grace)`)
+    }
     if (!gen.completed && gen.sentAt == null) armDeadline(gen, 'send')
     console.log(`[Flow Video T2V] [Angular] clicked gen=${generationId.slice(-8)} — waiting for YhhmEf`)
     await waiter

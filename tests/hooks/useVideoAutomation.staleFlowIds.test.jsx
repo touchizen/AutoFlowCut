@@ -41,8 +41,8 @@ const OPTS = { projectName: 'proj', saveMode: 'folder', videoModel: 'Omni Flash'
 beforeEach(() => { __resetQuotaStopForTests(); vi.useFakeTimers(); vi.spyOn(Math, 'random').mockReturnValue(0); vi.clearAllMocks() })
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
-/** genAPI — 제출은 프롬프트별 **첫 호출** 결과표(그 뒤는 성공: 두 번째 Start 가 재제출하는지 본다), 폴은 항상 complete. */
-function setup({ t2v = {}, i2v = {} } = {}) {
+/** genAPI — 제출은 프롬프트별 **첫 호출** 결과표(그 뒤는 성공: 두 번째 Start 가 재제출하는지 본다), 폴은 항상 complete. appMode 는 M2-R7 L3 의 API 모드 핀용. */
+function setup({ t2v = {}, i2v = {}, appMode = 'flow' } = {}) {
   let n = 0
   const once = (table) => {
     const used = new Set()
@@ -57,7 +57,7 @@ function setup({ t2v = {}, i2v = {} } = {}) {
   const downloadVideo = vi.fn(async () => ({ success: true, base64: 'data:video/mp4;base64,AQID' }))
   const genAPI = { generateVideoT2V, generateVideoI2V, checkVideoStatus, downloadVideo, upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('flow-session'), flowSessionReason: vi.fn(() => null) }
   const onItemUpdate = vi.fn()
-  const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null, null, 'flow'))
+  const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null, null, appMode))
   return { hook, genAPI, onItemUpdate, generateVideoT2V, generateVideoI2V, checkVideoStatus, downloadVideo }
 }
 async function run(h, input, ms = 30000) {
@@ -173,5 +173,22 @@ describe('useVideoAutomation — Flow fresh 항목의 옛 Flow 모양 generation
     expect(h.generateVideoT2V.mock.calls.map((c) => c[0])).toEqual(['p1', 'p2', 'p3'])
     expectResubmittedNotPolled(h, 'vscene_3', 'gen-new-3')
     expect(merged[2]).toMatchObject({ generationId: null, mediaId: null })
+  })
+
+  // M2-R7 L3(B2): hasStaleFlowId 의 `appMode === 'flow'` 항엔 핀이 없었다 — 지워도 전 스위트 초록. 없으면 API 모드도 제출 전 'generating' 패치가 Flow 모양 G 를 지운다:
+  //   과금된 Flow in-flight 행(pending + UUID G + mediaId/videoPath null)을 API 모드로 Start 하면(API 는 status 규칙 → fresh) API 제출이 실패해도 {generationId:null,
+  //   mediaId:null} 이 이미 나가 Flow 로 돌아온 뒤 그 행이 fresh 로 잡힌다 — 과금된 영상을 폴·다운로드할 길이 없어지고 다음 Start 가 10크레딧을 또 낸다. 항이 있으면 G 가 산다.
+  it('(f) API 모드: pending + Flow 모양 G(mediaId/videoPath null) 행의 API 제출이 실패(SAFETY_BLOCK)해도 어떤 패치도 generationId 키를 싣지 않는다 — App 머지 행은 G 를 지킨다 (M2-R7 L3)', async () => {
+    const h = setup({ t2v: { p1: { success: false, error: 'SAFETY_BLOCK' } }, appMode: 'api' })
+    const row = { id: 'vscene_1', prompt: 'p1', status: 'pending', generationId: G, mediaId: null, videoPath: null }
+    await run(h, { scenes: [row] })
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(1)   // API 는 status 규칙 → fresh 제출(폴 없음)
+    expect(h.checkVideoStatus).not.toHaveBeenCalled()
+    expect(retryVideoDownload).not.toHaveBeenCalled()
+    const all = patches(h, 'vscene_1')
+    expect(all.map(([status]) => status)).toEqual(['generating', 'error'])
+    for (const [, p] of all) expect(p).not.toHaveProperty('generationId')
+    const merged = mergeLikeApp(h, 'vscene_1', row)
+    expect(merged).toMatchObject({ status: 'error', error: 'SAFETY_BLOCK', generationId: G, mediaId: null, videoPath: null })
   })
 })
