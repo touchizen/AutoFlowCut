@@ -19,8 +19,11 @@ import * as plainToggle from '../../electron/flow-agent-toggle.js'
 import * as plainSettings from '../../electron/flow-composer-settings.js'
 import * as plainAngular from '../../electron/ipc/flow-angular.js'
 import * as plainProtocol from '../../electron/flow-rpc-protocol.js'
-import { sample, reencodeRequestBody } from '../fixtures/flow-batchexecute-samples.js'
+import * as plainRefs from '../../electron/flow-composer-refs.js'
+import { sample, reencodeRequestBody, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
+import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
 import { PAGE_IMAGE_KO, PAGE_VIDEO_KO, CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel } from '../fixtures/flow-live-dom-20260924.js'
+import { buildPage as buildM3Page, mentionHtml, paragraph } from '../fixtures/flow-live-dom-m3.js'
 
 const SRC = (rel) => fileURLToPath(new URL(rel, import.meta.url))
 async function loadMinified(rel) {
@@ -72,6 +75,30 @@ describe('minified 캡처 주입 — send/loadend 페이로드', () => {
       expect(page.windowObject.__autoflowcut_rpc_capture__).toBe(true)
       expect(x1.calls.find((c) => c[0] === 'send')[1]).toBe(reencodeRequestBody(sample('ogiZ0b').reqBody))
     }
+  })
+
+  // M3-2: MZZa6b·maseQ 허용 + refs/mentions(직렬화된 extractSubmitRefs) — minified 번들이 같은 페이로드를 만든다. maseQ 는 prompts:[] 만.
+  it('M3-2: S3#10·#17·#20(MZZa6b)·#19(ogiZ0b)·#4(maseQ) 페이로드가 비-minified 와 같다', () => {
+    const U = maskedUuid
+    const run = (M) => {
+      const page = vmPage(M.FLOW_RPC_CAPTURE_INJECTION)
+      for (const n of [10, 17, 20, 19, 4]) {
+        const x = new page.windowObject.XMLHttpRequest()
+        x.open('POST', BATCH.replace('rpcids=ogiZ0b', 'rpcids=' + s3(n).rpcid))
+        x.send(s3RequestBody(n))
+        expect(x.calls.find((c) => c[0] === 'send')[1]).toBe(s3RequestBody(n))
+        if (n === 4) x._finish(200, s3(4).respBody)
+      }
+      return page.reports.map(({ doc, ...rest }) => rest)
+    }
+    const min = run(mod)
+    expect(min).toEqual(run(plainCapture))
+    expect(min[0]).toMatchObject({ rpcid: 'MZZa6b', prompts: ['The king walks slowly toward the camera'], refs: [U(2)], mentions: [] })
+    expect(min[1]).toMatchObject({ rpcid: 'MZZa6b', refs: [U(2)], mentions: [U(2)] })
+    expect(min[2]).toMatchObject({ rpcid: 'MZZa6b', refs: [U(52)], mentions: [U(52), U(52)] })
+    expect(min[3]).toMatchObject({ rpcid: 'ogiZ0b', refs: [U(46)], mentions: [U(46), U(46)] })
+    expect(min[4]).toEqual({ kind: 'batchexecute-send', rpcid: 'maseQ', rpcids: ['maseQ'], seq: 5, prompts: [], sentAt: 1790240102.5 })
+    expect(min[5]).toMatchObject({ kind: 'batchexecute', rpcid: 'maseQ', seq: 5, status: 200, responseText: s3(4).respBody })
   })
 })
 
@@ -152,14 +179,56 @@ describe('minified DOM 파인더·편집기·설정 스크립트 (K/D 픽스처,
   })
 })
 
+// M3-4: 컴포저 레퍼런스 파인더(flow-composer-refs.js)의 *_JS — minified 번들이 M3 픽스처(ko·en)에서 같은 결과.
+describe('minified 컴포저 레퍼런스 파인더(M3-4) — 비-minified 와 같은 결과', () => {
+  let refs
+  beforeAll(async () => { refs = await loadMinified('../../electron/flow-composer-refs.js') })
+
+  it.each(['ko', 'en'])('%s: READ_COMPOSER_STATE_JS · 애셋 창·칩·버튼 파인더', (lang) => {
+    const U = maskedUuid
+    const html = buildM3Page({
+      lang,
+      composer: { chips: [{ id: U(2) }, { id: U(3) }, { id: null, busy: true }], editorHtml: paragraph(mentionHtml(U(2), 'king.jpg'), ' and a queen') },
+      picker: { tab: 'drive_folder_upload', items: [{ id: U(2) }, { id: U(3) }, { opaque: 1 }], search: 'x' },
+    })
+    const el = (v) => (v ? v.outerHTML : v)
+    const cases = [
+      [refs.READ_COMPOSER_STATE_JS, plainRefs.READ_COMPOSER_STATE_JS, (v) => v],
+      [refs.LIST_ID_ASSET_MEDIA_IDS_JS, plainRefs.LIST_ID_ASSET_MEDIA_IDS_JS, (v) => v],
+      [refs.READ_PICKER_PREVIEW_MEDIA_ID_JS, plainRefs.READ_PICKER_PREVIEW_MEDIA_ID_JS, (v) => v],
+      [refs.FIND_ADD_MENU_TRIGGER_JS, plainRefs.FIND_ADD_MENU_TRIGGER_JS, el],
+      [refs.FIND_CLEAR_PROMPT_BUTTON_JS, plainRefs.FIND_CLEAR_PROMPT_BUTTON_JS, el],
+      [refs.FIND_ADD_TO_PROMPT_BUTTON_JS, plainRefs.FIND_ADD_TO_PROMPT_BUTTON_JS, el],
+      [refs.FIND_ASSET_ITEM_BY_MEDIA_ID_JS(U(3)), plainRefs.FIND_ASSET_ITEM_BY_MEDIA_ID_JS(U(3)), el],
+      [refs.FIND_PICKER_TAB_JS('drive_folder_upload'), plainRefs.FIND_PICKER_TAB_JS('drive_folder_upload'), el],
+      [refs.FIND_CHIP_BY_MEDIA_ID_JS(U(3)), plainRefs.FIND_CHIP_BY_MEDIA_ID_JS(U(3)), el],
+    ]
+    for (const [min, plain, view] of cases) {
+      const a = view(runInPage(html, min).result)
+      expect(a).toEqual(view(runInPage(html, plain).result))
+      expect(a == null).toBe(false)
+    }
+    expect(runInPage(html, refs.READ_COMPOSER_STATE_JS).result).toMatchObject({
+      chips: [{ mediaId: U(2), busy: false }, { mediaId: U(3), busy: false }, { mediaId: null, busy: true }],
+      segments: [{ t: 'mention', mediaId: U(2), label: 'king.jpg' }, { t: 'text', text: ' and a queen' }],
+      pickerOpen: true, searchDirty: true,
+    })
+  })
+})
+
 describe('정적 규칙: 직렬화되는 헬퍼는 서로를 이름으로 부르지 않는다', () => {
   const helpers = {
     decodeFReqInner: plainProtocol.decodeFReqInner, extractSubmitPrompts: plainProtocol.extractSubmitPrompts, normalizePrompt: plainProtocol.normalizePrompt,
+    extractSubmitRefs: plainProtocol.extractSubmitRefs,
     readWizGlobals: plainClient.readWizGlobals, buildRpcRequest: plainClient.buildRpcRequest,
     findGenerateButton: plainDom.findGenerateButton, findSettingsTrigger: plainDom.findSettingsTrigger, readSettingsSummary: plainDom.readSettingsSummary,
     findPromptEditor: plainDom.findPromptEditor, readEditorText: plainDom.readEditorText,
     scanSettingsPanel: plainSettings.scanSettingsPanel, planSettingsClicks: plainSettings.planSettingsClicks, settingsDriverCore: plainSettings.settingsDriverCore, isSettingsPanelOpen: plainSettings.isSettingsPanelOpen,
     findAgentToggle: plainToggle.findAgentToggle, isToggleOn: plainToggle.isToggleOn,
+    // M3-4
+    readComposerState: plainRefs.readComposerState, findAssetItemByMediaId: plainRefs.findAssetItemByMediaId, listIdAssetMediaIds: plainRefs.listIdAssetMediaIds,
+    findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaId: plainRefs.readPickerPreviewMediaId, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
+    findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaId: plainRefs.findChipByMediaId,
   }
   it.each(Object.keys(helpers))('%s 본문에 다른 헬퍼 이름 호출이 없다', (name) => {
     const body = helpers[name].toString().replace(new RegExp(`^\\s*(async\\s+)?function\\s+${name}\\s*\\(`), '')
@@ -210,6 +279,7 @@ describe('정적 규칙(확장, R2#9): 드라이버·주입 헬퍼 본문은 모
     scanSettingsPanel: plainSettings.scanSettingsPanel, planSettingsClicks: plainSettings.planSettingsClicks, settingsDriverCore: plainSettings.settingsDriverCore, isSettingsPanelOpen: plainSettings.isSettingsPanelOpen,
     readWizGlobals: plainClient.readWizGlobals, buildRpcRequest: plainClient.buildRpcRequest,
     decodeFReqInner: plainProtocol.decodeFReqInner, extractSubmitPrompts: plainProtocol.extractSubmitPrompts, normalizePrompt: plainProtocol.normalizePrompt,
+    extractSubmitRefs: plainProtocol.extractSubmitRefs,
   }
   it.each(Object.keys(serialized))('%s', (name) => {
     const body = serialized[name].toString()

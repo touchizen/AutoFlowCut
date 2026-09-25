@@ -14,12 +14,14 @@ import {
   rpcErrorToRendererResult, describeMediaUrl,
   parseVideoSubmitRequest, parseVideoSubmitResponse, parseMediaRecord, parseVideoStatusResponse,
   mediaStateToStatus, modelKeyMatches,
+  extractSubmitRefs, parseUploadResponse,
 } from '../../electron/flow-rpc-protocol.js'
 import { isFlowAuthError, markFlowAuthFailure } from '../../src/engine/engineFlow.js'
 import { isQuotaExhaustedError } from '../../src/utils/quotaStop.js'
 import {
   sample, reencodeRequestBody, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid,
 } from '../fixtures/flow-batchexecute-samples.js'
+import { s3, s3RequestBody, s3Payload } from '../fixtures/flow-m3-samples.js'
 
 const UUID5 = maskedUuid(5)   // M2-R5 J2: 픽스처의 <uuid#5> 는 로더가 UUID 모양으로 푼다
 const PROMPT = '궁정안에 있는 왕'
@@ -509,7 +511,10 @@ describe('M2-R1 F12 rpc-shape 경로 인덱스 < 100 (숫자 금지 규칙의 �
     grab(() => { const p = samplePayload('jwpduf'); p[2][0][0] = 5; parseVideoStatusResponse(p) })
     grab(() => { const p = samplePayload('as29s'); p[7][0][8] = 'https://evil.example/v'; parseMediaRecord(p) })
     grab(() => parseBatchexecuteResponse('garbage', 'nzlxg'))
-    expect(errors).toHaveLength(6)
+    // M3-1: 새 shape 경로(maseQ @[0][0] · MZZa6b 모델키)도 같은 조건
+    grab(() => { const p = s3Payload(4); p[0][0] = 'not-a-uuid'; parseUploadResponse(p) })
+    grab(() => { const p = s3Payload(10); delete p[3][0][7][0][12]; parseVideoSubmitResponse(p, 'MZZa6b') })
+    expect(errors).toHaveLength(8)
     for (const err of errors) {
       expect(err).toBeInstanceOf(FlowRpcShapeError)
       const res = rpcErrorToRendererResult(err)
@@ -519,5 +524,197 @@ describe('M2-R1 F12 rpc-shape 경로 인덱스 < 100 (숫자 금지 규칙의 �
       expect(isFlowAuthError(res)).toBe(false)
       expect(markFlowAuthFailure(res)).not.toHaveProperty('authFailed')
     }
+  })
+})
+
+// ─── M3-1 레퍼런스(요청 refs·멘션 · 업로드 maseQ · r2v MZZa6b · 되돌림 · r2v 모델키) ─────────────────────────────────
+//   픽스처 = 2026-09-25 M3 샘플(S3#n — tests/fixtures/flow-m3-samples.js). U(n) = maskedUuid(n) 의 줄임.
+//   레퍼런스 = 칩 순서의 중복 없는 목록, 멘션 = **중복을 보존한 순서열**(PR §4 — 같은 미디어 두 번 멘션 = 레퍼런스 1개·멘션 2개).
+const U = maskedUuid
+const inner = (n) => decodeFReqInner(s3RequestBody(n)).inner
+
+describe('M3-1 extractSubmitRefs — 요청 본문의 레퍼런스·멘션 id(검증 불가면 null)', () => {
+  it.each([
+    ['S3#9 ogiZ0b 레퍼런스 2 + 인라인 멘션 1', 'ogiZ0b', 9, { refs: [U(2), U(3)], mentions: [U(2)] }],
+    ['S3#3 ogiZ0b 레퍼런스 1, 멘션 없음', 'ogiZ0b', 3, { refs: [U(2)], mentions: [] }],
+    ['S3#10 MZZa6b 칩만(평문 프롬프트)', 'MZZa6b', 10, { refs: [U(2)], mentions: [] }],
+    ['S3#17 MZZa6b 인라인 멘션', 'MZZa6b', 17, { refs: [U(2)], mentions: [U(2)] }],
+    ['S3#19 ogiZ0b 같은 미디어 두 번 멘션 — 멘션 중복 보존', 'ogiZ0b', 19, { refs: [U(46)], mentions: [U(46), U(46)] }],
+    ['S3#20 MZZa6b 같은 미디어 두 번 멘션 — 멘션 중복 보존', 'MZZa6b', 20, { refs: [U(52)], mentions: [U(52), U(52)] }],
+    ['S3#14 YhhmEf 대조군(레퍼런스 자리 없음)', 'YhhmEf', 14, { refs: [], mentions: [] }],
+  ])('%s', (_l, rpcid, n, want) => {
+    expect(s3(n).rpcid).toBe(rpcid)
+    expect(extractSubmitRefs(rpcid, inner(n))).toEqual(want)
+    // 공백 + 변형 본문도 같은 값
+    expect(extractSubmitRefs(rpcid, decodeFReqInner(s3RequestBody(n, { plus: true })).inner)).toEqual(want)
+  })
+
+  it('09-24 S1(레퍼런스 없는 ogiZ0b — [1][0][2] = null) → {refs:[], mentions:[]}', () => {
+    const i = decodeFReqInner(reencodeRequestBody(sample('ogiZ0b').reqBody)).inner
+    expect(i[1][0][2]).toBeNull()
+    expect(extractSubmitRefs('ogiZ0b', i)).toEqual({ refs: [], mentions: [] })
+  })
+
+  it('결과는 id 만 — 라벨(파일명)·프롬프트 텍스트 없음', () => {
+    for (const [rpcid, n] of [['ogiZ0b', 9], ['MZZa6b', 17], ['ogiZ0b', 19], ['MZZa6b', 20]]) {
+      const s = JSON.stringify(extractSubmitRefs(rpcid, inner(n)))
+      for (const bad of ['king.jpg', 'image.png', 'walks', 'queen', 'garden']) expect(s, `S3#${n}`).not.toContain(bad)
+    }
+  })
+
+  it('모양이 다르면 null(검증 불가 — 빈 배열과 구분): [1][0][2] 문자열 · 비-UUID 레퍼런스/멘션 id · 멘션 세그먼트 모양', () => {
+    const strRefs = inner(9); strRefs[1][0][2] = 'x'
+    expect(extractSubmitRefs('ogiZ0b', strRefs)).toBeNull()
+    const badRef = inner(9); badRef[1][0][2][1][0] = 'not-a-uuid'
+    expect(extractSubmitRefs('ogiZ0b', badRef)).toBeNull()
+    const badMention = inner(9); badMention[1][0][8][0][0][1][0][0] = 'king.jpg'
+    expect(extractSubmitRefs('ogiZ0b', badMention)).toBeNull()
+    const badSeg = inner(9); badSeg[1][0][8][0][0] = [null, 'x']
+    expect(extractSubmitRefs('ogiZ0b', badSeg)).toBeNull()
+    const vBadRef = inner(10); vBadRef[0][0][1][0][1] = 'not-a-uuid'
+    expect(extractSubmitRefs('MZZa6b', vBadRef)).toBeNull()
+    const vStrRefs = inner(17); vStrRefs[0][0][1] = 'abra_r2v_4s'
+    expect(extractSubmitRefs('MZZa6b', vStrRefs)).toBeNull()
+    const vBadMention = inner(17); vBadMention[0][0][0][2][0][0][1][0][0] = null
+    expect(extractSubmitRefs('MZZa6b', vBadMention)).toBeNull()
+  })
+
+  it('항목이 여럿(x2)이면 항목마다 같아야 한다 — 같으면 그 값, 다르면 null', () => {
+    const same = inner(9); same[1].push(JSON.parse(JSON.stringify(same[1][0])))
+    expect(extractSubmitRefs('ogiZ0b', same)).toEqual({ refs: [U(2), U(3)], mentions: [U(2)] })
+    const diffRefs = inner(9); const second = JSON.parse(JSON.stringify(diffRefs[1][0])); second[2].pop(); diffRefs[1].push(second)
+    expect(extractSubmitRefs('ogiZ0b', diffRefs)).toBeNull()
+    const diffMentions = inner(19); const m2 = JSON.parse(JSON.stringify(diffMentions[1][0])); m2[8][0].splice(2, 1); diffMentions[1].push(m2)
+    expect(extractSubmitRefs('ogiZ0b', diffMentions)).toBeNull()
+  })
+
+  it('모르는 rpcid · 깨진 inner · 빈 항목 → null (throw 없음)', () => {
+    expect(extractSubmitRefs('jwpduf', inner(9))).toBeNull()
+    expect(extractSubmitRefs('maseQ', inner(9))).toBeNull()
+    expect(extractSubmitRefs('ogiZ0b', null)).toBeNull()
+    expect(extractSubmitRefs('ogiZ0b', [null, []])).toBeNull()
+    expect(extractSubmitRefs('MZZa6b', [[]])).toBeNull()
+    expect(extractSubmitRefs('MZZa6b', 'x')).toBeNull()
+  })
+})
+
+describe('M3-1 extractSubmitPrompts — MZZa6b(= YhhmEf 경로) · 멘션 세그먼트는 건너뛰고 텍스트만', () => {
+  it('("MZZa6b", S3#10) → ["The king walks slowly toward the camera"]', () => {
+    expect(extractSubmitPrompts('MZZa6b', inner(10))).toEqual(['The king walks slowly toward the camera'])
+  })
+  it('("MZZa6b", S3#17) → [" walks toward the camera"] (멘션 라벨 없음)', () => {
+    expect(extractSubmitPrompts('MZZa6b', inner(17))).toEqual([' walks toward the camera'])
+  })
+  it('("ogiZ0b", S3#9) 정규화 → "and a queen in a garden"; S3#19 정규화 → "walks with in a garden"', () => {
+    expect(normalizePrompt(extractSubmitPrompts('ogiZ0b', inner(9))[0])).toBe('and a queen in a garden')
+    expect(normalizePrompt(extractSubmitPrompts('ogiZ0b', inner(19))[0])).toBe('walks with in a garden')
+  })
+})
+
+describe('M3-1 parseUploadResponse — maseQ 응답 → {mediaId} (파일명 없음)', () => {
+  it('S3#4(붙여넣기) → {mediaId:U3}, S3#2(파일 대화상자) → {mediaId:U2}', () => {
+    expect(parseUploadResponse(s3Payload(4))).toEqual({ mediaId: U(3) })
+    expect(parseUploadResponse(s3Payload(2))).toEqual({ mediaId: U(2) })
+    expect(parseUploadResponse(parseBatchexecuteResponse(s3(4).respBody, 'maseQ'))).toEqual({ mediaId: U(3) })
+  })
+  it('결과에 image.png · king.jpg · image/ 없음', () => {
+    for (const n of [2, 4]) {
+      const s = JSON.stringify(parseUploadResponse(s3Payload(n)))
+      for (const bad of ['image.png', 'king.jpg', 'image/']) expect(s).not.toContain(bad)
+    }
+  })
+  it('[1][3][4] 가 다른 사본 · [0][0] 비-UUID → "maseQ response shape changed at [0][0]" (메시지에 값 없음)', () => {
+    const other = s3Payload(4); other[1][3][4] = U(9)
+    expect(() => parseUploadResponse(other)).toThrow(/maseQ response shape changed at \[0\]\[0\]/)
+    const bad = s3Payload(4); bad[0][0] = 'image.png'
+    let err
+    try { parseUploadResponse(bad) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(FlowRpcShapeError)
+    expect(err).toMatchObject({ rpcid: 'maseQ', path: '[0][0]' })
+    expect(err.message).not.toContain('image.png')
+    expect(() => parseUploadResponse(null)).toThrow(/maseQ response shape changed at \[0\]\[0\]/)
+  })
+  it('[1][3][4] 가 없으면 [0][0] 만으로 성공(있을 때만 같아야 한다)', () => {
+    const p = s3Payload(4); p.length = 1
+    expect(parseUploadResponse(p)).toEqual({ mediaId: U(3) })
+  })
+})
+
+describe('M3-1 parseVideoSubmitResponse(payload, "MZZa6b") — YhhmEf 와 같은 모양 + refEcho([3][0][5][6][1][1][j][2])', () => {
+  it('S3#10 → {mediaId:U30, modelKey:"abra_r2v_4s", creditsLeft:904, refEcho:[U2]}', () => {
+    expect(parseVideoSubmitResponse(s3Payload(10), 'MZZa6b')).toMatchObject({ mediaId: U(30), modelKey: 'abra_r2v_4s', creditsLeft: 904, refEcho: [U(2)], state: 6, warnings: [] })
+  })
+  it('S3#15 → U40 · veo_3_1_r2v_fast_portrait · 864', () => {
+    expect(parseVideoSubmitResponse(s3Payload(15), 'MZZa6b')).toMatchObject({ mediaId: U(40), modelKey: 'veo_3_1_r2v_fast_portrait', creditsLeft: 864, refEcho: [U(2)] })
+  })
+  it('S3#20 → U57 · 850 · refEcho:[U52] (같은 미디어 두 번 멘션이어도 되돌림 하나); S3#17 → U45 · 857 · 텍스트 메아리만', () => {
+    expect(parseVideoSubmitResponse(s3Payload(20), 'MZZa6b')).toMatchObject({ mediaId: U(57), creditsLeft: 850, refEcho: [U(52)] })
+    expect(parseVideoSubmitResponse(s3Payload(17), 'MZZa6b')).toMatchObject({ mediaId: U(45), creditsLeft: 857, refEcho: [U(2)], echo: [' walks toward the camera'] })
+  })
+  it('[3][0][7][0][12] 삭제 → "MZZa6b response shape changed at [3][0][7][0][12]" + rejectedMediaId:U30', () => {
+    const p = s3Payload(10); delete p[3][0][7][0][12]
+    let err
+    try { parseVideoSubmitResponse(p, 'MZZa6b') } catch (e) { err = e }
+    expect(err).toBeInstanceOf(FlowRpcShapeError)
+    expect(err.message).toBe('MZZa6b response shape changed at [3][0][7][0][12]')
+    expect(err).toMatchObject({ rpcid: 'MZZa6b', rejectedMediaId: U(30) })
+    expect(rpcErrorToRendererResult(err)).toEqual({ success: false, errorKind: 'flow-rpc-error', error: 'rpc-shape:MZZa6b@[3][0][7][0][12]', rejectedMediaId: U(30) })
+  })
+  it('되돌림 삭제 → 성공 + refEcho:null; 되돌림 id 가 UUID 가 아니면 null', () => {
+    const p = s3Payload(10); delete p[3][0][5][6][1][1]
+    expect(parseVideoSubmitResponse(p, 'MZZa6b')).toMatchObject({ mediaId: U(30), refEcho: null })
+    const q = s3Payload(10); q[3][0][5][6][1][1][0][2] = 'king.jpg'
+    expect(parseVideoSubmitResponse(q, 'MZZa6b').refEcho).toBeNull()
+  })
+  it('rpcid 생략 = YhhmEf(기존 호출자 무변경)', () => {
+    expect(parseVideoSubmitResponse(samplePayload('YhhmEf'), 'YhhmEf')).toEqual(parseVideoSubmitResponse(samplePayload('YhhmEf')))
+    const p = samplePayload('YhhmEf'); delete p[3][0][7][0][12]
+    expect(() => parseVideoSubmitResponse(p)).toThrow(/^YhhmEf response shape changed at \[3\]\[0\]\[7\]\[0\]\[12\]$/)
+  })
+})
+
+describe('M3-1 parseImageGenerateResponse — results[i].refEcho([0][i][6][0][15][3][0][j][2])', () => {
+  it('S3#9 → [U2,U3] · S3#3 → [U2] · S3#19 → [U46] · 09-24 S1 → null', () => {
+    expect(parseImageGenerateResponse(s3Payload(9)).results[0].refEcho).toEqual([U(2), U(3)])
+    expect(parseImageGenerateResponse(s3Payload(3)).results[0].refEcho).toEqual([U(2)])
+    expect(parseImageGenerateResponse(s3Payload(19)).results[0].refEcho).toEqual([U(46)])
+    expect(parseImageGenerateResponse(samplePayload('ogiZ0b')).results[0].refEcho).toBeNull()
+  })
+  it('되돌림 id 가 UUID 가 아니면 null(검증 불가 — 성공은 유지)', () => {
+    const p = s3Payload(9); p[0][0][6][0][15][3][0][1][2] = 'queen.jpg'
+    const r = parseImageGenerateResponse(p).results[0]
+    expect(r.refEcho).toBeNull()
+    expect(r.mediaId).toBe(U(24))
+  })
+})
+
+describe('M3-1 modelKeyMatches — r2v 진리표(want.kind:"r2v", CAT 키만) · kind 생략 = t2v', () => {
+  const OMNI = 'Omni Flash', FAST = 'Veo 3.1 - Fast', LITE = 'Veo 3.1 - Lite', QUALITY = 'Veo 3.1 - Quality'
+  const truthy = [
+    ['abra_r2v_4s', { model: OMNI, duration: 4, ratio: '9:16', resolution: '720p', kind: 'r2v' }],
+    ['abra_r2v_6s_360p', { model: OMNI, duration: 6, ratio: '16:9', resolution: '360p', kind: 'r2v' }],
+    ['veo_3_1_r2v_fast_portrait', { model: FAST, duration: 8, ratio: '9:16', kind: 'r2v' }],
+    ['veo_3_1_r2v_fast_landscape', { model: FAST, duration: 8, ratio: '16:9', kind: 'r2v' }],
+    ['veo_3_1_r2v_fast_portrait_ultra_relaxed', { model: FAST, duration: 8, ratio: '9:16', kind: 'r2v' }],
+  ]
+  const falsy = [
+    ['abra_r2v_4s', { model: OMNI, duration: 4, ratio: '9:16', resolution: '720p' }],
+    ['abra_t2v_4s', { model: OMNI, duration: 4, ratio: '9:16', kind: 'r2v' }],
+    ['veo_3_1_r2v_fast_portrait', { model: FAST, duration: 8, ratio: '16:9', kind: 'r2v' }],
+    ['veo_3_1_r2v_fast_landscape', { model: FAST, duration: 8, ratio: '9:16', kind: 'r2v' }],
+    ['veo_3_1_r2v_lite', { model: LITE, duration: 8, kind: 'r2v' }],
+    ['abra_r2v_4s', { model: OMNI, duration: 6, kind: 'r2v' }],
+    ['abra_i2v_4s', { model: OMNI, duration: 4, ratio: '9:16', kind: 'r2v' }],
+    // 방향 토큰 필수(Veo r2v) · Quality r2v 는 CAT 에 없음 · landscape 는 t2v 문법에 없음 · 모르는 kind
+    ['veo_3_1_r2v_fast', { model: FAST, duration: 8, ratio: '16:9', kind: 'r2v' }],
+    ['veo_3_1_r2v', { model: QUALITY, duration: 8, ratio: '16:9', kind: 'r2v' }],
+    ['veo_3_1_t2v_fast_landscape', { model: FAST, duration: 8, ratio: '16:9' }],
+    ['abra_r2v_4s', { model: OMNI, duration: 4, ratio: '9:16', kind: 'i2v' }],
+  ]
+  it.each(truthy)('true: %s ↔ %o', (key, want) => { expect(modelKeyMatches(key, want)).toBe(true) })
+  it.each(falsy)('false: %s ↔ %o', (key, want) => { expect(modelKeyMatches(key, want)).toBe(false) })
+  it('t2v 는 kind:"t2v" 명시와 생략이 같다', () => {
+    expect(modelKeyMatches('veo_3_1_t2v_fast_portrait_ultra_relaxed', { model: FAST, duration: 8, ratio: '9:16', kind: 't2v' })).toBe(true)
+    expect(modelKeyMatches('abra_t2v_6s', { model: OMNI, duration: 6, kind: 't2v' })).toBe(true)
   })
 })

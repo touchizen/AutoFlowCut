@@ -11,11 +11,15 @@
  * isFlowAuthError 정규식(\b401\b|\b403\b|unauthorized|…)이 문구를 보기 때문. 코드·상태는 별도 필드
  * (rpcCode / rpcStatus / httpStatus) 로 싣고, authFailed:true 는 HTTP 401 과 rpc code 16 에만 명시한다.
  *
- * decodeFReqInner / extractSubmitPrompts / normalizePrompt 는 페이지 컨텍스트 주입 문자열에도
+ * decodeFReqInner / extractSubmitPrompts / extractSubmitRefs / normalizePrompt 는 페이지 컨텍스트 주입 문자열에도
  * toString() 으로 직렬화된다 → 자기완결(모듈 스코프·다른 헬퍼 참조 금지, 브라우저 전역만).
  *
  * M2-1(영상): parseVideoSubmitRequest / parseVideoSubmitResponse(단일 레코드, 거부 id 동반 throw) / parseMediaRecord /
  * parseVideoStatusResponse / mediaStateToStatus / modelKeyMatches(HTrJv 카탈로그 표 기반 — 플랜 D8-7).
+ *
+ * M3-1(레퍼런스, docs/plans/2026-09-25-flow-M3-references-plan.md D5·D10·D11·D12): extractSubmitRefs(요청의 레퍼런스·멘션 id — 자기완결,
+ * 캡처 주입에 직렬화) · parseUploadResponse(maseQ) · parseVideoSubmitResponse(payload, rpcid) 의 MZZa6b + refEcho · 이미지 결과의 refEcho ·
+ * modelKeyMatches 의 want.kind('t2v' 기본 | 'r2v').
  *
  * tests/electron/flow-rpc-protocol.test.js
  */
@@ -99,6 +103,20 @@ const MEDIA_HOST = 'flow-content.google'
 
 function isPosInt(n) { return Number.isInteger(n) && n > 0 }
 
+/**
+ * M3-1(D12): 응답의 레퍼런스 되돌림 목록 `[[null, <n>, "<mediaId>"], …]` → id 배열(순서 유지). 목록이 없거나 항목 하나라도 UUID 가 아니면 null
+ *   (= 검증 불가 — 성공은 막지 않는다; 클릭 뒤라 핸들러가 수용+warn 으로 다룬다). 이미지 `[15][3][0]` 의 n 은 1, 영상 `[5][6][1][1]` 은 4.
+ */
+function echoRefIds(list) {
+  if (!Array.isArray(list)) return null
+  const ids = []
+  for (const ent of list) {
+    if (!Array.isArray(ent) || !isFlowMediaId(ent[2])) return null
+    ids.push(ent[2])
+  }
+  return ids
+}
+
 /** `[[["…"], ["…"]]]` 모양(요청 프롬프트와 같은 꼴)의 세그먼트 텍스트 목록. 비어 있거나 모양이 다르면 []. */
 function echoSegments(node) {
   const segments = Array.isArray(node) && Array.isArray(node[0]) ? node[0] : null
@@ -109,9 +127,10 @@ function echoSegments(node) {
 }
 
 /**
- * ogiZ0b(이미지 생성) payload → { results: [{ mediaId, seed, url, width, height, echo }] }.
+ * ogiZ0b(이미지 생성) payload → { results: [{ mediaId, seed, url, width, height, echo, refEcho }] }.
  *   item = payload[0][i] (7원소): mediaId [0], 레코드 [6][0] (18원소: seed [1], url [13], 원 프롬프트
  *   [15][2][0][2]), 치수 [6][2] = [w, h]. url 호스트는 flow-content.google 이어야 한다.
+ *   M3-1: refEcho = 레퍼런스 되돌림 [6][0][15][3][0][j][2] 의 id 들(없거나 모양이 다르면 null — 레퍼런스 없는 요청은 [15][3] = [] 라 null).
  */
 export function parseImageGenerateResponse(payload) {
   const RPC = 'ogiZ0b'
@@ -138,7 +157,8 @@ export function parseImageGenerateResponse(payload) {
     const dims = holder[2]
     if (!Array.isArray(dims) || !isPosInt(dims[0]) || !isPosInt(dims[1])) throw shapeError(RPC, p + '[6][2]')
     const echo = echoSegments(record[15] && record[15][2] && record[15][2][0] ? record[15][2][0][2] : null)
-    return { mediaId, seed: seed == null ? null : seed, url, width: dims[0], height: dims[1], echo }
+    const refEcho = echoRefIds(Array.isArray(record[15]) && Array.isArray(record[15][3]) ? record[15][3][0] : null)
+    return { mediaId, seed: seed == null ? null : seed, url, width: dims[0], height: dims[1], echo, refEcho }
   })
   return { results }
 }
@@ -163,6 +183,8 @@ export function parseVideoSubmitRequest(inner) {
 
 /**
  * YhhmEf(영상 제출) payload → { mediaId, modelKey, creditsLeft, state, echo, ratioEnum, warnings } — 레코드는 정확히 하나(D8-6).
+ *   M3-1(D10·D12): rpcid 'MZZa6b'(레퍼런스 영상 r2v — 응답 모양이 YhhmEf 와 같다)면 shape 경로 문구가 그 rpcid 를 쓰고 결과에 refEcho(레퍼런스 되돌림
+ *   [3][0][5][6][1][1][j][2] 의 id 들, 없거나 모양이 다르면 null)가 붙는다. YhhmEf 는 레퍼런스가 없는 제출이라 refEcho 키가 없다(M2 결과 모양 무변경).
  *   필수는 셋뿐: [3].length(=1) · [3][0][0] mediaId · [3][0][7][0][12] 모델키. 나머지는 optional 이고 없으면 warnings 토큰
  *   ('credits-missing' [1] · 'state-missing' [3][0][5][8][0] · 'echo-missing' [3][0][5][6][2][0][2]) — 내용 없는 고정 문자열.
  *   [3].length ≠ 1 → FlowRpcError{kind:'video-count', rejectedMediaIds}. mediaId 를 읽은 뒤의 shape 실패는 항상
@@ -174,8 +196,8 @@ export function parseVideoSubmitRequest(inner) {
 const MODEL_KEY_SYNTAX = /^(abra|veo|omni)_[a-z0-9_]+$/
 const MODEL_KEY_MAX_LEN = 64
 
-export function parseVideoSubmitResponse(payload) {
-  const RPC = 'YhhmEf'
+export function parseVideoSubmitResponse(payload, rpcid = 'YhhmEf') {
+  const RPC = rpcid
   if (!Array.isArray(payload)) throw shapeError(RPC, '[]')
   const list = payload[3]
   if (!Array.isArray(list) || list.length === 0) throw shapeError(RPC, '[3]')
@@ -206,7 +228,23 @@ export function parseVideoSubmitResponse(payload) {
   if (state == null) warnings.push('state-missing')
   const echo = echoSegments(meta && meta[6] && meta[6][2] && meta[6][2][0] ? meta[6][2][0][2] : null)
   if (echo.length === 0) warnings.push('echo-missing')
-  return { mediaId, modelKey, creditsLeft, state, echo, ratioEnum: typeof g0[16] === 'number' ? g0[16] : null, warnings }
+  const out = { mediaId, modelKey, creditsLeft, state, echo, ratioEnum: typeof g0[16] === 'number' ? g0[16] : null, warnings }
+  if (RPC === 'MZZa6b') out.refEcho = echoRefIds(meta && Array.isArray(meta[6]) && Array.isArray(meta[6][1]) ? meta[6][1][1] : null)
+  return out
+}
+
+/**
+ * M3-1(D5): maseQ(레퍼런스 이미지 업로드) payload → { mediaId }. [0][0] = 새 mediaId(UUID 모양), [1][3][4] 가 있으면 같아야 한다.
+ *   아니면 FlowRpcShapeError('maseQ response shape changed at [0][0]'). 결과에 파일명(`image.png` 등)·mime 은 싣지 않는다.
+ */
+export function parseUploadResponse(payload) {
+  const RPC = 'maseQ'
+  const head = Array.isArray(payload) && Array.isArray(payload[0]) ? payload[0] : null
+  const mediaId = head ? head[0] : null
+  if (!isFlowMediaId(mediaId)) throw shapeError(RPC, '[0][0]')
+  const wf = Array.isArray(payload[1]) && Array.isArray(payload[1][3]) ? payload[1][3] : null
+  if (wf && wf[4] != null && wf[4] !== mediaId) throw shapeError(RPC, '[0][0]')
+  return { mediaId }
 }
 
 /**
@@ -274,31 +312,38 @@ function hasPortraitSibling(spec, duration) {
 }
 
 /**
- * 응답 모델키가 요청 {model, duration, ratio, resolution} 과 맞는가 — HTrJv 카탈로그 **표 기반**(플랜 D8-7, 추론 없음):
- *   패밀리(abra ↔ Omni Flash · veo_3_1 ↔ Veo 3.1) + `_t2v` 세그먼트 필수(r2v/i2v/extend/edit 거부)
+ * 응답 모델키가 요청 {model, duration, ratio, resolution, kind} 과 맞는가 — HTrJv 카탈로그 **표 기반**(플랜 D8-7, 추론 없음):
+ *   패밀리(abra ↔ Omni Flash · veo_3_1 ↔ Veo 3.1) + `_t2v` 세그먼트 필수(r2v/i2v/extend/edit 거부 — M3-1: want.kind:'r2v' 면 `_r2v` 필수)
  *   + 길이 토큰 `(\d+)s` 는 있으면 일치·없으면 8 + 등급 토큰(fast|lite|quality)은 veo 만, 없으면 quality
  *   + `_portrait` 는 portrait 형제가 있는 base 에서만 9:16 ↔ 토큰 일치(형제가 있는데 토큰이 없으면 9:16 요청은 거부)
  *   + 큐 토큰 `_ultra|_relaxed|_low_priority` 중립 + `_360p` 는 요청 해상도와 일치(없으면 720p).
  *   모르는 토큰·모르는 라벨·길이 없음은 false(fail-closed). Omni 의 비율은 키에 없다 — 패널이 보장(D7).
+ *   M3-1(D11): want.kind('t2v' 기본 | 'r2v') — 키의 둘째 토큰이 kind 와 같아야 한다(t2v 진리표 무변경). r2v 표(CAT): `abra_r2v_{4,6,8,10}s[_360p]`
+ *   ↔ Omni Flash(길이·해상도 규칙은 t2v 와 같다) · `veo_3_1_r2v_fast_{portrait|landscape}[_ultra|_relaxed…]` ↔ Veo 3.1 Fast 8초, **방향 토큰 필수**
+ *   (9:16 ↔ portrait, 16:9 ↔ landscape). `veo_3_1_r2v_lite`(패널 미관측)·Veo Quality r2v(CAT 에 없음)는 false.
  */
 export function modelKeyMatches(key, want) {
   if (typeof key !== 'string' || !want) return false
   const spec = videoModelSpec(want.model)
   if (!spec) return false
+  const kind = want.kind == null ? 't2v' : want.kind
+  if (kind !== 't2v' && kind !== 'r2v') return false
   const wantDur = Number(want.duration)
   if (!Number.isFinite(wantDur)) return false
   const wantRes = String(want.resolution || '720p').toLowerCase()
   const m = /^(abra|veo_3_1)_([a-z0-9]+)((?:_[a-z0-9]+)*)$/.exec(key)
-  if (!m || m[1] !== spec.family || m[2] !== 't2v') return false
+  if (!m || m[1] !== spec.family || m[2] !== kind) return false
   let duration = 8
   let tier = null
   let portrait = false
+  let landscape = false
   let res = '720p'
   for (const tok of m[3].split('_').filter(Boolean)) {
     const d = /^(\d+)s$/.exec(tok)
     if (d) { duration = Number(d[1]); continue }
     if (KEY_TIER_TOKENS.has(tok)) { if (spec.family !== 'veo_3_1' || tier) return false; tier = tok; continue }
     if (tok === 'portrait') { if (spec.family !== 'veo_3_1') return false; portrait = true; continue }
+    if (tok === 'landscape') { if (kind !== 'r2v' || spec.family !== 'veo_3_1') return false; landscape = true; continue }   // M3-1: r2v 전용 방향 토큰
     if (tok === '360p') { res = '360p'; continue }
     if (KEY_QUEUE_TOKENS.has(tok)) continue
     return false
@@ -306,7 +351,14 @@ export function modelKeyMatches(key, want) {
   if (duration !== wantDur) return false
   if (spec.family === 'veo_3_1' && (tier || 'quality') !== spec.tier) return false
   if (res !== wantRes) return false
-  const wantPortrait = String(want.ratio || '') === '9:16'
+  const ratio = String(want.ratio || '')
+  if (kind === 'r2v' && spec.family === 'veo_3_1') {
+    // CAT 의 Veo r2v 는 Fast 8초뿐이고 방향 토큰이 하나 붙는다 — 요청 비율과 같은 방향이어야 한다.
+    if (spec.tier !== 'fast' || duration !== 8 || (portrait && landscape)) return false
+    const wantDir = ratio === '9:16' ? 'portrait' : ratio === '16:9' ? 'landscape' : null
+    return wantDir === 'portrait' ? portrait : wantDir === 'landscape' ? landscape : false
+  }
+  const wantPortrait = ratio === '9:16'
   if (portrait) return hasPortraitSibling(spec, duration) && wantPortrait
   return !(wantPortrait && hasPortraitSibling(spec, duration))
 }
@@ -340,7 +392,8 @@ export function decodeFReqInner(body) {
 
 /**
  * 제출 RPC 의 inner payload 에서 프롬프트 텍스트 목록(항목당 1개, 세그먼트는 ' ' 결합).
- *   ogiZ0b: inner[1][i][8][0] = [["…"], …]      YhhmEf: inner[0][i][0][2][0] = [["…"], …]
+ *   ogiZ0b: inner[1][i][8][0] = [["…"], …]      YhhmEf·MZZa6b(M3-1): inner[0][i][0][2][0] = [["…"], …]
+ *   인라인 멘션 세그먼트 `[null, [["<id>","<라벨>"]]]` 는 건너뛴다(텍스트만 — 라벨은 프롬프트가 아니다).
  * 모양이 다르거나 모르는 rpcid 면 [] — throw 없음. 자기완결.
  */
 export function extractSubmitPrompts(rpcid, inner) {
@@ -348,7 +401,7 @@ export function extractSubmitPrompts(rpcid, inner) {
   if (!Array.isArray(inner)) return out
   var items = null
   if (rpcid === 'ogiZ0b') items = inner[1]
-  else if (rpcid === 'YhhmEf') items = inner[0]
+  else if (rpcid === 'YhhmEf' || rpcid === 'MZZa6b') items = inner[0]
   if (!Array.isArray(items)) return out
   for (var i = 0; i < items.length; i++) {
     var item = items[i]
@@ -364,6 +417,62 @@ export function extractSubmitPrompts(rpcid, inner) {
     if (texts.length) out.push(texts.join(' '))
   }
   return out
+}
+
+/**
+ * M3-1(D10): 제출 RPC 요청 inner → { refs, mentions } — **id 만**(라벨·텍스트 없음). refs = 레퍼런스 목록(칩 순서, 페이지가 중복 제거),
+ * mentions = 인라인 멘션의 등장 순서열(**중복 보존** — 같은 미디어 두 번 멘션이면 refs 1개·mentions 2개, PR §4).
+ *   ogiZ0b: refs inner[1][i][2][j][0](레퍼런스 없는 요청은 [1][i][2] = null → []) · mentions inner[1][i][8][0][k][1][0][0]
+ *   MZZa6b: refs inner[0][i][1][j][1] · mentions inner[0][i][0][2][0][k][1][0][0]
+ *   YhhmEf: 레퍼런스 자리 없음(refs [] — [0][i][1] 은 모델키 문자열) · mentions 는 MZZa6b 와 같은 경로
+ * 세그먼트는 텍스트 `["…"]` 또는 멘션 `[null, [["<id>","<라벨>"]]]` 뿐. id 가 UUID 가 아니거나 모양이 다르거나 모르는 rpcid 면 **null**(= 검증 불가 —
+ * 빈 배열과 구분, D12). 항목이 여럿(x2~x4)이면 항목마다 같아야 하고 다르면 null. throw 없음. 자기완결(캡처 주입에 직렬화).
+ */
+export function extractSubmitRefs(rpcid, inner) {
+  var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!Array.isArray(inner)) return null
+  var items = null
+  if (rpcid === 'ogiZ0b') items = inner[1]
+  else if (rpcid === 'MZZa6b' || rpcid === 'YhhmEf') items = inner[0]
+  if (!Array.isArray(items) || items.length === 0) return null
+  var first = null
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i]
+    if (!Array.isArray(item)) return null
+    var refs = []
+    if (rpcid === 'ogiZ0b' && item[2] !== null) {
+      if (!Array.isArray(item[2])) return null
+      for (var j = 0; j < item[2].length; j++) {
+        var ent = item[2][j]
+        if (!Array.isArray(ent) || typeof ent[0] !== 'string' || !UUID.test(ent[0])) return null
+        refs.push(ent[0])
+      }
+    } else if (rpcid === 'MZZa6b') {
+      if (!Array.isArray(item[1])) return null
+      for (var jj = 0; jj < item[1].length; jj++) {
+        var vent = item[1][jj]
+        if (!Array.isArray(vent) || typeof vent[1] !== 'string' || !UUID.test(vent[1])) return null
+        refs.push(vent[1])
+      }
+    } else if (rpcid === 'YhhmEf' && typeof item[1] !== 'string') {
+      return null
+    }
+    var node = rpcid === 'ogiZ0b' ? item[8] : (Array.isArray(item[0]) ? item[0][2] : null)
+    var segs = Array.isArray(node) && Array.isArray(node[0]) ? node[0] : null
+    if (!segs) return null
+    var mentions = []
+    for (var k = 0; k < segs.length; k++) {
+      var seg = segs[k]
+      if (!Array.isArray(seg)) return null
+      if (typeof seg[0] === 'string') continue
+      var m = seg[0] === null && Array.isArray(seg[1]) && seg[1].length === 1 && Array.isArray(seg[1][0]) ? seg[1][0][0] : null
+      if (typeof m !== 'string' || !UUID.test(m)) return null
+      mentions.push(m)
+    }
+    if (first === null) first = { refs: refs, mentions: mentions }
+    else if (first.refs.join(',') !== refs.join(',') || first.mentions.join(',') !== mentions.join(',')) return null
+  }
+  return first
 }
 
 /** 프롬프트 정규화: 세그먼트 ' ' 결합 → NFC → 공백 압축 → trim. 양쪽(main·주입) 동일. 자기완결. */

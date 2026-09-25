@@ -6,7 +6,8 @@
  * gen 엔트리(새 경로, flow-angular.js 가 만든다):
  *   { rpc, doc, seq, sentAt, normPrompt, wantRatio, wantModelKey, results, error, errorKind, completed,
  *     allowDomFallback:false, waiter:{resolve}|null, deadlines:{send?, grace?, loadend?}, setAt,
- *     sendDeadlinePassed?, onSendDeadline?(gen) }   // 뒤 둘은 M2-R7 L1(영상 send 유예)
+ *     sendDeadlinePassed?, onSendDeadline?(gen),   // M2-R7 L1(영상 send 유예)
+ *     altRpcs?, boundRpc?, sentRefs?, sentMentions? }   // M3-3(대체 rpc 바인딩 · 요청의 레퍼런스·멘션 id)
  * 시각은 전부 초(Date.now()/1000).
  *
  *   send    : 후보 = rpc 동일·미바인딩·미완료·setAt <= sentAt. 1개면 바인딩(프롬프트 달라도 — warn 만), 2개 이상이면
@@ -18,9 +19,14 @@
  *             맵에서 지우는 건 collect·clear·orphan TTL 뿐(지우면 렌더러가 notFound 로 ITEM_TIMEOUT 까지 매달린다).
  *             M2-R7 L1: 영상(YhhmEf)의 send 15s 는 최종이 아니다 — sendDeadlinePassed 표시 + gen.onSendDeadline(gen) 훅(핸들러의 크레딧 재판독)
  *             뿐이고 클릭 뒤 100s(15+85 grace)까지 바인딩 가능한 채로 둔다; 그때까지 send 가 없으면 grace 마감이 flow-submit-not-sent. 이미지는 그대로.
- *   unbound : 바인딩 없는 YhhmEf 200 이 UUID 로 파싱되면 media 앞 8자만 로그·reportDomFailure('submit:unbound-loadend') — 과금된 미디어를 찾을 수 있게.
+ *   unbound : 바인딩 없는 YhhmEf(M3-3: ·MZZa6b) 200 이 UUID 로 파싱되면 media 앞 8자만 로그·reportDomFailure('submit:unbound-loadend') — 과금된 미디어를 찾을 수 있게.
  *             M2-R8 M4: 보고는 **최근(≤120s) 앱이 loadend 없이 닫은 YhhmEf gen**(not-sent·lost·cleared·multi-batch — settleGen 이 기록)이 있을 때만; 없으면(사용자의 손 제출)
  *             로그만. 진단 싱크는 스텝당 세션 1회만 보내므로 콘솔 줄 `[Flow RPC] YhhmEf unbound loadend media=<8>` 이 미디어별 기록이다.
+ *
+ * M3-3(계획서 2026-09-25 M3 D5·D10): 영상 gen 은 대체 rpc 로도 바인딩된다 — `altRpcs`(레퍼런스 있음 rpc:'MZZa6b'·altRpcs:['YhhmEf'], 없음 그 반대;
+ *             칩이 있으면 페이지가 YhhmEf 대신 MZZa6b 를 보낸다). 후보 = rpc ∪ altRpcs, 바인딩 때 gen.boundRpc = 실제 rpc(파서 선택; 불일치 판정은 핸들러)
+ *             + gen.sentRefs/sentMentions = send 의 refs/mentions(id 배열, 없으면 null — D12 의 요청 근거). maseQ(업로드) gen 은 같은 규칙으로
+ *             바인딩 → loadend 에서 gen.mediaId(parseUploadResponse), 유예 없음. 유예·미바인딩 보고는 영상 rpc 둘(YhhmEf·MZZa6b) 모두.
  *
  * 문서 커밋(did-navigate)·렌더러 크래시(render-process-gone) 에서 main 이 failBoundUnfinished 를 부른다:
  * 바인딩됐으나 미완료인 gen 은 응답이 영영 오지 않으므로 flow-submit-lost 로 닫는다. 미바인딩 armed gen 은
@@ -29,7 +35,7 @@
  * tests/electron/flow-rpc-router.test.js
  */
 import {
-  FlowRpcError, parseBatchexecuteResponse, parseImageGenerateResponse, parseVideoSubmitResponse,
+  FlowRpcError, parseBatchexecuteResponse, parseImageGenerateResponse, parseVideoSubmitResponse, parseUploadResponse,
   normalizePrompt, ratioOk, rpcErrorToRendererResult,
 } from './flow-rpc-protocol.js'
 
@@ -39,7 +45,9 @@ export const LOADEND_DEADLINE_S = 100
 export const SEND_GRACE_S = LOADEND_DEADLINE_S - SEND_DEADLINE_S
 const DEADLINE_ERROR = { send: 'flow-submit-not-sent', grace: 'flow-submit-not-sent', loadend: 'flow-submit-lost' }
 const DEADLINE_SECS = { send: SEND_DEADLINE_S, grace: SEND_GRACE_S, loadend: LOADEND_DEADLINE_S }
-const SEND_GRACE_RPCS = new Set(['YhhmEf'])
+// 영상 제출 rpc(과금 — 응답 파서·미바인딩 200 보고 대상). M3-3: MZZa6b(레퍼런스 영상 r2v)
+const VIDEO_RPCS = new Set(['YhhmEf', 'MZZa6b'])
+const SEND_GRACE_RPCS = new Set(['YhhmEf', 'MZZa6b'])   // M3-3: r2v 제출도 같은 send 유예
 // M2-R8 M4(B2 + A4): 바인딩 없는 YhhmEf 200 보고의 조건 — 앱이 loadend 없이 닫은 YhhmEf gen 의 시각(초)을 짧은 TTL 로 기록한다. 캡처는 문서마다 주입돼
 //   사용자가 Flow 뷰에서 손으로 만든 영상의 YhhmEf 도 보고됐다(거짓 "DOM step failed" + 그 dedupe 가 진짜 보고를 가림). 이 kind 로 닫힌 gen 의 응답은 뒤늦게 올 수 있다.
 export const UNBOUND_CLOSE_TTL_S = 120
@@ -48,11 +56,11 @@ let recentUnboundCloses = []
 const nowS = () => Date.now() / 1000
 const pruneUnboundCloses = () => { const t = nowS(); recentUnboundCloses = recentUnboundCloses.filter((x) => t - x < UNBOUND_CLOSE_TTL_S) }
 function noteUnboundClose(gen, patch) {
-  if (!gen || gen.rpc !== 'YhhmEf' || !patch || !UNBOUND_CLOSE_KINDS.has(patch.errorKind)) return
+  if (!gen || !VIDEO_RPCS.has(gen.rpc) || !patch || !UNBOUND_CLOSE_KINDS.has(patch.errorKind)) return
   pruneUnboundCloses()
   recentUnboundCloses.push(nowS())
 }
-/** 최근 TTL 안에 앱이 loadend 없이 닫은 YhhmEf gen 이 있나. */
+/** 최근 TTL 안에 앱이 loadend 없이 닫은 영상(YhhmEf·MZZa6b) gen 이 있나. */
 export function hasRecentUnboundClose() { pruneUnboundCloses(); return recentUnboundCloses.length > 0 }
 /** 테스트용 — 모듈 기록 초기화. */
 export function _resetUnboundCloseRecordsForTests() { recentUnboundCloses = [] }
@@ -62,6 +70,8 @@ const short = (s) => String(s ?? '').slice(0, 8)
 const shortId = (s) => String(s ?? '').slice(-8)
 const isDoc = (d) => typeof d === 'string' && /^[0-9a-f]{32}$/.test(d)
 const isSeq = (n) => Number.isInteger(n) && n > 0
+// M3-3: send 이벤트의 refs/mentions — 문자열 배열만(사본), 아니면 null(= 검증 불가, D12)
+const idList = (x) => (Array.isArray(x) && x.every((v) => typeof v === 'string') ? x.slice() : null)
 
 /** gen 을 완료로 확정하고 마감 타이머를 정리한 뒤 waiter 를 한 번만 깨운다. 맵에서 지우지 않는다. */
 export function settleGen(gen, patch) {
@@ -135,7 +145,8 @@ export function routeRpcSend(ev, pendingGenerations) {
     || typeof ev.sentAt !== 'number' || !Number.isFinite(ev.sentAt)) return { ok: false, reason: 'invalid' }
   const candidates = []
   for (const [id, gen] of pendingGenerations) {
-    if (!gen || gen.rpc !== ev.rpcid || gen.completed || gen.doc != null) continue
+    if (!gen || gen.completed || gen.doc != null) continue
+    if (gen.rpc !== ev.rpcid && !(Array.isArray(gen.altRpcs) && gen.altRpcs.includes(ev.rpcid))) continue   // M3-3: rpc ∪ altRpcs
     if (typeof gen.setAt === 'number' && gen.setAt > ev.sentAt) continue
     candidates.push([id, gen])
   }
@@ -165,6 +176,9 @@ export function routeRpcSend(ev, pendingGenerations) {
   gen.doc = ev.doc
   gen.seq = ev.seq
   gen.sentAt = ev.sentAt
+  gen.boundRpc = ev.rpcid
+  gen.sentRefs = idList(ev.refs)
+  gen.sentMentions = idList(ev.mentions)
   // M2-R7 L1: 유예(grace) 마감도 해제 — 늦은 send 의 바인딩은 정상 경로(loadend 100s)로 간다. 로그에 late 표시만.
   for (const k of ['send', 'grace']) { if (gen.deadlines && gen.deadlines[k]) { clearTimeout(gen.deadlines[k]); delete gen.deadlines[k] } }
   armDeadline(gen, 'loadend')
@@ -173,12 +187,12 @@ export function routeRpcSend(ev, pendingGenerations) {
 }
 
 /**
- * M2-R7 L1: 바인딩 없는 YhhmEf 200 본문 → 파서가 UUID 로 검증한 mediaId(J2). 실패 프레임·비 200·shape·다른 rpc 는 null — 검증 안 된 값은 절대 내보내지 않는다
+ * M2-R7 L1: 바인딩 없는 영상 제출(YhhmEf · M3-3 MZZa6b) 200 본문 → 파서가 UUID 로 검증한 mediaId(J2). 실패 프레임·비 200·shape·다른 rpc 는 null — 검증 안 된 값은 절대 내보내지 않는다
  *   (200 뒤 shape 실패의 rejectedMediaId 도 [3][0][0] 검증 뒤에만 실린다; video-count 의 rejectedMediaIds 는 미검증이라 쓰지 않는다).
  */
 function unboundVideoMediaId(ev) {
-  if (ev.rpcid !== 'YhhmEf' || ev.status !== 200) return null
-  try { return parseVideoSubmitResponse(parseBatchexecuteResponse(ev.responseText, 'YhhmEf')).mediaId }
+  if (!VIDEO_RPCS.has(ev.rpcid) || ev.status !== 200) return null
+  try { return parseVideoSubmitResponse(parseBatchexecuteResponse(ev.responseText, ev.rpcid), ev.rpcid).mediaId }
   catch (e) { return e && typeof e.rejectedMediaId === 'string' ? e.rejectedMediaId : null }
 }
 
@@ -200,10 +214,10 @@ export function routeRpcLoadend(ev, pendingGenerations, opts) {
     if (media) {
       // M2-R8 M4: 최근 앱이 loadend 없이 닫은 YhhmEf gen 이 있을 때만 보고 — 없으면(사용자의 손 제출) 로그만. 싱크는 스텝당 세션 1회라 이 줄이 미디어별 기록.
       if (hasRecentUnboundClose()) {
-        console.warn(`[Flow RPC] YhhmEf unbound loadend media=${short(media)}`)
-        callSafe(opts && opts.reportDomFailure, 'submit:unbound-loadend', 'unbound-loadend', { rpc: 'YhhmEf', seq: ev.seq, media: short(media) })
+        console.warn(`[Flow RPC] ${ev.rpcid} unbound loadend media=${short(media)}`)
+        callSafe(opts && opts.reportDomFailure, 'submit:unbound-loadend', 'unbound-loadend', { rpc: ev.rpcid, seq: ev.seq, media: short(media) })
       } else {
-        console.warn(`[Flow RPC] YhhmEf unbound loadend media=${short(media)} (no recent app close — not reported)`)
+        console.warn(`[Flow RPC] ${ev.rpcid} unbound loadend media=${short(media)} (no recent app close — not reported)`)
       }
     }
     return { ok: true, dropped: 'unbound' }
@@ -211,12 +225,13 @@ export function routeRpcLoadend(ev, pendingGenerations, opts) {
   const [id, gen] = found
   if (gen.completed) return { ok: true, duplicate: id }
   const status = typeof ev.status === 'number' ? ev.status : 0
-  console.log(`[Flow RPC] ${gen.rpc} loadend seq=${ev.seq} status=${status}`)
+  const rpc = gen.boundRpc || gen.rpc   // M3-3: 대체 rpc 로 바인딩됐으면 그 rpc 의 파서
+  console.log(`[Flow RPC] ${rpc} loadend seq=${ev.seq} status=${status}`)
   try {
     if (status === 0) throw new FlowRpcError('network', { status: 0, reason: 'xhr-error' })
     if (status !== 200) throw new FlowRpcError('http', { status })
-    const payload = parseBatchexecuteResponse(ev.responseText, gen.rpc)
-    if (gen.rpc === 'ogiZ0b') {
+    const payload = parseBatchexecuteResponse(ev.responseText, rpc)
+    if (rpc === 'ogiZ0b') {
       const { results } = parseImageGenerateResponse(payload)
       warnEchoMismatch(gen, ev.seq, results[0] && results[0].echo)
       if (gen.wantRatio) {
@@ -232,19 +247,24 @@ export function routeRpcLoadend(ev, pendingGenerations, opts) {
       if (results.length !== want) console.warn(`[Flow RPC] ogiZ0b seq=${ev.seq} count mismatch got=${results.length} want=${want}`)
       console.log(`[Flow RPC] ogiZ0b seq=${ev.seq} results=${results.length} ${results[0].width}x${results[0].height}`)
       settleGen(gen, { results })
-    } else if (gen.rpc === 'YhhmEf') {
+    } else if (VIDEO_RPCS.has(rpc)) {
       // 레코드 수 ≠ 1(video-count + rejectedMediaIds)·200 뒤 shape(+rejectedMediaId) 는 파서가 throw → catch 가 매핑(M2-1).
-      const v = parseVideoSubmitResponse(payload)
+      const v = parseVideoSubmitResponse(payload, rpc)
       warnEchoMismatch(gen, ev.seq, v.echo)
-      if (v.warnings.length) console.warn(`[Flow RPC] YhhmEf seq=${ev.seq} warnings=${v.warnings.join(',')}`)
-      settleGen(gen, { mediaId: v.mediaId, creditsLeft: v.creditsLeft, modelKey: v.modelKey, warnings: v.warnings })
+      if (v.warnings.length) console.warn(`[Flow RPC] ${rpc} seq=${ev.seq} warnings=${v.warnings.join(',')}`)
+      const patch = { mediaId: v.mediaId, creditsLeft: v.creditsLeft, modelKey: v.modelKey, warnings: v.warnings }
+      if ('refEcho' in v) patch.refEcho = v.refEcho   // M3-3: MZZa6b 의 레퍼런스 되돌림(D12 의 응답 근거)
+      settleGen(gen, patch)
+    } else if (rpc === 'maseQ') {
+      // M3-3: 업로드 — 새 mediaId 만(파일명은 파서가 버린다). 칩 id 확인·캐시 기록은 드라이버 몫.
+      settleGen(gen, { mediaId: parseUploadResponse(payload).mediaId })
     } else {
-      throw new FlowRpcError('shape', { message: 'unsupported rpc ' + String(gen.rpc) })
+      throw new FlowRpcError('shape', { message: 'unsupported rpc ' + String(rpc) })
     }
   } catch (e) {
     const { success: _s, ...mapped } = rpcErrorToRendererResult(e)
     settleGen(gen, mapped)
-    console.warn(`[Flow RPC] ${gen.rpc} loadend seq=${ev.seq} failed kind=${(e && e.kind) || 'error'} code=${e && e.code != null ? e.code : '-'} status=${status}`)
+    console.warn(`[Flow RPC] ${rpc} loadend seq=${ev.seq} failed kind=${(e && e.kind) || 'error'} code=${e && e.code != null ? e.code : '-'} status=${status}`)
   }
   return { ok: true, completed: id }
 }

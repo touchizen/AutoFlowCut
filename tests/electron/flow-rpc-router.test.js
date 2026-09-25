@@ -13,6 +13,7 @@ import {
   SEND_DEADLINE_S, LOADEND_DEADLINE_S, UNBOUND_CLOSE_TTL_S, _resetUnboundCloseRecordsForTests,
 } from '../../electron/flow-rpc-router.js'
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
+import { s3, s3Payload } from '../fixtures/flow-m3-samples.js'
 
 const NOW_S = 1790240102.5
 const DOC_A = 'a'.repeat(32)
@@ -477,5 +478,149 @@ describe('M2-R8 M4 — 바인딩 없는 YhhmEf 200 보고는 최근(≤120s) 앱
     routeRpcLoadend(vend({ seq: 24 }), new Map(), { reportDomFailure: r3 })
     expect(r3).not.toHaveBeenCalled()
     expect(logged()).toMatch(/media=00000011 \(no recent app close — not reported\)/)
+  })
+})
+
+// M3-3 — 레퍼런스 영상(MZZa6b)·업로드(maseQ) 라우팅. 영상 gen 은 대체 rpc(altRpcs)로도 바인딩되고(D10 — 칩이 있으면 페이지가 YhhmEf 대신 MZZa6b 를 보낸다,
+//   그 반대도) gen.boundRpc 에 실제 rpc 를 적어 파서를 고른다(불일치 판정은 핸들러 몫). send 의 refs/mentions 는 gen.sentRefs/sentMentions 로(없으면 null).
+//   maseQ gen 은 같은 바인딩 규칙 → loadend 에서 gen.mediaId(parseUploadResponse); 유예 없음. 유예·미바인딩 보고는 MZZa6b 로 넓힌다.
+describe('M3-3 — altRpcs/boundRpc · sentRefs/sentMentions · maseQ · MZZa6b 유예·미바인딩 보고', () => {
+  const U = maskedUuid
+  const VPROMPT = '왕이 궁전 내부를 산책하는 영상'
+  const R2V_PROMPT = 'The king walks slowly toward the camera'
+
+  it('{rpc:"MZZa6b", altRpcs:["YhhmEf"]} + YhhmEf send → 바인딩, boundRpc==="YhhmEf"; loadend 09-24 S2 → YhhmEf 파서로 settle', () => {
+    const g = gen({ rpc: 'MZZa6b', altRpcs: ['YhhmEf'], normPrompt: VPROMPT, wantRatio: undefined })
+    const map = new Map([['v', g]])
+    expect(routeRpcSend(sendEv({ rpcid: 'YhhmEf', rpcids: ['YhhmEf'], prompts: [VPROMPT] }), map)).toEqual({ ok: true, bound: 'v' })
+    expect(g).toMatchObject({ rpc: 'MZZa6b', boundRpc: 'YhhmEf', doc: DOC_A, seq: 1 })
+    expect(routeRpcLoadend(endEv({ rpcid: 'YhhmEf', responseText: sample('YhhmEf').respBody }), map)).toEqual({ ok: true, completed: 'v' })
+    expect(g).toMatchObject({ completed: true, error: null, mediaId: U(11), creditsLeft: 1040, modelKey: 'abra_t2v_6s' })
+    expect(logged()).toMatch(/\[Flow RPC\] YhhmEf loadend seq=1 status=200/)
+  })
+
+  it('반대 방향(레퍼런스 없는 T2V 의 백스톱): {rpc:"YhhmEf", altRpcs:["MZZa6b"]} + MZZa6b send → boundRpc MZZa6b → loadend S3#10 → MZZa6b 파서(U30 · refEcho [U2])', () => {
+    const g = gen({ rpc: 'YhhmEf', altRpcs: ['MZZa6b'], normPrompt: R2V_PROMPT, wantRatio: undefined })
+    const map = new Map([['v', g]])
+    expect(routeRpcSend(sendEv({ rpcid: 'MZZa6b', rpcids: ['MZZa6b'], prompts: [R2V_PROMPT], refs: [U(2)], mentions: [] }), map)).toEqual({ ok: true, bound: 'v' })
+    expect(g.boundRpc).toBe('MZZa6b')
+    routeRpcLoadend(endEv({ rpcid: 'MZZa6b', responseText: s3(10).respBody }), map)
+    expect(g).toMatchObject({ completed: true, error: null, mediaId: U(30), creditsLeft: 904, modelKey: 'abra_r2v_4s', refEcho: [U(2)] })
+  })
+
+  it('MZZa6b 응답 shape 실패는 경로에 MZZa6b + rejectedMediaId(과금된 id)', () => {
+    const g = gen({ rpc: 'MZZa6b', doc: DOC_A, seq: 1, boundRpc: 'MZZa6b', normPrompt: R2V_PROMPT, wantRatio: undefined })
+    const p = s3Payload(10); delete p[3][0][7][0][12]
+    routeRpcLoadend(endEv({ rpcid: 'MZZa6b', responseText: respBodyWithPayload('MZZa6b', p) }), new Map([['v', g]]))
+    expect(g).toMatchObject({ completed: true, error: 'rpc-shape:MZZa6b@[3][0][7][0][12]', rejectedMediaId: U(30) })
+    expect(g.mediaId).toBeUndefined()
+  })
+
+  it('altRpcs 없는 gen + 다른 rpc send → 미바인딩(옛 동작); 정상 바인딩도 boundRpc = rpc', () => {
+    const v = gen({ rpc: 'YhhmEf', normPrompt: VPROMPT })
+    expect(routeRpcSend(sendEv({ rpcid: 'MZZa6b', rpcids: ['MZZa6b'], prompts: [VPROMPT] }), new Map([['v', v]]))).toEqual({ ok: true, dropped: 'unbound' })
+    expect(v.doc).toBeNull()
+    expect(v.boundRpc).toBeUndefined()
+    const i = gen()
+    routeRpcSend(sendEv(), new Map([['i', i]]))
+    expect(i.boundRpc).toBe('ogiZ0b')
+  })
+
+  it('send refs/mentions → gen.sentRefs/gen.sentMentions(멘션 중복 보존); 없거나 null·배열 아님 → null', () => {
+    const a = gen()
+    routeRpcSend(sendEv({ refs: [U(46)], mentions: [U(46), U(46)] }), new Map([['a', a]]))
+    expect(a).toMatchObject({ sentRefs: [U(46)], sentMentions: [U(46), U(46)] })
+    for (const over of [{}, { refs: null, mentions: null }, { refs: 'x', mentions: [1] }]) {
+      const g = gen()
+      routeRpcSend(sendEv(over), new Map([['g', g]]))
+      expect(g.doc).toBe(DOC_A)
+      expect(g).toMatchObject({ sentRefs: null, sentMentions: null })
+    }
+    const empty = gen()
+    routeRpcSend(sendEv({ refs: [], mentions: [] }), new Map([['e', empty]]))
+    expect(empty).toMatchObject({ sentRefs: [], sentMentions: [] })
+  })
+
+  describe('maseQ(업로드) gen', () => {
+    const ugen = (over = {}) => gen({ rpc: 'maseQ', normPrompt: '', wantRatio: undefined, ...over })
+    const usend = (over = {}) => sendEv({ rpcid: 'maseQ', rpcids: ['maseQ'], prompts: [], ...over })
+    const uend = (over = {}) => endEv({ rpcid: 'maseQ', responseText: s3(4).respBody, ...over })
+
+    it('바인딩 → loadend S3#4 → gen.mediaId===U3, gen.doc 기록; 로그·gen 에 파일명 없음', () => {
+      const g = ugen()
+      const map = new Map([['u', g]])
+      expect(routeRpcSend(usend(), map)).toEqual({ ok: true, bound: 'u' })
+      expect(routeRpcLoadend(uend(), map)).toEqual({ ok: true, completed: 'u' })
+      expect(g).toMatchObject({ completed: true, error: null, mediaId: U(3), doc: DOC_A, seq: 1, boundRpc: 'maseQ' })
+      const { waiter: _w, deadlines: _d, ...plain } = g
+      expect(JSON.stringify(plain)).not.toMatch(/image\.png|image\/|king\.jpg/)
+      expect(logged()).not.toMatch(/image\.png|image\//)
+      expect(logged()).toMatch(/\[Flow RPC\] maseQ loadend seq=1 status=200/)
+    })
+
+    it('실패 프레임 → flow-rpc-error + rpcCode; 응답 모양이 다르면 rpc-shape:maseQ@[0][0]', () => {
+      const g = ugen({ doc: DOC_A, seq: 1 })
+      routeRpcLoadend(uend({ responseText: respBodyFailure('maseQ', 3) }), new Map([['u', g]]))
+      expect(g).toMatchObject({ completed: true, error: 'flow-rpc-error', errorKind: 'flow-rpc-error', rpcCode: 3 })
+      const bad = s3Payload(4); bad[0][0] = 'image.png'
+      const h = ugen({ doc: DOC_A, seq: 2 })
+      routeRpcLoadend(uend({ seq: 2, responseText: respBodyWithPayload('maseQ', bad) }), new Map([['u', h]]))
+      expect(h).toMatchObject({ completed: true, error: 'rpc-shape:maseQ@[0][0]' })
+      expect(h.mediaId).toBeUndefined()
+      expect(logged()).not.toContain('image.png')
+    })
+
+    it('15s send 없음 → flow-submit-not-sent(유예 없음 — 영상만 유예)', () => {
+      const g = ugen()
+      armDeadline(g, 'send')
+      vi.advanceTimersByTime(SEND_DEADLINE_S * 1000)
+      expect(g).toMatchObject({ completed: true, error: 'flow-submit-not-sent', errorKind: 'flow-submit-not-sent' })
+      expect(g.sendDeadlinePassed).toBeUndefined()
+    })
+
+    it('미바인딩 maseQ loadend(사용자의 손 업로드) → {dropped:"unbound"}, 보고·media 줄 없음 — 최근 앱이 닫은 영상 gen 이 있어도', () => {
+      settleGen(gen({ rpc: 'MZZa6b' }), { error: 'flow-submit-lost', errorKind: 'flow-submit-lost' })
+      const report = vi.fn()
+      expect(routeRpcLoadend(uend({ seq: 7 }), new Map(), { reportDomFailure: report })).toEqual({ ok: true, dropped: 'unbound' })
+      expect(report).not.toHaveBeenCalled()
+      expect(logged()).not.toMatch(/unbound loadend media=/)
+    })
+  })
+
+  it.each(['MZZa6b', 'YhhmEf'])('%s send 마감 15s → 유예(sendDeadlinePassed + 훅, 바인딩 가능) → 16s 의 MZZa6b send 바인딩; send 없으면 100s 에 not-sent', (rpc) => {
+    const hook = vi.fn()
+    const alt = rpc === 'MZZa6b' ? ['YhhmEf'] : ['MZZa6b']
+    const g = gen({ rpc, altRpcs: alt, normPrompt: R2V_PROMPT, wantRatio: undefined, onSendDeadline: hook })
+    const map = new Map([['v', g]])
+    armDeadline(g, 'send')
+    vi.advanceTimersByTime(SEND_DEADLINE_S * 1000)
+    expect(g).toMatchObject({ completed: false, sendDeadlinePassed: true, error: null })
+    expect(hook).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1000)
+    expect(routeRpcSend(sendEv({ rpcid: 'MZZa6b', rpcids: ['MZZa6b'], prompts: [R2V_PROMPT], sentAt: NOW_S + 16 }), map)).toEqual({ ok: true, bound: 'v' })
+    expect(logged()).toMatch(/\[Flow RPC\] MZZa6b send doc=a{8} seq=1 bound=v late/)
+    const idle = gen({ rpc, altRpcs: alt, normPrompt: R2V_PROMPT })
+    armDeadline(idle, 'send')
+    vi.advanceTimersByTime(LOADEND_DEADLINE_S * 1000 - 1)
+    expect(idle).toMatchObject({ completed: false, sendDeadlinePassed: true })
+    vi.advanceTimersByTime(1)
+    expect(idle).toMatchObject({ completed: true, error: 'flow-submit-not-sent' })
+  })
+
+  it('최근 닫힌 MZZa6b gen 뒤 미바인딩 MZZa6b 200(S3#10) → [Flow RPC] MZZa6b unbound loadend media=00000030 + 보고(앞 8자만)', () => {
+    markDeadline(gen({ rpc: 'MZZa6b', altRpcs: ['YhhmEf'] }), 'grace')
+    const report = vi.fn()
+    expect(routeRpcLoadend(endEv({ rpcid: 'MZZa6b', seq: 9, responseText: s3(10).respBody }), new Map(), { reportDomFailure: report })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(logged()).toMatch(/\[Flow RPC\] MZZa6b unbound loadend media=00000030$/m)
+    expect(report).toHaveBeenCalledWith('submit:unbound-loadend', 'unbound-loadend', { rpc: 'MZZa6b', seq: 9, media: '00000030' })
+    expect(logged()).not.toContain(U(30))
+    expect(JSON.stringify(report.mock.calls)).not.toContain(U(30))
+  })
+
+  it('닫힌 gen 없음(사용자의 손 r2v 제출) → MZZa6b unbound 로그만 "(no recent app close — not reported)"', () => {
+    const report = vi.fn()
+    routeRpcLoadend(endEv({ rpcid: 'MZZa6b', seq: 9, responseText: s3(10).respBody }), new Map(), { reportDomFailure: report })
+    expect(logged()).toMatch(/\[Flow RPC\] MZZa6b unbound loadend media=00000030 \(no recent app close — not reported\)/)
+    expect(report).not.toHaveBeenCalled()
   })
 })

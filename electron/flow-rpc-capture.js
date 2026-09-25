@@ -7,8 +7,12 @@
  * reCAPTCHA Enterprise 토큰이 실린다 → 앱은 제출을 절대 만들지 않고(신뢰 클릭만) 페이지가 보낸 요청의
  * send/loadend 를 **관측**해 pendingGenerations 와 상관시킨다. 요청 본문은 절대 바꾸지 않는다.
  *
- *   send    → flowReportResponse({kind:'batchexecute-send', doc, rpcid, rpcids, seq, prompts, sentAt, multi?})
+ *   send    → flowReportResponse({kind:'batchexecute-send', doc, rpcid, rpcids, seq, prompts, sentAt, refs, mentions, multi?})
  *   loadend → flowReportResponse({kind:'batchexecute', doc, rpcid, seq, status, responseText, endedAt})
+ *
+ * M3-2(계획서 2026-09-25 M3 D5·D10): 허용 목록에 MZZa6b(레퍼런스 영상 r2v 제출)·maseQ(레퍼런스 이미지 업로드). 제출 send 에는 요청의
+ * 레퍼런스·멘션 id(refs·mentions — extractSubmitRefs, id 만; 검증 불가면 null). **maseQ 는 본문을 디코드하지 않는다**(수 MB base64·파일명) —
+ * send 는 prompts:[] 만(refs·mentions 키 없음), loadend 는 다른 rpc 와 같이 responseText(~600B, main 이 parseUploadResponse 로 파싱만).
  *
  * doc = 문서마다 새 32hex nonce(같은 문서 재주입은 유지 — SPA 내비게이션·재주입 안전), seq = 문서 안 카운터.
  * {doc, seq} 가 상관키(electron/flow-rpc-router.js). 제출 프롬프트는 send 이벤트로만 main 에 가고, main 은
@@ -19,15 +23,16 @@
  * 설치 플래그 window.__autoflowcut_rpc_capture__ 를 핸들러가 클릭 전에 프로브한다.
  * tests/electron/flow-rpc-capture.test.js · tests/electron/flow-injections-minified.test.js
  */
-import { decodeFReqInner, extractSubmitPrompts } from './flow-rpc-protocol.js'
+import { decodeFReqInner, extractSubmitPrompts, extractSubmitRefs } from './flow-rpc-protocol.js'
 
-export const FLOW_RPC_CAPTURE_ALLOWLIST = Object.freeze(['ogiZ0b', 'YhhmEf'])
+export const FLOW_RPC_CAPTURE_ALLOWLIST = Object.freeze(['ogiZ0b', 'YhhmEf', 'MZZa6b', 'maseQ'])
 
 export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
 (function () {
   const decodeFReqInner = ${decodeFReqInner.toString()};
   const extractSubmitPrompts = ${extractSubmitPrompts.toString()};
-  const ALLOW = { ogiZ0b: 1, YhhmEf: 1 };
+  const extractSubmitRefs = ${extractSubmitRefs.toString()};
+  const ALLOW = { ogiZ0b: 1, YhhmEf: 1, MZZa6b: 1, maseQ: 1 };
 
   function report(payload) {
     try {
@@ -79,9 +84,14 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
           if (rpcid) {
             t.armed = true
             const seq = (window.__autoflowcut_rpc_seq__ = window.__autoflowcut_rpc_seq__ + 1)
-            const decoded = typeof body === 'string' ? decodeFReqInner(body) : null
-            const prompts = decoded ? extractSubmitPrompts(rpcid, decoded.inner) : []
-            const ev = { kind: 'batchexecute-send', doc: doc, rpcid: rpcid, rpcids: rpcids, seq: seq, prompts: prompts, sentAt: Date.now() / 1000 }
+            const ev = { kind: 'batchexecute-send', doc: doc, rpcid: rpcid, rpcids: rpcids, seq: seq, prompts: [], sentAt: Date.now() / 1000 }
+            if (rpcid !== 'maseQ') {   // 업로드 본문(base64·파일명)은 풀지 않는다
+              const decoded = typeof body === 'string' ? decodeFReqInner(body) : null
+              const refs = decoded ? extractSubmitRefs(rpcid, decoded.inner) : null
+              ev.prompts = decoded ? extractSubmitPrompts(rpcid, decoded.inner) : []
+              ev.refs = refs ? refs.refs : null
+              ev.mentions = refs ? refs.mentions : null
+            }
             if (rpcids.length > 1) ev.multi = true
             report(ev)
             const xhr = this
