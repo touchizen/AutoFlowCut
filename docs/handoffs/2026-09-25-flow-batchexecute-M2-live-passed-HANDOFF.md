@@ -79,7 +79,7 @@ curl -s -X POST localhost:3210/api/start-scene-batch -H 'Content-Type: applicati
 ```
 주의: `app_generate_scene` MCP 호출은 권한 분류기에 한 번 막혔다가 다음엔 통과했다. main 프로세스 코드를 바꾸면 **앱 재시작**(HMR 은 렌더러만). 진단 파일은 `~/Desktop/flow-diag-*.json`(세션당 단계별 1회).
 
-## 4. 다음 할 일 (순서대로)
+## 4. 다음 할 일 (순서대로) — 1·2·3 은 끝났다(§0-1)
 
 1. **실기 수정분 독립 리뷰**(진행 중): 범위 `6b9b5859..63e967f0`(코드 7커밋), diff 는 스크래치 `review/m2-live.diff`. 리뷰어 Fable ×2(사본 분리). Codex 는 **9/27 06:01 까지 주간 한도**. findings → 저자 수정 → findings 0.
 2. **리뷰 R8 MINOR 5건**: `docs/handoffs/briefs/2026-09-25/fable-m2-fix8-brief.md`(M1~M5 — 테스트 핀 4 + 미바인딩 loadend 보고를 "최근 앱이 닫은 gen" 있을 때만). 1번 findings 와 한 라운드로 묶어도 된다.
@@ -95,3 +95,20 @@ curl -s -X POST localhost:3210/api/start-scene-batch -H 'Content-Type: applicati
 - Flow 설정 패널은 Escape 로 닫으면 다음 트리거 클릭 한 번이 헛돈다.
 - 모델마다 패널 컨트롤이 다르다(Veo Fast: 길이·해상도 없음). 모르는 패널은 shape 진단으로 0크레딧에 먼저 본다.
 - 셸에 `ELECTRON_RUN_AS_NODE=1` 이 박혀 있다(`env -u`). 세션의 `grep` 은 셸 함수라 큰 파이프에서 조용히 비는 일이 있다(`/usr/bin/grep`).
+- **한글 IME 는 `before-input-event` 키 잠금을 우회한다**(입력기가 처리한 keydown 은 PreHandleKeyboardEvent 를 건너뛴다). 재판독 뒤 OS 포커스를 앱 창으로 돌리고, 클릭 도우미의 `beforeDispatch` 로 mouseDown 직전에 편집기를 다시 읽는다.
+- **문서 이동·렌더러 크래시를 넘긴 `executeJavaScript` 는 영영 settle 하지 않는다**(Electron 36 실측) — 그걸 기다리는 직렬화는 교착한다. `did-navigate`·`render-process-gone` 에서 워치독이 끊은 단계만 푼다.
+- 방패(`WebContentsView`)는 포인터만 막는다. 방패의 focus 핸들러가 포커스를 Flow 로 되돌리면 편집기가 다시 입력을 받는다 — 넘긴 뒤엔 행선지를 앱 창으로.
+- Fable 5.1 도 사용량 크레딧이 떨어질 수 있다. 그땐 Opus 가 저자, 리뷰는 Sonnet(저자와 다른 모델). Codex 는 9/27 06:01 까지 주간 한도.
+
+## 6. 새 세션 시작 문구
+
+```
+AutoFlowCut-bugfix 워크트리(~/workspace/AutoFlowCut-bugfix, 브랜치 fix/flow-batchexecute)에서 이어서 작업해.
+먼저 docs/handoffs/2026-09-25-flow-batchexecute-M2-live-passed-HANDOFF.md 를 끝까지 읽어(§0-1 이 최신 상태).
+M2(영상)는 끝났다 — 구현·리뷰 루프·실기 통과, 44커밋 전부 미푸시.
+남은 것 중 내가 정한 것만 해: (a) 푸시·머지 방식 (b) M3 레퍼런스 — 내가 Flow 창에서 레퍼런스 1장 붙여 이미지 1장 생성한 캡처로 시작
+(c) 옛 핸들러·스킵 스위트 정리(플랜 §11 #18) (d) T2V 썸네일을 영상 프레임으로 바꿀지.
+구현은 Fable 5.1(안 되면 Opus), 리뷰는 저자와 다른 모델 독립 2인(사본 분리)으로 findings 0 까지, 전체 vitest 판정과 커밋은 네가 직접, 커밋 메시지는 영어, 푸시는 나한테 물어봐.
+크레딧이 드는 생성은 매번 나한테 물어봐(Flow 모드 테스트는 허용 — 이미지 0크레딧, Omni 4초 7·6초 10, Veo Fast 8초 20).
+```
+
