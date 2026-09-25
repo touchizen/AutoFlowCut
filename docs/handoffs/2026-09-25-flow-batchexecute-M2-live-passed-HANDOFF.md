@@ -102,6 +102,8 @@ curl -s -X POST localhost:3210/api/start-scene-batch -H 'Content-Type: applicati
 
 ## 6. 새 세션 시작 문구
 
+> **M3(레퍼런스)를 시작할 거면** 이 문구 대신 `docs/handoffs/2026-09-25-flow-M3-references-KICKOFF.md` §7 의 시작 문구를 써라(캡처 절차·막는 자리·함정 포함).
+
 ```
 AutoFlowCut-bugfix 워크트리(~/workspace/AutoFlowCut-bugfix, 브랜치 fix/flow-batchexecute)에서 이어서 작업해.
 먼저 docs/handoffs/2026-09-25-flow-batchexecute-M2-live-passed-HANDOFF.md 를 끝까지 읽어(§0-1 이 최신 상태).
