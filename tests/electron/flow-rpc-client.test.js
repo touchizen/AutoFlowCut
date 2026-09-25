@@ -42,17 +42,19 @@ describe('허용 목록 — 읽기 RPC 셋만', () => {
   it('정확히 nzlxg · jwpduf · as29s', () => {
     expect([...FLOW_RPC_ALLOWLIST].sort()).toEqual(['as29s', 'jwpduf', 'nzlxg'])
   })
-  it.each(['ogiZ0b', 'YhhmEf', 'Zzl0ze'])('buildRpcRequest(%s) 는 throw /rpcid not allowed/', (rpcid) => {
+  // M3-15: 레퍼런스 업로드(maseQ — reCAPTCHA 토큰)·레퍼런스 영상 제출(MZZa6b — 과금)도 앱이 만들 수 없다(페이지가 UI 로 보낸 것을 캡처만 한다).
+  const NOT_ALLOWED = ['ogiZ0b', 'YhhmEf', 'Zzl0ze', 'maseQ', 'MZZa6b']
+  it.each(NOT_ALLOWED)('buildRpcRequest(%s) 는 throw /rpcid not allowed/', (rpcid) => {
     expect(() => buildRpcRequest({ rpcid, payload: [], wiz: readWizGlobals(WIZ), hl: 'ko', sourcePath: '/p', reqid: 1 }))
       .toThrow(/rpcid not allowed/)
   })
-  it.each(['ogiZ0b', 'YhhmEf', 'Zzl0ze'])('callFlowRpc(%s) 도 throw /rpcid not allowed/ 이고 페이지를 건드리지 않는다', async (rpcid) => {
+  it.each(NOT_ALLOWED)('callFlowRpc(%s) 도 throw /rpcid not allowed/ 이고 페이지를 건드리지 않는다', async (rpcid) => {
     const executeJavaScript = vi.fn()
     await expect(callFlowRpc({ webContents: { executeJavaScript } }, rpcid, [])).rejects.toThrow(/rpcid not allowed/)
     expect(executeJavaScript).not.toHaveBeenCalled()
   })
   it('FLOW_RPC_CALL_JS 도 허용 목록 밖이면 throw', () => {
-    expect(() => FLOW_RPC_CALL_JS('ogiZ0b', '[]')).toThrow(/rpcid not allowed/)
+    for (const rpcid of NOT_ALLOWED) expect(() => FLOW_RPC_CALL_JS(rpcid, '[]'), rpcid).toThrow(/rpcid not allowed/)
   })
 })
 

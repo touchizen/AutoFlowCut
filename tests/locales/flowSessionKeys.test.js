@@ -136,3 +136,13 @@ describe('M3 레퍼런스 kind 문구 (D14)', () => {
     expect(locale.errorSection.kind['flow-t2v-reference-images-unsupported']).toBeTruthy()
   })
 })
+
+// M3 후속: 영상 시작 전 미해결 @멘션 토스트(App.jsx — Flow 모드 전용). 새 Flow 엔 Ref 탭의 캐릭터 동기화가 없다 — 그 이름의 레퍼런스(이미지 포함)를
+//   레퍼런스 탭에 추가하라고 한다. 플레이스홀더는 {names} 하나 그대로(App 이 '@a, @b' 로 채운다).
+describe('toast.videoUnknownMentions — 레퍼런스 탭에 그 이름의 레퍼런스를 추가하라는 문구 (M3 후속)', () => {
+  it('en/ko 문구 고정 · 플레이스홀더는 {names} 하나', () => {
+    expect(en.toast.videoUnknownMentions).toBe('No reference found for {names} — add a reference with that name (with an image) in the References tab and retry.')
+    expect(ko.toast.videoUnknownMentions).toBe('{names} 이름의 레퍼런스를 찾지 못했습니다 — 레퍼런스 탭에서 그 이름으로 레퍼런스(이미지 포함)를 추가한 뒤 다시 시도하세요.')
+    for (const locale of [en, ko]) expect(placeholders(locale.toast.videoUnknownMentions)).toEqual(['names'])
+  })
+})

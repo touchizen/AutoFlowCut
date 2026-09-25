@@ -14,6 +14,10 @@ import { failBoundUnfinished } from '../../electron/flow-rpc-router.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../../electron/flow-rpc-capture.js'
 import { sample, reencodeRequestBody, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 import { READ_COMPOSER_STATE_JS } from '../../electron/flow-composer-refs.js'   // M3: 레퍼런스 없는 제출 전의 잔여 칩 판독(D9 · §1-1)
+// M3-14: 레퍼런스 파이프라인 — 가짜 컴포저 문서(jsdom)에 실제 캡처 주입(FakeXHR)을 설치한 핸들러 하네스
+import { _resetDomStageForTests } from '../../electron/ipc/flow-angular.js'
+import { refMediaCache } from '../../electron/flow-ref-media-cache.js'
+import { refHandlerHarness, settle as settleRef, refInput, refSha, text, mention, session, FAKE_DOC, FAKE_PROJECT } from '../helpers/flowRefHandlerHarness.js'
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 const URL_OK = `https://flow.google.com/project/${PROJECT}`
@@ -176,5 +180,87 @@ describe('파이프라인 (a): 주입 → flowReportResponse → 라우터 → c
     const r = await settle(h.generate({ aspectRatio: '9:16' }))
     expect(r).toMatchObject({ success: false, errorKind: 'flow-aspect-mismatch' })
     expect(h.sessionFetch).not.toHaveBeenCalled()
+  })
+})
+
+// M3-14(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md §4 M3-14 · D5·D6·D10·D12) — 레퍼런스 경로를 **실제 캡처 주입**까지 잇는다.
+//   가짜 컴포저 문서(jsdom — 컴포즈 스크립트가 실제로 돈다)에 FLOW_RPC_CAPTURE_INJECTION 을 FakeXHR 위에 설치한다(main 이 문서 로드 때 하듯). 붙여넣기 업로드는
+//   그 문서의 XHR 이 maseQ(S3#4 요청)를 보내고, 제출 클릭은 S3#9 요청을 보낸다 — 주입이 send/loadend 를 flowReportResponse 로 보고하고 라우터가 {doc, seq} 로
+//   바인딩한다. 핸들러 하네스(tests/helpers/flowRefHandlerHarness.js realCapture)가 나머지(세션·설정·신뢰 클릭)를 맡는다.
+describe('M3-14 파이프라인 — 레퍼런스: 실제 캡처 주입 → flowReportResponse → 라우터(sentRefs·sentMentions) → 검증 → collect', () => {
+  const U = maskedUuid
+  /** S3#9: @king(U2) 인라인 멘션 + queen ＋ 첨부 — 요청 refs [U2,U3] · mentions [U2] · 응답 U24(768×1376, 되돌림 [U2,U3]). */
+  const PLAN9 = { segments: [mention(0), text(' and a queen in a garden')], attach: [1] }
+  const REFS9 = () => [refInput('king'), refInput('queen')]
+  const logged = () => [...console.log.mock.calls, ...console.warn.mock.calls].map((c) => c.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')).join('\n')
+  /** 제출 클릭 때 맵의 ogiZ0b gen 을 잡아 두고 **페이지 XHR** 이 S3#9 요청을 보내고 응답한다(주입이 보고). */
+  const submitS3_9 = (box) => (sp, map) => { box.gen = [...map.values()].find((g) => g.rpc === 'ogiZ0b') || null; sp.xhr(9) }
+  /** 드라이버가 맵에 넣는 업로드(maseQ) gen 을 붙잡는다 — 성공하면 드라이버가 맵에서 지우므로. */
+  const catchUploadGens = (h) => {
+    const gens = []
+    const set = h.pendingGenerations.set.bind(h.pendingGenerations)
+    h.pendingGenerations.set = (k, g) => { if (g && g.rpc === 'maseQ') gens.push(g); return set(k, g) }
+    return gens
+  }
+  beforeEach(() => { _resetDomStageForTests(); refMediaCache.clear() })
+  afterEach(() => { refMediaCache.clear() })
+
+  it('동기: king 은 이 문서 세션 재사용 · queen 은 붙여넣기 업로드 — 페이지의 maseQ(S3#4)가 주입 nonce 로 바인딩돼 업로드 gen 이 U3 로 완료 → S3#9 send 가 sentRefs [U2,U3]·sentMentions [U2] 로 바인딩 → loadend → images', async () => {
+    const box = {}
+    const h = refHandlerHarness({ realCapture: true, page: { assets: session(U(2)), upload: { ids: [U(3)] } }, onSubmit: submitS3_9(box) })
+    const uploads = catchUploadGens(h)
+    expect(h.docNonce).toMatch(/^[0-9a-f]{32}$/)
+    expect(h.docNonce).not.toBe(FAKE_DOC)   // 주입이 만든 nonce(가짜 페이지가 심어 둔 값이 아니다)
+    refMediaCache.set(h.docNonce, FAKE_PROJECT, refSha('king'), U(2))
+    const r = await settleRef(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(r.success).toBe(true)
+    expect(r.images).toHaveLength(1)
+    expect(r.images[0]).toMatchObject({ mediaId: U(24), width: 768, height: 1376 })
+    // 페이지가 보낸 것은 주입의 보고 넷뿐 — 전부 같은 문서
+    expect(h.reports.map((p) => [p.kind, p.rpcid])).toEqual([['batchexecute-send', 'maseQ'], ['batchexecute', 'maseQ'], ['batchexecute-send', 'ogiZ0b'], ['batchexecute', 'ogiZ0b']])
+    expect([...new Set(h.reports.map((p) => p.doc))]).toEqual([h.docNonce])
+    expect(h.reports[0]).toEqual({ kind: 'batchexecute-send', doc: h.docNonce, rpcid: 'maseQ', rpcids: ['maseQ'], seq: 1, prompts: [], sentAt: expect.any(Number) })   // 업로드 본문은 풀지 않는다
+    // 업로드 gen — 주입 nonce 로 바인딩, S3#4 의 mediaId 로 완료 → 세션 캐시도 그 문서 키로
+    expect(uploads).toHaveLength(1)
+    expect(uploads[0]).toMatchObject({ rpc: 'maseQ', boundRpc: 'maseQ', doc: h.docNonce, seq: 1, mediaId: U(3), completed: true, error: null })
+    expect(refMediaCache.get(h.docNonce, FAKE_PROJECT, refSha('queen'))).toBe(U(3))
+    // 제출 gen — 캡처가 요청에서 뽑은 refs·mentions 로 바인딩
+    expect(box.gen).toMatchObject({
+      rpc: 'ogiZ0b', boundRpc: 'ogiZ0b', doc: h.docNonce, seq: 2, completed: true,
+      sentRefs: [U(2), U(3)], sentMentions: [U(2)], expectedRefs: [U(2), U(3)], expectedMentions: [U(2)],
+    })
+    expect(h.page.counts.paste).toBe(1)
+    expect(h.sessionFetch).toHaveBeenCalledTimes(1)
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/\[Flow API\] \[Angular\] refs verified request=2 echo=2 mentions=1\/1/)
+  })
+
+  it('비동기: 둘 다 세션 재사용(업로드 0) → {generationId, submitted} → check(completed, via rpc) → collect 가 검증 뒤 images', async () => {
+    const box = {}
+    const h = refHandlerHarness({ realCapture: true, page: { assets: session(U(2), U(3)) }, onSubmit: submitS3_9(box) })
+    refMediaCache.set(h.docNonce, FAKE_PROJECT, refSha('king'), U(2))
+    refMediaCache.set(h.docNonce, FAKE_PROJECT, refSha('queen'), U(3))
+    const r = await settleRef(h.generate({ refs: REFS9(), plan: PLAN9, asyncMode: true }), 120000)
+    expect(r).toMatchObject({ success: true, submitted: true })
+    expect(h.reports.map((p) => p.rpcid)).toEqual(['ogiZ0b', 'ogiZ0b'])
+    expect(box.gen).toMatchObject({ doc: h.docNonce, sentRefs: [U(2), U(3)], sentMentions: [U(2)] })
+    expect(await h.ipcMain.invoke('flow:check-generation', { generationId: r.generationId })).toMatchObject({ completed: true, via: 'rpc' })
+    const c = await h.ipcMain.invoke('flow:collect-generation', { generationId: r.generationId })
+    expect(c.success).toBe(true)
+    expect(c.images[0]).toMatchObject({ mediaId: U(24), width: 768, height: 1376 })
+    expect(h.pendingGenerations.size).toBe(0)
+  })
+
+  it('기대를 [U2,U9] 로 바꾸면(queen 이 세션의 U9) — 같은 S3#9 요청(refs [U2,U3])·되돌림이 기대와 달라 flow-references-mismatch + postClick, 다운로드 없음', async () => {
+    const box = {}
+    const h = refHandlerHarness({ realCapture: true, page: { assets: session(U(2), U(9)) }, onSubmit: submitS3_9(box) })
+    refMediaCache.set(h.docNonce, FAKE_PROJECT, refSha('king'), U(2))
+    refMediaCache.set(h.docNonce, FAKE_PROJECT, refSha('queen'), U(9))
+    const r = await settleRef(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(r).toEqual({ success: false, errorKind: 'flow-references-mismatch', error: 'flow-references-mismatch', postClick: true })
+    expect(box.gen).toMatchObject({ expectedRefs: [U(2), U(9)], sentRefs: [U(2), U(3)], sentMentions: [U(2)] })
+    expect(h.page.counts.paste).toBe(0)
+    expect(h.sessionFetch).not.toHaveBeenCalled()
+    expect(logged()).toMatch(/refs mismatch request=2\/2 echo=2\/2 mentions=1\/1 → flow-references-mismatch/)
   })
 })

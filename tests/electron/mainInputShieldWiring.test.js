@@ -54,8 +54,9 @@ describe('main.js — DOM 단계 키 입력 잠금 배선 (M2-CLOSE O1)', () => 
     expect(deps).toMatch(/^\s*setAutomationKeyLock:\s*\(on\)\s*=>\s*\{\s*automationKeyLock = !!on\s*\}/m)
     expect(MAIN).toMatch(/^let automationKeyLock = false/m)
   })
-  it('Angular DOM 경로(flow-angular · flow-composer-settings · shared 의 신뢰 클릭)는 sendInputEvent 키 이벤트를 보내지 않는다 — 잠금이 자동화를 막지 않는다', () => {
-    for (const f of ['../../electron/ipc/flow-angular.js', '../../electron/flow-composer-settings.js', '../../electron/ipc/shared.js']) {
+  it('Angular DOM 경로(flow-angular · flow-composer-settings · shared 의 신뢰 클릭 · M3-15: 레퍼런스 드라이버·파인더·클립보드)는 sendInputEvent 키 이벤트를 보내지 않는다 — 잠금이 자동화를 막지 않는다', () => {
+    for (const f of ['../../electron/ipc/flow-angular.js', '../../electron/flow-composer-settings.js', '../../electron/ipc/shared.js',
+      '../../electron/flow-reference-driver.js', '../../electron/flow-composer-refs.js', '../../electron/flow-clipboard.js']) {
       const src = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8')
       expect(src, f).not.toMatch(/sendInputEvent\(\{\s*type:\s*'(keyDown|keyUp|char|rawKeyDown)'/)
     }
@@ -105,5 +106,53 @@ describe('main.js — 방패 포커스의 단계 플래그 배선 (M2-FINAL Q1)'
     expect(b).toMatch(/^\s*shield\.webContents\.on\('focus',\s*\(\)\s*=>\s*\{[^\n]*if \(shieldFocusTarget === 'main'\) win\.webContents\.focus\(\); else modeController\.getFlowView\(\)\?\.webContents\.focus\(\)/m)
     const deps = MAIN.slice(MAIN.indexOf('const flowAPIDeps = {'), MAIN.indexOf('registerFlowAPIIPC(ipcMain, flowAPIDeps)'))
     expect(deps).toMatch(/^\s*setShieldFocusTarget:\s*\(t\)\s*=>\s*\{\s*shieldFocusTarget = t === 'main' \? 'main' : 'flow'\s*\}/m)
+  })
+})
+
+// M3-15(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md §4 M3-15 · D8 · D16): 레퍼런스 경로도 Flow 뷰에 키 이벤트를 보내지 않는다 — '@' 는 execCommand('insertText'),
+//   @ 창 닫기는 문서 합성 Escape(DOM 이벤트). 위 목록은 파일을 이름으로 적으므로, Angular 핸들러가 import 로 닿는 모듈 전부(전이 폐포 — 새 모듈이 옛 labs.google 멘션 경로
+//   flow-compose-mention.js 같은 키 모듈을 끌어오면 여기서 빨개진다)와 main.js 도 본다. 새 레퍼런스 모듈은 sendInputEvent 자체를 부르지 않는다(신뢰 클릭은 ctx.trustedClick 로만).
+describe('레퍼런스 경로의 키 sendInputEvent 금지 (M3-15)', () => {
+  const ELECTRON_DIR = fileURLToPath(new URL('../../electron/', import.meta.url))
+  const REPO_DIR = fileURLToPath(new URL('../../', import.meta.url))
+  // 키 이벤트 — type 이 객체의 첫 키가 아니어도 잡는다
+  const KEY_SEND = /sendInputEvent\(\s*\{[^}]*\btype:\s*['"](keyDown|keyUp|char|rawKeyDown)['"]/
+  const read = (abs) => readFileSync(abs, 'utf8')
+  /** 상대 import·re-export 의 전이 폐포(절대 경로). 확장자 없는 지정자는 .js/.jsx 로 푼다. */
+  function importClosure(entryAbs) {
+    const seen = new Set()
+    const walk = (abs) => {
+      if (seen.has(abs)) return
+      seen.add(abs)
+      if (!/\.jsx?$/.test(abs)) return
+      for (const m of read(abs).matchAll(/^\s*(?:import|export)\s[^'"]*?from\s+['"](\.{1,2}\/[^'"]+)['"]/gm)) {
+        const base = new URL(m[1], 'file://' + abs).pathname
+        const hit = [base, base + '.js', base + '.jsx'].find((p) => { try { readFileSync(p); return true } catch (_e) { return false } })
+        if (hit) walk(hit)
+      }
+    }
+    walk(entryAbs)
+    return [...seen]
+  }
+
+  it('새 레퍼런스 모듈(flow-reference-driver · flow-composer-refs · flow-clipboard · flow-ref-media-cache)은 sendInputEvent 를 부르지 않는다', () => {
+    for (const f of ['flow-reference-driver.js', 'flow-composer-refs.js', 'flow-clipboard.js', 'flow-ref-media-cache.js']) {
+      expect(read(ELECTRON_DIR + f), f).not.toMatch(/\.sendInputEvent\s*\(/)
+    }
+  })
+
+  it('flow-angular.js 의 전이 import 폐포에 키 sendInputEvent 가 없다(드라이버·파인더·클립보드·캐시·설정·라우터 포함)', () => {
+    const closure = importClosure(ELECTRON_DIR + 'ipc/flow-angular.js')
+    const rel = closure.map((abs) => abs.replace(REPO_DIR, ''))
+    // 폐포가 레퍼런스 경로를 실제로 담는다(파서가 비어서 통과하는 게 아니다)
+    for (const f of ['electron/flow-reference-driver.js', 'electron/flow-composer-refs.js', 'electron/flow-clipboard.js', 'electron/flow-ref-media-cache.js', 'electron/flow-composer-settings.js', 'electron/flow-rpc-router.js']) {
+      expect(rel, f).toContain(f)
+    }
+    const offenders = closure.filter((abs) => /\.jsx?$/.test(abs) && KEY_SEND.test(read(abs))).map((abs) => abs.replace(REPO_DIR, ''))
+    expect(offenders).toEqual([])
+  })
+
+  it('main.js 에 키 sendInputEvent 가 0개다', () => {
+    expect(MAIN).not.toMatch(KEY_SEND)
   })
 })

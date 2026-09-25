@@ -111,7 +111,7 @@ describe('minified RPC 클라이언트 스크립트', () => {
     const args = { rpcid: 'nzlxg', payload: [], wiz: { at: 'A', sid: 'S', bl: 'B' }, hl: 'ko', sourcePath: '/project/x', reqid: 1 }
     expect(mod.buildRpcRequest(args)).toEqual(plainClient.buildRpcRequest(args))
     expect(mod.readWizGlobals({ SNlM0e: 'A', FdrFJe: 'S', cfb2h: 'B', oPEP7c: 'x' })).toEqual({ at: 'A', sid: 'S', bl: 'B' })
-    expect(() => mod.buildRpcRequest({ ...args, rpcid: 'ogiZ0b' })).toThrow(/rpcid not allowed/)
+    for (const rpcid of ['ogiZ0b', 'maseQ', 'MZZa6b']) expect(() => mod.buildRpcRequest({ ...args, rpcid }), rpcid).toThrow(/rpcid not allowed/)   // M3-15: 업로드·r2v 제출도
   })
 
   it('minified 클라이언트가 실제로 XHR 을 열고 보낸다(open/헤더/body)', async () => {
@@ -257,6 +257,30 @@ describe('minified 레퍼런스 드라이버 페이지 표현식(M3-7·M3-8) —
     })
     expect(min.chip1).toContain(U(3))
   })
+
+  // M3-15: 관찰 리스너는 이벤트를 소비하지 않는다 — 두 번 주입한 뒤에 붙은 리스너(문서 capture · 대상 · 문서 bubble)가 **전부** 받고 누구도 defaultPrevented 를 보지 않는다
+  //   (페이지의 붙여넣기 처리 = 업로드가 그대로 돈다). stopPropagation·stopImmediatePropagation·preventDefault 중 하나라도 넣으면 빨갛다. minified 동일.
+  it('붙여넣기 관찰 주입 뒤의 리스너가 전부 이벤트를 받는다 — 전파·기본 동작을 막지 않는다(두 번 주입해도 한 번 센다)', () => {
+    const run = (mod) => {
+      const dom = new JSDOM(`<body>${html()}</body>`, { runScripts: 'outside-only' })
+      const w = dom.window
+      w.eval(mod.FLOW_PASTE_OBSERVER_INJECTION)
+      w.eval(mod.FLOW_PASTE_OBSERVER_INJECTION)
+      const seen = []
+      const note = (tag) => (e) => seen.push([tag, e.defaultPrevented])
+      const target = w.document.querySelector('div.ProseMirror p')
+      w.document.addEventListener('paste', note('doc-capture'), true)
+      target.addEventListener('paste', note('target'))
+      w.document.addEventListener('paste', note('doc-bubble'))
+      const e = new w.Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(e, 'clipboardData', { value: { files: { length: 1 } } })
+      const notCanceled = target.dispatchEvent(e)
+      return { seen, notCanceled, obs: w.eval(mod.FLOW_PASTE_OBSERVER_INJECTION) }
+    }
+    const min = run(drv)
+    expect(min).toEqual(run(plainDriver))
+    expect(min).toEqual({ seen: [['doc-capture', false], ['target', false], ['doc-bubble', false]], notCanceled: true, obs: { n: 1, inEditor: true, files: 1 } })
+  })
 })
 
 describe('정적 규칙: 직렬화되는 헬퍼는 서로를 이름으로 부르지 않는다', () => {
@@ -281,6 +305,37 @@ describe('정적 규칙: 직렬화되는 헬퍼는 서로를 이름으로 부르
       if (other === name) continue
       expect(body, `${name} → ${other}`).not.toMatch(new RegExp(`\\b${other}\\s*\\(`))
     }
+  })
+})
+
+// M3-15: 레퍼런스 파인더(flow-composer-refs.js)·드라이버(flow-reference-driver.js)의 직렬화 헬퍼와 페이지 문자열도 모듈 스코프 이름(상수·내부 헬퍼·다른 *_JS)을
+//   참조하지 않는다 — 참조하면 페이지에서 ReferenceError(minified 면 뭉개진 이름). 위 "서로를 이름으로 부르지 않는다"는 호출만 보므로 상수 참조는 여기서.
+describe('정적 규칙(확장, M3-15): 레퍼런스 직렬화 헬퍼·페이지 문자열은 모듈 스코프 이름을 참조하지 않는다', () => {
+  const M3_MODULE_NAMES = [
+    // flow-reference-driver.js
+    'ATTACH_FAILED', 'CLIPBOARD_BUSY', 'DOM_STAGE_ABORTED', 'PASTE_OBSERVE_MS', 'PASTE_RESTORE_BACKSTOP_MS', 'UPLOAD_CHIP_ID_WAIT_MS', 'EXEC_RACE_MS', 'OBSERVE_POLL_MS',
+    'CHIP_POLL_MS', 'PICKER_OPEN_MS', 'PICKER_CLOSE_STEP_MS', 'ADD_CLOSE_MS', 'TAB_WAIT_MS', 'LIST_SETTLE_MS', 'PREVIEW_WAIT_MS', 'CHIP_WAIT_MS', 'MENTION_OPEN_MS',
+    'CLEAR_WAIT_MS', 'TEXT_PICKER_CHECK_MS', 'STATE_POLL_MS', 'UPLOAD_TAB', 'sleep', 'short', 'guard', 'raceExec', 'readState', 'abortedResult', 'abortedOr', 'tclick',
+    'pollJs', 'pollState', 'refTag', 'preUploadProblem', 'uploadReasonOf', 'observePaste', 'waitUploadChip', 'isEmptyComposer', 'mentionCount', 'endsWithAt',
+    'closePickerInner', 'openPickerInner', 'selectUploadTab', 'pickFromOpenPicker', 'gateProblem', 'CARET_EDITOR_JS', 'READ_PICKER_STATUS_JS', 'FIND_CHIP_AT_JS',
+    'FLOW_PASTE_OBSERVER_INJECTION', 'APPEND_EDITOR_TEXT_JS', 'DISPATCH_ESCAPE_JS', 'READ_RPC_DOC_JS',
+    // flow-composer-refs.js
+    'READ_COMPOSER_STATE_JS', 'LIST_ID_ASSET_MEDIA_IDS_JS', 'READ_PICKER_PREVIEW_MEDIA_ID_JS', 'FIND_ADD_MENU_TRIGGER_JS', 'FIND_CLEAR_PROMPT_BUTTON_JS',
+    'FIND_ADD_TO_PROMPT_BUTTON_JS', 'FIND_ASSET_ITEM_BY_MEDIA_ID_JS', 'FIND_PICKER_TAB_JS', 'FIND_CHIP_BY_MEDIA_ID_JS',
+  ]
+  const serialized = {
+    readComposerState: plainRefs.readComposerState, findAssetItemByMediaId: plainRefs.findAssetItemByMediaId, listIdAssetMediaIds: plainRefs.listIdAssetMediaIds,
+    findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaId: plainRefs.readPickerPreviewMediaId, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
+    findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaId: plainRefs.findChipByMediaId,
+    readPickerStatus: plainDriver.readPickerStatus, findChipAt: plainDriver.findChipAt,
+  }
+  it.each(Object.keys(serialized))('%s', (name) => {
+    const body = serialized[name].toString()
+    for (const id of M3_MODULE_NAMES) expect(body, `${name} → ${id}`).not.toMatch(new RegExp(`\\b${id}\\b`))
+  })
+  it('붙여넣기 관찰 · 텍스트 넣기 · Escape · 문서 nonce 문자열도 모듈 스코프 이름을 참조하지 않는다', () => {
+    const strings = { FLOW_PASTE_OBSERVER_INJECTION: plainDriver.FLOW_PASTE_OBSERVER_INJECTION, APPEND_EDITOR_TEXT_JS: plainDriver.APPEND_EDITOR_TEXT_JS('a @b'), DISPATCH_ESCAPE_JS: plainDriver.DISPATCH_ESCAPE_JS, READ_RPC_DOC_JS: plainDriver.READ_RPC_DOC_JS }
+    for (const [k, str] of Object.entries(strings)) for (const id of M3_MODULE_NAMES) expect(str, `${k} → ${id}`).not.toMatch(new RegExp(`\\b${id}\\b`))
   })
 })
 

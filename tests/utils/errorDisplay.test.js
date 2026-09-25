@@ -238,6 +238,13 @@ describe('resolveDisplayError — M3 레퍼런스 kind (실제 로케일)', () =
     }
   })
 
+  // M3 후속: unresolved-mentions 는 이제 렌더러 레퍼런스 계획(flowReferencePlan)이 만든다 — @이름에 맞는 레퍼런스가 프로젝트에 없다는 뜻이다.
+  //   새 Flow 엔 Ref 탭의 캐릭터 동기화가 없으므로 "동기화"를 권하지 않고, 그 이름의 레퍼런스(이미지 포함)를 레퍼런스 탭에 추가하라고 한다. params 없음(그대로).
+  it('unresolved-mentions 는 "그 이름의 레퍼런스를 레퍼런스 탭에 추가" 문구 — Ref 탭 동기화를 권하지 않는다', () => {
+    expect(resolveDisplayError(mk(en), 'unresolved-mentions', 'raw', {})).toBe("A reference named in an @mention wasn't found. Add a reference with that name (with an image) in the References tab and try again.")
+    expect(resolveDisplayError(mk(ko), 'unresolved-mentions', 'raw', {})).toBe('@멘션한 이름의 레퍼런스를 찾지 못했습니다. 레퍼런스 탭에서 그 이름으로 레퍼런스(이미지 포함)를 추가한 뒤 다시 시도해 주세요.')
+  })
+
   it('flow-references-unsupported 는 고친 문구 — 레퍼런스·@멘션 전체 미지원이라 하지 않는다', () => {
     expect(resolveDisplayError(mk(en), 'flow-references-unsupported', 'raw', {})).toBe("Flow mode can't use a style image when generating a reference card, or upload a reference on its own. Try again without the style image.")
     expect(resolveDisplayError(mk(ko), 'flow-references-unsupported', 'raw', {})).toBe('Flow 모드에서는 레퍼런스 카드를 만들 때 스타일 이미지를 쓰거나 레퍼런스를 따로 업로드할 수 없습니다. 스타일 이미지 없이 다시 시도해주세요.')

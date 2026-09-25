@@ -103,11 +103,15 @@ describe('useAutomation × useFlowEngine — 세션·게이트', () => {
   })
 
   // M3(D2·D15): 파일만 있는 태그 ref 도 엔진까지 간다(＋ 첨부) — 그 바이트를 못 읽으면(이 하네스의 readFileByPath 는 실패) 클릭 전 flow-reference-source-missing.
-  it('filePath 만 있고 읽을 수 없는 태그 ref → 씬 error flow-reference-source-missing, flowGenerateImage 미호출 (M3)', async () => {
+  //   M3-14: 씬 행(ResultsTable)의 렌더 텍스트가 그 문구다(kind 키·free-form 폴백이 아니다).
+  it('filePath 만 있고 읽을 수 없는 태그 ref → 씬 error flow-reference-source-missing, flowGenerateImage 미호출, 렌더 텍스트에 문구 (M3)', async () => {
     const { hook, updateScene } = setup({ references: [{ name: 'hero', filePath: '/refs/hero.png' }] })
     await runStart(hook, {}, 5000)
     expect(api.flowGenerateImage).not.toHaveBeenCalled()
-    expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'error', errorKind: 'flow-reference-source-missing' })
+    const s1 = lastPatch(updateScene, 's1')
+    expect(s1).toMatchObject({ status: 'error', errorKind: 'flow-reference-source-missing' })
+    const { container } = render(<I18nProvider><ResultsTable items={[{ id: 's1', prompt: 'a', ...s1 }]} mediaType="image" onRetry={vi.fn()} /></I18nProvider>)
+    expect(container.querySelector('.prompt-error').textContent).toContain("Couldn't read a reference image file, so nothing was generated. Re-select the image in the References tab.")
   })
 
   it('imageUpscale:2k → 씬 error flow-upscale-unsupported, 제출 없음', async () => {
@@ -115,6 +119,38 @@ describe('useAutomation × useFlowEngine — 세션·게이트', () => {
     await runStart(hook, { imageUpscale: '2k' }, 5000)
     expect(api.flowGenerateImage).not.toHaveBeenCalled()
     expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'error', errorKind: 'flow-upscale-unsupported' })
+  })
+})
+
+// M3-14(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md §4 M3-14 · D1·D2·D3·D15): 레퍼런스 씬의 렌더러 합성 — 실제 useAutomation 이 매칭 ref(파일만 있는 것 포함)와
+//   pool 을 submitGeneration 에 주고, 실제 useFlowEngine 이 계획(@멘션 = 인라인 멘션, 멘션 안 된 매칭 ref = ＋ 첨부) → ref 하나씩 바이트(referenceResolver →
+//   fileSystemAPI.readFileByPath) → IPC refs·plan(경로가 아니라 base64)을 만든다. main(IPC) 모킹이 images 를 돌려주면 imageFinalize 가 저장·done.
+describe('useAutomation × useFlowEngine — 레퍼런스 씬 (M3-14)', () => {
+  const FILES = { '/refs/king.png': 'data:image/png;base64,iVBORw0KGgoKING', '/refs/queen.png': 'data:image/png;base64,iVBORw0KGgoQUEEN' }
+  const REFS = [
+    { name: 'king', category: 'character', filePath: '/refs/king.png' },
+    { name: 'queen', category: 'character', filePath: '/refs/queen.png' },
+  ]
+
+  it("'@king walks' + 매칭 ref [king, queen](파일만) → flowGenerateImage({asyncMode:true, refs:[king,queen 바이트], plan:{@king 멘션 · queen ＋ 첨부}, referenceImages:[]}) → check → collect → saveImage → done", async () => {
+    fileSystemAPI.readFileByPath.mockImplementation(async (p) => (FILES[p] ? { success: true, data: FILES[p] } : { success: false }))
+    try {
+      const { hook, updateScene } = setup({ scenes: [SCENE('s1', '@king walks')], references: REFS })
+      await runStart(hook)
+      expect(api.flowGenerateImage).toHaveBeenCalledTimes(1)
+      const payload = api.flowGenerateImage.mock.calls[0][0]
+      expect(payload).toMatchObject({ token: null, prompt: '@king walks', asyncMode: true, projectId: 'proj-1', referenceImages: [] })
+      expect(payload.refs).toEqual([{ base64: 'iVBORw0KGgoKING', mime: 'image/png' }, { base64: 'iVBORw0KGgoQUEEN', mime: 'image/png' }])
+      expect(payload.plan).toEqual({ segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ' walks' }], attach: [1] })
+      expect(JSON.stringify(payload)).not.toContain('/refs/')   // 경로는 IPC 로 가지 않는다(D2)
+      expect(fileSystemAPI.readFileByPath.mock.calls.map((c) => c[0])).toEqual(['/refs/king.png', '/refs/queen.png'])   // ref 하나씩
+      expect(api.flowCollectGeneration).toHaveBeenCalledWith({ generationId: 'gen-1', token: null })
+      expect(fileSystemAPI.saveImage).toHaveBeenLastCalledWith('proj', 's1', IMAGE.base64, expect.anything(), expect.objectContaining({ mediaId: '<uuid#5>' }))
+      expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'done', imagePath: '/proj/scenes/s1.png', mediaId: '<uuid#5>', errorKind: null })
+    } finally {
+      fileSystemAPI.readFileByPath.mockReset()
+      fileSystemAPI.readFileByPath.mockRejectedValue(new Error('n/a'))
+    }
   })
 })
 

@@ -44,6 +44,9 @@ const CONTENT_BEARING = new RegExp(
     // M1-6: flow.google.com batchexecute — 요청 inner(프롬프트·레퍼런스 blob)·응답 본문·서명 URL·프롬프트 메아리·
     //   WIZ 전역(at 토큰). 길이·id 앞 8자·상태 코드만 찍는다.
     'reqInner', 'responseText', 'url', 'responseBody', 'prompts', 'normPrompt', 'echo', 'inner', 'wiz', 'at',
+    // M3(레퍼런스): 레퍼런스 바이트(base64) · 멘션·첨부 계획(segments·plan — 텍스트 세그먼트는 프롬프트) · 클립보드 스냅샷(snapshot·rtf·clip — 사용자가 복사한 것) ·
+    //   멘션 라벨(mentionLabel — 애셋 이름) · 업로드 파일명(fileName — 페이지가 붙인 image.png) · 게이트가 적은 편집기 텍스트(editorExpected — 프롬프트+라벨).
+    'base64', 'segments', 'plan', 'snapshot', 'rtf', 'mentionLabel', 'fileName', 'editorExpected', 'clip',
   ].join('|') + ')\\b',
 )
 
@@ -116,6 +119,26 @@ describe('the guard itself (R2#8)', () => {
     // 텍스트만 있는 템플릿은 인자가 아니다
     expect(consoleCallArgs("console.log(`prompt injected`)")).not.toMatch(CONTENT_BEARING)
   })
+
+  // M3-15: 레퍼런스 경로가 다루는 내용 — 바이트·계획·클립보드 스냅샷·멘션 라벨·파일명·게이트의 편집기 텍스트. 개수·id 앞 8자는 그대로 통과.
+  it.each([
+    ['ref.base64', 'console.log(`[Flow Upload] ${ref.base64}`)'],
+    ['plan.segments', "console.log('[Flow Refs] plan', plan.segments)"],
+    ['plan', "console.log('[Flow Refs] plan', plan)"],
+    ['saved.snapshot', 'console.log(`restore ${saved.snapshot}`)'],
+    ['keep.rtf', "console.warn('[Flow Upload] rtf', keep.rtf)"],
+    ['clip', "console.log('[Flow Upload]', clip)"],
+    ['seg.mentionLabel', 'console.log(`[Flow Refs] mention ${seg.mentionLabel}`)'],
+    ['fileName', "console.log('[Flow Upload] uploaded', fileName)"],
+    ['composed.editorExpected', 'console.warn(`gate ${composed.editorExpected}`)'],
+  ])('M3: %s 는 내용이다', (_n, line) => {
+    expect(consoleCallArgs(line)).toMatch(CONTENT_BEARING)
+  })
+  it('M3: 개수·id 앞 8자·상태어는 통과한다(길이로 바꾼 계획·세그먼트 포함)', () => {
+    expect(consoleCallArgs('console.log(`[Flow Refs] gate chips=${nChips} mentions=${nMentions} ok=true`)')).not.toMatch(CONTENT_BEARING)
+    expect(consoleCallArgs('console.log(`[Flow Upload] ${tag} bytes=${bytesLen} sha=${short(ref && ref.sha)} formats=${saved.formats}`)')).not.toMatch(CONTENT_BEARING)
+    expect(consoleCallArgs('console.log(`[Flow Refs] segments=${plan.segments.length}`)')).not.toMatch(CONTENT_BEARING)
+  })
 })
 
 describe('main-process logs must not carry user content', () => {
@@ -137,5 +160,41 @@ describe('main-process logs must not carry user content', () => {
     }
 
     expect(offenders, `Log the length or an id, not the content:\n${offenders.join('\n')}`).toEqual([])
+  })
+})
+
+// M3-15(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md §4 M3-15): 레퍼런스 모듈(업로드·컴포즈 드라이버 · 클립보드 · 세션 캐시 · 컴포저 파인더 · 핸들러)이
+//   스캔 안에 있다 — 그리고 그 안의 console.* 호출은 한 줄에서 닫힌다. 위 스캔은 줄 단위라 여러 줄에 걸친 호출의 뒤 줄 인자(예: 객체 리터럴의 plan)를 못 본다.
+describe('M3 레퍼런스 모듈은 스캔 안에 있다 (M3-15)', () => {
+  const M3_MODULES = ['flow-reference-driver.js', 'flow-clipboard.js', 'flow-ref-media-cache.js', 'flow-composer-refs.js', 'ipc/flow-angular.js']
+  const scanned = ROOTS.flatMap(jsFiles)
+  const abs = (rel) => fileURLToPath(new URL('../../electron/' + rel, import.meta.url))   // ROOTS 에서 파생하지 않는다(ROOTS 가 좁아지면 빨개져야 한다)
+
+  it.each(M3_MODULES)('electron/%s 가 스캔 대상이다', (rel) => {
+    expect(scanned).toContain(abs(rel))
+  })
+
+  /** 줄에서 console.x( 를 찾아 문자열·템플릿을 건너뛰며 괄호 짝을 센다 — 같은 줄에서 닫히면 true. */
+  function closesOnLine(line) {
+    const m = line.match(/console\.(log|warn|error|info)\s*\(/)
+    const rest = line.slice(m.index + m[0].length - 1)
+    let depth = 0
+    let quote = null
+    for (let j = 0; j < rest.length; j++) {
+      const c = rest[j]
+      if (quote) { if (c === '\\') j++; else if (c === quote) quote = null; continue }
+      if (c === "'" || c === '"' || c === '`') { quote = c; continue }
+      if (c === '(') depth++
+      else if (c === ')' && --depth === 0) return true
+    }
+    return false
+  }
+
+  it.each(M3_MODULES)('electron/%s 의 console.* 호출은 전부 한 줄에서 닫힌다(줄 스캔이 인자를 다 본다)', (rel) => {
+    const multi = readFileSync(abs(rel), 'utf8').split('\n')
+      .map((line, i) => [line, i + 1])
+      .filter(([line]) => /console\.(log|warn|error|info)\s*\(/.test(line) && !closesOnLine(line))
+      .map(([line, n]) => `${rel}:${n}  ${line.trim().slice(0, 90)}`)
+    expect(multi).toEqual([])
   })
 })

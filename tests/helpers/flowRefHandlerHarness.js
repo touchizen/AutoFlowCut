@@ -17,10 +17,21 @@ import { decodeFReqInner, extractSubmitRefs, extractSubmitPrompts } from '../../
 import { SUBMIT_ENABLED_PROBE } from '../../electron/flow-submit-gate.js'
 import { READ_EDITOR_TEXT_JS } from '../../electron/flow-composer-dom.js'
 import { READ_COMPOSER_STATE_JS } from '../../electron/flow-composer-refs.js'
+import { FLOW_RPC_CAPTURE_INJECTION } from '../../electron/flow-rpc-capture.js'
 import { createFakeFlowComposer, makeFakeClipboard, fakeNativeImage, maseQBody, pngBytes, FAKE_DOC, FAKE_PROJECT } from './fakeFlowComposer.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
 import { EMPTY_EDITOR } from '../fixtures/flow-live-dom-m3.js'
-import { respBodyWithPayload } from '../fixtures/flow-batchexecute-samples.js'
+import { respBodyWithPayload, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
+
+/** 페이지의 XMLHttpRequest 흉내(realCapture) — 캡처 주입이 prototype 의 open/send 를 감싼다. _finish 가 loadend 를 쏜다. */
+class FakeXHR {
+  constructor() { this._l = {}; this.responseType = ''; this.status = 0; this.responseText = ''; this.calls = [] }
+  open(method, url) { this.calls.push(['open', method, url]) }
+  setRequestHeader(k, v) { this.calls.push(['header', k, v]) }
+  send(body) { this.calls.push(['send', body]) }
+  addEventListener(type, fn) { (this._l[type] = this._l[type] || []).push(fn) }
+  _finish(status, text) { this.status = status; this.responseText = text; for (const fn of this._l.loadend || []) fn.call(this) }
+}
 
 export { FAKE_DOC, FAKE_PROJECT }
 export const FLOW_URL_OK = `https://flow.google.com/project/${FAKE_PROJECT}`
@@ -45,6 +56,10 @@ export function sampleSendFields(n) {
  *   kind 'image'|'video' · url · page(createFakeFlowComposer 옵션) · clipboard(가짜 클립보드 초기값) · upload {sendMs, loadendMs, noSend}
  *   · sample(제출 샘플 번호 S3#n — 기본 onSubmit 이 send/loadend) · send(send 이벤트 덮어쓰기) · loadend(loadend 덮어쓰기) · onSubmit(api)
  *   · settings(드라이버 결과 | Promise) · summary · credits(nzlxg 순서) · hidden · bounds · beforeDispatchHook(page) · deadSteps(신뢰 클릭이 헛도는 step 들)
+ *   · realCapture(M3-14) true → 가짜 페이지 문서에 **실제** 캡처 주입(FLOW_RPC_CAPTURE_INJECTION)을 FakeXHR 위에 설치한다(main 이 문서 로드 때 하듯).
+ *     그 문서의 flowReportResponse 가 라우터로 간다(main.js 의 flow:report-response 와 같은 모양). 문서 nonce 는 주입이 만든다(가짜 페이지의 FAKE_DOC 은 지운다 —
+ *     드라이버의 READ_RPC_DOC_JS 도 같은 문서에서 그 값을 읽는다) · 핸들러의 캡처 프로브·주입도 그 문서에서 돈다 · 붙여넣기 업로드는 페이지 XHR 이 maseQ(S3#4 요청)를
+ *     보내고 응답한다(U3 이면 S3#4 응답 그대로) · 제출은 submitPage.xhr(n) — 페이지 XHR 이 S3#n 요청을 보내고 응답한다. 이때 결과의 docNonce · reports(보고 페이로드).
  */
 export function refHandlerHarness(o = {}) {
   const kind = o.kind || 'image'
@@ -69,6 +84,14 @@ export function refHandlerHarness(o = {}) {
     reportDomFailure: helpers.reportDomFailure,
   })
   const up = { sendMs: 300, loadendMs: 7500, ...(o.upload || {}) }
+  /** realCapture: 페이지(가짜 문서)의 XHR 로 S3#n 요청을 보낸다 — 캡처 주입이 send 를 보고한다. XHR 을 돌려준다(_finish 가 loadend). */
+  const pageXhrSend = (n) => {
+    const x = new page.window.XMLHttpRequest()
+    x.open('POST', s3(n).url)
+    x.setRequestHeader('X-Same-Domain', '1')
+    x.send(s3RequestBody(n))
+    return x
+  }
   const page = createFakeFlowComposer({
     ...(o.page || {}),
     clipboard,
@@ -77,11 +100,29 @@ export function refHandlerHarness(o = {}) {
       ...((o.page && o.page.upload) || {}),
       onUpload: ({ id, n }) => {
         if (up.noSend) return
+        if (o.realCapture) {
+          let x = null
+          setTimeout(() => { x = pageXhrSend(4) }, up.sendMs)
+          setTimeout(() => { if (x) x._finish(200, id === maskedUuid(3) ? s3(4).respBody : maseQBody(id)) }, up.loadendMs)
+          return
+        }
         setTimeout(() => routeReportResponse({ kind: 'batchexecute-send', doc: FAKE_DOC, rpcid: 'maseQ', rpcids: ['maseQ'], seq: n, prompts: [], sentAt: Date.now() / 1000 }, ctx), up.sendMs)
         setTimeout(() => routeReportResponse({ kind: 'batchexecute', doc: FAKE_DOC, rpcid: 'maseQ', seq: n, status: 200, responseText: maseQBody(id), endedAt: Date.now() / 1000 }, ctx), up.loadendMs)
       },
     },
   })
+  let docNonce = FAKE_DOC
+  let reports = null
+  if (o.realCapture) {
+    const w = page.window
+    w.XMLHttpRequest = class PageXHR extends FakeXHR {}
+    w.Date = Date   // 가짜 시계 — 주입의 sentAt·endedAt(초)이 gen.setAt 과 같은 시계
+    delete w.__autoflowcut_rpc_doc__
+    reports = []
+    w.electronAPI = { flowReportResponse: vi.fn(async (payload) => { reports.push(payload); return routeReportResponse(payload, ctx) }) }
+    w.eval(FLOW_RPC_CAPTURE_INJECTION)
+    docNonce = w.__autoflowcut_rpc_doc__
+  }
   const submitPage = {
     /** S3#n 의 send(요청 필드는 실제 추출기) — over 로 refs/mentions/rpcid 등을 덮는다. */
     send: (n, over = {}) => {
@@ -91,6 +132,12 @@ export function refHandlerHarness(o = {}) {
     loadend: (n, over = {}) => {
       const smp = s3(n)
       return routeReportResponse({ kind: 'batchexecute', doc: FAKE_DOC, rpcid: smp.rpcid, seq: SUBMIT_SEQ, status: 200, responseText: smp.respBody, endedAt: Date.now() / 1000, ...over }, ctx)
+    },
+    /** realCapture: 페이지 XHR 이 S3#n 요청을 보내고(주입이 send 보고) 응답한다(주입이 loadend 보고) — respBody 로 응답을 바꾼다. */
+    xhr: (n, { respBody } = {}) => {
+      const x = pageXhrSend(n)
+      x._finish(200, respBody ?? s3(n).respBody)
+      return x
     },
   }
   const onSubmit = o.onSubmit !== undefined ? o.onSubmit
@@ -123,8 +170,8 @@ export function refHandlerHarness(o = {}) {
     if (s.includes('elementFromPoint')) return { ok: true, why: 'ok' }
     if (s.includes('const scan =')) return { candidates: [], context: { lang: 'ko' } }
     if (s.includes('const find =')) { trace.push('agent-probe'); return { found: true, on: false } }
-    if (s.includes('batchexecute capture installed')) { trace.push('capture-inject'); return undefined }
-    if (s.startsWith('!!window.__autoflowcut_rpc_capture__')) { trace.push('capture-probe'); return true }
+    if (s.includes('batchexecute capture installed')) { trace.push('capture-inject'); return o.realCapture ? page.exec(s) : undefined }
+    if (s.startsWith('!!window.__autoflowcut_rpc_capture__')) { trace.push('capture-probe'); return o.realCapture ? page.exec(s) : true }
     if (s.includes('settings-summary')) return summary
     if (s === SUBMIT_ENABLED_PROBE) { trace.push('submit-enabled'); return true }
     if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
@@ -185,7 +232,7 @@ export function refHandlerHarness(o = {}) {
     : ipcMain.invoke('flow:generate-image', { prompt: '@king and a queen', aspectRatio: '9:16', model: 'Nano Banana 2', projectId: FAKE_PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p }))
   return {
     ipcMain, generate, trace, page, submitPage, clipboard, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations,
-    flowView, mainWindow, pasteIntoFlowView, createInputShield, setAutomationKeyLock, legacy,
+    flowView, mainWindow, pasteIntoFlowView, createInputShield, setAutomationKeyLock, legacy, docNonce, reports,
   }
 }
 

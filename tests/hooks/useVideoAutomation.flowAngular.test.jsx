@@ -166,3 +166,45 @@ describe('useVideoAutomation × useFlowEngine — 새 제출만 중단(통합판
     expect(last(h, 'vscene_1')[0]).toBe('complete')
   })
 })
+
+// M3-14(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md §4 M3-14 · D10·D12·D14): 레퍼런스 영상(r2v) — 실제 useVideoAutomation(item.referenceImages) →
+//   실제 useFlowEngine.generateVideoT2V 가 @멘션을 계획해 IPC refs(바이트)·plan(인라인 멘션)으로 보낸다. main 이 클릭 뒤 레퍼런스 불일치로 거부하면
+//   (flow-references-mismatch + rejectedMediaId, postClick — 과금됨) 새 제출만 멈추고 제출된 항목은 끝까지 간다.
+describe('useVideoAutomation × useFlowEngine — 레퍼런스 영상 (M3-14)', () => {
+  const KING = { name: 'king', data: 'data:image/png;base64,iVBORw0KGgoKING' }
+  const REF_SCENES = (n) => Array.from({ length: n }, (_, i) => ({ id: `vscene_${i + 1}`, prompt: `@king p${i + 1}`, referenceImages: [KING] }))
+  const REFS_MISMATCH = { success: false, errorKind: 'flow-references-mismatch', error: 'flow-references-mismatch', errorParams: {}, rejectedMediaId: UUID11, postClick: true }
+
+  it('3항목 #2 flow-references-mismatch(rejectedMediaId) → #1 다운로드 완료, #2 거부 id 만(mediaId/generationId 없음), #3 flow-batch-halted {cause:flow-references-mismatch}', async () => {
+    api.flowGenerateVideoT2V.mockImplementation(async ({ prompt }) => (prompt === '@king p2' ? REFS_MISMATCH : { success: true, generationId: `${UUID11}:${prompt}`, creditsLeft: 1033 }))
+    const h = setup()
+    await run(h, REF_SCENES(3), { duration: 4, aspectRatio: '9:16' })
+    expect(api.flowGenerateVideoT2V).toHaveBeenCalledTimes(2)
+    // 제출된 두 항목 모두 엔진이 계획한 레퍼런스(바이트)·인라인 멘션을 싣는다 — 옛 칩 segments 는 없다
+    for (const [call, n] of [[0, 1], [1, 2]]) {
+      const payload = api.flowGenerateVideoT2V.mock.calls[call][0]
+      expect(payload).toMatchObject({ token: null, prompt: `@king p${n}`, model: 'Omni Flash', aspectRatio: '9:16', duration: 4, projectId: 'proj-1' })
+      expect(payload.refs).toEqual([{ base64: 'iVBORw0KGgoKING', mime: 'image/png' }])
+      expect(payload.plan).toEqual({ segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ` p${n}` }], attach: [] })
+      expect(payload).not.toHaveProperty('segments')
+    }
+    // #1 은 끝까지(폴 → 다운로드 → 저장)
+    expect(last(h, 'vscene_1')[0]).toBe('complete')
+    expect(api.flowDownloadVideoUrl).toHaveBeenCalledTimes(1)
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,AQID', expect.anything(), expect.objectContaining({ mediaId: `${UUID11}:@king p1` }))
+    // #2 는 거부한 미디어 id 만 — 다운로드 대상이 되지 않게 mediaId/generationId 키가 없다
+    const [st2, p2] = last(h, 'vscene_2')
+    expect(st2).toBe('error')
+    expect(p2).toMatchObject({ errorKind: 'flow-references-mismatch', rejectedMediaId: UUID11 })
+    expect(p2).not.toHaveProperty('mediaId')
+    expect(p2).not.toHaveProperty('generationId')
+    expect(api.flowCheckVideoStatus.mock.calls.flatMap((c) => c[0].generationIds)).not.toContain(UUID11)
+    // #3 은 제출하지 않고 중단 사유를 남긴다
+    expect(last(h, 'vscene_3')[1]).toEqual({ error: 'flow-batch-halted', errorKind: 'flow-batch-halted', errorParams: { cause: 'flow-references-mismatch' } })
+    expect(h.hook.result.current.video.status).toBe('error')
+    const texts = renderErrors([{ id: 'vscene_2', prompt: '@king p2', status: 'error', ...p2 }, { id: 'vscene_3', prompt: '@king p3', status: 'error', ...last(h, 'vscene_3')[1] }])
+    expect(texts[0]).toContain('Flow generated with different references than requested, so the result was not used.')
+    expect(texts[1]).toContain('flow-references-mismatch')
+    for (const tx of texts) expect(tx).not.toMatch(/\{\w+\}/)
+  })
+})
