@@ -66,16 +66,17 @@ function modelTrigger(label, { expanded = false, controls = null } = {}) {
  * 열린 설정 패널. mode 'image' | 'video'. checked 로 각 그룹의 선택값(리거처 또는 텍스트)을 바꾼다.
  * offset 은 자동 번호(id/name) 셔플, material:false 는 Material 이 아닌 라디오(input-mode-not-material 케이스).
  */
-export function buildSettingsPanel({ mode = 'image', checked = {}, offset = 0, model, material = true, durations = null } = {}) {
+export function buildSettingsPanel({ mode = 'image', checked = {}, offset = 0, model, material = true, durations = null, omit = [] } = {}) {
   const c = { mode: mode === 'video' ? 'videocam' : 'image', ratio: 'crop_16_9', count: 'x1', inputMode: 'chrome_extension', resolution: '720p', duration: '6초', ...checked }
   const parts = [toggleGroup(GROUPS.mode, c.mode, offset, material)]
   if (mode === 'video') {
     parts.push(toggleGroup(GROUPS.inputMode, c.inputMode, offset, material))
     parts.push(toggleGroup(GROUPS.ratioVideo, c.ratio, offset, material))
     parts.push(modelTrigger(model || 'Omni 1.1 Flash'))
-    parts.push(toggleGroup(GROUPS.resolution, c.resolution, offset, material))
+    // 2026-09-25 실측: Veo 3.1 - Fast 를 고르면 패널에 해상도·길이 그룹이 아예 없다 — omit: ['resolution','duration'] 로 재현.
+    if (!omit.includes('resolution')) parts.push(toggleGroup(GROUPS.resolution, c.resolution, offset, material))
     // M2-R3 H4: durations 로 현재 모델의 길이 옵션을 바꿀 수 있다(예: 8초 없는 모델)
-    parts.push(durations ? buildDurationGroup(durations, c.duration, offset, material) : toggleGroup(GROUPS.duration, c.duration, offset, material))
+    if (!omit.includes('duration')) parts.push(durations ? buildDurationGroup(durations, c.duration, offset, material) : toggleGroup(GROUPS.duration, c.duration, offset, material))
   } else {
     parts.push(toggleGroup(GROUPS.ratioImage, c.ratio, offset, material))
     parts.push(modelTrigger(model || '🍌 Nano Banana 2'))

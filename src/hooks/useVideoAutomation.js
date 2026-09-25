@@ -19,7 +19,7 @@ import { downloadVideoBase64 } from '../services/videoDownload'
 import { resolveFrameImageBase64 } from '../utils/framePairImages'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
-import { normalizeVideoModel, snapVideoDuration } from '../utils/videoModels'
+import { normalizeVideoModel, snapVideoDuration, isOmniFlashModel } from '../utils/videoModels'
 import { DEFAULT_VIDEO_MODEL_ID, coerceResolution } from '../config/genModels'
 import { clampInt } from '../utils/clampInt'
 import { makeBatchConsumeGate } from './batchConsumeGate'
@@ -44,6 +44,9 @@ export function effectiveVideoDuration(item, mode, batchDuration, resolution, mo
     if (mode === 't2v' && Array.isArray(item?.referenceImages) && item.referenceImages.length > 0) return 8
     if (resolution === '1080p' || resolution === '4k') return 8
   }
+  // Flow(flow.google.com) 의 Veo 는 패널에 길이 선택이 없다(2026-09-25 실측, Veo 3.1 - Fast — 해상도도 없음) → 모델 기본 8초 고정.
+  //   Flow 크레딧은 생성당이라 길이로 비용이 늘지 않는다. 드라이버는 그룹이 없으면 8초만 받는다(그 외는 클릭 전 거부).
+  if (appMode === 'flow' && !isOmniFlashModel(model) && /veo/i.test(String(model || ''))) return 8
   // 모델별 허용 길이 그리드로 스냅 — OmniFlash 는 {4,6,8,10}, 그 외(Veo) {4,6,8}.
   return snapVideoDuration(model, item?.targetDuration ?? batchDuration)
 }

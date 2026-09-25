@@ -96,7 +96,12 @@ export function scanSettingsPanel(doc) {
   } else if (triggers.length > 1) {
     model = { ambiguous: triggers.length }
   }
-  return { ok: true, panel, groups, model, radioCount: material.length, unclassified }
+  // M2 실기: 토글이 아닌 패널 컨트롤(드롭다운·메뉴 트리거 등)의 UI 라벨 — group-not-found 진단용(최대 24개, 라벨 32자).
+  const controls = Array.from(panel.querySelectorAll('button, [role], mat-select, select, input, [aria-haspopup]'))
+    .filter((el) => el.getAttribute('role') !== 'radio')
+    .slice(0, 24)
+    .map((el) => ({ tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || null, haspopup: el.getAttribute('aria-haspopup') || null, label: stripped(el).slice(0, 32) }))
+  return { ok: true, panel, groups, model, radioCount: material.length, unclassified, controls }
 }
 
 /**
@@ -172,13 +177,24 @@ export function planSettingsClicks(scan, targets, phase) {
     if (r.err) return r.err
     apply('ratio', r, lig)
   }
-  if (video && t.duration !== undefined) {
+  // 2026-09-25 실측: Veo 3.1 - Fast 패널엔 길이·해상도 컨트롤이 없다. 없는 그룹은 모델 기본값 — 카탈로그 키 문법상 길이 토큰 없음 = 8초,
+  //   _360p 없음 = 720p — 만 받고(steps 'fixed(…)'), 그 외 요청은 클릭 전에 거부한다(과금 뒤 모델키 불일치로 버려지는 것을 막는다).
+  //   단, 분류 못 한 토글 그룹이 하나라도 있으면(라벨이 낯선 실제 길이 그룹일 수 있다) '없음' 으로 보지 않는다 — group-not-found + shape.
+  const trulyAbsent = (kind) => !scan.groups[kind] && !(Array.isArray(scan.unclassified) && scan.unclassified.length > 0)
+  if (video && t.duration !== undefined && trulyAbsent('duration')) {
+    if (Number(t.duration) !== 8) return fail('duration-not-offered:' + t.duration)
+    steps.duration = 'fixed(8)'
+  } else if (video && t.duration !== undefined) {
     const digits = String(t.duration).replace(/\D/g, '')
     const r = want('duration', (o) => o.label.replace(/\D/g, '') === digits, 'duration-not-offered:' + t.duration)
     if (r.err) return r.err
     apply('duration', r, digits)
   }
-  if (video && t.resolution !== undefined) {
+  if (video && t.resolution !== undefined && trulyAbsent('resolution')) {
+    const res = String(t.resolution).toLowerCase()
+    if (res !== '720p') return { ok: false, kind: 'flow-resolution-not-offered', params: { requested: String(t.resolution) }, reason: 'resolution-not-offered:' + t.resolution, clicks: [] }
+    steps.resolution = 'fixed(720p)'
+  } else if (video && t.resolution !== undefined) {
     const res = String(t.resolution).toLowerCase()
     const g = scan.groups.resolution
     if (!g) return fail('group-not-found:resolution')
@@ -250,7 +266,7 @@ export async function settingsDriverCore(doc, targets, deps) {
     return r
   }
   // M2 실기: group-not-found 는 분류 못 한 그룹의 라벨을 shape 로 싣는다(Veo 패널 모양 진단).
-  const shapeOf = (p) => (String(p.reason || '').indexOf('group-not-found:') === 0 && s && s.ok ? { shape: { groups: Object.keys(s.groups || {}), unclassified: s.unclassified || [] } } : {})
+  const shapeOf = (p) => (String(p.reason || '').indexOf('group-not-found:') === 0 && s && s.ok ? { shape: { groups: Object.keys(s.groups || {}), unclassified: s.unclassified || [], controls: s.controls || [] } } : {})
   const failPlan = async (p) => Object.assign(await fail(p.reason || p.kind), { kind: p.kind || 'flow-settings-not-applied' }, shapeOf(p), p.params ? { params: p.params } : {})
   const norm = (s) => String(s || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
   // M2-2: planSettingsClicks 의 labelMatches 와 같은 규칙(자기완결 — 이름으로 부르지 않는다).

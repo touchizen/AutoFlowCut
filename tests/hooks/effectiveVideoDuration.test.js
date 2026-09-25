@@ -28,8 +28,12 @@ describe('effectiveVideoDuration — api/flow 모드 분리', () => {
     it('OmniFlash 1080p i2v 도 동일하게 스냅', () => {
       expect(effectiveVideoDuration({ targetDuration: 3 }, 'i2v', 8, '1080p', 'Omni Flash', 'flow')).toBe(4)
     })
-    it('Flow Veo 1080p 도 8 고정 없이 {4,6,8} 스냅', () => {
-      expect(effectiveVideoDuration({ targetDuration: 3 }, 't2v', 8, '1080p', 'Veo 3.1 - Fast', 'flow')).toBe(4)
+    it('Flow Veo 는 8 고정 — 새 Flow(flow.google.com) 의 Veo 패널엔 길이 선택이 없다(2026-09-25 실측, Veo 3.1 - Fast)', () => {
+      expect(effectiveVideoDuration({ targetDuration: 3 }, 't2v', 8, '720p', 'Veo 3.1 - Fast', 'flow')).toBe(8)
+      expect(effectiveVideoDuration({ targetDuration: 6 }, 't2v', 8, '720p', 'Veo 3.1 - Fast', 'flow')).toBe(8)
+      expect(effectiveVideoDuration({ targetDuration: 3 }, 't2v', 8, '720p', 'veo-3.1-fast-generate-preview', 'flow')).toBe(8)
+      // Omni Flash 는 그대로 스냅
+      expect(effectiveVideoDuration({ targetDuration: 6 }, 't2v', 8, '720p', 'Omni Flash', 'flow')).toBe(6)
     })
     it('referenceImages 가 있어도 Flow 모드는 스냅(refs→8 미적용)', () => {
       expect(effectiveVideoDuration({ targetDuration: 3, referenceImages: [{ name: 'h' }] }, 't2v', 8, '1080p', 'Omni Flash', 'flow')).toBe(4)

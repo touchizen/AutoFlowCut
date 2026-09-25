@@ -662,5 +662,33 @@ describe('settingsDriverCore — 트리거 헛클릭 재시도 · group-not-foun
     expect(r).toMatchObject({ ok: false, reason: 'group-not-found:duration' })
     expect(r.shape.groups).toEqual(expect.arrayContaining(['mode', 'ratio', 'resolution', 'count']))
     expect(r.shape.unclassified).toEqual([{ labels: odd, ligatures: [] }])
+    // 토글이 아닌 패널 컨트롤도 싣는다(Veo 패널엔 길이·해상도 토글이 없었다 — 드롭다운인지 없는지 본다). 모델 트리거가 그중 하나.
+    expect(r.shape.controls.some((c) => /omni 1\.1 flash/i.test(c.label) && c.haspopup === 'menu')).toBe(true)
+    expect(r.shape.controls.every((c) => c.role !== 'radio')).toBe(true)
+  })
+})
+
+// 2026-09-25 M2 실기: Veo 3.1 - Fast 패널엔 길이·해상도 컨트롤이 없다(진단 shape: mode·inputMode·ratio·모델·count 뿐). 없는 그룹은 모델 기본값
+//   — 카탈로그 키 문법상 길이 토큰 없음 = 8초, _360p 없음 = 720p — 만 받고, 그 외 요청은 클릭 전에 거부한다(과금 뒤 모델키 불일치를 막는다).
+describe('planSettingsClicks — 패널에 없는 길이·해상도 그룹은 모델 기본값만 (Veo 실측)', () => {
+  const veoPanel = () => mount(HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', model: 'Veo 3.1 - Fast', omit: ['resolution', 'duration'], checked: { ratio: 'crop_9_16' } }))
+  const plan2 = (targets) => { const s = scanSettingsPanel(veoPanel()); expect(s.ok).toBe(true); return planSettingsClicks(s, { mode: 'video', ratio: '9:16', count: 1, model: 'Veo 3.1 - Fast', ...targets }, 2) }
+  it('8초·720p → fixed 로 통과(클릭 없음)', () => {
+    const r = plan2({ duration: 8, resolution: '720p' })
+    expect(r).toMatchObject({ ok: true, clicks: [], steps: { model: 'already', duration: 'fixed(8)', resolution: 'fixed(720p)' } })
+  })
+  it('6초 → duration-not-offered:6 (클릭 전 거부)', () => {
+    expect(plan2({ duration: 6, resolution: '720p' })).toMatchObject({ ok: false, reason: 'duration-not-offered:6' })
+  })
+  it('360p → flow-resolution-not-offered {requested:360p}', () => {
+    expect(plan2({ duration: 8, resolution: '360p' })).toMatchObject({ ok: false, kind: 'flow-resolution-not-offered', params: { requested: '360p' } })
+  })
+  it('분류 못 한 토글 그룹이 있으면 없음으로 보지 않는다 — 8초 요청이어도 group-not-found:duration', () => {
+    const s = scanSettingsPanel(mount(HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', model: 'Veo 3.1 - Fast', durations: ['4초 · 오디오 포함', '8초 · 오디오 포함'] })))
+    expect(planSettingsClicks(s, { mode: 'video', ratio: '16:9', count: 1, model: 'Veo 3.1 - Fast', duration: 8, resolution: '720p' }, 2)).toMatchObject({ ok: false, reason: 'group-not-found:duration' })
+  })
+  it('그룹이 있는 Omni 패널은 그대로(없는 값은 여전히 not-offered)', () => {
+    const s = scanSettingsPanel(mount(HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video' })))
+    expect(planSettingsClicks(s, { mode: 'video', ratio: '16:9', count: 1, model: 'Omni Flash', duration: 5, resolution: '720p' }, 2)).toMatchObject({ ok: false, reason: 'duration-not-offered:5' })
   })
 })
