@@ -10,7 +10,7 @@
  * 폴링이 mode-entry 를 다시 돌려 무한히 재시도한다(사용자 제보 로그의 그 반복).
  */
 import { describe, it, expect } from 'vitest'
-import { flowBaseFromUrl, flowProjectUrl, isFlowPageUrl, onProjectComposerUrl, urlForLog, isLegacyFlowUrl } from '../../electron/flowUrl.js'
+import { flowBaseFromUrl, flowProjectUrl, isFlowPageUrl, onProjectComposerUrl, urlForLog, isLegacyFlowUrl, projectIdFromFlowUrl } from '../../electron/flowUrl.js'
 
 const ID = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 
@@ -142,5 +142,34 @@ describe('isLegacyFlowUrl', () => {
     expect(isLegacyFlowUrl('https://labs.google/other')).toBe(false)
     expect(isLegacyFlowUrl('')).toBe(false)
     expect(isLegacyFlowUrl(null)).toBe(false)
+  })
+})
+
+// M3-6(계획서 2026-09-25 M3 D6): 세션 캐시 키의 projectId 는 지금 URL 에서 — onProjectComposerUrl 과 같은 경계(새 도메인의 컴포저 경로만).
+//   페이로드의 projectId 는 null 일 수 있다(shared.js). null 이면 호출자가 DOM 단계 전에 no-project-id 로 거부한다.
+describe('projectIdFromFlowUrl — 지금 컴포저의 프로젝트 id', () => {
+  it('새 도메인의 컴포저 경로 → id(끝 슬래시·all-media 포함)', () => {
+    expect(projectIdFromFlowUrl(`https://flow.google.com/project/${ID}`)).toBe(ID)
+    expect(projectIdFromFlowUrl(`https://flow.google.com/project/${ID}/`)).toBe(ID)
+    expect(projectIdFromFlowUrl(`https://flow.google.com/project/${ID}/all-media`)).toBe(ID)
+    expect(projectIdFromFlowUrl(`https://flow.google.com/project/${ID}?foo=1#x`)).toBe(ID)
+  })
+
+  it('하위 라우트·쿼리 위장·다른 호스트·옛 도메인 → null', () => {
+    expect(projectIdFromFlowUrl(`https://flow.google.com/project/${ID}/character`)).toBeNull()
+    expect(projectIdFromFlowUrl(`https://flow.google.com/project/${ID}/edit/abc`)).toBeNull()
+    expect(projectIdFromFlowUrl(`https://flow.google.com/?next=/project/${ID}`)).toBeNull()
+    expect(projectIdFromFlowUrl(`https://flow.google.com/archive/project/${ID}`)).toBeNull()
+    expect(projectIdFromFlowUrl(`https://evil.example/project/${ID}`)).toBeNull()
+    expect(projectIdFromFlowUrl(`https://flow.google.com.evil.example/project/${ID}`)).toBeNull()
+    expect(projectIdFromFlowUrl(`https://labs.google/fx/tools/flow/project/${ID}`)).toBeNull()
+  })
+
+  it('깨진 값·빈 값·프로젝트 없는 경로 → null', () => {
+    expect(projectIdFromFlowUrl('')).toBeNull()
+    expect(projectIdFromFlowUrl(null)).toBeNull()
+    expect(projectIdFromFlowUrl('https://flow.google.com/')).toBeNull()
+    expect(projectIdFromFlowUrl('https://flow.google.com/project/')).toBeNull()
+    expect(projectIdFromFlowUrl('https://flow.google.com/project/a%2Fb')).toBeNull()
   })
 })

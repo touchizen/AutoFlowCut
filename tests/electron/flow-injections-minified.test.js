@@ -20,6 +20,7 @@ import * as plainSettings from '../../electron/flow-composer-settings.js'
 import * as plainAngular from '../../electron/ipc/flow-angular.js'
 import * as plainProtocol from '../../electron/flow-rpc-protocol.js'
 import * as plainRefs from '../../electron/flow-composer-refs.js'
+import * as plainDriver from '../../electron/flow-reference-driver.js'
 import { sample, reencodeRequestBody, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
 import { PAGE_IMAGE_KO, PAGE_VIDEO_KO, CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel } from '../fixtures/flow-live-dom-20260924.js'
@@ -216,6 +217,48 @@ describe('minified 컴포저 레퍼런스 파인더(M3-4) — 비-minified 와 �
   })
 })
 
+// M3-7·M3-8: 레퍼런스 드라이버(flow-reference-driver.js)의 페이지 표현식 — minified 번들이 jsdom 에서 같은 결과(붙여넣기 관찰 주입은 멱등·defaultPrevented 없음).
+describe('minified 레퍼런스 드라이버 페이지 표현식(M3-7·M3-8) — 비-minified 와 같은 결과', () => {
+  let drv
+  beforeAll(async () => { drv = await loadMinified('../../electron/flow-reference-driver.js') })
+  const U = maskedUuid
+  const html = () => buildM3Page({
+    composer: { chips: [{ id: U(2) }, { id: U(3) }], editorHtml: paragraph('A ', mentionHtml(U(2), 'king.jpg'), ' b') },
+    picker: { tab: 'drive_folder_upload', items: [{ id: U(2) }, { id: U(3) }, { opaque: 1 }] },
+  })
+  /** 편집기 끝에 넣는 가짜 execCommand(jsdom 에는 없다) + 합성 Escape 수신 기록. */
+  function page(mod) {
+    const dom = new JSDOM(`<body>${html()}</body>`, { runScripts: 'outside-only' })
+    const w = dom.window
+    w.__autoflowcut_rpc_doc__ = 'a'.repeat(32)
+    w.document.execCommand = (cmd, _u, v) => { if (cmd !== 'insertText') return false; const ps = w.document.querySelectorAll('div.ProseMirror p'); ps[ps.length - 1].append(String(v)); return true }
+    const keys = []
+    w.document.body.addEventListener('keydown', (e) => keys.push(e.keyCode))
+    const run = (expr) => w.eval(expr)
+    const out = {
+      obs0: run(mod.FLOW_PASTE_OBSERVER_INJECTION), obs0again: run(mod.FLOW_PASTE_OBSERVER_INJECTION),
+      append: run(mod.APPEND_EDITOR_TEXT_JS('x @y')), escape: run(mod.DISPATCH_ESCAPE_JS), doc: run(mod.READ_RPC_DOC_JS),
+      picker: run(mod.READ_PICKER_STATUS_JS), chip1: run(mod.FIND_CHIP_AT_JS(1))?.outerHTML ?? null,
+    }
+    const e = new w.Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(e, 'clipboardData', { value: { files: { length: 1 } } })
+    w.document.querySelector('div.ProseMirror p').dispatchEvent(e)
+    out.obs1 = run(mod.FLOW_PASTE_OBSERVER_INJECTION)
+    out.prevented = e.defaultPrevented
+    out.keys = keys
+    return out
+  }
+  it('관찰 주입·텍스트 넣기·Escape·문서 nonce·창 상태·칩 파인더', () => {
+    const min = page(drv)
+    expect(min).toEqual(page(plainDriver))
+    expect(min).toMatchObject({
+      obs0: { n: 0, inEditor: null, files: 0 }, obs0again: { n: 0, inEditor: null, files: 0 }, obs1: { n: 1, inEditor: true, files: 1 }, prevented: false,
+      append: { ok: true, grew: 3 }, escape: true, keys: [27], doc: 'a'.repeat(32), picker: { expanded: true, items: 3, uploadTab: 'selected' },
+    })
+    expect(min.chip1).toContain(U(3))
+  })
+})
+
 describe('정적 규칙: 직렬화되는 헬퍼는 서로를 이름으로 부르지 않는다', () => {
   const helpers = {
     decodeFReqInner: plainProtocol.decodeFReqInner, extractSubmitPrompts: plainProtocol.extractSubmitPrompts, normalizePrompt: plainProtocol.normalizePrompt,
@@ -229,6 +272,8 @@ describe('정적 규칙: 직렬화되는 헬퍼는 서로를 이름으로 부르
     readComposerState: plainRefs.readComposerState, findAssetItemByMediaId: plainRefs.findAssetItemByMediaId, listIdAssetMediaIds: plainRefs.listIdAssetMediaIds,
     findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaId: plainRefs.readPickerPreviewMediaId, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
     findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaId: plainRefs.findChipByMediaId,
+    // M3-8
+    readPickerStatus: plainDriver.readPickerStatus, findChipAt: plainDriver.findChipAt,
   }
   it.each(Object.keys(helpers))('%s 본문에 다른 헬퍼 이름 호출이 없다', (name) => {
     const body = helpers[name].toString().replace(new RegExp(`^\\s*(async\\s+)?function\\s+${name}\\s*\\(`), '')

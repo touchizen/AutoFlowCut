@@ -109,3 +109,16 @@ export function onProjectComposerUrl(url, projectId) {
   if (!m) return false
   return COMPOSER_SUBPATHS.has(m[1] || '')
 }
+
+/**
+ * M3-6(계획서 2026-09-25 M3 D6): 지금 URL 이 **새 도메인의 프로젝트 컴포저**면 그 projectId, 아니면 null — 레퍼런스 세션 캐시 키의 일부.
+ *   경계는 onProjectComposerUrl 과 같다(호스트 정확 비교 · 한 세그먼트 id · 컴포저 하위 경로만). 옛 도메인은 301 로 도달 불가라 null.
+ */
+export function projectIdFromFlowUrl(url) {
+  let u
+  try { u = new URL(String(url ?? '')) } catch { return null }
+  if (u.hostname.toLowerCase() !== FLOW_HOST) return null
+  const m = u.pathname.match(/^\/project\/([^/]+)(\/[^/]*)?$/)
+  if (!m || !isValidProjectId(m[1])) return null
+  return COMPOSER_SUBPATHS.has(m[2] || '') ? m[1] : null
+}
