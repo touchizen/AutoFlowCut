@@ -9,9 +9,9 @@ import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
 import { failBoundUnfinished } from '../../../electron/flow-rpc-router.js'
-import { _resetDomStageForTests } from '../../../electron/ipc/flow-angular.js'   // M2-CLOSE O2: DOM 단계 직렬화 기록은 모듈 상태
+import { _resetDomStageForTests, releaseDomStage } from '../../../electron/ipc/flow-angular.js'   // M2-CLOSE O2: DOM 단계 직렬화 기록은 모듈 상태 · M2-LAST P1: 문서가 죽으면 푼다
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
-import { setModalVisible } from '../../../electron/ipc/layout.js'
+import { setModalVisible, setLayoutDragging } from '../../../electron/ipc/layout.js'   // M2-LAST P4: 드래그 중 진입 거부
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../../fixtures/flow-batchexecute-samples.js'
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
@@ -38,11 +38,17 @@ function harness(o = {}) {
   const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
   const agentSeq = Array.isArray(o.agent) ? [...o.agent] : null
   const summarySeq = Array.isArray(o.summary) ? [...o.summary] : null   // M2-CLOSE O3: 요약 판독 순서(트리거 전 · 닫힌 뒤) — 마지막 값이 남는다
+  const settingsSeq = Array.isArray(o.settings) ? [...o.settings] : null   // M2-LAST P1: 드라이버 결과 순서(항목별 — undefined 는 기본값) — 마지막 값이 남는다
+  const editorSeq = Array.isArray(o.editorText) ? [...o.editorText] : null   // M2-LAST P2: 편집기 재판독 순서(주입 뒤 · 제출 클릭 직전) — 마지막 값이 남는다
   let injectedPrompt = null
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
     // 마커 있는 스크립트 먼저 — 설정 드라이버도 `const scan =` 을 품고 있어 진단 프로브 검사와 겹친다.
-    if (s.includes('__af_settings_driver__')) { trace.push('settings-driver'); return o.settings ?? { ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'already(crop_16_9)', count: 'already' } } }
+    if (s.includes('__af_settings_driver__')) {
+      trace.push('settings-driver')
+      const next = settingsSeq ? (settingsSeq.length > 1 ? settingsSeq.shift() : settingsSeq[0]) : o.settings
+      return next ?? { ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'already(crop_16_9)', count: 'already' } }
+    }
     if (s.includes('__af_settings_panel_open__')) return false
     if (s.includes('__af_set_editor_text__')) {
       trace.push(bounds.width > 0 && bounds.height > 0 ? 'set-text:visible' : 'set-text:hidden')
@@ -63,7 +69,7 @@ function harness(o = {}) {
     if (s.includes('batchexecute capture installed')) { trace.push('capture-inject'); return undefined }
     if (s.startsWith('!!window.__autoflowcut_rpc_capture__')) { trace.push('capture-probe'); return captureFlags.length > 1 ? captureFlags.shift() : captureFlags[0] }
     if (s.includes('settings-summary')) { trace.push('summary'); if (summarySeq) return summarySeq.length > 1 ? summarySeq.shift() : summarySeq[0]; return o.summary ?? { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_16_9'] } }
-    if (s.includes("querySelectorAll('p')")) { trace.push('read-text'); return o.editorText !== undefined ? o.editorText : injectedPrompt }
+    if (s.includes("querySelectorAll('p')")) { trace.push('read-text'); if (editorSeq) return editorSeq.length > 1 ? editorSeq.shift() : editorSeq[0]; return o.editorText !== undefined ? o.editorText : injectedPrompt }
     if (s.includes('aria-disabled')) { trace.push('submit-enabled'); return o.submitEnabled ?? true }
     if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
     if (s.includes('getMediaUrlRedirect')) { trace.push('dom-image-probe'); return [] }
@@ -501,21 +507,22 @@ describe('flow:generate-image (angular) — 비동기 + check/collect + 마감',
 
 // ─── R2-2 부록 #1 / #6 / #7 (플랜 §12 #45 · #47 · #48) ───────────────────────────────────────────────────────
 describe('flow:generate-image (angular) — 포커스 반환 (R2-2#1, §12 #45)', () => {
-  it('뷰가 넓고 이미 포커스를 갖고 있었으면(957×1022, isFocused) 메인 창에 포커스를 돌려주지 않는다', async () => {
+  it('뷰가 넓고 이미 포커스를 갖고 있었으면(957×1022, isFocused) finally 는 메인 창에 포커스를 돌려주지 않는다 — 클릭 전 P2 반환 한 번뿐(클릭 뒤 없음)', async () => {
     const h = harness({ focused: true })
     const r = await settle(h.generate())
     expect(r.success).toBe(true)
-    expect(h.mainWindow.webContents.focus).not.toHaveBeenCalled()
+    expect(h.mainWindow.webContents.focus).toHaveBeenCalledTimes(1)   // M2-LAST P2: 재판독 뒤·클릭 전의 반환
+    expect(h.trace.lastIndexOf('main-focus')).toBeLessThan(idx(h.trace, 'click:compose-submit'))
   })
 
-  it('뷰가 포커스를 갖고 있지 않았으면(보이는 뷰라도) 재판독·제출 클릭 뒤 메인 창에 포커스를 돌려준다', async () => {
+  it('뷰가 포커스를 갖고 있지 않았으면(보이는 뷰라도) 재판독 뒤(P2)와 제출 클릭 뒤(finally) 메인 창에 포커스를 돌려준다', async () => {
     const h = harness({ focused: false })
     const r = await settle(h.generate())
     expect(r.success).toBe(true)
-    expect(h.mainWindow.webContents.focus).toHaveBeenCalledTimes(1)
+    expect(h.mainWindow.webContents.focus).toHaveBeenCalledTimes(2)   // M2-LAST P2: 클릭 전 한 번 + finally 한 번
     const t = h.trace
     expect(idx(t, 'read-text')).toBeLessThan(idx(t, 'main-focus'))
-    expect(idx(t, 'click:compose-submit')).toBeLessThan(idx(t, 'main-focus'))
+    expect(idx(t, 'click:compose-submit')).toBeLessThan(t.lastIndexOf('main-focus'))
   })
 
   it('자동화 뷰포트에 들어갔으면 조기 반환(편집기 클릭 실패)에서도 레이아웃 원복 뒤 메인 창에 포커스를 돌려준다', async () => {
@@ -665,5 +672,116 @@ describe('flow:generate-image (angular) — 주입 직전 포커스 재확보 (M
     expect(t[inject - 1]).toBe('focus')
     expect(t.filter((x) => x === 'focus')).toHaveLength(2)
     expect(t.lastIndexOf('focus')).toBeGreaterThan(idx(t, 'click:compose-editor'))
+  })
+})
+
+// M2-LAST P1(A1 = B1): 이미지도 같은 모듈 상태를 본다 — 문서가 죽어(main 의 did-navigate·render-process-gone) releaseDomStage 가 불리면 영영 미해결 좀비 뒤의 다음 항목이 기다리지 않는다.
+describe('flow:generate-image (angular) — 문서가 죽으면 DOM 단계 직렬화를 푼다 (M2-LAST P1)', () => {
+  it('영영 미해결 좀비 → releaseDomStage("render-process-gone") → 다음 항목은 기다리지 않고 진행해 images; 로그 "DOM stage released (render-process-gone)"', async () => {
+    const h = harness({ bounds: { x: 0, y: 0, width: 597, height: 872 }, settings: [new Promise(() => {}), undefined] })   // 첫 항목의 드라이버만 영영 매달린다
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    expect(releaseDomStage('render-process-gone')).toBe(true)
+    expect(logged()).toMatch(/\[Flow API\] DOM stage released \(render-process-gone\)/)
+    expect(await settle(h.generate(), 15000)).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })   // 예산 15s — 풀리지 않았으면 dom-stage-busy 로 빨갛다
+    expect(h.trace.filter((x) => x === 'agent-probe')).toHaveLength(2)
+    expect(logged()).not.toMatch(/still busy/)
+  })
+})
+
+// M2-LAST P2(B2): 이미지도 같다 — 재판독이 맞은 즉시 메인 창에 OS 포커스(IME 조합이 붙을 편집기 포커스를 없앤다), 제출 클릭 직전 재판독이 다르면 클릭·arm 없이 클릭 전 실패.
+describe('flow:generate-image (angular) — 클릭 전 OS 포커스 반환 · 제출 직전 재판독 (M2-LAST P2)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  const count = (t, tag) => t.filter((x) => x === tag).length
+
+  it('재판독이 맞으면 제출 가능 프로브 전에 메인 창에 포커스(read-text < main-focus < submit-enabled); 제출 클릭 바로 앞은 두 번째 read-text — 좁은 뷰·넓은 뷰(포커스 있던 뷰 포함)', async () => {
+    for (const o of [{ bounds: NARROW }, {}, { focused: true }]) {
+      const h = harness(o)
+      expect(await settle(h.generate())).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
+      const t = h.trace
+      expect(idx(t, 'read-text')).toBeLessThan(idx(t, 'main-focus'))
+      expect(idx(t, 'main-focus')).toBeLessThan(idx(t, 'submit-enabled'))
+      expect(count(t, 'read-text')).toBe(2)
+      expect(t[idx(t, 'click:compose-submit') - 1]).toBe('read-text')
+      // finally 의 반환은 그대로: 뷰포트에 들어갔거나 포커스가 없던 뷰면 클릭 뒤 한 번 더, 넓고 포커스 있던 뷰면 클릭 전 한 번뿐
+      expect(count(t, 'main-focus')).toBe(o.focused ? 1 : 2)
+    }
+  })
+
+  it('재판독 뒤·클릭 전에 편집기 텍스트가 달라지면 제출 클릭·arm 없이 클릭 전 text-injection-failed(reason editor-changed-before-click) — 맵 0·보고 내용 없음', async () => {
+    const h = harness({ editorText: [PROMPT, PROMPT + '한'] })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'text-injection-failed', error: 'text-injection-failed', reason: 'editor-changed-before-click' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.trace.filter((x) => x.startsWith('armed:'))).toEqual([])
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(count(h.trace, 'read-text')).toBe(2)
+    expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'compose-text' && c[1]?.reason === 'editor-changed-before-click')).toBe(true)
+    expect(logged()).toMatch(/editor text changed between the read-back and the submit click promptLen=\d+ editorLen=\d+/)
+    for (const c of h.onDomFailure.mock.calls) expect(JSON.stringify(c)).not.toContain(PROMPT)
+    expect(logged()).not.toContain(PROMPT)
+  })
+})
+
+// M2-LAST P3(A2): 이미지도 같다 — 캐럿 클릭 중 워치독이 울린 좀비는 finally 뒤에 재포커스·주입하지 않는다.
+describe('flow:generate-image (angular) — 캐럿 클릭 중 워치독이 울린 좀비는 재포커스·주입하지 않는다 (M2-LAST P3)', () => {
+  it('compose-editor 클릭이 121s 에 돌아온 좀비 → keylock:off 뒤에 focus·set-text·read-text·main-focus·submit-enabled·제출 클릭 없음, 맵 0, shield:off 1회', async () => {
+    const h = harness({ bounds: { x: 0, y: 0, width: 597, height: 872 } })
+    h.trustedClickOnFlowView.mockImplementation(async (_sel, opts) => {
+      h.trace.push('click:' + (opts?.step || '?'))
+      if (opts?.step === 'compose-editor') await new Promise((r) => setTimeout(r, 121000))
+      return { success: true }
+    })
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    await vi.advanceTimersByTimeAsync(10000)
+    const t = h.trace
+    const off = t.indexOf('keylock:off')
+    expect(off).toBeGreaterThan(t.indexOf('click:compose-editor'))
+    const after = t.slice(off + 1)
+    expect(after).not.toContain('focus')
+    expect(after.filter((x) => x.startsWith('set-text'))).toEqual([])
+    expect(after).not.toContain('read-text')
+    expect(after).not.toContain('main-focus')
+    expect(after).not.toContain('submit-enabled')
+    expect(t).not.toContain('click:compose-submit')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(t.filter((x) => x === 'shield:off')).toHaveLength(1)
+  })
+})
+
+// M2-LAST P4(A3): 거부 경로(dom-stage-busy · layout-dragging)는 키 잠금을 건드리지 않는다 — 이미지 스위트엔 두 거부 핀이 없었다(잠금을 거부 앞에서 잡고 안 풀어도 초록).
+//   잠금이 거부 뒤에 남으면 Flow 뷰로 가는 모든 키가 영구히 막힌다(P1 이전엔 busy 가 영구였으니 함께 영구).
+describe('flow:generate-image (angular) — 클릭 전 거부는 키 잠금을 건드리지 않는다 (M2-LAST P4)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  const count = (t, tag) => t.filter((x) => x === tag).length
+
+  it('직전 단계의 좀비가 살아 있으면(드라이버 영영 미해결) 다음 항목은 10s 기다린 뒤 클릭 전 dom-stage-busy — bounds·방패·프로브·클릭 없음, 잠금 호출은 첫 항목의 on/off 뿐', async () => {
+    const h = harness({ bounds: NARROW, settings: new Promise(() => {}) })
+    expect(await settle(h.generate(), 125000)).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    const setBoundsCalls = h.flowView.setBounds.mock.calls.length
+    const r2 = await settle(h.generate(), 15000)
+    expect(r2).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'dom-stage-busy' })
+    expect(count(h.trace, 'agent-probe')).toBe(1)
+    expect(count(h.trace, 'shield:on')).toBe(1)
+    expect(h.flowView.setBounds.mock.calls.length).toBe(setBoundsCalls)
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/DOM stage still busy after 10s → refusing before click/)
+    expect(h.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+  })
+
+  it('5s 가 지나도 드래그 중이면 클릭 전 flow-settings-not-applied(reason layout-dragging) — bounds·방패·프로브·클릭 없음, 잠금 호출 없음', async () => {
+    setLayoutDragging(true)
+    try {
+      const h = harness({ hidden: true })
+      const r = await settle(h.generate(), 10000)
+      expect(r).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'layout-dragging' })
+      expect(h.flowView.setBounds).not.toHaveBeenCalled()
+      expect(h.createInputShield).not.toHaveBeenCalled()
+      expect(h.trace).not.toContain('agent-probe')
+      expect(h.trace).not.toContain('click:compose-submit')
+      expect(h.pendingGenerations.size).toBe(0)
+      expect(logged()).toMatch(/layout still dragging/)
+      expect(h.setAutomationKeyLock).not.toHaveBeenCalled()
+    } finally { setLayoutDragging(false) }
   })
 })

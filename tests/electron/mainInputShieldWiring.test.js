@@ -13,6 +13,12 @@ const fnBlock = (name) => {
   if (start < 0) return null
   return MAIN.slice(start, MAIN.indexOf('\n}\n', start))
 }
+/** M2-LAST P1: `view.webContents.on('<event>', …)` 핸들러 블록(2칸 들여쓰기의 `\n  })` 까지 — flow-rpc-capture-wiring 과 같은 꼴). */
+const handlerBlock = (event) => {
+  const start = MAIN.indexOf(`view.webContents.on('${event}'`)
+  if (start < 0) return null
+  return MAIN.slice(start, MAIN.indexOf('\n  })', start))
+}
 
 describe('main.js — 입력 방패(createInputShield) 배선 (M2-LIVE N1)', () => {
   it('flowAPIDeps 가 createInputShield 를 싣는다', () => {
@@ -63,5 +69,24 @@ describe('main.js — 방패의 포커스 되돌리기 배선 (M2-CLOSE O5)', ()
     const b = fnBlock('makeInputShield')
     expect(b, 'makeInputShield block').toBeTruthy()
     expect(b).toMatch(/^\s*shield\.webContents\.on\('focus',\s*\(\)\s*=>\s*\{[^\n]*getFlowView\(\)\?\.webContents\.focus\(\)/m)
+  })
+})
+
+// M2-LAST P1(A1 = B1): 문서가 죽으면(메인 프레임 did-navigate 커밋 · render-process-gone) 그 문서의 executeJavaScript 는 영영 settle 하지 않는다 — flow-angular 의 DOM 단계 직렬화 기록
+//   (lastDomStage)을 releaseDomStage(reason) 로 비운다(failBoundUnfinished 옆). SPA 내비게이션(did-navigate-in-page)은 문서가 살아 있으므로 풀지 않는다. 줄머리 앵커(주석 처리에 눈멀지 않게).
+describe('main.js — 문서가 죽으면 DOM 단계 직렬화를 푸는 배선 (M2-LAST P1)', () => {
+  it("flow-angular 의 releaseDomStage 를 import 하고, did-navigate 가 releaseDomStage('did-navigate') 를, render-process-gone 이 releaseDomStage('render-process-gone') 을 부른다", () => {
+    expect(MAIN).toMatch(/^import \{[^}]*\breleaseDomStage\b[^}]*\} from '\.\/ipc\/flow-angular\.js'/m)
+    const nav = handlerBlock('did-navigate')
+    expect(nav, 'did-navigate handler').toBeTruthy()
+    expect(nav).toMatch(/^\s*releaseDomStage\('did-navigate'\)/m)
+    const gone = handlerBlock('render-process-gone')
+    expect(gone, 'render-process-gone handler').toBeTruthy()
+    expect(gone).toMatch(/^\s*releaseDomStage\('render-process-gone'\)/m)
+  })
+  it('did-navigate-in-page(SPA) 와 did-start-navigation 은 풀지 않는다 — 문서가 살아 있다(취소될 수 있다)', () => {
+    expect(handlerBlock('did-navigate-in-page')).not.toMatch(/releaseDomStage/)
+    const start = handlerBlock('did-start-navigation')
+    if (start) expect(start).not.toMatch(/releaseDomStage/)
   })
 })

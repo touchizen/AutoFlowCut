@@ -51,6 +51,7 @@ import { createBearerStore, bearerFromHeaders, isFlowApiRequest } from './flow-b
 import { FLOW_XHR_CAPTURE_INJECTION } from './flow-xhr-capture.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from './flow-rpc-capture.js'
 import { failBoundUnfinished } from './flow-rpc-router.js'
+import { releaseDomStage } from './ipc/flow-angular.js'   // M2-LAST P1: 문서가 죽으면 DOM 단계 직렬화를 푼다
 import { decideUpdateRequest, parseStartSceneBatchBody } from './mcp-http-parsers.js'   // M2-LIVE N3 · N7
 import { isNetTraceOn, netTraceFilePath, decodeUploadData, buildTraceLine, summarizeTraceEntry } from './flow-net-trace.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
@@ -413,6 +414,7 @@ function makeFlowView() {
     //   (did-start-navigation 은 취소될 수 있어 여기서만.) 미바인딩 armed gen 은 새 문서의 send 를 기다린다.
     const lost = failBoundUnfinished(pendingGenerations)
     if (lost) console.warn('[Flow RPC] did-navigate: bound unfinished generations lost =', lost)
+    releaseDomStage('did-navigate')   // M2-LAST P1: 이 문서의 DOM 단계 exec 는 영영 settle 하지 않는다 — 직렬화 기록을 비운다(살아 있던 단계였을 때만 로그)
     if (url.includes('unsupported-country')) {
       console.log('[Flow] Region unavailable detected early (did-navigate)')
       const win = mainWindow
@@ -462,6 +464,7 @@ function makeFlowView() {
   view.webContents.on('render-process-gone', (_e, details) => {
     const lost = failBoundUnfinished(pendingGenerations)
     console.warn('[Flow RPC] render-process-gone reason=', details?.reason, 'lost =', lost)
+    releaseDomStage('render-process-gone')   // M2-LAST P1: 렌더러와 함께 이 문서의 DOM 단계도 죽었다
   })
 
   // Flow 페이지가 스스로 보내는 aisandbox 요청의 Bearer 를 잡아둔다 — flow.google.com 에는 세션 API 가

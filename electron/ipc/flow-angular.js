@@ -85,8 +85,22 @@ const DOM_STAGE_TIMEOUT = Symbol('dom-stage-timeout')
 // M2-CLOSE O2(A2): DOM 단계 직렬화 — 직전 단계의 run(settle 하면 끝, reject 도 끝)을 모듈에 기록해 두고 새 단계가 ≤10s 기다린다. 이미지·영상 핸들러 인스턴스가
 //   같은 Flow 페이지를 만지므로 모듈 상태(인스턴스별이 아니라). 테스트는 _resetDomStageForTests 로 비운다.
 const DOM_STAGE_BUSY_WAIT_MS = 10000
+// M2-LAST P1(A1 = B1): 기록은 { done, abortedAt, settled } — 문서가 죽으면(내비게이션 커밋·렌더러 크래시) 그 문서의 executeJavaScript 는 영영 settle 하지 않아(Electron 36 실측)
+//   좀비의 run 만 기다리던 직렬화가 프로세스가 끝날 때까지 모든 항목을 dom-stage-busy 로 거부했다. main 의 두 문서 이벤트가 releaseDomStage 로 비우고, 문서 이벤트를 못 본 경우의
+//   백스톱으로 워치독이 5분(DOM_STAGE_ZOMBIE_MAX_MS) 넘게 전에 울린 좀비는 busy 검사에서 버린다. 같은 문서에서 아직 살아 있는 좀비의 ≤10s 대기·거부는 그대로.
+const DOM_STAGE_ZOMBIE_MAX_MS = 5 * 60 * 1000
 let lastDomStage = null
 export function _resetDomStageForTests() { lastDomStage = null }
+/**
+ * M2-LAST P1: 문서가 죽었다(main 의 메인 프레임 did-navigate · render-process-gone) — 직렬화 기록을 비운다. 살아 있던(아직 settle 하지 않은) 단계를 풀었을 때만 true + 로그
+ *   (정상 항목 뒤의 프로젝트 열기마다 잡음이 되지 않게). reason 은 상태어(이벤트 이름)만.
+ */
+export function releaseDomStage(reason) {
+  const live = !!(lastDomStage && !lastDomStage.settled)
+  lastDomStage = null
+  if (live) console.log(`[Flow API] DOM stage released (${reason})`)
+  return live
+}
 /** 직전 단계가 ms 안에 settle 하면 false, 아니면 true(아직 살아 있다). 타이머는 정리한다. */
 async function domStageBusy(prev, ms) {
   let timer = null
@@ -117,6 +131,23 @@ export function createFlowAngular(deps) {
     try { await deps.reportDomFailure?.(step, reason, extra) } catch (_e) { /* 진단은 실패해도 흐름을 막지 않는다 */ }
   }
   const exec = (flowView, js) => flowView.webContents.executeJavaScript(js, true)
+  // M2-LAST P2(B2): 재판독이 맞은 즉시 OS 포커스를 메인 창으로 — O1 의 before-input-event 잠금은 PreHandleKeyboardEvent 를 지나는 키만 막고, 입력기(macOS 2벌식 한글)가 처리한
+  //   keydown 은 그 단계를 건너뛰어 조합 텍스트가 ImeSetComposition/ImeCommitText 로 포커스된 편집기에 붙는다(재판독~제출 mouseDown 사이 ≈150–300ms 의 음절이 프롬프트가 돼 과금).
+  //   편집기가 포커스를 잃으면 붙을 곳이 없다. 제출 신뢰 클릭은 sendInputEvent 라 OS 포커스가 필요 없다. 잠금은 그대로(Enter·단축키). 실패는 흐름을 막지 않는다(직전 재판독이 방벽).
+  const focusMainWindow = () => { try { deps.getMainWindow()?.webContents?.focus() } catch (_e) { /* 창이 이미 없을 수 있다 */ } }
+  /**
+   * M2-LAST P2: 제출 클릭 직전의 재판독 — 정규화한 편집기 텍스트가 프롬프트와 다르면(포커스를 옮기기 전에 붙은 조합 음절 등) 클릭 전 text-injection-failed(reason
+   *   editor-changed-before-click — 항목 이유, 다음 항목이 재시도) 결과, 같으면 null. 호출자는 이 뒤에 동기 구간(arm)만 두고 바로 클릭한다. 로그·보고는 길이만.
+   */
+  async function editorChangedBeforeClick(flowView, tag, normPrompt) {
+    let text = null
+    try { text = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { text = null }
+    const editorLen = normalizePrompt(text || '').length
+    if (normalizePrompt(text || '') === normPrompt) return null
+    console.warn(`${tag} editor text changed between the read-back and the submit click promptLen=${normPrompt.length} editorLen=${editorLen} → refusing before click`)
+    await report('compose-text', 'editor-changed-before-click', { promptLen: normPrompt.length, editorLen })
+    return kindResult('text-injection-failed', { reason: 'editor-changed-before-click' })
+  }
 
   /** Flow 페이지 + WIZ 전역이 있는 문서인가. 아니면 flow-session-missing(+authFailed) — DOM 을 건드리기 전에. */
   async function sessionGate(flowView) {
@@ -160,9 +191,16 @@ export function createFlowAngular(deps) {
    */
   async function withAutomationViewport(flowView, tag, fn) {
     // M2-CLOSE O2: 직전 단계(좀비 포함)가 아직 살아 있으면 ≤10s 기다린다 — 뷰포트·방패보다 먼저(기다리는 동안 뷰를 키워 두지 않는다).
-    if (lastDomStage && await domStageBusy(lastDomStage, DOM_STAGE_BUSY_WAIT_MS)) {
-      console.warn(`${tag} DOM stage still busy after ${DOM_STAGE_BUSY_WAIT_MS / 1000}s → refusing before click`)
-      return kindResult('flow-settings-not-applied', { reason: 'dom-stage-busy' })
+    if (lastDomStage) {
+      // M2-LAST P1: 워치독이 5분 넘게 전에 울린 좀비는 버린다(백스톱 — 문서 이벤트를 못 본 경우). 아직 5분 안이면 살아 있는 것으로 보고 그대로 기다린다.
+      const abortedAgoMs = lastDomStage.abortedAt != null ? Date.now() - lastDomStage.abortedAt : -1
+      if (abortedAgoMs > DOM_STAGE_ZOMBIE_MAX_MS) {
+        console.warn(`${tag} stale zombie dropped (watchdog fired ${Math.round(abortedAgoMs / 1000)}s ago)`)
+        lastDomStage = null
+      } else if (await domStageBusy(lastDomStage.done, DOM_STAGE_BUSY_WAIT_MS)) {
+        console.warn(`${tag} DOM stage still busy after ${DOM_STAGE_BUSY_WAIT_MS / 1000}s → refusing before click`)
+        return kindResult('flow-settings-not-applied', { reason: 'dom-stage-busy' })
+      }
     }
     // M2-LIVE N1: 드래그 중이면 먼저 드래그 끝을 기다린다(≤ DRAG_WAIT_MS) — 그 뒤에 bounds 를 읽어야 접힌 0×0 이 아니라 복원된 레이아웃을 본다.
     if (getLayoutDragging()) {
@@ -199,13 +237,17 @@ export function createFlowAngular(deps) {
       }
       const run = fn(ctl)
       run.catch(() => {})   // 워치독이 이긴 뒤의 zombie reject 는 unhandled 가 되면 안 된다(race 는 따로 구독한다)
-      lastDomStage = run.then(() => {}, () => {})   // M2-CLOSE O2: 다음 단계가 기다릴 대상(어느 쪽으로 끝나든 settle)
+      // M2-CLOSE O2: 다음 단계가 기다릴 대상(어느 쪽으로 끝나든 settle). M2-LAST P1: 워치독 시각(abortedAt)·settle 여부도 적는다(백스톱·releaseDomStage 의 판정).
+      const stage = { done: null, abortedAt: null, settled: false }
+      stage.done = run.then(() => { stage.settled = true }, () => { stage.settled = true })
+      lastDomStage = stage
       const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(DOM_STAGE_TIMEOUT), DOM_STAGE_TIMEOUT_MS) })
       const result = await Promise.race([run, timeout])
       if (result !== DOM_STAGE_TIMEOUT) return result
       // M2-LIVE N1(A8): 제출 클릭이 이미 나갔으면 timeout 결과로 덮지 않는다 — 클릭 헬퍼가 30s 안에 돌아오고 post-click 경로가 판정한다.
       if (ctl.clickStarted) return await run
       ctl.aborted = true
+      stage.abortedAt = Date.now()   // M2-LAST P1: 좀비의 나이 — 5분 넘으면 다음 단계가 버린다
       console.warn(`${tag} DOM stage timed out after ${DOM_STAGE_TIMEOUT_MS / 1000}s before the submit click → refusing`)
       return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
     } finally {
@@ -326,6 +368,9 @@ export function createFlowAngular(deps) {
       const focus = await deps.trustedClickOnFlowView(FIND_PROMPT_EDITOR_JS, { required: true, step: 'compose-editor' })
       if (!focus?.success) return kindResult('text-injection-failed')
       await sleep(120)
+      // M2-LAST P3(A2): 캐럿 클릭(≤30s + 뮤텍스 대기) 중에 워치독이 울렸으면 여기서 멈춘다 — 안 그러면 좀비가 finally(레이아웃 복원·메인 포커스·잠금 해제) 뒤에 Flow 뷰로
+      //   포커스를 가져가 프롬프트를 넣고 제출 가능 상태로 둔다(앱에 치려던 Enter 가 미추적 과금 제출).
+      if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
       let readBack = null
       try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
       try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
@@ -336,10 +381,14 @@ export function createFlowAngular(deps) {
         return kindResult('text-injection-failed')
       }
 
-      // 5. 제출 가능(텍스트가 등록돼 버튼이 활성)
+      // 5. 제출 가능(텍스트가 등록돼 버튼이 활성) — M2-LAST P2: 그 전에 OS 포커스를 메인 창으로(IME 조합이 편집기에 붙지 않게; 클릭은 포커스가 필요 없다)
+      focusMainWindow()
       let enabled = false
       try { enabled = !!(await exec(flowView, SUBMIT_ENABLED_PROBE)) } catch (_e) { enabled = false }
       if (!enabled) return kindResult('generate-button-unavailable')
+      // M2-LAST P2: 제출 클릭 직전 재판독 — 달라졌으면 클릭·arm 없이 클릭 전 실패. arm 은 이 뒤의 동기 구간(재판독 exec 에 매달린 좀비가 맵에 마감 없는 gen 을 남기지 않는다).
+      const changed = await editorChangedBeforeClick(flowView, '[Flow API] [Angular]', normPrompt)
+      if (changed) return changed
 
       // 6. arm — 클릭 전에 gen 을 맵에 넣는다(캡처의 send 가 바인딩할 후보). 초 단위 시각.
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 좀비는 arm·클릭하지 않는다
@@ -537,6 +586,9 @@ export function createFlowAngular(deps) {
       const focus = await deps.trustedClickOnFlowView(FIND_PROMPT_EDITOR_JS, { required: true, step: 'compose-editor' })
       if (!focus?.success) return kindResult('text-injection-failed')
       await sleep(120)
+      // M2-LAST P3(A2): 캐럿 클릭(≤30s + 뮤텍스 대기) 중에 워치독이 울렸으면 여기서 멈춘다 — 안 그러면 좀비가 finally(레이아웃 복원·메인 포커스·잠금 해제) 뒤에 Flow 뷰로
+      //   포커스를 가져가 프롬프트를 넣고 제출 가능 상태로 둔다(앱에 치려던 Enter 가 미추적 과금 제출).
+      if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
       let readBack = null
       try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
       try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
@@ -547,10 +599,14 @@ export function createFlowAngular(deps) {
         return kindResult('text-injection-failed')
       }
 
-      // 6. 제출 가능
+      // 6. 제출 가능 — M2-LAST P2: 그 전에 OS 포커스를 메인 창으로(IME 조합이 편집기에 붙지 않게; 클릭은 포커스가 필요 없다)
+      focusMainWindow()
       let enabled = false
       try { enabled = !!(await exec(flowView, SUBMIT_ENABLED_PROBE)) } catch (_e) { enabled = false }
       if (!enabled) return kindResult('generate-button-unavailable')
+      // M2-LAST P2: 제출 클릭 직전 재판독 — 달라졌으면 클릭·arm 없이 클릭 전 실패. arm 은 이 뒤의 동기 구간(재판독 exec 에 매달린 좀비가 맵에 마감 없는 gen 을 남기지 않는다).
+      const changed = await editorChangedBeforeClick(flowView, '[Flow Video T2V] [Angular]', normPrompt)
+      if (changed) return changed
 
       // 7. arm — YhhmEf gen(send 마감 15s). 비율은 키에 없어 wantRatio 검사는 없다(패널이 보장).
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 좀비는 arm·클릭하지 않는다
