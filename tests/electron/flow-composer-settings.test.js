@@ -639,3 +639,28 @@ describe('settingsDriverCore — 패널이 늦게 열려도 기다린다 (M2 실
     expect(r).toMatchObject({ ok: false, reason: 'panel-not-open' })
   }, 10000)
 })
+
+// 2026-09-25 M2 실기(3·4번째 런): (1) 같은 페이지에서 두 번째 생성부터 트리거 클릭 한 번이 헛돌았다 — Escape 로 닫은 뒤 Flow 의
+//   "열림" 상태가 풀리지 않아 다음 클릭이 닫기로 소비된다(그다음 클릭은 연다). 첫 대기에도 패널이 없으면 드라이버가 트리거를 한 번
+//   더 누르고 다시 기다린다. (2) Veo 3.1 - Fast 로 바꾸자 group-not-found:duration — Veo 패널의 길이 그룹 모양은 관측된 적이 없다.
+//   group-not-found 실패는 분류 못 한 토글 그룹의 라벨(UI 문자열)을 shape 로 싣는다(진단 — 다음 한 번에 모양을 본다).
+describe('settingsDriverCore — 트리거 헛클릭 재시도 · group-not-found 모양 진단 (M2 실기)', () => {
+  it('패널이 안 열리면 트리거를 한 번 더 누르고, 그 클릭이 패널을 열면 ok', async () => {
+    const doc = mount(HEAD + IMAGE_COMPOSER_KO)
+    const trigger = doc.querySelector('button.settings-trigger-button')
+    let clicks = 0
+    trigger.addEventListener('click', () => { clicks++; doc.body.insertAdjacentHTML('beforeend', buildSettingsPanel({ mode: 'image' })) })
+    const r = await runSettingsDriver(doc, { mode: 'image' })
+    expect(r).toMatchObject({ ok: true, steps: { mode: 'already' } })
+    expect(clicks).toBe(1)
+  }, 10000)
+
+  it('길이 그룹을 분류 못 하면 group-not-found:duration 에 분류 못 한 그룹의 라벨을 shape 로 싣는다', async () => {
+    const odd = ['4초 · 오디오 포함', '8초 · 오디오 포함']
+    const doc = mount(HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', durations: odd, checked: { duration: odd[1] } }))
+    const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni Flash' })
+    expect(r).toMatchObject({ ok: false, reason: 'group-not-found:duration' })
+    expect(r.shape.groups).toEqual(expect.arrayContaining(['mode', 'ratio', 'resolution', 'count']))
+    expect(r.shape.unclassified).toEqual([{ labels: odd, ligatures: [] }])
+  })
+})

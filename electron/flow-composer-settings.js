@@ -67,6 +67,7 @@ export function scanSettingsPanel(doc) {
     byName.get(name).push(r)
   }
   const groups = {}
+  const unclassified = []   // M2 실기: 분류 못 한 토글 그룹의 UI 라벨(사용자 내용 아님) — group-not-found 진단용
   for (const [name, els] of byName) {
     const options = els.map((el) => {
       const icons = Array.from(el.querySelectorAll(ICON_SEL)).map((i) => (i.textContent || '').trim()).filter(Boolean)
@@ -81,7 +82,7 @@ export function scanSettingsPanel(doc) {
     else if (labels.every((l) => /^x[1-4]$/i.test(l))) kind = 'count'
     else if (labels.every((l) => /^\d{3,4}p$/i.test(l))) kind = 'resolution'
     else if (labels.every((l) => /^\d{1,2}\s*\D{0,8}$/.test(l))) kind = 'duration'
-    if (!kind) continue
+    if (!kind) { unclassified.push({ labels: labels.slice(0, 8).map((l) => String(l).slice(0, 24)), ligatures: ligs.slice(0, 8) }); continue }
     if (groups[kind]) return { ok: false, reason: 'group-ambiguous:' + kind }
     groups[kind] = { name, kind, options, checked: options.find((o) => o.checked) || null }
   }
@@ -95,7 +96,7 @@ export function scanSettingsPanel(doc) {
   } else if (triggers.length > 1) {
     model = { ambiguous: triggers.length }
   }
-  return { ok: true, panel, groups, model, radioCount: material.length }
+  return { ok: true, panel, groups, model, radioCount: material.length, unclassified }
 }
 
 /**
@@ -248,7 +249,9 @@ export async function settingsDriverCore(doc, targets, deps) {
     if (!keepOpen) r.closed = await closePanel()
     return r
   }
-  const failPlan = async (p) => Object.assign(await fail(p.reason || p.kind), { kind: p.kind || 'flow-settings-not-applied' }, p.params ? { params: p.params } : {})
+  // M2 실기: group-not-found 는 분류 못 한 그룹의 라벨을 shape 로 싣는다(Veo 패널 모양 진단).
+  const shapeOf = (p) => (String(p.reason || '').indexOf('group-not-found:') === 0 && s && s.ok ? { shape: { groups: Object.keys(s.groups || {}), unclassified: s.unclassified || [] } } : {})
+  const failPlan = async (p) => Object.assign(await fail(p.reason || p.kind), { kind: p.kind || 'flow-settings-not-applied' }, shapeOf(p), p.params ? { params: p.params } : {})
   const norm = (s) => String(s || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
   // M2-2: planSettingsClicks 의 labelMatches 와 같은 규칙(자기완결 — 이름으로 부르지 않는다).
   const labelMatches = (label, want) => {
@@ -289,6 +292,16 @@ export async function settingsDriverCore(doc, targets, deps) {
   // M2 실기(2026-09-25, 2차 런): 트리거 클릭 직후 즉시 한 번 스캔하면 패널 애니메이션이 끝나기 전이라 panel-not-open 으로 닫혔다
   //   (이미지 런은 타이밍 운으로 통과). 패널이 스캔 가능해질 때까지 유계 대기(≤3s) 뒤 판정.
   await waitFor(() => scan(doc).ok, 3000)
+  // M2 실기(3·4번째 런): 같은 페이지의 두 번째 생성부터 트리거 클릭 한 번이 헛돈다(Escape 로 닫은 뒤 Flow 의 열림 상태가 안 풀려
+  //   다음 클릭이 닫기로 소비된다). 여전히 패널이 없으면 트리거를 한 번 더 누르고 다시 기다린다.
+  if (!scan(doc).ok) {
+    const trig = Array.from(doc.querySelectorAll('button.settings-trigger-button')).filter((b) => !!b.querySelector('.settings-summary'))
+    if (trig.length === 1) {
+      try { console.log('[Flow Inject] settings panel not open — clicking the trigger once more') } catch (_e) { /* 로그 실패 무시 */ }
+      trig[0].click()
+      await waitFor(() => scan(doc).ok, 3000)
+    }
+  }
   let s = scan(doc)
   if (!s.ok) return fail(s.reason)
   // phase 1 — 모드
@@ -453,7 +466,7 @@ export async function applyComposerSettings(flowView, opts, deps) {
     const kind = r?.kind || 'flow-settings-not-applied'
     const reason = r?.reason || kind
     console.warn(`[Flow Settings] ${mode} ${formatSteps(steps)} ok=false reason=${reason}`)
-    return Object.assign({ ok: false, kind, reason, steps }, r?.params ? { params: r.params } : {})
+    return Object.assign({ ok: false, kind, reason, steps }, r?.params ? { params: r.params } : {}, r?.shape ? { shape: r.shape } : {})
   }
   if (r.closed === false) {
     await deps.trustedClickOnFlowView(FIND_SETTINGS_TRIGGER_JS, { required: true, step: 'settings-trigger-close' })

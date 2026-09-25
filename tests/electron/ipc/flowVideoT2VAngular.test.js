@@ -567,3 +567,15 @@ describe('flow:generate-video-t2v (angular) — 클릭 전 거부(postClick 없�
     expect(h.executeJavaScript).not.toHaveBeenCalled()
   })
 })
+
+describe('설정 실패의 shape 진단은 onDomFailure 로 간다 (M2 실기)', () => {
+  it('group-not-found:duration + shape → 결과는 그대로, onDomFailure(settings:group-not-found:duration) 의 extra 에 shape', async () => {
+    const shape = { groups: ['mode', 'ratio', 'resolution', 'count'], unclassified: [{ labels: ['4초 · 오디오 포함'], ligatures: [] }] }
+    const h = harness({ settings: { ok: false, kind: 'flow-settings-not-applied', reason: 'group-not-found:duration', steps: { mode: 'already(videocam)' }, shape, closed: true } })
+    const r = await settle(h.generate())
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-settings-not-applied', reason: 'group-not-found:duration' })
+    const call = h.onDomFailure.mock.calls.find((c) => c[0] === 'settings:group-not-found:duration')
+    expect(call).toBeTruthy()
+    expect(JSON.stringify(call)).toContain('오디오 포함')
+  })
+})

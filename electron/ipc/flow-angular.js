@@ -245,7 +245,7 @@ export function createFlowAngular(deps) {
       // 3. 설정 패널 — 모드(이미지)·비율·개수, 모델은 검증만
       const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
       if (!settings.ok) {
-        await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps })
+        await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps, ...(settings.shape ? { shape: settings.shape } : {}) })
         return { success: false, errorKind: settings.kind || 'flow-settings-not-applied', error: settings.kind || 'flow-settings-not-applied', ...(settings.params ? { errorParams: settings.params } : {}) }
       }
 
@@ -439,7 +439,7 @@ export function createFlowAngular(deps) {
       // 4. 설정 패널 — video · ratio · count 1 · model · duration · resolution({360p,720p} 밖은 클릭 전 거부)
       const settings = await applyComposerSettings(flowView, { mode: 'video', ratio: aspectRatio, count: 1, model, duration: want.duration, resolution: want.resolution }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
       if (!settings.ok) {
-        await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps })
+        await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps, ...(settings.shape ? { shape: settings.shape } : {}) })
         // M2-R2 G4(B2): flow-settings-not-applied 는 params 가 {} 라 훅의 F8 서명(kind+params)이 항상 같다 — 드라이버 reason 을 **params 아닌** 필드로 실어
         //   훅이 배치 전체 이유(model-/ratio-not-offered·input-mode·submenu·menu-not-open)만 종결하게 한다. 렌더되지 않는다(errorParams 는 그대로 없음).
         const kind = settings.kind || 'flow-settings-not-applied'
