@@ -17,6 +17,8 @@ import { setLayoutDragging } from '../../../electron/ipc/layout.js'   // M2-LIVE
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
 import { isQuotaExhaustedError } from '../../../src/utils/quotaStop.js'
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../../fixtures/flow-batchexecute-samples.js'
+import { READ_COMPOSER_STATE_JS } from '../../../electron/flow-composer-refs.js'   // M3: 레퍼런스 없는 제출 전의 잔여 칩 판독(D9 · §1-1)
+import { s3 } from '../../fixtures/flow-m3-samples.js'   // M3: S3#10(칩만·멘션 없는 실제 MZZa6b 제출 — 잔여 칩 사고와 같은 모양)
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 const FLOW_URL_OK = `https://flow.google.com/project/${PROJECT}`
@@ -24,6 +26,8 @@ const PROMPT = '왕이 궁전 내부를 산책하는 영상'
 const UUID11 = maskedUuid(11)   // M2-R5 J2: 픽스처의 <uuid#11> 은 로더가 UUID 모양으로 푼다
 const DOC = 'e'.repeat(32)
 const NOW_S = 1790240102.5
+/** M3: 빈 컴포저 판독(칩 0 · 창 닫힘) — 레퍼런스 없는 제출의 잔여 칩 정리와 재판독(텍스트+칩)이 본다. */
+const EMPTY_COMPOSER = { chips: [], segments: [], editorText: '', pickerOpen: false, searchDirty: false, activeInEditor: true }
 
 function makeIpcMain() {
   const handlers = new Map()
@@ -37,6 +41,7 @@ const creditsBody = (n) => respBodyWithPayload('nzlxg', [n, 1, 2, 2, null, n])
  * @param {object} o
  *   url · wiz · agent · captureFlag · settings(드라이버 결과) · summary · editorText · submitEnabled · flowAgentOn · mode
  *   · credits(nzlxg 결과 순서: 숫자 | {status,text} | Error) · onSubmit(page) · clickSuccess · hidden · bounds
+ *   · composer(M3: READ_COMPOSER_STATE_JS 판독 순서 — 마지막 값이 남는다, 기본 빈 컴포저)
  */
 function harness(o = {}) {
   const url = o.url ?? FLOW_URL_OK
@@ -53,11 +58,14 @@ function harness(o = {}) {
   const settingsSeq = Array.isArray(o.settings) ? [...o.settings] : null   // M2-LAST P1: 드라이버 결과 순서(항목별 — undefined 는 기본값) — 마지막 값이 남는다
   const editorSeq = Array.isArray(o.editorText) ? [...o.editorText] : null   // M2-LAST P2: 편집기 재판독 순서(주입 뒤 · 제출 클릭 직전) — 마지막 값이 남는다
   const credits = Array.isArray(o.credits) ? [...o.credits] : [1050]
+  const composerSeq = Array.isArray(o.composer) ? [...o.composer] : null   // M3: 컴포저 판독 순서(잔여 칩 → 정리 뒤)
   let injectedPrompt = null
   let settingsTargets = null
   const creditReadsAt = []
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
+    // M3: 컴포저 판독이 먼저 — 그 스크립트도 querySelectorAll('p') 를 품고 있어 아래 편집기 판독 마커와 겹친다. trace 에는 남기지 않는다(M2 순서 단언 그대로).
+    if (s === READ_COMPOSER_STATE_JS) { if (composerSeq) return composerSeq.length > 1 ? composerSeq.shift() : composerSeq[0]; return EMPTY_COMPOSER }
     if (s.includes('__af_settings_driver__')) {
       trace.push('settings-driver')
       const m = s.match(/core\(document, (\{.*?\}), \{ scan: scan/)
@@ -117,7 +125,8 @@ function harness(o = {}) {
     reportDomFailure: helpers.reportDomFailure,   // M2-R7 L1: main.js 와 같이 — 라우터의 unbound YhhmEf loadend 보고
   })
   const page = {
-    send: (over = {}) => routeReportResponse({ kind: 'batchexecute-send', doc: DOC, rpcid: 'YhhmEf', rpcids: ['YhhmEf'], seq: 1, prompts: [PROMPT], sentAt: Date.now() / 1000, ...over }, ctx),
+    // M3-2: 캡처 send 는 요청의 refs·mentions(id)를 싣는다 — 레퍼런스 없는 YhhmEf 는 [] (S3#14 · D12 의 요청 근거)
+    send: (over = {}) => routeReportResponse({ kind: 'batchexecute-send', doc: DOC, rpcid: 'YhhmEf', rpcids: ['YhhmEf'], seq: 1, prompts: [PROMPT], refs: [], mentions: [], sentAt: Date.now() / 1000, ...over }, ctx),
     loadend: (over = {}) => routeReportResponse({ kind: 'batchexecute', doc: DOC, rpcid: 'YhhmEf', seq: 1, status: 200, responseText: sample('YhhmEf').respBody, endedAt: Date.now() / 1000, ...over }, ctx),
   }
   const onSubmit = o.onSubmit === undefined ? (() => { page.send(); page.loadend() }) : o.onSubmit
@@ -1154,5 +1163,52 @@ describe('flow:generate-video-t2v (angular) — 방패 포커스의 단계 플�
     expect(logged()).not.toContain(PROMPT)
     expect(h.trace.filter((x) => x === 'shield:off')).toHaveLength(1)
     expect(h.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+  })
+})
+
+// M3(§1-1 돈 구멍 · D9 · D10): 레퍼런스 **없는** T2V — 컴포저에 칩이 남아 있으면 페이지는 YhhmEf 대신 MZZa6b 를 보낸다(과금). 1차 방어 = 캐럿 뒤 잔여 칩 정리(실기 G7),
+//   백스톱 = arm rpc:'YhhmEf' · altRpcs:['MZZa6b'] — 라우터가 MZZa6b 로도 바인딩하고 boundRpc ≠ rpc 를 핸들러가 거부(+rejectedMediaId): 과금된 영상이 lost 대신 id 를 남긴다.
+//   백스톱은 정리가 칩을 지우므로 실기로는 일으킬 수 없다 — 실제 S3#10 모양(칩만·멘션 없는 MZZa6b 제출)으로 덮는다.
+describe('flow:generate-video-t2v (angular) — 레퍼런스 없는 T2V 의 칩 게이트 · 대체 rpc 백스톱 (M3 §1-1)', () => {
+  const LEFT = { chips: [{ mediaId: maskedUuid(9), busy: false }], segments: [], editorText: '', pickerOpen: false, searchDirty: false, activeInEditor: true }
+  const armedGen = (map) => [...map.values()].find((g) => g.rpc === 'YhhmEf' || g.rpc === 'MZZa6b')
+
+  it('arm = rpc YhhmEf · altRpcs [MZZa6b] · want.kind t2v · 기대 레퍼런스·멘션 빈 목록 → send refs [] 로 success, 로그 refs=0/0 mentions=0/0', async () => {
+    let snap = null
+    const h = harness({ onSubmit: (page, map) => { const g = armedGen(map); snap = { rpc: g.rpc, altRpcs: g.altRpcs, kind: g.want.kind, expectedRefs: g.expectedRefs, expectedMentions: g.expectedMentions }; page.send(); page.loadend() } })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    expect(snap).toEqual({ rpc: 'YhhmEf', altRpcs: ['MZZa6b'], kind: 't2v', expectedRefs: [], expectedMentions: [] })
+    expect(logged()).toMatch(/submitted media=\S{1,8} creditsLeft=1040 modelKey=abra_t2v_6s refs=0\/0 mentions=0\/0/)
+  })
+
+  it('백스톱: 페이지가 S3#10(MZZa6b · 칩만 · 멘션 없음)을 보냄 → 바인딩(boundRpc MZZa6b) → flow-references-mismatch + rejectedMediaId(U30) + postClick, generationId·mediaId 키 없음', async () => {
+    const MZZ = { rpcid: 'MZZa6b', rpcids: ['MZZa6b'], prompts: ['The king walks slowly toward the camera'], refs: [maskedUuid(2)], mentions: [] }
+    const h = harness({ onSubmit: (page) => { page.send(MZZ); page.loadend({ rpcid: 'MZZa6b', responseText: s3(10).respBody }) } })
+    const r = await settle(h.generate())   // 요청은 Omni 6초 16:9 t2v — 판정은 모델키가 아니라 바인딩된 rpc 가 먼저다
+    expect(r).toEqual({ success: false, errorKind: 'flow-references-mismatch', error: 'flow-references-mismatch', errorParams: {}, rejectedMediaId: maskedUuid(30), postClick: true })
+    expect(r).not.toHaveProperty('generationId')
+    expect(r).not.toHaveProperty('mediaId')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/\[Flow RPC\] MZZa6b send doc=\S{8} seq=1 bound=\S+/)
+    expect(logged()).toMatch(/bound rpc MZZa6b ≠ YhhmEf media=00000030 → flow-references-mismatch/)
+    expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'submit:flow-references-mismatch')).toBe(true)
+  })
+
+  it('1차 방어: 잔여 칩 1개 → 캐럿 뒤 지우기 신뢰 클릭 → 칩 0 확인 → 주입 → YhhmEf 로 success', async () => {
+    const h = harness({ composer: [LEFT, LEFT, EMPTY_COMPOSER] })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    expect(idx(h.trace, 'click:refs-clear')).toBeGreaterThan(idx(h.trace, 'click:compose-editor'))
+    expect(idx(h.trace, 'click:refs-clear')).toBeLessThan(idx(h.trace, 'set-text:visible'))
+    expect(logged()).toMatch(/\[Flow Refs\] composer clear chips=1→0/)
+  })
+
+  it('정리 실패 → 클릭 전 flow-reference-attach-failed(reason composer-not-clear) — 주입·제출 클릭 없음, postClick 없음', async () => {
+    const h = harness({ composer: [LEFT] })
+    const r = await settle(h.generate(), 20000)
+    expect(r).toEqual({ success: false, errorKind: 'flow-reference-attach-failed', error: 'flow-reference-attach-failed', reason: 'composer-not-clear' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.trace.filter((x) => x.startsWith('set-text'))).toEqual([])
   })
 })

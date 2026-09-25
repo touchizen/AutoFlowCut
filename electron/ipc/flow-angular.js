@@ -18,10 +18,16 @@
  *     로그 숫자로만). 설정은 video·count 1·duration·resolution(패널 밖이면 클릭 전 거부). 200 뒤엔 응답 모델키를 표(modelKeyMatches)로
  *     검증하고 불일치면 flow-video-settings-mismatch {expected, actual} + rejectedMediaId. 클릭 **뒤** 실패는 전부 postClick:true.
  *     거부한 미디어 id 는 rejectedMediaId(s) 로만 나간다(mediaId/generationId 로는 절대 — download-only 분류가 물지 않게).
+ *   - M3(레퍼런스, docs/plans/2026-09-25-flow-M3-references-plan.md D1·D9·D10·D12): refs+plan 이면 referencePreflight(모양·프로젝트 id·워치독 예산) →
+ *     캐럿 뒤 composeReferencePlan(flow-reference-driver.js — 정리·스캔·업로드·멘션·첨부·게이트)이 편집기·칩을 채우고, 재판독·mouseDown 직전 관문은
+ *     텍스트와 칩 집합을 본다. 레퍼런스 없는 제출도 잔여 칩을 먼저 치운다(§1-1 돈 구멍). 영상은 rpc/altRpcs(MZZa6b ↔ YhhmEf)로 바인딩하고
+ *     boundRpc ≠ rpc · 요청 refs(집합)/mentions(순서열) · 응답 되돌림이 기대와 다르면 클릭 뒤 flow-references-mismatch(이미지는 다운로드 없음, 영상은 rejectedMediaId).
  *
  * tests/electron/ipc/flowGenerateImageAngular.test.js · tests/electron/ipc/flowVideoT2VAngular.test.js · tests/electron/flowRpcPipeline.test.js
+ * tests/electron/ipc/flowImageReferencesAngular.test.js · tests/electron/ipc/flowVideoR2VAngular.test.js · tests/electron/ipc/flowReferencePreflight.test.js
  */
-import { isFlowPageUrl, isLegacyFlowUrl } from '../flowUrl.js'
+import { createHash } from 'node:crypto'
+import { isFlowPageUrl, isLegacyFlowUrl, projectIdFromFlowUrl } from '../flowUrl.js'
 import { updateBounds, getLayoutDragging } from './layout.js'
 import { computeInPlaceBounds, needsAutomationViewport } from '../offscreen-bounds.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../flow-rpc-capture.js'
@@ -34,6 +40,10 @@ import { callFlowRpc } from '../flow-rpc-client.js'
 import { applyComposerSettings } from '../flow-composer-settings.js'
 import { FIND_GENERATE_BUTTON_JS, READ_EDITOR_TEXT_JS, findPromptEditor } from '../flow-composer-dom.js'
 import { SUBMIT_ENABLED_PROBE } from '../flow-submit-gate.js'
+import { READ_COMPOSER_STATE_JS } from '../flow-composer-refs.js'
+import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
+import { refMediaCache } from '../flow-ref-media-cache.js'
+import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowReferencePlan.js'   // D13: 렌더러 계획과 같은 상한(main 이 src/utils 를 쓰는 선례 flow-rpc-protocol.js)
 
 /** 캡처 주입 설치 플래그 프로브(클릭 전). */
 export const CAPTURE_FLAG_PROBE = '!!window.__autoflowcut_rpc_capture__'
@@ -116,11 +126,86 @@ async function domStageBusy(prev, ms) {
     return await Promise.race([prev.then(() => false), new Promise((r) => { timer = setTimeout(() => r(true), ms) })])
   } finally { if (timer) clearTimeout(timer) }
 }
+// M3(D1·D4): 레퍼런스 하나당 워치독 예산(업로드 ~10s + 애셋 창·멘션 — 넉넉히) · plan 세그먼트·첨부 개수 상한
+const REF_STAGE_MS_PER_REF = 120000
+const PLAN_MAX_ITEMS = 64
+
+/**
+ * M3(D1): 두 핸들러가 ensureOnProjectComposer 뒤·DOM 단계 전에 부르는 사전 검사 — 전부 클릭 전(0크레딧).
+ *   ① plan 모양(세그먼트 타입·인덱스 범위·문자열·개수 ≤ 64, refs 는 비지 않은 base64) → 아니면 reason bad-plan
+ *   ② 레퍼런스가 있으면 projectIdFromFlowUrl(지금 URL) → null 이면 no-project-id(세션 캐시 키의 일부, D6)
+ *   ③ timeoutMs = DOM_STAGE_TIMEOUT_MS + 120s × 유일 ref 수(sha256 — 같은 바이트는 한 번 올린다, D4).
+ *   레퍼런스가 없으면 ③ 만(= 기존 120s) — plan 이 오면 모양만 본다(멘션이 있는데 refs 가 비면 bad-plan).
+ *   IPC 는 경로가 아니라 base64 를 받는다(D2) — main 이 바이트·sha 를 만든다. 로그는 reason 만.
+ * @returns {{ok:true, refs:Array<{bytes:Buffer, sha:string}>, projectId:string|null, timeoutMs:number} | {ok:false, reason:string}}
+ */
+export function referencePreflight(flowView, { refs, plan } = {}) {
+  const bad = (reason) => { console.warn(`[Flow Refs] preflight failed reason=${reason}`); return { ok: false, reason } }
+  if (refs != null && !Array.isArray(refs)) return bad('bad-plan')
+  const list = Array.isArray(refs) ? refs : []
+  if (list.length === 0 && plan == null) return { ok: true, refs: [], projectId: null, timeoutMs: DOM_STAGE_TIMEOUT_MS }
+  const segs = plan && Array.isArray(plan.segments) ? plan.segments : null
+  const attach = plan && Array.isArray(plan.attach) ? plan.attach : null
+  if (!segs || !attach || segs.length > PLAN_MAX_ITEMS || attach.length > PLAN_MAX_ITEMS) return bad('bad-plan')
+  const inRange = (i) => Number.isInteger(i) && i >= 0 && i < list.length
+  const segOk = (x) => !!x && (x.t === 'mention' ? inRange(x.ref) : x.t === 'text' && typeof x.text === 'string')
+  if (!segs.every(segOk) || !attach.every(inRange)) return bad('bad-plan')
+  const decoded = []
+  for (const r of list) {
+    const bytes = r && typeof r.base64 === 'string' ? Buffer.from(r.base64, 'base64') : null
+    if (!bytes || bytes.length === 0) return bad('bad-plan')
+    decoded.push({ bytes, sha: createHash('sha256').update(bytes).digest('hex') })
+  }
+  let projectId = null
+  if (decoded.length > 0) {
+    projectId = projectIdFromFlowUrl(flowView.webContents.getURL())
+    if (!projectId) return bad('no-project-id')
+  }
+  const unique = new Set(decoded.map((x) => x.sha)).size
+  return { ok: true, refs: decoded, projectId, timeoutMs: DOM_STAGE_TIMEOUT_MS + REF_STAGE_MS_PER_REF * unique }
+}
+
+const ATTACH_FAILED = 'flow-reference-attach-failed'
+/** M3(D10·D11): 레퍼런스 영상(r2v)을 받는 패널 모델 — 실기 관측(S3#10 Omni · S3#15 Veo Fast)뿐. 밖이면 클릭 전 flow-references-model-unsupported. */
+const R2V_MODELS = new Set(['Omni Flash', 'Veo 3.1 - Fast'])
+/** plan 의 멘션 세그먼트 수(진입 로그용 — 개수만). */
+const countMentions = (p) => (p && Array.isArray(p.segments) ? p.segments.filter((x) => x && x.t === 'mention').length : 0)
+/** D12 레퍼런스 = 집합·개수: 길이 같고 null·중복 없고 원소가 전부 기대(유일 id 목록)에 있다. */
+function sameIdSet(got, want) {
+  return Array.isArray(got) && Array.isArray(want) && got.length === want.length && new Set(got).size === got.length
+    && got.every((id) => typeof id === 'string' && want.includes(id))
+}
+/** D12 멘션 = 중복을 보존한 순서열(같은 미디어 두 번 멘션이면 두 번 — PR §4). */
+function sameIdSeq(got, want) {
+  return Array.isArray(got) && Array.isArray(want) && got.length === want.length && got.every((id, i) => id === want[i])
+}
+/** D9: 컴포저 판독(READ_COMPOSER_STATE_JS)의 칩 id 가 기대 집합과 같은가 — 바쁜 칩·id 없는 칩이 있으면 false. */
+function chipsMatch(st, want) {
+  if (!st || !Array.isArray(st.chips)) return false
+  return sameIdSet(st.chips.map((c) => (c && !c.busy && typeof c.mediaId === 'string' ? c.mediaId : null)), want)
+}
+/**
+ * D12: 클릭 뒤 레퍼런스 근거 판정 — 요청(gen.sentRefs·sentMentions, 캡처 send)과 응답 되돌림(echoes) 중 **있는 근거는 전부** 기대와 같아야 한다.
+ *   근거가 하나도 없으면 none(수용 + warn + rpc-shape 보고 — 클릭 전 게이트가 칩·멘션을 증명했다). 개수는 로그용(없으면 '-').
+ */
+function checkSubmittedRefs(gen, echoes) {
+  const want = Array.isArray(gen.expectedRefs) ? gen.expectedRefs : []
+  const wantM = Array.isArray(gen.expectedMentions) ? gen.expectedMentions : []
+  const req = Array.isArray(gen.sentRefs) ? gen.sentRefs : null
+  const reqM = Array.isArray(gen.sentMentions) ? gen.sentMentions : null
+  const ech = (Array.isArray(echoes) ? echoes : []).filter(Array.isArray)
+  const bad = (req && !sameIdSet(req, want)) || (reqM && !sameIdSeq(reqM, wantM)) || ech.some((e) => !sameIdSet(e, want))
+  return {
+    ok: !bad, none: !req && !reqM && ech.length === 0,
+    reqN: req ? req.length : '-', menN: reqM ? reqM.length : '-', echoN: ech.length ? ech[0].length : '-', wantN: want.length, wantMenN: wantM.length,
+  }
+}
+
 const short = (v) => String(v ?? '').slice(0, 8)
 /** nzlxg payload → 크레딧 잔량(숫자) 또는 null. */
 const creditsOf = (payload) => (Array.isArray(payload) && typeof payload[0] === 'number' ? payload[0] : null)
-/** 요청 설정 한 줄(errorParams.expected 용 — 값만: 모델 라벨·길이·비율·해상도). */
-const describeWant = (w) => `${w.model} ${w.duration}s ${w.ratio || '?'} ${w.resolution}`
+/** 요청 설정 한 줄(errorParams.expected 용 — 값만: 모델 라벨·길이·비율·해상도). M3(D11): 레퍼런스 영상이면 끝에 ' r2v'(t2v 문구는 그대로). */
+const describeWant = (w) => `${w.model} ${w.duration}s ${w.ratio || '?'} ${w.resolution}${w.kind === 'r2v' ? ' r2v' : ''}`
 /** 제출 단계의 실패 kind — D8-9 의 reportDomFailure('submit:<kind>') 대상(내용 없음). */
 const SUBMIT_FAILURE_KINDS = new Set(['flow-submit-not-sent', 'flow-submit-lost', 'flow-rpc-multi-batch'])
 /** M2-R7 L1: 클릭 전 값보다 줄었나 — 줄었으면 로그(감소분은 숫자로만, params 없음) + true. 판정 불가(null)는 false. */
@@ -133,6 +218,7 @@ function creditsDropped(before, after) {
 /**
  * @param {object} deps flow-api.js 의 deps(main.js flowAPIDeps 와 동일 모양). 필요한 것: getFlowView, getFlowAgentOn, getMainWindow,
  *   trustedClickOnFlowView, ensureAgentOff, ensureOnProjectComposer, sessionFetch, pendingGenerations, reportDomFailure?, createInputShield?(M2-LIVE N1)
+ *   · M3(레퍼런스 업로드): clipboard, nativeImage, pasteIntoFlowView(() => Flow 뷰의 webContents.paste())
  */
 export function createFlowAngular(deps) {
   const report = async (step, reason, extra) => {
@@ -148,39 +234,103 @@ export function createFlowAngular(deps) {
     setShieldTarget('main')   // M2-FINAL Q1: 이 뒤로는 방패를 눌러도 편집기가 포커스를 되찾지 않는다
     try { deps.getMainWindow()?.webContents?.focus() } catch (_e) { /* 창이 이미 없을 수 있다 */ }
   }
+  /** 칩 판독 — exec 실패는 null(호출자가 불일치로 본다 = fail-closed). */
+  const readComposerState = async (flowView) => { try { return await exec(flowView, READ_COMPOSER_STATE_JS) } catch (_e) { return null } }
+  const chipCountOf = (st) => (st && Array.isArray(st.chips) ? st.chips.length : -1)
   /**
    * M2-FINAL Q1(A1 = B1): 제출 신뢰 클릭의 beforeDispatch — 히트테스트 뒤·mouseDown 직전에 편집기를 마지막으로 재판독한다(재판독~mouseDown ≈200–300ms 사이의 IME 조합 음절).
    *   다르면 false(미디스패치 거부) + holder.editorLen 기록. 호출자가 gen 을 지우고 클릭 전 실패로 닫는다. 로그·보고는 길이만.
+   *   M3(D9): 비교 대상은 want = {text, chips} — 텍스트는 게이트 때의 editorExpected(레퍼런스 없으면 정규화 프롬프트), 칩은 기대 집합(레퍼런스 없으면 빈 집합 —
+   *   메뉴 "편집 → 붙여넣기" 등으로 붙은 칩은 페이지가 MZZa6b·레퍼런스로 보낸다). 칩이 다르면 holder.chips 에 개수를 적는다.
    */
-  const makeDispatchGuard = (flowView, normPrompt, holder) => async () => {
+  const makeDispatchGuard = (flowView, want, holder) => async () => {
     let text = null
     try { text = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { text = null }
     const norm = normalizePrompt(text || '')
-    if (norm === normPrompt) return true
+    if (norm !== want.text) {
+      holder.refused = true
+      holder.editorLen = norm.length
+      return false
+    }
+    const st = await readComposerState(flowView)
+    if (chipsMatch(st, want.chips)) return true
     holder.refused = true
-    holder.editorLen = norm.length
+    holder.chips = chipCountOf(st)
     return false
   }
-  /** M2-FINAL Q1: beforeDispatch 거부의 마감 — gen 을 지우고 클릭 전 text-injection-failed(reason editor-changed-before-click). */
-  async function refuseChangedAtDispatch(gen, generationId, tag, normPrompt, holder) {
+  /** M2-FINAL Q1: beforeDispatch 거부의 마감 — gen 을 지우고 클릭 전 text-injection-failed(reason editor-changed-before-click). M3: 칩 변화도 같은 경로. */
+  async function refuseChangedAtDispatch(gen, generationId, tag, want, holder) {
     settleGen(gen, { error: 'text-injection-failed', errorKind: 'text-injection-failed' })
     deps.pendingGenerations.delete(generationId)
-    console.warn(`${tag} editor text changed between the hit-test and the mouseDown promptLen=${normPrompt.length} editorLen=${holder.editorLen} → refused before dispatch`)
-    await report('compose-text', 'editor-changed-before-click', { promptLen: normPrompt.length, editorLen: holder.editorLen })
+    if (holder.chips != null) {
+      console.warn(`${tag} composer chips changed between the hit-test and the mouseDown chips=${holder.chips} want=${want.chips.length} → refused before dispatch`)
+      await report('refs:chips-changed-before-click', 'chips-changed-before-click', { chips: holder.chips, want: want.chips.length })
+    } else {
+      console.warn(`${tag} editor text changed between the hit-test and the mouseDown promptLen=${want.text.length} editorLen=${holder.editorLen} → refused before dispatch`)
+      await report('compose-text', 'editor-changed-before-click', { promptLen: want.text.length, editorLen: holder.editorLen })
+    }
     return kindResult('text-injection-failed', { reason: 'editor-changed-before-click' })
   }
   /**
    * M2-LAST P2: 제출 클릭 직전의 재판독 — 정규화한 편집기 텍스트가 프롬프트와 다르면(포커스를 옮기기 전에 붙은 조합 음절 등) 클릭 전 text-injection-failed(reason
    *   editor-changed-before-click — 항목 이유, 다음 항목이 재시도) 결과, 같으면 null. 호출자는 이 뒤에 동기 구간(arm)만 두고 바로 클릭한다. 로그·보고는 길이만.
+   *   M3(D9): want = {text, chips} — 텍스트 다음에 칩 집합도 본다(재판독 = 텍스트 + 칩).
    */
-  async function editorChangedBeforeClick(flowView, tag, normPrompt) {
+  async function editorChangedBeforeClick(flowView, tag, want) {
     let text = null
     try { text = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { text = null }
     const editorLen = normalizePrompt(text || '').length
-    if (normalizePrompt(text || '') === normPrompt) return null
-    console.warn(`${tag} editor text changed between the read-back and the submit click promptLen=${normPrompt.length} editorLen=${editorLen} → refusing before click`)
-    await report('compose-text', 'editor-changed-before-click', { promptLen: normPrompt.length, editorLen })
+    if (normalizePrompt(text || '') !== want.text) {
+      console.warn(`${tag} editor text changed between the read-back and the submit click promptLen=${want.text.length} editorLen=${editorLen} → refusing before click`)
+      await report('compose-text', 'editor-changed-before-click', { promptLen: want.text.length, editorLen })
+      return kindResult('text-injection-failed', { reason: 'editor-changed-before-click' })
+    }
+    const st = await readComposerState(flowView)
+    if (chipsMatch(st, want.chips)) return null
+    console.warn(`${tag} composer chips changed between the read-back and the submit click chips=${chipCountOf(st)} want=${want.chips.length} → refusing before click`)
+    await report('refs:chips-changed-before-click', 'chips-changed-before-click', { chips: chipCountOf(st), want: want.chips.length })
     return kindResult('text-injection-failed', { reason: 'editor-changed-before-click' })
+  }
+
+  /** M3: 레퍼런스 드라이버 ctx(flow-reference-driver.js) — 페이지 접촉은 exec·신뢰 클릭(마우스)·붙여넣기뿐. 세션 캐시는 main 모듈 메모리(D6). */
+  const refDriverCtx = (flowView, projectId, isAborted) => ({
+    exec: (js) => exec(flowView, js),
+    trustedClick: (js, opts) => deps.trustedClickOnFlowView(js, opts),
+    clipboard: deps.clipboard, nativeImage: deps.nativeImage,
+    paste: () => deps.pasteIntoFlowView(),
+    pendingGenerations: deps.pendingGenerations, cache: refMediaCache, projectId, isAborted, report,
+  })
+  /** 드라이버의 클릭 전 실패 {ok:false, kind, reason?} → 렌더러 결과(reason 은 렌더되지 않는 필드). */
+  const driverFailure = (r) => kindResult(r.kind || ATTACH_FAILED, r.reason ? { reason: String(r.reason) } : {})
+  /**
+   * M3(§1-1 돈 구멍 · D9): 레퍼런스 **없는** 제출 전에 잔여 칩·열린 애셋 창을 치운다 — 칩이 남아 있으면 페이지는 프롬프트에 멘션이 없어도 레퍼런스로 보낸다
+   *   (영상은 YhhmEf 대신 MZZa6b = 과금). 텍스트는 뒤의 SET_EDITOR_TEXT_JS 가 지우므로 칩·창만 본다. 판독 불가는 fail-closed(composer-not-clear).
+   */
+  async function clearLeftoverChips(flowView, ctx) {
+    const st = await readComposerState(flowView)
+    if (!st || !Array.isArray(st.chips)) {
+      console.warn('[Flow Refs] composer unreadable before a reference-less submit → composer-not-clear')
+      void report('refs:composer-not-clear', 'composer-not-clear', {})
+      return { ok: false, kind: ATTACH_FAILED, reason: 'composer-not-clear' }
+    }
+    if (!st.pickerOpen && st.chips.length === 0) return { ok: true }
+    console.log(`[Flow Refs] leftover chips=${st.chips.length} picker=${st.pickerOpen ? 'open' : 'closed'} → clearing before a reference-less submit`)
+    return clearComposer(ctx)
+  }
+  /** D12: 클릭 뒤 레퍼런스 검증 + 로그(개수만) + 진단 보고. 결과는 checkSubmittedRefs 그대로. */
+  function verifySubmittedRefs(tag, gen, echoes) {
+    const v = checkSubmittedRefs(gen, echoes)
+    const rpc = gen.boundRpc || gen.rpc
+    if (!v.ok) {
+      console.warn(`${tag} refs mismatch request=${v.reqN}/${v.wantN} echo=${v.echoN}/${v.wantN} mentions=${v.menN}/${v.wantMenN} → flow-references-mismatch`)
+      void report('submit:flow-references-mismatch', 'flow-references-mismatch', { rpc, reqN: v.reqN, echoN: v.echoN, menN: v.menN, wantN: v.wantN })
+    } else if (v.none) {
+      console.warn(`${tag} refs unverifiable (no request or echo evidence) — accepting; the pre-click gate proved chips=${v.wantN} mentions=${v.wantMenN}`)
+      void report(`rpc-shape:${rpc}@refs`, 'shape', { rpc })
+    } else {
+      console.log(`${tag} refs verified request=${v.reqN} echo=${v.echoN} mentions=${v.menN}/${v.wantMenN}`)
+    }
+    return v
   }
 
   /** Flow 페이지 + WIZ 전역이 있는 문서인가. 아니면 flow-session-missing(+authFailed) — DOM 을 건드리기 전에. */
@@ -220,10 +370,13 @@ export function createFlowAngular(deps) {
    *   최종 재판독 뒤·closePanel 전에 떨어지면 B 가 A 의 길이로 과금·거부(배치 중단). 새 단계는 직전 단계의 run 이 settle 할 때까지 ≤10s(DOM_STAGE_BUSY_WAIT_MS) 기다리고,
    *   그래도 살아 있으면 뷰포트·방패·프로브 없이 클릭 전 dom-stage-busy(항목 이유 — 다음 항목이 재시도). 좀비 쪽은 applyComposerSettings·ensureAgentOff 에 isAborted(ctl.aborted)를
    *   넘겨 신뢰 클릭·드라이버 exec 마다 먼저 보게 한다.
+   *   M3(D1·D4): 워치독 예산은 호출자가 opts.timeoutMs 로 준다(referencePreflight — 120s + 120s × 유일 ref 수: 업로드·애셋 창·멘션). 없으면 120s.
    * @param {string} tag 로그 접두('[Flow API] [Angular]' | '[Flow Video T2V] [Angular]')
    * @param {(ctl:{aborted:boolean, clickStarted:boolean}) => Promise<any>} fn
+   * @param {{timeoutMs?:number}} [opts]
    */
-  async function withAutomationViewport(flowView, tag, fn) {
+  async function withAutomationViewport(flowView, tag, fn, opts = {}) {
+    const stageMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0 ? opts.timeoutMs : DOM_STAGE_TIMEOUT_MS
     // M2-CLOSE O2: 직전 단계(좀비 포함)가 아직 살아 있으면 ≤10s 기다린다 — 뷰포트·방패보다 먼저(기다리는 동안 뷰를 키워 두지 않는다).
     if (lastDomStage) {
       // M2-LAST P1: 워치독이 5분 넘게 전에 울린 좀비는 버린다(백스톱 — 문서 이벤트를 못 본 경우). 아직 5분 안이면 살아 있는 것으로 보고 그대로 기다린다.
@@ -276,7 +429,7 @@ export function createFlowAngular(deps) {
       const stage = { done: null, abortedAt: null, settled: false, docDead: false }   // M2-FINAL Q2: docDead — 살아 있는 동안 문서가 죽었다
       stage.done = run.then(() => { stage.settled = true }, () => { stage.settled = true })
       lastDomStage = stage
-      const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(DOM_STAGE_TIMEOUT), DOM_STAGE_TIMEOUT_MS) })
+      const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(DOM_STAGE_TIMEOUT), stageMs) })
       const result = await Promise.race([run, timeout])
       if (result !== DOM_STAGE_TIMEOUT) return result
       // M2-LIVE N1(A8): 제출 클릭이 이미 나갔으면 timeout 결과로 덮지 않는다 — 클릭 헬퍼가 30s 안에 돌아오고 post-click 경로가 판정한다.
@@ -285,7 +438,7 @@ export function createFlowAngular(deps) {
       stage.abortedAt = Date.now()   // M2-LAST P1: 좀비의 나이 — 5분 넘으면 다음 단계가 버린다
       // M2-FINAL Q2: 살아 있는 동안 문서가 죽었던 단계는 워치독이 울리는 지금 비운다(그 문서의 exec 는 영영 settle 하지 않는다).
       if (stage.docDead && lastDomStage === stage) { lastDomStage = null; console.log('[Flow API] DOM stage released (doc-dead)') }
-      console.warn(`${tag} DOM stage timed out after ${DOM_STAGE_TIMEOUT_MS / 1000}s before the submit click → refusing`)
+      console.warn(`${tag} DOM stage timed out after ${stageMs / 1000}s before the submit click → refusing`)
       return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
     } finally {
       if (timer) clearTimeout(timer)
@@ -321,6 +474,8 @@ export function createFlowAngular(deps) {
     }
     const results = Array.isArray(gen.results) ? gen.results : []
     if (results.length === 0) return kindResult('flow-rpc-error')
+    // M3(D12): 레퍼런스 검증 — 요청(send refs·mentions)·결과마다 되돌림(refEcho) 중 있는 근거가 기대와 다르면 다운로드 없이 거부(이미지는 0크레딧, 클릭 뒤라 postClick).
+    if (!verifySubmittedRefs('[Flow API] [Angular]', gen, results.map((r) => r.refEcho)).ok) return kindResult('flow-references-mismatch', { postClick: true })
     console.log(`[Flow API] [Angular] image ${results[0].width}x${results[0].height} ratio=ok count=${results.length}`)
     const images = []
     for (const r of results) {
@@ -350,10 +505,16 @@ export function createFlowAngular(deps) {
     return { success: true, images }
   }
 
-  /** flow:generate-image(Flow 모드). */
+  /**
+   * flow:generate-image(Flow 모드). M3: 레퍼런스(refs:[{base64,mime}] + plan:{segments, attach}) — 캐럿 뒤 composeReferencePlan(정리 → 사전 스캔 →
+   *   필요한 업로드 → 정리 → 세그먼트(텍스트·@멘션) → ＋ 첨부 → 게이트)이 편집기를 채우고, 게이트의 editorExpected·칩 집합이 재판독·beforeDispatch 의 기대가 된다.
+   *   레퍼런스가 없으면 M2 경로(SET_EDITOR_TEXT_JS) + 그 전에 잔여 칩 정리(§1-1). 옛 필드(referenceImages 비어 있지 않음)는 계속 거부.
+   */
   async function generateImage(payload = {}) {
-    const { prompt, aspectRatio, model, projectId, referenceImages, batchCount, asyncMode } = payload
-    console.log('[Flow API] [Angular] generate-image:', { promptLen: prompt?.length ?? 0, model, aspectRatio, batchCount: batchCount ?? 1, asyncMode: !!asyncMode })
+    const { prompt, aspectRatio, model, projectId, referenceImages, batchCount, asyncMode, refs, plan } = payload
+    const nRefs = Array.isArray(refs) ? refs.length : 0
+    const nMentions = countMentions(plan)
+    console.log('[Flow API] [Angular] generate-image:', { promptLen: prompt?.length ?? 0, model, aspectRatio, batchCount: batchCount ?? 1, asyncMode: !!asyncMode, refs: nRefs, mentions: nMentions })
     if (!prompt) return { success: false, error: 'No prompt' }
     const flowView = deps.getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
@@ -367,13 +528,20 @@ export function createFlowAngular(deps) {
     if (!projectCheck?.ok) {
       return { success: false, errorKind: projectCheck?.errorKind || 'flow-project-open-failed', error: projectCheck?.error || 'flow-project-open-failed' }
     }
+    // M3(D1): 사전 검사 — plan 모양·프로젝트 id·워치독 예산(DOM 단계 전, 0크레딧)
+    const pre = referencePreflight(flowView, { refs, plan })
+    if (!pre.ok) {
+      void report(`refs:${pre.reason}`, pre.reason, {})
+      return kindResult(ATTACH_FAILED, { reason: pre.reason })
+    }
+    const hasRefs = pre.refs.length > 0
 
     let generationId = null
     let gen = null
     let waiter = null
     let click = null
-    const dispatchGuard = { refused: false, editorLen: 0 }   // M2-FINAL Q1: 제출 클릭 mouseDown 직전 재판독의 거부 기록
-    let normPromptForGuard = ''
+    const dispatchGuard = { refused: false, editorLen: 0, chips: null }   // M2-FINAL Q1: 제출 클릭 mouseDown 직전 재판독의 거부 기록(M3: 칩 개수도)
+    let wantForGuard = { text: '', chips: [] }
     // DOM 단계 — 자동화 뷰포트·포커스 반환 래퍼 안에서(조기 반환은 결과 객체로, 클릭까지 갔으면 null).
     const early = await withAutomationViewport(flowView, '[Flow API] [Angular]', async (ctl) => {
       const isAborted = () => ctl.aborted   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
@@ -411,42 +579,64 @@ export function createFlowAngular(deps) {
       // M2-LAST P3(A2): 캐럿 클릭(≤30s + 뮤텍스 대기) 중에 워치독이 울렸으면 여기서 멈춘다 — 안 그러면 좀비가 finally(레이아웃 복원·메인 포커스·잠금 해제) 뒤에 Flow 뷰로
       //   포커스를 가져가 프롬프트를 넣고 제출 가능 상태로 둔다(앱에 치려던 Enter 가 미추적 과금 제출).
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
-      let readBack = null
-      try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
-      try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
-      try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
-      const normPrompt = normalizePrompt(prompt)
-      normPromptForGuard = normPrompt   // M2-FINAL Q1: 클릭 뒤 거부 판정에서 쓴다
-      if (normalizePrompt(readBack || '') !== normPrompt) {
-        await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
-        return kindResult('text-injection-failed')
+      const refCtx = refDriverCtx(flowView, pre.projectId, isAborted)
+      let normPrompt = ''
+      let expectedRefs = []
+      let expectedMentions = []
+      let want = null
+      if (hasRefs) {
+        // M3(D9 순서): 정리 → 사전 스캔 → (업로드 → 정리) → 세그먼트 → 첨부 → 게이트. 실패는 전부 클릭 전(0크레딧).
+        try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5 와 같다 — 컴포즈 직전에 다시 건다 */ }
+        const composed = await composeReferencePlan(refCtx, { refs: pre.refs, plan })
+        if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
+        if (!composed.ok) return driverFailure(composed)
+        normPrompt = composed.normPrompt
+        expectedRefs = composed.expectedRefs
+        expectedMentions = composed.expectedMentions
+        want = { text: composed.editorExpected, chips: expectedRefs }
+      } else {
+        // M3(§1-1): 레퍼런스 없는 제출도 잔여 칩을 먼저 치운다(칩이 있으면 페이지가 레퍼런스로 보낸다).
+        const cleared = await clearLeftoverChips(flowView, refCtx)
+        if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
+        if (!cleared.ok) return driverFailure(cleared)
+        let readBack = null
+        try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
+        try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
+        try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
+        normPrompt = normalizePrompt(prompt)
+        if (normalizePrompt(readBack || '') !== normPrompt) {
+          await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
+          return kindResult('text-injection-failed')
+        }
+        want = { text: normPrompt, chips: [] }
       }
+      wantForGuard = want   // M2-FINAL Q1: 클릭 뒤 거부 판정에서 쓴다
 
       // 5. 제출 가능(텍스트가 등록돼 버튼이 활성) — M2-LAST P2: 그 전에 OS 포커스를 메인 창으로(IME 조합이 편집기에 붙지 않게; 클릭은 포커스가 필요 없다)
       focusMainWindow()
       let enabled = false
       try { enabled = !!(await exec(flowView, SUBMIT_ENABLED_PROBE)) } catch (_e) { enabled = false }
       if (!enabled) return kindResult('generate-button-unavailable')
-      // M2-LAST P2: 제출 클릭 직전 재판독 — 달라졌으면 클릭·arm 없이 클릭 전 실패. arm 은 이 뒤의 동기 구간(재판독 exec 에 매달린 좀비가 맵에 마감 없는 gen 을 남기지 않는다).
-      const changed = await editorChangedBeforeClick(flowView, '[Flow API] [Angular]', normPrompt)
+      // M2-LAST P2: 제출 클릭 직전 재판독(M3: 텍스트 + 칩) — 달라졌으면 클릭·arm 없이 클릭 전 실패. arm 은 이 뒤의 동기 구간(재판독 exec 에 매달린 좀비가 맵에 마감 없는 gen 을 남기지 않는다).
+      const changed = await editorChangedBeforeClick(flowView, '[Flow API] [Angular]', want)
       if (changed) return changed
 
-      // 6. arm — 클릭 전에 gen 을 맵에 넣는다(캡처의 send 가 바인딩할 후보). 초 단위 시각.
+      // 6. arm — 클릭 전에 gen 을 맵에 넣는다(캡처의 send 가 바인딩할 후보). 초 단위 시각. M3(D9·D12): 기대 레퍼런스(집합)·멘션(순서열) — 클릭 뒤 검증의 기준.
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 좀비는 arm·클릭하지 않는다
       generationId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       gen = {
         rpc: 'ogiZ0b', doc: null, seq: null, sentAt: null, normPrompt, wantRatio: aspectRatio || null, wantModelKey: null,
         results: null, error: null, errorKind: null, completed: false, allowDomFallback: false, waiter: null, deadlines: {},
-        setAt: Date.now() / 1000, generationId, expectedCount: Number(batchCount) || 1,
+        setAt: Date.now() / 1000, generationId, expectedCount: Number(batchCount) || 1, expectedRefs, expectedMentions,
       }
       waiter = new Promise((resolve) => { gen.waiter = { resolve } })
       deps.pendingGenerations.set(generationId, gen)
 
       // 7. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
       ctl.clickStarted = true   // M2-LIVE N1: 이제부터 워치독은 결과를 덮지 않는다
-      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', beforeDispatch: makeDispatchGuard(flowView, normPrompt, dispatchGuard) })   // M2-FINAL Q1
+      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', beforeDispatch: makeDispatchGuard(flowView, want, dispatchGuard) })   // M2-FINAL Q1
       return null
-    })
+    }, { timeoutMs: pre.timeoutMs })
     if (early) return early
     // M2-R1 F4(b): mouseDown 이 나가기 전의 실패만 "클릭 없음"(gen 삭제). dispatched 면 페이지가 제출했을 수 있다 — gen 을 armed 로 두고
     //   waiter/마감 경로로(늦은 send 는 바인딩, 없으면 not-sent).
@@ -454,7 +644,7 @@ export function createFlowAngular(deps) {
     //   미디스패치로 거부해도 gen 을 지우지 않고 post-click 경로로(과금된 결과를 버리지 않는다).
     // M2-FINAL Q1(A1 = B1): mouseDown 직전 재판독이 달라 클릭 도우미가 미디스패치로 거부했으면(페이지가 제출했을 리 없다) gen 을 지우고 클릭 전 실패로 닫는다.
     //   단, 그 사이 send 가 이미 바인딩됐거나 완료됐으면(사용자의 Enter 등) 아래 O1 경로로(과금된 결과를 버리지 않는다).
-    if (dispatchGuard.refused && !click?.success && !click?.dispatched && !(gen.doc != null || gen.completed)) return refuseChangedAtDispatch(gen, generationId, '[Flow API] [Angular]', normPromptForGuard, dispatchGuard)
+    if (dispatchGuard.refused && !click?.success && !click?.dispatched && !(gen.doc != null || gen.completed)) return refuseChangedAtDispatch(gen, generationId, '[Flow API] [Angular]', wantForGuard, dispatchGuard)
     const boundBeforeClick = gen.doc != null || gen.completed
     if (!click?.success && !click?.dispatched && !boundBeforeClick) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
@@ -528,6 +718,13 @@ export function createFlowAngular(deps) {
         ...(Array.isArray(gen.rejectedMediaIds) ? { rejectedMediaIds: gen.rejectedMediaIds } : {}),
       }
     }
+    // M3(D10): 페이지가 기대와 다른 rpc 로 보냈다 — 레퍼런스 있음인데 YhhmEf(칩이 사라졌다), 없음인데 MZZa6b(잔여 칩 — §1-1 돈 구멍의 백스톱). 과금은 됐고 새 제출만 멈춘다.
+    const refsRejected = { success: false, errorKind: 'flow-references-mismatch', error: 'flow-references-mismatch', errorParams: {}, rejectedMediaId: gen.mediaId, postClick: true }
+    if (gen.boundRpc && gen.boundRpc !== gen.rpc) {
+      console.warn(`[Flow Video T2V] [Angular] bound rpc ${gen.boundRpc} ≠ ${gen.rpc} media=${short(gen.mediaId)} → flow-references-mismatch`)
+      void report('submit:flow-references-mismatch', 'flow-references-mismatch', { rpc: gen.boundRpc, want: gen.rpc })
+      return refsRejected
+    }
     if (!modelKeyMatches(gen.modelKey, want)) {
       console.warn(`[Flow Video T2V] [Angular] model key mismatch media=${short(gen.mediaId)} modelKey=${gen.modelKey} → flow-video-settings-mismatch`)
       void report('submit:flow-video-settings-mismatch', 'flow-video-settings-mismatch', { rpc: gen.rpc, modelKey: gen.modelKey })
@@ -536,14 +733,23 @@ export function createFlowAngular(deps) {
         errorParams: { expected: describeWant(want), actual: String(gen.modelKey) }, rejectedMediaId: gen.mediaId, postClick: true,
       }
     }
-    console.log(`[Flow Video T2V] [Angular] submitted media=${short(gen.mediaId)} creditsLeft=${gen.creditsLeft} modelKey=${gen.modelKey}`)
+    // M3(D12): 요청 refs·mentions + 응답 되돌림(MZZa6b 만 — YhhmEf 결과엔 refEcho 키가 없다 = 근거 없음)
+    const v = verifySubmittedRefs('[Flow Video T2V] [Angular]', gen, [gen.refEcho])
+    if (!v.ok) return refsRejected
+    console.log(`[Flow Video T2V] [Angular] submitted media=${short(gen.mediaId)} creditsLeft=${gen.creditsLeft} modelKey=${gen.modelKey} refs=${v.reqN}/${v.wantN} mentions=${v.menN}/${v.wantMenN}`)
     return { success: true, generationId: gen.mediaId, creditsLeft: gen.creditsLeft }
   }
 
-  /** flow:generate-video-t2v(Flow 모드) — M2-4. 동기(YhhmEf 는 ~6s 에 돌아온다); 상태·다운로드는 checkVideoStatus 가 맡는다. */
+  /**
+   * flow:generate-video-t2v(Flow 모드) — M2-4. 동기(YhhmEf 는 ~6s 에 돌아온다); 상태·다운로드는 checkVideoStatus 가 맡는다.
+   *   M3(D1·D10·D11): refs + plan 이 있으면 레퍼런스 영상(r2v) — 인라인 멘션 컴포즈(이미지와 같은 드라이버) 뒤 arm rpc:'MZZa6b'·altRpcs:['YhhmEf']·want.kind 'r2v'.
+   *   없으면 rpc:'YhhmEf'·altRpcs:['MZZa6b'](§1-1 백스톱 — 잔여 칩이 MZZa6b 로 나가면 id 를 남기고 거부) + 잔여 칩 정리. 옛 필드(segments)는 계속 거부.
+   */
   async function generateVideoT2V(payload = {}) {
-    const { prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, segments } = payload
-    console.log('[Flow Video T2V] [Angular] generate-video-t2v:', { promptLen: prompt?.length ?? 0, model, aspectRatio, duration, resolution, videoBatchCount: videoBatchCount ?? 1 })
+    const { prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, segments, refs, plan } = payload
+    const nRefs = Array.isArray(refs) ? refs.length : 0
+    const nMentions = countMentions(plan)
+    console.log('[Flow Video T2V] [Angular] generate-video-t2v:', { promptLen: prompt?.length ?? 0, model, aspectRatio, duration, resolution, videoBatchCount: videoBatchCount ?? 1, refs: nRefs, mentions: nMentions })
     if (!prompt) return { success: false, error: 'No prompt' }
     const flowView = deps.getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
@@ -558,20 +764,39 @@ export function createFlowAngular(deps) {
       console.warn('[Flow Video T2V] [Angular] resolution missing → flow-settings-not-applied')
       return kindResult('flow-settings-not-applied', { reason: 'resolution-missing' })   // M2-R2 G4: 배치 전체 이유 — 훅의 F8 서명용 reason
     }
+    // M3(D1·D11·D13): 레퍼런스 영상의 클릭 전 거부 — 세션 게이트 뒤·DOM 전(프로젝트 이동도 전). 유일 ref 는 바이트(base64)로 센다.
+    if (nRefs > 0) {
+      if (!R2V_MODELS.has(model)) {
+        console.warn('[Flow Video T2V] [Angular] model has no reference-to-video in Flow → flow-references-model-unsupported')
+        return kindResult('flow-references-model-unsupported', { errorParams: { model: String(model ?? '') } })
+      }
+      const unique = new Set(refs.map((r) => (r && typeof r.base64 === 'string' ? r.base64 : r))).size
+      if (unique > FLOW_R2V_REFERENCE_LIMIT) {
+        console.warn(`[Flow Video T2V] [Angular] references=${unique} > ${FLOW_R2V_REFERENCE_LIMIT} → flow-references-too-many`)
+        return kindResult('flow-references-too-many', { errorParams: { max: FLOW_R2V_REFERENCE_LIMIT } })
+      }
+    }
 
     const projectCheck = await deps.ensureOnProjectComposer(flowView, projectId)
     if (!projectCheck?.ok) {
       return { success: false, errorKind: projectCheck?.errorKind || 'flow-project-open-failed', error: projectCheck?.error || 'flow-project-open-failed' }
     }
+    // M3(D1): 사전 검사 — plan 모양·프로젝트 id·워치독 예산(DOM 단계 전, 0크레딧). 이 호출 자리의 withAutomationViewport 에 timeoutMs 를 넘긴다.
+    const pre = referencePreflight(flowView, { refs, plan })
+    if (!pre.ok) {
+      void report(`refs:${pre.reason}`, pre.reason, {})
+      return kindResult(ATTACH_FAILED, { reason: pre.reason })
+    }
+    const hasRefs = pre.refs.length > 0
 
-    // 요청 설정 — 해상도는 요청값 그대로(기본값 없음), 개수는 항상 1(videoBatchCount 무시 — P3).
-    const want = { model, duration: Number(duration), ratio: aspectRatio || null, resolution: String(resolution) }
+    // 요청 설정 — 해상도는 요청값 그대로(기본값 없음), 개수는 항상 1(videoBatchCount 무시 — P3). M3(D11): kind 가 응답 모델키의 둘째 토큰(t2v|r2v)을 정한다.
+    const want = { model, duration: Number(duration), ratio: aspectRatio || null, resolution: String(resolution), kind: hasRefs ? 'r2v' : 't2v' }
     let generationId = null
     let gen = null
     let waiter = null
     let click = null
-    const dispatchGuard = { refused: false, editorLen: 0 }   // M2-FINAL Q1: 제출 클릭 mouseDown 직전 재판독의 거부 기록
-    let normPromptForGuard = ''
+    const dispatchGuard = { refused: false, editorLen: 0, chips: null }   // M2-FINAL Q1: 제출 클릭 mouseDown 직전 재판독의 거부 기록(M3: 칩 개수도)
+    let wantForGuard = { text: '', chips: [] }
     let creditsBefore = null
     const early = await withAutomationViewport(flowView, '[Flow Video T2V] [Angular]', async (ctl) => {
       const isAborted = () => ctl.aborted   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
@@ -635,42 +860,66 @@ export function createFlowAngular(deps) {
       // M2-LAST P3(A2): 캐럿 클릭(≤30s + 뮤텍스 대기) 중에 워치독이 울렸으면 여기서 멈춘다 — 안 그러면 좀비가 finally(레이아웃 복원·메인 포커스·잠금 해제) 뒤에 Flow 뷰로
       //   포커스를 가져가 프롬프트를 넣고 제출 가능 상태로 둔다(앱에 치려던 Enter 가 미추적 과금 제출).
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
-      let readBack = null
-      try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
-      try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
-      try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
-      const normPrompt = normalizePrompt(prompt)
-      normPromptForGuard = normPrompt   // M2-FINAL Q1: 클릭 뒤 거부 판정에서 쓴다
-      if (normalizePrompt(readBack || '') !== normPrompt) {
-        await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
-        return kindResult('text-injection-failed')
+      const refCtx = refDriverCtx(flowView, pre.projectId, isAborted)
+      let normPrompt = ''
+      let expectedRefs = []
+      let expectedMentions = []
+      let wantEditor = null
+      if (hasRefs) {
+        // M3(D9 순서, P9 — 영상도 이미지와 같은 인라인 멘션): 정리 → 사전 스캔 → (업로드 → 정리) → 세그먼트 → 첨부 → 게이트. 실패는 전부 클릭 전.
+        try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5 와 같다 — 컴포즈 직전에 다시 건다 */ }
+        const composed = await composeReferencePlan(refCtx, { refs: pre.refs, plan })
+        if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
+        if (!composed.ok) return driverFailure(composed)
+        normPrompt = composed.normPrompt
+        expectedRefs = composed.expectedRefs
+        expectedMentions = composed.expectedMentions
+        wantEditor = { text: composed.editorExpected, chips: expectedRefs }
+      } else {
+        // M3(§1-1): 레퍼런스 없는 제출도 잔여 칩을 먼저 치운다 — 칩이 남으면 페이지가 YhhmEf 대신 MZZa6b 를 보낸다(과금).
+        const cleared = await clearLeftoverChips(flowView, refCtx)
+        if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
+        if (!cleared.ok) return driverFailure(cleared)
+        let readBack = null
+        try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
+        try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
+        try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
+        normPrompt = normalizePrompt(prompt)
+        if (normalizePrompt(readBack || '') !== normPrompt) {
+          await report('compose-text', 'mismatch', { promptLen: normPrompt.length, editorLen: normalizePrompt(readBack || '').length })
+          return kindResult('text-injection-failed')
+        }
+        wantEditor = { text: normPrompt, chips: [] }
       }
+      wantForGuard = wantEditor   // M2-FINAL Q1: 클릭 뒤 거부 판정에서 쓴다
 
       // 6. 제출 가능 — M2-LAST P2: 그 전에 OS 포커스를 메인 창으로(IME 조합이 편집기에 붙지 않게; 클릭은 포커스가 필요 없다)
       focusMainWindow()
       let enabled = false
       try { enabled = !!(await exec(flowView, SUBMIT_ENABLED_PROBE)) } catch (_e) { enabled = false }
       if (!enabled) return kindResult('generate-button-unavailable')
-      // M2-LAST P2: 제출 클릭 직전 재판독 — 달라졌으면 클릭·arm 없이 클릭 전 실패. arm 은 이 뒤의 동기 구간(재판독 exec 에 매달린 좀비가 맵에 마감 없는 gen 을 남기지 않는다).
-      const changed = await editorChangedBeforeClick(flowView, '[Flow Video T2V] [Angular]', normPrompt)
+      // M2-LAST P2: 제출 클릭 직전 재판독(M3: 텍스트 + 칩) — 달라졌으면 클릭·arm 없이 클릭 전 실패. arm 은 이 뒤의 동기 구간(재판독 exec 에 매달린 좀비가 맵에 마감 없는 gen 을 남기지 않는다).
+      const changed = await editorChangedBeforeClick(flowView, '[Flow Video T2V] [Angular]', wantEditor)
       if (changed) return changed
 
-      // 7. arm — YhhmEf gen(send 마감 15s). 비율은 키에 없어 wantRatio 검사는 없다(패널이 보장).
+      // 7. arm — 영상 gen(send 마감 15s). 비율은 키에 없어 wantRatio 검사는 없다(패널이 보장). M3(D10): 레퍼런스 있음 MZZa6b(+YhhmEf), 없음 YhhmEf(+MZZa6b) —
+      //   라우터가 둘 다 바인딩하고 boundRpc ≠ rpc 는 finishVideoGen 이 거부(과금된 영상이 lost 대신 id 를 남긴다). 기대 레퍼런스·멘션은 클릭 뒤 검증(D12)의 기준.
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 좀비는 arm·클릭하지 않는다
       generationId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       gen = {
-        rpc: 'YhhmEf', doc: null, seq: null, sentAt: null, normPrompt, wantRatio: null, wantModelKey: null, want,
+        rpc: hasRefs ? 'MZZa6b' : 'YhhmEf', altRpcs: hasRefs ? ['YhhmEf'] : ['MZZa6b'],
+        doc: null, seq: null, sentAt: null, normPrompt, wantRatio: null, wantModelKey: null, want,
         results: null, error: null, errorKind: null, completed: false, allowDomFallback: false, waiter: null, deadlines: {},
-        setAt: Date.now() / 1000, generationId, expectedCount: 1,
+        setAt: Date.now() / 1000, generationId, expectedCount: 1, expectedRefs, expectedMentions,
       }
       waiter = new Promise((resolve) => { gen.waiter = { resolve } })
       deps.pendingGenerations.set(generationId, gen)
 
       // 8. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
       ctl.clickStarted = true   // M2-LIVE N1: 이제부터 워치독은 결과를 덮지 않는다
-      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', beforeDispatch: makeDispatchGuard(flowView, normPrompt, dispatchGuard) })   // M2-FINAL Q1
+      click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', beforeDispatch: makeDispatchGuard(flowView, wantEditor, dispatchGuard) })   // M2-FINAL Q1
       return null
-    })
+    }, { timeoutMs: pre.timeoutMs })
     if (early) return early
     // M2-R1 F4(b)(A4/B5): mouseDown 이 나가기 전의 실패만 "클릭 없음"(gen 삭제, postClick 없음). dispatched 면 페이지가 제출(과금)했을 수
     //   있다 — gen 을 armed 로 두고 waiter/마감 경로로(늦은 send 는 바인딩, 없으면 not-sent + 크레딧 재판독 → lost 격상). finishVideoGen 이
@@ -679,7 +928,7 @@ export function createFlowAngular(deps) {
     //   미디스패치로 거부해도 gen 을 지우지 않는다(지우면 과금된 영상이 고아가 되고 다음 Start 가 또 과금한다).
     // M2-FINAL Q1(A1 = B1): mouseDown 직전 재판독이 달라 클릭 도우미가 미디스패치로 거부했으면(페이지가 제출했을 리 없다) gen 을 지우고 클릭 전 실패로 닫는다.
     //   단, 그 사이 send 가 이미 바인딩됐거나 완료됐으면(사용자의 Enter 등) 아래 O1 경로로(과금된 결과를 버리지 않는다).
-    if (dispatchGuard.refused && !click?.success && !click?.dispatched && !(gen.doc != null || gen.completed)) return refuseChangedAtDispatch(gen, generationId, '[Flow Video T2V] [Angular]', normPromptForGuard, dispatchGuard)
+    if (dispatchGuard.refused && !click?.success && !click?.dispatched && !(gen.doc != null || gen.completed)) return refuseChangedAtDispatch(gen, generationId, '[Flow Video T2V] [Angular]', wantForGuard, dispatchGuard)
     const boundBeforeClick = gen.doc != null || gen.completed
     if (!click?.success && !click?.dispatched && !boundBeforeClick) {
       settleGen(gen, { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
@@ -707,7 +956,7 @@ export function createFlowAngular(deps) {
       else console.log(`[Flow Video T2V] [Angular] send deadline passed gen=${generationId.slice(-8)} credits unchanged — waiting for a late send (grace)`)
     }
     if (!gen.completed && gen.sentAt == null) armDeadline(gen, 'send')
-    console.log(`[Flow Video T2V] [Angular] clicked gen=${generationId.slice(-8)} — waiting for YhhmEf`)
+    console.log(`[Flow Video T2V] [Angular] clicked gen=${generationId.slice(-8)} — waiting for ${gen.rpc}`)
     await waiter
     deps.pendingGenerations.delete(generationId)
     return finishVideoGen(flowView, gen, want, creditsBefore)

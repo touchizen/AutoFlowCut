@@ -65,6 +65,22 @@ describe('video.js — t2v / check-video-status 는 Flow 모드에서 angular(M2
     } finally { logSpy.mockRestore() }
   })
 
+  // M3(D1): video.js 가 refs·plan 을 angular.generateVideoT2V 에 넘긴다 — 구조분해에서 빠지면 레퍼런스 영상이 조용히 t2v 로 제출된다. 진입 로그(세션 게이트 전)의 개수로 본다.
+  it('generate-video-t2v: video.js 가 refs·plan 을 angular 로 넘긴다(핸들러 진입 로그에 refs·mentions 개수)', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const { deps } = makeDeps('https://flow.google.com/project/x')
+      const ipc = makeIpcMain(); registerVideoIPC(ipc, deps)
+      await ipc.invoke('flow:generate-video-t2v', {
+        token: null, prompt: '@king walks', projectId: 'p', model: 'Omni Flash', aspectRatio: '9:16', duration: 4, resolution: '720p',
+        refs: [{ base64: 'iVBORw0KGgo=', mime: 'image/png' }], plan: { segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ' walks' }], attach: [] },
+      })
+      const entry = logSpy.mock.calls.find((c) => String(c[0]).includes('[Flow Video T2V] [Angular] generate-video-t2v:'))
+      expect(entry).toBeTruthy()
+      expect(entry[1]).toMatchObject({ refs: 1, mentions: 1 })
+    } finally { logSpy.mockRestore() }
+  })
+
   it('check-video-status → angular 세션 게이트(옛 "No token" 아님), API 모드는 옛 게이트', async () => {
     const { deps } = makeDeps('https://flow.google.com/project/x')
     const ipc = makeIpcMain(); registerVideoIPC(ipc, deps)

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut } from 'electron'
+import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, clipboard, nativeImage } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -1012,6 +1012,10 @@ const flowAPIDeps = {
   createInputShield: makeInputShield,   // M2-LIVE N1: 제자리 자동화 뷰포트 동안의 입력 방패
   setAutomationKeyLock: (on) => { automationKeyLock = !!on },   // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금
   setShieldFocusTarget: (t) => { shieldFocusTarget = t === 'main' ? 'main' : 'flow' },   // M2-FINAL Q1: 방패 focus 의 행선지(포커스 단계 플래그)
+  // M3(D4): 레퍼런스 업로드 = 클립보드 이미지 + Flow 뷰 붙여넣기(키 이벤트·CDP 없음). 세션 캐시는 flow-angular 가 모듈을 직접 쓴다.
+  clipboard,
+  nativeImage,
+  pasteIntoFlowView: () => modeController.getFlowView()?.webContents.paste(),
   // Shared helpers
   ...helpers,
   // Inject state helpers

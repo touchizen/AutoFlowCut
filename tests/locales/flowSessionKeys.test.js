@@ -16,6 +16,9 @@ const PARAMS = {
   'flow-image-model-mismatch': ['requested', 'panel'],
   'flow-video-settings-mismatch': ['expected', 'actual'],
   'flow-batch-halted': ['cause'],
+  // M3(D14): 레퍼런스 영상 — 모델 라벨 · 상한
+  'flow-references-model-unsupported': ['model'],
+  'flow-references-too-many': ['max'],
 }
 /** 플랜이 정한 kind(코드가 아직 안 만드는 M2 kind 포함) — 코드에서 뽑은 것과 합집합. */
 const PLANNED = [

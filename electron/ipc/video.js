@@ -121,9 +121,10 @@ export function registerVideoIPC(ipcMain, deps) {
   // Text-to-Video generation (DOM 자동화 — 페이지가 reCAPTCHA 자체 처리)
   ipcMain.handle('flow:generate-video-t2v', async (event, {
     token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed, segments, resolution,  // M2-3: resolution 도 받는다
+    refs, plan,  // M3(D1): 레퍼런스 영상(r2v) — 로컬 이미지 base64 목록 + 멘션·첨부 계획
   }) => {
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
-    if (flowActive()) return angular.generateVideoT2V({ prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, seed, segments })  // M1-12 · M2-3
+    if (flowActive()) return angular.generateVideoT2V({ prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, seed, segments, refs, plan })  // M1-12 · M2-3 · M3
     // #R36: @멘션 T2V — segments 가 있으면 컴포저 @칩(injectComposeSegments)으로 캐릭터 entity 를 넣는다.
     const _segments = Array.isArray(segments) && segments.length > 0 ? segments : null
     const flowView = getFlowView()

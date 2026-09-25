@@ -13,6 +13,7 @@ import { routeReportResponse, buildReportCtx } from '../../electron/reportRespon
 import { failBoundUnfinished } from '../../electron/flow-rpc-router.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../../electron/flow-rpc-capture.js'
 import { sample, reencodeRequestBody, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
+import { READ_COMPOSER_STATE_JS } from '../../electron/flow-composer-refs.js'   // M3: 레퍼런스 없는 제출 전의 잔여 칩 판독(D9 · §1-1)
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 const URL_OK = `https://flow.google.com/project/${PROJECT}`
@@ -62,6 +63,8 @@ function harness({ onSubmit, summary } = {}) {
   let injectedPrompt = null
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
+    // M3: 컴포저 판독(빈 컴포저 — 잔여 칩 없음). 그 스크립트도 querySelectorAll('p') 를 품고 있어 아래 편집기 판독 마커보다 먼저 본다.
+    if (s === READ_COMPOSER_STATE_JS) return { chips: [], segments: [], editorText: '', pickerOpen: false, searchDirty: false, activeInEditor: true }
     if (s.includes('__af_settings_driver__')) return { ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'already(crop_16_9)', count: 'already' } }
     if (s.includes('__af_settings_panel_open__')) return false
     if (s.includes('__af_set_editor_text__')) { const m = s.match(/const text = (".*?");/); injectedPrompt = m ? JSON.parse(m[1]) : null; return { ok: true } }

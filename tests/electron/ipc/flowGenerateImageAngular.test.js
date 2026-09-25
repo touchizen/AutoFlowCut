@@ -13,12 +13,15 @@ import { _resetDomStageForTests, releaseDomStage } from '../../../electron/ipc/f
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
 import { setModalVisible, setLayoutDragging } from '../../../electron/ipc/layout.js'   // M2-LAST P4: 드래그 중 진입 거부
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../../fixtures/flow-batchexecute-samples.js'
+import { READ_COMPOSER_STATE_JS } from '../../../electron/flow-composer-refs.js'   // M3: 레퍼런스 없는 제출 전의 잔여 칩 판독(D9 · §1-1)
 
 const PROJECT = '134cf5b5-6a64-47b8-8709-6de4c6b0e44c'
 const FLOW_URL_OK = `https://flow.google.com/project/${PROJECT}`
 const PROMPT = '궁정안에 있는 왕'
 const DOC = 'f'.repeat(32)
 const NOW_S = 1790240102.5
+/** M3: 빈 컴포저 판독(칩 0 · 창 닫힘) — 레퍼런스 없는 제출의 잔여 칩 정리와 재판독(텍스트+칩)이 본다. */
+const EMPTY_COMPOSER = { chips: [], segments: [], editorText: '', pickerOpen: false, searchDirty: false, activeInEditor: true }
 
 function makeIpcMain() {
   const handlers = new Map()
@@ -29,6 +32,7 @@ function makeIpcMain() {
  * @param {object} o
  *   url · wiz · agent(프로브 결과 | 순서 배열 | 'throw') · captureFlag(프로브 결과 순서) · settings(드라이버 결과)
  *   · summary · editorText(읽기 결과, 기본 = 주입한 프롬프트) · submitEnabled · flowAgentOn · mode · fetch(sessionFetch 응답)
+ *   · composer(M3: READ_COMPOSER_STATE_JS 판독 순서 — 마지막 값이 남는다, 기본 빈 컴포저)
  */
 function harness(o = {}) {
   const url = o.url ?? FLOW_URL_OK
@@ -45,9 +49,12 @@ function harness(o = {}) {
   const summarySeq = Array.isArray(o.summary) ? [...o.summary] : null   // M2-CLOSE O3: 요약 판독 순서(트리거 전 · 닫힌 뒤) — 마지막 값이 남는다
   const settingsSeq = Array.isArray(o.settings) ? [...o.settings] : null   // M2-LAST P1: 드라이버 결과 순서(항목별 — undefined 는 기본값) — 마지막 값이 남는다
   const editorSeq = Array.isArray(o.editorText) ? [...o.editorText] : null   // M2-LAST P2: 편집기 재판독 순서(주입 뒤 · 제출 클릭 직전) — 마지막 값이 남는다
+  const composerSeq = Array.isArray(o.composer) ? [...o.composer] : null   // M3: 컴포저 판독 순서(잔여 칩 → 정리 뒤)
   let injectedPrompt = null
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
+    // M3: 컴포저 판독이 먼저 — 그 스크립트도 querySelectorAll('p') 를 품고 있어 아래 편집기 판독 마커와 겹친다. trace 에는 남기지 않는다(M2 순서 단언 그대로).
+    if (s === READ_COMPOSER_STATE_JS) { if (composerSeq) return composerSeq.length > 1 ? composerSeq.shift() : composerSeq[0]; return EMPTY_COMPOSER }
     // 마커 있는 스크립트 먼저 — 설정 드라이버도 `const scan =` 을 품고 있어 진단 프로브 검사와 겹친다.
     if (s.includes('__af_settings_driver__')) {
       trace.push('settings-driver')
@@ -105,7 +112,8 @@ function harness(o = {}) {
     getPendingVideoGeneration: () => null, setPendingVideoGeneration: () => {},
   })
   const page = {
-    send: (over = {}) => routeReportResponse({ kind: 'batchexecute-send', doc: DOC, rpcid: 'ogiZ0b', rpcids: ['ogiZ0b'], seq: 1, prompts: [PROMPT], sentAt: Date.now() / 1000, ...over }, ctx),
+    // M3-2: 캡처 send 는 요청의 refs·mentions(id)를 싣는다 — 레퍼런스 없는 요청은 [] (09-24 S1 · D12 의 요청 근거)
+    send: (over = {}) => routeReportResponse({ kind: 'batchexecute-send', doc: DOC, rpcid: 'ogiZ0b', rpcids: ['ogiZ0b'], seq: 1, prompts: [PROMPT], refs: [], mentions: [], sentAt: Date.now() / 1000, ...over }, ctx),
     loadend: (over = {}) => routeReportResponse({ kind: 'batchexecute', doc: DOC, rpcid: 'ogiZ0b', seq: 1, status: 200, responseText: sample('ogiZ0b').respBody, endedAt: Date.now() / 1000, ...over }, ctx),
   }
   const onSubmit = o.onSubmit === undefined ? (() => { page.send(); page.loadend() }) : o.onSubmit
@@ -867,5 +875,74 @@ describe('flow:generate-image (angular) — 방패 포커스의 단계 플래그
     expect(logged()).not.toContain(PROMPT)
     expect(h.trace.filter((x) => x === 'shield:off')).toHaveLength(1)
     expect(h.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
+  })
+})
+
+// M3(§1-1 · D9 · D12): 레퍼런스 **없는** 제출도 칩을 본다 — 컴포저에 칩이 남아 있으면 페이지는 프롬프트에 멘션이 없어도 레퍼런스로 보낸다(이미지는 잔여 칩이 그대로 실린다).
+//   캐럿 뒤 잔여 칩 정리(지우기 신뢰 클릭 → 칩 0 확인) → M2 주입, 재판독·mouseDown 직전 관문은 텍스트와 **빈 칩 집합**을 본다, 클릭 뒤 send refs 가 [] 가 아니면 거부(다운로드 없음).
+describe('flow:generate-image (angular) — 레퍼런스 없는 제출의 칩 게이트 (M3 §1-1)', () => {
+  const LEFT = { chips: [{ mediaId: maskedUuid(9), busy: false }], segments: [], editorText: '', pickerOpen: false, searchDirty: false, activeInEditor: true }
+  const MISMATCH = { success: false, errorKind: 'flow-references-mismatch', error: 'flow-references-mismatch', postClick: true }
+
+  it('잔여 칩 1개 → 지우기 신뢰 클릭(refs-clear) → 칩 0 확인 → M2 주입 → 성공; 정리는 캐럿 뒤·주입 앞, 로그 "composer clear chips=1→0"', async () => {
+    const h = harness({ composer: [LEFT, LEFT, EMPTY_COMPOSER] })
+    const r = await settle(h.generate())
+    expect(r).toMatchObject({ success: true, images: [{ mediaId: maskedUuid(5) }] })
+    const t = h.trace
+    expect(idx(t, 'click:refs-clear')).toBeGreaterThan(idx(t, 'click:compose-editor'))
+    expect(idx(t, 'click:refs-clear')).toBeLessThan(idx(t, 'set-text:visible'))
+    expect(logged()).toMatch(/\[Flow Refs\] leftover chips=1 picker=closed → clearing before a reference-less submit/)
+    expect(logged()).toMatch(/\[Flow Refs\] composer clear chips=1→0/)
+    expect(logged()).toMatch(/refs verified request=0 echo=- mentions=0\/0/)
+  })
+
+  it('빈 컴포저면 정리 클릭 없음(M2 경로 그대로)', async () => {
+    const h = harness()
+    expect((await settle(h.generate())).success).toBe(true)
+    expect(h.trace.filter((x) => x.startsWith('click:refs-'))).toEqual([])
+  })
+
+  it('정리 실패(지우기·칩 hover 클릭 뒤에도 칩이 남음) → 클릭 전 flow-reference-attach-failed(reason composer-not-clear) — 주입·제출 클릭·arm 없음', async () => {
+    const h = harness({ composer: [LEFT] })
+    const r = await settle(h.generate(), 20000)
+    expect(r).toEqual({ success: false, errorKind: 'flow-reference-attach-failed', error: 'flow-reference-attach-failed', reason: 'composer-not-clear' })
+    expect(h.trace).toContain('click:refs-clear')
+    expect(h.trace.filter((x) => x.startsWith('set-text'))).toEqual([])
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.pendingGenerations.size).toBe(0)
+  })
+
+  it('컴포저 판독 불가(exec 결과 없음) → fail-closed composer-not-clear — 주입·제출 없음', async () => {
+    const h = harness({ composer: [null] })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'flow-reference-attach-failed', error: 'flow-reference-attach-failed', reason: 'composer-not-clear' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.onDomFailure.mock.calls.some((c) => c[0] === 'refs:composer-not-clear')).toBe(true)
+  })
+
+  it('레퍼런스를 요청하지 않았는데 send refs [U3] → flow-references-mismatch + postClick, sessionFetch 미호출', async () => {
+    const h = harness({ onSubmit: (page) => { page.send({ refs: [maskedUuid(3)] }); page.loadend() } })
+    expect(await settle(h.generate())).toEqual(MISMATCH)
+    expect(h.sessionFetch).not.toHaveBeenCalled()
+    expect(logged()).toMatch(/refs mismatch request=1\/0 echo=-\/0 mentions=0\/0 → flow-references-mismatch/)
+  })
+
+  it('mouseDown 직전 칩 +1(재판독 때는 0) → 미디스패치 거부, gen 삭제, 클릭 전 text-injection-failed(editor-changed-before-click)', async () => {
+    const h = harness({ composer: [EMPTY_COMPOSER, EMPTY_COMPOSER, LEFT] })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'text-injection-failed', error: 'text-injection-failed', reason: 'editor-changed-before-click' })
+    expect(h.trace).toContain('dispatch-refused')
+    expect(h.trace.filter((x) => x.startsWith('armed:'))).toEqual([])
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/composer chips changed between the hit-test and the mouseDown chips=1 want=0 → refused before dispatch/)
+  })
+
+  it('재판독 때 칩 +1 → 제출 클릭·arm 없이 클릭 전 text-injection-failed(editor-changed-before-click)', async () => {
+    const h = harness({ composer: [EMPTY_COMPOSER, LEFT] })
+    const r = await settle(h.generate())
+    expect(r).toEqual({ success: false, errorKind: 'text-injection-failed', error: 'text-injection-failed', reason: 'editor-changed-before-click' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/composer chips changed between the read-back and the submit click chips=1 want=0/)
   })
 })
