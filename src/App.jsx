@@ -2084,7 +2084,7 @@ function App() {
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
   // isRunning: scene OR ref(prepare/stop/generating) OR video — Phase 2 auto stop-restart 트리거.
   useMcpServer({
-    settings,
+    settings, setSettings,
     mode, flowProjectReady, activeTab,  // batch-status 진단 필드
     scenes, setScenes,
     references, setReferences,

@@ -630,7 +630,7 @@ curl http://127.0.0.1:3210/api/batch-status
         properties: {
           type: {
             type: 'string',
-            enum: ['update-references', 'update-reference', 'update-scenes', 'update-scene', 'generate-reference', 'generate-scene', 'start-scene-batch', 'start-ref-batch'],
+            enum: ['update-references', 'update-reference', 'update-scenes', 'update-scene', 'update-settings', 'generate-reference', 'generate-scene', 'start-scene-batch', 'start-ref-batch'],
           },
           index: { type: 'integer', description: '대상 인덱스 (0-based)' },
           fields: { type: 'object', description: '수정할 필드 객체' },

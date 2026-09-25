@@ -93,6 +93,7 @@ export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
  */
 export function useMcpServer({
   settings,
+  setSettings = null,  // MCP `update-settings` — 에이전트가 UI 없이 설정(영상 모델·해상도 등)을 맞춘다
   scenes, setScenes,
   references, setReferences,
   srtTrack = [], setSrtTrack = null,
@@ -446,6 +447,12 @@ export function useMcpServer({
       } else if (data.type === 'update-scene') {
         setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
+      } else if (data.type === 'update-settings') {
+        // 설정 병합 — useAppSettings 가 localStorage 로 동기화한다. fields 가 객체가 아니면 무시.
+        if (data.fields && typeof data.fields === 'object' && !Array.isArray(data.fields)) {
+          setSettings?.(prev => ({ ...prev, ...data.fields }))
+          console.log('[MCP] Settings updated via HTTP:', Object.keys(data.fields).join(','))
+        }
       } else if (data.type === 'generate-reference') {
         console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)
         // styleId를 override로 직접 전달 — 전역 selectedStyleRefId 오염 없음, race 없음.
