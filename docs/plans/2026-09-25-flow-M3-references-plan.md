@@ -1,7 +1,7 @@
 # 계획 — M3 레퍼런스: 레퍼런스 이미지 · @인라인 멘션 · 레퍼런스 영상(r2v)을 flow.google.com 에서 (2026-09-25, R3)
 
 레포: `~/workspace/AutoFlowCut-bugfix` (worktree, 브랜치 `feat/flow-m3-references` — M2 `fix/flow-batchexecute` 위, HEAD `c2a815e0`)
-상태: **PLAN R3. 코드 변경 0.** 저자 Opus 5.5. R0 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용) · M3-0 프로브(P1–P9, 추가 확인 PR §4) · R0 뒤의 사용자 결정 · R1 리뷰(Sonnet 5 ×2 — A1·B1·B2·B3 수용) · R2 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용)를 반영했다(§8). R0 의 `[분기]` 는 프로브로 전부 닫혔다.
+상태: **PLAN R3 — 리뷰 종료(R3 findings 0). 코드 변경 0.** 저자 Opus 5.5. R0 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용) · M3-0 프로브(P1–P9, 추가 확인 PR §4) · R0 뒤의 사용자 결정 · R1 리뷰(Sonnet 5 ×2 — A1·B1·B2·B3 수용) · R2 리뷰(Sonnet 5 ×2 — A1 수정 수용, B1·B2·B3 수용)를 반영했다(§8). R0 의 `[분기]` 는 프로브로 전부 닫혔다.
 증거: `docs/handoffs/evidence/2026-09-25-m3-references-capture.md`(**C**), `…-m3-samples.masked.jsonl`(**S3#n**, 행 1–20: 2 maseQ(파일 대화상자) · 3 ogiZ0b ref1 · 4 maseQ(붙여넣기) · 9 ogiZ0b ref2+멘션 · 10 MZZa6b Omni · 14 YhhmEf 대조군 · 15 MZZa6b Veo · 17 MZZa6b 인라인 멘션(P9) · 19 ogiZ0b 같은 미디어 두 번 멘션 · 20 MZZa6b 같은 미디어 두 번 멘션), `…-m3-dom-<단계>.elements.json`(**D3:<단계>**), 프로브 결과 `…-m3-probes.md`(**PR** P1–P9 · §4 추가 확인), 리뷰 처분 `docs/handoffs/briefs/2026-09-25/findings/m3-plan-r0.findings.md`, M2 계획서 `docs/plans/2026-09-24-flow-batchexecute-rework-plan.md`(**P2**, § 와 행 번호 #n), M2 핸드오프(**H2**), 킥오프(**K3**), HTrJv 카탈로그 = 09-24 샘플 11행(**CAT**, 20000자에서 잘림). **RAW** = 캡처 때 바탕화면에 남은 원본 DOM 덤프(저장소 밖, 마스킹해서 읽은 사실만).
 표기: **[관측]** 캡처·덤프·프로브에 있는 사실 · **[추정]** 관측에서 끌어낸 추론 · **[미상]** 아무도 본 적 없음.
 
@@ -477,6 +477,7 @@ D4(포커스 단계 삭제·관찰 즉시 복원·id img 대기) · D6(영속 JS
 | B2 | B | MAJOR | M3-10 에 중복 멘션 부정 케이스가 없다 | **수용** — S3#20 + `mentions:[U52]` → mismatch, `Set` 접기 뮤테이션 | M3-10 |
 | B3 | B | MINOR | 워치독 식이 n=0·n=2(121s/360s)로만 괄호쳐져 `120+60n`·일률 360s 가 통과 | **수용** — 헬퍼가 n=1/2/3 을 240/360/480s 로 정확히, 배선 핀은 359s/361s | M3-9, M3-10 |
 
-### 8.6 R3 리뷰
+### 8.6 R3 리뷰 (A·B = Sonnet 5, 새 인스턴스, 사본 분리 `4a7f1028`) — **A: NO FINDINGS · B: NO FINDINGS → 계획 리뷰 종료**
 | # | 리뷰 | 등급 | 처분 | 반영 위치 | 비고 |
 |---|---|---|---|---|---|
+| — | A·B | — | 없음 | — | A: R2 처분 4건을 R2→R3 diff 와 원 샘플(S3#10·#15·#17·#20)·제출 전 DOM 덤프로 재확인. B: R0~R2 의 B 항목 전부 R3 본문에서 닫힘 확인, 호출 지점(`useReferenceGeneration`·`useStyleThumbnails`·영상 복구·`fillWindow`) 추가 점검 |
