@@ -62,11 +62,19 @@ const randomSleep = (min, max) =>
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
 // M2-R1 F8(A8): 배치 전체에 걸리는 설정계 클릭 전 거부 — 같은 kind+params 가 연속 2번이면 나머지 항목도 같은 결과라 종결한다.
-const REPEATABLE_PRECLICK_KINDS = new Set(['flow-resolution-not-offered', 'flow-settings-not-applied', 'flow-agent-off-failed', 'flow-capture-not-installed', 'flow-agent-mode-unsupported'])
+// M3(D14): 레퍼런스 영상의 배치 전체 거부 — r2v 미지원 모델 {model}(모델은 배치 설정) · 클립보드의 Finder 파일 복사 · attach-failed 의 배치 전체 사유(아래).
+const REPEATABLE_PRECLICK_KINDS = new Set(['flow-resolution-not-offered', 'flow-settings-not-applied', 'flow-agent-off-failed', 'flow-capture-not-installed', 'flow-agent-mode-unsupported',
+  'flow-references-model-unsupported', 'flow-reference-clipboard-busy', 'flow-reference-attach-failed'])
 // M2-R2 G4(B2): flow-settings-not-applied 는 params 가 {} 라 서명이 항목마다 같다 — main 이 실어 주는 드라이버 reason 중 **배치 전체** 이유만 종결 후보다.
 //   항목별 이유(duration-not-offered:<d> — 씬마다 길이가 다르다 · not-checked:* · needs-trusted:* · settings-trigger-* · panel-not-closed)와 모르는 이유는 절대 종결하지 않는다.
 const BATCH_WIDE_SETTINGS_REASON = /^(model-not-offered|ratio-not-offered:|input-mode-not-material|model-submenu-unknown|model-menu-not-open|resolution-missing)/
-const isBatchWideRefusal = (r) => r?.errorKind !== 'flow-settings-not-applied' || BATCH_WIDE_SETTINGS_REASON.test(String(r?.reason || ''))
+// M3(D14): flow-reference-attach-failed 도 같은 규칙 — 붙여넣기·@ 트리거·애셋 창 열기/닫기·프로젝트 id 는 배치 전체, 나머지(칩·업로드·게이트 불일치 등)와 모르는 사유는 항목 사유.
+const BATCH_WIDE_ATTACH_REASON = /^(paste-not-observed|mention-trigger-not-working|picker-not-open|picker-not-closed|no-project-id)$/
+const isBatchWideRefusal = (r) => {
+  if (r?.errorKind === 'flow-settings-not-applied') return BATCH_WIDE_SETTINGS_REASON.test(String(r?.reason || ''))
+  if (r?.errorKind === 'flow-reference-attach-failed') return BATCH_WIDE_ATTACH_REASON.test(String(r?.reason || ''))
+  return true
+}
 
 // Auth failures are handled centrally by useFlowAPI's withAuthRetry wrapper
 // (see useFlowAPI.js — wrapper shim calls clearTokenCache + the App-level
@@ -125,8 +133,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     const { videoModel, aspectRatio, duration, seed = null, videoResolution, projectName = '', videoBatchCount = 1 } = options
     const prompt = item.prompt || ''
     // #R12-3: Flow 엔진은 callOpts.videoBatchCount 로 배치 수를 받는다 — 마지막 인자로 전달.
-    // #R36: Flow @멘션 T2V 는 컴포저 칩용 segments 를 함께 넘긴다(있으면 chip 경로, 없으면 일반 텍스트).
-    const callOpts = { videoBatchCount, segments: item.segments || null }
+    //   M3: Flow @멘션 T2V 는 엔진이 프롬프트의 @ 토큰과 item.referenceImages 로 인라인 멘션을 계획한다(옛 칩 segments 경로는 퇴역).
+    const callOpts = { videoBatchCount }
 
     switch (mode) {
       case 't2v': {
@@ -376,9 +384,6 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
             targetDuration: s.targetDuration ?? null,
             referenceImages: Array.isArray(s.referenceImages) ? s.referenceImages : [],
-            // #R36-fix(Codex R1[1]): Flow @멘션 T2V 의 컴포저 칩용 segments — 여기서 복사 안 하면
-            //   submitVideoItem 의 item.segments 가 항상 null 이 되어 칩 경로를 못 탄다.
-            segments: Array.isArray(s.segments) ? s.segments : null,
           }))
         break
       case 'i2v':

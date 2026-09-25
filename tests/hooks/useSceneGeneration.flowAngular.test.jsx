@@ -21,7 +21,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
 vi.mock('../../src/utils/formatters', async (orig) => ({ ...(await orig()), getImageSizeFromBase64: vi.fn(async () => ({ width: 1376, height: 768 })) }))
 vi.mock('../../src/services/styleService', () => ({ resolveSceneStyle: vi.fn((prompt) => ({ styledPrompt: prompt })) }))
 vi.mock('../../src/components/Toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
-vi.mock('../../src/utils/mentionParser', () => ({ resolveMentions: vi.fn(() => ({ missing: [] })) }))
+vi.mock('../../src/utils/mentionParser', async (orig) => ({ ...(await orig()), resolveMentions: vi.fn(() => ({ missing: [] })) }))   // M3: 엔진 계획(planFlowReferenceComposition)은 실제 멘션 파서를 쓴다
 
 import { useSceneGeneration } from '../../src/hooks/useSceneGeneration'
 import { useFlowEngine } from '../../src/engine/engineFlow'
@@ -87,11 +87,12 @@ describe('useSceneGeneration × useFlowEngine', () => {
     expect(msg).not.toContain('Flow login required')
   })
 
-  it('filePath 만 있는 태그 ref → 씬 error flow-references-unsupported, 제출 없음', async () => {
+  // M3(D2): 태그 ref 는 이제 ＋ 첨부로 간다 — 그 바이트를 읽지 못하면(여기선 파일 읽기가 없다) 클릭 전에 flow-reference-source-missing, IPC 없음.
+  it('filePath 만 있고 읽을 수 없는 태그 ref → 씬 error flow-reference-source-missing, 제출 없음 (M3)', async () => {
     const { hook, updateScene } = setup({ references: [{ name: 'hero', filePath: '/refs/hero.png' }] })
     await act(async () => { await hook.result.current.gen.handleGenerateScene('scene_1') })
     expect(api.flowGenerateImage).not.toHaveBeenCalled()
-    expect(lastPatch(updateScene)).toMatchObject({ status: 'error', errorKind: 'flow-references-unsupported' })
+    expect(lastPatch(updateScene)).toMatchObject({ status: 'error', errorKind: 'flow-reference-source-missing' })
   })
 
   it('imageUpscale:2k → 씬 error flow-upscale-unsupported, 제출 없음', async () => {

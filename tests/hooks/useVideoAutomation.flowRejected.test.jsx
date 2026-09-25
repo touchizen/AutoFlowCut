@@ -589,3 +589,58 @@ describe('useVideoAutomation — F8/F9 핀 보강 (M2-R2 G7)', () => {
     expect(h.hook.result.current.status).toBe('done')
   })
 })
+
+// M3-12(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md D14): 레퍼런스 영상의 배치 전체 클릭 전 거부도 같은 kind+params+reason 두 번 연속이면 종결한다 —
+//   flow-references-model-unsupported {model}(모델은 배치 설정) · flow-reference-clipboard-busy(Finder 파일 복사) · flow-reference-attach-failed 중 배치 전체 사유
+//   (paste-not-observed · mention-trigger-not-working · picker-not-open · picker-not-closed · no-project-id)만. 나머지 attach 사유(chip-mismatch 등)는 항목 사유 —
+//   두 번이어도 종결하지 않는다(그 항목의 칩·업로드 문제일 수 있다).
+describe('useVideoAutomation — Flow 레퍼런스 영상의 연속 클릭 전 거부 (M3-12, D14)', () => {
+  const MODEL_UNSUPPORTED = { success: false, errorKind: 'flow-references-model-unsupported', error: 'flow-references-model-unsupported', errorParams: { model: 'Veo 3.1 - Quality' } }
+  const CLIPBOARD_BUSY = { success: false, errorKind: 'flow-reference-clipboard-busy', error: 'flow-reference-clipboard-busy' }
+  const ATTACH = (reason) => ({ success: false, errorKind: 'flow-reference-attach-failed', error: 'flow-reference-attach-failed', reason })
+  const SCENES4 = [...SCENES3, { id: 'vscene_4', prompt: 'p4' }]
+  const expectClosed = (h, kind, errorParams) => {
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(2)
+    for (const id of ['vscene_1', 'vscene_2', 'vscene_3', 'vscene_4']) expect(last(h, id)).toEqual(['error', { error: kind, errorKind: kind, ...(errorParams ? { errorParams } : {}) }])
+    expect(patches(h, 'vscene_3').some(([st]) => st === 'generating')).toBe(false)
+    expect(h.hook.result.current.status).toBe('error')
+    expect(h.hook.result.current.statusMessage).toContain(`errorSection.kind.${kind}`)
+  }
+
+  it('flow-references-model-unsupported ×2 → 종결: 제출 2회, 4항목 전부 그 kind {model}, status error + kind 문구', async () => {
+    const h = setup({ submit: { p1: MODEL_UNSUPPORTED, p2: MODEL_UNSUPPORTED } })
+    await run(h, SCENES4)
+    expectClosed(h, 'flow-references-model-unsupported', { model: 'Veo 3.1 - Quality' })
+  })
+
+  it('flow-reference-clipboard-busy ×2 → 종결', async () => {
+    const h = setup({ submit: { p1: CLIPBOARD_BUSY, p2: CLIPBOARD_BUSY } })
+    await run(h, SCENES4)
+    expectClosed(h, 'flow-reference-clipboard-busy')
+  })
+
+  it.each(['paste-not-observed', 'mention-trigger-not-working', 'picker-not-open', 'picker-not-closed', 'no-project-id'])(
+    'flow-reference-attach-failed %s ×2(배치 전체 사유) → 종결', async (reason) => {
+      const h = setup({ submit: { p1: ATTACH(reason), p2: ATTACH(reason) } })
+      await run(h, SCENES4)
+      expectClosed(h, 'flow-reference-attach-failed')
+    })
+
+  it.each(['chip-mismatch', 'chip-no-id', 'upload-rpc-error', 'asset-not-found', 'at-sign-opened-picker', 'text-mismatch'])(
+    'flow-reference-attach-failed %s ×2(항목 사유) → 종결하지 않는다: 4회 제출, #3·#4 complete, status done', async (reason) => {
+      const h = setup({ submit: { p1: ATTACH(reason), p2: ATTACH(reason) } })
+      await run(h, SCENES4)
+      expect(h.generateVideoT2V).toHaveBeenCalledTimes(4)
+      expect(last(h, 'vscene_1')).toEqual(['error', { error: 'flow-reference-attach-failed', errorKind: 'flow-reference-attach-failed' }])
+      expect(last(h, 'vscene_3')[0]).toBe('complete')
+      expect(last(h, 'vscene_4')[0]).toBe('complete')
+      expect(h.hook.result.current.status).toBe('done')
+    })
+
+  it('배치 전체 사유라도 reason 이 다르면(paste-not-observed → picker-not-open) 연속이 아니다 — 계속 제출', async () => {
+    const h = setup({ submit: { p1: ATTACH('paste-not-observed'), p2: ATTACH('picker-not-open') } })
+    await run(h, SCENES3)
+    expect(h.generateVideoT2V).toHaveBeenCalledTimes(3)
+    expect(last(h, 'vscene_3')[0]).toBe('complete')
+  })
+})

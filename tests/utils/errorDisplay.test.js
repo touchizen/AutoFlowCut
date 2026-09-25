@@ -207,3 +207,39 @@ describe('resolveDisplayError — errorParams (M1-9)', () => {
     }
   })
 })
+
+// M3-13(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md D14): 레퍼런스 kind 의 표시 — {model}·{max} 는 값으로 채워지고(리터럴 토큰이 남으면 안 된다),
+//   params 없는 kind 는 문구 그대로(free-form 폴백 아님), flow-references-unsupported 는 고친 문구.
+describe('resolveDisplayError — M3 레퍼런스 kind (실제 로케일)', () => {
+  const mk = (locale) => (key, params = {}) => {
+    const v = key.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), locale)
+    if (typeof v !== 'string') return key
+    return v.replace(/\{(\w+)\}/g, (m, k) => (params[k] !== undefined ? params[k] : m))
+  }
+
+  it.each([['en', en], ['ko', ko]])('%s: flow-references-model-unsupported {model} → 모델명이 들어가고 {model} 토큰은 남지 않는다; too-many {max:3} → 3', (_lang, locale) => {
+    const t = mk(locale)
+    const m = resolveDisplayError(t, 'flow-references-model-unsupported', 'raw', { model: 'Veo 3.1 - Quality' })
+    expect(m).toContain('Veo 3.1 - Quality')
+    expect(m).not.toContain('{model}')
+    expect(m).not.toBe('raw')
+    const x = resolveDisplayError(t, 'flow-references-too-many', 'raw', { max: 3 })
+    expect(x).toContain('3')
+    expect(x).not.toContain('{max}')
+    expect(x).not.toBe('raw')
+    // params 가 빠지면 토큰을 노출하지 않고 free-form 으로 폴백
+    expect(resolveDisplayError(t, 'flow-references-model-unsupported', 'raw', {})).toBe('raw')
+  })
+
+  it.each([['en', en], ['ko', ko]])('%s: params 없는 레퍼런스 kind 4개는 로케일 문구 그대로', (_lang, locale) => {
+    const t = mk(locale)
+    for (const kind of ['flow-reference-attach-failed', 'flow-reference-source-missing', 'flow-reference-clipboard-busy', 'flow-references-mismatch']) {
+      expect(resolveDisplayError(t, kind, 'raw', {}), kind).toBe(locale.errorSection.kind[kind])
+    }
+  })
+
+  it('flow-references-unsupported 는 고친 문구 — 레퍼런스·@멘션 전체 미지원이라 하지 않는다', () => {
+    expect(resolveDisplayError(mk(en), 'flow-references-unsupported', 'raw', {})).toBe("Flow mode can't use a style image when generating a reference card, or upload a reference on its own. Try again without the style image.")
+    expect(resolveDisplayError(mk(ko), 'flow-references-unsupported', 'raw', {})).toBe('Flow 모드에서는 레퍼런스 카드를 만들 때 스타일 이미지를 쓰거나 레퍼런스를 따로 업로드할 수 없습니다. 스타일 이미지 없이 다시 시도해주세요.')
+  })
+})

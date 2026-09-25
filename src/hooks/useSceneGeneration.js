@@ -121,11 +121,11 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         // scene.prompt 그대로 전달 — strip 은 engineApi.generateImage 내부에서 수행.
         // scene 은 sceneOverride 가 병합된 fresh 스냅샷 — prompt/style_tag 모두 편집본을 반영.
         const { styledPrompt } = resolveSceneStyle(scene.prompt, [], effectiveOverride, refs, matchedRefs, scene.style_tag)
-        // M1-10: 엔진 게이트 재료 — 필터 전 매칭 개수 + 업스케일 설정(Flow 모드에서 미지원이면 제출 전에 거부된다).
+        // M1-10: 업스케일 설정은 엔진 게이트 재료(Flow 모드에서 미지원이면 제출 전에 거부된다). M3: Flow 는 matchedRefs(＋ 첨부)와 references(@멘션 해석)로 레퍼런스를 계획한다.
         return genAPI.generateImage(styledPrompt, matchedRefs, {
           batchCount: settings.imageBatchCount, seed,
           aspectRatio: settings.aspectRatio, model: settings.imageModel, references: refs,
-          matchedRefCount: allMatched.length, imageUpscale: settings.imageUpscale || 'off',
+          imageUpscale: settings.imageUpscale || 'off',
         })
       }
 

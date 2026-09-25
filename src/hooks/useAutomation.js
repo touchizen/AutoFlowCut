@@ -24,7 +24,7 @@ import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessag
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 import {
   applyM1MentionExclusions,
-  flowImageInjectable,
+  sourceAvailable,
 } from '../utils/refImageGuard'
 
 export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
@@ -290,10 +290,11 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // 단일 씬 경로와 동일 계약) mediaId 또는 name 중 하나만 있어도 선택하고 name 을 보존한다.
       // R37 review fix: data/filePath 도 보존 — memory-only ref 가 referenceResolver 의
       // 디스크 fallback 도 못 타고 조용히 빠지는 회귀 차단. (useSceneGeneration 과 정책 동일.)
+      // M3(D15): Flow 는 로컬 이미지(data·filePath·imagePath)가 있는 ref 만 — 엔진이 그 바이트를 애셋 창에 붙여 ＋ 첨부한다(imagePath → filePath).
       const allMatched = getMatchingReferences(scene)
       const matchedRefs = allMatched
         .filter(r => mode === 'flow'
-          ? flowImageInjectable(r)
+          ? sourceAvailable(r)
           : !!(r?.mediaId || r?.name || r?.data || r?.filePath)
         )
         .map(r => ({
@@ -328,8 +329,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      // M1-10: 엔진 게이트 재료 — 필터 **전** 매칭 개수(filePath 만 있는 ref 도 "레퍼런스가 있는 씬")와 업스케일 설정.
-      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, references: effectiveRefs, matchedRefCount: allMatched.length, imageUpscale })
+      // M1-10: 업스케일 설정은 엔진 게이트 재료. M3: Flow 엔진은 matchedRefs(＋ 첨부)와 references(@멘션 해석 pool)로 레퍼런스를 계획한다.
+      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, references: effectiveRefs, imageUpscale })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })
@@ -622,11 +623,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       }
     }
     let refsToUpload = selectRefsToRegister(references, usedRefIds, mode)
-    // #R34: 캐릭터 entity 동기화는 생성 배치에서 분리한다. 공유 flowView 에서 DOM 자동화가 동시
-    //   실행되면 navigation 이 ERR_ABORTED 로 충돌하고, uploadImage 가 항상 새 entity 를 만들어
-    //   중복 등록된다. 캐릭터는 Ref 탭의 '동기화'(개별/일괄) 버튼으로만 등록한다. 생성 배치는
-    //   비-character ref(스타일/씬 이미지)만 업로드한다. (미동기화 @멘션은 engineFlow 이미지 폴백/에러.)
-    if (mode === 'flow') refsToUpload = refsToUpload.filter(r => r?.type !== 'character')
+    // M3(D15): Flow 에선 선행 업로드가 없다 — 이 배치는 submitGeneration 으로 가고, 엔진·main 이 씬마다 ref 바이트를 컴포저에 붙여 올린다
+    //   (같은 페이지 세션 안에선 애셋 창에서 재사용). 엔진 uploadReference 는 새 Flow 에서 flow-references-unsupported 라 부르면 경고만 쌓인다.
+    if (mode === 'flow') refsToUpload = []
     console.log('[Automation] Refs to upload:', refsToUpload.length)
     if (refsToUpload.length > 0) {
       setStatus('uploading')

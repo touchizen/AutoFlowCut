@@ -12,6 +12,8 @@
  *   - listModels: IPC 없음 → FLOW_MODELS 정적 목록 반환
  *   - generateImage: flowGenerateImage(asyncMode:false)
  *   - submitGeneration: flowGenerateImage(asyncMode:true)
+ *     M3(docs/plans/2026-09-25-flow-M3-references-plan.md D1·D2·D3): 둘 다(그리고 generateVideoT2V) planFlowReferenceComposition → ref 하나씩
+ *     resolveReferenceImages → 페이로드 refs:[{base64,mime}] · plan:{segments, attach}(레퍼런스 없으면 plan:null)
  *   - checkVideoStatus: flowCheckVideoStatus → index zip으로 generationId 주입
  *   - uploadReference: meta.type==='character' → flowUploadCharacterEntity, 그 외 → flowUploadReference
  *   - downloadVideo: URI가 URL이면 flowDownloadVideoUrl, 아니면 flowDomDownloadVideo
@@ -29,121 +31,10 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { FLOW_MODELS } from './flowModels'
-import { parseSceneMentions } from '../utils/sceneMentions'
-import { resolveMentionPrefix, stripMentionPrefixes } from '../utils/mentionParser'
-import { flowImageInjectable } from '../utils/refImageGuard'
+import { planFlowReferenceComposition } from '../utils/flowReferencePlan'
+import { resolveReferenceImages } from '../utils/referenceResolver'
 
 const api = () => window.electronAPI
-
-/**
- * #R33: 미해결 @멘션 이미지 폴백 (순수).
- *
- * 캐릭터가 Flow 에 동기화되지 않아 @멘션이 해결 안 될 때(king 케이스), 그 캐릭터의
- * 레퍼런스가 "주입 가능한 mediaId"를 가졌다면 @ 를 떼어 일반 텍스트로 만들고 그 ref 이미지를
- * 주입해 **일반 이미지 생성**으로 폴백한다 — 캐릭터 일관성은 ref 이미지로 유지된다(빈 이미지가
- * 아님). 하나라도 mediaId 가 없어 주입 불가하면 null(=하드 실패 유지: 캐릭터 없는 생성 방지).
- *
- * 호출 측은 "해결된 멘션이 하나도 없을 때(hasMention===false)"만 이 폴백을 시도한다 —
- * @synced 와 @unsynced 가 섞인 혼합 케이스는 scene-mention 과 image-inject 를 한 호출에
- * 합칠 수 없어 기존대로 실패시킨다.
- *
- * @param {string} prompt
- * @param {Array} referenceImages - 이미 주입 예정인 매칭 ref 이미지들
- * @param {Array<{name:string,exact?:boolean}>} unresolved - parseSceneMentions 의 미해결 멘션
- * @param {Array} references - 전체 ref 목록(effectiveRefs)
- * @returns {{ prompt: string, referenceImages: Array } | null}
- */
-export function planUnresolvedMentionFallback(prompt, referenceImages, unresolved, references) {
-  if (!unresolved || unresolved.length === 0) return null
-  // #R34-fix: @멘션은 character 의도다. 같은 이름의 비-character(scene/style) ref 가 mediaId 를
-  //   가졌다고 character 멘션 폴백을 가로채면 안 된다 → character 만 lookup 대상으로 둔다.
-  const byName = new Map()
-  const byExactName = new Map()
-  for (const r of references || []) {
-    if (r?.name && r.type === 'character') {
-      byName.set(String(r.name).toLowerCase(), r)
-      byExactName.set(String(r.name).toLowerCase(), r)
-    }
-  }
-  const fallbackRefs = []
-  for (const u of unresolved) {
-    const ref = u.exact
-      ? byExactName.get(String(u.name).toLowerCase())
-      : resolveMentionPrefix(u.name, byName)?.ref
-    if (!ref || !ref.mediaId) return null  // 주입 불가 → 폴백 포기(하드 실패 유지)
-    fallbackRefs.push(ref)
-  }
-  if (fallbackRefs.length === 0) return null
-  const strippedPrompt = stripMentionPrefixes(prompt, fallbackRefs)
-  const merged = [...(referenceImages || [])]
-  const seen = new Set(merged.map(r => r && r.mediaId).filter(Boolean))
-  for (const r of fallbackRefs) {
-    if (r.mediaId && !seen.has(r.mediaId)) {
-      seen.add(r.mediaId)
-      merged.push({ category: r.category, mediaId: r.mediaId, caption: r.caption || '', name: r.name, data: r.data || null, filePath: r.filePath || null })
-    }
-  }
-  return { prompt: strippedPrompt, referenceImages: merged }
-}
-
-/**
- * #R33: @멘션 라우팅 단일 결정 함수 (순수) — generateImage/submitGeneration 공용.
- *
- * 한 곳에서 모든 경우를 판정해 분기 중복을 없앤다:
- *   - 멘션 없음                         → { kind:'image' } (입력 그대로 일반 생성)
- *   - 해결된 멘션 있음                  → { kind:'scene', segments } (flowGenerateScene)
- *   - 미해결만 있고(해결된 멘션 없음)
- *       · 모든 미해결이 mediaId 보유    → { kind:'image', prompt(스트립), referenceImages(주입) } 폴백
- *       · 하나라도 주입 불가            → { kind:'error' } (하드 실패)
- *   - 혼합(@synced + @unsynced)         → { kind:'error' } (두 경로를 한 호출에 못 합침)
- *
- * @param {string} prompt
- * @param {Array} referenceImages - 매칭으로 이미 주입될 ref 이미지들
- * @param {Array} references - 전체 ref 목록(effectiveRefs)
- * @returns {{kind:'image', prompt:string, referenceImages:Array}
- *          |{kind:'scene', segments:Array}
- *          |{kind:'error', error:string}}
- */
-export function planMentionRouting(prompt, referenceImages, references) {
-  const { hasMention, segments, unresolved } = parseSceneMentions(prompt, references || [])
-  if (unresolved.length > 0) {
-    // 해결된 멘션이 하나도 없을 때만 이미지 폴백 시도(혼합은 폴백 불가 → 실패).
-    if (!hasMention) {
-      const fb = planUnresolvedMentionFallback(prompt, referenceImages, unresolved, references)
-      if (fb) return { kind: 'image', prompt: fb.prompt, referenceImages: fb.referenceImages }
-    }
-    // 이름을 **데이터로도** 싣는다 — 호출부(개별 씬 생성)가 "무엇을 동기화하면 되는지" 알아야
-    // 그 자리에서 동기화를 제안할 수 있다. 사람이 읽는 문구를 파싱하게 두면 파서가 둘이 되고
-    // 문구를 바꾸는 순간 조용히 깨진다.
-    const unresolvedNames = unresolved.map(u => u.name)
-    return { kind: 'error', error: `Unresolved @mention(s): ${unresolvedNames.join(', ')}`, unresolvedNames }
-  }
-  if (hasMention) return { kind: 'scene', segments }
-  return { kind: 'image', prompt, referenceImages: referenceImages || [] }
-}
-
-/** Flow scene 칩으로 표현되지 않은 mediaId 레퍼런스만 주입 대상으로 남긴다. */
-export function computeSceneGapReferences(referenceImages, segments) {
-  const mentionNames = new Set(
-    (segments || [])
-      .filter(segment => segment?.type === 'mention' && segment.name)
-      .map(segment => String(segment.name).toLowerCase())
-  )
-  const refs = referenceImages || []
-  const isChip = (ref) => ref.name && mentionNames.has(String(ref.name).toLowerCase())
-  // 선-패스: chip 으로 이미 컨디셔닝되는 mediaId 를 먼저 모은다 — referenceImages 순서와 무관하게
-  //   같은-mediaId 별칭(다른 이름의 중복 카드)이 imageInput 으로 재주입돼 이중 컨디셔닝되는 것을 막는다.
-  const seenMediaIds = new Set(
-    refs.filter(ref => flowImageInjectable(ref) && isChip(ref)).map(ref => ref.mediaId)
-  )
-  return refs.filter(ref => {
-    if (!flowImageInjectable(ref)) return false
-    if (isChip(ref)) return false
-    if (seenMediaIds.has(ref.mediaId)) return false
-    seenMediaIds.add(ref.mediaId)
-    return true
-  })
-}
 
 /**
  * #R3-1: 바운드 flowProjectId(useProjectData 설정)와 추출된 projectId(live URL) 중
@@ -175,16 +66,15 @@ export function markFlowAuthFailure(res) {
   return isFlowAuthError(res) ? { ...res, authFailed: true } : res
 }
 
-// M1-10: 새 Flow(flow.google.com) 입력 게이트 — 레퍼런스 이미지·@멘션·업스케일·업로드는 아직 미지원이라 DOM 을
-//   건드리기 전에 거부한다(Flow 모드 무조건). 호출부는 필터 **전** 매칭 개수(matchedRefCount)를 넘긴다 —
-//   filePath 만 있는 ref 는 주입 필터에서 빠져도 "레퍼런스가 있는 씬"이다.
+// M1-10 → M3(D1): 새 Flow(flow.google.com) 입력 게이트 — 업스케일만 DOM 을 건드리기 전에 거부한다(Flow 모드 무조건). 레퍼런스·@멘션은 M3 에서
+//   planFlowReferenceComposition → ref 하나씩 바이트 → IPC refs·plan 으로 간다. REFERENCES_UNSUPPORTED 는 범위 밖(레퍼런스 생성의 스타일 ref 이미지 ·
+//   엔진 uploadReference)에만 남는다.
 const REFERENCES_UNSUPPORTED = () => ({ success: false, errorKind: 'flow-references-unsupported', error: 'flow-references-unsupported' })
-export function flowInputGate(referenceImages, callOpts = {}) {
+const SOURCE_MISSING = () => ({ success: false, errorKind: 'flow-reference-source-missing', error: 'flow-reference-source-missing' })
+export function flowInputGate(callOpts = {}) {
   if (callOpts.imageUpscale && callOpts.imageUpscale !== 'off') {
     return { success: false, errorKind: 'flow-upscale-unsupported', error: 'flow-upscale-unsupported' }
   }
-  if ((callOpts.matchedRefCount || 0) > 0) return REFERENCES_UNSUPPORTED()
-  if (Array.isArray(referenceImages) && referenceImages.length > 0) return REFERENCES_UNSUPPORTED()
   return null
 }
 
@@ -268,6 +158,10 @@ export function useFlowEngine(opts = {}) {
 
   // 현재 최선의 projectId 반환 (bound 우선, live-extracted 폴백 — ref 로 동기 최신값).
   const effectiveProjectId = () => resolveEffectiveProjectId(boundFlowProjectIdRef.current, extractedProjectIdRef.current)
+
+  // M3(D2): ref 바이트는 지금 프로젝트의 references/{name} 에서도 읽는다(referenceResolver) — 최신 getter 를 ref 로(useCallback 재생성 없이).
+  const getProjectNameRef = useRef(opts.getProjectName)
+  getProjectNameRef.current = opts.getProjectName
 
   // #R4-3: 최신 토큰 반환 — ref 경유로 stale closure 방지
   const effectiveToken = () => accessTokenRef.current
@@ -362,36 +256,57 @@ export function useFlowEngine(opts = {}) {
     return api().flowGenerateCharacter(createPayload)
   }
 
+  // M3(D2): ref **하나씩** 바이트로 — 한 번에 부르면 못 읽은 ref 가 경고만 남기고 조용히 빠진다(referenceResolver). 하나라도 못 읽으면 null.
+  //   IPC 로는 경로가 아니라 base64 를 보낸다(main 이 렌더러가 준 경로를 읽는 표면을 만들지 않는다). imagePath 도 원천이다(sourceAvailable).
+  const resolveRefBytes = async (refs) => {
+    const out = []
+    for (const ref of refs) {
+      const projectName = typeof getProjectNameRef.current === 'function' ? getProjectNameRef.current() : null
+      const [img] = await resolveReferenceImages([{ ...ref, filePath: ref.filePath || ref.imagePath || null }], { projectName, strictMime: true })
+      if (!img?.data) return null
+      out.push({ base64: img.data, mime: img.mimeType })
+    }
+    return out
+  }
+
+  // M3(D1·D3): 계획 → 바이트. 실패는 렌더러 결과 그대로({error}), 성공은 IPC 필드 {refs, plan} — 레퍼런스가 없으면 plan:null(main 은 M2 경로).
+  const planFlowRefs = async (input) => {
+    const planned = planFlowReferenceComposition(input)
+    if (!planned.success) return { error: planned }
+    const refs = await resolveRefBytes(planned.refs)
+    if (!refs) return { error: SOURCE_MISSING() }
+    return { refs, plan: refs.length > 0 ? planned.plan : null }
+  }
+
+  // M3(D1): 이미지 두 진입점(동기 generateImage · 배치·MCP 의 비동기 submitGeneration)이 같은 절차 — 업스케일 게이트 → 레퍼런스 생성의 스타일 ref
+  //   이미지(범위 밖) → 계획(멘션 = 인라인 멘션, 멘션 안 된 매칭 ref = ＋ 첨부, pool = 프로젝트 ref 전체) → 바이트 → IPC. asyncMode 만 다르다.
+  const submitFlowImage = async (prompt, referenceImages, callOpts, asyncMode) => {
+    const gate = flowInputGate(callOpts)
+    if (gate) return gate
+    const attached = Array.isArray(referenceImages) ? referenceImages : []
+    if (callOpts.purpose === 'reference' && attached.length > 0) return REFERENCES_UNSUPPORTED()
+    const r = await planFlowRefs({ prompt, attached, pool: callOpts.references || [], mode: 'image' })
+    if (r.error) return r.error
+    return markAuth(await api().flowGenerateImage({
+      token: effectiveToken(),
+      prompt,
+      aspectRatio: callOpts.aspectRatio,
+      seed: callOpts.seed,
+      model: callOpts.model,
+      projectId: effectiveProjectId(),
+      batchCount: callOpts.batchCount,
+      asyncMode,
+      refs: r.refs,
+      plan: r.plan,
+      referenceImages: [],
+    }))
+  }
+
   const generateImage = useCallback(async (prompt, referenceImages = [], callOpts = {}) => {
     try {
-      const pid = effectiveProjectId()
-      // 캐릭터 ref 는 자기 외형 프롬프트라 @멘션 라우팅 대상이 아니다 — 라우팅 전에 가른다.
-      if (isCharacterRefCall(callOpts)) return markAuth(await generateCharacterRef(prompt, callOpts, pid))
-      // M1-10: flow.google.com 미지원 입력은 DOM 조작 전에 거부(Flow 모드 무조건).
-      const gate = flowInputGate(referenceImages, callOpts)
-      if (gate) return gate
-      // #R33: 멘션 라우팅을 단일 함수로 위임(멘션없음/scene/미해결폴백/실패).
-      const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
-      // errorKind/unresolvedNames 를 함께 실어 보낸다 — 호출부가 문구 파싱 없이 "이 이름들을
-      // 동기화하면 된다"를 알고 그 자리에서 복구를 제안할 수 있다.
-      if (routing.kind === 'error') {
-        return { success: false, error: routing.error, errorKind: 'unresolved-mentions', unresolvedNames: routing.unresolvedNames || [] }
-      }
-      // M1-10: 해결된 @멘션(scene 라우팅)·미해결 멘션의 이미지 폴백(ref 주입)은 새 Flow 에서 미지원.
-      if (routing.kind === 'scene' || (routing.referenceImages || []).length > 0) return REFERENCES_UNSUPPORTED()
-
-      // routing.kind === 'image' — 평문 프롬프트만 여기 온다(레퍼런스는 위에서 거부됐다).
-      return markAuth(await api().flowGenerateImage({
-        token: effectiveToken(),
-        prompt: routing.prompt,
-        aspectRatio: callOpts.aspectRatio,
-        seed: callOpts.seed,
-        model: callOpts.model,
-        projectId: pid,
-        referenceImages: [],
-        batchCount: callOpts.batchCount,
-        asyncMode: false,
-      }))
+      // 캐릭터 ref 는 자기 외형 프롬프트라 레퍼런스 계획 대상이 아니다 — 먼저 가른다.
+      if (isCharacterRefCall(callOpts)) return markAuth(await generateCharacterRef(prompt, callOpts, effectiveProjectId()))
+      return await submitFlowImage(prompt, referenceImages, callOpts, false)
     } catch (error) {
       return markAuth({ success: false, error: error?.message || String(error) })
     }
@@ -420,31 +335,7 @@ export function useFlowEngine(opts = {}) {
         })
         return { success: true, generationId }
       }
-      // M1-10: flow.google.com 미지원 입력은 DOM 조작 전에 거부(Flow 모드 무조건).
-      const gate = flowInputGate(referenceImages, callOpts)
-      if (gate) return gate
-      // #R33: 멘션 라우팅 단일 함수 위임(generateImage 와 동일 결정).
-      const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
-      // errorKind/unresolvedNames 를 함께 실어 보낸다 — 호출부가 문구 파싱 없이 "이 이름들을
-      // 동기화하면 된다"를 알고 그 자리에서 복구를 제안할 수 있다.
-      if (routing.kind === 'error') {
-        return { success: false, error: routing.error, errorKind: 'unresolved-mentions', unresolvedNames: routing.unresolvedNames || [] }
-      }
-      // M1-10: 해결된 @멘션(scene 라우팅)·미해결 멘션의 이미지 폴백(ref 주입)은 새 Flow 에서 미지원.
-      if (routing.kind === 'scene' || (routing.referenceImages || []).length > 0) return REFERENCES_UNSUPPORTED()
-
-      // routing.kind === 'image' — 평문 프롬프트만 여기 온다(레퍼런스는 위에서 거부됐다).
-      return markAuth(await api().flowGenerateImage({
-        token: effectiveToken(),
-        prompt: routing.prompt,
-        aspectRatio: callOpts.aspectRatio,
-        seed: callOpts.seed,
-        model: callOpts.model,
-        projectId: pid,
-        referenceImages: [],
-        batchCount: callOpts.batchCount,
-        asyncMode: true,
-      }))
+      return await submitFlowImage(prompt, referenceImages, callOpts, true)
     } catch (error) {
       return markAuth({ success: false, error: error?.message || String(error) })
     }
@@ -508,26 +399,15 @@ export function useFlowEngine(opts = {}) {
   // --- 비디오 생성 ------------------------------------------------------------
 
   // M2-3: resolution 은 IPC 까지 간다 — 새 Flow 의 패널이 {360p, 720p} 만 내밀므로 main 이 클릭 전에 flow-resolution-not-offered 로 닫는다.
-  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, _referenceImages, callOpts = {}) => {
+  // M3(D1·D3·D15): 프롬프트의 @멘션 = 인라인 멘션(레퍼런스 영상 r2v) — 이미지와 같은 계획·바이트 절차. pool = referenceImages(videoPromptReferences 의
+  //   Flow 분기가 넘긴 멘션된 ref), 태그 첨부는 없다(API 모드와 같은 규칙: 영상 ref 는 멘션만). 유일 ref 상한은 계획이 IPC 전에 거부한다.
+  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, referenceImages, callOpts = {}) => {
     try {
-      // #R36: Flow @멘션 T2V 는 레퍼런스 이미지 대신 컴포저 @칩(segments)으로 캐릭터 entity 를 넣는다
-      //   (이미지 씬과 동일). segments 가 있으면 chip 경로 → ref 미지원 가드를 건너뛴다.
-      const _segments = Array.isArray(callOpts.segments) && callOpts.segments.length > 0 ? callOpts.segments : null
-      // M1-10: 새 Flow 에서 @멘션 칩(segments) 영상은 미지원 — 제출 전 거부.
-      if (_segments) return { success: false, errorKind: 'flow-mention-chips-unsupported', error: 'flow-mention-chips-unsupported' }
-      // #R17-10: Flow DOM T2V 는 reference image 주입 미지원. segments(chip) 도 아닌 실제 ref 이미지가
-      //   넘어오면 잘못된(레퍼런스 없는) 영상 방지 위해 fail-fast.
-      if (!_segments && Array.isArray(_referenceImages) && _referenceImages.length > 0) {
-        return {
-          success: false,
-          errorKind: 'flow-t2v-reference-images-unsupported',
-          error: 'Flow text-to-video does not support reference images',
-        }
-      }
+      const r = await planFlowRefs({ prompt, attached: [], pool: Array.isArray(referenceImages) ? referenceImages : [], mode: 'video' })
+      if (r.error) return r.error
       return markAuth(await api().flowGenerateVideoT2V({
         token: effectiveToken(),
         prompt,
-        segments: _segments,
         projectId: effectiveProjectId(),
         model,
         aspectRatio,
@@ -535,6 +415,8 @@ export function useFlowEngine(opts = {}) {
         resolution,
         videoBatchCount: callOpts.videoBatchCount,
         seed,
+        refs: r.refs,
+        plan: r.plan,
       }))
     } catch (error) {
       return markAuth({ success: false, error: error?.message || String(error) })

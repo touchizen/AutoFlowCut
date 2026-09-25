@@ -102,11 +102,12 @@ describe('useAutomation × useFlowEngine — 세션·게이트', () => {
     expect(hook.result.current.auto.statusMessage).toContain('rpc:http:500')
   })
 
-  it('filePath 만 있고 mediaId 없는 태그 ref → 씬 error flow-references-unsupported, flowGenerateImage 미호출', async () => {
+  // M3(D2·D15): 파일만 있는 태그 ref 도 엔진까지 간다(＋ 첨부) — 그 바이트를 못 읽으면(이 하네스의 readFileByPath 는 실패) 클릭 전 flow-reference-source-missing.
+  it('filePath 만 있고 읽을 수 없는 태그 ref → 씬 error flow-reference-source-missing, flowGenerateImage 미호출 (M3)', async () => {
     const { hook, updateScene } = setup({ references: [{ name: 'hero', filePath: '/refs/hero.png' }] })
     await runStart(hook, {}, 5000)
     expect(api.flowGenerateImage).not.toHaveBeenCalled()
-    expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'error', errorKind: 'flow-references-unsupported' })
+    expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'error', errorKind: 'flow-reference-source-missing' })
   })
 
   it('imageUpscale:2k → 씬 error flow-upscale-unsupported, 제출 없음', async () => {

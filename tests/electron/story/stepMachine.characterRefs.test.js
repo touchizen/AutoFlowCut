@@ -5,7 +5,7 @@ import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
-import { planMentionRouting } from '../../../src/engine/engineFlow.js'
+import { planFlowReferenceComposition } from '../../../src/utils/flowReferencePlan.js'
 
 describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
   let dir, machine, llm, emitted
@@ -531,13 +531,14 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(scene.prompt).toBe('@{도둑 우두머리}A young Korean man in a dark alley')
     expect(scene.videoT2VPrompt).toBe('@{도둑 우두머리}A young Korean man in a dark alley')
 
-    const routing = planMentionRouting(scene.prompt, [], [{
+    // M3: Flow 멘션 라우팅 = 렌더러 계획(planFlowReferenceComposition) — braced 이름이 통째로 인라인 멘션 세그먼트가 된다.
+    const routing = planFlowReferenceComposition({ prompt: scene.prompt, pool: [{
       type: 'character',
       name: '도둑 우두머리',
-      entityId: 'boss-entity',
-      flowNameSyncStatus: 'synced',
-    }])
-    expect(routing.kind).toBe('scene')
+      data: 'data:image/png;base64,Qk9TUw==',
+    }] })
+    expect(routing.success).toBe(true)
+    expect(routing.plan.segments).toEqual([{ t: 'mention', ref: 0 }, { t: 'text', text: 'A young Korean man in a dark alley' }])
   })
 
   it('appearance 없는 캐릭터는 @멘션에서 제외되지만 characters 태그/storyCharacters엔 남는다 (regression 7d77a0d)', async () => {
