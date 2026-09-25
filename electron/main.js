@@ -51,6 +51,7 @@ import { createBearerStore, bearerFromHeaders, isFlowApiRequest } from './flow-b
 import { FLOW_XHR_CAPTURE_INJECTION } from './flow-xhr-capture.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from './flow-rpc-capture.js'
 import { failBoundUnfinished } from './flow-rpc-router.js'
+import { decideUpdateRequest, parseStartSceneBatchBody } from './mcp-http-parsers.js'   // M2-LIVE N3 · N7
 import { isNetTraceOn, netTraceFilePath, decodeUploadData, buildTraceLine, summarizeTraceEntry } from './flow-net-trace.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
@@ -352,6 +353,27 @@ registerMcpIPC(ipcMain)
 
 // Vrew IPC (.vrew writing — local zip package)
 registerVrewIPC(ipcMain)
+
+// M2-LIVE N1: 제자리 자동화 뷰포트(flow-angular withAutomationViewport) 동안 사용자 포인터 입력을 삼키는 **최상위 투명 방패 뷰**.
+//   Flow 뷰가 앱 UI 위에 있는 몇 초 동안 사용자의 클릭이 컴포저(제출 화살표·설정 라디오·미디어 카드)에 닿으면 과금·고아 미디어·잘못된 설정이 된다.
+//   contentView 에 Flow 뷰 **뒤에** 붙여 최상위가 되게 하고 창 콘텐츠 크기로 둔다. 앱의 신뢰 클릭은 flowView.webContents.sendInputEvent 라
+//   OS 히트테스트를 거치지 않아 방패 아래로 그대로 통한다. 페이지 스크립트 없음(sandbox, preload 없음, about:blank). remove() 가 떼고 닫는다.
+function makeInputShield() {
+  const win = mainWindow
+  if (!win || !win.contentView) return null
+  const shield = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } })
+  shield.setBackgroundColor('#00000000')
+  shield.webContents.loadURL('about:blank').catch(() => {})
+  win.contentView.addChildView(shield)
+  const { width, height } = win.getContentBounds()
+  shield.setBounds({ x: 0, y: 0, width, height })
+  return {
+    remove() {
+      try { win.contentView.removeChildView(shield) } catch (_e) { /* 창이 이미 닫혔을 수 있다 */ }
+      try { shield.webContents.close() } catch (_e) { /* 이미 닫힘 */ }
+    },
+  }
+}
 
 // Flow WebContentsView factory — only called when mode:set('flow') is invoked.
 // Lazy creation ensures API mode startup is unaffected.
@@ -967,6 +989,7 @@ const flowAPIDeps = {
   //   소모하지 않도록 현재 모드를 노출한다.
   getCurrentMode: modeController.getCurrentMode,
   getMainWindow: () => mainWindow,
+  createInputShield: makeInputShield,   // M2-LIVE N1: 제자리 자동화 뷰포트 동안의 입력 방패
   // Shared helpers
   ...helpers,
   // Inject state helpers
@@ -1169,12 +1192,13 @@ function startMcpHttpServer(port) {
         }
 
         // POST /api/update — 데이터 업데이트 (renderer로 전달)
+        //   M2-LIVE N3: update-settings 는 화이트리스트 밖 키·틀린 값이면 400 + 키 이름(decideUpdateRequest — 순수, 테스트는 mcpHttpParsers.test.js).
         if (req.method === 'POST' && pathname === '/api/update') {
-          const data = JSON.parse(body)
+          const decided = decideUpdateRequest(body)
           if (mainWindow) {
-            mainWindow.webContents.send('mcp-update', data)
-            res.writeHead(200)
-            res.end(JSON.stringify({ success: true }))
+            if (decided.forward) mainWindow.webContents.send('mcp-update', decided.forward)
+            res.writeHead(decided.status)
+            res.end(JSON.stringify(decided.body))
           } else {
             res.writeHead(503)
             res.end(JSON.stringify({ error: 'App not ready' }))
@@ -1243,18 +1267,17 @@ function startMcpHttpServer(port) {
         }
 
         // POST /api/start-scene-batch — 씬 일괄 생성 시작
+        //   M2-LIVE N7: 본문 파싱은 parseStartSceneBatchBody(순수 — mcpStartSceneBatchMode.test.js). mode('video'|'image' — 렌더러의 탭 오버라이드, 없으면 현재 UI 탭)가
+        //   모르는 값이면 400 — 그대로 넘기면 이미지 탭에서 영상 씬 대신 이미지 배치가 과금된다. force: 선택, 기본 false. true면 완료된 씬도 재생성 대상에.
         if (req.method === 'POST' && pathname === '/api/start-scene-batch') {
           if (mainWindow) {
-            let styleId = null
-            let force = false
-            let mode = null   // 'video' | 'image' — 렌더러(useMcpServer)의 탭 오버라이드. 없으면 현재 UI 탭.
-            try {
-              const parsed = JSON.parse(body)
-              styleId = parsed.styleId || null
-              force = !!parsed.force  // 선택, 기본 false. true면 완료된 씬도 재생성 대상에.
-              mode = typeof parsed.mode === 'string' ? parsed.mode : null
-            } catch {}
-            mainWindow.webContents.send('mcp-update', { type: 'start-scene-batch', styleId, force, ...(mode ? { mode } : {}) })
+            const parsedBatch = parseStartSceneBatchBody(body)
+            if (!parsedBatch.ok) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: parsedBatch.error }))
+              return
+            }
+            mainWindow.webContents.send('mcp-update', parsedBatch.payload)
             res.writeHead(200)
             // 응답에 styleId echo 안 함 — fire-and-forget이라 effective style은 renderer fallback이
             // 결정하므로(예: 첫 카드 자동 적용), main이 즉시 알 수 없음. 거짓 정보를 주는 것보다 안 주는 게 정직.

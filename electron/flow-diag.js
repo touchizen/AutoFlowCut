@@ -23,7 +23,8 @@ const DEFAULT_MAX_STEPS = 8
 // 자동 전송에 실으면 안 되는 키 — 로컬 파일에는 남지만(사용자가 보낼지 스스로 정한다) Sentry 로는
 //   절대 안 싣는다. DOM 덤프가 이 싱크를 타게 되면 alt/title/placeholder/value/src 도
 //   페이지·사용자 콘텐츠를 담는다 — 나중에 붙이는 사람이 이 목록을 다시 발견하게 두지 않는다.
-const CONTENT_KEYS = /prompt|html|content|srt|script|caption|narration|body|ariaLabel|aria-label|placeholder|^text$|^url$|^alt$|^title$|^value$|^src$|^currentSrc$|^poster$|^label$|^name$/i
+//   M2-LIVE N8(A7/B8): `labels`(복수 — settings shape 의 unclassified[].labels)도 스크럽 — `^label$` 만이라 분류 못 한 그룹의 페이지 텍스트가 Sentry 로 갔다.
+const CONTENT_KEYS = /prompt|html|content|srt|script|caption|narration|body|ariaLabel|aria-label|placeholder|^text$|^url$|^alt$|^title$|^value$|^src$|^currentSrc$|^poster$|^labels?$|^name$/i
 
 /**
  * 자동 전송(Sentry)에 실을 수 있게 콘텐츠 필드를 재귀적으로 벗긴다.

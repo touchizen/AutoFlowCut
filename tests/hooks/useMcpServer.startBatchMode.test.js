@@ -58,4 +58,14 @@ describe('MCP start-scene-batch mode → handleStart tab override', () => {
     cb({ type: 'start-scene-batch', styleId: 'preset:cinematic', mode: 'f2v' })
     expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { source: 'mcp' })
   })
+
+  // M2-LIVE N7(A5): MCP_BATCH_MODE_TAB[mode] 는 평범한 객체 조회라 'constructor'·'toString'·'__proto__' 가 truthy 비문자열(함수·객체)을 내어 setActiveTab(fn) 이
+  //   React 업데이터로 적용돼 탭 UI 가 깨졌다. 자기 키(Object.hasOwn)만 탭이다.
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])("프로토타입 키 mode=%s → tab 키 없음(함수·객체가 tab 으로 새지 않는다) (M2-LIVE N7)", (mode) => {
+    const handleStart = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ handleStart })))
+    cb({ type: 'start-scene-batch', styleId: 'preset:cinematic', mode })
+    expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { source: 'mcp' })
+    expect(handleStart.mock.calls[0][1]).not.toHaveProperty('tab')
+  })
 })

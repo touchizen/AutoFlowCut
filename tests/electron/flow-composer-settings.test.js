@@ -11,7 +11,7 @@ import {
   FIND_RADIO_JS, applyComposerSettings,
 } from '../../electron/flow-composer-settings.js'
 import {
-  CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel,
+  CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel, buildDurationGroup,
 } from '../fixtures/flow-live-dom-20260924.js'
 import { installFakeAngular, disposeFakeAngular } from '../helpers/fakeFlowAngular.js'
 
@@ -158,13 +158,21 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     expect(s.ok).toBe(false)   // 닫혔다
   })
 
-  it('(b) 지연 리셋: count 클릭이 duration 을 되돌린다 → 최종 재판독이 잡고 2차 패스로 다시 맞춘 뒤 재판독 ok (M2 실기: 모델 전환 뒤 비율 지연 리셋)', async () => {
-    const doc = mount(videoPage({ checked: { count: 'x2' } }))
-    const log = installFakeAngular(doc, { modelReset: 'on-count' })
-    const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni 1.1 Flash' }, noSleep)
-    expect(r).toMatchObject({ ok: true, closed: true, steps: { duration: 'reclicked(8)', count: 'clicked(x1)' } })
-    expect(log.filter((l) => l === 'duration:8초')).toHaveLength(2)   // 1차 + 2차 패스
-    expect(scanSettingsPanel(doc).ok).toBe(false)   // 닫혔다
+  // M2-LIVE N6(B5): 가짜의 되돌림이 같은 노드의 aria-checked 만 뒤집어 "2차 패스는 재스캔한다" 가 묶이지 않았다 — 최종 재판독(+100ms)의 클릭 목록을 재스캔 없이 재사용하는
+  //   뮤턴트가 통과했다. 이제 되돌림은 상태를 뒤집고 200ms 뒤 그룹 element 를 갈아끼운다(라이브 Angular 의 재렌더): 재판독이 잡은 노드는 2차 패스(+400ms) 전에 떨어지므로
+  //   2차 패스의 8초 클릭은 재스캔한 새 노드여야 reclicked(8) 이 된다. 결정적 시계(가짜 타이머 + sleep 전진).
+  it('(b) 지연 리셋: count 클릭이 duration 을 되돌리고 200ms 뒤 그룹을 다시 그린다 → 최종 재판독이 잡고 2차 패스가 **재스캔한 노드**로 다시 맞춘 뒤 재판독 ok (M2 실기 · M2-LIVE N6)', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(videoPage({ checked: { count: 'x2' } }))
+      const log = installFakeAngular(doc, { modelReset: 'on-count', resetReplaceDelayMs: 200 })
+      const firstDurationEl = scanSettingsPanel(doc).groups.duration.options.find((o) => o.label === '8초').el
+      const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni 1.1 Flash' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(r).toMatchObject({ ok: true, closed: true, steps: { duration: 'reclicked(8)', count: 'clicked(x1)' } })
+      expect(log.filter((l) => l === 'duration:8초')).toHaveLength(2)   // 1차 + 2차 패스
+      expect(firstDurationEl.isConnected).toBe(false)   // 1차 패스가 누른 노드는 되돌림이 갈아끼워 떨어져 있다
+      expect(scanSettingsPanel(doc).ok).toBe(false)   // 닫혔다
+    } finally { vi.useRealTimers() }
   })
 
   it('(b2) 계속 되돌리는 그룹은 2차 패스 뒤에도 어긋나 → not-checked:<group> (fail-closed, 단계 통과만으로 ok 를 내지 않는다)', async () => {
@@ -634,13 +642,20 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
 // 2026-09-25 M2 실기(2차 런, 957×1022): 설정 트리거 trusted 클릭 직후 드라이버가 **즉시 한 번** 스캔해 패널 애니메이션이 끝나기 전에
 //   panel-not-open 으로 닫았다(같은 세션의 이미지 런 두 번은 타이밍 운으로 통과). 패널은 유계 대기(≤3s, 50ms 폴링)로 기다린다.
 describe('settingsDriverCore — 패널이 늦게 열려도 기다린다 (M2 실기)', () => {
-  it('트리거 클릭 400ms 뒤에 패널이 나타나면 ok', async () => {
+  // M2-LIVE N4(B3): 옛 핀은 "첫 스캔 전 대기" 를 묶지 못했다 — 대기를 지워도 재시도의 3s 대기가 400ms 패널을 구제해 초록이었다. 라이브에선 대기 없는
+  //   즉시 재시도 클릭이 **애니메이션 중인 패널을 토글로 닫아** 모든 생성이 panel-not-open 이 된다. 트리거에 토글 의미(클릭 = 열린 패널 닫기)를 달고
+  //   재시도 클릭이 0회임을 본다.
+  it('트리거 클릭 400ms 뒤에 패널이 나타나면 ok — 첫 스캔 전에 기다리므로 재시도 클릭(토글: 열린 패널을 닫는다)은 0회 (M2-LIVE N4)', async () => {
     const doc = mount(HEAD + IMAGE_COMPOSER_KO)   // 패널 없음(닫힌 상태)
+    const trigger = doc.querySelector('button.settings-trigger-button')
+    let clicks = 0
+    trigger.addEventListener('click', () => { clicks++; doc.querySelector('.cdk-overlay-container')?.remove() })
     const p = runSettingsDriver(doc, { mode: 'image' })   // 모드만 — 픽스처엔 가짜 Angular 가 없어 라디오 클릭 반영은 여기서 다루지 않는다
     await new Promise((r) => setTimeout(r, 400))
     doc.body.insertAdjacentHTML('beforeend', buildSettingsPanel({ mode: 'image' }))
     const r = await p
     expect(r).toMatchObject({ ok: true, steps: { mode: 'already' } })
+    expect(clicks).toBe(0)
   })
   it('3초가 지나도 패널이 없으면 panel-not-open', async () => {
     const doc = mount(HEAD + IMAGE_COMPOSER_KO)
@@ -654,15 +669,21 @@ describe('settingsDriverCore — 패널이 늦게 열려도 기다린다 (M2 실
 //   더 누르고 다시 기다린다. (2) Veo 3.1 - Fast 로 바꾸자 group-not-found:duration — Veo 패널의 길이 그룹 모양은 관측된 적이 없다.
 //   group-not-found 실패는 분류 못 한 토글 그룹의 라벨(UI 문자열)을 shape 로 싣는다(진단 — 다음 한 번에 모양을 본다).
 describe('settingsDriverCore — 트리거 헛클릭 재시도 · group-not-found 모양 진단 (M2 실기)', () => {
-  it('패널이 안 열리면 트리거를 한 번 더 누르고, 그 클릭이 패널을 열면 ok', async () => {
-    const doc = mount(HEAD + IMAGE_COMPOSER_KO)
-    const trigger = doc.querySelector('button.settings-trigger-button')
-    let clicks = 0
-    trigger.addEventListener('click', () => { clicks++; doc.body.insertAdjacentHTML('beforeend', buildSettingsPanel({ mode: 'image' })) })
-    const r = await runSettingsDriver(doc, { mode: 'image' })
-    expect(r).toMatchObject({ ok: true, steps: { mode: 'already' } })
-    expect(clicks).toBe(1)
-  }, 10000)
+  it('패널이 안 열리면 트리거를 한 번 더 누르고, 그 클릭이 패널을 열면 ok — 재시도 클릭은 첫 대기(≈3000ms)가 지난 **뒤**에만 (M2-LIVE N4)', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(HEAD + IMAGE_COMPOSER_KO)
+      const trigger = doc.querySelector('button.settings-trigger-button')
+      const t0 = Date.now()
+      const clickedAt = []
+      trigger.addEventListener('click', () => { clickedAt.push(Date.now() - t0); doc.body.insertAdjacentHTML('beforeend', buildSettingsPanel({ mode: 'image' })) })
+      const r = await runSettingsDriver(doc, { mode: 'image' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(r).toMatchObject({ ok: true, steps: { mode: 'already' } })
+      expect(clickedAt).toHaveLength(1)
+      expect(clickedAt[0]).toBeGreaterThanOrEqual(3000)
+      expect(clickedAt[0]).toBeLessThan(3200)
+    } finally { vi.useRealTimers() }
+  })
 
   it('길이 그룹을 분류 못 하면 group-not-found:duration 에 분류 못 한 그룹의 라벨을 shape 로 싣는다', async () => {
     const odd = ['4초 · 오디오 포함', '8초 · 오디오 포함']
@@ -674,6 +695,71 @@ describe('settingsDriverCore — 트리거 헛클릭 재시도 · group-not-foun
     // 토글이 아닌 패널 컨트롤도 싣는다(Veo 패널엔 길이·해상도 토글이 없었다 — 드롭다운인지 없는지 본다). 모델 트리거가 그중 하나.
     expect(r.shape.controls.some((c) => /omni 1\.1 flash/i.test(c.label) && c.haspopup === 'menu')).toBe(true)
     expect(r.shape.controls.every((c) => c.role !== 'radio')).toBe(true)
+  })
+})
+
+// M2-LIVE N5(A4/B4): 트리거 재시도 클릭은 scan 이 실패하기만 하면 나갔다 — 열려 있지만 Material 이 아닌 패널(input-mode-not-material, 배치 전체 이유)·점진 렌더 중인
+//   패널을 토글로 닫고 3s 뒤 panel-not-open(항목 이유)으로 둔갑시켜 원인을 가리고 항목마다 +3s·클릭 2회를 태웠다. 재시도는 "panel-not-open **이고** 문서에 [role=radio] 가
+//   하나도 없을 때"(정말 아무것도 안 그려진 경우)만; 아니면 스캔의 사유 그대로.
+describe('settingsDriverCore — 트리거 재시도는 panel-not-open + 라디오 0개일 때만 (M2-LIVE N5)', () => {
+  const fakeSleep = { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) }
+  const countTriggerClicks = (doc) => { let n = 0; doc.querySelector('button.settings-trigger-button').addEventListener('click', () => { n++ }); return () => n }
+  afterEach(() => { vi.useRealTimers() })
+  it('Material 이 아닌 라디오 패널(input-mode-not-material) → 재시도 클릭 없이 그 사유 그대로', async () => {
+    vi.useFakeTimers()
+    const doc = mount(imagePage({ material: false }))
+    const clicks = countTriggerClicks(doc)
+    const r = await runSettingsDriver(doc, { mode: 'image' }, fakeSleep)
+    expect(r).toMatchObject({ ok: false, reason: 'input-mode-not-material' })
+    expect(clicks()).toBe(0)
+  })
+  it('라디오가 있지만 6개 미만(점진 렌더 — panel-not-open) → 재시도 클릭 없이 panel-not-open', async () => {
+    vi.useFakeTimers()
+    const three = '<div class="cdk-overlay-container"><div class="cdk-overlay-pane"><div class="flow-settings-panel">' + [1, 2, 3].map((i) => `<button type="button" class="mat-button-toggle-button" role="radio" aria-checked="${i === 1}" name="mat-button-toggle-group-9">x${i}</button>`).join('') + '</div></div></div>'
+    const doc = mount(HEAD + IMAGE_COMPOSER_KO + three)
+    const clicks = countTriggerClicks(doc)
+    const r = await runSettingsDriver(doc, { mode: 'image' }, fakeSleep)
+    expect(r).toMatchObject({ ok: false, reason: 'panel-not-open' })
+    expect(clicks()).toBe(0)
+  })
+})
+
+// M2-LIVE N8(A7/B8): shape 진단은 라디오의 최소 공통 조상 아래 button/[role]/input/mat-select 의 textContent 를 읽는다 — 패널이 CDK 오버레이 pane 이면 UI 라벨뿐이지만
+//   Flow 가 패널을 인라인으로 그리면 LCA 가 컴포저·앱 루트로 넓어져 카드 프롬프트·프로젝트 이름 입력이 잡혀 reportDomFailure → Sentry 로 간다. shape(controls 포함)는 LCA 가
+//   .cdk-overlay-pane 안일 때만 모은다. 라벨 텍스트(unclassified[].labels · controls[].label)는 로컬 진단 파일에만 — Sentry 스크럽은 flow-diag 의 CONTENT_KEYS(labels 추가).
+describe('scanSettingsPanel / group-not-found shape — 오버레이 pane 안의 패널만 shape 를 싣는다 (M2-LIVE N8)', () => {
+  const odd = ['4초 · 오디오 포함', '8초 · 오디오 포함']
+  const inlinePanel = () => {
+    // 같은 패널을 오버레이 없이 컴포저 옆에 인라인으로 — LCA 가 body 바로 아래 래퍼(앱 루트 모양)가 된다
+    const panelHtml = buildSettingsPanel({ mode: 'video', durations: odd, checked: { duration: odd[1] } }).replace('<div class="cdk-overlay-container"><div class="cdk-overlay-pane">', '').replace(/<\/div><\/div>$/, '')
+    return mount('<div class="af-app-root"><input class="project-name" value="내 프로젝트 이름"><button class="af-card-prompt">왕이 궁전을 걷는 프롬프트</button>' + IMAGE_COMPOSER_KO + panelHtml + '</div>')
+  }
+  it('scan: 오버레이 pane 안이면 overlay:true + controls, 인라인이면 overlay:false + controls 비움(앱 루트의 텍스트를 읽지 않는다)', () => {
+    const inOverlay = scanSettingsPanel(mount(videoPage()))
+    expect(inOverlay.ok).toBe(true)
+    expect(inOverlay.overlay).toBe(true)
+    expect(inOverlay.controls.length).toBeGreaterThan(0)
+    const inline = scanSettingsPanel(inlinePanel())
+    expect(inline.ok).toBe(true)
+    expect(inline.overlay).toBe(false)
+    expect(inline.controls).toEqual([])
+    expect(JSON.stringify(inline)).not.toContain('프롬프트')
+    expect(JSON.stringify(inline)).not.toContain('프로젝트 이름')
+  })
+  it('driver: 인라인 패널의 group-not-found:duration 은 shape 없이 — 결과 어디에도 카드 프롬프트·프로젝트 이름이 없다', async () => {
+    const doc = inlinePanel()
+    const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni Flash' }, noSleep)
+    expect(r).toMatchObject({ ok: false, reason: 'group-not-found:duration' })
+    expect(r).not.toHaveProperty('shape')
+    expect(JSON.stringify(r)).not.toContain('프롬프트')
+    expect(JSON.stringify(r)).not.toContain('프로젝트 이름')
+  })
+  it('driver: 오버레이 pane 안의 패널은 그대로 shape(groups·unclassified·controls) 를 싣는다', async () => {
+    const doc = mount(HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', durations: odd, checked: { duration: odd[1] } }))
+    const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', duration: 8, resolution: '720p', count: 1, model: 'Omni Flash' }, noSleep)
+    expect(r).toMatchObject({ ok: false, reason: 'group-not-found:duration' })
+    expect(r.shape.unclassified).toEqual([{ labels: odd, ligatures: [] }])
+    expect(r.shape.controls.some((c) => c.haspopup === 'menu')).toBe(true)
   })
 })
 
@@ -699,5 +785,130 @@ describe('planSettingsClicks — 패널에 없는 길이·해상도 그룹은 �
   it('그룹이 있는 Omni 패널은 그대로(없는 값은 여전히 not-offered)', () => {
     const s = scanSettingsPanel(mount(HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video' })))
     expect(planSettingsClicks(s, { mode: 'video', ratio: '16:9', count: 1, model: 'Omni Flash', duration: 5, resolution: '720p' }, 2)).toMatchObject({ ok: false, reason: 'duration-not-offered:5' })
+  })
+})
+
+// M2-LIVE N2(A2/B1): "없는 그룹 = 모델 기본값(fixed 8초·720p)" 은 스냅샷 술어였다 — 안정 요구도 모델 검사도 없어서 (1) Omni 패널이 그룹을 늦게 그리면
+//   (모드 전환 뒤 · Veo → Omni 전환 뒤 Angular 가 옵션을 늦게 붙인다) 그 순간의 "없음" 을 기본값으로 받아 Flow 가 기억한 4·6초로 과금될 수 있었고
+//   (2) 모델 클릭 뒤 waitGroupsSettled 는 그룹이 없으면 영영 안정되지 않아 1.5s 상한에서 그냥 떨어져 "아직 없음" 을 "기본값" 으로 삼았다.
+//   이제: (a) fixed 는 패널 모델 라벨이 /veo/i 일 때만 — Omni 의 없는 그룹은 group-not-found + shape (b) 없음은 유계 대기(≤1.5s)로 증명한다 —
+//   그 안에 그룹이 나타나면 그걸로 계획하고, 끝까지 없으면 마지막 3스캔의 패널 서명(모든 라디오 name|label|checked + 트리거 라벨)이 같아야(모델 클릭 뒤엔
+//   클릭 전 서명에서 벗어나야) 받는다; 계속 바뀌면 settings-not-settled(클릭 전) (c) main 은 닫힌 요약의 길이·해상도 토큰이 fixed 값과 다르면 거부한다.
+describe('M2-LIVE N2 — 없는 길이·해상도 그룹은 Veo 에서만, 없음은 안정으로 증명, 닫힌 요약 재검증', () => {
+  const fakeSleep = { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) }
+  const veoPanel = (o = {}) => HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', model: 'Veo 3.1 - Fast', omit: ['resolution', 'duration'], checked: { ratio: 'crop_9_16' }, ...o })
+  const VEO8 = { mode: 'video', ratio: '9:16', count: 1, model: 'Veo 3.1 - Fast', duration: 8, resolution: '720p' }
+  afterEach(() => { vi.useRealTimers() })
+
+  it('(a) 계획: Omni 패널에 길이·해상도 그룹이 없으면 fixed 가 아니라 group-not-found:<kind> — Veo 라벨만 fixed', () => {
+    const omni = (omit) => scanSettingsPanel(mount(HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', omit })))
+    const target = { mode: 'video', ratio: '16:9', count: 1, model: 'Omni Flash', duration: 8, resolution: '720p' }
+    expect(planSettingsClicks(omni(['duration']), target, 2)).toMatchObject({ ok: false, reason: 'group-not-found:duration' })
+    expect(planSettingsClicks(omni(['resolution']), target, 2)).toMatchObject({ ok: false, reason: 'group-not-found:resolution' })
+    const veo = scanSettingsPanel(mount(veoPanel()))
+    expect(planSettingsClicks(veo, VEO8, 2)).toMatchObject({ ok: true, steps: { duration: 'fixed(8)', resolution: 'fixed(720p)' } })
+  })
+
+  it('(b) B1 프로브: Veo 패널 → 목표 Omni Flash 8초/720p, Omni 그룹이 항목 클릭 2000ms 뒤 삽입(6초 체크) → 절대 fixed(8) 아님 — 8초 클릭 또는 클릭 전 실패', async () => {
+    vi.useFakeTimers()
+    const doc = mount(veoPanel())
+    const log = installFakeAngular(doc, { modelSelectInsertGroupsMs: 2000, modelSelectInsertGroups: { durations: ['4초', '6초', '8초', '10초'], checkedDuration: '6초', resolutions: ['360p', '720p'], checkedResolution: '720p' } })
+    const r = await runSettingsDriver(doc, { ...VEO8, model: 'Omni Flash' }, fakeSleep)
+    expect(JSON.stringify(r.steps)).not.toContain('fixed(')
+    expect(r.steps.model).toBe('clicked')
+    if (r.ok) expect(log).toContain('duration:8초')
+    else expect(r.reason).toMatch(/^(group-not-found:duration|settings-not-settled)$/)
+    expect(r.closed).toBe(true)
+    expect(log.slice(0, 2)).toEqual(['model-trigger', 'model:omni 1.1 flash'])
+  })
+
+  it('(b) A2 시나리오(Veo 라벨): 이미지 → 영상 모드, 길이 그룹이 300ms 늦게(4초 체크) 그려진다 → 대기가 그룹을 보고 8초 클릭(fixed 아님)', async () => {
+    vi.useFakeTimers()
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc, { modePanel: { model: 'Veo 3.1 - Fast', omit: ['duration'] }, modeInsertDurationMs: 300, modeInsertDuration: { labels: ['4초', '6초', '8초'], checked: '4초' } })
+    const r = await runSettingsDriver(doc, { ...VEO8, ratio: '16:9' }, fakeSleep)
+    expect(r).toMatchObject({ ok: true, closed: true })
+    expect(r.steps).toMatchObject({ mode: 'clicked(videocam)', model: 'already', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)' })
+    expect(log).toEqual(['mode:videocam', 'duration:8초', 'keydown:Escape:27'])
+  })
+
+  it('(b) A2 시나리오(Omni 라벨): 늦게 그려진 그룹으로 8초 클릭; 끝까지 안 그려지면 유계 대기 뒤 group-not-found:duration + shape (클릭 전)', async () => {
+    vi.useFakeTimers()
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc, { modePanel: { omit: ['duration'] }, modeInsertDurationMs: 300, modeInsertDuration: { labels: ['4초', '6초', '8초', '10초'], checked: '4초' } })
+    const r = await runSettingsDriver(doc, { mode: 'video', ratio: '16:9', count: 1, model: 'Omni Flash', duration: 8, resolution: '720p' }, fakeSleep)
+    expect(r).toMatchObject({ ok: true, steps: { duration: 'clicked(8)' } })
+    expect(log).toEqual(['mode:videocam', 'duration:8초', 'keydown:Escape:27'])
+    const doc2 = mount(imagePage())
+    installFakeAngular(doc2, { modePanel: { omit: ['duration'] } })
+    const t0 = Date.now()
+    const r2 = await runSettingsDriver(doc2, { mode: 'video', ratio: '16:9', count: 1, model: 'Omni Flash', duration: 8, resolution: '720p' }, fakeSleep)
+    expect(r2).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'group-not-found:duration', closed: true })
+    expect(r2.shape.groups).toEqual(expect.arrayContaining(['mode', 'ratio', 'resolution', 'count']))
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1500)
+  })
+
+  it('(b) 모델 클릭 뒤 패널이 계속 바뀌면(100ms 마다 길이 그룹 교체) 1.5s 상한에서 떨어지지 않고 settings-not-settled (클릭 전, 닫고 나온다)', async () => {
+    vi.useFakeTimers()
+    const doc = mount(videoPage({ durations: ['4초', '6초'] }))
+    const log = installFakeAngular(doc, { modelSelectFlapMs: 100 })
+    const r = await runSettingsDriver(doc, { ...VEO8, ratio: '16:9' }, fakeSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'settings-not-settled', closed: true, steps: { model: 'clicked' } })
+    expect(log.filter((l) => l.startsWith('duration:'))).toEqual([])
+  })
+
+  it('(b) Veo 가 이미 선택된 패널(그룹 없음, 변화 없음): 없음을 ≥1.5s 지켜본 뒤 fixed(8)·fixed(720p) 로 ok — 클릭 없음', async () => {
+    vi.useFakeTimers()
+    const doc = mount(veoPanel())
+    const log = installFakeAngular(doc)
+    const t0 = Date.now()
+    const r = await runSettingsDriver(doc, VEO8, fakeSleep)
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { model: 'already', duration: 'fixed(8)', resolution: 'fixed(720p)', ratio: 'already(crop_9_16)', input: 'material' } })
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1500)
+    expect(log).toEqual(['keydown:Escape:27'])
+  })
+
+  it('(b) Veo → Omni 전환에서 Omni 그룹이 400ms 뒤에 그려지면(6초 체크) 안정 대기가 그룹을 보고 8초 클릭 — fixed 아님', async () => {
+    vi.useFakeTimers()
+    const doc = mount(veoPanel())
+    const log = installFakeAngular(doc, { modelSelectInsertGroupsMs: 400, modelSelectInsertGroups: { durations: ['4초', '6초', '8초', '10초'], checkedDuration: '6초' } })
+    const r = await runSettingsDriver(doc, { ...VEO8, model: 'Omni Flash' }, fakeSleep)
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { model: 'clicked', duration: 'clicked(8)', resolution: 'already(720p)' } })
+    expect(log).toEqual(['model-trigger', 'model:omni 1.1 flash', 'duration:8초', 'keydown:Escape:27'])
+  })
+
+  // (c) main: fixed 단계는 닫힌 요약으로 재검증 — 요약에 다른 길이·해상도 토큰이 있으면 클릭 전 거부(토큰 없음은 ok).
+  describe('(c) applyComposerSettings — fixed 단계의 닫힌 요약 재검증', () => {
+    const VEO_STEPS = { mode: 'already(videocam)', ratio: 'already(crop_9_16)', duration: 'fixed(8)', resolution: 'fixed(720p)', count: 'already(x1)', model: 'already', input: 'material' }
+    let warn
+    beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.spyOn(console, 'log').mockImplementation(() => {}) })
+    afterEach(() => { vi.restoreAllMocks() })
+    const mainRun = (steps, summaryText) => {
+      const executeJavaScript = vi.fn(async (script) => {
+        const s = String(script)
+        if (s.includes('__af_settings_driver__')) return { ok: true, closed: true, steps }
+        if (s.includes('settings-summary')) return { text: summaryText, ligatures: ['crop_9_16'] }
+        return null
+      })
+      return applyComposerSettings({ webContents: { executeJavaScript } }, VEO8, { trustedClickOnFlowView: vi.fn(async () => ({ success: true })) })
+    }
+    it.each([
+      ['동영상 · 720p · 6초 x1', 'duration-not-reflected', /summary duration=6 fixed=8/],
+      ['Video · 720p · 6s x1', 'duration-not-reflected', /summary duration=6 fixed=8/],
+      ['동영상 · 360p · 8초 x1', 'resolution-not-reflected', /summary resolution=360 fixed=720/],
+    ])('요약 %s → %s (숫자만 로그)', async (text, reason, logRe) => {
+      const r = await mainRun(VEO_STEPS, text)
+      expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason })
+      const logs = warn.mock.calls.map((c) => c.join(' ')).join('\n')
+      expect(logs).toMatch(logRe)
+      expect(logs).not.toContain(text)
+    })
+    it.each(['동영상 · 720p · 8초 x1', 'Video · 720p · 8s x1', 'Veo 3.1 - Fast x1', '동영상 x1'])('요약 %s (토큰 일치 또는 없음) → ok', async (text) => {
+      expect(await mainRun(VEO_STEPS, text)).toEqual({ ok: true, steps: VEO_STEPS })
+    })
+    it('fixed 가 아닌 단계(already(6)·already(720p))는 요약 토큰과 무관하게 ok (기존 경로 불변)', async () => {
+      const steps = { ...VEO_STEPS, duration: 'already(6)', resolution: 'already(720p)' }
+      expect(await mainRun(steps, '동영상 · 720p · 6초 x1')).toEqual({ ok: true, steps })
+    })
   })
 })

@@ -97,11 +97,14 @@ export function scanSettingsPanel(doc) {
     model = { ambiguous: triggers.length }
   }
   // M2 실기: 토글이 아닌 패널 컨트롤(드롭다운·메뉴 트리거 등)의 UI 라벨 — group-not-found 진단용(최대 24개, 라벨 32자).
-  const controls = Array.from(panel.querySelectorAll('button, [role], mat-select, select, input, [aria-haspopup]'))
+  // M2-LIVE N8(A7/B8): 패널이 CDK 오버레이 pane 안일 때만 — Flow 가 패널을 인라인으로 그리면 LCA 가 컴포저·앱 루트로 넓어져 카드 프롬프트·프로젝트 이름 입력의
+  //   텍스트를 읽게 된다(reportDomFailure → Sentry 로 새는 길). 인라인이면 controls 는 비우고 overlay:false — 드라이버는 shape 를 싣지 않는다.
+  const overlay = !!(panel.closest && panel.closest('.cdk-overlay-pane'))
+  const controls = !overlay ? [] : Array.from(panel.querySelectorAll('button, [role], mat-select, select, input, [aria-haspopup]'))
     .filter((el) => el.getAttribute('role') !== 'radio')
     .slice(0, 24)
     .map((el) => ({ tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || null, haspopup: el.getAttribute('aria-haspopup') || null, label: stripped(el).slice(0, 32) }))
-  return { ok: true, panel, groups, model, radioCount: material.length, unclassified, controls }
+  return { ok: true, panel, groups, model, radioCount: material.length, unclassified, controls, overlay }
 }
 
 /**
@@ -180,7 +183,10 @@ export function planSettingsClicks(scan, targets, phase) {
   // 2026-09-25 실측: Veo 3.1 - Fast 패널엔 길이·해상도 컨트롤이 없다. 없는 그룹은 모델 기본값 — 카탈로그 키 문법상 길이 토큰 없음 = 8초,
   //   _360p 없음 = 720p — 만 받고(steps 'fixed(…)'), 그 외 요청은 클릭 전에 거부한다(과금 뒤 모델키 불일치로 버려지는 것을 막는다).
   //   단, 분류 못 한 토글 그룹이 하나라도 있으면(라벨이 낯선 실제 길이 그룹일 수 있다) '없음' 으로 보지 않는다 — group-not-found + shape.
-  const trulyAbsent = (kind) => !scan.groups[kind] && !(Array.isArray(scan.unclassified) && scan.unclassified.length > 0)
+  // M2-LIVE N2(A2/B1): 기본값은 **Veo 키 문법**에서 나왔다 — 패널 트리거 라벨이 /veo/i 일 때만 받는다. Omni 는 항상 두 그룹을 가지고 키에 길이 토큰이 있으므로
+  //   Omni 에서 없는 그룹은 아직 안 그려진 것(늦은 렌더) — group-not-found + shape 로 클릭 전에 멈춘다(fixed(8) 로 받으면 Flow 가 기억한 4·6초로 과금된다).
+  const veoPanel = !!(scan.model && scan.model.label && /veo/i.test(scan.model.label))
+  const trulyAbsent = (kind) => veoPanel && !scan.groups[kind] && !(Array.isArray(scan.unclassified) && scan.unclassified.length > 0)
   if (video && t.duration !== undefined && trulyAbsent('duration')) {
     if (Number(t.duration) !== 8) return fail('duration-not-offered:' + t.duration)
     steps.duration = 'fixed(8)'
@@ -266,7 +272,8 @@ export async function settingsDriverCore(doc, targets, deps) {
     return r
   }
   // M2 실기: group-not-found 는 분류 못 한 그룹의 라벨을 shape 로 싣는다(Veo 패널 모양 진단).
-  const shapeOf = (p) => (String(p.reason || '').indexOf('group-not-found:') === 0 && s && s.ok ? { shape: { groups: Object.keys(s.groups || {}), unclassified: s.unclassified || [], controls: s.controls || [] } } : {})
+  // M2-LIVE N8: 패널이 오버레이 pane 안일 때만(scan.overlay) — 인라인 패널의 shape 는 앱 루트 텍스트를 품을 수 있어 싣지 않는다. 라벨 텍스트는 로컬 진단 파일에만(Sentry 는 flow-diag 가 스크럽).
+  const shapeOf = (p) => (String(p.reason || '').indexOf('group-not-found:') === 0 && s && s.ok && s.overlay ? { shape: { groups: Object.keys(s.groups || {}), unclassified: s.unclassified || [], controls: s.controls || [] } } : {})
   const failPlan = async (p) => Object.assign(await fail(p.reason || p.kind), { kind: p.kind || 'flow-settings-not-applied' }, shapeOf(p), p.params ? { params: p.params } : {})
   const norm = (s) => String(s || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
   // M2-2: planSettingsClicks 의 labelMatches 와 같은 규칙(자기완결 — 이름으로 부르지 않는다).
@@ -293,16 +300,31 @@ export async function settingsDriverCore(doc, targets, deps) {
     if (!kinds.every((k) => !!n.groups[k])) return null
     return kinds.map((k) => n.groups[k].options.map((o) => (o.ligature || '') + '|' + o.label + '|' + (o.checked ? 1 : 0)).join(',')).join(';')
   }
-  const waitGroupsSettled = async (preSig) => {
-    let prev = null
-    let same = 0   // 직전 스캔과 같은 서명이 이어진 횟수(서명 없는 스캔은 0 으로 되돌린다)
+  // M2-LIVE N2(A2/B1): 그룹 서명(groupSig)은 세 그룹이 전부 있을 때만 있어서, 그룹이 없는 패널(Veo)에선 옛 waitGroupsSettled 가 영영 안정되지 않고 1.5s 상한에서
+  //   그냥 떨어졌다 — 그 "아직 없음" 을 계획이 모델 기본값으로 삼았다. 이제 없음은 **증명**한다: 상한(1.5s)까지 그룹이 나타나면 그것으로 계획하고(연속 3회 동일),
+  //   끝까지 없으면 마지막 3스캔의 **패널 서명**(분류된 모든 라디오 name|리거처|label|checked · 라디오 수 · 분류 못 한 그룹 · 트리거 라벨)이 같고 클릭 전 패널 서명에서
+  //   벗어났을 때만 안정으로 본다. 그것도 아니면(계속 바뀌는 패널) 미안정 — 호출자가 settings-not-settled 로 클릭 전에 멈춘다. 상한에서의 fall-through 는 없다.
+  const panelSig = (n) => {
+    if (!n || !n.ok) return null
+    const parts = Object.keys(n.groups).sort().map((k) => k + ':' + n.groups[k].options.map((o) => o.name + '|' + (o.ligature || '') + '|' + o.label + '|' + (o.checked ? 1 : 0)).join(','))
+    return parts.join(';') + ';n=' + n.radioCount + ';u=' + JSON.stringify(n.unclassified || []) + ';m=' + ((n.model && n.model.label) || '')
+  }
+  // 영상 목표 중 지금 스캔에 없는 길이·해상도 그룹(없음 증명이 필요한 대상)
+  const absentKinds = (n) => (t.mode === 'video' && n && n.ok ? ['duration', 'resolution'].filter((k) => t[k] !== undefined && !n.groups[k]) : [])
+  const waitSettled = async (preGroupSig, prePanelSig) => {
+    let gPrev = null; let pPrev = null; let gSame = 0; let pSame = 0; let last = null
     for (let i = 0; i < 30; i++) {
-      const cur = groupSig(scan(doc))
-      same = cur != null && cur === prev ? same + 1 : 0
-      if (cur != null && cur !== preSig && same >= 2) return   // 연속 3회 동일(현재 + 직전 2회)
-      prev = cur
+      const n = scan(doc)
+      const g = groupSig(n); const p = panelSig(n)
+      gSame = g != null && g === gPrev ? gSame + 1 : 0
+      pSame = p != null && p === pPrev ? pSame + 1 : 0
+      if (g != null && g !== preGroupSig && gSame >= 2) return { ok: true }   // 세 그룹이 (클릭 전과 다르게) 연속 3회 동일
+      gPrev = g; pPrev = p; last = n
       await sleep(50)
     }
+    // 상한: 그룹이 끝까지 없거나(Veo) 클릭 전과 같다 — 마지막 3스캔의 패널 서명이 같고 클릭 전 서명에서 벗어났을 때만 안정
+    if (last && last.ok && pPrev != null && pPrev !== prePanelSig && pSame >= 2) return { ok: true }
+    return { ok: false }
   }
 
   // M2 실기(2026-09-25, 2차 런): 트리거 클릭 직후 즉시 한 번 스캔하면 패널 애니메이션이 끝나기 전이라 panel-not-open 으로 닫혔다
@@ -310,7 +332,10 @@ export async function settingsDriverCore(doc, targets, deps) {
   await waitFor(() => scan(doc).ok, 3000)
   // M2 실기(3·4번째 런): 같은 페이지의 두 번째 생성부터 트리거 클릭 한 번이 헛돈다(Escape 로 닫은 뒤 Flow 의 열림 상태가 안 풀려
   //   다음 클릭이 닫기로 소비된다). 여전히 패널이 없으면 트리거를 한 번 더 누르고 다시 기다린다.
-  if (!scan(doc).ok) {
+  // M2-LIVE N5(A4/B4): 재시도는 정말 아무것도 안 그려졌을 때만 — panel-not-open **이고** 문서에 [role=radio] 가 하나도 없을 때. 열려 있지만 Material 이 아닌 패널
+  //   (input-mode-not-material — 배치 전체 이유)·점진 렌더 중인 패널을 토글로 닫으면 사유가 panel-not-open(항목 이유)으로 둔갑하고 항목마다 +3s·클릭 2회가 든다.
+  const first = scan(doc)
+  if (!first.ok && first.reason === 'panel-not-open' && doc.querySelectorAll('[role="radio"]').length === 0) {
     const trig = Array.from(doc.querySelectorAll('button.settings-trigger-button')).filter((b) => !!b.querySelector('.settings-summary'))
     if (trig.length === 1) {
       try { console.log('[Flow Inject] settings panel not open — clicking the trigger once more') } catch (_e) { /* 로그 실패 무시 */ }
@@ -334,11 +359,21 @@ export async function settingsDriverCore(doc, targets, deps) {
     if (!s.ok) return fail(s.reason)
   }
   // phase 2 — 모델 먼저
+  // M2-LIVE N2: 영상 목표의 길이·해상도 그룹이 지금 없으면(모드 전환 직후·이미 Veo 인 패널) 없음을 유계 대기로 증명한 뒤 계획한다 — 그 안에 그룹이 그려지면
+  //   그것으로 계획한다(A2: 300ms 늦은 길이 그룹). 모델을 바꿔야 하는 경우는 모델 클릭 뒤의 대기가 같은 일을 하므로 여기서 기다리지 않는다.
+  const modelMatchesNow = t.model == null || t.model === '' || !!(s.model && s.model.label && labelMatches(s.model.label, t.model))
+  if (absentKinds(s).length && modelMatchesNow) {
+    const settled = await waitSettled(undefined, undefined)
+    s = scan(doc)
+    if (!s.ok) return fail(s.reason)
+    if (!settled.ok) return fail('settings-not-settled')
+  }
   let p2 = plan(s, t, 2)
   if (!p2.ok) return failPlan(p2)
   let modelClicked = false
   if (p2.model && p2.model.select) {
     const preSig = groupSig(s)   // M2-R4 I7: 클릭 전 그룹 서명
+    const prePanelSig = panelSig(s)   // M2-LIVE N2: 클릭 전 패널 서명(그룹 없는 패널의 안정 판정용)
     const trigger = s.model.trigger
     trigger.click()
     const opened = await waitFor(() => trigger.getAttribute('aria-expanded') === 'true' && !!trigger.getAttribute('aria-controls') && !!doc.getElementById(trigger.getAttribute('aria-controls')), 3000)
@@ -361,9 +396,10 @@ export async function settingsDriverCore(doc, targets, deps) {
     }
     modelClicked = true
     steps.model = 'clicked'   // M2-R4 I7: 클릭 뒤 거부(재계획 실패)도 모델 전환을 steps·로그에 보고한다(§12.2 무과금 프로브의 통과 조건)
-    await waitGroupsSettled(preSig)   // M2-R4 I7: 안정 대기 — 모델 변경이 길이/해상도/개수 그룹을 리셋·교체할 수 있다(고정 150ms 아님)
+    const settled = await waitSettled(preSig, prePanelSig)   // M2-R4 I7: 안정 대기 — 모델 변경이 길이/해상도/개수 그룹을 리셋·교체할 수 있다(고정 150ms 아님) · M2-LIVE N2: 없음도 증명
     s = scan(doc)
     if (!s.ok) return fail(s.reason)
+    if (!settled.ok) return fail('settings-not-settled')   // M2-LIVE N2: 상한에서 fall-through 하지 않는다 — 계속 바뀌는 패널은 클릭 전에 멈춘다
     p2 = plan(s, t, 2)
     if (!p2.ok) return failPlan(p2)
     if (p2.model && p2.model.select) return fail('model-not-reflected')
@@ -509,10 +545,25 @@ export async function applyComposerSettings(flowView, opts, deps) {
     const stillOpen = await exec(SETTINGS_PANEL_OPEN_JS).catch(() => true)
     if (stillOpen) return fail('panel-not-closed')
   }
-  if (targets.ratio !== undefined) {
+  // M2-LIVE N2(c): fixed 단계(패널에 그룹이 없어 모델 기본값으로 받은 길이·해상도)는 닫힌 요약으로 재검증 — 요약에 다른 길이(\d+초|\d+s)·해상도(\d{3,4}p) 토큰이
+  //   있으면 Flow 가 다른 값을 들고 있다(늦게 그려진 그룹·기억한 값) → 클릭 전 거부. 토큰이 없으면(Veo 요약이 길이를 안 보이는 경우) ok. 로그는 숫자만.
+  const fixedDuration = /^fixed\((\d+)\)$/.exec(String(steps.duration || ''))
+  const fixedResolution = /^fixed\((\d{3,4})p\)$/i.exec(String(steps.resolution || ''))
+  if (targets.ratio !== undefined || fixedDuration || fixedResolution) {
     const after = await exec(READ_SETTINGS_SUMMARY_JS).catch(() => null)
-    const lig = ratioLigature(targets.ratio)
-    if (!after || !Array.isArray(after.ligatures) || !after.ligatures.includes(lig)) return fail('ratio-not-reflected')
+    if (targets.ratio !== undefined) {
+      const lig = ratioLigature(targets.ratio)
+      if (!after || !Array.isArray(after.ligatures) || !after.ligatures.includes(lig)) return fail('ratio-not-reflected')
+    }
+    const summaryText = after && typeof after.text === 'string' ? after.text : ''
+    if (fixedDuration) {
+      const m = /(\d{1,2})\s*(?:초|s)(?![a-z0-9])/i.exec(summaryText)
+      if (m && m[1] !== fixedDuration[1]) { console.warn(`[Flow Settings] closed summary duration=${m[1]} fixed=${fixedDuration[1]}`); return fail('duration-not-reflected') }
+    }
+    if (fixedResolution) {
+      const m = /(\d{3,4})p(?![a-z0-9])/i.exec(summaryText)
+      if (m && m[1] !== fixedResolution[1]) { console.warn(`[Flow Settings] closed summary resolution=${m[1]} fixed=${fixedResolution[1]}`); return fail('resolution-not-reflected') }
+    }
   }
   console.log(`[Flow Settings] ${mode} ${formatSteps(steps)} ok=true`)
   return { ok: true, steps }

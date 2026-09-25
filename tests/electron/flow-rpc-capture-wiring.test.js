@@ -56,5 +56,7 @@ describe('main.js — flow:report-response 는 buildReportCtx(state) 로 ctx 를
     const block = MAIN.slice(MAIN.indexOf("ipcMain.handle('flow:report-response'"), MAIN.indexOf("ipcMain.handle('flow:report-xhr'"))
     expect(block).toMatch(/routeReportResponse\(payload, buildReportCtx\(/)
     expect(MAIN).toMatch(/import \{[^}]*buildReportCtx[^}]*\} from '\.\/reportResponseRouter\.js'/)
+    // M2-R8 M2(A2 = B3): 바인딩 없는 YhhmEf loadend 보고 배선 — buildReportCtx 는 함수가 아니면 조용히 뺀다(키 없음이 조용히 통과)
+    expect(block).toMatch(/reportDomFailure:\s*helpers\.reportDomFailure\b/)
   })
 })

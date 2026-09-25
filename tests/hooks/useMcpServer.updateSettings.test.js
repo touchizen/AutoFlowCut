@@ -37,6 +37,21 @@ describe('useMcpServer — update-settings', () => {
     expect(typeof updater).toBe('function')
     expect(updater({ aspectRatio: '9:16', videoResolution: '1080p' })).toEqual({ aspectRatio: '9:16', videoResolution: '720p', videoModelT2V: 'Omni Flash' })
   })
+  // M2-LIVE N3(A3/B2): main 의 /api/update 가 먼저 400 으로 거르지만 렌더러도 화이트리스트 밖·모양 틀린 키를 버린다(이중 방어 — 공용 상수 src/utils/mcpSettingsWhitelist.js).
+  it('화이트리스트 밖의 키(projectName·mcpHttpEnabled·saveMode)와 모양 틀린 값(seedNo:"abc")은 버리고 유효한 키만 병합한다', () => {
+    const setSettings = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSettings })))
+    mcpHandler({ type: 'update-settings', fields: { videoModelT2V: 'Omni Flash', projectName: 'B', mcpHttpEnabled: false, saveMode: 'none', seedNo: 'abc' } })
+    expect(setSettings).toHaveBeenCalledTimes(1)
+    const merged = setSettings.mock.calls[0][0]({ projectName: 'A', mcpHttpEnabled: true, saveMode: 'folder', seedNo: 7, videoModelT2V: 'Veo 3.1 - Fast' })
+    expect(merged).toEqual({ projectName: 'A', mcpHttpEnabled: true, saveMode: 'folder', seedNo: 7, videoModelT2V: 'Omni Flash' })
+  })
+  it('유효한 키가 하나도 없으면 setSettings 를 부르지 않는다', () => {
+    const setSettings = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSettings })))
+    mcpHandler({ type: 'update-settings', fields: { projectName: 'B', flowAgentOn: true } })
+    expect(setSettings).not.toHaveBeenCalled()
+  })
   it('fields 가 객체가 아니면 setSettings 를 부르지 않는다', () => {
     const setSettings = vi.fn()
     renderHook(() => useMcpServer(makeProps({ setSettings })))

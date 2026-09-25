@@ -35,6 +35,18 @@ describe('effectiveVideoDuration — api/flow 모드 분리', () => {
       // Omni Flash 는 그대로 스냅
       expect(effectiveVideoDuration({ targetDuration: 6 }, 't2v', 8, '720p', 'Omni Flash', 'flow')).toBe(6)
     })
+    // M2-LIVE N9(A9/B9): Flow Veo 8초 스냅은 t2v 이고 **Veo … Fast**(관측된 유일한 패널 — 길이 그룹 없음)일 때만. i2v(Flow 는 지금 미지원이지만 옛 i2v 경로·저장 메타의 계약)와
+    //   Lite/Quality(패널 모양 미관측 — 길이 그룹이 있으면 드라이버가 4·6초를 누르고, 없으면 드라이버 가드가 클릭 전에 거부한다)는 그리드 스냅 그대로.
+    it('Flow Veo Fast i2v 는 8 고정이 아니라 그리드 스냅 (M2-LIVE N9)', () => {
+      expect(effectiveVideoDuration({ targetDuration: 3 }, 'i2v', 8, '720p', 'Veo 3.1 - Fast', 'flow')).toBe(4)
+      expect(effectiveVideoDuration({ targetDuration: 6 }, 'i2v', 8, '720p', 'veo-3.1-fast-generate-preview', 'flow')).toBe(6)
+    })
+    it('Flow Veo Lite/Quality t2v 는 그리드 스냅 — Fast 만 8 고정 (M2-LIVE N9)', () => {
+      expect(effectiveVideoDuration({ targetDuration: 3 }, 't2v', 8, '720p', 'Veo 3.1 - Lite', 'flow')).toBe(4)
+      expect(effectiveVideoDuration({ targetDuration: 6 }, 't2v', 8, '720p', 'Veo 3.1 - Quality', 'flow')).toBe(6)
+      expect(effectiveVideoDuration({ targetDuration: 3 }, 't2v', 8, '720p', 'veo-3.1-generate-preview', 'flow')).toBe(4)
+      expect(effectiveVideoDuration({ targetDuration: 3 }, 't2v', 8, '720p', 'Veo 3.1 - Fast', 'flow')).toBe(8)
+    })
     it('referenceImages 가 있어도 Flow 모드는 스냅(refs→8 미적용)', () => {
       expect(effectiveVideoDuration({ targetDuration: 3, referenceImages: [{ name: 'h' }] }, 't2v', 8, '1080p', 'Omni Flash', 'flow')).toBe(4)
     })

@@ -91,6 +91,12 @@ export function buildDurationGroup(labels, checkedLabel, offset = 0, material = 
   return toggleGroup(spec, labels.includes(checkedLabel) ? checkedLabel : labels[0], offset, material)
 }
 
+/** M2-LIVE N2: 해상도 그룹만(라벨 목록으로) — 없던 그룹을 늦게 끼워 넣는 가짜 Angular 가 쓴다. checked 가 목록에 없으면 첫 항목. */
+export function buildResolutionGroup(labels, checkedLabel, offset = 0, material = true) {
+  const spec = { group: GROUPS.resolution.group, ids: labels.map((_, i) => GROUPS.resolution.ids[0] + i), options: labels.map((l) => [null, l]) }
+  return toggleGroup(spec, labels.includes(checkedLabel) ? checkedLabel : labels[0], offset, material)
+}
+
 /** 열린 모델 메뉴(video-model-menu 덤프): div#mat-menu-panel-N[role=menu] > button.mat-mdc-menu-item[role=menuitem]. */
 export function buildModelMenu(id = 'mat-menu-panel-20', items = ['Omni 1.1 Flash', 'Veo 3.1 - Lite', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality']) {
   const buttons = items.map((t) => `<button class="mat-mdc-menu-item mat-focus-indicator mat-mdc-menu-trigger flow-internal-menu-item" role="menuitem" aria-expanded="false">${ICON('volume_up')}<span class="mat-mdc-menu-item-text">${t}</span></button>`).join('')

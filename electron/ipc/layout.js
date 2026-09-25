@@ -162,3 +162,6 @@ export function getSplitRatio() { return splitRatio }
 export function setSplitRatio(ratio) { splitRatio = ratio }
 export function getModalVisible() { return modalVisible }
 export function setModalVisible(visible) { modalVisible = visible }
+// M2-LIVE N1: 스플리터 드래그 중인가 — 자동화 뷰포트(flow-angular withAutomationViewport)가 드래그 위로 네이티브 뷰를 올리지 않게 본다.
+export function getLayoutDragging() { return dragging }
+export function setLayoutDragging(v) { dragging = !!v }

@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   failBoundUnfinished, routeRpcSend, routeRpcLoadend, routeRpcReport, markDeadline, armDeadline, settleGen,
-  SEND_DEADLINE_S, LOADEND_DEADLINE_S,
+  SEND_DEADLINE_S, LOADEND_DEADLINE_S, UNBOUND_CLOSE_TTL_S, _resetUnboundCloseRecordsForTests,
 } from '../../electron/flow-rpc-router.js'
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 
@@ -27,6 +27,7 @@ const endEv = (over = {}) => ({ kind: 'batchexecute', doc: DOC_A, rpcid: 'ogiZ0b
 
 let warn, log
 beforeEach(() => {
+  _resetUnboundCloseRecordsForTests()   // M2-R8 M4: 모듈 기록(최근 앱 닫힘)은 테스트 사이에 남는다
   vi.useFakeTimers({ now: NOW_S * 1000 })
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
   log = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -382,6 +383,7 @@ describe('M2-R7 L1 — YhhmEf send 마감 유예(grace): 15s 는 표시·훅뿐,
   })
 
   it('(d) 바인딩 없는 YhhmEf 200 이 UUID 로 파싱되면 [Flow RPC] YhhmEf unbound loadend media=<8> + reportDomFailure(submit:unbound-loadend, 앞 8자만); 깨진 본문·비 200·이미지 rpc 는 throw 없이 기존 unbound 만', () => {
+    settleGen(vgen(), { error: 'flow-submit-lost', errorKind: 'flow-submit-lost' })   // M2-R8 M4: 앱이 loadend 없이 닫은 YhhmEf gen 이 최근에 있다 — 보고 조건
     const report = vi.fn()
     const map = new Map()
     expect(routeRpcLoadend(vend({ seq: 9 }), map, { reportDomFailure: report })).toEqual({ ok: true, dropped: 'unbound' })
@@ -405,5 +407,75 @@ describe('M2-R7 L1 — YhhmEf send 마감 유예(grace): 15s 는 표시·훅뿐,
     const viaCtx = vi.fn()
     expect(routeRpcReport(vend({ seq: 16 }), { pendingGenerations: map, reportDomFailure: viaCtx })).toEqual({ ok: true, dropped: 'unbound' })
     expect(viaCtx).toHaveBeenCalledWith('submit:unbound-loadend', 'unbound-loadend', { rpc: 'YhhmEf', seq: 16, media: '00000011' })
+    // M2-R8 M3(A3): 모델키가 문법을 못 넘는 200(UUID 는 검증됨 — 과금된 미디어) 도 파서의 rejectedMediaId 로 media 줄 + 보고; 레코드 2개(video-count — rejectedMediaIds 는 미검증) 는 media 줄 없음
+    warn.mockClear(); log.mockClear()
+    const badKey = samplePayload('YhhmEf'); badKey[3][0][7][0][12] = 'Bad Key'
+    const reportBad = vi.fn()
+    expect(routeRpcLoadend(vend({ seq: 17, responseText: respBodyWithPayload('YhhmEf', badKey) }), map, { reportDomFailure: reportBad })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(logged()).toMatch(/\[Flow RPC\] YhhmEf unbound loadend media=00000011\b/)
+    expect(reportBad).toHaveBeenCalledWith('submit:unbound-loadend', 'unbound-loadend', { rpc: 'YhhmEf', seq: 17, media: '00000011' })
+    expect(logged()).not.toContain('Bad Key')
+    warn.mockClear(); log.mockClear()
+    const two = samplePayload('YhhmEf'); const second = JSON.parse(JSON.stringify(two[3][0])); second[0] = maskedUuid(12); two[3].push(second)
+    const reportTwo = vi.fn()
+    expect(routeRpcLoadend(vend({ seq: 18, responseText: respBodyWithPayload('YhhmEf', two) }), map, { reportDomFailure: reportTwo })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(logged()).not.toMatch(/unbound loadend media=/)
+    expect(reportTwo).not.toHaveBeenCalled()
+  })
+})
+
+// M2-R8 M4(B2 + A4): 캡처 주입은 문서마다 설치돼 사용자가 Flow 뷰에서 **손으로** 만든 영상의 YhhmEf 도 보고한다 — 거짓 "DOM step failed"(Sentry 경고·바탕화면 진단 파일·
+//   세션 슬롯 8개 중 1)이고, 그 dedupe 때문에 나중에 앱이 lost 로 닫은 gen 의 진짜 미바인딩 loadend(과금된 미디어)는 영영 보고되지 않았다. 라우터는 loadend 없이 닫은 YhhmEf gen
+//   (not-sent·lost·cleared·multi-batch)의 시각을 짧은 TTL(120s)로 기록하고, 기록이 있을 때만 보고한다 — 없으면 로그만. 싱크는 스텝당 세션 1회만 보내므로 콘솔 줄이 미디어별 기록.
+describe('M2-R8 M4 — 바인딩 없는 YhhmEf 200 보고는 최근(≤120s) 앱이 loadend 없이 닫은 YhhmEf gen 이 있을 때만', () => {
+  const VPROMPT = '왕이 궁전 내부를 산책하는 영상'
+  const vgen = (over = {}) => gen({ rpc: 'YhhmEf', normPrompt: VPROMPT, wantRatio: undefined, ...over })
+  const vsend = (over = {}) => sendEv({ rpcid: 'YhhmEf', rpcids: ['YhhmEf'], prompts: [VPROMPT], ...over })
+  const vend = (over = {}) => endEv({ rpcid: 'YhhmEf', responseText: sample('YhhmEf').respBody, ...over })
+
+  it('(e) 닫은 gen 없음(사용자의 손 제출) → 로그만 "(no recent app close — not reported)", 보고 없음', () => {
+    const report = vi.fn()
+    expect(routeRpcLoadend(vend({ seq: 20 }), new Map(), { reportDomFailure: report })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(logged()).toMatch(/\[Flow RPC\] YhhmEf unbound loadend media=00000011 \(no recent app close — not reported\)/)
+    expect(logged()).not.toContain(maskedUuid(11))
+    expect(report).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['flow-submit-not-sent (send/grace 마감)', (g) => markDeadline(g, 'send')],
+    ['flow-submit-lost (loadend 마감·failBoundUnfinished·15s 훅)', (g) => settleGen(g, { error: 'flow-submit-lost', errorKind: 'flow-submit-lost' })],
+    ['flow-generation-cleared (사용자 clear)', (g) => settleGen(g, { error: 'flow-generation-cleared', errorKind: 'flow-generation-cleared' })],
+    ['flow-rpc-multi-batch (send 의 multi)', (g) => routeRpcSend(vsend({ multi: true, rpcids: ['YhhmEf', 'Zzl0ze'] }), new Map([['v', g]]))],
+  ])('(f) %s 로 닫힌 YhhmEf gen 뒤의 미바인딩 loadend → media 줄 + 보고', (_l, close) => {
+    close(vgen())
+    warn.mockClear(); log.mockClear()
+    const report = vi.fn()
+    expect(routeRpcLoadend(vend({ seq: 21 }), new Map(), { reportDomFailure: report })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(logged()).toMatch(/\[Flow RPC\] YhhmEf unbound loadend media=00000011$/m)
+    expect(logged()).not.toMatch(/not reported/)
+    expect(report).toHaveBeenCalledWith('submit:unbound-loadend', 'unbound-loadend', { rpc: 'YhhmEf', seq: 21, media: '00000011' })
+  })
+
+  it('(g) 기록은 TTL(120s) 뒤 만료 — 119s 엔 보고, 121s 엔 로그만; 이미지 gen(ogiZ0b)·generate-button-click-failed·loadend 로 닫힌 gen 은 기록하지 않는다', () => {
+    expect(UNBOUND_CLOSE_TTL_S).toBe(120)
+    settleGen(vgen(), { error: 'flow-submit-lost', errorKind: 'flow-submit-lost' })
+    vi.advanceTimersByTime((UNBOUND_CLOSE_TTL_S - 1) * 1000)
+    const r1 = vi.fn()
+    routeRpcLoadend(vend({ seq: 22 }), new Map(), { reportDomFailure: r1 })
+    expect(r1).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(2000)
+    const r2 = vi.fn()
+    routeRpcLoadend(vend({ seq: 23 }), new Map(), { reportDomFailure: r2 })
+    expect(r2).not.toHaveBeenCalled()
+    // 기록되지 않는 닫힘들: 이미지 not-sent · 미발송 클릭 실패 · loadend(응답)로 닫힌 gen
+    markDeadline(gen(), 'send')
+    settleGen(vgen(), { error: 'generate-button-click-failed', errorKind: 'generate-button-click-failed' })
+    const bound = vgen({ doc: DOC_A, seq: 30 })
+    expect(routeRpcLoadend(vend({ seq: 30, status: 500, responseText: '' }), new Map([['b', bound]]))).toEqual({ ok: true, completed: 'b' })
+    expect(bound.completed).toBe(true)
+    const r3 = vi.fn()
+    routeRpcLoadend(vend({ seq: 24 }), new Map(), { reportDomFailure: r3 })
+    expect(r3).not.toHaveBeenCalled()
+    expect(logged()).toMatch(/media=00000011 \(no recent app close — not reported\)/)
   })
 })

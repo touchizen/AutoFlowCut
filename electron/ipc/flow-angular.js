@@ -22,7 +22,7 @@
  * tests/electron/ipc/flowGenerateImageAngular.test.js · tests/electron/ipc/flowVideoT2VAngular.test.js · tests/electron/flowRpcPipeline.test.js
  */
 import { isFlowPageUrl, isLegacyFlowUrl } from '../flowUrl.js'
-import { updateBounds } from './layout.js'
+import { updateBounds, getLayoutDragging } from './layout.js'
 import { computeInPlaceBounds, needsAutomationViewport } from '../offscreen-bounds.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../flow-rpc-capture.js'
 import { armDeadline, settleGen } from '../flow-rpc-router.js'
@@ -78,6 +78,10 @@ export function unsupportedOnAngular(name) {
 
 const kindResult = (kind, extra) => ({ success: false, errorKind: kind, error: kind, ...(extra || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+// M2-LIVE N1: 드래그 끝 대기 상한 · DOM 단계 워치독(제출 클릭 전까지) · 워치독 sentinel
+const DRAG_WAIT_MS = 5000
+const DOM_STAGE_TIMEOUT_MS = 120000
+const DOM_STAGE_TIMEOUT = Symbol('dom-stage-timeout')
 const short = (v) => String(v ?? '').slice(0, 8)
 /** nzlxg payload → 크레딧 잔량(숫자) 또는 null. */
 const creditsOf = (payload) => (Array.isArray(payload) && typeof payload[0] === 'number' ? payload[0] : null)
@@ -93,8 +97,8 @@ function creditsDropped(before, after) {
 }
 
 /**
- * @param {object} deps flow-api.js 의 deps(main.js flowAPIDeps 와 동일 모양). 필요한 것: getFlowView, getFlowAgentOn,
- *   trustedClickOnFlowView, ensureAgentOff, ensureOnProjectComposer, sessionFetch, pendingGenerations, reportDomFailure?
+ * @param {object} deps flow-api.js 의 deps(main.js flowAPIDeps 와 동일 모양). 필요한 것: getFlowView, getFlowAgentOn, getMainWindow,
+ *   trustedClickOnFlowView, ensureAgentOff, ensureOnProjectComposer, sessionFetch, pendingGenerations, reportDomFailure?, createInputShield?(M2-LIVE N1)
  */
 export function createFlowAngular(deps) {
   const report = async (step, reason, extra) => {
@@ -124,13 +128,33 @@ export function createFlowAngular(deps) {
    *   R2-2#1(§12 #45): DOM 단계 전에 뷰가 OS 포커스를 갖고 있었는지(hadFocus) 적어 두고, 뷰포트에 들어갔거나 애초에 포커스가
    *   없었으면 끝난 뒤 메인 창에 포커스를 돌려준다 — 편집기 주입의 webContents.focus() 가 Flow 뷰로 옮긴 포커스가 모달·입력창에
    *   남지 않게. 조기 반환도 같은 finally 를 지난다.
+   *   M2-LIVE N1(A1/B6): 제자리 뷰포트 동안 Flow 뷰(네이티브)가 앱 UI 위에 있어 사용자의 클릭이 그대로 컴포저에 닿는다 — 제출 화살표를 누르면
+   *   과금 + 앱의 신뢰 클릭은 disabled 버튼 → 고아 미디어, 설정 라디오를 누르면 잘못된 길이·개수로 과금. 뷰포트를 키운 직후 **최상위 투명 방패 뷰**
+   *   (deps.createInputShield — main 이 WebContentsView 로 만든다)를 창 콘텐츠 크기로 올려 포인터 입력을 삼킨다. 신뢰 클릭은 webContents.sendInputEvent 라
+   *   OS 히트테스트를 거치지 않아 방패 아래로 그대로 통한다. 방패는 같은 finally 에서 레이아웃 복원 **전에** 제거된다(정상·조기 반환·throw·워치독 전부).
+   *   드래그 중(레이아웃이 뷰를 0×0 으로 접어 둔 상태) 진입하면 제자리 확장이 스플리터 드래그 위로 네이티브 뷰를 올려 mouseup 을 삼키고 dragging 이
+   *   영영 안 풀린다 — 드래그 끝을 ≤5s 기다리고, 그래도 드래그 중이면 클릭 전 fail-closed(layout-dragging, 다음 항목이 다시 시도).
+   *   M2-LIVE N1(A8) 워치독: DOM 단계엔 개별 타임아웃이 없어(exec 는 무한) 먹통 렌더러가 제자리 뷰를 앱 위에 영영 남겼다 — 120s 에 같은 finally 를
+   *   지나 클릭 전 dom-stage-timeout 으로 닫는다. 제출 클릭이 이미 나갔으면(ctl.clickStarted) 결과를 덮지 않고 기존 post-click 경로가 판정한다
+   *   (신뢰 클릭 헬퍼는 자체 30s 상한이 있다). 버려진 fn 은 ctl.aborted 를 보고 arm·클릭 전에 멈춘다(좀비가 뒤늦게 제출하지 않게).
    * @param {string} tag 로그 접두('[Flow API] [Angular]' | '[Flow Video T2V] [Angular]')
+   * @param {(ctl:{aborted:boolean, clickStarted:boolean}) => Promise<any>} fn
    */
   async function withAutomationViewport(flowView, tag, fn) {
+    // M2-LIVE N1: 드래그 중이면 먼저 드래그 끝을 기다린다(≤ DRAG_WAIT_MS) — 그 뒤에 bounds 를 읽어야 접힌 0×0 이 아니라 복원된 레이아웃을 본다.
+    if (getLayoutDragging()) {
+      const until = Date.now() + DRAG_WAIT_MS
+      while (getLayoutDragging() && Date.now() < until) await sleep(100)
+      if (getLayoutDragging()) {
+        console.warn(`${tag} layout still dragging after ${DRAG_WAIT_MS}ms → refusing before click`)
+        return kindResult('flow-settings-not-applied', { reason: 'layout-dragging' })
+      }
+    }
     const startBounds = flowView.getBounds ? flowView.getBounds() : null
     const viewport = needsAutomationViewport(startBounds)
     let hadFocus = false
     try { hadFocus = !!(flowView.webContents.isFocused && flowView.webContents.isFocused()) } catch (_e) { hadFocus = false }
+    let shield = null
     if (viewport) {
       // M2 실기(2026-09-25, 597×872 스플릿): 화면 밖(x=1760) 1200×872 로 옮겨도 페이지 innerWidth 가 597 그대로 — 완전히
       //   화면 밖인 뷰는 Chromium 이 다시 레이아웃하지 않는다(단위 테스트는 우리가 준 bounds 만 단언했다). 창 **안** 제자리
@@ -138,13 +162,29 @@ export function createFlowAngular(deps) {
       const mainWindow = deps.getMainWindow()
       const size = computeInPlaceBounds(mainWindow.getContentBounds())
       flowView.setBounds(size)
+      // M2-LIVE N1: 제자리 확장 직후 입력 방패 — 뷰가 사용자 위에 있는 동안은 언제나 방패가 있다.
+      try { shield = (typeof deps.createInputShield === 'function' && deps.createInputShield()) || null } catch (_e) { shield = null; console.warn(`${tag} input shield failed — continuing without it`) }
       await sleep(300)
       const why = (!startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)) ? 'hidden' : 'narrow'
-      console.log(`${tag} view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} in-place`)
+      console.log(`${tag} view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} in-place${shield ? ' shielded' : ''}`)
     }
+    const ctl = { aborted: false, clickStarted: false }
+    let timer = null
     try {
-      return await fn()
+      const run = fn(ctl)
+      run.catch(() => {})   // 워치독이 이긴 뒤의 zombie reject 는 unhandled 가 되면 안 된다(race 는 따로 구독한다)
+      const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(DOM_STAGE_TIMEOUT), DOM_STAGE_TIMEOUT_MS) })
+      const result = await Promise.race([run, timeout])
+      if (result !== DOM_STAGE_TIMEOUT) return result
+      // M2-LIVE N1(A8): 제출 클릭이 이미 나갔으면 timeout 결과로 덮지 않는다 — 클릭 헬퍼가 30s 안에 돌아오고 post-click 경로가 판정한다.
+      if (ctl.clickStarted) return await run
+      ctl.aborted = true
+      console.warn(`${tag} DOM stage timed out after ${DOM_STAGE_TIMEOUT_MS / 1000}s before the submit click → refusing`)
+      return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
     } finally {
+      if (timer) clearTimeout(timer)
+      // M2-LIVE N1: 방패는 레이아웃 복원 전에 — 뷰가 사용자 위에 있는 동안은 언제나 방패가 있다.
+      if (shield) { try { shield.remove() } catch (_e) { /* 창이 이미 없을 수 있다 */ } }
       if (viewport) {
         updateBounds(deps.getMainWindow(), flowView)
         await sleep(200)
@@ -225,7 +265,7 @@ export function createFlowAngular(deps) {
     let waiter = null
     let click = null
     // DOM 단계 — 자동화 뷰포트·포커스 반환 래퍼 안에서(조기 반환은 결과 객체로, 클릭까지 갔으면 null).
-    const early = await withAutomationViewport(flowView, '[Flow API] [Angular]', async () => {
+    const early = await withAutomationViewport(flowView, '[Flow API] [Angular]', async (ctl) => {
       // 1. 에이전트 OFF (ON 이면 페이지가 streamChat 로 보내 캡처가 안 잡힌다)
       const agent = await deps.ensureAgentOff()
       if (!agent?.success) return kindResult('flow-agent-off-failed')
@@ -243,6 +283,7 @@ export function createFlowAngular(deps) {
       }
 
       // 3. 설정 패널 — 모드(이미지)·비율·개수, 모델은 검증만
+      if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 워치독이 이미 닫았다(좀비)
       const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
       if (!settings.ok) {
         await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps, ...(settings.shape ? { shape: settings.shape } : {}) })
@@ -250,6 +291,7 @@ export function createFlowAngular(deps) {
       }
 
       // 4. 편집기 — OS 포커스를 준 뒤 신뢰 클릭으로 캐럿 → 주입 → 재판독(주입 실패는 재판독이 잡는다).
+      if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1
       try { flowView.webContents.focus() } catch (_e) { /* 포커스 실패는 재판독이 잡는다 */ }
       await sleep(120)
       const focus = await deps.trustedClickOnFlowView(FIND_PROMPT_EDITOR_JS, { required: true, step: 'compose-editor' })
@@ -270,6 +312,7 @@ export function createFlowAngular(deps) {
       if (!enabled) return kindResult('generate-button-unavailable')
 
       // 6. arm — 클릭 전에 gen 을 맵에 넣는다(캡처의 send 가 바인딩할 후보). 초 단위 시각.
+      if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 좀비는 arm·클릭하지 않는다
       generationId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       gen = {
         rpc: 'ogiZ0b', doc: null, seq: null, sentAt: null, normPrompt, wantRatio: aspectRatio || null, wantModelKey: null,
@@ -280,6 +323,7 @@ export function createFlowAngular(deps) {
       deps.pendingGenerations.set(generationId, gen)
 
       // 7. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
+      ctl.clickStarted = true   // M2-LIVE N1: 이제부터 워치독은 결과를 덮지 않는다
       click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit' })
       return null
     })
@@ -400,7 +444,7 @@ export function createFlowAngular(deps) {
     let waiter = null
     let click = null
     let creditsBefore = null
-    const early = await withAutomationViewport(flowView, '[Flow Video T2V] [Angular]', async () => {
+    const early = await withAutomationViewport(flowView, '[Flow Video T2V] [Angular]', async (ctl) => {
       // 1. 에이전트 OFF
       const agent = await deps.ensureAgentOff()
       if (!agent?.success) return kindResult('flow-agent-off-failed')
@@ -437,6 +481,7 @@ export function createFlowAngular(deps) {
       console.log(`[Flow Video T2V] [Angular] credits before=${creditsBefore}`)
 
       // 4. 설정 패널 — video · ratio · count 1 · model · duration · resolution({360p,720p} 밖은 클릭 전 거부)
+      if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 워치독이 이미 닫았다(좀비)
       const settings = await applyComposerSettings(flowView, { mode: 'video', ratio: aspectRatio, count: 1, model, duration: want.duration, resolution: want.resolution }, { trustedClickOnFlowView: deps.trustedClickOnFlowView })
       if (!settings.ok) {
         await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps, ...(settings.shape ? { shape: settings.shape } : {}) })
@@ -451,6 +496,7 @@ export function createFlowAngular(deps) {
       }
 
       // 5. 편집기 — OS 포커스 → 신뢰 클릭 캐럿 → 주입 → 재판독
+      if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1
       try { flowView.webContents.focus() } catch (_e) { /* 포커스 실패는 재판독이 잡는다 */ }
       await sleep(120)
       const focus = await deps.trustedClickOnFlowView(FIND_PROMPT_EDITOR_JS, { required: true, step: 'compose-editor' })
@@ -471,6 +517,7 @@ export function createFlowAngular(deps) {
       if (!enabled) return kindResult('generate-button-unavailable')
 
       // 7. arm — YhhmEf gen(send 마감 15s). 비율은 키에 없어 wantRatio 검사는 없다(패널이 보장).
+      if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 좀비는 arm·클릭하지 않는다
       generationId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       gen = {
         rpc: 'YhhmEf', doc: null, seq: null, sentAt: null, normPrompt, wantRatio: null, wantModelKey: null, want,
@@ -481,6 +528,7 @@ export function createFlowAngular(deps) {
       deps.pendingGenerations.set(generationId, gen)
 
       // 8. 신뢰 클릭 — 제출은 페이지가 한다(reCAPTCHA 토큰 포함)
+      ctl.clickStarted = true   // M2-LIVE N1: 이제부터 워치독은 결과를 덮지 않는다
       click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit' })
       return null
     })
@@ -505,8 +553,11 @@ export function createFlowAngular(deps) {
     //   not-sent 로 닫고 finishVideoGen 이 마지막으로 재판독한다.
     gen.onSendDeadline = async () => {
       const after = await readCreditsAgain(flowView)
+      // M2-R8 M1: 재판독 중에 늦은 send 가 바인딩됐으면(gen.doc) 닫지 않는다 — 그 send 의 과금이 재판독에 보여도 loadend 가 판정한다.
       if (gen.completed || gen.doc != null) return
       if (creditsDropped(creditsBefore, after)) settleGen(gen, { error: 'flow-submit-lost', errorKind: 'flow-submit-lost' })
+      // M2-R8 M5(A5): 재판독 실패(null)는 "unchanged" 가 아니다 — unreadable(숫자 없음). 유예는 그대로(100s 마감이 마지막으로 재판독한다).
+      else if (after == null) console.log(`[Flow Video T2V] [Angular] send deadline passed gen=${generationId.slice(-8)} credits unreadable — waiting for a late send (grace)`)
       else console.log(`[Flow Video T2V] [Angular] send deadline passed gen=${generationId.slice(-8)} credits unchanged — waiting for a late send (grace)`)
     }
     if (!gen.completed && gen.sentAt == null) armDeadline(gen, 'send')

@@ -19,6 +19,8 @@
  *             M2-R7 L1: 영상(YhhmEf)의 send 15s 는 최종이 아니다 — sendDeadlinePassed 표시 + gen.onSendDeadline(gen) 훅(핸들러의 크레딧 재판독)
  *             뿐이고 클릭 뒤 100s(15+85 grace)까지 바인딩 가능한 채로 둔다; 그때까지 send 가 없으면 grace 마감이 flow-submit-not-sent. 이미지는 그대로.
  *   unbound : 바인딩 없는 YhhmEf 200 이 UUID 로 파싱되면 media 앞 8자만 로그·reportDomFailure('submit:unbound-loadend') — 과금된 미디어를 찾을 수 있게.
+ *             M2-R8 M4: 보고는 **최근(≤120s) 앱이 loadend 없이 닫은 YhhmEf gen**(not-sent·lost·cleared·multi-batch — settleGen 이 기록)이 있을 때만; 없으면(사용자의 손 제출)
+ *             로그만. 진단 싱크는 스텝당 세션 1회만 보내므로 콘솔 줄 `[Flow RPC] YhhmEf unbound loadend media=<8>` 이 미디어별 기록이다.
  *
  * 문서 커밋(did-navigate)·렌더러 크래시(render-process-gone) 에서 main 이 failBoundUnfinished 를 부른다:
  * 바인딩됐으나 미완료인 gen 은 응답이 영영 오지 않으므로 flow-submit-lost 로 닫는다. 미바인딩 armed gen 은
@@ -38,6 +40,22 @@ export const SEND_GRACE_S = LOADEND_DEADLINE_S - SEND_DEADLINE_S
 const DEADLINE_ERROR = { send: 'flow-submit-not-sent', grace: 'flow-submit-not-sent', loadend: 'flow-submit-lost' }
 const DEADLINE_SECS = { send: SEND_DEADLINE_S, grace: SEND_GRACE_S, loadend: LOADEND_DEADLINE_S }
 const SEND_GRACE_RPCS = new Set(['YhhmEf'])
+// M2-R8 M4(B2 + A4): 바인딩 없는 YhhmEf 200 보고의 조건 — 앱이 loadend 없이 닫은 YhhmEf gen 의 시각(초)을 짧은 TTL 로 기록한다. 캡처는 문서마다 주입돼
+//   사용자가 Flow 뷰에서 손으로 만든 영상의 YhhmEf 도 보고됐다(거짓 "DOM step failed" + 그 dedupe 가 진짜 보고를 가림). 이 kind 로 닫힌 gen 의 응답은 뒤늦게 올 수 있다.
+export const UNBOUND_CLOSE_TTL_S = 120
+const UNBOUND_CLOSE_KINDS = new Set(['flow-submit-not-sent', 'flow-submit-lost', 'flow-generation-cleared', 'flow-rpc-multi-batch'])
+let recentUnboundCloses = []
+const nowS = () => Date.now() / 1000
+const pruneUnboundCloses = () => { const t = nowS(); recentUnboundCloses = recentUnboundCloses.filter((x) => t - x < UNBOUND_CLOSE_TTL_S) }
+function noteUnboundClose(gen, patch) {
+  if (!gen || gen.rpc !== 'YhhmEf' || !patch || !UNBOUND_CLOSE_KINDS.has(patch.errorKind)) return
+  pruneUnboundCloses()
+  recentUnboundCloses.push(nowS())
+}
+/** 최근 TTL 안에 앱이 loadend 없이 닫은 YhhmEf gen 이 있나. */
+export function hasRecentUnboundClose() { pruneUnboundCloses(); return recentUnboundCloses.length > 0 }
+/** 테스트용 — 모듈 기록 초기화. */
+export function _resetUnboundCloseRecordsForTests() { recentUnboundCloses = [] }
 
 const short = (s) => String(s ?? '').slice(0, 8)
 // gen id 는 `gen-<ms>-<rand>` 라 앞 8자가 항상 "gen-1790" — 뒤 8자(끝 ms 두 자리 + 난수)가 씬을 가른다(R1#11).
@@ -50,6 +68,7 @@ export function settleGen(gen, patch) {
   if (!gen || gen.completed) return false
   Object.assign(gen, patch)
   gen.completed = true
+  noteUnboundClose(gen, patch)   // M2-R8 M4: loadend 없이 닫는 kind 면 기록
   const d = gen.deadlines
   if (d && typeof d === 'object') {
     for (const k of Object.keys(d)) { try { clearTimeout(d[k]) } catch (_e) { /* ignore */ } }
@@ -179,8 +198,13 @@ export function routeRpcLoadend(ev, pendingGenerations, opts) {
     //   앞 8자만 로그·보고해 찾을 수 있게. 보고는 기다리지 않고 실패해도 라우팅을 막지 않는다.
     const media = unboundVideoMediaId(ev)
     if (media) {
-      console.warn(`[Flow RPC] YhhmEf unbound loadend media=${short(media)}`)
-      callSafe(opts && opts.reportDomFailure, 'submit:unbound-loadend', 'unbound-loadend', { rpc: 'YhhmEf', seq: ev.seq, media: short(media) })
+      // M2-R8 M4: 최근 앱이 loadend 없이 닫은 YhhmEf gen 이 있을 때만 보고 — 없으면(사용자의 손 제출) 로그만. 싱크는 스텝당 세션 1회라 이 줄이 미디어별 기록.
+      if (hasRecentUnboundClose()) {
+        console.warn(`[Flow RPC] YhhmEf unbound loadend media=${short(media)}`)
+        callSafe(opts && opts.reportDomFailure, 'submit:unbound-loadend', 'unbound-loadend', { rpc: 'YhhmEf', seq: ev.seq, media: short(media) })
+      } else {
+        console.warn(`[Flow RPC] YhhmEf unbound loadend media=${short(media)} (no recent app close — not reported)`)
+      }
     }
     return { ok: true, dropped: 'unbound' }
   }

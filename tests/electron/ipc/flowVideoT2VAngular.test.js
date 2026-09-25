@@ -11,7 +11,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { registerVideoIPC } from '../../../electron/ipc/video.js'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
-import { failBoundUnfinished } from '../../../electron/flow-rpc-router.js'
+import { failBoundUnfinished, _resetUnboundCloseRecordsForTests } from '../../../electron/flow-rpc-router.js'
+import { setLayoutDragging } from '../../../electron/ipc/layout.js'   // M2-LIVE N1: 드래그 중 진입
 import { isFlowAuthError, markFlowAuthFailure } from '../../../src/engine/engineFlow.js'
 import { isQuotaExhaustedError } from '../../../src/utils/quotaStop.js'
 import { sample, samplePayload, respBodyWithPayload, respBodyFailure, maskedUuid } from '../../fixtures/flow-batchexecute-samples.js'
@@ -117,6 +118,8 @@ function harness(o = {}) {
     return { success: o.clickSuccess ?? true }
   })
   const sessionFetch = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, headers: { get: () => 'video/mp4' } }))
+  // M2-LIVE N1: main 의 createInputShield 흉내 — 생성/제거를 trace 에 남긴다(shield:on / shield:off)
+  const createInputShield = vi.fn(() => { trace.push('shield:on'); return { remove: vi.fn(() => { trace.push('shield:off') }) } })
   const legacy = {
     configureFlowMode: vi.fn(async () => ({ success: true })), switchFlowToVideoMode: vi.fn(async () => ({ success: true })),
     setFlowPageInject: vi.fn(async () => ({ success: true })), clearFlowPageInject: vi.fn(async () => {}),
@@ -137,11 +140,12 @@ function harness(o = {}) {
     ...legacy,                  // 옛 deps 스파이는 실제 헬퍼 **뒤에**(R2#4)
     trustedClickOnFlowView,     // 클릭만 가짜 — 제출 클릭이 페이지 이벤트를 라우터로 흘린다
     sessionFetch,
+    createInputShield,          // M2-LIVE N1: 제자리 뷰포트 동안의 입력 방패(가짜 — trace 로 생성·제거 시각을 본다)
   })
   const generate = (p = {}) => ipcMain.invoke('flow:generate-video-t2v', {
     token: null, prompt: PROMPT, projectId: PROJECT, model: 'Omni Flash', aspectRatio: '16:9', duration: 6, resolution: '720p', videoBatchCount: 1, seed: null, segments: null, ...p,
   })
-  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, targets: () => settingsTargets, creditReadsAt }
+  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, targets: () => settingsTargets, creditReadsAt, createInputShield }
 }
 
 /** 가짜 시계에서 핸들러 promise 를 굴린다(ensureAgentOff 의 350ms sleep · 마감 타이머 등). */
@@ -154,6 +158,7 @@ async function settle(promise, maxMs = 5000) {
 
 let logSpy, warnSpy, errSpy
 beforeEach(() => {
+  _resetUnboundCloseRecordsForTests()   // M2-R8 M4: 라우터의 "최근 앱 닫힘" 기록은 모듈 상태
   vi.useFakeTimers({ now: NOW_S * 1000 })
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -383,10 +388,61 @@ describe('flow:generate-video-t2v (angular) — 마감·크레딧', () => {
     expect(logged()).toMatch(/\[Flow Video T2V\] \[Angular\] submitted media=00000011 creditsLeft=1040 modelKey=abra_t2v_6s/)
   })
 
-  it('바인딩 없는 YhhmEf loadend(UUID) → [Flow RPC] YhhmEf unbound loadend media=<8> + onDomFailure(submit:unbound-loadend, media 앞 8자) — 전체 id·프롬프트 없음, throw 없음 (M2-R7 L1)', async () => {
+  // M2-R8 M1(A1 = B1): onSendDeadline 의 `gen.doc != null` 가드 — 15s 재판독이 진행 중인 사이 늦은 send 가 바인딩되고 그 send 의 과금(1050→1040)이 재판독에 보이면, 가드가 없으면
+  //   훅이 바인딩된 gen 을 lost 로 닫고 진짜 loadend 는 unbound 로 버려진다(과금된 영상이 id 없는 error 행 — 다음 Start 가 또 과금). 재판독 중 바인딩되면 loadend 가 판정한다.
+  it('15s 재판독이 진행 중일 때 늦은 send 가 바인딩되면(gen.doc != null) 훅은 닫지 않는다 — 재판독이 1040 을 보여도 loadend 가 {success, creditsLeft:1040} 로 판정 (M2-R8 M1)', async () => {
+    let resolveRead = null
+    const deferred = new Promise((r) => { resolveRead = r })
+    const h = harness({ onSubmit: null, credits: [1050, deferred] })
+    const p = h.generate()
+    while (h.trace.filter((x) => x === 'credits').length < 2) await vi.advanceTimersByTimeAsync(100)   // 15s 마감 → 훅의 재판독이 떠 있다(deferred)
+    const gen = [...h.pendingGenerations.values()][0]
+    expect(gen).toMatchObject({ completed: false, sendDeadlinePassed: true, doc: null })
+    h.page.send()                                              // 재판독이 돌아오기 전에 늦은 send 가 바인딩된다
+    expect(gen.doc).toBe(DOC)
+    resolveRead({ status: 200, text: creditsBody(1040) })      // 그 send 의 과금이 보이는 재판독
+    await vi.advanceTimersByTimeAsync(200)
+    expect(gen.completed).toBe(false)                          // 가드: 바인딩된 gen 은 훅이 닫지 않는다
+    h.page.loadend()
+    const r = await settle(p)
+    expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    expect(h.onDomFailure.mock.calls.filter((c) => String(c[0]).startsWith('submit:'))).toEqual([])
+    expect(h.pendingGenerations.size).toBe(0)
+  })
+
+  // M2-R8 M5(A5): 15s 재판독이 실패하면(null) "credits unchanged" 는 거짓이다 — "credits unreadable" 로 적는다(숫자 없음). 유예는 그대로.
+  it('15s 재판독 실패(nzlxg HTTP 500) → "credits unreadable — waiting for a late send" 로그(숫자 없음, "unchanged" 아님), gen 은 유예 그대로 → 100s 에 not-sent (M2-R8 M5)', async () => {
+    const h = harness({ onSubmit: null, credits: [1050, { status: 500, text: 'oops' }, 1050] })
+    const p = h.generate()
+    while (h.trace.filter((x) => x === 'credits').length < 2) await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(logged()).toMatch(/\[Flow Video T2V\] \[Angular\] send deadline passed gen=\S+ credits unreadable — waiting for a late send/)
+    expect(logged()).not.toMatch(/credits unchanged/)
+    expect(logged()).not.toMatch(/credits unreadable[^\n]*\d/)
+    expect([...h.pendingGenerations.values()][0]).toMatchObject({ completed: false, sendDeadlinePassed: true, doc: null })
+    const r = await settle(p, 120000)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-submit-not-sent', postClick: true })
+    expect(h.trace.filter((x) => x === 'credits')).toHaveLength(3)
+  })
+
+  // M2-R8 M4(B2 + A4): 캡처는 문서마다 주입돼 사용자가 Flow 뷰에서 손으로 만든 영상의 YhhmEf 도 보고했다 — 거짓 "DOM step failed"(Sentry·바탕화면 파일·세션 슬롯)와 그 dedupe 로
+  //   진짜 보고(앱이 lost 로 닫은 뒤의 과금 미디어)가 가려졌다. 앱이 최근(≤120s) loadend 없이 닫은 YhhmEf gen 이 있을 때만 보고, 아니면 로그만.
+  it('바인딩 없는 YhhmEf loadend(UUID) — 최근 앱이 닫은 gen 없음(손 제출) → 로그만 "(no recent app close — not reported)", onDomFailure 없음 (M2-R8 M4)', async () => {
     const h = harness({ onSubmit: null })
     expect(h.page.loadend({ seq: 9 })).toEqual({ ok: true, dropped: 'unbound' })
+    expect(logged()).toMatch(/\[Flow RPC\] YhhmEf unbound loadend media=00000011 \(no recent app close — not reported\)/)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(h.onDomFailure.mock.calls.find((c) => c[0] === 'submit:unbound-loadend')).toBeUndefined()
+    expect(logged()).not.toContain(UUID11)
+  })
+
+  it('앱이 15s 크레딧 감소로 lost 로 닫은 뒤(loadend 없음) 뒤늦은 미바인딩 loadend(UUID) → [Flow RPC] YhhmEf unbound loadend media=<8> + onDomFailure(submit:unbound-loadend, media 앞 8자) — 전체 id·프롬프트 없음 (M2-R7 L1 · M2-R8 M4)', async () => {
+    const h = harness({ onSubmit: null, credits: [1050, 1040] })
+    const r = await settle(h.generate(), 20000)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-submit-lost' })
+    expect(h.page.loadend({ seq: 9 })).toEqual({ ok: true, dropped: 'unbound' })
     expect(logged()).toMatch(/\[Flow RPC\] YhhmEf unbound loadend media=00000011\b/)
+    expect(logged()).not.toMatch(/not reported/)
     await vi.advanceTimersByTimeAsync(100)
     const call = h.onDomFailure.mock.calls.find((c) => c[0] === 'submit:unbound-loadend')
     expect(call).toBeTruthy()
@@ -577,5 +633,127 @@ describe('설정 실패의 shape 진단은 onDomFailure 로 간다 (M2 실기)',
     const call = h.onDomFailure.mock.calls.find((c) => c[0] === 'settings:group-not-found:duration')
     expect(call).toBeTruthy()
     expect(JSON.stringify(call)).toContain('오디오 포함')
+  })
+})
+
+// M2-LIVE N1(A1/B6/A8): 제자리 자동화 뷰포트는 DOM 단계 내내 Flow 뷰(네이티브)를 앱 위에 둔다 — 사용자의 클릭이 컴포저·제출 화살표·설정 라디오에 닿으면
+//   과금·고아·잘못된 설정이 된다. 뷰포트를 키운 동안 **최상위 투명 방패 뷰**(deps.createInputShield)가 포인터 입력을 삼키고(신뢰 클릭은 sendInputEvent 라 OS 히트테스트를
+//   거치지 않는다), 같은 finally 에서 레이아웃 복원 전에 제거된다(정상·조기 반환·throw·워치독 전부). 드래그 중 진입은 드래그 끝을 ≤5s 기다리고, 그래도면 클릭 전 layout-dragging.
+//   워치독: DOM 단계 120s — 제출 클릭 전이면 같은 finally 를 지나 dom-stage-timeout(클릭 없음), 클릭이 이미 나갔으면 기존 post-click 경로.
+describe('flow:generate-video-t2v (angular) — 제자리 뷰포트의 입력 방패 · 드래그 대기 · 워치독 (M2-LIVE N1)', () => {
+  const NARROW = { x: 0, y: 0, width: 597, height: 872 }
+  const at = (t, tag) => t.findIndex((x) => x === tag)
+
+  it('좁은 뷰: 방패는 제자리 확장 직후·에이전트 프로브 전에 생기고, 제출 클릭 뒤 레이아웃 복원 전에 제거된다 — 포커스 반환은 그 뒤', async () => {
+    const h = harness({ bounds: NARROW })
+    const r = await settle(h.generate())
+    expect(r.success).toBe(true)
+    const t = h.trace
+    expect(h.createInputShield).toHaveBeenCalledTimes(1)
+    const enlarge = t.findIndex((x) => /^bounds:\d+x\d+$/.test(x))
+    expect(enlarge).toBeGreaterThanOrEqual(0)
+    expect(at(t, 'shield:on')).toBeGreaterThan(enlarge)
+    expect(at(t, 'shield:on')).toBeLessThan(idx(t, 'agent-probe'))
+    const restore = t.map((x, i) => [x, i]).filter(([x]) => x.startsWith('bounds:')).at(-1)[1]
+    expect(at(t, 'shield:off')).toBeGreaterThan(idx(t, 'click:compose-submit'))
+    expect(at(t, 'shield:off')).toBeLessThan(restore)
+    expect(restore).toBeLessThan(idx(t, 'main-focus'))
+  })
+
+  it('넓은 보이는 뷰(957×1022)는 뷰포트도 방패도 없다', async () => {
+    const h = harness()
+    expect((await settle(h.generate())).success).toBe(true)
+    expect(h.createInputShield).not.toHaveBeenCalled()
+    expect(h.trace).not.toContain('shield:on')
+  })
+
+  it('조기 반환(설정 실패, 클릭 전)에도 방패를 제거한다', async () => {
+    const h = harness({ bounds: NARROW, settings: { ok: false, kind: 'flow-settings-not-applied', reason: 'input-mode-not-material', steps: {} } })
+    const r = await settle(h.generate())
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-settings-not-applied', reason: 'input-mode-not-material' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(at(h.trace, 'shield:on')).toBeGreaterThanOrEqual(0)
+    expect(at(h.trace, 'shield:off')).toBeGreaterThan(at(h.trace, 'shield:on'))
+    expect(h.flowView.getBounds()).toEqual({ x: 0, y: 0, width: 637, height: 800 })   // 레이아웃(split-left 0.5)으로 복원
+  })
+
+  it('DOM 단계가 throw 해도(편집기 신뢰 클릭 reject) 방패를 제거하고 레이아웃을 복원한다', async () => {
+    const h = harness({ bounds: NARROW })
+    h.trustedClickOnFlowView.mockImplementation(async (_sel, opts) => { h.trace.push('click:' + (opts?.step || '?')); if (opts?.step === 'compose-editor') throw new Error('boom'); return { success: true } })
+    let err = null
+    const r = await settle(h.generate().catch((e) => { err = e; return 'threw' }))
+    expect(r).toBe('threw')
+    expect(err?.message).toBe('boom')
+    expect(at(h.trace, 'shield:off')).toBeGreaterThan(at(h.trace, 'shield:on'))
+    expect(h.flowView.getBounds()).toEqual({ x: 0, y: 0, width: 637, height: 800 })
+    expect(h.trace).not.toContain('click:compose-submit')
+  })
+
+  it('드래그 중 진입: 드래그가 끝날 때까지(≤5s) 확장·프로브를 미루고, 끝나면 정상 진행', async () => {
+    setLayoutDragging(true)
+    try {
+      const h = harness({ hidden: true })   // 드래그 중엔 레이아웃이 뷰를 0×0 으로 접어 둔다
+      const p = h.generate()
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(h.flowView.setBounds).not.toHaveBeenCalled()
+      expect(h.trace).not.toContain('agent-probe')
+      expect(h.trace).not.toContain('shield:on')
+      setLayoutDragging(false)
+      const r = await settle(p)
+      expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+      expect(at(h.trace, 'shield:on')).toBeLessThan(idx(h.trace, 'agent-probe'))
+    } finally { setLayoutDragging(false) }
+  })
+
+  it('5s 가 지나도 드래그 중이면 클릭 전 flow-settings-not-applied(reason layout-dragging) — bounds·방패·크레딧·클릭 없음', async () => {
+    setLayoutDragging(true)
+    try {
+      const h = harness({ hidden: true })
+      const r = await settle(h.generate(), 10000)
+      expect(r).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'layout-dragging' })
+      expect(h.flowView.setBounds).not.toHaveBeenCalled()
+      expect(h.createInputShield).not.toHaveBeenCalled()
+      expect(h.trace).not.toContain('credits')
+      expect(h.trace).not.toContain('click:compose-submit')
+      expect(h.pendingGenerations.size).toBe(0)
+      expect(logged()).toMatch(/layout still dragging/)
+    } finally { setLayoutDragging(false) }
+  })
+
+  it('워치독: DOM 단계(설정 드라이버)가 매달리면 120s 에 같은 finally 로 방패 제거·레이아웃 복원 후 클릭 전 dom-stage-timeout', async () => {
+    const h = harness({ bounds: NARROW, settings: new Promise(() => {}) })   // 드라이버가 영영 settle 하지 않는다(먹통 렌더러)
+    const p = h.generate()
+    await vi.advanceTimersByTimeAsync(119000)
+    expect(h.trace).not.toContain('shield:off')
+    const r = await settle(p, 5000)
+    expect(r).toEqual({ success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'dom-stage-timeout' })
+    expect(at(h.trace, 'shield:off')).toBeGreaterThan(at(h.trace, 'shield:on'))
+    expect(h.flowView.getBounds()).toEqual({ x: 0, y: 0, width: 637, height: 800 })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(logged()).toMatch(/DOM stage timed out/)
+  })
+
+  it('워치독 뒤 살아난 좀비(드라이버가 121s 에 돌아옴)는 arm·제출 클릭을 하지 않는다 — 결과는 dom-stage-timeout 그대로', async () => {
+    let resolveDriver
+    const h = harness({ bounds: NARROW, settings: new Promise((r) => { resolveDriver = r }) })
+    const p = h.generate()
+    await vi.advanceTimersByTimeAsync(121000)
+    const r = await settle(p, 1000)
+    expect(r).toMatchObject({ success: false, reason: 'dom-stage-timeout' })
+    resolveDriver({ ok: true, closed: true, steps: { mode: 'already(videocam)', ratio: 'already(crop_16_9)', duration: 'already(6)', resolution: 'already(720p)', count: 'already(x1)', model: 'already', input: 'material' } })
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(h.trace).not.toContain('click:compose-editor')
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(h.pendingGenerations.size).toBe(0)
+    expect(h.trace.filter((x) => x === 'shield:off')).toHaveLength(1)
+  })
+
+  it('워치독: 제출 클릭이 이미 나간 뒤(클릭 125s)에 120s 가 지나면 timeout 결과가 아니라 기존 post-click 경로(늦은 loadend → success)', async () => {
+    const h = harness({ bounds: NARROW, onSubmit: async (page) => { await new Promise((r) => setTimeout(r, 125000)); page.send(); page.loadend() }, credits: [1050, 1050] })
+    const r = await settle(h.generate(), 140000)
+    expect(r).toEqual({ success: true, generationId: UUID11, creditsLeft: 1040 })
+    expect(logged()).not.toMatch(/dom-stage-timeout|DOM stage timed out/)
+    expect(at(h.trace, 'shield:off')).toBeGreaterThan(idx(h.trace, 'click:compose-submit'))
   })
 })

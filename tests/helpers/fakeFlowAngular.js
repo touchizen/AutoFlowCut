@@ -4,7 +4,7 @@
 //   닫힌다 — 실제 CDK 오버레이가 body 의 keydown 을 keyCode===27 로 판정한다(R1#3, 2026-09-24 실기: document 에
 //   key:'Escape' 만 보낸 옛 드라이버는 패널을 못 닫았고 트리거 재클릭이 닫았다).
 //   opts.modelReset 'sync'     : 모델 항목 클릭 핸들러가 duration/resolution 을 즉시 기본값(6초/720p)으로 되돌린다
-//   opts.modelReset 'on-count' : 뒤의 count 클릭이 duration 을 기본값으로 되돌린다(지연 리셋)
+//   opts.modelReset 'on-count' : 뒤의 count 클릭이 duration 을 기본값으로 되돌린다(지연 리셋). (M2-LIVE N6) 되돌림은 그룹 element 를 갈아끼운다 — resetReplaceDelayMs 로 늦출 수 있다
 //   opts.lockGroup / lockTo    : 그 그룹은 클릭해도 ~60ms 뒤 lockTo 로 되돌아간다(계속 되돌리는 페이지)
 //   opts.ignoreClicks          : 클릭에 반응하지 않는 그룹 이름 목록(합성 클릭을 무시하는 컨트롤 — needsTrusted 케이스)
 //   opts.stickyPanel           : Escape 로 닫히지 않는다
@@ -18,8 +18,13 @@
 //                                불러오는 동안 그룹이 잠깐 사라지는 경우 — "그룹 없음" 스캔을 안정으로 세면 group-not-found:duration)
 //   opts.modelSelectInterim    : (M2-R5 J6) 두 단계 재렌더 사이의 **중간** 상태 {durations, atMs} — 최종 교체(modelSelectTwoStepMs) 전 atMs 에 다른 옵션 집합이 잠깐 붙는다
 //                                (연속 3회 미만의 과도 상태 — 첫 이탈 스캔이나 연속 2회에서 멈추면 중간 옵션으로 계획해 duration-not-offered)
+//   opts.modelSelectInsertGroupsMs : (M2-LIVE N2, B1 프로브) 모델 항목 클릭 N ms 뒤 **없던** 해상도·길이 그룹을 패널에 끼워 넣는다(Veo 패널 → Omni 로 전환하면
+//                                Angular 가 Omni 의 그룹을 늦게 그린다) — modelSelectInsertGroups {durations, checkedDuration, resolutions, checkedResolution}
+//   opts.modelSelectFlapMs     : (M2-LIVE N2) 모델 항목 클릭 뒤 길이 그룹을 N ms 마다 두 옵션 집합으로 계속 갈아끼운다(영영 안정되지 않는 패널 — settings-not-settled)
+//   opts.modePanel             : (M2-LIVE N2, A2 시나리오) 모드 클릭이 갈아끼우는 패널의 buildSettingsPanel 옵션(예: {model:'Veo 3.1 - Fast', omit:['duration']})
+//   opts.modeInsertDurationMs  : (M2-LIVE N2, A2 시나리오) 모드 클릭 N ms 뒤 길이 그룹을 끼워 넣는다 — modeInsertDuration {labels, checked}
 // 리스너는 document/body 에 붙으므로 테스트마다 disposeFakeAngular() 로 이전 것을 abort 한다.
-import { buildSettingsPanel, buildModelMenu, buildDurationGroup } from '../fixtures/flow-live-dom-20260924.js'
+import { buildSettingsPanel, buildModelMenu, buildDurationGroup, buildResolutionGroup } from '../fixtures/flow-live-dom-20260924.js'
 
 let fakeAngularAbort = null
 
@@ -50,9 +55,22 @@ export function installFakeAngular(doc, opts = {}) {
     if (/^\d{1,2}\s*\D{0,8}$/.test(t)) return 'duration'
     return 'other'
   }
-  const resetGroup = (group, key) => {
+  // M2-LIVE N2: 없던 그룹을 패널에 끼워 넣는다(모델 트리거 행 뒤) — 라이브 Angular 가 새 모델의 그룹을 늦게 그리는 경우
+  const insertRowAfterModel = (html) => {
+    const trigger = doc.querySelector('.flow-settings-panel button[aria-haspopup="menu"]')
+    const row = trigger && trigger.closest('.setting-row')
+    if (row) row.insertAdjacentHTML('afterend', `<div class="setting-row">${html}</div>`)
+  }
+  // M2-LIVE N6(B5): 되돌림은 aria-checked 를 옮긴 뒤 그룹 element 를 **갈아끼운다**(outerHTML — 라이브 Angular 는 상태를 바꾸고 곧 다시 그린다) 그래서 옛 참조는 떨어진
+  //   노드가 된다. replaceDelayMs 가 있으면 다시 그리기를 그만큼 늦춘다 — 드라이버의 최종 재판독(+100ms) 뒤·2차 패스(+400ms) 전에 그려져야, 재스캔 없이 재판독의 클릭 목록을
+  //   재사용하는 뮤턴트가 떨어진 노드를 눌러 not-checked 로 끝난다(동기 교체면 재판독이 이미 새 노드를 본다).
+  const resetGroup = (group, key, replaceDelayMs = 0) => {
     const b = Array.from(doc.querySelectorAll('button[role="radio"]')).find((x) => groupOf(x) === group && (x.textContent.includes(key)))
-    if (b) setChecked(b)
+    if (!b) return
+    setChecked(b)
+    const name = b.getAttribute('name')
+    const replace = () => { const g = doc.querySelector(`button[role="radio"][name="${name}"]`)?.closest('mat-button-toggle-group'); if (g) g.outerHTML = g.outerHTML }
+    if (replaceDelayMs > 0) setTimeout(replace, replaceDelayMs); else replace()
   }
   doc.addEventListener('click', (e) => {
     const btn = e.target.closest('button')
@@ -65,11 +83,15 @@ export function installFakeAngular(doc, opts = {}) {
       if (g === 'mode') {
         const toVideo = label === 'videocam'
         const overlay = doc.querySelector('.cdk-overlay-container')
-        overlay.outerHTML = buildSettingsPanel({ mode: toVideo ? 'video' : 'image', offset: 40 })
+        overlay.outerHTML = buildSettingsPanel({ mode: toVideo ? 'video' : 'image', offset: 40, ...(opts.modePanel || {}) })
+        // M2-LIVE N2(A2): 모드 전환 뒤 길이 그룹이 늦게 그려진다(현재 체크값은 Flow 가 기억한 값)
+        if (toVideo && opts.modeInsertDurationMs > 0 && opts.modeInsertDuration) {
+          setTimeout(() => insertRowAfterModel(buildDurationGroup(opts.modeInsertDuration.labels, opts.modeInsertDuration.checked, 40)), opts.modeInsertDurationMs)
+        }
         return
       }
       setChecked(btn)
-      if (opts.modelReset === 'on-count' && g === 'count') resetGroup('duration', '6초')
+      if (opts.modelReset === 'on-count' && g === 'count') resetGroup('duration', '6초', opts.resetReplaceDelayMs || 0)
       // 실기: 페이지가 그룹을 계속 되돌린다(클릭 뒤 ~60ms) — 2차 패스로도 못 맞추면 fail-closed 여야 한다
       if (opts.lockGroup === g) setTimeout(() => resetGroup(g, opts.lockTo), 60)
       return
@@ -96,6 +118,27 @@ export function installFakeAngular(doc, opts = {}) {
       trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-controls')
       btn.closest('.cdk-overlay-pane').remove()
       if (opts.modelReset === 'sync') { resetGroup('duration', '6초'); resetGroup('resolution', '720p') }
+      // M2-LIVE N2(B1 프로브): 그룹이 없던 패널(Veo)에서 Omni 로 — Angular 가 Omni 의 해상도·길이 그룹을 N ms 뒤에 그린다(체크값은 Flow 가 기억한 값)
+      if (opts.modelSelectInsertGroupsMs > 0 && opts.modelSelectInsertGroups) {
+        const g = opts.modelSelectInsertGroups
+        setTimeout(() => {
+          insertRowAfterModel(buildDurationGroup(g.durations, g.checkedDuration, 40))
+          insertRowAfterModel(buildResolutionGroup(g.resolutions || ['360p', '720p'], g.checkedResolution || '720p', 40))
+        }, opts.modelSelectInsertGroupsMs)
+      }
+      // M2-LIVE N2: 영영 안정되지 않는 패널 — 길이 그룹을 N ms 마다 두 옵션 집합으로 번갈아 갈아끼운다
+      if (opts.modelSelectFlapMs > 0) {
+        const sets = [['4초', '6초'], ['4초', '6초', '8초']]
+        let k = 0
+        const flap = () => {
+          if (signal.aborted) return
+          const radios = Array.from(doc.querySelectorAll('button[role="radio"]')).filter((x) => groupOf(x) === 'duration')
+          const group = radios[0]?.closest('mat-button-toggle-group')
+          if (group) group.outerHTML = buildDurationGroup(sets[k++ % 2], '4초')
+          setTimeout(flap, opts.modelSelectFlapMs)
+        }
+        setTimeout(flap, opts.modelSelectFlapMs)
+      }
       if (Array.isArray(opts.modelSelectDurations)) {
         const swapDurations = () => {
           const radios = Array.from(doc.querySelectorAll('button[role="radio"]')).filter((x) => groupOf(x) === 'duration')

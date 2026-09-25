@@ -13,6 +13,7 @@ import { normalizeStyleId, findAutoStyle } from '../services/styleService'
 import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 import { clearedImageFields } from '../utils/refEntityRegistration'
+import { pickMcpSettingsFields } from '../utils/mcpSettingsWhitelist'   // M2-LIVE N3: main 과 같은 화이트리스트(이중 방어)
 
 // start-scene-batch `mode` → handleStart 탭 오버라이드. 없거나 모르는 값이면 현재 UI 탭 그대로.
 const MCP_BATCH_MODE_TAB = { video: 'video-text', image: 'text' }
@@ -449,9 +450,12 @@ export function useMcpServer({
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
       } else if (data.type === 'update-settings') {
         // 설정 병합 — useAppSettings 가 localStorage 로 동기화한다. fields 가 객체가 아니면 무시.
-        if (data.fields && typeof data.fields === 'object' && !Array.isArray(data.fields)) {
-          setSettings?.(prev => ({ ...prev, ...data.fields }))
-          console.log('[MCP] Settings updated via HTTP:', Object.keys(data.fields).join(','))
+        // M2-LIVE N3(A3/B2): 화이트리스트 밖 키(projectName·mcpHttpEnabled·saveMode·flowAgentOn …)·모양 틀린 값은 버린다 — main 의 /api/update 가
+        //   먼저 400 으로 거르지만 렌더러도 같은 상수로 막는다(이중 방어). 유효한 키가 없으면 아무것도 하지 않는다.
+        const picked = pickMcpSettingsFields(data.fields)
+        if (picked && Object.keys(picked).length) {
+          setSettings?.(prev => ({ ...prev, ...picked }))
+          console.log('[MCP] Settings updated via HTTP:', Object.keys(picked).join(','))
         }
       } else if (data.type === 'generate-reference') {
         console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)
@@ -525,7 +529,8 @@ export function useMcpServer({
       // ref로 항상 최신 handleStart 호출 — stop 후 stale `isRunning=true` 가드에 막히는 회귀 방지.
       // mode('video'|'image')는 handleStart 의 tab 오버라이드로 변환 — 에이전트가 UI 탭과 무관하게 T2V 배치를 돌릴 수 있게.
       const { mode, ...restOptions } = options || {}
-      const tab = MCP_BATCH_MODE_TAB[mode]
+      // M2-LIVE N7(A5): 자기 키만 — 'constructor'·'toString'·'__proto__' 는 평범한 조회에서 truthy 비문자열(함수·객체)을 내어 setActiveTab(fn) 이 React 업데이터로 적용됐다.
+      const tab = typeof mode === 'string' && Object.hasOwn(MCP_BATCH_MODE_TAB, mode) ? MCP_BATCH_MODE_TAB[mode] : null
       const callHandleStart = effective => handleStartRef.current?.(effective, {
         ...restOptions,
         source: 'mcp',

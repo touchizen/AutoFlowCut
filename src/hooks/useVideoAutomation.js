@@ -47,7 +47,10 @@ export function effectiveVideoDuration(item, mode, batchDuration, resolution, mo
   // Flow(flow.google.com) 의 Veo 는 패널에 길이 선택이 없다(2026-09-25 실측, Veo 3.1 - Fast — 해상도도 없음) → 모델 기본 8초 고정.
   //   선택지가 없으니 8초 말고는 보낼 수 없다(Veo Fast 8초 = 20크레딧 실측; Omni 는 길이에 비례 — 4초 7·6초 10). 드라이버는 그룹이 없으면
   //   8초만 받는다(그 외는 클릭 전 거부).
-  if (appMode === 'flow' && !isOmniFlashModel(model) && /veo/i.test(String(model || ''))) return 8
+  // M2-LIVE N9(A9/B9): t2v 이고 **Veo … Fast** 일 때만 — 관측된 패널은 그것뿐이다. Lite/Quality 는 그리드 스냅 그대로(길이 그룹이 있으면 드라이버가 누르고, 없으면
+  //   드라이버 가드가 클릭 전에 거부한다); i2v 는 옛 경로·저장 메타의 계약을 바꾸지 않는다(Flow i2v 는 지금 미지원).
+  const modelName = String(model || '')
+  if (appMode === 'flow' && mode === 't2v' && !isOmniFlashModel(model) && /veo/i.test(modelName) && /fast/i.test(modelName)) return 8
   // 모델별 허용 길이 그리드로 스냅 — OmniFlash 는 {4,6,8,10}, 그 외(Veo) {4,6,8}.
   return snapVideoDuration(model, item?.targetDuration ?? batchDuration)
 }
