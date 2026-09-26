@@ -27,7 +27,10 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 describe('useVideoAutomation — Flow 모드는 씬 override 대신 설정의 Flow 모델', () => {
   it('override(grok) 씬 2개 + 일반 씬 2개 → 네 항목 모두 Omni Flash 로 제출, 설정 거부로 닫힌 항목 없음', async () => {
     let n = 0
-    const generateVideoT2V = vi.fn(async () => ({ success: true, generationId: `gen-${++n}`, creditsLeft: 1040 }))
+    // 리뷰 B R2 F3: Flow 설정 드라이버처럼 모델 메뉴에 없는 모델은 클릭 전에 거부한다 — 그래야 아래 "거부로 닫힌 항목 없음"이 거짓일 수 있다.
+    const generateVideoT2V = vi.fn(async (_prompt, model) => (model === 'Omni Flash'
+      ? { success: true, generationId: `gen-${++n}`, creditsLeft: 1040 }
+      : { success: false, errorKind: 'flow-settings-not-applied', error: 'flow-settings-not-applied', reason: 'model-not-offered' }))
     const checkVideoStatus = vi.fn(async (ids) => ({ success: true, statuses: ids.map((gid) => ({ generationId: gid, status: 'complete', mediaId: `media-${gid}`, videoUrl: SIGNED, error: null })) }))
     const genAPI = {
       generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus,

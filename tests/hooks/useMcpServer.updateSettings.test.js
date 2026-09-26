@@ -73,6 +73,26 @@ describe('useMcpServer — update-settings', () => {
     const prev = { imageModel: 'Nano Banana 2', generation: { image: { provider: 'google' } } }
     expect(setSettings.mock.calls[0][0](prev)).toEqual({ ...prev, imageModel: 'gpt-image-1' })
   })
+  // 리뷰 B R2 F1: 핸들러는 마운트 때 한 번 등록된다(effect deps []) — 모드는 ref 로 **지금** 값을 읽어야 한다. 마운트 모드만 보면 토글 뒤에 R2-2/F3 가 되살아난다.
+  it('마운트 뒤 API → Flow 로 바뀌면 정렬하지 않는다', () => {
+    const setSettings = vi.fn()
+    const props = makeProps({ setSettings, mode: 'api' })
+    const { rerender } = renderHook((p) => useMcpServer(p), { initialProps: props })
+    rerender({ ...props, mode: 'flow' })
+    mcpHandler({ type: 'update-settings', fields: { imageModel: 'gpt-image-1' } })
+    const prev = { imageModel: 'Nano Banana 2', generation: { image: { provider: 'google' } } }
+    expect(setSettings.mock.calls[0][0](prev)).toEqual({ ...prev, imageModel: 'gpt-image-1' })
+  })
+  it('마운트 뒤 Flow → API 로 바뀌면 provider 를 정렬한다', () => {
+    const setSettings = vi.fn()
+    const props = makeProps({ setSettings, mode: 'flow' })
+    const { rerender } = renderHook((p) => useMcpServer(p), { initialProps: props })
+    rerender({ ...props, mode: 'api' })
+    mcpHandler({ type: 'update-settings', fields: { imageModel: 'gpt-image-1' } })
+    const next = setSettings.mock.calls[0][0]({ imageModel: 'gemini-3.1-flash-image', generation: { image: { provider: 'google' } } })
+    expect(next.imageModel).toBe('gpt-image-1')
+    expect(next.generation.image.provider).toBe('openai')
+  })
   it('카탈로그 밖 이름(Flow 모델 Nano Banana Pro · Omni Flash)과 같은 provider 의 모델은 provider 를 건드리지 않는다', () => {
     const setSettings = vi.fn()
     renderHook(() => useMcpServer(makeProps({ setSettings })))
@@ -112,5 +132,16 @@ describe('useMcpServer — update-scenes / update-scene 은 generation 병합 �
     mcpHandler({ type: 'update-scene', index: 0, fields: { generation: { image: { provider: 'google', model: 'gemini-3-pro-image' } } } })
     const updater = setScenes.mock.calls.at(-1)[0]
     expect(updater(prev)[0].generation).toEqual({ image: { provider: 'google', model: 'gemini-3-pro-image' } })
+  })
+  // 리뷰 B R2 F2: 위 케이스는 image→image 전체 교체라 "병합 결과"와 "들어온 값 그대로"가 같다 — 일부 stage 만 보내면 나머지 override 가 남아야 한다.
+  it('update-scene: t2v override 만 보내면 기존 image override 는 남는다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes })))
+    mcpHandler({ type: 'update-scene', index: 0, fields: { generation: { video: { t2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' } } } } })
+    const updater = setScenes.mock.calls.at(-1)[0]
+    expect(updater(prev)[0].generation).toEqual({
+      image: { provider: 'openai', model: 'gpt-image-1' },
+      video: { t2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' } },
+    })
   })
 })
