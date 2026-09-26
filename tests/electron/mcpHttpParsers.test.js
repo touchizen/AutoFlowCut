@@ -50,16 +50,18 @@ describe('decideUpdateRequest — POST /api/update 본문 → {status, body, for
 })
 
 describe('main.js — POST /api/update 는 decideUpdateRequest 로 판정하고, api-docs 가 키를 문서화한다', () => {
-  it('라우트가 decideUpdateRequest(body) 의 status/body 를 쓰고 forward 만 mcp-update 로 보낸다', () => {
+  // self-render 병합(리뷰 B F1): 판정(decideUpdateRequest)과 렌더러 전달(dispatchMcpUpdate — 이미지 교체 busy 는 409)을 routeMcpUpdate 한 함수로 합쳤다.
+  //   400·forward·409 의 **동작**은 tests/electron/ipc/mcpUpdateRoute.test.js 가 실제 함수로 묶는다. 여기서는 라우트가 그 함수에 원문 body 를 넘기고 그 결과로 응답하는지,
+  //   그리고 그 함수가 이 파서로 판정하는지만 본다.
+  it('라우트가 routeMcpUpdate(원문 body) 의 status/body 로 응답하고, routeMcpUpdate 는 decideUpdateRequest 로 판정한다', () => {
     const b = MAIN.slice(MAIN.indexOf("pathname === '/api/update'"), MAIN.indexOf("pathname === '/api/generate-reference'"))
-    expect(b).toMatch(/decideUpdateRequest\(body\)/)
-    // self-render 병합: forward 는 dispatchMcpUpdate 로 간다(비이미지 수정은 거기서 mcp-update 로 보내고, 이미지 교체는 렌더러 결과 409 를 기다린다 — mcpUpdateRoute.test.js).
-    //   판정 본문(data 원본)이 아니라 **forward** 만 넘어가야 화이트리스트가 정리한 fields 가 렌더러에 닿는다.
-    expect(b).toMatch(/dispatchMcpUpdate\(mainWindow\.webContents,\s*\w+\.forward\)/)
-    expect(b).not.toMatch(/dispatchMcpUpdate\(mainWindow\.webContents,\s*(data|body)\)/)
-    expect(b).toMatch(/writeHead\(\w+\.status\)/)
+    expect(b).toMatch(/await routeMcpUpdate\(mainWindow\.webContents,\s*body\)/)
+    expect(b).toMatch(/writeHead\(updateResponse\.status\)/)
     expect(b).not.toMatch(/JSON\.parse\(body\)/)
-    expect(MAIN).toMatch(/import \{[^}]*decideUpdateRequest[^}]*\} from '\.\/mcp-http-parsers\.js'/)
+    const MCP_IPC = readFileSync(fileURLToPath(new URL('../../electron/ipc/mcp.js', import.meta.url)), 'utf8')
+    expect(MCP_IPC).toMatch(/import \{[^}]*decideUpdateRequest[^}]*\} from '\.\.\/mcp-http-parsers\.js'/)
+    const route = MCP_IPC.slice(MCP_IPC.indexOf('export async function routeMcpUpdate'))
+    expect(route).toMatch(/decideUpdateRequest\(rawBody\)/)
   })
   it('api-docs: update-settings 의 허용 키가 문서에 있다', () => {
     for (const k of ['videoModelT2V', 'videoModelF2V', 'imageModel', 'videoResolution', 'aspectRatio', 'defaultDuration', 'imageBatchCount', 'videoBatchCount', 'concurrency', 'videoConcurrency', 'seedNo', 'seedLocked', 'imageUpscale']) {

@@ -146,4 +146,23 @@ describe('useMcpServer — update-scenes / update-scene 은 generation 병합 �
       video: { t2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' }, i2v: { provider: 'google', model: 'veo-3.1-generate-preview' } },
     })
   })
+  // self-render 병합(리뷰 B F3): update-scene 은 applyMcpSceneUpdate(Upscayl 가드) 안에서 병합한다 — 모델만 보낸 override 는 provider 를
+  //   **지금** 앱 설정의 전역 provider 로 풀어 검증한다. 설정을 안 넘기거나 마운트 시점 값에 고정하면 google 로 풀려 {google, gpt-image-1} 로 거부되고
+  //   override 가 조용히 버려진다(경고는 콘솔뿐, HTTP 는 200).
+  it('update-scene: 모델만 보낸 image override 는 앱 설정의 전역 provider(openai)로 검증돼 남는다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes, settings: { mcpHttpEnabled: false, generation: { image: { provider: 'openai' } } } })))
+    mcpHandler({ type: 'update-scene', index: 0, fields: { generation: { image: { model: 'gpt-image-1' } } } })
+    const updater = setScenes.mock.calls.at(-1)[0]
+    expect(updater([{ id: 'scene_1' }])[0].generation).toEqual({ image: { model: 'gpt-image-1' } })
+  })
+  it('update-scene: 마운트 뒤 바뀐 설정으로 검증한다', () => {
+    const setScenes = vi.fn()
+    const props = makeProps({ setScenes, settings: { mcpHttpEnabled: false, generation: { image: { provider: 'google' } } } })
+    const { rerender } = renderHook((p) => useMcpServer(p), { initialProps: props })
+    rerender({ ...props, settings: { mcpHttpEnabled: false, generation: { image: { provider: 'openai' } } } })
+    mcpHandler({ type: 'update-scene', index: 0, fields: { generation: { image: { model: 'gpt-image-1' } } } })
+    const updater = setScenes.mock.calls.at(-1)[0]
+    expect(updater([{ id: 'scene_1' }])[0].generation).toEqual({ image: { model: 'gpt-image-1' } })
+  })
 })

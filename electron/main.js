@@ -15,7 +15,7 @@ import { registerRenderIPC } from './ipc/render.js'
 import { resolveFfmpegPath, isRuntimePackaged } from './render/ffmpegPath.js'
 import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
-import { dispatchMcpUpdate, registerMcpIPC } from './ipc/mcp.js'
+import { registerMcpIPC, routeMcpUpdate } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { createUpscaylPathStore, registerUpscaylIPC } from './ipc/upscayl.js'
 import { registerStoryIPC } from './ipc/story-api.js'
@@ -55,7 +55,7 @@ import { FLOW_XHR_CAPTURE_INJECTION } from './flow-xhr-capture.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from './flow-rpc-capture.js'
 import { failBoundUnfinished } from './flow-rpc-router.js'
 import { releaseDomStage } from './ipc/flow-angular.js'   // M2-LAST P1: 문서가 죽으면 DOM 단계 직렬화를 푼다
-import { decideUpdateRequest, parseStartSceneBatchBody } from './mcp-http-parsers.js'   // M2-LIVE N3 · N7
+import { parseStartSceneBatchBody } from './mcp-http-parsers.js'   // M2-LIVE N7 (N3 판정은 ipc/mcp.js routeMcpUpdate)
 import { isNetTraceOn, netTraceFilePath, decodeUploadData, buildTraceLine, summarizeTraceEntry } from './flow-net-trace.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
@@ -1269,19 +1269,12 @@ function startMcpHttpServer(port) {
 
         // POST /api/update — 데이터 업데이트 (renderer로 전달)
         //   M2-LIVE N3: update-settings 는 화이트리스트 밖 키·틀린 값이면 400 + 키 이름(decideUpdateRequest — 순수, 테스트는 mcpHttpParsers.test.js).
+        //   self-render: 이미지 교체 update-scene 은 렌더러 결과를 기다려 busy(Upscayl 실행 중)면 409. 판정·전달은 routeMcpUpdate(ipc/mcp.js) 한 곳 — mcpUpdateRoute.test.js.
         if (req.method === 'POST' && pathname === '/api/update') {
-          const decided = decideUpdateRequest(body)
           if (mainWindow) {
-            // main 병합(self-render): 화이트리스트 판정(decideUpdateRequest — 400)을 먼저 하고, 통과한 요청만 렌더러로 보낸다.
-            //   이미지 교체 update-scene 은 dispatchMcpUpdate 가 렌더러 결과를 기다려 409(busy — Upscayl 실행 중)를 돌려준다.
-            if (!decided.forward) {
-              res.writeHead(decided.status)
-              res.end(JSON.stringify(decided.body))
-            } else {
-              const updateResponse = await dispatchMcpUpdate(mainWindow.webContents, decided.forward)
-              res.writeHead(updateResponse.status)
-              res.end(JSON.stringify(updateResponse.body))
-            }
+            const updateResponse = await routeMcpUpdate(mainWindow.webContents, body)
+            res.writeHead(updateResponse.status)
+            res.end(JSON.stringify(updateResponse.body))
           } else {
             res.writeHead(503)
             res.end(JSON.stringify({ error: 'App not ready' }))
@@ -1638,6 +1631,9 @@ function startMcpHttpServer(port) {
 
         // DELETE /api/projects — 프로젝트 삭제
         if (req.method === 'DELETE' && pathname === '/api/projects') {
+          // Windows EPERM 폴백(아래 catch)이 쓰는 값 — try 안에서 const 로 두면 catch 에서 ReferenceError 라 폴백이 한 번도 돌지 못했다(진입 파일 정적 검사가 잡음).
+          let projectName = null
+          let projectDir = null
           try {
             const configPath = path.join(app.getPath('userData'), 'work-folder-config.json')
             let workFolder
@@ -1650,13 +1646,13 @@ function startMcpHttpServer(port) {
               return
             }
             const data = JSON.parse(body)
-            const projectName = data.name
+            projectName = data.name
             if (!projectName) {
               res.writeHead(400)
               res.end(JSON.stringify({ error: 'name required' }))
               return
             }
-            const projectDir = path.join(workFolder, projectName)
+            projectDir = path.join(workFolder, projectName)
             try { await fs.access(projectDir) } catch {
               res.writeHead(404)
               res.end(JSON.stringify({ error: `Project "${projectName}" not found` }))
@@ -1667,10 +1663,10 @@ function startMcpHttpServer(port) {
             res.end(JSON.stringify({ success: true, deleted: projectName }))
           } catch (err) {
             // Windows EPERM fallback (OneDrive 등 파일 잠금 시)
-            if (process.platform === 'win32' && err.code === 'EPERM') {
+            if (process.platform === 'win32' && err.code === 'EPERM' && projectDir) {
               try {
-                const { execSync } = require('child_process')
-                execSync(`rmdir /s /q "${projectDir}"`, { windowsHide: true })
+                // main 은 ESM 이라 require 가 없다 — 위에서 import 한 child_process 를 쓴다
+                execSyncRaw(`rmdir /s /q "${projectDir}"`, { windowsHide: true })
                 res.writeHead(200)
                 res.end(JSON.stringify({ success: true, deleted: projectName }))
               } catch (fallbackErr) {

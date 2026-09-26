@@ -7,6 +7,7 @@ import fsSync from 'fs'
 import path from 'path'
 import os from 'os'
 import { app } from 'electron'
+import { decideUpdateRequest } from '../mcp-http-parsers.js'
 
 const MCP_NAME = 'autoflowcut'
 
@@ -39,6 +40,17 @@ export async function dispatchMcpUpdate(webContents, data) {
   } catch (error) {
     return { status: 503, body: { success: false, error: error?.message || 'renderer-unavailable' } }
   }
+}
+
+/**
+ * POST /api/update — 원문 body → { status, body }.
+ *   main(M2-LIVE N3)의 화이트리스트 판정이 먼저다: 모양이 틀리면 400 이고 렌더러에 아무것도 보내지 않는다.
+ *   통과한 forward 만 dispatchMcpUpdate 로 보낸다 — 이미지 교체 update-scene 은 렌더러 결과를 기다려 busy(Upscayl 실행 중)면 409.
+ */
+export async function routeMcpUpdate(webContents, rawBody) {
+  const decided = decideUpdateRequest(rawBody)
+  if (!decided.forward) return { status: decided.status, body: decided.body }
+  return dispatchMcpUpdate(webContents, decided.forward)
 }
 
 function getClaudeConfigPath() {

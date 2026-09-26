@@ -383,7 +383,7 @@ describe('Upscayl 경로 저장소와 Electron wiring', () => {
     const main = await readFile(path.join(process.cwd(), 'electron', 'main.js'), 'utf8')
     expect(main).toContain("import { createUpscaylPathStore, registerUpscaylIPC } from './ipc/upscayl.js'")
     expect(main).toContain('const cleanupRunningUpscayl = registerUpscaylIPC')
-    expect(main).toContain('cleanupRunningUpscayl')
-    expect(main).toContain('Promise.allSettled')
+    // self-render 병합(리뷰 B F5): 이름이 선언에도 있어 toContain('cleanupRunningUpscayl') 은 공허했다 — 종료 배리어가 두 정리를 실제로 기다리는지 본다.
+    expect(main).toMatch(/Promise\.allSettled\(\[\s*cleanupRunningRenders\?\.\(\),\s*cleanupRunningUpscayl\?\.\(\),?\s*\]\)/)
   })
 })

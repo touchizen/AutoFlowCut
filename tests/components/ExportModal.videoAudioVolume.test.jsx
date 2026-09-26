@@ -103,6 +103,16 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
 
   // 리뷰 R1 MAJOR: 이 옵션은 CapCut 만 바꾼다(프리미어·Vrew 는 영상 소리를 그대로 낸다) — 다른 탭에 보이면 음소거를 골라도
   //   소리가 나와 힌트("나레이션만 들립니다")가 거짓이 된다.
+  // self-render 병합(리뷰 B F4): self-render(render 탭)도 Veo 오디오를 원래 볼륨으로 섞는다(audioAdapter VIDEO_GAIN) — 여기 보이면 음소거가 거짓이 된다.
+  //   탭이 실제로 그려졌는지(renderTitle)부터 본다 — 안 그려져서 옵션이 없는 거면 이 단언은 공허하다.
+  it('render(self-render) 탭에서는 보이지 않는다', () => {
+    currentSaved = { ...SAVED_BASE }
+    render(<ExportModal {...baseProps} initialFormat="render" onExport={vi.fn()} onExportRender={vi.fn()} />, { wrapper: Wrapper })
+    expect(screen.getByText(/exportModal\.renderTitle/)).toBeInTheDocument()
+    expect(screen.queryByText(/exportModal\.videoAudioVolume/)).toBeNull()
+    expect(screen.queryByRole('option', { name: /videoAudioMute/ })).toBeNull()
+  })
+
   it.each(['premiere', 'vrew'])('%s 탭에서는 보이지 않는다', (fmt) => {
     currentSaved = { ...SAVED_BASE }
     render(<ExportModal {...baseProps} initialFormat={fmt} onExport={vi.fn()} onExportPremiere={vi.fn()} onExportVrew={vi.fn()} />, { wrapper: Wrapper })

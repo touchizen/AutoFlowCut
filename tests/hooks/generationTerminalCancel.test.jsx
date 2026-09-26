@@ -258,8 +258,9 @@ async function runAutomationUpscaylLatch() {
   const sentScope = api.submitGeneration.mock.calls[0][2].cancelScope
   expect(api.cancelGeneration).toHaveBeenCalledTimes(1)
   expect(api.cancelGeneration).toHaveBeenCalledWith(sentScope)
+  expect(testState.nextCancelScope.mock.results.map(({ value }) => value)).toEqual([sentScope])
   expect(updateScene).not.toHaveBeenCalledWith('s2', expect.objectContaining({ status: 'generating' }))
-  expect(liveScenes.find((scene) => scene.id === 's1')).toMatchObject({ status: 'pending' })
+  expect(liveScenes.find((scene) => scene.id === 's1')).toMatchObject({ status: 'pending', error: null, errorKind: null })
 }
 
 async function runReferenceTerminal(kind) {
