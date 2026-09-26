@@ -97,8 +97,11 @@ export function buildResolutionGroup(labels, checkedLabel, offset = 0, material 
   return toggleGroup(spec, labels.includes(checkedLabel) ? checkedLabel : labels[0], offset, material)
 }
 
-/** 열린 모델 메뉴(video-model-menu 덤프): div#mat-menu-panel-N[role=menu] > button.mat-mdc-menu-item[role=menuitem]. */
-export function buildModelMenu(id = 'mat-menu-panel-20', items = ['Omni 1.1 Flash', 'Veo 3.1 - Lite', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality']) {
-  const buttons = items.map((t) => `<button class="mat-mdc-menu-item mat-focus-indicator mat-mdc-menu-trigger flow-internal-menu-item" role="menuitem" aria-expanded="false">${ICON('volume_up')}<span class="mat-mdc-menu-item-text">${t}</span></button>`).join('')
+/** 이미지 모델 메뉴 항목(2026-09-26 덤프 flow-dom-dump-20260926-145308, 순서 그대로) — 🍌 는 평문 텍스트, 항목에 아이콘 없음. */
+export const IMAGE_MODEL_MENU_ITEMS = ['🍌 Nano Banana Pro', '🍌 Nano Banana 2', '🍌 Nano Banana 2 Lite']
+
+/** 열린 모델 메뉴(video-model-menu 덤프): div#mat-menu-panel-N[role=menu] > button.mat-mdc-menu-item[role=menuitem]. icon:null 은 아이콘 없는 항목(이미지 메뉴). */
+export function buildModelMenu(id = 'mat-menu-panel-20', items = ['Omni 1.1 Flash', 'Veo 3.1 - Lite', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality'], { icon = 'volume_up' } = {}) {
+  const buttons = items.map((t) => `<button class="mat-mdc-menu-item mat-focus-indicator mat-mdc-menu-trigger flow-internal-menu-item" role="menuitem" aria-expanded="false">${icon ? ICON(icon) : ''}<span class="mat-mdc-menu-item-text">${t}</span></button>`).join('')
   return `<div class="cdk-overlay-pane"><div role="menu" class="mat-mdc-menu-panel flow-menu-panel flow-model-picker-panel mat-menu-above mat-menu-after" id="${id}"><div class="mat-mdc-menu-content">${buttons}</div></div></div>`
 }

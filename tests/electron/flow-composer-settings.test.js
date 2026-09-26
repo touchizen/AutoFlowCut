@@ -4,14 +4,15 @@
 // (aria-haspopup=menu) 7개와 프로젝트 메뉴 버튼을 **앞에** 둔다 — 모델 트리거는 패널 스코프 안에서만.
 //   locatePanel = 라디오의 최소 공통 조상 · 그룹은 자동 번호 name 으로만 묶고 내용(리거처·텍스트)으로 분류(번호 매칭 금지)
 //   phase1 모드 → 재스캔 → phase2: 모델 → (변경 시 안정 대기·재스캔·재계획) → 비율 → 길이 → 해상도 → 개수 → 최종 재판독
-//   이미지 모델은 검증만(불일치 → flow-image-model-mismatch {requested, panel}, 비율·개수 클릭 없음).
+//   이미지 모델도 영상처럼 메뉴에서 고른다(2026-09-26) — 단 **정확 일치**("Nano Banana 2" ≠ "Nano Banana 2 Lite"). 메뉴에 없으면
+//   flow-image-model-mismatch {requested, panel}(비율·개수 클릭 없음).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   scanSettingsPanel, planSettingsClicks, ratioLigature, runSettingsDriver, SETTINGS_DRIVER_JS, SETTINGS_PANEL_OPEN_JS,
   FIND_RADIO_JS, applyComposerSettings,
 } from '../../electron/flow-composer-settings.js'
 import {
-  CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel, buildDurationGroup,
+  CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel, buildDurationGroup, IMAGE_MODEL_MENU_ITEMS,
 } from '../fixtures/flow-live-dom-20260924.js'
 import { installFakeAngular, disposeFakeAngular } from '../helpers/fakeFlowAngular.js'
 
@@ -24,6 +25,8 @@ const noSleep = { sleep: async () => {} }
 function mount(html) { document.body.innerHTML = html; return document }
 const imagePage = (o = {}) => HEAD + IMAGE_COMPOSER_KO + buildSettingsPanel({ mode: 'image', ...o })
 const videoPage = (o = {}) => HEAD + VIDEO_COMPOSER_KO + buildSettingsPanel({ mode: 'video', ...o })
+// 가짜 Angular 의 모델 메뉴를 2026-09-26 이미지 메뉴 덤프로(항목 순서 그대로, 아이콘 없음)
+const IMAGE_MENU = { modelMenuItems: IMAGE_MODEL_MENU_ITEMS, modelMenuIcon: null }
 
 // 가짜 Angular 는 tests/helpers/fakeFlowAngular.js(공용 — minified 드라이버 테스트도 같은 것을 쓴다).
 
@@ -83,10 +86,20 @@ describe('planSettingsClicks', () => {
     expect(planSettingsClicks(s, { mode: 'image' }, 1)).toEqual({ ok: true, clicks: [], steps: { mode: 'already' } })
   })
 
-  it('phase2 이미지: 모델 검증 먼저 — 불일치면 flow-image-model-mismatch {requested, panel} 이고 비율·개수 클릭 없음', () => {
+  it('phase2 이미지: 모델이 다르면 영상처럼 select 계획 **만** — 비율·개수는 모델 클릭 뒤 재계획(2026-09-26, 옛: flow-image-model-mismatch)', () => {
     const s = scanSettingsPanel(mount(imagePage()))
     const p = planSettingsClicks(s, { mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana Pro' }, 2)
-    expect(p).toEqual({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, clicks: [] })
+    expect(p).toEqual({ ok: true, clicks: [], steps: {}, model: { select: true, requested: 'Nano Banana Pro' } })
+  })
+
+  // 2026-09-26: 부분열 규칙은 패널 "🍌 Nano Banana 2 Lite" 를 요청 "Nano Banana 2" 로 보고 verified — Lite 로 조용히 생성했다(덤프에서 Lite 첫 관측).
+  it('phase2 이미지: 모델은 정확 일치 — 패널 "🍌 Nano Banana 2 Lite" 는 요청 "Nano Banana 2" 가 아니다(select), 같은 이름이면 verified', () => {
+    const lite = scanSettingsPanel(mount(imagePage({ model: '🍌 Nano Banana 2 Lite' })))
+    expect(planSettingsClicks(lite, { mode: 'image', ratio: '9:16', model: 'Nano Banana 2' }, 2)).toEqual({ ok: true, clicks: [], steps: {}, model: { select: true, requested: 'Nano Banana 2' } })
+    expect(planSettingsClicks(lite, { mode: 'image', ratio: '16:9', model: 'Nano Banana 2 Lite' }, 2)).toMatchObject({ ok: true, steps: { model: 'verified' }, model: null })
+    // 이모지·대소문자는 무시한다(정규화 뒤 토큰 열 비교)
+    const two = scanSettingsPanel(mount(imagePage()))
+    expect(planSettingsClicks(two, { mode: 'image', ratio: '16:9', model: 'nano banana 2' }, 2)).toMatchObject({ ok: true, steps: { model: 'verified' }, model: null })
   })
 
   it('phase2 이미지 일치: model verified, ratio crop_9_16 클릭, count x2 클릭; 미정의 목표는 생략', () => {
@@ -137,14 +150,117 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
   })
 
-  it('이미지 모델 불일치 → 클릭 0회, kind/params 전달', async () => {
+  // 2026-09-26: 이미지 모델도 영상과 같은 메뉴 경로로 고른다(옛 flow.google.com 이전 뒤 검증만 남아 "요청 Pro, 패널 2" 토스트로 멈췄다).
+  it('이미지 모델이 다르면(패널 2 · 요청 Pro) 메뉴에서 🍌 Nano Banana Pro 클릭 → 재계획 → 비율·개수 클릭 → ok, model clicked', async () => {
     const doc = mount(imagePage())
-    const log = installFakeAngular(doc)
+    const log = installFakeAngular(doc, IMAGE_MENU)
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana Pro' }, noSleep)
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { mode: 'already', model: 'clicked', ratio: 'clicked(crop_9_16)', count: 'clicked' } })
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'ratio:crop_9_16', 'count:x2', 'keydown:Escape:27'])
+    expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+  })
+
+  it('패널 🍌 Nano Banana 2 Lite · 요청 Nano Banana 2 → Lite 로 조용히 생성하지 않는다: 메뉴에서 🍌 Nano Banana 2 를 클릭 → ok', async () => {
+    const doc = mount(imagePage({ model: '🍌 Nano Banana 2 Lite' }))
+    const log = installFakeAngular(doc, IMAGE_MENU)
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', model: 'Nano Banana 2' }, noSleep)
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { mode: 'already', model: 'clicked', ratio: 'already(crop_16_9)' } })
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana 2', 'keydown:Escape:27'])
+  })
+
+  // 드라이버 사본(settingsDriverCore)의 항목 찾기도 정확 일치여야 한다 — 덤프 순서(Pro, 2, Lite)에선 부분열 규칙도 2 를 먼저 찾으므로 Lite 를 앞에 둔다.
+  it('메뉴에서 Lite 가 2 보다 앞에 있어도 요청 Nano Banana 2 는 🍌 Nano Banana 2 를 누른다', async () => {
+    const doc = mount(imagePage({ model: '🍌 Nano Banana Pro' }))
+    const log = installFakeAngular(doc, { ...IMAGE_MENU, modelMenuItems: ['🍌 Nano Banana Pro', '🍌 Nano Banana 2 Lite', '🍌 Nano Banana 2'] })
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', model: 'Nano Banana 2' }, noSleep)
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { model: 'clicked' } })
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana 2', 'keydown:Escape:27'])
+  })
+
+  it('요청 이미지 모델이 메뉴에 없으면 flow-image-model-mismatch {requested, panel}(기존 문구·params) — 메뉴·패널을 닫고 비율·개수 클릭 없음', async () => {
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc, { ...IMAGE_MENU, modelMenuItems: ['🍌 Nano Banana 2', '🍌 Nano Banana 2 Lite'] })
     const r = await runSettingsDriver(doc, { mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana Pro' }, noSleep)
     expect(r).toMatchObject({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, closed: true })
-    // R1#3: 실패 경로도 패널을 닫고 나온다(열어 둔 채 돌아오면 다음 클릭이 오버레이에 막힌다).
-    expect(log).toEqual(['keydown:Escape:27'])
+    // 트리거 재클릭이 메뉴를 닫고, Escape 가 패널을 닫는다(R1#3: 실패 경로도 닫고 나온다)
+    expect(log).toEqual(['model-trigger', 'model-trigger', 'keydown:Escape:27'])
     expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+  })
+
+  it('이미지 항목을 눌러도 트리거 글자가 안 바뀌면 model-not-reflected — 비율·개수 클릭 없이 멈춘다(생성 전)', async () => {
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectIgnored: true })
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana Pro' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-not-reflected', closed: true })
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'keydown:Escape:27'])
+    expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+  })
+
+  // 리뷰 B(2026-09-26): 반영 확인도 정확 일치여야 한다 — 부분열이면 Lite 트리거가 요청 2 의 "반영"으로 통과해 model=clicked 로 거짓 보고하고
+  //   settings-not-settled 로 끝났다(생성 전 멈춤은 같지만 진단이 틀린다). 패널 2 · 요청 Pro 케이스는 두 규칙이 같은 답이라 이걸 못 가린다.
+  it('패널 Lite · 요청 2 · 항목 클릭이 반영 안 됨 → model-not-reflected, steps 에 model 없음(전환했다고 보고하지 않는다)', async () => {
+    const doc = mount(imagePage({ model: '🍌 Nano Banana 2 Lite' }))
+    const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectIgnored: true })
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', model: 'Nano Banana 2' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-not-reflected', closed: true })
+    expect(r.steps.model).toBeUndefined()
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana 2', 'keydown:Escape:27'])
+  })
+
+  // §4 덤프: 이미지 항목에도 mat-mdc-menu-trigger 가 달려 있다(영상은 장식이었다) — 하위 메뉴가 뜨면 내용 미관측이라 멈춘다.
+  it('이미지 항목이 하위 메뉴만 열면 model-submenu-unknown — Escape ×3 로 닫고 비율·개수 클릭 없음', async () => {
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSubmenu: true })
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana Pro' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-submenu-unknown', closed: true })
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'keydown:Escape:27', 'keydown:Escape:27', 'keydown:Escape:27'])
+  })
+
+  // 리뷰 A(2026-09-26): 이미지 패널엔 길이·해상도 그룹이 없어 안정 대기는 패널 서명으로 끝난다(≈1.5s) — 대기를 빼도 초록이었다.
+  //   모델 클릭 1000ms 뒤 Flow 가 개수를 x1 로 리셋하면, 대기 없이(또는 짧은 고정 대기로) 재스캔한 계획은 x2 를 already 로 보고 1장만 만든다.
+  //   (R2: 300ms 였을 땐 고정 sleep(400) 뮤턴트가 통과했다 — 안정 대기 상한 안쪽의 늦은 리셋으로 고정 대기를 가른다.)
+  it('이미지 모델 클릭 1000ms 뒤 개수 리셋(x2 → x1) → 안정 대기 뒤 재계획이 x2 를 다시 클릭한다', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(imagePage({ checked: { count: 'x2' } }))
+      const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectLater: { afterMs: 1000, count: 'x1' } })
+      const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', count: 2, model: 'Nano Banana Pro' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(r).toMatchObject({ ok: true, closed: true, steps: { model: 'clicked', count: 'clicked' } })
+      expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'count:x2', 'keydown:Escape:27'])
+    } finally { vi.useRealTimers() }
+  })
+
+  // 리뷰 A(2026-09-26): 이미지는 제출 뒤 모델 검사가 없다(영상은 modelKeyMatches) — 전환 뒤 되돌림을 잡는 재계획·최종 재판독이 유일한 방어선인데 묶이지 않았다.
+  it('반영 뒤 100ms 에 Flow 가 모델을 🍌 Nano Banana 2 로 되돌리면(개수도 바뀜) 재계획이 model-not-reflected 로 멈춘다 — 비율·개수 클릭 없음', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(imagePage())
+      const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectLater: { afterMs: 100, label: '🍌 Nano Banana 2', count: 'x2' } })
+      const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', model: 'Nano Banana Pro' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-not-reflected', closed: true, steps: { model: 'clicked' } })
+      expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'keydown:Escape:27'])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('재계획 뒤 개수 클릭이 모델을 되돌리면 최종 재판독이 not-checked:model 로 멈춘다(ok 로 닫지 않는다)', async () => {
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc, { ...IMAGE_MENU, modelRevertOnCount: '🍌 Nano Banana 2' })
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', count: 2, model: 'Nano Banana Pro' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:model', closed: true })
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'count:x2', 'keydown:Escape:27'])
+  })
+
+  // 리뷰 A R2(2026-09-26): 2차 패스 뒤의 모델 가드도 같은 방어선이다 — 개수가 되돌아가 2차 패스가 도는 동안(400ms 대기) Flow 가 모델을 되돌리면
+  //   2차 패스 뒤 재판독이 not-checked:model 로 멈춰야 한다(없으면 Nano Banana 2 · x1 로 ok 닫힘).
+  it('2차 패스 대기 중 Flow 가 모델을 되돌리면 2차 패스 뒤 재판독이 not-checked:model 로 멈춘다', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(imagePage())
+      const log = installFakeAngular(doc, { ...IMAGE_MENU, lockGroup: 'count', lockTo: 'x1', modelSelectLater: { afterMs: 1800, label: '🍌 Nano Banana 2' } })
+      const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', count: 2, model: 'Nano Banana Pro' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:model', closed: true, steps: { model: 'clicked' } })
+      expect(log.filter((l) => l === 'count:x2')).toHaveLength(1)   // 2차 패스는 모델이 이미 되돌아가 개수를 다시 누르지 않는다(계획이 모델에서 멈춘다)
+    } finally { vi.useRealTimers() }
   })
 
   it('(a) 동기 리셋: 모드 전환 → 재스캔 → 모델 메뉴 선택 → duration 이 되돌아가 모델 뒤에 다시 클릭 → ok', async () => {
@@ -281,6 +397,44 @@ describe('applyComposerSettings — main 측(트리거 trusted 클릭 → 드라
     const r = await applyComposerSettings(h.flowView, { mode: 'image', ratio: '9:16', model: 'Nano Banana Pro' }, h.deps)
     expect(r).toEqual({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, reason: 'flow-image-model-mismatch', steps: { mode: 'already' } })
     expect(h.calls).toEqual(['summary', 'trusted:settings-trigger', 'driver'])
+  })
+
+  // 2026-09-26 통합: main + **실제** 드라이버(페이지 표현식) + 가짜 Angular 이미지 메뉴 — 모델 전환이 한 줄 로그까지, 메뉴에 없음이 kind·params 까지 온다.
+  async function runMain(doc, opts) {
+    const calls = []
+    const flowView = { webContents: { executeJavaScript: vi.fn(async (js) => window.eval(js)) } }
+    const trustedClickOnFlowView = vi.fn(async (_sel, o) => { calls.push(`trusted:${o?.step}`); return { success: true } })
+    const p = applyComposerSettings(flowView, opts, { trustedClickOnFlowView })
+    let r
+    p.then((v) => { r = v })
+    for (let t = 0; t < 30000 && r === undefined; t += 100) await vi.advanceTimersByTimeAsync(100)
+    return { r, calls }
+  }
+
+  it('실제 드라이버: 이미지 패널 2 · 요청 Pro → 메뉴 선택 → ok, [Flow Settings] 로그 model=clicked, 닫기 재클릭 없음', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(imagePage())
+      const fakeLog = installFakeAngular(doc, IMAGE_MENU)
+      const { r, calls } = await runMain(doc, { mode: 'image', ratio: '16:9', model: 'Nano Banana Pro' })
+      expect(r).toEqual({ ok: true, steps: { mode: 'already', model: 'clicked', ratio: 'already(crop_16_9)' } })
+      expect(calls).toEqual(['trusted:settings-trigger'])
+      expect(fakeLog).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'keydown:Escape:27'])
+      expect(log.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('[Flow Settings] image mode=already ratio=already(crop_16_9) model=clicked ok=true')
+    } finally { vi.useRealTimers() }
+  })
+
+  it('실제 드라이버: 요청 이미지 모델이 메뉴에 없음 → main 도 flow-image-model-mismatch {requested, panel} 을 그대로 돌려준다', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const doc = mount(imagePage())
+      const fakeLog = installFakeAngular(doc, { ...IMAGE_MENU, modelMenuItems: ['🍌 Nano Banana 2', '🍌 Nano Banana 2 Lite'] })
+      const { r, calls } = await runMain(doc, { mode: 'image', ratio: '16:9', model: 'Nano Banana Pro' })
+      expect(r).toMatchObject({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })
+      expect(fakeLog).toEqual(['model-trigger', 'model-trigger', 'keydown:Escape:27'])   // 메뉴를 열어 찾아봤다(옛 검증은 열지 않았다)
+      expect(calls).toEqual(['trusted:settings-trigger'])   // 드라이버가 닫고 나왔다(closed:true) — 재클릭 없음
+    } finally { warn.mockRestore(); vi.useRealTimers() }
   })
 
   it('실패 결과가 closed:false 면(드라이버의 Escape 가 안 먹음) 트리거를 trusted 재클릭해 닫고 실패 kind 는 그대로 (R1#3)', async () => {

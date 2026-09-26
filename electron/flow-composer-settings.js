@@ -1,8 +1,9 @@
 /**
  * electron/flow-composer-settings.js
  *
- * flow.google.com(Angular) 컴포저 **설정 패널 드라이버** — 모드(이미지/영상)·비율·길이·해상도·개수를 패널에서 맞추고,
- * 이미지 모델은 **검증만** 한다(패널 트리거 텍스트 ≠ 요청 → flow-image-model-mismatch {requested, panel}).
+ * flow.google.com(Angular) 컴포저 **설정 패널 드라이버** — 모드(이미지/영상)·모델·비율·길이·해상도·개수를 패널에서 맞춘다.
+ * 모델은 이미지·영상 모두 모델 메뉴에서 고른다(2026-09-26 이미지도). 이미지 모델 라벨은 **정확 일치**("Nano Banana 2" ≠ "Nano Banana 2 Lite"),
+ * 메뉴에 없으면 flow-image-model-mismatch {requested, panel}.
  *
  * 패널(D 덤프 2026-09-24): Material button-toggle `button.mat-button-toggle-button[role=radio][aria-checked]` 가 자동 번호
  * `name`(mat-button-toggle-group-N) 으로 묶인다 — **번호·id 로 절대 매칭하지 않는다**. 그룹은 내용으로 분류한다:
@@ -12,7 +13,7 @@
  * 그 스코프 안의 button[aria-haspopup=menu] 하나. 메뉴는 열려 있을 때만 aria-controls=<div#mat-menu-panel-N[role=menu]>.
  *
  * 흐름(main applyComposerSettings): 트리거 trusted 클릭 → **단일 executeJavaScript**(SETTINGS_DRIVER_JS):
- *   스캔 → phase1 모드 → 반영 대기·재스캔 → phase2: 모델(이미지 검증 / 영상 메뉴 선택 → 안정 대기·재스캔·재계획)
+ *   스캔 → phase1 모드 → 반영 대기·재스캔 → phase2: 모델(다르면 메뉴 선택 → 안정 대기·재스캔·재계획)
  *   → 비율 → 길이 → 해상도 → 개수 → (영상) 입력방식 검증 → **최종 재판독**(단계 통과만으로 ok 를 내지 않는다) → Escape 로 닫기.
  * M2-2 영상 단계: 해상도는 {360p, 720p} 밖이면 모델과 무관하게 클릭 전 flow-resolution-not-offered(관측된 적 없는 값은 패널이
  *   내밀어도 거부) · 개수는 항상 x1 · 모델 라벨은 토큰 부분열로 맞춘다("Omni Flash" ~ "Omni 1.1 Flash") · 입력방식은 건드리지
@@ -108,27 +109,29 @@ export function scanSettingsPanel(doc) {
 }
 
 /**
- * 클릭 계획. phase 1 = 모드만, phase 2 = 모델(이미지 검증 / 영상 select 계획) → 비율 → 길이 → 해상도 → 개수(영상은 항상 x1).
+ * 클릭 계획. phase 1 = 모드만, phase 2 = 모델(같으면 이미지 verified·영상 already / 다르면 select 계획만) → 비율 → 길이 → 해상도 → 개수(영상은 항상 x1).
  * 이미 맞는 목표는 steps 에 already(비율은 already(<리거처>)), 미정의 목표는 생략. 자기완결.
  * @returns {{ok:boolean, kind?:string, params?:object, reason?:string, clicks:Array, steps?:object, model?:{select:true, requested:string}|null}}
  */
 export function planSettingsClicks(scan, targets, phase) {
   const RATIO = { '16:9': 'crop_16_9', '9:16': 'crop_9_16', '4:3': 'crop_landscape', '1:1': 'crop_square', '3:4': 'crop_portrait' }
   const norm = (s) => String(s || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
-  // M2-2: 모델 라벨 매칭 — 정규화 부분문자열이거나, 요청 토큰이 패널 토큰의 **부분열**이면 같은 모델("omni flash" ⊂ "omni 1.1 flash";
-  //   "veo 3.1 fast" ⊄ "veo 3.1 lite"). 자기완결(settingsDriverCore 에도 같은 사본).
+  const t = targets || {}
+  const video = t.mode === 'video'
+  // M2-2: 영상 모델 라벨 매칭 — 정규화 부분문자열이거나, 요청 토큰이 패널 토큰의 **부분열**이면 같은 모델("omni flash" ⊂ "omni 1.1 flash";
+  //   "veo 3.1 fast" ⊄ "veo 3.1 lite"). 2026-09-26: 이미지는 **정확 일치**(토큰 열이 같아야) — 부분열로는 "nano banana 2" ⊂ "nano banana 2 lite"
+  //   라서 Lite 패널이 검증을 통과해 Lite 로 생성했다. 자기완결(settingsDriverCore 에도 같은 사본).
   const labelMatches = (label, want) => {
     const l = norm(label); const w = norm(want)
     if (!w) return false
-    if (l.includes(w)) return true
     const toks = (x) => x.split(/\s+/).filter((k) => /[\p{L}\p{N}]/u.test(k))
     const lt = toks(l); const wt = toks(w)
+    if (!video) return wt.length > 0 && lt.join(' ') === wt.join(' ')
+    if (l.includes(w)) return true
     let i = 0
     for (const k of lt) if (i < wt.length && k === wt[i]) i++
     return wt.length > 0 && i === wt.length
   }
-  const t = targets || {}
-  const video = t.mode === 'video'
   const steps = {}
   const clicks = []
   const fail = (reason) => ({ ok: false, kind: 'flow-settings-not-applied', reason, clicks: [] })
@@ -160,16 +163,13 @@ export function planSettingsClicks(scan, targets, phase) {
   }
   if (t.model != null && t.model !== '') {
     if (!scan.model || !scan.model.trigger) return fail('model-trigger-not-found')
-    const matches = labelMatches(scan.model.label, t.model)
-    if (!video) {
-      if (!matches) return { ok: false, kind: 'flow-image-model-mismatch', params: { requested: String(t.model), panel: scan.model.display }, clicks: [] }
-      steps.model = 'verified'
-    } else if (matches) {
-      steps.model = 'already'
+    if (labelMatches(scan.model.label, t.model)) {
+      steps.model = video ? 'already' : 'verified'
     } else {
       // M2-R3 H4(A4): 모델을 바꿔야 하면 클릭 전 계획은 **모델뿐** — 길이·해상도·개수는 현재 모델의 옵션이라 여기서 실패시키면(예: 10초 없는 모델에서 Omni Flash 로)
       //   목표 모델이 제공하는 값을 클릭도 전에 거부한다. 모델 클릭 → 안정 대기 → 재스캔 → 재계획(select 없음)이 나머지 그룹을 검증한다.
       //   {360p,720p} 밖 해상도 게이트(카탈로그 고정)는 위에서 먼저 걸렸다.
+      // 2026-09-26: 이미지도 같은 경로로 고른다(옛: 검증만 → flow-image-model-mismatch). 메뉴에 없으면 드라이버가 flow-image-model-mismatch {requested, panel}.
       return { ok: true, clicks: [], steps, model: { select: true, requested: String(t.model) } }
     }
   }
@@ -276,13 +276,14 @@ export async function settingsDriverCore(doc, targets, deps) {
   const shapeOf = (p) => (String(p.reason || '').indexOf('group-not-found:') === 0 && s && s.ok && s.overlay ? { shape: { groups: Object.keys(s.groups || {}), unclassified: s.unclassified || [], controls: s.controls || [] } } : {})
   const failPlan = async (p) => Object.assign(await fail(p.reason || p.kind), { kind: p.kind || 'flow-settings-not-applied' }, shapeOf(p), p.params ? { params: p.params } : {})
   const norm = (s) => String(s || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
-  // M2-2: planSettingsClicks 의 labelMatches 와 같은 규칙(자기완결 — 이름으로 부르지 않는다).
+  // M2-2: planSettingsClicks 의 labelMatches 와 같은 규칙(자기완결 — 이름으로 부르지 않는다). 이미지는 정확 일치(2026-09-26).
   const labelMatches = (label, want) => {
     const l = norm(label); const w = norm(want)
     if (!w) return false
-    if (l.includes(w)) return true
     const toks = (x) => x.split(/\s+/).filter((k) => /[\p{L}\p{N}]/u.test(k))
     const lt = toks(l); const wt = toks(w)
+    if (t.mode !== 'video') return wt.length > 0 && lt.join(' ') === wt.join(' ')
+    if (l.includes(w)) return true
     let i = 0
     for (const k of lt) if (i < wt.length && k === wt[i]) i++
     return wt.length > 0 && i === wt.length
@@ -385,7 +386,12 @@ export async function settingsDriverCore(doc, targets, deps) {
       Array.from(clone.querySelectorAll(ICON_SEL)).forEach((i) => i.remove())
       return labelMatches(clone.textContent, wantLabel)
     })
-    if (!item) { try { trigger.click() } catch (_e) { /* 메뉴 닫기 실패는 무시 */ } return fail('model-not-offered') }
+    if (!item) {
+      try { trigger.click() } catch (_e) { /* 메뉴 닫기 실패는 무시 */ }
+      // 2026-09-26: 이미지 모델이 메뉴에 없으면 옛 검증과 같은 kind·params(로케일 문구 그대로). 영상은 배치 전체 이유 model-not-offered.
+      if (t.mode !== 'video') return fail('model-not-offered', { kind: 'flow-image-model-mismatch', params: { requested: String(wantLabel), panel: s.model.display } })
+      return fail('model-not-offered')
+    }
     item.click()
     const applied = await waitFor(() => { const n = scan(doc); return n.ok && !!n.model && !!n.model.label && labelMatches(n.model.label, wantLabel) && !n.model.expanded }, 3000)
     if (!applied) {

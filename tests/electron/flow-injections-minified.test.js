@@ -23,7 +23,7 @@ import * as plainRefs from '../../electron/flow-composer-refs.js'
 import * as plainDriver from '../../electron/flow-reference-driver.js'
 import { sample, reencodeRequestBody, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
-import { PAGE_IMAGE_KO, PAGE_VIDEO_KO, CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel } from '../fixtures/flow-live-dom-20260924.js'
+import { PAGE_IMAGE_KO, PAGE_VIDEO_KO, CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel, IMAGE_MODEL_MENU_ITEMS } from '../fixtures/flow-live-dom-20260924.js'
 import { buildPage as buildM3Page, mentionHtml, paragraph } from '../fixtures/flow-live-dom-m3.js'
 
 const SRC = (rel) => fileURLToPath(new URL(rel, import.meta.url))
@@ -165,8 +165,7 @@ describe('minified DOM 파인더·편집기·설정 스크립트 (K/D 픽스처,
       // 이미 맞는 목표(모드 image · 비율 16:9 · 모델 검증)만 — 클릭 없이 최종 재판독 ok, 닫기는 실제 Angular 가 없어 closed:false
       const r = await runInPage(page, M.SETTINGS_DRIVER_JS({ mode: 'image', ratio: '16:9', model: 'Nano Banana 2' })).result
       expect(r).toMatchObject({ ok: true, closed: false, steps: { mode: 'already', ratio: 'already(crop_16_9)', model: 'verified' } })
-      const mm = await runInPage(page, M.SETTINGS_DRIVER_JS({ mode: 'image', ratio: '16:9', model: 'Nano Banana Pro' })).result
-      expect(mm).toMatchObject({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })
+      // 이미지 모델 불일치는 이제 메뉴 선택이다(2026-09-26) — 메뉴가 필요한 케이스는 아래 가짜 Angular 블록에서
     }
   }, 20000)
 
@@ -363,6 +362,22 @@ describe('minified SETTINGS_DRIVER_JS — 가짜 Angular 위에서 모드 전환
       expect(r).toMatchObject({ ok: true, closed: true, steps: { mode: 'clicked(videocam)', model: 'clicked', ratio: 'already(crop_16_9)', duration: 'clicked(8)', resolution: 'already(720p)', count: 'already(x1)', input: 'material' } })
       expect(log).toEqual(['mode:videocam', 'model-trigger', 'model:veo 3.1 - fast', 'duration:8초', 'keydown:Escape:27'])
       expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
+    }
+  }, 30000)
+
+  // 2026-09-26: 이미지 모델 선택 + 정확 일치(두 사본 — planSettingsClicks · settingsDriverCore) 가 minified 에서도 같다.
+  it('이미지 모델 선택: 패널 2 · 요청 Pro → 🍌 Nano Banana Pro 클릭 ok · Lite 가 앞선 메뉴에서 요청 2 → 🍌 Nano Banana 2 · 메뉴에 없음 → flow-image-model-mismatch', async () => {
+    const IMAGE_MENU = { modelMenuItems: IMAGE_MODEL_MENU_ITEMS, modelMenuIcon: null }
+    for (const M of [settings, plainSettings]) {
+      const a = await drive(M, { mode: 'image', ratio: '16:9', model: 'Nano Banana Pro' }, IMAGE_MENU)
+      expect(a.r).toMatchObject({ ok: true, closed: true, steps: { mode: 'already', model: 'clicked', ratio: 'already(crop_16_9)' } })
+      expect(a.log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'keydown:Escape:27'])
+      const litePage = PROJECT_MENU_BUTTON + CARD_MENU_BUTTONS + IMAGE_COMPOSER_KO + buildSettingsPanel({ mode: 'image', model: '🍌 Nano Banana 2 Lite' })
+      const b = await drive(M, { mode: 'image', ratio: '16:9', model: 'Nano Banana 2' }, { ...IMAGE_MENU, modelMenuItems: ['🍌 Nano Banana Pro', '🍌 Nano Banana 2 Lite', '🍌 Nano Banana 2'] }, litePage)
+      expect(b.r).toMatchObject({ ok: true, closed: true, steps: { model: 'clicked' } })
+      expect(b.log).toEqual(['model-trigger', 'model:🍌 nano banana 2', 'keydown:Escape:27'])
+      const c = await drive(M, { mode: 'image', ratio: '16:9', model: 'Nano Banana Pro' }, { ...IMAGE_MENU, modelMenuItems: ['🍌 Nano Banana 2', '🍌 Nano Banana 2 Lite'] })
+      expect(c.r).toMatchObject({ ok: false, kind: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, closed: true })
     }
   }, 30000)
 

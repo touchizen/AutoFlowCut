@@ -51,6 +51,7 @@ function harness(o = {}) {
   const editorSeq = Array.isArray(o.editorText) ? [...o.editorText] : null   // M2-LAST P2: 편집기 재판독 순서(주입 뒤 · 제출 클릭 직전) — 마지막 값이 남는다
   const composerSeq = Array.isArray(o.composer) ? [...o.composer] : null   // M3: 컴포저 판독 순서(잔여 칩 → 정리 뒤)
   let injectedPrompt = null
+  let settingsTargets = null   // 리뷰 B(2026-09-26): 드라이버 스크립트에 실린 targets — IPC 가 이미지 model 을 드라이버로 넘기는지(영상 하네스와 같은 파싱)
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
     // M3: 컴포저 판독이 먼저 — 그 스크립트도 querySelectorAll('p') 를 품고 있어 아래 편집기 판독 마커와 겹친다. trace 에는 남기지 않는다(M2 순서 단언 그대로).
@@ -58,6 +59,8 @@ function harness(o = {}) {
     // 마커 있는 스크립트 먼저 — 설정 드라이버도 `const scan =` 을 품고 있어 진단 프로브 검사와 겹친다.
     if (s.includes('__af_settings_driver__')) {
       trace.push('settings-driver')
+      const m = s.match(/core\(document, (\{.*?\}), \{ scan: scan/)
+      settingsTargets = m ? JSON.parse(m[1]) : null
       const next = settingsSeq ? (settingsSeq.length > 1 ? settingsSeq.shift() : settingsSeq[0]) : o.settings
       return next ?? { ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'already(crop_16_9)', count: 'already' } }
     }
@@ -167,7 +170,7 @@ function harness(o = {}) {
     setShieldFocusTarget,       // M2-FINAL Q1: 방패 focus 의 행선지(가짜)
   })
   const generate = (p = {}) => ipcMain.invoke('flow:generate-image', { prompt: PROMPT, aspectRatio: '16:9', model: 'Nano Banana 2', projectId: PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p })
-  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, createInputShield, setAutomationKeyLock, setShieldFocusTarget }
+  return { ipcMain, generate, trace, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations, page, legacy, flowView, mainWindow, targets: () => settingsTargets, createInputShield, setAutomationKeyLock, setShieldFocusTarget }
 }
 
 /** 가짜 시계에서 핸들러 promise 를 굴린다(ensureAgentOff 의 350ms sleep 등). */
@@ -210,6 +213,8 @@ describe('flow:generate-image (angular) — 동기', () => {
     expect(idx(t, 'read-text')).toBeLessThan(idx(t, 'submit-enabled'))
     expect(idx(t, 'submit-enabled')).toBeLessThan(idx(t, 'click:compose-submit'))
     expect(t).toContain('armed:1')
+    // 설정 목표: image · 비율·개수·모델을 드라이버로 넘긴다 — model 이 빠지면 드라이버가 모델 단계를 건너뛰어 패널 모델로 조용히 생성한다(리뷰 B)
+    expect(h.targets()).toEqual({ mode: 'image', ratio: '16:9', count: 1, model: 'Nano Banana 2' })
     expect(h.pendingGenerations.size).toBe(0)
     expect(logged()).toMatch(/\[Flow API\] \[Angular\] image 1376x768 ratio=ok/)
     // R1#11: gen id 는 뒤 8자(앞 8자는 항상 "gen-1790")
@@ -443,8 +448,10 @@ describe('flow:generate-image (angular) — 에이전트·캡처·설정', () =>
 
   it('설정 실패(flow-image-model-mismatch) → params 포함, 클릭 없음, onDomFailure(settings:…) 내용 없음', async () => {
     const h = harness({ settings: { ok: false, kind: 'flow-image-model-mismatch', reason: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, steps: { mode: 'already' } } })
-    const r = await settle(h.generate({ model: 'Nano Banana Pro' }))
+    const r = await settle(h.generate({ model: 'Nano Banana Pro', aspectRatio: '9:16', batchCount: 2 }))
     expect(r).toMatchObject({ success: false, errorKind: 'flow-image-model-mismatch', error: 'flow-image-model-mismatch', errorParams: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })
+    // 리뷰 B R2: 하네스 기본값(2 · 16:9 · 1장)이 아닌 요청값이 드라이버 targets 로 그대로 간다 — IPC 가 모델·개수를 상수로 박으면 빨갛다
+    expect(h.targets()).toEqual({ mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana Pro' })
     expect(h.trace).not.toContain('click:compose-submit')
     const call = h.onDomFailure.mock.calls.find((c) => String(c[0]).startsWith('settings:'))
     expect(call).toBeTruthy()

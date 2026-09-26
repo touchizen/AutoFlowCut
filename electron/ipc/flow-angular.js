@@ -9,7 +9,7 @@
  *   - 페이지가 보낸 XHR 은 캡처 주입(flow-rpc-capture.js)이 send/loadend 로 보고하고 라우터가 {doc, seq} 로
  *     pendingGenerations 의 gen 에 바인딩한다. 핸들러는 클릭 전에 gen 을 arm 하고(send 마감 15s) 응답을 기다린다.
  *   - 순서: 세션(URL·WIZ) → 에이전트 모드/레퍼런스 거부 → 프로젝트 컴포저 → ensureAgentOff → 캡처 플래그(없으면 주입→재프로브)
- *     → 설정 패널(모드·비율·개수·모델 검증) → 편집기 클릭·텍스트 주입·재판독 → 제출 가능 → arm → 신뢰 클릭.
+ *     → 설정 패널(모드·모델 선택·비율·개수) → 편집기 클릭·텍스트 주입·재판독 → 제출 가능 → arm → 신뢰 클릭.
  *   - 실패는 kind 로 닫는다(문구 중립, 코드는 필드). 로그엔 내용 없음(길이·id 앞 8자·숫자·상태어만).
  *   - 상태 폴(M2-5): 앱이 페이지 컨텍스트 XHR 로 jwpduf 를 **id 당 1회** 부르고(§5-4) 상태 3 이면 as29s 로 mp4 서명 URL 을 받는다.
  *     읽기 RPC 실패는 그 항목만 pending+pollError(항목별 폴 예산 소모), auth 는 401/16 만 최상위. as29s 는 유계 pending(3회) 뒤
@@ -561,7 +561,7 @@ export function createFlowAngular(deps) {
         return kindResult('flow-capture-not-installed')
       }
 
-      // 3. 설정 패널 — 모드(이미지)·비율·개수, 모델은 검증만
+      // 3. 설정 패널 — 모드(이미지)·모델(다르면 메뉴에서 선택, 정확 일치)·비율·개수
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 워치독이 이미 닫았다(좀비)
       const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted })
       if (!settings.ok) {
