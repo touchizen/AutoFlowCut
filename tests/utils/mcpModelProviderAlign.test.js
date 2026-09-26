@@ -22,9 +22,20 @@ describe('alignMcpModelProviders', () => {
     expect(next.modelsByProviderVideo.i2v.google).toBe('veo-3.1-generate-preview')
     expect(next.videoModelT2V).toBe('veo-3.1-fast-generate-preview')
   })
-  it('같은 provider 의 모델·카탈로그 밖 이름(Flow 모델)은 provider·슬롯을 건드리지 않고 값만 병합', () => {
-    expect(alignMcpModelProviders(base, { imageModel: 'Nano Banana Pro', videoModelT2V: 'veo-3.1-lite-generate-preview' }))
-      .toEqual({ ...base, imageModel: 'Nano Banana Pro', videoModelT2V: 'veo-3.1-lite-generate-preview' })
+  it('같은 provider 의 카탈로그 모델은 provider·슬롯을 건드리지 않고 값만 병합', () => {
+    expect(alignMcpModelProviders(base, { imageModel: 'gpt-image-1', videoModelT2V: 'veo-3.1-lite-generate-preview' }))
+      .toEqual({ ...base, imageModel: 'gpt-image-1', videoModelT2V: 'veo-3.1-lite-generate-preview' })
+  })
+  // 리뷰 A R3-1: 카탈로그 밖 이름(라벨·Flow 이름·동적 모델)은 google 모델로 본다(imageModelsForProvider 와 같은 규칙) — 비-google provider 에
+  //   남기면 {openai, 'Nano Banana Pro'} 가 되어 heal 도 못 고치고(비-google 은 heal 대상 아님) 모든 생성이 실패한다. google 로 맞추면 heal 이 google 목록으로 고친다.
+  it('API 모드: 카탈로그 밖 이름은 google 모델로 본다 — 비-google provider 면 google 로 전환하고 이전 모델은 슬롯에 기억', () => {
+    const next = alignMcpModelProviders(base, { imageModel: 'Nano Banana Pro' })
+    expect(next).toMatchObject({ imageModel: 'Nano Banana Pro', generation: { image: { provider: 'google' } }, modelsByProvider: { openai: 'gpt-image-1' } })
+    const grokT2v = { ...base, videoModelT2V: 'grok-imagine-video-1.5', generation: { ...base.generation, video: { t2v: { provider: 'grok' }, i2v: { provider: 'google' } } } }
+    const nextV = alignMcpModelProviders(grokT2v, { videoModelT2V: 'Omni Flash' })
+    expect(nextV.generation.video).toEqual({ t2v: { provider: 'google' }, i2v: { provider: 'google' } })
+    expect(nextV.videoModelT2V).toBe('Omni Flash')
+    expect(nextV.modelsByProviderVideo.t2v.grok).toBe('grok-imagine-video-1.5')
   })
   // 리뷰 A R2-2: Flow 는 provider 축이 없다(설정 화면이 숨긴다) — Flow 모드에서 정렬하면 API 로 돌아왔을 때 {openai, gemini-…} 불일치가 생긴다
   it("appMode 'flow' 면 정렬하지 않고 그대로 병합", () => {

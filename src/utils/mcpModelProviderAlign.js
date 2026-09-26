@@ -5,7 +5,7 @@
  *   multi-provider 에서 이 키들은 "현재 provider 의 활성 모델"이라, 다른 provider 의 카탈로그 모델을 그대로 넣으면
  *   {openai, gemini-3-pro-image} 같은 조합이 되어 이후 모든 생성이 그 adapter 에서 실패한다(computeModelHeal 은 비-google 을 고치지 않는다).
  *   카탈로그가 아는 모델이면 설정 화면(SceneTab)처럼 provider 를 그 모델의 provider 로 전환하고(이전 모델은 슬롯에 기억), 모델은 요청값으로 둔다.
- *   카탈로그 밖 이름(Flow 모델 이름 등)과 같은 provider 의 모델은 provider 를 건드리지 않는다.
+ *   카탈로그 밖 이름은 google 모델로 본다(R3-1). 같은 provider 면 provider·슬롯을 건드리지 않는다. Flow 모드는 정렬하지 않는다(R2-2).
  * main 프로세스(/api/update)는 현재 설정을 모르므로 여기(렌더러)에서만 한다.
  */
 import { IMAGE_MODELS, VIDEO_MODELS } from '../config/genModels'
@@ -22,12 +22,15 @@ const VIDEO_STAGE_KEYS = [['t2v', 'videoModelT2V'], ['i2v', 'videoModelF2V']]
 export function alignMcpModelProviders(settings, picked, { appMode } = {}) {
   if (appMode === 'flow') return { ...(settings || {}), ...(picked || {}) }
   let next = { ...(settings || {}) }
-  const image = typeof picked?.imageModel === 'string' ? IMAGE_MODELS.find((m) => m.id === picked.imageModel) : null
-  if (image) next = { ...next, ...computeImageProviderSwitch(next, image.provider) }   // 같은 provider 면 {}
+  // 리뷰 A R3-1: 카탈로그 밖 이름(라벨·Flow 이름·동적 모델)은 google 모델로 본다(imageModelsForProvider 와 같은 규칙) — 비-google provider 에
+  //   남기면 heal 도 못 고친다(비-google 은 heal 대상 아님). google 로 맞추면 heal 이 google 목록으로 검증한다.
+  const providerOf = (catalog, id) => (catalog.find((m) => m.id === id)?.provider ?? 'google')
+  if (typeof picked?.imageModel === 'string') next = { ...next, ...computeImageProviderSwitch(next, providerOf(IMAGE_MODELS, picked.imageModel)) }   // 같은 provider 면 {}
   for (const [stage, key] of VIDEO_STAGE_KEYS) {
-    const video = typeof picked?.[key] === 'string' ? VIDEO_MODELS.find((m) => m.id === picked[key]) : null
+    if (typeof picked?.[key] !== 'string') continue
+    const target = providerOf(VIDEO_MODELS, picked[key])
     const current = next?.generation?.video?.[stage]?.provider ?? 'google'
-    if (video && video.provider !== current) next = { ...next, ...computeVideoProviderSwitch(next, stage, video.provider) }
+    if (target !== current) next = { ...next, ...computeVideoProviderSwitch(next, stage, target) }
   }
   return { ...next, ...(picked || {}) }
 }
