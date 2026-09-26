@@ -1,6 +1,6 @@
 # Flow 이미지 모델 자동 선택 — HANDOFF (2026-09-26)
 
-> **상태(2026-09-26 2차 세션): 구현·리뷰 완료, 실기 대기.** 워크트리 `../AutoFlowCut-imagemodel`, 브랜치 `fix/flow-image-model-select`
+> **상태(2026-09-26 2차 세션): 구현·리뷰 완료, 실기 통과(§8.5). main 병합·푸시는 사용자 결정 대기.** 워크트리 `../AutoFlowCut-imagemodel`, 브랜치 `fix/flow-image-model-select`
 > (main `18cccbfb` 에서, **미푸시·미머지**). 결과는 §8, 다음 일은 §8.4(실기). §1–§7 은 조사 당시 기록 그대로다.
 
 조사만 끝난 상태다. **코드 변경·커밋 없음.** 조사는 다른 작업(Gemini TTS 영상) 세션에서 사용자 질문으로 진행됐다.
@@ -79,7 +79,7 @@
 
 > ~~`AutoFlowCut-bugfix/docs/handoffs/2026-09-26-flow-image-model-select-HANDOFF.md` 읽고, §5 설계부터 다시 보여줘.~~ (2차 세션에서 소화 — 문서는 작업 브랜치로 옮겼다)
 >
-> `AutoFlowCut-imagemodel/docs/handoffs/2026-09-26-flow-image-model-select-HANDOFF.md` 읽고, §8.4 실기부터.
+> `AutoFlowCut-imagemodel/docs/handoffs/2026-09-26-flow-image-model-select-HANDOFF.md` 읽고, §8.3 결정과 병합부터.
 
 ## 8. 구현 결과 (2026-09-26, 2차 세션)
 
@@ -122,7 +122,7 @@ A = 라이브 동작·크레딧 안전·두 사본 일관성, B = 테스트 적�
   `evidence/2026-09-24-flow-batchexecute-rpcids.md:107,:127`). **Pro 키 미관측** → §8.4 에서 기록.
 - §6 두 항목 그대로.
 
-### 8.4 실기 (다음 일)
+### 8.4 실기 절차 (2026-09-26 에 Claude 가 앱 HTTP API 로 실행 — 결과 §8.5)
 
 1. `AutoFlowCut-bugfix` 에서 돌던 dev 앱을 끄고 새 워크트리에서 띄운다: `cd ~/workspace/AutoFlowCut-imagemodel && unset ELECTRON_RUN_AS_NODE && npm run dev`.
 2. test3, Flow 패널은 Nano Banana 2 인 상태. **Flow 화면의 크레딧 수를 적는다** — 이미지 경로는 크레딧도 모델 키도 로그에 안 남긴다.
@@ -132,3 +132,21 @@ A = 라이브 동작·크레딧 안전·두 사본 일관성, B = 테스트 적�
 6. 통과하면 main 병합·푸시 여부를 사용자에게 묻는다.
 
 리뷰 사본 두 워크트리(`-rA`, `-rB`)는 R3 뒤 제거했다.
+
+### 8.5 실기 결과 (2026-09-26, test3 · Flow 프로젝트 `dbe88d69…`)
+
+사용자 요청으로 Claude 가 실행했다 — `AutoFlowCut-bugfix` dev 앱(idle 확인)을 내리고 이 워크트리에서 `npm run dev`, 조작은 앱 HTTP API(3210)만
+(`POST /api/update {type:'update-settings', fields:{imageModel}}` = 설정 화면과 같은 `setSettings` 병합 · `POST /api/generate-scene`). CDP 없음.
+
+| # | 앱 설정 | Flow 패널(전) | 로그 | 결과 |
+|---|---|---|---|---|
+| 1 | Pro | Nano Banana 2 (신고된 `scene_2` mismatch 그대로) | `[Flow Settings] image mode=already ratio=clicked(crop_16_9) count=already model=clicked ok=true` | done, 1376×768 |
+| 2 | Pro | Pro | `… model=verified ok=true` (메뉴 클릭 없음) | done |
+| 3 | **Nano Banana 2**(설정 변경) | Pro | 요청 `model: 'Nano Banana 2'` · `… model=clicked ok=true` | done |
+
+- **크레딧**: `[Flow Session] ready credits=` 는 캐시가 아닐 때만 찍히는 `nzlxg` 새 조회다 — #1 전·#2 전·#3 전 모두 **893** → **Pro 이미지도 0크레딧**(§4 미관측 해소).
+- 실기가 닫은 가짜 가정(§4 미관측): 항목 클릭 뒤 트리거 글자가 바뀌고, 메뉴가 닫히고, 하위 메뉴 없음 — 두 방향(2→Pro, Pro→2) 모두.
+- 여전히 미관측: Pro 의 ogiZ0b 요청 모델 키(앱 로그에 없음 — 이미지 경로는 요청 모델 키를 파싱하지 않는다). 패널 최종 재판독이 정확 일치로 Pro 를 확인했고 #2 의
+  `verified` 가 패널이 Pro 에 머문 것을 보인다.
+- 끝난 뒤 앱 설정은 Pro 로 되돌렸다(Flow 패널은 #3 뒤 NB2 — 다음 생성이 다시 고른다). `scene_2` 이미지는 3번 덮였다(이전 것은 `test3/scenes/history`).
+- 실기 뒤 떠 있는 앱은 **이 워크트리**(`AutoFlowCut-imagemodel`)의 dev 앱이다.
