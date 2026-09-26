@@ -1,0 +1,1387 @@
+# Review package: 26d3630..924d2a9
+
+## Commits
+924d2a9 test(story-m2a): cover DOWNSTREAM audio reset on script/scenes rerun
+2b4717a feat(story-m2a): audio step — TTS gen, measure, SRT, regroup, manifest
+2045cbc test(story-m2a): cover saveBinary round-trip, atomicity, nested dir
+5835a05 feat(story-m2a): audio manifest builder + binary atomic write
+2f01695 feat(story-m2a): membership-based storyId assignment after regroup
+f0f4562 feat(story-m2a): scene regrouping by measured 6-10s target
+9795518 fix(story-m2a): uniform gap in segment timeline (remove sfx special-case, correct fixture)
+203598a feat(story-m2a): segment timeline + SRT from measured durations
+7cb5bf5 feat(story-m2a): Typecast TTS adapter (injected fetch/key)
+82587e8 fix(story-m2a): reject prototype-member provider names in key store allowlist
+69d1919 feat(story-m2a): multi-provider key store with enum allowlist
+8111dcd fix(story-m2a): probeDurationMs returns 0 on parse failure (safe value)
+460fae5 feat(story-m2a): add segment audio duration probe (music-metadata)
+
+## Files changed
+ electron/api/keyStoreMulti.js                      |  40 +++++
+ electron/api/tts/index.js                          |  10 ++
+ electron/api/tts/typecast.js                       |  29 ++++
+ electron/story/audioProbe.js                       |  16 ++
+ electron/story/manifest.js                         |  22 +++
+ electron/story/regroup.js                          |  33 +++++
+ electron/story/sceneIdentity.js                    |  17 +++
+ electron/story/stepMachine.js                      |  68 ++++++++-
+ electron/story/storyStore.js                       |   5 +-
+ electron/story/timing.js                           |  40 +++++
+ package-lock.json                                  | 162 ++++++++++++++++++++-
+ package.json                                       |   1 +
+ tests/electron/api/keyStoreMulti.test.js           |  62 ++++++++
+ tests/electron/api/tts/typecast.test.js            |  40 +++++
+ tests/electron/story/audioProbe.test.js            |  23 +++
+ tests/electron/story/manifest.test.js              |  27 ++++
+ tests/electron/story/regroup.test.js               |  37 +++++
+ .../story/sceneIdentity.membership.test.js         |  35 +++++
+ tests/electron/story/stepMachine.audio.test.js     |  73 ++++++++++
+ tests/electron/story/stepMachine.test.js           |  25 +++-
+ tests/electron/story/storyStore.test.js            |  27 ++++
+ tests/electron/story/timing.segments.test.js       |  31 ++++
+ 22 files changed, 813 insertions(+), 10 deletions(-)
+
+## Diff
+diff --git a/electron/api/keyStoreMulti.js b/electron/api/keyStoreMulti.js
+new file mode 100644
+index 0000000..daab208
+--- /dev/null
++++ b/electron/api/keyStoreMulti.js
+@@ -0,0 +1,40 @@
++/**
++ * provider별 멀티 키 저장소 — 스펙 §6. enum allowlist + 경로 매핑 테이블(path traversal 방어).
++ * 각 provider는 기존 createKeyStore(단일 파일) 인스턴스로 위임.
++ */
++import { createKeyStore } from './keyStore.js'
++
++// allowlist → 파일명 (provider 문자열을 직접 path join 하지 않는다)
++const FILENAME_BY_PROVIDER = {
++  genai: 'genai-key.enc',
++  elevenlabs: 'elevenlabs-key.enc',
++  typecast: 'typecast-key.enc',
++  anthropic: 'anthropic-key.enc',
++}
++export const PROVIDERS = Object.keys(FILENAME_BY_PROVIDER)
++
++export function createMultiKeyStore({ safeStorage, keysDir, fs, path }) {
++  fs.mkdirSync?.(keysDir, { recursive: true })
++  const cache = new Map()
++  function storeFor(provider) {
++    if (!PROVIDERS.includes(provider)) return null // allowlist 밖(프로토타입 멤버 포함) → 경로 생성 안 함
++    const filename = FILENAME_BY_PROVIDER[provider]
++    if (!cache.has(provider)) {
++      cache.set(provider, createKeyStore({ safeStorage, filePath: path.join(keysDir, filename), fs }))
++    }
++    return cache.get(provider)
++  }
++  return {
++    PROVIDERS,
++    setKey(provider, plain) {
++      const s = storeFor(provider)
++      return s ? s.setKey(plain) : { success: false, error: `unknown provider: ${provider}` }
++    },
++    getKey(provider) { return storeFor(provider)?.getKey() ?? null },
++    hasKey(provider) { return storeFor(provider)?.hasKey() ?? false },
++    clearKey(provider) {
++      const s = storeFor(provider)
++      return s ? s.clearKey() : { success: false, error: `unknown provider: ${provider}` }
++    },
++  }
++}
+diff --git a/electron/api/tts/index.js b/electron/api/tts/index.js
+new file mode 100644
+index 0000000..55cf5f2
+--- /dev/null
++++ b/electron/api/tts/index.js
+@@ -0,0 +1,10 @@
++/** provider명 → TTS 어댑터. M2a-1은 typecast만; elevenlabs/gemini는 후속. */
++import { createTypecastAdapter } from './typecast.js'
++
++const FACTORIES = { typecast: createTypecastAdapter }
++
++export function createTtsAdapter(provider, deps) {
++  const make = FACTORIES[provider]
++  if (!make) throw new Error(`Unsupported TTS provider: ${provider}`)
++  return make(deps)
++}
+diff --git a/electron/api/tts/typecast.js b/electron/api/tts/typecast.js
+new file mode 100644
+index 0000000..b5c0ef8
+--- /dev/null
++++ b/electron/api/tts/typecast.js
+@@ -0,0 +1,29 @@
++/**
++ * Typecast TTS 어댑터 — 스펙 §6. 실호출은 CLAUDE.md 값(api.typecast.ai, ssfm-v21).
++ * getKey/fetch 주입으로 단위 테스트. 세그먼트=단일 요청(어댑터는 이어붙이지 않음).
++ */
++const ENDPOINT = 'https://api.typecast.ai/v1/text-to-speech'
++
++export function createTypecastAdapter({ getKey, fetch }) {
++  return {
++    capabilities() {
++      return { supportsEmotion: true, maxCharsPerRequest: 2000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
++    },
++    async synthesize({ text, voiceId, emotion = 'normal', signal }) {
++      const key = getKey()
++      if (!key) throw new Error('No Typecast API key')
++      const res = await fetch(ENDPOINT, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
++        body: JSON.stringify({ text, model: 'ssfm-v21', voice_id: voiceId, emotion, language: 'ko' }),
++        signal,
++      })
++      if (!res.ok) {
++        const detail = await (res.text?.() ?? Promise.resolve(''))
++        throw new Error(`Typecast TTS failed: ${res.status} ${detail}`)
++      }
++      const buf = Buffer.from(await res.arrayBuffer())
++      return { audio: buf, format: 'wav' }
++    },
++  }
++}
+diff --git a/electron/story/audioProbe.js b/electron/story/audioProbe.js
+new file mode 100644
+index 0000000..a8f4726
+--- /dev/null
++++ b/electron/story/audioProbe.js
+@@ -0,0 +1,16 @@
++/**
++ * 세그먼트 mp3 실제 길이 측정 — music-metadata(순수 JS). ffmpeg 불필요.
++ * parseFile 주입으로 단위 테스트 가능.
++ * 측정 실패 시 안전값 0 반환 (재시도 아님).
++ */
++export async function probeDurationMs(filePath, { parseFile } = {}) {
++  try {
++    const parse = parseFile || (await import('music-metadata')).parseFile
++    const meta = await parse(filePath)
++    const sec = meta?.format?.duration
++    if (typeof sec !== 'number' || !isFinite(sec) || sec <= 0) return 0
++    return Math.round(sec * 1000)
++  } catch {
++    return 0
++  }
++}
+diff --git a/electron/story/manifest.js b/electron/story/manifest.js
+new file mode 100644
+index 0000000..5843372
+--- /dev/null
++++ b/electron/story/manifest.js
+@@ -0,0 +1,22 @@
++/**
++ * audio manifest — 스펙 §7 흐름 B. export가 읽는 계약.
++ * pushRevision은 §7 revision 소유 프로토콜: 최초 정밀은 null(prompts가 재스탐프), 재TTS는 audio가 확정.
++ */
++export function buildManifest(segments, { pushRevision = null } = {}) {
++  return {
++    version: 1,
++    pushRevision,
++    segments: segments.map((s) => {
++      const base = {
++        id: s.id,
++        type: s.type || 'narration',
++        speaker: s.speaker,
++        audioPath: s.audioPath,
++        startMs: s.startMs,
++        durationMs: s.durationMs,
++      }
++      if ((s.type || 'narration') === 'narration') base.trackIndex = 0 // M2a 단일 트랙
++      return base
++    }),
++  }
++}
+diff --git a/electron/story/regroup.js b/electron/story/regroup.js
+new file mode 100644
+index 0000000..8abc089
+--- /dev/null
++++ b/electron/story/regroup.js
+@@ -0,0 +1,33 @@
++/**
++ * 세그먼트 시퀀스 → 목표 6~10초 씬 그룹. 스펙 §4.
++ * 순서 보존, 세그먼트 안 쪼갬. 누적 minMs 도달 시 마감. 다음 추가가 maxMs 초과면 먼저 마감.
++ * 단일 세그먼트가 maxMs 초과면 단독 씬.
++ */
++export function regroupScenes(segments, { minMs = 6000, maxMs = 10000 } = {}) {
++  const scenes = []
++  let cur = []
++  let curMs = 0
++
++  const flush = () => {
++    if (!cur.length) return
++    const first = cur[0]
++    const last = cur[cur.length - 1]
++    const startMs = first.startMs || 0
++    const endMs = (last.startMs || 0) + (last.durationMs || 0)
++    scenes.push({ segmentIds: cur.map((s) => s.id), startMs, endMs, durationMs: endMs - startMs })
++    cur = []
++    curMs = 0
++  }
++
++  for (const s of segments) {
++    const dur = s.durationMs || 0
++    // 현재 씬에 이미 세그먼트가 있고, 추가 시 maxMs 초과 예상이면 먼저 마감
++    if (cur.length && curMs + dur > maxMs) flush()
++    cur.push(s)
++    curMs += dur
++    // 목표 하한 도달 → 마감
++    if (curMs >= minMs) flush()
++  }
++  flush()
++  return scenes
++}
+diff --git a/electron/story/sceneIdentity.js b/electron/story/sceneIdentity.js
+index af74f7a..b88be07 100644
+--- a/electron/story/sceneIdentity.js
++++ b/electron/story/sceneIdentity.js
+@@ -48,10 +48,27 @@ export function inheritStoryIds(prevScenes, nextScenes) {
+   return { scenes, unmatched: { prev: unmatchedPrev, next: unmatchedNext } }
+ }
+ 
+ export function assertUniqueStoryIds(scenes) {
+   const seen = new Set()
+   for (const s of scenes) {
+     if (seen.has(s.storyId)) throw new Error(`duplicate storyId: ${s.storyId}`)
+     seen.add(s.storyId)
+   }
+ }
++
++/**
++ * 멤버십(세그먼트 id 집합) 기반 storyId 발급 — 스펙 §4.
++ * 이전 씬과 집합 완전 동일 → 승계, 아니면 신규 uuid. 결과 유일성 보장.
++ */
++export function assignStoryIdsByMembership(prevScenes, nextGroups, { randomUUID: uuid = randomUUID } = {}) {
++  const keyOf = (ids) => [...ids].sort().join('|')
++  const prevByKey = new Map((prevScenes || []).map((s) => [keyOf(s.segmentIds || []), s.storyId]))
++  const used = new Set()
++  return nextGroups.map((g) => {
++    let storyId = prevByKey.get(keyOf(g.segmentIds || []))
++    if (!storyId || used.has(storyId)) storyId = uuid()
++    while (used.has(storyId)) storyId = uuid() // 유일성 보장
++    used.add(storyId)
++    return { ...g, storyId }
++  })
++}
+diff --git a/electron/story/stepMachine.js b/electron/story/stepMachine.js
+index 5c8e417..dae7c4a 100644
+--- a/electron/story/stepMachine.js
++++ b/electron/story/stepMachine.js
+@@ -1,22 +1,25 @@
+ /**
+  * Story 스텝 머신 — 스펙 §2/§3/§4. main process 소유, 결정적 순서 제어.
+  * LLM 어댑터는 DI(테스트 mock). emit은 모든 payload에 projectToken/operationId 포함.
+  */
+ import { randomUUID } from 'node:crypto'
++import path from 'node:path'
+ import { createStoryStore } from './storyStore.js'
+-import { inheritStoryIds, assertUniqueStoryIds } from './sceneIdentity.js'
+-import { buildFallbackTimeline } from './timing.js'
++import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership } from './sceneIdentity.js'
++import { buildFallbackTimeline, buildSegmentTimeline, buildSrt } from './timing.js'
++import { regroupScenes } from './regroup.js'
++import { buildManifest } from './manifest.js'
+ 
+-const DOWNSTREAM = { script: ['scenes', 'prompts'], scenes: ['prompts'], prompts: [] }
++const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
+ 
+-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt }) {
++export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, probe }) {
+   const store = createStoryStore(projectPath)
+   const projectToken = randomUUID()
+   let state = null
+   let controller = null
+ 
+   const send = (ch, payload, operationId) =>
+     emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
+ 
+   async function flush() { await store.save(state) }
+ 
+@@ -114,20 +117,77 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
+       if (signal?.aborted) return
+       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
+       const { scenes: withIds } = inheritStoryIds(prev, scenes)
+       assertUniqueStoryIds(withIds)
+       await store.saveText('scenes.json', JSON.stringify({ scenes: withIds }, null, 2))
+       // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
+       const norm = (n) => (n || '').replace(/\s/g, '')
+       const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
+       state.speakers = speakers.map((sp) => ({ ...sp, voice: prevSpeakers.get(norm(sp.name))?.voice ?? null }))
+     },
++    async audio(params, opId, signal) {
++      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
++      if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
++      // 화자 voice 배정 (params.speakers 우선, 없으면 state.speakers)
++      const speakers = params.speakers || state.speakers || []
++      const voiceOf = (spk) => (speakers.find((s) => s.id === spk)?.voice) || null
++      // 모든 씬의 세그먼트를 순서대로 평탄화
++      const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
++      const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
++
++      // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
++      const conc = tts.capabilities?.().maxConcurrency || 2
++      const results = new Map()
++      for (let i = 0; i < narration.length; i += conc) {
++        const batch = narration.slice(i, i + conc)
++        await Promise.all(batch.map(async (seg) => {
++          const voice = voiceOf(seg.speaker)
++          if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
++          const { audio } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
++          const rel = `audio/segments/${seg.id}.wav`
++          await store.saveBinary(rel, audio)
++          const durationMs = await probe(path.join(projectPath, 'story', rel))
++          results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs })
++        }))
++        if (signal?.aborted) return
++      }
++      if (signal?.aborted) return
++
++      // 2) 세그먼트에 실측 durationMs·audioPath 병합 (원 순서 보존)
++      const measured = segments.map((s) => {
++        const r = results.get(s.id)
++        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null }
++      })
++      // 3) 타임라인(startMs) + 4) SRT
++      const timed = buildSegmentTimeline(measured, { gapMs: 150 })
++      const srt = buildSrt(timed)
++      // 5) 재그룹 + 6) storyId 발급 (이전 확정 씬은 scenes.json에 segmentIds 있으면 사용)
++      const prevScenes = (scenesJson.scenes || []).filter((s) => s.storyId).map((s) => ({ storyId: s.storyId, segmentIds: (s.segments || []).map((g) => g.id) }))
++      const groups = regroupScenes(timed, { minMs: 6000, maxMs: 10000 })
++      const withIds = assignStoryIdsByMembership(prevScenes, groups)
++      // 7) 확정 씬 재구성 (그룹의 segmentIds로 timed 세그먼트를 묶음)
++      const byId = new Map(timed.map((s) => [s.id, s]))
++      const finalScenes = withIds.map((g) => ({
++        storyId: g.storyId,
++        startSec: g.startMs / 1000,
++        endSec: g.endMs / 1000,
++        segments: g.segmentIds.map((id) => byId.get(id)),
++        // 프롬프트는 audio 단계에서 건드리지 않음 (M2a-2/prompts 소유)
++      }))
++      if (signal?.aborted) return
++      if (params.speakers) state.speakers = params.speakers
++      // 8) 산출 저장: 세그먼트 파일은 이미 저장됨 → SRT, scenes.json, manifest 순서 원자 쓰기
++      await store.saveText('audio/final.srt', srt)
++      await store.saveText('scenes.json', JSON.stringify({ scenes: finalScenes }, null, 2))
++      const manifest = buildManifest(timed, { pushRevision: null }) // 최초 정밀: null (prompts가 재스탬프)
++      await store.saveText('audio/manifest.json', JSON.stringify(manifest, null, 2))
++    },
+     async prompts(params, opId, signal) {
+       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+       const scriptMd = await store.loadText('script.md')
+       const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
+       const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
+       if (signal?.aborted) return
+       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
+       state.pendingPushRevision += 1
+       // HIGH/Codex: push emit은 여기서 하지 않는다 — flush(story.json 저장) 전에 크래시하면
+diff --git a/electron/story/storyStore.js b/electron/story/storyStore.js
+index 1c209d8..ad06068 100644
+--- a/electron/story/storyStore.js
++++ b/electron/story/storyStore.js
+@@ -32,33 +32,34 @@ export function createStoryStore(projectPath) {
+   // 인스턴스별 promise 큐로 write 직렬화까지 더해 파일 내용 자체의 교착(마지막-쓰기-승리 순서
+   // 보장)도 안전하게 만든다.
+   let writeQueue = Promise.resolve()
+ 
+   function enqueueWrite(task) {
+     const result = writeQueue.then(task)
+     writeQueue = result.then(() => undefined, () => undefined)
+     return result
+   }
+ 
+-  async function writeAtomic(relPath, data) {
++  async function writeAtomic(relPath, data, encoding = 'utf-8') {
+     await mkdir(path.dirname(path.join(storyDir, relPath)), { recursive: true })
+     const target = path.join(storyDir, relPath)
+     const tmp = `${target}.tmp-${process.pid}-${randomUUID().slice(0, 8)}`
+-    await writeFile(tmp, data, 'utf-8')
++    await writeFile(tmp, data, encoding)
+     await rename(tmp, target)
+   }
+ 
+   return {
+     async load() {
+       try {
+         return JSON.parse(await readFile(path.join(storyDir, 'story.json'), 'utf-8'))
+       } catch {
+         return defaultStoryState()
+       }
+     },
+     async save(state) { return enqueueWrite(() => writeAtomic('story.json', JSON.stringify(state, null, 2))) },
+     async saveText(relPath, text) { return enqueueWrite(() => writeAtomic(relPath, text)) },
++    async saveBinary(relPath, buffer) { return enqueueWrite(() => writeAtomic(relPath, buffer, null)) },
+     async loadText(relPath) {
+       try { return await readFile(path.join(storyDir, relPath), 'utf-8') } catch { return null }
+     },
+   }
+ }
+diff --git a/electron/story/timing.js b/electron/story/timing.js
+index b5e5624..4a50c89 100644
+--- a/electron/story/timing.js
++++ b/electron/story/timing.js
+@@ -13,10 +13,50 @@ export function estimateReadingSec(text, language) {
+ export function buildFallbackTimeline(scenes, language) {
+   let cursor = 0
+   return scenes.map((scene) => {
+     const text = (scene.segments || []).map((s) => s.text || '').join('')
+     const duration = estimateReadingSec(text, language)
+     const entry = { storyId: scene.storyId, startTime: cursor, endTime: cursor + duration, duration }
+     cursor += duration
+     return entry
+   })
+ }
++
++/** 세그먼트 순서대로 gap 포함 누적 startMs 부여 (원본 불변). 스펙 §5-3. */
++export function buildSegmentTimeline(segments, { gapMs = 150 } = {}) {
++  let cursor = 0
++  return segments.map((s) => {
++    const startMs = cursor
++    cursor = startMs + (s.durationMs || 0) + gapMs
++    return { ...s, startMs }
++  })
++}
++
++/** 세그먼트 id → SRT 라인 id (결정론적, 스펙 §7 흐름 A). */
++export function srtLineId(segmentId) {
++  return `sub_${segmentId}`
++}
++
++function fmtSrtTime(ms) {
++  const h = Math.floor(ms / 3600000)
++  const m = Math.floor((ms % 3600000) / 60000)
++  const s = Math.floor((ms % 60000) / 1000)
++  const x = ms % 1000
++  const p2 = (n) => String(n).padStart(2, '0')
++  return `${p2(h)}:${p2(m)}:${p2(s)},${String(x).padStart(3, '0')}`
++}
++
++/** narration 세그먼트만 SRT 라인화 (sfx 제외). startMs 필요(buildSegmentTimeline 선행). 스펙 §5-4. */
++export function buildSrt(segments) {
++  let out = ''
++  let idx = 1
++  for (const s of segments) {
++    if (s.type && s.type !== 'narration') continue
++    const text = (s.text || '').trim()
++    if (!text) continue
++    const start = s.startMs || 0
++    const end = start + (s.durationMs || 0)
++    out += `${idx}\n${fmtSrtTime(start)} --> ${fmtSrtTime(end)}\n${text}\n\n`
++    idx++
++  }
++  return out.trim()
++}
+diff --git a/package-lock.json b/package-lock.json
+index 00126c4..b05be56 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -13,20 +13,21 @@
+         "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+         "@lexical/react": "^0.45.0",
+         "@modelcontextprotocol/sdk": "^1.27.1",
+         "@sentry/electron": "^7.13.0",
+         "dotenv": "^17.3.1",
+         "electron-updater": "^6.8.3",
+         "firebase": "^12.9.0",
+         "flag-icons": "^7.5.0",
+         "lexical": "^0.45.0",
+         "lexical-beautiful-mentions": "^0.1.48",
++        "music-metadata": "^11.13.0",
+         "react": "^18.3.1",
+         "react-dom": "^18.3.1"
+       },
+       "devDependencies": {
+         "@electron/notarize": "^3.1.1",
+         "@testing-library/jest-dom": "^6.9.1",
+         "@testing-library/react": "^16.3.2",
+         "@testing-library/user-event": "^14.6.1",
+         "@vitejs/plugin-react": "^4.3.4",
+         "@vitest/coverage-v8": "^4.0.18",
+@@ -545,20 +546,30 @@
+     "node_modules/@bcoe/v8-coverage": {
+       "version": "1.0.2",
+       "resolved": "https://registry.npmjs.org/@bcoe/v8-coverage/-/v8-coverage-1.0.2.tgz",
+       "integrity": "sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=18"
+       }
+     },
++    "node_modules/@borewit/text-codec": {
++      "version": "0.2.2",
++      "resolved": "https://registry.npmjs.org/@borewit/text-codec/-/text-codec-0.2.2.tgz",
++      "integrity": "sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Borewit"
++      }
++    },
+     "node_modules/@bramus/specificity": {
+       "version": "2.4.2",
+       "resolved": "https://registry.npmjs.org/@bramus/specificity/-/specificity-2.4.2.tgz",
+       "integrity": "sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "css-tree": "^3.0.0"
+       },
+       "bin": {
+@@ -4311,20 +4322,43 @@
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=12",
+         "npm": ">=6"
+       },
+       "peerDependencies": {
+         "@testing-library/dom": ">=7.21.4"
+       }
+     },
++    "node_modules/@tokenizer/inflate": {
++      "version": "0.4.1",
++      "resolved": "https://registry.npmjs.org/@tokenizer/inflate/-/inflate-0.4.1.tgz",
++      "integrity": "sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA==",
++      "license": "MIT",
++      "dependencies": {
++        "debug": "^4.4.3",
++        "token-types": "^6.1.1"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Borewit"
++      }
++    },
++    "node_modules/@tokenizer/token": {
++      "version": "0.3.0",
++      "resolved": "https://registry.npmjs.org/@tokenizer/token/-/token-0.3.0.tgz",
++      "integrity": "sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==",
++      "license": "MIT"
++    },
+     "node_modules/@types/aria-query": {
+       "version": "5.0.4",
+       "resolved": "https://registry.npmjs.org/@types/aria-query/-/aria-query-5.0.4.tgz",
+       "integrity": "sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==",
+       "dev": true,
+       "license": "MIT",
+       "peer": true
+     },
+     "node_modules/@types/babel__core": {
+       "version": "7.20.5",
+@@ -7119,20 +7153,38 @@
+       },
+       "peerDependencies": {
+         "picomatch": "^3 || ^4"
+       },
+       "peerDependenciesMeta": {
+         "picomatch": {
+           "optional": true
+         }
+       }
+     },
++    "node_modules/file-type": {
++      "version": "21.3.4",
++      "resolved": "https://registry.npmjs.org/file-type/-/file-type-21.3.4.tgz",
++      "integrity": "sha512-Ievi/yy8DS3ygGvT47PjSfdFoX+2isQueoYP1cntFW1JLYAuS4GD7NUPGg4zv2iZfV52uDyk5w5Z0TdpRS6Q1g==",
++      "license": "MIT",
++      "dependencies": {
++        "@tokenizer/inflate": "^0.4.1",
++        "strtok3": "^10.3.4",
++        "token-types": "^6.1.1",
++        "uint8array-extras": "^1.4.0"
++      },
++      "engines": {
++        "node": ">=20"
++      },
++      "funding": {
++        "url": "https://github.com/sindresorhus/file-type?sponsor=1"
++      }
++    },
+     "node_modules/filelist": {
+       "version": "1.0.6",
+       "resolved": "https://registry.npmjs.org/filelist/-/filelist-1.0.6.tgz",
+       "integrity": "sha512-5giy2PkLYY1cP39p17Ech+2xlpTRL9HLspOfEgm0L6CwBXBTgsK5ou0JtzYuepxkaQ/tvhCFIJ5uXo0OrM2DxA==",
+       "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "minimatch": "^5.0.1"
+       }
+     },
+@@ -7861,21 +7913,20 @@
+     "node_modules/idb": {
+       "version": "7.1.1",
+       "resolved": "https://registry.npmjs.org/idb/-/idb-7.1.1.tgz",
+       "integrity": "sha512-gchesWBzyvGHRO9W8tzUWFDycow5gwjvFKfyV9FF32Y7F50yZMp7mP+T2mJIWFx49zicqyC4uefHM17o6xKIVQ==",
+       "license": "ISC"
+     },
+     "node_modules/ieee754": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz",
+       "integrity": "sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==",
+-      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+           "url": "https://github.com/sponsors/feross"
+         },
+         {
+           "type": "patreon",
+           "url": "https://www.patreon.com/feross"
+         },
+         {
+@@ -8801,20 +8852,77 @@
+       "resolved": "https://registry.npmjs.org/module-details-from-path/-/module-details-from-path-1.0.4.tgz",
+       "integrity": "sha512-EGWKgxALGMgzvxYF1UyGTy0HXX/2vHLkw6+NvDKW2jypWbHpjQuj4UMcqQWXHERJhVGKikolT06G3bcKe4fi7w==",
+       "license": "MIT"
+     },
+     "node_modules/ms": {
+       "version": "2.1.3",
+       "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+       "license": "MIT"
+     },
++    "node_modules/music-metadata": {
++      "version": "11.13.0",
++      "resolved": "https://registry.npmjs.org/music-metadata/-/music-metadata-11.13.0.tgz",
++      "integrity": "sha512-uXRaov9dfjSpQufXIU7sMxVZnh+FilCQv2mXn+K5EJ/decP3dTWrgvPYa5r6MtRbieNSCE708Da4J0u1UGfQIw==",
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/Borewit"
++        },
++        {
++          "type": "buymeacoffee",
++          "url": "https://buymeacoffee.com/borewit"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "@borewit/text-codec": "^0.2.2",
++        "@tokenizer/token": "^0.3.0",
++        "content-type": "^2.0.0",
++        "debug": "^4.4.3",
++        "file-type": "^21.3.4",
++        "media-typer": "^2.0.0",
++        "strtok3": "^10.3.5",
++        "token-types": "^6.1.2",
++        "uint8array-extras": "^1.5.0",
++        "win-guid": "^0.2.1"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/music-metadata/node_modules/content-type": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz",
++      "integrity": "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
++    "node_modules/music-metadata/node_modules/media-typer": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/media-typer/-/media-typer-2.0.0.tgz",
++      "integrity": "sha512-kOy3OxT2HH39N70UnKgu4NWDZjLOz8W/mfyvniHjRH/DrL3f2pOfvWQ4p60offbbtDAnXWp0v9LfMIqMec269Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
+     "node_modules/nanoid": {
+       "version": "3.3.11",
+       "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz",
+       "integrity": "sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==",
+       "dev": true,
+       "funding": [
+         {
+           "type": "github",
+           "url": "https://github.com/sponsors/ai"
+         }
+@@ -10415,20 +10523,36 @@
+       "integrity": "sha512-laJTa3Jb+VQpaC6DseHhF7dXVqHTfJPCRDaEbid/drOhgitgYku/letMUqOXFoWV0zIIUbjpdH2t+tYj4bQMRQ==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "min-indent": "^1.0.0"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
++    "node_modules/strtok3": {
++      "version": "10.3.5",
++      "resolved": "https://registry.npmjs.org/strtok3/-/strtok3-10.3.5.tgz",
++      "integrity": "sha512-ki4hZQfh5rX0QDLLkOCj+h+CVNkqmp/CMf8v8kZpkNVK6jGQooMytqzLZYUVYIZcFZ6yDB70EfD8POcFXiF5oA==",
++      "license": "MIT",
++      "dependencies": {
++        "@tokenizer/token": "^0.3.0"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Borewit"
++      }
++    },
+     "node_modules/sumchecker": {
+       "version": "3.0.1",
+       "resolved": "https://registry.npmjs.org/sumchecker/-/sumchecker-3.0.1.tgz",
+       "integrity": "sha512-MvjXzkz/BOfyVDkG0oFOtBxHX2u3gKbMHIF/dXblZsgD3BWOFLmHovIpZY7BykJdAjcqRCBi1WYBNdEC9yI7vg==",
+       "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "debug": "^4.1.0"
+       },
+       "engines": {
+@@ -10664,20 +10788,38 @@
+     },
+     "node_modules/toidentifier": {
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz",
+       "integrity": "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=0.6"
+       }
+     },
++    "node_modules/token-types": {
++      "version": "6.1.2",
++      "resolved": "https://registry.npmjs.org/token-types/-/token-types-6.1.2.tgz",
++      "integrity": "sha512-dRXchy+C0IgK8WPC6xvCHFRIWYUbqqdEIKPaKo/AcTUNzwLTK6AH7RjdLWsEZcAN/TBdtfUw3PYEgPr5VPr6ww==",
++      "license": "MIT",
++      "dependencies": {
++        "@borewit/text-codec": "^0.2.1",
++        "@tokenizer/token": "^0.3.0",
++        "ieee754": "^1.2.1"
++      },
++      "engines": {
++        "node": ">=14.16"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Borewit"
++      }
++    },
+     "node_modules/tough-cookie": {
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
+       "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
+       "dev": true,
+       "license": "BSD-3-Clause",
+       "dependencies": {
+         "tldts": "^7.0.5"
+       },
+       "engines": {
+@@ -10741,20 +10883,32 @@
+       "license": "MIT",
+       "dependencies": {
+         "content-type": "^1.0.5",
+         "media-typer": "^1.1.0",
+         "mime-types": "^3.0.0"
+       },
+       "engines": {
+         "node": ">= 0.6"
+       }
+     },
++    "node_modules/uint8array-extras": {
++      "version": "1.5.0",
++      "resolved": "https://registry.npmjs.org/uint8array-extras/-/uint8array-extras-1.5.0.tgz",
++      "integrity": "sha512-rvKSBiC5zqCCiDZ9kAOszZcDvdAHwwIKJG33Ykj43OKcWsnmcBRL09YTU4nOeHZ8Y2a7l1MgTd08SBe9A8Qj6A==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/undici": {
+       "version": "7.24.7",
+       "resolved": "https://registry.npmjs.org/undici/-/undici-7.24.7.tgz",
+       "integrity": "sha512-H/nlJ/h0ggGC+uRL3ovD+G0i4bqhvsDOpbDv7At5eFLlj2b41L8QliGbnl2H7SnDiYhENphh1tQFJZf+MyfLsQ==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=20.18.1"
+       }
+     },
+@@ -11188,20 +11342,26 @@
+         "siginfo": "^2.0.0",
+         "stackback": "0.0.2"
+       },
+       "bin": {
+         "why-is-node-running": "cli.js"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
++    "node_modules/win-guid": {
++      "version": "0.2.1",
++      "resolved": "https://registry.npmjs.org/win-guid/-/win-guid-0.2.1.tgz",
++      "integrity": "sha512-gEIQU4mkgl2OPeoNrWflcJFJ3Ae2BPd4eCsHHA/XikslkIVms/nHhvnvzIZV7VLmBvtFlDOzLt9rrZT+n6D67A==",
++      "license": "MIT"
++    },
+     "node_modules/wrap-ansi": {
+       "version": "7.0.0",
+       "resolved": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz",
+       "integrity": "sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==",
+       "license": "MIT",
+       "dependencies": {
+         "ansi-styles": "^4.0.0",
+         "string-width": "^4.1.0",
+         "strip-ansi": "^6.0.0"
+       },
+diff --git a/package.json b/package.json
+index bee1be4..3b26b01 100644
+--- a/package.json
++++ b/package.json
+@@ -44,20 +44,21 @@
+     "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+     "@lexical/react": "^0.45.0",
+     "@modelcontextprotocol/sdk": "^1.27.1",
+     "@sentry/electron": "^7.13.0",
+     "dotenv": "^17.3.1",
+     "electron-updater": "^6.8.3",
+     "firebase": "^12.9.0",
+     "flag-icons": "^7.5.0",
+     "lexical": "^0.45.0",
+     "lexical-beautiful-mentions": "^0.1.48",
++    "music-metadata": "^11.13.0",
+     "react": "^18.3.1",
+     "react-dom": "^18.3.1"
+   },
+   "devDependencies": {
+     "@electron/notarize": "^3.1.1",
+     "@testing-library/jest-dom": "^6.9.1",
+     "@testing-library/react": "^16.3.2",
+     "@testing-library/user-event": "^14.6.1",
+     "@vitejs/plugin-react": "^4.3.4",
+     "@vitest/coverage-v8": "^4.0.18",
+diff --git a/tests/electron/api/keyStoreMulti.test.js b/tests/electron/api/keyStoreMulti.test.js
+new file mode 100644
+index 0000000..b47f8b6
+--- /dev/null
++++ b/tests/electron/api/keyStoreMulti.test.js
+@@ -0,0 +1,62 @@
++import { describe, it, expect, beforeEach } from 'vitest'
++import { createMultiKeyStore } from '../../../electron/api/keyStoreMulti.js'
++
++// safeStorage/fs mock — 메모리 저장
++function makeDeps() {
++  const files = new Map()
++  const safeStorage = {
++    isEncryptionAvailable: () => true,
++    encryptString: (s) => Buffer.from('enc:' + s),
++    decryptString: (b) => b.toString().replace(/^enc:/, ''),
++  }
++  const fs = {
++    existsSync: (p) => files.has(p),
++    readFileSync: (p) => files.get(p),
++    writeFileSync: (p, data) => files.set(p, Buffer.from(data)),
++    unlinkSync: (p) => files.delete(p),
++    mkdirSync: () => {},
++  }
++  const path = { join: (...xs) => xs.join('/') }
++  return { safeStorage, keysDir: '/keys', fs, path, files }
++}
++
++describe('createMultiKeyStore', () => {
++  let deps
++  beforeEach(() => { deps = makeDeps() })
++
++  it('허용 provider 키를 저장/조회/삭제', () => {
++    const ks = createMultiKeyStore(deps)
++    expect(ks.setKey('typecast', 'tc-123')).toEqual({ success: true })
++    expect(ks.hasKey('typecast')).toBe(true)
++    expect(ks.getKey('typecast')).toBe('tc-123')
++    expect(deps.files.has('/keys/typecast-key.enc')).toBe(true)
++    ks.clearKey('typecast')
++    expect(ks.hasKey('typecast')).toBe(false)
++  })
++
++  it('allowlist 밖 provider는 거부(경로 생성 안 함)', () => {
++    const ks = createMultiKeyStore(deps)
++    expect(ks.setKey('../evil', 'x').success).toBe(false)
++    expect(ks.getKey('../evil')).toBe(null)
++    expect(ks.hasKey('../evil')).toBe(false)
++    expect(deps.files.size).toBe(0)
++  })
++
++  it('provider별로 키가 격리', () => {
++    const ks = createMultiKeyStore(deps)
++    ks.setKey('typecast', 'tc'); ks.setKey('elevenlabs', 'el')
++    expect(ks.getKey('typecast')).toBe('tc')
++    expect(ks.getKey('elevenlabs')).toBe('el')
++  })
++
++  it('Object.prototype 멤버명 provider도 거부 (prototype 오염 방지)', () => {
++    const ks = createMultiKeyStore(deps)
++    for (const evil of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
++      expect(ks.setKey(evil, 'x').success).toBe(false)
++      expect(ks.getKey(evil)).toBe(null)
++      expect(ks.hasKey(evil)).toBe(false)
++      expect(ks.clearKey(evil).success).toBe(false)
++    }
++    expect(deps.files.size).toBe(0)
++  })
++})
+diff --git a/tests/electron/api/tts/typecast.test.js b/tests/electron/api/tts/typecast.test.js
+new file mode 100644
+index 0000000..b6e2638
+--- /dev/null
++++ b/tests/electron/api/tts/typecast.test.js
+@@ -0,0 +1,40 @@
++import { describe, it, expect } from 'vitest'
++import { createTypecastAdapter } from '../../../../electron/api/tts/typecast.js'
++
++describe('createTypecastAdapter', () => {
++  it('capabilities: 감정 지원·wav', () => {
++    const a = createTypecastAdapter({ getKey: () => 'tc', fetch: async () => {} })
++    expect(a.capabilities().supportsEmotion).toBe(true)
++    expect(a.capabilities().outputFormats).toContain('wav')
++  })
++
++  it('synthesize: 키·voiceId·text·emotion을 요청에 싣고 오디오 Buffer 반환', async () => {
++    let captured
++    const fetch = async (url, opts) => {
++      captured = { url, opts }
++      return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }
++    }
++    const a = createTypecastAdapter({ getKey: () => 'tc-key', fetch })
++    const { audio, format } = await a.synthesize({ text: '안녕', voiceId: 'tc_abc', emotion: 'happy' })
++    expect(format).toBe('wav')
++    expect(Buffer.isBuffer(audio)).toBe(true)
++    expect([...audio]).toEqual([1, 2, 3])
++    expect(captured.opts.headers.Authorization).toContain('tc-key')
++    const body = JSON.parse(captured.opts.body)
++    expect(body.voice_id).toBe('tc_abc')
++    expect(body.text).toBe('안녕')
++    expect(body.emotion).toBe('happy')
++    expect(body.model).toBe('ssfm-v21')
++  })
++
++  it('키 없으면 throw', async () => {
++    const a = createTypecastAdapter({ getKey: () => null, fetch: async () => {} })
++    await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/Typecast API key/)
++  })
++
++  it('HTTP 실패 시 throw', async () => {
++    const fetch = async () => ({ ok: false, status: 401, text: async () => 'unauthorized' })
++    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
++    await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/401/)
++  })
++})
+diff --git a/tests/electron/story/audioProbe.test.js b/tests/electron/story/audioProbe.test.js
+new file mode 100644
+index 0000000..377ecd6
+--- /dev/null
++++ b/tests/electron/story/audioProbe.test.js
+@@ -0,0 +1,23 @@
++import { describe, it, expect } from 'vitest'
++import { probeDurationMs } from '../../../electron/story/audioProbe.js'
++
++describe('probeDurationMs', () => {
++  it('주입한 parseFile의 format.duration(초)을 ms로 반올림 반환', async () => {
++    const fakeParse = async (p) => {
++      expect(p).toBe('/x/s001-1.mp3')
++      return { format: { duration: 2.3812 } }
++    }
++    const ms = await probeDurationMs('/x/s001-1.mp3', { parseFile: fakeParse })
++    expect(ms).toBe(2381)
++  })
++
++  it('duration 누락 시 0 반환(측정 실패 안전값)', async () => {
++    const ms = await probeDurationMs('/x/y.mp3', { parseFile: async () => ({ format: {} }) })
++    expect(ms).toBe(0)
++  })
++
++  it('parseFile가 실패(reject)해도 0 반환 (측정 실패 안전값)', async () => {
++    const ms = await probeDurationMs('/x/corrupt.mp3', { parseFile: async () => { throw new Error('bad file') } })
++    expect(ms).toBe(0)
++  })
++})
+diff --git a/tests/electron/story/manifest.test.js b/tests/electron/story/manifest.test.js
+new file mode 100644
+index 0000000..b8b696f
+--- /dev/null
++++ b/tests/electron/story/manifest.test.js
+@@ -0,0 +1,27 @@
++import { describe, it, expect } from 'vitest'
++import { buildManifest } from '../../../electron/story/manifest.js'
++
++const segs = [
++  { id: 's1', type: 'narration', speaker: 'narrator', audioPath: '/a/s1.wav', startMs: 0, durationMs: 2000 },
++  { id: 's2', type: 'sfx', audioPath: '/a/s2.wav', startMs: 2150, durationMs: 800 },
++]
++
++describe('buildManifest', () => {
++  it('narration은 trackIndex 0, pushRevision 기본 null', () => {
++    const m = buildManifest(segs)
++    expect(m.version).toBe(1)
++    expect(m.pushRevision).toBe(null)
++    expect(m.segments[0]).toMatchObject({ id: 's1', type: 'narration', trackIndex: 0, startMs: 0, durationMs: 2000 })
++  })
++
++  it('pushRevision 주입', () => {
++    expect(buildManifest(segs, { pushRevision: 7 }).pushRevision).toBe(7)
++  })
++
++  it('sfx 세그먼트도 포함(trackIndex 없음)', () => {
++    const m = buildManifest(segs)
++    const sfx = m.segments.find((s) => s.id === 's2')
++    expect(sfx.type).toBe('sfx')
++    expect(sfx.trackIndex).toBeUndefined()
++  })
++})
+diff --git a/tests/electron/story/regroup.test.js b/tests/electron/story/regroup.test.js
+new file mode 100644
+index 0000000..af81bc0
+--- /dev/null
++++ b/tests/electron/story/regroup.test.js
+@@ -0,0 +1,37 @@
++import { describe, it, expect } from 'vitest'
++import { regroupScenes } from '../../../electron/story/regroup.js'
++
++// startMs는 무시하고 durationMs 누적으로 그룹 판정 (startMs는 결과 계산용)
++function seg(id, durationMs, startMs) { return { id, type: 'narration', durationMs, startMs } }
++
++describe('regroupScenes', () => {
++  it('누적 6초 도달 시 씬 마감', () => {
++    const segs = [seg('a', 3000, 0), seg('b', 3500, 3150), seg('c', 3000, 6800)]
++    const scenes = regroupScenes(segs, { minMs: 6000, maxMs: 10000 })
++    // a+b = 6500ms >= 6000 → 씬1 [a,b]; c → 씬2 [c]
++    expect(scenes.map((s) => s.segmentIds)).toEqual([['a', 'b'], ['c']])
++    expect(scenes[0].startMs).toBe(0)
++  })
++
++  it('다음 세그먼트가 maxMs 초과 유발하면 현재 씬 먼저 마감', () => {
++    const segs = [seg('a', 5000, 0), seg('b', 6000, 5150)]
++    const scenes = regroupScenes(segs, { minMs: 6000, maxMs: 10000 })
++    // a=5000(<6000) 이지만 a+b=11000 > 10000 → a 단독 마감, b 단독
++    expect(scenes.map((s) => s.segmentIds)).toEqual([['a'], ['b']])
++  })
++
++  it('단일 세그먼트가 maxMs 초과면 단독 씬', () => {
++    const segs = [seg('a', 12000, 0)]
++    const scenes = regroupScenes(segs, { minMs: 6000, maxMs: 10000 })
++    expect(scenes).toHaveLength(1)
++    expect(scenes[0].segmentIds).toEqual(['a'])
++    expect(scenes[0].durationMs).toBe(12000)
++  })
++
++  it('endMs = 마지막 세그먼트 startMs + durationMs', () => {
++    const segs = [seg('a', 3000, 0), seg('b', 4000, 3150)]
++    const scenes = regroupScenes(segs, { minMs: 6000, maxMs: 10000 })
++    expect(scenes[0].endMs).toBe(7150)
++    expect(scenes[0].durationMs).toBe(7150) // startMs 0 기준
++  })
++})
+diff --git a/tests/electron/story/sceneIdentity.membership.test.js b/tests/electron/story/sceneIdentity.membership.test.js
+new file mode 100644
+index 0000000..953f6da
+--- /dev/null
++++ b/tests/electron/story/sceneIdentity.membership.test.js
+@@ -0,0 +1,35 @@
++import { describe, it, expect } from 'vitest'
++import { assignStoryIdsByMembership } from '../../../electron/story/sceneIdentity.js'
++
++describe('assignStoryIdsByMembership', () => {
++  it('세그먼트 집합 동일 → storyId 승계', () => {
++    const prev = [{ storyId: 'old-1', segmentIds: ['a', 'b'] }]
++    const next = [{ segmentIds: ['a', 'b'], startMs: 0, endMs: 6000, durationMs: 6000 }]
++    let n = 0
++    const out = assignStoryIdsByMembership(prev, next, { randomUUID: () => `new-${++n}` })
++    expect(out[0].storyId).toBe('old-1')
++  })
++
++  it('멤버십 변화(재그룹 경계 이동) → 신규 storyId', () => {
++    const prev = [{ storyId: 'old-1', segmentIds: ['a', 'b'] }]
++    const next = [
++      { segmentIds: ['a'], startMs: 0, endMs: 3000, durationMs: 3000 },
++      { segmentIds: ['b'], startMs: 3150, endMs: 6000, durationMs: 2850 },
++    ]
++    let n = 0
++    const out = assignStoryIdsByMembership(prev, next, { randomUUID: () => `new-${++n}` })
++    expect(out.map((s) => s.storyId)).toEqual(['new-1', 'new-2'])
++  })
++
++  it('결과 storyId 유일성 보장', () => {
++    const prev = [
++      { storyId: 'dup', segmentIds: ['a'] },
++      { storyId: 'dup', segmentIds: ['b'] }, // 비정상 중복 입력
++    ]
++    const next = [{ segmentIds: ['a'] }, { segmentIds: ['b'] }]
++    let n = 0
++    const out = assignStoryIdsByMembership(prev, next, { randomUUID: () => `new-${++n}` })
++    const ids = out.map((s) => s.storyId)
++    expect(new Set(ids).size).toBe(ids.length)
++  })
++})
+diff --git a/tests/electron/story/stepMachine.audio.test.js b/tests/electron/story/stepMachine.audio.test.js
+new file mode 100644
+index 0000000..5b9ab95
+--- /dev/null
++++ b/tests/electron/story/stepMachine.audio.test.js
+@@ -0,0 +1,73 @@
++import { describe, it, expect, beforeEach } from 'vitest'
++import { mkdtemp, readFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import path from 'node:path'
++import { createStepMachine } from '../../../electron/story/stepMachine.js'
++
++async function tmpProject() { return await mkdtemp(path.join(tmpdir(), 'story-audio-')) }
++
++function makeMachine(projectPath) {
++  // scenes.json 세그먼트를 미리 심어두기 위해 store 경유 대신 llm.splitScenes mock 사용은
++  // 이 테스트 범위 밖 — audio 스텝만 검증하려 scenes.json을 직접 배치한다.
++  const emitted = []
++  const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }) }
++  const probe = async () => 2000 // 모든 세그먼트 2초로 실측 가정
++  const machine = createStepMachine({
++    projectPath,
++    llm: {},
++    emit: (ch, payload) => emitted.push({ ch, payload }),
++    getApiKey: () => 'k',
++    tts,
++    probe,
++  })
++  return { machine, emitted }
++}
++
++describe('audio 스텝', () => {
++  let projectPath
++  beforeEach(async () => { projectPath = await tmpProject() })
++
++  it('세그먼트 TTS 생성 → 실측 → SRT → 재그룹 → manifest 저장', async () => {
++    // scenes.json 준비: narrator 화자 2 세그먼트
++    const { writeFile, mkdir } = await import('node:fs/promises')
++    await mkdir(path.join(projectPath, 'story'), { recursive: true })
++    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
++      scenes: [{ segments: [
++        { id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' },
++        { id: 's2', type: 'narration', speaker: 'narrator', text: '둘째 문장' },
++      ] }],
++    }))
++    const { machine } = makeMachine(projectPath)
++    // 화자 voice 배정
++    await machine.open()
++    // state.speakers에 narrator voiceId 주입 경로가 필요 — start의 params로 전달
++    const res = await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
++    expect(res.operationId).toBeTruthy()
++
++    // 세그먼트 오디오 파일
++    const s1 = await readFile(path.join(projectPath, 'story', 'audio', 'segments', 's1.wav'))
++    expect(s1.toString()).toBe('AUDIO:첫 문장')
++    // SRT
++    const srt = await readFile(path.join(projectPath, 'story', 'audio', 'final.srt'), 'utf-8')
++    expect(srt).toContain('첫 문장')
++    // manifest: pushRevision null(최초), 세그먼트 startMs 부여
++    const manifest = JSON.parse(await readFile(path.join(projectPath, 'story', 'audio', 'manifest.json'), 'utf-8'))
++    expect(manifest.pushRevision).toBe(null)
++    expect(manifest.segments[0].startMs).toBe(0)
++    expect(manifest.segments[1].startMs).toBe(2150) // 2000 + 150 gap
++  })
++
++  it('audio 완료 시 steps.audio.status=done, prompts는 pending 리셋', async () => {
++    const { writeFile, mkdir } = await import('node:fs/promises')
++    await mkdir(path.join(projectPath, 'story'), { recursive: true })
++    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
++      scenes: [{ segments: [{ id: 's1', type: 'narration', speaker: 'narrator', text: 'x' }] }],
++    }))
++    const { machine } = makeMachine(projectPath)
++    await machine.open()
++    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
++    const state = await machine.getState()
++    expect(state.steps.audio.status).toBe('done')
++    expect(state.steps.prompts.status).toBe('pending')
++  })
++})
+diff --git a/tests/electron/story/stepMachine.test.js b/tests/electron/story/stepMachine.test.js
+index 24150b7..718d5ea 100644
+--- a/tests/electron/story/stepMachine.test.js
++++ b/tests/electron/story/stepMachine.test.js
+@@ -6,27 +6,29 @@ import { tmpdir } from 'node:os'
+ import path from 'node:path'
+ import { createStepMachine } from '../../../electron/story/stepMachine.js'
+ 
+ let dir, emitted, llm, machine
+ beforeEach(async () => {
+   dir = await mkdtemp(path.join(tmpdir(), 'sm-'))
+   emitted = []
+   llm = {
+     generateScript: vi.fn(async (_i, _o, { onDelta }) => { onDelta?.('부분'); return { scriptMd: '# 대본' } }),
+     splitScenes: vi.fn(async () => ({
+-      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' }] }],
++      scenes: [{ sceneNo: 1, summary: 's', segments: [{ id: 'seg1', speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' }] }],
+       speakers: [{ id: 'narrator', name: '나레이션' }],
+     })),
+     writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s) => ({ ...s, imagePrompt: 'IMG', videoPrompt: 'VID' })) })),
+   }
++  const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }) }
++  const probe = async () => 2000
+   machine = createStepMachine({
+-    projectPath: dir, llm,
++    projectPath: dir, llm, tts, probe,
+     emit: (ch, payload) => emitted.push({ ch, payload }),
+     getApiKey: () => 'k',
+   })
+   await machine.open()
+ })
+ 
+ describe('stepMachine', () => {
+   it('script 실행: delta 중계 + done + script.md 저장', async () => {
+     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+     const state = await machine.getState()
+@@ -84,26 +86,43 @@ describe('stepMachine', () => {
+ 
+   it('ack 유실 후 open()이 push를 재발신한다', async () => {
+     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+     await machine.start('scenes', {})
+     await machine.start('prompts', {})
+     emitted.length = 0
+     await machine.open()   // ack 없이 재시작 시뮬레이션
+     expect(emitted.some((e) => e.ch === 'story:pushScenes')).toBe(true)
+   })
+ 
+-  it('script 재실행은 scenes/prompts를 pending으로 리셋한다', async () => {
++  it('script 재실행은 scenes/audio/prompts를 pending으로 리셋한다', async () => {
+     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+     await machine.start('scenes', {})
+     await machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
+     const state = await machine.getState()
+     expect(state.steps.scenes.status).toBe('pending')
++    expect(state.steps.audio.status).toBe('pending')
++    expect(state.steps.prompts.status).toBe('pending')
++  })
++
++  it('scenes 재실행은 audio/prompts를 pending으로 리셋한다', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    // audio step을 실행하여 audio.status를 done으로 만든다
++    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
++    const stateAfterAudio = await machine.getState()
++    expect(stateAfterAudio.steps.audio.status).toBe('done')
++    expect(stateAfterAudio.steps.prompts.status).toBe('pending')
++
++    // scenes 재실행 시 audio와 prompts가 pending으로 리셋되어야 한다
++    await machine.start('scenes', {})
++    const state = await machine.getState()
++    expect(state.steps.audio.status).toBe('pending')
+     expect(state.steps.prompts.status).toBe('pending')
+   })
+ 
+   it('LLM 에러 시 스텝 status=error + 에러 메시지 보존', async () => {
+     llm.generateScript.mockRejectedValueOnce(new Error('429'))
+     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+     const state = await machine.getState()
+     expect(state.steps.script.status).toBe('error')
+     expect(state.steps.script.error).toContain('429')
+   })
+diff --git a/tests/electron/story/storyStore.test.js b/tests/electron/story/storyStore.test.js
+index e6cee03..73dad62 100644
+--- a/tests/electron/story/storyStore.test.js
++++ b/tests/electron/story/storyStore.test.js
+@@ -1,15 +1,16 @@
+ import { describe, it, expect, beforeEach } from 'vitest'
+ import { mkdtemp, readFile, readdir } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import path from 'node:path'
+ import { createStoryStore, defaultStoryState } from '../../../electron/story/storyStore.js'
++import { existsSync } from 'node:fs'
+ 
+ let dir
+ beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'story-')) })
+ 
+ describe('storyStore', () => {
+   it('없으면 default 상태를 반환한다', async () => {
+     const store = createStoryStore(dir)
+     const s = await store.load()
+     expect(s.steps.script.status).toBe('pending')
+     expect(s.pendingPushRevision).toBe(0)
+@@ -52,11 +53,37 @@ describe('storyStore', () => {
+   it('병렬 saveText를 다수 실행해도 최종 파일이 유효하고 tmp 잔재가 없다', async () => {
+     const store = createStoryStore(dir)
+     const texts = Array.from({ length: 20 }, (_, i) => `본문 ${i}`)
+     await Promise.all(texts.map((t) => store.saveText('script.md', t)))
+ 
+     const raw = await store.loadText('script.md')
+     expect(texts).toContain(raw)
+     const files = await readdir(path.join(dir, 'story'))
+     expect(files.filter((f) => f.includes('.tmp'))).toEqual([])
+   })
++
++  it('saveBinary 왕복 — non-UTF8 바이트도 손상 없이 저장/읽기', async () => {
++    const store = createStoryStore(dir)
++    const buf = Buffer.from([0x00, 0xff, 0x10, 0xfe, 0x42])
++    await store.saveBinary('audio/segments/s1.wav', buf)
++    const read = await readFile(path.join(dir, 'story', 'audio/segments/s1.wav'))
++    expect(Buffer.compare(read, buf)).toBe(0)
++  })
++
++  it('saveBinary 원자적 쓰기 — tmp 파일이 남지 않는다', async () => {
++    const store = createStoryStore(dir)
++    const buf = Buffer.from([0xde, 0xad, 0xbe, 0xef])
++    await store.saveBinary('audio/output.bin', buf)
++    const files = await readdir(path.join(dir, 'story'))
++    expect(files.filter((f) => f.includes('.tmp'))).toEqual([])
++  })
++
++  it('saveBinary는 없는 중첩 디렉토리를 생성한다', async () => {
++    const store = createStoryStore(dir)
++    const buf = Buffer.from([0x11, 0x22, 0x33])
++    const relPath = 'audio/segments/nested/deep/file.bin'
++    await store.saveBinary(relPath, buf)
++    expect(existsSync(path.join(dir, 'story', relPath))).toBe(true)
++    const read = await readFile(path.join(dir, 'story', relPath))
++    expect(Buffer.compare(read, buf)).toBe(0)
++  })
+ })
+diff --git a/tests/electron/story/timing.segments.test.js b/tests/electron/story/timing.segments.test.js
+new file mode 100644
+index 0000000..91360fd
+--- /dev/null
++++ b/tests/electron/story/timing.segments.test.js
+@@ -0,0 +1,31 @@
++import { describe, it, expect } from 'vitest'
++import { buildSegmentTimeline, buildSrt, srtLineId } from '../../../electron/story/timing.js'
++
++const segs = [
++  { id: 's1', type: 'narration', text: '첫 문장', durationMs: 2000 },
++  { id: 's2', type: 'sfx', text: '', durationMs: 800 },
++  { id: 's3', type: 'narration', text: '둘째 문장', durationMs: 1500 },
++]
++
++describe('buildSegmentTimeline', () => {
++  it('gap 포함 누적 startMs (0, 2150, 3100)', () => {
++    const out = buildSegmentTimeline(segs, { gapMs: 150 })
++    expect(out.map((s) => s.startMs)).toEqual([0, 2150, 3100])
++    expect(segs[0].startMs).toBeUndefined() // 원본 불변
++  })
++})
++
++describe('srtLineId', () => {
++  it('sub_<id>', () => { expect(srtLineId('s3')).toBe('sub_s3') })
++})
++
++describe('buildSrt', () => {
++  it('narration만 자막화, sfx 제외, 인덱스 1..N 순차', () => {
++    const timed = buildSegmentTimeline(segs, { gapMs: 150 })
++    const srt = buildSrt(timed)
++    // s1: 0~2000, s3: 3100~4600 (s2 sfx 제외)
++    expect(srt).toContain('1\n00:00:00,000 --> 00:00:02,000\n첫 문장')
++    expect(srt).toContain('2\n00:00:03,100 --> 00:00:04,600\n둘째 문장')
++    expect(srt).not.toContain('800')
++  })
++})

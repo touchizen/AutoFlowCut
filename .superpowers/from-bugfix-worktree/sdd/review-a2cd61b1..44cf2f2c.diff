@@ -1,0 +1,514 @@
+# Review package: a2cd61b1..44cf2f2c
+
+## Commits
+44cf2f2c fix(settings): reload provider voices when a key is saved in Settings > API Keys
+7e6415ae fix(story-audio): translate tts-preview auth/missing-key errors instead of leaking raw message
+
+## Files changed
+ electron/ipc/story-api.js                      | 13 +++-
+ src/App.jsx                                    |  4 ++
+ src/components/SettingsModal.jsx               |  4 +-
+ src/components/settings/ApiKeyTab.jsx          |  8 ++-
+ src/components/story/StoryView.jsx             |  7 ++
+ tests/components/settings/ApiKeyTab.test.jsx   | 64 +++++++++++++++--
+ tests/components/story/storyAudioGate.test.jsx | 13 ++--
+ tests/electron/ipc/story-api.test.js           | 96 ++++++++++++++++++++++++++
+ 8 files changed, 195 insertions(+), 14 deletions(-)
+
+## Diff
+diff --git a/electron/ipc/story-api.js b/electron/ipc/story-api.js
+index a7efe1a5..0c11fa4c 100644
+--- a/electron/ipc/story-api.js
++++ b/electron/ipc/story-api.js
+@@ -197,21 +197,32 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
+   ipcMain.handle('story:generate-synopsis', guarded(({ type, title, pastedScript, options, useResearch }) =>
+     machine.generateSynopsis({ type, title, pastedScript, useResearch, options: options || {} })))
+   // 시놉시스 검수(spec 2026-07-10): draft-only — 결과를 돌려줄 뿐 저장하지 않는다.
+   ipcMain.handle('story:review-synopsis', guarded(({ synopsisMd, characters, options, review }) =>
+     machine.reviewSynopsis({ synopsisMd, characters, options: options || {}, review })))
+   // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋 채널(title·pasted 공통) — characters→speakers
+   // 반영 + charactersConfirmed=true + pushCharacters emit은 machine.confirmSynopsis가 수행.
+   ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters }) =>
+     machine.confirmSynopsis({ synopsisMd, characters })))
+   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
+-  ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
++  // §4.8 R3: synthPreview가 ProviderAuthError/MissingProviderKeyError(errorKind 있음)를 그대로
++  // throw하면 ipcRenderer.invoke가 message만 직렬화해 errorKind가 소실된다 — renderer가 번역할
++  // 코드를 잃고 raw 영문 진단문을 그대로 토스트한다. story:load-audio-package의 asKind 관습대로
++  // { error: kind, provider } 로 감싸 돌려준다. errorKind 없는 예외는 버그이므로 그대로 던져 드러낸다.
++  ipcMain.handle('story:tts-preview', guarded(async ({ segmentIds, speakers, sfxSources }) => {
++    try {
++      return await machine.synthPreview({ segmentIds, speakers, sfxSources })
++    } catch (e) {
++      if (!e?.errorKind) throw e
++      return { error: e.errorKind, provider: e.provider }
++    }
++  }))
+ 
+   // ── 화자별 오디오 출처 (mp3+SRT 가져오기) ──
+   // 출처 자체는 speaker.voice = {provider:'import', mp3Path, srtPath}로 들어가므로 별도 채널이
+   // 없다 — 기존 화자 배정(start('audio', {speakers}))이 그대로 나른다. 여기 있는 건 파일 선택뿐.
+   //
+   // 파일 선택 — renderer가 절대경로를 직접 만들 수 없으므로(그리고 만들게 하면 안 되므로) main이
+   // 다이얼로그를 띄우고 사용자가 고른 경로만 돌려준다.
+   // electron은 여기서 지연 import한다 — 이 모듈의 기존 테스트들은 electron을 mock하지 않으므로
+   // top-level import를 넣으면 그쪽이 깨진다(다이얼로그는 실제로 열 때만 필요하다).
+   // 다이얼로그 문구는 renderer가 실어 보낸다 — main은 useI18n을 부를 수 없어서, 여기에 문자열을
+diff --git a/src/App.jsx b/src/App.jsx
+index bcc94e20..75e65e08 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -2876,20 +2876,24 @@ function App() {
+       )}
+ 
+       {/* 모달들 */}
+       {showSettings && (
+         <SettingsModal
+           settings={settings}
+           initialTab={settingsTab}
+           onProjectChange={handleProjectChange}
+           availableModels={availableModels}
+           appMode={mode}
++          // §4.7 R3: "모든 저장 wrapper가 App-level 리로드를 공유한다" — Settings › API Keys에서
++          // provider 키를 저장하면 그 provider의 목소리 목록을 다시 긁는다. Story가 안 열려 있으면
++          // (voices가 안 쓰이면) best-effort로 조용히 끝난다 — 무해하다.
++          onKeySaved={reloadTtsVoicesForProvider}
+           onSave={async (newSettings) => {
+             setSettings(newSettings)
+             setShowSettings(false)
+             setSettingsTab(null)
+             // 화면비 등 project.json 메타가 바뀌었을 수 있으니 현재 프로젝트에 즉시
+             // 반영 (autosave 는 빈 프로젝트를 건너뜀). 저장 실패는 사용자에게 알린다.
+             const res = await saveCurrentProject(newSettings)
+             if (res && res.success === false) {
+               console.warn('[App] Project meta save failed:', res.error)
+               toast.error(t('toast.projectSaveFailed'))
+diff --git a/src/components/SettingsModal.jsx b/src/components/SettingsModal.jsx
+index bce1e74f..e08cfb25 100644
+--- a/src/components/SettingsModal.jsx
++++ b/src/components/SettingsModal.jsx
+@@ -15,21 +15,21 @@ import ApiKeyTab from './settings/ApiKeyTab'
+ import './SettingsModal.css'
+ 
+ const TABS = [
+   { id: 'storage', icon: '📁', labelKey: 'settings.tabStorage' },
+   { id: 'apiKey', icon: '🔑', labelKey: 'settings.tabApiKey' },
+   { id: 'scene', icon: '🎬', labelKey: 'settings.tabScene' },
+   { id: 'display', icon: '🖥️', labelKey: 'settings.tabDisplay' },
+   { id: 'mcp', icon: '🔌', labelKey: 'settings.tabMcp' }
+ ]
+ 
+-export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange, availableModels = {}, appMode }) {
++export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange, availableModels = {}, appMode, onKeySaved }) {
+   const { t } = useI18n()
+   // 모델 선택 옵션 — App 에서 라이브 /models 로 채워 내려줌(undefined 면 SceneTab 이 정적 폴백).
+   const [activeTab, setActiveTab] = useState(initialTab || 'storage')
+   const [localSettings, setLocalSettings] = useState(() => ({ ...settings }))
+   const [workFolder, setWorkFolder] = useState({ name: '', error: null })
+   const [highlight, setHighlight] = useState(!!initialTab)
+ 
+   useEffect(() => {
+     checkWorkFolder()
+   }, [])
+@@ -101,21 +101,21 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab =
+             setLocalSettings={setLocalSettings}
+             workFolder={workFolder}
+             onSelectFolder={handleSelectFolder}
+             onProjectChange={onProjectChange}
+             highlight={highlight}
+             t={t}
+           />
+         )}
+ 
+         {activeTab === 'apiKey' && (
+-          <ApiKeyTab t={t} />
++          <ApiKeyTab t={t} onKeySaved={onKeySaved} />
+         )}
+ 
+         {activeTab === 'scene' && (
+           <SceneTab
+             localSettings={localSettings}
+             setLocalSettings={setLocalSettings}
+             t={t}
+             appMode={appMode}
+             imageModels={availableModels.imageModels}
+             videoModels={availableModels.videoModels}
+diff --git a/src/components/settings/ApiKeyTab.jsx b/src/components/settings/ApiKeyTab.jsx
+index 55fdbf62..4f346b22 100644
+--- a/src/components/settings/ApiKeyTab.jsx
++++ b/src/components/settings/ApiKeyTab.jsx
+@@ -6,39 +6,43 @@ import GenaiApiKeyField from './GenaiApiKeyField'
+ import TtsApiKeyField from './TtsApiKeyField'
+ import { API_KEY_REGISTRY } from '../../config/apiKeyRegistry'
+ 
+ // Finding4(M3b 2R 리뷰): label/url을 여기 따로 하드코딩하지 않는다 — API_KEY_REGISTRY가 이미
+ // 단일 진실(AudioKeyGateCard가 쓰는 것과 같은 테이블)이다. store!=='genai'로 걸러 gemini(별도
+ // GenaiApiKeyField로 이미 렌더)를 뺀 나머지 3개 TTS provider만 순서대로 남는다.
+ const TTS_PROVIDER_IDS = Object.keys(API_KEY_REGISTRY).filter((id) => API_KEY_REGISTRY[id].store !== 'genai')
+ 
+ const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
+ 
+-export default function ApiKeyTab({ t }) {
++// §4.7 R3: "모든 저장 wrapper가 App-level 리로드를 공유한다" — Story가 열려 있으면 방금 저장한
++// provider의 목소리 목록이 stale로 남는 회귀를 막는다. App이 onKeySaved(provider)를
++// SettingsModal→ApiKeyTab으로 내려주면, 여기서 provider별 wrapper에 onSaved를 물려 알린다.
++export default function ApiKeyTab({ t, onKeySaved }) {
+   const openLink = (url) => window.electronAPI?.openExternal?.(url)
+   return (
+     <div className="settings-tab-content">
+       <div className="settings-section">
+         <h3>{t('settings.apiKeyTitle')}</h3>
+-        <GenaiApiKeyField t={t} />
++        <GenaiApiKeyField t={t} onSaved={() => onKeySaved?.('gemini')} />
+         {TTS_PROVIDER_IDS.map((id) => (
+           <TtsApiKeyField
+             key={id}
+             provider={id}
+             label={API_KEY_REGISTRY[id].label}
+             getKeyUrl={API_KEY_REGISTRY[id].url}
+             extraNote={
+               id === 'elevenlabs' ? t('settings.elevenlabsVoicesReadHint')
+               : id === 'googletts' ? t('settings.googlettsStoryUnavailable')
+               : undefined
+             }
+             t={t}
++            onSaved={() => onKeySaved?.(id)}
+           />
+         ))}
+         <span className="setting-sublabel" style={{ display: 'block', marginTop: '8px' }}>{t('settings.apiKeySecurityNote')}</span>
+       </div>
+ 
+       {/* Gemini 온보딩 가이드 (기존 유지) */}
+       <div className="settings-section">
+         <h3>{t('settings.apiKeyGuideTitle')}</h3>
+         <p className="setting-sublabel" style={{ marginBottom: '12px' }}>{t('settings.apiKeyGuideIntro')}</p>
+         <ol style={{ paddingLeft: '20px', lineHeight: 1.8, fontSize: '13px', margin: '0 0 12px' }}>
+diff --git a/src/components/story/StoryView.jsx b/src/components/story/StoryView.jsx
+index f91e14ab..3741b391 100644
+--- a/src/components/story/StoryView.jsx
++++ b/src/components/story/StoryView.jsx
+@@ -1215,30 +1215,37 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+   // Finding3(리뷰): 배치(runAudioWithPreflight를 거치는 audio())와 달리 이 단건 테스트는 preflight
+   // 없이 바로 ttsPreview를 불렀다 — 키가 없으면 IPC 거절이 errorKind 없이 raw 토스트로 샌다.
+   // backend audioPreflight가 mode:'segmentTest'(stepMachine:1971)를 이미 지원하므로 여기서도
+   // runAudioWithPreflight를 재사용해 같은 게이트 카드로 안내한다.
+   // Finding1(2R 리뷰): 게이트가 뜬 뒤 "키 저장"은 AudioKeyGateCard.onKeySaved(~L2166)가
+   // testSegment의 try/finally가 이미 끝난 뒤 audioGate.retry()로 별도(비동기) 재호출한다.
+   // 그 retry가 원래처럼 raw ttsPreview 콜백을 그대로 부르면 previewBusy 가드도 catch도 없이
+   // 실행돼, "존재하지만 무효한" 키에서 ttsPreview가 거부될 때 unhandled rejection +
+   // 번역 안 된 토스트로 새고, 두 번째 트리거와 겹칠 수도 있다. 가드+에러 처리를 가진 실행부를
+   // 별도 함수로 빼서 최초 호출과 retry가 항상 같은(가드된) 경로를 타게 한다.
++  // §4.8 R3: story:tts-preview는 이제 auth/missing-key를 throw 대신 { error: errorKind, provider }
++  // 로 돌려준다(electron/ipc/story-api.js) — 여기서 resolveDisplayError로 번역해 토스트한다.
++  // throw 경로(네트워크 등 errorKind 없는 예외)는 기존처럼 raw message로 폴백.
+   const previewBusyRef = useRef(false)
+   const [previewBusy, setPreviewBusy] = useState(false)
+   const runSegmentTestGuarded = async (segId) => {
+     if (previewBusyRef.current) return
+     previewBusyRef.current = true
+     setPreviewBusy(true)
+     try {
+       const ap = buildAudioParams()
+       const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
+       if (r?.busy) { toast.error(t('story.audio.busy')); return }
++      if (r?.error) {
++        toast.error(t('story.audio.testFailed', { error: resolveDisplayError(t, r.error, r.error) }))
++        return
++      }
+       const seg = r?.segments?.find((s) => s.id === segId)
+       if (seg?.audioPath) playAudio(seg.audioPath)
+     } catch (e) {
+       toast.error(t('story.audio.testFailed', { error: e?.message || e }))
+     } finally {
+       previewBusyRef.current = false
+       setPreviewBusy(false)
+     }
+   }
+   const testSegment = async (segId) => {
+diff --git a/tests/components/settings/ApiKeyTab.test.jsx b/tests/components/settings/ApiKeyTab.test.jsx
+index 8fd6438b..244e3ae3 100644
+--- a/tests/components/settings/ApiKeyTab.test.jsx
++++ b/tests/components/settings/ApiKeyTab.test.jsx
+@@ -1,24 +1,78 @@
+-import { describe, it, expect, vi } from 'vitest'
+-import { render, screen } from '@testing-library/react'
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { render, screen, fireEvent } from '@testing-library/react'
+ 
++/**
++ * §4.7 R3: settings-tab key save must trigger an App-level voice reload for the saved
++ * provider ("all save wrappers share an App-level reload"). ApiKeyTab is the point where
++ * every wrapper (GenaiApiKeyField + each TtsApiKeyField row) converges, so this is where the
++ * wrapper→tab→modal contract (onSaved → onKeySaved(provider)) is verified end to end.
++ */
++const { validateKey, saveKeyGenai, saveKeyTts } = vi.hoisted(() => ({
++  validateKey: vi.fn(async () => ({ valid: true })),
++  saveKeyGenai: vi.fn(async () => ({ success: true })),
++  saveKeyTts: vi.fn(async () => ({ success: true })),
++}))
+ // hooks가 IPC(window.electronAPI)를 부르므로 mock — 존재 여부만 렌더 확인.
+-vi.mock('../../../src/hooks/useApiKey', () => ({ useApiKey: () => ({ hasKey: true, encryptionAvailable: true, loading: false, validateKey: vi.fn(), saveKey: vi.fn(), clearKey: vi.fn() }) }))
+-vi.mock('../../../src/hooks/useTtsKeys', () => ({ useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: vi.fn(), clearKey: vi.fn(), provider: p }) }))
++vi.mock('../../../src/hooks/useApiKey', () => ({
++  useApiKey: () => ({ hasKey: true, encryptionAvailable: true, loading: false, validateKey, saveKey: saveKeyGenai, clearKey: vi.fn() }),
++}))
++// provider별 saveKey를 구분해야 하므로 훅을 부른 provider를 첫 인자로 실어 넘긴다.
++vi.mock('../../../src/hooks/useTtsKeys', () => ({
++  useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: (key) => saveKeyTts(p, key), clearKey: vi.fn() }),
++}))
+ 
+ import ApiKeyTab from '../../../src/components/settings/ApiKeyTab'
+-const t = (k) => k
++const t = (k, vars) => (vars ? `${k}:${JSON.stringify(vars)}` : k)
+ 
+ describe('ApiKeyTab (consolidated list)', () => {
+   it('lists Gemini + all three TTS providers', () => {
+     render(<ApiKeyTab t={t} />)
+     expect(screen.getByText('Google Gemini')).toBeTruthy()
+     expect(screen.getByText('Typecast')).toBeTruthy()
+     expect(screen.getByText('ElevenLabs')).toBeTruthy()
+     expect(screen.getByText('Google Cloud TTS')).toBeTruthy()
+   })
+ 
+   it('flags Google Cloud TTS as unavailable for Story audio', () => {
+     render(<ApiKeyTab t={t} />)
+     expect(screen.getByText('settings.googlettsStoryUnavailable')).toBeTruthy()
+   })
+ })
++
++describe('ApiKeyTab — onKeySaved reload wiring (§4.7)', () => {
++  beforeEach(() => {
++    validateKey.mockClear()
++    saveKeyGenai.mockClear()
++    saveKeyTts.mockClear()
++  })
++
++  it('saving the Gemini key calls onKeySaved("gemini")', async () => {
++    const onKeySaved = vi.fn()
++    render(<ApiKeyTab t={t} onKeySaved={onKeySaved} />)
++    const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Google Gemini"}')
++    fireEvent.change(input, { target: { value: 'AIzaGOOD' } })
++    fireEvent.click(screen.getAllByText('settings.ttsKeySave')[0])
++    await vi.waitFor(() => expect(saveKeyGenai).toHaveBeenCalledWith('AIzaGOOD'))
++    await vi.waitFor(() => expect(onKeySaved).toHaveBeenCalledWith('gemini'))
++  })
++
++  it('saving a TTS provider key (Typecast) calls onKeySaved("typecast")', async () => {
++    const onKeySaved = vi.fn()
++    render(<ApiKeyTab t={t} onKeySaved={onKeySaved} />)
++    const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Typecast"}')
++    fireEvent.change(input, { target: { value: 'tc-sk-abc' } })
++    fireEvent.click(screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"Typecast"}')
++      .closest('.setting-row').querySelector('button.btn-primary'))
++    await vi.waitFor(() => expect(saveKeyTts).toHaveBeenCalledWith('typecast', 'tc-sk-abc'))
++    await vi.waitFor(() => expect(onKeySaved).toHaveBeenCalledWith('typecast'))
++    expect(onKeySaved).not.toHaveBeenCalledWith('gemini')
++  })
++
++  it('without onKeySaved (not wired), saving still succeeds without throwing', async () => {
++    render(<ApiKeyTab t={t} />)
++    const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"ElevenLabs"}')
++    fireEvent.change(input, { target: { value: 'el-sk-abc' } })
++    fireEvent.click(input.closest('.setting-row').querySelector('button.btn-primary'))
++    await vi.waitFor(() => expect(saveKeyTts).toHaveBeenCalledWith('elevenlabs', 'el-sk-abc'))
++  })
++})
+diff --git a/tests/components/story/storyAudioGate.test.jsx b/tests/components/story/storyAudioGate.test.jsx
+index 97f06aae..8a07b26f 100644
+--- a/tests/components/story/storyAudioGate.test.jsx
++++ b/tests/components/story/storyAudioGate.test.jsx
+@@ -171,23 +171,27 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
+     expect(await screen.findByText('Typecast')).toBeTruthy() // 게이트 카드가 여전히 보인다
+     expect(start).not.toHaveBeenCalled()
+     // 오디오 패널을 벗어나 다른 스텝(프롬프트 등)으로 새지 않았다 — redo 버튼이 그대로 남아 있다.
+     expect(screen.getByRole('button', { name: /오디오 다시 생성/ })).toBeTruthy()
+   })
+ 
+   // Finding1(2R 리뷰): 세그먼트 "테스트" 게이트에서 키 저장→재시도는 testSegment의 원래
+   // try/finally 밖(AudioKeyGateCard.onKeySaved)에서 돈다 — 그 retry가 가드/catch 없는 raw
+   // ttsPreview 호출이면, 존재하지만 무효한 키에서 ttsPreview가 reject할 때 unhandled rejection +
+   // 번역 안 된 토스트로 샌다. retry가 testSegment와 같은 가드된 경로(에러 토스트 포함)를 타야 한다.
+-  it('세그먼트 "테스트" 게이트에서 키 저장 후 retry가 가드된 경로를 타 — ttsPreview가 거부돼도 unhandled 없이 에러 토스트를 보여준다', async () => {
++  // §4.8 R3: story:tts-preview IPC 핸들러(electron/ipc/story-api.js)가 auth 실패를 이제 throw
++  // 대신 { error: errorKind, provider } 로 돌려준다(story:load-audio-package의 asKind 관습과
++  // 동일) — ttsPreview 목도 reject가 아니라 그 모양으로 resolve해야 실제 계약과 맞는다. 토스트도
++  // raw 'invalid api key' 가 아니라 번역된 errorKind 문구여야 한다(§4.8 라운드3 finding).
++  it('세그먼트 "테스트" 게이트에서 키 저장 후 retry가 가드된 경로를 타 — auth 실패는 번역된 에러 토스트를 보여준다', async () => {
+     const ttsPreview = vi.fn()
+-      .mockRejectedValueOnce(new Error('invalid api key'))
++      .mockResolvedValueOnce({ error: 'story-audio-tts-auth', provider: 'typecast' })
+     const audioPreflight = vi.fn()
+       .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }], encryptionAvailable: true })
+       .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'resolved-store' }], encryptionAvailable: true })
+     const onReloadVoices = vi.fn(async () => {})
+     mockSaveKey.mockResolvedValue({ success: true })
+ 
+     const unhandled = vi.fn()
+     process.on('unhandledRejection', unhandled)
+     try {
+       renderStory(pipeline({
+@@ -203,22 +207,23 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
+ 
+       const input = document.querySelector('.audio-key-gate input[type="password"]')
+       fireEvent.change(input, { target: { value: 'sk-invalid' } })
+       fireEvent.click(screen.getByRole('button', { name: /저장|Save/i }))
+ 
+       await waitFor(() => expect(ttsPreview).toHaveBeenCalledWith(
+         expect.objectContaining({ segmentIds: ['s1-1'] }),
+       ))
+       // 게이트는 재검사 통과로 닫힌다 — 실패는 ttsPreview 쪽(무효 키)에서 난다.
+       await waitFor(() => expect(screen.queryByText('Typecast')).toBeNull())
+-      // 가드된 경로(runSegmentTestGuarded)의 catch가 번역된 에러 토스트를 보여준다.
+-      await screen.findByText('테스트 실패: invalid api key')
++      // 가드된 경로(runSegmentTestGuarded)가 resolve된 { error: errorKind } 를 번역해 토스트한다
++      // (raw 'invalid api key' 가 아니라 story-audio-tts-auth 의 로케일 문구).
++      await screen.findByText('테스트 실패: 음성 API 키가 유효하지 않습니다(인증 실패). 설정 › API 키에서 키를 다시 확인하세요.')
+       // 매크로태스크 한 틱을 더 흘려보내 어떤 unhandled rejection도 없었는지 확인.
+       await new Promise((resolve) => setTimeout(resolve, 0))
+       expect(unhandled).not.toHaveBeenCalled()
+     } finally {
+       process.off('unhandledRejection', unhandled)
+     }
+   })
+ 
+   // Finding2(리뷰) 미러 — 세그먼트 단건 "재생성"도 같은 이유로 같은 문제가 있었다.
+   it('세그먼트 "재생성"이 missing 키로 막히면 오디오 패널이 그대로 보인다', async () => {
+diff --git a/tests/electron/ipc/story-api.test.js b/tests/electron/ipc/story-api.test.js
+index 5f1460a8..3dcbd0a3 100644
+--- a/tests/electron/ipc/story-api.test.js
++++ b/tests/electron/ipc/story-api.test.js
+@@ -1,17 +1,18 @@
+ // @vitest-environment node
+ import { describe, it, expect, vi, beforeEach } from 'vitest'
+ import { mkdtemp } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import path from 'node:path'
+ import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
+ import { defaultStoryState } from '../../../electron/story/storyStore.js'
++import { ProviderAuthError, MissingProviderKeyError } from '../../../electron/api/keyErrors.js'
+ 
+ // manifest 를 심는 픽스처는 audio 스텝이 성공한 상태여야 현실과 맞는다 — manifest 는 조립
+ // (전체 성공) 경로에서만 쓰인다. done 이 아닌데 manifest 가 남은 경우는 옛 실행의 잔재라
+ // readAudioPackage 가 export 를 막는다(stepMachine.loadAudioPackage.test.js 가 그쪽을 본다).
+ const audioDoneState = (lastPushedRevision) => {
+   const base = defaultStoryState()
+   return { ...base, lastPushedRevision, steps: { ...base.steps, audio: { ...base.steps.audio, status: 'done' } } }
+ }
+ 
+ function fakeIpcMain() {
+@@ -334,20 +335,115 @@ describe('story IPC', () => {
+       JSON.stringify({ version: 1, pushRevision: 7, segments: [{ id: 'x', type: 'narration', audioPath: '/p/story/audio/segments/x.wav', startMs: 0, durationMs: 1 }] }))
+     await writeFile(path.join(other, 'story', 'story.json'),
+       JSON.stringify(audioDoneState(7)))
+     // machine 은 dir(A) 로 열고, other(B) manifest 를 요청
+     await ipc.invoke('story:open', { projectPath: dir })
+     const pkg = await ipc.invoke('story:load-audio-package', { projectPath: other })
+     expect(pkg.manifest.pushRevision).toBe(7)
+     expect(pkg.lastPushedRevision).toBe(7)
+   })
+ 
++  // §4.8 R3: machine.synthPreview는 어댑터가 던진 ProviderAuthError/MissingProviderKeyError를
++  // (errorKind 있는 타입) 그대로 throw한다. ipcRenderer.invoke는 message만 직렬화하므로 그냥
++  // 던지면 errorKind가 소실돼 renderer가 번역 못 하는 raw 영문 진단문이 뜬다(story:load-audio-package
++  // 의 asKind 와 같은 문제). story:tts-preview 핸들러가 같은 관습으로 { error: kind, provider }
++  // 를 돌려주는지 IPC 경계에서 검증한다.
++  it('story:tts-preview — 무효 키(401) 는 throw 대신 { error: errorKind, provider } 로 resolve', async () => {
++    const ipc2 = fakeIpcMain()
++    const tts = {
++      capabilities: () => ({ maxConcurrency: 2 }),
++      synthesize: async () => { throw new ProviderAuthError('typecast', { status: 401 }) },
++    }
++    registerStoryIPC(ipc2, {
++      keyStore: { getKey: () => 'k' },
++      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
++      llm: {
++        generateScript: vi.fn(async () => ({ scriptMd: '#' })),
++        splitScenes: vi.fn(async () => ({
++          scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '한 문장입니다.', emotion: 'normal' }] }],
++          speakers: [{ id: 'narrator', name: '나레이션' }],
++        })),
++      },
++      tts,
++    })
++    const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
++    await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
++    await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
++    const state = await ipc2.invoke('story:get-state', { projectToken })
++    const segId = state.scenes[0].segments[0].id
++
++    const r = await ipc2.invoke('story:tts-preview', {
++      projectToken, segmentIds: [segId], speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }],
++    })
++    expect(r).toEqual({ error: 'story-audio-tts-auth', provider: 'typecast' })
++  })
++
++  it('story:tts-preview — 키 없음(MissingProviderKeyError) 도 같은 모양으로 resolve', async () => {
++    const ipc2 = fakeIpcMain()
++    const tts = {
++      capabilities: () => ({ maxConcurrency: 2 }),
++      synthesize: async () => { throw new MissingProviderKeyError('typecast') },
++    }
++    registerStoryIPC(ipc2, {
++      keyStore: { getKey: () => 'k' },
++      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
++      llm: {
++        generateScript: vi.fn(async () => ({ scriptMd: '#' })),
++        splitScenes: vi.fn(async () => ({
++          scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '한 문장입니다.', emotion: 'normal' }] }],
++          speakers: [{ id: 'narrator', name: '나레이션' }],
++        })),
++      },
++      tts,
++    })
++    const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
++    await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
++    await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
++    const state = await ipc2.invoke('story:get-state', { projectToken })
++    const segId = state.scenes[0].segments[0].id
++
++    const r = await ipc2.invoke('story:tts-preview', {
++      projectToken, segmentIds: [segId], speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }],
++    })
++    expect(r).toEqual({ error: 'story-audio-no-tts-key', provider: 'typecast' })
++  })
++
++  // errorKind 없는 예외(네트워크 등)는 여전히 던져야 한다 — asKind 관습대로 삼키지 않는다.
++  it('story:tts-preview — errorKind 없는 예외는 그대로 throw(삼키지 않는다)', async () => {
++    const ipc2 = fakeIpcMain()
++    const tts = {
++      capabilities: () => ({ maxConcurrency: 2 }),
++      synthesize: async () => { throw new Error('network down') },
++    }
++    registerStoryIPC(ipc2, {
++      keyStore: { getKey: () => 'k' },
++      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
++      llm: {
++        generateScript: vi.fn(async () => ({ scriptMd: '#' })),
++        splitScenes: vi.fn(async () => ({
++          scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '한 문장입니다.', emotion: 'normal' }] }],
++          speakers: [{ id: 'narrator', name: '나레이션' }],
++        })),
++      },
++      tts,
++    })
++    const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
++    await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
++    await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
++    const state = await ipc2.invoke('story:get-state', { projectToken })
++    const segId = state.scenes[0].segments[0].id
++
++    await expect(ipc2.invoke('story:tts-preview', {
++      projectToken, segmentIds: [segId], speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }],
++    })).rejects.toThrow('network down')
++  })
++
+   it('story:push-ack(ok:false)는 operationId/reason을 버리지 않고 lastPushError로 보존한다', async () => {
+     const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+     await ipc.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: {} } })
+     await ipc.invoke('story:start', { projectToken, step: 'scenes', params: {} })
+     await ipc.invoke('story:start', { projectToken, step: 'prompts', params: {} })
+     const pushEvent = sent.find((e) => e.ch === 'story:pushScenes')
+ 
+     await ipc.invoke('story:push-ack', {
+       projectToken, operationId: 'op-1', pushRevision: pushEvent.p.pushRevision, ok: false, reason: 'save failed',
+     })

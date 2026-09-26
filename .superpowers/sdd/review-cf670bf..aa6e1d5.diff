@@ -1,0 +1,137 @@
+# Review package: cf670bf..aa6e1d5
+
+## Commits
+aa6e1d5 feat(m0): scaffold no-CDP spike extension + manifest + constants
+
+## Files changed
+ spikes/m0-nocdp/manifest.json          | 21 ++++++++++++++++
+ spikes/m0-nocdp/package.json           | 12 +++++++++
+ spikes/m0-nocdp/src/constants.js       | 10 ++++++++
+ spikes/m0-nocdp/tests/manifest.test.js | 46 ++++++++++++++++++++++++++++++++++
+ spikes/m0-nocdp/vitest.config.js       |  4 +++
+ 5 files changed, 93 insertions(+)
+
+## Diff
+diff --git a/spikes/m0-nocdp/manifest.json b/spikes/m0-nocdp/manifest.json
+new file mode 100644
+index 0000000..067d9a8
+--- /dev/null
++++ b/spikes/m0-nocdp/manifest.json
+@@ -0,0 +1,21 @@
++{
++  "manifest_version": 3,
++  "name": "M0 no-CDP Flow spike",
++  "version": "0.0.1",
++  "minimum_chrome_version": "111",
++  "background": { "service_worker": "src/bg/service-worker.js", "type": "module" },
++  "side_panel": { "default_path": "src/panel/panel.html" },
++  "action": { "default_title": "M0 spike" },
++  "permissions": ["storage", "downloads", "tabs", "scripting", "sidePanel", "alarms"],
++  "host_permissions": [
++    "*://*.googleapis.com/*",
++    "https://www.googleapis.com/*",
++    "https://labs.google/*",
++    "https://*.googleusercontent.com/*",
++    "https://flow-content.google/*"
++  ],
++  "content_scripts": [
++    { "matches": ["https://labs.google/*"], "js": ["dist/fetch-hook.iife.js"], "run_at": "document_start", "world": "MAIN" },
++    { "matches": ["https://labs.google/*"], "js": ["src/content/relay.js"], "run_at": "document_start", "world": "ISOLATED" }
++  ]
++}
+diff --git a/spikes/m0-nocdp/package.json b/spikes/m0-nocdp/package.json
+new file mode 100644
+index 0000000..2c536da
+--- /dev/null
++++ b/spikes/m0-nocdp/package.json
+@@ -0,0 +1,12 @@
++{
++  "name": "m0-nocdp-spike",
++  "private": true,
++  "type": "module",
++  "engines": { "node": ">=18" },
++  "scripts": {
++    "test": "vitest run",
++    "build:page": "node esbuild.page.mjs",
++    "lint:ext": "web-ext lint -s . --self-hosted"
++  },
++  "devDependencies": { "esbuild": "^0.23.0", "jsdom": "^24.0.0", "vitest": "^2.0.0" }
++}
+diff --git a/spikes/m0-nocdp/src/constants.js b/spikes/m0-nocdp/src/constants.js
+new file mode 100644
+index 0000000..ecff528
+--- /dev/null
++++ b/spikes/m0-nocdp/src/constants.js
+@@ -0,0 +1,10 @@
++export const SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV'
++export const RECAPTCHA_ACTION = 'generate'
++export const APP_ID = 'autoflowcut' // NOT flow2capcut (backend BATCH_APPS rejects it)
++export const FALLBACK_API_BASE = 'https://aisandbox-pa.googleapis.com/v1' // fallback ONLY; captured origin preferred
++
++// Endpoint URL keywords (partial match — from flow-page-injection.js:77-83)
++export const URL_BATCH_IMG    = 'batchGenerateImages'
++export const URL_VIDEO_T2V    = 'batchAsyncGenerateVideoText'
++export const URL_VIDEO_I2V    = 'batchAsyncGenerateVideoStartImage'
++export const URL_VIDEO_STATUS = 'batchCheckAsyncVideoGenerationStatus'
+diff --git a/spikes/m0-nocdp/tests/manifest.test.js b/spikes/m0-nocdp/tests/manifest.test.js
+new file mode 100644
+index 0000000..5bf11da
+--- /dev/null
++++ b/spikes/m0-nocdp/tests/manifest.test.js
+@@ -0,0 +1,46 @@
++import { describe, it, expect } from 'vitest'
++import { readFileSync } from 'node:fs'
++import { fileURLToPath } from 'node:url'
++import { SITE_KEY, RECAPTCHA_ACTION, APP_ID } from '../src/constants.js'
++
++const manifest = JSON.parse(
++  readFileSync(fileURLToPath(new URL('../manifest.json', import.meta.url)), 'utf8')
++)
++
++describe('manifest', () => {
++  it('is MV3', () => expect(manifest.manifest_version).toBe(3))
++  it('has SW (module) + side panel', () => {
++    expect(manifest.background.service_worker).toBe('src/bg/service-worker.js')
++    expect(manifest.background.type).toBe('module')
++    expect(manifest.side_panel.default_path).toBe('src/panel/panel.html')
++  })
++  it('has alarms + scripting + storage + sidePanel + tabs', () => {
++    for (const p of ['alarms', 'scripting', 'storage', 'sidePanel', 'tabs'])
++      expect(manifest.permissions).toContain(p)
++  })
++  it('does NOT request webNavigation (Gate ii uses a static MAIN content script)', () =>
++    expect(manifest.permissions).not.toContain('webNavigation'))
++  it('uses broad googleapis host + labs.google + www.googleapis.com + flow-content', () => {
++    for (const h of ['*://*.googleapis.com/*', 'https://www.googleapis.com/*', 'https://labs.google/*', 'https://flow-content.google/*'])
++      expect(manifest.host_permissions).toContain(h)
++  })
++  it('injects the MAIN-world fetch-hook at document_start (Gate ii primary)', () => {
++    const cs = manifest.content_scripts.find(c => c.js.includes('dist/fetch-hook.iife.js'))
++    expect(cs.world).toBe('MAIN')
++    expect(cs.run_at).toBe('document_start')
++    expect(cs.matches).toContain('https://labs.google/*')
++  })
++  it('runs the ISOLATED relay at document_start', () => {
++    const cs = manifest.content_scripts.find(c => c.js.includes('src/content/relay.js'))
++    expect(cs.world).toBe('ISOLATED')
++    expect(cs.run_at).toBe('document_start')
++  })
++})
++
++describe('constants', () => {
++  it('has the verified reCAPTCHA site key + action', () => {
++    expect(SITE_KEY).toBe('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV')
++    expect(RECAPTCHA_ACTION).toBe('generate')
++  })
++  it('uses APP_ID autoflowcut (NOT flow2capcut)', () => expect(APP_ID).toBe('autoflowcut'))
++})
+diff --git a/spikes/m0-nocdp/vitest.config.js b/spikes/m0-nocdp/vitest.config.js
+new file mode 100644
+index 0000000..23bb3df
+--- /dev/null
++++ b/spikes/m0-nocdp/vitest.config.js
+@@ -0,0 +1,4 @@
++import { defineConfig } from 'vitest/config'
++export default defineConfig({
++  test: { environment: 'node', include: ['tests/**/*.test.js'], globals: false },
++})

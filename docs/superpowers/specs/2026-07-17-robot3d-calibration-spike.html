@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoFlowCut 로봇 3D — 하나만 고르기</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --icon-size: 48px;
+      font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #f4f6fb;
+      background: #1e1e22;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 1100px;
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(circle at 50% -15%, rgba(119, 88, 219, 0.18), transparent 38%),
+        #1e1e22;
+    }
+
+    button, input { font: inherit; }
+
+    .svg-definitions {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    main {
+      width: calc(100% - 32px);
+      margin: 0 auto;
+      padding: 28px 0 42px;
+    }
+
+    .hero {
+      width: min(1080px, calc(100vw - 64px));
+      margin: 0 auto 24px;
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 1.08;
+      letter-spacing: -0.055em;
+    }
+
+    .kill-rule {
+      margin: 14px 0 0;
+      color: #ffb2b8;
+      font-size: clamp(17px, 2vw, 23px);
+      font-weight: 800;
+      letter-spacing: -0.025em;
+    }
+
+    .judge-rule {
+      margin: 8px 0 0;
+      color: #aeb5c7;
+      font-size: 13px;
+    }
+
+    .comparison-shell {
+      overflow-x: auto;
+      padding: 3px 2px 22px;
+      scrollbar-color: #515465 #26262d;
+    }
+
+    .candidate-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 386px);
+      gap: 14px;
+      width: max-content;
+      min-width: 100%;
+      justify-content: center;
+    }
+
+    .candidate {
+      --candidate-perspective: 220px;
+      --z-face: 9px;
+      --z-screen: 7px;
+      --z-eyes: 8px;
+      --z-glass: 8.4px;
+      --z-limb: 4px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 424px;
+      padding: 16px 14px 14px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 17px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0)),
+        #25252b;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+    }
+
+    .candidate-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-height: 40px;
+    }
+
+    .candidate-letter {
+      display: grid;
+      place-items: center;
+      width: 29px;
+      height: 29px;
+      border: 1px solid rgba(121, 180, 255, 0.36);
+      border-radius: 8px;
+      background: rgba(121, 180, 255, 0.09);
+      color: #bcd9ff;
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .candidate h2 {
+      margin: 0;
+      font-size: 17px;
+      letter-spacing: -0.025em;
+    }
+
+    .size-pair {
+      display: grid;
+      grid-template-columns: 116px 230px;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 9px;
+    }
+
+    .size-view {
+      min-width: 0;
+      text-align: center;
+    }
+
+    .size-label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 43px;
+      color: #dce2ef;
+      font-size: 11px;
+      font-weight: 780;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+    }
+
+    .size-label strong {
+      color: #fff;
+      font-size: 12px;
+    }
+
+    .size-label .not-judgment {
+      margin-top: 2px;
+      color: #ffb2b8;
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: 0.03em;
+    }
+
+    .view-stage {
+      display: grid;
+      place-items: center;
+      height: 252px;
+      border: 1px solid rgba(255, 255, 255, 0.055);
+      border-radius: 12px;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0)),
+        rgba(13, 13, 16, 0.28);
+    }
+
+    .actual-view .view-stage {
+      background:
+        radial-gradient(circle, rgba(121, 180, 255, 0.035), transparent 52%),
+        rgba(13, 13, 16, 0.28);
+    }
+
+    .fab {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 72px;
+      height: 72px;
+      padding: 12px;
+      overflow: visible;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #4c8dff, #7758db);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
+      transform-origin: center;
+    }
+
+    .zoom-fab {
+      transform: scale(3);
+    }
+
+    .perspective-box {
+      grid-area: 1 / 1;
+      position: relative;
+      width: var(--icon-size);
+      height: var(--icon-size);
+      perspective: var(--candidate-perspective);
+      perspective-origin: 50% 50%;
+    }
+
+    .robot-stack {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transform: rotateX(0deg) rotateY(0deg);
+      transform-origin: 50% 50%;
+      transform-style: preserve-3d;
+      will-change: transform;
+    }
+
+    .layer,
+    .flat-art {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+      backface-visibility: visible;
+    }
+
+    .layer-ground { transform: translateZ(-1px); }
+    .layer-limbs { transform: translateZ(var(--z-limb)); }
+    .extrusion-slice { transform: translateZ(var(--slice-z)); }
+    .shell-face { transform: translateZ(var(--z-face)); }
+    .screen-face { transform: translateZ(var(--z-screen)); }
+    .face-details { transform: translateZ(var(--z-eyes)); }
+    .glass-highlight { transform: translateZ(var(--z-glass)); }
+    .layer-bulb { transform: translateZ(var(--z-limb)); }
+
+    .robot-eye {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: robot-blink 4.2s ease-in-out infinite;
+    }
+
+    .robot-bulb { animation: robot-pulse 2s ease-in-out infinite; }
+
+    .gaze-eye-group {
+      transform: translate(var(--eye-x, 0px), var(--eye-y, 0px));
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+
+    @keyframes robot-blink {
+      0%, 91%, 100% { transform: scaleY(1); }
+      94%, 96% { transform: scaleY(0.12); }
+    }
+
+    @keyframes robot-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+
+    @keyframes robot-turn {
+      0%, 100% { transform: rotateX(0deg) rotateY(-24deg); }
+      50% { transform: rotateX(0deg) rotateY(24deg); }
+    }
+
+    .robot-stack {
+      animation: robot-turn 7s ease-in-out infinite;
+    }
+
+    /* paused가 아니라 none: gaze가 transform 소유권을 즉시 넘겨받는다. */
+    .gaze-fab.is-gazing .robot-stack {
+      animation: none;
+      transform: rotateX(var(--gaze-pitch)) rotateY(var(--gaze-yaw));
+    }
+
+    .candidate-cost {
+      margin: auto 0 0;
+      padding: 10px 8px 0;
+      color: #aeb5c7;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.35;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .candidate-cost strong { color: #e8edf7; }
+
+    .gaze-readout {
+      width: min(1080px, calc(100vw - 64px));
+      min-height: 17px;
+      margin: 0 auto;
+      color: #747d91;
+      font: 9px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-align: center;
+    }
+
+    .optional-controls {
+      width: min(720px, calc(100vw - 64px));
+      margin: 16px auto 0;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 11px;
+      background: rgba(35, 35, 41, 0.7);
+    }
+
+    .optional-controls summary {
+      padding: 12px 14px;
+      color: #aeb5c7;
+      font-size: 12px;
+      font-weight: 750;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .optional-controls[open] summary {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    }
+
+    .size-control {
+      display: grid;
+      grid-template-columns: 110px 1fr 64px;
+      align-items: center;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .size-control label {
+      color: #d3d8e5;
+      font-size: 12px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: #79b4ff;
+      cursor: ew-resize;
+    }
+
+    #icon-size-output {
+      color: #bcd9ff;
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-align: right;
+    }
+
+    .size-warning {
+      display: none;
+      grid-column: 1 / -1;
+      margin: 0;
+      padding: 9px 10px;
+      border-radius: 7px;
+      background: rgba(255, 103, 117, 0.09);
+      color: #ffb2b8;
+      font-size: 11px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    body.non-judgment-size .size-warning { display: block; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .robot-eye, .robot-bulb { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Robot.svg의 gradient 정의를 그대로 복사한 단일 source of truth. -->
+  <svg class="svg-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <linearGradient id="shell" x1="16" y1="16" x2="50" y2="52" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#FFFFFF"/>
+        <stop offset="0.55" stop-color="#EDF3FF"/>
+        <stop offset="1" stop-color="#B9C6DE"/>
+      </linearGradient>
+      <linearGradient id="screen" x1="17" y1="21" x2="47" y2="43" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#243149"/>
+        <stop offset="0.5" stop-color="#141C2C"/>
+        <stop offset="1" stop-color="#0C1220"/>
+      </linearGradient>
+      <linearGradient id="glass" x1="17" y1="21" x2="17" y2="34" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
+        <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="limb" x1="8" y1="29" x2="8" y2="41" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#F7FAFF"/>
+        <stop offset="1" stop-color="#B9C6DE"/>
+      </linearGradient>
+      <radialGradient id="eye" cx="0.35" cy="0.32" r="0.8">
+        <stop offset="0" stop-color="#DCEBFF"/>
+        <stop offset="0.45" stop-color="#79B4FF"/>
+        <stop offset="1" stop-color="#3D7FE0"/>
+      </radialGradient>
+      <radialGradient id="bulb" cx="0.35" cy="0.3" r="0.85">
+        <stop offset="0" stop-color="#EAF3FF"/>
+        <stop offset="0.5" stop-color="#79B4FF"/>
+        <stop offset="1" stop-color="#3D7FE0"/>
+      </radialGradient>
+    </defs>
+  </svg>
+
+  <main>
+    <header class="hero">
+      <h1>A(현재)보다 확실히 나은 게 있나? 있으면 어느 것?</h1>
+      <p class="kill-rule">없으면 '없다'가 정답이다 — 그러면 이 설계를 폐기한다.</p>
+      <p class="judge-rule">판정은 각 카드 왼쪽의 72px 실제 크기만 보고 한다. 오른쪽 3× 확대는 차이를 설명할 뿐이다.</p>
+    </header>
+
+    <section class="comparison-shell" aria-label="A부터 D까지 로봇 비교">
+      <div class="candidate-grid" id="candidate-grid"></div>
+    </section>
+
+    <div class="gaze-readout" id="gaze-readout">gaze: 없음</div>
+
+    <details class="optional-controls">
+      <summary>직접 만져보기 (선택)</summary>
+      <div class="size-control">
+        <label for="icon-size">아이콘 크기</label>
+        <input id="icon-size" type="range" min="32" max="96" step="1" value="48">
+        <output id="icon-size-output" for="icon-size">48px</output>
+        <p class="size-warning">지금은 판정 크기가 아니다. 결론을 내리기 전에 반드시 48px로 되돌린다.</p>
+      </div>
+    </details>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var SHELL_WITH_APERTURE = 'M25 17H39A12 12 0 0 1 51 29V39A12 12 0 0 1 39 51H25A12 12 0 0 1 13 39V29A12 12 0 0 1 25 17Z M25 21H39A8 8 0 0 1 47 29V35A8 8 0 0 1 39 43H25A8 8 0 0 1 17 35V29A8 8 0 0 1 25 21Z';
+      var presets = [
+        {
+          key: 'A',
+          name: '현재 (평면 1장)',
+          kind: 'flat',
+          perspective: 220,
+          maxYaw: 14,
+          cost: '<strong>A: 기준</strong> — 지금과 같음 / 못 이기면 변경 이유 없음'
+        },
+        {
+          key: 'B',
+          name: '은은하게',
+          kind: 'layered',
+          depth: 6,
+          slices: 6,
+          perspective: 260,
+          zFace: 9,
+          zScreen: 7,
+          zEyes: 8,
+          zGlass: 8.4,
+          zLimb: 4,
+          maxYaw: 14,
+          cost: '<strong>B: 얇음</strong> — 안 보일 수 있음'
+        },
+        {
+          key: 'C',
+          name: '뚜렷하게',
+          kind: 'layered',
+          depth: 10,
+          slices: 8,
+          perspective: 200,
+          zFace: 11,
+          zScreen: 8,
+          zEyes: 10.25,
+          zGlass: 10.65,
+          zLimb: 5,
+          maxYaw: 20,
+          cost: '<strong>C: 중간</strong> — 입체감과 장식감 사이'
+        },
+        {
+          key: 'D',
+          name: '과감하게',
+          kind: 'layered',
+          depth: 14,
+          slices: 10,
+          perspective: 150,
+          zFace: 14.5,
+          zScreen: 10,
+          zEyes: 12.5,
+          zGlass: 12.9,
+          zLimb: 6,
+          maxYaw: 24,
+          cost: '<strong>D: 두꺼움</strong> — 로봇이 아니라 판때기로 보일 수 있음'
+        }
+      ];
+
+      function mixHex(from, to, amount) {
+        var a = from.match(/[a-f\d]{2}/gi).map(function (part) { return parseInt(part, 16); });
+        var b = to.match(/[a-f\d]{2}/gi).map(function (part) { return parseInt(part, 16); });
+        return '#' + a.map(function (channel, index) {
+          var value = Math.round(channel + (b[index] - channel) * amount);
+          return value.toString(16).padStart(2, '0');
+        }).join('');
+      }
+
+      function flatRobotMarkup() {
+        return [
+          '<svg class="flat-art" viewBox="0 0 64 64" fill="none" aria-hidden="true">',
+          '<path d="M13 29H8v12h5M51 29h5v12h-5" stroke="url(#limb)" stroke-width="4" stroke-linejoin="round"/>',
+          '<path d="M32 17V10" stroke="url(#limb)" stroke-width="4" stroke-linecap="round"/>',
+          '<rect x="13" y="17" width="38" height="34" rx="12" fill="url(#shell)"/>',
+          '<ellipse cx="32" cy="49.5" rx="15" ry="2.2" fill="#8797B4" opacity="0.35"/>',
+          '<rect x="17" y="21" width="30" height="22" rx="8" fill="url(#screen)"/>',
+          '<rect x="17" y="21" width="30" height="13" rx="8" fill="url(#glass)"/>',
+          '<g class="gaze-eye-group">',
+          '<circle class="robot-eye" cx="26" cy="32" r="4" fill="url(#eye)"/>',
+          '<circle class="robot-eye" cx="38" cy="32" r="4" fill="url(#eye)"/>',
+          '</g>',
+          '<path d="M25 40c2.2 1.8 4.5 2.7 7 2.7s4.8-.9 7-2.7" stroke="#79B4FF" stroke-width="2.5" stroke-linecap="round"/>',
+          '<circle class="robot-bulb" cx="32" cy="8" r="4" fill="url(#bulb)"/>',
+          '</svg>'
+        ].join('');
+      }
+
+      function extrusionMarkup(preset) {
+        var slices = [];
+        for (var index = 0; index < preset.slices; index += 1) {
+          var ratio = index / (preset.slices - 1);
+          var z = preset.depth * ratio;
+          var fill = mixHex('#5A6A85', '#B9C6DE', ratio);
+          slices.push(
+            '<svg class="layer extrusion-slice" viewBox="0 0 64 64" fill="none" data-aperture="screen" style="--slice-z:' +
+            z + 'px"><path d="' + SHELL_WITH_APERTURE + '" fill="' + fill +
+            '" fill-rule="evenodd" clip-rule="evenodd"/></svg>'
+          );
+        }
+        return slices.join('');
+      }
+
+      function layeredRobotMarkup(preset) {
+        return [
+          '<svg class="layer layer-ground" viewBox="0 0 64 64" fill="none">',
+          '<ellipse cx="32" cy="49.5" rx="15" ry="2.2" fill="#8797B4" opacity="0.35"/>',
+          '</svg>',
+          '<svg class="layer layer-limbs" viewBox="0 0 64 64" fill="none">',
+          '<path d="M13 29H8v12h5M51 29h5v12h-5" stroke="url(#limb)" stroke-width="4" stroke-linejoin="round"/>',
+          '<path d="M32 17V10" stroke="url(#limb)" stroke-width="4" stroke-linecap="round"/>',
+          '</svg>',
+          extrusionMarkup(preset),
+          '<svg class="layer shell-face" viewBox="0 0 64 64" fill="none" data-aperture="screen">',
+          '<path d="' + SHELL_WITH_APERTURE + '" fill="url(#shell)" fill-rule="evenodd" clip-rule="evenodd"/>',
+          '</svg>',
+          '<svg class="layer screen-face" viewBox="0 0 64 64" fill="none">',
+          '<rect x="17" y="21" width="30" height="22" rx="8" fill="url(#screen)"/>',
+          '</svg>',
+          '<svg class="layer face-details" viewBox="0 0 64 64" fill="none">',
+          '<g class="gaze-eye-group">',
+          '<circle class="robot-eye" cx="26" cy="32" r="4" fill="url(#eye)"/>',
+          '<circle class="robot-eye" cx="38" cy="32" r="4" fill="url(#eye)"/>',
+          '</g>',
+          '<path d="M25 40c2.2 1.8 4.5 2.7 7 2.7s4.8-.9 7-2.7" stroke="#79B4FF" stroke-width="2.5" stroke-linecap="round"/>',
+          '</svg>',
+          '<svg class="layer glass-highlight" viewBox="0 0 64 64" fill="none">',
+          '<rect x="17" y="21" width="30" height="13" rx="8" fill="url(#glass)"/>',
+          '</svg>',
+          '<svg class="layer layer-bulb" viewBox="0 0 64 64" fill="none">',
+          '<circle class="robot-bulb" cx="32" cy="8" r="4" fill="url(#bulb)"/>',
+          '</svg>'
+        ].join('');
+      }
+
+      function viewMarkup(preset, view) {
+        var isZoom = view === 'zoom';
+        var title = isZoom ? '확대 (뭐가 다른지 보라고)' : '실제 크기 (이게 판정 기준)';
+        var secondary = isZoom
+          ? '<span class="not-judgment">판정 크기 아님 · 3×</span>'
+          : '<span>72px FAB · icon <span class="actual-icon-value">48</span>px</span>';
+        var robot = preset.kind === 'flat' ? flatRobotMarkup() : layeredRobotMarkup(preset);
+        return [
+          '<section class="size-view ' + (isZoom ? 'zoom-view' : 'actual-view') + '">',
+          '<div class="size-label"><strong>' + title + '</strong>' + secondary + '</div>',
+          '<div class="view-stage">',
+          '<div class="fab gaze-fab ' + (isZoom ? 'zoom-fab' : '') + '" data-candidate="' + preset.key +
+            '" data-view="' + view + '" data-max-yaw="' + preset.maxYaw + '">',
+          '<div class="perspective-box"><div class="robot-stack">' + robot + '</div></div>',
+          '</div>',
+          '</div>',
+          '</section>'
+        ].join('');
+      }
+
+      function candidateMarkup(preset) {
+        var style = [
+          '--candidate-perspective:' + preset.perspective + 'px'
+        ];
+        if (preset.kind === 'layered') {
+          style.push('--z-face:' + preset.zFace + 'px');
+          style.push('--z-screen:' + preset.zScreen + 'px');
+          style.push('--z-eyes:' + preset.zEyes + 'px');
+          style.push('--z-glass:' + preset.zGlass + 'px');
+          style.push('--z-limb:' + preset.zLimb + 'px');
+        }
+        return [
+          '<article class="candidate" data-candidate="' + preset.key + '" style="' + style.join(';') + '">',
+          '<header class="candidate-header"><span class="candidate-letter">' + preset.key + '</span><h2>' +
+            preset.name + '</h2></header>',
+          '<div class="size-pair">',
+          viewMarkup(preset, 'actual'),
+          viewMarkup(preset, 'zoom'),
+          '</div>',
+          '<p class="candidate-cost">' + preset.cost + '</p>',
+          '</article>'
+        ].join('');
+      }
+
+      document.getElementById('candidate-grid').innerHTML = presets.map(candidateMarkup).join('');
+
+      var latestPointer = null;
+      var gazeFrame = 0;
+      var gazeRadius = 320;
+      var maxPitch = 8;
+      var maxEye = 2.6;
+
+      function renderGaze() {
+        gazeFrame = 0;
+        var nearest = null;
+
+        document.querySelectorAll('.gaze-fab').forEach(function (fab) {
+          var engaged = false;
+          var yaw = 0;
+          var pitch = 0;
+          var eyeX = 0;
+          var eyeY = 0;
+          var distance = Infinity;
+
+          if (latestPointer) {
+            var bounds = fab.getBoundingClientRect();
+            var dx = latestPointer.x - (bounds.left + bounds.width / 2);
+            var dy = latestPointer.y - (bounds.top + bounds.height / 2);
+            distance = Math.hypot(dx, dy);
+            engaged = distance <= gazeRadius;
+            if (engaged) {
+              var maxYaw = Number(fab.dataset.maxYaw);
+              yaw = (dx / gazeRadius) * maxYaw;
+              pitch = -(dy / gazeRadius) * maxPitch;
+              eyeX = (dx / gazeRadius) * maxEye;
+              eyeY = (dy / gazeRadius) * maxEye;
+              if (!nearest || distance < nearest.distance) {
+                nearest = {
+                  distance: distance,
+                  candidate: fab.dataset.candidate,
+                  view: fab.dataset.view === 'actual' ? '실제' : '확대',
+                  yaw: yaw,
+                  pitch: pitch,
+                  eyeX: eyeX,
+                  eyeY: eyeY
+                };
+              }
+            }
+          }
+
+          fab.classList.toggle('is-gazing', engaged);
+          fab.style.setProperty('--gaze-yaw', yaw + 'deg');
+          fab.style.setProperty('--gaze-pitch', pitch + 'deg');
+          fab.style.setProperty('--eye-x', eyeX + 'px');
+          fab.style.setProperty('--eye-y', eyeY + 'px');
+        });
+
+        var readout = document.getElementById('gaze-readout');
+        readout.textContent = nearest
+          ? 'gaze ' + nearest.candidate + '·' + nearest.view + ' — yaw:' + nearest.yaw.toFixed(2) +
+            ' pitch:' + nearest.pitch.toFixed(2) + ' eyeX:' + nearest.eyeX.toFixed(2) +
+            ' eyeY:' + nearest.eyeY.toFixed(2)
+          : 'gaze: 없음';
+      }
+
+      function queueGaze() {
+        if (!gazeFrame) gazeFrame = requestAnimationFrame(renderGaze);
+      }
+
+      window.addEventListener('pointermove', function (event) {
+        latestPointer = { x: event.clientX, y: event.clientY };
+        queueGaze();
+      }, { passive: true });
+
+      window.addEventListener('resize', queueGaze, { passive: true });
+      window.addEventListener('blur', function () {
+        latestPointer = null;
+        queueGaze();
+      });
+
+      var sizeInput = document.getElementById('icon-size');
+      var sizeOutput = document.getElementById('icon-size-output');
+
+      sizeInput.addEventListener('input', function () {
+        var size = Number(sizeInput.value);
+        document.documentElement.style.setProperty('--icon-size', size + 'px');
+        sizeOutput.textContent = size + 'px';
+        document.querySelectorAll('.actual-icon-value').forEach(function (label) {
+          label.textContent = String(size);
+        });
+        document.body.classList.toggle('non-judgment-size', size !== 48);
+        queueGaze();
+      });
+
+      renderGaze();
+    }());
+  </script>
+</body>
+</html>

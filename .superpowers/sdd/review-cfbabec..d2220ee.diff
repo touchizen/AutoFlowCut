@@ -1,0 +1,425 @@
+# Review package: cfbabec..d2220ee
+
+## Commits
+d2220ee feat(agent): reference-style bottom-toolbar composer with merged send/stop
+
+## Files changed
+ src/components/agent/ChatPanel.css        | 65 +++++++++++++++-----
+ src/components/agent/ChatPanel.jsx        | 99 ++++++++++++++++---------------
+ tests/components/agent/ChatPanel.test.jsx | 39 ++++++++++--
+ 3 files changed, 136 insertions(+), 67 deletions(-)
+
+## Diff
+diff --git a/src/components/agent/ChatPanel.css b/src/components/agent/ChatPanel.css
+index 3823e5a..3b5754f 100644
+--- a/src/components/agent/ChatPanel.css
++++ b/src/components/agent/ChatPanel.css
+@@ -21,58 +21,97 @@
+   top: 0; right: 0; bottom: 0;
+   width: min(420px, 100%); height: 100%; max-height: 100%;
+   border-top-right-radius: 0; border-bottom-right-radius: 0;
+   transform: translateX(100%);
+ }
+ .agent-chat-panel.mode-slide.is-open { transform: translateX(0); }
+ .agent-chat-panel.mode-slide.is-dismissed { transform: translateX(100%); }
+ .agent-chat-panel.is-dismissed { visibility: hidden; opacity: 0; pointer-events: none; }
+ .agent-chat-panel.is-open { visibility: visible; opacity: 1; }
+ .agent-chat-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 13px; border-bottom: 1px solid var(--border, #3a3a42); }
+-.agent-chat-header-actions, .agent-chat-actions { display: flex; align-items: center; gap: 6px; }
++.agent-chat-header-actions, .agent-chat-toolbar-actions { display: flex; align-items: center; gap: 6px; }
+ .agent-chat-log { flex: 1 1 auto; min-height: 0; max-height: none; padding: 12px; overflow-y: auto; }
+-.agent-chat-compose { flex: 0 0 auto; padding: 10px 12px 12px; border-top: 1px solid var(--border, #3a3a42); }
++.agent-chat-compose {
++  flex: 0 0 auto;
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  margin: 8px 10px 10px;
++  padding: 8px;
++  background: var(--code-bg, #131316);
++  border: 1px solid var(--border, #3a3a42);
++  border-radius: 12px;
++}
++.agent-chat-compose:focus-within {
++  border-color: color-mix(in srgb, var(--accent, #4c8dff) 72%, var(--border, #3a3a42));
++  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #4c8dff) 18%, transparent);
++}
+ .agent-chat-header.is-draggable { cursor: grab; user-select: none; }
+ .agent-chat-header.is-draggable:active { cursor: grabbing; }
+ .agent-chat-flow-notice { max-width: 150px; font-size: 10px; line-height: 1.2; color: #e9bd68; }
+ 
+ .agent-chat-fab {
+   position: absolute; right: 18px; bottom: 18px; z-index: 3200;
+   display: grid; place-items: center; width: 72px; height: 72px; padding: 12px;
+   border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 50%;
+   background: linear-gradient(145deg, #4c8dff, #7758db);
+   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42); cursor: pointer;
+   transition: transform 0.16s ease, opacity 0.16s ease, visibility 0.16s ease;
+ }
+ .agent-chat-fab:hover { transform: translateY(-2px) scale(1.03); }
+ .agent-chat-fab:focus-visible { outline: 3px solid #b9d5ff; outline-offset: 3px; }
+ .agent-chat-fab.is-hidden { visibility: hidden; opacity: 0; pointer-events: none; }
+ .agent-chat-fab img { display: block; width: 100%; height: 100%; }
+ 
+-.agent-chat-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
++.agent-chat-heading { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+ .agent-chat-heading strong { flex: 0 0 auto; }
+-.agent-chat-heading .agent-model-selector { flex: 1 1 160px; min-width: 112px; }
+-.agent-chat-header button, .agent-chat-actions button { border: 1px solid var(--border, #3a3a42); border-radius: 7px; padding: 5px 9px; color: inherit; background: transparent; cursor: pointer; }
+-.agent-chat-header button:disabled, .agent-chat-actions button:disabled { cursor: default; opacity: 0.42; }
++.agent-chat-header-actions { flex: 0 0 auto; }
+ .agent-chat-running { font-size: 11px; color: #78b0ff; }
+ .agent-chat-empty { margin: 24px 0; text-align: center; font-size: 13px; opacity: 0.55; }
+ .agent-chat-message, .agent-chat-tool, .agent-chat-error { margin-bottom: 8px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; }
+ .agent-chat-message.user { margin-left: 42px; background: rgba(76, 141, 255, 0.18); }
+ .agent-chat-message.agent { margin-right: 24px; background: rgba(255, 255, 255, 0.07); }
+ .agent-chat-message.system { color: #b8c9dd; background: rgba(120, 176, 255, 0.1); }
+ .agent-chat-tool { border: 1px solid var(--border, #3a3a42); color: #c7d9ee; background: rgba(0, 0, 0, 0.12); }
+ .agent-chat-tool span { color: #75c992; }
+ .agent-chat-tool pre { max-height: 120px; margin: 6px 0 0; overflow: auto; font-size: 11px; white-space: pre-wrap; }
+ .agent-chat-error { color: #ffd2d2; border: 1px solid rgba(255, 92, 92, 0.5); background: rgba(255, 72, 72, 0.13); }
+ .agent-chat-usage { padding: 0 12px 9px; text-align: right; font-size: 11px; opacity: 0.65; }
+-.agent-chat-compose textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 54px; margin-bottom: 8px; padding: 8px 10px; color: inherit; background: var(--code-bg, #131316); border: 1px solid var(--border, #3a3a42); border-radius: 8px; font: inherit; }
+-.agent-chat-actions { justify-content: flex-end; flex-wrap: wrap; }
++.agent-chat-compose textarea {
++  box-sizing: border-box;
++  display: block;
++  width: 100%;
++  min-height: 48px;
++  max-height: 160px;
++  margin: 0;
++  padding: 4px 5px 8px;
++  resize: vertical;
++  color: inherit;
++  background: transparent;
++  border: 0;
++  outline: 0;
++  font: inherit;
++}
++.agent-chat-toolbar {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 10px;
++  min-width: 0;
++  padding-top: 6px;
++}
++.agent-chat-toolbar .agent-model-selector {
++  flex: 1 1 160px;
++  min-width: 120px;
++  max-width: 180px;
++}
++.agent-chat-toolbar-actions { flex: 0 0 auto; }
+ 
+ /* 진행 표시: 첫 응답까지 수십 초 비어 있으면 앱이 멈춘 것처럼 보인다. */
+ .agent-chat-thinking { display: flex; align-items: center; gap: 7px; opacity: 0.7; font-size: 12px; padding: 2px 0; }
+ .agent-chat-dots { display: inline-flex; gap: 3px; }
+ .agent-chat-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: agent-blink 1.2s infinite ease-in-out; }
+ .agent-chat-dots i:nth-child(2) { animation-delay: 0.2s; }
+ .agent-chat-dots i:nth-child(3) { animation-delay: 0.4s; }
+ @keyframes agent-blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+ 
+ .agent-model-selector { position: relative; min-width: 132px; }
+@@ -94,30 +133,26 @@
+ .agent-model-option.is-active { background: rgba(76, 141, 255, 0.2); outline: 1px solid rgba(76, 141, 255, 0.55); }
+ .agent-model-option.is-disabled { cursor: not-allowed; opacity: 0.48; }
+ .agent-model-badge { padding: 2px 5px; border: 1px solid currentColor; border-radius: 999px; font-size: 9px; }
+ 
+ .agent-icon-button {
+   display: inline-grid; place-items: center; flex: 0 0 auto;
+   width: 30px; height: 30px; padding: 0;
+   color: inherit; background: transparent;
+   border: 1px solid var(--border, #3a3a42); border-radius: 7px; cursor: pointer;
+ }
+-.agent-chat-actions .agent-icon-button,
++.agent-chat-toolbar-actions .agent-icon-button,
+ .agent-chat-header .agent-icon-button { padding: 0; }
+-.agent-chat-compose {
+-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+-  align-items: end; gap: 8px; padding: 8px;
+-}
+-.agent-chat-compose textarea { min-height: 44px; margin-bottom: 0; }
+-.agent-chat-actions { flex-wrap: nowrap; }
+ .agent-icon-button.is-primary { color: #fff; background: var(--accent, #4c8dff); border-color: transparent; }
++.agent-icon-button.is-primary.is-stop { background: var(--error-color, #f56565); }
+ .agent-icon-button:hover:not(:disabled) { background-color: rgba(255, 255, 255, 0.1); }
+ .agent-icon-button.is-primary:hover:not(:disabled) { background-color: color-mix(in srgb, var(--accent, #4c8dff) 82%, white); }
++.agent-icon-button.is-primary.is-stop:hover:not(:disabled) { background-color: color-mix(in srgb, var(--error-color, #f56565) 82%, white); }
+ .agent-icon-button:focus-visible { outline: 2px solid #9ec5ff; outline-offset: 2px; }
+ .agent-icon-button:disabled { cursor: default; opacity: 0.42; }
+ .agent-portal-tooltip {
+   position: fixed; z-index: 4000; max-width: min(260px, calc(100vw - 16px));
+   padding: 6px 9px; color: #f7f9ff; background: #111827;
+   border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 6px;
+   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.36);
+   font-size: 11px; line-height: 1.3; white-space: normal; pointer-events: none;
+ }
+diff --git a/src/components/agent/ChatPanel.jsx b/src/components/agent/ChatPanel.jsx
+index 44dfa61..ed28b06 100644
+--- a/src/components/agent/ChatPanel.jsx
++++ b/src/components/agent/ChatPanel.jsx
+@@ -510,47 +510,44 @@ export default function ChatPanel({
+         style={dragEnabled && position
+           ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' }
+           : undefined}
+       >
+         <div
+           className={`agent-chat-header ${dragEnabled ? 'is-draggable' : ''}`}
+           onPointerDown={onPointerDown}
+         >
+           <div className="agent-chat-heading">
+             <strong>{t('agent.title')}</strong>
+-            <AgentModelSelector
+-              models={models}
+-              value={selectedModel}
+-              loading={modelsLoading}
+-              onChange={setSelectedModel}
+-              label={t('agent.modelLabel')}
+-              defaultLabel={t('agent.modelDefault')}
+-              codexLabel={t('agent.codexProvider')}
+-              claudeLabel={t('agent.claudeProvider')}
+-              comingSoonLabel={t('agent.comingSoon')}
+-            />
+-          </div>
+-          <div className="agent-chat-header-actions">
+             {running && <span className="agent-chat-running">{t('agent.running')}</span>}
+             {appMode === 'flow' && (
+               <span className="agent-chat-flow-notice">{t('agent.flowFloatingOnly')}</span>
+             )}
++          </div>
++          <div className="agent-chat-header-actions">
+             <AgentIconButton
+               className="agent-chat-mode-toggle"
+               label={t('agent.modeToggle')}
+               tooltip={effectiveMode === 'slide' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
+               pressed={effectiveMode === 'slide'}
+               disabled={appMode === 'flow'}
+               onClick={() => onAgentPanelModeChange(effectiveMode === 'slide' ? 'floating' : 'slide')}
+             >
+               <AgentControlIcon name="mode" />
+             </AgentIconButton>
++            <AgentIconButton
++              label={t('agent.closeSession')}
++              tooltip={t('agent.closeSessionTooltip')}
++              onClick={close}
++              disabled={!sessionOpenRef.current}
++            >
++              <AgentControlIcon name="close" />
++            </AgentIconButton>
+             <AgentIconButton
+               className="agent-chat-dismiss"
+               label={t('agent.dismissPanel')}
+               tooltip={t('agent.dismissPanel')}
+               onClick={onDismiss}
+             >
+               <AgentControlIcon name="dismiss" />
+             </AgentIconButton>
+           </div>
+         </div>
+@@ -589,50 +586,58 @@ export default function ChatPanel({
+ 
+         <form className="agent-chat-compose" onSubmit={send}>
+           <textarea
+             ref={inputRef}
+             aria-label={t('agent.inputLabel')}
+             value={input}
+             onChange={(event) => setInput(event.target.value)}
+             placeholder={t('agent.placeholder')}
+             rows={2}
+           />
+-          <div className="agent-chat-actions">
+-            <AgentIconButton
+-              type="submit"
+-              className="is-primary"
+-              label={t('agent.send')}
+-              tooltip={t('agent.sendTooltip')}
+-              disabled={running || !input.trim()}
+-            >
+-              <AgentControlIcon name="send" />
+-            </AgentIconButton>
+-            <AgentIconButton
+-              label={t('agent.steer')}
+-              tooltip={t('agent.steerTooltip')}
+-              onClick={steer}
+-              disabled={!running || !input.trim()}
+-            >
+-              <AgentControlIcon name="steer" />
+-            </AgentIconButton>
+-            <AgentIconButton
+-              label={t('agent.stop')}
+-              tooltip={t('agent.stopTooltip')}
+-              onClick={abort}
+-              disabled={!running}
+-            >
+-              <AgentControlIcon name="stop" />
+-            </AgentIconButton>
+-            <AgentIconButton
+-              label={t('agent.closeSession')}
+-              tooltip={t('agent.closeSessionTooltip')}
+-              onClick={close}
+-              disabled={!sessionOpenRef.current}
+-            >
+-              <AgentControlIcon name="close" />
+-            </AgentIconButton>
++          <div className="agent-chat-toolbar">
++            <AgentModelSelector
++              models={models}
++              value={selectedModel}
++              loading={modelsLoading}
++              onChange={setSelectedModel}
++              label={t('agent.modelLabel')}
++              defaultLabel={t('agent.modelDefault')}
++              codexLabel={t('agent.codexProvider')}
++              claudeLabel={t('agent.claudeProvider')}
++              comingSoonLabel={t('agent.comingSoon')}
++            />
++            <div className="agent-chat-toolbar-actions">
++              <AgentIconButton
++                label={t('agent.steer')}
++                tooltip={t('agent.steerTooltip')}
++                onClick={steer}
++                disabled={!running || !input.trim()}
++              >
++                <AgentControlIcon name="steer" />
++              </AgentIconButton>
++              {running ? (
++                <AgentIconButton
++                  className="is-primary is-stop"
++                  label={t('agent.stop')}
++                  tooltip={t('agent.stopTooltip')}
++                  onClick={abort}
++                >
++                  <AgentControlIcon name="stop" />
++                </AgentIconButton>
++              ) : (
++                <AgentIconButton
++                  type="submit"
++                  className="is-primary"
++                  label={t('agent.send')}
++                  tooltip={t('agent.sendTooltip')}
++                  disabled={!input.trim()}
++                >
++                  <AgentControlIcon name="send" />
++                </AgentIconButton>
++              )}
++            </div>
+           </div>
+         </form>
+       </aside>
+     </>
+   )
+ }
+diff --git a/tests/components/agent/ChatPanel.test.jsx b/tests/components/agent/ChatPanel.test.jsx
+index f4a6eff..6475fc7 100644
+--- a/tests/components/agent/ChatPanel.test.jsx
++++ b/tests/components/agent/ChatPanel.test.jsx
+@@ -93,40 +93,68 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
+     await user.type(input, '시작해')
+     await user.click(screen.getByRole('button', { name: 'Send' }))
+     await user.type(input, '영상은 제외해')
+     await user.click(screen.getByRole('button', { name: 'Steer' }))
+     await user.click(screen.getByRole('button', { name: 'Stop' }))
+ 
+     expect(window.electronAPI.agentSteer).toHaveBeenCalledWith({ text: '영상은 제외해' })
+     expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
+   })
+ 
++  it('single primary가 idle Send로 submit하고 running Stop으로 바뀌어 abort한다', async () => {
++    const user = userEvent.setup()
++    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
++
++    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
++    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
++    await user.type(input, 'primary 전환 확인')
++
++    const send = screen.getByRole('button', { name: 'Send' })
++    expect(send).toBeEnabled()
++    await user.click(send)
++
++    expect(window.electronAPI.agentSend).toHaveBeenCalledWith({ text: 'primary 전환 확인' })
++    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
++    const stop = screen.getByRole('button', { name: 'Stop' })
++    expect(stop).toBeEnabled()
++    await user.click(stop)
++
++    expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
++  })
++
+   it('command가 error 값을 반환해도 조용히 삼키지 않고 화면에 표시한다', async () => {
+     window.electronAPI.agentSend.mockResolvedValueOnce({
+       error: 'agent-command-failed', message: 'app-server died', command: 'agent:send',
+     })
+     const user = userEvent.setup()
+     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+ 
+     await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '계속')
+     await user.click(screen.getByRole('button', { name: 'Send' }))
+ 
+     expect(await screen.findByRole('alert')).toHaveTextContent('app-server died')
+   })
+ 
+   it('icon action bar가 기존 accessible names를 보존하고 tooltip은 panel overflow 밖 body에 뜬다', async () => {
+     const user = userEvent.setup()
+     const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+     const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+     await user.type(input, '툴팁 확인')
+ 
+-    for (const name of ['Send', 'Steer', 'Stop', 'Close session']) {
++    const header = container.querySelector('.agent-chat-header')
++    const toolbar = container.querySelector('.agent-chat-toolbar')
++    const modelSelector = screen.getByRole('combobox', { name: 'Agent model' })
++    expect(header).toContainElement(screen.getByRole('button', { name: 'Close session' }))
++    expect(toolbar).toContainElement(modelSelector)
++    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
++
++    for (const name of ['Send', 'Steer', 'Close session']) {
+       const button = screen.getByRole('button', { name })
+       expect(button.querySelector('svg'), `${name} icon`).toBeTruthy()
+       expect(button.textContent.trim()).toBe('')
+     }
+ 
+     fireEvent.mouseEnter(screen.getByRole('button', { name: 'Send' }))
+     const tooltip = await screen.findByRole('tooltip')
+     expect(tooltip).toHaveTextContent('Send a new turn')
+     expect(tooltip.parentElement).toBe(document.body)
+     expect(container.querySelector('.agent-chat-panel')?.contains(tooltip)).toBe(false)
+@@ -225,34 +253,35 @@ describe('ChatPanel — model 적용 시점 계약', () => {
+     const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+     await user.type(input, '실패할 요청')
+     await user.click(screen.getByRole('button', { name: 'Send' }))
+ 
+     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('spawn failed'))
+     expect(window.electronAPI.agentSend).not.toHaveBeenCalled()
+     await user.type(input, '재시도')
+     expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
+   })
+ 
+-  it('running 중 Send는 disabled지만 Steer는 입력이 있으면 유지되고 model을 싣지 않는다', async () => {
++  it('running 중 primary는 enabled Stop이고 Send는 없으며 Steer는 model을 싣지 않는다', async () => {
+     const user = userEvent.setup()
+     render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+     const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+ 
+     await user.type(input, '새 turn')
+     await user.click(screen.getByRole('button', { name: 'Send' }))
+-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
++    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
++    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
+ 
+     await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+     await user.click(screen.getByRole('option', { name: 'GPT B' }))
+     await user.type(input, '진행 방향 수정')
+-    // 입력이 채워진 상태 → Send가 여전히 disabled면 그건 오직 running 때문(입력-빈 조건과 분리)
+-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
++    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
++    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
+     const steer = screen.getByRole('button', { name: 'Steer' })
+     expect(steer).toBeEnabled()
+     await user.click(steer)
+     expect(window.electronAPI.agentSteer).toHaveBeenCalledWith({ text: '진행 방향 수정' })
+   })
+ 
+   it('목록 실패 fallback []에서는 Default로 보내며 model을 생략하고 Send를 막지 않는다', async () => {
+     window.electronAPI.agentListModels.mockResolvedValueOnce([])
+     const user = userEvent.setup()
+     render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)

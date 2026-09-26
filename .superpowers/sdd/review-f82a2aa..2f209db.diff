@@ -1,0 +1,382 @@
+# Review package: f82a2aa..2f209db
+
+## Commits
+2f209db fix(story): pushAck reason 저장 + open 직렬화 + state null 방어
+65f41a0 feat(story): IPC 계층 + preload 브릿지
+
+## Files changed
+ electron/ipc/story-api.js                | 38 +++++++++++++++
+ electron/main.js                         |  4 ++
+ electron/preload.js                      | 14 ++++++
+ electron/story/stepMachine.js            | 19 ++++++--
+ tests/electron/ipc/story-api.test.js     | 82 ++++++++++++++++++++++++++++++++
+ tests/electron/story/stepMachine.test.js | 34 ++++++++++++-
+ 6 files changed, 185 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/electron/ipc/story-api.js b/electron/ipc/story-api.js
+new file mode 100644
+index 0000000..8ce4c9c
+--- /dev/null
++++ b/electron/ipc/story-api.js
+@@ -0,0 +1,38 @@
++/**
++ * Story 파이프라인 IPC — 스펙 §6. 프로젝트당 하나의 스텝 머신 인스턴스.
++ * 모든 R→M 명령은 projectToken 검증, 불일치 시 { error: 'stale-token' }.
++ */
++import { createStepMachine } from '../story/stepMachine.js'
++import * as llmGemini from '../api/llm/llmGemini.js'
++
++export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini }) {
++  let machine = null
++  let openLock = Promise.resolve()
++
++  const emit = (channel, payload) => {
++    const win = getWindow?.()
++    if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
++  }
++
++  const guarded = (fn) => async (_e, payload = {}) => {
++    if (!machine || payload.projectToken !== machine.projectToken) return { error: 'stale-token' }
++    return fn(payload)
++  }
++
++  ipcMain.handle('story:open', (_e, { projectPath } = {}) => {
++    // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
++    const task = openLock.then(async () => {
++      if (machine) await machine.abort()
++      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
++      return machine.open()
++    })
++    openLock = task.then(() => undefined, () => undefined)
++    return task
++  })
++
++  ipcMain.handle('story:get-state', guarded(async () => machine.getState()))
++  ipcMain.handle('story:start', guarded(({ step, params }) => machine.start(step, params)))
++  ipcMain.handle('story:abort', guarded(() => machine.abort()))
++  ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
++    machine.ackPush({ operationId, pushRevision, ok, reason })))
++}
+diff --git a/electron/main.js b/electron/main.js
+index 290438c..6a22f91 100644
+--- a/electron/main.js
++++ b/electron/main.js
+@@ -7,20 +7,21 @@ import os from 'node:os'
+ import { execSync as execSyncRaw } from 'node:child_process'
+ import { fileURLToPath } from 'node:url'
+ import dotenv from 'dotenv'
+ import { registerFilesystemIPC } from './ipc/filesystem.js'
+ import { registerAuthIPC } from './ipc/auth.js'
+ import { registerCapcutIPC } from './ipc/capcut.js'
+ import { registerPremiereIPC } from './ipc/premiere.js'
+ import { registerVrewIPC } from './ipc/vrew.js'
+ import { registerMcpIPC } from './ipc/mcp.js'
+ import { registerGenaiIPC } from './ipc/genai-api.js'
++import { registerStoryIPC } from './ipc/story-api.js'
+ import { createKeyStore } from './api/keyStore.js'
+ import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
+ import { createModeController } from './ipc/mode.js'
+ import { openApiSpec, getSwaggerHtml } from './api-docs.js'
+ import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
+ import { initSentryMain } from './sentry-init.js'
+ import { registerFlowAPIIPC } from './ipc/flow-api.js'
+ import { registerVideoIPC } from './ipc/video.js'
+ import { registerCharacterIPC } from './ipc/character.js'
+ import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-payload.js'
+@@ -189,20 +190,23 @@ registerFilesystemIPC(ipcMain)
+ // Google GenAI IPC (BYOK key management + Imagen/Veo official-API generation).
+ // Replaces Flow web reverse-engineering. Key is encrypted via OS keychain
+ // (safeStorage) and never leaves the main process.
+ const genaiKeyStore = createKeyStore({
+   safeStorage,
+   filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
+   fs: fsSync,
+ })
+ registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
+ 
++// Story pipeline IPC (script/scenes/prompts 스텝 머신 + preload 브릿지).
++registerStoryIPC(ipcMain, { keyStore: genaiKeyStore, getWindow: () => mainWindow })
++
+ // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
+ registerAuthIPC(ipcMain)
+ 
+ // CapCut IPC (path detection, project writing, app launch)
+ registerCapcutIPC(ipcMain)
+ 
+ // Premiere IPC (.prproj writing — gzipped XML)
+ registerPremiereIPC(ipcMain)
+ 
+ // MCP IPC (Claude Code MCP server registration)
+diff --git a/electron/preload.js b/electron/preload.js
+index c35e656..9e2855f 100644
+--- a/electron/preload.js
++++ b/electron/preload.js
+@@ -101,20 +101,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
+   genaiGetKeyStatus: () => ipcRenderer.invoke('genai:get-key-status'),
+   genaiSetKey: (params) => ipcRenderer.invoke('genai:set-key', params),
+   genaiClearKey: () => ipcRenderer.invoke('genai:clear-key'),
+   genaiValidateKey: (params) => ipcRenderer.invoke('genai:validate-key', params),
+   genaiListModels: () => ipcRenderer.invoke('genai:list-models'),
+   genaiGenerateImage: (params) => ipcRenderer.invoke('genai:generate-image', params),
+   genaiGenerateVideo: (params) => ipcRenderer.invoke('genai:generate-video', params),
+   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
+   genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),
+ 
++  // --- Story pipeline ---
++  storyOpen: (params) => ipcRenderer.invoke('story:open', params),
++  storyGetState: (params) => ipcRenderer.invoke('story:get-state', params),
++  storyStart: (params) => ipcRenderer.invoke('story:start', params),
++  storyAbort: (params) => ipcRenderer.invoke('story:abort', params),
++  storyPushAck: (params) => ipcRenderer.invoke('story:push-ack', params),
++  onStoryEvent: (channel, cb) => {
++    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes']
++    if (!valid.includes(channel)) return () => {}
++    const listener = (_e, payload) => cb(payload)
++    ipcRenderer.on(channel, listener)
++    return () => ipcRenderer.removeListener(channel, listener)
++  },
++
+   // Auth
+   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
+   googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),
+ 
+   // Power Save
+   setPreventSleep: (params) => ipcRenderer.invoke('app:set-prevent-sleep', params),
+   getPreventSleep: () => ipcRenderer.invoke('app:get-prevent-sleep'),
+ 
+   // MCP HTTP Server
+   startMcpHttp: (params) => ipcRenderer.invoke('mcp:start-http', params),
+diff --git a/electron/story/stepMachine.js b/electron/story/stepMachine.js
+index 10349b7..7710810 100644
+--- a/electron/story/stepMachine.js
++++ b/electron/story/stepMachine.js
+@@ -38,20 +38,21 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
+     assertUniqueStoryIds(scenes)
+     const timeline = buildFallbackTimeline(scenes, state.input?.options?.language || 'ko')
+     const byId = new Map(timeline.map((t) => [t.storyId, t]))
+     send('story:pushScenes', {
+       pushRevision: state.pendingPushRevision,
+       scenes: scenes.map((s) => mapScene(s, byId.get(s.storyId))),
+     }, operationId)
+   }
+ 
+   async function maybeResendPush(operationId) {
++    if (!state) state = await store.load()
+     if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
+       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}')
+       sendPush(scenesJson.scenes, operationId)
+     }
+   }
+ 
+   const steps = {
+     async script(params, opId, signal) {
+       state.input = params.input ? { ...params.input, options: params.options } : state.input
+       const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(params.options || {}) }
+@@ -88,20 +89,21 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
+ 
+   return {
+     projectToken,
+     async open() {
+       state = await store.load()
+       await maybeResendPush()
+       send('story:state', { state })
+       return { projectToken, state }
+     },
+     async getState() {
++      if (!state) state = await store.load()
+       await maybeResendPush()
+       return state
+     },
+     async start(step, params = {}) {
+       if (!steps[step]) throw new Error(`unknown step: ${step}`)
+       const operationId = randomUUID()
+       const myController = new AbortController()
+       controller = myController
+       // 하류 리셋 — revision은 스펙대로 단조 증가 유지(빈 push 재발신은 maybeResendPush의 prompts-done 가드가 차단)
+       for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
+@@ -124,21 +126,28 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
+     },
+     async abort() {
+       controller?.abort()
+       // 중단 시점에 running인 스텝은 동기적으로 terminal 마킹 — 이후 다른 스텝 시작으로
+       // controller가 교체돼도 running 잔류가 없도록. stale settle의 상태 쓰기는 캡처 가드가 차단.
+       for (const [name, s] of Object.entries(state?.steps || {})) {
+         if (s.status === 'running') {
+           state.steps[name] = { status: 'error', error: 'aborted', updatedAt: new Date().toISOString() }
+         }
+       }
+-      await flush()
++      if (state) await flush()
+     },
+-    async ackPush({ pushRevision, ok }) {
+-      if (ok && pushRevision > state.lastPushedRevision) {
+-        state.lastPushedRevision = pushRevision
+-        state.pushedAt = new Date().toISOString()
++    async ackPush({ pushRevision, ok, reason }) {
++      if (ok) {
++        if (pushRevision > state.lastPushedRevision) {
++          state.lastPushedRevision = pushRevision
++          state.pushedAt = new Date().toISOString()
++        }
++        state.lastPushError = null
++        await flush()
++      } else {
++        // revision 조건은 그대로라 open()/getState()의 maybeResendPush가 재발신한다
++        state.lastPushError = { pushRevision, reason, at: new Date().toISOString() }
+         await flush()
+       }
+     },
+   }
+ }
+diff --git a/tests/electron/ipc/story-api.test.js b/tests/electron/ipc/story-api.test.js
+new file mode 100644
+index 0000000..0c37b1f
+--- /dev/null
++++ b/tests/electron/ipc/story-api.test.js
+@@ -0,0 +1,82 @@
++// @vitest-environment node
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { mkdtemp } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import path from 'node:path'
++import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
++
++function fakeIpcMain() {
++  const handlers = new Map()
++  return { handle: (ch, fn) => handlers.set(ch, fn), invoke: (ch, payload) => handlers.get(ch)(null, payload), handlers }
++}
++
++let ipc, sent, dir
++beforeEach(async () => {
++  dir = await mkdtemp(path.join(tmpdir(), 'ipc-'))
++  ipc = fakeIpcMain()
++  sent = []
++  const llm = {
++    generateScript: vi.fn(async () => ({ scriptMd: '#' })),
++    splitScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
++    writePrompts: vi.fn(async (s) => ({ scenes: s })),
++  }
++  registerStoryIPC(ipc, {
++    keyStore: { getKey: () => 'k' },
++    getWindow: () => ({ webContents: { send: (ch, p) => sent.push({ ch, p }) }, isDestroyed: () => false }),
++    llm,
++  })
++})
++
++describe('story IPC', () => {
++  it('story:open → projectToken 발급 + state 반환', async () => {
++    const r = await ipc.invoke('story:open', { projectPath: dir })
++    expect(r.projectToken).toBeTruthy()
++    expect(r.state.steps.script.status).toBe('pending')
++  })
++  it('stale token 명령 거부', async () => {
++    await ipc.invoke('story:open', { projectPath: dir })
++    const r = await ipc.invoke('story:start', { projectToken: 'wrong', step: 'script', params: {} })
++    expect(r.error).toBe('stale-token')
++  })
++  it('start 실행 시 story:state 이벤트가 window로 발신된다', async () => {
++    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
++    await ipc.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: {} } })
++    const stateEvents = sent.filter((e) => e.ch === 'story:state')
++    expect(stateEvents.length).toBeGreaterThan(0)
++    expect(stateEvents[0].p.projectToken).toBe(projectToken)
++  })
++  it('재open 시 새 토큰 발급 (이전 토큰 무효)', async () => {
++    const a = await ipc.invoke('story:open', { projectPath: dir })
++    const b = await ipc.invoke('story:open', { projectPath: dir })
++    expect(a.projectToken).not.toBe(b.projectToken)
++    const r = await ipc.invoke('story:get-state', { projectToken: a.projectToken })
++    expect(r.error).toBe('stale-token')
++  })
++
++  it('동시 story:open 호출은 직렬화되어 마지막 토큰만 유효하다', async () => {
++    const p1 = ipc.invoke('story:open', { projectPath: dir })
++    const p2 = ipc.invoke('story:open', { projectPath: dir })
++    const [a, b] = await Promise.all([p1, p2])
++    expect(a.projectToken).not.toBe(b.projectToken)
++    const stale = await ipc.invoke('story:get-state', { projectToken: a.projectToken })
++    expect(stale.error).toBe('stale-token')
++    const fresh = await ipc.invoke('story:get-state', { projectToken: b.projectToken })
++    expect(fresh.error).toBeUndefined()
++  })
++
++  it('story:push-ack(ok:false)는 operationId/reason을 버리지 않고 lastPushError로 보존한다', async () => {
++    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
++    await ipc.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: {} } })
++    await ipc.invoke('story:start', { projectToken, step: 'scenes', params: {} })
++    await ipc.invoke('story:start', { projectToken, step: 'prompts', params: {} })
++    const pushEvent = sent.find((e) => e.ch === 'story:pushScenes')
++
++    await ipc.invoke('story:push-ack', {
++      projectToken, operationId: 'op-1', pushRevision: pushEvent.p.pushRevision, ok: false, reason: 'save failed',
++    })
++
++    const state = await ipc.invoke('story:get-state', { projectToken })
++    expect(state.lastPushedRevision).toBe(0)
++    expect(state.lastPushError).toMatchObject({ pushRevision: pushEvent.p.pushRevision, reason: 'save failed' })
++  })
++})
+diff --git a/tests/electron/story/stepMachine.test.js b/tests/electron/story/stepMachine.test.js
+index 2a4a7cf..b36928c 100644
+--- a/tests/electron/story/stepMachine.test.js
++++ b/tests/electron/story/stepMachine.test.js
+@@ -1,13 +1,13 @@
+ // @vitest-environment node
+ import { describe, it, expect, vi, beforeEach } from 'vitest'
+-import { mkdtemp } from 'node:fs/promises'
++import { mkdtemp, readFile } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import path from 'node:path'
+ import { createStepMachine } from '../../../electron/story/stepMachine.js'
+ 
+ let dir, emitted, llm, machine
+ beforeEach(async () => {
+   dir = await mkdtemp(path.join(tmpdir(), 'sm-'))
+   emitted = []
+   llm = {
+     generateScript: vi.fn(async (_i, _o, { onDelta }) => { onDelta?.('부분'); return { scriptMd: '# 대본' } }),
+@@ -171,11 +171,43 @@ describe('stepMachine', () => {
+     expect(state.steps.script.status).toBe('error')
+     expect(state.steps.script.error).toContain('aborted')
+     expect(state.steps.scenes.status).toBe('done')
+ 
+     // 디스크 reopen에도 running 잔류 없음
+     const reopened = createStepMachine({ projectPath: dir, llm, emit: () => {}, getApiKey: () => 'k' })
+     const { state: diskState } = await reopened.open()
+     expect(diskState.steps.script.status).toBe('error')
+     expect(Object.values(diskState.steps).every((s) => s.status !== 'running')).toBe(true)
+   })
++
++  it('ackPush(ok:false)는 lastPushedRevision을 갱신하지 않고 lastPushError를 저장하며, 이후 open()이 재발신한다', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    await machine.start('prompts', {})
++    const push = emitted.find((e) => e.ch === 'story:pushScenes')
++
++    await machine.ackPush({ pushRevision: push.payload.pushRevision, ok: false, reason: 'transaction failed' })
++    const state = await machine.getState()
++    expect(state.lastPushedRevision).toBe(0)
++    expect(state.lastPushError).toMatchObject({ pushRevision: push.payload.pushRevision, reason: 'transaction failed' })
++    expect(state.lastPushError.at).toBeTruthy()
++
++    emitted.length = 0
++    await machine.open()
++    expect(emitted.some((e) => e.ch === 'story:pushScenes')).toBe(true)
++  })
++
++  it('open 없이 getState() 호출해도 throw하지 않는다 (방어적 폴백)', async () => {
++    const freshDir = await mkdtemp(path.join(tmpdir(), 'sm-fresh-'))
++    const fresh = createStepMachine({ projectPath: freshDir, llm, emit: () => {}, getApiKey: () => 'k' })
++    const state = await fresh.getState()
++    expect(state.steps.script.status).toBe('pending')
++  })
++
++  it('open 없이 abort() 호출해도 throw하지 않고 story.json에 null을 쓰지 않는다', async () => {
++    const freshDir = await mkdtemp(path.join(tmpdir(), 'sm-fresh2-'))
++    const fresh = createStepMachine({ projectPath: freshDir, llm, emit: () => {}, getApiKey: () => 'k' })
++    await fresh.abort()
++    const raw = await readFile(path.join(freshDir, 'story', 'story.json'), 'utf-8').catch(() => null)
++    expect(raw).toBeNull()
++  })
+ })

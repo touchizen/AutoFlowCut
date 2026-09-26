@@ -1,0 +1,117 @@
+# Review package: 6315fa2..de0ea6e
+
+## Commits
+de0ea6e feat(m0): MAIN-world fetch-hook w/ postMessage bridge + esbuild page bundle
+
+## Files changed
+ spikes/m0-nocdp/esbuild.page.mjs              |  6 ++++
+ spikes/m0-nocdp/src/page/fetch-hook.js        | 34 +++++++++++++++++++
+ spikes/m0-nocdp/tests/page/fetch-hook.test.js | 47 +++++++++++++++++++++++++++
+ 3 files changed, 87 insertions(+)
+
+## Diff
+diff --git a/spikes/m0-nocdp/esbuild.page.mjs b/spikes/m0-nocdp/esbuild.page.mjs
+new file mode 100644
+index 0000000..45d4088
+--- /dev/null
++++ b/spikes/m0-nocdp/esbuild.page.mjs
+@@ -0,0 +1,6 @@
++import { build } from 'esbuild'
++await build({
++  entryPoints: ['src/page/fetch-hook.js'], // generate.js added in Task 7
++  bundle: true, format: 'iife', outdir: 'dist', entryNames: '[name].iife', target: 'chrome120',
++})
++console.log('page scripts bundled → dist/*.iife.js')
+diff --git a/spikes/m0-nocdp/src/page/fetch-hook.js b/spikes/m0-nocdp/src/page/fetch-hook.js
+new file mode 100644
+index 0000000..06397a0
+--- /dev/null
++++ b/spikes/m0-nocdp/src/page/fetch-hook.js
+@@ -0,0 +1,34 @@
++import { isCapturable } from './endpoints.js'
++import { captureApiOrigin } from './origin.js'
++
++// win param makes this unit-testable; runtime calls installFetchHook(window) below.
++export function installFetchHook(win) {
++  if (win.__autoflowcut_fetch_patched__) return
++  win.__autoflowcut_fetch_patched__ = true
++  const _fetch = win.fetch
++
++  win.fetch = async function (input, init) {
++    const url = typeof input === 'string' ? input : (input && input.url) || ''
++    const origin = captureApiOrigin(url)
++    if (origin) win.__autoflowcut_api_origin__ = origin
++
++    const res = await _fetch.call(this, input, init)
++    if (isCapturable(url)) {
++      try {
++        res.clone().text().then((text) => {
++          let data = null
++          try { data = JSON.parse(text.replace(/^\)\]\}',?\s*/, '')) } catch { data = null }
++          win.postMessage({ type: 'AUTOFLOW_API_INTERCEPT', endpoint: url, status: res.status, data }, '*')
++        }).catch(() => {})
++      } catch { /* ignore */ }
++    }
++    return res
++  }
++
++  try {
++    Object.defineProperty(win.fetch, 'toString', { value: () => 'function fetch() { [native code] }', configurable: true })
++    Object.defineProperty(win.fetch, 'name', { value: 'fetch', configurable: true })
++  } catch { /* ignore */ }
++}
++
++if (typeof window !== 'undefined') installFetchHook(window)
+diff --git a/spikes/m0-nocdp/tests/page/fetch-hook.test.js b/spikes/m0-nocdp/tests/page/fetch-hook.test.js
+new file mode 100644
+index 0000000..a5d2627
+--- /dev/null
++++ b/spikes/m0-nocdp/tests/page/fetch-hook.test.js
+@@ -0,0 +1,47 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { installFetchHook } from '../../src/page/fetch-hook.js'
++
++function makeWin() {
++  return {
++    location: { href: 'https://labs.google/fx/tools/flow/project/p1' },
++    fetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),
++    postMessage: vi.fn(),
++  }
++}
++
++describe('installFetchHook', () => {
++  let win
++  beforeEach(() => { win = makeWin() })
++
++  it('is idempotent', () => {
++    installFetchHook(win); const first = win.fetch; installFetchHook(win)
++    expect(win.fetch).toBe(first)
++    expect(win.__autoflowcut_fetch_patched__).toBe(true)
++  })
++  it('stashes aisandbox origin from a generation request', async () => {
++    installFetchHook(win)
++    await win.fetch('https://eu-aisandbox-pa.googleapis.com/v1/flowMedia:batchGenerateImages', { method: 'POST', body: '{}' })
++    expect(win.__autoflowcut_api_origin__).toBe('https://eu-aisandbox-pa.googleapis.com')
++  })
++  it('does NOT stash from a non-aisandbox host', async () => {
++    installFetchHook(win)
++    await win.fetch('https://fonts.googleapis.com/css2', {})
++    expect(win.__autoflowcut_api_origin__).toBeUndefined()
++  })
++  it('posts AUTOFLOW_API_INTERCEPT for capturable responses', async () => {
++    installFetchHook(win)
++    await win.fetch('https://aisandbox-pa.googleapis.com/v1/flowMedia:batchGenerateImages', { method: 'POST', body: '{}' })
++    await new Promise(r => setTimeout(r, 0))
++    const call = win.postMessage.mock.calls.find(c => c[0]?.type === 'AUTOFLOW_API_INTERCEPT')
++    expect(call).toBeTruthy()
++    expect(call[0].endpoint).toContain('batchGenerateImages')
++    expect(call[0].status).toBe(200)
++    expect(call[1]).toBe('*')
++  })
++  it('does not intercept non-capturable responses', async () => {
++    installFetchHook(win)
++    await win.fetch('https://fonts.googleapis.com/css2', {})
++    await new Promise(r => setTimeout(r, 0))
++    expect(win.postMessage.mock.calls.find(c => c[0]?.type === 'AUTOFLOW_API_INTERCEPT')).toBeUndefined()
++  })
++})

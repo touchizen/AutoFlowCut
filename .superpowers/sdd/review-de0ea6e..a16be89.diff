@@ -1,0 +1,160 @@
+# Review package: de0ea6e..a16be89
+
+## Commits
+a16be89 feat(m0): ISOLATED relay + SW catch-up (no re-broadcast) + inject predicate + poll state
+
+## Files changed
+ spikes/m0-nocdp/src/bg/inject-filter.js        |  3 +++
+ spikes/m0-nocdp/src/bg/service-worker.js       | 14 +++++++++++++
+ spikes/m0-nocdp/src/content/relay.js           | 13 ++++++++++++
+ spikes/m0-nocdp/src/panel/pollState.js         | 11 ++++++++++
+ spikes/m0-nocdp/tests/bg/inject-filter.test.js | 12 +++++++++++
+ spikes/m0-nocdp/tests/content/relay.test.js    | 21 +++++++++++++++++++
+ spikes/m0-nocdp/tests/panel/pollState.test.js  | 28 ++++++++++++++++++++++++++
+ 7 files changed, 102 insertions(+)
+
+## Diff
+diff --git a/spikes/m0-nocdp/src/bg/inject-filter.js b/spikes/m0-nocdp/src/bg/inject-filter.js
+new file mode 100644
+index 0000000..6967f9d
+--- /dev/null
++++ b/spikes/m0-nocdp/src/bg/inject-filter.js
+@@ -0,0 +1,3 @@
++export function shouldInjectFlowTab({ frameId, url }) {
++  return frameId === 0 && typeof url === 'string' && /^https:\/\/labs\.google\//.test(url)
++}
+diff --git a/spikes/m0-nocdp/src/bg/service-worker.js b/spikes/m0-nocdp/src/bg/service-worker.js
+new file mode 100644
+index 0000000..780c352
+--- /dev/null
++++ b/spikes/m0-nocdp/src/bg/service-worker.js
+@@ -0,0 +1,14 @@
++// Gate ii is served by the static MAIN content_scripts entry (fires at document_start on new nav).
++// This SW only (a) catches up already-open Flow tabs at install/reload, (b) keeps a heartbeat alarm.
++// It does NOT re-broadcast intercepts — relay → panel is direct (avoids double-delivery, Codex #5).
++import { shouldInjectFlowTab } from './inject-filter.js'
++
++chrome.runtime.onInstalled.addListener(async () => {
++  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {})
++  const tabs = await chrome.tabs.query({ url: 'https://labs.google/*' })
++  for (const t of tabs) {
++    if (!shouldInjectFlowTab({ frameId: 0, url: t.url })) continue
++    chrome.scripting.executeScript({ target: { tabId: t.id }, world: 'MAIN', files: ['dist/fetch-hook.iife.js'] }).catch(() => {})
++  }
++})
++chrome.alarms.create('m0-heartbeat', { periodInMinutes: 0.5 })
+diff --git a/spikes/m0-nocdp/src/content/relay.js b/spikes/m0-nocdp/src/content/relay.js
+new file mode 100644
+index 0000000..6856f38
+--- /dev/null
++++ b/spikes/m0-nocdp/src/content/relay.js
+@@ -0,0 +1,13 @@
++export function makeRelay(win, runtime) {
++  const allowed = win.location.origin
++  return function onMessage(ev) {
++    if (ev.origin !== allowed) return
++    const msg = ev.data
++    if (!msg || msg.type !== 'AUTOFLOW_API_INTERCEPT') return
++    runtime.sendMessage(msg)
++  }
++}
++// Runtime wiring (not unit-tested): relay page postMessages to the panel.
++if (typeof window !== 'undefined' && typeof chrome !== 'undefined' && chrome.runtime) {
++  window.addEventListener('message', makeRelay(window, chrome.runtime))
++}
+diff --git a/spikes/m0-nocdp/src/panel/pollState.js b/spikes/m0-nocdp/src/panel/pollState.js
+new file mode 100644
+index 0000000..24d93b3
+--- /dev/null
++++ b/spikes/m0-nocdp/src/panel/pollState.js
+@@ -0,0 +1,11 @@
++const KEY = 'm0_poll_state'
++export function createPollState(storage) {
++  let cache = {}
++  const persist = () => storage.set({ [KEY]: cache })
++  return {
++    async rehydrate() { const got = await storage.get(KEY); cache = (got && got[KEY]) || {}; return cache },
++    async arm(id, meta) { cache[id] = { status: 'pending', ...meta }; await persist() },
++    async record(id, result) { cache[id] = { ...(cache[id] || {}), status: 'done', result }; await persist() },
++    async pending() { await this.rehydrate(); return cache },
++  }
++}
+diff --git a/spikes/m0-nocdp/tests/bg/inject-filter.test.js b/spikes/m0-nocdp/tests/bg/inject-filter.test.js
+new file mode 100644
+index 0000000..24885d1
+--- /dev/null
++++ b/spikes/m0-nocdp/tests/bg/inject-filter.test.js
+@@ -0,0 +1,12 @@
++import { describe, it, expect } from 'vitest'
++import { shouldInjectFlowTab } from '../../src/bg/inject-filter.js'
++
++describe('shouldInjectFlowTab', () => {
++  it('true for top-frame labs.google', () =>
++    expect(shouldInjectFlowTab({ frameId: 0, url: 'https://labs.google/fx/tools/flow/project/p' })).toBe(true))
++  it('false for subframe', () =>
++    expect(shouldInjectFlowTab({ frameId: 1, url: 'https://labs.google/x' })).toBe(false))
++  it('false for other hosts', () =>
++    expect(shouldInjectFlowTab({ frameId: 0, url: 'https://example.com' })).toBe(false))
++  it('null-safe', () => expect(shouldInjectFlowTab({ frameId: 0, url: null })).toBe(false))
++})
+diff --git a/spikes/m0-nocdp/tests/content/relay.test.js b/spikes/m0-nocdp/tests/content/relay.test.js
+new file mode 100644
+index 0000000..4ddc2f3
+--- /dev/null
++++ b/spikes/m0-nocdp/tests/content/relay.test.js
+@@ -0,0 +1,21 @@
++import { describe, it, expect, vi } from 'vitest'
++import { makeRelay } from '../../src/content/relay.js'
++
++const win = { location: { origin: 'https://labs.google' } }
++describe('makeRelay', () => {
++  it('forwards AUTOFLOW_API_INTERCEPT to runtime.sendMessage', () => {
++    const runtime = { sendMessage: vi.fn() }
++    makeRelay(win, runtime)({ origin: 'https://labs.google', data: { type: 'AUTOFLOW_API_INTERCEPT', endpoint: 'x/batchGenerateImages', status: 200, data: { a: 1 } } })
++    expect(runtime.sendMessage).toHaveBeenCalledWith({ type: 'AUTOFLOW_API_INTERCEPT', endpoint: 'x/batchGenerateImages', status: 200, data: { a: 1 } })
++  })
++  it('ignores unrelated postMessages', () => {
++    const runtime = { sendMessage: vi.fn() }
++    makeRelay(win, runtime)({ origin: 'https://labs.google', data: { type: 'SOMETHING_ELSE' } })
++    expect(runtime.sendMessage).not.toHaveBeenCalled()
++  })
++  it('ignores foreign origins', () => {
++    const runtime = { sendMessage: vi.fn() }
++    makeRelay(win, runtime)({ origin: 'https://evil.example', data: { type: 'AUTOFLOW_API_INTERCEPT' } })
++    expect(runtime.sendMessage).not.toHaveBeenCalled()
++  })
++})
+diff --git a/spikes/m0-nocdp/tests/panel/pollState.test.js b/spikes/m0-nocdp/tests/panel/pollState.test.js
+new file mode 100644
+index 0000000..cf03151
+--- /dev/null
++++ b/spikes/m0-nocdp/tests/panel/pollState.test.js
+@@ -0,0 +1,28 @@
++import { describe, it, expect } from 'vitest'
++import { createPollState } from '../../src/panel/pollState.js'
++
++function fakeStorage(init = {}) {
++  let store = { ...init }
++  return {
++    get: async (k) => (k == null ? { ...store } : { [k]: store[k] }),
++    set: async (obj) => { Object.assign(store, obj) },
++  }
++}
++describe('createPollState', () => {
++  it('arms a pending generation persisted to storage (survives fresh instance)', async () => {
++    const storage = fakeStorage()
++    await createPollState(storage).arm('gen1', { prompt: 'x', startedAt: 111 })
++    const ps2 = createPollState(storage)
++    await ps2.rehydrate()
++    expect((await ps2.pending()).gen1).toMatchObject({ status: 'pending', prompt: 'x' })
++  })
++  it('records a result and marks done', async () => {
++    const storage = fakeStorage()
++    const ps = createPollState(storage)
++    await ps.arm('gen1', { startedAt: 1 })
++    await ps.record('gen1', { mediaUrl: 'https://x/img.png' })
++    const p = await ps.pending()
++    expect(p.gen1.status).toBe('done')
++    expect(p.gen1.result.mediaUrl).toBe('https://x/img.png')
++  })
++})

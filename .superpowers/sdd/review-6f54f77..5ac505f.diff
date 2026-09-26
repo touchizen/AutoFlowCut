@@ -1,0 +1,84 @@
+# Review package: 6f54f77..5ac505f
+
+## Commits
+5ac505f feat(story): buildScriptPrompt 길이 단위(min/chars/words) 지시
+
+## Files changed
+ electron/api/llm/prompts.js            |  8 +++++++-
+ tests/electron/api/llm/prompts.test.js | 24 +++++++++++++++++++-----
+ 2 files changed, 26 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/electron/api/llm/prompts.js b/electron/api/llm/prompts.js
+index 41240bf..564e90b 100644
+--- a/electron/api/llm/prompts.js
++++ b/electron/api/llm/prompts.js
+@@ -1,17 +1,23 @@
+ /** 프롬프트 빌더 — Gemini/Claude 두 엔진 공유. (구 llmGemini.js 내부 빌더 이관) */
+ 
+ export function buildScriptPrompt(input, opts) {
+   const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
++  const n = opts.lengthValue || 10
++  const unit = opts.lengthUnit || 'min'
++  const lengthText =
++    unit === 'chars' ? `약 ${n}자` :
++    unit === 'words' ? `about ${n} words` :
++    `약 ${n}분`
+   return [
+     meta,
+-    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${opts.targetMinutes || 10}분 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
++    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${lengthText} 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
+     opts.genre ? `장르: ${opts.genre}` : '',
+     opts.tone ? `톤: ${opts.tone}` : '',
+     `제목: ${input.title}`,
+     `마크다운으로, 챕터 구분과 (대사가 있으면) 화자 표기를 포함하라.`,
+   ].filter(Boolean).join('\n')
+ }
+ 
+ export function buildSplitPrompt(scriptMd, opts) {
+   return [
+     `아래 대본을 씬으로 분리하라. 각 씬은 낭독 시 6~10초(${opts.language === 'ko' ? '한국어 기준 약 33~55자' : 'about 90~150 chars in English'}) 분량이어야 한다. 초과하면 씬을 분할하라.`,
+diff --git a/tests/electron/api/llm/prompts.test.js b/tests/electron/api/llm/prompts.test.js
+index bfb94a1..97671fc 100644
+--- a/tests/electron/api/llm/prompts.test.js
++++ b/tests/electron/api/llm/prompts.test.js
+@@ -1,20 +1,34 @@
+ import { describe, it, expect } from 'vitest'
+ import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from '../../../../electron/api/llm/prompts.js'
+ 
+-describe('buildScriptPrompt', () => {
+-  it('제목/장르/언어를 템플릿에 채운다', () => {
+-    const p = buildScriptPrompt({ title: 'T' }, { targetMinutes: 8, language: 'ko', genre: 'yadam' })
+-    expect(p).toContain('8분')
++describe('buildScriptPrompt 길이 단위', () => {
++  it('min 단위는 "약 N분"', () => {
++    const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 8, lengthUnit: 'min', language: 'ko', genre: 'yadam' })
++    expect(p).toContain('약 8분')
+     expect(p).toContain('제목: T')
+-    expect(p).toContain('한국어')
+   })
++  it('chars 단위는 "약 N자"', () => {
++    const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 6000, lengthUnit: 'chars', language: 'ko' })
++    expect(p).toContain('약 6000자')
++  })
++  it('words 단위는 "about N words"', () => {
++    const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 1500, lengthUnit: 'words', language: 'en' })
++    expect(p).toContain('about 1500 words')
++  })
++  it('길이 미지정 시 기본 10분', () => {
++    const p = buildScriptPrompt({ title: 'T' }, { language: 'ko' })
++    expect(p).toContain('약 10분')
++  })
++})
++
++describe('buildScriptPrompt', () => {
+   it('metaPrompt가 있으면 CUSTOM INSTRUCTIONS 블록을 앞에 넣는다', () => {
+     const p = buildScriptPrompt({ title: 'T' }, { language: 'ko', metaPrompt: 'META-XYZ' })
+     expect(p).toContain('## CUSTOM INSTRUCTIONS')
+     expect(p).toContain('META-XYZ')
+     expect(p.indexOf('META-XYZ')).toBeLessThan(p.indexOf('제목: T'))
+   })
+   it('metaPrompt가 없으면 CUSTOM INSTRUCTIONS 블록이 없다', () => {
+     expect(buildScriptPrompt({ title: 'T' }, { language: 'ko' })).not.toContain('CUSTOM INSTRUCTIONS')
+   })
+ })

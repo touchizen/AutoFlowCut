@@ -1,0 +1,759 @@
+# Review package: 4e682e7d..a2cd61b1
+
+## Commits
+a2cd61b1 fix(story-audio): guard segment-test retry, replace-not-merge voice reload, wire VoicePicker reload, single-source key URLs
+
+## Files changed
+ src/App.jsx                                        | 16 ++---
+ src/components/settings/ApiKeyTab.jsx              | 24 +++----
+ src/components/settings/GenaiApiKeyField.jsx       |  7 ++-
+ src/components/story/StoryView.jsx                 | 45 +++++++++----
+ src/components/story/VoicePicker.jsx               | 11 +++-
+ src/utils/ttsVoiceReload.js                        | 22 +++++++
+ tests/components/App.storyVoiceReload.test.js      | 30 +++++++--
+ tests/components/story/StoryView.test.jsx          | 36 +++++++++++
+ .../story/VoicePicker.noKeyInline.test.jsx         | 55 ++++++++++++++++
+ tests/components/story/storyAudioGate.test.jsx     | 46 ++++++++++++++
+ tests/utils/ttsVoiceReload.test.js                 | 73 ++++++++++++++++++++++
+ 11 files changed, 324 insertions(+), 41 deletions(-)
+
+## Diff
+diff --git a/src/App.jsx b/src/App.jsx
+index 6bf12fed..bcc94e20 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -28,20 +28,21 @@ import { useAvailableModels } from './hooks/useAvailableModels'
+ import { computeModelHeal, computeModeSwitch } from './config/genModels'
+ import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
+ import { useAutoSave } from './hooks/useAutoSave'
+ import { useFlowEvents } from './hooks/useFlowEvents'
+ import { useMcpServer } from './hooks/useMcpServer'
+ import { useMenuActions } from './hooks/useMenuActions'
+ import { batchStartGate } from './hooks/batchStartGate'
+ import { upsertStoryCharacterRefs, assertStoryProjectCurrent } from './utils/storyCharacterRefs'
+ import { waitUntil } from './utils/waitUntil'
+ import { voiceKey } from './utils/voiceKey'
++import { ttsListVoicesReloadParams, replaceTtsVoicesForProvider } from './utils/ttsVoiceReload'
+ import { stripMentionsForNames } from './utils/mentionParser'
+ import { syncVideosIntoScenes } from './services/mediaSync'
+ import { retryVideoDownload } from './services/videoRecovery'
+ import { isStyleReference, previewStyleMatching } from './services/styleService'
+ import { isSceneGenerationDone } from './services/generationStatus'
+ import { computeGuardAvailable, isStartBlocked, shouldStopRefWork } from './services/startGuard'
+ import {
+   buildEmptyRefGateDeps,
+   nonInteractiveGateView,
+   runEmptyRefGateFlow,
+@@ -763,34 +764,33 @@ function App() {
+       if (Array.isArray(vs)) mergeTtsVoices(vs.map((v) => ({ ...v, provider })))
+     } catch {
+       // Search is opportunistic; existing seed/account voices remain usable.
+     }
+   }, [mergeTtsVoices])
+ 
+   // M3b 리뷰 Finding 1: 오디오 pre-flight 게이트에서 키를 막 저장한 뒤엔 handleTtsVoiceSearch로
+   // "재조회"할 수 없다 — 그 함수는 검색어 2자 미만이면 조용히 no-op하는 원격 검색이라(빈 검색어로
+   // provider 전체를 다시 긁는 용도가 아니다), 그 provider의 목소리를 처음부터 다시 로드하는
+   // 별도 경로가 필요하다. 초기 로드 이펙트(~L711)와 같은 모양으로 provider 하나만 다시 긁어 병합.
++  // Finding2(2R 리뷰): mergeTtsVoices는 voice별 upsert라, 키를 다른 계정으로 교체한 뒤 재조회해도
++  // 이전 계정의 stale voice가 그대로 남는다(새 목록에 없다고 지워지지 않음). 이 provider "슬라이스"는
++  // 방금 받아온 목록으로 통째로 교체해야 한다 — 다른 provider의 voice는 그대로 둔다.
+   const reloadTtsVoicesForProvider = useCallback(async (provider) => {
+     if (!provider) return
+     try {
+-      const vs = await window.electronAPI?.ttsListVoices?.({
+-        provider,
+-        includeShared: provider === 'elevenlabs',
+-        limit: 100,
+-        maxSharedPages: provider === 'elevenlabs' ? 10 : 1,
+-      })
+-      if (Array.isArray(vs)) mergeTtsVoices(vs.map((v) => ({ ...v, provider })))
++      const vs = await window.electronAPI?.ttsListVoices?.(ttsListVoicesReloadParams(provider))
++      if (!Array.isArray(vs)) return
++      setTtsVoices((prev) => replaceTtsVoicesForProvider(prev, provider, vs))
+     } catch {
+       // best-effort — 실패해도 뒤이은 preflight 재검사는 별도로 진행된다.
+     }
+-  }, [mergeTtsVoices])
++  }, [])
+ 
+   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
+   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
+   //   아직 dynamic 을 못 받았을 때만 — 이미 받았으면 반복 스크랩 생략.
+   useEffect(() => {
+     if (mode === 'flow' && flowProjectReady && modelsSource !== 'dynamic') refetchModels?.()
+   }, [mode, flowProjectReady, modelsSource, refetchModels])
+ 
+   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
+   const automation = useAutomation(
+diff --git a/src/components/settings/ApiKeyTab.jsx b/src/components/settings/ApiKeyTab.jsx
+index fd6a4eb0..55fdbf62 100644
+--- a/src/components/settings/ApiKeyTab.jsx
++++ b/src/components/settings/ApiKeyTab.jsx
+@@ -1,41 +1,41 @@
+ /**
+  * ApiKeyTab — 모든 API 키를 한 곳에서. Gemini(BYOK, 이미지·Veo·Gemini TTS 공용) + Story TTS
+  * provider(Typecast/ElevenLabs/Google Cloud TTS). 각 provider 는 ApiKeyField wrapper 로 독립 관리.
+  */
+ import GenaiApiKeyField from './GenaiApiKeyField'
+ import TtsApiKeyField from './TtsApiKeyField'
++import { API_KEY_REGISTRY } from '../../config/apiKeyRegistry'
+ 
+-const TTS_PROVIDERS = [
+-  { id: 'typecast', label: 'Typecast', url: 'https://app.typecast.ai' },
+-  { id: 'elevenlabs', label: 'ElevenLabs', url: 'https://elevenlabs.io/app/settings/api-keys' },
+-  { id: 'googletts', label: 'Google Cloud TTS', url: 'https://console.cloud.google.com/apis/credentials' },
+-]
++// Finding4(M3b 2R 리뷰): label/url을 여기 따로 하드코딩하지 않는다 — API_KEY_REGISTRY가 이미
++// 단일 진실(AudioKeyGateCard가 쓰는 것과 같은 테이블)이다. store!=='genai'로 걸러 gemini(별도
++// GenaiApiKeyField로 이미 렌더)를 뺀 나머지 3개 TTS provider만 순서대로 남는다.
++const TTS_PROVIDER_IDS = Object.keys(API_KEY_REGISTRY).filter((id) => API_KEY_REGISTRY[id].store !== 'genai')
+ 
+ const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
+ 
+ export default function ApiKeyTab({ t }) {
+   const openLink = (url) => window.electronAPI?.openExternal?.(url)
+   return (
+     <div className="settings-tab-content">
+       <div className="settings-section">
+         <h3>{t('settings.apiKeyTitle')}</h3>
+         <GenaiApiKeyField t={t} />
+-        {TTS_PROVIDERS.map((p) => (
++        {TTS_PROVIDER_IDS.map((id) => (
+           <TtsApiKeyField
+-            key={p.id}
+-            provider={p.id}
+-            label={p.label}
+-            getKeyUrl={p.url}
++            key={id}
++            provider={id}
++            label={API_KEY_REGISTRY[id].label}
++            getKeyUrl={API_KEY_REGISTRY[id].url}
+             extraNote={
+-              p.id === 'elevenlabs' ? t('settings.elevenlabsVoicesReadHint')
+-              : p.id === 'googletts' ? t('settings.googlettsStoryUnavailable')
++              id === 'elevenlabs' ? t('settings.elevenlabsVoicesReadHint')
++              : id === 'googletts' ? t('settings.googlettsStoryUnavailable')
+               : undefined
+             }
+             t={t}
+           />
+         ))}
+         <span className="setting-sublabel" style={{ display: 'block', marginTop: '8px' }}>{t('settings.apiKeySecurityNote')}</span>
+       </div>
+ 
+       {/* Gemini 온보딩 가이드 (기존 유지) */}
+       <div className="settings-section">
+diff --git a/src/components/settings/GenaiApiKeyField.jsx b/src/components/settings/GenaiApiKeyField.jsx
+index 276bcc06..e4bba0f7 100644
+--- a/src/components/settings/GenaiApiKeyField.jsx
++++ b/src/components/settings/GenaiApiKeyField.jsx
+@@ -1,18 +1,19 @@
+ /**
+  * GenaiApiKeyField — Google Gemini(BYOK) 키 필드. useApiKey 를 고정 호출하고
+  * ApiKeyField(presentational)에 상태/콜백을 넘긴다. 저장 전 검증(validateKey)을 거친다.
+  */
+ import { useState } from 'react'
+ import { toast } from '../Toast'
+ import { useApiKey } from '../../hooks/useApiKey'
+ import ApiKeyField from './ApiKeyField'
++import { API_KEY_REGISTRY } from '../../config/apiKeyRegistry'
+ 
+ export default function GenaiApiKeyField({ t, onSaved }) {
+   const { hasKey, encryptionAvailable, loading, validateKey, saveKey, clearKey } = useApiKey()
+   const [keyInput, setKeyInput] = useState('')
+   const [busy, setBusy] = useState(false)
+   const onSave = async () => {
+     const c = keyInput.trim()
+     if (!c) { toast.error(t('settings.apiKeyEmpty')); return }
+     setBusy(true)
+     const v = await validateKey(c)
+@@ -22,18 +23,20 @@ export default function GenaiApiKeyField({ t, onSaved }) {
+     if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')); onSaved?.() }
+     else toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
+   }
+   const onRemove = async () => {
+     setBusy(true)
+     const res = await clearKey()
+     setBusy(false)
+     if (res?.success === false) toast.error(t('settings.apiKeyRemoveFailed', { error: res?.error || '' }))
+     else toast.success(t('settings.apiKeyRemoved'))
+   }
++  // Finding4(M3b 2R 리뷰): label/url을 여기 하드코딩하지 않고 API_KEY_REGISTRY.gemini(단일
++  // 진실 — AudioKeyGateCard/ApiKeyTab과 같은 테이블)에서 읽는다.
+   return (
+     <ApiKeyField
+-      label="Google Gemini" hasKey={hasKey} loading={loading} encryptionAvailable={encryptionAvailable}
++      label={API_KEY_REGISTRY.gemini.label} hasKey={hasKey} loading={loading} encryptionAvailable={encryptionAvailable}
+       busy={busy} keyInput={keyInput} onKeyInput={setKeyInput} onSave={onSave} onRemove={onRemove}
+-      getKeyUrl="https://aistudio.google.com/apikey" extraNote={t('settings.ttsKeyGeminiNote')} t={t}
++      getKeyUrl={API_KEY_REGISTRY.gemini.url} extraNote={t('settings.ttsKeyGeminiNote')} t={t}
+     />
+   )
+ }
+diff --git a/src/components/story/StoryView.jsx b/src/components/story/StoryView.jsx
+index 6fa78b32..f91e14ab 100644
+--- a/src/components/story/StoryView.jsx
++++ b/src/components/story/StoryView.jsx
+@@ -1209,39 +1209,52 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+   const storySrtEntries = useMemo(() => buildStorySrtEntries(scenes), [scenes])
+   // Codex-Low: sfx만 있는 story(narration 없음)도 타임라인에 나오도록 sfx도 포함해 판정.
+   const hasStoryAudio = storyAudioPkg.voices.some((v) => v.files.length > 0)
+     || storyAudioPkg.sfx.some((s) => s.files.length > 0)
+ 
+   // 슬라이스1: 세그먼트 단건 테스트 — 배치와 분리해 그 세그먼트만 합성(화자 매핑 반영) 후 바로 재생.
+   // Finding3(리뷰): 배치(runAudioWithPreflight를 거치는 audio())와 달리 이 단건 테스트는 preflight
+   // 없이 바로 ttsPreview를 불렀다 — 키가 없으면 IPC 거절이 errorKind 없이 raw 토스트로 샌다.
+   // backend audioPreflight가 mode:'segmentTest'(stepMachine:1971)를 이미 지원하므로 여기서도
+   // runAudioWithPreflight를 재사용해 같은 게이트 카드로 안내한다.
++  // Finding1(2R 리뷰): 게이트가 뜬 뒤 "키 저장"은 AudioKeyGateCard.onKeySaved(~L2166)가
++  // testSegment의 try/finally가 이미 끝난 뒤 audioGate.retry()로 별도(비동기) 재호출한다.
++  // 그 retry가 원래처럼 raw ttsPreview 콜백을 그대로 부르면 previewBusy 가드도 catch도 없이
++  // 실행돼, "존재하지만 무효한" 키에서 ttsPreview가 거부될 때 unhandled rejection +
++  // 번역 안 된 토스트로 새고, 두 번째 트리거와 겹칠 수도 있다. 가드+에러 처리를 가진 실행부를
++  // 별도 함수로 빼서 최초 호출과 retry가 항상 같은(가드된) 경로를 타게 한다.
++  const previewBusyRef = useRef(false)
+   const [previewBusy, setPreviewBusy] = useState(false)
+-  const testSegment = async (segId) => {
+-    if (previewBusy) return
++  const runSegmentTestGuarded = async (segId) => {
++    if (previewBusyRef.current) return
++    previewBusyRef.current = true
+     setPreviewBusy(true)
+     try {
+       const ap = buildAudioParams()
+-      const result = await runAudioWithPreflight({ ...ap, mode: 'segmentTest', segmentIds: [segId] }, async () => {
+-        const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
+-        if (r?.busy) { toast.error(t('story.audio.busy')); return }
+-        const seg = r?.segments?.find((s) => s.id === segId)
+-        if (seg?.audioPath) playAudio(seg.audioPath)
+-      })
+-      if (result?.error === 'preflight-missing-key') return // 게이트 카드가 이미 안내한다.
++      const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
++      if (r?.busy) { toast.error(t('story.audio.busy')); return }
++      const seg = r?.segments?.find((s) => s.id === segId)
++      if (seg?.audioPath) playAudio(seg.audioPath)
+     } catch (e) {
+       toast.error(t('story.audio.testFailed', { error: e?.message || e }))
+     } finally {
++      previewBusyRef.current = false
+       setPreviewBusy(false)
+     }
+   }
++  const testSegment = async (segId) => {
++    if (previewBusyRef.current) return
++    const ap = buildAudioParams()
++    // run 콜백은 runSegmentTestGuarded 그대로 — runAudioWithPreflight가 이걸 audioGate.retry로도
++    // 저장하므로(위 주석), 최초 실행과 키 저장 후 retry가 완전히 같은 가드된 경로를 탄다.
++    return runAudioWithPreflight({ ...ap, mode: 'segmentTest', segmentIds: [segId] }, () => runSegmentTestGuarded(segId))
++  }
+ 
+   const startScriptFromTitle = () => {
+     setBaseScript('')
+     start('script', {
+       input: { type: 'title', title },
+       options: currentOptions(),
+     })
+     setScriptPhase('editor')
+   }
+ 
+@@ -2156,22 +2169,31 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+                 검색어 2자 미만이면 조용히 no-op하는 원격 "검색"이라 provider 목소리를 다시
+                 로드하지 못한다(prod no-op). onReloadVoices(=App.reloadTtsVoicesForProvider)가
+                 그 provider 슬라이스를 처음부터 다시 긁는 전용 경로다. */}
+             {audioGate && (
+               <AudioKeyGateCard
+                 missing={audioGate.missing}
+                 t={t}
+                 onKeySaved={async (provider) => {
+                   try { await onReloadVoices?.(provider) } catch { /* best-effort — 재조회 실패해도 재검사는 진행 */ }
+                   const r = await preflight.check(audioGate.paramsForRecheck)
+-                  if (r.ok) { setAudioGate(null); audioGate.retry?.() }
+-                  else setAudioGate((g) => (g ? { ...g, missing: r.missing } : g))
++                  if (r.ok) {
++                    setAudioGate(null)
++                    // Finding1(2R 리뷰): retry는 여기서 fire-and-forget으로 불리면 그 안에서
++                    // 도는 실제 실행이 이 컴포넌트의 원래 호출부(testSegment 등)의 try/finally
++                    // 밖에서 돈다 — await+catch로 감싸 unhandled rejection을 막는다. 세그먼트
++                    // 테스트 경로는 retry 자체가 이미 가드+토스트를 갖고 있어(runSegmentTestGuarded)
++                    // 안 던지지만, 다른 진입점(배치 실행 등)의 방어도 여기서 함께 확보한다.
++                    try { await audioGate.retry?.() } catch { /* run 콜백이 이미 자체 처리 — 방어적 캐치 */ }
++                  } else {
++                    setAudioGate((g) => (g ? { ...g, missing: r.missing } : g))
++                  }
+                 }}
+               />
+             )}
+             {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행).
+                 로그를 함께 넘긴다 — 파일 가져오기의 진단(정렬 결과, 자막이 안 맞는 위치)이 여기로
+                 온다. 안 넘기면 그 정보가 어디에도 안 보인다(오류 배너는 errorKind로 번역되면서
+                 상세 메시지를 버린다 — errorDisplay.js). */}
+             {steps.audio?.status === 'running' && (
+               <StoryRunning usage={usage}
+                 label={t('story.audio.running', '오디오 생성 중')}
+@@ -2345,20 +2367,21 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+                       <VoicePicker
+                         voices={storyVoices}
+                         selected={voiceSel.pickerSelection}
+                         initialGender={resolveCharacterGender(sp)}
+                         onSelect={voiceSel.setPickerSelection}
+                         onPreview={(voice) => voiceSel.preview.play(voice)}
+                         onOverrideGender={voiceSel.handleOverrideGender}
+                         onConfirm={voiceSel.confirmVoice}
+                         onCancel={voiceSel.closeVoicePicker}
+                         onVoiceSearch={onVoiceSearch}
++                        onReloadVoices={onReloadVoices}
+                         previewState={voiceSel.preview.state}
+                         t={t}
+                         isKo={isKo}
+                       />
+                     </Modal>
+                   )
+                 })()}
+                 {/* done 게이트를 걷어냈다 — **일부라도 만들어졌으면 보여야 확인할 수 있다.**
+                     "이 화자만 생성"은 설계상 조립을 건너뛰고 done 을 안 찍는다(반쪽 타임라인·manifest 가
+                     생기면 안 되므로). done 을 요구하면 그 기능이 영영 타임라인을 못 봐 "나레이터만 먼저
+diff --git a/src/components/story/VoicePicker.jsx b/src/components/story/VoicePicker.jsx
+index 130c3b0c..6accd1eb 100644
+--- a/src/components/story/VoicePicker.jsx
++++ b/src/components/story/VoicePicker.jsx
+@@ -53,20 +53,21 @@ function genderInfo(gender, t, isKo) {
+ 
+ export default function VoicePicker({
+   voices = [],
+   selected = {},
+   onSelect,
+   onPreview,
+   onOverrideGender,
+   onConfirm,
+   onCancel,
+   onVoiceSearch = null,
++  onReloadVoices = null,
+   previewState = { voiceId: null, status: 'idle' },
+   initialGender = null,
+   t,
+   isKo
+ }) {
+   const [activeProvider, setActiveProvider] = useState('all')
+   // C(성우 추천): 캐릭터 성별이 잡히면(initialGender) 그 세그먼트로 시작. 없거나 잘못된 값이면
+   // 'all'로 폴백해 기존 동작을 유지한다.
+   const [activeGender, setActiveGender] = useState(GENDER_SEGMENTS.has(initialGender) ? initialGender : 'all')
+   const [query, setQuery] = useState('')
+@@ -257,26 +258,32 @@ export default function VoicePicker({
+                   </div>
+                 </div>
+               </div>
+               {v.traits?.length > 0 && (
+                 <div className="vp-tags">
+                   {v.traits.map(tag => <span key={tag} className="vp-tag">{tag}</span>)}
+                 </div>
+               )}
+               {/* Task 3(attempt-first): a preview click first tries the call, and only when it
+                   actually fails with no-key does an inline key field show up right on the card
+-                  that was clicked — the list itself stays keyless (no upfront gate per voice). */}
++                  that was clicked — the list itself stays keyless (no upfront gate per voice).
++                  Finding3(2R 리뷰): 저장 후 이 provider의 계정 목소리를 다시 안 긁으면(onReloadVoices)
++                  키 저장 전에는 없던(키 필요한) 계정 목소리가 목록에 영영 안 나타난다 — preview
++                  재시도와 별개로 그 provider 슬라이스를 재조회한다(best-effort, 실패해도 preview는 시도). */}
+               {previewStatus === 'error' && previewState?.error === 'no-key' && (
+                 <div onClick={(e) => e.stopPropagation()}>
+                   <AudioKeyGateCard
+                     missing={[{ provider: v.provider, keyId: keyIdForProvider(v.provider) }]}
+-                    onKeySaved={() => onPreview({ provider: v.provider, voiceId: v.id, language: v.language, genderSource: v.genderSource, name: v.name })}
++                    onKeySaved={async () => {
++                      try { await onReloadVoices?.(v.provider) } catch { /* best-effort — 재조회 실패해도 preview는 이어간다 */ }
++                      onPreview({ provider: v.provider, voiceId: v.id, language: v.language, genderSource: v.genderSource, name: v.name })
++                    }}
+                     t={t}
+                   />
+                 </div>
+               )}
+               <span className="vp-check">✔</span>
+ 
+               {overrideKey === key && (
+                 <>
+                   <div className="vp-override-overlay" onClick={(e) => { e.stopPropagation(); setOverrideKey(null) }} />
+                   <div className="vp-override-menu" onClick={(e) => e.stopPropagation()}>
+diff --git a/src/utils/ttsVoiceReload.js b/src/utils/ttsVoiceReload.js
+new file mode 100644
+index 00000000..275cd86f
+--- /dev/null
++++ b/src/utils/ttsVoiceReload.js
+@@ -0,0 +1,22 @@
++// Pure helpers behind App.jsx's reloadTtsVoicesForProvider (M3b 2R review, Finding2/Finding5).
++// Extracted so the REPLACE-not-merge semantics and the elevenlabs-specific list params are
++// unit-testable without rendering the 3000+ line App component.
++
++// Params for a full provider reload — mirrors the initial preload effect's shape (App.jsx ~L715),
++// elevenlabs gets shared-voice search across more pages since its catalog is large.
++export function ttsListVoicesReloadParams(provider) {
++  return {
++    provider,
++    includeShared: provider === 'elevenlabs',
++    limit: 100,
++    maxSharedPages: provider === 'elevenlabs' ? 10 : 1,
++  }
++}
++
++// REPLACE (not merge) semantics: after a key swap, stale voices from the previous account must
++// not survive a reload just because the fresh list doesn't happen to include their ids. Drop all
++// existing entries for `provider`, keep every other provider's voices untouched, append fresh.
++export function replaceTtsVoicesForProvider(prevVoices, provider, fetchedVoices) {
++  const fresh = (fetchedVoices || []).map((v) => ({ ...v, provider }))
++  return [...(prevVoices || []).filter((v) => v.provider !== provider), ...fresh]
++}
+diff --git a/tests/components/App.storyVoiceReload.test.js b/tests/components/App.storyVoiceReload.test.js
+index 6afdb72a..078ecba4 100644
+--- a/tests/components/App.storyVoiceReload.test.js
++++ b/tests/components/App.storyVoiceReload.test.js
+@@ -1,44 +1,62 @@
+ // @vitest-environment node
+ /**
+  * M3b 리뷰 Finding 1 — StoryView의 오디오 키 게이트 onKeySaved가 App의 handleTtsVoiceSearch로
+  * "재조회"를 흉내내던 문제(그 함수는 query.length<2면 no-op하는 원격 검색이라 실제로는 아무 일도
+  * 안 함, prod no-op). App.jsx가 별도의 provider 슬라이스 재로드 함수(reloadTtsVoicesForProvider)를
+- * 갖고 그걸 StoryView에 onReloadVoices로 꽂는지 소스 레벨로 확인한다.
++ * 갖고 그걸 StoryView에 onReloadVoices로 꽂는지 확인한다.
++ *
++ * M3b 2R 리뷰 Finding5 — 예전엔 이 파일이 reloadTtsVoicesForProvider의 "merge" 동작을 소스
++ * 문자열(`mergeTtsVoices(vs.map(...))`)로 grep해 고정했다. 포매팅이 조금만 바뀌어도 깨지고,
++ * 실행되지 않아 로직이 바뀌어도 안 잡히는 죽은 체크였다(Finding2가 그 merge를 REPLACE로 바꾸면서
++ * 실제로 이 assertion을 못 쓰게 됐다). REPLACE 시맨틱과 elevenlabs 전용 list 파라미터의 실제
++ * 동작 검증은 App.jsx가 쓰는 순수 함수(src/utils/ttsVoiceReload.js)를 직접 import해 실행하는
++ * tests/utils/ttsVoiceReload.test.js로 옮겼다 — 이 파일은 "App이 그 함수들을 쓰고 StoryView에
++ * 제대로 꽂았는지"(배선)만 남긴다.
+  *
+  * App.jsx는 3000줄 넘는 단일 컴포넌트라(다른 App.*.test.js들도 같은 접근 — 예:
+  * App.emptyRefGateWiring.test.js) 여기서도 전체 렌더 대신 소스 슬라이스로 배선을 검증한다.
+  * 실제 게이트 동작(onKeySaved→onReloadVoices 호출 계약)은
+  * tests/components/story/storyAudioGate.test.jsx가 StoryView를 직접 렌더해서 검증한다.
+  */
+ import fs from 'node:fs'
+ import { describe, expect, it } from 'vitest'
++import { ttsListVoicesReloadParams, replaceTtsVoicesForProvider } from '../../src/utils/ttsVoiceReload.js'
+ 
+ const source = fs.readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8')
+ 
+ const sliceBetween = (startToken, endToken, from = 0) => {
+   const start = source.indexOf(startToken, from)
+   const end = source.indexOf(endToken, start)
+   return source.slice(start, end)
+ }
+ 
+ const reloadImpl = sliceBetween(
+   'const reloadTtsVoicesForProvider = useCallback(',
+   '// Flow 프로젝트가 준비되면',
+ )
+ const storyViewJsx = sliceBetween('<StoryView', '/>')
+ 
+-describe('App story voice reload wiring (Finding 1)', () => {
+-  it('reloadTtsVoicesForProvider가 존재하고 ttsListVoices 전체 재조회 후 mergeTtsVoices로 병합한다', () => {
+-    expect(reloadImpl).toContain('window.electronAPI?.ttsListVoices?.(')
+-    expect(reloadImpl).toContain('provider,')
+-    expect(reloadImpl).toContain('mergeTtsVoices(vs.map((v) => ({ ...v, provider })))')
++describe('App story voice reload wiring (Finding 1 / Finding 2 / Finding 5)', () => {
++  it('reloadTtsVoicesForProvider가 존재하고 ttsListVoices 재조회 후 REPLACE 헬퍼로 반영한다(배선만 — 로직은 ttsVoiceReload.test.js가 직접 실행해 검증)', () => {
++    expect(reloadImpl).toContain('window.electronAPI?.ttsListVoices?.(ttsListVoicesReloadParams(provider))')
++    expect(reloadImpl).toContain('setTtsVoices((prev) => replaceTtsVoicesForProvider(prev, provider, vs))')
+   })
+ 
+   it('<StoryView>는 onReloadVoices=reloadTtsVoicesForProvider를 꽂는다', () => {
+     expect(storyViewJsx).toContain('onReloadVoices={reloadTtsVoicesForProvider}')
+   })
+ 
+   it('onVoiceSearch(검색 전용, query<2 no-op)는 여전히 유지된다 — 재조회와는 별개 채널', () => {
+     expect(storyViewJsx).toContain('onVoiceSearch={handleTtsVoiceSearch}')
+   })
++
++  // App.jsx가 실제로 import해서 쓰는 그 함수들이 맞는지(경로 스킴 불일치로 다른 구현을 테스트하고
++  // 있는 게 아닌지) — 여기서도 직접 실행해서 확인한다. 전체 동작 매트릭스는 ttsVoiceReload.test.js.
++  it('App.jsx가 쓰는 헬퍼는 실제로 REPLACE 시맨틱을 실행한다(스모크)', () => {
++    expect(ttsListVoicesReloadParams('elevenlabs').maxSharedPages).toBe(10)
++    const prev = [{ provider: 'typecast', id: 'stale' }]
++    expect(replaceTtsVoicesForProvider(prev, 'typecast', [{ id: 'fresh' }])).toEqual([
++      { provider: 'typecast', id: 'fresh' },
++    ])
++  })
+ })
+diff --git a/tests/components/story/StoryView.test.jsx b/tests/components/story/StoryView.test.jsx
+index e229bb9f..0a4336bf 100644
+--- a/tests/components/story/StoryView.test.jsx
++++ b/tests/components/story/StoryView.test.jsx
+@@ -157,20 +157,56 @@ describe('StoryView', () => {
+       { id: 'rachel', name: 'Rachel', language: 'multi', provider: 'elevenlabs', traits: ['female'] },
+     ]
+     render(<StoryView pipeline={p} voices={voices} />)
+     fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+     fireEvent.click(screen.getByLabelText('나레이션 목소리'))
+     fireEvent.change(screen.getByPlaceholderText(/검색|search/i), { target: { value: 'energetic' } })
+     expect(screen.getByText('Liam')).toBeInTheDocument()
+     expect(screen.queryByText('Rachel')).not.toBeInTheDocument()
+   })
+ 
++  // Finding3(M3b 2R 리뷰): VoicePicker 인라인 키 게이트는 preview 재시도만 하고, 그 provider의
++  // 계정 목소리를 다시 안 긁었다 — StoryView가 onReloadVoices를 VoicePicker까지 실제로 이어
++  // 꽂았는지(prop 배선) end-to-end로 확인한다(useApiKey/useTtsKeys 목킹 없이 window.electronAPI만
++  // 스텁 — 실제 훅 경로를 그대로 태운다).
++  it('VoicePicker 인라인 키 게이트 저장 시 onReloadVoices(provider)가 실제로 호출된다', async () => {
++    const originalElectronAPI = window.electronAPI
++    window.electronAPI = {
++      ttsPreviewVoice: vi.fn().mockResolvedValue({ error: 'no-key' }),
++      keysStatus: vi.fn().mockResolvedValue({ hasKey: false, encryptionAvailable: true }),
++      keysSet: vi.fn().mockResolvedValue({ success: true }),
++      keysDelete: vi.fn().mockResolvedValue({ success: true }),
++    }
++    try {
++      const p = pipeline({ scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: 'x' }] }] })
++      p.state.steps.script.status = 'done'
++      p.state.steps.scenes.status = 'done'
++      p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: null }]
++      const voices = [{ id: 'tc_joon', name: 'Joonkyu', language: 'ko', provider: 'typecast' }]
++      const onReloadVoices = vi.fn(async () => {})
++      localStorage.setItem('autoflowcut_lang', 'ko')
++      render(<I18nProvider><StoryView pipeline={p} voices={voices} onReloadVoices={onReloadVoices} /></I18nProvider>)
++      fireEvent.click(screen.getByRole('button', { name: '오디오' }))
++      fireEvent.click(screen.getByLabelText('나레이션 목소리'))
++      fireEvent.click(screen.getByLabelText('미리듣기'))
++      await waitFor(() => expect(window.electronAPI.ttsPreviewVoice).toHaveBeenCalled())
++
++      const input = await waitFor(() => document.querySelector('.audio-key-gate input[type="password"]'))
++      fireEvent.change(input, { target: { value: 'sk-abc' } })
++      fireEvent.click(screen.getByRole('button', { name: '저장' }))
++
++      await waitFor(() => expect(onReloadVoices).toHaveBeenCalledWith('typecast'))
++    } finally {
++      window.electronAPI = originalElectronAPI
++    }
++  })
++
+   // Codex M2a-3: 기본 성우(빈 옵션) 명시 선택은 기존 voice를 유지하지 말고 null로 비워야 한다
+   // (backend defaultVoice로 폴백). `??`가 빈문자열을 "오버라이드 없음"으로 오인하던 버그.
+   it('기본 성우(빈 옵션) 선택은 화자 voice를 null로 비운다', () => {
+     const p = pipeline({ scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: 'x' }] }] })
+     p.state.steps.script.status = 'done'
+     p.state.steps.scenes.status = 'done'
+     p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_old' } }]
+     const voices = [{ id: 'tc_new', name: 'New', language: 'ko', provider: 'typecast' }]
+     render(<StoryView pipeline={p} voices={voices} />)
+     fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+diff --git a/tests/components/story/VoicePicker.noKeyInline.test.jsx b/tests/components/story/VoicePicker.noKeyInline.test.jsx
+index 7f63f1d8..6651a30a 100644
+--- a/tests/components/story/VoicePicker.noKeyInline.test.jsx
++++ b/tests/components/story/VoicePicker.noKeyInline.test.jsx
+@@ -101,11 +101,66 @@ describe('VoicePicker attempt-first no-key inline card', () => {
+         isKo
+       />,
+     )
+     const input = document.querySelector('.audio-key-gate input[type="password"]')
+     fireEvent.change(input, { target: { value: 'sk-abc' } })
+     fireEvent.click(screen.getByRole('button', { name: 'settings.ttsKeySave' }))
+ 
+     await new Promise((r) => setTimeout(r, 0)) // flush onSave's await saveKey()
+     expect(onPreview).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: null, name: 'Sanghyun' })
+   })
++
++  // Finding3(2R 리뷰): 이전엔 onKeySaved가 preview 재시도만 하고 그 provider의 계정 목소리를
++  // 다시 안 긁었다 — 키를 막 저장한 계정 전용(키 게이트된) 목소리가 이번 렌더의 voices 목록에는
++  // 없으므로, 재조회를 안 하면 그 목소리들이 화면에 영영 안 나타난다. onReloadVoices(provider)와
++  // preview 재시도를 둘 다 해야 한다.
++  it('finding3: saving the key inline also reloads that provider account voices (onReloadVoices), then re-attempts preview', async () => {
++    mockTtsSaveKey.mockResolvedValue({ success: true })
++    const onPreview = vi.fn()
++    const onReloadVoices = vi.fn(async () => {})
++    const previewState = { status: 'error', error: 'no-key', provider: 'typecast', voiceId: 'v1' }
++    render(
++      <VoicePicker
++        voices={voices}
++        selected={{}}
++        onSelect={vi.fn()}
++        onPreview={onPreview}
++        onOverrideGender={vi.fn()}
++        onReloadVoices={onReloadVoices}
++        previewState={previewState}
++        t={t}
++        isKo
++      />,
++    )
++    const input = document.querySelector('.audio-key-gate input[type="password"]')
++    fireEvent.change(input, { target: { value: 'sk-abc' } })
++    fireEvent.click(screen.getByRole('button', { name: 'settings.ttsKeySave' }))
++
++    await new Promise((r) => setTimeout(r, 0)) // flush onSave's await saveKey()
++    expect(onReloadVoices).toHaveBeenCalledWith('typecast')
++    expect(onPreview).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: null, name: 'Sanghyun' })
++  })
++
++  it('finding3: missing onReloadVoices prop does not break the preview re-attempt (best-effort)', async () => {
++    mockTtsSaveKey.mockResolvedValue({ success: true })
++    const onPreview = vi.fn()
++    const previewState = { status: 'error', error: 'no-key', provider: 'typecast', voiceId: 'v1' }
++    render(
++      <VoicePicker
++        voices={voices}
++        selected={{}}
++        onSelect={vi.fn()}
++        onPreview={onPreview}
++        onOverrideGender={vi.fn()}
++        previewState={previewState}
++        t={t}
++        isKo
++      />,
++    )
++    const input = document.querySelector('.audio-key-gate input[type="password"]')
++    fireEvent.change(input, { target: { value: 'sk-abc' } })
++    fireEvent.click(screen.getByRole('button', { name: 'settings.ttsKeySave' }))
++
++    await new Promise((r) => setTimeout(r, 0))
++    expect(onPreview).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: null, name: 'Sanghyun' })
++  })
+ })
+diff --git a/tests/components/story/storyAudioGate.test.jsx b/tests/components/story/storyAudioGate.test.jsx
+index 8983b89e..97f06aae 100644
+--- a/tests/components/story/storyAudioGate.test.jsx
++++ b/tests/components/story/storyAudioGate.test.jsx
+@@ -167,20 +167,66 @@ describe('StoryView — 오디오 pre-flight 키 게이트', () => {
+     fireEvent.click(screen.getByRole('button', { name: '오디오' })) // 스텝퍼 → viewedStep=audio(done)
+     fireEvent.click(screen.getByRole('button', { name: /오디오 다시 생성/ })) // redo
+ 
+     await waitFor(() => expect(audioPreflight).toHaveBeenCalled())
+     expect(await screen.findByText('Typecast')).toBeTruthy() // 게이트 카드가 여전히 보인다
+     expect(start).not.toHaveBeenCalled()
+     // 오디오 패널을 벗어나 다른 스텝(프롬프트 등)으로 새지 않았다 — redo 버튼이 그대로 남아 있다.
+     expect(screen.getByRole('button', { name: /오디오 다시 생성/ })).toBeTruthy()
+   })
+ 
++  // Finding1(2R 리뷰): 세그먼트 "테스트" 게이트에서 키 저장→재시도는 testSegment의 원래
++  // try/finally 밖(AudioKeyGateCard.onKeySaved)에서 돈다 — 그 retry가 가드/catch 없는 raw
++  // ttsPreview 호출이면, 존재하지만 무효한 키에서 ttsPreview가 reject할 때 unhandled rejection +
++  // 번역 안 된 토스트로 샌다. retry가 testSegment와 같은 가드된 경로(에러 토스트 포함)를 타야 한다.
++  it('세그먼트 "테스트" 게이트에서 키 저장 후 retry가 가드된 경로를 타 — ttsPreview가 거부돼도 unhandled 없이 에러 토스트를 보여준다', async () => {
++    const ttsPreview = vi.fn()
++      .mockRejectedValueOnce(new Error('invalid api key'))
++    const audioPreflight = vi.fn()
++      .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }], encryptionAvailable: true })
++      .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'resolved-store' }], encryptionAvailable: true })
++    const onReloadVoices = vi.fn(async () => {})
++    mockSaveKey.mockResolvedValue({ success: true })
++
++    const unhandled = vi.fn()
++    process.on('unhandledRejection', unhandled)
++    try {
++      renderStory(pipeline({
++        ttsPreview,
++        audioPreflight,
++        scenes: [{ storyId: 's1', segments: [{ id: 's1-1', speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
++      }), { onReloadVoices })
++      fireEvent.click(screen.getByRole('button', { name: '오디오' })) // 스텝퍼 → viewedStep=audio
++      fireEvent.click(screen.getByRole('button', { name: 's1-1 테스트' }))
++
++      await screen.findByText('Typecast')
++      expect(ttsPreview).not.toHaveBeenCalled()
++
++      const input = document.querySelector('.audio-key-gate input[type="password"]')
++      fireEvent.change(input, { target: { value: 'sk-invalid' } })
++      fireEvent.click(screen.getByRole('button', { name: /저장|Save/i }))
++
++      await waitFor(() => expect(ttsPreview).toHaveBeenCalledWith(
++        expect.objectContaining({ segmentIds: ['s1-1'] }),
++      ))
++      // 게이트는 재검사 통과로 닫힌다 — 실패는 ttsPreview 쪽(무효 키)에서 난다.
++      await waitFor(() => expect(screen.queryByText('Typecast')).toBeNull())
++      // 가드된 경로(runSegmentTestGuarded)의 catch가 번역된 에러 토스트를 보여준다.
++      await screen.findByText('테스트 실패: invalid api key')
++      // 매크로태스크 한 틱을 더 흘려보내 어떤 unhandled rejection도 없었는지 확인.
++      await new Promise((resolve) => setTimeout(resolve, 0))
++      expect(unhandled).not.toHaveBeenCalled()
++    } finally {
++      process.off('unhandledRejection', unhandled)
++    }
++  })
++
+   // Finding2(리뷰) 미러 — 세그먼트 단건 "재생성"도 같은 이유로 같은 문제가 있었다.
+   it('세그먼트 "재생성"이 missing 키로 막히면 오디오 패널이 그대로 보인다', async () => {
+     const start = vi.fn()
+     const audioPreflight = vi.fn().mockResolvedValue({
+       providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }],
+       encryptionAvailable: true,
+     })
+     renderStory(pipeline({
+       start,
+       audioPreflight,
+diff --git a/tests/utils/ttsVoiceReload.test.js b/tests/utils/ttsVoiceReload.test.js
+new file mode 100644
+index 00000000..df2de3c7
+--- /dev/null
++++ b/tests/utils/ttsVoiceReload.test.js
+@@ -0,0 +1,73 @@
++/**
++ * M3b 2R 리뷰 Finding2/Finding5 — App.jsx의 reloadTtsVoicesForProvider 핵심 로직(REPLACE 시맨틱 +
++ * elevenlabs 전용 list 파라미터)을 순수 함수로 뽑아 실제로 실행해 검증한다(소스 문자열 grep 아님).
++ */
++import { describe, expect, it } from 'vitest'
++import { ttsListVoicesReloadParams, replaceTtsVoicesForProvider } from '../../src/utils/ttsVoiceReload.js'
++
++describe('ttsListVoicesReloadParams', () => {
++  it('elevenlabs는 shared voice 포함 + maxSharedPages 10', () => {
++    expect(ttsListVoicesReloadParams('elevenlabs')).toEqual({
++      provider: 'elevenlabs',
++      includeShared: true,
++      limit: 100,
++      maxSharedPages: 10,
++    })
++  })
++
++  it('다른 provider는 shared 미포함 + maxSharedPages 1', () => {
++    expect(ttsListVoicesReloadParams('typecast')).toEqual({
++      provider: 'typecast',
++      includeShared: false,
++      limit: 100,
++      maxSharedPages: 1,
++    })
++    expect(ttsListVoicesReloadParams('gemini')).toEqual({
++      provider: 'gemini',
++      includeShared: false,
++      limit: 100,
++      maxSharedPages: 1,
++    })
++  })
++})
++
++describe('replaceTtsVoicesForProvider — Finding2: 계정 교체 후에도 stale voice가 안 남아야 한다', () => {
++  it('대상 provider의 기존 voice를 전부 지우고 새 목록으로 교체한다 (merge/upsert 아님)', () => {
++    const prev = [
++      { provider: 'elevenlabs', id: 'old-1', name: 'Old One' },
++      { provider: 'elevenlabs', id: 'old-2', name: 'Old Two' },
++    ]
++    // 새 계정에는 old-1, old-2가 더 이상 없고 new-1만 있다 — merge라면 old-1/old-2가 살아남는다.
++    const fetched = [{ id: 'new-1', name: 'New One' }]
++
++    const result = replaceTtsVoicesForProvider(prev, 'elevenlabs', fetched)
++
++    expect(result).toEqual([{ provider: 'elevenlabs', id: 'new-1', name: 'New One' }])
++  })
++
++  it('다른 provider의 voice는 손대지 않는다', () => {
++    const prev = [
++      { provider: 'elevenlabs', id: 'e-1', name: 'Eleven' },
++      { provider: 'typecast', id: 't-1', name: 'Typecast One' },
++    ]
++    const fetched = [{ id: 'e-2', name: 'Eleven Two' }]
++
++    const result = replaceTtsVoicesForProvider(prev, 'elevenlabs', fetched)
++
++    expect(result).toEqual([
++      { provider: 'typecast', id: 't-1', name: 'Typecast One' },
++      { provider: 'elevenlabs', id: 'e-2', name: 'Eleven Two' },
++    ])
++  })
++
++  it('fetched voice에 provider 태그를 붙인다(호출부가 안 붙여도 됨)', () => {
++    const result = replaceTtsVoicesForProvider([], 'typecast', [{ id: 't-1' }])
++    expect(result).toEqual([{ provider: 'typecast', id: 't-1' }])
++  })
++
++  it('fetchedVoices가 비거나 없으면 해당 provider 슬라이스가 그냥 사라진다(빈 계정)', () => {
++    const prev = [{ provider: 'elevenlabs', id: 'old-1' }, { provider: 'typecast', id: 't-1' }]
++    expect(replaceTtsVoicesForProvider(prev, 'elevenlabs', [])).toEqual([{ provider: 'typecast', id: 't-1' }])
++    expect(replaceTtsVoicesForProvider(prev, 'elevenlabs', undefined)).toEqual([{ provider: 'typecast', id: 't-1' }])
++  })
++})

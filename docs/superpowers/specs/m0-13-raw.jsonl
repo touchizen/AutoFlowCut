@@ -1,0 +1,55 @@
+{"runId":"mrk6x5tr-8142","label":"M0-13 전제: CLEAN_PATH 에 node 없음","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","platform":"darwin","cleanPath":"/usr/bin:/bin:/usr/sbin:/sbin","whichNode":null}
+{"runId":"mrk6x5tr-8142","label":"M0-13 Electron-as-node 의존성 로드","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","electronBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/electron/dist/AutoFlowCut.app/Contents/MacOS/AutoFlowCut","isElectron":true,"node":"22.19.0","electron":"36.9.5","zod":true,"mcp":true,"pathHasNode":false}
+{"runId":"mrk6x5tr-8142","label":"M0-13 RunAsNode fuse","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","app":"/Users/tuxxon/workspace/AutoFlowCut/release/mac-arm64/AutoFlowCut.app","fuseVersion":"1","runAsNode":"ENABLE"}
+{"runId":"mrk6x5tr-8142","label":"M0-13 무인증 handshake","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","loginStatus":"Not logged in","platform":"darwin","usedPackaged":true,"electronBin":"/Users/tuxxon/workspace/AutoFlowCut/release/mac-arm64/AutoFlowCut.app/Contents/MacOS/AutoFlowCut","spawnPathHasSpace":false,"cleanPath":"/usr/bin:/bin:/usr/sbin:/sbin","initialize":"ok","threadStart":"ok","inventory":[{"name":"echo","tools":["echo","echo_gated"]}],"timedOut":false}
+{"runId":"mrk6x5tr-8142","label":"M0-13 win/linux RunAsNode fuse (정적)","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","electronVersion":"36.9.5","win32-x64":"ENABLE","linux-x64":"ENABLE","linux-arm64":"ENABLE"}
+{"runId":"mrk6x5tr-8142","label":"M0-13 asar: CJS 는 되고 ESM 은 죽는다","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","app":"/Users/tuxxon/workspace/AutoFlowCut/release/mac-arm64/AutoFlowCut.app","asarCjsRequire":true,"asarEsmImport":false,"esmErr":"Cannot find module '/Users/tuxxon/workspace/AutoFlowCut/release/mac-arm64/AutoFlowCut.app/Contents/Resources/app.asar/no"}
+{"runId":"mrk6x5tr-8142","label":"M0-13 패키징 .app + asar 밖 ESM adapter","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","app":"/Users/tuxxon/workspace/AutoFlowCut/release/mac-arm64/AutoFlowCut.app","electronBin":"/Users/tuxxon/workspace/AutoFlowCut/release/mac-arm64/AutoFlowCut.app/Contents/MacOS/AutoFlowCut","isElectron":true,"electron":"36.9.5","node":"22.19.0","zod":true,"mcp":true}
+{"runId":"mrk6x5tr-8142","label":"M0-13 production adapter (출하물)","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","usedPackaged":true,"electronBin":"/Users/tuxxon/workspace/AutoFlowCut/release/mac-arm64/AutoFlowCut.app/Contents/MacOS/AutoFlowCut","adapter":"/Users/tuxxon/workspace/AutoFlowCut/dist-adapter/codex-adapter.mjs","cleanPath":"/usr/bin:/bin:/usr/sbin:/sbin","serverName":"autoflowcut","tools":["list_scenes"],"callResult":"{\"scenes\":[]}","timedOut":false,"rpcCalls":[{"tool":"list_scenes","args":{}}],"stderr":""}
+{"runId":"mrk6x5tr-8142","label":"M0-13 codex + Electron-as-node adapter","codexBin":"/Users/tuxxon/workspace/AutoFlowCut/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex","codexVersion":"codex-cli 0.142.5","electronBin":"/Users/tuxxon/workspace/AutoFlowCut/release/mac-arm64/AutoFlowCut.app/Contents/MacOS/AutoFlowCut","usedPackaged":true,"cleanPath":"/usr/bin:/bin:/usr/sbin:/sbin","toolCalls":[{"server":"echo","tool":"echo","status":"completed","resultText":"m0-13"}],"inventory":[{"name":"echo","tools":["echo","echo_gated"]}],"timedOut":false,"turnStatus":"completed","turnError":null,"stderr":""}
+{"runId":"mrk6x5tr-8142","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrkp25u1-78283","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrkphi6j-92604","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnm80eu-87997","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnmcxpy-90819","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnmead1-92120","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnmfcny-92488","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnmg63t-93115","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnmgycx-93718","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnmhusq-94570","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnmiy1g-95217","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnmj43h-95306","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnmjluo-95495","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnmpjpa-97347","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnmqsih-97785","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnmwppa-99782","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnmypcz-1519","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnn096h-2223","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnn1mnt-3452","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnmrl5h-98052","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrno0386-21623","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrno3cak-24459","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrno51ij-26023","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrno7gcd-27857","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnoepvl-32487","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnomo9d-36517","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrnp2ubd-43666","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnp45vx-44957","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnqeani-67512","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrnqsu4b-75873","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mroo37dw-44140","label":"__run_completed__","exitCode":null,"signal":"SIGINT"}
+{"runId":"mroohw83-54366","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrook5q3-56068","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mroomm8v-57762","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mroonllu-58578","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mroorj9e-62425","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mroqj5v7-11003","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrorpzfi-42953","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mrorzpaq-49771","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mros4fb5-53791","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mroxqwlr-6960","label":"__run_completed__","exitCode":1,"signal":null}
+{"runId":"mroy3pl5-16195","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mroy74ae-18420","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mroy9gr0-20016","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mroz1hn4-36908","label":"__run_completed__","exitCode":0,"signal":null}
+{"runId":"mrpq79cz-23416","label":"__run_completed__","exitCode":0,"signal":null}

@@ -1,0 +1,808 @@
+# Review package: 72a5d82..e7ecf34
+
+## Commits
+e7ecf34 feat(story): 설정 화면(세로 옵션+제목+drag&drop 임포트)
+
+## Files changed
+ src/components/story/StoryView.css              |  64 ++++++-
+ src/components/story/StoryView.jsx              | 224 ++++++++++++++----------
+ tests/components/story/StoryView.form.test.jsx  |  20 +--
+ tests/components/story/StoryView.genre.test.jsx |   2 +-
+ tests/components/story/StoryView.phase.test.jsx |  10 +-
+ tests/components/story/StoryView.setup.test.jsx | 108 ++++++++++++
+ tests/components/story/StoryView.test.jsx       |  16 +-
+ 7 files changed, 326 insertions(+), 118 deletions(-)
+
+## Diff
+diff --git a/src/components/story/StoryView.css b/src/components/story/StoryView.css
+index 9336804..bada78e 100644
+--- a/src/components/story/StoryView.css
++++ b/src/components/story/StoryView.css
+@@ -79,38 +79,90 @@
+   flex-direction: column;
+ }
+ 
+ .story-script-panel {
+   display: flex;
+   flex-direction: column;
+   gap: 12px;
+   height: 100%;
+ }
+ 
+-.story-title-row {
++/* ── 설정 화면(setup): 세로 옵션 + 설명 ── */
++.story-setup-phase {
+   display: flex;
++  flex-direction: column;
++  gap: 12px;
+ }
+ 
+-.story-title-input {
+-  flex: 1 1 100%;
++.story-opt-row {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  flex-wrap: wrap;
++}
++
++.story-opt-row > .story-input,
++.story-opt-row .story-length-group {
++  flex: 0 1 220px;
+ }
+ 
+-.story-options-row {
++.story-length-group {
+   display: flex;
+-  flex-wrap: wrap;
+   gap: 8px;
+-  margin-top: 8px;
++}
++
++.story-opt-desc {
++  flex: 1 1 auto;
++  font-size: 0.8rem;
++  color: var(--text-secondary);
++}
++
++.story-title-row {
++  display: flex;
++}
++
++.story-title-input {
++  flex: 1 1 100%;
+ }
+ 
+ .story-length-value { flex: 0 1 90px; }
+ .story-length-unit { flex: 0 1 90px; }
+ 
++/* ── 대본 임포트(drag&drop / 붙여넣기 겸용) ── */
++.story-import-drop {
++  border: 1px dashed var(--border-color);
++  border-radius: var(--border-radius);
++  padding: 6px;
++  background: var(--bg-color);
++}
++
++.story-import-drop .story-paste-textarea {
++  width: 100%;
++  min-height: 96px;
++  box-sizing: border-box;
++  padding: 8px 10px;
++  border: none;
++  border-radius: var(--border-radius);
++  background: transparent;
++  color: var(--text-color);
++  font-family: var(--font-family);
++  resize: vertical;
++}
++
++.story-import-drop .story-paste-textarea:focus {
++  outline: none;
++}
++
++.story-setup-start {
++  align-self: flex-end;
++}
++
+ .story-input {
+   flex: 1 1 160px;
+   padding: 8px 10px;
+   border: 1px solid var(--border-color);
+   border-radius: var(--border-radius);
+   background: var(--bg-color);
+   color: var(--text-color);
+   font-family: var(--font-family);
+ }
+ 
+diff --git a/src/components/story/StoryView.jsx b/src/components/story/StoryView.jsx
+index e0ffe08..58a0be0 100644
+--- a/src/components/story/StoryView.jsx
++++ b/src/components/story/StoryView.jsx
+@@ -159,20 +159,39 @@ export default function StoryView({ pipeline }) {
+       setScriptPhase(null)
+     }
+   }
+ 
+   const handlePasteStart = () => {
+     start('script', { pastedScript: scriptText, options: { language, model } })
+     // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
+     setScriptPhase('editor')
+   }
+ 
++  // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
++  // 대본 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
++  const handleSetupStart = () => {
++    if (scriptText.trim()) handlePasteStart()
++    else handlePrimaryAction() // currentStep==='script' → 제목 생성 경로
++  }
++
++  // 대본 임포트 drag&drop — .txt/.md 파일만 FileReader 로 읽어 scriptText 에 채운다(그 외 무시).
++  const handleImportDrop = (e) => {
++    e.preventDefault()
++    const file = e.dataTransfer?.files?.[0]
++    if (!file) return
++    const name = (file.name || '').toLowerCase()
++    if (!name.endsWith('.txt') && !name.endsWith('.md')) return
++    const reader = new FileReader()
++    reader.onloadend = () => setScriptText(String(reader.result || ''))
++    reader.readAsText(file)
++  }
++
+   const scriptEditor = (
+     <div className="story-script-editor">
+       <PromptInput
+         value={scriptText}
+         onChange={setScriptText}
+         references={[]}
+         disableMentions
+         showCharCount
+         placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
+       />
+@@ -203,106 +222,131 @@ export default function StoryView({ pipeline }) {
+               <div className="story-script-stream" aria-live="polite">{streamingText}</div>
+             ) : scriptPhase === 'editor' ? (
+               // §1-B 대본 작업 화면 골격 — 마커만. 버튼(다시쓰기/이어쓰기/분리시작/설정으로)은 Task 8·9.
+               // PromptInput 은 useI18n() provider 를 요구한다. 실제 앱에선 상위(Shell.jsx)
+               // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
+               // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
+               <div className="story-editor-phase" data-testid="story-editor">
+                 {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
+               </div>
+             ) : (
+-              // §1-A 설정 화면 골격 — 기존 제목/옵션 폼 + 붙여넣기. 세로 배치/임포트 drop은 Task 8.
++              // §1-A 설정 화면 — 세로 옵션(라벨+설명) + 제목 + 대본 임포트(drag&drop/붙여넣기) + [✨ 시작].
+               <div className="story-setup-phase" data-testid="story-setup">
+-            <div className="story-title-row">
+-              <input
+-                className="story-input story-title-input"
+-                placeholder={t('story.form.titlePlaceholder', '제목')}
+-                value={title}
+-                onChange={(e) => setTitle(e.target.value)}
+-                disabled={isRunning}
+-              />
+-            </div>
+-            <div className="story-options-row">
+-              <select
+-                className="story-input"
+-                aria-label={t('story.form.genreLabel', '장르')}
+-                value={genre}
+-                onChange={(e) => setGenre(e.target.value)}
+-                disabled={isRunning}
+-              >
+-                <option value="yadam">yadam (야담)</option>
+-                <option value="dark-history">dark-history</option>
+-                <option value="bespoke">bespoke</option>
+-              </select>
+-              <select
+-                className="story-input"
+-                aria-label={t('story.form.modelLabel', '모델')}
+-                value={model}
+-                onChange={(e) => setModel(e.target.value)}
+-                disabled={isRunning}
+-              >
+-                <option value="claude-opus-4-8">Opus 4.8</option>
+-                <option value="claude-sonnet-5">Sonnet 5</option>
+-              </select>
+-              <input
+-                className="story-input"
+-                placeholder={t('story.form.languagePlaceholder', '언어')}
+-                value={language}
+-                onChange={(e) => {
+-                  // 언어 변경 시 길이 단위를 새 언어 허용 목록(en: min/words, 그 외: min/chars)으로
+-                  // 정규화 — 안 하면 옛 단위(chars↔words)가 남아 영어 대본에 "약 N자" 같은 불일치가 생긴다.
+-                  const v = e.target.value
+-                  setLanguage(v)
+-                  if (v === 'en' && lengthUnit === 'chars') setLengthUnit('words')
+-                  else if (v !== 'en' && lengthUnit === 'words') setLengthUnit('chars')
+-                }}
+-                disabled={isRunning}
+-              />
+-              <input
+-                className="story-input story-length-value"
+-                aria-label={t('story.form.lengthValueLabel', '길이 값')}
+-                placeholder={t('story.form.lengthPlaceholder', '길이')}
+-                value={length}
+-                onChange={(e) => setLength(e.target.value)}
+-                disabled={isRunning}
+-              />
+-              <select
+-                className="story-input story-length-unit"
+-                aria-label={t('story.form.lengthUnitLabel', '길이 단위')}
+-                value={lengthUnit}
+-                onChange={(e) => setLengthUnit(e.target.value)}
+-                disabled={isRunning}
+-              >
+-                <option value="min">{language === 'en' ? 'min' : '분'}</option>
+-                <option value={language === 'en' ? 'words' : 'chars'}>{language === 'en' ? 'words' : '자'}</option>
+-              </select>
+-            </div>
++                <div className="story-opt-row">
++                  <select
++                    className="story-input"
++                    aria-label={t('story.form.genreLabel', '장르')}
++                    value={genre}
++                    onChange={(e) => setGenre(e.target.value)}
++                    disabled={isRunning}
++                  >
++                    <option value="yadam">yadam (야담)</option>
++                    <option value="dark-history">dark-history</option>
++                    <option value="bespoke">bespoke</option>
++                  </select>
++                  <span className="story-opt-desc">{t('story.form.genreDesc', '이야기 유형(bespoke=범용)')}</span>
++                </div>
++
++                <div className="story-opt-row">
++                  <select
++                    className="story-input"
++                    aria-label={t('story.form.modelLabel', '모델')}
++                    value={model}
++                    onChange={(e) => setModel(e.target.value)}
++                    disabled={isRunning}
++                  >
++                    <option value="claude-opus-4-8">Opus 4.8</option>
++                    <option value="claude-sonnet-5">Sonnet 5</option>
++                  </select>
++                  <span className="story-opt-desc">{t('story.form.modelDesc', '생성 AI')}</span>
++                </div>
++
++                <div className="story-opt-row">
++                  <select
++                    className="story-input"
++                    aria-label={t('story.form.languageLabel', '언어')}
++                    value={language}
++                    onChange={(e) => {
++                      // 언어 변경 시 길이 단위를 새 언어 허용 목록(en: min/words, 그 외: min/chars)으로
++                      // 정규화 — 안 하면 옛 단위(chars↔words)가 남아 영어 대본에 "약 N자" 같은 불일치가 생긴다.
++                      const v = e.target.value
++                      setLanguage(v)
++                      if (v === 'en' && lengthUnit === 'chars') setLengthUnit('words')
++                      else if (v !== 'en' && lengthUnit === 'words') setLengthUnit('chars')
++                    }}
++                    disabled={isRunning}
++                  >
++                    <option value="ko">한국어 (ko)</option>
++                    <option value="en">English (en)</option>
++                  </select>
++                  <span className="story-opt-desc">{t('story.form.languageDesc', '출력 언어')}</span>
++                </div>
++
++                <div className="story-opt-row">
++                  <div className="story-length-group">
++                    <input
++                      className="story-input story-length-value"
++                      aria-label={t('story.form.lengthValueLabel', '길이 값')}
++                      placeholder={t('story.form.lengthPlaceholder', '길이')}
++                      value={length}
++                      onChange={(e) => setLength(e.target.value)}
++                      disabled={isRunning}
++                    />
++                    <select
++                      className="story-input story-length-unit"
++                      aria-label={t('story.form.lengthUnitLabel', '길이 단위')}
++                      value={lengthUnit}
++                      onChange={(e) => setLengthUnit(e.target.value)}
++                      disabled={isRunning}
++                    >
++                      <option value="min">{language === 'en' ? 'min' : '분'}</option>
++                      <option value={language === 'en' ? 'words' : 'chars'}>{language === 'en' ? 'words' : '자'}</option>
++                    </select>
++                  </div>
++                  <span className="story-opt-desc">{t('story.form.lengthDesc', '대본 분량')}</span>
++                </div>
++
++                <div className="story-title-row">
++                  <input
++                    className="story-input story-title-input"
++                    placeholder={t('story.form.titlePlaceholder', '제목')}
++                    value={title}
++                    onChange={(e) => setTitle(e.target.value)}
++                    disabled={isRunning}
++                  />
++                </div>
++
++                <div
++                  className="story-import-drop"
++                  data-testid="story-import-drop"
++                  onDrop={handleImportDrop}
++                  onDragOver={(e) => e.preventDefault()}
++                >
++                  <textarea
++                    className="story-paste-textarea"
++                    value={scriptText}
++                    onChange={(e) => setScriptText(e.target.value)}
++                    placeholder={t('story.form.pastePlaceholder', '대본을 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
++                    disabled={isRunning}
++                  />
++                </div>
+ 
+-              <div className="story-paste-form">
+-                <textarea
+-                  className="story-paste-textarea"
+-                  value={scriptText}
+-                  onChange={(e) => setScriptText(e.target.value)}
+-                  placeholder={t('story.form.pastePlaceholder', '대본을 직접 붙여넣기')}
+-                  disabled={isRunning}
+-                />
+                 <button
+                   type="button"
+-                  className="story-btn-secondary"
+-                  onClick={handlePasteStart}
+-                  disabled={isRunning || !scriptText.trim()}
+-                  aria-label={t('story.action.pasteStart', '대본으로 시작')}
++                  className="story-btn-primary story-setup-start"
++                  onClick={handleSetupStart}
++                  disabled={isRunning || (!scriptText.trim() && !title.trim())}
++                  aria-label={t('story.action.setupStart', '시작')}
+                 >
+-                  {t('story.action.pasteStartIcon', '📝 붙여넣기로 진행')}
++                  {t('story.action.setupStartIcon', '✨ 시작')}
+                 </button>
+               </div>
+-              </div>
+             )}
+           </div>
+         )}
+ 
+         {displayStep === 'scenes' && (
+           <div className="story-scenes-panel">
+             <table className="story-readonly-table">
+               <thead>
+                 <tr>
+                   <th>{t('story.scenes.no', '#')}</th>
+@@ -349,28 +393,32 @@ export default function StoryView({ pipeline }) {
+               </tbody>
+             </table>
+             {scenes.length === 0 && (
+               <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
+             )}
+           </div>
+         )}
+       </div>
+ 
+       <div className="story-controls">
+-        <button
+-          type="button"
+-          className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
+-          onClick={handlePrimaryAction}
+-          disabled={isRunning}
+-          aria-label={actionAriaLabel}
+-        >
+-          {actionVisibleLabel}
+-        </button>
++        {/* 설정 화면(신규 대본 생성)에서는 in-panel [✨ 시작]이 primary — 하단 제네릭 버튼을 감춘다.
++            script done(씬 분리 진행) · 에러(재실행) · editor phase(Task 9)에서는 그대로 노출. */}
++        {!(scriptPhase === 'setup' && currentStep === 'script' && !isError) && (
++          <button
++            type="button"
++            className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
++            onClick={handlePrimaryAction}
++            disabled={isRunning}
++            aria-label={actionAriaLabel}
++          >
++            {actionVisibleLabel}
++          </button>
++        )}
+         {isRunning && (
+           <button type="button" className="story-btn-secondary" onClick={() => abort()}>
+             {t('story.action.abort', '⏹ 중단')}
+           </button>
+         )}
+       </div>
+     </div>
+   )
+ }
+diff --git a/tests/components/story/StoryView.form.test.jsx b/tests/components/story/StoryView.form.test.jsx
+index ccb0c64..f8f765b 100644
+--- a/tests/components/story/StoryView.form.test.jsx
++++ b/tests/components/story/StoryView.form.test.jsx
+@@ -5,72 +5,72 @@ import StoryView from '../../../src/components/story/StoryView.jsx'
+ function makePipeline(start) {
+   return { state: { steps: {} }, streamingText: '', start, abort: () => {}, scenes: [], openError: null }
+ }
+ 
+ describe('StoryView 폼 재구성', () => {
+   it('모델 드롭다운 선택이 options.model로 전달된다', () => {
+     const start = vi.fn()
+     render(<StoryView pipeline={makePipeline(start)} />)
+     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+     fireEvent.change(screen.getByLabelText('모델'), { target: { value: 'claude-sonnet-5' } })
+-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+       options: expect.objectContaining({ model: 'claude-sonnet-5' }),
+     }))
+   })
+   it('길이 값+단위가 options.lengthValue/lengthUnit으로 전달된다', () => {
+     const start = vi.fn()
+     render(<StoryView pipeline={makePipeline(start)} />)
+     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+     fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '6000' } })
+     fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'chars' } })
+-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+       options: expect.objectContaining({ lengthValue: '6000', lengthUnit: 'chars' }),
+     }))
+   })
+   it('기본 모델은 claude-opus-4-8, 기본 길이 10 min', () => {
+     const start = vi.fn()
+     render(<StoryView pipeline={makePipeline(start)} />)
+     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+       options: expect.objectContaining({ model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' }),
+     }))
+   })
+ 
+   it('언어를 en으로 바꾸면 chars 단위가 words로 정규화된다', () => {
+     const start = vi.fn()
+     render(<StoryView pipeline={makePipeline(start)} />)
+     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+     fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'chars' } })
+-    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
+-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+       options: expect.objectContaining({ lengthUnit: 'words' }),
+     }))
+   })
+ 
+   it('언어를 ko로 바꾸면 words 단위가 chars로 정규화된다', () => {
+     const start = vi.fn()
+     render(<StoryView pipeline={makePipeline(start)} />)
+     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+-    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
++    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+     fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'words' } })
+-    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'ko' } })
+-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'ko' } })
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+       options: expect.objectContaining({ lengthUnit: 'chars' }),
+     }))
+   })
+ 
+   it('min 단위는 언어를 바꿔도 유지된다', () => {
+     const start = vi.fn()
+     render(<StoryView pipeline={makePipeline(start)} />)
+     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+-    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
+-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+       options: expect.objectContaining({ lengthUnit: 'min' }),
+     }))
+   })
+ })
+diff --git a/tests/components/story/StoryView.genre.test.jsx b/tests/components/story/StoryView.genre.test.jsx
+index cf051f4..c7a1f0c 100644
+--- a/tests/components/story/StoryView.genre.test.jsx
++++ b/tests/components/story/StoryView.genre.test.jsx
+@@ -5,16 +5,16 @@ import StoryView from '../../../src/components/story/StoryView.jsx'
+ function makePipeline(start) {
+   return { state: { steps: {} }, streamingText: '', start, abort: () => {}, scenes: [], openError: null }
+ }
+ 
+ describe('StoryView 장르 드롭다운', () => {
+   it('장르 select에서 고른 값이 start options.genre로 전달된다', () => {
+     const start = vi.fn()
+     render(<StoryView pipeline={makePipeline(start)} />)
+     fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'dark-history' } })
+     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+       options: expect.objectContaining({ genre: 'dark-history' }),
+     }))
+   })
+ })
+diff --git a/tests/components/story/StoryView.phase.test.jsx b/tests/components/story/StoryView.phase.test.jsx
+index 423596d..0010664 100644
+--- a/tests/components/story/StoryView.phase.test.jsx
++++ b/tests/components/story/StoryView.phase.test.jsx
+@@ -73,21 +73,21 @@ describe('StoryView scriptPhase (Task 7)', () => {
+     expect(screen.getByText('화자')).toBeTruthy()
+     // done된 대본 스텝 클릭 → editor 복귀
+     fireEvent.click(screen.getByRole('button', { name: '대본' }))
+     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+   })
+ 
+   it('setup 시작(대본 생성)을 누르면 editor phase로 전환된다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+     expect(screen.queryByTestId('story-setup')).toBeNull()
+   })
+ })
+ 
+ describe('StoryView scriptText 단일 상태 (Task 7)', () => {
+   it('editor의 PromptInput은 pipeline.scriptText를 초기값으로 렌더한다', () => {
+     const text = '복원된 대본'
+     render(<StoryView pipeline={pipeline({ scriptText: text })} />)
+     expect(screen.getByTestId('prompt-textarea-wrap')).toBeInTheDocument()
+@@ -97,56 +97,56 @@ describe('StoryView scriptText 단일 상태 (Task 7)', () => {
+   it('pipeline.scriptText 변경(생성 완료 커밋/재오픈 지연 도착) 시 편집 상태가 동기화된다', () => {
+     const { rerender } = render(<StoryView pipeline={pipeline({ scriptText: '초안' })} />)
+     const committed = '저장된 최종 대본'
+     rerender(<StoryView pipeline={pipeline({ scriptText: committed })} />)
+     expect(screen.getByTestId('char-count')).toHaveTextContent(String(committed.length))
+   })
+ 
+   it('setup의 붙여넣기 텍스트도 scriptText 하나로 — 붙여넣고 시작하면 그 값이 pastedScript로 간다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+-    fireEvent.change(screen.getByPlaceholderText(/직접 붙여넣기/), { target: { value: '내가 쓴 대본' } })
+-    fireEvent.click(screen.getByRole('button', { name: /대본으로 시작/ }))
++    fireEvent.change(screen.getByPlaceholderText(/붙여넣/), { target: { value: '내가 쓴 대본' } })
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({ pastedScript: '내가 쓴 대본' }))
+     // 붙여넣기로 시작 → editor phase 전환
+     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+   })
+ })
+ 
+ describe('StoryView 폼 hydrate (Task 7)', () => {
+   const input = {
+     type: 'title',
+     title: '복원 제목',
+     options: { genre: 'yadam', model: 'claude-sonnet-5', language: 'en', lengthValue: '7', lengthUnit: 'words' },
+   }
+ 
+   it('재오픈 시 state.input.title/options로 폼을 초기화한다', () => {
+     const p = pipeline()
+     p.state.input = input
+     render(<StoryView pipeline={p} />)
+     expect(screen.getByPlaceholderText('제목')).toHaveValue('복원 제목')
+     expect(screen.getByLabelText('장르')).toHaveValue('yadam')
+     expect(screen.getByLabelText('모델')).toHaveValue('claude-sonnet-5')
+-    expect(screen.getByPlaceholderText('언어')).toHaveValue('en')
++    expect(screen.getByLabelText('언어')).toHaveValue('en')
+     expect(screen.getByLabelText('길이 값')).toHaveValue('7')
+     expect(screen.getByLabelText('길이 단위')).toHaveValue('words')
+   })
+ 
+   it('open 응답이 늦게 와도(state.input이 마운트 후 도착) 폼이 hydrate된다', () => {
+     const { rerender } = render(<StoryView pipeline={pipeline({ state: null })} />)
+     const p = pipeline()
+     p.state.input = input
+     rerender(<StoryView pipeline={p} />)
+     expect(screen.getByPlaceholderText('제목')).toHaveValue('복원 제목')
+     expect(screen.getByLabelText('모델')).toHaveValue('claude-sonnet-5')
+   })
+ 
+   it('state.input이 없으면 기존 기본값(bespoke/opus/ko/10/min)을 유지한다', () => {
+     render(<StoryView pipeline={pipeline()} />)
+     expect(screen.getByPlaceholderText('제목')).toHaveValue('')
+     expect(screen.getByLabelText('장르')).toHaveValue('bespoke')
+     expect(screen.getByLabelText('모델')).toHaveValue('claude-opus-4-8')
+-    expect(screen.getByPlaceholderText('언어')).toHaveValue('ko')
++    expect(screen.getByLabelText('언어')).toHaveValue('ko')
+     expect(screen.getByLabelText('길이 값')).toHaveValue('10')
+     expect(screen.getByLabelText('길이 단위')).toHaveValue('min')
+   })
+ })
+diff --git a/tests/components/story/StoryView.setup.test.jsx b/tests/components/story/StoryView.setup.test.jsx
+new file mode 100644
+index 0000000..575d011
+--- /dev/null
++++ b/tests/components/story/StoryView.setup.test.jsx
+@@ -0,0 +1,108 @@
++/**
++ * Task 8 — StoryView 설정 화면(setup) 마크업.
++ * 세로 옵션+설명, 제목, 대본 임포트(drag&drop / 붙여넣기), [✨ 시작] 분기.
++ */
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen, fireEvent, waitFor } from '@testing-library/react'
++import StoryView from '../../../src/components/story/StoryView.jsx'
++
++const pipeline = (over = {}) => ({
++  state: { steps: { script: { status: 'pending' } } },
++  scenes: [],
++  streamingText: '',
++  scriptText: '',
++  start: vi.fn(), abort: vi.fn(), openError: null,
++  ...over,
++})
++
++describe('StoryView 설정 화면(setup)', () => {
++  it('세로 옵션 각 항목에 라벨+설명을 렌더한다', () => {
++    render(<StoryView pipeline={pipeline()} />)
++    const setup = screen.getByTestId('story-setup')
++    expect(setup).toBeInTheDocument()
++    // 옵션 컨트롤
++    expect(screen.getByLabelText('장르')).toBeInTheDocument()
++    expect(screen.getByLabelText('모델')).toBeInTheDocument()
++    expect(screen.getByLabelText('언어')).toBeInTheDocument()
++    expect(screen.getByLabelText('길이 값')).toBeInTheDocument()
++    expect(screen.getByLabelText('길이 단위')).toBeInTheDocument()
++    // 설명
++    expect(screen.getByText(/이야기 유형/)).toBeInTheDocument()
++    expect(screen.getByText('생성 AI')).toBeInTheDocument()
++    expect(screen.getByText('출력 언어')).toBeInTheDocument()
++    expect(screen.getByText('대본 분량')).toBeInTheDocument()
++  })
++
++  it('언어는 ko/en select 이고 기본 ko', () => {
++    render(<StoryView pipeline={pipeline()} />)
++    const lang = screen.getByLabelText('언어')
++    expect(lang.tagName).toBe('SELECT')
++    expect(lang).toHaveValue('ko')
++    fireEvent.change(lang, { target: { value: 'en' } })
++    expect(lang).toHaveValue('en')
++  })
++
++  it('제목 input(placeholder "제목")을 렌더한다', () => {
++    render(<StoryView pipeline={pipeline()} />)
++    expect(screen.getByPlaceholderText('제목')).toBeInTheDocument()
++  })
++
++  it('[✨ 시작] — 제목만 있으면 title 생성 경로로 start 하고 editor로 전환한다', () => {
++    const p = pipeline()
++    render(<StoryView pipeline={p} />)
++    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: '운수 좋은 날' } })
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
++    expect(p.start).toHaveBeenCalledWith('script', {
++      input: { type: 'title', title: '운수 좋은 날' },
++      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
++    })
++    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
++  })
++
++  it('[✨ 시작] — scriptText 있으면 pastedScript 경로로 start 하고 editor로 전환한다', () => {
++    const p = pipeline()
++    render(<StoryView pipeline={p} />)
++    fireEvent.change(screen.getByTestId('story-import-drop').querySelector('textarea'), {
++      target: { value: '내가 쓴 대본' },
++    })
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
++    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({ pastedScript: '내가 쓴 대본' }))
++    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
++  })
++
++  it('[✨ 시작] — 제목·scriptText 둘 다 없으면 비활성', () => {
++    render(<StoryView pipeline={pipeline()} />)
++    expect(screen.getByRole('button', { name: '시작' })).toBeDisabled()
++  })
++
++  it('drag&drop 으로 .txt 파일을 놓으면 scriptText 에 채워진다', async () => {
++    const p = pipeline()
++    render(<StoryView pipeline={p} />)
++    const drop = screen.getByTestId('story-import-drop')
++    const file = new File(['드롭한 대본 내용'], 'script.txt', { type: 'text/plain' })
++    fireEvent.drop(drop, { dataTransfer: { files: [file] } })
++    await waitFor(() => {
++      expect(drop.querySelector('textarea')).toHaveValue('드롭한 대본 내용')
++    })
++    // 채워진 뒤 시작 버튼 활성화
++    expect(screen.getByRole('button', { name: '시작' })).not.toBeDisabled()
++  })
++
++  it('drag&drop 으로 .md 파일도 읽어들인다', async () => {
++    render(<StoryView pipeline={pipeline()} />)
++    const drop = screen.getByTestId('story-import-drop')
++    const file = new File(['# 마크다운 대본'], 'story.md', { type: 'text/markdown' })
++    fireEvent.drop(drop, { dataTransfer: { files: [file] } })
++    await waitFor(() => {
++      expect(drop.querySelector('textarea')).toHaveValue('# 마크다운 대본')
++    })
++  })
++
++  it('drag&drop 으로 지원하지 않는 확장자는 무시한다', () => {
++    render(<StoryView pipeline={pipeline()} />)
++    const drop = screen.getByTestId('story-import-drop')
++    const file = new File(['bin'], 'a.pdf', { type: 'application/pdf' })
++    fireEvent.drop(drop, { dataTransfer: { files: [file] } })
++    expect(drop.querySelector('textarea')).toHaveValue('')
++  })
++})
+diff --git a/tests/components/story/StoryView.test.jsx b/tests/components/story/StoryView.test.jsx
+index 3039cd8..e688be9 100644
+--- a/tests/components/story/StoryView.test.jsx
++++ b/tests/components/story/StoryView.test.jsx
+@@ -25,70 +25,70 @@ describe('StoryView', () => {
+     expect(screen.getByText(/씬 분리/)).toBeTruthy()
+     expect(screen.getByText(/오디오/)).toBeTruthy()
+     expect(screen.getByText(/프롬프트/)).toBeTruthy()
+   })
+   it('제목 입력 후 시작하면 start("script")가 stepMachine이 기대하는 shape로 호출된다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
+     fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'yadam' } })
+     fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '5' } })
+-    fireEvent.change(screen.getByPlaceholderText(/언어/), { target: { value: 'ko' } })
+-    fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
++    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'ko' } })
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/model/language/length)를
+     // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
+     expect(p.start).toHaveBeenCalledWith('script', {
+       input: { type: 'title', title: '운수 좋은 날' },
+       options: { genre: 'yadam', language: 'ko', model: 'claude-opus-4-8', lengthValue: '5', lengthUnit: 'min' },
+     })
+   })
+ 
+   it('옵션 미변경 시 기본값(장르 bespoke, 길이 10 min)이 options로 전달된다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '제목만' } })
+-    fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(p.start).toHaveBeenCalledWith('script', {
+       input: { type: 'title', title: '제목만' },
+       options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
+     })
+   })
+   it('script running이면 스트리밍 텍스트를 표시한다', () => {
+     const p = pipeline({ streamingText: '옛날 옛적에...' })
+     p.state.steps.script.status = 'running'
+     render(<StoryView pipeline={p} />)
+     expect(screen.getByText(/옛날 옛적에/)).toBeTruthy()
+   })
+   it('script done이면 다음 단계(씬 분리) 버튼이 활성화된다', () => {
+     const p = pipeline()
+     p.state.steps.script.status = 'done'
+     render(<StoryView pipeline={p} />)
+     const btn = screen.getByRole('button', { name: /씬 분리 실행/ })
+     fireEvent.click(btn)
+     expect(p.start).toHaveBeenCalledWith('scenes', expect.anything())
+   })
+   // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣어 LLM 없이 바로 시작할 수 있어야 한다.
+-  it('대본 붙여넣기 후 "대본으로 시작" 클릭하면 pastedScript로 start된다', () => {
++  it('대본 붙여넣기 후 [시작] 클릭하면 pastedScript로 start된다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+-    fireEvent.change(screen.getByPlaceholderText(/직접 붙여넣기/), { target: { value: '내가 쓴 대본' } })
+-    fireEvent.click(screen.getByRole('button', { name: /대본으로 시작/ }))
++    fireEvent.change(screen.getByPlaceholderText(/붙여넣/), { target: { value: '내가 쓴 대본' } })
++    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+     expect(p.start).toHaveBeenCalledWith('script', {
+       pastedScript: '내가 쓴 대본',
+       options: { language: 'ko', model: 'claude-opus-4-8' },
+     })
+   })
+ 
+-  it('붙여넣기 텍스트가 비어 있으면 "대본으로 시작" 버튼이 비활성화된다', () => {
++  it('제목·붙여넣기 둘 다 비어 있으면 [시작] 버튼이 비활성화된다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+-    expect(screen.getByRole('button', { name: /대본으로 시작/ })).toBeDisabled()
++    expect(screen.getByRole('button', { name: '시작' })).toBeDisabled()
+   })
+ 
+   // Important: state.scenes/state.prompts는 존재하지 않는 필드였다 — pipeline.scenes(파생
+   // 데이터, scenes.json 내용)를 별도로 받아 ②/④ 패널을 채운다.
+   // Task 7: scriptPhase가 남아 있는 동안 displayStep이 script로 강제되므로, done된 스텝을
+   // 스텝퍼에서 클릭해 해당 패널로 이동한 뒤 검증한다.
+   it('씬 분리 단계에서 scenes의 세그먼트(화자/텍스트) 행을 렌더한다', () => {
+     const p = pipeline({
+       scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
+     })

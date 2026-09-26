@@ -1,0 +1,339 @@
+# Review package: b7dfbca..2d8f427
+
+## Commits
+2d8f427 fix(agent): re-clamp floating panel on container resize and guard selector drag
+
+## Files changed
+ src/components/agent/ChatPanel.jsx              | 53 ++++++++++++++++---
+ src/components/agent/agentPanelLayout.js        |  8 +++
+ tests/components/agent/ChatPanel.test.jsx       | 67 +++++++++++++++++++++++++
+ tests/components/agent/agentPanelLayout.test.js | 18 +++++++
+ 4 files changed, 139 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/src/components/agent/ChatPanel.jsx b/src/components/agent/ChatPanel.jsx
+index 109ce9d..5a779c0 100644
+--- a/src/components/agent/ChatPanel.jsx
++++ b/src/components/agent/ChatPanel.jsx
+@@ -2,21 +2,25 @@ import { useCallback, useEffect, useRef, useState } from 'react'
+ import { readBatchStatus } from '../../agent/batchStatus.js'
+ import { registerToolBridgeHandlers } from '../../agent/toolBridgeHandlers.js'
+ import { sceneSnapshot } from '../../agent/sceneBridge.js'
+ import { runAgentExport } from '../../agent/exportBridge.js'
+ import { extractVideoFrames } from '../../utils/videoFrames.js'
+ import { resolveVideoSrc } from '../../utils/videoSrc.js'
+ import { useOptionalI18n } from '../../hooks/useI18n'
+ import en from '../../locales/en'
+ import AgentModelSelector from './AgentModelSelector.jsx'
+ import robotUrl from '../../assets/Robot.svg'
+-import { clampAgentPanelPosition, effectiveAgentPanelMode } from './agentPanelLayout.js'
++import {
++  clampAgentPanelPosition,
++  effectiveAgentPanelMode,
++  reclampAgentPanelPosition,
++} from './agentPanelLayout.js'
+ import './ChatPanel.css'
+ 
+ const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
+ 
+ function failureText(failure, t) {
+   if (failure?.error === 'agent-limit') {
+     // D10: 한도는 **보고**된다. 조용히 멈추지 않는다.
+     return t('agent.limitReached', { used: failure.used, limit: failure.limit })
+   }
+   return failure?.message || failure?.error || t('agent.failed')
+@@ -47,54 +51,89 @@ function fallbackT(key, params = {}) {
+   if (typeof value !== 'string') return key
+   return value.replace(/\{(\w+)\}/g, (match, name) => (params[name] !== undefined ? params[name] : match))
+ }
+ 
+ /**
+  * floating 패널을 헤더로 끌어 App container 안에서 옮긴다.
+  *
+  * 🔴 **App 밖으로 나가면 다시 잡을 수 없다.** positioned container 안으로 clamp 한다.
+  * 🔴 **버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
+  */
+-function useFloatingDrag(enabled) {
++function useFloatingDrag(enabled, reclampSignal) {
+   const [position, setPosition] = useState(null)
++  const positionRef = useRef(null)
+   const panelRef = useRef(null)
+   const dragRef = useRef(null)
+ 
++  const setDragPosition = useCallback((nextPosition) => {
++    positionRef.current = nextPosition
++    setPosition(nextPosition)
++  }, [])
++
++  const reclampPosition = useCallback(() => {
++    const current = positionRef.current
++    if (!current) return
++    const panel = panelRef.current
++    const container = panel?.closest('.app') || panel?.parentElement
++    if (!panel || !container) return
++    const next = reclampAgentPanelPosition({
++      position: current,
++      containerRect: container.getBoundingClientRect(),
++      panelRect: panel.getBoundingClientRect(),
++    })
++    if (next.left === current.left && next.top === current.top) return
++    setDragPosition(next)
++  }, [setDragPosition])
++
++  useEffect(() => {
++    reclampPosition()
++  }, [reclampPosition, reclampSignal])
++
++  useEffect(() => {
++    if (typeof ResizeObserver === 'undefined') return undefined
++    const panel = panelRef.current
++    const container = panel?.closest('.app') || panel?.parentElement
++    if (!panel || !container) return undefined
++    const observer = new ResizeObserver(reclampPosition)
++    observer.observe(container)
++    return () => observer.disconnect()
++  }, [reclampPosition])
++
+   useEffect(() => {
+     if (!enabled) return undefined
+     const onMove = (event) => {
+       const drag = dragRef.current
+       if (!drag) return
+       const panel = panelRef.current
+       const container = panel?.closest('.app') || panel?.parentElement
+       if (!panel || !container) return
+-      setPosition(clampAgentPanelPosition({
++      setDragPosition(clampAgentPanelPosition({
+         clientX: event.clientX,
+         clientY: event.clientY,
+         offsetX: drag.offsetX,
+         offsetY: drag.offsetY,
+         containerRect: container.getBoundingClientRect(),
+         panelRect: panel.getBoundingClientRect(),
+       }))
+     }
+     const onUp = () => { dragRef.current = null }
+     window.addEventListener('pointermove', onMove)
+     window.addEventListener('pointerup', onUp)
+     return () => {
+       window.removeEventListener('pointermove', onMove)
+       window.removeEventListener('pointerup', onUp)
+     }
+-  }, [enabled])
++  }, [enabled, setDragPosition])
+ 
+   const onPointerDown = useCallback((event) => {
+-    // 버튼 위에서 시작한 것은 클릭이지 드래그가 아니다.
+-    if (!enabled || event.button !== 0 || event.target.closest('button')) return
++    // 버튼/모델 selector에서 시작한 것은 클릭/선택이지 드래그가 아니다.
++    if (!enabled || event.button !== 0 || event.target.closest('button, .agent-model-selector')) return
+     const rect = panelRef.current?.getBoundingClientRect()
+     dragRef.current = {
+       offsetX: event.clientX - (rect?.left ?? 0),
+       offsetY: event.clientY - (rect?.top ?? 0),
+     }
+   }, [enabled])
+ 
+   return { panelRef, position: enabled ? position : null, onPointerDown }
+ }
+ 
+@@ -112,21 +151,21 @@ export default function ChatPanel({
+   projectKey = null,
+   batchStatusSources = {},
+   sceneBridgeSources = {},
+   exportBridgeSources = {},
+   videoAdmissionSources = {},
+ }) {
+   const t = useSafeT()
+   const api = window.electronAPI
+   const effectiveMode = effectiveAgentPanelMode(appMode, agentPanelMode)
+   const dragEnabled = open && effectiveMode === 'floating'
+-  const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled)
++  const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled, appMode)
+   const [input, setInput] = useState('')
+   const [messages, setMessages] = useState([])
+   const [toolCalls, setToolCalls] = useState([])
+   const [usage, setUsage] = useState(null)
+   const [errors, setErrors] = useState([])
+   const [running, setRunning] = useState(false)
+   const [models, setModels] = useState([])
+   const [modelsLoading, setModelsLoading] = useState(true)
+   const [selectedModel, setSelectedModel] = useState(null)
+   const sessionOpenRef = useRef(false)
+diff --git a/src/components/agent/agentPanelLayout.js b/src/components/agent/agentPanelLayout.js
+index 0ca6f99..5b7ae79 100644
+--- a/src/components/agent/agentPanelLayout.js
++++ b/src/components/agent/agentPanelLayout.js
+@@ -17,16 +17,24 @@ export function clampAgentPanelPosition({
+   offsetY,
+   containerRect,
+   panelRect,
+ }) {
+   return {
+     left: clamp(clientX - containerRect.left - offsetX, containerRect.width - panelRect.width),
+     top: clamp(clientY - containerRect.top - offsetY, containerRect.height - panelRect.height),
+   }
+ }
+ 
++export function reclampAgentPanelPosition({ position, containerRect, panelRect }) {
++  if (!position) return null
++  return {
++    left: clamp(position.left, containerRect.width - panelRect.width),
++    top: clamp(position.top, containerRect.height - panelRect.height),
++  }
++}
++
+ export function floatingPanelBox({ width, height }) {
+   return {
+     width: Math.min(420, Math.max(0, width - 36)),
+     maxHeight: Math.min(640, Math.max(0, height - 36)),
+   }
+ }
+diff --git a/tests/components/agent/ChatPanel.test.jsx b/tests/components/agent/ChatPanel.test.jsx
+index 2db47a3..084708e 100644
+--- a/tests/components/agent/ChatPanel.test.jsx
++++ b/tests/components/agent/ChatPanel.test.jsx
+@@ -452,20 +452,87 @@ describe('ChatPanel — open floating container drag', () => {
+     const header = container.querySelector('.agent-chat-header')
+     app.getBoundingClientRect = () => ({ left: 100, top: 50, width: 300, height: 200, right: 400, bottom: 250 })
+     panel.getBoundingClientRect = () => ({ left: 118, top: 68, width: 252, height: 140, right: 370, bottom: 208 })
+ 
+     drag(header, { x: 130, y: 78 }, { x: 999, y: 999 })
+ 
+     expect(panel.style.left).toBe('48px')
+     expect(panel.style.top).toBe('60px')
+   })
+ 
++  it('appMode 전환으로 container가 줄면 저장 위치를 새 bounds로 다시 clamp한다', async () => {
++    const { container, rerender } = render(
++      <div className="app">
++        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
++      </div>,
++    )
++    const app = container.querySelector('.app')
++    const panel = container.querySelector('.agent-chat-panel')
++    const header = container.querySelector('.agent-chat-header')
++    app.getBoundingClientRect = () => ({
++      left: 100, top: 50, width: 300, height: 200, right: 400, bottom: 250,
++    })
++    panel.getBoundingClientRect = () => ({
++      left: 118, top: 68, width: 252, height: 140, right: 370, bottom: 208,
++    })
++
++    drag(header, { x: 130, y: 78 }, { x: 999, y: 999 })
++    expect(panel.style.left).toBe('48px')
++    expect(panel.style.top).toBe('60px')
++
++    app.getBoundingClientRect = () => ({
++      left: 100, top: 50, width: 120, height: 90, right: 220, bottom: 140,
++    })
++    panel.getBoundingClientRect = () => ({
++      left: 148, top: 110, width: 100, height: 80, right: 248, bottom: 190,
++    })
++    rerender(
++      <div className="app">
++        <ChatPanel open appMode="flow" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
++      </div>,
++    )
++
++    await waitFor(() => {
++      expect(Number.parseFloat(panel.style.left)).toBeLessThanOrEqual(20)
++      expect(Number.parseFloat(panel.style.top)).toBeLessThanOrEqual(10)
++    })
++  })
++
++  it('model selector option에서 시작한 pointer drag는 panel을 옮기지 않는다', async () => {
++    const user = userEvent.setup()
++    const { container } = render(
++      <div className="app">
++        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
++      </div>,
++    )
++    const panel = container.querySelector('.agent-chat-panel')
++
++    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
++    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
++    drag(screen.getByRole('option', { name: 'GPT A' }), { x: 150, y: 90 }, { x: 160, y: 100 })
++
++    expect(panel.style.left).toBe('')
++  })
++
++  it('header button에서 시작한 pointer drag는 panel을 옮기지 않는다', () => {
++    const { container } = render(
++      <div className="app">
++        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
++      </div>,
++    )
++    const panel = container.querySelector('.agent-chat-panel')
++
++    drag(screen.getByRole('button', { name: 'Dismiss agent' }), { x: 260, y: 78 }, { x: 264, y: 82 })
++
++    expect(panel.style.left).toBe('')
++  })
++
+   it.each([
+     { open: false, mode: 'floating' },
+     { open: true, mode: 'slide' },
+   ])('open=$open mode=$mode에서는 drag position을 쓰지 않는다', ({ open, mode }) => {
+     const { container } = render(
+       <div className="app">
+         <ChatPanel open={open} appMode="api" agentPanelMode={mode} projectKey="p" batchStatusSources={batchSources()} />
+       </div>,
+     )
+     const header = container.querySelector('.agent-chat-header')
+diff --git a/tests/components/agent/agentPanelLayout.test.js b/tests/components/agent/agentPanelLayout.test.js
+index 8811fc8..9b4f9bf 100644
+--- a/tests/components/agent/agentPanelLayout.test.js
++++ b/tests/components/agent/agentPanelLayout.test.js
+@@ -1,16 +1,17 @@
+ import { describe, expect, it } from 'vitest'
+ import {
+   clampAgentPanelPosition,
+   effectiveAgentPanelMode,
+   floatingPanelBox,
+   normalizeAgentPanelMode,
++  reclampAgentPanelPosition,
+ } from '../../../src/components/agent/agentPanelLayout.js'
+ 
+ describe('agentPanelLayout', () => {
+   it('stored slide는 API에서 slide, Flow에서 floating이며 저장값 객체를 바꾸지 않는다', () => {
+     const preference = { value: 'slide' }
+ 
+     expect(effectiveAgentPanelMode('api', preference.value)).toBe('slide')
+     expect(effectiveAgentPanelMode('flow', preference.value)).toBe('floating')
+     expect(effectiveAgentPanelMode('api', preference.value)).toBe('slide')
+     expect(preference).toEqual({ value: 'slide' })
+@@ -30,16 +31,33 @@ describe('agentPanelLayout', () => {
+       containerRect: { left: 100, top: 50, width: 300, height: 200 },
+       panelRect: { width: 252, height: 140 },
+     }
+ 
+     expect(clampAgentPanelPosition({ ...base, clientX: -500, clientY: -500 }))
+       .toEqual({ left: 0, top: 0 })
+     expect(clampAgentPanelPosition({ ...base, clientX: 999, clientY: 999 }))
+       .toEqual({ left: 48, top: 60 })
+   })
+ 
++  it('저장된 위치를 현재 container bounds로 다시 clamp하고 null은 유지한다', () => {
++    const bounds = {
++      containerRect: { width: 120, height: 90 },
++      panelRect: { width: 100, height: 80 },
++    }
++
++    expect(reclampAgentPanelPosition({
++      position: { left: 48, top: 60 },
++      ...bounds,
++    })).toEqual({ left: 20, top: 10 })
++    expect(reclampAgentPanelPosition({
++      position: { left: 12, top: 8 },
++      ...bounds,
++    })).toEqual({ left: 12, top: 8 })
++    expect(reclampAgentPanelPosition({ position: null, ...bounds })).toBeNull()
++  })
++
+   it('288×180 App container에서 panel box가 양축을 넘지 않는다', () => {
+     expect(floatingPanelBox({ width: 288, height: 180 })).toEqual({ width: 252, maxHeight: 144 })
+     expect(floatingPanelBox({ width: 288, height: 180 }).width).toBeLessThanOrEqual(288)
+     expect(floatingPanelBox({ width: 288, height: 180 }).maxHeight).toBeLessThanOrEqual(180)
+   })
+ })

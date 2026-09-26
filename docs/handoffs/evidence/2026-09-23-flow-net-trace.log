@@ -1,0 +1,201 @@
+[Flow API] extract-token called
+[Flow API] extract-token called
+[Flow API] extract-token called
+[Flow] did-finish-load: https://flow.google.com/
+[Flow API] Session response received: 2 bytes
+[Flow API] Session keys: []
+[Flow API] Session response received: 2 bytes
+[Flow API] Session keys: []
+[Flow API] Session response received: 2 bytes
+[Flow API] Session keys: []
+[TrustedClick] Button coords: {
+[TrustedClick] Click events sent at (291, 752)
+[Flow Project] new flow project created: 8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] extract-token called
+[Flow API] Session response received: 2 bytes
+[Flow API] Session keys: []
+[Flow API] extract-token called
+[Flow API] extract-token called
+[Flow Project] opening saved flow project: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] extract-token called
+[Flow] did-finish-load: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] session probe: miss (1 candidates)
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates)
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates)
+[Flow API] Session response received: none
+[Flow Project] open error — retry via home: 8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow] did-finish-load: https://flow.google.com/
+[Flow] did-finish-load: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] extract-token called
+[Flow API] session probe: miss (3 candidates)
+[Flow API] Session response received: none
+[Flow API] extract-token called
+[Flow API] extract-token called
+[Flow Project] opening saved flow project: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] extract-token called
+[Flow] did-finish-load: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow Project] open error — retry via home: 8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow] did-finish-load: https://flow.google.com/
+[Flow] did-finish-load: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] extract-token called
+[Flow API] session probe: miss (3 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] extract-token called
+[Flow API] extract-token called
+[Flow Net] host seen: labs.google bearer: false
+[Flow Net] host seen: flow.google.com bearer: false
+[Flow Project] opening saved flow project: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] extract-token called
+[Flow Net] host seen: fonts.googleapis.com bearer: false
+[Flow Net] host seen: www.gstatic.com bearer: false
+[Flow Net] host seen: lh3.googleusercontent.com bearer: false
+[Flow Net] host seen: fonts.gstatic.com bearer: false
+[Flow Net] host seen: ogads-pa.clients6.google.com bearer: false
+[Flow Net] host seen: accounts.google.com bearer: false
+[Flow] did-finish-load: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow Net] host seen: www.googletagmanager.com bearer: false
+[Flow Net] host seen: www.google.com bearer: false
+[Flow Net] host seen: play.google.com bearer: false
+[Flow Net] host seen: www.google-analytics.com bearer: false
+[Flow API] extract-token called
+[Flow API] extract-token called
+[Flow Net] host seen: labs.google auth: none GET /fx/tools/flow
+[Flow Net] host seen: flow.google.com auth: none GET /
+[Flow Project] opening saved flow project: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] extract-token called
+[Flow Net] host seen: fonts.googleapis.com auth: none GET /css2
+[Flow Net] host seen: www.gstatic.com auth: none GET /glue/cookienotificationbar/cookienotificationbar.min.css
+[Flow Net] host seen: lh3.googleusercontent.com auth: none GET /ogw/AF2bZyjSGGVi6hNqI5mcNxLPmGmT55UUhkuNdB3TPIonTtLPOQo=s32
+[Flow Net] host seen: fonts.gstatic.com auth: none GET /s/googlesanstext/v29/5aUu9-KzpRiLCAt4Unrc-xIKmCU5qEp2i0VBux
+[Flow Net] host seen: ogads-pa.clients6.google.com auth: SAPISIDHASH POST /$rpc/google.internal.onegoogle.asyncdata.v1.AsyncDataServic
+[Flow Net] host seen: accounts.google.com auth: none GET /RotateCookiesPage
+[Flow] did-finish-load: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow Net] host seen: www.googletagmanager.com auth: none GET /gtm.js
+[Flow Net] host seen: www.google.com auth: none GET /recaptcha/enterprise.js
+[Flow Net] host seen: play.google.com auth: SAPISIDHASH POST /log
+[Flow Project] open error — retry via home: 8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow Net] host seen: www.google-analytics.com auth: none POST /g/collect
+[Flow] did-finish-load: https://flow.google.com/
+[Flow] did-finish-load: https://flow.google.com/project/8e463fb2-0b5c-4a71-badb-3f6e0f0f342b
+[Flow Net] host seen: play.google.com auth: none POST /log
+[Flow Project] opening saved flow project: https://flow.google.com/project/b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow] did-finish-load: https://flow.google.com/project/b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow Project] open error — retry via home: b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow] did-finish-load: https://flow.google.com/
+[Flow] did-finish-load: https://flow.google.com/project/b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow Net] host seen: flow-content.google auth: none GET /image/39926642-210d-4913-b0f4-66dbec4b006d
+[Flow API] extract-token called
+[Flow API] session probe: miss (3 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow Net] host seen: accounts.youtube.com auth: none GET /accounts/ClearSID
+[Flow] did-finish-load: https://accounts.google.com/Logout?continue=https%3A%2F%2Fflow.google.com%2Fflow
+[Flow Net] host seen: ogads-pa.clients6.google.com auth: none POST /$rpc/google.internal.onegoogle.asyncdata.v1.AsyncDataServic
+[Flow] did-finish-load: https://flow.google.com/about
+[Flow Net] host seen: ssl.gstatic.com auth: none GET /images/branding/googlelogo/2x/googlelogo_color_74x24dp.png
+[Flow] did-finish-load: https://accounts.google.com/v3/signin/accountchooser?continue=https://flow.google.com/&flowName=WebLiteSignIn&flowEntry=ServiceLogin&dsh=S-1625788848:1790155947853754
+[Flow] did-finish-load: https://accounts.google.com/v3/signin/challenge/pwd?TL=ADG-GRRxPIcXt0fUc6DEOJpuZONDeb1-wolh_OxkAgI0l091xUOJoMPPlAytW1RW&checkConnection=youtube:89&checkedDomains=youtube&cid=2&continue=https://flow.google.com/&dsh=S-1625788848:1790155947853754&flowEntry=ServiceLogin&flowName=WebLiteSignIn&pstMsg=1
+[Flow] did-finish-load: https://accounts.google.com/v3/signin/challenge/dp?TL=ADG-GRRxPIcXt0fUc6DEOJpuZONDeb1-wolh_OxkAgI0l091xUOJoMPPlAytW1RW&checkConnection=youtube:89&checkedDomains=youtube&cid=10&continue=https://flow.google.com/&dsh=S-1625788848:1790155947853754&flowEntry=ServiceLogin&flowName=WebLiteSignIn&pstMsg=1
+[Flow Net] host seen: signaler-pa.googleapis.com auth: none POST /punctual/v1/chooseServer
+[Flow Net] host seen: accounts.google.co.kr auth: none GET /accounts/SetSID
+[Flow] did-finish-load: https://flow.google.com/?pli=1
+[Flow Project] opening saved flow project: https://flow.google.com/project/9cd39615-927d-4042-ba3c-a30d34c6af6b
+[Flow] did-finish-load: https://flow.google.com/project/9cd39615-927d-4042-ba3c-a30d34c6af6b
+[Flow Project] open error — retry via home: 9cd39615-927d-4042-ba3c-a30d34c6af6b
+[Flow] did-finish-load: https://flow.google.com/
+[Flow] did-finish-load: https://flow.google.com/project/9cd39615-927d-4042-ba3c-a30d34c6af6b
+[Flow Project] open failed after retry: 9cd39615-927d-4042-ba3c-a30d34c6af6b dead= false https://flow.google.com/404?reason=project
+[Flow Project] opening saved flow project: https://flow.google.com/project/9cd39615-927d-4042-ba3c-a30d34c6af6b
+[Flow] did-finish-load: https://flow.google.com/project/9cd39615-927d-4042-ba3c-a30d34c6af6b
+[Flow Project] open error — retry via home: 9cd39615-927d-4042-ba3c-a30d34c6af6b
+[Flow] did-finish-load: https://flow.google.com/
+[Flow] did-finish-load: https://flow.google.com/project/9cd39615-927d-4042-ba3c-a30d34c6af6b
+[Flow Project] opening saved flow project: https://flow.google.com/project/b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow] did-finish-load: https://flow.google.com/project/b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow Project] open failed after retry: 9cd39615-927d-4042-ba3c-a30d34c6af6b dead= false https://flow.google.com/project/b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow Net] host seen: rr5---sn-3pm7dned.googlevideo.com auth: none GET /videoplayback
+[Flow Net] host seen: rr5---sn-3pm7dnes.googlevideo.com auth: none GET /videoplayback
+[Flow API] extract-token called
+[Flow API] extract-token called
+[Flow Net] host seen: labs.google auth: none GET /fx/tools/flow
+[Flow Net] req: GET labs.google /fx/tools/flow auth: none type: mainFrame
+[Flow Net] host seen: flow.google.com auth: none GET /
+[Flow Project] opening saved flow project: https://flow.google.com/project/b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow Net] req: GET flow.google.com /project/b266f9d4-abc1-468f-b67b-81cde7b23349 auth: none type: mainFrame
+[Flow API] extract-token called
+[Flow Net] host seen: fonts.googleapis.com auth: none GET /css2
+[Flow Net] host seen: www.gstatic.com auth: none GET /glue/cookienotificationbar/cookienotificationbar.min.css
+[Flow Net] host seen: lh3.googleusercontent.com auth: none GET /ogw/AF2bZyjSGGVi6hNqI5mcNxLPmGmT55UUhkuNdB3TPIonTtLPOQo=s32
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] host seen: fonts.gstatic.com auth: none GET /s/googlesanstext/v29/5aUu9-KzpRiLCAt4Unrc-xIKmCU5qEp2i0VBux
+[Flow Net] host seen: ogads-pa.clients6.google.com auth: SAPISIDHASH POST /$rpc/google.internal.onegoogle.asyncdata.v1.AsyncDataServic
+[Flow Net] req: POST ogads-pa.clients6.google.com /$rpc/google.internal.onegoogle.asyncdata.v1.AsyncDataService/GetAsyncData auth: SAPISIDHASH type: xhr
+[Flow Net] host seen: accounts.google.com auth: none GET /RotateCookiesPage
+[Flow] did-finish-load: https://flow.google.com/project/b266f9d4-abc1-468f-b67b-81cde7b23349
+[Flow Net] req: GET labs.google /fx/api/auth/session auth: none type: xhr
+[Flow Net] req: GET labs.google /fx/api/auth/session auth: none type: xhr
+[Flow Net] req: GET labs.google /fx/api/auth/session auth: none type: xhr
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow API] session probe: miss (1 candidates) → no captured bearer
+[Flow API] Session response received: none
+[Flow Net] host seen: www.googletagmanager.com auth: none GET /gtm.js
+[Flow Net] host seen: www.google.com auth: none GET /recaptcha/enterprise.js
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] host seen: play.google.com auth: SAPISIDHASH POST /log
+[Flow Net] req: POST play.google.com /log auth: SAPISIDHASH type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] host seen: flow-content.google auth: none GET /image/88ec63fc-c4f3-4929-a84a-b401df8b0c51
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] host seen: www.google-analytics.com auth: none POST /g/collect
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] host seen: play.google.com auth: none POST /log
+[Flow Net] req: POST play.google.com /log auth: none type: ping
+[Flow Net] req: POST play.google.com /log auth: none type: xhr
+[Flow Net] req: POST accounts.google.com /RotateCookies auth: none type: xhr
+[Flow Net] req: POST flow.google.com /_/AiSandboxAngularFrontend/data/batchexecute auth: none type: xhr
+[Flow Net] req: POST play.google.com /log auth: none type: ping

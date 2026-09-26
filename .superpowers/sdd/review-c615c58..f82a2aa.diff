@@ -1,0 +1,350 @@
+# Review package: c615c58..f82a2aa
+
+## Commits
+f82a2aa fix(story): revision 단조 증가 복원 + abort 동기 terminal 마킹
+f101735 fix(story): 재발신 prompts-done 가드 + stale 실행 상태 오염 방지
+0cbf47f feat(story): 스텝 머신 (①②④ + push revision + 재발신)
+
+## Files changed
+ electron/story/stepMachine.js            | 144 ++++++++++++++++++++++++
+ tests/electron/story/stepMachine.test.js | 181 +++++++++++++++++++++++++++++++
+ 2 files changed, 325 insertions(+)
+
+## Diff
+diff --git a/electron/story/stepMachine.js b/electron/story/stepMachine.js
+new file mode 100644
+index 0000000..10349b7
+--- /dev/null
++++ b/electron/story/stepMachine.js
+@@ -0,0 +1,144 @@
++/**
++ * Story 스텝 머신 — 스펙 §2/§3/§4. main process 소유, 결정적 순서 제어.
++ * LLM 어댑터는 DI(테스트 mock). emit은 모든 payload에 projectToken/operationId 포함.
++ */
++import { randomUUID } from 'node:crypto'
++import { createStoryStore } from './storyStore.js'
++import { inheritStoryIds, assertUniqueStoryIds } from './sceneIdentity.js'
++import { buildFallbackTimeline } from './timing.js'
++
++const DOWNSTREAM = { script: ['scenes', 'prompts'], scenes: ['prompts'], prompts: [] }
++
++export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
++  const store = createStoryStore(projectPath)
++  const projectToken = randomUUID()
++  let state = null
++  let controller = null
++
++  const send = (ch, payload, operationId) =>
++    emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
++
++  async function flush() { await store.save(state) }
++
++  function mapScene(s, timing) {
++    return {
++      storyId: s.storyId,
++      sceneNo: s.sceneNo,
++      prompt: s.imagePrompt || '',
++      videoT2VPrompt: s.videoPrompt || '',
++      startTime: timing.startTime,
++      endTime: timing.endTime,
++      duration: timing.duration,
++      srtLineIds: [],                                  // M1: 오디오 없음 (스펙 §4-④ 폴백)
++      subtitle: (s.segments || []).map((g) => g.text).join(' '),
++    }
++  }
++
++  function sendPush(scenes, operationId) {
++    assertUniqueStoryIds(scenes)
++    const timeline = buildFallbackTimeline(scenes, state.input?.options?.language || 'ko')
++    const byId = new Map(timeline.map((t) => [t.storyId, t]))
++    send('story:pushScenes', {
++      pushRevision: state.pendingPushRevision,
++      scenes: scenes.map((s) => mapScene(s, byId.get(s.storyId))),
++    }, operationId)
++  }
++
++  async function maybeResendPush(operationId) {
++    if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
++      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}')
++      sendPush(scenesJson.scenes, operationId)
++    }
++  }
++
++  const steps = {
++    async script(params, opId, signal) {
++      state.input = params.input ? { ...params.input, options: params.options } : state.input
++      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(params.options || {}) }
++      const { scriptMd } = await llm.generateScript(state.input, opts, {
++        onDelta: (text) => send('story:delta', { text }, opId), signal,
++      })
++      await store.saveText('script.md', scriptMd)
++    },
++    async scenes(params, opId, signal) {
++      const scriptMd = await store.loadText('script.md')
++      if (!scriptMd) throw new Error('script.md not found — run script step first')
++      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
++      const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
++      const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
++      const { scenes: withIds } = inheritStoryIds(prev, scenes)
++      assertUniqueStoryIds(withIds)
++      await store.saveText('scenes.json', JSON.stringify({ scenes: withIds }, null, 2))
++      // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
++      const norm = (n) => (n || '').replace(/\s/g, '')
++      const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
++      state.speakers = speakers.map((sp) => ({ ...sp, voice: prevSpeakers.get(norm(sp.name))?.voice ?? null }))
++    },
++    async prompts(params, opId, signal) {
++      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
++      if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
++      const scriptMd = await store.loadText('script.md')
++      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
++      const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
++      await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
++      state.pendingPushRevision += 1
++      sendPush(scenes, opId)
++    },
++  }
++
++  return {
++    projectToken,
++    async open() {
++      state = await store.load()
++      await maybeResendPush()
++      send('story:state', { state })
++      return { projectToken, state }
++    },
++    async getState() {
++      await maybeResendPush()
++      return state
++    },
++    async start(step, params = {}) {
++      if (!steps[step]) throw new Error(`unknown step: ${step}`)
++      const operationId = randomUUID()
++      const myController = new AbortController()
++      controller = myController
++      // 하류 리셋 — revision은 스펙대로 단조 증가 유지(빈 push 재발신은 maybeResendPush의 prompts-done 가드가 차단)
++      for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
++      state.steps[step] = { status: 'running', updatedAt: new Date().toISOString() }
++      await flush(); send('story:state', { state }, operationId)
++      try {
++        await steps[step](params, operationId, myController.signal)
++        if (controller === myController) {
++          state.steps[step] = { status: 'done', updatedAt: new Date().toISOString() }
++        }
++      } catch (e) {
++        if (controller === myController) {
++          state.steps[step] = { status: 'error', error: String(e.message || e), updatedAt: new Date().toISOString() }
++        }
++      }
++      if (controller === myController) {
++        await flush(); send('story:state', { state }, operationId)
++      }
++      return { operationId }
++    },
++    async abort() {
++      controller?.abort()
++      // 중단 시점에 running인 스텝은 동기적으로 terminal 마킹 — 이후 다른 스텝 시작으로
++      // controller가 교체돼도 running 잔류가 없도록. stale settle의 상태 쓰기는 캡처 가드가 차단.
++      for (const [name, s] of Object.entries(state?.steps || {})) {
++        if (s.status === 'running') {
++          state.steps[name] = { status: 'error', error: 'aborted', updatedAt: new Date().toISOString() }
++        }
++      }
++      await flush()
++    },
++    async ackPush({ pushRevision, ok }) {
++      if (ok && pushRevision > state.lastPushedRevision) {
++        state.lastPushedRevision = pushRevision
++        state.pushedAt = new Date().toISOString()
++        await flush()
++      }
++    },
++  }
++}
+diff --git a/tests/electron/story/stepMachine.test.js b/tests/electron/story/stepMachine.test.js
+new file mode 100644
+index 0000000..2a4a7cf
+--- /dev/null
++++ b/tests/electron/story/stepMachine.test.js
+@@ -0,0 +1,181 @@
++// @vitest-environment node
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { mkdtemp } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import path from 'node:path'
++import { createStepMachine } from '../../../electron/story/stepMachine.js'
++
++let dir, emitted, llm, machine
++beforeEach(async () => {
++  dir = await mkdtemp(path.join(tmpdir(), 'sm-'))
++  emitted = []
++  llm = {
++    generateScript: vi.fn(async (_i, _o, { onDelta }) => { onDelta?.('부분'); return { scriptMd: '# 대본' } }),
++    splitScenes: vi.fn(async () => ({
++      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' }] }],
++      speakers: [{ id: 'narrator', name: '나레이션' }],
++    })),
++    writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s) => ({ ...s, imagePrompt: 'IMG', videoPrompt: 'VID' })) })),
++  }
++  machine = createStepMachine({
++    projectPath: dir, llm,
++    emit: (ch, payload) => emitted.push({ ch, payload }),
++    getApiKey: () => 'k',
++  })
++  await machine.open()
++})
++
++describe('stepMachine', () => {
++  it('script 실행: delta 중계 + done + script.md 저장', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    const state = await machine.getState()
++    expect(state.steps.script.status).toBe('done')
++    expect(emitted.some((e) => e.ch === 'story:delta' && e.payload.text === '부분')).toBe(true)
++    expect(emitted.every((e) => e.payload.projectToken && e.payload.operationId)).toBe(true)
++  })
++
++  it('scenes 실행: storyId 발급 + speakers 시드', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    const state = await machine.getState()
++    expect(state.steps.scenes.status).toBe('done')
++    expect(state.speakers[0].id).toBe('narrator')
++  })
++
++  it('prompts 실행: 폴백 타이밍 push 발신 + pendingPushRevision 증가', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    await machine.start('prompts', {})
++    const push = emitted.find((e) => e.ch === 'story:pushScenes')
++    expect(push).toBeTruthy()
++    const scene = push.payload.scenes[0]
++    expect(scene).toMatchObject({ prompt: 'IMG', videoT2VPrompt: 'VID', srtLineIds: [] })
++    expect(scene.storyId).toMatch(/^[0-9a-f-]{36}$/)
++    expect(scene.duration).toBeGreaterThan(0)   // 폴백 타이밍 (0~3 기본값 아님)
++    const state = await machine.getState()
++    expect(state.pendingPushRevision).toBe(1)
++    expect(state.lastPushedRevision).toBe(0)
++  })
++
++  it('ackPush(ok)로 lastPushedRevision/pushedAt 갱신', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    await machine.start('prompts', {})
++    const push = emitted.find((e) => e.ch === 'story:pushScenes')
++    await machine.ackPush({ pushRevision: push.payload.pushRevision, ok: true })
++    const state = await machine.getState()
++    expect(state.lastPushedRevision).toBe(1)
++    expect(state.pushedAt).toBeTruthy()
++  })
++
++  it('ack 유실 후 open()이 push를 재발신한다', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    await machine.start('prompts', {})
++    emitted.length = 0
++    await machine.open()   // ack 없이 재시작 시뮬레이션
++    expect(emitted.some((e) => e.ch === 'story:pushScenes')).toBe(true)
++  })
++
++  it('script 재실행은 scenes/prompts를 pending으로 리셋한다', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    await machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
++    const state = await machine.getState()
++    expect(state.steps.scenes.status).toBe('pending')
++    expect(state.steps.prompts.status).toBe('pending')
++  })
++
++  it('LLM 에러 시 스텝 status=error + 에러 메시지 보존', async () => {
++    llm.generateScript.mockRejectedValueOnce(new Error('429'))
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    const state = await machine.getState()
++    expect(state.steps.script.status).toBe('error')
++    expect(state.steps.script.error).toContain('429')
++  })
++
++  it('prompts 완료 후 ack 없이 scenes 재실행하면 빈 push를 재발신하지 않고, prompts 재실행 후에는 정상 push한다', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    await machine.start('prompts', {})   // ack 없음 → prompts done, pendingPushRevision=1, lastPushedRevision=0
++
++    emitted.length = 0
++    await machine.start('scenes', {})    // 하류 리셋: prompts → pending
++    emitted.length = 0
++    await machine.open()                 // maybeResendPush: prompts가 pending이므로 재발신 없어야 함
++    expect(emitted.some((e) => e.ch === 'story:pushScenes')).toBe(false)
++
++    await machine.start('prompts', {})   // 정상 재실행 → 새 push 발신
++    const push = emitted.find((e) => e.ch === 'story:pushScenes')
++    expect(push).toBeTruthy()
++    expect(push.payload.scenes[0].prompt).toBe('IMG')
++  })
++
++  it('abort 후 즉시 재시작 시 stale 완료가 최신 status를 덮어쓰지 않는다', async () => {
++    let rejectFirst
++    llm.generateScript
++      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject }))
++      .mockImplementationOnce(async (_i, _o, { onDelta }) => { onDelta?.('2차'); return { scriptMd: '# 2차' } })
++
++    const firstStart = machine.start('script', { input: { type: 'title', title: 'T1' }, options: { language: 'ko' } })
++    // 첫 실행이 llm.generateScript 호출 지점(pending mock)에 도달할 때까지 대기
++    // (이 시점엔 첫 실행 자체의 초기 flush가 이미 끝나 있어 abort()의 flush와 충돌하지 않음)
++    while (!rejectFirst) { await new Promise((r) => setImmediate(r)) }
++    await machine.abort()   // 첫 실행 취소 신호
++    // 취소된 첫 실행이 뒤늦게 reject됨
++    rejectFirst(Object.assign(new Error('aborted'), { name: 'AbortError' }))
++    // 곧바로 같은 스텝을 재시작 — 두 번째 실행은 성공해야 함
++    const secondStart = machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
++    await Promise.all([firstStart, secondStart])
++
++    const state = await machine.getState()
++    expect(state.steps.script.status).toBe('done')
++  })
++
++  it('하류 리셋 + 늦은 ack 후 prompts 재실행은 새 revision으로 push하고, 유실 시 재발신된다', async () => {
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++    await machine.start('scenes', {})
++    await machine.start('prompts', {})   // push rev1 발신 (pending=1, last=0), ack 아직 없음
++
++    await machine.start('scenes', {})    // 하류 리셋: prompts → pending
++    await machine.ackPush({ pushRevision: 1, ok: true })   // 늦은 옛 ack 도착 → last=1
++
++    emitted.length = 0
++    await machine.start('prompts', {})   // 재실행 push는 rev1 재사용이 아닌 rev2여야 함
++    const push = emitted.find((e) => e.ch === 'story:pushScenes')
++    expect(push).toBeTruthy()
++    expect(push.payload.pushRevision).toBe(2)
++
++    emitted.length = 0
++    await machine.open()                 // rev2 push 유실 가정 → 재발신되어야 함
++    const resend = emitted.find((e) => e.ch === 'story:pushScenes')
++    expect(resend).toBeTruthy()
++    expect(resend.payload.pushRevision).toBe(2)
++  })
++
++  it('abort 후 다른 스텝을 시작해도 중단된 스텝이 running으로 잔류하지 않는다', async () => {
++    // 1차 script는 정상 완료시켜 script.md를 만들어 둔다 (scenes 선행 조건)
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
++
++    let rejectStale
++    llm.generateScript.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectStale = reject }))
++    const staleStart = machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
++    while (!rejectStale) { await new Promise((r) => setImmediate(r)) }
++
++    await machine.abort()                // abort 시점에 running이던 script는 동기적으로 terminal 처리
++    await machine.start('scenes', {})    // stale settle 전에 다른 스텝 시작 (controller 교체)
++    rejectStale(Object.assign(new Error('aborted'), { name: 'AbortError' }))
++    await staleStart                     // stale settle — 가드로 상태 쓰기 차단
++
++    const state = await machine.getState()
++    expect(state.steps.script.status).toBe('error')
++    expect(state.steps.script.error).toContain('aborted')
++    expect(state.steps.scenes.status).toBe('done')
++
++    // 디스크 reopen에도 running 잔류 없음
++    const reopened = createStepMachine({ projectPath: dir, llm, emit: () => {}, getApiKey: () => 'k' })
++    const { state: diskState } = await reopened.open()
++    expect(diskState.steps.script.status).toBe('error')
++    expect(Object.values(diskState.steps).every((s) => s.status !== 'running')).toBe(true)
++  })
++})

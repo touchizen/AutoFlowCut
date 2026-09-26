@@ -1,0 +1,156 @@
+# Review package: d0011f5..c1efc8e
+
+## Commits
+c1efc8e refactor: extract prompt builders to prompts.js + metaPrompt slot
+
+## Files changed
+ electron/api/llm/llmGemini.js          | 33 +--------------------------------
+ electron/api/llm/prompts.js            | 34 ++++++++++++++++++++++++++++++++++
+ tests/electron/api/llm/prompts.test.js | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 65 insertions(+), 32 deletions(-)
+
+## Diff
+diff --git a/electron/api/llm/llmGemini.js b/electron/api/llm/llmGemini.js
+index 0dbaf20..2918274 100644
+--- a/electron/api/llm/llmGemini.js
++++ b/electron/api/llm/llmGemini.js
+@@ -1,19 +1,20 @@
+ /**
+  * Gemini 텍스트 LLM 어댑터 — 스펙 §5. genai.js(이미지/비디오)와 별개 신규 모듈.
+  * 스트리밍(generateScript)은 streamGenerateContent SSE를 청크 단위로 점진 파싱해
+  * onDelta를 실시간 호출한다. structured output은 responseSchema.
+  * 재시도(스펙 §7): JSON 파싱 실패 → 즉시 1회 재요청 / HTTP 429·5xx → 1초 백오프 후
+  * 1회 재시도 / 그 외 HTTP 에러(400 등) → 재시도 없이 throw / abort → 즉시 throw.
+  * 키는 헤더(x-goog-api-key)로만 전달.
+  */
+ import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
++import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
+ 
+ const BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
+ 
+ function headers(apiKey) {
+   return { 'content-type': 'application/json', 'x-goog-api-key': apiKey }
+ }
+ 
+ class HttpError extends Error {
+   constructor(status, body) {
+     super(`Gemini ${status}: ${body}`)
+@@ -107,42 +108,10 @@ export async function writePrompts(scenes, context, opts, ctx = {}) {
+   const out = await structuredCall(prompt, PROMPTS_SCHEMA, opts, ctx)
+   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
+   return {
+     scenes: scenes.map((s) => ({
+       ...s,
+       imagePrompt: byNo.get(s.sceneNo)?.imagePrompt ?? s.imagePrompt ?? null,
+       videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
+     })),
+   }
+ }
+-
+-// --- 프롬프트 빌더 (한국어/영어, 스펙 §4 지시 포함) ---
+-function buildScriptPrompt(input, opts) {
+-  return [
+-    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${opts.targetMinutes || 10}분 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
+-    opts.genre ? `장르: ${opts.genre}` : '',
+-    opts.tone ? `톤: ${opts.tone}` : '',
+-    `제목: ${input.title}`,
+-    `마크다운으로, 챕터 구분과 (대사가 있으면) 화자 표기를 포함하라.`,
+-  ].filter(Boolean).join('\n')
+-}
+-
+-function buildSplitPrompt(scriptMd, opts) {
+-  return [
+-    `아래 대본을 씬으로 분리하라. 각 씬은 낭독 시 6~10초(${opts.language === 'ko' ? '한국어 기준 약 33~55자' : 'about 90~150 chars in English'}) 분량이어야 한다. 초과하면 씬을 분할하라.`,
+-    `각 씬의 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 emotion(normal/happy/sad/angry)을 지정하라.`,
+-    `등장 화자 전체 목록을 speakers로 반환하라.`,
+-    `--- 대본 ---`,
+-    scriptMd,
+-  ].join('\n')
+-}
+-
+-function buildPromptsPrompt(scenes, context, opts) {
+-  const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
+-  return [
+-    `아래 씬들에 대해 이미지 생성 프롬프트(imagePrompt)와 비디오 생성 프롬프트(videoPrompt)를 영어로 작성하라.`,
+-    `캐릭터가 등장하면 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라 (레퍼런스 참조 문법 금지 — 플레인 텍스트).`,
+-    context.style ? `스타일: ${context.style}` : '',
+-    `--- 씬 목록 ---`,
+-    ...sceneLines,
+-  ].filter(Boolean).join('\n')
+-}
+diff --git a/electron/api/llm/prompts.js b/electron/api/llm/prompts.js
+new file mode 100644
+index 0000000..41240bf
+--- /dev/null
++++ b/electron/api/llm/prompts.js
+@@ -0,0 +1,34 @@
++/** 프롬프트 빌더 — Gemini/Claude 두 엔진 공유. (구 llmGemini.js 내부 빌더 이관) */
++
++export function buildScriptPrompt(input, opts) {
++  const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
++  return [
++    meta,
++    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${opts.targetMinutes || 10}분 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
++    opts.genre ? `장르: ${opts.genre}` : '',
++    opts.tone ? `톤: ${opts.tone}` : '',
++    `제목: ${input.title}`,
++    `마크다운으로, 챕터 구분과 (대사가 있으면) 화자 표기를 포함하라.`,
++  ].filter(Boolean).join('\n')
++}
++
++export function buildSplitPrompt(scriptMd, opts) {
++  return [
++    `아래 대본을 씬으로 분리하라. 각 씬은 낭독 시 6~10초(${opts.language === 'ko' ? '한국어 기준 약 33~55자' : 'about 90~150 chars in English'}) 분량이어야 한다. 초과하면 씬을 분할하라.`,
++    `각 씬의 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 emotion(normal/happy/sad/angry)을 지정하라.`,
++    `등장 화자 전체 목록을 speakers로 반환하라.`,
++    `--- 대본 ---`,
++    scriptMd,
++  ].join('\n')
++}
++
++export function buildPromptsPrompt(scenes, context, opts) {
++  const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
++  return [
++    `아래 씬들에 대해 이미지 생성 프롬프트(imagePrompt)와 비디오 생성 프롬프트(videoPrompt)를 영어로 작성하라.`,
++    `캐릭터가 등장하면 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라 (레퍼런스 참조 문법 금지 — 플레인 텍스트).`,
++    context.style ? `스타일: ${context.style}` : '',
++    `--- 씬 목록 ---`,
++    ...sceneLines,
++  ].filter(Boolean).join('\n')
++}
+diff --git a/tests/electron/api/llm/prompts.test.js b/tests/electron/api/llm/prompts.test.js
+new file mode 100644
+index 0000000..bfb94a1
+--- /dev/null
++++ b/tests/electron/api/llm/prompts.test.js
+@@ -0,0 +1,30 @@
++import { describe, it, expect } from 'vitest'
++import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from '../../../../electron/api/llm/prompts.js'
++
++describe('buildScriptPrompt', () => {
++  it('제목/장르/언어를 템플릿에 채운다', () => {
++    const p = buildScriptPrompt({ title: 'T' }, { targetMinutes: 8, language: 'ko', genre: 'yadam' })
++    expect(p).toContain('8분')
++    expect(p).toContain('제목: T')
++    expect(p).toContain('한국어')
++  })
++  it('metaPrompt가 있으면 CUSTOM INSTRUCTIONS 블록을 앞에 넣는다', () => {
++    const p = buildScriptPrompt({ title: 'T' }, { language: 'ko', metaPrompt: 'META-XYZ' })
++    expect(p).toContain('## CUSTOM INSTRUCTIONS')
++    expect(p).toContain('META-XYZ')
++    expect(p.indexOf('META-XYZ')).toBeLessThan(p.indexOf('제목: T'))
++  })
++  it('metaPrompt가 없으면 CUSTOM INSTRUCTIONS 블록이 없다', () => {
++    expect(buildScriptPrompt({ title: 'T' }, { language: 'ko' })).not.toContain('CUSTOM INSTRUCTIONS')
++  })
++})
++
++describe('buildSplitPrompt / buildPromptsPrompt', () => {
++  it('split은 대본 본문을 포함', () => {
++    expect(buildSplitPrompt('SCRIPT-BODY', { language: 'ko' })).toContain('SCRIPT-BODY')
++  })
++  it('prompts는 씬 요약을 포함', () => {
++    const p = buildPromptsPrompt([{ sceneNo: 1, summary: 'S1', segments: [{ text: 'hi' }] }], {}, { language: 'en' })
++    expect(p).toContain('1. S1')
++  })
++})

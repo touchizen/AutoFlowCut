@@ -1,0 +1,163 @@
+# Review package: 40da0d2..7782701
+
+## Commits
+7782701 fix(agent): cancel pending send when aborted during session open
+
+## Files changed
+ src/components/agent/ChatPanel.jsx        |  5 +++++
+ tests/components/agent/ChatPanel.test.jsx | 37 +++++++++++++++++++++++++++++++
+ 2 files changed, 42 insertions(+)
+
+## Diff
+diff --git a/src/components/agent/ChatPanel.jsx b/src/components/agent/ChatPanel.jsx
+index 7f22cfb..647fe86 100644
+--- a/src/components/agent/ChatPanel.jsx
++++ b/src/components/agent/ChatPanel.jsx
+@@ -138,20 +138,21 @@ export default function ChatPanel({
+   const [toolCalls, setToolCalls] = useState([])
+   const [usage, setUsage] = useState(null)
+   const [errors, setErrors] = useState([])
+   const [running, setRunning] = useState(false)
+   const [models, setModels] = useState([])
+   const [modelsLoading, setModelsLoading] = useState(true)
+   const [selectedModel, setSelectedModel] = useState(null)
+   const sessionOpenRef = useRef(false)
+   const openPromiseRef = useRef(null)
+   const sessionEpochRef = useRef(0)
++  const abortEpochRef = useRef(0)
+   const projectSettleRef = useRef(Promise.resolve())
+   const projectKeyRef = useRef(projectKey)
+   const messageIdRef = useRef(0)
+   const batchSourcesRef = useRef(batchStatusSources)
+   batchSourcesRef.current = batchStatusSources
+   const sceneSourcesRef = useRef(sceneBridgeSources)
+   sceneSourcesRef.current = sceneBridgeSources
+   const exportSourcesRef = useRef(exportBridgeSources)
+   exportSourcesRef.current = exportBridgeSources
+   const videoAdmissionSourcesRef = useRef(videoAdmissionSources)
+@@ -353,25 +354,27 @@ export default function ChatPanel({
+ 
+   const send = async (event) => {
+     event.preventDefault()
+     const snapshot = { text: input.trim(), model: selectedModel || undefined }
+     if (!snapshot.text || running) return
+     messageIdRef.current += 1
+     setMessages((current) => [...current, {
+       id: `user-${messageIdRef.current}`, role: 'user', text: snapshot.text, streaming: false,
+     }])
+     setInput('')
++    const abortEpoch = abortEpochRef.current
+     setRunning(true)
+     if (!(await ensureSession(snapshot.model))) {
+       setRunning(false)
+       return
+     }
++    if (abortEpochRef.current !== abortEpoch) return
+     try {
+       const payload = snapshot.model
+         ? { text: snapshot.text, model: snapshot.model }
+         : { text: snapshot.text }
+       const result = await api.agentSend(payload)
+       if (hasFailure(result)) {
+         setRunning(false)
+         pushError(result)
+       }
+     } catch (error) {
+@@ -392,33 +395,35 @@ export default function ChatPanel({
+     }
+   }
+ 
+   const abort = async () => {
+     try {
+       const result = await api.agentAbort()
+       if (hasFailure(result)) pushError(result)
+     } catch (error) {
+       pushError({ error: 'agent-abort-failed', message: error?.message })
+     } finally {
++      abortEpochRef.current += 1
+       setRunning(false)
+     }
+   }
+ 
+   const close = async () => {
+     try {
+       videoAdmissionSourcesRef.current.abortAndClear?.()
+       const result = await api.agentSessionClose()
+       if (hasFailure(result)) pushError(result)
+       else sessionOpenRef.current = false
+     } catch (error) {
+       pushError({ error: 'agent-close-failed', message: error?.message })
+     } finally {
++      abortEpochRef.current += 1
+       setRunning(false)
+     }
+   }
+ 
+   return (
+     <aside
+       ref={panelRef}
+       className={`agent-chat-panel ${collapsed ? 'is-collapsed' : ''}`}
+       aria-label={t('agent.panelLabel')}
+       // 옮긴 뒤에는 right/bottom 앵커 대신 left/top 이 이긴다. 안 지우면 두 앵커가 싸워 늘어난다.
+diff --git a/tests/components/agent/ChatPanel.test.jsx b/tests/components/agent/ChatPanel.test.jsx
+index a594827..d5f064c 100644
+--- a/tests/components/agent/ChatPanel.test.jsx
++++ b/tests/components/agent/ChatPanel.test.jsx
+@@ -149,20 +149,57 @@ describe('ChatPanel — model 적용 시점 계약', () => {
+     await waitFor(() => expect(window.electronAPI.agentSend)
+       .toHaveBeenNthCalledWith(1, { text: 'A snapshot', model: 'gpt-a' }))
+ 
+     window.electronAPI.emitAgent('agent:done', { turnId: 'turn-1', status: 'completed' })
+     await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), 'B next turn')
+     await user.click(screen.getByRole('button', { name: 'Send' }))
+     expect(window.electronAPI.agentSend)
+       .toHaveBeenNthCalledWith(2, { text: 'B next turn', model: 'gpt-b' })
+   })
+ 
++  it('session open 대기 중 Stop하면 pending send를 취소하고 다음 Send를 다시 허용한다', async () => {
++    let resolveOpen
++    window.electronAPI.agentSessionOpen.mockReturnValueOnce(new Promise((resolve) => { resolveOpen = resolve }))
++    const user = userEvent.setup()
++    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
++    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
++
++    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
++    await user.type(input, 'open 중 취소할 요청')
++    await user.click(screen.getByRole('button', { name: 'Send' }))
++    await waitFor(() => expect(window.electronAPI.agentSessionOpen).toHaveBeenCalledOnce())
++
++    await user.click(screen.getByRole('button', { name: 'Stop' }))
++    expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
++    await user.type(input, '다음 요청')
++
++    await act(async () => resolveOpen({ sessionId: 'session-1' }))
++    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled())
++    expect(window.electronAPI.agentSend).not.toHaveBeenCalled()
++  })
++
++  it('session open 실패 뒤 running을 해제해 다음 Send를 다시 허용한다', async () => {
++    window.electronAPI.agentSessionOpen.mockRejectedValueOnce(new Error('spawn failed'))
++    const user = userEvent.setup()
++    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
++    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
++
++    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
++    await user.type(input, '실패할 요청')
++    await user.click(screen.getByRole('button', { name: 'Send' }))
++
++    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('spawn failed'))
++    expect(window.electronAPI.agentSend).not.toHaveBeenCalled()
++    await user.type(input, '재시도')
++    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
++  })
++
+   it('running 중 Send는 disabled지만 Steer는 입력이 있으면 유지되고 model을 싣지 않는다', async () => {
+     const user = userEvent.setup()
+     render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+     const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+ 
+     await user.type(input, '새 turn')
+     await user.click(screen.getByRole('button', { name: 'Send' }))
+     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+ 
+     await user.click(screen.getByRole('combobox', { name: 'Agent model' }))

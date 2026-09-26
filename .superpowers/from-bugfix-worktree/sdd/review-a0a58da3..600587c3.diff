@@ -1,0 +1,682 @@
+# Review package: a0a58da3..600587c3
+
+## Commits
+600587c3 Rewrite ApiKeyTab as consolidated provider list, wire into SettingsModal
+eeb08b11 Consolidate settings: single API key tab (Gemini + TTS providers), drop TTS tab
+63be45c6 Add ApiKeyField presentational + Genai/Tts wrappers (hook-rule-safe)
+
+## Files changed
+ src/components/SettingsModal.jsx               |   6 --
+ src/components/settings/ApiKeyField.jsx        |  50 +++++++++++
+ src/components/settings/ApiKeyTab.jsx          | 120 +++++--------------------
+ src/components/settings/GenaiApiKeyField.jsx   |  33 +++++++
+ src/components/settings/TtsApiKeyField.jsx     |  31 +++++++
+ src/components/settings/TtsKeyTab.jsx          | 113 -----------------------
+ tests/components/settings/ApiKeyField.test.jsx |  34 +++++++
+ tests/components/settings/ApiKeyTab.test.jsx   |  89 +++---------------
+ tests/components/settings/TtsKeyTab.test.jsx   |  56 ------------
+ 9 files changed, 184 insertions(+), 348 deletions(-)
+
+## Diff
+diff --git a/src/components/SettingsModal.jsx b/src/components/SettingsModal.jsx
+index f3d552aa..bce1e74f 100644
+--- a/src/components/SettingsModal.jsx
++++ b/src/components/SettingsModal.jsx
+@@ -5,27 +5,25 @@
+ import { useState, useEffect } from 'react'
+ import { fileSystemAPI } from '../hooks/useFileSystem'
+ import { useI18n } from '../hooks/useI18n'
+ import { TIMING } from '../config/defaults'
+ import Modal from './Modal'
+ import StorageTab from './settings/StorageTab'
+ import SceneTab from './settings/SceneTab'
+ import DisplayTab from './settings/DisplayTab'
+ import McpTab from './settings/McpTab'
+ import ApiKeyTab from './settings/ApiKeyTab'
+-import TtsKeyTab from './settings/TtsKeyTab'
+ import './SettingsModal.css'
+ 
+ const TABS = [
+   { id: 'storage', icon: '📁', labelKey: 'settings.tabStorage' },
+   { id: 'apiKey', icon: '🔑', labelKey: 'settings.tabApiKey' },
+-  { id: 'ttsKey', icon: '🎙️', labelKey: 'settings.tabTtsKey' },
+   { id: 'scene', icon: '🎬', labelKey: 'settings.tabScene' },
+   { id: 'display', icon: '🖥️', labelKey: 'settings.tabDisplay' },
+   { id: 'mcp', icon: '🔌', labelKey: 'settings.tabMcp' }
+ ]
+ 
+ export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange, availableModels = {}, appMode }) {
+   const { t } = useI18n()
+   // 모델 선택 옵션 — App 에서 라이브 /models 로 채워 내려줌(undefined 면 SceneTab 이 정적 폴백).
+   const [activeTab, setActiveTab] = useState(initialTab || 'storage')
+   const [localSettings, setLocalSettings] = useState(() => ({ ...settings }))
+@@ -106,24 +104,20 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab =
+             onProjectChange={onProjectChange}
+             highlight={highlight}
+             t={t}
+           />
+         )}
+ 
+         {activeTab === 'apiKey' && (
+           <ApiKeyTab t={t} />
+         )}
+ 
+-        {activeTab === 'ttsKey' && (
+-          <TtsKeyTab t={t} />
+-        )}
+-
+         {activeTab === 'scene' && (
+           <SceneTab
+             localSettings={localSettings}
+             setLocalSettings={setLocalSettings}
+             t={t}
+             appMode={appMode}
+             imageModels={availableModels.imageModels}
+             videoModels={availableModels.videoModels}
+           />
+         )}
+diff --git a/src/components/settings/ApiKeyField.jsx b/src/components/settings/ApiKeyField.jsx
+new file mode 100644
+index 00000000..1117a05e
+--- /dev/null
++++ b/src/components/settings/ApiKeyField.jsx
+@@ -0,0 +1,50 @@
++/**
++ * ApiKeyField — provider 하나의 키 상태 배지 + 입력 + 저장/삭제(presentational, hook 없음).
++ * 설정 통합 탭/게이트/미리듣기가 공용으로 쓴다(spec §4.6). hook 은 wrapper 가 고정 호출한다.
++ */
++const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
++
++export default function ApiKeyField({
++  label, statusLabel, hasKey, loading, encryptionAvailable, busy,
++  keyInput, onKeyInput, onSave, onRemove, getKeyUrl, extraNote, t,
++}) {
++  const openLink = (url) => window.electronAPI?.openExternal?.(url)
++  return (
++    <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '6px', borderTop: '1px solid #2a2a2a', paddingTop: '12px' }}>
++      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
++        <label className="setting-label" style={{ fontWeight: 600 }}>{label}</label>
++        <span style={{ color: hasKey ? '#10b981' : '#888', fontSize: '13px' }}>
++          {loading ? '…' : hasKey ? t('settings.apiKeySet') : t('settings.apiKeyNotSet')}
++        </span>
++      </div>
++      {!encryptionAvailable && (
++        <span style={{ color: '#f59e0b', fontSize: '13px' }}>{t('settings.apiKeyEncUnavailable')}</span>
++      )}
++      <input
++        type="password"
++        value={keyInput}
++        onChange={(e) => onKeyInput(e.target.value)}
++        placeholder={t('settings.ttsKeyPlaceholder')}
++        disabled={busy || !encryptionAvailable}
++        autoComplete="off"
++        spellCheck={false}
++      />
++      <div style={{ display: 'flex', gap: '8px' }}>
++        <button className="btn-primary" onClick={onSave} disabled={busy || !encryptionAvailable}>
++          {busy ? t('settings.ttsKeySaving') : t('settings.ttsKeySave')}
++        </button>
++        {hasKey && (
++          <button className="btn-secondary" onClick={onRemove} disabled={busy}>
++            {t('settings.ttsKeyRemove')}
++          </button>
++        )}
++        {getKeyUrl && (
++          <a style={{ ...linkStyle, marginLeft: 'auto', alignSelf: 'center' }} onClick={() => openLink(getKeyUrl)}>
++            {t('settings.ttsKeyGetKey')}
++          </a>
++        )}
++      </div>
++      {extraNote && <span className="setting-sublabel">{extraNote}</span>}
++    </div>
++  )
++}
+diff --git a/src/components/settings/ApiKeyTab.jsx b/src/components/settings/ApiKeyTab.jsx
+index 0f43661f..53236060 100644
+--- a/src/components/settings/ApiKeyTab.jsx
++++ b/src/components/settings/ApiKeyTab.jsx
+@@ -1,122 +1,50 @@
+ /**
+- * ApiKeyTab — BYOK(사용자 Gemini API 키) 입력/관리 + 온보딩 가이드.
+- *
+- * Flow 로그인(역공학 세션)을 대체하는 진입점. 키는 main process 에 암호화 저장되며
+- * 여기서는 존재 여부/유효성만 다룬다.
++ * ApiKeyTab — 모든 API 키를 한 곳에서. Gemini(BYOK, 이미지·Veo·Gemini TTS 공용) + Story TTS
++ * provider(Typecast/ElevenLabs/Google Cloud TTS). 각 provider 는 ApiKeyField wrapper 로 독립 관리.
+  */
+-import { useState } from 'react'
+-import { toast } from '../Toast'
+-import { useApiKey } from '../../hooks/useApiKey'
++import GenaiApiKeyField from './GenaiApiKeyField'
++import TtsApiKeyField from './TtsApiKeyField'
+ 
+-const GET_KEY_URL = 'https://aistudio.google.com/apikey'
+-const BILLING_URL = 'https://console.cloud.google.com/billing'
++const TTS_PROVIDERS = [
++  { id: 'typecast', label: 'Typecast', url: 'https://app.typecast.ai' },
++  { id: 'elevenlabs', label: 'ElevenLabs', url: 'https://elevenlabs.io/app/settings/api-keys' },
++  { id: 'googletts', label: 'Google Cloud TTS', url: 'https://console.cloud.google.com/apis/credentials' },
++]
+ 
+-const linkStyle = {
+-  color: '#4a9eff',
+-  textDecoration: 'underline',
+-  cursor: 'pointer',
+-  fontSize: '13px',
+-}
++const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
+ 
+ export default function ApiKeyTab({ t }) {
+-  const { hasKey, encryptionAvailable, loading, validateKey, saveKey, clearKey } = useApiKey()
+-  const [keyInput, setKeyInput] = useState('')
+-  const [busy, setBusy] = useState(false)
+-
+   const openLink = (url) => window.electronAPI?.openExternal?.(url)
+-
+-  const handleVerifySave = async () => {
+-    const candidate = keyInput.trim()
+-    if (!candidate) {
+-      toast.error(t('settings.apiKeyEmpty'))
+-      return
+-    }
+-    setBusy(true)
+-    // 저장 전 가벼운 검증 호출 (생성 quota 미소비)
+-    const v = await validateKey(candidate)
+-    if (!v?.valid) {
+-      setBusy(false)
+-      toast.error(t('settings.apiKeyInvalid', { error: v?.error || '' }))
+-      return
+-    }
+-    const res = await saveKey(candidate)
+-    setBusy(false)
+-    if (res?.success) {
+-      setKeyInput('') // 평문 키 폐기
+-      toast.success(t('settings.apiKeySaved'))
+-    } else {
+-      toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
+-    }
+-  }
+-
+-  const handleRemove = async () => {
+-    setBusy(true)
+-    await clearKey()
+-    setBusy(false)
+-    toast.success(t('settings.apiKeyRemoved'))
+-  }
+-
+   return (
+     <div className="settings-tab-content">
+-      {/* 키 입력 / 상태 */}
+       <div className="settings-section">
+         <h3>{t('settings.apiKeyTitle')}</h3>
+-
+-        {!encryptionAvailable && (
+-          <div className="setting-row">
+-            <span style={{ color: '#f59e0b' }}>{t('settings.apiKeyEncUnavailable')}</span>
+-          </div>
+-        )}
+-
+-        <div className="setting-row">
+-          <label className="setting-label">{t('settings.apiKeyStatusLabel')}</label>
+-          <span style={{ color: hasKey ? '#10b981' : '#888' }}>
+-            {loading ? '…' : hasKey ? t('settings.apiKeySet') : t('settings.apiKeyNotSet')}
+-          </span>
+-        </div>
+-
+-        <div className="setting-row">
+-          <label className="setting-label">{t('settings.apiKeyInputLabel')}</label>
+-          <input
+-            type="password"
+-            value={keyInput}
+-            onChange={(e) => setKeyInput(e.target.value)}
+-            placeholder={t('settings.apiKeyPlaceholder')}
+-            disabled={busy || !encryptionAvailable}
+-            autoComplete="off"
+-            spellCheck={false}
++        <GenaiApiKeyField t={t} />
++        {TTS_PROVIDERS.map((p) => (
++          <TtsApiKeyField
++            key={p.id}
++            provider={p.id}
++            label={p.label}
++            getKeyUrl={p.url}
++            extraNote={p.id === 'elevenlabs' ? t('settings.elevenlabsVoicesReadHint') : undefined}
++            t={t}
+           />
+-          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+-            <button className="btn-primary" onClick={handleVerifySave} disabled={busy || !encryptionAvailable}>
+-              {busy ? t('settings.apiKeyVerifying') : t('settings.apiKeyVerifySave')}
+-            </button>
+-            {hasKey && (
+-              <button className="btn-secondary" onClick={handleRemove} disabled={busy}>
+-                {t('settings.apiKeyRemove')}
+-              </button>
+-            )}
+-          </div>
+-          <span className="setting-sublabel">{t('settings.apiKeySecurityNote')}</span>
+-        </div>
++        ))}
++        <span className="setting-sublabel" style={{ display: 'block', marginTop: '8px' }}>{t('settings.apiKeySecurityNote')}</span>
+       </div>
+ 
+-      {/* 온보딩 가이드 */}
++      {/* Gemini 온보딩 가이드 (기존 유지) */}
+       <div className="settings-section">
+         <h3>{t('settings.apiKeyGuideTitle')}</h3>
+-        <p className="setting-sublabel" style={{ marginBottom: '12px' }}>
+-          {t('settings.apiKeyGuideIntro')}
+-        </p>
++        <p className="setting-sublabel" style={{ marginBottom: '12px' }}>{t('settings.apiKeyGuideIntro')}</p>
+         <ol style={{ paddingLeft: '20px', lineHeight: 1.8, fontSize: '13px', margin: '0 0 12px' }}>
+           <li>{t('settings.apiKeyGuideStep1')}</li>
+           <li>{t('settings.apiKeyGuideStep2')}</li>
+           <li>{t('settings.apiKeyGuideStep3')}</li>
+           <li>{t('settings.apiKeyGuideStep4')}</li>
+         </ol>
+-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+-          <a style={linkStyle} onClick={() => openLink(GET_KEY_URL)}>{t('settings.apiKeyGuideGetKey')}</a>
+-          <a style={linkStyle} onClick={() => openLink(BILLING_URL)}>{t('settings.apiKeyGuideBilling')}</a>
+-        </div>
++        <a style={linkStyle} onClick={() => openLink('https://console.cloud.google.com/billing')}>{t('settings.apiKeyGuideBilling')}</a>
+       </div>
+     </div>
+   )
+ }
+diff --git a/src/components/settings/GenaiApiKeyField.jsx b/src/components/settings/GenaiApiKeyField.jsx
+new file mode 100644
+index 00000000..25115820
+--- /dev/null
++++ b/src/components/settings/GenaiApiKeyField.jsx
+@@ -0,0 +1,33 @@
++/**
++ * GenaiApiKeyField — Google Gemini(BYOK) 키 필드. useApiKey 를 고정 호출하고
++ * ApiKeyField(presentational)에 상태/콜백을 넘긴다. 저장 전 검증(validateKey)을 거친다.
++ */
++import { useState } from 'react'
++import { toast } from '../Toast'
++import { useApiKey } from '../../hooks/useApiKey'
++import ApiKeyField from './ApiKeyField'
++
++export default function GenaiApiKeyField({ t }) {
++  const { hasKey, encryptionAvailable, loading, validateKey, saveKey, clearKey } = useApiKey()
++  const [keyInput, setKeyInput] = useState('')
++  const [busy, setBusy] = useState(false)
++  const onSave = async () => {
++    const c = keyInput.trim()
++    if (!c) { toast.error(t('settings.apiKeyEmpty')); return }
++    setBusy(true)
++    const v = await validateKey(c)
++    if (!v?.valid) { setBusy(false); toast.error(t('settings.apiKeyInvalid', { error: v?.error || '' })); return }
++    const res = await saveKey(c)
++    setBusy(false)
++    if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')) }
++    else toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
++  }
++  const onRemove = async () => { setBusy(true); await clearKey(); setBusy(false); toast.success(t('settings.apiKeyRemoved')) }
++  return (
++    <ApiKeyField
++      label="Google Gemini" hasKey={hasKey} loading={loading} encryptionAvailable={encryptionAvailable}
++      busy={busy} keyInput={keyInput} onKeyInput={setKeyInput} onSave={onSave} onRemove={onRemove}
++      getKeyUrl="https://aistudio.google.com/apikey" extraNote={t('settings.ttsKeyGeminiNote')} t={t}
++    />
++  )
++}
+diff --git a/src/components/settings/TtsApiKeyField.jsx b/src/components/settings/TtsApiKeyField.jsx
+new file mode 100644
+index 00000000..cff9e82e
+--- /dev/null
++++ b/src/components/settings/TtsApiKeyField.jsx
+@@ -0,0 +1,31 @@
++/**
++ * TtsApiKeyField — TTS provider(BYOK) 키 필드. useTtsKeys(provider) 를 고정 호출한다.
++ * Typecast/ElevenLabs/Google Cloud TTS는 검증 엔드포인트 통일이 없어 저장 전 검증은 생략.
++ */
++import { useState } from 'react'
++import { toast } from '../Toast'
++import { useTtsKeys } from '../../hooks/useTtsKeys'
++import ApiKeyField from './ApiKeyField'
++
++export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, t }) {
++  const { hasKey, encryptionAvailable, loading, saveKey, clearKey } = useTtsKeys(provider)
++  const [keyInput, setKeyInput] = useState('')
++  const [busy, setBusy] = useState(false)
++  const onSave = async () => {
++    const c = keyInput.trim()
++    if (!c) { toast.error(t('settings.ttsKeyEmpty')); return }
++    setBusy(true)
++    const res = await saveKey(c)
++    setBusy(false)
++    if (res?.success) { setKeyInput(''); toast.success(t('settings.ttsKeySaved')) }
++    else toast.error(t('settings.ttsKeySaveFailed', { error: res?.error || '' }))
++  }
++  const onRemove = async () => { setBusy(true); await clearKey(); setBusy(false); toast.success(t('settings.ttsKeyRemoved')) }
++  return (
++    <ApiKeyField
++      label={label} hasKey={hasKey} loading={loading} encryptionAvailable={encryptionAvailable}
++      busy={busy} keyInput={keyInput} onKeyInput={setKeyInput} onSave={onSave} onRemove={onRemove}
++      getKeyUrl={getKeyUrl} extraNote={extraNote} t={t}
++    />
++  )
++}
+diff --git a/src/components/settings/TtsKeyTab.jsx b/src/components/settings/TtsKeyTab.jsx
+deleted file mode 100644
+index 372ccb49..00000000
+--- a/src/components/settings/TtsKeyTab.jsx
++++ /dev/null
+@@ -1,113 +0,0 @@
+-/**
+- * TtsKeyTab — TTS provider BYOK 키 입력/관리 (스펙 §6, 슬라이스3).
+- *
+- * Story 오디오 나레이션 합성에 쓰는 provider별 API 키를 암호화 저장한다(keyStoreMulti).
+- * provider 선택 드롭다운 + 키 입력. Gemini TTS는 별도 키 없이 상단 'API 키'(Google) 키를 재사용한다.
+- * Typecast/ElevenLabs/Google Cloud TTS는 검증 엔드포인트 통일이 없어 저장 전 검증은 생략.
+- */
+-import { useState } from 'react'
+-import { toast } from '../Toast'
+-import { useTtsKeys } from '../../hooks/useTtsKeys'
+-
+-const PROVIDERS = [
+-  { id: 'typecast', label: 'Typecast', url: 'https://app.typecast.ai' },
+-  { id: 'elevenlabs', label: 'ElevenLabs', url: 'https://elevenlabs.io/app/settings/api-keys' },
+-  { id: 'googletts', label: 'Google Cloud TTS', url: 'https://console.cloud.google.com/apis/credentials' },
+-]
+-
+-const linkStyle = { color: '#4a9eff', textDecoration: 'underline', cursor: 'pointer', fontSize: '13px' }
+-
+-export default function TtsKeyTab({ t }) {
+-  const [provider, setProvider] = useState('typecast')
+-  const { hasKey, encryptionAvailable, loading, saveKey, clearKey } = useTtsKeys(provider)
+-  const [keyInput, setKeyInput] = useState('')
+-  const [busy, setBusy] = useState(false)
+-  const meta = PROVIDERS.find((p) => p.id === provider) || PROVIDERS[0]
+-
+-  const openLink = (url) => window.electronAPI?.openExternal?.(url)
+-
+-  const handleSave = async () => {
+-    const candidate = keyInput.trim()
+-    if (!candidate) { toast.error(t('settings.ttsKeyEmpty')); return }
+-    setBusy(true)
+-    const res = await saveKey(candidate)
+-    setBusy(false)
+-    if (res?.success) {
+-      setKeyInput('') // 평문 키 폐기
+-      toast.success(t('settings.ttsKeySaved'))
+-    } else {
+-      toast.error(t('settings.ttsKeySaveFailed', { error: res?.error || '' }))
+-    }
+-  }
+-
+-  const handleRemove = async () => {
+-    setBusy(true)
+-    await clearKey()
+-    setBusy(false)
+-    toast.success(t('settings.ttsKeyRemoved'))
+-  }
+-
+-  return (
+-    <div className="settings-tab-content">
+-      <div className="settings-section">
+-        <h3>{t('settings.ttsKeyTitle')}</h3>
+-
+-        <div className="setting-row">
+-          <label className="setting-label">{t('settings.ttsKeyProviderLabel')}</label>
+-          <select
+-            aria-label={t('settings.ttsKeyProvider')}
+-            value={provider}
+-            onChange={(e) => { setProvider(e.target.value); setKeyInput('') }}
+-          >
+-            {PROVIDERS.map((p) => (<option key={p.id} value={p.id}>{p.label}</option>))}
+-          </select>
+-        </div>
+-
+-        {!encryptionAvailable && (
+-          <div className="setting-row">
+-            <span style={{ color: '#f59e0b' }}>{t('settings.apiKeyEncUnavailable')}</span>
+-          </div>
+-        )}
+-
+-        <div className="setting-row">
+-          <label className="setting-label">{t('settings.ttsKeyStatusLabel')}</label>
+-          <span style={{ color: hasKey ? '#10b981' : '#888' }}>
+-            {loading ? '…' : hasKey ? t('settings.ttsKeySet') : t('settings.ttsKeyNotSet')}
+-          </span>
+-        </div>
+-
+-        <div className="setting-row">
+-          <label className="setting-label">{meta.label} {t('settings.ttsKeyInputLabel')}</label>
+-          <input
+-            type="password"
+-            value={keyInput}
+-            onChange={(e) => setKeyInput(e.target.value)}
+-            placeholder={t('settings.ttsKeyPlaceholder')}
+-            disabled={busy || !encryptionAvailable}
+-            autoComplete="off"
+-            spellCheck={false}
+-          />
+-          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+-            <button className="btn-primary" onClick={handleSave} disabled={busy || !encryptionAvailable}>
+-              {busy ? t('settings.ttsKeySaving') : t('settings.ttsKeySave')}
+-            </button>
+-            {hasKey && (
+-              <button className="btn-secondary" onClick={handleRemove} disabled={busy}>
+-                {t('settings.ttsKeyRemove')}
+-              </button>
+-            )}
+-          </div>
+-          <span className="setting-sublabel">{t('settings.apiKeySecurityNote')}</span>
+-          {provider === 'elevenlabs' && (
+-            <span className="setting-sublabel">{t('settings.elevenlabsVoicesReadHint')}</span>
+-          )}
+-          <span className="setting-sublabel">{t('settings.ttsKeyGeminiNote')}</span>
+-        </div>
+-      </div>
+-
+-      <div className="settings-section">
+-        <a style={linkStyle} onClick={() => openLink(meta.url)}>{t('settings.ttsKeyGetKey')}</a>
+-      </div>
+-    </div>
+-  )
+-}
+diff --git a/tests/components/settings/ApiKeyField.test.jsx b/tests/components/settings/ApiKeyField.test.jsx
+new file mode 100644
+index 00000000..68e8f378
+--- /dev/null
++++ b/tests/components/settings/ApiKeyField.test.jsx
+@@ -0,0 +1,34 @@
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen, fireEvent } from '@testing-library/react'
++import ApiKeyField from '../../../src/components/settings/ApiKeyField'
++
++const t = (k, vars) => (vars ? `${k}:${JSON.stringify(vars)}` : k)
++
++describe('ApiKeyField (presentational)', () => {
++  const base = {
++    label: 'Typecast', statusLabel: 'settings.ttsKeyStatusLabel', hasKey: false,
++    loading: false, encryptionAvailable: true, busy: false, keyInput: '',
++    onKeyInput: vi.fn(), onSave: vi.fn(), onRemove: vi.fn(), getKeyUrl: 'https://x', t,
++  }
++
++  it('shows the provider label and a password input', () => {
++    render(<ApiKeyField {...base} />)
++    expect(screen.getByText('Typecast')).toBeTruthy()
++    expect(screen.getByPlaceholderText('settings.ttsKeyPlaceholder')).toBeTruthy()
++  })
++
++  it('save button calls onSave; remove shown only when hasKey', () => {
++    const onSave = vi.fn()
++    const { rerender } = render(<ApiKeyField {...base} onSave={onSave} />)
++    fireEvent.click(screen.getByText('settings.ttsKeySave'))
++    expect(onSave).toHaveBeenCalled()
++    expect(screen.queryByText('settings.ttsKeyRemove')).toBeNull()
++    rerender(<ApiKeyField {...base} hasKey={true} />)
++    expect(screen.getByText('settings.ttsKeyRemove')).toBeTruthy()
++  })
++
++  it('disables input+save when encryption unavailable', () => {
++    render(<ApiKeyField {...base} encryptionAvailable={false} />)
++    expect(screen.getByPlaceholderText('settings.ttsKeyPlaceholder').disabled).toBe(true)
++  })
++})
+diff --git a/tests/components/settings/ApiKeyTab.test.jsx b/tests/components/settings/ApiKeyTab.test.jsx
+index 742e984d..4f10b555 100644
+--- a/tests/components/settings/ApiKeyTab.test.jsx
++++ b/tests/components/settings/ApiKeyTab.test.jsx
+@@ -1,84 +1,19 @@
+-/**
+- * ApiKeyTab.test.jsx — BYOK 키 입력 탭 통합 테스트.
+- *
+- * useApiKey + ApiKeyTab + genai IPC mock 을 관통. 검증→저장 흐름,
+- * 검증 실패 시 저장 차단, 암호화 불가 시 비활성을 확인.
+- */
+-import { describe, it, expect, vi, beforeEach } from 'vitest'
+-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+-import ApiKeyTab from '../../../src/components/settings/ApiKeyTab'
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen } from '@testing-library/react'
+ 
+-vi.mock('../../../src/components/Toast', () => ({
+-  toast: { success: vi.fn(), error: vi.fn() },
+-}))
+-import { toast } from '../../../src/components/Toast'
++// hooks가 IPC(window.electronAPI)를 부르므로 mock — 존재 여부만 렌더 확인.
++vi.mock('../../../src/hooks/useApiKey', () => ({ useApiKey: () => ({ hasKey: true, encryptionAvailable: true, loading: false, validateKey: vi.fn(), saveKey: vi.fn(), clearKey: vi.fn() }) }))
++vi.mock('../../../src/hooks/useTtsKeys', () => ({ useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: vi.fn(), clearKey: vi.fn(), provider: p }) }))
+ 
+-// t: 키를 그대로 반환 (보간은 무시) → 렌더된 텍스트로 키 존재 검증
++import ApiKeyTab from '../../../src/components/settings/ApiKeyTab'
+ const t = (k) => k
+ 
+-beforeEach(() => {
+-  window.electronAPI.genaiGetKeyStatus.mockResolvedValue({ hasKey: false, encryptionAvailable: true })
+-  window.electronAPI.genaiValidateKey.mockResolvedValue({ valid: true })
+-  window.electronAPI.genaiSetKey.mockResolvedValue({ success: true })
+-  window.electronAPI.genaiClearKey.mockResolvedValue({ success: true })
+-})
+-
+-describe('ApiKeyTab', () => {
+-  it('키 없음 상태 + 삭제 버튼 없음', async () => {
+-    render(<ApiKeyTab t={t} />)
+-    await waitFor(() => expect(screen.getByText('settings.apiKeyNotSet')).toBeInTheDocument())
+-    expect(screen.queryByText('settings.apiKeyRemove')).toBeNull()
+-  })
+-
+-  it('키 있음 → 상태 표시 + 삭제 버튼', async () => {
+-    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({ hasKey: true, encryptionAvailable: true })
+-    render(<ApiKeyTab t={t} />)
+-    await waitFor(() => expect(screen.getByText('settings.apiKeySet')).toBeInTheDocument())
+-    expect(screen.getByText('settings.apiKeyRemove')).toBeInTheDocument()
+-  })
+-
+-  it('Verify & Save: 검증 통과 → 저장 + 성공 토스트 + 입력 비움', async () => {
+-    window.electronAPI.genaiGetKeyStatus
+-      .mockResolvedValueOnce({ hasKey: false, encryptionAvailable: true })
+-      .mockResolvedValue({ hasKey: true, encryptionAvailable: true })
+-    render(<ApiKeyTab t={t} />)
+-    await waitFor(() => screen.getByText('settings.apiKeyNotSet'))
+-
+-    const input = screen.getByPlaceholderText('settings.apiKeyPlaceholder')
+-    fireEvent.change(input, { target: { value: 'AIza-good' } })
+-    fireEvent.click(screen.getByText('settings.apiKeyVerifySave'))
+-
+-    await waitFor(() => expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'AIza-good' }))
+-    expect(window.electronAPI.genaiValidateKey).toHaveBeenCalledWith({ apiKey: 'AIza-good' })
+-    expect(toast.success).toHaveBeenCalled()
+-    expect(input.value).toBe('')
+-  })
+-
+-  it('검증 실패 → 저장 안 함 + 에러 토스트', async () => {
+-    window.electronAPI.genaiValidateKey.mockResolvedValue({ valid: false, error: 'bad key' })
+-    render(<ApiKeyTab t={t} />)
+-    await waitFor(() => screen.getByText('settings.apiKeyNotSet'))
+-
+-    fireEvent.change(screen.getByPlaceholderText('settings.apiKeyPlaceholder'), { target: { value: 'bad' } })
+-    fireEvent.click(screen.getByText('settings.apiKeyVerifySave'))
+-
+-    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+-    expect(window.electronAPI.genaiSetKey).not.toHaveBeenCalled()
+-  })
+-
+-  it('빈 입력 → 검증 호출 안 함', async () => {
+-    render(<ApiKeyTab t={t} />)
+-    await waitFor(() => screen.getByText('settings.apiKeyNotSet'))
+-    fireEvent.click(screen.getByText('settings.apiKeyVerifySave'))
+-    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+-    expect(window.electronAPI.genaiValidateKey).not.toHaveBeenCalled()
+-  })
+-
+-  it('암호화 불가 → 경고 + 입력/버튼 비활성', async () => {
+-    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({ hasKey: false, encryptionAvailable: false })
++describe('ApiKeyTab (consolidated list)', () => {
++  it('lists Gemini + all three TTS providers', () => {
+     render(<ApiKeyTab t={t} />)
+-    await waitFor(() => expect(screen.getByText('settings.apiKeyEncUnavailable')).toBeInTheDocument())
+-    expect(screen.getByPlaceholderText('settings.apiKeyPlaceholder')).toBeDisabled()
+-    expect(screen.getByText('settings.apiKeyVerifySave')).toBeDisabled()
++    expect(screen.getByText('Google Gemini')).toBeTruthy()
++    expect(screen.getByText('Typecast')).toBeTruthy()
++    expect(screen.getByText('ElevenLabs')).toBeTruthy()
++    expect(screen.getByText('Google Cloud TTS')).toBeTruthy()
+   })
+ })
+diff --git a/tests/components/settings/TtsKeyTab.test.jsx b/tests/components/settings/TtsKeyTab.test.jsx
+deleted file mode 100644
+index 09a959e4..00000000
+--- a/tests/components/settings/TtsKeyTab.test.jsx
++++ /dev/null
+@@ -1,56 +0,0 @@
+-/**
+- * TtsKeyTab.test.jsx — TTS(Typecast) 키 입력 탭 (M2a-3b).
+- * useTtsKeys + keys:* IPC mock 관통. 저장 흐름 + 상태 + 삭제.
+- */
+-import { describe, it, expect, vi, beforeEach } from 'vitest'
+-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+-import TtsKeyTab from '../../../src/components/settings/TtsKeyTab'
+-
+-vi.mock('../../../src/components/Toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+-
+-const t = (k) => k
+-
+-beforeEach(() => {
+-  window.electronAPI.keysStatus.mockResolvedValue({ provider: 'typecast', hasKey: false, encryptionAvailable: true })
+-  window.electronAPI.keysSet.mockResolvedValue({ success: true })
+-  window.electronAPI.keysDelete.mockResolvedValue({ success: true })
+-})
+-
+-describe('TtsKeyTab', () => {
+-  it('키 없음 상태를 표시하고 삭제 버튼은 없다', async () => {
+-    render(<TtsKeyTab t={t} />)
+-    await waitFor(() => expect(screen.getByText('settings.ttsKeyNotSet')).toBeInTheDocument())
+-    expect(screen.queryByText('settings.ttsKeyRemove')).toBeNull()
+-  })
+-
+-  it('키 입력 후 저장하면 keysSet(typecast)을 호출하고 입력을 비운다', async () => {
+-    window.electronAPI.keysStatus
+-      .mockResolvedValueOnce({ provider: 'typecast', hasKey: false, encryptionAvailable: true })
+-      .mockResolvedValue({ provider: 'typecast', hasKey: true, encryptionAvailable: true })
+-    render(<TtsKeyTab t={t} />)
+-    await waitFor(() => screen.getByText('settings.ttsKeyNotSet'))
+-    const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder')
+-    fireEvent.change(input, { target: { value: 'tc-secret' } })
+-    fireEvent.click(screen.getByText('settings.ttsKeySave'))
+-    await waitFor(() => expect(window.electronAPI.keysSet).toHaveBeenCalledWith({ provider: 'typecast', apiKey: 'tc-secret' }))
+-    await waitFor(() => expect(input.value).toBe(''))
+-  })
+-
+-  it('키가 있으면 삭제 버튼을 보이고 클릭 시 keysDelete를 호출한다', async () => {
+-    window.electronAPI.keysStatus.mockResolvedValue({ provider: 'typecast', hasKey: true, encryptionAvailable: true })
+-    render(<TtsKeyTab t={t} />)
+-    await waitFor(() => expect(screen.getByText('settings.ttsKeyRemove')).toBeInTheDocument())
+-    fireEvent.click(screen.getByText('settings.ttsKeyRemove'))
+-    await waitFor(() => expect(window.electronAPI.keysDelete).toHaveBeenCalledWith({ provider: 'typecast' }))
+-  })
+-
+-  it('provider를 바꾸면 그 provider의 키로 저장한다', async () => {
+-    render(<TtsKeyTab t={t} />)
+-    await waitFor(() => screen.getByText('settings.ttsKeyNotSet'))
+-    fireEvent.change(screen.getByLabelText('settings.ttsKeyProvider'), { target: { value: 'elevenlabs' } })
+-    await waitFor(() => expect(window.electronAPI.keysStatus).toHaveBeenCalledWith({ provider: 'elevenlabs' }))
+-    fireEvent.change(screen.getByPlaceholderText('settings.ttsKeyPlaceholder'), { target: { value: 'el-secret' } })
+-    fireEvent.click(screen.getByText('settings.ttsKeySave'))
+-    await waitFor(() => expect(window.electronAPI.keysSet).toHaveBeenCalledWith({ provider: 'elevenlabs', apiKey: 'el-secret' }))
+-  })
+-})

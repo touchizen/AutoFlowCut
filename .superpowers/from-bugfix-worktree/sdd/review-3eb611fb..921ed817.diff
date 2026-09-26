@@ -1,0 +1,594 @@
+# Review package: 3eb611fb..921ed817
+
+## Commits
+921ed817 Add story:audio-preflight IPC (required providers -> per-provider key status)
+90261aaf keyResolvers: add resolveKeyWithSource returning {key, source}
+5e0c5bfc stepMachine: hoist audio selection helpers + add audioPreflight (required providers)
+
+## Files changed
+ electron/ipc/story-api.js                        |  27 ++++-
+ electron/main.js                                 |   4 +-
+ electron/main/keyResolvers.js                    |  21 +++-
+ electron/story/stepMachine.js                    |  96 +++++++++++-----
+ tests/electron/ipc/audioPreflightIpc.test.js     |  21 ++++
+ tests/electron/main/resolveKeyWithSource.test.js |  42 +++++++
+ tests/electron/story/audioPreflight.test.js      | 133 +++++++++++++++++++++++
+ 7 files changed, 314 insertions(+), 30 deletions(-)
+
+## Diff
+diff --git a/electron/ipc/story-api.js b/electron/ipc/story-api.js
+index 066e3886..a7efe1a5 100644
+--- a/electron/ipc/story-api.js
++++ b/electron/ipc/story-api.js
+@@ -1,17 +1,18 @@
+ /**
+  * Story 파이프라인 IPC — 스펙 §6. 프로젝트당 하나의 스텝 머신 인스턴스.
+  * 모든 R→M 명령은 projectToken 검증, 불일치 시 { error: 'stale-token' }.
+  */
+ import { stat } from 'node:fs/promises'
+ import path from 'node:path'
+ import { createStepMachine, readAudioPackage } from '../story/stepMachine.js'
++import { keyIdForProvider } from '../../src/config/apiKeyRegistry.js'
+ import * as llmGemini from '../api/llm/llmGemini.js'
+ import * as llmClaude from '../api/llm/llmClaude.js'
+ import { searchVideos } from '../api/youtube/searchVideos.js'
+ import { fetchTranscript } from '../api/youtube/fetchTranscript.js'
+ import { getVideoDetails } from '../api/youtube/getVideoDetails.js'
+ import { createTtsAdapter } from '../api/tts/index.js'
+ import { getTypecastKey } from '../api/tts/typecastKey.js'
+ import { probeDurationMs } from '../story/audioProbe.js'
+ import { DEFAULT_STORY_LLM, STORY_LLM_OPTIONS, setActiveStoryLlmCatalog } from '../api/llm/storyLlmCatalog.js'
+ import { buildClaudeStoryLlmOptions, buildCodexStoryLlmOptions, resolveStoryLlmCatalog } from '../api/llm/storyLlmDiscovery.js'
+@@ -40,21 +41,33 @@ async function validateProjectPath(projectPath) {
+ }
+ 
+ // HIGH(부분): 절대경로/traversal/존재 검증을 통과해도 활성 workFolder(렌더러가 마지막으로
+ // activate한 작업 폴더) 밖의 임의 경로면 여전히 임의 위치에 script.md/scenes.json을 쓸 수
+ // 있다. workFolder가 알려져 있으면(활성화된 뒤) projectPath가 그 하위인지 확인한다.
+ function isWithinWorkFolder(projectPath, workFolder) {
+   const rel = path.relative(workFolder, projectPath)
+   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+ }
+ 
+-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels }) {
++// M2 오디오 사전점검(§4.1/§4.3): audioPreflight()가 계산한 필요 provider 목록을 provider별
++// 키 상태(store/fallback/missing)로 매핑하는 순수 함수 — IPC 핸들러에서 분리해 단위 테스트한다.
++export function buildAudioPreflightResult(requiredProviders, { resolveKeyWithSource, encryptionAvailable }) {
++  const providers = requiredProviders.map((provider) => {
++    const keyId = keyIdForProvider(provider)
++    const { source } = resolveKeyWithSource(keyId)
++    const status = source === 'store' ? 'resolved-store' : source === 'fallback' ? 'resolved-fallback' : 'missing'
++    return { provider, keyId, status, encryptionAvailable }
++  })
++  return { providers, encryptionAvailable }
++}
++
++export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels, resolveKeyWithSource, safeStorage }) {
+   let machine = null
+   let openLock = Promise.resolve()
+ 
+   // 리서치(spec §3.1/§3.5): 검색·자막은 yt-dlp 모듈 직접 배선, 팩트체크는 Claude 강제라 라우터
+   // 우회 — llmClaude.factCheckClaims를 machine deps로 주입(N4 DI seam, 테스트는 mock 주입).
+   const youtubeApi = youtube || { searchVideos, fetchTranscript, getVideoDetails }
+   const factCheckFn = factCheck || llmClaude.factCheckClaims
+ 
+   // C1-a: audio 스텝은 tts/probe 주입이 필수(없으면 실앱에서 tts.capabilities() 크래시).
+   // 테스트/커스텀 provider는 주입 우선, 기본은 Typecast 어댑터 + music-metadata probe.
+@@ -159,20 +172,32 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
+     }
+     if (projectPath) {
+       if (!(await validateProjectPath(projectPath))) return null
+       const activeWorkFolder = getActiveWorkFolder()
+       if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) return null
+       return asKind(() => readAudioPackage(projectPath))
+     }
+     if (!machine) return null
+     return asKind(() => machine.loadAudioPackage())
+   })
++  // M2 오디오 사전점검(§4.1/§4.3): audioPreflight()로 필요 provider를 구한 뒤 provider별 키
++  // 상태를 붙여 renderer에 돌려준다. 읽기 전용 조회라 audioPreflight 자체처럼 guarded()로
++  // 감싸지 않는다(projectToken 불변 여부와 무관) — 다만 machine 이 아직 없으면(프로젝트 미오픈)
++  // machine.audioPreflight 호출이 TypeError로 터지므로 다른 비guarded 핸들러(story:load-audio-package)
++  // 관례대로 빈 목록으로 안전 반환한다.
++  ipcMain.handle('story:audio-preflight', async (_e, params) => {
++    const encryptionAvailable = safeStorage?.isEncryptionAvailable?.() ?? false
++    if (!machine) return buildAudioPreflightResult([], { resolveKeyWithSource, encryptionAvailable })
++    const required = await machine.audioPreflight(params || {})
++    return buildAudioPreflightResult(required, { resolveKeyWithSource, encryptionAvailable })
++  })
++
+   ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => machine.generateTitle(scriptMd, options || {})))
+   // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action — title/pasted 분기는 machine이 처리.
+   // 리서치 §5 M2: 기존 채널에 useResearch 필드 추가(신규 채널 아님) — true일 때만 research.json 주입.
+   ipcMain.handle('story:generate-synopsis', guarded(({ type, title, pastedScript, options, useResearch }) =>
+     machine.generateSynopsis({ type, title, pastedScript, useResearch, options: options || {} })))
+   // 시놉시스 검수(spec 2026-07-10): draft-only — 결과를 돌려줄 뿐 저장하지 않는다.
+   ipcMain.handle('story:review-synopsis', guarded(({ synopsisMd, characters, options, review }) =>
+     machine.reviewSynopsis({ synopsisMd, characters, options: options || {}, review })))
+   // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋 채널(title·pasted 공통) — characters→speakers
+   // 반영 + charactersConfirmed=true + pushCharacters emit은 machine.confirmSynopsis가 수행.
+diff --git a/electron/main.js b/electron/main.js
+index d4d797fb..4d9a8196 100644
+--- a/electron/main.js
++++ b/electron/main.js
+@@ -226,21 +226,21 @@ const multiKeyStore = createMultiKeyStore({
+   path,
+ })
+ // TTS 어댑터 라우팅(화자별 엔진). provider별 키 소스:
+ //  - typecast: multiKeyStore 우선, 없으면 env/~/.typecast/credentials 폴백
+ //  - elevenlabs/googletts: multiKeyStore 우선, 없으면 env/~/.{service}/credentials 폴백
+ //  - gemini: genai(Gemini) 키 재사용
+ // 같은 어댑터를 story audio(합성)와 tts IPC(listVoices)가 공유(메모이즈).
+ const ttsFetch = (...a) => globalThis.fetch(...a)
+ // AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1: multiKeyStore(암호화 저장)에 없으면 env/credentials
+ // 폴백을 건너뛰고 null 반환(개발용 스위치, spec §4.9) — 어댑터의 requireKey 가 MissingProviderKeyError 로 처리.
+-const { ttsKeyFor, sfxKeyFor: sfxKeyForBuilt } = buildKeyResolvers({
++const { ttsKeyFor, sfxKeyFor: sfxKeyForBuilt, resolveKeyWithSource } = buildKeyResolvers({
+   multiKeyStore,
+   genaiKeyStore,
+   getTypecastKey,
+   readCredentialsKey,
+   disableFallback: process.env.AUTOFLOWCUT_DISABLE_KEY_FALLBACK === '1',
+ })
+ const ttsAdapters = {}
+ const ttsFor = (provider) => {
+   const p = provider || 'typecast'
+   if (!ttsKeyFor[p]) throw new Error(`Unsupported TTS provider: ${p}`)
+@@ -288,20 +288,22 @@ const storyLlm = createStoryLlmRouter({ claude: llmClaude, codex: llmCodex })
+ // Story pipeline IPC (script/scenes/audio/prompts 스텝 머신 + preload 브릿지).
+ registerStoryIPC(ipcMain, {
+   keyStore: genaiKeyStore,
+   getWindow: () => mainWindow,
+   llm: storyLlm,
+   loadMetaPrompt,
+   getActiveWorkFolder: () => activeWorkFolder,
+   tts: ttsFor('typecast'), // 기본 어댑터(동시성/폴백)
+   ttsFor, // 화자별 provider 라우팅
+   sfxFor, // M2b: sfx sourceMode별 라우팅
++  resolveKeyWithSource, // M2: story:audio-preflight의 provider별 키 상태 조회
++  safeStorage, // M2: story:audio-preflight의 encryptionAvailable 판정
+ })
+ 
+ // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
+ registerAuthIPC(ipcMain)
+ 
+ // CapCut IPC (path detection, project writing, app launch)
+ registerCapcutIPC(ipcMain)
+ 
+ // Premiere IPC (.prproj writing — gzipped XML)
+ registerPremiereIPC(ipcMain)
+diff --git a/electron/main/keyResolvers.js b/electron/main/keyResolvers.js
+index 37e4e8a5..6d063098 100644
+--- a/electron/main/keyResolvers.js
++++ b/electron/main/keyResolvers.js
+@@ -12,12 +12,31 @@ export function buildKeyResolvers({ multiKeyStore, genaiKeyStore, getTypecastKey
+ 
+   const ttsKeyFor = {
+     typecast: () => multiKeyStore.getKey('typecast') || typecastFallback(),
+     elevenlabs: () => multiKeyStore.getKey('elevenlabs') || credFallback('elevenlabs', 'ELEVENLABS_API_KEY'),
+     googletts: () => multiKeyStore.getKey('googletts') || credFallback('googletts', 'GOOGLE_TTS_API_KEY'),
+     gemini: () => genaiKeyStore.getKey() ?? null,
+   }
+   const sfxKeyFor = {
+     elevenlabs: ttsKeyFor.elevenlabs,
+   }
+-  return { ttsKeyFor, sfxKeyFor }
++
++  const STORE_KEY = { typecast: 'typecast', elevenlabs: 'elevenlabs', googletts: 'googletts' }
++  const FALLBACK = {
++    typecast: typecastFallback,
++    elevenlabs: () => credFallback('elevenlabs', 'ELEVENLABS_API_KEY'),
++    googletts: () => credFallback('googletts', 'GOOGLE_TTS_API_KEY'),
++  }
++  function resolveKeyWithSource(keyId) {
++    if (keyId === 'genai') {
++      const k = genaiKeyStore.getKey() ?? null
++      return k ? { key: k, source: 'store' } : { key: null, source: null }
++    }
++    const storeId = STORE_KEY[keyId]
++    const stored = storeId ? (multiKeyStore.getKey(storeId) || null) : null
++    if (stored) return { key: stored, source: 'store' }
++    const fb = FALLBACK[keyId] ? FALLBACK[keyId]() : null
++    return fb ? { key: fb, source: 'fallback' } : { key: null, source: null }
++  }
++
++  return { ttsKeyFor, sfxKeyFor, resolveKeyWithSource }
+ }
+diff --git a/electron/story/stepMachine.js b/electron/story/stepMachine.js
+index 3a8ee6d4..425edebb 100644
+--- a/electron/story/stepMachine.js
++++ b/electron/story/stepMachine.js
+@@ -252,20 +252,52 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
+     try {
+       ;[mp3, srt] = await Promise.all([readFile(voice.mp3Path), readFile(voice.srtPath)])
+     } catch {
+       throw audioImportMissing()
+     }
+     const digest = (b) => createHash('sha256').update(b).digest('hex')
+     return `${digest(mp3)}::${digest(srt)}`
+   }
+   // 감정은 화자(대사)만 — narrator는 normal로 고정(나레이션에 감정 안 실림). TTS·reuse 지문에 공통.
+   const effectiveEmotion = (seg) => (isNarratorTrackSpeaker(seg?.speaker) ? 'normal' : seg?.emotion)
++  // audio()/audioPreflight() 공유 선택 로직 — 재사용 판정(canReuse/canReuseSfx)과 출처 해석
++  // (voiceOf/sfxSourceOf/sfxKeyOf)을 한 곳에 묶는다. 두 메서드가 "이 세그먼트를 실제로 만들
++  // 것인가"를 정확히 같은 규칙으로 판정해야 preflight가 필요 프로바이더를 정확히 예측한다.
++  function makeAudioSelection(params, speakers, defaultVoiceCfg) {
++    // IP5-a: 이미 status:'done'이고 오디오 파일이 현 프로젝트에 실재하면 재합성하지 않는다
++    // (resume/부분재시도). params.regenerate에 든 id는 강제 재합성(re-TTS 트리거).
++    // Codex-M2a-2b MED: audioPath는 절대경로라 프로젝트 이동/복사·파일 삭제 시 stale/타프로젝트를
++    // 가리킬 수 있다 — basename을 현 프로젝트 segments 디렉터리 기준으로 재구성 + 실재(stat) 확인.
++    const forceRegen = new Set(params.regenerate || [])
++    const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
++    const reusePathOf = (seg) => path.join(segmentsDir, path.basename(seg.audioPath))
++    // C1-a: 화자 매핑 UI(M2a-3) 전에는 미배정 화자를 주입된 기본 voice로 폴백해 audio가 앱에서
++    // 돌게 한다. defaultVoice 미주입(정식 흐름)이면 null → 아래 미배정 검증이 그대로 실행 차단(스펙 §6).
++    const voiceOf = (spk) => findSpeakerByRef(speakers, spk)?.voice || defaultVoiceCfg || null
++    const canReuse = async (seg) => {
++      if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
++      // Codex-TTS HIGH: 화자 voice/provider/emotion이 바뀌면(또는 지문 없는 옛 오디오면) 재사용 금지.
++      const intended = voiceOf(seg.speaker)
++      if (!intended?.voiceId || seg.voiceKey !== ttsVoiceKey(intended, effectiveEmotion(seg))) return false
++      try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
++    }
++    // M2b sfx reuse: 지문 sfxKey(source:description:durationHint) 일치 + 파일 실재.
++    // source는 UI 오버라이드(params.sfxSources[segId]) > 세그먼트 영속값 > 기본 elevenlabs.
++    const sfxSourceOf = (seg) => params.sfxSources?.[seg.id] || seg.sourceMode || 'elevenlabs'
++    const sfxKeyOf = (seg) => `${sfxSourceOf(seg)}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
++    const canReuseSfx = async (seg) => {
++      if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
++      if (seg.sfxKey !== sfxKeyOf(seg)) return false
++      try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
++    }
++    return { forceRegen, segmentsDir, reusePathOf, voiceOf, canReuse, canReuseSfx, sfxSourceOf, sfxKeyOf }
++  }
+   const projectToken = randomUUID()
+   let state = null
+   let controller = null
+   let sceneSplitExperimentRecord = null
+   // start()가 실행 소유권을 잡았다는 **동기** 래치. busy 검사는 state.steps의 'running'을 보는데,
+   // 그건 첫 await 뒤에야 마킹된다 — 그 사이에 await가 하나라도 있으면 같은 tick의 두 호출이 **둘 다**
+   // 통과한다(실측: onlySpeaker 사전검사가 scenes.json을 읽자 busy 0, TTS 2회). 동기로 먼저 잡는다.
+   let startInFlight = false
+   // abort 세대 — abort()는 controller 와 running 스텝만 보는데, start()의 사전검사 await 창에는
+   // **둘 다 없다**. 그 창에서 온 abort 가 안 닿아 프로젝트를 전환했는데도 옛 프로젝트의 절단/TTS 가
+@@ -1345,23 +1377,24 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
+     async audio(params, opId, signal) {
+       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+       assertSegmentIdsValid(scenesJson.scenes)
+       // 화자 voice 배정 (params.speakers 우선, 없으면 state.speakers)
+       const speakers = params.speakers || state.speakers || []
+       // 배정을 **일하기 전에** 영속한다. 예전엔 전체 조립 성공 직전(아래)에만 저장해서, 첫 실행이
+       // 실패(unmatched·디코드 오류)하고 앱을 재시작하면 골라둔 mp3/SRT가 사라졌다 — 실패를
+       // 고치려면 파일부터 다시 고르는 꼴이었다. 선택은 사용자의 의도지 실행의 산출물이 아니다.
+       if (params.speakers) { state.speakers = params.speakers; await flush() }
+-      // C1-a: 화자 매핑 UI(M2a-3) 전에는 미배정 화자를 주입된 기본 voice로 폴백해 audio가 앱에서
+-      // 돌게 한다. defaultVoice 미주입(정식 흐름)이면 null → 아래 미배정 검증이 그대로 실행 차단(스펙 §6).
+-      const voiceOf = (spk) => findSpeakerByRef(speakers, spk)?.voice || defaultVoice || null
++      // 선택 로직(voiceOf/canReuse/canReuseSfx/sfxSourceOf/sfxKeyOf)은 audioPreflight()와 공유한다
++      // (makeAudioSelection) — 정확히 같은 규칙으로 "무엇을 만들 것인가"를 판정해야 한다.
++      const sel = makeAudioSelection(params, speakers, defaultVoice)
++      const { voiceOf, canReuse, canReuseSfx, sfxSourceOf, sfxKeyOf, reusePathOf, forceRegen } = sel
+       // 모든 씬의 세그먼트를 순서대로 평탄화
+       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
+       const allNarration = segments.filter((s) => (s.type || 'narration') === 'narration')
+ 
+       // ── 화자별 오디오 출처 해석 ──
+       // voice가 {provider:'import', mp3Path, srtPath}인 화자는 TTS로 만들지 않고 그 파일에서
+       // 잘라 쓴다. 여기서 각 출처의 SRT를 읽어 그 화자의 세그먼트에 mp3 구간(srcStartMs/srcEndMs)을
+       // 붙인다 — ④는 이 일에 관여하지 않으므로(평소대로 LLM 분리) 정렬은 매번 여기서 한다.
+       // 결정론적이고 싸다(문자열 매칭).
+       // 세그먼트의 화자 참조는 id일 수도 이름/별칭일 수도 있다(나레이터는 {id:'narrator',
+@@ -1555,44 +1588,22 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
+       // 지불한 뒤라 낭비된다(스펙 §6 "미배정 화자 있으면 실행 불가").
+       // Codex-3 LOW: voice 객체가 존재해도 voiceId가 없으면(또는 빈 문자열이면) 사전 검증이
+       // 통과해 루프 중간에 tts.synthesize(voiceId:undefined)로 낭비된다 — voiceId가
+       // non-empty string인지 확인해야 한다.
+       const missingSpeakers = [...new Set(narration.map((s) => s.speaker))].filter((spk) => {
+         const voice = voiceOf(spk)
+         return !voice || typeof voice.voiceId !== 'string' || voice.voiceId === ''
+       })
+       if (missingSpeakers.length) throw new Error(`voice not assigned for speaker: ${missingSpeakers[0]}`)
+ 
+-      // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
+-      // IP5-a: 이미 status:'done'이고 오디오 파일이 현 프로젝트에 실재하면 재합성하지 않는다
+-      // (resume/부분재시도). params.regenerate에 든 id는 강제 재합성(re-TTS 트리거).
+-      // Codex-M2a-2b MED: audioPath는 절대경로라 프로젝트 이동/복사·파일 삭제 시 stale/타프로젝트를
+-      // 가리킬 수 있다 — basename을 현 프로젝트 segments 디렉터리 기준으로 재구성 + 실재(stat) 확인.
+-      const forceRegen = new Set(params.regenerate || [])
+-      const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
+-      const reusePathOf = (seg) => path.join(segmentsDir, path.basename(seg.audioPath))
+-      const canReuse = async (seg) => {
+-        if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
+-        // Codex-TTS HIGH: 화자 voice/provider/emotion이 바뀌면(또는 지문 없는 옛 오디오면) 재사용 금지.
+-        const intended = voiceOf(seg.speaker)
+-        if (!intended?.voiceId || seg.voiceKey !== ttsVoiceKey(intended, effectiveEmotion(seg))) return false
+-        try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
+-      }
+-      // M2b sfx reuse: 지문 sfxKey(source:description:durationHint) 일치 + 파일 실재.
+-      // source는 UI 오버라이드(params.sfxSources[segId]) > 세그먼트 영속값 > 기본 elevenlabs.
+-      const sfxSourceOf = (seg) => params.sfxSources?.[seg.id] || seg.sourceMode || 'elevenlabs'
+-      const sfxKeyOf = (seg) => `${sfxSourceOf(seg)}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
+-      const canReuseSfx = async (seg) => {
+-        if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
+-        if (seg.sfxKey !== sfxKeyOf(seg)) return false
+-        try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
+-      }
++      // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한) — 재사용 판정(forceRegen/reusePathOf/canReuse/
++      // canReuseSfx/sfxSourceOf/sfxKeyOf)은 위 makeAudioSelection(sel)이 제공한다.
+       // 동시성: 기본 tts(단일) 또는 첫 세그먼트 화자 어댑터에서. 없으면 2.
+       // SRT 가져오기 전용 프로젝트는 narration이 비어 화자 어댑터를 물을 대상이 없다 — 그때
+       // resolveTts(undefined)까지 가지 않도록 막는다(TTS를 안 쓰는데 어댑터 조회로 죽으면 안 된다).
+       const conc = (tts?.capabilities?.()?.maxConcurrency)
+         || (narration.length ? resolveTts(voiceOf(narration[0]?.speaker)?.provider)?.capabilities?.()?.maxConcurrency : 0)
+         || 2
+       const results = new Map()
+       const errored = new Set()
+       const errorMsgs = new Map() // 세그먼트별 실패 사유(인증/설정 등) — generic retry로 묻지 않기 위함
+       const errorKinds = new Map()
+@@ -1927,20 +1938,51 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
+       await healMissingStepArtifacts()
+       await healReferencedSpeakers()
+       await maybeResendPush()
+       maybeSendCharacters()
+       const scenes = await loadScenesForPayload()
+       const scriptText = (await store.loadText('script.md')) || ''
+       const extras = await hydrateExtras()
+       send('story:state', { state, scenes, scriptText, ...extras })
+       return { projectToken, state, scenes, scriptText, ...extras }
+     },
++    // M2 오디오 사전점검: 이 실행이 실제로 필요로 할 TTS/SFX 프로바이더 집합을 계산한다(중복 제거,
++    // 순서 무관). audio()와 정확히 같은 선택 규칙(makeAudioSelection)을 공유해야 한다 — 다른
++    // 규칙이면 "필요한 키" 예측이 실제 실행과 어긋나(과소/과잉) 게이트가 거짓말을 한다.
++    // 읽기 전용(부수효과 없음) — scenes.json/state를 건드리지 않는다. audio() 배치 스텝처럼
++    // start()로 감싸지 않는다 — 진행 상태/emit이 필요 없는 순수 조회다.
++    async audioPreflight(params = {}) {
++      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
++      if (!scenesJson) return []
++      const speakers = params.speakers || state?.speakers || []
++      const sel = makeAudioSelection(params, speakers, defaultVoice || null)
++      const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
++      const isTest = params.mode === 'segmentTest'
++      const ids = isTest ? new Set(params.segmentIds || []) : null
++      const required = new Set()
++      for (const seg of segments) {
++        const type = seg.type || 'narration'
++        if (isTest && !ids.has(seg.id)) continue
++        if (type === 'sfx') {
++          const source = sel.sfxSourceOf(seg)
++          if (source === 'library') continue
++          if (!isTest && await sel.canReuseSfx(seg)) continue
++          required.add(source)
++        } else {
++          const voice = sel.voiceOf(seg.speaker)
++          if (!voice || voice.provider === 'import') continue
++          if (!isTest && await sel.canReuse(seg)) continue
++          required.add(voice.provider || 'typecast')
++        }
++      }
++      return [...required]
++    },
+     // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
+     // renderer 엔 둘 다 없어 main 이 실어 준다. 정합 판단(pushRevision 일치)은 renderer 몫 — 여기선
+     // raw 값만. manifest 없으면(audio 미실행) null → 오디오 없이 export.
+     // 요청된 projectPath(기본=자기) 의 디스크를 직접 읽는다. machine 이 다른 프로젝트로 열려
+     // 있어도 요청 경로 것만 반환하므로 교차 주입/누락이 없다(Codex finding 1). 실제 읽기는
+     // 모듈 함수 readAudioPackage 에 위임 — IPC 가 machine 없이도(fresh session) 부를 수 있게.
+     async loadAudioPackage(requestedProjectPath = null) {
+       return readAudioPackage(requestedProjectPath || projectPath)
+     },
+     async getState() {
+diff --git a/tests/electron/ipc/audioPreflightIpc.test.js b/tests/electron/ipc/audioPreflightIpc.test.js
+new file mode 100644
+index 00000000..84ef3c2a
+--- /dev/null
++++ b/tests/electron/ipc/audioPreflightIpc.test.js
+@@ -0,0 +1,21 @@
++import { describe, it, expect } from 'vitest'
++import { buildAudioPreflightResult } from '../../../electron/ipc/story-api.js'
++
++describe('buildAudioPreflightResult', () => {
++  it('maps providers to keyId + status via resolveKeyWithSource', () => {
++    const resolveKeyWithSource = (keyId) => ({
++      genai: { key: 'g', source: 'store' },
++      typecast: { key: 'e', source: 'fallback' },
++      elevenlabs: { key: null, source: null },
++    }[keyId])
++    const res = buildAudioPreflightResult(['gemini', 'typecast', 'elevenlabs'], {
++      resolveKeyWithSource, encryptionAvailable: true,
++    })
++    expect(res.providers).toEqual([
++      { provider: 'gemini', keyId: 'genai', status: 'resolved-store', encryptionAvailable: true },
++      { provider: 'typecast', keyId: 'typecast', status: 'resolved-fallback', encryptionAvailable: true },
++      { provider: 'elevenlabs', keyId: 'elevenlabs', status: 'missing', encryptionAvailable: true },
++    ])
++    expect(res.encryptionAvailable).toBe(true)
++  })
++})
+diff --git a/tests/electron/main/resolveKeyWithSource.test.js b/tests/electron/main/resolveKeyWithSource.test.js
+new file mode 100644
+index 00000000..0e532d27
+--- /dev/null
++++ b/tests/electron/main/resolveKeyWithSource.test.js
+@@ -0,0 +1,42 @@
++import { describe, it, expect } from 'vitest'
++import { buildKeyResolvers } from '../../../electron/main/keyResolvers.js'
++
++const store = (map) => ({ getKey: (p) => map[p] ?? null })
++
++describe('resolveKeyWithSource', () => {
++  it('store hit → source store', () => {
++    const { resolveKeyWithSource } = buildKeyResolvers({
++      multiKeyStore: store({ typecast: 'k' }), genaiKeyStore: store({}),
++      getTypecastKey: () => 'env', readCredentialsKey: () => null, disableFallback: false,
++    })
++    expect(resolveKeyWithSource('typecast')).toEqual({ key: 'k', source: 'store' })
++  })
++  it('fallback hit → source fallback', () => {
++    const { resolveKeyWithSource } = buildKeyResolvers({
++      multiKeyStore: store({}), genaiKeyStore: store({}),
++      getTypecastKey: () => 'env', readCredentialsKey: () => null, disableFallback: false,
++    })
++    expect(resolveKeyWithSource('typecast')).toEqual({ key: 'env', source: 'fallback' })
++  })
++  it('missing → null/null', () => {
++    const { resolveKeyWithSource } = buildKeyResolvers({
++      multiKeyStore: store({}), genaiKeyStore: store({}),
++      getTypecastKey: () => { throw new Error('none') }, readCredentialsKey: () => null, disableFallback: false,
++    })
++    expect(resolveKeyWithSource('typecast')).toEqual({ key: null, source: null })
++  })
++  it('genai resolves from genaiKeyStore as store', () => {
++    const { resolveKeyWithSource } = buildKeyResolvers({
++      multiKeyStore: store({}), genaiKeyStore: { getKey: () => 'g' },
++      getTypecastKey: () => null, readCredentialsKey: () => null, disableFallback: false,
++    })
++    expect(resolveKeyWithSource('genai')).toEqual({ key: 'g', source: 'store' })
++  })
++  it('disableFallback: fallback ignored → null', () => {
++    const { resolveKeyWithSource } = buildKeyResolvers({
++      multiKeyStore: store({}), genaiKeyStore: store({}),
++      getTypecastKey: () => 'env', readCredentialsKey: () => 'cred', disableFallback: true,
++    })
++    expect(resolveKeyWithSource('typecast')).toEqual({ key: null, source: null })
++  })
++})
+diff --git a/tests/electron/story/audioPreflight.test.js b/tests/electron/story/audioPreflight.test.js
+new file mode 100644
+index 00000000..cde34e85
+--- /dev/null
++++ b/tests/electron/story/audioPreflight.test.js
+@@ -0,0 +1,133 @@
++import { describe, it, expect } from 'vitest'
++import { mkdtemp, writeFile, mkdir } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import path from 'node:path'
++import { createStepMachine } from '../../../electron/story/stepMachine.js'
++
++// audioPreflight()는 audio()와 정확히 같은 선택 규칙(makeAudioSelection)을 공유해야 하므로,
++// 이 harness는 audio 스텝 테스트(stepMachine.audio.test.js)와 동일하게 실제 파일시스템 위에
++// story/scenes.json + story/story.json을 직접 배치하고 createStepMachine을 그대로 쓴다
++// (store.loadText/state를 목으로 갈아끼우지 않는다 — 실제 storyStore 경로를 그대로 태워야
++// audio()가 보는 것과 audioPreflight()가 보는 것이 어긋나지 않는다).
++async function tmpProject() { return await mkdtemp(path.join(tmpdir(), 'story-audio-preflight-')) }
++
++async function makeMachine(scenes, { speakers = [], defaultVoice = null } = {}) {
++  const projectPath = await tmpProject()
++  await mkdir(path.join(projectPath, 'story'), { recursive: true })
++  await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({ scenes }))
++  // speakers는 state.speakers 경로로 주입한다(story.json 선-배치) — audioPreflight({})가
++  // params.speakers 없이도 audio()와 같은 우선순위(params.speakers || state.speakers)를 타는지
++  // 그대로 검증하기 위함.
++  await writeFile(path.join(projectPath, 'story', 'story.json'), JSON.stringify({
++    version: 1,
++    input: null,
++    engine: { llm: 'claude' },
++    steps: {
++      script: { status: 'pending' },
++      scenes: { status: 'pending' },
++      audio: { status: 'pending', registration: null },
++      prompts: { status: 'pending' },
++    },
++    autoRun: false,
++    pushedAt: null,
++    pendingPushRevision: 0,
++    lastPushedRevision: 0,
++    speakers,
++  }))
++  const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }) }
++  const probe = async () => 2000
++  const machine = createStepMachine({
++    projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe, defaultVoice,
++  })
++  await machine.open()
++  return { machine, projectPath }
++}
++
++describe('audioPreflight — required providers', () => {
++  it('narration with assigned gemini voice + typecast default → both when unassigned exists', async () => {
++    const scenes = [{ segments: [
++      { id: 's1', type: 'narration', speaker: 'A', text: 'hi' },
++      { id: 's2', type: 'narration', speaker: 'B', text: 'yo' },
++    ] }]
++    const { machine } = await makeMachine(scenes, {
++      speakers: [{ id: 'A', voice: { provider: 'gemini', voiceId: 'Kore' } }],
++      defaultVoice: { provider: 'typecast', voiceId: 'tc_x' },
++    })
++    const providers = await machine.audioPreflight({})
++    expect(new Set(providers)).toEqual(new Set(['gemini', 'typecast'])) // B unassigned → default typecast
++  })
++
++  it('import-voice speaker is excluded (no key needed)', async () => {
++    const scenes = [{ segments: [{ id: 's1', type: 'narration', speaker: 'A', text: 'hi' }] }]
++    const { machine } = await makeMachine(scenes, { speakers: [{ id: 'A', voice: { provider: 'import', mp3Path: '/a.mp3', srtPath: '/a.srt' } }] })
++    expect(await machine.audioPreflight({})).toEqual([])
++  })
++
++  it('sfx segment contributes its source; library excluded', async () => {
++    const scenes = [{ segments: [
++      { id: 'f1', type: 'sfx', description: 'boom', sourceMode: 'elevenlabs' },
++      { id: 'f2', type: 'sfx', description: 'wind', sourceMode: 'library' },
++    ] }]
++    const { machine } = await makeMachine(scenes, {})
++    expect(await machine.audioPreflight({})).toEqual(['elevenlabs'])
++  })
++
++  it('scenes.json missing → returns [] without throwing', async () => {
++    const projectPath = await tmpProject()
++    await mkdir(path.join(projectPath, 'story'), { recursive: true })
++    const machine = createStepMachine({ projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k' })
++    await machine.open()
++    expect(await machine.audioPreflight({})).toEqual([])
++  })
++
++  it('unassigned speaker with no default voice is skipped (no provider added)', async () => {
++    const scenes = [{ segments: [{ id: 's1', type: 'narration', speaker: 'nobody', text: 'hi' }] }]
++    const { machine } = await makeMachine(scenes, {}) // no speakers, no defaultVoice
++    expect(await machine.audioPreflight({})).toEqual([])
++  })
++
++  it('reusable narration segment (done, matching voiceKey, file present) contributes nothing', async () => {
++    const scenes = [{ segments: [
++      { id: 's1', type: 'narration', speaker: 'A', text: 'hi', status: 'done', audioPath: '/anywhere/s1.wav', durationMs: 1000, voiceKey: 'gemini:Kore:normal' },
++    ] }]
++    const { machine, projectPath } = await makeMachine(scenes, {
++      speakers: [{ id: 'A', voice: { provider: 'gemini', voiceId: 'Kore' } }],
++    })
++    // canReuse() 판정은 reusePathOf(seg) = <projectPath>/story/audio/segments/<basename(audioPath)>의
++    // 실재를 stat으로 확인한다 — 그 자리에 파일을 심어야 재사용 경로를 탄다.
++    const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
++    await mkdir(segmentsDir, { recursive: true })
++    await writeFile(path.join(segmentsDir, 's1.wav'), 'dummy')
++    expect(await machine.audioPreflight({})).toEqual([])
++  })
++
++  it('reusable sfx segment (done, matching sfxKey, file present) contributes nothing', async () => {
++    const scenes = [{ segments: [
++      { id: 'f1', type: 'sfx', description: 'boom', sourceMode: 'elevenlabs', status: 'done', audioPath: '/anywhere/f1.wav', durationMs: 500, sfxKey: 'elevenlabs:boom:auto' },
++    ] }]
++    const { machine, projectPath } = await makeMachine(scenes, {})
++    const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
++    await mkdir(segmentsDir, { recursive: true })
++    await writeFile(path.join(segmentsDir, 'f1.wav'), 'dummy')
++    expect(await machine.audioPreflight({})).toEqual([])
++  })
++
++  it('segmentTest mode scopes to segmentIds and ignores reuse (always requires provider for targeted segment)', async () => {
++    const scenes = [{ segments: [
++      { id: 's1', type: 'narration', speaker: 'A', text: 'hi', status: 'done', audioPath: '/anywhere/s1.wav', durationMs: 1000, voiceKey: 'gemini:Kore:normal' },
++      { id: 's2', type: 'narration', speaker: 'A', text: 'yo' },
++    ] }]
++    const { machine, projectPath } = await makeMachine(scenes, {
++      speakers: [{ id: 'A', voice: { provider: 'gemini', voiceId: 'Kore' } }],
++    })
++    const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
++    await mkdir(segmentsDir, { recursive: true })
++    await writeFile(path.join(segmentsDir, 's1.wav'), 'dummy') // would be reusable outside segmentTest
++    // s1 is reuse-eligible but segmentTest mode must ignore reuse and still require gemini.
++    const providers = await machine.audioPreflight({ mode: 'segmentTest', segmentIds: ['s1'] })
++    expect(providers).toEqual(['gemini'])
++    // s2 not targeted → excluded entirely even though it needs a provider outside segmentTest scope.
++    const providers2 = await machine.audioPreflight({ mode: 'segmentTest', segmentIds: ['s2'] })
++    expect(providers2).toEqual(['gemini'])
++  })
++})

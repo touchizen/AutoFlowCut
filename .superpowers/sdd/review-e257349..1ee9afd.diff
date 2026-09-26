@@ -1,0 +1,114 @@
+# Review package: e257349..1ee9afd
+
+## Commits
+1ee9afd feat: genre dropdown in StoryView
+
+## Files changed
+ src/components/story/StoryView.jsx              | 11 ++++++++---
+ tests/components/story/StoryView.genre.test.jsx | 20 ++++++++++++++++++++
+ tests/components/story/StoryView.test.jsx       |  4 ++--
+ 3 files changed, 30 insertions(+), 5 deletions(-)
+
+## Diff
+diff --git a/src/components/story/StoryView.jsx b/src/components/story/StoryView.jsx
+index d9101ce..396dfd9 100644
+--- a/src/components/story/StoryView.jsx
++++ b/src/components/story/StoryView.jsx
+@@ -117,27 +117,32 @@ export default function StoryView({ pipeline }) {
+         {displayStep === 'script' && (
+           <div className="story-script-panel">
+             <div className="story-title-form">
+               <input
+                 className="story-input"
+                 placeholder={t('story.form.titlePlaceholder', '제목')}
+                 value={title}
+                 onChange={(e) => setTitle(e.target.value)}
+                 disabled={isRunning}
+               />
+-              <input
++              <select
+                 className="story-input"
+-                placeholder={t('story.form.genrePlaceholder', '장르')}
++                aria-label={t('story.form.genreLabel', '장르')}
+                 value={genre}
+                 onChange={(e) => setGenre(e.target.value)}
+                 disabled={isRunning}
+-              />
++              >
++                <option value="">{t('story.form.genrePlaceholder', '장르')}</option>
++                <option value="yadam">yadam (야담)</option>
++                <option value="dark-history">dark-history</option>
++                <option value="bespoke">bespoke</option>
++              </select>
+               <input
+                 className="story-input"
+                 placeholder={t('story.form.lengthPlaceholder', '길이(분)')}
+                 value={length}
+                 onChange={(e) => setLength(e.target.value)}
+                 disabled={isRunning}
+               />
+               <input
+                 className="story-input"
+                 placeholder={t('story.form.languagePlaceholder', '언어')}
+diff --git a/tests/components/story/StoryView.genre.test.jsx b/tests/components/story/StoryView.genre.test.jsx
+new file mode 100644
+index 0000000..cf051f4
+--- /dev/null
++++ b/tests/components/story/StoryView.genre.test.jsx
+@@ -0,0 +1,20 @@
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen, fireEvent } from '@testing-library/react'
++import StoryView from '../../../src/components/story/StoryView.jsx'
++
++function makePipeline(start) {
++  return { state: { steps: {} }, streamingText: '', start, abort: () => {}, scenes: [], openError: null }
++}
++
++describe('StoryView 장르 드롭다운', () => {
++  it('장르 select에서 고른 값이 start options.genre로 전달된다', () => {
++    const start = vi.fn()
++    render(<StoryView pipeline={makePipeline(start)} />)
++    fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'dark-history' } })
++    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
++    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
++      options: expect.objectContaining({ genre: 'dark-history' }),
++    }))
++  })
++})
+diff --git a/tests/components/story/StoryView.test.jsx b/tests/components/story/StoryView.test.jsx
+index 08afaec..a4142e1 100644
+--- a/tests/components/story/StoryView.test.jsx
++++ b/tests/components/story/StoryView.test.jsx
+@@ -21,29 +21,29 @@ describe('StoryView', () => {
+     render(<StoryView pipeline={pipeline()} />)
+     expect(screen.getByText(/대본/)).toBeTruthy()
+     expect(screen.getByText(/씬 분리/)).toBeTruthy()
+     expect(screen.getByText(/오디오/)).toBeTruthy()
+     expect(screen.getByText(/프롬프트/)).toBeTruthy()
+   })
+   it('제목 입력 후 시작하면 start("script")가 stepMachine이 기대하는 shape로 호출된다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
+-    fireEvent.change(screen.getByPlaceholderText(/장르/), { target: { value: '단편' } })
++    fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'yadam' } })
+     fireEvent.change(screen.getByPlaceholderText(/길이/), { target: { value: '5' } })
+     fireEvent.change(screen.getByPlaceholderText(/언어/), { target: { value: 'ko' } })
+     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
+     // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/targetMinutes/language)를
+     // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
+     expect(p.start).toHaveBeenCalledWith('script', {
+       input: { type: 'title', title: '운수 좋은 날' },
+-      options: { genre: '단편', targetMinutes: 5, language: 'ko' },
++      options: { genre: 'yadam', targetMinutes: 5, language: 'ko' },
+     })
+   })
+ 
+   it('장르/길이 미입력 시 options에서 해당 필드가 undefined로 빠진다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '제목만' } })
+     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
+     expect(p.start).toHaveBeenCalledWith('script', {
+       input: { type: 'title', title: '제목만' },

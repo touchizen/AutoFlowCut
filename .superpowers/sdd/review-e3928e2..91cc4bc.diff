@@ -1,0 +1,269 @@
+# Review package: e3928e2..91cc4bc
+
+## Commits
+91cc4bc feat(llm): Gemini 텍스트 어댑터 (스트리밍 + structured output)
+
+## Files changed
+ electron/api/llm/llmGemini.js            | 111 +++++++++++++++++++++++++++++++
+ electron/api/llm/schemas.js              |  57 ++++++++++++++++
+ tests/electron/api/llm/llmGemini.test.js |  71 ++++++++++++++++++++
+ 3 files changed, 239 insertions(+)
+
+## Diff
+diff --git a/electron/api/llm/llmGemini.js b/electron/api/llm/llmGemini.js
+new file mode 100644
+index 0000000..30ce5e2
+--- /dev/null
++++ b/electron/api/llm/llmGemini.js
+@@ -0,0 +1,111 @@
++/**
++ * Gemini 텍스트 LLM 어댑터 — 스펙 §5. genai.js(이미지/비디오)와 별개 신규 모듈.
++ * 스트리밍(generateScript)은 streamGenerateContent SSE, structured output은
++ * responseSchema. 파싱 실패 시 1회 재요청. 키는 헤더(x-goog-api-key)로만 전달.
++ */
++import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
++
++const BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
++
++function headers(apiKey) {
++  return { 'content-type': 'application/json', 'x-goog-api-key': apiKey }
++}
++
++async function readSse(res, onDelta) {
++  const text = await res.text()
++  let full = ''
++  for (const line of text.split('\n')) {
++    if (!line.startsWith('data: ')) continue
++    try {
++      const chunk = JSON.parse(line.slice(6))
++      const t = chunk?.candidates?.[0]?.content?.parts?.[0]?.text
++      if (t) { full += t; onDelta?.(t) }
++    } catch { /* keep-alive 등 무시 */ }
++  }
++  return full
++}
++
++export async function generateScript(input, opts, { onDelta, signal, fetchImpl = fetch } = {}) {
++  const prompt = buildScriptPrompt(input, opts)
++  const res = await fetchImpl(`${BASE}/${opts.model}:streamGenerateContent?alt=sse`, {
++    method: 'POST',
++    headers: headers(opts.apiKey),
++    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
++    signal,
++  })
++  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
++  const scriptMd = await readSse(res, onDelta)
++  return { scriptMd }
++}
++
++async function structuredCall(prompt, schema, opts, { signal, fetchImpl = fetch }) {
++  const call = async () => {
++    const res = await fetchImpl(`${BASE}/${opts.model}:generateContent`, {
++      method: 'POST',
++      headers: headers(opts.apiKey),
++      body: JSON.stringify({
++        contents: [{ role: 'user', parts: [{ text: prompt }] }],
++        generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
++      }),
++      signal,
++    })
++    if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
++    const data = await res.json()
++    return JSON.parse(data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '')
++  }
++  try { return await call() } catch (e) {
++    if (signal?.aborted) throw e
++    return await call() // 파싱/일시 오류 1회 재요청 (스펙 §7)
++  }
++}
++
++export async function splitScenes(scriptMd, opts, ctx = {}) {
++  const prompt = buildSplitPrompt(scriptMd, opts)
++  const out = await structuredCall(prompt, SCENES_SCHEMA, opts, ctx)
++  return { scenes: out.scenes || [], speakers: out.speakers || [] }
++}
++
++export async function writePrompts(scenes, context, opts, ctx = {}) {
++  const prompt = buildPromptsPrompt(scenes, context, opts)
++  const out = await structuredCall(prompt, PROMPTS_SCHEMA, opts, ctx)
++  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
++  return {
++    scenes: scenes.map((s) => ({
++      ...s,
++      imagePrompt: byNo.get(s.sceneNo)?.imagePrompt ?? s.imagePrompt ?? null,
++      videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
++    })),
++  }
++}
++
++// --- 프롬프트 빌더 (한국어/영어, 스펙 §4 지시 포함) ---
++function buildScriptPrompt(input, opts) {
++  return [
++    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${opts.targetMinutes || 10}분 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
++    opts.genre ? `장르: ${opts.genre}` : '',
++    opts.tone ? `톤: ${opts.tone}` : '',
++    `제목: ${input.title}`,
++    `마크다운으로, 챕터 구분과 (대사가 있으면) 화자 표기를 포함하라.`,
++  ].filter(Boolean).join('\n')
++}
++
++function buildSplitPrompt(scriptMd, opts) {
++  return [
++    `아래 대본을 씬으로 분리하라. 각 씬은 낭독 시 6~10초(${opts.language === 'ko' ? '한국어 기준 약 33~55자' : 'about 90~150 chars in English'}) 분량이어야 한다. 초과하면 씬을 분할하라.`,
++    `각 씬의 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 emotion(normal/happy/sad/angry)을 지정하라.`,
++    `등장 화자 전체 목록을 speakers로 반환하라.`,
++    `--- 대본 ---`,
++    scriptMd,
++  ].join('\n')
++}
++
++function buildPromptsPrompt(scenes, context, opts) {
++  const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
++  return [
++    `아래 씬들에 대해 이미지 생성 프롬프트(imagePrompt)와 비디오 생성 프롬프트(videoPrompt)를 영어로 작성하라.`,
++    `캐릭터가 등장하면 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라 (레퍼런스 참조 문법 금지 — 플레인 텍스트).`,
++    context.style ? `스타일: ${context.style}` : '',
++    `--- 씬 목록 ---`,
++    ...sceneLines,
++  ].filter(Boolean).join('\n')
++}
+diff --git a/electron/api/llm/schemas.js b/electron/api/llm/schemas.js
+new file mode 100644
+index 0000000..02b7d41
+--- /dev/null
++++ b/electron/api/llm/schemas.js
+@@ -0,0 +1,57 @@
++/** Gemini responseSchema 정의 — 스펙 §4-②/④ structured output. */
++export const SCENES_SCHEMA = {
++  type: 'OBJECT',
++  properties: {
++    scenes: {
++      type: 'ARRAY',
++      items: {
++        type: 'OBJECT',
++        properties: {
++          sceneNo: { type: 'INTEGER' },
++          summary: { type: 'STRING' },
++          segments: {
++            type: 'ARRAY',
++            items: {
++              type: 'OBJECT',
++              properties: {
++                speaker: { type: 'STRING' },
++                text: { type: 'STRING' },
++                emotion: { type: 'STRING' },
++              },
++              required: ['speaker', 'text'],
++            },
++          },
++        },
++        required: ['sceneNo', 'summary', 'segments'],
++      },
++    },
++    speakers: {
++      type: 'ARRAY',
++      items: {
++        type: 'OBJECT',
++        properties: { id: { type: 'STRING' }, name: { type: 'STRING' } },
++        required: ['id', 'name'],
++      },
++    },
++  },
++  required: ['scenes', 'speakers'],
++}
++
++export const PROMPTS_SCHEMA = {
++  type: 'OBJECT',
++  properties: {
++    scenes: {
++      type: 'ARRAY',
++      items: {
++        type: 'OBJECT',
++        properties: {
++          sceneNo: { type: 'INTEGER' },
++          imagePrompt: { type: 'STRING' },
++          videoPrompt: { type: 'STRING' },
++        },
++        required: ['sceneNo', 'imagePrompt', 'videoPrompt'],
++      },
++    },
++  },
++  required: ['scenes'],
++}
+diff --git a/tests/electron/api/llm/llmGemini.test.js b/tests/electron/api/llm/llmGemini.test.js
+new file mode 100644
+index 0000000..010a1f4
+--- /dev/null
++++ b/tests/electron/api/llm/llmGemini.test.js
+@@ -0,0 +1,71 @@
++/**
++ * @vitest/environment node
++ */
++import { describe, it, expect, vi } from 'vitest'
++import { generateScript, splitScenes, writePrompts } from '../../../../electron/api/llm/llmGemini.js'
++
++// SSE 응답 mock: streamGenerateContent는 "data: {json}\n\n" 라인 스트림
++function sseResponse(chunks) {
++  const body = chunks
++    .map((text) => `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] })}\n\n`)
++    .join('')
++  return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
++}
++function jsonResponse(obj) {
++  return new Response(
++    JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(obj) }] } }] }),
++    { status: 200 },
++  )
++}
++
++const OPTS = { apiKey: 'test-key', model: 'gemini-2.5-pro', language: 'ko' }
++
++describe('generateScript', () => {
++  it('SSE 조각을 onDelta로 중계하고 전체를 반환한다', async () => {
++    const fetchImpl = vi.fn(async () => sseResponse(['# 제목\n', '본문1', '본문2']))
++    const deltas = []
++    const r = await generateScript({ type: 'title', title: '운수 좋은 날' }, OPTS, {
++      onDelta: (t) => deltas.push(t), fetchImpl,
++    })
++    expect(r.scriptMd).toBe('# 제목\n본문1본문2')
++    expect(deltas).toEqual(['# 제목\n', '본문1', '본문2'])
++    const url = fetchImpl.mock.calls[0][0]
++    expect(url).toContain('streamGenerateContent')
++    expect(url).not.toContain('test-key')  // 키는 헤더로 (URL 노출 금지)
++    expect(fetchImpl.mock.calls[0][1].headers['x-goog-api-key']).toBe('test-key')
++  })
++})
++
++describe('splitScenes', () => {
++  it('structured output을 파싱해 scenes/speakers 반환', async () => {
++    const payload = {
++      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '옛날에', emotion: 'normal' }] }],
++      speakers: [{ id: 'narrator', name: '나레이션' }],
++    }
++    const fetchImpl = vi.fn(async () => jsonResponse(payload))
++    const r = await splitScenes('# 대본', OPTS, { fetchImpl })
++    expect(r.scenes).toHaveLength(1)
++    expect(r.speakers[0].id).toBe('narrator')
++    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
++    expect(body.generationConfig.responseMimeType).toBe('application/json')
++    expect(body.generationConfig.responseSchema).toBeTruthy()
++  })
++  it('파싱 실패 시 1회 재요청', async () => {
++    const good = { scenes: [], speakers: [] }
++    const fetchImpl = vi.fn()
++      .mockResolvedValueOnce(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'not-json' }] } }] }), { status: 200 }))
++      .mockResolvedValueOnce(jsonResponse(good))
++    const r = await splitScenes('# 대본', OPTS, { fetchImpl })
++    expect(r.scenes).toEqual([])
++    expect(fetchImpl).toHaveBeenCalledTimes(2)
++  })
++})
++
++describe('writePrompts', () => {
++  it('sceneNo로 매칭해 프롬프트를 채운다', async () => {
++    const scenes = [{ storyId: 'u1', sceneNo: 1, segments: [] }]
++    const fetchImpl = vi.fn(async () => jsonResponse({ scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }))
++    const r = await writePrompts(scenes, { scriptMd: '#', style: null }, OPTS, { fetchImpl })
++    expect(r.scenes[0]).toMatchObject({ storyId: 'u1', imagePrompt: 'IMG', videoPrompt: 'VID' })
++  })
++})

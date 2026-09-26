@@ -1,0 +1,166 @@
+# Review package: 2f209db..bab5973
+
+## Commits
+bab5973 feat(scenes): importStoryScenes — storyId upsert + stale 플래그 + srtTrack 교체
+
+## Files changed
+ src/hooks/useScenes.js                          | 53 +++++++++++++++++++++++-
+ tests/hooks/useScenes.importStoryScenes.test.js | 55 +++++++++++++++++++++++++
+ 2 files changed, 106 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/src/hooks/useScenes.js b/src/hooks/useScenes.js
+index 854c06a..3423e24 100644
+--- a/src/hooks/useScenes.js
++++ b/src/hooks/useScenes.js
+@@ -654,38 +654,87 @@ export function useScenes() {
+     for (const s of scenes) {
+       if (stats[s.status]) stats[s.status].push(s)
+     }
+     return stats
+   }, [scenes])
+ 
+   const getCompletedCount = useCallback(() => sceneStats.done.length, [sceneStats])
+   const getErrorCount = useCallback(() => sceneStats.error.length, [sceneStats])
+   const getErrorScenes = useCallback(() => sceneStats.error, [sceneStats])
+   const getPendingScenes = useCallback(() => sceneStats.pending, [sceneStats])
+-  
++
++  /**
++   * Story 파이프라인 push 수신 (스펙 §4-④). storyId 기준 upsert — 트랜잭션의
++   * 적용 결과를 동기 반환하므로 호출자(App)는 이 반환값으로 명시 payload 저장 후 ack.
++   *
++   * - 신규 storyId → allocateSceneId() 로 안전하게 ID 발급 (삭제 이력 있어도 충돌 없음)
++   * - 기존 storyId → 이미지/비디오 보존, prompt 변경 시 stalePrompt, videoT2VPrompt/duration
++   *   변경 + 기존 비디오 존재 시 staleVideo 플래그
++   * - payload 에 없는 기존 story 씬은 유지 (삭제는 M1 범위 밖)
++   * - srtTrack 인자가 있으면 wholesale 교체 + non-story 씬의 srtLineIds 비움
++   */
++  const importStoryScenes = useCallback(({ scenes: pushScenes, srtTrack: newSrtTrack }) => {
++    const now = new Date().toISOString()
++    const current = scenesRef.current
++    const byStoryId = new Map(current.filter((s) => s.storyId).map((s) => [s.storyId, s]))
++
++    const upserted = pushScenes.map((p) => {
++      const prev = byStoryId.get(p.storyId)
++      if (!prev) {
++        return normalizeScene({ ...p, id: allocateSceneId() })
++      }
++      const merged = { ...prev, ...p, id: prev.id }
++      if (prev.prompt !== p.prompt && (prev.imageUrl || prev.images?.length)) {
++        merged.stalePrompt = true
++        merged.stalePromptAt = now
++      }
++      const hasVideo = prev.videoT2VUrl || prev.videoI2VUrl || prev.framePairs?.length
++      if (hasVideo && (prev.videoT2VPrompt !== p.videoT2VPrompt || Math.abs((prev.duration || 0) - p.duration) > 0.5)) {
++        merged.staleVideo = true
++        merged.staleVideoAt = now
++      }
++      return normalizeScene(merged)
++    })
++
++    const pushedIds = new Set(pushScenes.map((p) => p.storyId))
++    const kept = current.filter((s) => !s.storyId || !pushedIds.has(s.storyId))
++    const keptAdjusted = newSrtTrack
++      ? kept.map((s) => (!s.storyId && s.srtLineIds?.length ? { ...s, srtLineIds: [] } : s))
++      : kept
++
++    const nextScenes = [...keptAdjusted, ...upserted]
++    setScenes(nextScenes)
++    const nextSrtTrack = newSrtTrack ?? srtTrackRef.current
++    if (newSrtTrack) setSrtTrack(newSrtTrack)
++    return { nextScenes, nextSrtTrack }
++  }, [])
++
+   return {
+     // State
+     scenes,
+     references,
+     srtTrack,
+ 
+     // Setters
+     setScenes,
+     setReferences,
+     setSrtTrack,
+     
+     // Parsers
+     parseFromText,
+     parseFromCSV,
+     parseFromSRT,
+     parseReferencesFromCSV,
+-    
++
++    // Story pipeline
++    importStoryScenes,
++
+     // Scene actions
+     updateScene,
+     updateSrtLine,
+     deleteScene,
+     addScene,
+     moveScene,
+     clearScenes,
+     recalculateTimes,
+     trimScenes,
+     
+diff --git a/tests/hooks/useScenes.importStoryScenes.test.js b/tests/hooks/useScenes.importStoryScenes.test.js
+new file mode 100644
+index 0000000..e6ea615
+--- /dev/null
++++ b/tests/hooks/useScenes.importStoryScenes.test.js
+@@ -0,0 +1,55 @@
++import { describe, it, expect } from 'vitest'
++import { renderHook, act } from '@testing-library/react'
++import { useScenes } from '../../src/hooks/useScenes.js'
++
++const pushScene = (storyId, over = {}) => ({
++  storyId, sceneNo: 1, prompt: 'IMG', videoT2VPrompt: 'VID',
++  startTime: 0, endTime: 6, duration: 6, srtLineIds: [], subtitle: '자막', ...over,
++})
++
++describe('importStoryScenes', () => {
++  it('신규 push: 씬이 그리드에 추가되고 매핑이 적용된다', () => {
++    const { result } = renderHook(() => useScenes())
++    let ret
++    act(() => { ret = result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })
++    const s = result.current.scenes.find((x) => x.storyId === 'u1')
++    expect(s).toMatchObject({ prompt: 'IMG', videoT2VPrompt: 'VID', duration: 6 })
++    expect(s.id).toMatch(/^scene_/)
++    expect(ret.nextScenes).toHaveLength(1)
++  })
++
++  it('재push: 프롬프트 변경 시 이미지 보존 + stalePrompt', () => {
++    const { result } = renderHook(() => useScenes())
++    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })
++    act(() => {
++      // 이미지가 생성된 상태 시뮬레이션
++      result.current.setScenes(result.current.scenes.map((s) => ({ ...s, imageUrl: 'file://img.png' })))
++    })
++    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { prompt: 'IMG2' })] }) })
++    const s = result.current.scenes.find((x) => x.storyId === 'u1')
++    expect(s.prompt).toBe('IMG2')
++    expect(s.imageUrl).toBe('file://img.png')
++    expect(s.stalePrompt).toBe(true)
++    expect(s.stalePromptAt).toBeTruthy()
++  })
++
++  it('non-story 씬은 보존된다', () => {
++    const { result } = renderHook(() => useScenes())
++    act(() => { result.current.setScenes([{ id: 'scene_1', prompt: '기존' }]) })
++    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })
++    expect(result.current.scenes).toHaveLength(2)
++    expect(result.current.scenes[0].prompt).toBe('기존')
++  })
++
++  it('srtTrack 포함 push: wholesale 교체 + non-story 씬 srtLineIds 비움', () => {
++    const { result } = renderHook(() => useScenes())
++    act(() => {
++      result.current.setScenes([{ id: 'scene_1', prompt: '기존', srtLineIds: ['sub_1'] }])
++      result.current.setSrtTrack([{ id: 'sub_1', text: '옛 자막', startTime: 0, endTime: 1 }])
++    })
++    const newTrack = [{ id: 'story_1', text: '새 자막', startTime: 0, endTime: 6 }]
++    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { srtLineIds: ['story_1'] })], srtTrack: newTrack }) })
++    expect(result.current.srtTrack).toEqual(newTrack)
++    expect(result.current.scenes.find((s) => s.id === 'scene_1').srtLineIds).toEqual([])
++  })
++})

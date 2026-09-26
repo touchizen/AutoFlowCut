@@ -1,0 +1,153 @@
+# Review package: 0c867c5..656393e
+
+## Commits
+656393e feat: llmClaude.splitScenes/writePrompts (outputFormat structured + fallback)
+
+## Files changed
+ electron/api/llm/llmClaude.js                      | 64 +++++++++++++++++++++-
+ .../electron/api/llm/llmClaude.structured.test.js  | 42 ++++++++++++++
+ 2 files changed, 104 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/electron/api/llm/llmClaude.js b/electron/api/llm/llmClaude.js
+index d881598..1292623 100644
+--- a/electron/api/llm/llmClaude.js
++++ b/electron/api/llm/llmClaude.js
+@@ -1,16 +1,18 @@
+ /**
+  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
+  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
+  */
+-import { buildScriptPrompt } from './prompts.js'
+-import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta } from './claudeSdk.js'
++import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
++import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
++import { toJsonSchema } from './toJsonSchema.js'
++import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
+ 
+ export const DEFAULT_MODEL = 'claude-opus-4-8'
+ 
+ async function* defaultQuery(args) {
+   const { query } = await import('@anthropic-ai/claude-agent-sdk')
+   yield* query(args)
+ }
+ 
+ export async function generateScript(input, opts = {}, { onDelta, signal, queryImpl = defaultQuery } = {}) {
+   const prompt = buildScriptPrompt(input, opts)
+@@ -30,10 +32,68 @@ export async function generateScript(input, opts = {}, { onDelta, signal, queryI
+     }
+     if (signal?.aborted) throw new Error('Aborted')
+     return { scriptMd: full } // result 없이 스트림 종료 시 누적 델타 반환
+   } catch (err) {
+     if (signal?.aborted) throw new Error('Aborted')
+     throw new Error(`Claude SDK failed: ${err.message}`)
+   } finally {
+     cleanup()
+   }
+ }
++
++function parseJsonLoose(text) {
++  let t = (text || '').trim()
++  const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
++  if (fence) t = fence[1].trim()
++  const s = t.indexOf('{'); const e = t.lastIndexOf('}')
++  if (s >= 0 && e > s) t = t.slice(s, e + 1)
++  return JSON.parse(t)
++}
++
++async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery }) {
++  const schema = toJsonSchema(geminiSchema)
++  const { abortController, cleanup } = bridgeAbortSignal(signal)
++  try {
++    // 1차: outputFormat(json_schema) 강제
++    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { outputFormat: { type: 'json_schema', schema } })
++    let needFallback = false
++    for await (const m of queryImpl({ prompt, options: opt1 })) {
++      if (m.type !== 'result') continue
++      const r = readStructuredResult(m)
++      if (r.kind === 'structured') return r.data
++      if (r.kind === 'text') return parseJsonLoose(r.text)
++      if (r.kind === 'retry') { needFallback = true; break }
++    }
++    if (signal?.aborted) throw new Error('Aborted')
++    // 2차 폴백: outputFormat 없이 JSON-only 재요청
++    const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
++    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
++    for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
++      if (m.type === 'result') return parseJsonLoose(extractClaudeSdkResult(m))
++    }
++    throw new Error('no result message returned')
++  } catch (err) {
++    if (signal?.aborted) throw new Error('Aborted')
++    throw err
++  } finally {
++    cleanup()
++  }
++}
++
++export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {}) {
++  const prompt = buildSplitPrompt(scriptMd, opts)
++  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
++  return { scenes: out.scenes || [], speakers: out.speakers || [] }
++}
++
++export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
++  const prompt = buildPromptsPrompt(scenes, context, opts)
++  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
++  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
++  return {
++    scenes: scenes.map((s) => ({
++      ...s,
++      imagePrompt: byNo.get(s.sceneNo)?.imagePrompt ?? s.imagePrompt ?? null,
++      videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
++    })),
++  }
++}
+diff --git a/tests/electron/api/llm/llmClaude.structured.test.js b/tests/electron/api/llm/llmClaude.structured.test.js
+new file mode 100644
+index 0000000..445455f
+--- /dev/null
++++ b/tests/electron/api/llm/llmClaude.structured.test.js
+@@ -0,0 +1,42 @@
++import { describe, it, expect } from 'vitest'
++import { splitScenes, writePrompts } from '../../../../electron/api/llm/llmClaude.js'
++
++const SCENES = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'narrator', text: 'hi' }] }], speakers: [{ id: 'narrator', name: '내레이터' }] }
++
++function resultOf(msg) { return async function* () { yield msg } }
++
++describe('llmClaude.splitScenes', () => {
++  it('structured_output을 그대로 사용', async () => {
++    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: SCENES })
++    const out = await splitScenes('SCRIPT', { language: 'ko' }, { queryImpl })
++    expect(out.scenes[0].sceneNo).toBe(1)
++    expect(out.speakers[0].id).toBe('narrator')
++  })
++  it('structured 없으면 result 텍스트(코드펜스 포함)를 파싱', async () => {
++    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, result: '```json\n' + JSON.stringify(SCENES) + '\n```' })
++    const out = await splitScenes('SCRIPT', { language: 'ko' }, { queryImpl })
++    expect(out.scenes[0].summary).toBe('S')
++  })
++  it('retries 에러면 outputFormat 없는 재요청으로 폴백', async () => {
++    let call = 0
++    const queryImpl = async function* (args) {
++      call += 1
++      if (call === 1) { yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }; return }
++      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(SCENES) }
++    }
++    const out = await splitScenes('SCRIPT', {}, { queryImpl })
++    expect(call).toBe(2)
++    expect(out.scenes.length).toBe(1)
++  })
++})
++
++describe('llmClaude.writePrompts', () => {
++  it('sceneNo로 image/videoPrompt를 병합', async () => {
++    const scenes = [{ sceneNo: 1, storyId: 'a', summary: 'S' }]
++    const structured = { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
++    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: structured })
++    const out = await writePrompts(scenes, {}, {}, { queryImpl })
++    expect(out.scenes[0].imagePrompt).toBe('IMG')
++    expect(out.scenes[0].videoPrompt).toBe('VID')
++  })
++})

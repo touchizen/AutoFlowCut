@@ -1,0 +1,69 @@
+# Review package: 5835a05..2045cbc
+
+## Commits
+2045cbc test(story-m2a): cover saveBinary round-trip, atomicity, nested dir
+
+## Files changed
+ tests/electron/story/storyStore.test.js | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+## Diff
+diff --git a/tests/electron/story/storyStore.test.js b/tests/electron/story/storyStore.test.js
+index e6cee03..73dad62 100644
+--- a/tests/electron/story/storyStore.test.js
++++ b/tests/electron/story/storyStore.test.js
+@@ -1,15 +1,16 @@
+ import { describe, it, expect, beforeEach } from 'vitest'
+ import { mkdtemp, readFile, readdir } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import path from 'node:path'
+ import { createStoryStore, defaultStoryState } from '../../../electron/story/storyStore.js'
++import { existsSync } from 'node:fs'
+ 
+ let dir
+ beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'story-')) })
+ 
+ describe('storyStore', () => {
+   it('없으면 default 상태를 반환한다', async () => {
+     const store = createStoryStore(dir)
+     const s = await store.load()
+     expect(s.steps.script.status).toBe('pending')
+     expect(s.pendingPushRevision).toBe(0)
+@@ -52,11 +53,37 @@ describe('storyStore', () => {
+   it('병렬 saveText를 다수 실행해도 최종 파일이 유효하고 tmp 잔재가 없다', async () => {
+     const store = createStoryStore(dir)
+     const texts = Array.from({ length: 20 }, (_, i) => `본문 ${i}`)
+     await Promise.all(texts.map((t) => store.saveText('script.md', t)))
+ 
+     const raw = await store.loadText('script.md')
+     expect(texts).toContain(raw)
+     const files = await readdir(path.join(dir, 'story'))
+     expect(files.filter((f) => f.includes('.tmp'))).toEqual([])
+   })
++
++  it('saveBinary 왕복 — non-UTF8 바이트도 손상 없이 저장/읽기', async () => {
++    const store = createStoryStore(dir)
++    const buf = Buffer.from([0x00, 0xff, 0x10, 0xfe, 0x42])
++    await store.saveBinary('audio/segments/s1.wav', buf)
++    const read = await readFile(path.join(dir, 'story', 'audio/segments/s1.wav'))
++    expect(Buffer.compare(read, buf)).toBe(0)
++  })
++
++  it('saveBinary 원자적 쓰기 — tmp 파일이 남지 않는다', async () => {
++    const store = createStoryStore(dir)
++    const buf = Buffer.from([0xde, 0xad, 0xbe, 0xef])
++    await store.saveBinary('audio/output.bin', buf)
++    const files = await readdir(path.join(dir, 'story'))
++    expect(files.filter((f) => f.includes('.tmp'))).toEqual([])
++  })
++
++  it('saveBinary는 없는 중첩 디렉토리를 생성한다', async () => {
++    const store = createStoryStore(dir)
++    const buf = Buffer.from([0x11, 0x22, 0x33])
++    const relPath = 'audio/segments/nested/deep/file.bin'
++    await store.saveBinary(relPath, buf)
++    expect(existsSync(path.join(dir, 'story', relPath))).toBe(true)
++    const read = await readFile(path.join(dir, 'story', relPath))
++    expect(Buffer.compare(read, buf)).toBe(0)
++  })
+ })

@@ -1,0 +1,456 @@
+# Review package: 26d3630..460fae5
+
+## Commits
+460fae5 feat(story-m2a): add segment audio duration probe (music-metadata)
+
+## Files changed
+ electron/story/audioProbe.js            |  11 +++
+ package-lock.json                       | 162 +++++++++++++++++++++++++++++++-
+ package.json                            |   1 +
+ tests/electron/story/audioProbe.test.js |  18 ++++
+ 4 files changed, 191 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/electron/story/audioProbe.js b/electron/story/audioProbe.js
+new file mode 100644
+index 0000000..e76e844
+--- /dev/null
++++ b/electron/story/audioProbe.js
+@@ -0,0 +1,11 @@
++/**
++ * 세그먼트 mp3 실제 길이 측정 — music-metadata(순수 JS). ffmpeg 불필요.
++ * parseFile 주입으로 단위 테스트 가능.
++ */
++export async function probeDurationMs(filePath, { parseFile } = {}) {
++  const parse = parseFile || (await import('music-metadata')).parseFile
++  const meta = await parse(filePath)
++  const sec = meta?.format?.duration
++  if (typeof sec !== 'number' || !isFinite(sec) || sec <= 0) return 0
++  return Math.round(sec * 1000)
++}
+diff --git a/package-lock.json b/package-lock.json
+index 00126c4..b05be56 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -13,20 +13,21 @@
+         "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+         "@lexical/react": "^0.45.0",
+         "@modelcontextprotocol/sdk": "^1.27.1",
+         "@sentry/electron": "^7.13.0",
+         "dotenv": "^17.3.1",
+         "electron-updater": "^6.8.3",
+         "firebase": "^12.9.0",
+         "flag-icons": "^7.5.0",
+         "lexical": "^0.45.0",
+         "lexical-beautiful-mentions": "^0.1.48",
++        "music-metadata": "^11.13.0",
+         "react": "^18.3.1",
+         "react-dom": "^18.3.1"
+       },
+       "devDependencies": {
+         "@electron/notarize": "^3.1.1",
+         "@testing-library/jest-dom": "^6.9.1",
+         "@testing-library/react": "^16.3.2",
+         "@testing-library/user-event": "^14.6.1",
+         "@vitejs/plugin-react": "^4.3.4",
+         "@vitest/coverage-v8": "^4.0.18",
+@@ -545,20 +546,30 @@
+     "node_modules/@bcoe/v8-coverage": {
+       "version": "1.0.2",
+       "resolved": "https://registry.npmjs.org/@bcoe/v8-coverage/-/v8-coverage-1.0.2.tgz",
+       "integrity": "sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=18"
+       }
+     },
++    "node_modules/@borewit/text-codec": {
++      "version": "0.2.2",
++      "resolved": "https://registry.npmjs.org/@borewit/text-codec/-/text-codec-0.2.2.tgz",
++      "integrity": "sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Borewit"
++      }
++    },
+     "node_modules/@bramus/specificity": {
+       "version": "2.4.2",
+       "resolved": "https://registry.npmjs.org/@bramus/specificity/-/specificity-2.4.2.tgz",
+       "integrity": "sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "css-tree": "^3.0.0"
+       },
+       "bin": {
+@@ -4311,20 +4322,43 @@
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=12",
+         "npm": ">=6"
+       },
+       "peerDependencies": {
+         "@testing-library/dom": ">=7.21.4"
+       }
+     },
++    "node_modules/@tokenizer/inflate": {
++      "version": "0.4.1",
++      "resolved": "https://registry.npmjs.org/@tokenizer/inflate/-/inflate-0.4.1.tgz",
++      "integrity": "sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA==",
++      "license": "MIT",
++      "dependencies": {
++        "debug": "^4.4.3",
++        "token-types": "^6.1.1"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Borewit"
++      }
++    },
++    "node_modules/@tokenizer/token": {
++      "version": "0.3.0",
++      "resolved": "https://registry.npmjs.org/@tokenizer/token/-/token-0.3.0.tgz",
++      "integrity": "sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==",
++      "license": "MIT"
++    },
+     "node_modules/@types/aria-query": {
+       "version": "5.0.4",
+       "resolved": "https://registry.npmjs.org/@types/aria-query/-/aria-query-5.0.4.tgz",
+       "integrity": "sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==",
+       "dev": true,
+       "license": "MIT",
+       "peer": true
+     },
+     "node_modules/@types/babel__core": {
+       "version": "7.20.5",
+@@ -7119,20 +7153,38 @@
+       },
+       "peerDependencies": {
+         "picomatch": "^3 || ^4"
+       },
+       "peerDependenciesMeta": {
+         "picomatch": {
+           "optional": true
+         }
+       }
+     },
++    "node_modules/file-type": {
++      "version": "21.3.4",
++      "resolved": "https://registry.npmjs.org/file-type/-/file-type-21.3.4.tgz",
++      "integrity": "sha512-Ievi/yy8DS3ygGvT47PjSfdFoX+2isQueoYP1cntFW1JLYAuS4GD7NUPGg4zv2iZfV52uDyk5w5Z0TdpRS6Q1g==",
++      "license": "MIT",
++      "dependencies": {
++        "@tokenizer/inflate": "^0.4.1",
++        "strtok3": "^10.3.4",
++        "token-types": "^6.1.1",
++        "uint8array-extras": "^1.4.0"
++      },
++      "engines": {
++        "node": ">=20"
++      },
++      "funding": {
++        "url": "https://github.com/sindresorhus/file-type?sponsor=1"
++      }
++    },
+     "node_modules/filelist": {
+       "version": "1.0.6",
+       "resolved": "https://registry.npmjs.org/filelist/-/filelist-1.0.6.tgz",
+       "integrity": "sha512-5giy2PkLYY1cP39p17Ech+2xlpTRL9HLspOfEgm0L6CwBXBTgsK5ou0JtzYuepxkaQ/tvhCFIJ5uXo0OrM2DxA==",
+       "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "minimatch": "^5.0.1"
+       }
+     },
+@@ -7861,21 +7913,20 @@
+     "node_modules/idb": {
+       "version": "7.1.1",
+       "resolved": "https://registry.npmjs.org/idb/-/idb-7.1.1.tgz",
+       "integrity": "sha512-gchesWBzyvGHRO9W8tzUWFDycow5gwjvFKfyV9FF32Y7F50yZMp7mP+T2mJIWFx49zicqyC4uefHM17o6xKIVQ==",
+       "license": "ISC"
+     },
+     "node_modules/ieee754": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz",
+       "integrity": "sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==",
+-      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+           "url": "https://github.com/sponsors/feross"
+         },
+         {
+           "type": "patreon",
+           "url": "https://www.patreon.com/feross"
+         },
+         {
+@@ -8801,20 +8852,77 @@
+       "resolved": "https://registry.npmjs.org/module-details-from-path/-/module-details-from-path-1.0.4.tgz",
+       "integrity": "sha512-EGWKgxALGMgzvxYF1UyGTy0HXX/2vHLkw6+NvDKW2jypWbHpjQuj4UMcqQWXHERJhVGKikolT06G3bcKe4fi7w==",
+       "license": "MIT"
+     },
+     "node_modules/ms": {
+       "version": "2.1.3",
+       "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+       "license": "MIT"
+     },
++    "node_modules/music-metadata": {
++      "version": "11.13.0",
++      "resolved": "https://registry.npmjs.org/music-metadata/-/music-metadata-11.13.0.tgz",
++      "integrity": "sha512-uXRaov9dfjSpQufXIU7sMxVZnh+FilCQv2mXn+K5EJ/decP3dTWrgvPYa5r6MtRbieNSCE708Da4J0u1UGfQIw==",
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/Borewit"
++        },
++        {
++          "type": "buymeacoffee",
++          "url": "https://buymeacoffee.com/borewit"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "@borewit/text-codec": "^0.2.2",
++        "@tokenizer/token": "^0.3.0",
++        "content-type": "^2.0.0",
++        "debug": "^4.4.3",
++        "file-type": "^21.3.4",
++        "media-typer": "^2.0.0",
++        "strtok3": "^10.3.5",
++        "token-types": "^6.1.2",
++        "uint8array-extras": "^1.5.0",
++        "win-guid": "^0.2.1"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/music-metadata/node_modules/content-type": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz",
++      "integrity": "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
++    "node_modules/music-metadata/node_modules/media-typer": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/media-typer/-/media-typer-2.0.0.tgz",
++      "integrity": "sha512-kOy3OxT2HH39N70UnKgu4NWDZjLOz8W/mfyvniHjRH/DrL3f2pOfvWQ4p60offbbtDAnXWp0v9LfMIqMec269Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
+     "node_modules/nanoid": {
+       "version": "3.3.11",
+       "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz",
+       "integrity": "sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==",
+       "dev": true,
+       "funding": [
+         {
+           "type": "github",
+           "url": "https://github.com/sponsors/ai"
+         }
+@@ -10415,20 +10523,36 @@
+       "integrity": "sha512-laJTa3Jb+VQpaC6DseHhF7dXVqHTfJPCRDaEbid/drOhgitgYku/letMUqOXFoWV0zIIUbjpdH2t+tYj4bQMRQ==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "min-indent": "^1.0.0"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
++    "node_modules/strtok3": {
++      "version": "10.3.5",
++      "resolved": "https://registry.npmjs.org/strtok3/-/strtok3-10.3.5.tgz",
++      "integrity": "sha512-ki4hZQfh5rX0QDLLkOCj+h+CVNkqmp/CMf8v8kZpkNVK6jGQooMytqzLZYUVYIZcFZ6yDB70EfD8POcFXiF5oA==",
++      "license": "MIT",
++      "dependencies": {
++        "@tokenizer/token": "^0.3.0"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Borewit"
++      }
++    },
+     "node_modules/sumchecker": {
+       "version": "3.0.1",
+       "resolved": "https://registry.npmjs.org/sumchecker/-/sumchecker-3.0.1.tgz",
+       "integrity": "sha512-MvjXzkz/BOfyVDkG0oFOtBxHX2u3gKbMHIF/dXblZsgD3BWOFLmHovIpZY7BykJdAjcqRCBi1WYBNdEC9yI7vg==",
+       "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "debug": "^4.1.0"
+       },
+       "engines": {
+@@ -10664,20 +10788,38 @@
+     },
+     "node_modules/toidentifier": {
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz",
+       "integrity": "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=0.6"
+       }
+     },
++    "node_modules/token-types": {
++      "version": "6.1.2",
++      "resolved": "https://registry.npmjs.org/token-types/-/token-types-6.1.2.tgz",
++      "integrity": "sha512-dRXchy+C0IgK8WPC6xvCHFRIWYUbqqdEIKPaKo/AcTUNzwLTK6AH7RjdLWsEZcAN/TBdtfUw3PYEgPr5VPr6ww==",
++      "license": "MIT",
++      "dependencies": {
++        "@borewit/text-codec": "^0.2.1",
++        "@tokenizer/token": "^0.3.0",
++        "ieee754": "^1.2.1"
++      },
++      "engines": {
++        "node": ">=14.16"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Borewit"
++      }
++    },
+     "node_modules/tough-cookie": {
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
+       "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
+       "dev": true,
+       "license": "BSD-3-Clause",
+       "dependencies": {
+         "tldts": "^7.0.5"
+       },
+       "engines": {
+@@ -10741,20 +10883,32 @@
+       "license": "MIT",
+       "dependencies": {
+         "content-type": "^1.0.5",
+         "media-typer": "^1.1.0",
+         "mime-types": "^3.0.0"
+       },
+       "engines": {
+         "node": ">= 0.6"
+       }
+     },
++    "node_modules/uint8array-extras": {
++      "version": "1.5.0",
++      "resolved": "https://registry.npmjs.org/uint8array-extras/-/uint8array-extras-1.5.0.tgz",
++      "integrity": "sha512-rvKSBiC5zqCCiDZ9kAOszZcDvdAHwwIKJG33Ykj43OKcWsnmcBRL09YTU4nOeHZ8Y2a7l1MgTd08SBe9A8Qj6A==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/undici": {
+       "version": "7.24.7",
+       "resolved": "https://registry.npmjs.org/undici/-/undici-7.24.7.tgz",
+       "integrity": "sha512-H/nlJ/h0ggGC+uRL3ovD+G0i4bqhvsDOpbDv7At5eFLlj2b41L8QliGbnl2H7SnDiYhENphh1tQFJZf+MyfLsQ==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=20.18.1"
+       }
+     },
+@@ -11188,20 +11342,26 @@
+         "siginfo": "^2.0.0",
+         "stackback": "0.0.2"
+       },
+       "bin": {
+         "why-is-node-running": "cli.js"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
++    "node_modules/win-guid": {
++      "version": "0.2.1",
++      "resolved": "https://registry.npmjs.org/win-guid/-/win-guid-0.2.1.tgz",
++      "integrity": "sha512-gEIQU4mkgl2OPeoNrWflcJFJ3Ae2BPd4eCsHHA/XikslkIVms/nHhvnvzIZV7VLmBvtFlDOzLt9rrZT+n6D67A==",
++      "license": "MIT"
++    },
+     "node_modules/wrap-ansi": {
+       "version": "7.0.0",
+       "resolved": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz",
+       "integrity": "sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==",
+       "license": "MIT",
+       "dependencies": {
+         "ansi-styles": "^4.0.0",
+         "string-width": "^4.1.0",
+         "strip-ansi": "^6.0.0"
+       },
+diff --git a/package.json b/package.json
+index bee1be4..3b26b01 100644
+--- a/package.json
++++ b/package.json
+@@ -44,20 +44,21 @@
+     "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+     "@lexical/react": "^0.45.0",
+     "@modelcontextprotocol/sdk": "^1.27.1",
+     "@sentry/electron": "^7.13.0",
+     "dotenv": "^17.3.1",
+     "electron-updater": "^6.8.3",
+     "firebase": "^12.9.0",
+     "flag-icons": "^7.5.0",
+     "lexical": "^0.45.0",
+     "lexical-beautiful-mentions": "^0.1.48",
++    "music-metadata": "^11.13.0",
+     "react": "^18.3.1",
+     "react-dom": "^18.3.1"
+   },
+   "devDependencies": {
+     "@electron/notarize": "^3.1.1",
+     "@testing-library/jest-dom": "^6.9.1",
+     "@testing-library/react": "^16.3.2",
+     "@testing-library/user-event": "^14.6.1",
+     "@vitejs/plugin-react": "^4.3.4",
+     "@vitest/coverage-v8": "^4.0.18",
+diff --git a/tests/electron/story/audioProbe.test.js b/tests/electron/story/audioProbe.test.js
+new file mode 100644
+index 0000000..31eae7b
+--- /dev/null
++++ b/tests/electron/story/audioProbe.test.js
+@@ -0,0 +1,18 @@
++import { describe, it, expect } from 'vitest'
++import { probeDurationMs } from '../../../electron/story/audioProbe.js'
++
++describe('probeDurationMs', () => {
++  it('주입한 parseFile의 format.duration(초)을 ms로 반올림 반환', async () => {
++    const fakeParse = async (p) => {
++      expect(p).toBe('/x/s001-1.mp3')
++      return { format: { duration: 2.3812 } }
++    }
++    const ms = await probeDurationMs('/x/s001-1.mp3', { parseFile: fakeParse })
++    expect(ms).toBe(2381)
++  })
++
++  it('duration 누락 시 0 반환(측정 실패 안전값)', async () => {
++    const ms = await probeDurationMs('/x/y.mp3', { parseFile: async () => ({ format: {} }) })
++    expect(ms).toBe(0)
++  })
++})

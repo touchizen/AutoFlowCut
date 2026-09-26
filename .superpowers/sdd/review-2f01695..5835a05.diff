@@ -1,0 +1,114 @@
+# Review package: 2f01695..5835a05
+
+## Commits
+5835a05 feat(story-m2a): audio manifest builder + binary atomic write
+
+## Files changed
+ electron/story/manifest.js            | 22 ++++++++++++++++++++++
+ electron/story/storyStore.js          |  5 +++--
+ tests/electron/story/manifest.test.js | 27 +++++++++++++++++++++++++++
+ 3 files changed, 52 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/electron/story/manifest.js b/electron/story/manifest.js
+new file mode 100644
+index 0000000..5843372
+--- /dev/null
++++ b/electron/story/manifest.js
+@@ -0,0 +1,22 @@
++/**
++ * audio manifest — 스펙 §7 흐름 B. export가 읽는 계약.
++ * pushRevision은 §7 revision 소유 프로토콜: 최초 정밀은 null(prompts가 재스탐프), 재TTS는 audio가 확정.
++ */
++export function buildManifest(segments, { pushRevision = null } = {}) {
++  return {
++    version: 1,
++    pushRevision,
++    segments: segments.map((s) => {
++      const base = {
++        id: s.id,
++        type: s.type || 'narration',
++        speaker: s.speaker,
++        audioPath: s.audioPath,
++        startMs: s.startMs,
++        durationMs: s.durationMs,
++      }
++      if ((s.type || 'narration') === 'narration') base.trackIndex = 0 // M2a 단일 트랙
++      return base
++    }),
++  }
++}
+diff --git a/electron/story/storyStore.js b/electron/story/storyStore.js
+index 1c209d8..ad06068 100644
+--- a/electron/story/storyStore.js
++++ b/electron/story/storyStore.js
+@@ -32,33 +32,34 @@ export function createStoryStore(projectPath) {
+   // 인스턴스별 promise 큐로 write 직렬화까지 더해 파일 내용 자체의 교착(마지막-쓰기-승리 순서
+   // 보장)도 안전하게 만든다.
+   let writeQueue = Promise.resolve()
+ 
+   function enqueueWrite(task) {
+     const result = writeQueue.then(task)
+     writeQueue = result.then(() => undefined, () => undefined)
+     return result
+   }
+ 
+-  async function writeAtomic(relPath, data) {
++  async function writeAtomic(relPath, data, encoding = 'utf-8') {
+     await mkdir(path.dirname(path.join(storyDir, relPath)), { recursive: true })
+     const target = path.join(storyDir, relPath)
+     const tmp = `${target}.tmp-${process.pid}-${randomUUID().slice(0, 8)}`
+-    await writeFile(tmp, data, 'utf-8')
++    await writeFile(tmp, data, encoding)
+     await rename(tmp, target)
+   }
+ 
+   return {
+     async load() {
+       try {
+         return JSON.parse(await readFile(path.join(storyDir, 'story.json'), 'utf-8'))
+       } catch {
+         return defaultStoryState()
+       }
+     },
+     async save(state) { return enqueueWrite(() => writeAtomic('story.json', JSON.stringify(state, null, 2))) },
+     async saveText(relPath, text) { return enqueueWrite(() => writeAtomic(relPath, text)) },
++    async saveBinary(relPath, buffer) { return enqueueWrite(() => writeAtomic(relPath, buffer, null)) },
+     async loadText(relPath) {
+       try { return await readFile(path.join(storyDir, relPath), 'utf-8') } catch { return null }
+     },
+   }
+ }
+diff --git a/tests/electron/story/manifest.test.js b/tests/electron/story/manifest.test.js
+new file mode 100644
+index 0000000..b8b696f
+--- /dev/null
++++ b/tests/electron/story/manifest.test.js
+@@ -0,0 +1,27 @@
++import { describe, it, expect } from 'vitest'
++import { buildManifest } from '../../../electron/story/manifest.js'
++
++const segs = [
++  { id: 's1', type: 'narration', speaker: 'narrator', audioPath: '/a/s1.wav', startMs: 0, durationMs: 2000 },
++  { id: 's2', type: 'sfx', audioPath: '/a/s2.wav', startMs: 2150, durationMs: 800 },
++]
++
++describe('buildManifest', () => {
++  it('narration은 trackIndex 0, pushRevision 기본 null', () => {
++    const m = buildManifest(segs)
++    expect(m.version).toBe(1)
++    expect(m.pushRevision).toBe(null)
++    expect(m.segments[0]).toMatchObject({ id: 's1', type: 'narration', trackIndex: 0, startMs: 0, durationMs: 2000 })
++  })
++
++  it('pushRevision 주입', () => {
++    expect(buildManifest(segs, { pushRevision: 7 }).pushRevision).toBe(7)
++  })
++
++  it('sfx 세그먼트도 포함(trackIndex 없음)', () => {
++    const m = buildManifest(segs)
++    const sfx = m.segments.find((s) => s.id === 's2')
++    expect(sfx.type).toBe('sfx')
++    expect(sfx.trackIndex).toBeUndefined()
++  })
++})

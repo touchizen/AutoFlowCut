@@ -1,0 +1,882 @@
+# Review package: e7ffe0a0..HEAD
+
+## Commits
+c1625718 fix(chatgpt): stop refusing the project aspect ratio every scene carries
+
+## Files changed
+ electron/webtargets/chatgpt/generationAdapter.js   |  18 +-
+ src/App.jsx                                        |  13 ++
+ src/engine/engineChatgpt.js                        |  20 ++-
+ src/hooks/useStyleThumbnails.js                    |  11 +-
+ src/locales/en.js                                  |   1 +
+ src/locales/ko.js                                  |   1 +
+ tests/components/App.chatgptTargetGate.test.jsx    |  18 ++
+ .../webtargets/chatgptGenerationAdapter.test.js    |  91 ++++++++++
+ tests/engine/engineChatgpt.test.js                 |  59 ++++++-
+ tests/hooks/useStyleThumbnails.stop.test.jsx       |  84 +++++++++
+ tests/integration/chatgptRealCallShape.test.jsx    | 192 +++++++++++++++++++++
+ 11 files changed, 494 insertions(+), 14 deletions(-)
+
+## Diff
+diff --git a/electron/webtargets/chatgpt/generationAdapter.js b/electron/webtargets/chatgpt/generationAdapter.js
+index e8ef9478..b805eb0b 100644
+--- a/electron/webtargets/chatgpt/generationAdapter.js
++++ b/electron/webtargets/chatgpt/generationAdapter.js
+@@ -568,23 +568,25 @@ export function createChatgptGenerationAdapter({
+         return
+       }
+       const saved = await saveImage(view, generated.src, {
+         fs,
+         outputDir: getOutputDir(),
+         now,
+         timeoutMs: saveTimeoutMs,
+         signal: job.controller.signal,
+       })
+       job.state = 'completed'
++      // C2: the estuary content id stays main-process-only. Nothing in the renderer consumes
++      // it (finalize reads base64/dataUrl/filePath/mediaId), so it must not cross IPC.
+       job.result = {
+         success: true,
+-        images: [{ ...saved, id: generated.id }],
++        images: [saved],
+       }
+     } catch (error) {
+       if (error?.name === 'AbortError' || job.controller.signal.aborted) {
+         Object.assign(job, { state: 'cancelled', result: cancellationRefusal() })
+         return
+       }
+       logger.error?.('[ChatGPT Generation]', 'job failed', {
+         origin: originOf(view?.webContents?.getURL?.()),
+         errorName: errorNameOf(error),
+       })
+@@ -630,32 +632,38 @@ export function createChatgptGenerationAdapter({
+   const observe = async (generationId) => {
+     const job = jobs.get(generationId)
+     if (!job) return { success: false, completed: true, errorKind: 'chatgpt-generation-not-found', error: 'ChatGPT generation was not found.' }
+     if (job.state === 'failed' || job.state === 'cancelled') return { ...job.result, completed: true, state: job.state }
+     return { success: true, completed: job.state === 'completed', state: job.state }
+   }
+ 
+   const collect = async (generationId) => {
+     const job = jobs.get(generationId)
+     if (!job) return { success: false, errorKind: 'chatgpt-generation-not-found', error: 'ChatGPT generation was not found.' }
++    // C4: every terminal collect (completed/failed/cancelled) deletes the entry — otherwise
++    // cancelled jobs and their route-orphaned owner-map entries accumulate for the session.
++    if (job.state === 'failed' || job.state === 'cancelled') {
++      jobs.delete(generationId)
++      return job.result
++    }
+     if (job.state !== 'completed') {
+-      return job.state === 'failed' || job.state === 'cancelled'
+-        ? job.result
+-        : { success: false, errorKind: 'chatgpt-generation-pending', error: 'ChatGPT generation is still pending.' }
++      return { success: false, errorKind: 'chatgpt-generation-pending', error: 'ChatGPT generation is still pending.' }
+     }
+     jobs.delete(generationId)
+     return job.result
+   }
+ 
+   const clear = async () => {
+     for (const [generationId, job] of jobs) {
+-      if (job.state === 'completed' || job.state === 'failed') jobs.delete(generationId)
++      if (job.state === 'completed' || job.state === 'failed' || job.state === 'cancelled') {
++        jobs.delete(generationId)
++      }
+     }
+     return { success: true }
+   }
+ 
+   const cancelAll = async () => {
+     for (const job of jobs.values()) {
+       if (job.state === 'queued' || job.state === 'running') job.controller.abort()
+     }
+     return { success: true }
+   }
+diff --git a/src/App.jsx b/src/App.jsx
+index 9b31754a..f84f6144 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -595,20 +595,33 @@ function App() {
+         // #R8-5: recheck 도중 flow 로 전환됐으면 옛 api 결과로 authReady 를 set 하지 않는다.
+         if (modeRef.current !== startMode) return
+         authInvalidatedRef.current = false
+         setApiAuthReady(!!token)
+       }).catch(() => {})
+     }
+     window.addEventListener('byok-key-changed', onKeyChanged)
+     return () => window.removeEventListener('byok-key-changed', onKeyChanged)
+   }, [])
+ 
++  // C1: ChatGPT 타깃은 화면비를 제어하지 못한다(스파이크 실측: 정사각 출력만). 엔진이 프로젝트
++  // 화면비를 제출에서 제거할 때마다 이 이벤트를 쏘고, 여기서 세션당 한 번만 알린다(씬마다 아님).
++  const chatgptAspectNoticeShownRef = useRef(false)
++  useEffect(() => {
++    const onAspectRatioIgnored = () => {
++      if (chatgptAspectNoticeShownRef.current) return
++      chatgptAspectNoticeShownRef.current = true
++      toast.warning(t('toast.chatgptAspectRatioIgnored'))
++    }
++    window.addEventListener('chatgpt-aspect-ratio-ignored', onAspectRatioIgnored)
++    return () => window.removeEventListener('chatgpt-aspect-ratio-ignored', onAspectRatioIgnored)
++  }, [t])
++
+   const refuseIfSessionTargetUnsupported = useCallback(({ stage = 'image', hasReferences = false } = {}) => {
+     if (modeRef.current !== 'flow' || flowTargetActiveRef.current) return false
+     if (stage === 'image' && hasReferences !== true) return false
+     toast.warning(t(
+       stage === 'image'
+         ? 'toast.chatgptReferencesUnsupported'
+         : 'toast.chatgptVideoUsesApi'
+     ))
+     return true
+   }, [t])
+diff --git a/src/engine/engineChatgpt.js b/src/engine/engineChatgpt.js
+index 30f8e319..195a33f9 100644
+--- a/src/engine/engineChatgpt.js
++++ b/src/engine/engineChatgpt.js
+@@ -14,46 +14,58 @@ const referenceRefusal = () => ({
+   errorKind: 'chatgpt-reference-images-unmeasured',
+   error: 'ChatGPT reference image upload is not measured and remains unavailable.',
+ })
+ 
+ const optionRefusal = (errorKind, option) => ({
+   success: false,
+   errorKind,
+   error: `ChatGPT ${option} control is not measured, so this request was not submitted.`,
+ })
+ 
++// C1: every scene/reference caller forwards the project-level aspectRatio unconditionally
++// (useAppSettings defaults it to '16:9', so it is ALWAYS a string). That is settings/display
++// plumbing, not an explicit per-request opt-in — refusing it killed every real generation.
++// The engine drops it from the IPC payload instead, and announces the limitation so the app
++// can surface ONCE that the ChatGPT target does not control aspect ratio (the spike measured
++// square output only — we must not pretend a 9:16 project produced a 9:16 image).
++const defaultAspectRatioNotice = () => {
++  try {
++    globalThis.window?.dispatchEvent?.(new CustomEvent('chatgpt-aspect-ratio-ignored'))
++  } catch { /* no window / no CustomEvent — nothing to surface to */ }
++}
++
+ export function createChatgptEngine({
+   electronAPI = api(),
+   now = () => Date.now(),
+   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+   resultTimeoutMs = DEFAULT_RESULT_TIMEOUT_MS,
+   pollMs = DEFAULT_POLL_MS,
++  onAspectRatioIgnored = defaultAspectRatioNotice,
+ } = {}) {
+   const submitGeneration = async (prompt, referenceImages = [], options = {}) => {
+     if (referenceImages != null && (!Array.isArray(referenceImages) || referenceImages.length > 0)) {
+       return referenceRefusal()
+     }
++    // seed/batchCount defaults (null / 1) pass, so these refusals fire only on explicit opt-in.
+     if (options.batchCount != null && options.batchCount !== 1) {
+       return optionRefusal('chatgpt-batch-count-unmeasured', 'batch count')
+     }
+-    if (options.aspectRatio != null) {
+-      return optionRefusal('chatgpt-aspect-ratio-unmeasured', 'aspect ratio')
+-    }
+     if (options.seed != null) {
+       return optionRefusal('chatgpt-seed-unmeasured', 'seed')
+     }
++    if (options.aspectRatio != null) onAspectRatioIgnored()
+     if (typeof electronAPI?.chatgptSubmitGeneration !== 'function') return unavailable('generation')
++    // aspectRatio/provider/model are intentionally omitted — unmeasured on this target.
+     return electronAPI.chatgptSubmitGeneration({
+       prompt,
+       referenceImages: [],
+       batchCount: options.batchCount ?? 1,
+-      aspectRatio: options.aspectRatio,
+       purpose: options.purpose,
+     })
+   }
+ 
+   const checkGeneration = async (generationId) => {
+     if (typeof electronAPI?.chatgptObserveGeneration !== 'function') return unavailable('observation')
+     return electronAPI.chatgptObserveGeneration(generationId)
+   }
+ 
+   const collectGeneration = async (generationId) => {
+diff --git a/src/hooks/useStyleThumbnails.js b/src/hooks/useStyleThumbnails.js
+index 74514f15..13f5aa23 100644
+--- a/src/hooks/useStyleThumbnails.js
++++ b/src/hooks/useStyleThumbnails.js
+@@ -280,21 +280,30 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true, imageProvi
+     if (generated > 0) {
+       toast.success(t?.('reference.thumbnailComplete', { count: generated }) || `${generated} thumbnails generated`)
+     }
+ 
+     return customResults  // 커스텀 스타일 결과 반환 → App에서 References 업데이트
+   }, [genAPI, thumbnails, flowProjectReady])
+ 
+   const stopGenerating = useCallback(() => {
+     stopRequestedRef.current = true
+     setStopping(true)
+-  }, [])
++    // C3: ChatGPT submissions stay main-owned until the bounded page/fetch job finishes.
++    // Only that engine advertises active cancellation — same chain as useAutomation.stop()
++    // (setStopRequested(true) → chatgpt:cancel-generations → adapter cancelAll).
++    // Flow/API engines keep their existing stop path (stopRequestedRef only).
++    if (genAPI?.cancelsActiveOnStop === true && typeof genAPI.setStopRequested === 'function') {
++      void Promise.resolve(genAPI.setStopRequested(true)).catch((error) => {
++        console.warn('[StyleThumbnails] active generation cancellation failed:', error?.message)
++      })
++    }
++  }, [genAPI])
+ 
+   // 개별 썸네일 삭제
+   const deleteThumbnail = useCallback(async (presetId) => {
+     if (window.electronAPI?.deleteStyleThumbnail) {
+       await window.electronAPI.deleteStyleThumbnail({ presetId })
+     }
+     setThumbnails(prev => {
+       const next = { ...prev }
+       delete next[presetId]
+       return next
+diff --git a/src/locales/en.js b/src/locales/en.js
+index 717a0f5c..5c5fb8d0 100644
+--- a/src/locales/en.js
++++ b/src/locales/en.js
+@@ -1505,20 +1505,21 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
+     folderDeleted: 'Work folder has been deleted. Please select again.',
+     folderPermissionNeeded: 'Work folder permission required.',
+     folderSelectFirst: 'Please select work folder first.',
+     flowLoginRequired: 'Flow login required. Sign in with your Google account in the Flow window.',
+     flowReattachFailed: 'Failed to reconnect the Flow window. Try again.',
+     flowLoginHint: 'Sign in with your Google account in the Flow window.',
+     flowProjectNotReady: 'The Flow project is still loading. Try again shortly.',
+     sessionTargetUnsupported: 'Generation is unavailable for the selected session target.',
+     chatgptReferencesUnsupported: 'ChatGPT reference-image upload has not been measured, so this request was not submitted.',
+     chatgptVideoUsesApi: 'Video is routed to the API provider on the ChatGPT target and cannot start from this session view.',
++    chatgptAspectRatioIgnored: 'The ChatGPT target cannot control aspect ratio — images are generated square regardless of the project format.',
+     subscriptionLoading: 'Checking subscription information. Try again shortly.',
+     videoUnknownMentions: 'Unsynced or unknown character mention(s): {names} — verify or sync the character in the Ref tab and retry.',
+     flowSyncIncomplete: 'Flow sync incomplete ({ok} synced, {fail} failed) — generation not started.',
+     flowSyncGenerationStarting: 'Synced {ok} — starting generation.',
+     flowLoginExpiredTitle: 'Flow login expired',
+     flowLoginExpiredMessage: 'Your Flow session expired. Sign in again in the Flow window.',
+     memoryWarning: 'High memory usage. Some images may not be saved.',
+     memoryCritical: 'Out of memory. Stopping. Please allow save permission in settings.',
+     noGeneratedImages: 'No generated images.',
+     filePermissionRequired: 'File read permission required. Please allow in Settings.',
+diff --git a/src/locales/ko.js b/src/locales/ko.js
+index 06ffa928..0b340dcb 100644
+--- a/src/locales/ko.js
++++ b/src/locales/ko.js
+@@ -1504,20 +1504,21 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
+     folderDeleted: '작업 폴더가 삭제되었습니다. 다시 선택해주세요.',
+     folderPermissionNeeded: '작업 폴더 권한이 필요합니다.',
+     folderSelectFirst: '작업 폴더를 먼저 설정해주세요.',
+     flowLoginRequired: 'Flow 로그인이 필요합니다. Flow 창에서 Google 계정으로 로그인해주세요.',
+     flowReattachFailed: 'Flow 창 재연결에 실패했습니다. 다시 시도해 주세요.',
+     flowLoginHint: 'Flow 창에서 Google 계정으로 로그인하세요.',
+     flowProjectNotReady: 'Flow 프로젝트 로딩 중입니다. 잠시 후 다시 시도해 주세요.',
+     sessionTargetUnsupported: '선택한 세션 타깃에서는 생성을 시작할 수 없습니다.',
+     chatgptReferencesUnsupported: 'ChatGPT 레퍼런스 이미지 업로드는 아직 측정되지 않아 이 요청을 제출하지 않았습니다.',
+     chatgptVideoUsesApi: 'ChatGPT 타깃의 비디오는 API 공급자로 라우팅되며 이 세션 뷰에서는 시작할 수 없습니다.',
++    chatgptAspectRatioIgnored: 'ChatGPT 타깃은 화면비를 제어할 수 없습니다 — 프로젝트 화면비와 무관하게 정사각형 이미지로 생성됩니다.',
+     subscriptionLoading: '구독 정보를 확인 중입니다. 잠시 후 다시 시도해 주세요.',
+     videoUnknownMentions: '동기화되지 않았거나 알 수 없는 캐릭터 멘션: {names} — Ref 탭에서 캐릭터를 확인하거나 동기화한 뒤 다시 시도하세요.',
+     flowSyncIncomplete: 'Flow 동기화 미완료 ({ok} 성공 · {fail} 실패) — 생성을 시작하지 않습니다.',
+     flowSyncGenerationStarting: 'Flow 동기화 완료 ({ok}) — 생성을 시작합니다.',
+     flowLoginExpiredTitle: 'Flow 로그인 만료',
+     flowLoginExpiredMessage: 'Flow 세션이 만료되었습니다. Flow 창에서 다시 로그인해주세요.',
+     memoryWarning: '메모리 사용량이 높습니다. 일부 이미지가 저장되지 않을 수 있습니다.',
+     memoryCritical: '메모리 부족으로 중단합니다. 설정에서 저장 권한을 허용해주세요.',
+     noGeneratedImages: '생성된 이미지가 없습니다.',
+     filePermissionRequired: '파일 읽기 권한이 필요합니다. 설정에서 권한을 허용해주세요.',
+diff --git a/tests/components/App.chatgptTargetGate.test.jsx b/tests/components/App.chatgptTargetGate.test.jsx
+index e7e989ba..8ec13529 100644
+--- a/tests/components/App.chatgptTargetGate.test.jsx
++++ b/tests/components/App.chatgptTargetGate.test.jsx
+@@ -723,20 +723,38 @@ describe('App flow + chatgpt target gate', () => {
+       target: 'chatgpt', status, ready: true, revision: 2,
+     }))
+     await waitFor(() => expect(screen.getByTestId('image-start')).toBeDisabled())
+ 
+     fireEvent.click(screen.getByTestId('image-start'))
+     await act(async () => { await Promise.resolve() })
+     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
+     expect(appMocks.toastWarning).not.toHaveBeenCalled()
+   })
+ 
++  it('surfaces the aspect-ratio limitation once per session, not once per scene', async () => {
++    render(<App />)
++    await act(async () => { await Promise.resolve() })
++
++    // The ChatGPT engine fires this event for every scene whose submission drops the
++    // project aspect ratio — a batch of scenes must still produce a single notice.
++    await act(async () => {
++      window.dispatchEvent(new CustomEvent('chatgpt-aspect-ratio-ignored'))
++      window.dispatchEvent(new CustomEvent('chatgpt-aspect-ratio-ignored'))
++      window.dispatchEvent(new CustomEvent('chatgpt-aspect-ratio-ignored'))
++      await Promise.resolve()
++    })
++
++    const aspectNotices = appMocks.toastWarning.mock.calls
++      .filter((call) => call[0] === 'toast.chatgptAspectRatioIgnored')
++    expect(aspectNotices).toHaveLength(1)
++  })
++
+   it('flow + chatgpt blocks text-to-video before the Flow video engine seam', async () => {
+     render(<App />)
+ 
+     fireEvent.click(screen.getByTitle('tabs.videoText'))
+     fireEvent.click(screen.getByTitle('actions.start'))
+ 
+     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+     expect(appMocks.videoStart).not.toHaveBeenCalled()
+     expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptVideoUsesApi')
+   })
+diff --git a/tests/electron/webtargets/chatgptGenerationAdapter.test.js b/tests/electron/webtargets/chatgptGenerationAdapter.test.js
+index ebba8e5e..0109009c 100644
+--- a/tests/electron/webtargets/chatgptGenerationAdapter.test.js
++++ b/tests/electron/webtargets/chatgptGenerationAdapter.test.js
+@@ -477,20 +477,52 @@ describe('ChatGPT measured generation state machine', () => {
+     await expect(adapter.observe('adapter-job-positive')).resolves.toMatchObject({ completed: true })
+     await expect(adapter.collect('adapter-job-positive')).resolves.toMatchObject({
+       success: true,
+       images: [expect.objectContaining({
+         filePath: '/adapter-staging/generated-1700000000001.png',
+         dataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+       })],
+     })
+   })
+ 
++  it('keeps the estuary content id out of the collected IPC payload', async () => {
++    if (!expectMeasuredMachine()) return
++    const h = adapterHarness({
++      handlers: {
++        __cg_baseline__: { imgs: [] },
++        __cg_inject__: { textMatches: true, submitPresent: true },
++        __cg_clickSubmit__: { clicked: true },
++        __cg_submitAck__: submitted,
++        __cg_poll__: { imgs: [loaded('estuary-content-id-must-not-cross-ipc')] },
++      },
++      createId: () => 'ipc-payload-privacy-job',
++    })
++
++    await expect(h.adapter.submit({
++      prompt: 'a payload-privacy control scene',
++      referenceImages: [],
++      batchCount: 1,
++    })).resolves.toEqual({ success: true, generationId: 'ipc-payload-privacy-job' })
++    const collected = await h.adapter.collect('ipc-payload-privacy-job')
++
++    // Positive control: the payload still carries everything the renderer consumes.
++    expect(collected.success).toBe(true)
++    expect(collected.images[0]).toMatchObject({
++      filePath: '/adapter-harness-staging/generated-1700000000099.png',
++      base64: expect.any(String),
++      dataUrl: expect.stringMatching(/^data:image\/png;base64,/),
++    })
++    // The content-correlating estuary id must not cross IPC in the event/result payload.
++    expect(collected.images[0]).not.toHaveProperty('id')
++    expect(JSON.stringify(collected)).not.toContain('estuary-content-id-must-not-cross-ipc')
++  })
++
+   it('fails closed on a malformed non-array reference envelope after an empty-array positive control', async () => {
+     if (!expectMeasuredMachine()) return
+     let nextId = 0
+     const h = adapterHarness({ createId: () => `reference-shape-${++nextId}` })
+ 
+     await expect(h.adapter.submit({
+       prompt: 'text-only positive control with empty references',
+       referenceImages: [],
+       batchCount: 1,
+     })).resolves.toMatchObject({ success: true, generationId: 'reference-shape-1' })
+@@ -595,20 +627,79 @@ describe('ChatGPT measured generation state machine', () => {
+     expect(cancelResult).toMatchObject({ success: true })
+     expect(submitResult).toMatchObject({
+       success: false,
+       errorKind: 'chatgpt-generation-cancelled',
+     })
+     expect(fetchSignal).toBeInstanceOf(AbortSignal)
+     expect(fetchSignal.aborted).toBe(true)
+     expect(events).toEqual(['fetch-start', 'cancel-request', 'idle'])
+   })
+ 
++  it('deletes a cancelled job on terminal collect instead of leaking it for the session', async () => {
++    if (!expectMeasuredMachine()) return
++    const fetch = vi.fn(() => new Promise(() => {}))
++    const h = adapterHarness({ fetch, createId: () => 'reap-on-collect-job' })
++
++    const pending = h.adapter.submit({
++      prompt: 'cancel then collect twice',
++      referenceImages: [],
++      batchCount: 1,
++    })
++    await waitForCall(fetch)
++    // Positive control: an active (running) job must survive clear().
++    await expect(h.adapter.clear()).resolves.toEqual({ success: true })
++    await expect(h.adapter.observe('reap-on-collect-job')).resolves.toMatchObject({
++      success: true, completed: false, state: 'running',
++    })
++
++    await h.adapter.cancelAll()
++    await expect(pending).resolves.toMatchObject({
++      success: false, errorKind: 'chatgpt-generation-cancelled',
++    })
++
++    // First collect returns the terminal cancellation result…
++    await expect(h.adapter.collect('reap-on-collect-job')).resolves.toMatchObject({
++      success: false, errorKind: 'chatgpt-generation-cancelled',
++    })
++    // …and the terminal collect deletes the entry: a second collect finds nothing.
++    await expect(h.adapter.collect('reap-on-collect-job')).resolves.toMatchObject({
++      success: false, errorKind: 'chatgpt-generation-not-found',
++    })
++  })
++
++  it('clear() reaps a cancelled job that was never collected', async () => {
++    if (!expectMeasuredMachine()) return
++    const fetch = vi.fn(() => new Promise(() => {}))
++    const h = adapterHarness({ fetch, createId: () => 'reap-on-clear-job' })
++
++    const pending = h.adapter.submit({
++      prompt: 'cancel then clear without collecting',
++      referenceImages: [],
++      batchCount: 1,
++    })
++    await waitForCall(fetch)
++    await h.adapter.cancelAll()
++    await expect(pending).resolves.toMatchObject({
++      success: false, errorKind: 'chatgpt-generation-cancelled',
++    })
++    // Positive control: before clear() the cancelled job is still observable.
++    await expect(h.adapter.observe('reap-on-clear-job')).resolves.toMatchObject({
++      completed: true, state: 'cancelled',
++    })
++
++    await expect(h.adapter.clear()).resolves.toEqual({ success: true })
++
++    await expect(h.adapter.observe('reap-on-clear-job')).resolves.toMatchObject({
++      success: false, errorKind: 'chatgpt-generation-not-found',
++    })
++  })
++
+   it('owns cancellation before the session probe resolves and never evaluates the page', async () => {
+     if (!expectMeasuredMachine()) return
+     const positive = adapterHarness({ createId: () => 'session-probe-positive' })
+     await expect(positive.adapter.submit({
+       prompt: 'ready session positive control',
+       referenceImages: [],
+       batchCount: 1,
+     })).resolves.toMatchObject({ success: true, generationId: 'session-probe-positive' })
+ 
+     let releaseProbe
+diff --git a/tests/engine/engineChatgpt.test.js b/tests/engine/engineChatgpt.test.js
+index dbe283e2..1f0b557c 100644
+--- a/tests/engine/engineChatgpt.test.js
++++ b/tests/engine/engineChatgpt.test.js
+@@ -1,26 +1,26 @@
+ import { describe, expect, it, vi } from 'vitest'
+ import { createChatgptEngine } from '../../src/engine/engineChatgpt.js'
+ 
+-function engineHarness() {
++function engineHarness(deps = {}) {
+   const events = []
+   const electronAPI = {
+     chatgptSubmitGeneration: vi.fn(async (request) => {
+       events.push(`submit:${request.prompt}`)
+       return { success: true, generationId: 'engine-chatgpt-positive' }
+     }),
+     chatgptCancelGenerations: vi.fn(async () => {
+       events.push('cancel')
+       return { success: true }
+     }),
+   }
+-  return { engine: createChatgptEngine({ electronAPI }), electronAPI, events }
++  return { engine: createChatgptEngine({ electronAPI, ...deps }), electronAPI, events }
+ }
+ 
+ describe('ChatGPT renderer engine measured request contract', () => {
+   it('fails closed on malformed references after submitting an actual empty array', async () => {
+     const h = engineHarness()
+     await expect(h.engine.submitGeneration(
+       'empty-array positive control',
+       [],
+       { batchCount: 1 },
+     )).resolves.toMatchObject({ success: true })
+@@ -32,40 +32,91 @@ describe('ChatGPT renderer engine measured request contract', () => {
+       { batchCount: 1 },
+     )
+ 
+     expect(refused).toMatchObject({
+       success: false,
+       errorKind: 'chatgpt-reference-images-unmeasured',
+     })
+     expect(h.events).toEqual(['submit:empty-array positive control'])
+   })
+ 
+-  it('refuses batch, aspect-ratio, and seed controls that the spike never measured', async () => {
++  it('refuses explicit batch and seed opt-ins that the spike never measured', async () => {
+     const h = engineHarness()
+     await expect(h.engine.submitGeneration(
+       'measured options positive control',
+       [],
+       { batchCount: 1 },
+     )).resolves.toMatchObject({ success: true })
+ 
+     const cases = [
+       [{ batchCount: 4 }, 'chatgpt-batch-count-unmeasured'],
+-      [{ batchCount: 1, aspectRatio: '16:9' }, 'chatgpt-aspect-ratio-unmeasured'],
+       [{ batchCount: 1, seed: 314159 }, 'chatgpt-seed-unmeasured'],
+     ]
+     for (const [options, errorKind] of cases) {
+       await expect(h.engine.submitGeneration('unsupported option', [], options))
+         .resolves.toMatchObject({ success: false, errorKind })
+     }
+     expect(h.events).toEqual(['submit:measured options positive control'])
+   })
+ 
++  it('submits the app-default settings shape by omitting aspect-ratio/provider/model plumbing', async () => {
++    const notices = []
++    const h = engineHarness({ onAspectRatioIgnored: () => notices.push('aspect-ratio-ignored') })
++
++    // Positive control — no aspectRatio in options → no notice, submission goes through.
++    await expect(h.engine.submitGeneration('no-aspect positive control', [], { batchCount: 1 }))
++      .resolves.toMatchObject({ success: true })
++    expect(notices).toEqual([])
++
++    // The exact option object every real caller (useAutomation/useSceneGeneration/
++    // useReferenceGeneration) sends with the useAppSettings defaults.
++    const submitted = await h.engine.submitGeneration('settings-shaped submission', [], {
++      batchCount: 1,
++      seed: null,
++      aspectRatio: '16:9',
++      model: 'gemini-nonstandard-model',
++      provider: 'google',
++      references: [{ id: 'ref-non-default', name: 'unused-here' }],
++    })
++
++    expect(submitted).toMatchObject({ success: true, generationId: 'engine-chatgpt-positive' })
++    expect(h.events).toEqual([
++      'submit:no-aspect positive control',
++      'submit:settings-shaped submission',
++    ])
++    const request = h.electronAPI.chatgptSubmitGeneration.mock.calls[1][0]
++    expect('aspectRatio' in request).toBe(false)
++    expect('provider' in request).toBe(false)
++    expect('model' in request).toBe(false)
++    expect(request.referenceImages).toEqual([])
++    expect(notices).toEqual(['aspect-ratio-ignored'])
++  })
++
++  it('announces the dropped aspect ratio through the window event the app listens to', async () => {
++    const windowNotices = []
++    const listener = () => windowNotices.push('window-notice')
++    window.addEventListener('chatgpt-aspect-ratio-ignored', listener)
++    try {
++      const h = engineHarness()
++      await expect(h.engine.submitGeneration('no-notice positive control', [], { batchCount: 1 }))
++        .resolves.toMatchObject({ success: true })
++      expect(windowNotices).toEqual([])
++
++      await expect(h.engine.submitGeneration('noticed submission', [], { batchCount: 1, aspectRatio: '9:16' }))
++        .resolves.toMatchObject({ success: true })
++
++      expect(windowNotices).toEqual(['window-notice'])
++    } finally {
++      window.removeEventListener('chatgpt-aspect-ratio-ignored', listener)
++    }
++  })
++
+   it('maps Stop=true to the ChatGPT cancellation IPC and leaves Stop=false inert', async () => {
+     const h = engineHarness()
+ 
+     await h.engine.setStopRequested(false)
+     expect(h.events).toEqual([])
+ 
+     await h.engine.setStopRequested(true)
+ 
+     expect(h.events).toEqual(['cancel'])
+     expect(h.electronAPI.chatgptCancelGenerations).toHaveBeenCalledOnce()
+diff --git a/tests/hooks/useStyleThumbnails.stop.test.jsx b/tests/hooks/useStyleThumbnails.stop.test.jsx
+new file mode 100644
+index 00000000..5e40df2a
+--- /dev/null
++++ b/tests/hooks/useStyleThumbnails.stop.test.jsx
+@@ -0,0 +1,84 @@
++/**
++ * C3 — the thumbnail Stop must cancel an active ChatGPT job through the same
++ * cancellation chain useAutomation.stop() uses (cancelsActiveOnStop → setStopRequested(true)
++ * → chatgpt:cancel-generations → adapter cancelAll). Engines that do not advertise
++ * cancellation (Flow/API) must stay untouched.
++ */
++import { describe, it, expect, vi, afterEach } from 'vitest'
++import { renderHook, act } from '@testing-library/react'
++
++vi.mock('../../src/components/Toast', () => ({
++  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
++}))
++vi.mock('../../src/config/defaults', () => ({
++  STYLE_PRESETS: {
++    styles: [
++      { id: 'stop-chain-a', prompt_en: 'copperpunk skyline' },
++      { id: 'stop-chain-b', prompt_en: 'gaslight noir alley' },
++    ],
++  },
++}))
++import { useStyleThumbnails } from '../../src/hooks/useStyleThumbnails'
++
++afterEach(() => {
++  vi.useRealTimers()
++  delete window.electronAPI
++})
++
++function gatedGenAPI({ cancelsActiveOnStop }) {
++  const events = []
++  let release
++  const generateImage = vi.fn(() => {
++    events.push('generate:start')
++    return new Promise((resolve) => { release = resolve })
++  })
++  const genAPI = {
++    generateImage,
++    mode: 'flow',
++    ...(cancelsActiveOnStop ? { cancelsActiveOnStop: true } : {}),
++    setStopRequested: vi.fn(async (value) => {
++      events.push(`cancel:${value}`)
++      return { success: true }
++    }),
++  }
++  return { genAPI, events, releaseActive: (value) => release(value) }
++}
++
++async function runStopScenario({ cancelsActiveOnStop }) {
++  vi.useFakeTimers()
++  const h = gatedGenAPI({ cancelsActiveOnStop })
++  const { result } = renderHook(() => useStyleThumbnails(h.genAPI, { flowProjectReady: true }))
++
++  let run
++  act(() => { run = result.current.generateThumbnails(['stop-chain-a', 'stop-chain-b'], [], (key) => key) })
++  await act(async () => { await Promise.resolve() })
++  expect(h.events).toEqual(['generate:start'])
++
++  act(() => { result.current.stopGenerating() })
++
++  await act(async () => {
++    h.releaseActive({ success: false, errorKind: 'chatgpt-generation-cancelled', error: 'cancelled' })
++    await vi.advanceTimersByTimeAsync(5000)
++  })
++  await act(async () => { await run })
++
++  // Stop actually stopped the loop: the second preset was never submitted.
++  expect(h.genAPI.generateImage).toHaveBeenCalledTimes(1)
++  return h
++}
++
++describe('useStyleThumbnails Stop — active ChatGPT job cancellation', () => {
++  it('wires Stop through setStopRequested(true) when the engine advertises active cancellation', async () => {
++    const h = await runStopScenario({ cancelsActiveOnStop: true })
++
++    expect(h.events).toEqual(['generate:start', 'cancel:true'])
++    expect(h.genAPI.setStopRequested).toHaveBeenCalledExactlyOnceWith(true)
++  })
++
++  it('leaves engines without cancelsActiveOnStop on their existing stop path', async () => {
++    const h = await runStopScenario({ cancelsActiveOnStop: false })
++
++    expect(h.events).toEqual(['generate:start'])
++    expect(h.genAPI.setStopRequested).not.toHaveBeenCalled()
++  })
++})
+diff --git a/tests/integration/chatgptRealCallShape.test.jsx b/tests/integration/chatgptRealCallShape.test.jsx
+new file mode 100644
+index 00000000..d5266a64
+--- /dev/null
++++ b/tests/integration/chatgptRealCallShape.test.jsx
+@@ -0,0 +1,192 @@
++/**
++ * C1 regression net — the REAL scene-submission call shape against the REAL ChatGPT adapter.
++ *
++ * The App-gate test mocks the batch at the useAutomation seam and the engine tests only pass
++ * aspectRatio in negative cases, so a renderer-side refusal of the app-default
++ * `aspectRatio: '16:9'` (always present via useAppSettings) killed every real generation while
++ * the whole suite stayed green. This test drives the real useAutomation hook with the real
++ * createChatgptEngine and the real createChatgptGenerationAdapter, using the exact option
++ * object App builds from settings, and asserts the submission actually reaches the adapter.
++ */
++import { describe, expect, it, vi } from 'vitest'
++import { act, renderHook } from '@testing-library/react'
++
++vi.mock('../../src/components/Toast', () => ({
++  toast: { error: vi.fn(), warning: vi.fn(), success: vi.fn(), info: vi.fn() },
++}))
++vi.mock('../../src/hooks/useFileSystem', () => ({
++  fileSystemAPI: {
++    checkPermission: vi.fn().mockResolvedValue({ success: true }),
++    readFileByPath: vi.fn().mockRejectedValue(new Error('must not be called')),
++  },
++}))
++const { finalizeResults } = vi.hoisted(() => ({ finalizeResults: [] }))
++vi.mock('../../src/services/imageFinalize', () => ({
++  processAsyncSceneResult: vi.fn(async ({ result }) => {
++    finalizeResults.push(result)
++    return true
++  }),
++}))
++
++import { useAutomation } from '../../src/hooks/useAutomation'
++import { createChatgptEngine } from '../../src/engine/engineChatgpt.js'
++import { createChatgptGenerationAdapter } from '../../electron/webtargets/chatgpt/generationAdapter.js'
++
++const CDN = 'https://chatgpt.com/backend-api/estuary/content'
++const ESTUARY_ID = 'real-chain-estuary-content-id'
++
++function fnNameOf(script) {
++  return String(script).trim().split('\n').pop().match(/window\.(__cg_\w+__)\(/)?.[1] || null
++}
++
++function realChainHarness() {
++  const handlers = {
++    __cg_baseline__: { imgs: [] },
++    __cg_inject__: { textMatches: true, submitPresent: true },
++    __cg_clickSubmit__: { clicked: true },
++    __cg_submitAck__: { composerCleared: true, submitPresent: false, stillHasPrompt: false },
++    __cg_poll__: { imgs: [{ src: `${CDN}?id=${ESTUARY_ID}&sig=fixture-secret`, complete: true, w: 1254, h: 1254 }] },
++  }
++  let elapsed = 0
++  const executeInView = vi.fn(async (_view, script) => {
++    const fn = fnNameOf(script)
++    if (!(fn in handlers)) throw new Error(`unexpected page function: ${fn}`)
++    return handlers[fn]
++  })
++  const fetch = vi.fn(async () => ({
++    ok: true,
++    status: 200,
++    headers: { get: () => 'image/png' },
++    arrayBuffer: async () => new Uint8Array([31, 41, 59]).buffer,
++  }))
++  const view = {
++    webContents: {
++      executeJavaScript: vi.fn(),
++      getURL: vi.fn(() => 'https://chatgpt.com/c/real-chain'),
++      session: { fetch },
++    },
++  }
++  const fs = { mkdirSync: vi.fn(), writeFileSync: vi.fn() }
++  const adapter = createChatgptGenerationAdapter({
++    getView: () => view,
++    ensureSession: vi.fn(async () => ({ status: 'ready', ready: true })),
++    executeInView,
++    generateOptions: {
++      now: () => elapsed,
++      sleep: async (ms) => { elapsed += ms },
++      deadlineMs: 30,
++      cadenceMs: 5,
++    },
++    fs,
++    getOutputDir: () => '/real-chain-staging',
++    now: () => 1700000000777,
++    createId: () => 'real-chain-generation',
++    logger: { info: vi.fn(), error: vi.fn() },
++  })
++  // Thin stand-in for the preload/IPC bridge: every renderer call lands on the REAL adapter.
++  const electronAPI = {
++    chatgptSubmitGeneration: vi.fn((request) => adapter.submit(request)),
++    chatgptObserveGeneration: vi.fn((generationId) => adapter.observe(generationId)),
++    chatgptCollectGeneration: vi.fn((generationId) => adapter.collect(generationId)),
++    chatgptClearGenerations: vi.fn(() => adapter.clear()),
++    chatgptCancelGenerations: vi.fn(() => adapter.cancelAll()),
++    getSessionTargetStatus: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true })),
++  }
++  return { adapter, electronAPI, executeInView, fs }
++}
++
++function makeScenesHook() {
++  const scenes = [{ id: 'scene-real-chain', prompt: 'a copper lighthouse over a violet sea', status: 'pending' }]
++  const updates = []
++  return {
++    updates,
++    scenesHook: {
++      scenes,
++      references: [],
++      updateScene: vi.fn((id, patch) => updates.push({ id, ...patch })),
++      getMatchingReferences: vi.fn(() => []),
++      updateReferences: vi.fn(),
++    },
++  }
++}
++
++// The exact option object App.jsx handleStart builds from useAppSettings defaults
++// (aspectRatio '16:9' is a default, so it is ALWAYS a string on every submission).
++const appDefaultStartOptions = (overrides = {}) => ({
++  projectName: 'real-chain-project',
++  saveMode: 'folder',
++  concurrency: 5,
++  flowPacingMinMs: 0,
++  flowPacingMaxMs: 0,
++  imageBatchCount: 1,
++  imageUpscale: 'off',
++  aspectRatio: '16:9',
++  imageModel: 'gemini-3-pro-image-preview',
++  imageProvider: 'google',
++  generationSettings: {
++    generation: { image: { provider: 'google' } },
++    modelsByProvider: { google: 'gemini-3-pro-image-preview' },
++  },
++  selectedStyleRefId: null,
++  seed: null,
++  force: false,
++  ...overrides,
++})
++
++describe('ChatGPT target — real call shape from settings through the real adapter', () => {
++  it('a scene submission carrying the settings aspectRatio reaches the adapter and completes', async () => {
++    finalizeResults.length = 0
++    const h = realChainHarness()
++    const { scenesHook, updates } = makeScenesHook()
++    const engine = createChatgptEngine({ electronAPI: h.electronAPI })
++
++    const { result } = renderHook(() => useAutomation(
++      engine, scenesHook, null, null, null, (key) => key, null, null, null, 'flow', true,
++    ))
++
++    await act(async () => {
++      await result.current.start(appDefaultStartOptions())
++    })
++
++    // Before the C1 fix this refused inside the renderer with
++    // errorKind 'chatgpt-aspect-ratio-unmeasured' and never touched the adapter.
++    expect(updates.filter((u) => u.status === 'error')).toEqual([])
++    expect(h.executeInView).toHaveBeenCalled()
++    expect(h.fs.writeFileSync).toHaveBeenCalledOnce()
++
++    // The renderer-side result actually carries a usable image…
++    expect(finalizeResults).toHaveLength(1)
++    expect(finalizeResults[0].success).toBe(true)
++    expect(finalizeResults[0].images?.[0]?.base64).toBeTruthy()
++    // …and (C2) the estuary content id never crosses the IPC payload into the renderer.
++    expect(JSON.stringify(finalizeResults[0])).not.toContain(ESTUARY_ID)
++
++    // The C1 core: the IPC request itself no longer carries the settings plumbing.
++    const request = h.electronAPI.chatgptSubmitGeneration.mock.calls[0][0]
++    expect('aspectRatio' in request).toBe(false)
++    expect('provider' in request).toBe(false)
++    expect('model' in request).toBe(false)
++  })
++
++  it('an explicit seed opt-in is still refused through the same real chain', async () => {
++    finalizeResults.length = 0
++    const h = realChainHarness()
++    const { scenesHook, updates } = makeScenesHook()
++    const engine = createChatgptEngine({ electronAPI: h.electronAPI })
++
++    const { result } = renderHook(() => useAutomation(
++      engine, scenesHook, null, null, null, (key) => key, null, null, null, 'flow', true,
++    ))
++
++    await act(async () => {
++      // seedLocked user: settings.seedNo is a number → seed rides the same option object.
++      await result.current.start(appDefaultStartOptions({ seed: 271828 }))
++    })
++
++    expect(updates.filter((u) => u.status === 'error')).toEqual([
++      expect.objectContaining({ id: 'scene-real-chain', errorKind: 'chatgpt-seed-unmeasured' }),
++    ])
++    expect(h.executeInView).not.toHaveBeenCalled()
++    expect(finalizeResults).toHaveLength(0)
++  })
++})

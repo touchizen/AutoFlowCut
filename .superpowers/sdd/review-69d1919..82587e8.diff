@@ -1,0 +1,66 @@
+# Review package: 69d1919..82587e8
+
+## Commits
+82587e8 fix(story-m2a): reject prototype-member provider names in key store allowlist
+
+## Files changed
+ electron/api/keyStoreMulti.js            |  2 +-
+ tests/electron/api/keyStoreMulti.test.js | 11 +++++++++++
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/electron/api/keyStoreMulti.js b/electron/api/keyStoreMulti.js
+index 105f58d..daab208 100644
+--- a/electron/api/keyStoreMulti.js
++++ b/electron/api/keyStoreMulti.js
+@@ -10,22 +10,22 @@ const FILENAME_BY_PROVIDER = {
+   elevenlabs: 'elevenlabs-key.enc',
+   typecast: 'typecast-key.enc',
+   anthropic: 'anthropic-key.enc',
+ }
+ export const PROVIDERS = Object.keys(FILENAME_BY_PROVIDER)
+ 
+ export function createMultiKeyStore({ safeStorage, keysDir, fs, path }) {
+   fs.mkdirSync?.(keysDir, { recursive: true })
+   const cache = new Map()
+   function storeFor(provider) {
++    if (!PROVIDERS.includes(provider)) return null // allowlist 밖(프로토타입 멤버 포함) → 경로 생성 안 함
+     const filename = FILENAME_BY_PROVIDER[provider]
+-    if (!filename) return null // allowlist 밖 → 경로 생성 안 함
+     if (!cache.has(provider)) {
+       cache.set(provider, createKeyStore({ safeStorage, filePath: path.join(keysDir, filename), fs }))
+     }
+     return cache.get(provider)
+   }
+   return {
+     PROVIDERS,
+     setKey(provider, plain) {
+       const s = storeFor(provider)
+       return s ? s.setKey(plain) : { success: false, error: `unknown provider: ${provider}` }
+diff --git a/tests/electron/api/keyStoreMulti.test.js b/tests/electron/api/keyStoreMulti.test.js
+index e6c48f3..b47f8b6 100644
+--- a/tests/electron/api/keyStoreMulti.test.js
++++ b/tests/electron/api/keyStoreMulti.test.js
+@@ -41,11 +41,22 @@ describe('createMultiKeyStore', () => {
+     expect(ks.hasKey('../evil')).toBe(false)
+     expect(deps.files.size).toBe(0)
+   })
+ 
+   it('provider별로 키가 격리', () => {
+     const ks = createMultiKeyStore(deps)
+     ks.setKey('typecast', 'tc'); ks.setKey('elevenlabs', 'el')
+     expect(ks.getKey('typecast')).toBe('tc')
+     expect(ks.getKey('elevenlabs')).toBe('el')
+   })
++
++  it('Object.prototype 멤버명 provider도 거부 (prototype 오염 방지)', () => {
++    const ks = createMultiKeyStore(deps)
++    for (const evil of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
++      expect(ks.setKey(evil, 'x').success).toBe(false)
++      expect(ks.getKey(evil)).toBe(null)
++      expect(ks.hasKey(evil)).toBe(false)
++      expect(ks.clearKey(evil).success).toBe(false)
++    }
++    expect(deps.files.size).toBe(0)
++  })
+ })

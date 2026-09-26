@@ -1,0 +1,1440 @@
+# Review package: 91506bec~1..91506bec
+
+## Commits
+91506bec refactor(render): code-quality pass — dedupe, dead code, silent-catch diagnostics
+
+## Files changed
+ electron/ipc/render.js                          | 20 ++----
+ electron/render/audioAdapter.js                 |  1 +
+ electron/render/buildRenderPlan.js              | 65 +++++++----------
+ electron/render/ffmpegRunner.js                 | 50 +++++++++----
+ electron/render/filtergraphTokens.js            |  2 +
+ electron/render/resolveInputs.js                | 14 ++--
+ scripts/install-platform-binaries.cjs           | 23 +++---
+ scripts/verifyBinaryArch.cjs                    | 11 ++-
+ tests/electron/render/buildRenderPlan.test.js   | 50 +++++++++++--
+ tests/electron/render/ffmpegRunner.test.js      | 93 +++++++++++++++++++++----
+ tests/electron/render/filtergraphTokens.test.js | 10 +++
+ tests/packaging/installPlatformBinaries.test.js | 37 +++++++---
+ tests/packaging/verifyBinaryArch.test.js        | 25 ++++++-
+ 13 files changed, 286 insertions(+), 115 deletions(-)
+
+## Diff
+diff --git a/electron/ipc/render.js b/electron/ipc/render.js
+index 2902507c..3fae9a7c 100644
+--- a/electron/ipc/render.js
++++ b/electron/ipc/render.js
+@@ -1,30 +1,19 @@
+ // Render IPC — 완전 로컬 MP4 렌더. GCF 미사용. 스펙 §4.8.
+ // 파이프라인: validate → save dialog → resolve → adapt audio → buildRenderPlan → runFfmpegRender.
+ import { validateRenderRequest } from '../render/validateRequest.js'
+ import { resolveAndValidateInputs } from '../render/resolveInputs.js'
+ import { adaptAudioClips } from '../render/audioAdapter.js'
+-import { buildRenderPlan, outputSpec } from '../render/buildRenderPlan.js'
++import { buildRenderPlan, outputSpec, buildSceneStartsMs } from '../render/buildRenderPlan.js'
+ import { runFfmpegRender } from '../render/ffmpegRunner.js'
+ import { unlink } from 'node:fs/promises'
+ 
+-// 씬 누적 시작(ms) — sfxItems 배치용(§4.6).
+-function computeSceneStartsMs(scenes) {
+-  const starts = {}
+-  let accSec = 0
+-  for (const s of (scenes || [])) {
+-    starts[s.id] = Math.round(accSec * 1000)
+-    accSec += Number(s.duration) || 0
+-  }
+-  return starts
+-}
+-
+ export function registerRenderIPC(ipcMain, deps = {}) {
+   const {
+     getMainWindow,
+     validate = validateRenderRequest,
+     resolve = resolveAndValidateInputs,
+     adapt = adaptAudioClips,
+     build = buildRenderPlan,
+     run = runFfmpegRender,
+     pickOutPath,          // async () => string|null (dialog); default injected in main.js
+     ffmpegPath,           // string; injected in main.js
+@@ -49,21 +38,21 @@ export function registerRenderIPC(ipcMain, deps = {}) {
+     let markDone
+     jobCtx.done = new Promise(resolve => { markDone = resolve })
+     running.set(jobId, jobCtx)
+     try {
+       const outPath = await pickOutPath()
+       if (!outPath) return { ok: false, cancelled: true }
+ 
+       const cr = prepared.cloudRequest
+       const resolved = await resolve(prepared, { jobId })
+       if (Array.isArray(resolved.tempFiles)) jobCtx.tempFiles.push(...resolved.tempFiles) // decode된 base64 이미지 정리 위임
+-      const sceneStartsMs = computeSceneStartsMs(cr.scenes)
++      const sceneStartsMs = buildSceneStartsMs(cr.scenes)  // plan 과 동일 소스(중복 제거, fallback 통일)
+       resolved.audioClips = await adapt(cr, resolved, sceneStartsMs)
+ 
+       const plan = build(resolved, { renderMode: options.renderMode, renderBurnSubtitle: options.renderBurnSubtitle, cloudRequest: cr })
+       const spec = outputSpec(cr.format, options.renderMode)
+ 
+       const onProgress = (p) => {
+         const win = getMainWindow?.()
+         // jobId 를 스프레드 뒤에 둬 runner 가 실은 jobCtx.jobId(=이 jobId)로 덮어써도 안전.
+         win?.webContents?.send?.('render:progress', { ...p, jobId })
+       }
+@@ -74,21 +63,24 @@ export function registerRenderIPC(ipcMain, deps = {}) {
+       })
+ 
+       return { ok: true, outPath, durationSec: plan.totalDurationMs / 1000, width: spec.width, height: spec.height }
+     } catch (error) {
+       if (jobCtx.cancelled) return { ok: false, cancelled: true }
+       return { ok: false, error: String(error?.message || error), stderrTail: error?.stderrTail }
+     } finally {
+       // runner 가 돌지 못한 pre-run 실패(resolve/adapt/build throw) 시 decode 임시파일이 고아로
+       // 남는다 — runner 는 성공/실패 경로에서 자기 것을 지우지만 pre-run 은 못 지운다. 여기서 정리
+       // (runner 가 이미 지운 건 ENOENT 로 무시).
+-      for (const f of jobCtx.tempFiles) { try { await unlink(f) } catch { /* already gone */ } }
++      for (const f of jobCtx.tempFiles) {
++        try { await unlink(f) }
++        catch (e) { if (e?.code !== 'ENOENT') console.warn(`[render] temp cleanup failed: ${f} (${e?.code || e?.message})`) }
++      }
+       running.delete(jobId)
+       markDone()
+     }
+   })
+ 
+   ipcMain.handle('render:cancel', async (_event, { jobId } = {}) => {
+     const jobCtx = running.get(jobId)
+     if (!jobCtx) return { ok: false, error: 'no such job' }
+     jobCtx.cancelled = true
+     jobCtx.abort?.()   // 실행 중 ffmpeg 프로세스 즉시 SIGKILL (runner onAbort)
+diff --git a/electron/render/audioAdapter.js b/electron/render/audioAdapter.js
+index 2dc24ecb..7bac90bb 100644
+--- a/electron/render/audioAdapter.js
++++ b/electron/render/audioAdapter.js
+@@ -1,11 +1,12 @@
+ // audioTracks 4형태 + sfxItems → 렌더 클립 정규화. 스펙 §2.2/§4.6.
++// 이 경계 뒤의 buildRenderPlan은 아래 shape을 재정규화하지 않고 그대로 소비한다.
+ // 반환: [{ filename, path, startMs, durationMs, gain }]
+ const NARRATION_GAIN = 1.0
+ const SFX_GAIN = 0.7
+ 
+ export async function adaptAudioClips(cloudRequest, resolved, sceneStartsMs) {
+   const clips = []
+ 
+   for (const t of (cloudRequest.audioTracks || [])) {
+     const path = resolved.audio.get(t.filename)
+     if (!path) throw new Error(`render: audio track "${t.filename}" (${t.type}) has no resolved file — fail-closed`)
+diff --git a/electron/render/buildRenderPlan.js b/electron/render/buildRenderPlan.js
+index c25e1ed9..cb20ea2f 100644
+--- a/electron/render/buildRenderPlan.js
++++ b/electron/render/buildRenderPlan.js
+@@ -1,21 +1,21 @@
+ import { computeKenBurns } from './kenBurns.js'
+ import { buildAss } from './subtitleAss.js'
++import { ASS_PATH_TOKEN, FONTS_DIR_TOKEN } from './filtergraphTokens.js'
+ 
+ const K_AUDIO = 32
+ const K_VIDEO = 64
+ const WINDOWS_ARGV_LIMIT_CHARS = 32767
+ const ARGV_FIXED_RESERVE_CHARS = 8192
+ const MAX_STAGE_INPUT_ARG_CHARS = WINDOWS_ARGV_LIMIT_CHARS - ARGV_FIXED_RESERVE_CHARS
+ const INPUT_ARG_OVERHEAD_CHARS = 7 // Approximate characters for ` -i "<path>" ` around each path.
+-const ASS_PATH_TOKEN = '__ASS_PATH__'
+-const FONTS_DIR_TOKEN = '__FONTS_DIR__'
++export const DEFAULT_SCENE_DURATION_SEC = 3
+ 
+ const SPECS = {
+   portrait: {
+     final: { width: 1080, height: 1920, fps: 30, crf: 20, preset: 'medium', upscale: 2, audioBitrate: '192k' },
+     preview: { width: 720, height: 1280, fps: 24, crf: 26, preset: 'veryfast', upscale: 1.5, audioBitrate: '128k' },
+   },
+   landscape: {
+     final: { width: 1920, height: 1080, fps: 30, crf: 20, preset: 'medium', upscale: 2, audioBitrate: '192k' },
+     preview: { width: 1280, height: 720, fps: 24, crf: 26, preset: 'veryfast', upscale: 1.5, audioBitrate: '128k' },
+   },
+@@ -34,67 +34,61 @@ export function allocateFrames(durationsSec, fps) {
+   for (const durationSec of durationsSec) {
+     cumulativeSec += durationSec
+     const cumulativeBoundary = Math.round(cumulativeSec * fps)
+     frames.push(cumulativeBoundary - previousBoundary)
+     previousBoundary = cumulativeBoundary
+   }
+ 
+   return frames
+ }
+ 
+-export function computeTotalDurationMs({ sceneEndMs, audioTracks = [], sfxStarts = [], subtitleEndMs = 0 }) {
++export function computeTotalDurationMs({ sceneEndMs, audioTracks = [], subtitleEndMs = 0 }) {
+   let maxEndMs = finiteNumber(sceneEndMs, 0)
+ 
+   for (const track of audioTracks) {
+-    const startMs = finiteNumber(track.startMs, finiteNumber(track.timecodeMs, 0))
+-    const durationMs = finiteNumber(track.durationMs, 0)
+-    maxEndMs = Math.max(maxEndMs, startMs + durationMs)
+-  }
+-
+-  for (const sfx of sfxStarts) {
+-    const startMs = finiteNumber(sfx.startMs, 0)
+-    const durationMs = finiteNumber(sfx.durationMs, 0)
+-    maxEndMs = Math.max(maxEndMs, startMs + durationMs)
++    maxEndMs = Math.max(maxEndMs, track.startMs + track.durationMs)
+   }
+ 
+   return Math.max(maxEndMs, finiteNumber(subtitleEndMs, 0))
+ }
+ 
+ export function buildRenderPlan(resolved, options) {
+   const cloudRequest = options.cloudRequest
+   const spec = outputSpec(cloudRequest.format, options.renderMode)
+   const scenes = cloudRequest.scenes || []
+   const durationsSec = scenes.map(sceneDurationSec)
+   assertFrameDurations(durationsSec, spec.fps, scenes.map((scene, index) => scene.id || index + 1))
+   const frames = allocateFrames(durationsSec, spec.fps)
+   const sceneEndMs = Math.round(durationsSec.reduce((sum, duration) => sum + duration, 0) * 1000)
+   const audioClips = resolved.audioClips || []
+-  const subtitleEntries = options.renderBurnSubtitle ? effectiveSubtitleEntries(cloudRequest, durationsSec) : []
++  const sceneStartsMs = buildSceneStartsMs(scenes)
++  const subtitleEntries = options.renderBurnSubtitle
++    ? effectiveSubtitleEntries(cloudRequest, sceneStartsMs, sceneEndMs)
++    : []
+   const subtitleEndMs = subtitleEntries.reduce((endMs, entry) => {
+     const start = Number(entry.startMs)
+     const end = Number(entry.endMs)
+     return Number.isFinite(start) && Number.isFinite(end) && end > start ? Math.max(endMs, end) : endMs
+   }, 0)
+-  const sceneStartsMs = buildSceneStartsMs(scenes, durationsSec)
+   const totalDurationMs = computeTotalDurationMs({
+     sceneEndMs,
+     audioTracks: audioClips,
+     subtitleEndMs,
+   })
+ 
+   const sceneContexts = scenes.map((scene, index) => ({
+     scene,
+     index,
+     frames: frames[index],
+     durationSec: durationsSec[index],
+-    startMs: sceneStartsMs.get(scene.id),
+-    endMs: index + 1 < scenes.length ? sceneStartsMs.get(scenes[index + 1].id) : sceneEndMs,
++    startMs: sceneStartsMs[scene.id],
++    endMs: index + 1 < scenes.length ? sceneStartsMs[scenes[index + 1].id] : sceneEndMs,
+     imagePath: resolved.images.get(scene.id),
+     kenBurns: cloudRequest.kenBurns?.enabled
+       ? computeKenBurns(scene, index, cloudRequest.kenBurns)
+       : staticKenBurns(),
+   }))
+ 
+   const stages = []
+   const imageInputPaths = sceneContexts.map(context => context.imagePath)
+   const audioInputPaths = audioClips.map(clip => clip.path)
+   const stagedAudio = audioClips.length > 0 && (
+@@ -336,23 +330,23 @@ function buildAudioStages(audioClips) {
+     output: master.output,
+     baseStartMs: master.baseStartMs,
+     durationMs: master.endMs - master.baseStartMs,
+   }
+ }
+ 
+ function buildAudioGraph({ clips, inputOffset, baseStartMs, applyLimiter = false, targetDurationMs }) {
+   if (clips.length === 0) return []
+ 
+   const lines = clips.map((clip, index) => {
+-    const durationMs = Math.max(0, finiteNumber(clip.durationMs, 0))
+-    const delayMs = Math.max(0, Math.round(finiteNumber(clip.startMs, 0) - baseStartMs))
+-    const gain = finiteNumber(clip.gain, 1)
++    const durationMs = Math.max(0, clip.durationMs)
++    const delayMs = Math.max(0, Math.round(clip.startMs - baseStartMs))
++    const gain = clip.gain
+     return [
+       `[${inputOffset + index}:a]aresample=48000`,
+       'aformat=sample_fmts=fltp:channel_layouts=stereo',
+       `atrim=duration=${formatSeconds(durationMs)}`,
+       'asetpts=PTS-STARTPTS',
+       `volume=${formatNumber(gain)}`,
+       `adelay=${delayMs}:all=1[a${index}]`,
+     ].join(',')
+   })
+ 
+@@ -475,65 +469,56 @@ function exceedsArgvBudget(inputPaths) {
+   return ARGV_FIXED_RESERVE_CHARS
+     + inputPaths.reduce((total, inputPath) => total + inputArgChars(inputPath), 0)
+     > WINDOWS_ARGV_LIMIT_CHARS
+ }
+ 
+ function inputArgChars(inputPath) {
+   // JS string length is UTF-16 code units, matching CreateProcessW's command-line limit.
+   return String(inputPath).length + INPUT_ARG_OVERHEAD_CHARS
+ }
+ 
+-function effectiveSubtitleEntries(cloudRequest, durationsSec) {
++function effectiveSubtitleEntries(cloudRequest, sceneStartsMs, sceneEndMs) {
+   if (Array.isArray(cloudRequest.srtEntries)) return cloudRequest.srtEntries
+ 
+-  let cumulativeSec = 0
+   return (cloudRequest.scenes || []).flatMap((scene, index) => {
+-    const startMs = Math.round(cumulativeSec * 1000)
+-    cumulativeSec += durationsSec[index]
+-    const endMs = Math.round(cumulativeSec * 1000)
++    const startMs = sceneStartsMs[scene.id]
++    const nextScene = cloudRequest.scenes[index + 1]
++    const endMs = nextScene ? sceneStartsMs[nextScene.id] : sceneEndMs
+     const text = [scene.subtitleKo, scene.subtitleEn]
+       .find(value => typeof value === 'string' && value.trim())
+       ?.trim() || ''
+     const entry = text ? [{ startMs, endMs, text }] : []
+     return entry
+   })
+ }
+ 
+-function buildSceneStartsMs(scenes, durationsSec) {
+-  const starts = new Map()
++export function buildSceneStartsMs(scenes) {
++  const starts = {}
+   let cumulativeSec = 0
+-  scenes.forEach((scene, index) => {
+-    starts.set(scene.id, Math.round(cumulativeSec * 1000))
+-    cumulativeSec += durationsSec[index]
++  scenes.forEach((scene) => {
++    starts[scene.id] = Math.round(cumulativeSec * 1000)
++    cumulativeSec += sceneDurationSec(scene)
+   })
+   return starts
+ }
+ 
+ function sortAudioClips(audioClips) {
+-  return audioClips
+-    .map((clip, index) => ({
+-      ...clip,
+-      startMs: finiteNumber(clip.startMs, 0),
+-      durationMs: finiteNumber(clip.durationMs, 0),
+-      gain: finiteNumber(clip.gain, 1),
+-      _inputOrder: index,
+-    }))
+-    .sort((a, b) => a.startMs - b.startMs || a._inputOrder - b._inputOrder)
++  return [...audioClips].sort((a, b) => a.startMs - b.startMs)
+ }
+ 
+ function audioOutputName(level, batchIndex) {
+   return `AUDIO_LEVEL_${String(level).padStart(2, '0')}_BATCH_${String(batchIndex).padStart(4, '0')}.wav`
+ }
+ 
+-function sceneDurationSec(scene) {
++export function sceneDurationSec(scene) {
+   const duration = Number(scene.duration)
+-  return Number.isFinite(duration) && duration > 0 ? duration : 3
++  return Number.isFinite(duration) && duration > 0 ? duration : DEFAULT_SCENE_DURATION_SEC
+ }
+ 
+ function assertFrameDurations(durationsSec, fps, sceneLabels = []) {
+   durationsSec.forEach((durationSec, index) => {
+     if (Number(durationSec) * fps >= 1) return
+     const label = sceneLabels[index] ?? index + 1
+     throw new Error(
+       `scene ${label} duration ${formatNumber(durationSec)}s is shorter than one frame at ${fps} fps`,
+     )
+   })
+diff --git a/electron/render/ffmpegRunner.js b/electron/render/ffmpegRunner.js
+index 7f3d9c1f..24166915 100644
+--- a/electron/render/ffmpegRunner.js
++++ b/electron/render/ffmpegRunner.js
+@@ -3,51 +3,55 @@ import {
+   mkdtemp as nodeMkdtemp,
+   rename as nodeRename,
+   rmdir as nodeRmdir,
+   stat as nodeStat,
+   statfs as nodeStatfs,
+   unlink as nodeUnlink,
+   writeFile as nodeWriteFile,
+ } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import path from 'node:path'
++import { ASS_PATH_TOKEN, FONTS_DIR_TOKEN } from './filtergraphTokens.js'
+ 
+ const STDERR_TAIL_LINES = 20
+-const ASS_PATH_TOKEN = '__ASS_PATH__'
+-const FONTS_DIR_TOKEN = '__FONTS_DIR__'
+ const PCM_F32LE_BYTES_PER_SECOND = 48000 * 2 * 4
++const WAV_HEADER_SLACK_BYTES = 4096
++const AAC_BYTES_PER_SECOND = 32000
++const CONTAINER_OVERHEAD_BYTES = 1024 * 1024
+ // About 10 Mbps at 1080p30 before the separate safety factor is applied.
+ const VIDEO_BYTES_PER_PIXEL_FRAME = 0.02
+ const DISK_SAFETY_FACTOR = 1.25
+ const MIN_FREE_RESERVE_BYTES = 256 * 1024 * 1024
+ 
+ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, deps = {}) {
+   const stages = jobPlan.stages || []
+   if (stages.length === 0) throw new Error('render plan has no stages')
+ 
+   const spawn = deps.spawn || nodeSpawn
+   const rename = deps.rename || nodeRename
+   const unlink = deps.unlink || nodeUnlink
+   const rmdir = deps.rmdir || nodeRmdir
+   const stat = deps.stat || nodeStat
+   const statfs = deps.statfs || nodeStatfs
+   const writeFile = deps.writeFile || nodeWriteFile
+   const mkdtemp = deps.mkdtemp || nodeMkdtemp
++  const warn = deps.warn || console.warn
+   const ffmpegPath = deps.ffmpegPath
+   const outPath = deps.outPath
+   const fontsDir = deps.fontsDir
+   const totalDurationMs = positiveNumber(deps.totalDurationMs, positiveNumber(jobPlan.totalDurationMs, 1))
+   const safeJobId = sanitizeName(jobCtx.jobId || 'render')
+   const outputPaths = new Map()
+   let tempDirPromise
+   let tempDirRemoved = false
+   let lastPercent = 0
++  const warnedCleanupFailures = new Set()
+ 
+   jobCtx.tempFiles ||= []
+ 
+   try {
+     await assertNotCancelled()
+     await preflightDiskSpace()
+     for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+       await assertNotCancelled()
+       const stage = stages[stageIndex]
+       const prepared = await prepareStage(stage, stageIndex)
+@@ -188,21 +192,20 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
+     return new Promise((resolve, reject) => {
+       let child
+       try {
+         child = spawn(ffmpegPath, args, { windowsHide: true })
+       } catch (error) {
+         reject(describeSpawnError(error, ffmpegPath))
+         return
+       }
+ 
+       jobCtx.currentChild = child
+-      jobCtx.phase = stage.kind
+       let lineBuffer = ''
+       let tailLines = []
+       let settled = false
+ 
+       const rememberLine = (line) => {
+         if (!line) return
+ 
+         const progressMatch = line.match(/^out_time_ms=(\d+)$/)
+         if (progressMatch) {
+           const outTimeMs = Number(progressMatch[1]) / 1000
+@@ -240,21 +243,26 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
+         if (lineBuffer) rememberLine(lineBuffer)
+         if (isCancelled()) {
+           finish(new Error('render cancelled'))
+           return
+         }
+         if (code === 0) {
+           emitProgress(stage, stageIndex, 1, totalDurationMs)
+           finish(null)
+           return
+         }
+-        finish(new Error(`ffmpeg exit ${code}: ${tailLines.join('\n')}`))
++        const stderrTail = tailLines.join('\n')
++        const error = new Error(`ffmpeg exit ${code}: ${stderrTail}`)
++        error.stderrTail = stderrTail
++        error.phase = stage.kind
++        error.code = code
++        finish(error)
+       })
+ 
+       if (jobCtx.signal?.aborted) onAbort()
+       else jobCtx.signal?.addEventListener?.('abort', onAbort, { once: true })
+     })
+   }
+ 
+   function emitProgress(stage, stageIndex, localRatio, currentMs) {
+     const stageCount = stages.length
+     // Stage durations are not part of RenderJobPlan yet; equal slices are the
+@@ -333,33 +341,47 @@ export async function runFfmpegRender(jobPlan, jobCtx, onProgress = () => {}, de
+   async function unlinkTemp(file) {
+     try {
+       await unlink(file)
+       untrackTemp(file)
+       return true
+     } catch (error) {
+       if (error?.code === 'ENOENT') {
+         untrackTemp(file)
+         return true
+       }
++      warnCleanupFailure('unlink', file, error)
+       return false
+     }
+   }
+ 
+   async function cleanupTempFiles() {
+     for (const file of [...jobCtx.tempFiles]) await unlinkTemp(file)
+   }
+ 
+   async function cleanupArtifacts() {
+     await cleanupTempFiles()
+     if (!tempDirPromise || tempDirRemoved) return
+     tempDirRemoved = true
+-    try { await rmdir(await tempDirPromise) } catch {}
++    const directory = await tempDirPromise
++    try {
++      await rmdir(directory)
++    } catch (error) {
++      if (error?.code !== 'ENOENT') warnCleanupFailure('rmdir', directory, error)
++    }
++  }
++
++  function warnCleanupFailure(operation, targetPath, error) {
++    const code = error?.code || error?.name || 'UNKNOWN'
++    const key = `${operation}:${targetPath}:${code}`
++    if (warnedCleanupFailures.has(key)) return
++    warnedCleanupFailures.add(key)
++    warn(`[ffmpegRunner] ${operation} failed for ${targetPath} (${code}): ${error?.message || error}`)
+   }
+ }
+ 
+ export function estimateDiskSpaceBytes(jobPlan, fallbackDurationMs = jobPlan?.totalDurationMs) {
+   const stages = jobPlan?.stages || []
+   const outputSizes = new Map()
+   const fallbackMs = positiveNumber(fallbackDurationMs, 1000)
+   let liveBytes = 0
+   let tempBytes = 0
+ 
+@@ -380,60 +402,58 @@ export function estimateDiskSpaceBytes(jobPlan, fallbackDurationMs = jobPlan?.to
+   const finalStage = stages.at(-1)
+   const destinationBytes = finalStage
+     ? estimateStageOutputBytes(finalStage, fallbackMs)
+     : 0
+   return {
+     tempBytes: Math.ceil(tempBytes),
+     destinationBytes: Math.ceil(destinationBytes),
+   }
+ }
+ 
+-export function estimatePeakDiskBytes(jobPlan, fallbackDurationMs = jobPlan?.totalDurationMs) {
+-  const estimates = estimateDiskSpaceBytes(jobPlan, fallbackDurationMs)
+-  return estimates.tempBytes + estimates.destinationBytes
+-}
+-
+ function estimateStageOutputBytes(stage, fallbackDurationMs) {
+   const durationSec = positiveNumber(stage?.estimatedDurationMs, fallbackDurationMs) / 1000
+-  if (stage?.kind === 'audio') return durationSec * PCM_F32LE_BYTES_PER_SECOND + 4096
++  if (stage?.kind === 'audio') {
++    return durationSec * PCM_F32LE_BYTES_PER_SECOND + WAV_HEADER_SLACK_BYTES
++  }
+ 
+-  const spec = stage?.outputSpec || stage?.spec || {}
++  const spec = stage?.outputSpec || {}
+   const width = positiveNumber(spec.width, 1920)
+   const height = positiveNumber(spec.height, 1080)
+   const fps = positiveNumber(spec.fps, 30)
+   const videoBytes = durationSec * width * height * fps * VIDEO_BYTES_PER_PIXEL_FRAME
+-  const audioBytes = stage?.kind === 'final' ? durationSec * 32000 : 0
+-  return videoBytes + audioBytes + 1024 * 1024
++  const audioBytes = stage?.kind === 'final' ? durationSec * AAC_BYTES_PER_SECOND : 0
++  return videoBytes + audioBytes + CONTAINER_OVERHEAD_BYTES
+ }
+ 
+ export function escapeFilterOptionValue(value) {
+   return String(value)
+     .replace(/\\/g, '\\\\')
+     .replace(/:/g, '\\:')
+     .replace(/'/g, "\\'\\''")
+ }
+ 
+ function mapArgs(stage, graph, inputs) {
+   const args = []
+   const hasVideoOutput = graph.includes('[vout]')
+   const hasAudioOutput = graph.includes('[aout]')
+   if (hasVideoOutput) args.push('-map', '[vout]')
+   else if (stage.kind === 'final' && inputs.length > 0) args.push('-map', '0:v:0?')
+   if (hasAudioOutput) args.push('-map', '[aout]')
+   return args
+ }
+ 
+ function codecArgs(stage, graph) {
+-  const spec = stage.outputSpec || stage.spec || {}
+   if (stage.kind === 'audio') {
+     return ['-c:a', 'pcm_f32le', '-ar', '48000', '-ac', '2']
+   }
++  const spec = stage.outputSpec
++  if (!spec) throw new Error(`render ${stage.kind} stage is missing outputSpec`)
+ 
+   const crf = String(spec.crf ?? 20)
+   const preset = String(spec.preset ?? 'medium')
+   const outputFrameRateArgs = ['-r', String(spec.fps ?? 30)]
+   if (stage.kind === 'video') {
+     return [
+       '-c:v', 'libx264', '-preset', preset, '-crf', crf,
+       '-pix_fmt', 'yuv420p', ...outputFrameRateArgs, '-an',
+     ]
+   }
+diff --git a/electron/render/filtergraphTokens.js b/electron/render/filtergraphTokens.js
+new file mode 100644
+index 00000000..d9d95c35
+--- /dev/null
++++ b/electron/render/filtergraphTokens.js
+@@ -0,0 +1,2 @@
++export const ASS_PATH_TOKEN = '__ASS_PATH__'
++export const FONTS_DIR_TOKEN = '__FONTS_DIR__'
+diff --git a/electron/render/resolveInputs.js b/electron/render/resolveInputs.js
+index f8c72523..88c8a6bf 100644
+--- a/electron/render/resolveInputs.js
++++ b/electron/render/resolveInputs.js
+@@ -1,17 +1,20 @@
+ // effectful: filename→절대경로 해석(컬렉션별 키), 존재 검증, narration 길이 probe. 스펙 §3.
+ import fs from 'fs'
+ import { writeFile, unlink } from 'fs/promises'
+ import os from 'os'
+ import path from 'path'
+ import { probeDurationMs as realProbe } from '../story/audioProbe.js'
+ 
++// 파일명 안전화 — 한 곳에서만 정의(중복 방지).
++const sanitizeName = (s) => String(s).replace(/\W+/g, '_')
++
+ // data: URL 또는 raw base64 문자열을 임시 파일로 decode(main 소유). 파일 경로/http 는 null.
+ function pickDataSpec(value) {
+   if (typeof value !== 'string' || !value) return null
+   if (value.startsWith('data:')) return value
+   if (value.startsWith('http://') || value.startsWith('https://')) return null
+   // 파일 경로는 구분자로 "시작"한다(절대/상대/윈도우 드라이브). base64 는 '/' 를 중간에 포함할 수
+   // 있으므로 "아무데나 /" 로 배제하면 유효 base64(예: 중간에 '/' 있는 PNG)를 놓친다 — 시작만 본다.
+   if (value.startsWith('/') || value.startsWith('.') || value.startsWith('~') || value.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(value)) return null
+   if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.replace(/\s/g, '').length > 64) return value
+   return null
+@@ -28,40 +31,40 @@ async function defaultDecodeDataUrl(spec, name) {
+ }
+ 
+ const defaultDeps = {
+   existsSync: (p) => fs.existsSync(p),
+   probeDurationMs: (p) => realProbe(p),
+   decodeDataUrl: defaultDecodeDataUrl,
+ }
+ 
+ export async function resolveAndValidateInputs(prepared, deps = {}) {
+   const { existsSync, probeDurationMs, decodeDataUrl } = { ...defaultDeps, ...deps }
+-  const jobPrefix = deps.jobId ? `${String(deps.jobId).replace(/\W+/g, '_')}_` : ''
++  const jobPrefix = deps.jobId ? `${sanitizeName(deps.jobId)}_` : ''
+   const cr = prepared.cloudRequest || {}
+   const images = new Map()
+   const sfx = new Map()
+   const audio = new Map()
+   const tempFiles = []
+ 
+   try {
+   for (const m of (prepared.mediaFiles || [])) {
+     if (m.type === 'video') continue                    // v1 미지원 (§4.9)
+     // 1) 실제 파일 경로면 존재 확인
+     if (typeof m.path === 'string' && !m.path.startsWith('data:') && existsSync(m.path)) {
+       images.set(m.sceneId, m.path)                      // 이미지 1/씬 → sceneId 키로 충분
+       continue
+     }
+     // 2) data:/base64 (path 또는 fallback) → 임시 파일 decode (다른 exporter 와 동일한 fallback 지원)
+     const dataSpec = pickDataSpec(m.path) || pickDataSpec(m.fallback) || pickDataSpec(m.image)
+     if (dataSpec) {
+-      const safe = String(m.sceneId || 'scene').replace(/\W+/g, '_')
+-      const tmp = await decodeDataUrl(dataSpec, `${jobPrefix}${safe}_${String(m.filename || 'img').replace(/\W+/g, '_')}`)
++      const safe = sanitizeName(m.sceneId || 'scene')
++      const tmp = await decodeDataUrl(dataSpec, `${jobPrefix}${safe}_${sanitizeName(m.filename || 'img')}`)
+       images.set(m.sceneId, tmp)
+       tempFiles.push(tmp)
+       continue
+     }
+     throw new Error(`render: missing image for ${m.sceneId} (${m.filename})`)
+   }
+   for (const s of (prepared.sfxFiles || [])) {
+     if (!existsSync(s.path)) throw new Error(`render: missing sfx for ${s.sceneId} (${s.filename})`)
+     sfx.set(s.sceneId, s.path)
+   }
+@@ -78,14 +81,17 @@ export async function resolveAndValidateInputs(prepared, deps = {}) {
+     if (Number.isFinite(durSec) && durSec > 0) return Math.round(durSec * 1000)
+     const p = audio.get(filename)
+     const ms = await probeDurationMs(p)
+     if (!Number.isFinite(ms) || ms <= 0) throw new Error(`render: cannot probe narration length ${filename}`)
+     return ms
+   }
+   return { images, sfx, audio, narrationDurationMs, tempFiles }
+   } catch (err) {
+     // 부분 decode 후 이후 입력에서 throw 하면 tempFiles 가 호출자(ipc)에게 반환되지 않아
+     // 고아가 된다 — 여기서 트랜잭션 정리 후 rethrow.
+-    for (const f of tempFiles) { try { await unlink(f) } catch { /* already gone */ } }
++    for (const f of tempFiles) {
++      try { await unlink(f) }
++      catch (e) { if (e?.code !== 'ENOENT') console.warn(`[render] decode temp cleanup failed: ${f} (${e?.code || e?.message})`) }
++    }
+     throw err
+   }
+ }
+diff --git a/scripts/install-platform-binaries.cjs b/scripts/install-platform-binaries.cjs
+index f1988b03..7229c414 100644
+--- a/scripts/install-platform-binaries.cjs
++++ b/scripts/install-platform-binaries.cjs
+@@ -6,21 +6,21 @@
+ // 이 스크립트가 빠진 arch 패키지를 --force 로 채워 넣고,
+ // afterPack 의 pruneForeignPlatformPackages() 가 앱마다 필요한 것만 남긴다.
+ 
+ const fs = require('fs')
+ const crypto = require('crypto')
+ const http = require('http')
+ const https = require('https')
+ const os = require('os')
+ const path = require('path')
+ const { execFileSync } = require('child_process')
+-const { verifyBinaryArch } = require('./verifyBinaryArch.cjs')
++const { normalizeArch, verifyBinaryArch } = require('./verifyBinaryArch.cjs')
+ 
+ const rootDir = path.resolve(__dirname, '..')
+ 
+ // The SHA-256 is for the downloaded archive, not the extracted executable.
+ // Distribution builds must replace TODO_FILL_SHA (or inject the matching
+ // AFC_FFMPEG_<TARGET>_SHA256 value) before acquisition is allowed.
+ const FFMPEG_BUILD_MANIFEST = Object.freeze({
+   'darwin-arm64': Object.freeze({
+     source: 'osxexperts',
+     url: 'https://www.osxexperts.net/ffmpeg7arm.zip',
+@@ -303,21 +303,29 @@ function verifyStagedFfmpeg(binaryPath, target, deps = {}) {
+   if (!/^[a-f0-9]{64}$/i.test(expected) || sha256(binaryPath) !== expected.toLowerCase()) return false
+   if (!verifyArch(binaryPath, { platform, arch })) return false
+   if (!isHostNativeTarget({ platform, arch }, deps)) {
+     logDeferredVerification(target, deps)
+     return true
+   }
+   try {
+     verifySelfContained(binaryPath, { platform, execFileSync: deps.execFileSync })
+     verifyCapabilities(binaryPath, { execFileSync: deps.execFileSync })
+     return true
+-  } catch {
++  } catch (error) {
++    if (error?.code !== 'ENOENT') {
++      const warn = deps.warn || console.warn
++      const code = error?.code || error?.name || 'UNKNOWN'
++      warn(
++        `[platform-binaries] verify staged ffmpeg failed for ${binaryPath} (${code}): ` +
++        `${error?.message || error}`,
++      )
++    }
+     return false
+   }
+ }
+ 
+ function preserveFfmpegLicenses(sourcePath, target, explicitLicenseDir) {
+   const realSource = fs.realpathSync(sourcePath)
+   const bundledFfmpegLicenses = path.join(rootDir, 'LICENSES', 'ffmpeg', 'darwin-arm64')
+   const sourceDirectories = [
+     explicitLicenseDir,
+     path.dirname(realSource),
+@@ -435,26 +443,20 @@ function downloadBuffer(url, redirects = 0) {
+     }).on('error', reject)
+   })
+ }
+ 
+ function normalizePlatform(platform) {
+   if (platform === 'win' || platform === 'windows') return 'win32'
+   if (platform === 'mac' || platform === 'macos' || platform === 'osx') return 'darwin'
+   return platform
+ }
+ 
+-function normalizeArch(arch) {
+-  if (arch === 'amd64' || arch === 'x86_64') return 'x64'
+-  if (arch === 'aarch64') return 'arm64'
+-  return arch
+-}
+-
+ function splitTargets(value) {
+   return String(value || '').split(',').map(target => target.trim()).filter(Boolean)
+ }
+ 
+ function resolveRequestedFfmpegTargets({
+   argv = process.argv.slice(2),
+   env = process.env,
+   platform = process.platform,
+   arch = process.arch,
+ } = {}) {
+@@ -500,24 +502,21 @@ function walkFiles(directory, base = directory, output = []) {
+     else output.push({ absolute, relative: path.relative(base, absolute).split(path.sep).join('/') })
+   }
+   return output
+ }
+ 
+ function extractFfmpegArchive(archivePath, destination, build, deps = {}) {
+   const run = deps.execFileSync || execFileSync
+   const hostPlatform = deps.hostPlatform || process.platform
+   fs.mkdirSync(destination, { recursive: true })
+ 
+-  if (build.archive === 'raw') {
+-    const output = path.join(destination, build.binaryName || 'ffmpeg')
+-    fs.copyFileSync(archivePath, output)
+-  } else if (build.archive === 'zip') {
++  if (build.archive === 'zip') {
+     if (hostPlatform === 'win32') {
+       run('powershell.exe', [
+         '-NoProfile', '-NonInteractive', '-Command',
+         'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force',
+         archivePath, destination,
+       ], { stdio: 'pipe' })
+     } else {
+       run('unzip', ['-q', archivePath, '-d', destination], { stdio: 'pipe' })
+     }
+   } else if (build.archive === 'tar.xz') {
+diff --git a/scripts/verifyBinaryArch.cjs b/scripts/verifyBinaryArch.cjs
+index 1b80548c..e2f2389d 100644
+--- a/scripts/verifyBinaryArch.cjs
++++ b/scripts/verifyBinaryArch.cjs
+@@ -15,31 +15,37 @@ const PE_MACHINE_ARCH = new Map([
+ ])
+ 
+ const ELF_MACHINE_ARCH = new Map([
+   [62, 'x64'],
+   [183, 'arm64'],
+   [3, 'ia32'],
+   [40, 'armv7l'],
+ ])
+ 
+ function normalizeArch(arch) {
+-  if (arch === 'amd64') return 'x64'
++  if (arch === 'amd64' || arch === 'x86_64') return 'x64'
+   if (arch === 'aarch64') return 'arm64'
+   return arch
+ }
+ 
+ function verifyBinaryArch(filePath, { platform, arch }) {
+   try {
+     const buffer = readHeader(filePath)
+     const architectures = parseArchitectures(buffer, platform)
+     return architectures.includes(normalizeArch(arch))
+-  } catch {
++  } catch (error) {
++    if (error?.code !== 'ENOENT') {
++      const code = error?.code || error?.name || 'UNKNOWN'
++      console.warn(
++        `[verifyBinaryArch] failed to read ${filePath} (${code}): ${error?.message || error}`,
++      )
++    }
+     return false
+   }
+ }
+ 
+ function readHeader(filePath) {
+   const descriptor = fs.openSync(filePath, 'r')
+   try {
+     const buffer = Buffer.alloc(64 * 1024)
+     const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, 0)
+     return buffer.subarray(0, bytesRead)
+@@ -111,13 +117,14 @@ function parseFatMachArchitectures(buffer, littleEndian, is64Bit) {
+   }
+   return [...architectures]
+ }
+ 
+ function machCpuArch(cpuType) {
+   const arch = MACH_CPU_ARCH.get(cpuType)
+   return arch ? [arch] : []
+ }
+ 
+ module.exports = {
++  normalizeArch,
+   parseArchitectures,
+   verifyBinaryArch,
+ }
+diff --git a/tests/electron/render/buildRenderPlan.test.js b/tests/electron/render/buildRenderPlan.test.js
+index fc9fcf4c..1e3f9431 100644
+--- a/tests/electron/render/buildRenderPlan.test.js
++++ b/tests/electron/render/buildRenderPlan.test.js
+@@ -1,12 +1,20 @@
+ import { describe, it, expect } from 'vitest'
+-import { buildRenderPlan, allocateFrames, outputSpec, computeTotalDurationMs } from '../../../electron/render/buildRenderPlan.js'
++import {
++  DEFAULT_SCENE_DURATION_SEC,
++  allocateFrames,
++  buildRenderPlan,
++  buildSceneStartsMs,
++  computeTotalDurationMs,
++  outputSpec,
++  sceneDurationSec,
++} from '../../../electron/render/buildRenderPlan.js'
+ 
+ function makeScenes(count, duration = 1) {
+   return Array.from({ length: count }, (_, index) => ({ id: `scene_${index + 1}`, duration }))
+ }
+ 
+ function makeResolved(scenes, audioClips = [], pathFor = scene => `/${scene.id}.png`) {
+   return {
+     images: new Map(scenes.map(scene => [scene.id, pathFor(scene)])),
+     sfx: new Map(),
+     audioClips,
+@@ -60,27 +68,47 @@ describe('outputSpec', () => {
+       width: 1080, height: 1920, fps: 30, upscale: 2, audioBitrate: '192k',
+     })
+   })
+   it('landscape preview is 1280x720@24', () => {
+     expect(outputSpec('landscape', 'preview')).toMatchObject({
+       width: 1280, height: 720, fps: 24, upscale: 1.5, audioBitrate: '128k',
+     })
+   })
+ })
+ 
++describe('canonical scene timeline', () => {
++  it('uses one three-second fallback and returns scene-id keyed start milliseconds', () => {
++    const scenes = [
++      { id: 'first', duration: 1.25 },
++      { id: 'zero', duration: 0 },
++      { id: 'missing' },
++    ]
++
++    expect(DEFAULT_SCENE_DURATION_SEC).toBe(3)
++    expect(sceneDurationSec(scenes[0])).toBe(1.25)
++    expect(sceneDurationSec(scenes[1])).toBe(DEFAULT_SCENE_DURATION_SEC)
++    expect(sceneDurationSec(scenes[2])).toBe(DEFAULT_SCENE_DURATION_SEC)
++    expect(buildSceneStartsMs(scenes)).toEqual({
++      first: 0,
++      zero: 1250,
++      missing: 4250,
++    })
++  })
++})
++
+ describe('computeTotalDurationMs (max of all endpoints)', () => {
+   it('takes subtitle endMs when it exceeds video/audio', () => {
+-    const t = computeTotalDurationMs({ sceneEndMs: 5000, audioTracks: [{ timecodeMs: 0, durationMs: 4000 }], sfxStarts: [], subtitleEndMs: 8000 })
++    const t = computeTotalDurationMs({ sceneEndMs: 5000, audioTracks: [{ startMs: 0, durationMs: 4000 }], subtitleEndMs: 8000 })
+     expect(t).toBe(8000)
+   })
+-  it('ignores null audioDuration and uses clip ends', () => {
+-    const t = computeTotalDurationMs({ sceneEndMs: 3000, audioTracks: [{ timecodeMs: 20000, durationMs: 2000 }], sfxStarts: [], subtitleEndMs: 0 })
++  it('uses normalized clip ends', () => {
++    const t = computeTotalDurationMs({ sceneEndMs: 3000, audioTracks: [{ startMs: 20000, durationMs: 2000 }], subtitleEndMs: 0 })
+     expect(t).toBe(22000)
+   })
+ })
+ 
+ describe('buildRenderPlan', () => {
+   const resolved = {
+     images: new Map([['scene_1', '/a.png'], ['scene_2', '/b.png']]),
+     sfx: new Map(),
+     audioClips: [{ filename: 'nar.wav', path: '/nar.wav', startMs: 0, durationMs: 7000, gain: 1.0 }],
+   }
+@@ -271,20 +299,34 @@ describe('buildRenderPlan subtitles and normalized SFX', () => {
+     const plan = buildRenderPlan(
+       makeResolved(scenes),
+       makeOptions(scenes, { srtEntries: null }, { renderBurnSubtitle: true }),
+     )
+     const final = plan.stages.find(stage => stage.kind === 'final')
+ 
+     expect(final.subtitleAss).toContain('Dialogue:')
+     expect(final.subtitleAss).toContain('English fallback')
+   })
+ 
++  it('uses the canonical fallback duration when timing scene-derived subtitles', () => {
++    const scenes = [
++      { id: 'scene_1', duration: 0, subtitleKo: 'fallback duration' },
++      { id: 'scene_2', duration: 1, subtitleKo: 'next scene' },
++    ]
++    const plan = buildRenderPlan(
++      makeResolved(scenes),
++      makeOptions(scenes, { srtEntries: null }, { renderBurnSubtitle: true }),
++    )
++
++    expect(plan.stages.at(-1).subtitleAss).toContain('0:00:00.00,0:00:03.00')
++    expect(plan.stages.at(-1).subtitleAss).toContain('0:00:03.00,0:00:04.00')
++  })
++
+   it('uses normalized audioClips as the only SFX timing source', () => {
+     const scenes = makeScenes(1, 1)
+     const sfxClip = { filename: 'sfx.wav', path: '/sfx.wav', startMs: 1000, durationMs: 3000, gain: 0.7 }
+     const options = makeOptions(scenes, {
+       sfxItems: [{ sceneId: scenes[0].id, filename: 'sfx.wav', duration: 99 }],
+     })
+     const plan = buildRenderPlan(makeResolved(scenes, [sfxClip]), options)
+     expect(plan.totalDurationMs).toBe(4000)
+   })
+ })
+diff --git a/tests/electron/render/ffmpegRunner.test.js b/tests/electron/render/ffmpegRunner.test.js
+index 530e3688..3ea8ca47 100644
+--- a/tests/electron/render/ffmpegRunner.test.js
++++ b/tests/electron/render/ffmpegRunner.test.js
+@@ -1,16 +1,16 @@
+ import { describe, it, expect, vi } from 'vitest'
+ import { EventEmitter } from 'events'
+ import { tmpdir } from 'node:os'
+ import {
+   escapeFilterOptionValue,
+-  estimatePeakDiskBytes,
++  estimateDiskSpaceBytes,
+   runFfmpegRender,
+ } from '../../../electron/render/ffmpegRunner.js'
+ import { buildRenderPlan } from '../../../electron/render/buildRenderPlan.js'
+ 
+ function fakeChild() {
+   const child = new EventEmitter()
+   child.stderr = new EventEmitter()
+   child.kill = vi.fn()
+   return child
+ }
+@@ -20,38 +20,47 @@ function makeDeps(overrides = {}) {
+     spawn: vi.fn(() => fakeChild()),
+     ffmpegPath: '/ff',
+     rename: vi.fn(async () => {}),
+     unlink: vi.fn(async () => {}),
+     outPath: '/final.mp4',
+     totalDurationMs: 1000,
+     fontsDir: '/fonts',
+     writeFile: vi.fn(async () => {}),
+     mkdtemp: vi.fn(async () => '/tmp/render-job'),
+     rmdir: vi.fn(async () => {}),
++    warn: vi.fn(),
+     stat: vi.fn(async directory => ({ dev: directory === tmpdir() ? 2 : 1 })),
+     statfs: vi.fn(async () => ({ bavail: 10_000_000, bsize: 4096 })),
+     ...overrides,
+   }
+ }
+ 
+ async function waitForSpawn(spawn, count = 1) {
+   await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(count))
+ }
+ 
+ const plan = {
+   stages: [{
+     kind: 'final',
+     inputs: [],
+     filtergraphScript: '[vout]',
+     output: '/tmp/out.tmp.mp4',
+     dependsOn: [],
+     subtitleAss: null,
++    outputSpec: {
++      width: 1920,
++      height: 1080,
++      fps: 30,
++      crf: 20,
++      preset: 'medium',
++      audioBitrate: '192k',
++    },
+   }],
+ }
+ 
+ describe('runFfmpegRender base lifecycle', () => {
+   it('parses -progress and reports, then resolves on exit 0', async () => {
+     const child = fakeChild()
+     const spawn = vi.fn(() => child)
+     const rename = vi.fn(async () => {})
+     const onProgress = vi.fn()
+     const ctx = { cancelled: false, tempFiles: [] }
+@@ -103,21 +112,26 @@ describe('runFfmpegRender base lifecycle', () => {
+     const spawn = vi.fn(() => child)
+     const rename = vi.fn(async () => {})
+     const ctx = { cancelled: false, tempFiles: [] }
+     const deps = makeDeps({ spawn, rename, outPath: '/f.mp4' })
+     const promise = runFfmpegRender(plan, ctx, () => {}, deps)
+ 
+     await waitForSpawn(spawn)
+     child.stderr.emit('data', Buffer.from('boom error\n'))
+     child.emit('close', 1)
+ 
+-    await expect(promise).rejects.toThrow(/ffmpeg exit 1:.*boom error/s)
++    let error
++    try { await promise } catch (caught) { error = caught }
++    expect(error.message).toMatch(/ffmpeg exit 1:.*boom error/s)
++    expect(error.stderrTail).toBe('boom error')
++    expect(error.phase).toBe('final')
++    expect(error.code).toBe(1)
+     expect(rename).not.toHaveBeenCalled()
+   })
+ 
+   it('explains how to stage ffmpeg when the development binary is missing', async () => {
+     const child = fakeChild()
+     const missing = Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })
+     const deps = makeDeps({
+       ffmpegPath: '/app/vendor/ffmpeg/darwin-arm64/ffmpeg',
+       spawn: vi.fn(() => child),
+     })
+@@ -317,43 +331,70 @@ describe('runFfmpegRender disk preflight and cleanup', () => {
+         format: 'landscape',
+         scaleMode: 'fill',
+         kenBurns: { enabled: false },
+         scenes,
+         audioTracks: [],
+         sfxItems: [],
+         srtEntries: null,
+       },
+     })
+ 
+-    const estimate = estimatePeakDiskBytes(renderPlan)
++    const estimates = estimateDiskSpaceBytes(renderPlan)
++    const estimate = estimates.tempBytes + estimates.destinationBytes
+     expect(estimate).toBeGreaterThan(3 * 1024 ** 3)
+     expect(estimate).toBeLessThan(8 * 1024 ** 3)
+   })
+ 
+-  it('keeps a temp file tracked when unlink fails with a retryable error', async () => {
++  it('untracks a temp file that was already absent', async () => {
++    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
++    const unlink = vi.fn(async () => { throw missing })
++    const ctx = { cancelled: true, tempFiles: ['/tmp/gone.wav'] }
++
++    await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink })))
++      .rejects.toThrow('render cancelled')
++    expect(ctx.tempFiles).toEqual([])
++  })
++
++  it('warns once for a non-ENOENT unlink failure and keeps the file retryable', async () => {
+     const unlinkError = Object.assign(new Error('locked'), { code: 'EACCES' })
+     const unlink = vi.fn(async () => { throw unlinkError })
++    const warn = vi.fn()
+     const ctx = { cancelled: true, tempFiles: ['/tmp/locked.wav'] }
+ 
+-    await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink })))
++    await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink, warn })))
+       .rejects.toThrow('render cancelled')
++    expect(warn).toHaveBeenCalledTimes(1)
++    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/unlink.*\/tmp\/locked\.wav.*EACCES/i))
+     expect(ctx.tempFiles).toContain('/tmp/locked.wav')
+   })
+ 
+-  it('untracks a temp file that was already absent', async () => {
+-    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+-    const unlink = vi.fn(async () => { throw missing })
+-    const ctx = { cancelled: true, tempFiles: ['/tmp/gone.wav'] }
++  it('warns when removing the controlled temp directory fails', async () => {
++    const child = fakeChild()
++    const rmdirError = Object.assign(new Error('directory busy'), { code: 'EBUSY' })
++    const warn = vi.fn()
++    const deps = makeDeps({
++      spawn: vi.fn(() => child),
++      rmdir: vi.fn(async () => { throw rmdirError }),
++      warn,
++    })
++    const render = runFfmpegRender(
++      plan,
++      { jobId: 'rmdir-warning', cancelled: false, tempFiles: [] },
++      () => {},
++      deps,
++    )
+ 
+-    await expect(runFfmpegRender(plan, ctx, () => {}, makeDeps({ unlink })))
+-      .rejects.toThrow('render cancelled')
+-    expect(ctx.tempFiles).toEqual([])
++    await waitForSpawn(deps.spawn)
++    child.emit('close', 0)
++    await render
++    expect(warn).toHaveBeenCalledTimes(1)
++    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/rmdir.*\/tmp\/render-job.*EBUSY/i))
+   })
+ })
+ 
+ describe('runFfmpegRender Task 5 seams', () => {
+   it('escapes Windows drive colons, backslashes, and single quotes for filter options', () => {
+     expect(escapeFilterOptionValue('C:\\Users\\a b\\sub.ass'))
+       .toBe('C\\:\\\\Users\\\\a b\\\\sub.ass')
+     expect(escapeFilterOptionValue("D:\\Kid's Fonts"))
+       .toBe("D\\:\\\\Kid\\'\\''s Fonts")
+     expect(escapeFilterOptionValue("C:\\Users\\O'Brien\\sub.ass"))
+@@ -369,20 +410,21 @@ describe('runFfmpegRender Task 5 seams', () => {
+       mkdtemp: vi.fn(async () => "C:\\Users\\O'Brien"),
+       fontsDir: "D:\\Kid's Fonts",
+     })
+     const subtitlePlan = { stages: [{
+       kind: 'final',
+       inputs: [],
+       filtergraphScript: "[v]subtitles=filename='__ASS_PATH__':fontsdir='__FONTS_DIR__'[vout]",
+       output: 'out.mp4',
+       dependsOn: [],
+       subtitleAss: '[Script Info]\n',
++      outputSpec: { width: 1920, height: 1080, fps: 30, crf: 20, preset: 'medium', audioBitrate: '192k' },
+     }] }
+     const ctx = { jobId: 'sub', cancelled: false, tempFiles: [] }
+     const promise = runFfmpegRender(subtitlePlan, ctx, () => {}, deps)
+ 
+     await waitForSpawn(deps.spawn)
+     const graphWrite = writeFile.mock.calls.find(([path]) => path.endsWith('.filtergraph'))
+     const graph = graphWrite[1]
+     expect(writeFile).toHaveBeenCalledWith("C:\\Users\\O'Brien\\sub-stage-000.ass", '[Script Info]\n', 'utf8')
+     expect(graph).toContain("filename='C\\:\\\\Users\\\\O\\'\\''Brien\\\\sub-stage-000.ass'")
+     expect(graph).toContain("fontsdir='D\\:\\\\Kid\\'\\''s Fonts'")
+@@ -458,20 +500,41 @@ describe('runFfmpegRender staged execution', () => {
+     finalChild.stderr.emit('data', Buffer.from('out_time_ms=100000\n'))
+     finalChild.emit('close', 0)
+ 
+     await promise
+     const percents = onProgress.mock.calls.map(([event]) => event.percent)
+     expect(percents).toEqual([...percents].sort((a, b) => a - b))
+     expect(percents.at(-1)).toBe(100)
+     expect(onProgress.mock.calls.map(([event]) => event.stage)).toEqual(expect.arrayContaining(['audio', 'final']))
+   })
+ 
++  it('fails loudly when an encoding stage only supplies the removed stage.spec seam', async () => {
++    const deps = makeDeps()
++    const obsoletePlan = { stages: [{
++      kind: 'final',
++      inputs: [],
++      filtergraphScript: '[vout]',
++      output: 'out.mp4',
++      dependsOn: [],
++      subtitleAss: null,
++      spec: { fps: 24, crf: 26, preset: 'veryfast', audioBitrate: '128k' },
++    }] }
++
++    await expect(runFfmpegRender(
++      obsoletePlan,
++      { jobId: 'obsolete-spec', cancelled: false, tempFiles: [] },
++      () => {},
++      deps,
++    )).rejects.toThrow(/missing outputSpec/i)
++    expect(deps.spawn).not.toHaveBeenCalled()
++  })
++
+   it('uses preview encoding settings from a genuine buildRenderPlan output', async () => {
+     const scenes = [{ id: 'scene_1', duration: 1 }]
+     const renderPlan = buildRenderPlan({
+       images: new Map([['scene_1', '/image.png']]),
+       sfx: new Map(),
+       audioClips: [],
+     }, {
+       renderMode: 'preview',
+       renderBurnSubtitle: false,
+       cloudRequest: {
+@@ -573,21 +636,25 @@ describe('runFfmpegRender staged execution', () => {
+     await promise
+   })
+ 
+   it('checks cancellation before the next stage spawn', async () => {
+     const firstChild = fakeChild()
+     const spawn = vi.fn(() => firstChild)
+     const unlink = vi.fn(async () => {})
+     const deps = makeDeps({ spawn, unlink })
+     const twoStages = { stages: [
+       { kind: 'audio', inputs: [], filtergraphScript: 'a', output: 'a.wav', dependsOn: [], subtitleAss: null },
+-      { kind: 'final', inputs: ['a.wav'], filtergraphScript: 'v', output: 'out.mp4', dependsOn: ['a.wav'], subtitleAss: null },
++      {
++        kind: 'final', inputs: ['a.wav'], filtergraphScript: 'v', output: 'out.mp4',
++        dependsOn: ['a.wav'], subtitleAss: null,
++        outputSpec: { width: 1920, height: 1080, fps: 30, crf: 20, preset: 'medium', audioBitrate: '192k' },
++      },
+     ] }
+     const ctx = { jobId: 'cancel-next', cancelled: false, tempFiles: [] }
+     const promise = runFfmpegRender(twoStages, ctx, () => {}, deps)
+ 
+     await waitForSpawn(spawn)
+     ctx.cancelled = true
+     firstChild.emit('close', 0)
+ 
+     await expect(promise).rejects.toThrow('render cancelled')
+     expect(spawn).toHaveBeenCalledTimes(1)
+diff --git a/tests/electron/render/filtergraphTokens.test.js b/tests/electron/render/filtergraphTokens.test.js
+new file mode 100644
+index 00000000..ce341908
+--- /dev/null
++++ b/tests/electron/render/filtergraphTokens.test.js
+@@ -0,0 +1,10 @@
++import { describe, expect, it } from 'vitest'
++
++import { ASS_PATH_TOKEN, FONTS_DIR_TOKEN } from '../../../electron/render/filtergraphTokens.js'
++
++describe('filtergraph placeholder contract', () => {
++  it('exports the producer/consumer tokens from one module', () => {
++    expect(ASS_PATH_TOKEN).toBe('__ASS_PATH__')
++    expect(FONTS_DIR_TOKEN).toBe('__FONTS_DIR__')
++  })
++})
+diff --git a/tests/packaging/installPlatformBinaries.test.js b/tests/packaging/installPlatformBinaries.test.js
+index 4a458927..3c3f2e04 100644
+--- a/tests/packaging/installPlatformBinaries.test.js
++++ b/tests/packaging/installPlatformBinaries.test.js
+@@ -134,21 +134,21 @@ describe('static ffmpeg acquisition manifest', () => {
+   test('pins every supported distribution target with an archive recipe and checksum slot', () => {
+     expect(Object.keys(FFMPEG_BUILD_MANIFEST).sort()).toEqual([
+       'darwin-arm64',
+       'darwin-x64',
+       'linux-x64',
+       'win32-x64',
+     ])
+ 
+     for (const build of Object.values(FFMPEG_BUILD_MANIFEST)) {
+       expect(build.url).toMatch(/^https:\/\//)
+-      expect(['raw', 'zip', 'tar.xz']).toContain(build.archive)
++      expect(['zip', 'tar.xz']).toContain(build.archive)
+       expect(build.sha256).toMatch(/^(?:[a-f0-9]{64}|TODO_FILL_SHA)$/i)
+       expect(build.binaryPathPattern).toBeTruthy()
+     }
+     expect(FFMPEG_BUILD_MANIFEST['win32-x64'].archive).toBe('zip')
+     expect(FFMPEG_BUILD_MANIFEST['linux-x64'].archive).toBe('tar.xz')
+   })
+ 
+   test('resolves explicit CLI target first, then npm cross-target, then the host', () => {
+     expect(resolveRequestedFfmpegTargets({
+       argv: ['--target=win32-x64'],
+@@ -157,20 +157,24 @@ describe('static ffmpeg acquisition manifest', () => {
+       arch: 'arm64',
+     })).toEqual(['win32-x64'])
+     expect(resolveRequestedFfmpegTargets({
+       argv: [],
+       env: { npm_config_platform: 'linux', npm_config_arch: 'amd64' },
+       platform: 'darwin',
+       arch: 'arm64',
+     })).toEqual(['linux-x64'])
+     expect(resolveRequestedFfmpegTargets({ argv: [], env: {}, platform: 'darwin', arch: 'arm64' }))
+       .toEqual(['darwin-arm64'])
++    expect(resolveRequestedFfmpegTargets({
++      argv: [], env: { npm_config_platform: 'linux', npm_config_arch: 'x86_64' },
++      platform: 'darwin', arch: 'arm64',
++    })).toEqual(['linux-x64'])
+   })
+ 
+   test('refuses a TODO checksum before attempting a download', async () => {
+     const downloadBuffer = vi.fn()
+     const manifest = {
+       ...FFMPEG_BUILD_MANIFEST,
+       'darwin-arm64': {
+         ...FFMPEG_BUILD_MANIFEST['darwin-arm64'],
+         sha256: 'TODO_FILL_SHA',
+       },
+@@ -180,32 +184,25 @@ describe('static ffmpeg acquisition manifest', () => {
+     expect(downloadBuffer).not.toHaveBeenCalled()
+   })
+ 
+   test('rejects downloaded archive bytes that do not match the pinned SHA-256', async () => {
+     await expect(acquireFfmpegBuild('darwin-arm64', {
+       env: { AFC_FFMPEG_DARWIN_ARM64_SHA256: '0'.repeat(64) },
+       downloadBuffer: async () => Buffer.from('wrong archive'),
+     })).rejects.toThrow(/archive checksum mismatch.*darwin-arm64/i)
+   })
+ 
+-  test('extracts raw, zip, and tar.xz recipes and locates exactly one manifest member', () => {
++  test('extracts zip and tar.xz recipes and locates exactly one manifest member', () => {
+     const root = tempDir()
+     const archive = path.join(root, 'archive')
+     fs.writeFileSync(archive, 'fixture')
+ 
+-    const rawOut = path.join(root, 'raw')
+-    expect(extractFfmpegArchive(archive, rawOut, {
+-      archive: 'raw',
+-      binaryPathPattern: '(^|/)ffmpeg$',
+-    })).toBe(path.join(rawOut, 'ffmpeg'))
+-    expect(fs.readFileSync(path.join(rawOut, 'ffmpeg'), 'utf8')).toBe('fixture')
+-
+     const zipOut = path.join(root, 'zip')
+     const zipRun = vi.fn((command, args) => {
+       expect(command).toBe('unzip')
+       const destination = args.at(-1)
+       fs.mkdirSync(path.join(destination, 'build', 'bin'), { recursive: true })
+       fs.writeFileSync(path.join(destination, 'build', 'bin', 'ffmpeg.exe'), 'exe')
+     })
+     expect(extractFfmpegArchive(archive, zipOut, {
+       archive: 'zip',
+       binaryPathPattern: '(^|/)bin/ffmpeg\\.exe$',
+@@ -307,20 +304,42 @@ describe('cross-arch ffmpeg staging verification', () => {
+ 
+     expect(verifyStagedFfmpeg(fixture.sourcePath, 'darwin-x64', {
+       ...fixture.calls,
+       hostPlatform: 'darwin',
+       hostArch: 'arm64',
+     })).toBe(true)
+     expect(fixture.calls.verifyBinaryArch).toHaveBeenCalled()
+     expect(fixture.calls.verifySelfContainedFfmpeg).not.toHaveBeenCalled()
+     expect(fixture.calls.verifyFfmpegCapabilities).not.toHaveBeenCalled()
+   })
++
++  test('warns once when host-native staged verification swallows an execution failure', () => {
++    const fixture = stagingCase()
++    const failure = Object.assign(new Error('blocked executable'), { code: 'EACCES' })
++    const warn = vi.fn()
++    fs.writeFileSync(
++      `${fixture.sourcePath}.sha256`,
++      `${fixture.expectedSha256}  downloaded-ffmpeg\n`,
++    )
++
++    expect(verifyStagedFfmpeg(fixture.sourcePath, 'darwin-arm64', {
++      ...fixture.calls,
++      hostPlatform: 'darwin',
++      hostArch: 'arm64',
++      verifySelfContainedFfmpeg: vi.fn(() => { throw failure }),
++      warn,
++    })).toBe(false)
++    expect(warn).toHaveBeenCalledTimes(1)
++    expect(warn).toHaveBeenCalledWith(expect.stringMatching(
++      /verify staged ffmpeg.*downloaded-ffmpeg.*EACCES/i,
++    ))
++  })
+ })
+ 
+ describe('verifySelfContainedFfmpeg', () => {
+   test('accepts only system dylibs on macOS', () => {
+     const execFileSync = () => [
+       '/vendor/ffmpeg:',
+       '\t/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation (compatibility version 1.0.0)',
+       '\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)',
+     ].join('\n')
+     expect(() => verifySelfContainedFfmpeg('/vendor/ffmpeg', { platform: 'darwin', execFileSync }))
+diff --git a/tests/packaging/verifyBinaryArch.test.js b/tests/packaging/verifyBinaryArch.test.js
+index 823bef83..af44cd1a 100644
+--- a/tests/packaging/verifyBinaryArch.test.js
++++ b/tests/packaging/verifyBinaryArch.test.js
+@@ -1,17 +1,17 @@
+ // @vitest-environment node
+ import fs from 'node:fs'
+ import os from 'node:os'
+ import path from 'node:path'
+-import { afterEach, describe, expect, it } from 'vitest'
++import { afterEach, describe, expect, it, vi } from 'vitest'
+ 
+-import { verifyBinaryArch } from '../../scripts/verifyBinaryArch.cjs'
++import { normalizeArch, verifyBinaryArch } from '../../scripts/verifyBinaryArch.cjs'
+ 
+ const tempDirs = []
+ 
+ function fixture(buffer, name) {
+   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'afc-arch-'))
+   tempDirs.push(directory)
+   const filePath = path.join(directory, name)
+   fs.writeFileSync(filePath, buffer)
+   return filePath
+ }
+@@ -33,26 +33,34 @@ function pe64(machine) {
+ }
+ 
+ function elf64(machine) {
+   const buffer = Buffer.alloc(64)
+   buffer.set([0x7f, 0x45, 0x4c, 0x46, 2, 1], 0)
+   buffer.writeUInt16LE(machine, 18)
+   return buffer
+ }
+ 
+ afterEach(() => {
++  vi.restoreAllMocks()
+   for (const directory of tempDirs.splice(0)) {
+     fs.rmSync(directory, { recursive: true, force: true })
+   }
+ })
+ 
+ describe('verifyBinaryArch', () => {
++  it('normalizes every supported host/build alias in one place', () => {
++    expect(normalizeArch('amd64')).toBe('x64')
++    expect(normalizeArch('x86_64')).toBe('x64')
++    expect(normalizeArch('aarch64')).toBe('arm64')
++    expect(normalizeArch('arm64')).toBe('arm64')
++  })
++
+   it('distinguishes Mach-O x86_64 and arm64 by cputype, not magic bytes', () => {
+     const x64 = fixture(mach64(0x01000007), 'ffmpeg-x64')
+     const arm64 = fixture(mach64(0x0100000c), 'ffmpeg-arm64')
+ 
+     expect(verifyBinaryArch(x64, { platform: 'darwin', arch: 'x64' })).toBe(true)
+     expect(verifyBinaryArch(x64, { platform: 'darwin', arch: 'arm64' })).toBe(false)
+     expect(verifyBinaryArch(arm64, { platform: 'darwin', arch: 'arm64' })).toBe(true)
+     expect(verifyBinaryArch(arm64, { platform: 'darwin', arch: 'x64' })).toBe(false)
+   })
+ 
+@@ -60,11 +68,24 @@ describe('verifyBinaryArch', () => {
+     expect(verifyBinaryArch(fixture(pe64(0x8664), 'x64.exe'), { platform: 'win32', arch: 'x64' })).toBe(true)
+     expect(verifyBinaryArch(fixture(pe64(0xaa64), 'arm64.exe'), { platform: 'win32', arch: 'arm64' })).toBe(true)
+     expect(verifyBinaryArch(fixture(pe64(0x8664), 'wrong.exe'), { platform: 'win32', arch: 'arm64' })).toBe(false)
+   })
+ 
+   it('parses ELF class and e_machine for Linux', () => {
+     expect(verifyBinaryArch(fixture(elf64(62), 'x64'), { platform: 'linux', arch: 'x64' })).toBe(true)
+     expect(verifyBinaryArch(fixture(elf64(183), 'arm64'), { platform: 'linux', arch: 'arm64' })).toBe(true)
+     expect(verifyBinaryArch(fixture(elf64(62), 'wrong'), { platform: 'linux', arch: 'arm64' })).toBe(false)
+   })
++
++  it('warns once with path and code when a non-ENOENT read failure is swallowed', () => {
++    const filePath = '/fixtures/unreadable-ffmpeg'
++    const failure = Object.assign(new Error('permission denied'), { code: 'EACCES' })
++    vi.spyOn(fs, 'openSync').mockImplementation(() => { throw failure })
++    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
++
++    expect(verifyBinaryArch(filePath, { platform: 'darwin', arch: 'arm64' })).toBe(false)
++    expect(warn).toHaveBeenCalledTimes(1)
++    expect(warn).toHaveBeenCalledWith(expect.stringMatching(
++      /verifyBinaryArch.*\/fixtures\/unreadable-ffmpeg.*EACCES/i,
++    ))
++  })
+ })

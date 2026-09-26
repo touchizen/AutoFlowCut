@@ -1,0 +1,200 @@
+# Review package: f82a2aa..65f41a0
+
+## Commits
+65f41a0 feat(story): IPC 계층 + preload 브릿지
+
+## Files changed
+ electron/ipc/story-api.js            | 31 ++++++++++++++++++++
+ electron/main.js                     |  4 +++
+ electron/preload.js                  | 14 +++++++++
+ tests/electron/ipc/story-api.test.js | 55 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 104 insertions(+)
+
+## Diff
+diff --git a/electron/ipc/story-api.js b/electron/ipc/story-api.js
+new file mode 100644
+index 0000000..fe90469
+--- /dev/null
++++ b/electron/ipc/story-api.js
+@@ -0,0 +1,31 @@
++/**
++ * Story 파이프라인 IPC — 스펙 §6. 프로젝트당 하나의 스텝 머신 인스턴스.
++ * 모든 R→M 명령은 projectToken 검증, 불일치 시 { error: 'stale-token' }.
++ */
++import { createStepMachine } from '../story/stepMachine.js'
++import * as llmGemini from '../api/llm/llmGemini.js'
++
++export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini }) {
++  let machine = null
++
++  const emit = (channel, payload) => {
++    const win = getWindow?.()
++    if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
++  }
++
++  const guarded = (fn) => async (_e, payload = {}) => {
++    if (!machine || payload.projectToken !== machine.projectToken) return { error: 'stale-token' }
++    return fn(payload)
++  }
++
++  ipcMain.handle('story:open', async (_e, { projectPath } = {}) => {
++    if (machine) await machine.abort()
++    machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
++    return machine.open()
++  })
++
++  ipcMain.handle('story:get-state', guarded(async () => machine.getState()))
++  ipcMain.handle('story:start', guarded(({ step, params }) => machine.start(step, params)))
++  ipcMain.handle('story:abort', guarded(() => machine.abort()))
++  ipcMain.handle('story:push-ack', guarded(({ pushRevision, ok }) => machine.ackPush({ pushRevision, ok })))
++}
+diff --git a/electron/main.js b/electron/main.js
+index 290438c..6a22f91 100644
+--- a/electron/main.js
++++ b/electron/main.js
+@@ -7,20 +7,21 @@ import os from 'node:os'
+ import { execSync as execSyncRaw } from 'node:child_process'
+ import { fileURLToPath } from 'node:url'
+ import dotenv from 'dotenv'
+ import { registerFilesystemIPC } from './ipc/filesystem.js'
+ import { registerAuthIPC } from './ipc/auth.js'
+ import { registerCapcutIPC } from './ipc/capcut.js'
+ import { registerPremiereIPC } from './ipc/premiere.js'
+ import { registerVrewIPC } from './ipc/vrew.js'
+ import { registerMcpIPC } from './ipc/mcp.js'
+ import { registerGenaiIPC } from './ipc/genai-api.js'
++import { registerStoryIPC } from './ipc/story-api.js'
+ import { createKeyStore } from './api/keyStore.js'
+ import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
+ import { createModeController } from './ipc/mode.js'
+ import { openApiSpec, getSwaggerHtml } from './api-docs.js'
+ import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
+ import { initSentryMain } from './sentry-init.js'
+ import { registerFlowAPIIPC } from './ipc/flow-api.js'
+ import { registerVideoIPC } from './ipc/video.js'
+ import { registerCharacterIPC } from './ipc/character.js'
+ import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-payload.js'
+@@ -189,20 +190,23 @@ registerFilesystemIPC(ipcMain)
+ // Google GenAI IPC (BYOK key management + Imagen/Veo official-API generation).
+ // Replaces Flow web reverse-engineering. Key is encrypted via OS keychain
+ // (safeStorage) and never leaves the main process.
+ const genaiKeyStore = createKeyStore({
+   safeStorage,
+   filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
+   fs: fsSync,
+ })
+ registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
+ 
++// Story pipeline IPC (script/scenes/prompts 스텝 머신 + preload 브릿지).
++registerStoryIPC(ipcMain, { keyStore: genaiKeyStore, getWindow: () => mainWindow })
++
+ // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
+ registerAuthIPC(ipcMain)
+ 
+ // CapCut IPC (path detection, project writing, app launch)
+ registerCapcutIPC(ipcMain)
+ 
+ // Premiere IPC (.prproj writing — gzipped XML)
+ registerPremiereIPC(ipcMain)
+ 
+ // MCP IPC (Claude Code MCP server registration)
+diff --git a/electron/preload.js b/electron/preload.js
+index c35e656..9e2855f 100644
+--- a/electron/preload.js
++++ b/electron/preload.js
+@@ -101,20 +101,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
+   genaiGetKeyStatus: () => ipcRenderer.invoke('genai:get-key-status'),
+   genaiSetKey: (params) => ipcRenderer.invoke('genai:set-key', params),
+   genaiClearKey: () => ipcRenderer.invoke('genai:clear-key'),
+   genaiValidateKey: (params) => ipcRenderer.invoke('genai:validate-key', params),
+   genaiListModels: () => ipcRenderer.invoke('genai:list-models'),
+   genaiGenerateImage: (params) => ipcRenderer.invoke('genai:generate-image', params),
+   genaiGenerateVideo: (params) => ipcRenderer.invoke('genai:generate-video', params),
+   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
+   genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),
+ 
++  // --- Story pipeline ---
++  storyOpen: (params) => ipcRenderer.invoke('story:open', params),
++  storyGetState: (params) => ipcRenderer.invoke('story:get-state', params),
++  storyStart: (params) => ipcRenderer.invoke('story:start', params),
++  storyAbort: (params) => ipcRenderer.invoke('story:abort', params),
++  storyPushAck: (params) => ipcRenderer.invoke('story:push-ack', params),
++  onStoryEvent: (channel, cb) => {
++    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes']
++    if (!valid.includes(channel)) return () => {}
++    const listener = (_e, payload) => cb(payload)
++    ipcRenderer.on(channel, listener)
++    return () => ipcRenderer.removeListener(channel, listener)
++  },
++
+   // Auth
+   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
+   googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),
+ 
+   // Power Save
+   setPreventSleep: (params) => ipcRenderer.invoke('app:set-prevent-sleep', params),
+   getPreventSleep: () => ipcRenderer.invoke('app:get-prevent-sleep'),
+ 
+   // MCP HTTP Server
+   startMcpHttp: (params) => ipcRenderer.invoke('mcp:start-http', params),
+diff --git a/tests/electron/ipc/story-api.test.js b/tests/electron/ipc/story-api.test.js
+new file mode 100644
+index 0000000..8619f3c
+--- /dev/null
++++ b/tests/electron/ipc/story-api.test.js
+@@ -0,0 +1,55 @@
++// @vitest-environment node
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { mkdtemp } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import path from 'node:path'
++import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
++
++function fakeIpcMain() {
++  const handlers = new Map()
++  return { handle: (ch, fn) => handlers.set(ch, fn), invoke: (ch, payload) => handlers.get(ch)(null, payload), handlers }
++}
++
++let ipc, sent, dir
++beforeEach(async () => {
++  dir = await mkdtemp(path.join(tmpdir(), 'ipc-'))
++  ipc = fakeIpcMain()
++  sent = []
++  const llm = {
++    generateScript: vi.fn(async () => ({ scriptMd: '#' })),
++    splitScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
++    writePrompts: vi.fn(async (s) => ({ scenes: s })),
++  }
++  registerStoryIPC(ipc, {
++    keyStore: { getKey: () => 'k' },
++    getWindow: () => ({ webContents: { send: (ch, p) => sent.push({ ch, p }) }, isDestroyed: () => false }),
++    llm,
++  })
++})
++
++describe('story IPC', () => {
++  it('story:open → projectToken 발급 + state 반환', async () => {
++    const r = await ipc.invoke('story:open', { projectPath: dir })
++    expect(r.projectToken).toBeTruthy()
++    expect(r.state.steps.script.status).toBe('pending')
++  })
++  it('stale token 명령 거부', async () => {
++    await ipc.invoke('story:open', { projectPath: dir })
++    const r = await ipc.invoke('story:start', { projectToken: 'wrong', step: 'script', params: {} })
++    expect(r.error).toBe('stale-token')
++  })
++  it('start 실행 시 story:state 이벤트가 window로 발신된다', async () => {
++    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
++    await ipc.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: {} } })
++    const stateEvents = sent.filter((e) => e.ch === 'story:state')
++    expect(stateEvents.length).toBeGreaterThan(0)
++    expect(stateEvents[0].p.projectToken).toBe(projectToken)
++  })
++  it('재open 시 새 토큰 발급 (이전 토큰 무효)', async () => {
++    const a = await ipc.invoke('story:open', { projectPath: dir })
++    const b = await ipc.invoke('story:open', { projectPath: dir })
++    expect(a.projectToken).not.toBe(b.projectToken)
++    const r = await ipc.invoke('story:get-state', { projectToken: a.projectToken })
++    expect(r.error).toBe('stale-token')
++  })
++})

@@ -1,0 +1,1726 @@
+# Review package: a3b1007..58f1b99
+
+## Commits
+58f1b99 feat(agent): animate Robot FAB face (blink, gaze, antenna pulse)
+5ab8cd0 feat(agent): allow docking in Flow mode with container-clamped portals and size fallback
+88f84d8 feat(agent): resizable dock width with drag handle
+
+## Files changed
+ src/App.jsx                                        |  17 +-
+ src/assets/Robot.svg                               |  39 +++-
+ src/components/agent/AgentIconButton.jsx           |  23 +-
+ src/components/agent/AgentModelSelector.jsx        |  23 +-
+ src/components/agent/ChatPanel.css                 |  30 +++
+ src/components/agent/ChatPanel.jsx                 | 192 +++++++++++++++-
+ src/components/agent/agentPanelLayout.js           |  33 ++-
+ src/hooks/useAppSettings.js                        |  11 +-
+ src/locales/en.js                                  |   1 +
+ src/locales/ko.js                                  |   1 +
+ tests/components/agent/AgentIconButton.test.jsx    |  23 +-
+ tests/components/agent/AgentModelSelector.test.jsx |  31 ++-
+ tests/components/agent/ChatPanel.appMount.test.js  |  17 +-
+ tests/components/agent/ChatPanel.test.jsx          | 242 +++++++++++++++++----
+ tests/components/agent/agentPanelLayout.test.js    |  46 +++-
+ .../components/agent/modeToggle.roundtrip.test.jsx |  27 ++-
+ tests/components/agent/robotFabAsset.test.js       |  22 ++
+ tests/hooks/useAppSettings.test.js                 |  24 ++
+ 18 files changed, 706 insertions(+), 96 deletions(-)
+
+## Diff
+diff --git a/src/App.jsx b/src/App.jsx
+index 896155e..efcec24 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -590,21 +590,20 @@ export async function runStoryCharacterPush({
+   if (!result.ok) throw new Error(result.error || 'project save failed')
+   assertCurrent()
+   referencesRef.current = upserted
+   setReferences(upserted)
+ }
+ 
+ // Components
+ import Header from './components/Header'
+ import ApprovalDialog from './components/agent/ApprovalDialog'
+ import ChatPanel from './components/agent/ChatPanel'
+-import { effectiveAgentPanelMode } from './components/agent/agentPanelLayout'
+ import PromptInput from './components/PromptInput'
+ import SceneList from './components/SceneList'
+ import SrtPromptModal from './components/SrtPromptModal'
+ import GenerateMenu from './components/GenerateMenu'
+ import FrameToVideoPanel from './components/FrameToVideoPanel'
+ import ReferencePanel from './components/ReferencePanel'
+ import SettingsModal from './components/SettingsModal'
+ import ImportModal from './components/ImportModal'
+ import StatusBar from './components/StatusBar'
+ import ResultsTable from './components/ResultsTable'
+@@ -680,20 +679,28 @@ function App() {
+   const [runningStyle, setRunningStyle] = useState({ styleId: null, applies: false })
+ 
+   // scene/video batch가 큐에 enqueue된 후 실제 실행 시작 전까지 true.
+   // 이 사이에 사용자가 Start 또 누르면 runningStyle이 덮어써져서 Stop 라벨이
+   // 실제 실행 중인 job과 어긋날 수 있으므로 Start 버튼을 비활성화해 차단한다.
+   // (.finally로 작업 완료 시 자동 클리어 — 성공/에러/큐 클리어 모두 커버.)
+   const [hasPendingBatch, setHasPendingBatch] = useState(false)
+ 
+   // Settings (초기화 + localStorage 동기화)
+   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
++  const [agentEffectivePanelMode, setAgentEffectivePanelMode] = useState('floating')
++  const [agentDockWidth, setAgentDockWidth] = useState(settings.agentDockWidth)
++  useEffect(() => {
++    setAgentDockWidth(settings.agentDockWidth)
++  }, [settings.agentDockWidth])
++  const commitAgentDockWidth = useCallback((width) => {
++    updateSetting('agentDockWidth', width)
++  }, [updateSetting])
+ 
+   // Start 버튼 반응형 라벨 — 버튼 폭(flex:1, 콘텐츠 무관)을 측정해 full/short/icon 으로 축약.
+   const [startBtnRef, startBtnWidth] = useElementWidth()
+   const startTier = startButtonTier(startBtnWidth)
+ 
+   // Flow 이벤트 (로그인 만료, 레이아웃 보정)
+   useFlowEvents({ onLoginExpired: () => setShowApiKeyModal(true), mode })
+ 
+   // UI State
+   const [activeTab, setActiveTab] = useState('text') // 'text' | 'video-text' | 'frame-to-video' | 'list' | 'audio'
+@@ -2649,39 +2656,39 @@ function App() {
+     }
+   }, [scenes, anyRunning])
+   const isVideoTab = activeTab === 'video-text' || activeTab === 'frame-to-video'
+   // 생성 중에는 snapshot 된 runningGenMode 로 자동화 상태를 고른다 — Grid 와 일관되게,
+   // 탭을 바꿔도 StatusBar 가 다른 automation 상태로 튀지 않게(live activeTab 사용 시 회귀).
+   const showVideoAutomation = anyRunning ? (runningGenMode !== 'image') : isVideoTab
+   const currentProgress = showVideoAutomation ? videoAutomation.progress : progress
+   const currentStatus = showVideoAutomation ? videoAutomation.status : status
+   const currentStatusMessage = showVideoAutomation ? videoAutomation.statusMessage : statusMessage
+   const isAgentDocked = agentPanelOpen
+-    && effectiveAgentPanelMode(mode, settings.agentPanelMode) === 'docked'
++    && agentEffectivePanelMode === 'docked'
+ 
+   // #R7-18: mp3 드롭 → 나레이션/SFX 트랙 import. 메인(하단 패널) 타임라인이 공유하는 핸들러.
+   const handleTrackDrop = async ({ trackRole, files, timecodeMs }) => {
+     const workFolder = localStorage.getItem('workFolderPath')
+     const projectName = settings.projectName
+     const fallbackFolderPath = workFolder && projectName ? `${workFolder}/${projectName}/audio` : null
+     for (const file of files) {
+       const mp3Path = window.electronAPI?.getPathForFile?.(file)
+       if (!mp3Path) continue
+       await importMp3ToTrack({ mp3Path, trackType: trackRole, timecodeMs, fallbackFolderPath })
+       if (trackRole === 'narration') break // narration 은 1개(교체)
+     }
+   }
+ 
+   return (
+     <div
+       className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}
+-      style={{ '--agent-dock-w': '400px' }}
++      style={{ '--agent-dock-w': `${agentDockWidth}px` }}
+     >
+       <QAProgressBanner />
+       <ImportProcessingOverlay
+         processing={importProcessing}
+         spinnerVisible={importSpinnerVisible}
+         label={t('import.processing')}
+       />
+       {projectLoading && (
+         <div className="project-loading-overlay">
+           <div className="project-loading-spinner" />
+@@ -2691,20 +2698,24 @@ function App() {
+       {/* 🔴 둘 다 **전역 sibling**이다(D14). `activeView` 조건부 본문 안에 넣으면 뷰 전환 순간
+           승인/error surface와 대화 state가 사라진다. Header처럼 두 view보다 앞에 한 번만 둔다. */}
+       <ApprovalDialog />
+       <ChatPanel
+         open={agentPanelOpen}
+         onOpen={() => setAgentPanelOpen(true)}
+         onDismiss={() => setAgentPanelOpen(false)}
+         appMode={mode}
+         agentPanelMode={settings.agentPanelMode}
+         onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}
++        onEffectiveModeChange={setAgentEffectivePanelMode}
++        agentDockWidth={agentDockWidth}
++        onAgentDockWidthChange={setAgentDockWidth}
++        onAgentDockWidthCommit={commitAgentDockWidth}
+         projectKey={`${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`}
+         videoAdmissionSources={videoAdmissionSources}
+         batchStatusSources={{
+           automation: { isRunning, status },
+           scenes,
+           references,
+           generatingRefs,
+           refBatchRunning,
+         }}
+         sceneBridgeSources={{
+diff --git a/src/assets/Robot.svg b/src/assets/Robot.svg
+index 2af5349..dfdc9d4 100644
+--- a/src/assets/Robot.svg
++++ b/src/assets/Robot.svg
+@@ -1,10 +1,43 @@
+ <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
++  <!-- 얼굴은 계속 살아있어야 한다: 깜빡임 + 좌우 시선 + 안테나 펄스.
++       이 SVG 는 <img src> 로 로드되므로 바깥 CSS 가 내부에 닿지 않는다 → 애니메이션을 파일 안에 둔다. -->
++  <style>
++    .eyes { animation: robot-look 6s ease-in-out infinite; }
++    .eye {
++      transform-box: fill-box;
++      transform-origin: center;
++      animation: robot-blink 4.2s ease-in-out infinite;
++    }
++    .antenna {
++      transform-box: fill-box;
++      transform-origin: center;
++      animation: robot-pulse 2s ease-in-out infinite;
++    }
++    @keyframes robot-blink {
++      0%, 91%, 100% { transform: scaleY(1); }
++      94%, 96% { transform: scaleY(0.12); }
++    }
++    @keyframes robot-look {
++      0%, 22%, 100% { transform: translateX(0); }
++      36%, 46% { transform: translateX(2.4px); }
++      62%, 72% { transform: translateX(-2.4px); }
++    }
++    @keyframes robot-pulse {
++      0%, 100% { opacity: 1; }
++      50% { opacity: 0.45; }
++    }
++    @media (prefers-reduced-motion: reduce) {
++      .eyes, .eye, .antenna { animation: none; }
++    }
++  </style>
+   <rect x="13" y="17" width="38" height="34" rx="12" fill="#F7FAFF"/>
+   <rect x="17" y="21" width="30" height="22" rx="8" fill="#172033"/>
+-  <circle cx="26" cy="32" r="4" fill="#79B4FF"/>
+-  <circle cx="38" cy="32" r="4" fill="#79B4FF"/>
++  <g class="eyes">
++    <circle class="eye" cx="26" cy="32" r="4" fill="#79B4FF"/>
++    <circle class="eye" cx="38" cy="32" r="4" fill="#79B4FF"/>
++  </g>
+   <path d="M25 40c2.2 1.8 4.5 2.7 7 2.7s4.8-.9 7-2.7" stroke="#79B4FF" stroke-width="2.5" stroke-linecap="round"/>
+   <path d="M32 17V10" stroke="#F7FAFF" stroke-width="4" stroke-linecap="round"/>
+-  <circle cx="32" cy="8" r="4" fill="#79B4FF"/>
++  <circle class="antenna" cx="32" cy="8" r="4" fill="#79B4FF"/>
+   <path d="M13 29H8v12h5M51 29h5v12h-5" stroke="#F7FAFF" stroke-width="4" stroke-linejoin="round"/>
+ </svg>
+diff --git a/src/components/agent/AgentIconButton.jsx b/src/components/agent/AgentIconButton.jsx
+index aa44df9..e3bd4b0 100644
+--- a/src/components/agent/AgentIconButton.jsx
++++ b/src/components/agent/AgentIconButton.jsx
+@@ -1,37 +1,52 @@
+ import { useId, useLayoutEffect, useRef, useState } from 'react'
+ import { createPortal } from 'react-dom'
+ 
+ const EDGE = 8
+ 
+ const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max))
+ 
+ export function tooltipPosition(anchorRect, tooltipRect, viewport, gap = 8) {
++  const boundsLeft = Number.isFinite(viewport.left) ? viewport.left : 0
++  const boundsTop = Number.isFinite(viewport.top) ? viewport.top : 0
++  const boundsRight = Number.isFinite(viewport.right)
++    ? viewport.right
++    : boundsLeft + viewport.width
++  const boundsBottom = Number.isFinite(viewport.bottom)
++    ? viewport.bottom
++    : boundsTop + viewport.height
+   const centered = anchorRect.left + ((anchorRect.right - anchorRect.left - tooltipRect.width) / 2)
+-  const left = clamp(centered, EDGE, viewport.width - tooltipRect.width - EDGE)
++  const left = clamp(centered, boundsLeft + EDGE, boundsRight - tooltipRect.width - EDGE)
+   const preferredTop = anchorRect.top - tooltipRect.height - gap
+-  const placement = preferredTop >= EDGE ? 'top' : 'bottom'
++  const placement = preferredTop >= boundsTop + EDGE ? 'top' : 'bottom'
+   const rawTop = placement === 'top' ? preferredTop : anchorRect.bottom + gap
+-  const top = clamp(rawTop, EDGE, viewport.height - tooltipRect.height - EDGE)
++  const top = clamp(rawTop, boundsTop + EDGE, boundsBottom - tooltipRect.height - EDGE)
+   return { left, top, placement }
+ }
+ 
+ function PortalTooltip({ id, anchorRef, text, open }) {
+   const tooltipRef = useRef(null)
+   const [position, setPosition] = useState(null)
+ 
+   useLayoutEffect(() => {
+     if (!open || !anchorRef.current || !tooltipRef.current) return undefined
+     const update = () => setPosition(tooltipPosition(
+       anchorRef.current.getBoundingClientRect(),
+       tooltipRef.current.getBoundingClientRect(),
+-      { width: window.innerWidth, height: window.innerHeight },
++      anchorRef.current.closest('.app')?.getBoundingClientRect() || {
++        left: 0,
++        top: 0,
++        right: window.innerWidth,
++        bottom: window.innerHeight,
++        width: window.innerWidth,
++        height: window.innerHeight,
++      },
+     ))
+     update()
+     window.addEventListener('resize', update)
+     window.addEventListener('scroll', update, true)
+     return () => {
+       window.removeEventListener('resize', update)
+       window.removeEventListener('scroll', update, true)
+     }
+   }, [anchorRef, open, text])
+ 
+diff --git a/src/components/agent/AgentModelSelector.jsx b/src/components/agent/AgentModelSelector.jsx
+index 9627e53..554dd4d 100644
+--- a/src/components/agent/AgentModelSelector.jsx
++++ b/src/components/agent/AgentModelSelector.jsx
+@@ -3,28 +3,36 @@ import { createPortal } from 'react-dom'
+ 
+ const DEFAULT_OPTION = Object.freeze({ id: 'default', value: null, labelKey: 'default' })
+ const CLAUDE_OPTION = Object.freeze({ id: 'claude-coming-soon', value: 'claude', disabled: true })
+ const EDGE = 8
+ const GAP = 6
+ const MIN_LISTBOX_WIDTH = 220
+ 
+ const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max))
+ 
+ export function listboxPosition(anchorRect, listboxRect, viewport, gap = GAP) {
++  const boundsLeft = Number.isFinite(viewport.left) ? viewport.left : 0
++  const boundsTop = Number.isFinite(viewport.top) ? viewport.top : 0
++  const boundsRight = Number.isFinite(viewport.right)
++    ? viewport.right
++    : boundsLeft + viewport.width
++  const boundsBottom = Number.isFinite(viewport.bottom)
++    ? viewport.bottom
++    : boundsTop + viewport.height
+   const width = Math.max(anchorRect.width, MIN_LISTBOX_WIDTH)
+-  const left = clamp(anchorRect.left, EDGE, viewport.width - width - EDGE)
++  const left = clamp(anchorRect.left, boundsLeft + EDGE, boundsRight - width - EDGE)
+   const belowTop = anchorRect.bottom + gap
+-  const placement = belowTop + listboxRect.height > viewport.height - EDGE ? 'top' : 'bottom'
++  const placement = belowTop + listboxRect.height > boundsBottom - EDGE ? 'top' : 'bottom'
+   const rawTop = placement === 'top'
+     ? anchorRect.top - listboxRect.height - gap
+     : belowTop
+-  const top = clamp(rawTop, EDGE, viewport.height - listboxRect.height - EDGE)
++  const top = clamp(rawTop, boundsTop + EDGE, boundsBottom - listboxRect.height - EDGE)
+   return { left, top, width, placement }
+ }
+ 
+ function optionId(listboxId, option) {
+   return `${listboxId}-option-${option.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+ }
+ 
+ function nextEnabled(options, start, step) {
+   for (let distance = 1; distance <= options.length; distance += 1) {
+     const index = (start + (distance * step) + options.length) % options.length
+@@ -82,21 +90,28 @@ export default function AgentModelSelector({
+ 
+   useLayoutEffect(() => {
+     if (!open || !triggerRef.current || !listboxRef.current) return undefined
+     const update = () => {
+       const anchorRect = triggerRef.current.getBoundingClientRect()
+       const width = Math.max(anchorRect.width, MIN_LISTBOX_WIDTH)
+       listboxRef.current.style.width = `${width}px`
+       setPosition(listboxPosition(
+         anchorRect,
+         listboxRef.current.getBoundingClientRect(),
+-        { width: window.innerWidth, height: window.innerHeight },
++        triggerRef.current.closest('.app')?.getBoundingClientRect() || {
++          left: 0,
++          top: 0,
++          right: window.innerWidth,
++          bottom: window.innerHeight,
++          width: window.innerWidth,
++          height: window.innerHeight,
++        },
+       ))
+     }
+     update()
+     window.addEventListener('resize', update)
+     window.addEventListener('scroll', update, true)
+     return () => {
+       window.removeEventListener('resize', update)
+       window.removeEventListener('scroll', update, true)
+     }
+   }, [codexLabel, comingSoonLabel, open, options])
+diff --git a/src/components/agent/ChatPanel.css b/src/components/agent/ChatPanel.css
+index 8a08237..4b6bfd5 100644
+--- a/src/components/agent/ChatPanel.css
++++ b/src/components/agent/ChatPanel.css
+@@ -16,20 +16,50 @@
+   overflow: hidden;
+   transition: transform 0.22s ease, opacity 0.18s ease, visibility 0.18s ease;
+ }
+ .agent-chat-panel.mode-floating.is-dismissed { transform: translateY(12px) scale(0.98); }
+ .agent-chat-panel.mode-docked {
+   top: 0; right: 0; bottom: 0;
+   width: var(--agent-dock-w, 400px); height: 100%; max-height: 100%;
+   border-radius: 0;
+   transform: none;
+ }
++.agent-chat-resizer {
++  position: absolute;
++  top: 0;
++  bottom: 0;
++  left: 0;
++  z-index: 2;
++  width: 8px;
++  cursor: col-resize;
++  touch-action: none;
++}
++.agent-chat-resizer-handle {
++  position: absolute;
++  top: 50%;
++  left: 0;
++  width: 2px;
++  height: 48px;
++  border-radius: 2px;
++  background: rgba(255, 255, 255, 0.2);
++  transform: translateY(-50%);
++  transition: background 0.15s;
++}
++.agent-chat-resizer:hover .agent-chat-resizer-handle,
++.agent-chat-resizer:active .agent-chat-resizer-handle,
++.agent-chat-resizer:focus-visible .agent-chat-resizer-handle {
++  background: rgba(99, 102, 241, 0.85);
++}
++.agent-chat-resizer:focus-visible {
++  outline: 2px solid #9ec5ff;
++  outline-offset: -2px;
++}
+ .agent-chat-panel.is-dismissed { visibility: hidden; opacity: 0; pointer-events: none; }
+ .agent-chat-panel.is-open { visibility: visible; opacity: 1; }
+ .agent-chat-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 13px; border-bottom: 1px solid var(--border, #3a3a42); }
+ .agent-chat-header-actions, .agent-chat-toolbar-actions { display: flex; align-items: center; gap: 6px; }
+ .agent-chat-log { flex: 1 1 auto; min-height: 0; max-height: none; padding: 12px; overflow-y: auto; }
+ .agent-chat-compose {
+   flex: 0 0 auto;
+   display: flex;
+   flex-direction: column;
+   gap: 2px;
+diff --git a/src/components/agent/ChatPanel.jsx b/src/components/agent/ChatPanel.jsx
+index 3dd5788..7e5e449 100644
+--- a/src/components/agent/ChatPanel.jsx
++++ b/src/components/agent/ChatPanel.jsx
+@@ -1,31 +1,37 @@
+-import { useCallback, useEffect, useRef, useState } from 'react'
++import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+ import { readBatchStatus } from '../../agent/batchStatus.js'
+ import { registerToolBridgeHandlers } from '../../agent/toolBridgeHandlers.js'
+ import { sceneSnapshot } from '../../agent/sceneBridge.js'
+ import { runAgentExport } from '../../agent/exportBridge.js'
+ import { extractVideoFrames } from '../../utils/videoFrames.js'
+ import { resolveVideoSrc } from '../../utils/videoSrc.js'
+ import { useOptionalI18n } from '../../hooks/useI18n'
+ import en from '../../locales/en'
+ import AgentIconButton from './AgentIconButton.jsx'
+ import AgentModelSelector from './AgentModelSelector.jsx'
+ import robotUrl from '../../assets/Robot.svg'
+ import {
++  canDockInContainer,
++  clampAgentDockWidth,
+   clampAgentPanelPosition,
++  DEFAULT_AGENT_DOCK_WIDTH,
+   effectiveAgentPanelMode,
++  MAX_AGENT_DOCK_WIDTH,
++  MIN_AGENT_DOCK_WIDTH,
+   reclampAgentPanelPosition,
+ } from './agentPanelLayout.js'
+ import './ChatPanel.css'
+ 
+ const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
+ const STOP_ARM_MS = 300
++const DOCK_KEYBOARD_STEP_PX = 16
+ 
+ function AgentControlIcon({ name }) {
+   const paths = {
+     send: <path d="M4 4l16 8-16 8 3-8-3-8zm3.4 8h7.6" />,
+     steer: <path d="M5 19V7m0 0l-3 3m3-3l3 3m4 7V5m0 12l-3-3m3 3l3-3m4 5V9m0 0l-3 3m3-3l3 3" />,
+     stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+     close: <path d="M5 5l14 14M19 5L5 19" />,
+     dismiss: <path d="M6 6l12 12M18 6L6 18" />,
+     mode: <path d="M4 5h6v14H4V5zm10 0h6v14h-6V5z" />,
+   }
+@@ -80,24 +86,23 @@ function fallbackT(key, params = {}) {
+   if (typeof value !== 'string') return key
+   return value.replace(/\{(\w+)\}/g, (match, name) => (params[name] !== undefined ? params[name] : match))
+ }
+ 
+ /**
+  * floating 패널을 헤더로 끌어 App container 안에서 옮긴다.
+  *
+  * 🔴 **App 밖으로 나가면 다시 잡을 수 없다.** positioned container 안으로 clamp 한다.
+  * 🔴 **버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
+  */
+-function useFloatingDrag(enabled, reclampSignal) {
++function useFloatingDrag(enabled, reclampSignal, panelRef) {
+   const [position, setPosition] = useState(null)
+   const positionRef = useRef(null)
+-  const panelRef = useRef(null)
+   const dragRef = useRef(null)
+ 
+   const setDragPosition = useCallback((nextPosition) => {
+     positionRef.current = nextPosition
+     setPosition(nextPosition)
+   }, [])
+ 
+   const reclampPosition = useCallback(() => {
+     const current = positionRef.current
+     if (!current) return
+@@ -156,45 +161,200 @@ function useFloatingDrag(enabled, reclampSignal) {
+   const onPointerDown = useCallback((event) => {
+     // 버튼에서 시작한 것은 클릭이지 드래그가 아니다.
+     if (!enabled || event.button !== 0 || event.target.closest('button')) return
+     const rect = panelRef.current?.getBoundingClientRect()
+     dragRef.current = {
+       offsetX: event.clientX - (rect?.left ?? 0),
+       offsetY: event.clientY - (rect?.top ?? 0),
+     }
+   }, [enabled])
+ 
+-  return { panelRef, position: enabled ? position : null, onPointerDown }
++  return { position: enabled ? position : null, onPointerDown }
++}
++
++function useContainerAwarePanelMode({
++  appMode,
++  panelRef,
++  preferredMode,
++  onEffectiveModeChange,
++}) {
++  const [renderedMode, setRenderedMode] = useState(preferredMode)
++  const onEffectiveModeChangeRef = useRef(onEffectiveModeChange)
++  onEffectiveModeChangeRef.current = onEffectiveModeChange
++
++  const updateMode = useCallback(() => {
++    const panel = panelRef.current
++    const container = panel?.closest('.app') || panel?.parentElement
++    const nextMode = preferredMode === 'docked'
++      && !canDockInContainer(container?.getBoundingClientRect())
++      ? 'floating'
++      : preferredMode
++    setRenderedMode((current) => (current === nextMode ? current : nextMode))
++    onEffectiveModeChangeRef.current(nextMode)
++  }, [panelRef, preferredMode])
++
++  useLayoutEffect(() => {
++    updateMode()
++  }, [appMode, updateMode])
++
++  useEffect(() => {
++    if (typeof ResizeObserver === 'undefined') return undefined
++    const panel = panelRef.current
++    const container = panel?.closest('.app') || panel?.parentElement
++    if (!container) return undefined
++    const observer = new ResizeObserver(updateMode)
++    observer.observe(container)
++    return () => observer.disconnect()
++  }, [panelRef, updateMode])
++
++  return renderedMode
++}
++
++function useDockResize({
++  enabled,
++  width,
++  panelRef,
++  onWidthChange,
++  onWidthCommit,
++}) {
++  const dragRef = useRef(null)
++  const latestWidthRef = useRef(width)
++  const [maxWidth, setMaxWidth] = useState(MAX_AGENT_DOCK_WIDTH)
++  latestWidthRef.current = width
++
++  const readContainerWidth = useCallback(() => {
++    const panel = panelRef.current
++    const container = panel?.closest('.app') || panel?.parentElement
++    const measured = container?.getBoundingClientRect().width
++    return typeof measured === 'number' && measured > 0
++      ? measured
++      : Number.POSITIVE_INFINITY
++  }, [panelRef])
++
++  const resizeTo = useCallback((desired, commit = false) => {
++    const containerWidth = readContainerWidth()
++    if (Number.isFinite(containerWidth)) {
++      setMaxWidth(clampAgentDockWidth(MAX_AGENT_DOCK_WIDTH, containerWidth))
++    }
++    const next = clampAgentDockWidth(desired, containerWidth)
++    const changed = next !== latestWidthRef.current
++    latestWidthRef.current = next
++    if (changed) onWidthChange(next)
++    if (commit) onWidthCommit(next)
++    return next
++  }, [onWidthChange, onWidthCommit, readContainerWidth])
++
++  useEffect(() => {
++    if (!enabled) return undefined
++    const panel = panelRef.current
++    const container = panel?.closest('.app') || panel?.parentElement
++    if (!container) return undefined
++
++    const reclamp = () => {
++      const containerWidth = container.getBoundingClientRect().width
++      if (!(containerWidth > 0)) return
++      setMaxWidth(clampAgentDockWidth(MAX_AGENT_DOCK_WIDTH, containerWidth))
++      const next = clampAgentDockWidth(latestWidthRef.current, containerWidth)
++      if (next === latestWidthRef.current) return
++      latestWidthRef.current = next
++      onWidthChange(next)
++    }
++    reclamp()
++    if (typeof ResizeObserver === 'undefined') return undefined
++    const observer = new ResizeObserver(reclamp)
++    observer.observe(container)
++    return () => observer.disconnect()
++  }, [enabled, onWidthChange, panelRef])
++
++  useEffect(() => {
++    if (!enabled) return undefined
++    const onMove = (event) => {
++      const drag = dragRef.current
++      if (!drag) return
++      resizeTo(drag.startWidth + drag.startX - event.clientX)
++    }
++    const onUp = () => {
++      if (!dragRef.current) return
++      dragRef.current = null
++      onWidthCommit(latestWidthRef.current)
++    }
++    window.addEventListener('pointermove', onMove)
++    window.addEventListener('pointerup', onUp)
++    return () => {
++      window.removeEventListener('pointermove', onMove)
++      window.removeEventListener('pointerup', onUp)
++      dragRef.current = null
++    }
++  }, [enabled, onWidthCommit, resizeTo])
++
++  const onPointerDown = useCallback((event) => {
++    if (!enabled || event.button !== 0) return
++    event.preventDefault()
++    event.stopPropagation()
++    const startWidth = resizeTo(latestWidthRef.current)
++    dragRef.current = {
++      startX: event.clientX,
++      startWidth,
++    }
++  }, [enabled, resizeTo])
++
++  const onKeyDown = useCallback((event) => {
++    if (!enabled || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
++    event.preventDefault()
++    const delta = event.key === 'ArrowLeft' ? DOCK_KEYBOARD_STEP_PX : -DOCK_KEYBOARD_STEP_PX
++    resizeTo(latestWidthRef.current + delta, true)
++  }, [enabled, resizeTo])
++
++  return { maxWidth, onPointerDown, onKeyDown }
+ }
+ 
+ /**
+  * D14 전역 ChatPanel. App의 generate/story 조건부 body 밖에서 한 번만 mount해야 한다.
+  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
+  */
+ export default function ChatPanel({
+   open = true,
+   onOpen = () => {},
+   onDismiss = () => {},
+   appMode = 'api',
+   agentPanelMode = 'floating',
+   onAgentPanelModeChange = () => {},
++  onEffectiveModeChange = () => {},
++  agentDockWidth = DEFAULT_AGENT_DOCK_WIDTH,
++  onAgentDockWidthChange = () => {},
++  onAgentDockWidthCommit = () => {},
+   projectKey = null,
+   batchStatusSources = {},
+   sceneBridgeSources = {},
+   exportBridgeSources = {},
+   videoAdmissionSources = {},
+ }) {
+   const t = useSafeT()
+   const api = window.electronAPI
+-  const effectiveMode = effectiveAgentPanelMode(appMode, agentPanelMode)
++  const preferredMode = effectiveAgentPanelMode(appMode, agentPanelMode)
++  const panelRef = useRef(null)
++  const effectiveMode = useContainerAwarePanelMode({
++    appMode,
++    panelRef,
++    preferredMode,
++    onEffectiveModeChange,
++  })
+   const dragEnabled = open && effectiveMode === 'floating'
+-  const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled, appMode)
++  const { position, onPointerDown } = useFloatingDrag(dragEnabled, appMode, panelRef)
++  const dockResizeEnabled = open && effectiveMode === 'docked'
++  const dockResize = useDockResize({
++    enabled: dockResizeEnabled,
++    width: agentDockWidth,
++    panelRef,
++    onWidthChange: onAgentDockWidthChange,
++    onWidthCommit: onAgentDockWidthCommit,
++  })
+   const [input, setInput] = useState('')
+   const [messages, setMessages] = useState([])
+   const [toolCalls, setToolCalls] = useState([])
+   const [usage, setUsage] = useState(null)
+   const [errors, setErrors] = useState([])
+   const [running, setRunning] = useState(false)
+   const [models, setModels] = useState([])
+   const [modelsLoading, setModelsLoading] = useState(true)
+   const [selectedModel, setSelectedModel] = useState(null)
+   const fabRef = useRef(null)
+@@ -512,38 +672,50 @@ export default function ChatPanel({
+         ref={panelRef}
+         className={`agent-chat-panel ${open ? 'is-open' : 'is-dismissed'} mode-${effectiveMode}`}
+         aria-label={t('agent.panelLabel')}
+         aria-hidden={!open}
+         data-effective-mode={effectiveMode}
+         // 옮긴 뒤에는 right/bottom 앵커 대신 left/top 이 이긴다. 안 지우면 두 앵커가 싸워 늘어난다.
+         style={dragEnabled && position
+           ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' }
+           : undefined}
+       >
++        {dockResizeEnabled && (
++          <div
++            className="agent-chat-resizer"
++            role="separator"
++            aria-label={t('agent.resizeDock')}
++            aria-orientation="vertical"
++            aria-valuenow={agentDockWidth}
++            aria-valuemin={MIN_AGENT_DOCK_WIDTH}
++            aria-valuemax={dockResize.maxWidth}
++            tabIndex={0}
++            onPointerDown={dockResize.onPointerDown}
++            onKeyDown={dockResize.onKeyDown}
++          >
++            <div className="agent-chat-resizer-handle" />
++          </div>
++        )}
+         <div
+           className={`agent-chat-header ${dragEnabled ? 'is-draggable' : ''}`}
+           onPointerDown={onPointerDown}
+         >
+           <div className="agent-chat-heading">
+             <strong>{t('agent.title')}</strong>
+             {running && <span className="agent-chat-running">{t('agent.running')}</span>}
+-            {appMode === 'flow' && (
+-              <span className="agent-chat-flow-notice">{t('agent.flowFloatingOnly')}</span>
+-            )}
+           </div>
+           <div className="agent-chat-header-actions">
+             <AgentIconButton
+               className="agent-chat-mode-toggle"
+               label={t('agent.modeToggle')}
+               tooltip={effectiveMode === 'docked' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
+               pressed={effectiveMode === 'docked'}
+-              disabled={appMode === 'flow'}
+               onClick={() => onAgentPanelModeChange(effectiveMode === 'docked' ? 'floating' : 'docked')}
+             >
+               <AgentControlIcon name="mode" />
+             </AgentIconButton>
+             <AgentIconButton
+               label={t('agent.closeSession')}
+               tooltip={t('agent.closeSessionTooltip')}
+               onClick={close}
+               disabled={!sessionOpenRef.current}
+             >
+diff --git a/src/components/agent/agentPanelLayout.js b/src/components/agent/agentPanelLayout.js
+index e6fefbe..01d7734 100644
+--- a/src/components/agent/agentPanelLayout.js
++++ b/src/components/agent/agentPanelLayout.js
+@@ -1,21 +1,50 @@
+ export const AGENT_PANEL_MODES = Object.freeze(['floating', 'docked'])
++export const DEFAULT_AGENT_DOCK_WIDTH = 400
++export const MIN_AGENT_DOCK_WIDTH = 280
++export const MAX_AGENT_DOCK_WIDTH = 720
++export const MAX_AGENT_DOCK_RATIO = 0.6
++export const MIN_AGENT_DOCK_CONTAINER_WIDTH = 600
++export const MIN_AGENT_DOCK_CONTAINER_HEIGHT = 420
+ 
+ const clamp = (value, max) => Math.min(Math.max(value, 0), Math.max(max, 0))
+ 
++export function clampAgentDockWidth(desiredPx, containerWidthPx) {
++  const desired = typeof desiredPx === 'number' && Number.isFinite(desiredPx)
++    ? desiredPx
++    : DEFAULT_AGENT_DOCK_WIDTH
++  const containerWidth = typeof containerWidthPx === 'number' && Number.isFinite(containerWidthPx)
++    ? Math.max(0, containerWidthPx)
++    : Number.POSITIVE_INFINITY
++  const maxWidth = Math.max(
++    MIN_AGENT_DOCK_WIDTH,
++    Math.min(MAX_AGENT_DOCK_WIDTH, containerWidth * MAX_AGENT_DOCK_RATIO),
++  )
++  return Math.min(maxWidth, Math.max(MIN_AGENT_DOCK_WIDTH, desired))
++}
++
+ export function normalizeAgentPanelMode(value) {
+   if (value === 'slide') return 'docked'
+   return AGENT_PANEL_MODES.includes(value) ? value : 'floating'
+ }
+ 
+-export function effectiveAgentPanelMode(appMode, storedMode) {
+-  return appMode === 'flow' ? 'floating' : normalizeAgentPanelMode(storedMode)
++export function effectiveAgentPanelMode(_appMode, storedMode) {
++  return normalizeAgentPanelMode(storedMode)
++}
++
++export function canDockInContainer(containerSize) {
++  const width = containerSize?.width
++  const height = containerSize?.height
++  return Number.isFinite(width)
++    && Number.isFinite(height)
++    && width >= MIN_AGENT_DOCK_CONTAINER_WIDTH
++    && height >= MIN_AGENT_DOCK_CONTAINER_HEIGHT
+ }
+ 
+ export function clampAgentPanelPosition({
+   clientX,
+   clientY,
+   offsetX,
+   offsetY,
+   containerRect,
+   panelRect,
+ }) {
+diff --git a/src/hooks/useAppSettings.js b/src/hooks/useAppSettings.js
+index 095596b..9478267 100644
+--- a/src/hooks/useAppSettings.js
++++ b/src/hooks/useAppSettings.js
+@@ -1,19 +1,23 @@
+ /**
+  * useAppSettings — 앱 설정 관리 (초기화 + localStorage 동기화)
+  */
+ 
+ import { useState, useEffect, useCallback } from 'react'
+ import { DEFAULTS, UI } from '../config/defaults'
+ import { generateProjectName } from '../utils/formatters'
+ import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from '../config/genModels'
+-import { normalizeAgentPanelMode } from '../components/agent/agentPanelLayout'
++import {
++  clampAgentDockWidth,
++  DEFAULT_AGENT_DOCK_WIDTH,
++  normalizeAgentPanelMode,
++} from '../components/agent/agentPanelLayout'
+ 
+ const STORAGE_KEY = 'autoflowcut_settings'
+ 
+ function createDefaults() {
+   const randomSeed = () => Math.floor(Math.random() * 1000000)
+   return {
+     defaultDuration: DEFAULTS.scene.duration,
+     projectName: DEFAULTS.project.defaultName,
+     aspectRatio: '16:9', // 프로젝트 화면비: '16:9' 롱폼 / '9:16' 숏폼
+     saveMode: 'folder',
+@@ -27,36 +31,41 @@ function createDefaults() {
+     imageModel: DEFAULT_IMAGE_MODEL_ID,        // T2I 모델
+     videoModelT2V: DEFAULT_VIDEO_MODEL_ID,      // T2V 모델
+     videoModelF2V: DEFAULT_VIDEO_MODEL_ID,      // F2V 모델
+     videoResolution: '720p',
+     requireStyle: false,
+     seedNo: randomSeed(),
+     seedLocked: true,
+     mcpHttpEnabled: false,
+     mcpHttpPort: 3210,
+     agentPanelMode: 'floating',
++    agentDockWidth: DEFAULT_AGENT_DOCK_WIDTH,
+   }
+ }
+ 
+ function loadSettings() {
+   const defaults = createDefaults()
+   const saved = localStorage.getItem(STORAGE_KEY)
+   if (saved) {
+     const parsed = JSON.parse(saved)
+     // 이전 버전 호환: 불필요한 설정 제거
+     delete parsed.method
+     // seedNo 가 없거나 유효하지 않으면 랜덤으로 초기화
+     if (typeof parsed.seedNo !== 'number' || !Number.isFinite(parsed.seedNo)) {
+       parsed.seedNo = defaults.seedNo
+     }
+     const merged = { ...defaults, ...parsed }
+     merged.agentPanelMode = normalizeAgentPanelMode(merged.agentPanelMode)
++    merged.agentDockWidth = clampAgentDockWidth(
++      merged.agentDockWidth,
++      Number.POSITIVE_INFINITY,
++    )
+     // 옛 Flow(none) 저장 모드 폐기 — 공식 API 는 base64 만 오므로 작업폴더 저장이 필수.
+     // 'none'/legacy 값은 'folder' 로 강제 (설정 UI 의 저장 방식 토글도 제거됨).
+     if (merged.saveMode !== 'folder') merged.saveMode = 'folder'
+     // 모델 id 는 coerce 하지 않고 저장값을 그대로 보존한다 — 정적 카탈로그에 없는 동적
+     // /models 모델을 선택·저장했을 때 reload 마다 기본값으로 되돌아가지 않도록(리뷰 P2).
+     // 실제 사용 가능 여부는 /models 로드 후 ModelSelector 가 조정(없으면 합성 옵션 노출).
+     return merged
+   }
+   return defaults
+ }
+diff --git a/src/locales/en.js b/src/locales/en.js
+index 1719cb3..8d57967 100644
+--- a/src/locales/en.js
++++ b/src/locales/en.js
+@@ -1606,20 +1606,21 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
+     modelLabel: 'Agent model',
+     modelDefault: 'Default',
+     codexProvider: 'Codex',
+     claudeProvider: 'Claude',
+     comingSoon: 'Coming soon',
+     slideMode: 'Docked',
+     floatingMode: 'Floating',
+     modeToggle: 'Dock panel mode',
+     switchToSlide: 'Switch to docked panel',
+     switchToFloating: 'Switch to floating panel',
++    resizeDock: 'Resize agent dock',
+     flowFloatingOnly: 'The agent stays floating while Flow is active.',
+     sendTooltip: 'Send a new turn',
+     steerTooltip: 'Add guidance to the active turn',
+     stopTooltip: 'Stop the active turn',
+     closeSessionTooltip: 'Close the agent session',
+     running: 'Working',
+     collapse: 'Collapse',
+     expand: 'Expand',
+     empty: 'Ask the agent to work on this project.',
+     inputLabel: 'Message to the agent',
+diff --git a/src/locales/ko.js b/src/locales/ko.js
+index 5f669eb..2725568 100644
+--- a/src/locales/ko.js
++++ b/src/locales/ko.js
+@@ -1605,20 +1605,21 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
+     modelLabel: '에이전트 모델',
+     modelDefault: '기본',
+     codexProvider: 'Codex',
+     claudeProvider: 'Claude',
+     comingSoon: '구현 예정',
+     slideMode: '도킹',
+     floatingMode: '플로팅',
+     modeToggle: '도킹 패널 모드',
+     switchToSlide: '도킹 패널로 전환',
+     switchToFloating: '플로팅 패널로 전환',
++    resizeDock: '에이전트 도킹 폭 조절',
+     flowFloatingOnly: 'Flow 사용 중에는 에이전트가 플로팅으로 표시됩니다.',
+     sendTooltip: '새 턴 보내기',
+     steerTooltip: '진행 중인 턴에 지시 추가',
+     stopTooltip: '진행 중인 턴 중지',
+     closeSessionTooltip: '에이전트 세션 종료',
+     running: '작업 중',
+     collapse: '접기',
+     expand: '펼치기',
+     empty: '프로젝트 작업을 요청해보세요.',
+     inputLabel: '에이전트 메시지',
+diff --git a/tests/components/agent/AgentIconButton.test.jsx b/tests/components/agent/AgentIconButton.test.jsx
+index dd53d9a..ca9fc52 100644
+--- a/tests/components/agent/AgentIconButton.test.jsx
++++ b/tests/components/agent/AgentIconButton.test.jsx
+@@ -14,53 +14,64 @@ describe('AgentIconButton portal tooltip', () => {
+     render(
+       <AgentIconButton label="Send" tooltip="Send a new turn">
+         <svg aria-hidden="true"><path d="M0 0" /></svg>
+       </AgentIconButton>,
+     )
+     const button = screen.getByRole('button', { name: 'Send' })
+     expect(button.querySelector('svg')).toBeTruthy()
+     expect(button).toHaveTextContent('')
+   })
+ 
+-  it('overflow hidden 조상 밖 document.body portal에 렌더하고 우상단 edge에서 안 잘린다', async () => {
+-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
++  it('body portal을 유지하면서 offset App container의 우상단 edge 안으로 clamp한다', async () => {
++    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 })
++    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
++      if (this.classList.contains('app')) {
++        return { left: 600, top: 0, right: 1200, bottom: 900, width: 600, height: 900 }
++      }
+       if (this.classList.contains('agent-portal-tooltip')) {
+         return { left: 0, top: 0, right: 200, bottom: 30, width: 200, height: 30 }
+       }
+       if (this.tagName === 'BUTTON') {
+-        return { left: 990, top: 2, right: 1010, bottom: 34, width: 20, height: 32 }
++        return { left: 1170, top: 2, right: 1190, bottom: 34, width: 20, height: 32 }
+       }
+       return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
+     })
+     const { container } = render(
+-      <div style={{ overflow: 'hidden', width: 40, height: 40 }}>
++      <div className="app" style={{ overflow: 'hidden', width: 600, height: 900 }}>
+         <AgentIconButton label="Close session" tooltip="Close the agent session">
+           <svg aria-hidden="true" />
+         </AgentIconButton>
+       </div>,
+     )
+ 
+     fireEvent.mouseEnter(screen.getByRole('button', { name: 'Close session' }))
+     const tooltip = await screen.findByRole('tooltip')
+-    await waitFor(() => expect(tooltip.style.left).toBe('816px'))
++    await waitFor(() => expect(tooltip.style.left).toBe('992px'))
+ 
+     expect(tooltip.parentElement).toBe(document.body)
+     expect(container.contains(tooltip)).toBe(false)
+     expect(tooltip.style.top).toBe('42px')
+     expect(tooltip.dataset.placement).toBe('bottom')
+   })
+ 
+   it('순수 위치 함수는 좌우 clamp와 위쪽 우선 배치를 지킨다', () => {
+     expect(tooltipPosition(
+       { left: 100, right: 140, top: 100, bottom: 140 },
+       { width: 80, height: 24 },
+       { width: 320, height: 240 },
+     )).toEqual({ left: 80, top: 68, placement: 'top' })
+     expect(tooltipPosition(
+       { left: -20, right: 20, top: 100, bottom: 140 },
+       { width: 80, height: 24 },
+       { width: 320, height: 240 },
+     ).left).toBe(8)
+   })
++
++  it('순수 위치 함수는 viewport 원점이 아니라 offset App container 박스 안으로 clamp한다', () => {
++    expect(tooltipPosition(
++      { left: 1170, right: 1190, top: 100, bottom: 132 },
++      { width: 200, height: 30 },
++      { left: 600, top: 0, right: 1200, bottom: 900, width: 600, height: 900 },
++    )).toEqual({ left: 992, top: 62, placement: 'top' })
++  })
+ })
+diff --git a/tests/components/agent/AgentModelSelector.test.jsx b/tests/components/agent/AgentModelSelector.test.jsx
+index d1a27ad..8271ee0 100644
+--- a/tests/components/agent/AgentModelSelector.test.jsx
++++ b/tests/components/agent/AgentModelSelector.test.jsx
+@@ -1,26 +1,26 @@
+ // @vitest-environment jsdom
+ import React from 'react'
+ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+-import AgentModelSelector from '../../../src/components/agent/AgentModelSelector.jsx'
++import AgentModelSelector, { listboxPosition } from '../../../src/components/agent/AgentModelSelector.jsx'
+ 
+ const models = [
+   { id: 'gpt-a', displayName: 'GPT A', hidden: false },
+   { id: 'gpt-b', displayName: 'GPT B', hidden: false },
+ ]
+ 
+-function renderSelector(props = {}) {
++function renderSelector(props = {}, { appContainer = false } = {}) {
+   const onChange = vi.fn()
+   const result = render(
+-    <div>
++    <div className={appContainer ? 'app' : undefined}>
+       <AgentModelSelector
+         models={models}
+         value={null}
+         loading={false}
+         onChange={onChange}
+         label="Agent model"
+         defaultLabel="Default"
+         codexLabel="Codex"
+         claudeLabel="Claude"
+         comingSoonLabel="Coming soon"
+@@ -34,20 +34,28 @@ function renderSelector(props = {}) {
+ 
+ afterEach(() => {
+   cleanup()
+   vi.restoreAllMocks()
+   // innerWidth/innerHeight는 spy가 아니라 defineProperty라 restoreAllMocks로 안 돌아온다 → 다음 테스트 오염 방지 위해 jsdom 기본값 복원.
+   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
+ })
+ 
+ describe('AgentModelSelector', () => {
++  it('순수 위치 함수는 offset App container의 좌우·상하 경계 안으로 clamp한다', () => {
++    expect(listboxPosition(
++      { left: 1170, top: 850, right: 1190, bottom: 878, width: 20, height: 28 },
++      { left: 0, top: 0, right: 220, bottom: 120, width: 220, height: 120 },
++      { left: 600, top: 0, right: 1200, bottom: 900, width: 600, height: 900 },
++    )).toEqual({ left: 972, top: 724, width: 220, placement: 'top' })
++  })
++
+   it('combobox/listbox/option ARIA와 Claude disabled badge를 완전하게 노출한다', async () => {
+     const user = userEvent.setup()
+     renderSelector()
+     const combo = screen.getByRole('combobox', { name: 'Agent model' })
+ 
+     expect(combo).toHaveAttribute('aria-expanded', 'false')
+     expect(combo).toHaveAttribute('aria-controls', 'agent-model-listbox')
+     await user.click(combo)
+ 
+     const listbox = screen.getByRole('listbox', { name: 'Agent model' })
+@@ -127,44 +135,47 @@ describe('AgentModelSelector', () => {
+         { id: 'gpt-hidden', displayName: 'GPT Hidden', hidden: true },
+       ],
+     })
+     const combo = screen.getByRole('combobox', { name: 'Agent model' })
+ 
+     await user.click(combo)
+     expect(screen.getByRole('option', { name: 'GPT Visible' })).toBeInTheDocument()
+     expect(screen.queryByRole('option', { name: 'GPT Hidden' })).toBeNull()
+   })
+ 
+-  it('listbox를 document.body portal에 렌더하고 viewport edge에서 위로 flip한다', async () => {
+-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 300 })
+-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 240 })
++  it('listbox body portal을 offset App container 안에 두고 아래 공간이 없으면 위로 flip한다', async () => {
++    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 })
++    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
++      if (this.classList.contains('app')) {
++        return { left: 600, top: 0, right: 1200, bottom: 900, width: 600, height: 900 }
++      }
+       if (this.classList.contains('agent-model-combobox')) {
+-        return { left: 260, top: 210, right: 340, bottom: 238, width: 80, height: 28 }
++        return { left: 1170, top: 850, right: 1190, bottom: 878, width: 20, height: 28 }
+       }
+       if (this.classList.contains('agent-model-listbox')) {
+         return { left: 0, top: 0, right: 220, bottom: 120, width: 220, height: 120 }
+       }
+       return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
+     })
+     const user = userEvent.setup()
+-    const { container } = renderSelector()
++    const { container } = renderSelector({}, { appContainer: true })
+ 
+     await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+     const listbox = screen.getByRole('listbox', { name: 'Agent model' })
+-    await waitFor(() => expect(listbox.style.left).toBe('72px'))
++    await waitFor(() => expect(listbox.style.left).toBe('972px'))
+ 
+     expect(listbox.parentElement).toBe(document.body)
+     expect(container.querySelector('.agent-model-selector').contains(listbox)).toBe(false)
+     expect(listbox.style.position).toBe('fixed')
+     expect(listbox.style.width).toBe('220px')
+-    expect(listbox.style.top).toBe('84px')
++    expect(listbox.style.top).toBe('724px')
+   })
+ 
+   it('portaled listbox의 마지막 option으로 disabled Claude coming soon을 보존한다', async () => {
+     const user = userEvent.setup()
+     renderSelector()
+ 
+     await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+     const listbox = screen.getByRole('listbox', { name: 'Agent model' })
+     const claude = screen.getByRole('option', { name: /Claude.*Coming soon/ })
+ 
+diff --git a/tests/components/agent/ChatPanel.appMount.test.js b/tests/components/agent/ChatPanel.appMount.test.js
+index 88474e8..a74e592 100644
+--- a/tests/components/agent/ChatPanel.appMount.test.js
++++ b/tests/components/agent/ChatPanel.appMount.test.js
+@@ -22,33 +22,42 @@ describe('App agent surface 배치', () => {
+     expect(source.slice(approval, panel)).toMatch(/<ApprovalDialog\s*\/>\s*$/)
+     expect(source.match(/<ChatPanel\b/g)).toHaveLength(1)
+     expect(source).toContain('const [agentPanelOpen, setAgentPanelOpen] = useState(false)')
+     const panelProps = source.slice(panel, source.indexOf('/>', panel))
+     expect(panelProps).toContain('open={agentPanelOpen}')
+     expect(panelProps).toContain('onOpen={() => setAgentPanelOpen(true)}')
+     expect(panelProps).toContain('onDismiss={() => setAgentPanelOpen(false)}')
+     expect(panelProps).toContain('appMode={mode}')
+     expect(panelProps).toContain('agentPanelMode={settings.agentPanelMode}')
+     expect(panelProps).toContain("onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}")
++    expect(panelProps).toContain('agentDockWidth={agentDockWidth}')
++    expect(panelProps).toContain('onAgentDockWidthChange={setAgentDockWidth}')
++    expect(panelProps).toContain('onAgentDockWidthCommit={commitAgentDockWidth}')
++    expect(panelProps).toContain('onEffectiveModeChange={setAgentEffectivePanelMode}')
+   })
+ 
+-  it('API docked panel이 열려 있을 때만 App container에 reserve class와 width를 건다', () => {
++  it('ChatPanel이 보고한 실제 docked mode로만 App container reserve class와 width를 건다', () => {
+     const source = fs.readFileSync(path.resolve('src/App.jsx'), 'utf8')
+ 
+-    expect(source).toContain("import { effectiveAgentPanelMode } from './components/agent/agentPanelLayout'")
++    expect(source).not.toContain("import { effectiveAgentPanelMode } from './components/agent/agentPanelLayout'")
++    expect(source).toContain(
++      "const [agentEffectivePanelMode, setAgentEffectivePanelMode] = useState('floating')",
++    )
+     expect(source).toMatch(
+-      /const isAgentDocked = agentPanelOpen\s*&& effectiveAgentPanelMode\(mode, settings\.agentPanelMode\) === 'docked'/,
++      /const isAgentDocked = agentPanelOpen\s*&& agentEffectivePanelMode === 'docked'/,
+     )
+     expect(source).toContain(
+       "className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}",
+     )
+-    expect(source).toContain("style={{ '--agent-dock-w': '400px' }}")
++    expect(source).toContain("style={{ '--agent-dock-w': `${agentDockWidth}px` }}")
++    expect(source).toContain('const [agentDockWidth, setAgentDockWidth] = useState(settings.agentDockWidth)')
++    expect(source).toContain("updateSetting('agentDockWidth', width)")
+   })
+ 
+   it('App은 useVideoAutomation의 admission/status/event/cleanup source를 ChatPanel에 주입한다', () => {
+     const source = fs.readFileSync(path.resolve('src/App.jsx'), 'utf8')
+     const panel = source.slice(source.indexOf('<ChatPanel'), source.indexOf('/>', source.indexOf('<ChatPanel')))
+ 
+     expect(panel).toContain('videoAdmissionSources={videoAdmissionSources}')
+     expect(source).toContain('videoAutomation.admitVideoBatch')
+     expect(source).toContain('videoAutomation.getVideoStatus')
+     expect(source).toContain('videoAutomation.subscribeVideoStatus')
+diff --git a/tests/components/agent/ChatPanel.test.jsx b/tests/components/agent/ChatPanel.test.jsx
+index 0dc9557..c70d3d0 100644
+--- a/tests/components/agent/ChatPanel.test.jsx
++++ b/tests/components/agent/ChatPanel.test.jsx
+@@ -44,27 +44,47 @@ function batchSources(overrides = {}) {
+   return {
+     automation: { isRunning: false, status: 'done' },
+     scenes: [],
+     references: [],
+     generatingRefs: [],
+     refBatchRunning: false,
+     ...overrides,
+   }
+ }
+ 
++const largeAppRect = {
++  left: 0,
++  top: 0,
++  width: 1000,
++  height: 800,
++  right: 1000,
++  bottom: 800,
++}
++let currentAppRect
++let originalResizeObserver
++
+ beforeEach(() => {
++  currentAppRect = largeAppRect
++  originalResizeObserver = globalThis.ResizeObserver
++  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
++    if (this.classList.contains('app')) return currentAppRect
++    return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }
++  })
+   window.electronAPI = createFullAgentApi()
+ })
+ 
+ afterEach(() => {
+   vi.useRealTimers()
+   cleanup()
++  vi.restoreAllMocks()
++  if (originalResizeObserver === undefined) delete globalThis.ResizeObserver
++  else globalThis.ResizeObserver = originalResizeObserver
+   delete window.electronAPI
+ })
+ 
+ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
+   it('send를 sessionManager IPC까지 보내고 delta/tool/usage/limit를 모두 화면에 남긴다', async () => {
+     const user = userEvent.setup()
+     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+ 
+     await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '배치 상태를 확인해줘')
+     await user.click(screen.getByRole('button', { name: 'Send' }))
+@@ -422,65 +442,111 @@ describe('ChatPanel — agentMessage completion reconciliation', () => {
+     window.electronAPI.emitAgent('agent:delta', { delta: 'completion 없이 끝난 답' })
+     window.electronAPI.emitAgent('agent:done', { turnId: 'turn-1', status: 'completed' })
+ 
+     const bubbles = container.querySelectorAll('.agent-chat-message.agent')
+     expect(bubbles).toHaveLength(1)
+     expect(bubbles[0]).toHaveTextContent('completion 없이 끝난 답')
+   })
+ })
+ 
+ describe('ChatPanel — effective panel mode', () => {
+-  it('저장 docked는 Flow 진입 때 floating으로 파생되고 Flow 해제 때 docked로 자동 복귀한다', () => {
++  it('충분한 App에서는 Flow도 docked를 유지하고 toggle이 활성화되며 옛 notice가 없다', () => {
+     const onAgentPanelModeChange = vi.fn()
++    const onEffectiveModeChange = vi.fn()
+     const { container, rerender } = render(
+-      <ChatPanel
+-        open
+-        appMode="api"
+-        agentPanelMode="docked"
+-        onAgentPanelModeChange={onAgentPanelModeChange}
+-        projectKey="p"
+-        batchStatusSources={batchSources()}
+-      />,
++      <div className="app">
++        <ChatPanel
++          open
++          appMode="api"
++          agentPanelMode="docked"
++          onAgentPanelModeChange={onAgentPanelModeChange}
++          onEffectiveModeChange={onEffectiveModeChange}
++          projectKey="p"
++          batchStatusSources={batchSources()}
++        />
++      </div>,
+     )
+     const panel = container.querySelector('.agent-chat-panel')
+     const toggle = screen.getByRole('button', { name: 'Dock panel mode' })
+     expect(panel).toHaveClass('mode-docked')
+     expect(toggle).toHaveAttribute('aria-pressed', 'true')
+ 
+     rerender(
+-      <ChatPanel
+-        open
+-        appMode="flow"
+-        agentPanelMode="docked"
+-        onAgentPanelModeChange={onAgentPanelModeChange}
+-        projectKey="p"
+-        batchStatusSources={batchSources()}
+-      />,
++      <div className="app">
++        <ChatPanel
++          open
++          appMode="flow"
++          agentPanelMode="docked"
++          onAgentPanelModeChange={onAgentPanelModeChange}
++          onEffectiveModeChange={onEffectiveModeChange}
++          projectKey="p"
++          batchStatusSources={batchSources()}
++        />
++      </div>,
+     )
+-    expect(panel).toHaveClass('mode-floating')
+-    expect(toggle).toBeDisabled()
+-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+-    expect(screen.getByText('The agent stays floating while Flow is active.')).toBeTruthy()
++    expect(panel).toHaveClass('mode-docked')
++    expect(toggle).toBeEnabled()
++    expect(toggle).toHaveAttribute('aria-pressed', 'true')
++    expect(screen.queryByText('The agent stays floating while Flow is active.')).toBeNull()
+     expect(onAgentPanelModeChange).not.toHaveBeenCalled()
++    expect(onEffectiveModeChange).toHaveBeenLastCalledWith('docked')
++  })
+ 
+-    rerender(
+-      <ChatPanel
+-        open
+-        appMode="api"
+-        agentPanelMode="docked"
+-        onAgentPanelModeChange={onAgentPanelModeChange}
+-        projectKey="p"
+-        batchStatusSources={batchSources()}
+-      />,
++  it('작은 App에서는 저장 docked를 건드리지 않고 floating으로 파생하며 resize 뒤 자동 복귀한다', async () => {
++    const resizeCallbacks = []
++    globalThis.ResizeObserver = class ResizeObserver {
++      constructor(callback) { resizeCallbacks.push(callback) }
++      observe() {}
++      disconnect() {}
++    }
++    currentAppRect = {
++      left: 600,
++      top: 0,
++      width: 599,
++      height: 419,
++      right: 1199,
++      bottom: 419,
++    }
++    const onAgentPanelModeChange = vi.fn()
++    const onEffectiveModeChange = vi.fn()
++    const { container } = render(
++      <div className="app">
++        <ChatPanel
++          open
++          appMode="flow"
++          agentPanelMode="docked"
++          onAgentPanelModeChange={onAgentPanelModeChange}
++          onEffectiveModeChange={onEffectiveModeChange}
++          projectKey="p"
++          batchStatusSources={batchSources()}
++        />
++      </div>,
+     )
+-    expect(panel).toHaveClass('mode-docked')
+-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
++    const panel = container.querySelector('.agent-chat-panel')
++
++    await waitFor(() => expect(panel).toHaveClass('mode-floating'))
++    expect(screen.queryByRole('separator', { name: 'Resize agent dock' })).toBeNull()
++    expect(onAgentPanelModeChange).not.toHaveBeenCalled()
++    expect(onEffectiveModeChange).toHaveBeenLastCalledWith('floating')
++
++    currentAppRect = {
++      left: 600,
++      top: 0,
++      width: 600,
++      height: 420,
++      right: 1200,
++      bottom: 420,
++    }
++    act(() => resizeCallbacks.forEach((callback) => callback()))
++
++    await waitFor(() => expect(panel).toHaveClass('mode-docked'))
++    expect(onEffectiveModeChange).toHaveBeenLastCalledWith('docked')
+   })
+ 
+   it('API mode toggle은 floating에서 docked preference를 전달한다', async () => {
+     const user = userEvent.setup()
+     const onAgentPanelModeChange = vi.fn()
+     render(
+       <ChatPanel
+         open
+         appMode="api"
+         agentPanelMode="floating"
+@@ -491,28 +557,30 @@ describe('ChatPanel — effective panel mode', () => {
+     )
+ 
+     await user.click(screen.getByRole('button', { name: 'Dock panel mode' }))
+     expect(onAgentPanelModeChange).toHaveBeenCalledWith('docked')
+   })
+ 
+   it('API mode toggle은 docked에서 floating preference를 전달한다', async () => {
+     const user = userEvent.setup()
+     const onAgentPanelModeChange = vi.fn()
+     render(
+-      <ChatPanel
+-        open
+-        appMode="api"
+-        agentPanelMode="docked"
+-        onAgentPanelModeChange={onAgentPanelModeChange}
+-        projectKey="p"
+-        batchStatusSources={batchSources()}
+-      />,
++      <div className="app">
++        <ChatPanel
++          open
++          appMode="api"
++          agentPanelMode="docked"
++          onAgentPanelModeChange={onAgentPanelModeChange}
++          projectKey="p"
++          batchStatusSources={batchSources()}
++        />
++      </div>,
+     )
+ 
+     const toggle = screen.getByRole('button', { name: 'Dock panel mode' })
+     expect(toggle).toHaveAttribute('aria-pressed', 'true')
+     await user.click(toggle)
+     expect(onAgentPanelModeChange).toHaveBeenCalledWith('floating')
+   })
+ })
+ 
+ describe('ChatPanel — 진행 표시', () => {
+@@ -643,20 +711,114 @@ describe('ChatPanel — open floating container drag', () => {
+       <div className="app">
+         <ChatPanel open={open} appMode="api" agentPanelMode={mode} projectKey="p" batchStatusSources={batchSources()} />
+       </div>,
+     )
+     const header = container.querySelector('.agent-chat-header')
+     drag(header, { x: 130, y: 78 }, { x: 220, y: 150 })
+     expect(container.querySelector('.agent-chat-panel').style.left).toBe('')
+   })
+ })
+ 
++describe('ChatPanel — dock resize', () => {
++  function DockResizeHarness({ open = true, mode = 'docked', onCommit = () => {} }) {
++    const [width, setWidth] = React.useState(400)
++    return (
++      <div className="app" style={{ '--agent-dock-w': `${width}px` }}>
++        <ChatPanel
++          open={open}
++          appMode="api"
++          agentPanelMode={mode}
++          agentDockWidth={width}
++          onAgentDockWidthChange={setWidth}
++          onAgentDockWidthCommit={onCommit}
++          projectKey="p"
++          batchStatusSources={batchSources()}
++        />
++      </div>
++    )
++  }
++
++  it('docked+open에서 왼쪽 edge drag로 live 폭을 바꾸고 pointerup에 한 번 commit한다', () => {
++    const onCommit = vi.fn()
++    const { container } = render(<DockResizeHarness onCommit={onCommit} />)
++    const app = container.querySelector('.app')
++    const handle = screen.getByRole('separator', { name: 'Resize agent dock' })
++    app.getBoundingClientRect = () => ({
++      left: 100, top: 0, width: 1000, height: 800, right: 1100, bottom: 800,
++    })
++
++    act(() => {
++      handle.dispatchEvent(new PointerEvent('pointerdown', {
++        bubbles: true, clientX: 700, clientY: 100, button: 0,
++      }))
++      window.dispatchEvent(new PointerEvent('pointermove', {
++        bubbles: true, clientX: 600, clientY: 100,
++      }))
++    })
++
++    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('500px')
++    expect(onCommit).not.toHaveBeenCalled()
++
++    act(() => {
++      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
++    })
++    expect(onCommit).toHaveBeenCalledOnce()
++    expect(onCommit).toHaveBeenCalledWith(500)
++  })
++
++  it('separator keyboard 조작은 16px 단위이며 현재 clamp 범위를 ARIA로 노출한다', () => {
++    const onCommit = vi.fn()
++    const { container } = render(<DockResizeHarness onCommit={onCommit} />)
++    const app = container.querySelector('.app')
++    const handle = screen.getByRole('separator', { name: 'Resize agent dock' })
++    app.getBoundingClientRect = () => ({
++      left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800,
++    })
++
++    fireEvent.keyDown(handle, { key: 'ArrowLeft' })
++
++    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('416px')
++    expect(onCommit).toHaveBeenLastCalledWith(416)
++    expect(handle).toHaveAttribute('aria-valuenow', '416')
++    expect(handle).toHaveAttribute('aria-valuemin', '280')
++    expect(handle).toHaveAttribute('aria-valuemax', '600')
++
++    fireEvent.keyDown(handle, { key: 'ArrowRight' })
++    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('400px')
++    expect(onCommit).toHaveBeenLastCalledWith(400)
++  })
++
++  it('좁은 container에서도 separator의 폭과 ARIA 범위가 280px 아래로 역전되지 않는다', () => {
++    const { container } = render(<DockResizeHarness />)
++    const app = container.querySelector('.app')
++    const handle = screen.getByRole('separator', { name: 'Resize agent dock' })
++    app.getBoundingClientRect = () => ({
++      left: 0, top: 0, width: 400, height: 800, right: 400, bottom: 800,
++    })
++
++    fireEvent.keyDown(handle, { key: 'ArrowRight' })
++
++    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('280px')
++    expect(handle).toHaveAttribute('aria-valuemin', '280')
++    expect(handle).toHaveAttribute('aria-valuemax', '280')
++    expect(handle).toHaveAttribute('aria-valuenow', '280')
++  })
++
++  it.each([
++    { open: false, mode: 'docked' },
++    { open: true, mode: 'floating' },
++  ])('open=$open mode=$mode에서는 resize handle을 렌더하지 않는다', ({ open, mode }) => {
++    render(<DockResizeHarness open={open} mode={mode} />)
++    expect(screen.queryByRole('separator', { name: 'Resize agent dock' })).toBeNull()
++  })
++})
++
+ describe('ChatPanel — persistent 수명과 batch.status', () => {
+   function VisibilityHarness() {
+     const [open, setOpen] = React.useState(false)
+     return (
+       <ChatPanel
+         open={open}
+         onOpen={() => setOpen(true)}
+         onDismiss={() => setOpen(false)}
+         projectKey="same-project"
+         batchStatusSources={batchSources()}
+diff --git a/tests/components/agent/agentPanelLayout.test.js b/tests/components/agent/agentPanelLayout.test.js
+index 6bfd983..a9c99c6 100644
+--- a/tests/components/agent/agentPanelLayout.test.js
++++ b/tests/components/agent/agentPanelLayout.test.js
+@@ -1,34 +1,76 @@
+ import { describe, expect, it } from 'vitest'
+ import {
+   AGENT_PANEL_MODES,
++  canDockInContainer,
++  clampAgentDockWidth,
+   clampAgentPanelPosition,
+   effectiveAgentPanelMode,
+   floatingPanelBox,
+   normalizeAgentPanelMode,
+   reclampAgentPanelPosition,
+ } from '../../../src/components/agent/agentPanelLayout.js'
+ 
+ describe('agentPanelLayout', () => {
++  describe('clampAgentDockWidth', () => {
++    it('최소 280px 아래로 줄지 않는다', () => {
++      expect(clampAgentDockWidth(120, 1200)).toBe(280)
++    })
++
++    it('절대 최대 폭은 720px이다', () => {
++      expect(clampAgentDockWidth(900, 1600)).toBe(720)
++    })
++
++    it('container 폭의 60%를 동적 최대 폭으로 쓴다', () => {
++      expect(clampAgentDockWidth(700, 1000)).toBe(600)
++      expect(clampAgentDockWidth(500, 1000)).toBe(500)
++    })
++
++    it('아주 좁은 container에서도 280px 최소 폭을 깨지 않는다', () => {
++      expect(clampAgentDockWidth(400, 400)).toBe(280)
++    })
++
++    it('NaN이나 숫자가 아닌 값은 기본 400px로 복구한다', () => {
++      expect(clampAgentDockWidth(Number.NaN, 1200)).toBe(400)
++      expect(clampAgentDockWidth('garbage', 1200)).toBe(400)
++    })
++  })
++
+   it('지원 모드는 floating과 docked뿐이다', () => {
+     expect(AGENT_PANEL_MODES).toEqual(['floating', 'docked'])
+   })
+ 
+-  it('stored docked는 API에서 docked, Flow에서 floating이며 저장값 객체를 바꾸지 않는다', () => {
++  it('stored docked는 appMode와 무관하게 docked이며 저장값 객체를 바꾸지 않는다', () => {
+     const preference = { value: 'docked' }
+ 
+     expect(effectiveAgentPanelMode('api', preference.value)).toBe('docked')
+-    expect(effectiveAgentPanelMode('flow', preference.value)).toBe('floating')
++    expect(effectiveAgentPanelMode('flow', preference.value)).toBe('docked')
+     expect(effectiveAgentPanelMode('api', preference.value)).toBe('docked')
+     expect(preference).toEqual({ value: 'docked' })
+   })
+ 
++  describe('canDockInContainer', () => {
++    it('600×420 이상에서만 dock을 허용한다', () => {
++      expect(canDockInContainer({ width: 600, height: 420 })).toBe(true)
++      expect(canDockInContainer({ width: 601, height: 421 })).toBe(true)
++      expect(canDockInContainer({ width: 599, height: 420 })).toBe(false)
++      expect(canDockInContainer({ width: 600, height: 419 })).toBe(false)
++    })
++
++    it('누락되거나 유한하지 않은 크기는 dock 불가로 처리한다', () => {
++      expect(canDockInContainer()).toBe(false)
++      expect(canDockInContainer({})).toBe(false)
++      expect(canDockInContainer({ width: Number.NaN, height: 420 })).toBe(false)
++      expect(canDockInContainer({ width: 600, height: Number.POSITIVE_INFINITY })).toBe(false)
++    })
++  })
++
+   it('legacy slide를 docked로 마이그레이션하고 invalid mode는 floating으로 정규화한다', () => {
+     expect(normalizeAgentPanelMode('floating')).toBe('floating')
+     expect(normalizeAgentPanelMode('docked')).toBe('docked')
+     expect(normalizeAgentPanelMode('slide')).toBe('docked')
+     expect(normalizeAgentPanelMode('drawer')).toBe('floating')
+     expect(normalizeAgentPanelMode(null)).toBe('floating')
+   })
+ 
+   it('pointer 좌표를 viewport가 아니라 offset container의 local bounds로 clamp한다', () => {
+     const base = {
+diff --git a/tests/components/agent/modeToggle.roundtrip.test.jsx b/tests/components/agent/modeToggle.roundtrip.test.jsx
+index b9f13e0..66945dc 100644
+--- a/tests/components/agent/modeToggle.roundtrip.test.jsx
++++ b/tests/components/agent/modeToggle.roundtrip.test.jsx
+@@ -1,47 +1,60 @@
+ // @vitest-environment jsdom
+ import React, { useState } from 'react'
+ import { cleanup, render, screen } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+-import { afterEach, describe, expect, it, vi } from 'vitest'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import ChatPanel from '../../../src/components/agent/ChatPanel.jsx'
+-import { effectiveAgentPanelMode } from '../../../src/components/agent/agentPanelLayout.js'
+ import { useAppSettings } from '../../../src/hooks/useAppSettings.js'
+ 
+-afterEach(() => { cleanup(); localStorage.clear() })
++beforeEach(() => {
++  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
++    if (this.classList.contains('app')) {
++      return { left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800 }
++    }
++    return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }
++  })
++})
++
++afterEach(() => {
++  cleanup()
++  localStorage.clear()
++  vi.restoreAllMocks()
++})
+ 
+ function RealHarness({ appMode = 'api' }) {
+   const { settings, updateSetting } = useAppSettings()
+   const [open, setOpen] = useState(true)
+-  const isAgentDocked = open
+-    && effectiveAgentPanelMode(appMode, settings.agentPanelMode) === 'docked'
++  const [effectiveMode, setEffectiveMode] = useState('floating')
++  const isAgentDocked = open && effectiveMode === 'docked'
+   return (
+     <div className={`app${isAgentDocked ? ' agent-docked' : ''}`}>
+       <ChatPanel
+         open={open}
+         onOpen={() => setOpen(true)}
+         onDismiss={() => setOpen(false)}
+         appMode={appMode}
+         agentPanelMode={settings.agentPanelMode}
+         onAgentPanelModeChange={(m) => updateSetting('agentPanelMode', m)}
++        onEffectiveModeChange={setEffectiveMode}
+         projectKey="p"
+         batchStatusSources={{ automation:{isRunning:false,status:'done'}, scenes:[], references:[], generatingRefs:[], refBatchRunning:false }}
+       />
+     </div>
+   )
+ }
+ 
+ describe('mode-toggle REAL round-trip (App wiring)', () => {
+-  it('floating↔docked round-trip이 App reserve class까지 함께 바꾼다', async () => {
++  it('Flow floating↔docked round-trip이 App reserve class까지 함께 바꾼다', async () => {
+     window.electronAPI = { agentListModels: vi.fn(async () => []), onAgentEvent: vi.fn(()=>()=>{}), onToolBridgeRequest: vi.fn(()=>()=>{}) }
+     const user = userEvent.setup()
+-    const { container } = render(<RealHarness appMode="api" />)
++    const { container } = render(<RealHarness appMode="flow" />)
+     const app = container.querySelector('.app')
+     const panel = container.querySelector('.agent-chat-panel')
+     expect(panel).toHaveClass('mode-floating')
+     expect(app).not.toHaveClass('agent-docked')
+ 
+     const toggle = screen.getByRole('button', { name: 'Dock panel mode' })
+     expect(toggle).toBeEnabled()
+     await user.click(toggle)
+ 
+     expect(panel).toHaveClass('mode-docked')
+diff --git a/tests/components/agent/robotFabAsset.test.js b/tests/components/agent/robotFabAsset.test.js
+new file mode 100644
+index 0000000..6a26cb5
+--- /dev/null
++++ b/tests/components/agent/robotFabAsset.test.js
+@@ -0,0 +1,22 @@
++import { readFileSync } from 'node:fs'
++import { describe, expect, it } from 'vitest'
++
++// FAB 로봇 얼굴은 계속 움직여야 한다. 이 SVG 는 <img src> 로 로드되므로 바깥 CSS 가 못 닿는다
++// → 애니메이션이 파일 안에 있어야만 실제로 돈다. 누가 자산을 갈아끼우며 조용히 지우면 여기서 잡는다.
++describe('Robot FAB asset', () => {
++  const svg = readFileSync('src/assets/Robot.svg', 'utf8')
++
++  it('SVG 안에 얼굴 애니메이션(깜빡임/시선/안테나)이 들어있다', () => {
++    expect(svg).toContain('@keyframes robot-blink')
++    expect(svg).toContain('@keyframes robot-look')
++    expect(svg).toContain('@keyframes robot-pulse')
++    // 애니메이션 대상이 실제로 클래스로 물려 있어야 한다(키프레임만 있고 미적용이면 안 돈다).
++    expect(svg).toMatch(/class="eyes"/)
++    expect(svg).toMatch(/class="eye"/)
++    expect(svg).toMatch(/class="antenna"/)
++  })
++
++  it('prefers-reduced-motion 을 존중한다', () => {
++    expect(svg).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none/)
++  })
++})
+diff --git a/tests/hooks/useAppSettings.test.js b/tests/hooks/useAppSettings.test.js
+index 546b499..406ce0b 100644
+--- a/tests/hooks/useAppSettings.test.js
++++ b/tests/hooks/useAppSettings.test.js
+@@ -112,20 +112,44 @@ describe('useAppSettings — agentPanelMode', () => {
+     expect(result.current.settings.agentPanelMode).toBe('docked')
+   })
+ 
+   it('알 수 없는 저장값만 floating으로 정규화한다', () => {
+     localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentPanelMode: 'drawer' }))
+     const { result } = renderHook(() => useAppSettings())
+     expect(result.current.settings.agentPanelMode).toBe('floating')
+   })
+ })
+ 
++describe('useAppSettings — agentDockWidth', () => {
++  it('fresh install 기본값은 400px이다', () => {
++    const { result } = renderHook(() => useAppSettings())
++    expect(result.current.settings.agentDockWidth).toBe(400)
++  })
++
++  it('저장된 유효 폭 500px을 보존한다', () => {
++    localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentDockWidth: 500 }))
++    const { result } = renderHook(() => useAppSettings())
++    expect(result.current.settings.agentDockWidth).toBe(500)
++  })
++
++  it.each([
++    ['문자열', 'garbage', 400],
++    ['NaN', Number.NaN, 400],
++    ['최소 미만', 120, 280],
++    ['최대 초과', 900, 720],
++  ])('저장된 %s 폭을 로드 시 정규화한다', (_label, stored, expected) => {
++    localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentDockWidth: stored }))
++    const { result } = renderHook(() => useAppSettings())
++    expect(result.current.settings.agentDockWidth).toBe(expected)
++  })
++})
++
+ describe('useAppSettings — videoConcurrency', () => {
+   it('fresh install 기본값은 videoConcurrency 4', () => {
+     const { result } = renderHook(() => useAppSettings())
+     expect(result.current.settings.videoConcurrency).toBe(4)
+   })
+ 
+   it('저장된 videoConcurrency 값 보존', () => {
+     localStorage.setItem(STORAGE_KEY, JSON.stringify({ videoConcurrency: 4 }))
+     const { result } = renderHook(() => useAppSettings())
+     expect(result.current.settings.videoConcurrency).toBe(4)

@@ -1,0 +1,952 @@
+# Review package: 95fcdbfd^..90a180d5
+
+## Commits
+90a180d5 main: nullable key resolvers + AUTOFLOWCUT_DISABLE_KEY_FALLBACK dev switch
+0cbb8e64 keyStoreMulti: drop genai from allowlist (remove split-brain path)
+f4d505a7 SFX ElevenLabs adapter: standard Missing/Auth key errors
+36408acc TTS adapters: two-tier key contract (requireKey at synthesize) + auth mapping
+a123c4db Add provider-to-keyId registry (gemini->genai alias, store mapping)
+95fcdbfd Add standard provider key errors (Missing/Auth + Google 400 mapping)
+
+## Files changed
+ electron/api/keyErrors.js                          | 33 +++++++++++++++
+ electron/api/keyStoreMulti.js                      |  1 -
+ electron/api/sfx/elevenlabs.js                     |  7 +++-
+ electron/api/tts/elevenlabs.js                     |  6 ++-
+ electron/api/tts/gemini.js                         |  6 ++-
+ electron/api/tts/googletts.js                      |  6 ++-
+ electron/api/tts/index.js                          |  2 +-
+ electron/api/tts/typecast.js                       |  6 ++-
+ electron/main.js                                   | 21 +++++-----
+ electron/main/keyResolvers.js                      | 23 ++++++++++
+ src/config/apiKeyRegistry.js                       | 20 +++++++++
+ tests/config/apiKeyRegistry.test.js                | 22 ++++++++++
+ tests/electron/api/keyErrors.test.js               | 34 +++++++++++++++
+ tests/electron/api/keyStoreMultiGenai.test.js      | 31 ++++++++++++++
+ .../api/sfx/elevenlabsSfxKeyContract.test.js       | 15 +++++++
+ tests/electron/api/tts/adapterKeyContract.test.js  | 32 ++++++++++++++
+ tests/electron/api/tts/adapters.test.js            |  7 ++--
+ tests/electron/api/tts/typecast.test.js            |  3 +-
+ tests/electron/main/keyResolvers.test.js           | 49 ++++++++++++++++++++++
+ 19 files changed, 298 insertions(+), 26 deletions(-)
+
+## Diff
+diff --git a/electron/api/keyErrors.js b/electron/api/keyErrors.js
+new file mode 100644
+index 00000000..d7622749
+--- /dev/null
++++ b/electron/api/keyErrors.js
+@@ -0,0 +1,33 @@
++/**
++ * 표준 키 에러 — 어댑터/SFX가 missing/auth 실패를 raw 문자열 대신 errorKind 있는 타입으로 던진다.
++ * errorKind 는 stepMachine 집계·resolveDisplayError 가 로케일 안내로 변환한다(spec §4.8).
++ */
++export class MissingProviderKeyError extends Error {
++  constructor(provider) {
++    super(`No ${provider} API key`)
++    this.name = 'MissingProviderKeyError'
++    this.provider = provider
++    this.errorKind = 'story-audio-no-tts-key'
++  }
++}
++
++export class ProviderAuthError extends Error {
++  constructor(provider, { status, detail } = {}) {
++    super(`${provider} auth failed: ${status}`)
++    this.name = 'ProviderAuthError'
++    this.provider = provider
++    this.status = status
++    this.detail = detail
++    this.errorKind = 'story-audio-tts-auth'
++  }
++}
++
++/**
++ * HTTP 응답이 인증 실패인가. Typecast/ElevenLabs 는 401/403; Google 계열(Gemini/GoogleTTS)은
++ * 무효 키에 400 + reason 'API_KEY_INVALID' 를 준다 — 모든 400 이 아니라 이 reason 만 auth.
++ */
++export function isAuthResponse(status, detail = '') {
++  if (status === 401 || status === 403) return true
++  if (status === 400 && /API_KEY_INVALID/i.test(String(detail))) return true
++  return false
++}
+diff --git a/electron/api/keyStoreMulti.js b/electron/api/keyStoreMulti.js
+index d5b9d7d4..44a930d5 100644
+--- a/electron/api/keyStoreMulti.js
++++ b/electron/api/keyStoreMulti.js
+@@ -1,19 +1,18 @@
+ /**
+  * provider별 멀티 키 저장소 — 스펙 §6. enum allowlist + 경로 매핑 테이블(path traversal 방어).
+  * 각 provider는 기존 createKeyStore(단일 파일) 인스턴스로 위임.
+  */
+ import { createKeyStore } from './keyStore.js'
+ 
+ // allowlist → 파일명 (provider 문자열을 직접 path join 하지 않는다)
+ const FILENAME_BY_PROVIDER = {
+-  genai: 'genai-key.enc',
+   elevenlabs: 'elevenlabs-key.enc',
+   typecast: 'typecast-key.enc',
+   googletts: 'googletts-key.enc',
+   anthropic: 'anthropic-key.enc',
+ }
+ export const PROVIDERS = Object.keys(FILENAME_BY_PROVIDER)
+ 
+ export function createMultiKeyStore({ safeStorage, keysDir, fs, path }) {
+   fs.mkdirSync?.(keysDir, { recursive: true })
+   const cache = new Map()
+diff --git a/electron/api/sfx/elevenlabs.js b/electron/api/sfx/elevenlabs.js
+index cb1ca9a4..187a1f61 100644
+--- a/electron/api/sfx/elevenlabs.js
++++ b/electron/api/sfx/elevenlabs.js
+@@ -1,33 +1,36 @@
+ /**
+  * ElevenLabs SFX 어댑터 — POST /v1/sound-generation, xi-api-key 헤더, mp3.
+  * getKey/fetch 주입으로 단위 테스트. 세그먼트=단일 요청(description → 효과음).
+  * 계약(M2b-0 확인): https://elevenlabs.io/docs/api-reference/text-to-sound-effects/convert
+  *   body { text, model_id:'eleven_text_to_sound_v2', duration_seconds?:0.5~30(null=자동), prompt_influence?, loop? }
+  */
++import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
++
+ const URL = 'https://api.elevenlabs.io/v1/sound-generation'
+ 
+-export function createElevenLabsSfxAdapter({ getKey, fetch }) {
++export function createElevenLabsSfxAdapter({ getKey, fetch, provider = 'elevenlabs' }) {
+   return {
+     capabilities() {
+       return { outputFormats: ['mp3'], durationRange: [0.5, 30], maxConcurrency: 2 }
+     },
+     async generate({ description, durationSeconds = null, signal } = {}) {
+       const key = getKey()
+-      if (!key) throw new Error('No ElevenLabs API key')
++      if (key == null) throw new MissingProviderKeyError(provider)
+       const body = { text: description, model_id: 'eleven_text_to_sound_v2' }
+       // duration_seconds는 지정 시에만 전송(생략하면 API가 자동 추정).
+       if (durationSeconds != null) body.duration_seconds = durationSeconds
+       const res = await fetch(`${URL}?output_format=mp3_44100_128`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json', 'xi-api-key': key },
+         body: JSON.stringify(body),
+         signal,
+       })
+       if (!res.ok) {
+         const detail = await (res.text?.() ?? Promise.resolve(''))
++        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
+         throw new Error(`ElevenLabs SFX failed: ${res.status} ${detail}`)
+       }
+       return { audio: Buffer.from(await res.arrayBuffer()), format: 'mp3' }
+     },
+   }
+ }
+diff --git a/electron/api/tts/elevenlabs.js b/electron/api/tts/elevenlabs.js
+index 1698eea6..0a925cad 100644
+--- a/electron/api/tts/elevenlabs.js
++++ b/electron/api/tts/elevenlabs.js
+@@ -1,15 +1,16 @@
+ /**
+  * ElevenLabs TTS 어댑터 — POST /v1/text-to-speech/{voice_id}, xi-api-key 헤더, mp3.
+  * getKey/fetch 주입으로 단위 테스트. 세그먼트=단일 요청.
+  * 계약: https://elevenlabs.io/docs/api-reference/text-to-speech/convert
+  */
++import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
+ const BASE = 'https://api.elevenlabs.io/v1/text-to-speech'
+ const VOICES_ENDPOINT = 'https://api.elevenlabs.io/v2/voices'
+ const SHARED_VOICES_ENDPOINT = 'https://api.elevenlabs.io/v1/shared-voices'
+ 
+ // eleven_multilingual_v2는 discrete emotion 파라미터가 없어 voice_settings(stability↓=억양 변화↑, style↑=표현 과장↑)로 톤을 근사한다. normal은 생략(기존 동작).
+ const EMOTION_VOICE_SETTINGS = {
+   happy: { stability: 0.35, similarity_boost: 0.75, style: 0.55 },
+   sad: { stability: 0.3, similarity_boost: 0.75, style: 0.7 },
+   angry: { stability: 0.2, similarity_boost: 0.75, style: 0.85 },
+ }
+@@ -83,21 +84,21 @@ function uniqueVoices(voices) {
+   const seen = new Set()
+   const out = []
+   for (const voice of voices) {
+     if (!voice?.id || seen.has(voice.id)) continue
+     seen.add(voice.id)
+     out.push(voice)
+   }
+   return out
+ }
+ 
+-export function createElevenLabsAdapter({ getKey, fetch }) {
++export function createElevenLabsAdapter({ getKey, fetch, provider = 'elevenlabs' }) {
+   return {
+     capabilities() {
+       return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['mp3'], supportsPreview: true, maxConcurrency: 2 }
+     },
+     async listVoices({ query = '', includeShared = false, page = 0, limit = 100, maxSharedPages = 10 } = {}) {
+       const key = getKey()
+       const voices = []
+       const headers = key ? { 'xi-api-key': key } : {}
+ 
+       if (key) {
+@@ -130,26 +131,27 @@ export function createElevenLabsAdapter({ getKey, fetch }) {
+           } catch {
+             break
+           }
+         }
+       }
+ 
+       return uniqueVoices([...voices, ...KNOWN_VOICES.map((v) => ({ ...v }))])
+     },
+     async synthesize({ text, voiceId, emotion = 'normal', signal }) {
+       const key = getKey()
+-      if (!key) throw new Error('No ElevenLabs API key')
++      if (key == null) throw new MissingProviderKeyError(provider)
+       const voiceSettings = EMOTION_VOICE_SETTINGS[emotion]
+       const res = await fetch(`${BASE}/${voiceId}?output_format=mp3_44100_128`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json', 'xi-api-key': key },
+         body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', ...(voiceSettings ? { voice_settings: voiceSettings } : {}) }),
+         signal,
+       })
+       if (!res.ok) {
+         const detail = await (res.text?.() ?? Promise.resolve(''))
++        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
+         throw new Error(`ElevenLabs TTS failed: ${res.status} ${detail}`)
+       }
+       return { audio: Buffer.from(await res.arrayBuffer()), format: 'mp3' }
+     },
+   }
+ }
+diff --git a/electron/api/tts/gemini.js b/electron/api/tts/gemini.js
+index a741e0fc..7652e6e5 100644
+--- a/electron/api/tts/gemini.js
++++ b/electron/api/tts/gemini.js
+@@ -1,16 +1,17 @@
+ /**
+  * Gemini TTS 어댑터 — POST v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=API_KEY.
+  * responseModalities:['AUDIO'] + speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName.
+  * 응답은 raw PCM(L16, 예: 24kHz mono)이라 WAV 헤더로 래핑해 재생/실측 가능하게 한다.
+  * 키는 genai(Gemini) 키 재사용. 계약: https://ai.google.dev/gemini-api/docs/speech-generation
+  */
++import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
+ const MODEL = 'gemini-2.5-flash-preview-tts'
+ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
+ 
+ // Gemini prebuilt 보이스(문서화된 안정 목록, 다국어). 한국어 합성 지원.
+ const KNOWN_VOICES = [
+   { id: 'Zephyr', name: 'Zephyr', language: 'multi', previewUrl: null, traits: ['bright'], gender: 'female', genderSource: 'adapter', source: 'gemini' },
+   { id: 'Puck', name: 'Puck', language: 'multi', previewUrl: null, traits: ['upbeat'], gender: 'male', genderSource: 'adapter', source: 'gemini' },
+   { id: 'Charon', name: 'Charon', language: 'multi', previewUrl: null, traits: ['informative'], gender: 'male', genderSource: 'adapter', source: 'gemini' },
+   { id: 'Kore', name: 'Kore', language: 'multi', previewUrl: null, traits: ['firm'], gender: 'female', genderSource: 'adapter', source: 'gemini' },
+   { id: 'Fenrir', name: 'Fenrir', language: 'multi', previewUrl: null, traits: ['excitable'], gender: 'male', genderSource: 'adapter', source: 'gemini' },
+@@ -67,47 +68,48 @@ function pcmToWav(pcm, { rate = 24000, channels = 1, bits = 16 } = {}) {
+   header.writeUInt16LE(channels, 22)
+   header.writeUInt32LE(rate, 24)
+   header.writeUInt32LE(byteRate, 28)
+   header.writeUInt16LE(blockAlign, 32)
+   header.writeUInt16LE(bits, 34)
+   header.write('data', 36)
+   header.writeUInt32LE(pcm.length, 40)
+   return Buffer.concat([header, pcm])
+ }
+ 
+-export function createGeminiAdapter({ getKey, fetch }) {
++export function createGeminiAdapter({ getKey, fetch, provider = 'gemini' }) {
+   return {
+     capabilities() {
+       return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
+     },
+     listVoices() {
+       return KNOWN_VOICES.map((v) => ({ ...v }))
+     },
+     async synthesize({ text, voiceId, emotion = 'normal', signal }) {
+       const key = getKey()
+-      if (!key) throw new Error('No Gemini API key')
++      if (key == null) throw new MissingProviderKeyError(provider)
+       const stylePrompt = EMOTION_STYLE_PROMPTS[emotion]
+       const promptText = stylePrompt ? `${stylePrompt} ${text}` : text
+       const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           contents: [{ parts: [{ text: promptText }] }],
+           generationConfig: {
+             responseModalities: ['AUDIO'],
+             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || 'Kore' } } },
+           },
+         }),
+         signal,
+       })
+       if (!res.ok) {
+         const detail = await (res.text?.() ?? Promise.resolve(''))
++        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
+         throw new Error(`Gemini TTS failed: ${res.status} ${detail}`)
+       }
+       const json = await res.json()
+       const inline = json?.candidates?.[0]?.content?.parts?.find((p) => p?.inlineData)?.inlineData
+       if (!inline?.data) throw new Error('Gemini TTS: no audio data in response')
+       const pcm = Buffer.from(inline.data, 'base64')
+       return { audio: pcmToWav(pcm, { rate: parseRate(inline.mimeType) }), format: 'wav' }
+     },
+   }
+ }
+diff --git a/electron/api/tts/googletts.js b/electron/api/tts/googletts.js
+index f207b6eb..b9d4d81b 100644
+--- a/electron/api/tts/googletts.js
++++ b/electron/api/tts/googletts.js
+@@ -1,15 +1,16 @@
+ /**
+  * Google Cloud Text-to-Speech 어댑터 — POST v1/text:synthesize?key=API_KEY.
+  * body { input:{text}, voice:{languageCode,name}, audioConfig:{audioEncoding:'MP3'} } → { audioContent:base64 }.
+  * getKey/fetch 주입. 계약: https://docs.cloud.google.com/text-to-speech/docs/reference/rest/v1/text/synthesize
+  */
++import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
+ const ENDPOINT = 'https://texttospeech.googleapis.com/v1/text:synthesize'
+ const VOICES_ENDPOINT = 'https://texttospeech.googleapis.com/v1/voices'
+ 
+ // 한국어 보이스(문서화된 안정 name). voiceId = name, languageCode는 name 접두(ko-KR)에서 파생.
+ const KNOWN_VOICES = [
+   { id: 'ko-KR-Neural2-A', name: 'Neural2-A', language: 'ko-KR', previewUrl: null, traits: ['female', 'neural2'], source: 'seed' },
+   { id: 'ko-KR-Neural2-B', name: 'Neural2-B', language: 'ko-KR', previewUrl: null, traits: ['female', 'neural2'], source: 'seed' },
+   { id: 'ko-KR-Neural2-C', name: 'Neural2-C', language: 'ko-KR', previewUrl: null, traits: ['male', 'neural2'], source: 'seed' },
+   { id: 'ko-KR-Wavenet-A', name: 'Wavenet-A', language: 'ko-KR', previewUrl: null, traits: ['female', 'wavenet'], source: 'seed' },
+   { id: 'ko-KR-Wavenet-C', name: 'Wavenet-C', language: 'ko-KR', previewUrl: null, traits: ['male', 'wavenet'], source: 'seed' },
+@@ -37,21 +38,21 @@ function normalizeGoogleVoice(voice) {
+     language,
+     previewUrl: null,
+     traits: [
+       genderTrait(voice?.ssmlGender),
+       voice?.naturalSampleRateHertz ? `${voice.naturalSampleRateHertz}hz` : '',
+     ].filter(Boolean),
+     source: 'google',
+   }
+ }
+ 
+-export function createGoogleTtsAdapter({ getKey, fetch }) {
++export function createGoogleTtsAdapter({ getKey, fetch, provider = 'googletts' }) {
+   return {
+     capabilities() {
+       return { supportsEmotion: false, maxCharsPerRequest: 5000, outputFormats: ['mp3'], supportsPreview: true, maxConcurrency: 4 }
+     },
+     async listVoices({ language } = {}) {
+       const key = getKey()
+       if (!key) return KNOWN_VOICES.map((v) => ({ ...v }))
+       try {
+         const url = new URL(VOICES_ENDPOINT)
+         if (language) url.searchParams.set('languageCode', language)
+@@ -59,29 +60,30 @@ export function createGoogleTtsAdapter({ getKey, fetch }) {
+         if (!res?.ok) return KNOWN_VOICES.map((v) => ({ ...v }))
+         const json = await res.json()
+         const voices = (json?.voices || []).map(normalizeGoogleVoice).filter((v) => v.id)
+         return voices.length ? voices : KNOWN_VOICES.map((v) => ({ ...v }))
+       } catch {
+         return KNOWN_VOICES.map((v) => ({ ...v }))
+       }
+     },
+     async synthesize({ text, voiceId, signal }) {
+       const key = getKey()
+-      if (!key) throw new Error('No Google TTS API key')
++      if (key == null) throw new MissingProviderKeyError(provider)
+       const languageCode = (voiceId || '').split('-').slice(0, 2).join('-') || 'ko-KR'
+       // API 키는 URL 쿼리(?key=, 로그/URL 노출) 대신 x-goog-api-key 헤더로 전달(Google 권장).
+       const res = await fetch(ENDPOINT, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+         body: JSON.stringify({ input: { text }, voice: { languageCode, name: voiceId }, audioConfig: { audioEncoding: 'MP3' } }),
+         signal,
+       })
+       if (!res.ok) {
+         const detail = await (res.text?.() ?? Promise.resolve(''))
++        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
+         throw new Error(`Google TTS failed: ${res.status} ${detail}`)
+       }
+       const json = await res.json()
+       if (!json?.audioContent) throw new Error('Google TTS: no audioContent in response')
+       return { audio: Buffer.from(json.audioContent, 'base64'), format: 'mp3' }
+     },
+   }
+ }
+diff --git a/electron/api/tts/index.js b/electron/api/tts/index.js
+index 921bfbe0..bd6f5e84 100644
+--- a/electron/api/tts/index.js
++++ b/electron/api/tts/index.js
+@@ -7,12 +7,12 @@ import { createGeminiAdapter } from './gemini.js'
+ const FACTORIES = {
+   typecast: createTypecastAdapter,
+   elevenlabs: createElevenLabsAdapter,
+   googletts: createGoogleTtsAdapter,
+   gemini: createGeminiAdapter, // 키는 genai(Gemini) 키 재사용
+ }
+ 
+ export function createTtsAdapter(provider, deps) {
+   const make = FACTORIES[provider]
+   if (!make) throw new Error(`Unsupported TTS provider: ${provider}`)
+-  return make(deps)
++  return make({ ...deps, provider })
+ }
+diff --git a/electron/api/tts/typecast.js b/electron/api/tts/typecast.js
+index 44298825..e71c9097 100644
+--- a/electron/api/tts/typecast.js
++++ b/electron/api/tts/typecast.js
+@@ -1,14 +1,15 @@
+ /**
+  * Typecast TTS 어댑터 — 스펙 §6. 실호출은 CLAUDE.md 값(api.typecast.ai, ssfm-v21).
+  * getKey/fetch 주입으로 단위 테스트. 세그먼트=단일 요청(어댑터는 이어붙이지 않음).
+  */
++import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../keyErrors.js'
+ const ENDPOINT = 'https://api.typecast.ai/v1/text-to-speech'
+ const VOICES_ENDPOINT = 'https://api.typecast.ai/v1/voices'
+ 
+ // 알려진 Typecast 성우(CLAUDE.md). 라이브 /voices fetch가 실패하거나 키가 없을 때의 폴백,
+ // 그리고 라이브 목록에서 성별 정보를 덧씌우는 시드로 사용한다.
+ const KNOWN_VOICES = [
+   { id: 'tc_6436dbbb602bde66c6b39504', name: 'Joonkyu', language: 'ko', previewUrl: null, traits: ['male'], gender: 'male', genderSource: 'seed', source: 'seed' },
+   { id: 'tc_68257f68bc6e3c161ab5078d', name: 'Piljae', language: 'ko', previewUrl: null, traits: ['male'], gender: 'male', genderSource: 'seed', source: 'seed' },
+   { id: 'tc_6800a387534948f191cc952b', name: 'Taewoo', language: 'ko', previewUrl: null, traits: ['male'], gender: 'male', genderSource: 'seed', source: 'seed' },
+   { id: 'tc_6731b3ac075b04a944644234', name: 'Hanyoung', language: 'ko', previewUrl: null, traits: ['female'], gender: 'female', genderSource: 'seed', source: 'seed' },
+@@ -27,21 +28,21 @@ function normalizeTypecastVoice(v) {
+     previewUrl: null,
+     traits: [],
+     model: v.model,
+     emotions: v.emotions || [],
+     gender: null,
+     genderSource: null,
+     source: 'live',
+   }
+ }
+ 
+-export function createTypecastAdapter({ getKey, fetch }) {
++export function createTypecastAdapter({ getKey, fetch, provider = 'typecast' }) {
+   const voiceModelById = new Map()
+ 
+   // Core logic for fetching and caching voices — used by listVoices() and synthesize() lazy-populate
+   async function fetchAndCacheVoices() {
+     let key
+     try { key = getKey() } catch { key = null }
+     if (!key) return KNOWN_VOICES.map((v) => ({ ...v }))
+     try {
+       const ctrl = new AbortController()
+       const t = setTimeout(() => ctrl.abort(), 15000)
+@@ -64,35 +65,36 @@ export function createTypecastAdapter({ getKey, fetch }) {
+ 
+   return {
+     capabilities() {
+       return { supportsEmotion: true, maxCharsPerRequest: 2000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
+     },
+     async listVoices() {
+       return fetchAndCacheVoices()
+     },
+     async synthesize({ text, voiceId, emotion = 'normal', signal, model }) {
+       const key = getKey()
+-      if (!key) throw new Error('No Typecast API key')
++      if (key == null) throw new MissingProviderKeyError(provider)
+       // Lazy-populate voiceModelById on cache miss: if no explicit model and id not in cache, fetch voices
+       if (!model && !voiceModelById.has(voiceId)) {
+         try {
+           await fetchAndCacheVoices()
+         } catch {
+           // Best-effort: if lazy fetch fails, fall back to default model resolution
+         }
+       }
+       const useModel = model || voiceModelById.get(voiceId) || 'ssfm-v21'
+       const res = await fetch(ENDPOINT, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+         body: JSON.stringify({ text, voice_id: voiceId, model: useModel, emotion }),
+         signal,
+       })
+       if (!res.ok) {
+         const detail = await (res.text?.() ?? Promise.resolve(''))
++        if (isAuthResponse(res.status, detail)) throw new ProviderAuthError(provider, { status: res.status, detail })
+         throw new Error(`Typecast TTS failed: ${res.status} ${detail}`)
+       }
+       const buf = Buffer.from(await res.arrayBuffer())
+       return { audio: buf, format: 'wav' }
+     },
+   }
+ }
+diff --git a/electron/main.js b/electron/main.js
+index 63121a9d..d4d797fb 100644
+--- a/electron/main.js
++++ b/electron/main.js
+@@ -42,20 +42,21 @@ import { registerVideoIPC } from './ipc/video.js'
+ import { registerCharacterIPC } from './ipc/character.js'
+ import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-payload.js'
+ import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
+ import { registerDomIPC } from './ipc/dom.js'
+ import { createSharedHelpers } from './ipc/shared.js'
+ import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
+ import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
+ import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
+ import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
+ import { createFlowDiagSink } from './flow-diag.js'
++import { buildKeyResolvers } from './main/keyResolvers.js'
+ import * as Sentry from '@sentry/electron/main'
+ 
+ const __dirname = path.dirname(fileURLToPath(import.meta.url))
+ 
+ // Force the display name so dev-mode submenu items ("About …", "Quit …", etc.)
+ // match the productName from electron-builder. Has no effect on the bold app
+ // title in macOS menu bar (that comes from the Electron binary's Info.plist
+ // in dev; the packaged build sets it correctly).
+ app.setName('AutoFlowCut')
+ 
+@@ -223,26 +224,29 @@ const multiKeyStore = createMultiKeyStore({
+   keysDir: path.join(app.getPath('userData'), 'keys'),
+   fs: fsSync,
+   path,
+ })
+ // TTS 어댑터 라우팅(화자별 엔진). provider별 키 소스:
+ //  - typecast: multiKeyStore 우선, 없으면 env/~/.typecast/credentials 폴백
+ //  - elevenlabs/googletts: multiKeyStore 우선, 없으면 env/~/.{service}/credentials 폴백
+ //  - gemini: genai(Gemini) 키 재사용
+ // 같은 어댑터를 story audio(합성)와 tts IPC(listVoices)가 공유(메모이즈).
+ const ttsFetch = (...a) => globalThis.fetch(...a)
+-const ttsKeyFor = {
+-  typecast: () => multiKeyStore.getKey('typecast') || getTypecastKey(),
+-  elevenlabs: () => multiKeyStore.getKey('elevenlabs') || readCredentialsKey('elevenlabs', 'ELEVENLABS_API_KEY'),
+-  googletts: () => multiKeyStore.getKey('googletts') || readCredentialsKey('googletts', 'GOOGLE_TTS_API_KEY'),
+-  gemini: () => genaiKeyStore.getKey(),
+-}
++// AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1: multiKeyStore(암호화 저장)에 없으면 env/credentials
++// 폴백을 건너뛰고 null 반환(개발용 스위치, spec §4.9) — 어댑터의 requireKey 가 MissingProviderKeyError 로 처리.
++const { ttsKeyFor, sfxKeyFor: sfxKeyForBuilt } = buildKeyResolvers({
++  multiKeyStore,
++  genaiKeyStore,
++  getTypecastKey,
++  readCredentialsKey,
++  disableFallback: process.env.AUTOFLOWCUT_DISABLE_KEY_FALLBACK === '1',
++})
+ const ttsAdapters = {}
+ const ttsFor = (provider) => {
+   const p = provider || 'typecast'
+   if (!ttsKeyFor[p]) throw new Error(`Unsupported TTS provider: ${p}`)
+   if (!ttsAdapters[p]) ttsAdapters[p] = createTtsAdapter(p, { getKey: ttsKeyFor[p], fetch: ttsFetch })
+   return ttsAdapters[p]
+ }
+ // 성우 성별 캐시(app-global, provider:voiceId → gender) + 미리듣기 메타/서비스 (Task 8).
+ const voiceGenderCache = createVoiceGenderCache({ filePath: path.join(app.getPath('userData'), 'voice-gender.json') })
+ const voiceMetaCache = new Map() // 'provider:voiceId' -> { previewUrl, language }
+@@ -263,24 +267,21 @@ registerTtsIPC(ipcMain, {
+     // Enforce cap before filling so the just-fetched list's metadata always survives
+     if (voiceMetaCache.size + raw.length > VOICE_META_CACHE_MAX) voiceMetaCache.clear()
+     for (const v of raw) voiceMetaCache.set(voiceKey(provider, v.id), { previewUrl: v.previewUrl || null, language: v.language || 'ko' })
+     try { return applyGenderOverlay(provider, raw, voiceGenderCache.get()) } catch { return raw }
+   },
+   previewVoice: (args) => voicePreviewService.getPreview(args),
+   tagVoiceGender: (args) => voiceGenderCache.tag(args),
+ })
+ 
+ // M2b: SFX 어댑터 라우팅(sourceMode별). 키는 provider별 소스(elevenlabs는 tts와 동일 키 재사용).
+-const sfxKeyFor = {
+-  elevenlabs: () => multiKeyStore.getKey('elevenlabs') || readCredentialsKey('elevenlabs', 'ELEVENLABS_API_KEY'),
+-  library: () => null,
+-}
++const sfxKeyFor = { ...sfxKeyForBuilt, library: () => null }
+ const sfxAdapters = {}
+ const sfxFor = (provider) => {
+   const p = provider || 'elevenlabs'
+   if (!sfxKeyFor[p]) throw new Error(`Unsupported SFX provider: ${p}`)
+   if (!sfxAdapters[p]) sfxAdapters[p] = createSfxAdapter(p, { getKey: sfxKeyFor[p], fetch: ttsFetch })
+   return sfxAdapters[p]
+ }
+ 
+ const storyLlm = createStoryLlmRouter({ claude: llmClaude, codex: llmCodex })
+ 
+diff --git a/electron/main/keyResolvers.js b/electron/main/keyResolvers.js
+new file mode 100644
+index 00000000..447441f4
+--- /dev/null
++++ b/electron/main/keyResolvers.js
+@@ -0,0 +1,23 @@
++/**
++ * 키 resolver 빌더(순수·주입) — 모든 provider 를 nullable 로 통일한다(어댑터의 requireKey 가
++ * missing throw 를 담당, spec §4.1/4.8). typecast 의 throwing loader 만 try/catch 로 감싼다.
++ * disableFallback(AUTOFLOWCUT_DISABLE_KEY_FALLBACK) 이면 env/credentials 폴백을 건너뛴다(§4.9).
++ */
++export function buildKeyResolvers({ multiKeyStore, genaiKeyStore, getTypecastKey, readCredentialsKey, disableFallback }) {
++  const typecastFallback = () => {
++    if (disableFallback) return null
++    try { return getTypecastKey() ?? null } catch { return null }
++  }
++  const credFallback = (svc, envVar) => (disableFallback ? null : (readCredentialsKey(svc, envVar) ?? null))
++
++  const ttsKeyFor = {
++    typecast: () => multiKeyStore.getKey('typecast') || typecastFallback(),
++    elevenlabs: () => multiKeyStore.getKey('elevenlabs') || credFallback('elevenlabs', 'ELEVENLABS_API_KEY'),
++    googletts: () => multiKeyStore.getKey('googletts') || credFallback('googletts', 'GOOGLE_TTS_API_KEY'),
++    gemini: () => genaiKeyStore.getKey('genai') ?? null,
++  }
++  const sfxKeyFor = {
++    elevenlabs: () => multiKeyStore.getKey('elevenlabs') || credFallback('elevenlabs', 'ELEVENLABS_API_KEY'),
++  }
++  return { ttsKeyFor, sfxKeyFor }
++}
+diff --git a/src/config/apiKeyRegistry.js b/src/config/apiKeyRegistry.js
+new file mode 100644
+index 00000000..1ff0eedf
+--- /dev/null
++++ b/src/config/apiKeyRegistry.js
+@@ -0,0 +1,20 @@
++/**
++ * storyProvider ↔ keyId ↔ store 매핑(순수). Story 화자 provider 이름('gemini')과 키 store
++ * 식별자('genai')가 다르다 — 이 테이블만이 별칭의 단일 진실이다(spec §4.3). main·renderer 공용.
++ *   store 'genai': 단일 keyStore(genai-key.enc), useApiKey, 저장 전 검증.
++ *   store 'multi': keyStoreMulti, useTtsKeys, 검증 없음.
++ */
++export const API_KEY_REGISTRY = {
++  typecast:   { keyId: 'typecast',   store: 'multi', validate: false, label: 'Typecast' },
++  elevenlabs: { keyId: 'elevenlabs', store: 'multi', validate: false, label: 'ElevenLabs' },
++  gemini:     { keyId: 'genai',      store: 'genai', validate: true,  label: 'Google Gemini' },
++  googletts:  { keyId: 'googletts',  store: 'multi', validate: false, label: 'Google Cloud TTS' },
++}
++
++export function keyIdForProvider(storyProvider) {
++  return API_KEY_REGISTRY[storyProvider]?.keyId ?? storyProvider
++}
++
++export function storeForProvider(storyProvider) {
++  return API_KEY_REGISTRY[storyProvider]?.store ?? 'multi'
++}
+diff --git a/tests/config/apiKeyRegistry.test.js b/tests/config/apiKeyRegistry.test.js
+new file mode 100644
+index 00000000..88e7f512
+--- /dev/null
++++ b/tests/config/apiKeyRegistry.test.js
+@@ -0,0 +1,22 @@
++import { describe, it, expect } from 'vitest'
++import { API_KEY_REGISTRY, keyIdForProvider, storeForProvider } from '../../src/config/apiKeyRegistry.js'
++
++describe('apiKeyRegistry', () => {
++  it('maps gemini story-provider to genai keyId', () => {
++    expect(keyIdForProvider('gemini')).toBe('genai')
++    expect(storeForProvider('gemini')).toBe('genai')
++    expect(API_KEY_REGISTRY.gemini.validate).toBe(true)
++  })
++
++  it('tts providers keep their id and use multi store, no validation', () => {
++    for (const p of ['typecast', 'elevenlabs', 'googletts']) {
++      expect(keyIdForProvider(p)).toBe(p)
++      expect(storeForProvider(p)).toBe('multi')
++      expect(API_KEY_REGISTRY[p].validate).toBe(false)
++    }
++  })
++
++  it('unknown provider falls through to itself', () => {
++    expect(keyIdForProvider('mystery')).toBe('mystery')
++  })
++})
+diff --git a/tests/electron/api/keyErrors.test.js b/tests/electron/api/keyErrors.test.js
+new file mode 100644
+index 00000000..9931147e
+--- /dev/null
++++ b/tests/electron/api/keyErrors.test.js
+@@ -0,0 +1,34 @@
++import { describe, it, expect } from 'vitest'
++import { MissingProviderKeyError, ProviderAuthError, isAuthResponse } from '../../../electron/api/keyErrors.js'
++
++describe('keyErrors', () => {
++  it('MissingProviderKeyError carries provider + errorKind', () => {
++    const e = new MissingProviderKeyError('typecast')
++    expect(e).toBeInstanceOf(Error)
++    expect(e.provider).toBe('typecast')
++    expect(e.errorKind).toBe('story-audio-no-tts-key')
++    expect(e.message).toMatch(/typecast/i)
++  })
++
++  it('ProviderAuthError carries status/detail + errorKind', () => {
++    const e = new ProviderAuthError('gemini', { status: 400, detail: 'API_KEY_INVALID' })
++    expect(e.provider).toBe('gemini')
++    expect(e.status).toBe(400)
++    expect(e.errorKind).toBe('story-audio-tts-auth')
++  })
++
++  it('isAuthResponse: 401/403 are auth', () => {
++    expect(isAuthResponse(401)).toBe(true)
++    expect(isAuthResponse(403)).toBe(true)
++  })
++
++  it('isAuthResponse: Google 400 API_KEY_INVALID is auth, other 400 is not', () => {
++    expect(isAuthResponse(400, '{"error":{"status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}')).toBe(true)
++    expect(isAuthResponse(400, 'quota exceeded')).toBe(false)
++  })
++
++  it('isAuthResponse: 5xx / 429 are not auth', () => {
++    expect(isAuthResponse(500)).toBe(false)
++    expect(isAuthResponse(429)).toBe(false)
++  })
++})
+diff --git a/tests/electron/api/keyStoreMultiGenai.test.js b/tests/electron/api/keyStoreMultiGenai.test.js
+new file mode 100644
+index 00000000..5eef3b99
+--- /dev/null
++++ b/tests/electron/api/keyStoreMultiGenai.test.js
+@@ -0,0 +1,31 @@
++import { describe, it, expect } from 'vitest'
++import { createMultiKeyStore, PROVIDERS } from '../../../electron/api/keyStoreMulti.js'
++import path from 'node:path'
++
++const fakeSafeStorage = { isEncryptionAvailable: () => true, encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() }
++const makeFs = () => {
++  const files = new Map()
++  return {
++    mkdirSync: () => {},
++    existsSync: (p) => files.has(p),
++    readFileSync: (p) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p) },
++    writeFileSync: (p, d) => files.set(p, d),
++    unlinkSync: (p) => files.delete(p),
++    chmodSync: () => {},
++  }
++}
++
++describe('keyStoreMulti excludes genai (split-brain removed)', () => {
++  it('genai is not in PROVIDERS allowlist', () => {
++    expect(PROVIDERS).not.toContain('genai')
++    expect(PROVIDERS).toEqual(expect.arrayContaining(['typecast', 'elevenlabs', 'googletts']))
++  })
++
++  it('setKey(genai) is rejected and writes no file', () => {
++    const store = createMultiKeyStore({ safeStorage: fakeSafeStorage, keysDir: '/keys', fs: makeFs(), path })
++    const res = store.setKey('genai', 'secret')
++    expect(res.success).toBe(false)
++    expect(store.hasKey('genai')).toBe(false)
++    expect(store.getKey('genai')).toBe(null)
++  })
++})
+diff --git a/tests/electron/api/sfx/elevenlabsSfxKeyContract.test.js b/tests/electron/api/sfx/elevenlabsSfxKeyContract.test.js
+new file mode 100644
+index 00000000..0bde9748
+--- /dev/null
++++ b/tests/electron/api/sfx/elevenlabsSfxKeyContract.test.js
+@@ -0,0 +1,15 @@
++import { describe, it, expect } from 'vitest'
++import { createElevenLabsSfxAdapter } from '../../../../electron/api/sfx/elevenlabs.js'
++import { MissingProviderKeyError, ProviderAuthError } from '../../../../electron/api/keyErrors.js'
++
++describe('sfx elevenlabs key contract', () => {
++  it('generate throws MissingProviderKeyError without key', async () => {
++    const a = createElevenLabsSfxAdapter({ getKey: () => null, fetch: async () => ({ ok: true }), provider: 'elevenlabs' })
++    await expect(a.generate({ description: 'boom' })).rejects.toBeInstanceOf(MissingProviderKeyError)
++  })
++
++  it('generate maps 401 to ProviderAuthError', async () => {
++    const a = createElevenLabsSfxAdapter({ getKey: () => 'k', fetch: async () => ({ ok: false, status: 401, text: async () => 'no' }), provider: 'elevenlabs' })
++    await expect(a.generate({ description: 'boom' })).rejects.toBeInstanceOf(ProviderAuthError)
++  })
++})
+diff --git a/tests/electron/api/tts/adapterKeyContract.test.js b/tests/electron/api/tts/adapterKeyContract.test.js
+new file mode 100644
+index 00000000..768f9de7
+--- /dev/null
++++ b/tests/electron/api/tts/adapterKeyContract.test.js
+@@ -0,0 +1,32 @@
++import { describe, it, expect } from 'vitest'
++import { createTtsAdapter } from '../../../../electron/api/tts/index.js'
++import { MissingProviderKeyError, ProviderAuthError } from '../../../../electron/api/keyErrors.js'
++
++const okAudioFetch = async () => ({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(4), json: async () => ({}) })
++
++describe('adapter 2-tier key contract', () => {
++  for (const provider of ['typecast', 'elevenlabs', 'googletts']) {
++    it(`${provider}: synthesize throws MissingProviderKeyError when key is null`, async () => {
++      const a = createTtsAdapter(provider, { getKey: () => null, fetch: okAudioFetch, provider })
++      await expect(a.synthesize({ text: 'hi', voiceId: 'v1' })).rejects.toBeInstanceOf(MissingProviderKeyError)
++    })
++
++    it(`${provider}: listVoices does NOT throw without key (seed fallback)`, async () => {
++      const a = createTtsAdapter(provider, { getKey: () => null, fetch: okAudioFetch, provider })
++      const voices = await a.listVoices({})
++      expect(Array.isArray(voices)).toBe(true)
++    })
++
++    it(`${provider}: 401 maps to ProviderAuthError`, async () => {
++      const authFetch = async () => ({ ok: false, status: 401, text: async () => 'unauthorized' })
++      const a = createTtsAdapter(provider, { getKey: () => 'k', fetch: authFetch, provider })
++      await expect(a.synthesize({ text: 'hi', voiceId: 'v1' })).rejects.toBeInstanceOf(ProviderAuthError)
++    })
++  }
++
++  it('googletts: 400 API_KEY_INVALID maps to ProviderAuthError', async () => {
++    const g400 = async () => ({ ok: false, status: 400, text: async () => '{"error":{"details":[{"reason":"API_KEY_INVALID"}]}}' })
++    const a = createTtsAdapter('googletts', { getKey: () => 'bad', fetch: g400, provider: 'googletts' })
++    await expect(a.synthesize({ text: 'hi', voiceId: 'ko-KR-A' })).rejects.toBeInstanceOf(ProviderAuthError)
++  })
++})
+diff --git a/tests/electron/api/tts/adapters.test.js b/tests/electron/api/tts/adapters.test.js
+index e335c47d..770ef358 100644
+--- a/tests/electron/api/tts/adapters.test.js
++++ b/tests/electron/api/tts/adapters.test.js
+@@ -1,14 +1,15 @@
+ import { describe, it, expect } from 'vitest'
+ import { createElevenLabsAdapter } from '../../../../electron/api/tts/elevenlabs.js'
+ import { createGoogleTtsAdapter } from '../../../../electron/api/tts/googletts.js'
+ import { createGeminiAdapter } from '../../../../electron/api/tts/gemini.js'
++import { MissingProviderKeyError } from '../../../../electron/api/keyErrors.js'
+ 
+ function expectVoiceMetadata(voice) {
+   expect(typeof voice.id).toBe('string')
+   expect(typeof voice.name).toBe('string')
+   expect(typeof voice.language).toBe('string')
+   expect('previewUrl' in voice).toBe(true)
+   expect(Array.isArray(voice.traits)).toBe(true)
+   expect(typeof voice.source).toBe('string')
+ }
+ 
+@@ -19,21 +20,21 @@ describe('ElevenLabs 어댑터', () => {
+     const a = createElevenLabsAdapter({ getKey: () => 'el-key', fetch })
+     const { audio, format } = await a.synthesize({ text: '안녕', voiceId: 'v_rachel' })
+     expect(format).toBe('mp3')
+     expect([...audio]).toEqual([1, 2, 3])
+     expect(cap.url).toContain('/v1/text-to-speech/v_rachel')
+     expect(cap.opts.headers['xi-api-key']).toBe('el-key')
+     expect(JSON.parse(cap.opts.body).text).toBe('안녕')
+     expect(JSON.parse(cap.opts.body).model_id).toBeTruthy()
+   })
+   it('키 없으면 throw / HTTP 실패 throw', async () => {
+-    await expect(createElevenLabsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/ElevenLabs API key/)
++    await expect(createElevenLabsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'v' })).rejects.toBeInstanceOf(MissingProviderKeyError)
+     const fetch = async () => ({ ok: false, status: 401, text: async () => 'nope' })
+     await expect(createElevenLabsAdapter({ getKey: () => 'k', fetch }).synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/401/)
+   })
+   it('synthesize: emotion=happy/sad/angry면 emotion별로 다른 voice_settings를 body에 싣는다', async () => {
+     const captured = []
+     const fetch = async (url, opts) => { captured.push(JSON.parse(opts.body)); return { ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer } }
+     const a = createElevenLabsAdapter({ getKey: () => 'el-key', fetch })
+     await a.synthesize({ text: '안녕', voiceId: 'v', emotion: 'happy' })
+     await a.synthesize({ text: '안녕', voiceId: 'v', emotion: 'sad' })
+     await a.synthesize({ text: '안녕', voiceId: 'v', emotion: 'angry' })
+@@ -209,21 +210,21 @@ describe('Google Cloud TTS 어댑터', () => {
+     expect(format).toBe('mp3')
+     expect([...audio]).toEqual([9, 8, 7])
+     expect(cap.opts.headers['x-goog-api-key']).toBe('g-key') // URL 쿼리 아님(헤더)
+     expect(cap.url).not.toContain('key=')
+     const body = JSON.parse(cap.opts.body)
+     expect(body.voice.name).toBe('ko-KR-Neural2-A')
+     expect(body.voice.languageCode).toBe('ko-KR')
+     expect(body.audioConfig.audioEncoding).toBe('MP3')
+   })
+   it('키 없음/HTTP 실패/audioContent 없음 throw', async () => {
+-    await expect(createGoogleTtsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'ko-KR-Neural2-A' })).rejects.toThrow(/Google TTS API key/)
++    await expect(createGoogleTtsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'ko-KR-Neural2-A' })).rejects.toBeInstanceOf(MissingProviderKeyError)
+     const noContent = async () => ({ ok: true, json: async () => ({}) })
+     await expect(createGoogleTtsAdapter({ getKey: () => 'k', fetch: noContent }).synthesize({ text: 'x', voiceId: 'ko-KR-Neural2-A' })).rejects.toThrow(/audioContent/)
+   })
+   it('listVoices: fallback voices도 검색용 metadata를 포함한다', async () => {
+     const voices = await createGoogleTtsAdapter({ getKey: () => null, fetch: async () => {} }).listVoices()
+     expect(voices.length).toBeGreaterThan(0)
+     voices.forEach(expectVoiceMetadata)
+     expect(voices[0].source).toBe('seed')
+   })
+   it('listVoices: Google voices:list live 응답을 정규화한다', async () => {
+@@ -315,21 +316,21 @@ describe('Gemini TTS 어댑터', () => {
+       expect(body).toEqual({
+         contents: [{ parts: [{ text: '안녕' }] }],
+         generationConfig: {
+           responseModalities: ['AUDIO'],
+           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+         },
+       })
+     }
+   })
+   it('키 없음/데이터 없음 throw', async () => {
+-    await expect(createGeminiAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/Gemini API key/)
++    await expect(createGeminiAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toBeInstanceOf(MissingProviderKeyError)
+     const noData = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{}] } }] }) })
+     await expect(createGeminiAdapter({ getKey: () => 'k', fetch: noData }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/no audio/)
+   })
+   it('listVoices: 공식 Gemini TTS 30개 보이스와 trait metadata를 반환한다', async () => {
+     const voices = await createGeminiAdapter({ getKey: () => 'k', fetch: async () => {} }).listVoices()
+     expect(voices).toHaveLength(30)
+     voices.forEach(expectVoiceMetadata)
+     expect(voices.find((v) => v.id === 'Zephyr')).toMatchObject({ name: 'Zephyr', traits: ['bright'] })
+     expect(voices.find((v) => v.id === 'Kore')).toMatchObject({ name: 'Kore', traits: ['firm'] })
+   })
+diff --git a/tests/electron/api/tts/typecast.test.js b/tests/electron/api/tts/typecast.test.js
+index f4ac76da..6c2f76ec 100644
+--- a/tests/electron/api/tts/typecast.test.js
++++ b/tests/electron/api/tts/typecast.test.js
+@@ -1,12 +1,13 @@
+ import { describe, it, expect } from 'vitest'
+ import { createTypecastAdapter } from '../../../../electron/api/tts/typecast.js'
++import { MissingProviderKeyError } from '../../../../electron/api/keyErrors.js'
+ import fixture from '../../../fixtures/typecast-voices.json'
+ 
+ describe('createTypecastAdapter', () => {
+   it('capabilities: 감정 지원·wav', () => {
+     const a = createTypecastAdapter({ getKey: () => 'tc', fetch: async () => {} })
+     expect(a.capabilities().supportsEmotion).toBe(true)
+     expect(a.capabilities().outputFormats).toContain('wav')
+   })
+ 
+   it('synthesize: x-api-key 헤더·voiceId·text·emotion을 요청에 싣고 오디오 Buffer 반환 (실제 Typecast 계약: scripts/generate_tts_typecast.py)', async () => {
+@@ -82,21 +83,21 @@ describe('createTypecastAdapter', () => {
+       getKey: () => { throw new Error('no key configured') },
+       fetch: async () => { throw new Error('should not be called') },
+     })
+     const voices = await a.listVoices()
+     expect(voices.length).toBeGreaterThan(0)
+     expect(voices.every((v) => v.source === 'seed')).toBe(true)
+   })
+ 
+   it('키 없으면 throw', async () => {
+     const a = createTypecastAdapter({ getKey: () => null, fetch: async () => {} })
+-    await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/Typecast API key/)
++    await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toBeInstanceOf(MissingProviderKeyError)
+   })
+ 
+   it('HTTP 실패 시 throw', async () => {
+     const fetch = async () => ({ ok: false, status: 401, text: async () => 'unauthorized' })
+     const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+     await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/401/)
+   })
+ 
+   it('synthesize resolves the per-voice model discovered via listVoices (BUG 1: v30 voices 422 with hardcoded v21)', async () => {
+     const calls = []
+diff --git a/tests/electron/main/keyResolvers.test.js b/tests/electron/main/keyResolvers.test.js
+new file mode 100644
+index 00000000..8726da05
+--- /dev/null
++++ b/tests/electron/main/keyResolvers.test.js
+@@ -0,0 +1,49 @@
++import { describe, it, expect } from 'vitest'
++import { buildKeyResolvers } from '../../../electron/main/keyResolvers.js'
++
++const store = (map) => ({ getKey: (p) => map[p] ?? null })
++
++describe('buildKeyResolvers (nullable, dev switch)', () => {
++  it('typecast: store hit wins, never throws', () => {
++    const { ttsKeyFor } = buildKeyResolvers({
++      multiKeyStore: store({ typecast: 'store-key' }), genaiKeyStore: store({}),
++      getTypecastKey: () => { throw new Error('should not be called') },
++      readCredentialsKey: () => null, disableFallback: false,
++    })
++    expect(ttsKeyFor.typecast()).toBe('store-key')
++  })
++
++  it('typecast: falls back to loader, returns null instead of throwing when absent', () => {
++    const { ttsKeyFor } = buildKeyResolvers({
++      multiKeyStore: store({}), genaiKeyStore: store({}),
++      getTypecastKey: () => { throw new Error('not found') },
++      readCredentialsKey: () => null, disableFallback: false,
++    })
++    expect(ttsKeyFor.typecast()).toBe(null)
++  })
++
++  it('disableFallback: ignores env/credentials, store-only', () => {
++    const { ttsKeyFor } = buildKeyResolvers({
++      multiKeyStore: store({}), genaiKeyStore: store({}),
++      getTypecastKey: () => 'env-key', readCredentialsKey: () => 'cred-key', disableFallback: true,
++    })
++    expect(ttsKeyFor.typecast()).toBe(null)
++    expect(ttsKeyFor.elevenlabs()).toBe(null)
++  })
++
++  it('gemini resolves from genaiKeyStore only', () => {
++    const { ttsKeyFor } = buildKeyResolvers({
++      multiKeyStore: store({}), genaiKeyStore: store({ genai: 'g' }),
++      getTypecastKey: () => null, readCredentialsKey: () => null, disableFallback: false,
++    })
++    expect(ttsKeyFor.gemini()).toBe('g')
++  })
++
++  it('sfx elevenlabs mirrors tts elevenlabs resolution', () => {
++    const { sfxKeyFor } = buildKeyResolvers({
++      multiKeyStore: store({ elevenlabs: 'e' }), genaiKeyStore: store({}),
++      getTypecastKey: () => null, readCredentialsKey: () => null, disableFallback: false,
++    })
++    expect(sfxKeyFor.elevenlabs()).toBe('e')
++  })
++})

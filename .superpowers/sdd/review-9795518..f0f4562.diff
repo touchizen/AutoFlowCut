@@ -1,0 +1,93 @@
+# Review package: 9795518..f0f4562
+
+## Commits
+f0f4562 feat(story-m2a): scene regrouping by measured 6-10s target
+
+## Files changed
+ electron/story/regroup.js            | 33 ++++++++++++++++++++++++++++++++
+ tests/electron/story/regroup.test.js | 37 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 70 insertions(+)
+
+## Diff
+diff --git a/electron/story/regroup.js b/electron/story/regroup.js
+new file mode 100644
+index 0000000..8abc089
+--- /dev/null
++++ b/electron/story/regroup.js
+@@ -0,0 +1,33 @@
++/**
++ * 세그먼트 시퀀스 → 목표 6~10초 씬 그룹. 스펙 §4.
++ * 순서 보존, 세그먼트 안 쪼갬. 누적 minMs 도달 시 마감. 다음 추가가 maxMs 초과면 먼저 마감.
++ * 단일 세그먼트가 maxMs 초과면 단독 씬.
++ */
++export function regroupScenes(segments, { minMs = 6000, maxMs = 10000 } = {}) {
++  const scenes = []
++  let cur = []
++  let curMs = 0
++
++  const flush = () => {
++    if (!cur.length) return
++    const first = cur[0]
++    const last = cur[cur.length - 1]
++    const startMs = first.startMs || 0
++    const endMs = (last.startMs || 0) + (last.durationMs || 0)
++    scenes.push({ segmentIds: cur.map((s) => s.id), startMs, endMs, durationMs: endMs - startMs })
++    cur = []
++    curMs = 0
++  }
++
++  for (const s of segments) {
++    const dur = s.durationMs || 0
++    // 현재 씬에 이미 세그먼트가 있고, 추가 시 maxMs 초과 예상이면 먼저 마감
++    if (cur.length && curMs + dur > maxMs) flush()
++    cur.push(s)
++    curMs += dur
++    // 목표 하한 도달 → 마감
++    if (curMs >= minMs) flush()
++  }
++  flush()
++  return scenes
++}
+diff --git a/tests/electron/story/regroup.test.js b/tests/electron/story/regroup.test.js
+new file mode 100644
+index 0000000..af81bc0
+--- /dev/null
++++ b/tests/electron/story/regroup.test.js
+@@ -0,0 +1,37 @@
++import { describe, it, expect } from 'vitest'
++import { regroupScenes } from '../../../electron/story/regroup.js'
++
++// startMs는 무시하고 durationMs 누적으로 그룹 판정 (startMs는 결과 계산용)
++function seg(id, durationMs, startMs) { return { id, type: 'narration', durationMs, startMs } }
++
++describe('regroupScenes', () => {
++  it('누적 6초 도달 시 씬 마감', () => {
++    const segs = [seg('a', 3000, 0), seg('b', 3500, 3150), seg('c', 3000, 6800)]
++    const scenes = regroupScenes(segs, { minMs: 6000, maxMs: 10000 })
++    // a+b = 6500ms >= 6000 → 씬1 [a,b]; c → 씬2 [c]
++    expect(scenes.map((s) => s.segmentIds)).toEqual([['a', 'b'], ['c']])
++    expect(scenes[0].startMs).toBe(0)
++  })
++
++  it('다음 세그먼트가 maxMs 초과 유발하면 현재 씬 먼저 마감', () => {
++    const segs = [seg('a', 5000, 0), seg('b', 6000, 5150)]
++    const scenes = regroupScenes(segs, { minMs: 6000, maxMs: 10000 })
++    // a=5000(<6000) 이지만 a+b=11000 > 10000 → a 단독 마감, b 단독
++    expect(scenes.map((s) => s.segmentIds)).toEqual([['a'], ['b']])
++  })
++
++  it('단일 세그먼트가 maxMs 초과면 단독 씬', () => {
++    const segs = [seg('a', 12000, 0)]
++    const scenes = regroupScenes(segs, { minMs: 6000, maxMs: 10000 })
++    expect(scenes).toHaveLength(1)
++    expect(scenes[0].segmentIds).toEqual(['a'])
++    expect(scenes[0].durationMs).toBe(12000)
++  })
++
++  it('endMs = 마지막 세그먼트 startMs + durationMs', () => {
++    const segs = [seg('a', 3000, 0), seg('b', 4000, 3150)]
++    const scenes = regroupScenes(segs, { minMs: 6000, maxMs: 10000 })
++    expect(scenes[0].endMs).toBe(7150)
++    expect(scenes[0].durationMs).toBe(7150) // startMs 0 기준
++  })
++})

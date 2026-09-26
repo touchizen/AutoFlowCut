@@ -1,0 +1,581 @@
+# Review package: 9dab08b..72a5d82
+
+## Commits
+72a5d82 feat(story): StoryView scriptText 단일 상태 + scriptPhase + hydrate
+
+## Files changed
+ src/components/story/StoryView.jsx                 | 117 +++++++++++-----
+ .../story/StoryView.i18nNesting.test.jsx           |   3 +-
+ tests/components/story/StoryView.phase.test.jsx    | 152 +++++++++++++++++++++
+ tests/components/story/StoryView.script.test.jsx   |   3 +-
+ tests/components/story/StoryView.test.jsx          |  22 ++-
+ 5 files changed, 257 insertions(+), 40 deletions(-)
+
+## Diff
+diff --git a/src/components/story/StoryView.jsx b/src/components/story/StoryView.jsx
+index 51f7e7f..e0ffe08 100644
+--- a/src/components/story/StoryView.jsx
++++ b/src/components/story/StoryView.jsx
+@@ -1,21 +1,21 @@
+ /**
+  * StoryView — Story 파이프라인 뷰 골격 (스펙 §6).
+  *
+  * 프레젠테이션 컴포넌트 — Task 9 useStoryPipeline() 훅을 직접 호출하지 않고
+  * `{ state, streamingText, start, abort }`를 prop으로 받는다(테스트 용이성).
+  * 진행 순서: ① 대본 → ② 씬 분리 → ③ 오디오(M1 미구현, M2 예정) → ④ 프롬프트.
+  * 오디오 단계는 M1 진행 흐름에서 자동 스킵 — 씬 분리가 끝나면 바로 프롬프트로 넘어간다.
+  *
+  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
+  */
+-import { useState } from 'react'
++import { useState, useEffect, useRef } from 'react'
+ import { useI18n, I18nProvider } from '../../hooks/useI18n'
+ import PromptInput from '../PromptInput'
+ import StoryStepper, { STEP_META } from './StoryStepper'
+ import './StoryView.css'
+ 
+ // audio(M2)는 M1 진행 흐름에서 제외 — done 여부를 따지지 않고 건너뛴다.
+ const PROGRESSABLE_STEPS = ['script', 'scenes', 'prompts']
+ 
+ function computeCurrentStep(steps) {
+   for (const key of PROGRESSABLE_STEPS) {
+@@ -58,35 +58,81 @@ function useHasI18n() {
+ export default function StoryView({ pipeline }) {
+   const t = useSafeT()
+   const hasI18n = useHasI18n()
+   const { state, streamingText, start, abort, scenes = [], openError } = pipeline
+   const steps = state?.steps || {}
+   const currentStep = computeCurrentStep(steps)
+   const stepData = steps[currentStep] || { status: 'pending' }
+   const isRunning = stepData.status === 'running'
+   const isError = stepData.status === 'error'
+ 
++  // 재설계 §0.1 — 대본 단일 source of truth. pipeline.scriptText(main이 story/script.md에서
++  // 복원/커밋한 값)를 초기값으로 하는 controlled state. 편집(PromptInput)·붙여넣기(setup)가
++  // 모두 이 하나를 쓴다(기존 scriptDraft/pastedScript 혼재 제거).
++  const [scriptText, setScriptText] = useState(pipeline.scriptText || '')
++  // §0.3 — 생성 완료/재오픈 지연 도착 시 main 저장값이 진실. pipeline.scriptText가 바뀌면
++  // 로컬 편집 상태를 그 값으로 커밋한다(편집 중에는 pipeline 값이 안 바뀌므로 안 덮음).
++  useEffect(() => {
++    setScriptText(pipeline.scriptText || '')
++  }, [pipeline.scriptText])
++
++  // 재설계 §1 — script 스텝 2-phase. 재오픈 복원 시 scriptText가 있으면 바로 대본 작업
++  // 화면(editor). setup→editor 승격은 명시 트리거(시작/붙여넣기 시작/스텝퍼 script 클릭)에서만.
++  const [scriptPhase, setScriptPhase] = useState(pipeline.scriptText?.trim() ? 'editor' : 'setup')
++
+   // 7-⑴: 스텝퍼에서 done 상태 스텝을 클릭하면 진행이 더 앞서가 있어도 해당 패널을 다시 볼 수
+   // 있다 — 실행 버튼/러닝 상태 등 액션은 여전히 실제 진행 단계(currentStep) 기준으로 동작한다.
+   const [viewedStep, setViewedStep] = useState(null)
+-  const displayStep = (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
++  // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
++  // displayStep을 'script'로 강제해 대본 작업 화면을 유지한다. 다음 스텝 실행(분리시작)이나
++  // 스텝퍼에서 다른 스텝 클릭 시 scriptPhase를 벗고(null) scenes/prompts 패널로 진행.
++  const displayStep = scriptPhase
++    ? 'script'
++    : (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
++
++  const handleStepClick = (key) => {
++    setViewedStep(key)
++    // done된 script를 다시 클릭하면 대본 작업 화면(editor)으로 복귀, 다른 스텝은 phase 해제.
++    setScriptPhase(key === 'script' ? 'editor' : null)
++  }
++
++  // ① 제목/옵션 폼 — R4-2 폼 hydrate: 재오픈 시 state.input.title/options에서 복원(없으면 기본값).
++  const hydrateInput = pipeline.state?.input
++  const hydrateOpts = hydrateInput?.options || {}
++  const [title, setTitle] = useState(hydrateInput?.title || '')
++  const [genre, setGenre] = useState(hydrateOpts.genre || 'bespoke') // story-engine 기본: 장르 불명확 시 bespoke(범용)
++  const [length, setLength] = useState(hydrateOpts.lengthValue || '10')          // 길이 값
++  const [lengthUnit, setLengthUnit] = useState(hydrateOpts.lengthUnit || 'min') // 길이 단위
++  const [model, setModel] = useState(hydrateOpts.model || 'claude-opus-4-8')
++  const [language, setLanguage] = useState(hydrateOpts.language || 'ko')
+ 
+-  // ① 제목 입력 폼 — M1은 편집 저장 없이 로컬 폼 상태만(대본 생성 시작 파라미터로 사용).
+-  const [title, setTitle] = useState('')
+-  const [genre, setGenre] = useState('bespoke') // story-engine 기본: 장르 불명확 시 bespoke(범용)
+-  const [length, setLength] = useState('10')          // 길이 값
+-  const [lengthUnit, setLengthUnit] = useState('min') // 길이 단위
+-  const [model, setModel] = useState('claude-opus-4-8')
+-  const [language, setLanguage] = useState('ko')
+-  const [scriptDraft, setScriptDraft] = useState('')
+-  // M1 스펙 §1 2번 경로 — 대본을 직접 붙여넣어 LLM 호출 없이 바로 시작.
+-  const [pastedScript, setPastedScript] = useState('')
++  // open()/getState() 응답은 마운트 뒤에 도착한다(useStoryAutoOpen이 story 뷰 표시와 동시에
++  // open을 호출) — state.input이 늦게 오면 한 번만 폼을 hydrate한다. 이미 초기값으로 hydrate된
++  // 경우에도 같은 값을 다시 세팅할 뿐이라 무해하고, 이후 사용자의 폼 편집은 덮지 않는다.
++  const hydratedRef = useRef(!!hydrateInput)
++  useEffect(() => {
++    const input = state?.input
++    if (!input) {
++      // 프로젝트 전환 등으로 state가 리셋되면 다음 도착분을 다시 hydrate할 수 있게 해제.
++      if (!state) hydratedRef.current = false
++      return
++    }
++    if (hydratedRef.current) return
++    hydratedRef.current = true
++    if (input.title) setTitle(input.title)
++    const o = input.options || {}
++    if (o.genre) setGenre(o.genre)
++    if (o.model) setModel(o.model)
++    if (o.language) setLanguage(o.language)
++    if (o.lengthValue) setLength(o.lengthValue)
++    if (o.lengthUnit) setLengthUnit(o.lengthUnit)
++  }, [state])
+ 
+   // 버튼 aria-label(=접근성 이름)로 실제 라벨을 노출하고, 화면에 보이는 텍스트는 스텝 이름과
+   // 겹치지 않는 짧은 문구로 둔다. 스테퍼의 단계명 텍스트(예: "대본")와 버튼 라벨(예: "대본 생성")이
+   // 동시에 렌더되면 텍스트 검색(getByText)이 두 노드를 모두 찾아 모호해지기 때문.
+   const actionAriaLabel = isError
+     ? t('story.action.retry', '재실행')
+     : currentStep === 'script'
+       ? t('story.action.generateScript', '대본 생성')
+       : t('story.action.run', `${STEP_META[currentStep].label} 실행`)
+ 
+@@ -98,61 +144,81 @@ export default function StoryView({ pipeline }) {
+ 
+   const handlePrimaryAction = () => {
+     if (currentStep === 'script') {
+       // stepMachine.steps.script는 params.input(대본 생성 소재)과 params.options(LLM 호출
+       // opts로 그대로 spread)를 분리해서 읽는다 — genre/length/language를 input에 섞으면
+       // options로 전달되지 않아 LLM이 이를 무시하고(예: 한국어 입력에도 영어 대본) 버그가 된다.
+       start('script', {
+         input: { type: 'title', title },
+         options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit },
+       })
++      // §1 전환 — '시작' 명시 트리거로 대본 작업 화면(editor)에 진입.
++      setScriptPhase('editor')
+     } else {
+       start(currentStep, {})
++      // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
++      setScriptPhase(null)
+     }
+   }
+ 
+   const handlePasteStart = () => {
+-    start('script', { pastedScript, options: { language, model } })
++    start('script', { pastedScript: scriptText, options: { language, model } })
++    // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
++    setScriptPhase('editor')
+   }
+ 
+   const scriptEditor = (
+     <div className="story-script-editor">
+       <PromptInput
+-        value={scriptDraft || streamingText}
+-        onChange={setScriptDraft}
++        value={scriptText}
++        onChange={setScriptText}
+         references={[]}
+         disableMentions
+         showCharCount
+         placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
+       />
+     </div>
+   )
+ 
+   return (
+     <div className="story-view">
+-      <StoryStepper steps={steps} currentStep={currentStep} t={t} onStepClick={setViewedStep} />
++      <StoryStepper steps={steps} currentStep={currentStep} t={t} onStepClick={handleStepClick} />
+ 
+       {openError && (
+         <div className="story-open-error-banner" role="alert">
+           ⚠️ {t('story.error.openFailed', '프로젝트 폴더를 열 수 없습니다')}: {openError}
+         </div>
+       )}
+ 
+       {isError && (
+         <div className="story-error-banner" role="alert">
+           ⚠️ {t('story.error.prefix', '오류')}: {stepData.error}
+         </div>
+       )}
+ 
+       <div className="story-step-panel">
+         {displayStep === 'script' && (
+           <div className="story-script-panel">
++            {isRunning ? (
++              // 생성 중 스트리밍 preview — phase와 무관하게 스트림만 표시(§B).
++              <div className="story-script-stream" aria-live="polite">{streamingText}</div>
++            ) : scriptPhase === 'editor' ? (
++              // §1-B 대본 작업 화면 골격 — 마커만. 버튼(다시쓰기/이어쓰기/분리시작/설정으로)은 Task 8·9.
++              // PromptInput 은 useI18n() provider 를 요구한다. 실제 앱에선 상위(Shell.jsx)
++              // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
++              // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
++              <div className="story-editor-phase" data-testid="story-editor">
++                {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
++              </div>
++            ) : (
++              // §1-A 설정 화면 골격 — 기존 제목/옵션 폼 + 붙여넣기. 세로 배치/임포트 drop은 Task 8.
++              <div className="story-setup-phase" data-testid="story-setup">
+             <div className="story-title-row">
+               <input
+                 className="story-input story-title-input"
+                 placeholder={t('story.form.titlePlaceholder', '제목')}
+                 value={title}
+                 onChange={(e) => setTitle(e.target.value)}
+                 disabled={isRunning}
+               />
+             </div>
+             <div className="story-options-row">
+@@ -204,50 +270,39 @@ export default function StoryView({ pipeline }) {
+                 aria-label={t('story.form.lengthUnitLabel', '길이 단위')}
+                 value={lengthUnit}
+                 onChange={(e) => setLengthUnit(e.target.value)}
+                 disabled={isRunning}
+               >
+                 <option value="min">{language === 'en' ? 'min' : '분'}</option>
+                 <option value={language === 'en' ? 'words' : 'chars'}>{language === 'en' ? 'words' : '자'}</option>
+               </select>
+             </div>
+ 
+-            {isRunning ? (
+-              <div className="story-script-stream" aria-live="polite">{streamingText}</div>
+-            ) : (
+-              // PromptInput 은 useI18n() provider 를 요구한다. 실제 앱에선 상위(Shell.jsx)
+-              // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
+-              // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
+-              // 대본은 @멘션이 필요 없어 disableMentions 로 빨간 밑줄을 끄고, showCharCount 로
+-              // 줄 수+문자 수를 노출한다.
+-              hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
+-            )}
+-
+-            {!isRunning && (
+               <div className="story-paste-form">
+                 <textarea
+                   className="story-paste-textarea"
+-                  value={pastedScript}
+-                  onChange={(e) => setPastedScript(e.target.value)}
++                  value={scriptText}
++                  onChange={(e) => setScriptText(e.target.value)}
+                   placeholder={t('story.form.pastePlaceholder', '대본을 직접 붙여넣기')}
+                   disabled={isRunning}
+                 />
+                 <button
+                   type="button"
+                   className="story-btn-secondary"
+                   onClick={handlePasteStart}
+-                  disabled={isRunning || !pastedScript.trim()}
++                  disabled={isRunning || !scriptText.trim()}
+                   aria-label={t('story.action.pasteStart', '대본으로 시작')}
+                 >
+                   {t('story.action.pasteStartIcon', '📝 붙여넣기로 진행')}
+                 </button>
+               </div>
++              </div>
+             )}
+           </div>
+         )}
+ 
+         {displayStep === 'scenes' && (
+           <div className="story-scenes-panel">
+             <table className="story-readonly-table">
+               <thead>
+                 <tr>
+                   <th>{t('story.scenes.no', '#')}</th>
+diff --git a/tests/components/story/StoryView.i18nNesting.test.jsx b/tests/components/story/StoryView.i18nNesting.test.jsx
+index 13600c9..385c5fd 100644
+--- a/tests/components/story/StoryView.i18nNesting.test.jsx
++++ b/tests/components/story/StoryView.i18nNesting.test.jsx
+@@ -15,21 +15,22 @@ function LangSwitcher() {
+ 
+ describe('StoryView 대본 편집기 I18nProvider 중첩', () => {
+   beforeEach(() => {
+     localStorage.setItem('autoflowcut_lang', 'ko')
+   })
+ 
+   it('상위 provider 언어 전환이 편집기 PromptInput footer 에 전파된다', () => {
+     render(
+       <I18nProvider>
+         <LangSwitcher />
+-        <StoryView pipeline={pipelineWith({ streamingText: '대본 본문' })} />
++        {/* Task 7: PromptInput 편집기는 editor phase(scriptText 있음)에서 렌더된다 */}
++        <StoryView pipeline={pipelineWith({ scriptText: '대본 본문' })} />
+       </I18nProvider>,
+     )
+     // 초기(ko): "1개 프롬프트"
+     expect(screen.getByText('1개 프롬프트')).toBeInTheDocument()
+     // 상위 provider 로 언어 전환
+     fireEvent.click(screen.getByText('to-en'))
+     // 중첩 provider 가 없으면 상위 전환이 전파돼 영어 라벨로 바뀐다.
+     expect(screen.getByText('1 prompts')).toBeInTheDocument()
+     expect(screen.queryByText('1개 프롬프트')).toBeNull()
+   })
+diff --git a/tests/components/story/StoryView.phase.test.jsx b/tests/components/story/StoryView.phase.test.jsx
+new file mode 100644
+index 0000000..423596d
+--- /dev/null
++++ b/tests/components/story/StoryView.phase.test.jsx
+@@ -0,0 +1,152 @@
++/**
++ * Task 7 — scriptText 단일 상태 + scriptPhase + displayStep 강제 + 폼 hydrate (스펙 §0/§1).
++ * setup/editor 화면의 실제 마크업은 Task 8·9 — 여기서는 phase 골격 마커
++ * (data-testid="story-setup"/"story-editor")와 라우팅/hydrate만 검증한다.
++ */
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen, fireEvent } from '@testing-library/react'
++import StoryView from '../../../src/components/story/StoryView.jsx'
++
++const pipeline = (over = {}) => ({
++  state: {
++    steps: {
++      script: { status: 'pending' }, scenes: { status: 'pending' },
++      audio: { status: 'pending' }, prompts: { status: 'pending' },
++    },
++  },
++  scenes: [],
++  streamingText: '',
++  scriptText: '',
++  start: vi.fn(), abort: vi.fn(), openError: null,
++  ...over,
++})
++
++describe('StoryView scriptPhase (Task 7)', () => {
++  it('pipeline.scriptText가 있으면(재오픈 복원) 초기 phase=editor — 대본 작업 화면 마커', () => {
++    render(<StoryView pipeline={pipeline({ scriptText: '복원된 대본' })} />)
++    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
++    expect(screen.queryByTestId('story-setup')).toBeNull()
++  })
++
++  it('pipeline.scriptText가 없으면 초기 phase=setup — 설정 화면 마커', () => {
++    render(<StoryView pipeline={pipeline()} />)
++    expect(screen.getByTestId('story-setup')).toBeInTheDocument()
++    expect(screen.queryByTestId('story-editor')).toBeNull()
++  })
++
++  it('script done이어도 scriptPhase가 남아 있으면 displayStep=script (scenes 패널로 안 넘어감)', () => {
++    const p = pipeline({
++      scriptText: '완성 대본',
++      scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
++    })
++    p.state.steps.script.status = 'done'
++    render(<StoryView pipeline={p} />)
++    // currentStep은 scenes지만 대본 작업 화면 유지
++    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
++    expect(screen.queryByText('화자')).toBeNull()
++  })
++
++  it('다음 스텝 실행(씬 분리)을 시작하면 scriptPhase가 해제돼 scenes 패널로 진행한다', () => {
++    const p = pipeline({
++      scriptText: '완성 대본',
++      scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
++    })
++    p.state.steps.script.status = 'done'
++    render(<StoryView pipeline={p} />)
++    fireEvent.click(screen.getByRole('button', { name: /씬 분리 실행/ }))
++    expect(p.start).toHaveBeenCalledWith('scenes', expect.anything())
++    expect(screen.queryByTestId('story-editor')).toBeNull()
++    expect(screen.getByText('화자')).toBeTruthy()
++  })
++
++  it('스텝퍼에서 done된 script를 클릭하면 scriptPhase=editor로 대본 작업 화면으로 돌아온다', () => {
++    const p = pipeline({
++      scriptText: '완성 대본',
++      scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
++    })
++    p.state.steps.script.status = 'done'
++    p.state.steps.scenes.status = 'done'
++    render(<StoryView pipeline={p} />)
++    // 씬 분리 패널로 나갔다가
++    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
++    expect(screen.queryByTestId('story-editor')).toBeNull()
++    expect(screen.getByText('화자')).toBeTruthy()
++    // done된 대본 스텝 클릭 → editor 복귀
++    fireEvent.click(screen.getByRole('button', { name: '대본' }))
++    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
++  })
++
++  it('setup 시작(대본 생성)을 누르면 editor phase로 전환된다', () => {
++    const p = pipeline()
++    render(<StoryView pipeline={p} />)
++    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
++    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
++    expect(screen.queryByTestId('story-setup')).toBeNull()
++  })
++})
++
++describe('StoryView scriptText 단일 상태 (Task 7)', () => {
++  it('editor의 PromptInput은 pipeline.scriptText를 초기값으로 렌더한다', () => {
++    const text = '복원된 대본'
++    render(<StoryView pipeline={pipeline({ scriptText: text })} />)
++    expect(screen.getByTestId('prompt-textarea-wrap')).toBeInTheDocument()
++    expect(screen.getByTestId('char-count')).toHaveTextContent(String(text.length))
++  })
++
++  it('pipeline.scriptText 변경(생성 완료 커밋/재오픈 지연 도착) 시 편집 상태가 동기화된다', () => {
++    const { rerender } = render(<StoryView pipeline={pipeline({ scriptText: '초안' })} />)
++    const committed = '저장된 최종 대본'
++    rerender(<StoryView pipeline={pipeline({ scriptText: committed })} />)
++    expect(screen.getByTestId('char-count')).toHaveTextContent(String(committed.length))
++  })
++
++  it('setup의 붙여넣기 텍스트도 scriptText 하나로 — 붙여넣고 시작하면 그 값이 pastedScript로 간다', () => {
++    const p = pipeline()
++    render(<StoryView pipeline={p} />)
++    fireEvent.change(screen.getByPlaceholderText(/직접 붙여넣기/), { target: { value: '내가 쓴 대본' } })
++    fireEvent.click(screen.getByRole('button', { name: /대본으로 시작/ }))
++    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({ pastedScript: '내가 쓴 대본' }))
++    // 붙여넣기로 시작 → editor phase 전환
++    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
++  })
++})
++
++describe('StoryView 폼 hydrate (Task 7)', () => {
++  const input = {
++    type: 'title',
++    title: '복원 제목',
++    options: { genre: 'yadam', model: 'claude-sonnet-5', language: 'en', lengthValue: '7', lengthUnit: 'words' },
++  }
++
++  it('재오픈 시 state.input.title/options로 폼을 초기화한다', () => {
++    const p = pipeline()
++    p.state.input = input
++    render(<StoryView pipeline={p} />)
++    expect(screen.getByPlaceholderText('제목')).toHaveValue('복원 제목')
++    expect(screen.getByLabelText('장르')).toHaveValue('yadam')
++    expect(screen.getByLabelText('모델')).toHaveValue('claude-sonnet-5')
++    expect(screen.getByPlaceholderText('언어')).toHaveValue('en')
++    expect(screen.getByLabelText('길이 값')).toHaveValue('7')
++    expect(screen.getByLabelText('길이 단위')).toHaveValue('words')
++  })
++
++  it('open 응답이 늦게 와도(state.input이 마운트 후 도착) 폼이 hydrate된다', () => {
++    const { rerender } = render(<StoryView pipeline={pipeline({ state: null })} />)
++    const p = pipeline()
++    p.state.input = input
++    rerender(<StoryView pipeline={p} />)
++    expect(screen.getByPlaceholderText('제목')).toHaveValue('복원 제목')
++    expect(screen.getByLabelText('모델')).toHaveValue('claude-sonnet-5')
++  })
++
++  it('state.input이 없으면 기존 기본값(bespoke/opus/ko/10/min)을 유지한다', () => {
++    render(<StoryView pipeline={pipeline()} />)
++    expect(screen.getByPlaceholderText('제목')).toHaveValue('')
++    expect(screen.getByLabelText('장르')).toHaveValue('bespoke')
++    expect(screen.getByLabelText('모델')).toHaveValue('claude-opus-4-8')
++    expect(screen.getByPlaceholderText('언어')).toHaveValue('ko')
++    expect(screen.getByLabelText('길이 값')).toHaveValue('10')
++    expect(screen.getByLabelText('길이 단위')).toHaveValue('min')
++  })
++})
+diff --git a/tests/components/story/StoryView.script.test.jsx b/tests/components/story/StoryView.script.test.jsx
+index dd5ee3e..d32d0db 100644
+--- a/tests/components/story/StoryView.script.test.jsx
++++ b/tests/components/story/StoryView.script.test.jsx
+@@ -1,21 +1,22 @@
+ import { describe, it, expect } from 'vitest'
+ import { render, screen } from '@testing-library/react'
+ import StoryView from '../../../src/components/story/StoryView.jsx'
+ 
+ function pipelineWith(overrides) {
+   return { state: { steps: {} }, streamingText: '', start: () => {}, abort: () => {}, scenes: [], openError: null, ...overrides }
+ }
+ 
+ describe('StoryView 대본 영역', () => {
+   it('생성 중이 아니면 대본 편집을 PromptInput으로 렌더한다', () => {
+-    render(<StoryView pipeline={pipelineWith({ streamingText: '대본 본문' })} />)
++    // Task 7: 대본 편집기는 editor phase에서 렌더 — scriptText가 있으면 editor로 진입한다.
++    render(<StoryView pipeline={pipelineWith({ scriptText: '대본 본문' })} />)
+     // PromptInput은 data-testid="prompt-textarea-wrap"를 렌더
+     expect(screen.getByTestId('prompt-textarea-wrap')).toBeInTheDocument()
+   })
+   it('생성 중이면 스트리밍 div를 렌더한다(PromptInput 아님)', () => {
+     const pipeline = pipelineWith({ state: { steps: { script: { status: 'running' } } }, streamingText: '생성중' })
+     const { container } = render(<StoryView pipeline={pipeline} />)
+     expect(container.querySelector('.story-script-stream')).toBeInTheDocument()
+     expect(screen.queryByTestId('prompt-textarea-wrap')).toBeNull()
+   })
+ })
+diff --git a/tests/components/story/StoryView.test.jsx b/tests/components/story/StoryView.test.jsx
+index 3798de3..3039cd8 100644
+--- a/tests/components/story/StoryView.test.jsx
++++ b/tests/components/story/StoryView.test.jsx
+@@ -79,72 +79,80 @@ describe('StoryView', () => {
+   })
+ 
+   it('붙여넣기 텍스트가 비어 있으면 "대본으로 시작" 버튼이 비활성화된다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+     expect(screen.getByRole('button', { name: /대본으로 시작/ })).toBeDisabled()
+   })
+ 
+   // Important: state.scenes/state.prompts는 존재하지 않는 필드였다 — pipeline.scenes(파생
+   // 데이터, scenes.json 내용)를 별도로 받아 ②/④ 패널을 채운다.
++  // Task 7: scriptPhase가 남아 있는 동안 displayStep이 script로 강제되므로, done된 스텝을
++  // 스텝퍼에서 클릭해 해당 패널로 이동한 뒤 검증한다.
+   it('씬 분리 단계에서 scenes의 세그먼트(화자/텍스트) 행을 렌더한다', () => {
+     const p = pipeline({
+       scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
+     })
+     p.state.steps.script.status = 'done'
++    p.state.steps.scenes.status = 'done'
+     render(<StoryView pipeline={p} />)
++    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+     expect(screen.getByText('나레이션')).toBeTruthy()
+     expect(screen.getByText('어느 날')).toBeTruthy()
+   })
+ 
+   it('프롬프트 단계에서 scenes의 imagePrompt/videoPrompt를 렌더한다', () => {
+     const p = pipeline({
+       scenes: [{ storyId: 's1', imagePrompt: 'IMG-1', videoPrompt: 'VID-1' }],
+     })
+     p.state.steps.script.status = 'done'
+     p.state.steps.scenes.status = 'done'
++    p.state.steps.prompts.status = 'done'
+     render(<StoryView pipeline={p} />)
++    fireEvent.click(screen.getByRole('button', { name: '프롬프트' }))
+     expect(screen.getByText('IMG-1')).toBeTruthy()
+     expect(screen.getByText('VID-1')).toBeTruthy()
+   })
+ 
+   it('에러 단계는 error 뱃지 + 재실행 버튼', () => {
+     const p = pipeline()
+     p.state.steps.script.status = 'error'
+     p.state.steps.script.error = '429'
+     render(<StoryView pipeline={p} />)
+     expect(screen.getByText(/429/)).toBeTruthy()
+     expect(screen.getByRole('button', { name: /재실행/ })).toBeTruthy()
+   })
+ 
+   // Minor 7-⑴: done 상태 스텝은 스텝퍼에서 클릭해 해당 패널로 돌아가 볼 수 있어야 한다(현재
+   // currentStep이 더 앞선 단계로 진행돼 있어도). 미완료 스텝은 아직 데이터가 없으므로 클릭 불가.
++  // Task 7: scriptPhase가 남아 있는 동안은 대본 화면이 기본 — 스텝퍼 클릭으로 패널을 오간다.
+   it('스텝퍼에서 done 상태 스텝을 클릭하면 해당 패널을 표시하고, 미완료 스텝은 클릭할 수 없다', () => {
+     const p = pipeline({ scenes: [{ storyId: 's1', imagePrompt: 'IMG-1', videoPrompt: 'VID-1' }] })
+     p.state.steps.script.status = 'done'
+     p.state.steps.scenes.status = 'done'
+     render(<StoryView pipeline={p} />)
+ 
+-    // currentStep은 prompts이므로 기본으로 프롬프트 패널이 보인다
+-    expect(screen.getByText('IMG-1')).toBeTruthy()
++    // Task 7: scriptPhase가 남아 있으므로 기본은 대본(script) 패널이다
++    expect(screen.queryByText('IMG-1')).toBeNull()
+ 
+     // 미완료(pending) 스텝인 '오디오'는 클릭 가능한 요소가 아니다
+     expect(screen.queryByRole('button', { name: '오디오' })).toBeNull()
+ 
+-    // done 상태인 '대본' 스텝 클릭 → 대본 패널로 전환
+-    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+-    expect(screen.getByPlaceholderText(/제목/)).toBeTruthy()
+-
+-    // done 상태인 '씬 분리' 스텝 클릭 → 씬 분리 패널로 전환 (프롬프트 패널 고유 헤더가 사라진다)
++    // done 상태인 '씬 분리' 스텝 클릭 → scriptPhase 해제 + 씬 분리 패널로 전환
+     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+     expect(screen.queryByText('이미지 프롬프트')).toBeNull()
+     expect(screen.getByText('화자')).toBeTruthy()
++
++    // done 상태인 '대본' 스텝 클릭 → 대본 작업 화면(editor)으로 복귀
++    fireEvent.click(screen.getByRole('button', { name: '대본' }))
++    expect(screen.getByTestId('story-editor')).toBeTruthy()
++    expect(screen.queryByText('화자')).toBeNull()
+   })
+ 
+   // Minor 7-⑵: useStoryPipeline.open()이 실패(예: invalid-project-path)하면 pipeline.openError로
+   // 노출되고, StoryView는 안내 배너를 렌더해 사용자가 원인을 알 수 있어야 한다.
+   it('open 실패(openError) 시 안내 배너를 표시한다', () => {
+     const p = pipeline({ openError: 'invalid-project-path' })
+     render(<StoryView pipeline={p} />)
+     expect(screen.getByText(/프로젝트 폴더를 열 수 없습니다/)).toBeTruthy()
+     expect(screen.getByText(/invalid-project-path/)).toBeTruthy()
+   })

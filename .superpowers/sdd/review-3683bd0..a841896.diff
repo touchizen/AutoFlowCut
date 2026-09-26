@@ -1,0 +1,1590 @@
+# Review package: 3683bd0..a841896
+
+## Commits
+a841896 test: story Claude pipeline integration
+1ee9afd feat: genre dropdown in StoryView
+e257349 fix: drop stale story:delta by operationId in renderer
+a397466 feat: switch story engine to Claude (inject llm/meta, drop gemini fallback)
+656393e feat: llmClaude.splitScenes/writePrompts (outputFormat structured + fallback)
+0c867c5 feat: llmClaude.generateScript (streaming + abort guard)
+c53ab21 feat: add metaPrompts loader (genre W3 meta + hook)
+c1efc8e refactor: extract prompt builders to prompts.js + metaPrompt slot
+d0011f5 feat: add claudeSdk pure helpers (options/result/abort/delta/structured)
+afb37ac feat: add toJsonSchema (Gemini schema -> JSON Schema)
+4eba6fc fix: sync claude-agent-sdk version between package.json and lockfile
+f3b62f4 chore: add @anthropic-ai/claude-agent-sdk + asarUnpack
+
+## Files changed
+ electron/api/llm/claudeSdk.js                      |  48 +++++
+ electron/api/llm/llmClaude.js                      |  99 ++++++++++
+ electron/api/llm/llmGemini.js                      |  33 +---
+ electron/api/llm/metaPrompts.js                    |  37 ++++
+ electron/api/llm/prompts.js                        |  34 ++++
+ electron/api/llm/toJsonSchema.js                   |  18 ++
+ electron/ipc/story-api.js                          |   4 +-
+ electron/main.js                                   |   4 +
+ electron/story/stepMachine.js                      |  12 +-
+ electron/story/storyStore.js                       |   2 +-
+ package-lock.json                                  | 202 ++++++++++++++++++++-
+ package.json                                       |   4 +
+ src/components/story/StoryView.jsx                 |  11 +-
+ src/hooks/useStoryPipeline.js                      |   7 +
+ tests/components/story/StoryView.genre.test.jsx    |  20 ++
+ tests/components/story/StoryView.test.jsx          |   4 +-
+ tests/electron/api/llm/claudeSdk.test.js           |  60 ++++++
+ tests/electron/api/llm/claudeSdkImport.test.js     |   8 +
+ .../api/llm/llmClaude.generateScript.test.js       |  28 +++
+ .../electron/api/llm/llmClaude.structured.test.js  |  42 +++++
+ tests/electron/api/llm/metaPrompts.test.js         |  42 +++++
+ tests/electron/api/llm/prompts.test.js             |  30 +++
+ tests/electron/api/llm/toJsonSchema.test.js        |  35 ++++
+ tests/electron/story/stepMachine.claude.test.js    |  25 +++
+ tests/hooks/useStoryPipeline.delta.test.js         |  33 ++++
+ tests/integration/storyClaudePipeline.test.js      |  52 ++++++
+ 26 files changed, 847 insertions(+), 47 deletions(-)
+
+## Diff
+diff --git a/electron/api/llm/claudeSdk.js b/electron/api/llm/claudeSdk.js
+new file mode 100644
+index 0000000..411c46c
+--- /dev/null
++++ b/electron/api/llm/claudeSdk.js
+@@ -0,0 +1,48 @@
++/**
++ * Claude Agent SDK 순수 헬퍼 — query 결과/스트림/취소 처리. (AutoMovie vision.mjs 이식 + 확장)
++ * SDK 자체는 llmClaude가 동적 import — 여기는 SDK에 의존하지 않는 순수 함수만 둔다(테스트 용이).
++ */
++export function buildClaudeSdkOptions(model, abortController, extra = {}) {
++  return {
++    ...(model ? { model } : {}),
++    ...(abortController ? { abortController } : {}),
++    maxTurns: 2,
++    thinking: { type: 'disabled' },
++    tools: [],
++    settingSources: [],
++    skills: [], // 빈 배열 = 활성 skill 없음(오염 차단). string[]|'all' 중 [] 유효.
++    ...extra,
++  }
++}
++
++export function extractClaudeSdkResult(message) {
++  if (message.subtype === 'success' && !message.is_error) return (message.result || '').trim()
++  throw new Error(message.errors?.join('; ') || `result ${message.subtype || 'error'}`)
++}
++
++export function bridgeAbortSignal(signal) {
++  const abortController = new AbortController()
++  if (!signal) return { abortController, cleanup: () => {} }
++  if (signal.aborted) { abortController.abort(); return { abortController, cleanup: () => {} } }
++  const onAbort = () => abortController.abort()
++  signal.addEventListener('abort', onAbort, { once: true })
++  return { abortController, cleanup: () => signal.removeEventListener('abort', onAbort) }
++}
++
++export function extractTextDelta(message) {
++  if (message?.type !== 'stream_event') return null
++  const ev = message.event
++  if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') return ev.delta.text
++  return null
++}
++
++/** structured call result 메시지 분기. success 외 error subtype은 retry 신호 or throw. */
++export function readStructuredResult(message) {
++  if (message?.type !== 'result') return { kind: 'skip' }
++  if (message.subtype === 'success' && !message.is_error) {
++    if (message.structured_output != null) return { kind: 'structured', data: message.structured_output }
++    return { kind: 'text', text: (message.result || '').trim() }
++  }
++  if (message.subtype === 'error_max_structured_output_retries') return { kind: 'retry' }
++  throw new Error(message.errors?.join('; ') || `result ${message.subtype || 'error'}`)
++}
+diff --git a/electron/api/llm/llmClaude.js b/electron/api/llm/llmClaude.js
+new file mode 100644
+index 0000000..1292623
+--- /dev/null
++++ b/electron/api/llm/llmClaude.js
+@@ -0,0 +1,99 @@
++/**
++ * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
++ * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
++ */
++import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
++import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
++import { toJsonSchema } from './toJsonSchema.js'
++import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
++
++export const DEFAULT_MODEL = 'claude-opus-4-8'
++
++async function* defaultQuery(args) {
++  const { query } = await import('@anthropic-ai/claude-agent-sdk')
++  yield* query(args)
++}
++
++export async function generateScript(input, opts = {}, { onDelta, signal, queryImpl = defaultQuery } = {}) {
++  const prompt = buildScriptPrompt(input, opts)
++  const { abortController, cleanup } = bridgeAbortSignal(signal)
++  let full = ''
++  try {
++    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { includePartialMessages: true })
++    for await (const m of queryImpl({ prompt, options })) {
++      const delta = extractTextDelta(m)
++      if (delta != null) {
++        if (signal?.aborted) break
++        full += delta
++        onDelta?.(delta)
++        continue
++      }
++      if (m.type === 'result') return { scriptMd: extractClaudeSdkResult(m) }
++    }
++    if (signal?.aborted) throw new Error('Aborted')
++    return { scriptMd: full } // result 없이 스트림 종료 시 누적 델타 반환
++  } catch (err) {
++    if (signal?.aborted) throw new Error('Aborted')
++    throw new Error(`Claude SDK failed: ${err.message}`)
++  } finally {
++    cleanup()
++  }
++}
++
++function parseJsonLoose(text) {
++  let t = (text || '').trim()
++  const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
++  if (fence) t = fence[1].trim()
++  const s = t.indexOf('{'); const e = t.lastIndexOf('}')
++  if (s >= 0 && e > s) t = t.slice(s, e + 1)
++  return JSON.parse(t)
++}
++
++async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery }) {
++  const schema = toJsonSchema(geminiSchema)
++  const { abortController, cleanup } = bridgeAbortSignal(signal)
++  try {
++    // 1차: outputFormat(json_schema) 강제
++    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { outputFormat: { type: 'json_schema', schema } })
++    let needFallback = false
++    for await (const m of queryImpl({ prompt, options: opt1 })) {
++      if (m.type !== 'result') continue
++      const r = readStructuredResult(m)
++      if (r.kind === 'structured') return r.data
++      if (r.kind === 'text') return parseJsonLoose(r.text)
++      if (r.kind === 'retry') { needFallback = true; break }
++    }
++    if (signal?.aborted) throw new Error('Aborted')
++    // 2차 폴백: outputFormat 없이 JSON-only 재요청
++    const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
++    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
++    for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
++      if (m.type === 'result') return parseJsonLoose(extractClaudeSdkResult(m))
++    }
++    throw new Error('no result message returned')
++  } catch (err) {
++    if (signal?.aborted) throw new Error('Aborted')
++    throw err
++  } finally {
++    cleanup()
++  }
++}
++
++export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {}) {
++  const prompt = buildSplitPrompt(scriptMd, opts)
++  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
++  return { scenes: out.scenes || [], speakers: out.speakers || [] }
++}
++
++export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
++  const prompt = buildPromptsPrompt(scenes, context, opts)
++  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
++  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
++  return {
++    scenes: scenes.map((s) => ({
++      ...s,
++      imagePrompt: byNo.get(s.sceneNo)?.imagePrompt ?? s.imagePrompt ?? null,
++      videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
++    })),
++  }
++}
+diff --git a/electron/api/llm/llmGemini.js b/electron/api/llm/llmGemini.js
+index 0dbaf20..2918274 100644
+--- a/electron/api/llm/llmGemini.js
++++ b/electron/api/llm/llmGemini.js
+@@ -1,19 +1,20 @@
+ /**
+  * Gemini 텍스트 LLM 어댑터 — 스펙 §5. genai.js(이미지/비디오)와 별개 신규 모듈.
+  * 스트리밍(generateScript)은 streamGenerateContent SSE를 청크 단위로 점진 파싱해
+  * onDelta를 실시간 호출한다. structured output은 responseSchema.
+  * 재시도(스펙 §7): JSON 파싱 실패 → 즉시 1회 재요청 / HTTP 429·5xx → 1초 백오프 후
+  * 1회 재시도 / 그 외 HTTP 에러(400 등) → 재시도 없이 throw / abort → 즉시 throw.
+  * 키는 헤더(x-goog-api-key)로만 전달.
+  */
+ import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
++import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
+ 
+ const BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
+ 
+ function headers(apiKey) {
+   return { 'content-type': 'application/json', 'x-goog-api-key': apiKey }
+ }
+ 
+ class HttpError extends Error {
+   constructor(status, body) {
+     super(`Gemini ${status}: ${body}`)
+@@ -107,42 +108,10 @@ export async function writePrompts(scenes, context, opts, ctx = {}) {
+   const out = await structuredCall(prompt, PROMPTS_SCHEMA, opts, ctx)
+   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
+   return {
+     scenes: scenes.map((s) => ({
+       ...s,
+       imagePrompt: byNo.get(s.sceneNo)?.imagePrompt ?? s.imagePrompt ?? null,
+       videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
+     })),
+   }
+ }
+-
+-// --- 프롬프트 빌더 (한국어/영어, 스펙 §4 지시 포함) ---
+-function buildScriptPrompt(input, opts) {
+-  return [
+-    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${opts.targetMinutes || 10}분 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
+-    opts.genre ? `장르: ${opts.genre}` : '',
+-    opts.tone ? `톤: ${opts.tone}` : '',
+-    `제목: ${input.title}`,
+-    `마크다운으로, 챕터 구분과 (대사가 있으면) 화자 표기를 포함하라.`,
+-  ].filter(Boolean).join('\n')
+-}
+-
+-function buildSplitPrompt(scriptMd, opts) {
+-  return [
+-    `아래 대본을 씬으로 분리하라. 각 씬은 낭독 시 6~10초(${opts.language === 'ko' ? '한국어 기준 약 33~55자' : 'about 90~150 chars in English'}) 분량이어야 한다. 초과하면 씬을 분할하라.`,
+-    `각 씬의 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 emotion(normal/happy/sad/angry)을 지정하라.`,
+-    `등장 화자 전체 목록을 speakers로 반환하라.`,
+-    `--- 대본 ---`,
+-    scriptMd,
+-  ].join('\n')
+-}
+-
+-function buildPromptsPrompt(scenes, context, opts) {
+-  const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
+-  return [
+-    `아래 씬들에 대해 이미지 생성 프롬프트(imagePrompt)와 비디오 생성 프롬프트(videoPrompt)를 영어로 작성하라.`,
+-    `캐릭터가 등장하면 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라 (레퍼런스 참조 문법 금지 — 플레인 텍스트).`,
+-    context.style ? `스타일: ${context.style}` : '',
+-    `--- 씬 목록 ---`,
+-    ...sceneLines,
+-  ].filter(Boolean).join('\n')
+-}
+diff --git a/electron/api/llm/metaPrompts.js b/electron/api/llm/metaPrompts.js
+new file mode 100644
+index 0000000..32cbf5a
+--- /dev/null
++++ b/electron/api/llm/metaPrompts.js
+@@ -0,0 +1,37 @@
++/**
++ * story-engine 장르 메타프롬프트 로더 (main process). 대본(W3) 웨이브만 주입한다.
++ * 파일명은 story-engine SKILL.md W3 표 기준 + 공통 hook_principles(표 외 추가).
++ */
++import { readFile } from 'node:fs/promises'
++import path from 'node:path'
++import { app } from 'electron'
++
++export function resolveSkillsDir() {
++  if (app?.isPackaged) return path.join(process.resourcesPath, 'skills')
++  return path.join(app?.getAppPath?.() ?? process.cwd(), 'skills')
++}
++
++// 장르 → 대본(W3) 파일 (리터럴 고정). bespoke는 language 서브폴더.
++const W3_FILES = {
++  yadam: () => ['yadam/yadam-scenario-guide.md', 'yadam/yadam-narrative-guide.md', 'yadam/yadam-suspense-techniques.md'],
++  'dark-history': () => ['dark-history/screenplay_guidelines.md', 'dark-history/narrative_techniques.md', 'dark-history/suspense_techniques.md'],
++  bespoke: (lang) => [`bespoke/${lang}/screenplay_guidelines.md`, `bespoke/${lang}/narrative_techniques.md`, `bespoke/${lang}/suspense_techniques.md`],
++}
++const COMMON_FILES = ['_common/hook_principles.md']
++
++export async function loadMetaPrompt({ genre, wave, language = 'ko', skillsDir } = {}) {
++  if (wave !== 'script' || !genre || !W3_FILES[genre]) return ''
++  const dir = skillsDir ?? resolveSkillsDir()
++  const lang = language === 'en' ? 'en' : 'ko'
++  const rels = [...W3_FILES[genre](lang), ...COMMON_FILES]
++  const base = path.join(dir, 'story-engine', 'meta-prompts')
++  const parts = []
++  for (const rel of rels) {
++    try {
++      parts.push((await readFile(path.join(base, rel), 'utf8')).trim())
++    } catch {
++      console.warn(`[metaPrompts] missing meta file: ${rel}`)
++    }
++  }
++  return parts.join('\n\n---\n\n')
++}
+diff --git a/electron/api/llm/prompts.js b/electron/api/llm/prompts.js
+new file mode 100644
+index 0000000..41240bf
+--- /dev/null
++++ b/electron/api/llm/prompts.js
+@@ -0,0 +1,34 @@
++/** 프롬프트 빌더 — Gemini/Claude 두 엔진 공유. (구 llmGemini.js 내부 빌더 이관) */
++
++export function buildScriptPrompt(input, opts) {
++  const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
++  return [
++    meta,
++    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${opts.targetMinutes || 10}분 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
++    opts.genre ? `장르: ${opts.genre}` : '',
++    opts.tone ? `톤: ${opts.tone}` : '',
++    `제목: ${input.title}`,
++    `마크다운으로, 챕터 구분과 (대사가 있으면) 화자 표기를 포함하라.`,
++  ].filter(Boolean).join('\n')
++}
++
++export function buildSplitPrompt(scriptMd, opts) {
++  return [
++    `아래 대본을 씬으로 분리하라. 각 씬은 낭독 시 6~10초(${opts.language === 'ko' ? '한국어 기준 약 33~55자' : 'about 90~150 chars in English'}) 분량이어야 한다. 초과하면 씬을 분할하라.`,
++    `각 씬의 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 emotion(normal/happy/sad/angry)을 지정하라.`,
++    `등장 화자 전체 목록을 speakers로 반환하라.`,
++    `--- 대본 ---`,
++    scriptMd,
++  ].join('\n')
++}
++
++export function buildPromptsPrompt(scenes, context, opts) {
++  const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
++  return [
++    `아래 씬들에 대해 이미지 생성 프롬프트(imagePrompt)와 비디오 생성 프롬프트(videoPrompt)를 영어로 작성하라.`,
++    `캐릭터가 등장하면 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라 (레퍼런스 참조 문법 금지 — 플레인 텍스트).`,
++    context.style ? `스타일: ${context.style}` : '',
++    `--- 씬 목록 ---`,
++    ...sceneLines,
++  ].filter(Boolean).join('\n')
++}
+diff --git a/electron/api/llm/toJsonSchema.js b/electron/api/llm/toJsonSchema.js
+new file mode 100644
+index 0000000..affbb39
+--- /dev/null
++++ b/electron/api/llm/toJsonSchema.js
+@@ -0,0 +1,18 @@
++/** Gemini responseSchema(대문자 타입)를 JSON Schema(소문자)로 재귀 변환. */
++const TYPE_MAP = {
++  OBJECT: 'object', ARRAY: 'array', STRING: 'string',
++  INTEGER: 'integer', NUMBER: 'number', BOOLEAN: 'boolean',
++}
++
++export function toJsonSchema(schema) {
++  if (!schema || typeof schema !== 'object') return schema
++  const out = {}
++  for (const [k, v] of Object.entries(schema)) {
++    if (k === 'type' && typeof v === 'string') out.type = TYPE_MAP[v] || v.toLowerCase()
++    else if (k === 'properties' && v && typeof v === 'object') {
++      out.properties = Object.fromEntries(Object.entries(v).map(([pk, pv]) => [pk, toJsonSchema(pv)]))
++    } else if (k === 'items') out.items = toJsonSchema(v)
++    else out[k] = v
++  }
++  return out
++}
+diff --git a/electron/ipc/story-api.js b/electron/ipc/story-api.js
+index 9095ea6..179e372 100644
+--- a/electron/ipc/story-api.js
++++ b/electron/ipc/story-api.js
+@@ -30,21 +30,21 @@ async function validateProjectPath(projectPath) {
+ }
+ 
+ // HIGH(부분): 절대경로/traversal/존재 검증을 통과해도 활성 workFolder(렌더러가 마지막으로
+ // activate한 작업 폴더) 밖의 임의 경로면 여전히 임의 위치에 script.md/scenes.json을 쓸 수
+ // 있다. workFolder가 알려져 있으면(활성화된 뒤) projectPath가 그 하위인지 확인한다.
+ function isWithinWorkFolder(projectPath, workFolder) {
+   const rel = path.relative(workFolder, projectPath)
+   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+ }
+ 
+-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, getActiveWorkFolder = () => null }) {
++export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null }) {
+   let machine = null
+   let openLock = Promise.resolve()
+ 
+   const emit = (channel, payload) => {
+     const win = getWindow?.()
+     if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+   }
+ 
+   const guarded = (fn) => async (_e, payload = {}) => {
+     if (!machine || payload.projectToken !== machine.projectToken) return { error: 'stale-token' }
+@@ -54,21 +54,21 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
+   ipcMain.handle('story:open', (_e, { projectPath } = {}) => {
+     // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
+     const task = openLock.then(async () => {
+       if (!(await validateProjectPath(projectPath))) return { error: 'invalid-project-path' }
+       const activeWorkFolder = getActiveWorkFolder()
+       // activeWorkFolder를 아직 모르면(활성화 전) 기존 검증만 적용 — 하위호환.
+       if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) {
+         return { error: 'invalid-project-path' }
+       }
+       if (machine) await machine.abort()
+-      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
++      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt })
+       return machine.open()
+     })
+     openLock = task.then(() => undefined, () => undefined)
+     return task
+   })
+ 
+   ipcMain.handle('story:get-state', guarded(async () => machine.getState()))
+   ipcMain.handle('story:start', guarded(({ step, params }) => machine.start(step, params)))
+   ipcMain.handle('story:abort', guarded(() => machine.abort()))
+   ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
+diff --git a/electron/main.js b/electron/main.js
+index cff7099..822d9e5 100644
+--- a/electron/main.js
++++ b/electron/main.js
+@@ -8,20 +8,22 @@ import { execSync as execSyncRaw } from 'node:child_process'
+ import { fileURLToPath } from 'node:url'
+ import dotenv from 'dotenv'
+ import { registerFilesystemIPC } from './ipc/filesystem.js'
+ import { registerAuthIPC } from './ipc/auth.js'
+ import { registerCapcutIPC } from './ipc/capcut.js'
+ import { registerPremiereIPC } from './ipc/premiere.js'
+ import { registerVrewIPC } from './ipc/vrew.js'
+ import { registerMcpIPC } from './ipc/mcp.js'
+ import { registerGenaiIPC } from './ipc/genai-api.js'
+ import { registerStoryIPC } from './ipc/story-api.js'
++import * as llmClaude from './api/llm/llmClaude.js'
++import { loadMetaPrompt } from './api/llm/metaPrompts.js'
+ import { createKeyStore } from './api/keyStore.js'
+ import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
+ import { createModeController } from './ipc/mode.js'
+ import { openApiSpec, getSwaggerHtml } from './api-docs.js'
+ import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
+ import { initSentryMain } from './sentry-init.js'
+ import { registerFlowAPIIPC } from './ipc/flow-api.js'
+ import { registerVideoIPC } from './ipc/video.js'
+ import { registerCharacterIPC } from './ipc/character.js'
+ import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-payload.js'
+@@ -197,20 +199,22 @@ const genaiKeyStore = createKeyStore({
+   safeStorage,
+   filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
+   fs: fsSync,
+ })
+ registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
+ 
+ // Story pipeline IPC (script/scenes/prompts 스텝 머신 + preload 브릿지).
+ registerStoryIPC(ipcMain, {
+   keyStore: genaiKeyStore,
+   getWindow: () => mainWindow,
++  llm: llmClaude,
++  loadMetaPrompt,
+   getActiveWorkFolder: () => activeWorkFolder,
+ })
+ 
+ // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
+ registerAuthIPC(ipcMain)
+ 
+ // CapCut IPC (path detection, project writing, app launch)
+ registerCapcutIPC(ipcMain)
+ 
+ // Premiere IPC (.prproj writing — gzipped XML)
+diff --git a/electron/story/stepMachine.js b/electron/story/stepMachine.js
+index b183352..ba94434 100644
+--- a/electron/story/stepMachine.js
++++ b/electron/story/stepMachine.js
+@@ -2,21 +2,21 @@
+  * Story 스텝 머신 — 스펙 §2/§3/§4. main process 소유, 결정적 순서 제어.
+  * LLM 어댑터는 DI(테스트 mock). emit은 모든 payload에 projectToken/operationId 포함.
+  */
+ import { randomUUID } from 'node:crypto'
+ import { createStoryStore } from './storyStore.js'
+ import { inheritStoryIds, assertUniqueStoryIds } from './sceneIdentity.js'
+ import { buildFallbackTimeline } from './timing.js'
+ 
+ const DOWNSTREAM = { script: ['scenes', 'prompts'], scenes: ['prompts'], prompts: [] }
+ 
+-export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
++export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt }) {
+   const store = createStoryStore(projectPath)
+   const projectToken = randomUUID()
+   let state = null
+   let controller = null
+ 
+   const send = (ch, payload, operationId) =>
+     emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
+ 
+   async function flush() { await store.save(state) }
+ 
+@@ -67,47 +67,51 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
+       // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣은 경우 LLM 호출 없이 그대로 저장한다.
+       if (params.pastedScript) {
+         state.input = { type: 'pasted', options: params.options }
+         // HIGH: abort 직후 파일 쓰기 자체를 막는 방어 가드 — start() 래퍼의 결과 처리 가드와
+         // 별개로, 취소된 스텝이 디스크에 흔적을 남기지 않도록 saveText 직전에 한 번 더 확인한다.
+         if (signal?.aborted) return
+         await store.saveText('script.md', params.pastedScript)
+         return
+       }
+       state.input = params.input ? { ...params.input, options: params.options } : state.input
+-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(params.options || {}) }
++      const language = params.options?.language || state.input?.options?.language || 'ko'
++      const metaPrompt = loadMetaPrompt
++        ? await loadMetaPrompt({ genre: params.options?.genre, wave: 'script', language })
++        : ''
++      const opts = { apiKey: getApiKey(), model: state.engine.model, metaPrompt, ...(params.options || {}) }
+       const { scriptMd } = await llm.generateScript(state.input, opts, {
+         onDelta: (text) => send('story:delta', { text }, opId), signal,
+       })
+       if (signal?.aborted) return
+       await store.saveText('script.md', scriptMd)
+     },
+     async scenes(params, opId, signal) {
+       const scriptMd = await store.loadText('script.md')
+       if (!scriptMd) throw new Error('script.md not found — run script step first')
+-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
++      const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
+       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
+       if (signal?.aborted) return
+       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
+       const { scenes: withIds } = inheritStoryIds(prev, scenes)
+       assertUniqueStoryIds(withIds)
+       await store.saveText('scenes.json', JSON.stringify({ scenes: withIds }, null, 2))
+       // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
+       const norm = (n) => (n || '').replace(/\s/g, '')
+       const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
+       state.speakers = speakers.map((sp) => ({ ...sp, voice: prevSpeakers.get(norm(sp.name))?.voice ?? null }))
+     },
+     async prompts(params, opId, signal) {
+       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+       const scriptMd = await store.loadText('script.md')
+-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
++      const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
+       const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
+       if (signal?.aborted) return
+       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
+       state.pendingPushRevision += 1
+       // HIGH/Codex: push emit은 여기서 하지 않는다 — flush(story.json 저장) 전에 크래시하면
+       // 재발신 조건(pendingPushRevision > lastPushedRevision)이 디스크에 없어 복구 불가.
+       // start() 래퍼가 status=done 설정 + flush 완료 후에 pushScenes를 emit한다.
+       return { pushScenes: scenes }
+     },
+   }
+diff --git a/electron/story/storyStore.js b/electron/story/storyStore.js
+index d1d9a87..1c209d8 100644
+--- a/electron/story/storyStore.js
++++ b/electron/story/storyStore.js
+@@ -3,21 +3,21 @@
+  * 소유자는 main process 스텝 머신. temp 파일 + rename으로 원자적 쓰기.
+  */
+ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
+ import { randomUUID } from 'node:crypto'
+ import path from 'node:path'
+ 
+ export function defaultStoryState() {
+   return {
+     version: 1,
+     input: null,
+-    engine: { llm: 'gemini' },
++    engine: { llm: 'claude' },
+     steps: {
+       script: { status: 'pending' },
+       scenes: { status: 'pending' },
+       audio: { status: 'pending', registration: null },
+       prompts: { status: 'pending' },
+     },
+     autoRun: false,
+     pushedAt: null,
+     pendingPushRevision: 0,
+     lastPushedRevision: 0,
+diff --git a/package-lock.json b/package-lock.json
+index 9076393..00126c4 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,22 +1,23 @@
+ {
+   "name": "autoflowcut",
+-  "version": "2.0.1",
++  "version": "2.1.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "autoflowcut",
+-      "version": "2.0.1",
++      "version": "2.1.0",
+       "hasInstallScript": true,
+       "license": "AGPL-3.0-only",
+       "dependencies": {
++        "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+         "@lexical/react": "^0.45.0",
+         "@modelcontextprotocol/sdk": "^1.27.1",
+         "@sentry/electron": "^7.13.0",
+         "dotenv": "^17.3.1",
+         "electron-updater": "^6.8.3",
+         "firebase": "^12.9.0",
+         "flag-icons": "^7.5.0",
+         "lexical": "^0.45.0",
+         "lexical-beautiful-mentions": "^0.1.48",
+         "react": "^18.3.1",
+@@ -46,20 +47,170 @@
+       "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@adobe/css-tools": {
+       "version": "4.4.4",
+       "resolved": "https://registry.npmjs.org/@adobe/css-tools/-/css-tools-4.4.4.tgz",
+       "integrity": "sha512-Elp+iwUx5rN5+Y8xLt5/GRoG20WGoDCQ/1Fb+1LiGtvwbDavuSk0jhD/eZdckHAuzcDzccnkv+rEjyWfRx18gg==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@anthropic-ai/claude-agent-sdk": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.199.tgz",
++      "integrity": "sha512-fET9rfYR2DgjVG4Yri02Q6YL+SWBlcrsd3Dx96CpZSM50W4Jqh1sEC06hXIEHL0uDZ/kS//Y2uPpCQ9GQqh8Bg==",
++      "license": "SEE LICENSE IN README.md",
++      "engines": {
++        "node": ">=18.0.0"
++      },
++      "optionalDependencies": {
++        "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-linux-arm64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-linux-arm64-musl": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-linux-x64-musl": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-win32-arm64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.199"
++      },
++      "peerDependencies": {
++        "@anthropic-ai/sdk": ">=0.93.0",
++        "@modelcontextprotocol/sdk": "^1.29.0",
++        "zod": "^4.0.0"
++      }
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-darwin-arm64/-/claude-agent-sdk-darwin-arm64-0.3.199.tgz",
++      "integrity": "sha512-0813IEsPlA3GQZ86CGmRPh/2DY/iEuBkXV7CRAj55sQ30oIm+N/BbXzI/jH7WiWsHh3pCsRx65dbswf6jA5Uuw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "darwin"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-darwin-x64/-/claude-agent-sdk-darwin-x64-0.3.199.tgz",
++      "integrity": "sha512-iUenoE7UbWFfYjdfaeJkPl4qpXajPcRw8SzMYn0PK2LsBE5SJTfEdZyvtypNaKiWzsCCaU4MV1yzR8S7i/wZQg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "darwin"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64/-/claude-agent-sdk-linux-arm64-0.3.199.tgz",
++      "integrity": "sha512-wJ4GJCwrdVv4TWTiEwh2gUjrddIg+oMhoUcfXhtZgZeqXfGzxVWJa3HudX5xsVq/wktvM65CfdYly2blVBVG8Q==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64-musl/-/claude-agent-sdk-linux-arm64-musl-0.3.199.tgz",
++      "integrity": "sha512-mcqHuNHsA2V589rt0JpCsweS8kZ8LkKZi0qmMLqN3oZz+ar4DsuDjLDaNI1C5f+W/nz5G/st+2W3ZCJubeOqVQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.199.tgz",
++      "integrity": "sha512-nNLk8KcM33AYQ0P1cNK72kE14iTIuM5RTr0CrQm40FwdrPuVZ/se6KggpE3eje8hFYJu/1WrJqcZxtJSL6qnPg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.199.tgz",
++      "integrity": "sha512-wr7IIQ9d9H7Tt79Mn4ga8iNLzsvoPnAbBtsnUVBjgcAxKWrJ+QV2wCsowhhSc7DWNueiurdxNsLIwd07BzhfCA==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-win32-arm64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-win32-arm64/-/claude-agent-sdk-win32-arm64-0.3.199.tgz",
++      "integrity": "sha512-EQFMATdpp6XXYXw6Ih83BFCDj2PXqMYkM6nq3OrOVUF19xTe6o5dWhGzZ6TQfauvWf2BHFIfBDzZz82m8ffV8w==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "win32"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-win32-x64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-win32-x64/-/claude-agent-sdk-win32-x64-0.3.199.tgz",
++      "integrity": "sha512-6W2djU/NnOCY4NEdDjtZ3LIzFFQMT2OH9m5y5Hc4bko3KIXr0WHLrCJdgGiVycOWEd03OEsC4uYIIYIeueBAHw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "win32"
++      ]
++    },
++    "node_modules/@anthropic-ai/sdk": {
++      "version": "0.110.0",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-0.110.0.tgz",
++      "integrity": "sha512-hOP4bNYXDFHDxxiEgzlILXrxZIYCDnhe8sry0RDRKD/QnsEpvZcQpablCdm9X/WuD/YgOiSIkkqsL1mLLlTqJw==",
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "json-schema-to-ts": "^3.1.1",
++        "standardwebhooks": "^1.0.0"
++      },
++      "bin": {
++        "anthropic-ai-sdk": "bin/cli"
++      },
++      "peerDependencies": {
++        "zod": "^3.25.0 || ^4.0.0"
++      },
++      "peerDependenciesMeta": {
++        "zod": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/@asamuzakjp/css-color": {
+       "version": "5.1.10",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-5.1.10.tgz",
+       "integrity": "sha512-02OhhkKtgNRuicQ/nF3TRnGsxL9wp0r3Y7VlKWyOHHGmGyvXv03y+PnymU8FKFJMTjIr1Bk8U2g1HWSLrpAHww==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@csstools/css-calc": "^3.1.1",
+         "@csstools/css-color-parser": "^4.0.2",
+         "@csstools/css-parser-algorithms": "^4.0.0",
+@@ -331,21 +482,20 @@
+         "node": ">=6.9.0"
+       },
+       "peerDependencies": {
+         "@babel/core": "^7.0.0-0"
+       }
+     },
+     "node_modules/@babel/runtime": {
+       "version": "7.29.2",
+       "resolved": "https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.2.tgz",
+       "integrity": "sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=6.9.0"
+       }
+     },
+     "node_modules/@babel/template": {
+       "version": "7.28.6",
+       "resolved": "https://registry.npmjs.org/@babel/template/-/template-7.28.6.tgz",
+       "integrity": "sha512-YA6Ma2KsCdGb+WC6UpBVFJGXL58MDA6oyONbjyF/+5sBgxY/dwkhLogbMT2GXXyU84/IhRw/2D1Os1B/giz+BQ==",
+       "dev": true,
+@@ -4044,20 +4194,27 @@
+       "integrity": "sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=10"
+       },
+       "funding": {
+         "url": "https://github.com/sindresorhus/is?sponsor=1"
+       }
+     },
++    "node_modules/@stablelib/base64": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/@stablelib/base64/-/base64-1.0.1.tgz",
++      "integrity": "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==",
++      "license": "MIT",
++      "peer": true
++    },
+     "node_modules/@standard-schema/spec": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
+       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
+       "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@szmarczak/http-timer": {
+       "version": "4.0.6",
+       "resolved": "https://registry.npmjs.org/@szmarczak/http-timer/-/http-timer-4.0.6.tgz",
+@@ -6899,20 +7056,27 @@
+       "integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+       "license": "MIT"
+     },
+     "node_modules/fast-json-stable-stringify": {
+       "version": "2.1.0",
+       "resolved": "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz",
+       "integrity": "sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/fast-sha256": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/fast-sha256/-/fast-sha256-1.3.0.tgz",
++      "integrity": "sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==",
++      "license": "Unlicense",
++      "peer": true
++    },
+     "node_modules/fast-uri": {
+       "version": "3.1.0",
+       "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.0.tgz",
+       "integrity": "sha512-iPeeDKJSWf4IEOasVVrknXpaBV0IApz/gp7S2bb7Z4Lljbl2MGJRqInZiUrQwV16cpzw/D3S5j5Julj/gT52AA==",
+       "funding": [
+         {
+           "type": "github",
+           "url": "https://github.com/sponsors/fastify"
+         },
+         {
+@@ -8031,20 +8195,34 @@
+         "node": ">=6"
+       }
+     },
+     "node_modules/json-buffer": {
+       "version": "3.0.1",
+       "resolved": "https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz",
+       "integrity": "sha512-4bV5BfR2mqfQTJm+V5tPPdf+ZpuhiIvTuAB5g8kcrXOZpTT/QwwVRWBywX1ozr6lEuPdbHxwaJlm9G6mI2sfSQ==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/json-schema-to-ts": {
++      "version": "3.1.1",
++      "resolved": "https://registry.npmjs.org/json-schema-to-ts/-/json-schema-to-ts-3.1.1.tgz",
++      "integrity": "sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==",
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "@babel/runtime": "^7.18.3",
++        "ts-algebra": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=16"
++      }
++    },
+     "node_modules/json-schema-traverse": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz",
+       "integrity": "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==",
+       "license": "MIT"
+     },
+     "node_modules/json-schema-typed": {
+       "version": "8.0.2",
+       "resolved": "https://registry.npmjs.org/json-schema-typed/-/json-schema-typed-8.0.2.tgz",
+       "integrity": "sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==",
+@@ -10121,20 +10299,31 @@
+         "node": "^18.17.0 || >=20.5.0"
+       }
+     },
+     "node_modules/stackback": {
+       "version": "0.0.2",
+       "resolved": "https://registry.npmjs.org/stackback/-/stackback-0.0.2.tgz",
+       "integrity": "sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/standardwebhooks": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/standardwebhooks/-/standardwebhooks-1.0.0.tgz",
++      "integrity": "sha512-BbHGOQK9olHPMvQNHWul6MYlrRTAOKn03rOe4A8O3CLWhNf4YHBqq2HJKKC+sfqpxiBY52pNeesD6jIiLDz8jg==",
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "@stablelib/base64": "^1.0.0",
++        "fast-sha256": "^1.3.0"
++      }
++    },
+     "node_modules/stat-mode": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/stat-mode/-/stat-mode-1.0.0.tgz",
+       "integrity": "sha512-jH9EhtKIjuXZ2cWxmXS8ZP80XyC3iasQxMDV8jzhNJpfDb7VbQLVW4Wvsxz9QZvzV+G4YoSfBUVKDOyxLzi/sg==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">= 6"
+       }
+     },
+@@ -10511,20 +10700,27 @@
+     "node_modules/truncate-utf8-bytes": {
+       "version": "1.0.2",
+       "resolved": "https://registry.npmjs.org/truncate-utf8-bytes/-/truncate-utf8-bytes-1.0.2.tgz",
+       "integrity": "sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ==",
+       "dev": true,
+       "license": "WTFPL",
+       "dependencies": {
+         "utf8-byte-length": "^1.0.1"
+       }
+     },
++    "node_modules/ts-algebra": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/ts-algebra/-/ts-algebra-2.0.0.tgz",
++      "integrity": "sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==",
++      "license": "MIT",
++      "peer": true
++    },
+     "node_modules/tslib": {
+       "version": "2.8.1",
+       "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+       "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
+       "license": "0BSD"
+     },
+     "node_modules/type-fest": {
+       "version": "0.13.1",
+       "resolved": "https://registry.npmjs.org/type-fest/-/type-fest-0.13.1.tgz",
+       "integrity": "sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==",
+diff --git a/package.json b/package.json
+index f57fb44..5509877 100644
+--- a/package.json
++++ b/package.json
+@@ -34,20 +34,21 @@
+     "dist:linux": "npm run bump:build && npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && npm run build:preloads && electron-builder --linux",
+     "dist:mac:prod": "npm run bump:build && npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && npm run build:preloads && electron-builder --mac",
+     "test": "vitest",
+     "test:run": "vitest run",
+     "test:coverage": "vitest run --coverage"
+   },
+   "author": "Touchizen",
+   "license": "AGPL-3.0-only",
+   "private": true,
+   "dependencies": {
++    "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+     "@lexical/react": "^0.45.0",
+     "@modelcontextprotocol/sdk": "^1.27.1",
+     "@sentry/electron": "^7.13.0",
+     "dotenv": "^17.3.1",
+     "electron-updater": "^6.8.3",
+     "firebase": "^12.9.0",
+     "flag-icons": "^7.5.0",
+     "lexical": "^0.45.0",
+     "lexical-beautiful-mentions": "^0.1.48",
+     "react": "^18.3.1",
+@@ -66,20 +67,23 @@
+     "jsdom": "^28.1.0",
+     "vite": "^6.1.0",
+     "vite-plugin-electron": "^0.28.8",
+     "vite-plugin-electron-renderer": "^0.14.6",
+     "vitest": "^4.0.18"
+   },
+   "build": {
+     "appId": "com.touchizen.flow2capcut",
+     "productName": "AutoFlowCut",
+     "forceCodeSigning": true,
++    "asarUnpack": [
++      "node_modules/@anthropic-ai/claude-agent-sdk/**"
++    ],
+     "directories": {
+       "output": "release",
+       "buildResources": "assets"
+     },
+     "publish": [
+       {
+         "provider": "github",
+         "owner": "touchizen",
+         "repo": "AutoFlowCut"
+       }
+diff --git a/src/components/story/StoryView.jsx b/src/components/story/StoryView.jsx
+index d9101ce..396dfd9 100644
+--- a/src/components/story/StoryView.jsx
++++ b/src/components/story/StoryView.jsx
+@@ -117,27 +117,32 @@ export default function StoryView({ pipeline }) {
+         {displayStep === 'script' && (
+           <div className="story-script-panel">
+             <div className="story-title-form">
+               <input
+                 className="story-input"
+                 placeholder={t('story.form.titlePlaceholder', '제목')}
+                 value={title}
+                 onChange={(e) => setTitle(e.target.value)}
+                 disabled={isRunning}
+               />
+-              <input
++              <select
+                 className="story-input"
+-                placeholder={t('story.form.genrePlaceholder', '장르')}
++                aria-label={t('story.form.genreLabel', '장르')}
+                 value={genre}
+                 onChange={(e) => setGenre(e.target.value)}
+                 disabled={isRunning}
+-              />
++              >
++                <option value="">{t('story.form.genrePlaceholder', '장르')}</option>
++                <option value="yadam">yadam (야담)</option>
++                <option value="dark-history">dark-history</option>
++                <option value="bespoke">bespoke</option>
++              </select>
+               <input
+                 className="story-input"
+                 placeholder={t('story.form.lengthPlaceholder', '길이(분)')}
+                 value={length}
+                 onChange={(e) => setLength(e.target.value)}
+                 disabled={isRunning}
+               />
+               <input
+                 className="story-input"
+                 placeholder={t('story.form.languagePlaceholder', '언어')}
+diff --git a/src/hooks/useStoryPipeline.js b/src/hooks/useStoryPipeline.js
+index 39834ba..573046f 100644
+--- a/src/hooks/useStoryPipeline.js
++++ b/src/hooks/useStoryPipeline.js
+@@ -10,20 +10,24 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
+   // 상태와 별도로 보관한다 — StoryView ②/④ 패널이 이 값을 직접 소비한다.
+   const [scenes, setScenes] = useState([])
+   // Minor 7-⑵: story:open이 { error }를 반환하면(invalid-project-path 등) StoryView가
+   // 안내 배너를 렌더할 수 있게 노출한다.
+   const [openError, setOpenError] = useState(null)
+   const [streamingText, setStreamingText] = useState('')
+   const tokenRef = useRef(null)
+   const onPushRef = useRef(onPushScenes)
+   onPushRef.current = onPushScenes
+   const prevPathRef = useRef(projectPath)
++  // Task 9: renderer stale-delta 필터. running 스텝을 실은 story:state의 operationId를
++  // 활성 op로 저장 → 그와 다른 operationId의 story:delta는 drop(엔진 abort가 늦게 끊길 때
++  // 이전 실행의 델타가 새 streamingText에 섞이는 것 방지). 엔진 레벨 가드(Task 6)의 renderer 겹.
++  const activeOpRef = useRef(null)
+   // HIGH: projectPath 전환 시 tokenRef 무효화를 useEffect(passive)에만 맡기면 한 프레임 늦는다
+   // — rerender로 새 projectPath가 반영된 직후, effect가 아직 실행되기 전 틈에 옛 프로젝트의
+   // pushScenes가 도착하면 tokenRef가 여전히 옛 토큰이라 통과하고, onPushRef.current는 이미 새
+   // 프로젝트의 onPushScenes를 가리켜 옛 씬이 새 프로젝트에 저장될 수 있다. 그래서 토큰 무효화
+   // 자체는 렌더 본문에서 동기적으로 수행한다(onPushRef.current = onPushScenes와 같은 패턴).
+   // state/scenes 초기화와 storyAbort 호출 같은 부수효과는 아래 effect가 이어서 처리한다.
+   const pendingResetRef = useRef(null)
+   if (prevPathRef.current !== projectPath) {
+     pendingResetRef.current = { oldToken: tokenRef.current }
+     prevPathRef.current = projectPath
+@@ -47,27 +51,30 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
+       window.electronAPI?.storyAbort?.({ projectToken: oldToken })?.catch?.(() => {})
+     }
+   }, [projectPath])
+ 
+   useEffect(() => {
+     const api = window.electronAPI
+     if (!api?.onStoryEvent) return
+     const offs = [
+       api.onStoryEvent('story:state', (p) => {
+         if (p.projectToken !== tokenRef.current) return
++        const anyRunning = p.state?.steps && Object.values(p.state.steps).some((s) => s?.status === 'running')
++        if (anyRunning && p.operationId) activeOpRef.current = p.operationId
+         setState(p.state)
+         // Minor: 스텝 running 전환 시 stepMachine.start()가 scenes 필드 없이 story:state를
+         // 먼저 emit한다(하류 리셋 알림용) — scenes가 undefined면 기존 값을 유지, 있을 때만 반영.
+         if (p.scenes !== undefined) setScenes(p.scenes)
+       }),
+       api.onStoryEvent('story:delta', (p) => {
+         if (p.projectToken !== tokenRef.current) return
++        if (activeOpRef.current && p.operationId !== activeOpRef.current) return
+         setStreamingText((t) => t + p.text)
+       }),
+       api.onStoryEvent('story:pushScenes', async (p) => {
+         if (p.projectToken !== tokenRef.current) return
+         try {
+           await onPushRef.current(p)
+           await api.storyPushAck({ projectToken: p.projectToken, operationId: p.operationId, pushRevision: p.pushRevision, ok: true })
+         } catch (e) {
+           await api.storyPushAck({ projectToken: p.projectToken, operationId: p.operationId, pushRevision: p.pushRevision, ok: false, reason: String(e.message || e) })
+         }
+diff --git a/tests/components/story/StoryView.genre.test.jsx b/tests/components/story/StoryView.genre.test.jsx
+new file mode 100644
+index 0000000..cf051f4
+--- /dev/null
++++ b/tests/components/story/StoryView.genre.test.jsx
+@@ -0,0 +1,20 @@
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen, fireEvent } from '@testing-library/react'
++import StoryView from '../../../src/components/story/StoryView.jsx'
++
++function makePipeline(start) {
++  return { state: { steps: {} }, streamingText: '', start, abort: () => {}, scenes: [], openError: null }
++}
++
++describe('StoryView 장르 드롭다운', () => {
++  it('장르 select에서 고른 값이 start options.genre로 전달된다', () => {
++    const start = vi.fn()
++    render(<StoryView pipeline={makePipeline(start)} />)
++    fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'dark-history' } })
++    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
++    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
++    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
++      options: expect.objectContaining({ genre: 'dark-history' }),
++    }))
++  })
++})
+diff --git a/tests/components/story/StoryView.test.jsx b/tests/components/story/StoryView.test.jsx
+index 08afaec..a4142e1 100644
+--- a/tests/components/story/StoryView.test.jsx
++++ b/tests/components/story/StoryView.test.jsx
+@@ -21,29 +21,29 @@ describe('StoryView', () => {
+     render(<StoryView pipeline={pipeline()} />)
+     expect(screen.getByText(/대본/)).toBeTruthy()
+     expect(screen.getByText(/씬 분리/)).toBeTruthy()
+     expect(screen.getByText(/오디오/)).toBeTruthy()
+     expect(screen.getByText(/프롬프트/)).toBeTruthy()
+   })
+   it('제목 입력 후 시작하면 start("script")가 stepMachine이 기대하는 shape로 호출된다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
+-    fireEvent.change(screen.getByPlaceholderText(/장르/), { target: { value: '단편' } })
++    fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'yadam' } })
+     fireEvent.change(screen.getByPlaceholderText(/길이/), { target: { value: '5' } })
+     fireEvent.change(screen.getByPlaceholderText(/언어/), { target: { value: 'ko' } })
+     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
+     // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/targetMinutes/language)를
+     // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
+     expect(p.start).toHaveBeenCalledWith('script', {
+       input: { type: 'title', title: '운수 좋은 날' },
+-      options: { genre: '단편', targetMinutes: 5, language: 'ko' },
++      options: { genre: 'yadam', targetMinutes: 5, language: 'ko' },
+     })
+   })
+ 
+   it('장르/길이 미입력 시 options에서 해당 필드가 undefined로 빠진다', () => {
+     const p = pipeline()
+     render(<StoryView pipeline={p} />)
+     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '제목만' } })
+     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
+     expect(p.start).toHaveBeenCalledWith('script', {
+       input: { type: 'title', title: '제목만' },
+diff --git a/tests/electron/api/llm/claudeSdk.test.js b/tests/electron/api/llm/claudeSdk.test.js
+new file mode 100644
+index 0000000..00d4a8e
+--- /dev/null
++++ b/tests/electron/api/llm/claudeSdk.test.js
+@@ -0,0 +1,60 @@
++import { describe, it, expect, vi } from 'vitest'
++import {
++  buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal,
++  extractTextDelta, readStructuredResult,
++} from '../../../../electron/api/llm/claudeSdk.js'
++
++describe('buildClaudeSdkOptions', () => {
++  it('격리 옵션을 고정하고 model/extra를 병합한다', () => {
++    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { includePartialMessages: true })
++    expect(o).toMatchObject({
++      model: 'claude-opus-4-8', tools: [], settingSources: [], skills: [],
++      thinking: { type: 'disabled' }, maxTurns: 2, includePartialMessages: true,
++    })
++  })
++  it('model 없으면 model 키를 넣지 않는다', () => {
++    expect('model' in buildClaudeSdkOptions()).toBe(false)
++  })
++})
++
++describe('extractClaudeSdkResult', () => {
++  it('success면 result를 trim해 반환', () => {
++    expect(extractClaudeSdkResult({ subtype: 'success', is_error: false, result: '  hi ' })).toBe('hi')
++  })
++  it('에러 result면 throw', () => {
++    expect(() => extractClaudeSdkResult({ subtype: 'error_during_execution', errors: ['boom'] })).toThrow('boom')
++  })
++})
++
++describe('bridgeAbortSignal', () => {
++  it('signal abort 시 controller가 abort된다', () => {
++    const ac = new AbortController()
++    const { abortController, cleanup } = bridgeAbortSignal(ac.signal)
++    ac.abort()
++    expect(abortController.signal.aborted).toBe(true)
++    cleanup()
++  })
++})
++
++describe('extractTextDelta', () => {
++  it('text_delta면 텍스트, 아니면 null', () => {
++    expect(extractTextDelta({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ab' } } })).toBe('ab')
++    expect(extractTextDelta({ type: 'stream_event', event: { type: 'content_block_start' } })).toBeNull()
++    expect(extractTextDelta({ type: 'result' })).toBeNull()
++  })
++})
++
++describe('readStructuredResult', () => {
++  it('success + structured_output', () => {
++    expect(readStructuredResult({ type: 'result', subtype: 'success', structured_output: { a: 1 } })).toEqual({ kind: 'structured', data: { a: 1 } })
++  })
++  it('success + structured_output 없음 → text', () => {
++    expect(readStructuredResult({ type: 'result', subtype: 'success', result: '{"a":1}' })).toEqual({ kind: 'text', text: '{"a":1}' })
++  })
++  it('retries 에러 → retry', () => {
++    expect(readStructuredResult({ type: 'result', subtype: 'error_max_structured_output_retries', errors: [] })).toEqual({ kind: 'retry' })
++  })
++  it('그 외 에러 → throw', () => {
++    expect(() => readStructuredResult({ type: 'result', subtype: 'error_during_execution', errors: ['x'] })).toThrow('x')
++  })
++})
+diff --git a/tests/electron/api/llm/claudeSdkImport.test.js b/tests/electron/api/llm/claudeSdkImport.test.js
+new file mode 100644
+index 0000000..2aeb173
+--- /dev/null
++++ b/tests/electron/api/llm/claudeSdkImport.test.js
+@@ -0,0 +1,8 @@
++import { describe, it, expect } from 'vitest'
++
++describe('claude-agent-sdk 로드', () => {
++  it('query export가 존재한다', async () => {
++    const mod = await import('@anthropic-ai/claude-agent-sdk')
++    expect(typeof mod.query).toBe('function')
++  })
++})
+diff --git a/tests/electron/api/llm/llmClaude.generateScript.test.js b/tests/electron/api/llm/llmClaude.generateScript.test.js
+new file mode 100644
+index 0000000..e37cce1
+--- /dev/null
++++ b/tests/electron/api/llm/llmClaude.generateScript.test.js
+@@ -0,0 +1,28 @@
++import { describe, it, expect, vi } from 'vitest'
++import { generateScript } from '../../../../electron/api/llm/llmClaude.js'
++
++// stream_event 델타 2개 + 최종 result를 흘리는 가짜 query
++function fakeQuery(deltas, resultText) {
++  return async function* () {
++    for (const t of deltas) yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: t } } }
++    yield { type: 'result', subtype: 'success', is_error: false, result: resultText }
++  }
++}
++
++describe('llmClaude.generateScript', () => {
++  it('델타를 onDelta로 흘리고 최종 result를 반환', async () => {
++    const onDelta = vi.fn()
++    const queryImpl = fakeQuery(['A', 'B'], 'ABC')
++    const { scriptMd } = await generateScript({ title: 'T' }, { language: 'ko' }, { onDelta, signal: undefined, queryImpl })
++    expect(onDelta.mock.calls.map((c) => c[0])).toEqual(['A', 'B'])
++    expect(scriptMd).toBe('ABC')
++  })
++
++  it('signal.aborted면 onDelta 방출을 멈추고 Aborted throw', async () => {
++    const ac = new AbortController()
++    const onDelta = vi.fn((t) => { if (t === 'A') ac.abort() })
++    const queryImpl = fakeQuery(['A', 'B'], 'ABC')
++    await expect(generateScript({ title: 'T' }, {}, { onDelta, signal: ac.signal, queryImpl })).rejects.toThrow('Aborted')
++    expect(onDelta).toHaveBeenCalledTimes(1) // 'A'만, 'B'는 abort로 차단
++  })
++})
+diff --git a/tests/electron/api/llm/llmClaude.structured.test.js b/tests/electron/api/llm/llmClaude.structured.test.js
+new file mode 100644
+index 0000000..445455f
+--- /dev/null
++++ b/tests/electron/api/llm/llmClaude.structured.test.js
+@@ -0,0 +1,42 @@
++import { describe, it, expect } from 'vitest'
++import { splitScenes, writePrompts } from '../../../../electron/api/llm/llmClaude.js'
++
++const SCENES = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'narrator', text: 'hi' }] }], speakers: [{ id: 'narrator', name: '내레이터' }] }
++
++function resultOf(msg) { return async function* () { yield msg } }
++
++describe('llmClaude.splitScenes', () => {
++  it('structured_output을 그대로 사용', async () => {
++    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: SCENES })
++    const out = await splitScenes('SCRIPT', { language: 'ko' }, { queryImpl })
++    expect(out.scenes[0].sceneNo).toBe(1)
++    expect(out.speakers[0].id).toBe('narrator')
++  })
++  it('structured 없으면 result 텍스트(코드펜스 포함)를 파싱', async () => {
++    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, result: '```json\n' + JSON.stringify(SCENES) + '\n```' })
++    const out = await splitScenes('SCRIPT', { language: 'ko' }, { queryImpl })
++    expect(out.scenes[0].summary).toBe('S')
++  })
++  it('retries 에러면 outputFormat 없는 재요청으로 폴백', async () => {
++    let call = 0
++    const queryImpl = async function* (args) {
++      call += 1
++      if (call === 1) { yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }; return }
++      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(SCENES) }
++    }
++    const out = await splitScenes('SCRIPT', {}, { queryImpl })
++    expect(call).toBe(2)
++    expect(out.scenes.length).toBe(1)
++  })
++})
++
++describe('llmClaude.writePrompts', () => {
++  it('sceneNo로 image/videoPrompt를 병합', async () => {
++    const scenes = [{ sceneNo: 1, storyId: 'a', summary: 'S' }]
++    const structured = { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
++    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: structured })
++    const out = await writePrompts(scenes, {}, {}, { queryImpl })
++    expect(out.scenes[0].imagePrompt).toBe('IMG')
++    expect(out.scenes[0].videoPrompt).toBe('VID')
++  })
++})
+diff --git a/tests/electron/api/llm/metaPrompts.test.js b/tests/electron/api/llm/metaPrompts.test.js
+new file mode 100644
+index 0000000..2441043
+--- /dev/null
++++ b/tests/electron/api/llm/metaPrompts.test.js
+@@ -0,0 +1,42 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
++import os from 'node:os'
++import path from 'node:path'
++import { loadMetaPrompt } from '../../../../electron/api/llm/metaPrompts.js'
++
++async function fixtureSkillsDir() {
++  const root = await mkdtemp(path.join(os.tmpdir(), 'skills-'))
++  const base = path.join(root, 'story-engine', 'meta-prompts')
++  await mkdir(path.join(base, 'yadam'), { recursive: true })
++  await mkdir(path.join(base, '_common'), { recursive: true })
++  await writeFile(path.join(base, 'yadam', 'yadam-scenario-guide.md'), 'SCENARIO')
++  await writeFile(path.join(base, 'yadam', 'yadam-narrative-guide.md'), 'NARRATIVE')
++  await writeFile(path.join(base, 'yadam', 'yadam-suspense-techniques.md'), 'SUSPENSE')
++  await writeFile(path.join(base, '_common', 'hook_principles.md'), 'HOOK')
++  return root
++}
++
++describe('loadMetaPrompt', () => {
++  it('yadam script 웨이브: 3파일 + hook을 합친다', async () => {
++    const skillsDir = await fixtureSkillsDir()
++    const out = await loadMetaPrompt({ genre: 'yadam', wave: 'script', language: 'ko', skillsDir })
++    expect(out).toContain('SCENARIO')
++    expect(out).toContain('NARRATIVE')
++    expect(out).toContain('SUSPENSE')
++    expect(out).toContain('HOOK')
++  })
++  it('wave가 script가 아니면 빈 문자열', async () => {
++    const skillsDir = await fixtureSkillsDir()
++    expect(await loadMetaPrompt({ genre: 'yadam', wave: 'scenes', language: 'ko', skillsDir })).toBe('')
++  })
++  it('genre 없으면 빈 문자열', async () => {
++    expect(await loadMetaPrompt({ wave: 'script', language: 'ko', skillsDir: '/nope' })).toBe('')
++  })
++  it('누락 파일은 경고 후 건너뛴다', async () => {
++    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
++    const out = await loadMetaPrompt({ genre: 'dark-history', wave: 'script', language: 'en', skillsDir: '/nonexistent' })
++    expect(out).toBe('')
++    expect(warn).toHaveBeenCalled()
++    warn.mockRestore()
++  })
++})
+diff --git a/tests/electron/api/llm/prompts.test.js b/tests/electron/api/llm/prompts.test.js
+new file mode 100644
+index 0000000..bfb94a1
+--- /dev/null
++++ b/tests/electron/api/llm/prompts.test.js
+@@ -0,0 +1,30 @@
++import { describe, it, expect } from 'vitest'
++import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from '../../../../electron/api/llm/prompts.js'
++
++describe('buildScriptPrompt', () => {
++  it('제목/장르/언어를 템플릿에 채운다', () => {
++    const p = buildScriptPrompt({ title: 'T' }, { targetMinutes: 8, language: 'ko', genre: 'yadam' })
++    expect(p).toContain('8분')
++    expect(p).toContain('제목: T')
++    expect(p).toContain('한국어')
++  })
++  it('metaPrompt가 있으면 CUSTOM INSTRUCTIONS 블록을 앞에 넣는다', () => {
++    const p = buildScriptPrompt({ title: 'T' }, { language: 'ko', metaPrompt: 'META-XYZ' })
++    expect(p).toContain('## CUSTOM INSTRUCTIONS')
++    expect(p).toContain('META-XYZ')
++    expect(p.indexOf('META-XYZ')).toBeLessThan(p.indexOf('제목: T'))
++  })
++  it('metaPrompt가 없으면 CUSTOM INSTRUCTIONS 블록이 없다', () => {
++    expect(buildScriptPrompt({ title: 'T' }, { language: 'ko' })).not.toContain('CUSTOM INSTRUCTIONS')
++  })
++})
++
++describe('buildSplitPrompt / buildPromptsPrompt', () => {
++  it('split은 대본 본문을 포함', () => {
++    expect(buildSplitPrompt('SCRIPT-BODY', { language: 'ko' })).toContain('SCRIPT-BODY')
++  })
++  it('prompts는 씬 요약을 포함', () => {
++    const p = buildPromptsPrompt([{ sceneNo: 1, summary: 'S1', segments: [{ text: 'hi' }] }], {}, { language: 'en' })
++    expect(p).toContain('1. S1')
++  })
++})
+diff --git a/tests/electron/api/llm/toJsonSchema.test.js b/tests/electron/api/llm/toJsonSchema.test.js
+new file mode 100644
+index 0000000..8ebc988
+--- /dev/null
++++ b/tests/electron/api/llm/toJsonSchema.test.js
+@@ -0,0 +1,35 @@
++import { describe, it, expect } from 'vitest'
++import { toJsonSchema } from '../../../../electron/api/llm/toJsonSchema.js'
++
++describe('toJsonSchema', () => {
++  it('중첩 properties/items/required를 재귀 변환한다', () => {
++    const gemini = {
++      type: 'OBJECT',
++      properties: {
++        scenes: {
++          type: 'ARRAY',
++          items: {
++            type: 'OBJECT',
++            properties: { sceneNo: { type: 'INTEGER' }, summary: { type: 'STRING' } },
++            required: ['sceneNo', 'summary'],
++          },
++        },
++      },
++      required: ['scenes'],
++    }
++    expect(toJsonSchema(gemini)).toEqual({
++      type: 'object',
++      properties: {
++        scenes: {
++          type: 'array',
++          items: {
++            type: 'object',
++            properties: { sceneNo: { type: 'integer' }, summary: { type: 'string' } },
++            required: ['sceneNo', 'summary'],
++          },
++        },
++      },
++      required: ['scenes'],
++    })
++  })
++})
+diff --git a/tests/electron/story/stepMachine.claude.test.js b/tests/electron/story/stepMachine.claude.test.js
+new file mode 100644
+index 0000000..618d908
+--- /dev/null
++++ b/tests/electron/story/stepMachine.claude.test.js
+@@ -0,0 +1,25 @@
++import { describe, it, expect, vi } from 'vitest'
++import { mkdtemp } from 'node:fs/promises'
++import os from 'node:os'
++import path from 'node:path'
++import { createStepMachine } from '../../../electron/story/stepMachine.js'
++
++async function tmpProject() { return mkdtemp(path.join(os.tmpdir(), 'proj-')) }
++
++describe('stepMachine + Claude 엔진', () => {
++  it('script 스텝이 loadMetaPrompt 결과를 opts.metaPrompt로 llm에 넘긴다', async () => {
++    const projectPath = await tmpProject()
++    const llm = {
++      generateScript: vi.fn(async () => ({ scriptMd: '# 대본' })),
++      splitScenes: vi.fn(), writePrompts: vi.fn(),
++    }
++    const loadMetaPrompt = vi.fn(async () => 'META')
++    const machine = createStepMachine({ projectPath, llm, emit: () => {}, getApiKey: () => null, loadMetaPrompt })
++    await machine.open()
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { genre: 'yadam', language: 'ko' } })
++    expect(loadMetaPrompt).toHaveBeenCalledWith({ genre: 'yadam', wave: 'script', language: 'ko' })
++    expect(llm.generateScript.mock.calls[0][1].metaPrompt).toBe('META')
++    // 모델 fallback 'gemini-2.5-pro'가 새지 않음(엔진 미지정 → undefined)
++    expect(llm.generateScript.mock.calls[0][1].model).toBeUndefined()
++  })
++})
+diff --git a/tests/hooks/useStoryPipeline.delta.test.js b/tests/hooks/useStoryPipeline.delta.test.js
+new file mode 100644
+index 0000000..3b039b0
+--- /dev/null
++++ b/tests/hooks/useStoryPipeline.delta.test.js
+@@ -0,0 +1,33 @@
++import { describe, it, expect, beforeEach } from 'vitest'
++import { renderHook, act } from '@testing-library/react'
++import { useStoryPipeline } from '../../src/hooks/useStoryPipeline.js'
++
++// electronAPI onStoryEvent 목: 핸들러를 캡처해 수동 발화
++function installApi() {
++  const handlers = {}
++  window.electronAPI = {
++    onStoryEvent: (ch, fn) => { handlers[ch] = fn; return () => {} },
++    storyOpen: async () => ({ projectToken: 'TOK', state: {}, scenes: [] }),
++    storyGetState: async () => ({}),
++    storyStart: async () => ({ operationId: 'op2' }),
++    storyAbort: async () => {},
++  }
++  return handlers
++}
++
++describe('useStoryPipeline delta 필터', () => {
++  beforeEach(() => installApi())
++
++  it('활성 op와 다른 operationId의 delta는 무시한다', async () => {
++    const handlers = installApi()
++    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
++    await act(async () => { await result.current.open() })
++    // running 스텝 story:state로 활성 op = 'op2' 설정
++    act(() => handlers['story:state']({ projectToken: 'TOK', operationId: 'op2', state: { steps: { script: { status: 'running' } } } }))
++    // 옛 op 'op1' 델타 → 무시
++    act(() => handlers['story:delta']({ projectToken: 'TOK', operationId: 'op1', text: 'STALE' }))
++    // 현재 op 'op2' 델타 → 반영
++    act(() => handlers['story:delta']({ projectToken: 'TOK', operationId: 'op2', text: 'LIVE' }))
++    expect(result.current.streamingText).toBe('LIVE')
++  })
++})
+diff --git a/tests/integration/storyClaudePipeline.test.js b/tests/integration/storyClaudePipeline.test.js
+new file mode 100644
+index 0000000..435d8e0
+--- /dev/null
++++ b/tests/integration/storyClaudePipeline.test.js
+@@ -0,0 +1,52 @@
++import { describe, it, expect, vi } from 'vitest'
++import { mkdtemp, readFile } from 'node:fs/promises'
++import os from 'node:os'
++import path from 'node:path'
++import { createStepMachine } from '../../electron/story/stepMachine.js'
++import * as llmClaude from '../../electron/api/llm/llmClaude.js'
++
++// SDK query만 목킹 — llmClaude 실제 로직(스트리밍/structured) 경유
++function fakeQueryFactory() {
++  return async function* (args) {
++    if (args.options?.includePartialMessages) {
++      yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '# 대본' } } }
++      yield { type: 'result', subtype: 'success', is_error: false, result: '# 대본' }
++      return
++    }
++    if (args.options?.outputFormat) {
++      // splitScenes 또는 writePrompts 스키마에 따라 최소 유효 데이터 반환
++      const isPrompts = /imagePrompt/.test(JSON.stringify(args.options.outputFormat.schema))
++      const data = isPrompts
++        ? { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
++        : { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'narrator', text: 'hi' }] }], speakers: [{ id: 'narrator', name: 'N' }] }
++      yield { type: 'result', subtype: 'success', is_error: false, structured_output: data }
++      return
++    }
++    yield { type: 'result', subtype: 'success', is_error: false, result: '{}' }
++  }
++}
++
++describe('Story Claude 파이프라인 (통합)', () => {
++  it('대본→씬분리→프롬프트가 Claude 엔진으로 끝까지 돈다', async () => {
++    const projectPath = await mkdtemp(path.join(os.tmpdir(), 'proj-'))
++    const queryImpl = fakeQueryFactory()
++    // llmClaude 함수들을 queryImpl 주입 버전으로 래핑
++    const llm = {
++      generateScript: (i, o, ctx) => llmClaude.generateScript(i, o, { ...ctx, queryImpl }),
++      splitScenes: (s, o, ctx) => llmClaude.splitScenes(s, o, { ...ctx, queryImpl }),
++      writePrompts: (s, c, o, ctx) => llmClaude.writePrompts(s, c, o, { ...ctx, queryImpl }),
++    }
++    const loadMetaPrompt = async () => 'META'
++    const machine = createStepMachine({ projectPath, llm, emit: () => {}, getApiKey: () => null, loadMetaPrompt })
++    await machine.open()
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { genre: 'yadam', language: 'ko' } })
++    await machine.start('scenes', {})
++    await machine.start('prompts', {})
++
++    const scenes = JSON.parse(await readFile(path.join(projectPath, 'story', 'scenes.json'), 'utf8')).scenes
++    expect(scenes[0].imagePrompt).toBe('IMG')
++    expect(scenes[0].videoPrompt).toBe('VID')
++    const script = await readFile(path.join(projectPath, 'story', 'script.md'), 'utf8')
++    expect(script).toContain('대본')
++  })
++})

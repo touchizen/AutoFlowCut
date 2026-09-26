@@ -1,0 +1,66 @@
+# Review package: e6c7ecb..bebbfe3
+
+## Commits
+bebbfe3 feat(agent): add icon actions with portal tooltips
+
+## Files changed
+ src/components/agent/AgentIconButton.jsx     | 2 +-
+ tests/components/AppFlowSplitLayout.test.jsx | 3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/src/components/agent/AgentIconButton.jsx b/src/components/agent/AgentIconButton.jsx
+index db46d7e..aa44df9 100644
+--- a/src/components/agent/AgentIconButton.jsx
++++ b/src/components/agent/AgentIconButton.jsx
+@@ -67,21 +67,21 @@ export default function AgentIconButton({
+   const show = () => { if (!disabled) setShowTooltip(true) }
+   const hide = () => setShowTooltip(false)
+ 
+   return (
+     <>
+       <button
+         ref={buttonRef}
+         type={type}
+         className={`agent-icon-button ${className}`.trim()}
+         aria-label={label}
+-        aria-describedby={showTooltip ? tooltipId : undefined}
++        aria-describedby={showTooltip && tooltip ? tooltipId : undefined}
+         aria-pressed={pressed}
+         disabled={disabled}
+         onClick={onClick}
+         onMouseEnter={show}
+         onMouseLeave={hide}
+         onFocus={show}
+         onBlur={hide}
+       >
+         {children}
+       </button>
+diff --git a/tests/components/AppFlowSplitLayout.test.jsx b/tests/components/AppFlowSplitLayout.test.jsx
+index b5e0655..641ce11 100644
+--- a/tests/components/AppFlowSplitLayout.test.jsx
++++ b/tests/components/AppFlowSplitLayout.test.jsx
+@@ -136,21 +136,22 @@ describe('agent floating/FAB stay inside four-way App split', () => {
+       expect(splitAppStyle(layoutMode, 0.8).position).toBe('absolute')
+     },
+   )
+ 
+   it('production CSS가 viewport 단위가 아닌 App container 단위를 쓴다', () => {
+     const css = readFileSync('src/components/agent/ChatPanel.css', 'utf8')
+     expect(css).toContain('width: min(420px, calc(100% - 36px))')
+     expect(css).toContain('max-height: min(640px, calc(100% - 36px))')
+     // 패널 sizing rule 자체에 viewport 단위가 없어야 한다(컨테이너 축소 시 안 잘리게).
+     // portal tooltip(.agent-portal-tooltip)은 body에 position:fixed라 100vw clamp가 정당하므로 패널 rule 블록만 검사한다.
+-    expect(css).not.toMatch(/\.agent-chat-panel\s*\{[^}]*100v[wh]/)
++    // [^{]*로 .mode-slide 등 variant selector까지 포함해 검사하되 rule 블록 경계({,})는 안 넘어 tooltip false-positive는 피한다.
++    expect(css).not.toMatch(/\.agent-chat-panel[^{]*\{[^}]*100v[wh]/)
+   })
+ })
+ 
+ describe('Mode useEffect — setLayout IPC calls (§3.4)', () => {
+   let mockSetMode
+   let mockSetLayout
+ 
+   beforeEach(() => {
+     mockSetMode = vi.fn()
+     mockSetLayout = vi.fn()

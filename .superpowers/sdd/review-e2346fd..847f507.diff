@@ -1,0 +1,121 @@
+# Review package: e2346fd..847f507
+
+## Commits
+847f507 feat(story): llmClaude.generateTitle/continueScript
+
+## Files changed
+ electron/api/llm/llmClaude.js                      | 37 +++++++++++++++++++++-
+ .../api/llm/llmClaude.titleContinue.test.js        | 27 ++++++++++++++++
+ 2 files changed, 63 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/electron/api/llm/llmClaude.js b/electron/api/llm/llmClaude.js
+index 659ea00..d70f480 100644
+--- a/electron/api/llm/llmClaude.js
++++ b/electron/api/llm/llmClaude.js
+@@ -1,15 +1,15 @@
+ /**
+  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
+  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
+  */
+-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
++import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt } from './prompts.js'
+ import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
+ import { toJsonSchema } from './toJsonSchema.js'
+ import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
+ 
+ export const DEFAULT_MODEL = 'claude-opus-4-8'
+ 
+ async function* defaultQuery(args) {
+   const { query } = await import('@anthropic-ai/claude-agent-sdk')
+   yield* query(args)
+ }
+@@ -33,20 +33,55 @@ export async function generateScript(input, opts = {}, { onDelta, signal, queryI
+     if (signal?.aborted) throw new Error('Aborted')
+     return { scriptMd: full } // result 없이 스트림 종료 시 누적 델타 반환
+   } catch (err) {
+     if (signal?.aborted) throw new Error('Aborted')
+     throw new Error(`Claude SDK failed: ${err.message}`)
+   } finally {
+     cleanup()
+   }
+ }
+ 
++export async function generateTitle(scriptMd, opts = {}, { signal, queryImpl = defaultQuery } = {}) {
++  const prompt = buildTitlePrompt(scriptMd, opts)
++  const { abortController, cleanup } = bridgeAbortSignal(signal)
++  try {
++    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
++    for await (const m of queryImpl({ prompt, options })) {
++      if (m.type === 'result') return { title: extractClaudeSdkResult(m).split('\n')[0].trim() }
++    }
++    throw new Error('no result message returned')
++  } catch (err) {
++    if (signal?.aborted) throw new Error('Aborted')
++    throw new Error(`Claude SDK failed: ${err.message}`)
++  } finally { cleanup() }
++}
++
++export async function continueScript(existingScript, opts = {}, { onDelta, signal, queryImpl = defaultQuery } = {}) {
++  const prompt = buildContinuePrompt(existingScript, opts)
++  const { abortController, cleanup } = bridgeAbortSignal(signal)
++  let added = ''
++  try {
++    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { includePartialMessages: true })
++    for await (const m of queryImpl({ prompt, options })) {
++      if (signal?.aborted) break
++      const delta = extractTextDelta(m)
++      if (delta != null) { added += delta; onDelta?.(delta); if (signal?.aborted) break; continue }
++      if (m.type === 'result') return { scriptMd: `${existingScript}\n\n${extractClaudeSdkResult(m)}` }
++    }
++    if (signal?.aborted) throw new Error('Aborted')
++    return { scriptMd: `${existingScript}\n\n${added}` }
++  } catch (err) {
++    if (signal?.aborted) throw new Error('Aborted')
++    throw new Error(`Claude SDK failed: ${err.message}`)
++  } finally { cleanup() }
++}
++
+ function parseJsonLoose(text) {
+   let t = (text || '').trim()
+   const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
+   if (fence) t = fence[1].trim()
+   const s = t.indexOf('{'); const e = t.lastIndexOf('}')
+   if (s >= 0 && e > s) t = t.slice(s, e + 1)
+   return JSON.parse(t)
+ }
+ 
+ // Gemini 대문자 스키마(SCENES_SCHEMA/PROMPTS_SCHEMA) 기준 재귀 검증. required 미충족 시 throw.
+diff --git a/tests/electron/api/llm/llmClaude.titleContinue.test.js b/tests/electron/api/llm/llmClaude.titleContinue.test.js
+new file mode 100644
+index 0000000..7eb1ff9
+--- /dev/null
++++ b/tests/electron/api/llm/llmClaude.titleContinue.test.js
+@@ -0,0 +1,27 @@
++import { describe, it, expect, vi } from 'vitest'
++import { generateTitle, continueScript } from '../../../../electron/api/llm/llmClaude.js'
++
++const resultMsg = (text) => ({ type: 'result', subtype: 'success', is_error: false, result: text })
++function fakeQuery(msgs) { return async function* () { for (const m of msgs) yield m } }
++
++describe('generateTitle', () => {
++  it('result 첫 줄을 title로 반환', async () => {
++    const { title } = await generateTitle('대본', {}, { queryImpl: fakeQuery([resultMsg('멋진 제목\n군더더기')]) })
++    expect(title).toBe('멋진 제목')
++  })
++})
++describe('continueScript', () => {
++  it('기존 대본 뒤에 이어붙인 전체를 반환하고 델타를 흘린다', async () => {
++    const onDelta = vi.fn()
++    const stream = { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '이어진' } } }
++    const { scriptMd } = await continueScript('앞부분', {}, { onDelta, queryImpl: fakeQuery([stream, resultMsg('이어진 내용')]) })
++    expect(onDelta).toHaveBeenCalledWith('이어진')
++    expect(scriptMd).toBe('앞부분\n\n이어진 내용')
++  })
++  it('abort면 Aborted throw', async () => {
++    const ac = new AbortController()
++    const onDelta = vi.fn(() => ac.abort())
++    const stream = { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'x' } } }
++    await expect(continueScript('앞', {}, { onDelta, signal: ac.signal, queryImpl: fakeQuery([stream, resultMsg('y')]) })).rejects.toThrow('Aborted')
++  })
++})

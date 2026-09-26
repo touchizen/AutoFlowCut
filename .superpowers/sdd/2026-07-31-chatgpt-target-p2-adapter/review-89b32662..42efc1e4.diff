@@ -1,0 +1,2169 @@
+# Review package: 89b32662..HEAD
+
+## Commits
+42efc1e4 feat(chatgpt): generate images on the ChatGPT target
+
+## Files changed
+ electron/ipc/mode.js                               |  64 +++
+ electron/main.js                                   |   4 +
+ electron/preload.js                                |   4 +
+ electron/webtargets/chatgpt/generationAdapter.js   | 537 +++++++++++++++++++++
+ electron/webtargets/chatgpt/index.js               |  38 +-
+ src/App.jsx                                        |  98 +++-
+ src/engine/engineChatgpt.js                        |  92 ++++
+ src/engine/useGenerationEngine.js                  |  45 +-
+ src/locales/en.js                                  |   2 +
+ src/locales/ko.js                                  |   2 +
+ tests/components/App.chatgptTargetGate.test.jsx    |  54 ++-
+ tests/electron/ipc/mode.chatgptDevGate.test.js     | 135 ++++++
+ .../webtargets/chatgptGenerationAdapter.test.js    | 214 ++++++++
+ tests/electron/webtargets/chatgptTarget.test.js    |   8 +-
+ tests/engine/stageRoutedEngine.test.js             |  68 +++
+ 15 files changed, 1321 insertions(+), 44 deletions(-)
+
+## Diff
+diff --git a/electron/ipc/mode.js b/electron/ipc/mode.js
+index bbf5fdce..59f66b15 100644
+--- a/electron/ipc/mode.js
++++ b/electron/ipc/mode.js
+@@ -365,20 +365,84 @@ export function createModeController(getMainWindow, createFlowView, options = {}
+       if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
+       return getSessionStatus(target)
+     })
+     ipcMain.handle('session-target:reconnect', async (event, target) => {
+       if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
+       const view = views.get(target)
+       view?.webContents?.focus?.()
+       await startInitialSessionLoad(target, view)
+       return ensureSession(target)
+     })
++    const chatgptGenerationAdmission = (event) => {
++      if (!isTrustedRenderer(event)) {
++        return { success: false, errorKind: 'chatgpt-unauthorized-sender', error: 'ChatGPT generation sender is not authorized.' }
++      }
++      if (!isChatgptP2DevGateEnabled(options.chatgptDevGate)) {
++        return { success: false, errorKind: 'chatgpt-target-disabled', error: 'ChatGPT generation is disabled outside the opted-in development route.' }
++      }
++      if (currentRoute.mode !== 'flow' || currentRoute.sessionTarget !== 'chatgpt') {
++        return { success: false, errorKind: 'chatgpt-route-inactive', error: 'ChatGPT generation requires the active ChatGPT session target.' }
++      }
++      return null
++    }
++    const chatgptAdapter = () => getTargetDefinition('chatgpt')?.createAdapter?.() || null
++    ipcMain.handle('chatgpt:submit-generation', async (event, request = {}) => {
++      const refused = chatgptGenerationAdmission(event)
++      if (refused) return refused
++      const referenceImages = Array.isArray(request.referenceImages) ? request.referenceImages : []
++      // Reference upload has no measured product surface; never silently discard these bytes.
++      if (referenceImages.length > 0) {
++        return {
++          success: false,
++          errorKind: 'chatgpt-reference-images-unmeasured',
++          error: 'ChatGPT reference image upload is not measured and remains unavailable.',
++        }
++      }
++      const session = await ensureSession('chatgpt')
++      if (session?.ready !== true) {
++        return {
++          success: false,
++          errorKind: 'chatgpt-session-not-ready',
++          error: 'ChatGPT session is not ready. Log in and reconnect before generating.',
++          sessionStatus: session?.status || 'session-blocked',
++        }
++      }
++      const adapter = chatgptAdapter()
++      if (!adapter || typeof adapter.submit !== 'function') {
++        return { success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.' }
++      }
++      return adapter.submit({ ...request, referenceImages })
++    })
++    ipcMain.handle('chatgpt:observe-generation', async (event, generationId) => {
++      const refused = chatgptGenerationAdmission(event)
++      if (refused) return refused
++      const adapter = chatgptAdapter()
++      return adapter?.observe?.(generationId) || {
++        success: false, completed: true, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
++      }
++    })
++    ipcMain.handle('chatgpt:collect-generation', async (event, generationId) => {
++      const refused = chatgptGenerationAdmission(event)
++      if (refused) return refused
++      const adapter = chatgptAdapter()
++      return adapter?.collect?.(generationId) || {
++        success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
++      }
++    })
++    ipcMain.handle('chatgpt:clear-generations', async (event) => {
++      const refused = chatgptGenerationAdmission(event)
++      if (refused) return refused
++      const adapter = chatgptAdapter()
++      return adapter?.clear?.() || {
++        success: false, errorKind: 'chatgpt-adapter-unavailable', error: 'ChatGPT image generation adapter is unavailable.',
++      }
++    })
+     ipcMain.handle('flow:set-startup-project', (_event, payload = {}) => {
+       startupHint = payload.flowProjectId || null
+       return { ok: true }
+     })
+   }
+ 
+   const getActiveSessionView = (target = currentRoute.sessionTarget) => views.get(target) || null
+   return {
+     register,
+     setRoute,
+diff --git a/electron/main.js b/electron/main.js
+index 3dbd7811..ede7c6a8 100644
+--- a/electron/main.js
++++ b/electron/main.js
+@@ -714,20 +714,24 @@ function makeFlowView() {
+ 
+   // #R16-8: 초기 Flow 네비게이션 rejection 이 unhandled 로 새지 않게 catch.
+   view.webContents.loadURL(FLOW_URL).catch((e) => console.warn('[Flow] initial loadURL failed:', e?.message))
+   return view
+ }
+ 
+ const chatgptTarget = createChatgptTarget({
+   WebContentsView,
+   reservedSessionWebPreferences,
+   installReservedSessionSecurity,
++  adapterOptions: {
++    fs: fsSync,
++    getOutputDir: () => path.join(app.getPath('temp'), 'autoflowcut-chatgpt'),
++  },
+ })
+ const sessionTargetRegistry = createTargetRegistry({ chatgpt: chatgptTarget })
+ const chatgptDevGate = Object.freeze({
+   platform: process.platform,
+   isPackaged: app.isPackaged,
+   viteDevServerUrl: process.env.VITE_DEV_SERVER_URL,
+   chatgptP2Flag: process.env.AUTOFLOWCUT_CHATGPT_P2,
+ })
+ const chatgptTargetComboEnabled = isChatgptP2DevGateEnabled(chatgptDevGate)
+ setSessionTargetStripEnabled(chatgptTargetComboEnabled)
+diff --git a/electron/preload.js b/electron/preload.js
+index 65d0d45c..b2709431 100644
+--- a/electron/preload.js
++++ b/electron/preload.js
+@@ -167,20 +167,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
+   onMcpUpdate: (callback) => {
+     const handler = (_, data) => callback(data)
+     ipcRenderer.on('mcp-update', handler)
+     return () => ipcRenderer.removeListener('mcp-update', handler)
+   },
+ 
+   // Route controller — canonical {mode, sessionTarget} route (route:set handler in electron/ipc/mode.js).
+   setRoute: (params) => ipcRenderer.invoke('route:set', params),
+   getSessionTargetStatus: (target) => ipcRenderer.invoke('session-target:get-status', target),
+   reconnectSession: (target) => ipcRenderer.invoke('session-target:reconnect', target),
++  chatgptSubmitGeneration: (request) => ipcRenderer.invoke('chatgpt:submit-generation', request),
++  chatgptObserveGeneration: (generationId) => ipcRenderer.invoke('chatgpt:observe-generation', generationId),
++  chatgptCollectGeneration: (generationId) => ipcRenderer.invoke('chatgpt:collect-generation', generationId),
++  chatgptClearGenerations: () => ipcRenderer.invoke('chatgpt:clear-generations'),
+   onSessionTargetStatus: (callback) => {
+     const handler = (_, status) => callback(status)
+     ipcRenderer.on('session-target:status-changed', handler)
+     return () => ipcRenderer.removeListener('session-target:status-changed', handler)
+   },
+   onRouteQuiesceRequest: (callback) => {
+     const handler = (_, request) => callback(request)
+     ipcRenderer.on('route:quiesce-request', handler)
+     return () => ipcRenderer.removeListener('route:quiesce-request', handler)
+   },
+diff --git a/electron/webtargets/chatgpt/generationAdapter.js b/electron/webtargets/chatgpt/generationAdapter.js
+new file mode 100644
+index 00000000..59672924
+--- /dev/null
++++ b/electron/webtargets/chatgpt/generationAdapter.js
+@@ -0,0 +1,537 @@
++import fsSync from 'node:fs'
++import os from 'node:os'
++import path from 'node:path'
++
++export const SELECTORS = Object.freeze({
++  composer: '#prompt-textarea',
++  submit: '#composer-submit-button',
++})
++
++export const CDN_RE = /^https:\/\/chatgpt\.com\/backend-api\/estuary\/content\b/
++
++export function norm(value) {
++  return String(value == null ? '' : value)
++    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '')
++    .replace(/\u00A0/g, ' ')
++    .trim()
++}
++
++export function buildImagePrompt(prompt) {
++  return `Generate an image based on the following prompt:\n${norm(prompt)}`
++}
++
++export function idOf(src) {
++  try {
++    return new URL(String(src)).searchParams.get('id') || null
++  } catch {
++    return null
++  }
++}
++
++export function baselineIdsOf(images) {
++  const ids = []
++  for (const image of Array.isArray(images) ? images : []) {
++    const src = typeof image?.src === 'string' ? image.src : ''
++    if (!CDN_RE.test(src)) continue
++    const id = idOf(src)
++    if (id) ids.push(id)
++  }
++  return ids
++}
++
++export function pickNewCdnImage(baselineIds, images) {
++  const excluded = new Set(Array.isArray(baselineIds) ? baselineIds : [])
++  const list = Array.isArray(images) ? images : []
++  for (let index = list.length - 1; index >= 0; index -= 1) {
++    const image = list[index]
++    const src = typeof image?.src === 'string' ? image.src : ''
++    if (!CDN_RE.test(src)) continue
++    const id = idOf(src)
++    if (!id || excluded.has(id)) continue
++    if (image.complete !== true || !(Number(image.w) > 0)) continue
++    return { src, id, w: image.w, h: image.h }
++  }
++  return null
++}
++
++export const PAGE_FNS = /* js */ `
++(() => {
++  if (!window.__cg_v1) {
++    const SEL = ${JSON.stringify(SELECTORS)};
++    const norm = ${norm.toString()};
++    const composerEl = () => document.querySelector(SEL.composer);
++    const submitEl = () => document.querySelector(SEL.submit);
++    const text = () => { const composer = composerEl(); return composer ? norm(composer.textContent) : null; };
++    const state = (prompt) => {
++      const current = text();
++      return { textMatches: current !== null && current === norm(prompt), submitPresent: !!submitEl() };
++    };
++    const collect = () => Array.from(document.images || []).map((image) => ({
++      src: String(image.currentSrc || image.src || ''),
++      complete: image.complete === true,
++      w: image.naturalWidth || 0,
++      h: image.naturalHeight || 0,
++    }));
++    const snapshot = () => {
++      const images = collect();
++      const mainImages = document.querySelectorAll('main img');
++      const last = mainImages.length
++        ? mainImages[mainImages.length - 1]
++        : (document.images && document.images.length ? document.images[document.images.length - 1] : null);
++      try { if (last && last.scrollIntoView) last.scrollIntoView({ block: 'end' }); } catch {}
++      return {
++        imgs: images,
++        href: location.href,
++        alerts: document.querySelectorAll('[role="alert"]').length,
++      };
++    };
++
++    window.__cg_baseline__ = function () { return snapshot(); };
++    window.__cg_inject__ = function (prompt) {
++      const composer = composerEl();
++      if (!composer) return { textMatches: false, submitPresent: !!submitEl() };
++      try { composer.focus(); } catch {}
++      try {
++        document.execCommand('selectAll', false, null);
++        document.execCommand('delete', false, null);
++        document.execCommand('insertText', false, String(prompt));
++      } catch {}
++      try {
++        composer.dispatchEvent(new InputEvent('input', {
++          bubbles: true,
++          data: String(prompt),
++          inputType: 'insertText',
++        }));
++      } catch {}
++      return state(prompt);
++    };
++    window.__cg_verify__ = function (prompt) { return state(prompt); };
++    window.__cg_clickSubmit__ = function () {
++      const button = submitEl();
++      if (button) { try { button.click(); } catch {} }
++      return { clicked: !!button };
++    };
++    window.__cg_submitAck__ = function (prompt) {
++      const current = text();
++      return {
++        composerCleared: current === '',
++        submitPresent: !!submitEl(),
++        stillHasPrompt: current !== null && current === norm(prompt),
++      };
++    };
++    window.__cg_poll__ = function () { return snapshot(); };
++    window.__cg_v1 = true;
++  }
++})()`
++
++export function callPage(fnName, ...args) {
++  const serialized = args.map((arg) => JSON.stringify(arg)).join(', ')
++  return `${PAGE_FNS};\nwindow.${fnName}(${serialized})`
++}
++
++export function clearComposerAndType(view, text) {
++  const webContents = view.webContents
++  webContents.focus()
++  webContents.sendInputEvent({ type: 'keyDown', keyCode: 'a', modifiers: ['cmd'] })
++  webContents.sendInputEvent({ type: 'keyUp', keyCode: 'a', modifiers: ['cmd'] })
++  webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Delete' })
++  webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Delete' })
++  for (const character of Array.from(String(text))) {
++    webContents.sendInputEvent({ type: 'char', keyCode: character })
++  }
++}
++
++export function pressEnter(view) {
++  const webContents = view.webContents
++  webContents.focus()
++  webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
++  webContents.sendInputEvent({ type: 'char', keyCode: '\r' })
++  webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
++}
++
++export function withEvalTimeout(operation, timeoutMs) {
++  let timer
++  const timeout = new Promise((_, reject) => {
++    timer = setTimeout(() => reject(new Error(`operation-timeout:${timeoutMs}`)), timeoutMs)
++  })
++  Promise.resolve(operation).catch(() => {})
++  return Promise.race([operation, timeout]).finally(() => clearTimeout(timer))
++}
++
++function originOf(value) {
++  try {
++    return new URL(String(value)).origin
++  } catch {
++    return 'unknown-origin'
++  }
++}
++
++function errorNameOf(error) {
++  return typeof error?.name === 'string' && error.name ? error.name : 'Error'
++}
++
++export async function runGenerateStateMachine(view, prompt, deps = {}) {
++  const {
++    executeInView = (target, script) => target.webContents.executeJavaScript(script),
++    reprobe = async () => true,
++    log = console,
++    now = () => Date.now(),
++    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
++    typeText = clearComposerAndType,
++    enter = pressEnter,
++    deadlineMs = 120_000,
++    cadenceMs = 1_500,
++    maxRejectStreak = 3,
++    maxContextResets = 2,
++    evalTimeoutMs = 15_000,
++    reprobeTimeoutMs = 5_000,
++  } = deps
++  const prefix = '[ChatGPT Generation]'
++  const startedAt = now()
++  const remaining = () => deadlineMs - (now() - startedAt)
++  const expired = () => remaining() <= 0
++  const streaks = new Map()
++  const worstStreak = () => Math.max(0, ...streaks.values())
++  let contextResets = 0
++
++  const evalFn = async (fn, ...args) => {
++    const budget = Math.max(1, Math.min(evalTimeoutMs, remaining()))
++    try {
++      const value = await withEvalTimeout(executeInView(view, callPage(fn, ...args)), budget)
++      streaks.set(fn, 0)
++      return { ok: true, value }
++    } catch (error) {
++      streaks.set(fn, (streaks.get(fn) || 0) + 1)
++      log.error?.(prefix, 'page evaluation rejected', {
++        origin: originOf(view?.webContents?.getURL?.()),
++        errorName: errorNameOf(error),
++      })
++      return { ok: false }
++    }
++  }
++
++  const evalWithRetry = async (fn, ...args) => {
++    for (let attempt = 0; attempt < maxRejectStreak; attempt += 1) {
++      if (expired()) break
++      const result = await evalFn(fn, ...args)
++      if (result.ok) return result
++      if (expired() || attempt === maxRejectStreak - 1) break
++      await sleep(Math.min(cadenceMs, Math.max(remaining(), 0)))
++    }
++    return { ok: false }
++  }
++
++  const safeReprobe = async () => {
++    if (expired()) return false
++    try {
++      return await withEvalTimeout(
++        Promise.resolve().then(() => reprobe()),
++        Math.max(1, Math.min(reprobeTimeoutMs, remaining())),
++      )
++    } catch {
++      return false
++    }
++  }
++  const contextFailure = async (detail) => ({
++    ok: false,
++    stage: 'context',
++    detail: `${detail}:${await safeReprobe() ? 'page-alive' : 'probe-failed'}`,
++  })
++  const contextCheck = async () => {
++    if (worstStreak() < maxRejectStreak || expired()) return null
++    if (!await safeReprobe()) return 'page-probe-failed'
++    streaks.clear()
++    contextResets += 1
++    return contextResets > maxContextResets ? 'page-evaluations-repeatedly-failed' : null
++  }
++
++  const baseline = await evalWithRetry('__cg_baseline__')
++  if (!baseline.ok) return contextFailure('baseline-rejected')
++  if (!Array.isArray(baseline.value?.imgs)) return contextFailure('baseline-malformed')
++  const excluded = new Set(baselineIdsOf(baseline.value.imgs))
++  log.info?.(prefix, 'baseline ready', { origin: originOf(baseline.value?.href), imageCount: excluded.size })
++
++  let injectMethod = 'execCommand'
++  const injectedA = await evalWithRetry('__cg_inject__', prompt)
++  if (!injectedA.ok) return contextFailure('inject-rejected')
++  if (typeof injectedA.value?.textMatches !== 'boolean') return contextFailure('inject-malformed')
++  let injected = injectedA.value.textMatches === true
++  if (!injected) {
++    // The spike measured trusted char events only with ASCII. Keep non-ASCII fail-closed.
++    // eslint-disable-next-line no-control-regex
++    if (!/^[\x20-\x7E\r\n\t]*$/.test(prompt)) {
++      return { ok: false, stage: 'inject', detail: 'non-ascii-fallback-unmeasured' }
++    }
++    injectMethod = 'sendInputEvent'
++    try {
++      typeText(view, prompt)
++    } catch (error) {
++      return { ok: false, stage: 'inject', detail: `trusted-input-${errorNameOf(error)}` }
++    }
++    const verified = await evalWithRetry('__cg_verify__', prompt)
++    if (!verified.ok) return contextFailure('verify-rejected')
++    if (typeof verified.value?.textMatches !== 'boolean') return contextFailure('verify-malformed')
++    injected = verified.value.textMatches === true
++  }
++  if (!injected) return { ok: false, stage: 'inject', detail: 'composer-text-mismatch' }
++
++  let submitMethod = 'click'
++  await evalFn('__cg_clickSubmit__')
++  let notSubmittedStreak = 0
++  let submittedAck = false
++  let enterTried = false
++  let lastPollId = null
++  let alertsLogged = false
++
++  for (;;) {
++    await sleep(Math.min(cadenceMs, Math.max(remaining(), 0)))
++    if (expired()) break
++
++    const acknowledgement = await evalFn('__cg_submitAck__', prompt)
++    if (!acknowledgement.ok) {
++      notSubmittedStreak = 0
++      const lost = await contextCheck()
++      if (lost) return { ok: false, stage: 'context', detail: lost }
++    } else {
++      const ack = acknowledgement.value || {}
++      const isSubmitted = ack.composerCleared === true
++      const isNotSubmitted = ack.stillHasPrompt === true
++      if (isSubmitted) submittedAck = true
++      notSubmittedStreak = isNotSubmitted ? notSubmittedStreak + 1 : 0
++
++      if (notSubmittedStreak >= 2 && submitMethod === 'click' && !enterTried && !submittedAck) {
++        const recheck = await evalFn('__cg_submitAck__', prompt)
++        if (!recheck.ok) {
++          const lost = await contextCheck()
++          if (lost) return { ok: false, stage: 'context', detail: lost }
++        } else if (recheck.value?.stillHasPrompt === true) {
++          try { enter(view) } catch {}
++          enterTried = true
++          submitMethod = 'enter'
++        } else if (recheck.value?.composerCleared === true) {
++          enterTried = true
++          submittedAck = true
++        }
++      }
++    }
++
++    const poll = await evalFn('__cg_poll__')
++    if (!poll.ok) {
++      const lost = await contextCheck()
++      if (lost) return { ok: false, stage: 'context', detail: lost }
++      continue
++    }
++    if (!Array.isArray(poll.value?.imgs)) return contextFailure('poll-malformed')
++    if (!alertsLogged && Number(poll.value?.alerts) > 0) {
++      alertsLogged = true
++      log.info?.(prefix, 'page alert observed', { origin: originOf(poll.value?.href) })
++    }
++
++    // D3: anything observed before composer-clear acknowledgement belongs to the baseline.
++    if (!submittedAck) {
++      for (const id of baselineIdsOf(poll.value.imgs)) excluded.add(id)
++      lastPollId = null
++      continue
++    }
++
++    const candidate = pickNewCdnImage([...excluded], poll.value.imgs)
++    // Measured stability rule: accept only the same estuary id on two consecutive polls.
++    if (candidate && lastPollId === candidate.id) {
++      log.info?.(prefix, 'image accepted', {
++        origin: originOf(candidate.src),
++        id: candidate.id,
++        width: candidate.w,
++        height: candidate.h,
++      })
++      return {
++        ok: true,
++        src: candidate.src,
++        id: candidate.id,
++        injectMethod,
++        submitMethod,
++      }
++    }
++    lastPollId = candidate?.id || null
++  }
++
++  return { ok: false, stage: submittedAck ? 'poll' : 'submit', detail: 'deadline' }
++}
++
++export function extFromContentType(contentType, src = '') {
++  const normalized = String(contentType || '').toLowerCase().split(';')[0].trim()
++  const known = {
++    'image/png': 'png',
++    'image/jpeg': 'jpg',
++    'image/jpg': 'jpg',
++    'image/webp': 'webp',
++    'image/gif': 'gif',
++    'image/avif': 'avif',
++  }
++  if (known[normalized]) return known[normalized]
++  const match = String(src || '').match(/\.(png|jpe?g|webp|gif|avif)(?:[?#]|$)/i)
++  if (!match) return 'png'
++  return match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase()
++}
++
++export async function saveImage(view, src, deps = {}) {
++  const {
++    fs = fsSync,
++    outputDir = path.join(os.tmpdir(), 'autoflowcut-chatgpt'),
++    now = () => Date.now(),
++    timeoutMs = 60_000,
++  } = deps
++  if (!CDN_RE.test(String(src))) throw new Error('chatgpt-image-source-unmeasured')
++  const response = await withEvalTimeout(
++    view.webContents.session.fetch(src, { credentials: 'include' }),
++    timeoutMs,
++  )
++  if (!response?.ok) throw new Error(`chatgpt-image-fetch-status-${response?.status || 'missing'}`)
++  const mimeType = String(response.headers?.get?.('content-type') || '').toLowerCase().split(';')[0].trim()
++  if (!mimeType.startsWith('image/')) throw new Error('chatgpt-image-fetch-non-image')
++  const bytes = Buffer.from(await withEvalTimeout(response.arrayBuffer(), timeoutMs))
++  const extension = extFromContentType(mimeType, src)
++  fs.mkdirSync(outputDir, { recursive: true })
++  const filePath = path.join(outputDir, `generated-${now()}.${extension}`)
++  fs.writeFileSync(filePath, bytes)
++  const base64 = bytes.toString('base64')
++  return {
++    filePath,
++    mimeType,
++    base64,
++    dataUrl: `data:${mimeType};base64,${base64}`,
++    mediaId: null,
++  }
++}
++
++const referenceRefusal = () => ({
++  success: false,
++  errorKind: 'chatgpt-reference-images-unmeasured',
++  error: 'ChatGPT reference image upload is not measured and remains unavailable.',
++})
++
++const sessionRefusal = (status) => ({
++  success: false,
++  errorKind: 'chatgpt-session-not-ready',
++  error: 'ChatGPT session is not ready. Log in and reconnect before generating.',
++  sessionStatus: status || 'session-blocked',
++})
++
++export function createChatgptGenerationAdapter({
++  getView,
++  ensureSession,
++  executeInView,
++  logger = console,
++  fs = fsSync,
++  getOutputDir = () => path.join(os.tmpdir(), 'autoflowcut-chatgpt'),
++  now = () => Date.now(),
++  createId = () => `chatgpt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
++  generateOptions = {},
++  saveTimeoutMs = 60_000,
++} = {}) {
++  const jobs = new Map()
++  let tail = Promise.resolve()
++
++  const run = async (job) => {
++    job.state = 'running'
++    const freshSession = await ensureSession?.()
++    if (!freshSession?.ready) {
++      Object.assign(job, { state: 'failed', result: sessionRefusal(freshSession?.status) })
++      return
++    }
++    const view = getView?.()
++    if (!view?.webContents || typeof view.webContents.executeJavaScript !== 'function') {
++      Object.assign(job, { state: 'failed', result: sessionRefusal('session-blocked') })
++      return
++    }
++    try {
++      const generated = await runGenerateStateMachine(view, buildImagePrompt(job.request.prompt), {
++        executeInView,
++        reprobe: async () => (await ensureSession?.())?.ready === true,
++        log: logger,
++        ...generateOptions,
++      })
++      if (!generated.ok) {
++        job.state = 'failed'
++        job.result = {
++          success: false,
++          errorKind: `chatgpt-generation-${generated.stage || 'failed'}`,
++          error: `ChatGPT image generation failed during ${generated.stage || 'generation'}.`,
++        }
++        return
++      }
++      const saved = await saveImage(view, generated.src, {
++        fs,
++        outputDir: getOutputDir(),
++        now,
++        timeoutMs: saveTimeoutMs,
++      })
++      job.state = 'completed'
++      job.result = {
++        success: true,
++        images: [{ ...saved, id: generated.id }],
++      }
++    } catch (error) {
++      logger.error?.('[ChatGPT Generation]', 'job failed', {
++        origin: originOf(view?.webContents?.getURL?.()),
++        errorName: errorNameOf(error),
++      })
++      job.state = 'failed'
++      job.result = {
++        success: false,
++        errorKind: 'chatgpt-generation-failed',
++        error: `ChatGPT image generation failed (${errorNameOf(error)}).`,
++      }
++    }
++  }
++
++  const submit = async (request = {}) => {
++    const referenceImages = Array.isArray(request.referenceImages) ? request.referenceImages : []
++    if (referenceImages.length > 0) return referenceRefusal()
++    if (!norm(request.prompt)) {
++      return { success: false, errorKind: 'chatgpt-prompt-required', error: 'A text prompt is required.' }
++    }
++    const session = await ensureSession?.()
++    if (!session?.ready) return sessionRefusal(session?.status)
++    const generationId = createId()
++    const job = { generationId, state: 'queued', request: { ...request, referenceImages }, result: null }
++    jobs.set(generationId, job)
++    tail = tail.then(() => run(job), () => run(job))
++    await tail
++    if (job.state === 'failed') return job.result
++    return { success: true, generationId }
++  }
++
++  const observe = async (generationId) => {
++    const job = jobs.get(generationId)
++    if (!job) return { success: false, completed: true, errorKind: 'chatgpt-generation-not-found', error: 'ChatGPT generation was not found.' }
++    if (job.state === 'failed') return { ...job.result, completed: true, state: job.state }
++    return { success: true, completed: job.state === 'completed', state: job.state }
++  }
++
++  const collect = async (generationId) => {
++    const job = jobs.get(generationId)
++    if (!job) return { success: false, errorKind: 'chatgpt-generation-not-found', error: 'ChatGPT generation was not found.' }
++    if (job.state !== 'completed') {
++      return job.state === 'failed'
++        ? job.result
++        : { success: false, errorKind: 'chatgpt-generation-pending', error: 'ChatGPT generation is still pending.' }
++    }
++    jobs.delete(generationId)
++    return job.result
++  }
++
++  const clear = async () => {
++    for (const [generationId, job] of jobs) {
++      if (job.state === 'completed' || job.state === 'failed') jobs.delete(generationId)
++    }
++    return { success: true }
++  }
++
++  return Object.freeze({
++    submit,
++    observe,
++    collect,
++    clear,
++    awaitIdle: () => tail,
++  })
++}
+diff --git a/electron/webtargets/chatgpt/index.js b/electron/webtargets/chatgpt/index.js
+index 084596ed..a431cfb9 100644
+--- a/electron/webtargets/chatgpt/index.js
++++ b/electron/webtargets/chatgpt/index.js
+@@ -1,14 +1,34 @@
+ import {
+   RESERVED_ALLOWED_ORIGINS,
+   RESERVED_SESSION_PARTITION,
+ } from '../../sessionViewSecurity.js'
++import { createChatgptGenerationAdapter } from './generationAdapter.js'
++
++export {
++  SELECTORS,
++  CDN_RE,
++  norm,
++  buildImagePrompt,
++  idOf,
++  baselineIdsOf,
++  pickNewCdnImage,
++  PAGE_FNS,
++  callPage,
++  clearComposerAndType,
++  pressEnter,
++  withEvalTimeout,
++  runGenerateStateMachine,
++  extFromContentType,
++  saveImage,
++  createChatgptGenerationAdapter,
++} from './generationAdapter.js'
+ 
+ export const CHATGPT_START_URL = 'https://chatgpt.com/'
+ export const CHATGPT_ALLOWED_ORIGINS = RESERVED_ALLOWED_ORIGINS
+ 
+ const BLOCKED_STATUS = 'session-blocked'
+ const LOAD_WAIT_TIMEOUT_MS = 15_000
+ const PROBE_EVALUATION_TIMEOUT_MS = 10_000
+ const AUTH_PROBE_ATTEMPTS = 5
+ const AUTH_PROBE_INTERVAL_MS = 500
+ const RECOGNISED_SESSION_STATUSES = new Set([
+@@ -39,20 +59,21 @@ function statusFromAuthProbe(probe) {
+   }
+   if (isLoggedIn(probe)) return 'ready'
+   return probe.loginCta ? 'login-required' : BLOCKED_STATUS
+ }
+ 
+ function withTimeout(operation, timeoutMs) {
+   let timeoutId
+   const timeout = new Promise((_, reject) => {
+     timeoutId = setTimeout(() => reject(new Error('session-probe-timeout')), timeoutMs)
+   })
++  Promise.resolve(operation).catch(() => {})
+   return Promise.race([operation, timeout]).finally(() => clearTimeout(timeoutId))
+ }
+ 
+ function whenLoaded(view, { timeoutMs = LOAD_WAIT_TIMEOUT_MS } = {}) {
+   const webContents = view?.webContents
+   if (!webContents || typeof webContents.isLoading !== 'function') return Promise.resolve(false)
+ 
+   try {
+     if (!webContents.isLoading()) return Promise.resolve(true)
+   } catch {
+@@ -111,24 +132,26 @@ function normaliseSessionStatus(probeResult) {
+     ? probeResult
+     : probeResult?.status ?? probeResult?.state
+   return RECOGNISED_SESSION_STATUSES.has(candidate) ? candidate : BLOCKED_STATUS
+ }
+ 
+ export function createChatgptTarget({
+   WebContentsView,
+   reservedSessionWebPreferences,
+   installReservedSessionSecurity,
+   probeSession = measuredSessionProbe,
+-  createAdapter = () => null,
++  createAdapter,
++  adapterOptions = {},
+   logger = console,
+ } = {}) {
+   let view = null
++  let productAdapter = null
+   let sessionStatus = {
+     target: 'chatgpt',
+     status: BLOCKED_STATUS,
+     ready: false,
+     revision: 0,
+   }
+   const statusListeners = new Set()
+   let latestProbeSequence = 0
+ 
+   const getSessionStatus = () => ({ ...sessionStatus })
+@@ -177,21 +200,32 @@ export function createChatgptTarget({
+     return view
+   }
+ 
+   return Object.freeze({
+     id: 'chatgpt',
+     kind: 'image',
+     partition: RESERVED_SESSION_PARTITION,
+     startUrl: CHATGPT_START_URL,
+     allowedOrigins: CHATGPT_ALLOWED_ORIGINS,
+     createView,
+-    createAdapter: (...args) => createAdapter(...args),
++    createAdapter: (...args) => {
++      if (typeof createAdapter === 'function') return createAdapter(...args)
++      if (!productAdapter) {
++        productAdapter = createChatgptGenerationAdapter({
++          ...adapterOptions,
++          getView: () => view,
++          ensureSession,
++          logger,
++        })
++      }
++      return productAdapter
++    },
+     ensureSession,
+     getSessionStatus,
+     onSessionStatusChanged(listener) {
+       if (typeof listener !== 'function') throw new TypeError('status listener must be a function')
+       statusListeners.add(listener)
+       return () => statusListeners.delete(listener)
+     },
+   })
+ }
+ 
+diff --git a/src/App.jsx b/src/App.jsx
+index 04999243..39703ccb 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -460,21 +460,21 @@ function App() {
+   // Microsoft Store 평점 유도 (appx/Store 빌드에서만 동작)
+   // 내보내기 성공(3회) 또는 생성 100% 완료(5회) 시 평점 모달을 띄운다.
+   const storeRating = useStoreRating({ isStoreBuild: __BUILD_TARGET__ === 'appx' })
+ 
+   // #R3-1: flowProjectId ref — useProjectData 이전에 선언해 useGenerationEngine 에 넘긴다.
+   // useProjectData 반환 후 effect에서 갱신. engineFlow 는 lazy getter 로 최신 id를 읽는다.
+   const flowProjectIdRef = useRef(null)
+ 
+   // 생성 엔진 facade(§3.1). mode에 따라 어댑터 선택(M2=api 항등, Flow는 M4).
+   // 변수명 genAPI 유지(하위 소비자 호출부 불변) — 값은 이제 engine facade.
+-  const genAPI = useGenerationEngine(mode, {
++  const genAPI = useGenerationEngine(route, {
+     onAuthError: handleAuthError,
+     getProjectName: () => settings.projectName,
+     // #R3-1: lazy getter — engineFlow 가 IPC 호출 시점에 최신 bound id 를 읽는다.
+     getFlowProjectId: () => flowProjectIdRef.current,
+   })
+ 
+   // #R6-11: 현재 엔진을 가리키는 ref — mount 시점 genAPI 를 캡처해 stale 엔진의
+   // getAccessToken 을 호출하지 않도록(useGenerationEngine 은 매 렌더 새 facade 를 반환).
+   const genAPIRef = useRef(genAPI)
+   useEffect(() => { genAPIRef.current = genAPI }, [genAPI])
+@@ -595,26 +595,38 @@ function App() {
+         // #R8-5: recheck 도중 flow 로 전환됐으면 옛 api 결과로 authReady 를 set 하지 않는다.
+         if (modeRef.current !== startMode) return
+         authInvalidatedRef.current = false
+         setApiAuthReady(!!token)
+       }).catch(() => {})
+     }
+     window.addEventListener('byok-key-changed', onKeyChanged)
+     return () => window.removeEventListener('byok-key-changed', onKeyChanged)
+   }, [])
+ 
+-  const refuseIfSessionTargetUnsupported = useCallback(() => {
++  const refuseIfSessionTargetUnsupported = useCallback(({ stage = 'image', hasReferences = false } = {}) => {
+     if (modeRef.current !== 'flow' || flowTargetActiveRef.current) return false
+-    toast.warning(t('toast.sessionTargetUnsupported'))
++    if (stage === 'image' && hasReferences !== true) return false
++    toast.warning(t(
++      stage === 'image'
++        ? 'toast.chatgptReferencesUnsupported'
++        : 'toast.chatgptVideoUsesApi'
++    ))
+     return true
+   }, [t])
+ 
++  const imageRequestCarriesReferences = useCallback((targetScenes = [], styleId = null) => {
++    if (typeof styleId === 'string' && styleId.startsWith('ref:')) return true
++    return targetScenes.some((scene) => (
++      (scenesHook.getMatchingReferences(scene) || []).length > 0
++    ))
++  }, [scenesHook.getMatchingReferences])
++
+   // Flow 모드 인증 완료 이벤트 — main 이 flow-status { authenticated: true } 를 보내면
+   // authReady 를 올린다. optional-chaining 으로 jsdom / api 모드에서는 no-op.
+   // onFlowStatus 는 unsubscribe 함수를 반환하므로 cleanup 에서 호출한다.
+   // modeRef 로 gate: API 모드로 전환 후 늦게 도착한 Flow 인증 이벤트가
+   // authReady 를 올려 api-unauth 를 가리는 것을 방지한다(#R2-6).
+   useEffect(() => {
+     const off = window.electronAPI?.onFlowStatus?.((status) => {
+       if (status?.authenticated && flowTargetActiveRef.current) setTargetReady('flow', true)
+     })
+     return () => { off?.() }
+@@ -971,27 +983,35 @@ function App() {
+   const videoAutomation = useVideoAutomation(genAPI, t, generationQueue, (result) => {
+     // 비디오(T2V/I2V/F→V) 배치 100% 완료도 동일 generation 채널에 합산
+     if (result?.completed) storeRating.recordGeneration()
+   }, mode, flowProjectReady, subscriptionBatch, () => { setPaywallReason('upgrade'); setShowPaywallModal(true) }, isAuthenticated, () => setShowAuthModal(true),
+     subscription?.status,   // #5/#8: loading/error 상태 전달
+     refreshSubscription     // #6: consume 성공 시 1회 refresh
+   )
+ 
+   const { isRunning, isPaused, isStopping, isSceneBatchQueued, progress, status, statusMessage, start, togglePause, stop, retryErrors: retryErrorsUnsafe } = automation
+   const retryErrors = useCallback((...args) => {
+-    if (refuseIfSessionTargetUnsupported()) return Promise.resolve()
++    const targets = scenes.filter(scene => scene.status === 'error')
++    if (refuseIfSessionTargetUnsupported({
++      stage: 'image',
++      hasReferences: imageRequestCarriesReferences(targets, selectedStyleRefId),
++    })) return Promise.resolve()
+     return retryErrorsUnsafe(...args)
+-  }, [retryErrorsUnsafe, refuseIfSessionTargetUnsupported])
++  }, [retryErrorsUnsafe, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
+   const retryScene = useCallback((...args) => {
+-    if (refuseIfSessionTargetUnsupported()) return Promise.resolve()
++    const target = scenes.find(scene => scene.id === args[0])
++    if (refuseIfSessionTargetUnsupported({
++      stage: 'image',
++      hasReferences: imageRequestCarriesReferences(target ? [target] : [], selectedStyleRefId),
++    })) return Promise.resolve()
+     return automation.retryScene(...args)
+-  }, [automation.retryScene, refuseIfSessionTargetUnsupported])
++  }, [automation.retryScene, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
+   // #M2: 모달/ref batch 대기 뒤 scene launch가 과거 render의 start closure를 부르지 않게 한다.
+   const automationStartRef = useRef(start)
+   automationStartRef.current = start
+ 
+   // 자동화가 끝나면 Stop 버튼용 running snapshot 정리.
+   // Transition-based: 실행 → 종료 전이일 때만 clear. 큐로 대기 중일 때는 deps가 변하지 않아
+   // effect 자체가 재실행되지 않지만, 만에 하나 다른 state가 deps에 끼어드는 미래 변경에도
+   // wasRunningRef 가드 덕에 stale 시점에 잘못 clear하지 않는다.
+   const wasRunningRef = useRef(false)
+   // requireStyle 가드가 StylePicker 를 띄울 때 force(전체 재생성) 의도를 보존 —
+@@ -1002,37 +1022,48 @@ function App() {
+     const running = isRunning || videoAutomation.isRunning
+     if (wasRunningRef.current && !running) {
+       setRunningStyle(prev => prev.applies || prev.styleId ? { styleId: null, applies: false } : prev)
+     }
+     wasRunningRef.current = running
+   }, [isRunning, videoAutomation.isRunning])
+ 
+   // Style Thumbnails
+   const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails: generateThumbnailsUnsafe, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
+   const generateThumbnails = useCallback((...args) => {
+-    if (refuseIfSessionTargetUnsupported()) return
++    if (refuseIfSessionTargetUnsupported({
++      stage: 'image',
++      hasReferences: Array.isArray(args[1]) && args[1].length > 0,
++    })) return
+     return generateThumbnailsUnsafe(...args)
+   }, [generateThumbnailsUnsafe, refuseIfSessionTargetUnsupported])
+ 
+   // Reference 생성
+   const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef: handleGenerateRefUnsafe, handleGenerateAllRefs: handleGenerateAllRefsUnsafe, stopGenerateAllRefs } = useReferenceGeneration({
+     settings, references, scenes, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, selectedStyleRefIdRef, styleThumbnails, generationQueue, flowProjectReady,
+     scenesRef: scenesHook.scenesRef, flowProjectId: _flowProjectId, projectNameRef,
+   })
+   const handleGenerateRef = useCallback((...args) => {
+-    if (refuseIfSessionTargetUnsupported()) return
++    const styleId = args[2] ?? selectedStyleRefId
++    if (refuseIfSessionTargetUnsupported({
++      stage: 'image',
++      hasReferences: typeof styleId === 'string' && styleId.startsWith('ref:'),
++    })) return
+     return handleGenerateRefUnsafe(...args)
+-  }, [handleGenerateRefUnsafe, refuseIfSessionTargetUnsupported])
++  }, [handleGenerateRefUnsafe, refuseIfSessionTargetUnsupported, selectedStyleRefId])
+   const handleGenerateAllRefs = useCallback((...args) => {
+-    if (refuseIfSessionTargetUnsupported()) return
++    const styleId = args[0] ?? selectedStyleRefId
++    if (refuseIfSessionTargetUnsupported({
++      stage: 'image',
++      hasReferences: typeof styleId === 'string' && styleId.startsWith('ref:'),
++    })) return
+     return handleGenerateAllRefsUnsafe(...args)
+-  }, [handleGenerateAllRefsUnsafe, refuseIfSessionTargetUnsupported])
++  }, [handleGenerateAllRefsUnsafe, refuseIfSessionTargetUnsupported, selectedStyleRefId])
+ 
+   const { isOpen: showReferences, setOpenByUser } = useRefPanelVisibility({
+     refBatchActive,
+     generatingRefsCount: generatingRefs.length,
+     stoppingRefs,
+     syncGate,
+     syncGateBusy,
+     mode,
+     automationStatus: status,
+     hasPendingBatch,
+@@ -1053,23 +1084,27 @@ function App() {
+     openGate: openSyncGate,
+     onBlocked: (reason) => toast.warning(t(reason === 'superseded' ? 'toast.flowSyncSuperseded' : 'toast.flowSyncBusy')),
+   }), [openSyncGate, t])
+ 
+   // Scene 재생성
+   const { generatingSceneId, handleGenerateScene: handleGenerateSceneUnsafe } = useSceneGeneration({
+     settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
+     requestMentionSync,
+   })
+   const handleGenerateScene = useCallback((...args) => {
+-    if (refuseIfSessionTargetUnsupported()) return
++    const target = scenes.find(scene => scene.id === args[0])
++    if (refuseIfSessionTargetUnsupported({
++      stage: 'image',
++      hasReferences: imageRequestCarriesReferences(target ? [target] : [], args[1] ?? selectedStyleRefId),
++    })) return
+     return handleGenerateSceneUnsafe(...args)
+-  }, [handleGenerateSceneUnsafe, refuseIfSessionTargetUnsupported])
++  }, [handleGenerateSceneUnsafe, refuseIfSessionTargetUnsupported, scenes, imageRequestCarriesReferences, selectedStyleRefId])
+   const generatingSceneIdRef = useRef(generatingSceneId)
+   generatingSceneIdRef.current = generatingSceneId
+   const guardSceneBatchStart = (source = 'ui') => {
+     if (source === 'mcp' || !generatingSceneIdRef.current) return true
+     toast.warning(t('videoAutomation.busy') || 'Generation already running')
+     return false
+   }
+ 
+   const handleImportAudio = async () => {
+     setShowAudioResult(true)
+@@ -1417,21 +1452,21 @@ function App() {
+    *
+    * generationId + mediaId 둘 다 있으면: 서버는 영상을 가지고 있고 로컬 다운로드만
+    * 실패한 상황이므로 download-only 경로(videoRecovery.retryVideoDownload)로 재시도
+    * 하여 quota 소비 없이 복구한다.
+    *
+    * 둘 중 하나라도 없으면: full 재생성이 필요하므로 해당 아이템 상태를 pending으로 되돌린 뒤
+    * 사용자가 "Start Generation" 버튼으로 일괄 재생성할 수 있게 둔다.
+    */
+   const handleVideoRetry = useCallback(async (item, opts = {}) => {
+     if (!item) return
+-    if (refuseIfSessionTargetUnsupported()) return
++    if (refuseIfSessionTargetUnsupported({ stage: 'video' })) return
+     // #R30-4: timeline/scene-media 모달은 씬 미디어 id(t2v_N/i2v_N)로 연다. 재생성은 실제 generation
+     //   아이템(vscene_N / fp_N)을 리셋해야 한다 — 안 그러면 updateVideoScene 매퍼가 t2v_/i2v_ 를 몰라
+     //   no-op 이 되어 "재생성" 이 아무것도 안 한다. (t2v_N↔vscene_N, i2v_N↔fp_N: SceneList/LiveTimeline 매핑)
+     if (opts.forceRegenerate && typeof item.id === 'string') {
+       const mappedId = regenTargetVideoId(item.id)
+       if (mappedId !== item.id) item = { ...item, id: mappedId }
+     }
+     // #R12-11/#R14-6: 다운로드-only retry 도 in-flight 추적 + 큐 대기(hasPendingBatch) 중엔 차단.
+     if (isRunning || videoAutomation.isRunning || hasPendingBatch || videoRetryInFlightRef.current) {
+       toast.warning(t('videoAutomation.busy') || 'Generation already running')
+@@ -1775,32 +1810,37 @@ function App() {
+               initialTargetSceneIds: targetScenes.map(scene => scene.id),
+               selectedStyleRefId: effectiveStyleId,
+               startOptionsWithoutSceneIds,
+             }, getEmptyRefGateDeps(source))
+             // 모달 대기 중 다른 경로가 대상 씬을 모두 완료했으면 기존 완료 안내를 재사용한다.
+             if (gateResult.reason === 'no-live-targets') {
+               toast.warning(t('toast.allScenesGenerated'))
+             }
+             break
+           } else {
+-            refuseIfSessionTargetUnsupported()
++            if (refuseIfSessionTargetUnsupported({
++              stage: 'image',
++              hasReferences: imageRequestCarriesReferences(targetScenes, effectiveStyleId),
++            })) break
++            setHasPendingBatch(true)
++            start(startOptions).finally(() => setHasPendingBatch(false))
+             break
+           }
+         }
+         // API 모드는 M2 미노출 — 기존 scene start 경로를 그대로 유지한다(§11.12).
+         setHasPendingBatch(true)
+         start(startOptions).finally(() => setHasPendingBatch(false))
+         break
+       }
+ 
+       case 'video-text': {
+-        if (refuseIfSessionTargetUnsupported()) break
++        if (refuseIfSessionTargetUnsupported({ stage: 'video' })) break
+         // Text to Video — 선택된 videoScenes만 실행 (선택 검증은 상단에서 처리)
+         const selectedVideoScenes = videoScenes.filter(s => s.selected !== false)
+ 
+         // T2V는 video scene의 자체 prompt만 사용 — image scene과는 독립.
+         // 스타일(selectedStyleRefId)만 추가로 prefix해서 적용.
+         // (I2V는 이미지가 source라 별도 처리 — frame-to-video 케이스에서 미적용)
+         // override → effective는 styleResolver.resolveEffectiveStyleId가 탭별로 처리.
+         // video-text는 null override일 때 findAutoPromptStyle 결과로 변환됨 (resolver 내부 로직).
+         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
+         // #R36-fix(Codex R1[2]): build+start 를 클로저로 — sync gate 통과 후 patchedRefs 로 재빌드하기 위함.
+@@ -1880,21 +1920,21 @@ function App() {
+               if (res.proceeded) startVideoTextWith(res.patchedRefs || scenesHook.references)
+             })
+             return
+           }
+         }
+         startVideoTextWith(scenesHook.references)
+         break
+       }
+ 
+       case 'frame-to-video': {
+-        if (refuseIfSessionTargetUnsupported()) break
++        if (refuseIfSessionTargetUnsupported({ stage: 'video' })) break
+         // Frame to Video — 선택된 framePairs만 실행
+         // Frame to Video — 선택된 framePairs만 실행 (선택 검증은 상단에서 처리)
+         const selectedFramePairs = framePairs.filter(p => p.selected !== false)
+         const GALLERY_PFX = 'gallery::'
+         // OmniFlash 는 종료 프레임 미지원 — UI 는 End Image 를 비활성화하지만 state 의
+         //   pair.endSceneId 는 남는다. 제출 payload 에서 끝 프레임을 strip 하지 않으면
+         //   engineFlow 가 숨겨진 끝 이미지를 먼저 업로드하려다 실패해 start-only 생성을 막는다.
+         const omniNoEndFrame = flowTargetActive && isOmniFlashModel(settings.videoModelF2V)
+         const resolvedPairs = selectedFramePairs.map(p => {
+           // gallery:: prefix면 mediaId 직접 추출, 아니면 씬에서 resolve
+@@ -2031,44 +2071,52 @@ function App() {
+         return
+       }
+       if (flowTargetActiveRef.current) {
+         const readyCheck = checkFlowProjectReady(flowProjectReady, t)
+         if (!readyCheck.ok) { setPendingStartOptions(null); return }
+       }
+       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
+       const sid = opts.selectedStyleRefId
+       setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
+       if (modeRef.current === 'flow') {
++        const liveScenes = scenesHook.scenesRef.current
++        const liveTargetScenes = opts.force
++          ? liveScenes.filter(scene => scene.prompt)
++          : filterPendingScenes(liveScenes)
+         if (flowTargetActiveRef.current) {
+           // #M2: tag modal 대기 중 바뀐 scene 상태를 useScenes의 동기 ref에서 다시 읽어 최초 의도 ID를
+           // 새로 만든다. pendingStartOptions에는 설정만 남기고 과거 scene/M1 판정은 재사용하지 않는다.
+-          const liveScenes = scenesHook.scenesRef.current
+-          const liveTargetScenes = opts.force
+-            ? liveScenes.filter(scene => scene.prompt)
+-            : filterPendingScenes(liveScenes)
+           const { force = false, ...startOptionsWithoutSceneIds } = opts
+           setPendingStartOptions(null)
+           const gateResult = await runEmptyRefGateFlow({
+             startMode: __startMode,
+             projectName: opts.projectName,
+             force,
+             initialTargetSceneIds: liveTargetScenes.map(scene => scene.id),
+             selectedStyleRefId: sid,
+             startOptionsWithoutSceneIds,
+           }, getEmptyRefGateDeps(__startSource))
+           // 태그 모달까지 기다리는 동안 대상이 사라진 경우도 direct Start와 같은 안내를 낸다.
+           if (gateResult.reason === 'no-live-targets') {
+             toast.warning(t('toast.allScenesGenerated'))
+           }
+           return
+         } else {
+-          refuseIfSessionTargetUnsupported()
++          if (refuseIfSessionTargetUnsupported({
++            stage: 'image',
++            hasReferences: imageRequestCarriesReferences(liveTargetScenes, sid),
++          })) {
++            setPendingStartOptions(null)
++            return
++          }
++          setHasPendingBatch(true)
++          start(opts).finally(() => setHasPendingBatch(false))
+           setPendingStartOptions(null)
+           return
+         }
+       }
+       // API 모드는 M2 미노출 — 기존 tag proceed 직접 시작을 유지한다(§11.12).
+       if (!guardSceneBatchStart(__startSource)) {
+         setPendingStartOptions(null)
+         return
+       }
+       setHasPendingBatch(true)
+@@ -2400,21 +2448,23 @@ function App() {
+         <div className="tab-content">
+         {/* 레퍼런스 패널 (접기 가능) */}
+         {showReferences && (
+           <ReferencePanel
+             references={references}
+             scenes={scenes}
+             aspectRatio={settings.aspectRatio}
+             appMode={mode}
+             onUpdate={updateReferences}
+             onUpload={async (...args) => {
+-              if (refuseIfSessionTargetUnsupported()) return { success: false, error: 'unsupported_session_target' }
++              if (refuseIfSessionTargetUnsupported({ stage: 'image', hasReferences: true })) {
++                return { success: false, error: 'chatgpt_reference_images_unmeasured' }
++              }
+               const readyCheck = checkFlowProjectReady(flowProjectReady, t)
+               if (!readyCheck.ok) return { success: false, error: 'flow_project_not_ready' }
+               return genAPI.uploadReference(...args)
+             }}
+             onGenerate={handleGenerateRef}
+             onGenerateAll={handleGenerateAllRefs}
+             onStopGenerateAll={stopGenerateAllRefs}
+             onClearAll={() => setReferences([])}
+             generatingRefs={generatingRefs}
+             stoppingRefs={stoppingRefs}
+diff --git a/src/engine/engineChatgpt.js b/src/engine/engineChatgpt.js
+new file mode 100644
+index 00000000..fd7c92c6
+--- /dev/null
++++ b/src/engine/engineChatgpt.js
+@@ -0,0 +1,92 @@
++const DEFAULT_RESULT_TIMEOUT_MS = 135_000
++const DEFAULT_POLL_MS = 1_500
++
++const api = () => globalThis.window?.electronAPI
++
++const unavailable = (operation) => ({
++  success: false,
++  errorKind: 'chatgpt-operation-unavailable',
++  error: `ChatGPT ${operation} is unavailable on the measured image-only route.`,
++})
++
++const referenceRefusal = () => ({
++  success: false,
++  errorKind: 'chatgpt-reference-images-unmeasured',
++  error: 'ChatGPT reference image upload is not measured and remains unavailable.',
++})
++
++export function createChatgptEngine({
++  electronAPI = api(),
++  now = () => Date.now(),
++  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
++  resultTimeoutMs = DEFAULT_RESULT_TIMEOUT_MS,
++  pollMs = DEFAULT_POLL_MS,
++} = {}) {
++  const submitGeneration = async (prompt, referenceImages = [], options = {}) => {
++    if (Array.isArray(referenceImages) && referenceImages.length > 0) return referenceRefusal()
++    if (typeof electronAPI?.chatgptSubmitGeneration !== 'function') return unavailable('generation')
++    return electronAPI.chatgptSubmitGeneration({
++      prompt,
++      referenceImages: [],
++      batchCount: options.batchCount ?? 1,
++      aspectRatio: options.aspectRatio,
++      purpose: options.purpose,
++    })
++  }
++
++  const checkGeneration = async (generationId) => {
++    if (typeof electronAPI?.chatgptObserveGeneration !== 'function') return unavailable('observation')
++    return electronAPI.chatgptObserveGeneration(generationId)
++  }
++
++  const collectGeneration = async (generationId) => {
++    if (typeof electronAPI?.chatgptCollectGeneration !== 'function') return unavailable('collection')
++    return electronAPI.chatgptCollectGeneration(generationId)
++  }
++
++  const generateImage = async (prompt, referenceImages = [], options = {}) => {
++    const submitted = await submitGeneration(prompt, referenceImages, options)
++    if (!submitted?.success || !submitted.generationId) return submitted
++    const deadline = now() + resultTimeoutMs
++    while (now() < deadline) {
++      const observed = await checkGeneration(submitted.generationId)
++      if (observed?.completed) return collectGeneration(submitted.generationId)
++      if (observed?.success === false) return observed
++      await sleep(Math.min(pollMs, Math.max(0, deadline - now())))
++    }
++    return {
++      success: false,
++      errorKind: 'chatgpt-generation-timeout',
++      error: 'ChatGPT image generation timed out.',
++    }
++  }
++
++  return {
++    accessToken: null,
++    projectId: null,
++    getAccessToken: async () => {
++      const status = await electronAPI?.getSessionTargetStatus?.('chatgpt')
++      return status?.ready === true ? 'chatgpt-session-ready' : null
++    },
++    clearTokenCache: () => {},
++    listModels: async () => ({ success: true, models: [] }),
++    generateImage,
++    submitGeneration,
++    checkGeneration,
++    collectGeneration,
++    clearGenerations: async () => electronAPI?.chatgptClearGenerations?.() || { success: true },
++    uploadReference: async () => referenceRefusal(),
++    fetchMedia: async () => unavailable('media fetch'),
++    generateVideoT2V: async () => unavailable('text-to-video'),
++    generateVideoI2V: async () => unavailable('image-to-video'),
++    checkVideoStatus: async () => unavailable('video observation'),
++    downloadVideo: async () => unavailable('video download'),
++    upscaleVideo: async () => unavailable('video upscale'),
++    upscaleImage: async () => unavailable('image upscale'),
++    fetchGallery: async () => unavailable('gallery'),
++    listFlowProjects: async () => unavailable('Flow projects'),
++    setStopRequested: () => {},
++  }
++}
++
++export default createChatgptEngine
+diff --git a/src/engine/useGenerationEngine.js b/src/engine/useGenerationEngine.js
+index 533193cb..9bd2ab93 100644
+--- a/src/engine/useGenerationEngine.js
++++ b/src/engine/useGenerationEngine.js
+@@ -1,33 +1,68 @@
+ /**
+  * useGenerationEngine — 생성 엔진 facade 진입점.
+  * mode('api'|'flow')에 따라 어댑터를 선택해 통일 계약(§3.1)을 노출한다.
+  *
+  * M4: engineFlow 추가. mode==='flow'이면 Flow DOM 자동화 어댑터, 아니면 API 어댑터.
+  * 두 훅 모두 무조건 호출 (React Hook 규칙).
+  *
+  * 반환: { mode, capabilities, ready, ...엔진 계약(§3.1.1) }
+  */
+ import { useGenAPI } from '../hooks/useGenAPI'
++import { parseRoute, sourceForStage } from '../config/appRoute.js'
+ import { createEngineApi } from './engineApi'
++import { createChatgptEngine } from './engineChatgpt.js'
+ import { useFlowEngine } from './engineFlow'
+ 
+-export function useGenerationEngine(mode, genApiOptions) {
++const IMAGE_METHODS = [
++  'generateImage', 'submitGeneration', 'checkGeneration', 'collectGeneration',
++  'clearGenerations', 'uploadReference', 'upscaleImage',
++]
++const VIDEO_METHODS = [
++  'generateVideoT2V', 'generateVideoI2V', 'checkVideoStatus',
++  'downloadVideo', 'upscaleVideo',
++]
++
++export function createStageRoutedEngine(route, { api, flow, chatgpt }) {
++  const parsed = parseRoute(route)
++  if (!parsed) return api
++  const member = (source) => ({ api, flow, chatgpt })[source]
++  const image = member(sourceForStage(parsed, 'image'))
++  const video = member(sourceForStage(parsed, 't2v'))
++  const base = parsed.mode === 'api' ? api : (parsed.sessionTarget === 'flow' ? flow : api)
++  const routed = { ...base }
++  for (const method of IMAGE_METHODS) routed[method] = image[method]
++  for (const method of VIDEO_METHODS) routed[method] = video[method]
++  routed.getAccessToken = image.getAccessToken || base.getAccessToken
++  routed.clearTokenCache = image.clearTokenCache || base.clearTokenCache
++  return routed
++}
++
++export function useGenerationEngine(modeOrRoute, genApiOptions = {}) {
+   const genAPI = useGenAPI(genApiOptions)
+   const engineApi = createEngineApi(genAPI)
+   // 두 훅 모두 무조건 호출 (React Hook 규칙 — 조건부 호출 금지)
+   // #R3-1: genApiOptions.getFlowProjectId (lazy getter) 또는 flowProjectId (static) 를 전달.
+   // App 에서 flowProjectIdRef 를 통해 최신 바운드 id 를 제공한다.
+   const engineFlow = useFlowEngine({ ...genApiOptions })
+-  const active = mode === 'flow' ? engineFlow : engineApi
++  const route = typeof modeOrRoute === 'string'
++    ? { mode: modeOrRoute, sessionTarget: genApiOptions.sessionTarget || 'flow' }
++    : modeOrRoute
++  const parsed = parseRoute(route) || { mode: 'api', sessionTarget: 'flow' }
++  const engineChatgpt = createChatgptEngine({ electronAPI: globalThis.window?.electronAPI })
++  const active = createStageRoutedEngine(parsed, {
++    api: engineApi,
++    flow: engineFlow,
++    chatgpt: engineChatgpt,
++  })
+   return {
+-    mode,
++    mode: parsed.mode,
+     capabilities: {
+-      needsFlowView: mode === 'flow',   // 분할뷰/WebContentsView (M3/M5)
+-      hasFlowArchive: mode === 'flow',  // 아카이브 버튼 게이팅 (M5)
++      needsFlowView: parsed.mode === 'flow',
++      hasFlowArchive: parsed.mode === 'flow' && parsed.sessionTarget === 'flow',
+     },
+     ready: !!active.accessToken,  // 인증 준비됨(api='byok' truthy, flow=raw bearer truthy, null→false)
+     ...active,
+   }
+ }
+ 
+ export default useGenerationEngine
+diff --git a/src/locales/en.js b/src/locales/en.js
+index caece8d2..717a0f5c 100644
+--- a/src/locales/en.js
++++ b/src/locales/en.js
+@@ -1503,20 +1503,22 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
+     authErrorStop: 'Auth error. Stopping. Check authentication for the current generation mode.',
+     batchCompleteNeedPermission: 'Generation complete! Please allow permission to save.',
+     folderDeleted: 'Work folder has been deleted. Please select again.',
+     folderPermissionNeeded: 'Work folder permission required.',
+     folderSelectFirst: 'Please select work folder first.',
+     flowLoginRequired: 'Flow login required. Sign in with your Google account in the Flow window.',
+     flowReattachFailed: 'Failed to reconnect the Flow window. Try again.',
+     flowLoginHint: 'Sign in with your Google account in the Flow window.',
+     flowProjectNotReady: 'The Flow project is still loading. Try again shortly.',
+     sessionTargetUnsupported: 'Generation is unavailable for the selected session target.',
++    chatgptReferencesUnsupported: 'ChatGPT reference-image upload has not been measured, so this request was not submitted.',
++    chatgptVideoUsesApi: 'Video is routed to the API provider on the ChatGPT target and cannot start from this session view.',
+     subscriptionLoading: 'Checking subscription information. Try again shortly.',
+     videoUnknownMentions: 'Unsynced or unknown character mention(s): {names} — verify or sync the character in the Ref tab and retry.',
+     flowSyncIncomplete: 'Flow sync incomplete ({ok} synced, {fail} failed) — generation not started.',
+     flowSyncGenerationStarting: 'Synced {ok} — starting generation.',
+     flowLoginExpiredTitle: 'Flow login expired',
+     flowLoginExpiredMessage: 'Your Flow session expired. Sign in again in the Flow window.',
+     memoryWarning: 'High memory usage. Some images may not be saved.',
+     memoryCritical: 'Out of memory. Stopping. Please allow save permission in settings.',
+     noGeneratedImages: 'No generated images.',
+     filePermissionRequired: 'File read permission required. Please allow in Settings.',
+diff --git a/src/locales/ko.js b/src/locales/ko.js
+index cf1cb3d1..06ffa928 100644
+--- a/src/locales/ko.js
++++ b/src/locales/ko.js
+@@ -1502,20 +1502,22 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
+     authErrorStop: '인증 오류로 중단합니다. 현재 생성 모드의 인증 상태를 확인해주세요.',
+     batchCompleteNeedPermission: '이미지 생성 완료! 저장을 위해 권한을 허용해주세요.',
+     folderDeleted: '작업 폴더가 삭제되었습니다. 다시 선택해주세요.',
+     folderPermissionNeeded: '작업 폴더 권한이 필요합니다.',
+     folderSelectFirst: '작업 폴더를 먼저 설정해주세요.',
+     flowLoginRequired: 'Flow 로그인이 필요합니다. Flow 창에서 Google 계정으로 로그인해주세요.',
+     flowReattachFailed: 'Flow 창 재연결에 실패했습니다. 다시 시도해 주세요.',
+     flowLoginHint: 'Flow 창에서 Google 계정으로 로그인하세요.',
+     flowProjectNotReady: 'Flow 프로젝트 로딩 중입니다. 잠시 후 다시 시도해 주세요.',
+     sessionTargetUnsupported: '선택한 세션 타깃에서는 생성을 시작할 수 없습니다.',
++    chatgptReferencesUnsupported: 'ChatGPT 레퍼런스 이미지 업로드는 아직 측정되지 않아 이 요청을 제출하지 않았습니다.',
++    chatgptVideoUsesApi: 'ChatGPT 타깃의 비디오는 API 공급자로 라우팅되며 이 세션 뷰에서는 시작할 수 없습니다.',
+     subscriptionLoading: '구독 정보를 확인 중입니다. 잠시 후 다시 시도해 주세요.',
+     videoUnknownMentions: '동기화되지 않았거나 알 수 없는 캐릭터 멘션: {names} — Ref 탭에서 캐릭터를 확인하거나 동기화한 뒤 다시 시도하세요.',
+     flowSyncIncomplete: 'Flow 동기화 미완료 ({ok} 성공 · {fail} 실패) — 생성을 시작하지 않습니다.',
+     flowSyncGenerationStarting: 'Flow 동기화 완료 ({ok}) — 생성을 시작합니다.',
+     flowLoginExpiredTitle: 'Flow 로그인 만료',
+     flowLoginExpiredMessage: 'Flow 세션이 만료되었습니다. Flow 창에서 다시 로그인해주세요.',
+     memoryWarning: '메모리 사용량이 높습니다. 일부 이미지가 저장되지 않을 수 있습니다.',
+     memoryCritical: '메모리 부족으로 중단합니다. 설정에서 저장 권한을 허용해주세요.',
+     noGeneratedImages: '생성된 이미지가 없습니다.',
+     filePermissionRequired: '파일 읽기 권한이 필요합니다. 설정에서 권한을 허용해주세요.',
+diff --git a/tests/components/App.chatgptTargetGate.test.jsx b/tests/components/App.chatgptTargetGate.test.jsx
+index 84d71a31..cbd05608 100644
+--- a/tests/components/App.chatgptTargetGate.test.jsx
++++ b/tests/components/App.chatgptTargetGate.test.jsx
+@@ -8,21 +8,26 @@ const appMocks = vi.hoisted(() => {
+   const state = {
+     mode: 'flow',
+     sessionTarget: 'chatgpt',
+     sessionStatus: { target: 'chatgpt', status: 'ready', ready: true, revision: 1 },
+     tagErrors: [],
+     framePanelProps: null,
+   }
+   const sessionStatusListeners = new Set()
+   const loadEpochRef = { current: 0 }
+   const flowGenerateImage = vi.fn(async () => ({ success: true }))
+-  const sceneBatchStart = vi.fn(async options => flowGenerateImage(options))
++  const chatgptGenerateImage = vi.fn(async () => ({ success: true }))
++  const sceneBatchStart = vi.fn(async options => (
++    state.sessionTarget === 'chatgpt'
++      ? chatgptGenerateImage(options)
++      : flowGenerateImage(options)
++  ))
+   const videoStart = vi.fn(async () => ({ success: true }))
+   const toastWarning = vi.fn()
+   const commitRoute = vi.fn()
+   const scenes = [
+     { id: 'scene_1', prompt: 'a test scene', videoT2VPrompt: 'a test video', status: 'pending' },
+   ]
+   const scenesHook = {
+     scenes,
+     scenesRef: { current: scenes },
+     references: [],
+@@ -56,20 +61,21 @@ const appMocks = vi.hoisted(() => {
+     noop,
+     asyncNoop,
+     state,
+     sessionStatusListeners,
+     emitSessionStatus(status) {
+       state.sessionStatus = status
+       for (const listener of sessionStatusListeners) listener(status)
+     },
+     loadEpochRef,
+     flowGenerateImage,
++    chatgptGenerateImage,
+     sceneBatchStart,
+     videoStart,
+     toastWarning,
+     commitRoute,
+     scenes,
+     scenesHook,
+     genAPI,
+   }
+ })
+ 
+@@ -398,25 +404,27 @@ describe('App flow + chatgpt target gate', () => {
+   beforeEach(() => {
+     localStorage.clear()
+     appMocks.state.mode = 'flow'
+     appMocks.state.sessionTarget = 'chatgpt'
+     appMocks.state.sessionStatus = { target: 'chatgpt', status: 'ready', ready: true, revision: 1 }
+     appMocks.sessionStatusListeners.clear()
+     appMocks.state.tagErrors = []
+     appMocks.state.framePanelProps = null
+     appMocks.loadEpochRef.current = 0
+     appMocks.flowGenerateImage.mockClear()
++    appMocks.chatgptGenerateImage.mockClear()
+     appMocks.sceneBatchStart.mockClear()
+     appMocks.videoStart.mockClear()
+     appMocks.toastWarning.mockClear()
+     appMocks.commitRoute.mockClear()
+     appMocks.genAPI.getAccessToken.mockClear().mockResolvedValue('token')
++    appMocks.scenesHook.getMatchingReferences.mockReset().mockReturnValue([])
+     window.electronAPI = {
+       setRoute: vi.fn(async (payload) => ({ ok: true, route: payload?.to || payload, revision: 1 })),
+       setMode: vi.fn(async () => ({ ok: true })),
+       setLayout: vi.fn(async () => ({ ok: true })),
+       getSessionTargetStatus: vi.fn(async (target) => (
+         target === 'chatgpt' ? appMocks.state.sessionStatus : null
+       )),
+       onSessionTargetStatus: vi.fn((listener) => {
+         appMocks.sessionStatusListeners.add(listener)
+         return () => appMocks.sessionStatusListeners.delete(listener)
+@@ -515,53 +523,75 @@ describe('App flow + chatgpt target gate', () => {
+     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+     appMocks.state.mode = 'flow'
+     view.rerender(<SplitLayoutOwner />)
+     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+ 
+     expect(events).toContain('layout:split-left:0.5')
+     expect(JSON.parse(localStorage.getItem('layoutSettings'))).toEqual(savedLayout)
+     expect(screen.getByTestId('owned-layout')).toHaveTextContent('split-bottom:0.67')
+   })
+ 
+-  it('flow + chatgpt Start does not reach the Flow image engine seam', async () => {
++  it('flow + chatgpt text-only Start reaches image automation instead of the old generic refusal', async () => {
+     render(<App />)
+ 
+     const start = screen.getByTitle('actions.start')
+     await waitFor(() => expect(start).toBeEnabled())
+     fireEvent.click(start)
+ 
+     await act(async () => { await Promise.resolve(); await Promise.resolve() })
++    expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce()
++    expect(appMocks.chatgptGenerateImage).toHaveBeenCalledOnce()
+     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
+-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
++    expect(appMocks.toastWarning).not.toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+   })
+ 
+   it('flow + flow Start still reaches the Flow image engine seam', async () => {
+     appMocks.state.sessionTarget = 'flow'
+     render(<App />)
+ 
+     fireEvent.click(screen.getByTitle('actions.start'))
+ 
+     await waitFor(() => expect(appMocks.flowGenerateImage).toHaveBeenCalledTimes(1))
+   })
+ 
++  it('flow + chatgpt refuses an image request carrying references with the measured reason', async () => {
++    render(<App />)
++    const positiveStart = screen.getByTitle('actions.start')
++    await waitFor(() => expect(positiveStart).toBeEnabled())
++    fireEvent.click(positiveStart)
++    await waitFor(() => expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce())
++
++    cleanup()
++    appMocks.sceneBatchStart.mockClear()
++    appMocks.scenesHook.getMatchingReferences.mockReturnValue([{ id: 'ref-positive', data: 'not-empty' }])
++    render(<App />)
++    const refusedStart = screen.getByTitle('actions.start')
++    await waitFor(() => expect(refusedStart).toBeEnabled())
++    fireEvent.click(screen.getByTitle('actions.start'))
++    await act(async () => { await Promise.resolve(); await Promise.resolve() })
++
++    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
++    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptReferencesUnsupported')
++  })
++
+   it('does not reuse Flow token readiness as ChatGPT readiness on a target round-trip', async () => {
+     appMocks.state.sessionTarget = 'flow'
+     appMocks.state.sessionStatus = {
+       target: 'chatgpt', status: 'session-blocked', ready: false, revision: 2,
+     }
+     const { rerender } = render(<App />)
+     await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalled())
+ 
+     appMocks.state.sessionTarget = 'chatgpt'
+     rerender(<App />)
+     const start = screen.getByTestId('image-start')
+-    await waitFor(() => expect(start).toBeDisabled())
++    await waitFor(() => expect(screen.getByTestId('image-start')).toBeDisabled())
+ 
+     act(() => appMocks.emitSessionStatus({
+       target: 'chatgpt', status: 'ready', ready: true, revision: 3,
+     }))
+     expect(start).toBeEnabled()
+ 
+     appMocks.state.sessionTarget = 'flow'
+     rerender(<App />)
+     appMocks.state.sessionTarget = 'chatgpt'
+     rerender(<App />)
+@@ -572,90 +602,92 @@ describe('App flow + chatgpt target gate', () => {
+     appMocks.state.tagErrors = [{ sceneIndex: 0, missingTags: ['hero'] }]
+     render(<App />)
+ 
+     const start = screen.getByTitle('actions.start')
+     await waitFor(() => expect(start).toBeEnabled())
+     fireEvent.click(start)
+     fireEvent.click(await screen.findByRole('button', { name: 'tag-proceed' }))
+ 
+     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
+-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
++    expect(appMocks.chatgptGenerateImage).toHaveBeenCalledOnce()
++    expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce()
++    expect(appMocks.toastWarning).not.toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+   })
+ 
+   it.each([
+     'login-required',
+     'challenge',
+     'rate-limited',
+     'session-blocked',
+     'unknown',
+   ])('closes ChatGPT image admission when status is %s after a ready positive control', async (status) => {
+     render(<App />)
+     const start = screen.getByTitle('actions.start')
+ 
+     await waitFor(() => expect(start).toBeEnabled())
+     fireEvent.click(start)
+-    await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported'))
++    await waitFor(() => expect(appMocks.sceneBatchStart).toHaveBeenCalledOnce())
+     appMocks.toastWarning.mockClear()
+ 
+     act(() => appMocks.emitSessionStatus({
+       target: 'chatgpt', status, ready: true, revision: 2,
+     }))
+-    expect(start).toBeDisabled()
++    await waitFor(() => expect(screen.getByTestId('image-start')).toBeDisabled())
+ 
+-    fireEvent.click(start)
++    fireEvent.click(screen.getByTestId('image-start'))
+     await act(async () => { await Promise.resolve() })
+     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
+     expect(appMocks.toastWarning).not.toHaveBeenCalled()
+   })
+ 
+   it('flow + chatgpt blocks text-to-video before the Flow video engine seam', async () => {
+     render(<App />)
+ 
+     fireEvent.click(screen.getByTitle('tabs.videoText'))
+     fireEvent.click(screen.getByTitle('actions.start'))
+ 
+     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+     expect(appMocks.videoStart).not.toHaveBeenCalled()
+-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
++    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptVideoUsesApi')
+   })
+ 
+   it('flow + chatgpt blocks frame-to-video before the Flow video engine seam', async () => {
+     render(<App />)
+     fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+     await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+     act(() => appMocks.state.framePanelProps.onUpdate([{
+       id: 'fp_1',
+       ownerSceneId: 'scene_1',
+       startSceneId: 'scene_1',
+       endSceneId: null,
+       prompt: 'animate',
+       selected: true,
+       status: 'pending',
+     }]))
+ 
+     fireEvent.click(screen.getByTitle('actions.start'))
+ 
+     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+     expect(appMocks.videoStart).not.toHaveBeenCalled()
+-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
++    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptVideoUsesApi')
+   })
+ 
+   it('flow + chatgpt video retry does not extract a Flow access token', async () => {
+     render(<App />)
+     fireEvent.click(screen.getByTitle('tabs.frameToVideo'))
+     await waitFor(() => expect(appMocks.state.framePanelProps).toBeTruthy())
+     const accessTokenCallsBeforeRetry = appMocks.genAPI.getAccessToken.mock.calls.length
+ 
+     await act(async () => {
+       await appMocks.state.framePanelProps.onVideoRetry({
+         id: 'fp_1',
+         generationId: 'generation-1',
+         mediaId: 'media-1',
+         status: 'error',
+       })
+     })
+ 
+     expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(accessTokenCallsBeforeRetry)
+-    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
++    expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.chatgptVideoUsesApi')
+   })
+ })
+diff --git a/tests/electron/ipc/mode.chatgptDevGate.test.js b/tests/electron/ipc/mode.chatgptDevGate.test.js
+index dd2889a0..726fbebd 100644
+--- a/tests/electron/ipc/mode.chatgptDevGate.test.js
++++ b/tests/electron/ipc/mode.chatgptDevGate.test.js
+@@ -195,10 +195,145 @@ describe('P2 ChatGPT view load gate', () => {
+       'security:install',
+       'listener:did-finish-load',
+       'detach:flow',
+       'route:chatgpt',
+       'attach:chatgpt',
+       'bounds:chatgpt',
+       'load:https://chatgpt.com/',
+     ])
+   })
+ })
++
++function generationHarness({
++  gate = makeGate(),
++  route = chatgptRoute(),
++  session = { target: 'chatgpt', status: 'ready', ready: true, revision: 4 },
++} = {}) {
++  const handlers = {}
++  const sender = { send: vi.fn() }
++  const adapter = {
++    submit: vi.fn(async () => ({ success: true, generationId: 'chatgpt-job-positive' })),
++    observe: vi.fn(async () => ({ success: true, completed: true })),
++    collect: vi.fn(async () => ({ success: true, images: [{ filePath: '/saved/positive.png' }] })),
++    clear: vi.fn(async () => ({ success: true })),
++  }
++  const ensureSession = vi.fn(async () => session)
++  const target = {
++    id: 'chatgpt',
++    startUrl: 'https://chatgpt.com/',
++    createView: vi.fn(() => ({ webContents: { loadURL: vi.fn() } })),
++    createAdapter: vi.fn(() => adapter),
++    ensureSession,
++    getSessionStatus: vi.fn(() => session),
++  }
++  const registry = createTargetRegistry({ chatgpt: target })
++  const mainWindow = {
++    webContents: sender,
++    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
++  }
++  const controller = createModeController(() => mainWindow, vi.fn(), {
++    initialRoute: route,
++    targetRegistry: registry,
++    createSessionView: (name) => registry.createView(name),
++    chatgptDevGate: gate,
++    sessionJobs: { cancelAll: vi.fn(async () => {}), awaitIdle: vi.fn(async () => {}) },
++    rendererAutomation: { requestQuiesce: vi.fn(async () => {}) },
++  })
++  controller.register({
++    handle: (channel, handler) => { handlers[channel] = handler },
++    on: vi.fn(),
++  })
++  return { handlers, sender, adapter, ensureSession, target, controller }
++}
++
++describe('ChatGPT generation IPC route and session gate', () => {
++  it('submits a text-only image request on the enabled flow+chatgpt route', async () => {
++    const setup = generationHarness()
++    expect(typeof setup.handlers['chatgpt:submit-generation']).toBe('function')
++    if (typeof setup.handlers['chatgpt:submit-generation'] !== 'function') return
++
++    const result = await setup.handlers['chatgpt:submit-generation'](
++      { sender: setup.sender },
++      { prompt: 'Generate a jade lighthouse image', referenceImages: [] },
++    )
++
++    expect(result).toEqual({ success: true, generationId: 'chatgpt-job-positive' })
++    expect(setup.ensureSession).toHaveBeenCalledOnce()
++    expect(setup.adapter.submit).toHaveBeenCalledWith(expect.objectContaining({
++      prompt: 'Generate a jade lighthouse image',
++      referenceImages: [],
++    }))
++  })
++
++  it('refuses measured-route requests carrying references before adapter submission', async () => {
++    const setup = generationHarness()
++    expect(typeof setup.handlers['chatgpt:submit-generation']).toBe('function')
++    if (typeof setup.handlers['chatgpt:submit-generation'] !== 'function') return
++
++    await expect(setup.handlers['chatgpt:submit-generation'](
++      { sender: setup.sender },
++      { prompt: 'positive text-only control', referenceImages: [] },
++    )).resolves.toMatchObject({ success: true })
++    expect(setup.adapter.submit).toHaveBeenCalledOnce()
++    setup.adapter.submit.mockClear()
++
++    const refused = await setup.handlers['chatgpt:submit-generation'](
++      { sender: setup.sender },
++      { prompt: 'must not submit', referenceImages: [{ data: 'non-default-reference' }] },
++    )
++
++    expect(refused).toMatchObject({
++      success: false,
++      errorKind: 'chatgpt-reference-images-unmeasured',
++    })
++    expect(refused.error).toMatch(/reference/i)
++    expect(setup.adapter.submit).not.toHaveBeenCalled()
++  })
++
++  it('refuses a non-ready session clearly and never submits, after a ready positive control', async () => {
++    const ready = generationHarness()
++    expect(typeof ready.handlers['chatgpt:submit-generation']).toBe('function')
++    if (typeof ready.handlers['chatgpt:submit-generation'] !== 'function') return
++    await expect(ready.handlers['chatgpt:submit-generation'](
++      { sender: ready.sender },
++      { prompt: 'ready control', referenceImages: [] },
++    )).resolves.toMatchObject({ success: true })
++    expect(ready.adapter.submit).toHaveBeenCalledOnce()
++
++    const blocked = generationHarness({
++      session: { target: 'chatgpt', status: 'login-required', ready: false, revision: 7 },
++    })
++    const result = await blocked.handlers['chatgpt:submit-generation'](
++      { sender: blocked.sender },
++      { prompt: 'must not type', referenceImages: [] },
++    )
++
++    expect(result).toMatchObject({
++      success: false,
++      errorKind: 'chatgpt-session-not-ready',
++      sessionStatus: 'login-required',
++    })
++    expect(result.error).toMatch(/session|login/i)
++    expect(blocked.adapter.submit).not.toHaveBeenCalled()
++  })
++
++  it('keeps generation unreachable without the dev flag, with an enabled-gate positive control', async () => {
++    const enabled = generationHarness()
++    expect(typeof enabled.handlers['chatgpt:submit-generation']).toBe('function')
++    if (typeof enabled.handlers['chatgpt:submit-generation'] !== 'function') return
++    await expect(enabled.handlers['chatgpt:submit-generation'](
++      { sender: enabled.sender },
++      { prompt: 'enabled control', referenceImages: [] },
++    )).resolves.toMatchObject({ success: true })
++
++    const disabled = generationHarness({ gate: makeGate({ chatgptP2Flag: undefined }) })
++    const before = disabled.controller.getCurrentRoute()
++    const result = await disabled.handlers['chatgpt:submit-generation'](
++      { sender: disabled.sender },
++      { prompt: 'disabled must not submit', referenceImages: [] },
++    )
++
++    expect(result).toMatchObject({ success: false, errorKind: 'chatgpt-target-disabled' })
++    expect(disabled.adapter.submit).not.toHaveBeenCalled()
++    expect(disabled.controller.getCurrentRoute()).toEqual(before)
++  })
++})
+diff --git a/tests/electron/webtargets/chatgptGenerationAdapter.test.js b/tests/electron/webtargets/chatgptGenerationAdapter.test.js
+new file mode 100644
+index 00000000..7c0b3404
+--- /dev/null
++++ b/tests/electron/webtargets/chatgptGenerationAdapter.test.js
+@@ -0,0 +1,214 @@
++// @vitest-environment node
++import { describe, expect, it, vi } from 'vitest'
++import * as chatgpt from '../../../electron/webtargets/chatgpt/index.js'
++
++const CDN = 'https://chatgpt.com/backend-api/estuary/content'
++const prompt = 'Generate an image of a copper robot reading a blue book'
++const loaded = (id) => ({
++  src: `${CDN}?id=${id}&sig=fixture-secret`,
++  complete: true,
++  w: 1254,
++  h: 1254,
++})
++const submitted = { composerCleared: true, submitPresent: false, stillHasPrompt: false }
++const notSubmitted = { composerCleared: false, submitPresent: true, stillHasPrompt: true }
++
++function fnNameOf(script) {
++  return String(script).trim().split('\n').pop().match(/window\.(__cg_\w+__)\(/)?.[1] || null
++}
++
++function machineHarness(handlers) {
++  const counts = {}
++  let elapsed = 0
++  return {
++    counts,
++    executeInView: vi.fn(async (_view, script) => {
++      const fn = fnNameOf(script)
++      const call = (counts[fn] = (counts[fn] ?? -1) + 1)
++      const handler = handlers[fn]
++      if (handler === undefined) throw new Error(`unexpected page function: ${fn}`)
++      return typeof handler === 'function' ? handler(call) : handler
++    }),
++    now: () => elapsed,
++    sleep: async (ms) => { elapsed += ms },
++    typeText: vi.fn(),
++    enter: vi.fn(),
++    log: { info: vi.fn(), error: vi.fn() },
++    deadlineMs: 30,
++    cadenceMs: 5,
++  }
++}
++
++function expectMeasuredMachine() {
++  expect(typeof chatgpt.runGenerateStateMachine).toBe('function')
++  return typeof chatgpt.runGenerateStateMachine === 'function'
++}
++
++describe('ChatGPT measured generation state machine', () => {
++  it('turns the scene text into an explicit image-generation instruction', () => {
++    expect(typeof chatgpt.buildImagePrompt).toBe('function')
++    if (typeof chatgpt.buildImagePrompt !== 'function') return
++    const result = chatgpt.buildImagePrompt('a brass observatory under violet clouds')
++    expect(result).toMatch(/^(generate|create|draw|make)\b/i)
++    expect(result).toMatch(/\bimage\b/i)
++    expect(result).toContain('a brass observatory under violet clouds')
++  })
++
++  it('fails closed instead of inventing an unmeasured non-ASCII sendInputEvent fallback', async () => {
++    if (!expectMeasuredMachine()) return
++    const ascii = machineHarness({
++      __cg_baseline__: { imgs: [] },
++      __cg_inject__: { textMatches: false, submitPresent: true },
++      __cg_verify__: { textMatches: true, submitPresent: true },
++      __cg_clickSubmit__: { clicked: true },
++      __cg_submitAck__: submitted,
++      __cg_poll__: { imgs: [loaded('ascii-fallback-positive')] },
++    })
++    const asciiResult = await chatgpt.runGenerateStateMachine(
++      {},
++      'Generate an image of a silver astrolabe',
++      ascii,
++    )
++    expect(asciiResult).toMatchObject({ ok: true, id: 'ascii-fallback-positive' })
++    expect(ascii.typeText).toHaveBeenCalledOnce()
++
++    const nonAscii = machineHarness({
++      __cg_baseline__: { imgs: [] },
++      __cg_inject__: { textMatches: false, submitPresent: false },
++    })
++
++    const result = await chatgpt.runGenerateStateMachine(
++      {},
++      '푸른 바다 위의 등대 이미지를 생성해줘',
++      nonAscii,
++    )
++
++    expect(result).toMatchObject({ ok: false, stage: 'inject', detail: 'non-ascii-fallback-unmeasured' })
++    expect(nonAscii.typeText).not.toHaveBeenCalled()
++  })
++
++  it('requires two consecutive sightings of the same new estuary id', async () => {
++    if (!expectMeasuredMachine()) return
++    const sequence = [
++      { imgs: [loaded('single-sighting')] },
++      { imgs: [loaded('stable-final')] },
++      { imgs: [loaded('stable-final')] },
++    ]
++    const h = machineHarness({
++      __cg_baseline__: { imgs: [] },
++      __cg_inject__: { textMatches: true, submitPresent: true },
++      __cg_clickSubmit__: { clicked: true },
++      __cg_submitAck__: submitted,
++      __cg_poll__: (n) => sequence[Math.min(n, sequence.length - 1)],
++    })
++
++    const result = await chatgpt.runGenerateStateMachine({}, prompt, h)
++
++    expect(result).toMatchObject({ ok: true, id: 'stable-final' })
++    expect(h.counts.__cg_poll__).toBe(2)
++  })
++
++  it('absorbs an estuary id seen before submit confirmation and accepts the later result', async () => {
++    if (!expectMeasuredMachine()) return
++    const h = machineHarness({
++      __cg_baseline__: { imgs: [] },
++      __cg_inject__: { textMatches: true, submitPresent: true },
++      __cg_clickSubmit__: { clicked: true },
++      __cg_submitAck__: (n) => (n === 0 ? notSubmitted : submitted),
++      __cg_poll__: (n) => (n <= 2
++        ? { imgs: [loaded('pre-ack-stale')] }
++        : { imgs: [loaded('pre-ack-stale'), loaded('owned-final')] }),
++    })
++
++    const result = await chatgpt.runGenerateStateMachine({}, prompt, h)
++
++    expect(result).toMatchObject({ ok: true, id: 'owned-final' })
++  })
++
++  it('downloads through the ChatGPT partition session and returns a saved image payload', async () => {
++    expect(typeof chatgpt.saveImage).toBe('function')
++    if (typeof chatgpt.saveImage !== 'function') return
++    const events = []
++    const fetch = vi.fn(async () => ({
++      ok: true,
++      status: 200,
++      headers: { get: () => 'image/png' },
++      arrayBuffer: async () => new Uint8Array([11, 22, 33]).buffer,
++    }))
++    const fs = {
++      mkdirSync: vi.fn(() => events.push('mkdir')),
++      writeFileSync: vi.fn(() => events.push('write')),
++    }
++    const view = { webContents: { session: { fetch } } }
++
++    const result = await chatgpt.saveImage(view, `${CDN}?id=saved&sig=private`, {
++      fs,
++      outputDir: '/product-chatgpt-staging',
++      now: () => 1700000000000,
++      timeoutMs: 50,
++    })
++
++    expect(fetch).toHaveBeenCalledWith(`${CDN}?id=saved&sig=private`, { credentials: 'include' })
++    expect(events).toEqual(['mkdir', 'write'])
++    expect(result).toMatchObject({
++      filePath: '/product-chatgpt-staging/generated-1700000000000.png',
++      mimeType: 'image/png',
++      base64: Buffer.from([11, 22, 33]).toString('base64'),
++      dataUrl: `data:image/png;base64,${Buffer.from([11, 22, 33]).toString('base64')}`,
++    })
++  })
++
++  it('serializes adapter submission through saving before exposing the generation id', async () => {
++    expect(typeof chatgpt.createChatgptGenerationAdapter).toBe('function')
++    if (typeof chatgpt.createChatgptGenerationAdapter !== 'function') return
++    const h = machineHarness({
++      __cg_baseline__: { imgs: [] },
++      __cg_inject__: { textMatches: true, submitPresent: true },
++      __cg_clickSubmit__: { clicked: true },
++      __cg_submitAck__: submitted,
++      __cg_poll__: { imgs: [loaded('adapter-saved')] },
++    })
++    const fetch = vi.fn(async () => ({
++      ok: true,
++      status: 200,
++      headers: { get: () => 'image/png' },
++      arrayBuffer: async () => new Uint8Array([44, 55]).buffer,
++    }))
++    const view = {
++      webContents: {
++        executeJavaScript: vi.fn(),
++        session: { fetch },
++      },
++    }
++    const fs = { mkdirSync: vi.fn(), writeFileSync: vi.fn() }
++    const adapter = chatgpt.createChatgptGenerationAdapter({
++      getView: () => view,
++      ensureSession: vi.fn(async () => ({ status: 'ready', ready: true })),
++      executeInView: h.executeInView,
++      generateOptions: {
++        now: h.now,
++        sleep: h.sleep,
++        deadlineMs: h.deadlineMs,
++        cadenceMs: h.cadenceMs,
++      },
++      fs,
++      getOutputDir: () => '/adapter-staging',
++      now: () => 1700000000001,
++      createId: () => 'adapter-job-positive',
++      logger: h.log,
++    })
++
++    const submittedJob = await adapter.submit({ prompt: 'a measured quartz bridge', referenceImages: [] })
++
++    expect(submittedJob).toEqual({ success: true, generationId: 'adapter-job-positive' })
++    expect(fs.writeFileSync).toHaveBeenCalledOnce()
++    await expect(adapter.observe('adapter-job-positive')).resolves.toMatchObject({ completed: true })
++    await expect(adapter.collect('adapter-job-positive')).resolves.toMatchObject({
++      success: true,
++      images: [expect.objectContaining({
++        filePath: '/adapter-staging/generated-1700000000001.png',
++        dataUrl: expect.stringMatching(/^data:image\/png;base64,/),
++      })],
++    })
++  })
++})
+diff --git a/tests/electron/webtargets/chatgptTarget.test.js b/tests/electron/webtargets/chatgptTarget.test.js
+index 964bcfe2..8141a31d 100644
+--- a/tests/electron/webtargets/chatgptTarget.test.js
++++ b/tests/electron/webtargets/chatgptTarget.test.js
+@@ -81,25 +81,29 @@ describe('ChatGPT target definition', () => {
+       'listener:did-finish-load',
+     ])
+     expect(setup.reservedSessionWebPreferences).toHaveBeenCalledOnce()
+     expect(setup.installReservedSessionSecurity).toHaveBeenCalledWith(
+       setup.view,
+       setup.electronSession,
+     )
+     expect(setup.view.webContents).not.toHaveProperty('loadURL')
+   })
+ 
+-  it('keeps adapter construction as an explicit unimplemented injection point', () => {
++  it('constructs the product adapter by default while preserving explicit factory injection', () => {
+     const injectedAdapter = vi.fn((input) => ({ input }))
+     const setup = targetHarness()
+     const target = createChatgptTarget({
+       WebContentsView: class {},
+       reservedSessionWebPreferences: () => ({}),
+       installReservedSessionSecurity: () => {},
+       createAdapter: injectedAdapter,
+     })
+ 
+-    expect(setup.target.createAdapter()).toBeNull()
++    expect(setup.target.createAdapter()).toEqual(expect.objectContaining({
++      submit: expect.any(Function),
++      observe: expect.any(Function),
++      collect: expect.any(Function),
++    }))
+     expect(target.createAdapter('measured-later')).toEqual({ input: 'measured-later' })
+     expect(injectedAdapter).toHaveBeenCalledOnce()
+   })
+ })
+diff --git a/tests/engine/stageRoutedEngine.test.js b/tests/engine/stageRoutedEngine.test.js
+new file mode 100644
+index 00000000..698c28bb
+--- /dev/null
++++ b/tests/engine/stageRoutedEngine.test.js
+@@ -0,0 +1,68 @@
++import { describe, expect, it, vi } from 'vitest'
++import * as generationEngine from '../../src/engine/useGenerationEngine.js'
++
++function member(label) {
++  return {
++    label,
++    generateImage: vi.fn(async () => label),
++    submitGeneration: vi.fn(async () => label),
++    checkGeneration: vi.fn(async () => label),
++    collectGeneration: vi.fn(async () => label),
++    clearGenerations: vi.fn(async () => label),
++    generateVideoT2V: vi.fn(async () => label),
++    generateVideoI2V: vi.fn(async () => label),
++    checkVideoStatus: vi.fn(async () => label),
++    downloadVideo: vi.fn(async () => label),
++  }
++}
++
++function expectRouter() {
++  expect(typeof generationEngine.createStageRoutedEngine).toBe('function')
++  return typeof generationEngine.createStageRoutedEngine === 'function'
++}
++
++describe('stage-routed generation engine', () => {
++  it('routes text-only image generation to ChatGPT with flow+flow as the untouched positive control', async () => {
++    if (!expectRouter()) return
++    const api = member('api')
++    const flow = member('flow')
++    const chatgpt = member('chatgpt')
++
++    const routed = generationEngine.createStageRoutedEngine(
++      { mode: 'flow', sessionTarget: 'chatgpt' },
++      { api, flow, chatgpt },
++    )
++    await expect(routed.submitGeneration('measured text prompt', [], { batchCount: 1 }))
++      .resolves.toBe('chatgpt')
++    expect(chatgpt.submitGeneration).toHaveBeenCalledOnce()
++    expect(flow.submitGeneration).not.toHaveBeenCalled()
++
++    const control = generationEngine.createStageRoutedEngine(
++      { mode: 'flow', sessionTarget: 'flow' },
++      { api, flow, chatgpt },
++    )
++    await expect(control.submitGeneration('same prompt', [], { batchCount: 1 })).resolves.toBe('flow')
++    expect(flow.submitGeneration).toHaveBeenCalledOnce()
++  })
++
++  it('routes video on flow+chatgpt to the API provider, never ChatGPT', async () => {
++    if (!expectRouter()) return
++    const api = member('api')
++    const flow = member('flow')
++    const chatgpt = member('chatgpt')
++    const routed = generationEngine.createStageRoutedEngine(
++      { mode: 'flow', sessionTarget: 'chatgpt' },
++      { api, flow, chatgpt },
++    )
++
++    await expect(routed.generateVideoT2V('video prompt')).resolves.toBe('api')
++    await expect(routed.generateVideoI2V('motion prompt')).resolves.toBe('api')
++    expect(api.generateVideoT2V).toHaveBeenCalledOnce()
++    expect(api.generateVideoI2V).toHaveBeenCalledOnce()
++    expect(chatgpt.generateVideoT2V).not.toHaveBeenCalled()
++    expect(chatgpt.generateVideoI2V).not.toHaveBeenCalled()
++
++    await expect(routed.generateImage('image positive control', [])).resolves.toBe('chatgpt')
++    expect(chatgpt.generateImage).toHaveBeenCalledOnce()
++  })
++})

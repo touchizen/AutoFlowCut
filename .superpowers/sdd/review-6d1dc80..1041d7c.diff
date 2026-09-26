@@ -1,0 +1,279 @@
+# Review package: 6d1dc80..1041d7c
+
+## Commits
+1041d7c fix(story): open 완료 후 getState 재조회로 pushScenes 재발신 race 해소
+1da4980 feat(story): useStoryPipeline 훅 + push ack 트랜잭션 배선
+
+## Files changed
+ src/App.jsx                          |  18 +++++-
+ src/hooks/useStoryPipeline.js        |  60 +++++++++++++++++++
+ tests/hooks/useStoryPipeline.test.js | 109 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 186 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/App.jsx b/src/App.jsx
+index b896f14..c94f01f 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -5,20 +5,21 @@
+ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+ import { DEFAULTS, UI, TIMING, STYLE_PRESETS } from './config/defaults'
+ import { useGenerationEngine } from './engine/useGenerationEngine'
+ import { useMode } from './contexts/ModeContext'
+ import { useScenes } from './hooks/useScenes'
+ import { useAutomation } from './hooks/useAutomation'
+ import { useVideoAutomation } from './hooks/useVideoAutomation'
+ import { useVideoScenes } from './hooks/useVideoScenes'
+ import { useI18n } from './hooks/useI18n'
+ import { useProjectData } from './hooks/useProjectData'
++import { useStoryPipeline } from './hooks/useStoryPipeline'
+ import { useReferenceGeneration } from './hooks/useReferenceGeneration'
+ import { useStyleThumbnails } from './hooks/useStyleThumbnails'
+ import { useSceneGeneration } from './hooks/useSceneGeneration'
+ import { useGenerationQueue } from './hooks/useGenerationQueue'
+ import { useExport } from './hooks/useExport'
+ import { useStoreRating } from './hooks/useStoreRating'
+ import { useAudioImport } from './hooks/useAudioImport'
+ import { useAppSettings } from './hooks/useAppSettings'
+ import { useAvailableModels } from './hooks/useAvailableModels'
+ import { computeModelHeal, computeModeSwitch } from './config/genModels'
+@@ -430,21 +431,21 @@ function App() {
+     // 정책: 현재 srtTrack 이 비어 있을 때만 폴더 SRT 로 채움 (사용자 작업 보호).
+     onAudioSrtAbsorbed: (audioSrtTrack) => {
+       if ((scenesHook.srtTrack || []).length === 0 && audioSrtTrack.length > 0) {
+         scenesHook.setSrtTrack(audioSrtTrack)
+         console.log('[App] Absorbed audio folder SRT into project.srtTrack:', audioSrtTrack.length)
+       }
+     },
+   })
+ 
+   // Project Data 관리
+-  const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef, projectLoading, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
++  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, projectLoading, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
+     settings, setSettings, scenes, references, setScenes, setReferences,
+     videoScenes, setVideoScenes,
+     framePairs, setFramePairs,
+     selectedStyleRefId, setSelectedStyleRefId,
+     // Phase 7: srtTrack 영속화 (load/save 시 useProjectData 가 동기화)
+     srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
+     // B-phase: 드롭으로 변경된 audio 폴더가 즉시 project.json에 박히도록 prop으로 전달.
+     // audioPackage 로드 중(transient null)에 명시적 null로 덮어쓰지 않도록 undefined 유지 —
+     // saveCurrentProject가 undefined일 때 localStorage fallback.
+     audioFolderPath: audioPackage?.folderPath,
+@@ -452,20 +453,35 @@ function App() {
+     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
+     genAPI,
+     onSaveError: () => toast.error(t('toast.projectSaveFailed')),
+     mode, // flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화 (api 모드에서는 flowProjectReady 항상 true)
+   })
+ 
+   // #R3-1: flowProjectId ref 동기화 — engineFlow 가 IPC 호출 시 최신 bound id 를 사용한다.
+   // (useEffect 대신 렌더 중 직접 갱신 — getFlowProjectId() 는 동기 호출이므로 최신값 필요)
+   flowProjectIdRef.current = _flowProjectId ?? null
+ 
++  // Story 파이프라인 — projectPath 는 폴더 저장 모드의 프로젝트 루트
++  // (workFolder/projectName, useProjectData 의 audio 폴더 경로 계산과 동일 패턴).
++  const workFolder = localStorage.getItem('workFolderPath')
++  const storyProjectPath = settings.saveMode === 'folder' && workFolder && settings.projectName
++    ? `${workFolder}/${settings.projectName}`
++    : null
++  const storyPipeline = useStoryPipeline({
++    projectPath: storyProjectPath,
++    onPushScenes: async (payload) => {
++      const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(payload)
++      const r = await saveCurrentProjectWithPayload({ scenes: nextScenes, srtTrack: nextSrtTrack })
++      if (!r.ok) throw new Error('project save failed')
++    },
++  })
++
+   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
+   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
+   //   아직 dynamic 을 못 받았을 때만 — 이미 받았으면 반복 스크랩 생략.
+   useEffect(() => {
+     if (mode === 'flow' && flowProjectReady && modelsSource !== 'dynamic') refetchModels?.()
+   }, [mode, flowProjectReady, modelsSource, refetchModels])
+ 
+   // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
+   const automation = useAutomation(
+     genAPI,
+diff --git a/src/hooks/useStoryPipeline.js b/src/hooks/useStoryPipeline.js
+new file mode 100644
+index 0000000..c5f6fd0
+--- /dev/null
++++ b/src/hooks/useStoryPipeline.js
+@@ -0,0 +1,60 @@
++/**
++ * Story 파이프라인 renderer 훅 — 스펙 §6. main 스텝 머신의 이벤트를 구독하고
++ * projectToken 불일치 이벤트를 drop. push 수신 시 onPushScenes 트랜잭션 후 ack.
++ */
++import { useState, useCallback, useRef, useEffect } from 'react'
++
++export function useStoryPipeline({ projectPath, onPushScenes }) {
++  const [state, setState] = useState(null)
++  const [streamingText, setStreamingText] = useState('')
++  const tokenRef = useRef(null)
++  const onPushRef = useRef(onPushScenes)
++  onPushRef.current = onPushScenes
++
++  useEffect(() => {
++    const api = window.electronAPI
++    if (!api?.onStoryEvent) return
++    const offs = [
++      api.onStoryEvent('story:state', (p) => {
++        if (p.projectToken !== tokenRef.current) return
++        setState(p.state)
++      }),
++      api.onStoryEvent('story:delta', (p) => {
++        if (p.projectToken !== tokenRef.current) return
++        setStreamingText((t) => t + p.text)
++      }),
++      api.onStoryEvent('story:pushScenes', async (p) => {
++        if (p.projectToken !== tokenRef.current) return
++        try {
++          await onPushRef.current(p)
++          await api.storyPushAck({ projectToken: p.projectToken, operationId: p.operationId, pushRevision: p.pushRevision, ok: true })
++        } catch (e) {
++          await api.storyPushAck({ projectToken: p.projectToken, operationId: p.operationId, pushRevision: p.pushRevision, ok: false, reason: String(e.message || e) })
++        }
++      }),
++    ]
++    return () => offs.forEach((off) => off?.())
++  }, [])
++
++  const open = useCallback(async () => {
++    const r = await window.electronAPI.storyOpen({ projectPath })
++    tokenRef.current = r.projectToken
++    setState(r.state)
++    // main의 story:open 처리 중 maybeResendPush()가 재발신하는 story:pushScenes가 이
++    // storyOpen() resolve(=tokenRef 세팅) 전에 도착하면 토큰 불일치로 drop된다. 이제 토큰이
++    // 확정됐으니 storyGetState()를 한 번 호출해 동일한 재발신 로직(getState 핸들러)을 다시
++    // 태워 멱등 복구한다. 반환된 state로 setState도 함께 갱신.
++    const gs = await window.electronAPI.storyGetState({ projectToken: r.projectToken })
++    if (gs && !gs.error) setState(gs)
++    return r
++  }, [projectPath])
++
++  const start = useCallback(async (step, params) => {
++    setStreamingText('')
++    return window.electronAPI.storyStart({ projectToken: tokenRef.current, step, params })
++  }, [])
++
++  const abort = useCallback(() => window.electronAPI.storyAbort({ projectToken: tokenRef.current }), [])
++
++  return { state, streamingText, open, start, abort }
++}
+diff --git a/tests/hooks/useStoryPipeline.test.js b/tests/hooks/useStoryPipeline.test.js
+new file mode 100644
+index 0000000..c375ff4
+--- /dev/null
++++ b/tests/hooks/useStoryPipeline.test.js
+@@ -0,0 +1,109 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { renderHook, act, waitFor } from '@testing-library/react'
++import { useStoryPipeline } from '../../src/hooks/useStoryPipeline.js'
++
++let listeners
++beforeEach(() => {
++  listeners = {}
++  window.electronAPI = {
++    storyOpen: vi.fn(async () => ({ projectToken: 'tok1', state: { steps: {} } })),
++    storyGetState: vi.fn(async () => ({ steps: {} })),
++    storyStart: vi.fn(async () => ({ operationId: 'op1' })),
++    storyAbort: vi.fn(async () => ({})),
++    storyPushAck: vi.fn(async () => ({})),
++    onStoryEvent: vi.fn((ch, cb) => { listeners[ch] = cb; return () => delete listeners[ch] }),
++  }
++})
++
++describe('useStoryPipeline', () => {
++  it('open 후 state 이벤트를 반영한다', async () => {
++    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
++    await act(() => result.current.open())
++    act(() => listeners['story:state']({ projectToken: 'tok1', state: { steps: { script: { status: 'done' } } } }))
++    expect(result.current.state.steps.script.status).toBe('done')
++  })
++  it('토큰 불일치 이벤트는 drop', async () => {
++    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
++    await act(() => result.current.open())
++    act(() => listeners['story:state']({ projectToken: 'OTHER', state: { steps: { script: { status: 'done' } } } }))
++    expect(result.current.state?.steps?.script?.status).not.toBe('done')
++  })
++  it('pushScenes 수신 → onPushScenes 성공 → ack(ok:true)', async () => {
++    const onPushScenes = vi.fn(async () => {})
++    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))
++    await act(() => result.current.open())
++    await act(() => listeners['story:pushScenes']({ projectToken: 'tok1', operationId: 'op2', pushRevision: 1, scenes: [] }))
++    await waitFor(() => expect(window.electronAPI.storyPushAck).toHaveBeenCalledWith(
++      expect.objectContaining({ projectToken: 'tok1', pushRevision: 1, ok: true }),
++    ))
++  })
++  it('onPushScenes 실패 → ack(ok:false)', async () => {
++    const onPushScenes = vi.fn(async () => { throw new Error('save fail') })
++    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))
++    await act(() => result.current.open())
++    await act(() => listeners['story:pushScenes']({ projectToken: 'tok1', operationId: 'op2', pushRevision: 1, scenes: [] }))
++    await waitFor(() => expect(window.electronAPI.storyPushAck).toHaveBeenCalledWith(
++      expect.objectContaining({ ok: false, reason: expect.stringContaining('save fail') }),
++    ))
++  })
++
++  // 회귀: main의 story:open 처리 중 maybeResendPush()가 재발신하는 story:pushScenes가
++  // renderer의 storyOpen() resolve(=tokenRef 세팅) 전에 도착하면 토큰 불일치로 drop된다.
++  // open() 완료 후 storyGetState()를 한 번 호출해 동일한 재발신 로직을 재실행시켜 복구한다.
++  it('open() resolve 전에 도착한 pushScenes는 토큰 불일치로 drop된다', async () => {
++    let resolveOpen
++    window.electronAPI.storyOpen = vi.fn(() => new Promise((resolve) => { resolveOpen = resolve }))
++    const onPushScenes = vi.fn(async () => {})
++    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))
++
++    let openPromise
++    act(() => { openPromise = result.current.open() })
++
++    // storyOpen이 아직 resolve되지 않아 tokenRef.current가 null인 상태에서 pushScenes 도착
++    await act(async () => {
++      await listeners['story:pushScenes']?.({ projectToken: 'tok1', operationId: 'op-early', pushRevision: 1, scenes: [] })
++    })
++    expect(onPushScenes).not.toHaveBeenCalled()
++    expect(window.electronAPI.storyPushAck).not.toHaveBeenCalled()
++
++    resolveOpen({ projectToken: 'tok1', state: { steps: {} } })
++    await act(async () => { await openPromise })
++  })
++
++  it('open() resolve 후 올바른 projectToken으로 storyGetState를 호출한다', async () => {
++    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
++    await act(() => result.current.open())
++    expect(window.electronAPI.storyGetState).toHaveBeenCalledWith({ projectToken: 'tok1' })
++  })
++
++  it('storyGetState 재조회 시점에 재발신된 pushScenes(올바른 토큰)는 정상 처리 + ack(ok:true)', async () => {
++    const onPushScenes = vi.fn(async () => {})
++    window.electronAPI.storyGetState = vi.fn(async ({ projectToken }) => {
++      // main의 getState 핸들러가 maybeResendPush()로 story:pushScenes를 재발신하는 상황을 시뮬레이션
++      listeners['story:pushScenes']?.({ projectToken, operationId: 'op-resend', pushRevision: 2, scenes: [] })
++      return { steps: {} }
++    })
++    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))
++    await act(() => result.current.open())
++
++    await waitFor(() => expect(onPushScenes).toHaveBeenCalled())
++    await waitFor(() => expect(window.electronAPI.storyPushAck).toHaveBeenCalledWith(
++      expect.objectContaining({ projectToken: 'tok1', pushRevision: 2, ok: true }),
++    ))
++  })
++
++  it('unmount 시 이벤트 리스너를 해제한다 — 이후 이벤트 발화는 무해하다', async () => {
++    const onPushScenes = vi.fn(async () => {})
++    const { result, unmount } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))
++    await act(() => result.current.open())
++    expect(listeners['story:state']).toBeTypeOf('function')
++
++    unmount()
++
++    expect(listeners['story:state']).toBeUndefined()
++    expect(listeners['story:delta']).toBeUndefined()
++    expect(listeners['story:pushScenes']).toBeUndefined()
++    expect(() => listeners['story:state']?.({ projectToken: 'tok1', state: { steps: {} } })).not.toThrow()
++    expect(onPushScenes).not.toHaveBeenCalled()
++  })
++})

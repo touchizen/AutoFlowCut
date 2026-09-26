@@ -1,0 +1,929 @@
+# Review package: fec37b4..b7dfbca
+
+## Commits
+b7dfbca feat(agent): add Flow-safe floating and slide modes
+
+## Files changed
+ src/App.jsx                                       |   3 +
+ src/components/agent/ChatPanel.css                |  38 +++--
+ src/components/agent/ChatPanel.jsx                | 186 ++++++++++-----------
+ src/components/agent/agentPanelLayout.js          |  32 ++++
+ tests/components/AppFlowSplitLayout.test.jsx      |  27 +++
+ tests/components/agent/ChatPanel.appMount.test.js |   3 +
+ tests/components/agent/ChatPanel.test.jsx         | 190 +++++++++++-----------
+ tests/components/agent/agentPanelLayout.test.js   |  45 +++++
+ 8 files changed, 309 insertions(+), 215 deletions(-)
+
+## Diff
+diff --git a/src/App.jsx b/src/App.jsx
+index 6907c32..82da4cf 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -2682,20 +2682,23 @@ function App() {
+           <span>Loading project...</span>
+         </div>
+       )}
+       {/* 🔴 둘 다 **전역 sibling**이다(D14). `activeView` 조건부 본문 안에 넣으면 뷰 전환 순간
+           승인/error surface와 대화 state가 사라진다. Header처럼 두 view보다 앞에 한 번만 둔다. */}
+       <ApprovalDialog />
+       <ChatPanel
+         open={agentPanelOpen}
+         onOpen={() => setAgentPanelOpen(true)}
+         onDismiss={() => setAgentPanelOpen(false)}
++        appMode={mode}
++        agentPanelMode={settings.agentPanelMode}
++        onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}
+         projectKey={`${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`}
+         videoAdmissionSources={videoAdmissionSources}
+         batchStatusSources={{
+           automation: { isRunning, status },
+           scenes,
+           references,
+           generatingRefs,
+           refBatchRunning,
+         }}
+         sceneBridgeSources={{
+diff --git a/src/components/agent/ChatPanel.css b/src/components/agent/ChatPanel.css
+index a29331d..4c455d2 100644
+--- a/src/components/agent/ChatPanel.css
++++ b/src/components/agent/ChatPanel.css
+@@ -1,76 +1,80 @@
+ .agent-chat-panel {
+   position: absolute;
+   right: 18px;
+   bottom: 18px;
+   z-index: 3200;
+-  width: min(420px, calc(100vw - 36px));
+-  max-height: min(640px, calc(100vh - 90px));
++  width: min(420px, calc(100% - 36px));
++  max-height: min(640px, calc(100% - 36px));
+   display: flex;
+   flex-direction: column;
++  min-height: 0;
+   color: var(--text, #eee);
+   background: var(--panel-bg, #1e1e22);
+   border: 1px solid var(--border, #3a3a42);
+   border-radius: 12px;
+   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+   overflow: hidden;
++  transition: transform 0.22s ease, opacity 0.18s ease, visibility 0.18s ease;
+ }
+-
+-.agent-chat-panel.is-dismissed {
+-  visibility: hidden;
+-  opacity: 0;
+-  pointer-events: none;
++.agent-chat-panel.mode-floating.is-dismissed { transform: translateY(12px) scale(0.98); }
++.agent-chat-panel.mode-slide {
++  top: 0; right: 0; bottom: 0;
++  width: min(420px, 100%); height: 100%; max-height: 100%;
++  border-top-right-radius: 0; border-bottom-right-radius: 0;
++  transform: translateX(100%);
+ }
++.agent-chat-panel.mode-slide.is-open { transform: translateX(0); }
++.agent-chat-panel.mode-slide.is-dismissed { transform: translateX(100%); }
++.agent-chat-panel.is-dismissed { visibility: hidden; opacity: 0; pointer-events: none; }
+ .agent-chat-panel.is-open { visibility: visible; opacity: 1; }
++.agent-chat-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 13px; border-bottom: 1px solid var(--border, #3a3a42); }
++.agent-chat-header-actions, .agent-chat-actions { display: flex; align-items: center; gap: 6px; }
++.agent-chat-log { flex: 1 1 auto; min-height: 0; max-height: none; padding: 12px; overflow-y: auto; }
++.agent-chat-compose { flex: 0 0 auto; padding: 10px 12px 12px; border-top: 1px solid var(--border, #3a3a42); }
++.agent-chat-header.is-draggable { cursor: grab; user-select: none; }
++.agent-chat-header.is-draggable:active { cursor: grabbing; }
++.agent-chat-flow-notice { max-width: 150px; font-size: 10px; line-height: 1.2; color: #e9bd68; }
++
+ .agent-chat-fab {
+   position: absolute; right: 18px; bottom: 18px; z-index: 3200;
+   display: grid; place-items: center; width: 72px; height: 72px; padding: 12px;
+   border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 50%;
+   background: linear-gradient(145deg, #4c8dff, #7758db);
+   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42); cursor: pointer;
+   transition: transform 0.16s ease, opacity 0.16s ease, visibility 0.16s ease;
+ }
+ .agent-chat-fab:hover { transform: translateY(-2px) scale(1.03); }
+ .agent-chat-fab:focus-visible { outline: 3px solid #b9d5ff; outline-offset: 3px; }
+ .agent-chat-fab.is-hidden { visibility: hidden; opacity: 0; pointer-events: none; }
+ .agent-chat-fab img { display: block; width: 100%; height: 100%; }
+ 
+-.agent-chat-panel.is-collapsed { width: 190px; }
+-.agent-chat-header { display: flex; align-items: center; justify-content: space-between; padding: 11px 13px; border-bottom: 1px solid var(--border, #3a3a42); }
+ .agent-chat-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+ .agent-chat-heading strong { flex: 0 0 auto; }
+ .agent-chat-heading .agent-model-selector { flex: 1 1 160px; min-width: 112px; }
+-.agent-chat-header-actions, .agent-chat-actions { display: flex; align-items: center; gap: 6px; }
+ .agent-chat-header button, .agent-chat-actions button { border: 1px solid var(--border, #3a3a42); border-radius: 7px; padding: 5px 9px; color: inherit; background: transparent; cursor: pointer; }
+ .agent-chat-actions button[type='submit'] { color: #fff; background: var(--accent, #4c8dff); border-color: transparent; }
+ .agent-chat-header button:disabled, .agent-chat-actions button:disabled { cursor: default; opacity: 0.42; }
+ .agent-chat-running { font-size: 11px; color: #78b0ff; }
+-.agent-chat-log { min-height: 150px; max-height: 370px; padding: 12px; overflow-y: auto; }
+ .agent-chat-empty { margin: 24px 0; text-align: center; font-size: 13px; opacity: 0.55; }
+ .agent-chat-message, .agent-chat-tool, .agent-chat-error { margin-bottom: 8px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; }
+ .agent-chat-message.user { margin-left: 42px; background: rgba(76, 141, 255, 0.18); }
+ .agent-chat-message.agent { margin-right: 24px; background: rgba(255, 255, 255, 0.07); }
+ .agent-chat-message.system { color: #b8c9dd; background: rgba(120, 176, 255, 0.1); }
+ .agent-chat-tool { border: 1px solid var(--border, #3a3a42); color: #c7d9ee; background: rgba(0, 0, 0, 0.12); }
+ .agent-chat-tool span { color: #75c992; }
+ .agent-chat-tool pre { max-height: 120px; margin: 6px 0 0; overflow: auto; font-size: 11px; white-space: pre-wrap; }
+ .agent-chat-error { color: #ffd2d2; border: 1px solid rgba(255, 92, 92, 0.5); background: rgba(255, 72, 72, 0.13); }
+ .agent-chat-usage { padding: 0 12px 9px; text-align: right; font-size: 11px; opacity: 0.65; }
+-.agent-chat-compose { padding: 10px 12px 12px; border-top: 1px solid var(--border, #3a3a42); }
+ .agent-chat-compose textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 54px; margin-bottom: 8px; padding: 8px 10px; color: inherit; background: var(--code-bg, #131316); border: 1px solid var(--border, #3a3a42); border-radius: 8px; font: inherit; }
+ .agent-chat-actions { justify-content: flex-end; flex-wrap: wrap; }
+ 
+-/* 아이콘 버튼: 텍스트 버튼과 달리 정사각형으로 잡아야 셰브론이 가운데에 온다. */
+-.agent-chat-collapse { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; }
+-/* 접힌 상태에서만 헤더가 손잡이가 된다. 커서로 "끌 수 있다"를 알린다. */
+-.agent-chat-header.is-draggable { cursor: grab; user-select: none; }
+-.agent-chat-header.is-draggable:active { cursor: grabbing; }
+ /* 진행 표시: 첫 응답까지 수십 초 비어 있으면 앱이 멈춘 것처럼 보인다. */
+ .agent-chat-thinking { display: flex; align-items: center; gap: 7px; opacity: 0.7; font-size: 12px; padding: 2px 0; }
+ .agent-chat-dots { display: inline-flex; gap: 3px; }
+ .agent-chat-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: agent-blink 1.2s infinite ease-in-out; }
+ .agent-chat-dots i:nth-child(2) { animation-delay: 0.2s; }
+ .agent-chat-dots i:nth-child(3) { animation-delay: 0.4s; }
+ @keyframes agent-blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+ 
+ .agent-model-selector { position: relative; min-width: 132px; }
+ .agent-model-combobox {
+diff --git a/src/components/agent/ChatPanel.jsx b/src/components/agent/ChatPanel.jsx
+index b17a40d..109ce9d 100644
+--- a/src/components/agent/ChatPanel.jsx
++++ b/src/components/agent/ChatPanel.jsx
+@@ -2,48 +2,25 @@ import { useCallback, useEffect, useRef, useState } from 'react'
+ import { readBatchStatus } from '../../agent/batchStatus.js'
+ import { registerToolBridgeHandlers } from '../../agent/toolBridgeHandlers.js'
+ import { sceneSnapshot } from '../../agent/sceneBridge.js'
+ import { runAgentExport } from '../../agent/exportBridge.js'
+ import { extractVideoFrames } from '../../utils/videoFrames.js'
+ import { resolveVideoSrc } from '../../utils/videoSrc.js'
+ import { useOptionalI18n } from '../../hooks/useI18n'
+ import en from '../../locales/en'
+ import AgentModelSelector from './AgentModelSelector.jsx'
+ import robotUrl from '../../assets/Robot.svg'
++import { clampAgentPanelPosition, effectiveAgentPanelMode } from './agentPanelLayout.js'
+ import './ChatPanel.css'
+ 
+ const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
+ 
+-/**
+- * 접기/펼치기 셰브론.
+- *
+- * 🔴 화살표는 **지금 누르면 패널이 어디로 가는지**를 가리킨다. 패널이 화면 **아래쪽**에 붙어 있으므로:
+- *   - 펼쳐진 상태 → 누르면 **아래로 접힌다** → ∨ (아래 화살표)
+- *   - 접힌 상태   → 누르면 **위로 펼쳐진다** → ∧ (위 화살표)
+- * (반대로 두면 "현재 상태"를 가리키는 것처럼 보여서 사용자가 정반대로 읽는다.)
+- */
+-function ChevronIcon({ collapsed }) {
+-  return (
+-    <svg
+-      className="agent-chat-chevron"
+-      width="12" height="12" viewBox="0 0 24 24"
+-      fill="none" stroke="currentColor" strokeWidth="3"
+-      strokeLinecap="round" strokeLinejoin="round"
+-      aria-hidden="true" focusable="false"
+-    >
+-      {collapsed
+-        ? <polyline points="6 15 12 9 18 15" />   /* ∧ 펼치기 */
+-        : <polyline points="6 9 12 15 18 9" />}   {/* ∨ 접기 */}
+-    </svg>
+-  )
+-}
+-
+ function failureText(failure, t) {
+   if (failure?.error === 'agent-limit') {
+     // D10: 한도는 **보고**된다. 조용히 멈추지 않는다.
+     return t('agent.limitReached', { used: failure.used, limit: failure.limit })
+   }
+   return failure?.message || failure?.error || t('agent.failed')
+ }
+ 
+ function hasFailure(value) {
+   return !!(value && typeof value === 'object' && value.error)
+@@ -64,86 +41,92 @@ function useSafeT() {
+     [ctx],
+   )
+ }
+ 
+ function fallbackT(key, params = {}) {
+   const value = key.split('.').reduce((node, part) => (node && typeof node === 'object' ? node[part] : undefined), en)
+   if (typeof value !== 'string') return key
+   return value.replace(/\{(\w+)\}/g, (match, name) => (params[name] !== undefined ? params[name] : match))
+ }
+ 
+-const clamp = (value, max) => Math.min(Math.max(value, 0), Math.max(max, 0))
+-
+ /**
+- * 접힌 패널을 헤더로 끌어 옮긴다.
++ * floating 패널을 헤더로 끌어 App container 안에서 옮긴다.
+  *
+- * 🔴 **화면 밖으로 나가면 다시 잡을 수 없다.** 뷰포트 안으로 clamp 한다.
+- * 🔴 **접기 버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
++ * 🔴 **App 밖으로 나가면 다시 잡을 수 없다.** positioned container 안으로 clamp 한다.
++ * 🔴 **버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
+  */
+-function useCollapsedDrag(enabled) {
++function useFloatingDrag(enabled) {
+   const [position, setPosition] = useState(null)
+   const panelRef = useRef(null)
+   const dragRef = useRef(null)
+ 
+   useEffect(() => {
+     if (!enabled) return undefined
+     const onMove = (event) => {
+       const drag = dragRef.current
+       if (!drag) return
+       const panel = panelRef.current
+-      const width = panel?.offsetWidth ?? 0
+-      const height = panel?.offsetHeight ?? 0
+-      setPosition({
+-        left: clamp(event.clientX - drag.offsetX, window.innerWidth - width),
+-        top: clamp(event.clientY - drag.offsetY, window.innerHeight - height),
+-      })
++      const container = panel?.closest('.app') || panel?.parentElement
++      if (!panel || !container) return
++      setPosition(clampAgentPanelPosition({
++        clientX: event.clientX,
++        clientY: event.clientY,
++        offsetX: drag.offsetX,
++        offsetY: drag.offsetY,
++        containerRect: container.getBoundingClientRect(),
++        panelRect: panel.getBoundingClientRect(),
++      }))
+     }
+     const onUp = () => { dragRef.current = null }
+     window.addEventListener('pointermove', onMove)
+     window.addEventListener('pointerup', onUp)
+     return () => {
+       window.removeEventListener('pointermove', onMove)
+       window.removeEventListener('pointerup', onUp)
+     }
+   }, [enabled])
+ 
+   const onPointerDown = useCallback((event) => {
+-    // 버튼(접기/펼치기) 위에서 시작한 것은 클릭이지 드래그가 아니다.
++    // 버튼 위에서 시작한 것은 클릭이지 드래그가 아니다.
+     if (!enabled || event.button !== 0 || event.target.closest('button')) return
+     const rect = panelRef.current?.getBoundingClientRect()
+     dragRef.current = {
+       offsetX: event.clientX - (rect?.left ?? 0),
+       offsetY: event.clientY - (rect?.top ?? 0),
+     }
+   }, [enabled])
+ 
+   return { panelRef, position: enabled ? position : null, onPointerDown }
+ }
+ 
+ /**
+  * D14 전역 ChatPanel. App의 generate/story 조건부 body 밖에서 한 번만 mount해야 한다.
+  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
+  */
+ export default function ChatPanel({
+   open = true,
+   onOpen = () => {},
+   onDismiss = () => {},
++  appMode = 'api',
++  agentPanelMode = 'floating',
++  onAgentPanelModeChange = () => {},
+   projectKey = null,
+   batchStatusSources = {},
+   sceneBridgeSources = {},
+   exportBridgeSources = {},
+   videoAdmissionSources = {},
+ }) {
+   const t = useSafeT()
+   const api = window.electronAPI
+-  const [collapsed, setCollapsed] = useState(false)
+-  const { panelRef, position, onPointerDown } = useCollapsedDrag(collapsed)
++  const effectiveMode = effectiveAgentPanelMode(appMode, agentPanelMode)
++  const dragEnabled = open && effectiveMode === 'floating'
++  const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled)
+   const [input, setInput] = useState('')
+   const [messages, setMessages] = useState([])
+   const [toolCalls, setToolCalls] = useState([])
+   const [usage, setUsage] = useState(null)
+   const [errors, setErrors] = useState([])
+   const [running, setRunning] = useState(false)
+   const [models, setModels] = useState([])
+   const [modelsLoading, setModelsLoading] = useState(true)
+   const [selectedModel, setSelectedModel] = useState(null)
+   const sessionOpenRef = useRef(false)
+@@ -433,115 +416,116 @@ export default function ChatPanel({
+         aria-label={t('agent.openPanel')}
+         aria-hidden={open}
+         tabIndex={open ? -1 : 0}
+         title={t('agent.openPanel')}
+         onClick={onOpen}
+       >
+         <img src={robotUrl} alt="" aria-hidden="true" />
+       </button>
+       <aside
+         ref={panelRef}
+-        className={`agent-chat-panel ${open ? 'is-open' : 'is-dismissed'} ${collapsed ? 'is-collapsed' : ''}`}
++        className={`agent-chat-panel ${open ? 'is-open' : 'is-dismissed'} mode-${effectiveMode}`}
+         aria-label={t('agent.panelLabel')}
+         aria-hidden={!open}
++        data-effective-mode={effectiveMode}
+         // 옮긴 뒤에는 right/bottom 앵커 대신 left/top 이 이긴다. 안 지우면 두 앵커가 싸워 늘어난다.
+-        style={position ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' } : undefined}
++        style={dragEnabled && position
++          ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' }
++          : undefined}
+       >
+         <div
+-          className={`agent-chat-header ${collapsed ? 'is-draggable' : ''}`}
++          className={`agent-chat-header ${dragEnabled ? 'is-draggable' : ''}`}
+           onPointerDown={onPointerDown}
+         >
+           <div className="agent-chat-heading">
+             <strong>{t('agent.title')}</strong>
+             <AgentModelSelector
+               models={models}
+               value={selectedModel}
+               loading={modelsLoading}
+               onChange={setSelectedModel}
+               label={t('agent.modelLabel')}
+               defaultLabel={t('agent.modelDefault')}
+               codexLabel={t('agent.codexProvider')}
+               claudeLabel={t('agent.claudeProvider')}
+               comingSoonLabel={t('agent.comingSoon')}
+             />
+           </div>
+           <div className="agent-chat-header-actions">
+             {running && <span className="agent-chat-running">{t('agent.running')}</span>}
++            {appMode === 'flow' && (
++              <span className="agent-chat-flow-notice">{t('agent.flowFloatingOnly')}</span>
++            )}
++            <button
++              type="button"
++              className="agent-chat-mode-toggle"
++              aria-label={t('agent.modeToggle')}
++              aria-pressed={effectiveMode === 'slide'}
++              title={effectiveMode === 'slide' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
++              disabled={appMode === 'flow'}
++              onClick={() => onAgentPanelModeChange(effectiveMode === 'slide' ? 'floating' : 'slide')}
++            >
++              <span aria-hidden="true">⇥</span>
++            </button>
+             <button
+               type="button"
+               className="agent-chat-dismiss"
+               aria-label={t('agent.dismissPanel')}
+               title={t('agent.dismissPanel')}
+               onClick={onDismiss}
+             >
+               <span aria-hidden="true">×</span>
+             </button>
+-            {/* 🔴 아이콘만 두면 버튼의 **이름이 사라진다** — 스크린리더는 "button" 이라고만 읽는다.
+-                `aria-label` 로 이름을, `title` 로 풍선 도움말을 준다. 둘 다 상태를 그대로 말한다. */}
+-            <button
+-              type="button"
+-              className="agent-chat-collapse"
+-              aria-label={collapsed ? t('agent.expand') : t('agent.collapse')}
+-              aria-expanded={!collapsed}
+-              title={collapsed ? t('agent.expand') : t('agent.collapse')}
+-              onClick={() => setCollapsed((value) => !value)}
+-            >
+-              <ChevronIcon collapsed={collapsed} />
+-            </button>
+           </div>
+         </div>
+ 
+-        {!collapsed && (
+-          <>
+-            <div className="agent-chat-log" aria-live="polite">
+-              {messages.length === 0 && <p className="agent-chat-empty">{t('agent.empty')}</p>}
+-              {messages.map((message) => (
+-                <div key={message.id} className={`agent-chat-message ${message.role}`}>{message.text}</div>
+-              ))}
+-              {toolCalls.map(({ id, phase, item }) => (
+-                <div key={id} className="agent-chat-tool">
+-                  <div>
+-                    <span>{phase === 'completed' ? t('agent.toolDone') : t('agent.toolRunning')}</span>
+-                    {' · '}{toolName(item, t)}
+-                  </div>
+-                  {(item.arguments || item.result) && (
+-                    <pre>{JSON.stringify(item.arguments || item.result, null, 2)}</pre>
+-                  )}
+-                </div>
+-              ))}
+-              {errors.map((entry) => <div key={entry.key} className="agent-chat-error" role="alert">{entry.text}</div>)}
+-              {/* 🔴 첫 delta 까지 수십 초 걸린다 (실측 16초). 그동안 빈 화면이면 사용자는 앱이 죽은 줄 안다. */}
+-              {running && (
+-                <div className="agent-chat-thinking" role="status">
+-                  <span className="agent-chat-dots"><i /><i /><i /></span>
+-                  {t('agent.thinking')}
+-                </div>
++        <div className="agent-chat-log" aria-live="polite">
++          {messages.length === 0 && <p className="agent-chat-empty">{t('agent.empty')}</p>}
++          {messages.map((message) => (
++            <div key={message.id} className={`agent-chat-message ${message.role}`}>{message.text}</div>
++          ))}
++          {toolCalls.map(({ id, phase, item }) => (
++            <div key={id} className="agent-chat-tool">
++              <div>
++                <span>{phase === 'completed' ? t('agent.toolDone') : t('agent.toolRunning')}</span>
++                {' · '}{toolName(item, t)}
++              </div>
++              {(item.arguments || item.result) && (
++                <pre>{JSON.stringify(item.arguments || item.result, null, 2)}</pre>
+               )}
+             </div>
++          ))}
++          {errors.map((entry) => <div key={entry.key} className="agent-chat-error" role="alert">{entry.text}</div>)}
++          {/* 🔴 첫 delta 까지 수십 초 걸린다 (실측 16초). 그동안 빈 화면이면 사용자는 앱이 죽은 줄 안다. */}
++          {running && (
++            <div className="agent-chat-thinking" role="status">
++              <span className="agent-chat-dots"><i /><i /><i /></span>
++              {t('agent.thinking')}
++            </div>
++          )}
++        </div>
+ 
+-            {usage && (
+-              <div className="agent-chat-usage">
+-                {t('agent.usage', { turns: usage.turns ?? 0, toolCalls: usage.toolCalls ?? 0 })}
+-              </div>
+-            )}
+-
+-            <form className="agent-chat-compose" onSubmit={send}>
+-              <textarea
+-                aria-label={t('agent.inputLabel')}
+-                value={input}
+-                onChange={(event) => setInput(event.target.value)}
+-                placeholder={t('agent.placeholder')}
+-                rows={2}
+-              />
+-              <div className="agent-chat-actions">
+-                <button type="submit" disabled={running || !input.trim()}>{t('agent.send')}</button>
+-                <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
+-                <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
+-                <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>
+-              </div>
+-            </form>
+-          </>
++        {usage && (
++          <div className="agent-chat-usage">
++            {t('agent.usage', { turns: usage.turns ?? 0, toolCalls: usage.toolCalls ?? 0 })}
++          </div>
+         )}
++
++        <form className="agent-chat-compose" onSubmit={send}>
++          <textarea
++            aria-label={t('agent.inputLabel')}
++            value={input}
++            onChange={(event) => setInput(event.target.value)}
++            placeholder={t('agent.placeholder')}
++            rows={2}
++          />
++          <div className="agent-chat-actions">
++            <button type="submit" disabled={running || !input.trim()}>{t('agent.send')}</button>
++            <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
++            <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
++            <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>
++          </div>
++        </form>
+       </aside>
+     </>
+   )
+ }
+diff --git a/src/components/agent/agentPanelLayout.js b/src/components/agent/agentPanelLayout.js
+new file mode 100644
+index 0000000..0ca6f99
+--- /dev/null
++++ b/src/components/agent/agentPanelLayout.js
+@@ -0,0 +1,32 @@
++export const AGENT_PANEL_MODES = Object.freeze(['floating', 'slide'])
++
++const clamp = (value, max) => Math.min(Math.max(value, 0), Math.max(max, 0))
++
++export function normalizeAgentPanelMode(value) {
++  return AGENT_PANEL_MODES.includes(value) ? value : 'floating'
++}
++
++export function effectiveAgentPanelMode(appMode, storedMode) {
++  return appMode === 'flow' ? 'floating' : normalizeAgentPanelMode(storedMode)
++}
++
++export function clampAgentPanelPosition({
++  clientX,
++  clientY,
++  offsetX,
++  offsetY,
++  containerRect,
++  panelRect,
++}) {
++  return {
++    left: clamp(clientX - containerRect.left - offsetX, containerRect.width - panelRect.width),
++    top: clamp(clientY - containerRect.top - offsetY, containerRect.height - panelRect.height),
++  }
++}
++
++export function floatingPanelBox({ width, height }) {
++  return {
++    width: Math.min(420, Math.max(0, width - 36)),
++    maxHeight: Math.min(640, Math.max(0, height - 36)),
++  }
++}
+diff --git a/tests/components/AppFlowSplitLayout.test.jsx b/tests/components/AppFlowSplitLayout.test.jsx
+index 1b7447d..435be12 100644
+--- a/tests/components/AppFlowSplitLayout.test.jsx
++++ b/tests/components/AppFlowSplitLayout.test.jsx
+@@ -9,21 +9,23 @@
+  * These are the only renderer-side behaviors that are unit-testable.
+  * The actual visual split + WebContentsView bounds update are live-verify-only (Electron).
+  *
+  * NOTE: computeAppClass and flowLayoutForMode are imported from src/utils/appLayout.js —
+  * the SAME code App.jsx runs. If App.jsx changes its logic, these tests will catch the drift.
+  */
+ 
+ import { describe, it, expect, vi, beforeEach } from 'vitest'
+ import { render, act } from '@testing-library/react'
+ import { useEffect } from 'react'
++import { readFileSync } from 'node:fs'
+ import { computeAppClass, flowLayoutForMode, isHorizontalSplit, clampSplitRatio, ratioFromDrag, splitAppStyle, splitFlowStyle, splitResizerStyle } from '../../src/utils/appLayout'
++import { floatingPanelBox } from '../../src/components/agent/agentPanelLayout.js'
+ 
+ /**
+  * ModeEffectProbe: minimal component that calls the REAL flowLayoutForMode helper
+  * (same function App.jsx uses) to drive setLayout, so test behaviour stays anchored
+  * to production code.
+  */
+ function ModeEffectProbe({ mode }) {
+   useEffect(() => {
+     if (mode) {
+       window.electronAPI?.setMode?.({ mode })
+@@ -111,20 +113,45 @@ describe('split layout pure helpers (Flow split resizer 복원)', () => {
+ 
+   it('splitFlowStyle: Flow 영역은 App 반대편 — split-left → 왼쪽(left:0, width=flow%)', () => {
+     expect(splitFlowStyle('split-left', 0.4)).toMatchObject({ position: 'absolute', left: 0, width: '40%', height: '100%' })
+     // split-right → Flow 오른쪽(left=app%)
+     expect(splitFlowStyle('split-right', 0.4)).toMatchObject({ left: '60%', width: '40%' })
+     // App 박스와 상보: splitAppStyle(left=flow%, width=app%) 의 반대
+     expect(splitFlowStyle('split-left', 0.4).width).toBe(splitAppStyle('split-left', 0.4).left)
+   })
+ })
+ 
++describe('agent floating/FAB stay inside four-way App split', () => {
++  it.each(['split-left', 'split-right', 'split-top', 'split-bottom'])(
++    '%s ratio 0.8에서 panel과 72px FAB가 App 영역을 넘지 않는다',
++    (layoutMode) => {
++      const horizontal = isHorizontalSplit(layoutMode)
++      const app = {
++        width: horizontal ? 1440 * 0.2 : 1440,
++        height: horizontal ? 900 : 900 * 0.2,
++      }
++      const panel = floatingPanelBox(app)
++      expect(panel.width).toBeLessThanOrEqual(app.width)
++      expect(panel.maxHeight).toBeLessThanOrEqual(app.height)
++      expect(72 + 36).toBeLessThanOrEqual(horizontal ? app.width : app.height)
++      expect(splitAppStyle(layoutMode, 0.8).position).toBe('absolute')
++    },
++  )
++
++  it('production CSS가 viewport 단위가 아닌 App container 단위를 쓴다', () => {
++    const css = readFileSync('src/components/agent/ChatPanel.css', 'utf8')
++    expect(css).toContain('width: min(420px, calc(100% - 36px))')
++    expect(css).toContain('max-height: min(640px, calc(100% - 36px))')
++    expect(css).not.toMatch(/agent-chat-panel[\s\S]*?100v[wh]/)
++  })
++})
++
+ describe('Mode useEffect — setLayout IPC calls (§3.4)', () => {
+   let mockSetMode
+   let mockSetLayout
+ 
+   beforeEach(() => {
+     mockSetMode = vi.fn()
+     mockSetLayout = vi.fn()
+     window.electronAPI = { setMode: mockSetMode, setLayout: mockSetLayout }
+   })
+ 
+diff --git a/tests/components/agent/ChatPanel.appMount.test.js b/tests/components/agent/ChatPanel.appMount.test.js
+index 570c0d9..7bfe1da 100644
+--- a/tests/components/agent/ChatPanel.appMount.test.js
++++ b/tests/components/agent/ChatPanel.appMount.test.js
+@@ -19,20 +19,23 @@ describe('App agent surface 배치', () => {
+     expect(panel).toBeLessThan(generateBranch)
+     expect(panel).toBeLessThan(storyBranch)
+     const approval = source.lastIndexOf('<ApprovalDialog', panel)
+     expect(source.slice(approval, panel)).toMatch(/<ApprovalDialog\s*\/>\s*$/)
+     expect(source.match(/<ChatPanel\b/g)).toHaveLength(1)
+     expect(source).toContain('const [agentPanelOpen, setAgentPanelOpen] = useState(false)')
+     const panelProps = source.slice(panel, source.indexOf('/>', panel))
+     expect(panelProps).toContain('open={agentPanelOpen}')
+     expect(panelProps).toContain('onOpen={() => setAgentPanelOpen(true)}')
+     expect(panelProps).toContain('onDismiss={() => setAgentPanelOpen(false)}')
++    expect(panelProps).toContain('appMode={mode}')
++    expect(panelProps).toContain('agentPanelMode={settings.agentPanelMode}')
++    expect(panelProps).toContain("onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}")
+   })
+ 
+   it('App은 useVideoAutomation의 admission/status/event/cleanup source를 ChatPanel에 주입한다', () => {
+     const source = fs.readFileSync(path.resolve('src/App.jsx'), 'utf8')
+     const panel = source.slice(source.indexOf('<ChatPanel'), source.indexOf('/>', source.indexOf('<ChatPanel')))
+ 
+     expect(panel).toContain('videoAdmissionSources={videoAdmissionSources}')
+     expect(source).toContain('videoAutomation.admitVideoBatch')
+     expect(source).toContain('videoAutomation.getVideoStatus')
+     expect(source).toContain('videoAutomation.subscribeVideoStatus')
+diff --git a/tests/components/agent/ChatPanel.test.jsx b/tests/components/agent/ChatPanel.test.jsx
+index 3e49edd..2db47a3 100644
+--- a/tests/components/agent/ChatPanel.test.jsx
++++ b/tests/components/agent/ChatPanel.test.jsx
+@@ -316,53 +316,84 @@ describe('ChatPanel — agentMessage completion reconciliation', () => {
+ 
+     window.electronAPI.emitAgent('agent:delta', { delta: 'completion 없이 끝난 답' })
+     window.electronAPI.emitAgent('agent:done', { turnId: 'turn-1', status: 'completed' })
+ 
+     const bubbles = container.querySelectorAll('.agent-chat-message.agent')
+     expect(bubbles).toHaveLength(1)
+     expect(bubbles[0]).toHaveTextContent('completion 없이 끝난 답')
+   })
+ })
+ 
+-describe('ChatPanel — 접기/펼치기 아이콘 버튼', () => {
+-  // 🔴 텍스트를 아이콘으로 바꾸는 순간 **버튼의 접근 가능한 이름이 사라진다** — 스크린리더는
+-  //    "button" 이라고만 읽고, 테스트도 버튼을 못 찾는다. 그래서 이름을 aria-label 로 남긴다.
+-  //    (아이콘만 남기고 이름을 안 주는 건 이 프로젝트가 반복해서 밟은 "눈으로만 확인되는 UI" 다.)
+-  it('아이콘 버튼이지만 접근 가능한 이름과 툴팁이 상태를 그대로 말한다', async () => {
+-    const user = userEvent.setup()
+-    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+-
+-    const collapse = screen.getByRole('button', { name: 'Collapse' })
+-    expect(collapse.getAttribute('title'), '툴팁이 없으면 아이콘이 무엇인지 알 길이 없다').toBe('Collapse')
+-    // 아이콘이어야 한다 — 라벨 문자열이 버튼 안에 **보이면** 아이콘으로 바꾼 의미가 없다.
+-    expect(collapse.querySelector('svg'), '아이콘(svg)이 없다').toBeTruthy()
+-    expect(collapse.textContent.trim()).toBe('')
+-
+-    await user.click(collapse)
+-
+-    // 접힌 뒤에는 같은 버튼이 **펼치기**를 뜻해야 한다. 이름이 안 바뀌면 사용자는 상태를 못 읽는다.
+-    const expand = screen.getByRole('button', { name: 'Expand' })
+-    expect(expand.getAttribute('title')).toBe('Expand')
+-    expect(expand.querySelector('svg')).toBeTruthy()
+-  })
+-
+-  it('접으면 대화 로그가 사라지고 펼치면 그대로 돌아온다 — 세션은 유지된다', async () => {
++describe('ChatPanel — effective panel mode', () => {
++  it('저장 slide는 Flow 진입 때 floating으로 파생되고 Flow 해제 때 slide로 자동 복귀한다', () => {
++    const onAgentPanelModeChange = vi.fn()
++    const { container, rerender } = render(
++      <ChatPanel
++        open
++        appMode="api"
++        agentPanelMode="slide"
++        onAgentPanelModeChange={onAgentPanelModeChange}
++        projectKey="p"
++        batchStatusSources={batchSources()}
++      />,
++    )
++    const panel = container.querySelector('.agent-chat-panel')
++    const toggle = screen.getByRole('button', { name: 'Slide panel mode' })
++    expect(panel).toHaveClass('mode-slide')
++    expect(toggle).toHaveAttribute('aria-pressed', 'true')
++
++    rerender(
++      <ChatPanel
++        open
++        appMode="flow"
++        agentPanelMode="slide"
++        onAgentPanelModeChange={onAgentPanelModeChange}
++        projectKey="p"
++        batchStatusSources={batchSources()}
++      />,
++    )
++    expect(panel).toHaveClass('mode-floating')
++    expect(toggle).toBeDisabled()
++    expect(toggle).toHaveAttribute('aria-pressed', 'false')
++    expect(screen.getByText('The agent stays floating while Flow is active.')).toBeTruthy()
++    expect(onAgentPanelModeChange).not.toHaveBeenCalled()
++
++    rerender(
++      <ChatPanel
++        open
++        appMode="api"
++        agentPanelMode="slide"
++        onAgentPanelModeChange={onAgentPanelModeChange}
++        projectKey="p"
++        batchStatusSources={batchSources()}
++      />,
++    )
++    expect(panel).toHaveClass('mode-slide')
++    expect(toggle).toHaveAttribute('aria-pressed', 'true')
++  })
++
++  it('API mode toggle은 저장 callback에 다음 preference만 전달한다', async () => {
+     const user = userEvent.setup()
+-    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+-    window.electronAPI.emitAgent('agent:delta', { delta: '접어도 살아있어야 함' })
+-
+-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+-    expect(screen.queryByText('접어도 살아있어야 함')).toBeNull()
+-
+-    await user.click(screen.getByRole('button', { name: 'Expand' }))
+-    // 접기는 표시만 바꾼다. 메시지가 사라졌다면 세션 상태를 날린 것이다.
+-    expect(screen.getByText('접어도 살아있어야 함')).toBeTruthy()
++    const onAgentPanelModeChange = vi.fn()
++    render(
++      <ChatPanel
++        open
++        appMode="api"
++        agentPanelMode="floating"
++        onAgentPanelModeChange={onAgentPanelModeChange}
++        projectKey="p"
++        batchStatusSources={batchSources()}
++      />,
++    )
++
++    await user.click(screen.getByRole('button', { name: 'Slide panel mode' }))
++    expect(onAgentPanelModeChange).toHaveBeenCalledWith('slide')
+   })
+ })
+ 
+ describe('ChatPanel — 진행 표시', () => {
+   // 🔴 첫 delta 가 오기까지 **수십 초** 걸린다 (실측: 실앱에서 turn/start → 첫 tool call 까지 16초).
+   //    그동안 화면이 완전히 비어 있으면 사용자는 **앱이 죽었다고 생각한다.**
+   it('보낸 직후부터 첫 응답이 오기 전까지 진행 중임을 보여준다', async () => {
+     const user = userEvent.setup()
+     render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+ 
+@@ -390,98 +421,63 @@ describe('ChatPanel — 진행 표시', () => {
+ 
+     await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '뭐든 해줘')
+     await user.click(screen.getByRole('button', { name: 'Send' }))
+     window.electronAPI.emitAgent('agent:error', { error: 'agent-limit', limit: 64, used: 64 })
+ 
+     expect(screen.queryByRole('status')).toBeNull()
+     expect(screen.getByRole('alert')).toBeTruthy()
+   })
+ })
+ 
+-describe('ChatPanel — 접었을 때 드래그로 옮기기', () => {
++describe('ChatPanel — open floating container drag', () => {
+   function drag(el, from, to) {
+     act(() => {
+-      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: from.x, clientY: from.y, button: 0 }))
+-      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: to.x, clientY: to.y }))
++      el.dispatchEvent(new PointerEvent('pointerdown', {
++        bubbles: true, clientX: from.x, clientY: from.y, button: 0,
++      }))
++      window.dispatchEvent(new PointerEvent('pointermove', {
++        bubbles: true, clientX: to.x, clientY: to.y,
++      }))
+       window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+     })
+   }
+ 
+-  it('접힌 패널은 헤더를 끌면 그만큼 움직인다', async () => {
+-    const user = userEvent.setup()
+-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+-
++  it('open+floating만 drag되고 offset container의 우하단 bounds에서 clamp된다', () => {
++    const { container } = render(
++      <div className="app">
++        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
++      </div>,
++    )
++    const app = container.querySelector('.app')
+     const panel = container.querySelector('.agent-chat-panel')
+     const header = container.querySelector('.agent-chat-header')
+-    drag(header, { x: 500, y: 700 }, { x: 400, y: 300 })
+-
+-    // 위치가 실제로 인라인 스타일로 반영돼야 한다 — class 만 바뀌면 화면에선 안 움직인다.
+-    expect(panel.style.left, '드래그해도 패널이 움직이지 않았다').not.toBe('')
+-    expect(panel.style.top).not.toBe('')
+-  })
++    app.getBoundingClientRect = () => ({ left: 100, top: 50, width: 300, height: 200, right: 400, bottom: 250 })
++    panel.getBoundingClientRect = () => ({ left: 118, top: 68, width: 252, height: 140, right: 370, bottom: 208 })
+ 
+-  it('화면 밖으로는 못 나간다 — 잡을 수 없는 패널이 되면 안 된다', async () => {
+-    const user = userEvent.setup()
+-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
++    drag(header, { x: 130, y: 78 }, { x: 999, y: 999 })
+ 
+-    const panel = container.querySelector('.agent-chat-panel')
+-    const header = container.querySelector('.agent-chat-header')
+-    drag(header, { x: 500, y: 700 }, { x: -9999, y: -9999 })
+-
+-    expect(parseFloat(panel.style.left)).toBeGreaterThanOrEqual(0)
+-    expect(parseFloat(panel.style.top)).toBeGreaterThanOrEqual(0)
++    expect(panel.style.left).toBe('48px')
++    expect(panel.style.top).toBe('60px')
+   })
+ 
+-  it('펼친 상태에서는 헤더를 끌어도 움직이지 않는다', async () => {
+-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+-    const panel = container.querySelector('.agent-chat-panel')
++  it.each([
++    { open: false, mode: 'floating' },
++    { open: true, mode: 'slide' },
++  ])('open=$open mode=$mode에서는 drag position을 쓰지 않는다', ({ open, mode }) => {
++    const { container } = render(
++      <div className="app">
++        <ChatPanel open={open} appMode="api" agentPanelMode={mode} projectKey="p" batchStatusSources={batchSources()} />
++      </div>,
++    )
+     const header = container.querySelector('.agent-chat-header')
+-
+-    drag(header, { x: 500, y: 700 }, { x: 100, y: 100 })
+-
+-    expect(panel.style.left, '펼친 패널이 드래그로 움직였다').toBe('')
+-  })
+-
+-  it('옮긴 뒤 펼치면 기본 자리로 돌아온다 — 큰 패널이 화면 밖에 걸리지 않게', async () => {
+-    const user = userEvent.setup()
+-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+-    const panel = container.querySelector('.agent-chat-panel')
+-
+-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+-    drag(container.querySelector('.agent-chat-header'), { x: 500, y: 700 }, { x: 120, y: 90 })
+-    expect(panel.style.left).not.toBe('')
+-
+-    await user.click(screen.getByRole('button', { name: 'Expand' }))
+-
+-    // 접힌 칩 자리에 640px 짜리 패널을 그대로 펼치면 화면 밖으로 넘칠 수 있다. 앵커로 되돌린다.
+-    expect(panel.style.left, '펼쳤는데 드래그 위치가 남아 패널이 화면 밖에 걸릴 수 있다').toBe('')
+-  })
+-
+-  it('접기 버튼을 누른 채 손이 미세하게 움직여도 패널이 튀지 않는다', async () => {
+-    const user = userEvent.setup()
+-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+-
+-    const panel = container.querySelector('.agent-chat-panel')
+-    const button = screen.getByRole('button', { name: 'Expand' })
+-
+-    // 🔴 실제 클릭은 **거의 항상 1~2px 움직인다.** 버튼 위 pointerdown 을 드래그로 삼으면
+-    //    접기/펼치기를 누를 때마다 패널이 손끝으로 순간이동한다.
+-    act(() => {
+-      button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 600, clientY: 700, button: 0 }))
+-      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 602, clientY: 701 }))
+-      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+-    })
+-
+-    expect(panel.style.left, '버튼을 눌렀는데 드래그로 오해해 패널이 움직였다').toBe('')
++    drag(header, { x: 130, y: 78 }, { x: 220, y: 150 })
++    expect(container.querySelector('.agent-chat-panel').style.left).toBe('')
+   })
+ })
+ 
+ describe('ChatPanel — persistent 수명과 batch.status', () => {
+   it('dismiss/FAB 왕복은 같은 panel과 bridge를 유지하고 session close를 호출하지 않는다', async () => {
+     const user = userEvent.setup()
+     function VisibilityHarness() {
+       const [open, setOpen] = React.useState(false)
+       return (
+         <ChatPanel
+diff --git a/tests/components/agent/agentPanelLayout.test.js b/tests/components/agent/agentPanelLayout.test.js
+new file mode 100644
+index 0000000..8811fc8
+--- /dev/null
++++ b/tests/components/agent/agentPanelLayout.test.js
+@@ -0,0 +1,45 @@
++import { describe, expect, it } from 'vitest'
++import {
++  clampAgentPanelPosition,
++  effectiveAgentPanelMode,
++  floatingPanelBox,
++  normalizeAgentPanelMode,
++} from '../../../src/components/agent/agentPanelLayout.js'
++
++describe('agentPanelLayout', () => {
++  it('stored slide는 API에서 slide, Flow에서 floating이며 저장값 객체를 바꾸지 않는다', () => {
++    const preference = { value: 'slide' }
++
++    expect(effectiveAgentPanelMode('api', preference.value)).toBe('slide')
++    expect(effectiveAgentPanelMode('flow', preference.value)).toBe('floating')
++    expect(effectiveAgentPanelMode('api', preference.value)).toBe('slide')
++    expect(preference).toEqual({ value: 'slide' })
++  })
++
++  it('invalid stored mode만 floating으로 정규화한다', () => {
++    expect(normalizeAgentPanelMode('floating')).toBe('floating')
++    expect(normalizeAgentPanelMode('slide')).toBe('slide')
++    expect(normalizeAgentPanelMode('drawer')).toBe('floating')
++    expect(normalizeAgentPanelMode(null)).toBe('floating')
++  })
++
++  it('pointer 좌표를 viewport가 아니라 offset container의 local bounds로 clamp한다', () => {
++    const base = {
++      offsetX: 12,
++      offsetY: 10,
++      containerRect: { left: 100, top: 50, width: 300, height: 200 },
++      panelRect: { width: 252, height: 140 },
++    }
++
++    expect(clampAgentPanelPosition({ ...base, clientX: -500, clientY: -500 }))
++      .toEqual({ left: 0, top: 0 })
++    expect(clampAgentPanelPosition({ ...base, clientX: 999, clientY: 999 }))
++      .toEqual({ left: 48, top: 60 })
++  })
++
++  it('288×180 App container에서 panel box가 양축을 넘지 않는다', () => {
++    expect(floatingPanelBox({ width: 288, height: 180 })).toEqual({ width: 252, maxHeight: 144 })
++    expect(floatingPanelBox({ width: 288, height: 180 }).width).toBeLessThanOrEqual(288)
++    expect(floatingPanelBox({ width: 288, height: 180 }).maxHeight).toBeLessThanOrEqual(180)
++  })
++})

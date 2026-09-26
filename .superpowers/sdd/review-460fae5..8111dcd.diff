@@ -1,0 +1,58 @@
+# Review package: 460fae5..8111dcd
+
+## Commits
+8111dcd fix(story-m2a): probeDurationMs returns 0 on parse failure (safe value)
+
+## Files changed
+ electron/story/audioProbe.js            | 15 ++++++++++-----
+ tests/electron/story/audioProbe.test.js |  5 +++++
+ 2 files changed, 15 insertions(+), 5 deletions(-)
+
+## Diff
+diff --git a/electron/story/audioProbe.js b/electron/story/audioProbe.js
+index e76e844..a8f4726 100644
+--- a/electron/story/audioProbe.js
++++ b/electron/story/audioProbe.js
+@@ -1,11 +1,16 @@
+ /**
+  * 세그먼트 mp3 실제 길이 측정 — music-metadata(순수 JS). ffmpeg 불필요.
+  * parseFile 주입으로 단위 테스트 가능.
++ * 측정 실패 시 안전값 0 반환 (재시도 아님).
+  */
+ export async function probeDurationMs(filePath, { parseFile } = {}) {
+-  const parse = parseFile || (await import('music-metadata')).parseFile
+-  const meta = await parse(filePath)
+-  const sec = meta?.format?.duration
+-  if (typeof sec !== 'number' || !isFinite(sec) || sec <= 0) return 0
+-  return Math.round(sec * 1000)
++  try {
++    const parse = parseFile || (await import('music-metadata')).parseFile
++    const meta = await parse(filePath)
++    const sec = meta?.format?.duration
++    if (typeof sec !== 'number' || !isFinite(sec) || sec <= 0) return 0
++    return Math.round(sec * 1000)
++  } catch {
++    return 0
++  }
+ }
+diff --git a/tests/electron/story/audioProbe.test.js b/tests/electron/story/audioProbe.test.js
+index 31eae7b..377ecd6 100644
+--- a/tests/electron/story/audioProbe.test.js
++++ b/tests/electron/story/audioProbe.test.js
+@@ -8,11 +8,16 @@ describe('probeDurationMs', () => {
+       return { format: { duration: 2.3812 } }
+     }
+     const ms = await probeDurationMs('/x/s001-1.mp3', { parseFile: fakeParse })
+     expect(ms).toBe(2381)
+   })
+ 
+   it('duration 누락 시 0 반환(측정 실패 안전값)', async () => {
+     const ms = await probeDurationMs('/x/y.mp3', { parseFile: async () => ({ format: {} }) })
+     expect(ms).toBe(0)
+   })
++
++  it('parseFile가 실패(reject)해도 0 반환 (측정 실패 안전값)', async () => {
++    const ms = await probeDurationMs('/x/corrupt.mp3', { parseFile: async () => { throw new Error('bad file') } })
++    expect(ms).toBe(0)
++  })
+ })

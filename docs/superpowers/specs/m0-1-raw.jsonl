@@ -1,0 +1,5 @@
+{"label":"A (no ambient key)","elapsedMs":3922,"ok":true,"replyText":"ENV_OK","systemInit":{"apiKeySource":"none","model":"claude-opus-4-8[1m]"},"streamError":null}
+{"label":"B (ambient invalid key, no env pin)","elapsedMs":2584,"ok":true,"replyText":"ENV_OK","systemInit":{"apiKeySource":"none","model":"claude-opus-4-8[1m]"},"streamError":null}
+{"label":"B2 (ambient well-formed wrong key, no env pin)","elapsedMs":2589,"ok":true,"replyText":"ENV_OK","systemInit":{"apiKeySource":"none","model":"claude-opus-4-8[1m]"},"streamError":null}
+{"label":"C (env allowlist pin, ambient invalid key)","elapsedMs":2699,"ok":true,"replyText":"ENV_OK","systemInit":{"apiKeySource":"none","model":"claude-opus-4-8[1m]"},"streamError":null}
+{"label":"D (overrides-only, no PATH/HOME)","elapsedMs":880,"ok":false,"replyText":"Not logged in · Please run /login","systemInit":{"apiKeySource":"none","model":"claude-opus-4-8[1m]"},"streamError":"Claude Code returned an error result: Not logged in · Please run /login"}

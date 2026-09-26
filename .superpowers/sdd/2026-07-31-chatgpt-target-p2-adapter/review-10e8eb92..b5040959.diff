@@ -1,0 +1,2130 @@
+# Review package: 10e8eb92..HEAD
+
+## Commits
+b5040959 fix(route,layout): stop clobbering the saved layout and covering the strip
+
+## Files changed
+ electron/ipc/layout.js                             |  14 ++-
+ electron/ipc/mode.js                               |  35 ++++--
+ electron/main.js                                   |  37 ++++--
+ electron/spikes/chatgptR1Upload.js                 |  87 ++++++++++++-
+ electron/webtargets/chatgpt/index.js               |   5 +
+ src/App.css                                        |   8 ++
+ src/App.jsx                                        |  41 ++++---
+ src/components/Header.jsx                          |  23 +++-
+ src/components/settings/SceneTab.jsx               |  14 ++-
+ src/hooks/useAutomation.js                         |  10 +-
+ tests/components/App.chatgptTargetGate.test.jsx    | 134 +++++++++++++++++++--
+ tests/components/App.routeTransaction.test.jsx     |  22 +++-
+ tests/components/App.sessionTargetGates.test.jsx   |   4 +-
+ .../Header/Header.sessionTarget.test.jsx           |  31 ++++-
+ tests/components/ModeTargetLabels.test.jsx         |  19 +++
+ tests/electron/ipc/mode.chatgptDevGate.test.js     |  37 +++++-
+ tests/electron/ipc/trustedClickBoundsRace.test.js  |  19 +++
+ tests/electron/spikes/chatgptR1Harness.test.js     |  67 ++++++++++-
+ tests/electron/webtargets/chatgptSession.test.js   |  38 ++++++
+ tests/hooks/useAutomation.routeQuiesce.test.jsx    |  33 ++++-
+ 20 files changed, 594 insertions(+), 84 deletions(-)
+
+## Diff
+diff --git a/electron/ipc/layout.js b/electron/ipc/layout.js
+index a0fb39a5..e6c46b99 100644
+--- a/electron/ipc/layout.js
++++ b/electron/ipc/layout.js
+@@ -1,44 +1,49 @@
+ /**
+  * Layout IPC — 레이아웃 모드 변경, Flow 뷰 bounds 관리, 모달 가시성
+  */
+ 
+ import { powerSaveBlocker, shell } from 'electron'
+ import { SESSION_TARGET_STRIP_HEIGHT } from '../../src/utils/appLayout.js'
+ 
+ let layoutMode = 'split-left'
+ let splitRatio = 0.5
+ let modalVisible = false
++let sessionTargetStripEnabled = false
+ // 드래그 중 Flow 뷰 접기(A′) — 네이티브 뷰가 마우스 이벤트를 가로채 리사이즈가 흔들리므로,
+ // 드래그 동안 Flow 를 0×0 으로 접고 렌더러가 정지 스냅샷을 대신 그린다. dragToken 은 캡처(async)
+ // 도중 drag-end 가 와서 Flow 가 접힌 채 남는 레이스를 막는다.
+ let dragging = false
+ let dragToken = 0
+ let powerSaveBlockerId = null
+ 
+ /**
+  * 활성 세션 WebContentsView(Flow 또는 ChatGPT) 위치/크기를 현재 레이아웃에 맞게 업데이트
+  * @param {BrowserWindow} mainWindow
+  * @param {WebContentsView} sessionView
+  */
+-export function updateBounds(mainWindow, sessionView, { sessionTargetStripEnabled = false } = {}) {
++export function updateBounds(mainWindow, sessionView, options = {}) {
+   if (!mainWindow || !sessionView) return
+ 
++  const stripEnabled = Object.hasOwn(options, 'sessionTargetStripEnabled')
++    ? options.sessionTargetStripEnabled === true
++    : sessionTargetStripEnabled
++
+   if (modalVisible || dragging) {
+     sessionView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+     return
+   }
+ 
+   const { width, height } = mainWindow.getContentBounds()
+   const GAP = 3
+   const belowSessionStrip = (bounds) => {
+-    if (!sessionTargetStripEnabled) return bounds
++    if (!stripEnabled) return bounds
+     const inset = Math.min(SESSION_TARGET_STRIP_HEIGHT, Math.max(0, bounds.height))
+     return {
+       ...bounds,
+       y: bounds.y + inset,
+       height: Math.max(0, bounds.height - inset),
+     }
+   }
+ 
+   if (layoutMode === 'split-left') {
+     const splitPos = Math.round(width * splitRatio)
+@@ -54,22 +59,22 @@ export function updateBounds(mainWindow, sessionView, { sessionTargetStripEnable
+     sessionView.setBounds(belowSessionStrip({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP }))
+   }
+ }
+ 
+ /**
+  * 레이아웃 관련 IPC 핸들러 등록
+  * @param {ipcMain} ipcMain
+  * @param {Function} getMainWindow - mainWindow getter
+  * @param {Function} getActiveSessionView - 현재 routed 세션 view(Flow/ChatGPT) getter
+  */
+-export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView, options = {}) {
+-  const applyViewBounds = options.updateViewBounds || updateBounds
++export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView) {
++  const applyViewBounds = updateBounds
+   ipcMain.handle('app:set-layout', (event, { mode, ratio }) => {
+     layoutMode = mode || 'split-left'
+     if (ratio !== undefined) splitRatio = Math.max(0.2, Math.min(0.8, ratio))
+     applyViewBounds(getMainWindow(), getActiveSessionView())
+     const mw = getMainWindow()
+     if (mw) {
+       mw.webContents.send('layout-changed', { mode: layoutMode, splitRatio })
+     }
+     return { success: true, mode: layoutMode, splitRatio }
+   })
+@@ -166,10 +171,11 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getActiveSessionView,
+     return { success: true }
+   })
+ }
+ 
+ export function getLayoutMode() { return layoutMode }
+ export function setLayoutMode(mode) { layoutMode = mode }
+ export function getSplitRatio() { return splitRatio }
+ export function setSplitRatio(ratio) { splitRatio = ratio }
+ export function getModalVisible() { return modalVisible }
+ export function setModalVisible(visible) { modalVisible = visible }
++export function setSessionTargetStripEnabled(enabled) { sessionTargetStripEnabled = enabled === true }
+diff --git a/electron/ipc/mode.js b/electron/ipc/mode.js
+index 549a7a77..bbf5fdce 100644
+--- a/electron/ipc/mode.js
++++ b/electron/ipc/mode.js
+@@ -25,20 +25,23 @@ const LEGACY_NO_SENDER_SESSION_JOBS = Object.freeze({
+ const routesEqual = (left, right) => (
+   left?.mode === right?.mode && left?.sessionTarget === right?.sessionTarget
+ )
+ 
+ export function isChatgptP2DevGateEnabled({
+   platform,
+   isPackaged,
+   viteDevServerUrl,
+   chatgptP2Flag,
+ } = {}) {
++  // VITE_DEV_SERVER_URL is the canonical dev-launch signal. predev renames the Electron binary,
++  // which can make app.isPackaged report true; retaining this OR is deliberate for the P2 spike.
++  // The exact env value and darwin check still prevent ordinary packaged selectability (§10).
+   return platform === 'darwin' &&
+     (Boolean(viteDevServerUrl) || !isPackaged) &&
+     chatgptP2Flag === '1'
+ }
+ 
+ export function createModeController(getMainWindow, createFlowView, options = {}) {
+   const views = new Map()
+   const startedSessionViews = new WeakSet()
+   const targetRegistry = options.targetRegistry || null
+   const configuredInitialRoute = parseRoute(options.initialRoute)
+@@ -76,36 +79,37 @@ export function createModeController(getMainWindow, createFlowView, options = {}
+         }
+       })
+     }
+   }
+ 
+   function getOrCreateView(target) {
+     if (!views.has(target)) views.set(target, createSessionView(target))
+     return views.get(target)
+   }
+ 
+-  function startInitialSessionLoad(target, view) {
++  async function startInitialSessionLoad(target, view) {
+     if (target !== 'chatgpt' || !view || startedSessionViews.has(view)) return
+     if (!isChatgptP2DevGateEnabled(options.chatgptDevGate)) return
+     const definition = targetRegistry?.get(target)
+     if (!definition?.startUrl || typeof view.webContents?.loadURL !== 'function') return
+     startedSessionViews.add(view)
+     try {
+-      Promise.resolve(view.webContents.loadURL(definition.startUrl)).catch((error) => {
+-        console.warn('[ChatGPT] initial load failed', {
+-          name: typeof error?.name === 'string' ? error.name : 'Error',
+-        })
+-      })
++      await view.webContents.loadURL(definition.startUrl)
++      return true
+     } catch (error) {
++      // The view/session is deliberately preserved, but a transient navigation failure must not
++      // poison it for the process lifetime. A later route entry or explicit reconnect can retry.
++      startedSessionViews.delete(view)
+       console.warn('[ChatGPT] initial load failed', {
+         name: typeof error?.name === 'string' ? error.name : 'Error',
+       })
++      return false
+     }
+   }
+ 
+   const getTargetDefinition = (target) => (
+     typeof target === 'string' && targetRegistry?.has(target)
+       ? targetRegistry.get(target)
+       : null
+   )
+ 
+   const ensureSession = async (target = currentRoute.sessionTarget) => {
+@@ -144,20 +148,23 @@ export function createModeController(getMainWindow, createFlowView, options = {}
+       await options.rendererAutomation.requestQuiesce(request)
+       return
+     }
+ 
+     const sender = getMainWindow()?.webContents
+     if (!sender || typeof sender.send !== 'function') {
+       if (options.requireRendererQuiesce) throw new Error('route-quiesce-sender-unavailable')
+       return
+     }
+ 
++    // Explicit owner unregister rejects immediately below. A renderer that disappears without
++    // cleanup has no trustworthy receipt channel, so the bounded 30 s timeout intentionally stays
++    // as a fail-closed last resort: no route/view commit occurs while ownership is ambiguous.
+     const timeoutMs = Number.isFinite(options.quiesceTimeoutMs) ? options.quiesceTimeoutMs : 30_000
+     await new Promise((resolve, reject) => {
+       const timeout = setTimeout(() => {
+         pendingRendererQuiesce.delete(requestId)
+         reject(new Error('route-quiesce-timeout'))
+       }, timeoutMs)
+       pendingRendererQuiesce.set(requestId, {
+         sender,
+         fromRevision,
+         resolve: () => {
+@@ -178,22 +185,31 @@ export function createModeController(getMainWindow, createFlowView, options = {}
+         pendingRendererQuiesce.delete(requestId)
+         reject(error)
+       }
+     })
+   }
+ 
+   const performRouteTransition = async (payload, sessionJobOwner, rendererQuiesceRequired) => {
+     const envelope = payload && typeof payload === 'object' && !Array.isArray(payload) && payload.to
+       ? payload
+       : null
+-    const accepted = parseRoute(envelope ? envelope.to : payload)
++    let accepted = parseRoute(envelope ? envelope.to : payload)
+     if (!accepted) return { ok: false, error: 'invalid-route' }
++    const chatgptGateConfigured = Object.hasOwn(options, 'chatgptDevGate')
++    if (accepted.sessionTarget === 'chatgpt' && chatgptGateConfigured &&
++        !isChatgptP2DevGateEnabled(options.chatgptDevGate)) {
++      if (envelope?.boot === true) {
++        accepted = { ...accepted, sessionTarget: 'flow' }
++      } else {
++        return adoptedResult({ ok: false, error: 'session-target-disabled' })
++      }
++    }
+     if (envelope && Number.isInteger(envelope.fromRevision) && envelope.fromRevision !== routeRevision) {
+       return adoptedResult({ ok: true, stale: true })
+     }
+ 
+     const requestId = typeof envelope?.requestId === 'string' && envelope.requestId
+       ? envelope.requestId
+       : `route-${++routeRequestSequence}`
+     const previousRoute = { ...currentRoute }
+     const previousRevision = routeRevision
+     const routeChanges = !routesEqual(previousRoute, accepted)
+@@ -247,21 +263,21 @@ export function createModeController(getMainWindow, createFlowView, options = {}
+       options.onRouteCommitted?.({ ...currentRoute }, routeRevision)
+ 
+       assertRouteRevision(accepted, committedRevision)
+       if (win && attachmentChanges && nextView) {
+         win.contentView.addChildView(nextView)
+         attachedView = nextView
+       }
+       assertRouteRevision(accepted, committedRevision)
+       if (win && nextView) updateViewBounds(win, nextView)
+       assertRouteRevision(accepted, committedRevision)
+-      if (nextView) startInitialSessionLoad(accepted.sessionTarget, nextView)
++      if (nextView) void startInitialSessionLoad(accepted.sessionTarget, nextView)
+     } catch {
+       if (win && attachedView === nextView && nextView) {
+         try { win.contentView.removeChildView(nextView) } catch {}
+       }
+       attachedView = null
+       currentRoute = previousRoute
+       routeRevision = previousRevision
+       if (win && previousView) {
+         try {
+           win.contentView.addChildView(previousView)
+@@ -344,20 +360,23 @@ export function createModeController(getMainWindow, createFlowView, options = {}
+     ipcMain.handle('app:get-dev-flags', async (event) => ({
+       chatgptTargetCombo: isTrustedRenderer(event) &&
+         isChatgptP2DevGateEnabled(options.chatgptDevGate),
+     }))
+     ipcMain.handle('session-target:get-status', (event, target) => {
+       if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
+       return getSessionStatus(target)
+     })
+     ipcMain.handle('session-target:reconnect', async (event, target) => {
+       if (!isTrustedRenderer(event) || !isKnownTarget(target)) return null
++      const view = views.get(target)
++      view?.webContents?.focus?.()
++      await startInitialSessionLoad(target, view)
+       return ensureSession(target)
+     })
+     ipcMain.handle('flow:set-startup-project', (_event, payload = {}) => {
+       startupHint = payload.flowProjectId || null
+       return { ok: true }
+     })
+   }
+ 
+   const getActiveSessionView = (target = currentRoute.sessionTarget) => views.get(target) || null
+   return {
+diff --git a/electron/main.js b/electron/main.js
+index 5eeea518..3dbd7811 100644
+--- a/electron/main.js
++++ b/electron/main.js
+@@ -25,21 +25,21 @@ import { createKeyStore } from './api/keyStore.js'
+ import { createMultiKeyStore } from './api/keyStoreMulti.js'
+ import { createTtsAdapter } from './api/tts/index.js'
+ import { getTypecastKey } from './api/tts/typecastKey.js'
+ import { readCredentialsKey } from './api/tts/credentialsKey.js'
+ import { createSfxAdapter } from './api/sfx/index.js'
+ import { createVoiceGenderCache } from './api/tts/voiceGenderCache.js'
+ import { applyGenderOverlay } from './api/tts/genderOverlay.js'
+ import { createVoicePreviewService } from './api/tts/voicePreviewService.js'
+ import { ssrfSafeFetch } from './api/net/ssrfSafeFetch.js'
+ import { voiceKey } from '../src/utils/voiceKey.js'
+-import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
++import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, setSessionTargetStripEnabled, updateBounds } from './ipc/layout.js'
+ import { createModeController, isChatgptP2DevGateEnabled } from './ipc/mode.js'
+ import {
+   reservedSessionWebPreferences, installReservedSessionSecurity,
+ } from './sessionViewSecurity.js'
+ import { createTargetRegistry } from './webtargets/index.js'
+ import { createChatgptTarget } from './webtargets/chatgpt/index.js'
+ import { openApiSpec, getSwaggerHtml } from './api-docs.js'
+ import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
+ import { initSentryMain } from './sentry-init.js'
+ import { registerFlowAPIIPC } from './ipc/flow-api.js'
+@@ -144,20 +144,21 @@ const VIDEO_UPSCALE_URL = `${BASE_API_URL}/video:batchAsyncGenerateVideoUpsample
+ const RECAPTCHA_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV'
+ const RECAPTCHA_ACTION = 'generate'
+ 
+ const API_HEADERS = {
+   'Content-Type': 'application/json',
+   'Origin': 'https://labs.google',
+   'X-Kl-Ajax-Request': 'Ajax_Request'
+ }
+ 
+ let mainWindow = null
++let chatgptR1HarnessControls = null
+ let mcpHttpServer = null // MCP HTTP 서버 인스턴스
+ // 렌더러가 app:project-activated로 마지막 보고한 작업 폴더 — story:open의 projectPath가
+ // 이 하위인지 검증하는 데 쓰인다(story-api.js의 getActiveWorkFolder dep).
+ let activeWorkFolder = null
+ 
+ let capturedProjectId = null // Flow 네트워크에서 자동 캡처된 projectId
+ let capturedApiOrigin = null // #R33: Flow 가 실제로 쓴 생성 API origin(region 대응). null 이면 BASE_API_URL fallback.
+ let pendingGeneration = null // DOM-triggered generation 응답 캡처용 Promise resolver (이미지) — 동기 모드
+ const pendingGenerations = new Map() // 비동기 모드용 다중 생성 추적 (key: generationId)
+ // DOM 에서 이미 수집(배정)한 결과 이미지 mediaId 집합 — flow-api(비동기)와 character(동기 @멘션)
+@@ -199,21 +200,21 @@ function createWindow() {
+ 
+   // Load the React app (Vite dev server or built files)
+   if (process.env.VITE_DEV_SERVER_URL) {
+     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+   } else {
+     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+   }
+ 
+   // Re-size the active session WebContentsView (Flow or reserved) whenever the window is resized (§3.4).
+   // modeController is module-scope (created before app.whenReady) so it's always in scope here.
+-  mainWindow.on('resize', () => updateSessionViewBounds(mainWindow, modeController.getActiveSessionView()))
++  mainWindow.on('resize', () => updateBounds(mainWindow, modeController.getActiveSessionView()))
+ }
+ 
+ // === IPC Handlers ===
+ 
+ // File System IPC (Node.js fs operations)
+ registerFilesystemIPC(ipcMain)
+ 
+ // Google GenAI IPC (BYOK key management + Imagen/Veo official-API generation).
+ // Replaces Flow web reverse-engineering. Key is encrypted via OS keychain
+ // (safeStorage) and never leaves the main process.
+@@ -722,50 +723,46 @@ const chatgptTarget = createChatgptTarget({
+   installReservedSessionSecurity,
+ })
+ const sessionTargetRegistry = createTargetRegistry({ chatgpt: chatgptTarget })
+ const chatgptDevGate = Object.freeze({
+   platform: process.platform,
+   isPackaged: app.isPackaged,
+   viteDevServerUrl: process.env.VITE_DEV_SERVER_URL,
+   chatgptP2Flag: process.env.AUTOFLOWCUT_CHATGPT_P2,
+ })
+ const chatgptTargetComboEnabled = isChatgptP2DevGateEnabled(chatgptDevGate)
+-const updateSessionViewBounds = (window, view) => updateBounds(window, view, {
+-  sessionTargetStripEnabled: chatgptTargetComboEnabled,
+-})
++setSessionTargetStripEnabled(chatgptTargetComboEnabled)
+ 
+ // Mode controller wires route:set/mode:set IPC + lazy session view creation/attachment.
+ // Task 16 barrier owner is deliberately a required, awaited no-op until the real
+ // session-job coordinator replaces it in Task 10.
+ const routeSessionJobs = Object.freeze({
+   cancelAll: async () => {},
+   awaitIdle: async () => {},
+ })
+ const modeController = createModeController(() => mainWindow, makeFlowView, {
+   createSessionView: (target) => {
+     if (target === 'flow') return makeFlowView()
+     const view = sessionTargetRegistry.createView(target)
+     if (!view) throw new Error(`session-view-unavailable:${target}`)
+     return view
+   },
+   targetRegistry: sessionTargetRegistry,
+   chatgptDevGate,
+-  updateViewBounds: updateSessionViewBounds,
++  updateViewBounds: updateBounds,
+   sessionJobs: routeSessionJobs,
+   requireRendererQuiesce: true,
+ })
+ modeController.register(ipcMain)
+ 
+ // Layout, modal, sleep, open-external, show-in-folder IPC.
+-registerLayoutIPC(ipcMain, () => mainWindow, modeController.getActiveSessionView, {
+-  updateViewBounds: updateSessionViewBounds,
+-})
++registerLayoutIPC(ipcMain, () => mainWindow, modeController.getActiveSessionView)
+ 
+ // Agent 토글 not_found 진단 저장기 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만
+ //   신뢰할 수 있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다.
+ //   (실패해도 앱은 안 죽고 진단만 조용히 유실돼 — 정작 필요할 때 파일이 없는 최악의 실패 모드.)
+ // Flow DOM 스텝 실패 싱크 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만 신뢰할 수
+ //   있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다. (실패해도 앱은 안 죽고
+ //   진단만 조용히 유실돼 — 정작 필요할 때 아무것도 없는 최악의 실패 모드.)
+ let _flowDiagSink = null
+ function flowDiagSink() {
+   if (!_flowDiagSink) {
+@@ -1648,27 +1645,47 @@ app.whenReady().then(() => {
+   // 렌더러 언어 → 네이티브 메뉴 라벨 현지화 (I18nProvider 가 lang 변경 시 push).
+   ipcMain.handle('app:set-locale', (_e, { lang } = {}) => { try { setMenuLocale(lang) } catch {} ; return { ok: true } })
+ 
+   createWindow()
+ 
+   // R1 is an operator-run spike, never a product route. Keep even its module
+   // outside the runtime path unless the exact macOS development gate is on.
+   const isDevRuntime = Boolean(process.env.VITE_DEV_SERVER_URL) || !app.isPackaged
+   if (process.platform === 'darwin' && isDevRuntime && process.env.AUTOFLOWCUT_SPIKE === '1') {
+     void import('./spikes/chatgptR1Upload.js').then(({ registerChatgptR1Harness }) => {
+-      registerChatgptR1Harness({
++      chatgptR1HarnessControls = registerChatgptR1Harness({
+         app,
+         globalShortcut,
+         WebContentsView,
+         getMainWindow: () => mainWindow,
+         reservedSessionWebPreferences,
+         installReservedSessionSecurity,
++        // Spike-only full-window ownership: temporarily remove the routed product view so the
++        // harness never stacks two native WebContentsViews. Close restores only the same route/view.
++        suspendProductSessionView: () => {
++          if (!mainWindow || modeController.getCurrentMode() !== 'flow') return null
++          const suspendedRoute = modeController.getCurrentRoute()
++          const suspendedView = modeController.getActiveSessionView()
++          if (!suspendedView) return null
++          try { mainWindow.contentView.removeChildView(suspendedView) } catch { return null }
++          let restored = false
++          return () => {
++            if (restored || !mainWindow) return
++            restored = true
++            const currentRoute = modeController.getCurrentRoute()
++            if (currentRoute.mode !== suspendedRoute.mode ||
++                currentRoute.sessionTarget !== suspendedRoute.sessionTarget ||
++                modeController.getActiveSessionView() !== suspendedView) return
++            mainWindow.contentView.addChildView(suspendedView)
++            updateBounds(mainWindow, suspendedView)
++          }
++        },
+       })
+     }).catch((error) => {
+       console.warn('[ChatGPTR1] harness registration failed', {
+         name: typeof error?.name === 'string' ? error.name : 'Error',
+         code: typeof error?.code === 'string' ? error.code : undefined,
+       })
+     })
+   }
+ 
+   // 진단: Cmd/Ctrl+Shift+E → 현재 Flow 웹뷰의 인터랙티브 요소 + bodyHTML 을 데스크톱에
+diff --git a/electron/spikes/chatgptR1Upload.js b/electron/spikes/chatgptR1Upload.js
+index f54b68e4..46a0540a 100644
+--- a/electron/spikes/chatgptR1Upload.js
++++ b/electron/spikes/chatgptR1Upload.js
+@@ -1,14 +1,18 @@
+ import fs from 'node:fs/promises'
+ import path from 'node:path'
+ 
+ export const CHATGPT_R1_SHORTCUT = 'CommandOrControl+Shift+R'
++export const CHATGPT_R1_CAPTURE_SHORTCUT = 'CommandOrControl+Shift+S'
++export const CHATGPT_R1_RESET_SHORTCUT = 'CommandOrControl+Shift+B'
++export const CHATGPT_R1_NEXT_SHORTCUT = 'CommandOrControl+Shift+Right'
++export const CHATGPT_R1_CLOSE_SHORTCUT = 'CommandOrControl+Shift+X'
+ export const CHATGPT_R1_URL = 'https://chatgpt.com/'
+ export const BLOCKED_LOGIN_SIGNAL = 'BLOCKED: human ChatGPT login required'
+ 
+ export const R1_CASE_MATRIX = Object.freeze([
+   Object.freeze({ id: 'AUTH-FRESH', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'ATTACH-FILE-INPUT-SINGLE', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'ATTACH-CLIPBOARD-SINGLE', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'ATTACH-OBSERVED-DROP-SINGLE', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'ATTACH-MULTI-COUNT', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'MIME-PNG', repetitions: 3, operatorReview: true }),
+@@ -125,26 +129,29 @@ async function writeEvidenceFiles({
+ }
+ 
+ function createHarness({
+   WebContentsView,
+   getMainWindow,
+   reservedSessionWebPreferences,
+   installReservedSessionSecurity,
+   logger,
+   writeEvidence,
+   wait,
++  suspendProductSessionView,
+ }) {
+   let view = null
+   let status = 'idle'
+   let blockedReported = false
+   let readyReported = false
+   let authenticationProbe = null
++  let attached = false
++  let restoreProductSessionView = null
+ 
+   const getState = () => ({ status })
+ 
+   async function runAuthenticationProbe() {
+     if (!view) return { status: 'idle' }
+     for (let attempt = 0; attempt < 20; attempt += 1) {
+       let probe
+       try {
+         probe = await view.webContents.executeJavaScript(AUTH_PROBE)
+       } catch (error) {
+@@ -175,29 +182,39 @@ function createHarness({
+     return { status: 'blocked', signal: BLOCKED_LOGIN_SIGNAL }
+   }
+ 
+   function probeAuthentication() {
+     if (authenticationProbe) return authenticationProbe
+     authenticationProbe = runAuthenticationProbe().finally(() => { authenticationProbe = null })
+     return authenticationProbe
+   }
+ 
+   function attachViewToWindow(nextView) {
++    if (attached) return
+     const mainWindow = getMainWindow()
+     if (!mainWindow) throw new Error('ChatGPT R1 requires an open main window')
+-    mainWindow.contentView.addChildView(nextView)
+-    const [width, height] = mainWindow.getContentSize()
+-    nextView.setBounds({ x: 0, y: 0, width, height })
++    restoreProductSessionView = suspendProductSessionView?.() || null
++    try {
++      mainWindow.contentView.addChildView(nextView)
++      const [width, height] = mainWindow.getContentSize()
++      nextView.setBounds({ x: 0, y: 0, width, height })
++      attached = true
++    } catch (error) {
++      restoreProductSessionView?.()
++      restoreProductSessionView = null
++      throw error
++    }
+   }
+ 
+   async function open() {
+     if (view) {
++      attachViewToWindow(view)
+       view.webContents.focus()
+       return probeAuthentication()
+     }
+ 
+     // Hard order: factory → view → real two-argument security install → attach → load.
+     const webPreferences = reservedSessionWebPreferences()
+     const nextView = new WebContentsView({ webPreferences })
+     installReservedSessionSecurity(nextView, nextView.webContents.session)
+     view = nextView
+     view.webContents.on('did-finish-load', () => probeAuthentication().catch((error) => {
+@@ -249,62 +266,120 @@ function createHarness({
+     try {
+       await view.webContents.loadURL(CHATGPT_R1_URL)
+     } catch (error) {
+       status = 'blocked'
+       logger.error('[ChatGPTR1] conversation reset failed', safeErrorIdentity(error))
+       return { status: 'blocked', signal: BLOCKED_LOGIN_SIGNAL }
+     }
+     return probeAuthentication()
+   }
+ 
+-  return { open, probeAuthentication, captureEvidence, resetConversation, getState, getView: () => view }
++  function close() {
++    if (!view || !attached) return { status: 'idle' }
++    const mainWindow = getMainWindow()
++    try { mainWindow?.contentView?.removeChildView?.(view) } catch { /* spike close still restores product view */ }
++    attached = false
++    const restore = restoreProductSessionView
++    restoreProductSessionView = null
++    restore?.()
++    status = 'idle'
++    return { status: 'idle' }
++  }
++
++  return { open, close, probeAuthentication, captureEvidence, resetConversation, getState, getView: () => view }
+ }
+ 
+ /**
+  * Registers the R1 harness only behind the exact macOS development spike gate.
+  * No view is created and no URL is loaded until the operator presses the shortcut.
+  */
+ export function registerChatgptR1Harness({
+   app,
+   globalShortcut,
+   WebContentsView,
+   getMainWindow,
+   platform = process.platform,
+   env = process.env,
+   reservedSessionWebPreferences,
+   installReservedSessionSecurity,
+   logger = console,
+   writeEvidence = writeEvidenceFiles,
+   wait = waitFor,
++  suspendProductSessionView = () => null,
+ }) {
+   if (!isChatgptR1HarnessEnabled({
+     platform,
+     isPackaged: app.isPackaged,
+     viteDevServerUrl: env.VITE_DEV_SERVER_URL,
+     spikeFlag: env.AUTOFLOWCUT_SPIKE,
+   })) return { registered: false }
+ 
+   const harness = createHarness({
+     WebContentsView,
+     getMainWindow,
+     reservedSessionWebPreferences,
+     installReservedSessionSecurity,
+     logger,
+     writeEvidence,
+     wait,
++    suspendProductSessionView,
++  })
++  let caseIndex = 0
++  let repetition = 1
++  const getMeasurementCursor = () => ({
++    caseId: R1_CASE_MATRIX[caseIndex].id,
++    repetition,
+   })
+-  const registered = globalShortcut.register(CHATGPT_R1_SHORTCUT, () => harness.open())
++  const announceCursor = () => {
++    const cursor = getMeasurementCursor()
++    logger.log(`[ChatGPTR1] selected ${cursor.caseId} repetition ${cursor.repetition}`)
++    return cursor
++  }
++  const advanceMeasurement = () => {
++    repetition += 1
++    if (repetition > R1_CASE_MATRIX[caseIndex].repetitions) {
++      repetition = 1
++      caseIndex = (caseIndex + 1) % R1_CASE_MATRIX.length
++    }
++    return announceCursor()
++  }
++  const captureCurrentEvidence = () => {
++    const cursor = getMeasurementCursor()
++    return harness.captureEvidence({
++      ...cursor,
++      events: [{ at: new Date().toISOString(), event: 'OPERATOR_CAPTURE' }],
++    })
++  }
++  const resetAndAdvance = async () => {
++    const result = await harness.resetConversation()
++    if (result?.status === 'ready') advanceMeasurement()
++    return result
++  }
++  const controls = [
++    [CHATGPT_R1_SHORTCUT, () => harness.open()],
++    [CHATGPT_R1_CAPTURE_SHORTCUT, captureCurrentEvidence],
++    [CHATGPT_R1_RESET_SHORTCUT, resetAndAdvance],
++    [CHATGPT_R1_NEXT_SHORTCUT, resetAndAdvance],
++    [CHATGPT_R1_CLOSE_SHORTCUT, () => harness.close()],
++  ]
++  const registered = controls.every(([shortcut, callback]) => globalShortcut.register(shortcut, callback))
+   if (!registered) {
+     logger.error('[ChatGPTR1] shortcut registration failed')
+     return { registered: false }
+   }
+ 
+-  logger.log(`[ChatGPTR1] harness armed; press ${CHATGPT_R1_SHORTCUT}`)
++  logger.log(`[ChatGPTR1] harness armed; open ${CHATGPT_R1_SHORTCUT}; capture ${CHATGPT_R1_CAPTURE_SHORTCUT}; reset/advance ${CHATGPT_R1_RESET_SHORTCUT}; next ${CHATGPT_R1_NEXT_SHORTCUT}; close ${CHATGPT_R1_CLOSE_SHORTCUT}`)
++  announceCursor()
+   return {
+     registered: true,
+     shortcut: CHATGPT_R1_SHORTCUT,
+     open: harness.open,
+     captureEvidence: harness.captureEvidence,
++    captureCurrentEvidence,
+     resetConversation: harness.resetConversation,
++    resetAndAdvance,
++    advanceMeasurement,
++    close: harness.close,
+     getState: harness.getState,
++    getMeasurementCursor,
+   }
+ }
+diff --git a/electron/webtargets/chatgpt/index.js b/electron/webtargets/chatgpt/index.js
+index d70acd37..ba7e2bf7 100644
+--- a/electron/webtargets/chatgpt/index.js
++++ b/electron/webtargets/chatgpt/index.js
+@@ -35,30 +35,35 @@ export function createChatgptTarget({
+   logger = console,
+ } = {}) {
+   let view = null
+   let sessionStatus = {
+     target: 'chatgpt',
+     status: BLOCKED_STATUS,
+     ready: false,
+     revision: 0,
+   }
+   const statusListeners = new Set()
++  let latestProbeSequence = 0
+ 
+   const getSessionStatus = () => ({ ...sessionStatus })
+ 
+   async function ensureSession() {
++    const probeSequence = ++latestProbeSequence
+     let probeResult
+     try {
+       probeResult = await probeSession(view)
+     } catch {
+       probeResult = BLOCKED_STATUS
+     }
++    // Freshness is invocation order, not completion order. did-finish-load, admission, and
++    // explicit reconnect can overlap; an older observation must never publish after a newer one.
++    if (probeSequence !== latestProbeSequence) return getSessionStatus()
+     const status = normaliseSessionStatus(probeResult)
+     const ready = status === 'ready'
+     if (status !== sessionStatus.status || ready !== sessionStatus.ready) {
+       sessionStatus = {
+         target: 'chatgpt',
+         status,
+         ready,
+         revision: sessionStatus.revision + 1,
+       }
+       const snapshot = getSessionStatus()
+diff --git a/src/App.css b/src/App.css
+index 9e808a9a..ca6cf9ca 100644
+--- a/src/App.css
++++ b/src/App.css
+@@ -2498,10 +2498,18 @@ html, body {
+   font-size: 11px;
+   font-weight: 600;
+   padding: 1px 7px;
+   border-radius: 10px;
+   vertical-align: middle;
+   margin-left: 6px;
+   letter-spacing: 0.3px;
+ }
+ .model-mode-flow { background: #6366f1; color: #fff; }
+ .model-mode-api { background: #2d8a4e; color: #fff; }
++.model-provider-price {
++  display: inline-block;
++  margin-left: 6px;
++  color: var(--text-secondary);
++  font-size: 11px;
++  font-weight: 500;
++  vertical-align: middle;
++}
+diff --git a/src/App.jsx b/src/App.jsx
+index b1c13fb2..bbdefd52 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -141,35 +141,37 @@ import ImportProcessingOverlay from './components/ImportProcessingOverlay'
+ import { useAuth } from './contexts/AuthContext'
+ import { useImportProcessing } from './hooks/useImportProcessing'
+ import { useTargetAuthReady } from './hooks/useTargetAuthReady'
+ 
+ export function useAppRouteTransaction({ route, commitRoute, setRoute }) {
+   const requestSequenceRef = useRef(0)
+   const adoptedRevisionRef = useRef(-1)
+   const routeRef = useRef(route)
+   routeRef.current = route
+ 
+-  return useCallback(async (next) => {
++  return useCallback(async (next, options = {}) => {
+     const accepted = parseRoute(next)
+     if (!accepted) return { ok: false, error: 'invalid-route', route: routeRef.current }
+ 
+     const requestSequence = ++requestSequenceRef.current
+     let result
+     try {
+       result = typeof setRoute === 'function'
+-        ? await setRoute(accepted)
++        ? await setRoute(options.boot ? { to: accepted, boot: true } : accepted)
+         : { ok: false, error: 'route-api-unavailable', route: routeRef.current }
+     } catch (error) {
+       result = { ok: false, error: error?.message || 'route-set-failed', route: routeRef.current }
+     }
+ 
+-    if (requestSequence !== requestSequenceRef.current || result?.ok !== true) return result
++    if (requestSequence !== requestSequenceRef.current) return result
++    const reconcileFailure = options.reconcileOnFailure === true && result?.ok !== true
++    if (result?.ok !== true && !reconcileFailure) return result
+     const adopted = parseRoute(result.route)
+     if (!adopted) return { ok: false, error: 'invalid-adopted-route', route: routeRef.current }
+     const revision = Number.isInteger(result.revision) ? result.revision : null
+     if (revision != null && revision < adoptedRevisionRef.current) return result
+     if (revision != null) adoptedRevisionRef.current = revision
+     routeRef.current = adopted
+     commitRoute?.(adopted)
+     return result
+   }, [commitRoute, setRoute])
+ }
+@@ -272,32 +274,24 @@ function App() {
+   const setAuthReady = useCallback((ready) => {
+     if (modeRef.current === 'flow') {
+       setTargetReady(sessionTargetRef.current, ready)
+     } else {
+       setApiAuthReady(Boolean(ready))
+     }
+   }, [setTargetReady])
+   const generationQueue = useGenerationQueue()
+   const route = useMemo(() => mode ? { mode, sessionTarget } : null, [mode, sessionTarget])
+   const invokeMainRoute = useCallback(async (next) => {
+-    if (typeof window.electronAPI?.setRoute === 'function') {
+-      return window.electronAPI.setRoute(next)
+-    }
+-    // 이전 preload를 띄운 개발/HMR 창에서만 mode-only route를 유지한다. target 전환은
+-    // canonical route API 없이는 안전하게 표현할 수 없으므로 fail closed한다.
+-    const legacyCanRepresentRoute = next.mode === 'api' || next.sessionTarget === 'flow'
+-    const legacyModeSetter = window.electronAPI?.['set' + 'Mode']
+-    if (!legacyCanRepresentRoute || typeof legacyModeSetter !== 'function') {
++    if (typeof window.electronAPI?.setRoute !== 'function') {
+       return { ok: false, error: 'route-api-unavailable', route }
+     }
+-    const legacy = await legacyModeSetter({ mode: next.mode })
+-    return legacy?.ok ? { ok: true, route: next } : legacy
++    return window.electronAPI.setRoute(next)
+   }, [route])
+   const requestRoute = useAppRouteTransaction({ route, commitRoute, setRoute: invokeMainRoute })
+ 
+   // Auth/Payment Modals
+   const [showAuthModal, setShowAuthModal] = useState(false)
+   const [showPaywallModal, setShowPaywallModal] = useState(false)
+   const [paywallReason, setPaywallReason] = useState('trial_expired')
+ 
+   // Flow Login Expired Modal
+   const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+@@ -2162,29 +2156,42 @@ function App() {
+         { timeoutMs: 30_000, intervalMs: 20 },
+       )
+       if (!idle) throw new Error('renderer-flow-idle-timeout')
+     },
+   }
+ 
+   useRouteQuiesceBridge(routeQuiesceOwnerRef)
+ 
+   // quiesce listener가 먼저 설치된 다음 stored/current route를 main에 adopt한다. 이 순서를
+   // 뒤집으면 초기 IPC가 빠른 환경에서 첫 request를 놓쳐 main timeout까지 view 전환이 막힌다.
++  const previousLayoutModeRef = useRef(null)
++  const bootRouteRequestRef = useRef(true)
+   useEffect(() => {
+     if (!route) return
+-    requestRoute(route).then((result) => {
++    const enteringFlow = route.mode === 'flow' && previousLayoutModeRef.current !== 'flow'
++    previousLayoutModeRef.current = route.mode
++    // Shell/useSplitLayout 이 저장 레이아웃의 단일 소유자다. 진입 기본값은 child effect 에서
++    // 동기 push 해야 뒤이어 도는 Shell parent effect 의 저장값이 최종 승자가 된다. IPC 응답 뒤에
++    // 보내면 저장값을 덮고 echo 가 localStorage 까지 오염시킨다. target-only 변경에는 보내지 않는다.
++    if (enteringFlow) {
++      const layout = flowLayoutForMode(route.mode)
++      if (layout) window.electronAPI?.setLayout?.(layout)?.catch?.((e) => console.warn('[App] setLayout failed:', e?.message))
++    }
++    const isBootRequest = bootRouteRequestRef.current
++    bootRouteRequestRef.current = false
++    requestRoute(route, {
++      boot: isBootRequest,
++      reconcileOnFailure: isBootRequest,
++    }).then((result) => {
+       if (!result?.ok) {
+         console.warn('[App] setRoute failed:', result?.error)
+-        return
+       }
+-      const layout = flowLayoutForMode(result.route.mode)
+-      if (layout) window.electronAPI?.setLayout?.(layout)?.catch?.((e) => console.warn('[App] setLayout failed:', e?.message))
+     }).catch((e) => console.warn('[App] setRoute failed:', e?.message))
+   }, [route, requestRoute])
+ 
+   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
+   // isRunning: scene OR ref(prepare/stop/generating) OR video — Phase 2 auto stop-restart 트리거.
+   useMcpServer({
+     settings,
+     scenes, setScenes,
+     references, setReferences,
+     // Phase 11: MCP 가 srtTrack 동기화할 수 있게 setter 전달
+diff --git a/src/components/Header.jsx b/src/components/Header.jsx
+index c4b4de3f..5f66fca1 100644
+--- a/src/components/Header.jsx
++++ b/src/components/Header.jsx
+@@ -223,20 +223,35 @@ export default function Header({
+       return
+     }
+     // #R15-2: await 동안 모드 전환/언마운트됐으면 안내/폴링을 시작하지 않는다(stale flow polling 방지).
+     if (!mountedRef.current || !flowTargetActiveRef.current) return
+     toast.info(t('toast.flowLoginHint'))
+     // #R7-16: 재연결 후 인증 상태를 능동적으로 폴링 — flow-status 이벤트가 안 와도
+     //   사용자가 Flow 창에서 로그인 완료하면 배지가 🟢 로 회복되도록.
+     startAuthPolling()
+   }
+ 
++  const reconnectChatgpt = async () => {
++    if (!chatgptTargetActive) return
++    try {
++      const currentRoute = { mode, sessionTarget }
++      const routeResult = onRouteRequest
++        ? await onRouteRequest(currentRoute)
++        : await window.electronAPI?.setRoute?.(currentRoute)
++      if (routeResult && routeResult.ok === false) throw new Error(routeResult.error || 'route-set-failed')
++      const status = await window.electronAPI?.reconnectSession?.('chatgpt')
++      if (status?.ready === true) onAuthRecovered?.()
++    } catch (error) {
++      console.warn('[Header] ChatGPT reconnect failed:', error?.message)
++    }
++  }
++
+   // #R7-16: Flow 로그인 회복용 짧은 인증 폴링. 인증되면 authReady→effect 가 stopPolling.
+   const startAuthPolling = () => {
+     stopPolling()
+     let attempts = 0
+     pollingRef.current = setInterval(() => {
+       attempts += 1
+       if (attempts > 20) { stopPolling(); return } // ~60s 후 포기
+       checkAuth(true)
+     }, 3000)
+   }
+@@ -273,21 +288,21 @@ export default function Header({
+     } else {
+       alert(t('header.projectDeleteFailed', { error: result.error || 'Unknown error' }))
+     }
+     setDeleteTarget(null)
+     setShowProjectDropdown(false)
+   }
+ 
+   const handleUnauthenticated = () => {
+     if (mode === 'api') return onSettings?.('apiKey')
+     if (flowTargetActive) return openFlow()
+-    if (chatgptTargetActive) return undefined
++    if (chatgptTargetActive) return reconnectChatgpt()
+   }
+ 
+   const authActionLabel = mode === 'api' ? t('header.apiKey') : t(loginLabelKey)
+   const authActionIcon = mode === 'flow' ? '👤' : '🔑'
+   const authenticatedLabel = mode === 'api' ? t('header.apiAuthenticated') : t(authenticatedLabelKey)
+   
+   return (
+     <>
+     <header className="header">
+       <div className="header-left">
+@@ -349,21 +364,25 @@ export default function Header({
+             )}
+           </div>
+         )}
+         
+         {/* 토큰 상태 표시 */}
+         <div className="auth-status">
+           {authStatus === 'checking' && (
+             <span className="auth-badge checking" data-tooltip={t('header.checking')}>⏳</span>
+           )}
+           {authStatus === 'authenticated' && (
+-            <span className="auth-badge authenticated" data-tooltip={authenticatedLabel} onClick={checkAuth}>🟢</span>
++            <span
++              className="auth-badge authenticated"
++              data-tooltip={authenticatedLabel}
++              onClick={chatgptTargetActive ? reconnectChatgpt : checkAuth}
++            >🟢</span>
+           )}
+           {authStatus === 'unavailable' && (
+             <span className="auth-badge unavailable" data-tooltip={t('header.unavailable')}>
+               🌍 {t('header.unavailable')}
+             </span>
+           )}
+           {authStatus === 'waiting' && (
+             <span className="auth-badge waiting" data-tooltip={t('header.waitingLogin')}>
+               ⏳ {t('header.waitingLogin')}
+             </span>
+diff --git a/src/components/settings/SceneTab.jsx b/src/components/settings/SceneTab.jsx
+index af3903be..3390912e 100644
+--- a/src/components/settings/SceneTab.jsx
++++ b/src/components/settings/SceneTab.jsx
+@@ -116,25 +116,29 @@ export default function SceneTab({
+   ) ? VIDEO_MODELS : videoModels
+   const t2vModels = videoModelsForProvider(t2vProvider, effectiveVideoModels)
+   const i2vModels = videoModelsForProvider(i2vProvider, effectiveVideoModels)
+   const t2vDefaultModel = defaultVideoModelForProvider(t2vProvider) ?? DEFAULT_VIDEO_MODEL_ID
+   const i2vDefaultModel = defaultVideoModelForProvider(i2vProvider) ?? DEFAULT_VIDEO_MODEL_ID
+   const stagePrices = {
+     image: priceForSelection(stageSources.image, visibleImageModels, localSettings.imageModel, imageDefaultModel),
+     t2v: priceForSelection(stageSources.t2v, t2vModels, localSettings.videoModelT2V, t2vDefaultModel),
+     i2v: priceForSelection(stageSources.i2v, i2vModels, localSettings.videoModelF2V, i2vDefaultModel),
+   }
+-  const providerPrice = (stage) => (
+-    <span className="model-provider-price" data-testid={`${stage}-provider-price`}>
+-      {stagePrices[stage]}
+-    </span>
+-  )
++  const providerPrice = (stage) => {
++    const price = stagePrices[stage]
++    if (!price) return null
++    return (
++      <span className="model-provider-price" data-testid={`${stage}-provider-price`}>
++        {price}
++      </span>
++    )
++  }
+   return (
+     <div className="tab-panel">
+       {/* 프로젝트 화면비: 롱폼(16:9) / 숏폼(9:16) — 생성·카드·CapCut export 에 반영 */}
+       <div className="setting-row">
+         <label className="setting-label">{t('settings.aspectRatio')}</label>
+         <AspectRatioSelector
+           value={localSettings.aspectRatio}
+           onChange={(ratio) => setLocalSettings(s => ({ ...s, aspectRatio: ratio }))}
+           t={t}
+         />
+diff --git a/src/hooks/useAutomation.js b/src/hooks/useAutomation.js
+index f21b4423..ffc486e0 100644
+--- a/src/hooks/useAutomation.js
++++ b/src/hooks/useAutomation.js
+@@ -948,27 +948,27 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
+     return pending
+   }, [startQueued])
+ 
+   const awaitIdle = useCallback(async () => {
+     while (activeRunsRef.current.size > 0) {
+       await Promise.allSettled([...activeRunsRef.current])
+     }
+   }, [])
+ 
+   /**
+-   * 특정 씬 재시도 — startQueued 경유(정상 Start 와 동일한 queue 직렬화).
++   * 특정 씬 재시도 — startTracked 경유(정상 Start 와 동일한 queue 직렬화 + quiesce 추적).
+    */
+   const retryScene = useCallback(async (sceneId, options = {}) => {
+     if (!scenes.some(s => s.id === sceneId)) return
+     // id 로 전달 — queue 대기 중 scenes 재정렬/삭제가 있어도 실행 시점에 올바른 씬을 resolve.
+-    await startQueued({ ...options, sceneIds: [sceneId] })
+-  }, [scenes, startQueued])
++    await startTracked({ ...options, sceneIds: [sceneId] })
++  }, [scenes, startTracked])
+ 
+   /**
+    * 에러 씬들만 재시도 — startQueued 경유.
+    *
+    * 호출자가 React SyntheticEvent(onClick={retryErrors})를 그대로 넘기면 options
+    * 자리가 이벤트 객체가 되어 projectName 이 누락 → start() 가 'Untitled' 폴백 →
+    * 새 이미지 저장이 잘못된 프로젝트로 가는 데이터 손실 회귀가 발생한다.
+    * 가드: SyntheticEvent 흔적이 보이면 options 을 비우는 대신 **즉시 return**.
+    */
+   const retryErrors = useCallback(async (options = {}) => {
+@@ -978,22 +978,22 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
+     }
+     if (options && typeof options.preventDefault === 'function') {
+       console.warn('[useAutomation] retryErrors called with SyntheticEvent — caller must pass an options object with projectName. Aborting.')
+       return
+     }
+     // id 로 스냅샷 — queue 대기 중 재정렬돼도 실행 시점에 동일 씬을 resolve(index staleness 회피).
+     const errorIds = scenes.filter(s => s.status === 'error').map(s => s.id)
+ 
+     if (errorIds.length === 0) return
+ 
+-    await startQueued({ ...options, sceneIds: errorIds })
+-  }, [scenes, startQueued, mode, flowProjectReady, t])
++    await startTracked({ ...options, sceneIds: errorIds })
++  }, [scenes, startTracked, mode, flowProjectReady, t])
+ 
+   return {
+     isRunning,
+     isPaused,
+     isStopping,
+     isSceneBatchQueued: queuedSceneBatchCount > 0,
+     progress,
+     status,
+     statusMessage,
+     start: startTracked,
+diff --git a/tests/components/App.chatgptTargetGate.test.jsx b/tests/components/App.chatgptTargetGate.test.jsx
+index d099014d..84d71a31 100644
+--- a/tests/components/App.chatgptTargetGate.test.jsx
++++ b/tests/components/App.chatgptTargetGate.test.jsx
+@@ -1,29 +1,31 @@
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
++import { useSplitLayout } from '../../src/hooks/useSplitLayout.js'
+ 
+ const appMocks = vi.hoisted(() => {
+   const noop = vi.fn()
+   const asyncNoop = vi.fn(async () => null)
+   const state = {
+     mode: 'flow',
+     sessionTarget: 'chatgpt',
+     sessionStatus: { target: 'chatgpt', status: 'ready', ready: true, revision: 1 },
+     tagErrors: [],
+     framePanelProps: null,
+   }
+   const sessionStatusListeners = new Set()
+   const loadEpochRef = { current: 0 }
+   const flowGenerateImage = vi.fn(async () => ({ success: true }))
+   const sceneBatchStart = vi.fn(async options => flowGenerateImage(options))
+   const videoStart = vi.fn(async () => ({ success: true }))
+   const toastWarning = vi.fn()
++  const commitRoute = vi.fn()
+   const scenes = [
+     { id: 'scene_1', prompt: 'a test scene', videoT2VPrompt: 'a test video', status: 'pending' },
+   ]
+   const scenesHook = {
+     scenes,
+     scenesRef: { current: scenes },
+     references: [],
+     srtTrack: [],
+     parseFromText: noop,
+     parseFromCSV: noop,
+@@ -57,20 +59,21 @@ const appMocks = vi.hoisted(() => {
+     sessionStatusListeners,
+     emitSessionStatus(status) {
+       state.sessionStatus = status
+       for (const listener of sessionStatusListeners) listener(status)
+     },
+     loadEpochRef,
+     flowGenerateImage,
+     sceneBatchStart,
+     videoStart,
+     toastWarning,
++    commitRoute,
+     scenes,
+     scenesHook,
+     genAPI,
+   }
+ })
+ 
+ vi.mock('../../src/hooks/useI18n', () => ({
+   useI18n: () => ({ t: key => key, lang: 'ko' }),
+ }))
+ vi.mock('../../src/components/Toast', () => ({
+@@ -79,20 +82,21 @@ vi.mock('../../src/components/Toast', () => ({
+     error: appMocks.noop,
+     warning: appMocks.toastWarning,
+     info: appMocks.noop,
+   },
+ }))
+ vi.mock('../../src/contexts/ModeContext', () => ({
+   useMode: () => ({
+     mode: appMocks.state.mode,
+     sessionTarget: appMocks.state.sessionTarget,
+     clearMode: appMocks.noop,
++    setRoute: appMocks.commitRoute,
+   }),
+ }))
+ vi.mock('../../src/contexts/AuthContext', () => ({
+   useAuth: () => ({
+     isAuthenticated: true,
+     subscription: { status: 'active', batchRemaining: 10, batchUnlimited: false },
+     refreshSubscription: appMocks.asyncNoop,
+   }),
+ }))
+ vi.mock('../../src/hooks/useSyncGateHost', () => ({
+@@ -337,78 +341,194 @@ vi.mock('../../src/components/SubscriptionBanner', () => ({ SubscriptionBanner:
+ vi.mock('../../src/components/StylePicker', () => ({ default: () => null }))
+ vi.mock('../../src/components/Modal', () => ({ default: ({ isOpen, children }) => isOpen ? <div>{children}</div> : null }))
+ vi.mock('../../src/components/DeleteSceneConfirmModal', () => ({ default: () => null }))
+ vi.mock('../../src/components/FlowProjectAdoptModal', () => ({ default: () => null }))
+ vi.mock('../../src/components/SrtImportConflictModal', () => ({ default: () => null }))
+ vi.mock('../../src/components/ImportProcessingOverlay', () => ({ default: () => null }))
+ vi.mock('../../src/components/story/StoryView', () => ({ default: () => null }))
+ 
+ import App from '../../src/App'
+ 
++const shellRef = {
++  current: {
++    getBoundingClientRect: () => ({
++      left: 0, top: 0, right: 1200, bottom: 900, width: 1200, height: 900,
++    }),
++  },
++}
++
++function SplitLayoutOwner() {
++  const layout = useSplitLayout({ isFlow: appMocks.state.mode === 'flow', shellRef })
++  return (
++    <>
++      <output data-testid="owned-layout">{layout.layoutMode}:{layout.splitRatio}</output>
++      <App />
++    </>
++  )
++}
++
++function installLayoutEchoAPI(setRoute = vi.fn(async (payload) => {
++  const route = payload?.to || payload
++  return { ok: true, route, revision: 1 }
++})) {
++  const listeners = new Set()
++  const events = []
++  window.electronAPI = {
++    setRoute,
++    setMode: vi.fn(async () => ({ ok: true })),
++    setLayout: vi.fn(async ({ mode, ratio }) => {
++      events.push(`layout:${mode}:${ratio}`)
++      // Electron IPC/event delivery is asynchronous. Keeping the echo on a microtask is what
++      // makes this harness exercise the child-effect → parent-effect ordering contract.
++      queueMicrotask(() => {
++        for (const listener of listeners) listener({ mode, splitRatio: ratio })
++      })
++      return { success: true, mode, splitRatio: ratio }
++    }),
++    onLayoutChanged: vi.fn((listener) => {
++      listeners.add(listener)
++      return () => listeners.delete(listener)
++    }),
++    getSessionTargetStatus: vi.fn(async () => appMocks.state.sessionStatus),
++    onSessionTargetStatus: vi.fn(() => () => {}),
++  }
++  return { events, setRoute }
++}
++
+ describe('App flow + chatgpt target gate', () => {
+   beforeEach(() => {
+     localStorage.clear()
+     appMocks.state.mode = 'flow'
+     appMocks.state.sessionTarget = 'chatgpt'
+     appMocks.state.sessionStatus = { target: 'chatgpt', status: 'ready', ready: true, revision: 1 }
+     appMocks.sessionStatusListeners.clear()
+     appMocks.state.tagErrors = []
+     appMocks.state.framePanelProps = null
+     appMocks.loadEpochRef.current = 0
+     appMocks.flowGenerateImage.mockClear()
+     appMocks.sceneBatchStart.mockClear()
+     appMocks.videoStart.mockClear()
+     appMocks.toastWarning.mockClear()
++    appMocks.commitRoute.mockClear()
+     appMocks.genAPI.getAccessToken.mockClear().mockResolvedValue('token')
+     window.electronAPI = {
++      setRoute: vi.fn(async (payload) => ({ ok: true, route: payload?.to || payload, revision: 1 })),
+       setMode: vi.fn(async () => ({ ok: true })),
+       setLayout: vi.fn(async () => ({ ok: true })),
+       getSessionTargetStatus: vi.fn(async (target) => (
+         target === 'chatgpt' ? appMocks.state.sessionStatus : null
+       )),
+       onSessionTargetStatus: vi.fn((listener) => {
+         appMocks.sessionStatusListeners.add(listener)
+         return () => appMocks.sessionStatusListeners.delete(listener)
+       }),
+     }
+   })
+ 
+   afterEach(() => {
+     cleanup()
+     delete window.electronAPI
+   })
+ 
+-  it('flow + chatgpt does not push the legacy Flow attach IPC', async () => {
++  it('flow + chatgpt adopts the canonical route without the legacy mode IPC', async () => {
+     render(<App />)
+ 
+-    await act(async () => { await Promise.resolve() })
++    await waitFor(() => expect(window.electronAPI.setRoute).toHaveBeenCalledWith({
++      to: { mode: 'flow', sessionTarget: 'chatgpt' }, boot: true,
++    }))
+ 
+     expect(window.electronAPI.setMode).not.toHaveBeenCalled()
+-    expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
+   })
+ 
+-  it('flow + flow keeps pushing the legacy Flow attach IPC', async () => {
++  it('flow + flow adopts the canonical route without the legacy mode IPC', async () => {
+     appMocks.state.sessionTarget = 'flow'
+     render(<App />)
+ 
+-    await waitFor(() => expect(window.electronAPI.setMode).toHaveBeenCalledWith({ mode: 'flow' }))
++    await waitFor(() => expect(window.electronAPI.setRoute).toHaveBeenCalledWith({
++      to: { mode: 'flow', sessionTarget: 'flow' }, boot: true,
++    }))
++    expect(window.electronAPI.setMode).not.toHaveBeenCalled()
+     expect(window.electronAPI.setLayout).toHaveBeenCalled()
+   })
+ 
+-  it('api keeps pushing the legacy detach IPC for any target', async () => {
++  it('api adopts the canonical route without the legacy mode IPC', async () => {
+     appMocks.state.mode = 'api'
+     render(<App />)
+ 
+-    await waitFor(() => expect(window.electronAPI.setMode).toHaveBeenCalledWith({ mode: 'api' }))
++    await waitFor(() => expect(window.electronAPI.setRoute).toHaveBeenCalledWith({
++      to: { mode: 'api', sessionTarget: 'chatgpt' }, boot: true,
++    }))
++    expect(window.electronAPI.setMode).not.toHaveBeenCalled()
+     expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
+   })
+ 
++  it.each([
++    ['flow', { mode: 'split-right', ratio: 0.71 }],
++    ['chatgpt', { mode: 'split-bottom', ratio: 0.63 }],
++  ])('does not invoke a hidden legacy mode fallback for %s when route:set is unavailable', async (sessionTarget, savedLayout) => {
++    appMocks.state.sessionTarget = sessionTarget
++    localStorage.setItem('layoutSettings', JSON.stringify(savedLayout))
++    delete window.electronAPI.setRoute
++
++    render(<App />)
++    await act(async () => { await Promise.resolve(); await Promise.resolve() })
++
++    expect(window.electronAPI.setMode).not.toHaveBeenCalled()
++  })
++
++  it.each([
++    { mode: 'split-right', ratio: 0.71 },
++    { mode: 'split-top', ratio: 0.64 },
++    { mode: 'split-bottom', ratio: 0.59 },
++    { mode: 'split-left', ratio: 0.76 },
++  ])('preserves the saved non-default layout on login-mode launch: $mode/$ratio', async (savedLayout) => {
++    appMocks.state.sessionTarget = 'flow'
++    localStorage.setItem('layoutSettings', JSON.stringify(savedLayout))
++    installLayoutEchoAPI()
++
++    render(<SplitLayoutOwner />)
++
++    await waitFor(() => expect(screen.getByTestId('owned-layout')).toHaveTextContent(
++      `${savedLayout.mode}:${savedLayout.ratio}`,
++    ))
++    await act(async () => { await Promise.resolve(); await Promise.resolve() })
++    expect(JSON.parse(localStorage.getItem('layoutSettings'))).toEqual(savedLayout)
++    expect(screen.getByTestId('owned-layout')).toHaveTextContent(`${savedLayout.mode}:${savedLayout.ratio}`)
++  })
++
++  it('preserves the saved layout across a target-only switch and an api-to-flow mode entry', async () => {
++    const savedLayout = { mode: 'split-bottom', ratio: 0.67 }
++    localStorage.setItem('layoutSettings', JSON.stringify(savedLayout))
++    const { events } = installLayoutEchoAPI()
++    const view = render(<SplitLayoutOwner />)
++    await waitFor(() => expect(screen.getByTestId('owned-layout')).toHaveTextContent('split-bottom:0.67'))
++
++    events.length = 0
++    appMocks.state.sessionTarget = 'flow'
++    view.rerender(<SplitLayoutOwner />)
++    await act(async () => { await Promise.resolve(); await Promise.resolve() })
++    expect(JSON.parse(localStorage.getItem('layoutSettings'))).toEqual(savedLayout)
++    expect(events).not.toContain('layout:split-left:0.5')
++
++    events.length = 0
++    appMocks.state.mode = 'api'
++    view.rerender(<SplitLayoutOwner />)
++    await act(async () => { await Promise.resolve(); await Promise.resolve() })
++    appMocks.state.mode = 'flow'
++    view.rerender(<SplitLayoutOwner />)
++    await act(async () => { await Promise.resolve(); await Promise.resolve() })
++
++    expect(events).toContain('layout:split-left:0.5')
++    expect(JSON.parse(localStorage.getItem('layoutSettings'))).toEqual(savedLayout)
++    expect(screen.getByTestId('owned-layout')).toHaveTextContent('split-bottom:0.67')
++  })
++
+   it('flow + chatgpt Start does not reach the Flow image engine seam', async () => {
+     render(<App />)
+ 
+     const start = screen.getByTitle('actions.start')
+     await waitFor(() => expect(start).toBeEnabled())
+     fireEvent.click(start)
+ 
+     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+     expect(appMocks.flowGenerateImage).not.toHaveBeenCalled()
+     expect(appMocks.toastWarning).toHaveBeenCalledWith('toast.sessionTargetUnsupported')
+diff --git a/tests/components/App.routeTransaction.test.jsx b/tests/components/App.routeTransaction.test.jsx
+index de61db51..bca14723 100644
+--- a/tests/components/App.routeTransaction.test.jsx
++++ b/tests/components/App.routeTransaction.test.jsx
+@@ -82,23 +82,23 @@ function RouteTransactionProbe({ electronAPI, initialRoute }) {
+   renderedRoute = route
+   renderedEngine = { routeOwner: route.mode === 'api' ? 'api' : route.sessionTarget }
+   return <div data-testid="current-route">{route.mode}+{route.sessionTarget}</div>
+ }
+ 
+ const renderApp = ({ electronAPI, initialRoute }) => {
+   localStorage.setItem('route', JSON.stringify(initialRoute))
+   render(<RouteTransactionProbe electronAPI={electronAPI} initialRoute={initialRoute} />)
+ }
+ 
+-const requestInjectedRoute = (route) => {
++const requestInjectedRoute = (route, options) => {
+   let pending
+-  act(() => { pending = injectedRequest(route) })
++  act(() => { pending = injectedRequest(route, options) })
+   return pending.then(async (result) => {
+     await act(async () => {})
+     return result
+   })
+ }
+ 
+ const currentRoute = () => renderedRoute
+ const currentEngine = () => renderedEngine
+ 
+ function AppOwnedModeToggle({ setRoute }) {
+@@ -156,20 +156,38 @@ it('keeps renderer context, storage, main view, and engine on non-default Flow w
+   })
+   renderApp({ electronAPI: api, initialRoute: flowRoute() })
+   await requestInjectedRoute(chatgptRoute())
+   expect(screen.getByTestId('current-route')).toHaveTextContent('flow+flow')
+   expect(localStorage.getItem('route')).toBe(JSON.stringify(flowRoute()))
+   expect(api.mainRoute()).toEqual(flowRoute())
+   expect(api.attachedView()).toBe('flow')
+   expect(currentEngine().routeOwner).toBe('flow')
+ })
+ 
++it('reconciles a failed stored-route boot to the main route without weakening interactive failure preservation', async () => {
++  const storedRoute = { mode: 'flow', sessionTarget: 'flow' }
++  const mainRoute = { mode: 'api', sessionTarget: 'flow' }
++  const api = routeFailureHarness({
++    initialRoute: mainRoute,
++    result: { ok: false, error: 'route-quiesce-failed', route: mainRoute, revision: 0 },
++  })
++  renderApp({ electronAPI: api, initialRoute: storedRoute })
++
++  await requestInjectedRoute(storedRoute, { reconcileOnFailure: true, boot: true })
++
++  expect(screen.getByTestId('current-route')).toHaveTextContent('api+flow')
++  expect(localStorage.getItem('route')).toBe(JSON.stringify(mainRoute))
++  expect(currentEngine().routeOwner).toBe('api')
++  expect(api.mainRoute()).toEqual(mainRoute)
++  expect(api.attachedView()).toBeNull()
++})
++
+ it('commits and persists only the latest adopted success route', async () => {
+   const api = concurrentRouteHarness()
+   renderApp({ electronAPI: api, initialRoute: flowRoute() })
+   const first = requestInjectedRoute(chatgptRoute())
+   const second = requestInjectedRoute(apiRoute())
+   api.resolveSecond({ ok: true, route: apiRoute(), revision: 3 })
+   api.resolveFirst({ ok: true, route: chatgptRoute(), revision: 2 })
+   await Promise.all([first, second])
+   expect(currentRoute()).toEqual(apiRoute())
+   expect(localStorage.getItem('route')).toBe(JSON.stringify(apiRoute()))
+diff --git a/tests/components/App.sessionTargetGates.test.jsx b/tests/components/App.sessionTargetGates.test.jsx
+index 55f12ccf..09a72c28 100644
+--- a/tests/components/App.sessionTargetGates.test.jsx
++++ b/tests/components/App.sessionTargetGates.test.jsx
+@@ -1,13 +1,11 @@
+ import { it, expect } from 'vitest'
+ import fs from 'node:fs'
+ 
+-it('App passes sessionTarget to every P1 Flow gate and uses canonical route IPC', () => {
++it('App passes sessionTarget to every P1 Flow gate', () => {
+   const source = fs.readFileSync('src/App.jsx', 'utf8')
+   expect(source).toContain("const { mode, sessionTarget = 'flow', clearMode } = useMode()")
+   expect(source).toContain('useAvailableModels(genAPI, mode, sessionTarget)')
+   expect(source).toContain('const flowTargetActive = isFlowTarget({ mode, sessionTarget })')
+   expect((source.match(/runOuterStartAuthPreflight\(\{[\s\S]{0,180}?sessionTarget[\s\S]{0,180}?\}\)/g) || []))
+     .toHaveLength(2)
+-  expect(source).toContain('window.electronAPI.setRoute(next)')
+-  expect(source).not.toContain('window.electronAPI?.setMode?.({ mode })')
+ })
+diff --git a/tests/components/Header/Header.sessionTarget.test.jsx b/tests/components/Header/Header.sessionTarget.test.jsx
+index 5a41088a..dc54f31e 100644
+--- a/tests/components/Header/Header.sessionTarget.test.jsx
++++ b/tests/components/Header/Header.sessionTarget.test.jsx
+@@ -23,30 +23,55 @@ vi.mock('../../../src/components/ModeToggle', () => ({ default: () => null }))
+ vi.mock('../../../src/components/SideDrawer', () => ({ SideDrawer: () => null }))
+ vi.mock('../../../src/components/Modal', () => ({ default: () => null }))
+ vi.mock('../../../src/components/ExportSplitButton', () => ({ default: () => null }))
+ vi.mock('../../../src/components/Toast', () => ({ toast: { info: vi.fn() } }))
+ vi.mock('../../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'flow', sessionTarget: headerState.sessionTarget }) }))
+ 
+ import Header from '../../../src/components/Header.jsx'
+ 
+ beforeEach(() => { headerState.sessionTarget = 'chatgpt' })
+ 
+-it('ChatGPT target shows its label and never calls legacy Flow reattach', () => {
+-  window.electronAPI = { setRoute: vi.fn(), setLayout: vi.fn(), onFlowStatus: vi.fn(() => () => {}) }
++it('ChatGPT login action reattaches its route then uses the target reconnect port', async () => {
++  const events = []
++  window.electronAPI = {
++    setRoute: vi.fn(async (route) => { events.push(`route:${route.mode}+${route.sessionTarget}`); return { ok: true, route } }),
++    reconnectSession: vi.fn(async (target) => { events.push(`reconnect:${target}`); return { target, status: 'login-required', ready: false, revision: 7 } }),
++    setLayout: vi.fn(),
++    onFlowStatus: vi.fn(() => () => {}),
++  }
+   render(<Header authReady={false} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />)
+   // 버튼은 `{authActionIcon} {authActionLabel}`(Header.jsx:350)을 렌더해 접근성 이름이
+   // '👤 ChatGPT 로그인' 이다 — 정확 문자열 매칭은 절대 안 맞는다(기존 테스트도 정규식을 쓴다).
+   fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
+-  expect(window.electronAPI.setRoute).not.toHaveBeenCalled()
++
++  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
++  expect(events).toEqual(['route:flow+chatgpt', 'reconnect:chatgpt'])
+   expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
+ })
+ 
++it('ChatGPT authenticated badge rechecks the target without requesting a Flow token', async () => {
++  const getAccessToken = vi.fn(async () => 'flow-token')
++  window.electronAPI = {
++    setRoute: vi.fn(async (route) => ({ ok: true, route })),
++    reconnectSession: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true, revision: 9 })),
++    onFlowStatus: vi.fn(() => () => {}),
++  }
++  const { container } = render(
++    <Header authReady={true} getAccessToken={getAccessToken} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />,
++  )
++
++  fireEvent.click(container.querySelector('.auth-badge.authenticated'))
++
++  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
++  expect(getAccessToken).not.toHaveBeenCalled()
++})
++
+ it('keeps Flow readiness out of the ChatGPT auth chip on a target round-trip', async () => {
+   window.electronAPI = { onFlowStatus: vi.fn(() => () => {}) }
+   headerState.sessionTarget = 'flow'
+   const authReadyByTarget = { flow: true, chatgpt: false }
+   const { container, rerender } = render(
+     <Header authReadyByTarget={authReadyByTarget} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />,
+   )
+   await waitFor(() => expect(container.querySelector('.auth-badge.authenticated')).toBeTruthy())
+   expect(container.querySelector('.auth-badge.authenticated').getAttribute('data-tooltip'))
+     .toBe('Flow 로그인됨')
+diff --git a/tests/components/ModeTargetLabels.test.jsx b/tests/components/ModeTargetLabels.test.jsx
+index 3f767ddd..62205a9f 100644
+--- a/tests/components/ModeTargetLabels.test.jsx
++++ b/tests/components/ModeTargetLabels.test.jsx
+@@ -1,12 +1,14 @@
+ import { describe, it, expect, vi } from 'vitest'
+ import { render, screen } from '@testing-library/react'
++import { readFile } from 'node:fs/promises'
++import path from 'node:path'
+ import ModeToggle from '../../src/components/ModeToggle.jsx'
+ import SceneTab from '../../src/components/settings/SceneTab.jsx'
+ import DisplayTab from '../../src/components/settings/DisplayTab.jsx'
+ 
+ const t = (key) => ({
+   'modeInfo.flow.name': '로그인 모드',
+   'modeInfo.api.name': 'API 키 모드',
+   'sessionTarget.flow': 'Google Flow',
+   'sessionTarget.chatgpt': 'ChatGPT',
+   'settings.layoutMode': '세션 화면 배치',
+@@ -53,20 +55,37 @@ describe('mode/target labels', () => {
+ 
+   it('keeps image, T2V, and I2V on their Flow labels for the existing Flow route', () => {
+     render(<SceneTab localSettings={settings} setLocalSettings={vi.fn()} t={t} appMode="flow" sessionTarget="flow" imageModels={imageModels} videoModels={videoModels} />)
+ 
+     expect(screen.getByTestId('image-provider-badge')).toHaveTextContent('Google Flow')
+     expect(screen.getByTestId('t2v-provider-badge')).toHaveTextContent('Google Flow')
+     expect(screen.getByTestId('i2v-provider-badge')).toHaveTextContent('Google Flow')
+     expect(document.querySelectorAll('[title="https://one.google.com/about/google-ai-plans/"]')).toHaveLength(3)
+   })
+ 
++  it('does not render empty provider-price spans for the existing Flow route', () => {
++    const unpricedImages = imageModels.map(({ cost: _cost, ...model }) => model)
++    const unpricedVideos = videoModels.map(({ cost: _cost, ...model }) => model)
++    render(<SceneTab localSettings={settings} setLocalSettings={vi.fn()} t={t} appMode="flow" sessionTarget="flow" imageModels={unpricedImages} videoModels={unpricedVideos} />)
++
++    expect(screen.queryByTestId('image-provider-price')).toBeNull()
++    expect(screen.queryByTestId('t2v-provider-price')).toBeNull()
++    expect(screen.queryByTestId('i2v-provider-price')).toBeNull()
++    expect(screen.getByTestId('image-provider-badge')).toHaveTextContent('Google Flow')
++  })
++
++  it('defines presentation for non-empty provider prices alongside the existing badge style', async () => {
++    const css = await readFile(path.join(process.cwd(), 'src', 'App.css'), 'utf8')
++    expect(css).toMatch(/\.model-mode-badge\s*\{/)
++    expect(css).toMatch(/\.model-provider-price\s*\{/)
++  })
++
+   it('keeps all three stages on API labels, prices, and price links for the existing API route', () => {
+     render(<SceneTab localSettings={settings} setLocalSettings={vi.fn()} t={t} appMode="api" sessionTarget="flow" imageModels={imageModels} videoModels={videoModels} />)
+ 
+     expect(screen.getByTestId('image-provider-badge')).toHaveTextContent('API 키 모드')
+     expect(screen.getByTestId('t2v-provider-badge')).toHaveTextContent('API 키 모드')
+     expect(screen.getByTestId('i2v-provider-badge')).toHaveTextContent('API 키 모드')
+     expect(screen.getByTestId('image-provider-price')).toHaveTextContent('$0.04')
+     expect(screen.getByTestId('t2v-provider-price')).toHaveTextContent('$0.10')
+     expect(screen.getByTestId('i2v-provider-price')).toHaveTextContent('$0.40')
+     expect(document.querySelectorAll('[title="https://ai.google.dev/gemini-api/docs/pricing"]')).toHaveLength(3)
+diff --git a/tests/electron/ipc/mode.chatgptDevGate.test.js b/tests/electron/ipc/mode.chatgptDevGate.test.js
+index 84be2df4..dd2889a0 100644
+--- a/tests/electron/ipc/mode.chatgptDevGate.test.js
++++ b/tests/electron/ipc/mode.chatgptDevGate.test.js
+@@ -68,42 +68,55 @@ describe('P2 ChatGPT view load gate', () => {
+   it.each([
+     [makeGate({ chatgptP2Flag: '0' }), false],
+     [makeGate({ isPackaged: true }), false],
+     [makeGate({ isPackaged: true, viteDevServerUrl: 'http://localhost:5173' }), true],
+     [makeGate({ platform: 'linux' }), false],
+     [makeGate(), true],
+   ])('evaluates the exact real development gate %j → %s', (gate, expected) => {
+     expect(isChatgptP2DevGateEnabled(gate)).toBe(expected)
+   })
+ 
+-  it('never loads when any gate leg is absent, with a valid-gate positive control', async () => {
++  it('rejects explicit ChatGPT routes when any gate leg is absent, with a valid-gate positive control', async () => {
+     const invalidGates = [
+       makeGate({ chatgptP2Flag: undefined }),
+       makeGate({ isPackaged: true, viteDevServerUrl: '' }),
+       makeGate({ platform: 'linux' }),
+     ]
+     for (const gate of invalidGates) {
+       const negative = gateHarness(gate)
+-      await negative.controller.setRoute(chatgptRoute())
++      const result = await negative.controller.setRoute(chatgptRoute())
++      expect(result).toMatchObject({ ok: false, error: 'session-target-disabled', route: flowRoute() })
+       expect(negative.loadURL).not.toHaveBeenCalled()
+-      expect(negative.controller.getCurrentRoute()).toEqual(chatgptRoute())
++      expect(negative.target.createView).not.toHaveBeenCalled()
++      expect(negative.controller.getCurrentRoute()).toEqual(flowRoute())
+     }
+ 
+     const positive = gateHarness(makeGate({
+       isPackaged: true,
+       viteDevServerUrl: 'http://localhost:5173',
+     }))
+     await positive.controller.setRoute(chatgptRoute())
+     expect(positive.loadURL).toHaveBeenCalledOnce()
+     expect(positive.loadURL).toHaveBeenCalledWith('https://chatgpt.com/')
+   })
+ 
++  it('normalizes a disabled persisted ChatGPT boot route to Flow without creating a blank view', async () => {
++    const setup = gateHarness(makeGate({ chatgptP2Flag: undefined }))
++
++    const result = await setup.controller.setRoute({ to: chatgptRoute(), boot: true })
++
++    expect(result).toMatchObject({ ok: true, route: flowRoute() })
++    expect(setup.controller.getCurrentRoute()).toEqual(flowRoute())
++    expect(setup.target.createView).not.toHaveBeenCalled()
++    expect(setup.loadURL).not.toHaveBeenCalled()
++  })
++
+   it('does not create or load a view until route:set actually selects ChatGPT', async () => {
+     const setup = gateHarness(makeGate())
+ 
+     expect(setup.target.createView).not.toHaveBeenCalled()
+     expect(setup.loadURL).not.toHaveBeenCalled()
+ 
+     await setup.controller.setRoute(chatgptRoute())
+     expect(setup.target.createView).toHaveBeenCalledOnce()
+     expect(setup.loadURL).toHaveBeenCalledOnce()
+   })
+@@ -114,20 +127,38 @@ describe('P2 ChatGPT view load gate', () => {
+     await setup.controller.setRoute(chatgptRoute())
+     const firstView = setup.controller.getActiveSessionView('chatgpt')
+     await setup.controller.setRoute({ mode: 'api', sessionTarget: 'chatgpt' })
+     await setup.controller.setRoute(chatgptRoute())
+ 
+     expect(setup.controller.getActiveSessionView('chatgpt')).toBe(firstView)
+     expect(setup.target.createView).toHaveBeenCalledOnce()
+     expect(setup.loadURL).toHaveBeenCalledOnce()
+   })
+ 
++  it('retries a preserved ChatGPT view after one transient initial load failure', async () => {
++    const setup = gateHarness(makeGate())
++    setup.loadURL
++      .mockRejectedValueOnce(Object.assign(new Error('temporary network failure'), { code: 'ENETDOWN' }))
++      .mockResolvedValueOnce(undefined)
++    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
++
++    await setup.controller.setRoute(chatgptRoute())
++    await Promise.resolve()
++    await setup.controller.setRoute({ mode: 'api', sessionTarget: 'chatgpt' })
++    await setup.controller.setRoute(chatgptRoute())
++
++    expect(setup.target.createView).toHaveBeenCalledOnce()
++    expect(setup.loadURL).toHaveBeenCalledTimes(2)
++    expect(setup.loadURL).toHaveBeenLastCalledWith('https://chatgpt.com/')
++    warn.mockRestore()
++  })
++
+   it('installs the real two-argument security policy before the first URL load', async () => {
+     const events = []
+     const listeners = new Map()
+     const electronSession = {}
+     const view = {
+       id: 'chatgpt',
+       webContents: {
+         session: electronSession,
+         on: vi.fn((name, listener) => {
+           events.push(`listener:${name}`)
+diff --git a/tests/electron/ipc/trustedClickBoundsRace.test.js b/tests/electron/ipc/trustedClickBoundsRace.test.js
+index 9631ab4e..ed8fab4b 100644
+--- a/tests/electron/ipc/trustedClickBoundsRace.test.js
++++ b/tests/electron/ipc/trustedClickBoundsRace.test.js
+@@ -62,20 +62,21 @@ function makeCtx({ coordsByCall }) {
+ const OUT_THEN_IN = [
+   { x: 400, y: 500, width: 40, height: 40, visible: true },
+   { x: 900, y: 500, width: 40, height: 40, visible: true },
+ ]
+ 
+ describe('trustedClickOnFlowView — bounds ownership', () => {
+   beforeEach(() => {
+     layout.setLayoutMode('split-left')
+     layout.setSplitRatio(0.2)
+     layout.setModalVisible(false)
++    layout.setSessionTargetStripEnabled(false)
+   })
+ 
+   it('does not resurrect the Flow pane over a modal that opened mid-click', async () => {
+     const { ctx, flowView, mainWindow } = makeCtx({ coordsByCall: OUT_THEN_IN })
+     const { trustedClickOnFlowView } = createSharedHelpers(ctx)
+ 
+     const click = trustedClickOnFlowView('document.querySelector("button")', { required: true, step: 'compose-submit' })
+ 
+     // The user opens a modal while the click is in flight. Flow must stay hidden.
+     await new Promise((r) => setTimeout(r, 50))
+@@ -117,11 +118,29 @@ describe('trustedClickOnFlowView — bounds ownership', () => {
+       trustedClickOnFlowView('document.querySelector("button")'),
+       trustedClickOnFlowView('document.querySelector("button")'),
+     ])
+ 
+     expect(a.success).toBe(true)
+     expect(b.success).toBe(true)
+     // Both finished with the pane back at the user's width — neither restored the other's
+     // temporary offscreen bounds.
+     expect(flowView.getBounds().width).toBe(253)   // 1280 * 0.2 - GAP
+   })
++
++  it('keeps the target strip inset after an ordinary bare trusted-click restore', async () => {
++    layout.setLayoutMode('split-right')
++    layout.setSplitRatio(0.27)
++    layout.setSessionTargetStripEnabled(true)
++    const { ctx, flowView, mainWindow } = makeCtx({ coordsByCall: OUT_THEN_IN })
++    const { trustedClickOnFlowView } = createSharedHelpers(ctx)
++
++    // Positive control: the strip-aware layout is visibly inset before automation enlarges it.
++    layout.updateBounds(mainWindow, flowView, { sessionTargetStripEnabled: true })
++    expect(flowView.getBounds()).toMatchObject({ y: 44, height: 978 })
++
++    await trustedClickOnFlowView('document.querySelector("button")')
++
++    // trustedClickOnFlowView restores through a bare updateBounds call. The process-wide flag
++    // must keep that call—and every other legacy relayout caller—strip-aware.
++    expect(flowView.getBounds()).toMatchObject({ y: 44, height: 978 })
++  })
+ })
+diff --git a/tests/electron/spikes/chatgptR1Harness.test.js b/tests/electron/spikes/chatgptR1Harness.test.js
+index 5b6132d0..fa24de31 100644
+--- a/tests/electron/spikes/chatgptR1Harness.test.js
++++ b/tests/electron/spikes/chatgptR1Harness.test.js
+@@ -21,21 +21,21 @@ function makeSetup({
+   platform = 'darwin',
+   isPackaged = false,
+   viteDevServerUrl = '',
+   spikeFlag = '1',
+   composerReady = false,
+ } = {}) {
+   const events = []
+   const listeners = new Map()
+   const electronSession = { id: 'persist:chatgpt' }
+   let authState = { composerReady }
+-  let shortcutCallback = null
++  const shortcutCallbacks = new Map()
+ 
+   const webContents = {
+     session: electronSession,
+     on: vi.fn((name, listener) => listeners.set(name, listener)),
+     loadURL: vi.fn(async () => { events.push('loadURL') }),
+     executeJavaScript: vi.fn(async () => ({ ...authState })),
+     sendInputEvent: vi.fn(),
+     capturePage: vi.fn(async () => ({ toPNG: () => Buffer.from('screenshot') })),
+     focus: vi.fn(),
+   }
+@@ -44,73 +44,85 @@ function makeSetup({
+     constructor({ webPreferences }) {
+       events.push('WebContentsView')
+       this.webPreferences = webPreferences
+       this.webContents = webContents
+       this.setBounds = vi.fn(() => events.push('setBounds'))
+       createdViews.push(this)
+     }
+   }
+ 
+   const mainWindow = {
+-    contentView: { addChildView: vi.fn(() => events.push('addChildView')) },
++    contentView: {
++      addChildView: vi.fn(() => events.push('addChildView')),
++      removeChildView: vi.fn(() => events.push('removeChildView')),
++    },
+     getContentSize: vi.fn(() => [1200, 900]),
+   }
+   const globalShortcut = {
+     register: vi.fn((accelerator, callback) => {
+       events.push('globalShortcut.register')
+-      shortcutCallback = callback
++      shortcutCallbacks.set(accelerator, callback)
+       return true
+     }),
+   }
+   const reservedSessionWebPreferences = vi.fn(() => {
+     events.push('reservedSessionWebPreferences')
+     return { partition: 'persist:chatgpt', sandbox: true }
+   })
+   const installReservedSessionSecurity = vi.fn((view, session) => {
+     events.push('installReservedSessionSecurity')
+     expect(view).toBe(createdViews[0])
+     expect(session).toBe(electronSession)
+   })
+   const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() }
+   const writeEvidence = vi.fn()
+   const wait = vi.fn(async () => {})
++  const restoreProductSessionView = vi.fn(() => events.push('restoreProductSessionView'))
++  const suspendProductSessionView = vi.fn(() => {
++    events.push('suspendProductSessionView')
++    return restoreProductSessionView
++  })
+ 
+   const registration = registerChatgptR1Harness({
+     app: { isPackaged },
+     globalShortcut,
+     WebContentsView: FakeWebContentsView,
+     getMainWindow: () => mainWindow,
+     platform,
+     env: {
+       VITE_DEV_SERVER_URL: viteDevServerUrl,
+       AUTOFLOWCUT_SPIKE: spikeFlag,
+     },
+     reservedSessionWebPreferences,
+     installReservedSessionSecurity,
+     logger,
+     writeEvidence,
+     wait,
++    suspendProductSessionView,
+   })
+ 
+   return {
+     registration,
+     events,
+     listeners,
+     createdViews,
+     globalShortcut,
+     webContents,
+     electronSession,
+     reservedSessionWebPreferences,
+     installReservedSessionSecurity,
+     logger,
+     writeEvidence,
+-    invokeShortcut: async () => shortcutCallback?.(),
++    suspendProductSessionView,
++    restoreProductSessionView,
++    shortcutCallbacks,
++    invokeShortcut: async (accelerator = CHATGPT_R1_SHORTCUT) => shortcutCallbacks.get(accelerator)?.(),
+     setAuthState: (next) => { authState = next },
+   }
+ }
+ 
+ describe('ChatGPT R1 dev harness gate and secure view', () => {
+   it.each([
+     ['non-macOS', { platform: 'win32' }],
+     ['spike flag absent', { spikeFlag: '' }],
+     ['spike flag not exact', { spikeFlag: 'true' }],
+     ['packaged runtime without VITE', { isPackaged: true, viteDevServerUrl: '' }],
+@@ -135,24 +147,26 @@ describe('ChatGPT R1 dev harness gate and secure view', () => {
+     expect(setup.createdViews).toHaveLength(1)
+     expect(setup.webContents.loadURL).toHaveBeenCalledOnce()
+   })
+ 
+   it('calls the P1 preferences factory and real two-argument security installer before any load', async () => {
+     const setup = makeSetup()
+ 
+     await setup.invokeShortcut()
+ 
+     expect(setup.events).toEqual([
+-      'globalShortcut.register',
++      'globalShortcut.register', 'globalShortcut.register', 'globalShortcut.register',
++      'globalShortcut.register', 'globalShortcut.register',
+       'reservedSessionWebPreferences',
+       'WebContentsView',
+       'installReservedSessionSecurity',
++      'suspendProductSessionView',
+       'addChildView',
+       'setBounds',
+       'loadURL',
+     ])
+     expect(setup.reservedSessionWebPreferences).toHaveBeenCalledOnce()
+     expect(setup.installReservedSessionSecurity).toHaveBeenCalledWith(
+       setup.createdViews[0],
+       setup.electronSession,
+     )
+   })
+@@ -229,20 +243,63 @@ describe('ChatGPT R1 dev harness gate and secure view', () => {
+     expect(isChatgptR1HarnessEnabled({
+       platform: 'darwin', isPackaged: false, viteDevServerUrl: '', spikeFlag: '01',
+     })).toBe(false)
+   })
+ 
+   it('wires only a dynamically imported spike into main behind the same exact gate', async () => {
+     const main = await readFile(path.join(process.cwd(), 'electron', 'main.js'), 'utf8')
+     expect(main).toContain("const isDevRuntime = Boolean(process.env.VITE_DEV_SERVER_URL) || !app.isPackaged")
+     expect(main).toContain("process.platform === 'darwin' && isDevRuntime && process.env.AUTOFLOWCUT_SPIKE === '1'")
+     expect(main).toContain("import('./spikes/chatgptR1Upload.js')")
++    expect(main).toContain('chatgptR1HarnessControls = registerChatgptR1Harness({')
++    expect(main).toContain('suspendProductSessionView: () =>')
++  })
++
++  it('registers a real operator control loop that captures and advances non-default matrix repetitions', async () => {
++    const setup = makeSetup({ composerReady: true })
++    expect([...setup.shortcutCallbacks.keys()]).toEqual([
++      'CommandOrControl+Shift+R',
++      'CommandOrControl+Shift+S',
++      'CommandOrControl+Shift+B',
++      'CommandOrControl+Shift+Right',
++      'CommandOrControl+Shift+X',
++    ])
++    await setup.invokeShortcut()
++
++    await setup.invokeShortcut('CommandOrControl+Shift+Right')
++    await setup.invokeShortcut('CommandOrControl+Shift+Right')
++    await setup.invokeShortcut('CommandOrControl+Shift+S')
++
++    expect(setup.writeEvidence).toHaveBeenCalledWith(expect.objectContaining({
++      caseId: 'AUTH-FRESH',
++      repetition: 3,
++      events: [expect.objectContaining({ event: 'OPERATOR_CAPTURE' })],
++    }))
++    await setup.invokeShortcut('CommandOrControl+Shift+B')
++    expect(setup.webContents.loadURL).toHaveBeenCalledTimes(4)
++    expect(setup.registration.getMeasurementCursor()).toEqual({
++      caseId: 'ATTACH-FILE-INPUT-SINGLE', repetition: 1,
++    })
++  })
++
++  it('closes the full-window spike, restores the product session view, and can reopen the same secure view', async () => {
++    const setup = makeSetup({ composerReady: true })
++    await setup.invokeShortcut()
++
++    await setup.invokeShortcut('CommandOrControl+Shift+X')
++    expect(setup.events).toContain('removeChildView')
++    expect(setup.restoreProductSessionView).toHaveBeenCalledOnce()
++
++    await setup.invokeShortcut()
++    expect(setup.createdViews).toHaveLength(1)
++    expect(setup.installReservedSessionSecurity).toHaveBeenCalledOnce()
++    expect(setup.events.filter((event) => event === 'addChildView')).toHaveLength(2)
+   })
+ 
+   it('resets each repetition to a blank conversation without replacing or weakening the secure view', async () => {
+     const setup = makeSetup({ composerReady: true })
+     await setup.invokeShortcut()
+ 
+     const result = await setup.registration.resetConversation()
+ 
+     expect(result).toEqual({ status: 'ready' })
+     expect(setup.createdViews).toHaveLength(1)
+diff --git a/tests/electron/webtargets/chatgptSession.test.js b/tests/electron/webtargets/chatgptSession.test.js
+index 95cab18c..388be80f 100644
+--- a/tests/electron/webtargets/chatgptSession.test.js
++++ b/tests/electron/webtargets/chatgptSession.test.js
+@@ -41,20 +41,26 @@ const createViewDeps = (listeners = new Map()) => {
+     },
+   }
+   return {
+     view,
+     WebContentsView: class { constructor() { return view } },
+     reservedSessionWebPreferences: () => ({ partition: 'persist:chatgpt' }),
+     installReservedSessionSecurity: vi.fn(),
+   }
+ }
+ 
++const deferred = () => {
++  let resolve
++  const promise = new Promise((done) => { resolve = done })
++  return { promise, resolve }
++}
++
+ describe('ChatGPT fail-closed session port', () => {
+   it('leaves the unmeasured DOM predicate as a blocked injection point', async () => {
+     const deps = createViewDeps()
+     const target = createChatgptTarget(deps)
+     target.createView()
+ 
+     await expect(target.ensureSession()).resolves.toEqual({
+       target: 'chatgpt', status: 'session-blocked', ready: false, revision: 0,
+     })
+     expect(deps.view.webContents).not.toHaveProperty('executeJavaScript')
+@@ -90,20 +96,52 @@ describe('ChatGPT fail-closed session port', () => {
+     })
+     target.createView()
+ 
+     await listeners.get('did-finish-load')()
+ 
+     expect(probeSession).toHaveBeenCalledOnce()
+     expect(target.getSessionStatus()).toEqual({
+       target: 'chatgpt', status: 'ready', ready: true, revision: 1,
+     })
+   })
++
++  it.each([
++    ['ready', 'login-required'],
++    ['session-blocked', 'ready'],
++  ])('publishes only the newest overlapping probe: stale %s, newest %s', async (staleStatus, newestStatus) => {
++    const first = deferred()
++    const second = deferred()
++    const target = createChatgptTarget({
++      ...createViewDeps(),
++      probeSession: vi.fn()
++        .mockImplementationOnce(() => first.promise)
++        .mockImplementationOnce(() => second.promise),
++    })
++    const changed = vi.fn()
++    target.onSessionStatusChanged(changed)
++
++    const staleProbe = target.ensureSession()
++    const newestProbe = target.ensureSession()
++    second.resolve(newestStatus)
++    await newestProbe
++    first.resolve(staleStatus)
++    await staleProbe
++
++    expect(target.getSessionStatus()).toEqual({
++      target: 'chatgpt',
++      status: newestStatus,
++      ready: newestStatus === 'ready',
++      revision: 1,
++    })
++    expect(changed).toHaveBeenCalledTimes(1)
++    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ status: newestStatus }))
++  })
+ })
+ 
+ describe('session target initial query and status event', () => {
+   function setupController() {
+     const probeResults = ['ready', 'not-an-approved-state']
+     const probeSession = vi.fn(async () => probeResults.shift())
+     const target = createChatgptTarget({
+       ...createViewDeps(),
+       probeSession,
+     })
+diff --git a/tests/hooks/useAutomation.routeQuiesce.test.jsx b/tests/hooks/useAutomation.routeQuiesce.test.jsx
+index 2e151f72..c5ce0913 100644
+--- a/tests/hooks/useAutomation.routeQuiesce.test.jsx
++++ b/tests/hooks/useAutomation.routeQuiesce.test.jsx
+@@ -34,21 +34,21 @@ vi.mock('../../src/firebase/functions', () => ({
+ 
+ const deferred = () => {
+   let resolve
+   const promise = new Promise((done) => { resolve = done })
+   return { promise, resolve }
+ }
+ 
+ const flowRoute = () => ({ mode: 'flow', sessionTarget: 'flow' })
+ const chatgptRoute = () => ({ mode: 'flow', sessionTarget: 'chatgpt' })
+ 
+-const renderRunningFlowAutomation = ({ flowEffectGate }) => {
++const renderRunningFlowAutomation = ({ flowEffectGate, startMethod = 'start' }) => {
+   const events = []
+   const started = deferred()
+   const stopRequested = deferred()
+   let requestFromMain
+   const sendReceipt = vi.fn(() => events.push('route-quiesce-receipt'))
+   const electronAPI = {
+     onRouteQuiesceRequest: vi.fn((callback) => {
+       requestFromMain = callback
+       return vi.fn()
+     }),
+@@ -61,21 +61,21 @@ const renderRunningFlowAutomation = ({ flowEffectGate }) => {
+       await flowEffectGate.promise
+       return { success: false, error: 'cancelled' }
+     }),
+     checkGeneration: vi.fn(),
+     collectGeneration: vi.fn(),
+     clearGenerations: vi.fn().mockResolvedValue(undefined),
+     uploadReference: vi.fn(),
+     getAccessToken: vi.fn().mockResolvedValue('token'),
+   }
+   const scenesHook = {
+-    scenes: [{ id: 'scene-1', prompt: 'portrait', status: 'pending' }],
++    scenes: [{ id: 'scene-1', prompt: 'portrait', status: startMethod === 'retryErrors' ? 'error' : 'pending' }],
+     references: [],
+     updateScene: vi.fn(),
+     getMatchingReferences: vi.fn(() => []),
+     updateReferences: vi.fn(),
+   }
+   const hook = renderHook(() => {
+     const automation = useAutomation(
+       genAPI, scenesHook, null, null, null, (key) => key,
+       null, null, null, 'flow', true,
+     )
+@@ -88,29 +88,36 @@ const renderRunningFlowAutomation = ({ flowEffectGate }) => {
+       },
+       awaitIdle: async () => {
+         await automation.awaitIdle()
+         events.push('flow:idle')
+       },
+     }
+     useRouteQuiesceBridge(ownerRef, electronAPI)
+     return automation
+   })
+ 
++  let initialPromise
+   act(() => {
+-    void hook.result.current.start({
++    const options = {
+       projectName: 'route-quiesce', saveMode: 'memory',
+       flowPacingMinMs: 0, flowPacingMaxMs: 0,
+-    })
++    }
++    initialPromise = startMethod === 'retry'
++      ? hook.result.current.retryScene('scene-1', options)
++      : startMethod === 'retryErrors'
++        ? hook.result.current.retryErrors(options)
++        : hook.result.current.start(options)
+   })
+ 
+   const automation = {
+     waitUntilStopRequested: () => stopRequested.promise,
++    initialPromise: () => initialPromise,
+   }
+   const routeBridge = {
+     sendReceipt,
+     requestFromMain: async (request) => {
+       await started.promise
+       events.push('route-quiesce')
+       await act(async () => requestFromMain(request))
+     },
+   }
+   return { automation, routeBridge, events }
+@@ -120,10 +127,28 @@ it('does not acknowledge route quiesce until real renderer-owned Flow automation
+   const flowEffectGate = deferred()
+   const { automation, routeBridge, events } = renderRunningFlowAutomation({ flowEffectGate })
+   const pending = routeBridge.requestFromMain({ requestId: 'route-1', from: flowRoute(), to: chatgptRoute() })
+   await automation.waitUntilStopRequested()
+   expect(events).toEqual(['flow:start', 'route-quiesce', 'flow:stop-requested'])
+   expect(routeBridge.sendReceipt).not.toHaveBeenCalled()
+   flowEffectGate.resolve()
+   await pending
+   expect(events).toEqual(['flow:start', 'route-quiesce', 'flow:stop-requested', 'flow:idle', 'route-quiesce-receipt'])
+ })
++
++it.each([
++  ['retryScene', 'retry'],
++  ['retryErrors', 'retryErrors'],
++])('tracks %s in awaitIdle so a retry cannot outlive the renderer quiesce receipt', async (_label, startMethod) => {
++  const flowEffectGate = deferred()
++  const { automation, routeBridge, events } = renderRunningFlowAutomation({ flowEffectGate, startMethod })
++  const pending = routeBridge.requestFromMain({ requestId: 'route-retry', from: flowRoute(), to: chatgptRoute() })
++
++  await automation.waitUntilStopRequested()
++  await act(async () => { await Promise.resolve(); await Promise.resolve() })
++  expect(events).toEqual(['flow:start', 'route-quiesce', 'flow:stop-requested'])
++  expect(routeBridge.sendReceipt).not.toHaveBeenCalled()
++
++  flowEffectGate.resolve()
++  await Promise.all([automation.initialPromise(), pending])
++  expect(events).toEqual(['flow:start', 'route-quiesce', 'flow:stop-requested', 'flow:idle', 'route-quiesce-receipt'])
++})

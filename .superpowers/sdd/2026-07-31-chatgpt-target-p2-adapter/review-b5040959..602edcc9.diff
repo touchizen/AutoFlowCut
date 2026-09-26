@@ -1,0 +1,1391 @@
+# Review package: b5040959..HEAD
+
+## Commits
+602edcc9 fix(route,spike): converge on main's route and re-check target after awaits
+
+## Files changed
+ electron/spikes/chatgptR1Upload.js                 | 324 ++++++++++++++++++++-
+ src/App.jsx                                        |   9 +-
+ src/components/Header.jsx                          |  35 ++-
+ tests/components/App.routeTransaction.test.jsx     |  28 ++
+ .../Header/Header.sessionTarget.test.jsx           |  90 +++++-
+ tests/electron/spikes/chatgptR1Harness.test.js     | 205 ++++++++++++-
+ 6 files changed, 669 insertions(+), 22 deletions(-)
+
+## Diff
+diff --git a/electron/spikes/chatgptR1Upload.js b/electron/spikes/chatgptR1Upload.js
+index 46a0540a..88a984cf 100644
+--- a/electron/spikes/chatgptR1Upload.js
++++ b/electron/spikes/chatgptR1Upload.js
+@@ -1,20 +1,42 @@
+ import fs from 'node:fs/promises'
+ import path from 'node:path'
++import { pathToFileURL } from 'node:url'
++import {
++  buildImageSizeLadder,
++  padPngToExactSize,
++} from './lib/imageSizeLadder.js'
+ 
+ export const CHATGPT_R1_SHORTCUT = 'CommandOrControl+Shift+R'
+ export const CHATGPT_R1_CAPTURE_SHORTCUT = 'CommandOrControl+Shift+S'
+ export const CHATGPT_R1_RESET_SHORTCUT = 'CommandOrControl+Shift+B'
+ export const CHATGPT_R1_NEXT_SHORTCUT = 'CommandOrControl+Shift+Right'
+ export const CHATGPT_R1_CLOSE_SHORTCUT = 'CommandOrControl+Shift+X'
+ export const CHATGPT_R1_URL = 'https://chatgpt.com/'
+ export const BLOCKED_LOGIN_SIGNAL = 'BLOCKED: human ChatGPT login required'
++export const R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL = 'BLOCKED: runtime-observed R1 measurement adapter required'
++
++const R1_FIXTURE_DIR = path.join(process.cwd(), 'tests', 'fixtures', 'chatgpt-r1')
++const R1_RESULT_PATH = path.join(
++  process.cwd(),
++  'docs',
++  'superpowers',
++  'spikes',
++  '2026-07-31-chatgpt-r1-reference-upload.md',
++)
++const REQUIRED_MEASUREMENT_RUNTIME_METHODS = Object.freeze([
++  'getSafetyCeilingBytes',
++  'observeSurface',
++  'executeCase',
++  'reviewCase',
++  'finalize',
++])
+ 
+ export const R1_CASE_MATRIX = Object.freeze([
+   Object.freeze({ id: 'AUTH-FRESH', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'ATTACH-FILE-INPUT-SINGLE', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'ATTACH-CLIPBOARD-SINGLE', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'ATTACH-OBSERVED-DROP-SINGLE', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'ATTACH-MULTI-COUNT', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'MIME-PNG', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'MIME-JPEG', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'MIME-INVALID', repetitions: 3, operatorReview: true }),
+@@ -23,20 +45,21 @@ export const R1_CASE_MATRIX = Object.freeze([
+   Object.freeze({ id: 'REMOVE-AFTER-ATTACH', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'SIZE-LADDER', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'SIZE-BOUNDARY-LOW', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'SIZE-BOUNDARY-HIGH', repetitions: 3, operatorReview: true }),
+   Object.freeze({ id: 'AUTH-RELOAD-RESTART', repetitions: 3, operatorReview: true }),
+ ])
+ 
+ export const R1_PRE_EXECUTION_CHECKLIST = `
+ [ChatGPTR1] R1 PRE-EXECUTION CHECKLIST
+ - Confirm the authenticated composer exposes both previously confirmed scalar surfaces.
++- Set AUTOFLOWCUT_R1_RUNTIME_MODULE to a local adapter that supplies runtime-observed mechanism, surface, and outcomes; without it measurement fails closed.
+ - Record an operator-approved image-byte safety ceiling before building the 256 KiB doubling ladder.
+ - Use a new blank conversation for every repetition; stable claims require at least 3 repetitions.
+ - Observe a surface before attempting file-input, clipboard, or drop attachment; do not invent selectors.
+ - Capture sanitized DOM, capturePage screenshot, and timestamped event trace for every case.
+ - Do not count an attachment chip as support; a human must verify the submitted assistant turn used the reference.
+ - Record only origins for redirects/blocked navigation. Never record cookies, tokens, signed URLs, or page text.
+ - Keep largestVerifiedBytes separate from firstRejectedBytes; unstable/missing boundaries cannot claim a vendor maximum.
+ `.trim()
+ 
+ const AUTH_PROBE = `(() => ({
+@@ -100,60 +123,297 @@ export function isChatgptR1HarnessEnabled({
+   spikeFlag,
+ }) {
+   const isDevRuntime = Boolean(viteDevServerUrl) || !isPackaged
+   return platform === 'darwin' && isDevRuntime && spikeFlag === '1'
+ }
+ 
+ function timestampSlug(date = new Date()) {
+   return date.toISOString().replace(/[:.]/g, '-')
+ }
+ 
++export async function loadR1MeasurementRuntime(
++  { modulePath } = {},
++  { cwd = process.cwd(), importModule = (specifier) => import(specifier) } = {},
++) {
++  const configuredPath = typeof modulePath === 'string' ? modulePath.trim() : ''
++  if (!configuredPath) return null
++  if (/^[a-z][a-z\d+.-]*:\/\//i.test(configuredPath)) {
++    throw new TypeError('AUTOFLOWCUT_R1_RUNTIME_MODULE must be a local filesystem path')
++  }
++  const absolutePath = path.isAbsolute(configuredPath)
++    ? configuredPath
++    : path.resolve(cwd, configuredPath)
++  const runtimeModule = await importModule(pathToFileURL(absolutePath).href)
++  return runtimeModule?.default ?? runtimeModule?.measurementRuntime ?? null
++}
++
+ async function writeEvidenceFiles({
+   caseId,
+   repetition,
++  phase = 'capture',
+   snapshot,
+   screenshot,
+   events,
+   evidenceRoot = path.join(process.cwd(), 'docs', 'superpowers', 'spikes', 'evidence', 'chatgpt-r1'),
+ }) {
+-  const baseName = `${caseId}-r${repetition}-${timestampSlug()}`
++  const baseName = `${caseId}-r${repetition}-${phase}-${timestampSlug()}`
+   await fs.mkdir(evidenceRoot, { recursive: true })
+   const domPath = path.join(evidenceRoot, `${baseName}-dom.json`)
+   const screenshotPath = path.join(evidenceRoot, `${baseName}.png`)
+   const tracePath = path.join(evidenceRoot, `${baseName}-events.json`)
+   await Promise.all([
+     fs.writeFile(domPath, JSON.stringify(snapshot, null, 2)),
+     fs.writeFile(screenshotPath, screenshot),
+     fs.writeFile(tracePath, JSON.stringify(events, null, 2)),
+   ])
+   return { domPath, screenshotPath, tracePath }
+ }
+ 
++function reportValue(value) {
++  if (Array.isArray(value)) return value.length > 0 ? value.join(', ') : 'none observed'
++  if (value && typeof value === 'object') return JSON.stringify(value)
++  if (value === null || value === undefined || value === '') return 'not observed'
++  return String(value)
++}
++
++function sanitizeRedirectOrigins(origins) {
++  if (!Array.isArray(origins)) return []
++  return origins.flatMap((candidate) => {
++    try { return [new URL(candidate).origin] } catch { return [] }
++  })
++}
++
++export async function writeR1ResultFile(
++  { result, journal },
++  { resultPath = R1_RESULT_PATH, fileSystem = fs } = {},
++) {
++  const redirectOrigins = sanitizeRedirectOrigins(result?.observedRedirectOrigins)
++  const evidencePaths = (Array.isArray(journal) ? journal : []).flatMap((entry) => [
++    ...Object.values(entry?.evidence?.pre || {}),
++    ...Object.values(entry?.evidence?.post || {}),
++  ]).filter((entry) => typeof entry === 'string')
++  const report = [
++    '# ChatGPT R1 reference upload measurement',
++    '',
++    `Outcome: ${reportValue(result?.outcome)}`,
++    `Supported: ${reportValue(result?.supported)}`,
++    `Mechanism: ${reportValue(result?.mechanism)}`,
++    `Observed DOM surface: ${reportValue(result?.observedDomSurface)}`,
++    `Accepted MIME: ${reportValue(result?.acceptedMimeTypes)}`,
++    `Largest verified bytes: ${reportValue(result?.largestVerifiedBytes)}`,
++    `First rejected bytes: ${reportValue(result?.firstRejectedBytes)}`,
++    `Supported max bytes: ${reportValue(result?.supportedMaxBytes)}`,
++    `Boundary reproducible: ${reportValue(result?.boundaryReproducible)}`,
++    `Measured max count: ${reportValue(result?.maxCount)}`,
++    `Minimum repetitions: ${reportValue(result?.minRepetitions)}`,
++    `Upload-ready predicate: ${reportValue(result?.uploadReadySignal)}`,
++    `Login signal surface: ${reportValue(result?.loginSignalSurface)}`,
++    `Session state signals: ${reportValue(result?.sessionStateSignals)}`,
++    `Observed redirect origins: ${reportValue(redirectOrigins)}`,
++    `Failure modes: ${reportValue(result?.failureModes)}`,
++    `Evidence: ${reportValue(evidencePaths)}`,
++    '',
++  ].join('\n')
++  await fileSystem.mkdir(path.dirname(resultPath), { recursive: true })
++  await fileSystem.writeFile(resultPath, report, 'utf8')
++  return resultPath
++}
++
++async function loadR1Fixtures() {
++  const [pngBytes, jpegBytes] = await Promise.all([
++    fs.readFile(path.join(R1_FIXTURE_DIR, 'reference-a.png')),
++    fs.readFile(path.join(R1_FIXTURE_DIR, 'reference-b.jpg')),
++  ])
++  return Object.freeze({
++    png: Object.freeze({ name: 'reference-a.png', mime: 'image/png', bytes: pngBytes }),
++    jpeg: Object.freeze({ name: 'reference-b.jpg', mime: 'image/jpeg', bytes: jpegBytes }),
++    invalid: Object.freeze({
++      name: 'reference-invalid.txt',
++      mime: 'text/plain',
++      bytes: Buffer.from('AutoFlowCut R1 invalid image fixture', 'utf8'),
++    }),
++  })
++}
++
++function assertRuntimeResult(result, journalLength) {
++  const requiredFields = [
++    'supported', 'mechanism', 'observedDomSurface', 'acceptedMimeTypes',
++    'largestVerifiedBytes', 'firstRejectedBytes', 'supportedMaxBytes',
++    'boundaryReproducible', 'maxCount', 'uploadReadySignal',
++    'loginSignalSurface', 'sessionStateSignals', 'observedRedirectOrigins',
++    'minRepetitions', 'failureModes',
++  ]
++  if (!result || !/^R1-[A-E]$/.test(result.outcome || '')) {
++    throw new TypeError('runtime finalize must return an R1-A through R1-E outcome')
++  }
++  const missing = requiredFields.filter((field) => !Object.hasOwn(result, field))
++  if (missing.length > 0) throw new TypeError(`runtime finalize missing fields: ${missing.join(', ')}`)
++  if (!Number.isInteger(result.minRepetitions) || result.minRepetitions < 3) {
++    throw new TypeError('runtime finalize minRepetitions must be at least 3')
++  }
++  if (journalLength === 0) throw new TypeError('runtime finalize requires measured cases')
++}
++
++export async function runR1CaseMatrix({
++  measurementRuntime,
++  webContents,
++  resetConversation,
++  captureEvidence,
++  writeResult = writeR1ResultFile,
++  loadFixtures = loadR1Fixtures,
++  caseMatrix = R1_CASE_MATRIX,
++  logger = console,
++}) {
++  const missing = REQUIRED_MEASUREMENT_RUNTIME_METHODS.filter(
++    (method) => typeof measurementRuntime?.[method] !== 'function',
++  )
++  if (missing.length > 0) {
++    logger.warn(R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL)
++    return { status: 'blocked', signal: R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL, missing }
++  }
++
++  const fixtures = await loadFixtures()
++  const safetyCeilingBytes = await measurementRuntime.getSafetyCeilingBytes({ webContents })
++  const sizeLadder = buildImageSizeLadder({ safetyCeilingBytes }).map((targetBytes) => Object.freeze({
++    name: `reference-a-${targetBytes}.png`,
++    mime: 'image/png',
++    bytes: padPngToExactSize(fixtures.png.bytes, targetBytes),
++  }))
++  const surface = await measurementRuntime.observeSurface({ webContents })
++  if (!surface || typeof surface !== 'object') {
++    throw new TypeError('runtime observeSurface must return observed DOM facts')
++  }
++
++  const page = Object.freeze({
++    executeJavaScript: (...args) => webContents.executeJavaScript(...args),
++    sendInputEvent: (...args) => webContents.sendInputEvent(...args),
++    capturePage: (...args) => webContents.capturePage(...args),
++  })
++  const journal = []
++  for (const definition of caseMatrix) {
++    for (let repetition = 1; repetition <= definition.repetitions; repetition += 1) {
++      const reset = await resetConversation()
++      if (reset?.status !== 'ready') return reset
++      const pre = await captureEvidence({
++        caseId: definition.id,
++        repetition,
++        phase: 'pre',
++        events: [{ at: new Date().toISOString(), event: 'CASE_STARTED' }],
++      })
++      const attempt = await measurementRuntime.executeCase({
++        caseId: definition.id,
++        repetition,
++        definition,
++        surface,
++        fixtures,
++        sizeLadder,
++        priorResults: journal.slice(),
++        page,
++      })
++      if (!attempt || typeof attempt.outcome !== 'string' || !Array.isArray(attempt.events)) {
++        throw new TypeError('runtime executeCase must return an outcome and event trace')
++      }
++      const review = await measurementRuntime.reviewCase({
++        caseId: definition.id,
++        repetition,
++        definition,
++        surface,
++        attempt,
++        page,
++      })
++      if (!review || typeof review.verdict !== 'string') {
++        throw new TypeError('runtime reviewCase must return an operator verdict')
++      }
++      const post = await captureEvidence({
++        caseId: definition.id,
++        repetition,
++        phase: 'post',
++        events: attempt.events,
++      })
++      journal.push(Object.freeze({
++        caseId: definition.id,
++        repetition,
++        outcome: attempt.outcome,
++        review,
++        evidence: { pre: pre?.evidencePaths || pre, post: post?.evidencePaths || post },
++      }))
++    }
++  }
++
++  const result = await measurementRuntime.finalize({
++    surface,
++    fixtures,
++    sizeLadder,
++    journal: journal.slice(),
++  })
++  assertRuntimeResult(result, journal.length)
++  const resultPath = await writeResult({ result, journal })
++  return { status: 'completed', result, resultPath, journal }
++}
++
+ function createHarness({
+   WebContentsView,
+   getMainWindow,
+   reservedSessionWebPreferences,
+   installReservedSessionSecurity,
+   logger,
+   writeEvidence,
++  writeResult,
+   wait,
+   suspendProductSessionView,
++  measurementRuntime,
++  loadMeasurementRuntime,
+ }) {
+   let view = null
+   let status = 'idle'
+   let blockedReported = false
+   let readyReported = false
+   let authenticationProbe = null
+   let attached = false
+   let restoreProductSessionView = null
++  let measurementPromise = null
++  let measurementState = { status: 'idle' }
+ 
+   const getState = () => ({ status })
++  const getMeasurementState = () => ({ ...measurementState })
++
++  function startMeasurement() {
++    if (measurementPromise) return measurementPromise
++    if (status !== 'ready' || !view) {
++      return Promise.resolve({ status: 'blocked', signal: BLOCKED_LOGIN_SIGNAL })
++    }
++    measurementState = { status: 'running' }
++    measurementPromise = Promise.resolve()
++      .then(() => measurementRuntime || loadMeasurementRuntime?.())
++      .then((resolvedRuntime) => runR1CaseMatrix({
++        measurementRuntime: resolvedRuntime,
++        webContents: view.webContents,
++        resetConversation,
++        captureEvidence,
++        writeResult,
++        logger,
++      }))
++      .then((result) => {
++        measurementState = result
++        return result
++      }).catch((error) => {
++        const result = {
++          status: 'blocked',
++          signal: 'BLOCKED: R1 measurement execution failed',
++          error: safeErrorIdentity(error),
++        }
++        measurementState = result
++        logger.error('[ChatGPTR1] measurement execution failed', safeErrorIdentity(error))
++        return result
++      })
++    return measurementPromise
++  }
+ 
+   async function runAuthenticationProbe() {
+     if (!view) return { status: 'idle' }
+     for (let attempt = 0; attempt < 20; attempt += 1) {
+       let probe
+       try {
+         probe = await view.webContents.executeJavaScript(AUTH_PROBE)
+       } catch (error) {
+         status = 'blocked'
+         if (!blockedReported) {
+@@ -202,61 +462,71 @@ function createHarness({
+       restoreProductSessionView?.()
+       restoreProductSessionView = null
+       throw error
+     }
+   }
+ 
+   async function open() {
+     if (view) {
+       attachViewToWindow(view)
+       view.webContents.focus()
+-      return probeAuthentication()
++      const result = await probeAuthentication()
++      if (result?.status === 'ready') void startMeasurement()
++      return result
+     }
+ 
+     // Hard order: factory → view → real two-argument security install → attach → load.
+     const webPreferences = reservedSessionWebPreferences()
+     const nextView = new WebContentsView({ webPreferences })
+     installReservedSessionSecurity(nextView, nextView.webContents.session)
+     view = nextView
+-    view.webContents.on('did-finish-load', () => probeAuthentication().catch((error) => {
+-      logger.error('[ChatGPTR1] AUTH_PROBE failed', safeErrorIdentity(error))
+-    }))
++    view.webContents.on('did-finish-load', () => probeAuthentication()
++      .then((result) => {
++        if (result?.status === 'ready') return startMeasurement()
++        return result
++      })
++      .catch((error) => {
++        logger.error('[ChatGPTR1] AUTH_PROBE failed', safeErrorIdentity(error))
++      }))
+     attachViewToWindow(view)
+ 
+     try {
+       await view.webContents.loadURL(CHATGPT_R1_URL)
+     } catch (error) {
+       status = 'blocked'
+       logger.error('[ChatGPTR1] ChatGPT load failed', safeErrorIdentity(error))
+       if (!blockedReported) logger.warn(BLOCKED_LOGIN_SIGNAL)
+       blockedReported = true
+       return { status: 'blocked', signal: BLOCKED_LOGIN_SIGNAL }
+     }
+     view.webContents.focus()
+-    return probeAuthentication()
++    const result = await probeAuthentication()
++    if (result?.status === 'ready') void startMeasurement()
++    return result
+   }
+ 
+-  async function captureEvidence({ caseId, repetition, events = [] }) {
++  async function captureEvidence({ caseId, repetition, phase = 'capture', events = [] }) {
+     if (status !== 'ready' || !view) {
+       logger.warn(BLOCKED_LOGIN_SIGNAL)
+       return { status: 'blocked', signal: BLOCKED_LOGIN_SIGNAL }
+     }
+     if (!R1_CASE_MATRIX.some((entry) => entry.id === caseId)) throw new TypeError('unknown R1 caseId')
+     if (!Number.isInteger(repetition) || repetition < 1) throw new TypeError('repetition must be a positive integer')
+ 
+     const [snapshot, nativeImage] = await Promise.all([
+       view.webContents.executeJavaScript(SANITIZED_COMPOSER_SNAPSHOT),
+       view.webContents.capturePage(),
+     ])
+     const evidencePaths = await writeEvidence({
+       caseId,
+       repetition,
++      phase,
+       snapshot,
+       screenshot: nativeImage.toPNG(),
+       events: events.map(sanitizeEvidenceEvent),
+     })
+     return { status: 'captured', evidencePaths }
+   }
+ 
+   async function resetConversation() {
+     if (status !== 'ready' || !view) {
+       logger.warn(BLOCKED_LOGIN_SIGNAL)
+@@ -278,57 +548,76 @@ function createHarness({
+     const mainWindow = getMainWindow()
+     try { mainWindow?.contentView?.removeChildView?.(view) } catch { /* spike close still restores product view */ }
+     attached = false
+     const restore = restoreProductSessionView
+     restoreProductSessionView = null
+     restore?.()
+     status = 'idle'
+     return { status: 'idle' }
+   }
+ 
+-  return { open, close, probeAuthentication, captureEvidence, resetConversation, getState, getView: () => view }
++  return {
++    open,
++    close,
++    probeAuthentication,
++    captureEvidence,
++    resetConversation,
++    startMeasurement,
++    awaitMeasurement: startMeasurement,
++    getMeasurementState,
++    getState,
++    getView: () => view,
++  }
+ }
+ 
+ /**
+  * Registers the R1 harness only behind the exact macOS development spike gate.
+  * No view is created and no URL is loaded until the operator presses the shortcut.
+  */
+ export function registerChatgptR1Harness({
+   app,
+   globalShortcut,
+   WebContentsView,
+   getMainWindow,
+   platform = process.platform,
+   env = process.env,
+   reservedSessionWebPreferences,
+   installReservedSessionSecurity,
+   logger = console,
+   writeEvidence = writeEvidenceFiles,
++  writeResult = writeR1ResultFile,
+   wait = waitFor,
+   suspendProductSessionView = () => null,
++  measurementRuntime = null,
++  loadMeasurementRuntime = () => loadR1MeasurementRuntime({
++    modulePath: env.AUTOFLOWCUT_R1_RUNTIME_MODULE,
++  }),
+ }) {
+   if (!isChatgptR1HarnessEnabled({
+     platform,
+     isPackaged: app.isPackaged,
+     viteDevServerUrl: env.VITE_DEV_SERVER_URL,
+     spikeFlag: env.AUTOFLOWCUT_SPIKE,
+   })) return { registered: false }
+ 
+   const harness = createHarness({
+     WebContentsView,
+     getMainWindow,
+     reservedSessionWebPreferences,
+     installReservedSessionSecurity,
+     logger,
+     writeEvidence,
++    writeResult,
+     wait,
+     suspendProductSessionView,
++    measurementRuntime,
++    loadMeasurementRuntime,
+   })
+   let caseIndex = 0
+   let repetition = 1
+   const getMeasurementCursor = () => ({
+     caseId: R1_CASE_MATRIX[caseIndex].id,
+     repetition,
+   })
+   const announceCursor = () => {
+     const cursor = getMeasurementCursor()
+     logger.log(`[ChatGPTR1] selected ${cursor.caseId} repetition ${cursor.repetition}`)
+@@ -354,32 +643,47 @@ export function registerChatgptR1Harness({
+     if (result?.status === 'ready') advanceMeasurement()
+     return result
+   }
+   const controls = [
+     [CHATGPT_R1_SHORTCUT, () => harness.open()],
+     [CHATGPT_R1_CAPTURE_SHORTCUT, captureCurrentEvidence],
+     [CHATGPT_R1_RESET_SHORTCUT, resetAndAdvance],
+     [CHATGPT_R1_NEXT_SHORTCUT, resetAndAdvance],
+     [CHATGPT_R1_CLOSE_SHORTCUT, () => harness.close()],
+   ]
+-  const registered = controls.every(([shortcut, callback]) => globalShortcut.register(shortcut, callback))
+-  if (!registered) {
++  const registeredShortcuts = []
++  let registrationFailed = false
++  for (const [shortcut, callback] of controls) {
++    try {
++      if (globalShortcut.register(shortcut, callback)) registeredShortcuts.push(shortcut)
++      else registrationFailed = true
++    } catch {
++      registrationFailed = true
++    }
++  }
++  if (registrationFailed) {
++    for (const shortcut of registeredShortcuts) {
++      try { globalShortcut.unregister(shortcut) } catch { /* best-effort rollback of this attempt */ }
++    }
+     logger.error('[ChatGPTR1] shortcut registration failed')
+     return { registered: false }
+   }
+ 
+   logger.log(`[ChatGPTR1] harness armed; open ${CHATGPT_R1_SHORTCUT}; capture ${CHATGPT_R1_CAPTURE_SHORTCUT}; reset/advance ${CHATGPT_R1_RESET_SHORTCUT}; next ${CHATGPT_R1_NEXT_SHORTCUT}; close ${CHATGPT_R1_CLOSE_SHORTCUT}`)
+   announceCursor()
+   return {
+     registered: true,
+     shortcut: CHATGPT_R1_SHORTCUT,
+     open: harness.open,
+     captureEvidence: harness.captureEvidence,
+     captureCurrentEvidence,
+     resetConversation: harness.resetConversation,
+     resetAndAdvance,
+     advanceMeasurement,
+     close: harness.close,
+     getState: harness.getState,
++    startMeasurement: harness.startMeasurement,
++    awaitMeasurement: harness.awaitMeasurement,
++    getMeasurementState: harness.getMeasurementState,
+     getMeasurementCursor,
+   }
+ }
+diff --git a/src/App.jsx b/src/App.jsx
+index bbdefd52..04999243 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -150,29 +150,30 @@ export function useAppRouteTransaction({ route, commitRoute, setRoute }) {
+ 
+   return useCallback(async (next, options = {}) => {
+     const accepted = parseRoute(next)
+     if (!accepted) return { ok: false, error: 'invalid-route', route: routeRef.current }
+ 
+     const requestSequence = ++requestSequenceRef.current
+     let result
+     try {
+       result = typeof setRoute === 'function'
+         ? await setRoute(options.boot ? { to: accepted, boot: true } : accepted)
+-        : { ok: false, error: 'route-api-unavailable', route: routeRef.current }
++        : { ok: false, error: 'route-api-unavailable' }
+     } catch (error) {
+-      result = { ok: false, error: error?.message || 'route-set-failed', route: routeRef.current }
++      result = { ok: false, error: error?.message || 'route-set-failed' }
+     }
+ 
+     if (requestSequence !== requestSequenceRef.current) return result
+     const reconcileFailure = options.reconcileOnFailure === true && result?.ok !== true
+     if (result?.ok !== true && !reconcileFailure) return result
+     const adopted = parseRoute(result.route)
++    if (reconcileFailure && !adopted) return result
+     if (!adopted) return { ok: false, error: 'invalid-adopted-route', route: routeRef.current }
+     const revision = Number.isInteger(result.revision) ? result.revision : null
+     if (revision != null && revision < adoptedRevisionRef.current) return result
+     if (revision != null) adoptedRevisionRef.current = revision
+     routeRef.current = adopted
+     commitRoute?.(adopted)
+     return result
+   }, [commitRoute, setRoute])
+ }
+ 
+@@ -275,24 +276,24 @@ function App() {
+     if (modeRef.current === 'flow') {
+       setTargetReady(sessionTargetRef.current, ready)
+     } else {
+       setApiAuthReady(Boolean(ready))
+     }
+   }, [setTargetReady])
+   const generationQueue = useGenerationQueue()
+   const route = useMemo(() => mode ? { mode, sessionTarget } : null, [mode, sessionTarget])
+   const invokeMainRoute = useCallback(async (next) => {
+     if (typeof window.electronAPI?.setRoute !== 'function') {
+-      return { ok: false, error: 'route-api-unavailable', route }
++      return { ok: false, error: 'route-api-unavailable' }
+     }
+     return window.electronAPI.setRoute(next)
+-  }, [route])
++  }, [])
+   const requestRoute = useAppRouteTransaction({ route, commitRoute, setRoute: invokeMainRoute })
+ 
+   // Auth/Payment Modals
+   const [showAuthModal, setShowAuthModal] = useState(false)
+   const [showPaywallModal, setShowPaywallModal] = useState(false)
+   const [paywallReason, setPaywallReason] = useState('trial_expired')
+ 
+   // Flow Login Expired Modal
+   const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+   const emptyRefSubscriptionPreGate = useCallback(async () => {
+diff --git a/src/components/Header.jsx b/src/components/Header.jsx
+index 5f66fca1..88b48cec 100644
+--- a/src/components/Header.jsx
++++ b/src/components/Header.jsx
+@@ -1,15 +1,15 @@
+ /**
+  * Header Component - 상단 바
+  */
+ 
+-import { useState, useEffect, useRef } from 'react'
++import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+ import { useI18n } from '../hooks/useI18n'
+ import { TIMING } from '../config/defaults'
+ import { fileSystemAPI } from '../hooks/useFileSystem'
+ import { useMode } from '../contexts/ModeContext'
+ import { isFlowTarget, isChatgptTarget } from '../config/appRoute.js'
+ import { flowLayoutForMode } from '../utils/appLayout'
+ import { SESSION_TARGET_INFO } from './modeInfo.js'
+ import { UserMenu } from './UserMenu'
+ import ModeToggle from './ModeToggle'
+ import LanguagePicker from './LanguagePicker'
+@@ -53,24 +53,35 @@ export default function Header({
+   const [showProjectDropdown, setShowProjectDropdown] = useState(false)
+   const [showDrawer, setShowDrawer] = useState(false)
+   const [projects, setProjects] = useState([])
+   const [deleteTarget, setDeleteTarget] = useState(null) // Confirm 모달용
+   const dropdownRef = useRef(null)
+   const pollingRef = useRef(null)
+   // #R8-7: checkAuth 의 비동기 결과를 적용하기 전 가드용 — 언마운트/모드변경 감지.
+   const mountedRef = useRef(true)
+   // #R11-7: 겹치는 auth 폴링 중 최신 호출만 반영하기 위한 시퀀스 카운터.
+   const authCheckSeqRef = useRef(0)
++  const chatgptReconnectSeqRef = useRef(0)
+   // #R14-5: flow 지역 제한(unavailable) sticky 플래그 — flow 모드에서 폴링/authReady 가 덮지 않게.
+   const flowUnavailableRef = useRef(false)
+   const modeRef = useRef(mode)
+   const flowTargetActiveRef = useRef(flowTargetActive)
++  const liveRouteRef = useRef({ mode, sessionTarget, version: 0 })
++  useLayoutEffect(() => {
++    if (liveRouteRef.current.mode !== mode || liveRouteRef.current.sessionTarget !== sessionTarget) {
++      liveRouteRef.current = {
++        mode,
++        sessionTarget,
++        version: liveRouteRef.current.version + 1,
++      }
++    }
++  }, [mode, sessionTarget])
+   useEffect(() => {
+     modeRef.current = mode
+     flowTargetActiveRef.current = flowTargetActive
+   }, [mode, flowTargetActive])
+   // #R9-7: setup 에서 true 로 되돌린다 — StrictMode 의 cleanup→재실행 후에도 mounted 가 false 로
+   //   고착되지 않게(고착되면 dev 에서 checkAuth 결과가 버려지고 onAuthRecovered 가 안 뜬다).
+   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+ 
+   // authReady가 바뀌면 상태 동기화
+   useEffect(() => {
+@@ -224,28 +235,42 @@ export default function Header({
+     }
+     // #R15-2: await 동안 모드 전환/언마운트됐으면 안내/폴링을 시작하지 않는다(stale flow polling 방지).
+     if (!mountedRef.current || !flowTargetActiveRef.current) return
+     toast.info(t('toast.flowLoginHint'))
+     // #R7-16: 재연결 후 인증 상태를 능동적으로 폴링 — flow-status 이벤트가 안 와도
+     //   사용자가 Flow 창에서 로그인 완료하면 배지가 🟢 로 회복되도록.
+     startAuthPolling()
+   }
+ 
+   const reconnectChatgpt = async () => {
+-    if (!chatgptTargetActive) return
++    const startRoute = liveRouteRef.current
++    if (!isChatgptTarget(startRoute)) return
++    const requestSequence = ++chatgptReconnectSeqRef.current
++    const isLiveRequest = () => (
++      mountedRef.current &&
++      requestSequence === chatgptReconnectSeqRef.current &&
++      liveRouteRef.current.version === startRoute.version &&
++      liveRouteRef.current.mode === startRoute.mode &&
++      liveRouteRef.current.sessionTarget === startRoute.sessionTarget
++    )
+     try {
+-      const currentRoute = { mode, sessionTarget }
+       const routeResult = onRouteRequest
+-        ? await onRouteRequest(currentRoute)
+-        : await window.electronAPI?.setRoute?.(currentRoute)
++        ? await onRouteRequest({ mode: startRoute.mode, sessionTarget: startRoute.sessionTarget })
++        : await window.electronAPI?.setRoute?.({ mode: startRoute.mode, sessionTarget: startRoute.sessionTarget })
+       if (routeResult && routeResult.ok === false) throw new Error(routeResult.error || 'route-set-failed')
++      if (!isLiveRequest()) return
++      if (routeResult?.route && (
++        routeResult.route.mode !== startRoute.mode ||
++        routeResult.route.sessionTarget !== startRoute.sessionTarget
++      )) return
+       const status = await window.electronAPI?.reconnectSession?.('chatgpt')
++      if (!isLiveRequest()) return
+       if (status?.ready === true) onAuthRecovered?.()
+     } catch (error) {
+       console.warn('[Header] ChatGPT reconnect failed:', error?.message)
+     }
+   }
+ 
+   // #R7-16: Flow 로그인 회복용 짧은 인증 폴링. 인증되면 authReady→effect 가 stopPolling.
+   const startAuthPolling = () => {
+     stopPolling()
+     let attempts = 0
+diff --git a/tests/components/App.routeTransaction.test.jsx b/tests/components/App.routeTransaction.test.jsx
+index bca14723..a6a12e2c 100644
+--- a/tests/components/App.routeTransaction.test.jsx
++++ b/tests/components/App.routeTransaction.test.jsx
+@@ -19,20 +19,21 @@ const deferred = () => {
+   return { promise, resolve }
+ }
+ 
+ const flowRoute = () => ({ mode: 'flow', sessionTarget: 'flow' })
+ const chatgptRoute = () => ({ mode: 'flow', sessionTarget: 'chatgpt' })
+ const apiRoute = () => ({ mode: 'api', sessionTarget: 'flow' })
+ 
+ let injectedRequest = null
+ let renderedRoute = null
+ let renderedEngine = null
++let routeCommitEvents = []
+ 
+ const routeFailureHarness = ({ initialRoute, result }) => {
+   let mainRoute = initialRoute
+   let attachedView = initialRoute.mode === 'flow' ? initialRoute.sessionTarget : null
+   return {
+     setRoute: vi.fn(async () => result),
+     mainRoute: () => mainRoute,
+     attachedView: () => attachedView,
+   }
+ }
+@@ -60,20 +61,21 @@ const concurrentRouteHarness = () => {
+     mainRoute: () => mainRoute,
+     attachedView: () => attachedView,
+     resolveFirst: (result) => resolve(0, result),
+     resolveSecond: (result) => resolve(1, result),
+   }
+ }
+ 
+ function RouteTransactionProbe({ electronAPI, initialRoute }) {
+   const [route, setRoute] = useState(initialRoute)
+   const commitRoute = useCallback((next) => {
++    routeCommitEvents.push(next)
+     localStorage.setItem('route', JSON.stringify(next))
+     setRoute(next)
+   }, [])
+   const useAppRouteTransaction = AppModule.useAppRouteTransaction
+   const transactionalRequest = typeof useAppRouteTransaction === 'function'
+     ? useAppRouteTransaction({ route, commitRoute, setRoute: electronAPI.setRoute })
+     : null
+   const legacyRequest = useCallback(async (next) => {
+     commitRoute(next)
+     return electronAPI.setRoute(next)
+@@ -112,20 +114,21 @@ function AppOwnedModeToggle({ setRoute }) {
+     setRoute,
+   })
+   return <ModeToggle onRouteRequest={requestRoute} />
+ }
+ 
+ beforeEach(() => {
+   localStorage.clear()
+   injectedRequest = null
+   renderedRoute = null
+   renderedEngine = null
++  routeCommitEvents = []
+ })
+ 
+ afterEach(() => cleanup())
+ 
+ it('keeps the real mode toggle on non-default Flow until App adopts a successful route', async () => {
+   localStorage.setItem(MODE_STORAGE_KEY, 'flow')
+   localStorage.setItem(SESSION_TARGET_STORAGE_KEY, 'flow')
+   const failed = deferred()
+   const setRoute = vi.fn(() => failed.promise)
+   render(
+@@ -174,20 +177,45 @@ it('reconciles a failed stored-route boot to the main route without weakening in
+ 
+   await requestInjectedRoute(storedRoute, { reconcileOnFailure: true, boot: true })
+ 
+   expect(screen.getByTestId('current-route')).toHaveTextContent('api+flow')
+   expect(localStorage.getItem('route')).toBe(JSON.stringify(mainRoute))
+   expect(currentEngine().routeOwner).toBe('api')
+   expect(api.mainRoute()).toEqual(mainRoute)
+   expect(api.attachedView()).toBeNull()
+ })
+ 
++it.each([
++  ['the route API is unavailable', undefined],
++  ['the route IPC rejects', vi.fn(async () => { throw new Error('route-ipc-rejected') })],
++])('does not reconcile a failed stored-route boot from the renderer echo when %s', async (_label, setRoute) => {
++  const storedRoute = chatgptRoute()
++  const mainRoute = apiRoute()
++  const api = {
++    setRoute,
++    mainRoute: () => mainRoute,
++    attachedView: () => null,
++  }
++  renderApp({ electronAPI: api, initialRoute: storedRoute })
++
++  const result = await requestInjectedRoute(storedRoute, { reconcileOnFailure: true, boot: true })
++
++  expect(result).toEqual(expect.objectContaining({ ok: false }))
++  expect(result).not.toHaveProperty('route')
++  expect(routeCommitEvents).toEqual([])
++  expect(screen.getByTestId('current-route')).toHaveTextContent('flow+chatgpt')
++  expect(localStorage.getItem('route')).toBe(JSON.stringify(storedRoute))
++  expect(currentEngine().routeOwner).toBe('chatgpt')
++  expect(api.mainRoute()).toEqual(mainRoute)
++  expect(api.attachedView()).toBeNull()
++})
++
+ it('commits and persists only the latest adopted success route', async () => {
+   const api = concurrentRouteHarness()
+   renderApp({ electronAPI: api, initialRoute: flowRoute() })
+   const first = requestInjectedRoute(chatgptRoute())
+   const second = requestInjectedRoute(apiRoute())
+   api.resolveSecond({ ok: true, route: apiRoute(), revision: 3 })
+   api.resolveFirst({ ok: true, route: chatgptRoute(), revision: 2 })
+   await Promise.all([first, second])
+   expect(currentRoute()).toEqual(apiRoute())
+   expect(localStorage.getItem('route')).toBe(JSON.stringify(apiRoute()))
+diff --git a/tests/components/Header/Header.sessionTarget.test.jsx b/tests/components/Header/Header.sessionTarget.test.jsx
+index dc54f31e..48d182f5 100644
+--- a/tests/components/Header/Header.sessionTarget.test.jsx
++++ b/tests/components/Header/Header.sessionTarget.test.jsx
+@@ -1,12 +1,12 @@
+ import { beforeEach, it, expect, vi } from 'vitest'
+-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
++import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
+ 
+ const headerState = vi.hoisted(() => ({ sessionTarget: 'chatgpt' }))
+ 
+ vi.mock('../../../src/hooks/useI18n', () => ({ useI18n: () => ({
+   t: (k) => ({
+     'header.chatgptLogin': 'ChatGPT 로그인',
+     'header.chatgptAuthenticated': 'ChatGPT 로그인됨',
+     'header.flowLogin': 'Flow 로그인',
+     'header.flowAuthenticated': 'Flow 로그인됨',
+     'header.apiKey': 'API 키',
+@@ -23,53 +23,139 @@ vi.mock('../../../src/components/ModeToggle', () => ({ default: () => null }))
+ vi.mock('../../../src/components/SideDrawer', () => ({ SideDrawer: () => null }))
+ vi.mock('../../../src/components/Modal', () => ({ default: () => null }))
+ vi.mock('../../../src/components/ExportSplitButton', () => ({ default: () => null }))
+ vi.mock('../../../src/components/Toast', () => ({ toast: { info: vi.fn() } }))
+ vi.mock('../../../src/contexts/ModeContext', () => ({ useMode: () => ({ mode: 'flow', sessionTarget: headerState.sessionTarget }) }))
+ 
+ import Header from '../../../src/components/Header.jsx'
+ 
+ beforeEach(() => { headerState.sessionTarget = 'chatgpt' })
+ 
++const deferred = () => {
++  let resolve
++  const promise = new Promise((done) => { resolve = done })
++  return { promise, resolve }
++}
++
+ it('ChatGPT login action reattaches its route then uses the target reconnect port', async () => {
+   const events = []
+   window.electronAPI = {
+     setRoute: vi.fn(async (route) => { events.push(`route:${route.mode}+${route.sessionTarget}`); return { ok: true, route } }),
+     reconnectSession: vi.fn(async (target) => { events.push(`reconnect:${target}`); return { target, status: 'login-required', ready: false, revision: 7 } }),
+     setLayout: vi.fn(),
+     onFlowStatus: vi.fn(() => () => {}),
+   }
+   render(<Header authReady={false} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />)
+   // 버튼은 `{authActionIcon} {authActionLabel}`(Header.jsx:350)을 렌더해 접근성 이름이
+   // '👤 ChatGPT 로그인' 이다 — 정확 문자열 매칭은 절대 안 맞는다(기존 테스트도 정규식을 쓴다).
+   fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
+ 
+   await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
+   expect(events).toEqual(['route:flow+chatgpt', 'reconnect:chatgpt'])
+   expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
+ })
+ 
+ it('ChatGPT authenticated badge rechecks the target without requesting a Flow token', async () => {
+   const getAccessToken = vi.fn(async () => 'flow-token')
++  const onAuthRecovered = vi.fn()
+   window.electronAPI = {
+     setRoute: vi.fn(async (route) => ({ ok: true, route })),
+     reconnectSession: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true, revision: 9 })),
+     onFlowStatus: vi.fn(() => () => {}),
+   }
+   const { container } = render(
+-    <Header authReady={true} getAccessToken={getAccessToken} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />,
++    <Header
++      authReady={true}
++      getAccessToken={getAccessToken}
++      onSettings={vi.fn()}
++      onAuthRecovered={onAuthRecovered}
++    />,
+   )
+ 
+   fireEvent.click(container.querySelector('.auth-badge.authenticated'))
+ 
+   await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
+   expect(getAccessToken).not.toHaveBeenCalled()
++  expect(onAuthRecovered).toHaveBeenCalledOnce()
++})
++
++it('does not start ChatGPT reconnect when the live target changes while route adoption is pending', async () => {
++  const routeGate = deferred()
++  const onAuthRecovered = vi.fn()
++  const onRouteRequest = vi.fn(() => routeGate.promise)
++  window.electronAPI = {
++    reconnectSession: vi.fn(async () => ({ target: 'chatgpt', status: 'ready', ready: true })),
++    onFlowStatus: vi.fn(() => () => {}),
++  }
++  const { rerender } = render(
++    <Header
++      authReady={false}
++      onSettings={vi.fn()}
++      onRouteRequest={onRouteRequest}
++      onAuthRecovered={onAuthRecovered}
++    />,
++  )
++
++  fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
++  await waitFor(() => expect(onRouteRequest).toHaveBeenCalledOnce())
++  headerState.sessionTarget = 'flow'
++  rerender(
++    <Header
++      authReady={false}
++      onSettings={vi.fn()}
++      onRouteRequest={onRouteRequest}
++      onAuthRecovered={onAuthRecovered}
++    />,
++  )
++  await act(async () => {
++    routeGate.resolve({ ok: true, route: { mode: 'flow', sessionTarget: 'chatgpt' } })
++    await routeGate.promise
++  })
++
++  expect(window.electronAPI.reconnectSession).not.toHaveBeenCalled()
++  expect(onAuthRecovered).not.toHaveBeenCalled()
++})
++
++it('does not apply a delayed ChatGPT ready result after the live target changes', async () => {
++  const reconnectGate = deferred()
++  const onAuthRecovered = vi.fn()
++  window.electronAPI = {
++    reconnectSession: vi.fn(() => reconnectGate.promise),
++    onFlowStatus: vi.fn(() => () => {}),
++  }
++  const onRouteRequest = vi.fn(async (route) => ({ ok: true, route }))
++  const { rerender } = render(
++    <Header
++      authReady={false}
++      onSettings={vi.fn()}
++      onRouteRequest={onRouteRequest}
++      onAuthRecovered={onAuthRecovered}
++    />,
++  )
++
++  fireEvent.click(screen.getByRole('button', { name: /ChatGPT 로그인/ }))
++  await waitFor(() => expect(window.electronAPI.reconnectSession).toHaveBeenCalledWith('chatgpt'))
++  headerState.sessionTarget = 'flow'
++  rerender(
++    <Header
++      authReady={false}
++      onSettings={vi.fn()}
++      onRouteRequest={onRouteRequest}
++      onAuthRecovered={onAuthRecovered}
++    />,
++  )
++  await act(async () => {
++    reconnectGate.resolve({ target: 'chatgpt', status: 'ready', ready: true })
++    await reconnectGate.promise
++  })
++
++  expect(onAuthRecovered).not.toHaveBeenCalled()
+ })
+ 
+ it('keeps Flow readiness out of the ChatGPT auth chip on a target round-trip', async () => {
+   window.electronAPI = { onFlowStatus: vi.fn(() => () => {}) }
+   headerState.sessionTarget = 'flow'
+   const authReadyByTarget = { flow: true, chatgpt: false }
+   const { container, rerender } = render(
+     <Header authReadyByTarget={authReadyByTarget} onSettings={vi.fn()} onAuthRecovered={vi.fn()} />,
+   )
+   await waitFor(() => expect(container.querySelector('.auth-badge.authenticated')).toBeTruthy())
+diff --git a/tests/electron/spikes/chatgptR1Harness.test.js b/tests/electron/spikes/chatgptR1Harness.test.js
+index fa24de31..8ded89f0 100644
+--- a/tests/electron/spikes/chatgptR1Harness.test.js
++++ b/tests/electron/spikes/chatgptR1Harness.test.js
+@@ -1,35 +1,42 @@
+ // @vitest-environment node
+ import { describe, expect, it, vi } from 'vitest'
+ import { readFile } from 'node:fs/promises'
+ import path from 'node:path'
+ import {
+   BLOCKED_LOGIN_SIGNAL,
++  CHATGPT_R1_CAPTURE_SHORTCUT,
++  CHATGPT_R1_CLOSE_SHORTCUT,
+   CHATGPT_R1_SHORTCUT,
++  R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL,
+   R1_CASE_MATRIX,
+   isChatgptR1HarnessEnabled,
++  loadR1MeasurementRuntime,
+   registerChatgptR1Harness,
++  writeR1ResultFile,
+ } from '../../../electron/spikes/chatgptR1Upload.js'
+ import {
+   buildBoundedSizeSearch,
+   buildImageSizeLadder,
+   padPngToExactSize,
+ } from '../../../electron/spikes/lib/imageSizeLadder.js'
+ 
+ const FIXTURE_DIR = path.join(process.cwd(), 'tests', 'fixtures', 'chatgpt-r1')
+ 
+ function makeSetup({
+   platform = 'darwin',
+   isPackaged = false,
+   viteDevServerUrl = '',
+   spikeFlag = '1',
+   composerReady = false,
++  shortcutRegistrationFailure = null,
++  measurementRuntime = null,
+ } = {}) {
+   const events = []
+   const listeners = new Map()
+   const electronSession = { id: 'persist:chatgpt' }
+   let authState = { composerReady }
+   const shortcutCallbacks = new Map()
+ 
+   const webContents = {
+     session: electronSession,
+     on: vi.fn((name, listener) => listeners.set(name, listener)),
+@@ -53,35 +60,41 @@ function makeSetup({
+   const mainWindow = {
+     contentView: {
+       addChildView: vi.fn(() => events.push('addChildView')),
+       removeChildView: vi.fn(() => events.push('removeChildView')),
+     },
+     getContentSize: vi.fn(() => [1200, 900]),
+   }
+   const globalShortcut = {
+     register: vi.fn((accelerator, callback) => {
+       events.push('globalShortcut.register')
++      if (accelerator === shortcutRegistrationFailure) return false
+       shortcutCallbacks.set(accelerator, callback)
+       return true
+     }),
++    unregister: vi.fn((accelerator) => {
++      events.push('globalShortcut.unregister')
++      shortcutCallbacks.delete(accelerator)
++    }),
+   }
+   const reservedSessionWebPreferences = vi.fn(() => {
+     events.push('reservedSessionWebPreferences')
+     return { partition: 'persist:chatgpt', sandbox: true }
+   })
+   const installReservedSessionSecurity = vi.fn((view, session) => {
+     events.push('installReservedSessionSecurity')
+     expect(view).toBe(createdViews[0])
+     expect(session).toBe(electronSession)
+   })
+   const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() }
+-  const writeEvidence = vi.fn()
++  const writeEvidence = vi.fn(async ({ caseId, repetition, phase }) => ({ caseId, repetition, phase }))
++  const writeResult = vi.fn(async () => '/runtime/r1-result.md')
+   const wait = vi.fn(async () => {})
+   const restoreProductSessionView = vi.fn(() => events.push('restoreProductSessionView'))
+   const suspendProductSessionView = vi.fn(() => {
+     events.push('suspendProductSessionView')
+     return restoreProductSessionView
+   })
+ 
+   const registration = registerChatgptR1Harness({
+     app: { isPackaged },
+     globalShortcut,
+@@ -89,36 +102,39 @@ function makeSetup({
+     getMainWindow: () => mainWindow,
+     platform,
+     env: {
+       VITE_DEV_SERVER_URL: viteDevServerUrl,
+       AUTOFLOWCUT_SPIKE: spikeFlag,
+     },
+     reservedSessionWebPreferences,
+     installReservedSessionSecurity,
+     logger,
+     writeEvidence,
++    writeResult,
+     wait,
+     suspendProductSessionView,
++    measurementRuntime,
+   })
+ 
+   return {
+     registration,
+     events,
+     listeners,
+     createdViews,
+     globalShortcut,
+     webContents,
+     electronSession,
+     reservedSessionWebPreferences,
+     installReservedSessionSecurity,
+     logger,
+     writeEvidence,
++    writeResult,
+     suspendProductSessionView,
+     restoreProductSessionView,
+     shortcutCallbacks,
+     invokeShortcut: async (accelerator = CHATGPT_R1_SHORTCUT) => shortcutCallbacks.get(accelerator)?.(),
+     setAuthState: (next) => { authState = next },
+   }
+ }
+ 
+ describe('ChatGPT R1 dev harness gate and secure view', () => {
+   it.each([
+@@ -139,20 +155,41 @@ describe('ChatGPT R1 dev harness gate and secure view', () => {
+   it('treats VITE dev runtime as authoritative when app.isPackaged misreports true', async () => {
+     const setup = makeSetup({ isPackaged: true, viteDevServerUrl: 'http://localhost:5173' })
+ 
+     expect(setup.registration.registered).toBe(true)
+     expect(setup.globalShortcut.register).toHaveBeenCalledWith(CHATGPT_R1_SHORTCUT, expect.any(Function))
+ 
+     await setup.invokeShortcut()
+ 
+     expect(setup.createdViews).toHaveLength(1)
+     expect(setup.webContents.loadURL).toHaveBeenCalledOnce()
++    expect(setup.globalShortcut.unregister).not.toHaveBeenCalled()
++  })
++
++  it.each([
++    ['an intermediate shortcut conflicts', CHATGPT_R1_CAPTURE_SHORTCUT],
++    ['the close shortcut conflicts', CHATGPT_R1_CLOSE_SHORTCUT],
++  ])('rolls back every acquired R1 shortcut when %s', async (_label, shortcutRegistrationFailure) => {
++    const setup = makeSetup({ shortcutRegistrationFailure })
++
++    expect(setup.registration).toEqual({ registered: false })
++    expect(setup.globalShortcut.register).toHaveBeenCalledTimes(5)
++    expect(setup.globalShortcut.unregister.mock.calls.map(([accelerator]) => accelerator)).toEqual(
++      [...setup.globalShortcut.register.mock.calls]
++        .map(([accelerator]) => accelerator)
++        .filter((accelerator) => accelerator !== shortcutRegistrationFailure),
++    )
++    expect(setup.shortcutCallbacks.size).toBe(0)
++
++    await setup.invokeShortcut()
++    expect(setup.createdViews).toHaveLength(0)
++    expect(setup.webContents.loadURL).not.toHaveBeenCalled()
+   })
+ 
+   it('calls the P1 preferences factory and real two-argument security installer before any load', async () => {
+     const setup = makeSetup()
+ 
+     await setup.invokeShortcut()
+ 
+     expect(setup.events).toEqual([
+       'globalShortcut.register', 'globalShortcut.register', 'globalShortcut.register',
+       'globalShortcut.register', 'globalShortcut.register',
+@@ -304,20 +341,186 @@ describe('ChatGPT R1 dev harness gate and secure view', () => {
+     expect(result).toEqual({ status: 'ready' })
+     expect(setup.createdViews).toHaveLength(1)
+     expect(setup.installReservedSessionSecurity).toHaveBeenCalledOnce()
+     expect(setup.webContents.loadURL).toHaveBeenCalledTimes(2)
+   })
+ 
+   it('requires at least three independent conversations for every matrix case', () => {
+     expect(R1_CASE_MATRIX.length).toBeGreaterThan(0)
+     expect(R1_CASE_MATRIX.every(({ repetitions }) => repetitions >= 3)).toBe(true)
+   })
++
++  it('reports an explicit measurement blocker after login when no runtime-observed adapter exists', async () => {
++    const setup = makeSetup({ composerReady: true })
++
++    await setup.invokeShortcut()
++    const result = await setup.registration.awaitMeasurement()
++
++    expect(result).toEqual({
++      status: 'blocked',
++      signal: R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL,
++      missing: [
++        'getSafetyCeilingBytes',
++        'observeSurface',
++        'executeCase',
++        'reviewCase',
++        'finalize',
++      ],
++    })
++    expect(setup.logger.warn).toHaveBeenCalledWith(R1_MEASUREMENT_RUNTIME_REQUIRED_SIGNAL)
++    expect(setup.writeEvidence).not.toHaveBeenCalled()
++    expect(setup.writeResult).not.toHaveBeenCalled()
++  })
++
++  it('loads only an explicitly configured local runtime adapter for the real spike path', async () => {
++    const importModule = vi.fn(async () => ({ default: { source: 'runtime-module' } }))
++
++    await expect(loadR1MeasurementRuntime({ modulePath: '' }, {
++      cwd: '/workspace',
++      importModule,
++    })).resolves.toBeNull()
++    expect(importModule).not.toHaveBeenCalled()
++
++    await expect(loadR1MeasurementRuntime({ modulePath: './observed-runtime.mjs' }, {
++      cwd: '/workspace',
++      importModule,
++    })).resolves.toEqual({ source: 'runtime-module' })
++    expect(importModule).toHaveBeenCalledWith('file:///workspace/observed-runtime.mjs')
++    await expect(loadR1MeasurementRuntime({ modulePath: 'https://example.test/runtime.mjs' }, {
++      cwd: '/workspace',
++      importModule,
++    })).rejects.toThrow('local filesystem path')
++    expect(importModule).toHaveBeenCalledOnce()
++  })
++
++  it('automatically executes every matrix repetition with runtime-authored facts, fixtures, and size ladder', async () => {
++    const measurementEvents = []
++    const observedSurface = {
++      mechanism: 'runtime-observed-mechanism',
++      selector: '[runtime-observed-selector]',
++      uploadReadySignal: 'runtime-observed-ready-signal',
++    }
++    const measurementRuntime = {
++      getSafetyCeilingBytes: vi.fn(async () => 512 * 1024),
++      observeSurface: vi.fn(async () => {
++        measurementEvents.push('observe-surface')
++        return observedSurface
++      }),
++      executeCase: vi.fn(async ({ caseId, repetition, surface }) => {
++        measurementEvents.push(`execute:${caseId}:r${repetition}`)
++        expect(surface).toBe(observedSurface)
++        return {
++          outcome: 'runtime-observed-outcome',
++          events: [{ at: '2026-08-02T00:00:00.000Z', event: 'RUNTIME_OBSERVATION' }],
++        }
++      }),
++      reviewCase: vi.fn(async ({ caseId, repetition }) => ({
++        verdict: `operator-runtime-review:${caseId}:r${repetition}`,
++      })),
++      finalize: vi.fn(async ({ journal }) => {
++        measurementEvents.push(`finalize:${journal.length}`)
++        return {
++          outcome: 'R1-E',
++          supported: false,
++          mechanism: observedSurface.mechanism,
++          observedDomSurface: observedSurface.selector,
++          acceptedMimeTypes: ['image/png', 'image/jpeg'],
++          largestVerifiedBytes: 256 * 1024,
++          firstRejectedBytes: 512 * 1024,
++          supportedMaxBytes: 256 * 1024,
++          boundaryReproducible: false,
++          maxCount: 1,
++          uploadReadySignal: observedSurface.uploadReadySignal,
++          loginSignalSurface: 'runtime-observed-login-signal',
++          sessionStateSignals: ['runtime-observed-session-state'],
++          observedRedirectOrigins: ['https://chatgpt.com'],
++          minRepetitions: 3,
++          failureModes: ['runtime-observed-failure'],
++        }
++      }),
++    }
++    const setup = makeSetup({ composerReady: true, measurementRuntime })
++    setup.writeResult.mockImplementation(async () => {
++      measurementEvents.push('write-result')
++      return '/runtime/r1-result.md'
++    })
++
++    await setup.invokeShortcut()
++    const result = await setup.registration.awaitMeasurement()
++
++    const expectedAttempts = R1_CASE_MATRIX.reduce((sum, entry) => sum + entry.repetitions, 0)
++    expect(result).toEqual(expect.objectContaining({
++      status: 'completed',
++      resultPath: '/runtime/r1-result.md',
++    }))
++    expect(measurementRuntime.executeCase).toHaveBeenCalledTimes(expectedAttempts)
++    expect(measurementRuntime.reviewCase).toHaveBeenCalledTimes(expectedAttempts)
++    expect(setup.writeEvidence).toHaveBeenCalledTimes(expectedAttempts * 2)
++    expect(setup.webContents.loadURL).toHaveBeenCalledTimes(expectedAttempts + 1)
++    expect(measurementEvents.slice(-2)).toEqual([`finalize:${expectedAttempts}`, 'write-result'])
++
++    const attemptedCases = measurementRuntime.executeCase.mock.calls.map(([attempt]) => (
++      `${attempt.caseId}:r${attempt.repetition}`
++    ))
++    expect(attemptedCases).toEqual(R1_CASE_MATRIX.flatMap(({ id, repetitions }) => (
++      Array.from({ length: repetitions }, (_unused, index) => `${id}:r${index + 1}`)
++    )))
++    const firstAttempt = measurementRuntime.executeCase.mock.calls[0][0]
++    expect(firstAttempt.fixtures.png).toEqual(expect.objectContaining({
++      name: 'reference-a.png', mime: 'image/png', bytes: expect.any(Buffer),
++    }))
++    expect(firstAttempt.fixtures.jpeg).toEqual(expect.objectContaining({
++      name: 'reference-b.jpg', mime: 'image/jpeg', bytes: expect.any(Buffer),
++    }))
++    expect(firstAttempt.sizeLadder.map(({ bytes }) => bytes.length)).toEqual([
++      256 * 1024,
++      512 * 1024,
++    ])
++  })
++
++  it('writes a complete runtime-authored R1 result without retaining redirect paths or queries', async () => {
++    const fileSystem = {
++      mkdir: vi.fn(async () => {}),
++      writeFile: vi.fn(async () => {}),
++    }
++    const result = {
++      outcome: 'R1-E',
++      supported: false,
++      mechanism: 'runtime mechanism',
++      observedDomSurface: 'runtime surface',
++      acceptedMimeTypes: ['image/png'],
++      largestVerifiedBytes: 262144,
++      firstRejectedBytes: 524288,
++      supportedMaxBytes: 262144,
++      boundaryReproducible: false,
++      maxCount: 1,
++      uploadReadySignal: 'runtime signal',
++      loginSignalSurface: 'runtime login signal',
++      sessionStateSignals: ['runtime session state'],
++      observedRedirectOrigins: ['https://example.test/private?token=SECRET'],
++      minRepetitions: 3,
++      failureModes: ['runtime failure'],
++    }
++
++    await writeR1ResultFile({ result, journal: [] }, {
++      resultPath: '/tmp/chatgpt-r1-result.md',
++      fileSystem,
++    })
++
++    expect(fileSystem.mkdir).toHaveBeenCalledWith('/tmp', { recursive: true })
++    const report = fileSystem.writeFile.mock.calls[0][1]
++    expect(report).toContain('Outcome: R1-E')
++    expect(report).toContain('Mechanism: runtime mechanism')
++    expect(report).toContain('Minimum repetitions: 3')
++    expect(report).toContain('Observed redirect origins: https://example.test')
++    expect(report).not.toMatch(/private|SECRET|token=/)
++  })
+ })
+ 
+ describe('ChatGPT R1 deterministic image size ladder', () => {
+   it('starts at 256 KiB, doubles, and stops at the operator safety ceiling', () => {
+     expect(buildImageSizeLadder({ safetyCeilingBytes: 700 * 1024 })).toEqual([
+       256 * 1024,
+       512 * 1024,
+       700 * 1024,
+     ])
+   })

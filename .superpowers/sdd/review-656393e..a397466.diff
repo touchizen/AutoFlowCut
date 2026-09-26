@@ -1,0 +1,254 @@
+# Review package: 656393e..a397466
+
+## Commits
+a397466 feat: switch story engine to Claude (inject llm/meta, drop gemini fallback)
+
+## Files changed
+ electron/ipc/story-api.js                       |  4 ++--
+ electron/main.js                                |  4 ++++
+ electron/story/stepMachine.js                   | 12 ++++++++----
+ electron/story/storyStore.js                    |  2 +-
+ tests/electron/story/stepMachine.claude.test.js | 25 +++++++++++++++++++++++++
+ 5 files changed, 40 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/electron/ipc/story-api.js b/electron/ipc/story-api.js
+index 9095ea6..179e372 100644
+--- a/electron/ipc/story-api.js
++++ b/electron/ipc/story-api.js
+@@ -30,21 +30,21 @@ async function validateProjectPath(projectPath) {
+ }
+ 
+ // HIGH(부분): 절대경로/traversal/존재 검증을 통과해도 활성 workFolder(렌더러가 마지막으로
+ // activate한 작업 폴더) 밖의 임의 경로면 여전히 임의 위치에 script.md/scenes.json을 쓸 수
+ // 있다. workFolder가 알려져 있으면(활성화된 뒤) projectPath가 그 하위인지 확인한다.
+ function isWithinWorkFolder(projectPath, workFolder) {
+   const rel = path.relative(workFolder, projectPath)
+   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+ }
+ 
+-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, getActiveWorkFolder = () => null }) {
++export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null }) {
+   let machine = null
+   let openLock = Promise.resolve()
+ 
+   const emit = (channel, payload) => {
+     const win = getWindow?.()
+     if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+   }
+ 
+   const guarded = (fn) => async (_e, payload = {}) => {
+     if (!machine || payload.projectToken !== machine.projectToken) return { error: 'stale-token' }
+@@ -54,21 +54,21 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
+   ipcMain.handle('story:open', (_e, { projectPath } = {}) => {
+     // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
+     const task = openLock.then(async () => {
+       if (!(await validateProjectPath(projectPath))) return { error: 'invalid-project-path' }
+       const activeWorkFolder = getActiveWorkFolder()
+       // activeWorkFolder를 아직 모르면(활성화 전) 기존 검증만 적용 — 하위호환.
+       if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) {
+         return { error: 'invalid-project-path' }
+       }
+       if (machine) await machine.abort()
+-      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
++      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt })
+       return machine.open()
+     })
+     openLock = task.then(() => undefined, () => undefined)
+     return task
+   })
+ 
+   ipcMain.handle('story:get-state', guarded(async () => machine.getState()))
+   ipcMain.handle('story:start', guarded(({ step, params }) => machine.start(step, params)))
+   ipcMain.handle('story:abort', guarded(() => machine.abort()))
+   ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
+diff --git a/electron/main.js b/electron/main.js
+index cff7099..822d9e5 100644
+--- a/electron/main.js
++++ b/electron/main.js
+@@ -8,20 +8,22 @@ import { execSync as execSyncRaw } from 'node:child_process'
+ import { fileURLToPath } from 'node:url'
+ import dotenv from 'dotenv'
+ import { registerFilesystemIPC } from './ipc/filesystem.js'
+ import { registerAuthIPC } from './ipc/auth.js'
+ import { registerCapcutIPC } from './ipc/capcut.js'
+ import { registerPremiereIPC } from './ipc/premiere.js'
+ import { registerVrewIPC } from './ipc/vrew.js'
+ import { registerMcpIPC } from './ipc/mcp.js'
+ import { registerGenaiIPC } from './ipc/genai-api.js'
+ import { registerStoryIPC } from './ipc/story-api.js'
++import * as llmClaude from './api/llm/llmClaude.js'
++import { loadMetaPrompt } from './api/llm/metaPrompts.js'
+ import { createKeyStore } from './api/keyStore.js'
+ import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
+ import { createModeController } from './ipc/mode.js'
+ import { openApiSpec, getSwaggerHtml } from './api-docs.js'
+ import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
+ import { initSentryMain } from './sentry-init.js'
+ import { registerFlowAPIIPC } from './ipc/flow-api.js'
+ import { registerVideoIPC } from './ipc/video.js'
+ import { registerCharacterIPC } from './ipc/character.js'
+ import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-payload.js'
+@@ -197,20 +199,22 @@ const genaiKeyStore = createKeyStore({
+   safeStorage,
+   filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
+   fs: fsSync,
+ })
+ registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
+ 
+ // Story pipeline IPC (script/scenes/prompts 스텝 머신 + preload 브릿지).
+ registerStoryIPC(ipcMain, {
+   keyStore: genaiKeyStore,
+   getWindow: () => mainWindow,
++  llm: llmClaude,
++  loadMetaPrompt,
+   getActiveWorkFolder: () => activeWorkFolder,
+ })
+ 
+ // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
+ registerAuthIPC(ipcMain)
+ 
+ // CapCut IPC (path detection, project writing, app launch)
+ registerCapcutIPC(ipcMain)
+ 
+ // Premiere IPC (.prproj writing — gzipped XML)
+diff --git a/electron/story/stepMachine.js b/electron/story/stepMachine.js
+index b183352..ba94434 100644
+--- a/electron/story/stepMachine.js
++++ b/electron/story/stepMachine.js
+@@ -2,21 +2,21 @@
+  * Story 스텝 머신 — 스펙 §2/§3/§4. main process 소유, 결정적 순서 제어.
+  * LLM 어댑터는 DI(테스트 mock). emit은 모든 payload에 projectToken/operationId 포함.
+  */
+ import { randomUUID } from 'node:crypto'
+ import { createStoryStore } from './storyStore.js'
+ import { inheritStoryIds, assertUniqueStoryIds } from './sceneIdentity.js'
+ import { buildFallbackTimeline } from './timing.js'
+ 
+ const DOWNSTREAM = { script: ['scenes', 'prompts'], scenes: ['prompts'], prompts: [] }
+ 
+-export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
++export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt }) {
+   const store = createStoryStore(projectPath)
+   const projectToken = randomUUID()
+   let state = null
+   let controller = null
+ 
+   const send = (ch, payload, operationId) =>
+     emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
+ 
+   async function flush() { await store.save(state) }
+ 
+@@ -67,47 +67,51 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
+       // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣은 경우 LLM 호출 없이 그대로 저장한다.
+       if (params.pastedScript) {
+         state.input = { type: 'pasted', options: params.options }
+         // HIGH: abort 직후 파일 쓰기 자체를 막는 방어 가드 — start() 래퍼의 결과 처리 가드와
+         // 별개로, 취소된 스텝이 디스크에 흔적을 남기지 않도록 saveText 직전에 한 번 더 확인한다.
+         if (signal?.aborted) return
+         await store.saveText('script.md', params.pastedScript)
+         return
+       }
+       state.input = params.input ? { ...params.input, options: params.options } : state.input
+-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(params.options || {}) }
++      const language = params.options?.language || state.input?.options?.language || 'ko'
++      const metaPrompt = loadMetaPrompt
++        ? await loadMetaPrompt({ genre: params.options?.genre, wave: 'script', language })
++        : ''
++      const opts = { apiKey: getApiKey(), model: state.engine.model, metaPrompt, ...(params.options || {}) }
+       const { scriptMd } = await llm.generateScript(state.input, opts, {
+         onDelta: (text) => send('story:delta', { text }, opId), signal,
+       })
+       if (signal?.aborted) return
+       await store.saveText('script.md', scriptMd)
+     },
+     async scenes(params, opId, signal) {
+       const scriptMd = await store.loadText('script.md')
+       if (!scriptMd) throw new Error('script.md not found — run script step first')
+-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
++      const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
+       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
+       if (signal?.aborted) return
+       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
+       const { scenes: withIds } = inheritStoryIds(prev, scenes)
+       assertUniqueStoryIds(withIds)
+       await store.saveText('scenes.json', JSON.stringify({ scenes: withIds }, null, 2))
+       // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
+       const norm = (n) => (n || '').replace(/\s/g, '')
+       const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
+       state.speakers = speakers.map((sp) => ({ ...sp, voice: prevSpeakers.get(norm(sp.name))?.voice ?? null }))
+     },
+     async prompts(params, opId, signal) {
+       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+       const scriptMd = await store.loadText('script.md')
+-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
++      const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
+       const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
+       if (signal?.aborted) return
+       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
+       state.pendingPushRevision += 1
+       // HIGH/Codex: push emit은 여기서 하지 않는다 — flush(story.json 저장) 전에 크래시하면
+       // 재발신 조건(pendingPushRevision > lastPushedRevision)이 디스크에 없어 복구 불가.
+       // start() 래퍼가 status=done 설정 + flush 완료 후에 pushScenes를 emit한다.
+       return { pushScenes: scenes }
+     },
+   }
+diff --git a/electron/story/storyStore.js b/electron/story/storyStore.js
+index d1d9a87..1c209d8 100644
+--- a/electron/story/storyStore.js
++++ b/electron/story/storyStore.js
+@@ -3,21 +3,21 @@
+  * 소유자는 main process 스텝 머신. temp 파일 + rename으로 원자적 쓰기.
+  */
+ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
+ import { randomUUID } from 'node:crypto'
+ import path from 'node:path'
+ 
+ export function defaultStoryState() {
+   return {
+     version: 1,
+     input: null,
+-    engine: { llm: 'gemini' },
++    engine: { llm: 'claude' },
+     steps: {
+       script: { status: 'pending' },
+       scenes: { status: 'pending' },
+       audio: { status: 'pending', registration: null },
+       prompts: { status: 'pending' },
+     },
+     autoRun: false,
+     pushedAt: null,
+     pendingPushRevision: 0,
+     lastPushedRevision: 0,
+diff --git a/tests/electron/story/stepMachine.claude.test.js b/tests/electron/story/stepMachine.claude.test.js
+new file mode 100644
+index 0000000..618d908
+--- /dev/null
++++ b/tests/electron/story/stepMachine.claude.test.js
+@@ -0,0 +1,25 @@
++import { describe, it, expect, vi } from 'vitest'
++import { mkdtemp } from 'node:fs/promises'
++import os from 'node:os'
++import path from 'node:path'
++import { createStepMachine } from '../../../electron/story/stepMachine.js'
++
++async function tmpProject() { return mkdtemp(path.join(os.tmpdir(), 'proj-')) }
++
++describe('stepMachine + Claude 엔진', () => {
++  it('script 스텝이 loadMetaPrompt 결과를 opts.metaPrompt로 llm에 넘긴다', async () => {
++    const projectPath = await tmpProject()
++    const llm = {
++      generateScript: vi.fn(async () => ({ scriptMd: '# 대본' })),
++      splitScenes: vi.fn(), writePrompts: vi.fn(),
++    }
++    const loadMetaPrompt = vi.fn(async () => 'META')
++    const machine = createStepMachine({ projectPath, llm, emit: () => {}, getApiKey: () => null, loadMetaPrompt })
++    await machine.open()
++    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { genre: 'yadam', language: 'ko' } })
++    expect(loadMetaPrompt).toHaveBeenCalledWith({ genre: 'yadam', wave: 'script', language: 'ko' })
++    expect(llm.generateScript.mock.calls[0][1].metaPrompt).toBe('META')
++    // 모델 fallback 'gemini-2.5-pro'가 새지 않음(엔진 미지정 → undefined)
++    expect(llm.generateScript.mock.calls[0][1].model).toBeUndefined()
++  })
++})

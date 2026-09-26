@@ -1,0 +1,1837 @@
+# Review package: 78a65f40..fb96a9e8
+
+## Commits
+fb96a9e8 Fix gate card i18n interpolation via useSafeT params forwarding
+0a40fc0a VoicePicker attempt-first: surface no-key preview + inline key entry
+38fa7e63 Gate audio generation on pre-flight: block + inline AudioKeyGateCard, re-run after key entry
+136763e3 Add AudioKeyGateCard (inline key entry per missing provider)
+a693b5df Add M3b-2b plan: pre-flight gate UI (card, StoryView entry points, VoicePicker)
+30c38f74 Add useAudioPreflight hook (compute missing providers from preflight)
+4a35e1a1 Wire story:audio-preflight through preload + useStoryPipeline.audioPreflight
+1d096245 Add M3b-2a plan: preflight renderer wiring (preload + useAudioPreflight)
+ddf8e268 voicePreviewService: classify preview failures by errorKind (fallback to regex)
+bb0a01ba Add locale strings for story-audio missing-key / auth errorKinds
+b1ce1308 Add M3b-1 plan: errorKind locale + voicePreview classification
+
+## Files changed
+ ...2026-07-21-story-audio-m3b1-errorkind-locale.md | 192 +++++++++++++++
+ .../2026-07-21-story-audio-m3b2a-preflight-hook.md | 193 +++++++++++++++
+ docs/plans/2026-07-21-story-audio-m3b2b-gate-ui.md | 272 +++++++++++++++++++++
+ electron/api/tts/voicePreviewService.js            |  12 +-
+ electron/preload.js                                |   1 +
+ src/components/settings/GenaiApiKeyField.jsx       |   4 +-
+ src/components/settings/TtsApiKeyField.jsx         |   4 +-
+ src/components/story/AudioKeyGateCard.jsx          |  38 +++
+ src/components/story/StoryView.jsx                 |  77 +++++-
+ src/components/story/VoicePicker.jsx               |  10 +
+ src/hooks/useAudioPreflight.js                     |  18 ++
+ src/hooks/useStoryPipeline.js                      |   7 +-
+ src/hooks/useVoicePreview.js                       |   2 +-
+ src/locales/en.js                                  |   2 +
+ src/locales/ko.js                                  |   2 +
+ tests/components/story/AudioKeyGateCard.test.jsx   |  18 ++
+ .../story/StoryView.audioGateI18n.test.jsx         |  56 +++++
+ .../story/VoicePicker.noKeyInline.test.jsx         |  85 +++++++
+ tests/components/story/storyAudioGate.test.jsx     | 121 +++++++++
+ .../electron/api/tts/voicePreviewErrorKind.test.js |  32 +++
+ tests/hooks/useAudioPreflight.test.js              |  30 +++
+ .../hooks/useStoryPipeline.audioPreflight.test.js  |  43 ++++
+ tests/hooks/useVoicePreview.errorKind.test.js      |  18 ++
+ tests/utils/errorDisplay.storyAudioKinds.test.js   |  28 +++
+ 24 files changed, 1246 insertions(+), 19 deletions(-)
+
+## Diff
+diff --git a/docs/plans/2026-07-21-story-audio-m3b1-errorkind-locale.md b/docs/plans/2026-07-21-story-audio-m3b1-errorkind-locale.md
+new file mode 100644
+index 00000000..bb37683a
+--- /dev/null
++++ b/docs/plans/2026-07-21-story-audio-m3b1-errorkind-locale.md
+@@ -0,0 +1,192 @@
++# Story Audio errorKind Locale (M3b-1) Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use `- [ ]`.
++
++**Goal:** M2가 던지는 표준 키 에러(`MissingProviderKeyError`/`ProviderAuthError`)가 렌더러에서 raw 영어 대신 번역된 안내로 뜨게 한다 — 로케일 문구 추가 + 미리듣기 실패 분류를 정규식에서 `errorKind` 기반으로 교체.
++
++**Architecture:** `resolveDisplayError`는 이미 `errorSection.kind.<errorKind>` 키를 번역한다(errorDisplay.js). 그래서 `story-audio-no-tts-key`/`story-audio-tts-auth` 문구를 ko/en 로케일의 `errorSection.kind`에 추가하면 Story 오디오 스텝 에러가 자동 번역된다. `voicePreviewService.getPreview`의 catch는 메시지 정규식 대신 `e.errorKind`를 우선 본다.
++
++**Tech Stack:** React i18n(ko/en locale objects), vitest.
++
++## Global Constraints
++
++- TDD. 러너 `npx vitest run <path>`, 전체 `npm run test:run`.
++- 커밋 영어. 브랜치 `feature/story-audio-apikey-gate`.
++- spec §4.8(errorKind 표준화·로케일·resolveDisplayError). errorKind 값: `story-audio-no-tts-key`(from `MissingProviderKeyError`), `story-audio-tts-auth`(from `ProviderAuthError`) — M1 `electron/api/keyErrors.js`가 이 값을 세팅함.
++- pre-existing `VideoDetailModal` 2 errors 무관.
++
++## File Structure
++
++- `src/locales/ko.js` / `src/locales/en.js` (수정) — `errorSection.kind`에 두 키 추가.
++- `electron/api/tts/voicePreviewService.js` (수정) — catch 분류를 `errorKind` 우선으로.
++- Tests: `tests/utils/errorDisplay.storyAudioKinds.test.js`, `tests/electron/api/tts/voicePreviewErrorKind.test.js`.
++
++---
++
++### Task 1: errorKind 로케일 문구 + resolveDisplayError 확인
++
++**Files:**
++- Modify: `src/locales/ko.js`, `src/locales/en.js`
++- Test: `tests/utils/errorDisplay.storyAudioKinds.test.js`
++
++**Interfaces:**
++- Produces: `errorSection.kind['story-audio-no-tts-key']`, `errorSection.kind['story-audio-tts-auth']` in ko + en. `resolveDisplayError(t, 'story-audio-no-tts-key', rawEng)` returns the localized string (not the raw English).
++
++- [ ] **Step 1: Locate the existing errorSection.kind block**
++
++Run: `grep -n "story-audio-import\|errorSection" src/locales/ko.js | head` — find the nested `errorSection: { kind: { ... } }` object (existing keys like `story-audio-import-missing`). Add the two new keys there. Do the same in `src/locales/en.js`.
++
++- [ ] **Step 2: Write the failing test**
++
++```js
++// tests/utils/errorDisplay.storyAudioKinds.test.js
++import { describe, it, expect } from 'vitest'
++import { resolveDisplayError } from '../../src/utils/errorDisplay'
++import ko from '../../src/locales/ko'
++import en from '../../src/locales/en'
++
++// Minimal translator that reads a dotted key from a locale object (mirrors useI18n lookup:
++// returns the value or the key itself when missing).
++const makeT = (locale) => (key) => {
++  const val = key.split('.').reduce((o, k) => (o == null ? undefined : o[k]), locale)
++  return typeof val === 'string' ? val : key
++}
++
++describe('resolveDisplayError — story audio key errorKinds', () => {
++  for (const [name, locale] of [['ko', ko], ['en', en]]) {
++    const t = makeT(locale)
++    it(`${name}: no-tts-key kind translates (not raw English)`, () => {
++      const out = resolveDisplayError(t, 'story-audio-no-tts-key', 'audio failed: No typecast API key')
++      expect(out).toBeTruthy()
++      expect(out).not.toMatch(/No typecast API key/)
++      expect(out).not.toBe('errorSection.kind.story-audio-no-tts-key')
++    })
++    it(`${name}: tts-auth kind translates`, () => {
++      const out = resolveDisplayError(t, 'story-audio-tts-auth', 'Gemini TTS failed: 400')
++      expect(out).toBeTruthy()
++      expect(out).not.toBe('errorSection.kind.story-audio-tts-auth')
++    })
++  }
++})
++```
++
++- [ ] **Step 3: Run to verify fail**
++
++Run: `npx vitest run tests/utils/errorDisplay.storyAudioKinds.test.js`
++Expected: FAIL — keys missing → t() returns the raw key string → assertions fail.
++
++- [ ] **Step 4: Add locale strings**
++
++In `src/locales/ko.js`, inside `errorSection.kind`:
++```js
++      'story-audio-no-tts-key': '음성 API 키가 없어 오디오를 만들 수 없습니다. 설정 › API 키에서 해당 음성 제공자의 키를 등록하세요.',
++      'story-audio-tts-auth': '음성 API 키가 유효하지 않습니다(인증 실패). 설정 › API 키에서 키를 다시 확인하세요.',
++```
++In `src/locales/en.js`, inside `errorSection.kind`:
++```js
++      'story-audio-no-tts-key': 'Cannot generate audio — the voice API key is missing. Add it in Settings › API Keys for this voice provider.',
++      'story-audio-tts-auth': 'The voice API key is invalid (authentication failed). Recheck it in Settings › API Keys.',
++```
++(Match the surrounding key's exact indentation/quote style in each file.)
++
++- [ ] **Step 5: Run + commit**
++
++Run: `npx vitest run tests/utils/errorDisplay.storyAudioKinds.test.js` → PASS (4).
++```bash
++git add src/locales/ko.js src/locales/en.js tests/utils/errorDisplay.storyAudioKinds.test.js
++git commit -m "Add locale strings for story-audio missing-key / auth errorKinds"
++```
++
++---
++
++### Task 2: voicePreviewService errorKind-based classification
++
++**Files:**
++- Modify: `electron/api/tts/voicePreviewService.js:79-83`
++- Test: `tests/electron/api/tts/voicePreviewErrorKind.test.js`
++
++**Interfaces:**
++- Consumes: `MissingProviderKeyError`/`ProviderAuthError` from `electron/api/keyErrors.js` (thrown by adapters in preview's synthesize path).
++- Produces: `getPreview` catch returns `{ error: 'no-key', provider }` when the thrown error has `errorKind === 'story-audio-no-tts-key'`, `{ error: 'unauthorized', provider }` for `story-audio-tts-auth`, else `{ error: 'failed', provider }`. errorKind takes precedence over the message regex (regex kept only as a fallback for untyped errors).
++
++- [ ] **Step 1: Write the failing test**
++
++```js
++// tests/electron/api/tts/voicePreviewErrorKind.test.js
++import { describe, it, expect } from 'vitest'
++import { createVoicePreviewService } from '../../../../electron/api/tts/voicePreviewService.js'
++import { MissingProviderKeyError, ProviderAuthError } from '../../../../electron/api/keyErrors.js'
++
++function makeService(throwErr) {
++  return createVoicePreviewService({
++    cacheDir: '/tmp/nope-cache',
++    ttsFor: () => ({ synthesize: async () => { throw throwErr } }),
++    voiceMeta: () => ({}),
++    ssrfSafeFetch: async () => ({ audio: Buffer.alloc(0), mimeType: 'audio/mpeg' }),
++    fetch: async () => ({}),
++    fs: { existsSync: () => false, readFileSync: () => Buffer.alloc(0), mkdirSync: () => {}, writeFileSync: () => {}, renameSync: () => {} },
++  })
++}
++
++describe('voicePreviewService getPreview — errorKind classification', () => {
++  it('MissingProviderKeyError → {error:"no-key", provider}', async () => {
++    const svc = makeService(new MissingProviderKeyError('typecast'))
++    const res = await svc.getPreview({ provider: 'typecast', voiceId: 'v1', language: 'ko' })
++    expect(res).toEqual({ error: 'no-key', provider: 'typecast' })
++  })
++  it('ProviderAuthError → {error:"unauthorized", provider}', async () => {
++    const svc = makeService(new ProviderAuthError('gemini', { status: 400 }))
++    const res = await svc.getPreview({ provider: 'gemini', voiceId: 'Kore', language: 'ko' })
++    expect(res).toEqual({ error: 'unauthorized', provider: 'gemini' })
++  })
++  it('generic error → {error:"failed", provider}', async () => {
++    const svc = makeService(new Error('network boom'))
++    const res = await svc.getPreview({ provider: 'elevenlabs', voiceId: 'x', language: 'ko' })
++    expect(res).toEqual({ error: 'failed', provider: 'elevenlabs' })
++  })
++})
++```
++(If `createVoicePreviewService`'s dep shape differs — e.g. it doesn't accept an injected `fs` — read the actual signature at the top of `voicePreviewService.js` and adapt the harness so `produce` throws through `ttsFor(provider).synthesize`. The disk-cache branch must miss so it reaches synthesize.)
++
++- [ ] **Step 2: Run to verify fail**
++
++Run: `npx vitest run tests/electron/api/tts/voicePreviewErrorKind.test.js`
++Expected: FAIL — current regex on `MissingProviderKeyError('typecast')` message "No typecast API key" happens to match `no-key`, but `ProviderAuthError('gemini',{status:400})` message "gemini auth failed: 400" does NOT match `/401|unauth/i` → returns 'failed' not 'unauthorized'. So the auth case fails.
++
++- [ ] **Step 3: Implement errorKind-first classification**
++
++Replace the catch body (voicePreviewService.js:79-83):
++```js
++      .catch((e) => {
++        const kind = e?.errorKind
++        let error
++        if (kind === 'story-audio-no-tts-key') error = 'no-key'
++        else if (kind === 'story-audio-tts-auth') error = 'unauthorized'
++        else {
++          const msg = String(e?.message || e)
++          error = /no .* key|No .* API key/i.test(msg) ? 'no-key' : /401|unauth/i.test(msg) ? 'unauthorized' : 'failed'
++        }
++        return { error, provider: e?.provider || provider }
++      })
++```
++(`provider` is in scope from `getPreview`'s destructured arg; `e?.provider` from the typed error takes precedence.)
++
++- [ ] **Step 4: Run + full suite + commit**
++
++Run: `npx vitest run tests/electron/api/tts/voicePreviewErrorKind.test.js` → PASS (3).
++Run: `npx vitest run tests/electron/api/tts/` → existing voicePreviewService tests still green (if one asserted the old regex-only path with a typed error, update it).
++Run: `npm run test:run` → green (VideoDetailModal 2 errors unrelated).
++```bash
++git add electron/api/tts/voicePreviewService.js tests/electron/api/tts/voicePreviewErrorKind.test.js
++git commit -m "voicePreviewService: classify preview failures by errorKind (fallback to regex)"
++```
++
++---
++
++## Self-Review
++
++**Spec coverage:** §4.8 로케일 문구(ko/en) → Task 1 ✓; 미리듣기 정규식→errorKind → Task 2 ✓. resolveDisplayError 매핑은 기존 로직이 kind 번역을 이미 처리(변경 불필요). (게이트/VoicePicker UI가 이 분류를 소비하는 건 M3b-2/3.)
++
++**Placeholder scan:** 없음.
++
++**Type consistency:** errorKind 값 `story-audio-no-tts-key`/`story-audio-tts-auth`가 M1 keyErrors.js와 일치. getPreview 반환 `{error, provider}` 형태 기존과 동일(값만 정확해짐).
+diff --git a/docs/plans/2026-07-21-story-audio-m3b2a-preflight-hook.md b/docs/plans/2026-07-21-story-audio-m3b2a-preflight-hook.md
+new file mode 100644
+index 00000000..2f2fc260
+--- /dev/null
++++ b/docs/plans/2026-07-21-story-audio-m3b2a-preflight-hook.md
+@@ -0,0 +1,193 @@
++# Story Audio Pre-flight Renderer Wiring (M3b-2a) Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use `- [ ]`.
++
++**Goal:** 렌더러가 `story:audio-preflight`(M2)를 호출할 수 있게 배선한다 — preload 브릿지 + `useStoryPipeline`의 `audioPreflight` wrapper(projectToken 주입) + `useAudioPreflight` hook(missing provider 계산). UI 게이트 카드는 M3b-2b.
++
++**Architecture:** 기존 `story:tts-preview`/`storyTtsPreview` 배선 패턴을 그대로 복제한다. preload에 `storyAudioPreflight` 추가 → `useStoryPipeline`이 `tokenRef.current`를 주입한 `audioPreflight(params)`를 노출 → `useAudioPreflight` hook이 결과의 `providers[]`에서 `missing`을 골라 `{ ok, missing, providers }`를 준다.
++
++**Tech Stack:** Electron preload/IPC, React hook, vitest.
++
++## Global Constraints
++
++- TDD. 러너 `npx vitest run <path>`, 전체 `npm run test:run`.
++- 커밋 영어. 브랜치 `feature/story-audio-apikey-gate`.
++- spec §4.1/§4.4(preflight 소비). 반환 shape: `{ providers:[{provider,keyId,status:'resolved-store'|'resolved-fallback'|'missing',encryptionAvailable}], encryptionAvailable }` (M2 `story-api.js` `buildAudioPreflightResult`).
++- pre-existing `VideoDetailModal` 2 errors 무관.
++
++## Wiring facts (from repo)
++
++- `electron/preload.js:134` — `storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath })` (복제 대상 패턴).
++- `electron/preload.js:131` — `storyTtsPreview: (args) => ipcRenderer.invoke('story:tts-preview', args)`.
++- `src/hooks/useStoryPipeline.js:582` — `ttsPreview` = `useCallback((params) => window.electronAPI.storyTtsPreview({ projectToken: tokenRef.current, ...params }), [])`, returned in public object (~`:611-613`).
++- main handler `electron/ipc/story-api.js:187` — `ipcMain.handle('story:audio-preflight', async (_e, params) => ...)` reads `params` directly (not wrapped). So the renderer sends `params` at top level; `projectToken` is only needed if the handler uses it — verify: M2's handler calls `machine.audioPreflight(params)` and does NOT read projectToken. **So preload can invoke with `params` directly; the pipeline wrapper does not need to inject projectToken** (unlike ttsPreview). Confirm against the actual handler at implement time.
++
++## File Structure
++
++- `electron/preload.js` (수정) — `storyAudioPreflight` 브릿지.
++- `src/hooks/useStoryPipeline.js` (수정) — `audioPreflight` wrapper + public 노출.
++- `src/hooks/useAudioPreflight.js` (신규) — missing 계산 hook.
++- Tests: `tests/hooks/useAudioPreflight.test.js` (+ pipeline wrapper는 useStoryPipeline 기존 테스트 스타일로 커버 가능하면 추가).
++
++---
++
++### Task 1: preload 브릿지 + useStoryPipeline audioPreflight wrapper
++
++**Files:**
++- Modify: `electron/preload.js`, `src/hooks/useStoryPipeline.js`
++- Test: `tests/hooks/useStoryPipeline.audioPreflight.test.js` (or extend an existing useStoryPipeline test)
++
++**Interfaces:**
++- Produces: `window.electronAPI.storyAudioPreflight(params) → Promise<{providers, encryptionAvailable}>`; `pipeline.audioPreflight(params) → Promise<...>`.
++
++- [ ] **Step 1: Confirm the handler's param contract**
++
++Read `electron/ipc/story-api.js` around `:187` — confirm the `story:audio-preflight` handler reads `params` directly and whether it needs `projectToken` (M2 impl uses `machine.audioPreflight(params)`; `machine` is captured in `registerStoryIPC` scope, so projectToken is NOT required). This decides whether the wrapper injects `tokenRef.current`. (If the handler DOES read `payload.projectToken`, inject it like ttsPreview.)
++
++- [ ] **Step 2: Write the failing test**
++
++```js
++// tests/hooks/useStoryPipeline.audioPreflight.test.js
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { renderHook } from '@testing-library/react'
++import { useStoryPipeline } from '../../src/hooks/useStoryPipeline'
++
++describe('useStoryPipeline.audioPreflight', () => {
++  beforeEach(() => {
++    global.window = global.window || {}
++    window.electronAPI = {
++      storyAudioPreflight: vi.fn().mockResolvedValue({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing', encryptionAvailable: true }], encryptionAvailable: true }),
++      // other electronAPI methods the hook touches on mount — stub as needed (mirror existing useStoryPipeline test setup)
++    }
++  })
++  it('exposes audioPreflight that calls storyAudioPreflight with params', async () => {
++    const { result } = renderHook(() => useStoryPipeline(/* pass the same args existing tests use */))
++    const res = await result.current.audioPreflight({ speakers: [{ id: 'A', voice: { provider: 'typecast', voiceId: 'v' } }] })
++    expect(window.electronAPI.storyAudioPreflight).toHaveBeenCalled()
++    expect(res.providers[0].status).toBe('missing')
++  })
++})
++```
++(Read an existing `tests/hooks/useStoryPipeline*.test.js` to copy the exact `useStoryPipeline(...)` args and window.electronAPI stubs — the hook likely calls several IPCs on mount; stub them so renderHook doesn't throw.)
++
++- [ ] **Step 3: Run to verify fail**
++
++Run: `npx vitest run tests/hooks/useStoryPipeline.audioPreflight.test.js`
++Expected: FAIL — `result.current.audioPreflight` is undefined.
++
++- [ ] **Step 4: Implement**
++
++In `electron/preload.js` (near `:131-134`, inside the same story-channel group):
++```js
++  storyAudioPreflight: (params) => ipcRenderer.invoke('story:audio-preflight', params),
++```
++In `src/hooks/useStoryPipeline.js` (mirror `ttsPreview` at `:582`):
++```js
++  const audioPreflight = useCallback((params) => window.electronAPI.storyAudioPreflight(params), [])
++```
++(If Step 1 found projectToken IS needed: `storyAudioPreflight({ projectToken: tokenRef.current, ...params })` in preload-arg form — match ttsPreview's shape.) Add `audioPreflight` to the hook's returned public object (where `ttsPreview` is returned, ~`:611-613`).
++
++- [ ] **Step 5: Run + commit**
++
++Run: `npx vitest run tests/hooks/useStoryPipeline.audioPreflight.test.js` → PASS.
++Run: `npx vitest run tests/hooks/useStoryPipeline*.test.js` → existing pipeline tests green.
++```bash
++git add electron/preload.js src/hooks/useStoryPipeline.js tests/hooks/useStoryPipeline.audioPreflight.test.js
++git commit -m "Wire story:audio-preflight through preload + useStoryPipeline.audioPreflight"
++```
++
++---
++
++### Task 2: useAudioPreflight hook (missing 계산)
++
++**Files:**
++- Create: `src/hooks/useAudioPreflight.js`
++- Test: `tests/hooks/useAudioPreflight.test.js`
++
++**Interfaces:**
++- Consumes: `pipeline.audioPreflight(params)` (Task 1).
++- Produces: `useAudioPreflight(pipeline) → { check(params) → Promise<{ ok, missing, providers, encryptionAvailable }> }` where `missing = providers.filter(p => p.status === 'missing')` and `ok = missing.length === 0`.
++
++- [ ] **Step 1: Write the failing test**
++
++```js
++// tests/hooks/useAudioPreflight.test.js
++import { describe, it, expect, vi } from 'vitest'
++import { renderHook } from '@testing-library/react'
++import { useAudioPreflight } from '../../src/hooks/useAudioPreflight'
++
++const pipe = (providers, enc = true) => ({ audioPreflight: vi.fn().mockResolvedValue({ providers, encryptionAvailable: enc }) })
++
++describe('useAudioPreflight', () => {
++  it('ok=true when no provider is missing', async () => {
++    const { result } = renderHook(() => useAudioPreflight(pipe([
++      { provider: 'typecast', keyId: 'typecast', status: 'resolved-store', encryptionAvailable: true },
++    ])))
++    const r = await result.current.check({})
++    expect(r.ok).toBe(true)
++    expect(r.missing).toEqual([])
++  })
++  it('ok=false and lists missing providers', async () => {
++    const { result } = renderHook(() => useAudioPreflight(pipe([
++      { provider: 'typecast', keyId: 'typecast', status: 'resolved-fallback', encryptionAvailable: true },
++      { provider: 'gemini', keyId: 'genai', status: 'missing', encryptionAvailable: true },
++    ])))
++    const r = await result.current.check({})
++    expect(r.ok).toBe(false)
++    expect(r.missing.map(m => m.provider)).toEqual(['gemini'])
++  })
++  it('ok=true on empty required set', async () => {
++    const { result } = renderHook(() => useAudioPreflight(pipe([])))
++    const r = await result.current.check({})
++    expect(r.ok).toBe(true)
++  })
++})
++```
++
++- [ ] **Step 2: Run to verify fail**
++
++Run: `npx vitest run tests/hooks/useAudioPreflight.test.js`
++Expected: FAIL — module not found.
++
++- [ ] **Step 3: Implement**
++
++```js
++// src/hooks/useAudioPreflight.js
++import { useCallback } from 'react'
++
++/**
++ * useAudioPreflight — 오디오 생성 전 필요한 provider 키가 다 해석되는지 main 에 물어본다(spec §4.1/4.4).
++ * pipeline.audioPreflight(params) 결과의 providers[].status 로 missing 을 골라 게이트 판단을 준다.
++ * 렌더러는 이 결과를 표시만; 실제 실행은 main 이 다시 검사한다.
++ */
++export function useAudioPreflight(pipeline) {
++  const check = useCallback(async (params) => {
++    const res = await pipeline.audioPreflight(params)
++    const providers = res?.providers || []
++    const missing = providers.filter((p) => p.status === 'missing')
++    return { ok: missing.length === 0, missing, providers, encryptionAvailable: res?.encryptionAvailable !== false }
++  }, [pipeline])
++  return { check }
++}
++
++export default useAudioPreflight
++```
++
++- [ ] **Step 4: Run + full suite + commit**
++
++Run: `npx vitest run tests/hooks/useAudioPreflight.test.js` → PASS (3).
++Run: `npm run test:run` → green (VideoDetailModal 2 errors unrelated).
++```bash
++git add src/hooks/useAudioPreflight.js tests/hooks/useAudioPreflight.test.js
++git commit -m "Add useAudioPreflight hook (compute missing providers from preflight)"
++```
++
++---
++
++## Self-Review
++
++**Spec coverage:** §4.1/§4.4 preflight 렌더러 소비 배선 → Task 1(preload+wrapper), Task 2(missing 계산). (게이트 카드/진입점 통합/VoicePicker는 M3b-2b.)
++
++**Placeholder scan:** 없음.
++
++**Type consistency:** `audioPreflight(params) → {providers, encryptionAvailable}`, `useAudioPreflight(pipeline).check(params) → {ok, missing, providers, encryptionAvailable}`. M2 반환 shape과 일치.
+diff --git a/docs/plans/2026-07-21-story-audio-m3b2b-gate-ui.md b/docs/plans/2026-07-21-story-audio-m3b2b-gate-ui.md
+new file mode 100644
+index 00000000..ce53984d
+--- /dev/null
++++ b/docs/plans/2026-07-21-story-audio-m3b2b-gate-ui.md
+@@ -0,0 +1,272 @@
++# Story Audio Pre-flight Gate UI (M3b-2b) Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use `- [ ]`.
++
++**Goal:** 오디오 생성 전 키 없으면 인라인 게이트 카드로 막고 그 자리에서 키 입력, VoicePicker 미리듣기도 키 없으면 인라인 안내. `useAudioPreflight`(M3b-2a) 위에 UI를 올린다.
++
++**Architecture:** `AudioKeyGateCard`가 missing provider마다 `GenaiApiKeyField`(gemini→genai) 또는 `TtsApiKeyField`(그 외)를 렌더한다. StoryView가 `runAudioWithPreflight(params, run)`로 5개 오디오 진입점을 감싸 — missing이면 게이트 상태 세팅(카드 표시), 아니면 run. 키 저장 시 provider-slice refetch + 재검사→run. VoicePicker는 attempt-first: 미리듣기 결과가 `{error:'no-key'}`면 인라인 키 카드.
++
++**Tech Stack:** React, vitest + @testing-library/react. M3a `GenaiApiKeyField`/`TtsApiKeyField`, M3b-2a `useAudioPreflight` 재사용.
++
++## Global Constraints
++
++- TDD(컴포넌트 테스트). 러너 `npx vitest run <path>`, 전체 `npm run test:run`.
++- 커밋 영어. 브랜치 `feature/story-audio-apikey-gate`.
++- spec §4.4(게이트 진입점 통합·인라인 카드), §4.7(VoicePicker attempt-first, 목록 키리스 유지), §4.6(ApiKeyField wrapper 재사용).
++- **UI — 실앱 눈검증이 완성 게이트**(코드 그린 ≠ 완성).
++- pre-existing `VideoDetailModal` 2 errors 무관.
++- registry: `src/config/apiKeyRegistry.js` `API_KEY_REGISTRY[provider].label`, `keyIdForProvider`.
++
++## Wiring facts (M3b-2a + Explore)
++
++- `useAudioPreflight(pipeline).check(params) → { ok, missing:[{provider,keyId,status,...}], providers, encryptionAvailable }`.
++- StoryView `pipeline` prop(:402 destructure `start`,`ttsPreview`). `buildAudioParams()`(:1077). 진입점: handlePrimaryAction audio분기 `:1302`, handleStepRedo `:1314`, triggerAutoStep `:1402`, regenerateSegment `:1145`, runSpeakerAudio `:1151`(result.error 검사 :1155 = 템플릿).
++- App voices refetch: `window.electronAPI.ttsListVoices({provider})` + `mergeTtsVoices(vs.map(v=>({...v,provider})))` (handleTtsVoiceSearch :752 템플릿). StoryView엔 `onVoiceSearch` prop 있음(단일 provider refetch에 재사용 가능).
++- VoicePicker preview: `useVoicePreview.js:44`가 `res.error`/`res.provider`를 버리고 `status:'error'`만 → 캡처 필요.
++
++## File Structure
++
++- `src/components/story/AudioKeyGateCard.jsx` (신규) — missing providers → wrapper 목록.
++- `src/components/story/StoryView.jsx` (수정) — `runAudioWithPreflight` + 게이트 상태/렌더 + 5 진입점.
++- `src/hooks/useVoicePreview.js` (수정) — `res.error`/`res.provider` 캡처.
++- `src/components/story/VoicePicker.jsx` (수정) — no-key 인라인 카드.
++- Tests: `tests/components/story/AudioKeyGateCard.test.jsx`, `tests/hooks/useVoicePreview.errorKind.test.js`.
++
++---
++
++### Task 1: AudioKeyGateCard 컴포넌트
++
++**Files:**
++- Create: `src/components/story/AudioKeyGateCard.jsx`
++- Test: `tests/components/story/AudioKeyGateCard.test.jsx`
++
++**Interfaces:**
++- Produces: `AudioKeyGateCard({ missing, onKeySaved, t })` — `missing:[{provider,keyId}]` 각각에 대해 gemini면 `GenaiApiKeyField`, 아니면 `TtsApiKeyField`(provider,label from registry). 저장 성공 콜백은 각 wrapper 내부에서 이미 toast; 여기선 목록 렌더 + 안내 문구.
++
++- [ ] **Step 1: Write the failing test**
++
++```jsx
++// tests/components/story/AudioKeyGateCard.test.jsx
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen } from '@testing-library/react'
++vi.mock('../../../src/hooks/useApiKey', () => ({ useApiKey: () => ({ hasKey: false, encryptionAvailable: true, loading: false, validateKey: vi.fn(), saveKey: vi.fn(), clearKey: vi.fn() }) }))
++vi.mock('../../../src/hooks/useTtsKeys', () => ({ useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: vi.fn(), clearKey: vi.fn(), provider: p }) }))
++import AudioKeyGateCard from '../../../src/components/story/AudioKeyGateCard'
++const t = (k, v) => (v ? `${k}:${JSON.stringify(v)}` : k)
++
++describe('AudioKeyGateCard', () => {
++  it('renders a field per missing provider (gemini→Google Gemini label, typecast→Typecast)', () => {
++    render(<AudioKeyGateCard missing={[{ provider: 'gemini', keyId: 'genai' }, { provider: 'typecast', keyId: 'typecast' }]} t={t} />)
++    expect(screen.getByText('Google Gemini')).toBeTruthy()
++    expect(screen.getByText('Typecast')).toBeTruthy()
++  })
++  it('renders nothing meaningful when missing is empty', () => {
++    const { container } = render(<AudioKeyGateCard missing={[]} t={t} />)
++    expect(container.querySelector('input')).toBeNull()
++  })
++})
++```
++
++- [ ] **Step 2: Run to verify fail**
++
++Run: `npx vitest run tests/components/story/AudioKeyGateCard.test.jsx`
++Expected: FAIL — module not found.
++
++- [ ] **Step 3: Implement**
++
++```jsx
++// src/components/story/AudioKeyGateCard.jsx
++/**
++ * AudioKeyGateCard — 오디오 생성/미리듣기 pre-flight 에서 키 없는 provider 를 그 자리에서 입력받는다.
++ * missing provider 마다 registry 로 wrapper 선택(gemini→GenaiApiKeyField, 그 외→TtsApiKeyField).
++ */
++import { API_KEY_REGISTRY, keyIdForProvider } from '../../config/apiKeyRegistry'
++import GenaiApiKeyField from '../settings/GenaiApiKeyField'
++import TtsApiKeyField from '../settings/TtsApiKeyField'
++
++const GETKEY_URL = {
++  typecast: 'https://app.typecast.ai',
++  elevenlabs: 'https://elevenlabs.io/app/settings/api-keys',
++  googletts: 'https://console.cloud.google.com/apis/credentials',
++}
++
++export default function AudioKeyGateCard({ missing, onKeySaved, t }) {
++  if (!missing || missing.length === 0) return null
++  return (
++    <div className="audio-key-gate" style={{ border: '1px solid #f59e0b55', borderRadius: 8, padding: 12, margin: '8px 0', background: '#f59e0b0d' }}>
++      <div style={{ color: '#f59e0b', fontWeight: 600, marginBottom: 8 }}>{t('story.audio.keyGateTitle', '오디오를 만들려면 API 키가 필요합니다')}</div>
++      {missing.map((m) => {
++        const meta = API_KEY_REGISTRY[m.provider] || { label: m.provider }
++        if (keyIdForProvider(m.provider) === 'genai') {
++          return <GenaiApiKeyField key={m.provider} t={t} onSaved={() => onKeySaved?.(m.provider)} />
++        }
++        return (
++          <TtsApiKeyField
++            key={m.provider}
++            provider={m.provider}
++            label={meta.label}
++            getKeyUrl={GETKEY_URL[m.provider]}
++            onSaved={() => onKeySaved?.(m.provider)}
++            t={t}
++          />
++        )
++      })}
++    </div>
++  )
++}
++```
++NOTE: `GenaiApiKeyField`/`TtsApiKeyField` currently don't accept an `onSaved` prop — if you need the refetch trigger, add an optional `onSaved` call after a successful save in both wrappers (one line each: after `toast.success(...)`, `onSaved?.()`). Keep it optional so the settings tab (no onSaved) is unaffected. Add that in this task and note it.
++
++- [ ] **Step 4: Run + commit**
++
++Run: `npx vitest run tests/components/story/AudioKeyGateCard.test.jsx` → PASS.
++Run: `npx vitest run tests/components/settings/` → wrapper tests still green (onSaved optional).
++```bash
++git add src/components/story/AudioKeyGateCard.jsx src/components/settings/GenaiApiKeyField.jsx src/components/settings/TtsApiKeyField.jsx tests/components/story/AudioKeyGateCard.test.jsx
++git commit -m "Add AudioKeyGateCard (inline key entry per missing provider)"
++```
++
++---
++
++### Task 2: StoryView runAudioWithPreflight + 진입점 통합 + 게이트 렌더
++
++**Files:**
++- Modify: `src/components/story/StoryView.jsx`
++- Test: `tests/components/story/storyAudioGate.test.jsx` (integration-ish; if StoryView is too heavy to render, test the `runAudioWithPreflight` logic by extracting it to a small pure/near-pure helper and unit-testing that)
++
++**Interfaces:**
++- Consumes: `useAudioPreflight` (M3b-2a), `AudioKeyGateCard` (Task 1), `pipeline.start`, `buildAudioParams`, `onVoiceSearch` (provider refetch).
++- Produces: audio starts go through `runAudioWithPreflight(params, run)` — preflight check; if missing, set gate state (render `AudioKeyGateCard`) and DO NOT run; if ok, run. Key saved → refetch that provider's voices + re-check → run if now ok.
++
++- [ ] **Step 1: Add the hook + gate state + wrapper**
++
++In `StoryView.jsx` (near the top, after `pipeline` destructure ~:402):
++```js
++import { useAudioPreflight } from '../../hooks/useAudioPreflight'
++import AudioKeyGateCard from './AudioKeyGateCard'
++// inside component:
++const preflight = useAudioPreflight(pipeline)
++const [audioGate, setAudioGate] = useState(null) // { missing, retry } | null
++
++const runAudioWithPreflight = useCallback(async (params, run) => {
++  const r = await preflight.check(params)
++  if (!r.ok) { setAudioGate({ missing: r.missing, retry: () => run(params) }); return { error: 'preflight-missing-key' } }
++  setAudioGate(null)
++  return run(params)
++}, [preflight])
++```
++
++- [ ] **Step 2: Wrap the five audio trigger sites**
++
++Replace each direct audio `start(...)` with a `runAudioWithPreflight(params, (p) => start('audio', p))` form. Exact sites:
++- `:1302` handlePrimaryAction audio branch: `start(currentStep, buildStepParams(currentStep))` — only wrap when `currentStep === 'audio'`.
++- `:1314` handleStepRedo: wrap when `redoStep === 'audio'`.
++- `:1402` triggerAutoStep: wrap when `step === 'audio'`.
++- `:1145` regenerateSegment: `start('audio', buildAudioParams([segId]))`.
++- `:1151` runSpeakerAudio: `start('audio', { ...buildAudioParams(), onlySpeaker: sp.id })` — its params already include onlySpeaker so preflight scopes to that speaker.
++For non-audio steps, keep the direct `start(...)` (don't route scenes/prompts through the audio gate).
++
++- [ ] **Step 3: Render the gate card + wire key-saved refetch**
++
++Where the audio step UI renders (near the audio progress/log area), add:
++```jsx
++{audioGate && (
++  <AudioKeyGateCard
++    missing={audioGate.missing}
++    t={t}
++    onKeySaved={async (provider) => {
++      try { await onVoiceSearch?.(provider) } catch {}   // refetch that provider's voices (single-provider)
++      const p = /* the params used for this gate — store them in audioGate */ audioGate.paramsForRecheck
++      const r = await preflight.check(p)
++      if (r.ok) { setAudioGate(null); audioGate.retry?.() }
++      else setAudioGate({ ...audioGate, missing: r.missing })
++    }}
++  />
++)}
++```
++Adjust `runAudioWithPreflight` to store `paramsForRecheck: params` in the gate state so re-check uses the same params. (If `onVoiceSearch` isn't a single-provider refetch, pass whatever StoryView has for refreshing voices; the refetch is best-effort — the key re-check is what gates.)
++
++- [ ] **Step 4: Test**
++
++Extract `runAudioWithPreflight` decision (ok→run, missing→gate) into a tiny testable function if StoryView won't render in jsdom, OR write a focused test that mounts StoryView with a mocked `pipeline.audioPreflight` returning a missing provider and asserts the gate card appears and `start` was NOT called; then a version returning ok asserts `start` WAS called. Mirror an existing `tests/components/story/*.test.jsx` for StoryView mount setup (it needs many props/mocks — copy them).
++
++Run: `npx vitest run tests/components/story/storyAudioGate.test.jsx` → PASS.
++
++- [ ] **Step 5: Full suite + commit**
++
++Run: `npm run test:run` → green (VideoDetailModal 2 errors unrelated).
++```bash
++git add src/components/story/StoryView.jsx tests/components/story/storyAudioGate.test.jsx
++git commit -m "Gate audio generation on pre-flight: block + inline AudioKeyGateCard, re-run after key entry"
++```
++
++---
++
++### Task 3: VoicePicker attempt-first (no-key inline)
++
++**Files:**
++- Modify: `src/hooks/useVoicePreview.js` (capture error/provider), `src/components/story/VoicePicker.jsx` (inline no-key card)
++- Test: `tests/hooks/useVoicePreview.errorKind.test.js`
++
++**Interfaces:**
++- Produces: `useVoicePreview` state on failure includes `{ status:'error', error:'no-key'|'unauthorized'|'failed', provider }`; VoicePicker shows an inline `TtsApiKeyField`/`GenaiApiKeyField` when `error==='no-key'`.
++
++- [ ] **Step 1: Write the failing test**
++
++```js
++// tests/hooks/useVoicePreview.errorKind.test.js
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { renderHook, act } from '@testing-library/react'
++import { useVoicePreview } from '../../src/hooks/useVoicePreview'
++
++describe('useVoicePreview surfaces error kind + provider', () => {
++  beforeEach(() => {
++    global.window = global.window || {}
++    window.electronAPI = { ttsPreviewVoice: vi.fn().mockResolvedValue({ error: 'no-key', provider: 'gemini' }) }
++  })
++  it('sets status error with error=no-key and provider', async () => {
++    const { result } = renderHook(() => useVoicePreview())
++    await act(async () => { await result.current.play({ provider: 'gemini', voiceId: 'Kore', language: 'ko' }) })
++    expect(result.current.state.status).toBe('error')
++    expect(result.current.state.error).toBe('no-key')
++    expect(result.current.state.provider).toBe('gemini')
++  })
++})
++```
++(Read `useVoicePreview.js` for the exact `play`/`state` shape and the electronAPI method name — adapt the mock.)
++
++- [ ] **Step 2: Run to verify fail**
++
++Run: `npx vitest run tests/hooks/useVoicePreview.errorKind.test.js`
++Expected: FAIL — current code sets `status:'error'` but drops `error`/`provider` (useVoicePreview.js:44).
++
++- [ ] **Step 3: Implement capture**
++
++In `useVoicePreview.js:44` error branch, include the fields:
++```js
++if (!res || res.error) { setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error', error: res?.error || 'failed' }); return }
++```
++(Keep the rest unchanged.)
++
++- [ ] **Step 4: VoicePicker inline card**
++
++In `VoicePicker.jsx` near the preview button (`:237-249`), when `previewState?.status === 'error' && previewState?.error === 'no-key' && previewState?.provider === <this voice's provider>`, render an inline key field for that provider (reuse `TtsApiKeyField`/`GenaiApiKeyField` via the registry like AudioKeyGateCard, or import `AudioKeyGateCard` with `missing={[{provider, keyId: keyIdForProvider(provider)}]}`). Keep the voice list itself rendering (keyless list stays).
++
++- [ ] **Step 5: Run + full suite + commit**
++
++Run: `npx vitest run tests/hooks/useVoicePreview.errorKind.test.js` → PASS.
++Run: `npm run test:run` → green.
++```bash
++git add src/hooks/useVoicePreview.js src/components/story/VoicePicker.jsx tests/hooks/useVoicePreview.errorKind.test.js
++git commit -m "VoicePicker attempt-first: surface no-key preview result + inline key entry"
++```
++
++---
++
++## Self-Review
++
++**Spec coverage:** §4.4 진입점 통합 + 인라인 게이트 카드 → Task 1/2; §4.7 VoicePicker attempt-first(목록 키리스 유지) → Task 3; §4.6 wrapper 재사용 → Task 1. (main 재검사 §4.4는 선택 — 렌더 preflight + main 실행이 이미 동일 resolver라 TOCTOU 창만 남음; 후속.)
++
++**눈검증(사용자, 종료 게이트):** `AUTOFLOWCUT_DISABLE_KEY_FALLBACK=1`로 키 없는 상태 → (a) 오디오 생성 누르면 게이트 카드가 뜨고 키 입력 후 진행되는지, (b) VoicePicker 미리듣기가 키 없을 때 인라인 안내 뜨는지, (c) 성우 목록 자체는 키 없이도 뜨는지.
++
++**Type consistency:** `runAudioWithPreflight(params, run)`, `useAudioPreflight().check`, `AudioKeyGateCard({missing,onKeySaved,t})`, `previewState.{status,error,provider}` 일관.
+diff --git a/electron/api/tts/voicePreviewService.js b/electron/api/tts/voicePreviewService.js
+index 7bf924a7..829616d1 100644
+--- a/electron/api/tts/voicePreviewService.js
++++ b/electron/api/tts/voicePreviewService.js
+@@ -70,21 +70,27 @@ export function createVoicePreviewService({ cacheDir, fs = nodeFs, ttsFor, voice
+       fs.renameSync(tmp, p)
+     } catch { /* best-effort */ }
+     return { audioBase64: audioBuffer.toString('base64'), mimeType }
+   }
+ 
+   async function getPreview({ provider, voiceId, language }) {
+     const key = `${provider}:${voiceId}:${language}`
+     if (inflight.has(key)) return inflight.get(key)
+     const promise = produce({ provider, voiceId, language })
+       .catch((e) => {
+-        const msg = String(e?.message || e)
+-        const error = /no .* key|No .* API key/i.test(msg) ? 'no-key' : /401|unauth/i.test(msg) ? 'unauthorized' : 'failed'
+-        return { error, provider }
++        const kind = e?.errorKind
++        let error
++        if (kind === 'story-audio-no-tts-key') error = 'no-key'
++        else if (kind === 'story-audio-tts-auth') error = 'unauthorized'
++        else {
++          const msg = String(e?.message || e)
++          error = /no .* key|No .* API key/i.test(msg) ? 'no-key' : /401|unauth/i.test(msg) ? 'unauthorized' : 'failed'
++        }
++        return { error, provider: e?.provider || provider }
+       })
+       .finally(() => inflight.delete(key))
+     inflight.set(key, promise)
+     return promise
+   }
+ 
+   return { getPreview }
+ }
+diff --git a/electron/preload.js b/electron/preload.js
+index 7a7c3c9a..8d46b106 100644
+--- a/electron/preload.js
++++ b/electron/preload.js
+@@ -122,20 +122,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
+   storyOpen: (params) => ipcRenderer.invoke('story:open', params),
+   storyGetState: (params) => ipcRenderer.invoke('story:get-state', params),
+   storyStart: (params) => ipcRenderer.invoke('story:start', params),
+   storyAbort: (params) => ipcRenderer.invoke('story:abort', params),
+   storyPushAck: (params) => ipcRenderer.invoke('story:push-ack', params),
+   storyGenerateTitle: (params) => ipcRenderer.invoke('story:generate-title', params),
+   storyGenerateSynopsis: (params) => ipcRenderer.invoke('story:generate-synopsis', params),
+   storyReviewSynopsis: (params) => ipcRenderer.invoke('story:review-synopsis', params),
+   storyConfirmSynopsis: (params) => ipcRenderer.invoke('story:confirm-synopsis', params),
+   storyTtsPreview: (params) => ipcRenderer.invoke('story:tts-preview', params),
++  storyAudioPreflight: (params) => ipcRenderer.invoke('story:audio-preflight', params),
+   // SRT 가져오기 — 나레이션 오디오를 TTS로 만들지, 완성된 mp3에서 잘라 쓸지.
+   storyPickAudioImportFile: (params) => ipcRenderer.invoke('story:pick-audio-import-file', params),
+   storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath }),
+   storyListLlmOptions: () => ipcRenderer.invoke('story:list-llm-options'),
+   // 리서치 side actions (spec §5) — 진행(research-fetch)은 기존 story:progress 채널 재사용.
+   storyResearchSearch: (params) => ipcRenderer.invoke('story:research-search', params),
+   storyResearchFetch: (params) => ipcRenderer.invoke('story:research-fetch', params),
+   storyResearchAnalyze: (params) => ipcRenderer.invoke('story:research-analyze', params),
+   storyResearchFactCheck: (params) => ipcRenderer.invoke('story:research-factcheck', params),
+   storyResearchCommit: (params) => ipcRenderer.invoke('story:research-commit', params),
+diff --git a/src/components/settings/GenaiApiKeyField.jsx b/src/components/settings/GenaiApiKeyField.jsx
+index 1a5893fa..276bcc06 100644
+--- a/src/components/settings/GenaiApiKeyField.jsx
++++ b/src/components/settings/GenaiApiKeyField.jsx
+@@ -1,32 +1,32 @@
+ /**
+  * GenaiApiKeyField — Google Gemini(BYOK) 키 필드. useApiKey 를 고정 호출하고
+  * ApiKeyField(presentational)에 상태/콜백을 넘긴다. 저장 전 검증(validateKey)을 거친다.
+  */
+ import { useState } from 'react'
+ import { toast } from '../Toast'
+ import { useApiKey } from '../../hooks/useApiKey'
+ import ApiKeyField from './ApiKeyField'
+ 
+-export default function GenaiApiKeyField({ t }) {
++export default function GenaiApiKeyField({ t, onSaved }) {
+   const { hasKey, encryptionAvailable, loading, validateKey, saveKey, clearKey } = useApiKey()
+   const [keyInput, setKeyInput] = useState('')
+   const [busy, setBusy] = useState(false)
+   const onSave = async () => {
+     const c = keyInput.trim()
+     if (!c) { toast.error(t('settings.apiKeyEmpty')); return }
+     setBusy(true)
+     const v = await validateKey(c)
+     if (!v?.valid) { setBusy(false); toast.error(t('settings.apiKeyInvalid', { error: v?.error || '' })); return }
+     const res = await saveKey(c)
+     setBusy(false)
+-    if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')) }
++    if (res?.success) { setKeyInput(''); toast.success(t('settings.apiKeySaved')); onSaved?.() }
+     else toast.error(t('settings.apiKeySaveFailed', { error: res?.error || '' }))
+   }
+   const onRemove = async () => {
+     setBusy(true)
+     const res = await clearKey()
+     setBusy(false)
+     if (res?.success === false) toast.error(t('settings.apiKeyRemoveFailed', { error: res?.error || '' }))
+     else toast.success(t('settings.apiKeyRemoved'))
+   }
+   return (
+diff --git a/src/components/settings/TtsApiKeyField.jsx b/src/components/settings/TtsApiKeyField.jsx
+index 5f96826a..5727ce56 100644
+--- a/src/components/settings/TtsApiKeyField.jsx
++++ b/src/components/settings/TtsApiKeyField.jsx
+@@ -1,30 +1,30 @@
+ /**
+  * TtsApiKeyField — TTS provider(BYOK) 키 필드. useTtsKeys(provider) 를 고정 호출한다.
+  * Typecast/ElevenLabs/Google Cloud TTS는 검증 엔드포인트 통일이 없어 저장 전 검증은 생략.
+  */
+ import { useState } from 'react'
+ import { toast } from '../Toast'
+ import { useTtsKeys } from '../../hooks/useTtsKeys'
+ import ApiKeyField from './ApiKeyField'
+ 
+-export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, t }) {
++export default function TtsApiKeyField({ provider, label, getKeyUrl, extraNote, t, onSaved }) {
+   const { hasKey, encryptionAvailable, loading, saveKey, clearKey } = useTtsKeys(provider)
+   const [keyInput, setKeyInput] = useState('')
+   const [busy, setBusy] = useState(false)
+   const onSave = async () => {
+     const c = keyInput.trim()
+     if (!c) { toast.error(t('settings.ttsKeyEmpty')); return }
+     setBusy(true)
+     const res = await saveKey(c)
+     setBusy(false)
+-    if (res?.success) { setKeyInput(''); toast.success(t('settings.ttsKeySaved')) }
++    if (res?.success) { setKeyInput(''); toast.success(t('settings.ttsKeySaved')); onSaved?.() }
+     else toast.error(t('settings.ttsKeySaveFailed', { error: res?.error || '' }))
+   }
+   const onRemove = async () => {
+     setBusy(true)
+     const res = await clearKey()
+     setBusy(false)
+     if (res?.success === false) toast.error(t('settings.ttsKeyRemoveFailed', { error: res?.error || '' }))
+     else toast.success(t('settings.ttsKeyRemoved'))
+   }
+   return (
+diff --git a/src/components/story/AudioKeyGateCard.jsx b/src/components/story/AudioKeyGateCard.jsx
+new file mode 100644
+index 00000000..a4984cc3
+--- /dev/null
++++ b/src/components/story/AudioKeyGateCard.jsx
+@@ -0,0 +1,38 @@
++/**
++ * AudioKeyGateCard — 오디오 생성/미리듣기 pre-flight 에서 키 없는 provider 를 그 자리에서 입력받는다.
++ * missing provider 마다 registry 로 wrapper 선택(gemini→GenaiApiKeyField, 그 외→TtsApiKeyField).
++ */
++import { API_KEY_REGISTRY, keyIdForProvider } from '../../config/apiKeyRegistry'
++import GenaiApiKeyField from '../settings/GenaiApiKeyField'
++import TtsApiKeyField from '../settings/TtsApiKeyField'
++
++const GETKEY_URL = {
++  typecast: 'https://app.typecast.ai',
++  elevenlabs: 'https://elevenlabs.io/app/settings/api-keys',
++  googletts: 'https://console.cloud.google.com/apis/credentials',
++}
++
++export default function AudioKeyGateCard({ missing, onKeySaved, t }) {
++  if (!missing || missing.length === 0) return null
++  return (
++    <div className="audio-key-gate" style={{ border: '1px solid #f59e0b55', borderRadius: 8, padding: 12, margin: '8px 0', background: '#f59e0b0d' }}>
++      <div style={{ color: '#f59e0b', fontWeight: 600, marginBottom: 8 }}>{t('story.audio.keyGateTitle', '오디오를 만들려면 API 키가 필요합니다')}</div>
++      {missing.map((m) => {
++        const meta = API_KEY_REGISTRY[m.provider] || { label: m.provider }
++        if (keyIdForProvider(m.provider) === 'genai') {
++          return <GenaiApiKeyField key={m.provider} t={t} onSaved={() => onKeySaved?.(m.provider)} />
++        }
++        return (
++          <TtsApiKeyField
++            key={m.provider}
++            provider={m.provider}
++            label={meta.label}
++            getKeyUrl={GETKEY_URL[m.provider]}
++            onSaved={() => onKeySaved?.(m.provider)}
++            t={t}
++          />
++        )
++      })}
++    </div>
++  )
++}
+diff --git a/src/components/story/StoryView.jsx b/src/components/story/StoryView.jsx
+index 86752f46..4dba7b69 100644
+--- a/src/components/story/StoryView.jsx
++++ b/src/components/story/StoryView.jsx
+@@ -1,23 +1,25 @@
+ /**
+  * StoryView — Story 파이프라인 뷰 골격 (스펙 §6).
+  *
+  * 프레젠테이션 컴포넌트 — Task 9 useStoryPipeline() 훅을 직접 호출하지 않고
+  * `{ state, streamingText, start, abort }`를 prop으로 받는다(테스트 용이성).
+  * 진행 순서: ① 대본 → ② 씬 분리 → ③ 오디오(M1 미구현, M2 예정) → ④ 프롬프트.
+  * 오디오 단계는 M1 진행 흐름에서 자동 스킵 — 씬 분리가 끝나면 바로 프롬프트로 넘어간다.
+  *
+  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
+  */
+-import { useState, useEffect, useRef, useMemo } from 'react'
++import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+ import { readTextFile } from '../../utils/decodeTextFile'
+ import { useI18n, I18nProvider } from '../../hooks/useI18n'
++import { useAudioPreflight } from '../../hooks/useAudioPreflight'
++import AudioKeyGateCard from './AudioKeyGateCard'
+ import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
+ import PromptInput from '../PromptInput'
+ import { toast } from '../Toast'
+ import { useAudioPlayback } from '../../hooks/useAudioPlayback'
+ import { useStickToBottom } from '../../hooks/useStickToBottom'
+ import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
+ import StoryStepper, { STEP_META } from './StoryStepper'
+ import { UsageInline } from './StoryTokenUsage'
+ import VoicePicker from './VoicePicker'
+ import SpeakerAudioSource from './SpeakerAudioSource'
+@@ -338,24 +340,31 @@ function shortVoiceId(id) {
+ // useI18n()은 provider가 없으면 throw하므로 감싸서 안전한 t()로 노출하고, 키가 없으면
+ // 한국어 fallback 문자열을 그대로 보여준다.
+ function useSafeT() {
+   let i18nT = null
+   try {
+     // eslint-disable-next-line react-hooks/rules-of-hooks
+     i18nT = useI18n().t
+   } catch {
+     i18nT = null
+   }
+-  return (key, fallback, params = {}) => {
+-    const fallbackValue = interpolateFallback(fallback, params)
++  return (key, fallback, params) => {
++    // Two calling conventions land on this `t`: StoryView's own (key, koFallbackString, params)
++    // and the real i18n signature (key, params) used by shared Settings components (ApiKeyField/
++    // TtsApiKeyField/GenaiApiKeyField) that StoryView reuses via AudioKeyGateCard. Passing a
++    // params object straight through as `fallback` silently dropped it (params defaulted to {}),
++    // so `{label}` etc. rendered literally instead of interpolating — detect that shape here.
++    const isParamsShorthand = fallback !== null && typeof fallback === 'object'
++    const realParams = isParamsShorthand ? fallback : (params || {})
++    const fallbackValue = isParamsShorthand ? key : interpolateFallback(fallback, realParams)
+     if (!i18nT) return fallbackValue
+-    const v = i18nT(key, params)
++    const v = i18nT(key, realParams)
+     return v === key ? fallbackValue : v
+   }
+ }
+ 
+ // 상위에 I18nProvider 가 이미 있는지 감지한다. 있으면(실제 앱: Shell.jsx 상위 provider) 편집기
+ // PromptInput 을 다시 감싸지 않고 상위 provider 를 재사용해 Header 언어 전환이 전파되게 하고,
+ // 없으면(단위 테스트 단독 렌더) 폴백으로만 감싼다.
+ function useHasI18n() {
+   try {
+     // eslint-disable-next-line react-hooks/rules-of-hooks
+@@ -398,20 +407,39 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+   const t = useSafeT()
+   const hasI18n = useHasI18n()
+   const isKo = useSafeIsKo()
+   const {
+     state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, previewScenes = {}, sceneThinking = false, scenesRevising = false, previewPrompts = {}, promptThinking = false, promptsRevising = false, reviewProgress = null, reviewThinking = false, reviewScores = null, progressLog = [], usage = null,
+     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
+     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
+     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
+     synopsisReviewing = false,
+   } = pipeline
++
++  // M3b-2b Task 2: 오디오 생성 pre-flight 키 게이트(spec §4.4). 진입점(아래 5곳)이 직접 start('audio', …)를
++  // 부르지 않고 runAudioWithPreflight를 거친다 — main이 provider별 키를 다시 검사해 missing이 있으면
++  // 실행하지 않고 게이트 카드를 인라인으로 띄운다. pipeline.audioPreflight가 없는 pipeline(구버전/단위
++  // 테스트 목)은 게이트를 건너뛰고 바로 실행 — 이 훅은 M3b-2a에서 이미 커밋된 계약을 그대로 소비할 뿐,
++  // 그 계약이 없는 호출부까지 깨뜨리지 않기 위한 하위호환이다.
++  const preflight = useAudioPreflight(pipeline)
++  const [audioGate, setAudioGate] = useState(null) // { missing, retry, paramsForRecheck } | null
++  const runAudioWithPreflight = useCallback(async (params, run) => {
++    if (typeof pipeline.audioPreflight !== 'function') return run(params)
++    const r = await preflight.check(params)
++    if (!r.ok) {
++      setAudioGate({ missing: r.missing, retry: () => run(params), paramsForRecheck: params })
++      return { error: 'preflight-missing-key' }
++    }
++    setAudioGate(null)
++    return run(params)
++  }, [preflight, pipeline])
++
+   const steps = state?.steps || {}
+   const scenesStreaming = steps.scenes?.status === 'running' && steps.scenes?.reviewOnly !== true
+   const promptsStreaming = steps.prompts?.status === 'running' && steps.prompts?.reviewOnly !== true
+   const reviewActiveFor = (step) => (
+     steps[step]?.status === 'running'
+     && reviewProgress?.target === step
+     && (reviewProgress.phase === 'reviewing' || reviewProgress.phase === 'revising')
+   )
+   const scenesReviewing = reviewActiveFor('scenes') && reviewProgress.phase === 'reviewing'
+   const promptsReviewing = reviewActiveFor('prompts') && reviewProgress.phase === 'reviewing'
+@@ -1135,27 +1163,29 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+     return (
+       <div className="story-seg-cell">
+         <div className="story-seg-text">{renderSegmentMark(seg)}{seg.text}</div>
+         <div className="story-seg-emotion">({t(`story.emotion.${emo}`, EMOTION_LABEL[emo] || EMOTION_LABEL.normal)})</div>
+       </div>
+     )
+   }
+ 
+   // M2a-3d/3c: 세그먼트 재생성(강제 re-TTS)·미리듣기.
+   const regenerateSegment = (segId) => {
+-    start('audio', buildAudioParams([segId]))
++    runAudioWithPreflight(buildAudioParams([segId]), (p) => start('audio', p))
+     setScriptPhase(null)
+     setViewedStep(null)
+   }
+ 
+   const runSpeakerAudio = async (sp) => {
+-    const result = await start('audio', { ...buildAudioParams(), onlySpeaker: sp.id })
++    const result = await runAudioWithPreflight({ ...buildAudioParams(), onlySpeaker: sp.id }, (p) => start('audio', p))
++    // preflight가 막은 경우엔 게이트 카드가 이미 안내하므로 별도 토스트 없이 조용히 돌아간다.
++    if (result?.error === 'preflight-missing-key') return
+     // main 의 거절(대사 없는 화자 등)은 **사전검사라 스텝 상태를 일부러 안 건드린다**(완료 프로젝트의
+     // done 을 지키려고). 그래서 오류 배너도 안 뜬다 — 여기서 안 띄우면 버튼이 무반응으로 보인다.
+     // busy 는 뺀다: 실행 중엔 화자 맵 자체가 안 보이므로 사용자가 만든 상황이 아니다.
+     if (result?.error && result.error !== 'busy') {
+       toast.error(resolveDisplayError(t, result.error, result.error))
+       return
+     }
+     if (result?.partialAudioRun) {
+       const speaker = sp.name || sp.id
+       toast.success(t(
+@@ -1292,33 +1322,43 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+   const handlePrimaryAction = async () => {
+     if (currentStep === 'script') {
+       // stepMachine.steps.script는 params.input(대본 생성 소재)과 params.options(LLM 호출
+       // opts로 그대로 spread)를 분리해서 읽는다 — genre/length/language를 input에 섞으면
+       // options로 전달되지 않아 LLM이 이를 무시하고(예: 한국어 입력에도 영어 대본) 버그가 된다.
+       startScriptFromTitle()
+     } else if (currentStep === 'scenes') {
+       await handleSplit()
+     } else {
+       // M2a-3b: audio는 화자→목소리 매핑을 실어 보낸다(그 외 스텝은 params 없음).
+-      start(currentStep, buildStepParams(currentStep))
++      // M3b-2b: audio만 pre-flight 게이트를 거친다 — missing 키가 있으면 여기서 실행하지 않고
++      // AudioKeyGateCard로 안내한다(그 외 스텝은 게이트 대상이 아니라 원래대로 직접 실행).
++      if (currentStep === 'audio') {
++        runAudioWithPreflight(buildStepParams(currentStep), (p) => start('audio', p))
++      } else {
++        start(currentStep, buildStepParams(currentStep))
++      }
+       // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
+       setScriptPhase(null)
+       // 진행 액션은 현재 단계로 화면을 되돌린다 — done 스텝을 보던 중이면 viewedStep이
+       // 그 스텝에 고정돼 진행해도 화면이 안 따라온다(대기/진행 표시를 못 봄).
+       setViewedStep(null)
+     }
+   }
+ 
+   // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
+   const handleStepRedo = () => {
+     if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(제목 확정+분리, 자체 viewedStep 처리)
+-    start(redoStep, buildStepParams(redoStep))
++    if (redoStep === 'audio') {
++      runAudioWithPreflight(buildStepParams(redoStep), (p) => start('audio', p))
++    } else {
++      start(redoStep, buildStepParams(redoStep))
++    }
+     setViewedStep(null)
+   }
+ 
+   const manualReviewTarget = !isRunning && ['scenes', 'prompts'].includes(displayStep)
+     ? displayStep
+     : null
+ 
+   const handlePasteStart = async () => {
+     setBaseScript('')
+     // 임포트/붙여넣기 시작도 현재 설정(genre/length/…)과 제목을 버리지 않고 전부 커밋한다 —
+@@ -1392,21 +1432,25 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+   // 전체 진행 가능: 대본 done + 남은 자동 스텝 존재 + 실행 중 아님 + 미확정 게이트 아님(FIX-2).
+   const canRunAll = !unconfirmedGate && steps.script?.status === 'done' && !isRunning && !!nextAutoStep()
+   // 스텝을 실행하되 enqueue 실패(제목 실패/busy)면 자동 진행을 멈춘다(stuck 방지, Codex).
+   const triggerAutoStep = async (step) => {
+     if (step === 'scenes') {
+       const ok = await handleSplit()
+       if (!ok) setAutoRunning(false)
+       return
+     }
+     setScriptPhase(null); setViewedStep(null)
+-    const res = await start(step, buildStepParams(step))
++    // M3b-2b: audio는 pre-flight 게이트를 거친다 — missing 키면 'preflight-missing-key'가 res.error로
++    // 와서 아래 stuck 방지 로직이 자동 진행을 멈춘다(키가 없는데 계속 재시도하면 안 됨).
++    const res = step === 'audio'
++      ? await runAudioWithPreflight(buildStepParams(step), (p) => start('audio', p))
++      : await start(step, buildStepParams(step))
+     if (res?.error) setAutoRunning(false) // busy 등 상태전이 없음 → 멈춤
+   }
+   const handleRunAll = () => { if (canRunAll) setAutoRunning(true) }
+   // 실행 중이면 대기, 완료되면 다음 자동 스텝, 에러/남은 스텝 없으면 종료.
+   useEffect(() => {
+     if (!autoRunning) return
+     const anyRunning = ['script', ...AUTO_ORDER].some((s) => steps[s]?.status === 'running')
+     if (anyRunning) return
+     const anyError = ['script', ...AUTO_ORDER].some((s) => steps[s]?.status === 'error')
+     if (anyError) { setAutoRunning(false); return }
+@@ -2081,20 +2125,35 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
+             </StreamingTableViewport>
+             {steps.scenes?.status !== 'running' && scenes.length === 0 && (
+               <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
+             )}
+             {scenesReviewRun && reviewRunning('scenes', scenesProgressLog)}
+           </div>
+         )}
+ 
+         {displayStep === 'audio' && (
+           <div className="story-audio-panel">
++            {/* M3b-2b Task 2: pre-flight가 missing 키를 찾으면 실행 대신 여기 인라인으로 카드를
++                띄운다(§4.4). onKeySaved는 best-effort로 그 provider 목소리 재조회 후 재검사 —
++                통과하면 원래 하려던 실행(audioGate.retry)을 이어서 돈다. */}
++            {audioGate && (
++              <AudioKeyGateCard
++                missing={audioGate.missing}
++                t={t}
++                onKeySaved={async (provider) => {
++                  try { await onVoiceSearch?.(provider) } catch { /* best-effort — 재조회 실패해도 재검사는 진행 */ }
++                  const r = await preflight.check(audioGate.paramsForRecheck)
++                  if (r.ok) { setAudioGate(null); audioGate.retry?.() }
++                  else setAudioGate((g) => (g ? { ...g, missing: r.missing } : g))
++                }}
++              />
++            )}
+             {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행).
+                 로그를 함께 넘긴다 — 파일 가져오기의 진단(정렬 결과, 자막이 안 맞는 위치)이 여기로
+                 온다. 안 넘기면 그 정보가 어디에도 안 보인다(오류 배너는 errorKind로 번역되면서
+                 상세 메시지를 버린다 — errorDisplay.js). */}
+             {steps.audio?.status === 'running' && (
+               <StoryRunning usage={usage}
+                 label={t('story.audio.running', '오디오 생성 중')}
+                 startedAt={Date.parse(steps.audio.updatedAt)}
+                 log={audioProgressLog}
+               />
+diff --git a/src/components/story/VoicePicker.jsx b/src/components/story/VoicePicker.jsx
+index bb1e0c35..71ac6805 100644
+--- a/src/components/story/VoicePicker.jsx
++++ b/src/components/story/VoicePicker.jsx
+@@ -3,20 +3,22 @@
+  *
+  * - provider(전체/Typecast/Gemini/ElevenLabs) 칩 + 성별 세그먼트 + 검색으로 필터링
+  * - RENDER_CAP(120) 개까지만 렌더링, 초과분은 "더 보기"로 확장
+  * - 카드 클릭 시 즉시 onSelect({ provider, voiceId }) 호출 (StylePicker와 동일하게 controlled)
+  * - 미리듣기 버튼은 onPreview(voice), 성별 미확정(genderSource: null/f0/manual) 보이스는
+  *   우클릭 메뉴로 onOverrideGender({ provider, voiceId, gender })
+  */
+ 
+ import { useEffect, useMemo, useRef, useState } from 'react'
+ import { voiceKey } from '../../utils/voiceKey'
++import AudioKeyGateCard from './AudioKeyGateCard'
++import { keyIdForProvider } from '../../config/apiKeyRegistry'
+ import './VoicePicker.css'
+ 
+ const RENDER_CAP = 120
+ const PROVIDERS = ['typecast', 'gemini', 'elevenlabs']
+ const PROVIDER_BADGE = { typecast: 'TC', gemini: 'GM', elevenlabs: '11' }
+ const PROVIDER_CLASS = { typecast: 'tc', gemini: 'gm', elevenlabs: 'el' }
+ const OVERRIDABLE_SOURCES = new Set([null, undefined, 'f0', 'manual'])
+ const SEARCH_DEBOUNCE_MS = 300
+ const GENDER_SEGMENTS = new Set(['male', 'female'])
+ 
+@@ -253,20 +255,28 @@ export default function VoicePicker({
+                     <span className={`vp-gender ${gInfo.cls}`}>{gInfo.icon} {gInfo.label}</span>
+                     <span className="vp-lang">{v.language}</span>
+                   </div>
+                 </div>
+               </div>
+               {v.traits?.length > 0 && (
+                 <div className="vp-tags">
+                   {v.traits.map(tag => <span key={tag} className="vp-tag">{tag}</span>)}
+                 </div>
+               )}
++              {/* Task 3(attempt-first): a preview click first tries the call, and only when it
++                  actually fails with no-key does an inline key field show up right on the card
++                  that was clicked — the list itself stays keyless (no upfront gate per voice). */}
++              {previewStatus === 'error' && previewState?.error === 'no-key' && (
++                <div onClick={(e) => e.stopPropagation()}>
++                  <AudioKeyGateCard missing={[{ provider: v.provider, keyId: keyIdForProvider(v.provider) }]} t={t} />
++                </div>
++              )}
+               <span className="vp-check">✔</span>
+ 
+               {overrideKey === key && (
+                 <>
+                   <div className="vp-override-overlay" onClick={(e) => { e.stopPropagation(); setOverrideKey(null) }} />
+                   <div className="vp-override-menu" onClick={(e) => e.stopPropagation()}>
+                     <button
+                       type="button"
+                       onClick={() => { onOverrideGender({ provider: v.provider, voiceId: v.id, gender: 'female' }); setOverrideKey(null) }}
+                     >
+diff --git a/src/hooks/useAudioPreflight.js b/src/hooks/useAudioPreflight.js
+new file mode 100644
+index 00000000..98422408
+--- /dev/null
++++ b/src/hooks/useAudioPreflight.js
+@@ -0,0 +1,18 @@
++import { useCallback } from 'react'
++
++/**
++ * useAudioPreflight — 오디오 생성 전 필요한 provider 키가 다 해석되는지 main 에 물어본다(spec §4.1/4.4).
++ * pipeline.audioPreflight(params) 결과의 providers[].status 로 missing 을 골라 게이트 판단을 준다.
++ * 렌더러는 이 결과를 표시만; 실제 실행은 main 이 다시 검사한다.
++ */
++export function useAudioPreflight(pipeline) {
++  const check = useCallback(async (params) => {
++    const res = await pipeline.audioPreflight(params)
++    const providers = res?.providers || []
++    const missing = providers.filter((p) => p.status === 'missing')
++    return { ok: missing.length === 0, missing, providers, encryptionAvailable: res?.encryptionAvailable !== false }
++  }, [pipeline])
++  return { check }
++}
++
++export default useAudioPreflight
+diff --git a/src/hooks/useStoryPipeline.js b/src/hooks/useStoryPipeline.js
+index 526b9422..f5fddd84 100644
+--- a/src/hooks/useStoryPipeline.js
++++ b/src/hooks/useStoryPipeline.js
+@@ -573,20 +573,23 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
+       }
+     }
+   }, [])
+   // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋(title·pasted 공통) — main이 speakers 반영
+   // + charactersConfirmed=true + pushCharacters emit. title 경로의 start('script')는 호출측이
+   // confirm 완료 후 순차 호출한다(§v2.10).
+   const confirmSynopsis = useCallback((params = {}) =>
+     window.electronAPI.storyConfirmSynopsis({ projectToken: tokenRef.current, ...params }), [])
+   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치 진행버튼과 분리). 저장된 오디오는 story:state로 반영.
+   const ttsPreview = useCallback((params) => window.electronAPI.storyTtsPreview({ projectToken: tokenRef.current, ...params }), [])
++  // M2 오디오 사전점검(§4.1/§4.3): story-api.js의 핸들러는 guarded()로 감싸지 않고 params를
++  // 그대로 machine.audioPreflight(params)에 넘긴다 — projectToken 불필요, pickAudioImportFile과 동일 형태.
++  const audioPreflight = useCallback((params) => window.electronAPI.storyAudioPreflight(params), [])
+   // SRT 가져오기 — main이 state를 story:state로 되쏘므로 여기서 setState 하지 않는다(단일 진실원).
+   const pickAudioImportFile = useCallback((params) => window.electronAPI.storyPickAudioImportFile(params), [])
+   // 리서치 side actions(spec §3.1/§5) — machine 위임. 상태 갱신은 story:research-state 구독이 담당.
+   const researchSearch = useCallback((params = {}) =>
+     window.electronAPI.storyResearchSearch({ projectToken: tokenRef.current, ...params }), [])
+   const researchFetchTranscripts = useCallback((params = {}) => {
+     setResearchFetchProgress({}) // 새 취득 시작 — 이전 실행 진행 잔여 정리
+     return window.electronAPI.storyResearchFetch({ projectToken: tokenRef.current, ...params })
+   }, [])
+   const researchAnalyze = useCallback((params = {}) =>
+@@ -601,14 +604,14 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
+   const researchSelect = useCallback((params = {}) =>
+     window.electronAPI.storyResearchSelect({ projectToken: tokenRef.current, ...params }), [])
+   // 상세 모달(2026-07-08): 카드 더블클릭 시 단일 영상 상세 조회(온디맨드, 파이프라인 상태 불변).
+   const researchVideoDetails = useCallback((params = {}) =>
+     window.electronAPI.storyResearchVideoDetails({ projectToken: tokenRef.current, ...params }), [])
+ 
+   // 전환 감지 render에서는 옛 프로젝트의 state/scenes/scriptText/openError 대신 빈 값을 반환해
+   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
+   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
+   if (justSwitched) {
+-    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, previewScenes: {}, sceneThinking: false, scenesRevising: false, previewPrompts: {}, promptThinking: false, promptsRevising: false, reviewProgress: null, reviewThinking: false, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
++    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, audioPreflight, pickAudioImportFile, segmentProgress: {}, previewScenes: {}, sceneThinking: false, scenesRevising: false, previewPrompts: {}, promptThinking: false, promptsRevising: false, reviewProgress: null, reviewThinking: false, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+   }
+-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, previewScenes, sceneThinking, scenesRevising, previewPrompts, promptThinking, promptsRevising, reviewProgress, reviewThinking, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
++  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, audioPreflight, pickAudioImportFile, segmentProgress, previewScenes, sceneThinking, scenesRevising, previewPrompts, promptThinking, promptsRevising, reviewProgress, reviewThinking, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+ }
+diff --git a/src/hooks/useVoicePreview.js b/src/hooks/useVoicePreview.js
+index 2700a0f2..c203d3fe 100644
+--- a/src/hooks/useVoicePreview.js
++++ b/src/hooks/useVoicePreview.js
+@@ -34,21 +34,21 @@ export function useVoicePreview() {
+ 
+   const play = useCallback(async (voice) => {
+     const seq = ++seqRef.current
+     cleanup()
+     setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'loading' })
+     let res
+     try {
+       res = await window.electronAPI.ttsPreviewVoice({ provider: voice.provider, voiceId: voice.voiceId, language: voice.language || 'ko' })
+     } catch { if (seq === seqRef.current) setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error' }); return }
+     if (seq !== seqRef.current) return // stale
+-    if (!res || res.error) { setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error' }); return }
++    if (!res || res.error) { setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error', error: res?.error || 'failed' }); return }
+ 
+     let bytes
+     try {
+       if (!res.audioBase64) throw new Error('empty preview audio')
+       bytes = Uint8Array.from(atob(res.audioBase64), (c) => c.charCodeAt(0))
+       if (bytes.length <= 0) throw new Error('empty preview audio')
+     } catch {
+       if (seq === seqRef.current) setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error' })
+       return
+     }
+diff --git a/src/locales/en.js b/src/locales/en.js
+index 4cfb46a8..a849aaa4 100644
+--- a/src/locales/en.js
++++ b/src/locales/en.js
+@@ -1369,20 +1369,22 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
+       'story-audio-import-no-audio': 'Some lines have no audio in the source and no TTS voice. Check the segments in the progress log, then fix the script or assign a voice to that speaker.',
+       'story-audio-speaker-empty': 'That speaker has no lines to generate. Check the script for their dialogue.',
+       'story-audio-out-of-sync': 'The audio and the project are out of sync. Re-run the audio step to bring them back in line, then export.',
+       'story-audio-manifest-corrupt': 'The audio manifest could not be read (corrupt or inaccessible). Re-run the audio step to rebuild it, then export.',
+       'story-audio-stale-manifest': 'The audio is out of date. The script or scenes were rebuilt, or audio generation failed partway, so the saved audio no longer matches the current script. Re-run the audio step, then export.',
+       'story-audio-import-unmatched': 'The script and subtitles do not line up. Check that the mp3/SRT is from the same episode, and that the subtitles contain no extra text (titles, credits, [music]) that is absent from the script. The progress log has the details.',
+       'story-srt-no-cues': 'The SRT contains no subtitles. Select a different subtitle file.',
+       'story-srt-cues-overlap': 'The SRT has overlapping subtitle ranges. Overlapping ranges cannot be cut into segments.',
+       'story-srt-longer-than-audio': 'The SRT is longer than the mp3. Check that both files belong to the same episode.',
+       'story-sfx-library-unavailable': 'The local sound-effects library is not available yet. Choose ElevenLabs as the SFX source and try again.',
++      'story-audio-no-tts-key': 'Cannot generate audio — the voice API key is missing. Add it in Settings › API Keys for this voice provider.',
++      'story-audio-tts-auth': 'The voice API key is invalid (authentication failed). Recheck it in Settings › API Keys.',
+     },
+   },
+ 
+   // Scene detail modal
+   sceneDetail: {
+     cancel: 'Cancel',
+     generating: '⏳ Generating...',
+     regenerate: '🔄 Regenerate',
+     generate: '✨ Generate',
+     save: 'Save',
+diff --git a/src/locales/ko.js b/src/locales/ko.js
+index b41f4f2f..1f5f3a87 100644
+--- a/src/locales/ko.js
++++ b/src/locales/ko.js
+@@ -1368,20 +1368,22 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
+       'story-audio-state-corrupt': '스토리 상태 파일을 읽을 수 없습니다(손상되었거나 접근이 막혔습니다). 프로젝트를 다시 열어 확인해주세요.',
+       'story-audio-import-no-audio': '자막에 없어 오디오를 만들 수 없는 대사가 있습니다. 진행 로그의 세그먼트를 확인해 대본을 고치거나, 그 화자에 성우를 배정해주세요.',
+       'story-audio-speaker-empty': '그 화자에게는 생성할 대사가 없습니다. 대본에서 그 화자의 대사를 확인해주세요.',
+       'story-audio-out-of-sync': '오디오와 프로젝트가 어긋나 있습니다. ⑤ 오디오를 다시 실행해 최신 상태로 맞춘 뒤 내보내세요.',
+       'story-audio-manifest-corrupt': '오디오 정보 파일을 읽을 수 없습니다(손상되었거나 접근이 막혔습니다). ⑤ 오디오를 다시 실행해 다시 만든 뒤 내보내세요.',
+       'story-audio-stale-manifest': '오디오가 최신이 아닙니다. 대본·씬을 다시 만들었거나 오디오 생성이 중간에 실패해서, 저장된 오디오가 지금 대본과 어긋납니다. ⑤ 오디오를 다시 실행한 뒤 내보내세요.',
+       'story-audio-import-unmatched': '대본과 자막이 맞지 않습니다. 같은 회차의 mp3/SRT인지, 그리고 자막에 대본에 없는 내용(제목·크레딧·[음악] 등)이 섞여 있지 않은지 확인해주세요. 자세한 위치는 진행 로그에 있습니다.',
+       'story-srt-no-cues': 'SRT에 자막이 없습니다. 다른 자막 파일을 선택해주세요.',
+       'story-srt-cues-overlap': 'SRT의 자막 구간이 서로 겹칩니다. 겹치는 구간이 있으면 오디오를 나눌 수 없습니다.',
+       'story-srt-longer-than-audio': 'SRT가 mp3보다 깁니다. 두 파일이 같은 회차의 짝이 맞는지 확인해주세요.',
++      'story-audio-no-tts-key': '음성 API 키가 없어 오디오를 만들 수 없습니다. 설정 › API 키에서 해당 음성 제공자의 키를 등록하세요.',
++      'story-audio-tts-auth': '음성 API 키가 유효하지 않습니다(인증 실패). 설정 › API 키에서 키를 다시 확인하세요.',
+     },
+   },
+ 
+   // 씬 상세 모달
+   sceneDetail: {
+     cancel: '취소',
+     generating: '⏳ 생성 중...',
+     regenerate: '🔄 재생성',
+     generate: '✨ 생성',
+     save: '저장',
+diff --git a/tests/components/story/AudioKeyGateCard.test.jsx b/tests/components/story/AudioKeyGateCard.test.jsx
+new file mode 100644
+index 00000000..1d560b1d
+--- /dev/null
++++ b/tests/components/story/AudioKeyGateCard.test.jsx
+@@ -0,0 +1,18 @@
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen } from '@testing-library/react'
++vi.mock('../../../src/hooks/useApiKey', () => ({ useApiKey: () => ({ hasKey: false, encryptionAvailable: true, loading: false, validateKey: vi.fn(), saveKey: vi.fn(), clearKey: vi.fn() }) }))
++vi.mock('../../../src/hooks/useTtsKeys', () => ({ useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: vi.fn(), clearKey: vi.fn(), provider: p }) }))
++import AudioKeyGateCard from '../../../src/components/story/AudioKeyGateCard'
++const t = (k, v) => (v ? `${k}:${JSON.stringify(v)}` : k)
++
++describe('AudioKeyGateCard', () => {
++  it('renders a field per missing provider (gemini→Google Gemini label, typecast→Typecast)', () => {
++    render(<AudioKeyGateCard missing={[{ provider: 'gemini', keyId: 'genai' }, { provider: 'typecast', keyId: 'typecast' }]} t={t} />)
++    expect(screen.getByText('Google Gemini')).toBeTruthy()
++    expect(screen.getByText('Typecast')).toBeTruthy()
++  })
++  it('renders nothing meaningful when missing is empty', () => {
++    const { container } = render(<AudioKeyGateCard missing={[]} t={t} />)
++    expect(container.querySelector('input')).toBeNull()
++  })
++})
+diff --git a/tests/components/story/StoryView.audioGateI18n.test.jsx b/tests/components/story/StoryView.audioGateI18n.test.jsx
+new file mode 100644
+index 00000000..3b931eb9
+--- /dev/null
++++ b/tests/components/story/StoryView.audioGateI18n.test.jsx
+@@ -0,0 +1,56 @@
++/**
++ * concern-3: StoryView passes its useSafeT() result as `t` to AudioKeyGateCard, which forwards
++ * it straight through to TtsApiKeyField/GenaiApiKeyField/ApiKeyField — those call the real i18n
++ * convention t(key, params) (2 args), not useSafeT's own (key, fallbackKoString, params) — so a
++ * params object landing in useSafeT's `fallback` slot was dropped and {label} showed up literally
++ * in the placeholder instead of being interpolated.
++ */
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { render, screen, fireEvent } from '@testing-library/react'
++
++vi.mock('../../../src/components/LiveTimeline', () => ({ default: () => <div data-testid="lt" /> }))
++vi.mock('../../../src/hooks/useApiKey', () => ({
++  useApiKey: () => ({ hasKey: false, encryptionAvailable: true, loading: false, validateKey: vi.fn(), saveKey: vi.fn(), clearKey: vi.fn() }),
++}))
++vi.mock('../../../src/hooks/useTtsKeys', () => ({
++  useTtsKeys: () => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: vi.fn(), clearKey: vi.fn() }),
++}))
++
++import StoryView from '../../../src/components/story/StoryView.jsx'
++import { ToastProvider } from '../../../src/components/Toast.jsx'
++import { I18nProvider } from '../../../src/hooks/useI18n.jsx'
++
++const pipeline = (over = {}) => ({
++  state: {
++    steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'pending' }, prompts: { status: 'pending' } },
++    speakers: [{ id: 'narrator', name: '나레이션' }],
++  },
++  scenes: [],
++  streamingText: '', scriptText: '', start: vi.fn(async () => ({})), abort: vi.fn(), openError: null, ttsPreview: vi.fn(),
++  audioPreflight: vi.fn(),
++  ...over,
++})
++
++const renderStory = (p, props = {}) => render(
++  <I18nProvider><ToastProvider><StoryView pipeline={p} voices={[]} {...props} /></ToastProvider></I18nProvider>,
++)
++
++describe('StoryView audio key gate — i18n interpolation', () => {
++  beforeEach(() => {
++    localStorage.setItem('autoflowcut_lang', 'ko')
++  })
++
++  it('interpolates {label} in the gate card placeholder instead of showing it literally', async () => {
++    const audioPreflight = vi.fn().mockResolvedValue({
++      providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }],
++      encryptionAvailable: true,
++    })
++    renderStory(pipeline({ audioPreflight }))
++    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
++    fireEvent.click(screen.getByRole('button', { name: '오디오 실행' }))
++
++    const input = await screen.findByPlaceholderText('Typecast API 키를 붙여넣으세요')
++    expect(input).toBeTruthy()
++    expect(screen.queryByPlaceholderText('{label} API 키를 붙여넣으세요')).toBeNull()
++  })
++})
+diff --git a/tests/components/story/VoicePicker.noKeyInline.test.jsx b/tests/components/story/VoicePicker.noKeyInline.test.jsx
+new file mode 100644
+index 00000000..e03475d1
+--- /dev/null
++++ b/tests/components/story/VoicePicker.noKeyInline.test.jsx
+@@ -0,0 +1,85 @@
++import { describe, it, expect, vi } from 'vitest'
++import { render, screen } from '@testing-library/react'
++vi.mock('../../../src/hooks/useApiKey', () => ({ useApiKey: () => ({ hasKey: false, encryptionAvailable: true, loading: false, validateKey: vi.fn(), saveKey: vi.fn(), clearKey: vi.fn() }) }))
++vi.mock('../../../src/hooks/useTtsKeys', () => ({ useTtsKeys: (p) => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: vi.fn(), clearKey: vi.fn(), provider: p }) }))
++import VoicePicker from '../../../src/components/story/VoicePicker.jsx'
++
++const t = (k, d) => (typeof d === 'string' ? d : k)
++const voices = [
++  { provider: 'gemini', id: 'Kore', name: 'Kore', gender: 'female', genderSource: 'adapter', language: 'multi', traits: ['firm'] },
++  { provider: 'typecast', id: 'v1', name: 'Sanghyun', gender: null, genderSource: null, language: 'ko', traits: [] },
++]
++
++describe('VoicePicker attempt-first no-key inline card', () => {
++  it('shows an inline key field under the voice whose preview failed with error=no-key', () => {
++    const previewState = { status: 'error', error: 'no-key', provider: 'gemini', voiceId: 'Kore' }
++    render(
++      <VoicePicker
++        voices={voices}
++        selected={{}}
++        onSelect={vi.fn()}
++        onPreview={vi.fn()}
++        onOverrideGender={vi.fn()}
++        previewState={previewState}
++        t={t}
++        isKo
++      />,
++    )
++    expect(screen.getByText('Google Gemini')).toBeInTheDocument()
++  })
++
++  it('does not show the inline key field for a voice from a different provider', () => {
++    const previewState = { status: 'error', error: 'no-key', provider: 'gemini', voiceId: 'Kore' }
++    const { container } = render(
++      <VoicePicker
++        voices={voices}
++        selected={{}}
++        onSelect={vi.fn()}
++        onPreview={vi.fn()}
++        onOverrideGender={vi.fn()}
++        previewState={previewState}
++        t={t}
++        isKo
++      />,
++    )
++    // Only one inline key-gate field label should render (Gemini's), scoped by ApiKeyField's
++    // own "setting-label" element — the "Typecast" chip text also matches getByText, so this
++    // checks the ApiKeyField-specific label instead of any "Typecast" substring in the DOM.
++    const gateLabels = [...container.querySelectorAll('.setting-label')].map((el) => el.textContent)
++    expect(gateLabels).toEqual(['Google Gemini'])
++  })
++
++  it('does not show the inline key field when status is not error or error is not no-key', () => {
++    const previewState = { status: 'error', error: 'unauthorized', provider: 'gemini', voiceId: 'Kore' }
++    render(
++      <VoicePicker
++        voices={voices}
++        selected={{}}
++        onSelect={vi.fn()}
++        onPreview={vi.fn()}
++        onOverrideGender={vi.fn()}
++        previewState={previewState}
++        t={t}
++        isKo
++      />,
++    )
++    expect(screen.queryByText('Google Gemini')).not.toBeInTheDocument()
++  })
++
++  it('the voice list itself still renders without a key (keyless list stays)', () => {
++    render(
++      <VoicePicker
++        voices={voices}
++        selected={{}}
++        onSelect={vi.fn()}
++        onPreview={vi.fn()}
++        onOverrideGender={vi.fn()}
++        previewState={{ status: 'idle' }}
++        t={t}
++        isKo
++      />,
++    )
++    expect(screen.getByText('Kore')).toBeInTheDocument()
++    expect(screen.getByText('Sanghyun')).toBeInTheDocument()
++  })
++})
+diff --git a/tests/components/story/storyAudioGate.test.jsx b/tests/components/story/storyAudioGate.test.jsx
+new file mode 100644
+index 00000000..2d598a18
+--- /dev/null
++++ b/tests/components/story/storyAudioGate.test.jsx
+@@ -0,0 +1,121 @@
++/**
++ * M3b-2b Task 2 — 오디오 생성 진입점을 pre-flight로 게이트한다. 키가 없는 provider가 있으면
++ * start()를 부르지 않고 AudioKeyGateCard를 인라인으로 보여준다(§4.4). 키를 저장하면
++ * (best-effort) 목소리 재조회 + 재검사하고, 통과하면 원래 하려던 실행을 이어서 돈다.
++ */
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { render, screen, fireEvent, waitFor } from '@testing-library/react'
++
++vi.mock('../../../src/components/LiveTimeline', () => ({ default: () => <div data-testid="lt" /> }))
++
++const mockSaveKey = vi.fn()
++vi.mock('../../../src/hooks/useApiKey', () => ({
++  useApiKey: () => ({ hasKey: false, encryptionAvailable: true, loading: false, validateKey: vi.fn(), saveKey: vi.fn(), clearKey: vi.fn() }),
++}))
++vi.mock('../../../src/hooks/useTtsKeys', () => ({
++  useTtsKeys: () => ({ hasKey: false, encryptionAvailable: true, loading: false, saveKey: (...args) => mockSaveKey(...args), clearKey: vi.fn() }),
++}))
++
++import StoryView from '../../../src/components/story/StoryView.jsx'
++import { ToastProvider } from '../../../src/components/Toast.jsx'
++import { I18nProvider } from '../../../src/hooks/useI18n.jsx'
++
++const pipeline = (over = {}) => ({
++  state: {
++    steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'pending' }, prompts: { status: 'pending' } },
++    speakers: [{ id: 'narrator', name: '나레이션' }],
++  },
++  scenes: [],
++  streamingText: '', scriptText: '', start: vi.fn(async () => ({})), abort: vi.fn(), openError: null, ttsPreview: vi.fn(),
++  audioPreflight: vi.fn(),
++  ...over,
++})
++
++const renderStory = (p, props = {}) => render(
++  <I18nProvider><ToastProvider><StoryView pipeline={p} voices={[]} {...props} /></ToastProvider></I18nProvider>,
++)
++
++const goToAudioAndRun = () => {
++  fireEvent.click(screen.getByRole('button', { name: '오디오' })) // 스텝퍼 → viewedStep=audio
++  fireEvent.click(screen.getByRole('button', { name: '오디오 실행' })) // primary action
++}
++
++describe('StoryView — 오디오 pre-flight 키 게이트', () => {
++  beforeEach(() => {
++    mockSaveKey.mockReset()
++    localStorage.setItem('autoflowcut_lang', 'ko')
++  })
++
++  it('missing 키가 있으면 AudioKeyGateCard를 보여주고 start를 부르지 않는다', async () => {
++    const start = vi.fn()
++    const audioPreflight = vi.fn().mockResolvedValue({
++      providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }],
++      encryptionAvailable: true,
++    })
++    renderStory(pipeline({ start, audioPreflight }))
++    goToAudioAndRun()
++
++    await waitFor(() => expect(audioPreflight).toHaveBeenCalled())
++    expect(await screen.findByText('Typecast')).toBeTruthy()
++    expect(start).not.toHaveBeenCalled()
++  })
++
++  it('모든 provider가 ok면 게이트 없이 바로 start를 부른다', async () => {
++    const start = vi.fn(async () => ({}))
++    const audioPreflight = vi.fn().mockResolvedValue({
++      providers: [{ provider: 'typecast', keyId: 'typecast', status: 'resolved-store' }],
++      encryptionAvailable: true,
++    })
++    renderStory(pipeline({ start, audioPreflight }))
++    goToAudioAndRun()
++
++    await waitFor(() => expect(audioPreflight).toHaveBeenCalled()) // 우회하지 않고 반드시 preflight를 거친다
++    await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
++    expect(screen.queryByText('Typecast')).toBeNull()
++  })
++
++  it('키 저장 후 provider 재조회 + 재검사하고, 통과하면 원래 실행을 이어서 돈다', async () => {
++    const start = vi.fn(async () => ({}))
++    const onVoiceSearch = vi.fn(async () => {})
++    const audioPreflight = vi.fn()
++      .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }], encryptionAvailable: true })
++      .mockResolvedValueOnce({ providers: [{ provider: 'typecast', keyId: 'typecast', status: 'resolved-store' }], encryptionAvailable: true })
++    mockSaveKey.mockResolvedValue({ success: true })
++
++    renderStory(pipeline({ start, audioPreflight }), { onVoiceSearch })
++    goToAudioAndRun()
++    await screen.findByText('Typecast')
++    expect(start).not.toHaveBeenCalled()
++
++    const input = document.querySelector('.audio-key-gate input[type="password"]')
++    fireEvent.change(input, { target: { value: 'sk-abc' } })
++    fireEvent.click(screen.getByRole('button', { name: /저장|Save/i }))
++
++    await waitFor(() => expect(onVoiceSearch).toHaveBeenCalledWith('typecast'))
++    await waitFor(() => expect(audioPreflight).toHaveBeenCalledTimes(2))
++    await waitFor(() => expect(start).toHaveBeenCalledWith('audio', expect.anything()))
++    expect(screen.queryByText('Typecast')).toBeNull() // 게이트 해제
++  })
++
++  it('재검사에서도 여전히 missing이면 게이트가 남고 start는 안 부른다', async () => {
++    const start = vi.fn()
++    const onVoiceSearch = vi.fn(async () => {})
++    const audioPreflight = vi.fn().mockResolvedValue({
++      providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing' }],
++      encryptionAvailable: true,
++    })
++    mockSaveKey.mockResolvedValue({ success: true })
++
++    renderStory(pipeline({ start, audioPreflight }), { onVoiceSearch })
++    goToAudioAndRun()
++    await screen.findByText('Typecast')
++
++    const input = document.querySelector('.audio-key-gate input[type="password"]')
++    fireEvent.change(input, { target: { value: 'sk-abc' } })
++    fireEvent.click(screen.getByRole('button', { name: /저장|Save/i }))
++
++    await waitFor(() => expect(audioPreflight).toHaveBeenCalledTimes(2))
++    expect(start).not.toHaveBeenCalled()
++    expect(screen.getByText('Typecast')).toBeTruthy()
++  })
++})
+diff --git a/tests/electron/api/tts/voicePreviewErrorKind.test.js b/tests/electron/api/tts/voicePreviewErrorKind.test.js
+new file mode 100644
+index 00000000..300402a5
+--- /dev/null
++++ b/tests/electron/api/tts/voicePreviewErrorKind.test.js
+@@ -0,0 +1,32 @@
++import { describe, it, expect } from 'vitest'
++import { createVoicePreviewService } from '../../../../electron/api/tts/voicePreviewService.js'
++import { MissingProviderKeyError, ProviderAuthError } from '../../../../electron/api/keyErrors.js'
++
++function makeService(throwErr) {
++  return createVoicePreviewService({
++    cacheDir: '/tmp/nope-cache',
++    ttsFor: () => ({ synthesize: async () => { throw throwErr } }),
++    voiceMeta: () => ({}),
++    ssrfSafeFetch: async () => ({ audio: Buffer.alloc(0), mimeType: 'audio/mpeg' }),
++    fetch: async () => ({}),
++    fs: { existsSync: () => false, readFileSync: () => Buffer.alloc(0), mkdirSync: () => {}, writeFileSync: () => {}, renameSync: () => {} },
++  })
++}
++
++describe('voicePreviewService getPreview — errorKind classification', () => {
++  it('MissingProviderKeyError → {error:"no-key", provider}', async () => {
++    const svc = makeService(new MissingProviderKeyError('typecast'))
++    const res = await svc.getPreview({ provider: 'typecast', voiceId: 'v1', language: 'ko' })
++    expect(res).toEqual({ error: 'no-key', provider: 'typecast' })
++  })
++  it('ProviderAuthError → {error:"unauthorized", provider}', async () => {
++    const svc = makeService(new ProviderAuthError('gemini', { status: 400 }))
++    const res = await svc.getPreview({ provider: 'gemini', voiceId: 'Kore', language: 'ko' })
++    expect(res).toEqual({ error: 'unauthorized', provider: 'gemini' })
++  })
++  it('generic error → {error:"failed", provider}', async () => {
++    const svc = makeService(new Error('network boom'))
++    const res = await svc.getPreview({ provider: 'elevenlabs', voiceId: 'x', language: 'ko' })
++    expect(res).toEqual({ error: 'failed', provider: 'elevenlabs' })
++  })
++})
+diff --git a/tests/hooks/useAudioPreflight.test.js b/tests/hooks/useAudioPreflight.test.js
+new file mode 100644
+index 00000000..cea59adc
+--- /dev/null
++++ b/tests/hooks/useAudioPreflight.test.js
+@@ -0,0 +1,30 @@
++import { describe, it, expect, vi } from 'vitest'
++import { renderHook } from '@testing-library/react'
++import { useAudioPreflight } from '../../src/hooks/useAudioPreflight'
++
++const pipe = (providers, enc = true) => ({ audioPreflight: vi.fn().mockResolvedValue({ providers, encryptionAvailable: enc }) })
++
++describe('useAudioPreflight', () => {
++  it('ok=true when no provider is missing', async () => {
++    const { result } = renderHook(() => useAudioPreflight(pipe([
++      { provider: 'typecast', keyId: 'typecast', status: 'resolved-store', encryptionAvailable: true },
++    ])))
++    const r = await result.current.check({})
++    expect(r.ok).toBe(true)
++    expect(r.missing).toEqual([])
++  })
++  it('ok=false and lists missing providers', async () => {
++    const { result } = renderHook(() => useAudioPreflight(pipe([
++      { provider: 'typecast', keyId: 'typecast', status: 'resolved-fallback', encryptionAvailable: true },
++      { provider: 'gemini', keyId: 'genai', status: 'missing', encryptionAvailable: true },
++    ])))
++    const r = await result.current.check({})
++    expect(r.ok).toBe(false)
++    expect(r.missing.map(m => m.provider)).toEqual(['gemini'])
++  })
++  it('ok=true on empty required set', async () => {
++    const { result } = renderHook(() => useAudioPreflight(pipe([])))
++    const r = await result.current.check({})
++    expect(r.ok).toBe(true)
++  })
++})
+diff --git a/tests/hooks/useStoryPipeline.audioPreflight.test.js b/tests/hooks/useStoryPipeline.audioPreflight.test.js
+new file mode 100644
+index 00000000..a88dc376
+--- /dev/null
++++ b/tests/hooks/useStoryPipeline.audioPreflight.test.js
+@@ -0,0 +1,43 @@
++// M3b-2a Task1: story:audio-preflight IPC를 useStoryPipeline.audioPreflight로 노출.
++// story-api.js:187 핸들러는 payload.projectToken이 아니라 params를 그대로 machine.audioPreflight(params)에
++// 넘긴다(guarded()로 감싸지 않음, 주석 참조) — 따라서 wrapper는 projectToken을 주입하지 않고
++// pickAudioImportFile(useStoryPipeline.js:584)처럼 params를 그대로 전달한다.
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { renderHook, act } from '@testing-library/react'
++import { useStoryPipeline } from '../../src/hooks/useStoryPipeline.js'
++
++let listeners
++beforeEach(() => {
++  listeners = {}
++  window.electronAPI = {
++    storyOpen: vi.fn(async () => ({ projectToken: 'tok1', state: { steps: {} } })),
++    storyGetState: vi.fn(async () => ({ steps: {} })),
++    storyStart: vi.fn(async () => ({ operationId: 'op1' })),
++    storyAbort: vi.fn(async () => ({})),
++    storyPushAck: vi.fn(async () => ({})),
++    storyAudioPreflight: vi.fn(async () => ({
++      providers: [{ provider: 'typecast', keyId: 'typecast', status: 'missing', encryptionAvailable: true }],
++      encryptionAvailable: true,
++    })),
++    onStoryEvent: vi.fn((ch, cb) => { listeners[ch] = cb; return () => delete listeners[ch] }),
++  }
++})
++
++async function openHook(props = {}) {
++  const rendered = renderHook(
++    ({ projectPath }) => useStoryPipeline({ projectPath, onPushScenes: vi.fn(), ...props }),
++    { initialProps: { projectPath: '/p' } },
++  )
++  await act(() => rendered.result.current.open())
++  return rendered
++}
++
++describe('useStoryPipeline.audioPreflight', () => {
++  it('params를 그대로(projectToken 미주입) storyAudioPreflight에 전달한다', async () => {
++    const { result } = await openHook()
++    const params = { speakers: [{ id: 'A', voice: { provider: 'typecast', voiceId: 'v' } }] }
++    const res = await act(() => result.current.audioPreflight(params))
++    expect(window.electronAPI.storyAudioPreflight).toHaveBeenCalledWith(params)
++    expect(res.providers[0].status).toBe('missing')
++  })
++})
+diff --git a/tests/hooks/useVoicePreview.errorKind.test.js b/tests/hooks/useVoicePreview.errorKind.test.js
+new file mode 100644
+index 00000000..8b790a40
+--- /dev/null
++++ b/tests/hooks/useVoicePreview.errorKind.test.js
+@@ -0,0 +1,18 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { renderHook, act } from '@testing-library/react'
++import { useVoicePreview } from '../../src/hooks/useVoicePreview.js'
++
++describe('useVoicePreview surfaces error kind + provider', () => {
++  beforeEach(() => {
++    global.window = global.window || {}
++    window.electronAPI = { ttsPreviewVoice: vi.fn().mockResolvedValue({ error: 'no-key', provider: 'gemini' }) }
++  })
++
++  it('sets status error with error=no-key and provider', async () => {
++    const { result } = renderHook(() => useVoicePreview())
++    await act(async () => { await result.current.play({ provider: 'gemini', voiceId: 'Kore', language: 'ko' }) })
++    expect(result.current.state.status).toBe('error')
++    expect(result.current.state.error).toBe('no-key')
++    expect(result.current.state.provider).toBe('gemini')
++  })
++})
+diff --git a/tests/utils/errorDisplay.storyAudioKinds.test.js b/tests/utils/errorDisplay.storyAudioKinds.test.js
+new file mode 100644
+index 00000000..9fc20bb5
+--- /dev/null
++++ b/tests/utils/errorDisplay.storyAudioKinds.test.js
+@@ -0,0 +1,28 @@
++import { describe, it, expect } from 'vitest'
++import { resolveDisplayError } from '../../src/utils/errorDisplay'
++import ko from '../../src/locales/ko'
++import en from '../../src/locales/en'
++
++// Minimal translator that reads a dotted key from a locale object (mirrors useI18n lookup:
++// returns the value or the key itself when missing).
++const makeT = (locale) => (key) => {
++  const val = key.split('.').reduce((o, k) => (o == null ? undefined : o[k]), locale)
++  return typeof val === 'string' ? val : key
++}
++
++describe('resolveDisplayError — story audio key errorKinds', () => {
++  for (const [name, locale] of [['ko', ko], ['en', en]]) {
++    const t = makeT(locale)
++    it(`${name}: no-tts-key kind translates (not raw English)`, () => {
++      const out = resolveDisplayError(t, 'story-audio-no-tts-key', 'audio failed: No typecast API key')
++      expect(out).toBeTruthy()
++      expect(out).not.toMatch(/No typecast API key/)
++      expect(out).not.toBe('errorSection.kind.story-audio-no-tts-key')
++    })
++    it(`${name}: tts-auth kind translates`, () => {
++      const out = resolveDisplayError(t, 'story-audio-tts-auth', 'Gemini TTS failed: 400')
++      expect(out).toBeTruthy()
++      expect(out).not.toBe('errorSection.kind.story-audio-tts-auth')
++    })
++  }
++})

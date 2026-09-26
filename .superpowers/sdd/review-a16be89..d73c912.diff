@@ -1,0 +1,214 @@
+# Review package: a16be89..d73c912
+
+## Commits
+d73c912 feat(m0): unit-tested path-A generate + media->blob + panel shell (inject both bundles)
+
+## Files changed
+ spikes/m0-nocdp/esbuild.page.mjs            |  2 +-
+ spikes/m0-nocdp/src/page/generate.js        | 31 +++++++++++++++++++
+ spikes/m0-nocdp/src/panel/media.js          |  7 +++++
+ spikes/m0-nocdp/src/panel/panel.html        |  9 ++++++
+ spikes/m0-nocdp/src/panel/panel.js          | 46 +++++++++++++++++++++++++++++
+ spikes/m0-nocdp/tests/page/generate.test.js | 41 +++++++++++++++++++++++++
+ spikes/m0-nocdp/tests/panel/media.test.js   | 16 ++++++++++
+ 7 files changed, 151 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/spikes/m0-nocdp/esbuild.page.mjs b/spikes/m0-nocdp/esbuild.page.mjs
+index 45d4088..20c79bb 100644
+--- a/spikes/m0-nocdp/esbuild.page.mjs
++++ b/spikes/m0-nocdp/esbuild.page.mjs
+@@ -1,6 +1,6 @@
+ import { build } from 'esbuild'
+ await build({
+-  entryPoints: ['src/page/fetch-hook.js'], // generate.js added in Task 7
++  entryPoints: ['src/page/fetch-hook.js', 'src/page/generate.js'],
+   bundle: true, format: 'iife', outdir: 'dist', entryNames: '[name].iife', target: 'chrome120',
+ })
+ console.log('page scripts bundled → dist/*.iife.js')
+diff --git a/spikes/m0-nocdp/src/page/generate.js b/spikes/m0-nocdp/src/page/generate.js
+new file mode 100644
+index 0000000..71ce1e5
+--- /dev/null
++++ b/spikes/m0-nocdp/src/page/generate.js
+@@ -0,0 +1,31 @@
++// MAIN-world. Runs on user action (grecaptcha must be loaded). win is injectable for unit tests.
++import { SITE_KEY, RECAPTCHA_ACTION, FALLBACK_API_BASE } from '../constants.js'
++import { resolveApiBase } from './origin.js'
++import { extractProjectIdFromUrl, resolveEffectiveProjectId } from './projectId.js'
++import { buildBatchGenerateImagesBody, attachRecaptchaToken } from './imageRequest.js'
++
++export async function runPathA(
++  { prompt, template, boundProjectId = null, tokenPlacement = 'clientContext' },
++  win = (typeof window !== 'undefined' ? window : undefined),
++) {
++  const projectId = resolveEffectiveProjectId(boundProjectId, extractProjectIdFromUrl(win.location.href))
++  if (!projectId) throw new Error('no Flow projectId (open a Flow project first)')
++
++  const base = resolveApiBase(win.__autoflowcut_api_origin__, FALLBACK_API_BASE)
++  const url = `${base}/flowMedia:batchGenerateImages`
++
++  const token = await win.grecaptcha.enterprise.execute(SITE_KEY, { action: RECAPTCHA_ACTION })
++  const { body, headers } = attachRecaptchaToken(
++    buildBatchGenerateImagesBody({ template, prompt, projectId }), token, tokenPlacement,
++  )
++
++  const res = await win.fetch(url, {
++    method: 'POST',
++    credentials: 'include', // page (MAIN) realm rides the labs.google session; verified live Task 8
++    headers: { 'Content-Type': 'application/json', 'X-Kl-Ajax-Request': 'Ajax_Request', ...headers },
++    body: JSON.stringify(body),
++  })
++  return { status: res.status, base, usedOrigin: win.__autoflowcut_api_origin__ || null }
++}
++
++if (typeof window !== 'undefined') window.__m0_runPathA__ = (args) => runPathA(args, window)
+diff --git a/spikes/m0-nocdp/src/panel/media.js b/spikes/m0-nocdp/src/panel/media.js
+new file mode 100644
+index 0000000..3d60f53
+--- /dev/null
++++ b/spikes/m0-nocdp/src/panel/media.js
+@@ -0,0 +1,7 @@
++// credentials:'include' — Task 8 verifies whether the panel(extension) context can read
++// labs.google/flow-content media URLs, or whether a MAIN-world fetch is required (Codex #8).
++export async function mediaUrlToBlob(fetchImpl, url) {
++  const res = await fetchImpl(url, { credentials: 'include' })
++  if (!res.ok) throw new Error(`media fetch failed: ${res.status}`)
++  return res.blob()
++}
+diff --git a/spikes/m0-nocdp/src/panel/panel.html b/spikes/m0-nocdp/src/panel/panel.html
+new file mode 100644
+index 0000000..227b46b
+--- /dev/null
++++ b/spikes/m0-nocdp/src/panel/panel.html
+@@ -0,0 +1,9 @@
++<!doctype html>
++<html><head><meta charset="utf-8"><title>M0 spike</title></head>
++<body>
++  <h3>M0 no-CDP Flow spike</h3>
++  <button id="gen">Generate one image (path A)</button>
++  <pre id="log"></pre>
++  <img id="out" style="max-width:100%" />
++  <script type="module" src="panel.js"></script>
++</body></html>
+diff --git a/spikes/m0-nocdp/src/panel/panel.js b/spikes/m0-nocdp/src/panel/panel.js
+new file mode 100644
+index 0000000..6be77ff
+--- /dev/null
++++ b/spikes/m0-nocdp/src/panel/panel.js
+@@ -0,0 +1,46 @@
++// Manual-gate shell: inject both page bundles, drive ONE path-A generation, blob the media.
++import { createPollState } from './pollState.js'
++import { mediaUrlToBlob } from './media.js'
++
++const log = (m) => { document.getElementById('log').textContent += m + '\n' }
++const poll = createPollState(chrome.storage.local)
++
++// Live template + placements captured in Task 8 Step 2, pasted here.
++const OBSERVED_TEMPLATE = null           // PASTE captured batchGenerateImages body (Task 8)
++const TOKEN_PLACEMENT = 'clientContext'  // or 'header' per Task 8 observation
++const extractMediaUrl = (data) => {      // set the real JSON path from the Task 8 capture
++  try { return data?.imagePanels?.[0]?.generatedImages?.[0]?.fifeUrl || null } catch { return null }
++}
++
++async function findFlowTab() {
++  const [tab] = await chrome.tabs.query({ url: 'https://labs.google/*' })
++  return tab
++}
++
++document.getElementById('gen').addEventListener('click', async () => {
++  if (!OBSERVED_TEMPLATE) return log('OBSERVED_TEMPLATE not captured — complete Task 8 Step 2 first')
++  const tab = await findFlowTab()
++  if (!tab) return log('open a Flow project tab first')
++  // Codex #2: generate.js must be injected before its global is called.
++  await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', files: ['dist/fetch-hook.iife.js', 'dist/generate.iife.js'] })
++  await poll.arm('gen1', { prompt: 'a red fox in snow', startedAt: Date.now() })
++  const [{ result }] = await chrome.scripting.executeScript({
++    target: { tabId: tab.id }, world: 'MAIN',
++    func: (args) => window.__m0_runPathA__(args),
++    args: [{ prompt: 'a red fox in snow', template: OBSERVED_TEMPLATE, tokenPlacement: TOKEN_PLACEMENT }],
++  })
++  log('submit: ' + JSON.stringify(result))
++  if (result && !result.usedOrigin) log('WARNING: used FALLBACK origin — Gate i disqualified (Codex #6)')
++})
++
++// Intercepts arrive directly from the relay (no SW re-broadcast).
++chrome.runtime.onMessage.addListener(async (msg) => {
++  if (msg?.type !== 'AUTOFLOW_API_INTERCEPT') return
++  log('intercept: ' + msg.endpoint + ' (' + msg.status + ')')
++  const mediaUrl = extractMediaUrl(msg.data)
++  if (!mediaUrl) return
++  await poll.record('gen1', { mediaUrl })
++  const blob = await mediaUrlToBlob(fetch, mediaUrl) // context verified in Task 8 Step 5
++  document.getElementById('out').src = URL.createObjectURL(blob)
++  log('GATE i tail: media blob acquired: ' + blob.size + ' bytes')
++})
+diff --git a/spikes/m0-nocdp/tests/page/generate.test.js b/spikes/m0-nocdp/tests/page/generate.test.js
+new file mode 100644
+index 0000000..c3b61f4
+--- /dev/null
++++ b/spikes/m0-nocdp/tests/page/generate.test.js
+@@ -0,0 +1,41 @@
++import { describe, it, expect, vi } from 'vitest'
++import { runPathA } from '../../src/page/generate.js'
++import { SITE_KEY } from '../../src/constants.js'
++
++const template = { clientContext: { projectId: 'P' }, requests: [{ prompt: '' }] }
++
++describe('runPathA', () => {
++  it('composes url/headers/body, uses captured origin + self-minted token', async () => {
++    const fetchMock = vi.fn(async () => ({ status: 200 }))
++    const win = {
++      location: { href: 'https://labs.google/fx/tools/flow/project/pX' },
++      __autoflowcut_api_origin__: 'https://eu-aisandbox-pa.googleapis.com',
++      grecaptcha: { enterprise: { execute: vi.fn(async () => 'TOKEN') } },
++      fetch: fetchMock,
++    }
++    const out = await runPathA({ prompt: 'fox', template, tokenPlacement: 'clientContext' }, win)
++    expect(win.grecaptcha.enterprise.execute).toHaveBeenCalledWith(SITE_KEY, { action: 'generate' })
++    const [url, init] = fetchMock.mock.calls[0]
++    expect(url).toBe('https://eu-aisandbox-pa.googleapis.com/v1/flowMedia:batchGenerateImages')
++    const sent = JSON.parse(init.body)
++    expect(sent.requests[0].prompt).toBe('fox')
++    expect(sent.clientContext.projectId).toBe('pX')       // resolved from location
++    expect(sent.clientContext.recaptchaToken).toBe('TOKEN')
++    expect(out).toMatchObject({ status: 200, usedOrigin: 'https://eu-aisandbox-pa.googleapis.com' })
++  })
++  it('sends the token as a header when tokenPlacement=header', async () => {
++    const fetchMock = vi.fn(async () => ({ status: 200 }))
++    const win = {
++      location: { href: 'https://labs.google/fx/tools/flow/project/pX' },
++      __autoflowcut_api_origin__: 'https://aisandbox-pa.googleapis.com',
++      grecaptcha: { enterprise: { execute: vi.fn(async () => 'TOK') } },
++      fetch: fetchMock,
++    }
++    await runPathA({ prompt: 'x', template, tokenPlacement: 'header' }, win)
++    expect(fetchMock.mock.calls[0][1].headers['X-Recaptcha-Token']).toBe('TOK')
++  })
++  it('throws without a projectId', async () => {
++    const win = { location: { href: 'https://labs.google/fx/tools/flow' }, grecaptcha: { enterprise: { execute: vi.fn() } }, fetch: vi.fn() }
++    await expect(runPathA({ prompt: 'x', template: { requests: [] } }, win)).rejects.toThrow(/projectId/)
++  })
++})
+diff --git a/spikes/m0-nocdp/tests/panel/media.test.js b/spikes/m0-nocdp/tests/panel/media.test.js
+new file mode 100644
+index 0000000..c4cac52
+--- /dev/null
++++ b/spikes/m0-nocdp/tests/panel/media.test.js
+@@ -0,0 +1,16 @@
++import { describe, it, expect, vi } from 'vitest'
++import { mediaUrlToBlob } from '../../src/panel/media.js'
++
++describe('mediaUrlToBlob', () => {
++  it('fetches the URL and returns a Blob', async () => {
++    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })
++    const fetchImpl = vi.fn(async () => ({ ok: true, blob: async () => blob }))
++    const out = await mediaUrlToBlob(fetchImpl, 'https://flow-content.google/media/x.png')
++    expect(fetchImpl).toHaveBeenCalledWith('https://flow-content.google/media/x.png', { credentials: 'include' })
++    expect(out).toBe(blob)
++  })
++  it('throws on non-ok response', async () => {
++    const fetchImpl = vi.fn(async () => ({ ok: false, status: 403 }))
++    await expect(mediaUrlToBlob(fetchImpl, 'https://x/y.png')).rejects.toThrow(/403/)
++  })
++})

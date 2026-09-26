@@ -1,0 +1,202 @@
+# Review package: 2045cbc..2b4717a
+
+## Commits
+2b4717a feat(story-m2a): audio step — TTS gen, measure, SRT, regroup, manifest
+
+## Files changed
+ electron/story/stepMachine.js                  | 68 ++++++++++++++++++++++--
+ tests/electron/story/stepMachine.audio.test.js | 73 ++++++++++++++++++++++++++
+ 2 files changed, 137 insertions(+), 4 deletions(-)
+
+## Diff
+diff --git a/electron/story/stepMachine.js b/electron/story/stepMachine.js
+index 5c8e417..dae7c4a 100644
+--- a/electron/story/stepMachine.js
++++ b/electron/story/stepMachine.js
+@@ -1,22 +1,25 @@
+ /**
+  * Story 스텝 머신 — 스펙 §2/§3/§4. main process 소유, 결정적 순서 제어.
+  * LLM 어댑터는 DI(테스트 mock). emit은 모든 payload에 projectToken/operationId 포함.
+  */
+ import { randomUUID } from 'node:crypto'
++import path from 'node:path'
+ import { createStoryStore } from './storyStore.js'
+-import { inheritStoryIds, assertUniqueStoryIds } from './sceneIdentity.js'
+-import { buildFallbackTimeline } from './timing.js'
++import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership } from './sceneIdentity.js'
++import { buildFallbackTimeline, buildSegmentTimeline, buildSrt } from './timing.js'
++import { regroupScenes } from './regroup.js'
++import { buildManifest } from './manifest.js'
+ 
+-const DOWNSTREAM = { script: ['scenes', 'prompts'], scenes: ['prompts'], prompts: [] }
++const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
+ 
+-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt }) {
++export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, probe }) {
+   const store = createStoryStore(projectPath)
+   const projectToken = randomUUID()
+   let state = null
+   let controller = null
+ 
+   const send = (ch, payload, operationId) =>
+     emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
+ 
+   async function flush() { await store.save(state) }
+ 
+@@ -114,20 +117,77 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
+       if (signal?.aborted) return
+       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
+       const { scenes: withIds } = inheritStoryIds(prev, scenes)
+       assertUniqueStoryIds(withIds)
+       await store.saveText('scenes.json', JSON.stringify({ scenes: withIds }, null, 2))
+       // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
+       const norm = (n) => (n || '').replace(/\s/g, '')
+       const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
+       state.speakers = speakers.map((sp) => ({ ...sp, voice: prevSpeakers.get(norm(sp.name))?.voice ?? null }))
+     },
++    async audio(params, opId, signal) {
++      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
++      if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
++      // 화자 voice 배정 (params.speakers 우선, 없으면 state.speakers)
++      const speakers = params.speakers || state.speakers || []
++      const voiceOf = (spk) => (speakers.find((s) => s.id === spk)?.voice) || null
++      // 모든 씬의 세그먼트를 순서대로 평탄화
++      const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
++      const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
++
++      // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
++      const conc = tts.capabilities?.().maxConcurrency || 2
++      const results = new Map()
++      for (let i = 0; i < narration.length; i += conc) {
++        const batch = narration.slice(i, i + conc)
++        await Promise.all(batch.map(async (seg) => {
++          const voice = voiceOf(seg.speaker)
++          if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
++          const { audio } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
++          const rel = `audio/segments/${seg.id}.wav`
++          await store.saveBinary(rel, audio)
++          const durationMs = await probe(path.join(projectPath, 'story', rel))
++          results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs })
++        }))
++        if (signal?.aborted) return
++      }
++      if (signal?.aborted) return
++
++      // 2) 세그먼트에 실측 durationMs·audioPath 병합 (원 순서 보존)
++      const measured = segments.map((s) => {
++        const r = results.get(s.id)
++        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null }
++      })
++      // 3) 타임라인(startMs) + 4) SRT
++      const timed = buildSegmentTimeline(measured, { gapMs: 150 })
++      const srt = buildSrt(timed)
++      // 5) 재그룹 + 6) storyId 발급 (이전 확정 씬은 scenes.json에 segmentIds 있으면 사용)
++      const prevScenes = (scenesJson.scenes || []).filter((s) => s.storyId).map((s) => ({ storyId: s.storyId, segmentIds: (s.segments || []).map((g) => g.id) }))
++      const groups = regroupScenes(timed, { minMs: 6000, maxMs: 10000 })
++      const withIds = assignStoryIdsByMembership(prevScenes, groups)
++      // 7) 확정 씬 재구성 (그룹의 segmentIds로 timed 세그먼트를 묶음)
++      const byId = new Map(timed.map((s) => [s.id, s]))
++      const finalScenes = withIds.map((g) => ({
++        storyId: g.storyId,
++        startSec: g.startMs / 1000,
++        endSec: g.endMs / 1000,
++        segments: g.segmentIds.map((id) => byId.get(id)),
++        // 프롬프트는 audio 단계에서 건드리지 않음 (M2a-2/prompts 소유)
++      }))
++      if (signal?.aborted) return
++      if (params.speakers) state.speakers = params.speakers
++      // 8) 산출 저장: 세그먼트 파일은 이미 저장됨 → SRT, scenes.json, manifest 순서 원자 쓰기
++      await store.saveText('audio/final.srt', srt)
++      await store.saveText('scenes.json', JSON.stringify({ scenes: finalScenes }, null, 2))
++      const manifest = buildManifest(timed, { pushRevision: null }) // 최초 정밀: null (prompts가 재스탬프)
++      await store.saveText('audio/manifest.json', JSON.stringify(manifest, null, 2))
++    },
+     async prompts(params, opId, signal) {
+       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+       const scriptMd = await store.loadText('script.md')
+       const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
+       const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
+       if (signal?.aborted) return
+       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
+       state.pendingPushRevision += 1
+       // HIGH/Codex: push emit은 여기서 하지 않는다 — flush(story.json 저장) 전에 크래시하면
+diff --git a/tests/electron/story/stepMachine.audio.test.js b/tests/electron/story/stepMachine.audio.test.js
+new file mode 100644
+index 0000000..5b9ab95
+--- /dev/null
++++ b/tests/electron/story/stepMachine.audio.test.js
+@@ -0,0 +1,73 @@
++import { describe, it, expect, beforeEach } from 'vitest'
++import { mkdtemp, readFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import path from 'node:path'
++import { createStepMachine } from '../../../electron/story/stepMachine.js'
++
++async function tmpProject() { return await mkdtemp(path.join(tmpdir(), 'story-audio-')) }
++
++function makeMachine(projectPath) {
++  // scenes.json 세그먼트를 미리 심어두기 위해 store 경유 대신 llm.splitScenes mock 사용은
++  // 이 테스트 범위 밖 — audio 스텝만 검증하려 scenes.json을 직접 배치한다.
++  const emitted = []
++  const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }) }
++  const probe = async () => 2000 // 모든 세그먼트 2초로 실측 가정
++  const machine = createStepMachine({
++    projectPath,
++    llm: {},
++    emit: (ch, payload) => emitted.push({ ch, payload }),
++    getApiKey: () => 'k',
++    tts,
++    probe,
++  })
++  return { machine, emitted }
++}
++
++describe('audio 스텝', () => {
++  let projectPath
++  beforeEach(async () => { projectPath = await tmpProject() })
++
++  it('세그먼트 TTS 생성 → 실측 → SRT → 재그룹 → manifest 저장', async () => {
++    // scenes.json 준비: narrator 화자 2 세그먼트
++    const { writeFile, mkdir } = await import('node:fs/promises')
++    await mkdir(path.join(projectPath, 'story'), { recursive: true })
++    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
++      scenes: [{ segments: [
++        { id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' },
++        { id: 's2', type: 'narration', speaker: 'narrator', text: '둘째 문장' },
++      ] }],
++    }))
++    const { machine } = makeMachine(projectPath)
++    // 화자 voice 배정
++    await machine.open()
++    // state.speakers에 narrator voiceId 주입 경로가 필요 — start의 params로 전달
++    const res = await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
++    expect(res.operationId).toBeTruthy()
++
++    // 세그먼트 오디오 파일
++    const s1 = await readFile(path.join(projectPath, 'story', 'audio', 'segments', 's1.wav'))
++    expect(s1.toString()).toBe('AUDIO:첫 문장')
++    // SRT
++    const srt = await readFile(path.join(projectPath, 'story', 'audio', 'final.srt'), 'utf-8')
++    expect(srt).toContain('첫 문장')
++    // manifest: pushRevision null(최초), 세그먼트 startMs 부여
++    const manifest = JSON.parse(await readFile(path.join(projectPath, 'story', 'audio', 'manifest.json'), 'utf-8'))
++    expect(manifest.pushRevision).toBe(null)
++    expect(manifest.segments[0].startMs).toBe(0)
++    expect(manifest.segments[1].startMs).toBe(2150) // 2000 + 150 gap
++  })
++
++  it('audio 완료 시 steps.audio.status=done, prompts는 pending 리셋', async () => {
++    const { writeFile, mkdir } = await import('node:fs/promises')
++    await mkdir(path.join(projectPath, 'story'), { recursive: true })
++    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
++      scenes: [{ segments: [{ id: 's1', type: 'narration', speaker: 'narrator', text: 'x' }] }],
++    }))
++    const { machine } = makeMachine(projectPath)
++    await machine.open()
++    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
++    const state = await machine.getState()
++    expect(state.steps.audio.status).toBe('done')
++    expect(state.steps.prompts.status).toBe('pending')
++  })
++})

@@ -1,0 +1,450 @@
+# Review package: 3683bd0..f3b62f4
+
+## Commits
+f3b62f4 chore: add @anthropic-ai/claude-agent-sdk + asarUnpack
+
+## Files changed
+ package-lock.json                              | 202 ++++++++++++++++++++++++-
+ package.json                                   |   4 +
+ tests/electron/api/llm/claudeSdkImport.test.js |   8 +
+ 3 files changed, 211 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/package-lock.json b/package-lock.json
+index 9076393..00126c4 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,22 +1,23 @@
+ {
+   "name": "autoflowcut",
+-  "version": "2.0.1",
++  "version": "2.1.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "autoflowcut",
+-      "version": "2.0.1",
++      "version": "2.1.0",
+       "hasInstallScript": true,
+       "license": "AGPL-3.0-only",
+       "dependencies": {
++        "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+         "@lexical/react": "^0.45.0",
+         "@modelcontextprotocol/sdk": "^1.27.1",
+         "@sentry/electron": "^7.13.0",
+         "dotenv": "^17.3.1",
+         "electron-updater": "^6.8.3",
+         "firebase": "^12.9.0",
+         "flag-icons": "^7.5.0",
+         "lexical": "^0.45.0",
+         "lexical-beautiful-mentions": "^0.1.48",
+         "react": "^18.3.1",
+@@ -46,20 +47,170 @@
+       "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@adobe/css-tools": {
+       "version": "4.4.4",
+       "resolved": "https://registry.npmjs.org/@adobe/css-tools/-/css-tools-4.4.4.tgz",
+       "integrity": "sha512-Elp+iwUx5rN5+Y8xLt5/GRoG20WGoDCQ/1Fb+1LiGtvwbDavuSk0jhD/eZdckHAuzcDzccnkv+rEjyWfRx18gg==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@anthropic-ai/claude-agent-sdk": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.199.tgz",
++      "integrity": "sha512-fET9rfYR2DgjVG4Yri02Q6YL+SWBlcrsd3Dx96CpZSM50W4Jqh1sEC06hXIEHL0uDZ/kS//Y2uPpCQ9GQqh8Bg==",
++      "license": "SEE LICENSE IN README.md",
++      "engines": {
++        "node": ">=18.0.0"
++      },
++      "optionalDependencies": {
++        "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-linux-arm64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-linux-arm64-musl": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-linux-x64-musl": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-win32-arm64": "0.3.199",
++        "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.199"
++      },
++      "peerDependencies": {
++        "@anthropic-ai/sdk": ">=0.93.0",
++        "@modelcontextprotocol/sdk": "^1.29.0",
++        "zod": "^4.0.0"
++      }
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-darwin-arm64/-/claude-agent-sdk-darwin-arm64-0.3.199.tgz",
++      "integrity": "sha512-0813IEsPlA3GQZ86CGmRPh/2DY/iEuBkXV7CRAj55sQ30oIm+N/BbXzI/jH7WiWsHh3pCsRx65dbswf6jA5Uuw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "darwin"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-darwin-x64/-/claude-agent-sdk-darwin-x64-0.3.199.tgz",
++      "integrity": "sha512-iUenoE7UbWFfYjdfaeJkPl4qpXajPcRw8SzMYn0PK2LsBE5SJTfEdZyvtypNaKiWzsCCaU4MV1yzR8S7i/wZQg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "darwin"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64/-/claude-agent-sdk-linux-arm64-0.3.199.tgz",
++      "integrity": "sha512-wJ4GJCwrdVv4TWTiEwh2gUjrddIg+oMhoUcfXhtZgZeqXfGzxVWJa3HudX5xsVq/wktvM65CfdYly2blVBVG8Q==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64-musl/-/claude-agent-sdk-linux-arm64-musl-0.3.199.tgz",
++      "integrity": "sha512-mcqHuNHsA2V589rt0JpCsweS8kZ8LkKZi0qmMLqN3oZz+ar4DsuDjLDaNI1C5f+W/nz5G/st+2W3ZCJubeOqVQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.199.tgz",
++      "integrity": "sha512-nNLk8KcM33AYQ0P1cNK72kE14iTIuM5RTr0CrQm40FwdrPuVZ/se6KggpE3eje8hFYJu/1WrJqcZxtJSL6qnPg==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.199.tgz",
++      "integrity": "sha512-wr7IIQ9d9H7Tt79Mn4ga8iNLzsvoPnAbBtsnUVBjgcAxKWrJ+QV2wCsowhhSc7DWNueiurdxNsLIwd07BzhfCA==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-win32-arm64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-win32-arm64/-/claude-agent-sdk-win32-arm64-0.3.199.tgz",
++      "integrity": "sha512-EQFMATdpp6XXYXw6Ih83BFCDj2PXqMYkM6nq3OrOVUF19xTe6o5dWhGzZ6TQfauvWf2BHFIfBDzZz82m8ffV8w==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "win32"
++      ]
++    },
++    "node_modules/@anthropic-ai/claude-agent-sdk-win32-x64": {
++      "version": "0.3.199",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-win32-x64/-/claude-agent-sdk-win32-x64-0.3.199.tgz",
++      "integrity": "sha512-6W2djU/NnOCY4NEdDjtZ3LIzFFQMT2OH9m5y5Hc4bko3KIXr0WHLrCJdgGiVycOWEd03OEsC4uYIIYIeueBAHw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "SEE LICENSE IN LICENSE.md",
++      "optional": true,
++      "os": [
++        "win32"
++      ]
++    },
++    "node_modules/@anthropic-ai/sdk": {
++      "version": "0.110.0",
++      "resolved": "https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-0.110.0.tgz",
++      "integrity": "sha512-hOP4bNYXDFHDxxiEgzlILXrxZIYCDnhe8sry0RDRKD/QnsEpvZcQpablCdm9X/WuD/YgOiSIkkqsL1mLLlTqJw==",
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "json-schema-to-ts": "^3.1.1",
++        "standardwebhooks": "^1.0.0"
++      },
++      "bin": {
++        "anthropic-ai-sdk": "bin/cli"
++      },
++      "peerDependencies": {
++        "zod": "^3.25.0 || ^4.0.0"
++      },
++      "peerDependenciesMeta": {
++        "zod": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/@asamuzakjp/css-color": {
+       "version": "5.1.10",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-5.1.10.tgz",
+       "integrity": "sha512-02OhhkKtgNRuicQ/nF3TRnGsxL9wp0r3Y7VlKWyOHHGmGyvXv03y+PnymU8FKFJMTjIr1Bk8U2g1HWSLrpAHww==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@csstools/css-calc": "^3.1.1",
+         "@csstools/css-color-parser": "^4.0.2",
+         "@csstools/css-parser-algorithms": "^4.0.0",
+@@ -331,21 +482,20 @@
+         "node": ">=6.9.0"
+       },
+       "peerDependencies": {
+         "@babel/core": "^7.0.0-0"
+       }
+     },
+     "node_modules/@babel/runtime": {
+       "version": "7.29.2",
+       "resolved": "https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.2.tgz",
+       "integrity": "sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=6.9.0"
+       }
+     },
+     "node_modules/@babel/template": {
+       "version": "7.28.6",
+       "resolved": "https://registry.npmjs.org/@babel/template/-/template-7.28.6.tgz",
+       "integrity": "sha512-YA6Ma2KsCdGb+WC6UpBVFJGXL58MDA6oyONbjyF/+5sBgxY/dwkhLogbMT2GXXyU84/IhRw/2D1Os1B/giz+BQ==",
+       "dev": true,
+@@ -4044,20 +4194,27 @@
+       "integrity": "sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=10"
+       },
+       "funding": {
+         "url": "https://github.com/sindresorhus/is?sponsor=1"
+       }
+     },
++    "node_modules/@stablelib/base64": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/@stablelib/base64/-/base64-1.0.1.tgz",
++      "integrity": "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==",
++      "license": "MIT",
++      "peer": true
++    },
+     "node_modules/@standard-schema/spec": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
+       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
+       "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@szmarczak/http-timer": {
+       "version": "4.0.6",
+       "resolved": "https://registry.npmjs.org/@szmarczak/http-timer/-/http-timer-4.0.6.tgz",
+@@ -6899,20 +7056,27 @@
+       "integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+       "license": "MIT"
+     },
+     "node_modules/fast-json-stable-stringify": {
+       "version": "2.1.0",
+       "resolved": "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz",
+       "integrity": "sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/fast-sha256": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/fast-sha256/-/fast-sha256-1.3.0.tgz",
++      "integrity": "sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==",
++      "license": "Unlicense",
++      "peer": true
++    },
+     "node_modules/fast-uri": {
+       "version": "3.1.0",
+       "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.0.tgz",
+       "integrity": "sha512-iPeeDKJSWf4IEOasVVrknXpaBV0IApz/gp7S2bb7Z4Lljbl2MGJRqInZiUrQwV16cpzw/D3S5j5Julj/gT52AA==",
+       "funding": [
+         {
+           "type": "github",
+           "url": "https://github.com/sponsors/fastify"
+         },
+         {
+@@ -8031,20 +8195,34 @@
+         "node": ">=6"
+       }
+     },
+     "node_modules/json-buffer": {
+       "version": "3.0.1",
+       "resolved": "https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz",
+       "integrity": "sha512-4bV5BfR2mqfQTJm+V5tPPdf+ZpuhiIvTuAB5g8kcrXOZpTT/QwwVRWBywX1ozr6lEuPdbHxwaJlm9G6mI2sfSQ==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/json-schema-to-ts": {
++      "version": "3.1.1",
++      "resolved": "https://registry.npmjs.org/json-schema-to-ts/-/json-schema-to-ts-3.1.1.tgz",
++      "integrity": "sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==",
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "@babel/runtime": "^7.18.3",
++        "ts-algebra": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=16"
++      }
++    },
+     "node_modules/json-schema-traverse": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz",
+       "integrity": "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==",
+       "license": "MIT"
+     },
+     "node_modules/json-schema-typed": {
+       "version": "8.0.2",
+       "resolved": "https://registry.npmjs.org/json-schema-typed/-/json-schema-typed-8.0.2.tgz",
+       "integrity": "sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==",
+@@ -10121,20 +10299,31 @@
+         "node": "^18.17.0 || >=20.5.0"
+       }
+     },
+     "node_modules/stackback": {
+       "version": "0.0.2",
+       "resolved": "https://registry.npmjs.org/stackback/-/stackback-0.0.2.tgz",
+       "integrity": "sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==",
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/standardwebhooks": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/standardwebhooks/-/standardwebhooks-1.0.0.tgz",
++      "integrity": "sha512-BbHGOQK9olHPMvQNHWul6MYlrRTAOKn03rOe4A8O3CLWhNf4YHBqq2HJKKC+sfqpxiBY52pNeesD6jIiLDz8jg==",
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "@stablelib/base64": "^1.0.0",
++        "fast-sha256": "^1.3.0"
++      }
++    },
+     "node_modules/stat-mode": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/stat-mode/-/stat-mode-1.0.0.tgz",
+       "integrity": "sha512-jH9EhtKIjuXZ2cWxmXS8ZP80XyC3iasQxMDV8jzhNJpfDb7VbQLVW4Wvsxz9QZvzV+G4YoSfBUVKDOyxLzi/sg==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">= 6"
+       }
+     },
+@@ -10511,20 +10700,27 @@
+     "node_modules/truncate-utf8-bytes": {
+       "version": "1.0.2",
+       "resolved": "https://registry.npmjs.org/truncate-utf8-bytes/-/truncate-utf8-bytes-1.0.2.tgz",
+       "integrity": "sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ==",
+       "dev": true,
+       "license": "WTFPL",
+       "dependencies": {
+         "utf8-byte-length": "^1.0.1"
+       }
+     },
++    "node_modules/ts-algebra": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/ts-algebra/-/ts-algebra-2.0.0.tgz",
++      "integrity": "sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==",
++      "license": "MIT",
++      "peer": true
++    },
+     "node_modules/tslib": {
+       "version": "2.8.1",
+       "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+       "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
+       "license": "0BSD"
+     },
+     "node_modules/type-fest": {
+       "version": "0.13.1",
+       "resolved": "https://registry.npmjs.org/type-fest/-/type-fest-0.13.1.tgz",
+       "integrity": "sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==",
+diff --git a/package.json b/package.json
+index f57fb44..f3fd5aa 100644
+--- a/package.json
++++ b/package.json
+@@ -34,20 +34,21 @@
+     "dist:linux": "npm run bump:build && npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && npm run build:preloads && electron-builder --linux",
+     "dist:mac:prod": "npm run bump:build && npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && npm run build:preloads && electron-builder --mac",
+     "test": "vitest",
+     "test:run": "vitest run",
+     "test:coverage": "vitest run --coverage"
+   },
+   "author": "Touchizen",
+   "license": "AGPL-3.0-only",
+   "private": true,
+   "dependencies": {
++    "@anthropic-ai/claude-agent-sdk": "^0.3.178",
+     "@lexical/react": "^0.45.0",
+     "@modelcontextprotocol/sdk": "^1.27.1",
+     "@sentry/electron": "^7.13.0",
+     "dotenv": "^17.3.1",
+     "electron-updater": "^6.8.3",
+     "firebase": "^12.9.0",
+     "flag-icons": "^7.5.0",
+     "lexical": "^0.45.0",
+     "lexical-beautiful-mentions": "^0.1.48",
+     "react": "^18.3.1",
+@@ -66,20 +67,23 @@
+     "jsdom": "^28.1.0",
+     "vite": "^6.1.0",
+     "vite-plugin-electron": "^0.28.8",
+     "vite-plugin-electron-renderer": "^0.14.6",
+     "vitest": "^4.0.18"
+   },
+   "build": {
+     "appId": "com.touchizen.flow2capcut",
+     "productName": "AutoFlowCut",
+     "forceCodeSigning": true,
++    "asarUnpack": [
++      "node_modules/@anthropic-ai/claude-agent-sdk/**"
++    ],
+     "directories": {
+       "output": "release",
+       "buildResources": "assets"
+     },
+     "publish": [
+       {
+         "provider": "github",
+         "owner": "touchizen",
+         "repo": "AutoFlowCut"
+       }
+diff --git a/tests/electron/api/llm/claudeSdkImport.test.js b/tests/electron/api/llm/claudeSdkImport.test.js
+new file mode 100644
+index 0000000..2aeb173
+--- /dev/null
++++ b/tests/electron/api/llm/claudeSdkImport.test.js
+@@ -0,0 +1,8 @@
++import { describe, it, expect } from 'vitest'
++
++describe('claude-agent-sdk 로드', () => {
++  it('query export가 존재한다', async () => {
++    const mod = await import('@anthropic-ai/claude-agent-sdk')
++    expect(typeof mod.query).toBe('function')
++  })
++})
