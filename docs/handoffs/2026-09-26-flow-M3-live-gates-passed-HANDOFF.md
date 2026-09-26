@@ -28,7 +28,7 @@ M3(새 flow.google.com 의 레퍼런스 이미지 · @인라인 멘션 · 레퍼
 
 ## 3. 남은 것
 
-1. **푸시(사용자 결정)** — M3 는 `fix/flow-batchexecute` 에 병합 완료(사용자 지시, 빨리감기). 이 브랜치(M2+M3)와 main(미푸시 10커밋) 모두 미푸시 — 푸시·main 머지는 사용자에게 묻는다.
+1. **푸시(사용자 결정)** — M3 → `fix/flow-batchexecute` → **main 까지 빨리감기 병합 완료**(사용자 지시, 프로덕션 빌드 `build:prod` 성공·main 번들에 React 훅 0 확인 뒤). main 은 origin/main 보다 98커밋 앞, **미푸시** — 푸시는 사용자에게 묻는다.
 2. 브랜치 정리 완료(사용자 지시): `probe/m3-0` · `feat/flow-m3-references` · main 에 이미 병합된 로컬 브랜치 14개 삭제(원격은 그대로). 커밋이 사라져 **확인이 필요해 남긴 것**: `backup-premerge`(고유 3) · `feat/flow-chrome-extension`(고유 10, NO-GO 스파이크) · `feature/veo-audio-volume`(고유 1, 미병합 기능).
 3. 옛 코드 정리(계획서 §7·D15): `sceneMentions` 엔티티 경로 · `flow-compose-mention` · `cdp-image-inject` · 동기화 게이트 UI.
 4. 증거 §3 의 관찰 8건(결함 아님) — 특히 채택 모달 경고, MCP 단일 생성의 실패 무신호, 영상 프롬프트 변경 시 옛 영상 `complete` 유지.
@@ -52,7 +52,7 @@ M3(새 flow.google.com 의 레퍼런스 이미지 · @인라인 멘션 · 레퍼
 
 ```
 AutoFlowCut-bugfix 워크트리(~/workspace/AutoFlowCut-bugfix, 브랜치 fix/flow-batchexecute)에서 이어서 해.
-docs/handoffs/2026-09-26-flow-M3-live-gates-passed-HANDOFF.md 를 끝까지 읽어. M3 는 실기 G1~G7 까지 끝나 fix/flow-batchexecute 에 병합됐고 전부 미푸시다.
-첫 일: 푸시·main 머지를 나한테 물어서 확정(§3-1). 남긴 브랜치 3개(§3-2) 처분도 확인. 옛 코드 정리(§3-3)는 별도 계획으로.
+docs/handoffs/2026-09-26-flow-M3-live-gates-passed-HANDOFF.md 를 끝까지 읽어. M3 는 실기 G1~G7 까지 끝나 fix/flow-batchexecute 와 main 에 병합됐고 전부 미푸시다.
+첫 일: main 푸시를 나한테 물어서 확정(§3-1, main 머지는 끝났다). 남긴 브랜치 3개(§3-2) 처분도 확인. 옛 코드 정리(§3-3)는 별도 계획으로.
 커밋은 영어, 푸시는 나한테 물어봐. 리뷰어는 Opus 서브에이전트(Sonnet 금지).
 ```
