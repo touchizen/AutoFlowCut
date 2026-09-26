@@ -98,6 +98,27 @@ describe('useScenes — parseFromCSV (new scene-column format)', () => {
     expect(returned).toHaveLength(2)
   })
 
+  // multi-provider 병합(리뷰 B F5): 새 값이 든 셀은 기존 override 를 대체한다 — 병합 결과 대신 기존 값(existing.generation)을 쓰는 해결을 잡는다.
+  it('새 형식 CSV 재import의 새 generation 값은 기존 override를 대체한다', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.parseFromCSV(
+        'scene,prompt,image_provider,image_model,t2v_provider,t2v_model\n' +
+        '1,old,openai,gpt-image-1,grok,grok-imagine-video-1.5'
+      )
+    })
+    act(() => {
+      result.current.parseFromCSV(
+        'scene,prompt,image_provider,image_model,t2v_provider,t2v_model\n' +
+        '1,new,google,gemini-3-pro-image,google,veo-3.1-fast-generate-preview'
+      )
+    })
+    expect(result.current.scenes[0].generation).toEqual({
+      image: { provider: 'google', model: 'gemini-3-pro-image' },
+      video: { t2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' } },
+    })
+  })
+
   it('새 형식 CSV 재import의 빈 generation 셀은 기존 override를 보존한다', () => {
     const { result } = renderHook(() => useScenes())
     act(() => {

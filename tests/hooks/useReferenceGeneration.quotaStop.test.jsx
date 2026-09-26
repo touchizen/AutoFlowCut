@@ -269,3 +269,21 @@ describe('useReferenceGeneration — provider quota classification', () => {
     expect(collectGeneration).toHaveBeenCalledTimes(1)
   })
 })
+
+// multi-provider 병합(리뷰 B F2): 병합 해결이 ref 생성의 provider 를 지켰는지 — 빠지면 dispatcher 가 google 로 폴백해 openai/fal 전용 사용자의 ref 가 google 로 간다.
+describe('useReferenceGeneration — provider forwarding', () => {
+  it('단일 ref 생성은 settings.generation.image.provider 와 imageModel 을 generateImage 에 넘긴다', async () => {
+    const { hook, genAPI } = setupHook({ refs: [{ id: 1, prompt: 'a', type: 'character', status: 'pending' }] })
+    await act(async () => { await hook.result.current.handleGenerateRef(0) })
+    expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
+    expect(genAPI.generateImage.mock.calls[0][2]).toMatchObject({ provider: 'fal', model: 'fal-ai/flux-pro/v1.1' })
+  })
+
+  it('배치 ref 제출은 provider 와 imageModel 을 submitGeneration 에 넘긴다', async () => {
+    const submitGeneration = vi.fn().mockResolvedValue({ success: false, error: 'bad request', errorKind: 'other' })
+    const { hook } = setupHook({ refs: [{ id: 1, prompt: 'a', type: 'character', status: 'pending' }], genOverrides: { submitGeneration } })
+    await act(async () => { await hook.result.current.handleGenerateAllRefs() })
+    expect(submitGeneration).toHaveBeenCalledTimes(1)
+    expect(submitGeneration.mock.calls[0][2]).toMatchObject({ provider: 'fal', model: 'fal-ai/flux-pro/v1.1' })
+  })
+})

@@ -106,8 +106,6 @@ beforeEach(() => {
 
   // main 병합: flow.google.com 재작업 Flow 엔진은 토큰이 아니라 세션 준비(flowSessionStatus)로 인증을 판정한다 — 없으면 배치가 'No auth token' 으로 시작 전에 멈춘다
   window.electronAPI.flowSessionStatus = vi.fn().mockResolvedValue({ ready: true, credits: 1050 })
-  window.electronAPI.flowExtractToken = vi.fn().mockResolvedValue({ success: true, token: 'flow-token' })
-  window.electronAPI.flowValidateToken = vi.fn().mockResolvedValue({ valid: true })
   window.electronAPI.flowExtractProjectId = vi.fn().mockResolvedValue({ projectId: 'flow-project' })
   window.electronAPI.flowGenerateImage = vi.fn()
   window.electronAPI.flowCheckGeneration = vi.fn().mockResolvedValue({ success: true, completed: true })

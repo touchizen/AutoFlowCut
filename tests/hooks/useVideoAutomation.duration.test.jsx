@@ -370,6 +370,32 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
     )
   })
 
+  // multi-provider 병합(리뷰 B F4): 이전 세션에 제출된 in-flight 항목(재제출 없음)도 저장된 appliedInputs 로 완료 길이·메타를 기록한다 —
+  //   pending 에 실은 appliedInputs 가 빠지면 이번 배치 설정(4초·720p)으로 다시 계산한 값이 남는다.
+  it('in-flight 재개: 저장된 appliedInputs 가 완료 duration·appliedInputs 가 된다(재제출 없음)', async () => {
+    const applied = { model: 'veo-3.1-lite-generate-preview', aspectRatio: '16:9', durationSeconds: 8, resolution: '1080p' }
+    const genAPI = {
+      generateVideoT2V: vi.fn(),
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus: vi.fn().mockResolvedValue({ success: true, statuses: [{ generationId: 'gen-inflight', status: 'complete', mediaId: 'uri', videoUrl: 'uri' }] }),
+      downloadVideo: vi.fn().mockResolvedValue({ success: true, base64: 'VIDEO' }),
+      upscaleVideo: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const onItemUpdate = vi.fn()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+    await act(async () => {
+      await hook.result.current.start({
+        mode: 't2v',
+        scenes: [{ id: 'vscene_v1', prompt: 'p', status: 'generating', generationId: 'gen-inflight', mediaId: null, videoPath: null, appliedInputs: applied }],
+        projectName: 'test', saveMode: 'memory', videoProvider: 'google', videoModel: 'veo-3.1-lite-generate-preview',
+        aspectRatio: '16:9', duration: 4, videoResolution: '720p', onItemUpdate,
+      })
+    })
+    expect(genAPI.generateVideoT2V).not.toHaveBeenCalled()
+    expect(onItemUpdate).toHaveBeenCalledWith('vscene_v1', 'complete', expect.objectContaining({ duration: 8, appliedInputs: applied }))
+  })
+
   it('D1: completed item generationId를 provider-aware download에 전달', async () => {
     const generateVideoT2V = vi.fn().mockResolvedValue({
       success: true,

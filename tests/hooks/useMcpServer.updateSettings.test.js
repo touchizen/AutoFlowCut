@@ -94,3 +94,23 @@ describe('useMcpServer — update-settings', () => {
     expect(setSettings).not.toHaveBeenCalled()
   })
 })
+
+// multi-provider 병합(리뷰 B F5): update-scenes·update-scene 이 generation 병합 **결과**를 씬에 쓰는지 — 병합 함수는 단위로 묶였지만
+//   훅이 결과 대신 옛 값(matched.generation)을 쓰는 해결은 어떤 테스트도 못 잡았다. 새 override 값이 기존 값을 대체해야 한다.
+describe('useMcpServer — update-scenes / update-scene 은 generation 병합 결과를 쓴다', () => {
+  const prev = [{ id: 'scene_1', _sceneNum: 1, prompt: 'old', status: 'pending', generation: { image: { provider: 'openai', model: 'gpt-image-1' } } }]
+  it('update-scenes: 들어온 새 image override 가 기존 override 를 대체한다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes })))
+    mcpHandler({ type: 'update-scenes', scenes: [{ id: 'scene_1', _sceneNum: 1, prompt: 'old', generation: { image: { provider: 'google', model: 'gemini-3-pro-image' } } }] })
+    const updater = setScenes.mock.calls.at(-1)[0]
+    expect(updater(prev)[0].generation).toEqual({ image: { provider: 'google', model: 'gemini-3-pro-image' } })
+  })
+  it('update-scene: fields.generation 의 새 override 가 기존 override 를 대체한다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes })))
+    mcpHandler({ type: 'update-scene', index: 0, fields: { generation: { image: { provider: 'google', model: 'gemini-3-pro-image' } } } })
+    const updater = setScenes.mock.calls.at(-1)[0]
+    expect(updater(prev)[0].generation).toEqual({ image: { provider: 'google', model: 'gemini-3-pro-image' } })
+  })
+})
