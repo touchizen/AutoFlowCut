@@ -116,6 +116,43 @@ describe('snapshotClipboard — 형식 정책(D4-c)', () => {
     expect(clip.state.html).toBe(CHROME_HTML)
   })
 
+  it('macOS: 이미 meta 가 두 겹(수정 전 복원이 남긴 것)이어도 **하나만** 뗀다 → 바이트 그대로', () => {
+    const doubled = `<meta charset='utf-8'>${CHROME_HTML}`
+    const clip = macClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: doubled })
+    roundTrip(clip, MAC)
+    expect(clip.state.html).toBe(doubled)
+  })
+
+  it('macOS: 맨 앞이 아닌 meta 는 떼지 않는다 → 쓰기가 앞에 하나 붙인 모양으로 돌아온다', () => {
+    const inner = "<p>SECRET-HTML</p><meta charset='utf-8'>"
+    const clip = macClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: inner })
+    roundTrip(clip, MAC)
+    expect(clip.state.html).toBe(`<meta charset='utf-8'>${inner}`)
+  })
+
+  // 프로덕션(flow-reference-driver)은 platform 을 넘기지 않는다 — 기본값이 process.platform 인지 핀으로 묶는다.
+  //   'win32' 로 굳으면 macOS 에 TextEdit 버그가 돌아오고, 'darwin' 으로 굳으면 Windows·Linux 의 html 을 전부 버린다.
+  const withPlatform = (p, fn) => {
+    const orig = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: p, configurable: true })
+    try { return fn() } finally { Object.defineProperty(process, 'platform', orig) }
+  }
+
+  it('기본 platform(darwin 에서 실행) → TextEdit 복사가 지어낸 HTML 없이 {text, rtf}', () => {
+    const clip = macClipboard({ formats: ['text/plain', 'text/rtf'], text: TEXT, rtf: RTF })
+    const write = vi.spyOn(clip, 'write')
+    withPlatform('darwin', () => roundTrip(clip))
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT, rtf: RTF }])
+  })
+
+  it('기본 platform(win32 에서 실행) → html 을 형식 목록으로 판정해 {text, html}', () => {
+    const clip = makeFakeClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: HTML })
+    clip.readBuffer = () => Buffer.alloc(0)
+    const write = vi.spyOn(clip, 'write')
+    withPlatform('win32', () => roundTrip(clip))
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT, html: HTML }])
+  })
+
   it('Windows 는 meta 를 떼지 않는다(쓰기가 다시 붙이지 않는다) → write 의 html 이 읽은 그대로', () => {
     const clip = makeFakeClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: CHROME_HTML })
     const write = vi.spyOn(clip, 'write')
