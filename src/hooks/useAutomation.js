@@ -20,12 +20,16 @@ import { makeBatchConsumeGate } from './batchConsumeGate'
 import { resolveProjectBatchId } from '../utils/batchId'
 import { consumeBatchDownload } from '../firebase/functions'
 import { batchStartGate } from './batchStartGate'
-import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
+import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } from '../utils/authMessages'
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 import {
   applyM1MentionExclusions,
   sourceAvailable,
 } from '../utils/refImageGuard'
+import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
+import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
+import { nextCancelScope } from '../utils/cancelScope'
+import { isAbortedResult } from '../utils/isAbortedResult'
 
 export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -38,7 +42,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   const authErrorMessage = () => getAuthErrorMessage(mode, t)
   // R1#6/R2#5: 새 Flow 의 authFailed 결과는 error 가 기계 토큰(not-on-flow · flow-rpc-error)이다 — kind 가 있으면 사람 문구로.
   //   옛 결과(kind 없음, "Auth expired …" 같은 문구)는 그대로 둔다.
-  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
+  const authFailureText = (res) => (authErrorIsMachineToken(res) ? authErrorMessage() : (res?.error || authErrorMessage()))
   // M1-10: Flow 세션 판정 이유(flowSessionReason)로 로그인 안내 vs 세션 확인 실패 안내를 고른다.
   const authRequiredMessage = () => getAuthRequiredMessage(mode, t, genAPI?.flowSessionReason?.())
 
@@ -62,6 +66,26 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   // Set true when batch stops due to authFailed sentinel — prevents the normal
   // stopRequestedRef final-status logic from overwriting 'error' with 'stopped'.
   const authStoppedRef = useRef(false)
+  const activeRunsRef = useRef(new Set())
+  const cancelGenerationRef = useRef(genAPI.cancelGeneration)
+  cancelGenerationRef.current = genAPI.cancelGeneration
+
+  const beginRun = useCallback(() => {
+    const run = { scope: nextCancelScope('scenes'), cancelSent: false }
+    activeRunsRef.current.add(run)
+    return run
+  }, [])
+  const finishRun = useCallback((run) => {
+    activeRunsRef.current.delete(run)
+  }, [])
+  const cancelActiveScopeOnce = useCallback((run) => {
+    if (!run || run.cancelSent) return
+    run.cancelSent = true
+    void Promise.resolve(cancelGenerationRef.current?.(run.scope)).catch(() => {})
+  }, [])
+  const cancelActiveRuns = useCallback(() => {
+    for (const run of [...activeRunsRef.current]) cancelActiveScopeOnce(run)
+  }, [cancelActiveScopeOnce])
 
   // generateImage 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
   // 단일 씬 동기 호출이 필요해지면 genAPI.generateImage 으로 직접 접근.
@@ -88,7 +112,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   /**
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
-  const runConcurrentQueue = async (targetScenes, options, total) => {
+  const runConcurrentQueue = async (targetScenes, options, total, run) => {
     let {
       projectName,
       saveMode,
@@ -96,6 +120,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       imageUpscale,
       aspectRatio,
       imageModel,
+      imageProvider = 'google',
+      generationSettings,
       selectedStyleRefId,
       seed = null,
       concurrency: rawConcurrency,
@@ -120,7 +146,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     let consecutiveErrors = 0
 
     // 사용자 일시정지 동안 대기하고, 재개 시 그 시간만큼 보정한다 — pause 가
-    // in-flight 의 ITEM_TIMEOUT(2분)이나 Phase2 drain 예산(3분)을 갉아먹지 않게.
+    // in-flight 의 provider별 item timeout이나 Phase2 drain 예산을 갉아먹지 않게.
     const awaitUnpause = async () => {
       if (!pausedRef.current) return
       const pausedAt = Date.now()
@@ -133,8 +159,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     }
     // quota stop 은 공통 모듈 — stopRequestedRef 마킹 + listeners (queue, 모달) 자동 발사.
     // queue clear 는 useGenerationQueue 가 자체 subscribe 해서 처리하므로 caller 책임 X.
-    // 이미 submit 한 in-flight 는 마저 collect 시도 (운 좋게 결과 오면 살림).
-    const triggerQuotaStop = () => emitQuotaStop({ stopRequestedRef, scope: 'Automation' })
+    // Stop 뒤 미수집 in-flight 는 collect 를 건너뛰고 stop cleanup 에서 pending 으로 복원된다.
+    const triggerQuotaStop = () => {
+      stopRequestedRef.current = true
+      cancelActiveRuns()
+      emitQuotaStop({ scope: 'Automation' })
+    }
 
     const updateProgressMsg = (current) => {
       setProgress({ current, total, percent: Math.round((current / total) * 100), errorCount: errorCountRef.current, startedAt: batchStartedAtRef.current, endedAt: null })
@@ -149,16 +179,17 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       if (!consumeDenied) {
         consumeDenied = true
         stopRequestedRef.current = true
+        cancelActiveRuns()
         console.warn('[Automation] Consume denied mid-batch — stopping new submissions, triggering paywall')
         onPaywall?.()
       }
     }
 
     // 비동기 결과 후처리 (업스케일 + 저장) — 단위 테스트 가능한 standalone 헬퍼로 위임.
-    const processAsyncResult = async (scene, result) => {
+    const processAsyncResult = async (scene, result, resolvedModel = imageModel) => {
       const ok = await processAsyncSceneResult({
         scene, result,
-        genAPI, imageUpscale, saveMode, projectName, seed, model: imageModel,
+        genAPI, imageUpscale, saveMode, projectName, seed, model: resolvedModel,
         updateScene,
         authErrorText: authErrorMessage(),   // R1#6: authFailed 의 기계 토큰 대신 사람 문구
         gate: consumeGate,  // 배치당 1회 consume 보장 (undefined 면 processAsyncSceneResult 가 no-op 사용)
@@ -174,19 +205,18 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     }
 
     // 완료된 결과 수집
-    const ITEM_TIMEOUT = 120000 // 개별 아이템 2분 타임아웃
     const collectCompleted = async () => {
       const stillPending = []
       for (const item of pendingQueue) {
         if (stopRequestedRef.current) { stillPending.push(item); continue }
         const elapsed = Date.now() - item.submittedAt
-        // M1-13 (D4): main 의 마감(send 15s / loadend 100s = 115s < ITEM_TIMEOUT 120s)이 먼저 kind 를 정한다 —
-        //   ITEM_TIMEOUT 을 checkGeneration **앞**에 두면 페이싱 뒤 첫 재확인이 120s 를 넘긴 씬에서 'Generation timeout'
-        //   (errorKind null) 이 main 의 flow-submit-lost 를 덮는다. 먼저 묻고, main 이 미완료라고 할 때만 타임아웃.
+        // M1-13 (D4): main 의 마감(send 15s / loadend 100s = 115s < 아이템 타임아웃 — imageGenerationItemTimeoutMs, google 120s)이 먼저 kind 를 정한다 —
+        //   타임아웃을 checkGeneration **앞**에 두면 페이싱 뒤 첫 재확인이 타임아웃을 넘긴 씬에서 'Generation timeout'
+        //   (errorKind null) 이 main 의 flow-submit-lost 를 덮는다. 먼저 묻고, main 이 미완료라고 할 때만 타임아웃(provider 별 — fal 은 cap+마진).
         try {
           const st = await checkGeneration(item.generationId)
           // #R23-4: checkGeneration 자체가 401/403 → authFailed 를 표면화할 수 있다(완료 안 돼도).
-          //   이걸 무시하면 죽은 인증으로 ITEM_TIMEOUT(2분)까지 pending 으로 매달린다 → 즉시 중단.
+          //   이걸 무시하면 죽은 인증으로 provider별 item timeout까지 pending 으로 매달린다 → 즉시 중단.
           //   onAuthError 는 withAuthRetry wrapper 가 이미 발화 — 여기서 또 발화하지 않는다.
           if (st.authFailed) {
             console.warn('[Automation] checkGeneration authFailed — stopping batch:', st.error)
@@ -195,6 +225,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
             stopRequestedRef.current = true
+            cancelActiveRuns()
             authStoppedRef.current = true
             setStatus('error')
             setStatusMessage(authFailureText(st))
@@ -202,6 +233,10 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           }
           if (st.completed) {
             const result = await collectGeneration(item.generationId)
+            if (isAbortedResult(result)) {
+              updateScene(item.scene.id, { status: 'pending', error: null, errorKind: null })
+              continue
+            }
             // Auth failed sentinel — token is dead, stop batch immediately.
             // onAuthError was already fired by the withAuthRetry wrapper; don't fire again.
             if (result.authFailed) {
@@ -211,12 +246,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
               completedCountRef.current++
               updateProgressMsg(completedCountRef.current)
               stopRequestedRef.current = true
+              cancelActiveRuns()
               authStoppedRef.current = true
               setStatus('error')
               setStatusMessage(authFailureText(result))
               continue
             }
-            if (!result.success && isQuotaExhaustedError(result.error)) {
+            if (!result.success && isQuotaExhaustedError(result)) {
               updateScene(item.scene.id, { status: 'error', error: result.error, errorKind: result.errorKind ?? null })
               errorCountRef.current++
               completedCountRef.current++
@@ -230,7 +266,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             //   finalize 예외는 씬을 error 로 표시하고 완료로 카운트한다.
             let finalizeOk = false
             try {
-              finalizeOk = await processAsyncResult(item.scene, result)
+              finalizeOk = await processAsyncResult(item.scene, result, item.model)
             } catch (finErr) {
               console.error('[Automation] Finalize/save error for scene', item.scene.id, ':', finErr.message)
               updateScene(item.scene.id, { status: 'error', error: finErr.message, errorKind: null })
@@ -241,7 +277,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             }
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
-          } else if (elapsed > ITEM_TIMEOUT) {
+          } else if (elapsed > imageGenerationItemTimeoutMs(item.provider)) {
             console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
             updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
             errorCountRef.current++
@@ -330,10 +366,25 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
       // M1-10: 업스케일 설정은 엔진 게이트 재료. M3: Flow 엔진은 matchedRefs(＋ 첨부)와 references(@멘션 해석 pool)로 레퍼런스를 계획한다.
-      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, references: effectiveRefs, imageUpscale })
+      const resolvedGeneration = resolveSceneImageProvider(scene, generationSettings, { appMode: mode })   // Flow 는 씬 override 없이 설정 모델(F1)
+      if (resolvedGeneration.warning) console.warn('[Automation]', resolvedGeneration.warning)
+      if (run.cancelSent) {
+        updateScene(scene.id, { status: 'pending', error: null, errorKind: null })
+        break
+      }
+      const submitResult = await submitGeneration(styledPrompt, matchedRefs, {
+        batchCount: imageBatchCount,
+        seed,
+        aspectRatio,
+        model: resolvedGeneration.model,
+        provider: resolvedGeneration.provider,
+        references: effectiveRefs,
+        imageUpscale,
+        cancelScope: run.scope,
+      })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
-        pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })
+        pendingQueue.push({ generationId: submitResult.generationId, scene, model: resolvedGeneration.model, provider: resolvedGeneration.provider, submittedAt: _now, originalSubmittedAt: _now })
         consecutiveErrors = 0
         console.log('[Automation] Submitted scene', scene.id, '→', submitResult.generationId)
       } else if (submitResult.success && Array.isArray(submitResult.images) && submitResult.images.length > 0) {
@@ -342,7 +393,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         //   이미지가 버려지고, 에러 씬으로 남아 다음 배치/재생성에서 또 생성된다(중복 생성).
         consecutiveErrors = 0
         let finalizeOk = false
-        try { finalizeOk = await processAsyncResult(scene, submitResult) }
+        try { finalizeOk = await processAsyncResult(scene, submitResult, resolvedGeneration.model) }
         catch (finErr) {
           console.error('[Automation] Finalize error (sync) for scene', scene.id, ':', finErr.message)
           updateScene(scene.id, { status: 'error', error: finErr.message, errorKind: null })
@@ -371,6 +422,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
           stopRequestedRef.current = true
+          cancelActiveRuns()
           authStoppedRef.current = true
           setStatus('error')
           setStatusMessage(authFailureText(submitResult))
@@ -378,7 +430,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         }
         // R1#2/R2#2: 제출 실패의 kind 별 params(flow-image-model-mismatch {requested, panel} 등)를 씬에 남긴다 — 비동기 배치는
         //   모델 불일치가 항상 제출 결과로 온다. 없으면 {} 로 비워 stale params 를 막는다.
-        if (isQuotaExhaustedError(submitResult.error)) {
+        if (isQuotaExhaustedError(submitResult)) {
           updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null, errorParams: submitResult.errorParams || {} })
           errorCountRef.current++
           completedCountRef.current++
@@ -429,12 +481,17 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
     }
 
-    // Phase 2: 남은 결과 전부 수집 (3초 간격, 최대 3분)
+    // Phase 2: 남은 결과 전부 수집 (3초 간격, 기본 최대 3분).
+    // fal 동기 adapter는 자체 wall-clock cap이 더 길어서 그 cap+IPC 여유까지 drain한다.
     const pollStart = Date.now()
+    const phase2TimeoutMs = pendingQueue.reduce(
+      (maxMs, item) => Math.max(maxMs, imageGenerationItemTimeoutMs(item.provider, 180000)),
+      180000,
+    )
     while (
       pendingQueue.length > 0 &&
       !stopRequestedRef.current &&
-      (Date.now() - pollStart - pauseBudgetMs < 180000)
+      (Date.now() - pollStart - pauseBudgetMs < phase2TimeoutMs)
     ) {
       // paused (사용자 일시정지) 인식 — Phase 2 도 pause 동안 멈추고 시간 보정.
       await awaitUnpause()
@@ -487,6 +544,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       imageUpscale = 'off',
       aspectRatio = '16:9',
       imageModel = undefined,
+      imageProvider = 'google', // 전역 image provider(§5.8) — 미지정→google
+      generationSettings: suppliedGenerationSettings = null,
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
       concurrency = undefined,
@@ -498,6 +557,22 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       currentRefs: currentRefsOverride = null,
       m1ExcludedMentionNamesBySceneId = {},
     } = options
+    const generationSettings = {
+      ...(suppliedGenerationSettings || {}),
+      // Flow 모드의 모델은 설정의 imageModel(sceneProviderResolution F1) — 호출자가 설정 없이 start 옵션만 주면 옵션 값(main 이 보내던 값)
+      imageModel: suppliedGenerationSettings?.imageModel ?? imageModel,
+      generation: {
+        ...(suppliedGenerationSettings?.generation || {}),
+        image: {
+          provider: suppliedGenerationSettings?.generation?.image?.provider ?? imageProvider,
+          ...(suppliedGenerationSettings?.generation?.image || {}),
+        },
+      },
+      modelsByProvider: {
+        ...(imageModel != null ? { [imageProvider]: imageModel } : {}),
+        ...(suppliedGenerationSettings?.modelsByProvider || {}),
+      },
+    }
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
     // #M2: sceneIds 는 membership 고정용이지 partial retry 의미가 아니다. 호출자가 batchIntent 로
     //   명시하면 그 의미가 우선하고, 미전달이면 기존 sceneIds/sceneIndices 추론을 보존한다.
@@ -512,6 +587,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       toast.warning(t('toast.flowProjectNotReady'))
       return
     }
+
+    const run = beginRun()
+    try {
 
     stopRequestedRef.current = false
     pausedRef.current = false
@@ -590,10 +668,21 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       }
     }
     
-    // 토큰 확인
+    // 토큰 확인 — 선택된 image provider 의 키로 게이트(§5.7). google 키 없이 openai 만 있어도 시작 가능.
     setStatusMessage(t('status.checkingAuth'))
-    const token = await getAccessToken()
-    if (!token) {
+    const requiredImageProviders = [...new Set(targetScenes.map(scene => {
+      const resolved = resolveSceneImageProvider(scene, generationSettings, { appMode: mode })
+      if (resolved.warning) console.warn('[Automation]', resolved.warning)
+      return resolved.provider
+    }))]
+    let hasRequiredToken = true
+    for (const provider of requiredImageProviders) {
+      if (!(await getAccessToken(false, false, provider))) {
+        hasRequiredToken = false
+        break
+      }
+    }
+    if (!hasRequiredToken) {
       // BYOK 키 없음 → 생성 중단 + API 키 모달 안내 (handleStart 와 동일 UX).
       // 'flow-login-expired' → App 의 useFlowEvents → showApiKeyModal.
       console.log('[Automation] No auth token — prompting setup.')
@@ -679,6 +768,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           if (result.authFailed) {
             console.warn('[Automation] uploadReference authFailed — stopping batch:', result.error)
             stopRequestedRef.current = true
+            cancelActiveRuns()
             authStoppedRef.current = true
             setStatus('error')
             setStatusMessage(authFailureText(result))
@@ -795,6 +885,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       imageUpscale,
       aspectRatio,
       imageModel,
+      imageProvider,
+      generationSettings,
       selectedStyleRefId,
       seed,
       concurrency,
@@ -803,7 +895,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       currentRefs, // #R6-15: entity 패치가 반영된 로컬 refs (멘션 해석에 사용)
       consumeGate,  // 배치당 1회 consume 보장 게이트
       m1ExcludedMentionNamesBySceneId,
-    }, total)
+    }, total, run)
     
     // 완료 — 즉시 저장 (auto-save debounce 전에 프로젝트 전환/종료 방지)
     // completed=true 는 "진행률 100% 도달" 을 의미한다. 다음은 모두 false 여야 한다:
@@ -833,10 +925,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       setStatus('done')
       setStatusMessage(`${t('status.done')} — ${summary}`)
     }
+    } finally {
+      finishRun(run)
+    }
 
   // #R8-10: onComplete 도 dep — 누락 시 완료 시점에 stale save 콜백을 호출할 수 있다.
   // subscriptionBatch/onPaywall/isAuthenticated/onLoginRequired: 배치 게이트 — 구독/인증 상태 변경 시 최신값 반영.
-  }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, updateReferences, t, onOpenSettings, mode, flowProjectReady, onComplete, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription])
+  }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, updateReferences, t, onOpenSettings, mode, flowProjectReady, onComplete, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription, beginRun, finishRun, cancelActiveRuns])
   
   /**
    * 일시정지/재개
@@ -852,6 +947,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
    */
   const stop = useCallback(() => {
     stopRequestedRef.current = true
+    cancelActiveRuns()
     pausedRef.current = false
     setIsPaused(false)
     setIsStopping(true)
@@ -860,7 +956,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     if (generationQueue?.clearQueue) {
       generationQueue.clearQueue()
     }
-  }, [t, generationQueue])
+  }, [t, generationQueue, cancelActiveRuns])
   
   // 큐를 통한 시작 — 정상 Start 와 retry 가 모두 이 경로를 타 ref/video 작업과 직렬화한다.
   // (queue 없으면 직접 start — 하위호환.)

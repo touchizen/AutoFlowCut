@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getAuthErrorMessage, getAuthRequiredMessage } from '../../src/utils/authMessages.js'
+import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } from '../../src/utils/authMessages.js'
 
 const t = (map) => (key) => map[key] || key
 
@@ -62,5 +62,22 @@ describe('getAuthRequiredMessage — Flow 세션 이유 (M1-9)', () => {
 
   it('API 모드는 이유와 무관하게 API 키 안내', () => {
     expect(getAuthRequiredMessage('api', tt, 'rpc:http:500')).toBe('API 키가 필요합니다.')
+  })
+})
+
+// main 병합(리뷰 A F2): 인증 실패 결과의 error 가 기계 토큰인지(사람 안내 문구로 바꿀지) — 한 술어로 모은다.
+//   Flow(main)의 authFailed 결과는 flow-* kind 와 이유 토큰(not-on-flow·wiz-missing·flow-rpc-error)을 싣는다 → 안내 문구.
+//   multi-provider(브랜치)의 API 결과는 §5.11 로 errorKind:'auth' 와 provider 의 사람 메시지를 싣는다 → 그대로 보인다(어느 provider 키인지 알 수 있게).
+//   kind 없는 옛 결과("Auth expired …")도 그대로.
+describe('authErrorIsMachineToken', () => {
+  it("flow-* 등 'auth' 가 아닌 kind 면 기계 토큰", () => {
+    expect(authErrorIsMachineToken({ authFailed: true, errorKind: 'flow-session-missing', error: 'not-on-flow' })).toBe(true)
+    expect(authErrorIsMachineToken({ authFailed: true, errorKind: 'flow-rpc-error', error: 'flow-rpc-error' })).toBe(true)
+  })
+  it("errorKind 'auth'(provider 분류) 또는 kind 없음이면 기계 토큰이 아니다", () => {
+    expect(authErrorIsMachineToken({ authFailed: true, errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd' })).toBe(false)
+    expect(authErrorIsMachineToken({ authFailed: true, error: 'Auth expired — please re-login' })).toBe(false)
+    expect(authErrorIsMachineToken({ authFailed: true, errorKind: null, error: 'x' })).toBe(false)
+    expect(authErrorIsMachineToken(null)).toBe(false)
   })
 })

@@ -18,6 +18,12 @@ Each row represents one scene and is used for image/video generation and subtitl
 | `start_time` | | number | Start time (seconds) |
 | `end_time` | | number | End time (seconds) |
 | `parent_scene` | | string | Scene group ID (e.g., S001, S002) |
+| `image_provider` | | string | Per-scene image provider override: `google`, `openai`, `fal` |
+| `image_model` | | string | Per-scene image model override |
+| `t2v_provider` | | string | Per-scene T2V provider override: `google`, `grok`, `fal`, `wavespeed`, `higgsfield` |
+| `t2v_model` | | string | Per-scene T2V model override |
+| `i2v_provider` | | string | Per-scene I2V provider override: `google`, `grok`, `fal`, `wavespeed`, `higgsfield` |
+| `i2v_model` | | string | Per-scene I2V model override |
 
 ## Auto-Detection Conditions
 
@@ -32,6 +38,7 @@ Each row represents one scene and is used for image/video generation and subtitl
 - `scene_tag` must match the scene type name in references.csv
 - CSV encoding: UTF-8 (BOM allowed)
 - Fields containing quotes must be wrapped with `"`, and internal quotes escaped with `""`
+- Empty generation cells preserve the existing override. Put `__inherit__` in a provider cell to delete that stage override and inherit the global setting.
 
 ## Sample
 

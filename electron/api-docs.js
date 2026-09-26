@@ -438,9 +438,9 @@ curl http://127.0.0.1:3210/api/batch-status
 **지원 type:**
 - \`update-references\`: 레퍼런스 전체 교체
 - \`update-reference\`: 특정 레퍼런스 수정 (index + fields)
-- \`update-scenes\`: 씬 전체 교체
-- \`update-scene\`: 특정 씬 수정 (index + fields)
-- \`update-settings\`: 앱 설정 수정 (fields) — **화이트리스트 키만** 허용, 그 밖의 키나 틀린 값은 400 + \`keys\`(이름만): \`videoModelT2V\`·\`videoModelF2V\`·\`imageModel\`(비어 있지 않은 문자열 ≤ 64) · \`videoResolution\`(360p|720p|1080p|4k) · \`aspectRatio\`(16:9|9:16|1:1|4:3|3:4) · \`defaultDuration\`(숫자 1–60) · \`imageBatchCount\`·\`videoBatchCount\`(정수 1–4) · \`concurrency\`·\`videoConcurrency\`(정수 1–10) · \`seedNo\`(정수 ≥ 0) · \`seedLocked\`(boolean) · \`imageUpscale\`(문자열 ≤ 16)
+- \`update-scenes\`: 씬 전체 교체 (scene.generation stage-pair deep merge)
+- \`update-scene\`: 특정 씬 수정 (index + fields, generation 지원)
+- \`update-settings\`: 앱 설정 수정 (fields) — **화이트리스트 키만** 허용, 그 밖의 키나 틀린 값은 400 + \`keys\`(이름만): \`videoModelT2V\`·\`videoModelF2V\`·\`imageModel\`(비어 있지 않은 문자열 ≤ 64 — 시험 단계 provider 의 카탈로그 id 는 400. API 모드에서 다른 provider 의 카탈로그 id 면 그 provider 로 전환하고, 카탈로그 밖 이름은 google 모델로 본다. Flow 모드는 provider 를 건드리지 않는다) · \`videoResolution\`(360p|720p|1080p|4k) · \`aspectRatio\`(16:9|9:16|1:1|4:3|3:4) · \`defaultDuration\`(숫자 1–60) · \`imageBatchCount\`·\`videoBatchCount\`(정수 1–4) · \`concurrency\`·\`videoConcurrency\`(정수 1–10) · \`seedNo\`(정수 ≥ 0) · \`seedLocked\`(boolean) · \`imageUpscale\`(문자열 ≤ 16)
 - \`generate-reference\`: 레퍼런스 생성 트리거 (index + styleId?)
 - \`generate-scene\`: 씬 생성 트리거 (sceneId + styleId?)
 - \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force? + mode?: 'video'|'image' — 탭 오버라이드)
@@ -623,6 +623,39 @@ curl http://127.0.0.1:3210/api/batch-status
           characters: { type: 'string', description: '등장인물' },
           status: { type: 'string', enum: ['pending', 'generating', 'done', 'error'], description: '생성 상태' },
           imagePath: { type: 'string', description: '이미지 파일 경로', nullable: true },
+          generation: { $ref: '#/components/schemas/SceneGeneration' },
+        },
+      },
+      SceneGeneration: {
+        type: 'object',
+        description: '씬별 provider/model override. 누락 stage는 보존, null stage는 전역 상속.',
+        properties: {
+          image: {
+            type: 'object', nullable: true, additionalProperties: false,
+            properties: {
+              provider: { type: 'string', enum: ['google', 'openai', 'fal'] },
+              model: { type: 'string', nullable: true },
+            },
+          },
+          video: {
+            type: 'object', nullable: true, additionalProperties: false,
+            properties: {
+              t2v: {
+                type: 'object', nullable: true, additionalProperties: false,
+                properties: {
+                  provider: { type: 'string', enum: ['google', 'grok', 'fal', 'wavespeed', 'higgsfield'] },
+                  model: { type: 'string', nullable: true },
+                },
+              },
+              i2v: {
+                type: 'object', nullable: true, additionalProperties: false,
+                properties: {
+                  provider: { type: 'string', enum: ['google', 'grok', 'fal', 'wavespeed', 'higgsfield'] },
+                  model: { type: 'string', nullable: true },
+                },
+              },
+            },
+          },
         },
       },
       UpdateRequest: {
@@ -634,9 +667,15 @@ curl http://127.0.0.1:3210/api/batch-status
             enum: ['update-references', 'update-reference', 'update-scenes', 'update-scene', 'update-settings', 'generate-reference', 'generate-scene', 'start-scene-batch', 'start-ref-batch'],
           },
           index: { type: 'integer', description: '대상 인덱스 (0-based)' },
-          fields: { type: 'object', description: '수정할 필드 객체. update-settings 는 화이트리스트 키만(videoModelT2V, videoModelF2V, imageModel, videoResolution, aspectRatio, defaultDuration, imageBatchCount, videoBatchCount, concurrency, videoConcurrency, seedNo, seedLocked, imageUpscale) — 그 밖의 키·틀린 값은 400.' },
+          fields: {
+            type: 'object',
+            description: '수정할 필드 객체. update-settings 는 화이트리스트 키만(videoModelT2V, videoModelF2V, imageModel, videoResolution, aspectRatio, defaultDuration, imageBatchCount, videoBatchCount, concurrency, videoConcurrency, seedNo, seedLocked, imageUpscale) — 그 밖의 키·틀린 값은 400. 모델 키는 시험 단계 provider 의 카탈로그 id 도 400, API 모드에서 다른 provider 의 id 면 그 provider 로 전환(카탈로그 밖 이름은 google).',
+            properties: {
+              generation: { $ref: '#/components/schemas/SceneGeneration' },
+            },
+          },
           references: { type: 'array', description: '레퍼런스 전체 교체 시' },
-          scenes: { type: 'array', description: '씬 전체 교체 시' },
+          scenes: { type: 'array', description: '씬 전체 교체 시', items: { $ref: '#/components/schemas/Scene' } },
           sceneId: { type: 'string', description: '생성할 씬 ID' },
           styleId: { type: 'string', description: '스타일 ID' },
         },

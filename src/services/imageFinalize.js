@@ -6,6 +6,7 @@
  *   - useAutomation       : 비동기 batch (collectCompleted) — processAsyncSceneResult 경유
  */
 
+import { authErrorIsMachineToken } from '../utils/authMessages'
 import { RESOURCE } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { getImageSizeFromBase64 } from '../utils/formatters'
@@ -23,14 +24,15 @@ import { tryUpscaleImage } from '../utils/imageProcessing'
  *   이미지는 엔진명에 근사.
  *
  * @param {object} params
- * @param {object} params.result - 생성 결과 { success, images: [{ base64, mediaId, model? }], seed? }
+ * @param {object} params.result - 생성 결과 { success, images: [{ base64, mediaId, model?, seed? }], seed?, appliedInputs? }
+ *   `appliedInputs` 는 "엔진이 실제로 provider 에 적용한 입력" 선언이다 (아래 seed 3-상태 참고).
  * @param {object} params.genAPI - Flow API 인스턴스 (upscaleImage)
  * @param {string} params.upscaleRes - 업스케일 해상도 ('off', '2k', '4k')
  * @param {string} params.saveMode - 저장 모드 ('folder' | 'none')
  * @param {string} params.projectName - 프로젝트명
  * @param {string} params.sceneId - 씬 ID
  * @param {string} params.prompt - 프롬프트 (메타데이터용)
- * @param {string|number} [params.seed] - effective seed (결과에 포함되지 않을 때 폴백)
+ * @param {string|number} [params.seed] - 설정 seed. **`result.appliedInputs` 를 선언하지 않은 결과에서만** 폴백으로 쓰인다.
  * @param {string} [params.model='flow'] - 엔진/모델 식별자 (응답에서 더 구체적인 값 받으면 우선)
  * @param {string} [params.logPrefix]
  * @returns {Promise<{ success: boolean, sceneUpdate?: object }>}
@@ -52,7 +54,7 @@ export async function finalizeGeneratedImage({
       success: false,
       sceneUpdate: {
         status: 'error',
-        error: (result.authFailed && result.errorKind && authErrorText) ? authErrorText : (result.error || 'No images'),
+        error: (result.authFailed && authErrorIsMachineToken(result) && authErrorText) ? authErrorText : (result.error || 'No images'),
         errorKind: result.authFailed ? 'auth' : (result.errorKind ?? null),
         // M1-10: kind 별 params(예: flow-resolution-not-offered {requested}) 보존 — 없으면 {} 로 비워 stale params 차단.
         errorParams: result.errorParams || {},
@@ -67,9 +69,17 @@ export async function finalizeGeneratedImage({
   // 응답에 실제 model 필드가 들어오면 (예: 미래 Flow API 응답 schema 확장) 우선 사용,
   // 없으면 호출자 인자(기본 'flow' = 엔진 ID).
   const effectiveModel = firstImage.model ?? result.model ?? model
-  // result 에서 직접 받은 seed 가 있으면 우선 (Flow 가 랜덤 seed 를 반환하는 경우 등 대비),
-  // 없으면 호출자가 넘긴 effectiveSeed 사용.
-  const effectiveSeed = firstImage.seed ?? result.seed ?? seed ?? null
+  // seed 기록 규칙 — provider 가 echo 한 값이 언제나 최우선이고, 그 다음이 appliedInputs 3-상태다.
+  // 이 3-상태가 이 함수의 계약이다(합치면 안 된다):
+  //   appliedInputs 없음      → 선언 안 함  → 설정 seed 폴백 (Flow 등 레거시 호출자. 기존 동작 보존)
+  //   appliedInputs = {}      → seed 미적용 → null      (API 경로: useGenAPI 가 seed 를 IPC 로 안 보냄)
+  //   appliedInputs = {seed}  → 그 seed 적용 → 그 값
+  // ⚠️ "없음"과 "{}" 를 합치면 Flow 도 이 공용 sink 를 지나므로 함께 회귀한다.
+  // ⚠️ `??` 유지 필수 — seed 0 은 유효한 값이라 `||` 로 바꾸면 폴백으로 새어나간다.
+  const declared = result?.appliedInputs
+  const effectiveSeed = firstImage.seed
+    ?? result.seed
+    ?? (declared ? (declared.seed ?? null) : (seed ?? null))
 
   // 업스케일 — M1-10 백스톱: 새 Flow 의 업스케일 미지원은 tryUpscaleImage 가 flow-upscale-unsupported 로 throw 한다.
   //   삼키지 않고 그 kind 로 씬을 실패시킨다(저장 없음). 그 외 예외는 그대로 전파.

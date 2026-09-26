@@ -134,6 +134,42 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
   })
 })
 
+describe('finalizeGeneratedImage — appliedInputs seed truth table', () => {
+  const ABSENT = Symbol('appliedInputs absent')
+  const cases = [
+    ['first-image echo wins', 7, undefined, {}, 3, 7],
+    ['top-level echo wins', undefined, 9, {}, 3, 9],
+    ['declared empty rejects caller fallback', undefined, undefined, {}, 3, null],
+    ['declared seed is recorded', undefined, undefined, { seed: 5 }, 3, 5],
+    ['declared undefined seed becomes null', undefined, undefined, { seed: undefined }, 3, null],
+    ['undeclared result keeps legacy caller fallback', undefined, undefined, ABSENT, 3, 3],
+    ['undeclared result with no caller seed stays null', undefined, undefined, ABSENT, undefined, null],
+    ['first-image echo preserves zero', 0, undefined, {}, 3, 0],
+    ['top-level echo preserves zero', undefined, 0, {}, 3, 0],
+    ['declared seed preserves zero', undefined, undefined, { seed: 0 }, 3, 0],
+  ]
+
+  it.each(cases)('%s', async (_name, firstSeed, resultSeed, appliedInputs, callerSeed, expected) => {
+    const firstImage = { base64: TINY_BASE64, mediaId: 'm1' }
+    if (firstSeed !== undefined) firstImage.seed = firstSeed
+    const result = { success: true, images: [firstImage] }
+    if (resultSeed !== undefined) result.seed = resultSeed
+    if (appliedInputs !== ABSENT) result.appliedInputs = appliedInputs
+
+    const res = await finalizeGeneratedImage({
+      result,
+      genAPI: {},
+      saveMode: 'none',
+      projectName: 'truth-table',
+      sceneId: 'scene_1',
+      prompt: 'a cat',
+      seed: callerSeed,
+    })
+
+    expect(res.sceneUpdate.seed).toBe(expected)
+  })
+})
+
 describe('processAsyncSceneResult — useAutomation batch error counting contract', () => {
   // useAutomation 의 collect 루프는 이 함수의 boolean 반환값으로 errorCountRef 를 증감한다.
   // result.success 만 보고 카운트하면 "이미지는 받았는데 디스크 저장 실패" 케이스가
@@ -248,6 +284,16 @@ describe('finalizeGeneratedImage — errorParams 보존 + 업스케일 백스톱
       authErrorText: 'AUTH TEXT',
     })
     expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'auth', error: 'AUTH TEXT' })
+  })
+
+  // main 병합(리뷰 A F2): multi-provider API 결과의 errorKind:'auth' 는 provider 분류 — error 는 provider 의 사람 메시지(어느 키인지 알려 준다)라 그대로 둔다.
+  it("authFailed + errorKind 'auth'(API provider 분류)는 provider 메시지를 그대로 저장한다 — authErrorText 로 덮지 않는다", async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd', authFailed: true },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd' })
   })
 
   it('authFailed 인데 errorKind 가 없는 옛 결과는 error 문구를 그대로 둔다(#R26-6 유지)', async () => {

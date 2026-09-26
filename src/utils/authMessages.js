@@ -44,3 +44,14 @@ export function getAuthRequiredMessage(mode, t, reason) {
     'API key required — add it in Settings',
   )
 }
+
+/**
+ * 인증 실패 결과의 error 가 기계 토큰인가 — 그러면 저장·표시 문구를 사람 안내(getAuthErrorMessage)로 바꾼다.
+ *   Flow(main)의 authFailed 결과는 flow-* kind 와 이유 토큰(not-on-flow · wiz-missing · flow-rpc-error)을 싣는다 → true.
+ *   multi-provider API 결과의 errorKind:'auth'(§5.11 provider 분류)는 provider 의 사람 메시지(어느 provider 키인지)를 싣는다 → false.
+ *   kind 없는 옛 결과("Auth expired …")도 false — error 그대로.
+ * useAutomation · useVideoAutomation · useReferenceGeneration 의 authFailureText, imageFinalize, videoRecovery 가 같은 규칙을 쓴다.
+ */
+export function authErrorIsMachineToken(result) {
+  return !!result?.errorKind && result.errorKind !== 'auth'
+}

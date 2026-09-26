@@ -7,16 +7,29 @@
  * flowAgentOn(모든 Flow 생성 거부) 을 로컬의 아무 프로세스나(CORS *, 인증 없음, text/plain 단순 요청) 바꿀 수 있었다.
  * 값은 loadSettings 의 coercion 을 우회하므로 여기서 모양까지 본다(seedNo 는 정수 ≥ 0, 열거형은 목록 그대로).
  */
+import { IMAGE_MODELS, VIDEO_MODELS, listSupportedImageProviders, listSupportedVideoProviders } from '../config/genModels'
+
 const STR = (max) => (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= max
+// multi-provider 병합(리뷰 A R2-1): 시험 단계(provisional) provider 의 카탈로그 모델은 받지 않는다 — 설정 화면이 그 provider 를 숨겨서
+//   켜지면 되돌릴 길이 없다(heal 도 비-google provider 는 고치지 않는다). 켜진 provider 의 모델과 카탈로그 밖 이름(Flow 모델 등)은 통과.
+const MODEL = (catalog, enabledProviders) => {
+  const enabled = new Set(enabledProviders)
+  const str = STR(64)
+  return (v) => {
+    if (!str(v)) return false
+    const entry = catalog.find((m) => m.id === v)
+    return !entry || enabled.has(entry.provider)
+  }
+}
 const ENUM = (list) => (v) => typeof v === 'string' && list.includes(v)
 const NUM = (min, max) => (v) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
 const INT = (min, max) => (v) => Number.isInteger(v) && v >= min && v <= max
 
 /** 키 → 값 검사(true 면 유효). 여기 없는 키는 거부. */
 export const MCP_SETTINGS_FIELDS = Object.freeze({
-  videoModelT2V: STR(64),
-  videoModelF2V: STR(64),
-  imageModel: STR(64),
+  videoModelT2V: MODEL(VIDEO_MODELS, listSupportedVideoProviders()),
+  videoModelF2V: MODEL(VIDEO_MODELS, listSupportedVideoProviders()),
+  imageModel: MODEL(IMAGE_MODELS, listSupportedImageProviders()),
   videoResolution: ENUM(['360p', '720p', '1080p', '4k']),
   aspectRatio: ENUM(['16:9', '9:16', '1:1', '4:3', '3:4']),
   defaultDuration: NUM(1, 60),

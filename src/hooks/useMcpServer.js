@@ -13,9 +13,20 @@ import { normalizeStyleId, findAutoStyle } from '../services/styleService'
 import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 import { clearedImageFields } from '../utils/refEntityRegistration'
+import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
 import { pickMcpSettingsFields } from '../utils/mcpSettingsWhitelist'   // M2-LIVE N3: main 과 같은 화이트리스트(이중 방어)
+import { alignMcpModelProviders } from '../utils/mcpModelProviderAlign'
 import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'   // CSV 재적용 보존 목록 — parseFromCSV 와 공유
 import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'   // 내보내기 창과 같은 허용 값
+
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
+
+export function mergeSceneGenerationForMcp(existingScene, incomingScene, settings = {}) {
+  const patch = incomingScene && hasOwn(incomingScene, 'generation')
+    ? incomingScene.generation
+    : undefined
+  return mergeSceneGeneration(existingScene?.generation, patch, settings)
+}
 
 // start-scene-batch `mode` → handleStart 탭 오버라이드. 없거나 모르는 값이면 현재 UI 탭 그대로.
 const MCP_BATCH_MODE_TAB = { video: 'video-text', image: 'text' }
@@ -133,6 +144,14 @@ export function useMcpServer({
   useEffect(() => { handleStartRef.current = handleStart }, [handleStart])
   const handleGenerateAllRefsRef = useRef(handleGenerateAllRefs)
   useEffect(() => { handleGenerateAllRefsRef.current = handleGenerateAllRefs }, [handleGenerateAllRefs])
+  // F2(Fable): onMcpUpdate effect 는 [] deps 라 settings 를 클로저로 잡으면 mount 시점 값에 고정된다
+  //   → 세션 중 바뀐 모델/provider 허용목록(isKnownModel)이 반영 안 돼 유효한 override 가 조용히 드롭.
+  //   다른 상태처럼 ref 로 최신값을 읽는다(파일 관례).
+  const settingsRef = useRef(settings)
+  useEffect(() => { settingsRef.current = settings }, [settings])
+  // 리뷰 A R2-2: update-settings 핸들러(effect deps [])가 현재 앱 모드를 읽는다 — Flow 는 provider 정렬을 하지 않는다
+  const modeRef = useRef(mode)
+  useEffect(() => { modeRef.current = mode }, [mode])
 
   // MCP HTTP 서버 시작/중지
   useEffect(() => {
@@ -415,10 +434,19 @@ export function useMcpServer({
                 assignedId = freshId()
               }
               taken.add(assignedId)
-              return { ...incoming, id: assignedId, status: incoming.status || 'pending' }
+              const generationMerge = mergeSceneGenerationForMcp(null, incoming, settingsRef.current)
+              generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
+              return {
+                ...incoming,
+                generation: generationMerge.generation,
+                id: assignedId,
+                status: incoming.status || 'pending',
+              }
             }
             // matched: matched.id 는 prev 에서 왔으니 이미 taken — 중복 체크 불필요
             taken.add(matched.id)
+            const generationMerge = mergeSceneGenerationForMcp(matched, incoming, settingsRef.current)
+            generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
             // Issue #2 parity: CSV 재적용이 Done 씬(이미지 보유)의 프롬프트를 바꾸면 재생성 대상이
             //   되도록 pending 으로 되돌린다. load_csv 는 에이전트가 per-row status 를 표현할 수 없어
             //   여기서 규칙을 적용(updateScene / .txt import 와 동일). 프롬프트 불변이면 matched.status
@@ -430,6 +458,7 @@ export function useMcpServer({
               : (matched.status || incoming.status || 'pending')
             return {
               ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
+              generation: generationMerge.generation,  // sparse stage-pair deep merge; omitted generation is preserved
               // CSV 에 없는 런타임 필드(이미지 포인터·donePrompt, 생성 메타 model·seed, 영상 결과·선택)는 기존 값 — parseFromCSV 와
               //   같은 목록. 전엔 이미지 포인터만 골라 모델명·완성 영상 연결이 CSV 재적용마다 사라졌다(2026-09-26 실기).
               ...pickPreservedSceneFields(matched),
@@ -453,7 +482,12 @@ export function useMcpServer({
           console.log('[MCP] srtTrack replaced via HTTP:', data.srtTrack.length)
         }
       } else if (data.type === 'update-scene') {
-        setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
+        setScenes(prev => prev.map((s, i) => {
+          if (i !== data.index) return s
+          const generationMerge = mergeSceneGenerationForMcp(s, data.fields || {}, settingsRef.current)
+          generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
+          return { ...s, ...data.fields, generation: generationMerge.generation }
+        }))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
       } else if (data.type === 'update-settings') {
         // 설정 병합 — useAppSettings 가 localStorage 로 동기화한다. fields 가 객체가 아니면 무시.
@@ -461,7 +495,7 @@ export function useMcpServer({
         //   먼저 400 으로 거르지만 렌더러도 같은 상수로 막는다(이중 방어). 유효한 키가 없으면 아무것도 하지 않는다.
         const picked = pickMcpSettingsFields(data.fields)
         if (picked && Object.keys(picked).length) {
-          setSettings?.(prev => ({ ...prev, ...picked }))
+          setSettings?.(prev => alignMcpModelProviders(prev, picked, { appMode: modeRef.current }))   // 모델 키가 다른 provider 의 카탈로그 모델이면 provider 도 맞춘다(리뷰 A F3 · Flow 는 제외 R2-2)
           console.log('[MCP] Settings updated via HTTP:', Object.keys(picked).join(','))
         }
       } else if (data.type === 'generate-reference') {

@@ -16,8 +16,10 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 
+const EMPTY_BY_PROVIDER = { google: false, openai: false, grok: false, fal: false, wavespeed: false, higgsfield: false }
+
 export function useApiKey() {
-  const [status, setStatus] = useState({ hasKey: false, encryptionAvailable: true, loading: true })
+  const [status, setStatus] = useState({ hasKey: false, encryptionAvailable: true, byProvider: EMPTY_BY_PROVIDER, loading: true })
 
   const refresh = useCallback(async () => {
     try {
@@ -25,26 +27,29 @@ export function useApiKey() {
       setStatus({
         hasKey: !!s?.hasKey,
         encryptionAvailable: s?.encryptionAvailable !== false,
+        // §5.7: provider별 키 존재 map — 멀티 provider 배치 시작 게이트/설정 UI 가 소비.
+        byProvider: s?.byProvider || EMPTY_BY_PROVIDER,
         loading: false,
       })
     } catch {
-      setStatus({ hasKey: false, encryptionAvailable: true, loading: false })
+      setStatus({ hasKey: false, encryptionAvailable: true, byProvider: EMPTY_BY_PROVIDER, loading: false })
     }
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
 
-  const validateKey = useCallback(async (apiKey) => {
+  // provider 미지정 → google (기존 호출 하위호환, §5.7). openai 등은 명시.
+  const validateKey = useCallback(async (apiKey, provider = 'google') => {
     try {
-      return await window.electronAPI.genaiValidateKey({ apiKey })
+      return await window.electronAPI.genaiValidateKey({ apiKey, provider })
     } catch (e) {
       return { valid: false, error: e?.message || String(e) }
     }
   }, [])
 
-  const saveKey = useCallback(async (apiKey) => {
+  const saveKey = useCallback(async (apiKey, provider = 'google') => {
     try {
-      const res = await window.electronAPI.genaiSetKey({ apiKey })
+      const res = await window.electronAPI.genaiSetKey({ apiKey, provider })
       if (res?.success) {
         await refresh()
         // 키가 앱 내에서 바뀌었음을 전역 통지 — Header/Welcome 인증 게이트가 폴링 없이
@@ -57,9 +62,9 @@ export function useApiKey() {
     }
   }, [refresh])
 
-  const clearKey = useCallback(async () => {
+  const clearKey = useCallback(async (provider = 'google') => {
     try {
-      const res = await window.electronAPI.genaiClearKey()
+      const res = await window.electronAPI.genaiClearKey({ provider })
       await refresh()
       window.dispatchEvent(new CustomEvent('byok-key-changed'))
       return res

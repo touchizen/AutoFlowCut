@@ -14,7 +14,35 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { computeGuardAvailable, isStartBlocked, shouldStopRefWork } from '../../src/services/startGuard'
+import {
+  computeGuardAvailable,
+  isStartBlocked,
+  runOuterStartAuthPreflight,
+  shouldStopRefWork,
+} from '../../src/services/startGuard'
+
+describe('runOuterStartAuthPreflight — provider-aware hook preflight 위임', () => {
+  it('API 모드에서는 provider 없는 Google 기본 토큰 조회를 실행하지 않는다', async () => {
+    const getAccessToken = vi.fn()
+
+    await expect(runOuterStartAuthPreflight({ appMode: 'api', getAccessToken })).resolves.toBe(true)
+    expect(getAccessToken).not.toHaveBeenCalled()
+  })
+
+  it('Flow 모드에서는 기존 Flow 인증 preflight를 유지한다', async () => {
+    const getAccessToken = vi.fn().mockResolvedValue('flow-token')
+
+    await expect(runOuterStartAuthPreflight({ appMode: 'flow', getAccessToken })).resolves.toBe(true)
+    expect(getAccessToken).toHaveBeenCalledOnce()
+    expect(getAccessToken).toHaveBeenCalledWith(false, true)
+  })
+
+  it('Flow 인증 실패는 시작을 중단시킨다', async () => {
+    const getAccessToken = vi.fn().mockResolvedValue(null)
+
+    await expect(runOuterStartAuthPreflight({ appMode: 'flow', getAccessToken })).resolves.toBe(false)
+  })
+})
 
 // handleStop 이 ref 작업을 중단할지 — 진리표로 고정한다.
 //

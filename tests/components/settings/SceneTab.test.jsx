@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import SceneTab from '../../../src/components/settings/SceneTab'
-import { PRICING_URL, FLOW_PRICING_URL } from '../../../src/config/genModels'
+import { PRICING_URL, FLOW_PRICING_URL, VIDEO_MODELS } from '../../../src/config/genModels'
 
 const t = (k) => k
 const baseSettings = {
@@ -53,6 +53,170 @@ describe('SceneTab — aspect ratio', () => {
 
     const updater = setLocalSettings.mock.calls[0][0]
     expect(updater(baseSettings)).toMatchObject({ aspectRatio: '16:9' })
+  })
+})
+
+describe('SceneTab — image provider 선택 (M1 §5.8)', () => {
+  const provSettings = {
+    ...baseSettings,
+    imageModel: 'gemini-3.1-flash-image',
+    generation: { image: { provider: 'google' } },
+    modelsByProvider: { google: 'gemini-3.1-flash-image' },
+  }
+
+  it('현재 provider(google) 버튼이 active', () => {
+    render(<SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} />)
+    expect(screen.getByRole('button', { name: 'settings.imageProvider_google' }).className).toContain('active')
+    expect(screen.getByRole('button', { name: 'settings.imageProvider_openai' }).className).not.toContain('active')
+  })
+
+  it('OpenAI 클릭 → provider 전환 + gpt-image-1 모델 복원(현재 google 모델 기억)', () => {
+    const setLocalSettings = vi.fn()
+    render(<SceneTab localSettings={provSettings} setLocalSettings={setLocalSettings} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: 'settings.imageProvider_openai' }))
+    const updater = setLocalSettings.mock.calls[0][0]
+    const next = updater(provSettings)
+    expect(next.generation.image.provider).toBe('openai')
+    expect(next.imageModel).toBe('gpt-image-1')
+    expect(next.modelsByProvider.google).toBe('gemini-3.1-flash-image')
+  })
+
+  it('모델 변경 → modelsByProvider 를 현재 provider 슬롯에 갱신 (google)', () => {
+    const setLocalSettings = vi.fn()
+    render(<SceneTab localSettings={provSettings} setLocalSettings={setLocalSettings} t={t} />)
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[0], { target: { value: 'gemini-3-pro-image' } })
+    const updater = setLocalSettings.mock.calls.at(-1)[0]
+    const next = updater(provSettings)
+    expect(next.imageModel).toBe('gemini-3-pro-image')
+    expect(next.modelsByProvider.google).toBe('gemini-3-pro-image')
+  })
+
+  it('모델 변경 → 활성 provider(openai) 슬롯에 갱신 (F5: 슬롯 키 상수 아님)', () => {
+    const openaiSettings = {
+      ...baseSettings,
+      imageModel: 'gpt-image-1',
+      generation: { image: { provider: 'openai' } },
+      modelsByProvider: { google: 'gemini-3.1-flash-image', openai: 'gpt-image-1' },
+    }
+    const setLocalSettings = vi.fn()
+    render(<SceneTab localSettings={openaiSettings} setLocalSettings={setLocalSettings} t={t} />)
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[0], { target: { value: 'gpt-image-1' } })
+    const updater = setLocalSettings.mock.calls.at(-1)[0]
+    const next = updater(openaiSettings)
+    // openai 슬롯에 기록돼야 (google 슬롯 오염 금지)
+    expect(next.modelsByProvider.openai).toBe('gpt-image-1')
+    expect(next.modelsByProvider.google).toBe('gemini-3.1-flash-image')
+  })
+
+  it('Flow 모드에서는 provider 셀렉터 숨김 (F4: Flow 는 google 전용)', () => {
+    render(<SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} appMode="flow" />)
+    expect(screen.queryByRole('button', { name: 'settings.imageProvider_openai' })).toBeNull()
+  })
+
+  it('registry 목록에 fal image가 있어도 provisional이면 image provider toggle에서 숨김', () => {
+    render(
+      <SceneTab
+        localSettings={provSettings}
+        setLocalSettings={vi.fn()}
+        t={t}
+        appMode="api"
+        imageProviders={['google', 'fal']}
+      />,
+    )
+    // The injected registry list is respected, then intersected with supported providers.
+    expect(screen.queryByRole('button', { name: 'settings.imageProvider_openai' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'settings.imageProvider_fal' })).toBeNull()
+  })
+})
+
+describe('SceneTab — video provider 선택 (M2-pre §5.8)', () => {
+  const provSettings = {
+    ...baseSettings,
+    videoModelT2V: 'veo-3.1-fast-generate-preview',
+    videoModelF2V: 'veo-3.1-generate-preview',
+    generation: {
+      image: { provider: 'google' },
+      video: {
+        t2v: { provider: 'google' },
+        i2v: { provider: 'google' },
+      },
+    },
+    modelsByProviderVideo: {
+      t2v: { google: 'veo-3.1-fast-generate-preview', grok: 'grok-t2v-model' },
+      i2v: { google: 'veo-3.1-generate-preview', grok: 'grok-i2v-model' },
+    },
+  }
+
+  it('실제 등록 provider가 google 하나면 단일 옵션 토글을 숨김', () => {
+    render(<SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} appMode="api" />)
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderT2VTitle' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
+  })
+
+  it('registry 목록에 Grok이 있어도 provisional이면 provider toggle에 노출하지 않음', () => {
+    render(
+      <SceneTab
+        localSettings={provSettings}
+        setLocalSettings={vi.fn()}
+        t={t}
+        appMode="api"
+        videoProviders={['google', 'grok', 'fal']}
+      />,
+    )
+
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderT2VTitle' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'settings.videoProvider_grok' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'settings.videoProvider_fal' })).toBeNull()
+  })
+
+  it('T2V/I2V 모델 변경을 각 현재 provider stage 슬롯에 기억', () => {
+    const setLocalSettings = vi.fn()
+    const { container } = render(
+      <SceneTab localSettings={provSettings} setLocalSettings={setLocalSettings} t={t} appMode="api" />,
+    )
+    const selects = container.querySelectorAll('select.model-select')
+
+    fireEvent.change(selects[1], { target: { value: 'veo-3.1-generate-preview' } })
+    const afterT2V = setLocalSettings.mock.calls[0][0](provSettings)
+    expect(afterT2V.modelsByProviderVideo.t2v.google).toBe('veo-3.1-generate-preview')
+    expect(afterT2V.modelsByProviderVideo.i2v.google).toBe('veo-3.1-generate-preview')
+
+    fireEvent.change(selects[2], { target: { value: 'veo-3.1-fast-generate-preview' } })
+    const afterI2V = setLocalSettings.mock.calls[1][0](provSettings)
+    expect(afterI2V.modelsByProviderVideo.i2v.google).toBe('veo-3.1-fast-generate-preview')
+    expect(afterI2V.modelsByProviderVideo.t2v.google).toBe('veo-3.1-fast-generate-preview')
+  })
+
+  it('Flow 모드에서는 여러 video provider가 주입돼도 셀렉터를 숨김', () => {
+    render(
+      <SceneTab
+        localSettings={provSettings}
+        setLocalSettings={vi.fn()}
+        t={t}
+        appMode="flow"
+        videoProviders={['google', 'grok']}
+      />,
+    )
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderT2VTitle' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'settings.videoProviderI2VTitle' })).toBeNull()
+  })
+
+  it('F3: google stage 의 T2V/I2V 드롭다운은 provider 필터로 grok 항목을 노출하지 않는다', () => {
+    // videoModels 에 grok 이 섞여 들어와도(집계 카탈로그) google 단계 드롭다운엔 안 보여야
+    // (안 그러면 provider=google + grok 모델 선택 → Veo 로 오라우팅).
+    const withGrok = [
+      ...VIDEO_MODELS,
+      { id: 'grok-imagine-video-1.5', label: 'Grok Imagine', provider: 'grok', provisional: true },
+    ]
+    const { container } = render(
+      <SceneTab localSettings={provSettings} setLocalSettings={vi.fn()} t={t} appMode="api" videoModels={withGrok} />,
+    )
+    const optionValues = Array.from(container.querySelectorAll('select.model-select option')).map((o) => o.value)
+    expect(optionValues).not.toContain('grok-imagine-video-1.5')
+    expect(optionValues).toContain('veo-3.1-fast-generate-preview') // google 모델은 있음
   })
 })
 

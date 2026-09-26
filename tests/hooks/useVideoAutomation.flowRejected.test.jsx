@@ -108,7 +108,8 @@ describe('useVideoAutomation — Flow 거부 결과는 새 제출만 멈춘다 (
     expect(p2).not.toHaveProperty('mediaId')
     expect(p2).not.toHaveProperty('generationId')
     // #1: 끝까지 — stopped 로 덮이지 않는다
-    expect(h.downloadVideo).toHaveBeenCalledWith(SIGNED, '720p')
+    // multi-provider 병합: 다운로드는 provider 라우팅용 generationId 를 함께 싣는다(Flow 엔진의 downloadVideo(uri, resolution) 는 무시한다)
+    expect(h.downloadVideo).toHaveBeenCalledWith(SIGNED, '720p', 'gen-1')
     expect(fileSystemAPI.saveVideo).toHaveBeenCalledTimes(1)
     const [s1, p1] = last(h, 'vscene_1')
     expect(s1).toBe('complete')

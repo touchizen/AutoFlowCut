@@ -94,6 +94,13 @@ describe('useReferenceGeneration — authFailed 결과의 문구', () => {
     expect(toastMock.error.mock.calls.some((c) => String(c[0]).includes(AUTH_TEXT))).toBe(true)
   })
 
+  // main 병합(리뷰 A F2): API provider 분류(errorKind 'auth')는 provider 메시지 그대로 — 인증 안내 문구로 덮지 않는다.
+  it("API 모드 authFailed(errorKind 'auth', provider 메시지) → 저장 errorMessage 는 provider 메시지 그대로", async () => {
+    const { result, getLiveRefs } = setupHook({ mode: 'api', generateImage: vi.fn().mockResolvedValue({ success: false, authFailed: true, errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd' }) })
+    await act(async () => { await result.current.handleGenerateRef(0) })
+    expect(getLiveRefs()[0]).toMatchObject({ status: 'error', errorKind: 'auth', errorMessage: 'Incorrect API key provided: sk-…abcd' })
+  })
+
   it('authFailed 인데 errorKind 가 없는 옛 결과는 error 문구를 그대로 쓴다(회귀 없음)', async () => {
     const { result, getLiveRefs } = setupHook({ generateImage: vi.fn().mockResolvedValue({ success: false, authFailed: true, error: 'Auth expired — please re-login to Flow' }) })
     await act(async () => { await result.current.handleGenerateRef(0) })

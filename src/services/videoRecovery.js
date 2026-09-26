@@ -9,6 +9,7 @@
  * 아직 진행 중인 것은 'generating' 유지, 만료된 것은 'error' 처리한다.
  */
 
+import { authErrorIsMachineToken } from '../utils/authMessages'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { downloadVideoBase64 } from './videoDownload'
 import { isFlowMediaId } from '../utils/flowMediaId'   // M2-R5 J2: 훅·App·파서와 공유하는 Flow 미디어 id 술어(UUID)
@@ -30,7 +31,7 @@ export async function downloadAndSaveVideo({
 }) {
   // cloud(Veo): videoUri 직접 base64 다운로드 (구 DOM→URL→fetchMedia 폴백 제거,
   // useVideoAutomation 과 동일한 videoDownload 공통 헬퍼 사용)
-  const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution) // #R13-6
+  const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution, item.generationId) // #R13-6
 
   if (!mediaResult?.success) {
     return { success: false, error: `Media download failed: ${mediaResult?.error || 'no video URL'}`, mediaId }
@@ -326,9 +327,10 @@ export async function retryVideoDownload({
     //   (errorKind:'auth' → error 그대로) 가 표에 raw 토큰을 그린다. 훅의 authFailureText 와 같은 규칙: kind 동반이면 인증 안내 문구(없으면 기본 문구), kind 없는 옛
     //   결과는 error 그대로. 결과에도 errorKind:'auth' 를 실어 훅이 같은 규칙으로 상태 문구를 만들게 한다.
     const DEFAULT_AUTH_TEXT = 'Auth expired — please re-login to Flow'
-    const kindBearing = !!statusResult.errorKind
+    const kindBearing = authErrorIsMachineToken(statusResult)   // API provider 분류('auth')는 provider 메시지 그대로(main 병합 리뷰 A F2)
     const authText = typeof authErrorText === 'function' ? authErrorText() : authErrorText
-    const msg = kindBearing ? (authText || DEFAULT_AUTH_TEXT) : (statusResult.error || DEFAULT_AUTH_TEXT)
+    // 리뷰 A R2-3: API(useGenAPI.checkVideoStatus)의 키 거부는 error·kind 가 없다 — Flow 기본 문구("re-login to Flow") 대신 호출자의 모드별 인증 문구
+    const msg = kindBearing ? (authText || DEFAULT_AUTH_TEXT) : (statusResult.error || authText || DEFAULT_AUTH_TEXT)
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flow-login-expired'))
     onUpdate?.(item.id, 'error', { error: msg, errorKind: 'auth', generatingEndedAt: Date.now() })
     return { success: false, error: msg, authFailed: true, ...(kindBearing ? { errorKind: 'auth' } : {}) }

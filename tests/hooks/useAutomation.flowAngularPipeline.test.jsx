@@ -11,7 +11,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render } from '@testing-library/react'
 import { useAutomation } from '../../src/hooks/useAutomation'
 import { useFlowEngine } from '../../src/engine/engineFlow'
-import { __resetQuotaStopForTests } from '../../src/utils/quotaStop'
+import { __resetQuotaStopForTests, subscribeQuotaStop } from '../../src/utils/quotaStop'
 import ResultsTable from '../../src/components/ResultsTable'
 import { I18nProvider } from '../../src/hooks/useI18n'
 
@@ -242,5 +242,19 @@ describe('useAutomation × useFlowEngine — main 의 마감이 렌더러 ITEM_T
     await act(async () => { hook.result.current.auto.stop() })
     for (let t = 0; t < 200000; t += 5000) await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     await act(async () => { await p })
+  })
+})
+
+// multi-provider 병합(리뷰 B): 이미지 제출의 Flow quota(rpc code 8 → {errorKind:'flow-rpc-error', error:'RESOURCE_EXHAUSTED'})는 quota 중단을 건다 —
+//   브랜치의 errorKind 우선 판정이 'flow-rpc-error' 를 provider 분류로 보면 조용히 꺼진다(src/utils/quotaStop 의 예외가 이 경로를 지킨다).
+describe('useAutomation × useFlowEngine — Flow quota(code 8)', () => {
+  it('제출이 code 8 로 실패하면 quota 리스너가 1회 발화하고 다음 씬은 제출하지 않는다', async () => {
+    const quota = vi.fn()
+    subscribeQuotaStop(quota)
+    api.flowGenerateImage.mockResolvedValueOnce({ success: false, errorKind: 'flow-rpc-error', error: 'RESOURCE_EXHAUSTED', rpcCode: 8 })
+    const { hook } = setup({ scenes: [SCENE('s1', 'a'), SCENE('s2', 'b')] })
+    await runStart(hook)
+    expect(quota).toHaveBeenCalledTimes(1)
+    expect(api.flowGenerateImage).toHaveBeenCalledTimes(1)
   })
 })

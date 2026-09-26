@@ -3,6 +3,105 @@
  */
 
 import fs from 'fs';
+import { IMAGE_PROVIDER_IDS, VIDEO_PROVIDER_IDS } from './sceneGenerationSchema.js'
+
+const GENERATION_COLUMN_PATHS = {
+  image_provider: ['image', 'provider'],
+  image_model: ['image', 'model'],
+  t2v_provider: ['video', 't2v', 'provider'],
+  t2v_model: ['video', 't2v', 'model'],
+  i2v_provider: ['video', 'i2v', 'provider'],
+  i2v_model: ['video', 'i2v', 'model'],
+}
+const GENERATION_INHERIT_SENTINEL = '__inherit__'
+const IMAGE_PROVIDER_ID_SET = new Set(IMAGE_PROVIDER_IDS)
+const VIDEO_PROVIDER_ID_SET = new Set(VIDEO_PROVIDER_IDS)
+
+function generationFromRow(get, warnings, options = {}) {
+  const hasColumn = options.hasColumn || (() => true)
+  const existingGeneration = options.existingGeneration
+  const stage = (providerColumn, modelColumn, providerIds, path, existing) => {
+    const hasProviderColumn = hasColumn(providerColumn)
+    const hasModelColumn = hasColumn(modelColumn)
+    if (!hasProviderColumn && !hasModelColumn) return existing
+    const provider = hasProviderColumn ? get(providerColumn) : (existing?.provider ?? '')
+    const providerChanged = hasProviderColumn
+      && !hasModelColumn
+      && provider !== (existing?.provider ?? '')
+    let model = hasModelColumn ? get(modelColumn) : (providerChanged ? '' : (existing?.model ?? ''))
+    if (provider === GENERATION_INHERIT_SENTINEL) {
+      if (hasModelColumn && model && Array.isArray(warnings)) {
+        warnings.push(`Model '${model}' ignored because provider is __inherit__ at ${path}.`)
+      }
+      return null
+    }
+    const modelRejected = model === GENERATION_INHERIT_SENTINEL
+    if (modelRejected) {
+      if (Array.isArray(warnings)) warnings.push(`Rejected invalid model '${model}' at ${path}.`)
+      model = ''
+    }
+    if (!provider && !model) return undefined
+    if (provider && !providerIds.has(provider)) {
+      if (Array.isArray(warnings)) warnings.push(`Rejected unknown provider '${provider}' at ${path}.`)
+      if (modelRejected && existing && typeof existing === 'object') {
+        const preserved = { ...existing }
+        delete preserved.model
+        return Object.keys(preserved).length > 0 ? preserved : undefined
+      }
+      return existing
+    }
+    return { ...(provider ? { provider } : {}), ...(model ? { model } : {}) }
+  }
+  const image = stage(
+    'image_provider', 'image_model', IMAGE_PROVIDER_ID_SET, 'generation.image', existingGeneration?.image,
+  )
+  const t2v = stage(
+    't2v_provider', 't2v_model', VIDEO_PROVIDER_ID_SET, 'generation.video.t2v', existingGeneration?.video?.t2v,
+  )
+  const i2v = stage(
+    'i2v_provider', 'i2v_model', VIDEO_PROVIDER_ID_SET, 'generation.video.i2v', existingGeneration?.video?.i2v,
+  )
+  if (image === undefined && t2v === undefined && i2v === undefined) return undefined
+  return {
+    ...(image !== undefined ? { image } : {}),
+    ...((t2v !== undefined || i2v !== undefined) ? {
+      video: {
+        ...(t2v !== undefined ? { t2v } : {}),
+        ...(i2v !== undefined ? { i2v } : {}),
+      },
+    } : {}),
+  }
+}
+
+export function nestSceneGenerationColumns(row = {}, options = {}) {
+  const byLower = new Map(Object.entries(row).map(([key, value]) => [String(key).toLowerCase(), value]))
+  const hasGenerationColumns = Object.keys(GENERATION_COLUMN_PATHS).some(key => byLower.has(key))
+  if (!hasGenerationColumns) return row
+  const generation = generationFromRow(
+    key => String(byLower.get(key) ?? '').trim(),
+    options?.warnings,
+    {
+      hasColumn: key => byLower.has(key),
+      existingGeneration: row.generation,
+    },
+  )
+  const nested = { ...row }
+  if (generation === undefined) delete nested.generation
+  else nested.generation = generation
+  return nested
+}
+
+function valueForHeader(scene, header) {
+  const path = GENERATION_COLUMN_PATHS[String(header).toLowerCase()]
+  if (!path) return scene[header]
+  let stage = scene.generation
+  for (const segment of path.slice(0, -1)) stage = stage?.[segment]
+  if (stage === null) {
+    return path.at(-1) === 'provider' ? GENERATION_INHERIT_SENTINEL : ''
+  }
+  const value = stage?.[path.at(-1)]
+  return value ?? scene[header]
+}
 
 /**
  * CSV 텍스트를 2차원 배열로 파싱 (RFC 4180 호환)
@@ -161,6 +260,7 @@ export function bundleSceneCSVRows(rows, options = {}) {
       scene_tag: get('scene_tag') || get('background') || '',
       style_tag: get('style_tag') || get('style') || '',
       shot_type: get('shot_type') || '',
+      generation: generationFromRow(get, options.warnings),
     }
     if (!groupByNumber.has(sceneNum)) {
       const g = { sceneNum, rows: [] }
@@ -200,6 +300,7 @@ export function bundleSceneCSVRows(rows, options = {}) {
       scene_tag: first.scene_tag,
       style_tag: first.style_tag,
       shot_type: first.shot_type,
+      ...(first.generation !== undefined ? { generation: first.generation } : {}),
       status: 'pending',
       image: null,
     })
@@ -216,7 +317,7 @@ export function bundleSceneCSVRows(rows, options = {}) {
 export function saveCSV(csvPath, headers, scenes) {
   const lines = [headers.map(escapeCSVField).join(',')];
   for (const scene of scenes) {
-    const row = headers.map(h => escapeCSVField(scene[h] || ''));
+    const row = headers.map(h => escapeCSVField(valueForHeader(scene, h) ?? ''));
     lines.push(row.join(','));
   }
   fs.writeFileSync(csvPath, lines.join('\n') + '\n', 'utf-8');

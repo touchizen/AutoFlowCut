@@ -18,6 +18,12 @@ AutoFlowCut에서 사용하는 씬 단위 데이터 파일.
 | `start_time` | | number | 시작 시간 (초) |
 | `end_time` | | number | 종료 시간 (초) |
 | `parent_scene` | | string | 씬 그룹 ID (예: S001, S002) |
+| `image_provider` | | string | 씬 이미지 provider override: `google`, `openai`, `fal` |
+| `image_model` | | string | 씬 이미지 model override |
+| `t2v_provider` | | string | 씬 T2V provider override: `google`, `grok`, `fal`, `wavespeed`, `higgsfield` |
+| `t2v_model` | | string | 씬 T2V model override |
+| `i2v_provider` | | string | 씬 I2V provider override: `google`, `grok`, `fal`, `wavespeed`, `higgsfield` |
+| `i2v_model` | | string | 씬 I2V model override |
 
 ## 자동 감지 조건
 
@@ -32,6 +38,7 @@ AutoFlowCut에서 사용하는 씬 단위 데이터 파일.
 - `scene_tag`는 references.csv의 scene 타입 name과 일치시킨다
 - CSV 인코딩: UTF-8 (BOM 허용)
 - 따옴표 포함 필드는 `"` 로 감싸고, 내부 따옴표는 `""` 로 이스케이프
+- generation 셀을 비우면 기존 override를 보존한다. provider 셀에 `__inherit__`를 쓰면 해당 stage override를 삭제하고 전역 설정을 상속한다.
 
 ## 샘플
 

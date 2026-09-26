@@ -74,6 +74,14 @@ describe('isQuotaExhaustedError — status-only quota signal (회귀)', () => {
       status: 'RESOURCE_EXHAUSTED',
     })).toBe(true)
   })
+
+  it("L4: non-HTTP status:'failed' does not shadow a string error fallback", () => {
+    expect(isQuotaExhaustedError({
+      status: 'failed',
+      error: 'RESOURCE_EXHAUSTED: quota exceeded',
+      errorKind: null,
+    })).toBe(true)
+  })
 })
 
 describe('isQuotaExhaustedError (object inputs)', () => {
@@ -85,6 +93,51 @@ describe('isQuotaExhaustedError (object inputs)', () => {
   })
   it('does not match non-quota object', () => {
     expect(isQuotaExhaustedError({ message: 'Network down' })).toBe(false)
+  })
+})
+
+// §5.11 errorKind 우선 진리표: provider 분류가 authoritative, 없으면 문자열 폴백
+describe('isQuotaExhaustedError — errorKind priority (§5.11)', () => {
+  it('object + errorKind 정의됨 → errorKind 만 판정', () => {
+    expect(isQuotaExhaustedError({ errorKind: 'quota', error: 'anything' })).toBe(true)
+    // provider 가 other 로 분류 → RESOURCE_EXHAUSTED 문자열 있어도 false (collision)
+    expect(isQuotaExhaustedError({ errorKind: 'other', error: 'RESOURCE_EXHAUSTED' })).toBe(false)
+    expect(isQuotaExhaustedError({ errorKind: 'auth', error: 'quota exceeded' })).toBe(false)
+  })
+
+  it('errorKind 없는 object → 기존 normalizeErrorText 폴백 (회귀 0)', () => {
+    expect(isQuotaExhaustedError({ error: 'RESOURCE_EXHAUSTED' })).toBe(true)
+    expect(isQuotaExhaustedError({ error: 'Network down' })).toBe(false)
+  })
+
+  it('string/Error 입력은 errorKind 개념 없음 → 폴백', () => {
+    expect(isQuotaExhaustedError('RESOURCE_EXHAUSTED')).toBe(true)
+    expect(isQuotaExhaustedError(new Error('quota exceeded'))).toBe(true)
+  })
+
+  it('errorKind:null object → 폴백 (F1: 미분류 관용구)', () => {
+    expect(isQuotaExhaustedError({ errorKind: null, error: 'RESOURCE_EXHAUSTED' })).toBe(true)
+    expect(isQuotaExhaustedError({ errorKind: null, error: 'Network down' })).toBe(false)
+  })
+
+  it('Error 에 붙은 non-§5.11 errorKind 는 authoritative 아님 → 문자열 폴백 (F2: load-bearing 가드)', () => {
+    // prepareCloudRequest/useExport 가 Error 에 'story-audio-out-of-sync' 등을 붙인다.
+    // 이를 authoritative 로 오인하면 message 의 quota 신호를 놓친다.
+    expect(isQuotaExhaustedError(Object.assign(new Error('quota exceeded'), { errorKind: 'story-audio-out-of-sync' }))).toBe(true)
+  })
+
+  // main(flow.google.com 재작업) 병합: Flow 는 quota 를 errorKind 가 아니라 error 문구(RESOURCE_EXHAUSTED, rpc code 8)로 싣는다 —
+  //   'flow-rpc-error' 는 전송 계층의 중립 kind 라 provider 분류가 아니다. 읽기 실패는 flow-angular 가 문구를 'flow-rpc-error' 로 중립화한다.
+  //   authoritative 로 오인하면 Flow 의 이미지·영상 제출이 quota 로 실패해도 quota 중단이 걸리지 않는다.
+  it("Flow 의 'flow-rpc-error' 는 authoritative 아님 → 문자열 폴백(제출 code 8 만 quota, 중립화된 읽기 실패는 아님)", () => {
+    expect(isQuotaExhaustedError({ success: false, errorKind: 'flow-rpc-error', error: 'RESOURCE_EXHAUSTED', rpcCode: 8 })).toBe(true)
+    expect(isQuotaExhaustedError({ success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error', rpcCode: 8 })).toBe(false)
+    expect(isQuotaExhaustedError({ success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error' })).toBe(false)
+  })
+
+  it('null/undefined 입력은 throw 없이 false (F3)', () => {
+    expect(isQuotaExhaustedError(null)).toBe(false)
+    expect(isQuotaExhaustedError(undefined)).toBe(false)
   })
 })
 

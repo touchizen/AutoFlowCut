@@ -7,7 +7,7 @@ export const ENGINE_METHODS = [
   'generateImage', 'submitGeneration', 'checkGeneration', 'collectGeneration', 'clearGenerations',
   'uploadReference', 'fetchMedia',
   'generateVideoT2V', 'generateVideoI2V', 'checkVideoStatus', 'downloadVideo',
-  'upscaleVideo', 'upscaleImage', 'fetchGallery', 'listFlowProjects', 'setStopRequested',
+  'upscaleVideo', 'upscaleImage', 'fetchGallery', 'listFlowProjects', 'setStopRequested', 'cancelGeneration',
 ]
 
 export function assertEngineContract(engine) {

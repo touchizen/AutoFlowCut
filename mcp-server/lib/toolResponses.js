@@ -8,6 +8,16 @@ export function getAppResponseError(res) {
   return res.data?.error || res.data?.message || JSON.stringify(res.data)
 }
 
+export function csvToolResponse(text, warnings = []) {
+  const visibleText = warnings.length > 0
+    ? `${text}\n\nWarnings:\n${warnings.map(warning => `- ${warning}`).join('\n')}`
+    : text
+  return {
+    content: [{ type: 'text', text: visibleText }],
+    ...(warnings.length > 0 ? { warnings: [...warnings] } : {}),
+  }
+}
+
 export function exportCapcutToolResponse(res) {
   if (isFailedAppResponse(res)) {
     return {

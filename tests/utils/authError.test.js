@@ -48,4 +48,38 @@ describe('isAuthError', () => {
     expect(isAuthError({ success: false, error: 401 })).toBe(false)
     expect(isAuthError({ success: false })).toBe(false)
   })
+
+  // §5.11 errorKind 우선 진리표: provider 분류가 authoritative, 없으면 문자열 폴백
+  describe('errorKind priority (§5.11)', () => {
+    it('errorKind 정의됨 → errorKind 만 판정, 문자열 매칭 안 함', () => {
+      // provider 가 auth 로 분류 → 문자열에 auth 신호 없어도 true
+      expect(isAuthError({ success: false, errorKind: 'auth', error: 'some opaque failure' })).toBe(true)
+      // provider 가 other 로 분류 → error 문자열에 'http 401' 있어도 false (collision)
+      expect(isAuthError({ success: false, errorKind: 'other', error: 'HTTP 401: bad token' })).toBe(false)
+      // forbidden 은 auth 아님
+      expect(isAuthError({ success: false, errorKind: 'forbidden', error: 'API key not valid' })).toBe(false)
+      // quota 는 auth 아님
+      expect(isAuthError({ success: false, errorKind: 'quota' })).toBe(false)
+    })
+
+    it('errorKind 없음 → 기존 문자열 폴백 (회귀 0)', () => {
+      expect(isAuthError({ success: false, error: 'HTTP 401: bad token' })).toBe(true)
+      expect(isAuthError({ success: false, error: 'RESOURCE_EXHAUSTED' })).toBe(false)
+    })
+
+    it('errorKind:undefined 명시도 폴백 취급', () => {
+      expect(isAuthError({ success: false, errorKind: undefined, error: 'HTTP 401' })).toBe(true)
+    })
+
+    it('errorKind:null 은 "미분류" 관용구 → 폴백 (F1: hooks 의 `errorKind ?? null`)', () => {
+      // stored item state 가 forward 될 때 errorKind:null 이 authoritative false 로
+      // 문자열 폴백을 억누르면 dead-key 배치가 폭주한다. null 은 undefined 처럼 폴백.
+      expect(isAuthError({ success: false, errorKind: null, error: 'HTTP 401: bad token' })).toBe(true)
+      expect(isAuthError({ success: false, errorKind: null, error: 'Network error' })).toBe(false)
+    })
+
+    it('success guard 가 errorKind 보다 우선 (F4: success:true 면 errorKind 무시)', () => {
+      expect(isAuthError({ success: true, errorKind: 'auth' })).toBe(false)
+    })
+  })
 })

@@ -19,17 +19,32 @@ export const FLOW_PRICING_URL = 'https://one.google.com/about/google-ai-plans/'
 
 // cost 는 가격만(ASCII), 단위(장/sec 등)는 unit 필드 → ModelSelector 가 locale 로 표시.
 export const IMAGE_MODELS = [
-  { id: 'gemini-2.5-flash-image', label: 'Nano Banana', cost: '$0.039', unit: 'image', descKey: 'settings.modelImgNb', url: IMAGE_DOCS_URL },
-  { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.067~', unit: 'image', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
-  { id: 'gemini-3-pro-image', label: 'Nano Banana Pro', cost: '$0.134~', unit: 'image', descKey: 'settings.modelImgNbPro', url: IMAGE_DOCS_URL },
+  { id: 'gemini-2.5-flash-image', label: 'Nano Banana', cost: '$0.039', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNb', url: IMAGE_DOCS_URL },
+  { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.067~', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
+  { id: 'gemini-3-pro-image', label: 'Nano Banana Pro', cost: '$0.134~', unit: 'image', provider: 'google', aspectCapability: 'exact', descKey: 'settings.modelImgNbPro', url: IMAGE_DOCS_URL },
+  // OpenAI gpt-image-1. 드롭다운은 imageModelsForProvider 로 선택 provider 만 필터하므로
+  // google 사용자에겐 노출되지 않는다(누출 방지, Fable M1-T5a 리뷰). cost 는 PROVISIONAL —
+  // 실제 가격은 §5.13 / T6 실키 게이트에서 확정.
+  { id: 'gpt-image-1', label: 'GPT Image', cost: '$0.04~', unit: 'image', provider: 'openai', aspectCapability: 'approx', descKey: 'settings.modelImgGptImage', url: 'https://platform.openai.com/docs/guides/images' },
+  // PROVISIONAL — verify model id, price, aspect mapping, and output shape with a real fal key (M4 real-key gate).
+  { id: 'fal-ai/flux-pro/v1.1', label: 'FLUX Pro 1.1 (fal)', cost: '?', unit: 'image', provider: 'fal', provisional: true, aspectCapability: 'exact', descKey: 'settings.modelImgFalFlux', url: 'https://fal.ai/models/fal-ai/flux-pro/v1.1' },
 ]
 
 // allowedResolutions: 낮은→높은 순. 공식 Veo 3.1 Lite 는 4K 미지원(720p/1080p),
 // Fast/Quality 는 4K 지원. coerceResolution 이 미허용 해상도를 허용 최대로 강등.
 export const VIDEO_MODELS = [
-  { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite', cost: '$0.05~', unit: 'sec', descKey: 'settings.modelVidLite', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD },
-  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast', cost: '$0.10~', unit: 'sec', descKey: 'settings.modelVidFast', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
-  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality', cost: '$0.40~', unit: 'sec', descKey: 'settings.modelVidQuality', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
+  { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite', cost: '$0.05~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidLite', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD },
+  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast', cost: '$0.10~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidFast', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
+  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality', cost: '$0.40~', unit: 'sec', provider: 'google', descKey: 'settings.modelVidQuality', url: VIDEO_DOCS_URL, allowedResolutions: VEO_RES_HD_4K },
+  // PROVISIONAL — verify against real xAI API + key (M2 real-key gate)
+  // Model id, cost, and documentation URL remain provisional until submit→poll→download smoke passes.
+  { id: 'grok-imagine-video-1.5', label: 'Grok Imagine', cost: '?', unit: 'sec', provider: 'grok', provisional: true, descKey: 'settings.modelVidGrok', url: 'https://docs.x.ai/' },
+  // PROVISIONAL — verify model id, price, inputs, and result CDN with a real fal key (M4 real-key gate).
+  { id: 'fal-ai/kling-video/v2.1/standard/image-to-video', label: 'Kling 2.1 Standard (fal)', cost: '?', unit: 'sec', provider: 'fal', provisional: true, descKey: 'settings.modelVidFalKling', url: 'https://fal.ai/models/fal-ai/kling-video/v2.1/standard/image-to-video' },
+  // PROVISIONAL — verify model id, price, input mapping, paths, and result CDN/auth with an M5 real-key smoke.
+  { id: 'wavespeed-ai/wan-2.1/t2v-480p', label: 'WaveSpeed WAN 2.1 T2V 480p', cost: '?', unit: 'sec', provider: 'wavespeed', provisional: true, descKey: 'settings.modelVidWaveSpeedWan', url: 'https://wavespeed.ai/models/wavespeed-ai/wan-2.1/t2v-480p' },
+  // PROVISIONAL — verify model id, price, payload, paths, statuses, and result CDN/auth with an M6 real-key smoke.
+  { id: 'higgsfield-ai/dop-turbo', label: 'Higgsfield DoP Turbo', cost: '?', unit: 'sec', provider: 'higgsfield', provisional: true, descKey: 'settings.modelVidHiggsfieldDopTurbo', url: 'https://higgsfield.ai/' },
 ]
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2
@@ -42,6 +57,73 @@ export const VIDEO_REFERENCE_IMAGE_MODEL_IDS = [
 ]
 export const VIDEO_REFERENCE_IMAGE_LIMIT = 3
 export const VIDEO_REFERENCE_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+
+/**
+ * 선택된 image provider 의 모델 목록만 반환 (§5.12 드롭다운 provider 필터 — 누출 방지).
+ *
+ * - google: 라이브/정적 목록을 그대로 쓰되 비-google 카탈로그 항목(gpt-image 등)만 제외한다.
+ *   라이브 /models 의 dynamic extra 는 provider 필드가 없다 → google 로 간주(Google /models 산출물).
+ * - 비-google(openai 등): 라이브 목록은 Google 전용이라 무관 → 정적 카탈로그의 해당 provider 항목.
+ *
+ * @param {string} providerId - 선택된 image provider (미지정→google)
+ * @param {Array<{id,provider?}>} availableImageModels - useAvailableModels.imageModels(동적 or 정적)
+ * @returns {Array} 드롭다운에 노출할 모델 목록
+ */
+export function imageModelsForProvider(providerId, availableImageModels) {
+  const provider = providerId || 'google'
+  if (provider === 'google') {
+    return (availableImageModels || []).filter((m) => (m.provider ?? 'google') === 'google')
+  }
+  return IMAGE_MODELS.filter((m) => m.provider === provider)
+}
+
+/** 선택 provider 의 기본 이미지 모델 id. google=DEFAULT, 그 외=카탈로그 첫 항목(없으면 null). */
+export function defaultImageModelForProvider(providerId) {
+  if (!providerId || providerId === 'google') return DEFAULT_IMAGE_MODEL_ID
+  return IMAGE_MODELS.find((m) => m.provider === providerId)?.id ?? null
+}
+
+/**
+ * 이미지 provider 선택 UI의 feature-flag 권위.
+ * 모든 catalog model이 provisional인 provider(fal)는 registry에 등록돼도 숨긴다.
+ */
+export function listSupportedImageProviders() {
+  const providers = [...new Set(IMAGE_MODELS.map((model) => model.provider))]
+  return providers.filter((provider) => IMAGE_MODELS.some(
+    (model) => model.provider === provider && model.provisional !== true
+  ))
+}
+
+/**
+ * 선택된 video provider의 모델 목록만 반환한다(§5.12).
+ * Google live 목록은 provider 필드가 없는 dynamic extra를 Google로 간주하고,
+ * 비-Google은 정적 provider 카탈로그만 사용한다.
+ */
+export function videoModelsForProvider(providerId, availableVideoModels) {
+  const provider = providerId || 'google'
+  if (provider === 'google') {
+    return (availableVideoModels || []).filter((m) => (m.provider ?? 'google') === 'google')
+  }
+  return VIDEO_MODELS.filter((m) => m.provider === provider)
+}
+
+/** 선택 provider의 기본 비디오 모델 id. google=DEFAULT, 그 외=카탈로그 첫 항목. */
+export function defaultVideoModelForProvider(providerId) {
+  if (!providerId || providerId === 'google') return DEFAULT_VIDEO_MODEL_ID
+  return VIDEO_MODELS.find((m) => m.provider === providerId)?.id ?? null
+}
+
+/**
+ * 비디오 provider 선택 UI의 단일 feature-flag 권위.
+ * provider 카탈로그가 전부 provisional이면 registry에 등록돼도 UI에서는 숨긴다.
+ * provider real-key smoke 후 항목을 `provisional:false`로 바꾸면 자동으로 supported 승격된다.
+ */
+export function listSupportedVideoProviders() {
+  const providers = [...new Set(VIDEO_MODELS.map((model) => model.provider))]
+  return providers.filter((provider) => VIDEO_MODELS.some(
+    (model) => model.provider === provider && model.provisional !== true
+  ))
+}
 
 /** API 모델 id → 사람이 읽는 라벨. 카탈로그에 없으면 id 그대로, falsy 면 null.
  *  ResultsTable / 상세 모달의 모델 표시에 사용. */
@@ -130,9 +212,14 @@ export function computeModelHeal(availableModels, settings, mode) {
   const flowStaticAuthoritative = source === 'flow-static' && mode === 'flow'
   if (source && source !== 'dynamic' && !flowStaticAuthoritative) return {}
 
+  // §5.12 heal 경계: 선택된 image provider 목록으로만 그 provider 모델을 heal.
+  // Google 동적 /models 는 google 모델만 권위 — 비-google(openai) 선택 시 image heal 스킵(카탈로그 권위).
+  // 단 Flow 모드는 google 전용이라 provider 설정과 무관하게 heal 유지(mode 우선).
+  const imageProvider = settings?.generation?.image?.provider ?? 'google'
+  const healImageModel = mode === 'flow' || imageProvider === 'google'
   const out = {}
   const { imageModels, videoModels } = availableModels || {}
-  if (imageModels && imageModels !== IMAGE_MODELS) {
+  if (healImageModel && imageModels && imageModels !== IMAGE_MODELS) {
     // Flow 모드 이미지 기본값 = 'Nano Banana 2' (라벨 매칭 — 스크랩 id 'Nano Banana 2'/정적
     //   id 'flow_image_generate' 둘 다 라벨로 잡힌다). 목록에 없으면 API 기본/첫 항목으로 수렴.
     let imgDefaultId = DEFAULT_IMAGE_MODEL_ID
@@ -148,17 +235,29 @@ export function computeModelHeal(availableModels, settings, mode) {
     if (next !== settings.imageModel) out.imageModel = next
   }
   if (videoModels && videoModels !== VIDEO_MODELS) {
-    const t2v = pickValidModel(videoModels, settings.videoModelT2V, DEFAULT_VIDEO_MODEL_ID)
-    if (t2v !== settings.videoModelT2V) out.videoModelT2V = t2v
+    // §5.12 heal 경계(video): google /models 는 google 모델만 권위. 단계별 provider 가 비-google 이면
+    // 그 단계 모델은 heal 하지 않는다(비-google 모델을 Veo 로 되돌려 M2-선행 grok 생존을 무산시키지 않게).
+    // Flow 모드는 google 전용이라 provider 무관하게 heal(mode 우선, image heal 과 동일 규칙).
+    const t2vProvider = settings?.generation?.video?.t2v?.provider ?? 'google'
+    const i2vProvider = settings?.generation?.video?.i2v?.provider ?? 'google'
+    const healT2V = mode === 'flow' || t2vProvider === 'google'
+    const healI2V = mode === 'flow' || i2vProvider === 'google'
+
+    if (healT2V) {
+      const t2v = pickValidModel(videoModels, settings.videoModelT2V, DEFAULT_VIDEO_MODEL_ID)
+      if (t2v !== settings.videoModelT2V) out.videoModelT2V = t2v
+    }
 
     // Flow 비디오 모델은 패밀리 단위(Omni Flash / Veo Lite·Fast·Quality)라 t2v/i2v 구분이 없다 —
     //   T2V/F2V 둘 다 같은 4개 패밀리에서 고른다. F2V 기본값은 목록 첫 패밀리(저장값 무효 시).
-    let f2vDefaultId = DEFAULT_VIDEO_MODEL_ID
-    if (mode === 'flow' && videoModels.length > 0) {
-      f2vDefaultId = videoModels[0].id
+    if (healI2V) {
+      let f2vDefaultId = DEFAULT_VIDEO_MODEL_ID
+      if (mode === 'flow' && videoModels.length > 0) {
+        f2vDefaultId = videoModels[0].id
+      }
+      const f2v = pickValidModel(videoModels, settings.videoModelF2V, f2vDefaultId)
+      if (f2v !== settings.videoModelF2V) out.videoModelF2V = f2v
     }
-    const f2v = pickValidModel(videoModels, settings.videoModelF2V, f2vDefaultId)
-    if (f2v !== settings.videoModelF2V) out.videoModelF2V = f2v
   }
   return out
 }

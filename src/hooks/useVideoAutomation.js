@@ -27,8 +27,9 @@ import { resolveProjectBatchId } from '../utils/batchId'
 import { consumeBatchDownload } from '../firebase/functions'
 import { partitionDownloadOnly } from './downloadOnlyGate'
 import { batchStartGate } from './batchStartGate'
-import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
+import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } from '../utils/authMessages'
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
+import { resolveSceneVideoProvider } from '../utils/sceneProviderResolution'
 import { isFlowMediaId as isFlowShapedId, isLegacyFlowGenerationFailure } from '../utils/flowMediaId'   // M2-R5 J2: App·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
@@ -39,7 +40,12 @@ import { isFlowMediaId as isFlowShapedId, isLegacyFlowGenerationFailure } from '
 //   이 API 제약을 적용하지 않고 항상 모델 그리드로 스냅한다. (OmniFlash 는 Flow 모드 전용.)
 //   - api 모드: t2v+refs → 8, 1080p/4k → 8, 그 외 720p → {4,6,8} 스냅
 //   - flow 모드: 해상도/refs 무관, 모델 그리드 스냅 (OmniFlash {4,6,8,10}, Veo {4,6,8})
-export function effectiveVideoDuration(item, mode, batchDuration, resolution, model, appMode) {
+export function effectiveVideoDuration(item, mode, batchDuration, resolution, model, appMode, provider = 'google') {
+  // Veo 제약/길이 격자는 google adapter의 규칙이다. 비-google provider는 renderer에서
+  // duration을 변조하지 않고 씬 목표값(없으면 batch 값)을 그대로 adapter에 넘긴다.
+  if (appMode !== 'flow' && provider !== 'google') {
+    return item?.targetDuration ?? batchDuration
+  }
   if (appMode !== 'flow') {
     if (mode === 't2v' && Array.isArray(item?.referenceImages) && item.referenceImages.length > 0) return 8
     if (resolution === '1080p' || resolution === '4k') return 8
@@ -60,6 +66,15 @@ const randomSleep = (min, max) =>
   new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min))
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
+const isDownloadOnlyItem = (item) =>
+  item.status === 'error' && item.generationId && item.mediaId && !item.videoPath
+
+const isInFlightItem = (item) =>
+  item.status === 'generating' && item.generationId && !item.mediaId && !item.videoPath
+
+const shouldUsePersistedGenerationProvider = (item) =>
+  !!item.generationProvider && (isDownloadOnlyItem(item) || isInFlightItem(item))
 
 // M2-R1 F8(A8): 배치 전체에 걸리는 설정계 클릭 전 거부 — 같은 kind+params 가 연속 2번이면 나머지 항목도 같은 결과라 종결한다.
 // M3(D14): 레퍼런스 영상의 배치 전체 거부 — r2v 미지원 모델 {model}(모델은 배치 설정) · 클립보드의 Finder 파일 복사 · attach-failed 의 배치 전체 사유(아래).
@@ -93,7 +108,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
   const authRequiredMessage = () => getAuthRequiredMessage(appMode, t, genAPI?.flowSessionReason?.())
   // M2-R1 F3(A3): authFailed 결과의 error 가 기계 토큰(errorKind 동반 — 'wiz-missing'·'not-on-flow'·'flow-rpc-error')이면 항목·상태 문구는
   //   인증 안내다(useAutomation/useReferenceGeneration 과 같은 규칙). kind 없는 옛 결과("Auth expired …")는 error 그대로.
-  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
+  const authFailureText = (res) => (authErrorIsMachineToken(res) ? authErrorMessage() : (res?.error || authErrorMessage()))
 
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
@@ -130,17 +145,20 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
 
   // ─── Phase 1 Helper: 비디오 제출 ───
   const submitVideoItem = async (item, mode, options) => {
-    const { videoModel, aspectRatio, duration, seed = null, videoResolution, projectName = '', videoBatchCount = 1 } = options
+    const { videoModel, videoProvider = 'google', aspectRatio, duration, seed = null, videoResolution, projectName = '', videoBatchCount = 1 } = options
     const prompt = item.prompt || ''
     // #R12-3: Flow 엔진은 callOpts.videoBatchCount 로 배치 수를 받는다 — 마지막 인자로 전달.
     //   M3: Flow @멘션 T2V 는 엔진이 프롬프트의 @ 토큰과 item.referenceImages 로 인라인 멘션을 계획한다(옛 칩 segments 경로는 퇴역).
-    const callOpts = { videoBatchCount }
+    const callOpts = {
+      videoBatchCount,
+      ...(appMode !== 'flow' ? { provider: videoProvider } : {}),
+    }
 
     switch (mode) {
       case 't2v': {
         // 자동 길이: 씬 길이(item.targetDuration, SRT 기반)를 Veo 허용값 {4,6,8} 으로 스냅.
         // 1080p/4k 면 submitVideo 가 8초로 강제(공식 제약).
-        const dur = effectiveVideoDuration(item, mode, duration, videoResolution, videoModel, appMode)
+        const dur = effectiveVideoDuration(item, mode, duration, videoResolution, videoModel, appMode, videoProvider)
         return await generateVideoT2V(prompt, videoModel, aspectRatio, dur, seed, videoResolution, item.referenceImages || [], callOpts)
       }
       case 'i2v': {
@@ -166,7 +184,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         const endB64 = preferEndId
           ? item.endMediaId
           : await resolveFrameImageBase64(item.endSceneId, item.endImage, projectName)
-        const dur = effectiveVideoDuration(item, mode, duration, videoResolution, videoModel, appMode)
+        const dur = effectiveVideoDuration(item, mode, duration, videoResolution, videoModel, appMode, videoProvider)
         return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, dur, seed, videoResolution, callOpts)
       }
       default:
@@ -188,7 +206,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // cloud(Veo): 완료된 operation 의 videoUri 를 직접 base64 로 다운로드.
     // (구 Flow 의 DOM→URL→fetchMedia 3단계 폴백은 제거 — videoDownload 공통 헬퍼로 통일)
     setStatusMsg?.(`⬇️ Downloading — ${String(videoUrl || mediaId || '').substring(0, 24)}...`)
-    const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution)
+    const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution, item.generationId)
 
     if (!mediaResult?.success) {
       return { success: false, error: `Video download failed: ${mediaResult?.error || 'no video URL'}` }
@@ -262,8 +280,10 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       framePairs = [],
       projectName = '',
       saveMode = 'folder',
-      videoModel = 'veo-3.1-fast-generate-preview',
-      aspectRatio = 'VIDEO_ASPECT_RATIO_LANDSCAPE',
+      videoModel,
+      videoProvider = 'google',
+      generationSettings: suppliedGenerationSettings = null,
+      aspectRatio = '16:9',
       duration = 8,
       videoBatchCount = 1,
       seed = null,
@@ -275,6 +295,26 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       // false/미전달이면 새 배치 id 발급 (첫 실행 또는 의도적 재시작).
       isRetry = false
     } = options
+    const generationSettings = {
+      ...(suppliedGenerationSettings || {}),
+      generation: {
+        ...(suppliedGenerationSettings?.generation || {}),
+        video: {
+          ...(suppliedGenerationSettings?.generation?.video || {}),
+          [mode]: {
+            provider: suppliedGenerationSettings?.generation?.video?.[mode]?.provider ?? videoProvider,
+            ...(suppliedGenerationSettings?.generation?.video?.[mode] || {}),
+          },
+        },
+      },
+      modelsByProviderVideo: {
+        ...(suppliedGenerationSettings?.modelsByProviderVideo || {}),
+        [mode]: {
+          ...(videoModel != null ? { [videoProvider]: videoModel } : {}),
+          ...(suppliedGenerationSettings?.modelsByProviderVideo?.[mode] || {}),
+        },
+      },
+    }
     // 손상된 저장값('x'/NaN/0/음수)은 무한대기/no-op 유발 → clampInt 로 기본 4 폴백 (useAutomation 과 동일).
     const concurrency = clampInt(rawConcurrency, 1, 10, 4)
     // #R26-4: API 모드는 공식 Veo hyphen 모델명으로 정규화해야 한다(실제 Veo API 로 전송).
@@ -282,16 +322,31 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     //   그대로 메타데이터에 보존한다 — normalize 하면 매핑 안 된 Flow id 가 API 기본 모델로
     //   둔갑해 메타가 실제 선택과 어긋난다. (Flow 엔진이 그 모델을 실제로 적용하는지는 별개의
     //   live-DOM 이슈 — video.js 가 현재 model 을 미적용. live-verify 체크리스트에 보존.)
+    const globalGeneration = resolveSceneVideoProvider({}, generationSettings, mode, { appMode })
+    const isGoogleProvider = globalGeneration.provider === 'google'
     const effectiveVideoModel = appMode === 'flow'
-      ? (videoModel || DEFAULT_VIDEO_MODEL_ID)
-      : (normalizeVideoModel(videoModel) || DEFAULT_VIDEO_MODEL_ID)
-    const canonicalVideoModel = (modelId) => appMode === 'flow'
+      ? (globalGeneration.model || videoModel || DEFAULT_VIDEO_MODEL_ID)
+      : (isGoogleProvider ? (normalizeVideoModel(globalGeneration.model) || DEFAULT_VIDEO_MODEL_ID) : globalGeneration.model)
+    const canonicalVideoModel = (modelId, provider = globalGeneration.provider) => appMode === 'flow'
       ? (modelId || effectiveVideoModel)
-      : (normalizeVideoModel(modelId) || effectiveVideoModel)
+      : (provider === 'google'
+          ? (normalizeVideoModel(modelId) || (provider === globalGeneration.provider ? effectiveVideoModel : DEFAULT_VIDEO_MODEL_ID))
+          : (modelId || effectiveVideoModel))
     // 모델이 지원하지 않거나(예: Veo Lite + 4K) stale 한 해상도는 여기서 한 번만 강등/정규화.
     // 이후 effectiveVideoDuration 계산·history 메타데이터·생성 호출이 전부 같은 값을 써서
     // 부분 coerce 로 인한 어긋남(기록은 4k, 실제는 1080p)을 방지한다. (리뷰 P2)
-    const videoResolution = coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p')
+    const videoResolution = (appMode === 'flow' || isGoogleProvider)
+      ? coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p')
+      : options.videoResolution
+    const resolveItemGeneration = (item) => {
+      const resolved = resolveSceneVideoProvider(item, generationSettings, mode, { appMode })   // Flow 는 씬 override 없이 설정 모델(F1)
+      if (resolved.warning) console.warn('[VideoAutomation]', resolved.warning)
+      const model = canonicalVideoModel(resolved.model, resolved.provider)
+      const resolution = (appMode === 'flow' || resolved.provider === 'google')
+        ? coerceResolution(model, options.videoResolution ?? '720p')
+        : options.videoResolution
+      return { provider: resolved.provider, model, resolution }
+    }
 
     if (isRunning) return
 
@@ -331,8 +386,27 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     }
 
     // 토큰 확인 — 키 없으면 API 키 모달 안내(handleStart 와 동일 UX, 토스트 대신).
-    const token = await getAccessToken()
-    if (!token) {
+    const sourceItems = mode === 'i2v'
+      ? framePairs.filter(pair => pair.startSceneId)
+      : scenes.filter(scene => scene.prompt)
+    const requiredProviders = appMode === 'flow'
+      ? [globalGeneration.provider]
+      : [...new Set(sourceItems.map(item => (
+          shouldUsePersistedGenerationProvider(item)
+            ? item.generationProvider
+            : resolveItemGeneration(item).provider
+        )))]
+    let hasRequiredToken = true
+    for (const provider of requiredProviders) {
+      const token = appMode === 'flow'
+        ? await getAccessToken()
+        : await getAccessToken(false, false, provider)
+      if (!token) {
+        hasRequiredToken = false
+        break
+      }
+    }
+    if (!hasRequiredToken) {
       setStatus('error')
       setStatusMessage(`🔐 ${authRequiredMessage()}`)
       window.dispatchEvent(new CustomEvent('flow-login-expired'))
@@ -358,33 +432,35 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // seed/model 도 보존 — error 상태에서 retry 가 retryVideoDownload → downloadAndSaveVideo
     // 로 흘러갈 때 item.model/seed 가 비면 'flow-video' 폴백되어 메타 일관성이 깨진다.
     // 호출자가 새 seed/videoModel 을 plumb 하는 일반 경로는 그대로 그 값이 우선.
-    // in-flight 항목 분류용: status='generating' + generationId set + 미완료 (no mediaId/videoPath).
-    // recovery 가 서버 상태 확인 후 'generating' 으로 표시한 항목 — 재제출(quota 중복) 안 함.
-    // 대신 Phase 2 polling 에 직접 합류시켜 서버가 complete 되면 다운로드만 수행.
-    const isInFlightItem = (it) =>
-      it.status === 'generating' && it.generationId && !it.mediaId && !it.videoPath
-
     let items = []
     switch (mode) {
       case 't2v':
         items = scenes
           .filter(s => s.prompt)
-          .map(s => ({
-            id: s.id,
-            prompt: s.prompt,
-            videoSaveId: `t2v_${s.id.replace('vscene_', '')}`,
-            status: s.status,
-            generationId: s.generationId,
-            mediaId: s.mediaId,
-            videoPath: s.videoPath,
-            downloadGated: !!s.downloadGated,   // M2-R3 H6: 배치 다운로드 권한 마커(Phase 0 게이트 판정)
-            legacyFailure: isLegacyFlowGenerationFailure(s),   // M2-R5 J3: 옛 서버측 생성 실패(error PUBLIC_ERROR_* · kind 없음 · 미디어 없음) — 출처 분류에서 제외(items 는 error/errorKind 를 안 실으므로 여기서 판정)
-            seed: s.seed ?? seed ?? null,
-            model: s.model ? canonicalVideoModel(s.model) : effectiveVideoModel,
-            // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
-            targetDuration: s.targetDuration ?? null,
-            referenceImages: Array.isArray(s.referenceImages) ? s.referenceImages : [],
-          }))
+          .map(s => {
+            const resolved = resolveItemGeneration(s)
+            const itemProvider = shouldUsePersistedGenerationProvider(s) ? s.generationProvider : resolved.provider
+            return {
+              id: s.id,
+              prompt: s.prompt,
+              videoSaveId: `t2v_${s.id.replace('vscene_', '')}`,
+              status: s.status,
+              generationId: s.generationId,
+              mediaId: s.mediaId,
+              videoPath: s.videoPath,
+              downloadGated: !!s.downloadGated,   // M2-R3 H6: 배치 다운로드 권한 마커(Phase 0 게이트 판정)
+              legacyFailure: isLegacyFlowGenerationFailure(s),   // M2-R5 J3: 옛 서버측 생성 실패(error PUBLIC_ERROR_* · kind 없음 · 미디어 없음) — 출처 분류에서 제외(items 는 error/errorKind 를 안 실으므로 여기서 판정)
+              seed: s.seed ?? seed ?? null,
+              model: s.model ? canonicalVideoModel(s.model, itemProvider) : resolved.model,
+              generationProvider: itemProvider,
+              generationModel: resolved.model,
+              generationResolution: resolved.resolution,
+              appliedInputs: s.appliedInputs || null,
+              // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
+              targetDuration: s.targetDuration ?? null,
+              referenceImages: Array.isArray(s.referenceImages) ? s.referenceImages : [],
+            }
+          })
         break
       case 'i2v':
         // 이슈1: t2v(scenes.filter(s=>s.prompt))처럼 complete 여도 전체 Start 에서 재생성한다.
@@ -392,30 +468,38 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         //   startSceneId 는 필수(시작 이미지 없으면 생성 불가)라 유지.
         items = framePairs
           .filter(p => p.startSceneId)
-          .map(p => ({
-            id: p.id,
-            prompt: p.prompt,
-            startMediaId: p._startMediaId,
-            endMediaId: p._endMediaId || null,
-            startSceneId: p.startSceneId,
-            endSceneId: p.endSceneId,
-            startImage: p._startImage || null,
-            endImage: p._endImage || null,
-            videoSaveId: `i2v_${p.id.replace('fp_', '')}`,
-            status: p.status,
-            generationId: p.generationId,
-            mediaId: p.mediaId,
-            videoPath: p.videoPath,
-            downloadGated: !!p.downloadGated,   // M2-R3 H6
-            legacyFailure: isLegacyFlowGenerationFailure(p),   // M2-R5 J3
-            seed: p.seed ?? seed ?? null,
-            // t2v(279)와 동일: 저장된 p.model 을 보존하고 없을 때만 현재 선택으로 폴백한다.
-            //   download-only/in-flight 복구 항목은 서버가 옛 모델로 생성한 메타를 그대로 들고 있어야
-            //   pickVideoMetadata(item.model 우선) 가 history 를 실제 사용 모델로 저장한다. fresh 제출은
-            //   fillWindow 가 제출 시점에 effectiveVideoModel 을 다시 stamp 하므로(447) 새 선택이 반영된다.
-            model: p.model ? canonicalVideoModel(p.model) : effectiveVideoModel,
-            targetDuration: p.targetDuration ?? null,
-          }))
+          .map(p => {
+            const resolved = resolveItemGeneration(p)
+            const itemProvider = shouldUsePersistedGenerationProvider(p) ? p.generationProvider : resolved.provider
+            return {
+              id: p.id,
+              prompt: p.prompt,
+              startMediaId: p._startMediaId,
+              endMediaId: p._endMediaId || null,
+              startSceneId: p.startSceneId,
+              endSceneId: p.endSceneId,
+              startImage: p._startImage || null,
+              endImage: p._endImage || null,
+              videoSaveId: `i2v_${p.id.replace('fp_', '')}`,
+              status: p.status,
+              generationId: p.generationId,
+              mediaId: p.mediaId,
+              videoPath: p.videoPath,
+              downloadGated: !!p.downloadGated,   // M2-R3 H6
+              legacyFailure: isLegacyFlowGenerationFailure(p),   // M2-R5 J3
+              seed: p.seed ?? seed ?? null,
+              // t2v(279)와 동일: 저장된 p.model 을 보존하고 없을 때만 현재 선택으로 폴백한다.
+              //   download-only/in-flight 복구 항목은 서버가 옛 모델로 생성한 메타를 그대로 들고 있어야
+              //   pickVideoMetadata(item.model 우선) 가 history 를 실제 사용 모델로 저장한다. fresh 제출은
+              //   fillWindow 가 제출 시점에 effectiveVideoModel 을 다시 stamp 하므로(447) 새 선택이 반영된다.
+              model: p.model ? canonicalVideoModel(p.model, itemProvider) : resolved.model,
+              generationProvider: itemProvider,
+              generationModel: resolved.model,
+              generationResolution: resolved.resolution,
+              appliedInputs: p.appliedInputs || null,
+              targetDuration: p.targetDuration ?? null,
+            }
+          })
         break
     }
 
@@ -466,9 +550,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // M2-R5 J3(B2): 옛 서버측 생성 실패 행(error PUBLIC_ERROR_* · errorKind null · mediaId null · videoPath 없음)은 미디어가 없어 폴 대상이 아니다 — 출처 분류에서 빼 status 규칙(error+mediaId 없음 → fresh)으로.
     //   전엔 in-flight 로 잡혀 jwpduf 레코드 없음 ×3 → flow-video-not-found(+mediaId=G)로 영원히 download-only 가 됐다(H3 이후). App chargedFlowItem 도 같은 제외.
     const submittedFlow = (it) => appMode === 'flow' && it.status !== 'complete' && isFlowShapedId(it.generationId) && !it.videoPath && !it.legacyFailure
-    const downloadOnly = items.filter(it => (submittedFlow(it)
-      ? !!it.mediaId
-      : it.status === 'error' && it.generationId && it.mediaId && !it.videoPath))
+    const downloadOnly = items.filter(it => (submittedFlow(it) ? !!it.mediaId : isDownloadOnlyItem(it)))
     const downloadOnlyIds = new Set(downloadOnly.map(it => it.id))
     const inFlight = items.filter(it => !downloadOnlyIds.has(it.id) && (submittedFlow(it) ? !it.mediaId : isInFlightItem(it)))
     const inFlightIds = new Set(inFlight.map(it => it.id))
@@ -584,7 +666,11 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     //   - concurrency ≥ (freshGen + inFlight) 면 예전처럼 한 번에 전부 제출되는 것과 동일.
     // ═══════════════════════════════════════════
     // pending: itemId → { generationId, polls }. polls 는 per-item 폴링 예산(스턱 슬롯 방지).
-    const pending = new Map(inFlight.map(it => [it.id, { generationId: it.generationId, polls: 0 }]))
+    const pending = new Map(inFlight.map(it => [it.id, {
+      generationId: it.generationId,
+      polls: 0,
+      appliedInputs: it.appliedInputs || null,
+    }]))
     // M2-R2 G1(b)(A1/B1): Flow 의 generationId 는 곧 mediaId — YhhmEf 가 200 을 돌려준 순간 과금됐고 그 id([3][0][0])로 영상을 받는다. 제출 패치가 mediaId 를
     //   null 로 지웠으므로 pending 항목의 **모든** 종결 패치(사용자 stop·폴 타임아웃·폴 authFailed·꼬리)에 mediaId 를 다시 실어 download-only
     //   (error+generationId+mediaId) 로 분류되게 한다 — 안 그러면 다음 Start 가 재제출해 10크레딧을 또 쓴다. 타임아웃은 flow-video-fetch-failed 로 닫는다. 비-Flow 는 그대로.
@@ -621,12 +707,24 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         if (hasStaleFlowId(item)) onItemUpdate?.(item.id, 'generating', staleIdClear(item))
         else onItemUpdate?.(item.id, 'generating')
 
+        const itemProvider = item.generationProvider || globalGeneration.provider
+        const itemModel = item.generationModel || effectiveVideoModel
+        const itemResolution = item.generationResolution ?? videoResolution
         const genResult = await submitVideoItem(item, mode, {
-          videoModel: effectiveVideoModel, aspectRatio, duration, videoBatchCount, seed, projectName, videoResolution
+          videoModel: itemModel, videoProvider: itemProvider, aspectRatio, duration, videoBatchCount, seed, projectName, videoResolution: itemResolution
         })
 
         if (genResult.success && genResult.generationId) {
-          pending.set(item.id, { generationId: genResult.generationId, polls: 0 })
+          const appliedInputs = genResult.appliedInputs || null
+          const appliedModel = appliedInputs?.model ?? itemModel
+          pending.set(item.id, {
+            generationId: genResult.generationId,
+            polls: 0,
+            appliedInputs,
+            provider: itemProvider,
+            model: itemModel,
+            resolution: itemResolution,
+          })
           nextFreshIdx++
           lastPreClickRefusal = null   // M2-R1 F8
           // fresh 제출은 effectiveVideoModel 로 생성됐으므로 로컬 item.model 도 갱신한다.
@@ -634,14 +732,18 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           //   regen(완료 쌍 재생성) 항목은 item-build(310)에서 보존된 옛 p.model 을 들고 있어
           //   stamp 하지 않으면 새 모델로 생성했는데 history 엔 옛 모델이 저장된다.
           //   (download-only/in-flight 항목은 fillWindow 를 안 거치므로 옛 메타 그대로 유지.)
-          item.model = effectiveVideoModel
+          item.generationId = genResult.generationId
+          item.model = appliedModel
+          item.appliedInputs = appliedInputs
           // Persist generationId + 메타(seed/model) 를 즉시 state 에 박는다.
           // app-kill → reload → recovery 시 videoRecovery 가 item.model/seed 를 읽어
           // 동일한 모델/seed 로 저장하도록. 누락하면 recovery 가 'flow-video' 로 폴백.
           onItemUpdate?.(item.id, 'generating', {
             generationId: genResult.generationId,
             ...(seed != null ? { seed } : {}),
-            model: effectiveVideoModel,
+            model: appliedModel,
+            generationProvider: itemProvider,
+            appliedInputs: appliedInputs ?? null,
             // canonical 식별자 — recovery/retry 가 file 위치 매칭에 사용 (videoSaveId 없으면 vscene_/fp_ 폴백되어 파일명 갈라짐)
             ...(item.videoSaveId ? { videoSaveId: item.videoSaveId } : {}),
             // 새 generation 제출 — 이전 complete 의 path/mediaId/video 명시적 제거.
@@ -718,7 +820,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           videoErrorCount++
           nextFreshIdx++
           console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)
-          if (_maybeTriggerQuotaStop(genResult.error)) return
+          if (_maybeTriggerQuotaStop(genResult)) return
           if (rejected) {
             // M2-5(D8-6): 클릭 뒤 실패·거부 id 를 실은 결과 → 새 제출만 중단(태그로 판정 — kind 목록이 아니다). pending 은 계속.
             submitHaltRef.current = genResult.errorKind || 'flow-rpc-error'
@@ -863,7 +965,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       // M2-R1 F9(A9/B9): Flow 는 **읽기** 결과로 quota 를 발화하지 않고(D5: 읽기 code 8 은 일시) break 도 하지 않는다 — Flow 의 quota 경로는
       //   stopRequestedRef 를 세우지 않아 break 하면 pending 이 꼬리의 "Polling timeout" 으로 묻힌다. 아래 else 가 전 항목 pollError 1회(예산 −1)로
       //   보고 계속 폴링한다. 비-Flow 는 그대로.
-      if (!result.success && appMode !== 'flow' && _maybeTriggerQuotaStop(result.error)) break
+      if (!result.success && appMode !== 'flow' && _maybeTriggerQuotaStop(result)) break
 
       if (result.success && result.statuses) {
         // statuses 배열은 genIds 순서와 동일 → 인덱스로 매칭
@@ -879,6 +981,10 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
 
             // item 을 한 번만 lookup — downloadAndSaveVideo 와 실패 patch 가 공유 (메타 우선순위 일관성).
             const item = items.find(i => i.id === itemId)
+            const appliedInputs = submission.appliedInputs
+            const appliedVideoModel = appliedInputs?.model ?? submission.model ?? item?.generationModel ?? effectiveVideoModel
+            const appliedVideoResolution = appliedInputs?.resolution ?? submission.resolution ?? item?.generationResolution ?? videoResolution
+            const appliedAspectRatio = appliedInputs?.aspectRatio ?? aspectRatio
 
             // 배치 다운로드 구독 게이트 — 첫 번째 다운로드 직전에 한 번만 consume (이후 캐시).
             const gateResult = await consumeGate.ensure()
@@ -908,7 +1014,14 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               statusInfo.mediaId,
               statusInfo.videoUrl,
               item,
-              { projectName, saveMode, videoResolution, aspectRatio, seed, videoModel: effectiveVideoModel },
+              {
+                projectName,
+                saveMode,
+                videoResolution: appliedVideoResolution,
+                aspectRatio: appliedAspectRatio,
+                seed,
+                videoModel: appliedVideoModel,
+              },
               setStatusMessage
             )
 
@@ -916,7 +1029,17 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               onItemUpdate?.(itemId, 'complete', {
                 ...dlResult,
                 generationId: submission.generationId,
-                duration: effectiveVideoDuration(item, mode, duration, videoResolution, effectiveVideoModel, appMode),
+                duration: appliedInputs?.durationSeconds
+                  ?? effectiveVideoDuration(
+                    item,
+                    mode,
+                    duration,
+                    appliedVideoResolution,
+                    appliedVideoModel,
+                    appMode,
+                    submission.provider ?? item?.generationProvider ?? globalGeneration.provider,
+                  ),
+                ...(appliedInputs ? { appliedInputs } : {}),
                 mode,
                 // 이전 실패에서 남은 error 메시지 clear (success 이후 stale 표시 방지)
                 error: null,
@@ -969,7 +1092,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             videoErrorCount++  // 서버 generation 실패도 집계
             pending.delete(itemId)
             console.warn(`[VideoAutomation] ❌ Generation failed: ${submission.generationId.substring(0, 16)}`)
-            if (appMode !== 'flow') _maybeTriggerQuotaStop(statusInfo.error)   // M2-R1 F9: 읽기 결과로는 quota 를 발화하지 않는다
+            if (appMode !== 'flow') _maybeTriggerQuotaStop(statusInfo)   // M2-R1 F9: 읽기 결과로는 quota 를 발화하지 않는다
 
           } else {
             // 'pending' / 'processing' — per-item 폴링 예산 소진. 초과 시 슬롯 영구 점유 방지 위해 timeout.

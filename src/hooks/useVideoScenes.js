@@ -64,6 +64,8 @@ const FIELD_MAP = {
   // M2-R3 H6(B2): 배치 다운로드 권한 마커 — Phase 0 재다운로드 게이트 판정에 쓴다(project.json 에 남는다)
   downloadGated: 'videoT2VDownloadGated',
   videoSaveId: 'videoT2VSaveId',
+  generationProvider: 'videoT2VProvider',
+  appliedInputs: 'videoT2VAppliedInputs',
   // startTime / endTime 은 scene 본체와 공유 — 별도 매핑 없이 patch에 그대로
 }
 
@@ -112,6 +114,10 @@ function deriveVideoScene(s) {
     rejectedMediaIds: s.videoT2VRejectedMediaIds ?? null,
     downloadGated: s.videoT2VDownloadGated ?? null,   // M2-R3 H6
     videoSaveId: s.videoT2VSaveId ?? null,
+    generationProvider: s.videoT2VProvider ?? null,
+    appliedInputs: s.videoT2VAppliedInputs ?? null,
+    // Scene-level provider/model override must survive the image-scene → T2V derived view.
+    generation: s.generation,
     // Poster fields from the source image scene. ResultsTable uses these while
     // keeping the video element unmounted until hover.
     image: s.image ?? null,
@@ -226,6 +232,8 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
       videoT2VRejectedMediaIds: null,
       videoT2VDownloadGated: null,   // M2-R3 H6
       videoT2VSaveId: null,
+      videoT2VProvider: null,
+      videoT2VAppliedInputs: null,
     })))
   }, [scenesHook])
 

@@ -117,6 +117,8 @@ Claude Code
 | `start-scene-batch` | `styleId?`, `force?` | 씬 일괄 생성 시작 |
 | `start-ref-batch` | `styleId?`, `force?` | 레퍼런스 일괄 생성 시작 |
 
+씬별 생성 override는 `generation.image`, `generation.video.t2v`, `generation.video.i2v`의 `{provider, model}` 쌍으로 수정한다. CSV에서는 `image_provider`, `image_model`, `t2v_provider`, `t2v_model`, `i2v_provider`, `i2v_model` 열을 사용한다. 누락 stage와 빈 CSV 셀은 기존 값을 보존하고, stage `null` 또는 provider 셀의 `__inherit__`는 전역 설정 상속으로 되돌린다.
+
 #### POST /api/generate-reference
 
 ```json
@@ -385,6 +387,8 @@ When MCP HTTP Server is ON in the app settings, it listens on `127.0.0.1:3210`.
 | `generate-scene` | `sceneId` | Generate scene (IPC → global call) |
 | `start-scene-batch` | `styleId?`, `force?` | Start scene batch generation |
 | `start-ref-batch` | `styleId?`, `force?` | Start reference batch generation |
+
+Per-scene generation overrides use `{provider, model}` pairs at `generation.image`, `generation.video.t2v`, and `generation.video.i2v`. CSV uses `image_provider`, `image_model`, `t2v_provider`, `t2v_model`, `i2v_provider`, and `i2v_model`. Omitted stages and empty CSV cells preserve existing values; stage `null` or `__inherit__` in a provider cell restores global inheritance.
 
 #### POST /api/generate-reference
 

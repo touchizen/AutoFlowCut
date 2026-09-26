@@ -10,6 +10,7 @@ import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { resolveMentions } from '../utils/mentionParser'
 import { getAuthRequiredMessage, getAuthErrorMessage } from '../utils/authMessages'
+import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 import { resolveDisplayError } from '../utils/errorDisplay'
 
 /**
@@ -39,6 +40,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       toast.warning(t('toast.noPrompt'))
       return
     }
+    const resolvedGeneration = resolveSceneImageProvider(scene, settings, { appMode: genAPI?.mode })   // Flow 는 씬 override 없이 설정 모델(F1)
+    if (resolvedGeneration.warning) console.warn('[Scene]', resolvedGeneration.warning)
 
     // #R27-1: preflight(folder/ready/auth) await 동안에도 busy 로 표시한다. 안 그러면 그 창에서
     //   project/mode 전환이 허용돼, 전환 뒤 stale 엔진으로 생성하고 결과를 현재 프로젝트의 씬
@@ -54,7 +57,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     }
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
     if (!readyCheck.ok) return
-    if (!(await checkAuthToken(genAPI, t))) {
+    // 멀티 provider: 씬이 해석한 provider 의 키로 검사해야 openai-only 사용자가 google 키 부재로 막히지 않는다.
+    if (!(await checkAuthToken(genAPI, t, resolvedGeneration.provider))) {
       const message = getAuthRequiredMessage(genAPI?.mode, t, genAPI?.flowSessionReason?.())
       scenesHook.updateScene(sceneId, { status: 'error', errorKind: 'auth', error: message })
       toast.warning(message)
@@ -121,10 +125,14 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         // scene.prompt 그대로 전달 — strip 은 engineApi.generateImage 내부에서 수행.
         // scene 은 sceneOverride 가 병합된 fresh 스냅샷 — prompt/style_tag 모두 편집본을 반영.
         const { styledPrompt } = resolveSceneStyle(scene.prompt, [], effectiveOverride, refs, matchedRefs, scene.style_tag)
+        // 모델/provider 는 씬 override→전역→google 로 해석된 값을 쓴다(전역 settings.imageModel 직행 금지).
         // M1-10: 업스케일 설정은 엔진 게이트 재료(Flow 모드에서 미지원이면 제출 전에 거부된다). M3: Flow 는 matchedRefs(＋ 첨부)와 references(@멘션 해석)로 레퍼런스를 계획한다.
         return genAPI.generateImage(styledPrompt, matchedRefs, {
           batchCount: settings.imageBatchCount, seed,
-          aspectRatio: settings.aspectRatio, model: settings.imageModel, references: refs,
+          aspectRatio: settings.aspectRatio,
+          model: resolvedGeneration.model,
+          provider: resolvedGeneration.provider,
+          references: refs,
           imageUpscale: settings.imageUpscale || 'off',
         })
       }
@@ -161,7 +169,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         seed,
         // 선택 모델을 기록 — 안 넘기면 imageFinalize 기본값 'flow' 로 저장돼 ResultsTable 에
         //   엔진ID 가 뜬다(응답이 더 구체적 model 을 주면 그게 우선). batch 경로와 일관.
-        model: settings.imageModel,
+        model: resolvedGeneration.model,
         logPrefix: '[Scene]',
         authErrorText: getAuthErrorMessage(genAPI?.mode, t),   // R1#6: authFailed 의 기계 토큰 대신 사람 문구
       })
@@ -171,7 +179,9 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       } else {
         // 단일 씬 실패도 quota 면 batch 와 동일하게 전역 stop+modal 트리거 — 사용자가 잇따른
         // 단일 재시도로 quota 를 더 소진하는 것을 막는다.
-        const failErr = result?.error ?? sceneUpdate.error
+        const failErr = result && typeof result === 'object'
+          ? result
+          : (result?.error ?? sceneUpdate.error)
         if (isQuotaExhaustedError(failErr)) {
           emitQuotaStop({ scope: 'SceneGen' })
         } else {

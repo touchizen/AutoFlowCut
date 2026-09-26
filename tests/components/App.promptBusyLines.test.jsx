@@ -511,21 +511,19 @@ describe('App prompt busyLines wiring', () => {
   })
 
   it('UI Start preflight 중 개별 씬 생성이 시작되면 재개된 배치를 enqueue하지 않고 알린다', async () => {
-    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
     const view = render(<App />)
-    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
 
-    const token = deferred()
-    appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
+    const folderPermission = deferred()
+    appMocks.folderPermissionCheck.mockReturnValueOnce(folderPermission.promise)
 
     fireEvent.click(screen.getByTitle('actions.start'))
-    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(appMocks.folderPermissionCheck).toHaveBeenCalledTimes(1))
 
     appMocks.state.generatingSceneId = 's4'
     view.rerender(<App />)
     await act(async () => {
-      token.resolve('token')
-      await token.promise
+      folderPermission.resolve({ ok: true })
+      await folderPermission.promise
     })
 
     await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy'))
@@ -534,20 +532,18 @@ describe('App prompt busyLines wiring', () => {
   })
 
   it('MCP Start는 같은 preflight race에서도 scene batch를 enqueue한다', async () => {
-    appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
     const view = render(<App />)
-    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(2))
 
-    const token = deferred()
-    appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
+    const folderPermission = deferred()
+    appMocks.folderPermissionCheck.mockReturnValueOnce(folderPermission.promise)
 
     const startPromise = appMocks.state.mcpProps.handleStart(undefined, { source: 'mcp' })
-    await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(appMocks.folderPermissionCheck).toHaveBeenCalledTimes(1))
 
     appMocks.state.generatingSceneId = 's4'
     view.rerender(<App />)
     await act(async () => {
-      token.resolve('token')
+      folderPermission.resolve({ ok: true })
       await startPromise
     })
 
@@ -744,6 +740,7 @@ describe('App prompt busyLines wiring', () => {
   })
 
   it('태그 Proceed 전에 개별 씬 생성이 시작되면 auth 재검사나 enqueue 없이 알린다', async () => {
+    appMocks.state.mode = 'flow'
     appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
     appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
       index === 0 ? { ...scene, characters: 'Missing' } : scene
@@ -769,6 +766,7 @@ describe('App prompt busyLines wiring', () => {
   })
 
   it('태그 Proceed의 auth 재검사 중 개별 씬 생성이 시작되면 enqueue 직전에 차단한다', async () => {
+    appMocks.state.mode = 'flow'
     appMocks.genAPI.getAccessToken.mockResolvedValue('mount-token')
     appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
       index === 0 ? { ...scene, characters: 'Missing' } : scene
@@ -792,6 +790,27 @@ describe('App prompt busyLines wiring', () => {
       token.resolve('token')
       await token.promise
     })
+
+    await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy'))
+    expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
+    expect(appMocks.generationEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('API 모드 태그 Proceed의 preflight 중 개별 씬 생성이 시작되면 직접 enqueue 직전에 차단한다', async () => {
+    appMocks.state.mode = 'api'
+    appMocks.scenesHook.scenes = appMocks.scenes.map((scene, index) => (
+      index === 0 ? { ...scene, characters: 'Missing' } : scene
+    ))
+    const view = render(<App />)
+
+    fireEvent.click(screen.getByTitle('actions.start'))
+    await screen.findByRole('button', { name: 'tag-proceed' })
+
+    // API auth preflight도 async 함수라 첫 guard와 direct-start guard 사이에서 한 microtask 양보한다.
+    // 클릭 직후 같은 turn에 ref를 갱신해 API 전용 두 번째 guard가 race를 잡는 경로를 지난다.
+    fireEvent.click(screen.getByRole('button', { name: 'tag-proceed' }))
+    appMocks.state.generatingSceneId = 's4'
+    view.rerender(<App />)
 
     await waitFor(() => expect(appMocks.toastWarning).toHaveBeenCalledWith('videoAutomation.busy'))
     expect(appMocks.sceneBatchStart).not.toHaveBeenCalled()
@@ -1062,11 +1081,11 @@ describe('App prompt busyLines wiring', () => {
       const oldOnItemUpdate = appMocks.state.videoStartOptions.onItemUpdate
       await act(async () => { await Promise.resolve() })
 
-      const token = deferred()
+      const folderPermission = deferred()
       appMocks.videoStart.mockClear()
-      appMocks.genAPI.getAccessToken.mockReset().mockReturnValueOnce(token.promise)
+      appMocks.folderPermissionCheck.mockReset().mockReturnValueOnce(folderPermission.promise)
       fireEvent.click(screen.getByTitle('actions.start'))
-      await waitFor(() => expect(appMocks.genAPI.getAccessToken).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(appMocks.folderPermissionCheck).toHaveBeenCalledTimes(1))
 
       appMocks.scenesHook.updateScene.mockClear()
       act(() => {
@@ -1076,8 +1095,8 @@ describe('App prompt busyLines wiring', () => {
       expect(appMocks.scenesHook.updateScene).not.toHaveBeenCalled()
 
       await act(async () => {
-        token.resolve('token')
-        await token.promise
+        folderPermission.resolve({ ok: true })
+        await folderPermission.promise
       })
       await waitFor(() => expect(appMocks.videoStart).not.toHaveBeenCalled())
       expect(appMocks.toastWarning).toHaveBeenCalledWith('errorSection.kind.project-changed')

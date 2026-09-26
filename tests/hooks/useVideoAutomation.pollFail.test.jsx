@@ -36,13 +36,14 @@ afterEach(() => {
 })
 
 describe('useVideoAutomation — poll top-level fail quota', () => {
-  it('checkVideoStatus 가 batch 전체 fail 로 quota 반환 시 즉시 break (max polls 안 감)', async () => {
+  it('K3: top-level poll result errorKind quota stops on non-matching error text', async () => {
     // submit 은 성공해서 polling 단계 진입
     const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
     // checkVideoStatus 는 batch 전체로 quota 실패 — statuses 없음
     const checkVideoStatus = vi.fn().mockResolvedValue({
       success: false,
-      error: 'Resource has been exhausted (e.g. check quota).',
+      error: 'Too Many Requests',
+      errorKind: 'quota',
     })
 
     const genAPI = {
@@ -103,6 +104,46 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
     // 완료 메시지가 실패를 숨기지 않음 (성공처럼 안 보이게)
     expect(hook.result.current.statusMessage).toMatch(/1 failed/)
     expect(hook.result.current.statusMessage).toContain('⚠️')
+  })
+
+  it('D2: 서버 failed status의 errorKind를 item error patch에 보존', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: true,
+      statuses: [{
+        generationId: 'gen-1',
+        status: 'failed',
+        error: 'Opaque provider failure',
+        errorKind: 'provider-failure',
+      }],
+    })
+    const genAPI = {
+      generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus,
+      upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const onItemUpdate = vi.fn()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+    let startPromise
+
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v', scenes: [{ id: 'vscene_v1', prompt: 'p' }],
+        projectName: 'test', saveMode: 'memory', videoModel: 'veo-3', aspectRatio: '16:9',
+        duration: 8, videoResolution: '720p', videoBatchCount: 1, seed: null,
+        onItemUpdate,
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(20 * 1000) })
+    await startPromise
+
+    expect(onItemUpdate).toHaveBeenCalledWith(
+      'vscene_v1',
+      'error',
+      expect.objectContaining({
+        error: 'Opaque provider failure',
+        errorKind: 'provider-failure',
+      }),
+    )
   })
 
   it('non-quota top-level 실패가 반복돼도 per-item 예산으로 종료 (무한루프 방지)', { timeout: 20000 }, async () => {

@@ -24,6 +24,8 @@ export const CSV_PRESERVED_SCENE_FIELDS = Object.freeze([
   'videoI2VStatus', 'videoI2VGeneratingStartedAt', 'videoI2VGeneratingEndedAt',
   // 영상 생성 메타 — 영상 탭의 모델명·시드·생성 시각·저장 id
   'videoT2VModel', 'videoT2VSeed', 'videoT2VGeneratedAt', 'videoT2VSaveId',
+  // 멀티 프로바이더(feature/multi-provider-genapi): 생성한 provider(in-flight 복구·다운로드 라우팅)와 실제 적용된 입력(appliedInputs)
+  'videoT2VProvider', 'videoT2VAppliedInputs',
   // 영상 오류·거부 id·다운로드 게이트 — 배치 시작의 분류(옛 서버측 실패 · in-flight · 다운로드 전용)가 status·generationId 와 **함께** 읽는다.
   //   하나만 남기면 재적용 뒤 분류가 바뀐다(리뷰 R2: 옛 실패가 in-flight 로 → 폴링). 영상 탭 파생 필드는 프롬프트 빼고 전부 여기 있어야 한다.
   'videoT2VError', 'videoT2VErrorKind', 'videoT2VErrorParams', 'videoT2VRejectedMediaId', 'videoT2VRejectedMediaIds', 'videoT2VDownloadGated',

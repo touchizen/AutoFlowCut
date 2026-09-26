@@ -131,6 +131,27 @@ describe('useVideoAutomation — downloadGated 마커와 Phase 0 게이트 (M2-R
     expect(h.hook.result.current.isRunning).toBe(false)
   })
 
+  // multi-provider 병합(리뷰 B F3): i2v 항목도 downloadGated 를 실어야 한다 — 빠지면 이미 권한을 받은 i2v 재다운로드가 게이트를 다시 지나(과금·페이월) 거부되면 막힌다.
+  it('i2v: Phase 0 게이트 거부 → 마커 없는 frame pair 는 download-entitlement, 마커 있는 frame pair 는 그대로 재다운로드', async () => {
+    consumeBatchDownload.mockResolvedValueOnce({ denied: true })
+    const h = setup()
+    const fp = (id, extra) => ({ id, prompt: 'p', startSceneId: 'scene_1', _startMediaId: 'm-start', status: 'error', errorKind: 'stopped', videoPath: null, ...extra })
+    const started = {}
+    await act(async () => {
+      started.promise = h.hook.result.current.start({
+        ...OPTS, mode: 'i2v', onItemUpdate: h.onItemUpdate,
+        framePairs: [fp('fp_1', { generationId: 'gen-a', mediaId: 'gen-a' }), fp('fp_2', { generationId: 'gen-b', mediaId: 'gen-b', downloadGated: true })],
+      })
+    })
+    for (let t = 0; t < 5000; t += 500) await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    await act(async () => { await started.promise })
+    expect(consumeBatchDownload).toHaveBeenCalledTimes(1)
+    expect(consumeBatchDownload.mock.calls[0][0]).toMatchObject({ batchType: 'video-i2v' })
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(retryVideoDownload.mock.calls[0][0].item.id).toBe('fp_2')
+    expect(last(h, 'fp_1')).toEqual(['error', expect.objectContaining({ errorKind: 'download-entitlement', generationId: 'gen-a', mediaId: 'gen-a' })])
+  })
+
   it('새 제출의 generating 패치는 옛 마커를 null 로 지운다(전체 Start 의 재생성 — 새 배치의 권한은 새로 확인한다)', async () => {
     const h = setup()
     await run(h, [{ id: 'vscene_1', prompt: 'p1', status: 'complete', generationId: 'gen-old', mediaId: 'gen-old', videoPath: '/proj/videos/t2v_1.mp4', downloadGated: true }])
