@@ -69,6 +69,22 @@ export function pickSceneCorrelationKey(segs, prompt) {
 //   고착돼 멘션 후보에서 빠졌다("Unresolved @mention"). 등록 완료 시간을 확보(+1분).
 export const CHARACTER_UPLOAD_TIMEOUT_MS = 120000
 
+// #R37: injectFileToInput 의 in-page 만료 가드가 main 타임아웃보다 앞서야 하는 여유.
+//   가드를 통과했다면 dispatch 직후 동기 반환이므로, main 이 결과를 수신할 시간이 남는다.
+export const INJECT_DEADLINE_MARGIN_MS = 3000
+
+// #R37: loadURL 은 did-finish-load 로 resolve 한다 — 렌더러가 먹통이면 그 이벤트가 안 온다.
+//   네비게이션은 원격 부작용이 없으므로(entity 생성 없음) 포기해도 안전하다. 실패하면 호출측의
+//   readiness probe 가 false 를 받아 정상적으로 실패 처리한다.
+const NAV_TIMEOUT_MS = 30000
+function withNavTimeout(p, ms = NAV_TIMEOUT_MS) {
+  let timer
+  const timeout = new Promise((_, rej) => {
+    timer = setTimeout(() => rej(new Error(`loadURL timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer))
+}
+
 // EDITOR_SELECTOR / appendSceneText / insertSceneMention / injectComposeSegments 는 flow-compose-mention.js 로
 //   추출(이미지 씬·T2V 비디오 공용). #R36.
 
@@ -199,7 +215,12 @@ export function registerCharacterIPC(ipcMain, deps) {
       const target = characterDetailUrl(entityId, projectIdOverride)
       if (!target) return false
       console.log('[Flow Character] navigating to character detail:', target)
-      await flowView.webContents.loadURL(target)
+      // #R37: 먹통 렌더러면 loadURL 이 did-finish-load 를 영영 못 받아 coordinator 락이 고착한다.
+      //   네비게이션은 원격 부작용이 없으므로(entity 를 만들지 않음) 타임아웃으로 포기해도 안전하다.
+      // 타임아웃/실패는 삼킨다 — 바로 아래 readiness probe 가 false 를 받아 기존 실패 경로로 흐른다.
+      //   (그대로 던지면 호출부가 예상 못 한 예외 경로를 타고, 락 해제 순서가 달라진다.)
+      await withNavTimeout(flowView.webContents.loadURL(target))
+        .catch((e) => console.warn('[Flow Character] loadURL:', e.message))
     }
     for (let i = 0; i < 30; i++) {
       await sleep(500)
@@ -267,7 +288,12 @@ export function registerCharacterIPC(ipcMain, deps) {
       const target = charactersUrl(projectIdOverride)
       if (!target) return false
       console.log('[Flow Character] navigating to characters compose:', target)
-      await flowView.webContents.loadURL(target)
+      // #R37: 먹통 렌더러면 loadURL 이 did-finish-load 를 영영 못 받아 coordinator 락이 고착한다.
+      //   네비게이션은 원격 부작용이 없으므로(entity 를 만들지 않음) 타임아웃으로 포기해도 안전하다.
+      // 타임아웃/실패는 삼킨다 — 바로 아래 readiness probe 가 false 를 받아 기존 실패 경로로 흐른다.
+      //   (그대로 던지면 호출부가 예상 못 한 예외 경로를 타고, 락 해제 순서가 달라진다.)
+      await withNavTimeout(flowView.webContents.loadURL(target))
+        .catch((e) => console.warn('[Flow Character] loadURL:', e.message))
     }
     // 진짜 Slate 컴포저 에디터가 마운트될 때까지 대기. EDITOR_SELECTOR(숨은 textarea 폴백
     // 포함)로 판정하면 항상-존재하는 g-recaptcha-response textarea 때문에 너무 일찍 통과해
@@ -300,7 +326,18 @@ export function registerCharacterIPC(ipcMain, deps) {
   }
 
   // file input 에 base64 파일을 넣고 change 를 발생(+ click 복구). DataTransfer 로 input.files 세팅.
-  async function injectFileToInput(flowView, base64, fileName, mimeType) {
+  //
+  // ⚠️ 이 페이로드는 **로컬 작업이 아니다**. dispatch 하는 change 를 SPA 의 onChange 가 받아
+  //   uploadImage 를 실행하고 = **Flow 에 캐릭터 entity 가 만들어진다**(핸들러 주석 참고).
+  //   그래서 execJs 가 타임아웃돼 이 스크립트를 "버려도" 안전하지 않다: 먹통이던 렌더러가 나중에
+  //   깨어나 change 를 쏘면 entity 가 생기는데, 우리는 실패로 알고 락을 풀어버린 뒤다 → 재시도가
+  //   entity 를 하나 더 만든다(중복의 재발).
+  //
+  //   그래서 **페이지 안에 만료 시각을 심는다.** 좀비가 늦게 깨어나면 change 를 쏘지 않고 물러난다.
+  //   deadline 은 main 의 타임아웃보다 여유를 두고 앞선다 — 가드를 통과했다면 dispatch 직후 동기 반환이라
+  //   main 이 결과를 받을 시간이 남는다.
+  async function injectFileToInput(flowView, base64, fileName, mimeType, timeoutMs = EXEC_JS_TIMEOUT_MS) {
+    const deadline = Date.now() + Math.max(1000, timeoutMs - INJECT_DEADLINE_MARGIN_MS)
     return execJs(flowView.webContents, `(function(){
       try{
         var i=document.querySelector(${JSON.stringify(A2_FILE_SEL)});
@@ -310,11 +347,14 @@ export function registerCharacterIPC(ipcMain, deps) {
         for(var k=0;k<bin.length;k++) by[k]=bin.charCodeAt(k);
         var f=new File([by], ${JSON.stringify(fileName || 'upload.png')}, {type:${JSON.stringify(mimeType || 'image/png')}});
         var dt=new DataTransfer(); dt.items.add(f); i.files=dt.files;
+        // 만료 가드 — change 는 uploadImage(=entity 생성)를 트리거하므로, 호출측이 이미 포기한 뒤라면
+        //   절대 쏘지 않는다. (여기까지 오는 데 오래 걸렸다면 main 은 이미 타임아웃했을 수 있다.)
+        if (Date.now() > ${deadline}) return {success:false, expired:true, error:'aborted before change dispatch'};
         i.dispatchEvent(new Event('input',{bubbles:true}));
         i.dispatchEvent(new Event('change',{bubbles:true}));
         return {success:i.files.length===1};
       }catch(e){ return {success:false, error:String(e&&e.message||e)}; }
-    })()`).catch(e => ({ success: false, error: e.message }))
+    })()`).catch(e => ({ success: false, timedOut: true, error: e.message }))
   }
 
   // A2: SPA 가 보낸 uploadImage 응답을 네트워크 캡처 버퍼(window.__autoflowcut_net__)에서 회수.
@@ -1114,8 +1154,18 @@ export function registerCharacterIPC(ipcMain, deps) {
 
       // 2) file input 에 파일 주입(synthetic change — onChange 가 읽음).
       const inj = await injectFileToInput(flowView, b64, fileName, mimeType)
-      if (!inj || !inj.success) return { success: false, error: 'file 주입 실패: ' + (inj && inj.error) }
-      console.log('[Flow Character] A2 file injected')
+      if (!inj || !inj.success) {
+        // expired: 만료 가드가 change 를 막았다 → uploadImage 가 트리거되지 않았음이 확실하다. 즉시 실패.
+        if (inj && inj.expired) return { success: false, error: 'file 주입 만료(중단): ' + inj.error }
+        // timedOut: 스크립트를 버렸다. change 를 이미 쏘고 결과 반환만 유실됐을 수 있다 — 그 경우
+        //   uploadImage 는 실제로 돌아 entity 가 생긴다. 여기서 포기하면 그 entityId 를 못 잡고,
+        //   재시도가 entity 를 하나 더 만든다(중복). 그래서 버리지 않고 응답을 기다려 회수한다.
+        //   (캡처 버퍼는 위에서 비웠으므로 잡히는 응답은 이번 시도의 것이다.)
+        if (!inj || !inj.timedOut) return { success: false, error: 'file 주입 실패: ' + (inj && inj.error) }
+        console.warn('[Flow Character] A2 file 주입 타임아웃 — uploadImage 응답을 회수 시도(중복 entity 방지)')
+      } else {
+        console.log('[Flow Character] A2 file injected')
+      }
       await sleep(800)
 
       // 3) "만들기"(실행) 버튼 best-effort 클릭. 단, Flow 는 파일 주입(onChange) 만으로 uploadImage 가

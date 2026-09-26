@@ -42,7 +42,7 @@ import { registerCharacterIPC } from './ipc/character.js'
 import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-payload.js'
 import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
 import { registerDomIPC } from './ipc/dom.js'
-import { createSharedHelpers } from './ipc/shared.js'
+import { createSharedHelpers, execJs } from './ipc/shared.js'
 import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
@@ -763,7 +763,10 @@ async function setFlowPageInject({ seed, aspectRatio, references, i2v, duration,
   try {
     // #R16-1: payload 를 쓰고 fetch 패치 설치 여부를 함께 확인한다 — 패치가 없으면(주입 무효)
     //   success 로 보고하지 않는다(호출부가 미주입 생성을 막을 수 있게).
-    const patched = await flowView.webContents.executeJavaScript(
+    // #R37: 먹통 렌더러에서 executeJavaScript 가 안 끝나면 캐릭터 coordinator 락이 고착한다.
+    //   이 페이로드는 window 변수만 세팅하는 순수 로컬 작업이라 버려도 원격 부작용이 없다.
+    const patched = await execJs(
+      flowView.webContents,
       `(function(){ window.__autoflowcut_inject__ = ${JSON.stringify(payload)}; return !!window.__autoflowcut_fetch_patched__ })()`
     )
     if (!patched) {
@@ -785,7 +788,9 @@ async function clearFlowPageInject() {
   const flowView = modeController.getFlowView()
   if (!flowView) return
   try {
-    await flowView.webContents.executeJavaScript(
+    // #R37: 위와 같은 이유로 타임아웃을 건다(순수 로컬 — 버려도 안전).
+    await execJs(
+      flowView.webContents,
       `window.__autoflowcut_inject__ = ${JSON.stringify(flowInjectClearPayload())}`
     )
   } catch (_) {}
