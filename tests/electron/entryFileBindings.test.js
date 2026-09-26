@@ -77,6 +77,8 @@ describe('main.js — DELETE /api/projects 폴백이 읽는 이름', () => {
               const binding = c.scope.getBinding(name)
               expect(binding?.kind, name).toBe('let')
               expect(binding.path.parentPath.parentPath.node, `${name} is declared at the head of the DELETE block`).toBe(p.node.consequent)
+              // 리뷰 B R4: try 뒤에 선언하면 try 안의 대입이 TDZ 에 걸려 모든 DELETE 가 500 이 된다 — "머리"는 try 보다 앞이다
+              expect(binding.path.node.start, `${name} is declared before the try`).toBeLessThan(tryPath.node.start)
               const assignedInTry = binding.constantViolations.some((v) => v.node.start >= tryStart && v.node.end <= tryEnd)
               expect(assignedInTry, `${name} is assigned inside the try`).toBe(true)
               checked.push(name)
