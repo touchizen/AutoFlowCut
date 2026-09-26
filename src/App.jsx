@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { DEFAULTS, UI, TIMING, STYLE_PRESETS } from './config/defaults'
 import { useGenerationEngine } from './engine/useGenerationEngine'
 import { useMode } from './contexts/ModeContext'
+import { ExportSettingsProvider } from './contexts/ExportSettingsContext'
 import { useScenes } from './hooks/useScenes'
 import { useAutomation } from './hooks/useAutomation'
 import { useVideoAutomation } from './hooks/useVideoAutomation'
@@ -26,6 +27,8 @@ import { useExport } from './hooks/useExport'
 import { useStoreRating } from './hooks/useStoreRating'
 import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
+import { useUpscayl } from './hooks/useUpscayl'
+import { fileSystemAPI } from './hooks/useFileSystem'
 import { useAvailableModels } from './hooks/useAvailableModels'
 import { computeModelHeal, computeModeSwitch } from './config/genModels'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
@@ -47,7 +50,11 @@ import { isSceneGenerationDone } from './services/generationStatus'
 import { hasExportAccess, buildExportModalCounts } from './services/exportSelection'
 import {
   computeGuardAvailable,
+  isAnyRunning,
+  isMcpRunning,
+  isProjectBusy,
   isStartBlocked,
+  isUpscaylStartBlocked,
   runOuterStartAuthPreflight,
   shouldStopRefWork,
 } from './services/startGuard'
@@ -88,6 +95,7 @@ import { runSyncGate } from './services/syncGateRun'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
+import { baseImageReplacementPatch } from './utils/imagePatch'
 import { resolveSceneVideoProvider } from './utils/sceneProviderResolution'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
@@ -125,6 +133,7 @@ import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
 import BottomPanelTabs from './components/BottomPanelTabs'
+import BottomPanelActions from './components/BottomPanelActions'
 import LiveTimeline from './components/LiveTimeline'
 import { useMonitor } from './hooks/useMonitor'
 import PreviewMonitor from './components/PreviewMonitor'
@@ -138,6 +147,7 @@ import DeleteSceneConfirmModal from './components/DeleteSceneConfirmModal'
 import FlowProjectAdoptModal from './components/FlowProjectAdoptModal'
 import SrtImportConflictModal from './components/SrtImportConflictModal'
 import ImportProcessingOverlay from './components/ImportProcessingOverlay'
+import UpscaylDialog from './components/UpscaylDialog'
 import { useAuth } from './contexts/AuthContext'
 import { useImportProcessing } from './hooks/useImportProcessing'
 
@@ -291,6 +301,9 @@ function App() {
   }, [])
   const [showStylePicker, setShowStylePicker] = useState(false) // 스타일 선택 모달
   const [selectedVideo, setSelectedVideo] = useState(null) // 비디오 상세 모달용
+  const [upscaylDialogOpen, setUpscaylDialogOpen] = useState(false)
+  const [upscaylTargetSceneIds, setUpscaylTargetSceneIds] = useState(null)
+  const [upscaylDetectState, setUpscaylDetectState] = useState(null)
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
     const saved = localStorage.getItem('autoflowcut_bottomPanelHeight')
     return saved ? parseInt(saved, 10) : UI.DEFAULT_BOTTOM_PANEL_HEIGHT // 기본 높이
@@ -441,6 +454,62 @@ function App() {
   }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  const saveUpscaylImage = useCallback((...args) => fileSystemAPI.saveImage(...args), [])
+  const restoreInFlightRef = useRef(false)
+  // useUpscayl은 App 뒤쪽에서 채운 최신 render 신호와 same-tick latch ref를 매 호출 시 읽는다.
+  const upscaylBusySignalsRef = useRef({})
+  const isUpscaylBusy = useCallback(() => {
+    const signals = upscaylBusySignalsRef.current
+    return isUpscaylStartBlocked({
+      isRunning: signals.isRunning,
+      isSceneBatchQueued: signals.isSceneBatchQueued,
+      hasPendingBatch: signals.hasPendingBatch,
+      startInFlight: signals.startInFlightRef?.current,
+      generatingSceneId: signals.generatingSceneId,
+      videoRunning: signals.videoRunning,
+      videoRetryInFlight: signals.videoRetryInFlightRef?.current,
+      refBatchRunning: signals.refBatchRunning,
+      gatePhase: signals.gatePhase,
+      restoreInFlight: signals.restoreInFlightRef?.current,
+    })
+  }, [])
+  const upscayl = useUpscayl({
+    scenes,
+    scenesRef: scenesHook.scenesRef,
+    updateScene: scenesHook.updateScene,
+    projectNameRef,
+    saveImage: saveUpscaylImage,
+    upscaylAPI: window.upscaylAPI,
+    isBusy: isUpscaylBusy,
+    options: { model: 'ultrasharp-4x', scale: 2 },
+  })
+  const handleUpscaylDetect = useCallback(async () => {
+    setUpscaylDetectState((previous) => ({ ...previous, loading: true }))
+    try {
+      const result = await window.upscaylAPI?.detect?.()
+      setUpscaylDetectState(result || { ok: false, reason: 'missing' })
+    } catch {
+      setUpscaylDetectState({ ok: false, reason: 'missing' })
+    }
+  }, [])
+  const handleUpscaylLocate = useCallback(async () => {
+    setUpscaylDetectState((previous) => ({ ...previous, loading: true }))
+    try {
+      const result = await window.upscaylAPI?.locate?.()
+      setUpscaylDetectState(result || { ok: false, reason: 'missing' })
+    } catch {
+      setUpscaylDetectState({ ok: false, reason: 'missing' })
+    }
+  }, [])
+  const openUpscayl = useCallback((targetSceneIds = null) => {
+    setUpscaylTargetSceneIds(Array.isArray(targetSceneIds) ? targetSceneIds : null)
+    setUpscaylDetectState(null)
+    setUpscaylDialogOpen(true)
+  }, [])
+  useEffect(() => {
+    if (!upscaylDialogOpen) return
+    void handleUpscaylDetect()
+  }, [upscaylDialogOpen, handleUpscaylDetect])
   const imageBusyLines = useMemo(
     () => busyPromptLines(scenes, { field: 'prompt', trimTrailing: false }),
     [scenes],
@@ -878,7 +947,8 @@ function App() {
     isAuthenticated,
     () => setShowAuthModal(true),
     subscription?.status,   // #5/#8: loading/error 상태 전달 — 미확인 subscription 에서 진행 금지
-    refreshSubscription     // #6: consume 성공 시 1회 refresh (stale 방지)
+    refreshSubscription,    // #6: consume 성공 시 1회 refresh (stale 방지)
+    upscayl.isRunningNow,   // commit 전 시작도 배치 dispatch가 live latch로 차단
   )
 
   // 비디오 자동화 — 동일 이유로 useProjectData 이후 선언.
@@ -951,6 +1021,12 @@ function App() {
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
     settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady,
+    // rendered snapshot 으로 충분 — Upscayl start 는 UpscaylDialog 클릭이 유일 caller라
+    // runningRef set 과 running commit 이 같은 클릭 task 에 완료된다. generation 트리거(다른
+    // 클릭/MCP)는 별개 task 라 항상 commit 후 실행돼 same-tick interleave 가 불가능하다.
+    // ⚠️ MCP/agent 가 upscale 을 트리거하게 되면 이 세 곳(여기·handleStop·rejectUpscaylWrite)을
+    //    isRunningNow() live latch 로 전환해야 한다.
+    upscaylRunning: upscayl.running,
     requestMentionSync,
   })
   const generatingSceneIdRef = useRef(generatingSceneId)
@@ -981,7 +1057,7 @@ function App() {
   }
 
   // Export
-  const { showExportModal, setShowExportModal, exporting, exportPhase, exportFormat, handleExportClick, handleExportConfirm, handleExportPremiere, handleExportVrew } = useExport({
+  const { showExportModal, setShowExportModal, exporting, exportPhase, exportFormat, renderProgress, renderStartedAt, handleExportClick, handleExportConfirm, handleExportPremiere, handleExportVrew, handleExportRender, handleCancelRender } = useExport({
     settings, scenes, srtTrack: scenesHook.srtTrack, videoScenes, framePairs, openSettings,
     audioPackage,
     storyProjectPath,  // M2a-4: story 프로젝트면 export 시 나레이션 manifest 배치
@@ -1496,6 +1572,7 @@ function App() {
       videoRunning: videoAutomation.isRunning,
       hasPendingBatch,
       retryInFlight: videoRetryInFlightRef.current,
+      upscaylRunning: upscayl.isRunningNow(),
       refBatchRunning,
     })) return
     const isImageBatchStart = startTab === 'text' || startTab === 'list'
@@ -2014,8 +2091,22 @@ function App() {
   // ref batch는 generatingRefs.length만으로 부족 — refBatchActive가 batch-global preflight부터
   // 아이템별 auth와 정리까지 덮고, stoppingRefs는 중지 정리 창을 잇는다.
   const refBatchRunning = refBatchActive || stoppingRefs || generatingRefs.length > 0
+  upscaylBusySignalsRef.current = {
+    isRunning,
+    isSceneBatchQueued,
+    hasPendingBatch,
+    startInFlightRef,
+    generatingSceneId,
+    videoRunning: videoAutomation.isRunning,
+    videoRetryInFlightRef,
+    refBatchRunning,
+    gatePhase: emptyRefGate?.phase,
+    restoreInFlightRef,
+  }
+  const upscaylBusy = isUpscaylBusy()
+  const upscaylBusyTooltip = t('upscayl.busyTooltip')
 
-  // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
+  // Handle stop — 활성 자동화 중지 (scene + video + ref batch + Upscayl 모두 cover).
   // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
   const handleStop = () => {
     // 실행 중인 개별 씬(type: scene)은 그대로 두고, 공유 큐에서 아직 시작하지 않은
@@ -2025,6 +2116,7 @@ function App() {
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
     if (shouldStopRefWork({ refBatchRunning, gatePhase: emptyRefGate?.phase })) stopGenerateAllRefs()
+    if (upscayl.running) void upscayl.cancel()  // rendered OK: Upscayl start=UI 클릭 유일(위 single-scene 주석 참조)
   }
 
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
@@ -2045,19 +2137,41 @@ function App() {
     automationState: { isRunning, isSceneBatchQueued, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
     refBatchRunning,
-    isRunning: isRunning || isSceneBatchQueued || videoAutomation.isRunning || refBatchRunning
+    isUpscaylRunning: upscayl.isRunningNow,
+    isRunning: isMcpRunning({
+      isRunning,
+      isSceneBatchQueued,
+      videoRunning: videoAutomation.isRunning,
+      refBatchRunning,
+      upscaylRunning: upscayl.running,
+    }),
   })
 
   // 어느 자동화든 실행 중이면 true
   // #R13-14: 큐 대기(hasPendingBatch) 구간도 busy 로 본다 — isRunning 으로 뒤집기 전 windows 에서
   //   편집/프로젝트 액션이 열려 있던 비일관성 차단. (anyRunning 은 videoRetryInFlightRef 를 제외하지만,
   //   #R24-2 로 모드 토글 차단용 반응형 videoRetryRunning 은 별도로 modeBusy 에 포함된다.)
-  const anyRunning = isRunning || videoAutomation.isRunning || hasPendingBatch
+  const anyRunning = isAnyRunning({
+    isRunning,
+    videoRunning: videoAutomation.isRunning,
+    hasPendingBatch,
+    upscaylRunning: upscayl.running,
+  })
   // 개별 씬 생성은 MCP·프로그램 배치를 공유 큐에 대기시킬 수 있어야 한다. 로직 가드가 아니라
   // 사용자가 동시에 scene batch를 넣을 수 있는 UI 진입점만 공통으로 차단한다.
   const uiSceneBatchBlocked = !!generatingSceneId
   // Header의 프로젝트/모드 액션과 네이티브 File 메뉴가 같은 전체 busy 계약을 쓴다.
-  const fullProjectBusy = anyRunning || refBatchRunning || videoRetryRunning || uiSceneBatchBlocked || thumbnailGenerating || galleryUploading
+  const fullProjectBusy = isProjectBusy({
+    isRunning,
+    videoRunning: videoAutomation.isRunning,
+    hasPendingBatch,
+    upscaylRunning: upscayl.running,
+    refBatchRunning,
+    videoRetryRunning,
+    generatingSceneId,
+    thumbnailGenerating,
+    galleryUploading,
+  })
 
   // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
   // Recent 항목은 work folder 단위로 구분되므로 현재 work folder 경로도 함께 전달.
@@ -2108,6 +2222,7 @@ function App() {
   }
 
   return (
+    <ExportSettingsProvider aspectRatio={settings.aspectRatio}>
     <div className={computeAppClass(mode)}>
       <QAProgressBanner />
       <ImportProcessingOverlay
@@ -2378,6 +2493,11 @@ function App() {
               generatingSceneId={generatingSceneId}
               references={references}
               styleThumbnails={styleThumbnails}
+              onUpscaleClick={openUpscayl}
+              upscaylBusy={upscaylBusy}
+              upscaylBusyTooltip={upscaylBusyTooltip}
+              upscaylRunning={upscayl.running}
+              restoreInFlightRef={restoreInFlightRef}
             />
           )}
           {activeTab === 'audio' && (
@@ -2631,7 +2751,15 @@ function App() {
 
         {activeTab !== 'audio' && (
           <>
-            <BottomPanelTabs view={bottomPanelView} onChange={setBottomPanelView} t={t} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <BottomPanelTabs view={bottomPanelView} onChange={setBottomPanelView} t={t} />
+              <BottomPanelActions
+                onUpscale={() => openUpscayl()}
+                upscaylBusy={upscaylBusy}
+                upscaylBusyTooltip={upscaylBusyTooltip}
+                t={t}
+              />
+            </div>
             {bottomPanelView === 'timeline' ? (
               <LiveTimeline
                 scenes={scenes}
@@ -2684,12 +2812,13 @@ function App() {
                 }).finally(() => setHasPendingBatch(false))
               }}
               onShowDetail={(scene) => setSelectedScene(scene)}
-              onClearMedia={(id) => scenesHook.updateScene(id, {
+              onClearMedia={(id) => scenesHook.updateScene(id, baseImageReplacementPatch({
                 // 이미지 미디어 전체 정리 — mediaId 남기면 isSceneEmpty 가 scene을 non-empty 로
                 // 판정해 trim 안 됨. derived 메타도 같이 비워야 history/재생성 경로가 stale 메타로 흐트러지지 않음.
                 image: null, imagePath: null, filePath: null, data: null, status: 'pending',
                 mediaId: null, seed: null, generatedAt: null, model: null,
-              })}
+              }))}
+              disabled={anyRunning}
             />
         )}
         {activeTab === 'video-text' && (
@@ -2793,12 +2922,12 @@ function App() {
               }).finally(() => setHasPendingBatch(false))
             }}
             onShowDetail={(scene) => setSelectedScene(scene)}
-            onClearMedia={(id) => scenesHook.updateScene(id, {
+            onClearMedia={(id) => scenesHook.updateScene(id, baseImageReplacementPatch({
               // 이미지 미디어 전체 정리 — mediaId 남기면 isSceneEmpty 가 scene을 non-empty 로
               // 판정해 trim 안 됨. derived 메타도 같이 비워야 history/재생성 경로가 stale 메타로 흐트러지지 않음.
               image: null, imagePath: null, filePath: null, data: null, status: 'pending',
               mediaId: null, seed: null, generatedAt: null, model: null,
-            })}
+            }))}
           />
         )}
               </>
@@ -2847,6 +2976,11 @@ function App() {
           projectName={ensureProjectName()}
           references={references}
           styleThumbnails={styleThumbnails}
+          onUpscaleClick={openUpscayl}
+          upscaylBusy={upscaylBusy}
+          upscaylBusyTooltip={upscaylBusyTooltip}
+          upscaylRunning={upscayl.running}
+          restoreInFlightRef={restoreInFlightRef}
         />
       )}
 
@@ -3000,6 +3134,10 @@ function App() {
         onExport={handleExportConfirm}
         onExportPremiere={handleExportPremiere}
         onExportVrew={handleExportVrew}
+        onExportRender={handleExportRender}
+        onCancelRender={handleCancelRender}
+        renderProgress={renderProgress}
+        renderStartedAt={renderStartedAt}
         initialFormat={exportFormat}
         projectName={ensureProjectName()}
         loading={exporting}
@@ -3168,6 +3306,18 @@ function App() {
         />
       )}
 
+      <UpscaylDialog
+        isOpen={upscaylDialogOpen}
+        onClose={() => setUpscaylDialogOpen(false)}
+        targetSceneIds={upscaylTargetSceneIds}
+        upscayl={upscayl}
+        detectState={upscaylDetectState}
+        onDetect={handleUpscaylDetect}
+        onLocate={handleUpscaylLocate}
+        upscaylBusy={upscaylBusy}
+        upscaylBusyTooltip={upscaylBusyTooltip}
+      />
+
       <DeleteSceneConfirmModal
         scene={sceneToDelete?.scene || null}
         sceneIndex={sceneToDelete?.sceneIndex ?? 0}
@@ -3208,6 +3358,7 @@ function App() {
         t={t}
       />
     </div>
+    </ExportSettingsProvider>
   )
 }
 

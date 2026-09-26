@@ -11,11 +11,12 @@
  * loading-prop branch here. Manual QA covers the project-switch case.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render as rtlRender, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import AudioPanel from '../../src/components/AudioPanel'
 import { I18nProvider } from '../../src/hooks/useI18n'
+import { renderWithExportSettings } from '../utils/renderWithExportSettings'
 
-const render = (ui, options) => rtlRender(<I18nProvider>{ui}</I18nProvider>, options)
+const render = (ui, options) => renderWithExportSettings(<I18nProvider>{ui}</I18nProvider>, options)
 
 const audioPackage = {
   folderPath: '/audio',

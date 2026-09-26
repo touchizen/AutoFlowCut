@@ -38,7 +38,8 @@ vi.mock('../../src/hooks/useExportSettings', () => ({
   useExportSettings: () => ({
     settings: currentSaved,
     isLoaded: true,
-    saveSettings: mockSaveSettings
+    saveSettings: mockSaveSettings,
+    updateSetting: vi.fn()
   })
 }))
 
@@ -53,6 +54,10 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
 }))
 
 import { ExportModal } from '../../src/components/ExportModal'
+import { ExportSettingsProvider } from '../../src/contexts/ExportSettingsContext'
+
+// self-render 병합: ExportModal 은 설정을 ExportSettingsProvider(컨텍스트)에서 읽는다 — 위 useExportSettings 모의가 그 저장소다.
+const Wrapper = ({ children }) => <ExportSettingsProvider aspectRatio="16:9">{children}</ExportSettingsProvider>
 
 const baseProps = {
   isOpen: true,
@@ -88,7 +93,7 @@ beforeEach(() => {
 
 describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
   it('옵션 select 가 렌더되고 세 선택지가 모두 보인다', async () => {
-    render(<ExportModal {...baseProps} onExport={vi.fn()} />)
+    render(<ExportModal {...baseProps} onExport={vi.fn()} />, { wrapper: Wrapper })
 
     expect(screen.getByText(/exportModal\.videoAudioVolume/)).toBeInTheDocument()
     expect(screen.getByRole('option', { name: /videoAudioMute/ })).toBeInTheDocument()
@@ -98,9 +103,19 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
 
   // 리뷰 R1 MAJOR: 이 옵션은 CapCut 만 바꾼다(프리미어·Vrew 는 영상 소리를 그대로 낸다) — 다른 탭에 보이면 음소거를 골라도
   //   소리가 나와 힌트("나레이션만 들립니다")가 거짓이 된다.
+  // self-render 병합(리뷰 B F4): self-render(render 탭)도 Veo 오디오를 원래 볼륨으로 섞는다(audioAdapter VIDEO_GAIN) — 여기 보이면 음소거가 거짓이 된다.
+  //   탭이 실제로 그려졌는지(renderTitle)부터 본다 — 안 그려져서 옵션이 없는 거면 이 단언은 공허하다.
+  it('render(self-render) 탭에서는 보이지 않는다', () => {
+    currentSaved = { ...SAVED_BASE }
+    render(<ExportModal {...baseProps} initialFormat="render" onExport={vi.fn()} onExportRender={vi.fn()} />, { wrapper: Wrapper })
+    expect(screen.getByText(/exportModal\.renderTitle/)).toBeInTheDocument()
+    expect(screen.queryByText(/exportModal\.videoAudioVolume/)).toBeNull()
+    expect(screen.queryByRole('option', { name: /videoAudioMute/ })).toBeNull()
+  })
+
   it.each(['premiere', 'vrew'])('%s 탭에서는 보이지 않는다', (fmt) => {
     currentSaved = { ...SAVED_BASE }
-    render(<ExportModal {...baseProps} initialFormat={fmt} onExport={vi.fn()} onExportPremiere={vi.fn()} onExportVrew={vi.fn()} />)
+    render(<ExportModal {...baseProps} initialFormat={fmt} onExport={vi.fn()} onExportPremiere={vi.fn()} onExportVrew={vi.fn()} />, { wrapper: Wrapper })
     expect(screen.queryByText(/exportModal\.videoAudioVolume/)).toBeNull()
     expect(screen.queryByRole('option', { name: /videoAudioMute/ })).toBeNull()
   })
@@ -108,7 +123,7 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
   it('저장된 값이 없으면 기본값은 원본 — onExport 페이로드에 videoAudioVolume: 1', async () => {
     currentSaved = { ...SAVED_BASE }
     const onExport = vi.fn()
-    render(<ExportModal {...baseProps} onExport={onExport} />)
+    render(<ExportModal {...baseProps} onExport={onExport} />, { wrapper: Wrapper })
     await waitForPath()
 
     fireEvent.click(screen.getByRole('button', { name: /exportModal\.export/ }))
@@ -120,7 +135,7 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
   it('저장된 음소거(0)는 0 그대로 — 기본값(1)에 묻히지 않는다', async () => {
     currentSaved = { ...SAVED_BASE, videoAudioVolume: 0 }
     const onExport = vi.fn()
-    render(<ExportModal {...baseProps} onExport={onExport} />)
+    render(<ExportModal {...baseProps} onExport={onExport} />, { wrapper: Wrapper })
     await waitForPath()
 
     fireEvent.click(screen.getByRole('button', { name: /exportModal\.export/ }))
@@ -132,7 +147,7 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
   it.each([['abc'], [null], [0.5]])('알 수 없는 저장값 %s 은 원본(1)으로 — 음소거로 새지 않는다', async (bad) => {
     currentSaved = { ...SAVED_BASE, videoAudioVolume: bad }
     const onExport = vi.fn()
-    render(<ExportModal {...baseProps} onExport={onExport} />)
+    render(<ExportModal {...baseProps} onExport={onExport} />, { wrapper: Wrapper })
     await waitForPath()
 
     fireEvent.click(screen.getByRole('button', { name: /exportModal\.export/ }))
@@ -144,7 +159,7 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
   it("'음소거' 선택 → onExport 페이로드 videoAudioVolume: 0 + 설정 저장", async () => {
     currentSaved = { ...SAVED_BASE }
     const onExport = vi.fn()
-    render(<ExportModal {...baseProps} onExport={onExport} />)
+    render(<ExportModal {...baseProps} onExport={onExport} />, { wrapper: Wrapper })
     await waitForPath()
 
     const select = screen.getByRole('option', { name: /videoAudioMute/ }).closest('select')

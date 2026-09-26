@@ -11,9 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-
-const mockSaveSettings = vi.fn()
+import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { renderWithExportSettings as render } from '../utils/renderWithExportSettings'
 
 vi.mock('../../src/hooks/useI18n', () => ({
   default: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
@@ -22,23 +21,6 @@ vi.mock('../../src/hooks/useI18n', () => ({
 
 vi.mock('../../src/contexts/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: false, subscription: { status: 'none' } })
-}))
-
-vi.mock('../../src/hooks/useExportSettings', () => ({
-  useExportSettings: () => ({
-    settings: {
-      pathPreset: 'capcut',
-      scaleMode: 'none',
-      includeSubtitle: true,
-      kenBurns: true,
-      kenBurnsMode: 'random',
-      kenBurnsCycle: 5,
-      kenBurnsScaleMin: 100,
-      kenBurnsScaleMax: 130
-    },
-    isLoaded: true,
-    saveSettings: mockSaveSettings
-  })
 }))
 
 vi.mock('../../src/hooks/useModalVisibility', () => ({
@@ -118,6 +100,26 @@ describe('ExportModal — 포맷 선택', () => {
     expect(onExportPremiere).not.toHaveBeenCalled()
     expect(onExport.mock.calls[0][0]).toMatchObject({
       capcutProjectNumber: '/Users/tester/Movies/CapCut/Projects/0001'
+    })
+  })
+
+  it('Context settings identity가 바뀌어도 미저장 custom 경로를 리셋하지 않는다', async () => {
+    render(<ExportModal {...baseProps} onExport={vi.fn()} onExportPremiere={vi.fn()} />)
+
+    await waitFor(() =>
+      expect(screen.getByDisplayValue('/Users/tester/Movies/CapCut/Projects/0001')).toBeInTheDocument()
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'exportModal.pathPresetCustom' }))
+    const customPath = screen.getByPlaceholderText('exportModal.customPathPlaceholder')
+    fireEvent.change(customPath, { target: { value: '/Users/tester/Custom/Draft' } })
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /exportModal\.kenBurns$/ }))
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('exportModal.customPathPlaceholder')).toHaveValue(
+        '/Users/tester/Custom/Draft',
+      )
     })
   })
 

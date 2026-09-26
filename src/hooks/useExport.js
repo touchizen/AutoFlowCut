@@ -7,7 +7,7 @@
  * JSZip 후처리(SRT 리네임)도 capcut.js / capcutCloud.js 쪽으로 이관되었습니다.
  */
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
@@ -15,6 +15,9 @@ import { resolveExportVideos, getExportFilePaths } from '../utils/sceneMedia'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
+import { isExportableScene } from '../utils/exportableScene'
+import { aspectRatioToRenderFormat } from '../utils/kenBurnsPreview'
+import { computeExportVideoSegment } from '../utils/videoSegments'
 import { computeSceneSlots } from '../services/sceneSlots'
 import { selectExportScenes, hasExportAccess } from '../services/exportSelection'
 
@@ -39,7 +42,11 @@ export function useExport({
   const { t } = useI18n()
   const [showExportModal, setShowExportModal] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [exportPhase, setExportPhase] = useState(null) // 'saving' | 'launching' | null
+  const [exportPhase, setExportPhase] = useState(null) // 'saving' | 'launching' | 'rendering' | null
+  const [renderProgress, setRenderProgress] = useState(null) // { jobId, percent, stage } | null
+  const [renderStartedAt, setRenderStartedAt] = useState(null) // 렌더 시작 시각(ms) — 진행 중 경과 표시용
+  const [renderJobId, setRenderJobId] = useState(null)       // 취소 대상 jobId
+  const cancelLatchRef = useRef(false)                       // IPC 등록 전 취소 래치
   // 마지막 선택 포맷 — split 진입 버튼 본체 동작/문구 + 모달 초기 탭에 사용. localStorage 영속.
   const [exportFormat, setExportFormat] = useState(() => {
     try { return normalizeExportFormat(localStorage.getItem('lastExportFormat')) } catch { return 'capcut' }
@@ -100,13 +107,18 @@ export function useExport({
   // M2a-4 IP-A2: story 프로젝트면 export 직전에 최신 manifest+lastPushedRevision 을 로드한다.
   // (App state 에 미리 담으면 stale — export 시점 디스크가 source of truth.) 정합 판단은
   // prepareCloudRequest 가 하고, manifest 없으면(audio 미실행) null → 오디오 없이 export.
-  // CapCut/Premiere 전용 — Vrew 는 오디오 미배치라 호출하지 않는다(IP-A3).
+  // CapCut/Premiere/Render 전용 — Vrew 는 오디오 미배치라 호출하지 않는다(IP-A3).
   //   - storyProjectPath 를 넘겨 교차 프로젝트 주입을 막는다(Codex finding 1, main 에서 대조).
   //   - 손상 manifest 는 IPC 가 reject → 삼키지 않고 상위 export 핸들러로 전파해 export 를
-  //     차단한다(Codex finding 3, fail-fast). IPC 자체가 없으면(테스트 등) optional chain → null.
+  //     차단한다(Codex finding 3, fail-fast). electronAPI 자체가 없는 테스트만 null 로 허용한다.
   const loadStoryAudio = async () => {
     if (!storyProjectPath) return null
-    const pkg = (await window.electronAPI?.storyLoadAudioPackage?.(storyProjectPath)) ?? null
+    const electronAPI = window.electronAPI
+    // preload 객체가 있는데 bridge만 없으면 배선 오류다 — 무음 export보다 즉시 차단.
+    if (electronAPI && typeof electronAPI.storyLoadAudioPackage !== 'function') {
+      throw new Error('storyLoadAudioPackage bridge is unavailable')
+    }
+    const pkg = (await electronAPI?.storyLoadAudioPackage?.(storyProjectPath)) ?? null
     // main 은 stale/손상 manifest 를 { error: kind } 로 알린다(throw 는 IPC 를 건너며 errorKind 가
     // 소실된다). 그대로 흘려보내면 이 객체가 storyAudio 로 들어가 manifest 없는 채 export 가
     // 진행된다 — 막고, kind 를 실어 던져 catch 가 로케일 문구로 바꾸게 한다.
@@ -121,6 +133,9 @@ export function useExport({
     if (!settings.projectName) {
       console.warn('[useExport] settings.projectName missing — falling back to "Untitled"')
     }
+    const renderVideoSegments = []
+    const renderSceneMeta = {}
+
     // 씬 사이 무음 간격을 앞 씬에 흡수한다 — 슬롯을 누적하면 cum(i) === start_i 가
     // 되어 이미지가 내레이션보다 앞서지 않는다. 시각이 성립하지 않는 프로젝트는
     // 전체 폴백(all-or-nothing)해서 현행과 바이트 동일하게 동작한다.
@@ -131,7 +146,7 @@ export function useExport({
     return {
       name: settings.projectName || 'Untitled',
       // 'portrait' / 'landscape' — GCF가 기대하는 값.
-      format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
+      format: aspectRatioToRenderFormat(settings.aspectRatio),
       // Phase 5 + R1 + R8 review fix: srtTrack 을 validScenes 순서로 rebase.
       // 슬롯일 때만 누적 길이(srtSlots)와 시드(start_0)를 넘긴다 — 폴백 프로젝트에
       // 넘기면 사이드카 시작 시각이 현행과 달라진다.
@@ -148,14 +163,32 @@ export function useExport({
       ),
       // P1 review fix: prune/rebase 전 원본 srtTrack 도 보존.
       rawSrtTrack: srtTrack,
+      renderVideoSegments,
+      renderSceneMeta,
       scenes: validScenes.map((s, i) => {
         // 슬롯 = 다음 씬 시작까지(간격 흡수). 폴백이면 기존 레거시 값 그대로.
         const sceneDuration = slots.imageSlots[i]
         // 씬 자기 길이 — 영상 오버레이는 슬롯이 아니라 이걸 기준으로 배치된다.
         const sourceDuration = slots.useSlots ? slots.sourceDurations[i] : null
-        const videos = resolveExportVideos(s).map(v => ({
+        const off = slots.useSlots ? (slots.sourceOffsets[i] || 0) : 0
+        const rawVideos = resolveExportVideos(s)
+        const segBasis = sourceDuration || sceneDuration
+        const segment = computeExportVideoSegment({ videos: rawVideos, sceneDurationSec: segBasis })
+        if (segment) {
+          renderVideoSegments.push({
+            sceneId: s.id,
+            source: segment.source,
+            inSec: segment.inSec + off,
+            outSec: segment.outSec + off,
+          })
+        }
+        // 모니터의 Ken Burns gate는 배치 가능한 segment가 아니라 비디오 존재 여부다.
+        renderSceneMeta[s.id] = { hasVideo: rawVideos.length > 0 }
+
+        const videos = rawVideos.map(v => ({
           source: v.source,
           path: v.path || v.data,
+          fallback: v.path ? v.data : null,
           // 자체 길이 없는 영상은 발화 구간 → 슬롯 순으로 폴백한다. 0 으로 두면
           // prepareCloudRequest 의 `videoDuration <= 0 continue` 에서 증발한다.
           duration: v.duration || sourceDuration || sceneDuration || 0,
@@ -474,15 +507,118 @@ export function useExport({
     }
   }
 
+  // Self-render — 완전 로컬 MP4. Premiere 미러(loadStoryAudio 호출 필수 — 무음 방지),
+  // 단 GCF 대신 render:export-mp4 IPC. 진행/취소 상태는 이 훅이 소유한다.
+  const handleExportRender = async ({ scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize, renderMode, renderBurnSubtitle }) => {
+    const validScenes = scenes.filter(isExportableScene)
+    if (validScenes.length === 0) {
+      toast.warning(t('toast.noGeneratedImages'))
+      setShowExportModal(false)
+      return { success: false, error: t('toast.noGeneratedImages') }
+    }
+
+    const hasFilePaths = validScenes.some(s => getExportFilePaths(s).length > 0)
+    if (hasFilePaths) {
+      const permission = await fileSystemAPI.ensurePermission()
+      if (!permission.hasPermission) {
+        toast.warning(t('toast.filePermissionRequired'))
+        setShowExportModal(false)
+        openSettings('storage')
+        return { success: false, error: t('toast.filePermissionRequired') }
+      }
+    }
+
+    setExporting(true)
+    setExportPhase('rendering')
+    setRenderProgress(null)
+    setRenderStartedAt(Date.now())
+    cancelLatchRef.current = false
+    let unsub
+    try {
+      const { exportRenderVideo, makeRenderJobId } = await import('../exporters/render.js')
+      const project = buildExportProject(validScenes)
+
+      console.log('[Export] Render — aspectRatio:', settings.aspectRatio, '→ format:', project.format)
+
+      const storyAudio = await loadStoryAudio()
+      const jobId = makeRenderJobId(project)
+      setRenderJobId(jobId)
+      unsub = window.electronAPI?.onRenderProgress?.((p) => {
+        if (p?.jobId === jobId) setRenderProgress(p)
+      })
+
+      const result = await exportRenderVideo(project, {
+        scaleMode,
+        kenBurns,
+        kenBurnsMode,
+        kenBurnsCycle,
+        kenBurnsScaleMin,
+        kenBurnsScaleMax,
+        subtitleOption,
+        subtitleFontSize,
+        audioPackage,
+        storyAudio,
+        renderMode,
+        renderBurnSubtitle
+      }, {
+        makeJobId: () => jobId,
+        shouldCancel: () => cancelLatchRef.current
+      })
+
+      if (result?.cancelled) {
+        toast.info(t('toast.renderCancelled'), 4000)
+        return { success: false, cancelled: true }
+      }
+      if (!result?.ok) {
+        // ffmpeg stderr tail 을 진단용으로 콘솔에 보존(사용자 토스트엔 요약만 뜬다).
+        if (result?.stderrTail) console.error('[Render] ffmpeg stderr tail:', result.stderrTail)
+        throw new Error(result?.error || 'Render failed')
+      }
+
+      toast.success(t('toast.renderComplete'), 6000)
+      if (result.outPath && window.electronAPI?.revealPath) {
+        try { await window.electronAPI.revealPath(result.outPath) } catch { /* best-effort */ }
+      }
+
+      await new Promise(r => setTimeout(r, 800))
+      setShowExportModal(false)
+      onExportSuccess?.()
+      return { success: true, outPath: result.outPath }
+    } catch (error) {
+      toast.error(t('toast.exportFailed', { error: resolveDisplayError(t, error.errorKind, error.message) }))
+      return { success: false, error: error.message }
+    } finally {
+      unsub?.()
+      setExporting(false)
+      setExportPhase(null)
+      setRenderProgress(null)
+      setRenderStartedAt(null)
+      setRenderJobId(null)
+    }
+  }
+
+  const handleCancelRender = () => {
+    // 몇 시간짜리 렌더를 한 번의 클릭으로 버리지 않도록 확인.
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function'
+        && !window.confirm(t('exportModal.renderCancelConfirm'))) return
+    // IPC 등록 전(jobId 미확정)이면 래치로 예약 — exportRenderVideo 가 등록 직전 확인해 멈춘다.
+    cancelLatchRef.current = true
+    if (renderJobId) window.electronAPI?.renderCancel?.({ jobId: renderJobId })
+  }
+
   return {
     showExportModal,
     setShowExportModal,
     exporting,
     exportPhase,
     exportFormat,
+    renderProgress,
+    renderStartedAt,
     handleExportClick,
     handleExportConfirm,
     handleExportPremiere,
-    handleExportVrew
+    handleExportVrew,
+    handleExportRender,
+    handleCancelRender
   }
 }

@@ -1,12 +1,83 @@
 // handleStart 초입 guard — hasPendingBatch는 M2 failure 모달이 열린 동안 유지되어 MCP
 // stop-restart의 scene start 재호출을 막는 latch다.
-export function isStartBlocked({ isRunning, videoRunning, hasPendingBatch, retryInFlight, refBatchRunning }) {
+export function isStartBlocked({ isRunning, videoRunning, hasPendingBatch, retryInFlight, upscaylRunning, refBatchRunning }) {
   return !!(
     isRunning
     || videoRunning
     || hasPendingBatch
     || retryInFlight
+    || upscaylRunning
     || refBatchRunning
+  )
+}
+
+// Upscayl 시작은 같은 이미지 파일을 건드리는 생성 작업만 역방향으로 막는다.
+export function isUpscaylStartBlocked({
+  isRunning,
+  isSceneBatchQueued,
+  hasPendingBatch,
+  startInFlight,
+  generatingSceneId,
+  videoRunning,
+  videoRetryInFlight,
+  refBatchRunning,
+  gatePhase,
+  restoreInFlight,
+}) {
+  return !!(
+    isRunning
+    || isSceneBatchQueued
+    || hasPendingBatch
+    || startInFlight
+    || generatingSceneId
+    || videoRunning
+    || videoRetryInFlight
+    || refBatchRunning
+    || gatePhase === 'busy'
+    || restoreInFlight
+  )
+}
+
+// App의 anyRunning 계약 — 썸네일/갤러리 작업은 포함하지 않는다.
+export function isAnyRunning({ isRunning, videoRunning, hasPendingBatch, upscaylRunning }) {
+  return !!(
+    isRunning
+    || videoRunning
+    || hasPendingBatch
+    || upscaylRunning
+  )
+}
+
+// MCP stop/wait용 aggregate — batch-status의 별도 ref 재계산과 섞지 않는다.
+export function isMcpRunning({ isRunning, isSceneBatchQueued, videoRunning, refBatchRunning, upscaylRunning }) {
+  return !!(
+    isRunning
+    || isSceneBatchQueued
+    || videoRunning
+    || refBatchRunning
+    || upscaylRunning
+  )
+}
+
+// App의 fullProjectBusy는 anyRunning 위에 프로젝트 액션 차단 신호를 더한다.
+export function isProjectBusy({
+  isRunning,
+  videoRunning,
+  hasPendingBatch,
+  upscaylRunning,
+  refBatchRunning,
+  videoRetryRunning,
+  generatingSceneId,
+  thumbnailGenerating,
+  galleryUploading,
+}) {
+  return !!(
+    isAnyRunning({ isRunning, videoRunning, hasPendingBatch, upscaylRunning })
+    || refBatchRunning
+    || videoRetryRunning
+    || generatingSceneId
+    || thumbnailGenerating
+    || galleryUploading
   )
 }
 

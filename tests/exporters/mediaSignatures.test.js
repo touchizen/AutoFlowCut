@@ -5,6 +5,12 @@ import { rawMediaExtension, isRawBase64Media } from '../../src/exporters/mediaSi
 import { isFilePath } from '../../src/exporters/prepareCloudRequest'
 
 describe('mediaSignatures', () => {
+  it('detects WebM raw base64 and keeps MP4 detection', () => {
+    expect(rawMediaExtension('GkXfo0FBQUFB')).toBe('webm')
+    expect(isRawBase64Media('GkXfo0FBQUFB')).toBe(true)
+    expect(rawMediaExtension('AAAAGGZ0eXA')).toBe('mp4')
+  })
+
   it('maps raw base64 signatures to extensions (incl. data: prefix)', () => {
     expect(rawMediaExtension('/9j/4AAQ')).toBe('jpg')
     expect(rawMediaExtension('iVBORw0KG')).toBe('png')

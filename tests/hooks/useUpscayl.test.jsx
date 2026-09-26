@@ -1,0 +1,443 @@
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useUpscayl } from '../../src/hooks/useUpscayl.js'
+import { isUpscaylStartBlocked } from '../../src/services/startGuard.js'
+
+const OPTIONS = { model: 'ultrasharp-4x', scale: 4 }
+
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+function scene(id, extra = {}) {
+  return {
+    id,
+    status: 'done',
+    imagePath: `/project/scenes/${id}.png`,
+    ...extra,
+  }
+}
+
+function setup({
+  scenes = [scene('scene_1')],
+  projectNameRef = { current: 'project-a' },
+  run = vi.fn().mockResolvedValue({ ok: true, base64: 'UPSCALED', width: 400, height: 300 }),
+  cancel = vi.fn().mockResolvedValue({ ok: true }),
+  saveImage = vi.fn().mockResolvedValue({ success: true, path: '/saved/scene.png' }),
+  updateScene = vi.fn(),
+  isBusy,
+  scenesRef,
+} = {}) {
+  const upscaylAPI = { run, cancel }
+  const hook = renderHook(
+    ({ busyCheck, currentScenes = scenes }) => useUpscayl({
+      scenes: currentScenes,
+      updateScene,
+      projectNameRef,
+      saveImage,
+      upscaylAPI,
+      options: OPTIONS,
+      ...(busyCheck ? { isBusy: busyCheck } : {}),
+      ...(scenesRef ? { scenesRef } : {}),
+    }),
+    { initialProps: { busyCheck: isBusy, currentScenes: scenes } },
+  )
+  return { ...hook, projectNameRef, upscaylAPI, saveImage, updateScene, isBusy }
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('useUpscayl 외부 busy guard', () => {
+  it('history restore live latch가 켜져 있으면 React commit 전에도 startBatch를 거절한다', async () => {
+    const restoreInFlightRef = { current: true }
+    const harness = setup({
+      isBusy: () => isUpscaylStartBlocked({
+        restoreInFlight: restoreInFlightRef.current,
+      }),
+    })
+    let response
+
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toEqual({ ok: false, error: 'busy' })
+    expect(harness.upscaylAPI.run).not.toHaveBeenCalled()
+    expect(harness.updateScene).not.toHaveBeenCalled()
+  })
+
+  it('live running reader는 state commit과 무관하게 내부 latch를 읽는다', async () => {
+    const runGate = deferred()
+    const harness = setup({ run: vi.fn(() => runGate.promise) })
+
+    expect(harness.result.current.isRunningNow).toBeTypeOf('function')
+    expect(harness.result.current.isRunningNow()).toBe(false)
+
+    let batch
+    act(() => { batch = harness.result.current.startBatch() })
+    expect(harness.result.current.isRunningNow()).toBe(true)
+
+    runGate.resolve({ ok: false, error: 'stopped' })
+    await act(async () => { await batch })
+    expect(harness.result.current.isRunningNow()).toBe(false)
+  })
+
+  it('외부가 busy면 target/path 캡처·state 변경·IPC 없이 busy를 반환한다', async () => {
+    const readImagePath = vi.fn(() => '/project/scenes/scene_1.png')
+    const guardedScene = {
+      id: 'scene_1',
+      status: 'done',
+      get imagePath() { return readImagePath() },
+    }
+    const readProjectName = vi.fn(() => 'project-a')
+    const projectNameRef = {}
+    Object.defineProperty(projectNameRef, 'current', { get: readProjectName })
+    const isBusy = vi.fn(() => true)
+    const harness = setup({ scenes: [guardedScene], projectNameRef, isBusy })
+    let response
+
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toEqual({ ok: false, error: 'busy' })
+    expect(isBusy).toHaveBeenCalledTimes(1)
+    expect(readImagePath).not.toHaveBeenCalled()
+    expect(readProjectName).not.toHaveBeenCalled()
+    expect(harness.upscaylAPI.run).not.toHaveBeenCalled()
+    expect(harness.upscaylAPI.cancel).not.toHaveBeenCalled()
+    expect(harness.saveImage).not.toHaveBeenCalled()
+    expect(harness.updateScene).not.toHaveBeenCalled()
+    expect(harness.result.current).toMatchObject({
+      running: false,
+      current: 0,
+      currentSceneId: null,
+      total: 0,
+      completed: 0,
+      failures: [],
+      skipped: 0,
+      cancelled: false,
+      stopped: false,
+      startedAt: null,
+      durationMs: null,
+    })
+  })
+
+  it('외부 busy 콜백을 주입하지 않으면 기존처럼 배치를 실행한다', async () => {
+    const harness = setup()
+    let response
+
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toMatchObject({ ok: true, completed: 1 })
+    expect(harness.upscaylAPI.run).toHaveBeenCalledTimes(1)
+    expect(harness.updateScene).toHaveBeenCalledTimes(1)
+  })
+
+  it('자체 실행 중이면 외부 busy 콜백보다 먼저 거절한다', async () => {
+    const runGate = deferred()
+    const isBusy = vi.fn(() => false)
+    const harness = setup({ run: vi.fn(() => runGate.promise), isBusy })
+    let firstBatch
+
+    act(() => { firstBatch = harness.result.current.startBatch() })
+    await waitFor(() => expect(harness.upscaylAPI.run).toHaveBeenCalledTimes(1))
+    expect(isBusy).toHaveBeenCalledTimes(1)
+
+    let response
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toEqual({ ok: false, error: 'busy' })
+    expect(isBusy).toHaveBeenCalledTimes(1)
+
+    runGate.resolve({ ok: false, error: 'stopped' })
+    await act(async () => { await firstBatch })
+  })
+
+  it('rerender로 교체된 최신 외부 busy 콜백을 읽는다', async () => {
+    const staleCheck = vi.fn(() => false)
+    const latestCheck = vi.fn(() => true)
+    const harness = setup({ isBusy: staleCheck })
+
+    harness.rerender({ busyCheck: latestCheck })
+    let response
+    await act(async () => { response = await harness.result.current.startBatch() })
+
+    expect(response).toEqual({ ok: false, error: 'busy' })
+    expect(staleCheck).not.toHaveBeenCalled()
+    expect(latestCheck).toHaveBeenCalledTimes(1)
+    expect(harness.upscaylAPI.run).not.toHaveBeenCalled()
+  })
+})
+
+describe('useUpscayl 대상 선정과 성공', () => {
+  it('scene writer가 live ref를 동기 갱신하면 React rerender 전 startBatch도 새 imagePath를 읽는다', async () => {
+    const scenesRef = { current: [scene('scene_1', { imagePath: '/old.png' })] }
+    const harness = setup({ scenes: scenesRef.current, scenesRef })
+    const startBatchBeforeUpdate = harness.result.current.startBatch
+
+    scenesRef.current = [scene('scene_1', { imagePath: '/same-tick-new.png' })]
+    await act(async () => { await startBatchBeforeUpdate(['scene_1']) })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: '/same-tick-new.png',
+    }))
+    expect(harness.updateScene).toHaveBeenCalledWith('scene_1', expect.any(Object))
+  })
+
+  it('startBatch 함수가 만들어진 뒤 scene이 갱신돼도 호출 시점의 새 imagePath를 읽는다', async () => {
+    const harness = setup({
+      scenes: [
+        scene('scene_1', { imagePath: '/old.png' }),
+        scene('scene_2'),
+      ],
+    })
+    const startBatchBeforeUpdate = harness.result.current.startBatch
+
+    harness.rerender({
+      busyCheck: undefined,
+      currentScenes: [
+        scene('scene_2'),
+        scene('scene_1', { imagePath: '/new.png' }),
+      ],
+    })
+    await act(async () => { await startBatchBeforeUpdate(['scene_1']) })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: '/new.png',
+    }))
+    expect(harness.updateScene).toHaveBeenCalledWith('scene_1', expect.any(Object))
+  })
+
+  it('완료+파일경로+미업스케일 씬만 처리하고 나머지는 skipped로 센다', async () => {
+    const harness = setup({
+      scenes: [
+        scene('eligible'),
+        scene('base64-only', { imagePath: null, image: 'BASE64' }),
+        scene('already', { upscaledAt: 100 }),
+        scene('pending', { status: 'pending' }),
+      ],
+    })
+
+    await act(async () => { await harness.result.current.startBatch() })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledTimes(1)
+    expect(harness.upscaylAPI.run).toHaveBeenCalledWith({
+      inputPath: '/project/scenes/eligible.png',
+      model: 'ultrasharp-4x',
+      scale: 4,
+    })
+    expect(harness.result.current).toMatchObject({
+      running: false,
+      current: 1,
+      total: 1,
+      completed: 1,
+      failures: [],
+      skipped: 3,
+    })
+  })
+
+  it('targetSceneIds가 있으면 선택한 적격 씬만 처리한다', async () => {
+    const harness = setup({ scenes: [scene('scene_1'), scene('scene_2')] })
+
+    await act(async () => { await harness.result.current.startBatch(['scene_2']) })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledTimes(1)
+    expect(harness.upscaylAPI.run).toHaveBeenCalledWith(expect.objectContaining({
+      inputPath: '/project/scenes/scene_2.png',
+    }))
+    expect(harness.result.current).toMatchObject({ total: 1, skipped: 0 })
+  })
+
+  it('startBatch 옵션 override를 해당 배치 실행에 사용한다', async () => {
+    const harness = setup()
+
+    await act(async () => {
+      await harness.result.current.startBatch(null, { model: 'remacri-4x', scale: 2 })
+    })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'remacri-4x',
+      scale: 2,
+    }))
+  })
+
+  it('각 씬을 run→saveImage→updateScene 순서로 완전히 끝낸 뒤 다음 씬으로 간다', async () => {
+    const order = []
+    const run = vi.fn(async ({ inputPath }) => {
+      order.push(`run:${inputPath}`)
+      return { ok: true, base64: `B64:${inputPath}`, width: 800, height: 600 }
+    })
+    const saveImage = vi.fn(async (_project, sceneId) => {
+      order.push(`save:${sceneId}`)
+      return { success: true, path: `/saved/${sceneId}.png` }
+    })
+    const updateScene = vi.fn((sceneId) => { order.push(`update:${sceneId}`) })
+    const harness = setup({ scenes: [scene('one'), scene('two')], run, saveImage, updateScene })
+
+    await act(async () => { await harness.result.current.startBatch() })
+
+    expect(order).toEqual([
+      'run:/project/scenes/one.png',
+      'save:one',
+      'update:one',
+      'run:/project/scenes/two.png',
+      'save:two',
+      'update:two',
+    ])
+  })
+
+  it('저장 성공 시 capturedProject와 upscayl metadata를 쓰고 이미지 상태를 교체한다', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1700000000000)
+    const harness = setup()
+
+    await act(async () => { await harness.result.current.startBatch() })
+
+    expect(harness.saveImage).toHaveBeenCalledWith(
+      'project-a',
+      'scene_1',
+      'UPSCALED',
+      'upscayl',
+      { upscaleModel: 'ultrasharp-4x', scale: 4, timestamp: 1700000000000 },
+    )
+    expect(harness.updateScene).toHaveBeenCalledWith('scene_1', {
+      upscaledAt: 1700000000000,
+      upscaled_size: null,
+      imagePath: '/saved/scene.png',
+      image: null,
+      image_size: { width: 400, height: 300 },
+      generatedAt: 1700000000000,
+    })
+  })
+})
+
+describe('useUpscayl 프로젝트 전환과 실패 처리', () => {
+  it('run await 뒤 프로젝트가 바뀌면 현재 결과와 남은 씬을 버린다', async () => {
+    const projectNameRef = { current: 'project-a' }
+    const run = vi.fn(async () => {
+      projectNameRef.current = 'project-b'
+      return { ok: true, base64: 'UPSCALED', width: 400, height: 300 }
+    })
+    const harness = setup({ scenes: [scene('one'), scene('two')], projectNameRef, run })
+
+    await act(async () => { await harness.result.current.startBatch() })
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(harness.saveImage).not.toHaveBeenCalled()
+    expect(harness.updateScene).not.toHaveBeenCalled()
+  })
+
+  it('save await 뒤 프로젝트가 바뀌면 patch하지 않고 남은 씬도 중단한다', async () => {
+    const projectNameRef = { current: 'project-a' }
+    const saveImage = vi.fn(async () => {
+      projectNameRef.current = 'project-b'
+      return { success: true, path: '/project-a/scenes/one.png' }
+    })
+    const harness = setup({ scenes: [scene('one'), scene('two')], projectNameRef, saveImage })
+
+    await act(async () => { await harness.result.current.startBatch() })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledTimes(1)
+    expect(saveImage).toHaveBeenCalledWith(
+      'project-a',
+      'one',
+      'UPSCALED',
+      'upscayl',
+      expect.any(Object),
+    )
+    expect(harness.updateScene).not.toHaveBeenCalled()
+  })
+
+  it('run 실패를 기록하고 다음 씬은 계속 처리한다', async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ ok: false, error: 'GPU failed' })
+      .mockResolvedValueOnce({ ok: true, base64: 'SECOND', width: 200, height: 100 })
+    const harness = setup({ scenes: [scene('one'), scene('two')], run })
+
+    await act(async () => { await harness.result.current.startBatch() })
+
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(harness.saveImage).toHaveBeenCalledTimes(1)
+    expect(harness.updateScene).toHaveBeenCalledWith('two', expect.any(Object))
+    expect(harness.result.current.failures).toEqual([{ sceneId: 'one', error: 'GPU failed' }])
+  })
+
+  it('save 실패를 기록하고 다음 씬은 계속 처리한다', async () => {
+    const saveImage = vi.fn()
+      .mockResolvedValueOnce({ success: false, error: 'Disk full' })
+      .mockResolvedValueOnce({ success: true, path: '/saved/two.png' })
+    const harness = setup({ scenes: [scene('one'), scene('two')], saveImage })
+
+    await act(async () => { await harness.result.current.startBatch() })
+
+    expect(harness.upscaylAPI.run).toHaveBeenCalledTimes(2)
+    expect(harness.updateScene).toHaveBeenCalledTimes(1)
+    expect(harness.updateScene).toHaveBeenCalledWith('two', expect.any(Object))
+    expect(harness.result.current.failures).toEqual([{ sceneId: 'one', error: 'Disk full' }])
+  })
+})
+
+describe('useUpscayl 취소', () => {
+  it('cancel이 IPC 취소를 호출하고 현재 결과 저장 및 다음 반복을 막는다', async () => {
+    const pendingRun = deferred()
+    const run = vi.fn(() => pendingRun.promise)
+    const harness = setup({ scenes: [scene('one'), scene('two')], run })
+    let batchPromise
+
+    act(() => { batchPromise = harness.result.current.startBatch() })
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1))
+    expect(harness.result.current.running).toBe(true)
+
+    await act(async () => { await harness.result.current.cancel() })
+    pendingRun.resolve({ ok: true, base64: 'LATE', width: 100, height: 100 })
+    await act(async () => { await batchPromise })
+
+    expect(harness.upscaylAPI.cancel).toHaveBeenCalledTimes(1)
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(harness.saveImage).not.toHaveBeenCalled()
+    expect(harness.updateScene).not.toHaveBeenCalled()
+    expect(harness.result.current.running).toBe(false)
+  })
+
+  it('N개 중 1개 patch 후 취소하면 completed는 실제 완료한 1개만 센다', async () => {
+    const secondRun = deferred()
+    const run = vi.fn()
+      .mockResolvedValueOnce({ ok: true, base64: 'FIRST', width: 100, height: 100 })
+      .mockImplementationOnce(() => secondRun.promise)
+    const harness = setup({ scenes: [scene('one'), scene('two'), scene('three')], run })
+    let batchPromise
+
+    act(() => { batchPromise = harness.result.current.startBatch() })
+    await waitFor(() => {
+      expect(harness.updateScene).toHaveBeenCalledTimes(1)
+      expect(run).toHaveBeenCalledTimes(2)
+    })
+
+    await act(async () => { await harness.result.current.cancel() })
+    secondRun.resolve({ ok: false, error: 'cancelled' })
+    await act(async () => { await batchPromise })
+
+    expect(harness.result.current).toMatchObject({
+      running: false,
+      total: 3,
+      completed: 1,
+      cancelled: true,
+      stopped: false,
+    })
+  })
+
+  it('실행 중 unmount하면 IPC 취소를 호출한다', async () => {
+    const pendingRun = deferred()
+    const run = vi.fn(() => pendingRun.promise)
+    const harness = setup({ run })
+    let batchPromise
+
+    act(() => { batchPromise = harness.result.current.startBatch() })
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1))
+    harness.unmount()
+
+    expect(harness.upscaylAPI.cancel).toHaveBeenCalledTimes(1)
+    pendingRun.resolve({ ok: false, error: 'cancelled' })
+    await batchPromise
+  })
+})

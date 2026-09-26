@@ -2,11 +2,12 @@ import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { useAuth } from '../contexts/AuthContext'
-import { useExportSettings } from '../hooks/useExportSettings'
+import { useExportSettingsContext } from '../contexts/ExportSettingsContext'
 import { useModalVisibility } from '../hooks/useModalVisibility'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { normalizeExportFormat } from '../utils/exportFormat'
-import { formatExpiryDate } from '../utils/formatters'
+import { formatExpiryDate, formatElapsedMs } from '../utils/formatters'
+import { toKenBurnsRatios } from '../utils/kenBurnsPreview'
 import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'
 import './ExportModal.css'
 
@@ -49,19 +50,45 @@ function FormatCard({ icon, title, description, children }) {
   )
 }
 
-export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExportVrew, initialFormat = 'capcut', projectName, loading, exportPhase, hasSubtitles, onUpgradeClick,
+export const ExportModal = ({
+  isOpen,
+  onClose,
+  onExport,
+  onExportPremiere,
+  onExportVrew,
+  onExportRender,
+  onCancelRender,
+  renderProgress,
+  renderStartedAt,
+  initialFormat = 'capcut',
+  projectName,
+  loading,
+  exportPhase,
+  hasSubtitles,
+  onUpgradeClick,
   // 이미지가 있는 pending 씬을 포함할지 묻기 위한 카운트. 씬 배열을 통째로 넘기지
   // 않는다 — 모달은 표시만 하고 분류는 App 이 한 번 한다.
   // ⚠️ 기본값 필수: 기존 테스트들이 이 prop 을 안 넘긴다.
-  totalSceneCount = 0, readyCount = 0, pendingWithImageCount = 0 }) => {
+  totalSceneCount = 0,
+  readyCount = 0,
+  pendingWithImageCount = 0,
+}) => {
   const { t, lang } = useI18n()
   const { isAuthenticated, subscription } = useAuth()
-  const { settings: savedSettings, isLoaded, saveSettings } = useExportSettings()
+  const { settings, isLoaded, saveSettings, updateSetting } = useExportSettingsContext()
+  const {
+    scaleMode,
+    renderMode,
+    kenBurns,
+    kenBurnsMode,
+    kenBurnsScaleMin,
+    kenBurnsScaleMax,
+  } = settings
 
   // OS 감지 (기본값 결정용)
   const detectedMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
 
-  // 내보내기 포맷 — 'capcut'(기본) | 'premiere' | 'vrew'.
+  // 내보내기 포맷 — 'capcut'(기본) | 'premiere' | 'vrew' | 'render'.
   // CapCut 은 draft 폴더 경로 + 설치확인 + 앱 실행, Premiere 는 프로젝트 폴더에
   // .prproj 자동 저장(경로 UI 불필요). Scale/KenBurns/자막 옵션은 공유.
   const [format, setFormat] = useState(() => normalizeExportFormat(initialFormat))
@@ -91,36 +118,29 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   const [pathPreset, setPathPreset] = useState('capcut')
   const [pathManuallyEdited, setPathManuallyEdited] = useState(false)
   const [pathCopied, setPathCopied] = useState(false)
-  const [scaleMode, setScaleMode] = useState('none')
   const [includeSubtitle, setIncludeSubtitle] = useState(true)
+  const [renderBurnSubtitle, setRenderBurnSubtitle] = useState(true)
   const [videoAudioVolume, setVideoAudioVolume] = useState(DEFAULT_VIDEO_AUDIO_VOLUME)
-  const [kenBurns, setKenBurns] = useState(true)
-  const [kenBurnsMode, setKenBurnsMode] = useState('random')
   const [kenBurnsCycle, setKenBurnsCycle] = useState(5)
-  const [kenBurnsScaleMin, setKenBurnsScaleMin] = useState(100)
-  const [kenBurnsScaleMax, setKenBurnsScaleMax] = useState(130)
   const [selectedOS, setSelectedOS] = useState(detectedMac ? 'mac' : 'windows')
   const [detectedBasePath, setDetectedBasePath] = useState('')  // 감지된 CapCut basePath
 
   // 현재 OS에 해당하는 프리셋 목록
   const currentPresets = PATH_PRESETS[selectedOS] || PATH_PRESETS.windows
+  const didInitRef = useRef(false)
 
   // 저장된 설정 로드
   useEffect(() => {
-    if (isLoaded) {
-      setScaleMode(savedSettings.scaleMode || 'none')
-      setIncludeSubtitle(savedSettings.includeSubtitle !== false)
-      setKenBurns(savedSettings.kenBurns !== false)
-      setKenBurnsMode(savedSettings.kenBurnsMode || 'random')
-      setKenBurnsCycle(savedSettings.kenBurnsCycle || 5)
-      setKenBurnsScaleMin(savedSettings.kenBurnsScaleMin || 100)
-      setKenBurnsScaleMax(savedSettings.kenBurnsScaleMax || 130)
-      // 0 이 유효값이라 || 폴백을 쓰면 안 된다
-      setVideoAudioVolume(toVideoAudioVolume(savedSettings.videoAudioVolume))
-      // pathPreset 로드
-      setPathPreset(savedSettings.pathPreset || 'capcut')
-    }
-  }, [isLoaded, savedSettings])
+    if (!isLoaded || didInitRef.current) return
+    didInitRef.current = true
+    setIncludeSubtitle(settings.includeSubtitle !== false)
+    setRenderBurnSubtitle(settings.renderBurnSubtitle !== false)
+    setKenBurnsCycle(settings.kenBurnsCycle || 5)
+    // 0 이 유효값이라 || 폴백을 쓰면 안 된다
+    setVideoAudioVolume(toVideoAudioVolume(settings.videoAudioVolume))
+    // pathPreset 로드
+    setPathPreset(settings.pathPreset || 'capcut')
+  }, [isLoaded, settings])
 
   // 모달 열릴 때 진입에서 고른 포맷으로 초기화 (모달은 unmount 안 되므로 useState 초기값만으론 부족).
   // useLayoutEffect — paint 전 동기 적용해 "이전 탭이 한 프레임 보이는" 깜빡임 방지.
@@ -231,6 +251,16 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   // 모달 열릴 때 Flow 뷰 숨기기 (네이티브 레이어는 CSS z-index로 가릴 수 없음)
   useModalVisibility(isOpen)
 
+  // 렌더 중 경과 시간 실시간 갱신(1초 tick). early return 앞 — hook 순서 고정.
+  const renderBusyForTick = format === 'render' && (loading || exportPhase === 'rendering')
+  const [renderNowTick, setRenderNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (!renderBusyForTick || !renderStartedAt) return undefined
+    setRenderNowTick(Date.now())
+    const id = setInterval(() => setRenderNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [renderBusyForTick, renderStartedAt])
+
   if (!isOpen) return null
 
   // preflight 부터 dispatching 까지 액션을 잠근다. choosing 만 잠그면 preflight 중
@@ -246,27 +276,33 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   const vrewTargetPath = `${vrewOutputFolder}/${safeProjectName}.vrew`
 
   // 포맷 공통 옵션 — CapCut/Premiere 콜백에 동일하게 전달.
-  const buildExportOptions = () => ({
-    scaleMode,  // 'fill' | 'fit' | 'none'
-    kenBurns,
-    kenBurnsMode,
-    kenBurnsCycle: Number(kenBurnsCycle) || 5,
-    kenBurnsScaleMin: Number(kenBurnsScaleMin) / 100 || 1.0,  // % → 비율
-    kenBurnsScaleMax: Number(kenBurnsScaleMax) / 100 || 1.15,  // % → 비율
-    subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
-    videoAudioVolume: toVideoAudioVolume(videoAudioVolume)  // 0=음소거 / 0.15=앰비언스 / 1=원본(기본)
-  })
+  const buildExportOptions = () => {
+    const { mode, scaleMin, scaleMax } = toKenBurnsRatios({
+      kenBurnsMode,
+      kenBurnsScaleMin,
+      kenBurnsScaleMax,
+    })
+
+    return {
+      scaleMode,  // 'fill' | 'fit' | 'none'
+      kenBurns,
+      kenBurnsMode: mode,
+      kenBurnsScaleMin: scaleMin,
+      kenBurnsScaleMax: scaleMax,
+      kenBurnsCycle: Number(kenBurnsCycle) || 5,
+      subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
+      renderMode,
+      renderBurnSubtitle,
+      videoAudioVolume: toVideoAudioVolume(videoAudioVolume),  // 0=음소거 / 0.15=앰비언스 / 1=원본(기본)
+    }
+  }
 
   const persistOptions = () => {
     saveSettings({
       pathPreset,
-      scaleMode,
       includeSubtitle,
-      kenBurns,
-      kenBurnsMode,
+      renderBurnSubtitle,
       kenBurnsCycle: Number(kenBurnsCycle) || 5,
-      kenBurnsScaleMin: Number(kenBurnsScaleMin) || 100,
-      kenBurnsScaleMax: Number(kenBurnsScaleMax) || 130,
       videoAudioVolume: toVideoAudioVolume(videoAudioVolume),
     })
   }
@@ -281,7 +317,8 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   const callbackFor = (kind) => (
     kind === 'premiere' ? onExportPremiere
       : kind === 'vrew' ? (onExportVrew || (() => {}))
-        : onExport
+        : kind === 'render' ? (onExportRender || (() => {}))
+          : onExport
   )
 
   // phase 를 여는 유일한 지점이자 닫는 유일한 지점.
@@ -314,6 +351,12 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
     phaseRef.current = 'preflight'
     setPhase('preflight')
     try {
+      // 로컬 렌더는 pending 포함 선택 대상이 아니며 설치/경로 preflight 도 없다.
+      // 공통 dispatch 를 타서 동기 중복 클릭 latch와 설정 저장은 유지한다.
+      if (format === 'render') {
+        await dispatch('render', buildExportOptions(), false)
+        return
+      }
       const prepared = format === 'premiere' ? await preparePremiere(my)
         : format === 'vrew' ? await prepareVrew(my)
           : await prepareCapcut(my)
@@ -483,8 +526,15 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
     }
   }
 
+  const isRenderBusy = format === 'render' && (loading || exportPhase === 'rendering')
+  const renderElapsedMs = isRenderBusy && renderStartedAt ? Math.max(0, renderNowTick - renderStartedAt) : 0
+  const progressNumber = Number(renderProgress?.percent)
+  const renderPercent = Number.isFinite(progressNumber)
+    ? Math.min(100, Math.max(0, Math.round(progressNumber)))
+    : 0
+
   return createPortal(
-    <div className="export-modal-overlay" onClick={loading ? undefined : handleClose}>
+    <div className="export-modal-overlay" onClick={loading || isRenderBusy ? undefined : handleClose}>
       {pendingChoice && (
         <div className="pending-choice-backdrop" onClick={(e) => e.stopPropagation()}>
           <div className="pending-choice" role="dialog" aria-modal="true">
@@ -514,30 +564,59 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
       )}
       <div className="export-modal" onClick={(e) => e.stopPropagation()}>
         {/* 로딩 오버레이 */}
-        {loading && (
+        {(loading || isRenderBusy) && (
           <div className="export-loading-overlay">
             <div className="export-loading-content">
-              <div className="export-loading-spinner"></div>
-              <p>{exportPhase === 'launching'
-                ? (format === 'premiere'
-                  ? t('exportModal.premiereLaunching')
-                  : format === 'vrew'
-                    ? t('exportModal.vrewLaunching')
-                    : t('exportModal.launchingCapcut'))
-                : (format === 'premiere'
-                  ? t('exportModal.premiereExporting')
-                  : format === 'vrew'
-                    ? t('exportModal.vrewExporting')
-                    : t('exportModal.preparingPackage'))
-              }</p>
-              <span className="export-loading-hint">{exportPhase === 'launching'
-                ? (format === 'premiere'
-                  ? t('exportModal.premiereLaunchingHint')
-                  : format === 'vrew'
-                    ? t('exportModal.vrewLaunchingHint')
-                    : t('exportModal.launchingHint'))
-                : t('exportModal.pleaseWait')
-              }</span>
+              {isRenderBusy ? (
+                <>
+                  <p>{t('exportModal.renderProgress')}</p>
+                  <div
+                    className="render-progress-bar"
+                    role="progressbar"
+                    aria-label={t('exportModal.renderProgress')}
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow={renderPercent}
+                  >
+                    <div className="render-progress-fill" style={{ width: `${renderPercent}%` }} />
+                  </div>
+                  <span className="render-progress-percent">
+                    {renderPercent}%
+                    {renderStartedAt != null && <span className="render-progress-elapsed"> · {t('exportModal.renderElapsed', { time: formatElapsedMs(renderElapsedMs) })}</span>}
+                  </span>
+                  <button
+                    type="button"
+                    className="export-btn export-btn-cancel render-cancel-btn"
+                    onClick={onCancelRender}
+                  >
+                    {t('exportModal.renderCancel')}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="export-loading-spinner"></div>
+                  <p>{exportPhase === 'launching'
+                    ? (format === 'premiere'
+                      ? t('exportModal.premiereLaunching')
+                      : format === 'vrew'
+                        ? t('exportModal.vrewLaunching')
+                        : t('exportModal.launchingCapcut'))
+                    : (format === 'premiere'
+                      ? t('exportModal.premiereExporting')
+                      : format === 'vrew'
+                        ? t('exportModal.vrewExporting')
+                        : t('exportModal.preparingPackage'))
+                  }</p>
+                  <span className="export-loading-hint">{exportPhase === 'launching'
+                    ? (format === 'premiere'
+                      ? t('exportModal.premiereLaunchingHint')
+                      : format === 'vrew'
+                        ? t('exportModal.vrewLaunchingHint')
+                        : t('exportModal.launchingHint'))
+                    : t('exportModal.pleaseWait')
+                  }</span>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -547,10 +626,12 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
               ? t('exportModal.premiereTitle')
               : format === 'vrew'
                 ? t('exportModal.vrewTitle')
-                : t('exportModal.title')}</h2>
+                : format === 'render'
+                  ? t('exportModal.renderTitle')
+                  : t('exportModal.title')}</h2>
             {/* 'loading' 상태에서 0/0 garbage 가 새는 걸 막기 위해 trial/expired 만 명시.
                 useExport gateway 가 loading 윈도우엔 모달을 안 열지만, defense in depth. */}
-            {isAuthenticated && (subscription.status === 'trial' || subscription.status === 'expired') && (
+            {format !== 'render' && isAuthenticated && (subscription.status === 'trial' || subscription.status === 'expired') && (
               <span className="header-trial-badge">
                 🎁 {t('exportModal.trialBadge', { exports: subscription.exportsRemaining, days: subscription.daysRemaining })}
               </span>
@@ -594,6 +675,15 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
             >
               📝 Vrew
             </button>
+            <button
+              type="button"
+              className={`export-format-tab ${format === 'render' ? 'active' : ''}`}
+              aria-pressed={format === 'render'}
+              disabled={busy}
+              onClick={() => setFormat('render')}
+            >
+              🎞️ {t('exportModal.renderTab')}
+            </button>
           </div>
 
           {format === 'capcut' ? (
@@ -616,6 +706,41 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
                 // 작업 폴더 미설정 — 가짜 경로 대신 안내. Export 버튼도 비활성(사후 alert 보다 사전 차단).
                 <p className="option-hint">📁 {t('exportModal.premiereWorkFolderRequired')}</p>
               )}
+            </FormatCard>
+          ) : format === 'render' ? (
+            <FormatCard icon="🎞️" title={t('exportModal.renderPackage')} description={t('exportModal.renderPackageDesc')}>
+              <fieldset className="render-mode-options">
+                <legend>{t('exportModal.renderMode')}</legend>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="render-mode"
+                    value="preview"
+                    checked={renderMode === 'preview'}
+                    onChange={(e) => updateSetting('renderMode', e.target.value)}
+                  />
+                  <span>{t('exportModal.renderModePreview')}</span>
+                </label>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="render-mode"
+                    value="final"
+                    checked={renderMode === 'final'}
+                    onChange={(e) => updateSetting('renderMode', e.target.value)}
+                  />
+                  <span>{t('exportModal.renderModeFinal')}</span>
+                </label>
+              </fieldset>
+              <label className="checkbox-label render-subtitle-option">
+                <input
+                  type="checkbox"
+                  checked={renderBurnSubtitle}
+                  onChange={(e) => setRenderBurnSubtitle(e.target.checked)}
+                />
+                <span>{t('exportModal.renderBurnSubtitle')}</span>
+              </label>
+              <p className="option-hint">{t('exportModal.renderBurnSubtitleHint')}</p>
             </FormatCard>
           ) : (
             <FormatCard icon="📝" title={t('exportModal.vrewPackage')} description={t('exportModal.vrewPackageDesc')}>
@@ -750,7 +875,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
             </label>
             <select
               value={scaleMode}
-              onChange={(e) => setScaleMode(e.target.value)}
+              onChange={(e) => updateSetting('scaleMode', e.target.value)}
               style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #444', background: '#1a1a1a', color: '#fff', fontSize: '0.9rem' }}
             >
               <option value="fill">📐 Fill - {t('exportModal.scaleFill')}</option>
@@ -793,7 +918,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
               <input
                 type="checkbox"
                 checked={kenBurns}
-                onChange={(e) => setKenBurns(e.target.checked)}
+                onChange={(e) => updateSetting('kenBurns', e.target.checked)}
               />
               <span>🎬 {t('exportModal.kenBurns')}</span>
             </label>
@@ -805,25 +930,27 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <select
                     value={kenBurnsMode}
-                    onChange={(e) => setKenBurnsMode(e.target.value)}
+                    onChange={(e) => updateSetting('kenBurnsMode', e.target.value)}
                     style={{ padding: '4px 8px', borderRadius: '4px' }}
                     title={t('exportModal.kenBurnsModeTooltip')}
                   >
                     <option value="random">🎲 {t('exportModal.kenBurnsModeRandom')}</option>
                     <option value="pattern">🎯 {t('exportModal.kenBurnsModePattern')}</option>
                   </select>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }} title={t('exportModal.kenBurnsCycleTooltip')}>
-                    <span>{t('exportModal.kenBurnsCycle')}</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="30"
-                      value={kenBurnsCycle}
-                      onChange={(e) => setKenBurnsCycle(e.target.value)}
-                      style={{ width: '50px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc' }}
-                    />
-                    <span>{t('exportModal.kenBurnsCycleUnit')}</span>
-                  </div>
+                  {format !== 'render' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }} title={t('exportModal.kenBurnsCycleTooltip')}>
+                      <span>{t('exportModal.kenBurnsCycle')}</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="30"
+                        value={kenBurnsCycle}
+                        onChange={(e) => setKenBurnsCycle(e.target.value)}
+                        style={{ width: '50px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc' }}
+                      />
+                      <span>{t('exportModal.kenBurnsCycleUnit')}</span>
+                    </div>
+                  )}
                 </div>
                 {/* 스케일 범위 입력 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }} title={t('exportModal.kenBurnsScaleTooltip')}>
@@ -833,7 +960,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
                     min="100"
                     max="150"
                     value={kenBurnsScaleMin}
-                    onChange={(e) => setKenBurnsScaleMin(e.target.value)}
+                    onChange={(e) => updateSetting('kenBurnsScaleMin', e.target.value)}
                     style={{ width: '55px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc', textAlign: 'center' }}
                   />
                   <span>~</span>
@@ -842,7 +969,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
                     min="100"
                     max="150"
                     value={kenBurnsScaleMax}
-                    onChange={(e) => setKenBurnsScaleMax(e.target.value)}
+                    onChange={(e) => updateSetting('kenBurnsScaleMax', e.target.value)}
                     style={{ width: '55px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc', textAlign: 'center' }}
                   />
                   <span>%</span>
@@ -852,7 +979,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
           </div>
 
           {/* 자막 옵션 - 자막이 있을 때만 표시 */}
-          {hasSubtitles && (
+          {hasSubtitles && format !== 'render' && (
             <div className="export-option-section">
               <label className="checkbox-label">
                 <input
@@ -930,9 +1057,13 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
               <button
                 className="export-btn export-btn-export"
                 onClick={handleExport}
-                disabled={loading || busy || ((format === 'premiere' || format === 'vrew') && !premiereWorkFolder)}
+                disabled={loading || isRenderBusy || busy || ((format === 'premiere' || format === 'vrew') && !premiereWorkFolder)}
               >
-                {loading ? `⏳ ${t('exportModal.exporting')}` : `📦 ${t('exportModal.export')}`}
+                {loading
+                  ? `⏳ ${t('exportModal.exporting')}`
+                  : format === 'render'
+                    ? `🎞️ ${t('actions.exportRender')}`
+                    : `📦 ${t('exportModal.export')}`}
               </button>
             </div>
           </div>

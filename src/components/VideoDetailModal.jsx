@@ -160,9 +160,9 @@ export default function VideoDetailModal({
     fetchLatestHistoryMeta(projectName, 'videos', baseName).then(meta => {
       if (cancelled) return
       setBackfilledMeta({
-        seed: meta.seed ?? null,
-        generatedAt: meta.generatedAt ?? null,
-        model: meta.model ?? null
+        seed: meta?.seed ?? null,
+        generatedAt: meta?.generatedAt ?? null,
+        model: meta?.model ?? null
       })
     })
     return () => { cancelled = true }

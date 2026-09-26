@@ -78,6 +78,32 @@
   color: #888;
 }
 
+.render-progress-bar {
+  width: min(320px, 70vw);
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #333;
+  border: 1px solid #444;
+}
+
+.render-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0084ff, #34a7ff);
+  transition: width 0.2s ease;
+}
+
+.render-progress-percent {
+  color: #bbb;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.render-cancel-btn {
+  margin-top: 0.25rem;
+}
+
 /* Export Modal Header */
 .export-modal-header {
   display: flex;
@@ -319,6 +345,26 @@
 .radio-label input[type="radio"] {
   accent-color: #ffc107;
   cursor: pointer;
+}
+
+.render-mode-options {
+  display: flex;
+  gap: 1rem;
+  margin: 0 0 0.8rem;
+  padding: 0;
+  border: 0;
+}
+
+.render-mode-options legend {
+  width: 100%;
+  margin-bottom: 0.45rem;
+  color: #ccc;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.render-subtitle-option {
+  margin-top: 0.35rem;
 }
 
 /* Export Info */

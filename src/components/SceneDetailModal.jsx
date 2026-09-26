@@ -2,9 +2,9 @@
  * SceneDetailModal - 씬 상세 모달 (레퍼런스 상세와 유사한 구조)
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
+import { formatTime, getImageSizeFromBase64, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { STYLE_PRESETS, UI, RESOURCE } from '../config/defaults'
 import { toast } from './Toast'
 import { useI18n } from '../hooks/useI18n'
@@ -14,6 +14,7 @@ import MediaMetaBar from './MediaMetaBar'
 import { fetchLatestHistoryMeta } from '../utils/mediaMeta'
 import TagInputAutocomplete from './TagInputAutocomplete'
 import PromptInput from './PromptInput'
+import { baseImageReplacementPatch } from '../utils/imagePatch'
 import './SceneDetailModal.css'
 
 export default function SceneDetailModal({
@@ -26,7 +27,12 @@ export default function SceneDetailModal({
   projectName,
   aspectRatio = '9:16',
   references = [],
-  styleThumbnails = {}
+  styleThumbnails = {},
+  onUpscaleClick,
+  upscaylBusy = false,
+  upscaylBusyTooltip,
+  upscaylRunning = false,
+  restoreInFlightRef = null,
 }) {
   const [editData, setEditData] = useState({ ...scene })
   const [histories, setHistories] = useState([])
@@ -38,8 +44,18 @@ export default function SceneDetailModal({
   // 복원했지만 메타가 비어 있으면 명시적 null 을 그대로 노출 — backfilledMeta 로 fallback 하면
   // 이전 history 의 stale 메타가 다시 보이고 저장값(null)과 어긋난다.
   const [restoredMeta, setRestoredMeta] = useState(null)
+  const localRestoreInFlightRef = useRef(false)
+  const activeRestoreInFlightRef = restoreInFlightRef || localRestoreInFlightRef
   const { lang } = useI18n()
   const isKo = lang === 'ko'
+  const rejectUpscaylWrite = () => {
+    // rendered snapshot 으로 충분 — Upscayl start 는 UpscaylDialog 클릭이 유일 caller라 runningRef
+    // set 과 running commit 이 같은 클릭 task 에 완료된다. 이 write(restore/save/regen)는 별개 task
+    // 라 항상 commit 후 실행돼 same-tick 이 불가하다. MCP/agent upscale 추가 시 live latch 로 전환 필요.
+    if (!upscaylRunning) return false
+    toast.warning(t('upscayl.blockedByUpscayl') || 'An upscale is running — try again after it finishes')
+    return true
+  }
 
   // scene prop이 변경되면 editData 업데이트 (재생성 완료 시).
   // image/imagePath/status 외에 메타 필드(seed, generatedAt, model, image_size, mediaId)도
@@ -56,12 +72,14 @@ export default function SceneDetailModal({
       model: scene.model,
       image_size: scene.image_size,
       mediaId: scene.mediaId,
+      upscaledAt: scene.upscaledAt,
+      upscaled_size: scene.upscaled_size,
     }))
     // 부모 prop 갱신 = scene 권위 — 로컬 복원 메타 리셋
     setRestoredMeta(null)
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
-  }, [scene.image, scene.imagePath, scene.status, scene.seed, scene.generatedAt, scene.model, scene.image_size, scene.mediaId])
+  }, [scene.image, scene.imagePath, scene.status, scene.seed, scene.generatedAt, scene.model, scene.image_size, scene.mediaId, scene.upscaledAt, scene.upscaled_size])
   
   // 히스토리 로드 — metadata(seed/timestamp/model)도 함께 보존하여 복원 시 활용.
   const loadHistory = async () => {
@@ -112,10 +130,14 @@ export default function SceneDetailModal({
   // imagePath를 null로 두면 export 시 base64 fallback 브랜치를 타서 CapCut에
   // "media/image_scene_N.jpg" placeholder 경로가 박히고 → Media Not Found 발생.
   const handleRestoreHistory = async (historyItem) => {
+    if (rejectUpscaylWrite()) return
+    if (activeRestoreInFlightRef.current) return
     if (!projectName || !scene.id) {
       toast.error(t('imageHistory.restoreFailed') || 'Restore failed')
       return
     }
+    // 파일 교체부터 로컬 메타 반영까지 Upscayl 시작과 겹치지 않게 live latch로 묶는다.
+    activeRestoreInFlightRef.current = true
     try {
       const histExt = historyItem.filename?.match(/\.(png|jpg|jpeg|webp|gif)$/i)?.[1]?.toLowerCase() || 'png'
       const currentFilename = `${scene.id}.${histExt}`
@@ -132,24 +154,35 @@ export default function SceneDetailModal({
         return
       }
 
-      // 복원한 history 항목의 메타(seed/timestamp/model)도 editData 에 반영.
-      // 빠뜨리면 모달 표시 + 저장 시 project.json 에 직전 생성의 stale 메타가 남는다.
+      // seed/model은 history 메타를 복원하되 generatedAt은 파일 교체 cachebuster라 현재 시각을 쓴다.
+      // history timestamp는 아래 restoredMeta에만 두어 상세 표시 의미를 보존한다.
       const meta = historyItem.metadata || {}
       const restoredSeed = meta.seed ?? null
       const restoredAt = typeof meta.timestamp === 'number' ? meta.timestamp : null
       const restoredModel = meta.model ?? null
+      let restoredSize = null
+      try {
+        restoredSize = await getImageSizeFromBase64(historyItem.data)
+      } catch {
+        // 크기 판독 실패 시 이전 이미지 크기를 남기지 않는다.
+      }
+      const restoredGeneratedAt = Date.now()
       setEditData(prev => ({
         ...prev,
-        image: historyItem.data,
-        imagePath: result.path || prev.imagePath,
-        status: 'done',
-        seed: restoredSeed,
-        generatedAt: restoredAt,
-        model: restoredModel,
-        // 복원한 이미지의 생성 프롬프트가 새 baseline(되돌림 done 복원 기준). 메타에 없으면
-        // null 로 명시 — 직전 세대의 stale donePrompt 가 다른 프롬프트 이미지에 남지 않게.
-        donePrompt: meta.prompt ?? null,
-        ...(meta.mediaId ? { mediaId: meta.mediaId } : {}),
+        // 업스케일 메타 리셋(upscaledAt/upscaled_size) + generatedAt=현재시각(파일 교체 cachebuster,
+        //   history timestamp 아님). donePrompt=복원 이미지의 생성 프롬프트(되돌림 done 복원 baseline;
+        //   메타에 없으면 null 로 stale donePrompt 잔존 방지).
+        ...baseImageReplacementPatch({
+          image: historyItem.data,
+          imagePath: result.path || prev.imagePath,
+          image_size: restoredSize,
+          generatedAt: restoredGeneratedAt,
+          status: 'done',
+          seed: restoredSeed,
+          model: restoredModel,
+          donePrompt: meta.prompt ?? null,
+          ...(meta.mediaId ? { mediaId: meta.mediaId } : {}),
+        }),
       }))
       // restoredMeta 가 set 됐다는 건 "사용자가 history 복원했음" — 렌더 시 backfill 폴백 차단.
       // null 도 명시적 의도 (해당 history 에 메타 없음) → MediaMetaBar 에 그대로 노출.
@@ -161,11 +194,14 @@ export default function SceneDetailModal({
     } catch (err) {
       console.error('[SceneDetail] Restore history failed:', err)
       toast.error(err.message)
+    } finally {
+      activeRestoreInFlightRef.current = false
     }
   }
   
   // 저장
   const handleSave = () => {
+    if (rejectUpscaylWrite()) return
     onUpdate(scene.id, editData)
     onClose()
   }
@@ -174,6 +210,7 @@ export default function SceneDetailModal({
   const handleRegenerate = () => {
     console.log('[SceneDetail] Regenerate clicked')
     if (!onGenerate) return
+    if (rejectUpscaylWrite()) return
     // Issue #4: 모달에서 편집한 내용(prompt/characters/style_tag 등)을 먼저 영속 — 재생성이 저장을
     //   안 하면 편집이 사라지고 모달을 다시 열면 옛 값이 보인다.
     if (onUpdate) onUpdate(scene.id, editData)
@@ -181,6 +218,11 @@ export default function SceneDetailModal({
     //   옛 prompt/style_tag 를 읽어(스타일은 항상 실사, 프롬프트는 편집 전 값) 나오는 race 를 피한다.
     onGenerate(scene.id, undefined, editData)
     onClose()
+  }
+
+  const handleUpscale = () => {
+    onClose()
+    onUpscaleClick?.([scene.id])
   }
   
   const ratioClass = getRatioClass(aspectRatio)
@@ -215,6 +257,16 @@ export default function SceneDetailModal({
             : hasGeneratedImage ? t('sceneDetail.regenerate') : t('sceneDetail.generate')}
         </button>
       )}
+      {onUpscaleClick && (
+        <button
+          className="btn-upscale"
+          onClick={handleUpscale}
+          disabled={upscaylBusy || !editData.imagePath || isGenerating}
+          title={upscaylBusy ? upscaylBusyTooltip : undefined}
+        >
+          {t('sceneDetail.upscale')}
+        </button>
+      )}
       <button className="btn-primary" onClick={handleSave}>{t('sceneDetail.save')}</button>
     </>
   )
@@ -247,7 +299,10 @@ export default function SceneDetailModal({
                   className="btn-clear-image"
                   onClick={(e) => {
                     e.stopPropagation()
-                    setEditData(prev => ({ ...prev, image: null, imagePath: null }))
+                    setEditData(prev => ({
+                      ...prev,
+                      ...baseImageReplacementPatch({ image: null, imagePath: null, image_size: null }),
+                    }))
                     setImageSize(null)
                   }}
                   title={t('reference.clearImage') || '이미지 제거'}
@@ -277,6 +332,11 @@ export default function SceneDetailModal({
             model={restoredMeta ? restoredMeta.model : (editData.model ?? backfilledMeta.model)}
             t={t}
           />
+          {editData.upscaledAt && (
+            <div className="scene-upscaled-at">
+              {t('sceneDetail.upscaledAt', { date: new Date(editData.upscaledAt).toLocaleString() })}
+            </div>
+          )}
           
           {/* 프롬프트 */}
           <div className="form-group">

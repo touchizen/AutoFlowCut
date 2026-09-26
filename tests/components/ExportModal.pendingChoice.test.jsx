@@ -16,8 +16,9 @@ vi.mock('../../src/contexts/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true, subscription: { status: 'active', canExport: true } })
 }))
 const saveSettings = vi.fn()
+const updateSetting = vi.fn()
 vi.mock('../../src/hooks/useExportSettings', () => ({
-  useExportSettings: () => ({ settings: {}, isLoaded: true, saveSettings })
+  useExportSettings: () => ({ settings: {}, isLoaded: true, saveSettings, updateSetting })
 }))
 vi.mock('../../src/hooks/useModalVisibility', () => ({ useModalVisibility: () => {} }))
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -32,6 +33,7 @@ vi.mock('../../src/hooks/useI18n', () => ({
 }))
 
 import { ExportModal } from '../../src/components/ExportModal'
+import { ExportSettingsProvider } from '../../src/contexts/ExportSettingsContext'
 
 const onExport = vi.fn()
 const onExportPremiere = vi.fn()
@@ -74,7 +76,11 @@ afterEach(cleanup)
 
 // autoDetect 가 비동기라 렌더 직후엔 CapCut 경로가 아직 비어 있다 — 정착시킨다.
 const renderModal = async (props) => {
-  const utils = render(<ExportModal {...props} />)
+  const utils = render(<ExportModal {...props} />, {
+    wrapper: ({ children }) => (
+      <ExportSettingsProvider aspectRatio="16:9">{children}</ExportSettingsProvider>
+    ),
+  })
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
   return utils
 }

@@ -8,13 +8,25 @@
  *      잘못된 (직전 생성의) seed/model 이 남는 케이스
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 // fileSystemAPI 모킹
 const mockGetHistory = vi.fn()
 const mockReadHistoryFile = vi.fn()
 const mockRestoreFromHistory = vi.fn()
+const mockGetImageSizeFromBase64 = vi.fn()
+const mockToastWarning = vi.fn()
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -24,6 +36,11 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
   }
 }))
 
+vi.mock('../../src/utils/formatters', async (importOriginal) => ({
+  ...await importOriginal(),
+  getImageSizeFromBase64: (...args) => mockGetImageSizeFromBase64(...args),
+}))
+
 vi.mock('../../src/hooks/useI18n', () => ({
   default: () => ({ t: (k) => k, lang: 'en', setLang: vi.fn() }),
   useI18n: () => ({ t: (k) => k, lang: 'en', setLang: vi.fn() })
@@ -31,7 +48,7 @@ vi.mock('../../src/hooks/useI18n', () => ({
 
 // formatRelativeTime fallback 까지 그대로 가니 toast 모킹
 vi.mock('../../src/components/Toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
+  toast: { success: vi.fn(), error: vi.fn(), warning: (...args) => mockToastWarning(...args), info: vi.fn() }
 }))
 
 // MediaMetaBar 가 toast 를 사용 — 위에서 잡힘.
@@ -73,7 +90,10 @@ const baseScene = {
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetHistory.mockResolvedValue({ success: true, histories: [] })
+  mockGetImageSizeFromBase64.mockResolvedValue({ width: 1920, height: 1080 })
 })
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('SceneDetailModal — 재생성 후 editData 동기화', () => {
   it('scene props 가 새 seed/generatedAt/model 로 갱신되면 editData 도 같이 갱신', async () => {
@@ -170,7 +190,77 @@ describe('SceneDetailModal — 재생성 후 editData 동기화', () => {
 })
 
 describe('SceneDetailModal — history 복원 시 메타 반영', () => {
-  it('history 항목 클릭 시 metadata 의 seed/generatedAt/model 이 editData 에 들어감', async () => {
+  it('history restore 전체 await를 live latch로 직렬화하고 실패해도 latch를 해제한다', async () => {
+    const restoreGate = deferred()
+    const restoreInFlightRef = { current: false }
+    mockGetHistory.mockResolvedValue({
+      success: true,
+      histories: [{ filename: 'scene_1.png', engine: 'flow' }],
+    })
+    mockReadHistoryFile.mockResolvedValue({
+      success: true,
+      data: 'data:image/png;base64,history',
+      metadata: null,
+    })
+    mockRestoreFromHistory.mockImplementation(() => restoreGate.promise)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={vi.fn()}
+        onClose={vi.fn()}
+        t={(key) => key}
+        projectName="proj"
+        restoreInFlightRef={restoreInFlightRef}
+      />
+    )
+
+    await waitFor(() => expect(document.querySelector('.history-item')).toBeInTheDocument())
+    fireEvent.click(document.querySelector('.history-item'))
+    await waitFor(() => expect(mockRestoreFromHistory).toHaveBeenCalledTimes(1))
+    expect(restoreInFlightRef.current).toBe(true)
+
+    fireEvent.click(document.querySelector('.history-item'))
+    expect(mockRestoreFromHistory).toHaveBeenCalledTimes(1)
+
+    restoreGate.reject(new Error('copy failed'))
+    await waitFor(() => expect(restoreInFlightRef.current).toBe(false))
+  })
+
+  it('Upscayl 실행 중에는 history 디스크 복원을 거부하고 원인을 알린다', async () => {
+    mockGetHistory.mockResolvedValue({
+      success: true,
+      histories: [{ filename: 'scene_1.png', engine: 'flow' }],
+    })
+    mockReadHistoryFile.mockResolvedValue({
+      success: true,
+      data: 'data:image/png;base64,history',
+      metadata: null,
+    })
+    const onUpdate = vi.fn()
+
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={onUpdate}
+        onClose={vi.fn()}
+        t={(key) => key}
+        projectName="proj"
+        upscaylRunning
+      />
+    )
+
+    await waitFor(() => expect(document.querySelector('.history-item')).toBeInTheDocument())
+    fireEvent.click(document.querySelector('.history-item'))
+
+    expect(mockRestoreFromHistory).not.toHaveBeenCalled()
+    expect(onUpdate).not.toHaveBeenCalled()
+    expect(mockToastWarning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
+  })
+
+  it('history 복원은 크기/cachebuster를 새로 계산하고 Upscayl 표식을 지운다', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1800000000000)
     // history 1건 + metadata 포함
     mockGetHistory.mockResolvedValue({
       success: true,
@@ -194,7 +284,7 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
 
     render(
       <SceneDetailModal
-        scene={baseScene}
+        scene={{ ...baseScene, upscaledAt: 1750000000000, upscaled_size: { width: 4096, height: 4096 } }}
         onUpdate={onUpdate}
         onClose={vi.fn()}
         t={t}
@@ -221,12 +311,16 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
 
     expect(onUpdate).toHaveBeenCalledWith('scene_1', expect.objectContaining({
       seed: 7777,
-      generatedAt: 1600000000000,
+      generatedAt: 1800000000000,
       model: 'flow-old',
       mediaId: 'history-media-id',
+      image_size: { width: 1920, height: 1080 },
+      upscaledAt: null,
+      upscaled_size: null,
       // 복원한 이미지의 생성 프롬프트가 새 baseline — 이후 편집→되돌림의 done 복원 기준.
       donePrompt: 'the prompt that generated this history image',
     }))
+    expect(mockGetImageSizeFromBase64).toHaveBeenCalledWith('data:image/png;base64,history')
   })
 
   it('history.metadata 가 비어있으면 seed/generatedAt/model 이 null 로 명시 (stale 값 유지 X)', async () => {
@@ -265,11 +359,90 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
     // 핵심: 저장 시 stale seed=100 이 아니라 null 로 가야 함
     const callArgs = onUpdate.mock.calls[0][1]
     expect(callArgs.seed).toBeNull()
-    expect(callArgs.generatedAt).toBeNull()
+    expect(callArgs.generatedAt).toEqual(expect.any(Number))
     expect(callArgs.model).toBeNull()
     // metadata 에 prompt 가 없으면 donePrompt 도 null — 이전 생성의 stale baseline 이 남아
     // "다른 프롬프트 이미지"에 done 오복원되는 것을 막는다.
     expect(callArgs.donePrompt).toBeNull()
+  })
+})
+
+describe('SceneDetailModal — 이미지 삭제', () => {
+  it('이미지를 지울 때 Upscayl 표식과 파생 크기도 함께 초기화한다', () => {
+    const onUpdate = vi.fn()
+    render(
+      <SceneDetailModal
+        scene={{
+          ...baseScene,
+          imagePath: '/old.png',
+          upscaledAt: 1750000000000,
+          upscaled_size: { width: 4096, height: 4096 },
+        }}
+        onUpdate={onUpdate}
+        onClose={vi.fn()}
+        t={(key) => key}
+        projectName="proj"
+      />
+    )
+
+    fireEvent.click(screen.getByTitle('reference.clearImage'))
+    fireEvent.click(screen.getByText('sceneDetail.save'))
+
+    expect(onUpdate).toHaveBeenCalledWith('scene_1', expect.objectContaining({
+      image: null,
+      imagePath: null,
+      image_size: null,
+      upscaledAt: null,
+      upscaled_size: null,
+    }))
+  })
+})
+
+describe('SceneDetailModal — Upscayl writer guard', () => {
+  it('Upscayl 실행 중 Save는 scene image snapshot을 쓰거나 모달을 닫지 않는다', () => {
+    const onUpdate = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={onUpdate}
+        onClose={onClose}
+        t={(key) => key}
+        projectName="proj"
+        upscaylRunning
+      />
+    )
+
+    fireEvent.click(screen.getByText('sceneDetail.save'))
+
+    expect(onUpdate).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(mockToastWarning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
+  })
+
+  it('Upscayl 실행 중 Regenerate는 선행 save·생성·close를 모두 거부한다', () => {
+    const onUpdate = vi.fn()
+    const onGenerate = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={onUpdate}
+        onClose={onClose}
+        onGenerate={onGenerate}
+        isGenerating={false}
+        t={(key) => key}
+        projectName="proj"
+        upscaylRunning
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /sceneDetail\.regenerate/ }))
+
+    expect(onUpdate).not.toHaveBeenCalled()
+    expect(onGenerate).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(mockToastWarning).toHaveBeenCalledWith('upscayl.blockedByUpscayl')
   })
 })
 

@@ -808,3 +808,26 @@
 .ref-detail-modal .btn-fill-preset:hover {
   background: var(--bg-hover, #333);
 }
+.scene-detail-modal .btn-upscale {
+  flex: 1;
+  padding: 12px 20px;
+  border: 1px solid #7c3aed;
+  border-radius: var(--border-radius);
+  background: #5b21b6;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.scene-detail-modal .btn-upscale:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scene-upscaled-at {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  text-align: center;
+}

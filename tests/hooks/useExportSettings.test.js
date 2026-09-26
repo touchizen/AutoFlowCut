@@ -21,7 +21,8 @@ describe('useExportSettings', () => {
       expect(result.current.settings.projectNumber).toBe('')
       expect(result.current.settings.pathPreset).toBe('capcut')
       expect(result.current.settings.scaleMode).toBe('none')
-      expect(result.current.settings.kenBurns).toBe(true)
+      expect(result.current.settings.kenBurns).toBe(true)          // export 기본 on
+      expect(result.current.settings.kenBurnsPreview).toBe(false)  // 타임라인 프리뷰 기본 off
       expect(result.current.settings.kenBurnsMode).toBe('random')
       expect(result.current.settings.kenBurnsCycle).toBe(5)
       expect(result.current.settings.kenBurnsScaleMin).toBe(100)
@@ -99,6 +100,34 @@ describe('useExportSettings', () => {
       expect(result.current.settings.username).toBe('saved')
       expect(result.current.settings.includeSubtitle).toBe(true) // default
     })
+
+    it('레거시/오염된 저장값을 로드 시 한 번 정규화한다 (Fable M2 리뷰 #1·#3)', async () => {
+      // 문자열 숫자(per-keystroke persist 드리프트), falsy/garbage enum — 소비처가 아니라
+      // 로드 merge에서 한 번 정규화해 UI·export 양쪽에 깨끗한 값이 흐르게 한다.
+      localStorage.setItem('exportSettings', JSON.stringify({
+        kenBurnsScaleMin: '110',   // 문자열 → 숫자
+        kenBurnsScaleMax: 0,       // falsy → 기본값 130
+        kenBurnsCycle: '7',        // 문자열 → 숫자
+        renderMode: 'x',           // garbage → 'final'
+        scaleMode: '',             // falsy → 'none'
+        kenBurnsMode: null,        // falsy → 'random'
+        kenBurnsPreview: 1,        // truthy garbage → false (명시적 true 만 켬)
+      }))
+
+      const { result } = renderHook(() => useExportSettings())
+
+      await vi.waitFor(() => {
+        expect(result.current.isLoaded).toBe(true)
+      })
+
+      expect(result.current.settings.kenBurnsScaleMin).toBe(110)
+      expect(result.current.settings.kenBurnsScaleMax).toBe(130)
+      expect(result.current.settings.kenBurnsCycle).toBe(7)
+      expect(result.current.settings.renderMode).toBe('final')
+      expect(result.current.settings.scaleMode).toBe('none')
+      expect(result.current.settings.kenBurnsMode).toBe('random')
+      expect(result.current.settings.kenBurnsPreview).toBe(false)
+    })
   })
 
   // ============================================================
@@ -126,6 +155,39 @@ describe('useExportSettings', () => {
 
       const stored = JSON.parse(localStorage.getItem('exportSettings'))
       expect(stored.scaleMode).toBe('fit')
+    })
+
+    it('같은 tick의 두 updateSetting을 모두 반영한다', async () => {
+      const { result } = renderHook(() => useExportSettings())
+
+      await vi.waitFor(() => {
+        expect(result.current.isLoaded).toBe(true)
+      })
+
+      act(() => {
+        result.current.updateSetting('kenBurns', false)
+        result.current.updateSetting('kenBurnsMode', 'pattern')
+      })
+
+      expect(result.current.settings.kenBurns).toBe(false)
+      expect(result.current.settings.kenBurnsMode).toBe('pattern')
+    })
+
+    it('state 변경 뒤에도 saveSettings와 updateSetting 참조가 안정적이다', async () => {
+      const { result } = renderHook(() => useExportSettings())
+
+      await vi.waitFor(() => {
+        expect(result.current.isLoaded).toBe(true)
+      })
+      const firstSaveSettings = result.current.saveSettings
+      const firstUpdateSetting = result.current.updateSetting
+
+      act(() => {
+        result.current.updateSetting('kenBurns', false)
+      })
+
+      expect(result.current.saveSettings).toBe(firstSaveSettings)
+      expect(result.current.updateSetting).toBe(firstUpdateSetting)
     })
   })
 
@@ -156,7 +218,7 @@ describe('useExportSettings', () => {
       expect(result.current.settings.pathPreset).toBe('capcut')
     })
 
-    it('removes localStorage key on reset', async () => {
+    it('persists default settings on reset', async () => {
       const { result } = renderHook(() => useExportSettings())
 
       await act(async () => {
@@ -169,7 +231,9 @@ describe('useExportSettings', () => {
         await result.current.resetSettings()
       })
 
-      expect(localStorage.getItem('exportSettings')).toBeNull()
+      await vi.waitFor(() => {
+        expect(JSON.parse(localStorage.getItem('exportSettings'))).toEqual(result.current.DEFAULT_SETTINGS)
+      })
     })
   })
 

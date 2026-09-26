@@ -50,6 +50,8 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
       donePrompt: 'a cat',
       error: null,
       errorKind: null,    // ← critical: prior 'image-missing' 마커가 merge 후 남으면 안 됨
+      upscaledAt: null,
+      upscaled_size: null,
     })
   })
 
@@ -69,6 +71,8 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
       error: 'Quota exceeded',
       errorKind: null,    // ← stale 'image-missing' 가 'Quota exceeded' 메시지를 가리면 안 됨
     })
+    expect(res.sceneUpdate).not.toHaveProperty('upscaledAt')
+    expect(res.sceneUpdate).not.toHaveProperty('upscaled_size')
     expect(res.sceneUpdate).not.toHaveProperty('donePrompt')
   })
 
@@ -128,8 +132,10 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
     expect(res.sceneUpdate.status).toBe('error')
     expect(res.sceneUpdate.error).toMatch(/Image save failed.*Disk full/)
     expect(res.sceneUpdate.errorKind).toBeNull()
-    // 저장 실패 패치는 NEW 이미지를 메모리에 남기므로, 옛 donePrompt 가 merge 로 살아남으면
-    // "새 이미지 + 옛 기준" 불일치로 error→done 오복귀가 가능하다 — 명시적으로 null 클리어.
+    // 저장 실패 패치는 NEW(비업스케일) 이미지를 메모리에 남기므로 donePrompt 와 동일 이유로
+    // 업스케일 marker 도 클리어해야 한다 — 안 그러면 새 이미지에 옛 "업스케일됨" 배지가 남는다.
+    expect(res.sceneUpdate).toHaveProperty('upscaledAt', null)
+    expect(res.sceneUpdate).toHaveProperty('upscaled_size', null)
     expect(res.sceneUpdate).toHaveProperty('donePrompt', null)
   })
 })

@@ -29,3 +29,6 @@ _models/
 # docs/plans-archive/ 는 추적한다 — CLAUDE.md 가 "완료된 plan/spec 은 여기로 옮기고 commit" 을
 # 지시하는데, 무시하면 그 커밋이 아카이브가 아니라 삭제가 된다.
 docs/superpowers/
+
+# self-render: dev ffmpeg staged by scripts/install-platform-binaries.cjs (not committed)
+vendor/ffmpeg/

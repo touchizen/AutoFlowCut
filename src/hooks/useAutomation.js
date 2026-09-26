@@ -31,7 +31,7 @@ import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
 import { nextCancelScope } from '../utils/cancelScope'
 import { isAbortedResult } from '../utils/isAbortedResult'
 
-export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
+export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null, isUpscaylRunning = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -66,6 +66,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   // Set true when batch stops due to authFailed sentinel — prevents the normal
   // stopRequestedRef final-status logic from overwriting 'error' with 'stopped'.
   const authStoppedRef = useRef(false)
+  // Upscayl 내부 latch reader를 보존해 React commit 전 same-tick 시작도 dispatch에서 본다.
+  const isUpscaylRunningRef = useRef(isUpscaylRunning)
+  isUpscaylRunningRef.current = isUpscaylRunning
   const activeRunsRef = useRef(new Set())
   const cancelGenerationRef = useRef(genAPI.cancelGeneration)
   cancelGenerationRef.current = genAPI.cancelGeneration
@@ -313,6 +316,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         }
       }
       if (stopRequestedRef.current) break
+
+      // 씬 상태를 generating으로 바꾸기 직전 live latch 재검사 — hit 씬과 이후 씬은 손대지 않는다.
+      if (isUpscaylRunningRef.current?.()) {
+        stopRequestedRef.current = true
+        cancelActiveRuns()   // main 병합(리뷰 A): 종결 경로는 제출된 run scope 를 취소한다(auth·quota·consume-denied 와 같은 계약)
+        break
+      }
 
       const scene = applyM1MentionExclusions(
         targetScenes[i],
@@ -581,7 +591,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       batchIntent === 'retry' ||
       (batchIntent == null && inferredPartialRetry)
 
-    if (isRunning) return
+    // 렌더 전 Upscayl 시작도 live latch로 admission에서 바로 막는다.
+    if (isRunning || isUpscaylRunningRef.current?.()) return
 
     if (mode === 'flow' && !flowProjectReady) {
       toast.warning(t('toast.flowProjectNotReady'))
@@ -855,9 +866,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     // 이미지/이미지 경로는 유지 — 새 이미지 도착 전까지 이전 결과를 노출해 사용자가 비교 가능.
     // error/errorKind도 초기화해 stale 메시지 노출 회피.
     // ⚠️ 폴더/토큰 확인·ref 업로드를 모두 통과한 뒤(실제 씬 제출 직전)에 리셋한다. 그리고
-    //    그 대기 중 Stop 을 눌렀을 수 있으니 !stopRequestedRef 도 확인 — 안 그러면 제출은
+    //    그 대기 중 Stop/Upscayl 시작이 들어올 수 있으니 둘 다 live 재확인 — 안 그러면 제출은
     //    안 됐는데 done 씬이 pending+image 로 남아 "이미지는 있는데 미완료"로 저장된다.
-    if (force && !stopRequestedRef.current) {
+    if (force && !stopRequestedRef.current && !isUpscaylRunningRef.current?.()) {
       for (const s of targetScenes) {
         if (s.status === 'done' || s.status === 'error') {
           updateScene(s.id, { status: 'pending', error: null, errorKind: null })

@@ -15,6 +15,8 @@ export const CSV_PRESERVED_SCENE_FIELDS = Object.freeze([
   'image', 'imagePath', 'mediaId', 'generatingStartedAt', 'image_size', 'donePrompt',
   // 이미지 생성 메타 — 이미지 탭의 모델명·시드·생성 시각
   'model', 'seed', 'generatedAt', 'generatingEndedAt',
+  // Upscayl(feature/self-render): 업스케일 시각 — 버리면 이미 업스케일한 이미지를 다시 업스케일 대상으로 센다(imagePatch)
+  'upscaledAt',
   // 영상 결과·클립별 export 토글
   'videoT2V', 'videoT2VPath', 'videoI2V', 'videoI2VPath', 'videoT2VDuration', 'videoI2VDuration',
   'videoT2VDisabled', 'videoI2VDisabled',

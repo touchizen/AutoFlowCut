@@ -11,17 +11,36 @@ const DEFAULT_SETTINGS = {
   projectNumber: '',
   pathPreset: 'capcut',  // 'capcut' | 'capcutpro' | 'capcut_docs' | 'custom'
   scaleMode: 'none',
-  kenBurns: true,
+  kenBurns: true,          // export 시 Ken Burns 적용 여부 (Export 모달, 기본 on)
+  kenBurnsPreview: false,  // 프리뷰 모니터에서 Ken Burns 표시 여부 (Timeline 체크박스, 기본 off)
   kenBurnsMode: 'random',
   kenBurnsCycle: 5,
   kenBurnsScaleMin: 100,
   kenBurnsScaleMax: 130,
   selectedOS: null,  // null이면 자동 감지
   includeSubtitle: true,
+  renderMode: 'final',        // 'preview' | 'final' (self-render)
+  renderBurnSubtitle: true,   // self-render 자막 번인 토글
   // Veo 영상 클립의 오디오 볼륨 — 옵션. Veo 는 오디오를 끌 수 없어(Gemini API 가 generate_audio=false 거부)
   // 내레이션형 영상엔 음소거가 맞지만, 대사 있는 영상이 모르고 음소거되지 않게 기본은 원본(2026-09-26 사용자 결정).
   // 0 = 음소거 / 0.15 = 앰비언스 / 1 = 원본
   videoAudioVolume: 1
+}
+
+// 구 ExportModal load-effect의 정규화 의미 재현 + 숫자 필드는 Number 강제
+// (per-keystroke persist로 문자열이 저장돼도 소비처는 숫자만 본다).
+function normalizeStoredSettings(merged) {
+  return {
+    ...merged,
+    scaleMode: merged.scaleMode || 'none',
+    renderMode: merged.renderMode === 'preview' ? 'preview' : 'final',
+    kenBurns: merged.kenBurns !== false,          // 기본 on — 명시적 false 만 끔
+    kenBurnsPreview: merged.kenBurnsPreview === true,  // 기본 off — 명시적 true 만 켬
+    kenBurnsMode: merged.kenBurnsMode || 'random',
+    kenBurnsCycle: Number(merged.kenBurnsCycle) || 5,
+    kenBurnsScaleMin: Number(merged.kenBurnsScaleMin) || 100,
+    kenBurnsScaleMax: Number(merged.kenBurnsScaleMax) || 130,
+  }
 }
 
 export function useExportSettings() {
@@ -33,12 +52,24 @@ export function useExportSettings() {
     loadSettings()
   }, [])
 
-  // localStorage에서 설정 불러오기
+  // 초기 로드가 끝난 뒤 state를 localStorage에 반영한다.
+  useEffect(() => {
+    if (!isLoaded) return
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    } catch (error) {
+      console.warn('Failed to save export settings:', error)
+    }
+  }, [settings, isLoaded])
+
+  // localStorage에서 설정 불러오기.
+  // 레거시/오염 저장값(문자열 숫자, garbage enum)은 여기서 한 번 정규화 —
+  // Context 직접 바인딩 이후 소비처별 방어 대신 로드 merge가 단일 정규화 지점.
   const loadSettings = useCallback(async () => {
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY))
       if (stored) {
-        setSettings(prev => ({
+        setSettings(prev => normalizeStoredSettings({
           ...DEFAULT_SETTINGS,
           ...stored
         }))
@@ -51,30 +82,18 @@ export function useExportSettings() {
   }, [])
 
   // localStorage에 설정 저장
-  const saveSettings = useCallback(async (newSettings) => {
-    try {
-      const merged = { ...settings, ...newSettings }
-      setSettings(merged)
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
-    } catch (error) {
-      console.warn('Failed to save export settings:', error)
-    }
-  }, [settings])
+  const saveSettings = useCallback((newSettings) => {
+    setSettings(prev => ({ ...prev, ...newSettings }))
+  }, [])
 
   // 개별 설정값 업데이트
   const updateSetting = useCallback((key, value) => {
-    saveSettings({ [key]: value })
-  }, [saveSettings])
+    setSettings(prev => ({ ...prev, [key]: value }))
+  }, [])
 
   // 설정 초기화
-  const resetSettings = useCallback(async () => {
-    try {
-      setSettings(DEFAULT_SETTINGS)
-      localStorage.removeItem(STORAGE_KEY)
-    } catch (error) {
-      console.warn('Failed to reset export settings:', error)
-    }
+  const resetSettings = useCallback(() => {
+    setSettings(DEFAULT_SETTINGS)
   }, [])
 
   return {

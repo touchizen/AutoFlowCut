@@ -2,13 +2,17 @@
  * AudioTimeline 컴포넌트 테스트
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, render as rtlRender, screen, fireEvent } from '@testing-library/react'
+import { act, screen, fireEvent } from '@testing-library/react'
 import AudioTimeline from '../../../src/components/AudioTimeline/AudioTimeline'
 import { AUDIO_CLIP_CLICK_DELAY_MS } from '../../../src/components/AudioTimeline/interactionTiming'
 import { I18nProvider } from '../../../src/hooks/useI18n'
+import { renderWithExportSettings } from '../../utils/renderWithExportSettings'
 
-// I18nProvider로 감싸는 render 헬퍼
-const render = (ui, options) => rtlRender(<I18nProvider>{ui}</I18nProvider>, options)
+// Provider로 감싸는 render 헬퍼
+const render = (ui, options = {}) => renderWithExportSettings(ui, {
+  ...options,
+  wrapper: I18nProvider,
+})
 
 const audioPackage = {
   folderPath: '/audio',
@@ -674,7 +678,7 @@ describe('AudioTimeline', () => {
       vi.stubGlobal('cancelAnimationFrame', vi.fn())
 
       try {
-        const { container } = rtlRender(
+        const { container } = render(
           <AudioTimeline
             audioPackage={audioPackage}
             scenes={scenes}
@@ -709,7 +713,7 @@ describe('AudioTimeline', () => {
       const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => now)
 
       try {
-        const { container } = rtlRender(
+        const { container } = render(
           <AudioTimeline
             audioPackage={audioPackage}
             scenes={scenes}
@@ -743,7 +747,7 @@ describe('AudioTimeline', () => {
     it('playhead 값이 같으면 부모 콜백 identity가 바뀌어도 다시 통보하지 않음', () => {
       const first = vi.fn()
       const second = vi.fn()
-      const { rerender } = rtlRender(
+      const { rerender } = render(
         <AudioTimeline
           audioPackage={audioPackage}
           scenes={scenes}
@@ -780,7 +784,7 @@ describe('AudioTimeline', () => {
     it('데이터 있음 → null → 다시 있음 순서로 rerender해도 hook 에러 없음', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       try {
-        const { rerender } = rtlRender(
+        const { rerender } = render(
           <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
           { wrapper: I18nProvider }
         )
@@ -801,7 +805,7 @@ describe('AudioTimeline', () => {
     it('null로 마운트 → 데이터 주입 시 hook 에러 없음', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       try {
-        const { rerender, container } = rtlRender(
+        const { rerender, container } = render(
           <AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />,
           { wrapper: I18nProvider }
         )
@@ -833,7 +837,7 @@ describe('AudioTimeline', () => {
           ],
           sfx: [],
         }
-        const { rerender } = rtlRender(
+        const { rerender } = render(
           <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
           { wrapper: I18nProvider }
         )
@@ -852,7 +856,7 @@ describe('AudioTimeline', () => {
     it('audioPackage=null 상태에서 Space 눌러도 크래시/playback 트리거 없음', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       try {
-        const { rerender } = rtlRender(
+        const { rerender } = render(
           <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
           { wrapper: I18nProvider }
         )
@@ -875,7 +879,7 @@ describe('AudioTimeline', () => {
     })
 
     it('audioPackage=null 상태에서 Esc는 안전하게 동작', () => {
-      const { rerender, container } = rtlRender(
+      const { rerender, container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
         { wrapper: I18nProvider }
       )
@@ -893,7 +897,7 @@ describe('AudioTimeline', () => {
   // wheel useEffect deps에 data가 없으면 재등록 안 돼 zoom/wheel scroll이 죽음
   describe('wheel listener 재등록 (Issue 2)', () => {
     it('데이터 null→복귀 후에도 Ctrl+wheel zoom이 동작', () => {
-      const { rerender, container } = rtlRender(
+      const { rerender, container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
         { wrapper: I18nProvider }
       )
@@ -914,7 +918,7 @@ describe('AudioTimeline', () => {
     })
 
     it('데이터 null→복귀 후 세로 wheel → 가로 스크롤 변환도 동작', () => {
-      const { rerender, container } = rtlRender(
+      const { rerender, container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
         { wrapper: I18nProvider }
       )
@@ -942,7 +946,7 @@ describe('AudioTimeline', () => {
         data: 'data:audio/mpeg;base64,AAAA',
       })
 
-      const { rerender, container } = rtlRender(
+      const { rerender, container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />,
         { wrapper: I18nProvider }
       )
@@ -969,7 +973,7 @@ describe('AudioTimeline', () => {
       const readFile = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
       global.window.electronAPI.readFileAbsolute = readFile
 
-      rtlRender(
+      render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={true} />,
         { wrapper: I18nProvider }
       )
@@ -990,7 +994,7 @@ describe('AudioTimeline', () => {
     })
 
     it('label column resize 중 unmount하면 cursor/userSelect 복구', () => {
-      const { unmount, container } = rtlRender(
+      const { unmount, container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
         { wrapper: I18nProvider }
       )
@@ -1010,7 +1014,7 @@ describe('AudioTimeline', () => {
     })
 
     it('preview ↔ timeline splitter drag 중 unmount해도 cleanup', () => {
-      const { unmount, container } = rtlRender(
+      const { unmount, container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
         { wrapper: I18nProvider }
       )
@@ -1026,7 +1030,7 @@ describe('AudioTimeline', () => {
     })
 
     it('track height resize drag 중 unmount해도 cleanup', () => {
-      const { unmount, container } = rtlRender(
+      const { unmount, container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
         { wrapper: I18nProvider }
       )
@@ -1042,7 +1046,7 @@ describe('AudioTimeline', () => {
     })
 
     it('연속된 두 번의 드래그 시작 — 이전 cleanup이 idempotent하게 호출됨', () => {
-      const { container } = rtlRender(
+      const { container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
         { wrapper: I18nProvider }
       )
@@ -1119,7 +1123,7 @@ describe('AudioTimeline', () => {
       global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
       const { created, restore } = spyAudio()
       try {
-        rtlRender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
+        render(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
         fireEvent.keyDown(window, { code: 'Space' })
         await act(async () => { await new Promise(r => setTimeout(r, 0)) })
         expect(created.length).toBeGreaterThan(0)
@@ -1138,7 +1142,7 @@ describe('AudioTimeline', () => {
       const { created, restore } = spyAudio()
       try {
         // monitor-volume 이벤트를 한 번도 dispatch 하지 않는다 (AudioTimeline 이 저장값을 직접 읽어야 함).
-        rtlRender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
+        render(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
         fireEvent.keyDown(window, { code: 'Space' })
         await act(async () => { await new Promise(r => setTimeout(r, 0)) })
         expect(created.length).toBeGreaterThan(0)
@@ -1157,7 +1161,7 @@ describe('AudioTimeline', () => {
       global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
       const { created, restore } = spyAudio()
       try {
-        rtlRender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
+        render(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
         // 재생 전에 마스터 설정
         act(() => window.dispatchEvent(new CustomEvent('monitor-volume', { detail: { volume: 0.4, muted: true } })))
         fireEvent.keyDown(window, { code: 'Space' })

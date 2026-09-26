@@ -35,13 +35,21 @@ describe('ExportSplitButton', () => {
     expect(onSelect).toHaveBeenCalledWith('premiere')
   })
 
-  it('▾ 메뉴에 세 포맷이 노출되고 선택 시 해당 키로 onSelect', () => {
+  it('▾ 메뉴에 네 포맷이 노출되고 선택 시 해당 키로 onSelect', () => {
     const onSelect = vi.fn()
     render(<ExportSplitButton format="capcut" onSelect={onSelect} />)
     fireEvent.click(screen.getByRole('button', { name: /formatSelectLabel/ }))
-    expect(screen.getAllByRole('menuitem')).toHaveLength(3)
+    expect(screen.getAllByRole('menuitem')).toHaveLength(4)
     fireEvent.click(screen.getByRole('menuitem', { name: /Vrew/i }))
     expect(onSelect).toHaveBeenCalledWith('vrew')
+  })
+
+  it('▾ 메뉴에서 Render 선택 시 render 키로 onSelect', () => {
+    const onSelect = vi.fn()
+    render(<ExportSplitButton format="capcut" onSelect={onSelect} />)
+    fireEvent.click(screen.getByRole('button', { name: /formatSelectLabel/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Render/i }))
+    expect(onSelect).toHaveBeenCalledWith('render')
   })
 
   it('메뉴 항목 클릭 후 메뉴가 닫힌다', () => {

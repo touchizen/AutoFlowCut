@@ -37,26 +37,31 @@ const sceneNoImage = {
   image: null, imagePath: null, status: 'pending',
 }
 const sceneWithImage = { ...sceneNoImage, image: 'data:image/png;base64,x', status: 'done' }
+const sceneWithImagePath = { ...sceneWithImage, imagePath: '/project/scenes/scene_1.png' }
 
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetHistory.mockResolvedValue({ success: true, histories: [] })
 })
 
-function renderModal(scene) {
+function renderModal(scene, extraProps = {}) {
   const onGenerate = vi.fn()
+  const onClose = vi.fn()
+  const onUpscaleClick = vi.fn()
   render(
     <SceneDetailModal
       scene={scene}
       onUpdate={vi.fn()}
-      onClose={vi.fn()}
+      onClose={onClose}
       onGenerate={onGenerate}
       isGenerating={false}
       t={(k) => k}
       projectName="proj"
+      onUpscaleClick={onUpscaleClick}
+      {...extraProps}
     />
   )
-  return { onGenerate }
+  return { onGenerate, onClose, onUpscaleClick }
 }
 
 describe('SceneDetailModal — 생성/재생성 버튼', () => {
@@ -94,5 +99,33 @@ describe('SceneDetailModal — 생성/재생성 버튼', () => {
     const btn = screen.getByText('sceneDetail.generate').closest('button')
     expect(btn).toBeDisabled()
     expect(btn).toHaveAttribute('title', 'toast.noPrompt')
+  })
+
+  it('App busy면 Upscale이 disabled+tooltip이고 클릭 동작을 막는다', () => {
+    const { onClose, onUpscaleClick } = renderModal(sceneWithImagePath, {
+      upscaylBusy: true,
+      upscaylBusyTooltip: 'You can upscale after generation finishes',
+    })
+    const button = screen.getByRole('button', { name: 'sceneDetail.upscale' })
+
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'You can upscale after generation finishes')
+    fireEvent.click(button)
+    expect(onUpscaleClick).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('App busy가 false면 Upscale이 활성화되고 기존 per-scene 경로를 호출한다', () => {
+    const { onClose, onUpscaleClick } = renderModal(sceneWithImagePath, {
+      upscaylBusy: false,
+      upscaylBusyTooltip: 'You can upscale after generation finishes',
+    })
+    const button = screen.getByRole('button', { name: 'sceneDetail.upscale' })
+
+    expect(button).toBeEnabled()
+    expect(button).not.toHaveAttribute('title')
+    fireEvent.click(button)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onUpscaleClick).toHaveBeenCalledWith(['scene_1'])
   })
 })

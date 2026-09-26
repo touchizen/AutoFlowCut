@@ -13,6 +13,7 @@ import { normalizeStyleId, findAutoStyle } from '../services/styleService'
 import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 import { clearedImageFields } from '../utils/refEntityRegistration'
+import { baseImageReplacementPatch } from '../utils/imagePatch'
 import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
 import { pickMcpSettingsFields } from '../utils/mcpSettingsWhitelist'   // M2-LIVE N3: main 과 같은 화이트리스트(이중 방어)
 import { alignMcpModelProviders } from '../utils/mcpModelProviderAlign'
@@ -80,6 +81,30 @@ export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
   })
 }
 
+function applyMcpSceneUpdate({ data, setScenes, isUpscaylRunning, getSettings = () => ({}) }) {
+  const fields = data?.fields || {}
+  const replacesImage = 'image' in fields || 'imagePath' in fields
+  if (replacesImage && isUpscaylRunning()) {
+    return { success: false, error: 'busy' }
+  }
+
+  // 이미지 교체는 UI writer와 같은 baseline reset 계약을 쓴다. 비이미지는 그대로 merge한다.
+  const patch = replacesImage
+    ? {
+        ...baseImageReplacementPatch(fields),
+        ...('donePrompt' in fields ? {} : { donePrompt: null }),
+      }
+    : fields
+  // main 병합(multi-provider): generation 은 stage-pair 병합 결과로 쓴다 — 보낸 stage 만 바꾸고(누락 stage 보존) provider/model 쌍을 검증한다.
+  setScenes(prev => prev.map((scene, index) => {
+    if (index !== data.index) return scene
+    const generationMerge = mergeSceneGenerationForMcp(scene, fields, getSettings())
+    generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
+    return { ...scene, ...patch, generation: generationMerge.generation }
+  }))
+  return { success: true }
+}
+
 
 /**
  * @param {object} params
@@ -120,6 +145,7 @@ export function useMcpServer({
   automationState, videoAutomation, generatingRefs,
   isRunning = false,  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
   refBatchRunning = false,  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  isUpscaylRunning = null,
   // batch-status 진단용 — preflight 에서 조용히 return 한 이유(Flow 준비/탭)를 밖에서 볼 수 있게.
   mode, flowProjectReady, activeTab,
 }) {
@@ -127,6 +153,11 @@ export function useMcpServer({
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
   const referencesRef = useRef(references)
   useEffect(() => { referencesRef.current = references }, [references])
+  const setScenesRef = useRef(setScenes)
+  setScenesRef.current = setScenes
+  // Upscayl 내부 latch reader 자체를 ref로 보존 — React commit 전 same-tick 시작도 HTTP dispatch가 본다.
+  const isUpscaylRunningRef = useRef(isUpscaylRunning)
+  isUpscaylRunningRef.current = isUpscaylRunning
 
   // Phase 2: isRunning을 ref로 mirror — global 핸들러 closure가 polling 시 최신 값 읽음.
   const isRunningRef = useRef(isRunning)
@@ -171,6 +202,12 @@ export function useMcpServer({
       ready: isReferenceUploadedDone({ ...rest, data }),
     }))
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
+    window.__mcpUpdateScene = (data) => applyMcpSceneUpdate({
+      data,
+      setScenes: setScenesRef.current,
+      isUpscaylRunning: () => !!isUpscaylRunningRef.current?.(),
+      getSettings: () => settingsRef.current,
+    })
     // styleId override를 직접 받음 (전역 상태 setSelectedStyleRefId + setTimeout race 회피).
     // styleId 형식은 normalizeStyleId로 정규화됨 ('ref:*' / 'preset:*' / plain → 'preset:*' / null).
     // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — caller-side fallback만 사용.
@@ -315,6 +352,7 @@ export function useMcpServer({
     return () => {
       delete window.__mcpGetReferences
       delete window.__mcpGetScenes
+      delete window.__mcpUpdateScene
       delete window.__mcpGenerateRef
       delete window.__mcpGenerateScene
       delete window.__mcpSetStyle
@@ -482,13 +520,9 @@ export function useMcpServer({
           console.log('[MCP] srtTrack replaced via HTTP:', data.srtTrack.length)
         }
       } else if (data.type === 'update-scene') {
-        setScenes(prev => prev.map((s, i) => {
-          if (i !== data.index) return s
-          const generationMerge = mergeSceneGenerationForMcp(s, data.fields || {}, settingsRef.current)
-          generationMerge.warnings.forEach(warning => console.warn('[MCP]', warning))
-          return { ...s, ...data.fields, generation: generationMerge.generation }
-        }))
-        console.log('[MCP] Scene', data.index, 'updated via HTTP')
+        const result = window.__mcpUpdateScene?.(data)
+        if (result?.success) console.log('[MCP] Scene', data.index, 'updated via HTTP')
+        else console.warn('[MCP] Scene image update refused:', result?.error || 'handler-unavailable')
       } else if (data.type === 'update-settings') {
         // 설정 병합 — useAppSettings 가 localStorage 로 동기화한다. fields 가 객체가 아니면 무시.
         // M2-LIVE N3(A3/B2): 화이트리스트 밖 키(projectName·mcpHttpEnabled·saveMode·flowAgentOn …)·모양 틀린 값은 버린다 — main 의 /api/update 가
@@ -668,7 +702,8 @@ export function useMcpServer({
       return {
         app: { mode, flowProjectReady, activeTab },
         video,
-        isRunning: sceneIsRunning || videoAutomation.isRunning || refIsRunning,
+        // stop/wait aggregate도 포함해야 Upscayl-only 실행을 idle로 잘못 보고하지 않는다.
+        isRunning: isRunningRef.current || sceneIsRunning || videoAutomation.isRunning || refIsRunning,
         isPaused: isPaused || videoAutomation.isPaused,
         progress: sceneIsRunning ? progress : videoAutomation.progress,
         total, done, pending, generating, error,

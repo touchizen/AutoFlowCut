@@ -7,8 +7,51 @@ import fsSync from 'fs'
 import path from 'path'
 import os from 'os'
 import { app } from 'electron'
+import { decideUpdateRequest } from '../mcp-http-parsers.js'
 
 const MCP_NAME = 'autoflowcut'
+
+const isSceneImageWrite = (data) => data?.type === 'update-scene' && !!data.fields && (
+  Object.prototype.hasOwnProperty.call(data.fields, 'image') ||
+  Object.prototype.hasOwnProperty.call(data.fields, 'imagePath')
+)
+
+export async function dispatchMcpUpdate(webContents, data) {
+  // 비이미지 수정은 기존 fire-and-forget IPC 경로를 보존한다.
+  if (!isSceneImageWrite(data)) {
+    webContents.send('mcp-update', data)
+    return { status: 200, body: { success: true } }
+  }
+
+  // JSON을 JS 식에 넣을 때 U+2028/U+2029도 escape해 사용자 필드가 script를 깨지 않게 한다.
+  const payload = JSON.stringify(data)
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+  const script = `JSON.stringify(window.__mcpUpdateScene?.(${payload}) ?? { success: false, error: 'handler-unavailable' })`
+
+  try {
+    const raw = await webContents.executeJavaScript(script)
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (result?.success) return { status: 200, body: result }
+    return {
+      status: result?.error === 'busy' ? 409 : 503,
+      body: { success: false, error: result?.error || 'handler-unavailable' },
+    }
+  } catch (error) {
+    return { status: 503, body: { success: false, error: error?.message || 'renderer-unavailable' } }
+  }
+}
+
+/**
+ * POST /api/update — 원문 body → { status, body }.
+ *   main(M2-LIVE N3)의 화이트리스트 판정이 먼저다: 모양이 틀리면 400 이고 렌더러에 아무것도 보내지 않는다.
+ *   통과한 forward 만 dispatchMcpUpdate 로 보낸다 — 이미지 교체 update-scene 은 렌더러 결과를 기다려 busy(Upscayl 실행 중)면 409.
+ */
+export async function routeMcpUpdate(webContents, rawBody) {
+  const decided = decideUpdateRequest(rawBody)
+  if (!decided.forward) return { status: decided.status, body: decided.body }
+  return dispatchMcpUpdate(webContents, decided.forward)
+}
 
 function getClaudeConfigPath() {
   return path.join(os.homedir(), '.claude.json')

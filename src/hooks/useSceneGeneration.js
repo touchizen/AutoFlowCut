@@ -2,7 +2,7 @@
  * useSceneGeneration - 씬 이미지 재생성 (상세 모달에서 개별)
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { checkFolderPermission, checkAuthToken, checkFlowProjectReady } from '../utils/guards'
 import { resolveSceneStyle } from '../services/styleService'
 import { finalizeGeneratedImage } from '../services/imageFinalize'
@@ -22,8 +22,10 @@ import { resolveDisplayError } from '../utils/errorDisplay'
  *   반환: proceeded=false 면 사용자가 취소한 것(생성하지 않는다), refs 가 있으면 그것이
  *   authoritative refs 다(React state 는 같은 tick 에 stale).
  */
-export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true, requestMentionSync }) {
+export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true, upscaylRunning = false, requestMentionSync }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
+  const upscaylRunningRef = useRef(upscaylRunning)
+  upscaylRunningRef.current = upscaylRunning
 
   // 핵심 생성 로직
   // overrideStyleId: MCP 호출 등에서 명시 styleId 줬을 때 사용. undefined면 기존 동작 (style_tag fallback만).
@@ -34,6 +36,15 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   //   closure scene 그대로. 모달이 onUpdate 직후 onGenerate 를 부르면 scenes 클로저가 stale 이라
   //   방금 편집한 prompt/characters/style_tag 를 못 보는 race 가 난다 — 스냅샷을 병합해 fresh 하게 쓴다.
   const _executeSceneGeneration = useCallback(async (sceneId, overrideStyleId = undefined, sceneOverride = undefined) => {
+    // 큐에 들어간 뒤 Upscayl이 시작될 수도 있으므로 실제 실행 직전에도 live ref로 확인한다.
+    if (upscaylRunningRef.current) return { success: false, error: 'busy' }
+
+    const rejectUpscaylBusy = () => {
+      // 원인은 생성 중복이 아니라 Upscayl 진행이다 — 원인을 맞게 알린다.
+      toast.warning(t('upscayl.blockedByUpscayl') || 'An upscale is running — try again after it finishes')
+      return { success: false, error: 'busy' }
+    }
+
     const baseScene = scenes.find(s => s.id === sceneId)
     const scene = (baseScene && sceneOverride) ? { ...baseScene, ...sceneOverride } : baseScene
     if (!scene?.prompt) {
@@ -75,6 +86,9 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       if (gate && gate.proceeded === false) return
       if (gate?.refs) effectiveRefs = gate.refs
     }
+
+    // auth/sync await 동안 시작된 Upscayl을 status 변경과 엔진 제출 직전에 다시 막는다.
+    if (upscaylRunningRef.current) return rejectUpscaylBusy()
 
     // generatingStartedAt 을 새로 찍는다 — 안 그러면 이전 생성의 stale 시작시각이 남아
     //   경과시간이 엉뚱하게(예: 1분인데 1시간 25분) 표시된다. (배치/레퍼런스 경로는 이미 세팅.)
@@ -156,7 +170,13 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       if (unresolvedNames.length > 0 && genAPI?.mode === 'flow' && requestMentionSync) {
         const recovery = await requestMentionSync({ scene, names: unresolvedNames, projectName: settings.projectName })
         if (recovery?.proceeded) {
-          result = await callEngine(recovery.refs || effectiveRefs)
+          // recovery gate 대기 중 Upscayl이 시작돼도 두 번째 엔진 제출은 금지한다.
+          if (upscaylRunningRef.current) {
+            // 첫 실패는 아래에서 finalize해야 scene이 generating으로 고착되지 않는다.
+            rejectUpscaylBusy()
+          } else {
+            result = await callEngine(recovery.refs || effectiveRefs)
+          }
         }
       }
 
@@ -217,6 +237,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   // 큐를 통한 생성. overrideStyleId 선택 — MCP `app_generate_scene(sceneId, styleId)`에서 사용.
   // sceneOverride 선택 — 상세 모달 재생성이 방금 편집한 스냅샷(editData)을 명시 전달(Issue #4/#5).
   const handleGenerateScene = useCallback(async (sceneId, overrideStyleId = undefined, sceneOverride = undefined) => {
+    if (upscaylRunningRef.current) return { success: false, error: 'busy' }
+
     if (!generationQueue) {
       return _executeSceneGeneration(sceneId, overrideStyleId, sceneOverride)
     }

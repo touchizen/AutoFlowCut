@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
+contextBridge.exposeInMainWorld('upscaylAPI', {
+  detect: () => ipcRenderer.invoke('upscayl:detect'),
+  locate: () => ipcRenderer.invoke('upscayl:locate'),
+  run: (params) => ipcRenderer.invoke('upscayl:run', params),
+  cancel: () => ipcRenderer.invoke('upscayl:cancel'),
+})
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // App
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
@@ -88,6 +95,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Vrew (.vrew — ZIP archive)
   writeVrewProject: (params) => ipcRenderer.invoke('vrew:write-project', params),
   openVrewProject: (params) => ipcRenderer.invoke('vrew:open-project', params),
+
+  // Self-render (local ffmpeg MP4)
+  renderMp4: (payload) => ipcRenderer.invoke('render:export-mp4', payload),
+  renderCancel: (payload) => ipcRenderer.invoke('render:cancel', payload),
+  revealPath: (filePath) => ipcRenderer.invoke('render:reveal', { path: filePath }),
+  onRenderProgress: (cb) => {
+    const listener = (_e, p) => cb(p)
+    ipcRenderer.on('render:progress', listener)
+    return () => ipcRenderer.removeListener('render:progress', listener)
+  },
   checkVrewInstalled: () => ipcRenderer.invoke('vrew:check-installed'),
 
   // MCP (Claude Code integration)

@@ -59,7 +59,63 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     delete window.__mcpStartBatch
     delete window.__mcpSetStyle
     delete window.__mcpExportCapcut
+    delete window.__mcpUpdateScene
     delete window.electronAPI
+  })
+
+  it('__mcpUpdateScene은 active Upscayl의 imagePath write를 busy로 거부한다', () => {
+    const setScenes = vi.fn()
+    const running = { current: false }
+    renderHook(() => useMcpServer(makeProps({
+      setScenes,
+      isUpscaylRunning: () => running.current,
+    })))
+    // React rerender 없이 내부 latch만 켜져도 HTTP dispatch 순간에 보여야 한다.
+    running.current = true
+
+    const result = window.__mcpUpdateScene?.({
+      type: 'update-scene',
+      index: 0,
+      fields: { imagePath: '/replacement.png' },
+    })
+
+    expect(result).toEqual({ success: false, error: 'busy' })
+    expect(setScenes).not.toHaveBeenCalled()
+  })
+
+  it('__mcpUpdateScene은 idle일 때 imagePath write와 기존 replacement patch를 적용한다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes, isUpscaylRunning: () => false })))
+
+    const result = window.__mcpUpdateScene?.({
+      type: 'update-scene',
+      index: 0,
+      fields: { imagePath: '/replacement.png' },
+    })
+
+    expect(result).toEqual({ success: true })
+    expect(setScenes).toHaveBeenCalledTimes(1)
+    const next = setScenes.mock.calls[0][0]([{
+      id: 'scene_1', imagePath: '/old.png', upscaledAt: 10, donePrompt: 'old',
+    }])
+    expect(next[0]).toMatchObject({
+      imagePath: '/replacement.png', upscaledAt: null, donePrompt: null,
+    })
+  })
+
+  it('__mcpUpdateScene은 active Upscayl이어도 subtitle 같은 비이미지 수정은 통과시킨다', () => {
+    const setScenes = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setScenes, isUpscaylRunning: () => true })))
+
+    const result = window.__mcpUpdateScene?.({
+      type: 'update-scene',
+      index: 0,
+      fields: { subtitle: 'kept working' },
+    })
+
+    expect(result).toEqual({ success: true })
+    const next = setScenes.mock.calls[0][0]([{ id: 'scene_1', subtitle: 'old' }])
+    expect(next[0]).toMatchObject({ subtitle: 'kept working' })
   })
 
   it('registers __mcpGenerateRef on mount', () => {
@@ -644,6 +700,38 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     vi.useRealTimers()
   })
 
+  it('Upscayl-only stop은 hook finally가 running을 내린 뒤 scene batch를 restart한다', async () => {
+    vi.useFakeTimers()
+    const cancelUpscayl = vi.fn()
+    const handleStart = vi.fn()
+    const handleStop = vi.fn(() => cancelUpscayl())
+    let upscaylRunning = true
+
+    function Wrapper() {
+      return useMcpServer(makeProps({
+        // App의 stop/wait aggregate에서 Upscayl만 true인 상태.
+        isRunning: upscaylRunning,
+        handleStart,
+        handleStop,
+      }))
+    }
+    const { rerender } = renderHook(Wrapper)
+
+    const callPromise = window.__mcpStartBatch('preset:noir', { force: true })
+    expect(handleStop).toHaveBeenCalledTimes(1)
+    expect(cancelUpscayl).toHaveBeenCalledTimes(1)
+    expect(handleStart).not.toHaveBeenCalled()
+
+    // useUpscayl.cancel() 이후 batch finally가 running=false로 정리한 render를 재현한다.
+    upscaylRunning = false
+    rerender()
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true, source: 'mcp' })
+    vi.useRealTimers()
+  })
+
   it('__mcpStartBatch waitForStopped timeout: handleStart NOT called', async () => {
     vi.useFakeTimers()
     const handleStart = vi.fn()
@@ -817,6 +905,27 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(window.__mcpBatchStatus().ref.isRunning).toBe(true)
 
     // Cleanup
+    result.unmount()
+  })
+
+  it('__mcpBatchStatus는 Upscayl만 실행 중이어도 top-level isRunning=true를 보고한다', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      // App이 전달하는 stop/wait aggregate: scene/video/ref는 idle이고 Upscayl만 active.
+      isRunning: true,
+      automationState: {
+        isRunning: false,
+        isSceneBatchQueued: false,
+        isPaused: false,
+        progress: { current: 0, total: 0 },
+        status: 'idle',
+        statusMessage: '',
+      },
+      videoAutomation: { isRunning: false, isPaused: false },
+      refBatchRunning: false,
+      generatingRefs: [],
+    })))
+
+    expect(window.__mcpBatchStatus().isRunning).toBe(true)
     result.unmount()
   })
 

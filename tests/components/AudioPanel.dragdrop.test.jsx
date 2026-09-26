@@ -6,9 +6,10 @@
  * - mp3 + srt 동시 드롭(패널 레벨): SRT만 처리됨
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, createEvent, fireEvent } from '@testing-library/react'
+import { screen, createEvent, fireEvent } from '@testing-library/react'
 import AudioPanel from '../../src/components/AudioPanel'
 import { I18nProvider } from '../../src/hooks/useI18n'
+import { renderWithExportSettings } from '../utils/renderWithExportSettings'
 
 function makeFile(name, content = 'fake', type = 'audio/mpeg') {
   return new File([content], name, { type })
@@ -25,7 +26,7 @@ function fireDragEvent(el, type, { files = [], types = ['Files'], clientX = 0, c
   return fireEvent(el, event)
 }
 
-const renderPanel = (props = {}) => render(
+const renderPanel = (props = {}) => renderWithExportSettings(
   <I18nProvider><AudioPanel {...props} /></I18nProvider>
 )
 

@@ -220,6 +220,7 @@ describe('isStartBlocked — handleStart entry guard', () => {
     ['video automation', { videoRunning: true }],
     ['pending batch latch', { hasPendingBatch: true }],
     ['video retry', { retryInFlight: true }],
+    ['Upscayl batch', { upscaylRunning: true }],
     ['Ref batch', { refBatchRunning: true }],
   ])('%s가 진행 중이면 시작을 차단한다', (_label, overrides) => {
     expect(isStartBlocked({
@@ -227,6 +228,7 @@ describe('isStartBlocked — handleStart entry guard', () => {
       videoRunning: false,
       hasPendingBatch: false,
       retryInFlight: false,
+      upscaylRunning: false,
       refBatchRunning: false,
       ...overrides,
     })).toBe(true)
@@ -238,6 +240,7 @@ describe('isStartBlocked — handleStart entry guard', () => {
       videoRunning: false,
       hasPendingBatch: false,
       retryInFlight: false,
+      upscaylRunning: false,
       refBatchRunning: false,
     })).toBe(false)
   })
@@ -248,6 +251,7 @@ describe('isStartBlocked — handleStart entry guard', () => {
       videoRunning: false,
       hasPendingBatch: false,
       retryInFlight: false,
+      upscaylRunning: false,
       refBatchRunning: false,
       generatingSceneId: 'scene-1',
     })).toBe(false)

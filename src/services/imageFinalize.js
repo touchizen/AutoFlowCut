@@ -11,6 +11,7 @@ import { RESOURCE } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { getImageSizeFromBase64 } from '../utils/formatters'
 import { tryUpscaleImage } from '../utils/imageProcessing'
+import { baseImageReplacementPatch } from '../utils/imagePatch'
 
 /**
  * 생성된 이미지 결과를 후처리 (업스케일 + 크기 + 저장 + 씬 업데이트 데이터 반환)
@@ -146,7 +147,10 @@ export async function finalizeGeneratedImage({
         errorKind: null,    // stale image-missing kind 가 free-form 메시지를 가리지 않도록 클리어
         // NEW 이미지를 메모리에 남기므로 옛 donePrompt 가 merge 로 살아남으면 "새 이미지 + 옛 기준"
         // 불일치로 되돌림이 error→done 오복원될 수 있다 — 명시적으로 클리어.
+        // 같은 이유로 업스케일 marker 도 클리어 (새 비업스케일 이미지에 stale 배지 방지).
         donePrompt: null,
+        upscaledAt: null,
+        upscaled_size: null,
         // 메모리 표시는 유지 (사용자가 재시도 결정 가능)
         image: imageData,
         mediaId,
@@ -160,7 +164,7 @@ export async function finalizeGeneratedImage({
 
   return {
     success: true,
-    sceneUpdate: {
+    sceneUpdate: baseImageReplacementPatch({
       status: 'done',
       donePrompt: prompt,
       // updateScene 은 merge 방식이라 prior error/errorKind (예: image-missing 마커)가
@@ -175,7 +179,7 @@ export async function finalizeGeneratedImage({
       seed: effectiveSeed,
       generatedAt,
       model: effectiveModel
-    }
+    })
   }
 }
 

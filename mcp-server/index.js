@@ -22,8 +22,8 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
-import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, nestSceneGenerationColumns } from './lib/csv.js';
-import { csvToolResponse, handleExportCapcutTool, handleExportPremiereTool } from './lib/toolResponses.js';
+import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, preserveSceneRuntimeFields, nestSceneGenerationColumns } from './lib/csv.js';
+import { csvToolResponse, handleExportCapcutTool, handleExportPremiereTool, handleUpdateSceneTool } from './lib/toolResponses.js';
 import { SCENE_GENERATION_PATCH_SCHEMA } from './lib/sceneGenerationSchema.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
@@ -910,32 +910,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
               const pj = JSON.parse(fs.readFileSync(pjPath, 'utf-8'));
               const existingScenes = pj.scenes || [];
-              // R9 review fix: _sceneNum 우선 매칭 → reorder/insert 안전. 둘 다
-              // _sceneNum 가지면 stable key 로 매핑 (renderer parseFromCSV 와 동일
-              // 전략). 둘 중 한쪽이라도 _sceneNum 없으면 옛 동작 (길이 동일 시 인덱스 매핑).
-              const existingByNum = new Map();
-              existingScenes.forEach(s => {
-                if (s._sceneNum != null) existingByNum.set(s._sceneNum, s);
-              });
-              if (existingByNum.size > 0) {
-                scenes.forEach(s => {
-                  const existing = existingByNum.get(s._sceneNum);
-                  if (!existing) return;
-                  if (existing.mediaId) s.mediaId = existing.mediaId;
-                  if (existing.imagePath) s.imagePath = existing.imagePath;
-                  if (existing.status === 'done') s.status = 'done';
-                  // 생성 기준 스냅샷 보존 — 되돌림 done 복원이 load_csv 왕복에도 유지
-                  if (typeof existing.donePrompt === 'string') s.donePrompt = existing.donePrompt;
-                });
-              } else if (existingScenes.length === scenes.length) {
-                // 옛 동작 fallback — 길이 동일 시 인덱스 매핑
-                existingScenes.forEach((existing, i) => {
-                  if (existing.mediaId) scenes[i].mediaId = existing.mediaId;
-                  if (existing.imagePath) scenes[i].imagePath = existing.imagePath;
-                  if (existing.status === 'done') scenes[i].status = 'done';
-                  if (typeof existing.donePrompt === 'string') scenes[i].donePrompt = existing.donePrompt;
-                });
-              }
+              // _sceneNum 우선, legacy는 길이가 같을 때 index fallback. 이미지 포인터와
+              // 캐시/업스케일 메타 + donePrompt(되돌림 done 복원)를 함께 보존한다
+              // (renderer CSV merge와 동일 정책).
+              scenes = preserveSceneRuntimeFields(scenes, existingScenes);
             } catch { /* project.json 파싱 실패 시 무시 */ }
           }
         }
@@ -1342,15 +1320,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'app_update_scene': {
-        const port = args.port || 3210;
-        const res = await appFetch(port, 'POST', '/api/update', {
-          type: 'update-scene',
-          index: args.index,
-          fields: args.fields,
-        });
-        return {
-          content: [{ type: 'text', text: `씬 [${args.index}] 수정 완료: ${JSON.stringify(args.fields)}` }],
-        };
+        return handleUpdateSceneTool(args, appFetch);
       }
 
       case 'app_generate_reference': {

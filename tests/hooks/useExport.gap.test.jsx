@@ -199,6 +199,36 @@ describe('useExport — 영상 길이 폴백 체인', () => {
   })
 })
 
+describe('useExport — self-render 영상 세그먼트의 슬롯-로컬 offset', () => {
+  it('첫 씬 source_offset 만큼 inSec/outSec를 시프트한다', async () => {
+    const project = await exportedProject([
+      scene('A', 1, 5, { videoI2VPath: '/v.mp4', videoI2VDuration: 2 }),
+      scene('B', 6, 9),
+    ])
+
+    expect(project.scenes[0]).toMatchObject({
+      image_duration: 6,
+      source_duration: 4,
+      source_offset: 1,
+    })
+    expect(project.renderVideoSegments).toEqual([
+      { sceneId: 'A', source: 'i2v', inSec: 3, outSec: 5 },
+    ])
+  })
+
+  it('비-slots 폴백은 off=0으로 기존 씬-로컬 세그먼트를 유지한다', async () => {
+    const project = await exportedProject([
+      scene('A', 0, 5, { videoI2VPath: '/v.mp4', videoI2VDuration: 2 }),
+      scene('B', 4, 8),
+    ])
+
+    expect(project.scenes[0]).not.toHaveProperty('source_offset')
+    expect(project.renderVideoSegments).toEqual([
+      { sceneId: 'A', source: 'i2v', inSec: 3, outSec: 5 },
+    ])
+  })
+})
+
 describe('useExport — 세 포맷이 같은 슬롯을 받는다', () => {
   const scenes = [scene('A', 0.1, 5), scene('B', 6, 9), scene('C', 10, 15)]
 

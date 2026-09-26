@@ -12,6 +12,42 @@ import * as toolResponses from '../../mcp-server/lib/toolResponses.js'
 const mcpIndexSource = readFileSync(resolve(process.cwd(), 'mcp-server/index.js'), 'utf8')
 
 describe('mcp-server toolResponses', () => {
+  it('app_update_scene propagates HTTP 409 busy as MCP isError', async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      status: 409,
+      data: { success: false, error: 'busy' },
+    })
+
+    const result = await toolResponses.handleUpdateSceneTool?.({
+      port: 4321,
+      index: 2,
+      fields: { imagePath: '/replacement.png' },
+    }, fetcher)
+
+    expect(fetcher).toHaveBeenCalledWith(4321, 'POST', '/api/update', {
+      type: 'update-scene',
+      index: 2,
+      fields: { imagePath: '/replacement.png' },
+    })
+    expect(result?.isError).toBe(true)
+    expect(result?.content[0].text).toContain('busy')
+  })
+
+  it('app_update_scene keeps successful non-image updates as completion', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ status: 200, data: { success: true } })
+
+    const result = await toolResponses.handleUpdateSceneTool?.({
+      index: 1,
+      fields: { subtitle: 'updated' },
+    }, fetcher)
+
+    expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/update', {
+      type: 'update-scene', index: 1, fields: { subtitle: 'updated' },
+    })
+    expect(result?.isError).toBeUndefined()
+    expect(result?.content[0].text).toContain('수정 완료')
+  })
+
   it('G3/H3: CSV tool response keeps structured warnings and appends them to visible content', () => {
     expect(toolResponses.csvToolResponse).toBeTypeOf('function')
     const warnings = [

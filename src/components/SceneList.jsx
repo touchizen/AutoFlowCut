@@ -406,7 +406,12 @@ export default function SceneList({
   onGenerate,
   generatingSceneId,
   references = [],
-  styleThumbnails = {}
+  styleThumbnails = {},
+  onUpscaleClick,
+  upscaylBusy = false,
+  upscaylBusyTooltip,
+  upscaylRunning = false,
+  restoreInFlightRef = null,
 }) {
   const { t } = useI18n()
   const [detailModal, setDetailModal] = useState({ open: false, scene: null })
@@ -698,6 +703,11 @@ export default function SceneList({
           aspectRatio={aspectRatio}
           references={references}
           styleThumbnails={styleThumbnails}
+          onUpscaleClick={onUpscaleClick}
+          upscaylBusy={upscaylBusy}
+          upscaylBusyTooltip={upscaylBusyTooltip}
+          upscaylRunning={upscaylRunning}
+          restoreInFlightRef={restoreInFlightRef}
         />
       )}
 

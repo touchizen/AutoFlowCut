@@ -15,6 +15,7 @@ const SIGNATURES = [
   ['/9j/', 'jpg'],
   ['iVBOR', 'png'],
   ['R0lGOD', 'gif'],
+  ['GkXf', 'webm'],    // WebM/Matroska EBML header
   ['AAAA', 'mp4'],     // MP4 ftyp box
   ['SUQ', 'mp3'],      // ID3 ('ID3')
   ['//u', 'mp3'],      // MPEG frame sync

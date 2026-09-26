@@ -216,6 +216,53 @@ async function runAutomationTerminal(kind) {
   }
 }
 
+// self-render 병합(리뷰 A): Upscayl 래치로 배치를 멈추는 것도 종결 경로다 — 이미 제출한 run scope 를 정확히 한 번 취소해야
+//   main 프로세스의 provider 요청이 계속 돌며 과금되지 않는다. s1 제출 직후 Upscayl 이 시작돼 s2 직전 래치 재검사에 걸린다.
+async function runAutomationUpscaylLatch() {
+  let upscaylRunning = false
+  const api = makeEngineMock({
+    submitGeneration: vi.fn(async () => {
+      upscaylRunning = true
+      return { success: true, generationId: 'g-1' }
+    }),
+    checkGeneration: vi.fn(async () => ({ success: true, completed: false })),
+  })
+  const liveScenes = [
+    { id: 's1', prompt: 'first', status: 'pending' },
+    { id: 's2', prompt: 'second', status: 'pending' },
+  ]
+  const updateScene = vi.fn((id, patch) => {
+    const scene = liveScenes.find((item) => item.id === id)
+    if (scene) Object.assign(scene, patch)
+  })
+  const scenesHook = {
+    scenes: liveScenes,
+    references: [],
+    updateScene,
+    getMatchingReferences: vi.fn(() => []),
+    updateReferences: vi.fn(),
+  }
+  const { result } = renderHook(() => useAutomation(
+    api, scenesHook, null, null, null, t, vi.fn(), null, null, 'api', true, false, null, vi.fn(),
+    false, null, undefined, null, () => upscaylRunning,
+  ))
+
+  let operation
+  act(() => {
+    operation = result.current.start({ projectName: 'terminal-cancel', saveMode: 'memory', concurrency: 2 })
+  })
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+  await act(async () => { await operation })
+
+  expect(api.submitGeneration).toHaveBeenCalledTimes(1)
+  const sentScope = api.submitGeneration.mock.calls[0][2].cancelScope
+  expect(api.cancelGeneration).toHaveBeenCalledTimes(1)
+  expect(api.cancelGeneration).toHaveBeenCalledWith(sentScope)
+  expect(testState.nextCancelScope.mock.results.map(({ value }) => value)).toEqual([sentScope])
+  expect(updateScene).not.toHaveBeenCalledWith('s2', expect.objectContaining({ status: 'generating' }))
+  expect(liveScenes.find((scene) => scene.id === 's1')).toMatchObject({ status: 'pending', error: null, errorKind: null })
+}
+
 async function runReferenceTerminal(kind) {
   const terminal = deferred()
   const api = makeEngineMock()
@@ -336,6 +383,7 @@ const terminalCases = [
   ['Automation collect-auth', () => runAutomationTerminal('collect-auth')],
   ['Automation submit-auth', () => runAutomationTerminal('submit-auth')],
   ['Automation quota', () => runAutomationTerminal('quota')],
+  ['Automation upscayl-latch', () => runAutomationUpscaylLatch()],
   ['Reference collect-auth (active + queued)', () => runReferenceTerminal('collect-auth')],
   ['Reference check-auth (active + queued)', () => runReferenceTerminal('check-auth')],
   ['Reference submit-auth (active + queued)', () => runReferenceTerminal('submit-auth')],

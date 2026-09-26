@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import {
   isNewSceneCSVFormat,
   bundleSceneCSVRows,
+  preserveSceneRuntimeFields,
   nestSceneGenerationColumns,
   loadCSV,
   saveCSV,
@@ -406,5 +407,30 @@ describe('bundleSceneCSVRows', () => {
       "Rejected invalid model '__inherit__' at generation.image.",
       "Rejected unknown provider 'unknown-image' at generation.image.",
     ])
+  })
+})
+
+describe('preserveSceneRuntimeFields', () => {
+  const runtime = {
+    mediaId: 'media-1',
+    imagePath: '/project/scenes/scene_1.png',
+    image_size: { width: 2048, height: 1152 },
+    generatedAt: 1700000000000,
+    upscaledAt: 1700000001000,
+    status: 'done',
+  }
+
+  it('_sceneNum 매칭으로 이미지 런타임 필드를 보존한다', () => {
+    const scenes = [{ id: 'fresh', _sceneNum: 7, prompt: 'new' }]
+    const existing = [{ id: 'old', _sceneNum: 7, prompt: 'old', ...runtime }]
+
+    expect(preserveSceneRuntimeFields(scenes, existing)[0]).toMatchObject(runtime)
+  })
+
+  it('_sceneNum이 없고 길이가 같으면 index fallback으로 보존한다', () => {
+    const scenes = [{ id: 'fresh', prompt: 'new' }]
+    const existing = [{ id: 'old', prompt: 'old', ...runtime }]
+
+    expect(preserveSceneRuntimeFields(scenes, existing)[0]).toMatchObject(runtime)
   })
 })
