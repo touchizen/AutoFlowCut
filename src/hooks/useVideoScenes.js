@@ -261,4 +261,7 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
   }
 }
 
+/** 영상 탭 파생 필드 → 씬 필드 매핑(읽기 전용 공개) — CSV 재적용 보존 목록이 전부 담는지 테스트가 묶는다(csvPreservedSceneFields). */
+export { FIELD_MAP as VIDEO_SCENE_FIELD_MAP }
+
 export default useVideoScenes

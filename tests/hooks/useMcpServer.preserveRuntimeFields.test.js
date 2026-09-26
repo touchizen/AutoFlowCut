@@ -10,7 +10,7 @@
  * image:null, videoT2VPrompt:'' 등)과 달라 규칙을 못 문다.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook } from '@testing-library/react'
+import { renderHook, act } from '@testing-library/react'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -18,6 +18,8 @@ import { useMcpServer } from '../../src/hooks/useMcpServer'
 import { useVideoScenes } from '../../src/hooks/useVideoScenes'
 import { filterPendingScenes } from '../../src/utils/sceneFilters'
 import { loadCSV, bundleSceneCSVRows } from '../../mcp-server/lib/csv.js'
+import { useScenes } from '../../src/hooks/useScenes'
+import { isLegacyFlowGenerationFailure } from '../../src/utils/flowMediaId'
 
 function makeProps(overrides = {}) {
   return {
@@ -111,6 +113,48 @@ describe('MCP load_csv — CSV 가 싣지 않는 씬 런타임 필드 보존(실
     expect(rows[0].image).toBeNull()
     const [s] = applyUpdate([{ ...DONE_SCENE, image: 'data:img' }], rows)
     expect(s.image).toBe('data:img')
+  })
+
+  it('리뷰 R2: 옛 서버측 실패 영상 행의 분류(isLegacyFlowGenerationFailure)가 재적용 뒤에도 같다 — 오류·게이트 필드 보존', () => {
+    const failed = {
+      ...DONE_SCENE, videoT2VStatus: 'error', videoT2VPath: null, videoT2VMediaId: null,
+      videoT2VGenerationId: '6f9bc842-d056-425e-88aa-ef4f7efa98a5', videoT2VError: 'PUBLIC_ERROR_UNSAFE_GENERATION', videoT2VErrorKind: null,
+      videoT2VDownloadGated: true,
+    }
+    const derive = (scenes) => renderHook(() => useVideoScenes(scenes, null)).result.current.videoScenes[0]
+    const before = derive([failed])
+    expect(isLegacyFlowGenerationFailure(before)).toBe(true)
+    const merged = applyUpdate([failed], mcpRows('scene,prompt,video_prompt,start_time,end_time\n1,"A","V",0,3\n'))
+    const after = derive(merged)
+    expect(isLegacyFlowGenerationFailure(after)).toBe(true)
+    expect(after.downloadGated).toBe(true)
+  })
+
+  it('리뷰 R2: 옛 프로젝트(_sceneNum 없음)의 인덱스 매칭이 같은 기존 씬을 두 번 쓰지 않는다 — id·영상 경로 중복 없음', () => {
+    const legacy = [
+      { id: 'scene_3', prompt: 'C', status: 'done', imagePath: '/c.jpg', videoT2VPath: '/v3.mp4', videoT2VSaveId: 't2v_3', videoT2VStatus: 'complete' },
+      { id: 'scene_1', prompt: 'A', status: 'done', imagePath: '/a.jpg', videoT2VPath: '/v1.mp4', videoT2VSaveId: 't2v_1', videoT2VStatus: 'complete' },
+    ]
+    const merged = applyUpdate(legacy, mcpRows('scene,prompt,start_time,end_time\n1,"A",0,3\n2,"B",3,6\n3,"C",6,9\n'))
+    const ids = merged.map((s) => s.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    const paths = merged.map((s) => s.videoT2VPath).filter(Boolean)
+    expect(new Set(paths).size).toBe(paths.length)
+  })
+
+  it('통합 — 리뷰 R2: 스토리 반영 → CSV 재적용 → 스토리 반영을 거쳐도 스토리 씬이 중복되지 않는다(storyId 보존)', () => {
+    const { result } = renderHook(() => {
+      const sh = useScenes()
+      useMcpServer(makeProps({ setScenes: sh.setScenes }))
+      return sh
+    })
+    const push = { storyId: 'st1', sceneNo: 1, prompt: 'A', videoT2VPrompt: '', startTime: 0, endTime: 3, duration: 3, srtLineIds: [], subtitle: 's' }
+    act(() => { result.current.importStoryScenes({ scenes: [push] }) })
+    const rows = mcpRows('scene,prompt,subtitle,start_time,end_time\n1,"A","s",0,3\n')
+    act(() => { cb({ type: 'update-scenes', scenes: rows }) })
+    expect(result.current.scenes[0].storyId).toBe('st1')
+    act(() => { result.current.importStoryScenes({ scenes: [push] }) })
+    expect(result.current.scenes).toHaveLength(1)
   })
 
   it('통합: 병합 뒤에도 영상 탭(useVideoScenes)에 완료된 영상이 선택된 채로 보인다', () => {

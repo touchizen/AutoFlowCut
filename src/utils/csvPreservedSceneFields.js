@@ -2,7 +2,7 @@
  * src/utils/csvPreservedSceneFields.js
  *
  * CSV 를 다시 적용할 때 — 앱의 새 형식 parseFromCSV(useScenes)와 MCP load_csv 가 보내는 update-scenes(useMcpServer) —
- * CSV 에 실리지 않는 씬 런타임 필드: 생성 결과 포인터, 진행·선택 상태, 생성 메타. 두 경로가 **같은 목록**을 쓴다.
+ * CSV 에 실리지 않는 씬 런타임 필드: 생성 결과 포인터, 진행·선택 상태, 오류·게이트, 생성 메타, 스토리 연결(storyId). 두 경로가 **같은 목록**을 쓴다.
  * 따로 두면 어긋난다 — 2026-09-26 실기: MCP 경로만 영상 결과·선택을 버렸고, 둘 다 model·seed·생성 시각을 버려 이미지 탭 모델명이 사라졌다.
  *
  * CSV 가 쓰는 필드(프롬프트·자막·태그·시간)와 옛 형식 별칭(start_time/end_time — normalizeScene 이 camelCase 보다 먼저 읽는다)은
@@ -24,6 +24,11 @@ export const CSV_PRESERVED_SCENE_FIELDS = Object.freeze([
   'videoI2VStatus', 'videoI2VGeneratingStartedAt', 'videoI2VGeneratingEndedAt',
   // 영상 생성 메타 — 영상 탭의 모델명·시드·생성 시각·저장 id
   'videoT2VModel', 'videoT2VSeed', 'videoT2VGeneratedAt', 'videoT2VSaveId',
+  // 영상 오류·거부 id·다운로드 게이트 — 배치 시작의 분류(옛 서버측 실패 · in-flight · 다운로드 전용)가 status·generationId 와 **함께** 읽는다.
+  //   하나만 남기면 재적용 뒤 분류가 바뀐다(리뷰 R2: 옛 실패가 in-flight 로 → 폴링). 영상 탭 파생 필드는 프롬프트 빼고 전부 여기 있어야 한다.
+  'videoT2VError', 'videoT2VErrorKind', 'videoT2VErrorParams', 'videoT2VRejectedMediaId', 'videoT2VRejectedMediaIds', 'videoT2VDownloadGated',
+  // 스토리 연결 — 버리면 다음 스토리 반영이 같은 씬을 새로 만든다(storyId upsert, 리뷰 R2)
+  'storyId',
 ])
 
 /** 기존 씬에서 목록의 키만 옮긴다(값이 없으면 undefined — CSV 쪽 값을 덮어 기존 상태를 그대로 드러낸다). */

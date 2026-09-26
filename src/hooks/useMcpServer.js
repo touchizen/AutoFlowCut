@@ -368,6 +368,7 @@ export function useMcpServer({
               if (n > maxSceneN) maxSceneN = n
             }
           }
+          const consumed = new Set()
           let nextFreshN = maxSceneN + 1
           const freshId = () => {
             while (taken.has(`scene_${nextFreshN}`)) nextFreshN++
@@ -387,6 +388,10 @@ export function useMcpServer({
             } else {
               matched = byId.get(incomingId) || (prevHasSceneNums ? null : prev[i])
             }
+            // 인덱스 fallback(prev[i])은 앞 행이 id 로 이미 가져간 씬을 또 고를 수 있다 — 한 prev 는 한 번만(리뷰 R2: 옛 프로젝트에서
+            //   id 가 겹치고 두 씬이 같은 영상 경로·저장 id 를 나눠 가졌다).
+            if (matched && consumed.has(matched)) matched = null
+            if (matched) consumed.add(matched)
             // R15: 한 prev 가 두 incoming 에 매칭되면 두번째는 fresh id 필요.
             // 매칭 즉시 maps 에서 제거해 다음 incoming 이 동일 prev 재매칭 못 하게.
             if (matched) {
