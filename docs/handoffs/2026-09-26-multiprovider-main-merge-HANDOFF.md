@@ -1,6 +1,10 @@
 # main → feature/multi-provider-genapi 병합 — HANDOFF (2026-09-26)
 
-> ✅ **완료(2026-09-26 밤 세션).** 두 리뷰어 findings 0 → `feature/multi-provider-genapi` origin 푸시(fast-forward, 이 문서 커밋까지). 리뷰 사본 두 워크트리 제거. 남은 일 없음(§5).
+> ✅ **완료(2026-09-26 밤 세션).** 두 리뷰어 findings 0 → `feature/multi-provider-genapi` origin 푸시(fast-forward, `00e30c2b`). 리뷰 사본 두 워크트리 제거.
+> ✅ **main 병합·푸시 `723f675d`**(`--no-ff`, 트리는 `00e30c2b` 와 동일). 병합 전 실앱 스모크(병합본 dev, 앱 프로젝트 `mpmerge-smoke` → Flow 프로젝트 `3dadbde3`):
+>   Flow 이미지 `ogiZ0b` → `scene_1.jpg` 1376×768·Nano Banana Pro·mediaId UUID ✅ · Flow T2V Omni Flash 4초 `YhhmEf`(`abra_t2v_4s`, 7크레딧 → 잔여 886) → `jwpduf` complete → `t2v_1.mp4` 1280×720·4.0초 ✅
+>   (씬에 main 필드 `videoT2VDownloadGated` 와 브랜치 필드 `videoT2VProvider:'google'` 이 함께 기록 · MCP update-settings 가 Flow 에서 정렬 없이 적용).
+>   🔴 **API 모드 실앱 스모크는 안 했다**(사용자 결정: 필요할 때 사용자가 한다). 브랜치의 provisional 경로(CSV·MCP 씬 override 로 fal 등 도달)·openai 실키 T6 도 그대로 남아 있다 — 릴리스 전에 볼 것.
 
 ## 1. 상태
 
