@@ -217,12 +217,13 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
   })
 
   // 리뷰 A(2026-09-26): 이미지 패널엔 길이·해상도 그룹이 없어 안정 대기는 패널 서명으로 끝난다(≈1.5s) — 대기를 빼도 초록이었다.
-  //   모델 클릭 300ms 뒤 Flow 가 개수를 x1 로 리셋하면, 대기 없이 재스캔한 계획은 x2 를 already 로 보고 1장만 만든다.
-  it('이미지 모델 클릭 300ms 뒤 개수 리셋(x2 → x1) → 안정 대기 뒤 재계획이 x2 를 다시 클릭한다', async () => {
+  //   모델 클릭 1000ms 뒤 Flow 가 개수를 x1 로 리셋하면, 대기 없이(또는 짧은 고정 대기로) 재스캔한 계획은 x2 를 already 로 보고 1장만 만든다.
+  //   (R2: 300ms 였을 땐 고정 sleep(400) 뮤턴트가 통과했다 — 안정 대기 상한 안쪽의 늦은 리셋으로 고정 대기를 가른다.)
+  it('이미지 모델 클릭 1000ms 뒤 개수 리셋(x2 → x1) → 안정 대기 뒤 재계획이 x2 를 다시 클릭한다', async () => {
     vi.useFakeTimers()
     try {
       const doc = mount(imagePage({ checked: { count: 'x2' } }))
-      const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectLater: { afterMs: 300, count: 'x1' } })
+      const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectLater: { afterMs: 1000, count: 'x1' } })
       const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', count: 2, model: 'Nano Banana Pro' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
       expect(r).toMatchObject({ ok: true, closed: true, steps: { model: 'clicked', count: 'clicked' } })
       expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'count:x2', 'keydown:Escape:27'])
@@ -247,6 +248,19 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', count: 2, model: 'Nano Banana Pro' }, noSleep)
     expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:model', closed: true })
     expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'count:x2', 'keydown:Escape:27'])
+  })
+
+  // 리뷰 A R2(2026-09-26): 2차 패스 뒤의 모델 가드도 같은 방어선이다 — 개수가 되돌아가 2차 패스가 도는 동안(400ms 대기) Flow 가 모델을 되돌리면
+  //   2차 패스 뒤 재판독이 not-checked:model 로 멈춰야 한다(없으면 Nano Banana 2 · x1 로 ok 닫힘).
+  it('2차 패스 대기 중 Flow 가 모델을 되돌리면 2차 패스 뒤 재판독이 not-checked:model 로 멈춘다', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(imagePage())
+      const log = installFakeAngular(doc, { ...IMAGE_MENU, lockGroup: 'count', lockTo: 'x1', modelSelectLater: { afterMs: 1800, label: '🍌 Nano Banana 2' } })
+      const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', count: 2, model: 'Nano Banana Pro' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:model', closed: true, steps: { model: 'clicked' } })
+      expect(log.filter((l) => l === 'count:x2')).toHaveLength(1)   // 2차 패스는 모델이 이미 되돌아가 개수를 다시 누르지 않는다(계획이 모델에서 멈춘다)
+    } finally { vi.useRealTimers() }
   })
 
   it('(a) 동기 리셋: 모드 전환 → 재스캔 → 모델 메뉴 선택 → duration 이 되돌아가 모델 뒤에 다시 클릭 → ok', async () => {
