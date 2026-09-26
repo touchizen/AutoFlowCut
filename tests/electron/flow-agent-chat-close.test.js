@@ -30,6 +30,52 @@ describe('findAgentChatCloseButton', () => {
     expect(findAgentChatCloseButton(document)).toBeNull()
   })
 
+  // 2026-09-26 실기(M3 G5): 새 flow.google.com 엔 에이전트 채팅 창이 없는데, 'close' 아이콘 버튼이 하나뿐이면 그게 뭐든 눌렀다 —
+  //   사용자가 붙인 칩이 ensureAgentOff 에서 입력창 지우기로 조용히 사라졌다. 아래 마크업은 M3 캡처(docs/handoffs/evidence/
+  //   2026-09-25-m3-dom-*.elements.json)에서 'close' 버튼이 그것 하나뿐인 세 화면이다. 에이전트 창이 아니면 누르지 않는다.
+  it('new flow.google.com, chip attached: the lone close button is the composer clear — returns null', () => {
+    document.body.innerHTML = `
+      <div class="composer"><div class="chips"><img src="blob:x"></div>
+        <button type="button" class="mdc-icon-button mat-mdc-icon-button clear-button clear-button-no-touch-target" aria-label="프롬프트 지우기"><i class="google-symbols">close</i></button>
+        <button type="button"><i class="google-symbols">arrow_forward</i></button>
+      </div>`
+    expect(findAgentChatCloseButton(document)).toBeNull()
+  })
+
+  it('new flow.google.com, asset picker open: the add trigger shows close — returns null', () => {
+    document.body.innerHTML = `
+      <div class="composer">
+        <button type="button" class="mdc-icon-button mat-mdc-icon-button" aria-label="프롬프트 상자에 소재 추가"><i class="google-symbols">close</i></button>
+      </div>`
+    expect(findAgentChatCloseButton(document)).toBeNull()
+  })
+
+  it('new flow.google.com home: a banner close alone — returns null', () => {
+    document.body.innerHTML = `<div class="banner"><span>공지</span><button aria-label="배너 닫기"><i class="google-symbols">close</i></button></div>`
+    expect(findAgentChatCloseButton(document)).toBeNull()
+  })
+
+  it('agent-chat header in another locale is found by its untranslated icons (edit_square)', () => {
+    document.body.innerHTML = `
+      <div class="agent-panel-header">
+        <button aria-label="History"><i class="google-symbols">menu</i></button>
+        <button aria-label="New session"><i class="google-symbols">edit_square</i></button>
+        <button class="target" aria-label="Close"><i class="google-symbols">close</i></button>
+      </div>`
+    expect(findAgentChatCloseButton(document)?.classList.contains('target')).toBe(true)
+  })
+
+  it('agent-chat header and a chip-bearing composer together → the header close, never the composer clear', () => {
+    document.body.innerHTML = `
+      <div class="composer"><button class="clear-button" aria-label="프롬프트 지우기"><i class="google-symbols">close</i></button></div>
+      <div class="agent-panel"><div class="header">
+        <button><i class="google-symbols">menu</i></button>
+        <button><i class="google-symbols">edit_square</i></button>
+        <button class="target"><i class="google-symbols">close</i></button>
+      </div></div>`
+    expect(findAgentChatCloseButton(document)?.classList.contains('target')).toBe(true)
+  })
+
   it('prefers the close button inside the agent-chat header over an unrelated one', () => {
     document.body.innerHTML = `
       <div class="some-modal"><button aria-label="close"><i>close</i></button></div>
