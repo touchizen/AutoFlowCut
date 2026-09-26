@@ -1,6 +1,6 @@
 # HANDOFF — M3 레퍼런스: 실기 게이트 G1~G7 전부 통과 (실기 결함 3건 수정·리뷰 종료)
 
-작성: 2026-09-26 · 워크트리 `~/workspace/AutoFlowCut-bugfix` · 브랜치 **`feat/flow-m3-references`**(`fix/flow-batchexecute` `f00a2775` 위) · **전부 미푸시**
+작성: 2026-09-26 · 워크트리 `~/workspace/AutoFlowCut-bugfix` · 브랜치 **`fix/flow-batchexecute`**(M3 브랜치 `feat/flow-m3-references` 를 빨리감기 병합 `f00a2775 → 2c6df18a` 뒤 삭제) · **전부 미푸시**
 이전 문서: `docs/handoffs/2026-09-26-flow-M3-implemented-live-gate-pending-HANDOFF.md` · 증거: **`docs/handoffs/evidence/2026-09-26-m3-live-gate.md`** · 계획서(완료, 아카이브): `docs/plans-archive/2026-09-25-flow-M3-references-plan.md`
 
 ---
@@ -28,8 +28,8 @@ M3(새 flow.google.com 의 레퍼런스 이미지 · @인라인 멘션 · 레퍼
 
 ## 3. 남은 것
 
-1. **푸시·머지(사용자 결정)** — M2 `fix/flow-batchexecute` 44커밋 + M3 이 브랜치 전부 미푸시, main 도 미푸시 10커밋. 이 세션 중 사용자가 "완료했으면 base 에 병합"이라고 했다가 "여기선 하면 안 되는데… 내가 착각했어"로 정정 — **병합 여부·대상은 다시 물어서 확정**할 것(base 는 `fix/flow-batchexecute` 로 이해하고 있었다).
-2. `probe/m3-0` 브랜치 삭제(계획서대로 M3 끝나면 삭제 — 사용자 확인 후).
+1. **푸시(사용자 결정)** — M3 는 `fix/flow-batchexecute` 에 병합 완료(사용자 지시, 빨리감기). 이 브랜치(M2+M3)와 main(미푸시 10커밋) 모두 미푸시 — 푸시·main 머지는 사용자에게 묻는다.
+2. 브랜치 정리 완료(사용자 지시): `probe/m3-0` · `feat/flow-m3-references` · main 에 이미 병합된 로컬 브랜치 14개 삭제(원격은 그대로). 커밋이 사라져 **확인이 필요해 남긴 것**: `backup-premerge`(고유 3) · `feat/flow-chrome-extension`(고유 10, NO-GO 스파이크) · `feature/veo-audio-volume`(고유 1, 미병합 기능).
 3. 옛 코드 정리(계획서 §7·D15): `sceneMentions` 엔티티 경로 · `flow-compose-mention` · `cdp-image-inject` · 동기화 게이트 UI.
 4. 증거 §3 의 관찰 8건(결함 아님) — 특히 채택 모달 경고, MCP 단일 생성의 실패 무신호, 영상 프롬프트 변경 시 옛 영상 `complete` 유지.
 5. Flow 프로젝트 잔여물: `8e463fb2`(프로브·캡처 잔여), `048857b2`(m3-live-gate 실기) — 사용자가 원하면 손으로 정리.
@@ -51,8 +51,8 @@ M3(새 flow.google.com 의 레퍼런스 이미지 · @인라인 멘션 · 레퍼
 ## 6. 새 세션 시작 문구
 
 ```
-AutoFlowCut-bugfix 워크트리(~/workspace/AutoFlowCut-bugfix, 브랜치 feat/flow-m3-references)에서 이어서 해.
-docs/handoffs/2026-09-26-flow-M3-live-gates-passed-HANDOFF.md 를 끝까지 읽어. M3 는 실기 G1~G7 까지 끝났고 전부 미푸시다.
-첫 일: 푸시·머지 대상을 나한테 물어서 확정(§3-1). 그다음 probe/m3-0 삭제 확인, 옛 코드 정리(§3-3)는 별도 계획으로.
+AutoFlowCut-bugfix 워크트리(~/workspace/AutoFlowCut-bugfix, 브랜치 fix/flow-batchexecute)에서 이어서 해.
+docs/handoffs/2026-09-26-flow-M3-live-gates-passed-HANDOFF.md 를 끝까지 읽어. M3 는 실기 G1~G7 까지 끝나 fix/flow-batchexecute 에 병합됐고 전부 미푸시다.
+첫 일: 푸시·main 머지를 나한테 물어서 확정(§3-1). 남긴 브랜치 3개(§3-2) 처분도 확인. 옛 코드 정리(§3-3)는 별도 계획으로.
 커밋은 영어, 푸시는 나한테 물어봐. 리뷰어는 Opus 서브에이전트(Sonnet 금지).
 ```
