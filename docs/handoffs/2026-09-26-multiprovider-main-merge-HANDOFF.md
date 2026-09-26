@@ -1,13 +1,13 @@
 # main → feature/multi-provider-genapi 병합 — HANDOFF (2026-09-26)
 
-> **새 세션 시작 문구:** `AutoFlowCut-main/docs/handoffs/2026-09-26-multiprovider-main-merge-HANDOFF.md 읽고 §5 부터 진행해줘.`
+> ✅ **완료(2026-09-26 밤 세션).** 두 리뷰어 findings 0 → `feature/multi-provider-genapi` origin 푸시(fast-forward, 이 문서 커밋까지). 리뷰 사본 두 워크트리 제거. 남은 일 없음(§5).
 
 ## 1. 상태
 
-- 워크트리 `~/workspace/AutoFlowCut-main`, 브랜치 **`feature/multi-provider-genapi`**, HEAD **`59dfebac`** — **origin 미푸시**(origin 은 병합 전 `2365a3a7`).
+- 워크트리 `~/workspace/AutoFlowCut-main`, 브랜치 **`feature/multi-provider-genapi`** — **origin 푸시 완료**(병합 전 origin `2365a3a7` 에서 fast-forward).
 - 사용자 지시: "AutoFlowCut-bugfix 의 앞선 커밋들(=main)을 병합하고, **findings 0 이 될 때까지 루프**. findings 는 **Opus 5.5 서브에이전트**로. 테스트는 알아서."
   사용자 규칙(메모리): **병합을 시키면 푸시까지** — findings 0 확인 뒤 `git push origin feature/multi-provider-genapi`(fast-forward 확인 후, 따로 묻지 않는다).
-- 전체 스위트 **9454 passed / 54 skipped**(병합 전 브랜치 7987 · main 8741), `npm run build` 통과.
+- 전체 스위트 **9460 passed / 54 skipped**(병합 전 브랜치 7987 · main 8741), `npm run build` 통과. 코드(src·electron)는 `59dfebac` 이후 안 바뀌었다 — 뒤 커밋은 테스트·문서뿐.
 
 | 커밋 | 내용 |
 |---|---|
@@ -16,6 +16,8 @@
 | `57c3237e` | 리뷰 A R2: 시험 단계 provider 모델 MCP 거부(400) · Flow 모드 정렬 안 함 · API 영상 복구 인증 문구 |
 | `2477d252` | 리뷰 B R1: 되돌려도 안 잡히던 해결 5곳 테스트로 고정(테스트만) |
 | `59dfebac` | 리뷰 A R3: MCP 카탈로그 밖 모델 이름은 google 로 본다 · api-docs 규칙 |
+| `bbb5a196` | 리뷰 B R2(테스트만): MCP 모드 전환 뒤 정렬(modeRef) · update-scene 일부 stage 병합 · Flow 목이 실제 드라이버처럼 거부 · 영상 provider 전환 기억 |
+| `c755a084` | 리뷰 B R3(테스트만): update-scene stage-pair 병합(i2v 보존) · `computeVideoProviderSwitch` 의 spread 전부 |
 
 ## 2. 충돌 해결 원칙
 
@@ -41,26 +43,28 @@
 미정의 식별자 탐지(ESLint no-undef 를 병합본·main·브랜치 판에 각각 돌려 병합본에만 새로 생긴 것)로 75개 파일 재검사 — 2·3 외 없음.
 ⚠️ 탐지기 함정: ESLint 는 작업 폴더 밖 파일을 "outside of base path" 경고로 **조용히 건너뛴다** → cwd 를 임시 폴더로 두고, "ignored" 메시지는 오류로 취급. 알려진 버그(2·3)를 되살려 잡히는지부터 확인할 것.
 
-## 4. 리뷰 루프 현황 — **findings 0 아직 미확인**
+## 4. 리뷰 루프 — ✅ **둘 다 findings 0**
 
 리뷰어 2명(Opus 5.5 서브에이전트, 각자 전용 사본):
-- **A — 의미 정합성**: R1 3건(F1 major, F2·F3 minor) → R2 3건(R2-1..3 minor) → R3 1건(R3-1 minor) + nit(api-docs). 모두 수정. **R4(`59dfebac` 검증)는 돌던 중 세션 이동으로 중단.**
-- **B — 테스트 적정성·뮤테이션**: R1(89 뮤턴트): F1·F8 은 A 와 중복(이미 수정), F2–F5 테스트 공백 + 이미지 Flow quota 훅 테스트 → `2477d252` 로 고정. **R2 는 돌던 중 중단.**
-- 사본: `~/workspace/AutoFlowCut-mpmerge-rA`, `-rB` (둘 다 detached `59dfebac`, 깨끗, node_modules 는 `AutoFlowCut-main/node_modules` 심볼릭 링크).
+- **A — 의미 정합성**: R1 3건(F1 major, F2·F3 minor) → R2 3건(R2-1..3 minor) → R3 1건(R3-1 minor) + nit(api-docs) → **R4 findings 0**(`59dfebac`).
+  R4: 이전 프로브 A–I 재실행 + 새 프로브 J 9케이스(openai 에서 정적 카탈로그 밖 동적 google id → google 전환·openai 슬롯 기억·heal 유지·SceneTab 왕복, 영상 stage, Flow 불변, provisional 400) ·
+  R3-1 원복 뮤턴트는 `mcpModelProviderAlign.test.js` 가 죽임 · 병합 핫스팟 15파일 중복 키 0(검사기 픽스처로 먼저 검증) · 스위트·빌드 통과.
+- **B — 테스트 적정성·뮤테이션**: R1(89 뮤턴트) → `2477d252` · R2(92 뮤턴트, minor 2 + nit 3) → `bbb5a196` · R3(nit 1: update-scene 얕은 병합 M7 생존) → `c755a084` · **R4 findings 0**(`c755a084`).
+  R1 생존 R5 R6 V4 V9 C3 C4 M3 Q1 은 R2 에서 전부 죽음. R2 에서 살아남은 뮤턴트 중 실제 공백은 G9·G28(마운트 뒤 모드 전환)·M5(update-scene)였고, 이제 전부 죽는다.
+  B 가 **등가로 판정**한 생존: W10(imageModel fallback 순서 — 호출부가 항상 같은 값), W12(전역 site appMode — Flow 에선 provider 를 안 씀), B12·B13(videoRecovery `||`·DEFAULT 꼬리 — 호출부가 항상 문구를 넘김),
+  G14·G33(화이트리스트 video 목록 ↔ image 목록 — VIDEO_MODELS 에 openai 없음), G45(`...generation.video[stage]` — stage 객체엔 provider 뿐).
+- ⚠️ **저자 주장 정정**: "표적 뮤턴트 22개 전부 죽음"은 틀렸다 — `mutations_r2.py` 중 W10·W12·G9·G14·G16 이 전체 스위트에서 살았다(B R2). 실제 공백은 G9(→`bbb5a196`), G16 은 새 테스트로 죽음, 나머지 셋은 등가.
 
-남긴 nit(사유): B F7 `mergeLikeApp` 손 사본 4벌(main 에서 K1 이후부터 어긋나 있던 것 — 병합 무관) · `tests/electron/story/stepMachine.scenesExperiment.test.js` 부하 시 간헐 실패(병합 전부터) ·
-A 의 `useReferenceGeneration` maxWait provider nit(fal 전역 provider 는 이제 UI·MCP 로 도달 불가 — A 동의).
+남긴 nit(사유): B F7 `mergeLikeApp` 손 사본 4벌(main 에서 K1 이후부터 어긋나 있던 것 — 병합 무관) · `tests/electron/story/stepMachine.scenesExperiment.test.js` 부하 시 간헐 실패(병합 전부터, 이번 라운드들엔 안 뜸) ·
+A 의 `useReferenceGeneration` maxWait provider nit(fal 전역 provider 는 이제 UI·MCP 로 도달 불가 — A 동의) · B F5 api-docs 새 문장은 테스트로 안 묶음(문서 문장 — B 동의) ·
+A 참고: `SceneGeneration` 스키마·MCP README 에 "Flow 모드는 씬 override 무시"가 안 적혀 있다(병합 전 브랜치도 동일).
+영상 provider 가 provisional 을 벗어나는 날엔 `computeVideoProviderSwitch` 경로가 UI 로 도달 가능해진다 — 지금 테스트가 spread 전부를 묶어 두었다.
 
-## 5. 다음 일
+## 5. 다음 일 — 이 병합에 남은 일 없음
 
-1. `59dfebac` 기준으로 **A R4 · B R2 를 다시** 돌린다(Opus 5.5 서브에이전트 `model: "opus"`, 백그라운드, 각자 사본). 프롬프트 요점:
-   - 저자 설명 불신 · VERIFIED/INFERRED 구분 · 사본에서만 뮤테이션 후 `git checkout -- .` 복원 · 커밋/푸시 금지.
-   - A: R3-1 수정(카탈로그 밖 → google) 검증 + 회귀(openai 사용자가 정적 카탈로그 밖의 동적 google id 를 보낼 때 등) + 전체 의미 재점검.
-   - B: 자기 R1 생존 뮤턴트(R5 R6 V4 V9 C3 C4 M3 Q1) 재실행 + `3671efcb`·`57c3237e`·`59dfebac` 새 코드 뮤테이션(저자 주장: 표적 뮤턴트 22개 전부 죽음 — 독립 검증).
-   - zsh 는 따옴표 없는 `$VAR` 를 쪼개지 않는다 — 테스트 파일은 직접 나열하고 `Tests ` 요약 줄이 있는지 먼저 본다.
-2. findings 가 나오면 TDD(실패 테스트 먼저)로 고치고 뮤턴트 확인 → 전체 스위트·빌드 → 커밋(영어) → 두 리뷰어 다음 라운드. **둘 다 findings 0** 까지.
-3. findings 0 이면 `git fetch` → fast-forward 확인 → `git push origin feature/multi-provider-genapi`. 리뷰 사본 두 워크트리 제거(`node_modules` 링크 먼저 삭제 후 `git worktree remove`).
-4. 이 문서를 결과로 갱신·커밋.
+- 1~4 전부 끝(리뷰 A R4·B R2–R4 → findings 0 → 리뷰 사본 제거 → 이 문서 갱신 → fetch·fast-forward 확인 → 푸시).
+- 브랜치 자체의 남은 일(실키 smoke·provisional 승격·실앱 눈검증·F8/F9 제품 결정)은 이 병합과 무관 — 메모리 `autoflowcut-multiprovider-progress` 참고.
+- 리뷰 프롬프트·뮤턴트 하네스를 다시 쓰려면: 이전 세션 스크래치패드(`/private/tmp/claude-501/-Users-tuxxon-workspace/<세션>/scratchpad/{prev,rB,mut}`) — 임시 폴더라 재부팅하면 사라진다.
 
 ## 6. 참고
 
