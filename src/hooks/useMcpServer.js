@@ -14,6 +14,7 @@ import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 import { clearedImageFields } from '../utils/refEntityRegistration'
 import { pickMcpSettingsFields } from '../utils/mcpSettingsWhitelist'   // M2-LIVE N3: main 과 같은 화이트리스트(이중 방어)
+import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'   // CSV 재적용 보존 목록 — parseFromCSV 와 공유
 
 // start-scene-batch `mode` → handleStart 탭 오버라이드. 없거나 모르는 값이면 현재 UI 탭 그대로.
 const MCP_BATCH_MODE_TAB = { video: 'video-text', image: 'text' }
@@ -419,18 +420,12 @@ export function useMcpServer({
               ? 'pending'
               : (matched.status || incoming.status || 'pending')
             return {
-              // CSV 가 보내지 않은 필드는 기존 값(생성 메타 model·seed·generatedAt, 텍스트→영상 결과·선택, storyId …) — 이걸 깔지
-              //   않으면 CSV 를 다시 넣을 때마다 사라졌다(2026-09-26 실기: 모델명·완성 영상 연결 소실). 스토리 push 와 같은 정책.
-              ...matched,
               ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
+              // CSV 에 없는 런타임 필드(이미지 포인터·donePrompt, 생성 메타 model·seed, 영상 결과·선택)는 기존 값 — parseFromCSV 와
+              //   같은 목록. 전엔 이미지 포인터만 골라 모델명·완성 영상 연결이 CSV 재적용마다 사라졌다(2026-09-26 실기).
+              ...pickPreservedSceneFields(matched),
               id: matched.id,                          // R9 fix: 기존 stable id 유지 (incoming.id 무시)
-              image: matched.image,                    // preserve in-memory image payload (if any)
-              imagePath: matched.imagePath,            // preserve saved image path
               status: mergedStatus,
-              mediaId: matched.mediaId,
-              generatingStartedAt: matched.generatingStartedAt,
-              image_size: matched.image_size,
-              donePrompt: matched.donePrompt,          // 생성 기준 스냅샷 — 되돌림 done 복원 유지
               // C9 fix: incoming 이 srtLineIds 안 보내면 기존 보존
               srtLineIds: incoming.srtLineIds ?? matched.srtLineIds ?? [],
             }

@@ -135,6 +135,25 @@ describe('T2V 런타임 필드 — CSV 재파싱 시 보존', () => {
   })
 })
 
+describe('생성 메타 — CSV 재파싱 시 보존(이미지 탭 모델명 · 영상 모델)', () => {
+  // 2026-09-26 실기: 이미지 탭 1~3번 씬 모델명이 사라졌다. MCP load_csv 경로와 같은 목록을 쓴다(src/utils/csvPreservedSceneFields).
+  it('새 형식 CSV 재import 가 model·seed·생성 시각과 videoT2VModel·Seed·GeneratedAt·SaveId 를 보존한다', () => {
+    const csv1 = `scene,prompt,video_t2v_prompt,subtitle\n1,"image A","video A","s1"`
+    const csv2 = `scene,prompt,video_t2v_prompt,subtitle\n1,"image A","video A","s1-edited"`
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.parseFromCSV(csv1) })
+    const id = result.current.scenes[0].id
+    const meta = {
+      model: 'Nano Banana 2', seed: 7, generatedAt: 111, generatingEndedAt: 222,
+      videoT2VModel: 'Omni Flash', videoT2VSeed: 9, videoT2VGeneratedAt: 333, videoT2VSaveId: 't2v_1',
+    }
+    act(() => { result.current.updateScene(id, meta) })
+    act(() => { result.current.parseFromCSV(csv2) })
+    expect(result.current.scenes[0].subtitle).toBe('s1-edited')
+    expect(result.current.scenes[0]).toMatchObject(meta)
+  })
+})
+
 describe('I2V 런타임 필드 — CSV 재파싱 시 보존', () => {
   // 회귀: 타임라인은 videoI2VStatus==='generating' 일 때만 generating 클립을 그리고,
   // 경과 타이머는 videoI2VGeneratingStartedAt/EndedAt 를 읽는다. 재파싱이 status 만 살리고
