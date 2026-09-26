@@ -419,6 +419,9 @@ export function useMcpServer({
               ? 'pending'
               : (matched.status || incoming.status || 'pending')
             return {
+              // CSV 가 보내지 않은 필드는 기존 값(생성 메타 model·seed·generatedAt, 텍스트→영상 결과·선택, storyId …) — 이걸 깔지
+              //   않으면 CSV 를 다시 넣을 때마다 사라졌다(2026-09-26 실기: 모델명·완성 영상 연결 소실). 스토리 push 와 같은 정책.
+              ...matched,
               ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
               id: matched.id,                          // R9 fix: 기존 stable id 유지 (incoming.id 무시)
               image: matched.image,                    // preserve in-memory image payload (if any)
