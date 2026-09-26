@@ -196,6 +196,17 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     expect(doc.querySelector('.cdk-overlay-container')).toBeNull()
   })
 
+  // 리뷰 B(2026-09-26): 반영 확인도 정확 일치여야 한다 — 부분열이면 Lite 트리거가 요청 2 의 "반영"으로 통과해 model=clicked 로 거짓 보고하고
+  //   settings-not-settled 로 끝났다(생성 전 멈춤은 같지만 진단이 틀린다). 패널 2 · 요청 Pro 케이스는 두 규칙이 같은 답이라 이걸 못 가린다.
+  it('패널 Lite · 요청 2 · 항목 클릭이 반영 안 됨 → model-not-reflected, steps 에 model 없음(전환했다고 보고하지 않는다)', async () => {
+    const doc = mount(imagePage({ model: '🍌 Nano Banana 2 Lite' }))
+    const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectIgnored: true })
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', model: 'Nano Banana 2' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-not-reflected', closed: true })
+    expect(r.steps.model).toBeUndefined()
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana 2', 'keydown:Escape:27'])
+  })
+
   // §4 덤프: 이미지 항목에도 mat-mdc-menu-trigger 가 달려 있다(영상은 장식이었다) — 하위 메뉴가 뜨면 내용 미관측이라 멈춘다.
   it('이미지 항목이 하위 메뉴만 열면 model-submenu-unknown — Escape ×3 로 닫고 비율·개수 클릭 없음', async () => {
     const doc = mount(imagePage())
