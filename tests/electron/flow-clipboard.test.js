@@ -153,6 +153,14 @@ describe('snapshotClipboard — 형식 정책(D4-c)', () => {
     expect(writeArg(clip, write)).toEqual([{ text: TEXT, html: HTML }])
   })
 
+  it('Linux: html 은 형식 목록으로 판정하고 meta 도 떼지 않는다(public.html 은 macOS 형식 이름) → write 의 html 이 읽은 그대로', () => {
+    const clip = makeFakeClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: CHROME_HTML })
+    clip.readBuffer = () => Buffer.alloc(0)
+    const write = vi.spyOn(clip, 'write')
+    roundTrip(clip, { platform: 'linux' })
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT, html: CHROME_HTML }])
+  })
+
   it('Windows 는 meta 를 떼지 않는다(쓰기가 다시 붙이지 않는다) → write 의 html 이 읽은 그대로', () => {
     const clip = makeFakeClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: CHROME_HTML })
     const write = vi.spyOn(clip, 'write')
