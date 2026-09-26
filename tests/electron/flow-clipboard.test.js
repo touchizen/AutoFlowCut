@@ -102,9 +102,26 @@ describe('snapshotClipboard — 형식 정책(D4-c)', () => {
       if (has('text/rtf')) return `<meta charset='utf-8'><p>${clip.state.text}</p>`
       return clip.state.text ? `<meta charset='utf-8'>${clip.state.text}` : ''
     }
+    // ③ write({html}) 은 앞에 <meta charset='utf-8'> 를 붙인다(readHTML 은 떼지 않는다 — 실기 (b) 에서 meta 가 둘이 됐다).
+    const baseWrite = clip.write
+    clip.write = (data) => baseWrite(data && data.html ? { ...data, html: `<meta charset='utf-8'>${data.html}` } : data)
     return clip
   }
   const MAC = { platform: 'darwin' }
+  const CHROME_HTML = "<meta charset='utf-8'><b>SECRET-HTML</b>"
+
+  it('macOS 크롬 복사(<meta charset> 로 시작하는 html) → 복원 뒤 html 이 **바이트 그대로**(쓰기가 붙이는 meta 가 겹치지 않는다)', () => {
+    const clip = macClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: CHROME_HTML })
+    roundTrip(clip, MAC)
+    expect(clip.state.html).toBe(CHROME_HTML)
+  })
+
+  it('Windows 는 meta 를 떼지 않는다(쓰기가 다시 붙이지 않는다) → write 의 html 이 읽은 그대로', () => {
+    const clip = makeFakeClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: CHROME_HTML })
+    const write = vi.spyOn(clip, 'write')
+    roundTrip(clip, { platform: 'win32' })
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT, html: CHROME_HTML }])
+  })
 
   it('macOS plain text 만(터미널·스토리 입력창 복사) → 지어낸 HTML 을 보관하지 않는다, 복원 write 가 **정확히** {text}', () => {
     const clip = macClipboard({ formats: ['text/plain'], text: TEXT })

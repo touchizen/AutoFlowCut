@@ -43,7 +43,10 @@ export function snapshotClipboard(clipboard, { platform = process.platform } = {
   const rawHtml = platform === 'darwin' ? read(() => clipboard.readBuffer('public.html')) : null
   const htmlPresent = platform === 'darwin' ? !!(rawHtml && rawHtml.length > 0) : fmts.includes('text/html')
   const h = htmlPresent ? read(() => clipboard.readHTML()) : null
-  if (h) keep.html = h
+  // macOS Chromium 의 write({html}) 은 앞에 <meta charset='utf-8'> 를 붙이고 readHTML() 은 떼지 않는다 — 크롬에서 온 HTML 은 복원 한 바퀴마다
+  //   meta 가 하나씩 늘었다(실기). 쓰기가 붙일 것을 하나 미리 떼 두면 바이트 그대로 돌아온다.
+  const hk = h && platform === 'darwin' ? h.replace(/^<meta charset='utf-8'>/, '') : h
+  if (hk) keep.html = hk
   const r = read(() => clipboard.readRTF())
   if (r) keep.rtf = r
   const img = read(() => clipboard.readImage())
