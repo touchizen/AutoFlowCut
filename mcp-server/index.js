@@ -591,6 +591,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'boolean',
             description: '이미지 파일은 있지만 status 가 pending 인 씬도 포함할지 (기본: false). 프롬프트를 고친 뒤 재생성하지 않은 옛 이미지일 수 있습니다.',
           },
+          videoAudioVolume: {
+            type: 'number',
+            enum: [0, 0.15, 1],
+            description: '영상 클립 오디오 볼륨 — 0 음소거 / 0.15 앰비언스 / 1 원본. 생략하면 앱에 저장된 내보내기 설정을 따릅니다(기본 원본). 내레이션만 들려야 하면 0.',
+          },
         },
       },
     },

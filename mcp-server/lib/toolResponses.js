@@ -23,7 +23,11 @@ export function exportCapcutToolResponse(res) {
 
 export async function handleExportCapcutTool(args = {}, fetcher) {
   const port = args.port || 3210
-  const res = await fetcher(port, 'POST', '/api/export-capcut', { includePending: args.includePending === true })
+  const body = { includePending: args.includePending === true }
+  // 영상 클립 오디오 볼륨(CapCut 전용) — 허용 값만 싣는다. 없으면 앱에 저장된 내보내기 설정을 따른다.
+  //   허용 값은 앱의 src/exporters/videoAudioVolume.js VIDEO_AUDIO_VOLUMES 와 같다(앱도 다시 거른다).
+  if ([0, 0.15, 1].includes(args.videoAudioVolume)) body.videoAudioVolume = args.videoAudioVolume
+  const res = await fetcher(port, 'POST', '/api/export-capcut', body)
   return exportCapcutToolResponse(res)
 }
 

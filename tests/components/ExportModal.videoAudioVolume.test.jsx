@@ -96,6 +96,15 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
     expect(screen.getByRole('option', { name: /videoAudioOriginal/ })).toBeInTheDocument()
   })
 
+  // 리뷰 R1 MAJOR: 이 옵션은 CapCut 만 바꾼다(프리미어·Vrew 는 영상 소리를 그대로 낸다) — 다른 탭에 보이면 음소거를 골라도
+  //   소리가 나와 힌트("나레이션만 들립니다")가 거짓이 된다.
+  it.each(['premiere', 'vrew'])('%s 탭에서는 보이지 않는다', (fmt) => {
+    currentSaved = { ...SAVED_BASE }
+    render(<ExportModal {...baseProps} initialFormat={fmt} onExport={vi.fn()} onExportPremiere={vi.fn()} onExportVrew={vi.fn()} />)
+    expect(screen.queryByText(/exportModal\.videoAudioVolume/)).toBeNull()
+    expect(screen.queryByRole('option', { name: /videoAudioMute/ })).toBeNull()
+  })
+
   it('저장된 값이 없으면 기본값은 원본 — onExport 페이로드에 videoAudioVolume: 1', async () => {
     currentSaved = { ...SAVED_BASE }
     const onExport = vi.fn()

@@ -115,7 +115,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
       setKenBurnsCycle(savedSettings.kenBurnsCycle || 5)
       setKenBurnsScaleMin(savedSettings.kenBurnsScaleMin || 100)
       setKenBurnsScaleMax(savedSettings.kenBurnsScaleMax || 130)
-      // 0 이 유효값이라 || 폴백을 쓰면 안 된다 (음소거가 기본값)
+      // 0 이 유효값이라 || 폴백을 쓰면 안 된다
       setVideoAudioVolume(toVideoAudioVolume(savedSettings.videoAudioVolume))
       // pathPreset 로드
       setPathPreset(savedSettings.pathPreset || 'capcut')
@@ -764,26 +764,28 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
             </p>
           </div>
 
-          {/* Veo 영상 오디오 볼륨 — Veo 는 오디오를 끌 수 없어 기본 음소거 */}
-          <div className="export-option-section">
-            <label className="option-label">
-              🔈 {t('exportModal.videoAudioVolume')}
-            </label>
-            <select
-              value={String(videoAudioVolume)}
-              onChange={(e) => setVideoAudioVolume(Number(e.target.value))}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #444', background: '#1a1a1a', color: '#fff', fontSize: '0.9rem' }}
-            >
-              <option value="0">🔇 {t('exportModal.videoAudioMute')}</option>
-              <option value="0.15">🔉 {t('exportModal.videoAudioAmbience')}</option>
-              <option value="1">🔊 {t('exportModal.videoAudioOriginal')}</option>
-            </select>
-            <p className="option-hint">
-              {videoAudioVolume === 0 && t('exportModal.videoAudioMuteHint')}
-              {videoAudioVolume === 0.15 && t('exportModal.videoAudioAmbienceHint')}
-              {videoAudioVolume === 1 && t('exportModal.videoAudioOriginalHint')}
-            </p>
-          </div>
+          {/* 영상 클립 오디오 볼륨 — CapCut 드래프트만 패치한다(프리미어·Vrew 는 영상 소리를 그대로 낸다). 기본은 원본. */}
+          {format === 'capcut' && (
+            <div className="export-option-section">
+              <label className="option-label">
+                🔈 {t('exportModal.videoAudioVolume')}
+              </label>
+              <select
+                value={String(videoAudioVolume)}
+                onChange={(e) => setVideoAudioVolume(Number(e.target.value))}
+                style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #444', background: '#1a1a1a', color: '#fff', fontSize: '0.9rem' }}
+              >
+                <option value="0">🔇 {t('exportModal.videoAudioMute')}</option>
+                <option value="0.15">🔉 {t('exportModal.videoAudioAmbience')}</option>
+                <option value="1">🔊 {t('exportModal.videoAudioOriginal')}</option>
+              </select>
+              <p className="option-hint">
+                {videoAudioVolume === 0 && t('exportModal.videoAudioMuteHint')}
+                {videoAudioVolume === 0.15 && t('exportModal.videoAudioAmbienceHint')}
+                {videoAudioVolume === 1 && t('exportModal.videoAudioOriginalHint')}
+              </p>
+            </div>
+          )}
 
           {/* Ken Burns 효과 옵션 */}
           <div className="export-option-section">

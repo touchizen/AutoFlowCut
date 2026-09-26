@@ -89,3 +89,24 @@ describe('applyVideoAudioVolume', () => {
     expect(() => applyVideoAudioVolume(null, { videoFilenames: VIDEO_FILENAMES, volume: 0 })).not.toThrow()
   })
 })
+
+// 리뷰 R1(참고): CapCut 은 음소거를 풀 때 last_nonzero_volume 으로 돌아간다(템플릿 기본 1.0). 0.15 로 낮춘 클립을 CapCut 에서
+//   껐다 켜면 100% 로 튀지 않게, 0 보다 큰 값은 last_nonzero_volume 도 같이 맞춘다. 음소거(0)는 되돌릴 값을 남긴다.
+describe('applyVideoAudioVolume — last_nonzero_volume', () => {
+  const withLast = () => {
+    const d = makeDraft()
+    for (const s of d.tracks.flatMap(t => t.segments)) s.last_nonzero_volume = 1.0
+    return d
+  }
+
+  it('0.15 → volume 과 last_nonzero_volume 둘 다 0.15', () => {
+    const out = applyVideoAudioVolume(withLast(), { videoFilenames: VIDEO_FILENAMES, volume: 0.15 })
+    expect(segById(out, 'seg_vid_1')).toMatchObject({ volume: 0.15, last_nonzero_volume: 0.15 })
+    expect(segById(out, 'seg_img_1')).toMatchObject({ volume: 1.0, last_nonzero_volume: 1.0 })
+  })
+
+  it('0(음소거) → last_nonzero_volume 은 그대로(풀면 원래 볼륨)', () => {
+    const out = applyVideoAudioVolume(withLast(), { videoFilenames: VIDEO_FILENAMES, volume: 0 })
+    expect(segById(out, 'seg_vid_1')).toMatchObject({ volume: 0, last_nonzero_volume: 1.0 })
+  })
+})

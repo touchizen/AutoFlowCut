@@ -48,7 +48,11 @@ export function applyVideoAudioVolume(draftInfo, { videoFilenames, volume } = {}
   if (videoMaterialIds.size > 0) {
     for (const track of draft?.tracks || []) {
       for (const segment of track?.segments || []) {
-        if (videoMaterialIds.has(segment?.material_id)) segment.volume = volume
+        if (!videoMaterialIds.has(segment?.material_id)) continue
+        segment.volume = volume
+        // CapCut 은 음소거를 풀 때 last_nonzero_volume 으로 돌아간다(템플릿 기본 1.0) — 0 보다 큰 값은 같이 맞춰
+        //   0.15 로 낮춘 클립이 껐다 켜면 100% 로 튀지 않게. 음소거(0)는 되돌릴 값을 남긴다.
+        if (volume > 0) segment.last_nonzero_volume = volume
       }
     }
   }

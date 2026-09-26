@@ -118,3 +118,24 @@ describe('mcp-server toolResponses — includePending 전달', () => {
     expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-capcut', { includePending: false })
   })
 })
+
+// 영상 클립 오디오 볼륨(CapCut 전용) — 스키마·바디 두 곳이 막으면 에이전트 값이 앱까지 못 간다(리뷰 R1).
+describe('mcp-server toolResponses — videoAudioVolume 전달(CapCut 만)', () => {
+  it.each([0, 0.15, 1])('%s 는 CapCut 바디에 실린다', async (v) => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+    await handleExportCapcutTool({ port: 3210, videoAudioVolume: v }, fetcher)
+    expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-capcut', { includePending: false, videoAudioVolume: v })
+  })
+
+  it.each([['loud'], [0.5], [null]])('허용 값이 아니면(%s) 싣지 않는다 — 앱의 저장 설정을 따른다', async (v) => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+    await handleExportCapcutTool({ port: 3210, videoAudioVolume: v }, fetcher)
+    expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-capcut', { includePending: false })
+  })
+
+  it('프리미어 도구는 싣지 않는다(옵션이 프리미어를 바꾸지 않는다)', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+    await handleExportPremiereTool({ port: 3210, videoAudioVolume: 0 }, fetcher)
+    expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-premiere', { includePending: false })
+  })
+})
