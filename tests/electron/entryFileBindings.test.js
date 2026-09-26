@@ -18,9 +18,13 @@ const traverse = traverseModule.default ?? traverseModule
 
 // 리뷰 B R2 F1: 전역은 테스트 워커(globalThis)가 아니라 깨끗한 Node ESM 프로세스에서 받는다 — 워커에는 vitest 가 올린 describe·expect 와
 //   vite define 상수(__BUILD_TARGET__ 등)가 있지만 main 번들(vite-plugin-electron 은 최상위 define 을 안 쓴다)과 mcp-server(순수 node)에는 없다.
-const NODE_GLOBALS = new Set(JSON.parse(execFileSync(process.execPath, [
-  '--input-type=module', '-e', 'process.stdout.write(JSON.stringify(Object.getOwnPropertyNames(globalThis)))',
-], { encoding: 'utf8' })))
+// 리뷰 B R3 F1: 스크립트는 -e 가 아니라 stdin 으로 넘긴다 — -e 평가 모드는 path·fs·net 같은 내장 모듈을 전역으로 올려 그 import 누락을 가린다
+//   (stdin 모드의 전역 = 파일로 실행할 때의 전역). NODE_OPTIONS 의 --require/--import 가 전역을 보태지 못하게 비운다.
+const NODE_GLOBALS = new Set(JSON.parse(execFileSync(process.execPath, ['--input-type=module'], {
+  input: 'process.stdout.write(JSON.stringify(Object.getOwnPropertyNames(globalThis)))',
+  encoding: 'utf8',
+  env: { ...process.env, NODE_OPTIONS: '' },
+})))
 
 function undeclaredIdentifiers(source) {
   const ast = parse(source, { sourceType: 'module', plugins: ['jsx', 'importMeta', 'topLevelAwait'] })
@@ -40,8 +44,10 @@ describe('진입 파일의 선언되지 않은 식별자', () => {
       // 리뷰 B R2 F1: 렌더러 빌드 상수(vitest define 으로 테스트 워커 전역에는 있다)와 선언 없는 대입도 잡아야 한다
       "const isAppx = __BUILD_TARGET__ === 'appx'",
       'lastSeenAt = Date.now()',
+      // 리뷰 B R3 F1: 내장 모듈 이름(import 누락)도 잡아야 한다
+      "const dir = path.dirname('/a/b')",
     ].join('\n')
-    expect(undeclaredIdentifiers(source)).toEqual(['__BUILD_TARGET__', 'dialog', 'lastSeenAt', 'require'])
+    expect(undeclaredIdentifiers(source)).toEqual(['__BUILD_TARGET__', 'dialog', 'lastSeenAt', 'path', 'require'])
   })
 
   it.each(['electron/main.js', 'mcp-server/index.js'])('%s', (rel) => {
@@ -49,16 +55,36 @@ describe('진입 파일의 선언되지 않은 식별자', () => {
   })
 })
 
-// 리뷰 B R2 F2: DELETE /api/projects 의 Windows EPERM 폴백은 catch 에서 projectName·projectDir 를 읽는다. try 안에서 다시 선언하면
-//   catch 는 블록 머리의 null 을 보고 폴백이 조용히 꺼진다(또는 deleted:null) — 이름은 선언돼 있으니 위 검사로는 안 보인다.
+// 리뷰 B R2 F2 · R3 F2: DELETE /api/projects 의 Windows EPERM 폴백은 catch 에서 projectDir(·projectName)를 읽는다. try 안에서 다시 선언하거나
+//   (const · 구조분해) 다른 변수에 담으면 catch 는 블록 머리의 null 을 보고 폴백이 조용히 꺼진다 — 이름은 선언돼 있으니 위 검사로는 안 보인다.
+//   그래서 스코프로 본다: 폴백 호출이 읽는 이름은 DELETE 블록 머리의 let 이고, try 안에서 그 바인딩에 값이 들어가야 한다.
 describe('main.js — DELETE /api/projects 폴백이 읽는 이름', () => {
-  it('projectName·projectDir 는 블록 머리의 let 한 번만 선언되고, 폴백은 import 한 execSyncRaw 로 그 경로를 지운다', () => {
-    const main = readFileSync('electron/main.js', 'utf8')
-    const start = main.indexOf("if (req.method === 'DELETE' && pathname === '/api/projects') {")
-    const block = main.slice(start, main.indexOf('// 404', start))
-    expect(start).toBeGreaterThan(-1)
-    expect(block.match(/\b(?:const|let|var)\s+projectDir\b/g)).toEqual(['let projectDir'])
-    expect(block.match(/\b(?:const|let|var)\s+projectName\b/g)).toEqual(['let projectName'])
-    expect(block).toContain('execSyncRaw(`rmdir /s /q "${projectDir}"`')
+  it('폴백의 projectDir·projectName 은 블록 머리의 let 이고 try 가 거기에 대입한다; 폴백은 import 한 execSyncRaw 로 그 경로를 지운다', () => {
+    const src = readFileSync('electron/main.js', 'utf8')
+    const ast = parse(src, { sourceType: 'module', plugins: ['jsx', 'importMeta', 'topLevelAwait'] })
+    const checked = []
+    traverse(ast, {
+      IfStatement(p) {
+        const test = src.slice(p.node.test.start, p.node.test.end)
+        if (!test.includes("'DELETE'") || !test.includes("'/api/projects'")) return
+        const tryPath = p.get('consequent.body').find((s) => s.isTryStatement())
+        const { start: tryStart, end: tryEnd } = tryPath.node.block
+        tryPath.get('handler').traverse({
+          CallExpression(c) {
+            if (!c.get('callee').isIdentifier({ name: 'execSyncRaw' })) return
+            expect(src.slice(c.node.start, c.node.end)).toContain('`rmdir /s /q "${projectDir}"`')
+            for (const name of ['projectDir', 'projectName']) {
+              const binding = c.scope.getBinding(name)
+              expect(binding?.kind, name).toBe('let')
+              expect(binding.path.parentPath.parentPath.node, `${name} is declared at the head of the DELETE block`).toBe(p.node.consequent)
+              const assignedInTry = binding.constantViolations.some((v) => v.node.start >= tryStart && v.node.end <= tryEnd)
+              expect(assignedInTry, `${name} is assigned inside the try`).toBe(true)
+              checked.push(name)
+            }
+          },
+        })
+      },
+    })
+    expect(checked).toEqual(['projectDir', 'projectName'])
   })
 })
