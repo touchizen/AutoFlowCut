@@ -8,6 +8,7 @@
 // a real flow-dom-dump (Cmd+Shift+E).
 import { describe, it, expect } from 'vitest'
 import { findAgentChatCloseButton } from '../../electron/flow-agent-toggle.js'
+import { buildComposer, paragraph, uuid } from '../fixtures/flow-live-dom-m3.js'
 
 describe('findAgentChatCloseButton', () => {
   it('finds the agent-chat panel close button by real markup', () => {
@@ -63,6 +64,38 @@ describe('findAgentChatCloseButton', () => {
         <button class="target" aria-label="Close"><i class="google-symbols">close</i></button>
       </div>`
     expect(findAgentChatCloseButton(document)?.classList.contains('target')).toBe(true)
+  })
+
+  // 리뷰 R1: 한글 라벨 앵커는 입력창 글자에도 걸렸다 — 지우기 버튼의 둘째 조상이 편집기를 품어, 프롬프트에 '기록'이 있으면
+  //   지우기 버튼을 에이전트 창 닫기로 봤다. 라벨은 쓰지 않고 번역되지 않는 edit_square 리거처만 본다. 실제 입력창(09-24 라이브 마크업).
+  it('live composer: a chip plus 기록 / 새로운 세션 in the prompt text → null (page text is not an agent anchor)', () => {
+    for (const text of ['조선 왕실의 기록 보관소', '새로운 세션을 시작한다']) {
+      document.body.innerHTML = buildComposer({ chips: [{ id: uuid(1) }], editorHtml: paragraph(text) })
+      expect(document.querySelector('button.clear-button')).toBeTruthy()
+      expect(findAgentChatCloseButton(document)).toBeNull()
+    }
+  })
+
+  it('Korean header labels alone (no edit_square icon) do not qualify', () => {
+    document.body.innerHTML = `<div class="hdr"><span>기록</span><span>새로운 세션</span><button><i class="google-symbols">close</i></button></div>`
+    expect(findAgentChatCloseButton(document)).toBeNull()
+  })
+
+  it('an edit icon is not edit_square', () => {
+    document.body.innerHTML = `<div class="hdr"><button><i class="google-symbols">edit</i></button><button><i class="google-symbols">close</i></button></div>`
+    expect(findAgentChatCloseButton(document)).toBeNull()
+  })
+
+  it('the agent header anchor counts up to the 3rd ancestor of the close button', () => {
+    document.body.innerHTML = `<div class="hdr"><button><i class="google-symbols">edit_square</i></button>
+      <div><div><button class="target"><i class="google-symbols">close</i></button></div></div></div>`
+    expect(findAgentChatCloseButton(document)?.classList.contains('target')).toBe(true)
+  })
+
+  it('…but not at the 4th ancestor', () => {
+    document.body.innerHTML = `<div class="hdr"><button><i class="google-symbols">edit_square</i></button>
+      <div><div><div><button class="target"><i class="google-symbols">close</i></button></div></div></div></div>`
+    expect(findAgentChatCloseButton(document)).toBeNull()
   })
 
   it('agent-chat header and a chip-bearing composer together → the header close, never the composer clear', () => {

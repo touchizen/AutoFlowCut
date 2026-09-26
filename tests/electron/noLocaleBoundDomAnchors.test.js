@@ -49,7 +49,7 @@ const LOCALE_ANCHOR = new RegExp(
  */
 const BASELINE = new Map([
   ['flow-mention-dom.js', '캐릭터 탭의 2차 폴백. 1차 앵커는 accessibility_new 리거처이고, 폴백은 리거처가 개명될 때만 쓰인다.'],
-  ['flow-agent-toggle.js', '에이전트 채팅 close 버튼의 다중 후보 판별(새로운 세션/기록). 이 화면의 DOM 을 아직 한 번도 관측하지 못해 구조 앵커를 만들 수 없다 — 덤프 확보 후 제거할 것.'],
+  ['flow-agent-toggle.js', '에이전트 토글 진단·스캔의 라벨 폴백(agent|에이전트)과 close 버튼 판정의 라벨 폴백(닫기). 에이전트 채팅 창 판별은 edit_square 리거처만 쓴다(2026-09-26 — 라벨은 입력창 글자에도 걸렸다). 창 DOM 은 새 flow.google.com 에서 아직 관측되지 않았다 — 덤프 확보 후 닫기 라벨도 구조 앵커로 옮길 것.'],
   ['flow-settings-dumper.js', '진단 전용 도구(Cmd+Shift+?). 생성 경로가 의존하지 않는다. 그래도 로케일 종속이므로 영어 계정에서는 진단이 무용지물이다.'],
   ['character.js', 'A2 캐릭터 업로드 실행 버튼(만들기/실행). 캐릭터 페이지 DOM 미관측 — arrow_forward 폴백이 있으나 정확도가 떨어진다.'],
   ['flow-api.js', '프로젝트 진입 버튼(새 프로젝트/시작). 영어 키워드(new/start/enter)가 함께 있으나 일본어·아랍어는 못 잡는다.'],

@@ -138,7 +138,8 @@ export const AGENT_TOGGLE_DIAGNOSTIC = `(function() {
  * Locate the agent CHAT panel's header close button (icon 'close' / label '닫기').
  * A prior Agent-ON generation leaves this right-side panel open, covering the main
  * compose bar where the Agent toggle lives — so we close it before probing/toggling.
- * Disambiguated by the panel header's sibling '기록'(menu) / '새로운 세션'(edit_square).
+ * Identified by the header's new-session button (untranslated edit_square ligature)
+ * within 3 ancestors of the close button; anything else returns null.
  */
 export function findAgentChatCloseButton(doc) {
   const win = doc.defaultView
@@ -155,17 +156,15 @@ export function findAgentChatCloseButton(doc) {
   const candidates = Array.from(doc.querySelectorAll('button')).filter((b) => !isHidden(b) && isClose(b))
   if (candidates.length === 0) return null
   // Only a close button inside the agent chat header counts — the header holds the
-  //   '새로운 세션' (edit_square) / '기록' (menu) buttons. A lone close button is NOT
-  //   enough: the new flow.google.com has no agent chat panel, and its only close
-  //   button is the composer's clear (with a chip or text), the asset picker's add
-  //   trigger, or a banner's X — clicking it silently cleared a user's chip before a
-  //   generation (2026-09-26 live, M3 G5). Unconfirmed → null (nothing is clicked).
-  //   Stop before body/documentElement — their textContent is the whole page.
-  const isAgentHeader = (p) => {
-    const t = p.textContent || ''
-    return t.includes('새로운 세션') || t.includes('기록')
-      || Array.from(p.querySelectorAll('button')).some((x) => iconTexts(x).includes('edit_square'))
-  }
+  //   new-session button, recognised by its untranslated edit_square ligature. A lone
+  //   close button is NOT enough: the agent chat panel has never been observed on the
+  //   new flow.google.com, whose only close buttons in every capture are the composer's
+  //   clear (with a chip or text), the asset picker's add trigger, or a banner's X —
+  //   clicking one silently cleared a user's chip before a generation (2026-09-26 live,
+  //   M3 G5). Header label text ('새로운 세션'/'기록') is not used: it is translated, and
+  //   it also matched the prompt text inside the composer (review R1). Unconfirmed →
+  //   null (nothing is clicked). Stop before body/documentElement.
+  const isAgentHeader = (p) => Array.from(p.querySelectorAll('button')).some((x) => iconTexts(x).includes('edit_square'))
   for (const b of candidates) {
     let p = b.parentElement
     for (let i = 0; i < 3 && p && p !== doc.body && p !== doc.documentElement; i++) {
