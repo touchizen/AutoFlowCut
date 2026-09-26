@@ -31,9 +31,11 @@ describe('findAgentChatCloseButton', () => {
     expect(findAgentChatCloseButton(document)).toBeNull()
   })
 
-  // 2026-09-26 실기(M3 G5): 새 flow.google.com 엔 에이전트 채팅 창이 없는데, 'close' 아이콘 버튼이 하나뿐이면 그게 뭐든 눌렀다 —
-  //   사용자가 붙인 칩이 ensureAgentOff 에서 입력창 지우기로 조용히 사라졌다. 아래 마크업은 M3 캡처(docs/handoffs/evidence/
-  //   2026-09-25-m3-dom-*.elements.json)에서 'close' 버튼이 그것 하나뿐인 세 화면이다. 에이전트 창이 아니면 누르지 않는다.
+  // 2026-09-26 실기(M3 G5): 'close' 아이콘 버튼이 하나뿐이면 그게 뭐든 눌렀다 — 사용자가 붙인 칩이 ensureAgentOff 에서 입력창
+  //   지우기로 조용히 사라졌다. 새 flow.google.com 의 에이전트 채팅 창은 DOM 이 아직 관측되지 않았다(채팅 세션 rpc mrlkwd·GN0Bre 는
+  //   있다 — docs/handoffs/evidence/2026-09-24-flow-batchexecute-rpcids.md). 캡처에서 'close' 버튼이 하나뿐인 화면은 입력창 지우기·
+  //   애셋 창 트리거(M3 덤프 2026-09-25-m3-dom-*.elements.json)와 홈 배너 닫기(flow-dom-dump-20260923-173104.elements.json)다.
+  //   에이전트 창 머리라고 확인되지 않으면 누르지 않는다.
   it('new flow.google.com, chip attached: the lone close button is the composer clear — returns null', () => {
     document.body.innerHTML = `
       <div class="composer"><div class="chips"><img src="blob:x"></div>
