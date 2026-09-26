@@ -225,7 +225,7 @@ export function useExport({
   }
 
   // Handle export confirm from modal
-  const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize, includePending = false }) => {
+  const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize, videoAudioVolume, includePending = false }) => {
     const validScenes = selectExportScenes(scenes, { includePending })
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
@@ -278,6 +278,9 @@ export function useExport({
         kenBurnsScaleMax,
         subtitleOption,
         subtitleFontSize,
+        // 영상 클립 오디오 볼륨(0/0.15/1) — 이름을 골라 넘기는 목록이라 빠뜨리면 창에서 골라도 exporter 에 안 간다.
+        //   없으면(undefined) exporter 가 draft 를 건드리지 않는다(기존 동작).
+        videoAudioVolume,
         audioPackage,
         storyAudio
       })

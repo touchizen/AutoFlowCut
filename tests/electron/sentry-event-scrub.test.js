@@ -55,3 +55,33 @@ describe('scrubEvent', () => {
     expect(() => scrubEvent(event)).not.toThrow()
   })
 })
+
+// M1-6: 서명 URL 은 문자열 어디에 있든(로그·span·extra) 지운다. 서명 파라미터는 키로도 잡는다.
+describe('scrubSentryString / scrubEvent — flow-content.google 서명 URL (M1-6)', () => {
+  const SIGNED = 'https://flow-content.google/image/2f1c9a7e-1111-2222-3333-444455556666?Expires=1790261742&KeyName=labs-flow-prod-cdn-key&Signature=SIG123'
+
+  it('scrubSentryString 은 URL 을 통째로 지우고 앞뒤 진단은 남긴다', () => {
+    const out = scrubSentryString('dl ' + SIGNED + ' status=200')
+    expect(out).not.toContain('SIG123')
+    expect(out).not.toContain('flow-content.google')
+    expect(out).toContain('dl ')
+    expect(out).toContain('status=200')
+  })
+
+  it('URL 이 아닌 문맥의 Signature/KeyName/Expires 값도 키로 지운다', () => {
+    const out = scrubSentryString('query ?Expires=1790261742&KeyName=labs-flow-prod-cdn-key&Signature=SIG123 end')
+    expect(out).not.toContain('SIG123')
+    expect(out).not.toContain('labs-flow-prod-cdn-key')
+    expect(out).toContain('end')
+  })
+
+  it('scrubEvent 는 span description · extra · message 의 서명 URL 을 지운다', () => {
+    const event = scrubEvent({
+      message: 'download ' + SIGNED,
+      spans: [{ op: 'http.client', description: 'GET ' + SIGNED }],
+      extra: { detail: { last: SIGNED } },
+    })
+    expect(JSON.stringify(event)).not.toContain('SIG123')
+    expect(JSON.stringify(event)).not.toContain('flow-content.google')
+  })
+})

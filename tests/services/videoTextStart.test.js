@@ -85,6 +85,7 @@ describe('videoTextStart', () => {
         aspectRatio: '9:16',
         videoResolution: '1080p',
         videoModelT2V: 'veo-3.1-fast-generate-preview',
+        generation: { video: { t2v: { provider: 'grok' } } },
         videoBatchCount: 2,
         videoConcurrency: 3,
       },
@@ -102,6 +103,7 @@ describe('videoTextStart', () => {
       aspectRatio: '9:16',
       videoResolution: '1080p',
       videoModel: 'veo-3.1-fast-generate-preview',
+      videoProvider: 'grok',
       videoBatchCount: 2,
       concurrency: 3,
     })
@@ -111,6 +113,9 @@ describe('videoTextStart', () => {
       referenceImages: [expect.objectContaining({ name: 'hero', data: 'data:image/png;base64,REF' })],
       targetDuration: 4,
     })
+    expect(startOptions.generationSettings).toEqual(expect.objectContaining({
+      generation: { video: { t2v: { provider: 'grok' } } },
+    }))
   })
 
   it('keeps 720p no-reference scenes on scene duration even if a prior generated video was 8s', () => {

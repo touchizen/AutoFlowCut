@@ -6,6 +6,7 @@
  */
 
 import { screen } from 'electron'
+import { createFlowAngular, unsupportedOnAngular } from './flow-angular.js'
 import { updateBounds } from './layout.js'
 import { extractServerErrorMessage } from './videoErrorExtractor.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
@@ -58,6 +59,8 @@ export function registerVideoIPC(ipcMain, deps) {
   // #R25-4: API 모드 전환 후에도 flowView 는 보존되므로 stale 호출이 Flow quota 를 쓸 수 있다.
   //   quota 를 쓰는 비디오 submit/upscale 핸들러는 현재 모드가 'flow' 일 때만 진행한다.
   const flowActive = () => !getCurrentMode || getCurrentMode() === 'flow'
+  // M1-12: Flow 모드의 t2v/check-video-status 는 무조건 angular(M1 은 fail-closed 스텁, M2 가 본문).
+  const angular = createFlowAngular(deps)
 
   // LOCAL helper — 비디오 응답에서 generation ID (UUID) 추출
   function extractVideoGenerationId(data) {
@@ -117,9 +120,11 @@ export function registerVideoIPC(ipcMain, deps) {
 
   // Text-to-Video generation (DOM 자동화 — 페이지가 reCAPTCHA 자체 처리)
   ipcMain.handle('flow:generate-video-t2v', async (event, {
-    token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed, segments
+    token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed, segments, resolution,  // M2-3: resolution 도 받는다
+    refs, plan,  // M3(D1): 레퍼런스 영상(r2v) — 로컬 이미지 base64 목록 + 멘션·첨부 계획
   }) => {
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
+    if (flowActive()) return angular.generateVideoT2V({ prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, seed, segments, refs, plan })  // M1-12 · M2-3 · M3
     // #R36: @멘션 T2V — segments 가 있으면 컴포저 @칩(injectComposeSegments)으로 캐릭터 entity 를 넣는다.
     const _segments = Array.isArray(segments) && segments.length > 0 ? segments : null
     const flowView = getFlowView()
@@ -504,6 +509,7 @@ export function registerVideoIPC(ipcMain, deps) {
   ipcMain.handle('flow:generate-video-i2v', async (event, {
     token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, videoBatchCount, seed
   }) => {
+    if (flowActive()) return unsupportedOnAngular('generate-video-i2v')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     const mainWindow = getMainWindow()
@@ -796,6 +802,7 @@ export function registerVideoIPC(ipcMain, deps) {
 
   // Check video generation status (페이지 컨텍스트에서 실행 — origin 일치)
   ipcMain.handle('flow:check-video-status', async (event, { token, generationIds, projectId }) => {
+    if (flowActive()) return angular.checkVideoStatus({ generationIds, projectId })  // M1-12
     const flowView = getFlowView()
     if (!token) return { success: false, error: 'No token' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
@@ -936,6 +943,7 @@ export function registerVideoIPC(ipcMain, deps) {
   // AutoFlow 10.7.58 역공학: upscaleVideoDirect (sidepanel.js:20223)
   // mediaId → workflowId 조회 → reCAPTCHA → upscale 제출 → resultMediaName 반환
   ipcMain.handle('flow:upscale-video', async (event, { token, mediaId, projectId, resolution, aspectRatio }) => {
+    if (flowActive()) return unsupportedOnAngular('upscale-video')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     if (!token) return { success: false, error: 'No token' }

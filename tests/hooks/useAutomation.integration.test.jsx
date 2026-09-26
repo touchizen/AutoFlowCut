@@ -96,6 +96,7 @@ function setupHook(overrides = {}) {
     submitGeneration,
     checkGeneration,
     collectGeneration,
+    getAccessToken,
   }
 }
 
@@ -168,6 +169,120 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
     const submitOptions = submitGeneration.mock.calls[0][2]
     // M4 T7: imageModel → model (engineApi 정규화 후 genAPI로 전달되는 키)
     expect(submitOptions.model).toBe('gemini-3.1-flash-image')
+  })
+
+  // M1: 전역 image provider 가 배치 제출 옵션까지 전달돼야 dispatcher 가 openai 로 라우팅한다.
+  it('start({imageProvider:openai}) 을 submitGeneration provider + 게이트에 전달', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration, getAccessToken } = setupHook({
+      scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
+    })
+    submitGeneration.mockResolvedValue({ success: true, generationId: 'gen-1' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory', imageProvider: 'openai', imageModel: 'gpt-image-1' })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    const submitOptions = submitGeneration.mock.calls[0][2]
+    expect(submitOptions.provider).toBe('openai')
+    expect(submitOptions.model).toBe('gpt-image-1')
+    // §5.7 게이트: 선택된 provider(openai)로 키 확인 — google-only 게이트면 openai-only 사용자가 막힘
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'openai')
+  })
+
+  it('imageProvider 미지정 → submitGeneration provider=google (하위호환)', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration } = setupHook({
+      scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
+    })
+    submitGeneration.mockResolvedValue({ success: true, generationId: 'gen-1' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory' })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    expect(submitGeneration.mock.calls[0][2].provider).toBe('google')
+  })
+
+  it('혼합 배치에서 각 scene의 image provider/model override를 독립적으로 제출', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration, getAccessToken } = setupHook({
+      scenes: [
+        {
+          id: 's1', prompt: 'openai scene', status: 'pending',
+          generation: { image: { provider: 'openai', model: 'gpt-image-scene' } },
+        },
+        { id: 's2', prompt: 'global scene', status: 'pending' },
+      ],
+    })
+    submitGeneration
+      .mockResolvedValueOnce({ success: true, generationId: 'gen-1' })
+      .mockResolvedValueOnce({ success: true, generationId: 'gen-2' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        projectName: 'p', saveMode: 'memory',
+        imageProvider: 'google', imageModel: 'gemini-global',
+        generationSettings: {
+          generation: { image: { provider: 'google' } },
+          modelsByProvider: { google: 'gemini-global', openai: 'gpt-image-global' },
+        },
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(90 * 1000) })
+    await startPromise
+
+    expect(submitGeneration).toHaveBeenCalledTimes(2)
+    expect(submitGeneration.mock.calls[0][2]).toMatchObject({
+      provider: 'openai', model: 'gpt-image-scene',
+    })
+    expect(submitGeneration.mock.calls[1][2]).toMatchObject({
+      provider: 'google', model: 'gemini-global',
+    })
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'openai')
+    expect(getAccessToken).toHaveBeenCalledWith(false, false, 'google')
+  })
+
+  // main 병합(리뷰 A F1): Flow 모드는 씬 override 를 쓰지 않는다 — override 의 API 모델 id 를 Flow 로 보내면 설정 패널 드라이버가
+  //   정확 일치로 거부한다(flow-image-model-mismatch). main 처럼 모든 씬을 start 의 imageModel(Flow 모델 이름)로 제출한다.
+  it('Flow 모드: scene override 가 있어도 모든 씬을 google + start 의 imageModel(Flow 모델)로 제출', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration, getAccessToken } = setupHook({
+      mode: 'flow',
+      scenes: [
+        { id: 's1', prompt: 'override scene', status: 'pending', generation: { image: { provider: 'openai', model: 'gpt-image-scene' } } },
+        { id: 's2', prompt: 'global scene', status: 'pending' },
+      ],
+    })
+    submitGeneration
+      .mockResolvedValueOnce({ success: true, generationId: 'gen-1' })
+      .mockResolvedValueOnce({ success: true, generationId: 'gen-2' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        projectName: 'p', saveMode: 'memory',
+        imageProvider: 'google', imageModel: 'Nano Banana Pro',
+        generationSettings: { generation: { image: { provider: 'google' } } },
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(120 * 1000) })
+    await startPromise
+
+    expect(submitGeneration).toHaveBeenCalledTimes(2)
+    for (const call of submitGeneration.mock.calls) expect(call[2]).toMatchObject({ provider: 'google', model: 'Nano Banana Pro' })
+    expect(getAccessToken).not.toHaveBeenCalledWith(false, false, 'openai')
   })
 })
 

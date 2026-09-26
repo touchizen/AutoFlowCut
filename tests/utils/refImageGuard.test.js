@@ -117,7 +117,8 @@ describe('M1 basic Flow exclusions', () => {
     mediaId: 'media-1',
   }
 
-  it('keeps syncable mentions and uploadable non-characters but excludes M1-unusable uses', () => {
+  // M3(D15): Flow 에서 쓸 수 있음 = 로컬 이미지(sourceAvailable) — 멘션·첨부 공통. 옛 mediaId·entity 동기화는 보지 않는다(애셋 창에서 검증할 수 없다).
+  it('M3: keeps every ref with a local image (tagged characters included) and excludes the rest — mediaId-only and entity-only too', () => {
     const scenes = [
       { id: 's1', prompt: 'plain', characters: 'LocalTag' },
       { id: 's2', prompt: '@LocalMention appears', characters: '' },
@@ -143,13 +144,39 @@ describe('M1 basic Flow exclusions', () => {
     )
 
     expect(result.exclusions.map(item => item.refName)).toEqual([
-      'LocalTag',
       'Ghost',
+      'EntityOnly',
       'EmptyStyle',
+      'Uploaded',
     ])
     expect(result.mentionNamesBySceneId).toEqual({
       s3: ['Ghost'],
+      s4: ['EntityOnly'],
     })
+  })
+
+  it('M3: a tag-only character with a filePath (no mediaId) is not excluded; a mediaId-only ref is', () => {
+    const fileTagged = { id: 'file-tag', name: 'Hero', type: 'character', filePath: '/refs/hero.png', mediaId: null }
+    const mediaOnly = { id: 'media-only', name: 'Old', type: 'scene', mediaId: 'media-9' }
+    const result = collectM1FlowReferenceExclusions(
+      [{ id: 's1', prompt: 'a knight', characters: 'Hero', scene_tag: 'Old' }],
+      () => [fileTagged, mediaOnly]
+    )
+
+    expect(result.exclusions).toEqual([{ sceneId: 's1', sceneIndex: 0, refId: 'media-only', refName: 'Old' }])
+    expect(result.mentionNamesBySceneId).toEqual({})
+  })
+
+  // M3 멘션은 타입 무관(엔진 계획과 같다) — 제외된 non-character 멘션도 @ 를 떼야 엔진이 그 씬을 source-missing 으로 떨구지 않고 평문으로 진행한다.
+  it('M3: an excluded mentioned non-character ref also has its mention stripped', () => {
+    const noImageScene = { id: 'nowhere', name: 'Nowhere', type: 'scene', mediaId: 'm-1' }
+    const result = collectM1FlowReferenceExclusions(
+      [{ id: 's8', prompt: 'a road to @Nowhere' }],
+      () => [noImageScene]
+    )
+
+    expect(result.exclusions.map(item => item.refName)).toEqual(['Nowhere'])
+    expect(result.mentionNamesBySceneId).toEqual({ s8: ['Nowhere'] })
   })
 
   it('strips only excluded mention sigils from a run-local scene copy', () => {

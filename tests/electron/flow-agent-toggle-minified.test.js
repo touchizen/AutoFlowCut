@@ -30,6 +30,7 @@ import {
   ENGLISH_AGENT_SETTINGS,
   ENGLISH_COMPOSER,
 } from '../fixtures/flow-live-dom-20260714.js'
+import { buildComposer, paragraph, uuid } from '../fixtures/flow-live-dom-m3.js'
 
 const SRC = fileURLToPath(new URL('../../electron/flow-agent-toggle.js', import.meta.url))
 
@@ -85,6 +86,16 @@ describe('page-injected probes under production minification', () => {
   it('the element-returning selectors survive minification (they already did — keep it that way)', () => {
     expect(runInPage(REAL_TOGGLE, mod.AGENT_TOGGLE_SELECTOR)).toBeTruthy()
     expect(runInPage('<button type="button">No panel</button>', mod.AGENT_CHAT_CLOSE_SELECTOR)).toBeNull()
+  })
+
+  // 리뷰 R1: 위 케이스는 close 버튼이 없어 isAgentHeader 까지 가지 않는다 — 판별 경로를 압축본으로 직접 태운다.
+  it('the agent chat close selector reaches its header check after minification — header found, composer clear never', () => {
+    const header = `<div class="agent-panel-header"><button aria-label="History"><i class="google-symbols">menu</i></button>`
+      + `<button aria-label="New session"><i class="google-symbols">edit_square</i></button>`
+      + `<button class="target" aria-label="Close"><i class="google-symbols">close</i></button></div>`
+    expect(runInPage(header, mod.AGENT_CHAT_CLOSE_SELECTOR)?.className).toBe('target')
+    const composer = buildComposer({ chips: [{ id: uuid(1) }], editorHtml: paragraph('조선 왕실의 기록 보관소') })
+    expect(runInPage(composer, mod.AGENT_CHAT_CLOSE_SELECTOR)).toBeNull()
   })
 
   it('the structural toggle selector stays locale-invariant after minification', () => {

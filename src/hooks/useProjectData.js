@@ -241,12 +241,22 @@ export async function loadProjectWithResources(projectName) {
     return null
   }
 
+  // M2-R4 I2(B1): 제출 패치 모양(generationId 있음 · mediaId null · videoPath null, complete 아님) = 디스크의 어떤 파일보다 **새로운** 과금된 제출(전체 Start/Regenerate→Start 가
+  //   t2v_N.mp4 가 있는 씬을 재생성하다 완료 전에 앱이 다시 뜬 경우). 여기서 videoSaveId 로 찾은 옛 파일을 붙이고 complete 로 올리면 복구(!videoPath 만)도 Phase 0(complete+videoPath
+  //   → fresh)도 G_new 를 폴링하지 않아 옛 영상이 결과로 보이고 다음 Start 가 재제출(10크레딧)한다. 경로·base64 를 붙이지 않고 그대로 두어(generating → pending) Phase 0 이 in-flight 로 폴링하게 한다.
+  //   complete 는 제외 — 저장된 complete 는 이미 내려받은 결과라 재제출 모양이 아니다(옛 memory 모드 행의 base64 재로드를 막지 않는다).
+  // M2-R5 J1(A1 + B6): `mediaId == null` 항을 뺀다 — G1(b) 이후 제출된 항목의 모든 Flow 종결 패치(stop·폴 타임아웃·폴 auth·not-found·권한 거부·다운로드 실패)가 mediaId = generationId 를
+  //   쓰므로 mediaId 를 든 비완료 행(download-only)도 같은 구멍이었다(옛 파일을 붙여 complete → 복구·Phase 0 모두 G 를 안 받고 다음 Start 가 재제출). generationId 가 있고 videoPath 가
+  //   없는 비완료 행은 in-flight(mediaId null)든 download-only(mediaId 있음)든 그대로 두어 Phase 0 몫으로 남긴다. 저장된 videoPath 가 있는 행(옛 결과)은 여전히 현재 폴더로 리맵한다.
+  const isNewerSubmission = (item) => !!item.generationId && item.videoPath == null && item.status !== 'complete'
+
   // videoScenes 비디오 파일에서 로드 (새 명명 t2v_N 우선, 기존 vscene_N 폴백).
   // path 가 복구되면 path-only 로 유지 (framePairs 와 일관 + 큰 base64 IPC 부담 회피).
   // R28 review fix: chunked (S6 와 동일 정책) — 비디오/IPC 부하 회피
   const videoScenesWithMedia = await mapInChunks(
     (result.data.videoScenes || []),
     async (vs) => {
+      if (isNewerSubmission(vs)) return { ...vs }   // M2-R4 I2: 옛 파일을 붙이지 않는다 — Phase 0 이 폴링
       // videoPath 를 현재 프로젝트 폴더 기준으로 항상 재산출 (folder rename 회귀 차단)
       const remapped = await remapVideoPath(vs)
       let next = { ...vs }
@@ -296,6 +306,7 @@ export async function loadProjectWithResources(projectName) {
     async (fp) => {
       // 레거시 framePairs 에 ownerSceneId 가 없으면 startSceneId 로 backfill (스키마 마이그레이션)
       fp = backfillFramePairOwner(fp)
+      if (isNewerSubmission(fp)) return { ...fp }   // M2-R4 I2: 옛 파일을 붙이지 않는다 — Phase 0 이 폴링
       // videoPath 를 현재 프로젝트 폴더 기준으로 항상 재산출 (folder rename 회귀 차단)
       const remapped = await remapVideoPath(fp)
       let next = { ...fp }

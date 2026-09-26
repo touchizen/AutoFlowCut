@@ -8,7 +8,17 @@ import { fileSystemAPI } from '../hooks/useFileSystem'
 import { normalizeExportFormat } from '../utils/exportFormat'
 import { formatExpiryDate, formatElapsedMs } from '../utils/formatters'
 import { toKenBurnsRatios } from '../utils/kenBurnsPreview'
+import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'
 import './ExportModal.css'
+
+// 영상 클립 오디오 볼륨(0 음소거 / 0.15 앰비언스 / 1 원본). 옵션이며 기본은 원본(2026-09-26 사용자 결정 — 대사 있는 영상이
+//   모르고 음소거되지 않게). 0 도 유효값이라 ||/falsy 폴백을 쓰면 안 된다 — 모르는 값·빈 값만 기본으로 돌린다.
+const DEFAULT_VIDEO_AUDIO_VOLUME = 1
+const toVideoAudioVolume = (v) => {
+  if (v == null || v === '') return DEFAULT_VIDEO_AUDIO_VOLUME
+  const n = Number(v)
+  return VIDEO_AUDIO_VOLUMES.includes(n) ? n : DEFAULT_VIDEO_AUDIO_VOLUME
+}
 
 // 경로 프리셋 정의
 const PATH_PRESETS = {
@@ -110,6 +120,7 @@ export const ExportModal = ({
   const [pathCopied, setPathCopied] = useState(false)
   const [includeSubtitle, setIncludeSubtitle] = useState(true)
   const [renderBurnSubtitle, setRenderBurnSubtitle] = useState(true)
+  const [videoAudioVolume, setVideoAudioVolume] = useState(DEFAULT_VIDEO_AUDIO_VOLUME)
   const [kenBurnsCycle, setKenBurnsCycle] = useState(5)
   const [selectedOS, setSelectedOS] = useState(detectedMac ? 'mac' : 'windows')
   const [detectedBasePath, setDetectedBasePath] = useState('')  // 감지된 CapCut basePath
@@ -125,6 +136,8 @@ export const ExportModal = ({
     setIncludeSubtitle(settings.includeSubtitle !== false)
     setRenderBurnSubtitle(settings.renderBurnSubtitle !== false)
     setKenBurnsCycle(settings.kenBurnsCycle || 5)
+    // 0 이 유효값이라 || 폴백을 쓰면 안 된다
+    setVideoAudioVolume(toVideoAudioVolume(settings.videoAudioVolume))
     // pathPreset 로드
     setPathPreset(settings.pathPreset || 'capcut')
   }, [isLoaded, settings])
@@ -280,6 +293,7 @@ export const ExportModal = ({
       subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
       renderMode,
       renderBurnSubtitle,
+      videoAudioVolume: toVideoAudioVolume(videoAudioVolume),  // 0=음소거 / 0.15=앰비언스 / 1=원본(기본)
     }
   }
 
@@ -289,6 +303,7 @@ export const ExportModal = ({
       includeSubtitle,
       renderBurnSubtitle,
       kenBurnsCycle: Number(kenBurnsCycle) || 5,
+      videoAudioVolume: toVideoAudioVolume(videoAudioVolume),
     })
   }
 
@@ -873,6 +888,29 @@ export const ExportModal = ({
               {scaleMode === 'none' && t('exportModal.scaleNoneHint')}
             </p>
           </div>
+
+          {/* 영상 클립 오디오 볼륨 — CapCut 드래프트만 패치한다(프리미어·Vrew 는 영상 소리를 그대로 낸다). 기본은 원본. */}
+          {format === 'capcut' && (
+            <div className="export-option-section">
+              <label className="option-label">
+                🔈 {t('exportModal.videoAudioVolume')}
+              </label>
+              <select
+                value={String(videoAudioVolume)}
+                onChange={(e) => setVideoAudioVolume(Number(e.target.value))}
+                style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #444', background: '#1a1a1a', color: '#fff', fontSize: '0.9rem' }}
+              >
+                <option value="0">🔇 {t('exportModal.videoAudioMute')}</option>
+                <option value="0.15">🔉 {t('exportModal.videoAudioAmbience')}</option>
+                <option value="1">🔊 {t('exportModal.videoAudioOriginal')}</option>
+              </select>
+              <p className="option-hint">
+                {videoAudioVolume === 0 && t('exportModal.videoAudioMuteHint')}
+                {videoAudioVolume === 0.15 && t('exportModal.videoAudioAmbienceHint')}
+                {videoAudioVolume === 1 && t('exportModal.videoAudioOriginalHint')}
+              </p>
+            </div>
+          )}
 
           {/* Ken Burns 효과 옵션 */}
           <div className="export-option-section">

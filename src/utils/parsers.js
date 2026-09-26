@@ -4,6 +4,54 @@
 
 import { DEFAULTS } from '../config/defaults'
 import { parseCSVTextToRows } from './csvParser'
+import { mergeSceneGeneration } from './sceneGenerationMerge'
+import { isKnownImageProvider, isKnownVideoProvider } from './sceneProviderResolution'
+
+export const SCENE_GENERATION_CSV_COLUMNS = [
+  'image_provider', 'image_model',
+  't2v_provider', 't2v_model',
+  'i2v_provider', 'i2v_model',
+]
+export const SCENE_GENERATION_INHERIT_SENTINEL = '__inherit__'
+
+function generationFromCSV(getCol, warnings) {
+  const stage = (providerColumn, modelColumn, isKnownProvider, path) => {
+    const provider = getCol(providerColumn)
+    let model = getCol(modelColumn)
+    if (provider === SCENE_GENERATION_INHERIT_SENTINEL) {
+      if (model && Array.isArray(warnings)) {
+        warnings.push(`Model '${model}' ignored because provider is __inherit__ at ${path}.`)
+      }
+      return null
+    }
+    if (model === SCENE_GENERATION_INHERIT_SENTINEL) {
+      if (Array.isArray(warnings)) warnings.push(`Rejected invalid model '${model}' at ${path}.`)
+      model = ''
+    }
+    if (!provider && !model) return undefined
+    if (provider && !isKnownProvider(provider)) {
+      if (Array.isArray(warnings)) warnings.push(`Rejected unknown provider '${provider}' at ${path}.`)
+      return undefined
+    }
+    return {
+      ...(provider ? { provider } : {}),
+      ...(model ? { model } : {}),
+    }
+  }
+  const image = stage('image_provider', 'image_model', isKnownImageProvider, 'generation.image')
+  const t2v = stage('t2v_provider', 't2v_model', isKnownVideoProvider, 'generation.video.t2v')
+  const i2v = stage('i2v_provider', 'i2v_model', isKnownVideoProvider, 'generation.video.i2v')
+  if (image === undefined && t2v === undefined && i2v === undefined) return undefined
+  return {
+    ...(image !== undefined ? { image } : {}),
+    ...((t2v !== undefined || i2v !== undefined) ? {
+      video: {
+        ...(t2v !== undefined ? { t2v } : {}),
+        ...(i2v !== undefined ? { i2v } : {}),
+      },
+    } : {}),
+  }
+}
 
 // ============================================================
 // 기본 유틸
@@ -87,7 +135,7 @@ export function parseTextToScenes(text, defaultDuration = DEFAULTS.scene.duratio
  * @param {number} defaultDuration - 기본 duration
  * @returns {Array} 씬 배열
  */
-export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.duration) {
+export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.duration, options = {}) {
   // R10 review fix: shared RFC parser (escaped quote / multiline / CRLF 안전)
   const { headers: rawHeaders, rows } = parseCSVTextToRows(csvText)
   if (rows.length === 0) return []
@@ -108,6 +156,7 @@ export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.durat
     const startTime = !isNaN(parsedStart) ? parsedStart : currentTime
     const parsedEnd = parseTimeToSeconds(row.end_time)
     const endTime = !isNaN(parsedEnd) ? parsedEnd : startTime + duration
+    const generation = generationFromCSV(name => (row[name] || '').trim(), options.warnings)
 
     currentTime = endTime
 
@@ -125,6 +174,7 @@ export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.durat
       characters: row.characters || row.character || '',
       scene_tag: row.scene_tag || row.scene || row.background || '',
       style_tag: row.style_tag || row.style || '',
+      ...(generation !== undefined ? { generation } : {}),
       status: 'pending',
       image: null
     })
@@ -281,6 +331,7 @@ export function parseSceneCSVToTracks(csvText, options = {}) {
       scene_tag: getCol('scene_tag') || getCol('background') || '',
       style_tag: getCol('style_tag') || getCol('style') || '',
       shot_type: getCol('shot_type') || '',
+      generation: generationFromCSV(getCol, options.warnings),
     }
     parsedRows.push(row)
 
@@ -336,6 +387,7 @@ export function parseSceneCSVToTracks(csvText, options = {}) {
       scene_tag: first.scene_tag,
       style_tag: first.style_tag,
       shot_type: first.shot_type,
+      ...(first.generation !== undefined ? { generation: first.generation } : {}),
       status: 'pending',
       image: null,
     })
@@ -648,7 +700,7 @@ export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS
     }
   }
 
-  const parsed = parseCSVToScenes(csvText, defaultDuration)
+  const parsed = parseCSVToScenes(csvText, defaultDuration, { warnings: options.warnings })
   const maxLen = Math.max(existing.length, parsed.length)
   return Array.from({ length: maxLen }, (_, i) => {
     const ex = existing[i]
@@ -660,6 +712,15 @@ export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS
         if (value !== '' && value !== null && value !== undefined) {
           merged[field] = value
         }
+      }
+      if (p.generation !== undefined) {
+        const generationMerge = mergeSceneGeneration(
+          ex.generation,
+          p.generation,
+          options.generationSettings,
+        )
+        merged.generation = generationMerge.generation
+        if (Array.isArray(options.warnings)) options.warnings.push(...generationMerge.warnings)
       }
       return merged
     }

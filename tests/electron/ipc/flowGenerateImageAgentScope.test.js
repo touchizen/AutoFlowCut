@@ -1,4 +1,9 @@
 // @vitest-environment node
+// ⚠️ M1-12(2026-09-24 flow.google.com 재작업): 이 파일이 구동하는 옛 labs.google 핸들러 경로는 Flow 모드에서
+//    도달 불가다(generate-image/t2v/check-video-status 는 angular 디스패치, 나머지 9개는 flow-feature-unsupported 단락).
+//    옛 핸들러 본문은 후속 정리 대상이라 남겨 두었고, 그 코드만 검증하는 이 스위트는 그 정리 때 함께 삭제한다.
+//    새 경로의 계약은 tests/electron/ipc/flowGenerateImageAngular.test.js · flowFeatureUnsupported.test.js ·
+//    flowAngularDispatch.test.js 가 핀한다.
 //
 // Regression: the Agent-ON refactor wrapped the Agent-OFF logic in
 //   `if (!agentOn) { let agentOff = false; ... }`
@@ -99,7 +104,7 @@ async function submitAgent(agentOn, batchCount = 1) {
   return { result, pendingGenerations, deps }
 }
 
-describe('flow:generate-image async arming — agentOff scope (Agent-ON download regression)', () => {
+describe.skip('flow:generate-image async arming — agentOff scope (Agent-ON download regression)', () => {
   it('returns a coded Agent OFF failure before prompt injection', async () => {
     const ipc = makeIpcMain()
     const pendingGenerations = new Map()

@@ -35,7 +35,8 @@ vi.mock('../../src/utils/videoMetadata', () => ({
 function setupHook(overrides = {}) {
   const generateVideoT2V = vi.fn().mockResolvedValue({
     success: false,
-    error: 'Resource has been exhausted (e.g. check quota).',
+    error: 'Too Many Requests',
+    errorKind: 'quota',
   })
   const genAPI = {
     generateVideoT2V,
@@ -64,12 +65,12 @@ afterEach(() => {
 })
 
 describe('useVideoAutomation — quota stop race regression', () => {
-  it('poll path 에서 quota 멈춤 시에도 quotaStopped 메시지 표시 (UX 일관)', async () => {
+  it('K3: failed poll status errorKind quota stops on non-matching error text', async () => {
     // submit 은 성공 → poll 단계 진입 → poll 중 quota 감지로 멈춤.
     const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
     const checkVideoStatus = vi.fn().mockResolvedValue({
       success: true,
-      statuses: [{ status: 'failed', error: 'Resource has been exhausted (e.g. check quota).' }],
+      statuses: [{ status: 'failed', error: 'Too Many Requests', errorKind: 'quota' }],
     })
     const { hook } = setupHook({
       genAPI: { generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus, upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token') },
@@ -92,7 +93,7 @@ describe('useVideoAutomation — quota stop race regression', () => {
     expect(hook.result.current.statusMessage).toMatch(/quota|limit reached|한도/i)
   })
 
-  it('첫 submit quota + 모달 즉시 dismiss 시에도 status="stopped" 유지 (race 없음)', async () => {
+  it('K3: submit result errorKind quota stops even when the modal is dismissed immediately', async () => {
     const { hook } = setupHook()
 
     // listener 가 호출되자마자 사용자가 dismiss 한다고 시뮬레이션 — race 극단값.
@@ -121,5 +122,32 @@ describe('useVideoAutomation — quota stop race regression', () => {
     // race 가드: 모달 dismiss 가 빨라도 status 는 'stopped' (구현은 quotaStoppedRef 로 판단)
     expect(hook.result.current.status).toBe('stopped')
     expect(hook.result.current.statusMessage).toMatch(/quota|limit reached|한도/i)
+  })
+
+  it('K3: submit result errorKind other overrides quota-looking text', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'Resource has been exhausted (e.g. check quota).',
+      errorKind: 'other',
+    })
+    const { hook } = setupHook({ genAPI: { generateVideoT2V } })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: [
+          { id: 'vscene_v1', prompt: 'p1' },
+          { id: 'vscene_v2', prompt: 'p2' },
+        ],
+        projectName: 'test', saveMode: 'folder', videoModel: 'veo-3', aspectRatio: '16:9',
+        duration: 8, videoResolution: '1080', videoBatchCount: 1, seed: null,
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    expect(generateVideoT2V).toHaveBeenCalledTimes(2)
+    expect(hook.result.current.status).not.toBe('stopped')
   })
 })

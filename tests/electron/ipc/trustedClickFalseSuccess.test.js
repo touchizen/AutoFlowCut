@@ -19,25 +19,30 @@ vi.mock('electron', () => ({
 const { createSharedHelpers } = await import('../../../electron/ipc/shared.js')
 const layout = await import('../../../electron/ipc/layout.js')
 
-function makeCtx({ coords, onBeforeClick }) {
+function makeCtx({ coords, onBeforeClick, onMouseDown, onMouseUp, hitTestHangs = false }) {
   let current = { x: 0, y: 0, width: 637, height: 1022 }
+  const collapse = () => { current = { x: 0, y: 0, width: 0, height: 0 } }
   const flowView = {
     getBounds: vi.fn(() => ({ ...current })),
     setBounds: vi.fn((b) => { current = { ...b } }),
     webContents: {
       executeJavaScript: vi.fn(async (s) => {
         const src = String(s)
-        if (src.includes('elementFromPoint')) return { ok: true, why: 'ok' }
+        if (src.includes('elementFromPoint')) return hitTestHangs ? new Promise(() => {}) : { ok: true, why: 'ok' }   // M2-R2 G5: 먹통 렌더러의 hit-test
         if (src.includes('getBoundingClientRect')) return coords
         return null
       }),
-      sendInputEvent: vi.fn((e) => { if (e.type === 'mouseMove' && onBeforeClick) onBeforeClick({ collapse: () => { current = { x: 0, y: 0, width: 0, height: 0 } } }) }),
+      sendInputEvent: vi.fn((e) => {
+        if (e.type === 'mouseMove' && onBeforeClick) onBeforeClick({ collapse })
+        if (e.type === 'mouseDown' && onMouseDown) onMouseDown({ collapse })
+        if (e.type === 'mouseUp' && onMouseUp) onMouseUp({ collapse })
+      }),
       getURL: () => '',
       focus: vi.fn(),
       session: null,
     },
   }
-  const onDomFailure = vi.fn()
+  const onDomFailure = vi.fn(async () => {})   // main 의 onDomFailure 처럼 promise 를 돌려준다(타임아웃 catch 가 .catch 를 건다)
   return {
     ctx: {
       getFlowView: () => flowView,
@@ -89,5 +94,137 @@ describe('trustedClickOnFlowView — no false success', () => {
     const res = await trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
 
     expect(res.success).toBe(false)
+  })
+})
+
+// M2-R1 F4(a) (A4/B5): mouseDown 이 이미 나간 뒤의 실패는 "클릭이 안 됐다"가 아니라 "클릭이 됐을 수 있다" — 페이지가 제출(과금)했을 수
+//   있으므로 dispatched:true 로 보고한다. 호출부(T2V)는 그걸 보고 gen 을 지우지 않고 waiter/마감 경로로 간다(postClick).
+//   mouseDown 전의 실패(측정·hit-test·bounds 변경)는 dispatched 없음.
+describe('trustedClickOnFlowView — mouseDown 뒤의 실패는 dispatched:true', () => {
+  beforeEach(() => { layout.setLayoutMode('split-left'); layout.setSplitRatio(0.5); layout.setModalVisible(false) })
+  const COORDS = { x: 100, y: 50, width: 40, height: 40, visible: true }
+
+  it('mouseDown 뒤에 뷰가 접히면(모달) {success:false, dispatched:true}; mouseDown 전에 접히면 dispatched 없음', async () => {
+    const after = makeCtx({ coords: COORDS, onMouseDown: ({ collapse }) => collapse() })
+    const r1 = await createSharedHelpers(after.ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+    expect(r1).toMatchObject({ success: false, dispatched: true })
+    expect(downs(after.flowView)).toHaveLength(1)
+    const before = makeCtx({ coords: COORDS, onBeforeClick: ({ collapse }) => collapse() })
+    const r0 = await createSharedHelpers(before.ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+    expect(r0.success).toBe(false)
+    expect(r0).not.toHaveProperty('dispatched')
+    expect(downs(before.flowView)).toHaveLength(0)
+  })
+
+  it('mouseDown 뒤에 throw(mouseUp 의 sendInputEvent) → {success:false, dispatched:true}', async () => {
+    const { ctx, flowView } = makeCtx({ coords: COORDS, onMouseUp: () => { throw new Error('render frame gone') } })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+    expect(r).toMatchObject({ success: false, dispatched: true })
+    expect(downs(flowView)).toHaveLength(1)
+  })
+
+  it('mouseDown 뒤에 클릭이 30s 타임아웃되면(타이머 기아) {success:false, dispatched:true}', async () => {
+    vi.useFakeTimers()
+    try {
+      // mouseDown 직후의 80ms 대기(setTimeout)를 한 번 삼켜 클릭이 영영 안 끝나게 한다 — 그 뒤 30s 타임아웃이 결과를 낸다.
+      const { ctx, flowView } = makeCtx({
+        coords: COORDS,
+        onMouseDown: () => {
+          const orig = globalThis.setTimeout
+          globalThis.setTimeout = (fn, ms, ...a) => { if (ms === 80) { globalThis.setTimeout = orig; return 0 } return orig(fn, ms, ...a) }
+        },
+      })
+      const p = createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(downs(flowView)).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(30_000)
+      const r = await p
+      expect(r).toMatchObject({ success: false, dispatched: true })
+      expect(r.error).toMatch(/timed out/)
+    } finally { vi.useRealTimers() }
+  })
+})
+
+// M2-R2 G5 (A3=B5): dispatched 는 **mouseDown 직전**에만 선다. 그 전의 실패 — mouseMove 의 sendInputEvent throw, hit-test 가 매달린 채 30s 타임아웃 — 는 클릭이
+//   나간 적이 없으니 dispatched 없음이어야 T2V 가 gen 을 지우고 generate-button-click-failed 로 다음 항목을 잇는다(dispatched 면 15s 를 기다려 flow-submit-not-sent
+//   +postClick 으로 배치를 멈춘다). 기존 "mouseDown 전 접힘" 케이스는 bounds 조기 반환이라 플래그를 읽지 않아, 플래그를 mouseMove 위로 옮긴 변이도 초록이었다.
+describe('trustedClickOnFlowView — mouseDown 전의 실패는 dispatched 없음 (M2-R2 G5)', () => {
+  beforeEach(() => { layout.setLayoutMode('split-left'); layout.setSplitRatio(0.5); layout.setModalVisible(false) })
+  const COORDS = { x: 100, y: 50, width: 40, height: 40, visible: true }
+
+  it('mouseMove 의 sendInputEvent 가 throw → {success:false}, dispatched 없음, mouseDown 없음, onDomFailure(threw)', async () => {
+    const { ctx, flowView, onDomFailure } = makeCtx({ coords: COORDS, onBeforeClick: () => { throw new Error('render frame gone') } })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+    expect(r.success).toBe(false)
+    expect(r).not.toHaveProperty('dispatched')
+    expect(downs(flowView)).toHaveLength(0)
+    expect(onDomFailure).toHaveBeenCalledWith('trusted-click:compose-submit', expect.objectContaining({ reason: 'threw' }))
+  })
+
+  it('hit-test 가 매달린 채 30s 타임아웃 → {success:false, timed out}, dispatched 없음, mouseDown 없음', async () => {
+    vi.useFakeTimers()
+    try {
+      const { ctx, flowView } = makeCtx({ coords: COORDS, hitTestHangs: true })
+      const p = createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(flowView.webContents.sendInputEvent.mock.calls.map(([e]) => e.type)).toEqual(['mouseMove'])
+      await vi.advanceTimersByTimeAsync(30_000)
+      const r = await p
+      expect(r.success).toBe(false)
+      expect(r.error).toMatch(/timed out/)
+      expect(r).not.toHaveProperty('dispatched')
+      expect(downs(flowView)).toHaveLength(0)
+    } finally { vi.useRealTimers() }
+  })
+})
+
+// M2-FINAL Q1(A1 = B1): 호출자의 **마지막** 검사 — opts.beforeDispatch(async predicate) 를 히트테스트 뒤·mouseDown 직전에 한 번 묻는다(제출 클릭의 재판독~mouseDown 사이
+//   ≈200–300ms — 뮤텍스·measure·mouseMove 100ms·히트테스트 — 에 IME 조합이 편집기에 붙었으면 클릭을 내지 않는다). false·throw 는 **미디스패치** 거부(dispatched 없음,
+//   mouseDown·mouseUp 없음, 이유 상수) — 페이지가 제출했을 리 없으니 호출자는 gen 을 지운다. 보고는 호출자 몫(헬퍼는 onDomFailure 를 부르지 않는다 — 이중 보고 없음).
+describe('trustedClickOnFlowView — beforeDispatch 는 히트테스트 뒤·mouseDown 직전의 마지막 관문 (M2-FINAL Q1)', () => {
+  beforeEach(() => { layout.setLayoutMode('split-left'); layout.setSplitRatio(0.5); layout.setModalVisible(false) })
+  const COORDS = { x: 100, y: 50, width: 40, height: 40, visible: true }
+  const types = (flowView) => flowView.webContents.sendInputEvent.mock.calls.map(([e]) => e.type)
+
+  it('predicate 가 false → {success:false, error:"Refused before dispatch"}, dispatched 없음, mouseDown·mouseUp 없음(mouseMove 만), onDomFailure 없음', async () => {
+    const { ctx, flowView, onDomFailure } = makeCtx({ coords: COORDS })
+    const beforeDispatch = vi.fn(async () => false)
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit', beforeDispatch })
+    expect(r).toEqual({ success: false, error: 'Refused before dispatch' })
+    expect(r).not.toHaveProperty('dispatched')
+    expect(types(flowView)).toEqual(['mouseMove'])
+    expect(beforeDispatch).toHaveBeenCalledTimes(1)
+    expect(onDomFailure).not.toHaveBeenCalled()
+  })
+
+  it('predicate 가 throw → 같은 미디스패치 거부(fail-closed)', async () => {
+    const { ctx, flowView } = makeCtx({ coords: COORDS })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit', beforeDispatch: async () => { throw new Error('read failed') } })
+    expect(r).toEqual({ success: false, error: 'Refused before dispatch' })
+    expect(r).not.toHaveProperty('dispatched')
+    expect(types(flowView)).toEqual(['mouseMove'])
+  })
+
+  it('predicate 가 true → 호출 시점엔 히트테스트(elementFromPoint)가 이미 돌았고 mouseDown 은 아직 없다; 그 뒤 mouseDown·mouseUp → success', async () => {
+    const { ctx, flowView } = makeCtx({ coords: COORDS })
+    const seen = []
+    const beforeDispatch = vi.fn(async () => {
+      seen.push({
+        hitTests: flowView.webContents.executeJavaScript.mock.calls.filter(([s]) => String(s).includes('elementFromPoint')).length,
+        types: types(flowView),
+      })
+      return true
+    })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit', beforeDispatch })
+    expect(r).toMatchObject({ success: true })
+    expect(seen).toEqual([{ hitTests: 1, types: ['mouseMove'] }])
+    expect(types(flowView)).toEqual(['mouseMove', 'mouseDown', 'mouseUp'])
+  })
+
+  it('predicate 가 없으면 옛 동작 그대로(mouseDown·mouseUp → success)', async () => {
+    const { ctx, flowView } = makeCtx({ coords: COORDS })
+    const r = await createSharedHelpers(ctx).trustedClickOnFlowView('sel', { required: true, step: 'compose-submit' })
+    expect(r).toMatchObject({ success: true })
+    expect(types(flowView)).toEqual(['mouseMove', 'mouseDown', 'mouseUp'])
   })
 })

@@ -140,6 +140,42 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
   })
 })
 
+describe('finalizeGeneratedImage — appliedInputs seed truth table', () => {
+  const ABSENT = Symbol('appliedInputs absent')
+  const cases = [
+    ['first-image echo wins', 7, undefined, {}, 3, 7],
+    ['top-level echo wins', undefined, 9, {}, 3, 9],
+    ['declared empty rejects caller fallback', undefined, undefined, {}, 3, null],
+    ['declared seed is recorded', undefined, undefined, { seed: 5 }, 3, 5],
+    ['declared undefined seed becomes null', undefined, undefined, { seed: undefined }, 3, null],
+    ['undeclared result keeps legacy caller fallback', undefined, undefined, ABSENT, 3, 3],
+    ['undeclared result with no caller seed stays null', undefined, undefined, ABSENT, undefined, null],
+    ['first-image echo preserves zero', 0, undefined, {}, 3, 0],
+    ['top-level echo preserves zero', undefined, 0, {}, 3, 0],
+    ['declared seed preserves zero', undefined, undefined, { seed: 0 }, 3, 0],
+  ]
+
+  it.each(cases)('%s', async (_name, firstSeed, resultSeed, appliedInputs, callerSeed, expected) => {
+    const firstImage = { base64: TINY_BASE64, mediaId: 'm1' }
+    if (firstSeed !== undefined) firstImage.seed = firstSeed
+    const result = { success: true, images: [firstImage] }
+    if (resultSeed !== undefined) result.seed = resultSeed
+    if (appliedInputs !== ABSENT) result.appliedInputs = appliedInputs
+
+    const res = await finalizeGeneratedImage({
+      result,
+      genAPI: {},
+      saveMode: 'none',
+      projectName: 'truth-table',
+      sceneId: 'scene_1',
+      prompt: 'a cat',
+      seed: callerSeed,
+    })
+
+    expect(res.sceneUpdate.seed).toBe(expected)
+  })
+})
+
 describe('processAsyncSceneResult — useAutomation batch error counting contract', () => {
   // useAutomation 의 collect 루프는 이 함수의 boolean 반환값으로 errorCountRef 를 증감한다.
   // result.success 만 보고 카운트하면 "이미지는 받았는데 디스크 저장 실패" 케이스가
@@ -207,5 +243,80 @@ describe('processAsyncSceneResult — useAutomation batch error counting contrac
       status: 'error',
       errorKind: null, // stale missing-image marker is cleared
     }))
+  })
+})
+
+// M1-10/M1-13: 새 Flow 경로의 실패 kind 는 params 를 싣는다(플레이스홀더 렌더 방지) — 실패 sceneUpdate 에 errorParams 보존.
+//   업스케일 백스톱(tryUpscaleImage 가 flow-upscale-unsupported 로 throw) 은 삼키지 않고 그 kind 로 씬 실패.
+describe('finalizeGeneratedImage — errorParams 보존 + 업스케일 백스톱 (M1-10)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    fileSystemAPI.saveImage.mockResolvedValue({ success: true, path: '/tmp/scene_1.png' })
+  })
+
+  it('실패 result 의 errorKind/errorParams 가 sceneUpdate 에 실린다', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, error: 'flow-resolution-not-offered', errorKind: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+    })
+    expect(res.success).toBe(false)
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
+  })
+
+  it('params 없는 실패는 errorParams:{} (stale params 가 merge 로 남지 않게)', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, error: 'No images', images: [] },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+    })
+    expect(res.sceneUpdate.errorParams).toEqual({})
+  })
+
+  it('tryUpscaleImage 가 flow-upscale-unsupported 로 throw 하면 그 kind 로 씬 실패(저장 없음)', async () => {
+    const { tryUpscaleImage } = await import('../../src/utils/imageProcessing')
+    tryUpscaleImage.mockRejectedValueOnce(Object.assign(new Error('flow-upscale-unsupported'), { errorKind: 'flow-upscale-unsupported', errorParams: {} }))
+    const res = await finalizeGeneratedImage({
+      result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
+      genAPI: {}, upscaleRes: '2k', saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+    })
+    expect(res.success).toBe(false)
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', error: 'flow-upscale-unsupported', errorKind: 'flow-upscale-unsupported', errorParams: {} })
+    expect(fileSystemAPI.saveImage).not.toHaveBeenCalled()
+  })
+
+  it('authFailed + 기계 토큰 error(flow-session-missing) 에 authErrorText 가 오면 그 문구를 저장한다 (R1#6/R2#5)', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'auth', error: 'AUTH TEXT' })
+  })
+
+  // main 병합(리뷰 A F2): multi-provider API 결과의 errorKind:'auth' 는 provider 분류 — error 는 provider 의 사람 메시지(어느 키인지 알려 준다)라 그대로 둔다.
+  it("authFailed + errorKind 'auth'(API provider 분류)는 provider 메시지를 그대로 저장한다 — authErrorText 로 덮지 않는다", async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd', authFailed: true },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd' })
+  })
+
+  it('authFailed 인데 errorKind 가 없는 옛 결과는 error 문구를 그대로 둔다(#R26-6 유지)', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, error: 'Auth expired', authFailed: true, images: [] },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ errorKind: 'auth', error: 'Auth expired' })
+  })
+
+  it('성공 sceneUpdate 도 errorParams 를 비운다', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+    })
+    expect(res.success).toBe(true)
+    expect(res.sceneUpdate.errorParams).toEqual({})
   })
 })

@@ -117,6 +117,9 @@ describe('useVideoAutomation — auth failure during polling', () => {
     )
     expect(authErrorCalls.length).toBeGreaterThanOrEqual(1)
     expect(authErrorCalls[0][0]).toBe('vscene_1')
+    // M2-R3 H8(B4): API 모드의 폴 auth 패치엔 Flow 의 mediaId 링크(G1(b))가 없다 — Veo operation 이름이 mediaId 가 되면 download-only 로 오분류된다
+    expect(authErrorCalls[0][2]).not.toHaveProperty('mediaId')
+    expect(authErrorCalls[0][2].errorKind).toBe('auth')
   })
 
   it('poll authFailed 시 pending 항목도 progress.errorCount 에 집계', async () => {
@@ -255,6 +258,26 @@ describe('useVideoAutomation — auth failure during submit', () => {
       error: 'Could not turn Flow Agent off',
     }))
     expect(genAPI.checkVideoStatus).not.toHaveBeenCalled()
+  })
+
+  // main 병합(리뷰 A F2): API provider 분류(errorKind 'auth')는 provider 메시지 그대로 — 인증 안내 문구로 덮지 않는다.
+  it("submit authFailed(errorKind 'auth', provider 메시지) → 항목 error 는 provider 메시지 그대로", async () => {
+    const onItemUpdate = vi.fn()
+    const genAPI = {
+      generateVideoT2V: vi.fn().mockResolvedValue({ success: false, authFailed: true, errorKind: 'auth', error: 'Invalid xAI API key' }),
+      generateVideoI2V: vi.fn(), checkVideoStatus: vi.fn(), upscaleVideo: vi.fn(), fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ mode: 't2v', scenes: [{ id: 'vscene_1', prompt: 'test' }], projectName: 'p', saveMode: 'folder', onItemUpdate })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    await act(async () => { await startPromise })
+    const authPatches = onItemUpdate.mock.calls.filter(([id, status, patch]) => id === 'vscene_1' && status === 'error' && patch?.errorKind === 'auth')
+    expect(authPatches.length).toBeGreaterThanOrEqual(1)
+    expect(authPatches.at(-1)[2].error).toBe('Invalid xAI API key')
   })
 
   it('marks all items (submitted, failing, remaining) with errorKind:"auth" and skips polling', async () => {

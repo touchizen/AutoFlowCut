@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, dialog } from 'electron'
+import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, dialog, clipboard, nativeImage } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -47,8 +47,16 @@ import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-pa
 import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
-import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
+import { routeReportResponse, isFlowFrameOrigin, buildReportCtx } from './reportResponseRouter.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
+import { urlForLog } from './flowUrl.js'
+import { createBearerStore, bearerFromHeaders, isFlowApiRequest } from './flow-bearer-capture.js'
+import { FLOW_XHR_CAPTURE_INJECTION } from './flow-xhr-capture.js'
+import { FLOW_RPC_CAPTURE_INJECTION } from './flow-rpc-capture.js'
+import { failBoundUnfinished } from './flow-rpc-router.js'
+import { releaseDomStage } from './ipc/flow-angular.js'   // M2-LAST P1: 문서가 죽으면 DOM 단계 직렬화를 푼다
+import { decideUpdateRequest, parseStartSceneBatchBody } from './mcp-http-parsers.js'   // M2-LIVE N3 · N7
+import { isNetTraceOn, netTraceFilePath, decodeUploadData, buildTraceLine, summarizeTraceEntry } from './flow-net-trace.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
@@ -128,6 +136,39 @@ const sentryMain = initSentryMain()
 // === Flow API URLs ===
 const FLOW_URL = 'https://labs.google/fx/tools/flow'
 const SESSION_URL = 'https://labs.google/fx/api/auth/session'
+const flowBearerStore = createBearerStore()
+
+// ─── AUTOFLOWCUT_NET_TRACE=1 — Flow 페이지 네트워크 진단 트레이스(관측 전용) ───
+//   새 flow.google.com 은 생성 RPC 를 XHR(batchexecute)로 보내 fetch 몽키패치가 못 본다(2026-09-23).
+//   켜져 있으면 (1) 페이지에 XHR 캡처를 주입하고(flow-xhr-capture.js) (2) webRequest 에서 batchexecute
+//   요청 본문을 (3) flow:report-xhr 로 응답까지 받아 JSONL 한 줄씩 append 한다. 꺼져 있으면 아무것도
+//   안 한다 — 생성 로직 무관. 파일: AUTOFLOWCUT_NET_TRACE_FILE 또는 바탕화면(flow-net-trace.js).
+const NET_TRACE_ON = isNetTraceOn(process.env)
+const NET_TRACE_INJECTION = 'window.__autoflowcut_net_trace__ = true;\n' + FLOW_XHR_CAPTURE_INJECTION
+let netTraceFile = null
+function appendNetTrace(entry) {
+  if (!NET_TRACE_ON) return
+  try {
+    if (!netTraceFile) {
+      netTraceFile = netTraceFilePath(process.env, app.getPath('desktop'))
+      console.log('[Flow Net] trace file:', netTraceFile)
+    }
+    fsSync.appendFileSync(netTraceFile, buildTraceLine(entry) + '\n')
+    console.log('[Flow Net] trace:', summarizeTraceEntry(entry))
+  } catch (e) { console.warn('[Flow Net] trace write failed:', e.message) }
+}
+function injectNetTrace(view) {
+  if (!NET_TRACE_ON || !view || view.webContents.isDestroyed()) return
+  view.webContents.executeJavaScript(NET_TRACE_INJECTION).catch(() => {})
+}
+// flow.google.com 제출 RPC(ogiZ0b/YhhmEf) 캡처 — 프로덕션, 항상 켜짐. 멱등(문서 플래그). 페이지 스크립트가
+//   첫 XHR 을 쏘기 전에 설치돼야 해서 dom-ready 에서도 주입한다. 핸들러는 클릭 전에 설치 플래그를 프로브한다.
+function injectRpcCapture(view) {
+  if (!view || view.webContents.isDestroyed()) return
+  view.webContents.executeJavaScript(FLOW_RPC_CAPTURE_INJECTION).catch((e) => {
+    console.warn('[Flow RPC] capture injection failed:', e?.message)
+  })
+}
 const BASE_API_URL = 'https://aisandbox-pa.googleapis.com/v1'
 const GENERATE_URL = `${BASE_API_URL}/flowMedia:batchGenerateImages`
 const UPLOAD_URL = `${BASE_API_URL}/flow/uploadImage`
@@ -219,7 +260,6 @@ const genaiKeyStore = createKeyStore({
   filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
   fs: fsSync,
 })
-registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
 
 // TTS provider 멀티 키 저장소 (스펙 §6, M2a-3b) — genai|elevenlabs|typecast|anthropic.
 const multiKeyStore = createMultiKeyStore({
@@ -228,6 +268,7 @@ const multiKeyStore = createMultiKeyStore({
   fs: fsSync,
   path,
 })
+registerGenaiIPC(ipcMain, { genaiKeyStore, multiKeyStore })
 // TTS 어댑터 라우팅(화자별 엔진). provider별 키 소스:
 //  - typecast: multiKeyStore 우선, 없으면 env/~/.typecast/credentials 폴백
 //  - elevenlabs/googletts: multiKeyStore 우선, 없으면 env/~/.{service}/credentials 폴백
@@ -364,6 +405,41 @@ app.on('before-quit', (event) => {
   })()
 })
 
+// M2-LIVE N1: 제자리 자동화 뷰포트(flow-angular withAutomationViewport) 동안 사용자 포인터 입력을 삼키는 **최상위 투명 방패 뷰**.
+//   Flow 뷰가 앱 UI 위에 있는 몇 초 동안 사용자의 클릭이 컴포저(제출 화살표·설정 라디오·미디어 카드)에 닿으면 과금·고아 미디어·잘못된 설정이 된다.
+//   contentView 에 Flow 뷰 **뒤에** 붙여 최상위가 되게 하고 창 콘텐츠 크기로 둔다. 앱의 신뢰 클릭은 flowView.webContents.sendInputEvent 라
+//   OS 히트테스트를 거치지 않아 방패 아래로 그대로 통한다. 페이지 스크립트 없음(sandbox, preload 없음, about:blank). remove() 가 떼고 닫는다.
+// M2-CLOSE O1(A1): DOM 단계(flow-angular withAutomationViewport) 동안 사용자의 **키 입력**을 Flow 뷰에 넣지 않는다 — 방패(N1)는 포인터만 막고, 편집기 주입이
+//   Flow 뷰에 OS 포커스를 주므로(넓은 뷰든 제자리든) 재판독~제출 클릭 사이의 타이핑이 프롬프트에 붙어 그대로 과금되고 Enter 는 페이지가 제출해 앱의 클릭이 빈손이 됐다.
+//   makeFlowView 의 before-input-event 가 이 플래그를 보고 preventDefault 한다. 앱의 Angular 자동화는 executeJavaScript 와 **마우스** sendInputEvent(신뢰 클릭)뿐이고
+//   Escape 는 페이지 안 DOM 이벤트라 잠금이 자동화를 막지 않는다(키 sendInputEvent 는 옛 labs.google 멘션 경로에만 있고 Angular 에선 미지원으로 거부된다 — mainInputShieldWiring 핀).
+let automationKeyLock = false
+// M2-FINAL Q1(A1 = B1): 방패 focus 의 단계 플래그 — 'flow'(기본·방패 생성 시·DOM 단계 finally 리셋)면 O5 대로 Flow 뷰로, 'main'(핸들러의 focusMainWindow: 재판독 뒤 OS 포커스를
+//   메인 창으로 옮긴 뒤)이면 메인 창으로. P2 뒤에도 O5 가 방패 클릭마다 포커스를 Flow 뷰로 돌려보내 Blink 가 ProseMirror 편집기에 문서 포커스를 되살리고 IME 조합이 다시
+//   프롬프트에 붙었다(재판독~mouseDown 사이 ≈200–300ms). flowAPIDeps.setShieldFocusTarget 이 세운다.
+let shieldFocusTarget = 'flow'
+
+function makeInputShield() {
+  const win = mainWindow
+  if (!win || !win.contentView) return null
+  const shield = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } })
+  shield.setBackgroundColor('#00000000')
+  shield.webContents.loadURL('about:blank').catch(() => {})
+  // M2-CLOSE O5(A5): 사용자가 방패를 누르면 방패 webContents 가 OS 포커스를 가져간다 — 캐럿 클릭~주입 사이에 포커스가 빠지면 execCommand 주입이 안 먹어 재판독 불일치
+  //   (text-injection-failed, 항목은 재시도로 유실). 포커스를 받는 즉시 Flow 뷰로 돌려준다(핸들러도 주입 직전에 focus 를 다시 건다).
+  // M2-FINAL Q1: 핸들러가 포커스를 메인 창으로 넘긴 뒤(shieldFocusTarget === 'main')엔 Flow 뷰가 아니라 메인 창으로 — 편집기가 포커스를 되찾지 않게.
+  shield.webContents.on('focus', () => { try { if (shieldFocusTarget === 'main') win.webContents.focus(); else modeController.getFlowView()?.webContents.focus() } catch (_e) { /* 뷰·창이 이미 없을 수 있다 */ } })
+  win.contentView.addChildView(shield)
+  const { width, height } = win.getContentBounds()
+  shield.setBounds({ x: 0, y: 0, width, height })
+  return {
+    remove() {
+      try { win.contentView.removeChildView(shield) } catch (_e) { /* 창이 이미 닫혔을 수 있다 */ }
+      try { shield.webContents.close() } catch (_e) { /* 이미 닫힘 */ }
+    },
+  }
+}
+
 // Flow WebContentsView factory — only called when mode:set('flow') is invoked.
 // Lazy creation ensures API mode startup is unaffected.
 // did-finish-load bootstrap is attached here directly so it fires on view creation.
@@ -377,6 +453,9 @@ function makeFlowView() {
     },
   })
 
+  // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금(위 automationKeyLock — flowAPIDeps.setAutomationKeyLock 이 켜고 끈다)
+  view.webContents.on('before-input-event', (e) => { if (automationKeyLock) e.preventDefault() })
+
   // 페이지 console 로그를 main 콘솔에 forward (우리 prefix만 filtering)
   view.webContents.on('console-message', (_event, _level, message) => {
     if (message.includes('[Flow Inject]') || message.includes('[Flow Debug]') || message.includes('[autoflowcut')) {
@@ -386,6 +465,11 @@ function makeFlowView() {
 
   // 지역 제한 조기 감지 (did-navigate는 did-finish-load보다 먼저 발생)
   view.webContents.on('did-navigate', (_, url) => {
+    // 문서 커밋 — 이전 문서에 바인딩된 미완료 gen 의 응답은 영영 오지 않는다 → flow-submit-lost 로 닫는다.
+    //   (did-start-navigation 은 취소될 수 있어 여기서만.) 미바인딩 armed gen 은 새 문서의 send 를 기다린다.
+    const lost = failBoundUnfinished(pendingGenerations)
+    if (lost) console.warn('[Flow RPC] did-navigate: bound unfinished generations lost =', lost)
+    releaseDomStage('did-navigate')   // M2-LAST P1: 이 문서의 DOM 단계 exec 는 영영 settle 하지 않는다 — 직렬화 기록을 비운다(살아 있던 단계였을 때만 로그)
     if (url.includes('unsupported-country')) {
       console.log('[Flow] Region unavailable detected early (did-navigate)')
       const win = mainWindow
@@ -406,7 +490,8 @@ function makeFlowView() {
 
   // SPA pushState/replaceState 내비게이션 캡처
   view.webContents.on('did-navigate-in-page', (_, url) => {
-    console.log('[Flow] did-navigate-in-page:', url)
+    const where = urlForLog(url)   // 쿼리 없이 — 로그인 리다이렉트 쿼리는 계정 힌트를 싣는다
+    console.log('[Flow] did-navigate-in-page:', where)
     const win = mainWindow
     if (win) win.webContents.send('flow-status', { loaded: true, url, loggedIn: url.includes('labs.google/fx') })
     const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
@@ -419,12 +504,68 @@ function makeFlowView() {
     }
     // Re-inject fetch monkey-patch on SPA navigation (guard flag ensures idempotency)
     view.webContents.executeJavaScript(FLOW_PAGE_INJECTION).catch(() => {})
+    injectNetTrace(view)
+    injectRpcCapture(view)
   })
+
+  // AUTOFLOWCUT_NET_TRACE: 페이지 스크립트가 첫 XHR 을 쏘기 전에 잡아야 초기 RPC(프로젝트 데이터·미디어
+  //   목록)까지 보인다 — did-finish-load 는 늦다. 주입은 idempotent.
+  view.webContents.on('dom-ready', () => {
+    injectNetTrace(view)
+    injectRpcCapture(view)
+  })
+
+  // 렌더러 크래시 — 이 문서의 XHR 은 끝났다. 바인딩된 미완료 gen 을 flow-submit-lost 로 닫는다(사유는 상태어만).
+  view.webContents.on('render-process-gone', (_e, details) => {
+    const lost = failBoundUnfinished(pendingGenerations)
+    console.warn('[Flow RPC] render-process-gone reason=', details?.reason, 'lost =', lost)
+    releaseDomStage('render-process-gone')   // M2-LAST P1: 렌더러와 함께 이 문서의 DOM 단계도 죽었다
+  })
+
+  // Flow 페이지가 스스로 보내는 aisandbox 요청의 Bearer 를 잡아둔다 — flow.google.com 에는 세션 API 가
+  //   없어(2026-09-23) readFlowSession 이 이 값을 세션 대용으로 쓴다. 페이지 로드 시점 요청까지 보인다.
+  const flowNetHostsSeen = new Set()
+  view.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: ['<all_urls>'] },
+    (details, callback) => {
+      try {
+        const bearer = bearerFromHeaders(details.requestHeaders)
+        if (bearer && isFlowApiRequest(details.url)) flowBearerStore.set(bearer)
+        // AUTOFLOWCUT_NET_TRACE=1 일 때만 진단 로그를 찍는다 — 요청마다 나가는 로그는 프로덕션 콘솔과
+        //   Sentry breadcrumb(consoleIntegration) 소음이 된다. 값은 절대 찍지 않는다(scheme 단어만).
+        if (NET_TRACE_ON) {
+          const host = new URL(details.url).hostname
+          const pathname = new URL(details.url).pathname
+          const authHeader = Object.entries(details.requestHeaders || {}).find(([k]) => k.toLowerCase() === 'authorization')
+          const scheme = authHeader ? String(authHeader[1]).split(/\s+/)[0] : 'none'
+          // 호스트+인증방식별 1회 — 새 도메인이 어떤 인증(Bearer/SAPISIDHASH/없음)을 어디로 보내는지.
+          const key = `${host} ${scheme}`
+          if (!flowNetHostsSeen.has(key)) {
+            flowNetHostsSeen.add(key)
+            console.log('[Flow Net] host seen:', host, 'auth:', scheme, details.method, pathname.slice(0, 60))
+          }
+          // API 성격 요청을 전부 찍는다(method/host/path/scheme/type). 새 Flow 는 fetch 가 아니라
+          //   XHR 로 생성을 보내 페이지 주입(fetch) 캡처에 안 잡힌다 — 이 로그가 그걸 증명했다.
+          const apiLike = details.method !== 'GET' || /rpc|api|generate|batch|video|media|project|flow/i.test(pathname)
+          const assetHost = /gstatic|fonts\.|googleusercontent|googlevideo|analytics|googletagmanager|recaptcha/i.test(host + pathname)
+          if (apiLike && !assetHost) {
+            console.log('[Flow Net] req:', details.method, host, pathname.slice(0, 110), 'auth:', scheme, 'type:', details.resourceType)
+          }
+        }
+      } catch { /* 캡처 실패는 요청에 영향 없음 */ }
+      callback({ requestHeaders: details.requestHeaders })
+    }
+  )
 
   // Flow 페이지 네트워크에서 projectId 자동 캡처
   view.webContents.session.webRequest.onBeforeRequest(
     { urls: ['*://*/*'] },
     (details, callback) => {
+      // AUTOFLOWCUT_NET_TRACE: batchexecute 요청 본문(f.req/at)은 여기서 — 페이지 주입보다 먼저 나간
+      //   요청도 보인다(응답은 못 보므로 XHR 훅이 따로 보고한다).
+      if (NET_TRACE_ON && details.url.includes('batchexecute')) {
+        appendNetTrace({ source: 'webRequest', method: details.method, url: details.url, resourceType: details.resourceType, reqBody: decodeUploadData(details.uploadData) })
+      }
       if (details.url.includes('aisandbox') || details.url.includes('googleapis.com/v1')) {
         const pidMatch = details.url.match(/projects\/([a-f0-9-]{36})/)
         if (pidMatch && !capturedProjectId) {
@@ -451,7 +592,8 @@ function makeFlowView() {
   // ─── did-finish-load bootstrap: injection / landing / consent / token / startup-gate / enter-tool ───
   view.webContents.on('did-finish-load', async () => {
     const url = view.webContents.getURL()
-    console.log('[Flow] did-finish-load:', url)
+    const where = urlForLog(url)   // 쿼리 없이
+    console.log('[Flow] did-finish-load:', where)
     if (!url || url === 'about:blank') return
 
     // #R23-3: Flow 부트스트랩은 여러 await 를 거친다. 그 사이 사용자가 API 모드로 전환하면
@@ -484,6 +626,8 @@ function makeFlowView() {
     } catch (e) {
       console.warn('[Flow] fetch injection failed:', e.message)
     }
+    injectNetTrace(view)
+    injectRpcCapture(view)
 
     try {
       await view.webContents.executeJavaScript(FLOW_SETTINGS_DUMPER)
@@ -590,11 +734,7 @@ function makeFlowView() {
         }
 
         // 2단계: 토큰 확인 (로그인 여부 체크)
-        const sessionData = await view.webContents.executeJavaScript(`
-          fetch('${SESSION_URL}')
-            .then(r => r.ok ? r.text() : null)
-            .catch(() => null)
-        `)
+        const sessionData = await readFlowSession(view)
         if (!sessionData) {
           console.log('[Flow API] No session data — user not logged in yet')
           return
@@ -790,6 +930,9 @@ function flowDiagSink() {
 const helpers = createSharedHelpers({
   getFlowView: modeController.getFlowView,
   getMainWindow: () => mainWindow,
+  // 세션 API 가 없는 새 도메인용 폴백 — 페이지 요청에서 잡아둔 Bearer (flow-bearer-capture.js)
+  getCapturedSessionText: () => flowBearerStore.sessionText(),
+  getCapturedBearerAgeMs: () => flowBearerStore.ageMs(),
   constants: {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
   },
@@ -798,7 +941,7 @@ const helpers = createSharedHelpers({
   onDomFailure: (step, detail) => flowDiagSink()(step, detail),
 })
 const {
-  trustedClickOnFlowView, parseFlowResponse, sessionFetch, flowPageFetch,
+  trustedClickOnFlowView, parseFlowResponse, readFlowSession, sessionFetch, flowPageFetch,
   getRecaptchaToken, extractMediaIds, extractFifeUrls, extractBase64Images,
   fetchMediaAsBase64, configureFlowMode, switchFlowToVideoMode, applyAgentDefaults,
   ensureAgentOff, selectFlowModeTab,
@@ -882,13 +1025,25 @@ ipcMain.handle('flow:report-response', (event, payload) => {
   // #R33: 페이지가 보낸 생성 API 요청의 origin 을 캡처해 직접 호출 호스트를 region 에 맞춘다.
   const _apiOrigin = captureApiOrigin(payload?.url)
   if (_apiOrigin) capturedApiOrigin = _apiOrigin
-  return routeReportResponse(payload, {
+  return routeReportResponse(payload, buildReportCtx({
     getPendingGeneration: () => pendingGeneration,
     setPendingGeneration: (v) => { pendingGeneration = v },
     pendingGenerations,
     getPendingVideoGeneration: () => pendingVideoGeneration,
     setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
-  })
+    reportDomFailure: helpers.reportDomFailure,   // M2-R7 L1: 바인딩 없는 YhhmEf 200(UUID) → submit:unbound-loadend(앞 8자만)
+  }))
+})
+
+// ─── flow:report-xhr — 진단 트레이스(AUTOFLOWCUT_NET_TRACE=1) 페이지 → main ───
+//   report-response 와 같은 sender/origin 검증. 트레이스가 꺼져 있으면 무조건 거절(파일도 안 만든다).
+ipcMain.handle('flow:report-xhr', (event, payload) => {
+  if (!NET_TRACE_ON) return { ok: false, error: 'trace off' }
+  const flowView = modeController.getFlowView()
+  if (!flowView || event.sender !== flowView.webContents) return { ok: false, error: 'unauthorized sender' }
+  if (!isFlowFrameOrigin(event.senderFrame?.url)) return { ok: false, error: 'unauthorized origin' }
+  appendNetTrace(payload && typeof payload === 'object' ? payload : { source: 'invalid' })
+  return { ok: true }
 })
 
 // Flow Agent(Maps 그라운딩) 모드 — 렌더러 설정(flowAgentOn)을 flow:set-agent-mode 로 push.
@@ -904,6 +1059,13 @@ const flowAPIDeps = {
   //   소모하지 않도록 현재 모드를 노출한다.
   getCurrentMode: modeController.getCurrentMode,
   getMainWindow: () => mainWindow,
+  createInputShield: makeInputShield,   // M2-LIVE N1: 제자리 자동화 뷰포트 동안의 입력 방패
+  setAutomationKeyLock: (on) => { automationKeyLock = !!on },   // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금
+  setShieldFocusTarget: (t) => { shieldFocusTarget = t === 'main' ? 'main' : 'flow' },   // M2-FINAL Q1: 방패 focus 의 행선지(포커스 단계 플래그)
+  // M3(D4): 레퍼런스 업로드 = 클립보드 이미지 + Flow 뷰 붙여넣기(키 이벤트·CDP 없음). 세션 캐시는 flow-angular 가 모듈을 직접 쓴다.
+  clipboard,
+  nativeImage,
+  pasteIntoFlowView: () => modeController.getFlowView()?.webContents.paste(),
   // Shared helpers
   ...helpers,
   // Inject state helpers
@@ -922,6 +1084,7 @@ const flowAPIDeps = {
   setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
   getEnterToolClicked: () => enterToolClicked,
   setEnterToolClicked: (v) => { enterToolClicked = v },
+  readFlowSession,
   // URL constants
   SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
   API_HEADERS, GENERATE_URL, BASE_API_URL,
@@ -1105,12 +1268,20 @@ function startMcpHttpServer(port) {
         }
 
         // POST /api/update — 데이터 업데이트 (renderer로 전달)
+        //   M2-LIVE N3: update-settings 는 화이트리스트 밖 키·틀린 값이면 400 + 키 이름(decideUpdateRequest — 순수, 테스트는 mcpHttpParsers.test.js).
         if (req.method === 'POST' && pathname === '/api/update') {
-          const data = JSON.parse(body)
+          const decided = decideUpdateRequest(body)
           if (mainWindow) {
-            const updateResponse = await dispatchMcpUpdate(mainWindow.webContents, data)
-            res.writeHead(updateResponse.status)
-            res.end(JSON.stringify(updateResponse.body))
+            // main 병합(self-render): 화이트리스트 판정(decideUpdateRequest — 400)을 먼저 하고, 통과한 요청만 렌더러로 보낸다.
+            //   이미지 교체 update-scene 은 dispatchMcpUpdate 가 렌더러 결과를 기다려 409(busy — Upscayl 실행 중)를 돌려준다.
+            if (!decided.forward) {
+              res.writeHead(decided.status)
+              res.end(JSON.stringify(decided.body))
+            } else {
+              const updateResponse = await dispatchMcpUpdate(mainWindow.webContents, decided.forward)
+              res.writeHead(updateResponse.status)
+              res.end(JSON.stringify(updateResponse.body))
+            }
           } else {
             res.writeHead(503)
             res.end(JSON.stringify({ error: 'App not ready' }))
@@ -1179,16 +1350,17 @@ function startMcpHttpServer(port) {
         }
 
         // POST /api/start-scene-batch — 씬 일괄 생성 시작
+        //   M2-LIVE N7: 본문 파싱은 parseStartSceneBatchBody(순수 — mcpStartSceneBatchMode.test.js). mode('video'|'image' — 렌더러의 탭 오버라이드, 없으면 현재 UI 탭)가
+        //   모르는 값이면 400 — 그대로 넘기면 이미지 탭에서 영상 씬 대신 이미지 배치가 과금된다. force: 선택, 기본 false. true면 완료된 씬도 재생성 대상에.
         if (req.method === 'POST' && pathname === '/api/start-scene-batch') {
           if (mainWindow) {
-            let styleId = null
-            let force = false
-            try {
-              const parsed = JSON.parse(body)
-              styleId = parsed.styleId || null
-              force = !!parsed.force  // 선택, 기본 false. true면 완료된 씬도 재생성 대상에.
-            } catch {}
-            mainWindow.webContents.send('mcp-update', { type: 'start-scene-batch', styleId, force })
+            const parsedBatch = parseStartSceneBatchBody(body)
+            if (!parsedBatch.ok) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: parsedBatch.error }))
+              return
+            }
+            mainWindow.webContents.send('mcp-update', parsedBatch.payload)
             res.writeHead(200)
             // 응답에 styleId echo 안 함 — fire-and-forget이라 effective style은 renderer fallback이
             // 결정하므로(예: 첫 카드 자동 적용), main이 즉시 알 수 없음. 거짓 정보를 주는 것보다 안 주는 게 정직.

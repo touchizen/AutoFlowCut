@@ -80,7 +80,8 @@ afterEach(() => {
 })
 
 describe('useAutomation — preparing status', () => {
-  it('큐 execute 뒤 folder/token은 preparing, 실제 upload는 uploading, 첫 scene submit 전에는 running이다', async () => {
+  // M3(D15): Flow 는 선행 업로드가 없어(엔진·main 이 씬마다 컴포저에 붙여 올린다) 업로드 단계가 있는 API 모드로 상태 전이를 본다.
+  it('큐 execute 뒤 folder/token은 preparing, 실제 upload는 uploading, 첫 scene submit 전에는 running이다 (API 모드 — 선행 업로드가 있는 쪽)', async () => {
     const folderGate = deferred()
     const tokenGate = deferred()
     const uploadGate = deferred()
@@ -97,7 +98,7 @@ describe('useAutomation — preparing status', () => {
     const hook = renderHook(() => {
       const automation = useAutomation(
         genAPI, scenesHook, null, null, null, key => key,
-        null, null, null, 'flow', true,
+        null, null, null, 'api', true,
       )
       statusLog.push(automation.status)
       return automation

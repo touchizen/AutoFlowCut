@@ -4,19 +4,31 @@
  * genai IPC mock 을 관통: 인증(BYOK), 이미지 동기 생성 + async 에뮬레이션,
  * 레퍼런스 base64 해석, 비디오 매핑, Flow 전용 기능의 graceful degrade.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useGenAPI } from '../../src/hooks/useGenAPI'
 import { DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
+import { isScopeCancelled, nextCancelScope } from '../../src/utils/cancelScope'
 
 const IMG_RESULT = {
   success: true,
   images: [{ base64: 'ABC', mimeType: 'image/png', dataUrl: 'data:image/png;base64,ABC' }],
 }
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 beforeEach(() => {
   window.electronAPI.genaiGetKeyStatus.mockResolvedValue({ hasKey: true, encryptionAvailable: true })
   window.electronAPI.genaiGenerateImage.mockResolvedValue(IMG_RESULT)
+  window.electronAPI.genaiCancel.mockResolvedValue({ success: true, aborted: 0 })
   window.electronAPI.genaiGenerateVideo.mockResolvedValue({ success: true, generationId: 'op1' })
   window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({ success: true, statuses: [] })
   window.electronAPI.genaiDownloadVideo.mockResolvedValue({ success: true, base64: 'VID' })
@@ -33,9 +45,84 @@ describe('useGenAPI — 인증(BYOK)', () => {
     await act(async () => { tok = await result.current.getAccessToken() })
     expect(tok).toBeNull()
   })
+
+  it('providerId 지정 시 byProvider[id] 로 게이트 (§5.7 openai-only)', async () => {
+    // google 키 없음 + openai 키 있음
+    window.electronAPI.genaiGetKeyStatus.mockResolvedValue({
+      hasKey: false, byProvider: { google: false, openai: true },
+    })
+    const { result } = renderHook(() => useGenAPI())
+    let googleTok, openaiTok
+    await act(async () => {
+      googleTok = await result.current.getAccessToken(false, false, 'google')
+      openaiTok = await result.current.getAccessToken(false, false, 'openai')
+    })
+    expect(googleTok).toBeNull()   // google 키 없음 → 차단
+    expect(openaiTok).toBe('byok') // openai 키 있음 → 통과 (핵심)
+  })
 })
 
 describe('useGenAPI — 이미지', () => {
+  it('cancelScope가 없으면 IPC payload에 새 own-property를 만들지 않는다', async () => {
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => { await result.current.generateImage('plain', []) })
+
+    const payload = window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0]
+    expect(Object.hasOwn(payload, 'cancelScope')).toBe(false)
+  })
+
+  it('cancelScope를 IPC payload까지 관통하고 handoff 직후 renderer sender를 release한다', async () => {
+    const scope = nextCancelScope('scenes')
+    const ipc = deferred()
+    window.electronAPI.genaiGenerateImage.mockReturnValueOnce(ipc.promise)
+    const { result } = renderHook(() => useGenAPI())
+
+    let generation
+    act(() => {
+      generation = result.current.generateImage('scoped', [], { cancelScope: scope })
+    })
+    await waitFor(() => expect(window.electronAPI.genaiGenerateImage).toHaveBeenCalled())
+
+    expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].cancelScope).toBe(scope)
+    expect(isScopeCancelled(scope)).toBe(false)
+    ipc.resolve(IMG_RESULT)
+    await act(async () => { await generation })
+  })
+
+  it('reference preflight 중 cancel하면 tombstone을 먼저 세우고 IPC 직전 gate에서 D4로 끝낸다', async () => {
+    localStorage.setItem('workFolderPath', '/work')
+    const read = deferred()
+    window.electronAPI.readResource.mockReturnValueOnce(read.promise)
+    const cancelObserved = []
+    window.electronAPI.genaiCancel.mockImplementationOnce(async ({ scope }) => {
+      cancelObserved.push(isScopeCancelled(scope))
+      return { success: true, aborted: 0 }
+    })
+    const scope = nextCancelScope('refs')
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+
+    let generation
+    act(() => {
+      generation = result.current.generateImage('late sender', [{ name: 'hero' }], { cancelScope: scope })
+    })
+    await waitFor(() => expect(window.electronAPI.readResource).toHaveBeenCalled())
+    await act(async () => { await result.current.cancelGeneration(scope) })
+    read.resolve({ success: true, data: 'REF' })
+
+    let generated
+    await act(async () => { generated = await generation })
+    expect(cancelObserved).toEqual([true])
+    expect(generated).toEqual({
+      success: false,
+      error: 'Operation aborted',
+      errorKind: 'aborted',
+      aborted: true,
+    })
+    expect(window.electronAPI.genaiGenerateImage).not.toHaveBeenCalled()
+    expect(isScopeCancelled(scope)).toBe(false)
+  })
+
   it('generateImage: 레퍼런스 base64 해석 후 전달 + 결과 매핑', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let r
@@ -52,8 +139,44 @@ describe('useGenAPI — 이미지', () => {
       aspectRatio: '16:9',
       model: DEFAULT_IMAGE_MODEL_ID,
     })
-    // base64 필드는 data URL, mediaId 는 null (업스케일 자동 skip)
-    expect(r.images[0]).toEqual({ base64: 'data:image/png;base64,ABC', mimeType: 'image/png', mediaId: null })
+    // base64 필드는 data URL, mediaId 는 null (업스케일 자동 skip), actualAspectRatio 표면화(§2.4)
+    expect(r.images[0]).toEqual({ base64: 'data:image/png;base64,ABC', mimeType: 'image/png', mediaId: null, actualAspectRatio: null })
+    expect(r.appliedInputs).toEqual({})
+    expect('seed' in r.appliedInputs).toBe(false)
+  })
+
+  it('generateImage: provider 를 IPC 로 관통 + 비-google 은 gemini 기본 강제 안 함', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    await act(async () => {
+      await result.current.generateImage('a cat', [], { aspectRatio: '16:9', provider: 'openai' })
+    })
+    const call = window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0]
+    expect(call.provider).toBe('openai')
+    // model 미지정 + 비-google → undefined(어댑터가 gpt-image-1 기본), gemini 강제 아님
+    expect(call.model).toBeUndefined()
+  })
+
+  it('generateImage: openai + 명시 모델은 그대로 전달', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    await act(async () => {
+      await result.current.generateImage('a cat', [], { provider: 'openai', model: 'gpt-image-1' })
+    })
+    const call = window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0]
+    expect(call).toMatchObject({ provider: 'openai', model: 'gpt-image-1' })
+  })
+
+  it('generateImage: actualAspectRatio 를 결과에 표면화(근사 provider)', async () => {
+    window.electronAPI.genaiGenerateImage.mockResolvedValueOnce({
+      success: true,
+      images: [{ base64: 'B64', mimeType: 'image/png', dataUrl: 'data:image/png;base64,B64' }],
+      actualAspectRatio: '3:2',
+    })
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => { r = await result.current.generateImage('a cat', [], { provider: 'openai', aspectRatio: '16:9' }) })
+    expect(r.actualAspectRatio).toBe('3:2')
+    expect(r.images[0].actualAspectRatio).toBe('3:2')
+    expect(r.provider).toBe('openai')
   })
 
   it('generateImage: 선택 모델을 IPC 로 전달 + 결과에 model 기록', async () => {
@@ -85,6 +208,19 @@ describe('useGenAPI — 이미지', () => {
     })
   })
 
+  it('submitGeneration: cancelScope를 재조립 options에서 잃지 않는다', async () => {
+    const scope = nextCancelScope('scenes')
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => {
+      await result.current.submitGeneration('p', [], { cancelScope: scope })
+    })
+
+    await waitFor(() => {
+      expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].cancelScope).toBe(scope)
+    })
+  })
+
   it('submit → check → collect 비동기 에뮬레이션', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let sub
@@ -99,6 +235,8 @@ describe('useGenAPI — 이미지', () => {
     const col = await result.current.collectGeneration(sub.generationId)
     expect(col.success).toBe(true)
     expect(col.images[0].base64).toBe('data:image/png;base64,ABC')
+    expect(col.appliedInputs).toEqual({})
+    expect('seed' in col.appliedInputs).toBe(false)
   })
 
   it('collectGeneration: 미완료/없음 처리', async () => {
@@ -115,6 +253,24 @@ describe('useGenAPI — 이미지', () => {
     const r = await result.current.collectGeneration(sub.generationId)
     expect(r.success).toBe(false)
   })
+
+  it('clearGenerations 뒤 늦게 끝난 entry를 Map에 되살리지 않는다', async () => {
+    const ipc = deferred()
+    window.electronAPI.genaiGenerateImage.mockReturnValueOnce(ipc.promise)
+    const { result } = renderHook(() => useGenAPI())
+    let sub
+
+    await act(async () => { sub = await result.current.submitGeneration('p', []) })
+    await waitFor(() => expect(window.electronAPI.genaiGenerateImage).toHaveBeenCalled())
+    await act(async () => { await result.current.clearGenerations() })
+    ipc.resolve(IMG_RESULT)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(await result.current.collectGeneration(sub.generationId)).toEqual({
+      success: false,
+      error: 'Generation not found',
+    })
+  })
 })
 
 describe('useGenAPI — 비디오', () => {
@@ -126,6 +282,63 @@ describe('useGenAPI — 비디오', () => {
       prompt: 'go', aspectRatio: '16:9', durationSeconds: 8, model: 'veo-3.1-fast-generate-preview',
     })
     expect(r).toEqual({ success: true, generationId: 'op1' })
+  })
+
+  it('generateVideoT2V: non-google provider의 grok model/aspect/resolution을 IPC까지 byte-for-byte 보존', async () => {
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => {
+      await result.current.generateVideoT2V(
+        'launch',
+        'grok-imagine-video-1.5',
+        'VIDEO_ASPECT_RATIO_CINEMATIC_RAW',
+        5,
+        17,
+        'native-ultra',
+        [],
+        { provider: 'grok' },
+      )
+    })
+
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'launch',
+      aspectRatio: 'VIDEO_ASPECT_RATIO_CINEMATIC_RAW',
+      durationSeconds: 5,
+      model: 'grok-imagine-video-1.5',
+      resolution: 'native-ultra',
+      seed: 17,
+      provider: 'grok',
+    })
+  })
+
+  it('generateVideoI2V: non-google provider의 model/aspect/resolution을 IPC까지 원형 보존', async () => {
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => {
+      await result.current.generateVideoI2V(
+        'animate',
+        'data:image/png;base64,START',
+        null,
+        'grok-imagine-video-1.5',
+        '1:1',
+        7,
+        null,
+        'provider-native',
+        { provider: 'grok' },
+      )
+    })
+
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'animate',
+      image: { mimeType: 'image/png', data: 'START' },
+      endImage: null,
+      aspectRatio: '1:1',
+      durationSeconds: 7,
+      model: 'grok-imagine-video-1.5',
+      seed: undefined,
+      resolution: 'provider-native',
+      provider: 'grok',
+    })
   })
 
   it('generateVideoT2V: referenceImages 를 base64 해석 후 IPC 로 전달', async () => {
@@ -531,6 +744,19 @@ describe('useGenAPI — 비디오', () => {
     expect(window.electronAPI.genaiDownloadVideo).toHaveBeenCalledWith({ videoUri: 'https://v/a' })
     expect(r).toEqual({ success: true, base64: 'VID' })
   })
+
+  it('D1: downloadVideo provider handle을 IPC payload에 포함', async () => {
+    const { result } = renderHook(() => useGenAPI())
+
+    await act(async () => {
+      await result.current.downloadVideo('https://cdn/grok/video.mp4', '1080p', 'gen:v1:grok-handle')
+    })
+
+    expect(window.electronAPI.genaiDownloadVideo).toHaveBeenCalledWith({
+      videoUri: 'https://cdn/grok/video.mp4',
+      generationId: 'gen:v1:grok-handle',
+    })
+  })
 })
 
 describe('useGenAPI — auth 실패 센티넬 (BYOK 키 거부)', () => {
@@ -567,6 +793,48 @@ describe('useGenAPI — auth 실패 센티넬 (BYOK 키 거부)', () => {
     await act(async () => { r = await result.current.checkVideoStatus(['a']) })
     expect(r.authFailed).toBe(true)
     expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('D2: provider auth errorKind를 보존하고 opaque auth 실패를 중단', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({
+      success: true,
+      statuses: [{
+        generationId: 'gen-grok',
+        status: 'failed',
+        error: 'Unauthorized',
+        errorKind: 'auth',
+      }],
+    })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+
+    await act(async () => { r = await result.current.checkVideoStatus(['gen-grok']) })
+
+    expect(r.statuses[0].errorKind).toBe('auth')
+    expect(r.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('D2: authoritative non-auth errorKind가 auth 비슷한 문구의 false positive를 막음', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({
+      success: true,
+      statuses: [{
+        generationId: 'gen-grok',
+        status: 'failed',
+        error: 'HTTP 403 :: PERMISSION_DENIED',
+        errorKind: 'other',
+      }],
+    })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+
+    await act(async () => { r = await result.current.checkVideoStatus(['gen-grok']) })
+
+    expect(r.statuses[0].errorKind).toBe('other')
+    expect(r.authFailed).toBeUndefined()
+    expect(onAuthError).not.toHaveBeenCalled()
   })
 
   it('일반(quota) 에러는 authFailed 아님', async () => {

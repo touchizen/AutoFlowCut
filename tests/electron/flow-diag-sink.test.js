@@ -117,6 +117,24 @@ describe('createFlowDiagSink', () => {
     expect(writeFile.mock.calls.at(-1)[1]).toContain('홍길동')
   })
 
+  // M2-LIVE N8(A7/B8): settings:group-not-found 의 shape — unclassified[].labels(복수) 는 `^label$` 스크럽을 비켜 갔고, controls[].label 은 스크럽됐다.
+  //   라벨 텍스트는 Flow 페이지 UI 문자열이지만 인라인 패널이면 사용자 내용이 섞일 수 있다 — Sentry 엔 리거처·개수·tag/role/haspopup 만, 라벨은 로컬 파일에만.
+  it('scrubs `labels` (plural) like `label` — shape.unclassified[].labels and controls[].label stay in the local file only', async () => {
+    const { sink, captureMessage, writeFile } = makeSink()
+    await sink('settings:group-not-found:duration', {
+      reason: 'group-not-found:duration',
+      shape: { groups: ['mode', 'ratio', 'count'], unclassified: [{ labels: ['4초 · 오디오 포함'], ligatures: ['volume_up'] }], controls: [{ tag: 'button', role: null, haspopup: 'menu', label: 'Omni 1.1 Flash' }] },
+    })
+    const [, opts] = captureMessage.mock.calls[0]
+    const sent = JSON.stringify(opts)
+    expect(sent).not.toContain('오디오 포함')
+    expect(sent).not.toContain('Omni 1.1 Flash')
+    expect(opts.extra.shape.unclassified[0]).toEqual({ ligatures: ['volume_up'] })
+    expect(opts.extra.shape.controls[0]).toEqual({ tag: 'button', role: null, haspopup: 'menu' })
+    expect(opts.extra.shape.groups).toEqual(['mode', 'ratio', 'count'])
+    expect(writeFile.mock.calls.at(-1)[1]).toContain('오디오 포함')
+  })
+
   it('falls back to userData when the Desktop is not writable (AppX sandbox)', async () => {
     const writeFile = vi.fn((p) => { if (p.startsWith('/Desktop')) throw new Error('EPERM') })
     const { sink } = makeSink({ writeFile })

@@ -1,0 +1,11 @@
+# M2 review round 3 — reviewer A (Codex gpt-6-astra, xhigh; general axis) — c6d057e5
+
+1. [BLOCKER] electron/ipc/flow-angular.js:354 — Unvalidated `gen.modelKey` reaches main-console logs and diagnostics — A response-shape change placing user text at `[3][0][7][0][12]` passes the string check and logs that text verbatim; a sentinel reproduction confirms the leak — Validate model-key syntax before logging, and omit unrecognized values from logs and diagnostics.
+
+2. [MAJOR] src/services/videoRecovery.js:232 — Recovery’s `failed` branch discards `mediaId` and `errorKind`, violating the money rule — Repeated project reloads can exhaust the handler’s `as29s` failure counter; recovery then leaves a charged video as `error + generationId + mediaId:null`, and the next Start submits it again — Preserve the Flow media link, kind, and params, and test recovery followed by Start.
+
+3. [MAJOR] src/hooks/useVideoAutomation.js:435 — Restored submitted videos can fall into `freshGen` — Recovery authentication failure leaves a restored item `pending + generationId`; an interrupted download-only retry can recover as `generating + generationId + mediaId`. Both combinations resubmit on Start, reproduced through the real recovery service and hook — Preserve submitted provenance through restoration and resume these items without generating again; explicitly distinguish Regenerate.
+
+4. [MINOR] electron/flow-composer-settings.js:280 — Settings validation checks the current model’s options before selecting the requested model — Switching from a model without 10-second output to Omni Flash fails with `duration-not-offered:10` before any model click, although the target model supports it — Select the model first, rescan, then validate its duration and resolution options.
+
+5. [MINOR] src/hooks/useVideoAutomation.js:495 — Phase-0 authentication failure leaves mixed batches with `status:'running'` after execution stops — With a download-only item and an in-flight item, `isRunning` becomes false while the status bar still indicates activity; the existing test omits this assertion — Set the error status and authentication message when Phase 0 detects `authFailed`, and assert both.

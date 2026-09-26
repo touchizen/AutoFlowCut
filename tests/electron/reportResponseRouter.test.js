@@ -3,7 +3,8 @@
 // R17-P2: flow:report-response 의 라우팅을 routing-level 로 검증. 특히 video upscale(UpsampleVideo)
 //   /status 응답이 pending T2V/I2V capture 를 resolve 하지 않아야 한다(이전 substring 버그 회귀 가드).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { routeReportResponse, isFlowFrameOrigin } from '../../electron/reportResponseRouter.js'
+import { routeReportResponse, isFlowFrameOrigin, buildReportCtx } from '../../electron/reportResponseRouter.js'
+import { sample as rpcSample, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 
 const T2V = 'https://x/video:batchAsyncGenerateVideoText'
 const UPSCALE = 'https://x/video:batchAsyncGenerateVideoUpsampleVideo'
@@ -108,10 +109,24 @@ describe('isFlowFrameOrigin (#R23-2)', () => {
     expect(isFlowFrameOrigin('https://labs.google/fx/api/auth/session')).toBe(true)
   })
 
+  // Google 이 Flow 를 flow.google.com 으로 옮겼다. 이 origin 을 안 받으면 페이지가 보고한
+  // 생성 응답이 전부 'unauthorized origin' 으로 버려져 pending capture 가 타임아웃까지 매달린다
+  // (증상이 "열기 무한 반복"에서 "생성이 영영 안 끝남"으로 바뀔 뿐이다).
+  it('accepts the new Flow domain origin', () => {
+    expect(isFlowFrameOrigin('https://flow.google.com/')).toBe(true)
+    expect(isFlowFrameOrigin('https://flow.google.com/project/134cf5b5-6a64-47b8-8709-6de4c6b0e44c')).toBe(true)
+  })
+
   it('rejects other origins (navigated/compromised page)', () => {
     expect(isFlowFrameOrigin('https://evil.example/fx/tools/flow')).toBe(false)
     expect(isFlowFrameOrigin('https://labs.google.evil.com/x')).toBe(false)
     expect(isFlowFrameOrigin('http://labs.google/fx')).toBe(false)  // wrong scheme
+    expect(isFlowFrameOrigin('https://flow.google.com.evil.com/x')).toBe(false)
+    expect(isFlowFrameOrigin('http://flow.google.com/')).toBe(false)  // wrong scheme
+    expect(isFlowFrameOrigin('https://flow.google.com:444/')).toBe(false)  // wrong port
+    // 로그인 리다이렉트가 실제로 착지하는 곳 — "https 이고 *.google.com 이면 통과" 로
+    //   느슨해진 구현을 이 리터럴이 잡는다.
+    expect(isFlowFrameOrigin('https://accounts.google.com/signin')).toBe(false)
   })
 
   it('rejects empty/invalid/non-string urls', () => {
@@ -194,5 +209,53 @@ describe('routeReportResponse — #R35 genTag correlation', () => {
     )
     expect(r).toMatchObject({ ok: true })
     expect(g.responses).toHaveLength(1)
+  })
+})
+
+// M1-4: flow.google.com batchexecute 캡처 이벤트는 첫 줄에서 rpc 라우터로 위임된다(url 없음). 옛 URL 페이로드는 불변.
+describe('routeReportResponse — batchexecute 위임 (M1-4)', () => {
+  const DOC = 'c'.repeat(32)
+  const rpcGen = () => ({ rpc: 'ogiZ0b', doc: null, seq: null, sentAt: null, normPrompt: '궁정안에 있는 왕', wantRatio: '16:9', results: null, error: null, errorKind: null, completed: false, allowDomFallback: false, waiter: null, deadlines: {}, setAt: 1790240100 })
+
+  it('kind:batchexecute-send → gen 바인딩, kind:batchexecute → gen 완료 (url 필드 없이)', () => {
+    const g = rpcGen()
+    const ctx = makeCtx({})
+    ctx.pendingGenerations.set('gen-1', g)
+    expect(routeReportResponse({ kind: 'batchexecute-send', doc: DOC, rpcid: 'ogiZ0b', rpcids: ['ogiZ0b'], seq: 1, prompts: ['궁정안에 있는 왕'], sentAt: 1790240102.5 }, ctx))
+      .toEqual({ ok: true, bound: 'gen-1' })
+    expect(g).toMatchObject({ doc: DOC, seq: 1 })
+    expect(routeReportResponse({ kind: 'batchexecute', doc: DOC, rpcid: 'ogiZ0b', seq: 1, status: 200, responseText: rpcSample('ogiZ0b').respBody, endedAt: 1790240123 }, ctx))
+      .toEqual({ ok: true, completed: 'gen-1' })
+    expect(g.completed).toBe(true)
+    expect(g.results[0]).toMatchObject({ mediaId: maskedUuid(5), width: 1376, height: 768 })
+  })
+
+  it('옛 URL 페이로드는 rpc gen 이 맵에 있어도 불변 경로로 간다(rpc gen 은 손대지 않는다)', () => {
+    const g = rpcGen()
+    const resolve = vi.fn()
+    const ctx = makeCtx({ pendingVideo: { setAt: 100, resolve } })
+    ctx.pendingGenerations.set('gen-1', g)
+    expect(routeReportResponse({ url: T2V, body: '{}', status: 200, reqStartedAt: 200 }, ctx)).toEqual({ ok: true })
+    expect(resolve).toHaveBeenCalledWith({ error: false, body: '{}', status: 200 })
+    expect(routeReportResponse({ url: BATCH_IMG, body: '{"x":1}', status: 200, reqStartedAt: 200, requestBody: '{"prompt":"other"}' }, ctx)).toMatchObject({ ok: false })
+    expect(g).toMatchObject({ doc: null, completed: false, results: null })
+  })
+
+  it('buildReportCtx(state) 는 main 의 상태 접근자를 그대로 ctx 로 (다른 필드는 만들지 않는다)', () => {
+    let pg = null; let pv = null
+    const pendingGenerations = new Map()
+    const ctx = buildReportCtx({
+      getPendingGeneration: () => pg, setPendingGeneration: (v) => { pg = v }, pendingGenerations,
+      getPendingVideoGeneration: () => pv, setPendingVideoGeneration: (v) => { pv = v },
+    })
+    ctx.setPendingGeneration({ setAt: 1 }); expect(ctx.getPendingGeneration()).toEqual({ setAt: 1 })
+    ctx.setPendingVideoGeneration({ setAt: 2 }); expect(ctx.getPendingVideoGeneration()).toEqual({ setAt: 2 })
+    expect(ctx.pendingGenerations).toBe(pendingGenerations)
+    expect(Object.keys(ctx).sort()).toEqual(['getPendingGeneration', 'getPendingVideoGeneration', 'pendingGenerations', 'setPendingGeneration', 'setPendingVideoGeneration'])
+    // M2-R7 L1: reportDomFailure 는 state 가 함수로 줄 때만 ctx 에 실린다(라우터의 unbound YhhmEf loadend 보고용) — 없으면 옛 모양 그대로.
+    const report = () => {}
+    const ctx2 = buildReportCtx({ getPendingGeneration: () => pg, setPendingGeneration: (v) => { pg = v }, pendingGenerations, getPendingVideoGeneration: () => pv, setPendingVideoGeneration: (v) => { pv = v }, reportDomFailure: report })
+    expect(ctx2.reportDomFailure).toBe(report)
+    expect(Object.keys(ctx2).sort()).toEqual(['getPendingGeneration', 'getPendingVideoGeneration', 'pendingGenerations', 'reportDomFailure', 'setPendingGeneration', 'setPendingVideoGeneration'])
   })
 })

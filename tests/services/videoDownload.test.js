@@ -20,6 +20,18 @@ describe('downloadVideoBase64', () => {
     expect(r).toEqual({ success: true, base64: 'VID', mimeType: 'video/mp4' })
   })
 
+  it('D1: provider handle generationId를 downloadVideo까지 전달', async () => {
+    const dv = vi.fn().mockResolvedValue({ success: true, base64: 'VID' })
+
+    await downloadVideoBase64(dv, 'https://cdn/grok/video.mp4', '1080p', 'gen:v1:grok-handle')
+
+    expect(dv).toHaveBeenCalledWith(
+      'https://cdn/grok/video.mp4',
+      '1080p',
+      'gen:v1:grok-handle',
+    )
+  })
+
   it('downloadVideo throw 시 안전하게 실패 반환', async () => {
     const dv = vi.fn().mockRejectedValue(new Error('net'))
     expect(await downloadVideoBase64(dv, 'https://v/a')).toEqual({ success: false, error: 'net' })

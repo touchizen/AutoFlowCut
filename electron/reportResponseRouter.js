@@ -14,24 +14,46 @@
  */
 import { routeBatchImageResponse } from './ipc/generationMatch.js'
 import { createOwnedCollectionTimer, isStaleResponse, isVideoSubmitEndpoint } from './flow-generation-timeout.js'
+import { routeRpcReport } from './flow-rpc-router.js'
+
+/**
+ * main 의 pending 상태 접근자 → routeReportResponse ctx. main.js 와 파이프라인 테스트가 같은 모양을 쓴다.
+ * @param {{getPendingGeneration, setPendingGeneration, pendingGenerations, getPendingVideoGeneration, setPendingVideoGeneration, reportDomFailure?}} state
+ *   reportDomFailure(선택) — M2-R7 L1: 라우터가 바인딩 없는 YhhmEf 200(UUID) 을 'submit:unbound-loadend' 로 보고할 때 쓴다(없으면 로그만).
+ */
+export function buildReportCtx(state) {
+  return {
+    getPendingGeneration: state.getPendingGeneration,
+    setPendingGeneration: state.setPendingGeneration,
+    pendingGenerations: state.pendingGenerations,
+    getPendingVideoGeneration: state.getPendingVideoGeneration,
+    setPendingVideoGeneration: state.setPendingVideoGeneration,
+    ...(typeof state.reportDomFailure === 'function' ? { reportDomFailure: state.reportDomFailure } : {}),   // M2-R7 L1: 있을 때만(옛 ctx 모양 불변)
+  }
+}
 
 // #R23-2: flow:report-response 의 발신 프레임 origin 검증.
 //   sender webContents 일치만으론 부족하다 — 동일 view 가 다른(공격자) 페이지로
 //   네비게이트되면 flow-preload 브리지(flowReportResponse)가 그대로 노출돼 임의 페이지가
 //   생성 응답을 위조해 pending capture 를 attacker payload 로 resolve 할 수 있다.
-//   합법 Flow 페이지는 https://labs.google origin 에서만 동작하므로 그 origin 으로 제한한다.
-const FLOW_FRAME_ORIGIN = 'https://labs.google'
+//   합법 Flow 페이지는 아래 origin 에서만 동작하므로 그 origin 으로 제한한다.
+//   ⚠️ Google 이 Flow 를 flow.google.com 으로 옮겼다(2026-09). 새 origin 을 빼면 페이지가
+//   보고한 생성 응답이 **전부** 여기서 버려져 pending capture 가 타임아웃까지 매달린다.
+//   origin 비교라 scheme·port 까지 정확히 본다(http:· :444 는 통과 못 한다).
+const FLOW_FRAME_ORIGINS = new Set(['https://labs.google', 'https://flow.google.com'])
 
 export function isFlowFrameOrigin(frameUrl) {
   if (typeof frameUrl !== 'string' || !frameUrl) return false
   try {
-    return new URL(frameUrl).origin === FLOW_FRAME_ORIGIN
+    return FLOW_FRAME_ORIGINS.has(new URL(frameUrl).origin)
   } catch {
     return false
   }
 }
 
 export function routeReportResponse(payload, ctx) {
+  // M1-4: flow.google.com batchexecute 캡처(flow-rpc-capture.js) 는 url 대신 kind 를 싣는다 — 첫 줄에서 위임.
+  if (payload && typeof payload.kind === 'string' && payload.kind.startsWith('batchexecute')) return routeRpcReport(payload, ctx)
   const { url, body, status, requestBody, reqStartedAt, genTag } = payload || {}
   if (!url) return { ok: false }
   // #R31-4: 본문이 비어도 에러 status(>=400)면 계속 처리한다 — 안 그러면 빈 본문 401/403/429/5xx 가
@@ -66,10 +88,12 @@ export function routeReportResponse(payload, ctx) {
       }
       return { ok: true, matchedByGenTag: true }
     }
+    // M1-4: 새 경로(rpc) gen 은 옛 matcher 의 후보가 아니다 — responses/promptKey 가 없어 매칭되면 터진다.
+    const legacyGens = new Map([...(ctx.pendingGenerations || [])].filter(([, g]) => !(g && g.rpc)))
     const route = routeBatchImageResponse({
       hasSyncPending: !!ctx.getPendingGeneration(),
       syncSetAt: ctx.getPendingGeneration()?.setAt,
-      pendingGenerations: ctx.pendingGenerations,
+      pendingGenerations: legacyGens,
       requestBody,
       reqStartedAt,
     })

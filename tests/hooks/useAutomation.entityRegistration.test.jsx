@@ -311,7 +311,8 @@ describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
     }))
   }, 30000)
 
-  it('flow mode: non-character ref (style) — no entity patch', async () => {
+  // M3(D15): Flow 는 선행 업로드가 없다 — 엔진·main 이 씬마다 ref 바이트를 컴포저에 붙여 올린다. 그래서 업로드도 entity 패치도 없다.
+  it('flow mode: non-character ref (style) — no pre-upload (M3) and no entity patch', async () => {
     const styleRef = { id: 'ref1', name: 'stylish', type: 'style', category: 'style', data: 'base64data==', mediaId: null, entityId: null }
     const updateReferences = vi.fn()
     const scenesHook = makeScenesHook({ references: [styleRef], updateReferences })
@@ -330,8 +331,8 @@ describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
     await act(async () => { await startPromise })
 
-    // uploadReference called
-    expect(genAPI.uploadReference).toHaveBeenCalled()
+    // M3: no Flow pre-upload (was: uploadReference called)
+    expect(genAPI.uploadReference).not.toHaveBeenCalled()
     // No entity patch — not a character ref
     expect(updateReferences).not.toHaveBeenCalled()
   }, 30000)

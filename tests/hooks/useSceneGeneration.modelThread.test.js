@@ -57,6 +57,75 @@ describe('useSceneGeneration — 모델 전달', () => {
     expect(generateImage).toHaveBeenCalledTimes(1)
     const opts = generateImage.mock.calls[0][2]
     expect(opts.model).toBe('gemini-3-pro-image')
+    expect(Object.hasOwn(opts, 'cancelScope')).toBe(false)
+  })
+
+  // main 병합(리뷰 A F1): Flow 모드는 씬 override 를 쓰지 않는다 — override 의 API 모델 id 가 Flow 설정 패널 드라이버로 가면
+  //   정확 일치로 거부된다. main 처럼 settings.imageModel(Flow 모델 이름)과 google 로 보낸다.
+  it('Flow 모드: scene override 가 있어도 settings.imageModel + google 로 전달', async () => {
+    const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'X' }] })
+    const scenes = [{ id: 'scene_1', prompt: 'a hero', generation: { image: { provider: 'openai', model: 'gpt-image-scene' } } }]
+    const scenesHook = { references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+    const settings = { imageModel: 'Nano Banana Pro', aspectRatio: '16:9', imageBatchCount: 1, saveMode: 'memory', generation: { image: { provider: 'google' } } }
+    const { result } = renderHook(() =>
+      useSceneGeneration({
+        settings, scenes, scenesHook,
+        genAPI: { mode: 'flow', generateImage },
+        openSettings: vi.fn(), setSelectedScene: vi.fn(),
+        t: (k) => k, generationQueue: null,
+      })
+    )
+    await act(async () => { await result.current.handleGenerateScene('scene_1') })
+    expect(generateImage).toHaveBeenCalledTimes(1)
+    expect(generateImage.mock.calls[0][2]).toMatchObject({ model: 'Nano Banana Pro', provider: 'google' })
+  })
+
+  // M1 F2: 단일 씬 재생성도 전역 image provider 를 전달해야 openai 로 라우팅된다(안 그러면 google 오라우팅).
+  it('settings.generation.image.provider 를 generateImage provider 로 전달', async () => {
+    const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'X' }] })
+    const scenes = [{ id: 'scene_1', prompt: 'a hero' }]
+    const scenesHook = { references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+    const settings = {
+      imageModel: 'gpt-image-1', aspectRatio: '16:9', imageBatchCount: 1, saveMode: 'memory',
+      generation: { image: { provider: 'openai' } },
+    }
+    const { result } = renderHook(() =>
+      useSceneGeneration({
+        settings, scenes, scenesHook,
+        genAPI: { generateImage },
+        openSettings: vi.fn(), setSelectedScene: vi.fn(),
+        t: (k) => k, generationQueue: null,
+      })
+    )
+    await act(async () => { await result.current.handleGenerateScene('scene_1') })
+    expect(generateImage.mock.calls[0][2].provider).toBe('openai')
+  })
+
+  it('scene image override를 전역보다 우선해 auth와 generateImage에 전달', async () => {
+    const { checkAuthToken } = await import('../../src/utils/guards')
+    const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'X' }] })
+    const scenes = [{
+      id: 'scene_1', prompt: 'a hero',
+      generation: { image: { provider: 'openai', model: 'gpt-image-scene' } },
+    }]
+    const scenesHook = { references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+    const settings = {
+      imageModel: 'gemini-global', aspectRatio: '16:9', imageBatchCount: 1, saveMode: 'memory',
+      generation: { image: { provider: 'google' } },
+      modelsByProvider: { google: 'gemini-global', openai: 'gpt-image-global' },
+    }
+    const genAPI = { generateImage }
+    const { result } = renderHook(() => useSceneGeneration({
+      settings, scenes, scenesHook, genAPI,
+      openSettings: vi.fn(), setSelectedScene: vi.fn(), t: (k) => k, generationQueue: null,
+    }))
+
+    await act(async () => { await result.current.handleGenerateScene('scene_1') })
+
+    expect(checkAuthToken).toHaveBeenCalledWith(genAPI, expect.any(Function), 'openai')
+    expect(generateImage.mock.calls[0][2]).toMatchObject({
+      provider: 'openai', model: 'gpt-image-scene',
+    })
   })
 
   it('finalizeGeneratedImage 에도 선택 모델을 넘긴다 (ResultsTable 모델명이 flow 로 기록되는 회귀 방지)', async () => {

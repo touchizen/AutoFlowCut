@@ -55,6 +55,7 @@ import {
   isProjectBusy,
   isStartBlocked,
   isUpscaylStartBlocked,
+  runOuterStartAuthPreflight,
   shouldStopRefWork,
 } from './services/startGuard'
 import {
@@ -65,6 +66,13 @@ import {
 import { shouldSkipStaleF0Gender } from './services/genderGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { buildVideoTextStartPayload } from './services/videoTextStart'
+import { buildVideoI2VStartOptions } from './services/videoI2VStart'
+import {
+  buildVideoRetryFramePairPatch,
+  buildVideoRetryScenePatch,
+  buildVideoTextResultPatch,
+  buildVideoI2VResultPatch,
+} from './services/videoResultPatch'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { isOmniFlashModel } from './utils/videoModels'
 import { startButtonTier, startChipLabelVisible } from './utils/actionButtonLayout'
@@ -88,6 +96,7 @@ import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
 import { baseImageReplacementPatch } from './utils/imagePatch'
+import { resolveSceneVideoProvider } from './utils/sceneProviderResolution'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { busyPromptLines } from './utils/promptBusyLines'
@@ -95,6 +104,7 @@ import { toast } from './components/Toast'
 import { syncRefToFlow } from './utils/flowCharacterSync'
 import { runFlowComposerRefresh } from './utils/flowCharacterCoordinator'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
+import { isFlowMediaId, isLegacyFlowGenerationFailure } from './utils/flowMediaId'   // M2-R5 J2: 훅·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
 
 // Components
 import Header from './components/Header'
@@ -973,7 +983,7 @@ function App() {
   }, [isRunning, videoAutomation.isRunning])
 
   // Style Thumbnails
-  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady })
+  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady, imageProvider: settings.generation?.image?.provider ?? 'google', imageModel: settings.imageModel })
 
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, refBatchActive, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
@@ -1261,6 +1271,10 @@ function App() {
       videoScenesHook.parseFromText(text, settings.defaultDuration, framePairs)
     }
 
+    const importSceneCSV = (text) => (
+      parseFromCSV(text, settings.defaultDuration, framePairs, { generationSettings: settings })
+    )
+
     const hasExistingSrt = (scenesHook.srtTrack || []).length > 0
 
     // 타입별 실행 액션
@@ -1271,8 +1285,8 @@ function App() {
       csv: () => isVideo
         // CSV 비디오 모드: prompt 컬럼이 있으면 video_t2v_prompt 로 rename 한 후 parseFromCSV.
         // 행 단위 매칭은 그대로 보존되고, video_*_prompt 컬럼이 이미 있는 CSV 는 그대로 통과.
-        ? parseFromCSV(csvPromptToVideoT2V(content), settings.defaultDuration, framePairs)
-        : parseFromCSV(content, settings.defaultDuration, framePairs),
+        ? importSceneCSV(csvPromptToVideoT2V(content))
+        : importSceneCSV(content),
       // SRT 는 자막 전용 — 비디오 모드 의미 없음 (자막 → 비디오 prompt 강제 변환은 부자연)
       // 기존 srtTrack 이 있을 때만 충돌 모달 띄움. parseFromSRT 의 smart-match
       // (fuzzy 매칭) 분기는 oldTrack && prevScenes 둘 다 있을 때만 동작하므로,
@@ -1413,21 +1427,8 @@ function App() {
 
         setFramePairs(prev => prev.map(p =>
           p.id === id ? {
-            ...p, status: newStatus,
-            ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
-            ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
-            ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
-            ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
-            ...(result?.generationId ? { generationId: result.generationId } : {}),
-            ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
-            ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-            ...(result?.duration ? { duration: result.duration } : {}),
-            ...(result?.seed != null ? { seed: result.seed } : {}),
-            ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
-            ...(result?.model ? { model: result.model } : {}),
-            // 'error'/'errorKind' in result 패턴 — null 값도 patch 에 포함시켜 stale error 메시지 clear.
-            ...(result && 'error' in result ? { error: result.error } : {}),
-            ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+            ...p,
+            ...buildVideoRetryFramePairPatch(newStatus, result),
           } : p
         ))
         // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
@@ -1436,23 +1437,7 @@ function App() {
           scenesHook.updateScene(fpOwner.ownerSceneId, buildI2VScenePatch(newStatus, result))
         }
       } else {
-        videoScenesHook.updateVideoScene(id, {
-          status: newStatus,
-          ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
-          ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
-          ...(result?.base64 ? { video: result.base64 } : {}),
-          ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
-          ...(result?.generationId ? { generationId: result.generationId } : {}),
-          ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
-          ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-          ...(result?.duration ? { duration: result.duration } : {}),
-          ...(result?.seed != null ? { seed: result.seed } : {}),
-          ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
-          ...(result?.model ? { model: result.model } : {}),
-          // null 값도 적용해 stale error clear (success 분기 patch 가 작동하도록).
-          ...(result && 'error' in result ? { error: result.error } : {}),
-          ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
-        })
+        videoScenesHook.updateVideoScene(id, buildVideoRetryScenePatch(newStatus, result))
         if (newStatus === 'complete' && result?.base64) {
           const sceneId = id.replace('vscene_', 'scene_')
           scenesHook.updateScene(sceneId, {
@@ -1473,16 +1458,29 @@ function App() {
     //   forceRegenerate 면 fast-path 를 건너뛰고 아래 slow-path 로 가 status 를 'pending' 으로 되돌린다
     //   → 분류상 download-only(status==='error')도 in-flight(status==='generating')도 아니라 freshGen
     //   으로 잡혀, 다음 Start 가 새로 생성한다(기존 영상은 덮어쓰기 전까지 폴백 유지).
-    if (!opts.forceRegenerate && item.generationId && item.mediaId) {
+    // M2-R4 I1(A1 = B3): Flow 의 generationId 는 곧 미디어 id(YhhmEf 200 순간 과금) — mediaId 가 없어도(옛 auth/stopped/타임아웃 패치, provenance (c)/(c2) 모양)
+    //   파일이 없는 항목은 과금된 제출이라 plain Retry 도 이 download-only 경로로 간다(retryVideoDownload 는 generationId 로 폴한다 — mediaId 불필요).
+    //   전엔 아래 slow path 가 generationId·mediaId 를 null 로 지워 다음 Start 가 재제출(10크레딧 이중 과금)했다. id 를 지우는 건 Regenerate(forceRegenerate)뿐.
+    // M2-R5 J2(A2 = B1 + B5): 훅 submittedFlow(I4)·복구 #R34-1 과 같은 **엔진 모양** 필터(isFlowMediaId — UUID) — API operation 이름을 든 행(API 모드의 stop/실패가 남긴 모양)은
+    //   Flow 가 과금한 제출이 아니므로 slow path(pending 리셋). 안 그러면 retryVideoDownload 가 jwpduf 에 operation 이름을 보내 4회째 flow-video-not-found(+mediaId=operation
+    //   이름)로 양 모드에서 영원히 download-only 가 된다. API 모드·파일(videoPath) 있는 행도 slow path 그대로.
+    // M2-R5 J3(B2): 옛 서버측 생성 실패 행(error PUBLIC_ERROR_* · errorKind null · mediaId null · videoPath 없음 — 사용자 실데이터에 4행)은 미디어가 없어 폴 대상이 아니다 — 훅 submittedFlow 와
+    //   같은 제외로 slow path(pending 리셋)에 보내 프롬프트를 고친 뒤 Retry 로 다시 생성할 수 있게 한다(전엔 "still pending" ×3 → flow-video-not-found 로 영원히 download-only).
+    const chargedFlowItem = startMode === 'flow' && isFlowMediaId(item.generationId) && !item.videoPath && !isLegacyFlowGenerationFailure(item)
+    if (!opts.forceRegenerate && item.generationId && (item.mediaId || chargedFlowItem)) {
       // #R12-11/#R13-8: 첫 await(getAccessToken) 전에 in-flight 를 세팅 — 같은 tick 의 중복 Retry/
       //   Retry+Start 가 auth await 동안 busy 가드를 통과하는 것을 막는다. 모든 종료 경로에서 해제.
       videoRetryInFlightRef.current = true
       setVideoRetryRunning(true)  // #R24-2: 모드 토글 차단(반응형)
-      if (!(await genAPI.getAccessToken(false, true))) {
+      if (!(await genAPI.getAccessToken(
+        false,
+        true,
+        item.generationProvider || resolveSceneVideoProvider(item, settings, isFramePair ? 'i2v' : 't2v').provider,
+      ))) {
         videoRetryInFlightRef.current = false
         setVideoRetryRunning(false)
         if (modeRef.current === 'flow') {
-          toast.warning(getAuthRequiredMessage('flow', t))
+          toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
         } else {
           window.dispatchEvent(new CustomEvent('flow-login-expired'))
         }
@@ -1502,6 +1500,7 @@ function App() {
         projectName,
         saveMode: settings.saveMode || 'folder',
         videoResolution: settings.videoResolution || '720p',
+        authErrorText: () => getAuthErrorMessage(startMode, t),   // M2-R3 H5: kind 동반 authFailed 의 항목 문구는 인증 안내(raw 토큰 금지)
       }).catch(err => {
         console.error('[handleVideoRetry] Unexpected error:', err)
         onUpdate(item.id, 'error', { error: String(err?.message || err) })
@@ -1509,8 +1508,11 @@ function App() {
       return
     }
 
-    // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
-    onUpdate(item.id, 'pending', { error: null })
+    // Slow path: Regenerate, 또는 (API 모드·Flow 의 파일 있는 항목) generationId/mediaId 없음 — reset to pending; user clicks Start Generation to regenerate
+    // M2-R4 I1: Flow 의 과금된 항목(generationId 있음·videoPath 없음)은 위 fast path 가 받으므로 여기엔 forceRegenerate 로만 온다 — id 를 지우는 유일한 자리.
+    // M2-R3 H3(A3): Regenerate 는 generationId·mediaId 도 null — Flow 모드 Phase 0 은 출처(generationId 있음 + videoPath 없음)로 분류하므로 id 를 남기면
+    //   재생성이 in-flight/download-only 로 잡혀 새 생성이 안 된다. Regenerate/Clear 만이 항목을 fresh 로 만든다(옛 videoPath 폴백은 그대로).
+    onUpdate(item.id, 'pending', { error: null, errorKind: null, generationId: null, mediaId: null, downloadGated: null })   // downloadGated: M2-R3 H6
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
   }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t])
 
@@ -1559,7 +1561,10 @@ function App() {
     gateView: source === 'mcp' ? nonInteractiveGateView : emptyRefGateView,
   })
   const handleStartImpl = async (overrideStyleId = undefined, options = {}) => {
-    const { force = false, source = 'ui' } = options
+    const { force = false, source = 'ui', tab: tabOverride = null } = options
+    // MCP 가 tab 을 지정하면(mode:'video' → T2V) 현재 UI 탭 대신 그 탭으로 돌고 UI 도 맞춰 옮긴다.
+    const startTab = tabOverride || activeTab
+    if (tabOverride && tabOverride !== activeTab) setActiveTab(tabOverride)
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     // #R12-11: 다운로드-only 비디오 retry 진행 중에도 Start 차단(같은 아이템 경합 방지).
     if (isStartBlocked({
@@ -1570,7 +1575,7 @@ function App() {
       upscaylRunning: upscayl.isRunningNow(),
       refBatchRunning,
     })) return
-    const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
+    const isImageBatchStart = startTab === 'text' || startTab === 'list'
     const imageTargetScenes = isImageBatchStart
       ? (force ? scenes.filter(scene => scene.prompt) : filterPendingScenes(scenes))
       : []
@@ -1596,13 +1601,16 @@ function App() {
 
     // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
     // Flow 모드는 Flow 뷰/onFlowStatus 에서 인증을 처리하므로 BYOK 모달을 열지 않는다.
-    if (!(await genAPI.getAccessToken(false, true))) {
+    if (!(await runOuterStartAuthPreflight({
+      appMode: modeRef.current,
+      getAccessToken: genAPI.getAccessToken,
+    }))) {
       // #R8-4: getAccessToken await 동안 flow 로 전환됐을 수 있으니 stale closure `mode` 가
       //   아니라 현재 모드(modeRef)로 BYOK 모달 여부를 판단한다(flow 에서 BYOK 모달 방지).
       if (modeRef.current !== 'flow') {
         setShowApiKeyModal(true)
       } else {
-        toast.warning(getAuthRequiredMessage('flow', t))
+        toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
       }
       return
     }
@@ -1613,16 +1621,16 @@ function App() {
     }
 
     // 생성 모드 snapshot — 라이브 그리드가 탭 이동과 무관하게 이 값을 쓴다.
-    setRunningGenMode(genModeForTab(activeTab))
+    setRunningGenMode(genModeForTab(startTab))
 
     // 선택 검증 (폴더 확인보다 먼저)
-    if (activeTab === 'video-text') {
+    if (startTab === 'video-text') {
       if (videoScenes.filter(s => s.selected !== false).length === 0) {
         toast.warning(t('videoSelection.noneSelected'))
         return
       }
     }
-    if (activeTab === 'frame-to-video') {
+    if (startTab === 'frame-to-video') {
       if (framePairs.filter(p => p.selected !== false).length === 0) {
         toast.warning(t('videoSelection.noneSelected'))
         return
@@ -1654,7 +1662,7 @@ function App() {
 
     const projectName = ensureProjectName()
 
-    switch (activeTab) {
+    switch (startTab) {
       case 'text':
       case 'list': {
         // 이미지 생성 — 가드 순서: (1) 생성 대상 0개면 즉시 안내 (스타일 선택 요구하지 않음),
@@ -1702,6 +1710,8 @@ function App() {
           imageUpscale: settings.imageUpscale || 'off',
           aspectRatio: settings.aspectRatio,
           imageModel: settings.imageModel,
+          imageProvider: settings.generation?.image?.provider ?? 'google',
+          generationSettings: settings,
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
           force,
@@ -1794,23 +1804,7 @@ function App() {
             // 명시적 null 도 통과시켜야 하는 필드(video/videoPath/mediaId/generatedAt 등)는
             // `'X' in result` 체크 — useVideoAutomation 의 새 generation 제출 시 이전 complete
             // 메타를 의도적으로 null 로 지우기 때문 (regen 후 recovery 후보에 포함되도록).
-            videoScenesHook.updateVideoScene(id, {
-              status: newStatus,
-              ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
-              ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
-              ...(result && 'base64' in result ? { video: result.base64 } : {}),
-              ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
-              ...(result?.generationId ? { generationId: result.generationId } : {}),
-              ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
-              ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-              ...(result?.duration ? { duration: result.duration } : {}),
-              ...(result?.seed != null ? { seed: result.seed } : {}),
-              ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
-              ...(result?.model ? { model: result.model } : {}),
-              // null 값 보존 — success 시 stale error 메시지 clear.
-              ...(result && 'error' in result ? { error: result.error } : {}),
-              ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
-            })
+            videoScenesHook.updateVideoScene(id, buildVideoTextResultPatch(newStatus, result))
 
             // #R36-fix(Codex R1[3]): T2V @멘션 칩이 stale(Flow 에서 캐릭터 삭제 등)면 그 ref 를 'failed' 로
             //   마킹 → 다음 실행 선등록(needsEntityRegistration)에서 자동 재등록(self-heal, 이미지와 동일).
@@ -1890,6 +1884,7 @@ function App() {
             _startImage: frameImageFor(p.startSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
             _endImage: frameImageFor(p.endSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
             targetDuration: ownerScene ? getSceneDuration(ownerScene, scenesHook.srtTrack) : (p.targetDuration ?? null),
+            generation: ownerScene?.generation,
           }
           // OmniFlash 면 UI 에서 숨긴 끝 프레임을 payload 에서도 제거 (start-only 보장).
           return stripOmniEndFrame(resolved, omniNoEndFrame)
@@ -1904,19 +1899,12 @@ function App() {
         setHasPendingBatch(true)
 
         videoAutomation.start({
-          mode: 'i2v',
-          framePairs: resolvedPairs,
-          projectName,
-          // 화면비(설정>씬) 공용값 — 안 실으면 landscape 기본값으로 고정돼 9:16/16:9가 무시된다(T2V와 동일).
-          aspectRatio: settings.aspectRatio,
-          saveMode: settings.saveMode,
-          videoResolution: settings.videoResolution || '720p',
-          videoModel: settings.videoModelF2V,
-          videoBatchCount: settings.videoBatchCount || 1,
-          concurrency: settings.videoConcurrency || 4,
-          flowPacingMinMs: settings.flowPacingMinMs,
-          flowPacingMaxMs: settings.flowPacingMaxMs,
-          seed: effectiveI2VSeed,
+          ...buildVideoI2VStartOptions({
+            settings,
+            framePairs: resolvedPairs,
+            projectName,
+            seed: effectiveI2VSeed,
+          }),
           onItemUpdate: (id, newStatus, result) => {
             // epoch를 owner lookup보다 먼저 검사해야 재사용된 fp_* id를 새 프로젝트 소유자로 오인하지 않는다.
             if (loadEpochRef.current !== i2vStartEpoch) return
@@ -1926,23 +1914,8 @@ function App() {
 
             setFramePairs(prev => prev.map(p =>
               p.id === id ? {
-                ...p, status: newStatus,
-                ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
-                ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
-                // 'X' in result — useVideoAutomation 의 새 generation 제출 시 옛 complete 메타를
-                // 의도적으로 null 로 지우는 흐름 지원 (regen 후 recovery 후보 포함되도록).
-                ...(result && 'base64' in result ? { video: result.base64, base64: result.base64 } : {}),
-                ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
-                ...(result?.generationId ? { generationId: result.generationId } : {}),
-                ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
-                ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
-                ...(result?.duration ? { duration: result.duration } : {}),
-                ...(result?.seed != null ? { seed: result.seed } : {}),
-                ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
-                ...(result?.model ? { model: result.model } : {}),
-                // null 값 보존 — success 시 stale error 메시지 clear.
-                ...(result && 'error' in result ? { error: result.error } : {}),
-                ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
+                ...p,
+                ...buildVideoI2VResultPatch(newStatus, result),
               } : p
             ))
 
@@ -2002,11 +1975,14 @@ function App() {
         return
       }
       // #R9-4: 인증 재확인(모달 사이 키 변경/만료 가능). flow 는 BYOK 모달 대신 Flow 뷰가 처리.
-      if (!(await genAPI.getAccessToken(false, true))) {
+      if (!(await runOuterStartAuthPreflight({
+        appMode: modeRef.current,
+        getAccessToken: genAPI.getAccessToken,
+      }))) {
         if (modeRef.current !== 'flow') {
           setShowApiKeyModal(true)
         } else {
-          toast.warning(getAuthRequiredMessage('flow', t))
+          toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
         }
         setPendingStartOptions(null)
         return
@@ -2146,7 +2122,8 @@ function App() {
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
   // isRunning: scene OR ref(prepare/stop/generating) OR video — Phase 2 auto stop-restart 트리거.
   useMcpServer({
-    settings,
+    settings, setSettings,
+    mode, flowProjectReady, activeTab,  // batch-status 진단 필드
     scenes, setScenes,
     references, setReferences,
     // Phase 11: MCP 가 srtTrack 동기화할 수 있게 setter 전달
@@ -2707,6 +2684,8 @@ function App() {
                   imageUpscale: settings.imageUpscale || 'off',
                   aspectRatio: settings.aspectRatio,
                   imageModel: settings.imageModel,
+                  imageProvider: settings.generation?.image?.provider ?? 'google',
+                  generationSettings: settings,
                   selectedStyleRefId,
                   seed: effectiveSeed,
                 }).finally(() => setHasPendingBatch(false))
@@ -2826,6 +2805,8 @@ function App() {
                   imageUpscale: settings.imageUpscale || 'off',
                   aspectRatio: settings.aspectRatio,
                   imageModel: settings.imageModel,
+                  imageProvider: settings.generation?.image?.provider ?? 'google',
+                  generationSettings: settings,
                   selectedStyleRefId,
                   seed: effectiveSeed,
                 }).finally(() => setHasPendingBatch(false))
@@ -2864,6 +2845,11 @@ function App() {
               status: 'pending', selected: false,
               // 비디오 메타도 정리 — 상세 모달/저장에 이전 비디오 메타 잔류 방지.
               generatedAt: null, seed: null, model: null, error: null, errorKind: null, videoSaveId: null,
+              generationProvider: null, appliedInputs: null,
+              // M2-R2 G8(B7): kind 별 params·거부 미디어 id 도 정리(F2 가 더한 videoT2V* 필드) — 안 지우면 project.json 에 stale 값이 남는다.
+              errorParams: null, rejectedMediaId: null, rejectedMediaIds: null,
+              // M2-R3 H6: 배치 다운로드 권한 마커도 정리
+              downloadGated: null,
               // per-clip toggle 도 reset — stale disabled 가 project.json 에 남아 history 복원 등
               // path 재부착 경로와 만나면 새 영상이 숨겨짐. (FIELD_MAP 미매핑 → scene.videoT2VDisabled 로 직행)
               videoT2VDisabled: null,
@@ -2891,11 +2877,13 @@ function App() {
               base64: null, video: null, videoPath: null, videoSaveId: null,
               // recovery 식별자 — reload 시 in-flight 로 안 잡히도록 둘 다 null
               generationId: null, mediaId: null,
+              downloadGated: null,   // M2-R3 H6: 배치 다운로드 권한 마커도 정리
               // 상태/에러 — pending 으로 되돌리고 stale error 제거
               status: 'pending', error: null, errorKind: null,
               // timing / 메타 — history 모달에 stale 값 표시 안 되도록
               generatingStartedAt: null, generatingEndedAt: null,
               seed: null, generatedAt: null, model: null, duration: null,
+              generationProvider: null, appliedInputs: null,
             } : p))
             if (fp?.ownerSceneId) {
               scenesHook.updateScene(fp.ownerSceneId, { ...videoClearPatch('i2v'), videoI2VGeneratedAt: null })
@@ -2927,6 +2915,8 @@ function App() {
                 imageUpscale: settings.imageUpscale || 'off',
                 aspectRatio: settings.aspectRatio,
                 imageModel: settings.imageModel,
+                imageProvider: settings.generation?.image?.provider ?? 'google',
+                generationSettings: settings,
                 selectedStyleRefId,
                 seed: effectiveSeed,
               }).finally(() => setHasPendingBatch(false))

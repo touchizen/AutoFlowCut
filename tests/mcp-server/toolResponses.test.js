@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   exportCapcutToolResponse,
   handleExportCapcutTool,
@@ -6,6 +8,8 @@ import {
   handleExportPremiereTool,
 } from '../../mcp-server/lib/toolResponses.js'
 import * as toolResponses from '../../mcp-server/lib/toolResponses.js'
+
+const mcpIndexSource = readFileSync(resolve(process.cwd(), 'mcp-server/index.js'), 'utf8')
 
 describe('mcp-server toolResponses', () => {
   it('app_update_scene propagates HTTP 409 busy as MCP isError', async () => {
@@ -42,6 +46,50 @@ describe('mcp-server toolResponses', () => {
     })
     expect(result?.isError).toBeUndefined()
     expect(result?.content[0].text).toContain('수정 완료')
+  })
+
+  it('G3/H3: CSV tool response keeps structured warnings and appends them to visible content', () => {
+    expect(toolResponses.csvToolResponse).toBeTypeOf('function')
+    const warnings = [
+      "Rejected unknown provider 'unknown' at generation.image.",
+      "Rejected invalid model '__inherit__' at generation.video.t2v.",
+    ]
+
+    expect(toolResponses.csvToolResponse('CSV loaded', warnings)).toEqual({
+      content: [{
+        type: 'text',
+        text: [
+          'CSV loaded',
+          '',
+          'Warnings:',
+          "- Rejected unknown provider 'unknown' at generation.image.",
+          "- Rejected invalid model '__inherit__' at generation.video.t2v.",
+        ].join('\n'),
+      }],
+      warnings,
+    })
+    expect(toolResponses.csvToolResponse('CSV loaded', [])).toEqual({
+      content: [{ type: 'text', text: 'CSV loaded' }],
+    })
+  })
+
+  it('G3: MCP CSV handlers collect parser warnings and pass them to the tool response', () => {
+    const loadCsvBlock = mcpIndexSource.slice(
+      mcpIndexSource.indexOf("case 'load_csv':"),
+      mcpIndexSource.indexOf("case 'list_scenes':"),
+    )
+    expect(loadCsvBlock).toContain('bundleSceneCSVRows(data.scenes, { warnings: csvWarnings })')
+    expect(loadCsvBlock).toContain('nestSceneGenerationColumns(row, { warnings: csvWarnings })')
+    expect(loadCsvBlock).toMatch(/csvToolResponse\([\s\S]*csvWarnings,\s*\)/)
+
+    const updateFieldBlock = mcpIndexSource.slice(
+      mcpIndexSource.indexOf("case 'update_field':"),
+      mcpIndexSource.indexOf("case 'list_references':"),
+    )
+    expect(updateFieldBlock).toContain(
+      'nestSceneGenerationColumns(scenes[idx], { warnings: csvWarnings })',
+    )
+    expect(updateFieldBlock).toMatch(/csvToolResponse\([\s\S]*csvWarnings,\s*\)/)
   })
 
   it('export_capcut propagates HTTP failure as MCP tool error', () => {
@@ -153,5 +201,26 @@ describe('mcp-server toolResponses — includePending 전달', () => {
     await handleExportCapcutTool({ port: 3210, includePending: 'yes' }, fetcher)
 
     expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-capcut', { includePending: false })
+  })
+})
+
+// 영상 클립 오디오 볼륨(CapCut 전용) — 스키마·바디 두 곳이 막으면 에이전트 값이 앱까지 못 간다(리뷰 R1).
+describe('mcp-server toolResponses — videoAudioVolume 전달(CapCut 만)', () => {
+  it.each([0, 0.15, 1])('%s 는 CapCut 바디에 실린다', async (v) => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+    await handleExportCapcutTool({ port: 3210, videoAudioVolume: v }, fetcher)
+    expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-capcut', { includePending: false, videoAudioVolume: v })
+  })
+
+  it.each([['loud'], [0.5], [null]])('허용 값이 아니면(%s) 싣지 않는다 — 앱의 저장 설정을 따른다', async (v) => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+    await handleExportCapcutTool({ port: 3210, videoAudioVolume: v }, fetcher)
+    expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-capcut', { includePending: false })
+  })
+
+  it('프리미어 도구는 싣지 않는다(옵션이 프리미어를 바꾸지 않는다)', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, status: 200, data: {} })
+    await handleExportPremiereTool({ port: 3210, videoAudioVolume: 0 }, fetcher)
+    expect(fetcher).toHaveBeenCalledWith(3210, 'POST', '/api/export-premiere', { includePending: false })
   })
 })

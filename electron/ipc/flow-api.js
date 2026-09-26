@@ -14,6 +14,10 @@ import { SUBMIT_PROBE, shouldProceed, SUBMIT_ENABLED_PROBE } from '../flow-submi
 import { GENERATED_IMG_PROBE, planDomImageAssignments, clampImageBatchCount } from '../flow-media-collect.js'
 import { createGenerationTimeout } from '../flow-generation-timeout.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
+import { isFlowPageUrl } from '../flowUrl.js'
+import { describeMediaUrl } from '../flow-rpc-protocol.js'
+import { callFlowRpc } from '../flow-rpc-client.js'
+import { createFlowAngular, unsupportedOnAngular } from './flow-angular.js'
 import { createMutex } from '../asyncMutex.js'
 import { VIDEO_DOWNLOAD_TIMEOUT_MS, IMAGE_UPSCALE_TIMEOUT_MS } from '../flow-download-config.js'
 
@@ -36,6 +40,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     setFlowPageInject, clearFlowPageInject,
     getCurrentMode,
     getApiBase, // #R33: region 대응 동적 API base (uploadImage 호스트)
+    readFlowSession, // 세션은 페이지 origin 후보 → 옛 주소 순으로 읽는다(flow-session.js)
     SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
     API_HEADERS, GENERATE_URL, BASE_API_URL,
   } = deps
@@ -44,6 +49,52 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   //   stale 렌더러 호출이 Flow quota 를 소비/상태변경할 수 있다. quota 를 쓰는 submit/upscale/upload
   //   핸들러는 현재 모드가 'flow' 일 때만 진행한다(읽기 전용 핸들러는 게이트 불필요).
   const flowActive = () => !getCurrentMode || getCurrentMode() === 'flow'
+
+  // M1-11: flow.google.com(Angular) 핸들러 — Flow 모드의 generate-image 는 무조건 여기로(옛 코드는 도달 불가, 아래 유지).
+  const angular = createFlowAngular(deps)
+
+  // ─── flow:session-status (M1-9) ───────────────────────────────────────────
+  // flow.google.com 에는 세션 API 도 Bearer 도 없다(2026-09-23 실측). 준비 판정은 Flow 페이지 URL → WIZ_global_data
+  //   (batchexecute 의 at 토큰이 있는 문서인가) → nzlxg(크레딧) 읽기 RPC 성공. 값(at·이메일)은 main 으로 가져오지 않는다.
+  //   reason 은 상태어만: wiz-missing | not-on-flow | flow-inactive | rpc:http:<status> | rpc:er:<code> | timeout | rpc:network:<why>
+  //   — 렌더러(getAuthRequiredMessage)가 로그인 안내 vs 세션 확인 실패 토스트를 고른다. ready 는 10초 캐시(배치 폴링 부담).
+  const SESSION_READY_CACHE_S = 10
+  let sessionReadyCache = null   // { at: 초, credits }
+  const sessionReasonFromRpcError = (e) => {
+    const kind = e && e.kind
+    if (kind === 'http') return `rpc:http:${e.status}`
+    if (kind === 'rpc' || kind === 'er') return `rpc:er:${e.code == null ? '?' : e.code}`
+    if (kind === 'network') return e.reason === 'timeout' || e.reason === 'wiz-missing' ? e.reason : `rpc:network:${e.reason || 'unknown'}`
+    if (kind === 'shape') return 'rpc:shape'
+    return 'rpc:network:unknown'
+  }
+  ipcMain.handle('flow:session-status', async () => {
+    if (!flowActive()) return { ready: false, reason: 'flow-inactive' }
+    const flowView = getFlowView()
+    if (!flowView || (flowView.webContents.isDestroyed && flowView.webContents.isDestroyed())) return { ready: false, reason: 'flow-inactive' }
+    const now = Date.now() / 1000
+    if (sessionReadyCache && now - sessionReadyCache.at < SESSION_READY_CACHE_S) {
+      return { ready: true, credits: sessionReadyCache.credits, cached: true }
+    }
+    const url = flowView.webContents.getURL()
+    if (!isFlowPageUrl(url)) return { ready: false, reason: 'not-on-flow' }
+    let hasWiz = false
+    try {
+      hasWiz = await flowView.webContents.executeJavaScript('!!(window.WIZ_global_data && window.WIZ_global_data.SNlM0e)', true)
+    } catch (_e) { hasWiz = false }
+    if (!hasWiz) return { ready: false, reason: 'wiz-missing' }
+    try {
+      const credits = await callFlowRpc(flowView, 'nzlxg', [])
+      const n = Array.isArray(credits) && typeof credits[0] === 'number' ? credits[0] : null
+      sessionReadyCache = { at: now, credits: n }
+      console.log(`[Flow Session] ready credits=${n}`)
+      return { ready: true, credits: n }
+    } catch (e) {
+      const reason = sessionReasonFromRpcError(e)
+      console.warn(`[Flow Session] not ready reason=${reason}`)
+      return { ready: false, reason }
+    }
+  })
 
   // 에이전트 챗 DOM 에서 이미 수집(배정)한 생성 이미지 mediaId 집합.
   // 같은 이미지를 다른 generation 에 중복 배정하지 않게 한다. clear-generations 시 리셋.
@@ -78,49 +129,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     }
   }
 
-  // Extract Flow access token from session
-  ipcMain.handle('flow:extract-token', async () => {
-    console.log('[Flow API] extract-token called')
-    // #R28-1: API 모드 전환 후에도 Flow view(=로그인 세션)는 보존되므로, gate 없으면 렌더러가
-    //   계속 Flow bearer token 을 읽을 수 있다(fail-open). API 모드는 BYOK 키를 쓰지 Flow token 을
-    //   안 쓰므로 mode 가 'flow' 일 때만 추출한다.
-    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
-    const flowView = getFlowView()
-    if (!flowView) return { success: false, error: 'Flow view not ready' }
-
-    try {
-      const sessionData = await flowView.webContents.executeJavaScript(`
-        fetch('${SESSION_URL}')
-          .then(r => r.ok ? r.text() : null)
-          .catch(() => null)
-      `)
-
-      // ⚠️ 세션 본문은 절대 찍지 않는다 — access_token 과 이메일이 들어있고, Sentry 의
-      //   consoleIntegration 이 main 콘솔을 breadcrumb 으로 걷어가므로 그대로 전송된다.
-      //   진단에 필요한 건 "세션이 왔는가" 뿐이다.
-      console.log('[Flow API] Session response received:', sessionData ? `${sessionData.length} bytes` : 'none')
-
-      if (!sessionData) {
-        return { success: false, error: 'No session data. Please log in to Flow first.' }
-      }
-
-      // XSSI prefix 제거 후 JSON 파싱
-      const parsed = parseFlowResponse(sessionData) || JSON.parse(sessionData)
-      console.log('[Flow API] Session keys:', Object.keys(parsed || {}))   // 키 이름만 — 값 없음
-
-      const token = parsed?.access_token || parsed?.accessToken || null
-
-      if (token) {
-        console.log('[Flow API] Token extracted, length:', token.length)
-        return { success: true, token, length: token.length }
-      }
-      console.warn('[Flow API] No token in session data')
-      return { success: false, error: 'No token found. Please log in to Flow first.' }
-    } catch (e) {
-      console.error('[Flow API] extract-token error:', e.message)
-      return { success: false, error: e.message }
-    }
-  })
+  // M1-10: flow:extract-token 제거 — flow.google.com 에는 세션 API 도 Bearer 도 없다(flow:session-status 가 대신한다).
 
   // Extract projectId from Flow page URL
   // (capturedProjectId는 파일 상단에서 선언)
@@ -199,7 +208,14 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   })
 
   // Generate image via Flow API
-  ipcMain.handle('flow:generate-image', async (event, {
+  // M1-12: Flow 모드에서는 URL 과 무관하게 angular 핸들러로 디스패치한다(옛 labs.google 은 301 이라 도달 불가).
+  //   옛 핸들러 본문은 후속 정리 대상으로 남긴다(등록하지 않는다).
+  ipcMain.handle('flow:generate-image', async (event, payload) => {
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
+    return angular.generateImage(payload || {})
+  })
+  // eslint-disable-next-line no-unused-vars
+  const legacyGenerateImage = async (event, {
     token, prompt, aspectRatio, seed, model, projectId, referenceImages, batchCount,
     asyncMode  // true: 제출만 하고 즉시 반환 (비동기 배치용)
   }) => {
@@ -257,8 +273,8 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
         // Flow 랜딩 페이지면: Enter tool 버튼 클릭으로 프로젝트 생성
         if (!currentUrl.includes('/project/')) {
-          // 이미 Flow 페이지가 아니면 로드
-          if (!currentUrl.includes('labs.google/fx')) {
+          // 이미 Flow 페이지가 아니면 로드 (두 도메인 배치 모두 Flow 로 친다)
+          if (!isFlowPageUrl(currentUrl)) {
             console.log('[Flow API] Navigating to Flow...')
             await flowView.webContents.loadURL(FLOW_URL)
             await new Promise(r => setTimeout(r, 3000))
@@ -351,9 +367,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // 0.5. 토큰 자동 추출 (DOM 모드에서 token=null로 호출될 때)
       if (!token) {
         try {
-          const sessionData = await flowView.webContents.executeJavaScript(
-            `fetch('${SESSION_URL}').then(r => r.ok ? r.text() : null).catch(() => null)`
-          )
+          const sessionData = await readFlowSession(flowView)
           if (sessionData) {
             const parsed = parseFlowResponse(sessionData) || JSON.parse(sessionData)
             token = parsed?.access_token || parsed?.accessToken || null
@@ -1196,13 +1210,15 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // Monkey-patch inject 정리 (다음 유기적 Flow 요청에 stale 값이 새지 않도록)
       await clearFlowPageInject?.()
     }
-  })
+  }
 
   // ─── 비동기 생성 결과 조회 (폴링용) ───
   ipcMain.handle('flow:check-generation', async (event, { generationId }) => {
     if (!generationId) return { success: false, error: 'No generationId' }
     const gen = pendingGenerations.get(generationId)
     if (!gen) return { success: false, error: 'Generation not found', notFound: true }
+    // M1-11: 새 경로(rpc) gen 은 DOM 폴백 없이 완료 여부만.
+    if (gen.rpc) return angular.checkRpcGeneration(gen)
     // 응답 가로채기로 완료가 안 됐으면 DOM 에서 생성 이미지를 수집해 본다 (에이전트 모델).
     if (!gen.completed) {
       try { await assignDomImagesToPending() } catch (_) {}
@@ -1221,6 +1237,8 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     if (!generationId) return { success: false, error: 'No generationId' }
     const gen = pendingGenerations.get(generationId)
     if (!gen) return { success: false, error: 'Generation not found', notFound: true }
+    // M1-11: 새 경로(rpc) gen — 완료된 것만 지우고 결과(에러 kind 또는 다운로드)를 돌려준다.
+    if (gen.rpc) return angular.collectRpcGeneration(generationId, gen)
     if (!gen.completed) return { success: false, error: 'Generation not completed yet' }
 
     // 타이머 정리 + Map에서 제거
@@ -1320,6 +1338,8 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // ─── 비동기 생성 일괄 정리 (배치 종료 시) ───
   ipcMain.handle('flow:clear-generations', async () => {
+    // M1-11: 대기 중인 새 경로 waiter 를 먼저 settle — 동기 호출이 영영 매달리지 않게.
+    angular.settleRpcGenerations()
     for (const [id, gen] of pendingGenerations) {
       if (gen.collectionTimer) clearTimeout(gen.collectionTimer)
       if (gen.orphanTimer) clearTimeout(gen.orphanTimer) // #R13-3
@@ -1332,6 +1352,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // Fetch media by ID (mediaId → redirect → base64)
   ipcMain.handle('flow:fetch-media', async (event, { token, mediaId }) => {
+    if (flowActive()) return unsupportedOnAngular('fetch-media')  // R1#7: 옛 호스트 로직 — 새 Flow 에서 도달 불가
     if (!token) return { success: false, error: 'No token' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
 
@@ -1347,24 +1368,31 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   ipcMain.handle('flow:download-video-url', async (event, { url, token }) => {
     if (!url) return { success: false, error: 'No URL' }
 
+    // M1-6: flow.google.com 의 미디어 URL 은 서명 URL(flow-content.google/…?Expires&KeyName&Signature, ~6h 접근권)
+    //   — 로그는 호스트 + 미디어 id 앞 8자 + 숫자만. 실패 문구는 중립('HTTP 403' 은 isFlowAuthError 가 인증 실패로
+    //   오판한다) — 상태는 httpStatus 필드로.
+    const { host, media } = describeMediaUrl(url)
     try {
-      console.log('[Flow VideoDownload] Fetching:', url.substring(0, 80))
+      console.log(`[Flow VideoDownload] fetching host=${host} media=${media}`)
       const headers = {}
       if (token) headers['Authorization'] = `Bearer ${token}`
 
       const res = await sessionFetch(url, { headers })
       if (!res.ok) {
-        return { success: false, error: `HTTP ${res.status}` }
+        console.warn(`[Flow VideoDownload] failed host=${host} media=${media} status=${res.status}`)
+        return { success: false, error: 'flow-download-error', errorKind: 'flow-download-error', httpStatus: res.status }
       }
 
       const buffer = await res.arrayBuffer()
       const contentType = res.headers?.get?.('content-type') || 'video/mp4'
       const base64 = `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`
-      console.log('[Flow VideoDownload] Downloaded, size:', buffer.byteLength, 'type:', contentType)
+      console.log(`[Flow VideoDownload] downloaded host=${host} media=${media} bytes=${buffer.byteLength} type=${contentType}`)
       return { success: true, base64 }
     } catch (e) {
-      console.error('[Flow VideoDownload] Error:', e.message)
-      return { success: false, error: e.message }
+      // 예외 메시지는 URL(서명 포함)을 실을 수 있다 — 이름만.
+      // safe-log: e.name 은 예외 클래스 이름(TypeError 등) — 사용자 내용이 아니다
+      console.error(`[Flow VideoDownload] error host=${host} media=${media} reason=${e?.name || 'Error'}`)
+      return { success: false, error: 'flow-download-error', errorKind: 'flow-download-error', httpStatus: 0 }
     }
   })
 
@@ -1377,6 +1405,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     //   돌 수 있어 Flow quota 를 쓴다. API 모드 전환 후 stale 호출이 보존된 Flow view 를 구동해
     //   quota 를 소모하지 않도록 게이트한다. (API 모드 비디오 다운로드는 engineApi 경로라 무관.)
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
+    if (flowActive()) return unsupportedOnAngular('dom-download-video')  // R1#7: 옛 DOM 다운로드 메뉴 — 새 Flow 에서 도달 불가(M2 는 서명 URL)
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
@@ -1841,6 +1870,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // Upload image to Flow
   ipcMain.handle('flow:upload-reference', async (event, { token, base64, projectId }) => {
+    if (flowActive()) return unsupportedOnAngular('upload-reference')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     if (!token) return { success: false, error: 'No token' }
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
 
@@ -1906,24 +1936,13 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     }
   })
 
-  // Validate token and get expiry
-  ipcMain.handle('flow:validate-token', async (event, { token }) => {
-    try {
-      const response = await sessionFetch(`${TOKEN_INFO_URL}?access_token=${token}`)
-      if (response.ok) {
-        const data = await response.json()
-        return { valid: true, expiry: parseInt(data.exp) * 1000 }
-      }
-      return { valid: false, expiry: null }
-    } catch (e) {
-      return { valid: false, expiry: null }
-    }
-  })
+  // M1-10: flow:validate-token 제거(토큰 없음).
 
   // ─── List User Projects (Flow archive — date list) ─────────────
   // 사용자의 Flow 프로젝트(=날짜별 세션) 목록을 가져온다.
   // 응답: result.data.json.result.projects[] → {projectId, projectInfo, creationTime}
   ipcMain.handle('flow:list-projects', async (event, { token, pageSize = 20 } = {}) => {
+    if (flowActive()) return unsupportedOnAngular('list-projects')  // R1#7: labs.google trpc — "List projects HTTP 401" 문구가 markAuth 를 오발동시켰다
     try {
       const input = JSON.stringify({ json: { pageSize, toolName: 'PINHOLE' } })
       const url = `https://labs.google/fx/api/trpc/project.searchUserProjects?input=${encodeURIComponent(input)}`
@@ -1968,6 +1987,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // 이미지(image.userUploadedImage)와 생성 이미지(image.generatedImage)
   // 모두 반환한다. 비디오는 제외.
   ipcMain.handle('flow:fetch-gallery', async (event, { token, projectId }) => {
+    if (flowActive()) return unsupportedOnAngular('fetch-gallery')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     try {
       if (!projectId) {
         projectId = getCapturedProjectId?.()
@@ -2133,6 +2153,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // ─── Image Upscale (DOM 방식: three-dots → download → 해상도 선택 → 파일 캡처) ───
   // 비디오 DOM 다운로드와 동일한 패턴. Flow UI가 reCAPTCHA를 내부적으로 처리.
   ipcMain.handle('flow:upscale-image', async (event, { token, mediaId, projectId, resolution }) => {
+    if (flowActive()) return unsupportedOnAngular('upscale-image')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }

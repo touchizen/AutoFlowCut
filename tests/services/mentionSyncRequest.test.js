@@ -5,8 +5,16 @@
  * (뮤테이션 실측). "잘못된 프로젝트에 바인딩하지 않는다"와 "거절당한 이름은 강제 재등록한다"는
  * 이 수정의 핵심 보장인데 실행되는 테스트가 0개였다.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { runMentionSyncRequest } from '../../src/services/mentionSyncRequest'
+import { selectMentionSyncTargets } from '../../src/utils/mentionSyncTargets'
+
+// M3(D15): 동기화 대상 셀렉터는 퇴역(항상 []) — 실제 셀렉터로는 게이트가 열리지 않는다(첫 describe). 남아 있는 오케스트레이션
+//   (게이트·forceRepair·프로젝트 스코프·알림 — 옛 코드, 정리는 범위 밖)은 옛 셀렉터 모양의 스텁으로 계속 지킨다(둘째 describe).
+vi.mock('../../src/utils/mentionSyncTargets', async (importOriginal) => {
+  const mod = await importOriginal()
+  return { ...mod, selectMentionSyncTargets: vi.fn(mod.selectMentionSyncTargets) }
+})
 
 const UNSYNCED = { id: 1, type: 'character', name: '문지기', entityId: 'e1', workflowId: 'w1', mediaId: 'm1', flowNameSyncStatus: 'failed', filePath: '/a.png' }
 const SYNCED = { ...UNSYNCED, flowNameSyncStatus: 'synced' }
@@ -23,7 +31,31 @@ function deps(over = {}) {
   }
 }
 
+describe('runMentionSyncRequest — M3 (실제 셀렉터: 퇴역)', () => {
+  it('프리플라이트: 옛 기준의 미동기화 멘션이어도 게이트 없이 live refs 와 진행한다', async () => {
+    const d = deps()
+    const res = await runMentionSyncRequest({ scene: SCENE, projectName: 'p1' }, d)
+
+    expect(d.openGate).not.toHaveBeenCalled()
+    expect(res).toEqual({ proceeded: true, refs: [UNSYNCED] })
+  })
+
+  it('복구(names): 고칠 대상이 없으니 게이트 없이 진행 불가(no-target) — 호출부는 엔진의 실패를 그대로 보인다', async () => {
+    const d = deps()
+    const res = await runMentionSyncRequest({ names: ['문지기'], projectName: 'p1' }, d)
+
+    expect(d.openGate).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ proceeded: false, reason: 'no-target' })
+  })
+})
+
 describe('runMentionSyncRequest', () => {
+  // 옛 셀렉터 모양의 스텁: names 가 있으면 그 이름의 ref, 없으면 synced 가 아닌 ref.
+  beforeEach(() => {
+    selectMentionSyncTargets.mockImplementation(({ names, references } = {}) => (references || [])
+      .filter((r) => (names?.length ? names.includes(r.name) : r.flowNameSyncStatus !== 'synced')))
+  })
+
   it('동기화가 필요하면 그 대상으로 게이트를 연다', async () => {
     const d = deps()
     const res = await runMentionSyncRequest({ scene: SCENE, projectName: 'p1' }, d)

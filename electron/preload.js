@@ -119,10 +119,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Key management exposes only existence/validity to the renderer — never the key itself.
   genaiGetKeyStatus: () => ipcRenderer.invoke('genai:get-key-status'),
   genaiSetKey: (params) => ipcRenderer.invoke('genai:set-key', params),
-  genaiClearKey: () => ipcRenderer.invoke('genai:clear-key'),
+  genaiClearKey: (params) => ipcRenderer.invoke('genai:clear-key', params),
   genaiValidateKey: (params) => ipcRenderer.invoke('genai:validate-key', params),
-  genaiListModels: () => ipcRenderer.invoke('genai:list-models'),
+  genaiListModels: (params) => ipcRenderer.invoke('genai:list-models', params),
+  genaiListProviders: () => ipcRenderer.invoke('genai:list-providers'),
   genaiGenerateImage: (params) => ipcRenderer.invoke('genai:generate-image', params),
+  genaiCancel: (params) => ipcRenderer.invoke('genai:cancel', params),
   genaiGenerateVideo: (params) => ipcRenderer.invoke('genai:generate-video', params),
   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
   genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),
@@ -190,8 +192,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setMode: (params) => ipcRenderer.invoke('mode:set', params),
 
   // Flow DOM automation bridges (Flow mode)
-  flowExtractToken: () => ipcRenderer.invoke('flow:extract-token'),
-  flowValidateToken: (payload) => ipcRenderer.invoke('flow:validate-token', payload),
+  flowSessionStatus: () => ipcRenderer.invoke('flow:session-status'),  // M1-9: flow.google.com 세션 판정(토큰 없음)
   flowExtractProjectId: (opts) => ipcRenderer.invoke('flow:extract-project-id', opts),
   flowGenerateImage: (payload) => ipcRenderer.invoke('flow:generate-image', payload),
   flowCheckGeneration: (payload) => ipcRenderer.invoke('flow:check-generation', payload),

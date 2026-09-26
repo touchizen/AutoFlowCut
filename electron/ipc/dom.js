@@ -8,8 +8,10 @@
 import { screen } from 'electron'
 import { updateBounds } from './layout.js'
 import { AGENT_TOGGLE_SELECTOR } from '../flow-agent-toggle.js'
-import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS } from '../flowOpenRetry.js'
+import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS, waitForProjectLoaded, OPEN_SETTLE_TIMEOUT_MS } from '../flowOpenRetry.js'
+import { flowBaseFromUrl, flowProjectUrl, onProjectComposerUrl } from '../flowUrl.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
+import { FIND_NEW_PROJECT_BUTTON_JS } from '../flow-new-project-button.js'
 
 export function registerDomIPC(ipcMain, deps) {
   const { getFlowView, getMainWindow, trustedClickOnFlowView, FLOW_URL, getCurrentMode } = deps
@@ -77,10 +79,9 @@ export function registerDomIPC(ipcMain, deps) {
     }
     try {
       const cur = flowView.webContents.getURL() || ''
-      // 현재 URL 에서 /tools/flow 까지의 base(로케일 포함) 추출, 없으면 기본.
-      const m = cur.match(/^(.*\/tools\/flow)(\/|$)/)
-      const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
-      const target = `${base}/project/${flowProjectId}`
+      // base 추출과 컴포저 판정은 flowUrl.js 가 소유한다 — 옛/새 도메인을 둘 다 안다.
+      const base = flowBaseFromUrl(cur)
+      const target = flowProjectUrl(base, flowProjectId)
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
       // 페이지가 진짜 대상 프로젝트로 로드됐는지 확인 — URL 일치 + 에러 텍스트 없음.
       //   (URL 만 보면 "문제가 발생했습니다" 에러 페이지도 success 로 오판 → false positive.)
@@ -94,20 +95,14 @@ export function registerDomIPC(ipcMain, deps) {
         // ⚠️ 경로 끝이면서 **컴포저** 여야 한다. (/[^/]*)?$ 로만 두면 /characters·/settings 도 통과해,
         //    캐릭터 작업 후 그 페이지에 머문 상태를 "프로젝트 열림"으로 승인한다(컴포저는 없는데).
         //    ensureOnProjectComposer 와 같은 허용 목록을 쓴다.
-        let onTargetUrl = false
-        try {
-          const pn = new URL(urlNow).pathname
-          const m = pn.match(new RegExp(`/tools/flow/project/${flowProjectId}(/[^/]*)?$`))
-          onTargetUrl = !!m && ['', '/', '/all-media'].includes(m[1] || '')
-        } catch { onTargetUrl = false }
+        const onTargetUrl = onProjectComposerUrl(urlNow, flowProjectId)
         return { urlNow, onTargetUrl, isErrorPage: isFlowErrorPage(page), probeOk, page }
       }
 
-      // 이미 그 프로젝트 URL 이면 페이지만 확인(로딩이면 1.5s 대기 후 재확인).
+      // 이미 그 프로젝트 URL 이면 페이지만 확인 — 그려질 때까지(최대 OPEN_SETTLE_TIMEOUT_MS) 기다린다.
       if (cur.includes(`/project/${flowProjectId}`)) {
-        let p = await probe()
-        if (!p.onTargetUrl || p.isErrorPage) { await sleep(1500); p = await probe() }
-        if (p.onTargetUrl && !p.isErrorPage) return { success: true, already: true, url: p.urlNow }
+        const p = await waitForProjectLoaded(probe, { timeoutMs: OPEN_SETTLE_TIMEOUT_MS, sleep })
+        if (p.loaded) return { success: true, already: true, url: p.urlNow }
         // 에러면 아래 재네비 경로로 떨어진다.
       }
 
@@ -115,8 +110,10 @@ export function registerDomIPC(ipcMain, deps) {
       const MAX_ATTEMPTS = 2 // 최초 1 + 재시도 1
       await flowView.webContents.loadURL(target).catch((e) => console.warn('[Flow Project] loadURL failed:', e.message))
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        await sleep(2000) // 로드/에러 표시 안정화 대기
-        const p = await probe()
+        // 새 flow.google.com 은 미디어 목록이 5~6초 뒤에 와 컴포저가 늦게 그려진다(2026-09-24 캡처) —
+        //   고정 2초 뒤 한 번 검사하면 로딩 중 페이지를 에러로 오판한다. 그려질 때까지 폴링(상한 15s).
+        await sleep(1000)
+        const p = await waitForProjectLoaded(probe, { timeoutMs: OPEN_SETTLE_TIMEOUT_MS, sleep })
         const action = decideFlowOpenAction({ onTargetUrl: p.onTargetUrl, isErrorPage: p.isErrorPage, attempt, maxAttempts: MAX_ATTEMPTS })
         if (action === 'success') return { success: true, url: p.urlNow }
         if (action === 'fail') {
@@ -158,14 +155,9 @@ export function registerDomIPC(ipcMain, deps) {
       deps.setEnterToolClicked?.(true)
       await flowView.webContents.loadURL(FLOW_URL)
       await new Promise((r) => setTimeout(r, 2000)) // home 렌더 대기
-      const addBtnSelector = `(function(){
-        try {
-          const xr = document.evaluate("//button[.//i[normalize-space(text())='add_2']] | (//button[.//i[normalize-space(.)='add_2']])", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-          if (xr.singleNodeValue) return xr.singleNodeValue;
-        } catch {}
-        for (const b of document.querySelectorAll('button')) { const i = b.querySelector('i'); if (i && (i.textContent.trim()==='add_2'||i.textContent.trim()==='add')) return b; }
-        return null;
-      })()`
+      // 버튼 파인더는 flow-new-project-button.js 가 소유한다 — 옛(<i>add_2</i>)·새(flow.google.com
+      //   material-symbols add FAB) 마크업을 둘 다 알고, jsdom 테스트로 고정돼 있다.
+      const addBtnSelector = FIND_NEW_PROJECT_BUTTON_JS
       // #R15-6/#R16-2: 클릭 "전"에 project id 를 기록한다(클릭 후 빠른 네비로 이미 새 id 가 떠
       //   preId 가 새 id 가 되면 루프가 영원히 다른 id 를 기다린다). 클릭 성공도 요구한다.
       //   (home 이 직전 프로젝트로 리다이렉트돼 있으면 stale id 를 잘못 바인딩할 수 있다.)

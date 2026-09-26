@@ -11,7 +11,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: { saveVideo: vi.fn() },
 }))
 
-import { recoverInFlightVideos, retryVideoDownload } from '../../src/services/videoRecovery'
+import { downloadAndSaveVideo, recoverInFlightVideos, retryVideoDownload } from '../../src/services/videoRecovery'
 
 let authEvents
 const onAuthExpired = () => authEvents.push(1)
@@ -114,6 +114,65 @@ describe('recoverInFlightVideos — cross-engine guard (#R34-1)', () => {
 })
 
 describe('retryVideoDownload — authFailed (#R24-3)', () => {
+  // M2-R3 H5(A5/B3): kind 를 동반한 authFailed(main 의 flow-session-missing 게이트 격상·읽기 RPC 401/16 → flow-rpc-error)의 error 는 기계 토큰이다 — 그대로 항목에 쓰면
+  //   resolveDisplayError(errorKind:'auth' → error 그대로) 가 표에 raw 토큰을 그린다. 훅의 authFailureText 와 같은 규칙: kind 동반이면 인증 안내 문구(호출자가
+  //   authErrorText 로 준 문자열/함수, 없으면 기본 문구), kind 없는 옛 결과는 error 그대로. 결과에도 errorKind:'auth' 를 실어 훅이 같은 규칙으로 상태 문구를 만든다.
+  const AUTH_TEXT = 'Auth error. Please login to Flow and try again.'
+  it.each([
+    ['문자열', AUTH_TEXT],
+    ['함수', () => AUTH_TEXT],
+  ])('kind 동반 authFailed(flow-session-missing) + authErrorText(%s) → 패치·결과의 error 는 인증 문구, errorKind:auth, raw 토큰 없음', async (_l, authErrorText) => {
+    const onUpdate = vi.fn()
+    const genAPI = {
+      checkVideoStatus: vi.fn().mockResolvedValue({ success: false, authFailed: true, errorKind: 'flow-session-missing', error: 'flow-session-missing' }),
+      downloadVideo: vi.fn(),
+    }
+    const res = await retryVideoDownload({ item: { id: 'vscene_1', generationId: 'g1', mediaId: 'g1' }, genAPI, onUpdate, projectName: 'p', authErrorText })
+    expect(res).toEqual({ success: false, error: AUTH_TEXT, authFailed: true, errorKind: 'auth' })
+    expect(genAPI.downloadVideo).not.toHaveBeenCalled()
+    const [, status, patch] = onUpdate.mock.calls.at(-1)
+    expect(status).toBe('error')
+    expect(patch).toMatchObject({ error: AUTH_TEXT, errorKind: 'auth' })
+    expect(JSON.stringify([res, patch])).not.toMatch(/flow-session-missing|flow-rpc-error|wiz-missing/)
+  })
+
+  it('kind 동반 authFailed 인데 authErrorText 가 없으면 기본 인증 문구 — raw 토큰은 절대 아니다', async () => {
+    const onUpdate = vi.fn()
+    const genAPI = { checkVideoStatus: vi.fn().mockResolvedValue({ success: false, authFailed: true, errorKind: 'flow-rpc-error', error: 'flow-rpc-error', rpcStatus: 401 }), downloadVideo: vi.fn() }
+    const res = await retryVideoDownload({ item: { id: 'vscene_1', generationId: 'g1', mediaId: 'g1' }, genAPI, onUpdate, projectName: 'p' })
+    expect(res).toMatchObject({ success: false, authFailed: true, errorKind: 'auth', error: 'Auth expired — please re-login to Flow' })
+    const [, , patch] = onUpdate.mock.calls.at(-1)
+    expect(patch).toMatchObject({ error: 'Auth expired — please re-login to Flow', errorKind: 'auth' })
+    expect(JSON.stringify([res, patch])).not.toContain('flow-rpc-error')
+  })
+
+  // main 병합(리뷰 A F2): API provider 의 errorKind:'auth' 는 사람 메시지를 싣는다 — 인증 안내로 덮지 않는다(어느 provider 키인지 보이게).
+  it("API provider 분류(errorKind 'auth') authFailed 는 provider 메시지 그대로 — authErrorText 로 덮지 않는다", async () => {
+    const onUpdate = vi.fn()
+    const genAPI = { checkVideoStatus: vi.fn().mockResolvedValue({ success: false, authFailed: true, errorKind: 'auth', error: 'Invalid xAI API key' }), downloadVideo: vi.fn() }
+    const res = await retryVideoDownload({ item: { id: 'vscene_1', generationId: 'gen:v1:grok-handle', mediaId: 'media-grok' }, genAPI, onUpdate, projectName: 'p', authErrorText: AUTH_TEXT })
+    expect(res).toMatchObject({ success: false, authFailed: true, error: 'Invalid xAI API key' })
+    expect(onUpdate.mock.calls.at(-1)[2]).toMatchObject({ error: 'Invalid xAI API key', errorKind: 'auth' })
+  })
+
+  // 리뷰 A R2-3: API(useGenAPI.checkVideoStatus)의 키 거부는 {success:true, statuses, authFailed:true} — error·kind 가 없다. Flow 기본 문구
+  //   ("re-login to Flow") 대신 호출자의 모드별 인증 문구(authErrorText)를 쓴다.
+  it('error·kind 없는 authFailed(API 키 거부)는 호출자의 인증 문구를 쓴다 — Flow 기본 문구가 아니다', async () => {
+    const onUpdate = vi.fn()
+    const genAPI = { checkVideoStatus: vi.fn().mockResolvedValue({ success: true, statuses: [], authFailed: true }), downloadVideo: vi.fn() }
+    const res = await retryVideoDownload({ item: { id: 'vscene_1', generationId: 'models/veo/operations/x', mediaId: 'm1' }, genAPI, onUpdate, projectName: 'p', authErrorText: 'API key was rejected.' })
+    expect(res).toMatchObject({ success: false, authFailed: true, error: 'API key was rejected.' })
+    expect(onUpdate.mock.calls.at(-1)[2]).toMatchObject({ error: 'API key was rejected.', errorKind: 'auth' })
+  })
+
+  it('kind 없는 옛 authFailed 결과는 error 그대로이고 결과에 errorKind 가 없다(회귀 없음)', async () => {
+    const onUpdate = vi.fn()
+    const genAPI = { checkVideoStatus: vi.fn().mockResolvedValue({ success: true, statuses: [], authFailed: true, error: 'Auth expired — please re-login to Flow' }), downloadVideo: vi.fn() }
+    const res = await retryVideoDownload({ item: { id: 'vscene_1', generationId: 'g1', mediaId: 'g1' }, genAPI, onUpdate, projectName: 'p', authErrorText: AUTH_TEXT })
+    expect(res).toEqual({ success: false, error: 'Auth expired — please re-login to Flow', authFailed: true })
+    expect(onUpdate.mock.calls.at(-1)[2]).toMatchObject({ error: 'Auth expired — please re-login to Flow', errorKind: 'auth' })
+  })
+
   it('reports auth error (not "Generation expired") + fires flow-login-expired', async () => {
     const onUpdate = vi.fn()
     const genAPI = {
@@ -139,5 +198,27 @@ describe('retryVideoDownload — authFailed (#R24-3)', () => {
     expect(patch.errorKind).toBe('auth')
     // must NOT report the wrong "Generation expired — please regenerate" path
     expect(patch.error).not.toMatch(/generation expired/i)
+  })
+})
+
+describe('videoRecovery — provider-aware download', () => {
+  it('D1: recovery download가 item generationId를 downloadVideo에 전달', async () => {
+    const downloadVideo = vi.fn().mockResolvedValue({ success: true, base64: 'VIDEO' })
+
+    await downloadAndSaveVideo({
+      mediaId: 'media-grok',
+      videoUrl: 'https://cdn/grok/video.mp4',
+      item: { id: 'fp_1', generationId: 'gen:v1:grok-handle' },
+      projectName: 'p',
+      saveMode: 'memory',
+      videoResolution: '1080p',
+      downloadVideo,
+    })
+
+    expect(downloadVideo).toHaveBeenCalledWith(
+      'https://cdn/grok/video.mp4',
+      '1080p',
+      'gen:v1:grok-handle',
+    )
   })
 })

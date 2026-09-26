@@ -328,7 +328,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           } else {
             if (getScopeToken() === renameStartScope) markFailed()
             toast.error(t('reference.flowRenameFailed', {
-              error: resolveDisplayError(t, res?.errorKind, res?.error || 'unknown'),
+              error: resolveDisplayError(t, res?.errorKind, res?.error || 'unknown', res?.errorParams),
             }))
           }
         } catch (e) {
@@ -461,7 +461,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       if (res.ok) toast.success(t('reference.flowSyncSuccess', { name: refSnapshot.name }))
       else {
         toast.error(t('reference.flowSyncFailed', {
-          error: resolveDisplayError(t, res.errorKind, res.error || 'unknown'),
+          error: resolveDisplayError(t, res.errorKind, res.error || 'unknown', res.errorParams),
         }))
       }
       // 등록 자체가 실패했어도 entity 가 생성됐다면 목록 캐시 갱신을 위해 재진입한다.
@@ -760,7 +760,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           </div>
 
           {/* 에러 정보 (생성 실패 시에만 노출) */}
-          <ErrorSection error={editData.errorMessage || editData.error} errorKind={editData.errorKind} />
+          <ErrorSection error={editData.errorMessage || editData.error} errorKind={editData.errorKind} errorParams={editData.errorParams} />
         </div>
 
         {/* 오른쪽: 히스토리 */}

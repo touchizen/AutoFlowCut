@@ -384,7 +384,7 @@ export default function VideoDetailModal({
           </div>
 
           {/* 에러 정보 (생성 실패 시에만 노출) */}
-          <ErrorSection error={video.error} errorKind={video.errorKind} />
+          <ErrorSection error={video.error} errorKind={video.errorKind} errorParams={video.errorParams} />
         </div>
 
         {/* History Column */}

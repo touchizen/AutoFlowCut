@@ -22,3 +22,35 @@ export function computeOffscreenBounds(displays, winX, width, height) {
   }
   return { x: Math.round(maxRight - (winX || 0)) + 200, y: 0, width, height }
 }
+
+/** DOM 자동화가 요구하는 최소 뷰 크기. 2026-09-25 실기: flow.google.com 은 597px 폭(Material handset 분기점 600 미만)
+ *  에서 에이전트 칩 등 컴포저 컨트롤을 아예 렌더하지 않았고 957px 에선 정상이었다. 700 은 600 위 여유, 957 아래. */
+export const AUTOMATION_MIN_WIDTH = 700
+export const AUTOMATION_MIN_HEIGHT = 600
+
+/** 이 bounds 로는 DOM 자동화(에이전트 칩·설정 패널·편집기 주입)를 믿을 수 없나 — 숨음(0×0/없음) 또는 좁음. 순수. */
+export function needsAutomationViewport(bounds) {
+  if (!bounds) return true
+  const w = Number(bounds.width) || 0
+  const h = Number(bounds.height) || 0
+  return w < AUTOMATION_MIN_WIDTH || h < AUTOMATION_MIN_HEIGHT
+}
+
+/** 화면 밖 자동화 뷰포트 크기 — 창 콘텐츠 크기 이상, 최소값 이상. 순수. */
+export function automationViewportSize(contentBounds) {
+  const w = Number(contentBounds && contentBounds.width) || 0
+  const h = Number(contentBounds && contentBounds.height) || 0
+  return { width: Math.max(w, AUTOMATION_MIN_WIDTH), height: Math.max(h, AUTOMATION_MIN_HEIGHT) }
+}
+
+
+/**
+ * 창 **안** 제자리 자동화 뷰포트(x=0,y=0, 창 콘텐츠 크기 이상·최소값 이상). 순수.
+ *   2026-09-25 M2 실기: 화면 밖(x=1760) 1200×872 로 옮겨도 페이지 innerWidth 가 597 그대로 — 완전히 화면 밖인 뷰는
+ *   Chromium 이 다시 레이아웃하지 않아 에이전트 칩이 안 그려졌다(ensureAgentOff not_found). 보이는 뷰(957px)는 실기 통과.
+ *   DOM 단계 몇 초 동안 Flow 뷰가 앱 UI 를 덮고, finally 의 updateBounds 가 레이아웃으로 되돌린다.
+ */
+export function computeInPlaceBounds(contentBounds) {
+  const size = automationViewportSize(contentBounds)
+  return { x: 0, y: 0, width: size.width, height: size.height }
+}

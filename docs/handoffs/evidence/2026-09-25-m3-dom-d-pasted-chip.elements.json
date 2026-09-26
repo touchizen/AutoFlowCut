@@ -1,0 +1,2359 @@
+{
+ "url": "https://flow.google.com/project/<uuid#1>",
+ "title": "Google Flow - 9월 23 - 17:37",
+ "elements": [
+  {
+   "tag": "div",
+   "class": "glue-cookie-notification-bar",
+   "id": "glue-cookie-notification-bar-1",
+   "aria-hidden": "true",
+   "aria-labelledby": "glue-cookie-notification-bar-1-label",
+   "inert": "true",
+   "role": "region",
+   "data-nosnippet": "",
+   "tabindex": "-1",
+   "text": "flow.google.com 은(는) 서비스 제공 및 서비스 품질 개선과 트래픽 분석을 위해 쿠키를 사용합니다. 동의 시 광고를 게재하고 표시되",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "href": "https://policies.google.com/technologies/cookies?hl=ko",
+   "class": "glue-cookie-notification-bar__more",
+   "rel": "noopener",
+   "aria-describedby": "glue-cookie-notification-bar-1-label",
+   "target": "_blank",
+   "aria-label": "Google에서 쿠키를 사용하는 방법을 자세히 알아보세요. 새 탭에서 열립니다.",
+   "text": "자세히 알아보세요",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "class": "glue-cookie-notification-bar__accept",
+   "text": "동의함",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "class": "glue-cookie-notification-bar__reject",
+   "text": "나중에",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "class": "skip-to-content-link",
+   "href": "#main-content",
+   "text": "Skip to main content",
+   "icons": [],
+   "rect": {
+    "x": 8,
+    "y": -1022,
+    "w": 182,
+    "h": 42
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c1731092006": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger back-button mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "홈",
+   "text": "home",
+   "icons": [
+    "home"
+   ],
+   "rect": {
+    "x": 20,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "input",
+   "_ngcontent-ng-c1359095025": "",
+   "type": "text",
+   "aria-label": "수정 가능한 텍스트",
+   "class": "editable-text-input",
+   "size": "14",
+   "placeholder": "",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 68,
+    "y": 25,
+    "w": 40,
+    "h": 26
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c38631500": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger more-options-button mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "프로젝트 옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-2",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 108,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c1843585962": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger icon-button-inside-search-input search-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "검색",
+   "text": "search",
+   "icons": [
+    "search"
+   ],
+   "rect": {
+    "x": 152,
+    "y": 21,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "input",
+   "_ngcontent-ng-c1843585962": "",
+   "type": "text",
+   "aria-label": "검색",
+   "class": "search-input",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 192,
+    "y": 25,
+    "w": 382,
+    "h": 26
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c1843585962": "",
+   "cdkoverlayorigin": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger filter-button mat-unthemed flow-icon-button-primary flow-button-small flow-icon-button-no-touch-target",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "필터링 및 정렬 옵션",
+   "aria-expanded": "false",
+   "text": "filter_list",
+   "icons": [
+    "filter_list"
+   ],
+   "rect": {
+    "x": 586,
+    "y": 18,
+    "w": 42,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c38631500": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "mattooltip": "미디어 추가",
+   "aria-label": "미디어 메뉴 추가",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-3",
+   "cdk-describedby-host": "ng-1",
+   "text": "add",
+   "icons": [
+    "add"
+   ],
+   "rect": {
+    "x": 628,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c38631500": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "mattooltip": "제품 도움말",
+   "aria-label": "제품 도움말",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "text": "help",
+   "icons": [
+    "help"
+   ],
+   "rect": {
+    "x": 674,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c38631500": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "mattooltip": "설정 보기",
+   "aria-label": "타일 그리드 설정",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-8",
+   "cdk-describedby-host": "ng-1",
+   "text": "settings_2",
+   "icons": [
+    "settings_2"
+   ],
+   "rect": {
+    "x": 720,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "maticonbutton": "",
+   "flow-icon-button": "",
+   "aria-label": "옵션 더보기",
+   "mattooltip": "옵션 더보기",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 766,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c3772024091": "",
+   "role": "button",
+   "tabindex": "0",
+   "aria-label": "계정 세부정보",
+   "class": "header-user-button has-tier",
+   "text": "PRO",
+   "icons": [],
+   "rect": {
+    "x": 818,
+    "y": 14,
+    "w": 107,
+    "h": 48
+   }
+  },
+  {
+   "tag": "a",
+   "class": "gb_C gb_9a gb_8",
+   "aria-expanded": "false",
+   "aria-label": "Google 계정: <account-name>  \n(<email>)",
+   "href": "https://accounts.google.com/SignOutOptions?hl=ko&continue=https://flow.google.com/project/<uuid#1>&ec=GBRA7QU",
+   "tabindex": "0",
+   "role": "button",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 876,
+    "y": 18,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "a",
+   "_ngcontent-ng-c2038856279": "",
+   "mat-list-item": "",
+   "routerlinkactive": "",
+   "class": "mat-mdc-list-item mdc-list-item mat-mdc-tooltip-trigger mat-mdc-list-item-interactive mdc-list-item--with-leading-icon mat-mdc-tooltip-disabled mat-mdc-list-item-single-line mdc-list-item--with-one-line",
+   "aria-disabled": "false",
+   "href": "/project/<uuid#1>/tools",
+   "text": "apps_spark_2도구",
+   "icons": [
+    "apps_spark_2"
+   ],
+   "rect": {
+    "x": 16,
+    "y": 405,
+    "w": 215,
+    "h": 48
+   }
+  },
+  {
+   "tag": "a",
+   "_ngcontent-ng-c2038856279": "",
+   "mat-list-item": "",
+   "flow-trash-drop-zone": "",
+   "class": "mat-mdc-list-item mdc-list-item mat-mdc-tooltip-trigger trash-item mat-mdc-list-item-interactive mdc-list-item--with-leading-icon mat-mdc-tooltip-disabled mat-mdc-list-item-single-line mdc-list-item--with-one-line",
+   "aria-disabled": "false",
+   "text": "delete휴지통",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 16,
+    "y": 873,
+    "w": 215,
+    "h": 48
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c38631500": "",
+   "cdkvirtualscrollingelement": "",
+   "tabindex": "0",
+   "class": "cdk-virtual-scrollable page-container",
+   "text": "favoritemore_vertimageimage.pngfavoriteredomore_vertimageKing standing in palace",
+   "icons": [
+    "favorite",
+    "more_vert",
+    "image",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "favorite",
+    "more_vert",
+    "image",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "play_circle",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image",
+    "favorite",
+    "redo",
+    "more_vert",
+    "image"
+   ],
+   "rect": {
+    "x": 232,
+    "y": 0,
+    "w": 717,
+    "h": 1022
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 681,
+    "y": 88,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 711,
+    "y": 88,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageimage.png",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 327,
+    "w": 81,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 88,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 88,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 88,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageKing standing in palace hall",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 779,
+    "y": 327,
+    "w": 134,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 681,
+    "y": 385,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 711,
+    "y": 385,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageking.jpg",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 624,
+    "w": 66,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 385,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 385,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 385,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circlePotato crisp landing on stack",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 779,
+    "y": 624,
+    "w": 134,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 305,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 335,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 365,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imagePotato crisp falling on stack",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 919,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 479,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 509,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 539,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circlePotato crisp cans rise on surfac…",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 433,
+    "y": 919,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 652,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 682,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 712,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circleGamer eating potato crisp",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 607,
+    "y": 919,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 682,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imagePotato crisp landing on stack",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 780,
+    "y": 919,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 305,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 335,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 365,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imagePotato crisp cans rising into fr…",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 1215,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 479,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 509,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 539,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circleHand opening potato crisp can",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 433,
+    "y": 1215,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 652,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 682,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 712,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circlePotato crisp falling on stack",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 607,
+    "y": 1215,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 977,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circlePotato crisp cans rising into fr…",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 780,
+    "y": 1215,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 305,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 335,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 365,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circleCamera entering potato crisp can",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 1510,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 479,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 509,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 539,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circleHand opening potato crisp can",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 433,
+    "y": 1510,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 652,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 682,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 712,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageGamer eating potato crisp",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 607,
+    "y": 1510,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 1273,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circleGamer eating potato crisp",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 780,
+    "y": 1510,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 305,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 335,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 365,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circleCrisp cans rise into frame",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 1806,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 479,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 509,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 539,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circleMan eating potato crisp",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 433,
+    "y": 1806,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 652,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 682,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 712,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "play_circleWoman eating potato crisp",
+   "icons": [
+    "play_circle"
+   ],
+   "rect": {
+    "x": 607,
+    "y": 1806,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 825,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 855,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 885,
+    "y": 1568,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageMan eating potato crisp",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 780,
+    "y": 1806,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 305,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 335,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 365,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageWoman eating potato crisp",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 260,
+    "y": 2101,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 479,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 509,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 539,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageCamera pushes into potato crisps",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 433,
+    "y": 2101,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "즐겨찾기",
+   "text": "favorite",
+   "icons": [
+    "favorite"
+   ],
+   "rect": {
+    "x": 652,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "프롬프트 재사용",
+   "text": "redo",
+   "icons": [
+    "redo"
+   ],
+   "rect": {
+    "x": 682,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "flowhotbarbutton": "",
+   "type": "button",
+   "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+   "_nghost-ng-c1490573664": "",
+   "aria-label": "옵션 더보기",
+   "aria-haspopup": "menu",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-7",
+   "cdk-describedby-host": "ng-1",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 712,
+    "y": 1864,
+    "w": 28,
+    "h": 28
+   }
+  },
+  {
+   "tag": "div",
+   "_ngcontent-ng-c648430393": "",
+   "tabindex": "0",
+   "role": "button",
+   "cdkoverlayorigin": "",
+   "class": "footer-left",
+   "text": "imageHand opening potato crisp can",
+   "icons": [
+    "image"
+   ],
+   "rect": {
+    "x": 607,
+    "y": 2101,
+    "w": 133,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c2833433460": "",
+   "cdkoverlayorigin": "",
+   "class": "chip-container",
+   "aria-label": "소재",
+   "aria-busy": "false",
+   "text": "cancel",
+   "icons": [
+    "cancel"
+   ],
+   "rect": {
+    "x": 198,
+    "y": 843,
+    "w": 50,
+    "h": 50
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c2613749729": "",
+   "mat-icon-button": "",
+   "type": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger clear-button clear-button-no-touch-target mat-unthemed",
+   "mat-ripple-loader-uninitialized": "",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "프롬프트 지우기",
+   "text": "close",
+   "icons": [
+    "close"
+   ],
+   "rect": {
+    "x": 738,
+    "y": 839,
+    "w": 32,
+    "h": 32
+   }
+  },
+  {
+   "tag": "div",
+   "contenteditable": "true",
+   "translate": "no",
+   "class": "ProseMirror",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 198,
+    "y": 909,
+    "w": 564,
+    "h": 20
+   }
+  },
+  {
+   "tag": "button",
+   "maticonbutton": "",
+   "type": "button",
+   "aria-haspopup": "true",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger add-menu-trigger mat-unthemed",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "aria-label": "프롬프트 상자에 소재 추가",
+   "aria-expanded": "false",
+   "aria-describedby": "cdk-describedby-message-ng-1-5",
+   "cdk-describedby-host": "ng-1",
+   "text": "add",
+   "icons": [
+    "add"
+   ],
+   "rect": {
+    "x": 190,
+    "y": 949,
+    "w": 32,
+    "h": 32
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c3982074850": "",
+   "class": "agent-mode-chip",
+   "aria-pressed": "false",
+   "text": "에이전트",
+   "icons": [],
+   "rect": {
+    "x": 232,
+    "y": 951,
+    "w": 70,
+    "h": 28
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c2613749729": "",
+   "matbutton": "",
+   "flow-button": "",
+   "aria-label": "설정 트리거",
+   "cdkoverlayorigin": "",
+   "class": "mdc-button mat-mdc-button-base settings-trigger-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-small flow-button-no-touch-target",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "text": "🍌 Nano Banana 2 crop_9_16 x1",
+   "icons": [
+    "crop_9_16"
+   ],
+   "rect": {
+    "x": 577,
+    "y": 949,
+    "w": 157,
+    "h": 32
+   }
+  },
+  {
+   "tag": "button",
+   "_ngcontent-ng-c4088038156": "",
+   "flow-icon-button": "",
+   "maticonbutton": "",
+   "type": "submit",
+   "aria-label": "생성 시작",
+   "cdkoverlayorigin": "",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base generate-icon-button mat-unthemed flow-icon-button-secondary flow-button-small flow-icon-button-no-touch-target mat-mdc-button-disabled",
+   "mat-ripple-loader-class-name": "mat-mdc-button-ripple",
+   "mat-ripple-loader-centered": "",
+   "disabled": "true",
+   "text": "arrow_forward",
+   "icons": [
+    "arrow_forward"
+   ],
+   "rect": {
+    "x": 738,
+    "y": 949,
+    "w": 32,
+    "h": 32
+   }
+  },
+  {
+   "tag": "textarea",
+   "id": "g-recaptcha-response-100000",
+   "name": "g-recaptcha-response",
+   "class": "g-recaptcha-response",
+   "style": "width: 250px; height: 40px; border: 1px solid rgb(193, 193, 193); margin: 10px 25px; padding: 0px; resize: none; display: none;",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  }
+ ],
+ "chipImages": [
+  {
+   "src": "https://flow-content.google/image/<uuid#3>?Expires=1790338800&KeyName=labs-flow-prod-cdn-key&Signature=<sig>",
+   "hasName": false,
+   "alt": "소재 이미지",
+   "naturalWidth": 1376,
+   "naturalHeight": 768,
+   "rect": {
+    "x": 198,
+    "y": 843,
+    "w": 50,
+    "h": 50
+   },
+   "parentTestid": null
+  }
+ ]
+}

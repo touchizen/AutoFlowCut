@@ -26,7 +26,10 @@ import { fileSystemAPI } from './useFileSystem'
 import { normalizeTagKey, splitTags } from '../utils/tagMatch'
 import { resolveMentions } from '../utils/mentionParser'
 import { isStyleReference } from '../services/styleService'
+import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
+import { toast } from '../components/Toast'
 import { hasImageData } from '../utils/formatters'
+import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'
 
 // snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
@@ -167,14 +170,27 @@ export function useScenes() {
    * - 옛 형식: 기존 mergeCSVIntoScenes (CSV에 채워진 필드만 덮어쓰기)
    *
    * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
+   * @param {object} [options]
+   * @param {object} [options.generationSettings] - model-only override 검증에 쓸 현재 설정
+   * @returns {Array} merged scenes. 수집된 경고는 비열거형 `warnings` 배열로 제공.
    */
-  const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration, framePairs = []) => {
+  const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration, framePairs = [], options = {}) => {
     let merged
+    const warnings = []
+    const finish = (result) => {
+      Object.defineProperty(result, 'warnings', {
+        value: [...warnings],
+        enumerable: false,
+      })
+      if (warnings.length > 0) toast.warning(warnings.join('\n'))
+      return result
+    }
 
     if (isNewSceneCSVFormat(csvText)) {
       const parsed = parseSceneCSVToTracks(csvText, {
         allocateSceneId,
         defaultDuration,
+        warnings,
       })
       // C6 + R5 review fix: 기존 씬의 런타임 필드를 보존하되, 매칭 키는 CSV scene 번호
       // (_sceneNum). prev 에 _sceneNum 있는 씬이 하나라도 있으면 sceneNum 매칭만
@@ -190,44 +206,21 @@ export function useScenes() {
         const existing = prevByNum.get(parsedScene._sceneNum)
           || (prevHasSceneNums ? null : prev[i])
         if (!existing) return parsedScene
+        const generationMerge = mergeSceneGeneration(
+          existing.generation,
+          parsedScene.generation,
+          options.generationSettings,
+        )
+        warnings.push(...generationMerge.warnings)
         return {
           ...parsedScene,
+          generation: generationMerge.generation,
+          // CSV 에 없는 런타임 필드(이미지·영상 결과 포인터, 진행·선택 상태, 생성 메타)는 기존 값 — MCP load_csv 와 같은 목록
+          //   (src/utils/csvPreservedSceneFields). 진행 중 T2V 의 status·generationId·타이머를 잃으면 reload 뒤 재제출(중복 quota)·
+          //   타이머 0:00, 생성 메타를 잃으면 이미지 탭 모델명이 사라진다(2026-09-26 실기).
+          ...pickPreservedSceneFields(existing),
           id: existing.id, // 안정 ID 유지
-          image: existing.image,
-          imagePath: existing.imagePath,
           status: existing.status || parsedScene.status,
-          mediaId: existing.mediaId,
-          generatingStartedAt: existing.generatingStartedAt,
-          image_size: existing.image_size,
-          generatedAt: existing.generatedAt,
-          upscaledAt: existing.upscaledAt,
-          donePrompt: existing.donePrompt, // 생성 기준 스냅샷 — 되돌림 done 복원이 CSV 왕복에도 유지
-          // 비디오 관련 런타임 필드도 보존
-          videoT2V: existing.videoT2V,
-          videoT2VPath: existing.videoT2VPath,
-          videoI2V: existing.videoI2V,
-          videoI2VPath: existing.videoI2VPath,
-          videoT2VDuration: existing.videoT2VDuration,
-          videoI2VDuration: existing.videoI2VDuration,
-          // per-clip export 토글 — 재파싱에도 보존
-          videoT2VDisabled: existing.videoT2VDisabled,
-          videoI2VDisabled: existing.videoI2VDisabled,
-          // T2V 런타임 상태 — CSV 에는 안 실리는 항목들. 재파싱이 진행 중 generation/recovery/선택을 깨지 않도록 보존.
-          //   - videoT2VStatus: ResultsTable 이 status === 'generating' 일 때만 타이머를 렌더 → 잃으면 타이머가 사라짐.
-          //   - videoT2VMediaId / videoT2VGenerationId: videoRecovery 가 in-flight 분류에 사용 → 잃으면 reload 후 재제출(중복 quota).
-          //   - videoT2VSelected: 단순 UI 선택 상태인데 재파싱으로 리셋되면 사용자 의도가 사라짐.
-          //   - videoT2VGeneratingStartedAt/EndedAt: 위의 status 와 짝 — status 만 살리고 timestamp 잃으면 0:00 회귀.
-          videoT2VStatus: existing.videoT2VStatus,
-          videoT2VMediaId: existing.videoT2VMediaId,
-          videoT2VGenerationId: existing.videoT2VGenerationId,
-          videoT2VSelected: existing.videoT2VSelected,
-          videoT2VGeneratingStartedAt: existing.videoT2VGeneratingStartedAt,
-          videoT2VGeneratingEndedAt: existing.videoT2VGeneratingEndedAt,
-          // I2V 생성 상태 — 타임라인 generating(빈칸+shimmer) 판정용. 재파싱 중 generation 상태 보존.
-          //   - videoI2VGeneratingStartedAt/EndedAt: status 와 짝 — status 만 살리고 timestamp 잃으면 0:00 회귀(T2V 와 동일).
-          videoI2VStatus: existing.videoI2VStatus,
-          videoI2VGeneratingStartedAt: existing.videoI2VGeneratingStartedAt,
-          videoI2VGeneratingEndedAt: existing.videoI2VGeneratingEndedAt,
         }
       })
       // R4 review fix: parseSceneCSVToTracks 가 row 별 start_time/end_time 절대값을
@@ -236,18 +229,22 @@ export function useScenes() {
       merged = trimTrailingEmptyScenes(mergedScenes, framePairs)
       setScenes(() => merged)
       setSrtTrack(parsed.srtTrack)
-      return merged
+      return finish(merged)
     }
 
     // 옛 형식: 동기 계산 후 양쪽 state 갱신 (batched-update deferral 회피)
     const prev = scenesRef.current
-    const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration, { allocateId: allocateSceneId })
+    const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration, {
+      allocateId: allocateSceneId,
+      generationSettings: options.generationSettings,
+      warnings,
+    })
     const trimmed = trimTrailingEmptyScenes(afterMerge, framePairs)
     const built = createSrtTrackFromScenes(trimmed)
     merged = recalculateTimesArr(built.scenes)
     setScenes(() => merged)
     setSrtTrack(built.srtTrack)
-    return merged
+    return finish(merged)
   }, [allocateSceneId])
 
   /**

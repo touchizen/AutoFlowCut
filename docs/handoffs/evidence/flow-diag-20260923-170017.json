@@ -1,0 +1,22 @@
+[
+  {
+    "step": "trusted-click:new-project",
+    "reason": "not-found",
+    "coords": null,
+    "viewBounds": {
+      "x": 0,
+      "y": 0,
+      "width": 957,
+      "height": 1022
+    },
+    "context": {
+      "innerWidth": 957,
+      "innerHeight": 1022,
+      "lang": "ko",
+      "url": "https://flow.google.com/",
+      "readyState": "complete",
+      "scopedToggleCount": 0,
+      "hasComposeEditor": false
+    }
+  }
+]

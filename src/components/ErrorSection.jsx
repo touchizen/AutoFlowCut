@@ -10,6 +10,7 @@
  *                  로 현재 로케일에서 메시지를 조회. 데이터 언어 독립을 위해 errorKind 만 저장하고
  *                  표시 시점에 번역하는 패턴.
  *   - errorKind 와 error 가 모두 주어지면 errorKind 우선 (번역된 메시지가 사용자 화면에 더 정확).
+ *   - errorParams: kind 별 고정 params(예: flow-resolution-not-offered 의 {requested}) — 번역문에 치환.
  *   - 둘 다 falsy 면 아무것도 렌더링하지 않는다.
  */
 
@@ -18,11 +19,11 @@ import { resolveDisplayError } from '../utils/errorDisplay'
 import { toast } from './Toast'
 import './ErrorSection.css'
 
-export default function ErrorSection({ error, errorKind, label, className = '' }) {
+export default function ErrorSection({ error, errorKind, errorParams, label, className = '' }) {
   const { t } = useI18n()
 
   // 공용 util — errorKind 우선, 알 수 없는 kind 일 때 raw 키가 새지 않도록 fallback 가드.
-  const displayError = resolveDisplayError(t, errorKind, error)
+  const displayError = resolveDisplayError(t, errorKind, error, errorParams)
 
   if (!displayError) return null
 

@@ -26,11 +26,13 @@ describe('M1 mention merge and reference exclusion integration', () => {
     }
     const references = [
       {
+        // M3(D15): 쓸 수 있음 = 로컬 이미지 — 옛 entity 동기화(entityId·synced)만으로는 더 이상 쓸 수 없다
         id: 'alice',
         name: 'Alice',
         type: 'character',
         entityId: 'entity-alice',
         flowNameSyncStatus: 'synced',
+        filePath: '/refs/alice.png',
         mediaId: null,
       },
       {

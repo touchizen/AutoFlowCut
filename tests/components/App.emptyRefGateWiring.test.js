@@ -156,7 +156,8 @@ describe('App empty reference gate wiring', () => {
     expect(emptyRefDepsFactory).toMatch(
       /buildEmptyRefGateDeps\(\{\s*source,/
     )
-    expect(handleStartImpl).toContain("const { force = false, source = 'ui' } = options")
+    // MCP start-scene-batch 의 mode:'video' 가 options.tab 으로 들어온다(useMcpServer) — source 핀은 유지.
+    expect(handleStartImpl).toContain("const { force = false, source = 'ui', tab: tabOverride = null } = options")
     expect(handleStartImpl).toContain('getEmptyRefGateDeps(source)')
     expect(tagProceed).toContain('getEmptyRefGateDeps(__startSource)')
   })

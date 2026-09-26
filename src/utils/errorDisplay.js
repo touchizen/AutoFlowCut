@@ -23,18 +23,20 @@
  * @param {(key: string, params?: object) => string} t  i18n translator (useI18n().t).
  * @param {string|null|undefined} errorKind  코드화된 에러 종류 (예: 'image-missing')
  * @param {string|null|undefined} error      자유 형식 에러 메시지
+ * @param {object} [errorParams]  kind 별 고정 params(예: flow-resolution-not-offered 의 {requested}) — t(key, params).
+ *                                번역문에 {…} 가 남으면(params 누락) free-form error 로 폴백한다(플레이스홀더 노출 금지).
  * @returns {string|null}  렌더링할 메시지. 둘 다 비어 있거나 어떤 메시지도
  *                         찾을 수 없으면 null (호출 측은 conditional render).
  */
-export function resolveDisplayError(t, errorKind, error) {
+export function resolveDisplayError(t, errorKind, error, errorParams) {
   if (errorKind === 'auth' && error) return error
   if (errorKind) {
     const key = `errorSection.kind.${errorKind}`
-    const translated = typeof t === 'function' ? t(key) : null
+    const translated = typeof t === 'function' ? t(key, errorParams || {}) : null
     // useI18n 의 t() 는 키가 없으면 key 자체를 그대로 반환 (`return value || key`).
     // 번역 결과가 key 와 같다는 것은 locale 에 등록되지 않은 errorKind 라는 뜻 →
     // raw 키 문자열을 UI 에 노출하지 않고 free-form error 로 떨어진다.
-    if (translated && translated !== key) return translated
+    if (translated && translated !== key && !/\{\w+\}/.test(translated)) return translated
   }
   return error || null
 }

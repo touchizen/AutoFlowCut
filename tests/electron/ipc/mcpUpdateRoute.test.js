@@ -51,6 +51,7 @@ describe('MCP /api/update renderer dispatch', () => {
     const main = fs.readFileSync(path.join(process.cwd(), 'electron/main.js'), 'utf8')
 
     expect(main).toContain("import { dispatchMcpUpdate, registerMcpIPC } from './ipc/mcp.js'")
-    expect(main).toContain('await dispatchMcpUpdate(mainWindow.webContents, data)')
+    // main 병합: 화이트리스트 판정(decideUpdateRequest)을 통과한 forward 만 dispatch 한다 — 400 이면 렌더러에 안 간다(mcpHttpParsers.test.js).
+    expect(main).toContain('await dispatchMcpUpdate(mainWindow.webContents, decided.forward)')
   })
 })

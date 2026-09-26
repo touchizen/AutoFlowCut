@@ -17,6 +17,8 @@ vi.mock('../../../src/hooks/useTtsKeys', () => ({
 }))
 
 import TtsApiKeyField from '../../../src/components/settings/TtsApiKeyField'
+import en from '../../../src/locales/en'
+import ko from '../../../src/locales/ko'
 
 const t = (k, vars) => (vars ? `${k}:${JSON.stringify(vars)}` : k)
 
@@ -28,7 +30,7 @@ describe('TtsApiKeyField (wrapper)', () => {
     toast.error.mockReset()
   })
 
-  it('save → saveKey called then input cleared', async () => {
+  it('unvalidated ElevenLabs save uses the shared unverified message', async () => {
     saveKey.mockResolvedValue({ success: true })
     render(<TtsApiKeyField provider="elevenlabs" label="ElevenLabs" getKeyUrl="https://x" t={t} />)
     const input = screen.getByPlaceholderText('settings.ttsKeyPlaceholder:{"label":"ElevenLabs"}')
@@ -36,14 +38,21 @@ describe('TtsApiKeyField (wrapper)', () => {
     fireEvent.click(screen.getByText('settings.ttsKeySave'))
     await vi.waitFor(() => expect(saveKey).toHaveBeenCalledWith('sk-abc'))
     await vi.waitFor(() => expect(input.value).toBe(''))
-    expect(toast.success).toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeySavedUnverified')
+    expect(toast.success).not.toHaveBeenCalledWith('settings.apiKeySaved')
+    expect(en.settings.apiKeySavedUnverified).toBe(
+      'API key saved (not verified — validated on first use)',
+    )
+    expect(ko.settings.apiKeySavedUnverified).toBe(
+      'API 키를 저장했습니다 (미검증 — 처음 사용할 때 검증됩니다)',
+    )
   })
 
   it('empty input → saveKey NOT called', () => {
     render(<TtsApiKeyField provider="elevenlabs" label="ElevenLabs" getKeyUrl="https://x" t={t} />)
     fireEvent.click(screen.getByText('settings.ttsKeySave'))
     expect(saveKey).not.toHaveBeenCalled()
-    expect(toast.error).toHaveBeenCalledWith('settings.ttsKeyEmpty')
+    expect(toast.error).toHaveBeenCalledWith('settings.apiKeyEmpty')
   })
 
   it('clearKey failure → error toast (not the unconditional success toast)', async () => {
@@ -51,7 +60,17 @@ describe('TtsApiKeyField (wrapper)', () => {
     render(<TtsApiKeyField provider="elevenlabs" label="ElevenLabs" getKeyUrl="https://x" t={t} />)
     fireEvent.click(screen.getByText('settings.ttsKeyRemove'))
     await vi.waitFor(() => expect(clearKey).toHaveBeenCalled())
-    await vi.waitFor(() => expect(toast.error).toHaveBeenCalled())
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith('settings.apiKeyRemoveFailed:{"error":"locked"}'))
     expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it('ElevenLabs remove uses the provider-neutral API key message', async () => {
+    clearKey.mockResolvedValue({ success: true })
+    render(<TtsApiKeyField provider="elevenlabs" label="ElevenLabs" getKeyUrl="https://x" t={t} />)
+
+    fireEvent.click(screen.getByText('settings.ttsKeyRemove'))
+
+    await vi.waitFor(() => expect(clearKey).toHaveBeenCalled())
+    expect(toast.success).toHaveBeenCalledWith('settings.apiKeyRemoved')
   })
 })

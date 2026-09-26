@@ -137,6 +137,46 @@ describe('T2V 런타임 필드 — CSV 재파싱 시 보존', () => {
     expect(s0.videoT2VGeneratingStartedAt).toBe(startedAt)
     expect(s0.videoT2VGeneratingEndedAt).toBeNull()
   })
+
+  it('D3/D4: CSV 재import 가 T2V provider와 appliedInputs를 generationId와 함께 보존한다', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.parseFromCSV(NEW_CSV_V1) })
+    const sceneId = result.current.scenes[0].id
+    const appliedInputs = { model: 'grok-imagine-video-1.5', resolution: '720p' }
+
+    act(() => {
+      result.current.updateScene(sceneId, {
+        videoT2VGenerationId: 'gen:v1:grok-handle',
+        videoT2VProvider: 'grok',
+        videoT2VAppliedInputs: appliedInputs,
+      })
+    })
+    act(() => { result.current.parseFromCSV(NEW_CSV_V2) })
+
+    const scene = result.current.scenes[0]
+    expect(scene.videoT2VGenerationId).toBe('gen:v1:grok-handle')
+    expect(scene.videoT2VProvider).toBe('grok')
+    expect(scene.videoT2VAppliedInputs).toBe(appliedInputs)
+  })
+})
+
+describe('생성 메타 — CSV 재파싱 시 보존(이미지 탭 모델명 · 영상 모델)', () => {
+  // 2026-09-26 실기: 이미지 탭 1~3번 씬 모델명이 사라졌다. MCP load_csv 경로와 같은 목록을 쓴다(src/utils/csvPreservedSceneFields).
+  it('새 형식 CSV 재import 가 model·seed·생성 시각과 videoT2VModel·Seed·GeneratedAt·SaveId 를 보존한다', () => {
+    const csv1 = `scene,prompt,video_t2v_prompt,subtitle\n1,"image A","video A","s1"`
+    const csv2 = `scene,prompt,video_t2v_prompt,subtitle\n1,"image A","video A","s1-edited"`
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.parseFromCSV(csv1) })
+    const id = result.current.scenes[0].id
+    const meta = {
+      model: 'Nano Banana 2', seed: 7, generatedAt: 111, generatingEndedAt: 222,
+      videoT2VModel: 'Omni Flash', videoT2VSeed: 9, videoT2VGeneratedAt: 333, videoT2VSaveId: 't2v_1',
+    }
+    act(() => { result.current.updateScene(id, meta) })
+    act(() => { result.current.parseFromCSV(csv2) })
+    expect(result.current.scenes[0].subtitle).toBe('s1-edited')
+    expect(result.current.scenes[0]).toMatchObject(meta)
+  })
 })
 
 describe('I2V 런타임 필드 — CSV 재파싱 시 보존', () => {

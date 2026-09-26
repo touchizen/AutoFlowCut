@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
+import { modelLabel, coerceImageModel, imageModelsForProvider, videoModelsForProvider, defaultImageModelForProvider, defaultVideoModelForProvider, listSupportedImageProviders, listSupportedVideoProviders, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
 import { FLOW_MODELS } from '../../src/engine/flowModels'
 
 describe('genModels — modelLabel', () => {
@@ -30,6 +30,185 @@ describe('genModels — modelLabel', () => {
     expect(modelLabel(null)).toBeNull()
     expect(modelLabel(undefined)).toBeNull()
     expect(modelLabel('')).toBeNull()
+  })
+})
+
+describe('genModels — provider-aware catalog (§5.12)', () => {
+  it('기존 Gemini 이미지 모델은 google/exact 메타데이터 유지', () => {
+    const geminiModels = IMAGE_MODELS.filter(m => m.id.startsWith('gemini-'))
+    expect(geminiModels).toHaveLength(3)
+    for (const model of geminiModels) {
+      expect(model.provider).toBe('google')
+      expect(model.aspectCapability).toBe('exact')
+    }
+  })
+
+  it('기존 Veo 비디오 모델은 google provider 메타데이터 유지', () => {
+    const veoModels = VIDEO_MODELS.filter((model) => model.provider === 'google')
+    expect(veoModels).toHaveLength(3)
+    for (const model of veoModels) expect(model.provider).toBe('google')
+  })
+
+  it('Grok Imagine 비디오 모델은 real-key gate 전 provisional 카탈로그다', () => {
+    const grok = VIDEO_MODELS.find((model) => model.id === 'grok-imagine-video-1.5')
+    expect(grok).toMatchObject({
+      id: 'grok-imagine-video-1.5',
+      label: 'Grok Imagine',
+      cost: '?',
+      unit: 'sec',
+      provider: 'grok',
+      provisional: true,
+      descKey: 'settings.modelVidGrok',
+    })
+    expect(modelLabel(grok.id)).toBe('Grok Imagine')
+  })
+
+  it('gpt-image-1 카탈로그 항목 (드롭다운 provider 필터와 함께 추가)', () => {
+    const gpt = IMAGE_MODELS.find(m => m.id === 'gpt-image-1')
+    expect(gpt).toMatchObject({ id: 'gpt-image-1', label: 'GPT Image', provider: 'openai', aspectCapability: 'approx' })
+    expect(modelLabel('gpt-image-1')).toBe('GPT Image')
+    expect(coerceImageModel('gpt-image-1')).toBe('gpt-image-1')
+  })
+
+  it('fal image/video models are provisional catalog entries until the M4 real-key smoke', () => {
+    const image = IMAGE_MODELS.find((model) => model.provider === 'fal')
+    const video = VIDEO_MODELS.find((model) => model.provider === 'fal')
+
+    expect(image).toMatchObject({
+      id: 'fal-ai/flux-pro/v1.1',
+      label: 'FLUX Pro 1.1 (fal)',
+      provider: 'fal',
+      provisional: true,
+      aspectCapability: 'exact',
+      descKey: 'settings.modelImgFalFlux',
+    })
+    expect(video).toMatchObject({
+      id: 'fal-ai/kling-video/v2.1/standard/image-to-video',
+      label: 'Kling 2.1 Standard (fal)',
+      provider: 'fal',
+      provisional: true,
+      descKey: 'settings.modelVidFalKling',
+    })
+    expect(modelLabel(image.id)).toBe('FLUX Pro 1.1 (fal)')
+    expect(modelLabel(video.id)).toBe('Kling 2.1 Standard (fal)')
+  })
+
+  it('WaveSpeed video model is a provisional M5 catalog entry', () => {
+    const video = VIDEO_MODELS.find((model) => model.provider === 'wavespeed')
+    expect(video).toMatchObject({
+      id: 'wavespeed-ai/wan-2.1/t2v-480p',
+      label: 'WaveSpeed WAN 2.1 T2V 480p',
+      cost: '?',
+      unit: 'sec',
+      provider: 'wavespeed',
+      provisional: true,
+      descKey: 'settings.modelVidWaveSpeedWan',
+    })
+    expect(modelLabel(video.id)).toBe('WaveSpeed WAN 2.1 T2V 480p')
+  })
+
+  it('Higgsfield video model is a provisional M6 catalog entry', () => {
+    const video = VIDEO_MODELS.find((model) => model.provider === 'higgsfield')
+    expect(video).toMatchObject({
+      id: 'higgsfield-ai/dop-turbo',
+      label: 'Higgsfield DoP Turbo',
+      cost: '?',
+      unit: 'sec',
+      provider: 'higgsfield',
+      provisional: true,
+      descKey: 'settings.modelVidHiggsfieldDopTurbo',
+    })
+    expect(modelLabel(video.id)).toBe('Higgsfield DoP Turbo')
+  })
+})
+
+describe('genModels — videoModelsForProvider + supported feature flag', () => {
+  it('google 선택 → Grok 제외, provider 없는 live extra는 google로 포함', () => {
+    const dynamic = [
+      ...VIDEO_MODELS,
+      { id: 'veo-future', label: 'Future Veo' },
+    ]
+    const list = videoModelsForProvider('google', dynamic)
+
+    expect(list.some((model) => model.id === 'grok-imagine-video-1.5')).toBe(false)
+    expect(list.some((model) => model.id === 'veo-future')).toBe(true)
+    expect(list.every((model) => (model.provider ?? 'google') === 'google')).toBe(true)
+  })
+
+  it('grok 선택 → live Google 목록과 무관하게 정적 Grok 항목만 반환', () => {
+    const list = videoModelsForProvider('grok', [
+      { id: 'veo-live', provider: 'google' },
+    ])
+    expect(list.map((model) => model.id)).toEqual(['grok-imagine-video-1.5'])
+  })
+
+  it('provider별 기본 video 모델을 반환한다', () => {
+    expect(defaultVideoModelForProvider()).toBe(DEFAULT_VIDEO_MODEL_ID)
+    expect(defaultVideoModelForProvider('google')).toBe(DEFAULT_VIDEO_MODEL_ID)
+    expect(defaultVideoModelForProvider('grok')).toBe('grok-imagine-video-1.5')
+    expect(defaultVideoModelForProvider('unknown')).toBe(null)
+  })
+
+  it('지원 목록은 모든 모델이 provisional인 Grok을 제외한다', () => {
+    expect(listSupportedVideoProviders()).toEqual(['google'])
+  })
+
+  it('fal video catalog remains resolvable while the supported list hides it', () => {
+    expect(videoModelsForProvider('fal', [])).toHaveLength(1)
+    expect(defaultVideoModelForProvider('fal')).toBe('fal-ai/kling-video/v2.1/standard/image-to-video')
+    expect(listSupportedVideoProviders()).not.toContain('fal')
+  })
+
+  it('wavespeed catalog resolves generically while all-provisional feature flag hides it', () => {
+    expect(videoModelsForProvider('wavespeed', []).map((model) => model.id)).toEqual([
+      'wavespeed-ai/wan-2.1/t2v-480p',
+    ])
+    expect(defaultVideoModelForProvider('wavespeed')).toBe('wavespeed-ai/wan-2.1/t2v-480p')
+    expect(listSupportedVideoProviders()).not.toContain('wavespeed')
+  })
+
+  it('higgsfield catalog resolves while all-provisional feature flag keeps it hidden', () => {
+    expect(videoModelsForProvider('higgsfield', []).map((model) => model.id)).toEqual([
+      'higgsfield-ai/dop-turbo',
+    ])
+    expect(defaultVideoModelForProvider('higgsfield')).toBe('higgsfield-ai/dop-turbo')
+    expect(listSupportedVideoProviders()).not.toContain('higgsfield')
+  })
+})
+
+describe('genModels — imageModelsForProvider (드롭다운 provider 필터, 누출 방지)', () => {
+  it('google 선택 → gpt-image(openai) 제외, gemini 만', () => {
+    const list = imageModelsForProvider('google', IMAGE_MODELS)
+    expect(list.every(m => m.provider === 'google')).toBe(true)
+    expect(list.some(m => m.id === 'gpt-image-1')).toBe(false)
+  })
+
+  it('google 선택 → 라이브 dynamic extra(provider 필드 없음)는 google 로 간주해 포함', () => {
+    const dynamic = [
+      { id: 'gemini-3.1-flash-image', label: 'NB2', provider: 'google' },
+      { id: 'gemini-9-flash-image', label: 'Future' }, // dynamic extra, provider 없음
+    ]
+    const list = imageModelsForProvider('google', dynamic)
+    expect(list.map(m => m.id)).toEqual(['gemini-3.1-flash-image', 'gemini-9-flash-image'])
+  })
+
+  it('openai 선택 → 정적 카탈로그의 openai 항목(gpt-image), 라이브 google 목록 무관', () => {
+    const dynamicGoogle = [{ id: 'gemini-3.1-flash-image', provider: 'google' }]
+    const list = imageModelsForProvider('openai', dynamicGoogle)
+    expect(list.map(m => m.id)).toEqual(['gpt-image-1'])
+  })
+
+  it('provider 미지정 → google 취급', () => {
+    const list = imageModelsForProvider(undefined, IMAGE_MODELS)
+    expect(list.some(m => m.id === 'gpt-image-1')).toBe(false)
+  })
+
+  it('fal image catalog remains resolvable while the supported list hides it', () => {
+    expect(imageModelsForProvider('fal', []).map((model) => model.id))
+      .toEqual(['fal-ai/flux-pro/v1.1'])
+    expect(defaultImageModelForProvider('fal')).toBe('fal-ai/flux-pro/v1.1')
+    expect(listSupportedImageProviders()).toEqual(['google', 'openai'])
+    expect(listSupportedImageProviders()).not.toContain('fal')
   })
 })
 
@@ -202,5 +381,94 @@ describe('genModels — computeModelHeal (권위 있는 목록으로 stale 저�
       { imageModel: 'gemini-9', videoModelT2V: 'x', videoModelF2V: 'y' },
     )
     expect(out).toEqual({})
+  })
+
+  it('OpenAI 이미지 provider는 Google 동적 목록으로 imageModel을 heal하지 않음', () => {
+    const googleImageModels = [
+      { id: 'gemini-2.5-flash-image' },
+      { id: DEFAULT_IMAGE_MODEL_ID },
+    ]
+    const out = computeModelHeal(
+      { imageModels: googleImageModels, videoModels: VIDEO_MODELS, source: 'dynamic' },
+      {
+        generation: { image: { provider: 'openai', model: 'gpt-image-1' } },
+        imageModel: 'gpt-image-1',
+        videoModelT2V: 'veo-3.1-fast-generate-preview',
+        videoModelF2V: 'veo-3.1-fast-generate-preview',
+      },
+    )
+
+    expect(out).not.toHaveProperty('imageModel')
+  })
+
+  it('generation 설정이 없으면 google provider로 간주해 기존 imageModel heal 유지', () => {
+    const googleImageModels = [
+      { id: 'gemini-2.5-flash-image' },
+      { id: DEFAULT_IMAGE_MODEL_ID },
+    ]
+    const out = computeModelHeal(
+      { imageModels: googleImageModels, videoModels: VIDEO_MODELS, source: 'dynamic' },
+      {
+        imageModel: 'stale-image-model',
+        videoModelT2V: 'veo-3.1-fast-generate-preview',
+        videoModelF2V: 'veo-3.1-fast-generate-preview',
+      },
+    )
+
+    expect(out.imageModel).toBe(DEFAULT_IMAGE_MODEL_ID)
+  })
+
+  it('video: 단계 provider 가 비-google(grok) 이면 그 단계 모델을 heal 안 함 (§5.12, M2-선행 grok 생존)', () => {
+    const googleVideoModels = [
+      { id: 'veo-3.1-fast-generate-preview' },
+      { id: 'veo-3.1-generate-preview' },
+    ]
+    const out = computeModelHeal(
+      { imageModels: IMAGE_MODELS, videoModels: googleVideoModels, source: 'dynamic' },
+      {
+        imageModel: 'gemini-3.1-flash-image',
+        videoModelT2V: 'grok-imagine-video-1.5',   // grok 모델
+        videoModelF2V: 'veo-3.1-generate-preview', // google 모델
+        generation: {
+          image: { provider: 'google' },
+          video: { t2v: { provider: 'grok' }, i2v: { provider: 'google' } },
+        },
+      },
+    )
+    // t2v provider=grok → heal 스킵(grok 모델 보존). i2v provider=google → 정상(이미 유효라 patch 없음)
+    expect(out).not.toHaveProperty('videoModelT2V')
+  })
+
+  it('video: 단계 provider 가 google 이면 stale 모델을 heal (기존 동작 유지)', () => {
+    const googleVideoModels = [{ id: 'veo-3.1-fast-generate-preview' }]
+    const out = computeModelHeal(
+      { imageModels: IMAGE_MODELS, videoModels: googleVideoModels, source: 'dynamic' },
+      {
+        imageModel: 'gemini-3.1-flash-image',
+        videoModelT2V: 'stale-video',
+        videoModelF2V: 'stale-video',
+        // generation.video 없음 → 기본 google → 기존 heal
+      },
+    )
+    expect(out.videoModelT2V).toBe('veo-3.1-fast-generate-preview')
+  })
+
+  it('Flow 모드는 google 전용 — openai provider 설정이 남아있어도 image heal 유지', () => {
+    // Flow 는 google 전용이라 provider 설정과 무관하게 heal(mode 우선, Fable F3 forward-guard)
+    const flowImageModels = [
+      { id: 'flow_nb2', label: 'Nano Banana 2' },
+      { id: 'flow_pro', label: 'Nano Banana Pro' },
+    ]
+    const out = computeModelHeal(
+      { imageModels: flowImageModels, videoModels: VIDEO_MODELS, source: 'flow-static' },
+      {
+        generation: { image: { provider: 'openai', model: 'gpt-image-1' } },
+        imageModel: 'stale-flow-image',
+        videoModelT2V: 'veo-3.1-fast-generate-preview',
+        videoModelF2V: 'veo-3.1-fast-generate-preview',
+      },
+      'flow',
+    )
+    expect(out.imageModel).toBe('flow_nb2') // Flow NB2 기본으로 heal (스킵 안 함)
   })
 })

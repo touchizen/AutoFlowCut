@@ -1,4 +1,5 @@
 import { buildVideoPromptScenes, VIDEO_REFERENCE_LIMIT } from '../utils/videoPromptReferences'
+import { sharedVideoStartOptions } from './videoStartOptions'
 
 export function prepareVideoTextStartScenes({
   videoScenes = [],
@@ -51,6 +52,11 @@ export function buildVideoTextStartPayload({
   const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
     ? settings.seedNo
     : null
+  const {
+    saveMode,
+    videoResolution,
+    ...trailingSharedOptions
+  } = sharedVideoStartOptions(settings)
 
   return {
     runningStyle: { styleId: effectiveStyleId, label: styleLabel, applies: true },
@@ -60,17 +66,11 @@ export function buildVideoTextStartPayload({
       scenes,
       seed,
       projectName,
-      // 화면비(설정>씬)는 이미지·비디오 공용 — 안 실으면 useVideoAutomation 이 하드코딩
-      //   기본값(VIDEO_ASPECT_RATIO_LANDSCAPE)으로 떨어져 9:16/16:9 선택이 무시된다.
-      //   값('9:16'/'16:9')은 Flow(aspectSuffix)·API(Veo) 양쪽에서 그대로 소비된다.
-      aspectRatio: settings.aspectRatio,
-      saveMode: settings.saveMode,
-      videoResolution: settings.videoResolution || '720p',
+      saveMode,
+      videoResolution,
       videoModel: settings.videoModelT2V,
-      videoBatchCount: settings.videoBatchCount || 1,
-      concurrency: settings.videoConcurrency || 4,
-      flowPacingMinMs: settings.flowPacingMinMs,
-      flowPacingMaxMs: settings.flowPacingMaxMs,
+      videoProvider: settings.generation?.video?.t2v?.provider ?? 'google',
+      ...trailingSharedOptions,
     },
   }
 }

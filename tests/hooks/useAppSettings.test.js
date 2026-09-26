@@ -98,6 +98,137 @@ describe('useAppSettings — 모델 id 보존 (동적 /models 모델 지원)', (
   })
 })
 
+describe('useAppSettings — 전역 image provider (M1 §5.8)', () => {
+  it('fresh install: generation.image.provider=google + modelsByProvider.google=기본모델', () => {
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.generation.image.provider).toBe('google')
+    expect(result.current.settings.modelsByProvider.google).toBe(DEFAULT_IMAGE_MODEL_ID)
+  })
+
+  it('마이그레이션: flat imageModel 만 있던 기존 설정 → provider=google, 그 모델을 google 슬롯에 시드, imageModel 보존', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ imageModel: 'gemini-3-pro-image' }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.generation.image.provider).toBe('google')
+    expect(result.current.settings.modelsByProvider.google).toBe('gemini-3-pro-image')
+    expect(result.current.settings.imageModel).toBe('gemini-3-pro-image') // 기존 consumer 하위호환
+  })
+
+  it('기존 nested 설정 보존(openai 선택 + 기억 모델)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      imageModel: 'gpt-image-1',
+      generation: { image: { provider: 'openai' } },
+      modelsByProvider: { google: 'gemini-3.1-flash-image', openai: 'gpt-image-1' },
+    }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.generation.image.provider).toBe('openai')
+    expect(result.current.settings.modelsByProvider.openai).toBe('gpt-image-1')
+    expect(result.current.settings.modelsByProvider.google).toBe('gemini-3.1-flash-image')
+  })
+
+  it('부분 nested(generation.image 만, provider 누락) → provider=google 로 채움', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ generation: { image: {} } }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.generation.image.provider).toBe('google')
+  })
+
+  it('nested generation.image.model 이 있으면 imageModel/슬롯 정합 (provider/model desync 방지)', () => {
+    // 스펙 shape: {provider:openai, model:gpt-image-1} 로드 시 imageModel 이 gemini 로 어긋나면 안 됨
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      generation: { image: { provider: 'openai', model: 'gpt-image-1' } },
+    }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.imageModel).toBe('gpt-image-1')
+    expect(result.current.settings.modelsByProvider.openai).toBe('gpt-image-1')
+    // consume-once: 반영 후 nested model 은 제거돼 재로드 시 사용자 선택을 덮어쓰지 않는다
+    expect(result.current.settings.generation.image.model).toBeUndefined()
+  })
+
+  it('nested model consume-once: 반영 후 저장된 imageModel 변경이 재로드에서 안 덮어써짐', () => {
+    // 최초: nested model 로드 → imageModel=gpt-image-1, nested model 소비됨
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      generation: { image: { provider: 'openai', model: 'gpt-image-1' } },
+    }))
+    const first = renderHook(() => useAppSettings())
+    expect(first.result.current.settings.generation.image.model).toBeUndefined()
+    // 사용자가 이후 다른 모델을 저장한 상태를 시뮬레이션(nested model 없음, flat imageModel 이 진실)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      imageModel: 'some-other-model',
+      generation: { image: { provider: 'openai' } },
+      modelsByProvider: { openai: 'some-other-model' },
+    }))
+    const second = renderHook(() => useAppSettings())
+    expect(second.result.current.settings.imageModel).toBe('some-other-model') // stale nested 가 안 덮음
+  })
+})
+
+describe('useAppSettings — 단계별 video provider (M2-pre §5.8)', () => {
+  it('fresh install: T2V/I2V provider=google + 단계별 google 모델 기억', () => {
+    const { result } = renderHook(() => useAppSettings())
+
+    expect(result.current.settings.generation.video).toEqual({
+      t2v: { provider: 'google' },
+      i2v: { provider: 'google' },
+    })
+    expect(result.current.settings.modelsByProviderVideo).toEqual({
+      t2v: { google: DEFAULT_VIDEO_MODEL_ID },
+      i2v: { google: DEFAULT_VIDEO_MODEL_ID },
+    })
+  })
+
+  it('마이그레이션: flat videoModelT2V/videoModelF2V를 각 google stage 슬롯에 시드하고 보존', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      videoModelT2V: 'legacy-t2v-model',
+      videoModelF2V: 'legacy-i2v-model',
+    }))
+
+    const { result } = renderHook(() => useAppSettings())
+
+    expect(result.current.settings.videoModelT2V).toBe('legacy-t2v-model')
+    expect(result.current.settings.videoModelF2V).toBe('legacy-i2v-model')
+    expect(result.current.settings.modelsByProviderVideo.t2v.google).toBe('legacy-t2v-model')
+    expect(result.current.settings.modelsByProviderVideo.i2v.google).toBe('legacy-i2v-model')
+  })
+
+  it('nested provider/model을 flat active model과 정합하고 모델은 consume-once', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      generation: {
+        video: {
+          t2v: { provider: 'future-t2v', model: 'future-t2v-model' },
+          i2v: { provider: 'future-i2v', model: 'future-i2v-model' },
+        },
+      },
+    }))
+
+    const { result } = renderHook(() => useAppSettings())
+
+    expect(result.current.settings.videoModelT2V).toBe('future-t2v-model')
+    expect(result.current.settings.videoModelF2V).toBe('future-i2v-model')
+    expect(result.current.settings.modelsByProviderVideo.t2v['future-t2v']).toBe('future-t2v-model')
+    expect(result.current.settings.modelsByProviderVideo.i2v['future-i2v']).toBe('future-i2v-model')
+    expect(result.current.settings.generation.video.t2v.model).toBeUndefined()
+    expect(result.current.settings.generation.video.i2v.model).toBeUndefined()
+  })
+
+  it('마이그레이션은 재로드해도 멱등이고 image/provider 축을 보존', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      imageModel: 'gpt-image-1',
+      videoModelT2V: 'legacy-t2v-model',
+      videoModelF2V: 'legacy-i2v-model',
+      generation: { image: { provider: 'openai' } },
+      modelsByProvider: { openai: 'gpt-image-1' },
+    }))
+
+    const first = renderHook(() => useAppSettings())
+    const once = first.result.current.settings
+    first.unmount()
+    const second = renderHook(() => useAppSettings())
+
+    expect(second.result.current.settings).toEqual(once)
+    expect(second.result.current.settings.generation.image.provider).toBe('openai')
+    expect(second.result.current.settings.modelsByProvider.openai).toBe('gpt-image-1')
+  })
+})
+
 describe('useAppSettings — videoConcurrency', () => {
   it('fresh install 기본값은 videoConcurrency 4', () => {
     const { result } = renderHook(() => useAppSettings())

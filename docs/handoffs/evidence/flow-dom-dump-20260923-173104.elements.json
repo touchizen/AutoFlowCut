@@ -1,0 +1,1242 @@
+{
+ "url": "https://flow.google.com/",
+ "title": "Google Flow - 동영상, 이미지, 맞춤 도구를 위한 AI 크리에이티브 스튜디오",
+ "elements": [
+  {
+   "tag": "div",
+   "class": "glue-cookie-notification-bar",
+   "role": "region",
+   "text": "flow.google.com 은(는) 서비스 제공 및 서비스 품질 개선과 트래픽 분석을 위해 쿠키를 사용합니다. 동의 시 광고를 게재하고 표시되",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "href": "https://policies.google.com/technologies/cookies?hl=ko",
+   "class": "glue-cookie-notification-bar__more",
+   "aria-label": "Google에서 쿠키를 사용하는 방법을 자세히 알아보세요. 새 탭에서 열립니다.",
+   "text": "자세히 알아보세요",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "class": "glue-cookie-notification-bar__accept",
+   "text": "동의함",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "button",
+   "class": "glue-cookie-notification-bar__reject",
+   "text": "나중에",
+   "icons": [],
+   "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0
+   }
+  },
+  {
+   "tag": "a",
+   "class": "skip-to-content-link",
+   "href": "#main-content",
+   "text": "Skip to main content",
+   "icons": [],
+   "rect": {
+    "x": 8,
+    "y": -1022,
+    "w": 182,
+    "h": 42
+   }
+  },
+  {
+   "tag": "a",
+   "class": "header-title-link",
+   "href": "/",
+   "text": "Google Flow",
+   "icons": [],
+   "rect": {
+    "x": 24,
+    "y": 30,
+    "w": 93,
+    "h": 20
+   }
+  },
+  {
+   "tag": "a",
+   "class": "mdc-button mat-mdc-button-base header-music-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-medium",
+   "href": "https://www.flowmusic.app/?utm_source=flow",
+   "text": "Flow Music",
+   "icons": [],
+   "rect": {
+    "x": 236,
+    "y": 18,
+    "w": 151,
+    "h": 44
+   }
+  },
+  {
+   "tag": "a",
+   "class": "mdc-button mat-mdc-button-base header-tv-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-medium",
+   "href": "https://labs.google/flow/tv",
+   "text": "tvFlow TV",
+   "icons": [
+    "tv"
+   ],
+   "rect": {
+    "x": 411,
+    "y": 18,
+    "w": 129,
+    "h": 44
+   }
+  },
+  {
+   "tag": "a",
+   "class": "header-social-link",
+   "href": "https://discord.com/invite/googlelabs",
+   "aria-label": "Google Labs Discord 서버 링크",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 564,
+    "y": 28,
+    "w": 44,
+    "h": 24
+   }
+  },
+  {
+   "tag": "a",
+   "class": "header-social-link",
+   "href": "https://www.instagram.com/googleflow",
+   "aria-label": "Instagram에서의 Flow 링크",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 612,
+    "y": 28,
+    "w": 44,
+    "h": 24
+   }
+  },
+  {
+   "tag": "a",
+   "class": "header-social-link",
+   "href": "https://x.com/FlowbyGoogle",
+   "aria-label": "X(트위터)에서의 Flow 링크",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 660,
+    "y": 31,
+    "w": 38,
+    "h": 18
+   }
+  },
+  {
+   "tag": "button",
+   "aria-label": "제품 도움말",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger header-help-button mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "text": "help",
+   "icons": [
+    "help"
+   ],
+   "rect": {
+    "x": 702,
+    "y": 18,
+    "w": 44,
+    "h": 44
+   }
+  },
+  {
+   "tag": "button",
+   "aria-label": "옵션 더보기",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger mat-mdc-tooltip-trigger more-options-trigger mat-unthemed flow-icon-button-transparent flow-button-large flow-icon-button-no-touch-target",
+   "text": "more_vert",
+   "icons": [
+    "more_vert"
+   ],
+   "rect": {
+    "x": 750,
+    "y": 18,
+    "w": 44,
+    "h": 44
+   }
+  },
+  {
+   "tag": "div",
+   "role": "button",
+   "aria-label": "계정 세부정보",
+   "class": "header-user-button has-tier",
+   "text": "PRO",
+   "icons": [],
+   "rect": {
+    "x": 818,
+    "y": 16,
+    "w": 107,
+    "h": 48
+   }
+  },
+  {
+   "tag": "a",
+   "class": "gb_C gb_9a gb_8",
+   "aria-label": "Google 계정: Gordon Ahn  \n(<user-email>)",
+   "href": "https://accounts.google.com/SignOutOptions?hl=ko&continue=https://flow.google.com/&ec=GBRA7QU",
+   "role": "button",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 876,
+    "y": 20,
+    "w": 40,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-button mat-mdc-button-base promotion-banner-primary-cta mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed flow-button-primary flow-button-large",
+   "text": "Try the Google Flow Agent",
+   "icons": [],
+   "rect": {
+    "x": 65,
+    "y": 451,
+    "w": 222,
+    "h": 40
+   }
+  },
+  {
+   "tag": "button",
+   "aria-label": "배너로 이동",
+   "class": "promotion-banner-nav-dash",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 65,
+    "y": 511,
+    "w": 60,
+    "h": 4
+   }
+  },
+  {
+   "tag": "button",
+   "aria-label": "배너로 이동",
+   "class": "promotion-banner-nav-dash",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 131,
+    "y": 511,
+    "w": 60,
+    "h": 4
+   }
+  },
+  {
+   "tag": "button",
+   "aria-label": "배너로 이동",
+   "class": "promotion-banner-nav-dash",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 197,
+    "y": 511,
+    "w": 60,
+    "h": 4
+   }
+  },
+  {
+   "tag": "button",
+   "aria-label": "배너로 이동",
+   "class": "promotion-banner-nav-dash",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 263,
+    "y": 511,
+    "w": 60,
+    "h": 4
+   }
+  },
+  {
+   "tag": "button",
+   "aria-label": "배너로 이동",
+   "class": "promotion-banner-nav-dash",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 329,
+    "y": 511,
+    "w": 60,
+    "h": 4
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger promotion-banner-close-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "배너 닫기",
+   "text": "close",
+   "icons": [
+    "close"
+   ],
+   "rect": {
+    "x": 890,
+    "y": 89,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/f22c8373-c2a3-482d-a66f-848759dbb8e3",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 24,
+    "y": 580,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 185,
+    "y": 748,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 266,
+    "y": 748,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/29c05a52-74b5-4222-ba72-9159370d9c1e",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 332,
+    "y": 580,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 488,
+    "y": 748,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 575,
+    "y": 748,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/b9dd61fa-17d4-48ad-a6ef-fa740b85bdcf",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 641,
+    "y": 580,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 798,
+    "y": 748,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 883,
+    "y": 748,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/2201c62b-91ad-44fb-a198-ab7159bccdee",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 24,
+    "y": 802,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 177,
+    "y": 971,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 266,
+    "y": 971,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/841ecc80-60b4-4685-8dc6-e41f694dc748",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 332,
+    "y": 802,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 488,
+    "y": 971,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 575,
+    "y": 971,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/2310dc40-6bfb-4a10-9b1c-ae6fcc4494ff",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 641,
+    "y": 802,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 799,
+    "y": 971,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 883,
+    "y": 971,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/c623904c-76ef-4838-a0e5-51dd85479c1c",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 24,
+    "y": 1025,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 184,
+    "y": 1193,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 266,
+    "y": 1193,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/7f674ada-067b-474c-b2ed-9bac23243ac5",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 332,
+    "y": 1025,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 489,
+    "y": 1193,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 575,
+    "y": 1193,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/6254eba5-9964-406a-bc31-9bf3eb4d5879",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 641,
+    "y": 1025,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 799,
+    "y": 1193,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 883,
+    "y": 1193,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/760c10f3-d7d4-418c-a55d-420df8cd1b8f",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 24,
+    "y": 1247,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 181,
+    "y": 1416,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 266,
+    "y": 1416,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/f1f3671b-f554-4759-8990-10d203d62688",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 332,
+    "y": 1247,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 492,
+    "y": 1416,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 575,
+    "y": 1416,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/cd069c66-d989-4b51-b6ed-ef745348b050",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 641,
+    "y": 1247,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 798,
+    "y": 1416,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 883,
+    "y": 1416,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/aad023ac-9062-4dbf-8815-a3381643bc8a",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 24,
+    "y": 1470,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 184,
+    "y": 1638,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 266,
+    "y": 1638,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/0e617106-8271-4443-99f4-f05496fd41a3",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 332,
+    "y": 1470,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 484,
+    "y": 1638,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 575,
+    "y": 1638,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/a917d4db-5577-4105-b3aa-dc0c6bf193f9",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 641,
+    "y": 1470,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 798,
+    "y": 1638,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 883,
+    "y": 1638,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/dbe88d69-f637-46ea-b1f8-7321ab776bf4",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 24,
+    "y": 1692,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 178,
+    "y": 1861,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 266,
+    "y": 1861,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/b214471a-2b98-449a-a3c5-034df2c319b0",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 332,
+    "y": 1692,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 487,
+    "y": 1861,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 575,
+    "y": 1861,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/f53e44e6-7cfb-4f13-94ca-c857f678e861",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 641,
+    "y": 1692,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 795,
+    "y": 1861,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 883,
+    "y": 1861,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/3255a0d1-36a8-4bed-a44f-2d2a43377858",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 24,
+    "y": 1915,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 179,
+    "y": 2083,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 266,
+    "y": 2083,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/1ac9e923-c42b-43d2-b911-f8572e9abab3",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 332,
+    "y": 1915,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 487,
+    "y": 2083,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 575,
+    "y": 2083,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "a",
+   "aria-label": "프로젝트 열기",
+   "class": "project-thumbnail-container",
+   "href": "/project/134cf5b5-6a64-47b8-8709-6de4c6b0e44c",
+   "text": "",
+   "icons": [],
+   "rect": {
+    "x": 641,
+    "y": 1915,
+    "w": 292,
+    "h": 164
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 제목 수정",
+   "text": "edit",
+   "icons": [
+    "edit"
+   ],
+   "rect": {
+    "x": 793,
+    "y": 2083,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger footer-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+   "aria-label": "프로젝트 삭제",
+   "text": "delete",
+   "icons": [
+    "delete"
+   ],
+   "rect": {
+    "x": 883,
+    "y": 2083,
+    "w": 34,
+    "h": 34
+   }
+  },
+  {
+   "tag": "button",
+   "class": "mdc-fab mat-mdc-fab-base mat-mdc-fab mat-mdc-button-base new-project-button mat-accent mdc-fab--extended mat-mdc-extended-fab",
+   "text": "add새 프로젝트",
+   "icons": [
+    "add"
+   ],
+   "rect": {
+    "x": 383,
+    "y": 838,
+    "w": 192,
+    "h": 128
+   }
+  }
+ ]
+}

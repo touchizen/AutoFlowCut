@@ -29,6 +29,7 @@ import {
 import { isStyleReference } from '../services/styleService'
 import { isAuthError } from '../utils/authError'
 import { cleanBase64, detectImageType } from '../utils/urls'
+import { beginScopeSend, isScopeCancelled, markScopeCancelled } from '../utils/cancelScope'
 
 // base64 또는 data URL 문자열 → Veo inline 이미지 { mimeType, data } (없으면 null).
 // 일부 인코더는 base64 를 76자마다 줄바꿈하므로 공백/개행을 제거한 뒤 처리한다.
@@ -90,14 +91,21 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
    */
   // 조용한 체크(mount 시 authReady 확인 등)에서도 호출되므로 여기서 onAuthError 를
   // 직접 트리거하지 않는다 — 무키 상태 UX 는 checkAuthToken 가드가 담당.
-  const getAccessToken = useCallback(async () => {
+  // providerId(3번째 인자, §5.7): 배치 시작 게이트가 "선택된 provider 의 키" 유무로 판정하게 한다.
+  //   미지정/google → hasKey(google, 기존 동작·헤더 표시 호환). 비-google → byProvider[id].
+  //   google 키 없이 openai 만 있는 사용자가 openai 배치를 시작할 수 있게 하는 핵심(그 전엔 google 게이트가 차단).
+  //   forceRefresh/silent 는 레거시 Flow 시그니처 호환용(현재 BYOK 경로에선 미사용).
+  const getAccessToken = useCallback(async (_forceRefresh = false, _silent = false, providerId = 'google') => {
     try {
       const s = await window.electronAPI.genaiGetKeyStatus()
-      const ok = !!s?.hasKey
-      setAccessToken(ok ? 'byok' : null)
+      const ok = (providerId && providerId !== 'google')
+        ? !!s?.byProvider?.[providerId]
+        : !!s?.hasKey
+      // accessToken 상태(헤더 표시)는 google 기준으로만 갱신 — provider-특정 게이트가 헤더를 흔들지 않게.
+      if (!providerId || providerId === 'google') setAccessToken(ok ? 'byok' : null)
       return ok ? 'byok' : null
     } catch {
-      setAccessToken(null)
+      if (!providerId || providerId === 'google') setAccessToken(null)
       return null
     }
   }, [])
@@ -136,36 +144,85 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
    * @returns {{success, images:[{base64, mimeType, mediaId}], error}}
    *   base64 필드는 data URL — downstream 은 cleanBase64 로 저장, 그대로 표시.
    */
-  const generateImage = useCallback(async (prompt, referenceImages = [], { aspectRatio, model } = {}) => {
+  const generateImage = useCallback(async (prompt, referenceImages = [], { aspectRatio, model, provider, cancelScope } = {}) => {
+    const finishScopeSend = beginScopeSend(cancelScope)
     // 선택 모델(없으면 기본). API 호출에 쓰고, 결과에도 실어 finalize 가 item.model 로
     // 기록하게 한다 — 그래야 ResultsTable/상세 모달의 모델 표시가 'flow' 가 아닌 실제 모델이 됨.
-    const effectiveModel = model || DEFAULT_IMAGE_MODEL_ID
+    // 비-google provider(openai 등)는 gemini 기본을 강제하지 않는다 — model 미지정이면
+    // adapter 가 자기 기본(gpt-image-1)으로 채우게 undefined 로 넘긴다(§5.8).
+    const effectiveModel = model || (provider && provider !== 'google' ? undefined : DEFAULT_IMAGE_MODEL_ID)
     try {
       const refs = await resolveReferenceImages(referenceImages, { projectName: projectName() })
-      const result = await window.electronAPI.genaiGenerateImage({ prompt, referenceImages: refs, aspectRatio, model: effectiveModel })
+      if (isScopeCancelled(cancelScope)) {
+        return { success: false, error: 'Operation aborted', errorKind: 'aborted', aborted: true }
+      }
+      const ipcPromise = window.electronAPI.genaiGenerateImage({
+        prompt,
+        referenceImages: refs,
+        aspectRatio,
+        model: effectiveModel,
+        provider,
+        ...(cancelScope ? { cancelScope } : {}),
+      })
+      finishScopeSend()
+      const result = await ipcPromise
       if (!result?.success) return markAuthFailure(result || { success: false, error: 'Unknown error' })
       const images = (result.images || []).map((im) => ({
         base64: im.dataUrl || im.base64,
         mimeType: im.mimeType,
         mediaId: null, // 공식 API 는 Flow mediaId 가 없음 → 업스케일/I2V 자동 skip
+        actualAspectRatio: im.actualAspectRatio ?? result.actualAspectRatio ?? null,
+        ...(im.seed !== undefined ? { seed: im.seed } : {}),
       }))
-      return { success: true, images, model: effectiveModel }
+      return {
+        success: true,
+        images,
+        model: effectiveModel,
+        provider,
+        actualAspectRatio: result.actualAspectRatio ?? null,
+        // seed 를 IPC 로 보내지 않으므로 "적용된 입력 없음"을 선언한다 → finalize 가 설정 seed 를
+        // 거짓 기록하지 않는다. 어댑터가 seed 를 지원하게 되면 여기서 { seed } 를 채워야 한다
+        // (top-level seed echo 는 위 mapper 가 per-image 로만 옮기므로 그것도 함께 손볼 것).
+        appliedInputs: {},
+      }
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
+    } finally {
+      finishScopeSend()
     }
   }, [])
 
   // 비동기 제출 — 동기 생성을 fire-and-forget 으로 감싸 in-flight 에 저장
   const submitGeneration = useCallback(async (prompt, referenceImages = [], options = {}) => {
     const id = `gen_${++counterRef.current}`
-    inflightRef.current.set(id, { status: 'pending', result: null })
+    const entry = { status: 'pending', result: null }
+    inflightRef.current.set(id, entry)
     // 의도적으로 await 안 함 (fire-and-forget)
     // 배치 경로는 options.imageModel 로 모델을 넘긴다 → generateImage 의 model 로 매핑.
-    generateImage(prompt, referenceImages, { aspectRatio: options.aspectRatio, model: options.imageModel ?? options.model })
-      .then((result) => inflightRef.current.set(id, { status: 'done', result }))
-      .catch((e) => inflightRef.current.set(id, { status: 'done', result: { success: false, error: e?.message || String(e) } }))
+    // options.provider(전역 image provider) 도 관통 — 미지정이면 undefined→google.
+    generateImage(prompt, referenceImages, {
+      aspectRatio: options.aspectRatio,
+      model: options.imageModel ?? options.model,
+      provider: options.provider,
+      ...(options.cancelScope ? { cancelScope: options.cancelScope } : {}),
+    })
+      .then((result) => {
+        if (inflightRef.current.get(id) !== entry) return
+        entry.status = 'done'
+        entry.result = result
+      })
+      .catch((e) => {
+        if (inflightRef.current.get(id) !== entry) return
+        entry.status = 'done'
+        entry.result = { success: false, error: e?.message || String(e) }
+      })
     return { success: true, generationId: id }
   }, [generateImage])
+
+  const cancelGeneration = useCallback(async (scope) => {
+    markScopeCancelled(scope)
+    return window.electronAPI.genaiCancel({ scope })
+  }, [])
 
   const checkGeneration = useCallback(async (generationId) => {
     const entry = inflightRef.current.get(generationId)
@@ -194,11 +251,16 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
 
   // --- 비디오 생성 -----------------------------------------------------------
 
-  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, referenceImages = []) => {
+  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, referenceImages = [], { provider } = {}) => {
     try {
-      const effectiveModel = normalizeVideoModel(model)
-      const videoReferenceInputs = (referenceImages || []).slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
-      const invalidTypeRef = videoReferenceInputs.find(isInvalidVideoAssetReference)
+      const isGoogleProvider = !provider || provider === 'google'
+      const effectiveModel = isGoogleProvider ? normalizeVideoModel(model) : model
+      const videoReferenceInputs = isGoogleProvider
+        ? (referenceImages || []).slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
+        : (referenceImages || [])
+      const invalidTypeRef = isGoogleProvider
+        ? videoReferenceInputs.find(isInvalidVideoAssetReference)
+        : null
       if (invalidTypeRef) {
         return {
           success: false,
@@ -208,7 +270,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
       const refs = []
       const unresolvedRefs = []
       for (const ref of videoReferenceInputs) {
-        const resolved = await resolveReferenceImages([ref], { projectName: projectName(), strictMime: true })
+        const resolved = await resolveReferenceImages([ref], { projectName: projectName(), strictMime: isGoogleProvider })
         if (resolved.length === 0) unresolvedRefs.push(describeVideoReference(ref))
         else refs.push(resolved[0])
       }
@@ -218,14 +280,16 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
           error: `Veo reference images could not be resolved: ${unresolvedRefs.join(', ')}`,
         }
       }
-      const invalidRef = refs.find(ref => !supportsVideoReferenceMimeType(ref.mimeType))
+      const invalidRef = isGoogleProvider
+        ? refs.find(ref => !supportsVideoReferenceMimeType(ref.mimeType))
+        : null
       if (invalidRef) {
         return {
           success: false,
           error: 'Veo reference images support PNG, JPEG, or WebP.',
         }
       }
-      if (refs.length > 0 && !supportsVideoReferenceImages(effectiveModel || DEFAULT_VIDEO_MODEL_ID)) {
+      if (isGoogleProvider && refs.length > 0 && !supportsVideoReferenceImages(effectiveModel || DEFAULT_VIDEO_MODEL_ID)) {
         return {
           success: false,
           error: 'Veo reference images require Veo 3.1 Fast/Quality. Select Fast or Quality, or remove @references.',
@@ -233,12 +297,13 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
       }
       const payload = {
         prompt,
-        aspectRatio: toVeoAspect(aspectRatio),
+        aspectRatio: isGoogleProvider ? toVeoAspect(aspectRatio) : aspectRatio,
         durationSeconds: duration,
         model: effectiveModel,
         // 모델이 지원하지 않는 해상도(예: Veo Lite + 4K)는 허용 최대로 강등 — 전역 resolution
         // 설정과 타입별 모델 조합에서 잘못된 해상도가 API 로 새어나가 실패하는 걸 막는다.
-        resolution: coerceResolution(effectiveModel, resolution) || undefined,
+        resolution: isGoogleProvider ? (coerceResolution(effectiveModel, resolution) || undefined) : resolution,
+        ...(provider ? { provider } : {}),
       }
       if (Number.isFinite(seed)) payload.seed = seed
       if (refs.length > 0) payload.referenceImages = refs
@@ -252,18 +317,20 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
   // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 { mimeType, data } 로 정규화한다.
   // main-process submitVideo 가 image/lastFrame 을 bytesBase64Encoded REST payload 로 직렬화한다.
   // (T2V referenceImages 는 별도 경로로 inlineData 를 쓴다.)
-  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution) => {
+  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution, { provider } = {}) => {
     try {
-      const effectiveModel = normalizeVideoModel(model)
+      const isGoogleProvider = !provider || provider === 'google'
+      const effectiveModel = isGoogleProvider ? normalizeVideoModel(model) : model
       const r = await window.electronAPI.genaiGenerateVideo({
         prompt,
         image: toInlineImage(startImage),
         endImage: toInlineImage(endImage),
-        aspectRatio: toVeoAspect(aspectRatio),
+        aspectRatio: isGoogleProvider ? toVeoAspect(aspectRatio) : aspectRatio,
         durationSeconds: duration,
         model: effectiveModel,
         seed: Number.isFinite(seed) ? seed : undefined,
-        resolution: coerceResolution(effectiveModel, resolution) || undefined,
+        resolution: isGoogleProvider ? (coerceResolution(effectiveModel, resolution) || undefined) : resolution,
+        ...(provider ? { provider } : {}),
       })
       return markAuthFailure(r)
     } catch (error) {
@@ -284,9 +351,14 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         videoUrl: s.videoUri || null, // 일부 소비자가 videoUrl 로 읽음 (download 경로)
         mediaId: s.videoUri || null,  // mediaId 자리에 videoUri 전달 (완료 게이트 호환)
         error: s.error,
+        errorKind: s.errorKind ?? null,
       }))
       // 폴링 중 키 거부(authFailed)면 배치 루프가 즉시 중단하도록 센티넬 전파.
-      const authStatus = statuses.find((s) => s.status === 'failed' && isAuthError({ success: false, error: s.error }))
+      const authStatus = statuses.find((s) => s.status === 'failed' && isAuthError({
+        success: false,
+        error: s.error,
+        errorKind: s.errorKind,
+      }))
       if (authStatus) {
         onAuthErrorRef.current?.()
         return { success: true, statuses, authFailed: true }
@@ -298,9 +370,12 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
   }, [])
 
   // 완료된 비디오 다운로드 (videoUri → base64)
-  const downloadVideo = useCallback(async (videoUri) => {
+  const downloadVideo = useCallback(async (videoUri, _resolution, generationId) => {
     try {
-      return await window.electronAPI.genaiDownloadVideo({ videoUri })
+      return await window.electronAPI.genaiDownloadVideo({
+        videoUri,
+        ...(generationId != null ? { generationId } : {}),
+      })
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
     }
@@ -334,6 +409,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     fetchGallery,
     listFlowProjects,
     setStopRequested,
+    cancelGeneration,
   }
 }
 

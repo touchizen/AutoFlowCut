@@ -76,7 +76,7 @@ describe('checkAuthToken', () => {
     }
     const result = await checkAuthToken(genAPI, t)
     expect(result).toBe(true)
-    expect(genAPI.getAccessToken).toHaveBeenCalledWith(true)
+    expect(genAPI.getAccessToken).toHaveBeenCalledWith(true, false, 'google')
   })
 
   it('returns false and dispatches login-expired event when no token', async () => {
@@ -90,5 +90,11 @@ describe('checkAuthToken', () => {
     expect(genAPI.clearTokenCache).toHaveBeenCalled()
     expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'flow-login-expired' }))
     dispatchSpy.mockRestore()
+  })
+
+  it('providerId 를 getAccessToken 으로 관통 (§5.7 openai-only 게이트)', async () => {
+    const genAPI = { getAccessToken: vi.fn().mockResolvedValue('byok'), clearTokenCache: vi.fn() }
+    await checkAuthToken(genAPI, t, 'openai')
+    expect(genAPI.getAccessToken).toHaveBeenCalledWith(true, false, 'openai')
   })
 })

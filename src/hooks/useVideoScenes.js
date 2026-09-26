@@ -56,7 +56,16 @@ const FIELD_MAP = {
   model: 'videoT2VModel',
   error: 'videoT2VError',
   errorKind: 'videoT2VErrorKind',
+  // M2-R1 F2(A2): kind 별 params 와 거부 미디어 id 도 videoT2V* 네임스페이스 — 없으면 이미지 씬의 동명 필드(errorParams)를 덮고,
+  //   derived 가 읽지 않아 영상 표/모달이 {requested} 같은 플레이스홀더 대신 raw kind 토큰을 보인다.
+  errorParams: 'videoT2VErrorParams',
+  rejectedMediaId: 'videoT2VRejectedMediaId',
+  rejectedMediaIds: 'videoT2VRejectedMediaIds',
+  // M2-R3 H6(B2): 배치 다운로드 권한 마커 — Phase 0 재다운로드 게이트 판정에 쓴다(project.json 에 남는다)
+  downloadGated: 'videoT2VDownloadGated',
   videoSaveId: 'videoT2VSaveId',
+  generationProvider: 'videoT2VProvider',
+  appliedInputs: 'videoT2VAppliedInputs',
   // startTime / endTime 은 scene 본체와 공유 — 별도 매핑 없이 patch에 그대로
 }
 
@@ -99,7 +108,16 @@ function deriveVideoScene(s) {
     model: s.videoT2VModel ?? null,
     error: s.videoT2VError ?? null,
     errorKind: s.videoT2VErrorKind ?? null,
+    // M2-R1 F2: ResultsTable/VideoDetailModal 의 resolveDisplayError(t, kind, error, params) 가 읽는다.
+    errorParams: s.videoT2VErrorParams ?? null,
+    rejectedMediaId: s.videoT2VRejectedMediaId ?? null,
+    rejectedMediaIds: s.videoT2VRejectedMediaIds ?? null,
+    downloadGated: s.videoT2VDownloadGated ?? null,   // M2-R3 H6
     videoSaveId: s.videoT2VSaveId ?? null,
+    generationProvider: s.videoT2VProvider ?? null,
+    appliedInputs: s.videoT2VAppliedInputs ?? null,
+    // Scene-level provider/model override must survive the image-scene → T2V derived view.
+    generation: s.generation,
     // Poster fields from the source image scene. ResultsTable uses these while
     // keeping the video element unmounted until hover.
     image: s.image ?? null,
@@ -208,7 +226,14 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
       videoT2VModel: null,
       videoT2VError: null,
       videoT2VErrorKind: null,
+      // M2-R1 F2: params·거부 id 도 함께 초기화
+      videoT2VErrorParams: null,
+      videoT2VRejectedMediaId: null,
+      videoT2VRejectedMediaIds: null,
+      videoT2VDownloadGated: null,   // M2-R3 H6
       videoT2VSaveId: null,
+      videoT2VProvider: null,
+      videoT2VAppliedInputs: null,
     })))
   }, [scenesHook])
 
@@ -243,5 +268,8 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
     toggleSelectAll,
   }
 }
+
+/** 영상 탭 파생 필드 → 씬 필드 매핑(읽기 전용 공개) — CSV 재적용 보존 목록이 전부 담는지 테스트가 묶는다(csvPreservedSceneFields). */
+export { FIELD_MAP as VIDEO_SCENE_FIELD_MAP }
 
 export default useVideoScenes
