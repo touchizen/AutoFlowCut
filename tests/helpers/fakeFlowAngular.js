@@ -11,6 +11,8 @@
 //   opts.modelSubmenu          : (M2-2) 모델 메뉴 항목 클릭이 트리거 라벨을 바꾸지 않고 **하위 메뉴**만 연다(라이브 메뉴 항목엔
 //                                mat-mdc-menu-trigger·aria-expanded 가 있어 하위 메뉴가 달려 있다 — 내용 미관측)
 //   opts.modelMenuItems        : (M2-2) 메뉴 항목 목록 덮어쓰기(요청 모델이 없는 메뉴 — model-not-offered 케이스)
+//   opts.modelMenuIcon         : (2026-09-26) 메뉴 항목 앞 아이콘 리거처 — null 이면 아이콘 없음(이미지 메뉴 덤프)
+//   opts.modelSelectIgnored    : (2026-09-26) 메뉴 항목 클릭이 메뉴만 닫고 트리거 라벨은 그대로(선택이 반영 안 되는 페이지 — model-not-reflected)
 //   opts.escapeLeavesMenus     : (M2-R1 F6) Escape 가 패널 pane 만 닫고 열린 메뉴 pane 은 남긴다
 //   opts.modelSelectDurations  : (M2-R3 H4) 모델 항목 클릭이 길이 그룹을 이 라벨 목록으로 갈아끼운다(모델마다 길이 옵션이 다르다 — 현재 체크값이 목록에 있으면 유지)
 //   opts.modelSelectDelayMs    : (M2-R4 I7) 그 교체를 클릭 뒤 N ms 지나서 한다(라이브 페이지의 늦은 재렌더 — 고정 150ms 대기가 놓치는 경우)
@@ -102,7 +104,7 @@ export function installFakeAngular(doc, opts = {}) {
       log.push('model-trigger')
       const open = btn.getAttribute('aria-expanded') === 'true'
       if (open) { doc.getElementById(btn.getAttribute('aria-controls'))?.closest('.cdk-overlay-pane')?.remove(); btn.setAttribute('aria-expanded', 'false'); btn.removeAttribute('aria-controls'); return }
-      doc.querySelector('.cdk-overlay-container').insertAdjacentHTML('beforeend', buildModelMenu('mat-menu-panel-20', opts.modelMenuItems))
+      doc.querySelector('.cdk-overlay-container').insertAdjacentHTML('beforeend', buildModelMenu('mat-menu-panel-20', opts.modelMenuItems, { icon: opts.modelMenuIcon }))
       btn.setAttribute('aria-expanded', 'true'); btn.setAttribute('aria-controls', 'mat-menu-panel-20')
       return
     }
@@ -116,9 +118,10 @@ export function installFakeAngular(doc, opts = {}) {
         return
       }
       const trigger = doc.querySelector('.flow-settings-panel button[aria-haspopup="menu"]')
-      trigger.querySelector('.mdc-button__label').textContent = text
+      if (!opts.modelSelectIgnored) trigger.querySelector('.mdc-button__label').textContent = text
       trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-controls')
       btn.closest('.cdk-overlay-pane').remove()
+      if (opts.modelSelectIgnored) return
       if (opts.modelReset === 'sync') { resetGroup('duration', '6초'); resetGroup('resolution', '720p') }
       // M2-CLOSE O6(B3): Veo 항목 클릭이 길이·해상도 행을 없앤다 — afterMs 0 이면 동기, 아니면 N ms 뒤
       if (opts.modelSelectRemoveGroups && /veo/i.test(text)) {
