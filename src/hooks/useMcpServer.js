@@ -15,6 +15,7 @@ import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/gene
 import { clearedImageFields } from '../utils/refEntityRegistration'
 import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
 import { pickMcpSettingsFields } from '../utils/mcpSettingsWhitelist'   // M2-LIVE N3: main 과 같은 화이트리스트(이중 방어)
+import { alignMcpModelProviders } from '../utils/mcpModelProviderAlign'
 import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'   // CSV 재적용 보존 목록 — parseFromCSV 와 공유
 import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'   // 내보내기 창과 같은 허용 값
 
@@ -491,7 +492,7 @@ export function useMcpServer({
         //   먼저 400 으로 거르지만 렌더러도 같은 상수로 막는다(이중 방어). 유효한 키가 없으면 아무것도 하지 않는다.
         const picked = pickMcpSettingsFields(data.fields)
         if (picked && Object.keys(picked).length) {
-          setSettings?.(prev => ({ ...prev, ...picked }))
+          setSettings?.(prev => alignMcpModelProviders(prev, picked))   // 모델 키가 다른 provider 의 카탈로그 모델이면 provider 도 맞춘다(main 병합 리뷰 A F3)
           console.log('[MCP] Settings updated via HTTP:', Object.keys(picked).join(','))
         }
       } else if (data.type === 'generate-reference') {

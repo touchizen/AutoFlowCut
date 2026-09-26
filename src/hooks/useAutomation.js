@@ -20,7 +20,7 @@ import { makeBatchConsumeGate } from './batchConsumeGate'
 import { resolveProjectBatchId } from '../utils/batchId'
 import { consumeBatchDownload } from '../firebase/functions'
 import { batchStartGate } from './batchStartGate'
-import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
+import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } from '../utils/authMessages'
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 import {
   applyM1MentionExclusions,
@@ -42,7 +42,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   const authErrorMessage = () => getAuthErrorMessage(mode, t)
   // R1#6/R2#5: 새 Flow 의 authFailed 결과는 error 가 기계 토큰(not-on-flow · flow-rpc-error)이다 — kind 가 있으면 사람 문구로.
   //   옛 결과(kind 없음, "Auth expired …" 같은 문구)는 그대로 둔다.
-  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
+  const authFailureText = (res) => (authErrorIsMachineToken(res) ? authErrorMessage() : (res?.error || authErrorMessage()))
   // M1-10: Flow 세션 판정 이유(flowSessionReason)로 로그인 안내 vs 세션 확인 실패 안내를 고른다.
   const authRequiredMessage = () => getAuthRequiredMessage(mode, t, genAPI?.flowSessionReason?.())
 
@@ -366,7 +366,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
       // M1-10: 업스케일 설정은 엔진 게이트 재료. M3: Flow 엔진은 matchedRefs(＋ 첨부)와 references(@멘션 해석 pool)로 레퍼런스를 계획한다.
-      const resolvedGeneration = resolveSceneImageProvider(scene, generationSettings)
+      const resolvedGeneration = resolveSceneImageProvider(scene, generationSettings, { appMode: mode })   // Flow 는 씬 override 없이 설정 모델(F1)
       if (resolvedGeneration.warning) console.warn('[Automation]', resolvedGeneration.warning)
       if (run.cancelSent) {
         updateScene(scene.id, { status: 'pending', error: null, errorKind: null })
@@ -559,6 +559,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     } = options
     const generationSettings = {
       ...(suppliedGenerationSettings || {}),
+      // Flow 모드의 모델은 설정의 imageModel(sceneProviderResolution F1) — 호출자가 설정 없이 start 옵션만 주면 옵션 값(main 이 보내던 값)
+      imageModel: suppliedGenerationSettings?.imageModel ?? imageModel,
       generation: {
         ...(suppliedGenerationSettings?.generation || {}),
         image: {
@@ -669,7 +671,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     // 토큰 확인 — 선택된 image provider 의 키로 게이트(§5.7). google 키 없이 openai 만 있어도 시작 가능.
     setStatusMessage(t('status.checkingAuth'))
     const requiredImageProviders = [...new Set(targetScenes.map(scene => {
-      const resolved = resolveSceneImageProvider(scene, generationSettings)
+      const resolved = resolveSceneImageProvider(scene, generationSettings, { appMode: mode })
       if (resolved.warning) console.warn('[Automation]', resolved.warning)
       return resolved.provider
     }))]

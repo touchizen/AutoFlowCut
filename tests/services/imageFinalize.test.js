@@ -286,6 +286,16 @@ describe('finalizeGeneratedImage — errorParams 보존 + 업스케일 백스톱
     expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'auth', error: 'AUTH TEXT' })
   })
 
+  // main 병합(리뷰 A F2): multi-provider API 결과의 errorKind:'auth' 는 provider 분류 — error 는 provider 의 사람 메시지(어느 키인지 알려 준다)라 그대로 둔다.
+  it("authFailed + errorKind 'auth'(API provider 분류)는 provider 메시지를 그대로 저장한다 — authErrorText 로 덮지 않는다", async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd', authFailed: true },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd' })
+  })
+
   it('authFailed 인데 errorKind 가 없는 옛 결과는 error 문구를 그대로 둔다(#R26-6 유지)', async () => {
     const res = await finalizeGeneratedImage({
       result: { success: false, error: 'Auth expired', authFailed: true, images: [] },

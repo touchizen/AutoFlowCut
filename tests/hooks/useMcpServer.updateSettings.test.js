@@ -46,6 +46,33 @@ describe('useMcpServer — update-settings', () => {
     const merged = setSettings.mock.calls[0][0]({ projectName: 'A', mcpHttpEnabled: true, saveMode: 'folder', seedNo: 7, videoModelT2V: 'Veo 3.1 - Fast' })
     expect(merged).toEqual({ projectName: 'A', mcpHttpEnabled: true, saveMode: 'folder', seedNo: 7, videoModelT2V: 'Omni Flash' })
   })
+  // main 병합(리뷰 A F3): multi-provider 에서 모델 키는 "현재 provider 의 활성 모델"이다 — 다른 provider 의 카탈로그 모델을 그대로 넣으면
+  //   {openai, gemini-3-pro-image} 같은 조합이 되어 이후 모든 생성이 그 adapter 에서 실패한다. 설정 화면처럼 provider 도 그 모델의 provider 로 맞춘다.
+  it('다른 provider 의 카탈로그 모델(image gemini-3-pro-image · t2v grok)이면 provider 를 전환하고 이전 모델은 슬롯에 기억한다', () => {
+    const setSettings = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSettings })))
+    mcpHandler({ type: 'update-settings', fields: { imageModel: 'gemini-3-pro-image', videoModelT2V: 'grok-imagine-video-1.5' } })
+    const next = setSettings.mock.calls[0][0]({
+      imageModel: 'gpt-image-1', videoModelT2V: 'veo-3.1-fast-generate-preview', videoModelF2V: 'veo-3.1-generate-preview',
+      generation: { image: { provider: 'openai' }, video: { t2v: { provider: 'google' }, i2v: { provider: 'google' } } },
+      modelsByProvider: { openai: 'gpt-image-1' }, modelsByProviderVideo: { t2v: {}, i2v: {} },
+    })
+    expect(next.imageModel).toBe('gemini-3-pro-image')
+    expect(next.generation.image.provider).toBe('google')
+    expect(next.modelsByProvider.openai).toBe('gpt-image-1')
+    expect(next.videoModelT2V).toBe('grok-imagine-video-1.5')
+    expect(next.generation.video.t2v.provider).toBe('grok')
+    expect(next.modelsByProviderVideo.t2v.google).toBe('veo-3.1-fast-generate-preview')
+    expect(next.generation.video.i2v.provider).toBe('google')
+    expect(next.videoModelF2V).toBe('veo-3.1-generate-preview')
+  })
+  it('카탈로그 밖 이름(Flow 모델 Nano Banana Pro · Omni Flash)과 같은 provider 의 모델은 provider 를 건드리지 않는다', () => {
+    const setSettings = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSettings })))
+    mcpHandler({ type: 'update-settings', fields: { imageModel: 'Nano Banana Pro', videoModelT2V: 'Omni Flash', videoModelF2V: 'veo-3.1-generate-preview' } })
+    const prev = { imageModel: 'Nano Banana 2', generation: { image: { provider: 'google' }, video: { t2v: { provider: 'google' }, i2v: { provider: 'google' } } } }
+    expect(setSettings.mock.calls[0][0](prev)).toEqual({ ...prev, imageModel: 'Nano Banana Pro', videoModelT2V: 'Omni Flash', videoModelF2V: 'veo-3.1-generate-preview' })
+  })
   it('유효한 키가 하나도 없으면 setSettings 를 부르지 않는다', () => {
     const setSettings = vi.fn()
     renderHook(() => useMcpServer(makeProps({ setSettings })))

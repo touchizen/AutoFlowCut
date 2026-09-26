@@ -218,6 +218,25 @@ describe('useAutomation — auth failure during submitGeneration (#R10-6)', () =
   }, 15000)
 })
 
+// main 병합(리뷰 A F2): API provider 분류(errorKind 'auth')의 error 는 provider 의 사람 메시지 — 인증 안내 문구로 덮지 않는다(어느 provider 키인지 보이게).
+//   Flow 의 kind 동반 결과(flow-session-missing 등 — error 는 기계 토큰)는 여전히 안내 문구다(useAutomation.flowAngularPipeline).
+describe('useAutomation — API provider auth message', () => {
+  it("submitGeneration authFailed(errorKind 'auth', provider 메시지) → 씬 error 는 provider 메시지 그대로", async () => {
+    const updateScene = vi.fn()
+    const submitGeneration = vi.fn().mockResolvedValue({ success: false, authFailed: true, errorKind: 'auth', error: 'Incorrect API key provided: sk-…abcd' })
+    const genAPI = makeFlowAPI({ submitGeneration })
+    const scenesHook = makeScenesHook({ scenes: [{ id: 's1', prompt: 'a', status: 'pending' }], updateScene })
+    const { result } = renderHook(() => useAutomation(genAPI, scenesHook, null, null, null, (k) => k, vi.fn(), null, null))
+    let startPromise
+    await act(async () => { startPromise = result.current.start({ projectName: 'p', saveMode: 'folder' }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000) })
+    await act(async () => { await startPromise })
+    const authCalls = updateScene.mock.calls.filter(([id, patch]) => id === 's1' && patch?.errorKind === 'auth')
+    expect(authCalls.length).toBeGreaterThanOrEqual(1)
+    expect(authCalls.at(-1)[1].error).toBe('Incorrect API key provided: sk-…abcd')
+  }, 15000)
+})
+
 // ─── Tests: checkGeneration authFailed (#R23-4) ────────────────────────────────
 
 describe('useAutomation — auth failure during checkGeneration (#R23-4)', () => {

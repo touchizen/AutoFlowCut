@@ -7,6 +7,7 @@ import ModelSelector from './ModelSelector'
 import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL, FLOW_PRICING_URL, defaultImageModelForProvider, defaultVideoModelForProvider, imageModelsForProvider, listSupportedImageProviders, listSupportedVideoProviders, videoModelsForProvider } from '../../config/genModels'
 import { DEFAULTS } from '../../config/defaults'
 import { computeImageProviderSwitch } from '../../utils/imageProviderSwitch'
+import { computeVideoProviderSwitch } from '../../utils/videoProviderSwitch'
 
 // provider 선택 UI는 catalog provisional flag가 단일 권위다. Registry에는 fal이 양쪽에
 // 등록돼 persisted 설정이 라우팅되지만 real-key smoke 전에는 supported 목록에서 제외된다.
@@ -16,35 +17,6 @@ const SUPPORTED_IMAGE_PROVIDER_IDS = new Set(SUPPORTED_IMAGE_PROVIDERS)
 // 등록돼 persisted 설정이 라우팅되지만 real-key smoke 전에는 이 목록에서 제외된다.
 const SUPPORTED_VIDEO_PROVIDERS = listSupportedVideoProviders()
 const SUPPORTED_VIDEO_PROVIDER_IDS = new Set(SUPPORTED_VIDEO_PROVIDERS)
-
-function computeVideoProviderSwitch(settings, stage, newProvider) {
-  const modelKey = stage === 't2v' ? 'videoModelT2V' : 'videoModelF2V'
-  const currentProvider = settings?.generation?.video?.[stage]?.provider ?? 'google'
-  const stageMemory = settings?.modelsByProviderVideo?.[stage] || {}
-  const remembered = stageMemory[newProvider]
-  const nextModel = remembered ?? defaultVideoModelForProvider(newProvider) ?? undefined
-
-  return {
-    [modelKey]: nextModel,
-    generation: {
-      ...settings?.generation,
-      video: {
-        ...settings?.generation?.video,
-        [stage]: {
-          ...settings?.generation?.video?.[stage],
-          provider: newProvider,
-        },
-      },
-    },
-    modelsByProviderVideo: {
-      ...settings?.modelsByProviderVideo,
-      [stage]: {
-        ...stageMemory,
-        [currentProvider]: settings?.[modelKey],
-      },
-    },
-  }
-}
 
 // Flow 배치 카운트 옵션(x1~x4). Flow 컴포즈가 한 요청에 여러 장/개를 생성한다.
 const BATCH_OPTIONS = [1, 2, 3, 4]

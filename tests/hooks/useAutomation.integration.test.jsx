@@ -252,6 +252,38 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
     expect(getAccessToken).toHaveBeenCalledWith(false, false, 'openai')
     expect(getAccessToken).toHaveBeenCalledWith(false, false, 'google')
   })
+
+  // main 병합(리뷰 A F1): Flow 모드는 씬 override 를 쓰지 않는다 — override 의 API 모델 id 를 Flow 로 보내면 설정 패널 드라이버가
+  //   정확 일치로 거부한다(flow-image-model-mismatch). main 처럼 모든 씬을 start 의 imageModel(Flow 모델 이름)로 제출한다.
+  it('Flow 모드: scene override 가 있어도 모든 씬을 google + start 의 imageModel(Flow 모델)로 제출', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration, getAccessToken } = setupHook({
+      mode: 'flow',
+      scenes: [
+        { id: 's1', prompt: 'override scene', status: 'pending', generation: { image: { provider: 'openai', model: 'gpt-image-scene' } } },
+        { id: 's2', prompt: 'global scene', status: 'pending' },
+      ],
+    })
+    submitGeneration
+      .mockResolvedValueOnce({ success: true, generationId: 'gen-1' })
+      .mockResolvedValueOnce({ success: true, generationId: 'gen-2' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        projectName: 'p', saveMode: 'memory',
+        imageProvider: 'google', imageModel: 'Nano Banana Pro',
+        generationSettings: { generation: { image: { provider: 'google' } } },
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(120 * 1000) })
+    await startPromise
+
+    expect(submitGeneration).toHaveBeenCalledTimes(2)
+    for (const call of submitGeneration.mock.calls) expect(call[2]).toMatchObject({ provider: 'google', model: 'Nano Banana Pro' })
+    expect(getAccessToken).not.toHaveBeenCalledWith(false, false, 'openai')
+  })
 })
 
 describe('useAutomation — force regenerate status reset ordering', () => {

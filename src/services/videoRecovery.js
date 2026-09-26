@@ -9,6 +9,7 @@
  * 아직 진행 중인 것은 'generating' 유지, 만료된 것은 'error' 처리한다.
  */
 
+import { authErrorIsMachineToken } from '../utils/authMessages'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { downloadVideoBase64 } from './videoDownload'
 import { isFlowMediaId } from '../utils/flowMediaId'   // M2-R5 J2: 훅·App·파서와 공유하는 Flow 미디어 id 술어(UUID)
@@ -326,7 +327,7 @@ export async function retryVideoDownload({
     //   (errorKind:'auth' → error 그대로) 가 표에 raw 토큰을 그린다. 훅의 authFailureText 와 같은 규칙: kind 동반이면 인증 안내 문구(없으면 기본 문구), kind 없는 옛
     //   결과는 error 그대로. 결과에도 errorKind:'auth' 를 실어 훅이 같은 규칙으로 상태 문구를 만들게 한다.
     const DEFAULT_AUTH_TEXT = 'Auth expired — please re-login to Flow'
-    const kindBearing = !!statusResult.errorKind
+    const kindBearing = authErrorIsMachineToken(statusResult)   // API provider 분류('auth')는 provider 메시지 그대로(main 병합 리뷰 A F2)
     const authText = typeof authErrorText === 'function' ? authErrorText() : authErrorText
     const msg = kindBearing ? (authText || DEFAULT_AUTH_TEXT) : (statusResult.error || DEFAULT_AUTH_TEXT)
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flow-login-expired'))

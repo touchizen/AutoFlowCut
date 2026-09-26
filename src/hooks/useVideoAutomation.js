@@ -27,7 +27,7 @@ import { resolveProjectBatchId } from '../utils/batchId'
 import { consumeBatchDownload } from '../firebase/functions'
 import { partitionDownloadOnly } from './downloadOnlyGate'
 import { batchStartGate } from './batchStartGate'
-import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
+import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } from '../utils/authMessages'
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 import { resolveSceneVideoProvider } from '../utils/sceneProviderResolution'
 import { isFlowMediaId as isFlowShapedId, isLegacyFlowGenerationFailure } from '../utils/flowMediaId'   // M2-R5 J2: App·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
@@ -108,7 +108,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
   const authRequiredMessage = () => getAuthRequiredMessage(appMode, t, genAPI?.flowSessionReason?.())
   // M2-R1 F3(A3): authFailed 결과의 error 가 기계 토큰(errorKind 동반 — 'wiz-missing'·'not-on-flow'·'flow-rpc-error')이면 항목·상태 문구는
   //   인증 안내다(useAutomation/useReferenceGeneration 과 같은 규칙). kind 없는 옛 결과("Auth expired …")는 error 그대로.
-  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
+  const authFailureText = (res) => (authErrorIsMachineToken(res) ? authErrorMessage() : (res?.error || authErrorMessage()))
 
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
@@ -322,7 +322,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     //   그대로 메타데이터에 보존한다 — normalize 하면 매핑 안 된 Flow id 가 API 기본 모델로
     //   둔갑해 메타가 실제 선택과 어긋난다. (Flow 엔진이 그 모델을 실제로 적용하는지는 별개의
     //   live-DOM 이슈 — video.js 가 현재 model 을 미적용. live-verify 체크리스트에 보존.)
-    const globalGeneration = resolveSceneVideoProvider({}, generationSettings, mode)
+    const globalGeneration = resolveSceneVideoProvider({}, generationSettings, mode, { appMode })
     const isGoogleProvider = globalGeneration.provider === 'google'
     const effectiveVideoModel = appMode === 'flow'
       ? (globalGeneration.model || videoModel || DEFAULT_VIDEO_MODEL_ID)
@@ -339,7 +339,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       ? coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p')
       : options.videoResolution
     const resolveItemGeneration = (item) => {
-      const resolved = resolveSceneVideoProvider(item, generationSettings, mode)
+      const resolved = resolveSceneVideoProvider(item, generationSettings, mode, { appMode })   // Flow 는 씬 override 없이 설정 모델(F1)
       if (resolved.warning) console.warn('[VideoAutomation]', resolved.warning)
       const model = canonicalVideoModel(resolved.model, resolved.provider)
       const resolution = (appMode === 'flow' || resolved.provider === 'google')

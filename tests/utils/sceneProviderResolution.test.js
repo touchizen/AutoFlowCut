@@ -107,6 +107,37 @@ describe('sceneProviderResolution', () => {
     })
   })
 
+  // main 병합(리뷰 A F1): Flow 모드는 씬 override 를 쓰지 않는다 — Flow 는 google(Flow 컴포저) 하나이고, 모델은 설정의 Flow 모델 이름이어야
+  //   Flow 설정 패널 드라이버의 정확 일치에 맞는다. override 모델(API id)이 드라이버로 가면 flow-image-model-mismatch 로 거부되고,
+  //   영상은 배치 전체 거부로 번져 override 없는 씬까지 닫힌다.
+  describe("appMode 'flow' — 씬 override 대신 설정의 Flow 모델", () => {
+    const flowSettings = {
+      ...settings,
+      imageModel: 'Nano Banana Pro',
+      videoModelT2V: 'Omni Flash',
+      videoModelF2V: 'Veo 3.1 - Fast',
+      generation: { image: { provider: 'openai' }, video: { t2v: { provider: 'grok' }, i2v: { provider: 'grok' } } },
+    }
+
+    it('image: override(provider·model)가 있어도 google + settings.imageModel', () => {
+      const scene = { generation: { image: { provider: 'openai', model: 'gpt-image-custom' } } }
+      expect(resolveSceneImageProvider(scene, flowSettings, { appMode: 'flow' })).toEqual({ provider: 'google', model: 'Nano Banana Pro' })
+      expect(resolveSceneImageProvider({}, flowSettings, { appMode: 'flow' })).toEqual({ provider: 'google', model: 'Nano Banana Pro' })
+    })
+
+    it('video: t2v·i2v override 가 있어도 google + settings.videoModelT2V / videoModelF2V', () => {
+      const scene = { generation: { video: { t2v: { provider: 'grok', model: 'grok-imagine-video-1.5' }, i2v: { provider: 'google', model: 'veo-x' } } } }
+      expect(resolveSceneVideoProvider(scene, flowSettings, 't2v', { appMode: 'flow' })).toEqual({ provider: 'google', model: 'Omni Flash' })
+      expect(resolveSceneVideoProvider(scene, flowSettings, 'i2v', { appMode: 'flow' })).toEqual({ provider: 'google', model: 'Veo 3.1 - Fast' })
+    })
+
+    it("API 모드('api' 또는 옵션 생략)는 기존 override 규칙 그대로", () => {
+      const scene = { generation: { image: { provider: 'openai', model: 'gpt-image-custom' }, video: { t2v: { provider: 'google', model: 'veo-scene-t2v' } } } }
+      expect(resolveSceneImageProvider(scene, settings, { appMode: 'api' })).toEqual({ provider: 'openai', model: 'gpt-image-custom' })
+      expect(resolveSceneVideoProvider(scene, settings, 't2v', { appMode: 'api' })).toEqual({ provider: 'google', model: 'veo-scene-t2v' })
+    })
+  })
+
   it('falls an unknown scene provider back to the global provider with a warning payload', () => {
     const scene = {
       id: 'scene_bad',

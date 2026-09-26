@@ -40,7 +40,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       toast.warning(t('toast.noPrompt'))
       return
     }
-    const resolvedGeneration = resolveSceneImageProvider(scene, settings)
+    const resolvedGeneration = resolveSceneImageProvider(scene, settings, { appMode: genAPI?.mode })   // Flow 는 씬 override 없이 설정 모델(F1)
     if (resolvedGeneration.warning) console.warn('[Scene]', resolvedGeneration.warning)
 
     // #R27-1: preflight(folder/ready/auth) await 동안에도 busy 로 표시한다. 안 그러면 그 창에서

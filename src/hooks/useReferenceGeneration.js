@@ -15,7 +15,7 @@ import { isStyleReference } from '../services/styleService'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
 import { clampInt } from '../utils/clampInt'
-import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
+import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } from '../utils/authMessages'
 import { runFlowCharacterOperation, runFlowComposerRefresh } from '../utils/flowCharacterCoordinator'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { isReferenceImageEmpty, referenceGuardKey, sourceAvailable } from '../utils/refImageGuard'
@@ -66,7 +66,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   const resultErrorKind = (result) => result?.authFailed ? 'auth' : (result?.errorKind ?? null)
   // R2-2#2(O1#2/O2#1): 씬 경로(useAutomation.authFailureText)와 같은 규칙 — authFailed 결과에 errorKind 가 있으면(새 Flow 의
   //   flow-session-missing 등, error 는 'not-on-flow'/'wiz-missing' 같은 이유 토큰) 저장 문구·토스트는 사람 문구다.
-  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
+  const authFailureText = (res) => (authErrorIsMachineToken(res) ? authErrorMessage() : (res?.error || authErrorMessage()))
   const displayResultError = (result, fallback) => resolveDisplayError(
     t,
     resultErrorKind(result),

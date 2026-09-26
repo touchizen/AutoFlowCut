@@ -146,6 +146,15 @@ describe('retryVideoDownload — authFailed (#R24-3)', () => {
     expect(JSON.stringify([res, patch])).not.toContain('flow-rpc-error')
   })
 
+  // main 병합(리뷰 A F2): API provider 의 errorKind:'auth' 는 사람 메시지를 싣는다 — 인증 안내로 덮지 않는다(어느 provider 키인지 보이게).
+  it("API provider 분류(errorKind 'auth') authFailed 는 provider 메시지 그대로 — authErrorText 로 덮지 않는다", async () => {
+    const onUpdate = vi.fn()
+    const genAPI = { checkVideoStatus: vi.fn().mockResolvedValue({ success: false, authFailed: true, errorKind: 'auth', error: 'Invalid xAI API key' }), downloadVideo: vi.fn() }
+    const res = await retryVideoDownload({ item: { id: 'vscene_1', generationId: 'gen:v1:grok-handle', mediaId: 'media-grok' }, genAPI, onUpdate, projectName: 'p', authErrorText: AUTH_TEXT })
+    expect(res).toMatchObject({ success: false, authFailed: true, error: 'Invalid xAI API key' })
+    expect(onUpdate.mock.calls.at(-1)[2]).toMatchObject({ error: 'Invalid xAI API key', errorKind: 'auth' })
+  })
+
   it('kind 없는 옛 authFailed 결과는 error 그대로이고 결과에 errorKind 가 없다(회귀 없음)', async () => {
     const onUpdate = vi.fn()
     const genAPI = { checkVideoStatus: vi.fn().mockResolvedValue({ success: true, statuses: [], authFailed: true, error: 'Auth expired — please re-login to Flow' }), downloadVideo: vi.fn() }

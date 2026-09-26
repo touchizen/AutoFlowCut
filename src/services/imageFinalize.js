@@ -6,6 +6,7 @@
  *   - useAutomation       : 비동기 batch (collectCompleted) — processAsyncSceneResult 경유
  */
 
+import { authErrorIsMachineToken } from '../utils/authMessages'
 import { RESOURCE } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { getImageSizeFromBase64 } from '../utils/formatters'
@@ -53,7 +54,7 @@ export async function finalizeGeneratedImage({
       success: false,
       sceneUpdate: {
         status: 'error',
-        error: (result.authFailed && result.errorKind && authErrorText) ? authErrorText : (result.error || 'No images'),
+        error: (result.authFailed && authErrorIsMachineToken(result) && authErrorText) ? authErrorText : (result.error || 'No images'),
         errorKind: result.authFailed ? 'auth' : (result.errorKind ?? null),
         // M1-10: kind 별 params(예: flow-resolution-not-offered {requested}) 보존 — 없으면 {} 로 비워 stale params 차단.
         errorParams: result.errorParams || {},
