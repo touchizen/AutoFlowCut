@@ -36,7 +36,8 @@ export function snapshotClipboard(clipboard) {
   const read = (fn) => { try { return fn() } catch (_e) { return null } }
   const t = read(() => clipboard.readText())
   if (t) keep.text = t
-  const h = read(() => clipboard.readHTML())
+  // macOS readHTML() 은 HTML 이 없으면 RTF 변환본이나 plain 문자열로 채워 준다 — 형식 목록에 있을 때만 읽는다(실기 G1).
+  const h = fmts.includes('text/html') ? read(() => clipboard.readHTML()) : null
   if (h) keep.html = h
   const r = read(() => clipboard.readRTF())
   if (r) keep.rtf = r

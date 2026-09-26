@@ -74,6 +74,34 @@ describe('snapshotClipboard — 형식 정책(D4-c)', () => {
     expect(writeArg(clip, write)).toEqual([{ text: TEXT, rtf: RTF }])
   })
 
+  // 실기(2026-09-26 G1): macOS 의 readHTML() 은 HTML 이 없으면 RTF 를 HTML 로 바꾸거나 plain 문자열을 그대로 돌려준다
+  //   (Chromium ClipboardMac::ReadHTML 폴백). 그 값을 보관하면 복원 뒤 원래 없던 public.html 이 생겼다 — "있는 것만" 위반.
+  const macHtmlFallback = (clip) => {
+    clip.readHTML = () => {
+      clip.calls.push('readHTML')
+      if (clip.state.formats.includes('text/html')) return clip.state.html
+      if (clip.state.formats.includes('text/rtf')) return `<meta charset='utf-8'><p>${clip.state.text}</p>`
+      return clip.state.text ? `<meta charset='utf-8'>${clip.state.text}` : ''
+    }
+    return clip
+  }
+
+  it('plain text 만(터미널·스토리 입력창 복사) → macOS readHTML 폴백을 보관하지 않는다, 복원 write 가 **정확히** {text}', () => {
+    const clip = macHtmlFallback(makeFakeClipboard({ formats: ['text/plain'], text: TEXT }))
+    const write = vi.spyOn(clip, 'write')
+    const { r } = roundTrip(clip)
+    expect(r).toEqual({ restored: true })
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT }])
+    expect(clip.state.formats).toEqual(['text/plain'])
+  })
+
+  it('text + rtf(텍스트 편집기 복사) → RTF 를 바꾼 HTML 폴백을 보관하지 않는다, 복원 write 가 **정확히** {text, rtf}', () => {
+    const clip = macHtmlFallback(makeFakeClipboard({ formats: ['text/plain', 'text/rtf'], text: TEXT, rtf: RTF }))
+    const write = vi.spyOn(clip, 'write')
+    roundTrip(clip)
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT, rtf: RTF }])
+  })
+
   it('빈 클립보드 → 복원은 clear() 만(write 없음)', () => {
     const clip = makeFakeClipboard({ formats: [] })
     const { saved, r } = roundTrip(clip)
