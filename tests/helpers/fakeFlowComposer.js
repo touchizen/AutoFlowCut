@@ -51,6 +51,8 @@ export function makeFakeClipboard(init = {}, onCall) {
     readText() { note('readText'); return st.text },
     readHTML() { note('readHTML'); return st.html },
     readRTF() { note('readRTF'); return st.rtf },
+    /** macOS 원시 형식 읽기(폴백 없음) — 'public.html' 은 진짜 HTML 이 있을 때만 바이트가 있다. */
+    readBuffer(type) { note('readBuffer'); return type === 'public.html' && st.formats.includes('text/html') && st.html ? Buffer.from(st.html) : Buffer.alloc(0) },
     readImage() { note('readImage'); return fakeImage(st.image) },
     writeImage(img) { note('writeImage'); maybeThrow('writeImage'); reset(); st.image = img.toPNG(); st.formats = ['image/png'] },
     writeText(s) { note('writeText'); reset(); st.text = String(s); st.formats = ['text/plain'] },

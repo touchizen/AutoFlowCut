@@ -21,10 +21,11 @@ const imageSig = (img) => (img && !img.isEmpty() ? sha256(img.toPNG()) : '')
 const sameList = (a, b) => [...a].sort().join('\n') === [...b].sort().join('\n')
 
 /**
+ * @param {{platform?:string}} [opts] platform 은 HTML 판정 방식을 고른다(기본 process.platform — 테스트가 주입).
  * @returns {{formats:number, fileCopy:boolean, keep:{text?:string, html?:string, rtf?:string, image?:object}}}
  *   formats 는 개수(로그용). fileCopy 면 keep 은 비어 있다(내용을 읽지 않는다).
  */
-export function snapshotClipboard(clipboard) {
+export function snapshotClipboard(clipboard, { platform = process.platform } = {}) {
   let list
   try { list = clipboard.availableFormats() } catch (_e) {
     // 형식을 못 읽으면 파일 복사인지 판정할 수 없다 — 쓰지 않는 쪽으로(fail-closed).
@@ -36,8 +37,12 @@ export function snapshotClipboard(clipboard) {
   const read = (fn) => { try { return fn() } catch (_e) { return null } }
   const t = read(() => clipboard.readText())
   if (t) keep.text = t
-  // macOS readHTML() 은 HTML 이 없으면 RTF 변환본이나 plain 문자열로 채워 준다 — 형식 목록에 있을 때만 읽는다(실기 G1).
-  const h = fmts.includes('text/html') ? read(() => clipboard.readHTML()) : null
+  // HTML 은 진짜로 있을 때만 보관한다. macOS(Chromium)는 HTML 을 두 겹으로 지어낸다 — availableFormats() 는 public.rtf 만 있어도
+  //   text/html 을 올리고, readHTML() 은 HTML 이 없으면 RTF 변환본·plain 문자열로 채운다(실기 G1: plain 복사·TextEdit 복사 둘 다
+  //   복원 뒤 없던 public.html 이 생겼다). 그래서 macOS 는 원시 public.html 바이트(readBuffer — 폴백 없음)로, 그 밖은 형식 목록으로 판정한다.
+  const rawHtml = platform === 'darwin' ? read(() => clipboard.readBuffer('public.html')) : null
+  const htmlPresent = platform === 'darwin' ? !!(rawHtml && rawHtml.length > 0) : fmts.includes('text/html')
+  const h = htmlPresent ? read(() => clipboard.readHTML()) : null
   if (h) keep.html = h
   const r = read(() => clipboard.readRTF())
   if (r) keep.rtf = r

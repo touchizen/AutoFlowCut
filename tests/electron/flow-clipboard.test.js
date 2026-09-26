@@ -25,8 +25,8 @@ afterEach(() => { logSpy.mockRestore(); warnSpy.mockRestore() })
 const logged = () => [...logSpy.mock.calls, ...warnSpy.mock.calls].map((c) => c.map(String).join(' ')).join('\n')
 
 /** 스냅샷 → 업로드 이미지 쓰기 → 복원 한 바퀴. 복원 호출만 따로 본다. */
-function roundTrip(clip) {
-  const saved = snapshotClipboard(clip)
+function roundTrip(clip, opts) {
+  const saved = snapshotClipboard(clip, opts)
   const written = writeUploadImage(clip, fakeNativeImage.createFromBuffer(pngBytes('ref')))
   clip.calls.length = 0
   const r = restoreClipboard(clip, saved, written)
@@ -67,39 +67,75 @@ describe('snapshotClipboard — 형식 정책(D4-c)', () => {
     expect(Buffer.compare(clip.state.image, src)).toBe(0)
   })
 
-  it('rtf 도 보관·복원 → write({text, rtf})', () => {
+  it('Windows: rtf 도 보관·복원 → write({text, rtf})', () => {
     const clip = makeFakeClipboard({ formats: ['text/plain', 'text/rtf'], text: TEXT, rtf: RTF })
     const write = vi.spyOn(clip, 'write')
-    roundTrip(clip)
+    roundTrip(clip, { platform: 'win32' })
     expect(writeArg(clip, write)).toEqual([{ text: TEXT, rtf: RTF }])
   })
 
-  // 실기(2026-09-26 G1): macOS 의 readHTML() 은 HTML 이 없으면 RTF 를 HTML 로 바꾸거나 plain 문자열을 그대로 돌려준다
-  //   (Chromium ClipboardMac::ReadHTML 폴백). 그 값을 보관하면 복원 뒤 원래 없던 public.html 이 생겼다 — "있는 것만" 위반.
-  const macHtmlFallback = (clip) => {
+  it('Windows: html 은 형식 목록으로 판정한다(원시 public.html 이 없는 플랫폼) → write({text, html})', () => {
+    const clip = makeFakeClipboard({ formats: ['text/plain', 'text/html'], text: TEXT, html: HTML })
+    clip.readBuffer = () => Buffer.alloc(0)   // Windows 엔 'public.html' 이 없다 — 이걸 보면 진짜 HTML 을 버린다
+    const write = vi.spyOn(clip, 'write')
+    roundTrip(clip, { platform: 'win32' })
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT, html: HTML }])
+  })
+
+  // 실기(2026-09-26 G1 · TextEdit 재현): macOS Chromium 은 HTML 을 두 겹으로 지어낸다 —
+  //   ① availableFormats() 는 public.rtf 만 있어도 text/html 을 올린다(ClipboardMac::IsFormatAvailable — "RTF 를 HTML 로 바꿀 수 있다").
+  //   ② readHTML() 은 HTML 이 없으면 RTF 변환본이나 plain 문자열로 채운다.
+  //   그대로 보관하면 복원 뒤 원래 없던 public.html 이 생긴다(plain 복사 formats=1 · TextEdit 복사 formats=3, 둘 다 실측).
+  //   원시 public.html 바이트(readBuffer — 폴백 없음)만 진짜 HTML 의 증거다.
+  const macClipboard = (init) => {
+    const clip = makeFakeClipboard(init)
+    const has = (f) => clip.state.formats.includes(f)
+    clip.availableFormats = () => {
+      clip.calls.push('availableFormats')
+      const list = [...clip.state.formats]
+      if (has('text/rtf') && !has('text/html')) list.push('text/html')
+      return list
+    }
     clip.readHTML = () => {
       clip.calls.push('readHTML')
-      if (clip.state.formats.includes('text/html')) return clip.state.html
-      if (clip.state.formats.includes('text/rtf')) return `<meta charset='utf-8'><p>${clip.state.text}</p>`
+      if (has('text/html')) return clip.state.html
+      if (has('text/rtf')) return `<meta charset='utf-8'><p>${clip.state.text}</p>`
       return clip.state.text ? `<meta charset='utf-8'>${clip.state.text}` : ''
     }
     return clip
   }
+  const MAC = { platform: 'darwin' }
 
-  it('plain text 만(터미널·스토리 입력창 복사) → macOS readHTML 폴백을 보관하지 않는다, 복원 write 가 **정확히** {text}', () => {
-    const clip = macHtmlFallback(makeFakeClipboard({ formats: ['text/plain'], text: TEXT }))
+  it('macOS plain text 만(터미널·스토리 입력창 복사) → 지어낸 HTML 을 보관하지 않는다, 복원 write 가 **정확히** {text}', () => {
+    const clip = macClipboard({ formats: ['text/plain'], text: TEXT })
     const write = vi.spyOn(clip, 'write')
-    const { r } = roundTrip(clip)
+    const { saved, r } = roundTrip(clip, MAC)
+    expect(saved.formats).toBe(1)
     expect(r).toEqual({ restored: true })
     expect(writeArg(clip, write)).toEqual([{ text: TEXT }])
     expect(clip.state.formats).toEqual(['text/plain'])
   })
 
-  it('text + rtf(텍스트 편집기 복사) → RTF 를 바꾼 HTML 폴백을 보관하지 않는다, 복원 write 가 **정확히** {text, rtf}', () => {
-    const clip = macHtmlFallback(makeFakeClipboard({ formats: ['text/plain', 'text/rtf'], text: TEXT, rtf: RTF }))
+  it('macOS TextEdit 복사(text + rtf, 목록엔 text/html 도 뜬다) → RTF 변환 HTML 을 보관하지 않는다, write 가 **정확히** {text, rtf}', () => {
+    const clip = macClipboard({ formats: ['text/plain', 'text/rtf'], text: TEXT, rtf: RTF })
     const write = vi.spyOn(clip, 'write')
-    roundTrip(clip)
+    const { saved } = roundTrip(clip, MAC)
+    expect(saved.formats).toBe(3)
     expect(writeArg(clip, write)).toEqual([{ text: TEXT, rtf: RTF }])
+  })
+
+  it('macOS Word 복사(text + html + rtf) → 진짜 HTML 과 RTF 를 둘 다 보관, write 가 **정확히** {text, html, rtf}', () => {
+    const clip = macClipboard({ formats: ['text/plain', 'text/html', 'text/rtf'], text: TEXT, html: HTML, rtf: RTF })
+    const write = vi.spyOn(clip, 'write')
+    roundTrip(clip, MAC)
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT, html: HTML, rtf: RTF }])
+  })
+
+  it('macOS 앱 텍스트창(text + html + Lexical) → 진짜 HTML 보관, write 가 **정확히** {text, html}', () => {
+    const clip = macClipboard({ formats: ['text/plain', 'text/html', 'application/x-lexical-editor'], text: TEXT, html: HTML })
+    const write = vi.spyOn(clip, 'write')
+    roundTrip(clip, MAC)
+    expect(writeArg(clip, write)).toEqual([{ text: TEXT, html: HTML }])
   })
 
   it('빈 클립보드 → 복원은 clear() 만(write 없음)', () => {
