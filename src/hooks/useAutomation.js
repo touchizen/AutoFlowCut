@@ -320,6 +320,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // 씬 상태를 generating으로 바꾸기 직전 live latch 재검사 — hit 씬과 이후 씬은 손대지 않는다.
       if (isUpscaylRunningRef.current?.()) {
         stopRequestedRef.current = true
+        cancelActiveRuns()   // main 병합(리뷰 A): 종결 경로는 제출된 run scope 를 취소한다(auth·quota·consume-denied 와 같은 계약)
         break
       }
 
