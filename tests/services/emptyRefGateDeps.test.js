@@ -6,6 +6,13 @@ import {
   runEmptyRefGateFlow,
 } from '../../src/services/emptyRefGate'
 import { useAppSettings } from '../../src/hooks/useAppSettings'
+import { selectMentionSyncTargets } from '../../src/utils/mentionSyncTargets'
+
+// M3(D15): 동기화 대상 셀렉터는 퇴역(항상 []) — 기본은 실제 구현. 남아 있는 MCP 비대화 게이트(대상이 있으면 자동 취소)는 스텁 셀렉터로 지킨다.
+vi.mock('../../src/utils/mentionSyncTargets', async (importOriginal) => {
+  const mod = await importOriginal()
+  return { ...mod, selectMentionSyncTargets: vi.fn(mod.selectMentionSyncTargets) }
+})
 
 const makeArgs = (overrides = {}) => ({
   scenesRef: { current: [{ id: 's1' }] },
@@ -97,6 +104,51 @@ describe('buildEmptyRefGateDeps — liveness 배선', () => {
     })
   })
 
+  // M3(D15): 실제 셀렉터는 퇴역 — MCP 의 비대화 게이트가 멘션 배치를 취소하지 않는다(엔진이 @멘션을 로컬 이미지 인라인 멘션으로 붙인다).
+  it('M3: MCP source의 (옛 기준) 미동기화 mention도 sync gate·자동 취소 없이 시작한다', async () => {
+    const humanSyncGate = vi.fn(async () => ({
+      proceeded: false,
+      patchedRefs: null,
+    }))
+    let latch = false
+    const startScenes = vi.fn(async () => {})
+    const unsynced = {
+      id: 'sync-me',
+      name: 'SyncMe',
+      type: 'character',
+      filePath: '/sync-me.png',
+    }
+    const deps = buildEmptyRefGateDeps(makeArgs({
+      source: 'mcp',
+      scenesRef: {
+        current: [{ id: 's1', prompt: '@SyncMe', status: 'pending' }],
+      },
+      referencesRef: { current: [unsynced] },
+      getMatchingReferences: (scene, pool) => (
+        (pool || []).filter(ref => scene.prompt.includes(`@${ref.name}`))
+      ),
+      subscriptionPreGate: vi.fn(async () => 'proceed'),
+      setPendingLatch: vi.fn(on => { latch = on }),
+      openSyncGate: humanSyncGate,
+      automationStartRef: { current: startScenes },
+      gateView: nonInteractiveGateView,
+    }))
+
+    const outcome = await runEmptyRefGateFlow({
+      startMode: 'flow',
+      projectName: 'P',
+      force: false,
+      initialTargetSceneIds: ['s1'],
+      startOptionsWithoutSceneIds: {},
+    }, deps)
+
+    expect(humanSyncGate).not.toHaveBeenCalled()
+    expect(startScenes).toHaveBeenCalledTimes(1)
+    expect(outcome).toMatchObject({ started: true })
+    expect(latch).toBe(false)
+  })
+
+  // 대상이 있을 때의 비대화 게이트(옛 경로 — 코드는 남아 있다)를 스텁 셀렉터로 지킨다.
   it('MCP source의 미동기화 mention은 사람 sync gate를 열지 않고 자동 취소해 latch를 해제한다', async () => {
     const humanSyncGate = vi.fn(async () => ({
       proceeded: false,
@@ -110,6 +162,7 @@ describe('buildEmptyRefGateDeps — liveness 배선', () => {
       type: 'character',
       filePath: '/sync-me.png',
     }
+    selectMentionSyncTargets.mockImplementationOnce(() => [unsynced])
     const deps = buildEmptyRefGateDeps(makeArgs({
       source: 'mcp',
       scenesRef: {

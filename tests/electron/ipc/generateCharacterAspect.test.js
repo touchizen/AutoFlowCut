@@ -1,4 +1,9 @@
 // @vitest-environment node
+// ⚠️ M1-12(2026-09-24 flow.google.com 재작업): 이 파일이 구동하는 옛 labs.google 핸들러 경로는 Flow 모드에서
+//    도달 불가다(generate-image/t2v/check-video-status 는 angular 디스패치, 나머지 9개는 flow-feature-unsupported 단락).
+//    옛 핸들러 본문은 후속 정리 대상이라 남겨 두었고, 그 코드만 검증하는 이 스위트는 그 정리 때 함께 삭제한다.
+//    새 경로의 계약은 tests/electron/ipc/flowGenerateImageAngular.test.js · flowFeatureUnsupported.test.js ·
+//    flowAngularDispatch.test.js 가 핀한다.
 //
 // flow:generate-character 는 Ref 탭 캐릭터 카드 생성 경로다(메인 컴포저 대신 /characters 컴포저).
 // generate-image / generate-scene 과 동일하게 setFlowPageInject 로 화면비(aspectRatio)·seed 를
@@ -76,7 +81,7 @@ function makeDeps({
   return { deps, flowView }
 }
 
-describe('flow:generate-character injects aspectRatio/seed', () => {
+describe.skip('flow:generate-character injects aspectRatio/seed', () => {
   it('16:9 → LANDSCAPE enum + seed 주입, 그리고 inject 정리', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps()
@@ -203,7 +208,7 @@ describe('flow:generate-character injects aspectRatio/seed', () => {
   })
 })
 
-describe('flow character IPC coded failure responses', () => {
+describe.skip('flow character IPC coded failure responses', () => {
   it.each([
     ['flow:generate-character', { prompt: 'private prompt', projectId: PID }],
     ['flow:reroll-character', { entityId: 'entity-1', prompt: 'private prompt', projectId: PID }],
@@ -239,24 +244,6 @@ describe('flow character IPC coded failure responses', () => {
       errorKind: 'generation-response-invalid',
       error: 'Generation response was invalid',
     })
-  })
-
-  it.each([
-    ['flow:register-character-entity', { entityId: 'e', workflowId: 'w', displayName: 'private name' }],
-    ['flow:rename-character', { entityId: 'e', displayName: 'private name' }],
-  ])('%s returns a coded missing-session failure', async (channel, payload) => {
-    const ipc = makeIpcMain()
-    const { deps } = makeDeps()
-    registerCharacterIPC(ipc, deps)
-
-    const res = await ipc.invoke(channel, { ...payload, projectId: PID })
-
-    expect(res).toMatchObject({
-      success: false,
-      errorKind: 'flow-access-token-unavailable',
-      error: 'Flow access token unavailable',
-    })
-    expect(res.error).not.toContain('private name')
   })
 
   it('upload returns a coded invalid-response failure without the response body', async () => {
@@ -337,7 +324,7 @@ describe('flow character IPC coded failure responses', () => {
 // 서버 저장은 PATCH /flow/entities 가 한다(라이브 캡처로 200 확인). 하지만 SPA 는 페이지 로드 시점의
 // '제목 없는 캐릭터' 를 캐시한 채라, 상세 페이지 이름칸에 타이핑해 스토어를 갱신하지 않으면
 // 프로젝트를 나갔다 재진입해야 이름이 보인다. 실패하면 nameApplied:false 로 알려 호출측이 refresh 로 폴백한다.
-describe('flow:generate-character — SPA 캐시에 이름 반영', () => {
+describe.skip('flow:generate-character — SPA 캐시에 이름 반영', () => {
   it('상세 페이지로 가서 이름을 타이핑하고 nameApplied:true 를 돌려준다', async () => {
     const ipc = makeIpcMain()
     const { deps, flowView } = makeDeps()
@@ -368,5 +355,27 @@ describe('flow:generate-character — SPA 캐시에 이름 반영', () => {
     const scripts = flowView.webContents.executeJavaScript.mock.calls.map(c => String(c[0]))
     expect(scripts.some(s => s.includes('name input not found'))).toBe(false)
     expect(res.nameApplied).toBe(false)
+  })
+})
+
+// R2#7: register/rename 은 M1-12 의 단락 대상이 아니다 — flow.google.com 에서도 렌더러(flowCharacterSync.js)가 닿는 살아 있는
+//   핸들러라, 코드화된 세션 실패 계약(내용 없음)은 계속 검증한다. (위 describe.skip 은 도달 불가 코드만 덮는다.)
+describe('flow character session-coded failures (live on flow.google.com)', () => {
+  it.each([
+    ['flow:register-character-entity', { entityId: 'e', workflowId: 'w', displayName: 'private name' }],
+    ['flow:rename-character', { entityId: 'e', displayName: 'private name' }],
+  ])('%s returns a coded missing-session failure', async (channel, payload) => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke(channel, { ...payload, projectId: PID })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'flow-access-token-unavailable',
+      error: 'Flow access token unavailable',
+    })
+    expect(res.error).not.toContain('private name')
   })
 })

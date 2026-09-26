@@ -11,6 +11,7 @@
 
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { downloadVideoBase64 } from './videoDownload'
+import { isFlowMediaId } from '../utils/flowMediaId'   // M2-R5 J2: 훅·App·파서와 공유하는 Flow 미디어 id 술어(UUID)
 
 /**
  * 다운로드 + 저장 (useVideoAutomation의 Phase 3 로직과 동일)
@@ -115,10 +116,10 @@ export async function recoverInFlightVideos({
   //   현재 mode 의 엔진(genAPI.checkVideoStatus)으로 다른 엔진 id 를 폴링하면 'failed' 로 돌아와
   //   영구히 error 마킹되고(이후 recovery 가 generating/pending 만 보므로 skip) 완료된 Flow 잡이
   //   고아가 된다. 엔진이 안 맞으면 폴링하지 않고 그대로 둬, 올바른 모드의 recovery 가 처리하게 한다.
-  const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || '').trim())
+  //   M2-R5 J2: 지역 isUuid 대신 공유 술어 isFlowMediaId(훅 submittedFlow · App chargedFlowItem · 파서와 같은 모양).
   const engineMatches = (genId) => {
     if (mode !== 'api' && mode !== 'flow') return true  // mode 미지정(legacy) → 필터 안 함
-    return mode === 'flow' ? isUuid(genId) : !isUuid(genId)  // flow=UUID, api=operationName
+    return mode === 'flow' ? isFlowMediaId(genId) : !isFlowMediaId(genId)  // flow=UUID, api=operationName
   }
   // 복구 대상: generationId 있음 + videoPath 없음 + status가 generating/pending + 엔진 일치
   const candidates = framePairs.filter(fp =>
@@ -172,7 +173,8 @@ export async function recoverInFlightVideos({
           expired++
         }
       }
-      // 일시적 오류면 그대로 둠 ('generating' 유지)
+      // 일시적 오류면 그대로 둠 — status 는 손대지 않는다(로드 뒤라 보통 'pending'). M2-R3 H3: Flow 모드 Phase 0 은 generationId 있음 + videoPath 없음(출처)으로
+      //   in-flight 를 잡으므로 여기서 'generating' 으로 되돌릴 필요가 없다(authFailed·예외 분기도 같다 — generationId 만 남기면 된다).
       continue
     }
 
@@ -230,9 +232,16 @@ export async function recoverInFlightVideos({
           console.warn(`${logPrefix} Recovery download exception for ${fp.id}:`, e.message)
         }
       } else if (statusInfo.status === 'failed') {
+        // M2-R3 H2(A2/B1): G3 의 retryVideoDownload failed 분기와 같은 모양 — kind·params 를 올리고(없으면 null), mediaId 는 답에 있을 때만, generationId 유지.
+        //   프로젝트를 여러 번 다시 열면 main 의 as29s/no-record 4회 유계에 닿아 {failed, flow-video-fetch-failed|not-found, mediaId} 가 온다 — mediaId·kind 를
+        //   버리면 과금된 미디어가 error+generationId+mediaId:null 로 남아 다음 Start 가 재제출(10크레딧)한다. 머지 뒤 download-only 로 분류돼야 한다.
         onFramePairUpdate(fp.id, {
           status: 'error',
           error: statusInfo.error || 'Video generation failed',
+          errorKind: statusInfo.errorKind ?? null,
+          ...(statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
+          ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
+          generationId: fp.generationId,
           generatingEndedAt: Date.now(),
         })
         expired++
@@ -281,6 +290,7 @@ export async function retryVideoDownload({
   projectName = '',
   saveMode = 'folder',
   videoResolution = '1080p',
+  authErrorText = null,    // M2-R3 H5: kind 동반 authFailed 의 항목 문구(문자열 | () => 문자열) — 호출자의 인증 안내(getAuthErrorMessage)
 }) {
   if (!item?.generationId) {
     const error = 'Cannot retry: missing generationId'
@@ -312,10 +322,16 @@ export async function retryVideoDownload({
   // #R24-3: checkVideoStatus 가 authFailed 를 표면화하면(success:true + statuses:[]) 아래
   //   statuses[0]===undefined 분기가 "Generation expired" 로 오보한다. 인증 만료를 정확히 보고.
   if (statusResult?.authFailed) {
-    const msg = statusResult.error || 'Auth expired — please re-login to Flow'
+    // M2-R3 H5(A5/B3): kind 를 동반한 authFailed(flow-session-missing 격상·읽기 RPC 401/16 의 flow-rpc-error)의 error 는 기계 토큰 — 그대로 쓰면 resolveDisplayError
+    //   (errorKind:'auth' → error 그대로) 가 표에 raw 토큰을 그린다. 훅의 authFailureText 와 같은 규칙: kind 동반이면 인증 안내 문구(없으면 기본 문구), kind 없는 옛
+    //   결과는 error 그대로. 결과에도 errorKind:'auth' 를 실어 훅이 같은 규칙으로 상태 문구를 만들게 한다.
+    const DEFAULT_AUTH_TEXT = 'Auth expired — please re-login to Flow'
+    const kindBearing = !!statusResult.errorKind
+    const authText = typeof authErrorText === 'function' ? authErrorText() : authErrorText
+    const msg = kindBearing ? (authText || DEFAULT_AUTH_TEXT) : (statusResult.error || DEFAULT_AUTH_TEXT)
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flow-login-expired'))
     onUpdate?.(item.id, 'error', { error: msg, errorKind: 'auth', generatingEndedAt: Date.now() })
-    return { success: false, error: msg, authFailed: true }
+    return { success: false, error: msg, authFailed: true, ...(kindBearing ? { errorKind: 'auth' } : {}) }
   }
 
   if (!statusResult?.success || !Array.isArray(statusResult.statuses)) {
@@ -337,7 +353,16 @@ export async function retryVideoDownload({
 
   if (statusInfo.status === 'failed') {
     const msg = statusInfo.error || 'Video generation failed'
-    onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+    // M2-R2 G3(B6): 상태 핸들러가 kind 를 실은 failed(flow-video-not-found: Flow 에 그 미디어가 없음)를 답하면 그 kind·params 를 그대로 올린다 — 안 그러면 표에
+    //   raw kind 토큰이 뜬다. kind 없으면 null 로 stale kind 를 지운다(훅의 F1 failed 분기와 같은 모양). mediaId 는 답에 있을 때만 다시 쓴다(과금 안전 — download-only 유지).
+    onUpdate?.(item.id, 'error', {
+      error: msg,
+      errorKind: statusInfo.errorKind ?? null,
+      ...(statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
+      ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
+      generationId: item.generationId,
+      generatingEndedAt: Date.now(),
+    })
     return { success: false, error: msg }
   }
 

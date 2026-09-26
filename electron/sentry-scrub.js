@@ -56,6 +56,9 @@ const KEYED_SECRETS = [
   //      지워 로그를 못 읽게 만들었다(실측). 쿠키는 헤더 문맥 안에서만 판단한다.
   /((?:^|[;\s,])(?:set-)?cookie\s*[:=]\s*)[^\n]+/gi,
   /(["']?(?:access|refresh|id)_token["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/-]{8,}/gi,
+  // M1-6: flow-content.google 서명 URL 의 파라미터(Expires·KeyName·Signature = ~6h 미디어 접근권). URL 통째는
+  //   아래 MEDIA_HOST 가 지우고, URL 이 아닌 문맥(쿼리 조각·span)에서는 키로 지운다.
+  /([?&](?:Signature|KeyName|Expires)=)[^&\s"'`]+/g,
 ]
 
 // 계정 이름 세그먼트만 지운다. 공백 있는 이름("/Users/Gordon Ahn/…")은 뒤에 '/' 가 이어질 때만
@@ -84,7 +87,7 @@ const SECRET_BEARING = [
 const SDK_CONTEXTS = /^(os|runtime|app|browser|culture|trace|gpu|cloud_resource|response)$/i
 
 const ANY_URL = /https?:\/\/[^\s"'`,)\]}]+/g
-const MEDIA_HOST = /googleusercontent|ggpht|fife|getMediaUrlRedirect/i
+const MEDIA_HOST = /googleusercontent|ggpht|fife|getMediaUrlRedirect|flow-content\.google/i
 
 /** 한 문자열에서 콘텐츠·자격증명·계정명을 벗긴다. */
 export function scrubSentryString(message) {

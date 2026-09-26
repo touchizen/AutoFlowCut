@@ -77,7 +77,9 @@ export function isQuotaExhaustedError(err) {
   // null 은 "미분류" 관용구(`errorKind ?? null`) → 폴백. Error 가드는 load-bearing:
   //   prepareCloudRequest/useExport 가 Error 에 non-§5.11 errorKind('story-audio-out-of-sync' 등)를
   //   붙이므로, 이를 authoritative 로 오인하면 message 의 quota 신호를 놓친다 → 문자열 폴백으로 우회.
-  if (err != null && typeof err === 'object' && !(err instanceof Error) && err.errorKind != null) {
+  // Flow(batchexecute) 의 'flow-rpc-error' 도 authoritative 아님 — 전송 계층의 중립 kind 이고 quota 는 error 문구(RESOURCE_EXHAUSTED,
+  //   rpc code 8 — electron/flow-rpc-protocol rpcErrorToRendererResult)로 온다. 읽기 실패는 flow-angular 가 문구를 중립화하므로 폴백이 잡지 않는다.
+  if (err != null && typeof err === 'object' && !(err instanceof Error) && err.errorKind != null && err.errorKind !== 'flow-rpc-error') {
     return err.errorKind === 'quota'
   }
   const text = normalizeErrorText(err)

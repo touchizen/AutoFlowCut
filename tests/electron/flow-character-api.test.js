@@ -28,6 +28,9 @@ describe('buildCharactersUrl (A2 bound-project /characters URL)', () => {
   it('projectId 지정 시 base/locale 보존하며 그 프로젝트로 강제', () => {
     expect(buildCharactersUrl('https://labs.google/fx/ko/tools/flow/project/AAAAAAAA-aaaa-aaaa-aaaa-aaaaaaaaaaaa/characters', 'BBB'))
       .toBe('https://labs.google/fx/ko/tools/flow/project/BBB/characters')
+    expect(buildCharactersUrl('https://flow.google.com/project/AAAAAAAA-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'BBB'))
+      .toBe('https://flow.google.com/project/BBB/characters')
+    // 로케일 없는 옛 배치 — 도메인 이전 때 이 입력이 새 도메인 케이스로 바뀌며 커버리지가 사라졌었다.
     expect(buildCharactersUrl('https://labs.google/fx/tools/flow/project/AAAAAAAA-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'BBB'))
       .toBe('https://labs.google/fx/tools/flow/project/BBB/characters')
   })
@@ -46,7 +49,7 @@ describe('buildCharactersUrl (A2 bound-project /characters URL)', () => {
       .toBe('https://labs.google/fx/tools/flow/project/BBB/characters')
   })
   it('P2: 빈 URL + projectId 있으면 고정 base 폴백', () => {
-    expect(buildCharactersUrl('', 'BBB')).toBe('https://labs.google/fx/tools/flow/project/BBB/characters')
+    expect(buildCharactersUrl('', 'BBB')).toBe('https://flow.google.com/project/BBB/characters')
   })
 })
 

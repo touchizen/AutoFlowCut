@@ -14,6 +14,9 @@ import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 import { clearedImageFields } from '../utils/refEntityRegistration'
 import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
+import { pickMcpSettingsFields } from '../utils/mcpSettingsWhitelist'   // M2-LIVE N3: main 과 같은 화이트리스트(이중 방어)
+import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'   // CSV 재적용 보존 목록 — parseFromCSV 와 공유
+import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'   // 내보내기 창과 같은 허용 값
 
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
 
@@ -23,6 +26,9 @@ export function mergeSceneGenerationForMcp(existingScene, incomingScene, setting
     : undefined
   return mergeSceneGeneration(existingScene?.generation, patch, settings)
 }
+
+// start-scene-batch `mode` → handleStart 탭 오버라이드. 없거나 모르는 값이면 현재 UI 탭 그대로.
+const MCP_BATCH_MODE_TAB = { video: 'video-text', image: 'text' }
 
 /**
  * MCP load_csv(update-references) 병합. CSV 는 prompt/type/category 의 authoritative 소스지만,
@@ -100,6 +106,7 @@ export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
  */
 export function useMcpServer({
   settings,
+  setSettings = null,  // MCP `update-settings` — 에이전트가 UI 없이 설정(영상 모델·해상도 등)을 맞춘다
   scenes, setScenes,
   references, setReferences,
   srtTrack = [], setSrtTrack = null,
@@ -111,7 +118,9 @@ export function useMcpServer({
   importByPath, audioPackage,
   automationState, videoAutomation, generatingRefs,
   isRunning = false,  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
-  refBatchRunning = false  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  refBatchRunning = false,  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
+  // batch-status 진단용 — preflight 에서 조용히 return 한 이유(Flow 준비/탭)를 밖에서 볼 수 있게.
+  mode, flowProjectReady, activeTab,
 }) {
   // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
@@ -242,6 +251,9 @@ export function useMcpServer({
           kenBurnsScaleMax: (options.kenBurnsScaleMax || saved.kenBurnsScaleMax || 130) / 100,
           subtitleOption: options.subtitleOption || (saved.includeSubtitle !== false ? 'ko' : 'none'),
           subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8,
+          // 영상 클립 오디오 볼륨 — 에이전트 값 > 저장값, 허용 값(0/0.15/1)만. 0 이 유효값이라 || 폴백 금지.
+          //   둘 다 없으면 undefined → exporter 가 draft 를 건드리지 않는다(기존 동작).
+          videoAudioVolume: [options.videoAudioVolume, saved.videoAudioVolume].find((v) => VIDEO_AUDIO_VOLUMES.includes(v)),
           // 자동화는 기본 false — 옵션을 명시해야만 pending 씬이 섞인다.
           includePending: options.includePending === true
         }
@@ -375,6 +387,7 @@ export function useMcpServer({
               if (n > maxSceneN) maxSceneN = n
             }
           }
+          const consumed = new Set()
           let nextFreshN = maxSceneN + 1
           const freshId = () => {
             while (taken.has(`scene_${nextFreshN}`)) nextFreshN++
@@ -394,6 +407,10 @@ export function useMcpServer({
             } else {
               matched = byId.get(incomingId) || (prevHasSceneNums ? null : prev[i])
             }
+            // 인덱스 fallback(prev[i])은 앞 행이 id 로 이미 가져간 씬을 또 고를 수 있다 — 한 prev 는 한 번만(리뷰 R2: 옛 프로젝트에서
+            //   id 가 겹치고 두 씬이 같은 영상 경로·저장 id 를 나눠 가졌다).
+            if (matched && consumed.has(matched)) matched = null
+            if (matched) consumed.add(matched)
             // R15: 한 prev 가 두 incoming 에 매칭되면 두번째는 fresh id 필요.
             // 매칭 즉시 maps 에서 제거해 다음 incoming 이 동일 prev 재매칭 못 하게.
             if (matched) {
@@ -438,14 +455,11 @@ export function useMcpServer({
             return {
               ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
               generation: generationMerge.generation,  // sparse stage-pair deep merge; omitted generation is preserved
+              // CSV 에 없는 런타임 필드(이미지 포인터·donePrompt, 생성 메타 model·seed, 영상 결과·선택)는 기존 값 — parseFromCSV 와
+              //   같은 목록. 전엔 이미지 포인터만 골라 모델명·완성 영상 연결이 CSV 재적용마다 사라졌다(2026-09-26 실기).
+              ...pickPreservedSceneFields(matched),
               id: matched.id,                          // R9 fix: 기존 stable id 유지 (incoming.id 무시)
-              image: matched.image,                    // preserve in-memory image payload (if any)
-              imagePath: matched.imagePath,            // preserve saved image path
               status: mergedStatus,
-              mediaId: matched.mediaId,
-              generatingStartedAt: matched.generatingStartedAt,
-              image_size: matched.image_size,
-              donePrompt: matched.donePrompt,          // 생성 기준 스냅샷 — 되돌림 done 복원 유지
               // C9 fix: incoming 이 srtLineIds 안 보내면 기존 보존
               srtLineIds: incoming.srtLineIds ?? matched.srtLineIds ?? [],
             }
@@ -471,6 +485,15 @@ export function useMcpServer({
           return { ...s, ...data.fields, generation: generationMerge.generation }
         }))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
+      } else if (data.type === 'update-settings') {
+        // 설정 병합 — useAppSettings 가 localStorage 로 동기화한다. fields 가 객체가 아니면 무시.
+        // M2-LIVE N3(A3/B2): 화이트리스트 밖 키(projectName·mcpHttpEnabled·saveMode·flowAgentOn …)·모양 틀린 값은 버린다 — main 의 /api/update 가
+        //   먼저 400 으로 거르지만 렌더러도 같은 상수로 막는다(이중 방어). 유효한 키가 없으면 아무것도 하지 않는다.
+        const picked = pickMcpSettingsFields(data.fields)
+        if (picked && Object.keys(picked).length) {
+          setSettings?.(prev => ({ ...prev, ...picked }))
+          console.log('[MCP] Settings updated via HTTP:', Object.keys(picked).join(','))
+        }
       } else if (data.type === 'generate-reference') {
         console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)
         // styleId를 override로 직접 전달 — 전역 selectedStyleRefId 오염 없음, race 없음.
@@ -482,8 +505,12 @@ export function useMcpServer({
         console.log('[MCP] Open project requested:', data.projectName)
         window.__mcpOpenProject?.(data.projectName)
       } else if (data.type === 'start-scene-batch') {
-        console.log('[MCP] Scene batch generation start requested, styleId:', data.styleId, 'force:', data.force)
-        window.__mcpStartBatch?.(data.styleId, data.force ? { force: true } : undefined)
+        console.log('[MCP] Scene batch generation start requested, styleId:', data.styleId, 'force:', data.force, 'mode:', data.mode)
+        const batchOptions = {
+          ...(data.force ? { force: true } : {}),
+          ...(data.mode ? { mode: data.mode } : {}),
+        }
+        window.__mcpStartBatch?.(data.styleId, Object.keys(batchOptions).length ? batchOptions : undefined)
       } else if (data.type === 'start-ref-batch') {
         console.log('[MCP] Reference batch generation start requested, styleId:', data.styleId, 'force:', data.force)
         window.__mcpStartRefBatch?.(data.styleId, data.force ? { force: true } : undefined)
@@ -537,9 +564,14 @@ export function useMcpServer({
     // → Start 버튼 라벨이 새 스타일 자동 표시. 'auto'/'none'/생략은 UI 유지 (사용자 의도 보존).
     window.__mcpStartBatch = async (styleId, options) => {
       // ref로 항상 최신 handleStart 호출 — stop 후 stale `isRunning=true` 가드에 막히는 회귀 방지.
+      // mode('video'|'image')는 handleStart 의 tab 오버라이드로 변환 — 에이전트가 UI 탭과 무관하게 T2V 배치를 돌릴 수 있게.
+      const { mode, ...restOptions } = options || {}
+      // M2-LIVE N7(A5): 자기 키만 — 'constructor'·'toString'·'__proto__' 는 평범한 조회에서 truthy 비문자열(함수·객체)을 내어 setActiveTab(fn) 이 React 업데이터로 적용됐다.
+      const tab = typeof mode === 'string' && Object.hasOwn(MCP_BATCH_MODE_TAB, mode) ? MCP_BATCH_MODE_TAB[mode] : null
       const callHandleStart = effective => handleStartRef.current?.(effective, {
-        ...(options || {}),
+        ...restOptions,
         source: 'mcp',
+        ...(tab ? { tab } : {}),
       })
       const resolveEffective = () => {
         if (styleId === 'auto') return null
@@ -618,7 +650,20 @@ export function useMcpServer({
       // 중복 batch 진행 가능 (auto stop-restart 우회).
       const refIsRunning = refBatchRunning || generatingRefs.length > 0
 
+      // T2V 카운트 — videoT2VPrompt 있는 씬만, videoT2VStatus 기준 (image status 와 별개).
+      const videoEligible = scenes.filter(s => s.videoT2VPrompt)
+      const videoCount = st => videoEligible.filter(s => s.videoT2VStatus === st).length
+      const video = {
+        total: videoEligible.length,
+        done: videoCount('complete'),
+        generating: videoCount('generating'),
+        error: videoCount('error'),
+        pending: videoEligible.filter(s => !s.videoT2VStatus || s.videoT2VStatus === 'pending').length,
+      }
+
       return {
+        app: { mode, flowProjectReady, activeTab },
+        video,
         isRunning: sceneIsRunning || videoAutomation.isRunning || refIsRunning,
         isPaused: isPaused || videoAutomation.isPaused,
         progress: sceneIsRunning ? progress : videoAutomation.progress,
@@ -634,5 +679,5 @@ export function useMcpServer({
       delete window.__mcpStopBatch
       delete window.__mcpBatchStatus
     }
-  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning])
+  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning, mode, flowProjectReady, activeTab])
 }

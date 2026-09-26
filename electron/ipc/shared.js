@@ -7,11 +7,13 @@
  * These are used by flow-api.js, video.js, dom.js via deps injection from main.js.
  */
 
+import { sessionUrlCandidates, buildSessionProbeJs } from '../flow-session.js'
 import { aspectRatioTabSuffix } from '../flow-aspect-ratio-ui.js'
 import { buildAgentDefaultsScript, buildListModelsScript } from '../flow-agent-defaults.js'
 import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR, AGENT_TOGGLE_DIAGNOSTIC } from '../flow-agent-toggle.js'
 import { buildSelectModeScript } from '../flow-mode-tab.js'
 import { FLOW_PAGE_PROBE_JS, isFlowErrorPage } from '../flowOpenRetry.js'
+import { flowBaseFromUrl, flowProjectUrl, onProjectComposerUrl as isOnProjectComposerUrl } from '../flowUrl.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { updateBounds } from './layout.js'
@@ -55,6 +57,9 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  */
 export function createSharedHelpers(ctx) {
   const { getFlowView, getMainWindow, constants, onDomFailure } = ctx
+  // 세션 API 가 없는 새 도메인용 폴백(main 의 flow-bearer-capture) — 없으면 폴백 없음.
+  const getCapturedSessionText = ctx.getCapturedSessionText ?? (() => null)
+  const getCapturedBearerAgeMs = ctx.getCapturedBearerAgeMs ?? (() => null)
   const flowPageFetchTimeoutMs = ctx.flowPageFetchTimeoutMs ?? FLOW_PAGE_FETCH_TIMEOUT_MS
 
   // 클릭 직렬화 — 두 클릭이 겹치면 서로의 임시(확대) bounds 를 자기 '원래 값'으로 스냅샷해
@@ -83,6 +88,27 @@ export function createSharedHelpers(ctx) {
   const {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
   } = constants
+
+  // ─── readFlowSession ──────────────────────────────────────────
+  /**
+   * Flow 뷰에서 세션 본문(access_token 포함)을 읽는다. 페이지 origin 의 same-origin 후보를 먼저,
+   * 옛 절대주소(SESSION_URL)를 마지막에 시도한다(flow-session.js). 토큰이 없으면 null.
+   * ⚠️ 본문은 절대 찍지 않는다 — 어느 후보가 답했는지만 로그한다.
+   */
+  async function readFlowSession(flowView) {
+    const candidates = sessionUrlCandidates(flowView.webContents.getURL(), SESSION_URL)
+    const r = await flowView.webContents.executeJavaScript(buildSessionProbeJs(candidates))
+    if (r && r.text) {
+      // safe-log: 후보 URL 은 앱 상수(sessionUrlCandidates) — 본문·토큰·사용자 내용 없음
+      console.log('[Flow API] session probe: hit', r.url)
+      return r.text
+    }
+    // 세션 API 가 없는 도메인(flow.google.com) — 페이지 요청에서 잡아둔 Bearer 로 대신한다.
+    const captured = getCapturedSessionText()
+    console.log('[Flow API] session probe:', `miss (${candidates.length} candidates)`,
+      captured ? `→ captured bearer (age ${Math.round((getCapturedBearerAgeMs() || 0) / 1000)}s)` : '→ no captured bearer')
+    return captured
+  }
 
   // ─── trustedClickOnFlowView ───────────────────────────────────
   /**
@@ -125,7 +151,8 @@ export function createSharedHelpers(ctx) {
         if (opts.required && onDomFailure) {
           await onDomFailure(`trusted-click:${opts.step || 'unknown'}`, { reason: 'timeout', error: e.message }).catch(() => {})
         }
-        return { success: false, error: e.message }
+        // M2-R1 F4(a): mouseDown 이 이미 나갔으면 클릭이 됐을 수 있다(페이지가 제출·과금) — dispatched 로 알린다.
+        return { success: false, error: e.message, ...(token.dispatched ? { dispatched: true } : {}) }
       } finally {
         clearTimeout(timer)
       }
@@ -274,6 +301,19 @@ export function createSharedHelpers(ctx) {
         return { success: false, error: `Target not at point (${hit.why})` }
       }
 
+      // M2-FINAL Q1(A1 = B1): 호출자의 **마지막** 관문 — 히트테스트 뒤·mouseDown 직전에 opts.beforeDispatch(async predicate) 를 한 번 묻는다. 제출 클릭은 재판독이 돌아온 뒤에도
+      //   뮤텍스·measure·mouseMove 100ms·히트테스트로 ≈200–300ms 를 더 쓰고, 그 사이 IME 조합(한글 2벌식)이 다시 포커스된 편집기에 붙을 수 있다 — 핸들러가 여기서 편집기를 다시 읽는다.
+      //   false·throw 는 **미디스패치** 거부(dispatched 없음, mouseDown·mouseUp 없음): 페이지가 제출했을 리 없으니 호출자는 gen 을 지운다. 이유는 상수, 보고는 호출자 몫(이중 보고 없음).
+      //   아래 bounds 재검사·aborted 검사는 동기라 predicate 뒤에 await 가 남지 않는다.
+      if (typeof opts.beforeDispatch === 'function') {
+        let go = false
+        try { go = !!(await opts.beforeDispatch()) } catch (_e) { go = false }
+        if (!go) {
+          console.warn('[TrustedClick] Refused before dispatch by the caller predicate')
+          return { success: false, error: 'Refused before dispatch' }
+        }
+      }
+
       // ⚠️ 좌표는 measure 시점의 bounds 기준이다. 위 100ms 사이에 모달이 열리면 layout 이 뷰를
       //   0×0 으로 접고(네이티브 뷰라 CSS 로 못 가리니 접는다), mouseDown/Up 은 아무 데도 안 닿는다.
       //   그런데도 success 를 반환하면 또 "아무것도 안 누르고 성공" 이다. 누르기 직전에 다시 본다.
@@ -286,6 +326,9 @@ export function createSharedHelpers(ctx) {
       }
 
       if (token.aborted) return { success: false, error: 'aborted' }
+      // M2-R1 F4(a): 여기서부터의 실패(뷰 접힘·throw·타임아웃)는 "클릭이 안 됐다"가 아니라 "됐을 수 있다" — 페이지가 제출(과금)했을 수
+      //   있으므로 결과에 dispatched:true 를 실어 호출부가 gen 을 지우지 않고 waiter/마감 경로로 가게 한다.
+      token.dispatched = true
       flowView.webContents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 80))
 
@@ -300,7 +343,7 @@ export function createSharedHelpers(ctx) {
         if (opts.required) {
           await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'bounds-changed-mid-click', { coords })
         }
-        return { success: false, error: 'View bounds changed mid-click' }
+        return { success: false, error: 'View bounds changed mid-click', dispatched: true }   // M2-R1 F4(a)
       }
 
       console.log('[TrustedClick] Click events sent at (' + coords.x + ', ' + coords.y + ')')
@@ -313,7 +356,7 @@ export function createSharedHelpers(ctx) {
       if (opts.required) {
         await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'threw', { error: e.message })
       }
-      return { success: false, error: e.message }
+      return { success: false, error: e.message, ...(token.dispatched ? { dispatched: true } : {}) }   // M2-R1 F4(a)
     } finally {
       // bounds 복원 — 스냅샷을 되돌리는 게 아니라 레이아웃 상태에서 "다시 계산"한다.
       //   클릭이 도는 ~1초 사이에 사용자가 모달을 열거나(→ Flow 를 0×0 으로 숨겨야 함) 스플리터를
@@ -847,9 +890,15 @@ export function createSharedHelpers(ctx) {
   // Agent 토글을 가릴 수 있는 두 패널(우측 대화"챗" 패널 + "에이전트 설정"(기본값) 패널)을
   //   모두 닫는다(각각 no-op if 없음). 사용자 지정: OFF/ON 전환 시 둘 다 동시에 떠 있을 수 있어
   //   토글 가림 여부와 무관하게 선제적으로 강제 close 한다. (Escape 는 설정 패널을 못 닫아 X 클릭 병행.)
-  async function closeAgentPanels(flowView) {
-    await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
-    await trustedClickOnFlowView(AGENT_SETTINGS_CLOSE_SELECTOR).catch(() => {})
+  // M2-CLOSE O2: aborted(워치독이 닫은 좀비)면 페이지를 더 만지지 않는다 — 클릭·Escape 앞에서 각각 본다(프로브 exec 사이에 abort 가 올 수 있다).
+  async function closeAgentPanels(flowView, aborted = () => false) {
+    // 새 flow.google.com 에는 옛 에이전트 챗/설정 닫기 버튼이 없다 — 있을 때만 trusted 클릭한다. 무조건 클릭하면 매 생성마다
+    //   "[TrustedClick] Button not found" 2건과 bounds 왕복(숨은 뷰면 확대/축소 2회)만 남는다(2026-09-24 실기 로그).
+    const present = (selector) => flowView.webContents.executeJavaScript(`!!(${selector})`).then(Boolean).catch(() => false)
+    if (aborted()) return
+    if (await present(AGENT_CHAT_CLOSE_SELECTOR) && !aborted()) await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
+    if (await present(AGENT_SETTINGS_CLOSE_SELECTOR) && !aborted()) await trustedClickOnFlowView(AGENT_SETTINGS_CLOSE_SELECTOR).catch(() => {})
+    if (aborted()) return
     await flowView.webContents.executeJavaScript(
       `try { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true, composed: true })); } catch (e) {}`
     ).catch(() => {})
@@ -889,19 +938,25 @@ export function createSharedHelpers(ctx) {
     }
   }
 
-  async function ensureAgentOff() {
+  // M2-CLOSE O2(A2): opts.isAborted — flow-angular 의 워치독이 닫은 뒤의 좀비는 토글을 누르지 않는다(다음 항목이 OFF 를 확인한 뒤 칩을 뒤집을 수 있다).
+  //   패널 닫기 클릭·토글 클릭 앞에서 본다. 보고하지 않는 출구(좀비의 잡음 — 결과는 호출자가 버린다). 옛 호출자(인수 없음)는 그대로.
+  async function ensureAgentOff(opts = {}) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'No flowView' }
+    const aborted = () => { try { return typeof opts.isAborted === 'function' && !!opts.isAborted() } catch (_e) { return false } }
+    const abortedExit = () => { console.warn('[Flow API] ensureAgentOff: aborted by the DOM-stage watchdog — no toggle click'); return { success: false, state: 'aborted' } }
     try {
       // 선제적으로 대화창 + "에이전트 설정" 패널을 모두 닫는다(둘 다 떠 있을 수 있음).
-      await closeAgentPanels(flowView)
+      await closeAgentPanels(flowView, aborted)
       let probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       // 그래도 토글이 안 보이면(여전히 가림) 재시도하며 닫는다.
       for (let i = 0; i < 4 && (!probe || !probe.found); i++) {
+        if (aborted()) return abortedExit()
         console.log('[Flow API] ensureAgentOff: toggle hidden — closing covering panel attempt', i + 1)
-        await closeAgentPanels(flowView)
+        await closeAgentPanels(flowView, aborted)
         probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       }
+      if (aborted()) return abortedExit()   // M2-CLOSE O2: 프로브(무한 exec)에 매달렸다 돌아온 좀비 — OFF 여도 성공으로 흘려보내지 않는다(핸들러가 캡처 프로브로 가지 않게)
       if (!probe || !probe.found) {
         console.log('[Flow API] ensureAgentOff: toggle not found (panel close retries exhausted)')
         await reportAgentToggleFailure(flowView, 'ensureAgentOff', 'not_found')
@@ -911,6 +966,7 @@ export function createSharedHelpers(ctx) {
         console.log('[Flow API] ensureAgentOff: already OFF')
         return { success: true, state: 'already_off' }
       }
+      if (aborted()) return abortedExit()   // M2-CLOSE O2: 프로브가 매달렸다 돌아온 좀비
       // ON → Flow 의 토글은 synthetic 클릭(isTrusted:false)을 무시하므로 trusted click 으로 끈다.
       const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR, { required: true, step: 'agent-toggle-click' })
       await new Promise(r => setTimeout(r, 400))
@@ -1128,13 +1184,12 @@ export function createSharedHelpers(ctx) {
     if (!page || !isFlowErrorPage(page)) return { ok: true }
 
     console.warn('[Flow Guard] project URL but page is not loaded (error/landing) — recovering via home')
-    const m = safeUrl(flowView).match(/^(.*\/tools\/flow)(\/|$)/)
-    const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
+    const base = flowBaseFromUrl(safeUrl(flowView))
     // loadURL 은 파괴된 webContents 에서 **동기로** throw 한다 — .catch() 는 promise rejection 만 잡는다.
     const safeLoad = async (u) => { try { await flowView.webContents.loadURL(u) } catch { /* 파괴/중단 */ } }
     await safeLoad(base)
     await new Promise((r) => setTimeout(r, 1500))
-    await safeLoad(`${base}/project/${projectId}`)
+    await safeLoad(flowProjectUrl(base, projectId))
     await new Promise((r) => setTimeout(r, 2000))
 
     // ⚠️ 페이지가 "리치"하다는 것만으로 복구를 선언하면 안 된다 — home 화면도 인터랙티브 요소가
@@ -1164,27 +1219,9 @@ export function createSharedHelpers(ctx) {
    * ⚠️ 초기 체크에만 이 제외가 있었고 복구·폴링 경로는 단순 includes 라, 대기 중 사용자가
    *    /characters 로 넘어가면 그 페이지를 "대상 프로젝트"로 승인했다. 한 곳에서 판정한다.
    */
-  // Flow 컴포저로 인정하는 하위 경로. 그 외(/characters, /settings, 알 수 없는 라우트)는 컴포저가
-  //   아니므로 거기에 프롬프트를 주입하면 안 된다 — 모르면 막고 진단을 남긴다.
-  const COMPOSER_SUBPATHS = new Set(['', '/', '/all-media'])
-
-  function onProjectComposerUrl(url, projectId) {
-    // ⚠️ substring 으로 보면 "…/tools/flow/?next=/project/<id>"(쿼리), "/archive/project/<id>"(다른 라우트),
-    //    "/project/<id>-suffix"(다른 id), 심지어 다른 origin 도 통과한다 — 전부 실측으로 확인됐다.
-    //    origin 과 pathname 을 정확히 본다.
-    // ⚠️ projectId 는 **한 경로 세그먼트** 여야 한다. 저장값에 '/' 가 섞이면("abc/characters")
-    //    /project/abc/characters 가 통째로 id 로 매칭돼 캐릭터 페이지를 컴포저로 승인한다.
-    if (!/^[A-Za-z0-9._~-]+$/.test(String(projectId))) return false
-    let u
-    try { u = new URL(url) } catch { return false }
-    if (u.hostname.toLowerCase() !== 'labs.google') return false
-    // ⚠️ projectId 를 정규식에 그대로 넣으면 저장값이 "[" 같을 때 SyntaxError 로 **던진다** —
-    //    가드가 {ok:false} 를 반환하는 대신 reject 된다. 이스케이프한다.
-    const esc = String(projectId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const m = u.pathname.match(new RegExp(`/tools/flow/project/${esc}(/[^/]*)?$`))
-    if (!m) return false
-    return COMPOSER_SUBPATHS.has(m[1] || '')
-  }
+  // 판정은 electron/flowUrl.js 가 소유한다 — 같은 규칙이 dom.js 프로브에도 필요해서
+  // 복제돼 있었고, Flow 도메인이 옮겨갔을 때 두 곳이 따로 틀렸다.
+  const onProjectComposerUrl = isOnProjectComposerUrl
 
   /** getURL 은 뷰/렌더러가 파괴되면 throw 한다 — 가드가 {ok:false} 대신 reject 되면 안 된다. */
   function safeUrl(flowView) {
@@ -1199,6 +1236,7 @@ export function createSharedHelpers(ctx) {
     // Falsy projectId → lenient fallback: any /project/ or /tools/flow/ page is acceptable.
     if (!projectId) {
       const onSomePage = currentUrl.includes('/project/') || currentUrl.includes('/tools/flow/')
+        || (() => { try { return new URL(currentUrl).hostname.toLowerCase() === 'flow.google.com' } catch { return false } })()
       return onSomePage
         ? { ok: true }
         : { ok: false, error: 'Not on a Flow project page' }
@@ -1218,9 +1256,7 @@ export function createSharedHelpers(ctx) {
     }
 
     // Not on the target project — attempt navigation (same logic as flow:open-project in dom.js).
-    const m = currentUrl.match(/^(.*\/tools\/flow)(\/|$)/)
-    const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
-    const target = `${base}/project/${projectId}`
+    const target = flowProjectUrl(flowBaseFromUrl(currentUrl), projectId)
     console.log('[Flow Guard] Not on target project, navigating:', target)
     try {
       await flowView.webContents.loadURL(target).catch((e) =>
@@ -1248,6 +1284,7 @@ export function createSharedHelpers(ctx) {
   return {
     trustedClickOnFlowView,
     parseFlowResponse,
+    readFlowSession,
     sessionFetch,
     flowPageFetch,
     getRecaptchaToken,
@@ -1263,5 +1300,6 @@ export function createSharedHelpers(ctx) {
     ensureAgentOn,
     selectFlowModeTab,
     ensureOnProjectComposer,
+    reportDomFailure,   // M1-11: 새 Flow 핸들러(flow-angular.js)가 settings/shape/submit 실패를 내용 없이 보고한다
   }
 }

@@ -96,6 +96,7 @@ import { toast } from './components/Toast'
 import { syncRefToFlow } from './utils/flowCharacterSync'
 import { runFlowComposerRefresh } from './utils/flowCharacterCoordinator'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
+import { isFlowMediaId, isLegacyFlowGenerationFailure } from './utils/flowMediaId'   // M2-R5 J2: 훅·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
 
 // Components
 import Header from './components/Header'
@@ -1381,7 +1382,16 @@ function App() {
     //   forceRegenerate 면 fast-path 를 건너뛰고 아래 slow-path 로 가 status 를 'pending' 으로 되돌린다
     //   → 분류상 download-only(status==='error')도 in-flight(status==='generating')도 아니라 freshGen
     //   으로 잡혀, 다음 Start 가 새로 생성한다(기존 영상은 덮어쓰기 전까지 폴백 유지).
-    if (!opts.forceRegenerate && item.generationId && item.mediaId) {
+    // M2-R4 I1(A1 = B3): Flow 의 generationId 는 곧 미디어 id(YhhmEf 200 순간 과금) — mediaId 가 없어도(옛 auth/stopped/타임아웃 패치, provenance (c)/(c2) 모양)
+    //   파일이 없는 항목은 과금된 제출이라 plain Retry 도 이 download-only 경로로 간다(retryVideoDownload 는 generationId 로 폴한다 — mediaId 불필요).
+    //   전엔 아래 slow path 가 generationId·mediaId 를 null 로 지워 다음 Start 가 재제출(10크레딧 이중 과금)했다. id 를 지우는 건 Regenerate(forceRegenerate)뿐.
+    // M2-R5 J2(A2 = B1 + B5): 훅 submittedFlow(I4)·복구 #R34-1 과 같은 **엔진 모양** 필터(isFlowMediaId — UUID) — API operation 이름을 든 행(API 모드의 stop/실패가 남긴 모양)은
+    //   Flow 가 과금한 제출이 아니므로 slow path(pending 리셋). 안 그러면 retryVideoDownload 가 jwpduf 에 operation 이름을 보내 4회째 flow-video-not-found(+mediaId=operation
+    //   이름)로 양 모드에서 영원히 download-only 가 된다. API 모드·파일(videoPath) 있는 행도 slow path 그대로.
+    // M2-R5 J3(B2): 옛 서버측 생성 실패 행(error PUBLIC_ERROR_* · errorKind null · mediaId null · videoPath 없음 — 사용자 실데이터에 4행)은 미디어가 없어 폴 대상이 아니다 — 훅 submittedFlow 와
+    //   같은 제외로 slow path(pending 리셋)에 보내 프롬프트를 고친 뒤 Retry 로 다시 생성할 수 있게 한다(전엔 "still pending" ×3 → flow-video-not-found 로 영원히 download-only).
+    const chargedFlowItem = startMode === 'flow' && isFlowMediaId(item.generationId) && !item.videoPath && !isLegacyFlowGenerationFailure(item)
+    if (!opts.forceRegenerate && item.generationId && (item.mediaId || chargedFlowItem)) {
       // #R12-11/#R13-8: 첫 await(getAccessToken) 전에 in-flight 를 세팅 — 같은 tick 의 중복 Retry/
       //   Retry+Start 가 auth await 동안 busy 가드를 통과하는 것을 막는다. 모든 종료 경로에서 해제.
       videoRetryInFlightRef.current = true
@@ -1394,7 +1404,7 @@ function App() {
         videoRetryInFlightRef.current = false
         setVideoRetryRunning(false)
         if (modeRef.current === 'flow') {
-          toast.warning(getAuthRequiredMessage('flow', t))
+          toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
         } else {
           window.dispatchEvent(new CustomEvent('flow-login-expired'))
         }
@@ -1414,6 +1424,7 @@ function App() {
         projectName,
         saveMode: settings.saveMode || 'folder',
         videoResolution: settings.videoResolution || '720p',
+        authErrorText: () => getAuthErrorMessage(startMode, t),   // M2-R3 H5: kind 동반 authFailed 의 항목 문구는 인증 안내(raw 토큰 금지)
       }).catch(err => {
         console.error('[handleVideoRetry] Unexpected error:', err)
         onUpdate(item.id, 'error', { error: String(err?.message || err) })
@@ -1421,8 +1432,11 @@ function App() {
       return
     }
 
-    // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
-    onUpdate(item.id, 'pending', { error: null })
+    // Slow path: Regenerate, 또는 (API 모드·Flow 의 파일 있는 항목) generationId/mediaId 없음 — reset to pending; user clicks Start Generation to regenerate
+    // M2-R4 I1: Flow 의 과금된 항목(generationId 있음·videoPath 없음)은 위 fast path 가 받으므로 여기엔 forceRegenerate 로만 온다 — id 를 지우는 유일한 자리.
+    // M2-R3 H3(A3): Regenerate 는 generationId·mediaId 도 null — Flow 모드 Phase 0 은 출처(generationId 있음 + videoPath 없음)로 분류하므로 id 를 남기면
+    //   재생성이 in-flight/download-only 로 잡혀 새 생성이 안 된다. Regenerate/Clear 만이 항목을 fresh 로 만든다(옛 videoPath 폴백은 그대로).
+    onUpdate(item.id, 'pending', { error: null, errorKind: null, generationId: null, mediaId: null, downloadGated: null })   // downloadGated: M2-R3 H6
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
   }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t])
 
@@ -1471,7 +1485,10 @@ function App() {
     gateView: source === 'mcp' ? nonInteractiveGateView : emptyRefGateView,
   })
   const handleStartImpl = async (overrideStyleId = undefined, options = {}) => {
-    const { force = false, source = 'ui' } = options
+    const { force = false, source = 'ui', tab: tabOverride = null } = options
+    // MCP 가 tab 을 지정하면(mode:'video' → T2V) 현재 UI 탭 대신 그 탭으로 돌고 UI 도 맞춰 옮긴다.
+    const startTab = tabOverride || activeTab
+    if (tabOverride && tabOverride !== activeTab) setActiveTab(tabOverride)
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     // #R12-11: 다운로드-only 비디오 retry 진행 중에도 Start 차단(같은 아이템 경합 방지).
     if (isStartBlocked({
@@ -1481,7 +1498,7 @@ function App() {
       retryInFlight: videoRetryInFlightRef.current,
       refBatchRunning,
     })) return
-    const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
+    const isImageBatchStart = startTab === 'text' || startTab === 'list'
     const imageTargetScenes = isImageBatchStart
       ? (force ? scenes.filter(scene => scene.prompt) : filterPendingScenes(scenes))
       : []
@@ -1516,7 +1533,7 @@ function App() {
       if (modeRef.current !== 'flow') {
         setShowApiKeyModal(true)
       } else {
-        toast.warning(getAuthRequiredMessage('flow', t))
+        toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
       }
       return
     }
@@ -1527,16 +1544,16 @@ function App() {
     }
 
     // 생성 모드 snapshot — 라이브 그리드가 탭 이동과 무관하게 이 값을 쓴다.
-    setRunningGenMode(genModeForTab(activeTab))
+    setRunningGenMode(genModeForTab(startTab))
 
     // 선택 검증 (폴더 확인보다 먼저)
-    if (activeTab === 'video-text') {
+    if (startTab === 'video-text') {
       if (videoScenes.filter(s => s.selected !== false).length === 0) {
         toast.warning(t('videoSelection.noneSelected'))
         return
       }
     }
-    if (activeTab === 'frame-to-video') {
+    if (startTab === 'frame-to-video') {
       if (framePairs.filter(p => p.selected !== false).length === 0) {
         toast.warning(t('videoSelection.noneSelected'))
         return
@@ -1568,7 +1585,7 @@ function App() {
 
     const projectName = ensureProjectName()
 
-    switch (activeTab) {
+    switch (startTab) {
       case 'text':
       case 'list': {
         // 이미지 생성 — 가드 순서: (1) 생성 대상 0개면 즉시 안내 (스타일 선택 요구하지 않음),
@@ -1888,7 +1905,7 @@ function App() {
         if (modeRef.current !== 'flow') {
           setShowApiKeyModal(true)
         } else {
-          toast.warning(getAuthRequiredMessage('flow', t))
+          toast.warning(getAuthRequiredMessage('flow', t, genAPI.flowSessionReason?.()))
         }
         setPendingStartOptions(null)
         return
@@ -2013,7 +2030,8 @@ function App() {
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
   // isRunning: scene OR ref(prepare/stop/generating) OR video — Phase 2 auto stop-restart 트리거.
   useMcpServer({
-    settings,
+    settings, setSettings,
+    mode, flowProjectReady, activeTab,  // batch-status 진단 필드
     scenes, setScenes,
     references, setReferences,
     // Phase 11: MCP 가 srtTrack 동기화할 수 있게 setter 전달
@@ -2699,6 +2717,10 @@ function App() {
               // 비디오 메타도 정리 — 상세 모달/저장에 이전 비디오 메타 잔류 방지.
               generatedAt: null, seed: null, model: null, error: null, errorKind: null, videoSaveId: null,
               generationProvider: null, appliedInputs: null,
+              // M2-R2 G8(B7): kind 별 params·거부 미디어 id 도 정리(F2 가 더한 videoT2V* 필드) — 안 지우면 project.json 에 stale 값이 남는다.
+              errorParams: null, rejectedMediaId: null, rejectedMediaIds: null,
+              // M2-R3 H6: 배치 다운로드 권한 마커도 정리
+              downloadGated: null,
               // per-clip toggle 도 reset — stale disabled 가 project.json 에 남아 history 복원 등
               // path 재부착 경로와 만나면 새 영상이 숨겨짐. (FIELD_MAP 미매핑 → scene.videoT2VDisabled 로 직행)
               videoT2VDisabled: null,
@@ -2726,6 +2748,7 @@ function App() {
               base64: null, video: null, videoPath: null, videoSaveId: null,
               // recovery 식별자 — reload 시 in-flight 로 안 잡히도록 둘 다 null
               generationId: null, mediaId: null,
+              downloadGated: null,   // M2-R3 H6: 배치 다운로드 권한 마커도 정리
               // 상태/에러 — pending 으로 되돌리고 stale error 제거
               status: 'pending', error: null, errorKind: null,
               // timing / 메타 — history 모달에 stale 값 표시 안 되도록

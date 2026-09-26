@@ -239,3 +239,68 @@ describe('processAsyncSceneResult — useAutomation batch error counting contrac
     }))
   })
 })
+
+// M1-10/M1-13: 새 Flow 경로의 실패 kind 는 params 를 싣는다(플레이스홀더 렌더 방지) — 실패 sceneUpdate 에 errorParams 보존.
+//   업스케일 백스톱(tryUpscaleImage 가 flow-upscale-unsupported 로 throw) 은 삼키지 않고 그 kind 로 씬 실패.
+describe('finalizeGeneratedImage — errorParams 보존 + 업스케일 백스톱 (M1-10)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    fileSystemAPI.saveImage.mockResolvedValue({ success: true, path: '/tmp/scene_1.png' })
+  })
+
+  it('실패 result 의 errorKind/errorParams 가 sceneUpdate 에 실린다', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, error: 'flow-resolution-not-offered', errorKind: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+    })
+    expect(res.success).toBe(false)
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
+  })
+
+  it('params 없는 실패는 errorParams:{} (stale params 가 merge 로 남지 않게)', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, error: 'No images', images: [] },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+    })
+    expect(res.sceneUpdate.errorParams).toEqual({})
+  })
+
+  it('tryUpscaleImage 가 flow-upscale-unsupported 로 throw 하면 그 kind 로 씬 실패(저장 없음)', async () => {
+    const { tryUpscaleImage } = await import('../../src/utils/imageProcessing')
+    tryUpscaleImage.mockRejectedValueOnce(Object.assign(new Error('flow-upscale-unsupported'), { errorKind: 'flow-upscale-unsupported', errorParams: {} }))
+    const res = await finalizeGeneratedImage({
+      result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
+      genAPI: {}, upscaleRes: '2k', saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+    })
+    expect(res.success).toBe(false)
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', error: 'flow-upscale-unsupported', errorKind: 'flow-upscale-unsupported', errorParams: {} })
+    expect(fileSystemAPI.saveImage).not.toHaveBeenCalled()
+  })
+
+  it('authFailed + 기계 토큰 error(flow-session-missing) 에 authErrorText 가 오면 그 문구를 저장한다 (R1#6/R2#5)', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ status: 'error', errorKind: 'auth', error: 'AUTH TEXT' })
+  })
+
+  it('authFailed 인데 errorKind 가 없는 옛 결과는 error 문구를 그대로 둔다(#R26-6 유지)', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, error: 'Auth expired', authFailed: true, images: [] },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+      authErrorText: 'AUTH TEXT',
+    })
+    expect(res.sceneUpdate).toMatchObject({ errorKind: 'auth', error: 'Auth expired' })
+  })
+
+  it('성공 sceneUpdate 도 errorParams 를 비운다', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
+      genAPI: {}, saveMode: 'folder', projectName: 'ep6', sceneId: 'scene_1', prompt: 'a cat',
+    })
+    expect(res.success).toBe(true)
+    expect(res.sceneUpdate.errorParams).toEqual({})
+  })
+})

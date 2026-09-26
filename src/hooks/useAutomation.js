@@ -24,7 +24,7 @@ import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessag
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 import {
   applyM1MentionExclusions,
-  flowImageInjectable,
+  sourceAvailable,
 } from '../utils/refImageGuard'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
@@ -40,7 +40,11 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
   const authErrorMessage = () => getAuthErrorMessage(mode, t)
-  const authRequiredMessage = () => getAuthRequiredMessage(mode, t)
+  // R1#6/R2#5: 새 Flow 의 authFailed 결과는 error 가 기계 토큰(not-on-flow · flow-rpc-error)이다 — kind 가 있으면 사람 문구로.
+  //   옛 결과(kind 없음, "Auth expired …" 같은 문구)는 그대로 둔다.
+  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
+  // M1-10: Flow 세션 판정 이유(flowSessionReason)로 로그인 안내 vs 세션 확인 실패 안내를 고른다.
+  const authRequiredMessage = () => getAuthRequiredMessage(mode, t, genAPI?.flowSessionReason?.())
 
   // t 함수가 변경되면 초기 상태 메시지 업데이트
   useEffect(() => {
@@ -187,6 +191,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         scene, result,
         genAPI, imageUpscale, saveMode, projectName, seed, model: resolvedModel,
         updateScene,
+        authErrorText: authErrorMessage(),   // R1#6: authFailed 의 기계 토큰 대신 사람 문구
         gate: consumeGate,  // 배치당 1회 consume 보장 (undefined 면 processAsyncSceneResult 가 no-op 사용)
         logPrefix: '[Automation]',
       })
@@ -205,15 +210,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       for (const item of pendingQueue) {
         if (stopRequestedRef.current) { stillPending.push(item); continue }
         const elapsed = Date.now() - item.submittedAt
-        const itemTimeoutMs = imageGenerationItemTimeoutMs(item.provider)
-        if (elapsed > itemTimeoutMs) {
-          console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
-          updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
-          errorCountRef.current++
-          completedCountRef.current++
-          updateProgressMsg(completedCountRef.current)
-          continue
-        }
+        // M1-13 (D4): main 의 마감(send 15s / loadend 100s = 115s < 아이템 타임아웃 — imageGenerationItemTimeoutMs, google 120s)이 먼저 kind 를 정한다 —
+        //   타임아웃을 checkGeneration **앞**에 두면 페이싱 뒤 첫 재확인이 타임아웃을 넘긴 씬에서 'Generation timeout'
+        //   (errorKind null) 이 main 의 flow-submit-lost 를 덮는다. 먼저 묻고, main 이 미완료라고 할 때만 타임아웃(provider 별 — fal 은 cap+마진).
         try {
           const st = await checkGeneration(item.generationId)
           // #R23-4: checkGeneration 자체가 401/403 → authFailed 를 표면화할 수 있다(완료 안 돼도).
@@ -221,7 +220,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           //   onAuthError 는 withAuthRetry wrapper 가 이미 발화 — 여기서 또 발화하지 않는다.
           if (st.authFailed) {
             console.warn('[Automation] checkGeneration authFailed — stopping batch:', st.error)
-            updateScene(item.scene.id, { status: 'error', error: st.error || authErrorMessage(), errorKind: 'auth' })
+            updateScene(item.scene.id, { status: 'error', error: authFailureText(st), errorKind: 'auth' })
             errorCountRef.current++
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
@@ -229,7 +228,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             cancelActiveRuns()
             authStoppedRef.current = true
             setStatus('error')
-            setStatusMessage(st.error || authErrorMessage())
+            setStatusMessage(authFailureText(st))
             continue
           }
           if (st.completed) {
@@ -242,7 +241,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             // onAuthError was already fired by the withAuthRetry wrapper; don't fire again.
             if (result.authFailed) {
               console.warn('[Automation] collectGeneration authFailed — stopping batch:', result.error)
-              updateScene(item.scene.id, { status: 'error', error: result.error || authErrorMessage(), errorKind: 'auth' })
+              updateScene(item.scene.id, { status: 'error', error: authFailureText(result), errorKind: 'auth' })
               errorCountRef.current++
               completedCountRef.current++
               updateProgressMsg(completedCountRef.current)
@@ -250,7 +249,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
               cancelActiveRuns()
               authStoppedRef.current = true
               setStatus('error')
-              setStatusMessage(result.error || authErrorMessage())
+              setStatusMessage(authFailureText(result))
               continue
             }
             if (!result.success && isQuotaExhaustedError(result)) {
@@ -276,6 +275,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             if (!finalizeOk) {
               errorCountRef.current++
             }
+            completedCountRef.current++
+            updateProgressMsg(completedCountRef.current)
+          } else if (elapsed > imageGenerationItemTimeoutMs(item.provider)) {
+            console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
+            updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
+            errorCountRef.current++
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
           } else {
@@ -321,10 +326,11 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // 단일 씬 경로와 동일 계약) mediaId 또는 name 중 하나만 있어도 선택하고 name 을 보존한다.
       // R37 review fix: data/filePath 도 보존 — memory-only ref 가 referenceResolver 의
       // 디스크 fallback 도 못 타고 조용히 빠지는 회귀 차단. (useSceneGeneration 과 정책 동일.)
+      // M3(D15): Flow 는 로컬 이미지(data·filePath·imagePath)가 있는 ref 만 — 엔진이 그 바이트를 애셋 창에 붙여 ＋ 첨부한다(imagePath → filePath).
       const allMatched = getMatchingReferences(scene)
       const matchedRefs = allMatched
         .filter(r => mode === 'flow'
-          ? flowImageInjectable(r)
+          ? sourceAvailable(r)
           : !!(r?.mediaId || r?.name || r?.data || r?.filePath)
         )
         .map(r => ({
@@ -359,6 +365,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
+      // M1-10: 업스케일 설정은 엔진 게이트 재료. M3: Flow 엔진은 matchedRefs(＋ 첨부)와 references(@멘션 해석 pool)로 레퍼런스를 계획한다.
       const resolvedGeneration = resolveSceneImageProvider(scene, generationSettings)
       if (resolvedGeneration.warning) console.warn('[Automation]', resolvedGeneration.warning)
       if (run.cancelSent) {
@@ -372,6 +379,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         model: resolvedGeneration.model,
         provider: resolvedGeneration.provider,
         references: effectiveRefs,
+        imageUpscale,
         cancelScope: run.scope,
       })
       if (submitResult.success && submitResult.generationId) {
@@ -409,7 +417,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         // #R10-6: 인증 실패 센티넬 — 토큰이 죽었으니 즉시 배치 중단(collect/upload 경로와 동일 처리).
         if (submitResult.authFailed) {
           console.warn('[Automation] submitGeneration authFailed — stopping batch:', submitResult.error)
-          updateScene(scene.id, { status: 'error', error: submitResult.error || authErrorMessage(), errorKind: 'auth' })
+          updateScene(scene.id, { status: 'error', error: authFailureText(submitResult), errorKind: 'auth', errorParams: submitResult.errorParams || {} })
           errorCountRef.current++
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
@@ -417,18 +425,20 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           cancelActiveRuns()
           authStoppedRef.current = true
           setStatus('error')
-          setStatusMessage(submitResult.error || authErrorMessage())
+          setStatusMessage(authFailureText(submitResult))
           break
         }
+        // R1#2/R2#2: 제출 실패의 kind 별 params(flow-image-model-mismatch {requested, panel} 등)를 씬에 남긴다 — 비동기 배치는
+        //   모델 불일치가 항상 제출 결과로 온다. 없으면 {} 로 비워 stale params 를 막는다.
         if (isQuotaExhaustedError(submitResult)) {
-          updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null })
+          updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null, errorParams: submitResult.errorParams || {} })
           errorCountRef.current++
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
           triggerQuotaStop()
           break
         }
-        updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null })
+        updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null, errorParams: submitResult.errorParams || {} })
         errorCountRef.current++
         completedCountRef.current++
         updateProgressMsg(completedCountRef.current)
@@ -700,11 +710,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       }
     }
     let refsToUpload = selectRefsToRegister(references, usedRefIds, mode)
-    // #R34: 캐릭터 entity 동기화는 생성 배치에서 분리한다. 공유 flowView 에서 DOM 자동화가 동시
-    //   실행되면 navigation 이 ERR_ABORTED 로 충돌하고, uploadImage 가 항상 새 entity 를 만들어
-    //   중복 등록된다. 캐릭터는 Ref 탭의 '동기화'(개별/일괄) 버튼으로만 등록한다. 생성 배치는
-    //   비-character ref(스타일/씬 이미지)만 업로드한다. (미동기화 @멘션은 engineFlow 이미지 폴백/에러.)
-    if (mode === 'flow') refsToUpload = refsToUpload.filter(r => r?.type !== 'character')
+    // M3(D15): Flow 에선 선행 업로드가 없다 — 이 배치는 submitGeneration 으로 가고, 엔진·main 이 씬마다 ref 바이트를 컴포저에 붙여 올린다
+    //   (같은 페이지 세션 안에선 애셋 창에서 재사용). 엔진 uploadReference 는 새 Flow 에서 flow-references-unsupported 라 부르면 경고만 쌓인다.
+    if (mode === 'flow') refsToUpload = []
     console.log('[Automation] Refs to upload:', refsToUpload.length)
     if (refsToUpload.length > 0) {
       setStatus('uploading')
@@ -761,7 +769,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             cancelActiveRuns()
             authStoppedRef.current = true
             setStatus('error')
-            setStatusMessage(result.error || authErrorMessage())
+            setStatusMessage(authFailureText(result))
             return
           }
           if (result.error?.includes('429') && attempt < MAX_RETRIES) {

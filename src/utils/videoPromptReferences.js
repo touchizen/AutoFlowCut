@@ -1,7 +1,6 @@
 import { applyStyle, isStyleReference } from '../services/styleService'
 import { VIDEO_REFERENCE_IMAGE_LIMIT } from '../config/genModels'
 import { resolveMentions, stripMentionPrefixes } from './mentionParser'
-import { parseSceneMentions } from './sceneMentions'
 import { getSceneDuration } from './srtTrack'
 
 export const VIDEO_REFERENCE_LIMIT = VIDEO_REFERENCE_IMAGE_LIMIT
@@ -53,18 +52,18 @@ function getVideoTargetDuration(scene, srtTrack) {
 export function buildVideoPromptWithReferences(prompt, references = [], effectiveStyleId = null, appMode = 'api') {
   const refs = references || []
 
-  // #R36: Flow 모드 T2V 는 @멘션을 "레퍼런스 이미지"가 아니라 컴포저 @칩(segments)으로 넣는다 —
-  //   Flow T2V DOM 은 ref 이미지 주입을 지원하지 않아 기존엔 "레퍼런스 미지원" 에러로 막혔다.
-  //   이미지 씬과 동일하게 스타일 적용 후(멘션 유지, strip 안 함) parseSceneMentions 로 segments 를
-  //   만들어 넘긴다. seed/프롬프트는 그대로. 멘션이 없으면 segments 없이 일반 텍스트 T2V.
+  // M3(D15): Flow 모드 T2V 의 @멘션 = 인라인 멘션(레퍼런스 영상 r2v). 스타일 적용 뒤 @ 토큰은 그대로 두고(엔진 계획 planFlowReferenceComposition 이
+  //   멘션 세그먼트로 만든다) 멘션된 ref 를 referenceImages 로 넘긴다 — 타입 무관, 자르지 않는다(상한은 엔진 계획이 거부). imagePath 는 filePath 로 옮겨
+  //   싣는다(엔진이 그 경로로 읽는다). 이미지 원천이 없는 멘션 ref 도 넘긴다: 빼면 그 @토큰이(다른 멘션이 없을 때) 평문으로 나가 레퍼런스 없는 영상이
+  //   과금된다 — 엔진이 flow-reference-source-missing 으로 클릭 전에 거부한다. missing = 미해결 이름(App 이 시작을 막는다).
   if (appMode === 'flow') {
     const { styledPrompt } = applyStyle(prompt || '', effectiveStyleId, refs, [])
-    const parsed = parseSceneMentions(styledPrompt, refs)
+    const { matched, missing } = resolveMentions(styledPrompt, refs)
     return {
       styledPrompt,
-      referenceImages: [],
-      segments: parsed.hasMention ? parsed.segments : null,
-      missing: (parsed.unresolved || []).map((u) => u.name),
+      referenceImages: matched.map((ref) => ({ ...toGenerationReference(ref), filePath: ref.filePath || ref.imagePath || null })),
+      segments: null,
+      missing,
       truncated: 0,
     }
   }
@@ -100,7 +99,6 @@ export function buildVideoPromptScenes(videoScenes = [], references = [], effect
         ...scene,
         prompt: prepared.styledPrompt,
         referenceImages: prepared.referenceImages,
-        segments: prepared.segments || null,  // #R36: Flow @멘션 씬은 컴포저 칩용 segments
         targetDuration: getVideoTargetDuration(scene, srtTrack),
       },
     }

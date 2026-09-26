@@ -154,3 +154,99 @@ describe('resolveDisplayError', () => {
     expect(resolveDisplayError(T_EN, '', 'free form')).toBe('free form')
   })
 })
+
+// M1-9: errorParams — kind 별 고정 params 표(플랜 §3 공통 규칙). 번역문에 {…} 가 남으면 free-form error 로 폴백.
+describe('resolveDisplayError — errorParams (M1-9)', () => {
+  const tParams = (key, params = {}) => {
+    const table = {
+      'errorSection.kind.flow-resolution-not-offered': 'Flow does not offer {requested}.',
+      'errorSection.kind.flow-image-model-mismatch': 'requested {requested}, panel {panel}',
+      'errorSection.kind.flow-rpc-error': 'Flow request failed.',
+    }
+    const v = table[key]
+    if (!v) return key
+    return v.replace(/\{(\w+)\}/g, (m, k) => (params[k] !== undefined ? params[k] : m))
+  }
+
+  it('params 를 t(key, params) 로 넘겨 번역문에 값이 들어간다', () => {
+    expect(resolveDisplayError(tParams, 'flow-resolution-not-offered', 'raw', { requested: '1080p' })).toBe('Flow does not offer 1080p.')
+    expect(resolveDisplayError(tParams, 'flow-image-model-mismatch', 'raw', { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' })).toBe('requested Nano Banana Pro, panel Nano Banana 2')
+  })
+
+  it('{…} 가 남으면(params 누락) free-form error 로 폴백, error 도 없으면 null', () => {
+    expect(resolveDisplayError(tParams, 'flow-resolution-not-offered', 'raw', {})).toBe('raw')
+    expect(resolveDisplayError(tParams, 'flow-resolution-not-offered', 'raw')).toBe('raw')
+    expect(resolveDisplayError(tParams, 'flow-resolution-not-offered', null, {})).toBeNull()
+  })
+
+  it('params 가 필요 없는 kind 는 4번째 인자와 무관', () => {
+    expect(resolveDisplayError(tParams, 'flow-rpc-error', 'raw', undefined)).toBe('Flow request failed.')
+    expect(resolveDisplayError(tParams, 'flow-rpc-error', 'raw', { requested: 'x' })).toBe('Flow request failed.')
+  })
+
+  it('실제 로케일(en/ko)에서 kind 별 params 표대로 값이 들어가고 플레이스홀더가 남지 않는다', () => {
+    const mk = (locale) => (key, params = {}) => {
+      const v = key.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), locale)
+      if (typeof v !== 'string') return key
+      return v.replace(/\{(\w+)\}/g, (m, k) => (params[k] !== undefined ? params[k] : m))
+    }
+    for (const locale of [en, ko]) {
+      const t = mk(locale)
+      const a = resolveDisplayError(t, 'flow-resolution-not-offered', 'raw', { requested: '1080p' })
+      expect(a).toContain('1080p'); expect(a).not.toMatch(/\{\w+\}/)
+      const b = resolveDisplayError(t, 'flow-image-model-mismatch', 'raw', { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' })
+      expect(b).toContain('Nano Banana Pro'); expect(b).toContain('Nano Banana 2'); expect(b).not.toMatch(/\{\w+\}/)
+      const c = resolveDisplayError(t, 'flow-video-settings-mismatch', 'raw', { expected: 'veo_3_1_t2v_fast', actual: 'abra_t2v_6s' })
+      expect(c).toContain('veo_3_1_t2v_fast'); expect(c).toContain('abra_t2v_6s'); expect(c).not.toMatch(/\{\w+\}/)
+      const d = resolveDisplayError(t, 'flow-batch-halted', 'raw', { cause: 'flow-video-settings-mismatch' })
+      expect(d).toContain('flow-video-settings-mismatch'); expect(d).not.toMatch(/\{\w+\}/)
+      for (const kind of ['flow-session-missing', 'flow-settings-not-applied', 'flow-upscale-unsupported', 'flow-aspect-mismatch', 'flow-video-count-mismatch', 'flow-video-fetch-failed', 'flow-submit-lost', 'flow-submit-not-sent', 'flow-capture-not-installed', 'flow-references-unsupported', 'flow-mention-chips-unsupported', 'flow-agent-mode-unsupported', 'flow-feature-unsupported', 'flow-rpc-error', 'flow-download-error']) {
+        const m = resolveDisplayError(t, kind, 'raw', {})
+        expect(m, kind).not.toBe('raw'); expect(m, kind).not.toMatch(/\{\w+\}/)
+      }
+    }
+  })
+})
+
+// M3-13(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md D14): 레퍼런스 kind 의 표시 — {model}·{max} 는 값으로 채워지고(리터럴 토큰이 남으면 안 된다),
+//   params 없는 kind 는 문구 그대로(free-form 폴백 아님), flow-references-unsupported 는 고친 문구.
+describe('resolveDisplayError — M3 레퍼런스 kind (실제 로케일)', () => {
+  const mk = (locale) => (key, params = {}) => {
+    const v = key.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), locale)
+    if (typeof v !== 'string') return key
+    return v.replace(/\{(\w+)\}/g, (m, k) => (params[k] !== undefined ? params[k] : m))
+  }
+
+  it.each([['en', en], ['ko', ko]])('%s: flow-references-model-unsupported {model} → 모델명이 들어가고 {model} 토큰은 남지 않는다; too-many {max:3} → 3', (_lang, locale) => {
+    const t = mk(locale)
+    const m = resolveDisplayError(t, 'flow-references-model-unsupported', 'raw', { model: 'Veo 3.1 - Quality' })
+    expect(m).toContain('Veo 3.1 - Quality')
+    expect(m).not.toContain('{model}')
+    expect(m).not.toBe('raw')
+    const x = resolveDisplayError(t, 'flow-references-too-many', 'raw', { max: 3 })
+    expect(x).toContain('3')
+    expect(x).not.toContain('{max}')
+    expect(x).not.toBe('raw')
+    // params 가 빠지면 토큰을 노출하지 않고 free-form 으로 폴백
+    expect(resolveDisplayError(t, 'flow-references-model-unsupported', 'raw', {})).toBe('raw')
+  })
+
+  it.each([['en', en], ['ko', ko]])('%s: params 없는 레퍼런스 kind 4개는 로케일 문구 그대로', (_lang, locale) => {
+    const t = mk(locale)
+    for (const kind of ['flow-reference-attach-failed', 'flow-reference-source-missing', 'flow-reference-clipboard-busy', 'flow-references-mismatch']) {
+      expect(resolveDisplayError(t, kind, 'raw', {}), kind).toBe(locale.errorSection.kind[kind])
+    }
+  })
+
+  // M3 후속: unresolved-mentions 는 이제 렌더러 레퍼런스 계획(flowReferencePlan)이 만든다 — @이름에 맞는 레퍼런스가 프로젝트에 없다는 뜻이다.
+  //   새 Flow 엔 Ref 탭의 캐릭터 동기화가 없으므로 "동기화"를 권하지 않고, 그 이름의 레퍼런스(이미지 포함)를 레퍼런스 탭에 추가하라고 한다. params 없음(그대로).
+  it('unresolved-mentions 는 "그 이름의 레퍼런스를 레퍼런스 탭에 추가" 문구 — Ref 탭 동기화를 권하지 않는다', () => {
+    expect(resolveDisplayError(mk(en), 'unresolved-mentions', 'raw', {})).toBe("A reference named in an @mention wasn't found. Add a reference with that name (with an image) in the References tab and try again.")
+    expect(resolveDisplayError(mk(ko), 'unresolved-mentions', 'raw', {})).toBe('@멘션한 이름의 레퍼런스를 찾지 못했습니다. 레퍼런스 탭에서 그 이름으로 레퍼런스(이미지 포함)를 추가한 뒤 다시 시도해 주세요.')
+  })
+
+  it('flow-references-unsupported 는 고친 문구 — 레퍼런스·@멘션 전체 미지원이라 하지 않는다', () => {
+    expect(resolveDisplayError(mk(en), 'flow-references-unsupported', 'raw', {})).toBe("Flow mode can't use a style image when generating a reference card, or upload a reference on its own. Try again without the style image.")
+    expect(resolveDisplayError(mk(ko), 'flow-references-unsupported', 'raw', {})).toBe('Flow 모드에서는 레퍼런스 카드를 만들 때 스타일 이미지를 쓰거나 레퍼런스를 따로 업로드할 수 없습니다. 스타일 이미지 없이 다시 시도해주세요.')
+  })
+})

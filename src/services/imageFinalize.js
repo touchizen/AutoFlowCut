@@ -39,7 +39,10 @@ import { tryUpscaleImage } from '../utils/imageProcessing'
  */
 export async function finalizeGeneratedImage({
   result, genAPI, upscaleRes = 'off', saveMode, projectName, sceneId, prompt,
-  seed = null, model = 'flow', logPrefix = '[Finalize]'
+  seed = null, model = 'flow', logPrefix = '[Finalize]',
+  // R1#6/R2#5: authFailed 결과의 error 가 기계 토큰(not-on-flow · flow-rpc-error, kind 동반)일 때 대신 저장할 인증 안내 문구.
+  //   호출자가 t 로 만든다(여기엔 t 가 없다). kind 없는 옛 결과("Auth expired …")는 그대로 둔다(#R26-6).
+  authErrorText = null,
 }) {
   if (!result.success || !result.images?.length) {
     // merge update 에서 stale errorKind (예: image-missing) 가 새 free-form 실패 메시지보다
@@ -50,8 +53,10 @@ export async function finalizeGeneratedImage({
       success: false,
       sceneUpdate: {
         status: 'error',
-        error: result.error || 'No images',
+        error: (result.authFailed && result.errorKind && authErrorText) ? authErrorText : (result.error || 'No images'),
         errorKind: result.authFailed ? 'auth' : (result.errorKind ?? null),
+        // M1-10: kind 별 params(예: flow-resolution-not-offered {requested}) 보존 — 없으면 {} 로 비워 stale params 차단.
+        errorParams: result.errorParams || {},
       },
     }
   }
@@ -75,8 +80,18 @@ export async function finalizeGeneratedImage({
     ?? result.seed
     ?? (declared ? (declared.seed ?? null) : (seed ?? null))
 
-  // 업스케일
-  const upscaled = await tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix)
+  // 업스케일 — M1-10 백스톱: 새 Flow 의 업스케일 미지원은 tryUpscaleImage 가 flow-upscale-unsupported 로 throw 한다.
+  //   삼키지 않고 그 kind 로 씬을 실패시킨다(저장 없음). 그 외 예외는 그대로 전파.
+  let upscaled = null
+  try {
+    upscaled = await tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix)
+  } catch (e) {
+    if (!e?.errorKind) throw e
+    return {
+      success: false,
+      sceneUpdate: { status: 'error', error: e.message || e.errorKind, errorKind: e.errorKind, errorParams: e.errorParams || {} },
+    }
+  }
   if (upscaled) imageData = upscaled
 
   // 이미지 크기 추출
@@ -151,6 +166,7 @@ export async function finalizeGeneratedImage({
       // 그대로 남으면 ErrorSection/ResultsTable 이 계속 에러 메시지를 띄운다 — 명시 클리어.
       error: null,
       errorKind: null,
+      errorParams: {},
       image: imagePath ? null : imageData,
       imagePath: imagePath || null,
       mediaId,
@@ -187,6 +203,7 @@ export async function processAsyncSceneResult({
   updateScene,
   gate = NO_OP_GATE,
   logPrefix = '[Automation]',
+  authErrorText = null,
 }) {
   // 저장 직전에 배치 consume 게이트 확인 (첫 번째 항목만 실제 consume, 이후 캐시).
   // result 에 base64 가 있을 때(= 이미지 생성 완료 후)만 게이트를 실행 — Flow/API 양쪽 동작.
@@ -217,6 +234,7 @@ export async function processAsyncSceneResult({
     //   (응답이 더 구체적 model 을 주면 finalizeGeneratedImage 가 그걸 우선.)
     ...(model !== undefined ? { model } : {}),
     logPrefix,
+    authErrorText,
   })
   updateScene(scene.id, sceneUpdate)
   return success

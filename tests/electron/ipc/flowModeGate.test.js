@@ -40,7 +40,6 @@ const QUOTA_FLOW = [
   ['flow:upload-reference', { token: 't', base64: 'b', projectId: 'pid' }],
   ['flow:upscale-image', { token: 't', mediaId: 'm', projectId: 'pid' }],
   ['flow:dom-download-video', { mediaId: 'm', resolution: '1080p' }],  // #R27-5: can trigger upscale (quota)
-  ['flow:extract-token', {}],  // #R28-1: token readable in API mode (fail-open)
 ]
 const STATE_DOM = [
   ['flow:open-project', { flowProjectId: 'p1' }],   // #R28-2: navigates preserved Flow view

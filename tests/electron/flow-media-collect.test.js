@@ -39,7 +39,44 @@ function generatedCard(uuid, { alt = 'Generated image', w = 689, h = 388 } = {})
   return link
 }
 
+// Google moved Flow off labs.google (2026-09): the edit-card href is now
+// `/project/<id>/edit/<id>` with no `/tools/flow` segment. Matching only the old
+// layout makes collection silently return nothing on the new domain.
+function generatedCardHref(uuid, href) {
+  const el = document.createElement('img')
+  el.setAttribute('src', REDIRECT(uuid))
+  el.setAttribute('alt', 'Generated image')
+  el.getBoundingClientRect = () => ({ width: 689, height: 388 })
+  const link = document.createElement('a')
+  link.setAttribute('href', href)
+  link.appendChild(el)
+  return link
+}
+
 beforeEach(() => { document.body.innerHTML = '' })
+
+describe('scanGeneratedImages — Flow domain migration', () => {
+  const uuid = '11111111-2222-3333-4444-555555555555'
+
+  it.each([
+    ['new domain, absolute', `https://flow.google.com/project/p1/edit/${uuid}`],
+    ['new domain, relative', `/project/p1/edit/${uuid}`],
+    ['legacy domain', `https://labs.google/fx/tools/flow/project/p1/edit/${uuid}`],
+    ['legacy domain with locale', `https://labs.google/ko/fx/tools/flow/project/p1/edit/${uuid}`],
+  ])('collects the edit card on %s', (_label, href) => {
+    document.body.appendChild(generatedCardHref(uuid, href))
+    expect(scanGeneratedImages(document).map(r => r.mediaId)).toEqual([uuid])
+  })
+
+  it.each([
+    ['not an edit card', `https://flow.google.com/project/p1`],
+    ['a different route', `https://flow.google.com/archive/project/p1/edit/${uuid}`],
+    ['no href path', ''],
+  ])('ignores %s', (_label, href) => {
+    document.body.appendChild(generatedCardHref(uuid, href))
+    expect(scanGeneratedImages(document)).toEqual([])
+  })
+})
 
 describe('extractMediaName', () => {
   it('pulls the UUID from a media.getMediaUrlRedirect src', () => {

@@ -1,4 +1,9 @@
 // @vitest-environment node
+// ⚠️ M1-12(2026-09-24 flow.google.com 재작업): 이 파일이 구동하는 옛 labs.google 핸들러 경로는 Flow 모드에서
+//    도달 불가다(generate-image/t2v/check-video-status 는 angular 디스패치, 나머지 9개는 flow-feature-unsupported 단락).
+//    옛 핸들러 본문은 후속 정리 대상이라 남겨 두었고, 그 코드만 검증하는 이 스위트는 그 정리 때 함께 삭제한다.
+//    새 경로의 계약은 tests/electron/ipc/flowGenerateImageAngular.test.js · flowFeatureUnsupported.test.js ·
+//    flowAngularDispatch.test.js 가 핀한다.
 //
 // #R33: flow:generate-scene (@멘션 씬 생성) 은 generate-image 와 동일하게
 //   (1) configureFlowMode('IMAGE', batchCount) 로 이미지 모드를 강제하고
@@ -78,7 +83,7 @@ function makeDeps({
 
 const PID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
-describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', () => {
+describe.skip('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', () => {
   it('fails closed before mutation or submit when app Agent is OFF but the page cannot be turned OFF', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps({ ensureAgentOffResult: { success: false, state: 'still_on' } })
@@ -189,7 +194,7 @@ describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', ()
   })
 })
 
-describe('flow:generate-scene gap reference injection', () => {
+describe.skip('flow:generate-scene gap reference injection', () => {
   it('arms synchronous scene generation with gap reference mediaIds', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps()
@@ -266,7 +271,7 @@ describe('flow:generate-scene gap reference injection', () => {
   })
 })
 
-describe('#R33: flow:generate-scene 5xx (HTTP 500) transient retry', () => {
+describe.skip('#R33: flow:generate-scene 5xx (HTTP 500) transient retry', () => {
   it('returns a coded, content-free Generate click failure', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps({

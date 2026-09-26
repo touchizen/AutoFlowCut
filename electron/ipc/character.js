@@ -15,6 +15,7 @@
  */
 
 import { updateBounds } from './layout.js'
+import { unsupportedOnAngular } from './flow-angular.js'
 import {
   buildEntityRegisterBody,
   buildEntityRenameBody,
@@ -29,6 +30,7 @@ import {
   normalizeEntityDisplayName,
 } from '../flow-character-api.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
+import { flowBaseFromUrl, flowProjectUrl } from '../flowUrl.js'
 import { EDITOR_SELECTOR, appendSceneText, insertSceneMention, injectComposeSegments } from '../flow-compose-mention.js'
 import { FLOW_APPLY_NAME_PROBE, FLOW_BACK_BTN_EXPR } from '../flow-character-name.js'
 import { screen } from 'electron'
@@ -188,9 +190,7 @@ export function registerCharacterIPC(ipcMain, deps) {
   function characterDetailUrl(entityId, projectIdOverride) {
     const cur = (getFlowView() && getFlowView().webContents.getURL()) || ''
     if (projectIdOverride) {
-      const fm = cur.match(/^(.*\/tools\/flow)(\/|$)/)
-      const base = fm ? fm[1] : 'https://labs.google/fx/tools/flow'
-      return `${base}/project/${projectIdOverride}/character/${entityId}`
+      return `${flowProjectUrl(flowBaseFromUrl(cur), projectIdOverride)}/character/${entityId}`
     }
     const m = cur.match(/^(.*\/project\/[0-9a-f-]{36})/)
     return m ? `${m[1]}/character/${entityId}` : null
@@ -432,6 +432,7 @@ export function registerCharacterIPC(ipcMain, deps) {
   }
 
   ipcMain.handle('flow:generate-character', async (_e, opts = {}) => {
+    if (flowActive()) return unsupportedOnAngular('generate-character')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     const { prompt, displayName } = opts
     // generate-image/generate-scene 과 동일 계약 — 화면비/seed 를 batchGenerateImages body 에 주입한다.
     //   미주입 시 /characters 컴포저의 직전 상태(관측상 9:16)를 그대로 따라가 프로젝트 화면비와 어긋난다.
@@ -597,6 +598,7 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   (flow-net-capture #34 확인). 새 workflowId 를 캐릭터 대표 이미지로 PATCH 한다.
   //   ⚠️ inject/submit/capture 는 generate-character 와 동일 패턴(추후 공통 함수로 dedup TODO).
   ipcMain.handle('flow:reroll-character', async (_e, opts = {}) => {
+    if (flowActive()) return unsupportedOnAngular('reroll-character')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     const { entityId, prompt, displayName } = opts
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
     const flowView = getFlowView()
@@ -721,6 +723,7 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   ⚠️ inject/submit/capture 는 generate-character 와 동일 패턴(추후 공통 엔진으로 dedup TODO).
 
   ipcMain.handle('flow:generate-scene', async (_e, opts = {}) => {
+    if (flowActive()) return unsupportedOnAngular('generate-scene')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     const { prompt, segments } = opts
     const gapReferences = Array.isArray(opts.gapReferences) ? opts.gapReferences : []
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
@@ -1230,6 +1233,7 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   주입 → SPA 의 onChange 가 entityContext 와 함께 uploadImage 실행(= 캐릭터 생성). 2) 가로챈
   //   네트워크 버퍼에서 그 응답(parentEntityId/workflowId) 회수. 3) PATCH /flow/entities 로 이름 등록.
   ipcMain.handle('flow:upload-character-entity', async (_e, opts = {}) => {
+    if (flowActive()) return unsupportedOnAngular('upload-character-entity')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
     const { base64, displayName, mimeType, fileName } = opts
     console.log(
       '[Flow Character] A2 request displayName:',

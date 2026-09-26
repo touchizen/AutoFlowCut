@@ -91,12 +91,12 @@ export function collectM1FlowReferenceExclusions(
     if (!filter(scene, sceneIndex)) continue
 
     const matchedRefs = getMatchingReferences(scene) || []
-    const characterRefs = matchedRefs.filter(ref => ref?.type === 'character')
-    const { matched: mentionedCharacters } = resolveMentions(
+    // M3(D15): 멘션은 타입 무관(엔진 계획 planFlowReferenceComposition 과 같다) — 제외된 멘션 ref 는 @ 를 떼 평문으로 진행한다.
+    const { matched: mentionedRefs } = resolveMentions(
       scene?.prompt || '',
-      characterRefs
+      matchedRefs.filter(Boolean)
     )
-    const mentionedSet = new Set(mentionedCharacters)
+    const mentionedSet = new Set(mentionedRefs)
     const seen = new Set()
 
     for (const ref of matchedRefs) {
@@ -106,16 +106,8 @@ export function collectM1FlowReferenceExclusions(
       seen.add(refKey)
 
       const mentioned = mentionedSet.has(ref)
-      const usableAsMention = mentioned && (
-        flowMentionEligible(ref) ||
-        flowImageInjectable(ref) ||
-        flowSyncable(ref)
-      )
-      const usableAsImage = flowImageInjectable(ref) || (
-        ref.type !== 'character' && flowSyncable(ref)
-      )
-
-      if (usableAsMention || usableAsImage) continue
+      // M3(D15): Flow 에서 쓸 수 있음 = 로컬 이미지(멘션·첨부 공통 — 애셋 창에 붙여 올린다). 옛 mediaId·entity 는 애셋 창에서 검증할 수 없어 보지 않는다.
+      if (sourceAvailable(ref)) continue
 
       exclusions.push({
         sceneId: scene.id,

@@ -62,12 +62,16 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   //   되돌리지만, auth-stop 은 죽은 인증을 숨긴 채 재시도 루프가 돌지 않도록 error(auth)로 남긴다.
   const authStoppedRef = useRef(false)
   const authErrorMessage = () => getAuthErrorMessage(genAPI?.mode, t)
-  const authRequiredMessage = () => getAuthRequiredMessage(genAPI?.mode, t)
+  const authRequiredMessage = () => getAuthRequiredMessage(genAPI?.mode, t, genAPI?.flowSessionReason?.())
   const resultErrorKind = (result) => result?.authFailed ? 'auth' : (result?.errorKind ?? null)
+  // R2-2#2(O1#2/O2#1): 씬 경로(useAutomation.authFailureText)와 같은 규칙 — authFailed 결과에 errorKind 가 있으면(새 Flow 의
+  //   flow-session-missing 등, error 는 'not-on-flow'/'wiz-missing' 같은 이유 토큰) 저장 문구·토스트는 사람 문구다.
+  const authFailureText = (res) => (res?.errorKind ? authErrorMessage() : (res?.error || authErrorMessage()))
   const displayResultError = (result, fallback) => resolveDisplayError(
     t,
     resultErrorKind(result),
-    result?.error || fallback,
+    result?.authFailed ? authFailureText(result) : (result?.error || fallback),
+    result?.errorParams,
   )
   const activeRunsRef = useRef(new Set())
   const cancelGenerationRef = useRef(genAPI.cancelGeneration)
@@ -86,6 +90,8 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   const cancelActiveRuns = () => {
     for (const run of [...activeRunsRef.current]) cancelActiveScopeOnce(run)
   }
+  // M1-10: 비-스타일 ref 만 업스케일하므로 그때만 엔진 게이트에 설정을 넘긴다(Flow 모드는 제출 전에 거부).
+  const upscaleOptFor = (ref) => (isStyleReference(ref) ? undefined : (settings.imageUpscale || 'off'))
 
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
   const _maybeTriggerQuotaStop = (err) => {
@@ -493,6 +499,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               model: settings.imageModel,
               provider: settings.generation?.image?.provider ?? 'google',
               purpose: 'reference',
+              imageUpscale: upscaleOptFor(submitRef),
               cancelScope: run.scope,
               ref: { id: submitRef.id, name: submitRef.name, type: submitRef.type, category: submitRef.category, entityId: submitRef.entityId, workflowId: submitRef.workflowId },
             })
@@ -543,8 +550,9 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
             current => ({
                 ...current,
                 status: 'error',
-                errorMessage: result.error || 'Generation failed',
+                errorMessage: result.authFailed ? authFailureText(result) : (result.error || 'Generation failed'),
                 errorKind: (result.authFailed || isAuthError) ? 'auth' : (result.errorKind ?? null),
+                ...(result.errorParams ? { errorParams: result.errorParams } : {}),
               })
           ))
           return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
@@ -635,7 +643,12 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
         prev,
         index,
         guardKey,
-        current => ({ ...current, status: 'error', errorMessage: error.message || 'Generation error', ...(isAuthError ? { errorKind: 'auth' } : {}) })
+        current => ({
+          ...current, status: 'error', errorMessage: error.message || 'Generation error',
+          ...(isAuthError ? { errorKind: 'auth' } : {}),
+          // M1-10: 업스케일 백스톱(tryUpscaleImage 의 flow-upscale-unsupported) 같은 kind 있는 예외는 kind/params 보존.
+          ...(error?.errorKind ? { errorKind: error.errorKind, errorParams: error.errorParams || {} } : {}),
+        })
       ))
       if (guardKey && resolveReferenceIndex(referencesRef.current, index, guardKey) < 0) {
         return { success: false, skipped: true, skipStage: 'not-found' }
@@ -690,7 +703,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
         current => ({
             ...current,
             status: 'error',
-            errorMessage: result.error || 'Generation failed',
+            errorMessage: result.authFailed ? authFailureText(result) : (result.error || 'Generation failed'),
             errorKind: resultErrorKind(result),
           })
       ))
@@ -1087,6 +1100,25 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               'collect',
               e?.message || String(e)
             )
+            // M1-10 백스톱: kind 를 실은 후처리 예외(tryUpscaleImage 의 flow-upscale-unsupported)만 종결이다 — 결과가 이미
+            //   소비된 항목이라 ref 를 그 kind 로 error 표시, busy 해제, 큐에서 제거(settled). 안 그러면 180s 캡까지 pending 으로
+            //   돈다. kind 없는 예외(디스크 오류 등)는 기존대로 큐에 남겨 타임아웃/사용자 중지(pending 복귀) 정리에 맡긴다(R1#14).
+            if (e?.errorKind) {
+              removeBatchGeneratingRef(pending.busyIndex)
+              setReferences(prev => patchReferenceByIdentity(
+                prev,
+                pending.index,
+                isTargeted ? pending.key : null,
+                current => ({
+                  ...current,
+                  status: 'error',
+                  errorMessage: e?.message || 'Post-processing failed',
+                  errorKind: e.errorKind,
+                  errorParams: e?.errorParams || {},
+                })
+              ))
+              consumed.add(pending)   // multi-provider 병합: 큐 제거 집합은 브랜치에서 consumed 로 바뀌었다(옛 succeeded — 남기면 ReferenceError)
+            }
           }
         }, 5)
 
@@ -1223,6 +1255,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
             model: settings.imageModel,
             provider: settings.generation?.image?.provider ?? 'google',
             purpose: 'reference',
+            imageUpscale: upscaleOptFor(ref),
             cancelScope: run.scope,
             ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId },
           })
@@ -1251,6 +1284,9 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               cancelActiveRuns()
               authStoppedRef.current = true
               window.dispatchEvent(new CustomEvent('flow-login-expired'))
+              // R2-2#2: Flow 모드의 flow-login-expired 는 로그만 남긴다(useFlowEvents) — 왜 멈췄는지 사람 문구로 알린다.
+              // M2-R1 F14(B8): API 모드는 그 이벤트가 이미 API 키 모달을 연다 — 토스트까지 띄우면 이중 알림.
+              if (genAPI?.mode === 'flow') toast.error(t('toast.generateFailed', { error: displayResultError(submitResult, 'Submit failed') }))
             }
             removeBatchGeneratingRef(busyIndex)
             // #R25-5: authFailed 면 errorKind:'auth' 도 남겨 안정적 auth 표식 유지.
@@ -1261,8 +1297,9 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
               current => ({
                   ...current,
                   status: 'error',
-                  errorMessage: submitResult?.error || 'Submit failed',
+                  errorMessage: submitResult?.authFailed ? authFailureText(submitResult) : (submitResult?.error || 'Submit failed'),
                   errorKind: resultErrorKind(submitResult),
+                  ...(submitResult?.errorParams ? { errorParams: submitResult.errorParams } : {}),
                 })
             ))
 

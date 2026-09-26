@@ -7,6 +7,7 @@
 
 import { prepareCloudRequest } from './prepareCloudRequest';
 import { callExportFunction } from './callExportFunction';
+import { applyVideoAudioVolume } from './videoAudioVolume';
 
 /**
  * sidecar SRT 로 legacy audioPackage.srtContent(narration-aligned)를 쓸지 여부.
@@ -78,6 +79,14 @@ export async function exportCapcutPackageCloud(project, options = {}) {
 
   // 2. Cloud Functions 호출하여 JSON 생성
   let { draftInfo, draftMetaInfo } = await callGenerateCapcutJson(cloudRequest);
+
+  // 2-1. Veo 영상 오디오 볼륨 — GCF 는 영상 세그먼트에 volume 을 쓰지 않아 템플릿 기본 1.0 이
+  //      그대로 나간다(=Veo 가 지어낸 대사가 TTS 나레이션 위에 깔림). GCF 수정 없이 앱이 패치한다.
+  //      옵션 미지정이면 손대지 않는다 → 기존 동작 유지.
+  draftInfo = applyVideoAudioVolume(draftInfo, {
+    videoFilenames: (cloudRequest.videoOverlays || []).map((o) => o.filename),
+    volume: options.videoAudioVolume,
+  });
 
   // 3. 데스크톱 모드: 미디어 복사 없이 절대경로 치환
   //    GCF가 생성한 JSON 내 "mediaPathBase/filename" → 실제 절대경로로 교체

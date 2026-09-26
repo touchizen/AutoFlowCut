@@ -440,9 +440,10 @@ curl http://127.0.0.1:3210/api/batch-status
 - \`update-reference\`: 특정 레퍼런스 수정 (index + fields)
 - \`update-scenes\`: 씬 전체 교체 (scene.generation stage-pair deep merge)
 - \`update-scene\`: 특정 씬 수정 (index + fields, generation 지원)
+- \`update-settings\`: 앱 설정 수정 (fields) — **화이트리스트 키만** 허용, 그 밖의 키나 틀린 값은 400 + \`keys\`(이름만): \`videoModelT2V\`·\`videoModelF2V\`·\`imageModel\`(비어 있지 않은 문자열 ≤ 64) · \`videoResolution\`(360p|720p|1080p|4k) · \`aspectRatio\`(16:9|9:16|1:1|4:3|3:4) · \`defaultDuration\`(숫자 1–60) · \`imageBatchCount\`·\`videoBatchCount\`(정수 1–4) · \`concurrency\`·\`videoConcurrency\`(정수 1–10) · \`seedNo\`(정수 ≥ 0) · \`seedLocked\`(boolean) · \`imageUpscale\`(문자열 ≤ 16)
 - \`generate-reference\`: 레퍼런스 생성 트리거 (index + styleId?)
 - \`generate-scene\`: 씬 생성 트리거 (sceneId + styleId?)
-- \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force?)
+- \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force? + mode?: 'video'|'image' — 탭 오버라이드)
 - \`start-ref-batch\`: 레퍼런스 일괄 생성 시작 (styleId? + force?)`,
         requestBody: {
           required: true,
@@ -540,8 +541,9 @@ curl http://127.0.0.1:3210/api/batch-status
               schema: {
                 type: 'object',
                 properties: {
-                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "auto" (씬별 style_tag 매칭 명시) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback.', example: 'preset:korean-ani' },
-                  force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만).', example: true },
+                  styleId: { type: 'string', maxLength: 128, description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "auto" (씬별 style_tag 매칭 명시) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback. 문자열이 아니거나 128자를 넘으면 400.', example: 'preset:korean-ani' },
+                  force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만). boolean 이 아니면("false"·0 포함) 400.', example: true },
+                  mode: { type: 'string', enum: ['video', 'image'], description: "선택. 'video'면 UI 탭과 무관하게 텍스트→영상(T2V) 배치(선택된 영상 씬만), 'image'면 이미지 배치. 생략 시 현재 UI 탭. 본문이 비어 있지 않은데 JSON 객체가 아니면 400." },
                 },
               },
             },
@@ -662,12 +664,12 @@ curl http://127.0.0.1:3210/api/batch-status
         properties: {
           type: {
             type: 'string',
-            enum: ['update-references', 'update-reference', 'update-scenes', 'update-scene', 'generate-reference', 'generate-scene', 'start-scene-batch', 'start-ref-batch'],
+            enum: ['update-references', 'update-reference', 'update-scenes', 'update-scene', 'update-settings', 'generate-reference', 'generate-scene', 'start-scene-batch', 'start-ref-batch'],
           },
           index: { type: 'integer', description: '대상 인덱스 (0-based)' },
           fields: {
             type: 'object',
-            description: '수정할 필드 객체',
+            description: '수정할 필드 객체. update-settings 는 화이트리스트 키만(videoModelT2V, videoModelF2V, imageModel, videoResolution, aspectRatio, defaultDuration, imageBatchCount, videoBatchCount, concurrency, videoConcurrency, seedNo, seedLocked, imageUpscale) — 그 밖의 키·틀린 값은 400.',
             properties: {
               generation: { $ref: '#/components/schemas/SceneGeneration' },
             },

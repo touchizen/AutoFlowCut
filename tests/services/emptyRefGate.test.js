@@ -3,6 +3,14 @@ import {
   nonInteractiveGateView,
   runEmptyRefGateFlow,
 } from '../../src/services/emptyRefGate'
+import { selectMentionSyncTargets } from '../../src/utils/mentionSyncTargets'
+
+// M3(D15): 동기화 대상 셀렉터는 퇴역(항상 []) — 기본은 실제 구현. 남아 있는 sync gate 위임 경로(옛 코드, 정리는 범위 밖)는
+//   대상을 주는 스텁으로 계속 지킨다(아래 'sync gate 위임').
+vi.mock('../../src/utils/mentionSyncTargets', async (importOriginal) => {
+  const mod = await importOriginal()
+  return { ...mod, selectMentionSyncTargets: vi.fn(mod.selectMentionSyncTargets) }
+})
 
 const deferred = () => {
   let resolve
@@ -445,8 +453,26 @@ describe('subscription 사전 gate (§6.6)', () => {
 })
 
 describe('sync gate 위임', () => {
+  // M3(D15): 실제 셀렉터는 퇴역 — 옛 기준의 미동기화 @멘션이어도 모달 없이 바로 시작한다.
+  it('M3: 미동기화 @멘션이어도(실제 셀렉터) sync gate 를 열지 않고 시작한다', async () => {
+    const unsynced = { id: 'sync-me', name: 'SyncMe', type: 'character', filePath: '/a.png' }
+    const deps = makeDeps({
+      getLiveRefs: () => [filledGhost, unsynced],
+      openSyncGate: vi.fn(async () => ({ proceeded: false, patchedRefs: null })),
+    })
+    deps.__state.scenes = [{ id: 's1', prompt: '@SyncMe', status: 'pending' }]
+
+    const result = await runEmptyRefGateFlow(baseContext(), deps)
+
+    expect(deps.openSyncGate).not.toHaveBeenCalled()
+    expect(deps.startScenes).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({ started: true })
+  })
+
+  // 아래 둘은 셀렉터가 대상을 줄 때의 위임(옛 경로 — 코드는 남아 있다)을 스텁 셀렉터로 지킨다.
   it('sync gate를 취소하면 씬을 시작하지 않고 latch를 푼다', async () => {
     const unsynced = { id: 'sync-me', name: 'SyncMe', type: 'character', filePath: '/a.png' }
+    selectMentionSyncTargets.mockImplementationOnce(() => [unsynced])
     const deps = makeDeps({
       getLiveRefs: () => [filledGhost, unsynced],
       openSyncGate: vi.fn(async () => ({ proceeded: false, patchedRefs: null })),
@@ -463,6 +489,7 @@ describe('sync gate 위임', () => {
   it('sync gate가 patchedRefs를 주면 최종 start의 currentRefs로 쓴다', async () => {
     const unsynced = { id: 'sync-me', name: 'SyncMe', type: 'character', filePath: '/a.png' }
     const patched = [{ ...unsynced, mediaId: 'm9', entityId: 'e9' }]
+    selectMentionSyncTargets.mockImplementationOnce(() => [unsynced])
     const deps = makeDeps({
       getLiveRefs: () => [filledGhost, unsynced],
       openSyncGate: vi.fn(async () => ({ proceeded: true, patchedRefs: patched })),

@@ -70,12 +70,14 @@ function setup({ mode, scene, references }) {
 }
 
 describe('useAutomation M1 Flow reference guard', () => {
-  it('removes null, undefined, and empty mediaId refs from Flow submissions', async () => {
+  // M3(D15): Flow 에서 쓸 수 있는 ref = 로컬 이미지(data·filePath·imagePath). 옛 mediaId 만 있는 ref 는 애셋 창에서 검증할 수 없어 뺀다.
+  it('keeps only refs with a local image in Flow submissions — imageless and mediaId-only refs are removed (M3)', async () => {
     const references = [
       { id: 'null', name: 'Null', type: 'character', mediaId: null },
       { id: 'undefined', name: 'Undefined', type: 'scene', mediaId: undefined },
       { id: 'empty', name: 'Empty', type: 'style', mediaId: '' },
-      { id: 'valid', name: 'Valid', type: 'character', mediaId: 'media-ok' },
+      { id: 'media-only', name: 'MediaOnly', type: 'character', mediaId: 'media-ok' },
+      { id: 'valid', name: 'Valid', type: 'character', filePath: '/refs/valid.png', mediaId: null },
     ]
     const { hook, submitGeneration } = setup({
       mode: 'flow',
@@ -93,11 +95,11 @@ describe('useAutomation M1 Flow reference guard', () => {
     expect(submitGeneration.mock.calls[0][1]).toEqual([
       {
         category: undefined,
-        mediaId: 'media-ok',
+        mediaId: null,
         caption: '',
         name: 'Valid',
         data: null,
-        filePath: null,
+        filePath: '/refs/valid.png',
       },
     ])
   })

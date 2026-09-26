@@ -233,6 +233,7 @@ export const FLOW_PAGE_INJECTION = /* js */ `
               ? inject.i2v.i2vStartEndUrl
               : inject.i2v.i2vUrl
             if (targetUrl && url !== targetUrl) {
+              // safe-log: /v1/ 뒤 API 경로 조각만(쿼리·본문 없음) — 페이지 콘솔은 scrubBreadcrumb 이 통째로 버린다
               console.log('[Flow Inject] i2v redirect:', url.split('/v1/').pop(), '→', targetUrl.split('/v1/').pop())
               // Don't early-return — re-target so the main fetch+capture path applies the new URL.
               _input = targetUrl
@@ -340,6 +341,14 @@ export const FLOW_PAGE_INJECTION = /* js */ `
         res.clone().text().then(function(_resp) {
           window.__autoflowcut_net__.push({ method: _m, url: url, status: res.status, reqHeaders: _rh, reqBody: _rb, respBody: (_resp || '').slice(0, 60000) })
           while (window.__autoflowcut_net__.length > 300) window.__autoflowcut_net__.shift()
+          // AUTOFLOWCUT_NET_TRACE=1: main 이 이 플래그를 켠다 — fetch 캡처도 XHR 트레이스(flow-xhr-capture.js)와
+          //   같은 채널(flow:report-xhr)로 보내 한 JSONL 에 시간순으로 모인다. 꺼져 있으면 기존 동작 그대로.
+          if (window.__autoflowcut_net_trace__ && window.electronAPI && typeof window.electronAPI.flowReportXhr === 'function') {
+            try {
+              var _p = window.electronAPI.flowReportXhr({ source: 'fetch', method: _m, url: url, status: res.status, reqHeaders: _rh, reqBody: _rb, respBody: (_resp || '').slice(0, 4194304) })
+              if (_p && typeof _p.catch === 'function') _p.catch(function () {})
+            } catch (_) {}
+          }
         }).catch(function() {})
       }
     } catch (_) {}

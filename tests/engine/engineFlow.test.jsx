@@ -8,8 +8,7 @@ import { assertEngineContract } from './engineContract'
 import { FLOW_MODELS } from '../../src/engine/flowModels'
 
 // --- flow* IPC mocks ---
-const mockFlowExtractToken = vi.fn()
-const mockFlowValidateToken = vi.fn()
+const mockFlowSessionStatus = vi.fn()
 const mockFlowExtractProjectId = vi.fn()
 const mockFlowGenerateImage = vi.fn()
 const mockFlowCheckGeneration = vi.fn()
@@ -34,8 +33,7 @@ const mockFlowGenerateScene = vi.fn()
 beforeEach(() => {
   // Install flow* methods on the existing window.electronAPI mock (setup.js installs base mock)
   Object.assign(window.electronAPI, {
-    flowExtractToken: mockFlowExtractToken,
-    flowValidateToken: mockFlowValidateToken,
+    flowSessionStatus: mockFlowSessionStatus,
     flowExtractProjectId: mockFlowExtractProjectId,
     flowGenerateImage: mockFlowGenerateImage,
     flowCheckGeneration: mockFlowCheckGeneration,
@@ -60,7 +58,7 @@ beforeEach(() => {
 })
 
 // Import after mocks are set up in beforeEach
-import { useFlowEngine, resolveEffectiveProjectId, isFlowAuthError, markFlowAuthFailure, planMentionRouting, planUnresolvedMentionFallback, planCharacterGeneration, computeSceneGapReferences } from '../../src/engine/engineFlow'
+import { useFlowEngine, resolveEffectiveProjectId, isFlowAuthError, markFlowAuthFailure, planCharacterGeneration } from '../../src/engine/engineFlow'
 
 // #R8-11: Flow auth-error sentinel — pure unit tests
 describe('isFlowAuthError / markFlowAuthFailure (#R8-11)', () => {
@@ -127,85 +125,68 @@ describe('useFlowEngine — engine contract', () => {
   })
 })
 
-describe('useFlowEngine — getAccessToken', () => {
-  it('calls flowExtractToken then flowValidateToken and returns the raw token', async () => {
-    mockFlowExtractToken.mockResolvedValue({ success: true, token: 'bearer-abc' })
-    mockFlowValidateToken.mockResolvedValue({ valid: true, expiry: Date.now() + 3600_000 })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let token
-    await act(async () => {
-      token = await result.current.getAccessToken()
-    })
-
-    expect(mockFlowExtractToken).toHaveBeenCalledTimes(1)
-    expect(mockFlowValidateToken).toHaveBeenCalledWith({ token: 'bearer-abc' })
-    expect(token).toBe('bearer-abc')
-  })
-
-  it('sets accessToken state after successful extraction', async () => {
-    mockFlowExtractToken.mockResolvedValue({ success: true, token: 'tok-123' })
-    mockFlowValidateToken.mockResolvedValue({ valid: true, expiry: Date.now() + 3600_000 })
-
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => { await result.current.getAccessToken() })
-
-    expect(result.current.accessToken).toBe('tok-123')
-  })
-
-  it('returns null and does not set token when extract fails', async () => {
-    mockFlowExtractToken.mockResolvedValue({ success: false })
-
+describe('useFlowEngine — getAccessToken (flow:session-status, M1-10)', () => {
+  // flow.google.com 에는 세션 API 도 Bearer 도 없다. 준비 판정은 flowSessionStatus 이고, 준비되면 토큰 대신
+  //   센티널 'flow-session'(useGenerationEngine.ready 용) — IPC 페이로드의 token 은 항상 null.
+  it('ready → 센티널 "flow-session", state 도 센티널, reason null, projectId 추출', async () => {
+    mockFlowSessionStatus.mockResolvedValue({ ready: true, credits: 1050 })
+    mockFlowExtractProjectId.mockResolvedValue({ projectId: 'proj-abc' })
     const { result } = renderHook(() => useFlowEngine())
     let token
     await act(async () => { token = await result.current.getAccessToken() })
-
-    expect(token).toBeNull()
-    expect(result.current.accessToken).toBeNull()
-  })
-
-  it('populates projectId from flowExtractProjectId after successful token (I3)', async () => {
-    mockFlowExtractToken.mockResolvedValue({ success: true, token: 'tok-i3' })
-    mockFlowValidateToken.mockResolvedValue({ valid: true, expiry: Date.now() + 3600_000 })
-    mockFlowExtractProjectId.mockResolvedValue({ projectId: 'proj-abc' })
-
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => { await result.current.getAccessToken() })
-
+    expect(mockFlowSessionStatus).toHaveBeenCalledTimes(1)
+    expect(token).toBe('flow-session')
+    expect(result.current.accessToken).toBe('flow-session')
+    expect(result.current.flowSessionReason()).toBeNull()
     expect(mockFlowExtractProjectId).toHaveBeenCalledWith({ liveOnly: false })
     expect(result.current.projectId).toBe('proj-abc')
   })
 
-  it('returns null when token is invalid', async () => {
-    mockFlowExtractToken.mockResolvedValue({ success: true, token: 'expired-tok' })
-    mockFlowValidateToken.mockResolvedValue({ valid: false })
-
+  it.each(['wiz-missing', 'not-on-flow', 'rpc:http:500', 'rpc:er:3', 'timeout'])('not ready(%s) → null + reason, state null', async (reason) => {
+    mockFlowSessionStatus.mockResolvedValue({ ready: false, reason })
     const { result } = renderHook(() => useFlowEngine())
     let token
     await act(async () => { token = await result.current.getAccessToken() })
-
     expect(token).toBeNull()
     expect(result.current.accessToken).toBeNull()
+    expect(result.current.flowSessionReason()).toBe(reason)
+    expect(mockFlowExtractProjectId).not.toHaveBeenCalled()
+  })
+
+  it('IPC reject → null, reason "timeout"', async () => {
+    mockFlowSessionStatus.mockRejectedValue(new Error('ipc down'))
+    const { result } = renderHook(() => useFlowEngine())
+    let token
+    await act(async () => { token = await result.current.getAccessToken() })
+    expect(token).toBeNull()
+    expect(result.current.flowSessionReason()).toBe('timeout')
+  })
+
+  it('ready 뒤 not-ready 가 오면 센티널을 거둔다', async () => {
+    mockFlowSessionStatus.mockResolvedValueOnce({ ready: true, credits: 1 }).mockResolvedValueOnce({ ready: false, reason: 'not-on-flow' })
+    mockFlowExtractProjectId.mockResolvedValue({ projectId: null })
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => { await result.current.getAccessToken() })
+    expect(result.current.accessToken).toBe('flow-session')
+    await act(async () => { await result.current.getAccessToken() })
+    expect(result.current.accessToken).toBeNull()
+    expect(result.current.flowSessionReason()).toBe('not-on-flow')
   })
 })
 
 describe('useFlowEngine — clearTokenCache', () => {
-  it('clears the accessToken state', async () => {
-    mockFlowExtractToken.mockResolvedValue({ success: true, token: 'tok-abc' })
-    mockFlowValidateToken.mockResolvedValue({ valid: true, expiry: Date.now() + 3600_000 })
-
+  it('clears the accessToken sentinel', async () => {
+    mockFlowSessionStatus.mockResolvedValue({ ready: true, credits: 1050 })
+    mockFlowExtractProjectId.mockResolvedValue({ projectId: null })
     const { result } = renderHook(() => useFlowEngine())
     await act(async () => { await result.current.getAccessToken() })
-    expect(result.current.accessToken).toBe('tok-abc')
+    expect(result.current.accessToken).toBe('flow-session')
 
     act(() => { result.current.clearTokenCache() })
     expect(result.current.accessToken).toBeNull()
   })
 })
 
-// ---------------------------------------------------------------------------
-// #R3-1: bound projectId (getFlowProjectId) takes precedence over extracted (live URL)
-// ---------------------------------------------------------------------------
 describe('useFlowEngine — bound projectId precedence (#R3-1)', () => {
   beforeEach(() => {
     mockFlowGenerateImage.mockResolvedValue({ success: true, images: [] })
@@ -221,8 +202,7 @@ describe('useFlowEngine — bound projectId precedence (#R3-1)', () => {
     const { result } = renderHook(() => useFlowEngine({ getFlowProjectId: () => boundId }))
 
     // Simulate extracted projectId being set (via getAccessToken → flowExtractProjectId)
-    mockFlowExtractToken.mockResolvedValue({ success: true, token: 'tok' })
-    mockFlowValidateToken.mockResolvedValue({ valid: true })
+    mockFlowSessionStatus.mockResolvedValue({ ready: true, credits: 1050 })
     mockFlowExtractProjectId.mockResolvedValue({ projectId: extractedId })
     await act(async () => { await result.current.getAccessToken() })
     // Confirm extracted id was set internally
@@ -241,8 +221,7 @@ describe('useFlowEngine — bound projectId precedence (#R3-1)', () => {
     const extractedId = 'extracted-proj-fallback'
     const { result } = renderHook(() => useFlowEngine({ getFlowProjectId: () => null }))
 
-    mockFlowExtractToken.mockResolvedValue({ success: true, token: 'tok2' })
-    mockFlowValidateToken.mockResolvedValue({ valid: true })
+    mockFlowSessionStatus.mockResolvedValue({ ready: true, credits: 1050 })
     mockFlowExtractProjectId.mockResolvedValue({ projectId: extractedId })
     await act(async () => { await result.current.getAccessToken() })
 
@@ -254,16 +233,15 @@ describe('useFlowEngine — bound projectId precedence (#R3-1)', () => {
     )
   })
 
-  it('uses bound projectId for uploadReference (character entity path)', async () => {
-    const boundId = 'bound-char-proj'
-    mockFlowUploadCharacterEntity.mockResolvedValue({ success: true })
-    const { result } = renderHook(() => useFlowEngine({ getFlowProjectId: () => boundId }))
+  it('uploadReference 는 flow.google.com 에서 미지원 — IPC 없이 flow-references-unsupported (M1-10)', async () => {
+    const { result } = renderHook(() => useFlowEngine({ getFlowProjectId: () => 'bound-char-proj' }))
+    let res
     await act(async () => {
-      await result.current.uploadReference('base64data', { type: 'character', name: 'hero' })
+      res = await result.current.uploadReference('base64data', { type: 'character', name: 'hero' })
     })
-    expect(mockFlowUploadCharacterEntity).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: boundId })
-    )
+    expect(res).toMatchObject({ success: false, errorKind: 'flow-references-unsupported', error: 'flow-references-unsupported' })
+    expect(mockFlowUploadCharacterEntity).not.toHaveBeenCalled()
+    expect(mockFlowUploadReference).not.toHaveBeenCalled()
   })
 
   it('uses bound projectId for checkVideoStatus', async () => {
@@ -286,7 +264,7 @@ describe('useFlowEngine — listModels', () => {
     await act(async () => { models = await result.current.listModels() })
 
     // No flow IPC should be called — not token, not projects, not image generation
-    expect(mockFlowExtractToken).not.toHaveBeenCalled()
+    expect(mockFlowSessionStatus).not.toHaveBeenCalled()
     expect(mockFlowListProjects).not.toHaveBeenCalled()
     expect(mockFlowGenerateImage).not.toHaveBeenCalled()
     expect(models).toEqual({ success: true, models: FLOW_MODELS })
@@ -371,39 +349,17 @@ describe('useFlowEngine — checkVideoStatus index zip', () => {
   })
 })
 
-describe('useFlowEngine — uploadReference routing', () => {
-  it('routes to flowUploadReference for plain (non-character) refs', async () => {
-    mockFlowUploadReference.mockResolvedValue({ success: true, mediaId: 'ref-plain', caption: null })
-
+describe('useFlowEngine — uploadReference (flow.google.com 미지원, M1-10)', () => {
+  it.each([
+    ['plain', { category: 'style' }],
+    ['character', { category: 'character', type: 'character', name: 'Hero' }],
+  ])('%s ref → flow-references-unsupported, 어떤 IPC 도 호출하지 않는다', async (_n, meta) => {
     const { result } = renderHook(() => useFlowEngine())
     let res
-    await act(async () => {
-      res = await result.current.uploadReference('data:img/png;base64,abc', { category: 'style' })
-    })
-
-    expect(mockFlowUploadReference).toHaveBeenCalledTimes(1)
-    expect(mockFlowUploadCharacterEntity).not.toHaveBeenCalled()
-    expect(res.mediaId).toBe('ref-plain')
-  })
-
-  it('routes to flowUploadCharacterEntity for character type refs', async () => {
-    mockFlowUploadCharacterEntity.mockResolvedValue({
-      success: true, entityId: 'ent-1', workflowId: 'wf-1', mediaId: 'media-1', registered: true,
-    })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.uploadReference(
-        'data:img/png;base64,abc',
-        { category: 'character', type: 'character', name: 'Hero' }
-      )
-    })
-
-    expect(mockFlowUploadCharacterEntity).toHaveBeenCalledTimes(1)
+    await act(async () => { res = await result.current.uploadReference('data:img/png;base64,abc', meta) })
+    expect(res).toEqual({ success: false, errorKind: 'flow-references-unsupported', error: 'flow-references-unsupported' })
     expect(mockFlowUploadReference).not.toHaveBeenCalled()
-    expect(res.entityId).toBe('ent-1')
-    expect(res.mediaId).toBe('media-1')
+    expect(mockFlowUploadCharacterEntity).not.toHaveBeenCalled()
   })
 })
 
@@ -439,7 +395,7 @@ describe('useFlowEngine — setStopRequested (renderer-local)', () => {
     act(() => { result.current.setStopRequested(true) })
 
     // No flow IPC should have been called
-    expect(mockFlowExtractToken).not.toHaveBeenCalled()
+    expect(mockFlowSessionStatus).not.toHaveBeenCalled()
     expect(mockFlowGenerateImage).not.toHaveBeenCalled()
   })
 
@@ -538,260 +494,111 @@ describe('useFlowEngine — listFlowProjects', () => {
   })
 })
 
-describe('useFlowEngine — submitGeneration: mention routing (C1)', () => {
-  const syncedRef = {
-    id: 1,
-    name: 'hero',
-    type: 'character',
-    category: 'character',
-    entityId: 'ent-1',
-    flowNameSyncStatus: 'synced',
-    mediaId: 'm1',
+// M3-11(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md D1·D2·D3): 엔진 입력 게이트는 업스케일만 남는다. 레퍼런스는 planFlowReferenceComposition
+//   (프롬프트의 @멘션 → 인라인 멘션 세그먼트, 멘션 안 된 매칭 ref → ＋ 첨부) → ref **하나씩** resolveReferenceImages([ref], {projectName, strictMime:true})
+//   (못 읽으면 flow-reference-source-missing, IPC 없음 — 한 번에 부르면 못 읽은 것이 조용히 빠진다) → IPC {refs:[{base64,mime}], plan:{segments, attach},
+//   referenceImages:[]}. 동기 generateImage(asyncMode:false)와 배치·MCP 의 비동기 submitGeneration(asyncMode:true, R0 B1)이 같은 절차다.
+//   레퍼런스 생성(purpose:'reference')의 스타일 ref 이미지는 범위 밖(flow-references-unsupported), 캐릭터 ref 생성 분기는 그대로.
+describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이트 → IPC (M3-11, D1·D2·D3)', () => {
+  const PNG = 'data:image/png;base64,QUFB'
+  const JPG = 'data:image/jpeg;base64,/9j/BB'
+  const king = { id: 'k', name: 'king', type: 'character', data: JPG }                                        // pool(프로젝트 ref)
+  const queenRef = { id: 'q', name: 'queen', type: 'character', data: PNG }
+  const queen = { category: 'character', mediaId: null, caption: '', name: 'queen', data: PNG, filePath: null }  // 훅이 넘기는 매칭 ref 사본(id 없음)
+  const unreadable = { category: 'scene', mediaId: null, caption: '', name: 'castle', data: null, filePath: '/nowhere/castle.png' }   // 원천은 있으나 못 읽는다
+  const REFS_UNSUPPORTED = { success: false, errorKind: 'flow-references-unsupported', error: 'flow-references-unsupported' }
+  const SOURCE_MISSING = { success: false, errorKind: 'flow-reference-source-missing', error: 'flow-reference-source-missing' }
+  const ENTRIES = [['generateImage', false], ['submitGeneration', true]]
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFlowGenerateImage.mockImplementation(async (p) => (p.asyncMode ? { success: true, generationId: 'gen-7' } : { success: true, images: [{ base64: 'img', mediaId: 'm' }] }))
+  })
+  const call = async (fn, ...args) => {
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current[fn](...args) })
+    return res
   }
 
-  it('routes to flowGenerateScene when prompt has a resolvable @mention', async () => {
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true,
-      images: [{ base64: 'data:img', mediaId: 'scene-m1' }],
-      workflowId: 'wf-scene-1',
-      mediaId: 'scene-m1',
-      fifeUrl: null,
+  it.each(ENTRIES)('%s: 태그 ref 1개 → 페이로드 {asyncMode, refs:[{base64,mime}], plan, referenceImages:[]} · 결과는 그대로', async (fn, asyncMode) => {
+    const res = await call(fn, 'the queen walks', [queen], { references: [king, queenRef], aspectRatio: '9:16', batchCount: 2, model: 'Nano Banana 2', seed: 5 })
+    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
+    expect(mockFlowGenerateImage.mock.calls[0][0]).toEqual({
+      token: null, prompt: 'the queen walks', aspectRatio: '9:16', seed: 5, model: 'Nano Banana 2', projectId: null, batchCount: 2, asyncMode,
+      refs: [{ base64: 'QUFB', mime: 'image/png' }], plan: { segments: [{ t: 'text', text: 'the queen walks' }], attach: [0] }, referenceImages: [],
     })
+    expect(res).toEqual(asyncMode ? { success: true, generationId: 'gen-7' } : { success: true, images: [{ base64: 'img', mediaId: 'm' }] })
+  })
 
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
-    })
+  it.each(ENTRIES)('%s: @멘션 + 태그 → 멘션 세그먼트(ref 0) + 첨부(ref 1), 바이트는 refs 순서 · 멘션된 태그 사본은 첨부하지 않는다', async (fn) => {
+    await call(fn, '@king이 queen 과 걷는다', [{ ...queen, name: 'King', data: JPG }, queen], { references: [king, queenRef] })
+    const p = mockFlowGenerateImage.mock.calls[0][0]
+    expect(p.refs).toEqual([{ base64: '/9j/BB', mime: 'image/jpeg' }, { base64: 'QUFB', mime: 'image/png' }])
+    expect(p.plan).toEqual({ segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: '이 queen 과 걷는다' }], attach: [1] })
+    expect(p.prompt).toBe('@king이 queen 과 걷는다')
+  })
 
-    expect(mockFlowGenerateScene).toHaveBeenCalledTimes(1)
+  it.each(ENTRIES)('%s: 두 ref 중 하나 못 읽음 → flow-reference-source-missing, IPC 미호출', async (fn) => {
+    expect(await call(fn, 'p', [queen, unreadable], {})).toEqual(SOURCE_MISSING)
     expect(mockFlowGenerateImage).not.toHaveBeenCalled()
-    // submitGeneration contract: { success, generationId }
-    // #R6-1: generationId is now a local-map id (e.g. 'scene-N'), NOT the raw workflowId
-    expect(res.success).toBe(true)
-    expect(typeof res.generationId).toBe('string')
-    expect(res.generationId.length).toBeGreaterThan(0)
-    // flowGenerateScene is called with prompt + segments
-    const call = mockFlowGenerateScene.mock.calls[0][0]
-    expect(call.prompt).toBe('@hero walks')
-    expect(Array.isArray(call.segments)).toBe(true)
-    expect(call.segments.some(s => s.type === 'mention' && s.name === 'hero')).toBe(true)
   })
 
-  it('passes only tag-matched scene gap refs alongside resolved mention chips', async () => {
-    const syncedMention = { ...syncedRef, name: '사내', entityId: 'ent-office', mediaId: 'media-office' }
-    const tagOnly = {
-      id: 2,
-      name: '도둑 우두머리',
-      type: 'character',
-      category: 'character',
-      entityId: 'ent-bandit',
-      flowNameSyncStatus: 'synced',
-      mediaId: 'media-bandit',
-    }
-    mockFlowGenerateScene.mockResolvedValue({ success: true, generationId: 'scene-gap-async' })
-
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => {
-      await result.current.submitGeneration('@사내가 도둑 우두머리를 바라본다', [syncedMention, tagOnly], {
-        references: [syncedMention, tagOnly],
-      })
-    })
-
-    const call = mockFlowGenerateScene.mock.calls[0][0]
-    expect(call.segments.some(s => s.type === 'mention' && s.name === '사내')).toBe(true)
-    expect(call.gapReferences.map(r => r.mediaId)).toEqual(['media-bandit'])
-  })
-
-  it('#R35: passes asyncMode:true to flowGenerateScene', async () => {
-    mockFlowGenerateScene.mockResolvedValue({ success: true, generationId: 'scene-async-1' })
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => {
-      await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
-    })
-    expect(mockFlowGenerateScene.mock.calls[0][0].asyncMode).toBe(true)
-  })
-
-  it('#R35: async scene → returns the SERVER generationId (background collect), not a local scene-N id', async () => {
-    // flowGenerateScene 이 generationId 를 주면(Agent OFF 비동기 제출) 그걸 그대로 반환 →
-    //   checkGeneration 은 localResultsRef 미스라 flow:check-generation 폴링 경로를 탄다.
-    mockFlowGenerateScene.mockResolvedValue({ success: true, generationId: 'scene-async-xyz' })
-    mockFlowCheckGeneration.mockResolvedValue({ success: true, completed: false })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
-    })
-    expect(res.generationId).toBe('scene-async-xyz')
-
-    // checkGeneration 이 서버 폴링(flow:check-generation)으로 위임되는지 — 로컬 결과가 아님
-    await act(async () => {
-      await result.current.checkGeneration('scene-async-xyz')
-    })
-    expect(mockFlowCheckGeneration).toHaveBeenCalledWith({ generationId: 'scene-async-xyz' })
-  })
-
-  it('#R35: sync scene fallback (images, no generationId) still stored locally (Agent ON)', async () => {
-    // flowGenerateScene 이 images 만 주면(Agent ON DOM 수집) 기존대로 로컬 저장 + 즉시 완료.
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true, images: [{ base64: 'data:img', mediaId: 'm-on' }], workflowId: 'wf-on',
-    })
-    mockFlowCheckGeneration.mockClear()
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
-    })
-    expect(res.generationId).toMatch(/^scene-/)
-    // 로컬 결과 → checkGeneration 은 서버 폴링 안 함(즉시 완료)
-    let st
-    await act(async () => { st = await result.current.checkGeneration(res.generationId) })
-    expect(st.completed).toBe(true)
-    expect(mockFlowCheckGeneration).not.toHaveBeenCalled()
-  })
-
-  it('falls back to flowGenerateImage when prompt has no mentions', async () => {
-    mockFlowGenerateImage.mockResolvedValue({ success: true, generationId: 'gen-plain' })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.submitGeneration('a plain prompt', [], { references: [] })
-    })
-
-    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
-    expect(mockFlowGenerateScene).not.toHaveBeenCalled()
-    expect(res.success).toBe(true)
-    expect(res.generationId).toBe('gen-plain')
-  })
-
-  it('falls back to flowGenerateImage when references list is empty even if @ appears in prompt', async () => {
-    mockFlowGenerateImage.mockResolvedValue({ success: true, generationId: 'gen-noref' })
-
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => {
-      await result.current.submitGeneration('@hero walks', [], { references: [] })
-    })
-
-    // No eligible mention (no character refs with entityId+synced) → flowGenerateImage
-    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
-    expect(mockFlowGenerateScene).not.toHaveBeenCalled()
-  })
-})
-
-describe('useFlowEngine — generateImage: mention routing (C1)', () => {
-  const syncedRef = {
-    id: 1,
-    name: 'hero',
-    type: 'character',
-    category: 'character',
-    entityId: 'ent-1',
-    flowNameSyncStatus: 'synced',
-    mediaId: 'm1',
-  }
-
-  it('routes to flowGenerateScene when prompt has a resolvable @mention', async () => {
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true,
-      images: [{ base64: 'data:img', mediaId: 'scene-m2' }],
-      workflowId: 'wf-scene-2',
-      mediaId: 'scene-m2',
-      fifeUrl: null,
-    })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateImage('@hero sits', [], { references: [syncedRef] })
-    })
-
-    expect(mockFlowGenerateScene).toHaveBeenCalledTimes(1)
+  it.each(ENTRIES)('%s: 로컬 이미지가 없는 ref(옛 mediaId 만) → flow-reference-source-missing, IPC 미호출', async (fn) => {
+    expect(await call(fn, 'p', [{ name: 'old', mediaId: 'm-old', data: null, filePath: null }], {})).toEqual(SOURCE_MISSING)
+    expect(await call(fn, '@old waves', [], { references: [{ id: 'o', name: 'old', type: 'character', mediaId: 'm-old', entityId: 'e', flowNameSyncStatus: 'synced' }] })).toEqual(SOURCE_MISSING)
     expect(mockFlowGenerateImage).not.toHaveBeenCalled()
-    // generateImage contract: { success, images }
-    expect(res.success).toBe(true)
-    expect(res.images).toHaveLength(1)
-    expect(res.images[0].mediaId).toBe('scene-m2')
   })
 
-  it('passes only tag-matched scene gap refs on the synchronous scene route', async () => {
-    const syncedMention = { ...syncedRef, name: '사내', entityId: 'ent-office', mediaId: 'media-office' }
-    const tagOnly = {
-      id: 2,
-      name: '도둑 우두머리',
-      type: 'character',
-      category: 'character',
-      entityId: 'ent-bandit',
-      flowNameSyncStatus: 'synced',
-      mediaId: 'media-bandit',
-    }
-    mockFlowGenerateScene.mockResolvedValue({ success: true, images: [{ base64: 'data:img', mediaId: 'scene-gap-sync' }] })
-
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => {
-      await result.current.generateImage('@사내가 도둑 우두머리를 바라본다', [syncedMention, tagOnly], {
-        references: [syncedMention, tagOnly],
-      })
-    })
-
-    expect(mockFlowGenerateScene.mock.calls[0][0].gapReferences.map(r => r.mediaId)).toEqual(['media-bandit'])
-  })
-
-  it('falls back to flowGenerateImage (asyncMode:false) when no mention', async () => {
-    mockFlowGenerateImage.mockResolvedValue({ success: true, images: [{ base64: 'img', mediaId: 'plain' }] })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateImage('no mention prompt', [], {})
-    })
-
-    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
-    const call = mockFlowGenerateImage.mock.calls[0][0]
-    expect(call.asyncMode).toBe(false)
-    expect(mockFlowGenerateScene).not.toHaveBeenCalled()
-    expect(res.success).toBe(true)
-  })
-
-  it('#R7-7: fails (no plain fallback) when an @mention is unresolved', async () => {
-    // ineligible character ref (not synced) → @hero is an unresolved mention, not eligible
-    const ineligible = { id: 2, name: 'hero', type: 'character', entityId: null, flowNameSyncStatus: 'failed' }
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateImage('@hero sits', [], { references: [ineligible] })
-    })
-    expect(res.success).toBe(false)
+  it.each(ENTRIES)('%s: 미해결 @멘션(pool 에 이름 있는 ref 가 있다) → unresolved-mentions + unresolvedNames, IPC 미호출', async (fn) => {
+    const res = await call(fn, '@king and @ghost', [], { references: [king] })
+    expect(res).toMatchObject({ success: false, errorKind: 'unresolved-mentions', unresolvedNames: ['ghost'] })
     expect(res.error).toMatch(/Unresolved @mention/)
     expect(mockFlowGenerateImage).not.toHaveBeenCalled()
-    expect(mockFlowGenerateScene).not.toHaveBeenCalled()
   })
 
-  it('#R8-11: marks authFailed when flowGenerateImage returns an auth error (plain path)', async () => {
-    mockFlowGenerateImage.mockResolvedValue({ success: false, error: '401 Unauthorized' })
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateImage('plain prompt', [], {})
-    })
-    expect(res.success).toBe(false)
-    expect(res.authFailed).toBe(true)
+  it.each(ENTRIES)("%s: purpose:'reference' + 스타일 ref 이미지 → flow-references-unsupported(범위 밖), IPC 미호출; 스타일 ref 없으면 평문 제출", async (fn) => {
+    const refOpts = { purpose: 'reference', ref: { id: 3, name: 'castle', type: 'scene' } }
+    expect(await call(fn, 'a castle', [queen], refOpts)).toEqual(REFS_UNSUPPORTED)
+    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+    await call(fn, 'a castle', [], refOpts)
+    expect(mockFlowGenerateImage).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'a castle', refs: [], plan: null, referenceImages: [] }))
   })
 
-  it('#R7-7: passes opts (aspectRatio/seed/model/batchCount/references) to flowGenerateScene', async () => {
-    mockFlowGenerateScene.mockResolvedValue({ success: true, images: [{ base64: 'data:img', mediaId: 'sm' }] })
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => {
-      await result.current.generateImage('@hero sits', [], {
-        references: [syncedRef], aspectRatio: '9:16', seed: 42, model: 'veo-x', batchCount: 3,
-      })
-    })
-    const call = mockFlowGenerateScene.mock.calls[0][0]
-    expect(call.aspectRatio).toBe('9:16')
-    expect(call.seed).toBe(42)
-    expect(call.model).toBe('veo-x')
-    expect(call.batchCount).toBe(3)
-    expect(Array.isArray(call.references)).toBe(true)
+  it.each(ENTRIES)('%s: 캐릭터 ref 생성 분기는 그대로 — 스타일 ref 이미지가 있어도 계획·게이트 전에 flowGenerateCharacter', async (fn) => {
+    mockFlowGenerateCharacter.mockResolvedValue({ success: true, images: [{ base64: 'c', mediaId: 'mc' }], entityId: 'e', workflowId: 'w', mediaId: 'mc', registered: true })
+    const res = await call(fn, 'tall man', [queen], { purpose: 'reference', ref: { id: 7, name: '준호', type: 'character' } })
+    expect(res.success).toBe(true)
+    expect(mockFlowGenerateCharacter).toHaveBeenCalledTimes(1)
+    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+  })
+
+  it.each(ENTRIES)('%s: callOpts.imageUpscale:"2k" → flow-upscale-unsupported(레퍼런스보다 먼저); "off"/미정의는 통과', async (fn) => {
+    expect(await call(fn, 'plain prompt', [queen], { imageUpscale: '2k' })).toMatchObject({ success: false, errorKind: 'flow-upscale-unsupported', error: 'flow-upscale-unsupported' })
+    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+    await call(fn, 'plain prompt', [], { imageUpscale: 'off' })
+    await call(fn, 'plain prompt', [], {})
+    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(ENTRIES)('%s: 레퍼런스 없는 평문 → refs:[]·plan:null·referenceImages:[]·token:null(main 은 M2 경로)', async (fn) => {
+    await call(fn, 'plain prompt', [], { aspectRatio: '16:9', references: [king] })
+    expect(mockFlowGenerateImage).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'plain prompt', refs: [], plan: null, referenceImages: [], token: null, aspectRatio: '16:9' }))
+  })
+
+  it.each(ENTRIES)('%s: ref 바이트는 getProjectName 의 프로젝트에서 읽는다 — imagePath 만 있는 ref 는 그 경로 → 프로젝트 references/{name}', async (fn) => {
+    localStorage.setItem('workFolderPath', '/work')
+    window.electronAPI.readFileByPath.mockResolvedValue({ success: false })
+    window.electronAPI.readResource.mockImplementation(async ({ project, name }) => (project === 'proj' && name === 'hero' ? { success: true, data: JPG } : { success: false }))
+    try {
+      const { result } = renderHook(() => useFlowEngine({ getProjectName: () => 'proj' }))
+      await act(async () => { await result.current[fn]('hero rides', [{ name: 'hero', imagePath: 'references/hero.png' }], {}) })
+      expect(window.electronAPI.readFileByPath).toHaveBeenCalledWith({ workFolder: '/work', filePath: 'references/hero.png' })
+      expect(window.electronAPI.readResource).toHaveBeenCalledWith(expect.objectContaining({ workFolder: '/work', project: 'proj', name: 'hero' }))
+      expect(mockFlowGenerateImage.mock.calls[0][0].refs).toEqual([{ base64: '/9j/BB', mime: 'image/jpeg' }])
+    } finally {
+      window.electronAPI.readFileByPath.mockReset()
+      window.electronAPI.readResource.mockReset()
+    }
   })
 })
 
@@ -871,6 +678,17 @@ describe('useFlowEngine — generateVideoI2V: base64 upload (Fix #1)', () => {
     expect(res.generationId).toBe('vid-1')
   })
 
+  it('R1#8: frame upload failure keeps its errorKind (flow-feature-unsupported) on the result', async () => {
+    mockFlowUploadReference.mockResolvedValueOnce({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:upload-reference' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.generateVideoI2V('a video prompt', 'data:image/png;base64,abc123', null, 'veo-model', '9:16', 5, 0, null, {})
+    })
+    expect(res).toMatchObject({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:upload-reference' })
+    expect(mockFlowGenerateVideoI2V).not.toHaveBeenCalled()
+  })
+
   it('#R9-3: propagates authFailed when a frame upload returns an auth error', async () => {
     mockFlowUploadReference.mockResolvedValueOnce({ success: false, error: '401 Unauthorized' })
     const { result } = renderHook(() => useFlowEngine())
@@ -932,178 +750,6 @@ describe('useFlowEngine — generateVideoI2V: base64 upload (Fix #1)', () => {
   })
 })
 
-describe('useFlowEngine — uploadReference: displayName field (Fix #4)', () => {
-  it('passes displayName (not name) to flowUploadCharacterEntity', async () => {
-    mockFlowUploadCharacterEntity.mockResolvedValue({
-      success: true, entityId: 'ent-2', workflowId: 'wf-2', mediaId: 'media-2', registered: true,
-    })
-
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => {
-      await result.current.uploadReference(
-        'data:img/png;base64,abc',
-        { category: 'character', type: 'character', name: 'Villain' }
-      )
-    })
-
-    expect(mockFlowUploadCharacterEntity).toHaveBeenCalledTimes(1)
-    const call = mockFlowUploadCharacterEntity.mock.calls[0][0]
-    // Must pass displayName, not name
-    expect(call.displayName).toBe('Villain')
-    expect(call.name).toBeUndefined()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// #R4-3: token ref prevents stale closure — effectiveToken() vs accessToken state
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// #R6-1: mention-path submitGeneration → collectable via local completed map
-// ---------------------------------------------------------------------------
-describe('useFlowEngine (#R6-1) — mention submit is collectable via local map', () => {
-  const syncedRef = {
-    id: 1, name: 'hero', type: 'character', category: 'character',
-    entityId: 'ent-1', flowNameSyncStatus: 'synced', mediaId: 'm1',
-  }
-
-  it('submitGeneration mention path returns { success:true, generationId } (not workflowId raw)', async () => {
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true,
-      images: [{ base64: 'data:img', mediaId: 'scene-m1' }],
-      workflowId: 'wf-scene-99',
-      mediaId: 'scene-m1',
-    })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
-    })
-
-    expect(res.success).toBe(true)
-    expect(typeof res.generationId).toBe('string')
-    expect(res.generationId.length).toBeGreaterThan(0)
-  })
-
-  it('checkGeneration returns { success:true, completed:true } for a local-map id', async () => {
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true,
-      images: [{ base64: 'data:img', mediaId: 'scene-m1' }],
-      workflowId: 'wf-scene-99',
-    })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let genId
-    await act(async () => {
-      const res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
-      genId = res.generationId
-    })
-
-    let checkRes
-    await act(async () => {
-      checkRes = await result.current.checkGeneration(genId)
-    })
-
-    expect(checkRes.success).toBe(true)
-    expect(checkRes.completed).toBe(true)
-    // should NOT have delegated to IPC for this local id
-    expect(mockFlowCheckGeneration).not.toHaveBeenCalled()
-  })
-
-  it('collectGeneration returns { success:true, images } for a local-map id', async () => {
-    const expectedImages = [{ base64: 'data:img', mediaId: 'scene-m1' }]
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true,
-      images: expectedImages,
-      workflowId: 'wf-scene-99',
-    })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let genId
-    await act(async () => {
-      const res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
-      genId = res.generationId
-    })
-
-    let collectRes
-    await act(async () => {
-      collectRes = await result.current.collectGeneration(genId)
-    })
-
-    expect(collectRes.success).toBe(true)
-    expect(collectRes.images).toEqual(expectedImages)
-    // should NOT have delegated to IPC for this local id
-    expect(mockFlowCollectGeneration).not.toHaveBeenCalled()
-  })
-
-  it('clearGenerations clears the local map so collectGeneration falls through to IPC', async () => {
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true,
-      images: [{ base64: 'data:img', mediaId: 'scene-m1' }],
-      workflowId: 'wf-clear-1',
-    })
-    // IPC fallback after clear — simulate not-found response
-    mockFlowCollectGeneration.mockResolvedValue({ success: false, error: 'not found' })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let genId
-    await act(async () => {
-      const res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
-      genId = res.generationId
-    })
-
-    // clear the local map
-    mockFlowClearGenerations.mockResolvedValue({ success: true })
-    await act(async () => {
-      await result.current.clearGenerations()
-    })
-
-    // after clear, collectGeneration must fall through to IPC (not local map)
-    await act(async () => {
-      await result.current.collectGeneration(genId)
-    })
-
-    expect(mockFlowCollectGeneration).toHaveBeenCalledTimes(1)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// #R6-2: mention path passes opts (aspectRatio, seed, model, batchCount, refs)
-// ---------------------------------------------------------------------------
-describe('useFlowEngine (#R6-2) — mention submit passes opts to flowGenerateScene', () => {
-  const syncedRef = {
-    id: 1, name: 'hero', type: 'character', category: 'character',
-    entityId: 'ent-1', flowNameSyncStatus: 'synced', mediaId: 'm1',
-  }
-
-  it('passes aspectRatio, seed, model, batchCount from callOpts into flowGenerateScene', async () => {
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true, images: [], workflowId: 'wf-opts-1',
-    })
-
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => {
-      await result.current.submitGeneration('@hero walks', [], {
-        references: [syncedRef],
-        aspectRatio: '16:9',
-        seed: 42,
-        model: 'flow-ultra',
-        batchCount: 3,
-      })
-    })
-
-    expect(mockFlowGenerateScene).toHaveBeenCalledTimes(1)
-    const call = mockFlowGenerateScene.mock.calls[0][0]
-    expect(call.aspectRatio).toBe('16:9')
-    expect(call.seed).toBe(42)
-    expect(call.model).toBe('flow-ultra')
-    expect(call.batchCount).toBe(3)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// #R6-3: checkVideoStatus sets videoUrl = s.videoUrl || s.mediaId || null
-// ---------------------------------------------------------------------------
 describe('useFlowEngine (#R6-3) — checkVideoStatus videoUrl fallback to mediaId', () => {
   it('sets videoUrl = mediaId when status has mediaId but no videoUrl', async () => {
     mockFlowCheckVideoStatus.mockResolvedValue({
@@ -1143,24 +789,19 @@ describe('useFlowEngine (#R6-3) — checkVideoStatus videoUrl fallback to mediaI
 })
 
 // ---------------------------------------------------------------------------
-// #R6-4: unresolved @mentions → fail immediately, no IPC call
+// #R6-4 → M3(D3-2): 해석 안 된 @멘션 → IPC 없이 실패. M3 의 "해석" 은 pool(프로젝트 ref)의 이름(타입 무관) — 옛 entity 동기화 상태는 보지 않는다.
 // ---------------------------------------------------------------------------
 describe('useFlowEngine (#R6-4) — unresolved @mention fails submitGeneration', () => {
-  const syncedRef = {
+  const heroRef = {
     id: 1, name: 'hero', type: 'character', category: 'character',
-    entityId: 'ent-1', flowNameSyncStatus: 'synced', mediaId: 'm1',
-  }
-  // An unsynced ref WITHOUT a usable mediaId → @villain is unresolved AND cannot image-fallback (#R33).
-  const unsyncedRef = {
-    id: 2, name: 'villain', type: 'character', category: 'character',
-    entityId: null, flowNameSyncStatus: 'pending', mediaId: null,
+    entityId: 'ent-1', flowNameSyncStatus: 'synced', mediaId: 'm1', data: 'data:image/png;base64,SEVSTw==',
   }
 
   it('returns { success:false, error } when prompt has an unresolved @mention', async () => {
     const { result } = renderHook(() => useFlowEngine())
     let res
     await act(async () => {
-      res = await result.current.submitGeneration('@villain appears', [], { references: [syncedRef, unsyncedRef] })
+      res = await result.current.submitGeneration('@villain appears', [], { references: [heroRef] })
     })
 
     expect(res.success).toBe(false)
@@ -1171,452 +812,175 @@ describe('useFlowEngine (#R6-4) — unresolved @mention fails submitGeneration',
     expect(mockFlowGenerateImage).not.toHaveBeenCalled()
   })
 
-  it('does NOT fail when the mention is fully resolved (no unresolved)', async () => {
-    // #R20-4: the mention path collects images synchronously, so a resolved mention returns an image
-    //   (empty images with no mediaId/fifeUrl is now a fail-closed result, not a silent success).
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true, images: [{ base64: 'data:img', mediaId: 'm-ok' }], workflowId: 'wf-ok',
-    })
-
+  it('fully resolved mention is not "unresolved" — it goes out as an inline mention (M3)', async () => {
+    mockFlowGenerateImage.mockResolvedValue({ success: true, generationId: 'g' })
     const { result } = renderHook(() => useFlowEngine())
     let res
     await act(async () => {
-      res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
+      res = await result.current.submitGeneration('@hero walks', [], { references: [heroRef] })
     })
 
-    expect(res.success).toBe(true)
-    expect(mockFlowGenerateScene).toHaveBeenCalledTimes(1)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// #R33: 미해결 @멘션 이미지 폴백 — 미동기화 캐릭터라도 mediaId 가 있으면 @ 를 떼고
-//   ref 이미지를 주입해 일반 이미지로 생성(하드 실패 대신). mediaId 없으면 기존대로 실패.
-// ---------------------------------------------------------------------------
-describe('useFlowEngine (#R33) — unresolved @mention image fallback', () => {
-  // 미동기화지만 업로드는 됨(mediaId 보유) — king 케이스.
-  const unsyncedWithMedia = {
-    id: 9, name: 'king', type: 'character', category: 'character',
-    entityId: null, flowNameSyncStatus: 'failed', mediaId: 'king-m',
-  }
-
-  it('submitGeneration: unresolved mention with mediaId → flowGenerateImage (stripped prompt + injected ref)', async () => {
-    mockFlowGenerateImage.mockResolvedValue({ success: true, generationId: 'gen-fb' })
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.submitGeneration('@king walks in', [], { references: [unsyncedWithMedia] })
-    })
-    expect(mockFlowGenerateScene).not.toHaveBeenCalled()
-    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
-    const call = mockFlowGenerateImage.mock.calls[0][0]
-    // @ 가 제거되어 일반 텍스트로
-    expect(call.prompt).toBe('king walks in')
-    // king 의 이미지가 mediaId 로 주입됨
-    expect(call.referenceImages.some(r => r.mediaId === 'king-m')).toBe(true)
-    expect(call.asyncMode).toBe(true)
-    expect(res.success).toBe(true)
-  })
-
-  it('generateImage: unresolved mention with mediaId → flowGenerateImage fallback (asyncMode:false)', async () => {
-    mockFlowGenerateImage.mockResolvedValue({ success: true, images: [{ base64: 'img', mediaId: 'x' }] })
-    const { result } = renderHook(() => useFlowEngine())
-    await act(async () => {
-      await result.current.generateImage('@king sits', [], { references: [unsyncedWithMedia] })
-    })
-    const call = mockFlowGenerateImage.mock.calls[0][0]
-    expect(call.prompt).toBe('king sits')
-    expect(call.referenceImages.some(r => r.mediaId === 'king-m')).toBe(true)
-    expect(call.asyncMode).toBe(false)
-  })
-
-  it('does NOT fall back (hard fails) when the unresolved ref has no mediaId', async () => {
-    const noMedia = { id: 10, name: 'ghost', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: null }
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.submitGeneration('@ghost appears', [], { references: [noMedia] })
-    })
-    expect(res.success).toBe(false)
-    expect(res.error).toMatch(/Unresolved @mention/)
-    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+    expect(res).toEqual({ success: true, generationId: 'g' })
+    expect(mockFlowGenerateImage.mock.calls[0][0].plan).toEqual({ segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ' walks' }], attach: [] })
     expect(mockFlowGenerateScene).not.toHaveBeenCalled()
   })
 })
 
 // ---------------------------------------------------------------------------
-// #R33: staleMention 전파 — Flow UI 에서 캐릭터 삭제 시 멘션 피커 누락 신호를 호출측에 전달
-//   (useAutomation 이 ref 를 'failed' 로 마킹해 self-heal 하도록).
+// 미해결 멘션 결과 계약 — errorKind 와 unresolvedNames 를 데이터로 싣는다(호출부가 문구를 파싱하지 않는다).
 // ---------------------------------------------------------------------------
-describe('useFlowEngine (#R33) — staleMention propagation', () => {
-  const synced = { id: 1, name: 'king', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' }
-
-  it('submitGeneration: flowGenerateScene staleMention → propagated on the failed result', async () => {
-    mockFlowGenerateScene.mockResolvedValue({ success: false, errorKind: 'option-not-found', error: 'Mention selection failed', retry: true, staleMention: 'king' })
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.submitGeneration('@king walks', [], { references: [synced] })
-    })
-    expect(res.success).toBe(false)
-    expect(res.errorKind).toBe('option-not-found')
-    expect(res.staleMention).toBe('king')
-  })
-
-  it('generateImage: flowGenerateScene staleMention → propagated', async () => {
-    mockFlowGenerateScene.mockResolvedValue({ success: false, errorKind: 'option-not-found', error: 'Mention selection failed', retry: true, staleMention: 'king' })
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateImage('@king walks', [], { references: [synced] })
-    })
-    expect(res.success).toBe(false)
-    expect(res.errorKind).toBe('option-not-found')
-    expect(res.staleMention).toBe('king')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// #R33: planMentionRouting / planUnresolvedMentionFallback — pure unit tests
-// ---------------------------------------------------------------------------
-// 개별 씬 생성이 이 결과를 보고 "동기화 후 재시도"를 제안한다 — 문자열이 아니라 필드로 판정한다.
 describe('generateImage: 미해결 멘션 결과 계약', () => {
+  const refs = [
+    { id: 1, name: 'hero', type: 'character', data: 'data:image/png;base64,SEVSTw==' },
+    { id: 2, name: 'king', type: 'character', data: 'data:image/png;base64,S0lORw==' },
+  ]
   it('하드 실패면 errorKind 와 unresolvedNames 를 함께 돌려준다', async () => {
     const { result } = renderHook(() => useFlowEngine({ mode: 'flow', projectId: 'p' }))
-    const refs = [
-      { id: 1, name: 'hero', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' },
-      { id: 2, name: 'king', type: 'character', entityId: 'e2', flowNameSyncStatus: 'failed', mediaId: 'km' },
-    ]
-    const res = await result.current.generateImage('@hero and @king', [], { references: refs })
+    const res = await result.current.generateImage('@hero and @queen', [], { references: refs })
     expect(res.success).toBe(false)
     expect(res.errorKind).toBe('unresolved-mentions')
-    expect(res.unresolvedNames).toEqual(['king'])
+    expect(res.unresolvedNames).toEqual(['queen'])
   })
 
   // 배치는 submitGeneration 을 쓴다 — 두 진입점이 같은 계약이어야 호출부가 하나로 복구할 수 있다.
   it('submitGeneration 도 같은 계약으로 돌려준다', async () => {
     const { result } = renderHook(() => useFlowEngine({ mode: 'flow', projectId: 'p' }))
-    const refs = [
-      { id: 1, name: 'hero', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' },
-      { id: 2, name: 'king', type: 'character', entityId: 'e2', flowNameSyncStatus: 'failed', mediaId: 'km' },
-    ]
-    const res = await result.current.submitGeneration('@hero and @king', [], { references: refs })
+    const res = await result.current.submitGeneration('@hero and @queen', [], { references: refs })
     expect(res.success).toBe(false)
     expect(res.errorKind).toBe('unresolved-mentions')
-    expect(res.unresolvedNames).toEqual(['king'])
-  })
-})
-
-describe('#R33: planMentionRouting (pure)', () => {
-  const synced = { id: 1, name: 'hero', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' }
-  const unsyncedMedia = { id: 2, name: 'king', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: 'km' }
-  const unsyncedNoMedia = { id: 3, name: 'ghost', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: null }
-
-  it('no mention → kind:image, prompt/refs unchanged', () => {
-    const r = planMentionRouting('a plain prompt', [{ mediaId: 'z' }], [])
-    expect(r.kind).toBe('image')
-    expect(r.prompt).toBe('a plain prompt')
-    expect(r.referenceImages).toEqual([{ mediaId: 'z' }])
-  })
-
-  it('resolved mention → kind:scene with segments', () => {
-    const r = planMentionRouting('@hero runs', [], [synced])
-    expect(r.kind).toBe('scene')
-    expect(r.segments.some(s => s.type === 'mention' && s.name === 'hero')).toBe(true)
-  })
-
-  it('unresolved-only with mediaId → kind:image fallback (stripped + injected)', () => {
-    const r = planMentionRouting('@king runs', [], [unsyncedMedia])
-    expect(r.kind).toBe('image')
-    expect(r.prompt).toBe('king runs')
-    expect(r.referenceImages.some(x => x.mediaId === 'km')).toBe(true)
-  })
-
-  it('unresolved-only without mediaId → kind:error', () => {
-    const r = planMentionRouting('@ghost runs', [], [unsyncedNoMedia])
-    expect(r.kind).toBe('error')
-    expect(r.error).toMatch(/Unresolved @mention/)
-  })
-
-  it('mixed (resolved + unresolved) → kind:error (cannot merge paths)', () => {
-    const r = planMentionRouting('@hero and @king', [], [synced, unsyncedMedia])
-    expect(r.kind).toBe('error')
-    expect(r.error).toContain('king')
-  })
-
-  // 호출부가 "무엇을 고쳐야 하나"를 알아야 그 자리에서 동기화를 제안할 수 있다. 사람이 읽는
-  // 에러 문자열을 파싱해서 이름을 캐내면 파서가 둘이 되고 문구를 바꾸는 순간 조용히 깨진다.
-  it('error carries the unresolved names as data, not only in the message', () => {
-    const r = planMentionRouting('@hero and @king', [], [synced, unsyncedMedia])
-    expect(r.unresolvedNames).toEqual(['king'])
-  })
-
-  it('braced unresolved name is carried whole', () => {
-    const r = planMentionRouting('@{도둑 우두머리} 등장', [], [synced])
-    expect(r.unresolvedNames).toEqual(['도둑 우두머리'])
-  })
-
-  it('braced unresolved error reports the full inner name', () => {
-    const r = planMentionRouting('@{도둑 우두머리} 등장', [], [synced])
-    expect(r).toEqual({
-      kind: 'error',
-      error: 'Unresolved @mention(s): 도둑 우두머리',
-      unresolvedNames: ['도둑 우두머리'],
-    })
-  })
-
-  it('braced unresolved character with mediaId falls back without prefix shortening', () => {
-    const boss = {
-      id: 4,
-      name: '도둑 우두머리',
-      type: 'character',
-      flowNameSyncStatus: 'failed',
-      mediaId: 'boss-media',
-    }
-    const r = planMentionRouting('@{도둑 우두머리}A young man', [], [boss])
-    expect(r.kind).toBe('image')
-    expect(r.prompt).toBe('도둑 우두머리A young man')
-    expect(r.referenceImages.map(ref => ref.mediaId)).toEqual(['boss-media'])
-  })
-
-  it('braced unresolved fallback does not strip a particle to a shorter ref', () => {
-    const chulsoo = {
-      id: 5,
-      name: '철수',
-      type: 'character',
-      flowNameSyncStatus: 'failed',
-      mediaId: 'chulsoo-media',
-    }
-    const r = planMentionRouting('@{철수가} 달린다', [], [chulsoo])
-    expect(r.kind).toBe('error')
-    expect(r.error).toContain('철수가')
-  })
-
-  it('braced unresolved fallback matches the exact full name case-insensitively', () => {
-    const bob = {
-      id: 6,
-      name: 'Bob',
-      type: 'character',
-      flowNameSyncStatus: 'failed',
-      mediaId: 'bob-media',
-    }
-
-    const r = planMentionRouting('@{BOB} walks', [], [bob])
-
-    expect(r.kind).toBe('image')
-    expect(r.prompt).toBe('BOB walks')
-    expect(r.referenceImages.map(ref => ref.mediaId)).toEqual(['bob-media'])
-  })
-})
-
-describe('computeSceneGapReferences (pure)', () => {
-  it('excludes chip mentions, drops refs without mediaId, and dedupes by mediaId', () => {
-    const mentionRef = { name: 'Office Man', mediaId: 'media-office' }
-    const gapRef = { name: '도둑 우두머리', mediaId: 'media-bandit' }
-    const duplicateMedia = { name: '초저녁 도둑', mediaId: 'media-bandit' }
-    const noMedia = { name: '배경 인물', mediaId: null }
-
-    const result = computeSceneGapReferences(
-      [mentionRef, gapRef, duplicateMedia, noMedia],
-      [{ type: 'mention', name: 'office man' }, { type: 'text', text: ' 장면' }],
-    )
-
-    expect(result).toEqual([gapRef])
-  })
-
-  it('does not inject a same-mediaId alias of a chip-mentioned ref (no double-conditioning)', () => {
-    // 사내(chip) 와 mediaId 가 같은 중복 카드(다른 이름)는 이미 chip 으로 컨디셔닝된 이미지라 imageInput 재주입 금지.
-    const chipRef = { name: '사내', mediaId: 'media-office' }
-    const sameMediaAlias = { name: '사내_복제', mediaId: 'media-office' }
-    const realGap = { name: '도둑 우두머리', mediaId: 'media-bandit' }
-
-    const result = computeSceneGapReferences(
-      [chipRef, sameMediaAlias, realGap],
-      [{ type: 'mention', name: '사내' }],
-    )
-
-    expect(result.map(r => r.mediaId)).toEqual(['media-bandit'])
-  })
-
-  it('blocks a same-mediaId alias even when it precedes the chip ref (order-independent)', () => {
-    // referenceImages 순서는 caller/사용자 정의 → alias 가 chip ref 보다 앞서도 이중 컨디셔닝 금지.
-    const sameMediaAlias = { name: '사내_복제', mediaId: 'media-office' }
-    const chipRef = { name: '사내', mediaId: 'media-office' }
-    const realGap = { name: '도둑 우두머리', mediaId: 'media-bandit' }
-
-    const result = computeSceneGapReferences(
-      [sameMediaAlias, chipRef, realGap],
-      [{ type: 'mention', name: '사내' }],
-    )
-
-    expect(result.map(r => r.mediaId)).toEqual(['media-bandit'])
-  })
-
-  it('excludes a canonical space-name chip produced from a braced mention', () => {
-    const chipRef = {
-      id: 6,
-      type: 'character',
-      name: '도둑 우두머리',
-      entityId: 'boss-entity',
-      flowNameSyncStatus: 'synced',
-      mediaId: 'boss-media',
-    }
-    const gapRef = { name: '골목 배경', mediaId: 'alley-media' }
-    const routing = planMentionRouting('@{도둑 우두머리} 등장', [], [chipRef])
-
-    expect(routing.kind).toBe('scene')
-    expect(computeSceneGapReferences([chipRef, gapRef], routing.segments)).toEqual([gapRef])
-  })
-})
-
-describe('#R33: planUnresolvedMentionFallback (pure)', () => {
-  const unsyncedMedia = { id: 2, name: 'king', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: 'km', category: 'character' }
-
-  it('returns stripped prompt + merged refs when all unresolved have mediaId', () => {
-    const fb = planUnresolvedMentionFallback('@king walks', [{ mediaId: 'pre' }], [{ name: 'king' }], [unsyncedMedia])
-    expect(fb).not.toBeNull()
-    expect(fb.prompt).toBe('king walks')
-    expect(fb.referenceImages.map(r => r.mediaId)).toEqual(['pre', 'km'])
-  })
-
-  it('returns null when any unresolved name has no usable mediaId', () => {
-    const noMedia = { name: 'ghost', mediaId: null }
-    expect(planUnresolvedMentionFallback('@ghost', [], [{ name: 'ghost' }], [noMedia])).toBeNull()
-  })
-
-  it('dedupes by mediaId (no duplicate injection)', () => {
-    const fb = planUnresolvedMentionFallback('@king', [{ mediaId: 'km' }], [{ name: 'king' }], [unsyncedMedia])
-    expect(fb.referenceImages.filter(r => r.mediaId === 'km')).toHaveLength(1)
-  })
-
-  it('#R34-fix: 같은 이름의 비-character(scene/style) ref 가 character 멘션 폴백을 가로채지 않는다', () => {
-    // @king 은 캐릭터 멘션 의도. 같은 이름의 scene ref(mediaId 보유)가 있어도
-    // character 가 미동기화이고 주입 불가(mediaId 없음)면 폴백 포기(null) — scene 이미지를 주입하지 않는다.
-    const charNoMedia = { id: 3, name: 'king', type: 'character', mediaId: null, category: 'character' }
-    const sceneSameName = { id: 4, name: 'king', type: 'scene', mediaId: 'scene-media', category: 'scene' }
-    const fb = planUnresolvedMentionFallback('@king walks', [], [{ name: 'king' }], [sceneSameName, charNoMedia])
-    expect(fb).toBeNull()
+    expect(res.unresolvedNames).toEqual(['queen'])
   })
 })
 
 // ---------------------------------------------------------------------------
 // Existing: token ref prevents stale closure (#R4-3)
 // ---------------------------------------------------------------------------
-describe('useFlowEngine (#R4-3) — token ref prevents stale closure', () => {
+describe('useFlowEngine — 세션 준비 후 IPC 페이로드의 token 은 항상 null (M1-10)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockFlowExtractToken.mockResolvedValue({ success: true, token: 'tok-fresh' })
-    mockFlowValidateToken.mockResolvedValue({ valid: true })
+    mockFlowSessionStatus.mockResolvedValue({ ready: true, credits: 1050 })
     mockFlowExtractProjectId.mockResolvedValue({ projectId: null })
   })
 
-  it('getAccessToken then uploadReference uses the fresh token (not null)', async () => {
-    mockFlowUploadReference.mockResolvedValue({ success: true, mediaId: 'm1' })
-
-    const { result } = renderHook(() => useFlowEngine())
-
-    // Call getAccessToken — sets ref synchronously in same microtask
-    await act(async () => {
-      await result.current.getAccessToken()
-    })
-
-    // Now call uploadReference — must pass the fresh token via ref, not stale null
-    await act(async () => {
-      await result.current.uploadReference('base64data', {})
-    })
-
-    expect(mockFlowUploadReference).toHaveBeenCalledWith(
-      expect.objectContaining({ token: 'tok-fresh' })
-    )
-  })
-
-  it('getAccessToken then checkVideoStatus uses the fresh token', async () => {
+  it('getAccessToken 뒤 checkVideoStatus / fetchMedia / generateVideoT2V 가 token:null 로 나간다', async () => {
     mockFlowCheckVideoStatus.mockResolvedValue({ success: true, statuses: [] })
-
+    mockFlowFetchMedia.mockResolvedValue({ success: true, base64: 'x' })
+    mockFlowGenerateVideoT2V.mockResolvedValue({ success: true, generationId: 'gv' })
     const { result } = renderHook(() => useFlowEngine())
-
-    await act(async () => {
-      await result.current.getAccessToken()
-    })
-
+    await act(async () => { await result.current.getAccessToken() })
+    expect(result.current.accessToken).toBe('flow-session')
     await act(async () => {
       await result.current.checkVideoStatus(['gen-id-1'])
+      await result.current.fetchMedia('m1')
+      await result.current.generateVideoT2V('a quiet street', 'veo', '16:9', 6, null, '720p', [], {})
     })
-
-    expect(mockFlowCheckVideoStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ token: 'tok-fresh' })
-    )
+    expect(mockFlowCheckVideoStatus).toHaveBeenCalledWith(expect.objectContaining({ token: null }))
+    expect(mockFlowFetchMedia).toHaveBeenCalledWith({ token: null, mediaId: 'm1' })
+    expect(mockFlowGenerateVideoT2V).toHaveBeenCalledWith(expect.objectContaining({ token: null }))
   })
 
-  it('clearTokenCache clears the ref so subsequent calls pass null token', async () => {
-    mockFlowUploadReference.mockResolvedValue({ success: true, mediaId: 'm1' })
-
+  it('clearTokenCache 뒤에도 token:null (센티널만 사라진다)', async () => {
+    mockFlowFetchMedia.mockResolvedValue({ success: true, base64: 'x' })
     const { result } = renderHook(() => useFlowEngine())
-
-    // Get a fresh token first
-    await act(async () => {
-      await result.current.getAccessToken()
-    })
-    expect(result.current.accessToken).toBe('tok-fresh')
-
-    // Clear token — clears both state and ref
-    act(() => {
-      result.current.clearTokenCache()
-    })
-
-    // After clear, uploadReference should pass null token
-    await act(async () => {
-      await result.current.uploadReference('base64data', {})
-    })
-
-    expect(mockFlowUploadReference).toHaveBeenCalledWith(
-      expect.objectContaining({ token: null })
-    )
+    await act(async () => { await result.current.getAccessToken() })
+    act(() => { result.current.clearTokenCache() })
+    expect(result.current.accessToken).toBeNull()
+    await act(async () => { await result.current.fetchMedia('m2') })
+    expect(mockFlowFetchMedia).toHaveBeenCalledWith({ token: null, mediaId: 'm2' })
   })
 })
 
-// ---------------------------------------------------------------------------
-// #R36: Flow T2V @멘션 — segments(칩) 경로 vs ref 이미지 가드
-// ---------------------------------------------------------------------------
-describe('useFlowEngine — #R36 T2V @멘션 segments', () => {
+// M2-3: 해상도를 엔진 → IPC 로 넘긴다(옛 경로는 _resolution 을 버렸다 — 플랜 1-3). 패널에 없는 값(1080p)은 main 이 클릭 전에
+//   flow-resolution-not-offered {requested} 로 닫는다(M2-2) — 그 판정이 서려면 값이 IPC 에 실려야 한다.
+describe('useFlowEngine — M2-3 generateVideoT2V 는 resolution 을 IPC 페이로드에 싣는다', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockFlowGenerateVideoT2V.mockResolvedValue({ success: true, generationId: 'gv1' })
+    mockFlowGenerateVideoT2V.mockResolvedValue({ success: true, generationId: 'gv1', creditsLeft: 1040 })
   })
 
-  it('segments 가 있으면 ref 가드 없이 flowGenerateVideoT2V 에 segments 를 넘긴다', async () => {
+  it("generateVideoT2V('p','Omni Flash','16:9',6,null,'1080p',[],{}) → 페이로드 {resolution:'1080p', token:null, model, aspectRatio, duration}", async () => {
     const { result } = renderHook(() => useFlowEngine())
-    const segs = [{ type: 'mention', name: 'king', entityId: 'e1' }, { type: 'text', text: ' walks' }]
     let res
-    await act(async () => {
-      res = await result.current.generateVideoT2V('@king walks', 'veo', '16:9', 6, null, '720p', [], { segments: segs })
+    await act(async () => { res = await result.current.generateVideoT2V('p', 'Omni Flash', '16:9', 6, null, '1080p', [], {}) })
+    expect(res).toEqual({ success: true, generationId: 'gv1', creditsLeft: 1040 })
+    expect(mockFlowGenerateVideoT2V).toHaveBeenCalledTimes(1)
+    expect(mockFlowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '1080p', token: null, prompt: 'p', model: 'Omni Flash', aspectRatio: '16:9', duration: 6, refs: [], plan: null })
+    expect(mockFlowGenerateVideoT2V.mock.calls[0][0]).not.toHaveProperty('segments')
+  })
+
+  it('main 의 flow-resolution-not-offered {requested} · postClick · rejectedMediaId 결과는 그대로 통과한다(markAuth 가 덮지 않는다)', async () => {
+    mockFlowGenerateVideoT2V.mockResolvedValueOnce({ success: false, errorKind: 'flow-resolution-not-offered', error: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.generateVideoT2V('p', 'Omni Flash', '16:9', 6, null, '1080p', [], {}) })
+    expect(res).toEqual({ success: false, errorKind: 'flow-resolution-not-offered', error: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
+    mockFlowGenerateVideoT2V.mockResolvedValueOnce({ success: false, errorKind: 'flow-video-settings-mismatch', error: 'flow-video-settings-mismatch', errorParams: { expected: 'a', actual: 'b' }, rejectedMediaId: 'rm', postClick: true })
+    await act(async () => { res = await result.current.generateVideoT2V('p', 'Omni Flash', '16:9', 6, null, '720p', [], {}) })
+    expect(res).toMatchObject({ errorKind: 'flow-video-settings-mismatch', rejectedMediaId: 'rm', postClick: true })
+    expect(res).not.toHaveProperty('authFailed')
+    expect(res).not.toHaveProperty('mediaId')
+    expect(res).not.toHaveProperty('generationId')
+  })
+})
+
+// M3-11(D1·D3·D15): Flow 영상 T2V 의 @멘션은 인라인 멘션(레퍼런스 영상 r2v) — 이미지와 같은 계획·바이트 절차로 IPC 에 refs·plan 을 싣는다.
+//   pool = referenceImages(videoPromptReferences Flow 분기가 넘기는 멘션된 ref), 태그 첨부 없음(API 모드와 같은 규칙), 옛 segments 필드는 싣지 않는다
+//   (main 은 그 필드를 계속 거부한다). 유일 ref > FLOW_R2V_REFERENCE_LIMIT 는 IPC 전에 flow-references-too-many.
+describe('useFlowEngine — 영상 T2V 레퍼런스: 인라인 멘션 → refs·plan (M3-11)', () => {
+  const king = { category: 'character', mediaId: null, caption: '', name: 'king', data: 'data:image/jpeg;base64,/9j/BB', filePath: null }
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFlowGenerateVideoT2V.mockResolvedValue({ success: true, generationId: 'gv1', creditsLeft: 857 })
+  })
+  const t2v = async (prompt, refs, callOpts = {}) => {
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.generateVideoT2V(prompt, 'Omni Flash', '9:16', 4, null, '720p', refs, callOpts) })
+    return res
+  }
+
+  it('@king → flowGenerateVideoT2V 에 refs·plan(멘션 세그먼트), segments 키 없음', async () => {
+    const res = await t2v('@king walks toward the camera', [king], { videoBatchCount: 1 })
+    expect(res).toEqual({ success: true, generationId: 'gv1', creditsLeft: 857 })
+    const p = mockFlowGenerateVideoT2V.mock.calls[0][0]
+    expect(p).toEqual({
+      token: null, prompt: '@king walks toward the camera', projectId: null, model: 'Omni Flash', aspectRatio: '9:16', duration: 4, resolution: '720p', videoBatchCount: 1, seed: null,
+      refs: [{ base64: '/9j/BB', mime: 'image/jpeg' }], plan: { segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ' walks toward the camera' }], attach: [] },
     })
+    expect(p).not.toHaveProperty('segments')
+  })
+
+  it('같은 ref 두 번 멘션 → 멘션 세그먼트 둘·refs 하나', async () => {
+    await t2v('@king waves, @king smiles', [king])
+    const p = mockFlowGenerateVideoT2V.mock.calls[0][0]
+    expect(p.refs).toHaveLength(1)
+    expect(p.plan.segments).toEqual([{ t: 'mention', ref: 0 }, { t: 'text', text: ' waves, ' }, { t: 'mention', ref: 0 }, { t: 'text', text: ' smiles' }])
+  })
+
+  it('멘션 없음 → 일반 T2V: refs:[]·plan:null (멘션 안 된 referenceImages 는 붙이지 않는다 — 영상은 멘션만)', async () => {
+    const res = await t2v('a quiet street', [king])
     expect(res.success).toBe(true)
-    expect(mockFlowGenerateVideoT2V).toHaveBeenCalledWith(expect.objectContaining({ segments: segs }))
+    expect(mockFlowGenerateVideoT2V).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'a quiet street', refs: [], plan: null }))
   })
 
-  it('segments 없이 referenceImages 가 있으면 기존대로 fail-fast(ref 미지원)', async () => {
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateVideoT2V('hero walks', 'veo', '16:9', 6, null, '720p', [{ mediaId: 'm1' }], {})
-    })
-    expect(res.success).toBe(false)
-    expect(res).toMatchObject({
-      errorKind: 'flow-t2v-reference-images-unsupported',
-      error: 'Flow text-to-video does not support reference images',
-    })
+  it('유일 ref 4개 → flow-references-too-many {max:3}, IPC 미호출', async () => {
+    const four = ['a1', 'a2', 'a3', 'a4'].map((name) => ({ ...king, name }))
+    expect(await t2v('@a1 @a2 @a3 @a4', four)).toEqual({ success: false, errorKind: 'flow-references-too-many', error: 'flow-references-too-many', errorParams: { max: 3 } })
     expect(mockFlowGenerateVideoT2V).not.toHaveBeenCalled()
   })
 
-  it('segments/ref 둘 다 없으면 일반 텍스트 T2V (정상 제출)', async () => {
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateVideoT2V('a quiet street', 'veo', '16:9', 6, null, '720p', [], {})
-    })
-    expect(res.success).toBe(true)
-    expect(mockFlowGenerateVideoT2V).toHaveBeenCalledWith(expect.objectContaining({ segments: null }))
+  it('멘션 ref 를 못 읽음(원천 없음·읽기 실패) → flow-reference-source-missing, IPC 미호출', async () => {
+    const SOURCE_MISSING = { success: false, errorKind: 'flow-reference-source-missing', error: 'flow-reference-source-missing' }
+    expect(await t2v('@king walks', [{ ...king, data: null, mediaId: 'm-old' }])).toEqual(SOURCE_MISSING)
+    expect(await t2v('@king walks', [{ ...king, data: null, filePath: '/nowhere/king.png' }])).toEqual(SOURCE_MISSING)
+    expect(mockFlowGenerateVideoT2V).not.toHaveBeenCalled()
+  })
+
+  it('옛 callOpts.segments(칩 경로)는 생산자가 퇴역했다 — 싣지도 거부하지도 않고 프롬프트에서 계획한다', async () => {
+    await t2v('@king walks', [king], { segments: [{ type: 'mention', name: 'king', entityId: 'e1' }] })
+    const p = mockFlowGenerateVideoT2V.mock.calls[0][0]
+    expect(p).not.toHaveProperty('segments')
+    expect(p.plan.segments[0]).toEqual({ t: 'mention', ref: 0 })
   })
 })
 
@@ -1724,72 +1088,42 @@ describe('useFlowEngine — 캐릭터 ref 는 /characters 에서 생성한다', 
   })
 })
 
-describe('useFlowEngine M1 final image reference guard', () => {
-  const dirtyReferences = [
-    { mediaId: null },
-    { mediaId: undefined },
-    { mediaId: '' },
-    { mediaId: 'media-ok' },
-  ]
+describe('useFlowEngine — checkVideoStatus: 새 경로 필드·중립 문구 (M1-10)', () => {
+  beforeEach(() => { vi.clearAllMocks() })
 
-  it('filters invalid mediaIds before synchronous flowGenerateImage IPC', async () => {
-    mockFlowGenerateImage.mockClear()
-    mockFlowGenerateImage.mockResolvedValue({
-      success: true,
-      images: [{ base64: 'image' }],
-    })
-    const { result } = renderHook(() => useFlowEngine())
-
-    await act(async () => {
-      await result.current.generateImage('plain prompt', dirtyReferences)
-    })
-
-    expect(mockFlowGenerateImage.mock.calls[0][0].referenceImages).toEqual([
-      { mediaId: 'media-ok' },
-    ])
+  it('항목 {error:"flow-rpc-error", rpcStatus:403} 는 authFailed 가 되지 않는다(정규식 스캔 통과)', async () => {
+    mockFlowCheckVideoStatus.mockResolvedValue({ success: true, statuses: [{ status: 'failed', error: 'flow-rpc-error', errorKind: 'flow-rpc-error', rpcStatus: 403 }] })
+    const onAuthError = vi.fn()
+    const { result } = renderHook(() => useFlowEngine({ onAuthError }))
+    let res
+    await act(async () => { res = await result.current.checkVideoStatus(['g1']) })
+    expect(res.authFailed).toBeUndefined()
+    expect(onAuthError).not.toHaveBeenCalled()
+    expect(res.statuses[0]).toMatchObject({ generationId: 'g1', status: 'failed', error: 'flow-rpc-error', errorKind: 'flow-rpc-error' })
   })
 
-  it('filters invalid mediaIds before async flowGenerateImage IPC', async () => {
-    mockFlowGenerateImage.mockClear()
-    mockFlowGenerateImage.mockResolvedValue({
-      success: true,
-      generationId: 'generation-1',
-    })
-    const { result } = renderHook(() => useFlowEngine())
-
-    await act(async () => {
-      await result.current.submitGeneration('plain prompt', dirtyReferences)
-    })
-
-    expect(mockFlowGenerateImage.mock.calls[0][0].referenceImages).toEqual([
-      { mediaId: 'media-ok' },
-    ])
+  it('main 이 authFailed:true 를 명시하면 markAuth (센티널 제거 + onAuthError 1회)', async () => {
+    mockFlowCheckVideoStatus.mockResolvedValue({ success: false, error: 'flow-rpc-error', errorKind: 'flow-rpc-error', rpcStatus: 401, authFailed: true })
+    const onAuthError = vi.fn()
+    const { result } = renderHook(() => useFlowEngine({ onAuthError }))
+    let res
+    await act(async () => { res = await result.current.checkVideoStatus(['g1']) })
+    expect(res.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps an entity-only synced mention on the scene route', async () => {
-    mockFlowGenerateImage.mockClear()
-    mockFlowGenerateScene.mockClear()
-    mockFlowGenerateScene.mockResolvedValue({
-      success: true,
-      images: [{ base64: 'scene-image' }],
-    })
-    const entityOnlyReference = {
-      id: 'entity-only',
-      name: 'EntityOnly',
-      type: 'character',
-      entityId: 'entity-1',
-      flowNameSyncStatus: 'synced',
-      mediaId: null,
-    }
+  it('errorKind · unknownState · errorParams · rejectedMediaId · pollError 를 항목에 그대로 싣는다', async () => {
+    mockFlowCheckVideoStatus.mockResolvedValue({ success: true, statuses: [
+      { status: 'pending', unknownState: 7 },
+      { status: 'failed', error: 'flow-video-settings-mismatch', errorKind: 'flow-video-settings-mismatch', errorParams: { expected: 'a', actual: 'b' }, rejectedMediaId: 'rm' },
+      { status: 'pending', pollError: 'flow-rpc-error', rpcCode: 8 },
+    ] })
     const { result } = renderHook(() => useFlowEngine())
-
-    await act(async () => {
-      await result.current.generateImage('@EntityOnly appears', [], {
-        references: [entityOnlyReference],
-      })
-    })
-
-    expect(mockFlowGenerateScene).toHaveBeenCalledTimes(1)
-    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+    let res
+    await act(async () => { res = await result.current.checkVideoStatus(['g1', 'g2', 'g3']) })
+    expect(res.statuses[0]).toMatchObject({ generationId: 'g1', status: 'pending', unknownState: 7 })
+    expect(res.statuses[1]).toMatchObject({ generationId: 'g2', status: 'failed', errorKind: 'flow-video-settings-mismatch', errorParams: { expected: 'a', actual: 'b' }, rejectedMediaId: 'rm' })
+    expect(res.statuses[1].mediaId).toBeNull()
+    expect(res.statuses[2]).toMatchObject({ generationId: 'g3', status: 'pending', pollError: 'flow-rpc-error', rpcCode: 8 })
   })
 })

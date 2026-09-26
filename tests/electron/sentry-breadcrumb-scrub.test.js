@@ -158,3 +158,24 @@ describe('beforeBreadcrumb — console breadcrumbs must not carry prompt text', 
     expect(beforeBreadcrumb({ ...crumb })).toMatchObject(crumb)
   })
 })
+
+// M1-6: flow.google.com 의 미디어는 서명 URL(flow-content.google/…?Expires&KeyName&Signature, ~6h 유효) 로 온다.
+//   Electron net 브레드크럼·다운로드 로그가 그 URL 을 실으면 Sentry 가 6시간짜리 미디어 접근권을 받는다.
+describe('beforeBreadcrumb — flow-content.google 서명 URL (M1-6)', () => {
+  const SIGNED = 'https://flow-content.google/video/2f1c9a7e-1111-2222-3333-444455556666?Expires=1790261742&KeyName=labs-flow-prod-cdn-key&Signature=SIG123'
+
+  it('electron.net 브레드크럼의 data.url 에서 서명 URL 을 통째로 지운다(호스트도 남지 않는다)', () => {
+    const { beforeBreadcrumb } = opts()
+    const out = beforeBreadcrumb({ category: 'electron.net', type: 'http', data: { url: SIGNED, method: 'GET', status_code: 200 } })
+    expect(out.data.url).not.toContain('SIG123')
+    expect(out.data.url).not.toContain('flow-content.google')
+    expect(JSON.stringify(out)).not.toContain('SIG123')
+  })
+
+  it('콘솔 메시지 안의 서명 파라미터도 지운다', () => {
+    const { beforeBreadcrumb } = opts()
+    const out = beforeBreadcrumb({ category: 'console', level: 'log', message: '[Flow VideoDownload] Fetching: ' + SIGNED })
+    expect(out.message).not.toContain('SIG123')
+    expect(out.message).toContain('[Flow VideoDownload]')
+  })
+})

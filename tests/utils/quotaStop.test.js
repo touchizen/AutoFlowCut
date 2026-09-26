@@ -126,6 +126,15 @@ describe('isQuotaExhaustedError — errorKind priority (§5.11)', () => {
     expect(isQuotaExhaustedError(Object.assign(new Error('quota exceeded'), { errorKind: 'story-audio-out-of-sync' }))).toBe(true)
   })
 
+  // main(flow.google.com 재작업) 병합: Flow 는 quota 를 errorKind 가 아니라 error 문구(RESOURCE_EXHAUSTED, rpc code 8)로 싣는다 —
+  //   'flow-rpc-error' 는 전송 계층의 중립 kind 라 provider 분류가 아니다. 읽기 실패는 flow-angular 가 문구를 'flow-rpc-error' 로 중립화한다.
+  //   authoritative 로 오인하면 Flow 의 이미지·영상 제출이 quota 로 실패해도 quota 중단이 걸리지 않는다.
+  it("Flow 의 'flow-rpc-error' 는 authoritative 아님 → 문자열 폴백(제출 code 8 만 quota, 중립화된 읽기 실패는 아님)", () => {
+    expect(isQuotaExhaustedError({ success: false, errorKind: 'flow-rpc-error', error: 'RESOURCE_EXHAUSTED', rpcCode: 8 })).toBe(true)
+    expect(isQuotaExhaustedError({ success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error', rpcCode: 8 })).toBe(false)
+    expect(isQuotaExhaustedError({ success: false, errorKind: 'flow-rpc-error', error: 'flow-rpc-error' })).toBe(false)
+  })
+
   it('null/undefined 입력은 throw 없이 false (F3)', () => {
     expect(isQuotaExhaustedError(null)).toBe(false)
     expect(isQuotaExhaustedError(undefined)).toBe(false)

@@ -28,3 +28,15 @@ describe('mcp-server 스키마 — includePending', () => {
     expect(source).not.toContain("name: 'export_vrew'")
   })
 })
+
+describe('mcp-server 스키마 — videoAudioVolume(CapCut 전용)', () => {
+  it('export_capcut 이 0/0.15/1 로 받는다', () => {
+    const block = schemaOf('export_capcut')
+    expect(block).toContain('videoAudioVolume')
+    expect(block).toMatch(/enum:\s*\[0,\s*0\.15,\s*1\]/)
+  })
+
+  it('export_premiere 는 받지 않는다', () => {
+    expect(schemaOf('export_premiere')).not.toContain('videoAudioVolume')
+  })
+})

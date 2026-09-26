@@ -1,0 +1,167 @@
+// @vitest-environment node
+//
+// M2-LIVE N1 — main.js 배선(소스 정책, 다른 main.js 핀과 같은 방식: main.js 는 Electron 을 부팅해야 해서 실행 테스트가 없다).
+//   제자리 자동화 뷰포트 동안 사용자 포인터 입력을 삼키는 **최상위 투명 방패 뷰**: flowAPIDeps.createInputShield 가 WebContentsView 를
+//   투명 배경·about:blank 로 만들어 mainWindow.contentView 에 Flow 뷰 **뒤에**(위에) 붙이고 창 콘텐츠 크기로 두며, remove() 가 떼고 닫는다.
+import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+const MAIN = readFileSync(fileURLToPath(new URL('../../electron/main.js', import.meta.url)), 'utf8')
+const fnBlock = (name) => {
+  const start = MAIN.indexOf(`function ${name}(`)
+  if (start < 0) return null
+  return MAIN.slice(start, MAIN.indexOf('\n}\n', start))
+}
+/** M2-LAST P1: `view.webContents.on('<event>', …)` 핸들러 블록(2칸 들여쓰기의 `\n  })` 까지 — flow-rpc-capture-wiring 과 같은 꼴). */
+const handlerBlock = (event) => {
+  const start = MAIN.indexOf(`view.webContents.on('${event}'`)
+  if (start < 0) return null
+  return MAIN.slice(start, MAIN.indexOf('\n  })', start))
+}
+
+describe('main.js — 입력 방패(createInputShield) 배선 (M2-LIVE N1)', () => {
+  it('flowAPIDeps 가 createInputShield 를 싣는다', () => {
+    const deps = MAIN.slice(MAIN.indexOf('const flowAPIDeps = {'), MAIN.indexOf('registerFlowAPIIPC(ipcMain, flowAPIDeps)'))
+    expect(deps).toMatch(/createInputShield:\s*makeInputShield\b/)
+  })
+  it('makeInputShield: 투명 WebContentsView + about:blank, contentView 에 추가(Flow 뷰 뒤 = 위), 창 콘텐츠 크기, remove() 가 떼고 닫는다', () => {
+    const b = fnBlock('makeInputShield')
+    expect(b, 'makeInputShield block').toBeTruthy()
+    expect(b).toMatch(/new WebContentsView\(/)
+    expect(b).toMatch(/setBackgroundColor\('#00000000'\)/)
+    expect(b).toMatch(/loadURL\('about:blank'\)/)
+    expect(b).toMatch(/contentView\.addChildView\(shield\)/)
+    expect(b).toMatch(/getContentBounds\(\)/)
+    expect(b).toMatch(/shield\.setBounds\(\{ x: 0, y: 0, width, height \}\)/)
+    expect(b).toMatch(/remove\(\)\s*\{[\s\S]*removeChildView\(shield\)[\s\S]*webContents\.close\(\)/)
+    // 방패는 페이지 스크립트를 돌리지 않는다(sandbox, preload 없음)
+    expect(b).toMatch(/sandbox:\s*true/)
+    expect(b).not.toMatch(/preload/)
+  })
+})
+
+// M2-CLOSE O1(A1): DOM 단계 동안 사용자의 키 입력을 Flow 뷰에 넣지 않는다 — makeFlowView 가 before-input-event 를 automationKeyLock 으로 preventDefault 하고,
+//   flowAPIDeps.setAutomationKeyLock 이 그 플래그를 켜고 끈다(래퍼가 진입·finally 에서). 앱의 Angular 자동화는 executeJavaScript 와 마우스 sendInputEvent 뿐이라
+//   (Escape 는 페이지 안 DOM 이벤트) 잠금이 자동화를 막지 않는다 — 그 전제도 여기서 핀.
+describe('main.js — DOM 단계 키 입력 잠금 배선 (M2-CLOSE O1)', () => {
+  it('makeFlowView 가 before-input-event 를 automationKeyLock 으로 preventDefault 하고, flowAPIDeps 가 setAutomationKeyLock 을 싣는다', () => {
+    const b = fnBlock('makeFlowView')
+    expect(b, 'makeFlowView block').toBeTruthy()
+    // 줄머리 앵커(^\s*) — 주석 처리된 줄(// view.webContents.on(…))은 매치되지 않는다(뮤테이션 O1-f 가 그 구멍을 보였다)
+    expect(b).toMatch(/^\s*view\.webContents\.on\('before-input-event',\s*\((\w+)\)\s*=>\s*\{\s*if \(automationKeyLock\)\s*\1\.preventDefault\(\)/m)
+    const deps = MAIN.slice(MAIN.indexOf('const flowAPIDeps = {'), MAIN.indexOf('registerFlowAPIIPC(ipcMain, flowAPIDeps)'))
+    expect(deps).toMatch(/^\s*setAutomationKeyLock:\s*\(on\)\s*=>\s*\{\s*automationKeyLock = !!on\s*\}/m)
+    expect(MAIN).toMatch(/^let automationKeyLock = false/m)
+  })
+  it('Angular DOM 경로(flow-angular · flow-composer-settings · shared 의 신뢰 클릭 · M3-15: 레퍼런스 드라이버·파인더·클립보드)는 sendInputEvent 키 이벤트를 보내지 않는다 — 잠금이 자동화를 막지 않는다', () => {
+    for (const f of ['../../electron/ipc/flow-angular.js', '../../electron/flow-composer-settings.js', '../../electron/ipc/shared.js',
+      '../../electron/flow-reference-driver.js', '../../electron/flow-composer-refs.js', '../../electron/flow-clipboard.js']) {
+      const src = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8')
+      expect(src, f).not.toMatch(/sendInputEvent\(\{\s*type:\s*'(keyDown|keyUp|char|rawKeyDown)'/)
+    }
+  })
+})
+
+// M2-CLOSE O5(A5): 사용자가 방패를 누르면 방패 webContents 가 OS 포커스를 가져간다 — 캐럿 클릭~주입 사이에 포커스가 빠지면 execCommand 주입이 안 먹어 재판독 불일치
+//   (text-injection-failed, 항목은 재시도로 유실). 방패는 포커스를 받는 즉시 Flow 뷰로 돌려준다(핸들러도 주입 직전에 focus 를 다시 건다 — 핸들러 스위트 핀).
+describe('main.js — 방패의 포커스 되돌리기 배선 (M2-CLOSE O5)', () => {
+  it("makeInputShield 가 shield.webContents.on('focus') 에서 getFlowView()?.webContents.focus() 를 부른다", () => {
+    const b = fnBlock('makeInputShield')
+    expect(b, 'makeInputShield block').toBeTruthy()
+    expect(b).toMatch(/^\s*shield\.webContents\.on\('focus',\s*\(\)\s*=>\s*\{[^\n]*getFlowView\(\)\?\.webContents\.focus\(\)/m)
+  })
+})
+
+// M2-LAST P1(A1 = B1): 문서가 죽으면(메인 프레임 did-navigate 커밋 · render-process-gone) 그 문서의 executeJavaScript 는 영영 settle 하지 않는다 — flow-angular 의 DOM 단계 직렬화 기록
+//   (lastDomStage)을 releaseDomStage(reason) 로 비운다(failBoundUnfinished 옆). SPA 내비게이션(did-navigate-in-page)은 문서가 살아 있으므로 풀지 않는다. 줄머리 앵커(주석 처리에 눈멀지 않게).
+describe('main.js — 문서가 죽으면 DOM 단계 직렬화를 푸는 배선 (M2-LAST P1)', () => {
+  it("flow-angular 의 releaseDomStage 를 import 하고, did-navigate 가 releaseDomStage('did-navigate') 를, render-process-gone 이 releaseDomStage('render-process-gone') 을 부른다", () => {
+    expect(MAIN).toMatch(/^import \{[^}]*\breleaseDomStage\b[^}]*\} from '\.\/ipc\/flow-angular\.js'/m)
+    const nav = handlerBlock('did-navigate')
+    expect(nav, 'did-navigate handler').toBeTruthy()
+    expect(nav).toMatch(/^\s*releaseDomStage\('did-navigate'\)/m)
+    // M2-FINAL Q4(B3): 조건문 안으로 옮기면 교착(P1)이 조용히 돌아온다 — 핸들러 본문 들여쓰기(정확히 4칸) + failBoundUnfinished 다음다음 줄에 고정
+    expect(nav).toMatch(/^    const lost = failBoundUnfinished\(pendingGenerations\)\n    [^\n]*\n    releaseDomStage\('did-navigate'\)/m)
+    const gone = handlerBlock('render-process-gone')
+    expect(gone, 'render-process-gone handler').toBeTruthy()
+    expect(gone).toMatch(/^\s*releaseDomStage\('render-process-gone'\)/m)
+    expect(gone).toMatch(/^    const lost = failBoundUnfinished\(pendingGenerations\)\n    [^\n]*\n    releaseDomStage\('render-process-gone'\)/m)   // M2-FINAL Q4
+  })
+  it('did-navigate-in-page(SPA) 와 did-start-navigation 은 풀지 않는다 — 문서가 살아 있다(취소될 수 있다)', () => {
+    expect(handlerBlock('did-navigate-in-page')).not.toMatch(/releaseDomStage/)
+    const start = handlerBlock('did-start-navigation')
+    if (start) expect(start).not.toMatch(/releaseDomStage/)
+  })
+})
+
+// M2-FINAL Q1(A1 = B1): O5 의 방패 focus 핸들러는 제자리 뷰포트 내내 포커스를 Flow 뷰로 돌려보냈다 — P2 가 재판독 뒤 OS 포커스를 메인 창으로 옮겨도 사용자가 방패(창 아무 곳)를
+//   누르면 방패 → Flow 뷰 → Blink 가 ProseMirror 편집기에 문서 포커스를 되살려 IME 조합이 다시 프롬프트에 붙었다. 포커스 단계 플래그: 핸들러의 focusMainWindow 가
+//   deps.setShieldFocusTarget('main') 을 세우면 방패는 메인 창으로, 'flow'(방패 생성 시·finally 리셋)면 Flow 뷰로. 줄머리 앵커.
+describe('main.js — 방패 포커스의 단계 플래그 배선 (M2-FINAL Q1)', () => {
+  it("let shieldFocusTarget = 'flow' · makeInputShield 의 focus 핸들러는 'main' 이면 메인 창, 아니면 Flow 뷰 · flowAPIDeps.setShieldFocusTarget 이 'main'|'flow' 로 정규화해 세운다", () => {
+    expect(MAIN).toMatch(/^let shieldFocusTarget = 'flow'/m)
+    const b = fnBlock('makeInputShield')
+    expect(b, 'makeInputShield block').toBeTruthy()
+    expect(b).toMatch(/^\s*shield\.webContents\.on\('focus',\s*\(\)\s*=>\s*\{[^\n]*if \(shieldFocusTarget === 'main'\) win\.webContents\.focus\(\); else modeController\.getFlowView\(\)\?\.webContents\.focus\(\)/m)
+    const deps = MAIN.slice(MAIN.indexOf('const flowAPIDeps = {'), MAIN.indexOf('registerFlowAPIIPC(ipcMain, flowAPIDeps)'))
+    expect(deps).toMatch(/^\s*setShieldFocusTarget:\s*\(t\)\s*=>\s*\{\s*shieldFocusTarget = t === 'main' \? 'main' : 'flow'\s*\}/m)
+  })
+})
+
+// M3-15(계획서 docs/plans/2026-09-25-flow-M3-references-plan.md §4 M3-15 · D8 · D16): 레퍼런스 경로도 Flow 뷰에 키 이벤트를 보내지 않는다 — '@' 는 execCommand('insertText'),
+//   @ 창 닫기는 문서 합성 Escape(DOM 이벤트). 위 목록은 파일을 이름으로 적으므로, Angular 핸들러가 import 로 닿는 모듈 전부(전이 폐포 — 새 모듈이 옛 labs.google 멘션 경로
+//   flow-compose-mention.js 같은 키 모듈을 끌어오면 여기서 빨개진다)와 main.js 도 본다. 새 레퍼런스 모듈은 sendInputEvent 자체를 부르지 않는다(신뢰 클릭은 ctx.trustedClick 로만).
+describe('레퍼런스 경로의 키 sendInputEvent 금지 (M3-15)', () => {
+  const ELECTRON_DIR = fileURLToPath(new URL('../../electron/', import.meta.url))
+  const REPO_DIR = fileURLToPath(new URL('../../', import.meta.url))
+  // 키 이벤트 — type 이 객체의 첫 키가 아니어도 잡는다
+  const KEY_SEND = /sendInputEvent\(\s*\{[^}]*\btype:\s*['"](keyDown|keyUp|char|rawKeyDown)['"]/
+  const read = (abs) => readFileSync(abs, 'utf8')
+  /** 상대 import·re-export 의 전이 폐포(절대 경로). 확장자 없는 지정자는 .js/.jsx 로 푼다. */
+  function importClosure(entryAbs) {
+    const seen = new Set()
+    const walk = (abs) => {
+      if (seen.has(abs)) return
+      seen.add(abs)
+      if (!/\.jsx?$/.test(abs)) return
+      for (const m of read(abs).matchAll(/^\s*(?:import|export)\s[^'"]*?from\s+['"](\.{1,2}\/[^'"]+)['"]/gm)) {
+        const base = new URL(m[1], 'file://' + abs).pathname
+        const hit = [base, base + '.js', base + '.jsx'].find((p) => { try { readFileSync(p); return true } catch (_e) { return false } })
+        if (hit) walk(hit)
+      }
+    }
+    walk(entryAbs)
+    return [...seen]
+  }
+
+  it('새 레퍼런스 모듈(flow-reference-driver · flow-composer-refs · flow-clipboard · flow-ref-media-cache)은 sendInputEvent 를 부르지 않는다', () => {
+    for (const f of ['flow-reference-driver.js', 'flow-composer-refs.js', 'flow-clipboard.js', 'flow-ref-media-cache.js']) {
+      expect(read(ELECTRON_DIR + f), f).not.toMatch(/\.sendInputEvent\s*\(/)
+    }
+  })
+
+  it('flow-angular.js 의 전이 import 폐포에 키 sendInputEvent 가 없다(드라이버·파인더·클립보드·캐시·설정·라우터 포함)', () => {
+    const closure = importClosure(ELECTRON_DIR + 'ipc/flow-angular.js')
+    const rel = closure.map((abs) => abs.replace(REPO_DIR, ''))
+    // 폐포가 레퍼런스 경로를 실제로 담는다(파서가 비어서 통과하는 게 아니다)
+    for (const f of ['electron/flow-reference-driver.js', 'electron/flow-composer-refs.js', 'electron/flow-clipboard.js', 'electron/flow-ref-media-cache.js', 'electron/flow-composer-settings.js', 'electron/flow-rpc-router.js']) {
+      expect(rel, f).toContain(f)
+    }
+    const offenders = closure.filter((abs) => /\.jsx?$/.test(abs) && KEY_SEND.test(read(abs))).map((abs) => abs.replace(REPO_DIR, ''))
+    expect(offenders).toEqual([])
+  })
+
+  it('main.js 에 키 sendInputEvent 가 0개다', () => {
+    expect(MAIN).not.toMatch(KEY_SEND)
+  })
+
+  // M3 D13: main 은 r2v 상한 상수 하나만 필요하다 — 렌더러 계획 모듈을 import 하면 가드 → 캐릭터 동기화 → React 훅(useFileSystem)까지
+  //   main 번들로 끌려 들어온다(C5 폐포 계산). 상수는 import 없는 모듈에서 가져온다.
+  it('flow-angular.js 의 import 폐포에 렌더러 훅·컴포넌트가 없다 — r2v 상한은 의존성 없는 모듈에서', () => {
+    const rel = importClosure(ELECTRON_DIR + 'ipc/flow-angular.js').map((abs) => abs.replace(REPO_DIR, ''))
+    expect(rel).toContain('src/utils/flowR2vLimit.js')
+    expect(rel.filter((p) => /^src\/(hooks|components|contexts)\//.test(p))).toEqual([])
+    expect(read(REPO_DIR + 'src/utils/flowR2vLimit.js')).not.toMatch(/^\s*import\s/m)
+  })
+})

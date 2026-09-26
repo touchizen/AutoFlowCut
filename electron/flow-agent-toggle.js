@@ -34,7 +34,12 @@ export function isToggleOn(el) {
  * control; ambiguity fails closed.
  */
 export function findAgentToggle(doc) {
-  const editor = doc.querySelector("[data-slate-editor='true']")
+  // flow.google.com(Angular, 2026-09): 컴포저의 에이전트 칩은 클래스가 안정적이다 — 정확히 하나일 때만 믿는다.
+  const chips = Array.from(doc.querySelectorAll('button.agent-mode-chip[aria-pressed]'))
+  if (chips.length === 1) return chips[0]
+  if (chips.length > 1) return null
+  // 옛 Slate 컴포저(labs.google) — 편집기 조상에서 상태 컨트롤을 찾는다.
+  const editor = doc.querySelector("[data-slate-editor='true']") || doc.querySelector('div.ProseMirror[contenteditable="true"]')
   if (!editor) return null
   const STATE_SELECTOR = 'button[aria-pressed], [role="switch"][aria-checked], [role="checkbox"][aria-checked]'
   let candidates = []
@@ -71,7 +76,7 @@ export const AGENT_TOGGLE_SELECTOR = `(function() {
 export function scanAgentToggleCandidates(doc) {
   const win = doc.defaultView
   const STATE_SELECTOR = 'button[aria-pressed], [role="switch"][aria-checked], [role="checkbox"][aria-checked]'
-  const editor = doc.querySelector("[data-slate-editor='true']")
+  const editor = doc.querySelector("[data-slate-editor='true']") || doc.querySelector('div.ProseMirror[contenteditable="true"]')
   let scoped = []
   if (editor) {
     for (let scope = editor.parentElement; scope && scope !== doc.body && scope !== doc.documentElement; scope = scope.parentElement) {
@@ -117,6 +122,7 @@ export function scanAgentToggleCandidates(doc) {
       // 컴포즈 에디터가 떠 있는지 — 없으면 페이지가 아직 안 그려진 것(하이드레이션/뷰포트 문제)이고,
       // 있는데도 토글이 없으면 Flow 마크업이 바뀐 것이다. 이 한 줄이 두 원인을 가른다.
       hasComposeEditor: !!(doc.querySelector("[data-slate-editor='true']")
+        || doc.querySelector('div.ProseMirror[contenteditable="true"]')
         || doc.querySelector("div[role='textbox'][contenteditable='true']")),
     },
   }
@@ -132,7 +138,8 @@ export const AGENT_TOGGLE_DIAGNOSTIC = `(function() {
  * Locate the agent CHAT panel's header close button (icon 'close' / label '닫기').
  * A prior Agent-ON generation leaves this right-side panel open, covering the main
  * compose bar where the Agent toggle lives — so we close it before probing/toggling.
- * Disambiguated by the panel header's sibling '기록'(menu) / '새로운 세션'(edit_square).
+ * Identified by the header's new-session button (untranslated edit_square ligature)
+ * within 3 ancestors of the close button; anything else returns null.
  */
 export function findAgentChatCloseButton(doc) {
   const win = doc.defaultView
@@ -148,20 +155,24 @@ export function findAgentChatCloseButton(doc) {
     || /close|닫기/i.test(b.getAttribute('aria-label') || '')
   const candidates = Array.from(doc.querySelectorAll('button')).filter((b) => !isHidden(b) && isClose(b))
   if (candidates.length === 0) return null
-  if (candidates.length === 1) return candidates[0]
-  // Multiple close buttons: prefer the one whose nearby ancestor holds the agent
-  //   chat header labels (so we don't click some unrelated modal's X). Stop before
-  //   body/documentElement — their textContent is the whole page and would match
-  //   every candidate.
+  // Only a close button inside the agent chat header counts — the header holds the
+  //   new-session button, recognised by its untranslated edit_square ligature. A lone
+  //   close button is NOT enough: the agent chat panel has never been observed on the
+  //   new flow.google.com, whose only close buttons in every capture are the composer's
+  //   clear (with a chip or text), the asset picker's add trigger, or a banner's X —
+  //   clicking one silently cleared a user's chip before a generation (2026-09-26 live,
+  //   M3 G5). Header label text ('새로운 세션'/'기록') is not used: it is translated, and
+  //   it also matched the prompt text inside the composer (review R1). Unconfirmed →
+  //   null (nothing is clicked). Stop before body/documentElement.
+  const isAgentHeader = (p) => Array.from(p.querySelectorAll('button')).some((x) => iconTexts(x).includes('edit_square'))
   for (const b of candidates) {
     let p = b.parentElement
     for (let i = 0; i < 3 && p && p !== doc.body && p !== doc.documentElement; i++) {
-      const t = p.textContent || ''
-      if (t.includes('새로운 세션') || t.includes('기록')) return b
+      if (isAgentHeader(p)) return b
       p = p.parentElement
     }
   }
-  return candidates[0]
+  return null
 }
 
 /** Page expression returning the agent-chat close button ELEMENT. */
