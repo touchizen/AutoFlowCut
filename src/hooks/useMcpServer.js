@@ -15,6 +15,7 @@ import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/gene
 import { clearedImageFields } from '../utils/refEntityRegistration'
 import { pickMcpSettingsFields } from '../utils/mcpSettingsWhitelist'   // M2-LIVE N3: main 과 같은 화이트리스트(이중 방어)
 import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'   // CSV 재적용 보존 목록 — parseFromCSV 와 공유
+import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'   // 내보내기 창과 같은 허용 값
 
 // start-scene-batch `mode` → handleStart 탭 오버라이드. 없거나 모르는 값이면 현재 UI 탭 그대로.
 const MCP_BATCH_MODE_TAB = { video: 'video-text', image: 'text' }
@@ -235,6 +236,9 @@ export function useMcpServer({
           kenBurnsScaleMax: (options.kenBurnsScaleMax || saved.kenBurnsScaleMax || 130) / 100,
           subtitleOption: options.subtitleOption || (saved.includeSubtitle !== false ? 'ko' : 'none'),
           subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8,
+          // 영상 클립 오디오 볼륨 — 에이전트 값 > 저장값, 허용 값(0/0.15/1)만. 0 이 유효값이라 || 폴백 금지.
+          //   둘 다 없으면 undefined → exporter 가 draft 를 건드리지 않는다(기존 동작).
+          videoAudioVolume: [options.videoAudioVolume, saved.videoAudioVolume].find((v) => VIDEO_AUDIO_VOLUMES.includes(v)),
           // 자동화는 기본 false — 옵션을 명시해야만 pending 씬이 섞인다.
           includePending: options.includePending === true
         }

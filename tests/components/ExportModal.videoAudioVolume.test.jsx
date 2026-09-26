@@ -3,8 +3,9 @@
  *
  * 잡는 동작:
  *   1) 옵션 select 가 실제로 렌더된다 (발견성 — 리뷰어가 못 잡는 부분)
- *   2) 기본값은 음소거(0) → onExport 페이로드에 videoAudioVolume: 0
- *   3) '원본' 선택 시 onExport 페이로드에 videoAudioVolume: 1 + 설정에 저장
+ *   2) 저장된 값이 없으면 기본값은 원본(1) — 옵션이다(2026-09-26 사용자 결정: 대사 있는 영상에서 모르고 음소거되지 않게)
+ *   3) 저장된 음소거(0)는 0 그대로 복원된다(0 이 유효값 — || 폴백에 묻히면 안 된다)
+ *   4) '음소거' 선택 시 onExport 페이로드에 videoAudioVolume: 0 + 설정에 저장
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -24,17 +25,18 @@ vi.mock('../../src/contexts/AuthContext', () => ({
 // settings 객체는 identity 가 안정적이어야 한다 — 실제 훅은 useState 라 안 바뀐다.
 // 매 렌더 새 객체를 주면 로드 useEffect([isLoaded, savedSettings])가 재실행돼 사용자의
 // select 변경을 즉시 되돌린다(= 테스트만의 거짓 실패).
-const SAVED_SETTINGS = {
+const SAVED_BASE = {
   pathPreset: 'capcut',
   scaleMode: 'none',
   includeSubtitle: true,
   kenBurns: true,
-  videoAudioVolume: 0
 }
+// 테스트마다 렌더 **전에** 바꾼다 — 렌더 중에는 같은 객체(identity 안정).
+let currentSaved = SAVED_BASE
 
 vi.mock('../../src/hooks/useExportSettings', () => ({
   useExportSettings: () => ({
-    settings: SAVED_SETTINGS,
+    settings: currentSaved,
     isLoaded: true,
     saveSettings: mockSaveSettings
   })
@@ -94,7 +96,20 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
     expect(screen.getByRole('option', { name: /videoAudioOriginal/ })).toBeInTheDocument()
   })
 
-  it('기본값은 음소거 — onExport 페이로드에 videoAudioVolume: 0', async () => {
+  it('저장된 값이 없으면 기본값은 원본 — onExport 페이로드에 videoAudioVolume: 1', async () => {
+    currentSaved = { ...SAVED_BASE }
+    const onExport = vi.fn()
+    render(<ExportModal {...baseProps} onExport={onExport} />)
+    await waitForPath()
+
+    fireEvent.click(screen.getByRole('button', { name: /exportModal\.export/ }))
+
+    await waitFor(() => expect(onExport).toHaveBeenCalled())
+    expect(onExport.mock.calls[0][0].videoAudioVolume).toBe(1)
+  })
+
+  it('저장된 음소거(0)는 0 그대로 — 기본값(1)에 묻히지 않는다', async () => {
+    currentSaved = { ...SAVED_BASE, videoAudioVolume: 0 }
     const onExport = vi.fn()
     render(<ExportModal {...baseProps} onExport={onExport} />)
     await waitForPath()
@@ -105,20 +120,33 @@ describe('ExportModal — 영상 오디오 볼륨 옵션', () => {
     expect(onExport.mock.calls[0][0].videoAudioVolume).toBe(0)
   })
 
-  it("'원본' 선택 → onExport 페이로드 videoAudioVolume: 1 + 설정 저장", async () => {
+  it.each([['abc'], [null], [0.5]])('알 수 없는 저장값 %s 은 원본(1)으로 — 음소거로 새지 않는다', async (bad) => {
+    currentSaved = { ...SAVED_BASE, videoAudioVolume: bad }
     const onExport = vi.fn()
     render(<ExportModal {...baseProps} onExport={onExport} />)
     await waitForPath()
-
-    const select = screen.getByRole('option', { name: /videoAudioOriginal/ }).closest('select')
-    fireEvent.change(select, { target: { value: '1' } })
 
     fireEvent.click(screen.getByRole('button', { name: /exportModal\.export/ }))
 
     await waitFor(() => expect(onExport).toHaveBeenCalled())
     expect(onExport.mock.calls[0][0].videoAudioVolume).toBe(1)
+  })
+
+  it("'음소거' 선택 → onExport 페이로드 videoAudioVolume: 0 + 설정 저장", async () => {
+    currentSaved = { ...SAVED_BASE }
+    const onExport = vi.fn()
+    render(<ExportModal {...baseProps} onExport={onExport} />)
+    await waitForPath()
+
+    const select = screen.getByRole('option', { name: /videoAudioMute/ }).closest('select')
+    fireEvent.change(select, { target: { value: '0' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /exportModal\.export/ }))
+
+    await waitFor(() => expect(onExport).toHaveBeenCalled())
+    expect(onExport.mock.calls[0][0].videoAudioVolume).toBe(0)
     expect(mockSaveSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ videoAudioVolume: 1 })
+      expect.objectContaining({ videoAudioVolume: 0 })
     )
   })
 })

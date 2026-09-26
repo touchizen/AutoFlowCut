@@ -7,7 +7,17 @@ import { useModalVisibility } from '../hooks/useModalVisibility'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { normalizeExportFormat } from '../utils/exportFormat'
 import { formatExpiryDate } from '../utils/formatters'
+import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'
 import './ExportModal.css'
+
+// 영상 클립 오디오 볼륨(0 음소거 / 0.15 앰비언스 / 1 원본). 옵션이며 기본은 원본(2026-09-26 사용자 결정 — 대사 있는 영상이
+//   모르고 음소거되지 않게). 0 도 유효값이라 ||/falsy 폴백을 쓰면 안 된다 — 모르는 값·빈 값만 기본으로 돌린다.
+const DEFAULT_VIDEO_AUDIO_VOLUME = 1
+const toVideoAudioVolume = (v) => {
+  if (v == null || v === '') return DEFAULT_VIDEO_AUDIO_VOLUME
+  const n = Number(v)
+  return VIDEO_AUDIO_VOLUMES.includes(n) ? n : DEFAULT_VIDEO_AUDIO_VOLUME
+}
 
 // 경로 프리셋 정의
 const PATH_PRESETS = {
@@ -83,7 +93,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   const [pathCopied, setPathCopied] = useState(false)
   const [scaleMode, setScaleMode] = useState('none')
   const [includeSubtitle, setIncludeSubtitle] = useState(true)
-  const [videoAudioVolume, setVideoAudioVolume] = useState(0)
+  const [videoAudioVolume, setVideoAudioVolume] = useState(DEFAULT_VIDEO_AUDIO_VOLUME)
   const [kenBurns, setKenBurns] = useState(true)
   const [kenBurnsMode, setKenBurnsMode] = useState('random')
   const [kenBurnsCycle, setKenBurnsCycle] = useState(5)
@@ -106,7 +116,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
       setKenBurnsScaleMin(savedSettings.kenBurnsScaleMin || 100)
       setKenBurnsScaleMax(savedSettings.kenBurnsScaleMax || 130)
       // 0 이 유효값이라 || 폴백을 쓰면 안 된다 (음소거가 기본값)
-      setVideoAudioVolume(savedSettings.videoAudioVolume ?? 0)
+      setVideoAudioVolume(toVideoAudioVolume(savedSettings.videoAudioVolume))
       // pathPreset 로드
       setPathPreset(savedSettings.pathPreset || 'capcut')
     }
@@ -244,7 +254,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
     kenBurnsScaleMin: Number(kenBurnsScaleMin) / 100 || 1.0,  // % → 비율
     kenBurnsScaleMax: Number(kenBurnsScaleMax) / 100 || 1.15,  // % → 비율
     subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
-    videoAudioVolume: Number(videoAudioVolume) || 0  // 0=음소거(기본) / 0.15=앰비언스 / 1=원본
+    videoAudioVolume: toVideoAudioVolume(videoAudioVolume)  // 0=음소거 / 0.15=앰비언스 / 1=원본(기본)
   })
 
   const persistOptions = () => {
@@ -257,7 +267,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
       kenBurnsCycle: Number(kenBurnsCycle) || 5,
       kenBurnsScaleMin: Number(kenBurnsScaleMin) || 100,
       kenBurnsScaleMax: Number(kenBurnsScaleMax) || 130,
-      videoAudioVolume: Number(videoAudioVolume) || 0,
+      videoAudioVolume: toVideoAudioVolume(videoAudioVolume),
     })
   }
 

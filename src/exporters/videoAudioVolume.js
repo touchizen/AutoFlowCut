@@ -13,6 +13,9 @@
  * 전체가 아니라 videoOverlays 의 filename 집합에 속한 material 만 대상으로 한다.
  */
 
+/** 고를 수 있는 값 — 0 음소거 / 0.15 앰비언스 / 1 원본. 내보내기 창과 MCP 내보내기가 같은 목록을 쓴다. */
+export const VIDEO_AUDIO_VOLUMES = Object.freeze([0, 0.15, 1])
+
 /**
  * @param {Object|string} draftInfo - GCF 가 준 CapCut draft (객체 또는 JSON 문자열)
  * @param {Object} opts

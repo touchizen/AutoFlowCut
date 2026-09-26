@@ -191,3 +191,29 @@ describe('useMcpServer — 자동화가 실제로 내보내는 씬 수', () => {
     expect(result.current.showExportModal).toBe(false)
   })
 })
+
+describe('useMcpServer — CapCut 영상 클립 오디오 볼륨', () => {
+  it('저장된 내보내기 설정의 음소거(0)가 그대로 전달된다(0 이 폴백에 묻히지 않는다)', async () => {
+    localStorage.setItem('exportSettings', JSON.stringify({ videoAudioVolume: 0 }))
+    mount()
+    await window.__mcpExportCapcut({ capcutProjectNumber: '/d/1' })
+    expect(handleExportConfirm.mock.calls[0][0].videoAudioVolume).toBe(0)
+  })
+
+  it('에이전트가 넘긴 값이 저장값보다 우선한다', async () => {
+    localStorage.setItem('exportSettings', JSON.stringify({ videoAudioVolume: 0 }))
+    mount()
+    await window.__mcpExportCapcut({ capcutProjectNumber: '/d/1', videoAudioVolume: 0.15 })
+    expect(handleExportConfirm.mock.calls[0][0].videoAudioVolume).toBe(0.15)
+  })
+
+  it.each([[undefined, undefined], ['loud', undefined], [0.5, 1]])(
+    '옵션 %s · 저장값 %s — 허용 값(0/0.15/1)만 싣고 없으면 싣지 않는다',
+    async (opt, savedV) => {
+      localStorage.setItem('exportSettings', JSON.stringify(savedV === undefined ? {} : { videoAudioVolume: savedV }))
+      mount()
+      await window.__mcpExportCapcut({ capcutProjectNumber: '/d/1', ...(opt === undefined ? {} : { videoAudioVolume: opt }) })
+      expect(handleExportConfirm.mock.calls[0][0].videoAudioVolume).toBe(savedV === 1 ? 1 : undefined)
+    },
+  )
+})

@@ -35,6 +35,8 @@ describe('useExportSettings', () => {
 
       expect(result.current.DEFAULT_SETTINGS).toBeDefined()
       expect(result.current.DEFAULT_SETTINGS.pathPreset).toBe('capcut')
+      // 영상 클립 오디오는 옵션이다 — 기본은 원본(1), 음소거는 골라야 한다(2026-09-26 사용자 결정)
+      expect(result.current.DEFAULT_SETTINGS.videoAudioVolume).toBe(1)
     })
 
     it('sets isLoaded to true after init', async () => {
