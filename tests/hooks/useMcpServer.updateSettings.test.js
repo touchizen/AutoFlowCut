@@ -48,7 +48,7 @@ describe('useMcpServer — update-settings', () => {
   })
   // main 병합(리뷰 A F3): multi-provider 에서 모델 키는 "현재 provider 의 활성 모델"이다 — 다른 provider 의 카탈로그 모델을 그대로 넣으면
   //   {openai, gemini-3-pro-image} 같은 조합이 되어 이후 모든 생성이 그 adapter 에서 실패한다. 설정 화면처럼 provider 도 그 모델의 provider 로 맞춘다.
-  it('다른 provider 의 카탈로그 모델(image gemini-3-pro-image · t2v grok)이면 provider 를 전환하고 이전 모델은 슬롯에 기억한다', () => {
+  it('다른 provider 의 카탈로그 모델(image gemini-3-pro-image)이면 provider 를 전환하고 이전 모델은 슬롯에 기억한다 — 시험 단계 provider 모델(t2v grok)은 버린다(R2-1)', () => {
     const setSettings = vi.fn()
     renderHook(() => useMcpServer(makeProps({ setSettings })))
     mcpHandler({ type: 'update-settings', fields: { imageModel: 'gemini-3-pro-image', videoModelT2V: 'grok-imagine-video-1.5' } })
@@ -60,11 +60,18 @@ describe('useMcpServer — update-settings', () => {
     expect(next.imageModel).toBe('gemini-3-pro-image')
     expect(next.generation.image.provider).toBe('google')
     expect(next.modelsByProvider.openai).toBe('gpt-image-1')
-    expect(next.videoModelT2V).toBe('grok-imagine-video-1.5')
-    expect(next.generation.video.t2v.provider).toBe('grok')
-    expect(next.modelsByProviderVideo.t2v.google).toBe('veo-3.1-fast-generate-preview')
+    expect(next.videoModelT2V).toBe('veo-3.1-fast-generate-preview')
+    expect(next.generation.video.t2v.provider).toBe('google')
     expect(next.generation.video.i2v.provider).toBe('google')
     expect(next.videoModelF2V).toBe('veo-3.1-generate-preview')
+  })
+  // 리뷰 A R2-2: Flow 모드는 provider 축이 없다 — 정렬하지 않고 그대로 병합(Flow heal 이 Flow 모델로 되돌린다)
+  it('Flow 모드: 다른 provider 의 카탈로그 모델이어도 provider 를 바꾸지 않는다', () => {
+    const setSettings = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSettings, mode: 'flow' })))
+    mcpHandler({ type: 'update-settings', fields: { imageModel: 'gpt-image-1' } })
+    const prev = { imageModel: 'Nano Banana 2', generation: { image: { provider: 'google' } } }
+    expect(setSettings.mock.calls[0][0](prev)).toEqual({ ...prev, imageModel: 'gpt-image-1' })
   })
   it('카탈로그 밖 이름(Flow 모델 Nano Banana Pro · Omni Flash)과 같은 provider 의 모델은 provider 를 건드리지 않는다', () => {
     const setSettings = vi.fn()

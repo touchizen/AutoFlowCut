@@ -26,6 +26,10 @@ describe('alignMcpModelProviders', () => {
     expect(alignMcpModelProviders(base, { imageModel: 'Nano Banana Pro', videoModelT2V: 'veo-3.1-lite-generate-preview' }))
       .toEqual({ ...base, imageModel: 'Nano Banana Pro', videoModelT2V: 'veo-3.1-lite-generate-preview' })
   })
+  // 리뷰 A R2-2: Flow 는 provider 축이 없다(설정 화면이 숨긴다) — Flow 모드에서 정렬하면 API 로 돌아왔을 때 {openai, gemini-…} 불일치가 생긴다
+  it("appMode 'flow' 면 정렬하지 않고 그대로 병합", () => {
+    expect(alignMcpModelProviders(base, { imageModel: 'gemini-3-pro-image' }, { appMode: 'flow' })).toEqual({ ...base, imageModel: 'gemini-3-pro-image' })
+  })
   it('모델 키가 없으면 그대로 병합(다른 키만)', () => {
     expect(alignMcpModelProviders(base, { aspectRatio: '9:16' })).toEqual({ ...base, aspectRatio: '9:16' })
   })

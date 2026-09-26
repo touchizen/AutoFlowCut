@@ -155,6 +155,16 @@ describe('retryVideoDownload — authFailed (#R24-3)', () => {
     expect(onUpdate.mock.calls.at(-1)[2]).toMatchObject({ error: 'Invalid xAI API key', errorKind: 'auth' })
   })
 
+  // 리뷰 A R2-3: API(useGenAPI.checkVideoStatus)의 키 거부는 {success:true, statuses, authFailed:true} — error·kind 가 없다. Flow 기본 문구
+  //   ("re-login to Flow") 대신 호출자의 모드별 인증 문구(authErrorText)를 쓴다.
+  it('error·kind 없는 authFailed(API 키 거부)는 호출자의 인증 문구를 쓴다 — Flow 기본 문구가 아니다', async () => {
+    const onUpdate = vi.fn()
+    const genAPI = { checkVideoStatus: vi.fn().mockResolvedValue({ success: true, statuses: [], authFailed: true }), downloadVideo: vi.fn() }
+    const res = await retryVideoDownload({ item: { id: 'vscene_1', generationId: 'models/veo/operations/x', mediaId: 'm1' }, genAPI, onUpdate, projectName: 'p', authErrorText: 'API key was rejected.' })
+    expect(res).toMatchObject({ success: false, authFailed: true, error: 'API key was rejected.' })
+    expect(onUpdate.mock.calls.at(-1)[2]).toMatchObject({ error: 'API key was rejected.', errorKind: 'auth' })
+  })
+
   it('kind 없는 옛 authFailed 결과는 error 그대로이고 결과에 errorKind 가 없다(회귀 없음)', async () => {
     const onUpdate = vi.fn()
     const genAPI = { checkVideoStatus: vi.fn().mockResolvedValue({ success: true, statuses: [], authFailed: true, error: 'Auth expired — please re-login to Flow' }), downloadVideo: vi.fn() }

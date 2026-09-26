@@ -14,8 +14,13 @@ import { computeVideoProviderSwitch } from './videoProviderSwitch'
 
 const VIDEO_STAGE_KEYS = [['t2v', 'videoModelT2V'], ['i2v', 'videoModelF2V']]
 
-/** @returns 병합된 다음 설정(picked 가 마지막에 이긴다) */
-export function alignMcpModelProviders(settings, picked) {
+/**
+ * 리뷰 A R2-2: Flow 모드는 provider 축이 없다(설정 화면이 숨긴다) — 정렬하지 않고 그대로 병합한다(Flow heal 이 Flow 모델로 되돌린다).
+ *   Flow 에서 정렬하면 API 로 돌아왔을 때 {openai, gemini-…} 같은 불일치가 되살아난다.
+ * @returns 병합된 다음 설정(picked 가 마지막에 이긴다)
+ */
+export function alignMcpModelProviders(settings, picked, { appMode } = {}) {
+  if (appMode === 'flow') return { ...(settings || {}), ...(picked || {}) }
   let next = { ...(settings || {}) }
   const image = typeof picked?.imageModel === 'string' ? IMAGE_MODELS.find((m) => m.id === picked.imageModel) : null
   if (image) next = { ...next, ...computeImageProviderSwitch(next, image.provider) }   // 같은 provider 면 {}

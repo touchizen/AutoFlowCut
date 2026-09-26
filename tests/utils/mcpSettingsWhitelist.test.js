@@ -37,6 +37,16 @@ describe('validateMcpSettingsFields — 화이트리스트 + 값 모양', () => 
     expect(validateMcpSettingsFields({ videoModelT2V: 'x'.repeat(64), videoResolution: '4k', aspectRatio: '3:4', defaultDuration: 1, imageBatchCount: 4, concurrency: 10, seedNo: 0, imageUpscale: 'y'.repeat(16) }).ok).toBe(true)
     expect(validateMcpSettingsFields({ defaultDuration: 60, videoBatchCount: 1, videoConcurrency: 1, seedLocked: false }).ok).toBe(true)
   })
+  // multi-provider 병합(리뷰 A R2-1): 시험 단계(provisional) provider 의 카탈로그 모델은 거부 — 설정 화면이 그 provider 를 숨겨서 켜지면 되돌릴 길이 없다.
+  it('시험 단계 provider 의 카탈로그 모델(grok·fal·wavespeed)은 거부, 켜진 provider(google·openai)의 모델·카탈로그 밖 이름(Flow)은 통과', () => {
+    expect(validateMcpSettingsFields({ videoModelT2V: 'grok-imagine-video-1.5' })).toEqual({ ok: false, badKeys: ['videoModelT2V'] })
+    expect(validateMcpSettingsFields({ videoModelF2V: 'fal-ai/kling-video/v2.1/standard/image-to-video' })).toEqual({ ok: false, badKeys: ['videoModelF2V'] })
+    expect(validateMcpSettingsFields({ videoModelT2V: 'wavespeed-ai/wan-2.1/t2v-480p' })).toEqual({ ok: false, badKeys: ['videoModelT2V'] })
+    expect(validateMcpSettingsFields({ imageModel: 'fal-ai/flux-pro/v1.1' })).toEqual({ ok: false, badKeys: ['imageModel'] })
+    expect(validateMcpSettingsFields({ imageModel: 'gpt-image-1', videoModelT2V: 'veo-3.1-fast-generate-preview', videoModelF2V: 'Omni Flash' }).ok).toBe(true)
+    expect(pickMcpSettingsFields({ imageModel: 'gemini-3-pro-image', videoModelT2V: 'grok-imagine-video-1.5' })).toEqual({ imageModel: 'gemini-3-pro-image' })
+  })
+
   it('fields 가 객체가 아니면(없음·문자열·배열) ok:false', () => {
     for (const f of [undefined, null, 'x', 3, ['videoResolution']]) expect(validateMcpSettingsFields(f).ok).toBe(false)
   })

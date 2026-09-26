@@ -329,7 +329,8 @@ export async function retryVideoDownload({
     const DEFAULT_AUTH_TEXT = 'Auth expired — please re-login to Flow'
     const kindBearing = authErrorIsMachineToken(statusResult)   // API provider 분류('auth')는 provider 메시지 그대로(main 병합 리뷰 A F2)
     const authText = typeof authErrorText === 'function' ? authErrorText() : authErrorText
-    const msg = kindBearing ? (authText || DEFAULT_AUTH_TEXT) : (statusResult.error || DEFAULT_AUTH_TEXT)
+    // 리뷰 A R2-3: API(useGenAPI.checkVideoStatus)의 키 거부는 error·kind 가 없다 — Flow 기본 문구("re-login to Flow") 대신 호출자의 모드별 인증 문구
+    const msg = kindBearing ? (authText || DEFAULT_AUTH_TEXT) : (statusResult.error || authText || DEFAULT_AUTH_TEXT)
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flow-login-expired'))
     onUpdate?.(item.id, 'error', { error: msg, errorKind: 'auth', generatingEndedAt: Date.now() })
     return { success: false, error: msg, authFailed: true, ...(kindBearing ? { errorKind: 'auth' } : {}) }

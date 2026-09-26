@@ -149,6 +149,9 @@ export function useMcpServer({
   //   다른 상태처럼 ref 로 최신값을 읽는다(파일 관례).
   const settingsRef = useRef(settings)
   useEffect(() => { settingsRef.current = settings }, [settings])
+  // 리뷰 A R2-2: update-settings 핸들러(effect deps [])가 현재 앱 모드를 읽는다 — Flow 는 provider 정렬을 하지 않는다
+  const modeRef = useRef(mode)
+  useEffect(() => { modeRef.current = mode }, [mode])
 
   // MCP HTTP 서버 시작/중지
   useEffect(() => {
@@ -492,7 +495,7 @@ export function useMcpServer({
         //   먼저 400 으로 거르지만 렌더러도 같은 상수로 막는다(이중 방어). 유효한 키가 없으면 아무것도 하지 않는다.
         const picked = pickMcpSettingsFields(data.fields)
         if (picked && Object.keys(picked).length) {
-          setSettings?.(prev => alignMcpModelProviders(prev, picked))   // 모델 키가 다른 provider 의 카탈로그 모델이면 provider 도 맞춘다(main 병합 리뷰 A F3)
+          setSettings?.(prev => alignMcpModelProviders(prev, picked, { appMode: modeRef.current }))   // 모델 키가 다른 provider 의 카탈로그 모델이면 provider 도 맞춘다(리뷰 A F3 · Flow 는 제외 R2-2)
           console.log('[MCP] Settings updated via HTTP:', Object.keys(picked).join(','))
         }
       } else if (data.type === 'generate-reference') {

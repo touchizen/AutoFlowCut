@@ -28,6 +28,12 @@ describe('decideUpdateRequest — POST /api/update 본문 → {status, body, for
     expect(JSON.stringify(d)).not.toContain('abc')
     expect(JSON.stringify(d)).not.toContain('"B"')
   })
+  // multi-provider 병합(리뷰 A R2-1): 시험 단계 provider 의 카탈로그 모델은 main 이 400 + 키 이름으로 거부한다(에이전트가 거부를 안다)
+  it('update-settings: 시험 단계 provider 모델(grok)이면 400 + keys, 켜진 provider 모델은 200', () => {
+    expect(decideUpdateRequest(JSON.stringify({ type: 'update-settings', fields: { videoModelT2V: 'grok-imagine-video-1.5' } })))
+      .toEqual({ status: 400, body: { error: 'update-settings: unknown or invalid fields', keys: ['videoModelT2V'] } })
+    expect(decideUpdateRequest(JSON.stringify({ type: 'update-settings', fields: { imageModel: 'gpt-image-1' } })).status).toBe(200)
+  })
   it('update-settings: fields 가 객체가 아니면 400', () => {
     expect(decideUpdateRequest(JSON.stringify({ type: 'update-settings' })).status).toBe(400)
     expect(decideUpdateRequest(JSON.stringify({ type: 'update-settings', fields: 'x' })).status).toBe(400)
