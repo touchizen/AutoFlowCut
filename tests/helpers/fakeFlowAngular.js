@@ -13,6 +13,9 @@
 //   opts.modelMenuItems        : (M2-2) 메뉴 항목 목록 덮어쓰기(요청 모델이 없는 메뉴 — model-not-offered 케이스)
 //   opts.modelMenuIcon         : (2026-09-26) 메뉴 항목 앞 아이콘 리거처 — null 이면 아이콘 없음(이미지 메뉴 덤프)
 //   opts.modelSelectIgnored    : (2026-09-26) 메뉴 항목 클릭이 메뉴만 닫고 트리거 라벨은 그대로(선택이 반영 안 되는 페이지 — model-not-reflected)
+//   opts.modelSelectLater      : (2026-09-26) {afterMs, label?, count?} — 모델 항목 클릭(반영) afterMs 뒤 페이지가 트리거 라벨을 label 로 되돌리거나
+//                                개수를 count(예 'x1') 로 리셋한다(안정 대기·재계획이 봐야 하는 늦은 변화)
+//   opts.modelRevertOnCount    : (2026-09-26) 개수 라디오 클릭이 트리거 라벨을 이 값으로 되돌린다(재계획 뒤의 되돌림 — 최종 재판독이 잡아야 한다)
 //   opts.escapeLeavesMenus     : (M2-R1 F6) Escape 가 패널 pane 만 닫고 열린 메뉴 pane 은 남긴다
 //   opts.modelSelectDurations  : (M2-R3 H4) 모델 항목 클릭이 길이 그룹을 이 라벨 목록으로 갈아끼운다(모델마다 길이 옵션이 다르다 — 현재 체크값이 목록에 있으면 유지)
 //   opts.modelSelectDelayMs    : (M2-R4 I7) 그 교체를 클릭 뒤 N ms 지나서 한다(라이브 페이지의 늦은 재렌더 — 고정 150ms 대기가 놓치는 경우)
@@ -96,6 +99,7 @@ export function installFakeAngular(doc, opts = {}) {
       }
       setChecked(btn)
       if (opts.modelReset === 'on-count' && g === 'count') resetGroup('duration', '6초', opts.resetReplaceDelayMs || 0)
+      if (opts.modelRevertOnCount && g === 'count') doc.querySelector('.flow-settings-panel button[aria-haspopup="menu"] .mdc-button__label').textContent = opts.modelRevertOnCount
       // 실기: 페이지가 그룹을 계속 되돌린다(클릭 뒤 ~60ms) — 2차 패스로도 못 맞추면 fail-closed 여야 한다
       if (opts.lockGroup === g) setTimeout(() => resetGroup(g, opts.lockTo), 60)
       return
@@ -122,6 +126,15 @@ export function installFakeAngular(doc, opts = {}) {
       trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-controls')
       btn.closest('.cdk-overlay-pane').remove()
       if (opts.modelSelectIgnored) return
+      if (opts.modelSelectLater) {
+        const m = opts.modelSelectLater
+        setTimeout(() => {
+          if (signal.aborted) return
+          if (m.label) trigger.querySelector('.mdc-button__label').textContent = m.label
+          const c = m.count && Array.from(doc.querySelectorAll('button[role="radio"]')).find((x) => groupOf(x) === 'count' && x.textContent.trim() === m.count)
+          if (c) setChecked(c)
+        }, m.afterMs)
+      }
       if (opts.modelReset === 'sync') { resetGroup('duration', '6초'); resetGroup('resolution', '720p') }
       // M2-CLOSE O6(B3): Veo 항목 클릭이 길이·해상도 행을 없앤다 — afterMs 0 이면 동기, 아니면 N ms 뒤
       if (opts.modelSelectRemoveGroups && /veo/i.test(text)) {

@@ -205,6 +205,39 @@ describe('runSettingsDriver — 페이지 안에서 한 번에(가짜 Angular)',
     expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'keydown:Escape:27', 'keydown:Escape:27', 'keydown:Escape:27'])
   })
 
+  // 리뷰 A(2026-09-26): 이미지 패널엔 길이·해상도 그룹이 없어 안정 대기는 패널 서명으로 끝난다(≈1.5s) — 대기를 빼도 초록이었다.
+  //   모델 클릭 300ms 뒤 Flow 가 개수를 x1 로 리셋하면, 대기 없이 재스캔한 계획은 x2 를 already 로 보고 1장만 만든다.
+  it('이미지 모델 클릭 300ms 뒤 개수 리셋(x2 → x1) → 안정 대기 뒤 재계획이 x2 를 다시 클릭한다', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(imagePage({ checked: { count: 'x2' } }))
+      const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectLater: { afterMs: 300, count: 'x1' } })
+      const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', count: 2, model: 'Nano Banana Pro' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(r).toMatchObject({ ok: true, closed: true, steps: { model: 'clicked', count: 'clicked' } })
+      expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'count:x2', 'keydown:Escape:27'])
+    } finally { vi.useRealTimers() }
+  })
+
+  // 리뷰 A(2026-09-26): 이미지는 제출 뒤 모델 검사가 없다(영상은 modelKeyMatches) — 전환 뒤 되돌림을 잡는 재계획·최종 재판독이 유일한 방어선인데 묶이지 않았다.
+  it('반영 뒤 100ms 에 Flow 가 모델을 🍌 Nano Banana 2 로 되돌리면(개수도 바뀜) 재계획이 model-not-reflected 로 멈춘다 — 비율·개수 클릭 없음', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = mount(imagePage())
+      const log = installFakeAngular(doc, { ...IMAGE_MENU, modelSelectLater: { afterMs: 100, label: '🍌 Nano Banana 2', count: 'x2' } })
+      const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', model: 'Nano Banana Pro' }, { sleep: (ms) => vi.advanceTimersByTimeAsync(ms) })
+      expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'model-not-reflected', closed: true, steps: { model: 'clicked' } })
+      expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'keydown:Escape:27'])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('재계획 뒤 개수 클릭이 모델을 되돌리면 최종 재판독이 not-checked:model 로 멈춘다(ok 로 닫지 않는다)', async () => {
+    const doc = mount(imagePage())
+    const log = installFakeAngular(doc, { ...IMAGE_MENU, modelRevertOnCount: '🍌 Nano Banana 2' })
+    const r = await runSettingsDriver(doc, { mode: 'image', ratio: '16:9', count: 2, model: 'Nano Banana Pro' }, noSleep)
+    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'not-checked:model', closed: true })
+    expect(log).toEqual(['model-trigger', 'model:🍌 nano banana pro', 'count:x2', 'keydown:Escape:27'])
+  })
+
   it('(a) 동기 리셋: 모드 전환 → 재스캔 → 모델 메뉴 선택 → duration 이 되돌아가 모델 뒤에 다시 클릭 → ok', async () => {
     const doc = mount(imagePage())
     const log = installFakeAngular(doc, { modelReset: 'sync' })
