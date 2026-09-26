@@ -134,14 +134,16 @@ describe('useMcpServer — update-scenes / update-scene 은 generation 병합 �
     expect(updater(prev)[0].generation).toEqual({ image: { provider: 'google', model: 'gemini-3-pro-image' } })
   })
   // 리뷰 B R2 F2: 위 케이스는 image→image 전체 교체라 "병합 결과"와 "들어온 값 그대로"가 같다 — 일부 stage 만 보내면 나머지 override 가 남아야 한다.
-  it('update-scene: t2v override 만 보내면 기존 image override 는 남는다', () => {
+  //   리뷰 B R3 N1: 같은 video 아래의 i2v 도 남아야 한다 — top-level 얕은 병합({...s.generation, ...fields.generation})은 video 를 통째로 덮는다.
+  it('update-scene: t2v override 만 보내면 기존 image·i2v override 는 남는다', () => {
     const setScenes = vi.fn()
     renderHook(() => useMcpServer(makeProps({ setScenes })))
     mcpHandler({ type: 'update-scene', index: 0, fields: { generation: { video: { t2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' } } } } })
     const updater = setScenes.mock.calls.at(-1)[0]
-    expect(updater(prev)[0].generation).toEqual({
+    const withI2v = [{ ...prev[0], generation: { ...prev[0].generation, video: { i2v: { provider: 'google', model: 'veo-3.1-generate-preview' } } } }]
+    expect(updater(withI2v)[0].generation).toEqual({
       image: { provider: 'openai', model: 'gpt-image-1' },
-      video: { t2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' } },
+      video: { t2v: { provider: 'google', model: 'veo-3.1-fast-generate-preview' }, i2v: { provider: 'google', model: 'veo-3.1-generate-preview' } },
     })
   })
 })
