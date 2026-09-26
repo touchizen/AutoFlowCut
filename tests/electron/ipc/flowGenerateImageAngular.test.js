@@ -448,8 +448,10 @@ describe('flow:generate-image (angular) — 에이전트·캡처·설정', () =>
 
   it('설정 실패(flow-image-model-mismatch) → params 포함, 클릭 없음, onDomFailure(settings:…) 내용 없음', async () => {
     const h = harness({ settings: { ok: false, kind: 'flow-image-model-mismatch', reason: 'flow-image-model-mismatch', params: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' }, steps: { mode: 'already' } } })
-    const r = await settle(h.generate({ model: 'Nano Banana Pro' }))
+    const r = await settle(h.generate({ model: 'Nano Banana Pro', aspectRatio: '9:16', batchCount: 2 }))
     expect(r).toMatchObject({ success: false, errorKind: 'flow-image-model-mismatch', error: 'flow-image-model-mismatch', errorParams: { requested: 'Nano Banana Pro', panel: 'Nano Banana 2' } })
+    // 리뷰 B R2: 하네스 기본값(2 · 16:9 · 1장)이 아닌 요청값이 드라이버 targets 로 그대로 간다 — IPC 가 모델·개수를 상수로 박으면 빨갛다
+    expect(h.targets()).toEqual({ mode: 'image', ratio: '9:16', count: 2, model: 'Nano Banana Pro' })
     expect(h.trace).not.toContain('click:compose-submit')
     const call = h.onDomFailure.mock.calls.find((c) => String(c[0]).startsWith('settings:'))
     expect(call).toBeTruthy()
