@@ -2,6 +2,8 @@
 
 > 사용자 지시: "AutoFlowCut-selfrender 에도 main 에 올라와 있는 commit 들을 병합해줘 — 나중에 다시 main 에 병합하려는 것."
 > 규칙: 리뷰는 Opus 5.5 서브에이전트 2명(A 의미 · B 테스트/뮤테이션), **둘 다 findings 0** 뒤 푸시.
+> ✅ **이어서 self-render → main 병합·푸시 `586f37b6`**(`--no-ff`, 트리는 `a6d392b4` 와 동일, 2026-09-27). 사용자 결정으로 실앱 스모크는 생략했다.
+>   main 에서 스위트 10008 통과·빌드 통과 · 번들 ffmpeg(`npm run stage:ffmpeg`, 7.x) 렌더 smoke ✅ · 시스템 ffmpeg 9 smoke 3개 ✗(§4-1, 병합 전부터). 브랜치 `feature/self-render` 는 병합 뒤 삭제.
 
 ## 1. 상태
 
