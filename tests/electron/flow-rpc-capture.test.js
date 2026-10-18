@@ -7,7 +7,7 @@
 // doc 은 문서마다 새 32hex nonce(같은 문서 재주입은 유지), seq 는 문서 안 카운터 — {doc, seq} 가 상관키.
 import { describe, it, expect, vi } from 'vitest'
 import vm from 'node:vm'
-import { FLOW_RPC_CAPTURE_INJECTION, FLOW_RPC_CAPTURE_ALLOWLIST } from '../../electron/flow-rpc-capture.js'
+import { FLOW_RPC_CAPTURE_INJECTION, FLOW_RPC_CAPTURE_ALLOWLIST, FETCH_BODY_READ_MAX_MS } from '../../electron/flow-rpc-capture.js'
 import { sample, reencodeRequestBody, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
 
@@ -49,7 +49,7 @@ function makePage({ electronAPI = { flowReportResponse: vi.fn(() => Promise.reso
   }
   const context = vm.createContext({
     window: windowObject, location: windowObject.location, console: { log() {}, warn() {}, error() {} },
-    Date: { now: () => NOW_MS }, URL, URLSearchParams: CountingURLSearchParams, JSON, String, Object,
+    Date: { now: () => NOW_MS }, URL, URLSearchParams: CountingURLSearchParams, JSON, String, Object, setTimeout, clearTimeout,
   })
   const inject = () => vm.runInContext(FLOW_RPC_CAPTURE_INJECTION, context)
   inject()
@@ -340,6 +340,45 @@ describe('FLOW_RPC_CAPTURE_INJECTION — fetch 경로(2026-10 Flow)', () => {
     const page = makePage({ fetchImpl: () => { throw boom } })
     expect(() => page.windowObject.fetch(new FakeRequest(url('maseQ'), { method: 'POST', body: 'x' }))).toThrow(boom)
     expect(page.reports().map((e) => [e.kind, e.status])).toEqual([['batchexecute-send', undefined], ['batchexecute', 0]])
+  })
+
+  it('[Codex R1-1] 무관한 요청의 init 접근자는 읽지 않고, batchexecute 요청은 method·body 를 한 번씩만 읽는다', () => {
+    const page = makePage()
+    const reads = { method: 0, body: 0 }
+    const initOf = (method, body) => ({
+      get method() { reads.method++; return method },
+      get body() { reads.body++; return body },
+    })
+    page.windowObject.fetch('https://www.google-analytics.com/g/collect', initOf('POST', 'x'))
+    page.windowObject.fetch(url('as29s'), initOf('POST', 'x'))
+    expect(reads).toEqual({ method: 0, body: 0 })
+    page.windowObject.fetch(url('ogiZ0b'), initOf('POST', imageBody()))
+    expect(reads).toEqual({ method: 1, body: 1 })
+    expect(page.reports()[0]).toMatchObject({ rpcid: 'ogiZ0b', prompts: [PROMPT] })
+  })
+
+  it('[Codex R1-2] 멀티 배치(maseQ 가 섞일 수 있다)는 XHR·fetch 모두 본문을 읽지 않는다', async () => {
+    const page = makePage()
+    const req = new FakeRequest(url('ogiZ0b,maseQ'), { method: 'POST', body: s3RequestBody(4) })
+    await page.windowObject.fetch(req)
+    page.post(url('ogiZ0b,maseQ'), s3RequestBody(4))
+    await flush()
+    expect(req.clones).toBe(0)
+    expect(page.decodes).toEqual([])
+    const sends = page.reports().filter((e) => e.kind === 'batchexecute-send')
+    expect(sends.map((e) => [e.rpcid, e.multi, e.prompts])).toEqual([['ogiZ0b', true, []], ['ogiZ0b', true, []]])
+    for (const e of sends) expect(JSON.stringify(e)).not.toMatch(/image\.png|<b64/)
+  })
+
+  it('[Codex R1-3] Request 본문 판독이 끝나지 않아도 send 는 상한 안에 보고되고 loadend 가 뒤따른다', async () => {
+    const boom = new Error('aborted')
+    const page = makePage({ fetchImpl: () => Promise.reject(boom) })
+    const req = new FakeRequest(url('ogiZ0b'), { method: 'POST', body: imageBody() })
+    req.clone = () => ({ text: () => new Promise(() => {}) })   // 영영 settle 하지 않는 판독
+    await expect(page.windowObject.fetch(req)).rejects.toBe(boom)
+    await new Promise((r) => setTimeout(r, FETCH_BODY_READ_MAX_MS + 50))
+    expect(page.reports().map((e) => [e.kind, e.status])).toEqual([['batchexecute-send', undefined], ['batchexecute', 0]])
+    expect(page.reports()[0]).toMatchObject({ prompts: [], refs: null, mentions: null })
   })
 
   it('재주입은 fetch 를 한 겹만 감싼다(호출 1건 = send 보고 1건) · toString 은 네이티브처럼', () => {

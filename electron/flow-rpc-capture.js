@@ -27,6 +27,9 @@ import { decodeFReqInner, extractSubmitPrompts, extractSubmitRefs } from './flow
 
 export const FLOW_RPC_CAPTURE_ALLOWLIST = Object.freeze(['ogiZ0b', 'YhhmEf', 'MZZa6b', 'maseQ'])
 
+// fetch(Request) 본문(clone) 판독 상한 — 넘으면 본문 없이 send 를 보고한다(판독이 영영 settle 하지 않아도 send·loadend 가 매달리지 않게).
+export const FETCH_BODY_READ_MAX_MS = 1000
+
 export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
 (function () {
   const decodeFReqInner = ${decodeFReqInner.toString()};
@@ -61,22 +64,24 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
   if (typeof window.__autoflowcut_rpc_seq__ !== 'number') window.__autoflowcut_rpc_seq__ = 0
   window.__autoflowcut_rpc_capture__ = true
 
-  // XHR·fetch 공용 — POST …/data/batchexecute 의 허용 rpc 면 send 이벤트(본문 판독 전, seq 하나 사용), 아니면 null.
-  const sendEventFor = function (method, url) {
-    if (method !== 'POST') return null
+  // XHR·fetch 공용 — …/data/batchexecute 의 허용 rpc 면 {rpcid, rpcids}, 아니면 null(seq 를 쓰지 않는다).
+  const batchRpcOf = function (url) {
     let u = null
     try { u = new URL(url, window.location && window.location.href) } catch (_) { return null }
     if (!u.pathname.endsWith('/data/batchexecute')) return null
     const rpcids = String(u.searchParams.get('rpcids') || '').split(',').filter(function (x) { return !!x })
-    let rpcid = null
-    for (let i = 0; i < rpcids.length; i++) { if (ALLOW[rpcids[i]]) { rpcid = rpcids[i]; break } }
-    if (!rpcid) return null
+    for (let i = 0; i < rpcids.length; i++) { if (ALLOW[rpcids[i]]) return { rpcid: rpcids[i], rpcids: rpcids } }
+    return null
+  }
+  const newSendEvent = function (m) {
     const seq = (window.__autoflowcut_rpc_seq__ = window.__autoflowcut_rpc_seq__ + 1)
-    const ev = { kind: 'batchexecute-send', doc: doc, rpcid: rpcid, rpcids: rpcids, seq: seq, prompts: [], sentAt: Date.now() / 1000 }
-    if (rpcids.length > 1) ev.multi = true
+    const ev = { kind: 'batchexecute-send', doc: doc, rpcid: m.rpcid, rpcids: m.rpcids, seq: seq, prompts: [], sentAt: Date.now() / 1000 }
+    if (m.rpcids.length > 1) ev.multi = true
     return ev
   }
-  // 제출 본문 → prompts·refs·mentions. maseQ 에는 부르지 않는다(업로드 본문 base64·파일명은 풀지 않는다).
+  // 본문을 읽어도 되는 send — 단일 제출 rpc 만. maseQ(업로드 base64·파일명)와 멀티 배치(maseQ 가 섞일 수 있고 라우터가 어차피 거절)는 읽지 않는다.
+  const readsBody = function (ev) { return ev.rpcids.length === 1 && ev.rpcid !== 'maseQ' }
+  // 제출 본문 → prompts·refs·mentions(판독 불가면 prompts [] · refs·mentions null).
   const fillSubmit = function (ev, body) {
     const decoded = typeof body === 'string' ? decodeFReqInner(body) : null
     const refs = decoded ? extractSubmitRefs(ev.rpcid, decoded.inner) : null
@@ -101,10 +106,11 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
   XHR.prototype.send = function (body) {
     try {
       const t = this.__af_rpc
-      const ev = t && !t.armed ? sendEventFor(t.method, t.url) : null
-      if (ev) {
+      const m = t && !t.armed && t.method === 'POST' ? batchRpcOf(t.url) : null
+      if (m) {
         t.armed = true
-        if (ev.rpcid !== 'maseQ') fillSubmit(ev, body)
+        const ev = newSendEvent(m)
+        if (readsBody(ev)) fillSubmit(ev, body)
         report(ev)
         const xhr = this
         this.addEventListener('loadend', function () {
@@ -120,31 +126,45 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
   }
 
   // 2026-10-18 실기: Flow 가 batchexecute 를 fetch(Request) 로도 보낸다(maseQ·ogiZ0b 등) — XHR 만 감싸면 send 를 못 봐 upload-not-sent.
-  //   같은 doc·seq·이벤트 모양으로 보고한다. Request 본문은 clone 으로만 읽고(원본 미소비), maseQ 본문은 읽지 않는다.
-  //   본문 판독이 실패해도 send 는 보고하고(loadend 만 남지 않게), loadend 는 send 보고 뒤에 — 라우터는 send 로 바인딩하고 loadend 를 {doc, seq} 로 찾는다.
+  //   같은 doc·seq·이벤트 모양으로 보고한다. init 은 batchexecute 일 때만 한 번씩 읽고(무관한 요청의 접근자는 건드리지 않는다),
+  //   Request 본문은 clone 으로만(원본 미소비) ≤ FETCH_BODY_READ_MAX_MS 읽는다. 판독이 실패·지연돼도 send 는 보고하고,
+  //   loadend 는 send 보고 뒤에 — 라우터는 send 로 바인딩하고 loadend 를 {doc, seq} 로 찾는다.
   const _fetch = window.fetch
   if (typeof _fetch === 'function') {
     const patchedFetch = function (input, init) {
       let ev = null
+      let raw = null
       try {
         const isObj = !!input && typeof input === 'object'
-        const url = typeof input === 'string' ? input : (isObj && typeof input.url === 'string' ? input.url : String(input))
-        ev = sendEventFor(String((init && init.method) || (isObj && input.method) || 'GET').toUpperCase(), url)
+        const m = batchRpcOf(typeof input === 'string' ? input : (isObj && typeof input.url === 'string' ? input.url : String(input)))
+        if (m) {
+          const initMethod = init ? init.method : undefined
+          if (String(initMethod || (isObj && input.method) || 'GET').toUpperCase() === 'POST') {
+            ev = newSendEvent(m)
+            if (readsBody(ev) && init) raw = init.body
+          }
+        }
       } catch (_) { ev = null }
       if (!ev) return _fetch.apply(this, arguments)
 
+      let sent = false
+      const sendOnce = function () { if (!sent) { sent = true; report(ev) } }
       let sendDone = null
       try {
-        const raw = init && init.body != null ? init.body : null
-        if (ev.rpcid === 'maseQ') report(ev)
+        if (!readsBody(ev)) sendOnce()
         else if (raw == null && typeof input === 'object' && typeof input.clone === 'function') {
+          fillSubmit(ev, null)   // 판독 전 기본값(검증 불가) — 판독이 늦거나 실패하면 이대로 보고
           let text = null
           try { text = input.clone().text() } catch (_) { text = null }
           if (text && typeof text.then === 'function') {
-            sendDone = text.then(function (t) { fillSubmit(ev, t) }, function () { fillSubmit(ev, null) }).then(function () { report(ev) }, function () { report(ev) })
-          } else { fillSubmit(ev, null); report(ev) }
-        } else { fillSubmit(ev, typeof raw === 'string' ? raw : null); report(ev) }
-      } catch (_) { report(ev) }
+            sendDone = new Promise(function (resolve) {
+              const finish = function () { sendOnce(); resolve() }
+              try { setTimeout(finish, ${FETCH_BODY_READ_MAX_MS}) } catch (_) {}
+              text.then(function (t) { if (!sent) fillSubmit(ev, t) }, function () {}).then(finish, finish)
+            })
+          } else sendOnce()
+        } else { fillSubmit(ev, typeof raw === 'string' ? raw : null); sendOnce() }
+      } catch (_) { sendOnce() }
 
       const end = function (status, text) {
         const fire = function () { report(loadendEvent(ev, status, text)) }
