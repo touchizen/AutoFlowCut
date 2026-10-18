@@ -89,6 +89,12 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
     ev.refs = refs ? refs.refs : null
     ev.mentions = refs ? refs.mentions : null
   }
+  // init 속성을 접근자 호출 없이 읽는다 — 자기 데이터 속성만 값, 접근자·상속 속성은 accessor(값 모름). 페이지 getter 는 native fetch 만 부른다.
+  const initProp = function (init, key) {
+    if (!init || (typeof init !== 'object' && typeof init !== 'function') || !(key in init)) return { accessor: false, value: undefined }
+    const d = Object.getOwnPropertyDescriptor(init, key)
+    return d && 'value' in d ? { accessor: false, value: d.value } : { accessor: true, value: undefined }
+  }
   const loadendEvent = function (ev, status, text) {
     return { kind: 'batchexecute', doc: doc, rpcid: ev.rpcid, seq: ev.seq, status: status, responseText: text, endedAt: Date.now() / 1000 }
   }
@@ -126,7 +132,7 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
   }
 
   // 2026-10-18 실기: Flow 가 batchexecute 를 fetch(Request) 로도 보낸다(maseQ·ogiZ0b 등) — XHR 만 감싸면 send 를 못 봐 upload-not-sent.
-  //   같은 doc·seq·이벤트 모양으로 보고한다. init 은 batchexecute 일 때만 한 번씩 읽고(무관한 요청의 접근자는 건드리지 않는다),
+  //   같은 doc·seq·이벤트 모양으로 보고한다. init 은 batchexecute 일 때만, 데이터 속성만 읽는다(페이지 getter 는 부르지 않는다 — method 가 접근자면 관측하지 않는다),
   //   Request 본문은 clone 으로만(원본 미소비) ≤ FETCH_BODY_READ_MAX_MS 읽는다. 판독이 실패·지연돼도 send 는 보고하고,
   //   loadend 는 send 보고 뒤에 — 라우터는 send 로 바인딩하고 loadend 를 {doc, seq} 로 찾는다.
   const _fetch = window.fetch
@@ -134,15 +140,14 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
     const patchedFetch = function (input, init) {
       let ev = null
       let raw = null
+      let bodyKnown = true   // false = init.body 가 접근자(값을 모른다 — 부르지 않는다)
       try {
         const isObj = !!input && typeof input === 'object'
         const m = batchRpcOf(typeof input === 'string' ? input : (isObj && typeof input.url === 'string' ? input.url : String(input)))
-        if (m) {
-          const initMethod = init ? init.method : undefined
-          if (String(initMethod || (isObj && input.method) || 'GET').toUpperCase() === 'POST') {
-            ev = newSendEvent(m)
-            if (readsBody(ev) && init) raw = init.body
-          }
+        const im = m ? initProp(init, 'method') : null
+        if (im && !im.accessor && String(im.value || (isObj && input.method) || 'GET').toUpperCase() === 'POST') {
+          ev = newSendEvent(m)
+          if (readsBody(ev)) { const ib = initProp(init, 'body'); if (ib.accessor) bodyKnown = false; else raw = ib.value }
         }
       } catch (_) { ev = null }
       if (!ev) return _fetch.apply(this, arguments)
@@ -152,6 +157,7 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
       let sendDone = null
       try {
         if (!readsBody(ev)) sendOnce()
+        else if (!bodyKnown) { fillSubmit(ev, null); sendOnce() }
         else if (raw == null && typeof input === 'object' && typeof input.clone === 'function') {
           fillSubmit(ev, null)   // 판독 전 기본값(검증 불가) — 판독이 늦거나 실패하면 이대로 보고
           let text = null

@@ -342,19 +342,28 @@ describe('FLOW_RPC_CAPTURE_INJECTION — fetch 경로(2026-10 Flow)', () => {
     expect(page.reports().map((e) => [e.kind, e.status])).toEqual([['batchexecute-send', undefined], ['batchexecute', 0]])
   })
 
-  it('[Codex R1-1] 무관한 요청의 init 접근자는 읽지 않고, batchexecute 요청은 method·body 를 한 번씩만 읽는다', () => {
+  it('[Codex R1-1·R2-1] 페이지의 init 접근자(getter)는 절대 부르지 않는다 — 데이터 속성만 읽고, method 가 접근자면 관측 없이 통과', async () => {
+    // native fetch 처럼 init 을 직접 읽는 스텁 + 두 번째 읽기에서 throw 하는 접근자: 래퍼가 한 번이라도 읽으면 요청이 깨진다.
+    const page = makePage({ fetchImpl: (_input, init) => { if (init) { void init.method; void init.body } return Promise.resolve(new FakeResponse(200, 'OK')) } })
+    const once = (v) => { let n = 0; return () => { if (++n > 1) throw new Error('second read'); return v } }
+    const accessorInit = (method, body) => { const m = once(method); const b = once(body); return { get method() { return m() }, get body() { return b() } } }
+    await expect(page.windowObject.fetch('https://www.google-analytics.com/g/collect', accessorInit('POST', 'x'))).resolves.toBeTruthy()
+    await expect(page.windowObject.fetch(url('ogiZ0b'), accessorInit('POST', imageBody()))).resolves.toBeTruthy()
+    expect(page.reports()).toHaveLength(0)   // method 를 모르면(접근자) 관측하지 않는다
+    const bodyAccessor = { method: 'POST' }
+    const b = once(imageBody())
+    Object.defineProperty(bodyAccessor, 'body', { get: () => b(), enumerable: true })
+    const req = new FakeRequest(url('ogiZ0b'), { method: 'POST', body: imageBody() })
+    await expect(page.windowObject.fetch(req, bodyAccessor)).resolves.toBeTruthy()
+    await flush()
+    expect(req.clones).toBe(0)   // init.body 가 Request 본문을 덮으므로 Request 본문도 읽지 않는다
+    expect(page.reports()[0]).toMatchObject({ kind: 'batchexecute-send', rpcid: 'ogiZ0b', prompts: [], refs: null, mentions: null })
+  })
+
+  it('[Codex R2-1] 데이터 속성 init 은 그대로 관측된다(method·body 값)', () => {
     const page = makePage()
-    const reads = { method: 0, body: 0 }
-    const initOf = (method, body) => ({
-      get method() { reads.method++; return method },
-      get body() { reads.body++; return body },
-    })
-    page.windowObject.fetch('https://www.google-analytics.com/g/collect', initOf('POST', 'x'))
-    page.windowObject.fetch(url('as29s'), initOf('POST', 'x'))
-    expect(reads).toEqual({ method: 0, body: 0 })
-    page.windowObject.fetch(url('ogiZ0b'), initOf('POST', imageBody()))
-    expect(reads).toEqual({ method: 1, body: 1 })
-    expect(page.reports()[0]).toMatchObject({ rpcid: 'ogiZ0b', prompts: [PROMPT] })
+    page.windowObject.fetch(url('ogiZ0b'), { method: 'post', body: imageBody() })
+    expect(page.reports()[0]).toMatchObject({ rpcid: 'ogiZ0b', prompts: [PROMPT], refs: [], mentions: [] })
   })
 
   it('[Codex R1-2] 멀티 배치(maseQ 가 섞일 수 있다)는 XHR·fetch 모두 본문을 읽지 않는다', async () => {
