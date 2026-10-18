@@ -325,6 +325,23 @@ describe('FLOW_RPC_CAPTURE_INJECTION — fetch 경로(2026-10 Flow)', () => {
     expect(page.reports()[1]).toMatchObject({ kind: 'batchexecute', rpcid: 'maseQ', seq: 1, status: 0, responseText: '' })
   })
 
+  it('Request clone 이 throw 해도 send 는 보고된다(prompts [], refs·mentions null) — loadend 만 남지 않게', async () => {
+    const page = makePage()
+    const req = new FakeRequest(url('ogiZ0b'), { method: 'POST', body: imageBody() })
+    req.clone = () => { throw new TypeError('body already used') }
+    await page.windowObject.fetch(req)
+    await flush()
+    expect(page.reports().map((e) => e.kind)).toEqual(['batchexecute-send', 'batchexecute'])
+    expect(page.reports()[0]).toMatchObject({ rpcid: 'ogiZ0b', seq: 1, prompts: [], refs: null, mentions: null })
+  })
+
+  it('원래 fetch 가 동기로 throw → loadend status 0 보고 후 같은 예외(바인딩된 gen 이 100s 매달리지 않게)', () => {
+    const boom = new TypeError('Illegal invocation')
+    const page = makePage({ fetchImpl: () => { throw boom } })
+    expect(() => page.windowObject.fetch(new FakeRequest(url('maseQ'), { method: 'POST', body: 'x' }))).toThrow(boom)
+    expect(page.reports().map((e) => [e.kind, e.status])).toEqual([['batchexecute-send', undefined], ['batchexecute', 0]])
+  })
+
   it('재주입은 fetch 를 한 겹만 감싼다(호출 1건 = send 보고 1건) · toString 은 네이티브처럼', () => {
     const page = makePage()
     page.inject()
