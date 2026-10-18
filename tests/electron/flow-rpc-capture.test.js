@@ -24,10 +24,24 @@ class FakeXHR {
   _finish(status, text) { this.status = status; this.responseText = text; for (const fn of this._l.loadend || []) fn.call(this) }
 }
 
-function makePage({ electronAPI = { flowReportResponse: vi.fn(() => Promise.resolve({ ok: true })) }, href = 'https://flow.google.com/project/abc' } = {}) {
+// 2026-10 실기: Flow 는 batchexecute 를 fetch(Request) 로 보낸다. Request 본문은 원본을 소비하지 않고 clone 으로만 읽어야 한다.
+class FakeRequest {
+  constructor(url, { method = 'GET', body = null } = {}) { this.url = url; this.method = method; this._body = body; this.bodyUsed = false; this.clones = 0 }
+  clone() { this.clones++; return new FakeRequest(this.url, { method: this.method, body: this._body }) }
+  text() { this.bodyUsed = true; return Promise.resolve(this._body == null ? '' : String(this._body)) }
+}
+class FakeResponse {
+  constructor(status, body) { this.status = status; this._body = body }
+  clone() { return new FakeResponse(this.status, this._body) }
+  text() { return Promise.resolve(this._body) }
+}
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+function makePage({ electronAPI = { flowReportResponse: vi.fn(() => Promise.resolve({ ok: true })) }, href = 'https://flow.google.com/project/abc', fetchImpl } = {}) {
   // 문서마다 XMLHttpRequest 가 따로 있다(브라우저) — 컨텍스트마다 자기 prototype 을 가진 서브클래스.
   class PageXHR extends FakeXHR {}
-  const windowObject = { XMLHttpRequest: PageXHR, location: { href }, electronAPI }
+  const pageFetch = vi.fn(fetchImpl || (() => Promise.resolve(new FakeResponse(200, 'OK'))))
+  const windowObject = { XMLHttpRequest: PageXHR, fetch: pageFetch, location: { href }, electronAPI }
   // M3-2: 본문 디코드(decodeFReqInner 의 new URLSearchParams(body))를 센다 — maseQ 본문은 디코드되면 안 된다. URL 의 searchParams 는 이 전역을 안 쓴다.
   const decodes = []
   class CountingURLSearchParams extends URLSearchParams {
@@ -41,7 +55,7 @@ function makePage({ electronAPI = { flowReportResponse: vi.fn(() => Promise.reso
   inject()
   const reports = () => (electronAPI ? electronAPI.flowReportResponse.mock.calls.map((c) => c[0]) : [])
   const post = (url, body) => { const x = new windowObject.XMLHttpRequest(); x.open('POST', url); x.setRequestHeader('X-Same-Domain', '1'); x.send(body); return x }
-  return { windowObject, context, inject, reports, post, decodes }
+  return { windowObject, context, inject, reports, post, decodes, pageFetch }
 }
 
 const imageBody = () => reencodeRequestBody(sample('ogiZ0b').reqBody)
@@ -237,5 +251,85 @@ describe('M3-2 FLOW_RPC_CAPTURE_INJECTION — MZZa6b·maseQ 와 refs/mentions', 
     const page = makePage()
     page.post(url('MZZa6b'), 'f.req=%7Bbroken&at=SECRET&')
     expect(page.reports()[0]).toMatchObject({ rpcid: 'MZZa6b', prompts: [], refs: null, mentions: null })
+  })
+})
+
+// 2026-10-18 실기(AUTOFLOWCUT_NET_TRACE): Flow 가 batchexecute 를 XHR 이 아니라 fetch(Request) 로 보낸다 — maseQ 업로드가 나가고 200 이 와도
+//   XHR 만 감싼 캡처는 send 를 못 봐서 upload-not-sent(15s)로 실패했다. fetch 경로도 같은 이벤트(같은 doc·seq 카운터)로 보고한다. 관측만.
+describe('FLOW_RPC_CAPTURE_INJECTION — fetch 경로(2026-10 Flow)', () => {
+  const url = (rpcid) => BATCH + '?rpcids=' + rpcid + '&source-path=%2Fproject%2Fabc&bl=B&f.sid=S&hl=ko&_reqid=1&rt=c'
+
+  it('fetch(Request POST maseQ) → send 즉시 보고(본문 미판독) → 응답 뒤 loadend(responseText)', async () => {
+    const page = makePage({ fetchImpl: () => Promise.resolve(new FakeResponse(200, s3(4).respBody)) })
+    const req = new FakeRequest(url('maseQ'), { method: 'POST', body: s3RequestBody(4) })
+    const p = page.windowObject.fetch(req)
+    expect(page.reports()).toEqual([{
+      kind: 'batchexecute-send', doc: expect.stringMatching(/^[0-9a-f]{32}$/), rpcid: 'maseQ', rpcids: ['maseQ'], seq: 1,
+      prompts: [], sentAt: 1790240102.5,
+    }])
+    const res = await p
+    await flush()
+    const [sendEv, endEv] = page.reports()
+    expect(endEv).toEqual({ kind: 'batchexecute', doc: sendEv.doc, rpcid: 'maseQ', seq: 1, status: 200, responseText: s3(4).respBody, endedAt: 1790240102.5 })
+    expect(res.status).toBe(200)
+    expect(req.clones).toBe(0)                   // maseQ 본문(수 MB)은 읽지 않는다
+    expect(req.bodyUsed).toBe(false)
+    expect(page.decodes).toEqual([])
+    expect(page.pageFetch).toHaveBeenCalledWith(req)   // 원래 fetch 에 그대로
+  })
+
+  it('fetch(url, {method:POST, body:string}) ogiZ0b → send 에 prompts·refs·mentions', () => {
+    const page = makePage()
+    const init = { method: 'POST', body: imageBody() }
+    page.windowObject.fetch(url('ogiZ0b'), init)
+    expect(page.reports()[0]).toMatchObject({ kind: 'batchexecute-send', rpcid: 'ogiZ0b', seq: 1, prompts: [PROMPT], refs: [], mentions: [] })
+    expect(page.pageFetch).toHaveBeenCalledWith(url('ogiZ0b'), init)
+  })
+
+  it('fetch(Request) ogiZ0b → clone 으로 본문을 읽어 prompts — 원본 본문은 소비하지 않고, send 가 loadend 보다 먼저', async () => {
+    const page = makePage({ fetchImpl: () => Promise.resolve(new FakeResponse(200, sample('ogiZ0b').respBody)) })
+    const req = new FakeRequest(url('ogiZ0b'), { method: 'POST', body: imageBody() })
+    await page.windowObject.fetch(req)
+    await flush()
+    const evs = page.reports()
+    expect(evs.map((e) => e.kind)).toEqual(['batchexecute-send', 'batchexecute'])
+    expect(evs[0]).toMatchObject({ rpcid: 'ogiZ0b', prompts: [PROMPT], refs: [], mentions: [] })
+    expect(evs[1]).toMatchObject({ rpcid: 'ogiZ0b', seq: 1, status: 200, responseText: sample('ogiZ0b').respBody })
+    expect(req.bodyUsed).toBe(false)
+  })
+
+  it('XHR 과 fetch 는 같은 doc·seq 카운터를 쓴다', () => {
+    const page = makePage()
+    page.post(url('ogiZ0b'), imageBody())
+    page.windowObject.fetch(new FakeRequest(url('maseQ'), { method: 'POST', body: 'x' }))
+    const evs = page.reports()
+    expect(evs.map((e) => [e.rpcid, e.seq])).toEqual([['ogiZ0b', 1], ['maseQ', 2]])
+    expect(evs[1].doc).toBe(evs[0].doc)
+  })
+
+  it('허용 목록 밖·GET·비-batchexecute fetch 는 보고하지 않고 그대로 통과', async () => {
+    const page = makePage()
+    await page.windowObject.fetch(new FakeRequest(url('as29s'), { method: 'POST', body: 'f.req=%5B%5D&at=SECRET&' }))
+    await page.windowObject.fetch(url('maseQ'))                                    // GET
+    await page.windowObject.fetch('https://www.google-analytics.com/g/collect', { method: 'POST', body: 'x' })
+    await flush()
+    expect(page.reports()).toHaveLength(0)
+    expect(page.pageFetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('네트워크 실패(reject) → loadend status 0 보고, 호출자에겐 같은 reject', async () => {
+    const boom = new Error('net down')
+    const page = makePage({ fetchImpl: () => Promise.reject(boom) })
+    await expect(page.windowObject.fetch(new FakeRequest(url('maseQ'), { method: 'POST', body: 'x' }))).rejects.toBe(boom)
+    await flush()
+    expect(page.reports()[1]).toMatchObject({ kind: 'batchexecute', rpcid: 'maseQ', seq: 1, status: 0, responseText: '' })
+  })
+
+  it('재주입은 fetch 를 한 겹만 감싼다(호출 1건 = send 보고 1건) · toString 은 네이티브처럼', () => {
+    const page = makePage()
+    page.inject()
+    page.windowObject.fetch(new FakeRequest(url('maseQ'), { method: 'POST', body: 'x' }))
+    expect(page.reports()).toHaveLength(1)
+    expect(String(page.windowObject.fetch)).toBe('function fetch() { [native code] }')
   })
 })

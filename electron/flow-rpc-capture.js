@@ -3,7 +3,7 @@
  *
  * flow.google.com 제출 RPC 캡처 주입 — **프로덕션, 항상 켜짐**(진단 트레이스 flow-xhr-capture.js 와 별개).
  *
- * 새 Flow(Angular) 는 이미지 생성(ogiZ0b)·영상 제출(YhhmEf)을 XHR POST …/batchexecute 로 보내고 그 요청에는
+ * 새 Flow(Angular) 는 이미지 생성(ogiZ0b)·영상 제출(YhhmEf)을 POST …/batchexecute 로 보내고(XHR — 2026-10 부터는 fetch(Request) 도) 그 요청에는
  * reCAPTCHA Enterprise 토큰이 실린다 → 앱은 제출을 절대 만들지 않고(신뢰 클릭만) 페이지가 보낸 요청의
  * send/loadend 를 **관측**해 pendingGenerations 와 상관시킨다. 요청 본문은 절대 바꾸지 않는다.
  *
@@ -107,6 +107,70 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
       }
     } catch (_) {}
     return _send.apply(this, arguments)
+  }
+
+  // 2026-10-18 실기: Flow 가 batchexecute 를 fetch(Request) 로도 보낸다(maseQ·ogiZ0b 등) — XHR 만 감싸면 send 를 못 봐 upload-not-sent.
+  //   같은 doc·seq·이벤트 모양으로 보고한다. Request 본문은 clone 으로만 읽고(원본 미소비), maseQ 본문은 읽지 않는다.
+  //   send 보고(본문 판독이 비동기여도)가 끝난 뒤에 loadend 를 보고한다 — 라우터는 send 로 바인딩하고 loadend 를 {doc, seq} 로 찾는다.
+  const _fetch = window.fetch
+  if (typeof _fetch === 'function') {
+    const patchedFetch = function (input, init) {
+      let ev = null
+      try {
+        const isObj = !!input && typeof input === 'object'
+        const url = typeof input === 'string' ? input : (isObj && typeof input.url === 'string' ? input.url : String(input))
+        const method = String((init && init.method) || (isObj && input.method) || 'GET').toUpperCase()
+        let u = null
+        if (method === 'POST') { try { u = new URL(url, window.location && window.location.href) } catch (_) { u = null } }
+        if (u && u.pathname.endsWith('/data/batchexecute')) {
+          const rpcids = String(u.searchParams.get('rpcids') || '').split(',').filter(function (x) { return !!x })
+          let rpcid = null
+          for (let i = 0; i < rpcids.length; i++) { if (ALLOW[rpcids[i]]) { rpcid = rpcids[i]; break } }
+          if (rpcid) {
+            const seq = (window.__autoflowcut_rpc_seq__ = window.__autoflowcut_rpc_seq__ + 1)
+            ev = { kind: 'batchexecute-send', doc: doc, rpcid: rpcid, rpcids: rpcids, seq: seq, prompts: [], sentAt: Date.now() / 1000 }
+            if (rpcids.length > 1) ev.multi = true
+          }
+        }
+      } catch (_) { ev = null }
+      if (!ev) return _fetch.apply(this, arguments)
+
+      const fill = function (body) {
+        const decoded = typeof body === 'string' ? decodeFReqInner(body) : null
+        const refs = decoded ? extractSubmitRefs(ev.rpcid, decoded.inner) : null
+        ev.prompts = decoded ? extractSubmitPrompts(ev.rpcid, decoded.inner) : []
+        ev.refs = refs ? refs.refs : null
+        ev.mentions = refs ? refs.mentions : null
+      }
+      let sendDone = null
+      try {
+        const raw = init && init.body != null ? init.body : null
+        if (ev.rpcid === 'maseQ') report(ev)   // 업로드 본문(base64·파일명)은 풀지 않는다
+        else if (raw == null && input && typeof input === 'object' && typeof input.clone === 'function') {
+          sendDone = input.clone().text().then(function (t) { fill(t) }, function () { fill(null) }).then(function () { report(ev) })
+        } else { fill(typeof raw === 'string' ? raw : null); report(ev) }
+      } catch (_) {}
+
+      const p = _fetch.apply(this, arguments)
+      const end = function (status, text) {
+        const fire = function () { report({ kind: 'batchexecute', doc: doc, rpcid: ev.rpcid, seq: ev.seq, status: status, responseText: text, endedAt: Date.now() / 1000 }) }
+        if (sendDone) sendDone.then(fire, fire); else fire()
+      }
+      try {
+        p.then(function (res) {
+          let t = null
+          try { t = res.clone().text() } catch (_) { t = null }
+          if (t && typeof t.then === 'function') t.then(function (s) { end(res.status, String(s || '')) }, function () { end(res.status, '') })
+          else end(res.status, '')
+        }, function () { end(0, '') })
+      } catch (_) {}
+      return p
+    }
+    try {
+      Object.defineProperty(patchedFetch, 'toString', { value: function () { return 'function fetch() { [native code] }' }, configurable: true })
+      Object.defineProperty(patchedFetch, 'name', { value: 'fetch', configurable: true })
+    } catch (_) {}
+    window.fetch = patchedFetch
   }
 
   console.log('[Flow Inject] batchexecute capture installed')
