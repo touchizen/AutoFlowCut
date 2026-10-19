@@ -58,6 +58,16 @@
 | — | 라이브: 클릭 직후 이탈 시 파일 안 옴 | — | 6c15f677 |
 | 4 | 3건 | 6건 | 3ba635bd |
 | 5 | 4건 major (gpt-6-astra, 3ba635bd 대상) — 아래 표, **미수정** | 4라운드(3ba635bd) 결과 받음, 아래 표 — **미수정** | — |
+| — | 라이브(오후): 트리거 'covered' 거부 · 해상도 표시 없는 파일 이름 | — | 6cc7f88f (리뷰 전) |
+
+### 오후 라이브에서 드러난 것 (6cc7f88f, 6라운드 리뷰 대상에 포함)
+
+Flow 웹에서 만든 영상(시그널 인트로 (b))을 download-only로 1080p 받으면서 세 번 720p로 물러났다. 고친 것:
+- **트리거가 'covered'로 거부됐다.** 편집 화면을 연 직후 hit-test가 "미디어 다운로드" 버튼을 덮였다고 거부했다. 덮은 요소는 버튼 안의 `mat-icon` 자신이었다(아이콘 교체·리렌더 중으로 보인다). 400ms 간격으로 5번까지 다시 재고 누른다. 두 번째에 열렸다.
+- **해상도 표시 없는 파일 이름.** 이미 업스케일된 파일은 `<제목>_<시각>.mp4`(blob, 53자)로 바로 내려왔다. 표시가 없다고 버리자 5분을 기다리다 720p가 됐다. 이제 표시가 있으면 맞아야 하고, 없으면 ASCII 제목 접두가 맞을 때만 받는다. 한글 제목처럼 대조할 수 없으면 표시가 계속 필요하다.
+- 진단 로그: hit-test가 덮은 요소(태그·id·클래스 3개, 글자 없음)를, 버린 다운로드가 본 토큰·원하는 해상도·이름 길이를 남긴다.
+- 결과: 네 번째 시도에 1920×1080 저장(약 10초). 파일 `~/Documents/AutoFlowCut/gordon-insight-signal-intro/videos/t2v_3.mp4`.
+- 미확인: 두 번째 시도에서 blob을 버린 직후 프로젝트 그리드로의 이동이 생겨 `left-editor`로 접혔다. 누가 옮겼는지는 못 봤다.
 
 ### Fable 4라운드 지적 (3ba635bd 대상, 아직 안 고침 — 다음 세션 첫 작업)
 
@@ -113,6 +123,9 @@ Fable이 확인한 정상 동작:
 4. 머지: `finishing-a-development-branch` 절차, 커밋 메시지는 영어.
 
 ## 6. 라이브 확인 방법 (크레딧 0)
+
+- ⚠️ **영상 배치는 선택된 씬을 complete여도 다시 생성한다**(t2v 모드는 프롬프트 있는 선택 씬 전부). download-only만 돌리려면 다른 씬의 `videoT2VSelected`를 먼저 끈다. 2026-10-19에 씬 0이 다시 생성돼 Flow 크레딧 12가 들었다(원래 1080p 파일은 `videos/history`에서 되살림).
+- **Flow 웹에서 만든 영상 받기**: 씬을 하나 더 넣고 `videoT2VMediaId`·`videoT2VGenerationId`에 그 영상의 mediaId, `videoT2VStatus:'error'`, `videoT2VPath:null`, `videoT2VDownloadGated:true`를 준다. mediaId는 편집 화면 id가 아니다. `as29s([mediaId])`가 `[mediaId, projectId, editId…]`를 돌려주는 id이고, 프로젝트 미디어 목록 `Zzl0ze` 기록의 `[3][4]`에 있다(편집 id로 as29s를 부르면 오류 5).
 
 - dev 앱은 **Bash `run_in_background`로** 띄운다: `cd ~/workspace/AutoFlowCut && npm run dev > <log> 2>&1`
   - 포그라운드 명령 안의 `nohup … &`는 명령이 끝나면 같이 죽었다.
