@@ -22,3 +22,18 @@ export async function downloadVideoBase64(downloadVideo, videoUrl, resolution = 
     return { success: false, error: e?.message || String(e) }
   }
 }
+
+/**
+ * 요청보다 낮은 해상도로 받았는지(Codex R1 #3) — 업스케일 실패로 원본(720p)에 물러났거나, 4K 가 막혀 1080p 로 내렸을 때.
+ * 저장 메타데이터와 사용자 경고에 쓴다. 해당 없으면 null.
+ * @returns {{kind:'upscale-fallback', requested:string, saved:string, reason?:string} | {kind:'upscale-downgraded', requested:string, saved:string} | null}
+ */
+export function downloadNoticeOf(mediaResult) {
+  if (!mediaResult || !mediaResult.success) return null
+  if (mediaResult.upscaleFallback) {
+    const { requested, errorKind } = mediaResult.upscaleFallback
+    return { kind: 'upscale-fallback', requested, saved: mediaResult.resolution || '720p', ...(errorKind ? { reason: errorKind } : {}) }
+  }
+  if (mediaResult.downgradedFrom) return { kind: 'upscale-downgraded', requested: mediaResult.downgradedFrom, saved: mediaResult.resolution }
+  return null
+}

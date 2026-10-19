@@ -15,7 +15,7 @@ import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import { retryVideoDownload } from '../services/videoRecovery'
-import { downloadVideoBase64 } from '../services/videoDownload'
+import { downloadVideoBase64, downloadNoticeOf } from '../services/videoDownload'
 import { resolveFrameImageBase64 } from '../utils/framePairImages'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
@@ -214,6 +214,13 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     if (!mediaResult?.success) {
       return { success: false, error: `Video download failed: ${mediaResult?.error || 'no video URL'}` }
     }
+    // 요청보다 낮은 해상도로 받았으면 알린다(업스케일 실패 → 원본, 4K 막힘 → 1080p). 영상은 저장한다.
+    const downloadNotice = downloadNoticeOf(mediaResult)
+    if (downloadNotice) {
+      console.warn('[VideoAutomation] saved at', downloadNotice.saved, 'instead of', downloadNotice.requested, downloadNotice.reason || '')
+      toast.warning(t(downloadNotice.kind === 'upscale-fallback' ? 'videoAutomation.upscaleFallback' : 'videoAutomation.upscaleDowngraded',
+        { requested: downloadNotice.requested, saved: downloadNotice.saved }))
+    }
 
     // 파일 저장 — videoSaveId 우선 (t2v_N / i2v_N), 없으면 기존 item.id (vscene_N / fp_N)
     let videoPath = null
@@ -231,6 +238,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         model: modelId,
         timestamp: generatedAt,
         seed: seedValue,
+        resolution: mediaResult.resolution ?? null,
+        ...(downloadNotice ? { downloadNotice } : {}),
       }
       const saveResult = await fileSystemAPI.saveVideo(projectName, videoId, mediaResult.base64, modelId, metadata)
       if (saveResult?.success) {

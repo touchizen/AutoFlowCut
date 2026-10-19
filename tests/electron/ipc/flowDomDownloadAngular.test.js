@@ -6,6 +6,7 @@
 //   → base64. 핸들러·임시 폴더는 어느 경로든 정리하고, 어느 경로든 시작한 화면으로 돌아간다.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'node:fs'
+import { EventEmitter } from 'node:events'
 import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
 import { _resetDomStageForTests } from '../../../electron/ipc/flow-angular.js'
 import { PAGE_PATH_JS, READ_RESOLUTION_ITEMS_JS, EDITOR_DOWNLOAD_TRIGGER_JS } from '../../../electron/flow-video-download.js'
@@ -22,22 +23,37 @@ function makeIpcMain() {
   return { handle: (c, fn) => handlers.set(c, fn), invoke: (c, p) => handlers.get(c)({}, p) }
 }
 
-function harness({ items, record, editorRenders = true, deliver = true } = {}) {
-  const listeners = new Set()
-  const savedPaths = []
-  const session = {
-    on: (ev, fn) => { if (ev === 'will-download') listeners.add(fn) },
-    off: (ev, fn) => { if (ev === 'will-download') listeners.delete(fn) },
+/** Electron DownloadItem 흉내 — setSavePath 에 파일을 쓰고 'done'(completed)을 낸다. */
+function fakeItem(name, mime, savedPaths) {
+  const item = new EventEmitter()
+  item.getFilename = () => name
+  item.getMimeType = () => mime
+  item.getState = () => 'progressing'
+  item.cancel = vi.fn()
+  item.setSavePath = (p) => {
+    savedPaths.push(p)
+    fs.writeFileSync(p, Buffer.alloc(2048, 7))
+    setTimeout(() => item.emit('done', {}, 'completed'), 10)
   }
+  return item
+}
+
+function harness({ items, record, editorRenders = true, deliver = true, unrelatedFirst = false, userMovesTo = null, pathReadFails = false } = {}) {
+  const savedPaths = []
+  const session = new EventEmitter()
   const steps = []
   const navigations = []
+  const unrelated = Object.assign(new EventEmitter(), { getFilename: () => 'invoice.pdf', getMimeType: () => 'application/pdf', setSavePath: vi.fn() })
   let page = GRID
   const executeJavaScript = vi.fn(async (js) => {
     if (js.includes('readWizGlobals')) {   // callFlowRpc(as29s)
       return { status: 200, text: respBodyWithPayload('as29s', record ?? [MEDIA, PROJECT, EDIT, 'CAE', null]) }
     }
-    if (js === PAGE_PATH_JS) return page
-    const nav = /history\.pushState\(history\.state, '', "([^"]+)"\)/.exec(js)
+    if (js === PAGE_PATH_JS) {
+      if (pathReadFails && !navigations.length) throw new Error('render frame disposed')
+      return page
+    }
+    const nav = /history\.replaceState\(history\.state, '', "([^"]+)"\)/.exec(js)
     if (nav) { page = nav[1]; navigations.push(page); return page }
     if (js.includes('editorReady(document, ')) return editorRenders && js.includes(JSON.stringify(page))
     if (js === READ_RESOLUTION_ITEMS_JS) return items ?? [
@@ -57,11 +73,11 @@ function harness({ items, record, editorRenders = true, deliver = true } = {}) {
     steps.push(opts.step)
     if (opts.step === 'download-menu') expect(js).toBe(EDITOR_DOWNLOAD_TRIGGER_JS)
     if (opts.step === 'download-resolution' && deliver) {
-      // Flow 가 업스케일을 끝내고 내려보낸다 → will-download
+      // Flow 가 업스케일을 끝내고 내려보낸다 → will-download(그 전에 사용자의 관계없는 다운로드가 끼어들 수 있다)
       setTimeout(() => {
-        for (const fn of listeners) {
-          fn({}, { getFilename: () => 'ba1764fb_1080p.mp4', setSavePath: (p) => { savedPaths.push(p); fs.writeFileSync(p, Buffer.alloc(2048, 7)) } })
-        }
+        if (unrelatedFirst) session.emit('will-download', {}, unrelated)
+        if (userMovesTo) page = userMovesTo
+        session.emit('will-download', {}, fakeItem('Amber_light_particles_drifting_1080p.mp4', 'video/mp4', savedPaths))
       }, 20)
     }
     return { success: true }
@@ -74,7 +90,7 @@ function harness({ items, record, editorRenders = true, deliver = true } = {}) {
   }
   const ipc = makeIpcMain()
   registerFlowAPIIPC(ipc, deps)
-  return { ipc, deps, flowView, steps, listeners, savedPaths, navigations, page: () => page }
+  return { ipc, deps, flowView, steps, session, unrelated, savedPaths, navigations, page: () => page }
 }
 
 describe('flow:dom-download-video on the new Flow (Angular)', () => {
@@ -89,8 +105,30 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     expect(h.steps).toEqual(['download-menu', 'download-resolution'])
     expect(h.navigations).toEqual([EDITOR, GRID])
     expect(h.page()).toBe(GRID)
-    expect(h.listeners.size).toBe(0)
+    expect(h.session.listenerCount('will-download')).toBe(0)
     expect(fs.existsSync(h.savedPaths[0])).toBe(false)   // temp dir cleaned
+  }, 15000)
+
+  it("leaves an unrelated download alone and takes only the video (Codex R1 #1)", async () => {
+    const h = harness({ unrelatedFirst: true })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true, resolution: '1080p' })
+    expect(h.unrelated.setSavePath).not.toHaveBeenCalled()
+    expect(h.savedPaths).toHaveLength(1)
+  }, 15000)
+
+  it("does not undo the user's navigation made during the download (Codex R1 #2)", async () => {
+    const h = harness({ userMovesTo: `/project/${PROJECT}/edit/11111111-2222-4333-8444-555555555555` })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true })
+    expect(h.navigations).toEqual([EDITOR])
+  }, 15000)
+
+  it('returns to the project grid when the starting path could not be read', async () => {
+    const h = harness({ pathReadFails: true })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true })
+    expect(h.navigations).toEqual([EDITOR, GRID])
   }, 15000)
 
   it('asks for 4K, takes 1080p when 4K is locked, and says so', async () => {
@@ -105,7 +143,7 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     expect(r).toMatchObject({ success: false, errorKind: 'flow-upscale-unavailable' })
     expect(h.steps).toEqual(['download-menu'])
     expect(h.page()).toBe(GRID)
-    expect(h.listeners.size).toBe(0)
+    expect(h.session.listenerCount('will-download')).toBe(0)
   })
 
   it('flow-download-editor-not-ready when the editor never renders — no clicks, back on the grid', async () => {

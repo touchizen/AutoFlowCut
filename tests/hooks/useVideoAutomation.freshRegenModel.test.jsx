@@ -28,6 +28,7 @@ vi.mock('../../src/utils/framePairImages', () => ({
 }))
 vi.mock('../../src/services/videoDownload', () => ({
   downloadVideoBase64: vi.fn().mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,VID', resolution: '720p' }),
+  downloadNoticeOf: () => null,
 }))
 
 // Capture the item passed into pickVideoMetadata at completion/download time.

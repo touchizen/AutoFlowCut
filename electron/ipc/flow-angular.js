@@ -47,7 +47,7 @@ import { READ_COMPOSER_STATE_JS } from '../flow-composer-refs.js'
 import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
 import { refMediaCache } from '../flow-ref-media-cache.js'
 import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowR2vLimit.js'   // D13: 렌더러 계획과 같은 상한 — import 없는 모듈(렌더러 계획 모듈을 끌어오면 React 훅까지 main 에 들어온다)
-import { mediaEditLocation, editorPath, driveEditorDownload, returnToPath, waitForDownloadedFile, PAGE_PATH_JS } from '../flow-video-download.js'
+import { mediaEditLocation, editorPath, driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, PAGE_PATH_JS } from '../flow-video-download.js'
 import { VIDEO_DOWNLOAD_TIMEOUT_MS } from '../flow-download-config.js'
 
 /** 캡처 주입 설치 플래그 프로브(클릭 전). */
@@ -1114,9 +1114,9 @@ export function createFlowAngular(deps) {
    * flow:dom-download-video(새 Flow) — 업스케일 다운로드. M2(R1#7) 이후 서명 URL(720p 원본)만 받아 1080p/4K 가 빠졌던 것을 되살린다.
    *   그리드 타일엔 hover 전 mediaId 가 없어(미리보기 asb src) as29s 기록의 편집 위치([1] projectId · [2] editId)로 편집 화면을 열고
    *   상단 "미디어 다운로드" 메뉴에서 해상도를 누른다. 4K 가 막혀 있으면 1080p(사용자 결정 2026-10-19).
-   *   다운로드는 lock(flow-api 의 downloadMutex)으로 직렬화 — 공유 session 의 will-download 를 한 번에 하나만 가로챈다. 편집 화면에
-   *   머무는 동안(업스케일 처리 · 파일 대기) 다른 DOM 단계가 엉뚱한 화면에서 돌지 않게 DOM 단계를 끝까지 쥐고, 어느 경로든 시작한
-   *   화면으로 돌아간 뒤 놓는다.
+   *   다운로드는 lock(flow-api 의 downloadMutex)으로 직렬화하고, 공유 session 에선 다음 동영상 다운로드 하나만 가로챈다. 편집 화면에
+   *   머무는 동안(업스케일 처리 · 파일 대기) 다른 DOM 단계가 엉뚱한 화면에서 돌지 않게 DOM 단계를 끝까지 쥐고, 아직 편집 화면이면
+   *   시작한 화면으로 돌아간 뒤 놓는다(사용자가 옮겼으면 그대로).
    */
   const MEDIA_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   const DOWNLOAD_RESOLUTIONS = new Set(['720p', '1080p', '4k'])
@@ -1136,13 +1136,14 @@ export function createFlowAngular(deps) {
     }
     if (!where) return kindResult('flow-download-edit-unknown', { reason: 'no-edit-location' })
     const release = lock ? await lock.acquire() : () => {}
-    const session = flowView.webContents.session
+    const editPath = editorPath(where)
+    const gridPath = `/project/${where.projectId}`
     let dir = null
-    let onWillDownload = null
+    let capture = null
     try {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-dl-'))
-      onWillDownload = (_e, item) => { item.setSavePath(path.join(dir, item.getFilename())) }
-      session.on('will-download', onWillDownload)
+      // 다음 *동영상* 다운로드 하나만 잡는다 — 사용자의 다른 다운로드는 건드리지 않는다(Codex R1 #1).
+      capture = armVideoDownloadCapture(flowView.webContents.session, dir, { timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS })
       const out = await withAutomationViewport(flowView, tag, async (ctl) => {
         const ctx = {
           exec: (js) => exec(flowView, js),
@@ -1154,14 +1155,17 @@ export function createFlowAngular(deps) {
         }
         let back = null
         try { back = await exec(flowView, PAGE_PATH_JS) } catch (_e) { back = null }
+        if (typeof back !== 'string' || !back.startsWith('/project/') || back === editPath) back = gridPath   // 못 읽으면 프로젝트 그리드로
         try {
-          const menu = await driveEditorDownload(ctx, { path: editorPath(where), resolution: res })
+          const menu = await driveEditorDownload(ctx, { path: editPath, resolution: res })
           if (!menu.ok) return menu
           console.log(`${tag} clicked ${menu.res}${menu.downgradedFrom ? ` (asked ${menu.downgradedFrom})` : ''} → waiting for the file`)
-          const file = await waitForDownloadedFile({ dir, fs, timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS, pollMs: 500 })
-          return file ? { ...menu, file } : { ok: false, kind: 'flow-download-timeout', reason: 'no-file' }
+          const got = await capture.wait()
+          return got.path ? { ...menu, file: got.path } : { ok: false, kind: 'flow-download-timeout', reason: got.error }
         } finally {
-          if (back && !(await returnToPath(ctx, back))) console.warn(`${tag} could not return to ${back}`)
+          // 아직 편집 화면이면 시작한 화면으로 — 그 사이 사용자가 옮겼으면 그대로 둔다(Codex R1 #2).
+          const back2 = await returnIfStillOn(ctx, { editPath, back })
+          if (back2 === 'failed') console.warn(`${tag} could not return to ${back}`)
         }
       }, { timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS + DOM_STAGE_TIMEOUT_MS })
       if (out.success === false) return out   // DOM 단계 거부(busy · dragging · timeout)
@@ -1177,7 +1181,7 @@ export function createFlowAngular(deps) {
     } catch (e) {
       return kindResult('flow-download-error', { reason: e?.message || String(e) })
     } finally {
-      if (onWillDownload) { try { session.off('will-download', onWillDownload) } catch (_e) { /* 세션이 이미 없을 수 있다 */ } }
+      if (capture) capture.dispose()
       if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch (_e) { /* 정리 실패는 결과를 바꾸지 않는다 */ } }
       release()
     }

@@ -1671,6 +1671,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
   // Video Automation
   videoAutomation: {
+    upscaleFallback: '업스케일({requested}) 다운로드에 실패해 원본({saved})으로 저장했습니다.',
+    upscaleDowngraded: '{requested} 업스케일을 쓸 수 없어 {saved}로 저장했습니다.',
     requesting: '비디오 생성 요청 중...',
     submitting: '제출 중',
     waitingNext: '다음 제출까지 대기',

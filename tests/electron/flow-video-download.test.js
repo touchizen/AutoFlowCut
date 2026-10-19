@@ -5,13 +5,11 @@
 //   그리드 타일은 hover 전 미리보기 src 에 mediaId 가 없어(2026-10-19 덤프) 편집 id(as29s 기록 [2])로 편집 화면을 연다.
 //   픽스처는 tests/fixtures/flow-live-dom-download-20261019.js(같은 날 라이브 판독).
 import { describe, it, expect, beforeEach } from 'vitest'
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
+import { EventEmitter } from 'node:events'
 import {
   mediaEditLocation, editorPath, findEditorDownloadTrigger, readResolutionItems, findResolutionItem, pickResolution,
   PAGE_PATH_JS, NAVIGATE_JS, EDITOR_READY_JS, EDITOR_DOWNLOAD_TRIGGER_JS, READ_RESOLUTION_ITEMS_JS, RESOLUTION_ITEM_JS,
-  driveEditorDownload, returnToPath, waitForDownloadedFile,
+  driveEditorDownload, returnIfStillOn, armVideoDownloadCapture,
 } from '../../electron/flow-video-download.js'
 import { DISPATCH_ESCAPE_JS } from '../../electron/flow-reference-driver.js'
 import {
@@ -66,15 +64,18 @@ describe('probes (editor page)', () => {
     expect(window.eval(EDITOR_READY_JS(EDIT_PATH))).toBe(false)
   })
 
-  it('NAVIGATE_JS moves the SPA (pushState + popstate) and PAGE_PATH_JS reads it back', () => {
+  it('NAVIGATE_JS moves the SPA (replaceState + popstate) without adding history entries', () => {
     at(GRID_PATH, gridPage())
+    const entries = window.history.length
     let popped = 0
     const onPop = () => { popped++ }
     window.addEventListener('popstate', onPop)
     window.eval(NAVIGATE_JS(EDIT_PATH))
+    window.eval(NAVIGATE_JS(GRID_PATH))
     window.removeEventListener('popstate', onPop)
-    expect(window.eval(PAGE_PATH_JS)).toBe(EDIT_PATH)
-    expect(popped).toBe(1)
+    expect(window.eval(PAGE_PATH_JS)).toBe(GRID_PATH)
+    expect(popped).toBe(2)
+    expect(window.history.length).toBe(entries)   // 뒤로 가기가 임시 편집 화면을 다시 열지 않는다(Codex R1 #4)
   })
 
   it('injected JS strings behave like the functions (self-contained when stringified)', () => {
@@ -180,48 +181,81 @@ describe('driveEditorDownload', () => {
   })
 })
 
-describe('returnToPath', () => {
-  it('navigates back to where the download started', async () => {
+describe('returnIfStillOn', () => {
+  it('goes back to where the download started while still on the editor', async () => {
     at(EDIT_PATH, editorPage())
     const { ctx, calls } = fakeCtx()
-    expect(await returnToPath(ctx, GRID_PATH)).toBe(true)
+    expect(await returnIfStillOn(ctx, { editPath: EDIT_PATH, back: GRID_PATH })).toBe('returned')
     expect(window.location.pathname).toBe(GRID_PATH)
     expect(calls.navigations).toEqual([GRID_PATH])
   })
-  it('is a no-op when already there', async () => {
-    at(GRID_PATH, gridPage())
+  it("leaves the user's own navigation alone (Codex R1 #2)", async () => {
+    at('/project/other', gridPage())
     const { ctx, calls } = fakeCtx()
-    expect(await returnToPath(ctx, GRID_PATH)).toBe(true)
+    expect(await returnIfStillOn(ctx, { editPath: EDIT_PATH, back: GRID_PATH })).toBe('user-moved')
+    expect(window.location.pathname).toBe('/project/other')
     expect(calls.navigations).toEqual([])
   })
 })
 
-describe('waitForDownloadedFile', () => {
-  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'afc-dl-test-'))
+describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () => {
+  function fakeItem(name, mime) {
+    const item = new EventEmitter()
+    item.getFilename = () => name
+    item.getMimeType = () => mime
+    item.savePath = null
+    item.setSavePath = (p) => { item.savePath = p }
+    item.getState = () => 'progressing'
+    item.cancel = () => { item.cancelled = true }
+    return item
+  }
+  const session = () => {
+    const s = new EventEmitter()
+    return s
+  }
 
-  it('ignores in-progress files and returns the finished file once its size holds', async () => {
-    const dir = tmp()
-    fs.writeFileSync(path.join(dir, 'clip.mp4.crdownload'), 'partial')
-    setTimeout(() => {
-      fs.rmSync(path.join(dir, 'clip.mp4.crdownload'))
-      fs.writeFileSync(path.join(dir, 'clip.mp4'), Buffer.alloc(1024, 1))
-    }, 30)
-    const r = await waitForDownloadedFile({ dir, fs, timeoutMs: 2000, pollMs: 20 })
-    expect(r).toBe(path.join(dir, 'clip.mp4'))
-    fs.rmSync(dir, { recursive: true, force: true })
+  it('ignores non-video downloads, captures the first video, then stops listening', async () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/flow-dl-x', { timeoutMs: 1000 })
+    const pdf = fakeItem('report.pdf', 'application/pdf')
+    s.emit('will-download', {}, pdf)
+    expect(pdf.savePath).toBeNull()
+    const vid = fakeItem('Amber_1080p.mp4', 'video/mp4')
+    s.emit('will-download', {}, vid)
+    expect(vid.savePath).toBe('/tmp/flow-dl-x/Amber_1080p.mp4')
+    expect(s.listenerCount('will-download')).toBe(0)
+    const later = fakeItem('other.mp4', 'video/mp4')
+    s.emit('will-download', {}, later)
+    expect(later.savePath).toBeNull()
+    vid.emit('done', {}, 'completed')
+    await expect(cap.wait()).resolves.toEqual({ path: '/tmp/flow-dl-x/Amber_1080p.mp4' })
+    cap.dispose()
   })
 
-  it('returns null on timeout', async () => {
-    const dir = tmp()
-    const r = await waitForDownloadedFile({ dir, fs, timeoutMs: 80, pollMs: 20 })
-    expect(r).toBeNull()
-    fs.rmSync(dir, { recursive: true, force: true })
+  it('reports an interrupted download', async () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000 })
+    const vid = fakeItem('a.mp4', 'video/mp4')
+    s.emit('will-download', {}, vid)
+    vid.emit('done', {}, 'interrupted')
+    await expect(cap.wait()).resolves.toEqual({ error: 'download-interrupted' })
+    cap.dispose()
   })
 
-  it('stops when aborted', async () => {
-    const dir = tmp()
-    const r = await waitForDownloadedFile({ dir, fs, timeoutMs: 5000, pollMs: 20, isAborted: () => true })
-    expect(r).toBeNull()
-    fs.rmSync(dir, { recursive: true, force: true })
+  it('times out when nothing arrives, and dispose detaches the listener', async () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 30 })
+    await expect(cap.wait()).resolves.toEqual({ error: 'timeout' })
+    cap.dispose()
+    expect(s.listenerCount('will-download')).toBe(0)
+  })
+
+  it('dispose cancels a capture still in progress', () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000 })
+    const vid = fakeItem('a.mp4', 'video/mp4')
+    s.emit('will-download', {}, vid)
+    cap.dispose()
+    expect(vid.cancelled).toBe(true)
   })
 })

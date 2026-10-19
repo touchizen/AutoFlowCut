@@ -6,7 +6,7 @@
  *   - 그리드 타일은 hover 전 미리보기 src(flow.google.com/asb/<token>=mm,…)라 mediaId 로 타일을 찾을 수 없다(hover 해도 그대로).
  *   - as29s 기록은 [mediaId, projectId, editId, …] — 타일을 누르면 열리는 편집 화면이 /project/<projectId>/edit/<editId> 다.
  *   - 편집 화면 상단(cta-buttons)의 download 메뉴 트리거가 해상도 목록 "270p … / 720p … / 1080p … / 4K …"를 바로 연다(플랜 밖이면 disabled).
- *   - Angular 라우터는 history.pushState + popstate 로 페이지 안에서 이동한다(새로고침 없음 — 캡처 주입이 그대로 남는다).
+ *   - Angular 라우터는 history.replaceState + popstate 로 페이지 안에서 이동한다(새로고침 없음 — 캡처 주입이 그대로 남는다).
  *
  * 프로브는 Flow 의 번역 문구가 아니라 아이콘 글자(download)·위치(cta-buttons, hotbar 아님)·해상도 숫자로만 찾는다(noLocaleBoundDomAnchors).
  * 프로브 함수는 executeJavaScript 로 문자열화돼 들어가므로 자기완결이어야 한다(함수 선언끼리만 서로 부른다 — PROBE_LIB 로 함께 싣는다).
@@ -101,9 +101,9 @@ const PROBE_LIB = [iconText, findEditorDownloadTrigger, resolutionOf, isDisabled
 const probe = (call) => `(function () {\n${PROBE_LIB}\nreturn ${call};\n})()`
 
 export const PAGE_PATH_JS = '(function () { return location.pathname })()'
-/** 페이지 안 이동 — Angular 라우터는 popstate 를 듣는다(새로고침 없음). */
+/** 페이지 안 이동 — Angular 라우터는 popstate 를 듣는다(새로고침 없음). replaceState 라 기록이 늘지 않는다 — 뒤로 가기가 임시 편집 화면을 다시 열지 않게(Codex R1 #4). */
 export const NAVIGATE_JS = (p) => `(function () {
-  history.pushState(history.state, '', ${JSON.stringify(String(p))});
+  history.replaceState(history.state, '', ${JSON.stringify(String(p))});
   window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
   return location.pathname;
 })()`
@@ -182,35 +182,49 @@ export async function driveEditorDownload(ctx, { path: editPath, resolution }) {
   return pick.downgradedFrom ? { ok: true, res: pick.res, downgradedFrom: pick.downgradedFrom } : { ok: true, res: pick.res }
 }
 
-/** 다운로드를 시작한 화면으로 돌아간다(이미 거기면 그대로). 경로가 맞으면 true. */
-export async function returnToPath(ctx, backPath) {
-  if (!backPath) return false
-  if ((await ex(ctx, PAGE_PATH_JS)) === backPath) return true
-  await ex(ctx, NAVIGATE_JS(backPath))
-  return !!(await poll(ctx, PAGE_PATH_JS, (v) => v === backPath, RETURN_WAIT_MS))
+/**
+ * 아직 편집 화면에 있으면 다운로드를 시작한 화면으로 돌아간다. 그 사이 사용자가 다른 화면으로 갔으면 그대로 둔다(Codex R1 #2).
+ * @returns {Promise<'returned'|'user-moved'|'failed'>}
+ */
+export async function returnIfStillOn(ctx, { editPath, back }) {
+  const here = await ex(ctx, PAGE_PATH_JS)
+  if (here !== editPath) return 'user-moved'
+  await ex(ctx, NAVIGATE_JS(back))
+  return (await poll(ctx, PAGE_PATH_JS, (v) => v === back, RETURN_WAIT_MS)) ? 'returned' : 'failed'
 }
 
 /**
- * will-download 가 내려받는 파일이 다 쓰일 때까지(크기가 한 번 더 같은 값) 기다린다. 진행 중 파일(.crdownload·.tmp·.part)과 점파일은 무시.
- * 업스케일은 클릭 뒤 Flow 가 서버에서 처리한 다음 내려보내므로 오래 걸릴 수 있다(VIDEO_DOWNLOAD_TIMEOUT_MS).
- * @returns {Promise<string|null>} 파일 경로, 시간 초과·중단이면 null
+ * 공유 session 의 다음 *동영상* 다운로드 하나만 dir 로 가로챈다(Codex R1 #1). 동영상이 아닌 다운로드는 건드리지 않고(평소대로),
+ *   하나를 잡으면 즉시 리스너를 뗀다 — 그 뒤의 다운로드는 사용자 것. 완료는 폴더 폴링이 아니라 그 DownloadItem 의 'done' 으로 안다.
+ * 업스케일은 클릭 뒤 Flow 가 서버에서 처리한 다음 내려보내므로 오래 걸릴 수 있다(timeoutMs = VIDEO_DOWNLOAD_TIMEOUT_MS).
+ * @returns {{ wait: () => Promise<{path:string}|{error:string}>, dispose: () => void }}
  */
-export async function waitForDownloadedFile({ dir, fs, timeoutMs, pollMs = 1000, isAborted, sleep = defaultSleep }) {
-  const until = Date.now() + timeoutMs
-  let last = null
-  while (Date.now() < until) {
-    if (isAborted?.()) return null
-    let names = []
-    try { names = fs.readdirSync(dir) } catch (_e) { names = [] }
-    const done = names.filter((n) => !n.startsWith('.') && !/\.(crdownload|tmp|part)$/i.test(n))
-    if (done.length) {
-      const f = path.join(dir, done[0])
-      let size = 0
-      try { size = fs.statSync(f).size } catch (_e) { size = 0 }
-      if (size > 0 && last && last.f === f && last.size === size) return f
-      last = { f, size }
-    }
-    await sleep(pollMs)
+export function armVideoDownloadCapture(session, dir, { timeoutMs }) {
+  let settle
+  const done = new Promise((r) => { settle = r })
+  let captured = null
+  let finished = false
+  const finish = (v) => { if (!finished) { finished = true; settle(v) } }
+  const onWillDownload = (_e, item) => {
+    if (captured) return
+    const name = String((item.getFilename && item.getFilename()) || '')
+    const mime = String((item.getMimeType && item.getMimeType()) || '')
+    if (!/^video\//i.test(mime) && !/\.(mp4|webm|mov)$/i.test(name)) return
+    captured = item
+    const savePath = path.join(dir, path.basename(name) || 'flow-video.mp4')
+    item.setSavePath(savePath)
+    session.off('will-download', onWillDownload)
+    item.once('done', (_ev, state) => finish(state === 'completed' ? { path: savePath } : { error: 'download-' + String(state) }))
   }
-  return null
+  session.on('will-download', onWillDownload)
+  const timer = setTimeout(() => finish({ error: 'timeout' }), timeoutMs)
+  return {
+    wait: () => done,
+    dispose: () => {
+      clearTimeout(timer)
+      session.off('will-download', onWillDownload)
+      if (captured && !finished) { try { captured.cancel() } catch (_e) { /* 이미 끝났을 수 있다 */ } }
+      finish({ error: 'disposed' })
+    },
+  }
 }

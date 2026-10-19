@@ -11,7 +11,7 @@
 
 import { authErrorIsMachineToken } from '../utils/authMessages'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { downloadVideoBase64 } from './videoDownload'
+import { downloadVideoBase64, downloadNoticeOf } from './videoDownload'
 import { isFlowMediaId } from '../utils/flowMediaId'   // M2-R5 J2: 훅·App·파서와 공유하는 Flow 미디어 id 술어(UUID)
 
 /**
@@ -36,6 +36,8 @@ export async function downloadAndSaveVideo({
   if (!mediaResult?.success) {
     return { success: false, error: `Media download failed: ${mediaResult?.error || 'no video URL'}`, mediaId }
   }
+  const downloadNotice = downloadNoticeOf(mediaResult)
+  if (downloadNotice) console.warn('[VideoRecovery] saved at', downloadNotice.saved, 'instead of', downloadNotice.requested, downloadNotice.reason || '')
 
   // 파일 저장 — useVideoAutomation 와 동일한 metadata 규칙(seed/timestamp/model) +
   // 저장 실패 surfacing. 미적용 시 saveCurrentProject 가 base64 를 strip 한 뒤 path 가 비어
@@ -58,6 +60,8 @@ export async function downloadAndSaveVideo({
       model: modelId,
       timestamp: generatedAt,
       seed: seedValue,
+      resolution: mediaResult.resolution ?? null,
+      ...(downloadNotice ? { downloadNotice } : {}),
     }
     const saveResult = await fileSystemAPI.saveVideo(projectName, videoId, mediaResult.base64, modelId, metadata)
     if (saveResult?.success) {

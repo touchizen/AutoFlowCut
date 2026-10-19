@@ -26,6 +26,7 @@ vi.mock('../../src/services/videoRecovery', () => ({ retryVideoDownload: vi.fn(a
 vi.mock('../../src/firebase/functions', () => ({ consumeBatchDownload: vi.fn(async () => ({ charged: false })) }))
 
 import { fileSystemAPI } from '../../src/hooks/useFileSystem'
+import { toast } from '../../src/components/Toast'
 
 const UUID11 = '<uuid#11>'
 const SIGNED = 'https://flow-content.google/video/<uuid#11>?Expires=1790261742&KeyName=labs-flow-prod-cdn-key&Signature=SIG'
@@ -120,8 +121,9 @@ describe('useVideoAutomation × useFlowEngine — 성공 경로', () => {
     expect(api.flowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '720p' })
     expect(api.flowDomDownloadVideo).toHaveBeenCalledWith({ mediaId: REAL, resolution: '1080p' })
     expect(api.flowDownloadVideoUrl).not.toHaveBeenCalled()
-    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,SEQ=', expect.anything(), expect.anything())
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,SEQ=', expect.anything(), expect.objectContaining({ resolution: '1080p' }))
     expect(last(h, 'vscene_1')[0]).toBe('complete')
+    expect(toast.warning).not.toHaveBeenCalled()
   })
 
   it('resolution 1080p 인데 DOM 업스케일 실패 → 720p 원본(서명 URL)으로 저장, 영상은 잃지 않는다', async () => {
@@ -130,8 +132,22 @@ describe('useVideoAutomation × useFlowEngine — 성공 경로', () => {
     const h = setup()
     await run(h, SCENES(1), { videoResolution: '1080p' })
     expect(api.flowDownloadVideoUrl).toHaveBeenCalledWith({ url: SIGNED_REAL, token: null })
-    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,AQID', expect.anything(), expect.anything())
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,AQID', expect.anything(),
+      expect.objectContaining({ resolution: '720p', downloadNotice: { kind: 'upscale-fallback', requested: '1080p', saved: '720p', reason: 'flow-download-tile-not-found' } }))
     expect(last(h, 'vscene_1')[0]).toBe('complete')
+    // Codex R1 #3: 낮은 해상도로 저장됐음을 알린다
+    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.upscaleFallback')
+  })
+
+  it('resolution 4k 인데 4K 가 막혀 1080p 로 받음 → 메타에 실제 해상도 · 경고', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,SEQ=', mimeType: 'video/mp4', resolution: '1080p', downgradedFrom: '4k' })
+    const h = setup()
+    await run(h, SCENES(1), { videoResolution: '4k', videoModel: 'Veo 3.1 - Fast' })
+    expect(api.flowDomDownloadVideo).toHaveBeenCalledWith({ mediaId: REAL, resolution: '4k' })
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,SEQ=', expect.anything(),
+      expect.objectContaining({ resolution: '1080p', downloadNotice: { kind: 'upscale-downgraded', requested: '4k', saved: '1080p' } }))
+    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.upscaleDowngraded')
   })
 })
 
