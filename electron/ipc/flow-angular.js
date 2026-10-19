@@ -47,7 +47,7 @@ import { READ_COMPOSER_STATE_JS } from '../flow-composer-refs.js'
 import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
 import { refMediaCache } from '../flow-ref-media-cache.js'
 import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowR2vLimit.js'   // D13: 렌더러 계획과 같은 상한 — import 없는 모듈(렌더러 계획 모듈을 끌어오면 React 훅까지 main 에 들어온다)
-import { mediaEditLocation, editorPath, driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, PAGE_PATH_JS } from '../flow-video-download.js'
+import { mediaEditLocation, editorPath, driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, PAGE_PATH_JS, UUID_RE } from '../flow-video-download.js'
 import { VIDEO_DOWNLOAD_TIMEOUT_MS } from '../flow-download-config.js'
 
 /** 캡처 주입 설치 플래그 프로브(클릭 전). */
@@ -1114,15 +1114,15 @@ export function createFlowAngular(deps) {
    * flow:dom-download-video(새 Flow) — 업스케일 다운로드. M2(R1#7) 이후 서명 URL(720p 원본)만 받아 1080p/4K 가 빠졌던 것을 되살린다.
    *   그리드 타일엔 hover 전 mediaId 가 없어(미리보기 asb src) as29s 기록의 편집 위치([1] projectId · [2] editId)로 편집 화면을 열고
    *   상단 "미디어 다운로드" 메뉴에서 해상도를 누른다. 4K 가 막혀 있으면 1080p(사용자 결정 2026-10-19).
-   *   다운로드는 lock(flow-api 의 downloadMutex)으로 직렬화하고, 공유 session 에선 다음 동영상 다운로드 하나만 가로챈다. 편집 화면에
-   *   머무는 동안(업스케일 처리 · 파일 대기) 다른 DOM 단계가 엉뚱한 화면에서 돌지 않게 DOM 단계를 끝까지 쥐고, 아직 편집 화면이면
-   *   시작한 화면으로 돌아간 뒤 놓는다(사용자가 옮겼으면 그대로).
+   *   다운로드는 lock(flow-api 의 downloadMutex)으로 직렬화하고, 공유 session 에선 해상도 클릭 직후의 Flow 동영상 다운로드 하나만
+   *   가로챈다. DOM 단계는 클릭과 돌아가기까지만 쥔다 — 업스케일 처리·파일 대기는 단계 밖.
    */
-  const MEDIA_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   const DOWNLOAD_RESOLUTIONS = new Set(['720p', '1080p', '4k'])
+  /** 계획된 한계(플랜에 없는 해상도)는 DOM 실패로 보고하지 않는다(Fable #8). */
+  const EXPECTED_DOWNLOAD_KINDS = new Set(['flow-upscale-unavailable'])
   async function domDownloadVideo({ mediaId, resolution, lock } = {}) {
     const res = String(resolution || '').toLowerCase()
-    if (!MEDIA_ID_RE.test(String(mediaId || '')) || !DOWNLOAD_RESOLUTIONS.has(res)) return kindResult('flow-download-invalid-input', { reason: 'invalid-input' })
+    if (!UUID_RE.test(String(mediaId || '')) || !DOWNLOAD_RESOLUTIONS.has(res)) return kindResult('flow-download-invalid-input', { reason: 'invalid-input' })
     const flowView = deps.getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     const tag = '[Flow DOMDownload] [Angular]'
@@ -1138,46 +1138,52 @@ export function createFlowAngular(deps) {
     const release = lock ? await lock.acquire() : () => {}
     const editPath = editorPath(where)
     const gridPath = `/project/${where.projectId}`
+    const session = flowView.webContents.session
     let dir = null
     let capture = null
     try {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-dl-'))
-      // 다음 *동영상* 다운로드 하나만 잡는다 — 사용자의 다른 다운로드는 건드리지 않는다(Codex R1 #1).
-      capture = armVideoDownloadCapture(flowView.webContents.session, dir, { timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS })
-      const out = await withAutomationViewport(flowView, tag, async (ctl) => {
+      // DOM 단계는 클릭까지만 — 해상도를 누르면 바로 시작한 화면으로 돌아가 단계(방패·키 잠금)를 놓는다. 업스케일 처리·파일 대기는
+      //   단계 밖에서 downloadMutex 만 쥐고 한다(Fable #1·#2: 몇 분씩 앱을 막지 않는다).
+      const menu = await withAutomationViewport(flowView, tag, async (ctl) => {
         const ctx = {
           exec: (js) => exec(flowView, js),
           trustedClick: (js, opts) => {
-            if (opts.step === 'download-resolution') ctl.clickStarted = true   // 해상도 클릭 뒤엔 워치독이 끊지 않는다(업스케일이 이미 시작됐다)
+            if (opts.step === 'download-resolution') {
+              // 가로채기는 해상도 클릭 직전에 건다 — 열어 두는 창을 짧게(Fable #7).
+              capture = armVideoDownloadCapture(session, dir, { timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS })
+              ctl.clickStarted = true   // 클릭 뒤엔 워치독이 끊지 않는다(업스케일이 이미 시작됐다)
+            }
             return deps.trustedClickOnFlowView(js, opts)
           },
           isAborted: () => ctl.aborted,
         }
         let back = null
         try { back = await exec(flowView, PAGE_PATH_JS) } catch (_e) { back = null }
-        if (typeof back !== 'string' || !back.startsWith('/project/') || back === editPath) back = gridPath   // 못 읽으면 프로젝트 그리드로
+        if (typeof back !== 'string' || !back.startsWith('/project/')) back = gridPath   // 못 읽으면 프로젝트 그리드로
         try {
-          const menu = await driveEditorDownload(ctx, { path: editPath, resolution: res })
-          if (!menu.ok) return menu
-          console.log(`${tag} clicked ${menu.res}${menu.downgradedFrom ? ` (asked ${menu.downgradedFrom})` : ''} → waiting for the file`)
-          const got = await capture.wait()
-          return got.path ? { ...menu, file: got.path } : { ok: false, kind: 'flow-download-timeout', reason: got.error }
+          return await driveEditorDownload(ctx, { path: editPath, resolution: res })
         } finally {
-          // 아직 편집 화면이면 시작한 화면으로 — 그 사이 사용자가 옮겼으면 그대로 둔다(Codex R1 #2).
-          const back2 = await returnIfStillOn(ctx, { editPath, back })
-          if (back2 === 'failed') console.warn(`${tag} could not return to ${back}`)
+          // 아직 편집 화면이면 시작한 화면으로 — 그 사이 사용자가 옮겼으면 그대로 둔다(Codex R1 #2 · R2 #3·#4).
+          if ((await returnIfStillOn(ctx, { editPath, back })) === 'failed') console.warn(`${tag} could not return to ${back}`)
         }
-      }, { timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS + DOM_STAGE_TIMEOUT_MS })
-      if (out.success === false) return out   // DOM 단계 거부(busy · dragging · timeout)
-      if (!out.ok) {
-        console.warn(`${tag} ${out.kind}: ${out.reason}`)
-        void report('download-menu', out.kind, { reason: out.reason })
-        return kindResult(out.kind, { reason: out.reason })
+      })
+      if (menu.success === false) return menu   // DOM 단계 거부(busy · dragging · timeout)
+      if (!menu.ok) {
+        console.warn(`${tag} ${menu.kind}: ${menu.reason}`)
+        if (!EXPECTED_DOWNLOAD_KINDS.has(menu.kind)) void report('download-menu', menu.kind, { reason: menu.reason })
+        return kindResult(menu.kind, { reason: menu.reason })
       }
-      const mimeType = /\.webm$/i.test(out.file) ? 'video/webm' : 'video/mp4'
-      const base64 = `data:${mimeType};base64,${fs.readFileSync(out.file).toString('base64')}`
-      console.log(`${tag} ✅ ${out.res} ${path.basename(out.file)} (${Math.round(base64.length * 0.75 / 1024)} KB)`)
-      return { success: true, base64, mimeType, resolution: out.res, ...(out.downgradedFrom ? { downgradedFrom: out.downgradedFrom } : {}) }
+      console.log(`${tag} clicked ${menu.res}${menu.downgradedFrom ? ` (asked ${menu.downgradedFrom})` : ''} → waiting for the file`)
+      const got = capture ? await capture.wait() : { error: 'not-armed' }
+      if (!got.path) {
+        console.warn(`${tag} download ${got.error}`)
+        return kindResult(got.error === 'timeout' ? 'flow-download-timeout' : 'flow-download-error', { reason: got.error })
+      }
+      const mimeType = /\.webm$/i.test(got.path) ? 'video/webm' : 'video/mp4'
+      const base64 = `data:${mimeType};base64,${fs.readFileSync(got.path).toString('base64')}`
+      console.log(`${tag} ✅ ${menu.res} ${path.basename(got.path)} (${Math.round(base64.length * 0.75 / 1024)} KB)`)
+      return { success: true, base64, mimeType, resolution: menu.res, ...(menu.downgradedFrom ? { downgradedFrom: menu.downgradedFrom } : {}) }
     } catch (e) {
       return kindResult('flow-download-error', { reason: e?.message || String(e) })
     } finally {

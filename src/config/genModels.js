@@ -313,6 +313,15 @@ export function supportsVideoReferenceMimeType(mimeType) {
 /** 앱이 지원하는 비디오 해상도 known set. */
 export const VIDEO_RESOLUTIONS = ['720p', '1080p', '4k']
 
+/**
+ * Flow 다운로드 해상도 — 설정값을 검증만 한다(생성 모델 한계와 무관: 1080p/4K 를 줄지는 Flow 의 다운로드 메뉴가 정한다,
+ *   Codex R2 #2 · Fable #4). 그 밖의 값·미설정은 720p(원본, 업스케일 없음). 일괄·개별 다시 받기·프로젝트 열 때 복구가 같은 규칙을 쓴다.
+ */
+export function flowDownloadResolution(value) {
+  const r = String(value || '').toLowerCase()
+  return VIDEO_RESOLUTIONS.includes(r) ? r : '720p'
+}
+
 /** 모델이 지원하지 않는 해상도면 허용 최대로 강등(예: Veo Lite + 4K → 1080p).
  *  - falsy → passthrough (엔진 기본 위임)
  *  - known set 밖(stale/오타) → undefined (무단 상향 금지, 엔진 기본 720p)

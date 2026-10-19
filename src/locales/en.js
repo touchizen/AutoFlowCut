@@ -1669,8 +1669,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
   // Video Automation
   videoAutomation: {
-    upscaleFallback: 'The {requested} upscaled download failed, so the video was saved at the original {saved}.',
-    upscaleDowngraded: '{requested} upscaling is not available, so the video was saved at {saved}.',
+    savedAtLowerResolution: '{count} video(s) were saved below the requested resolution because upscaling was unavailable or failed (see each video\'s resolution).',
     requesting: 'Requesting video generation...',
     submitting: 'Submitting',
     waitingNext: 'Waiting before next submission',

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { syncVideosIntoScenes } from '../services/mediaSync'
 import { recoverInFlightVideos } from '../services/videoRecovery'
+import { flowDownloadResolution } from '../config/genModels'
 import { migrateLegacyProject } from '../utils/srtTrack'
 import { stripReferencesForSave } from '../utils/projectPersist'
 import { buildI2VScenePatch } from '../utils/i2vScenePatch'
@@ -519,6 +520,7 @@ export function useProjectData({
   onAudioSwitch,
   genAPI = null,
   onSaveError = null, // 프로젝트 저장 실패 시 호출 (인자: 에러 메시지)
+  onLowerResolutionSaved = null, // 열 때 복구가 요청보다 낮은 해상도로 저장한 영상 수(> 0)로 한 번 호출 — Codex R2 #5
   mode = 'api', // 'flow' | 'api' — flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화
 }) {
   // CONTRACT: runtime callers must provide the synchronous framePairs mirror. The array fallback
@@ -576,7 +578,7 @@ export function useProjectData({
     const commonOpts = {
       projectName,
       saveMode: settings?.saveMode || 'folder',
-      videoResolution: settings?.videoResolution || '1080p',
+      videoResolution: flowDownloadResolution(settings?.videoResolution),   // 검증만 — 미설정은 720p(업스케일 시도 없음, Fable #4)
       checkVideoStatus: genAPI.checkVideoStatus,
       downloadVideo: genAPI.downloadVideo,
       fetchMedia: genAPI.fetchMedia,
@@ -590,20 +592,24 @@ export function useProjectData({
     try {
       // T2V — videoScenes 항목 형식이지만 recoverInFlightVideos 의 framePairs 인터페이스 재사용
       // (둘 다 generationId/mediaId/videoPath/status 같은 동일 shape 의 in-flight item)
+      let lowerResolutionSaved = 0
       if (t2vInFlight) {
-        await recoverInFlightVideos({
+        const r = await recoverInFlightVideos({
           ...commonOpts,
           framePairs: loadedVideoScenes,  // T2V items 도 동일 shape — 재사용
           onFramePairUpdate: guardedVideoScenePatch,
         })
+        lowerResolutionSaved += r?.notices?.length || 0
       }
       if (i2vInFlight) {
-        await recoverInFlightVideos({
+        const r = await recoverInFlightVideos({
           ...commonOpts,
           framePairs: loadedFramePairs,
           onFramePairUpdate: guardedFramePairPatch,
         })
+        lowerResolutionSaved += r?.notices?.length || 0
       }
+      if (lowerResolutionSaved > 0) onLowerResolutionSaved?.(lowerResolutionSaved)
     } catch (e) {
       console.warn('[ProjectData] Video recovery failed:', e.message)
     }

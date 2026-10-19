@@ -91,6 +91,7 @@ export async function downloadAndSaveVideo({
     seed: seedValue,
     generatedAt,
     model: modelId,
+    ...(downloadNotice ? { downloadNotice } : {}),
   }
 }
 
@@ -134,12 +135,13 @@ export async function recoverInFlightVideos({
     engineMatches(fp.generationId)
   )
 
-  if (candidates.length === 0) return { recovered: 0, total: 0, expired: 0 }
+  if (candidates.length === 0) return { recovered: 0, total: 0, expired: 0, notices: [] }
 
   console.log(`${logPrefix} Found ${candidates.length} in-flight videos — checking Flow status...`)
 
   const CHUNK = 50  // same concurrency as mediaId recovery (commit d70a61c)
   let recovered = 0
+  const notices = []   // 요청보다 낮은 해상도로 저장된 항목 — 호출자가 한 번 알린다(Codex R2 #5)
   let expired = 0
   const total = candidates.length
 
@@ -219,6 +221,7 @@ export async function recoverInFlightVideos({
               errorKind: null,
             })
             recovered++
+            if (dlResult.downloadNotice) notices.push(dlResult.downloadNotice)
             console.log(`${logPrefix} Recovered ${fp.id} → ${statusInfo.mediaId.substring(0, 16)}`)
           } else {
             // 저장 실패 시에도 retry 식별자 + 메타 보존 (download-only retry 경로 유효 +
@@ -263,7 +266,7 @@ export async function recoverInFlightVideos({
   }
 
   console.log(`${logPrefix} 🎬 Recovered ${recovered}/${total} in-flight videos${expired > 0 ? ` (${expired} expired/failed)` : ''}`)
-  return { recovered, total, expired }
+  return { recovered, total, expired, notices }
 }
 
 /**
@@ -408,7 +411,8 @@ export async function retryVideoDownload({
       error: null,
       errorKind: null,
     })
-    return { success: true }
+    // 낮은 해상도로 저장됐으면 호출자가 알린다(Codex R2 #5)
+    return dl.downloadNotice ? { success: true, downloadNotice: dl.downloadNotice } : { success: true }
   }
 
   // 실패 시에도 retry 식별자 + 메타 보존 — 다음 retry 가 download-only 경로 탈 수 있게 +

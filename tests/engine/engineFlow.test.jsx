@@ -424,6 +424,14 @@ describe('useFlowEngine — downloadVideo routing', () => {
     expect(res).toMatchObject({ success: false, authFailed: true })
   })
 
+  it('a plain signed-URL download reports 720p (Fable #5: the saved resolution is never blank)', async () => {
+    mockFlowDownloadVideoUrl.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,EEE' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.downloadVideo(SIGNED, '720p') })
+    expect(res).toMatchObject({ success: true, resolution: '720p' })
+  })
+
   it('720p (or no resolution) keeps the plain signed-URL download', async () => {
     mockFlowDownloadVideoUrl.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,CCC' })
     const { result } = renderHook(() => useFlowEngine())

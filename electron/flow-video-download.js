@@ -14,7 +14,8 @@
 import path from 'node:path'
 import { DISPATCH_ESCAPE_JS } from './flow-reference-driver.js'
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** Flow 미디어·프로젝트·편집 id 모양(flow-angular 도 이걸 쓴다). */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** as29s 기록 → 편집 화면 위치. 그 mediaId 의 기록이 아니거나 id 모양이 틀리면 null. */
 export function mediaEditLocation(record, mediaId) {
@@ -107,6 +108,13 @@ export const NAVIGATE_JS = (p) => `(function () {
   window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
   return location.pathname;
 })()`
+/** 아직 그 편집 화면이면 back 으로 — 비교와 이동을 한 스크립트에서(사이에 사용자가 옮길 틈이 없다, Codex R2 #4). */
+export const RETURN_IF_ON_JS = (editPath, back) => `(function () {
+  if (location.pathname !== ${JSON.stringify(String(editPath))}) return 'user-moved';
+  history.replaceState(history.state, '', ${JSON.stringify(String(back))});
+  window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+  return 'navigated';
+})()`
 export const EDITOR_READY_JS = (p) => probe(`editorReady(document, ${JSON.stringify(String(p))})`)
 export const EDITOR_DOWNLOAD_TRIGGER_JS = probe('findEditorDownloadTrigger(document)')
 export const READ_RESOLUTION_ITEMS_JS = probe('readResolutionItems(document)')
@@ -135,8 +143,16 @@ const RETURN_WAIT_MS = 5000
 const POLL_MS = 100
 const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/** 죽은 문서의 exec 는 영영 settle 하지 않는다 — 시간 한도 안에 못 받으면 null(Fable #6, flow-reference-driver 의 raceExec 와 같은 규칙). */
+const EXEC_RACE_MS = 5000
 async function ex(ctx, js) {
-  try { return await ctx.exec(js) } catch (_e) { return null }
+  let timer = null
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => ctx.exec(js)).catch(() => null),
+      new Promise((r) => { timer = setTimeout(() => r(null), EXEC_RACE_MS) }),
+    ])
+  } finally { if (timer) clearTimeout(timer) }
 }
 async function tclick(ctx, js, step) {
   try { return (await ctx.trustedClick(js, { required: true, step })) || { success: false } } catch (e) { return { success: false, error: e?.message || String(e) } }
@@ -169,10 +185,15 @@ export async function driveEditorDownload(ctx, { path: editPath, resolution }) {
   if (!(await poll(ctx, EDITOR_READY_JS(editPath), (v) => v === true, EDITOR_WAIT_MS))) {
     return ctx.isAborted?.() ? aborted() : { ok: false, kind: 'flow-download-editor-not-ready', reason: 'editor-not-ready' }
   }
-  const menu = await tclick(ctx, EDITOR_DOWNLOAD_TRIGGER_JS, 'download-menu')
-  if (!menu.success) return failClose(ctx, 'flow-download-menu-failed', 'menu-trigger:' + (menu.error || 'click-failed'))
-  const items = await poll(ctx, READ_RESOLUTION_ITEMS_JS, (v) => Array.isArray(v) && v.length > 0, MENU_WAIT_MS)
-  if (!items) return ctx.isAborted?.() ? aborted() : failClose(ctx, 'flow-download-menu-failed', 'menu-not-open')
+  // 편집 화면이 막 그려진 직후엔 버튼이 보여도 첫 클릭이 메뉴를 못 열 때가 있다(2026-10-19 라이브: 앱 재시작 직후) — 한 번 더 누른다.
+  let items = null
+  for (let attempt = 1; attempt <= 2 && !items; attempt++) {
+    const menu = await tclick(ctx, EDITOR_DOWNLOAD_TRIGGER_JS, 'download-menu')
+    if (!menu.success) return failClose(ctx, 'flow-download-menu-failed', 'menu-trigger:' + (menu.error || 'click-failed'))
+    items = await poll(ctx, READ_RESOLUTION_ITEMS_JS, (v) => Array.isArray(v) && v.length > 0, MENU_WAIT_MS)
+    if (ctx.isAborted?.()) return aborted()
+  }
+  if (!items) return failClose(ctx, 'flow-download-menu-failed', 'menu-not-open')
 
   const pick = pickResolution(items, resolution)
   if (!pick) return failClose(ctx, 'flow-upscale-unavailable', 'no-enabled-upscale:' + String(resolution), { items })
@@ -183,38 +204,55 @@ export async function driveEditorDownload(ctx, { path: editPath, resolution }) {
 }
 
 /**
- * 아직 편집 화면에 있으면 다운로드를 시작한 화면으로 돌아간다. 그 사이 사용자가 다른 화면으로 갔으면 그대로 둔다(Codex R1 #2).
- * @returns {Promise<'returned'|'user-moved'|'failed'>}
+ * 아직 편집 화면에 있으면 다운로드를 시작한 화면으로 돌아간다. 그 사이 사용자가 다른 화면으로 갔으면 그대로 둔다(Codex R1 #2 · R2 #4).
+ *   그 편집 화면에서 시작했으면 머문다(R2 #3). DOM 단계가 워치독에 끊긴 뒤(좀비)엔 아무것도 안 한다(Fable #6).
+ * @returns {Promise<'returned'|'user-moved'|'aborted'|'failed'>}
  */
 export async function returnIfStillOn(ctx, { editPath, back }) {
-  const here = await ex(ctx, PAGE_PATH_JS)
-  if (here !== editPath) return 'user-moved'
-  await ex(ctx, NAVIGATE_JS(back))
+  if (ctx.isAborted?.()) return 'aborted'
+  if (back === editPath) return 'returned'
+  const r = await ex(ctx, RETURN_IF_ON_JS(editPath, back))
+  if (r === 'user-moved') return 'user-moved'
   return (await poll(ctx, PAGE_PATH_JS, (v) => v === back, RETURN_WAIT_MS)) ? 'returned' : 'failed'
 }
 
+/** Flow 가 내려보내는 다운로드의 출처 — 페이지가 만든 blob/data, 또는 Flow·Google 미디어 호스트. 그 밖의 호스트는 사용자 것(Codex R2 #1). */
+function isFlowDownloadUrl(url) {
+  if (!url) return true
+  if (/^(blob|data):/i.test(url)) return true
+  let host = ''
+  try { host = new URL(url).hostname } catch (_e) { return false }
+  return /(^|\.)(flow\.google\.com|labs\.google|flow-content\.google|googleusercontent\.com|storage\.googleapis\.com)$/i.test(host)
+}
+
 /**
- * 공유 session 의 다음 *동영상* 다운로드 하나만 dir 로 가로챈다(Codex R1 #1). 동영상이 아닌 다운로드는 건드리지 않고(평소대로),
- *   하나를 잡으면 즉시 리스너를 뗀다 — 그 뒤의 다운로드는 사용자 것. 완료는 폴더 폴링이 아니라 그 DownloadItem 의 'done' 으로 안다.
- * 업스케일은 클릭 뒤 Flow 가 서버에서 처리한 다음 내려보내므로 오래 걸릴 수 있다(timeoutMs = VIDEO_DOWNLOAD_TIMEOUT_MS).
+ * 공유 session 의 다음 Flow *동영상* 다운로드 하나만 dir 로 가로챈다(Codex R1 #1 · R2 #1). 동영상이 아니거나 Flow 밖 호스트의 다운로드는
+ *   건드리지 않고(평소대로), 하나를 잡으면 즉시 리스너를 뗀다. 해상도 클릭 직전에 건다(Fable #7 — 열어 두는 창을 짧게).
+ *   완료는 폴더 폴링이 아니라 그 DownloadItem 의 'done' 으로 안다. 끝나지 않은 채 정리되면(시간 초과 포함) 취소한다(Fable #3).
  * @returns {{ wait: () => Promise<{path:string}|{error:string}>, dispose: () => void }}
  */
 export function armVideoDownloadCapture(session, dir, { timeoutMs }) {
   let settle
   const done = new Promise((r) => { settle = r })
   let captured = null
+  let itemDone = false
   let finished = false
   const finish = (v) => { if (!finished) { finished = true; settle(v) } }
   const onWillDownload = (_e, item) => {
     if (captured) return
     const name = String((item.getFilename && item.getFilename()) || '')
     const mime = String((item.getMimeType && item.getMimeType()) || '')
+    const url = String((item.getURL && item.getURL()) || '')
     if (!/^video\//i.test(mime) && !/\.(mp4|webm|mov)$/i.test(name)) return
+    if (!isFlowDownloadUrl(url)) return
     captured = item
     const savePath = path.join(dir, path.basename(name) || 'flow-video.mp4')
     item.setSavePath(savePath)
     session.off('will-download', onWillDownload)
-    item.once('done', (_ev, state) => finish(state === 'completed' ? { path: savePath } : { error: 'download-' + String(state) }))
+    item.once('done', (_ev, state) => {
+      itemDone = true
+      finish(state === 'completed' ? { path: savePath } : { error: 'download-' + String(state) })
+    })
   }
   session.on('will-download', onWillDownload)
   const timer = setTimeout(() => finish({ error: 'timeout' }), timeoutMs)
@@ -223,7 +261,7 @@ export function armVideoDownloadCapture(session, dir, { timeoutMs }) {
     dispose: () => {
       clearTimeout(timer)
       session.off('will-download', onWillDownload)
-      if (captured && !finished) { try { captured.cancel() } catch (_e) { /* 이미 끝났을 수 있다 */ } }
+      if (captured && !itemDone) { try { captured.cancel() } catch (_e) { /* 이미 끝났을 수 있다 */ } }
       finish({ error: 'disposed' })
     },
   }

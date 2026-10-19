@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events'
 import {
   mediaEditLocation, editorPath, findEditorDownloadTrigger, readResolutionItems, findResolutionItem, pickResolution,
   PAGE_PATH_JS, NAVIGATE_JS, EDITOR_READY_JS, EDITOR_DOWNLOAD_TRIGGER_JS, READ_RESOLUTION_ITEMS_JS, RESOLUTION_ITEM_JS,
-  driveEditorDownload, returnIfStillOn, armVideoDownloadCapture,
+  driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, RETURN_IF_ON_JS, UUID_RE,
 } from '../../electron/flow-video-download.js'
 import { DISPATCH_ESCAPE_JS } from '../../electron/flow-reference-driver.js'
 import {
@@ -28,6 +28,10 @@ describe('mediaEditLocation (as29s record → editor route)', () => {
     expect(mediaEditLocation([MEDIA_ID, PROJECT_ID, null], MEDIA_ID)).toBeNull()
     expect(mediaEditLocation([MEDIA_ID, 'x', EDIT_ID], MEDIA_ID)).toBeNull()
     expect(mediaEditLocation(null, MEDIA_ID)).toBeNull()
+  })
+  it('UUID_RE is the shared media id shape', () => {
+    expect(UUID_RE.test(MEDIA_ID)).toBe(true)
+    expect(UUID_RE.test('m')).toBe(false)
   })
   it('editorPath', () => {
     expect(editorPath({ projectId: PROJECT_ID, editId: EDIT_ID })).toBe(EDIT_PATH)
@@ -172,6 +176,19 @@ describe('driveEditorDownload', () => {
     expect(calls.steps).toEqual([])
   })
 
+  it('clicks the trigger once more when the first click does not open the menu (live 2026-10-19: right after an app restart)', async () => {
+    const { ctx, calls } = fakeCtx()
+    const click = ctx.trustedClick
+    let menuClicks = 0
+    ctx.trustedClick = async (js, opts) => {
+      if (opts.step === 'download-menu' && ++menuClicks === 1) { calls.steps.push(opts.step); return { success: true } }   // 눌렸지만 메뉴가 안 열림
+      return click(js, opts)
+    }
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toEqual({ ok: true, res: '1080p' })
+    expect(calls.steps).toEqual(['download-menu', 'download-menu', 'download-resolution'])
+  })
+
   it('reports flow-download-menu-failed and closes menus when the menu never opens', async () => {
     const { ctx, calls } = fakeCtx()
     ctx.trustedClick = async () => ({ success: false, error: 'covered' })
@@ -189,6 +206,30 @@ describe('returnIfStillOn', () => {
     expect(window.location.pathname).toBe(GRID_PATH)
     expect(calls.navigations).toEqual([GRID_PATH])
   })
+  it('compares and navigates in one page script (Codex R2 #4: no gap for the user to move in between)', () => {
+    at(EDIT_PATH, editorPage())
+    expect(window.eval(RETURN_IF_ON_JS(EDIT_PATH, GRID_PATH))).toBe('navigated')
+    expect(window.location.pathname).toBe(GRID_PATH)
+    at('/project/other', gridPage())
+    expect(window.eval(RETURN_IF_ON_JS(EDIT_PATH, GRID_PATH))).toBe('user-moved')
+    expect(window.location.pathname).toBe('/project/other')
+  })
+
+  it('does nothing once the DOM stage was aborted (Fable #6: no zombie navigation)', async () => {
+    at(EDIT_PATH, editorPage())
+    const { ctx, calls } = fakeCtx()
+    ctx.isAborted = () => true
+    expect(await returnIfStillOn(ctx, { editPath: EDIT_PATH, back: GRID_PATH })).toBe('aborted')
+    expect(calls.navigations).toEqual([])
+  })
+
+  it('stays put when the download started on that same editor (Codex R2 #3)', async () => {
+    at(EDIT_PATH, editorPage())
+    const { ctx, calls } = fakeCtx()
+    expect(await returnIfStillOn(ctx, { editPath: EDIT_PATH, back: EDIT_PATH })).toBe('returned')
+    expect(calls.navigations).toEqual([])
+  })
+
   it("leaves the user's own navigation alone (Codex R1 #2)", async () => {
     at('/project/other', gridPage())
     const { ctx, calls } = fakeCtx()
@@ -230,6 +271,41 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     vid.emit('done', {}, 'completed')
     await expect(cap.wait()).resolves.toEqual({ path: '/tmp/flow-dl-x/Amber_1080p.mp4' })
     cap.dispose()
+  })
+
+  it('ignores a video from a foreign host (Codex R2 #1)', () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000 })
+    const foreign = fakeItem('trailer.mp4', 'video/mp4')
+    foreign.getURL = () => 'https://cdn.example.com/trailer.mp4'
+    s.emit('will-download', {}, foreign)
+    expect(foreign.savePath).toBeNull()
+    const ours = fakeItem('Amber_1080p.mp4', 'video/mp4')
+    ours.getURL = () => 'blob:https://flow.google.com/1b2c'
+    s.emit('will-download', {}, ours)
+    expect(ours.savePath).toBe('/tmp/d/Amber_1080p.mp4')
+    cap.dispose()
+  })
+
+  it('cancels a captured download that is still running when the wait times out (Fable #3)', async () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 20 })
+    const vid = fakeItem('a.mp4', 'video/mp4')
+    s.emit('will-download', {}, vid)
+    await expect(cap.wait()).resolves.toEqual({ error: 'timeout' })
+    cap.dispose()
+    expect(vid.cancelled).toBe(true)
+  })
+
+  it('does not cancel a download that already completed', async () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000 })
+    const vid = fakeItem('a.mp4', 'video/mp4')
+    s.emit('will-download', {}, vid)
+    vid.emit('done', {}, 'completed')
+    await cap.wait()
+    cap.dispose()
+    expect(vid.cancelled).toBeUndefined()
   })
 
   it('reports an interrupted download', async () => {

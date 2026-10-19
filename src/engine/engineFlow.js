@@ -562,7 +562,9 @@ export function useFlowEngine(opts = {}) {
             ? { ...plain, resolution: '720p', upscaleFallback: { requested: String(resolution).toLowerCase(), errorKind: dom?.errorKind || 'flow-download-error' } }
             : plain
         }
-        return markAuth(await api().flowDownloadVideoUrl({ url: uri, token: effectiveToken() }))
+        const plain = markAuth(await api().flowDownloadVideoUrl({ url: uri, token: effectiveToken() }))
+        // 새 Flow 서명 URL 은 생성 원본(720p) — 저장 해상도를 비워 두지 않는다(Fable #5).
+        return plain?.success && flowVideoMediaIdFromUrl(uri) ? { ...plain, resolution: '720p' } : plain
       }
       // #R13-6: 선택된 비디오 해상도를 DOM 다운로드(업스케일 선택)에 전달.
       // #R31-5: mediaId(DOM) 경로도 markAuth 로 감싼다 — DOM 다운로드 중 인증 만료(401/sign-in)가

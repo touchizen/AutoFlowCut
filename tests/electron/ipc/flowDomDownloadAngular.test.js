@@ -24,25 +24,29 @@ function makeIpcMain() {
 }
 
 /** Electron DownloadItem 흉내 — setSavePath 에 파일을 쓰고 'done'(completed)을 낸다. */
-function fakeItem(name, mime, savedPaths) {
+function fakeItem(name, mime, savedPaths, doneState = 'completed', events = []) {
   const item = new EventEmitter()
   item.getFilename = () => name
   item.getMimeType = () => mime
+  item.getURL = () => 'blob:https://flow.google.com/9f1c'
   item.getState = () => 'progressing'
   item.cancel = vi.fn()
   item.setSavePath = (p) => {
     savedPaths.push(p)
+    events.push('download')
     fs.writeFileSync(p, Buffer.alloc(2048, 7))
-    setTimeout(() => item.emit('done', {}, 'completed'), 10)
+    setTimeout(() => item.emit('done', {}, doneState), 10)
   }
   return item
 }
 
-function harness({ items, record, editorRenders = true, deliver = true, unrelatedFirst = false, userMovesTo = null, pathReadFails = false } = {}) {
+function harness({ items, record, editorRenders = true, deliver = true, unrelatedFirst = false, userMovesTo = null, pathReadFails = false, doneState = 'completed', earlyVideo = false } = {}) {
   const savedPaths = []
   const session = new EventEmitter()
   const steps = []
   const navigations = []
+  const events = []
+  const early = Object.assign(new EventEmitter(), { getFilename: () => 'other_clip.mp4', getMimeType: () => 'video/mp4', getURL: () => 'blob:https://flow.google.com/aa', setSavePath: vi.fn() })
   const unrelated = Object.assign(new EventEmitter(), { getFilename: () => 'invoice.pdf', getMimeType: () => 'application/pdf', setSavePath: vi.fn() })
   let page = GRID
   const executeJavaScript = vi.fn(async (js) => {
@@ -53,8 +57,18 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
       if (pathReadFails && !navigations.length) throw new Error('render frame disposed')
       return page
     }
+    const ret = /if \(location\.pathname !== "([^"]+)"\) return 'user-moved';\s*history\.replaceState\(history\.state, '', "([^"]+)"\)/.exec(js)
+    if (ret) {
+      if (page !== ret[1]) return 'user-moved'
+      page = ret[2]; navigations.push(page); events.push('nav:' + page); return 'navigated'
+    }
     const nav = /history\.replaceState\(history\.state, '', "([^"]+)"\)/.exec(js)
-    if (nav) { page = nav[1]; navigations.push(page); return page }
+    if (nav) {
+      page = nav[1]; navigations.push(page); events.push('nav:' + page)
+      // 가로채기는 해상도 클릭 직전에만 걸린다 — 편집 화면으로 가는 동안 끼어든 동영상 다운로드는 잡히지 않는다(Fable #7)
+      if (earlyVideo) session.emit('will-download', {}, early)
+      return page
+    }
     if (js.includes('editorReady(document, ')) return editorRenders && js.includes(JSON.stringify(page))
     if (js === READ_RESOLUTION_ITEMS_JS) return items ?? [
       { res: '270p', disabled: false }, { res: '720p', disabled: false }, { res: '1080p', disabled: false }, { res: '4k', disabled: true },
@@ -72,13 +86,15 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
   const trustedClickOnFlowView = vi.fn(async (js, opts) => {
     steps.push(opts.step)
     if (opts.step === 'download-menu') expect(js).toBe(EDITOR_DOWNLOAD_TRIGGER_JS)
-    if (opts.step === 'download-resolution' && deliver) {
+    if (opts.step === 'download-resolution') {
+      if (userMovesTo) page = userMovesTo   // 클릭과 돌아가기 사이에 사용자가 옮겼다
       // Flow 가 업스케일을 끝내고 내려보낸다 → will-download(그 전에 사용자의 관계없는 다운로드가 끼어들 수 있다)
-      setTimeout(() => {
-        if (unrelatedFirst) session.emit('will-download', {}, unrelated)
-        if (userMovesTo) page = userMovesTo
-        session.emit('will-download', {}, fakeItem('Amber_light_particles_drifting_1080p.mp4', 'video/mp4', savedPaths))
-      }, 20)
+      if (deliver) {
+        setTimeout(() => {
+          if (unrelatedFirst) session.emit('will-download', {}, unrelated)
+          session.emit('will-download', {}, fakeItem('Amber_light_particles_drifting_1080p.mp4', 'video/mp4', savedPaths, doneState, events))
+        }, 50)
+      }
     }
     return { success: true }
   })
@@ -90,7 +106,7 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
   }
   const ipc = makeIpcMain()
   registerFlowAPIIPC(ipc, deps)
-  return { ipc, deps, flowView, steps, session, unrelated, savedPaths, navigations, page: () => page }
+  return { ipc, deps, flowView, steps, session, unrelated, early, savedPaths, navigations, events, page: () => page }
 }
 
 describe('flow:dom-download-video on the new Flow (Angular)', () => {
@@ -105,6 +121,8 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     expect(h.steps).toEqual(['download-menu', 'download-resolution'])
     expect(h.navigations).toEqual([EDITOR, GRID])
     expect(h.page()).toBe(GRID)
+    // 클릭 직후 그리드로 돌아가 DOM 단계를 놓고, 파일은 그 뒤에 기다린다(Fable #1·#2)
+    expect(h.events).toEqual(['nav:' + EDITOR, 'nav:' + GRID, 'download'])
     expect(h.session.listenerCount('will-download')).toBe(0)
     expect(fs.existsSync(h.savedPaths[0])).toBe(false)   // temp dir cleaned
   }, 15000)
@@ -117,11 +135,34 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     expect(h.savedPaths).toHaveLength(1)
   }, 15000)
 
-  it("does not undo the user's navigation made during the download (Codex R1 #2)", async () => {
+  it("does not undo the user's navigation made before the return (Codex R1 #2)", async () => {
     const h = harness({ userMovesTo: `/project/${PROJECT}/edit/11111111-2222-4333-8444-555555555555` })
     const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
     expect(r).toMatchObject({ success: true })
     expect(h.navigations).toEqual([EDITOR])
+  }, 15000)
+
+  it('a video download fired while opening the editor is not captured (Fable #7)', async () => {
+    const h = harness({ earlyVideo: true })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true })
+    expect(h.early.setSavePath).not.toHaveBeenCalled()
+  }, 15000)
+
+  it('an interrupted download ends as flow-download-error (the engine then falls back to 720p)', async () => {
+    const h = harness({ doneState: 'interrupted' })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-download-error', reason: 'download-interrupted' })
+    expect(h.session.listenerCount('will-download')).toBe(0)
+  }, 15000)
+
+  it('starting on that same editor leaves the user there (Codex R2 #3)', async () => {
+    const h = harness()
+    await h.flowView.webContents.executeJavaScript(`(function () {\n  history.replaceState(history.state, '', ${JSON.stringify(EDITOR)});`)
+    h.navigations.length = 0
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true })
+    expect(h.page()).toBe(EDITOR)
   }, 15000)
 
   it('returns to the project grid when the starting path could not be read', async () => {
