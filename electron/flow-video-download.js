@@ -148,6 +148,10 @@ export function pickResolution(items, requested) {
 /** 편집 화면이 그려질 때까지 · 메뉴가 열릴 때까지 · 되돌아간 경로가 맞을 때까지의 한도. */
 const EDITOR_WAIT_MS = 10000
 const MENU_WAIT_MS = 3000
+/** 트리거가 다른 요소에 덮여(hit-test 'covered') 거부됐을 때 다시 재고 누르는 횟수·간격 — 편집 화면이 열린 직후의 일시적 덮임(2026-10-19 라이브). */
+export const MENU_COVERED_RETRIES = 5
+const MENU_COVERED_WAIT_MS = 400
+const isCoveredRefusal = (r) => /covered/i.test(String(r?.error || ''))
 const RETURN_WAIT_MS = 5000
 const POLL_MS = 100
 const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -197,7 +201,14 @@ export async function driveEditorDownload(ctx, { path: editPath, resolution }) {
   // 편집 화면이 막 그려진 직후엔 버튼이 보여도 첫 클릭이 메뉴를 못 열 때가 있다(2026-10-19 라이브: 앱 재시작 직후) — 한 번 더 누른다.
   let items = null
   for (let attempt = 1; attempt <= 2 && !items; attempt++) {
-    const menu = await tclick(ctx, EDITOR_DOWNLOAD_TRIGGER_JS, 'download-menu')
+    let menu = await tclick(ctx, EDITOR_DOWNLOAD_TRIGGER_JS, 'download-menu')
+    // 편집 화면이 열린 직후엔 다른 요소가 잠시 버튼 위를 덮어 hit-test 가 'covered' 로 거부한다(2026-10-19 라이브: 두 편집 화면 모두 → 720p 로 물러났다).
+    //   바로 다시 누르면 같은 요소가 또 덮는다 — 잠깐 기다렸다 다시 재고 누른다. 횟수는 유계.
+    for (let c = 0; c < MENU_COVERED_RETRIES && !menu.success && isCoveredRefusal(menu); c++) {
+      if (ctx.isAborted?.()) return aborted()
+      await (ctx.sleep || defaultSleep)(MENU_COVERED_WAIT_MS)
+      menu = await tclick(ctx, EDITOR_DOWNLOAD_TRIGGER_JS, 'download-menu')
+    }
     if (!menu.success) return failClose(ctx, 'flow-download-menu-failed', 'menu-trigger:' + (menu.error || 'click-failed'))
     items = await poll(ctx, READ_RESOLUTION_ITEMS_JS, (v) => Array.isArray(v) && v.length > 0, MENU_WAIT_MS)
     if (ctx.isAborted?.()) return aborted()
@@ -292,15 +303,19 @@ export function armVideoDownloadCapture(session, dir, { timeoutMs, title = null,
     const name = String((item.getFilename && item.getFilename()) || '')
     const mime = String((item.getMimeType && item.getMimeType()) || '')
     const url = String((item.getURL && item.getURL()) || '')
-    const skip = (reason) => { try { onIgnored?.({ reason, name, mime, host: hostOf(url) }) } catch (_e) { /* 진단은 흐름을 막지 않는다 */ } }
+    // 이름은 사용자 콘텐츠라 호출자가 로그에 못 남긴다 — 무엇을 봤는지는 토큰·길이로(2026-10-19 라이브: blob 다운로드가 'resolution' 으로 버려졌는데 이유를 알 수 없었다).
+    const skip = (reason) => { try { onIgnored?.({ reason, name, mime, host: hostOf(url), tok: resToken(name), want: res ? String(res).toLowerCase() : null, nameLen: name.length }) } catch (_e) { /* 진단은 흐름을 막지 않는다 */ } }
     if (!/^video\//i.test(mime) && !/\.(mp4|webm|mov)$/i.test(name)) return skip('not-video')
     if (!isFlowDownloadUrl(url)) return skip('host')
     // 이 미디어·이 해상도의 파일인지 — Flow 는 "<제목>_<해상도>_<시각>.mp4" 로 내려보낸다(2026-10-19 라이브). 사용자가 받은 다른 영상은 그대로 둔다(Codex R3 #1).
-    // 고른 해상도가 있으면 파일 이름에 그 해상도 표시가 있어야 한다(없으면 우리 파일이라 확신할 수 없다, Codex R4 #2).
-    if (res && resToken(name) !== String(res).toLowerCase()) return skip('resolution')
-    // 제목 접두 대조는 ASCII 제목일 때만 — 한글 등은 파일 이름에서 빠지거나 바뀔 수 있다(Fable R3 #2). 그 경우는 해상도 +
-    //   "편집 화면을 떠나면 접는다"(호출자가 abort)로 가린다.
-    if (wantTitle && /^[a-z0-9]+$/.test(wantTitle) && !normName(name).startsWith(wantTitle)) return skip('title')
+    // 해상도 표시가 **있으면** 고른 해상도와 같아야 한다(Codex R4 #2). 없는 이름도 있다 — 같은 날 12:56 라이브: 이미 업스케일된 파일은
+    //   "<제목>_<시각>.mp4" 로 바로(blob) 내려왔고, 표시가 없다고 버리자 5분을 기다리다 720p 로 물러났다. 그때는 제목 대조와 출처(Flow·blob)로 가린다.
+    const tok = resToken(name)
+    // 제목 접두 대조는 ASCII 제목일 때만 — 한글 등은 파일 이름에서 빠지거나 바뀔 수 있다(Fable R3 #2). 그 경우는 해상도 표시가
+    //   유일한 대조라 표시 없는 이름은 받지 않는다 + "편집 화면을 떠나면 접는다"(호출자가 abort)로 가린다.
+    const titleMatchable = !!wantTitle && /^[a-z0-9]+$/.test(wantTitle)
+    if (res && (tok ? tok !== String(res).toLowerCase() : !titleMatchable)) return skip('resolution')
+    if (titleMatchable && !normName(name).startsWith(wantTitle)) return skip('title')
     captured = item
     const savePath = path.join(dir, path.basename(name) || 'flow-video.mp4')
     item.setSavePath(savePath)

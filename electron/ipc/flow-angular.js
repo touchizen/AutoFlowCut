@@ -1178,7 +1178,7 @@ export function createFlowAngular(deps) {
             console.log(`${tag} capture armed — titleLen=${titleLen} res=${pickedRes}`)
             capture = armVideoDownloadCapture(session, dir, {
               timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS, title, res: pickedRes,
-              onIgnored: (i) => console.warn(`${tag} ignored download (${i.reason}) [${i.mime}] host=${i.host}`),   // 파일 이름(제목)은 남기지 않는다
+              onIgnored: (i) => console.warn(`${tag} ignored download (${i.reason}) [${i.mime}] host=${i.host} tok=${i.tok ?? '-'} want=${i.want ?? '-'} nameLen=${i.nameLen}`),   // 파일 이름(제목)은 남기지 않는다
             })
           },
           isAborted: () => ctl.aborted,

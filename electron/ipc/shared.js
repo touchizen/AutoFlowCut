@@ -57,6 +57,26 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  * @param {object} ctx.constants - URL constants and API headers
  * @returns {object} All helper functions
  */
+/**
+ * 클릭 직전 hit-test(페이지 컨텍스트) — 좌표의 요소가 대상(또는 그 자손)이 아니면 거부한다. 자기완결(브라우저 전역만).
+ *   covered 면 덮은 요소를 태그·id·클래스(최대 3개)로 이름 붙여 돌려준다 — 텍스트는 싣지 않는다(사용자 콘텐츠). tests/electron/ipc/hitTestJs.test.js
+ */
+export function HIT_TEST_JS(x, y, measuredUrl, jsSelector) {
+  return `
+      (function() {
+        if (location.href !== ${JSON.stringify(measuredUrl)}) return { ok: false, why: 'page-changed' };
+        const target = ${jsSelector};
+        if (!target) return { ok: false, why: 'gone' };
+        const hit = document.elementFromPoint(${Number(x)}, ${Number(y)});
+        if (!hit) return { ok: false, why: 'nothing-at-point' };
+        // hit.contains(target) 은 넣지 않는다 — 큰 부모가 hit 이면 우리 버튼이 이벤트를 못 받는다는 뜻이다.
+        if (target === hit || target.contains(hit)) return { ok: true };
+        const name = (e) => String(e.tagName || '').toLowerCase() + (e.id ? '#' + e.id : '') + Array.from(e.classList || []).slice(0, 3).map((c) => '.' + c).join('');
+        return { ok: false, why: 'covered', hit: name(hit) };
+      })()
+    `
+}
+
 export function createSharedHelpers(ctx) {
   const { getFlowView, getMainWindow, constants, onDomFailure } = ctx
   // 세션 API 가 없는 새 도메인용 폴백(main 의 flow-bearer-capture) — 없으면 폴백 없음.
@@ -210,18 +230,9 @@ export function createSharedHelpers(ctx) {
     // ⚠️ measuredUrl 을 넘겨 "측정한 그 페이지" 인지 확인한다. reject 만 막으면 부족하다 — 100ms 사이에
     //    B 로 **정상 navigate** 되면 executeJavaScript 는 성공하고, B 에도 같은 자리에 같은 버튼이 있으면
     //    hit-test 를 통과해 **B 의 버튼을 누른다**(B 에 남은 draft 를 잘못 제출할 수도 있다).
-    const hitTest = (x, y, measuredUrl) => flowView.webContents.executeJavaScript(`
-      (function() {
-        if (location.href !== ${JSON.stringify(measuredUrl)}) return { ok: false, why: 'page-changed' };
-        const target = ${jsSelector};
-        if (!target) return { ok: false, why: 'gone' };
-        const hit = document.elementFromPoint(${x}, ${y});
-        if (!hit) return { ok: false, why: 'nothing-at-point' };
-        // hit.contains(target) 은 넣지 않는다 — 큰 부모가 hit 이면 우리 버튼이 이벤트를 못 받는다는 뜻이다.
-        return { ok: target === hit || target.contains(hit), why: 'covered' };
-      })()
-    `).then((r) => (r && typeof r.ok === 'boolean' ? r : { ok: false, why: 'unreadable' }))
-     .catch(() => ({ ok: false, why: 'context-gone' }))
+    const hitTest = (x, y, measuredUrl) => flowView.webContents.executeJavaScript(HIT_TEST_JS(x, y, measuredUrl, jsSelector))
+      .then((r) => (r && typeof r.ok === 'boolean' ? r : { ok: false, why: 'unreadable' }))
+      .catch(() => ({ ok: false, why: 'context-gone' }))
     // ⚠️ 여기서 fail-open 하면 안 된다. hit-test 가 reject 된다는 건 그 사이 페이지가 navigate 되어
     //    실행 컨텍스트가 사라졌다는 뜻이고, 그러면 우리가 들고 있는 좌표는 **다른 페이지의 좌표** 다.
     //    그걸 누르고 success 를 반환하면 오늘 종일 쫓던 "엉뚱한 걸 누르고 성공이라 말하기" 다.
@@ -296,9 +307,10 @@ export function createSharedHelpers(ctx) {
 
       const hit = await hitTest(coords.x, coords.y, coords.url)
       if (!hit.ok) {
-        console.warn('[TrustedClick] Another element occupies the point — refusing to click it:', hit.why)
+        // 덮은 요소의 태그·id·클래스만 남긴다(사용자 콘텐츠 아님) — 2026-10-19 라이브의 'covered' 는 무엇이 덮었는지 알 수 없어 고칠 수 없었다.
+        console.warn('[TrustedClick] Another element occupies the point — refusing to click it:', hit.why, hit.hit || '')
         if (opts.required) {
-          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, `hit-test:${hit.why}`, { coords })
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, `hit-test:${hit.why}`, { coords, ...(hit.hit ? { hit: hit.hit } : {}) })
         }
         return { success: false, error: `Target not at point (${hit.why})` }
       }

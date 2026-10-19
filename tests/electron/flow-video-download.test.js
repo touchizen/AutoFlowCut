@@ -10,7 +10,7 @@ import {
   mediaEditLocation, editorPath, findEditorDownloadTrigger, readResolutionItems, findResolutionItem, pickResolution,
   PAGE_PATH_JS, NAVIGATE_JS, EDITOR_READY_JS, EDITOR_DOWNLOAD_TRIGGER_JS, READ_RESOLUTION_ITEMS_JS, RESOLUTION_ITEM_JS,
   driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, RETURN_IF_ON_JS, UUID_RE,
-  EDITOR_TITLE_JS, isVideoCapturePending, waitForVideoCaptures, guardFlowNavigation,
+  EDITOR_TITLE_JS, isVideoCapturePending, waitForVideoCaptures, guardFlowNavigation, MENU_COVERED_RETRIES,
 } from '../../electron/flow-video-download.js'
 import { DISPATCH_ESCAPE_JS } from '../../electron/flow-reference-driver.js'
 import {
@@ -209,12 +209,47 @@ describe('driveEditorDownload', () => {
     const { ctx, calls } = fakeCtx()
     let n = 0
     ctx.trustedClick = async (_js, opts) => {
-      if (opts.step === 'download-menu') { calls.steps.push(opts.step); return ++n === 1 ? { success: true } : { success: false, error: 'covered' } }
+      if (opts.step === 'download-menu') { calls.steps.push(opts.step); return ++n === 1 ? { success: true } : { success: false, error: 'not found' } }
       return { success: false }
     }
     const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
-    expect(r).toMatchObject({ ok: false, kind: 'flow-download-menu-failed', reason: 'menu-trigger:covered' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-download-menu-failed', reason: 'menu-trigger:not found' })
     expect(calls.steps).toEqual(['download-menu', 'download-menu'])
+  })
+
+  it('re-measures and clicks the trigger again when the hit-test says another element covers it (live 2026-10-19: both editors refused "covered" → 720p)', async () => {
+    const { ctx, calls } = fakeCtx()
+    const click = ctx.trustedClick
+    let covered = 2
+    ctx.trustedClick = async (js, opts) => {
+      if (opts.step === 'download-menu' && covered-- > 0) { calls.steps.push(opts.step); return { success: false, error: 'Target not at point (covered)' } }
+      return click(js, opts)
+    }
+    let sleeps = 0
+    ctx.sleep = async () => { sleeps++ }
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toEqual({ ok: true, res: '1080p' })
+    expect(calls.steps).toEqual(['download-menu', 'download-menu', 'download-menu', 'download-resolution'])
+    expect(sleeps).toBeGreaterThanOrEqual(2)   // 덮인 사이에 잠깐 기다린다 — 바로 다시 누르면 같은 요소가 또 덮는다
+  })
+
+  it('gives up on a trigger that stays covered after bounded retries — no endless loop, menus closed', async () => {
+    const { ctx, calls } = fakeCtx()
+    ctx.trustedClick = async (_js, opts) => { calls.steps.push(opts.step); return { success: false, error: 'Target not at point (covered)' } }
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-download-menu-failed', reason: 'menu-trigger:Target not at point (covered)' })
+    expect(calls.steps).toEqual(Array(1 + MENU_COVERED_RETRIES).fill('download-menu'))
+    expect(calls.escapes).toBeGreaterThan(0)
+  })
+
+  it('a watchdog abort while the trigger is covered stops the retries (no clicks on a zombie stage)', async () => {
+    const { ctx, calls } = fakeCtx()
+    let aborted = false
+    ctx.isAborted = () => aborted
+    ctx.trustedClick = async (_js, opts) => { calls.steps.push(opts.step); aborted = true; return { success: false, error: 'Target not at point (covered)' } }
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-download-aborted' })
+    expect(calls.steps).toEqual(['download-menu'])
   })
 
   it('a watchdog abort during beforeResolutionClick stops before the resolution click (Fable R3 #3)', async () => {
@@ -371,14 +406,52 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     cap.dispose()
   })
 
-  it('a requested resolution needs a resolution token in the name (Codex R4 #2)', () => {
+  it('a name whose resolution token disagrees with the chosen one is left alone, with what was seen (Codex R4 #2)', () => {
+    const s = session()
+    const ignored = []
+    const info = []
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: MEDIA_TITLE, res: '1080p', onIgnored: (i) => { ignored.push(i.reason); info.push(i) } })
+    const other = fakeItem('Amber_light_particles_drifting_720p_20261019114022.mp4', 'video/mp4')
+    s.emit('will-download', {}, other)
+    expect(other.savePath).toBeNull()
+    expect(ignored).toEqual(['resolution'])
+    expect(info[0]).toMatchObject({ tok: '720p', want: '1080p', nameLen: 'Amber_light_particles_drifting_720p_20261019114022.mp4'.length })
+    cap.dispose()
+  })
+
+  it('a token-less name is taken when the title matches — Flow named the cached 1080p file "<title>_<time>.mp4" (live 2026-10-19 12:56: tok=- nameLen=53 → dropped → 5-minute timeout → 720p)', () => {
     const s = session()
     const ignored = []
     const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: MEDIA_TITLE, res: '1080p', onIgnored: (i) => ignored.push(i.reason) })
-    const noTok = fakeItem('Amber_light_particles_drifting.mp4', 'video/mp4')
-    s.emit('will-download', {}, noTok)
-    expect(noTok.savePath).toBeNull()
+    const ours = fakeItem('Amber_light_particles_drifting_20261019125600.mp4', 'video/mp4')
+    s.emit('will-download', {}, ours)
+    expect(ours.savePath).toBe('/tmp/d/Amber_light_particles_drifting_20261019125600.mp4')
+    expect(ignored).toEqual([])
+    cap.dispose()
+  })
+
+  it('a token-less name is not taken when the title cannot be matched (Korean title) — the resolution token is then the only guard', () => {
+    const s = session()
+    const ignored = []
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: '호박색 빛 입자가 흐르는 배경', res: '1080p', onIgnored: (i) => ignored.push(i.reason) })
+    const tokenless = fakeItem('_20261019125600.mp4', 'video/mp4')
+    s.emit('will-download', {}, tokenless)
+    expect(tokenless.savePath).toBeNull()
     expect(ignored).toEqual(['resolution'])
+    const ours = fakeItem('_1080p_20261019125600.mp4', 'video/mp4')
+    s.emit('will-download', {}, ours)
+    expect(ours.savePath).toBe('/tmp/d/_1080p_20261019125600.mp4')
+    cap.dispose()
+  })
+
+  it("a token-less name with another title is still someone else's download", () => {
+    const s = session()
+    const ignored = []
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: MEDIA_TITLE, res: '1080p', onIgnored: (i) => ignored.push(i.reason) })
+    const other = fakeItem('Neon_city_20261019125600.mp4', 'video/mp4')
+    s.emit('will-download', {}, other)
+    expect(other.savePath).toBeNull()
+    expect(ignored).toEqual(['title'])
     cap.dispose()
   })
 
@@ -414,6 +487,8 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     s.emit('will-download', {}, wrongRes)
     expect(ignored.map((i) => i.reason)).toEqual(['not-video', 'title', 'resolution'])
     expect(ignored[1]).toMatchObject({ name: 'Neon_city_1080p_1.mp4' })
+    // 해상도 불일치는 **무엇을** 봤는지도 — 이름은 사용자 콘텐츠라 로그에 못 남기니 토큰·길이만(2026-10-19 라이브: blob 다운로드가 'resolution' 으로 버려졌는데 이유를 알 수 없었다)
+    expect(ignored[2]).toMatchObject({ reason: 'resolution', tok: '720p', want: '1080p', nameLen: 'Amber_light_particles_drifting_720p_1.mp4'.length })
     cap.dispose()
   })
 
