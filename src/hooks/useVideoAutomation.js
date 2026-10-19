@@ -224,10 +224,6 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     }
     // 요청보다 낮은 해상도로 받았으면 알린다(업스케일 실패 → 원본, 4K 막힘 → 1080p). 영상은 저장한다.
     const downloadNotice = downloadNoticeOf(mediaResult)
-    if (downloadNotice) {
-      console.warn('[VideoAutomation] saved at', downloadNotice.saved, 'instead of', downloadNotice.requested, downloadNotice.reason || '')
-      lowerResNoticesRef.current.push(downloadNotice)   // 배치 끝에 한 번 알린다(Fable #8)
-    }
 
     // 파일 저장 — videoSaveId 우선 (t2v_N / i2v_N), 없으면 기존 item.id (vscene_N / fp_N)
     let videoPath = null
@@ -268,6 +264,12 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         mediaId,
         videoSaveId: item.videoSaveId || null,
       }
+    }
+
+    // 저장까지 끝난 뒤에만 센다(Codex R3 #3) — 배치 끝에 한 번 알린다(Fable #8).
+    if (downloadNotice) {
+      console.warn('[VideoAutomation] saved at', downloadNotice.saved, 'instead of', downloadNotice.requested, downloadNotice.reason || '')
+      lowerResNoticesRef.current.push(downloadNotice)
     }
 
     return {
@@ -899,6 +901,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // in-flight 도 없고 제출도 0건 — auth/quota/일반 실패 구분 후 조기 종료.
     if (pending.size === 0) {
       setIsRunning(false)
+      flushLowerResNotices()   // Phase 0 에서 낮은 해상도로 저장된 항목(Fable R2 #2)
       if (authStopped || terminalStopped) {
         // Status + message already set at the submit break site — do not overwrite.
       } else if (quotaStoppedRef.current) {

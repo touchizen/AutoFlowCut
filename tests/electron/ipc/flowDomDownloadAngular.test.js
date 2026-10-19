@@ -8,8 +8,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
-import { _resetDomStageForTests } from '../../../electron/ipc/flow-angular.js'
-import { PAGE_PATH_JS, READ_RESOLUTION_ITEMS_JS, EDITOR_DOWNLOAD_TRIGGER_JS } from '../../../electron/flow-video-download.js'
+import { _resetDomStageForTests, _domStageSettledForTests } from '../../../electron/ipc/flow-angular.js'
+import { PAGE_PATH_JS, READ_RESOLUTION_ITEMS_JS, EDITOR_DOWNLOAD_TRIGGER_JS, EDITOR_TITLE_JS } from '../../../electron/flow-video-download.js'
 import { respBodyWithPayload } from '../../fixtures/flow-batchexecute-samples.js'
 
 const MEDIA = 'ba1764fb-6f24-49d4-9b1e-6c13af2f1f7b'
@@ -40,7 +40,7 @@ function fakeItem(name, mime, savedPaths, doneState = 'completed', events = []) 
   return item
 }
 
-function harness({ items, record, editorRenders = true, deliver = true, unrelatedFirst = false, userMovesTo = null, pathReadFails = false, doneState = 'completed', earlyVideo = false } = {}) {
+function harness({ items, record, editorRenders = true, deliver = true, unrelatedFirst = false, userMovesTo = null, pathReadFails = false, doneState = 'completed', earlyVideo = false, startPage = GRID, otherFlowVideoFirst = false } = {}) {
   const savedPaths = []
   const session = new EventEmitter()
   const steps = []
@@ -48,11 +48,14 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
   const events = []
   const early = Object.assign(new EventEmitter(), { getFilename: () => 'other_clip.mp4', getMimeType: () => 'video/mp4', getURL: () => 'blob:https://flow.google.com/aa', setSavePath: vi.fn() })
   const unrelated = Object.assign(new EventEmitter(), { getFilename: () => 'invoice.pdf', getMimeType: () => 'application/pdf', setSavePath: vi.fn() })
-  let page = GRID
+  let page = startPage
+  let stageSettledAtDownload = null
+  const otherFlowVideo = Object.assign(new EventEmitter(), { getFilename: () => 'Neon_city_at_night_1080p_20261019.mp4', getMimeType: () => 'video/mp4', getURL: () => 'blob:https://flow.google.com/77', setSavePath: vi.fn() })
   const executeJavaScript = vi.fn(async (js) => {
     if (js.includes('readWizGlobals')) {   // callFlowRpc(as29s)
       return { status: 200, text: respBodyWithPayload('as29s', record ?? [MEDIA, PROJECT, EDIT, 'CAE', null]) }
     }
+    if (js === EDITOR_TITLE_JS) return page.includes('/edit/') ? 'Amber light particles drifting' : null
     if (js === PAGE_PATH_JS) {
       if (pathReadFails && !navigations.length) throw new Error('render frame disposed')
       return page
@@ -91,7 +94,9 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
       // Flow 가 업스케일을 끝내고 내려보낸다 → will-download(그 전에 사용자의 관계없는 다운로드가 끼어들 수 있다)
       if (deliver) {
         setTimeout(() => {
+          stageSettledAtDownload = _domStageSettledForTests()
           if (unrelatedFirst) session.emit('will-download', {}, unrelated)
+          if (otherFlowVideoFirst) session.emit('will-download', {}, otherFlowVideo)
           session.emit('will-download', {}, fakeItem('Amber_light_particles_drifting_1080p.mp4', 'video/mp4', savedPaths, doneState, events))
         }, 50)
       }
@@ -106,7 +111,7 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
   }
   const ipc = makeIpcMain()
   registerFlowAPIIPC(ipc, deps)
-  return { ipc, deps, flowView, steps, session, unrelated, early, savedPaths, navigations, events, page: () => page }
+  return { ipc, deps, flowView, steps, session, unrelated, early, otherFlowVideo, savedPaths, navigations, events, page: () => page, stageSettledAtDownload: () => stageSettledAtDownload }
 }
 
 describe('flow:dom-download-video on the new Flow (Angular)', () => {
@@ -121,8 +126,9 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     expect(h.steps).toEqual(['download-menu', 'download-resolution'])
     expect(h.navigations).toEqual([EDITOR, GRID])
     expect(h.page()).toBe(GRID)
-    // 클릭 직후 그리드로 돌아가 DOM 단계를 놓고, 파일은 그 뒤에 기다린다(Fable #1·#2)
+    // 클릭 직후 그리드로 돌아가 DOM 단계를 놓고, 파일은 그 뒤에 기다린다(Fable #1·#2) — 파일이 올 때 단계는 이미 풀려 있다(Fable R2 테스트 공백)
     expect(h.events).toEqual(['nav:' + EDITOR, 'nav:' + GRID, 'download'])
+    expect(h.stageSettledAtDownload()).toBe(true)
     expect(h.session.listenerCount('will-download')).toBe(0)
     expect(fs.existsSync(h.savedPaths[0])).toBe(false)   // temp dir cleaned
   }, 15000)
@@ -163,6 +169,21 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
     expect(r).toMatchObject({ success: true })
     expect(h.page()).toBe(EDITOR)
+  }, 15000)
+
+  it("another Flow video downloaded during the wait is left alone — only this media's file is taken (Codex R3 #1)", async () => {
+    const h = harness({ otherFlowVideoFirst: true })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true, resolution: '1080p' })
+    expect(h.otherFlowVideo.setSavePath).not.toHaveBeenCalled()
+    expect(h.savedPaths).toHaveLength(1)
+  }, 15000)
+
+  it('a start outside /project/ (Flow home) is restored exactly (Codex R3 #2)', async () => {
+    const h = harness({ startPage: '/' })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true })
+    expect(h.navigations).toEqual([EDITOR, '/'])
   }, 15000)
 
   it('returns to the project grid when the starting path could not be read', async () => {

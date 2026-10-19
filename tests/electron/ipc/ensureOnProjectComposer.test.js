@@ -3,6 +3,8 @@
 // Tests the pure decision logic extracted via createSharedHelpers factory.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
+import { armVideoDownloadCapture } from '../../../electron/flow-video-download.js'
+import { EventEmitter } from 'node:events'
 
 // Minimal stub that satisfies createSharedHelpers without real Electron APIs.
 function makeCtx({ getURL = () => '', loadURL = vi.fn() } = {}) {
@@ -105,5 +107,26 @@ describe('ensureOnProjectComposer', () => {
     const result = await helpers.ensureOnProjectComposer(flowView, target)
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/Flow not on target project/)
+  })
+
+  it('while an upscaled download is pending on that project\'s editor, returns to the grid in-page instead of loadURL (Fable R2 #1)', async () => {
+    const target = 'aaaabbbb-1111-2222-3333-ccccddddeeee'
+    let url = `https://flow.google.com/project/${target}/edit/11111111-2222-4333-8444-555555555555`
+    const loadURL = vi.fn()
+    const { ctx, flowView } = makeCtx({ getURL: () => url, loadURL })
+    flowView.webContents.executeJavaScript = vi.fn(async (script) => {
+      const s = String(script)
+      const m = /history\.replaceState\(history\.state, '', "([^"]+)"\)/.exec(s)
+      if (m) { url = `https://flow.google.com${m[1]}`; return m[1] }
+      return s.includes('interactiveCount') ? { hasComposer: true, interactiveCount: 63, url } : null
+    })
+    const cap = armVideoDownloadCapture(new EventEmitter(), '/tmp/d', { timeoutMs: 10000 })
+    try {
+      const helpers = createSharedHelpers(ctx)
+      const result = await helpers.ensureOnProjectComposer(flowView, target)
+      expect(loadURL).not.toHaveBeenCalled()
+      expect(url).toBe(`https://flow.google.com/project/${target}`)
+      expect(result).toEqual({ ok: true })
+    } finally { cap.dispose() }
   })
 })

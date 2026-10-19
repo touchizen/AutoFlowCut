@@ -93,12 +93,20 @@ export function findResolutionItem(doc, res) {
   return null
 }
 
+/** 편집 화면 머리말의 미디어 제목(Flow 가 붙인 이름) — 다운로드 파일 이름이 이걸로 시작한다. 편집 화면이 아니면 null. */
+function editorTitle(doc) {
+  if (!/\/edit\//.test(String(doc.location && doc.location.pathname))) return null
+  var h = doc.querySelector('.header-title-heading[role="heading"]')
+  var t = h ? String(h.textContent || '').trim() : ''
+  return t || null
+}
+
 function editorReady(doc, wantPath) {
   return doc.location.pathname === wantPath && !!findEditorDownloadTrigger(doc)
 }
 
 const PROBE_LIB = [iconText, findEditorDownloadTrigger, resolutionOf, isDisabledItem, resolutionPanel, readResolutionItems,
-  findResolutionItem, editorReady].map((f) => f.toString()).join('\n')
+  findResolutionItem, editorTitle, editorReady].map((f) => f.toString()).join('\n')
 const probe = (call) => `(function () {\n${PROBE_LIB}\nreturn ${call};\n})()`
 
 export const PAGE_PATH_JS = '(function () { return location.pathname })()'
@@ -117,6 +125,7 @@ export const RETURN_IF_ON_JS = (editPath, back) => `(function () {
 })()`
 export const EDITOR_READY_JS = (p) => probe(`editorReady(document, ${JSON.stringify(String(p))})`)
 export const EDITOR_DOWNLOAD_TRIGGER_JS = probe('findEditorDownloadTrigger(document)')
+export const EDITOR_TITLE_JS = probe('editorTitle(document)')
 export const READ_RESOLUTION_ITEMS_JS = probe('readResolutionItems(document)')
 export const RESOLUTION_ITEM_JS = (res) => probe(`findResolutionItem(document, ${JSON.stringify(String(res))})`)
 
@@ -176,7 +185,7 @@ async function failClose(ctx, kind, reason, extra) {
 /**
  * 편집 화면으로 가서 해상도를 누른다. 파일 가로채기(will-download)는 이 함수 전에 걸려 있어야 하고, 파일 대기와 원래 화면으로
  *   돌아가기(returnToPath)는 호출자가 한다 — 업스케일이 끝나 Flow 가 파일을 내려보낼 때까지 편집 화면에 머문다.
- * ctx = { exec(js), trustedClick(js, {required, step}), isAborted?(), sleep?(ms) }
+ * ctx = { exec(js), trustedClick(js, {required, step}), beforeResolutionClick?(res), isAborted?(), sleep?(ms) }
  * @returns {Promise<{ok:true, res:string, downgradedFrom?:string} | {ok:false, kind:string, reason:string}>}
  */
 export async function driveEditorDownload(ctx, { path: editPath, resolution }) {
@@ -198,8 +207,11 @@ export async function driveEditorDownload(ctx, { path: editPath, resolution }) {
   const pick = pickResolution(items, resolution)
   if (!pick) return failClose(ctx, 'flow-upscale-unavailable', 'no-enabled-upscale:' + String(resolution), { items })
   if (ctx.isAborted?.()) return failClose(ctx, 'flow-download-aborted', 'dom-stage-aborted')
+  // 호출자가 이 시점에 다운로드 가로채기를 건다(클릭 직전 — 열어 두는 창을 짧게, 파일 이름 대조용 해상도와 함께).
+  await ctx.beforeResolutionClick?.(pick.res)
   const c = await tclick(ctx, RESOLUTION_ITEM_JS(pick.res), 'download-resolution')
-  if (!c.success) return failClose(ctx, 'flow-download-menu-failed', 'resolution-click:' + (c.error || 'click-failed'))
+  // 클릭이 이미 나갔으면(mouseDown 뒤 응답 시간 초과) 업스케일은 시작됐을 수 있다 — 실패로 접지 말고 파일을 기다린다(Fable R2 #3).
+  if (!c.success && !c.dispatched) return failClose(ctx, 'flow-download-menu-failed', 'resolution-click:' + (c.error || 'click-failed'))
   return pick.downgradedFrom ? { ok: true, res: pick.res, downgradedFrom: pick.downgradedFrom } : { ok: true, res: pick.res }
 }
 
@@ -225,19 +237,33 @@ function isFlowDownloadUrl(url) {
   return /(^|\.)(flow\.google\.com|labs\.google|flow-content\.google|googleusercontent\.com|storage\.googleapis\.com)$/i.test(host)
 }
 
+/** 대조용 정규화 — 대소문자·기호·공백을 버린 글자와 숫자만. */
+const normName = (v) => String(v || '').toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}]+/gu, '')
+/** 파일 이름 속 해상도 표시(…_1080p_… / …_4k_…). 없으면 null. */
+const resToken = (name) => { const m = /(?:^|[^a-z0-9])(270p|360p|720p|1080p|4k)(?:[^a-z0-9]|$)/i.exec(String(name || '')); return m ? m[1].toLowerCase() : null }
+/** 긴 제목은 파일 이름에서 잘릴 수 있다 — 앞쪽만 맞춘다. */
+const TITLE_PREFIX_CHARS = 16
+
+let activeCaptures = 0
+/** 업스케일 다운로드를 기다리는 중인가 — 그동안 Flow 페이지를 통째로 다시 불러오면(loadURL) 파일을 내보낼 페이지가 사라진다(Fable R2 #1). */
+export const isVideoCapturePending = () => activeCaptures > 0
+
 /**
  * 공유 session 의 다음 Flow *동영상* 다운로드 하나만 dir 로 가로챈다(Codex R1 #1 · R2 #1). 동영상이 아니거나 Flow 밖 호스트의 다운로드는
  *   건드리지 않고(평소대로), 하나를 잡으면 즉시 리스너를 뗀다. 해상도 클릭 직전에 건다(Fable #7 — 열어 두는 창을 짧게).
  *   완료는 폴더 폴링이 아니라 그 DownloadItem 의 'done' 으로 안다. 끝나지 않은 채 정리되면(시간 초과 포함) 취소한다(Fable #3).
+ *   title·res 가 있으면 파일 이름(<제목>_<해상도>_<시각>.mp4)이 맞는 것만 잡는다(Codex R3 #1).
  * @returns {{ wait: () => Promise<{path:string}|{error:string}>, dispose: () => void }}
  */
-export function armVideoDownloadCapture(session, dir, { timeoutMs }) {
+export function armVideoDownloadCapture(session, dir, { timeoutMs, title = null, res = null }) {
   let settle
   const done = new Promise((r) => { settle = r })
   let captured = null
   let itemDone = false
   let finished = false
-  const finish = (v) => { if (!finished) { finished = true; settle(v) } }
+  activeCaptures++
+  const finish = (v) => { if (!finished) { finished = true; activeCaptures--; settle(v) } }
+  const wantTitle = normName(title).slice(0, TITLE_PREFIX_CHARS)
   const onWillDownload = (_e, item) => {
     if (captured) return
     const name = String((item.getFilename && item.getFilename()) || '')
@@ -245,6 +271,10 @@ export function armVideoDownloadCapture(session, dir, { timeoutMs }) {
     const url = String((item.getURL && item.getURL()) || '')
     if (!/^video\//i.test(mime) && !/\.(mp4|webm|mov)$/i.test(name)) return
     if (!isFlowDownloadUrl(url)) return
+    // 이 미디어·이 해상도의 파일인지 — Flow 는 "<제목>_<해상도>_<시각>.mp4" 로 내려보낸다(2026-10-19 라이브). 사용자가 받은 다른 영상은 그대로 둔다(Codex R3 #1).
+    const tok = resToken(name)
+    if (res && tok && tok !== String(res).toLowerCase()) return
+    if (wantTitle && !normName(name).startsWith(wantTitle)) return
     captured = item
     const savePath = path.join(dir, path.basename(name) || 'flow-video.mp4')
     item.setSavePath(savePath)

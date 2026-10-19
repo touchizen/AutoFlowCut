@@ -47,7 +47,7 @@ import { READ_COMPOSER_STATE_JS } from '../flow-composer-refs.js'
 import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
 import { refMediaCache } from '../flow-ref-media-cache.js'
 import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowR2vLimit.js'   // D13: 렌더러 계획과 같은 상한 — import 없는 모듈(렌더러 계획 모듈을 끌어오면 React 훅까지 main 에 들어온다)
-import { mediaEditLocation, editorPath, driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, PAGE_PATH_JS, UUID_RE } from '../flow-video-download.js'
+import { mediaEditLocation, editorPath, driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, PAGE_PATH_JS, EDITOR_TITLE_JS, UUID_RE } from '../flow-video-download.js'
 import { VIDEO_DOWNLOAD_TIMEOUT_MS } from '../flow-download-config.js'
 
 /** 캡처 주입 설치 플래그 프로브(클릭 전). */
@@ -124,6 +124,8 @@ export function releaseDomStage(reason) {
   console.log(`[Flow API] DOM stage released (${reason})`)
   return true
 }
+/** 테스트용 — DOM 단계가 비어 있거나 끝났는가(업스케일 다운로드는 파일을 기다리는 동안 단계를 쥐지 않는다). */
+export function _domStageSettledForTests() { return !lastDomStage || !!lastDomStage.settled }
 /** 직전 단계가 ms 안에 settle 하면 false, 아니면 true(아직 살아 있다). 타이머는 정리한다. */
 async function domStageBusy(prev, ms) {
   let timer = null
@@ -1149,18 +1151,20 @@ export function createFlowAngular(deps) {
         const ctx = {
           exec: (js) => exec(flowView, js),
           trustedClick: (js, opts) => {
-            if (opts.step === 'download-resolution') {
-              // 가로채기는 해상도 클릭 직전에 건다 — 열어 두는 창을 짧게(Fable #7).
-              capture = armVideoDownloadCapture(session, dir, { timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS })
-              ctl.clickStarted = true   // 클릭 뒤엔 워치독이 끊지 않는다(업스케일이 이미 시작됐다)
-            }
+            if (opts.step === 'download-resolution') ctl.clickStarted = true   // 클릭 뒤엔 워치독이 끊지 않는다(업스케일이 이미 시작됐다)
             return deps.trustedClickOnFlowView(js, opts)
+          },
+          // 가로채기는 해상도 클릭 직전에 건다(Fable #7) — 이 미디어의 제목·고른 해상도로 파일 이름을 대조한다(Codex R3 #1).
+          beforeResolutionClick: async (pickedRes) => {
+            let title = null
+            try { title = await exec(flowView, EDITOR_TITLE_JS) } catch (_e) { title = null }
+            capture = armVideoDownloadCapture(session, dir, { timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS, title, res: pickedRes })
           },
           isAborted: () => ctl.aborted,
         }
         let back = null
         try { back = await exec(flowView, PAGE_PATH_JS) } catch (_e) { back = null }
-        if (typeof back !== 'string' || !back.startsWith('/project/')) back = gridPath   // 못 읽으면 프로젝트 그리드로
+        if (typeof back !== 'string' || !back.startsWith('/')) back = gridPath   // 못 읽었을 때만 프로젝트 그리드로 — 읽었으면 그대로(Codex R3 #2)
         try {
           return await driveEditorDownload(ctx, { path: editPath, resolution: res })
         } finally {

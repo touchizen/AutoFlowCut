@@ -1503,7 +1503,8 @@ function App() {
         videoResolution: flowDownloadResolution(settings.videoResolution),   // 일괄·복구와 같은 규칙(Fable #4)
         authErrorText: () => getAuthErrorMessage(startMode, t),   // M2-R3 H5: kind 동반 authFailed 의 항목 문구는 인증 안내(raw 토큰 금지)
       }).then(r => {
-        if (r?.downloadNotice) toast.warning(t('videoAutomation.savedAtLowerResolution', { count: 1 }))   // Codex R2 #5
+        // Codex R2 #5 — 알림 실패가 이미 저장된 항목을 error 로 바꾸지 않게(Fable R2 #5)
+        try { if (r?.downloadNotice) toast.warning(t('videoAutomation.savedAtLowerResolution', { count: 1 })) } catch (e) { console.warn('[handleVideoRetry] notice toast failed:', e) }
       }).catch(err => {
         console.error('[handleVideoRetry] Unexpected error:', err)
         onUpdate(item.id, 'error', { error: String(err?.message || err) })

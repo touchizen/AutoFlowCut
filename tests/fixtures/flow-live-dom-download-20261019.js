@@ -10,6 +10,8 @@ export const MEDIA_ID = 'ba1764fb-6f24-49d4-9b1e-6c13af2f1f7b'
 export const EDIT_ID = 'd2ac9584-3ba2-47fa-a529-8a4c85416f07'
 export const GRID_PATH = `/project/${PROJECT_ID}`
 export const EDIT_PATH = `/project/${PROJECT_ID}/edit/${EDIT_ID}`
+/** 편집 화면 머리말의 미디어 제목(Flow 가 붙인 이름) — 다운로드 파일 이름이 이걸로 시작한다(Amber_light_particles_drifting_1080p_<시각>.mp4). */
+export const MEDIA_TITLE = 'Amber light particles drifting'
 
 const icon = (name) => `<mat-icon role="img" class="mat-icon notranslate google-symbols mat-icon-no-color" aria-hidden="true" data-mat-icon-type="font">${name}</mat-icon>`
 
@@ -17,6 +19,7 @@ const icon = (name) => `<mat-icon role="img" class="mat-icon notranslate google-
 export function editorPage({ menuOpen = false, fourKDisabled = true, upscale1080Disabled = false } = {}) {
   const trigAttrs = menuOpen ? 'aria-haspopup="menu" aria-expanded="true" aria-controls="mat-menu-panel-0"' : 'aria-haspopup="menu" aria-expanded="false"'
   const header = `
+<span class="header-title"><span class="header-title-heading visually-hidden" aria-level="1" aria-label="${MEDIA_TITLE}" role="heading">${MEDIA_TITLE}</span><flow-editable-text><div class="editable-text-container"><input type="text" class="editable-text-input" size="35" placeholder=""></div></flow-editable-text></span>
 <div class="header-desktop-main-row"><div cta-buttons-content-marker="" class="cta-buttons">
   <button flow-icon-button="" maticonbutton="" class="mdc-icon-button mat-mdc-icon-button mat-mdc-tooltip-trigger" aria-label="즐겨찾기">${icon('favorite')}</button>
   <button flow-icon-button="" maticonbutton="" class="mdc-icon-button mat-mdc-icon-button mat-mdc-tooltip-trigger" aria-label="공유">${icon('share')}</button>

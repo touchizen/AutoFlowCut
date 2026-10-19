@@ -27,6 +27,7 @@ vi.mock('../../src/firebase/functions', () => ({ consumeBatchDownload: vi.fn(asy
 
 import { fileSystemAPI } from '../../src/hooks/useFileSystem'
 import { toast } from '../../src/components/Toast'
+import { retryVideoDownload } from '../../src/services/videoRecovery'
 
 const UUID11 = '<uuid#11>'
 const SIGNED = 'https://flow-content.google/video/<uuid#11>?Expires=1790261742&KeyName=labs-flow-prod-cdn-key&Signature=SIG'
@@ -159,6 +160,30 @@ describe('useVideoAutomation × useFlowEngine — 성공 경로', () => {
     await run(h, SCENES(1), { videoResolution: '4k' })   // videoModel 기본 'Omni Flash'
     expect(api.flowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '720p' })
     expect(api.flowDomDownloadVideo).toHaveBeenCalledWith({ mediaId: REAL, resolution: '4k' })
+  })
+
+  it('저장이 실패하면 "낮은 해상도로 저장" 으로 세지 않는다(Codex R3 #3)', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: false, errorKind: 'flow-upscale-unavailable', error: 'flow-upscale-unavailable' })
+    fileSystemAPI.saveVideo.mockResolvedValueOnce({ success: false, error: 'disk full' })
+    const h = setup()
+    await run(h, SCENES(1), { videoResolution: '1080p' })
+    expect(last(h, 'vscene_1')[0]).toBe('error')
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('다운로드 전용 항목(Phase 0)의 알림도 모으고, 새 제출이 막혀 일찍 끝나도 한 번 알린다(Fable R2 #2)', async () => {
+    retryVideoDownload.mockResolvedValueOnce({ success: true, downloadNotice: { kind: 'upscale-fallback', requested: '1080p', saved: '720p' } })
+    api.flowGenerateVideoT2V.mockResolvedValue(LOST)
+    const h = setup()
+    const scenes = [
+      { id: 'vscene_1', prompt: 'p1', status: 'error', generationId: REAL, mediaId: REAL, downloadGated: true },
+      { id: 'vscene_2', prompt: 'p2' },
+    ]
+    await run(h, scenes, { videoResolution: '1080p' }, 5000)
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.savedAtLowerResolution')
   })
 
   it('세 항목이 모두 낮은 해상도로 저장돼도 경고는 배치 끝에 한 번(Fable #8)', async () => {

@@ -10,10 +10,11 @@ import {
   mediaEditLocation, editorPath, findEditorDownloadTrigger, readResolutionItems, findResolutionItem, pickResolution,
   PAGE_PATH_JS, NAVIGATE_JS, EDITOR_READY_JS, EDITOR_DOWNLOAD_TRIGGER_JS, READ_RESOLUTION_ITEMS_JS, RESOLUTION_ITEM_JS,
   driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, RETURN_IF_ON_JS, UUID_RE,
+  EDITOR_TITLE_JS, isVideoCapturePending,
 } from '../../electron/flow-video-download.js'
 import { DISPATCH_ESCAPE_JS } from '../../electron/flow-reference-driver.js'
 import {
-  PROJECT_ID, MEDIA_ID, EDIT_ID, GRID_PATH, EDIT_PATH, editorPage, gridPage,
+  PROJECT_ID, MEDIA_ID, EDIT_ID, GRID_PATH, EDIT_PATH, MEDIA_TITLE, editorPage, gridPage,
 } from '../fixtures/flow-live-dom-download-20261019.js'
 
 function mount(html) { document.body.innerHTML = html; return document }
@@ -80,6 +81,13 @@ describe('probes (editor page)', () => {
     expect(window.eval(PAGE_PATH_JS)).toBe(GRID_PATH)
     expect(popped).toBe(2)
     expect(window.history.length).toBe(entries)   // 뒤로 가기가 임시 편집 화면을 다시 열지 않는다(Codex R1 #4)
+  })
+
+  it('EDITOR_TITLE_JS reads the media title from the editor heading (null elsewhere)', () => {
+    at(EDIT_PATH, editorPage())
+    expect(window.eval(EDITOR_TITLE_JS)).toBe(MEDIA_TITLE)
+    at(GRID_PATH, gridPage())
+    expect(window.eval(EDITOR_TITLE_JS)).toBeNull()
   })
 
   it('injected JS strings behave like the functions (self-contained when stringified)', () => {
@@ -187,6 +195,26 @@ describe('driveEditorDownload', () => {
     const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
     expect(r).toEqual({ ok: true, res: '1080p' })
     expect(calls.steps).toEqual(['download-menu', 'download-menu', 'download-resolution'])
+  })
+
+  it('a resolution click that was dispatched but timed out still counts as clicked (Fable R2 #3: wait for the file)', async () => {
+    const { ctx } = fakeCtx()
+    const click = ctx.trustedClick
+    ctx.trustedClick = async (js, opts) => (opts.step === 'download-resolution' ? { success: false, dispatched: true, error: 'mouseup timeout' } : click(js, opts))
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toMatchObject({ ok: true, res: '1080p' })
+  })
+
+  it('reports menu-failed when the second trigger click fails too', async () => {
+    const { ctx, calls } = fakeCtx()
+    let n = 0
+    ctx.trustedClick = async (_js, opts) => {
+      if (opts.step === 'download-menu') { calls.steps.push(opts.step); return ++n === 1 ? { success: true } : { success: false, error: 'covered' } }
+      return { success: false }
+    }
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-download-menu-failed', reason: 'menu-trigger:covered' })
+    expect(calls.steps).toEqual(['download-menu', 'download-menu'])
   })
 
   it('reports flow-download-menu-failed and closes menus when the menu never opens', async () => {
@@ -306,6 +334,47 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     await cap.wait()
     cap.dispose()
     expect(vid.cancelled).toBeUndefined()
+  })
+
+  it("takes only the file named after this media's title and the clicked resolution (Codex R3 #1 · Fable R2 #4)", () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: MEDIA_TITLE, res: '1080p' })
+    const other = fakeItem('Neon_city_at_night_1080p_20261019.mp4', 'video/mp4')
+    s.emit('will-download', {}, other)
+    const wrongRes = fakeItem('Amber_light_particles_drifting_720p_20261019.mp4', 'video/mp4')
+    s.emit('will-download', {}, wrongRes)
+    expect(other.savePath).toBeNull()
+    expect(wrongRes.savePath).toBeNull()
+    const ours = fakeItem('Amber_light_particles_drifting_1080p_20261019110901.mp4', 'video/mp4')
+    s.emit('will-download', {}, ours)
+    expect(ours.savePath).toBe('/tmp/d/Amber_light_particles_drifting_1080p_20261019110901.mp4')
+    cap.dispose()
+  })
+
+  it('without a known title it still checks the resolution token', () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: null, res: '1080p' })
+    const wrongRes = fakeItem('Something_720p_1.mp4', 'video/mp4')
+    s.emit('will-download', {}, wrongRes)
+    expect(wrongRes.savePath).toBeNull()
+    const ours = fakeItem('Something_1080p_1.mp4', 'video/mp4')
+    s.emit('will-download', {}, ours)
+    expect(ours.savePath).toBe('/tmp/d/Something_1080p_1.mp4')
+    cap.dispose()
+  })
+
+  it('isVideoCapturePending is true from arming until the capture settles (Fable R2 #1)', async () => {
+    const s = session()
+    expect(isVideoCapturePending()).toBe(false)
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000 })
+    expect(isVideoCapturePending()).toBe(true)
+    const vid = fakeItem('a.mp4', 'video/mp4')
+    s.emit('will-download', {}, vid)
+    vid.emit('done', {}, 'completed')
+    await cap.wait()
+    expect(isVideoCapturePending()).toBe(false)
+    cap.dispose()
+    expect(isVideoCapturePending()).toBe(false)
   })
 
   it('reports an interrupted download', async () => {
