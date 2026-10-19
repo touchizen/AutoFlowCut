@@ -90,11 +90,11 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
     steps.push(opts.step)
     if (opts.step === 'download-menu') expect(js).toBe(EDITOR_DOWNLOAD_TRIGGER_JS)
     if (opts.step === 'download-resolution') {
-      if (userMovesTo) page = userMovesTo   // 클릭과 돌아가기 사이에 사용자가 옮겼다
       // Flow 가 업스케일을 끝내고 내려보낸다 → will-download(그 전에 사용자의 관계없는 다운로드가 끼어들 수 있다)
       if (deliver) {
         setTimeout(() => {
           stageSettledAtDownload = _domStageSettledForTests()
+          if (userMovesTo) page = userMovesTo   // 파일을 기다리는 동안 사용자가 옮겼다
           if (unrelatedFirst) session.emit('will-download', {}, unrelated)
           if (otherFlowVideoFirst) session.emit('will-download', {}, otherFlowVideo)
           session.emit('will-download', {}, fakeItem('Amber_light_particles_drifting_1080p.mp4', 'video/mp4', savedPaths, doneState, events))
@@ -126,8 +126,9 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     expect(h.steps).toEqual(['download-menu', 'download-resolution'])
     expect(h.navigations).toEqual([EDITOR, GRID])
     expect(h.page()).toBe(GRID)
-    // 클릭 직후 그리드로 돌아가 DOM 단계를 놓고, 파일은 그 뒤에 기다린다(Fable #1·#2) — 파일이 올 때 단계는 이미 풀려 있다(Fable R2 테스트 공백)
-    expect(h.events).toEqual(['nav:' + EDITOR, 'nav:' + GRID, 'download'])
+    // 파일이 올 때까지 편집 화면에 머문다 — 클릭 직후 떠나면 업스케일 다운로드가 오지 않았다(2026-10-19 라이브: 5분 무응답).
+    //   DOM 단계(방패·키 잠금)는 클릭 직후 풀린다(Fable #1·#2) — 파일이 올 때 단계는 이미 비어 있다.
+    expect(h.events).toEqual(['nav:' + EDITOR, 'download', 'nav:' + GRID])
     expect(h.stageSettledAtDownload()).toBe(true)
     expect(h.session.listenerCount('will-download')).toBe(0)
     expect(fs.existsSync(h.savedPaths[0])).toBe(false)   // temp dir cleaned
@@ -141,7 +142,7 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     expect(h.savedPaths).toHaveLength(1)
   }, 15000)
 
-  it("does not undo the user's navigation made before the return (Codex R1 #2)", async () => {
+  it("does not undo the user's navigation made while the file was awaited (Codex R1 #2)", async () => {
     const h = harness({ userMovesTo: `/project/${PROJECT}/edit/11111111-2222-4333-8444-555555555555` })
     const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
     expect(r).toMatchObject({ success: true })

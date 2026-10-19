@@ -19,7 +19,8 @@ import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { updateBounds } from './layout.js'
 import { createMutex } from '../asyncMutex.js'
 import { sanitizeForSentry } from '../flow-diag.js'
-import { isVideoCapturePending, NAVIGATE_JS } from '../flow-video-download.js'   // Fable R2 #1: 업스케일 대기 중엔 편집 화면을 loadURL 로 버리지 않는다
+import { isVideoCapturePending, waitForVideoCaptures } from '../flow-video-download.js'   // Fable R2 #1: 업스케일 다운로드 중엔 화면을 옮기지 않는다
+import { VIDEO_DOWNLOAD_TIMEOUT_MS } from '../flow-download-config.js'
 
 export const FLOW_PAGE_FETCH_TIMEOUT_MS = 120000
 
@@ -1229,13 +1230,15 @@ export function createSharedHelpers(ctx) {
     try { return flowView.webContents.getURL() || '' } catch { return '' }
   }
 
-  /** /project/<projectId>/edit/<editId> 인가(같은 프로젝트의 미디어 편집 화면). */
-  function editRouteOfProject(url, projectId) {
-    try { return new URL(url).pathname.startsWith(`/project/${projectId}/edit/`) } catch { return false }
-  }
-
   async function ensureOnProjectComposer(flowView, projectId) {
     if (!flowView) return { ok: false, error: 'Flow view not ready' }
+
+    // 업스케일 다운로드가 진행 중이면(편집 화면에서 파일을 기다리는 중) 끝날 때까지 기다린다 — 그 전에 화면을 옮기면 파일이
+    //   오지 않는다(2026-10-19 라이브 · Fable R2 #1). 다운로드는 끝나면 시작한 화면으로 돌아가 있다.
+    if (isVideoCapturePending()) {
+      console.log('[Flow Guard] waiting for the pending upscaled download before navigating')
+      await waitForVideoCaptures(VIDEO_DOWNLOAD_TIMEOUT_MS + 30000)
+    }
 
     const currentUrl = safeUrl(flowView)
 
@@ -1258,17 +1261,6 @@ export function createSharedHelpers(ctx) {
         //   생성이 진행되고, ensureAgentOff 가 토글을 못 찾아 "Agent 를 OFF 로 못 바꿨다"는 엉뚱한
         //   에러가 사용자에게 뜬다(실제 원인은 프로젝트 미로드). 실제 제보가 이 경로였다.
         return await ensureProjectLoaded(flowView, projectId)
-      }
-    }
-
-    // 업스케일 다운로드를 기다리는 중이고 그 프로젝트의 편집 화면이면 페이지를 통째로 다시 불러오지 않는다 — 파일을 내보낼
-    //   페이지 JS 가 사라져 5분 뒤 720p 로 물러난다(Fable R2 #1). 페이지 안 이동(replaceState + popstate)으로 그리드에 간다.
-    if (isVideoCapturePending() && editRouteOfProject(currentUrl, projectId)) {
-      console.log('[Flow Guard] upscaled download pending — leaving the editor in-page instead of loadURL')
-      try { await flowView.webContents.executeJavaScript(NAVIGATE_JS(`/project/${projectId}`), true) } catch (e) { console.warn('[Flow Guard] in-page navigation failed:', e.message) }
-      for (let i = 0; i < 6; i++) {
-        if (onProjectComposerUrl(safeUrl(flowView), projectId)) return await ensureProjectLoaded(flowView, projectId)
-        await new Promise((r) => setTimeout(r, 500))
       }
     }
 

@@ -237,6 +237,7 @@ function isFlowDownloadUrl(url) {
   return /(^|\.)(flow\.google\.com|labs\.google|flow-content\.google|googleusercontent\.com|storage\.googleapis\.com)$/i.test(host)
 }
 
+const hostOf = (url) => { if (/^(blob|data):/i.test(url)) return url.slice(0, url.indexOf(':')); try { return new URL(url).hostname } catch (_e) { return '' } }
 /** 대조용 정규화 — 대소문자·기호·공백을 버린 글자와 숫자만. */
 const normName = (v) => String(v || '').toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}]+/gu, '')
 /** 파일 이름 속 해상도 표시(…_1080p_… / …_4k_…). 없으면 null. */
@@ -245,8 +246,25 @@ const resToken = (name) => { const m = /(?:^|[^a-z0-9])(270p|360p|720p|1080p|4k)
 const TITLE_PREFIX_CHARS = 16
 
 let activeCaptures = 0
-/** 업스케일 다운로드를 기다리는 중인가 — 그동안 Flow 페이지를 통째로 다시 불러오면(loadURL) 파일을 내보낼 페이지가 사라진다(Fable R2 #1). */
+let captureWaiters = []
+/**
+ * 업스케일 다운로드가 진행 중인가(가로채기를 건 뒤 dispose 까지 — 파일 대기와 원래 화면으로 돌아가기 포함). 그동안 Flow 페이지를
+ *   옮기면(loadURL·편집 화면 이탈) 파일을 내보낼 페이지가 사라진다(Fable R2 #1 · 2026-10-19 라이브).
+ */
 export const isVideoCapturePending = () => activeCaptures > 0
+/** 진행 중인 업스케일 다운로드가 모두 끝날 때까지(최대 maxMs). 끝났으면 true, 한도면 false. */
+export function waitForVideoCaptures(maxMs) {
+  if (activeCaptures === 0) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const waiter = (v) => { clearTimeout(timer); resolve(v) }
+    const timer = setTimeout(() => { captureWaiters = captureWaiters.filter((w) => w !== waiter); resolve(false) }, maxMs)
+    captureWaiters.push(waiter)
+  })
+}
+function releaseCapture() {
+  activeCaptures--
+  if (activeCaptures === 0) { const ws = captureWaiters; captureWaiters = []; ws.forEach((w) => w(true)) }
+}
 
 /**
  * 공유 session 의 다음 Flow *동영상* 다운로드 하나만 dir 로 가로챈다(Codex R1 #1 · R2 #1). 동영상이 아니거나 Flow 밖 호스트의 다운로드는
@@ -255,26 +273,28 @@ export const isVideoCapturePending = () => activeCaptures > 0
  *   title·res 가 있으면 파일 이름(<제목>_<해상도>_<시각>.mp4)이 맞는 것만 잡는다(Codex R3 #1).
  * @returns {{ wait: () => Promise<{path:string}|{error:string}>, dispose: () => void }}
  */
-export function armVideoDownloadCapture(session, dir, { timeoutMs, title = null, res = null }) {
+export function armVideoDownloadCapture(session, dir, { timeoutMs, title = null, res = null, onIgnored = null }) {
   let settle
   const done = new Promise((r) => { settle = r })
   let captured = null
   let itemDone = false
   let finished = false
   activeCaptures++
-  const finish = (v) => { if (!finished) { finished = true; activeCaptures--; settle(v) } }
+  let released = false
+  const finish = (v) => { if (!finished) { finished = true; settle(v) } }
   const wantTitle = normName(title).slice(0, TITLE_PREFIX_CHARS)
   const onWillDownload = (_e, item) => {
     if (captured) return
     const name = String((item.getFilename && item.getFilename()) || '')
     const mime = String((item.getMimeType && item.getMimeType()) || '')
     const url = String((item.getURL && item.getURL()) || '')
-    if (!/^video\//i.test(mime) && !/\.(mp4|webm|mov)$/i.test(name)) return
-    if (!isFlowDownloadUrl(url)) return
+    const skip = (reason) => { try { onIgnored?.({ reason, name, mime, host: hostOf(url) }) } catch (_e) { /* 진단은 흐름을 막지 않는다 */ } }
+    if (!/^video\//i.test(mime) && !/\.(mp4|webm|mov)$/i.test(name)) return skip('not-video')
+    if (!isFlowDownloadUrl(url)) return skip('host')
     // 이 미디어·이 해상도의 파일인지 — Flow 는 "<제목>_<해상도>_<시각>.mp4" 로 내려보낸다(2026-10-19 라이브). 사용자가 받은 다른 영상은 그대로 둔다(Codex R3 #1).
     const tok = resToken(name)
-    if (res && tok && tok !== String(res).toLowerCase()) return
-    if (wantTitle && !normName(name).startsWith(wantTitle)) return
+    if (res && tok && tok !== String(res).toLowerCase()) return skip('resolution')
+    if (wantTitle && !normName(name).startsWith(wantTitle)) return skip('title')
     captured = item
     const savePath = path.join(dir, path.basename(name) || 'flow-video.mp4')
     item.setSavePath(savePath)
@@ -293,6 +313,7 @@ export function armVideoDownloadCapture(session, dir, { timeoutMs, title = null,
       session.off('will-download', onWillDownload)
       if (captured && !itemDone) { try { captured.cancel() } catch (_e) { /* 이미 끝났을 수 있다 */ } }
       finish({ error: 'disposed' })
+      if (!released) { released = true; releaseCapture() }
     },
   }
 }

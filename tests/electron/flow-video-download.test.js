@@ -10,7 +10,7 @@ import {
   mediaEditLocation, editorPath, findEditorDownloadTrigger, readResolutionItems, findResolutionItem, pickResolution,
   PAGE_PATH_JS, NAVIGATE_JS, EDITOR_READY_JS, EDITOR_DOWNLOAD_TRIGGER_JS, READ_RESOLUTION_ITEMS_JS, RESOLUTION_ITEM_JS,
   driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, RETURN_IF_ON_JS, UUID_RE,
-  EDITOR_TITLE_JS, isVideoCapturePending,
+  EDITOR_TITLE_JS, isVideoCapturePending, waitForVideoCaptures,
 } from '../../electron/flow-video-download.js'
 import { DISPATCH_ESCAPE_JS } from '../../electron/flow-reference-driver.js'
 import {
@@ -351,6 +351,21 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     cap.dispose()
   })
 
+  it('reports every ignored download with its reason (live diagnosis)', () => {
+    const s = session()
+    const ignored = []
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: MEDIA_TITLE, res: '1080p', onIgnored: (info) => ignored.push(info) })
+    const pdf = fakeItem('a.pdf', 'application/pdf')
+    s.emit('will-download', {}, pdf)
+    const other = fakeItem('Neon_city_1080p_1.mp4', 'video/mp4')
+    s.emit('will-download', {}, other)
+    const wrongRes = fakeItem('Amber_light_particles_drifting_720p_1.mp4', 'video/mp4')
+    s.emit('will-download', {}, wrongRes)
+    expect(ignored.map((i) => i.reason)).toEqual(['not-video', 'title', 'resolution'])
+    expect(ignored[1]).toMatchObject({ name: 'Neon_city_1080p_1.mp4' })
+    cap.dispose()
+  })
+
   it('without a known title it still checks the resolution token', () => {
     const s = session()
     const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: null, res: '1080p' })
@@ -363,7 +378,29 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     cap.dispose()
   })
 
-  it('isVideoCapturePending is true from arming until the capture settles (Fable R2 #1)', async () => {
+  it('waitForVideoCaptures resolves once every capture is disposed (the whole download op is over), or at its limit', async () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000 })
+    const vid = fakeItem('a.mp4', 'video/mp4')
+    s.emit('will-download', {}, vid)
+    let settled = false
+    const w = waitForVideoCaptures(2000).then((r) => { settled = true; return r })
+    vid.emit('done', {}, 'completed')
+    await cap.wait()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(settled).toBe(false)          // 파일은 왔지만 호출자가 아직 돌아가는 중
+    cap.dispose()
+    await expect(w).resolves.toBe(true)
+    await expect(waitForVideoCaptures(50)).resolves.toBe(true)   // 남은 것 없음
+  })
+
+  it('waitForVideoCaptures gives up at its limit', async () => {
+    const cap = armVideoDownloadCapture(session(), '/tmp/d', { timeoutMs: 1000 })
+    await expect(waitForVideoCaptures(30)).resolves.toBe(false)
+    cap.dispose()
+  })
+
+  it('isVideoCapturePending is true from arming until dispose (Fable R2 #1)', async () => {
     const s = session()
     expect(isVideoCapturePending()).toBe(false)
     const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000 })
@@ -372,8 +409,9 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     s.emit('will-download', {}, vid)
     vid.emit('done', {}, 'completed')
     await cap.wait()
-    expect(isVideoCapturePending()).toBe(false)
+    expect(isVideoCapturePending()).toBe(true)
     cap.dispose()
+    cap.dispose()   // idempotent
     expect(isVideoCapturePending()).toBe(false)
   })
 

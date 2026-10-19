@@ -1145,11 +1145,16 @@ export function createFlowAngular(deps) {
     let capture = null
     try {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-dl-'))
-      // DOM 단계는 클릭까지만 — 해상도를 누르면 바로 시작한 화면으로 돌아가 단계(방패·키 잠금)를 놓는다. 업스케일 처리·파일 대기는
-      //   단계 밖에서 downloadMutex 만 쥐고 한다(Fable #1·#2: 몇 분씩 앱을 막지 않는다).
+      // DOM 단계(방패·키 잠금)는 편집 화면으로 가서 해상도를 누르기까지만 — 업스케일 처리·파일 대기는 단계 밖(Fable #1·#2).
+      //   파일이 올 때까지 편집 화면에 머문다: 클릭 직후 떠나면 업스케일 다운로드가 오지 않았다(2026-10-19 라이브, 5분 무응답).
+      //   그동안 다른 작업은 ensureOnProjectComposer 가 이 다운로드가 끝날 때까지 기다린다(isVideoCapturePending).
+      const pageCtx = { exec: (js) => exec(flowView, js), trustedClick: deps.trustedClickOnFlowView, isAborted: () => false }
+      let back = null
       const menu = await withAutomationViewport(flowView, tag, async (ctl) => {
+        try { back = await exec(flowView, PAGE_PATH_JS) } catch (_e) { back = null }
+        if (typeof back !== 'string' || !back.startsWith('/')) back = gridPath   // 못 읽었을 때만 프로젝트 그리드로 — 읽었으면 그대로(Codex R3 #2)
         const ctx = {
-          exec: (js) => exec(flowView, js),
+          ...pageCtx,
           trustedClick: (js, opts) => {
             if (opts.step === 'download-resolution') ctl.clickStarted = true   // 클릭 뒤엔 워치독이 끊지 않는다(업스케일이 이미 시작됐다)
             return deps.trustedClickOnFlowView(js, opts)
@@ -1158,19 +1163,18 @@ export function createFlowAngular(deps) {
           beforeResolutionClick: async (pickedRes) => {
             let title = null
             try { title = await exec(flowView, EDITOR_TITLE_JS) } catch (_e) { title = null }
-            capture = armVideoDownloadCapture(session, dir, { timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS, title, res: pickedRes })
+            const titleLen = title ? String(title).length : 0   // 제목은 사용자 콘텐츠 — 로그엔 길이만
+            console.log(`${tag} capture armed — titleLen=${titleLen} res=${pickedRes}`)
+            capture = armVideoDownloadCapture(session, dir, {
+              timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS, title, res: pickedRes,
+              onIgnored: (i) => console.warn(`${tag} ignored download (${i.reason}) [${i.mime}] host=${i.host}`),   // 파일 이름(제목)은 남기지 않는다
+            })
           },
           isAborted: () => ctl.aborted,
         }
-        let back = null
-        try { back = await exec(flowView, PAGE_PATH_JS) } catch (_e) { back = null }
-        if (typeof back !== 'string' || !back.startsWith('/')) back = gridPath   // 못 읽었을 때만 프로젝트 그리드로 — 읽었으면 그대로(Codex R3 #2)
-        try {
-          return await driveEditorDownload(ctx, { path: editPath, resolution: res })
-        } finally {
-          // 아직 편집 화면이면 시작한 화면으로 — 그 사이 사용자가 옮겼으면 그대로 둔다(Codex R1 #2 · R2 #3·#4).
-          if ((await returnIfStillOn(ctx, { editPath, back })) === 'failed') console.warn(`${tag} could not return to ${back}`)
-        }
+        const r = await driveEditorDownload(ctx, { path: editPath, resolution: res })
+        if (!r.ok && back) await returnIfStillOn(ctx, { editPath, back })   // 실패면 바로 돌아간다
+        return r
       })
       if (menu.success === false) return menu   // DOM 단계 거부(busy · dragging · timeout)
       if (!menu.ok) {
@@ -1178,15 +1182,17 @@ export function createFlowAngular(deps) {
         if (!EXPECTED_DOWNLOAD_KINDS.has(menu.kind)) void report('download-menu', menu.kind, { reason: menu.reason })
         return kindResult(menu.kind, { reason: menu.reason })
       }
-      console.log(`${tag} clicked ${menu.res}${menu.downgradedFrom ? ` (asked ${menu.downgradedFrom})` : ''} → waiting for the file`)
+      console.log(`${tag} clicked ${menu.res}${menu.downgradedFrom ? ` (asked ${menu.downgradedFrom})` : ''} → waiting for the file on the editor`)
       const got = capture ? await capture.wait() : { error: 'not-armed' }
+      // 파일이 왔거나 포기했으면 시작한 화면으로 — 그 사이 사용자가 옮겼으면 그대로 둔다(Codex R1 #2 · R2 #3·#4).
+      if (back && (await returnIfStillOn(pageCtx, { editPath, back })) === 'failed') console.warn(`${tag} could not return to ${back}`)
       if (!got.path) {
         console.warn(`${tag} download ${got.error}`)
         return kindResult(got.error === 'timeout' ? 'flow-download-timeout' : 'flow-download-error', { reason: got.error })
       }
       const mimeType = /\.webm$/i.test(got.path) ? 'video/webm' : 'video/mp4'
       const base64 = `data:${mimeType};base64,${fs.readFileSync(got.path).toString('base64')}`
-      console.log(`${tag} ✅ ${menu.res} ${path.basename(got.path)} (${Math.round(base64.length * 0.75 / 1024)} KB)`)
+      console.log(`${tag} ✅ ${menu.res} (${Math.round(base64.length * 0.75 / 1024)} KB)`)   // 파일 이름(제목)은 남기지 않는다
       return { success: true, base64, mimeType, resolution: menu.res, ...(menu.downgradedFrom ? { downgradedFrom: menu.downgradedFrom } : {}) }
     } catch (e) {
       return kindResult('flow-download-error', { reason: e?.message || String(e) })
