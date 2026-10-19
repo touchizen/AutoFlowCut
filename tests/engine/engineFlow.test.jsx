@@ -387,6 +387,59 @@ describe('useFlowEngine — downloadVideo routing', () => {
     expect(mockFlowDomDownloadVideo).toHaveBeenCalledTimes(1)
     expect(mockFlowDownloadVideoUrl).not.toHaveBeenCalled()
   })
+
+  // 2026-10-19 업스케일 복구: 새 Flow 완료 폴은 항상 서명 URL(720p 원본)을 준다 — 1080p/4K 요청이면 URL 에서 mediaId 를 뽑아 DOM 업스케일 먼저.
+  const MEDIA = 'ba1764fb-6f24-49d4-9b1e-6c13af2f1f7b'
+  const SIGNED = `https://flow-content.google/video/${MEDIA}?Expires=1&KeyName=k&Signature=s`
+
+  it('upscale request on a signed Flow URL goes to the DOM download with the mediaId from the URL', async () => {
+    mockFlowDomDownloadVideo.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,AAA', resolution: '1080p' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.downloadVideo(SIGNED, '1080p') })
+    expect(mockFlowDomDownloadVideo).toHaveBeenCalledWith({ mediaId: MEDIA, resolution: '1080p' })
+    expect(mockFlowDownloadVideoUrl).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ success: true, resolution: '1080p' })
+  })
+
+  it('falls back to the signed URL (720p original) and says why when the DOM upscale fails', async () => {
+    mockFlowDomDownloadVideo.mockResolvedValue({ success: false, errorKind: 'flow-upscale-unavailable', error: 'flow-upscale-unavailable' })
+    mockFlowDownloadVideoUrl.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,BBB' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.downloadVideo(SIGNED, '4k') })
+    expect(mockFlowDownloadVideoUrl).toHaveBeenCalledTimes(1)
+    expect(res).toMatchObject({
+      success: true, base64: 'data:video/mp4;base64,BBB', resolution: '720p',
+      upscaleFallback: { requested: '4k', errorKind: 'flow-upscale-unavailable' },
+    })
+  })
+
+  it('does not fall back when the DOM download hits an auth error (surfaced as authFailed)', async () => {
+    mockFlowDomDownloadVideo.mockResolvedValue({ success: false, error: 'HTTP 401 Unauthorized' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.downloadVideo(SIGNED, '1080p') })
+    expect(mockFlowDownloadVideoUrl).not.toHaveBeenCalled()
+    expect(res).toMatchObject({ success: false, authFailed: true })
+  })
+
+  it('720p (or no resolution) keeps the plain signed-URL download', async () => {
+    mockFlowDownloadVideoUrl.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,CCC' })
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => { await result.current.downloadVideo(SIGNED, '720p') })
+    await act(async () => { await result.current.downloadVideo(SIGNED) })
+    expect(mockFlowDomDownloadVideo).not.toHaveBeenCalled()
+    expect(mockFlowDownloadVideoUrl).toHaveBeenCalledTimes(2)
+  })
+
+  it('an upscale request on a URL with no Flow mediaId stays on the URL path', async () => {
+    mockFlowDownloadVideoUrl.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,DDD' })
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => { await result.current.downloadVideo('https://example.com/video.mp4', '1080p') })
+    expect(mockFlowDomDownloadVideo).not.toHaveBeenCalled()
+    expect(mockFlowDownloadVideoUrl).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('useFlowEngine — setStopRequested (renderer-local)', () => {

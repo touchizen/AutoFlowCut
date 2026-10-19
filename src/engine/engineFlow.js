@@ -60,6 +60,18 @@ export function isFlowAuthError(res) {
   return /\b401\b|\b403\b|unauthorized|unauthenticated|permission denied|invalid token|expired token|sign in|로그인|인증 만료|토큰/.test(e)
 }
 
+/** 업스케일 다운로드가 필요한 해상도(새 Flow 생성은 720p 까지). */
+export function isUpscaleResolution(resolution) {
+  const r = String(resolution || '').toLowerCase()
+  return r === '1080p' || r === '4k'
+}
+
+/** 새 Flow 서명 동영상 URL(https://flow-content.google/video/<mediaId>?Expires=…)의 mediaId. 아니면 null. */
+export function flowVideoMediaIdFromUrl(url) {
+  const m = /^https:\/\/flow-content\.google\/video\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[?#]|$)/i.exec(String(url || ''))
+  return m ? m[1] : null
+}
+
 /** authFailed 센티넬을 부여(이미 있으면 보존). 인증 에러가 아니면 원본 그대로. */
 export function markFlowAuthFailure(res) {
   if (res && res.authFailed) return res
@@ -537,6 +549,19 @@ export function useFlowEngine(opts = {}) {
   const downloadVideo = useCallback(async (uri, resolution = undefined) => {
     try {
       if (typeof uri === 'string' && /^https?:\/\//i.test(uri)) {
+        // 2026-10-19: 새 Flow 완료 폴은 늘 서명 URL(720p 원본)을 준다 — 1080p/4K 요청이면 URL 의 mediaId 로 DOM 업스케일 먼저.
+        //   실패(인증 제외)는 원본 URL 로 받고 upscaleFallback 에 이유를 남긴다(영상을 잃지 않는다).
+        const mediaId = isUpscaleResolution(resolution) ? flowVideoMediaIdFromUrl(uri) : null
+        if (mediaId) {
+          const dom = await api().flowDomDownloadVideo({ mediaId, resolution: String(resolution).toLowerCase() })
+          if (dom?.success) return dom
+          if (dom?.authFailed || isFlowAuthError(dom)) return markAuth(dom)
+          console.warn('[Flow Engine] upscale download failed → 720p original:', dom?.errorKind || dom?.error)
+          const plain = markAuth(await api().flowDownloadVideoUrl({ url: uri, token: effectiveToken() }))
+          return plain?.success
+            ? { ...plain, resolution: '720p', upscaleFallback: { requested: String(resolution).toLowerCase(), errorKind: dom?.errorKind || 'flow-download-error' } }
+            : plain
+        }
         return markAuth(await api().flowDownloadVideoUrl({ url: uri, token: effectiveToken() }))
       }
       // #R13-6: 선택된 비디오 해상도를 DOM 다운로드(업스케일 선택)에 전달.

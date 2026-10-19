@@ -1,0 +1,135 @@
+// @vitest-environment node
+//
+// flow:dom-download-video 를 새 Flow(Angular)에서 다시 연다 — M2(R1#7) 이후 unsupportedOnAngular 로 막혀 서명 URL(720p 원본)만 받았고
+//   업스케일(1080p/4K)이 빠졌다. 순서: 입력 검증 → as29s 로 편집 위치(projectId·editId) → 다운로드 직렬화(downloadMutex)
+//   → will-download 가로채기(임시 폴더) → DOM 단계(편집 화면으로 이동 → "미디어 다운로드" → 해상도 → 파일 대기 → 원래 화면으로)
+//   → base64. 핸들러·임시 폴더는 어느 경로든 정리하고, 어느 경로든 시작한 화면으로 돌아간다.
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import fs from 'node:fs'
+import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
+import { _resetDomStageForTests } from '../../../electron/ipc/flow-angular.js'
+import { PAGE_PATH_JS, READ_RESOLUTION_ITEMS_JS, EDITOR_DOWNLOAD_TRIGGER_JS } from '../../../electron/flow-video-download.js'
+import { respBodyWithPayload } from '../../fixtures/flow-batchexecute-samples.js'
+
+const MEDIA = 'ba1764fb-6f24-49d4-9b1e-6c13af2f1f7b'
+const PROJECT = 'f4f8378f-f606-43ff-9aa7-fabca351d2f4'
+const EDIT = 'd2ac9584-3ba2-47fa-a529-8a4c85416f07'
+const GRID = `/project/${PROJECT}`
+const EDITOR = `/project/${PROJECT}/edit/${EDIT}`
+
+function makeIpcMain() {
+  const handlers = new Map()
+  return { handle: (c, fn) => handlers.set(c, fn), invoke: (c, p) => handlers.get(c)({}, p) }
+}
+
+function harness({ items, record, editorRenders = true, deliver = true } = {}) {
+  const listeners = new Set()
+  const savedPaths = []
+  const session = {
+    on: (ev, fn) => { if (ev === 'will-download') listeners.add(fn) },
+    off: (ev, fn) => { if (ev === 'will-download') listeners.delete(fn) },
+  }
+  const steps = []
+  const navigations = []
+  let page = GRID
+  const executeJavaScript = vi.fn(async (js) => {
+    if (js.includes('readWizGlobals')) {   // callFlowRpc(as29s)
+      return { status: 200, text: respBodyWithPayload('as29s', record ?? [MEDIA, PROJECT, EDIT, 'CAE', null]) }
+    }
+    if (js === PAGE_PATH_JS) return page
+    const nav = /history\.pushState\(history\.state, '', "([^"]+)"\)/.exec(js)
+    if (nav) { page = nav[1]; navigations.push(page); return page }
+    if (js.includes('editorReady(document, ')) return editorRenders && js.includes(JSON.stringify(page))
+    if (js === READ_RESOLUTION_ITEMS_JS) return items ?? [
+      { res: '270p', disabled: false }, { res: '720p', disabled: false }, { res: '1080p', disabled: false }, { res: '4k', disabled: true },
+    ]
+    return true
+  })
+  const flowView = {
+    getBounds: () => ({ x: 0, y: 0, width: 957, height: 1022 }),
+    setBounds: vi.fn(),
+    webContents: {
+      getURL: () => `https://flow.google.com${page}`, executeJavaScript, sendInputEvent: vi.fn(),
+      isFocused: () => true, focus: vi.fn(), isDestroyed: () => false, session,
+    },
+  }
+  const trustedClickOnFlowView = vi.fn(async (js, opts) => {
+    steps.push(opts.step)
+    if (opts.step === 'download-menu') expect(js).toBe(EDITOR_DOWNLOAD_TRIGGER_JS)
+    if (opts.step === 'download-resolution' && deliver) {
+      // Flow 가 업스케일을 끝내고 내려보낸다 → will-download
+      setTimeout(() => {
+        for (const fn of listeners) {
+          fn({}, { getFilename: () => 'ba1764fb_1080p.mp4', setSavePath: (p) => { savedPaths.push(p); fs.writeFileSync(p, Buffer.alloc(2048, 7)) } })
+        }
+      }, 20)
+    }
+    return { success: true }
+  })
+  const getFlowView = vi.fn(() => flowView)
+  const deps = {
+    getFlowView, getCurrentMode: () => 'flow', getFlowAgentOn: () => false,
+    getMainWindow: () => ({ webContents: { focus: vi.fn() }, getContentBounds: () => ({ x: 0, y: 0, width: 1600, height: 1000 }) }),
+    trustedClickOnFlowView, sessionFetch: vi.fn(), pendingGenerations: new Map(), getCapturedProjectId: () => PROJECT, fetchMediaAsBase64: vi.fn(),
+  }
+  const ipc = makeIpcMain()
+  registerFlowAPIIPC(ipc, deps)
+  return { ipc, deps, flowView, steps, listeners, savedPaths, navigations, page: () => page }
+}
+
+describe('flow:dom-download-video on the new Flow (Angular)', () => {
+  beforeEach(() => { _resetDomStageForTests() })
+
+  it('opens the editor from the as29s record, picks 1080p, returns the upscaled file and goes back to the grid', async () => {
+    const h = harness()
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true, resolution: '1080p', mimeType: 'video/mp4' })
+    expect(r.base64.startsWith('data:video/mp4;base64,')).toBe(true)
+    expect(Buffer.from(r.base64.split(',')[1], 'base64')).toHaveLength(2048)
+    expect(h.steps).toEqual(['download-menu', 'download-resolution'])
+    expect(h.navigations).toEqual([EDITOR, GRID])
+    expect(h.page()).toBe(GRID)
+    expect(h.listeners.size).toBe(0)
+    expect(fs.existsSync(h.savedPaths[0])).toBe(false)   // temp dir cleaned
+  }, 15000)
+
+  it('asks for 4K, takes 1080p when 4K is locked, and says so', async () => {
+    const h = harness()
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '4k' })
+    expect(r).toMatchObject({ success: true, resolution: '1080p', downgradedFrom: '4k' })
+  }, 15000)
+
+  it('flow-upscale-unavailable: no file wait, and still back on the grid', async () => {
+    const h = harness({ items: [{ res: '720p', disabled: false }, { res: '1080p', disabled: true }, { res: '4k', disabled: true }] })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-upscale-unavailable' })
+    expect(h.steps).toEqual(['download-menu'])
+    expect(h.page()).toBe(GRID)
+    expect(h.listeners.size).toBe(0)
+  })
+
+  it('flow-download-editor-not-ready when the editor never renders — no clicks, back on the grid', async () => {
+    const h = harness({ editorRenders: false })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-download-editor-not-ready' })
+    expect(h.steps).toEqual([])
+    expect(h.page()).toBe(GRID)
+  }, 20000)
+
+  it('flow-download-edit-unknown when as29s does not give an editor location — the view is not driven', async () => {
+    const h = harness({ record: [MEDIA, PROJECT, null] })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-download-edit-unknown' })
+    expect(h.navigations).toEqual([])
+    expect(h.steps).toEqual([])
+  })
+
+  it('refuses a non-UUID mediaId or an unknown resolution before touching the view', async () => {
+    for (const payload of [{ mediaId: 'm', resolution: '1080p' }, { mediaId: MEDIA, resolution: '8k' }]) {
+      const h = harness()
+      const r = await h.ipc.invoke('flow:dom-download-video', payload)
+      expect(r).toMatchObject({ success: false, errorKind: 'flow-download-invalid-input' })
+      expect(h.deps.getFlowView).not.toHaveBeenCalled()
+    }
+  })
+})

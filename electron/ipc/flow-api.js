@@ -1405,7 +1405,8 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     //   돌 수 있어 Flow quota 를 쓴다. API 모드 전환 후 stale 호출이 보존된 Flow view 를 구동해
     //   quota 를 소모하지 않도록 게이트한다. (API 모드 비디오 다운로드는 engineApi 경로라 무관.)
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
-    if (flowActive()) return unsupportedOnAngular('dom-download-video')  // R1#7: 옛 DOM 다운로드 메뉴 — 새 Flow 에서 도달 불가(M2 는 서명 URL)
+    // 2026-10-19: 새 Flow 메뉴(⋮ → 다운로드 → 1080p/4K)로 업스케일 다운로드 복구 — 아래 옛 Radix 경로는 Flow 모드에서 도달하지 않는다.
+    if (flowActive()) return angular.domDownloadVideo({ mediaId, resolution, lock: downloadMutex })
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }

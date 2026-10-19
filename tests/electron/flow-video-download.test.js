@@ -1,0 +1,227 @@
+// @vitest-environment jsdom
+//
+// 새 Flow(Angular) 동영상 업스케일 다운로드 — 미디어 편집 화면(/project/<pid>/edit/<editId>)의 "미디어 다운로드" 메뉴 → 1080p/4K.
+//   M2(R1#7)는 옛 Radix 메뉴 기준으로 "도달 불가"라 보고 DOM 다운로드를 막았고, 그 뒤로 서명 URL(720p 원본)만 받아 업스케일이 빠졌다.
+//   그리드 타일은 hover 전 미리보기 src 에 mediaId 가 없어(2026-10-19 덤프) 편집 id(as29s 기록 [2])로 편집 화면을 연다.
+//   픽스처는 tests/fixtures/flow-live-dom-download-20261019.js(같은 날 라이브 판독).
+import { describe, it, expect, beforeEach } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import {
+  mediaEditLocation, editorPath, findEditorDownloadTrigger, readResolutionItems, findResolutionItem, pickResolution,
+  PAGE_PATH_JS, NAVIGATE_JS, EDITOR_READY_JS, EDITOR_DOWNLOAD_TRIGGER_JS, READ_RESOLUTION_ITEMS_JS, RESOLUTION_ITEM_JS,
+  driveEditorDownload, returnToPath, waitForDownloadedFile,
+} from '../../electron/flow-video-download.js'
+import { DISPATCH_ESCAPE_JS } from '../../electron/flow-reference-driver.js'
+import {
+  PROJECT_ID, MEDIA_ID, EDIT_ID, GRID_PATH, EDIT_PATH, editorPage, gridPage,
+} from '../fixtures/flow-live-dom-download-20261019.js'
+
+function mount(html) { document.body.innerHTML = html; return document }
+function at(p, html) { window.history.replaceState(null, '', p); return mount(html) }
+
+describe('mediaEditLocation (as29s record → editor route)', () => {
+  it('reads projectId [1] and editId [2] of the record for that mediaId', () => {
+    expect(mediaEditLocation([MEDIA_ID, PROJECT_ID, EDIT_ID, 'CAE', null], MEDIA_ID)).toEqual({ projectId: PROJECT_ID, editId: EDIT_ID })
+  })
+  it('null for another media, missing or non-UUID ids', () => {
+    expect(mediaEditLocation([MEDIA_ID, PROJECT_ID, EDIT_ID], '00000000-0000-4000-8000-000000000000')).toBeNull()
+    expect(mediaEditLocation([MEDIA_ID, PROJECT_ID, null], MEDIA_ID)).toBeNull()
+    expect(mediaEditLocation([MEDIA_ID, 'x', EDIT_ID], MEDIA_ID)).toBeNull()
+    expect(mediaEditLocation(null, MEDIA_ID)).toBeNull()
+  })
+  it('editorPath', () => {
+    expect(editorPath({ projectId: PROJECT_ID, editId: EDIT_ID })).toBe(EDIT_PATH)
+  })
+})
+
+describe('probes (editor page)', () => {
+  it('picks the header "media download" trigger, never the timeline hotbar one', () => {
+    const doc = at(EDIT_PATH, editorPage())
+    const btn = findEditorDownloadTrigger(doc)
+    expect(btn).not.toBeNull()
+    expect(btn.hasAttribute('flowhotbarbutton')).toBe(false)
+    expect(btn.closest('.cta-buttons')).not.toBeNull()
+    expect(findEditorDownloadTrigger(at(GRID_PATH, gridPage()))).toBeNull()
+  })
+
+  it('reads the resolution items of the open menu, with disabled state', () => {
+    const doc = at(EDIT_PATH, editorPage({ menuOpen: true }))
+    expect(readResolutionItems(doc)).toEqual([
+      { res: '270p', disabled: false },
+      { res: '720p', disabled: false },
+      { res: '1080p', disabled: false },
+      { res: '4k', disabled: true },
+    ])
+    expect(findResolutionItem(doc, '1080p').textContent).toContain('1080p')
+    expect(readResolutionItems(at(EDIT_PATH, editorPage()))).toEqual([])
+  })
+
+  it('EDITOR_READY_JS is true only on that path with the trigger rendered', () => {
+    at(EDIT_PATH, editorPage())
+    expect(window.eval(EDITOR_READY_JS(EDIT_PATH))).toBe(true)
+    expect(window.eval(EDITOR_READY_JS(GRID_PATH))).toBe(false)
+    at(EDIT_PATH, gridPage())
+    expect(window.eval(EDITOR_READY_JS(EDIT_PATH))).toBe(false)
+  })
+
+  it('NAVIGATE_JS moves the SPA (pushState + popstate) and PAGE_PATH_JS reads it back', () => {
+    at(GRID_PATH, gridPage())
+    let popped = 0
+    const onPop = () => { popped++ }
+    window.addEventListener('popstate', onPop)
+    window.eval(NAVIGATE_JS(EDIT_PATH))
+    window.removeEventListener('popstate', onPop)
+    expect(window.eval(PAGE_PATH_JS)).toBe(EDIT_PATH)
+    expect(popped).toBe(1)
+  })
+
+  it('injected JS strings behave like the functions (self-contained when stringified)', () => {
+    const doc = at(EDIT_PATH, editorPage({ menuOpen: true }))
+    expect(window.eval(EDITOR_DOWNLOAD_TRIGGER_JS)).toBe(findEditorDownloadTrigger(doc))
+    expect(window.eval(READ_RESOLUTION_ITEMS_JS)).toEqual(readResolutionItems(doc))
+    expect(window.eval(RESOLUTION_ITEM_JS('1080p'))).toBe(findResolutionItem(doc, '1080p'))
+  })
+})
+
+describe('pickResolution', () => {
+  const items = (fourK, hd = false) => [
+    { res: '720p', disabled: false }, { res: '1080p', disabled: hd }, { res: '4k', disabled: fourK },
+  ]
+  it('takes the requested upscale when enabled', () => {
+    expect(pickResolution(items(true), '1080p')).toEqual({ res: '1080p' })
+    expect(pickResolution(items(false), '4k')).toEqual({ res: '4k' })
+  })
+  it('steps 4K down to 1080p when 4K is locked (user decision 2026-10-19)', () => {
+    expect(pickResolution(items(true), '4k')).toEqual({ res: '1080p', downgradedFrom: '4k' })
+  })
+  it('gives up when no upscale at or below the request is enabled', () => {
+    expect(pickResolution(items(true, true), '1080p')).toBeNull()
+    expect(pickResolution(items(true, true), '4k')).toBeNull()
+    expect(pickResolution([], '1080p')).toBeNull()
+  })
+})
+
+/**
+ * Fake Angular: SPA navigation mounts the page for the new path (editor or grid); clicking the header trigger opens the
+ * resolution menu; the resolution click is recorded.
+ */
+function fakeCtx({ fourKDisabled = true, upscale1080Disabled = false, editorRenders = true } = {}) {
+  const calls = { steps: [], chosen: null, escapes: 0, navigations: [] }
+  const ctx = {
+    exec: async (js) => {
+      if (js === DISPATCH_ESCAPE_JS) { calls.escapes++; return true }
+      const before = window.location.pathname
+      const r = window.eval(js)
+      const after = window.location.pathname
+      if (after !== before) {
+        calls.navigations.push(after)
+        mount(after.includes('/edit/') ? (editorRenders ? editorPage() : '<main></main>') : gridPage())
+      }
+      return r
+    },
+    trustedClick: async (js, opts) => {
+      const el = window.eval(js)
+      if (!el) return { success: false, error: 'not found' }
+      if (el.disabled || el.getAttribute('disabled') === 'true') return { success: false, error: 'Button is disabled' }
+      calls.steps.push(opts.step)
+      if (el.closest('.cta-buttons')) mount(editorPage({ menuOpen: true, fourKDisabled, upscale1080Disabled }))
+      else calls.chosen = el.textContent.trim()
+      return { success: true }
+    },
+    isAborted: () => false,
+    sleep: async () => {},
+  }
+  return { ctx, calls }
+}
+
+describe('driveEditorDownload', () => {
+  beforeEach(() => { at(GRID_PATH, gridPage()) })
+
+  it('opens the editor route, then "media download" → 1080p', async () => {
+    const { ctx, calls } = fakeCtx()
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toEqual({ ok: true, res: '1080p' })
+    expect(calls.navigations).toEqual([EDIT_PATH])
+    expect(calls.steps).toEqual(['download-menu', 'download-resolution'])
+    expect(calls.chosen).toContain('1080p')
+    expect(window.location.pathname).toBe(EDIT_PATH)   // 돌아가기는 호출자가 파일을 받은 뒤에
+  })
+
+  it('asks for 4K, gets 1080p when 4K is locked', async () => {
+    const { ctx, calls } = fakeCtx({ fourKDisabled: true })
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '4k' })
+    expect(r).toEqual({ ok: true, res: '1080p', downgradedFrom: '4k' })
+    expect(calls.chosen).toContain('1080p')
+  })
+
+  it('closes the menu and reports flow-upscale-unavailable when no upscale is enabled', async () => {
+    const { ctx, calls } = fakeCtx({ upscale1080Disabled: true })
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-upscale-unavailable' })
+    expect(calls.chosen).toBeNull()
+    expect(calls.escapes).toBeGreaterThan(0)
+  })
+
+  it('reports flow-download-editor-not-ready without clicking when the editor never renders', async () => {
+    const { ctx, calls } = fakeCtx({ editorRenders: false })
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-download-editor-not-ready' })
+    expect(calls.steps).toEqual([])
+  })
+
+  it('reports flow-download-menu-failed and closes menus when the menu never opens', async () => {
+    const { ctx, calls } = fakeCtx()
+    ctx.trustedClick = async () => ({ success: false, error: 'covered' })
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-download-menu-failed' })
+    expect(calls.escapes).toBeGreaterThan(0)
+  })
+})
+
+describe('returnToPath', () => {
+  it('navigates back to where the download started', async () => {
+    at(EDIT_PATH, editorPage())
+    const { ctx, calls } = fakeCtx()
+    expect(await returnToPath(ctx, GRID_PATH)).toBe(true)
+    expect(window.location.pathname).toBe(GRID_PATH)
+    expect(calls.navigations).toEqual([GRID_PATH])
+  })
+  it('is a no-op when already there', async () => {
+    at(GRID_PATH, gridPage())
+    const { ctx, calls } = fakeCtx()
+    expect(await returnToPath(ctx, GRID_PATH)).toBe(true)
+    expect(calls.navigations).toEqual([])
+  })
+})
+
+describe('waitForDownloadedFile', () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'afc-dl-test-'))
+
+  it('ignores in-progress files and returns the finished file once its size holds', async () => {
+    const dir = tmp()
+    fs.writeFileSync(path.join(dir, 'clip.mp4.crdownload'), 'partial')
+    setTimeout(() => {
+      fs.rmSync(path.join(dir, 'clip.mp4.crdownload'))
+      fs.writeFileSync(path.join(dir, 'clip.mp4'), Buffer.alloc(1024, 1))
+    }, 30)
+    const r = await waitForDownloadedFile({ dir, fs, timeoutMs: 2000, pollMs: 20 })
+    expect(r).toBe(path.join(dir, 'clip.mp4'))
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('returns null on timeout', async () => {
+    const dir = tmp()
+    const r = await waitForDownloadedFile({ dir, fs, timeoutMs: 80, pollMs: 20 })
+    expect(r).toBeNull()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('stops when aborted', async () => {
+    const dir = tmp()
+    const r = await waitForDownloadedFile({ dir, fs, timeoutMs: 5000, pollMs: 20, isAborted: () => true })
+    expect(r).toBeNull()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})

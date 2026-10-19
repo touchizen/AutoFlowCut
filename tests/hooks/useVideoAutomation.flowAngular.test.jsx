@@ -106,19 +106,32 @@ describe('useVideoAutomation × useFlowEngine — 성공 경로', () => {
     expect(h.hook.result.current.video.status).toBe('done')
   })
 
-  it('resolution 1080p → main 이 클릭 전에 flow-resolution-not-offered {requested} → 항목 error(렌더 텍스트에 1080p, 플레이스홀더 없음), 폴·다운로드 없음', async () => {
-    api.flowGenerateVideoT2V.mockResolvedValue(NOT_OFFERED)
+  // 2026-10-19 업스케일 복구(사용자 결정): Flow 모드의 해상도 설정 = 다운로드 해상도. 생성은 늘 720p(새 Flow 패널은 {360p, 720p}),
+  //   1080p/4K 는 완료 뒤 DOM 다운로드(⋮ → 다운로드 → 1080p)로 업스케일해 받는다. 서명 URL 은 mediaId 를 뽑는 데만 쓴다.
+  const REAL = 'ba1764fb-6f24-49d4-9b1e-6c13af2f1f7b'
+  const SIGNED_REAL = `https://flow-content.google/video/${REAL}?Expires=1&KeyName=k&Signature=s`
+  const completeWith = (url) => async ({ generationIds }) => ({ success: true, statuses: generationIds.map((id) => ({ status: 'complete', mediaId: id, videoUrl: url })) })
+
+  it('resolution 1080p → 생성은 720p, 완료 뒤 DOM 업스케일 다운로드(mediaId·1080p) → 저장', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,SEQ=', mimeType: 'video/mp4', resolution: '1080p' })
     const h = setup()
-    await run(h, SCENES(1), { videoResolution: '1080p' }, 5000)
-    expect(api.flowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '1080p' })
-    const [st, patch] = last(h, 'vscene_1')
-    expect(st).toBe('error')
-    expect(patch).toMatchObject({ errorKind: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
-    expect(api.flowCheckVideoStatus).not.toHaveBeenCalled()
+    await run(h, SCENES(1), { videoResolution: '1080p' })
+    expect(api.flowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '720p' })
+    expect(api.flowDomDownloadVideo).toHaveBeenCalledWith({ mediaId: REAL, resolution: '1080p' })
     expect(api.flowDownloadVideoUrl).not.toHaveBeenCalled()
-    const [text] = renderErrors([{ id: 'vscene_1', prompt: 'p1', status: 'error', ...patch }])
-    expect(text).toContain('1080p')
-    expect(text).not.toMatch(/\{\w+\}/)
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,SEQ=', expect.anything(), expect.anything())
+    expect(last(h, 'vscene_1')[0]).toBe('complete')
+  })
+
+  it('resolution 1080p 인데 DOM 업스케일 실패 → 720p 원본(서명 URL)으로 저장, 영상은 잃지 않는다', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: false, errorKind: 'flow-download-tile-not-found', error: 'flow-download-tile-not-found' })
+    const h = setup()
+    await run(h, SCENES(1), { videoResolution: '1080p' })
+    expect(api.flowDownloadVideoUrl).toHaveBeenCalledWith({ url: SIGNED_REAL, token: null })
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,AQID', expect.anything(), expect.anything())
+    expect(last(h, 'vscene_1')[0]).toBe('complete')
   })
 })
 

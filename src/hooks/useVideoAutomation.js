@@ -67,6 +67,9 @@ const randomSleep = (min, max) =>
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
+/** 새 Flow 생성 해상도 — 패널은 {360p, 720p}. 설정의 1080p/4K 는 다운로드 업스케일로 간다(2026-10-19). */
+const FLOW_GENERATION_RESOLUTION = '720p'
+
 const isDownloadOnlyItem = (item) =>
   item.status === 'error' && item.generationId && item.mediaId && !item.videoPath
 
@@ -335,16 +338,21 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // 모델이 지원하지 않거나(예: Veo Lite + 4K) stale 한 해상도는 여기서 한 번만 강등/정규화.
     // 이후 effectiveVideoDuration 계산·history 메타데이터·생성 호출이 전부 같은 값을 써서
     // 부분 coerce 로 인한 어긋남(기록은 4k, 실제는 1080p)을 방지한다. (리뷰 P2)
-    const videoResolution = (appMode === 'flow' || isGoogleProvider)
+    // 2026-10-19 업스케일 복구(사용자 결정): Flow 모드의 해상도 설정은 *다운로드* 해상도다 — 새 Flow 생성 패널은 {360p, 720p} 뿐이라
+    //   생성은 FLOW_GENERATION_RESOLUTION, 1080p/4K 는 완료 뒤 DOM 다운로드(⋮ → 다운로드 → 1080p/4K)로 업스케일한다(engineFlow.downloadVideo).
+    const videoResolution = appMode === 'flow'
+      ? FLOW_GENERATION_RESOLUTION
+      : (isGoogleProvider ? coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p') : options.videoResolution)
+    const downloadResolution = appMode === 'flow'
       ? coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p')
-      : options.videoResolution
+      : videoResolution
     const resolveItemGeneration = (item) => {
       const resolved = resolveSceneVideoProvider(item, generationSettings, mode, { appMode })   // Flow 는 씬 override 없이 설정 모델(F1)
       if (resolved.warning) console.warn('[VideoAutomation]', resolved.warning)
       const model = canonicalVideoModel(resolved.model, resolved.provider)
-      const resolution = (appMode === 'flow' || resolved.provider === 'google')
-        ? coerceResolution(model, options.videoResolution ?? '720p')
-        : options.videoResolution
+      const resolution = appMode === 'flow'
+        ? FLOW_GENERATION_RESOLUTION
+        : (resolved.provider === 'google' ? coerceResolution(model, options.videoResolution ?? '720p') : options.videoResolution)
       return { provider: resolved.provider, model, resolution }
     }
 
@@ -608,7 +616,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           onUpdate: (id, newStatus, patch) => onItemUpdate?.(id, newStatus, patch),
           projectName,
           saveMode,
-          videoResolution,
+          videoResolution: downloadResolution,
           authErrorText: authErrorMessage,   // M2-R3 H5: kind 동반 authFailed 의 항목 문구는 인증 안내(raw 토큰 금지)
         }).catch(err => ({ success: false, error: String(err?.message || err) }))))
 
@@ -1017,7 +1025,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               {
                 projectName,
                 saveMode,
-                videoResolution: appliedVideoResolution,
+                videoResolution: appMode === 'flow' ? downloadResolution : appliedVideoResolution,
                 aspectRatio: appliedAspectRatio,
                 seed,
                 videoModel: appliedVideoModel,
