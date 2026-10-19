@@ -10,7 +10,7 @@ import {
   mediaEditLocation, editorPath, findEditorDownloadTrigger, readResolutionItems, findResolutionItem, pickResolution,
   PAGE_PATH_JS, NAVIGATE_JS, EDITOR_READY_JS, EDITOR_DOWNLOAD_TRIGGER_JS, READ_RESOLUTION_ITEMS_JS, RESOLUTION_ITEM_JS,
   driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, RETURN_IF_ON_JS, UUID_RE,
-  EDITOR_TITLE_JS, isVideoCapturePending, waitForVideoCaptures,
+  EDITOR_TITLE_JS, isVideoCapturePending, waitForVideoCaptures, guardFlowNavigation,
 } from '../../electron/flow-video-download.js'
 import { DISPATCH_ESCAPE_JS } from '../../electron/flow-reference-driver.js'
 import {
@@ -217,6 +217,17 @@ describe('driveEditorDownload', () => {
     expect(calls.steps).toEqual(['download-menu', 'download-menu'])
   })
 
+  it('a watchdog abort during beforeResolutionClick stops before the resolution click (Fable R3 #3)', async () => {
+    const { ctx, calls } = fakeCtx()
+    let aborted = false
+    ctx.isAborted = () => aborted
+    ctx.beforeResolutionClick = async () => { aborted = true }
+    const r = await driveEditorDownload(ctx, { path: EDIT_PATH, resolution: '1080p' })
+    expect(r).toMatchObject({ ok: false, kind: 'flow-download-aborted' })
+    expect(calls.steps).toEqual(['download-menu'])
+    expect(calls.chosen).toBeNull()
+  })
+
   it('reports flow-download-menu-failed and closes menus when the menu never opens', async () => {
     const { ctx, calls } = fakeCtx()
     ctx.trustedClick = async () => ({ success: false, error: 'covered' })
@@ -351,6 +362,46 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     cap.dispose()
   })
 
+  it('reads the resolution from the last token — a title containing "4K" does not confuse it (Codex R4 #3 · Fable R3 #1)', () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: 'Cinematic 4K drone shot', res: '1080p' })
+    const ours = fakeItem('Cinematic_4K_drone_shot_1080p_20261019.mp4', 'video/mp4')
+    s.emit('will-download', {}, ours)
+    expect(ours.savePath).toBe('/tmp/d/Cinematic_4K_drone_shot_1080p_20261019.mp4')
+    cap.dispose()
+  })
+
+  it('a requested resolution needs a resolution token in the name (Codex R4 #2)', () => {
+    const s = session()
+    const ignored = []
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: MEDIA_TITLE, res: '1080p', onIgnored: (i) => ignored.push(i.reason) })
+    const noTok = fakeItem('Amber_light_particles_drifting.mp4', 'video/mp4')
+    s.emit('will-download', {}, noTok)
+    expect(noTok.savePath).toBeNull()
+    expect(ignored).toEqual(['resolution'])
+    cap.dispose()
+  })
+
+  it('a non-ASCII (e.g. Korean) title is not used for name matching — Flow may strip it (Fable R3 #2)', () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 1000, title: '호박색 빛 입자가 흐르는 배경', res: '1080p' })
+    const ours = fakeItem('_1080p_20261019.mp4', 'video/mp4')
+    s.emit('will-download', {}, ours)
+    expect(ours.savePath).toBe('/tmp/d/_1080p_20261019.mp4')
+    cap.dispose()
+  })
+
+  it('abort(reason) settles the wait at once and cancels a running item (left the editor / document gone)', async () => {
+    const s = session()
+    const cap = armVideoDownloadCapture(s, '/tmp/d', { timeoutMs: 5000 })
+    const vid = fakeItem('a.mp4', 'video/mp4')
+    s.emit('will-download', {}, vid)
+    cap.abort('left-editor')
+    await expect(cap.wait()).resolves.toEqual({ error: 'left-editor' })
+    expect(vid.cancelled).toBe(true)
+    cap.dispose()
+  })
+
   it('reports every ignored download with its reason (live diagnosis)', () => {
     const s = session()
     const ignored = []
@@ -440,5 +491,35 @@ describe('armVideoDownloadCapture (Codex R1 #1: only our video, only once)', () 
     s.emit('will-download', {}, vid)
     cap.dispose()
     expect(vid.cancelled).toBe(true)
+  })
+})
+
+describe('guardFlowNavigation (Codex R4 #1 · Fable R3 #5: every reload of the Flow view waits for a pending upscaled download)', () => {
+  function fakeWebContents() {
+    const calls = []
+    return { calls, loadURL: async (u) => { calls.push('load:' + u) }, reload: () => { calls.push('reload') } }
+  }
+  it('loadURL and reload wait until the pending download is over', async () => {
+    const wc = fakeWebContents()
+    let pending = true
+    let release
+    const gate = new Promise((r) => { release = r })
+    guardFlowNavigation(wc, { isPending: () => pending, wait: () => gate.then(() => true), log: () => {} })
+    const p = wc.loadURL('https://flow.google.com/project/x')
+    wc.reload()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(wc.calls).toEqual([])
+    pending = false
+    release()
+    await p
+    await new Promise((r) => setTimeout(r, 0))
+    expect(wc.calls).toEqual(['load:https://flow.google.com/project/x', 'reload'])
+  })
+  it('navigates at once when nothing is pending', async () => {
+    const wc = fakeWebContents()
+    guardFlowNavigation(wc, { isPending: () => false, wait: async () => true, log: () => {} })
+    await wc.loadURL('u')
+    wc.reload()
+    expect(wc.calls).toEqual(['load:u', 'reload'])
   })
 })

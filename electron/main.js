@@ -61,6 +61,7 @@ import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
 import { buildKeyResolvers } from './main/keyResolvers.js'
+import { guardFlowNavigation } from './flow-video-download.js'
 import * as Sentry from '@sentry/electron/main'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -455,6 +456,8 @@ function makeFlowView() {
 
   // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금(위 automationKeyLock — flowAPIDeps.setAutomationKeyLock 이 켜고 끈다)
   view.webContents.on('before-input-event', (e) => { if (automationKeyLock) e.preventDefault() })
+  // 업스케일 다운로드 중엔 어떤 경로의 loadURL·reload 도 끝날 때까지 기다린다 — 편집 화면을 떠나면 파일이 오지 않는다(Codex R4 #1 · Fable R3 #5).
+  guardFlowNavigation(view.webContents)
 
   // 페이지 console 로그를 main 콘솔에 forward (우리 prefix만 filtering)
   view.webContents.on('console-message', (_event, _level, message) => {

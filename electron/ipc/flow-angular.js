@@ -126,6 +126,12 @@ export function releaseDomStage(reason) {
 }
 /** 테스트용 — DOM 단계가 비어 있거나 끝났는가(업스케일 다운로드는 파일을 기다리는 동안 단계를 쥐지 않는다). */
 export function _domStageSettledForTests() { return !lastDomStage || !!lastDomStage.settled }
+/** 테스트용 — 다른 작업이 DOM 단계를 쥐고 있는 상황(done 이 settle 할 때까지). */
+export function _occupyDomStageForTests(done) {
+  const stage = { done: null, abortedAt: null, settled: false, docDead: false }
+  stage.done = Promise.resolve(done).then(() => { stage.settled = true }, () => { stage.settled = true })
+  lastDomStage = stage
+}
 /** 직전 단계가 ms 안에 settle 하면 false, 아니면 true(아직 살아 있다). 타이머는 정리한다. */
 async function domStageBusy(prev, ms) {
   let timer = null
@@ -1150,7 +1156,8 @@ export function createFlowAngular(deps) {
       //   그동안 다른 작업은 ensureOnProjectComposer 가 이 다운로드가 끝날 때까지 기다린다(isVideoCapturePending).
       const pageCtx = { exec: (js) => exec(flowView, js), trustedClick: deps.trustedClickOnFlowView, isAborted: () => false }
       let back = null
-      const menu = await withAutomationViewport(flowView, tag, async (ctl) => {
+      let stageOver = false
+      const runStage = () => withAutomationViewport(flowView, tag, async (ctl) => {
         try { back = await exec(flowView, PAGE_PATH_JS) } catch (_e) { back = null }
         if (typeof back !== 'string' || !back.startsWith('/')) back = gridPath   // 못 읽었을 때만 프로젝트 그리드로 — 읽었으면 그대로(Codex R3 #2)
         const ctx = {
@@ -1161,8 +1168,12 @@ export function createFlowAngular(deps) {
           },
           // 가로채기는 해상도 클릭 직전에 건다(Fable #7) — 이 미디어의 제목·고른 해상도로 파일 이름을 대조한다(Codex R3 #1).
           beforeResolutionClick: async (pickedRes) => {
+            if (ctl.aborted || stageOver) return   // 워치독이 끊은 좀비는 가로채기를 걸지 않는다(Fable R3 #3)
             let title = null
-            try { title = await exec(flowView, EDITOR_TITLE_JS) } catch (_e) { title = null }
+            try {
+              title = await Promise.race([exec(flowView, EDITOR_TITLE_JS), new Promise((r) => setTimeout(() => r(null), 5000))])
+            } catch (_e) { title = null }
+            if (ctl.aborted || stageOver) return
             const titleLen = title ? String(title).length : 0   // 제목은 사용자 콘텐츠 — 로그엔 길이만
             console.log(`${tag} capture armed — titleLen=${titleLen} res=${pickedRes}`)
             capture = armVideoDownloadCapture(session, dir, {
@@ -1176,6 +1187,14 @@ export function createFlowAngular(deps) {
         if (!r.ok && back) await returnIfStillOn(ctx, { editPath, back })   // 실패면 바로 돌아간다
         return r
       })
+      // 다른 작업(생성 등)이 단계를 쥐고 있으면 잠시 뒤 다시 — 바로 720p 로 물러나지 않는다(Fable R3 #6).
+      let menu = await runStage()
+      for (let attempt = 2; attempt <= 4 && menu.success === false && menu.reason === 'dom-stage-busy'; attempt++) {
+        console.warn(`${tag} DOM stage busy — retry ${attempt}/4`)
+        menu = await runStage()
+      }
+      stageOver = true
+      if (capture && menu.success === false) { capture.dispose(); capture = null }
       if (menu.success === false) return menu   // DOM 단계 거부(busy · dragging · timeout)
       if (!menu.ok) {
         console.warn(`${tag} ${menu.kind}: ${menu.reason}`)
@@ -1183,7 +1202,22 @@ export function createFlowAngular(deps) {
         return kindResult(menu.kind, { reason: menu.reason })
       }
       console.log(`${tag} clicked ${menu.res}${menu.downgradedFrom ? ` (asked ${menu.downgradedFrom})` : ''} → waiting for the file on the editor`)
-      const got = capture ? await capture.wait() : { error: 'not-armed' }
+      // 기다리는 동안 편집 화면을 떠나거나 문서가 바뀌거나 렌더러가 죽으면 파일은 오지 않는다 — 바로 접는다(Codex R4 #2 · Fable R3 #4).
+      const wc = flowView.webContents
+      const pathOf = (u) => { try { return new URL(u).pathname } catch (_e) { return '' } }
+      const onNav = (_e, url) => { if (capture && pathOf(url) !== editPath) capture.abort('left-editor') }
+      const onGone = () => { if (capture) capture.abort('document-gone') }
+      wc.on('did-navigate', onNav)
+      wc.on('did-navigate-in-page', onNav)
+      wc.on('render-process-gone', onGone)
+      let got
+      try {
+        got = capture ? await capture.wait() : { error: 'not-armed' }
+      } finally {
+        wc.removeListener('did-navigate', onNav)
+        wc.removeListener('did-navigate-in-page', onNav)
+        wc.removeListener('render-process-gone', onGone)
+      }
       // 파일이 왔거나 포기했으면 시작한 화면으로 — 그 사이 사용자가 옮겼으면 그대로 둔다(Codex R1 #2 · R2 #3·#4).
       if (back && (await returnIfStillOn(pageCtx, { editPath, back })) === 'failed') console.warn(`${tag} could not return to ${back}`)
       if (!got.path) {

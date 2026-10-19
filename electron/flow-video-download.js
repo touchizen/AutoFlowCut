@@ -209,6 +209,7 @@ export async function driveEditorDownload(ctx, { path: editPath, resolution }) {
   if (ctx.isAborted?.()) return failClose(ctx, 'flow-download-aborted', 'dom-stage-aborted')
   // 호출자가 이 시점에 다운로드 가로채기를 건다(클릭 직전 — 열어 두는 창을 짧게, 파일 이름 대조용 해상도와 함께).
   await ctx.beforeResolutionClick?.(pick.res)
+  if (ctx.isAborted?.()) return failClose(ctx, 'flow-download-aborted', 'dom-stage-aborted')   // 워치독이 그 사이 끊었다(Fable R3 #3)
   const c = await tclick(ctx, RESOLUTION_ITEM_JS(pick.res), 'download-resolution')
   // 클릭이 이미 나갔으면(mouseDown 뒤 응답 시간 초과) 업스케일은 시작됐을 수 있다 — 실패로 접지 말고 파일을 기다린다(Fable R2 #3).
   if (!c.success && !c.dispatched) return failClose(ctx, 'flow-download-menu-failed', 'resolution-click:' + (c.error || 'click-failed'))
@@ -240,8 +241,11 @@ function isFlowDownloadUrl(url) {
 const hostOf = (url) => { if (/^(blob|data):/i.test(url)) return url.slice(0, url.indexOf(':')); try { return new URL(url).hostname } catch (_e) { return '' } }
 /** 대조용 정규화 — 대소문자·기호·공백을 버린 글자와 숫자만. */
 const normName = (v) => String(v || '').toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}]+/gu, '')
-/** 파일 이름 속 해상도 표시(…_1080p_… / …_4k_…). 없으면 null. */
-const resToken = (name) => { const m = /(?:^|[^a-z0-9])(270p|360p|720p|1080p|4k)(?:[^a-z0-9]|$)/i.exec(String(name || '')); return m ? m[1].toLowerCase() : null }
+/** 파일 이름 속 해상도 표시 — 마지막 것(Flow 는 "<제목>_<해상도>_<시각>.mp4" — 제목에 "4K" 가 들어 있어도 끝쪽이 해상도, Codex R4 #3 · Fable R3 #1). 없으면 null. */
+const resToken = (name) => {
+  const all = [...String(name || '').matchAll(/(?:^|[^a-z0-9])(270p|360p|720p|1080p|4k)(?=[^a-z0-9]|$)/gi)]
+  return all.length ? all[all.length - 1][1].toLowerCase() : null
+}
 /** 긴 제목은 파일 이름에서 잘릴 수 있다 — 앞쪽만 맞춘다. */
 const TITLE_PREFIX_CHARS = 16
 
@@ -292,9 +296,11 @@ export function armVideoDownloadCapture(session, dir, { timeoutMs, title = null,
     if (!/^video\//i.test(mime) && !/\.(mp4|webm|mov)$/i.test(name)) return skip('not-video')
     if (!isFlowDownloadUrl(url)) return skip('host')
     // 이 미디어·이 해상도의 파일인지 — Flow 는 "<제목>_<해상도>_<시각>.mp4" 로 내려보낸다(2026-10-19 라이브). 사용자가 받은 다른 영상은 그대로 둔다(Codex R3 #1).
-    const tok = resToken(name)
-    if (res && tok && tok !== String(res).toLowerCase()) return skip('resolution')
-    if (wantTitle && !normName(name).startsWith(wantTitle)) return skip('title')
+    // 고른 해상도가 있으면 파일 이름에 그 해상도 표시가 있어야 한다(없으면 우리 파일이라 확신할 수 없다, Codex R4 #2).
+    if (res && resToken(name) !== String(res).toLowerCase()) return skip('resolution')
+    // 제목 접두 대조는 ASCII 제목일 때만 — 한글 등은 파일 이름에서 빠지거나 바뀔 수 있다(Fable R3 #2). 그 경우는 해상도 +
+    //   "편집 화면을 떠나면 접는다"(호출자가 abort)로 가린다.
+    if (wantTitle && /^[a-z0-9]+$/.test(wantTitle) && !normName(name).startsWith(wantTitle)) return skip('title')
     captured = item
     const savePath = path.join(dir, path.basename(name) || 'flow-video.mp4')
     item.setSavePath(savePath)
@@ -308,6 +314,11 @@ export function armVideoDownloadCapture(session, dir, { timeoutMs, title = null,
   const timer = setTimeout(() => finish({ error: 'timeout' }), timeoutMs)
   return {
     wait: () => done,
+    /** 기다릴 이유가 사라졌다(편집 화면을 떠남·문서가 바뀜·렌더러 종료) — 5분을 기다리지 않고 바로 접는다. */
+    abort: (reason) => {
+      if (captured && !itemDone) { try { captured.cancel() } catch (_e) { /* 이미 끝났을 수 있다 */ } }
+      finish({ error: String(reason || 'aborted') })
+    },
     dispose: () => {
       clearTimeout(timer)
       session.off('will-download', onWillDownload)
@@ -316,4 +327,25 @@ export function armVideoDownloadCapture(session, dir, { timeoutMs, title = null,
       if (!released) { released = true; releaseCapture() }
     },
   }
+}
+
+/**
+ * Flow 뷰의 loadURL·reload 를 감싼다 — 업스케일 다운로드가 진행 중이면 끝날 때까지 기다렸다가 옮긴다(Codex R4 #1 · Fable R3 #5).
+ *   편집 화면을 떠나면 Flow 가 업스케일 파일을 내보내지 않는다(2026-10-19 라이브). 프로젝트 열기·새로 만들기·컴포저 새로고침 등
+ *   loadURL 을 직접 부르는 모든 경로가 여기서 걸린다. main 이 Flow 뷰를 만들 때 한 번 건다.
+ */
+export function guardFlowNavigation(webContents, { isPending = isVideoCapturePending, wait = waitForVideoCaptures, maxWaitMs = 330000, log = console.log } = {}) {
+  const rawLoadURL = webContents.loadURL.bind(webContents)
+  const rawReload = webContents.reload.bind(webContents)
+  const hold = async (what) => {
+    if (!isPending()) return
+    log(`[Flow Nav] ${what} waits for the pending upscaled download`)
+    await wait(maxWaitMs)
+  }
+  webContents.loadURL = async (...args) => { await hold('loadURL'); return rawLoadURL(...args) }
+  webContents.reload = () => {
+    if (!isPending()) return rawReload()
+    void hold('reload').then(() => rawReload())
+  }
+  return webContents
 }

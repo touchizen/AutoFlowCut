@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
-import { _resetDomStageForTests, _domStageSettledForTests } from '../../../electron/ipc/flow-angular.js'
+import { _resetDomStageForTests, _domStageSettledForTests, _occupyDomStageForTests } from '../../../electron/ipc/flow-angular.js'
 import { PAGE_PATH_JS, READ_RESOLUTION_ITEMS_JS, EDITOR_DOWNLOAD_TRIGGER_JS, EDITOR_TITLE_JS } from '../../../electron/flow-video-download.js'
 import { respBodyWithPayload } from '../../fixtures/flow-batchexecute-samples.js'
 
@@ -40,7 +40,7 @@ function fakeItem(name, mime, savedPaths, doneState = 'completed', events = []) 
   return item
 }
 
-function harness({ items, record, editorRenders = true, deliver = true, unrelatedFirst = false, userMovesTo = null, pathReadFails = false, doneState = 'completed', earlyVideo = false, startPage = GRID, otherFlowVideoFirst = false } = {}) {
+function harness({ items, record, editorRenders = true, deliver = true, unrelatedFirst = false, userMovesTo = null, pathReadFails = false, doneState = 'completed', earlyVideo = false, startPage = GRID, otherFlowVideoFirst = false, leaveDuringWait = null, crashDuringWait = false } = {}) {
   const savedPaths = []
   const session = new EventEmitter()
   const steps = []
@@ -78,20 +78,26 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
     ]
     return true
   })
+  const webContents = Object.assign(new EventEmitter(), {
+    getURL: () => `https://flow.google.com${page}`, executeJavaScript, sendInputEvent: vi.fn(),
+    isFocused: () => true, focus: vi.fn(), isDestroyed: () => false, session,
+  })
   const flowView = {
     getBounds: () => ({ x: 0, y: 0, width: 957, height: 1022 }),
     setBounds: vi.fn(),
-    webContents: {
-      getURL: () => `https://flow.google.com${page}`, executeJavaScript, sendInputEvent: vi.fn(),
-      isFocused: () => true, focus: vi.fn(), isDestroyed: () => false, session,
-    },
+    webContents,
   }
   const trustedClickOnFlowView = vi.fn(async (js, opts) => {
     steps.push(opts.step)
     if (opts.step === 'download-menu') expect(js).toBe(EDITOR_DOWNLOAD_TRIGGER_JS)
     if (opts.step === 'download-resolution') {
       // Flow 가 업스케일을 끝내고 내려보낸다 → will-download(그 전에 사용자의 관계없는 다운로드가 끼어들 수 있다)
-      if (deliver) {
+      if (leaveDuringWait || crashDuringWait) {
+        setTimeout(() => {
+          if (leaveDuringWait) { page = leaveDuringWait; webContents.emit('did-navigate-in-page', {}, `https://flow.google.com${leaveDuringWait}`, true) }
+          else webContents.emit('render-process-gone', {}, { reason: 'crashed' })
+        }, 30)
+      } else if (deliver) {
         setTimeout(() => {
           stageSettledAtDownload = _domStageSettledForTests()
           if (userMovesTo) page = userMovesTo   // 파일을 기다리는 동안 사용자가 옮겼다
@@ -186,6 +192,30 @@ describe('flow:dom-download-video on the new Flow (Angular)', () => {
     expect(r).toMatchObject({ success: true })
     expect(h.navigations).toEqual([EDITOR, '/'])
   }, 15000)
+
+  it('leaving the editor while the file is awaited ends the wait at once (no 5-minute stall; Codex R4 #2)', async () => {
+    const h = harness({ leaveDuringWait: '/project/other' })
+    const t0 = Date.now()
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-download-error', reason: 'left-editor' })
+    expect(Date.now() - t0).toBeLessThan(5000)
+    expect(h.navigations).toEqual([EDITOR])   // the user's page is left alone
+  }, 15000)
+
+  it('a renderer crash during the wait ends it at once (Fable R3 #4)', async () => {
+    const h = harness({ crashDuringWait: true })
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-download-error', reason: 'document-gone' })
+  }, 15000)
+
+  it('a busy DOM stage (another job) is retried instead of falling back to 720p (Fable R3 #6)', async () => {
+    let free
+    _occupyDomStageForTests(new Promise((r) => { free = r }))
+    setTimeout(() => free(), 11000)   // longer than one busy wait (10 s)
+    const h = harness()
+    const r = await h.ipc.invoke('flow:dom-download-video', { mediaId: MEDIA, resolution: '1080p' })
+    expect(r).toMatchObject({ success: true, resolution: '1080p' })
+  }, 40000)
 
   it('returns to the project grid when the starting path could not be read', async () => {
     const h = harness({ pathReadFails: true })
