@@ -393,6 +393,13 @@ describe('M2-1 rpcErrorToRendererResult — 거부 id 통과', () => {
   })
 })
 
+describe('2026-10-19 as29s 기록 → 편집 화면 위치(업스케일 다운로드)', () => {
+  it('실측 as29s 기록의 [1] projectId · [2] editId', async () => {
+    const { mediaEditLocation } = await import('../../electron/flow-video-download.js')
+    expect(mediaEditLocation(samplePayload('as29s'), maskedUuid(11))).toEqual({ projectId: maskedUuid(1), editId: maskedUuid(10) })
+  })
+})
+
 describe('M2-1 parseMediaRecord / parseVideoStatusResponse / mediaStateToStatus', () => {
   it('R 첫 폴 → creditsLeft:null, records[0] {mediaId, state:2, bytes:null, videoUrl:null}', () => {
     const v = parseVideoStatusResponse(firstPollPayload())

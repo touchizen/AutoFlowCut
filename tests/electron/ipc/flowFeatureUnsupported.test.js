@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// M1-12 — 옛 핸들러 단락: 새 Flow(flow.google.com)에서 아직 미지원인 9개 핸들러는 Flow 모드에서 URL 과 무관하게
+// M1-12 — 옛 핸들러 단락: 새 Flow(flow.google.com)에서 아직 미지원인 핸들러는(dom-download-video 는 2026-10-19 업스케일 복구로 빠졌다 — flowDomDownloadAngular.test.js) Flow 모드에서 URL 과 무관하게
 //   {success:false, errorKind:'flow-feature-unsupported', error:'flow-feature-unsupported:<name>'} 로 닫힌다 —
 //   DOM·클릭·fetch 없이(getFlowView 미호출). API 모드는 기존 flowActive 게이트가 먼저(flowModeGate.test.js).
 import { describe, it, expect, vi } from 'vitest'
@@ -29,7 +29,6 @@ const CASES = {
     // R1#7: 옛 호스트 로직이 Flow 모드에서 아직 닿던 셋 — "List projects HTTP 401" 같은 문구가 markAuth 를 오발동시킨다
     ['flow:list-projects', 'list-projects', { token: null, pageSize: 20 }],
     ['flow:fetch-media', 'fetch-media', { token: null, mediaId: 'm' }],
-    ['flow:dom-download-video', 'dom-download-video', { mediaId: 'm', resolution: '720p' }],
   ]],
   video: [registerVideoIPC, [
     ['flow:upscale-video', 'upscale-video', { token: null, mediaId: 'm', projectId: 'p' }],

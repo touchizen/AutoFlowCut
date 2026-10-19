@@ -15,12 +15,12 @@ import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import { retryVideoDownload } from '../services/videoRecovery'
-import { downloadVideoBase64 } from '../services/videoDownload'
+import { downloadVideoBase64, downloadNoticeOf } from '../services/videoDownload'
 import { resolveFrameImageBase64 } from '../utils/framePairImages'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { normalizeVideoModel, snapVideoDuration, isOmniFlashModel } from '../utils/videoModels'
-import { DEFAULT_VIDEO_MODEL_ID, coerceResolution } from '../config/genModels'
+import { DEFAULT_VIDEO_MODEL_ID, coerceResolution, flowDownloadResolution } from '../config/genModels'
 import { clampInt } from '../utils/clampInt'
 import { makeBatchConsumeGate } from './batchConsumeGate'
 import { resolveProjectBatchId } from '../utils/batchId'
@@ -66,6 +66,9 @@ const randomSleep = (min, max) =>
   new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min))
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
+/** 새 Flow 생성 해상도 — 패널은 {360p, 720p}. 설정의 1080p/4K 는 다운로드 업스케일로 간다(2026-10-19). */
+const FLOW_GENERATION_RESOLUTION = '720p'
 
 const isDownloadOnlyItem = (item) =>
   item.status === 'error' && item.generationId && item.mediaId && !item.videoPath
@@ -201,6 +204,14 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
   //   DOM 경로가 Flow UI의 자체 reCAPTCHA + upscale을 태우므로 충분하다.
   //   DOM 반환값의 resolution 필드(720p/1080p/4K/default)로 실제 다운로드
   //   해상도를 확인할 수 있다.
+  // 요청보다 낮은 해상도로 저장된 항목(업스케일 실패·4K 막힘) — 배치 동안 모아 끝에 한 번 알린다(Codex R1 #3 · Fable #8).
+  const lowerResNoticesRef = useRef([])
+  const flushLowerResNotices = () => {
+    const count = lowerResNoticesRef.current.length
+    lowerResNoticesRef.current = []
+    if (count > 0) toast.warning(t('videoAutomation.savedAtLowerResolution', { count }))
+  }
+
   const downloadAndSaveVideo = async (mediaId, videoUrl, item, options, setStatusMsg) => {
     const { projectName, saveMode, videoResolution } = options
     // cloud(Veo): 완료된 operation 의 videoUri 를 직접 base64 로 다운로드.
@@ -211,6 +222,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     if (!mediaResult?.success) {
       return { success: false, error: `Video download failed: ${mediaResult?.error || 'no video URL'}` }
     }
+    // 요청보다 낮은 해상도로 받았으면 알린다(업스케일 실패 → 원본, 4K 막힘 → 1080p). 영상은 저장한다.
+    const downloadNotice = downloadNoticeOf(mediaResult)
 
     // 파일 저장 — videoSaveId 우선 (t2v_N / i2v_N), 없으면 기존 item.id (vscene_N / fp_N)
     let videoPath = null
@@ -228,6 +241,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         model: modelId,
         timestamp: generatedAt,
         seed: seedValue,
+        resolution: mediaResult.resolution ?? null,
+        ...(downloadNotice ? { downloadNotice } : {}),
       }
       const saveResult = await fileSystemAPI.saveVideo(projectName, videoId, mediaResult.base64, modelId, metadata)
       if (saveResult?.success) {
@@ -249,6 +264,12 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         mediaId,
         videoSaveId: item.videoSaveId || null,
       }
+    }
+
+    // 저장까지 끝난 뒤에만 센다(Codex R3 #3) — 배치 끝에 한 번 알린다(Fable #8).
+    if (downloadNotice) {
+      console.warn('[VideoAutomation] saved at', downloadNotice.saved, 'instead of', downloadNotice.requested, downloadNotice.reason || '')
+      lowerResNoticesRef.current.push(downloadNotice)
     }
 
     return {
@@ -335,16 +356,19 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // 모델이 지원하지 않거나(예: Veo Lite + 4K) stale 한 해상도는 여기서 한 번만 강등/정규화.
     // 이후 effectiveVideoDuration 계산·history 메타데이터·생성 호출이 전부 같은 값을 써서
     // 부분 coerce 로 인한 어긋남(기록은 4k, 실제는 1080p)을 방지한다. (리뷰 P2)
-    const videoResolution = (appMode === 'flow' || isGoogleProvider)
-      ? coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p')
-      : options.videoResolution
+    // 2026-10-19 업스케일 복구(사용자 결정): Flow 모드의 해상도 설정은 *다운로드* 해상도다 — 새 Flow 생성 패널은 {360p, 720p} 뿐이라
+    //   생성은 FLOW_GENERATION_RESOLUTION, 1080p/4K 는 완료 뒤 DOM 다운로드(⋮ → 다운로드 → 1080p/4K)로 업스케일한다(engineFlow.downloadVideo).
+    const videoResolution = appMode === 'flow'
+      ? FLOW_GENERATION_RESOLUTION
+      : (isGoogleProvider ? coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p') : options.videoResolution)
+    const downloadResolution = appMode === 'flow' ? flowDownloadResolution(options.videoResolution) : videoResolution
     const resolveItemGeneration = (item) => {
       const resolved = resolveSceneVideoProvider(item, generationSettings, mode, { appMode })   // Flow 는 씬 override 없이 설정 모델(F1)
       if (resolved.warning) console.warn('[VideoAutomation]', resolved.warning)
       const model = canonicalVideoModel(resolved.model, resolved.provider)
-      const resolution = (appMode === 'flow' || resolved.provider === 'google')
-        ? coerceResolution(model, options.videoResolution ?? '720p')
-        : options.videoResolution
+      const resolution = appMode === 'flow'
+        ? FLOW_GENERATION_RESOLUTION
+        : (resolved.provider === 'google' ? coerceResolution(model, options.videoResolution ?? '720p') : options.videoResolution)
       return { provider: resolved.provider, model, resolution }
     }
 
@@ -565,6 +589,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     const staleIdClear = (it) => (hasStaleFlowId(it) ? { generationId: null, mediaId: null } : {})
 
     const batchStartedAt = Date.now()
+    lowerResNoticesRef.current = []
     setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: batchStartedAt })
     let videoErrorCount = 0
     let redownloadedCount = 0
@@ -608,13 +633,14 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           onUpdate: (id, newStatus, patch) => onItemUpdate?.(id, newStatus, patch),
           projectName,
           saveMode,
-          videoResolution,
+          videoResolution: downloadResolution,
           authErrorText: authErrorMessage,   // M2-R3 H5: kind 동반 authFailed 의 항목 문구는 인증 안내(raw 토큰 금지)
         }).catch(err => ({ success: false, error: String(err?.message || err) }))))
 
         for (const r of results) {
           if (r?.success) redownloadedCount++
           else videoErrorCount++
+          if (r?.downloadNotice) lowerResNoticesRef.current.push(r.downloadNotice)
         }
 
         // #R25-3: download-only retry 가 authFailed 면 토큰이 죽었으니 남은 chunk 를 죽은 인증으로
@@ -639,6 +665,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     if (freshGen.length === 0 && inFlight.length === 0) {
       setIsRunning(false)
       setIsPaused(false)
+      flushLowerResNotices()
       setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt, endedAt: Date.now() })
       if (authStopped) {
         // #R25-3: download-only 전부였고 Phase 0 에서 인증이 죽은 경우 — 'done' 으로 묻지 않는다.
@@ -874,6 +901,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // in-flight 도 없고 제출도 0건 — auth/quota/일반 실패 구분 후 조기 종료.
     if (pending.size === 0) {
       setIsRunning(false)
+      flushLowerResNotices()   // Phase 0 에서 낮은 해상도로 저장된 항목(Fable R2 #2)
       if (authStopped || terminalStopped) {
         // Status + message already set at the submit break site — do not overwrite.
       } else if (quotaStoppedRef.current) {
@@ -1017,7 +1045,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               {
                 projectName,
                 saveMode,
-                videoResolution: appliedVideoResolution,
+                videoResolution: appMode === 'flow' ? downloadResolution : appliedVideoResolution,
                 aspectRatio: appliedAspectRatio,
                 seed,
                 videoModel: appliedVideoModel,
@@ -1175,6 +1203,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // ═══════════════════════════════════════════
     setIsRunning(false)
     setIsPaused(false)
+    flushLowerResNotices()
     setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt, endedAt: Date.now() })
 
     if (authStopped || terminalStopped) {

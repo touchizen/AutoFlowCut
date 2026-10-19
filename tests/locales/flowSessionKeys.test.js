@@ -38,6 +38,8 @@ const SOURCES = [
   'electron/ipc/shared.js', 'electron/ipc/video.js', 'electron/ipc/flow-api.js', 'electron/ipc/character.js',
   // M3: 레퍼런스 드라이버(업로드·컴포즈 — kind 를 상수로 든다)와 렌더러 레퍼런스 계획(fail('…'))
   'electron/flow-reference-driver.js', 'src/utils/flowReferencePlan.js',
+  // 2026-10-19: 업스케일 다운로드 메뉴 드라이버(kind 를 결과 객체로 돌려준다 — flow-angular 가 kindResult(menu.kind) 로 통과)
+  'electron/flow-video-download.js',
 ]
 // M3: kind 상수(const ATTACH_FAILED = 'flow-…' — main 핸들러·드라이버) · 렌더러 계획의 fail('flow-…') 도 뽑는다.
 const PATTERNS = [/errorKind:\s*'([a-z0-9-]+)'/g, /kindResult\('([a-z0-9-]+)'/g, /\bkind:\s*'(flow-[a-z0-9-]+)'/g, /error:\s*'(flow-[a-z0-9-]+)'/g, /\b(?:send|loadend):\s*'(flow-[a-z0-9-]+)'/g,

@@ -26,6 +26,8 @@ vi.mock('../../src/services/videoRecovery', () => ({ retryVideoDownload: vi.fn(a
 vi.mock('../../src/firebase/functions', () => ({ consumeBatchDownload: vi.fn(async () => ({ charged: false })) }))
 
 import { fileSystemAPI } from '../../src/hooks/useFileSystem'
+import { toast } from '../../src/components/Toast'
+import { retryVideoDownload } from '../../src/services/videoRecovery'
 
 const UUID11 = '<uuid#11>'
 const SIGNED = 'https://flow-content.google/video/<uuid#11>?Expires=1790261742&KeyName=labs-flow-prod-cdn-key&Signature=SIG'
@@ -106,19 +108,92 @@ describe('useVideoAutomation × useFlowEngine — 성공 경로', () => {
     expect(h.hook.result.current.video.status).toBe('done')
   })
 
-  it('resolution 1080p → main 이 클릭 전에 flow-resolution-not-offered {requested} → 항목 error(렌더 텍스트에 1080p, 플레이스홀더 없음), 폴·다운로드 없음', async () => {
-    api.flowGenerateVideoT2V.mockResolvedValue(NOT_OFFERED)
+  // 2026-10-19 업스케일 복구(사용자 결정): Flow 모드의 해상도 설정 = 다운로드 해상도. 생성은 늘 720p(새 Flow 패널은 {360p, 720p}),
+  //   1080p/4K 는 완료 뒤 DOM 다운로드(⋮ → 다운로드 → 1080p)로 업스케일해 받는다. 서명 URL 은 mediaId 를 뽑는 데만 쓴다.
+  const REAL = 'ba1764fb-6f24-49d4-9b1e-6c13af2f1f7b'
+  const SIGNED_REAL = `https://flow-content.google/video/${REAL}?Expires=1&KeyName=k&Signature=s`
+  const completeWith = (url) => async ({ generationIds }) => ({ success: true, statuses: generationIds.map((id) => ({ status: 'complete', mediaId: id, videoUrl: url })) })
+
+  it('resolution 1080p → 생성은 720p, 완료 뒤 DOM 업스케일 다운로드(mediaId·1080p) → 저장', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,SEQ=', mimeType: 'video/mp4', resolution: '1080p' })
     const h = setup()
-    await run(h, SCENES(1), { videoResolution: '1080p' }, 5000)
-    expect(api.flowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '1080p' })
-    const [st, patch] = last(h, 'vscene_1')
-    expect(st).toBe('error')
-    expect(patch).toMatchObject({ errorKind: 'flow-resolution-not-offered', errorParams: { requested: '1080p' } })
-    expect(api.flowCheckVideoStatus).not.toHaveBeenCalled()
+    await run(h, SCENES(1), { videoResolution: '1080p' })
+    expect(api.flowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '720p' })
+    expect(api.flowDomDownloadVideo).toHaveBeenCalledWith({ mediaId: REAL, resolution: '1080p' })
     expect(api.flowDownloadVideoUrl).not.toHaveBeenCalled()
-    const [text] = renderErrors([{ id: 'vscene_1', prompt: 'p1', status: 'error', ...patch }])
-    expect(text).toContain('1080p')
-    expect(text).not.toMatch(/\{\w+\}/)
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,SEQ=', expect.anything(), expect.objectContaining({ resolution: '1080p' }))
+    expect(last(h, 'vscene_1')[0]).toBe('complete')
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('resolution 1080p 인데 DOM 업스케일 실패 → 720p 원본(서명 URL)으로 저장, 영상은 잃지 않는다', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: false, errorKind: 'flow-download-tile-not-found', error: 'flow-download-tile-not-found' })
+    const h = setup()
+    await run(h, SCENES(1), { videoResolution: '1080p' })
+    expect(api.flowDownloadVideoUrl).toHaveBeenCalledWith({ url: SIGNED_REAL, token: null })
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,AQID', expect.anything(),
+      expect.objectContaining({ resolution: '720p', downloadNotice: { kind: 'upscale-fallback', requested: '1080p', saved: '720p', reason: 'flow-download-tile-not-found' } }))
+    expect(last(h, 'vscene_1')[0]).toBe('complete')
+    // Codex R1 #3: 낮은 해상도로 저장됐음을 알린다 — 배치 끝에 한 번(Fable #8)
+    expect(toast.warning).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.savedAtLowerResolution')
+  })
+
+  it('resolution 4k 인데 4K 가 막혀 1080p 로 받음 → 메타에 실제 해상도 · 경고', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,SEQ=', mimeType: 'video/mp4', resolution: '1080p', downgradedFrom: '4k' })
+    const h = setup()
+    await run(h, SCENES(1), { videoResolution: '4k', videoModel: 'Veo 3.1 - Fast' })
+    expect(api.flowDomDownloadVideo).toHaveBeenCalledWith({ mediaId: REAL, resolution: '4k' })
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledWith('proj', 't2v_1', 'data:video/mp4;base64,SEQ=', expect.anything(),
+      expect.objectContaining({ resolution: '1080p', downloadNotice: { kind: 'upscale-downgraded', requested: '4k', saved: '1080p' } }))
+    expect(toast.warning).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.savedAtLowerResolution')
+  })
+
+  it('4K + Omni Flash → 생성 모델 한계로 깎지 않고 4K 를 요청한다(Codex R2 #2 · Fable #4)', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: true, base64: 'data:video/mp4;base64,SEQ=', mimeType: 'video/mp4', resolution: '4k' })
+    const h = setup()
+    await run(h, SCENES(1), { videoResolution: '4k' })   // videoModel 기본 'Omni Flash'
+    expect(api.flowGenerateVideoT2V.mock.calls[0][0]).toMatchObject({ resolution: '720p' })
+    expect(api.flowDomDownloadVideo).toHaveBeenCalledWith({ mediaId: REAL, resolution: '4k' })
+  })
+
+  it('저장이 실패하면 "낮은 해상도로 저장" 으로 세지 않는다(Codex R3 #3)', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: false, errorKind: 'flow-upscale-unavailable', error: 'flow-upscale-unavailable' })
+    fileSystemAPI.saveVideo.mockResolvedValueOnce({ success: false, error: 'disk full' })
+    const h = setup()
+    await run(h, SCENES(1), { videoResolution: '1080p' })
+    expect(last(h, 'vscene_1')[0]).toBe('error')
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('다운로드 전용 항목(Phase 0)의 알림도 모으고, 새 제출이 막혀 일찍 끝나도 한 번 알린다(Fable R2 #2)', async () => {
+    retryVideoDownload.mockResolvedValueOnce({ success: true, downloadNotice: { kind: 'upscale-fallback', requested: '1080p', saved: '720p' } })
+    api.flowGenerateVideoT2V.mockResolvedValue(LOST)
+    const h = setup()
+    const scenes = [
+      { id: 'vscene_1', prompt: 'p1', status: 'error', generationId: REAL, mediaId: REAL, downloadGated: true },
+      { id: 'vscene_2', prompt: 'p2' },
+    ]
+    await run(h, scenes, { videoResolution: '1080p' }, 5000)
+    expect(retryVideoDownload).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.savedAtLowerResolution')
+  })
+
+  it('세 항목이 모두 낮은 해상도로 저장돼도 경고는 배치 끝에 한 번(Fable #8)', async () => {
+    api.flowCheckVideoStatus.mockImplementation(completeWith(SIGNED_REAL))
+    api.flowDomDownloadVideo.mockResolvedValue({ success: false, errorKind: 'flow-upscale-unavailable', error: 'flow-upscale-unavailable' })
+    const h = setup()
+    await run(h, SCENES(3), { videoResolution: '1080p' })
+    expect(fileSystemAPI.saveVideo).toHaveBeenCalledTimes(3)
+    expect(toast.warning).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledWith('videoAutomation.savedAtLowerResolution')
   })
 })
 

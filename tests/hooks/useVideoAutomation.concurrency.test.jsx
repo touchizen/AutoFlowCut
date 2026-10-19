@@ -24,6 +24,7 @@ vi.mock('../../src/services/videoRecovery', () => ({
 }))
 vi.mock('../../src/services/videoDownload', () => ({
   downloadVideoBase64: vi.fn().mockResolvedValue({ success: true, base64: 'vid_b64' }),
+  downloadNoticeOf: () => null,
 }))
 vi.mock('../../src/utils/videoMetadata', () => ({
   pickVideoMetadata: vi.fn(() => ({})),

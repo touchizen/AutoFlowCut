@@ -3,6 +3,8 @@
 // Tests the pure decision logic extracted via createSharedHelpers factory.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
+import { armVideoDownloadCapture } from '../../../electron/flow-video-download.js'
+import { EventEmitter } from 'node:events'
 
 // Minimal stub that satisfies createSharedHelpers without real Electron APIs.
 function makeCtx({ getURL = () => '', loadURL = vi.fn() } = {}) {
@@ -105,5 +107,25 @@ describe('ensureOnProjectComposer', () => {
     const result = await helpers.ensureOnProjectComposer(flowView, target)
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/Flow not on target project/)
+  })
+
+  it('while an upscaled download is pending, waits for it before navigating (leaving the editor early drops the file — live 2026-10-19)', async () => {
+    const target = 'aaaabbbb-1111-2222-3333-ccccddddeeee'
+    const url = `https://flow.google.com/project/${target}/edit/11111111-2222-4333-8444-555555555555`
+    const order = []
+    const loadURL = vi.fn(async () => { order.push('loadURL') })
+    const { ctx, flowView } = makeCtx({ getURL: () => url, loadURL })
+    const session = new EventEmitter()
+    const cap = armVideoDownloadCapture(session, '/tmp/d', { timeoutMs: 10000 })
+    const item = Object.assign(new EventEmitter(), { getFilename: () => 'a.mp4', getMimeType: () => 'video/mp4', setSavePath: () => {} })
+    session.emit('will-download', {}, item)
+    // 다운로드 작업이 끝나는 순서: 파일 도착 → (시작한 화면으로 돌아가기) → dispose
+    setTimeout(() => { order.push('file'); item.emit('done', {}, 'completed'); cap.dispose() }, 100)
+    try {
+      const helpers = createSharedHelpers(ctx)
+      await helpers.ensureOnProjectComposer(flowView, target)
+      expect(order[0]).toBe('file')
+      expect(loadURL).toHaveBeenCalled()
+    } finally { cap.dispose() }
   })
 })

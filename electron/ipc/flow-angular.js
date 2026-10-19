@@ -27,6 +27,9 @@
  * tests/electron/ipc/flowImageReferencesAngular.test.js · tests/electron/ipc/flowVideoR2VAngular.test.js · tests/electron/ipc/flowReferencePreflight.test.js
  */
 import { createHash } from 'node:crypto'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { isFlowPageUrl, isLegacyFlowUrl, projectIdFromFlowUrl } from '../flowUrl.js'
 import { updateBounds, getLayoutDragging } from './layout.js'
 import { computeInPlaceBounds, needsAutomationViewport } from '../offscreen-bounds.js'
@@ -44,6 +47,8 @@ import { READ_COMPOSER_STATE_JS } from '../flow-composer-refs.js'
 import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
 import { refMediaCache } from '../flow-ref-media-cache.js'
 import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowR2vLimit.js'   // D13: 렌더러 계획과 같은 상한 — import 없는 모듈(렌더러 계획 모듈을 끌어오면 React 훅까지 main 에 들어온다)
+import { mediaEditLocation, editorPath, driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, PAGE_PATH_JS, EDITOR_TITLE_JS, UUID_RE } from '../flow-video-download.js'
+import { VIDEO_DOWNLOAD_TIMEOUT_MS } from '../flow-download-config.js'
 
 /** 캡처 주입 설치 플래그 프로브(클릭 전). */
 export const CAPTURE_FLAG_PROBE = '!!window.__autoflowcut_rpc_capture__'
@@ -118,6 +123,14 @@ export function releaseDomStage(reason) {
   lastDomStage = null
   console.log(`[Flow API] DOM stage released (${reason})`)
   return true
+}
+/** 테스트용 — DOM 단계가 비어 있거나 끝났는가(업스케일 다운로드는 파일을 기다리는 동안 단계를 쥐지 않는다). */
+export function _domStageSettledForTests() { return !lastDomStage || !!lastDomStage.settled }
+/** 테스트용 — 다른 작업이 DOM 단계를 쥐고 있는 상황(done 이 settle 할 때까지). */
+export function _occupyDomStageForTests(done) {
+  const stage = { done: null, abortedAt: null, settled: false, docDead: false }
+  stage.done = Promise.resolve(done).then(() => { stage.settled = true }, () => { stage.settled = true })
+  lastDomStage = stage
 }
 /** 직전 단계가 ms 안에 settle 하면 false, 아니면 true(아직 살아 있다). 타이머는 정리한다. */
 async function domStageBusy(prev, ms) {
@@ -1105,5 +1118,124 @@ export function createFlowAngular(deps) {
     return { success: true, statuses }
   }
 
-  return { generateImage, checkRpcGeneration, collectRpcGeneration, settleRpcGenerations, generateVideoT2V, checkVideoStatus, unsupportedOnAngular }
+  /**
+   * flow:dom-download-video(새 Flow) — 업스케일 다운로드. M2(R1#7) 이후 서명 URL(720p 원본)만 받아 1080p/4K 가 빠졌던 것을 되살린다.
+   *   그리드 타일엔 hover 전 mediaId 가 없어(미리보기 asb src) as29s 기록의 편집 위치([1] projectId · [2] editId)로 편집 화면을 열고
+   *   상단 "미디어 다운로드" 메뉴에서 해상도를 누른다. 4K 가 막혀 있으면 1080p(사용자 결정 2026-10-19).
+   *   다운로드는 lock(flow-api 의 downloadMutex)으로 직렬화하고, 공유 session 에선 해상도 클릭 직후의 Flow 동영상 다운로드 하나만
+   *   가로챈다. DOM 단계는 클릭과 돌아가기까지만 쥔다 — 업스케일 처리·파일 대기는 단계 밖.
+   */
+  const DOWNLOAD_RESOLUTIONS = new Set(['720p', '1080p', '4k'])
+  /** 계획된 한계(플랜에 없는 해상도)는 DOM 실패로 보고하지 않는다(Fable #8). */
+  const EXPECTED_DOWNLOAD_KINDS = new Set(['flow-upscale-unavailable'])
+  async function domDownloadVideo({ mediaId, resolution, lock } = {}) {
+    const res = String(resolution || '').toLowerCase()
+    if (!UUID_RE.test(String(mediaId || '')) || !DOWNLOAD_RESOLUTIONS.has(res)) return kindResult('flow-download-invalid-input', { reason: 'invalid-input' })
+    const flowView = deps.getFlowView()
+    if (!flowView) return { success: false, error: 'Flow view not ready' }
+    const tag = '[Flow DOMDownload] [Angular]'
+    let where
+    try {
+      where = mediaEditLocation(await callFlowRpc(flowView, 'as29s', [mediaId]), mediaId)
+    } catch (e) {
+      const mapped = rpcErrorToRendererResult(e)
+      if (mapped.authFailed) return mapped
+      return kindResult('flow-download-edit-unknown', { reason: 'as29s:' + (mapped.error || 'failed') })
+    }
+    if (!where) return kindResult('flow-download-edit-unknown', { reason: 'no-edit-location' })
+    const release = lock ? await lock.acquire() : () => {}
+    const editPath = editorPath(where)
+    const gridPath = `/project/${where.projectId}`
+    const session = flowView.webContents.session
+    let dir = null
+    let capture = null
+    try {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-dl-'))
+      // DOM 단계(방패·키 잠금)는 편집 화면으로 가서 해상도를 누르기까지만 — 업스케일 처리·파일 대기는 단계 밖(Fable #1·#2).
+      //   파일이 올 때까지 편집 화면에 머문다: 클릭 직후 떠나면 업스케일 다운로드가 오지 않았다(2026-10-19 라이브, 5분 무응답).
+      //   그동안 다른 작업은 ensureOnProjectComposer 가 이 다운로드가 끝날 때까지 기다린다(isVideoCapturePending).
+      const pageCtx = { exec: (js) => exec(flowView, js), trustedClick: deps.trustedClickOnFlowView, isAborted: () => false }
+      let back = null
+      let stageOver = false
+      const runStage = () => withAutomationViewport(flowView, tag, async (ctl) => {
+        try { back = await exec(flowView, PAGE_PATH_JS) } catch (_e) { back = null }
+        if (typeof back !== 'string' || !back.startsWith('/')) back = gridPath   // 못 읽었을 때만 프로젝트 그리드로 — 읽었으면 그대로(Codex R3 #2)
+        const ctx = {
+          ...pageCtx,
+          trustedClick: (js, opts) => {
+            if (opts.step === 'download-resolution') ctl.clickStarted = true   // 클릭 뒤엔 워치독이 끊지 않는다(업스케일이 이미 시작됐다)
+            return deps.trustedClickOnFlowView(js, opts)
+          },
+          // 가로채기는 해상도 클릭 직전에 건다(Fable #7) — 이 미디어의 제목·고른 해상도로 파일 이름을 대조한다(Codex R3 #1).
+          beforeResolutionClick: async (pickedRes) => {
+            if (ctl.aborted || stageOver) return   // 워치독이 끊은 좀비는 가로채기를 걸지 않는다(Fable R3 #3)
+            let title = null
+            try {
+              title = await Promise.race([exec(flowView, EDITOR_TITLE_JS), new Promise((r) => setTimeout(() => r(null), 5000))])
+            } catch (_e) { title = null }
+            if (ctl.aborted || stageOver) return
+            const titleLen = title ? String(title).length : 0   // 제목은 사용자 콘텐츠 — 로그엔 길이만
+            console.log(`${tag} capture armed — titleLen=${titleLen} res=${pickedRes}`)
+            capture = armVideoDownloadCapture(session, dir, {
+              timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS, title, res: pickedRes,
+              onIgnored: (i) => console.warn(`${tag} ignored download (${i.reason}) [${i.mime}] host=${i.host} tok=${i.tok ?? '-'} want=${i.want ?? '-'} nameLen=${i.nameLen}`),   // 파일 이름(제목)은 남기지 않는다
+            })
+          },
+          isAborted: () => ctl.aborted,
+        }
+        const r = await driveEditorDownload(ctx, { path: editPath, resolution: res })
+        if (!r.ok && back) await returnIfStillOn(ctx, { editPath, back })   // 실패면 바로 돌아간다
+        return r
+      })
+      // 다른 작업(생성 등)이 단계를 쥐고 있으면 잠시 뒤 다시 — 바로 720p 로 물러나지 않는다(Fable R3 #6).
+      let menu = await runStage()
+      for (let attempt = 2; attempt <= 4 && menu.success === false && menu.reason === 'dom-stage-busy'; attempt++) {
+        console.warn(`${tag} DOM stage busy — retry ${attempt}/4`)
+        menu = await runStage()
+      }
+      stageOver = true
+      if (capture && menu.success === false) { capture.dispose(); capture = null }
+      if (menu.success === false) return menu   // DOM 단계 거부(busy · dragging · timeout)
+      if (!menu.ok) {
+        console.warn(`${tag} ${menu.kind}: ${menu.reason}`)
+        if (!EXPECTED_DOWNLOAD_KINDS.has(menu.kind)) void report('download-menu', menu.kind, { reason: menu.reason })
+        return kindResult(menu.kind, { reason: menu.reason })
+      }
+      console.log(`${tag} clicked ${menu.res}${menu.downgradedFrom ? ` (asked ${menu.downgradedFrom})` : ''} → waiting for the file on the editor`)
+      // 기다리는 동안 편집 화면을 떠나거나 문서가 바뀌거나 렌더러가 죽으면 파일은 오지 않는다 — 바로 접는다(Codex R4 #2 · Fable R3 #4).
+      const wc = flowView.webContents
+      const pathOf = (u) => { try { return new URL(u).pathname } catch (_e) { return '' } }
+      const onNav = (_e, url) => { if (capture && pathOf(url) !== editPath) capture.abort('left-editor') }
+      const onGone = () => { if (capture) capture.abort('document-gone') }
+      wc.on('did-navigate', onNav)
+      wc.on('did-navigate-in-page', onNav)
+      wc.on('render-process-gone', onGone)
+      let got
+      try {
+        got = capture ? await capture.wait() : { error: 'not-armed' }
+      } finally {
+        wc.removeListener('did-navigate', onNav)
+        wc.removeListener('did-navigate-in-page', onNav)
+        wc.removeListener('render-process-gone', onGone)
+      }
+      // 파일이 왔거나 포기했으면 시작한 화면으로 — 그 사이 사용자가 옮겼으면 그대로 둔다(Codex R1 #2 · R2 #3·#4).
+      if (back && (await returnIfStillOn(pageCtx, { editPath, back })) === 'failed') console.warn(`${tag} could not return to ${back}`)
+      if (!got.path) {
+        console.warn(`${tag} download ${got.error}`)
+        return kindResult(got.error === 'timeout' ? 'flow-download-timeout' : 'flow-download-error', { reason: got.error })
+      }
+      const mimeType = /\.webm$/i.test(got.path) ? 'video/webm' : 'video/mp4'
+      const base64 = `data:${mimeType};base64,${fs.readFileSync(got.path).toString('base64')}`
+      console.log(`${tag} ✅ ${menu.res} (${Math.round(base64.length * 0.75 / 1024)} KB)`)   // 파일 이름(제목)은 남기지 않는다
+      return { success: true, base64, mimeType, resolution: menu.res, ...(menu.downgradedFrom ? { downgradedFrom: menu.downgradedFrom } : {}) }
+    } catch (e) {
+      return kindResult('flow-download-error', { reason: e?.message || String(e) })
+    } finally {
+      if (capture) capture.dispose()
+      if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch (_e) { /* 정리 실패는 결과를 바꾸지 않는다 */ } }
+      release()
+    }
+  }
+
+  return { generateImage, checkRpcGeneration, collectRpcGeneration, settleRpcGenerations, generateVideoT2V, checkVideoStatus, domDownloadVideo, unsupportedOnAngular }
 }

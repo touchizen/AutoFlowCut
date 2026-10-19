@@ -30,7 +30,7 @@ import { useAppSettings } from './hooks/useAppSettings'
 import { useUpscayl } from './hooks/useUpscayl'
 import { fileSystemAPI } from './hooks/useFileSystem'
 import { useAvailableModels } from './hooks/useAvailableModels'
-import { computeModelHeal, computeModeSwitch } from './config/genModels'
+import { computeModelHeal, computeModeSwitch, flowDownloadResolution } from './config/genModels'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
@@ -658,6 +658,7 @@ function App() {
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
     genAPI,
     onSaveError: () => toast.error(t('toast.projectSaveFailed')),
+    onLowerResolutionSaved: (count) => toast.warning(t('videoAutomation.savedAtLowerResolution', { count })),   // Codex R2 #5
     mode, // flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화 (api 모드에서는 flowProjectReady 항상 true)
   })
 
@@ -1499,8 +1500,11 @@ function App() {
         onUpdate,
         projectName,
         saveMode: settings.saveMode || 'folder',
-        videoResolution: settings.videoResolution || '720p',
+        videoResolution: flowDownloadResolution(settings.videoResolution),   // 일괄·복구와 같은 규칙(Fable #4)
         authErrorText: () => getAuthErrorMessage(startMode, t),   // M2-R3 H5: kind 동반 authFailed 의 항목 문구는 인증 안내(raw 토큰 금지)
+      }).then(r => {
+        // Codex R2 #5 — 알림 실패가 이미 저장된 항목을 error 로 바꾸지 않게(Fable R2 #5)
+        try { if (r?.downloadNotice) toast.warning(t('videoAutomation.savedAtLowerResolution', { count: 1 })) } catch (e) { console.warn('[handleVideoRetry] notice toast failed:', e) }
       }).catch(err => {
         console.error('[handleVideoRetry] Unexpected error:', err)
         onUpdate(item.id, 'error', { error: String(err?.message || err) })

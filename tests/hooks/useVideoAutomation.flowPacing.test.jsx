@@ -14,7 +14,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
 }))
 vi.mock('../../src/components/Toast', () => ({ toast: { error: vi.fn(), info: vi.fn(), success: vi.fn(), warning: vi.fn() } }))
 vi.mock('../../src/services/videoRecovery', () => ({ retryVideoDownload: vi.fn() }))
-vi.mock('../../src/services/videoDownload', () => ({ downloadVideoBase64: vi.fn().mockResolvedValue({ success: true, base64: 'vid_b64' }) }))
+vi.mock('../../src/services/videoDownload', () => ({ downloadVideoBase64: vi.fn().mockResolvedValue({ success: true, base64: 'vid_b64' }), downloadNoticeOf: () => null }))
 vi.mock('../../src/utils/videoMetadata', () => ({
   pickVideoMetadata: vi.fn(() => ({})),
   buildVideoMetaPatch: vi.fn((item) => ({ seed: item?.seed ?? null, model: item?.model ?? null })),
