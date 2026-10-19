@@ -57,7 +57,7 @@
 | 3 | 3건 | 5건 + 테스트 공백 | f4406309 |
 | — | 라이브: 클릭 직후 이탈 시 파일 안 옴 | — | 6c15f677 |
 | 4 | 3건 | 6건 | 3ba635bd |
-| 5 | **결과 미확인** (gpt-6-astra로 실행) | 4라운드(3ba635bd) 결과 받음, 아래 표 — **미수정** | — |
+| 5 | 4건 major (gpt-6-astra, 3ba635bd 대상) — 아래 표, **미수정** | 4라운드(3ba635bd) 결과 받음, 아래 표 — **미수정** | — |
 
 ### Fable 4라운드 지적 (3ba635bd 대상, 아직 안 고침 — 다음 세션 첫 작업)
 
@@ -83,16 +83,26 @@ Fable이 확인한 정상 동작:
 - 이중 대기(가드 + ensureOnProjectComposer)는 같은 해제에서 풀린다
 - `ensureOnProjectComposer`가 DOM 단계 전에 돌아서 교착이 없다
 
-- **다음 세션에서 할 것**: 위 Fable 4라운드를 먼저 고친다. 그다음 Codex 5라운드(아래)를 다시 돌린다. 이전 세션의 결과 파일이 있으면 그걸 쓴다.
+### Codex 5라운드 지적 (gpt-6-astra, 3ba635bd 대상, 아직 안 고침)
+
+| # | 심각도 | 위치 | 내용 | 제안 |
+|---|---|---|---|---|
+| C1 | major | `flow-angular.js:1139` 첫 as29s RPC | RPC 실행 중에 문서가 사라지면 `executeJavaScript` promise가 영영 안 끝날 수 있다. 이 await는 두 watchdog보다 앞이라 720p 대체 경로에도 못 간다 | 메인 프로세스 쪽 시간 한도와 문서 소실 시 취소를 둔다. 안 끝나는 RPC 테스트를 추가한다 |
+| C2 | major | `flow-angular.js:1222` 복귀, `flow-video-download.js:169` `poll` | `render-process-gone`으로 abort한 뒤에도 복귀가 `isAborted: () => false`로 돈다. 렌더러가 응답하지 않으면 반복 횟수 기반 poll이 약 265초 걸린다. 그동안 capture가 pending이라 reload와 다른 다운로드가 막힌다. 지금 crash 테스트는 exec가 계속 응답해서 이 경우를 가린다 | 문서를 잃었으면 복귀를 건너뛴다. poll은 반복 횟수가 아니라 경과 시간으로 끝낸다 |
+| C3 | major | `flow-angular.js:1210` 리스너 설치 시점 | capture는 클릭 전에 무장하는데, 이동·crash 리스너는 `runStage()`가 돌아온 뒤에야 붙는다. 마우스업 뒤 200ms, 뷰포트 복원 200ms 사이에 이동이나 렌더러 소실이 나면 놓치고 5분을 기다린다 | capture를 무장할 때(클릭 전) 리스너를 붙이고 바깥 finally에서 뗀다. 클릭 promise가 끝나기 전에 이벤트를 쏘는 회귀 테스트를 추가한다 |
+| C4 | major | `flow-angular.js:1208` `onNav` | Fable R4 #2와 같다. `did-navigate`가 경로 비교 핸들러를 같이 써서, 같은 편집 경로로 문서가 다시 로드되면 abort하지 않는다 | `did-navigate`는 무조건 문서 소실로 처리하고, 경로 비교는 메인 프레임 `did-navigate-in-page`에만 쓴다. 같은 URL 재로드 테스트를 추가한다 |
+
+주의: Fable R4 #1(잡힌 뒤엔 abort 안 함)과 C2·C4는 서로 맞물린다. 문서 소실은 "아직 안 잡혔을 때만 abort"로 정리하되, 잡힌 뒤에도 복귀(returnIfStillOn)는 건너뛰어야 C2가 풀린다. 한 번에 설계하고 고친다.
+
+- **다음 세션에서 할 것**: 위 Fable 4라운드와 Codex 5라운드를 함께 고친다(TDD). 그다음 6라운드 리뷰를 돌린다.
   - Codex: `~/workspace/codex-account2.sh exec -m gpt-6-astra --sandbox read-only -c model_reasoning_effort=xhigh "<git diff main...HEAD 리뷰 프롬프트>" < /dev/null`
     - **리뷰 모델은 gpt-6-astra** (사용자 지시). `-m`을 빼면 2번 계정 기본값인 gpt-6-luna가 돈다.
   - Fable: `model: fable` 서브에이전트에게 read-only 리뷰를 맡긴다.
-  - 이전 세션의 Codex 5라운드 출력이 남아 있으면 참고한다: `/private/tmp/claude-501/-Users-tuxxon-premiere-workspace/a383f00a-0b8d-4283-a281-86c9f20d3ad1/scratchpad/codex-review-r5.txt`
 - 사용자 제안: 단순한 지적은 Codex에게 수정까지 맡겨도 된다.
 
 ## 5. 남은 일 (순서대로)
 
-1. 리뷰 5라운드 → 지적 0건까지 수정한다. 커밋할 때마다 라이브로 다시 확인한다(아래 6).
+1. Fable R4 + Codex R5 지적을 고치고 6라운드부터 지적 0건까지 돈다. 커밋할 때마다 라이브로 다시 확인한다(아래 6).
 2. **끝-끝 라이브 테스트**: 한글 프롬프트로 새 영상을 1개 생성하고(Flow 크레딧 약 12) 1080p로 저장되는지 본다.
    - Fable R3 #2 "한글 제목이면 파일 이름 대조"를 확인하는 게 목적이다. 지금은 ASCII 제목일 때만 제목을 대조한다.
    - **크레딧을 쓰기 전에 사용자에게 확인한다.**
