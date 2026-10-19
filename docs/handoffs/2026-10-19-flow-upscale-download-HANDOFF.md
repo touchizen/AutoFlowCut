@@ -1,6 +1,6 @@
 # 인계 — 새 Flow 업스케일(1080p/4K) 다운로드 복구 (2026-10-19)
 
-새 세션은 이 문서부터 읽는다. 브랜치 `fix/flow-upscale-download` (main 미머지, push 안 함).
+새 세션은 이 문서부터 읽는다. 브랜치 `fix/flow-upscale-download`는 **2026-10-19 사용자 지시로 main에 병합하고 push했다**(병합 커밋 1da8eaec). 리뷰 지적 8건(Fable 4라운드 4건, Codex 5라운드 4건, 4절)은 아직 열려 있다. 다음 수정은 main에서 새 브랜치를 따서 한다.
 
 ## 1. 무엇을 고쳤나
 
