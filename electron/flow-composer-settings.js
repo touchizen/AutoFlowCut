@@ -3,7 +3,8 @@
  *
  * flow.google.com(Angular) 컴포저 **설정 패널 드라이버** — 모드(이미지/영상)·모델·비율·길이·해상도·개수를 패널에서 맞춘다.
  * 모델은 이미지·영상 모두 모델 메뉴에서 고른다(2026-09-26 이미지도). 이미지 모델 라벨은 **정확 일치**("Nano Banana 2" ≠ "Nano Banana 2 Lite"),
- * 메뉴에 없으면 flow-image-model-mismatch {requested, panel}.
+ * 메뉴에 없으면 flow-image-model-mismatch {requested, panel}. 2026-10-20 메뉴는 Pro · 2 Lite · 2.1 이고 "Nano Banana 2" 는 사라졌다
+ * (정적 목록은 src/engine/flowModels.js).
  *
  * 패널(D 덤프 2026-09-24): Material button-toggle `button.mat-button-toggle-button[role=radio][aria-checked]` 가 자동 번호
  * `name`(mat-button-toggle-group-N) 으로 묶인다 — **번호·id 로 절대 매칭하지 않는다**. 그룹은 내용으로 분류한다:

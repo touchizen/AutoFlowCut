@@ -57,7 +57,8 @@ describe('FLOW_STATIC_MODELS (kind 로 split — 정적 Flow 목록)', () => {
 
   it('이미지 id 는 Flow 패널 표시 이름 (applyAgentDefaults setModel 매칭용 — Nano Banana 포함)', () => {
     const ids = FLOW_STATIC_MODELS.imageModels.map(m => m.id)
-    expect(ids).toContain('Nano Banana 2')
+    expect(ids).toContain('Nano Banana 2.1')
+    expect(ids).toContain('Nano Banana 2 Lite')
     expect(ids).toContain('Nano Banana Pro')
     // /image/ 같은 enum 술어에 안 의존 (표시 이름이라 'image' 가 없다)
     expect(ids.some(id => /image/i.test(id))).toBe(false)

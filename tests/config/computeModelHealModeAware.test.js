@@ -240,37 +240,74 @@ describe('(D) API 모드 heal 불변: DEFAULT_IMAGE_MODEL_ID / DEFAULT_VIDEO_MOD
     expect(heal.videoModelF2V).toBe('veo-3.1-fast-generate-preview')
   })
 
-  it('Flow 모드 이미지 기본값 = Nano Banana 2 (라벨 매칭, 첫 항목이 아니어도)', () => {
+  it('Flow 모드 이미지 기본값 = Nano Banana 2.1 (라벨 매칭, 첫 항목이 아니어도)', () => {
     const flowImg = [
       { id: 'nano-pro', label: 'Nano Banana Pro', methods: ['generateContent'] },
-      { id: 'nb2', label: 'Nano Banana 2', methods: ['generateContent'] },
+      { id: 'nb21', label: 'Nano Banana 2.1', methods: ['generateContent'] },
     ]
     const out = computeModelHeal(
       { imageModels: flowImg, videoModels: FLOW_VIDEO_MODELS, loading: false },
       { imageModel: 'gemini-3.1-flash-image', videoModelT2V: FLOW_T2V_IDS[0], videoModelF2V: FLOW_I2V_IDS[0] },
       'flow',
     )
-    expect(out.imageModel).toBe('nb2')   // 첫 항목(nano-pro) 아니라 Nano Banana 2
+    expect(out.imageModel).toBe('nb21')   // 첫 항목(nano-pro) 아니라 Nano Banana 2.1
   })
 
-  it('Flow 실제 스크랩 형태(id=value, 라벨에 🍌 이모지)에서도 Nano Banana 2 로 — Pro(첫 항목)로 안 떨어짐', () => {
-    // 라이브 listFlowAgentModels: value='Nano Banana Pro'/'Nano Banana 2', label='🍌 Nano Banana N'
+  it('Flow 실제 스크랩 형태(id=value, 라벨에 🍌 이모지)에서도 Nano Banana 2.1 로 — Pro(첫 항목)로 안 떨어짐', () => {
     const flowImg = [
       { id: 'Nano Banana Pro', label: '🍌 Nano Banana Pro', methods: ['generateContent'] },
-      { id: 'Nano Banana 2', label: '🍌 Nano Banana 2', methods: ['generateContent'] },
+      { id: 'Nano Banana 2.1', label: '🍌 Nano Banana 2.1', methods: ['generateContent'] },
     ]
     const out = computeModelHeal(
       { imageModels: flowImg, videoModels: FLOW_VIDEO_MODELS, loading: false },
       { imageModel: 'flow_image_generate', videoModelT2V: FLOW_T2V_IDS[0], videoModelF2V: FLOW_I2V_IDS[0] }, // 무효(정적 id)
       'flow',
     )
-    expect(out.imageModel).toBe('Nano Banana 2')   // 재시작 시 Pro 로 안 떨어짐
+    expect(out.imageModel).toBe('Nano Banana 2.1')   // 재시작 시 Pro 로 안 떨어짐
+  })
+
+  it('Flow 라이브 메뉴 순서(2026-10-20: Pro · 2 Lite · 2.1)에서도 기본값은 2.1 — 앞에 있는 2 Lite 를 고르지 않는다', () => {
+    // 옛 기본값 정규식 /nano banana 2\b/ 는 "2 Lite" 에도 걸려 메뉴 순서상 Lite 를 기본값으로 골랐다.
+    const flowImg = [
+      { id: 'Nano Banana Pro', label: '🍌 Nano Banana Pro', methods: ['generateContent'] },
+      { id: 'Nano Banana 2 Lite', label: '🍌 Nano Banana 2 Lite', methods: ['generateContent'] },
+      { id: 'Nano Banana 2.1', label: '🍌 Nano Banana 2.1', methods: ['generateContent'] },
+    ]
+    const out = computeModelHeal(
+      { imageModels: flowImg, videoModels: FLOW_VIDEO_MODELS, loading: false },
+      { imageModel: 'gemini-3.1-flash-image', videoModelT2V: FLOW_T2V_IDS[0], videoModelF2V: FLOW_I2V_IDS[0] },
+      'flow',
+    )
+    expect(out.imageModel).toBe('Nano Banana 2.1')
+  })
+
+  it('기본값 찾기는 정확히 2.1 — "Nano Banana 2.1 Lite" 가 앞에 있어도 Lite 를 고르지 않는다', () => {
+    const flowImg = [
+      { id: 'Nano Banana Pro', label: '🍌 Nano Banana Pro', methods: ['generateContent'] },
+      { id: 'Nano Banana 2.1 Lite', label: '🍌 Nano Banana 2.1 Lite', methods: ['generateContent'] },
+      { id: 'Nano Banana 2.1', label: '🍌 Nano Banana 2.1', methods: ['generateContent'] },
+    ]
+    const out = computeModelHeal(
+      { imageModels: flowImg, videoModels: FLOW_VIDEO_MODELS, loading: false },
+      { imageModel: 'gemini-3.1-flash-image', videoModelT2V: FLOW_T2V_IDS[0], videoModelF2V: FLOW_I2V_IDS[0] },
+      'flow',
+    )
+    expect(out.imageModel).toBe('Nano Banana 2.1')
+  })
+
+  it('Flow 정적 목록에서 저장값 "Nano Banana 2"(메뉴에서 사라짐)는 Nano Banana 2.1 로 치유', () => {
+    const out = computeModelHeal(
+      { imageModels: FLOW_IMAGE_MODELS, videoModels: FLOW_VIDEO_MODELS, loading: false, source: 'flow-static' },
+      { imageModel: 'Nano Banana 2', videoModelT2V: FLOW_T2V_IDS[0], videoModelF2V: FLOW_I2V_IDS[0] },
+      'flow',
+    )
+    expect(out.imageModel).toBe('Nano Banana 2.1')
   })
 
   it('Flow 모드 이미지: 저장값이 이미 유효하면 유지(기본값으로 강제 안 함)', () => {
     const flowImg = [
       { id: 'nano-pro', label: 'Nano Banana Pro', methods: ['generateContent'] },
-      { id: 'nb2', label: 'Nano Banana 2', methods: ['generateContent'] },
+      { id: 'nb21', label: 'Nano Banana 2.1', methods: ['generateContent'] },
     ]
     const out = computeModelHeal(
       { imageModels: flowImg, videoModels: FLOW_VIDEO_MODELS, loading: false },
@@ -339,7 +376,7 @@ describe('(E) source 가드: 정적 폴백(Flow scrape 실패 등)은 heal하지
       source: 'flow-static',
     }
     const heal = computeModelHeal(flowStatic, settings, 'flow')
-    expect(heal.imageModel).toBe('Nano Banana 2')  // isNB2 기본값으로 치유
+    expect(heal.imageModel).toBe('Nano Banana 2.1')  // Flow 기본값(2.1)으로 치유
   })
 
   it('source=dynamic 인 Flow 카탈로그는 정상 heal한다', () => {

@@ -220,16 +220,18 @@ export function computeModelHeal(availableModels, settings, mode) {
   const out = {}
   const { imageModels, videoModels } = availableModels || {}
   if (healImageModel && imageModels && imageModels !== IMAGE_MODELS) {
-    // Flow 모드 이미지 기본값 = 'Nano Banana 2' (라벨 매칭 — 스크랩 id 'Nano Banana 2'/정적
-    //   id 'flow_image_generate' 둘 다 라벨로 잡힌다). 목록에 없으면 API 기본/첫 항목으로 수렴.
+    // Flow 모드 이미지 기본값 = 'Nano Banana 2.1' (라벨 매칭). 목록에 없으면 API 기본/첫 항목으로 수렴.
+    //   2026-10-20: Flow 메뉴에서 "Nano Banana 2" 가 사라지고 2.1 · 2 Lite 가 생겼다 — 저장값 "Nano Banana 2" 는
+    //   목록에 없으니 아래 pickValidModel 이 이 기본값(2.1)으로 치유한다.
     let imgDefaultId = DEFAULT_IMAGE_MODEL_ID
     if (mode === 'flow') {
-      // 'Nano Banana 2' 를 id(스크랩 value) 또는 label 로 찾는다. 라벨엔 '🍌 ' 이모지 prefix 가
-      //   붙어 정확매칭(=== 'nano banana 2')이 실패했다 → 재시작 heal 이 첫 항목(Pro)으로 떨어졌다.
-      //   \b 로 'Nano Banana 25' 같은 오매칭은 막고, Pro/무관 항목은 '2' 없어 안 걸린다.
-      const isNB2 = (m) => /nano\s*banana\s*2\b/i.test((m && m.id) || '') || /nano\s*banana\s*2\b/i.test((m && m.label) || '')
-      const nb2 = imageModels.find(isNB2)
-      if (nb2) imgDefaultId = nb2.id
+      // id(스크랩 value) 또는 label 로 찾는다. 라벨엔 '🍌 ' 이모지 prefix 가 붙어 정확매칭이 실패했다
+      //   → 재시작 heal 이 첫 항목(Pro)으로 떨어졌다. 끝까지 '2.1' 로 고정해 메뉴 순서상 앞에 있는 '2 Lite'·
+      //   '2.1 Lite' 를 피한다(옛 /2\b/ 는 Lite 에도 걸렸다).
+      const NB21 = /nano\s*banana\s*2\.1\s*$/i
+      const isNB21 = (m) => [m?.id, m?.label].some((s) => NB21.test(s || ''))
+      const nb21 = imageModels.find(isNB21)
+      if (nb21) imgDefaultId = nb21.id
     }
     const next = pickValidModel(imageModels, settings.imageModel, imgDefaultId)
     if (next !== settings.imageModel) out.imageModel = next
