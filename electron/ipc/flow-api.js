@@ -385,7 +385,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // configureFlowMode 확장 예정). applyAgentDefaults 호출은 주석처리됨.
 
       // 0.85. (v2) Flow 이미지 모델 적용 — 에이전트 설정 패널에서 선택(동적 모델 목록 반영).
-      //   model 이 Flow 패널 모델명(예: 'Nano Banana 2')일 때만 의미가 있고, 매칭 실패 시 graceful
+      //   model 이 Flow 패널 모델명(예: 'Nano Banana 2.1')일 때만 의미가 있고, 매칭 실패 시 graceful
       //   (패널 열고 닫음). applyAgentDefaults 는 패널이 닫힌 것을 확인(panelClosed)하므로 이후 컴포즈
       //   주입을 가리지 않는다. 컴포즈 주입(아래) 전에 호출한다.
       if (model && applyAgentDefaults) {

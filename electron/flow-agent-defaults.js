@@ -21,7 +21,7 @@
  *   - Save: the panel's sole plain action after role/menu/icon controls are excluded.
  *
  * The model labels are matched leniently (emoji/whitespace/case-insensitive) so
- * stored 'Nano Banana 2' matches the live '🍌 Nano Banana 2'.
+ * stored 'Nano Banana 2.1' matches the live '🍌 Nano Banana 2.1'.
  */
 
 import {
@@ -257,7 +257,7 @@ function clampCount(n) {
  * Flow Agent Settings 패널의 이미지/비디오 모델 드롭다운 옵션을 동적으로 긁는 page-script.
  * 하드코딩 대신 실제 서비스되는 모델만 반환(예: Imagen 제거 자동 반영).
  * 반환: { ok, image:{current,options:[{value,label}]}, video:{...}, error? }
- *   - value = 이모지/arrow 제거한 매칭용 텍스트(예: 'Nano Banana 2'), label = 원문(이모지 포함).
+ *   - value = 이모지/arrow 제거한 매칭용 텍스트(예: 'Nano Banana 2.1'), label = 원문(이모지 포함).
  * 패널은 'tune' 버튼으로 자동 오픈, 끝나면 Escape 로 닫는다(컴포즈 가림 방지).
  */
 export function buildListModelsScript() {

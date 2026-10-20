@@ -327,9 +327,16 @@ describe('genModels — categorizeApiModels (라이브 /models → 카테고리)
     //   /image/ 술어로는 못 거른다 → kind:'image' 를 인정해야 round-trip 계약이 유지된다.
     const { imageModels, videoModels } = categorizeApiModels(FLOW_MODELS)
     const imgIds = imageModels.map(m => m.id)
-    expect(imgIds).toContain('Nano Banana 2')
+    expect(imgIds).toContain('Nano Banana 2.1')
     expect(imgIds).toContain('Nano Banana Pro')
     expect(videoModels.map(m => m.id)).toContain('Omni Flash')
+  })
+
+  it('Flow 이미지 모델 = 라이브 메뉴(2026-10-20 덤프): Pro · 2.1 · 2 Lite — 메뉴에서 사라진 "Nano Banana 2" 는 없다', () => {
+    // 덤프 flow-dom-dump-20261020-143043: menuitem '🍌 Nano Banana Pro' · '🍌 Nano Banana 2 Lite' · '🍌 Nano Banana 2.1'.
+    //   "Nano Banana 2" 를 고르면 드라이버가 메뉴에서 못 찾아 flow-image-model-mismatch 로 배치가 멈췄다.
+    const { imageModels } = categorizeApiModels(FLOW_MODELS)
+    expect(imageModels.map(m => m.id)).toEqual(['Nano Banana Pro', 'Nano Banana 2.1', 'Nano Banana 2 Lite'])
   })
 })
 
@@ -456,8 +463,8 @@ describe('genModels — computeModelHeal (권위 있는 목록으로 stale 저�
   it('Flow 모드는 google 전용 — openai provider 설정이 남아있어도 image heal 유지', () => {
     // Flow 는 google 전용이라 provider 설정과 무관하게 heal(mode 우선, Fable F3 forward-guard)
     const flowImageModels = [
-      { id: 'flow_nb2', label: 'Nano Banana 2' },
       { id: 'flow_pro', label: 'Nano Banana Pro' },
+      { id: 'flow_nb21', label: 'Nano Banana 2.1' },
     ]
     const out = computeModelHeal(
       { imageModels: flowImageModels, videoModels: VIDEO_MODELS, source: 'flow-static' },
@@ -469,6 +476,6 @@ describe('genModels — computeModelHeal (권위 있는 목록으로 stale 저�
       },
       'flow',
     )
-    expect(out.imageModel).toBe('flow_nb2') // Flow NB2 기본으로 heal (스킵 안 함)
+    expect(out.imageModel).toBe('flow_nb21') // Flow 기본값(2.1)으로 heal (스킵 안 함)
   })
 })

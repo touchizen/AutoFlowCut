@@ -30,11 +30,13 @@ import { VEO_RES_HD, VEO_RES_HD_4K } from '../utils/videoModels'
 //   제거), OmniFlash 길이 감지(/omni.?flash/)도 id 로 한다. 분류는 /image/ 술어 대신 명시적
 //   kind 필드로 한다(FLOW_STATIC_MODELS) — 표시 이름엔 'image' 가 없어 술어로는 못 거른다.
 //   ⚠️ 모델 목록은 동적 스크랩(Flow UI drift 로 panel_not_found)을 버리고 이 정적 목록을 쓴다.
-//   라이브 확인(2026-06-27 Cmd+Shift+E 덤프) 기준 현재 Flow 모델.
+//   라이브 확인(2026-06-27 Cmd+Shift+E 덤프) 기준 현재 Flow 모델. 이미지는 2026-10-20 덤프로 갱신 —
+//   메뉴가 Pro · 2 Lite · 2.1 이 되고 "Nano Banana 2" 가 사라졌다(고르면 flow-image-model-mismatch).
 export const FLOW_MODELS = [
-  // ── 이미지 모델 (Flow 에이전트 설정 '이미지 생성 기본값' 드롭다운) ──
-  { id: 'Nano Banana Pro', label: 'Nano Banana Pro', displayName: 'Nano Banana Pro', kind: 'image', methods: ['generateContent'], cost: null, unit: 'image' },
-  { id: 'Nano Banana 2',   label: 'Nano Banana 2',   displayName: 'Nano Banana 2',   kind: 'image', methods: ['generateContent'], cost: null, unit: 'image' },
+  // ── 이미지 모델 (Flow 컴포저 모델 메뉴) ──
+  { id: 'Nano Banana Pro',    label: 'Nano Banana Pro',    displayName: 'Nano Banana Pro',    kind: 'image', methods: ['generateContent'], cost: null, unit: 'image' },
+  { id: 'Nano Banana 2.1',    label: 'Nano Banana 2.1',    displayName: 'Nano Banana 2.1',    kind: 'image', methods: ['generateContent'], cost: null, unit: 'image' },
+  { id: 'Nano Banana 2 Lite', label: 'Nano Banana 2 Lite', displayName: 'Nano Banana 2 Lite', kind: 'image', methods: ['generateContent'], cost: null, unit: 'image' },
 
   // ── 비디오 모델 (Flow 에이전트 설정 '동영상 생성 기본값' 드롭다운) ──
   //   Flow 는 비디오 모델을 "패밀리" 단위로 고르고(Omni Flash / Veo 3.1 Lite·Fast·Quality), t2v vs i2v
