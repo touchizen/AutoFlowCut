@@ -12,6 +12,8 @@ import {
   bundleSceneCSVRows,
   preserveSceneRuntimeFields,
   nestSceneGenerationColumns,
+  layoutSceneRowTimes,
+  stripCSVTimeColumns,
   loadCSV,
   saveCSV,
 } from '../../mcp-server/lib/csv.js'
@@ -407,6 +409,59 @@ describe('bundleSceneCSVRows', () => {
       "Rejected invalid model '__inherit__' at generation.image.",
       "Rejected unknown provider 'unknown-image' at generation.image.",
     ])
+  })
+})
+
+describe('layoutSceneRowTimes (옛 형식 CSV — load_csv 가 씬 시각을 채운다)', () => {
+  // 시각 열 없이 duration 만 있는 CSV(툰 배치 CSV)를 load_csv 로 넣으면 시각 없는 행이 앱으로 가고, 렌더러
+  //   normalizeScene 이 씬마다 startTime 0 을 넣어 전부 0~duration 에 겹쳤다(2026-10-20, 96씬이 0~4초).
+  it('시각 열이 없으면 duration 으로 앞 씬 끝에 이어 붙인다', () => {
+    const rows = [1, 2, 3].map((n) => ({ prompt: `p${n}`, scene_tag: `frame_v${n}`, duration: '4.000' }))
+    const out = layoutSceneRowTimes(rows)
+    expect(out.map((r) => [r.startTime, r.endTime, Number(r.duration)])).toEqual([[0, 4, 4], [4, 8, 4], [8, 12, 4]])
+    expect(out[0]).toMatchObject({ prompt: 'p1', scene_tag: 'frame_v1' })
+  })
+
+  it('start_time/end_time 이 있으면 그 값(초·타임코드)을 쓰고, 없는 다음 행은 그 끝에서 이어진다', () => {
+    const rows = [
+      { prompt: 'a', start_time: '00:00:01,500', end_time: '3.5' },
+      { prompt: 'b', duration: '2' },
+    ]
+    const out = layoutSceneRowTimes(rows)
+    expect(out.map((r) => [r.startTime, r.endTime])).toEqual([[1.5, 3.5], [3.5, 5.5]])
+  })
+
+  it('duration 도 없으면 기본 길이(3초)', () => {
+    const out = layoutSceneRowTimes([{ prompt: 'a' }, { prompt: 'b' }])
+    expect(out.map((r) => [r.startTime, r.endTime])).toEqual([[0, 3], [3, 6]])
+  })
+
+  it('빈 start_time/end_time 칸이어도 camelCase 시각은 이어 붙이고, CSV 칸 자체는 건드리지 않는다(save_csv 왕복)', () => {
+    const out = layoutSceneRowTimes([{ prompt: 'a', start_time: '', end_time: '', duration: '4' }, { prompt: 'b', start_time: '', end_time: '', duration: '4' }])
+    expect(out.map((r) => [r.startTime, r.endTime])).toEqual([[0, 4], [4, 8]])
+    expect(out.map((r) => [r.start_time, r.end_time, r.duration])).toEqual([['', '', '4'], ['', '', '4']])
+  })
+
+  it('stripCSVTimeColumns: 앱으로 보낼 씬에서 start_time/end_time 칸(대소문자 무관)만 뺀다 — 렌더러 normalizeScene 이 snake 키를 먼저 읽는다', () => {
+    const out = stripCSVTimeColumns([{ prompt: 'a', start_time: '', End_Time: '4', startTime: 0, endTime: 4, duration: '4' }])
+    expect(out).toEqual([{ prompt: 'a', startTime: 0, endTime: 4, duration: '4' }])
+  })
+
+  it('헤더 대소문자와 무관(가져오기 창 parseCSVToScenes 처럼) — Start_Time/End_Time/Duration', () => {
+    const out = layoutSceneRowTimes([{ Prompt: 'a', Start_Time: '10', End_Time: '14' }, { Prompt: 'b', Duration: '4' }])
+    expect(out.map((r) => [r.startTime, r.endTime])).toEqual([[10, 14], [14, 18]])
+  })
+
+  it('시각 열이 있는 옛 형식 CSV 는 load → layout → save 왕복에서 start_time/end_time/duration 칸이 그대로다', () => {
+    const src = join(process.cwd(), 'docs/examples/scenes_example_legacy.csv')
+    const before = loadCSV(src)
+    const scenes = layoutSceneRowTimes(before.scenes.map((row) => nestSceneGenerationColumns(row, { warnings: [] })))
+    const out = join(mkdtempSync(join(tmpdir(), 'afc-legacy-')), 'out.csv')
+    saveCSV(out, before.headers, scenes)
+    const after = loadCSV(out)
+    const cols = (rows) => rows.map((r) => [r.start_time, r.end_time, r.duration])
+    expect(cols(after.scenes)).toEqual(cols(before.scenes))
+    expect(after.scenes.every((r) => r.start_time !== '' && r.end_time !== '')).toBe(true)
   })
 })
 
