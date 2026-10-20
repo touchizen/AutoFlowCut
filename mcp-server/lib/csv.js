@@ -203,6 +203,74 @@ export function isNewSceneCSVFormat(headers, rows) {
 }
 
 /**
+ * CSV 시각 값(초 숫자 또는 "HH:MM:SS,mmm" / "MM:SS" 타임코드) → 초. 비었거나 못 읽으면 NaN.
+ */
+function parseCSVTime(raw) {
+  if (raw === undefined || raw === null || raw === '') return NaN
+  const num = Number(raw)
+  if (!isNaN(num)) return num
+  const str = String(raw).trim().replace(',', '.')
+  const parts = str.split(':')
+  if (parts.length === 3) {
+    return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2])
+  }
+  if (parts.length === 2) return parseFloat(parts[0]) * 60 + parseFloat(parts[1])
+  return NaN
+}
+
+/**
+ * 시작·끝 시각 결정 — 읽히는 값이 있으면 그 값, 없으면 앞 씬 끝(cursor)에서 시작해 duration 만큼.
+ * (bundleSceneCSVRows · layoutSceneRowTimes 공용)
+ */
+function resolveRowTimes(startRaw, endRaw, cursor, duration) {
+  const parsedStart = parseCSVTime(startRaw)
+  const parsedEnd = parseCSVTime(endRaw)
+  const startTime = !isNaN(parsedStart) ? parsedStart : cursor
+  const endTime = !isNaN(parsedEnd) ? parsedEnd : startTime + duration
+  return { startTime, endTime }
+}
+
+/**
+ * 옛 형식 CSV row 들(scene 열 없음)에 씬 시각을 붙인다 — 렌더러 parseCSVToScenes(가져오기 창)와 같은 규칙
+ * (헤더 대소문자 무관, start_time/end_time 이 있으면 그 값, 없으면 앞 씬 끝에서 duration — 없으면 defaultDuration).
+ * camelCase startTime/endTime(숫자)만 더하고 CSV 칸(start_time·end_time·duration)은 그대로 둔다 — save_csv 왕복이 바이트 그대로.
+ * 앱으로 보낼 땐 stripCSVTimeColumns 로 시각 칸을 뺀다.
+ *
+ * @param {object[]} rows — loadCSV 가 반환한 row objects
+ * @param {object} [options]
+ * @param {number} [options.defaultDuration=3]
+ * @returns {object[]}
+ */
+export function layoutSceneRowTimes(rows, options = {}) {
+  if (!Array.isArray(rows)) return []
+  const defaultDuration = options.defaultDuration ?? 3
+  let cursor = 0
+  return rows.map((r) => {
+    const cell = (name) => {
+      const key = Object.keys(r).find((k) => k.toLowerCase() === name)
+      return key ? r[key] : undefined
+    }
+    const duration = parseFloat(cell('duration')) || defaultDuration
+    const { startTime, endTime } = resolveRowTimes(cell('start_time'), cell('end_time'), cursor, duration)
+    cursor = endTime
+    return { ...r, startTime, endTime }
+  })
+}
+
+/**
+ * 앱(update-scenes)으로 보낼 씬에서 CSV 시각 칸(start_time/end_time, 대소문자 무관)을 뺀다.
+ * 렌더러 normalizeScene 은 start_time 을 startTime 보다 먼저 읽는다 — 빈 칸이면 startTime 0(2026-10-20: 96씬이 전부 0~4초),
+ * 값이 있어도 씬 삭제·이동 뒤 recalculateTimes 가 camelCase 만 고쳐 옛 시각으로 되돌아간다. 앱은 camelCase 만 보면 된다.
+ *
+ * @param {object[]} scenes
+ * @returns {object[]}
+ */
+export function stripCSVTimeColumns(scenes) {
+  return (scenes || []).map((s) => Object.fromEntries(
+    Object.entries(s).filter(([k]) => !['start_time', 'end_time'].includes(k.toLowerCase()))))
+}
+
+/**
  * 새 형식 CSV row 들을 묶음 scenes + srtTrack 으로 변환.
  * Renderer 의 parseSceneCSVToTracks 와 동등한 로직 (R2 review fix —
  * MCP 경로도 같은 결과 emit 해서 ImportModal 과 일치).
@@ -220,18 +288,6 @@ export function bundleSceneCSVRows(rows, options = {}) {
   const groups = []
   const groupByNumber = new Map()
   let cursor = 0
-  const parseTime = (raw) => {
-    if (raw === undefined || raw === null || raw === '') return NaN
-    const num = Number(raw)
-    if (!isNaN(num)) return num
-    const str = String(raw).trim().replace(',', '.')
-    const parts = str.split(':')
-    if (parts.length === 3) {
-      return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2])
-    }
-    if (parts.length === 2) return parseFloat(parts[0]) * 60 + parseFloat(parts[1])
-    return NaN
-  }
 
   for (const r of rows) {
     const get = (k) => (r[k] ?? r[k.toLowerCase()] ?? r[k.toUpperCase()] ?? '').toString().trim()
@@ -239,12 +295,7 @@ export function bundleSceneCSVRows(rows, options = {}) {
     if (!/^\d+$/.test(sceneNumStr)) continue
     const sceneNum = parseInt(sceneNumStr, 10)
 
-    const startRaw = get('start_time')
-    const endRaw = get('end_time')
-    const parsedStart = parseTime(startRaw)
-    const startTime = !isNaN(parsedStart) ? parsedStart : cursor
-    const parsedEnd = parseTime(endRaw)
-    const endTime = !isNaN(parsedEnd) ? parsedEnd : startTime + defaultDuration
+    const { startTime, endTime } = resolveRowTimes(get('start_time'), get('end_time'), cursor, defaultDuration)
     cursor = endTime
 
     const row = {

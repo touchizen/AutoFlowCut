@@ -22,7 +22,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
-import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, preserveSceneRuntimeFields, nestSceneGenerationColumns } from './lib/csv.js';
+import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, preserveSceneRuntimeFields, nestSceneGenerationColumns, layoutSceneRowTimes, stripCSVTimeColumns } from './lib/csv.js';
 import { csvToolResponse, handleExportCapcutTool, handleExportPremiereTool, handleUpdateSceneTool } from './lib/toolResponses.js';
 import { SCENE_GENERATION_PATCH_SCHEMA } from './lib/sceneGenerationSchema.js';
 
@@ -887,7 +887,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           scenes = bundled.scenes;
           bundledSrtTrack = bundled.srtTrack;
         } else {
-          scenes = data.scenes.map(row => nestSceneGenerationColumns(row, { warnings: csvWarnings }));
+          // 옛 형식(scene 열 없음): 가져오기 창(parseCSVToScenes)처럼 duration 으로 씬 시각을 이어 붙인다 — 시각 없이 보내면
+          //   렌더러 normalizeScene 이 씬마다 startTime 0 을 넣어 전부 0~duration 에 겹친다(2026-10-20).
+          scenes = layoutSceneRowTimes(data.scenes.map(row => nestSceneGenerationColumns(row, { warnings: csvWarnings })));
         }
         // project.json 자동 로드 (image_dir이 프로젝트 루트)
         let projectLoaded = false;
@@ -921,7 +923,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // 앱에 update-scenes 전달 (새 형식이면 srtTrack 도 동봉)
         const port = args.port || 3210;
         try {
-          const payload = { type: 'update-scenes', scenes: scenes };
+          // 앱은 camelCase 시각만 본다 — CSV 시각 칸은 save_csv 용으로 여기(scenes)에만 남긴다(stripCSVTimeColumns 주석).
+          const payload = { type: 'update-scenes', scenes: stripCSVTimeColumns(scenes) };
           if (bundledSrtTrack) payload.srtTrack = bundledSrtTrack;
           await appFetch(port, 'POST', '/api/update', payload);
         } catch { /* 앱 미실행 시 무시 */ }

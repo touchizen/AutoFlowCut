@@ -7,10 +7,10 @@ import { useState, useEffect, useDeferredValue } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { useAudioPlayback } from '../hooks/useAudioPlayback'
 import { findSrtSegment } from '../utils/audioTimeline'
-import { parseTimeToSeconds } from '../utils/parsers'
 import AudioFlagPopover from './AudioFlagPopover'
 import HoverImageBalloon from './HoverImageBalloon'
 import AudioTimeline from './AudioTimeline/AudioTimeline'
+import { getSceneTimeRangeMs } from './AudioTimeline/useAudioTimeline'
 import AudioDetailModal from './AudioDetailModal'
 import AudioSummary from './AudioSummary'
 import { toast } from './Toast'
@@ -31,15 +31,12 @@ const VOICE_SORT_OPTIONS = ['character', 'timecode', 'count']
 const SFX_SORT_OPTIONS = ['category', 'name', 'timecode']
 
 /** 타임코드(ms)에 해당하는 씬을 찾는다 (시간 기반 → SRT 자막 기반 fallback) */
-function findSceneAtTime(scenes, timecodeMs, srtEntries) {
+export function findSceneAtTime(scenes, timecodeMs, srtEntries) {
   if (!scenes?.length || timecodeMs == null) return null
-  // 1차: start_time/end_time 기반
-  const timeSec = timecodeMs / 1000
+  // 1차: 씬 시각 — 앱 상태는 camelCase startTime/endTime(MCP load_csv 도 snake 칸을 빼고 보낸다), 옛 snake 타임코드도 읽는다
   const byTime = scenes.find(s => {
-    const start = parseTimeToSeconds(s.start_time)
-    const end = parseTimeToSeconds(s.end_time)
-    if (isNaN(start) || isNaN(end)) return false
-    return timeSec >= start && timeSec < end
+    const range = getSceneTimeRangeMs(s)
+    return !!range && timecodeMs >= range.startMs && timecodeMs < range.endMs
   })
   if (byTime) return byTime
   // 2차: SRT 자막 → 씬 subtitle 매칭
