@@ -13,11 +13,13 @@ import { __resetQuotaStopForTests } from '../../src/utils/quotaStop'
 
 const readImageMock = vi.fn()
 const readResourceMock = vi.fn()
+const readFileByPathMock = vi.fn()
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
     checkPermission: vi.fn().mockResolvedValue({ success: true }),
     readImage: (...a) => readImageMock(...a),
     readResource: (...a) => readResourceMock(...a),
+    readFileByPath: (...a) => readFileByPathMock(...a),
   },
 }))
 vi.mock('../../src/components/Toast', () => ({
@@ -35,6 +37,7 @@ beforeEach(() => {
   vi.spyOn(Math, 'random').mockReturnValue(0)
   readImageMock.mockReset().mockResolvedValue({ success: false })
   readResourceMock.mockReset().mockResolvedValue({ success: false })
+  readFileByPathMock.mockReset().mockResolvedValue({ success: false })
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -81,7 +84,32 @@ async function runI2V(hook, framePairOverrides) {
   await startPromise
 }
 
-describe('useVideoAutomation — Flow I2V mediaId 우선 (R22-1)', () => {
+// 2026-10-30 I2V(새 Flow): main 이 시작 프레임을 **바이트**로 받아 편집기 붙여넣기로 올린다(앞 세션 애셋은 id 로 고를 수 없다) — 이미지 바이트(메모리 dataUrl·디스크)가
+//   있으면 Flow mediaId 보다 먼저 쓴다. 바이트가 없을 때만(아카이브 CDN URL 등) 옛 규칙대로 mediaId(엔진이 바이트 아님으로 거부한다).
+describe('useVideoAutomation — Flow I2V 시작 프레임 바이트 우선 (2026-10-30)', () => {
+  it('Flow 모드: 메모리 dataUrl 이 있으면 Flow mediaId 대신 그 바이트로 제출', async () => {
+    const { hook, generateVideoI2V } = makeHook('flow')
+    await runI2V(hook, { _startMediaId: 'flowStart123', _startImage: 'data:image/png;base64,STARTB64' })
+    expect(generateVideoI2V.mock.calls[0][1]).toBe('data:image/png;base64,STARTB64')
+  })
+
+  it('Flow 모드: 씬의 imagePath(_startImagePath)가 있으면 그 파일 — scenes/<id> 의 옛 이미지가 아니라 (Codex 2차 H1)', async () => {
+    readFileByPathMock.mockImplementation(async (p) => (p === '/w/p/replaced.png' ? { success: true, data: 'data:image/png;base64,NEW' } : { success: false }))
+    readImageMock.mockResolvedValue({ success: true, data: 'data:image/png;base64,OLD' })
+    const { hook, generateVideoI2V } = makeHook('flow')
+    await runI2V(hook, { _startMediaId: 'flowStart123', _startImage: null, _startImagePath: '/w/p/replaced.png' })
+    expect(generateVideoI2V.mock.calls[0][1]).toBe('data:image/png;base64,NEW')
+  })
+
+  it('Flow 모드: 메모리 이미지가 없으면 디스크(scenes/<id>) 바이트를 mediaId 보다 먼저', async () => {
+    readImageMock.mockResolvedValue({ success: true, data: 'data:image/jpeg;base64,DISKSCENE' })
+    const { hook, generateVideoI2V } = makeHook('flow')
+    await runI2V(hook, { _startMediaId: 'flowStart123', _startImage: null })
+    expect(generateVideoI2V.mock.calls[0][1]).toBe('data:image/jpeg;base64,DISKSCENE')
+  })
+})
+
+describe('useVideoAutomation — Flow I2V: 바이트가 없을 때만 mediaId (R22-1 · 새 Flow 엔진은 바이트 아님으로 거부 — engineFlow.test)', () => {
   it('Flow 모드: 씬 프레임은 archive CDN URL 대신 Flow mediaId 로 제출', async () => {
     const { hook, generateVideoI2V } = makeHook('flow')
     await runI2V(hook, {

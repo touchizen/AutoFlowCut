@@ -61,8 +61,17 @@ function makePage({ electronAPI = { flowReportResponse: vi.fn(() => Promise.reso
 const imageBody = () => reencodeRequestBody(sample('ogiZ0b').reqBody)
 
 describe('FLOW_RPC_CAPTURE_INJECTION — send / loadend 보고', () => {
-  it('허용 목록은 제출 RPC 셋(ogiZ0b·YhhmEf·MZZa6b) + 업로드 maseQ (M3-2)', () => {
-    expect([...FLOW_RPC_CAPTURE_ALLOWLIST].sort()).toEqual(['MZZa6b', 'YhhmEf', 'maseQ', 'ogiZ0b'])
+  it('허용 목록은 제출 RPC 넷(ogiZ0b·YhhmEf·MZZa6b·eb1hJf — I2V 2026-10-30) + 업로드 maseQ (M3-2)', () => {
+    expect([...FLOW_RPC_CAPTURE_ALLOWLIST].sort()).toEqual(['MZZa6b', 'YhhmEf', 'eb1hJf', 'maseQ', 'ogiZ0b'])
+  })
+
+  it('eb1hJf send 도 보고한다(I2V) — 프롬프트는 YhhmEf 와 같은 자리, refs 는 검증 불가(null)', () => {
+    const page = makePage()
+    const inner = [[[[null, null, [[['The hand pulls the scissors up']]]], 'abra_i2v_4s', 2]]]
+    const body = 'f.req=' + encodeURIComponent(JSON.stringify([[['eb1hJf', JSON.stringify(inner), null, 'generic']]])) + '&at=TOKEN&'
+    page.post(BATCH + '?rpcids=eb1hJf&source-path=%2Fproject%2Fabc&bl=B&f.sid=S&hl=ko&_reqid=1&rt=c', body)
+    const [ev] = page.reports()
+    expect(ev).toMatchObject({ kind: 'batchexecute-send', rpcid: 'eb1hJf', rpcids: ['eb1hJf'], seq: 1, prompts: ['The hand pulls the scissors up'], refs: null, mentions: null })
   })
 
   it('ogiZ0b send → batchexecute-send {doc 32hex, rpcid, rpcids, seq 1, prompts, sentAt 초}', () => {

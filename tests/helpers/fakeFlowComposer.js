@@ -112,13 +112,23 @@ export function createFakeFlowComposer(opts = {}) {
 
   const chips = (opts.chips || []).map((c) => ({ id: c.id || null, busy: !!c.busy, img: !!c.id }))
   const assets = (opts.assets || []).map((a) => ({ ...a }))
-  const st = { picker: null, tab: 'dashboard', active: 0, opens: 0, duds: Number(opts.triggerDudClicks) || 0, hovered: null, visible: [] }
+  const st = { picker: null, tab: 'dashboard', active: 0, opens: 0, duds: Number(opts.triggerDudClicks) || 0, hovered: null, visible: [], framesMode: false }
   const editor = () => document.querySelector('div.ProseMirror[contenteditable="true"]')
   const trigger = () => document.querySelector('button.add-menu-trigger')
   const lastPara = () => { const ps = editor().querySelectorAll('p'); return ps[ps.length - 1] }
 
+  // 2026-10-30 I2V: 프레임 모드(크롬 실기) — 칸 둘(시작 · 끝)과 바꾸기 버튼. 소재 칩 중 **첫 칩만** 시작 칸에 보이고 나머지는 숨는다(끝 칸은 비어 있다).
+  const emptyFrame = (label) => `<button type="button" class="empty-chip"> ${label} </button>`
   function renderChips() {
-    document.querySelector('.af-ingredient-list').innerHTML = chips.map((c) => chipHtml({ id: c.img ? c.id : null, busy: c.busy })).join('')
+    const list = document.querySelector('.af-ingredient-list')
+    if (st.framesMode) {
+      const first = chips[0]
+      list.innerHTML = `<div cdkoverlayorigin="" class="frame-trigger">${first ? chipHtml({ id: first.img ? first.id : null, busy: first.busy }) : emptyFrame('시작')}</div>`
+        + '<button aria-label="첫 번째 프레임과 마지막 프레임 바꾸기"><mat-icon>swap_horiz</mat-icon></button>'
+        + `<div cdkoverlayorigin="" class="frame-trigger">${emptyFrame('종료')}</div>`
+    } else {
+      list.innerHTML = chips.map((c) => chipHtml({ id: c.img ? c.id : null, busy: c.busy })).join('')
+    }
     syncClear()
   }
   function editorPlain() { return (editor().textContent || '').replace(/[​﻿]/g, '') }
@@ -340,6 +350,8 @@ export function createFakeFlowComposer(opts = {}) {
       if (u.onUpload) u.onUpload({ id, n })
     },
     chipIds: () => chips.map((c) => (c.img ? c.id : null)),
+    /** I2V: 설정 패널의 입력방식 전환 흉내('frames' | 'material') — 칩은 그대로, 보이는 모양만 바뀐다. */
+    setInputMode: (mode) => { st.framesMode = mode === 'frames'; renderChips(); ev('input:' + (st.framesMode ? 'frames' : 'material')) },
     mentionIds: () => Array.from(editor().querySelectorAll('span.mention-chip')).map((s) => s.getAttribute('data-mention-id')),
     editorText: () => editorPlain(),
     pickerKind: () => st.picker,

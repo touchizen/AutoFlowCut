@@ -42,23 +42,40 @@ export function frameImageFor(id, { scenes = [], galleryItems = [], galleryPrefi
  * 실행 시점에 시작/끝 프레임을 base64/dataUrl 로 해석 (디스크 폴백 포함).
  *
  * 우선순위:
- *   1. inlineImage (이번 세션 메모리 dataUrl — frameImageFor 결과)
+ *   1. opts.imagePath (씬의 정확한 이미지 파일, 읽힐 때 — 2026-10-30, 썸네일과 같은 순서)
+ *   1b. inlineImage (이번 세션 메모리 dataUrl — frameImageFor 결과)
  *   2. gallery::<id> → frames/ 리소스 (디스크 업로드, 재오픈 후에도 동작)
  *   3. 씬 id → scenes/<id> 리소스 (folder 모드 디스크 저장본)
  *
  * fs 주입 가능 → 단위 테스트.
  *
  * @param {string} sceneId - startSceneId / endSceneId
- * @param {string|null} inlineImage - frameImageFor 가 채운 메모리 dataUrl (있으면 우선)
+ * @param {string|null} inlineImage - frameImageFor 가 채운 메모리 dataUrl (읽히는 imagePath 다음)
  * @param {string} projectName
  * @param {object} [opts]
  * @param {object} [opts.fs] - fileSystemAPI (기본: 싱글톤)
  * @param {string} [opts.galleryPrefix]
+ * @param {string|null} [opts.imagePath] - 씬의 imagePath(있으면 리소스 폴더보다 먼저 그 파일)
  * @returns {Promise<string|null>}
  */
-export async function resolveFrameImageBase64(sceneId, inlineImage, projectName, { fs = fileSystemAPI, galleryPrefix = 'gallery::' } = {}) {
+export async function resolveFrameImageBase64(sceneId, inlineImage, projectName, { fs = fileSystemAPI, galleryPrefix = 'gallery::', imagePath = null } = {}) {
+  // 2026-10-30(Codex 2차 H1·3차 H1): 씬의 imagePath 가 교체 이미지(다른 파일)를 가리킬 수 있다 — scenes/<id> 에 옛 이미지가 남아 있으면 옛 이미지로 과금된다.
+  //   정확한 경로가 먼저이고(Fable 최종 리뷰 2: 썸네일 resolveImageSrc 처럼 메모리 image 보다도 먼저), 못 읽으면 메모리, 그다음은 그 경로가 바로 이 씬의
+  //   정식 파일(scenes/<id>.<ext> — 폴더 이동 등)일 때만 리소스로 넘어간다. 아니면 null.
+  const tryPath = !!(sceneId && imagePath && fs?.readFileByPath)   // Codex 3차 M2: 프레임을 뺀 칸(씬 id 없음)은 남은 경로도 읽지 않는다
+  if (tryPath) {
+    try {
+      const r = await fs.readFileByPath(imagePath)
+      if (r?.success && r.data) return r.data
+    } catch { /* 아래 판정 */ }
+  }
   if (inlineImage) return inlineImage
-  if (!sceneId || !projectName) return null
+  if (!sceneId) return null
+  if (tryPath) {
+    const m = /(?:^|[\\/])scenes[\\/]([^\\/]+)\.[A-Za-z0-9]+$/.exec(String(imagePath))
+    if (!m || m[1] !== sceneId) return null
+  }
+  if (!projectName) return null
 
   if (typeof sceneId === 'string' && sceneId.startsWith(galleryPrefix)) {
     const gid = sceneId.slice(galleryPrefix.length)
@@ -94,5 +111,16 @@ export async function resolveFrameImageBase64(sceneId, inlineImage, projectName,
  */
 export function stripOmniEndFrame(pair, isOmniFlash) {
   if (!isOmniFlash || !pair) return pair
-  return { ...pair, endSceneId: '', _endMediaId: null, _endImage: null }
+  return { ...pair, endSceneId: '', _endMediaId: null, _endImage: null, _endImagePath: null }   // Codex 3차 M2: 경로도(남으면 숨긴 끝 프레임을 읽는다)
+}
+
+/**
+ * 끝 프레임을 끌지(UI End Image 비활성 + 제출 payload 에서 stripOmniEndFrame) — 2026-10-30 I2V: 새 Flow 는 시작 프레임만 받는다(끝 칸 첨부 미검증,
+ *   main 은 끝 프레임이 오면 flow-i2v-end-frame-unsupported). 그래서 Flow 모드면 모델과 무관하게 true(옛 규칙 OmniFlash 만 → Flow 전체로 넓힘).
+ *   API(cloud Veo) 모드는 끝 프레임을 그대로 쓴다.
+ * @param {string} appMode 'flow' | 'api'
+ * @param {string} [_model] F2V 모델(지금은 판단에 쓰지 않는다 — 새 Flow 가 끝 칸을 받게 되면 모델별로 좁힌다)
+ */
+export function flowEndFrameDisabled(appMode, _model) {
+  return appMode === 'flow'
 }

@@ -147,8 +147,13 @@ export function refHandlerHarness(o = {}) {
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
     if (s.includes('__af_settings_driver__')) {
-      trace.push('settings-driver')
-      return o.settings ?? { ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'already', count: 'already' } }
+      // I2V: 목표의 입력방식을 가짜 페이지에 반영한다(드라이버가 패널을 눌렀다고 보고) — input 키가 없으면 소재(T2V·R2V 기본).
+      const frames = s.includes('"input":"frames"')
+      trace.push(frames ? 'settings-driver:frames' : 'settings-driver')
+      const res = typeof o.settings === 'function' ? o.settings(s) : o.settings
+      if (kind === 'video' && (!res || res.ok !== false)) page.setInputMode(frames ? 'frames' : 'material')
+      if (typeof o.afterSettings === 'function') o.afterSettings(s, page)
+      return res ?? { ok: true, closed: true, steps: { mode: 'already', model: 'verified', ratio: 'already', count: 'already', ...(frames ? { input: 'clicked(frames)' } : {}) } }
     }
     if (s.includes('__af_settings_panel_open__')) return false
     if (s.includes('__af_set_editor_text__')) {
@@ -177,6 +182,9 @@ export function refHandlerHarness(o = {}) {
     if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
     if (s === READ_EDITOR_TEXT_JS) trace.push('read-text')
     else if (s === READ_COMPOSER_STATE_JS) trace.push('composer-state')
+    // I2V 워치독 시험: 특정 스크립트(execDelay(s) → ms)의 결과를 늦춘다 — 늦은 판독이 워치독 뒤에 돌아오는 경우
+    const delayMs = typeof o.execDelay === 'function' ? o.execDelay(s) : 0
+    if (delayMs > 0) { trace.push('exec-delayed'); await new Promise((r) => setTimeout(r, delayMs)) }
     return page.exec(s)   // 컴포저 스크립트는 가짜 페이지 문서에서 실제로
   })
   flowView = {
@@ -184,6 +192,7 @@ export function refHandlerHarness(o = {}) {
     setBounds: vi.fn((b) => { bounds = { ...b }; trace.push(`bounds:${b.width}x${b.height}`) }),
     webContents: { executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(() => { trace.push('focus') }), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null, isFocused: () => false },
   }
+  const clickCounts = {}
   const trustedClickOnFlowView = vi.fn(async (js, opts = {}) => {
     trace.push('click:' + (opts.step || '?'))
     if (opts.step === 'compose-submit') {
@@ -198,6 +207,12 @@ export function refHandlerHarness(o = {}) {
       return { success: true }
     }
     if (Array.isArray(o.deadSteps) && o.deadSteps.includes(opts.step)) return { success: false, error: 'dead' }
+    // I2V 워치독 시험: 클릭 도우미 안에서 걸리는 시간(뮤텍스 대기 등) — clickDelay(step, n번째) → ms. 그 뒤 beforeDispatch(있으면)가 false 면 누르지 않는다.
+    const nth = (clickCounts[opts.step] = (clickCounts[opts.step] || 0) + 1)
+    const wait = typeof o.clickDelay === 'function' ? o.clickDelay(opts.step, nth) : 0
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+    if (typeof opts.beforeDispatch === 'function' && !(await opts.beforeDispatch())) { trace.push('dispatch-refused:' + opts.step); return { success: false, error: 'Refused before dispatch' } }
+    trace.push('dispatched:' + opts.step)
     return page.trustedClick(js, opts)
   })
   const sessionFetch = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, headers: { get: () => 'image/png' } }))
@@ -227,11 +242,13 @@ export function refHandlerHarness(o = {}) {
   }
   if (kind === 'video') registerVideoIPC(ipcMain, deps)
   else registerFlowAPIIPC(ipcMain, deps)
+  /** I2V: flow:generate-video-i2v(Flow 모드 본문) — startImage 는 base64(main 이 sha·붙여넣기 업로드). */
+  const generateI2V = (p = {}) => ipcMain.invoke('flow:generate-video-i2v', { token: null, prompt: 'The hand pulls the scissors up', projectId: FAKE_PROJECT, model: 'Omni Flash', aspectRatio: '9:16', duration: 4, resolution: '720p', videoBatchCount: 1, seed: null, startImage: refInput('frame').base64, ...p })
   const generate = (p = {}) => (kind === 'video'
     ? ipcMain.invoke('flow:generate-video-t2v', { token: null, prompt: '@king walks', projectId: FAKE_PROJECT, model: 'Omni Flash', aspectRatio: '9:16', duration: 4, resolution: '720p', videoBatchCount: 1, seed: null, segments: null, ...p })
     : ipcMain.invoke('flow:generate-image', { prompt: '@king and a queen', aspectRatio: '9:16', model: 'Nano Banana 2', projectId: FAKE_PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p }))
   return {
-    ipcMain, generate, trace, page, submitPage, clipboard, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations,
+    ipcMain, generate, generateI2V, trace, page, submitPage, clipboard, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations,
     flowView, mainWindow, pasteIntoFlowView, createInputShield, setAutomationKeyLock, legacy, docNonce, reports,
   }
 }

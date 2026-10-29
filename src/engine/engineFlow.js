@@ -31,6 +31,7 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { FLOW_MODELS } from './flowModels'
+import { isInlineImageData } from '../utils/inlineImage'   // I2V 시작 프레임 바이트 판정(훅·MCP 와 공용)
 import { planFlowReferenceComposition } from '../utils/flowReferencePlan'
 import { resolveReferenceImages } from '../utils/referenceResolver'
 
@@ -435,51 +436,25 @@ export function useFlowEngine(opts = {}) {
     }
   }, [accessToken, projectId])
 
-  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, _resolution, callOpts = {}) => {
+  // 2026-10-30 I2V(새 Flow): 시작 프레임 **바이트**를 main 에 넘긴다 — main 이 편집기 붙여넣기로 올려 프레임 칸에 꽂고 eb1hJf 로 제출한다.
+  //   옛 경로(flowUploadReference → mediaId)는 새 Flow 에서 미지원이고, 앞 세션 애셋은 애셋 창에서 id 로 고를 수 없어 Flow mediaId·CDN URL 은 쓸 수 없다 —
+  //   이미지 바이트가 아니면 IPC 전에 flow-i2v-start-frame-missing. 끝 프레임은 받지 않는다(새 Flow 의 끝 칸 첨부는 미검증 — 렌더러가 Flow 모드에서 뺀다).
+  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution, callOpts = {}) => {
+    const refuse = (kind) => ({ success: false, errorKind: kind, error: kind })
+    if (endImage != null && endImage !== '') return refuse('flow-i2v-end-frame-unsupported')
+    if (!isInlineImageData(startImage)) return refuse('flow-i2v-start-frame-missing')
+    // 새 Flow I2V 는 레퍼런스를 붙이지 않는다 — 멘션 표지(@이름 · @{두 단어})는 떼고 이름 글자만 남긴다(편집기의 @ 는 애셋 창을 연다). 메일 주소 같은 단어 안 @ 는 그대로.
+    const plainPrompt = String(prompt || '').replace(/@\{([^}]+)\}/g, '$1').replace(/(^|[\s(\[“"'])@(?=[\p{L}\p{N}_])/gu, '$1')
     try {
-      const pid = effectiveProjectId()
-      // Fix #1: base64 data URL → flowUploadReference でアップロードして mediaId を取得.
-      // "data:" で始まるか 100文字超の純 base64 文字列ならアップロードが必要.
-      const isBase64Frame = (v) => {
-        if (typeof v !== 'string') return false
-        if (v.startsWith('data:')) return true
-        return v.length > 100 && /^[A-Za-z0-9+/]+=*$/.test(v.slice(0, 60))
-      }
-
-      // #R9-3: 프레임 업로드 결과도 markFlowAuthFailure 로 감싸 401/403 시 authFailed 를 전파
-      //   (안 그러면 'startImage upload failed' 로 둔갑해 비디오 배치가 죽은 인증으로 계속 진행).
-      // #R20-1: Flow upload 은 raw base64 를 기대한다 — data:URL prefix 를 제거하고 올린다.
-      const uploadFrame = async (base64) =>
-        markAuth(await api().flowUploadReference({
-          token: effectiveToken(),
-          base64: String(base64).replace(/^data:[^;]+;base64,/, ''),
-          projectId: pid,
-        }))
-
-      let startMediaId = startImage
-      let endMediaId = endImage
-
-      // R1#8: 업로드 실패의 errorKind(flow-feature-unsupported 등)를 떨구지 않는다 — 훅이 종결/일시를 kind 로 가른다.
-      if (isBase64Frame(startImage)) {
-        const up = await uploadFrame(startImage)
-        if (!up?.mediaId) return { success: false, error: up?.error || 'startImage upload failed', authFailed: up?.authFailed, ...(up?.errorKind ? { errorKind: up.errorKind } : {}) }
-        startMediaId = up.mediaId
-      }
-      if (endImage != null && isBase64Frame(endImage)) {
-        const up = await uploadFrame(endImage)
-        if (!up?.mediaId) return { success: false, error: up?.error || 'endImage upload failed', authFailed: up?.authFailed, ...(up?.errorKind ? { errorKind: up.errorKind } : {}) }
-        endMediaId = up.mediaId
-      }
-
       return markAuth(await api().flowGenerateVideoI2V({
         token: effectiveToken(),
-        prompt,
-        startImageMediaId: startMediaId,
-        endImageMediaId: endMediaId,
-        projectId: pid,
+        prompt: plainPrompt,
+        startImage: String(startImage).replace(/^data:[^;]+;base64,/, ''),
+        projectId: effectiveProjectId(),
         model,
         aspectRatio,
         duration,
+        resolution,
         videoBatchCount: callOpts.videoBatchCount ?? 1,
         seed,
       }))

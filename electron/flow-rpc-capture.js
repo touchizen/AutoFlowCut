@@ -25,7 +25,7 @@
  */
 import { decodeFReqInner, extractSubmitPrompts, extractSubmitRefs } from './flow-rpc-protocol.js'
 
-export const FLOW_RPC_CAPTURE_ALLOWLIST = Object.freeze(['ogiZ0b', 'YhhmEf', 'MZZa6b', 'maseQ'])
+export const FLOW_RPC_CAPTURE_ALLOWLIST = Object.freeze(['ogiZ0b', 'YhhmEf', 'MZZa6b', 'eb1hJf', 'maseQ'])   // eb1hJf: 프레임 → 영상(I2V) 제출(2026-10-30)
 
 // fetch(Request) 본문(clone) 판독 상한 — 넘으면 본문 없이 send 를 보고한다(판독이 영영 settle 하지 않아도 send·loadend 가 매달리지 않게).
 export const FETCH_BODY_READ_MAX_MS = 1000
@@ -35,7 +35,7 @@ export const FLOW_RPC_CAPTURE_INJECTION = /* js */ `
   const decodeFReqInner = ${decodeFReqInner.toString()};
   const extractSubmitPrompts = ${extractSubmitPrompts.toString()};
   const extractSubmitRefs = ${extractSubmitRefs.toString()};
-  const ALLOW = { ogiZ0b: 1, YhhmEf: 1, MZZa6b: 1, maseQ: 1 };
+  const ALLOW = { ogiZ0b: 1, YhhmEf: 1, MZZa6b: 1, eb1hJf: 1, maseQ: 1 };
 
   function report(payload) {
     try {

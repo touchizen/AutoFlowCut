@@ -46,8 +46,8 @@ export const SEND_GRACE_S = LOADEND_DEADLINE_S - SEND_DEADLINE_S
 const DEADLINE_ERROR = { send: 'flow-submit-not-sent', grace: 'flow-submit-not-sent', loadend: 'flow-submit-lost' }
 const DEADLINE_SECS = { send: SEND_DEADLINE_S, grace: SEND_GRACE_S, loadend: LOADEND_DEADLINE_S }
 // 영상 제출 rpc(과금 — 응답 파서·미바인딩 200 보고 대상). M3-3: MZZa6b(레퍼런스 영상 r2v)
-const VIDEO_RPCS = new Set(['YhhmEf', 'MZZa6b'])
-const SEND_GRACE_RPCS = new Set(['YhhmEf', 'MZZa6b'])   // M3-3: r2v 제출도 같은 send 유예
+const VIDEO_RPCS = new Set(['YhhmEf', 'MZZa6b', 'eb1hJf'])   // 2026-10-30: eb1hJf(프레임 → 영상 I2V 제출)
+const SEND_GRACE_RPCS = new Set(['YhhmEf', 'MZZa6b', 'eb1hJf'])   // M3-3: r2v 제출도 같은 send 유예 · I2V 도
 // M2-R8 M4(B2 + A4): 바인딩 없는 YhhmEf 200 보고의 조건 — 앱이 loadend 없이 닫은 YhhmEf gen 의 시각(초)을 짧은 TTL 로 기록한다. 캡처는 문서마다 주입돼
 //   사용자가 Flow 뷰에서 손으로 만든 영상의 YhhmEf 도 보고됐다(거짓 "DOM step failed" + 그 dedupe 가 진짜 보고를 가림). 이 kind 로 닫힌 gen 의 응답은 뒤늦게 올 수 있다.
 export const UNBOUND_CLOSE_TTL_S = 120
@@ -265,8 +265,25 @@ export function routeRpcLoadend(ev, pendingGenerations, opts) {
     const { success: _s, ...mapped } = rpcErrorToRendererResult(e)
     settleGen(gen, mapped)
     console.warn(`[Flow RPC] ${rpc} loadend seq=${ev.seq} failed kind=${(e && e.kind) || 'error'} code=${e && e.code != null ? e.code : '-'} status=${status}`)
+    // 2026-10-30(Codex H3 · Fable 1): 200 영상 응답의 모양이 달라 과금된 id 를 못 읽었으면 응답 속 UUID 앞 8자를 남긴다 — Flow 에서 그 영상을 찾을 단서(내용 없음).
+    if (VIDEO_RPCS.has(rpc) && status === 200 && e && e.kind === 'shape' && typeof e.rejectedMediaId !== 'string') {
+      const ids = uuidPrefixes(ev.responseText)
+      if (ids.length) console.warn(`[Flow RPC] ${rpc} loadend seq=${ev.seq} shape without media id — uuids=${ids.join(',')}`)
+    }
   }
   return { ok: true, completed: id }
+}
+
+/** 응답 본문의 UUID(중복 없이 앞에서 5개)의 앞 8자 — 실패한 파싱의 회수 단서. */
+function uuidPrefixes(text) {
+  const out = []
+  const re = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
+  for (const m of String(text || '').matchAll(re)) {
+    const p = m[0].slice(0, 8).toLowerCase()
+    if (!out.includes(p)) out.push(p)
+    if (out.length >= 5) break
+  }
+  return out
 }
 
 function warnEchoMismatch(gen, seq, echo) {

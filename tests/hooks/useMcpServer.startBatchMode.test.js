@@ -45,6 +45,14 @@ describe('MCP start-scene-batch mode → handleStart tab override', () => {
     expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { force: true, source: 'mcp', tab: 'text' })
   })
 
+  // 2026-10-30: 'i2v' = 프레임 → 영상(I2V) 탭 — 에이전트가 UI 탭과 무관하게 I2V 배치를 돌린다.
+  it("mode:'i2v' → tab:'frame-to-video' 전달", () => {
+    const handleStart = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ handleStart })))
+    cb({ type: 'start-scene-batch', styleId: 'none', mode: 'i2v' })
+    expect(handleStart).toHaveBeenCalledWith('none', { source: 'mcp', tab: 'frame-to-video' })
+  })
+
   it('mode 생략 → tab 키 없음 (현재 탭 그대로, 옛 호출자 호환)', () => {
     const handleStart = vi.fn()
     renderHook(() => useMcpServer(makeProps({ handleStart })))

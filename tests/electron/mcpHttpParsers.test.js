@@ -70,3 +70,32 @@ describe('main.js — POST /api/update 는 decideUpdateRequest 로 판정하고,
     expect(DOCS).toMatch(/update-settings[^\n]*(화이트리스트|whitelist|허용 키)/)
   })
 })
+
+// 2026-10-30 I2V: set-frame-pairs — indexes(씬 0-based index, 1~200개, 중복 없는 정수) + promptSource?('video'|'image'|'none'). 모양이 틀리면 400(렌더러에 안 간다),
+//   통과하면 정리된 본문만 forward(다른 키는 버린다).
+describe('decideUpdateRequest — set-frame-pairs (I2V 행)', () => {
+  it('indexes 만 → 200 + forward {type, indexes}; promptSource 가 있으면 함께', () => {
+    expect(decideUpdateRequest(JSON.stringify({ type: 'set-frame-pairs', indexes: [3, 0], extra: 1 }))).toEqual({ status: 200, body: { success: true }, forward: { type: 'set-frame-pairs', indexes: [3, 0] } })
+    expect(decideUpdateRequest(JSON.stringify({ type: 'set-frame-pairs', indexes: [1], promptSource: 'none' })).forward).toEqual({ type: 'set-frame-pairs', indexes: [1], promptSource: 'none' })
+  })
+  it.each([[undefined], [[]], [[-1]], [[1.5]], [['1']], [[1, 1]], [Array.from({ length: 201 }, (_, i) => i)], [{ 0: 1 }]])('indexes=%j → 400', (indexes) => {
+    expect(decideUpdateRequest(JSON.stringify({ type: 'set-frame-pairs', indexes }))).toEqual({ status: 400, body: { error: 'set-frame-pairs: indexes must be 1-200 unique non-negative integers' } })
+  })
+  it.each(['Video', 'scene', '', 3, null])('promptSource=%j → 400', (promptSource) => {
+    expect(decideUpdateRequest(JSON.stringify({ type: 'set-frame-pairs', indexes: [0], promptSource }))).toEqual({ status: 400, body: { error: "set-frame-pairs: promptSource must be 'video', 'image' or 'none'" } })
+  })
+})
+
+describe('api-docs — set-frame-pairs · batch-status.i2v (2026-10-30 I2V)', () => {
+  const D = readFileSync(fileURLToPath(new URL('../../electron/api-docs.js', import.meta.url)), 'utf8')
+  it('update 의 지원 type 목록과 UpdateRequest.type enum 에 set-frame-pairs, indexes·promptSource 가 문서화돼 있다', () => {
+    expect(D).toMatch(/- \\`set-frame-pairs\\`:/)
+    expect(D).toMatch(/enum: \[[^\]]*'set-frame-pairs'[^\]]*\]/)
+    expect(D).toMatch(/indexes: \{ type: 'array'/)
+    expect(D).toMatch(/promptSource: \{ type: 'string', enum: \['video', 'image', 'none'\]/)
+  })
+  it('BatchStatus 스키마에 i2v 카운트가 있다', () => {
+    const bs = D.slice(D.indexOf('BatchStatus: {'), D.indexOf('Reference: {', D.indexOf('BatchStatus: {')))
+    expect(bs).toMatch(/i2v: \{/)
+  })
+})

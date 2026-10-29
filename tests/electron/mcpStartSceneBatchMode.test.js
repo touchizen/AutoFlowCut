@@ -14,8 +14,10 @@ const DOCS = readFileSync(fileURLToPath(new URL('../../electron/api-docs.js', im
 const block = () => MAIN.slice(MAIN.indexOf("pathname === '/api/start-scene-batch'"), MAIN.indexOf("pathname === '/api/notify-qa'"))
 
 describe('parseStartSceneBatchBody — POST /api/start-scene-batch 본문 → mcp-update 페이로드 (M2-LIVE N7)', () => {
-  it("mode:'video' / 'image' 는 페이로드에 실린다(styleId·force 와 함께)", () => {
+  it("mode:'video' / 'image' / 'i2v' 는 페이로드에 실린다(styleId·force 와 함께)", () => {
     expect(parseStartSceneBatchBody(JSON.stringify({ styleId: 'none', mode: 'video' }))).toEqual({ ok: true, payload: { type: 'start-scene-batch', styleId: 'none', force: false, mode: 'video' } })
+    // 2026-10-30: 'i2v' = 프레임 → 영상 탭(선택된 I2V 행만)
+    expect(parseStartSceneBatchBody(JSON.stringify({ styleId: 'none', mode: 'i2v' }))).toEqual({ ok: true, payload: { type: 'start-scene-batch', styleId: 'none', force: false, mode: 'i2v' } })
     expect(parseStartSceneBatchBody(JSON.stringify({ styleId: 'preset:x', force: true, mode: 'image' }))).toEqual({ ok: true, payload: { type: 'start-scene-batch', styleId: 'preset:x', force: true, mode: 'image' } })
   })
   it('mode 생략·null → 페이로드에 mode 키 없음(현재 UI 탭 — 옛 호출자 호환); 본문 없음(빈 문자열·공백)은 옛 기본값 그대로', () => {
@@ -47,9 +49,9 @@ describe('parseStartSceneBatchBody — POST /api/start-scene-batch 본문 → mc
   it.each(['x'.repeat(129), 5, true, ['preset:x'], { id: 'x' }])('styleId=%j (문자열 아님 또는 129자 이상) → ok:false "styleId must be a string of at most 128 characters" (M2-CLOSE O4)', (styleId) => {
     expect(parseStartSceneBatchBody(JSON.stringify({ styleId }))).toEqual({ ok: false, error: 'styleId must be a string of at most 128 characters' })
   })
-  it.each(['Video', 'v2v', 't2v', 'constructor', '__proto__', 'toString', '', 3, true])('mode=%s (모르는 값) → ok:false + 400 문구, 페이로드 없음', (mode) => {
+  it.each(['Video', 'v2v', 't2v', 'f2v', 'I2V', 'constructor', '__proto__', 'toString', '', 3, true])('mode=%s (모르는 값) → ok:false + 400 문구, 페이로드 없음', (mode) => {
     const r = parseStartSceneBatchBody(JSON.stringify({ styleId: 'none', mode }))
-    expect(r).toEqual({ ok: false, error: "mode must be 'video' or 'image'" })
+    expect(r).toEqual({ ok: false, error: "mode must be 'video', 'image' or 'i2v'" })
   })
 })
 
@@ -62,10 +64,15 @@ describe('main.js — POST /api/start-scene-batch 는 parseStartSceneBatchBody �
     expect(b).not.toMatch(/JSON\.parse\(body\)/)
     expect(MAIN).toMatch(/import \{[^}]*parseStartSceneBatchBody[^}]*\} from '\.\/mcp-http-parsers\.js'/)
   })
-  it('api-docs 의 start-scene-batch 스키마에 mode(enum video|image) 가 있고, styleId 는 maxLength 128, force 는 boolean 이다', () => {
+  it('api-docs 의 start-scene-batch 스키마에 mode(enum video|image|i2v) 가 있고, styleId 는 maxLength 128, force 는 boolean 이다', () => {
     const d = DOCS.slice(DOCS.indexOf("'/api/start-scene-batch'"), DOCS.indexOf("'/api/start-ref-batch'"))
-    expect(d).toMatch(/mode:\s*\{\s*type:\s*'string',\s*enum:\s*\['video',\s*'image'\]/)
+    expect(d).toMatch(/mode:\s*\{\s*type:\s*'string',\s*enum:\s*\['video',\s*'image',\s*'i2v'\]/)
     expect(d).toMatch(/styleId:\s*\{\s*type:\s*'string',\s*maxLength:\s*128/)   // M2-CLOSE O4
     expect(d).toMatch(/force:\s*\{\s*type:\s*'boolean'/)
+  })
+  // Fable 최종 리뷰 1: i2v 는 force 와 무관하게 선택된 I2V 행을 완료여도 다시 만든다 — "false면 pending/error만" 만 쓰면 재실행이 완료 행까지 다시 과금한다.
+  it("api-docs force 설명은 i2v 에선 force 를 안 보고 선택된 행을 다시 만든다고 말한다", () => {
+    const d = DOCS.slice(DOCS.indexOf("'/api/start-scene-batch'"), DOCS.indexOf("'/api/start-ref-batch'"))
+    expect(d).toMatch(/force:\s*\{\s*type:\s*'boolean',\s*description:\s*'[^']*i2v[^']*완료[^']*set-frame-pairs/)
   })
 })

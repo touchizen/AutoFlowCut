@@ -153,7 +153,30 @@ export function findChipByMediaId(doc, mediaId) {
   return hits.length === 1 ? hits[0] : null
 }
 
+/**
+ * 2026-10-30 I2V — 프레임 모드 컴포저의 칸(크롬 실기 DOM): flow-ingredient-bar 안 `.frame-trigger` 둘(시작 · 끝, DOM 순서). 빈 칸은 button.empty-chip,
+ *   채운 칸은 button.chip-container[aria-busy] + img(src https://flow-content.google/image/<mediaId>?…). 소재 모드면 `.frame-trigger` 가 없다.
+ *   → { framesMode, slots:[{mediaId, busy, empty}] } — 로케일 문구("시작"/"종료")는 보지 않는다.
+ */
+export function readFrameSlots(doc) {
+  var ID_SRC = /^https:\/\/flow-content\.google\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\?|$)/i
+  var triggers = Array.from(doc.querySelectorAll('flow-ingredient-bar .frame-trigger'))
+  var slots = triggers.map(function (t) {
+    var chip = t.querySelector('button.chip-container')
+    if (!chip) return { mediaId: null, busy: false, empty: true }
+    var mediaId = null
+    var imgs = chip.querySelectorAll('img')
+    for (var i = 0; i < imgs.length && !mediaId; i++) {
+      var m = ID_SRC.exec(imgs[i].getAttribute('src') || '')
+      if (m) mediaId = m[1]
+    }
+    return { mediaId: mediaId, busy: chip.getAttribute('aria-busy') === 'true', empty: false }
+  })
+  return { framesMode: triggers.length > 0, slots: slots }
+}
+
 // ─── 페이지 주입 표현식(단일 표현식, 자기완결) ──────────────────────────────
+export const READ_FRAME_SLOTS_JS = `(${readFrameSlots.toString()})(document)`
 export const READ_COMPOSER_STATE_JS = `(${readComposerState.toString()})(document)`
 export const LIST_ID_ASSET_MEDIA_IDS_JS = `(${listIdAssetMediaIds.toString()})(document)`
 export const READ_PICKER_PREVIEW_MEDIA_ID_JS = `(${readPickerPreviewMediaId.toString()})(document)`

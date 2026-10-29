@@ -82,3 +82,34 @@ export async function handleUpdateSceneTool(args = {}, fetcher) {
   })
   return updateSceneToolResponse(res, args)
 }
+
+/**
+ * 2026-10-30 I2V — app_set_frame_pairs: 씬 index(0부터)를 시작 프레임으로 하는 I2V 행을 세우고 나머지 행은 선택을 푼다(POST /api/update set-frame-pairs).
+ *   실패(409 busy · 422 no-image/bad-index · 400 모양)는 isError 로.
+ */
+export async function handleSetFramePairsTool(args = {}, fetcher) {
+  const port = args.port || 3210
+  const body = { type: 'set-frame-pairs', indexes: args.indexes }
+  if (args.promptSource !== undefined) body.promptSource = args.promptSource
+  const res = await fetcher(port, 'POST', '/api/update', body)
+  if (isFailedAppResponse(res)) {
+    const at = (Array.isArray(res?.data?.indexes) ? ` indexes=${JSON.stringify(res.data.indexes)}` : '')
+      + (Array.isArray(res?.data?.pairIds) ? ` pairIds=${JSON.stringify(res.data.pairIds)}` : '')   // 주인 씬 없는 갤러리 행(Codex 5차 P3)
+    return { content: [{ type: 'text', text: `I2V 행 지정 실패 (${res?.status ?? 'unknown'}): ${getAppResponseError(res)}${at}` }], isError: true }
+  }
+  return { content: [{ type: 'text', text: `I2V 행 지정 완료: ${JSON.stringify(res.data?.rows ?? [])} — 이제 app_start_scene_batch {mode:'i2v'}` }] }
+}
+
+/** app_start_scene_batch — styleId?·force?·mode?(image|video|i2v). 아무것도 없으면 본문 null(옛 호출 호환). 400(모르는 mode 등)은 isError. */
+export async function handleStartSceneBatchTool(args = {}, fetcher) {
+  const port = args.port || 3210
+  const body = {}
+  if (args.styleId !== undefined) body.styleId = args.styleId
+  if (args.force !== undefined) body.force = !!args.force
+  if (args.mode !== undefined) body.mode = args.mode
+  const res = await fetcher(port, 'POST', '/api/start-scene-batch', Object.keys(body).length ? body : null)
+  if (isFailedAppResponse(res)) {
+    return { content: [{ type: 'text', text: `씬 일괄 생성 시작 실패 (${res?.status ?? 'unknown'}): ${getAppResponseError(res)}` }], isError: true }
+  }
+  return { content: [{ type: 'text', text: `씬 일괄 생성 시작: ${JSON.stringify(res.data)}` }] }
+}
