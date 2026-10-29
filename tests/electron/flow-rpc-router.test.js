@@ -624,3 +624,58 @@ describe('M3-3 — altRpcs/boundRpc · sentRefs/sentMentions · maseQ · MZZa6b 
     expect(report).not.toHaveBeenCalled()
   })
 })
+
+// 2026-10-30 I2V — 프레임 → 영상 제출 rpc eb1hJf(크롬 실기 네트워크로 확인). 영상 gen 과 같은 규칙: 바인딩 → loadend 는 영상 제출 파서(YhhmEf 모양 가정) →
+//   mediaId·modelKey·credits, send 유예(15s → 100s), 미바인딩 200 보고 대상. 핸들러는 rpc:'eb1hJf', altRpcs:['YhhmEf','MZZa6b'] 로 arm 한다
+//   (프레임 칩이 빠지면 페이지가 T2V/R2V 로 보낸다 — boundRpc ≠ rpc 는 핸들러가 거부).
+describe('I2V eb1hJf 라우팅', () => {
+  const U = maskedUuid
+  const I2V_PROMPT = 'The hand pulls the scissors up'
+  const i2vPayload = () => { const p = samplePayload('YhhmEf'); p[3][0][7][0][12] = 'abra_i2v_4s'; return p }
+
+  it('{rpc:"eb1hJf"} + eb1hJf send → 바인딩 → loadend(영상 레코드) → mediaId·modelKey·creditsLeft 로 settle', () => {
+    const g = gen({ rpc: 'eb1hJf', altRpcs: ['YhhmEf', 'MZZa6b'], normPrompt: I2V_PROMPT, wantRatio: undefined })
+    const map = new Map([['v', g]])
+    expect(routeRpcSend(sendEv({ rpcid: 'eb1hJf', rpcids: ['eb1hJf'], prompts: [I2V_PROMPT] }), map)).toEqual({ ok: true, bound: 'v' })
+    expect(g).toMatchObject({ boundRpc: 'eb1hJf', doc: DOC_A, seq: 1 })
+    expect(routeRpcLoadend(endEv({ rpcid: 'eb1hJf', responseText: respBodyWithPayload('eb1hJf', i2vPayload()) }), map)).toEqual({ ok: true, completed: 'v' })
+    expect(g).toMatchObject({ completed: true, error: null, mediaId: U(11), modelKey: 'abra_i2v_4s' })
+    expect(g).not.toHaveProperty('refEcho')
+    expect(logged()).toMatch(/\[Flow RPC\] eb1hJf loadend seq=1 status=200/)
+  })
+
+  it('eb1hJf 응답 shape 실패 → rpc-shape:eb1hJf@… + rejectedMediaId(과금된 id)', () => {
+    const g = gen({ rpc: 'eb1hJf', doc: DOC_A, seq: 1, boundRpc: 'eb1hJf', normPrompt: I2V_PROMPT, wantRatio: undefined })
+    const p = i2vPayload(); delete p[3][0][7][0][12]
+    routeRpcLoadend(endEv({ rpcid: 'eb1hJf', responseText: respBodyWithPayload('eb1hJf', p) }), new Map([['v', g]]))
+    expect(g).toMatchObject({ completed: true, error: 'rpc-shape:eb1hJf@[3][0][7][0][12]', rejectedMediaId: U(11) })
+  })
+
+  // Codex H3 · Fable 1: eb1hJf 응답 모양은 실측 전 — 모양이 달라 id 를 못 읽으면 과금된 영상이 id 없이 닫힌다. 찾을 수 있게 응답의 UUID 앞 8자를 로그에 남긴다(내용 없음).
+  it('영상 응답 shape 실패에 rejectedMediaId 가 없으면 응답 속 UUID 앞 8자(최대 5개)를 warn 한다', () => {
+    const g = gen({ rpc: 'eb1hJf', doc: DOC_A, seq: 1, boundRpc: 'eb1hJf', normPrompt: I2V_PROMPT, wantRatio: undefined })
+    const MID = '12345678-0000-4000-8000-000000000000'
+    routeRpcLoadend(endEv({ rpcid: 'eb1hJf', responseText: respBodyWithPayload('eb1hJf', [null, 978, [[MID, null, 'x']]]) }), new Map([['v', g]]))
+    expect(g).toMatchObject({ completed: true, error: 'rpc-shape:eb1hJf@[3]' })
+    expect(g.rejectedMediaId).toBeUndefined()
+    expect(logged()).toMatch(/\[Flow RPC\] eb1hJf loadend seq=1 shape without media id — uuids=12345678$/m)
+  })
+
+  it('eb1hJf send 마감 15s 는 유예(영상과 같다) — 16s 의 send 도 바인딩', () => {
+    const hook = vi.fn()
+    const g = gen({ rpc: 'eb1hJf', altRpcs: ['YhhmEf', 'MZZa6b'], normPrompt: I2V_PROMPT, wantRatio: undefined, onSendDeadline: hook })
+    const map = new Map([['v', g]])
+    armDeadline(g, 'send')
+    vi.advanceTimersByTime(SEND_DEADLINE_S * 1000)
+    expect(g).toMatchObject({ completed: false, sendDeadlinePassed: true })
+    expect(hook).toHaveBeenCalledTimes(1)
+    expect(routeRpcSend(sendEv({ rpcid: 'eb1hJf', rpcids: ['eb1hJf'], prompts: [I2V_PROMPT], sentAt: NOW_S + 16 }), map)).toEqual({ ok: true, bound: 'v' })
+  })
+
+  it('최근 닫힌 eb1hJf gen 뒤 미바인딩 eb1hJf 200 → unbound loadend media 보고(과금된 I2V 를 찾을 수 있게)', () => {
+    markDeadline(gen({ rpc: 'eb1hJf', altRpcs: ['YhhmEf', 'MZZa6b'] }), 'grace')
+    const report = vi.fn()
+    routeRpcLoadend(endEv({ rpcid: 'eb1hJf', seq: 9, responseText: respBodyWithPayload('eb1hJf', i2vPayload()) }), new Map(), { reportDomFailure: report })
+    expect(report).toHaveBeenCalledWith('submit:unbound-loadend', 'unbound-loadend', { rpc: 'eb1hJf', seq: 9, media: String(U(11)).slice(0, 8) })
+  })
+})

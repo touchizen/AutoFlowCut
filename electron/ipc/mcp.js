@@ -16,22 +16,41 @@ const isSceneImageWrite = (data) => data?.type === 'update-scene' && !!data.fiel
   Object.prototype.hasOwnProperty.call(data.fields, 'imagePath')
 )
 
+// 2026-10-30 I2V: set-frame-pairs 의 렌더러 거부 → HTTP 상태(나머지 실패는 503).
+const FRAME_PAIR_REFUSAL_STATUS = { busy: 409, 'no-image': 422, 'bad-index': 422, 'needs-recovery': 422 }
+
+/** 렌더러 핸들러를 executeJavaScript 로 불러 결과를 기다린다 — JSON 을 JS 식에 넣을 때 U+2028/U+2029 도 escape 해 사용자 필드가 script 를 깨지 않게 한다. */
+async function callRendererHandler(webContents, handler, data) {
+  const payload = JSON.stringify(data)
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+  const script = `JSON.stringify(window.${handler}?.(${payload}) ?? { success: false, error: 'handler-unavailable' })`
+  const raw = await webContents.executeJavaScript(script)
+  return typeof raw === 'string' ? JSON.parse(raw) : raw
+}
+
 export async function dispatchMcpUpdate(webContents, data) {
+  if (data?.type === 'set-frame-pairs') {
+    try {
+      const result = await callRendererHandler(webContents, '__mcpSetFramePairs', data)
+      if (result?.success) return { status: 200, body: { success: true, rows: Array.isArray(result.rows) ? result.rows : [] } }
+      const error = result?.error || 'handler-unavailable'
+      return {
+        status: FRAME_PAIR_REFUSAL_STATUS[error] || 503,
+        body: { success: false, error, ...(Array.isArray(result?.indexes) ? { indexes: result.indexes } : {}), ...(Array.isArray(result?.pairIds) ? { pairIds: result.pairIds } : {}) },
+      }
+    } catch (error) {
+      return { status: 503, body: { success: false, error: error?.message || 'renderer-unavailable' } }
+    }
+  }
   // 비이미지 수정은 기존 fire-and-forget IPC 경로를 보존한다.
   if (!isSceneImageWrite(data)) {
     webContents.send('mcp-update', data)
     return { status: 200, body: { success: true } }
   }
 
-  // JSON을 JS 식에 넣을 때 U+2028/U+2029도 escape해 사용자 필드가 script를 깨지 않게 한다.
-  const payload = JSON.stringify(data)
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029')
-  const script = `JSON.stringify(window.__mcpUpdateScene?.(${payload}) ?? { success: false, error: 'handler-unavailable' })`
-
   try {
-    const raw = await webContents.executeJavaScript(script)
-    const result = typeof raw === 'string' ? JSON.parse(raw) : raw
+    const result = await callRendererHandler(webContents, '__mcpUpdateScene', data)
     if (result?.success) return { status: 200, body: result }
     return {
       status: result?.error === 'busy' ? 409 : 503,

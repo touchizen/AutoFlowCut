@@ -712,102 +712,66 @@ describe('useFlowEngine — Flow auth side-effects (#R11-2/3)', () => {
   })
 })
 
-describe('useFlowEngine — generateVideoI2V: base64 upload (Fix #1)', () => {
-  it('uploads base64 data URL frames before calling flowGenerateVideoI2V', async () => {
-    mockFlowUploadReference.mockResolvedValueOnce({ success: true, mediaId: 'media-start' })
-    mockFlowUploadReference.mockResolvedValueOnce({ success: true, mediaId: 'media-end' })
-    mockFlowGenerateVideoI2V.mockResolvedValue({ success: true, generationId: 'vid-1' })
-
+// 2026-10-30 I2V: 새 Flow(flow.google.com) 는 시작 프레임을 **바이트**로 main 에 넘긴다 — main 이 편집기 붙여넣기로 올리고 프레임 칸에 꽂는다(eb1hJf).
+//   옛 경로(flowUploadReference → mediaId)는 새 Flow 에서 flow-feature-unsupported 라 쓰지 않는다. 끝 프레임은 받지 않고(새 Flow 미검증) 이미지 바이트가 아닌
+//   시작 프레임(Flow mediaId·CDN URL — 앞 세션 애셋은 id 로 고를 수 없다)은 IPC 전에 거부한다.
+describe('useFlowEngine — generateVideoI2V(새 Flow: 시작 프레임 바이트)', () => {
+  it('data URL 접두를 떼고 startImage(base64)·resolution 을 그대로 flowGenerateVideoI2V 에 — flowUploadReference 없음', async () => {
+    mockFlowGenerateVideoI2V.mockResolvedValue({ success: true, generationId: 'vid-1', creditsLeft: 900 })
     const { result } = renderHook(() => useFlowEngine())
     let res
     await act(async () => {
-      res = await result.current.generateVideoI2V(
-        'a video prompt',
-        'data:image/png;base64,abc123',
-        'data:image/png;base64,def456',
-        'veo-model', '9:16', 5, 0, null, {}
-      )
+      res = await result.current.generateVideoI2V('a video prompt', 'data:image/jpeg;base64,QUJD', null, 'Omni Flash', '9:16', 4, null, '720p', {})
     })
-
-    // flowUploadReference called twice (start + end frames)
-    expect(mockFlowUploadReference).toHaveBeenCalledTimes(2)
-    expect(mockFlowGenerateVideoI2V).toHaveBeenCalledTimes(1)
-    const call = mockFlowGenerateVideoI2V.mock.calls[0][0]
-    expect(call.startImageMediaId).toBe('media-start')
-    expect(call.endImageMediaId).toBe('media-end')
-    expect(res.success).toBe(true)
-    expect(res.generationId).toBe('vid-1')
-  })
-
-  it('R1#8: frame upload failure keeps its errorKind (flow-feature-unsupported) on the result', async () => {
-    mockFlowUploadReference.mockResolvedValueOnce({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:upload-reference' })
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateVideoI2V('a video prompt', 'data:image/png;base64,abc123', null, 'veo-model', '9:16', 5, 0, null, {})
-    })
-    expect(res).toMatchObject({ success: false, errorKind: 'flow-feature-unsupported', error: 'flow-feature-unsupported:upload-reference' })
-    expect(mockFlowGenerateVideoI2V).not.toHaveBeenCalled()
-  })
-
-  it('#R9-3: propagates authFailed when a frame upload returns an auth error', async () => {
-    mockFlowUploadReference.mockResolvedValueOnce({ success: false, error: '401 Unauthorized' })
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateVideoI2V(
-        'a video prompt', 'data:image/png;base64,abc123', null,
-        'veo-model', '9:16', 5, 0, null, {}
-      )
-    })
-    expect(res.success).toBe(false)
-    expect(res.authFailed).toBe(true)
-    expect(mockFlowGenerateVideoI2V).not.toHaveBeenCalled()
-  })
-
-  it('passes media IDs through unchanged (no upload) when frames are already IDs', async () => {
-    mockFlowGenerateVideoI2V.mockResolvedValue({ success: true, generationId: 'vid-2' })
-
-    const { result } = renderHook(() => useFlowEngine())
-    let res
-    await act(async () => {
-      res = await result.current.generateVideoI2V(
-        'a video prompt',
-        'media-id-start',   // short non-base64 string → media ID
-        'media-id-end',
-        'veo-model', '9:16', 5, 0, null, {}
-      )
-    })
-
-    // flowUploadReference should NOT be called — IDs passed through
     expect(mockFlowUploadReference).not.toHaveBeenCalled()
     expect(mockFlowGenerateVideoI2V).toHaveBeenCalledTimes(1)
     const call = mockFlowGenerateVideoI2V.mock.calls[0][0]
-    expect(call.startImageMediaId).toBe('media-id-start')
-    expect(call.endImageMediaId).toBe('media-id-end')
-    expect(res.success).toBe(true)
+    expect(call).toMatchObject({ prompt: 'a video prompt', startImage: 'QUJD', model: 'Omni Flash', aspectRatio: '9:16', duration: 4, resolution: '720p' })
+    expect(call).not.toHaveProperty('startImageMediaId')
+    expect(call).not.toHaveProperty('endImage')
+    expect(res).toMatchObject({ success: true, generationId: 'vid-1' })
   })
 
-  it('uploads only startImage when endImage is null (single-frame I2V)', async () => {
-    mockFlowUploadReference.mockResolvedValueOnce({ success: true, mediaId: 'media-start-only' })
-    mockFlowGenerateVideoI2V.mockResolvedValue({ success: true, generationId: 'vid-3' })
-
+  it('접두 없는 긴 base64 도 그대로 넘긴다', async () => {
+    mockFlowGenerateVideoI2V.mockResolvedValue({ success: true, generationId: 'vid-2' })
+    const raw = 'A'.repeat(120)
     const { result } = renderHook(() => useFlowEngine())
+    await act(async () => { await result.current.generateVideoI2V('p', raw, null, 'Omni Flash', '9:16', 4, null, '720p', {}) })
+    expect(mockFlowGenerateVideoI2V.mock.calls[0][0].startImage).toBe(raw)
+  })
+
+  it('끝 프레임이 있으면 IPC 전에 flow-i2v-end-frame-unsupported', async () => {
+    const { result } = renderHook(() => useFlowEngine())
+    let res
     await act(async () => {
-      await result.current.generateVideoI2V(
-        'single frame prompt',
-        'data:image/jpeg;base64,xxxx',
-        null,
-        'veo-model', '16:9', 5, 0, null, {}
-      )
+      res = await result.current.generateVideoI2V('p', 'data:image/png;base64,abc123', 'data:image/png;base64,def456', 'Omni Flash', '9:16', 4, null, '720p', {})
+    })
+    expect(res).toEqual({ success: false, errorKind: 'flow-i2v-end-frame-unsupported', error: 'flow-i2v-end-frame-unsupported' })
+    expect(mockFlowGenerateVideoI2V).not.toHaveBeenCalled()
+  })
+
+  it.each([['Flow mediaId', 'media-id-start'], ['CDN URL', 'https://flow-content.google/image/x?sig=1'], ['없음', null]])(
+    '시작 프레임이 이미지 바이트가 아니면(%s) IPC 전에 flow-i2v-start-frame-missing', async (_label, start) => {
+      const { result } = renderHook(() => useFlowEngine())
+      let res
+      await act(async () => { res = await result.current.generateVideoI2V('p', start, null, 'Omni Flash', '9:16', 4, null, '720p', {}) })
+      expect(res).toEqual({ success: false, errorKind: 'flow-i2v-start-frame-missing', error: 'flow-i2v-start-frame-missing' })
+      expect(mockFlowGenerateVideoI2V).not.toHaveBeenCalled()
     })
 
-    // Only one upload (startImage); endImage=null is skipped
-    expect(mockFlowUploadReference).toHaveBeenCalledTimes(1)
-    expect(mockFlowGenerateVideoI2V).toHaveBeenCalledTimes(1)
-    const call = mockFlowGenerateVideoI2V.mock.calls[0][0]
-    expect(call.startImageMediaId).toBe('media-start-only')
-    expect(call.endImageMediaId).toBeNull()
+  it('프롬프트의 @멘션 표지는 떼고 이름은 남긴다(새 Flow I2V 는 레퍼런스를 붙이지 않는다 — 편집기의 @ 는 애셋 창을 연다)', async () => {
+    mockFlowGenerateVideoI2V.mockResolvedValue({ success: true, generationId: 'vid-3' })
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => { await result.current.generateVideoI2V('Bring @s04 to life with @{Mina Park}, mail@example.com', 'data:image/png;base64,abc123', null, 'Omni Flash', '9:16', 4, null, '720p', {}) })
+    expect(mockFlowGenerateVideoI2V.mock.calls[0][0].prompt).toBe('Bring s04 to life with Mina Park, mail@example.com')
+  })
+
+  it('#R9-3: IPC 의 auth 오류는 authFailed 로 전파된다', async () => {
+    mockFlowGenerateVideoI2V.mockResolvedValue({ success: false, error: '401 Unauthorized' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.generateVideoI2V('p', 'data:image/png;base64,abc123', null, 'Omni Flash', '9:16', 4, null, '720p', {}) })
+    expect(res).toMatchObject({ success: false, authFailed: true })
   })
 })
 

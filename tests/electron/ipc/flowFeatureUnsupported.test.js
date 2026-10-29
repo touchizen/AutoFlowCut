@@ -32,7 +32,7 @@ const CASES = {
   ]],
   video: [registerVideoIPC, [
     ['flow:upscale-video', 'upscale-video', { token: null, mediaId: 'm', projectId: 'p' }],
-    ['flow:generate-video-i2v', 'generate-video-i2v', { token: null, prompt: 'p', startImageMediaId: 'm', projectId: 'p' }],
+    // 2026-10-30: flow:generate-video-i2v 는 새 Flow 본문이 생겼다(프레임 → 영상) — tests/electron/ipc/flowVideoI2VAngular.test.js.
   ]],
   character: [registerCharacterIPC, [
     ['flow:generate-character', 'generate-character', { prompt: 'p', displayName: 'd', projectId: 'p' }],

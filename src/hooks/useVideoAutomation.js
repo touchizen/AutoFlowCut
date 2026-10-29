@@ -30,6 +30,7 @@ import { batchStartGate } from './batchStartGate'
 import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } from '../utils/authMessages'
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 import { resolveSceneVideoProvider } from '../utils/sceneProviderResolution'
+import { isInlineImageData } from '../utils/inlineImage'   // I2V 시작 프레임 바이트 판정(엔진·MCP 와 공용)
 import { isFlowMediaId as isFlowShapedId, isLegacyFlowGenerationFailure } from '../utils/flowMediaId'   // M2-R5 J2: App·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
@@ -85,9 +86,9 @@ const REPEATABLE_PRECLICK_KINDS = new Set(['flow-resolution-not-offered', 'flow-
   'flow-references-model-unsupported', 'flow-reference-clipboard-busy', 'flow-reference-attach-failed'])
 // M2-R2 G4(B2): flow-settings-not-applied 는 params 가 {} 라 서명이 항목마다 같다 — main 이 실어 주는 드라이버 reason 중 **배치 전체** 이유만 종결 후보다.
 //   항목별 이유(duration-not-offered:<d> — 씬마다 길이가 다르다 · not-checked:* · needs-trusted:* · settings-trigger-* · panel-not-closed)와 모르는 이유는 절대 종결하지 않는다.
-const BATCH_WIDE_SETTINGS_REASON = /^(model-not-offered|ratio-not-offered:|input-mode-not-material|model-submenu-unknown|model-menu-not-open|resolution-missing)/
+const BATCH_WIDE_SETTINGS_REASON = /^(model-not-offered|ratio-not-offered:|input-mode-not-material|input-mode-not-offered:|model-submenu-unknown|model-menu-not-open|resolution-missing)/
 // M3(D14): flow-reference-attach-failed 도 같은 규칙 — 붙여넣기·@ 트리거·애셋 창 열기/닫기·프로젝트 id 는 배치 전체, 나머지(칩·업로드·게이트 불일치 등)와 모르는 사유는 항목 사유.
-const BATCH_WIDE_ATTACH_REASON = /^(paste-not-observed|mention-trigger-not-working|picker-not-open|picker-not-closed|no-project-id)$/
+const BATCH_WIDE_ATTACH_REASON = /^(paste-not-observed|mention-trigger-not-working|picker-not-open|picker-not-closed|no-project-id|start-frame-mismatch:not-frames-mode)$/   // I2V: 프레임 칸이 안 보이면 화면이 바뀐 것 — 모든 항목이 같다
 const isBatchWideRefusal = (r) => {
   if (r?.errorKind === 'flow-settings-not-applied') return BATCH_WIDE_SETTINGS_REASON.test(String(r?.reason || ''))
   if (r?.errorKind === 'flow-reference-attach-failed') return BATCH_WIDE_ATTACH_REASON.test(String(r?.reason || ''))
@@ -168,25 +169,24 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         // 시작 프레임 base64 (필수). 끝 프레임은 있으면 lastFrame 보간.
         // 메모리(_startImage) 우선, 없으면 디스크(gallery→frames/, 씬→scenes/) 폴백 — 재오픈 후에도 동작.
         //
-        // #R22-1/#R23-6: Flow 모드는 실제 Flow mediaId(item.startMediaId/endMediaId)를 우선한다.
-        //   아카이브/서버 갤러리에서 복원한 프레임은 이미지 필드에 CDN URL 이 들어있어(base64 아님)
-        //   Flow I2V 가 그 URL 을 base64 로 인식하지 못하고 잘못된 mediaId 로 제출한다. 실제 Flow
-        //   mediaId 가 있으면 그것을 직접 넘겨 정상 제출한다.
-        //   단 디스크 업로드(handleUploadGalleryImage)는 mediaId 가 'local-…' 로컬 id 라 Flow
-        //   mediaId 가 아니다 — 이 경우는 dataUrl 업로드 경로가 필요하므로 제외한다. (씬은 mediaId
-        //   가 null 이면 자동으로 base64 폴백.) API(cloud Veo) 모드는 inline base64 가 필수라 우회 안 함.
+        // #R22-1/#R23-6(옛 Flow): 아카이브/서버 갤러리에서 복원한 프레임은 이미지 필드에 CDN URL 이 들어있어(base64 아님) URL 을 그대로 넘기면
+        //   잘못 제출된다 — 그런 프레임은 실제 Flow mediaId(item.startMediaId/endMediaId)로 넘긴다. 디스크 업로드('local-…' id)는 Flow mediaId 가 아니라
+        //   제외. API(cloud Veo) 모드는 inline base64 가 필수라 언제나 바이트.
+        //   2026-10-30(새 Flow): main 이 시작 프레임을 **바이트**로 받아 붙여넣기로 올린다(앞 세션 애셋은 id 로 고를 수 없다) — Flow 모드도 이미지 바이트
+        //   (메모리 → 디스크)가 먼저이고, 바이트가 없을 때만 mediaId(엔진이 바이트 아님으로 거부해 이유가 남는다).
         const isFlowMediaId = (id) => typeof id === 'string' && id.length > 0 && !id.startsWith('local-')
-        const preferStartId = appMode === 'flow' && isFlowMediaId(item.startMediaId)
-        const preferEndId = appMode === 'flow' && isFlowMediaId(item.endMediaId)
-        const startB64 = preferStartId
-          ? item.startMediaId
-          : await resolveFrameImageBase64(item.startSceneId, item.startImage, projectName)
+        const frameFor = async (sceneId, inline, mediaId, imagePath) => {
+          let bytes = await resolveFrameImageBase64(sceneId, inline, projectName, { imagePath })
+          if (appMode !== 'flow') return bytes
+          if (!isInlineImageData(bytes) && inline) bytes = await resolveFrameImageBase64(sceneId, null, projectName, { imagePath })   // 메모리가 CDN URL 이면 디스크 사본
+          if (isInlineImageData(bytes)) return bytes
+          return isFlowMediaId(mediaId) ? mediaId : bytes
+        }
+        const startB64 = await frameFor(item.startSceneId, item.startImage, item.startMediaId, item.startImagePath)
         if (!startB64) {
           return { success: false, error: 'No start image — generate the start scene first' }
         }
-        const endB64 = preferEndId
-          ? item.endMediaId
-          : await resolveFrameImageBase64(item.endSceneId, item.endImage, projectName)
+        const endB64 = await frameFor(item.endSceneId, item.endImage, item.endMediaId, item.endImagePath)
         const dur = effectiveVideoDuration(item, mode, duration, videoResolution, videoModel, appMode, videoProvider)
         return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, dur, seed, videoResolution, callOpts)
       }
@@ -504,6 +504,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               endSceneId: p.endSceneId,
               startImage: p._startImage || null,
               endImage: p._endImage || null,
+              startImagePath: p._startImagePath || null,   // 2026-10-30(Codex 2차 H1): 씬의 정확한 이미지 파일
+              endImagePath: p._endImagePath || null,
               videoSaveId: `i2v_${p.id.replace('fp_', '')}`,
               status: p.status,
               generationId: p.generationId,

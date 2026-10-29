@@ -56,6 +56,7 @@ export function installFakeAngular(doc, opts = {}) {
     const ligs = Array.from(btn.querySelectorAll('mat-icon')).map((i) => i.textContent.trim())
     if (ligs.some((l) => l === 'image' || l === 'videocam')) return 'mode'
     if (ligs.some((l) => /^crop_(16_9|9_16|landscape|square|portrait)$/.test(l))) return 'ratio'
+    if (ligs.some((l) => l === 'crop_free' || l === 'chrome_extension')) return 'inputMode'
     if (/^x\d$/.test(t)) return 'count'
     if (/\d+p/.test(t)) return 'resolution'
     // M2-2: 길이 라벨은 로케일마다 다르다('4초'·'4s') — 드라이버와 같은 "앞자리 정수" 규칙으로 분류한다.

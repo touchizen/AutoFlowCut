@@ -507,9 +507,10 @@ export function registerVideoIPC(ipcMain, deps) {
   // T2V와 동일한 DOM 흐름: 프롬프트 주입 → Generate 클릭 → CDP 응답 캡처
   // 차이점: CDP Fetch로 나가는 T2V 요청을 가로채서 startImage 주입 + URL을 I2V 엔드포인트로 변경
   ipcMain.handle('flow:generate-video-i2v', async (event, {
-    token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, videoBatchCount, seed
+    token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, videoBatchCount, seed, resolution, startImage, endImage,
   }) => {
-    if (flowActive()) return unsupportedOnAngular('generate-video-i2v')  // M1-12: 새 Flow 미지원(옛 코드는 도달 불가)
+    // 2026-10-30: 새 Flow 의 프레임 → 영상(시작 프레임 바이트 — 붙여넣기 업로드·eb1hJf). 아래 옛 본문(mediaId·monkey-patch)은 도달 불가.
+    if (flowActive()) return angular.generateVideoI2V({ prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, seed, startImage, endImage: endImage ?? endImageMediaId ?? null })
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     const mainWindow = getMainWindow()

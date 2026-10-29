@@ -321,13 +321,15 @@ function hasPortraitSibling(spec, duration) {
  *   M3-1(D11): want.kind('t2v' 기본 | 'r2v') — 키의 둘째 토큰이 kind 와 같아야 한다(t2v 진리표 무변경). r2v 표(CAT): `abra_r2v_{4,6,8,10}s[_360p]`
  *   ↔ Omni Flash(길이·해상도 규칙은 t2v 와 같다) · `veo_3_1_r2v_fast_{portrait|landscape}[_ultra|_relaxed…]` ↔ Veo 3.1 Fast 8초, **방향 토큰 필수**
  *   (9:16 ↔ portrait, 16:9 ↔ landscape). `veo_3_1_r2v_lite`(패널 미관측)·Veo Quality r2v(CAT 에 없음)는 false.
+ *   2026-10-30 I2V: want.kind 'i2v'(시작 프레임만) — CAT `abra_i2v_{4,6,8,10}s[_360p]` ↔ Omni Flash · `veo_3_1_i2v[_s][_등급][_길이s][_portrait][큐]` ↔ Veo 3.1
+ *   (`_s` = 시작 프레임 표지, 한 번만·Veo·i2v 만). 끝 프레임 키(`_fl` · `omni_flash_i2v_*_first_last`)는 false. 나머지 규칙은 t2v 와 같다.
  */
 export function modelKeyMatches(key, want) {
   if (typeof key !== 'string' || !want) return false
   const spec = videoModelSpec(want.model)
   if (!spec) return false
   const kind = want.kind == null ? 't2v' : want.kind
-  if (kind !== 't2v' && kind !== 'r2v') return false
+  if (kind !== 't2v' && kind !== 'r2v' && kind !== 'i2v') return false
   const wantDur = Number(want.duration)
   if (!Number.isFinite(wantDur)) return false
   const wantRes = String(want.resolution || '720p').toLowerCase()
@@ -338,6 +340,7 @@ export function modelKeyMatches(key, want) {
   let portrait = false
   let landscape = false
   let res = '720p'
+  let startMark = false
   for (const tok of m[3].split('_').filter(Boolean)) {
     const d = /^(\d+)s$/.exec(tok)
     if (d) { duration = Number(d[1]); continue }
@@ -345,8 +348,9 @@ export function modelKeyMatches(key, want) {
     if (tok === 'portrait') { if (spec.family !== 'veo_3_1') return false; portrait = true; continue }
     if (tok === 'landscape') { if (kind !== 'r2v' || spec.family !== 'veo_3_1') return false; landscape = true; continue }   // M3-1: r2v 전용 방향 토큰
     if (tok === '360p') { res = '360p'; continue }
+    if (tok === 's') { if (kind !== 'i2v' || spec.family !== 'veo_3_1' || startMark) return false; startMark = true; continue }   // I2V: Veo 시작 프레임 표지(한 번)
     if (KEY_QUEUE_TOKENS.has(tok)) continue
-    return false
+    return false   // 모르는 토큰 — i2v 의 `fl`(끝 프레임)도 여기서 거부(시작 프레임만 요청한다)
   }
   if (duration !== wantDur) return false
   if (spec.family === 'veo_3_1' && (tier || 'quality') !== spec.tier) return false
@@ -392,7 +396,7 @@ export function decodeFReqInner(body) {
 
 /**
  * 제출 RPC 의 inner payload 에서 프롬프트 텍스트 목록(항목당 1개, 세그먼트는 ' ' 결합).
- *   ogiZ0b: inner[1][i][8][0] = [["…"], …]      YhhmEf·MZZa6b(M3-1): inner[0][i][0][2][0] = [["…"], …]
+ *   ogiZ0b: inner[1][i][8][0] = [["…"], …]      YhhmEf·MZZa6b(M3-1)·eb1hJf(I2V — 같은 자리로 가정, 실기 증거로 확인): inner[0][i][0][2][0] = [["…"], …]
  *   인라인 멘션 세그먼트 `[null, [["<id>","<라벨>"]]]` 는 건너뛴다(텍스트만 — 라벨은 프롬프트가 아니다).
  * 모양이 다르거나 모르는 rpcid 면 [] — throw 없음. 자기완결.
  */
@@ -401,7 +405,7 @@ export function extractSubmitPrompts(rpcid, inner) {
   if (!Array.isArray(inner)) return out
   var items = null
   if (rpcid === 'ogiZ0b') items = inner[1]
-  else if (rpcid === 'YhhmEf' || rpcid === 'MZZa6b') items = inner[0]
+  else if (rpcid === 'YhhmEf' || rpcid === 'MZZa6b' || rpcid === 'eb1hJf') items = inner[0]
   if (!Array.isArray(items)) return out
   for (var i = 0; i < items.length; i++) {
     var item = items[i]

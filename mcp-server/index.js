@@ -23,7 +23,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
 import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows, preserveSceneRuntimeFields, nestSceneGenerationColumns, layoutSceneRowTimes, stripCSVTimeColumns } from './lib/csv.js';
-import { csvToolResponse, handleExportCapcutTool, handleExportPremiereTool, handleUpdateSceneTool } from './lib/toolResponses.js';
+import { csvToolResponse, handleExportCapcutTool, handleExportPremiereTool, handleUpdateSceneTool, handleSetFramePairsTool, handleStartSceneBatchTool } from './lib/toolResponses.js';
 import { SCENE_GENERATION_PATCH_SCHEMA } from './lib/sceneGenerationSchema.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
@@ -545,8 +545,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
           styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), plain id (예: "korean-ani" — 자동으로 "preset:"으로 wrap), "auto" (씬별 style_tag 매칭 명시), "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback (MCP default). list_styles로 조회 가능.' },
-          force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만).' },
+          force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만). mode i2v 는 force 를 보지 않는다 — 선택된 I2V 행을 완료여도 다시 만든다(다시 만들 행만 app_set_frame_pairs 로 고른다).' },
+          mode: { type: 'string', enum: ['image', 'video', 'i2v'], description: "선택. 'image' 이미지 배치 · 'video' 텍스트→영상(T2V, 선택된 영상 씬) · 'i2v' 프레임→영상(I2V, 선택된 I2V 행 — 먼저 app_set_frame_pairs). 생략 시 앱의 현재 탭." },
         },
+      },
+    },
+    {
+      name: 'app_set_frame_pairs',
+      description: "실행 중인 AutoFlowCut 앱에 I2V(프레임 → 영상) 행을 지정합니다. 주어진 씬(index, 0부터)의 이미지를 시작 프레임으로 하는 행을 만들거나 고치고(끝 프레임 없음, 선택) 나머지 행은 선택을 풉니다 — I2V 배치는 선택된 행을 완료여도 다시 만듭니다. 프롬프트는 기본으로 씬의 영상 프롬프트(videoT2VPrompt — app_update_scene 로 넣는다). 실행 중이면 busy, 시작 프레임 이미지(파일·data URL)가 없는 씬이면 no-image, 과금된 작업을 아직 못 받은 행의 프레임을 바꾸려 하면 needs-recovery(앱에서 그 행을 먼저 회수하거나 지운다). 다음에 app_start_scene_batch {mode:'i2v'} — 그 배치가 끝나기 전(isRunning)엔 다시 부르지 않는다.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          indexes: { type: 'array', items: { type: 'integer', minimum: 0 }, description: '시작 프레임으로 쓸 씬 인덱스(0부터, 1~200개, 중복 없음)' },
+          promptSource: { type: 'string', enum: ['video', 'image', 'none'], description: "선택. I2V 프롬프트 출처 — 'video'(기본, 씬의 영상 프롬프트) · 'image'(씬 이미지 프롬프트) · 'none'(행 직접 입력)" },
+        },
+        required: ['indexes'],
       },
     },
     {
@@ -1347,14 +1361,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'app_start_scene_batch': {
-        const port = args.port || 3210;
-        const body = {};
-        if (args.styleId !== undefined) body.styleId = args.styleId;
-        if (args.force !== undefined) body.force = !!args.force;
-        const res = await appFetch(port, 'POST', '/api/start-scene-batch', Object.keys(body).length ? body : null);
-        return {
-          content: [{ type: 'text', text: `씬 일괄 생성 시작: ${JSON.stringify(res.data)}` }],
-        };
+        return handleStartSceneBatchTool(args, appFetch);
+      }
+
+      case 'app_set_frame_pairs': {
+        return handleSetFramePairsTool(args, appFetch);
       }
 
       case 'app_start_ref_batch': {

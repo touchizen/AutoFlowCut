@@ -74,7 +74,6 @@ import {
   buildVideoI2VResultPatch,
 } from './services/videoResultPatch'
 import { filterPendingScenes } from './utils/sceneFilters'
-import { isOmniFlashModel } from './utils/videoModels'
 import { startButtonTier, startChipLabelVisible } from './utils/actionButtonLayout'
 import { useElementWidth } from './hooks/useElementWidth'
 import { videoClearPatch, buildFramePairVideoPatch, buildVideoRestorePatch, resolveI2vRestoreSceneId, regenTargetVideoId } from './utils/sceneMedia'
@@ -94,7 +93,7 @@ import { runMentionSyncRequest } from './services/mentionSyncRequest'
 import { runSyncGate } from './services/syncGateRun'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
-import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
+import { frameImageFor, stripOmniEndFrame, flowEndFrameDisabled } from './utils/framePairImages'
 import { baseImageReplacementPatch } from './utils/imagePatch'
 import { resolveSceneVideoProvider } from './utils/sceneProviderResolution'
 import { saveGalleryFrame } from './utils/galleryUpload'
@@ -270,7 +269,14 @@ function App() {
     framePairsRef.current = nextFramePairs
     setFramePairsState(nextFramePairs)
   }, [])
-  const [ftvPromptSource, setFtvPromptSource] = useState('image') // 'image' | 'video' | 'none'
+  const [ftvPromptSource, setFtvPromptSourceState] = useState('image') // 'image' | 'video' | 'none'
+  // 2026-10-30 I2V: MCP set-frame-pairs 가 프롬프트 출처를 바꾼 직후(재렌더 전) start-scene-batch 가 와도 새 값을 읽게 ref 를 동기로 갱신(framePairs 와 같은 꼴).
+  const ftvPromptSourceRef = useRef(ftvPromptSource)
+  ftvPromptSourceRef.current = ftvPromptSource
+  const setFtvPromptSource = useCallback((next) => {
+    ftvPromptSourceRef.current = next
+    setFtvPromptSourceState(next)
+  }, [])
   const [galleryItems, setGalleryItems] = useState([])
   const [galleryUploading, setGalleryUploading] = useState(false)  // #R29-3: F2V 디스크 업로드 중 전환 차단
   const [galleryLoading, setGalleryLoading] = useState(false)
@@ -1545,6 +1551,7 @@ function App() {
   //   반영되기 전(await 구간)에 둘 다 통과해 배치를 두 번 enqueue 하는 것을 막는다. handleStart 와
   //   tag-validation Proceed 가 공유.
   const startInFlightRef = useRef(false)
+  const i2vBatchPendingRef = useRef(false)   // 2026-10-30: I2V videoAutomation.start() 가 끝날 때까지(준비 구간 포함) — MCP set-frame-pairs busy · batch-status 실행 중
   const getEmptyRefGateDeps = (source = 'ui') => buildEmptyRefGateDeps({
     source,
     scenesRef: scenesHook.scenesRef,
@@ -1566,6 +1573,10 @@ function App() {
   })
   const handleStartImpl = async (overrideStyleId = undefined, options = {}) => {
     const { force = false, source = 'ui', tab: tabOverride = null } = options
+    // 2026-10-30 I2V(Codex 리뷰 H2): I2V 행·프롬프트 출처는 시작을 받은 순간의 ref 사본 — 아래 await(인증·폴더 확인) 동안 MCP set-frame-pairs 가
+    //   행을 바꿔도 이 시작은 받은 행으로 돈다(ref 라 재렌더 전의 set-frame-pairs 도 이미 반영돼 있다).
+    const framePairsAtStart = framePairsRef.current
+    const ftvPromptSourceAtStart = ftvPromptSourceRef.current
     // MCP 가 tab 을 지정하면(mode:'video' → T2V) 현재 UI 탭 대신 그 탭으로 돌고 UI 도 맞춰 옮긴다.
     const startTab = tabOverride || activeTab
     if (tabOverride && tabOverride !== activeTab) setActiveTab(tabOverride)
@@ -1635,7 +1646,7 @@ function App() {
       }
     }
     if (startTab === 'frame-to-video') {
-      if (framePairs.filter(p => p.selected !== false).length === 0) {
+      if (framePairsAtStart.filter(p => p.selected !== false).length === 0) {
         toast.warning(t('videoSelection.noneSelected'))
         return
       }
@@ -1857,14 +1868,13 @@ function App() {
       }
 
       case 'frame-to-video': {
-        // Frame to Video — 선택된 framePairs만 실행
         // Frame to Video — 선택된 framePairs만 실행 (선택 검증은 상단에서 처리)
-        const selectedFramePairs = framePairs.filter(p => p.selected !== false)
+        //   2026-10-30: 행·프롬프트 출처는 시작 때의 ref 사본 — 클로저의 옛 행(다른 씬)도, 준비 중에 바뀐 행도 과금하지 않는다.
+        const selectedFramePairs = framePairsAtStart.filter(p => p.selected !== false)
         const GALLERY_PFX = 'gallery::'
-        // OmniFlash 는 종료 프레임 미지원 — UI 는 End Image 를 비활성화하지만 state 의
-        //   pair.endSceneId 는 남는다. 제출 payload 에서 끝 프레임을 strip 하지 않으면
-        //   engineFlow 가 숨겨진 끝 이미지를 먼저 업로드하려다 실패해 start-only 생성을 막는다.
-        const omniNoEndFrame = mode === 'flow' && isOmniFlashModel(settings.videoModelF2V)
+        // 새 Flow 는 시작 프레임만(2026-10-30 I2V — 옛 규칙은 OmniFlash 만) — UI 는 End Image 를 비활성화하지만 state 의
+        //   pair.endSceneId 는 남는다. 제출 payload 에서 끝 프레임을 strip 하지 않으면 engineFlow 가 끝 프레임으로 거부한다(start-only 생성이 막힌다).
+        const omniNoEndFrame = flowEndFrameDisabled(mode, settings.videoModelF2V)
         const resolvedPairs = selectedFramePairs.map(p => {
           // gallery:: prefix면 mediaId 직접 추출, 아니면 씬에서 resolve
           const startIsGallery = p.startSceneId?.startsWith(GALLERY_PFX)
@@ -1876,7 +1886,7 @@ function App() {
           // promptSource에 따라 effective prompt 계산 — ResultsTable 표시와 동일한 규칙이어야
           // mismatch (UI 가 옛 값을 보이는데 generation 은 새 값을 쓰는 등) 가 안 난다.
           // image 모드는 owner scene.prompt 가 진실 — pair.prompt 는 행 생성 시 스냅샷이라 stale 가능.
-          const effectivePrompt = getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes, scenes)
+          const effectivePrompt = getFramePairEffectivePrompt(p, ftvPromptSourceAtStart, videoScenes, scenes)
 
           const resolved = {
             ...p,
@@ -1887,6 +1897,9 @@ function App() {
             // 씬이 folder 모드라 image 가 null 이면 useVideoAutomation 이 readImage(sceneId) 폴백.
             _startImage: frameImageFor(p.startSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
             _endImage: frameImageFor(p.endSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
+            // 2026-10-30(Codex 2차 H1): 씬의 정확한 이미지 파일 — scenes/<id> 에 옛 이미지가 남은 교체 씬도 지금 이미지로 보낸다
+            _startImagePath: startIsGallery ? null : (startScene?.imagePath || null),
+            _endImagePath: endIsGallery ? null : (endScene?.imagePath || null),
             targetDuration: ownerScene ? getSceneDuration(ownerScene, scenesHook.srtTrack) : (p.targetDuration ?? null),
             generation: ownerScene?.generation,
           }
@@ -1901,6 +1914,8 @@ function App() {
         // I2V는 스타일 무관 — Stop 버튼에 표시 안 함
         setRunningStyle({ styleId: null, applies: false })
         setHasPendingBatch(true)
+        // Codex 2차 H2: start() 를 기다리지 않으므로 handleStart latch 는 곧 풀린다 — 자동화의 토큰·준비 구간까지 MCP set-frame-pairs 를 막고 batch-status 를 실행 중으로 둔다
+        i2vBatchPendingRef.current = true
 
         videoAutomation.start({
           ...buildVideoI2VStartOptions({
@@ -1931,7 +1946,10 @@ function App() {
               scenesHook.updateScene(fpOwner.ownerSceneId, scenePatch)
             }
           },
-        }).finally(() => setHasPendingBatch(false))
+        }).finally(() => {
+          i2vBatchPendingRef.current = false
+          setHasPendingBatch(false)
+        })
         break
       }
 
@@ -2129,6 +2147,10 @@ function App() {
     settings, setSettings,
     mode, flowProjectReady, activeTab,  // batch-status 진단 필드
     scenes, setScenes,
+    // 2026-10-30 I2V: set-frame-pairs · batch-status.i2v — 행은 동기 갱신 ref 로 읽는다
+    getFramePairs: () => framePairsRef.current, setFramePairs, setFtvPromptSource,
+    isStartInFlight: () => startInFlightRef.current || i2vBatchPendingRef.current,   // Codex 리뷰 H2: 시작 준비(await)·I2V 자동화 준비 중에도 set-frame-pairs 는 busy
+    getFtvPromptSource: () => ftvPromptSourceRef.current,   // Codex 2차 M3: 회수 대기 행의 프롬프트 출처 변경 판정
     references, setReferences,
     // Phase 11: MCP 가 srtTrack 동기화할 수 있게 setter 전달
     srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
@@ -2451,7 +2473,7 @@ function App() {
               onShowSceneDetail={(scene) => setSelectedScene(scene)}
               onVideoRetry={handleVideoRetry}
               disabled={anyRunning}
-              endImageDisabled={mode === 'flow' && isOmniFlashModel(settings.videoModelF2V)}
+              endImageDisabled={flowEndFrameDisabled(mode, settings.videoModelF2V)}
               t={t}
               galleryItems={galleryItems}
               galleryLoading={galleryLoading}

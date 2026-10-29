@@ -17,8 +17,8 @@
  *   스캔 → phase1 모드 → 반영 대기·재스캔 → phase2: 모델(다르면 메뉴 선택 → 안정 대기·재스캔·재계획)
  *   → 비율 → 길이 → 해상도 → 개수 → (영상) 입력방식 검증 → **최종 재판독**(단계 통과만으로 ok 를 내지 않는다) → Escape 로 닫기.
  * M2-2 영상 단계: 해상도는 {360p, 720p} 밖이면 모델과 무관하게 클릭 전 flow-resolution-not-offered(관측된 적 없는 값은 패널이
- *   내밀어도 거부) · 개수는 항상 x1 · 모델 라벨은 토큰 부분열로 맞춘다("Omni Flash" ~ "Omni 1.1 Flash") · 입력방식은 건드리지
- *   않고 chrome_extension(소재) 이 체크됐는지만 본다(input-mode-not-material) · 메뉴 항목 클릭이 하위 메뉴만 열면
+ *   내밀어도 거부) · 개수는 항상 x1 · 모델 라벨은 토큰 부분열로 맞춘다("Omni Flash" ~ "Omni 1.1 Flash") · 입력방식은 목표대로
+ *   누른다(2026-10-30 I2V: 기본 소재 chrome_extension, targets.input 'frames' 면 프레임 crop_free, 모르는 값은 input-mode-not-offered) · 메뉴 항목 클릭이 하위 메뉴만 열면
  *   (라이브 항목엔 mat-mdc-menu-trigger 가 달려 있다, 내용 미관측) model-submenu-unknown. 영상 step 라벨은 값을 단다
  *   (§4 M2 로그: mode=clicked(videocam) duration=already(6) resolution=already(720p) count=already(x1) model=already input=material).
  *   합성 클릭을 무시한 라디오는 needsTrusted 로 돌려주고 main 이 그것만 trusted 클릭한 뒤 드라이버를 다시 돌린다.
@@ -215,12 +215,20 @@ export function planSettingsClicks(scan, targets, phase) {
     if (r.err) return r.err
     apply('count', r, video ? label : null)
   }
-  // M2-2: 영상 입력방식은 건드리지 않되 소재(chrome_extension) 가 체크돼 있어야 한다 — 프레임(crop_free) 이면 i2v 로 나간다(미지원).
+  // 2026-10-30 I2V: 영상 입력방식은 목표대로 맞춘다 — 기본(T2V·R2V)은 소재(chrome_extension), input:'frames'(I2V)는 프레임(crop_free).
+  //   이미 맞으면 steps.input = 'material'|'frames'(옛 로그 모양), 바꾸면 clicked(<이름>). 모르는 값은 클릭 전 거부(오타가 소재로 떨어지지 않게).
   if (video) {
-    const g = scan.groups.inputMode
-    if (!g) return fail('group-not-found:inputMode')
-    if (!g.checked || g.checked.ligature !== 'chrome_extension') return fail('input-mode-not-material')
-    steps.input = 'material'
+    const INPUT_LIG = { material: 'chrome_extension', frames: 'crop_free' }
+    const inputName = t.input == null ? 'material' : String(t.input)
+    const lig = INPUT_LIG[inputName]
+    if (!lig) return fail('input-mode-not-offered:' + inputName)
+    const r = want('inputMode', (o) => o.ligature === lig, 'input-mode-not-offered:' + inputName)
+    if (r.err) return r.err
+    if (r.opt.checked) steps.input = inputName
+    else {
+      clicks.push({ group: 'inputMode', name: r.g.name, label: r.opt.label, ligature: r.opt.ligature, el: r.opt.el })
+      steps.input = 'clicked(' + inputName + ')'
+    }
   }
   return { ok: true, clicks, steps, model: null }
 }
@@ -517,7 +525,7 @@ export async function applyComposerSettings(flowView, opts, deps) {
 
 async function applyComposerSettingsBody(flowView, opts, deps) {
   const mode = opts && opts.mode === 'video' ? 'video' : 'image'
-  const targets = { mode, ratio: opts?.ratio, count: opts?.count, model: opts?.model, duration: opts?.duration, resolution: opts?.resolution }
+  const targets = { mode, ratio: opts?.ratio, count: opts?.count, model: opts?.model, duration: opts?.duration, resolution: opts?.resolution, ...(opts?.input != null ? { input: opts.input } : {}) }
   // M2-CLOSE O2: 모든 페이지 접촉(exec·신뢰 클릭)은 이 둘을 지난다 — isAborted 면 동기 throw(await 식 안에서 던져 .catch 가 붙기 전에 빠져나온다)
   const guard = () => { if (typeof deps.isAborted === 'function' && deps.isAborted()) throw DOM_STAGE_ABORTED }
   const exec = (js) => { guard(); return flowView.webContents.executeJavaScript(js, true) }

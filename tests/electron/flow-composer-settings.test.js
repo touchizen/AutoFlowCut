@@ -620,15 +620,36 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
     expect(planSettingsClicks(s, { ...VIDEO_TARGET, duration: 5 }, 2)).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'duration-not-offered:5' })
   })
 
-  it('입력방식이 crop_free(프레임) 로 체크된 사본 → input-mode-not-material(클릭 없음); 그룹이 없으면 group-not-found:inputMode', async () => {
+  // 2026-10-30 I2V: 입력방식은 목표대로 맞춘다 — T2V·R2V(기본)는 소재(chrome_extension), I2V(input:'frames')는 프레임(crop_free).
+  //   옛 규칙(프레임이면 input-mode-not-material 로 배치 종결)은 I2V 를 못 돌리던 때의 것이다 — I2V 한 번 뒤 남은 프레임 모드가 다음 T2V 를 막으면 안 된다.
+  it('입력방식이 crop_free(프레임) 로 체크된 사본 + T2V 목표 → 소재(chrome_extension) 클릭, steps.input clicked(material); 그룹이 없으면 group-not-found:inputMode', async () => {
     const doc = mount(videoPage({ checked: { inputMode: 'crop_free' } }))
     const log = installFakeAngular(doc)
     const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 6 }, noSleep)
-    expect(r).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'input-mode-not-material', closed: true })
-    expect(log).toEqual(['keydown:Escape:27'])
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { input: 'clicked(material)' } })
+    expect(log).toEqual(['inputMode:chrome_extension', 'keydown:Escape:27'])
     const s = scanSettingsPanel(mount(videoPage()))
     delete s.groups.inputMode
     expect(planSettingsClicks(s, { ...VIDEO_TARGET, duration: 6 }, 2)).toMatchObject({ ok: false, reason: 'group-not-found:inputMode' })
+  })
+
+  it('I2V 목표(input:"frames") → 소재 패널에서 프레임(crop_free) 클릭, steps.input clicked(frames); 이미 프레임이면 input=frames(클릭 없음)', async () => {
+    const doc = mount(videoPage())
+    const log = installFakeAngular(doc)
+    const r = await runSettingsDriver(doc, { ...VIDEO_TARGET, duration: 6, input: 'frames' }, noSleep)
+    expect(r).toMatchObject({ ok: true, closed: true, steps: { input: 'clicked(frames)' } })
+    expect(log).toEqual(['inputMode:crop_free', 'keydown:Escape:27'])
+    disposeFakeAngular(doc)
+    const doc2 = mount(videoPage({ checked: { inputMode: 'crop_free' } }))
+    const log2 = installFakeAngular(doc2)
+    const r2 = await runSettingsDriver(doc2, { ...VIDEO_TARGET, duration: 6, input: 'frames' }, noSleep)
+    expect(r2).toMatchObject({ ok: true, steps: { input: 'frames' } })
+    expect(log2).toEqual(['keydown:Escape:27'])
+  })
+
+  it('모르는 input 값은 클릭 전 거부(input-mode-not-offered:<값>) — 오타가 소재로 조용히 떨어지지 않는다', () => {
+    const s = scanSettingsPanel(mount(videoPage()))
+    expect(planSettingsClicks(s, { ...VIDEO_TARGET, input: 'frame' }, 2)).toMatchObject({ ok: false, kind: 'flow-settings-not-applied', reason: 'input-mode-not-offered:frame', clicks: [] })
   })
 
   // M2-R3 H4(A4): 현재 모델(Omni)의 패널엔 8초가 없고 요청 모델(Veo Fast)은 8초를 제공한다 — 옛 드라이버는 모델 클릭 **전**에 현재 패널로 전체를 계획해 duration-not-offered:8 로
@@ -772,6 +793,26 @@ describe('M2-2 설정 드라이버 영상 단계', () => {
       expect(r.ok).toBe(true)
       expect(calls).toEqual(['summary', 'trusted:settings-trigger', 'driver', 'summary'])
       expect(log.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('[Flow Settings] video mode=clicked(videocam) ratio=clicked(crop_9_16) duration=already(6) resolution=already(720p) count=already(x1) model=already input=material ok=true')
+    } finally { log.mockRestore() }
+  })
+
+  it('applyComposerSettings(main): opts.input 을 드라이버 목표로 넘긴다(I2V = frames) — 없으면 키를 싣지 않는다(T2V 기본 = 소재)', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const scripts = []
+      const executeJavaScript = vi.fn(async (script) => {
+        const s = String(script)
+        if (s.includes('__af_settings_driver__')) { scripts.push(s); return { ok: true, closed: true, steps: { mode: 'already(videocam)', input: 'clicked(frames)' } } }
+        if (s.includes('settings-summary')) return { text: '동영상 · 720p · 4초 x1', ligatures: ['crop_9_16'] }
+        return null
+      })
+      const trustedClickOnFlowView = vi.fn(async () => ({ success: true }))
+      const base = { mode: 'video', ratio: '9:16', model: 'Omni Flash', duration: 4, resolution: '720p' }
+      await applyComposerSettings({ webContents: { executeJavaScript } }, { ...base, input: 'frames' }, { trustedClickOnFlowView })
+      await applyComposerSettings({ webContents: { executeJavaScript } }, base, { trustedClickOnFlowView })
+      expect(scripts[0]).toContain('"input":"frames"')
+      expect(scripts[1]).not.toContain('"input"')
+      expect(log.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('input=clicked(frames) ok=true')
     } finally { log.mockRestore() }
   })
 

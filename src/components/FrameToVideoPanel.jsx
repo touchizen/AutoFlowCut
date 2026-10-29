@@ -15,6 +15,7 @@
  */
 
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react'
+import { getNextPairId } from '../utils/framePairIds'   // 기존 행의 최대 fp_N + 1 (MCP set-frame-pairs 와 공용)
 import { resolveImageSrc } from '../utils/formatters'
 import useFlowArchiveBrowser, { ARCHIVE_LABELS } from '../hooks/useFlowArchiveBrowser'
 import { toast } from './Toast'
@@ -415,16 +416,6 @@ const STATUS_ICONS = {
   error: '❌',
 }
 
-// 기존 페어들에서 사용 중인 최대 fp_N을 찾아 다음 ID 반환
-// 모듈 스코프 카운터를 쓰면 프로젝트 전환/리로드 시 기존 저장된 ID와 충돌(중복 key)하므로
-// 항상 현재 framePairs를 기준으로 재계산한다.
-const getNextPairId = (pairs) => {
-  const maxId = (pairs || []).reduce((max, p) => {
-    const n = parseInt(String(p?.id || '').replace('fp_', ''), 10)
-    return Number.isFinite(n) && n > max ? n : max
-  }, 0)
-  return maxId + 1
-}
 
 export { GALLERY_PREFIX }
 

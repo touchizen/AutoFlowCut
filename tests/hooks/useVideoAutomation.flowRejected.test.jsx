@@ -519,7 +519,7 @@ describe('useVideoAutomation — flow-settings-not-applied 는 배치 전체 rea
 
   // M2-R3 H9(B5): G4 는 배치 전체 이유 둘·항목별 이유 둘만 핀했다 — resolution-missing 을 빼거나(F11 의 렌더러 배관 결함이 항목마다 7~15s 로 배치 전체를 끌고 간다),
   //   input-mode/submenu/menu-not-open 을 빼거나, 항목별 패밀리를 넣는(needs-trusted 두 번에 남은 항목이 전부 닫힌다) 변이가 전부 살아남았다. 여섯·다섯 전부를 돈다.
-  it.each(['model-not-offered', 'ratio-not-offered:4:3', 'input-mode-not-material', 'model-submenu-unknown', 'model-menu-not-open', 'resolution-missing'])(
+  it.each(['model-not-offered', 'ratio-not-offered:4:3', 'input-mode-not-material', 'input-mode-not-offered:frames', 'model-submenu-unknown', 'model-menu-not-open', 'resolution-missing'])(
     '배치 전체 이유 %s ×2 → 종결: 제출 2회, 4항목 전부 그 kind, status error + kind 문구', async (reason) => {
       const h = setup({ submit: { p1: NOT_APPLIED(reason), p2: NOT_APPLIED(reason) } })
       await run(h, DUR)
@@ -620,14 +620,15 @@ describe('useVideoAutomation — Flow 레퍼런스 영상의 연속 클릭 전 �
     expectClosed(h, 'flow-reference-clipboard-busy')
   })
 
-  it.each(['paste-not-observed', 'mention-trigger-not-working', 'picker-not-open', 'picker-not-closed', 'no-project-id'])(
+  // 2026-10-30 I2V(Fable 리뷰 3): start-frame-mismatch:not-frames-mode(프레임 칸이 안 보인다 — Flow 화면이 바뀌었다)도 배치 전체 사유.
+  it.each(['paste-not-observed', 'mention-trigger-not-working', 'picker-not-open', 'picker-not-closed', 'no-project-id', 'start-frame-mismatch:not-frames-mode'])(
     'flow-reference-attach-failed %s ×2(배치 전체 사유) → 종결', async (reason) => {
       const h = setup({ submit: { p1: ATTACH(reason), p2: ATTACH(reason) } })
       await run(h, SCENES4)
       expectClosed(h, 'flow-reference-attach-failed')
     })
 
-  it.each(['chip-mismatch', 'chip-no-id', 'upload-rpc-error', 'asset-not-found', 'at-sign-opened-picker', 'text-mismatch'])(
+  it.each(['chip-mismatch', 'chip-no-id', 'upload-rpc-error', 'asset-not-found', 'at-sign-opened-picker', 'text-mismatch', 'start-frame-mismatch:start', 'start-frame-mismatch:picker-open'])(
     'flow-reference-attach-failed %s ×2(항목 사유) → 종결하지 않는다: 4회 제출, #3·#4 complete, status done', async (reason) => {
       const h = setup({ submit: { p1: ATTACH(reason), p2: ATTACH(reason) } })
       await run(h, SCENES4)

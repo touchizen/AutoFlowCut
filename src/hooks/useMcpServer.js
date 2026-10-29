@@ -19,6 +19,7 @@ import { pickMcpSettingsFields } from '../utils/mcpSettingsWhitelist'   // M2-LI
 import { alignMcpModelProviders } from '../utils/mcpModelProviderAlign'
 import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'   // CSV 재적용 보존 목록 — parseFromCSV 와 공유
 import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'   // 내보내기 창과 같은 허용 값
+import { planMcpFramePairs } from '../utils/mcpFramePairs'   // 2026-10-30 I2V: set-frame-pairs 계획(순수)
 
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
 
@@ -30,7 +31,7 @@ export function mergeSceneGenerationForMcp(existingScene, incomingScene, setting
 }
 
 // start-scene-batch `mode` → handleStart 탭 오버라이드. 없거나 모르는 값이면 현재 UI 탭 그대로.
-const MCP_BATCH_MODE_TAB = { video: 'video-text', image: 'text' }
+const MCP_BATCH_MODE_TAB = { video: 'video-text', image: 'text', i2v: 'frame-to-video' }   // 2026-10-30: i2v = 프레임 → 영상(선택된 I2V 행)
 
 /**
  * MCP load_csv(update-references) 병합. CSV 는 prompt/type/category 의 authoritative 소스지만,
@@ -148,6 +149,10 @@ export function useMcpServer({
   isUpscaylRunning = null,
   // batch-status 진단용 — preflight 에서 조용히 return 한 이유(Flow 준비/탭)를 밖에서 볼 수 있게.
   mode, flowProjectReady, activeTab,
+  // 2026-10-30 I2V(set-frame-pairs · batch-status.i2v): App 의 framePairsRef 판독기(동기 갱신 — 같은 tick 의 연속 호출도 앞 결과를 본다) · setter 들
+  getFramePairs = null, setFramePairs = null, setFtvPromptSource = null,
+  isStartInFlight = null,   // Codex 리뷰 H2: 시작 준비(인증·폴더 확인 await) 구간 — 실행 중 미러(isRunning)는 그때 아직 false 다
+  getFtvPromptSource = null,   // Codex 2차 M3: 지금 I2V 프롬프트 출처(회수 대기 행의 프롬프트 변경 판정)
 }) {
   // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
@@ -158,6 +163,17 @@ export function useMcpServer({
   // Upscayl 내부 latch reader 자체를 ref로 보존 — React commit 전 same-tick 시작도 HTTP dispatch가 본다.
   const isUpscaylRunningRef = useRef(isUpscaylRunning)
   isUpscaylRunningRef.current = isUpscaylRunning
+  // I2V: 판독기·setter 도 렌더마다 최신으로(전역 핸들러는 effect 클로저라 stale 해질 수 있다)
+  const getFramePairsRef = useRef(getFramePairs)
+  getFramePairsRef.current = getFramePairs
+  const setFramePairsRef = useRef(setFramePairs)
+  setFramePairsRef.current = setFramePairs
+  const setFtvPromptSourceRef = useRef(setFtvPromptSource)
+  setFtvPromptSourceRef.current = setFtvPromptSource
+  const isStartInFlightRef = useRef(isStartInFlight)
+  isStartInFlightRef.current = isStartInFlight
+  const getFtvPromptSourceRef = useRef(getFtvPromptSource)
+  getFtvPromptSourceRef.current = getFtvPromptSource
 
   // Phase 2: isRunning을 ref로 mirror — global 핸들러 closure가 polling 시 최신 값 읽음.
   const isRunningRef = useRef(isRunning)
@@ -251,6 +267,21 @@ export function useMcpServer({
       }
       const normalized = normalizeStyleId(styleId) ?? styleId
       return handleGenerateScene(sceneId, normalized)
+    }
+    // 2026-10-30 I2V: MCP set-frame-pairs — main 이 executeJavaScript 로 결과를 기다린다(동기 반환 — Promise 면 JSON.stringify 가 '{}' 를 낸다).
+    //   실행 중·시작 준비 중이면 busy(돌고 있거나 막 시작하는 배치의 행이 바뀐다), 계획 실패는 그 사유, 성공이면 행 + 프롬프트 출처(기본 video = 씬의 움직임 프롬프트).
+    window.__mcpSetFramePairs = (data) => {
+      const getPairs = getFramePairsRef.current
+      const setPairs = setFramePairsRef.current
+      if (typeof getPairs !== 'function' || typeof setPairs !== 'function') return { success: false, error: 'handler-unavailable' }
+      if (isRunningRef.current || isStartInFlightRef.current?.()) return { success: false, error: 'busy' }
+      const toPromptSource = data?.promptSource || 'video'
+      const plan = planMcpFramePairs(getPairs() || [], scenes, data?.indexes, { fromPromptSource: getFtvPromptSourceRef.current?.() ?? null, toPromptSource })
+      if (!plan.ok) return { success: false, error: plan.error, indexes: plan.indexes, ...(plan.pairIds ? { pairIds: plan.pairIds } : {}) }
+      setPairs(plan.pairs)
+      setFtvPromptSourceRef.current?.(toPromptSource)
+      console.log('[MCP] Frame pairs set via HTTP:', plan.rows.map((r) => r.id).join(','))
+      return { success: true, rows: plan.rows }
     }
     window.__mcpSetStyle = (styleId) => { setSelectedStyleRefId(styleId); return styleId }
     window.__mcpGetStyle = () => selectedStyleRefId
@@ -353,6 +384,7 @@ export function useMcpServer({
       delete window.__mcpGetReferences
       delete window.__mcpGetScenes
       delete window.__mcpUpdateScene
+      delete window.__mcpSetFramePairs
       delete window.__mcpGenerateRef
       delete window.__mcpGenerateScene
       delete window.__mcpSetStyle
@@ -602,7 +634,7 @@ export function useMcpServer({
     // → Start 버튼 라벨이 새 스타일 자동 표시. 'auto'/'none'/생략은 UI 유지 (사용자 의도 보존).
     window.__mcpStartBatch = async (styleId, options) => {
       // ref로 항상 최신 handleStart 호출 — stop 후 stale `isRunning=true` 가드에 막히는 회귀 방지.
-      // mode('video'|'image')는 handleStart 의 tab 오버라이드로 변환 — 에이전트가 UI 탭과 무관하게 T2V 배치를 돌릴 수 있게.
+      // mode('video'|'image'|'i2v')는 handleStart 의 tab 오버라이드로 변환 — 에이전트가 UI 탭과 무관하게 T2V·I2V 배치를 돌릴 수 있게.
       const { mode, ...restOptions } = options || {}
       // M2-LIVE N7(A5): 자기 키만 — 'constructor'·'toString'·'__proto__' 는 평범한 조회에서 truthy 비문자열(함수·객체)을 내어 setActiveTab(fn) 이 React 업데이터로 적용됐다.
       const tab = typeof mode === 'string' && Object.hasOwn(MCP_BATCH_MODE_TAB, mode) ? MCP_BATCH_MODE_TAB[mode] : null
@@ -699,11 +731,19 @@ export function useMcpServer({
         pending: videoEligible.filter(s => !s.videoT2VStatus || s.videoT2VStatus === 'pending').length,
       }
 
+      // 2026-10-30 I2V 카운트 — 선택된 행(selected !== false)만, 행 status 기준(waiting 등 나머지 = pending).
+      const i2vRows = (getFramePairsRef.current?.() || []).filter((p) => p && p.selected !== false)
+      const i2vCount = st => i2vRows.filter(p => p.status === st).length
+      const i2vDone = i2vCount('complete'); const i2vGen = i2vCount('generating'); const i2vErr = i2vCount('error')
+      const i2v = { total: i2vRows.length, done: i2vDone, generating: i2vGen, error: i2vErr, pending: i2vRows.length - i2vDone - i2vGen - i2vErr }
+
       return {
         app: { mode, flowProjectReady, activeTab },
         video,
+        i2v,
         // stop/wait aggregate도 포함해야 Upscayl-only 실행을 idle로 잘못 보고하지 않는다.
-        isRunning: isRunningRef.current || sceneIsRunning || videoAutomation.isRunning || refIsRunning,
+        // Codex 2차 H2: I2V 시작 준비·자동화 준비 구간(isStartInFlight)도 실행 중 — app_wait_batch 가 시작 직후에 끝나지 않게
+        isRunning: isRunningRef.current || sceneIsRunning || videoAutomation.isRunning || refIsRunning || !!isStartInFlightRef.current?.(),
         isPaused: isPaused || videoAutomation.isPaused,
         progress: sceneIsRunning ? progress : videoAutomation.progress,
         total, done, pending, generating, error,

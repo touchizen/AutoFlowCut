@@ -725,3 +725,66 @@ describe('M3-1 modelKeyMatches — r2v 진리표(want.kind:"r2v", CAT 키만) ·
     expect(modelKeyMatches('abra_t2v_6s', { model: OMNI, duration: 6, kind: 't2v' })).toBe(true)
   })
 })
+
+// 2026-10-30 I2V(프레임 → 영상, Flow 제출 rpc eb1hJf — 크롬 실기 네트워크로 확인): 시작 프레임만(끝 프레임 없음).
+//   CAT(HTrJv) 키: Omni `abra_i2v_{4,6,8,10}s[_360p]` · Veo `veo_3_1_i2v_s[_<등급>][_<길이>s][_portrait][_fl][큐]` — `_s` = 시작 프레임 표지(Lite 8초 `veo_3_1_i2v_lite` 엔 없다),
+//   `_fl` = 끝 프레임(first-last) → 시작 프레임만 요청하면 거부. `omni_flash_i2v_*_first_last` 는 끝 프레임 Omni 라 거부. 등급·길이·portrait·360p·큐 규칙은 t2v 와 같다.
+describe('I2V modelKeyMatches — i2v 진리표(want.kind:"i2v", 시작 프레임만)', () => {
+  const OMNI = 'Omni Flash', FAST = 'Veo 3.1 - Fast', LITE = 'Veo 3.1 - Lite', QUALITY = 'Veo 3.1 - Quality'
+  const truthy = [
+    ['abra_i2v_4s', { model: OMNI, duration: 4, ratio: '9:16', resolution: '720p', kind: 'i2v' }],
+    ['abra_i2v_10s_360p', { model: OMNI, duration: 10, ratio: '16:9', resolution: '360p', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_fast', { model: FAST, duration: 8, ratio: '16:9', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_fast_portrait', { model: FAST, duration: 8, ratio: '9:16', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_fast_portrait_ultra_relaxed', { model: FAST, duration: 8, ratio: '9:16', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_fast_4s', { model: FAST, duration: 4, ratio: '9:16', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_lite_6s', { model: LITE, duration: 6, ratio: '16:9', kind: 'i2v' }],
+    ['veo_3_1_i2v_lite', { model: LITE, duration: 8, ratio: '16:9', kind: 'i2v' }],
+    ['veo_3_1_i2v_s', { model: QUALITY, duration: 8, ratio: '16:9', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_portrait', { model: QUALITY, duration: 8, ratio: '9:16', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_quality_4s', { model: QUALITY, duration: 4, ratio: '16:9', kind: 'i2v' }],
+  ]
+  const falsy = [
+    ['abra_t2v_4s', { model: OMNI, duration: 4, ratio: '9:16', kind: 'i2v' }],
+    ['abra_i2v_4s', { model: OMNI, duration: 4, ratio: '9:16' }],
+    ['abra_i2v_4s', { model: OMNI, duration: 6, ratio: '9:16', kind: 'i2v' }],
+    ['abra_i2v_4s_360p', { model: OMNI, duration: 4, ratio: '9:16', resolution: '720p', kind: 'i2v' }],
+    ['omni_flash_i2v_4s_first_last', { model: OMNI, duration: 4, ratio: '9:16', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_fast_fl', { model: FAST, duration: 8, ratio: '16:9', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_fast_portrait_fl', { model: FAST, duration: 8, ratio: '9:16', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_fast_portrait', { model: FAST, duration: 8, ratio: '16:9', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_fast', { model: FAST, duration: 8, ratio: '9:16', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_s_fast', { model: FAST, duration: 8, ratio: '16:9', kind: 'i2v' }],
+    ['veo_3_1_i2v_s_lite_4s', { model: FAST, duration: 4, ratio: '16:9', kind: 'i2v' }],
+    ['veo_3_1_t2v_s_fast', { model: FAST, duration: 8, ratio: '16:9' }],
+    ['abra_i2v_s_4s', { model: OMNI, duration: 4, ratio: '9:16', kind: 'i2v' }],
+  ]
+  it.each(truthy)('true: %s ↔ %o', (key, want) => { expect(modelKeyMatches(key, want)).toBe(true) })
+  it.each(falsy)('false: %s ↔ %o', (key, want) => { expect(modelKeyMatches(key, want)).toBe(false) })
+})
+
+describe('I2V eb1hJf — 제출 프롬프트·응답 파서는 YhhmEf 와 같은 자리', () => {
+  it('extractSubmitPrompts("eb1hJf") 는 inner[0][i][0][2][0] 세그먼트를 읽는다(모양이 다르면 [] — throw 없음)', () => {
+    const inner = [[[[null, null, [[['The hand pulls'], ['the scissors']]]], 'abra_i2v_4s', 2]]]
+    expect(extractSubmitPrompts('eb1hJf', inner)).toEqual(['The hand pulls the scissors'])
+    expect(extractSubmitPrompts('eb1hJf', [[{ nope: 1 }]])).toEqual([])
+    expect(extractSubmitPrompts('eb1hJf', null)).toEqual([])
+  })
+  it('parseVideoSubmitResponse(payload, "eb1hJf") — YhhmEf 모양을 읽고 refEcho 키는 없다; shape 문구는 eb1hJf', () => {
+    const MID = '11111111-2222-4333-8444-555555555555'
+    const payload = [null, 978, null, [[MID, null, null, null, null, [null, null, null, null, null, null, null, null, [6]], null, [[null, null, null, null, null, null, null, null, null, null, null, null, 'abra_i2v_4s']]]]]
+    const r = parseVideoSubmitResponse(payload, 'eb1hJf')
+    expect(r).toMatchObject({ mediaId: MID, modelKey: 'abra_i2v_4s', creditsLeft: 978, state: 6 })
+    expect(r).not.toHaveProperty('refEcho')
+    expect(() => parseVideoSubmitResponse([null, 1, null, []], 'eb1hJf')).toThrow(/eb1hJf response shape changed at \[3\]/)
+  })
+  // 2026-10-30 실기(앱 I2V 배치, Omni Flash 4초 9:16): 실제 eb1hJf 응답(마스킹 — <uuid#2>=영상 mediaId, <uuid#5>=시작 프레임). [2] 는 비지 않고 워크플로 레코드다.
+  it('실측 eb1hJf 응답 → mediaId·modelKey·credits·state·프롬프트 echo', () => {
+    const line = JSON.parse(readFileSync(fileURLToPath(new URL('../../docs/handoffs/evidence/2026-10-30-flow-i2v-eb1hJf.masked.jsonl', import.meta.url)), 'utf8'))
+    const text = line.respBody.replace(/<uuid#(\d+)>/g, (_m, n) => maskedUuid(n))
+    const r = parseVideoSubmitResponse(parseBatchexecuteResponse(text, 'eb1hJf'), 'eb1hJf')
+    expect(r).toMatchObject({ mediaId: maskedUuid(2), modelKey: 'abra_i2v_4s', creditsLeft: 964, state: 6, warnings: [] })
+    expect(r.echo).toEqual([expect.stringMatching(/^The woman's hand grips the round sage green loop handles/)])
+    expect(r).not.toHaveProperty('refEcho')
+  })
+})

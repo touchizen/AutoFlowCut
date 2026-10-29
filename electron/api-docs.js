@@ -95,7 +95,8 @@ Claude Code ── stdio ──▶ MCP Server (mcp-server/index.js)
 | \`app_update_scene\` | \`POST /api/update\` | 씬 수정 |
 | \`app_generate_reference\` | \`POST /api/generate-reference\` | 레퍼런스 이미지 생성 |
 | \`app_generate_scene\` | \`POST /api/generate-scene\` | 개별 씬 이미지 생성 |
-| \`app_start_scene_batch\` | \`POST /api/start-scene-batch\` | 씬 일괄 생성 시작 |
+| \`app_start_scene_batch\` | \`POST /api/start-scene-batch\` | 씬 일괄 생성 시작 (mode: image·video·i2v) |
+| \`app_set_frame_pairs\` | \`POST /api/update\` | I2V 행 지정 (set-frame-pairs) |
 | \`app_start_ref_batch\` | \`POST /api/start-ref-batch\` | 레퍼런스 일괄 생성 시작 |
 | \`app_batch_status\` | \`GET /api/batch-status\` | 배치 진행 상태 |
 | \`app_wait_batch\` | *(MCP 전용 — 폴링)* | 배치 완료 대기 |
@@ -443,8 +444,9 @@ curl http://127.0.0.1:3210/api/batch-status
 - \`update-settings\`: 앱 설정 수정 (fields) — **화이트리스트 키만** 허용, 그 밖의 키나 틀린 값은 400 + \`keys\`(이름만): \`videoModelT2V\`·\`videoModelF2V\`·\`imageModel\`(비어 있지 않은 문자열 ≤ 64 — 시험 단계 provider 의 카탈로그 id 는 400. API 모드에서 다른 provider 의 카탈로그 id 면 그 provider 로 전환하고, 카탈로그 밖 이름은 google 모델로 본다. Flow 모드는 provider 를 건드리지 않는다) · \`videoResolution\`(360p|720p|1080p|4k) · \`aspectRatio\`(16:9|9:16|1:1|4:3|3:4) · \`defaultDuration\`(숫자 1–60) · \`imageBatchCount\`·\`videoBatchCount\`(정수 1–4) · \`concurrency\`·\`videoConcurrency\`(정수 1–10) · \`seedNo\`(정수 ≥ 0) · \`seedLocked\`(boolean) · \`imageUpscale\`(문자열 ≤ 16)
 - \`generate-reference\`: 레퍼런스 생성 트리거 (index + styleId?)
 - \`generate-scene\`: 씬 생성 트리거 (sceneId + styleId?)
-- \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force? + mode?: 'video'|'image' — 탭 오버라이드)
-- \`start-ref-batch\`: 레퍼런스 일괄 생성 시작 (styleId? + force?)`,
+- \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force? + mode?: 'video'|'image'|'i2v' — 탭 오버라이드)
+- \`start-ref-batch\`: 레퍼런스 일괄 생성 시작 (styleId? + force?)
+- \`set-frame-pairs\`: I2V(프레임 → 영상) 행 지정 (indexes: 씬 0-based index 1~200개 + promptSource?: 'video'(기본 — 씬의 영상 프롬프트 videoT2VPrompt)|'image'|'none'). 그 씬을 시작 프레임으로 하는 행을 만들거나 고치고(끝 프레임 없음, 선택) **나머지 행은 선택을 푼다** — I2V 배치는 선택된 행을 완료여도 다시 만든다. 렌더러 결과를 기다려 200 {success, rows:[{index, sceneId, id}]} · 실행 중 409 busy · 이미지 없는 씬/범위 밖/과금 회수 대기 행의 프레임 변경 422 {error:'no-image'|'bad-index'|'needs-recovery', indexes}. 같은 씬이 주인인 옛 중복 행은 첫 행만 선택한다. 앞 배치가 끝난 뒤(batch-status isRunning:false)에 부른다 — start 직후에 부르면 두 요청의 처리 순서가 보장되지 않는다. 다음에 \`POST /api/start-scene-batch {"mode":"i2v"}\`.`,
         requestBody: {
           required: true,
           content: {
@@ -466,6 +468,10 @@ curl http://127.0.0.1:3210/api/batch-status
                     index: 0,
                     fields: { prompt: 'Updated reference prompt...' },
                   },
+                },
+                'set-frame-pairs': {
+                  summary: 'I2V 행 — 씬 4(index 3)를 시작 프레임으로',
+                  value: { type: 'set-frame-pairs', indexes: [3] },
                 },
               },
             },
@@ -542,8 +548,8 @@ curl http://127.0.0.1:3210/api/batch-status
                 type: 'object',
                 properties: {
                   styleId: { type: 'string', maxLength: 128, description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "auto" (씬별 style_tag 매칭 명시) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback. 문자열이 아니거나 128자를 넘으면 400.', example: 'preset:korean-ani' },
-                  force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만). boolean 이 아니면("false"·0 포함) 400.', example: true },
-                  mode: { type: 'string', enum: ['video', 'image'], description: "선택. 'video'면 UI 탭과 무관하게 텍스트→영상(T2V) 배치(선택된 영상 씬만), 'image'면 이미지 배치. 생략 시 현재 UI 탭. 본문이 비어 있지 않은데 JSON 객체가 아니면 400." },
+                  force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 씬도 재생성 대상에 포함 — 새 styleId로 모든 씬 다시 생성. false면 기존 동작 (pending/error만). mode i2v 는 force 를 보지 않는다 — 선택된 I2V 행을 완료여도 다시 만든다(다시 만들 행만 set-frame-pairs 로 고른다). boolean 이 아니면("false"·0 포함) 400.', example: true },
+                  mode: { type: 'string', enum: ['video', 'image', 'i2v'], description: "선택. 'video'면 UI 탭과 무관하게 텍스트→영상(T2V) 배치(선택된 영상 씬만), 'image'면 이미지 배치, 'i2v'면 프레임→영상(I2V) 배치(선택된 I2V 행만 — 먼저 /api/update {type:'set-frame-pairs'}). 생략 시 현재 UI 탭. 본문이 비어 있지 않은데 JSON 객체가 아니면 400." },
                 },
               },
             },
@@ -603,6 +609,11 @@ curl http://127.0.0.1:3210/api/batch-status
           error: { type: 'integer', description: '오류 씬 수' },
           status: { type: 'string', description: '현재 상태', example: 'ready' },
           statusMessage: { type: 'string', description: '상태 메시지' },
+          i2v: {
+            type: 'object',
+            description: 'I2V(프레임 → 영상) — 선택된 행 기준. 배치가 끝났는지는 isRunning 으로 보고, 행 결과는 이 카운트로(시작 전에 이미 complete 인 행도 done 으로 센다).',
+            properties: { total: { type: 'integer' }, done: { type: 'integer' }, generating: { type: 'integer' }, error: { type: 'integer' }, pending: { type: 'integer' } },
+          },
         },
       },
       Reference: {
@@ -664,9 +675,11 @@ curl http://127.0.0.1:3210/api/batch-status
         properties: {
           type: {
             type: 'string',
-            enum: ['update-references', 'update-reference', 'update-scenes', 'update-scene', 'update-settings', 'generate-reference', 'generate-scene', 'start-scene-batch', 'start-ref-batch'],
+            enum: ['update-references', 'update-reference', 'update-scenes', 'update-scene', 'update-settings', 'generate-reference', 'generate-scene', 'start-scene-batch', 'start-ref-batch', 'set-frame-pairs'],
           },
           index: { type: 'integer', description: '대상 인덱스 (0-based)' },
+          indexes: { type: 'array', items: { type: 'integer', minimum: 0 }, minItems: 1, maxItems: 200, description: 'set-frame-pairs: 시작 프레임으로 쓸 씬 index(0-based, 중복 없음)' },
+          promptSource: { type: 'string', enum: ['video', 'image', 'none'], description: "set-frame-pairs: I2V 프롬프트 출처 — 'video'(기본, 씬의 영상 프롬프트) · 'image'(씬 이미지 프롬프트) · 'none'(행의 직접 입력)" },
           fields: {
             type: 'object',
             description: '수정할 필드 객체. update-settings 는 화이트리스트 키만(videoModelT2V, videoModelF2V, imageModel, videoResolution, aspectRatio, defaultDuration, imageBatchCount, videoBatchCount, concurrency, videoConcurrency, seedNo, seedLocked, imageUpscale) — 그 밖의 키·틀린 값은 400. 모델 키는 시험 단계 provider 의 카탈로그 id 도 400, API 모드에서 다른 provider 의 id 면 그 provider 로 전환(카탈로그 밖 이름은 google).',

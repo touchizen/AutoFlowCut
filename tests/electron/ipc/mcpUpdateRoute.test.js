@@ -109,3 +109,29 @@ describe('routeMcpUpdate — POST /api/update 판정 → 렌더러 전달', () =
     expect(webContents.executeJavaScript).not.toHaveBeenCalled()
   })
 })
+
+// 2026-10-30 I2V: set-frame-pairs 는 렌더러 결과를 기다린다(window.__mcpSetFramePairs) — 실패 이유가 호출자에게 가야 한다.
+//   성공 200 {success, rows} · 실행 중 409 busy · 이미지 없음/범위 밖 422 {error, indexes} · 핸들러 없음·렌더러 오류 503.
+describe('MCP /api/update set-frame-pairs → renderer 결과', () => {
+  const run = async (ret) => {
+    const webContents = { send: vi.fn(), executeJavaScript: vi.fn(async () => (ret instanceof Error ? Promise.reject(ret) : JSON.stringify(ret))) }
+    const r = await mcpIpc.dispatchMcpUpdate(webContents, { type: 'set-frame-pairs', indexes: [3] })
+    return { r, webContents }
+  }
+  it('성공 → 200 + rows, IPC send 없음, 스크립트에 __mcpSetFramePairs', async () => {
+    const { r, webContents } = await run({ success: true, rows: [{ index: 3, sceneId: 'scene_4', id: 'fp_1' }] })
+    expect(r).toEqual({ status: 200, body: { success: true, rows: [{ index: 3, sceneId: 'scene_4', id: 'fp_1' }] } })
+    expect(webContents.send).not.toHaveBeenCalled()
+    expect(webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('__mcpSetFramePairs'))
+  })
+  it('busy → 409', async () => {
+    expect((await run({ success: false, error: 'busy' })).r).toEqual({ status: 409, body: { success: false, error: 'busy' } })
+  })
+  it.each(['no-image', 'bad-index', 'needs-recovery'])('%s → 422 + indexes', async (error) => {
+    expect((await run({ success: false, error, indexes: [3] })).r).toEqual({ status: 422, body: { success: false, error, indexes: [3] } })
+  })
+  it('핸들러 없음·렌더러 오류 → 503', async () => {
+    expect((await run({ success: false, error: 'handler-unavailable' })).r).toEqual({ status: 503, body: { success: false, error: 'handler-unavailable' } })
+    expect((await run(new Error('renderer gone'))).r).toEqual({ status: 503, body: { success: false, error: 'renderer gone' } })
+  })
+})
