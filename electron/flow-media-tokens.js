@@ -4,38 +4,62 @@
  * 2026-10-31 — asb 토큰 지도({토큰: mediaId}, as29s 로 배운 것). Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=… 로 바꿔
  *   (이번 세션 업로드 포함 — id 없음) 칩 id 는 이 지도로만 읽힌다(flow-composer-refs.js mediaIdOfImg).
  * 돈 안전 규칙:
- *   - 지우지 않는다 — 같은 id 의 새 토큰은 더한다. 늦게 온 옛 답이 새 토큰을 지우거나 되돌리지 못한다.
- *   - 주인 기록(토큰 → 처음 받은 id)은 영구 — 한 토큰을 다른 id 가 받으면(갱신 뒤의 옛 토큰이어도) 그 토큰을 영구 격리한다.
- *     격리된 토큰은 판독 지도(map)에서 빠진다 → 그 칩·항목은 id 가 안 읽혀 클릭 전에 실패로 닫힌다(엉뚱한 미디어를 그 id 로 고르지 않는다).
- *   - 격리마다 epoch +1 — guarded(read) 는 그 사이 격리가 있었으면 판독을 버린다(null). 더하기는 이미 읽힌 id 를 틀리게 만들지 못해 epoch 를 안 올린다.
+ *   - 주인 기록(토큰 → 처음 받은 id)은 영구 — 한 토큰을 다른 id 가 받으면(판독 지도에서 내려간 옛 토큰이어도) 그 토큰을 영구 격리한다.
+ *   - 판독 지도(map)는 id 마다 가장 최근 답의 토큰 하나뿐. 옛 토큰이 남아 있으면 그 토큰을 쓰게 된 다른 미디어(한 번도 묻지 않은)를 이 id 로 읽는다.
+ *   - 강제로 다시 물을 때(begin force)는 그 id 의 지금 토큰부터 내린다 — 답 전·실패·시간 초과면 그 id 는 토큰으로 안 읽혀 클릭 전에 실패로 닫히거나
+ *     새로 올린다(검증된 묶음만 쓴다).
+ *   - 물음마다 번호 — 그 id 의 더 나중 물음이 있으면 늦게 온 옛 답은 버린다(superseded). 늦은 답이 새 토큰을 되돌리지 못한다.
+ *   - 판독 지도에서 빠질 때마다 epoch +1 — guarded(read) 는 그 사이 빠진 게 있으면 판독을 버린다(null). 더하기는 이미 읽힌 id 를 틀리게 만들지 못해 안 올린다.
  * 토큰은 미디어 접근 주소 — 로그·보고에 싣지 않는다.
  * tests/electron/flow-media-tokens.test.js
  */
 export function createMediaTokenRegistry() {
-  const owner = new Map()
+  const owner = new Map()     // 토큰 → 처음 받은 id(영구)
   const ambiguous = new Set()
+  const current = new Map()   // id → 판독 지도에 있는 토큰
+  const asked = new Map()     // id → 마지막 물음 번호
   const map = {}
   let epoch = 0
+  /** id 의 지금 토큰을 판독 지도에서 내린다. */
+  const retire = (id) => {
+    const t = current.get(id)
+    if (t === undefined) return
+    current.delete(id)
+    if (map[t] === id) { delete map[t]; epoch++ }
+  }
   return {
-    /** 판독에 싣는 지도(같은 객체) = 주인 기록 − 격리. */
+    /** 판독에 싣는 지도(같은 객체) = id 마다 최근 답의 토큰(격리 제외). */
     map,
     epoch: () => epoch,
-    knows: (id) => Object.values(map).includes(id),
-    /** → 'ok' | 'conflict'(이번에 격리) | 'ambiguous'(이미 격리) */
-    record(token, id) {
-      if (ambiguous.has(token)) return 'ambiguous'
+    knows: (id) => current.has(id),
+    /** 물음 시작 → 번호. force 면 지금 토큰부터 내린다. */
+    begin(id, { force = false } = {}) {
+      const n = (asked.get(id) || 0) + 1
+      asked.set(id, n)
+      if (force) retire(id)
+      return n
+    },
+    /** 답(token 없으면 null) → 'ok' | 'none' | 'conflict'(이번에 격리) | 'ambiguous'(이미 격리) | 'superseded'(더 나중 물음이 있다) */
+    settle(id, n, token) {
+      if (asked.get(id) !== n) return 'superseded'
+      if (!token) { retire(id); return 'none' }
+      if (ambiguous.has(token)) { retire(id); return 'ambiguous' }
       const prev = owner.get(token)
-      if (prev && prev !== id) {
+      if (prev !== undefined && prev !== id) {
         ambiguous.add(token)
-        delete map[token]
-        epoch++
+        if (current.get(prev) === token) retire(prev)
+        retire(id)
         return 'conflict'
       }
-      owner.set(token, id)
-      map[token] = id
+      if (prev === undefined) owner.set(token, id)
+      if (current.get(id) !== token) {
+        retire(id)
+        current.set(id, token)
+        map[token] = id
+      }
       return 'ok'
     },
-    /** read() 결과 — 그동안 격리가 있었거나 read 가 던지면 null(호출자는 판독 불가 = fail-closed). */
+    /** read() 결과 — 그동안 판독 지도에서 빠진 게 있었거나 read 가 던지면 null(호출자는 판독 불가 = fail-closed). */
     async guarded(read) {
       const e = epoch
       let v = null

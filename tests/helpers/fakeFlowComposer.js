@@ -428,7 +428,12 @@ export function makeRefDriverHarness(o = {}) {
       trace.push('state-read')
       // Codex 2차#2: 판독이 도는 사이 다른 응답이 토큰을 격리했다(epoch +1) — 결과는 옛 지도로 계산된 그대로 돌아온다
       // 진짜 격리로: 판독마다 새 토큰 하나를 두 id 가 받는다(주인 기록 → conflict → epoch +1)
-      if (o.bumpEpochDuringStateRead) return page.exec(s).then((r) => { const t = `RACE_${++raceN}`; registry.record(t, uuid(901)); registry.record(t, uuid(902)); return r })
+      if (o.bumpEpochDuringStateRead) return page.exec(s).then((r) => {
+        const t = `RACE_${++raceN}`
+        registry.settle(uuid(901), registry.begin(uuid(901)), t)
+        registry.settle(uuid(902), registry.begin(uuid(902)), t)
+        return r
+      })
     }
     if (s.includes('__af_paste_observer__')) {
       if (o.hangObserver && page.counts.paste > 0) { trace.push('observer:hang'); return new Promise(() => {}) }
@@ -467,15 +472,19 @@ export function makeRefDriverHarness(o = {}) {
     // 진짜 지도(flow-media-tokens.js)로 — flow-angular learnMediaTokens 와 같은 규칙: 이미 아는 id 는 force 가 아니면 다시 묻지 않는다.
     learnMediaTokens: (ids, opts = {}) => {
       learnCalls.push({ ids: [...ids], force: !!opts.force })
-      if (o.learnHang) return new Promise(() => {})   // as29s 가 영영 답하지 않는다
+      const asks = []
       for (const id of ids) {
         if (!opts.force && registry.knows(id)) continue
+        asks.push([id, registry.begin(id, { force: !!opts.force })])   // force 면 지금 토큰부터 내린다(flow-angular 와 같다)
+      }
+      if (o.learnHang) return new Promise(() => {})   // as29s 가 영영 답하지 않는다(물음은 시작됐다)
+      for (const [id, q] of asks) {
         learned.push(id)
-        if (o.learnTokens === false) continue
-        if (Number.isInteger(o.learnTokensFailFirst) && learned.length <= o.learnTokensFailFirst) continue   // 처음 n 번은 토큰이 아직 없다(업로드 직후)
+        const failFirst = Number.isInteger(o.learnTokensFailFirst) && learned.length <= o.learnTokensFailFirst   // 처음 n 번은 토큰이 아직 없다(업로드 직후)
+        if (o.learnTokens === false || failFirst) { registry.settle(id, q, null); continue }
         const n = learned.filter((x) => x === id).length
         const src = typeof o.tokenOf === 'function' ? o.tokenOf(id, n) : id   // 다른 id 면 그 미디어의 토큰을 준다(재사용·충돌 시험)
-        registry.record(o.staleTokenFirst && n === 1 ? `STALE_${asbToken(id)}` : asbToken(src), id)   // 처음 답은 페이지와 다른(낡은) 토큰
+        registry.settle(id, q, o.staleTokenFirst && n === 1 ? `STALE_${asbToken(id)}` : asbToken(src))   // 처음 답은 페이지와 다른(낡은) 토큰
       }
       return Promise.resolve()
     },

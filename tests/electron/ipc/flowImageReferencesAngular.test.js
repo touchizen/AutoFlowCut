@@ -356,7 +356,7 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     seed('king', U(2)); seed('queen', U(3))
     const h = refHandlerHarness({
       page: { asb: true, assets: session(U(2), U(3)) }, as29sTokens: true,
-      quarantineDuringGuard: (reg) => { reg.record(asbToken(U(3)), U(99)) },   // 늦은 답: U3 의 토큰이 다른 미디어 것이기도 했다
+      quarantineDuringGuard: (reg) => { reg.settle(U(99), reg.begin(U(99)), asbToken(U(3))) },   // 늦은 답: U3 의 토큰이 다른 미디어 것이기도 했다
       onSubmit: () => { throw new Error('must not submit') },
     })
     const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
@@ -386,6 +386,27 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     expect(box.snapshot.expectedRefs).not.toContain(U(2))
     expect(img2.page.counts.paste).toBe(2)
     _resetSharedMediaTokensForTests()
+  })
+
+  it('Codex 5차: 캐시 레퍼런스의 토큰이 바뀌었고(T1→T2) 옛 T1 은 다른 미디어(한 번도 안 물음)가 쓴다 — 옛 T1 로 그 미디어를 이 id 로 고르지 않고 새로 올린다', async () => {
+    seed('king', U(2))
+    const box = capture(9)
+    // 페이지엔 U9(물은 적 없는 다른 미디어)만 — 그 썸네일 토큰 = U2 의 옛 토큰. as29s(U2) 는 이제 새 토큰을 준다.
+    const h = refHandlerHarness({ page: { asb: true, assets: session(U(9)), upload: { ids: [U(3)] } }, as29sTokens: true, onSubmit: box.onSubmit })
+    h.mediaTokenRegistry.settle(U(2), h.mediaTokenRegistry.begin(U(2)), asbToken(U(9)))   // 지난 세션: U2 = T1(지금은 U9 의 토큰)
+    await settle(h.generate({ refs: [refInput('king')], plan: { segments: [text('a king')], attach: [0] } }), 120000)
+    expect(box.snapshot.expectedRefs).toEqual([U(3)])
+    expect(h.page.counts.paste).toBe(1)
+  })
+
+  it('Codex 5차: 캐시 레퍼런스의 토큰 갱신이 실패하면(as29s 토큰 없음) 옛 토큰을 쓰지 않는다 — 새로 올린다', async () => {
+    seed('king', U(2))
+    const box = capture(9)
+    const h = refHandlerHarness({ page: { asb: true, assets: session(U(9)), upload: { ids: [U(3)] } }, as29sTokens: (id) => (id === U(2) ? null : id), onSubmit: box.onSubmit })
+    h.mediaTokenRegistry.settle(U(2), h.mediaTokenRegistry.begin(U(2)), asbToken(U(9)))
+    await settle(h.generate({ refs: [refInput('king')], plan: { segments: [text('a king')], attach: [0] } }), 120000)
+    expect(box.snapshot.expectedRefs).toEqual([U(3)])
+    expect(h.page.counts.paste).toBe(1)
   })
 })
 

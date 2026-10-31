@@ -194,6 +194,7 @@ export function refHandlerHarness(o = {}) {
       as29sCalls[m[1]] = (as29sCalls[m[1]] || 0) + 1
       // 함수면 (id, n번째) → 토큰을 만들 id(다른 id 면 그 미디어의 토큰을 준다 — 충돌·낡은 토큰 시험)
       const tokenOf = typeof o.as29sTokens === 'function' ? o.as29sTokens(m[1], as29sCalls[m[1]]) : m[1]
+      if (tokenOf === null) return { status: 200, text: respBodyWithPayload('as29s', [m[1], FAKE_PROJECT]) }   // 토큰 없는 기록
       return { status: 200, text: respBodyWithPayload('as29s', as29sImageRecord(m[1], tokenOf)) }
     }
     if (s.includes('"jwpduf"')) { trace.push('poll'); return null }

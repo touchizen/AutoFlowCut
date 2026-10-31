@@ -256,18 +256,19 @@ export function createFlowAngular(deps) {
    */
   const tokens = deps.mediaTokenRegistry || sharedMediaTokenRegistry()
   /**
-   * ids 의 토큰을 as29s(읽기 RPC)로 배운다 — 이미 아는 id 는 force 가 아니면 건너뛴다(force = 칩이 안 읽혀 다시 묻기). 실패·토큰 없음은 그대로 진행
-   *   (판독이 옛 주소로만 돈다). 토큰 값은 로그에 싣지 않는다.
+   * ids 의 토큰을 as29s(읽기 RPC)로 배운다 — 이미 아는 id 는 force 가 아니면 건너뛴다. force(compose 시작의 캐시 id · 칩이 안 읽혀 다시 묻기)는 지금
+   *   토큰부터 내리고 묻는다(답 전·실패면 그 id 는 토큰으로 안 읽힌다). 실패·토큰 없음은 그대로 진행(판독이 옛 주소로만 돈다). 토큰 값은 로그에 싣지 않는다.
    */
   async function learnMediaTokens(flowView, ids, { force = false } = {}) {
     for (const id of new Set(ids)) {
       if (typeof id !== 'string' || !UUID_RE.test(id)) continue
       if (!force && tokens.knows(id)) continue
+      const n = tokens.begin(id, { force })
       let token = null
       try { token = parseMediaImageToken(await callFlowRpc(flowView, 'as29s', [id]), id) } catch (_e) { token = null }
-      if (!token) { console.log(`[Flow Refs] media token media=${short(id)} none`); continue }
-      const res = tokens.record(token, id)
+      const res = tokens.settle(id, n, token)
       if (res === 'ok') console.log(`[Flow Refs] media token media=${short(id)} ok${force ? ' (refreshed)' : ''}`)
+      else if (res === 'none' || res === 'superseded') console.log(`[Flow Refs] media token media=${short(id)} ${res}`)
       else console.warn(`[Flow Refs] media token ${res} media=${short(id)} → not used`)
     }
   }
