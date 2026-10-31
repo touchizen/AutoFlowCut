@@ -287,10 +287,11 @@ export function parseVideoStatusResponse(payload) {
   return { creditsLeft, records }
 }
 
-/** 상태 [5][8][0] → 'pending'(6 제출됨·2 생성중) | 'complete'(3) | 'unknown'(그 외·null — 폴이 pending+unknownState 로). */
+/** 상태 [5][8][0] → 'pending'(6 제출됨·2 생성중) | 'complete'(3) | 'failed'(4 — 10-31 실기: Flow 화면에 실패, 크레딧 환불) | 'unknown'(그 외·null — 폴이 pending+unknownState 로). */
 export function mediaStateToStatus(state) {
   if (state === 6 || state === 2) return 'pending'
   if (state === 3) return 'complete'
+  if (state === 4) return 'failed'
   return 'unknown'
 }
 

@@ -437,10 +437,11 @@ describe('M2-1 parseMediaRecord / parseVideoStatusResponse / mediaStateToStatus'
     try { parseVideoStatusResponse(p) } catch (e) { err = e }
     expect(err).toMatchObject({ rpcid: 'jwpduf', path: '[2][0][0]' })
   })
-  it('mediaStateToStatus: 6·2 → pending, 3 → complete, 9·null → unknown', () => {
+  it('mediaStateToStatus: 6·2 → pending, 3 → complete, 4 → failed(10-31 실기: Flow 실패·크레딧 환불), 9·null → unknown', () => {
     expect(mediaStateToStatus(6)).toBe('pending')
     expect(mediaStateToStatus(2)).toBe('pending')
     expect(mediaStateToStatus(3)).toBe('complete')
+    expect(mediaStateToStatus(4)).toBe('failed')
     expect(mediaStateToStatus(9)).toBe('unknown')
     expect(mediaStateToStatus(null)).toBe('unknown')
   })

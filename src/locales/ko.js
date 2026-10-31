@@ -1402,6 +1402,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
       'flow-aspect-mismatch': 'Flow가 요청과 다른 비율의 이미지를 만들었습니다. Flow 컴포저의 비율 설정을 확인한 뒤 다시 시도해주세요.',
       'flow-video-settings-mismatch': '영상 설정이 다릅니다 — 요청 {expected}, Flow {actual}. 이 영상은 사용하지 않습니다.',
       'flow-video-count-mismatch': 'Flow가 한 번에 여러 영상을 만들었습니다. 컴포저의 개수를 x1로 두고 다시 시도해주세요.',
+      'flow-video-generation-failed': 'Flow가 영상 생성에 실패했습니다(크레딧은 Flow가 돌려줍니다). 프롬프트나 시작 이미지를 바꿔 다시 시도해주세요.',
       'flow-video-fetch-failed': '완성된 영상 정보를 가져오지 못했습니다. Flow에서 영상을 확인한 뒤 다시 시도해주세요.',
       'flow-video-not-found': '이 영상이 Flow에 더 이상 없습니다(삭제되었거나 만료). 재생성으로 새로 만들어주세요.',   // M2-R2 G3
       'flow-submit-lost': 'Flow에 제출됐지만 응답을 받지 못했습니다(페이지 이동 또는 시간 초과). Flow 창에서 결과를 확인해주세요.',

@@ -2,7 +2,7 @@
  * isFlowMediaId — App handleVideoRetry · useVideoAutomation Phase 0 · videoRecovery #R34-1 · flow-rpc-protocol [3][0][0] 이 공유하는 Flow 미디어 id 모양(UUID) 술어 (M2-R5 J2)
  */
 import { describe, it, expect } from 'vitest'
-import { isFlowMediaId, isLegacyFlowGenerationFailure } from '../../src/utils/flowMediaId'
+import { isFlowMediaId, isLegacyFlowGenerationFailure, failedStatusPatch, isFlowGenerationFailure } from '../../src/utils/flowMediaId'
 
 describe('isFlowMediaId — UUID 모양만 Flow 미디어 id', () => {
   it('UUID(대소문자·양끝 공백 허용)는 true', () => {
@@ -44,5 +44,20 @@ describe('isLegacyFlowGenerationFailure — 넷 다 맞아야 true(errorKind nul
     expect(isLegacyFlowGenerationFailure({ ...legacy, videoPath: '/proj/videos/t2v_1.mp4' })).toBe(false)
     expect(isLegacyFlowGenerationFailure(null)).toBe(false)
     expect(isLegacyFlowGenerationFailure(undefined)).toBe(false)
+  })
+})
+
+describe('2026-10-31 failedStatusPatch / isFlowGenerationFailure', () => {
+  const G = '12345678-1234-1234-1234-123456789abc'
+  it('Flow 생성 실패(flow-video-generation-failed) → generationId·mediaId null(fresh) + kind·params', () => {
+    const st = { status: 'failed', errorKind: 'flow-video-generation-failed', error: 'flow-video-generation-failed' }
+    expect(isFlowGenerationFailure(st)).toBe(true)
+    expect(failedStatusPatch(st, G)).toEqual({ error: 'flow-video-generation-failed', errorKind: 'flow-video-generation-failed', mediaId: null, generationId: null })
+    expect(failedStatusPatch(st, G, { clearGenerationFailure: false })).toEqual({ error: 'flow-video-generation-failed', errorKind: 'flow-video-generation-failed', generationId: G })
+  })
+  it('다른 failed(fetch-failed + mediaId) → mediaId·generationId 유지(download-only), kind 없으면 null·기본 문구', () => {
+    expect(failedStatusPatch({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'e', mediaId: G }, G)).toEqual({ error: 'e', errorKind: 'flow-video-fetch-failed', mediaId: G, generationId: G })
+    expect(failedStatusPatch({ status: 'failed' }, 'op')).toEqual({ error: 'Video generation failed', errorKind: null, generationId: 'op' })
+    expect(isFlowGenerationFailure(null)).toBe(false)
   })
 })
