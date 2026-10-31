@@ -303,28 +303,29 @@ describe('단계 함수 — 직접 호출', () => {
 })
 
 // 2026-10-31 실측: Flow 가 칩·애셋 항목·미리보기 src 를 전부 https://flow.google.com/asb/<토큰>=s1600-rw 로 바꿨다(이번 세션 업로드 포함). 업로드(maseQ)는
-//   성공하는데 칩 id 를 못 읽어 chip-no-id 로 끝났다(xmas90 장면 1~3, 사용자 덤프 3개). 드라이버는 필요한 id 의 토큰을 as29s 로 배워(ctx.learnMediaTokens)
-//   그 지도로 칩·항목·미리보기를 읽는다.
-describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는다', () => {
-  it('업로드 → 칩 확인이 토큰으로 통과(예전엔 chip-no-id) · 올린 id 의 토큰을 배운다', async () => {
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [] } })
-    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
-    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
-    expect(h.page.counts.paste).toBe(1)
-    expect(h.learned).toContain(U(3))
-    expect([...h.page.chipIds()]).toEqual([U(3)])
-  })
+//   성공하는데 칩 id 를 못 읽어 chip-no-id 로 끝났다(xmas90 장면 1~3). as29s 는 갓 올린 이미지에 옛 주소만 준다(실기). 드라이버는 우리가 붙여넣어
+//   정확히 하나 늘어난 칩의 토큰을 maseQ 가 준 id 로 등록하고(ctx.adoptMediaToken), 그 지도로 칩·항목·미리보기를 읽는다.
+describe('2026-10-31 asb 주소 — 우리가 붙인 칩에서 토큰을 배워 칩·애셋을 읽는다', () => {
+  const adopt = (h, id) => h.registry.adopt(id, asbToken(id))
 
-  it('as29s 가 토큰을 못 줘도(갓 올린 이미지는 옛 주소만 — 10-31 실기) 우리가 붙인 새 칩 하나의 토큰을 그 id 로 배운다 → 통과', async () => {
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnTokens: false })
+  it('업로드 → 새 칩 하나의 토큰을 그 id 로 등록 → 칩 확인 통과(예전엔 chip-no-id)', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] } })
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
     expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
     expect(h.adopted).toEqual([U(3)])
     expect(h.registry.map[asbToken(U(3))]).toBe(U(3))
+    expect([...h.page.chipIds()]).toEqual([U(3)])
   })
 
-  it('붙여넣기 뒤 칩이 둘 늘면(어느 것이 우리 것인지 모름) 토큰을 배우지 않는다 → 클릭 전 실패', async () => {
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [], upload: { extraChip: true } }, learnTokens: false })
+  it('등록하지 못하면(adoptMediaToken 없음) 클릭 전 chip-no-id — 생성 버튼은 누르지 않는다', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, noAdopt: true })
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-no-id' })
+    expectNoSubmit(h)
+  })
+
+  it('붙여넣기 뒤 칩이 둘 늘면(어느 것이 우리 것인지 모름) 등록하지 않는다 → 클릭 전 실패', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [], upload: { extraChip: true } } })
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
     expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED })
     expect(['chip-no-id', 'chip-mismatch']).toContain(r.reason)
@@ -332,69 +333,37 @@ describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는
     expectNoSubmit(h)
   })
 
-  it('캐시 hit + asb 목록 → 사전 스캔이 토큰으로 찾음 → 업로드 0회 · 멘션·첨부 ok', async () => {
+  it('새 칩의 토큰이 이미 다른 id 것이면 그 칩은 그 id 로 읽혀 chip-mismatch — 등록하지 않고 클릭 전 실패', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] } })
+    h.registry.adopt(U(9), asbToken(U(3)))   // 그 토큰은 이미 U9 의 것
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-mismatch' })
+    expect(h.adopted).toEqual([])
+    expectNoSubmit(h)
+  })
+
+  it('캐시 hit + 이번 세션에 배운 토큰 → 사전 스캔이 토큰으로 찾음 → 업로드 0회 · 멘션·첨부 ok', async () => {
     seed(R0, M0); seed(R1, M1)
     const h = makeRefDriverHarness({ page: { asb: true, assets: session(M0, M1) } })
+    adopt(h, M0); adopt(h, M1)
     const r = await compose(h, [R0, R1], { segments: [text('A '), mention(0)], attach: [1] })
     expect(r).toMatchObject({ ok: true, expectedRefs: [M0, M1], expectedMentions: [M0] })
     expect(h.page.counts.paste).toBe(0)
-    expect(h.learned).toEqual(expect.arrayContaining([M0, M1]))
     expect(logged()).toMatch(/assets scan tab=upload idItems=2 cached=2 found=2 missing=0 reopened=0/)
   })
 
-  it('앞 세션 애셋(asb)도 캐시 id 의 토큰을 알면 재사용 — 업로드 0회', async () => {
+  it('캐시 hit 인데 토큰을 모르면(앱 재시작 뒤 등) 항목을 못 알아봐 새로 올린다 — 불투명 항목은 고르지 않는다', async () => {
     seed(R0, M0)
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [{ id: M0, session: false, name: 'image.png' }] } })
-    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
-    expect(r).toMatchObject({ ok: true, expectedRefs: [M0] })
-    expect(h.page.counts.paste).toBe(0)
-  })
-
-  it('업로드 직후 as29s 에 토큰이 아직 없으면 칩 대기 안에서 다시 배운다(2.5초 간격) → 통과', async () => {
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnTokensFailFirst: 2, noAdopt: true })   // 칩 토큰 등록이 안 될 때의 예비 경로
+    const h = makeRefDriverHarness({ page: { asb: true, assets: session(M0) } })
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
     expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
-    expect(h.learned.filter((id) => id === U(3)).length).toBeGreaterThanOrEqual(3)
+    expect(h.page.counts.paste).toBe(1)
   })
 
-  it('Codex#2: 처음 배운 토큰이 낡았으면(페이지와 다름) 칩을 못 읽는 동안 강제로 다시 배운다 → 통과', async () => {
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, staleTokenFirst: true, noAdopt: true })   // 칩 토큰 등록이 안 될 때의 예비 경로
-    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
-    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
-    expect(h.learnCalls.some((c) => c.force && c.ids.includes(U(3)))).toBe(true)
-  })
-
-  it('Codex#3: as29s 가 영영 답하지 않아도 옛 주소 칩은 바로 읽힌다 — 업로드 loadend 뒤 곧 통과(마감 우회 없음)', async () => {
-    const h = makeRefDriverHarness({ page: { assets: [] }, learnHang: true })
-    const t0 = Date.now()
-    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
-    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
-    expect(Date.now() - t0).toBeLessThan(20000)
-  })
-
-  it('Codex#3: asb 칩 + as29s 무응답 → 기다림은 마감 안에서 끝나고, 새 칩의 토큰으로 통과', async () => {
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnHang: true })
-    const t0 = Date.now()
-    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
-    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
-    expect(Date.now() - t0).toBeLessThan(7500 + 15000 + 6000)
-  })
-
-  it('Codex 2차#2: 게이트 판독이 도는 사이 토큰이 격리되면(epoch 변경) 그 판독을 버린다 → chip-set-mismatch(클릭 전)', async () => {
+  it('게이트 판독이 도는 사이 토큰이 격리되면(epoch 변경) 그 판독을 버린다 → chip-set-mismatch(클릭 전)', async () => {
     const h = makeRefDriverHarness({ page: { asb: true, chips: [{ id: M0 }], assets: [] }, bumpEpochDuringStateRead: true })
-    h.registry.settle(M0, h.registry.begin(M0), asbToken(M0))
+    adopt(h, M0)
     const r = await drive(readGate(h.ctx, { refs: [M0], mentions: [], texts: [], summary: await summaryOf(h) }))
     expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-set-mismatch' })
   })
-
-  it('Fable: 재사용 레퍼런스의 토큰도 compose 마다 다시 묻는다 — 아는 id(옛 토큰)를 건너뛰면 그 사이 다른 미디어가 받은 새 토큰을 충돌로 못 잡는다', async () => {
-    seed(R0, M0); seed(R1, M1)
-    // 페이지의 king 항목은 새 토큰(asbToken(M0)) · 지도엔 M0 의 옛 토큰만 · M1 을 물으면 king 의 새 토큰이 온다
-    const h = makeRefDriverHarness({ page: { asb: true, assets: session(M0), upload: { ids: [U(3), U(4)] } }, tokenOf: (id) => (id === M1 ? M0 : id) })
-    h.registry.settle(M0, h.registry.begin(M0), `OLD_${asbToken(M0)}`)
-    const r = await compose(h, [R0, R1], { segments: [mention(0)], attach: [1] })
-    expect(r.ok === false || !r.expectedRefs.includes(M1)).toBe(true)   // king 항목을 queen(M1)으로 고르지 않는다
-    expect(h.learnCalls[0]).toMatchObject({ force: true })
-  })
 })
-

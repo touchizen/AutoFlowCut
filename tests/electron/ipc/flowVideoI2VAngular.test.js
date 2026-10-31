@@ -65,14 +65,13 @@ describe('I2V(프레임 → 영상) — 성공', () => {
     for (const w of ['scissors', 'image.png']) expect(out, w).not.toContain(w)
   })
 
-  it('2026-10-31 asb 주소(칩·칸에 id 없음): 업로드한 시작 프레임의 토큰을 as29s 로 배워 칩·칸 확인 통과 → 제출', async () => {
+  it('2026-10-31 asb 주소(칩·칸에 id 없음): 붙인 시작 프레임 칩의 토큰을 그 id 로 등록해 칩·칸 확인 통과 → 제출', async () => {
     const box = capture()
-    const h = refHandlerHarness({ kind: 'video', page: { asb: true, upload: { ids: [U(4)] } }, as29sTokens: true, onSubmit: box.onSubmit })
+    const h = refHandlerHarness({ kind: 'video', page: { asb: true, upload: { ids: [U(4)] } }, onSubmit: box.onSubmit })
     const r = await settle(h.generateI2V(), 120000)
     expect(r).toEqual({ success: true, generationId: U(11), creditsLeft: 1040 })
-    expect(h.trace.filter((x) => x === 'as29s').length).toBe(1)
     const out = logged()
-    expect(out).toMatch(/\[Flow Refs\] media token media=00000004 ok/)
+    expect(out).toMatch(/\[Flow Refs\] media token media=00000004 ok\(from-chip\)/)
     expect(out).toMatch(/\[Flow Video I2V\] \[Angular\] start frame media=00000004 ok/)
     expect(out).not.toMatch(/ANqvLO/)
   })

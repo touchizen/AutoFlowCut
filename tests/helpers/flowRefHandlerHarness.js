@@ -21,7 +21,7 @@ import { FLOW_RPC_CAPTURE_INJECTION } from '../../electron/flow-rpc-capture.js'
 import { createMediaTokenRegistry } from '../../electron/flow-media-tokens.js'
 import { createFakeFlowComposer, makeFakeClipboard, fakeNativeImage, maseQBody, pngBytes, FAKE_DOC, FAKE_PROJECT } from './fakeFlowComposer.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
-import { EMPTY_EDITOR, asbToken } from '../fixtures/flow-live-dom-m3.js'
+import { EMPTY_EDITOR } from '../fixtures/flow-live-dom-m3.js'
 import { respBodyWithPayload, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 
 /** 페이지의 XMLHttpRequest 흉내(realCapture) — 캡처 주입이 prototype 의 open/send 를 감싼다. _finish 가 loadend 를 쏜다. */
@@ -36,12 +36,6 @@ class FakeXHR {
 
 export { FAKE_DOC, FAKE_PROJECT }
 const COMPOSER_STATE_PREFIX = composerStateJs().slice(0, composerStateJs().lastIndexOf('{}'))
-/** 2026-10-31 실측 모양의 as29s 이미지 기록(마스킹) — [5][10]·[6][1][3] 에 https://lh3.googleusercontent.com/asb/<토큰>. */
-export function as29sImageRecord(id, tokenOf = id) {
-  const url = `https://lh3.googleusercontent.com/asb/${asbToken(tokenOf)}`
-  return [id, FAKE_PROJECT, maskedUuid(98), null, null, [[1793426994, 0], null, null, null, null, null, [null, null, null, null, 1], null, null, 1, url, null, null, 276168],
-    [null, [null, null, null, url, 0, null, 'image/jpeg'], [768, 1376], null, null, [url]]]
-}
 export const FLOW_URL_OK = `https://flow.google.com/project/${FAKE_PROJECT}`
 export const SUBMIT_SEQ = 100
 
@@ -65,8 +59,6 @@ export function sampleSendFields(n) {
  *   · sample(제출 샘플 번호 S3#n — 기본 onSubmit 이 send/loadend) · send(send 이벤트 덮어쓰기) · loadend(loadend 덮어쓰기) · onSubmit(api)
  *   · settings(드라이버 결과 | Promise) · summary · credits(nzlxg 순서) · hidden · bounds · beforeDispatchHook(page) · deadSteps(신뢰 클릭이 헛도는 step 들)
  *   · quarantineDuringGuard(registry)(2026-10-31) → 제출 클릭 dispatch 가드의 컴포저 판독 중에 호출(토큰 격리 모사)
- *   · as29sDelay(id, n)(2026-10-31) → 그 as29s 답을 ms 만큼 늦춘다
- *   · as29sTokens(2026-10-31) true → as29s 를 그 id 의 이미지 기록(asb 토큰)으로 답한다(page.asb 와 함께)
  *   · realCapture(M3-14) true → 가짜 페이지 문서에 **실제** 캡처 주입(FLOW_RPC_CAPTURE_INJECTION)을 FakeXHR 위에 설치한다(main 이 문서 로드 때 하듯).
  *     그 문서의 flowReportResponse 가 라우터로 간다(main.js 의 flow:report-response 와 같은 모양). 문서 nonce 는 주입이 만든다(가짜 페이지의 FAKE_DOC 은 지운다 —
  *     드라이버의 READ_RPC_DOC_JS 도 같은 문서에서 그 값을 읽는다) · 핸들러의 캡처 프로브·주입도 그 문서에서 돈다 · 붙여넣기 업로드는 페이지 XHR 이 maseQ(S3#4 요청)를
@@ -76,7 +68,6 @@ export function refHandlerHarness(o = {}) {
   const kind = o.kind || 'image'
   const url = o.url ?? FLOW_URL_OK
   const trace = []
-  const as29sCalls = {}
   let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
   const credits = Array.isArray(o.credits) ? [...o.credits] : [900]
   const clipboard = makeFakeClipboard(o.clipboard || { formats: ['text/plain', 'text/html', 'application/x-lexical-editor'], text: 'user text', html: '<p>user text</p>' }, (tag) => trace.push(tag))
@@ -187,21 +178,8 @@ export function refHandlerHarness(o = {}) {
       const next = credits.length > 1 ? credits.shift() : credits[0]
       return { status: 200, text: respBodyWithPayload('nzlxg', [next, 1, 2, 2, null, next]) }
     }
-    // 2026-10-31: as29sTokens → 그 id 의 이미지 기록(asb 토큰 주소 [5][10]·[6][1][3])으로 답한다 — 드라이버가 칩·애셋을 토큰으로 읽는다.
-    if (o.as29sTokens && s.includes('"as29s"')) {
-      const m = s.match(/payload: \["([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"\]/)
-      trace.push('as29s')
-      if (!m) return null
-      as29sCalls[m[1]] = (as29sCalls[m[1]] || 0) + 1
-      const delay = typeof o.as29sDelay === 'function' ? o.as29sDelay(m[1], as29sCalls[m[1]]) : 0   // 이 물음이 늦게(멈춘 듯) 온다
-      if (delay > 0) await new Promise((r) => setTimeout(r, delay))
-      // 함수면 (id, n번째) → 토큰을 만들 id(다른 id 면 그 미디어의 토큰을 준다 — 충돌·낡은 토큰 시험)
-      const tokenOf = typeof o.as29sTokens === 'function' ? o.as29sTokens(m[1], as29sCalls[m[1]]) : m[1]
-      if (tokenOf === null) return { status: 200, text: respBodyWithPayload('as29s', [m[1], FAKE_PROJECT]) }   // 토큰 없는 기록
-      return { status: 200, text: respBodyWithPayload('as29s', as29sImageRecord(m[1], tokenOf)) }
-    }
     if (s.includes('"jwpduf"')) { trace.push('poll'); return null }
-    if (s.includes('"as29s"')) { trace.push('as29s'); return null }   // 2026-10-31: 컴포즈 중 토큰 배우기도 as29s — 폴(jwpduf)과 따로 센다
+    if (s.includes('"as29s"')) { trace.push('as29s'); return null }   // 미디어 기록(완료 폴의 둘째 단계) — 상태 폴(jwpduf)과 따로 센다
     if (s.includes('elementFromPoint')) return { ok: true, why: 'ok' }
     if (s.includes('const scan =')) return { candidates: [], context: { lang: 'ko' } }
     if (s.includes('const find =')) { trace.push('agent-probe'); return { found: true, on: false } }
@@ -213,7 +191,7 @@ export function refHandlerHarness(o = {}) {
     if (s === READ_EDITOR_TEXT_JS) trace.push('read-text')
     else if (s.startsWith(COMPOSER_STATE_PREFIX)) {
       trace.push('composer-state')   // 2026-10-31: 토큰 지도가 실려도 같은 판독
-      // Codex 2차#2: 제출 클릭(dispatch 가드) 중의 판독이 도는 사이 늦은 as29s 답이 토큰을 격리한다 — 결과는 옛 지도로 계산된 그대로
+      // 제출 클릭(dispatch 가드) 중의 판독이 도는 사이 다른 등록이 토큰을 격리한다 — 결과는 옛 지도로 계산된 그대로
       if (submitClicked && typeof o.quarantineDuringGuard === 'function') {
         const r = await page.exec(s)
         o.quarantineDuringGuard(mediaTokenRegistry)

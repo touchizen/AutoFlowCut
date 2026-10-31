@@ -276,22 +276,6 @@ export function parseMediaRecord(rec, ctx) {
   return { mediaId, state, bytes, videoUrl }
 }
 
-const ASB_URL = /^https:\/\/(?:lh3\.googleusercontent\.com|flow\.google\.com)\/asb\/([A-Za-z0-9_-]+)(?:[=?#]|$)/
-/**
- * 2026-10-31: as29s 이미지 기록 → asb 토큰(페이지 칩·애셋 항목 src https://flow.google.com/asb/<토큰>=… 과 같은 글자) 또는 null.
- *   Flow 가 썸네일 src 에서 id 를 뺀 뒤 칩·항목을 id 로 알아보는 유일한 열쇠다. 자리 [5][10] → [6][1][3]. 그 mediaId 의 기록이 아니면 null — 던지지 않는다
- *   (토큰이 없으면 판독이 옛 주소 모양으로만 돈다). 토큰은 미디어 접근 주소라 로그·보고에 싣지 않는다.
- */
-export function parseMediaImageToken(rec, mediaId) {
-  if (!Array.isArray(rec) || typeof mediaId !== 'string' || rec[0] !== mediaId) return null
-  const at = (a, ...path) => path.reduce((o, i) => (Array.isArray(o) ? o[i] : undefined), a)
-  for (const v of [at(rec, 5, 10), at(rec, 6, 1, 3)]) {
-    const m = typeof v === 'string' ? ASB_URL.exec(v) : null
-    if (m) return m[1]
-  }
-  return null
-}
-
 /** jwpduf(상태 폴) payload `[null, credits|null, [records]]` → { creditsLeft, records }. 중간 폴은 [1]=null(R:143-149). */
 export function parseVideoStatusResponse(payload) {
   const RPC = 'jwpduf'

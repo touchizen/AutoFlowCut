@@ -1,14 +1,12 @@
 /**
  * electron/flow-media-tokens.js
  *
- * 2026-10-31 — asb 토큰 지도({토큰: mediaId}, as29s 로 배운 것). Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=… 로 바꿔
- *   (이번 세션 업로드 포함 — id 없음) 칩 id 는 이 지도로만 읽힌다(flow-composer-refs.js mediaIdOfImg).
+ * 2026-10-31 — asb 토큰 지도({토큰: mediaId}). Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=… 로 바꿔(이번 세션 업로드 포함 —
+ *   id 없음) 칩 id 는 이 지도로만 읽힌다(flow-composer-refs.js mediaIdOfImg). 토큰은 드라이버가 "우리가 방금 붙여넣은 칩 하나"에서 배워 maseQ 가 준 id 로
+ *   등록한다(adopt). as29s 는 갓 올린 이미지에 옛 flow-content 주소만 줘 토큰 출처가 못 된다(10-31 실기).
  * 돈 안전 규칙:
  *   - 주인 기록(토큰 → 처음 받은 id)은 영구 — 한 토큰을 다른 id 가 받으면(판독 지도에서 내려간 옛 토큰이어도) 그 토큰을 영구 격리한다.
- *   - 판독 지도(map)는 id 마다 가장 최근 답의 토큰 하나뿐. 옛 토큰이 남아 있으면 그 토큰을 쓰게 된 다른 미디어(한 번도 묻지 않은)를 이 id 로 읽는다.
- *   - 강제로 다시 물을 때(begin force)는 그 id 의 지금 토큰부터 내린다 — 답 전·실패·시간 초과면 그 id 는 토큰으로 안 읽혀 클릭 전에 실패로 닫히거나
- *     새로 올린다(검증된 묶음만 쓴다).
- *   - 물음마다 번호 — 그 id 의 더 나중 물음이 있으면 늦게 온 옛 답은 지금 토큰을 바꾸지 못한다(superseded). 그래도 주인 증거(충돌·격리)는 남긴다.
+ *   - 판독 지도(map)는 id 마다 마지막 토큰 하나 — 새 토큰이 오면 옛 토큰은 내린다.
  *   - 판독 지도에서 빠질 때마다 epoch +1 — guarded(read) 는 그 사이 빠진 게 있으면 판독을 버린다(null). 더하기는 이미 읽힌 id 를 틀리게 만들지 못해 안 올린다.
  * 토큰은 미디어 접근 주소 — 로그·보고에 싣지 않는다.
  * tests/electron/flow-media-tokens.test.js
@@ -17,7 +15,6 @@ export function createMediaTokenRegistry() {
   const owner = new Map()     // 토큰 → 처음 받은 id(영구)
   const ambiguous = new Set()
   const current = new Map()   // id → 판독 지도에 있는 토큰
-  const asked = new Map()     // id → 마지막 물음 번호
   const map = {}
   let epoch = 0
   /** id 의 지금 토큰을 판독 지도에서 내린다. */
@@ -28,37 +25,21 @@ export function createMediaTokenRegistry() {
     if (map[t] === id) { delete map[t]; epoch++ }
   }
   return {
-    /** 판독에 싣는 지도(같은 객체) = id 마다 최근 답의 토큰(격리 제외). */
+    /** 판독에 싣는 지도(같은 객체) = id 마다 마지막 토큰(격리 제외). */
     map,
     epoch: () => epoch,
     knows: (id) => current.has(id),
-    /** 물음 시작 → 번호. force 면 지금 토큰부터 내린다. */
-    begin(id, { force = false } = {}) {
-      const n = (asked.get(id) || 0) + 1
-      asked.set(id, n)
-      if (force) retire(id)
-      return n
-    },
-    /** 답(token 없으면 null) → 'ok' | 'none' | 'conflict'(이번에 격리) | 'ambiguous'(이미 격리) | 'superseded'(더 나중 물음이 있다) */
-    settle(id, n, token) {
-      const latest = asked.get(id) === n
-      // 주인 증거는 모든 유효한 답에서 남긴다(늦게 온 옛 답 포함) — 순서 번호는 "지금 읽을 토큰을 바꿀지"에만 쓴다(Codex 6차#2)
-      if (token) {
-        const prev = owner.get(token)
-        if (ambiguous.has(token) || (prev !== undefined && prev !== id)) {
-          if (!ambiguous.has(token)) {
-            ambiguous.add(token)
-            if (current.get(prev) === token) retire(prev)
-            if (latest) retire(id)
-            return 'conflict'
-          }
-          if (latest) retire(id)
-          return 'ambiguous'
-        }
-        if (prev === undefined) owner.set(token, id)
+    /** id 의 토큰 등록 → 'ok' | 'conflict'(이번에 격리) | 'ambiguous'(이미 격리). 격리면 두 id 다 그 토큰으로 안 읽힌다. */
+    adopt(id, token) {
+      if (ambiguous.has(token)) { retire(id); return 'ambiguous' }
+      const prev = owner.get(token)
+      if (prev !== undefined && prev !== id) {
+        ambiguous.add(token)
+        if (current.get(prev) === token) retire(prev)
+        retire(id)
+        return 'conflict'
       }
-      if (!latest) return 'superseded'
-      if (!token) { retire(id); return 'none' }
+      if (prev === undefined) owner.set(token, id)
       if (current.get(id) !== token) {
         retire(id)
         current.set(id, token)

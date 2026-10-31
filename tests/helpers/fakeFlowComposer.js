@@ -9,7 +9,7 @@
 // (3) makeRefDriverHarness — 가짜 페이지 + 가짜 클립보드 + **실제** 라우터 ctx(routeReportResponse·buildReportCtx) + maseQ send/loadend 예약 + 드라이버 ctx.
 //   파일 로더(flow-m3-samples.js)가 fs·file URL 을 쓰므로 이 헬퍼를 쓰는 테스트는 `@vitest-environment node` 다(jsdom 환경의 URL 은 file 스킴을 못 푼다).
 import { JSDOM } from 'jsdom'
-import { buildComposer, buildAssetPicker, chipHtml, mentionHtml, EMPTY_EDITOR, uuid, asbToken } from '../fixtures/flow-live-dom-m3.js'
+import { buildComposer, buildAssetPicker, chipHtml, mentionHtml, EMPTY_EDITOR, uuid } from '../fixtures/flow-live-dom-m3.js'
 import { routeReportResponse, buildReportCtx } from '../../electron/reportResponseRouter.js'
 import { refMediaCache } from '../../electron/flow-ref-media-cache.js'
 import { composerStateJs } from '../../electron/flow-composer-refs.js'
@@ -381,10 +381,8 @@ export function maseQBody(id) {
  *   upload    {sendMs=300, loadendMs=7500, noSend, responseText(id)→string, onPaste()} maseQ 예약
  *   hangObserver  true → 붙여넣기 뒤의 관찰 exec 가 영영 settle 하지 않는다(죽은 문서)
  *   aborted() 드라이버의 isAborted
- *   learnTokens  false → as29s 로 토큰을 못 배운다 · learnTokensFailFirst n → 처음 n 번(배운 id 누적 수 기준)은 토큰이 없다
- *   tokenOf(id, n)  → 그 id 를 물었을 때 토큰을 만들 id(기본 id)
+ *   noAdopt  true → ctx.adoptMediaToken 없음(새 칩의 토큰을 등록하지 못한다)
  *   bumpEpochDuringStateRead true → 컴포저 판독마다 그 사이 토큰 격리가 있었던 것처럼 epoch +1(결과는 그대로)
- *   staleTokenFirst true → id 마다 첫 답은 낡은 토큰(페이지와 다름) · learnHang true → learnMediaTokens 가 영영 끝나지 않는다
  */
 export function makeRefDriverHarness(o = {}) {
   const trace = []
@@ -430,8 +428,8 @@ export function makeRefDriverHarness(o = {}) {
       // 진짜 격리로: 판독마다 새 토큰 하나를 두 id 가 받는다(주인 기록 → conflict → epoch +1)
       if (o.bumpEpochDuringStateRead) return page.exec(s).then((r) => {
         const t = `RACE_${++raceN}`
-        registry.settle(uuid(901), registry.begin(uuid(901)), t)
-        registry.settle(uuid(902), registry.begin(uuid(902)), t)
+        registry.adopt(uuid(901), t)
+        registry.adopt(uuid(902), t)
         return r
       })
     }
@@ -448,8 +446,6 @@ export function makeRefDriverHarness(o = {}) {
     return page.exec(s)
   }
   const report = []
-  const learned = []
-  const learnCalls = []
   const adopted = []
   const cache = {
     get: (...a) => refMediaCache.get(...a),
@@ -467,30 +463,11 @@ export function makeRefDriverHarness(o = {}) {
     projectId: FAKE_PROJECT,
     isAborted: () => !!(o.aborted && o.aborted()),
     report: async (step, reason, extra) => { report.push({ step, reason, extra }) },
-    // 2026-10-31: as29s 로 토큰 배우기 — 가짜 페이지의 asb 토큰은 id 에서 만든다(asbToken). o.learnTokens:false 면 배우지 못한다(as29s 실패).
+    // 2026-10-31: asb 토큰 지도(진짜 flow-media-tokens.js) — 가짜 페이지의 asb 토큰은 id 에서 만든다(asbToken)
     mediaTokens: registry.map,
     tokenEpoch: registry.epoch,
-    // 2026-10-31: 우리가 방금 붙인 새 칩의 토큰을 그 id 로(as29s 는 갓 올린 이미지에 옛 주소만 준다) — flow-angular 와 같은 규칙
-    ...(o.noAdopt ? {} : { adoptMediaToken: (id, token) => { adopted.push(id); return registry.settle(id, registry.begin(id), token) } }),   // noAdopt: as29s 예비 경로 시험
-    // 진짜 지도(flow-media-tokens.js)로 — flow-angular learnMediaTokens 와 같은 규칙: 이미 아는 id 는 force 가 아니면 다시 묻지 않는다.
-    learnMediaTokens: (ids, opts = {}) => {
-      learnCalls.push({ ids: [...ids], force: !!opts.force })
-      const asks = []
-      for (const id of ids) {
-        if (!opts.force && registry.knows(id)) continue
-        asks.push([id, registry.begin(id, { force: !!opts.force })])   // force 면 지금 토큰부터 내린다(flow-angular 와 같다)
-      }
-      if (o.learnHang) return new Promise(() => {})   // as29s 가 영영 답하지 않는다(물음은 시작됐다)
-      for (const [id, q] of asks) {
-        learned.push(id)
-        const failFirst = Number.isInteger(o.learnTokensFailFirst) && learned.length <= o.learnTokensFailFirst   // 처음 n 번은 토큰이 아직 없다(업로드 직후)
-        if (o.learnTokens === false || failFirst) { registry.settle(id, q, null); continue }
-        const n = learned.filter((x) => x === id).length
-        const src = typeof o.tokenOf === 'function' ? o.tokenOf(id, n) : id   // 다른 id 면 그 미디어의 토큰을 준다(재사용·충돌 시험)
-        registry.settle(id, q, o.staleTokenFirst && n === 1 ? `STALE_${asbToken(id)}` : asbToken(src))   // 처음 답은 페이지와 다른(낡은) 토큰
-      }
-      return Promise.resolve()
-    },
+    // 2026-10-31: 우리가 방금 붙인 새 칩의 토큰을 그 id 로 — flow-angular adoptMediaToken 과 같은 지도·규칙
+    ...(o.noAdopt ? {} : { adoptMediaToken: (id, token) => { adopted.push(id); return registry.adopt(id, token) } }),   // noAdopt: 등록 못 하는 경우 시험
   }
-  return { ctx, page, trace, clipboard, pendingGenerations, report, router, learned, learnCalls, registry, adopted }
+  return { ctx, page, trace, clipboard, pendingGenerations, report, router, registry, adopted }
 }

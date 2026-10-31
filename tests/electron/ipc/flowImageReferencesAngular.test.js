@@ -301,147 +301,59 @@ describe('레퍼런스 이미지 — 숨은 뷰(0×0) (D16)', () => {
 })
 
 // 2026-10-31 실측(xmas90 장면 1~3): Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=s1600-rw 로 바꿨다(이번 세션 업로드 포함).
-//   업로드는 성공하는데 칩 id 를 못 읽어 flow-reference-attach-failed(chip-no-id). 핸들러는 필요한 id 의 토큰을 as29s(읽기 RPC)로 배워 지도로 읽는다.
-describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다', () => {
-  it('세션 재사용 + 업로드 둘 다 asb 인 페이지 → 토큰을 배워 스캔·멘션·첨부·게이트·재판독 통과 → images', async () => {
+//   업로드는 성공하는데 칩 id 를 못 읽어 flow-reference-attach-failed(chip-no-id). as29s 는 갓 올린 이미지에 옛 주소만 준다(실기) — 핸들러는 드라이버가
+//   확인한 "우리가 붙인 새 칩 하나"의 토큰을 maseQ 가 준 id 로 등록하고(공유 지도) 그 지도로 칩·애셋을 읽는다.
+describe('2026-10-31 asb 주소 — 우리가 붙인 칩의 토큰으로 칩·애셋을 읽는다', () => {
+  it('세션 재사용(이번 세션에 배운 토큰) + 새 업로드(칩에서 등록) 둘 다 asb → 스캔·멘션·첨부·게이트·재판독 통과 → images', async () => {
     seed('king', U(2))
     const box = capture(9)
-    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(3)] } }, as29sTokens: true, onSubmit: box.onSubmit })
+    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(3)] } }, onSubmit: box.onSubmit })
+    h.mediaTokenRegistry.adopt(U(2), asbToken(U(2)))   // 앞 장면에서 올리며 배운 토큰
     const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
     expect(r.success).toBe(true)
     expect(r.images[0]).toMatchObject({ mediaId: U(24) })
     expect(box.snapshot).toMatchObject({ expectedRefs: [U(2), U(3)], expectedMentions: [U(2)] })
     expect(h.page.counts.paste).toBe(1)
-    expect(h.trace.filter((x) => x === 'as29s').length).toBe(2)   // U2(캐시) · U3(업로드) 한 번씩 — 같은 세션에선 다시 묻지 않는다
+    expect(h.trace).not.toContain('as29s')   // 토큰은 as29s 로 묻지 않는다
     const out = logged()
-    expect(out).toMatch(/\[Flow Refs\] media token media=00000002 ok/)
-    expect(out).toMatch(/\[Flow Refs\] media token media=00000003 ok/)
+    expect(out).toMatch(/\[Flow Refs\] media token media=00000003 ok\(from-chip\)/)
     expect(out).toMatch(/refs verified request=2 echo=2/)
     expect(out).not.toMatch(/ANqvLO/)   // 토큰(미디어 접근 주소)은 로그에 싣지 않는다
     noContent(out)
   })
 
-  it('as29s 가 토큰을 못 줘도(10-31 실기: 갓 올린 이미지는 옛 주소만) 우리가 붙인 새 칩의 토큰을 그 id 로 배워 제출까지 간다', async () => {
-    const box = capture(9)
-    seed('king', U(2))
-    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(3)] } }, as29sTokens: (id) => (id === U(3) ? null : id), onSubmit: box.onSubmit })
-    const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
-    expect(r.success).toBe(true)
-    expect(box.snapshot.expectedRefs).toEqual([U(2), U(3)])
-    const out = logged()
-    expect(out).toMatch(/\[Flow Refs\] media token media=00000003 none\(no-asb\)/)   // 사유 종류만(토큰·본문 없음)
-    expect(out).toMatch(/\[Flow Refs\] media token media=00000003 ok\(from-chip\)/)
-    expect(out).not.toMatch(/ANqvLO/)
+  it('새 칩의 토큰이 이미 다른 미디어 것이면(칩이 그 미디어로 읽힘) 등록하지 않는다 → 클릭 전 flow-reference-attach-failed', async () => {
+    const h = refHandlerHarness({ page: { asb: true, assets: [], upload: { ids: [U(3)] } }, onSubmit: () => { throw new Error('must not submit') } })
+    h.mediaTokenRegistry.adopt(U(9), asbToken(U(3)))
+    const r = await settle(h.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-reference-attach-failed' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(logged()).not.toMatch(/ok\(from-chip\)/)
   })
 
-  it('Codex#1: as29s 가 다른 id 에 이미 쓰인 토큰을 주면(충돌) 그 토큰을 버린다 — 엉뚱한 미디어를 그 id 로 고르지 않고 둘 다 새로 올린다', async () => {
-    seed('king', U(2)); seed('queen', U(3))
-    const box = capture(9)
-    // U3 를 물으면 U2 의 토큰이 온다 — 페이지엔 U2(king)만 있다
-    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(5), U(6)] } }, as29sTokens: (id) => (id === U(3) ? U(2) : id), onSubmit: box.onSubmit })
-    await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
-    expect(box.snapshot.expectedRefs).toEqual([U(5), U(6)])
-    expect(box.snapshot.expectedRefs).not.toContain(U(3))
-    expect(h.page.counts.paste).toBe(2)
-    expect(logged()).toMatch(/\[Flow Refs\] media token conflict media=00000003/)
-  })
-
-  it('Codex#2: 업로드 직후 as29s 가 낡은 토큰을 줘도 통과 — 새 칩의 토큰을 그 id 로 배운다(as29s 예비 경로는 드라이버 시험)', async () => {
-    const box = capture(9)
-    seed('king', U(2))
-    // U3 의 첫 답은 아무 항목에도 없는 토큰(U97), 두 번째부터 진짜
-    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(3)] } }, as29sTokens: (id, n) => (id === U(3) && n === 1 ? U(97) : id), onSubmit: box.onSubmit })
-    const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
-    expect(r.success).toBe(true)
-    expect(box.snapshot.expectedRefs).toEqual([U(2), U(3)])
-    expect(logged()).toMatch(/\[Flow Refs\] media token media=00000003 ok\(from-chip\)/)
-  })
-
-  it('Codex 2차#2: 제출 클릭 직전(dispatch 가드) 판독 중 토큰이 격리되면 그 판독을 버린다 → 누르지 않는다(클릭 전 실패)', async () => {
+  it('제출 클릭 직전(dispatch 가드) 판독 중 토큰이 격리되면 그 판독을 버린다 → 누르지 않는다(클릭 전 실패)', async () => {
     seed('king', U(2)); seed('queen', U(3))
     const h = refHandlerHarness({
-      page: { asb: true, assets: session(U(2), U(3)) }, as29sTokens: true,
-      quarantineDuringGuard: (reg) => { reg.settle(U(99), reg.begin(U(99)), asbToken(U(3))) },   // 늦은 답: U3 의 토큰이 다른 미디어 것이기도 했다
+      page: { asb: true, assets: session(U(2), U(3)) },
+      quarantineDuringGuard: (reg) => { reg.adopt(U(99), asbToken(U(3))) },   // 그 사이 U3 의 토큰을 다른 미디어가 받았다
       onSubmit: () => { throw new Error('must not submit') },
     })
+    h.mediaTokenRegistry.adopt(U(2), asbToken(U(2))); h.mediaTokenRegistry.adopt(U(3), asbToken(U(3)))
     const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
     expect(r.success).toBe(false)
     expect(r.postClick).toBeFalsy()
     expect(h.trace).toContain('dispatch-refused')
   })
 
-  it('Codex 3차#1: 이미지 → 영상 → 이미지 — 핸들러가 달라도 같은 주인 기록(모듈 공유 지도)이라 영상에서 본 충돌이 이미지의 토큰을 격리한다', async () => {
+  it('이미지·영상 핸들러는 같은 모듈 지도를 쓴다 — 이미지에서 올리며 배운 토큰을 영상이 그대로 본다', async () => {
     _resetSharedMediaTokensForTests()
-    // 1) 이미지: king(U2) 토큰을 배운다
-    seed('king', U(2)); seed('queen', U(3))
-    const img1 = refHandlerHarness({ page: { asb: true, assets: session(U(2), U(3)) }, as29sTokens: true, sharedTokens: true, onSubmit: capture(9).onSubmit })
-    await settle(img1.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
-    expect(sharedMediaTokenRegistry().map[asbToken(U(2))]).toBe(U(2))
-    // 2) 영상(다른 핸들러 인스턴스): U7 을 물으면 U2 의 토큰이 온다 → 같은 주인 기록이라 충돌 → 격리
-    refMediaCache.clear(); seed('king', U(7))
-    const vid = refHandlerHarness({ kind: 'video', page: { asb: true, assets: session(U(7)) }, as29sTokens: (id) => (id === U(7) ? U(2) : id), sharedTokens: true, onSubmit: () => {} })
+    const img = refHandlerHarness({ page: { asb: true, assets: [], upload: { ids: [U(3)] } }, sharedTokens: true, onSubmit: capture(9).onSubmit })
+    await settle(img.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
+    expect(sharedMediaTokenRegistry().map[asbToken(U(3))]).toBe(U(3))
+    refMediaCache.clear(); seed('king', U(3))
+    const vid = refHandlerHarness({ kind: 'video', page: { asb: true, assets: session(U(3)) }, sharedTokens: true, onSubmit: () => {} })
     await settle(vid.generate({ refs: [refInput('king')], plan: { segments: [mention(0), text(' walks')], attach: [] } }), 120000)
-    expect(logged()).toMatch(/\[Flow Refs\] media token conflict media=00000007/)
-    expect(sharedMediaTokenRegistry().map[asbToken(U(2))]).toBeUndefined()
-    // 3) 이미지 다시: 캐시 U2 의 토큰은 격리 — U2 를 그 토큰 항목으로 고르지 않고 새로 올린다
-    refMediaCache.clear(); seed('king', U(2))
-    const box = capture(9)
-    const img2 = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(5), U(6)] } }, as29sTokens: true, sharedTokens: true, onSubmit: box.onSubmit })
-    await settle(img2.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
-    expect(box.snapshot.expectedRefs).not.toContain(U(2))
-    expect(img2.page.counts.paste).toBe(2)
+    expect(vid.page.counts.paste).toBe(0)   // 영상 핸들러가 이미지 쪽에서 배운 토큰으로 항목을 알아봤다
     _resetSharedMediaTokensForTests()
-  })
-
-  it('Codex 5차: 캐시 레퍼런스의 토큰이 바뀌었고(T1→T2) 옛 T1 은 다른 미디어(한 번도 안 물음)가 쓴다 — 옛 T1 로 그 미디어를 이 id 로 고르지 않고 새로 올린다', async () => {
-    seed('king', U(2))
-    const box = capture(9)
-    // 페이지엔 U9(물은 적 없는 다른 미디어)만 — 그 썸네일 토큰 = U2 의 옛 토큰. as29s(U2) 는 이제 새 토큰을 준다.
-    const h = refHandlerHarness({ page: { asb: true, assets: session(U(9)), upload: { ids: [U(3)] } }, as29sTokens: true, onSubmit: box.onSubmit })
-    h.mediaTokenRegistry.settle(U(2), h.mediaTokenRegistry.begin(U(2)), asbToken(U(9)))   // 지난 세션: U2 = T1(지금은 U9 의 토큰)
-    await settle(h.generate({ refs: [refInput('king')], plan: { segments: [text('a king')], attach: [0] } }), 120000)
-    expect(box.snapshot.expectedRefs).toEqual([U(3)])
-    expect(h.page.counts.paste).toBe(1)
-  })
-
-  it('Codex 5차: 캐시 레퍼런스의 토큰 갱신이 실패하면(as29s 토큰 없음) 옛 토큰을 쓰지 않는다 — 새로 올린다', async () => {
-    seed('king', U(2))
-    const box = capture(9)
-    const h = refHandlerHarness({ page: { asb: true, assets: session(U(9)), upload: { ids: [U(3)] } }, as29sTokens: (id) => (id === U(2) ? null : id), onSubmit: box.onSubmit })
-    h.mediaTokenRegistry.settle(U(2), h.mediaTokenRegistry.begin(U(2)), asbToken(U(9)))
-    await settle(h.generate({ refs: [refInput('king')], plan: { segments: [text('a king')], attach: [0] } }), 120000)
-    expect(box.snapshot.expectedRefs).toEqual([U(3)])
-    expect(h.page.counts.paste).toBe(1)
-    expect(logged()).toMatch(/\[Flow Refs\] media token media=00000002 none\(no-asb\)/)
-  })
-
-  it('Codex 6차#1: 앞 레퍼런스의 as29s 가 멈춰도 뒤 레퍼런스의 옛 토큰이 남아 있지 않다 — 모든 id 를 먼저 내리고 묻는다', async () => {
-    seed('king', U(2)); seed('queen', U(3))
-    const box = capture(9)
-    // 지난 세션: U2 = 자기 토큰, U3 = 옛 토큰(지금은 U9 = 다른 미디어 C 의 토큰). 페이지엔 U2·U9. U2 의 as29s 는 20초 멈춤, U3 는 새 토큰(페이지에 없음)
-    const h = refHandlerHarness({
-      page: { asb: true, assets: session(U(2), U(9)), upload: { ids: [U(5), U(6)] } }, as29sTokens: (id) => (id === U(3) ? U(13) : id),
-      as29sDelay: (id) => (id === U(2) ? 20000 : 0), onSubmit: box.onSubmit,
-    })
-    const reg = h.mediaTokenRegistry
-    reg.settle(U(2), reg.begin(U(2)), asbToken(U(2)))
-    reg.settle(U(3), reg.begin(U(3)), asbToken(U(9)))
-    await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
-    expect(box.snapshot.expectedRefs).not.toContain(U(3))   // C(U9 썸네일)를 queen(U3)으로 고르지 않는다
-  })
-
-  it('진단(AUTOFLOWCUT_TOKEN_DEBUG=1): 토큰 없는 as29s 기록의 모양만 — URL 자리와 호스트(토큰·경로·본문 없음). 꺼져 있으면 안 찍는다', async () => {
-    const run = async () => {
-      const h = refHandlerHarness({ page: { asb: true, assets: [], upload: { ids: [U(3)] } }, as29sTokens: () => null, onSubmit: () => {} })
-      await settle(h.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
-    }
-    await run()
-    expect(logged()).not.toMatch(/token shape/)
-    process.env.AUTOFLOWCUT_TOKEN_DEBUG = '1'
-    try { await run() } finally { delete process.env.AUTOFLOWCUT_TOKEN_DEBUG }
-    const out = logged()
-    expect(out).toMatch(/\[Flow Refs\] token shape media=00000003 len=2 urls=\[\]/)
-    expect(out).not.toMatch(/ANqvLO|https:\/\//)
   })
 })
-
