@@ -333,11 +333,20 @@ describe('2026-10-31 asb 주소 — 우리가 붙인 칩에서 토큰을 배워 
     expectNoSubmit(h)
   })
 
-  it('새 칩의 토큰이 이미 다른 id 것이면 그 칩은 그 id 로 읽혀 chip-mismatch — 등록하지 않고 클릭 전 실패', async () => {
+  it('Codex 8차#1: 새 칩의 토큰이 이미 다른 id 것이면 chip-mismatch — 끝내기 전에 그 토큰을 격리한다(다음에 그 id 로 이 칩·항목을 고르지 않게)', async () => {
     const h = makeRefDriverHarness({ page: { asb: true, assets: [] } })
     h.registry.adopt(U(9), asbToken(U(3)))   // 그 토큰은 이미 U9 의 것
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
     expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-mismatch' })
+    expect(h.registry.map[asbToken(U(3))]).toBeUndefined()
+    expect(h.registry.knows(U(9))).toBe(false)
+    expectNoSubmit(h)
+  })
+
+  it('Codex 8차#2: maseQ 가 끝난 뒤 문서가 바뀌면(nonce 다름) 새 칩을 이 업로드 id 로 등록하지 않는다 → 클릭 전 실패', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, swapDocOnLoadend: true })
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r.ok).toBe(false)
     expect(h.adopted).toEqual([])
     expectNoSubmit(h)
   })

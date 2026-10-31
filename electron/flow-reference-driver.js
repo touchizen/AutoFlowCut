@@ -25,7 +25,7 @@ import { armDeadline, settleGen } from './flow-rpc-router.js'
 import { normalizePrompt } from './flow-rpc-protocol.js'
 import { snapshotClipboard, writeUploadImage, restoreClipboard } from './flow-clipboard.js'
 import {
-  composerStateJs, listIdAssetMediaIdsJs, readPickerPreviewMediaIdJs, READ_CHIP_TOKENS_JS, FIND_ADD_MENU_TRIGGER_JS, FIND_CLEAR_PROMPT_BUTTON_JS,
+  composerStateJs, listIdAssetMediaIdsJs, readPickerPreviewMediaIdJs, READ_CHIP_SNAPSHOT_JS, FIND_ADD_MENU_TRIGGER_JS, FIND_CLEAR_PROMPT_BUTTON_JS,
   FIND_ADD_TO_PROMPT_BUTTON_JS, FIND_ASSET_ITEM_BY_MEDIA_ID_JS, FIND_PICKER_TAB_JS,
 } from './flow-composer-refs.js'
 import { findPromptEditor, READ_SETTINGS_SUMMARY_JS } from './flow-composer-dom.js'
@@ -240,10 +240,26 @@ async function observePaste(ctx, n0) {
 /**
  * loadend 뒤 칩 검증(D4-13): 모든 칩이 id img 를 갖고 바쁘지 않게 되면 판정 — 칩 수 = L0+1 이고 응답 id 의 칩이 정확히 하나여야 한다(아니면 chip-mismatch).
  *   ≤ UPLOAD_CHIP_ID_WAIT_MS 안에 그렇게 되지 않으면 chip-no-id. aria-busy="false" 만으로는 성공하지 않는다(P1a).
+ * 2026-10-31: 칩 src 가 asb 토큰이라 갓 올린 칩의 id 는 안 읽힌다(as29s 도 옛 주소만 준다 — 실기). 새 칩의 토큰을 이 id 로 등록(ctx.adoptMediaToken)해 읽는다.
+ *   새 칩은 한 번의 판독(READ_CHIP_SNAPSHOT_JS)으로만 인정한다 — 업로드가 바인딩된 문서(uploadDoc)와 같고 · 칩 L0+1 · 바쁜 칩 없음 · 붙여넣기 전 칩 토큰(base)이
+ *   그대로 다 있고 · 새 토큰이 정확히 하나. 아니면 등록하지 않는다(클릭 전 실패로 닫힌다). 새 칩이 다른 id 로 읽히면(그 토큰이 이미 남의 것) 실패로 끝내기 전에
+ *   등록을 시도해 충돌로 격리한다 — 다음에 그 id 로 이 미디어를 고르지 않게(Codex 8차).
  */
-async function waitUploadChip(ctx, mediaId, L0) {
+async function waitUploadChip(ctx, mediaId, L0, base, uploadDoc) {
   const t0 = Date.now()
   const until = t0 + UPLOAD_CHIP_ID_WAIT_MS
+  const canAdopt = typeof ctx.adoptMediaToken === 'function' && !!base && typeof uploadDoc === 'string'
+  const newChipToken = async () => {
+    const snap = await ex(ctx, READ_CHIP_SNAPSHOT_JS)
+    if (!snap || snap.doc !== uploadDoc || !Array.isArray(snap.chips) || snap.chips.length !== L0 + 1 || snap.chips.some((c) => c.busy)) return null
+    const rest = snap.chips.map((c) => c.token)
+    for (const c of base.chips) {
+      const i = rest.indexOf(c.token)
+      if (i < 0) return null
+      rest.splice(i, 1)
+    }
+    return rest.length === 1 && typeof rest[0] === 'string' && rest[0] ? rest[0] : null
+  }
   let adopted = false
   for (;;) {
     const st = await readState(ctx)
@@ -251,16 +267,16 @@ async function waitUploadChip(ctx, mediaId, L0) {
     if (chips && chips.length > L0 && chips.every((c) => c.mediaId && !c.busy)) {
       const mine = chips.filter((c) => c.mediaId === mediaId).length
       if (chips.length === L0 + 1 && mine === 1) return { ok: true, ms: Date.now() - t0 }
+      if (canAdopt && chips.length === L0 + 1 && mine === 0) {
+        const t = await newChipToken()
+        if (t) ctx.adoptMediaToken(mediaId, t)   // 남의 토큰이면 충돌 → 격리
+      }
       return { ok: false, reason: 'chip-mismatch' }
     }
     if (Date.now() >= until) return { ok: false, reason: 'chip-no-id' }
-    // 2026-10-31: 칩 src 가 asb 토큰이라 갓 올린 칩의 id 는 안 읽힌다(as29s 도 옛 주소만 준다 — 실기). 칩이 정확히 하나 늘었고(L0+1) 바쁘지 않으며
-    //   id 가 안 읽히는 칩이 그 하나뿐이면 그 칩의 asb 토큰을 maseQ 가 준 이 id 로 등록한다(우리가 붙여넣은 칩). 아니면 등록하지 않는다 — 클릭 전 실패로 닫힌다.
-    if (!adopted && chips && chips.length === L0 + 1 && chips.every((c) => !c.busy) && typeof ctx.adoptMediaToken === 'function') {
-      const unread = chips.map((c, i) => (c.mediaId ? -1 : i)).filter((i) => i >= 0)
-      const toks = unread.length === 1 ? await ex(ctx, READ_CHIP_TOKENS_JS) : null
-      const t = Array.isArray(toks) && toks.length === chips.length ? toks[unread[0]] : null
-      if (typeof t === 'string' && t) { adopted = true; ctx.adoptMediaToken(mediaId, t); continue }
+    if (canAdopt && !adopted && chips && chips.length === L0 + 1 && chips.every((c) => !c.busy) && chips.filter((c) => !c.mediaId).length === 1) {
+      const t = await newChipToken()
+      if (t) { adopted = true; ctx.adoptMediaToken(mediaId, t); continue }
     }
     await sleep(CHIP_POLL_MS)
   }
@@ -288,6 +304,9 @@ export async function uploadReferenceByPaste(ctx, ref) {
     const pre = preUploadProblem(st)
     if (pre) return fail(ctx, 'upload', pre, tag)
     const L0 = st.chips.length
+    // 2026-10-31: 붙여넣기 전 칩 토큰 — 새 칩을 고를 때 기준(waitUploadChip). 판독이 칩 수와 다르면 등록하지 않는다(base null).
+    const snap0 = await ex(ctx, READ_CHIP_SNAPSHOT_JS)
+    const base = snap0 && Array.isArray(snap0.chips) && snap0.chips.length === L0 ? snap0 : null
 
     // 2. 클립보드 스냅샷(D4-c) — 파일 복사면 쓰지도 붙이지도 않는다
     guard(ctx)
@@ -351,7 +370,7 @@ export async function uploadReferenceByPaste(ctx, ref) {
     if (done.error || typeof done.mediaId !== 'string') return fail(ctx, 'upload', done.error ? uploadReasonOf(done) : 'upload-shape', tag)
 
     // 13. 칩 검증 — id img 까지
-    const chip = await waitUploadChip(ctx, done.mediaId, L0)
+    const chip = await waitUploadChip(ctx, done.mediaId, L0, base, done.doc)
     if (!chip.ok) return fail(ctx, 'upload', chip.reason, tag)
     console.log(`[Flow Upload] ${tag} uploaded media=${short(done.mediaId)} chipIdAfter=${chip.ms}`)
 

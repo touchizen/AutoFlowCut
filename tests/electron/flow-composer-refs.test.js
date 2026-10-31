@@ -11,7 +11,7 @@ import {
   findAddMenuTrigger, findClearPromptButton, findAddToPromptButton, findChipByMediaId,
   READ_COMPOSER_STATE_JS, FIND_ASSET_ITEM_BY_MEDIA_ID_JS, LIST_ID_ASSET_MEDIA_IDS_JS, FIND_PICKER_TAB_JS, READ_PICKER_PREVIEW_MEDIA_ID_JS,
   FIND_ADD_MENU_TRIGGER_JS, FIND_CLEAR_PROMPT_BUTTON_JS, FIND_ADD_TO_PROMPT_BUTTON_JS, FIND_CHIP_BY_MEDIA_ID_JS,
-  composerStateJs, listIdAssetMediaIdsJs, readPickerPreviewMediaIdJs, readChipTokens, READ_CHIP_TOKENS_JS,
+  composerStateJs, listIdAssetMediaIdsJs, readPickerPreviewMediaIdJs, readChipSnapshot, READ_CHIP_SNAPSHOT_JS,
 } from '../../electron/flow-composer-refs.js'
 import { buildPage, buildComposer, buildAssetPicker, mentionHtml, paragraph, idSrc, uuid, asbToken } from '../fixtures/flow-live-dom-m3.js'
 
@@ -328,10 +328,15 @@ describe('2026-10-31 asb 토큰 지도로 id 읽기 — tokens = {토큰: mediaI
     expect(run(LIST_ID_ASSET_MEDIA_IDS_JS)).toEqual([])
   })
 
-  it('readChipTokens: 칩마다 asb 토큰(DOM 순 · img 없거나 asb 가 아니면 null) — 우리가 방금 붙인 칩의 토큰을 그 id 로 배울 때 쓴다', () => {
+  it('readChipSnapshot: 한 번의 판독으로 문서 nonce + 칩마다 {token, busy}(DOM 순 · img 없거나 asb 가 아니면 token null) — 새 칩의 토큰을 등록할 때만 쓴다', () => {
     document.body.innerHTML = buildPage({ composer: { chips: [{ id: U(2), asb: true }, { id: null, busy: true }, { id: U(4) }] } })
-    expect(readChipTokens(document)).toEqual([asbToken(U(2)), null, null])
-    expect(run(READ_CHIP_TOKENS_JS)).toEqual([asbToken(U(2)), null, null])
+    window.__autoflowcut_rpc_doc__ = 'a'.repeat(32)
+    const want = { doc: 'a'.repeat(32), chips: [{ token: asbToken(U(2)), busy: false }, { token: null, busy: true }, { token: null, busy: false }] }
+    expect(readChipSnapshot(document)).toEqual(want)
+    expect(run(READ_CHIP_SNAPSHOT_JS)).toEqual(want)
+    window.__autoflowcut_rpc_doc__ = 'not-a-nonce'
+    expect(readChipSnapshot(document).doc).toBeNull()
+    delete window.__autoflowcut_rpc_doc__
   })
 })
 
