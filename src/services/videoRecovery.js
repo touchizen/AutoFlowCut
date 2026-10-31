@@ -243,10 +243,10 @@ export async function recoverInFlightVideos({
         // M2-R3 H2(A2/B1): G3 의 retryVideoDownload failed 분기와 같은 모양 — kind·params 를 올리고(없으면 null), mediaId 는 답에 있을 때만, generationId 유지.
         //   프로젝트를 여러 번 다시 열면 main 의 as29s/no-record 4회 유계에 닿아 {failed, flow-video-fetch-failed|not-found, mediaId} 가 온다 — mediaId·kind 를
         //   버리면 과금된 미디어가 error+generationId+mediaId:null 로 남아 다음 Start 가 재제출(10크레딧)한다. 머지 뒤 download-only 로 분류돼야 한다.
-        //   2026-10-31: Flow 생성 실패(상태 4)는 fresh 로(failedStatusPatch).
+        //   2026-10-31: Flow 생성 실패(상태 4)도 여기선 id 를 지우지 않는다 — 늦게 끝난 복구가 새 생성의 id 를 지우지 않게(다음 Start 의 폴이 지운다).
         onFramePairUpdate(fp.id, {
           status: 'error',
-          ...failedStatusPatch(statusInfo, fp.generationId),
+          ...failedStatusPatch(statusInfo, fp.generationId, { clearGenerationFailure: false }),
           generatingEndedAt: Date.now(),
         })
         expired++

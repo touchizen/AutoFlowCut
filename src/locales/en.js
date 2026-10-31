@@ -1400,7 +1400,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
       'flow-aspect-mismatch': 'Flow generated an image with a different aspect ratio than requested. Check the aspect ratio in the Flow composer and try again.',
       'flow-video-settings-mismatch': 'Video settings mismatch — requested {expected}, Flow used {actual}. This video was not used.',
       'flow-video-count-mismatch': 'Flow generated more than one video for this request. Set the count to x1 in the composer and try again.',
-      'flow-video-generation-failed': 'Flow failed to generate the video (Flow refunds the credits). Reason: {reason}. Change the prompt or start image and try again.',
+      'flow-video-generation-failed': 'Flow failed to generate the video (Flow refunds the credits). Change the prompt or start image and try again.',
       'flow-video-fetch-failed': 'Could not fetch the finished video from Flow. Check the video in Flow and try again.',
       'flow-video-not-found': 'This video no longer exists in Flow (deleted or expired). Use Regenerate to create it again.',   // M2-R2 G3
       'flow-submit-lost': 'Submitted to Flow but no response arrived (page navigation or timeout). Check the result in the Flow window.',

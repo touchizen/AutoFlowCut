@@ -151,19 +151,8 @@ describe('flow:check-video-status (angular) — 폴', () => {
 
   it('2026-10-31 상태 4(Flow 실패 — 실기: 화면에 실패, 크레딧 환불) → {failed, flow-video-generation-failed} 바로 닫는다(계속 기다리지 않는다) · mediaId 는 싣지 않는다(받을 영상 없음 — download-only 아님)', async () => {
     const h = harness({ jwpduf: [{ status: 200, text: pollBodyWithState(4) }] })
-    expect(await h.check()).toEqual({ success: true, statuses: [{ status: 'failed', errorKind: 'flow-video-generation-failed', error: 'flow-video-generation-failed', errorParams: { reason: 'unknown' } }] })
-    expect(logSpy.mock.calls.concat(warnSpy.mock.calls).some((c) => /state=4 → failed reason=unknown/.test(String(c[0])))).toBe(true)
-  })
-
-  it('2026-10-31 상태 4 + 기록 안의 Flow 오류 코드(PUBLIC_ERROR_*) → reason 으로 싣는다(코드만 — 다른 글자는 싣지 않는다)', async () => {
-    const p = samplePayload('jwpduf')
-    p[2][0][0] = UUID11
-    p[2][0][5][8] = [4]
-    p[2][0].push([null, 'PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED', 'some free text'])
-    const h = harness({ jwpduf: [{ status: 200, text: respBodyWithPayload('jwpduf', p) }] })
-    const r = await h.check()
-    expect(r.statuses[0]).toMatchObject({ status: 'failed', errorKind: 'flow-video-generation-failed', errorParams: { reason: 'PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED' } })
-    expect(JSON.stringify(r)).not.toContain('some free text')
+    expect(await h.check()).toEqual({ success: true, statuses: [{ status: 'failed', errorKind: 'flow-video-generation-failed', error: 'flow-video-generation-failed' }] })
+    expect(logSpy.mock.calls.concat(warnSpy.mock.calls).some((c) => /state=4 → failed/.test(String(c[0])))).toBe(true)
   })
 
   it('상태 9(미지) → pending + unknownState:9, warn 은 같은 id·상태에 1회', async () => {

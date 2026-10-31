@@ -1199,9 +1199,9 @@ export function createFlowAngular(deps) {
       }
       if (st === 'failed') {
         // 2026-10-31 실기: 상태 4 = Flow 생성 실패(화면에 실패, 크레딧 환불). 바로 닫는다 — mediaId 는 싣지 않는다(받을 영상이 없다 → download-only 아님).
-        const reason = record.errorCode || 'unknown'
-        console.warn(`[Flow VideoStatus] [Angular] ${short(id)} state=4 → failed reason=${reason}`)
-        statuses.push({ status: 'failed', errorKind: FLOW_GENERATION_FAILED, error: FLOW_GENERATION_FAILED, errorParams: { reason } })
+        //   사유 자리는 아직 실측 샘플이 없어 싣지 않는다(기록 전체를 뒤지면 프롬프트 글자를 사유로 집을 수 있다 — Codex).
+        console.warn(`[Flow VideoStatus] [Angular] ${short(id)} state=4 → failed`)
+        statuses.push({ status: 'failed', errorKind: FLOW_GENERATION_FAILED, error: FLOW_GENERATION_FAILED })
         continue
       }
       if (st === 'unknown') {

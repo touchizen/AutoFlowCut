@@ -50,9 +50,10 @@ describe('isLegacyFlowGenerationFailure — 넷 다 맞아야 true(errorKind nul
 describe('2026-10-31 failedStatusPatch / isFlowGenerationFailure', () => {
   const G = '12345678-1234-1234-1234-123456789abc'
   it('Flow 생성 실패(flow-video-generation-failed) → generationId·mediaId null(fresh) + kind·params', () => {
-    const st = { status: 'failed', errorKind: 'flow-video-generation-failed', error: 'flow-video-generation-failed', errorParams: { reason: 'PUBLIC_ERROR_X' } }
+    const st = { status: 'failed', errorKind: 'flow-video-generation-failed', error: 'flow-video-generation-failed' }
     expect(isFlowGenerationFailure(st)).toBe(true)
-    expect(failedStatusPatch(st, G)).toEqual({ error: 'flow-video-generation-failed', errorKind: 'flow-video-generation-failed', errorParams: { reason: 'PUBLIC_ERROR_X' }, mediaId: null, generationId: null })
+    expect(failedStatusPatch(st, G)).toEqual({ error: 'flow-video-generation-failed', errorKind: 'flow-video-generation-failed', mediaId: null, generationId: null })
+    expect(failedStatusPatch(st, G, { clearGenerationFailure: false })).toEqual({ error: 'flow-video-generation-failed', errorKind: 'flow-video-generation-failed', generationId: G })
   })
   it('다른 failed(fetch-failed + mediaId) → mediaId·generationId 유지(download-only), kind 없으면 null·기본 문구', () => {
     expect(failedStatusPatch({ status: 'failed', errorKind: 'flow-video-fetch-failed', error: 'e', mediaId: G }, G)).toEqual({ error: 'e', errorKind: 'flow-video-fetch-failed', mediaId: G, generationId: G })

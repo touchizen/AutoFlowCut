@@ -19,7 +19,7 @@ import { __resetQuotaStopForTests } from '../../src/utils/quotaStop'
 
 const G = '12345678-1234-1234-1234-123456789abc'
 const KIND = 'flow-video-generation-failed'
-const failedStatus = () => ({ success: true, statuses: [{ generationId: G, status: 'failed', errorKind: KIND, error: KIND, errorParams: { reason: 'unknown' }, progress: null }] })
+const failedStatus = () => ({ success: true, statuses: [{ generationId: G, status: 'failed', errorKind: KIND, error: KIND, progress: null }] })
 const startOpts = (scenes, onItemUpdate) => ({ mode: 't2v', scenes, projectName: 'proj', saveMode: 'folder', videoModel: 'Omni Flash', aspectRatio: '9:16', duration: 6, videoResolution: '720p', onItemUpdate })
 
 beforeEach(() => { __resetQuotaStopForTests(); vi.spyOn(Math, 'random').mockReturnValue(0) })
@@ -38,14 +38,14 @@ describe('Flow 생성 실패(상태 4) → 행을 fresh 로(generationId·mediaI
     const item = { id: 'vscene_1', prompt: 'p1', status: 'pending', generationId: null, mediaId: null, videoPath: null }
     await act(async () => { await hook.result.current.start(startOpts([item], onItemUpdate)) })
     const err = patches.filter((p) => p[1] === 'error').pop()
-    expect(err[2]).toMatchObject({ errorKind: KIND, errorParams: { reason: 'unknown' }, generationId: null, mediaId: null })
+    expect(err[2]).toMatchObject({ errorKind: KIND, generationId: null, mediaId: null })
     const merged = { ...item, status: 'error', ...err[2] }
     genAPI.generateVideoT2V.mockClear()
     await act(async () => { await hook.result.current.start(startOpts([merged], vi.fn())) })
     expect(genAPI.generateVideoT2V).toHaveBeenCalledTimes(1)   // in-flight 폴이 아니라 새 제출
   })
 
-  it('복구: 로드 시 상태 확인이 flow-video-generation-failed 면 패치에 generationId:null·mediaId:null — 다음 Start 가 재제출', async () => {
+  it('복구: 로드 시 상태 확인이 flow-video-generation-failed 면 kind 만 남기고 id 는 그대로(늦게 끝난 복구가 새 생성의 id 를 지우지 않게, Codex) — 다음 Start 의 폴이 실패로 닫으며 지운다', async () => {
     const persisted = { id: 'fp_1', prompt: 'p', status: 'pending', generationId: G, mediaId: null, videoPath: null }
     const patches = []
     await recoverInFlightVideos({
@@ -53,6 +53,18 @@ describe('Flow 생성 실패(상태 4) → 행을 fresh 로(generationId·mediaI
       onFramePairUpdate: (id, patch) => patches.push([id, patch]),
     })
     expect(patches).toHaveLength(1)
-    expect(patches[0][1]).toMatchObject({ status: 'error', errorKind: KIND, errorParams: { reason: 'unknown' }, generationId: null, mediaId: null })
+    expect(patches[0][1]).toMatchObject({ status: 'error', errorKind: KIND, generationId: G })
+    expect(patches[0][1]).not.toHaveProperty('mediaId')
+    // 다음 Start: in-flight 로 G 를 한 번 폴 → 실패로 닫으며 id 를 지운다 → 그다음 Start 가 재제출
+    const genAPI = {
+      generateVideoT2V: vi.fn().mockResolvedValue({ success: true, generationId: G }), generateVideoI2V: vi.fn(),
+      checkVideoStatus: vi.fn().mockResolvedValue(failedStatus()), downloadVideo: vi.fn(), upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('flow-session'),
+    }
+    const upd = []
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null, null, 'flow'))
+    const merged = { ...persisted, ...patches[0][1] }
+    await act(async () => { await hook.result.current.start(startOpts([merged], vi.fn((id, st, patch) => upd.push(patch)))) })
+    expect(genAPI.generateVideoT2V).not.toHaveBeenCalled()
+    expect(upd.pop()).toMatchObject({ errorKind: KIND, generationId: null, mediaId: null })
   })
 })

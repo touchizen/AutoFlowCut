@@ -273,8 +273,7 @@ export function parseMediaRecord(rec, ctx) {
     }
     videoUrl = g0[8]
   }
-  const errorCode = state === 4 ? findFlowErrorCode(rec) : null
-  return { mediaId, state, bytes, videoUrl, ...(errorCode ? { errorCode } : {}) }
+  return { mediaId, state, bytes, videoUrl }
 }
 
 /** jwpduf(상태 폴) payload `[null, credits|null, [records]]` → { creditsLeft, records }. 중간 폴은 [1]=null(R:143-149). */
@@ -294,18 +293,6 @@ export function mediaStateToStatus(state) {
   if (state === 3) return 'complete'
   if (state === 4) return 'failed'
   return 'unknown'
-}
-
-/** 2026-10-31: 미디어 기록 안의 Flow 오류 코드(PUBLIC_ERROR_* — 열거값) 첫 번째 또는 null. 다른 글자(프롬프트 등)는 내보내지 않는다. */
-export function findFlowErrorCode(rec) {
-  const CODE = /^PUBLIC_ERROR_[A-Z0-9_]{1,80}$/
-  const walk = (v) => {
-    if (typeof v === 'string') return CODE.test(v) ? v : null
-    if (!Array.isArray(v)) return null
-    for (const x of v) { const c = walk(x); if (c) return c }
-    return null
-  }
-  return walk(rec)
 }
 
 /** 요청 모델 라벨 → { family:'abra'|'veo_3_1', tier:null|'fast'|'lite'|'quality' }. 모르면 null(fail-closed). */
