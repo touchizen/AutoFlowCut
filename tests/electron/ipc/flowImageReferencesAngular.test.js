@@ -327,5 +327,28 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     expect(h.trace).not.toContain('click:compose-submit')
     expect(logged()).toMatch(/\[Flow Refs\] media token media=00000003 none/)
   })
+
+  it('Codex#1: as29s 가 다른 id 에 이미 쓰인 토큰을 주면(충돌) 그 토큰을 버린다 — 엉뚱한 미디어를 그 id 로 고르지 않고 둘 다 새로 올린다', async () => {
+    seed('king', U(2)); seed('queen', U(3))
+    const box = capture(9)
+    // U3 를 물으면 U2 의 토큰이 온다 — 페이지엔 U2(king)만 있다
+    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(5), U(6)] } }, as29sTokens: (id) => (id === U(3) ? U(2) : id), onSubmit: box.onSubmit })
+    await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(box.snapshot.expectedRefs).toEqual([U(5), U(6)])
+    expect(box.snapshot.expectedRefs).not.toContain(U(3))
+    expect(h.page.counts.paste).toBe(2)
+    expect(logged()).toMatch(/\[Flow Refs\] media token conflict media=00000003/)
+  })
+
+  it('Codex#2: 업로드 직후 as29s 가 낡은 토큰을 주면 칩을 못 읽는 동안 강제로 다시 물어 새 토큰으로 통과', async () => {
+    const box = capture(9)
+    seed('king', U(2))
+    // U3 의 첫 답은 아무 항목에도 없는 토큰(U97), 두 번째부터 진짜
+    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(3)] } }, as29sTokens: (id, n) => (id === U(3) && n === 1 ? U(97) : id), onSubmit: box.onSubmit })
+    const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(r.success).toBe(true)
+    expect(box.snapshot.expectedRefs).toEqual([U(2), U(3)])
+    expect(h.trace.filter((x) => x === 'as29s').length).toBe(3)   // U2 1 · U3 2(첫 답 낡음 → 강제 다시)
+  })
 })
 

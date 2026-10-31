@@ -12,12 +12,12 @@ import { JSDOM } from 'jsdom'
 import { buildComposer, buildAssetPicker, chipHtml, mentionHtml, EMPTY_EDITOR, uuid, asbToken } from '../fixtures/flow-live-dom-m3.js'
 import { routeReportResponse, buildReportCtx } from '../../electron/reportResponseRouter.js'
 import { refMediaCache } from '../../electron/flow-ref-media-cache.js'
-import { readComposerState } from '../../electron/flow-composer-refs.js'
+import { composerStateJs } from '../../electron/flow-composer-refs.js'
 import { s3Payload } from '../fixtures/flow-m3-samples.js'
 import { respBodyWithPayload } from '../fixtures/flow-batchexecute-samples.js'
 
 /** 컴포저 판독 표현식의 머리 — 토큰 지도가 실려도(2026-10-31) state-read 로 센다. */
-const STATE_JS_PREFIX = `(${readComposerState.toString()})(document, `
+const STATE_JS_PREFIX = composerStateJs().slice(0, composerStateJs().lastIndexOf('{}'))
 
 const PNG_SIG = [0x89, 0x50, 0x4e, 0x47]
 const JPEG_SIG = [0xff, 0xd8]
@@ -381,6 +381,7 @@ export function maseQBody(id) {
  *   hangObserver  true → 붙여넣기 뒤의 관찰 exec 가 영영 settle 하지 않는다(죽은 문서)
  *   aborted() 드라이버의 isAborted
  *   learnTokens  false → as29s 로 토큰을 못 배운다 · learnTokensFailFirst n → 처음 n 번(배운 id 누적 수 기준)은 토큰이 없다
+ *   staleTokenFirst true → id 마다 첫 답은 낡은 토큰(페이지와 다름) · learnHang true → learnMediaTokens 가 영영 끝나지 않는다
  */
 export function makeRefDriverHarness(o = {}) {
   const trace = []
@@ -433,6 +434,7 @@ export function makeRefDriverHarness(o = {}) {
   }
   const report = []
   const learned = []
+  const learnCalls = []
   const cache = {
     get: (...a) => refMediaCache.get(...a),
     set: (...a) => { trace.push('cache:set'); refMediaCache.set(...a) },
@@ -451,12 +453,22 @@ export function makeRefDriverHarness(o = {}) {
     report: async (step, reason, extra) => { report.push({ step, reason, extra }) },
     // 2026-10-31: as29s 로 토큰 배우기 — 가짜 페이지의 asb 토큰은 id 에서 만든다(asbToken). o.learnTokens:false 면 배우지 못한다(as29s 실패).
     mediaTokens: {},
-    learnMediaTokens: async (ids) => {
-      learned.push(...ids)
-      if (o.learnTokens === false) return
-      if (Number.isInteger(o.learnTokensFailFirst) && learned.length <= o.learnTokensFailFirst) return   // 처음 n 번은 토큰이 아직 없다(업로드 직후)
-      for (const id of ids) ctx.mediaTokens[asbToken(id)] = id
+    // flow-angular 와 같은 규칙: 이미 아는 id 는 force 가 아니면 다시 묻지 않는다 · 새 토큰이면 그 id 의 옛 토큰은 지운다.
+    learnMediaTokens: (ids, opts = {}) => {
+      learnCalls.push({ ids: [...ids], force: !!opts.force })
+      if (o.learnHang) return new Promise(() => {})   // as29s 가 영영 답하지 않는다
+      for (const id of ids) {
+        if (!opts.force && Object.values(ctx.mediaTokens).includes(id)) continue
+        learned.push(id)
+        if (o.learnTokens === false) continue
+        if (Number.isInteger(o.learnTokensFailFirst) && learned.length <= o.learnTokensFailFirst) continue   // 처음 n 번은 토큰이 아직 없다(업로드 직후)
+        const n = learned.filter((x) => x === id).length
+        const token = o.staleTokenFirst && n === 1 ? `STALE_${asbToken(id)}` : asbToken(id)   // 처음 답은 페이지와 다른(낡은) 토큰
+        for (const [t, v] of Object.entries(ctx.mediaTokens)) if (v === id) delete ctx.mediaTokens[t]
+        ctx.mediaTokens[token] = id
+      }
+      return Promise.resolve()
     },
   }
-  return { ctx, page, trace, clipboard, pendingGenerations, report, router, learned }
+  return { ctx, page, trace, clipboard, pendingGenerations, report, router, learned, learnCalls }
 }

@@ -254,15 +254,30 @@ export function createFlowAngular(deps) {
    *   칩 id 는 이 지도로만 읽힌다. 토큰은 미디어마다 고정이라 이 핸들러 인스턴스 동안 쌓는다. 토큰은 미디어 접근 주소 — 로그·보고에 싣지 않는다.
    */
   const mediaTokens = {}
-  /** ids 중 토큰을 모르는 것만 as29s(읽기 RPC)로 배운다. 실패·토큰 없음은 그대로 진행(판독이 옛 주소로만 돈다). */
-  async function learnMediaTokens(flowView, ids) {
-    const known = new Set(Object.values(mediaTokens))
+  /** 두 id 가 같은 토큰을 받은 적이 있는 토큰 — 지도에서 빼고 다시 넣지 않는다(그 칩·항목은 id 가 안 읽혀 클릭 전에 실패로 닫힌다). */
+  const ambiguousTokens = new Set()
+  /**
+   * ids 의 토큰을 as29s(읽기 RPC)로 배운다 — 이미 아는 id 는 force 가 아니면 건너뛴다(force = 칩이 안 읽혀 다시 묻기).
+   *   새 토큰이면 그 id 의 옛 토큰은 지운다. 다른 id 가 이미 가진 토큰이면 충돌 — 덮어쓰지 않고 그 토큰을 모호함으로 뺀다(엉뚱한 미디어를 그 id 로 고르지 않게).
+   *   실패·토큰 없음은 그대로 진행(판독이 옛 주소로만 돈다).
+   */
+  async function learnMediaTokens(flowView, ids, { force = false } = {}) {
     for (const id of new Set(ids)) {
-      if (typeof id !== 'string' || !UUID_RE.test(id) || known.has(id)) continue
+      if (typeof id !== 'string' || !UUID_RE.test(id)) continue
+      if (!force && Object.values(mediaTokens).includes(id)) continue
       let token = null
       try { token = parseMediaImageToken(await callFlowRpc(flowView, 'as29s', [id]), id) } catch (_e) { token = null }
-      if (token) { mediaTokens[token] = id; known.add(id) }
-      console.log(`[Flow Refs] media token media=${short(id)} ${token ? 'ok' : 'none'}`)
+      if (!token) { console.log(`[Flow Refs] media token media=${short(id)} none`); continue }
+      const owner = mediaTokens[token]
+      if (ambiguousTokens.has(token) || (owner && owner !== id)) {
+        delete mediaTokens[token]
+        ambiguousTokens.add(token)
+        console.warn(`[Flow Refs] media token conflict media=${short(id)} owner=${short(owner)} → dropped`)
+        continue
+      }
+      for (const [t, v] of Object.entries(mediaTokens)) if (v === id && t !== token) delete mediaTokens[t]
+      mediaTokens[token] = id
+      console.log(`[Flow Refs] media token media=${short(id)} ok${force ? ' (refreshed)' : ''}`)
     }
   }
   /** 칩 판독 — exec 실패는 null(호출자가 불일치로 본다 = fail-closed). */
@@ -330,7 +345,7 @@ export function createFlowAngular(deps) {
     clipboard: deps.clipboard, nativeImage: deps.nativeImage,
     paste: () => deps.pasteIntoFlowView(),
     pendingGenerations: deps.pendingGenerations, cache: refMediaCache, projectId, isAborted, report,
-    mediaTokens, learnMediaTokens: (ids) => learnMediaTokens(flowView, ids),
+    mediaTokens, learnMediaTokens: (ids, opts) => learnMediaTokens(flowView, ids, opts),
   })
   /** 드라이버의 클릭 전 실패 {ok:false, kind, reason?} → 렌더러 결과(reason 은 렌더되지 않는 필드). */
   const driverFailure = (r) => kindResult(r.kind || ATTACH_FAILED, r.reason ? { reason: String(r.reason) } : {})

@@ -40,6 +40,8 @@ export const PASTE_RESTORE_BACKSTOP_MS = 5000
 export const UPLOAD_CHIP_ID_WAIT_MS = 15000
 /** 2026-10-31: 업로드한 id 의 asb 토큰을 아직 모를 때 칩 대기 안에서 다시 배우는 간격. */
 export const TOKEN_RELEARN_MS = 2500
+/** 2026-10-31: 토큰 배우기(as29s) 한 번을 기다리는 최대 시간 — 넘으면 토큰 없이 진행(판독이 실패로 닫는다). */
+export const TOKEN_LEARN_MAX_MS = 5000
 const EXEC_RACE_MS = 1000
 const OBSERVE_POLL_MS = 50
 const CHIP_POLL_MS = 200
@@ -174,11 +176,18 @@ const readState = (ctx) => ex(ctx, composerStateJs(toks(ctx)))
  * 2026-10-31: id 들의 asb 토큰을 배운다(ctx.learnMediaTokens — as29s). Flow 가 칩·애셋 항목·미리보기 src 에서 id 를 뺐기 때문에 토큰 없이는 칩 id 가 null 로 읽힌다.
  *   ctx 에 없거나 실패해도 흐름은 계속 — 판독이 옛 주소 모양으로만 돌고, 못 읽으면 기존 사유(chip-no-id 등)로 클릭 전에 끝난다.
  */
-async function learnTokens(ctx, ids) {
+async function learnTokens(ctx, ids, { force = false, maxMs = TOKEN_LEARN_MAX_MS } = {}) {
   const want = [...new Set((ids || []).filter((id) => typeof id === 'string' && id))]
-  if (!want.length || typeof ctx.learnMediaTokens !== 'function') return
+  if (!want.length || typeof ctx.learnMediaTokens !== 'function' || !(maxMs > 0)) return
   guard(ctx)
-  try { await ctx.learnMediaTokens(want) } catch (_e) { /* 토큰 없이 진행 */ }
+  // 기다림은 maxMs 까지 — as29s 가 느리거나 영영 답하지 않아도 칩 대기 마감·DOM 단계를 넘기지 않는다(늦은 답은 지도에 그냥 쌓인다)
+  let timer = null
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => ctx.learnMediaTokens(want, { force })).catch(() => {}),
+      new Promise((r) => { timer = setTimeout(r, maxMs) }),
+    ])
+  } finally { if (timer) clearTimeout(timer) }
 }
 const abortedResult = () => ({ ok: false, kind: 'flow-settings-not-applied', reason: 'dom-stage-aborted' })
 /** 공개 함수의 catch — 좀비 sentinel 만 결과로, 나머지는 다시 던진다(버그는 드러나야 한다). */
@@ -250,12 +259,8 @@ async function observePaste(ctx, n0) {
 async function waitUploadChip(ctx, mediaId, L0) {
   const t0 = Date.now()
   const until = t0 + UPLOAD_CHIP_ID_WAIT_MS
-  // 2026-10-31: 칩 src 가 asb 토큰이라 토큰을 알아야 칩 id 가 읽힌다. 업로드 직후 as29s 에 아직 없으면 대기 안에서 TOKEN_RELEARN_MS 마다 다시 배운다.
-  const known = () => Object.values(toks(ctx)).includes(mediaId)
-  let learnedAt = Date.now()
-  await learnTokens(ctx, [mediaId])
+  let learnedAt = null
   for (;;) {
-    if (!known() && Date.now() - learnedAt >= TOKEN_RELEARN_MS) { learnedAt = Date.now(); await learnTokens(ctx, [mediaId]) }
     const st = await readState(ctx)
     const chips = st && Array.isArray(st.chips) ? st.chips : null
     if (chips && chips.length > L0 && chips.every((c) => c.mediaId && !c.busy)) {
@@ -264,6 +269,15 @@ async function waitUploadChip(ctx, mediaId, L0) {
       return { ok: false, reason: 'chip-mismatch' }
     }
     if (Date.now() >= until) return { ok: false, reason: 'chip-no-id' }
+    // 2026-10-31: 칩 src 가 asb 토큰이라 바쁘지 않은 칩의 id 가 안 읽히면 토큰을 배운다 — 처음은 보통, 그 뒤 TOKEN_RELEARN_MS 마다 강제로
+    //   (업로드 직후 아직 없거나 바뀐 토큰). 칩을 먼저 읽고, 배우기는 남은 마감 안에서만 기다린다.
+    const unreadable = chips && chips.some((c) => !c.busy && !c.mediaId)
+    if (unreadable && (learnedAt == null || Date.now() - learnedAt >= TOKEN_RELEARN_MS)) {
+      const force = learnedAt != null
+      learnedAt = Date.now()
+      await learnTokens(ctx, [mediaId], { force, maxMs: Math.min(TOKEN_LEARN_MAX_MS, until - Date.now()) })
+      continue
+    }
     await sleep(CHIP_POLL_MS)
   }
 }

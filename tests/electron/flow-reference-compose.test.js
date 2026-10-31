@@ -346,5 +346,29 @@ describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는
     expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
     expect(h.learned.filter((id) => id === U(3)).length).toBeGreaterThanOrEqual(3)
   })
+
+  it('Codex#2: 처음 배운 토큰이 낡았으면(페이지와 다름) 칩을 못 읽는 동안 강제로 다시 배운다 → 통과', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, staleTokenFirst: true })
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
+    expect(h.learnCalls.some((c) => c.force && c.ids.includes(U(3)))).toBe(true)
+  })
+
+  it('Codex#3: as29s 가 영영 답하지 않아도 옛 주소 칩은 바로 읽힌다 — 업로드 loadend 뒤 곧 통과(마감 우회 없음)', async () => {
+    const h = makeRefDriverHarness({ page: { assets: [] }, learnHang: true })
+    const t0 = Date.now()
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
+    expect(Date.now() - t0).toBeLessThan(20000)
+  })
+
+  it('Codex#3: asb 칩 + as29s 무응답 → 칩 대기 마감(15초) 안에서 끝난다(chip-no-id, 클릭 없음)', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnHang: true })
+    const t0 = Date.now()
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-no-id' })
+    expect(Date.now() - t0).toBeLessThan(7500 + 15000 + 6000)
+    expectNoSubmit(h)
+  })
 })
 

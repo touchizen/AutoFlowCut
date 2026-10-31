@@ -24,7 +24,7 @@ import * as plainDriver from '../../electron/flow-reference-driver.js'
 import { sample, reencodeRequestBody, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
 import { PAGE_IMAGE_KO, PAGE_VIDEO_KO, CARD_MENU_BUTTONS, PROJECT_MENU_BUTTON, IMAGE_COMPOSER_KO, VIDEO_COMPOSER_KO, buildSettingsPanel, IMAGE_MODEL_MENU_ITEMS } from '../fixtures/flow-live-dom-20260924.js'
-import { buildPage as buildM3Page, mentionHtml, paragraph } from '../fixtures/flow-live-dom-m3.js'
+import { buildPage as buildM3Page, mentionHtml, paragraph, asbToken } from '../fixtures/flow-live-dom-m3.js'
 
 const SRC = (rel) => fileURLToPath(new URL(rel, import.meta.url))
 async function loadMinified(rel) {
@@ -216,6 +216,36 @@ describe('minified 컴포저 레퍼런스 파인더(M3-4) — 비-minified 와 �
   })
 })
 
+// 2026-10-31: asb 토큰 지도를 실은 빌더(판독기 mediaIdOfImg 를 호출 지점에서 조합) — minified 번들에서도 같은 id.
+describe('minified asb 토큰 판독(2026-10-31) — 비-minified 와 같은 결과', () => {
+  let refs
+  beforeAll(async () => { refs = await loadMinified('../../electron/flow-composer-refs.js') })
+
+  it('칩·애셋 항목·미리보기·프레임 칸이 토큰 지도로 id 를 읽는다', () => {
+    const U = maskedUuid
+    const html = buildM3Page({
+      composer: { chips: [{ id: U(2), asb: true }, { id: U(3), asb: true }] },
+      picker: { tab: 'drive_folder_upload', items: [{ id: U(2), asb: true }, { id: U(3), asb: true }] },
+    })
+    const tokens = { [asbToken(U(2))]: U(2), [asbToken(U(3))]: U(3) }
+    const el = (v) => (v ? v.outerHTML : v)
+    const cases = [
+      [refs.composerStateJs(tokens), plainRefs.composerStateJs(tokens), (v) => v.chips],
+      [refs.listIdAssetMediaIdsJs(tokens), plainRefs.listIdAssetMediaIdsJs(tokens), (v) => v],
+      [refs.readPickerPreviewMediaIdJs(tokens), plainRefs.readPickerPreviewMediaIdJs(tokens), (v) => v],
+      [refs.FIND_ASSET_ITEM_BY_MEDIA_ID_JS(U(3), tokens), plainRefs.FIND_ASSET_ITEM_BY_MEDIA_ID_JS(U(3), tokens), el],
+      [refs.FIND_CHIP_BY_MEDIA_ID_JS(U(3), tokens), plainRefs.FIND_CHIP_BY_MEDIA_ID_JS(U(3), tokens), el],
+    ]
+    for (const [min, plain, view] of cases) {
+      const a = view(runInPage(html, min).result)
+      expect(a).toEqual(view(runInPage(html, plain).result))
+      expect(a == null).toBe(false)
+    }
+    expect(runInPage(html, refs.composerStateJs(tokens)).result.chips.map((c) => c.mediaId)).toEqual([U(2), U(3)])
+    expect(runInPage(html, refs.listIdAssetMediaIdsJs(tokens)).result).toEqual([U(2), U(3)])
+  })
+})
+
 // M3-7·M3-8: 레퍼런스 드라이버(flow-reference-driver.js)의 페이지 표현식 — minified 번들이 jsdom 에서 같은 결과(붙여넣기 관찰 주입은 멱등·defaultPrevented 없음).
 describe('minified 레퍼런스 드라이버 페이지 표현식(M3-7·M3-8) — 비-minified 와 같은 결과', () => {
   let drv
@@ -292,9 +322,11 @@ describe('정적 규칙: 직렬화되는 헬퍼는 서로를 이름으로 부르
     scanSettingsPanel: plainSettings.scanSettingsPanel, planSettingsClicks: plainSettings.planSettingsClicks, settingsDriverCore: plainSettings.settingsDriverCore, isSettingsPanelOpen: plainSettings.isSettingsPanelOpen,
     findAgentToggle: plainToggle.findAgentToggle, isToggleOn: plainToggle.isToggleOn,
     // M3-4
-    readComposerState: plainRefs.readComposerState, findAssetItemByMediaId: plainRefs.findAssetItemByMediaId, listIdAssetMediaIds: plainRefs.listIdAssetMediaIds,
-    findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaId: plainRefs.readPickerPreviewMediaId, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
-    findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaId: plainRefs.findChipByMediaId,
+    readComposerStateWith: plainRefs.readComposerStateWith, findAssetItemByMediaIdWith: plainRefs.findAssetItemByMediaIdWith, listIdAssetMediaIdsWith: plainRefs.listIdAssetMediaIdsWith,
+    findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaIdWith: plainRefs.readPickerPreviewMediaIdWith, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
+    findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaIdWith: plainRefs.findChipByMediaIdWith,
+    // 2026-10-31: img id 판독기(호출 지점에서 조합) · 프레임 칸
+    mediaIdOfImg: plainRefs.mediaIdOfImg, readFrameSlotsWith: plainRefs.readFrameSlotsWith,
     // M3-8
     readPickerStatus: plainDriver.readPickerStatus, findChipAt: plainDriver.findChipAt,
   }
@@ -321,15 +353,21 @@ describe('정적 규칙(확장, M3-15): 레퍼런스 직렬화 헬퍼·페이지
     // flow-composer-refs.js
     'READ_COMPOSER_STATE_JS', 'LIST_ID_ASSET_MEDIA_IDS_JS', 'READ_PICKER_PREVIEW_MEDIA_ID_JS', 'FIND_ADD_MENU_TRIGGER_JS', 'FIND_CLEAR_PROMPT_BUTTON_JS',
     'FIND_ADD_TO_PROMPT_BUTTON_JS', 'FIND_ASSET_ITEM_BY_MEDIA_ID_JS', 'FIND_PICKER_TAB_JS', 'FIND_CHIP_BY_MEDIA_ID_JS',
+    // 2026-10-31
+    'mediaIdOfImg', 'withResolver', 'tokensArg', 'TOKEN_RE', 'UUID_RE', 'READ_FRAME_SLOTS_JS', 'composerStateJs', 'frameSlotsJs', 'listIdAssetMediaIdsJs',
+    'readPickerPreviewMediaIdJs', 'readComposerState', 'findAssetItemByMediaId', 'listIdAssetMediaIds', 'readPickerPreviewMediaId', 'findChipByMediaId', 'readFrameSlots',
   ]
   const serialized = {
-    readComposerState: plainRefs.readComposerState, findAssetItemByMediaId: plainRefs.findAssetItemByMediaId, listIdAssetMediaIds: plainRefs.listIdAssetMediaIds,
-    findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaId: plainRefs.readPickerPreviewMediaId, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
-    findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaId: plainRefs.findChipByMediaId,
+    readComposerStateWith: plainRefs.readComposerStateWith, findAssetItemByMediaIdWith: plainRefs.findAssetItemByMediaIdWith, listIdAssetMediaIdsWith: plainRefs.listIdAssetMediaIdsWith,
+    findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaIdWith: plainRefs.readPickerPreviewMediaIdWith, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
+    findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaIdWith: plainRefs.findChipByMediaIdWith,
+    // 2026-10-31: img id 판독기(호출 지점에서 조합) · 프레임 칸
+    mediaIdOfImg: plainRefs.mediaIdOfImg, readFrameSlotsWith: plainRefs.readFrameSlotsWith,
     readPickerStatus: plainDriver.readPickerStatus, findChipAt: plainDriver.findChipAt,
   }
   it.each(Object.keys(serialized))('%s', (name) => {
-    const body = serialized[name].toString()
+    // 자기 함수 머리(function <name>(…)의 이름은 참조가 아니다 — 위 정적 규칙과 같이 뗀다
+    const body = serialized[name].toString().replace(new RegExp(`^\\s*function\\s+${name}\\s*\\(`), '')
     for (const id of M3_MODULE_NAMES) expect(body, `${name} → ${id}`).not.toMatch(new RegExp(`\\b${id}\\b`))
   })
   it('붙여넣기 관찰 · 텍스트 넣기 · Escape · 문서 nonce 문자열도 모듈 스코프 이름을 참조하지 않는다', () => {

@@ -16,7 +16,7 @@ import { routeReportResponse, buildReportCtx } from '../../electron/reportRespon
 import { decodeFReqInner, extractSubmitRefs, extractSubmitPrompts } from '../../electron/flow-rpc-protocol.js'
 import { SUBMIT_ENABLED_PROBE } from '../../electron/flow-submit-gate.js'
 import { READ_EDITOR_TEXT_JS } from '../../electron/flow-composer-dom.js'
-import { readComposerState } from '../../electron/flow-composer-refs.js'
+import { composerStateJs } from '../../electron/flow-composer-refs.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../../electron/flow-rpc-capture.js'
 import { createFakeFlowComposer, makeFakeClipboard, fakeNativeImage, maseQBody, pngBytes, FAKE_DOC, FAKE_PROJECT } from './fakeFlowComposer.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
@@ -34,10 +34,10 @@ class FakeXHR {
 }
 
 export { FAKE_DOC, FAKE_PROJECT }
-const COMPOSER_STATE_PREFIX = `(${readComposerState.toString()})(document, `
+const COMPOSER_STATE_PREFIX = composerStateJs().slice(0, composerStateJs().lastIndexOf('{}'))
 /** 2026-10-31 실측 모양의 as29s 이미지 기록(마스킹) — [5][10]·[6][1][3] 에 https://lh3.googleusercontent.com/asb/<토큰>. */
-export function as29sImageRecord(id) {
-  const url = `https://lh3.googleusercontent.com/asb/${asbToken(id)}`
+export function as29sImageRecord(id, tokenOf = id) {
+  const url = `https://lh3.googleusercontent.com/asb/${asbToken(tokenOf)}`
   return [id, FAKE_PROJECT, maskedUuid(98), null, null, [[1793426994, 0], null, null, null, null, null, [null, null, null, null, 1], null, null, 1, url, null, null, 276168],
     [null, [null, null, null, url, 0, null, 'image/jpeg'], [768, 1376], null, null, [url]]]
 }
@@ -73,6 +73,7 @@ export function refHandlerHarness(o = {}) {
   const kind = o.kind || 'image'
   const url = o.url ?? FLOW_URL_OK
   const trace = []
+  const as29sCalls = {}
   let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
   const credits = Array.isArray(o.credits) ? [...o.credits] : [900]
   const clipboard = makeFakeClipboard(o.clipboard || { formats: ['text/plain', 'text/html', 'application/x-lexical-editor'], text: 'user text', html: '<p>user text</p>' }, (tag) => trace.push(tag))
@@ -183,7 +184,11 @@ export function refHandlerHarness(o = {}) {
     if (o.as29sTokens && s.includes('"as29s"')) {
       const m = s.match(/payload: \["([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"\]/)
       trace.push('as29s')
-      return m ? { status: 200, text: respBodyWithPayload('as29s', as29sImageRecord(m[1])) } : null
+      if (!m) return null
+      as29sCalls[m[1]] = (as29sCalls[m[1]] || 0) + 1
+      // 함수면 (id, n번째) → 토큰을 만들 id(다른 id 면 그 미디어의 토큰을 준다 — 충돌·낡은 토큰 시험)
+      const tokenOf = typeof o.as29sTokens === 'function' ? o.as29sTokens(m[1], as29sCalls[m[1]]) : m[1]
+      return { status: 200, text: respBodyWithPayload('as29s', as29sImageRecord(m[1], tokenOf)) }
     }
     if (s.includes('"jwpduf"')) { trace.push('poll'); return null }
     if (s.includes('"as29s"')) { trace.push('as29s'); return null }   // 2026-10-31: 컴포즈 중 토큰 배우기도 as29s — 폴(jwpduf)과 따로 센다
