@@ -373,7 +373,7 @@ describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는
 
   it('Codex 2차#2: 게이트 판독이 도는 사이 토큰이 격리되면(epoch 변경) 그 판독을 버린다 → chip-set-mismatch(클릭 전)', async () => {
     const h = makeRefDriverHarness({ page: { asb: true, chips: [{ id: M0 }], assets: [] }, bumpEpochDuringStateRead: true })
-    h.ctx.mediaTokens[asbToken(M0)] = M0
+    h.registry.record(asbToken(M0), M0)
     const r = await drive(readGate(h.ctx, { refs: [M0], mentions: [], texts: [], summary: await summaryOf(h) }))
     expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-set-mismatch' })
   })

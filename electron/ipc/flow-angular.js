@@ -46,7 +46,7 @@ import { SUBMIT_ENABLED_PROBE } from '../flow-submit-gate.js'
 import { composerStateJs, frameSlotsJs } from '../flow-composer-refs.js'
 import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
 import { refMediaCache } from '../flow-ref-media-cache.js'
-import { createMediaTokenRegistry } from '../flow-media-tokens.js'
+import { sharedMediaTokenRegistry } from '../flow-media-tokens.js'
 import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowR2vLimit.js'   // D13: 렌더러 계획과 같은 상한 — import 없는 모듈(렌더러 계획 모듈을 끌어오면 React 훅까지 main 에 들어온다)
 import { mediaEditLocation, editorPath, driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, PAGE_PATH_JS, EDITOR_TITLE_JS, UUID_RE } from '../flow-video-download.js'
 import { VIDEO_DOWNLOAD_TIMEOUT_MS } from '../flow-download-config.js'
@@ -252,9 +252,9 @@ export function createFlowAngular(deps) {
   }
   /**
    * 2026-10-31: asb 토큰 지도(flow-media-tokens.js) — Flow 가 칩·애셋 항목·미리보기 src 에서 id 를 빼 칩 id 는 이 지도로만 읽힌다. 토큰은 미디어마다 고정이라
-   *   이 핸들러 인스턴스 동안 쌓는다(지우지 않음 · 충돌 토큰은 영구 격리 · 격리마다 epoch). 시험은 deps.mediaTokenRegistry 로 넣는다.
+   *   앱이 도는 동안 쌓는다(지우지 않음 · 충돌 토큰은 영구 격리 · 격리마다 epoch). 이미지·영상 핸들러가 같은 모듈 지도를 쓴다 — 시험은 deps.mediaTokenRegistry 로 넣는다.
    */
-  const tokens = deps.mediaTokenRegistry || createMediaTokenRegistry()
+  const tokens = deps.mediaTokenRegistry || sharedMediaTokenRegistry()
   /**
    * ids 의 토큰을 as29s(읽기 RPC)로 배운다 — 이미 아는 id 는 force 가 아니면 건너뛴다(force = 칩이 안 읽혀 다시 묻기). 실패·토큰 없음은 그대로 진행
    *   (판독이 옛 주소로만 돈다). 토큰 값은 로그에 싣지 않는다.

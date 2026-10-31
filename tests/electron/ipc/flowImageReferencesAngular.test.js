@@ -8,6 +8,7 @@
 //   하네스: tests/helpers/flowRefHandlerHarness.js(가짜 페이지 jsdom + 실제 createSharedHelpers + 실제 라우터 + S3 샘플).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { _resetDomStageForTests } from '../../../electron/ipc/flow-angular.js'
+import { sharedMediaTokenRegistry, _resetSharedMediaTokensForTests } from '../../../electron/flow-media-tokens.js'
 import { refMediaCache } from '../../../electron/flow-ref-media-cache.js'
 import { setModalVisible } from '../../../electron/ipc/layout.js'
 import { refHandlerHarness, settle, refInput, refSha, text, mention, session, FAKE_DOC, FAKE_PROJECT } from '../../helpers/flowRefHandlerHarness.js'
@@ -362,6 +363,29 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     expect(r.success).toBe(false)
     expect(r.postClick).toBeFalsy()
     expect(h.trace).toContain('dispatch-refused')
+  })
+
+  it('Codex 3차#1: 이미지 → 영상 → 이미지 — 핸들러가 달라도 같은 주인 기록(모듈 공유 지도)이라 영상에서 본 충돌이 이미지의 토큰을 격리한다', async () => {
+    _resetSharedMediaTokensForTests()
+    // 1) 이미지: king(U2) 토큰을 배운다
+    seed('king', U(2)); seed('queen', U(3))
+    const img1 = refHandlerHarness({ page: { asb: true, assets: session(U(2), U(3)) }, as29sTokens: true, sharedTokens: true, onSubmit: capture(9).onSubmit })
+    await settle(img1.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(sharedMediaTokenRegistry().map[asbToken(U(2))]).toBe(U(2))
+    // 2) 영상(다른 핸들러 인스턴스): U7 을 물으면 U2 의 토큰이 온다 → 같은 주인 기록이라 충돌 → 격리
+    refMediaCache.clear(); seed('king', U(7))
+    const vid = refHandlerHarness({ kind: 'video', page: { asb: true, assets: session(U(7)) }, as29sTokens: (id) => (id === U(7) ? U(2) : id), sharedTokens: true, onSubmit: () => {} })
+    await settle(vid.generate({ refs: [refInput('king')], plan: { segments: [mention(0), text(' walks')], attach: [] } }), 120000)
+    expect(logged()).toMatch(/\[Flow Refs\] media token conflict media=00000007/)
+    expect(sharedMediaTokenRegistry().map[asbToken(U(2))]).toBeUndefined()
+    // 3) 이미지 다시: 캐시 U2 의 토큰은 격리 — U2 를 그 토큰 항목으로 고르지 않고 새로 올린다
+    refMediaCache.clear(); seed('king', U(2))
+    const box = capture(9)
+    const img2 = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(5), U(6)] } }, as29sTokens: true, sharedTokens: true, onSubmit: box.onSubmit })
+    await settle(img2.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(box.snapshot.expectedRefs).not.toContain(U(2))
+    expect(img2.page.counts.paste).toBe(2)
+    _resetSharedMediaTokensForTests()
   })
 })
 

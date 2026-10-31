@@ -13,6 +13,7 @@ import { buildComposer, buildAssetPicker, chipHtml, mentionHtml, EMPTY_EDITOR, u
 import { routeReportResponse, buildReportCtx } from '../../electron/reportResponseRouter.js'
 import { refMediaCache } from '../../electron/flow-ref-media-cache.js'
 import { composerStateJs } from '../../electron/flow-composer-refs.js'
+import { createMediaTokenRegistry } from '../../electron/flow-media-tokens.js'
 import { s3Payload } from '../fixtures/flow-m3-samples.js'
 import { respBodyWithPayload } from '../fixtures/flow-batchexecute-samples.js'
 
@@ -418,13 +419,15 @@ export function makeRefDriverHarness(o = {}) {
     },
   })
   let obsBase = null
-  let tokenEpochN = 0
+  let raceN = 0
+  const registry = createMediaTokenRegistry()
   const exec = (js) => {
     const s = String(js)
     if (s.startsWith(STATE_JS_PREFIX)) {
       trace.push('state-read')
       // Codex 2차#2: 판독이 도는 사이 다른 응답이 토큰을 격리했다(epoch +1) — 결과는 옛 지도로 계산된 그대로 돌아온다
-      if (o.bumpEpochDuringStateRead) return page.exec(s).then((r) => { tokenEpochN++; return r })
+      // 진짜 격리로: 판독마다 새 토큰 하나를 두 id 가 받는다(주인 기록 → conflict → epoch +1)
+      if (o.bumpEpochDuringStateRead) return page.exec(s).then((r) => { const t = `RACE_${++raceN}`; registry.record(t, uuid(901)); registry.record(t, uuid(902)); return r })
     }
     if (s.includes('__af_paste_observer__')) {
       if (o.hangObserver && page.counts.paste > 0) { trace.push('observer:hang'); return new Promise(() => {}) }
@@ -458,24 +461,22 @@ export function makeRefDriverHarness(o = {}) {
     isAborted: () => !!(o.aborted && o.aborted()),
     report: async (step, reason, extra) => { report.push({ step, reason, extra }) },
     // 2026-10-31: as29s 로 토큰 배우기 — 가짜 페이지의 asb 토큰은 id 에서 만든다(asbToken). o.learnTokens:false 면 배우지 못한다(as29s 실패).
-    mediaTokens: {},
-    tokenEpoch: () => tokenEpochN,
-    // flow-angular 와 같은 규칙: 이미 아는 id 는 force 가 아니면 다시 묻지 않는다 · 새 토큰이면 그 id 의 옛 토큰은 지운다.
+    mediaTokens: registry.map,
+    tokenEpoch: registry.epoch,
+    // 진짜 지도(flow-media-tokens.js)로 — flow-angular learnMediaTokens 와 같은 규칙: 이미 아는 id 는 force 가 아니면 다시 묻지 않는다.
     learnMediaTokens: (ids, opts = {}) => {
       learnCalls.push({ ids: [...ids], force: !!opts.force })
       if (o.learnHang) return new Promise(() => {})   // as29s 가 영영 답하지 않는다
       for (const id of ids) {
-        if (!opts.force && Object.values(ctx.mediaTokens).includes(id)) continue
+        if (!opts.force && registry.knows(id)) continue
         learned.push(id)
         if (o.learnTokens === false) continue
         if (Number.isInteger(o.learnTokensFailFirst) && learned.length <= o.learnTokensFailFirst) continue   // 처음 n 번은 토큰이 아직 없다(업로드 직후)
         const n = learned.filter((x) => x === id).length
-        const token = o.staleTokenFirst && n === 1 ? `STALE_${asbToken(id)}` : asbToken(id)   // 처음 답은 페이지와 다른(낡은) 토큰
-        for (const [t, v] of Object.entries(ctx.mediaTokens)) if (v === id) delete ctx.mediaTokens[t]
-        ctx.mediaTokens[token] = id
+        registry.record(o.staleTokenFirst && n === 1 ? `STALE_${asbToken(id)}` : asbToken(id), id)   // 처음 답은 페이지와 다른(낡은) 토큰
       }
       return Promise.resolve()
     },
   }
-  return { ctx, page, trace, clipboard, pendingGenerations, report, router, learned, learnCalls }
+  return { ctx, page, trace, clipboard, pendingGenerations, report, router, learned, learnCalls, registry }
 }

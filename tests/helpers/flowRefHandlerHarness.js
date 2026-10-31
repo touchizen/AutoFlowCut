@@ -156,7 +156,8 @@ export function refHandlerHarness(o = {}) {
   const summary = o.summary ?? (kind === 'video' ? { text: '동영상 · 720p · 4초 x1', ligatures: ['crop_9_16'] } : { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_9_16'] })
 
   // 2026-10-31: 토큰 지도(flow-angular 가 deps 로 받는다) — 시험이 격리를 일으킬 수 있게 하네스가 만든다
-  const mediaTokenRegistry = createMediaTokenRegistry()
+  // o.sharedTokens: true → 주입하지 않는다(프로덕션 기본 = 모듈 공유 지도 — 이미지·영상 핸들러가 같이 쓴다)
+  const mediaTokenRegistry = o.sharedTokens ? null : createMediaTokenRegistry()
   let submitClicked = false
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
@@ -272,7 +273,7 @@ export function refHandlerHarness(o = {}) {
     ...helpers,
     ...legacy,
     trustedClickOnFlowView, sessionFetch, createInputShield, setAutomationKeyLock, setShieldFocusTarget,
-    clipboard, nativeImage: fakeNativeImage, pasteIntoFlowView, mediaTokenRegistry,
+    clipboard, nativeImage: fakeNativeImage, pasteIntoFlowView, ...(mediaTokenRegistry ? { mediaTokenRegistry } : {}),
   }
   if (kind === 'video') registerVideoIPC(ipcMain, deps)
   else registerFlowAPIIPC(ipcMain, deps)

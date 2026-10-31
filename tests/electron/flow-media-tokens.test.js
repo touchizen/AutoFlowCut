@@ -5,7 +5,7 @@
 //   지우지 않는다(새 토큰은 더한다 — 늦게 온 옛 답이 새 토큰을 못 지운다) · 한 토큰을 두 id 가 받으면(옛 토큰 포함) 영구 격리 ·
 //   격리마다 epoch +1 → 그동안 진행된 판독은 버린다(guarded → null).
 import { describe, it, expect } from 'vitest'
-import { createMediaTokenRegistry } from '../../electron/flow-media-tokens.js'
+import { createMediaTokenRegistry, sharedMediaTokenRegistry, _resetSharedMediaTokensForTests } from '../../electron/flow-media-tokens.js'
 
 const A = '00000001-0000-4000-8000-000000000000'
 const B = '00000002-0000-4000-8000-000000000000'
@@ -48,4 +48,16 @@ describe('createMediaTokenRegistry', () => {
     const r = createMediaTokenRegistry()
     expect(await r.guarded(async () => { throw new Error('exec failed') })).toBeNull()
   })
+
+  it('Codex 3차#1: sharedMediaTokenRegistry 는 모듈 하나 — 이미지·영상 핸들러가 같은 주인 기록을 본다 · 시험용 리셋은 새 지도', () => {
+    _resetSharedMediaTokensForTests()
+    const a = sharedMediaTokenRegistry()
+    expect(sharedMediaTokenRegistry()).toBe(a)
+    a.record('T1', A)
+    expect(sharedMediaTokenRegistry().record('T1', B)).toBe('conflict')
+    _resetSharedMediaTokensForTests()
+    expect(sharedMediaTokenRegistry()).not.toBe(a)
+    expect(sharedMediaTokenRegistry().map).toEqual({})
+  })
 })
+

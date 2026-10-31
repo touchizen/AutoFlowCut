@@ -44,3 +44,12 @@ export function createMediaTokenRegistry() {
     },
   }
 }
+
+/**
+ * 프로덕션 기본 지도 — 모듈 하나(세션 캐시 refMediaCache 처럼). 이미지(flow-api.js)·영상(video.js) 핸들러가 createFlowAngular 를 따로 만들어도
+ *   같은 주인 기록을 봐야 한쪽에서 본 충돌이 다른 쪽의 토큰을 격리한다.
+ */
+let shared = createMediaTokenRegistry()
+export function sharedMediaTokenRegistry() { return shared }
+/** 시험 전용 — 새 지도로 바꾼다(이미 만든 핸들러는 옛 지도를 계속 쓴다). */
+export function _resetSharedMediaTokensForTests() { shared = createMediaTokenRegistry() }
