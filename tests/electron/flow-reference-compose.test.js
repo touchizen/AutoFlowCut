@@ -343,6 +343,15 @@ describe('2026-10-31 asb 주소 — 우리가 붙인 칩에서 토큰을 배워 
     expectNoSubmit(h)
   })
 
+  it('Codex 9차: 기준 스냅샷 뒤·붙여넣기 전에 문서가 바뀌면(기준 문서 ≠ 업로드 문서) 등록하지 않는다 — 새 문서에 원래 있던 칩을 새 칩으로 착각하지 않는다', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, baselineDoc: 'c'.repeat(32) })
+    h.page.window.__autoflowcut_rpc_doc__ = 'c'.repeat(32)
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r.ok).toBe(false)
+    expect(h.adopted).toEqual([])
+    expectNoSubmit(h)
+  })
+
   it('Codex 8차#2: maseQ 가 끝난 뒤 문서가 바뀌면(nonce 다름) 새 칩을 이 업로드 id 로 등록하지 않는다 → 클릭 전 실패', async () => {
     const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, swapDocOnLoadend: true })
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })

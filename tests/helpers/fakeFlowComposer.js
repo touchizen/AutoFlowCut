@@ -381,6 +381,7 @@ export function maseQBody(id) {
  *   upload    {sendMs=300, loadendMs=7500, noSend, responseText(id)→string, onPaste()} maseQ 예약
  *   hangObserver  true → 붙여넣기 뒤의 관찰 exec 가 영영 settle 하지 않는다(죽은 문서)
  *   aborted() 드라이버의 isAborted
+ *   baselineDoc nonce → 처음 페이지 문서 nonce(기준 스냅샷이 이걸 본다) — 붙여넣기 때 FAKE_DOC 으로 바뀐다
  *   swapDocOnLoadend true → maseQ loadend 뒤 페이지 문서 nonce 가 바뀐다
  *   noAdopt  true → ctx.adoptMediaToken 없음(새 칩의 토큰을 등록하지 못한다)
  *   bumpEpochDuringStateRead true → 컴포저 판독마다 그 사이 토큰 격리가 있었던 것처럼 epoch +1(결과는 그대로)
@@ -416,6 +417,7 @@ export function makeRefDriverHarness(o = {}) {
     upload: {
       ...((o.page && o.page.upload) || {}),
       onUpload: ({ id, n }) => {
+        if (o.baselineDoc) page.window.__autoflowcut_rpc_doc__ = FAKE_DOC   // 기준 스냅샷 뒤·붙여넣기 때 문서가 바뀌었다(업로드는 새 문서에 바인딩)
         if (up.onPaste) up.onPaste({ id, n })
         if (up.noSend) return
         setTimeout(() => router.send(n), up.sendMs)
