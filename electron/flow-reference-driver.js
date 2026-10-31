@@ -25,7 +25,7 @@ import { armDeadline, settleGen } from './flow-rpc-router.js'
 import { normalizePrompt } from './flow-rpc-protocol.js'
 import { snapshotClipboard, writeUploadImage, restoreClipboard } from './flow-clipboard.js'
 import {
-  READ_COMPOSER_STATE_JS, LIST_ID_ASSET_MEDIA_IDS_JS, READ_PICKER_PREVIEW_MEDIA_ID_JS, FIND_ADD_MENU_TRIGGER_JS, FIND_CLEAR_PROMPT_BUTTON_JS,
+  composerStateJs, listIdAssetMediaIdsJs, readPickerPreviewMediaIdJs, FIND_ADD_MENU_TRIGGER_JS, FIND_CLEAR_PROMPT_BUTTON_JS,
   FIND_ADD_TO_PROMPT_BUTTON_JS, FIND_ASSET_ITEM_BY_MEDIA_ID_JS, FIND_PICKER_TAB_JS,
 } from './flow-composer-refs.js'
 import { findPromptEditor, READ_SETTINGS_SUMMARY_JS } from './flow-composer-dom.js'
@@ -38,6 +38,8 @@ const DOM_STAGE_ABORTED = Symbol('dom-stage-aborted')
 export const PASTE_OBSERVE_MS = 3000
 export const PASTE_RESTORE_BACKSTOP_MS = 5000
 export const UPLOAD_CHIP_ID_WAIT_MS = 15000
+/** 2026-10-31: 업로드한 id 의 asb 토큰을 아직 모를 때 칩 대기 안에서 다시 배우는 간격. */
+export const TOKEN_RELEARN_MS = 2500
 const EXEC_RACE_MS = 1000
 const OBSERVE_POLL_MS = 50
 const CHIP_POLL_MS = 200
@@ -165,7 +167,19 @@ async function raceExec(ctx, js, ms = EXEC_RACE_MS) {
     ])
   } finally { if (timer) clearTimeout(timer) }
 }
-const readState = (ctx) => ex(ctx, READ_COMPOSER_STATE_JS)
+/** 2026-10-31: id 판독에 싣는 asb 토큰 지도({토큰: mediaId}) — ctx.mediaTokens(호출자가 as29s 로 채운다). */
+const toks = (ctx) => (ctx && ctx.mediaTokens && typeof ctx.mediaTokens === 'object' ? ctx.mediaTokens : {})
+const readState = (ctx) => ex(ctx, composerStateJs(toks(ctx)))
+/**
+ * 2026-10-31: id 들의 asb 토큰을 배운다(ctx.learnMediaTokens — as29s). Flow 가 칩·애셋 항목·미리보기 src 에서 id 를 뺐기 때문에 토큰 없이는 칩 id 가 null 로 읽힌다.
+ *   ctx 에 없거나 실패해도 흐름은 계속 — 판독이 옛 주소 모양으로만 돌고, 못 읽으면 기존 사유(chip-no-id 등)로 클릭 전에 끝난다.
+ */
+async function learnTokens(ctx, ids) {
+  const want = [...new Set((ids || []).filter((id) => typeof id === 'string' && id))]
+  if (!want.length || typeof ctx.learnMediaTokens !== 'function') return
+  guard(ctx)
+  try { await ctx.learnMediaTokens(want) } catch (_e) { /* 토큰 없이 진행 */ }
+}
 const abortedResult = () => ({ ok: false, kind: 'flow-settings-not-applied', reason: 'dom-stage-aborted' })
 /** 공개 함수의 catch — 좀비 sentinel 만 결과로, 나머지는 다시 던진다(버그는 드러나야 한다). */
 function abortedOr(e) {
@@ -182,13 +196,13 @@ async function tclick(ctx, js, step, required) {
 async function pollJs(ctx, js, pred, ms) {
   const until = Date.now() + ms
   for (;;) {
-    const v = await ex(ctx, js)
+    const v = await ex(ctx, typeof js === 'function' ? js() : js)
     if (v && pred(v)) return v
     if (Date.now() >= until) return null
     await sleep(STATE_POLL_MS)
   }
 }
-const pollState = (ctx, pred, ms) => pollJs(ctx, READ_COMPOSER_STATE_JS, pred, ms)
+const pollState = (ctx, pred, ms) => pollJs(ctx, () => composerStateJs(toks(ctx)), pred, ms)
 const refTag = (i) => `ref#${Number.isInteger(i) ? i : '?'}`
 
 /** 실패 결과 + 로그 한 줄 + 진단 보고(기다리지 않는다 — 먹통 보고가 흐름을 막지 않게). area = 'upload' | 'refs'. */
@@ -236,7 +250,12 @@ async function observePaste(ctx, n0) {
 async function waitUploadChip(ctx, mediaId, L0) {
   const t0 = Date.now()
   const until = t0 + UPLOAD_CHIP_ID_WAIT_MS
+  // 2026-10-31: 칩 src 가 asb 토큰이라 토큰을 알아야 칩 id 가 읽힌다. 업로드 직후 as29s 에 아직 없으면 대기 안에서 TOKEN_RELEARN_MS 마다 다시 배운다.
+  const known = () => Object.values(toks(ctx)).includes(mediaId)
+  let learnedAt = Date.now()
+  await learnTokens(ctx, [mediaId])
   for (;;) {
+    if (!known() && Date.now() - learnedAt >= TOKEN_RELEARN_MS) { learnedAt = Date.now(); await learnTokens(ctx, [mediaId]) }
     const st = await readState(ctx)
     const chips = st && Array.isArray(st.chips) ? st.chips : null
     if (chips && chips.length > L0 && chips.every((c) => c.mediaId && !c.busy)) {
@@ -415,13 +434,13 @@ async function pickFromOpenPicker(ctx, mediaId) {
   const st = await readState(ctx)
   if (!st) return 'picker-not-open'
   if (st.searchDirty) return 'picker-search-dirty'
-  if (!(await ex(ctx, `!!(${FIND_ASSET_ITEM_BY_MEDIA_ID_JS(mediaId)})`))) return 'asset-not-found'
-  const item = await tclick(ctx, FIND_ASSET_ITEM_BY_MEDIA_ID_JS(mediaId), 'refs-asset-item', true)
+  if (!(await ex(ctx, `!!(${FIND_ASSET_ITEM_BY_MEDIA_ID_JS(mediaId, toks(ctx))})`))) return 'asset-not-found'
+  const item = await tclick(ctx, FIND_ASSET_ITEM_BY_MEDIA_ID_JS(mediaId, toks(ctx)), 'refs-asset-item', true)
   if (!item.success) return 'asset-not-found'
   let shown = null
   const until = Date.now() + PREVIEW_WAIT_MS
   for (;;) {
-    shown = await ex(ctx, READ_PICKER_PREVIEW_MEDIA_ID_JS)
+    shown = await ex(ctx, readPickerPreviewMediaIdJs(toks(ctx)))
     if (shown === mediaId || Date.now() >= until) break
     await sleep(STATE_POLL_MS)
   }
@@ -474,7 +493,7 @@ export async function scanUploadedAssets(ctx, { wantIds = [] } = {}) {
       const st = await readState(ctx)
       if (!st) return { why: 'picker-not-open' }
       if (st.searchDirty) return { why: 'picker-search-dirty' }
-      const ids = await ex(ctx, LIST_ID_ASSET_MEDIA_IDS_JS)
+      const ids = await ex(ctx, listIdAssetMediaIdsJs(toks(ctx)))
       return { tab, ids: Array.isArray(ids) ? ids : [] }
     }
     let r = await once()
@@ -617,6 +636,7 @@ export async function composeReferencePlan(ctx, { refs = [], plan = {} } = {}) {
     const shas = [...firstOfSha.keys()]
     const cached = new Map()
     for (const s of shas) { const id = doc ? ctx.cache.get(doc, ctx.projectId, s) : null; if (id) cached.set(s, id) }
+    await learnTokens(ctx, [...cached.values()])   // 2026-10-31: 애셋 항목 src 가 asb 토큰 — 캐시 id 의 토큰을 알아야 스캔·고르기가 된다
     const scan = await scanUploadedAssets(ctx, { wantIds: [...cached.values()] })
     if (!scan.ok) return scan
     const mediaOf = new Map()

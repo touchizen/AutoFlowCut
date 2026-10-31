@@ -11,8 +11,9 @@ import {
   findAddMenuTrigger, findClearPromptButton, findAddToPromptButton, findChipByMediaId,
   READ_COMPOSER_STATE_JS, FIND_ASSET_ITEM_BY_MEDIA_ID_JS, LIST_ID_ASSET_MEDIA_IDS_JS, FIND_PICKER_TAB_JS, READ_PICKER_PREVIEW_MEDIA_ID_JS,
   FIND_ADD_MENU_TRIGGER_JS, FIND_CLEAR_PROMPT_BUTTON_JS, FIND_ADD_TO_PROMPT_BUTTON_JS, FIND_CHIP_BY_MEDIA_ID_JS,
+  composerStateJs, listIdAssetMediaIdsJs, readPickerPreviewMediaIdJs,
 } from '../../electron/flow-composer-refs.js'
-import { buildPage, buildComposer, buildAssetPicker, mentionHtml, paragraph, idSrc, uuid } from '../fixtures/flow-live-dom-m3.js'
+import { buildPage, buildComposer, buildAssetPicker, mentionHtml, paragraph, idSrc, uuid, asbToken } from '../fixtures/flow-live-dom-m3.js'
 
 const U = uuid
 const run = (expr) => window.eval(expr)
@@ -260,5 +261,69 @@ describe('findAddMenuTrigger · findClearPromptButton · findAddToPromptButton �
   it('헤더의 "미디어 메뉴 추가"(mat-mdc-menu-trigger)·헤더 메뉴 div.add-menu 는 트리거가 아니다', () => {
     document.body.innerHTML = '<button class="mdc-icon-button mat-mdc-menu-trigger" aria-label="미디어 메뉴 추가" aria-haspopup="menu"><mat-icon>add</mat-icon></button><div role="menu" class="mat-mdc-menu-panel add-menu"></div>' + buildPage({})
     expect(findAddMenuTrigger(document)).toBe(document.querySelector('button.add-menu-trigger'))
+  })
+})
+
+// 2026-10-31 실측: 썸네일·칩·미리보기 src 가 전부 https://flow.google.com/asb/<토큰>=s1600-rw(이번 세션 업로드 포함 — id 없음). 그리드 타일 img 엔
+//   data-media-id 가 있지만 애셋 창 항목·칩·미리보기엔 없다. 토큰은 미디어마다 고정이라 as29s 로 배운 {토큰: id} 지도로 읽는다.
+describe('2026-10-31 asb 토큰 지도로 id 읽기 — tokens = {토큰: mediaId}', () => {
+  const T = (...ids) => Object.fromEntries(ids.map((id) => [asbToken(id), id]))
+  const asbChips = (ids) => buildPage({ composer: { chips: ids.map((id) => ({ id, asb: true })) } })
+  const asbPicker = (ids, picker = {}) => buildPage({ picker: { tab: 'drive_folder_upload', items: ids.map((id) => ({ id, asb: true })), ...picker } })
+
+  it('칩: 지도에 있는 토큰이면 id, 없으면 null(대기) — 옛 flow-content 주소는 지도 없이도 그대로', () => {
+    document.body.innerHTML = asbChips([U(2), U(3)])
+    expect(readComposerState(document).chips).toEqual([{ mediaId: null, busy: false }, { mediaId: null, busy: false }])
+    expect(readComposerState(document, T(U(2))).chips).toEqual([{ mediaId: U(2), busy: false }, { mediaId: null, busy: false }])
+    expect(readComposerState(document, T(U(2), U(3))).chips.map((c) => c.mediaId)).toEqual([U(2), U(3)])
+    document.body.innerHTML = buildPage({ composer: { chips: [{ id: U(4) }] } })
+    expect(readComposerState(document, T(U(2))).chips).toEqual([{ mediaId: U(4), busy: false }])
+  })
+
+  it('지도 값이 UUID 가 아니면 무시 · lh3.googleusercontent.com/asb 도 같은 토큰 · 다른 호스트의 /asb/ 는 무시', () => {
+    document.body.innerHTML = asbChips([U(2)])
+    expect(readComposerState(document, { [asbToken(U(2))]: 'not-a-uuid' }).chips[0].mediaId).toBeNull()
+    document.body.innerHTML = asbChips([U(2)]).replace('https://flow.google.com/asb/', 'https://lh3.googleusercontent.com/asb/')
+    expect(readComposerState(document, T(U(2))).chips[0].mediaId).toBe(U(2))
+    document.body.innerHTML = asbChips([U(2)]).replace('https://flow.google.com/asb/', 'https://evil.example/asb/')
+    expect(readComposerState(document, T(U(2))).chips[0].mediaId).toBeNull()
+  })
+
+  it('토큰 접두 오매칭 없음 — 토큰 뒤는 = ? # 또는 끝이어야 한다', () => {
+    document.body.innerHTML = asbChips([U(2)]).replace(`${asbToken(U(2))}=s1600`, `${asbToken(U(2))}XYZ=s1600`)
+    expect(readComposerState(document, T(U(2))).chips[0].mediaId).toBeNull()
+  })
+
+  it('img 의 data-media-id(그리드 타일 모양)도 id 로 읽는다', () => {
+    document.body.innerHTML = asbChips([U(2)])
+    document.querySelector('img.chip-image').setAttribute('data-media-id', U(7))
+    expect(readComposerState(document).chips[0].mediaId).toBe(U(7))
+  })
+
+  it('애셋 창: findAssetItemByMediaId · listIdAssetMediaIds · readPickerPreviewMediaId 가 지도로 찾는다', () => {
+    document.body.innerHTML = asbPicker([U(2), U(3)])
+    expect(listIdAssetMediaIds(document)).toEqual([])
+    expect(listIdAssetMediaIds(document, T(U(2), U(3)))).toEqual([U(2), U(3)])
+    expect(findAssetItemByMediaId(document, U(3))).toBeNull()
+    expect(findAssetItemByMediaId(document, U(3), T(U(3)))).toBe(document.querySelectorAll('button.asset-item')[1])
+    expect(readPickerPreviewMediaId(document)).toBeNull()
+    expect(readPickerPreviewMediaId(document, T(U(2)))).toBe(U(2))
+  })
+
+  it('findChipByMediaId 도 지도로', () => {
+    document.body.innerHTML = asbChips([U(2), U(3)])
+    expect(findChipByMediaId(document, U(3))).toBeNull()
+    expect(findChipByMediaId(document, U(3), T(U(3)))).toBe(document.querySelectorAll('button.chip-container')[1])
+  })
+
+  it('*_JS 빌더는 지도를 실어 같은 결과(단일 표현식) — 인자 없으면 지도 없음', () => {
+    document.body.innerHTML = asbChips([U(2)]) + buildAssetPicker({ tab: 'drive_folder_upload', items: [{ id: U(2), asb: true }] })
+    expect(run(READ_COMPOSER_STATE_JS).chips[0].mediaId).toBeNull()
+    expect(run(composerStateJs(T(U(2)))).chips[0].mediaId).toBe(U(2))
+    expect(run(listIdAssetMediaIdsJs(T(U(2))))).toEqual([U(2)])
+    expect(run(readPickerPreviewMediaIdJs(T(U(2))))).toBe(U(2))
+    expect(run(FIND_ASSET_ITEM_BY_MEDIA_ID_JS(U(2), T(U(2))))).toBe(document.querySelector('button.asset-item'))
+    expect(run(FIND_CHIP_BY_MEDIA_ID_JS(U(2), T(U(2))))).toBe(document.querySelector('button.chip-container'))
+    expect(run(LIST_ID_ASSET_MEDIA_IDS_JS)).toEqual([])
   })
 })

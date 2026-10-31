@@ -298,3 +298,34 @@ describe('레퍼런스 이미지 — 숨은 뷰(0×0) (D16)', () => {
     expect(logged()).toMatch(/view hidden 0x0 → automation viewport \d+x\d+ in-place shielded/)
   })
 })
+
+// 2026-10-31 실측(xmas90 장면 1~3): Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=s1600-rw 로 바꿨다(이번 세션 업로드 포함).
+//   업로드는 성공하는데 칩 id 를 못 읽어 flow-reference-attach-failed(chip-no-id). 핸들러는 필요한 id 의 토큰을 as29s(읽기 RPC)로 배워 지도로 읽는다.
+describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다', () => {
+  it('세션 재사용 + 업로드 둘 다 asb 인 페이지 → 토큰을 배워 스캔·멘션·첨부·게이트·재판독 통과 → images', async () => {
+    seed('king', U(2))
+    const box = capture(9)
+    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(3)] } }, as29sTokens: true, onSubmit: box.onSubmit })
+    const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(r.success).toBe(true)
+    expect(r.images[0]).toMatchObject({ mediaId: U(24) })
+    expect(box.snapshot).toMatchObject({ expectedRefs: [U(2), U(3)], expectedMentions: [U(2)] })
+    expect(h.page.counts.paste).toBe(1)
+    expect(h.trace.filter((x) => x === 'as29s').length).toBe(2)   // U2(캐시) · U3(업로드) 한 번씩 — 같은 세션에선 다시 묻지 않는다
+    const out = logged()
+    expect(out).toMatch(/\[Flow Refs\] media token media=00000002 ok/)
+    expect(out).toMatch(/\[Flow Refs\] media token media=00000003 ok/)
+    expect(out).toMatch(/refs verified request=2 echo=2/)
+    expect(out).not.toMatch(/ANqvLO/)   // 토큰(미디어 접근 주소)은 로그에 싣지 않는다
+    noContent(out)
+  })
+
+  it('as29s 가 토큰을 못 주면(옛 응답) → 업로드 칩 id 를 못 읽어 클릭 전 flow-reference-attach-failed — 생성 클릭 없음', async () => {
+    const h = refHandlerHarness({ page: { asb: true, assets: [], upload: { ids: [U(3)] } }, onSubmit: () => { throw new Error('must not submit') } })
+    const r = await settle(h.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-reference-attach-failed' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(logged()).toMatch(/\[Flow Refs\] media token media=00000003 none/)
+  })
+})
+

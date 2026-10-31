@@ -9,12 +9,15 @@
 // (3) makeRefDriverHarness — 가짜 페이지 + 가짜 클립보드 + **실제** 라우터 ctx(routeReportResponse·buildReportCtx) + maseQ send/loadend 예약 + 드라이버 ctx.
 //   파일 로더(flow-m3-samples.js)가 fs·file URL 을 쓰므로 이 헬퍼를 쓰는 테스트는 `@vitest-environment node` 다(jsdom 환경의 URL 은 file 스킴을 못 푼다).
 import { JSDOM } from 'jsdom'
-import { buildComposer, buildAssetPicker, chipHtml, mentionHtml, EMPTY_EDITOR, uuid } from '../fixtures/flow-live-dom-m3.js'
+import { buildComposer, buildAssetPicker, chipHtml, mentionHtml, EMPTY_EDITOR, uuid, asbToken } from '../fixtures/flow-live-dom-m3.js'
 import { routeReportResponse, buildReportCtx } from '../../electron/reportResponseRouter.js'
 import { refMediaCache } from '../../electron/flow-ref-media-cache.js'
-import { READ_COMPOSER_STATE_JS } from '../../electron/flow-composer-refs.js'
+import { readComposerState } from '../../electron/flow-composer-refs.js'
 import { s3Payload } from '../fixtures/flow-m3-samples.js'
 import { respBodyWithPayload } from '../fixtures/flow-batchexecute-samples.js'
+
+/** 컴포저 판독 표현식의 머리 — 토큰 지도가 실려도(2026-10-31) state-read 로 센다. */
+const STATE_JS_PREFIX = `(${readComposerState.toString()})(document, `
 
 const PNG_SIG = [0x89, 0x50, 0x4e, 0x47]
 const JPEG_SIG = [0xff, 0xd8]
@@ -83,6 +86,7 @@ const short = (id) => String(id || '').slice(0, 8)
  *   chips            처음 칩 [{id, busy?}] (id null = img 없음)
  *   editorHtml       처음 편집기 내용(기본 빈 문단)
  *   assets           프로젝트 애셋(최신이 앞) [{id, session?:boolean, name?}] — session:true 만 id 썸네일(PR P5), 나머지는 불투명(추가하면 칩엔 진짜 id)
+ *   asb              true → 2026-10-31 Flow: 칩·애셋 항목·미리보기 src 가 전부 https://flow.google.com/asb/<토큰>=s1600-rw(세션 업로드 포함, id 없음)
  *   picker           처음부터 열린 창: 'add'(＋) | 'at'(@) | null
  *   focus            처음 포커스: 'editor' | 'picker-search' | 'header-search' | null
  *   firstOpenMissing true → **첫** 열기에 session 애셋이 목록에 없다(앱 재시작 뒤 첫 창 누락, P5)
@@ -123,11 +127,11 @@ export function createFakeFlowComposer(opts = {}) {
     const list = document.querySelector('.af-ingredient-list')
     if (st.framesMode) {
       const first = chips[0]
-      list.innerHTML = `<div cdkoverlayorigin="" class="frame-trigger">${first ? chipHtml({ id: first.img ? first.id : null, busy: first.busy }) : emptyFrame('시작')}</div>`
+      list.innerHTML = `<div cdkoverlayorigin="" class="frame-trigger">${first ? chipHtml({ id: first.img ? first.id : null, busy: first.busy, asb: !!opts.asb }) : emptyFrame('시작')}</div>`
         + '<button aria-label="첫 번째 프레임과 마지막 프레임 바꾸기"><mat-icon>swap_horiz</mat-icon></button>'
         + `<div cdkoverlayorigin="" class="frame-trigger">${emptyFrame('종료')}</div>`
     } else {
-      list.innerHTML = chips.map((c) => chipHtml({ id: c.img ? c.id : null, busy: c.busy })).join('')
+      list.innerHTML = chips.map((c) => chipHtml({ id: c.img ? c.id : null, busy: c.busy, asb: !!opts.asb })).join('')
     }
     syncClear()
   }
@@ -182,7 +186,8 @@ export function createFakeFlowComposer(opts = {}) {
     if (!st.picker) return
     st.visible = visibleAssets()
     let opaqueN = 0
-    const items = st.visible.map((a) => (a.session ? { id: a.id, name: a.name } : { opaque: ++opaqueN, name: a.name }))
+    // asb 모드(2026-10-31 실측): 세션 업로드든 아니든 모든 썸네일이 asb 토큰 주소 — id 는 토큰 지도로만 읽힌다
+    const items = st.visible.map((a) => (opts.asb ? { id: a.id, name: a.name, asb: true } : a.session ? { id: a.id, name: a.name } : { opaque: ++opaqueN, name: a.name }))
     const activeItem = items[st.active] || null
     const preview = opts.preview && st.clickedItem ? opts.preview : activeItem
     document.body.insertAdjacentHTML('beforeend', buildAssetPicker({ tab: st.tab, items, preview, search: st.search || '' }))
@@ -375,6 +380,7 @@ export function maseQBody(id) {
  *   upload    {sendMs=300, loadendMs=7500, noSend, responseText(id)→string, onPaste()} maseQ 예약
  *   hangObserver  true → 붙여넣기 뒤의 관찰 exec 가 영영 settle 하지 않는다(죽은 문서)
  *   aborted() 드라이버의 isAborted
+ *   learnTokens  false → as29s 로 토큰을 못 배운다 · learnTokensFailFirst n → 처음 n 번(배운 id 누적 수 기준)은 토큰이 없다
  */
 export function makeRefDriverHarness(o = {}) {
   const trace = []
@@ -412,7 +418,7 @@ export function makeRefDriverHarness(o = {}) {
   let obsBase = null
   const exec = (js) => {
     const s = String(js)
-    if (s === READ_COMPOSER_STATE_JS) trace.push('state-read')
+    if (s.startsWith(STATE_JS_PREFIX)) trace.push('state-read')
     if (s.includes('__af_paste_observer__')) {
       if (o.hangObserver && page.counts.paste > 0) { trace.push('observer:hang'); return new Promise(() => {}) }
       return page.exec(s).then((r) => {
@@ -426,6 +432,7 @@ export function makeRefDriverHarness(o = {}) {
     return page.exec(s)
   }
   const report = []
+  const learned = []
   const cache = {
     get: (...a) => refMediaCache.get(...a),
     set: (...a) => { trace.push('cache:set'); refMediaCache.set(...a) },
@@ -442,6 +449,14 @@ export function makeRefDriverHarness(o = {}) {
     projectId: FAKE_PROJECT,
     isAborted: () => !!(o.aborted && o.aborted()),
     report: async (step, reason, extra) => { report.push({ step, reason, extra }) },
+    // 2026-10-31: as29s 로 토큰 배우기 — 가짜 페이지의 asb 토큰은 id 에서 만든다(asbToken). o.learnTokens:false 면 배우지 못한다(as29s 실패).
+    mediaTokens: {},
+    learnMediaTokens: async (ids) => {
+      learned.push(...ids)
+      if (o.learnTokens === false) return
+      if (Number.isInteger(o.learnTokensFailFirst) && learned.length <= o.learnTokensFailFirst) return   // 처음 n 번은 토큰이 아직 없다(업로드 직후)
+      for (const id of ids) ctx.mediaTokens[asbToken(id)] = id
+    },
   }
-  return { ctx, page, trace, clipboard, pendingGenerations, report, router }
+  return { ctx, page, trace, clipboard, pendingGenerations, report, router, learned }
 }

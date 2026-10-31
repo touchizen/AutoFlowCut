@@ -301,3 +301,50 @@ describe('단계 함수 — 직접 호출', () => {
     expect(h.trace).toEqual([])
   })
 })
+
+// 2026-10-31 실측: Flow 가 칩·애셋 항목·미리보기 src 를 전부 https://flow.google.com/asb/<토큰>=s1600-rw 로 바꿨다(이번 세션 업로드 포함). 업로드(maseQ)는
+//   성공하는데 칩 id 를 못 읽어 chip-no-id 로 끝났다(xmas90 장면 1~3, 사용자 덤프 3개). 드라이버는 필요한 id 의 토큰을 as29s 로 배워(ctx.learnMediaTokens)
+//   그 지도로 칩·항목·미리보기를 읽는다.
+describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는다', () => {
+  it('업로드 → 칩 확인이 토큰으로 통과(예전엔 chip-no-id) · 올린 id 의 토큰을 배운다', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] } })
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
+    expect(h.page.counts.paste).toBe(1)
+    expect(h.learned).toContain(U(3))
+    expect([...h.page.chipIds()]).toEqual([U(3)])
+  })
+
+  it('토큰을 못 배우면(as29s 실패) 클릭 전 chip-no-id — 생성 버튼은 누르지 않는다', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnTokens: false })
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-no-id' })
+    expectNoSubmit(h)
+  })
+
+  it('캐시 hit + asb 목록 → 사전 스캔이 토큰으로 찾음 → 업로드 0회 · 멘션·첨부 ok', async () => {
+    seed(R0, M0); seed(R1, M1)
+    const h = makeRefDriverHarness({ page: { asb: true, assets: session(M0, M1) } })
+    const r = await compose(h, [R0, R1], { segments: [text('A '), mention(0)], attach: [1] })
+    expect(r).toMatchObject({ ok: true, expectedRefs: [M0, M1], expectedMentions: [M0] })
+    expect(h.page.counts.paste).toBe(0)
+    expect(h.learned).toEqual(expect.arrayContaining([M0, M1]))
+    expect(logged()).toMatch(/assets scan tab=upload idItems=2 cached=2 found=2 missing=0 reopened=0/)
+  })
+
+  it('앞 세션 애셋(asb)도 캐시 id 의 토큰을 알면 재사용 — 업로드 0회', async () => {
+    seed(R0, M0)
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [{ id: M0, session: false, name: 'image.png' }] } })
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: true, expectedRefs: [M0] })
+    expect(h.page.counts.paste).toBe(0)
+  })
+
+  it('업로드 직후 as29s 에 토큰이 아직 없으면 칩 대기 안에서 다시 배운다(2.5초 간격) → 통과', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnTokensFailFirst: 2 })
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
+    expect(h.learned.filter((id) => id === U(3)).length).toBeGreaterThanOrEqual(3)
+  })
+})
+

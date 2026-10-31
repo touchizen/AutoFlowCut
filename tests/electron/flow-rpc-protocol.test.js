@@ -15,6 +15,7 @@ import {
   parseVideoSubmitRequest, parseVideoSubmitResponse, parseMediaRecord, parseVideoStatusResponse,
   mediaStateToStatus, modelKeyMatches,
   extractSubmitRefs, parseUploadResponse,
+  parseMediaImageToken,
 } from '../../electron/flow-rpc-protocol.js'
 import { isFlowAuthError, markFlowAuthFailure } from '../../src/engine/engineFlow.js'
 import { isQuotaExhaustedError } from '../../src/utils/quotaStop.js'
@@ -786,5 +787,32 @@ describe('I2V eb1hJf — 제출 프롬프트·응답 파서는 YhhmEf 와 같은
     expect(r).toMatchObject({ mediaId: maskedUuid(2), modelKey: 'abra_i2v_4s', creditsLeft: 964, state: 6, warnings: [] })
     expect(r.echo).toEqual([expect.stringMatching(/^The woman's hand grips the round sage green loop handles/)])
     expect(r).not.toHaveProperty('refEcho')
+  })
+})
+
+// 2026-10-31 실측(사용자 네트워크 덤프 autoflowcut-net-2026-10-31T06-14-44Z, 마스킹): 이미지의 as29s 기록 = [mediaId, projectId, editId, null, null,
+//   [[초, 나노], null×5, [null×4, 1], null, null, 1, "https://lh3.googleusercontent.com/asb/<토큰>", null, null, 바이트], [null, [null×3, "<같은 주소>", 0, null,
+//   "image/jpeg"], [w, h], null, null, ["<같은 주소>", …]], …]. 페이지 칩·애셋 항목 src 는 https://flow.google.com/asb/<같은 토큰>=s1600-rw.
+describe('2026-10-31 parseMediaImageToken — as29s 이미지 기록의 asb 토큰', () => {
+  const ID = '1952851f-7f4c-4c12-be3f-4cd12e48abd6'
+  const TOK = 'ANqvLObJV3UU-MASKED_tok3n'
+  const URL_ = (t = TOK, host = 'lh3.googleusercontent.com') => `https://${host}/asb/${t}`
+  const rec = (o = {}) => [o.id ?? ID, 'c9785b53-9a54-4523-9591-a63c32f669ba', '64db8409-c90f-484d-a1b0-2f56e84bb4b9', null, null,
+    [[1793426994, 677778000], null, null, null, null, null, [null, null, null, null, 1], null, null, 1, o.u510 === undefined ? URL_() : o.u510, null, null, 276168],
+    [null, [null, null, null, o.u613 === undefined ? URL_() : o.u613, 0, null, 'image/jpeg'], [1376, 768], null, null, [URL_()]]]
+
+  it('[5][10] 의 토큰(=·쿼리 없이) — 페이지 src 의 토큰과 같은 글자', () => {
+    expect(parseMediaImageToken(rec(), ID)).toBe(TOK)
+    expect(parseMediaImageToken(rec({ u510: URL_(TOK) + '=s512' }), ID)).toBe(TOK)
+  })
+  it('[5][10] 이 비면 [6][1][3]', () => {
+    expect(parseMediaImageToken(rec({ u510: null }), ID)).toBe(TOK)
+  })
+  it('다른 미디어의 기록·asb 가 아닌 주소·모르는 호스트·기록 아님 → null(던지지 않는다)', () => {
+    expect(parseMediaImageToken(rec({ id: '00000000-0000-4000-8000-000000000000' }), ID)).toBeNull()
+    expect(parseMediaImageToken(rec({ u510: 'https://flow-content.google/image/x', u613: null }), ID)).toBeNull()
+    expect(parseMediaImageToken(rec({ u510: URL_(TOK, 'evil.example'), u613: null }), ID)).toBeNull()
+    expect(parseMediaImageToken(null, ID)).toBeNull()
+    expect(parseMediaImageToken(['x'], ID)).toBeNull()
   })
 })

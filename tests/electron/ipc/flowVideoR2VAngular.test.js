@@ -48,7 +48,11 @@ const capture = (n, over = {}) => {
   return box
 }
 const noKeys = (r) => { expect(r).not.toHaveProperty('generationId'); expect(r).not.toHaveProperty('mediaId') }
-const noPollOrDownload = (h) => { expect(h.trace).not.toContain('poll'); expect(h.sessionFetch).not.toHaveBeenCalled() }
+// 2026-10-31: 컴포즈 중 토큰 배우기(as29s)는 클릭 전이라 괜찮다 — 클릭 뒤의 폴(jwpduf)·as29s·다운로드가 없어야 한다.
+const noPollOrDownload = (h) => {
+  const after = h.trace.slice(Math.max(0, h.trace.indexOf('click:compose-submit')))
+  expect(after).not.toContain('poll'); expect(after).not.toContain('as29s'); expect(h.sessionFetch).not.toHaveBeenCalled()
+}
 
 describe('레퍼런스 영상(r2v) — 성공', () => {
   it('@king 1개 · Omni 4초 · 9:16: 인라인 멘션 컴포즈 → arm MZZa6b + altRpcs [YhhmEf] + want.kind r2v → S3#17 → {success, generationId:U45, creditsLeft:857}', async () => {

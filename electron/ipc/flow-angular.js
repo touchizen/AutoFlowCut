@@ -37,13 +37,13 @@ import { FLOW_RPC_CAPTURE_INJECTION } from '../flow-rpc-capture.js'
 import { armDeadline, settleGen } from '../flow-rpc-router.js'
 import {
   FlowRpcShapeError, normalizePrompt, describeMediaUrl, modelKeyMatches, rpcErrorToRendererResult,
-  parseVideoStatusResponse, parseMediaRecord, mediaStateToStatus,
+  parseVideoStatusResponse, parseMediaRecord, mediaStateToStatus, parseMediaImageToken,
 } from '../flow-rpc-protocol.js'
 import { callFlowRpc } from '../flow-rpc-client.js'
 import { applyComposerSettings } from '../flow-composer-settings.js'
 import { FIND_GENERATE_BUTTON_JS, READ_EDITOR_TEXT_JS, findPromptEditor } from '../flow-composer-dom.js'
 import { SUBMIT_ENABLED_PROBE } from '../flow-submit-gate.js'
-import { READ_COMPOSER_STATE_JS, READ_FRAME_SLOTS_JS } from '../flow-composer-refs.js'
+import { composerStateJs, frameSlotsJs } from '../flow-composer-refs.js'
 import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
 import { refMediaCache } from '../flow-ref-media-cache.js'
 import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowR2vLimit.js'   // D13: 렌더러 계획과 같은 상한 — import 없는 모듈(렌더러 계획 모듈을 끌어오면 React 훅까지 main 에 들어온다)
@@ -249,8 +249,24 @@ export function createFlowAngular(deps) {
     setShieldTarget('main')   // M2-FINAL Q1: 이 뒤로는 방패를 눌러도 편집기가 포커스를 되찾지 않는다
     try { deps.getMainWindow()?.webContents?.focus() } catch (_e) { /* 창이 이미 없을 수 있다 */ }
   }
+  /**
+   * 2026-10-31: 미디어 id 의 asb 토큰 지도({토큰: mediaId}) — Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=… 로 바꿔(id 없음)
+   *   칩 id 는 이 지도로만 읽힌다. 토큰은 미디어마다 고정이라 이 핸들러 인스턴스 동안 쌓는다. 토큰은 미디어 접근 주소 — 로그·보고에 싣지 않는다.
+   */
+  const mediaTokens = {}
+  /** ids 중 토큰을 모르는 것만 as29s(읽기 RPC)로 배운다. 실패·토큰 없음은 그대로 진행(판독이 옛 주소로만 돈다). */
+  async function learnMediaTokens(flowView, ids) {
+    const known = new Set(Object.values(mediaTokens))
+    for (const id of new Set(ids)) {
+      if (typeof id !== 'string' || !UUID_RE.test(id) || known.has(id)) continue
+      let token = null
+      try { token = parseMediaImageToken(await callFlowRpc(flowView, 'as29s', [id]), id) } catch (_e) { token = null }
+      if (token) { mediaTokens[token] = id; known.add(id) }
+      console.log(`[Flow Refs] media token media=${short(id)} ${token ? 'ok' : 'none'}`)
+    }
+  }
   /** 칩 판독 — exec 실패는 null(호출자가 불일치로 본다 = fail-closed). */
-  const readComposerState = async (flowView) => { try { return await exec(flowView, READ_COMPOSER_STATE_JS) } catch (_e) { return null } }
+  const readComposerState = async (flowView) => { try { return await exec(flowView, composerStateJs(mediaTokens)) } catch (_e) { return null } }
   const chipCountOf = (st) => (st && Array.isArray(st.chips) ? st.chips.length : -1)
   /**
    * M2-FINAL Q1(A1 = B1): 제출 신뢰 클릭의 beforeDispatch — 히트테스트 뒤·mouseDown 직전에 편집기를 마지막으로 재판독한다(재판독~mouseDown ≈200–300ms 사이의 IME 조합 음절).
@@ -314,6 +330,7 @@ export function createFlowAngular(deps) {
     clipboard: deps.clipboard, nativeImage: deps.nativeImage,
     paste: () => deps.pasteIntoFlowView(),
     pendingGenerations: deps.pendingGenerations, cache: refMediaCache, projectId, isAborted, report,
+    mediaTokens, learnMediaTokens: (ids) => learnMediaTokens(flowView, ids),
   })
   /** 드라이버의 클릭 전 실패 {ok:false, kind, reason?} → 렌더러 결과(reason 은 렌더되지 않는 필드). */
   const driverFailure = (r) => kindResult(r.kind || ATTACH_FAILED, r.reason ? { reason: String(r.reason) } : {})
@@ -338,7 +355,7 @@ export function createFlowAngular(deps) {
    */
   async function startFrameProblem(flowView, startId) {
     let fs = null
-    try { fs = await exec(flowView, READ_FRAME_SLOTS_JS) } catch (_e) { fs = null }
+    try { fs = await exec(flowView, frameSlotsJs(mediaTokens)) } catch (_e) { fs = null }
     const slots = fs && Array.isArray(fs.slots) ? fs.slots : []
     if (!fs || !fs.framesMode || slots.length !== 2) return 'not-frames-mode'
     if (slots[0].mediaId !== startId || slots[0].busy) return 'start'

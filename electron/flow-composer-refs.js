@@ -6,6 +6,8 @@
  * 계획서 docs/plans/2026-09-25-flow-M3-references-plan.md §1-4 ③⑤⑥ · D4 · D7 · D8 · D9.
  *
  *   칩        button.chip-container[aria-busy] + 자손 img(src https://flow-content.google/image/<mediaId>?…) — 칩 순서 = DOM 순서.
+ *   id 판독  2026-10-31: Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=s1600-rw 로 바꿨다(이번 세션 업로드 포함, id 없음).
+ *             img 에서 id 는 ① flow-content.google/image/<id> ② data-media-id(그리드 타일) ③ asb 토큰 → tokens 지도(as29s 로 배운 {토큰: id}) 순으로 읽는다.
  *             업로드 중엔 aria-busy="true"·img 없음, busy 해제 뒤에도 ~2s img 없음(PR P1a) → 그동안 mediaId null.
  *   멘션      편집기 div.ProseMirror[contenteditable=true] 안 span.mention-chip[data-mention-id](텍스트 = 애셋 라벨, PR P3).
  *   트리거    button.add-menu-trigger(＋, 열리면 aria-expanded="true") — 헤더의 "미디어 메뉴 추가"(mat-mdc-menu-trigger)와 다르다.
@@ -26,17 +28,26 @@
  *   editorText 는 라벨을 포함한 편집기 텍스트(READ_EDITOR_TEXT_JS 와 같은 규칙), 편집기가 없으면 null.
  *   pickerOpen 은 열림 흔적 전부(트리거 expanded · 항목 · 애셋 검색 · 추가 버튼) — 닫힘 게이트가 fail-closed 가 되게.
  */
-export function readComposerState(doc) {
+export function readComposerState(doc, tokens) {
   var ID_SRC = /^https:\/\/flow-content\.google\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\?|$)/i
+  var ASB_SRC = /^https:\/\/(?:flow\.google\.com|lh3\.googleusercontent\.com)\/asb\/([A-Za-z0-9_-]+)(?:[=?#]|$)/
+  var UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  var idOf = function (img) {
+    var src = img.getAttribute('src') || ''
+    var m = ID_SRC.exec(src)
+    if (m) return m[1]
+    var d = img.getAttribute('data-media-id') || ''
+    if (UUID_ID.test(d)) return d
+    var a = ASB_SRC.exec(src)
+    var v = a && tokens && Object.prototype.hasOwnProperty.call(tokens, a[1]) ? tokens[a[1]] : null
+    return typeof v === 'string' && UUID_ID.test(v) ? v : null
+  }
   var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   var ZW = /[​﻿]/g
   var chips = Array.from(doc.querySelectorAll('button.chip-container')).map(function (btn) {
     var mediaId = null
     var imgs = btn.querySelectorAll('img')
-    for (var i = 0; i < imgs.length && !mediaId; i++) {
-      var m = ID_SRC.exec(imgs[i].getAttribute('src') || '')
-      if (m) mediaId = m[1]
-    }
+    for (var i = 0; i < imgs.length && !mediaId; i++) mediaId = idOf(imgs[i])
     return { mediaId: mediaId, busy: btn.getAttribute('aria-busy') === 'true' }
   })
   var editor = doc.querySelector('div.ProseMirror[contenteditable="true"]')
@@ -78,27 +89,48 @@ export function readComposerState(doc) {
 }
 
 /** 애셋 창 항목 중 자손 썸네일 src 가 https://flow-content.google/image/<mediaId>(? 또는 끝) 인 것 — 정확히 하나일 때만(불투명 항목은 안 잡힌다). */
-export function findAssetItemByMediaId(doc, mediaId) {
+export function findAssetItemByMediaId(doc, mediaId, tokens) {
   var ID_SRC = /^https:\/\/flow-content\.google\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\?|$)/i
+  var ASB_SRC = /^https:\/\/(?:flow\.google\.com|lh3\.googleusercontent\.com)\/asb\/([A-Za-z0-9_-]+)(?:[=?#]|$)/
+  var UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  var idOf = function (img) {
+    var src = img.getAttribute('src') || ''
+    var m = ID_SRC.exec(src)
+    if (m) return m[1]
+    var d = img.getAttribute('data-media-id') || ''
+    if (UUID_ID.test(d)) return d
+    var a = ASB_SRC.exec(src)
+    var v = a && tokens && Object.prototype.hasOwnProperty.call(tokens, a[1]) ? tokens[a[1]] : null
+    return typeof v === 'string' && UUID_ID.test(v) ? v : null
+  }
   if (typeof mediaId !== 'string' || !mediaId) return null
   var hits = Array.from(doc.querySelectorAll('button.asset-item[role="option"]')).filter(function (item) {
-    return Array.from(item.querySelectorAll('img')).some(function (img) {
-      var m = ID_SRC.exec(img.getAttribute('src') || '')
-      return !!m && m[1] === mediaId
-    })
+    return Array.from(item.querySelectorAll('img')).some(function (img) { return idOf(img) === mediaId })
   })
   return hits.length === 1 ? hits[0] : null
 }
 
 /** 애셋 창의 id 썸네일 항목들의 mediaId(DOM 순서) — 불투명 항목은 빠진다. */
-export function listIdAssetMediaIds(doc) {
+export function listIdAssetMediaIds(doc, tokens) {
   var ID_SRC = /^https:\/\/flow-content\.google\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\?|$)/i
+  var ASB_SRC = /^https:\/\/(?:flow\.google\.com|lh3\.googleusercontent\.com)\/asb\/([A-Za-z0-9_-]+)(?:[=?#]|$)/
+  var UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  var idOf = function (img) {
+    var src = img.getAttribute('src') || ''
+    var m = ID_SRC.exec(src)
+    if (m) return m[1]
+    var d = img.getAttribute('data-media-id') || ''
+    if (UUID_ID.test(d)) return d
+    var a = ASB_SRC.exec(src)
+    var v = a && tokens && Object.prototype.hasOwnProperty.call(tokens, a[1]) ? tokens[a[1]] : null
+    return typeof v === 'string' && UUID_ID.test(v) ? v : null
+  }
   var out = []
   Array.from(doc.querySelectorAll('button.asset-item[role="option"]')).forEach(function (item) {
     var imgs = item.querySelectorAll('img')
     for (var i = 0; i < imgs.length; i++) {
-      var m = ID_SRC.exec(imgs[i].getAttribute('src') || '')
-      if (m) { out.push(m[1]); return }
+      var id = idOf(imgs[i])
+      if (id) { out.push(id); return }
     }
   })
   return out
@@ -114,12 +146,23 @@ export function findPickerTab(doc, ligature) {
 }
 
 /** 미리보기(img.detail-preview-image, 정확히 하나)의 mediaId — 불투명 썸네일이거나 미리보기가 없으면 null. */
-export function readPickerPreviewMediaId(doc) {
+export function readPickerPreviewMediaId(doc, tokens) {
   var ID_SRC = /^https:\/\/flow-content\.google\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\?|$)/i
+  var ASB_SRC = /^https:\/\/(?:flow\.google\.com|lh3\.googleusercontent\.com)\/asb\/([A-Za-z0-9_-]+)(?:[=?#]|$)/
+  var UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  var idOf = function (img) {
+    var src = img.getAttribute('src') || ''
+    var m = ID_SRC.exec(src)
+    if (m) return m[1]
+    var d = img.getAttribute('data-media-id') || ''
+    if (UUID_ID.test(d)) return d
+    var a = ASB_SRC.exec(src)
+    var v = a && tokens && Object.prototype.hasOwnProperty.call(tokens, a[1]) ? tokens[a[1]] : null
+    return typeof v === 'string' && UUID_ID.test(v) ? v : null
+  }
   var imgs = doc.querySelectorAll('img.detail-preview-image')
   if (imgs.length !== 1) return null
-  var m = ID_SRC.exec(imgs[0].getAttribute('src') || '')
-  return m ? m[1] : null
+  return idOf(imgs[0])
 }
 
 /** 컴포저 ＋ 트리거(button.add-menu-trigger) — 정확히 하나일 때만. */
@@ -141,14 +184,23 @@ export function findAddToPromptButton(doc) {
 }
 
 /** 칩(button.chip-container) 중 자손 img 가 그 mediaId 의 id 썸네일인 것 — 정확히 하나일 때만(img 없는 칩은 안 잡힌다). */
-export function findChipByMediaId(doc, mediaId) {
+export function findChipByMediaId(doc, mediaId, tokens) {
   var ID_SRC = /^https:\/\/flow-content\.google\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\?|$)/i
+  var ASB_SRC = /^https:\/\/(?:flow\.google\.com|lh3\.googleusercontent\.com)\/asb\/([A-Za-z0-9_-]+)(?:[=?#]|$)/
+  var UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  var idOf = function (img) {
+    var src = img.getAttribute('src') || ''
+    var m = ID_SRC.exec(src)
+    if (m) return m[1]
+    var d = img.getAttribute('data-media-id') || ''
+    if (UUID_ID.test(d)) return d
+    var a = ASB_SRC.exec(src)
+    var v = a && tokens && Object.prototype.hasOwnProperty.call(tokens, a[1]) ? tokens[a[1]] : null
+    return typeof v === 'string' && UUID_ID.test(v) ? v : null
+  }
   if (typeof mediaId !== 'string' || !mediaId) return null
   var hits = Array.from(doc.querySelectorAll('button.chip-container')).filter(function (chip) {
-    return Array.from(chip.querySelectorAll('img')).some(function (img) {
-      var m = ID_SRC.exec(img.getAttribute('src') || '')
-      return !!m && m[1] === mediaId
-    })
+    return Array.from(chip.querySelectorAll('img')).some(function (img) { return idOf(img) === mediaId })
   })
   return hits.length === 1 ? hits[0] : null
 }
@@ -158,31 +210,55 @@ export function findChipByMediaId(doc, mediaId) {
  *   채운 칸은 button.chip-container[aria-busy] + img(src https://flow-content.google/image/<mediaId>?…). 소재 모드면 `.frame-trigger` 가 없다.
  *   → { framesMode, slots:[{mediaId, busy, empty}] } — 로케일 문구("시작"/"종료")는 보지 않는다.
  */
-export function readFrameSlots(doc) {
+export function readFrameSlots(doc, tokens) {
   var ID_SRC = /^https:\/\/flow-content\.google\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\?|$)/i
+  var ASB_SRC = /^https:\/\/(?:flow\.google\.com|lh3\.googleusercontent\.com)\/asb\/([A-Za-z0-9_-]+)(?:[=?#]|$)/
+  var UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  var idOf = function (img) {
+    var src = img.getAttribute('src') || ''
+    var m = ID_SRC.exec(src)
+    if (m) return m[1]
+    var d = img.getAttribute('data-media-id') || ''
+    if (UUID_ID.test(d)) return d
+    var a = ASB_SRC.exec(src)
+    var v = a && tokens && Object.prototype.hasOwnProperty.call(tokens, a[1]) ? tokens[a[1]] : null
+    return typeof v === 'string' && UUID_ID.test(v) ? v : null
+  }
   var triggers = Array.from(doc.querySelectorAll('flow-ingredient-bar .frame-trigger'))
   var slots = triggers.map(function (t) {
     var chip = t.querySelector('button.chip-container')
     if (!chip) return { mediaId: null, busy: false, empty: true }
     var mediaId = null
     var imgs = chip.querySelectorAll('img')
-    for (var i = 0; i < imgs.length && !mediaId; i++) {
-      var m = ID_SRC.exec(imgs[i].getAttribute('src') || '')
-      if (m) mediaId = m[1]
-    }
+    for (var i = 0; i < imgs.length && !mediaId; i++) mediaId = idOf(imgs[i])
     return { mediaId: mediaId, busy: chip.getAttribute('aria-busy') === 'true', empty: false }
   })
   return { framesMode: triggers.length > 0, slots: slots }
 }
 
 // ─── 페이지 주입 표현식(단일 표현식, 자기완결) ──────────────────────────────
-export const READ_FRAME_SLOTS_JS = `(${readFrameSlots.toString()})(document)`
-export const READ_COMPOSER_STATE_JS = `(${readComposerState.toString()})(document)`
-export const LIST_ID_ASSET_MEDIA_IDS_JS = `(${listIdAssetMediaIds.toString()})(document)`
-export const READ_PICKER_PREVIEW_MEDIA_ID_JS = `(${readPickerPreviewMediaId.toString()})(document)`
+// 2026-10-31: id 를 읽는 판독은 asb 토큰 지도({토큰: mediaId}, as29s 로 배운 것)를 함께 싣는다. 모양이 맞는 항목만 싣는다(토큰 글자·UUID).
+const TOKEN_RE = /^[A-Za-z0-9_-]+$/
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+function tokensArg(tokens) {
+  const out = {}
+  if (tokens && typeof tokens === 'object') {
+    for (const [k, v] of Object.entries(tokens)) if (TOKEN_RE.test(k) && typeof v === 'string' && UUID_RE.test(v)) out[k] = v
+  }
+  return JSON.stringify(out)
+}
+export const frameSlotsJs = (tokens) => `(${readFrameSlots.toString()})(document, ${tokensArg(tokens)})`
+export const composerStateJs = (tokens) => `(${readComposerState.toString()})(document, ${tokensArg(tokens)})`
+export const listIdAssetMediaIdsJs = (tokens) => `(${listIdAssetMediaIds.toString()})(document, ${tokensArg(tokens)})`
+export const readPickerPreviewMediaIdJs = (tokens) => `(${readPickerPreviewMediaId.toString()})(document, ${tokensArg(tokens)})`
+/** 지도 없는 판독(옛 flow-content 주소·data-media-id 만). */
+export const READ_FRAME_SLOTS_JS = frameSlotsJs()
+export const READ_COMPOSER_STATE_JS = composerStateJs()
+export const LIST_ID_ASSET_MEDIA_IDS_JS = listIdAssetMediaIdsJs()
+export const READ_PICKER_PREVIEW_MEDIA_ID_JS = readPickerPreviewMediaIdJs()
 export const FIND_ADD_MENU_TRIGGER_JS = `(${findAddMenuTrigger.toString()})(document)`
 export const FIND_CLEAR_PROMPT_BUTTON_JS = `(${findClearPromptButton.toString()})(document)`
 export const FIND_ADD_TO_PROMPT_BUTTON_JS = `(${findAddToPromptButton.toString()})(document)`
-export const FIND_ASSET_ITEM_BY_MEDIA_ID_JS = (mediaId) => `(${findAssetItemByMediaId.toString()})(document, ${JSON.stringify(String(mediaId))})`
+export const FIND_ASSET_ITEM_BY_MEDIA_ID_JS = (mediaId, tokens) => `(${findAssetItemByMediaId.toString()})(document, ${JSON.stringify(String(mediaId))}, ${tokensArg(tokens)})`
 export const FIND_PICKER_TAB_JS = (ligature) => `(${findPickerTab.toString()})(document, ${JSON.stringify(String(ligature))})`
-export const FIND_CHIP_BY_MEDIA_ID_JS = (mediaId) => `(${findChipByMediaId.toString()})(document, ${JSON.stringify(String(mediaId))})`
+export const FIND_CHIP_BY_MEDIA_ID_JS = (mediaId, tokens) => `(${findChipByMediaId.toString()})(document, ${JSON.stringify(String(mediaId))}, ${tokensArg(tokens)})`

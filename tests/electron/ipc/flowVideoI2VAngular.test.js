@@ -65,6 +65,18 @@ describe('I2V(프레임 → 영상) — 성공', () => {
     for (const w of ['scissors', 'image.png']) expect(out, w).not.toContain(w)
   })
 
+  it('2026-10-31 asb 주소(칩·칸에 id 없음): 업로드한 시작 프레임의 토큰을 as29s 로 배워 칩·칸 확인 통과 → 제출', async () => {
+    const box = capture()
+    const h = refHandlerHarness({ kind: 'video', page: { asb: true, upload: { ids: [U(4)] } }, as29sTokens: true, onSubmit: box.onSubmit })
+    const r = await settle(h.generateI2V(), 120000)
+    expect(r).toEqual({ success: true, generationId: U(11), creditsLeft: 1040 })
+    expect(h.trace.filter((x) => x === 'as29s').length).toBe(1)
+    const out = logged()
+    expect(out).toMatch(/\[Flow Refs\] media token media=00000004 ok/)
+    expect(out).toMatch(/\[Flow Video I2V\] \[Angular\] start frame media=00000004 ok/)
+    expect(out).not.toMatch(/ANqvLO/)
+  })
+
   it('같은 페이지 세션에서 같은 이미지 두 번째: 캐시 + id 썸네일이면 다시 올리지 않는다(붙여넣기 0)', async () => {
     const first = refHandlerHarness({ kind: 'video', page: { upload: { ids: [U(4)] } }, onSubmit: capture().onSubmit })
     await settle(first.generateI2V(), 120000)
