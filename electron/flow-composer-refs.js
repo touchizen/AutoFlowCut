@@ -194,6 +194,22 @@ export function readFrameSlotsWith(doc, tokens, resolveImg) {
 /** readFrameSlotsWith + mediaIdOfImg(직접 호출용 — 페이지엔 *_JS 빌더가 조합한다). */
 export function readFrameSlots(doc, tokens) { return readFrameSlotsWith(doc, tokens, mediaIdOfImg) }
 
+/**
+ * 2026-10-31: 칩마다 asb 토큰(DOM 순) — img 가 없거나 asb 주소가 아니면 null. 드라이버가 "우리가 방금 빈 자리에 붙인 칩 하나"의 토큰을 maseQ 가 준 id 로
+ *   배울 때만 쓴다(갓 올린 이미지는 as29s 가 옛 주소만 준다 — 10-31 실기). 토큰은 미디어 접근 주소 — 호출자는 로그에 싣지 않는다.
+ */
+export function readChipTokens(doc) {
+  var ASB_SRC = /^https:\/\/(?:flow\.google\.com|lh3\.googleusercontent\.com)\/asb\/([A-Za-z0-9_-]+)(?:[=?#]|$)/
+  return Array.from(doc.querySelectorAll('button.chip-container')).map(function (btn) {
+    var imgs = btn.querySelectorAll('img')
+    for (var i = 0; i < imgs.length; i++) {
+      var m = ASB_SRC.exec(imgs[i].getAttribute('src') || '')
+      if (m) return m[1]
+    }
+    return null
+  })
+}
+
 // ─── 페이지 주입 표현식(단일 표현식, 자기완결) ──────────────────────────────
 // 2026-10-31: id 를 읽는 판독은 asb 토큰 지도({토큰: mediaId}, as29s 로 배운 것)를 함께 싣는다. 모양이 맞는 항목만 싣는다(토큰 글자·UUID).
 const TOKEN_RE = /^[A-Za-z0-9_-]+$/
@@ -216,6 +232,7 @@ export const READ_FRAME_SLOTS_JS = frameSlotsJs()
 export const READ_COMPOSER_STATE_JS = composerStateJs()
 export const LIST_ID_ASSET_MEDIA_IDS_JS = listIdAssetMediaIdsJs()
 export const READ_PICKER_PREVIEW_MEDIA_ID_JS = readPickerPreviewMediaIdJs()
+export const READ_CHIP_TOKENS_JS = `(${readChipTokens.toString()})(document)`
 export const FIND_ADD_MENU_TRIGGER_JS = `(${findAddMenuTrigger.toString()})(document)`
 export const FIND_CLEAR_PROMPT_BUTTON_JS = `(${findClearPromptButton.toString()})(document)`
 export const FIND_ADD_TO_PROMPT_BUTTON_JS = `(${findAddToPromptButton.toString()})(document)`

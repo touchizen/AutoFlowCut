@@ -450,6 +450,7 @@ export function makeRefDriverHarness(o = {}) {
   const report = []
   const learned = []
   const learnCalls = []
+  const adopted = []
   const cache = {
     get: (...a) => refMediaCache.get(...a),
     set: (...a) => { trace.push('cache:set'); refMediaCache.set(...a) },
@@ -469,6 +470,8 @@ export function makeRefDriverHarness(o = {}) {
     // 2026-10-31: as29s 로 토큰 배우기 — 가짜 페이지의 asb 토큰은 id 에서 만든다(asbToken). o.learnTokens:false 면 배우지 못한다(as29s 실패).
     mediaTokens: registry.map,
     tokenEpoch: registry.epoch,
+    // 2026-10-31: 우리가 방금 붙인 새 칩의 토큰을 그 id 로(as29s 는 갓 올린 이미지에 옛 주소만 준다) — flow-angular 와 같은 규칙
+    ...(o.noAdopt ? {} : { adoptMediaToken: (id, token) => { adopted.push(id); return registry.settle(id, registry.begin(id), token) } }),   // noAdopt: as29s 예비 경로 시험
     // 진짜 지도(flow-media-tokens.js)로 — flow-angular learnMediaTokens 와 같은 규칙: 이미 아는 id 는 force 가 아니면 다시 묻지 않는다.
     learnMediaTokens: (ids, opts = {}) => {
       learnCalls.push({ ids: [...ids], force: !!opts.force })
@@ -489,5 +492,5 @@ export function makeRefDriverHarness(o = {}) {
       return Promise.resolve()
     },
   }
-  return { ctx, page, trace, clipboard, pendingGenerations, report, router, learned, learnCalls, registry }
+  return { ctx, page, trace, clipboard, pendingGenerations, report, router, learned, learnCalls, registry, adopted }
 }

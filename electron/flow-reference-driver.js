@@ -25,7 +25,7 @@ import { armDeadline, settleGen } from './flow-rpc-router.js'
 import { normalizePrompt } from './flow-rpc-protocol.js'
 import { snapshotClipboard, writeUploadImage, restoreClipboard } from './flow-clipboard.js'
 import {
-  composerStateJs, listIdAssetMediaIdsJs, readPickerPreviewMediaIdJs, FIND_ADD_MENU_TRIGGER_JS, FIND_CLEAR_PROMPT_BUTTON_JS,
+  composerStateJs, listIdAssetMediaIdsJs, readPickerPreviewMediaIdJs, READ_CHIP_TOKENS_JS, FIND_ADD_MENU_TRIGGER_JS, FIND_CLEAR_PROMPT_BUTTON_JS,
   FIND_ADD_TO_PROMPT_BUTTON_JS, FIND_ASSET_ITEM_BY_MEDIA_ID_JS, FIND_PICKER_TAB_JS,
 } from './flow-composer-refs.js'
 import { findPromptEditor, READ_SETTINGS_SUMMARY_JS } from './flow-composer-dom.js'
@@ -266,6 +266,7 @@ async function waitUploadChip(ctx, mediaId, L0) {
   const t0 = Date.now()
   const until = t0 + UPLOAD_CHIP_ID_WAIT_MS
   let learnedAt = null
+  let adopted = false
   for (;;) {
     const st = await readState(ctx)
     const chips = st && Array.isArray(st.chips) ? st.chips : null
@@ -275,6 +276,14 @@ async function waitUploadChip(ctx, mediaId, L0) {
       return { ok: false, reason: 'chip-mismatch' }
     }
     if (Date.now() >= until) return { ok: false, reason: 'chip-no-id' }
+    // 2026-10-31 실기: 갓 올린 이미지는 as29s 가 옛 주소만 준다(토큰 없음). 칩이 정확히 하나 늘었고(L0+1) 바쁘지 않으며 id 가 안 읽히는 칩이 그 하나뿐이면
+    //   그 칩의 asb 토큰을 maseQ 가 준 이 id 로 배운다(우리가 붙여넣은 칩). 아니면 배우지 않는다 — 클릭 전 실패로 닫힌다.
+    if (!adopted && chips && chips.length === L0 + 1 && chips.every((c) => !c.busy) && typeof ctx.adoptMediaToken === 'function') {
+      const unread = chips.map((c, i) => (c.mediaId ? -1 : i)).filter((i) => i >= 0)
+      const toks = unread.length === 1 ? await ex(ctx, READ_CHIP_TOKENS_JS) : null
+      const t = Array.isArray(toks) && toks.length === chips.length ? toks[unread[0]] : null
+      if (typeof t === 'string' && t) { adopted = true; ctx.adoptMediaToken(mediaId, t); continue }
+    }
     // 2026-10-31: 칩 src 가 asb 토큰이라 바쁘지 않은 칩의 id 가 안 읽히면 토큰을 배운다 — 처음은 보통, 그 뒤 TOKEN_RELEARN_MS 마다 강제로
     //   (업로드 직후 아직 없거나 바뀐 토큰). 칩을 먼저 읽고, 배우기는 남은 마감 안에서만 기다린다.
     const unreadable = chips && chips.some((c) => !c.busy && !c.mediaId)

@@ -321,12 +321,17 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     noContent(out)
   })
 
-  it('as29s 가 토큰을 못 주면(옛 응답) → 업로드 칩 id 를 못 읽어 클릭 전 flow-reference-attach-failed — 생성 클릭 없음', async () => {
-    const h = refHandlerHarness({ page: { asb: true, assets: [], upload: { ids: [U(3)] } }, onSubmit: () => { throw new Error('must not submit') } })
-    const r = await settle(h.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
-    expect(r).toMatchObject({ success: false, errorKind: 'flow-reference-attach-failed' })
-    expect(h.trace).not.toContain('click:compose-submit')
-    expect(logged()).toMatch(/\[Flow Refs\] media token media=00000003 none\(rpc-\w+\)/)   // 사유 종류만(토큰·본문 없음)
+  it('as29s 가 토큰을 못 줘도(10-31 실기: 갓 올린 이미지는 옛 주소만) 우리가 붙인 새 칩의 토큰을 그 id 로 배워 제출까지 간다', async () => {
+    const box = capture(9)
+    seed('king', U(2))
+    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(3)] } }, as29sTokens: (id) => (id === U(3) ? null : id), onSubmit: box.onSubmit })
+    const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(r.success).toBe(true)
+    expect(box.snapshot.expectedRefs).toEqual([U(2), U(3)])
+    const out = logged()
+    expect(out).toMatch(/\[Flow Refs\] media token media=00000003 none\(no-asb\)/)   // 사유 종류만(토큰·본문 없음)
+    expect(out).toMatch(/\[Flow Refs\] media token media=00000003 ok\(from-chip\)/)
+    expect(out).not.toMatch(/ANqvLO/)
   })
 
   it('Codex#1: as29s 가 다른 id 에 이미 쓰인 토큰을 주면(충돌) 그 토큰을 버린다 — 엉뚱한 미디어를 그 id 로 고르지 않고 둘 다 새로 올린다', async () => {
@@ -341,7 +346,7 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     expect(logged()).toMatch(/\[Flow Refs\] media token conflict media=00000003/)
   })
 
-  it('Codex#2: 업로드 직후 as29s 가 낡은 토큰을 주면 칩을 못 읽는 동안 강제로 다시 물어 새 토큰으로 통과', async () => {
+  it('Codex#2: 업로드 직후 as29s 가 낡은 토큰을 줘도 통과 — 새 칩의 토큰을 그 id 로 배운다(as29s 예비 경로는 드라이버 시험)', async () => {
     const box = capture(9)
     seed('king', U(2))
     // U3 의 첫 답은 아무 항목에도 없는 토큰(U97), 두 번째부터 진짜
@@ -349,7 +354,7 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
     expect(r.success).toBe(true)
     expect(box.snapshot.expectedRefs).toEqual([U(2), U(3)])
-    expect(h.trace.filter((x) => x === 'as29s').length).toBe(3)   // U2 1 · U3 2(첫 답 낡음 → 강제 다시)
+    expect(logged()).toMatch(/\[Flow Refs\] media token media=00000003 ok\(from-chip\)/)
   })
 
   it('Codex 2차#2: 제출 클릭 직전(dispatch 가드) 판독 중 토큰이 격리되면 그 판독을 버린다 → 누르지 않는다(클릭 전 실패)', async () => {
@@ -423,6 +428,20 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     reg.settle(U(3), reg.begin(U(3)), asbToken(U(9)))
     await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
     expect(box.snapshot.expectedRefs).not.toContain(U(3))   // C(U9 썸네일)를 queen(U3)으로 고르지 않는다
+  })
+
+  it('진단(AUTOFLOWCUT_TOKEN_DEBUG=1): 토큰 없는 as29s 기록의 모양만 — URL 자리와 호스트(토큰·경로·본문 없음). 꺼져 있으면 안 찍는다', async () => {
+    const run = async () => {
+      const h = refHandlerHarness({ page: { asb: true, assets: [], upload: { ids: [U(3)] } }, as29sTokens: () => null, onSubmit: () => {} })
+      await settle(h.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
+    }
+    await run()
+    expect(logged()).not.toMatch(/token shape/)
+    process.env.AUTOFLOWCUT_TOKEN_DEBUG = '1'
+    try { await run() } finally { delete process.env.AUTOFLOWCUT_TOKEN_DEBUG }
+    const out = logged()
+    expect(out).toMatch(/\[Flow Refs\] token shape media=00000003 len=2 urls=\[\]/)
+    expect(out).not.toMatch(/ANqvLO|https:\/\//)
   })
 })
 

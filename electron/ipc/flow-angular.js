@@ -218,6 +218,16 @@ function checkSubmittedRefs(gen, echoes) {
 }
 
 const short = (v) => String(v ?? '').slice(0, 8)
+/** 진단(AUTOFLOWCUT_TOKEN_DEBUG=1) — 기록의 길이와 URL 자리·호스트만(토큰·경로·본문 없음). */
+function recordShape(rec) {
+  const urls = []
+  const walk = (v, path) => {
+    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`)); return }
+    if (typeof v === 'string' && /^https?:\/\//.test(v)) { try { urls.push(`${path}:${new URL(v).hostname}`) } catch (_e) { urls.push(`${path}:?`) } }
+  }
+  walk(rec, '')
+  return `len=${Array.isArray(rec) ? rec.length : -1} urls=[${urls.join(',')}]`
+}
 /** nzlxg payload → 크레딧 잔량(숫자) 또는 null. */
 const creditsOf = (payload) => (Array.isArray(payload) && typeof payload[0] === 'number' ? payload[0] : null)
 /** 요청 설정 한 줄(errorParams.expected 용 — 값만: 모델 라벨·길이·비율·해상도). M3(D11): 레퍼런스 영상이면 끝에 ' r2v', I2V 면 ' i2v'(t2v 문구는 그대로). */
@@ -278,12 +288,24 @@ export function createFlowAngular(deps) {
       token = parseMediaImageToken(rec, id)
       if (!token && !Array.isArray(rec)) why = 'not-record'
       else if (!token && rec[0] !== id) why = 'other-media'
+      if (!token && process.env.AUTOFLOWCUT_TOKEN_DEBUG === '1') console.log(`[Flow Refs] token shape media=${short(id)} ${recordShape(rec)}`)
     } catch (e) { why = 'rpc-' + ((e && e.kind) || 'error') }
     const res = tokens.settle(id, n, token)
     if (res === 'ok') console.log(`[Flow Refs] media token media=${short(id)} ok${force ? ' (refreshed)' : ''}`)
     else if (res === 'none') console.log(`[Flow Refs] media token media=${short(id)} none(${why})`)
     else if (res === 'superseded') console.log(`[Flow Refs] media token media=${short(id)} superseded`)
     else console.warn(`[Flow Refs] media token ${res} media=${short(id)} → not used`)
+  }
+  /**
+   * 2026-10-31: 드라이버가 확인한 "우리가 방금 붙인 새 칩 하나"의 asb 토큰을 maseQ 가 준 id 로 — as29s 와 같은 지도·충돌 규칙(새 물음 번호라 진행 중
+   *   as29s 답은 지금 토큰을 못 바꾼다). 갓 올린 이미지는 as29s 가 옛 주소만 줘 이 길뿐이다(10-31 실기).
+   */
+  function adoptMediaToken(id, token) {
+    if (typeof id !== 'string' || !UUID_RE.test(id) || typeof token !== 'string' || !/^[A-Za-z0-9_-]+$/.test(token)) return 'invalid'
+    const res = tokens.settle(id, tokens.begin(id), token)
+    if (res === 'ok') console.log(`[Flow Refs] media token media=${short(id)} ok(from-chip)`)
+    else console.warn(`[Flow Refs] media token ${res} media=${short(id)} (from-chip) → not used`)
+    return res
   }
   /** 칩 판독 — exec 실패는 null(호출자가 불일치로 본다 = fail-closed). */
   //   2026-10-31: 판독 중 토큰이 격리되면(epoch 변경) 그 판독은 버린다 — 옛 지도로 계산된 칩 id 를 믿지 않는다.
@@ -351,7 +373,7 @@ export function createFlowAngular(deps) {
     clipboard: deps.clipboard, nativeImage: deps.nativeImage,
     paste: () => deps.pasteIntoFlowView(),
     pendingGenerations: deps.pendingGenerations, cache: refMediaCache, projectId, isAborted, report,
-    mediaTokens: tokens.map, tokenEpoch: tokens.epoch, learnMediaTokens: (ids, opts) => learnMediaTokens(flowView, ids, opts),
+    mediaTokens: tokens.map, tokenEpoch: tokens.epoch, learnMediaTokens: (ids, opts) => learnMediaTokens(flowView, ids, opts), adoptMediaToken,
   })
   /** 드라이버의 클릭 전 실패 {ok:false, kind, reason?} → 렌더러 결과(reason 은 렌더되지 않는 필드). */
   const driverFailure = (r) => kindResult(r.kind || ATTACH_FAILED, r.reason ? { reason: String(r.reason) } : {})

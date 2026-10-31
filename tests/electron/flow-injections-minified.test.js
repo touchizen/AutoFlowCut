@@ -326,7 +326,7 @@ describe('정적 규칙: 직렬화되는 헬퍼는 서로를 이름으로 부르
     findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaIdWith: plainRefs.readPickerPreviewMediaIdWith, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
     findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaIdWith: plainRefs.findChipByMediaIdWith,
     // 2026-10-31: img id 판독기(호출 지점에서 조합) · 프레임 칸
-    mediaIdOfImg: plainRefs.mediaIdOfImg, readFrameSlotsWith: plainRefs.readFrameSlotsWith,
+    mediaIdOfImg: plainRefs.mediaIdOfImg, readFrameSlotsWith: plainRefs.readFrameSlotsWith, readChipTokens: plainRefs.readChipTokens,
     // M3-8
     readPickerStatus: plainDriver.readPickerStatus, findChipAt: plainDriver.findChipAt,
   }
@@ -362,7 +362,7 @@ describe('정적 규칙(확장, M3-15): 레퍼런스 직렬화 헬퍼·페이지
     findPickerTab: plainRefs.findPickerTab, readPickerPreviewMediaIdWith: plainRefs.readPickerPreviewMediaIdWith, findAddMenuTrigger: plainRefs.findAddMenuTrigger,
     findClearPromptButton: plainRefs.findClearPromptButton, findAddToPromptButton: plainRefs.findAddToPromptButton, findChipByMediaIdWith: plainRefs.findChipByMediaIdWith,
     // 2026-10-31: img id 판독기(호출 지점에서 조합) · 프레임 칸
-    mediaIdOfImg: plainRefs.mediaIdOfImg, readFrameSlotsWith: plainRefs.readFrameSlotsWith,
+    mediaIdOfImg: plainRefs.mediaIdOfImg, readFrameSlotsWith: plainRefs.readFrameSlotsWith, readChipTokens: plainRefs.readChipTokens,
     readPickerStatus: plainDriver.readPickerStatus, findChipAt: plainDriver.findChipAt,
   }
   it.each(Object.keys(serialized))('%s', (name) => {

@@ -315,10 +315,20 @@ describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는
     expect([...h.page.chipIds()]).toEqual([U(3)])
   })
 
-  it('토큰을 못 배우면(as29s 실패) 클릭 전 chip-no-id — 생성 버튼은 누르지 않는다', async () => {
+  it('as29s 가 토큰을 못 줘도(갓 올린 이미지는 옛 주소만 — 10-31 실기) 우리가 붙인 새 칩 하나의 토큰을 그 id 로 배운다 → 통과', async () => {
     const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnTokens: false })
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
-    expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-no-id' })
+    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
+    expect(h.adopted).toEqual([U(3)])
+    expect(h.registry.map[asbToken(U(3))]).toBe(U(3))
+  })
+
+  it('붙여넣기 뒤 칩이 둘 늘면(어느 것이 우리 것인지 모름) 토큰을 배우지 않는다 → 클릭 전 실패', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [], upload: { extraChip: true } }, learnTokens: false })
+    const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
+    expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED })
+    expect(['chip-no-id', 'chip-mismatch']).toContain(r.reason)
+    expect(h.adopted).toEqual([])
     expectNoSubmit(h)
   })
 
@@ -341,14 +351,14 @@ describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는
   })
 
   it('업로드 직후 as29s 에 토큰이 아직 없으면 칩 대기 안에서 다시 배운다(2.5초 간격) → 통과', async () => {
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnTokensFailFirst: 2 })
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnTokensFailFirst: 2, noAdopt: true })   // 칩 토큰 등록이 안 될 때의 예비 경로
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
     expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
     expect(h.learned.filter((id) => id === U(3)).length).toBeGreaterThanOrEqual(3)
   })
 
   it('Codex#2: 처음 배운 토큰이 낡았으면(페이지와 다름) 칩을 못 읽는 동안 강제로 다시 배운다 → 통과', async () => {
-    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, staleTokenFirst: true })
+    const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, staleTokenFirst: true, noAdopt: true })   // 칩 토큰 등록이 안 될 때의 예비 경로
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
     expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
     expect(h.learnCalls.some((c) => c.force && c.ids.includes(U(3)))).toBe(true)
@@ -362,13 +372,12 @@ describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는
     expect(Date.now() - t0).toBeLessThan(20000)
   })
 
-  it('Codex#3: asb 칩 + as29s 무응답 → 칩 대기 마감(15초) 안에서 끝난다(chip-no-id, 클릭 없음)', async () => {
+  it('Codex#3: asb 칩 + as29s 무응답 → 기다림은 마감 안에서 끝나고, 새 칩의 토큰으로 통과', async () => {
     const h = makeRefDriverHarness({ page: { asb: true, assets: [] }, learnHang: true })
     const t0 = Date.now()
     const r = await compose(h, [R0], { segments: [text('x')], attach: [0] })
-    expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-no-id' })
+    expect(r).toMatchObject({ ok: true, expectedRefs: [U(3)] })
     expect(Date.now() - t0).toBeLessThan(7500 + 15000 + 6000)
-    expectNoSubmit(h)
   })
 
   it('Codex 2차#2: 게이트 판독이 도는 사이 토큰이 격리되면(epoch 변경) 그 판독을 버린다 → chip-set-mismatch(클릭 전)', async () => {
