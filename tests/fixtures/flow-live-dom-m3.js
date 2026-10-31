@@ -44,6 +44,12 @@ export const uuid = (n) => String(n).padStart(8, '0') + '-0000-4000-8000-0000000
 export const idSrc = (id) => `https://flow-content.google/image/${id}?Expires=1790338020&KeyName=labs-flow-prod-cdn-key&Signature=SIGSECRET`
 /** 앞 세션 업로드·생성 이미지의 불투명 썸네일(id 를 드러내지 않는다). */
 export const opaqueSrc = (n) => `https://lh3.googleusercontent.com/asb/OPAQUE-TOKEN-${n}=s512`
+/**
+ * 2026-10-31 실측(크롬 + 사용자 덤프): 이번 세션 업로드까지 썸네일·칩·미리보기가 전부 `https://flow.google.com/asb/<토큰>=s1600-rw` 이다(id 없음).
+ *   토큰은 미디어마다 고정 — as29s 기록 [5][10] 의 `https://lh3.googleusercontent.com/asb/<토큰>` 과 같은 글자. 마스킹 토큰은 id 에서 만든다.
+ */
+export const asbToken = (id) => `ANqvLO-MASK_${String(id).replace(/-/g, '')}`
+export const asbSrc = (id) => `https://flow.google.com/asb/${asbToken(id)}=s1600-rw`
 
 /** P3 멘션 노드. */
 export const mentionHtml = (id, label) => `<span class="mention-chip" data-mention-id="${id}" data-reference-type="media" contenteditable="false">${label}</span>`
@@ -52,10 +58,10 @@ export const mentionHtml = (id, label) => `<span class="mention-chip" data-menti
 export const paragraph = (...parts) => `<p>${parts.join('')}${/<\/span>$/.test(parts[parts.length - 1] || '') ? '<img class="ProseMirror-separator" alt=""><br class="ProseMirror-trailingBreak">' : ''}</p>`
 export const EMPTY_EDITOR = '<p><br class="ProseMirror-trailingBreak"></p>'
 
-/** 칩 하나. id 가 null 이면 img 없음(업로드 중 · busy 해제 직후). */
-export function chipHtml({ id = null, busy = false, lang = 'ko' } = {}) {
+/** 칩 하나. id 가 null 이면 img 없음(업로드 중 · busy 해제 직후). asb:true 면 2026-10-31 모양(asb 토큰 주소). */
+export function chipHtml({ id = null, busy = false, lang = 'ko', asb = false } = {}) {
   const T = TEXT[lang]
-  const img = id ? `<img class="chip-image" alt="${T.chipImg}" src="${idSrc(id)}">` : ''
+  const img = id ? `<img class="chip-image" alt="${T.chipImg}" src="${asb ? asbSrc(id) : idSrc(id)}">` : ''
   return `<flow-image-ingredient-chip><button cdkoverlayorigin="" class="chip-container" aria-label="${T.chip}" aria-busy="${busy}"><div class="chip-image-wrapper">${img}</div><div class="hover-icon-overlay">${ICON('cancel')}</div></button></flow-image-ingredient-chip>`
 }
 
@@ -94,7 +100,7 @@ export function buildComposer({ chips = [], editorHtml = EMPTY_EDITOR, expanded 
 }
 
 /**
- * 열린 애셋 창(cdk 오버레이 — 컴포저 밖). items 는 {id} (id 썸네일) 또는 {opaque:n} (불투명), 선택 name·kind.
+ * 열린 애셋 창(cdk 오버레이 — 컴포저 밖). items 는 {id} (id 썸네일) · {id, asb:true} (asb 토큰 썸네일) · {opaque:n} (불투명), 선택 name·kind.
  * preview 생략 = 첫 항목(활성)의 미리보기, null = 상세 창 없음(D3:e 빈 탭), {id}|{opaque} 로 따로 지정.
  */
 export function buildAssetPicker({ tab = 'dashboard', items = [], preview, search = '', lang = 'ko' } = {}) {
@@ -103,7 +109,7 @@ export function buildAssetPicker({ tab = 'dashboard', items = [], preview, searc
     const sel = lig === tab
     return `<mat-list-item role="tab" class="mat-mdc-list-item mdc-list-item mat-mdc-tooltip-trigger side-nav-list-item mat-mdc-list-item-interactive${sel ? ' side-nav-list-item-active mdc-list-item--activated' : ''} mdc-list-item--with-leading-icon" aria-selected="${sel}" aria-disabled="false"><span class="mdc-list-item__start">${ICON(lig)}</span><span class="mdc-list-item__content"><span class="mdc-list-item__primary-text">${T.tabs[lig]}</span></span></mat-list-item>`
   }).join('')
-  const src = (it) => (it.id ? idSrc(it.id) : opaqueSrc(it.opaque))
+  const src = (it) => (it.id ? (it.asb ? asbSrc(it.id) : idSrc(it.id)) : opaqueSrc(it.opaque))
   const list = items.map((it, i) => `<button type="button" role="option" class="asset-item${i === 0 ? ' asset-item-active' : ''}" aria-selected="false"><div class="af-asset-thumb"><img alt="" src="${src(it)}"></div><span class="af-asset-name">${it.name || 'image.png'}</span><span class="af-asset-kind">${T.kind[it.kind || 'image']}</span></button>`).join('')
   const pv = preview === undefined ? items[0] || null : preview
   const detail = pv ? `<div class="af-asset-detail"><img class="detail-preview-image" alt="" src="${src(pv)}"><button type="button" mat-button="" flow-button="" class="mdc-button mat-mdc-button-base detail-add-to-prompt-btn mat-tonal-button mat-unthemed flow-button-secondary flow-button-medium flow-button-no-touch-target">${T.addToPrompt}</button></div>` : ''

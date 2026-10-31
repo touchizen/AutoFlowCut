@@ -8,12 +8,13 @@
 //   하네스: tests/helpers/flowRefHandlerHarness.js(가짜 페이지 jsdom + 실제 createSharedHelpers + 실제 라우터 + S3 샘플).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { _resetDomStageForTests } from '../../../electron/ipc/flow-angular.js'
+import { sharedMediaTokenRegistry, _resetSharedMediaTokensForTests } from '../../../electron/flow-media-tokens.js'
 import { refMediaCache } from '../../../electron/flow-ref-media-cache.js'
 import { setModalVisible } from '../../../electron/ipc/layout.js'
 import { refHandlerHarness, settle, refInput, refSha, text, mention, session, FAKE_DOC, FAKE_PROJECT } from '../../helpers/flowRefHandlerHarness.js'
 import { s3Payload } from '../../fixtures/flow-m3-samples.js'
 import { respBodyWithPayload, maskedUuid as U } from '../../fixtures/flow-batchexecute-samples.js'
-import { chipHtml } from '../../fixtures/flow-live-dom-m3.js'
+import { chipHtml, asbToken } from '../../fixtures/flow-live-dom-m3.js'
 
 const NOW_S = 1790240102.5
 const seed = (tail, id) => refMediaCache.set(FAKE_DOC, FAKE_PROJECT, refSha(tail), id)
@@ -296,5 +297,63 @@ describe('레퍼런스 이미지 — 숨은 뷰(0×0) (D16)', () => {
     const lastBounds = t.map((x, i) => [x, i]).filter(([x]) => x.startsWith('bounds:')).at(-1)[1]
     expect(lastBounds).toBeGreaterThan(at(t, 'click:compose-submit'))
     expect(logged()).toMatch(/view hidden 0x0 → automation viewport \d+x\d+ in-place shielded/)
+  })
+})
+
+// 2026-10-31 실측(xmas90 장면 1~3): Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=s1600-rw 로 바꿨다(이번 세션 업로드 포함).
+//   업로드는 성공하는데 칩 id 를 못 읽어 flow-reference-attach-failed(chip-no-id). as29s 는 갓 올린 이미지에 옛 주소만 준다(실기) — 핸들러는 드라이버가
+//   확인한 "우리가 붙인 새 칩 하나"의 토큰을 maseQ 가 준 id 로 등록하고(공유 지도) 그 지도로 칩·애셋을 읽는다.
+describe('2026-10-31 asb 주소 — 우리가 붙인 칩의 토큰으로 칩·애셋을 읽는다', () => {
+  it('세션 재사용(이번 세션에 배운 토큰) + 새 업로드(칩에서 등록) 둘 다 asb → 스캔·멘션·첨부·게이트·재판독 통과 → images', async () => {
+    seed('king', U(2))
+    const box = capture(9)
+    const h = refHandlerHarness({ page: { asb: true, assets: session(U(2)), upload: { ids: [U(3)] } }, onSubmit: box.onSubmit })
+    h.mediaTokenRegistry.adopt(U(2), asbToken(U(2)))   // 앞 장면에서 올리며 배운 토큰
+    const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(r.success).toBe(true)
+    expect(r.images[0]).toMatchObject({ mediaId: U(24) })
+    expect(box.snapshot).toMatchObject({ expectedRefs: [U(2), U(3)], expectedMentions: [U(2)] })
+    expect(h.page.counts.paste).toBe(1)
+    expect(h.trace).not.toContain('as29s')   // 토큰은 as29s 로 묻지 않는다
+    const out = logged()
+    expect(out).toMatch(/\[Flow Refs\] media token media=00000003 ok\(from-chip\)/)
+    expect(out).toMatch(/refs verified request=2 echo=2/)
+    expect(out).not.toMatch(/ANqvLO/)   // 토큰(미디어 접근 주소)은 로그에 싣지 않는다
+    noContent(out)
+  })
+
+  it('새 칩의 토큰이 이미 다른 미디어 것이면(칩이 그 미디어로 읽힘) 등록하지 않는다 → 클릭 전 flow-reference-attach-failed', async () => {
+    const h = refHandlerHarness({ page: { asb: true, assets: [], upload: { ids: [U(3)] } }, onSubmit: () => { throw new Error('must not submit') } })
+    h.mediaTokenRegistry.adopt(U(9), asbToken(U(3)))
+    const r = await settle(h.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
+    expect(r).toMatchObject({ success: false, errorKind: 'flow-reference-attach-failed' })
+    expect(h.trace).not.toContain('click:compose-submit')
+    expect(logged()).not.toMatch(/ok\(from-chip\)/)
+  })
+
+  it('제출 클릭 직전(dispatch 가드) 판독 중 토큰이 격리되면 그 판독을 버린다 → 누르지 않는다(클릭 전 실패)', async () => {
+    seed('king', U(2)); seed('queen', U(3))
+    const h = refHandlerHarness({
+      page: { asb: true, assets: session(U(2), U(3)) },
+      quarantineDuringGuard: (reg) => { reg.adopt(U(99), asbToken(U(3))) },   // 그 사이 U3 의 토큰을 다른 미디어가 받았다
+      onSubmit: () => { throw new Error('must not submit') },
+    })
+    h.mediaTokenRegistry.adopt(U(2), asbToken(U(2))); h.mediaTokenRegistry.adopt(U(3), asbToken(U(3)))
+    const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(r.success).toBe(false)
+    expect(r.postClick).toBeFalsy()
+    expect(h.trace).toContain('dispatch-refused')
+  })
+
+  it('이미지·영상 핸들러는 같은 모듈 지도를 쓴다 — 이미지에서 올리며 배운 토큰을 영상이 그대로 본다', async () => {
+    _resetSharedMediaTokensForTests()
+    const img = refHandlerHarness({ page: { asb: true, assets: [], upload: { ids: [U(3)] } }, sharedTokens: true, onSubmit: capture(9).onSubmit })
+    await settle(img.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
+    expect(sharedMediaTokenRegistry().map[asbToken(U(3))]).toBe(U(3))
+    refMediaCache.clear(); seed('king', U(3))
+    const vid = refHandlerHarness({ kind: 'video', page: { asb: true, assets: session(U(3)) }, sharedTokens: true, onSubmit: () => {} })
+    await settle(vid.generate({ refs: [refInput('king')], plan: { segments: [mention(0), text(' walks')], attach: [] } }), 120000)
+    expect(vid.page.counts.paste).toBe(0)   // 영상 핸들러가 이미지 쪽에서 배운 토큰으로 항목을 알아봤다
+    _resetSharedMediaTokensForTests()
   })
 })

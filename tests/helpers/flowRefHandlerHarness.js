@@ -16,8 +16,9 @@ import { routeReportResponse, buildReportCtx } from '../../electron/reportRespon
 import { decodeFReqInner, extractSubmitRefs, extractSubmitPrompts } from '../../electron/flow-rpc-protocol.js'
 import { SUBMIT_ENABLED_PROBE } from '../../electron/flow-submit-gate.js'
 import { READ_EDITOR_TEXT_JS } from '../../electron/flow-composer-dom.js'
-import { READ_COMPOSER_STATE_JS } from '../../electron/flow-composer-refs.js'
+import { composerStateJs } from '../../electron/flow-composer-refs.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../../electron/flow-rpc-capture.js'
+import { createMediaTokenRegistry } from '../../electron/flow-media-tokens.js'
 import { createFakeFlowComposer, makeFakeClipboard, fakeNativeImage, maseQBody, pngBytes, FAKE_DOC, FAKE_PROJECT } from './fakeFlowComposer.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
 import { EMPTY_EDITOR } from '../fixtures/flow-live-dom-m3.js'
@@ -34,6 +35,7 @@ class FakeXHR {
 }
 
 export { FAKE_DOC, FAKE_PROJECT }
+const COMPOSER_STATE_PREFIX = composerStateJs().slice(0, composerStateJs().lastIndexOf('{}'))
 export const FLOW_URL_OK = `https://flow.google.com/project/${FAKE_PROJECT}`
 export const SUBMIT_SEQ = 100
 
@@ -56,6 +58,7 @@ export function sampleSendFields(n) {
  *   kind 'image'|'video' · url · page(createFakeFlowComposer 옵션) · clipboard(가짜 클립보드 초기값) · upload {sendMs, loadendMs, noSend}
  *   · sample(제출 샘플 번호 S3#n — 기본 onSubmit 이 send/loadend) · send(send 이벤트 덮어쓰기) · loadend(loadend 덮어쓰기) · onSubmit(api)
  *   · settings(드라이버 결과 | Promise) · summary · credits(nzlxg 순서) · hidden · bounds · beforeDispatchHook(page) · deadSteps(신뢰 클릭이 헛도는 step 들)
+ *   · quarantineDuringGuard(registry)(2026-10-31) → 제출 클릭 dispatch 가드의 컴포저 판독 중에 호출(토큰 격리 모사)
  *   · realCapture(M3-14) true → 가짜 페이지 문서에 **실제** 캡처 주입(FLOW_RPC_CAPTURE_INJECTION)을 FakeXHR 위에 설치한다(main 이 문서 로드 때 하듯).
  *     그 문서의 flowReportResponse 가 라우터로 간다(main.js 의 flow:report-response 와 같은 모양). 문서 nonce 는 주입이 만든다(가짜 페이지의 FAKE_DOC 은 지운다 —
  *     드라이버의 READ_RPC_DOC_JS 도 같은 문서에서 그 값을 읽는다) · 핸들러의 캡처 프로브·주입도 그 문서에서 돈다 · 붙여넣기 업로드는 페이지 XHR 이 maseQ(S3#4 요청)를
@@ -144,6 +147,10 @@ export function refHandlerHarness(o = {}) {
     : (o.sample ? (() => { submitPage.send(o.sample, o.send || {}); submitPage.loadend(o.sample, o.loadend || {}) }) : null)
   const summary = o.summary ?? (kind === 'video' ? { text: '동영상 · 720p · 4초 x1', ligatures: ['crop_9_16'] } : { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_9_16'] })
 
+  // 2026-10-31: 토큰 지도(flow-angular 가 deps 로 받는다) — 시험이 격리를 일으킬 수 있게 하네스가 만든다
+  // o.sharedTokens: true → 주입하지 않는다(프로덕션 기본 = 모듈 공유 지도 — 이미지·영상 핸들러가 같이 쓴다)
+  const mediaTokenRegistry = o.sharedTokens ? null : createMediaTokenRegistry()
+  let submitClicked = false
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
     if (s.includes('__af_settings_driver__')) {
@@ -171,7 +178,8 @@ export function refHandlerHarness(o = {}) {
       const next = credits.length > 1 ? credits.shift() : credits[0]
       return { status: 200, text: respBodyWithPayload('nzlxg', [next, 1, 2, 2, null, next]) }
     }
-    if (s.includes('"jwpduf"') || s.includes('"as29s"')) { trace.push('poll'); return null }
+    if (s.includes('"jwpduf"')) { trace.push('poll'); return null }
+    if (s.includes('"as29s"')) { trace.push('as29s'); return null }   // 미디어 기록(완료 폴의 둘째 단계) — 상태 폴(jwpduf)과 따로 센다
     if (s.includes('elementFromPoint')) return { ok: true, why: 'ok' }
     if (s.includes('const scan =')) return { candidates: [], context: { lang: 'ko' } }
     if (s.includes('const find =')) { trace.push('agent-probe'); return { found: true, on: false } }
@@ -181,7 +189,15 @@ export function refHandlerHarness(o = {}) {
     if (s === SUBMIT_ENABLED_PROBE) { trace.push('submit-enabled'); return true }
     if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
     if (s === READ_EDITOR_TEXT_JS) trace.push('read-text')
-    else if (s === READ_COMPOSER_STATE_JS) trace.push('composer-state')
+    else if (s.startsWith(COMPOSER_STATE_PREFIX)) {
+      trace.push('composer-state')   // 2026-10-31: 토큰 지도가 실려도 같은 판독
+      // 제출 클릭(dispatch 가드) 중의 판독이 도는 사이 다른 등록이 토큰을 격리한다 — 결과는 옛 지도로 계산된 그대로
+      if (submitClicked && typeof o.quarantineDuringGuard === 'function') {
+        const r = await page.exec(s)
+        o.quarantineDuringGuard(mediaTokenRegistry)
+        return r
+      }
+    }
     // I2V 워치독 시험: 특정 스크립트(execDelay(s) → ms)의 결과를 늦춘다 — 늦은 판독이 워치독 뒤에 돌아오는 경우
     const delayMs = typeof o.execDelay === 'function' ? o.execDelay(s) : 0
     if (delayMs > 0) { trace.push('exec-delayed'); await new Promise((r) => setTimeout(r, delayMs)) }
@@ -196,6 +212,7 @@ export function refHandlerHarness(o = {}) {
   const trustedClickOnFlowView = vi.fn(async (js, opts = {}) => {
     trace.push('click:' + (opts.step || '?'))
     if (opts.step === 'compose-submit') {
+      submitClicked = true
       if (o.beforeDispatchHook) o.beforeDispatchHook(page)
       if (typeof opts.beforeDispatch === 'function') {
         let go = false
@@ -238,7 +255,7 @@ export function refHandlerHarness(o = {}) {
     ...helpers,
     ...legacy,
     trustedClickOnFlowView, sessionFetch, createInputShield, setAutomationKeyLock, setShieldFocusTarget,
-    clipboard, nativeImage: fakeNativeImage, pasteIntoFlowView,
+    clipboard, nativeImage: fakeNativeImage, pasteIntoFlowView, ...(mediaTokenRegistry ? { mediaTokenRegistry } : {}),
   }
   if (kind === 'video') registerVideoIPC(ipcMain, deps)
   else registerFlowAPIIPC(ipcMain, deps)
@@ -249,7 +266,7 @@ export function refHandlerHarness(o = {}) {
     : ipcMain.invoke('flow:generate-image', { prompt: '@king and a queen', aspectRatio: '9:16', model: 'Nano Banana 2', projectId: FAKE_PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p }))
   return {
     ipcMain, generate, generateI2V, trace, page, submitPage, clipboard, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations,
-    flowView, mainWindow, pasteIntoFlowView, createInputShield, setAutomationKeyLock, legacy, docNonce, reports,
+    flowView, mainWindow, pasteIntoFlowView, createInputShield, setAutomationKeyLock, legacy, docNonce, reports, mediaTokenRegistry,
   }
 }
 

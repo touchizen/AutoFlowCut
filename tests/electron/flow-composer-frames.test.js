@@ -5,8 +5,8 @@
  *   (src https://flow-content.google/image/<mediaId>?… — 칩은 불투명 애셋에서 골라도 id 를 드러낸다; storage.googleapis.com 등 다른 주소면 mediaId null).
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { readFrameSlots, READ_FRAME_SLOTS_JS } from '../../electron/flow-composer-refs.js'
-import { idSrc, uuid } from '../fixtures/flow-live-dom-m3.js'
+import { readFrameSlots, READ_FRAME_SLOTS_JS, frameSlotsJs } from '../../electron/flow-composer-refs.js'
+import { idSrc, uuid, asbSrc, asbToken } from '../fixtures/flow-live-dom-m3.js'
 
 const U = uuid
 const chip = (src, busy = false) => `<flow-image-ingredient-chip><button cdkoverlayorigin="" class="chip-container" aria-label="이미지 소재" aria-busy="${busy}"><div class="chip-image-wrapper"><img alt="소재 이미지" class="chip-image cropped" src="${src}"></div><div class="hover-icon-overlay" data-state="closed"><mat-icon class="mat-icon hover-icon">cancel</mat-icon></div></button></flow-image-ingredient-chip>`
@@ -46,5 +46,14 @@ describe('readFrameSlots(doc) → {framesMode, slots:[{mediaId, busy, empty}]}',
   it('READ_FRAME_SLOTS_JS 는 같은 결과의 단일 표현식(페이지 주입)', () => {
     document.body.innerHTML = frameBar(chip(idSrc(U(4))), empty('종료'))
     expect(window.eval(READ_FRAME_SLOTS_JS)).toEqual(readFrameSlots(document))
+  })
+
+  it('2026-10-31 asb 토큰 칩 — 지도(as29s 로 배운 {토큰: id})가 있어야 시작 칸 id 를 읽는다(빌더도 같다)', () => {
+    document.body.innerHTML = frameBar(chip(asbSrc(U(4))), empty('종료'))
+    expect(readFrameSlots(document).slots[0].mediaId).toBeNull()
+    const tokens = { [asbToken(U(4))]: U(4) }
+    expect(readFrameSlots(document, tokens).slots[0]).toEqual({ mediaId: U(4), busy: false, empty: false })
+    expect(window.eval(frameSlotsJs(tokens)).slots[0].mediaId).toBe(U(4))
+    expect(window.eval(READ_FRAME_SLOTS_JS).slots[0].mediaId).toBeNull()
   })
 })

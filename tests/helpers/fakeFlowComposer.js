@@ -12,9 +12,13 @@ import { JSDOM } from 'jsdom'
 import { buildComposer, buildAssetPicker, chipHtml, mentionHtml, EMPTY_EDITOR, uuid } from '../fixtures/flow-live-dom-m3.js'
 import { routeReportResponse, buildReportCtx } from '../../electron/reportResponseRouter.js'
 import { refMediaCache } from '../../electron/flow-ref-media-cache.js'
-import { READ_COMPOSER_STATE_JS } from '../../electron/flow-composer-refs.js'
+import { composerStateJs } from '../../electron/flow-composer-refs.js'
+import { createMediaTokenRegistry } from '../../electron/flow-media-tokens.js'
 import { s3Payload } from '../fixtures/flow-m3-samples.js'
 import { respBodyWithPayload } from '../fixtures/flow-batchexecute-samples.js'
+
+/** 컴포저 판독 표현식의 머리 — 토큰 지도가 실려도(2026-10-31) state-read 로 센다. */
+const STATE_JS_PREFIX = composerStateJs().slice(0, composerStateJs().lastIndexOf('{}'))
 
 const PNG_SIG = [0x89, 0x50, 0x4e, 0x47]
 const JPEG_SIG = [0xff, 0xd8]
@@ -83,6 +87,7 @@ const short = (id) => String(id || '').slice(0, 8)
  *   chips            처음 칩 [{id, busy?}] (id null = img 없음)
  *   editorHtml       처음 편집기 내용(기본 빈 문단)
  *   assets           프로젝트 애셋(최신이 앞) [{id, session?:boolean, name?}] — session:true 만 id 썸네일(PR P5), 나머지는 불투명(추가하면 칩엔 진짜 id)
+ *   asb              true → 2026-10-31 Flow: 칩·애셋 항목·미리보기 src 가 전부 https://flow.google.com/asb/<토큰>=s1600-rw(세션 업로드 포함, id 없음)
  *   picker           처음부터 열린 창: 'add'(＋) | 'at'(@) | null
  *   focus            처음 포커스: 'editor' | 'picker-search' | 'header-search' | null
  *   firstOpenMissing true → **첫** 열기에 session 애셋이 목록에 없다(앱 재시작 뒤 첫 창 누락, P5)
@@ -123,11 +128,11 @@ export function createFakeFlowComposer(opts = {}) {
     const list = document.querySelector('.af-ingredient-list')
     if (st.framesMode) {
       const first = chips[0]
-      list.innerHTML = `<div cdkoverlayorigin="" class="frame-trigger">${first ? chipHtml({ id: first.img ? first.id : null, busy: first.busy }) : emptyFrame('시작')}</div>`
+      list.innerHTML = `<div cdkoverlayorigin="" class="frame-trigger">${first ? chipHtml({ id: first.img ? first.id : null, busy: first.busy, asb: !!opts.asb }) : emptyFrame('시작')}</div>`
         + '<button aria-label="첫 번째 프레임과 마지막 프레임 바꾸기"><mat-icon>swap_horiz</mat-icon></button>'
         + `<div cdkoverlayorigin="" class="frame-trigger">${emptyFrame('종료')}</div>`
     } else {
-      list.innerHTML = chips.map((c) => chipHtml({ id: c.img ? c.id : null, busy: c.busy })).join('')
+      list.innerHTML = chips.map((c) => chipHtml({ id: c.img ? c.id : null, busy: c.busy, asb: !!opts.asb })).join('')
     }
     syncClear()
   }
@@ -182,7 +187,8 @@ export function createFakeFlowComposer(opts = {}) {
     if (!st.picker) return
     st.visible = visibleAssets()
     let opaqueN = 0
-    const items = st.visible.map((a) => (a.session ? { id: a.id, name: a.name } : { opaque: ++opaqueN, name: a.name }))
+    // asb 모드(2026-10-31 실측): 세션 업로드든 아니든 모든 썸네일이 asb 토큰 주소 — id 는 토큰 지도로만 읽힌다
+    const items = st.visible.map((a) => (opts.asb ? { id: a.id, name: a.name, asb: true } : a.session ? { id: a.id, name: a.name } : { opaque: ++opaqueN, name: a.name }))
     const activeItem = items[st.active] || null
     const preview = opts.preview && st.clickedItem ? opts.preview : activeItem
     document.body.insertAdjacentHTML('beforeend', buildAssetPicker({ tab: st.tab, items, preview, search: st.search || '' }))
@@ -375,6 +381,9 @@ export function maseQBody(id) {
  *   upload    {sendMs=300, loadendMs=7500, noSend, responseText(id)→string, onPaste()} maseQ 예약
  *   hangObserver  true → 붙여넣기 뒤의 관찰 exec 가 영영 settle 하지 않는다(죽은 문서)
  *   aborted() 드라이버의 isAborted
+ *   swapDocOnLoadend true → maseQ loadend 뒤 페이지 문서 nonce 가 바뀐다
+ *   noAdopt  true → ctx.adoptMediaToken 없음(새 칩의 토큰을 등록하지 못한다)
+ *   bumpEpochDuringStateRead true → 컴포저 판독마다 그 사이 토큰 격리가 있었던 것처럼 epoch +1(결과는 그대로)
  */
 export function makeRefDriverHarness(o = {}) {
   const trace = []
@@ -393,7 +402,12 @@ export function makeRefDriverHarness(o = {}) {
   const up = { sendMs: 300, loadendMs: 7500, ...(o.upload || {}) }
   const router = {
     send: (seq) => { trace.push('maseQ:send'); return routeReportResponse({ kind: 'batchexecute-send', doc: FAKE_DOC, rpcid: 'maseQ', rpcids: ['maseQ'], seq, prompts: [], sentAt: Date.now() / 1000 }, reportCtx) },
-    loadend: (seq, responseText) => { trace.push('maseQ:loadend'); return routeReportResponse({ kind: 'batchexecute', doc: FAKE_DOC, rpcid: 'maseQ', seq, status: 200, responseText, endedAt: Date.now() / 1000 }, reportCtx) },
+    loadend: (seq, responseText) => {
+      trace.push('maseQ:loadend')
+      const r = routeReportResponse({ kind: 'batchexecute', doc: FAKE_DOC, rpcid: 'maseQ', seq, status: 200, responseText, endedAt: Date.now() / 1000 }, reportCtx)
+      if (o.swapDocOnLoadend) page.window.__autoflowcut_rpc_doc__ = 'e'.repeat(32)   // 업로드가 끝난 뒤 문서가 바뀌었다(다른 nonce)
+      return r
+    },
   }
   const page = createFakeFlowComposer({
     ...(o.page || {}),
@@ -410,9 +424,21 @@ export function makeRefDriverHarness(o = {}) {
     },
   })
   let obsBase = null
+  let raceN = 0
+  const registry = createMediaTokenRegistry()
   const exec = (js) => {
     const s = String(js)
-    if (s === READ_COMPOSER_STATE_JS) trace.push('state-read')
+    if (s.startsWith(STATE_JS_PREFIX)) {
+      trace.push('state-read')
+      // Codex 2차#2: 판독이 도는 사이 다른 응답이 토큰을 격리했다(epoch +1) — 결과는 옛 지도로 계산된 그대로 돌아온다
+      // 진짜 격리로: 판독마다 새 토큰 하나를 두 id 가 받는다(주인 기록 → conflict → epoch +1)
+      if (o.bumpEpochDuringStateRead) return page.exec(s).then((r) => {
+        const t = `RACE_${++raceN}`
+        registry.adopt(uuid(901), t)
+        registry.adopt(uuid(902), t)
+        return r
+      })
+    }
     if (s.includes('__af_paste_observer__')) {
       if (o.hangObserver && page.counts.paste > 0) { trace.push('observer:hang'); return new Promise(() => {}) }
       return page.exec(s).then((r) => {
@@ -426,6 +452,7 @@ export function makeRefDriverHarness(o = {}) {
     return page.exec(s)
   }
   const report = []
+  const adopted = []
   const cache = {
     get: (...a) => refMediaCache.get(...a),
     set: (...a) => { trace.push('cache:set'); refMediaCache.set(...a) },
@@ -442,6 +469,11 @@ export function makeRefDriverHarness(o = {}) {
     projectId: FAKE_PROJECT,
     isAborted: () => !!(o.aborted && o.aborted()),
     report: async (step, reason, extra) => { report.push({ step, reason, extra }) },
+    // 2026-10-31: asb 토큰 지도(진짜 flow-media-tokens.js) — 가짜 페이지의 asb 토큰은 id 에서 만든다(asbToken)
+    mediaTokens: registry.map,
+    tokenEpoch: registry.epoch,
+    // 2026-10-31: 우리가 방금 붙인 새 칩의 토큰을 그 id 로 — flow-angular adoptMediaToken 과 같은 지도·규칙
+    ...(o.noAdopt ? {} : { adoptMediaToken: (id, token) => { adopted.push(id); return registry.adopt(id, token) } }),   // noAdopt: 등록 못 하는 경우 시험
   }
-  return { ctx, page, trace, clipboard, pendingGenerations, report, router }
+  return { ctx, page, trace, clipboard, pendingGenerations, report, router, registry, adopted }
 }
