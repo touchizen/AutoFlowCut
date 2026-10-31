@@ -241,14 +241,15 @@ async function observePaste(ctx, n0) {
  * loadend 뒤 칩 검증(D4-13): 모든 칩이 id img 를 갖고 바쁘지 않게 되면 판정 — 칩 수 = L0+1 이고 응답 id 의 칩이 정확히 하나여야 한다(아니면 chip-mismatch).
  *   ≤ UPLOAD_CHIP_ID_WAIT_MS 안에 그렇게 되지 않으면 chip-no-id. aria-busy="false" 만으로는 성공하지 않는다(P1a).
  * 2026-10-31: 칩 src 가 asb 토큰이라 갓 올린 칩의 id 는 안 읽힌다(as29s 도 옛 주소만 준다 — 실기). 새 칩의 토큰을 이 id 로 등록(ctx.adoptMediaToken)해 읽는다.
- *   새 칩은 한 번의 판독(READ_CHIP_SNAPSHOT_JS)으로만 인정한다 — 업로드가 바인딩된 문서(uploadDoc)와 같고 · 칩 L0+1 · 바쁜 칩 없음 · 붙여넣기 전 칩 토큰(base)이
+ *   새 칩은 한 번의 판독(READ_CHIP_SNAPSHOT_JS)으로만 인정한다 — 기준 스냅샷(base.doc)·업로드가 바인딩된 문서(uploadDoc)와 같고 · 칩 L0+1 · 바쁜 칩 없음 · 붙여넣기 전 칩 토큰(base)이
  *   그대로 다 있고 · 새 토큰이 정확히 하나. 아니면 등록하지 않는다(클릭 전 실패로 닫힌다). 새 칩이 다른 id 로 읽히면(그 토큰이 이미 남의 것) 실패로 끝내기 전에
  *   등록을 시도해 충돌로 격리한다 — 다음에 그 id 로 이 미디어를 고르지 않게(Codex 8차).
  */
 async function waitUploadChip(ctx, mediaId, L0, base, uploadDoc) {
   const t0 = Date.now()
   const until = t0 + UPLOAD_CHIP_ID_WAIT_MS
-  const canAdopt = typeof ctx.adoptMediaToken === 'function' && !!base && typeof uploadDoc === 'string'
+  // 기준 스냅샷·업로드·새 칩 판독이 모두 같은 문서여야 한다(Codex 9차) — 붙여넣기 전후로 문서가 바뀌면 새 문서에 원래 있던 칩을 새 칩으로 착각할 수 있다
+  const canAdopt = typeof ctx.adoptMediaToken === 'function' && !!base && typeof uploadDoc === 'string' && base.doc === uploadDoc
   const newChipToken = async () => {
     const snap = await ex(ctx, READ_CHIP_SNAPSHOT_JS)
     if (!snap || snap.doc !== uploadDoc || !Array.isArray(snap.chips) || snap.chips.length !== L0 + 1 || snap.chips.some((c) => c.busy)) return null
