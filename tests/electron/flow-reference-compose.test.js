@@ -14,7 +14,7 @@ import {
 import { READ_SETTINGS_SUMMARY_JS } from '../../electron/flow-composer-dom.js'
 import { refMediaCache } from '../../electron/flow-ref-media-cache.js'
 import { makeRefDriverHarness, pngBytes, FAKE_DOC, FAKE_PROJECT } from '../helpers/fakeFlowComposer.js'
-import { uuid as U, paragraph, mentionHtml } from '../fixtures/flow-live-dom-m3.js'
+import { uuid as U, paragraph, mentionHtml, asbToken } from '../fixtures/flow-live-dom-m3.js'
 
 const NOW_S = 1790240102.5
 const sha = (b) => createHash('sha256').update(b).digest('hex')
@@ -369,6 +369,13 @@ describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는
     expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-no-id' })
     expect(Date.now() - t0).toBeLessThan(7500 + 15000 + 6000)
     expectNoSubmit(h)
+  })
+
+  it('Codex 2차#2: 게이트 판독이 도는 사이 토큰이 격리되면(epoch 변경) 그 판독을 버린다 → chip-set-mismatch(클릭 전)', async () => {
+    const h = makeRefDriverHarness({ page: { asb: true, chips: [{ id: M0 }], assets: [] }, bumpEpochDuringStateRead: true })
+    h.ctx.mediaTokens[asbToken(M0)] = M0
+    const r = await drive(readGate(h.ctx, { refs: [M0], mentions: [], texts: [], summary: await summaryOf(h) }))
+    expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-set-mismatch' })
   })
 })
 

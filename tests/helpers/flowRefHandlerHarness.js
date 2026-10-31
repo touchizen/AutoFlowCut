@@ -18,6 +18,7 @@ import { SUBMIT_ENABLED_PROBE } from '../../electron/flow-submit-gate.js'
 import { READ_EDITOR_TEXT_JS } from '../../electron/flow-composer-dom.js'
 import { composerStateJs } from '../../electron/flow-composer-refs.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../../electron/flow-rpc-capture.js'
+import { createMediaTokenRegistry } from '../../electron/flow-media-tokens.js'
 import { createFakeFlowComposer, makeFakeClipboard, fakeNativeImage, maseQBody, pngBytes, FAKE_DOC, FAKE_PROJECT } from './fakeFlowComposer.js'
 import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
 import { EMPTY_EDITOR, asbToken } from '../fixtures/flow-live-dom-m3.js'
@@ -63,6 +64,7 @@ export function sampleSendFields(n) {
  *   kind 'image'|'video' · url · page(createFakeFlowComposer 옵션) · clipboard(가짜 클립보드 초기값) · upload {sendMs, loadendMs, noSend}
  *   · sample(제출 샘플 번호 S3#n — 기본 onSubmit 이 send/loadend) · send(send 이벤트 덮어쓰기) · loadend(loadend 덮어쓰기) · onSubmit(api)
  *   · settings(드라이버 결과 | Promise) · summary · credits(nzlxg 순서) · hidden · bounds · beforeDispatchHook(page) · deadSteps(신뢰 클릭이 헛도는 step 들)
+ *   · quarantineDuringGuard(registry)(2026-10-31) → 제출 클릭 dispatch 가드의 컴포저 판독 중에 호출(토큰 격리 모사)
  *   · as29sTokens(2026-10-31) true → as29s 를 그 id 의 이미지 기록(asb 토큰)으로 답한다(page.asb 와 함께)
  *   · realCapture(M3-14) true → 가짜 페이지 문서에 **실제** 캡처 주입(FLOW_RPC_CAPTURE_INJECTION)을 FakeXHR 위에 설치한다(main 이 문서 로드 때 하듯).
  *     그 문서의 flowReportResponse 가 라우터로 간다(main.js 의 flow:report-response 와 같은 모양). 문서 nonce 는 주입이 만든다(가짜 페이지의 FAKE_DOC 은 지운다 —
@@ -153,6 +155,9 @@ export function refHandlerHarness(o = {}) {
     : (o.sample ? (() => { submitPage.send(o.sample, o.send || {}); submitPage.loadend(o.sample, o.loadend || {}) }) : null)
   const summary = o.summary ?? (kind === 'video' ? { text: '동영상 · 720p · 4초 x1', ligatures: ['crop_9_16'] } : { text: '🍌 Nano Banana 2 x1', ligatures: ['crop_9_16'] })
 
+  // 2026-10-31: 토큰 지도(flow-angular 가 deps 로 받는다) — 시험이 격리를 일으킬 수 있게 하네스가 만든다
+  const mediaTokenRegistry = createMediaTokenRegistry()
+  let submitClicked = false
   const executeJavaScript = vi.fn(async (script) => {
     const s = String(script)
     if (s.includes('__af_settings_driver__')) {
@@ -201,7 +206,15 @@ export function refHandlerHarness(o = {}) {
     if (s === SUBMIT_ENABLED_PROBE) { trace.push('submit-enabled'); return true }
     if (s.includes('interactiveCount')) return { hasComposer: true, interactiveCount: 80, url }
     if (s === READ_EDITOR_TEXT_JS) trace.push('read-text')
-    else if (s.startsWith(COMPOSER_STATE_PREFIX)) trace.push('composer-state')   // 2026-10-31: 토큰 지도가 실려도 같은 판독
+    else if (s.startsWith(COMPOSER_STATE_PREFIX)) {
+      trace.push('composer-state')   // 2026-10-31: 토큰 지도가 실려도 같은 판독
+      // Codex 2차#2: 제출 클릭(dispatch 가드) 중의 판독이 도는 사이 늦은 as29s 답이 토큰을 격리한다 — 결과는 옛 지도로 계산된 그대로
+      if (submitClicked && typeof o.quarantineDuringGuard === 'function') {
+        const r = await page.exec(s)
+        o.quarantineDuringGuard(mediaTokenRegistry)
+        return r
+      }
+    }
     // I2V 워치독 시험: 특정 스크립트(execDelay(s) → ms)의 결과를 늦춘다 — 늦은 판독이 워치독 뒤에 돌아오는 경우
     const delayMs = typeof o.execDelay === 'function' ? o.execDelay(s) : 0
     if (delayMs > 0) { trace.push('exec-delayed'); await new Promise((r) => setTimeout(r, delayMs)) }
@@ -216,6 +229,7 @@ export function refHandlerHarness(o = {}) {
   const trustedClickOnFlowView = vi.fn(async (js, opts = {}) => {
     trace.push('click:' + (opts.step || '?'))
     if (opts.step === 'compose-submit') {
+      submitClicked = true
       if (o.beforeDispatchHook) o.beforeDispatchHook(page)
       if (typeof opts.beforeDispatch === 'function') {
         let go = false
@@ -258,7 +272,7 @@ export function refHandlerHarness(o = {}) {
     ...helpers,
     ...legacy,
     trustedClickOnFlowView, sessionFetch, createInputShield, setAutomationKeyLock, setShieldFocusTarget,
-    clipboard, nativeImage: fakeNativeImage, pasteIntoFlowView,
+    clipboard, nativeImage: fakeNativeImage, pasteIntoFlowView, mediaTokenRegistry,
   }
   if (kind === 'video') registerVideoIPC(ipcMain, deps)
   else registerFlowAPIIPC(ipcMain, deps)
@@ -269,7 +283,7 @@ export function refHandlerHarness(o = {}) {
     : ipcMain.invoke('flow:generate-image', { prompt: '@king and a queen', aspectRatio: '9:16', model: 'Nano Banana 2', projectId: FAKE_PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p }))
   return {
     ipcMain, generate, generateI2V, trace, page, submitPage, clipboard, executeJavaScript, trustedClickOnFlowView, sessionFetch, onDomFailure, pendingGenerations,
-    flowView, mainWindow, pasteIntoFlowView, createInputShield, setAutomationKeyLock, legacy, docNonce, reports,
+    flowView, mainWindow, pasteIntoFlowView, createInputShield, setAutomationKeyLock, legacy, docNonce, reports, mediaTokenRegistry,
   }
 }
 

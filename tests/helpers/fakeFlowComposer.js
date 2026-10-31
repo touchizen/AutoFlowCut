@@ -381,6 +381,7 @@ export function maseQBody(id) {
  *   hangObserver  true → 붙여넣기 뒤의 관찰 exec 가 영영 settle 하지 않는다(죽은 문서)
  *   aborted() 드라이버의 isAborted
  *   learnTokens  false → as29s 로 토큰을 못 배운다 · learnTokensFailFirst n → 처음 n 번(배운 id 누적 수 기준)은 토큰이 없다
+ *   bumpEpochDuringStateRead true → 컴포저 판독마다 그 사이 토큰 격리가 있었던 것처럼 epoch +1(결과는 그대로)
  *   staleTokenFirst true → id 마다 첫 답은 낡은 토큰(페이지와 다름) · learnHang true → learnMediaTokens 가 영영 끝나지 않는다
  */
 export function makeRefDriverHarness(o = {}) {
@@ -417,9 +418,14 @@ export function makeRefDriverHarness(o = {}) {
     },
   })
   let obsBase = null
+  let tokenEpochN = 0
   const exec = (js) => {
     const s = String(js)
-    if (s.startsWith(STATE_JS_PREFIX)) trace.push('state-read')
+    if (s.startsWith(STATE_JS_PREFIX)) {
+      trace.push('state-read')
+      // Codex 2차#2: 판독이 도는 사이 다른 응답이 토큰을 격리했다(epoch +1) — 결과는 옛 지도로 계산된 그대로 돌아온다
+      if (o.bumpEpochDuringStateRead) return page.exec(s).then((r) => { tokenEpochN++; return r })
+    }
     if (s.includes('__af_paste_observer__')) {
       if (o.hangObserver && page.counts.paste > 0) { trace.push('observer:hang'); return new Promise(() => {}) }
       return page.exec(s).then((r) => {
@@ -453,6 +459,7 @@ export function makeRefDriverHarness(o = {}) {
     report: async (step, reason, extra) => { report.push({ step, reason, extra }) },
     // 2026-10-31: as29s 로 토큰 배우기 — 가짜 페이지의 asb 토큰은 id 에서 만든다(asbToken). o.learnTokens:false 면 배우지 못한다(as29s 실패).
     mediaTokens: {},
+    tokenEpoch: () => tokenEpochN,
     // flow-angular 와 같은 규칙: 이미 아는 id 는 force 가 아니면 다시 묻지 않는다 · 새 토큰이면 그 id 의 옛 토큰은 지운다.
     learnMediaTokens: (ids, opts = {}) => {
       learnCalls.push({ ids: [...ids], force: !!opts.force })

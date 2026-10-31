@@ -46,6 +46,7 @@ import { SUBMIT_ENABLED_PROBE } from '../flow-submit-gate.js'
 import { composerStateJs, frameSlotsJs } from '../flow-composer-refs.js'
 import { composeReferencePlan, clearComposer } from '../flow-reference-driver.js'
 import { refMediaCache } from '../flow-ref-media-cache.js'
+import { createMediaTokenRegistry } from '../flow-media-tokens.js'
 import { FLOW_R2V_REFERENCE_LIMIT } from '../../src/utils/flowR2vLimit.js'   // D13: 렌더러 계획과 같은 상한 — import 없는 모듈(렌더러 계획 모듈을 끌어오면 React 훅까지 main 에 들어온다)
 import { mediaEditLocation, editorPath, driveEditorDownload, returnIfStillOn, armVideoDownloadCapture, PAGE_PATH_JS, EDITOR_TITLE_JS, UUID_RE } from '../flow-video-download.js'
 import { VIDEO_DOWNLOAD_TIMEOUT_MS } from '../flow-download-config.js'
@@ -250,38 +251,29 @@ export function createFlowAngular(deps) {
     try { deps.getMainWindow()?.webContents?.focus() } catch (_e) { /* 창이 이미 없을 수 있다 */ }
   }
   /**
-   * 2026-10-31: 미디어 id 의 asb 토큰 지도({토큰: mediaId}) — Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=… 로 바꿔(id 없음)
-   *   칩 id 는 이 지도로만 읽힌다. 토큰은 미디어마다 고정이라 이 핸들러 인스턴스 동안 쌓는다. 토큰은 미디어 접근 주소 — 로그·보고에 싣지 않는다.
+   * 2026-10-31: asb 토큰 지도(flow-media-tokens.js) — Flow 가 칩·애셋 항목·미리보기 src 에서 id 를 빼 칩 id 는 이 지도로만 읽힌다. 토큰은 미디어마다 고정이라
+   *   이 핸들러 인스턴스 동안 쌓는다(지우지 않음 · 충돌 토큰은 영구 격리 · 격리마다 epoch). 시험은 deps.mediaTokenRegistry 로 넣는다.
    */
-  const mediaTokens = {}
-  /** 두 id 가 같은 토큰을 받은 적이 있는 토큰 — 지도에서 빼고 다시 넣지 않는다(그 칩·항목은 id 가 안 읽혀 클릭 전에 실패로 닫힌다). */
-  const ambiguousTokens = new Set()
+  const tokens = deps.mediaTokenRegistry || createMediaTokenRegistry()
   /**
-   * ids 의 토큰을 as29s(읽기 RPC)로 배운다 — 이미 아는 id 는 force 가 아니면 건너뛴다(force = 칩이 안 읽혀 다시 묻기).
-   *   새 토큰이면 그 id 의 옛 토큰은 지운다. 다른 id 가 이미 가진 토큰이면 충돌 — 덮어쓰지 않고 그 토큰을 모호함으로 뺀다(엉뚱한 미디어를 그 id 로 고르지 않게).
-   *   실패·토큰 없음은 그대로 진행(판독이 옛 주소로만 돈다).
+   * ids 의 토큰을 as29s(읽기 RPC)로 배운다 — 이미 아는 id 는 force 가 아니면 건너뛴다(force = 칩이 안 읽혀 다시 묻기). 실패·토큰 없음은 그대로 진행
+   *   (판독이 옛 주소로만 돈다). 토큰 값은 로그에 싣지 않는다.
    */
   async function learnMediaTokens(flowView, ids, { force = false } = {}) {
     for (const id of new Set(ids)) {
       if (typeof id !== 'string' || !UUID_RE.test(id)) continue
-      if (!force && Object.values(mediaTokens).includes(id)) continue
+      if (!force && tokens.knows(id)) continue
       let token = null
       try { token = parseMediaImageToken(await callFlowRpc(flowView, 'as29s', [id]), id) } catch (_e) { token = null }
       if (!token) { console.log(`[Flow Refs] media token media=${short(id)} none`); continue }
-      const owner = mediaTokens[token]
-      if (ambiguousTokens.has(token) || (owner && owner !== id)) {
-        delete mediaTokens[token]
-        ambiguousTokens.add(token)
-        console.warn(`[Flow Refs] media token conflict media=${short(id)} owner=${short(owner)} → dropped`)
-        continue
-      }
-      for (const [t, v] of Object.entries(mediaTokens)) if (v === id && t !== token) delete mediaTokens[t]
-      mediaTokens[token] = id
-      console.log(`[Flow Refs] media token media=${short(id)} ok${force ? ' (refreshed)' : ''}`)
+      const res = tokens.record(token, id)
+      if (res === 'ok') console.log(`[Flow Refs] media token media=${short(id)} ok${force ? ' (refreshed)' : ''}`)
+      else console.warn(`[Flow Refs] media token ${res} media=${short(id)} → not used`)
     }
   }
   /** 칩 판독 — exec 실패는 null(호출자가 불일치로 본다 = fail-closed). */
-  const readComposerState = async (flowView) => { try { return await exec(flowView, composerStateJs(mediaTokens)) } catch (_e) { return null } }
+  //   2026-10-31: 판독 중 토큰이 격리되면(epoch 변경) 그 판독은 버린다 — 옛 지도로 계산된 칩 id 를 믿지 않는다.
+  const readComposerState = (flowView) => tokens.guarded(() => exec(flowView, composerStateJs(tokens.map)))
   const chipCountOf = (st) => (st && Array.isArray(st.chips) ? st.chips.length : -1)
   /**
    * M2-FINAL Q1(A1 = B1): 제출 신뢰 클릭의 beforeDispatch — 히트테스트 뒤·mouseDown 직전에 편집기를 마지막으로 재판독한다(재판독~mouseDown ≈200–300ms 사이의 IME 조합 음절).
@@ -345,7 +337,7 @@ export function createFlowAngular(deps) {
     clipboard: deps.clipboard, nativeImage: deps.nativeImage,
     paste: () => deps.pasteIntoFlowView(),
     pendingGenerations: deps.pendingGenerations, cache: refMediaCache, projectId, isAborted, report,
-    mediaTokens, learnMediaTokens: (ids, opts) => learnMediaTokens(flowView, ids, opts),
+    mediaTokens: tokens.map, tokenEpoch: tokens.epoch, learnMediaTokens: (ids, opts) => learnMediaTokens(flowView, ids, opts),
   })
   /** 드라이버의 클릭 전 실패 {ok:false, kind, reason?} → 렌더러 결과(reason 은 렌더되지 않는 필드). */
   const driverFailure = (r) => kindResult(r.kind || ATTACH_FAILED, r.reason ? { reason: String(r.reason) } : {})
@@ -370,7 +362,7 @@ export function createFlowAngular(deps) {
    */
   async function startFrameProblem(flowView, startId) {
     let fs = null
-    try { fs = await exec(flowView, frameSlotsJs(mediaTokens)) } catch (_e) { fs = null }
+    fs = await tokens.guarded(() => exec(flowView, frameSlotsJs(tokens.map)))   // 판독 중 토큰 격리면 null → not-frames-mode(fail-closed)
     const slots = fs && Array.isArray(fs.slots) ? fs.slots : []
     if (!fs || !fs.framesMode || slots.length !== 2) return 'not-frames-mode'
     if (slots[0].mediaId !== startId || slots[0].busy) return 'start'

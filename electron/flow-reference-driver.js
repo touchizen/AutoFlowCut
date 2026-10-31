@@ -171,7 +171,13 @@ async function raceExec(ctx, js, ms = EXEC_RACE_MS) {
 }
 /** 2026-10-31: id 판독에 싣는 asb 토큰 지도({토큰: mediaId}) — ctx.mediaTokens(호출자가 as29s 로 채운다). */
 const toks = (ctx) => (ctx && ctx.mediaTokens && typeof ctx.mediaTokens === 'object' ? ctx.mediaTokens : {})
-const readState = (ctx) => ex(ctx, composerStateJs(toks(ctx)))
+/** 컴포저 판독 — 그 사이 토큰 격리(ctx.tokenEpoch 변경)가 있었으면 버린다(null = 판독 불가, fail-closed). 옛 지도로 계산된 id 를 믿지 않는다. */
+async function readState(ctx) {
+  const epoch = typeof ctx.tokenEpoch === 'function' ? ctx.tokenEpoch() : null
+  const st = await ex(ctx, composerStateJs(toks(ctx)))
+  if (epoch != null && ctx.tokenEpoch() !== epoch) return null
+  return st
+}
 /**
  * 2026-10-31: id 들의 asb 토큰을 배운다(ctx.learnMediaTokens — as29s). Flow 가 칩·애셋 항목·미리보기 src 에서 id 를 뺐기 때문에 토큰 없이는 칩 id 가 null 로 읽힌다.
  *   ctx 에 없거나 실패해도 흐름은 계속 — 판독이 옛 주소 모양으로만 돌고, 못 읽으면 기존 사유(chip-no-id 등)로 클릭 전에 끝난다.
@@ -205,13 +211,13 @@ async function tclick(ctx, js, step, required) {
 async function pollJs(ctx, js, pred, ms) {
   const until = Date.now() + ms
   for (;;) {
-    const v = await ex(ctx, typeof js === 'function' ? js() : js)
+    const v = typeof js === 'function' ? await js() : await ex(ctx, js)   // 함수 = 판독기(readState 등)
     if (v && pred(v)) return v
     if (Date.now() >= until) return null
     await sleep(STATE_POLL_MS)
   }
 }
-const pollState = (ctx, pred, ms) => pollJs(ctx, () => composerStateJs(toks(ctx)), pred, ms)
+const pollState = (ctx, pred, ms) => pollJs(ctx, () => readState(ctx), pred, ms)
 const refTag = (i) => `ref#${Number.isInteger(i) ? i : '?'}`
 
 /** 실패 결과 + 로그 한 줄 + 진단 보고(기다리지 않는다 — 먹통 보고가 흐름을 막지 않게). area = 'upload' | 'refs'. */

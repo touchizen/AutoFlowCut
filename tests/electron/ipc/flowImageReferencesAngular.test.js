@@ -13,7 +13,7 @@ import { setModalVisible } from '../../../electron/ipc/layout.js'
 import { refHandlerHarness, settle, refInput, refSha, text, mention, session, FAKE_DOC, FAKE_PROJECT } from '../../helpers/flowRefHandlerHarness.js'
 import { s3Payload } from '../../fixtures/flow-m3-samples.js'
 import { respBodyWithPayload, maskedUuid as U } from '../../fixtures/flow-batchexecute-samples.js'
-import { chipHtml } from '../../fixtures/flow-live-dom-m3.js'
+import { chipHtml, asbToken } from '../../fixtures/flow-live-dom-m3.js'
 
 const NOW_S = 1790240102.5
 const seed = (tail, id) => refMediaCache.set(FAKE_DOC, FAKE_PROJECT, refSha(tail), id)
@@ -349,6 +349,19 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     expect(r.success).toBe(true)
     expect(box.snapshot.expectedRefs).toEqual([U(2), U(3)])
     expect(h.trace.filter((x) => x === 'as29s').length).toBe(3)   // U2 1 · U3 2(첫 답 낡음 → 강제 다시)
+  })
+
+  it('Codex 2차#2: 제출 클릭 직전(dispatch 가드) 판독 중 토큰이 격리되면 그 판독을 버린다 → 누르지 않는다(클릭 전 실패)', async () => {
+    seed('king', U(2)); seed('queen', U(3))
+    const h = refHandlerHarness({
+      page: { asb: true, assets: session(U(2), U(3)) }, as29sTokens: true,
+      quarantineDuringGuard: (reg) => { reg.record(asbToken(U(3)), U(99)) },   // 늦은 답: U3 의 토큰이 다른 미디어 것이기도 했다
+      onSubmit: () => { throw new Error('must not submit') },
+    })
+    const r = await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(r.success).toBe(false)
+    expect(r.postClick).toBeFalsy()
+    expect(h.trace).toContain('dispatch-refused')
   })
 })
 
