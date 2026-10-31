@@ -377,5 +377,15 @@ describe('2026-10-31 asb 주소 — as29s 토큰 지도로 칩·애셋을 읽는
     const r = await drive(readGate(h.ctx, { refs: [M0], mentions: [], texts: [], summary: await summaryOf(h) }))
     expect(r).toMatchObject({ ok: false, kind: ATTACH_FAILED, reason: 'chip-set-mismatch' })
   })
+
+  it('Fable: 재사용 레퍼런스의 토큰도 compose 마다 다시 묻는다 — 아는 id(옛 토큰)를 건너뛰면 그 사이 다른 미디어가 받은 새 토큰을 충돌로 못 잡는다', async () => {
+    seed(R0, M0); seed(R1, M1)
+    // 페이지의 king 항목은 새 토큰(asbToken(M0)) · 지도엔 M0 의 옛 토큰만 · M1 을 물으면 king 의 새 토큰이 온다
+    const h = makeRefDriverHarness({ page: { asb: true, assets: session(M0), upload: { ids: [U(3), U(4)] } }, tokenOf: (id) => (id === M1 ? M0 : id) })
+    h.registry.record(`OLD_${asbToken(M0)}`, M0)
+    const r = await compose(h, [R0, R1], { segments: [mention(0)], attach: [1] })
+    expect(r.ok === false || !r.expectedRefs.includes(M1)).toBe(true)   // king 항목을 queen(M1)으로 고르지 않는다
+    expect(h.learnCalls[0]).toMatchObject({ force: true })
+  })
 })
 

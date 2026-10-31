@@ -265,7 +265,7 @@ describe('findAddMenuTrigger · findClearPromptButton · findAddToPromptButton �
 })
 
 // 2026-10-31 실측: 썸네일·칩·미리보기 src 가 전부 https://flow.google.com/asb/<토큰>=s1600-rw(이번 세션 업로드 포함 — id 없음). 그리드 타일 img 엔
-//   data-media-id 가 있지만 애셋 창 항목·칩·미리보기엔 없다. 토큰은 미디어마다 고정이라 as29s 로 배운 {토큰: id} 지도로 읽는다.
+//   data-media-id 가 있지만 애셋 창 항목·칩·미리보기엔 없다(판독기는 보지 않는다). 토큰은 미디어마다 고정이라 as29s 로 배운 {토큰: id} 지도로 읽는다.
 describe('2026-10-31 asb 토큰 지도로 id 읽기 — tokens = {토큰: mediaId}', () => {
   const T = (...ids) => Object.fromEntries(ids.map((id) => [asbToken(id), id]))
   const asbChips = (ids) => buildPage({ composer: { chips: ids.map((id) => ({ id, asb: true })) } })
@@ -294,10 +294,11 @@ describe('2026-10-31 asb 토큰 지도로 id 읽기 — tokens = {토큰: mediaI
     expect(readComposerState(document, T(U(2))).chips[0].mediaId).toBeNull()
   })
 
-  it('img 의 data-media-id(그리드 타일 모양)도 id 로 읽는다', () => {
+  it('img 의 data-media-id 는 보지 않는다(그리드 타일에만 있고 칩·항목·미리보기엔 없다 — 근거 없는 경로가 토큰 지도를 덮지 않게, Fable)', () => {
     document.body.innerHTML = asbChips([U(2)])
     document.querySelector('img.chip-image').setAttribute('data-media-id', U(7))
-    expect(readComposerState(document).chips[0].mediaId).toBe(U(7))
+    expect(readComposerState(document).chips[0].mediaId).toBeNull()
+    expect(readComposerState(document, T(U(2))).chips[0].mediaId).toBe(U(2))
   })
 
   it('애셋 창: findAssetItemByMediaId · listIdAssetMediaIds · readPickerPreviewMediaId 가 지도로 찾는다', () => {

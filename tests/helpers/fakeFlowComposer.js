@@ -382,6 +382,7 @@ export function maseQBody(id) {
  *   hangObserver  true → 붙여넣기 뒤의 관찰 exec 가 영영 settle 하지 않는다(죽은 문서)
  *   aborted() 드라이버의 isAborted
  *   learnTokens  false → as29s 로 토큰을 못 배운다 · learnTokensFailFirst n → 처음 n 번(배운 id 누적 수 기준)은 토큰이 없다
+ *   tokenOf(id, n)  → 그 id 를 물었을 때 토큰을 만들 id(기본 id)
  *   bumpEpochDuringStateRead true → 컴포저 판독마다 그 사이 토큰 격리가 있었던 것처럼 epoch +1(결과는 그대로)
  *   staleTokenFirst true → id 마다 첫 답은 낡은 토큰(페이지와 다름) · learnHang true → learnMediaTokens 가 영영 끝나지 않는다
  */
@@ -473,7 +474,8 @@ export function makeRefDriverHarness(o = {}) {
         if (o.learnTokens === false) continue
         if (Number.isInteger(o.learnTokensFailFirst) && learned.length <= o.learnTokensFailFirst) continue   // 처음 n 번은 토큰이 아직 없다(업로드 직후)
         const n = learned.filter((x) => x === id).length
-        registry.record(o.staleTokenFirst && n === 1 ? `STALE_${asbToken(id)}` : asbToken(id), id)   // 처음 답은 페이지와 다른(낡은) 토큰
+        const src = typeof o.tokenOf === 'function' ? o.tokenOf(id, n) : id   // 다른 id 면 그 미디어의 토큰을 준다(재사용·충돌 시험)
+        registry.record(o.staleTokenFirst && n === 1 ? `STALE_${asbToken(id)}` : asbToken(src), id)   // 처음 답은 페이지와 다른(낡은) 토큰
       }
       return Promise.resolve()
     },

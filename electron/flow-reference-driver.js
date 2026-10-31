@@ -656,7 +656,9 @@ export async function composeReferencePlan(ctx, { refs = [], plan = {} } = {}) {
     const shas = [...firstOfSha.keys()]
     const cached = new Map()
     for (const s of shas) { const id = doc ? ctx.cache.get(doc, ctx.projectId, s) : null; if (id) cached.set(s, id) }
-    await learnTokens(ctx, [...cached.values()])   // 2026-10-31: 애셋 항목 src 가 asb 토큰 — 캐시 id 의 토큰을 알아야 스캔·고르기가 된다
+    // 2026-10-31: 애셋 항목 src 가 asb 토큰 — 캐시 id 의 토큰을 알아야 스캔·고르기가 된다. 아는 id 도 compose 마다 강제로 다시 묻는다(Fable):
+    //   옛 토큰만 알고 건너뛰면 그 사이 바뀐 토큰을 다른 미디어가 받아도 충돌로 못 잡는다(그 미디어 항목을 이 id 로 고를 수 있다).
+    await learnTokens(ctx, [...cached.values()], { force: true })
     const scan = await scanUploadedAssets(ctx, { wantIds: [...cached.values()] })
     if (!scan.ok) return scan
     const mediaOf = new Map()

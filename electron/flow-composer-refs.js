@@ -7,7 +7,7 @@
  *
  *   칩        button.chip-container[aria-busy] + 자손 img(src https://flow-content.google/image/<mediaId>?…) — 칩 순서 = DOM 순서.
  *   id 판독  2026-10-31: Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=s1600-rw 로 바꿨다(이번 세션 업로드 포함, id 없음).
- *             img 에서 id 는 ① flow-content.google/image/<id> ② data-media-id(그리드 타일) ③ asb 토큰 → tokens 지도(as29s 로 배운 {토큰: id}) 순으로 읽는다.
+ *             img 에서 id 는 ① flow-content.google/image/<id> ② asb 토큰 → tokens 지도(as29s 로 배운 {토큰: id}) 순으로 읽는다(mediaIdOfImg).
  *             업로드 중엔 aria-busy="true"·img 없음, busy 해제 뒤에도 ~2s img 없음(PR P1a) → 그동안 mediaId null.
  *   멘션      편집기 div.ProseMirror[contenteditable=true] 안 span.mention-chip[data-mention-id](텍스트 = 애셋 라벨, PR P3).
  *   트리거    button.add-menu-trigger(＋, 열리면 aria-expanded="true") — 헤더의 "미디어 메뉴 추가"(mat-mdc-menu-trigger)와 다르다.
@@ -23,7 +23,8 @@
 
 /**
  * 2026-10-31: img → mediaId 또는 null. Flow 가 칩·애셋 항목·미리보기 src 를 https://flow.google.com/asb/<토큰>=… 로 바꿔(이번 세션 업로드 포함 — id 없음)
- *   ① flow-content.google/image/<id>(옛 모양) ② img 의 data-media-id(그리드 타일) ③ asb 토큰 → tokens 지도({토큰: mediaId}, as29s 로 배운 것) 순으로 읽는다.
+ *   ① flow-content.google/image/<id>(옛 모양) ② asb 토큰 → tokens 지도({토큰: mediaId}, as29s 로 배운 것) 순으로 읽는다. img 의 data-media-id 는
+ *   그리드 타일에만 있어(칩·항목·미리보기엔 없다) 보지 않는다.
  *   자기완결 — *_JS 빌더가 호출 지점에서 판독기(…With)에 resolveImg 로 넘긴다(이름으로 부르지 않는다 — minified 빌드 안전).
  */
 export function mediaIdOfImg(img, tokens) {
@@ -33,8 +34,6 @@ export function mediaIdOfImg(img, tokens) {
   var src = img.getAttribute('src') || ''
   var m = ID_SRC.exec(src)
   if (m) return m[1]
-  var d = img.getAttribute('data-media-id') || ''
-  if (UUID_ID.test(d)) return d
   var a = ASB_SRC.exec(src)
   var v = a && tokens && Object.prototype.hasOwnProperty.call(tokens, a[1]) ? tokens[a[1]] : null
   return typeof v === 'string' && UUID_ID.test(v) ? v : null
