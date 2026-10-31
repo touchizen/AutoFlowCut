@@ -31,7 +31,7 @@ import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } 
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 import { resolveSceneVideoProvider } from '../utils/sceneProviderResolution'
 import { isInlineImageData } from '../utils/inlineImage'   // I2V 시작 프레임 바이트 판정(엔진·MCP 와 공용)
-import { isFlowMediaId as isFlowShapedId, isLegacyFlowGenerationFailure } from '../utils/flowMediaId'   // M2-R5 J2: App·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
+import { isFlowMediaId as isFlowShapedId, isLegacyFlowGenerationFailure, failedStatusPatch } from '../utils/flowMediaId'   // M2-R5 J2: App·복구·파서와 공유하는 Flow 미디어 id 술어(UUID) · J3: 옛 서버측 생성 실패 제외
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
 // 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치).
@@ -1110,12 +1110,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             // M2-R1 F1(A1/B1): main 의 kind·params 를 그대로 남기고, flow-video-fetch-failed 처럼 mediaId 를 실은 실패는 mediaId 도 보존한다 —
             //   제출 패치가 mediaId 를 null 로 지웠으므로 여기서 다시 쓰지 않으면 download-only 분류(error+generationId+mediaId)에 걸리지 않아
             //   다음 Start/Retry 가 이미 완성돼 과금된 영상을 다시 제출한다. generationId 도 함께(App 은 truthy 만 머지).
+            // 2026-10-31: Flow 생성 실패(상태 4 · 환불)는 generationId·mediaId 를 지워 fresh 로(failedStatusPatch — 다음 Start 가 재제출).
             onItemUpdate?.(itemId, 'error', {
-              error: statusInfo.error || 'Video generation failed',
-              errorKind: statusInfo.errorKind ?? null,
-              ...(statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
-              ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
-              generationId: submission.generationId,
+              ...failedStatusPatch(statusInfo, submission.generationId),
               ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
               ...gateMark(),   // M2-R3 H6
             })

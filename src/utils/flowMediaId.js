@@ -21,3 +21,29 @@ export function isFlowMediaId(value) {
 export function isLegacyFlowGenerationFailure(item) {
   return !!item && item.errorKind == null && typeof item.error === 'string' && /^PUBLIC_ERROR_/.test(item.error) && item.mediaId == null && !item.videoPath
 }
+
+/**
+ * 2026-10-31: Flow 가 생성 자체에 실패한 상태 4(실기 — 화면에 실패, 크레딧 환불)를 main 이 닫은 kind. 미디어가 만들어지지 않아 받을 것도 폴할 것도 없다 —
+ *   이 실패 패치만 generationId·mediaId 를 지워 fresh 로 만든다(안 지우면 출처 분류가 in-flight 로 잡아 같은 실패 미디어를 영원히 폴한다).
+ */
+export const FLOW_GENERATION_FAILED = 'flow-video-generation-failed'
+export function isFlowGenerationFailure(statusInfo) {
+  return !!statusInfo && statusInfo.errorKind === FLOW_GENERATION_FAILED
+}
+
+/**
+ * 상태 핸들러의 failed 답 → 행 error 패치의 공통 필드(훅 폴 분기 · 로드 시 복구 · 재다운로드 — 세 곳이 같은 모양).
+ *   kind·params 를 올리고(없으면 errorKind null), mediaId 는 답에 있을 때만(download-only 유지 — 과금 안전), generationId 는 유지.
+ *   2026-10-31: Flow 생성 실패(isFlowGenerationFailure)만 generationId·mediaId 를 null 로 — fresh(다음 Start 가 재제출).
+ */
+export function failedStatusPatch(statusInfo, generationId) {
+  const genFailed = isFlowGenerationFailure(statusInfo)
+  return {
+    error: (statusInfo && statusInfo.error) || 'Video generation failed',
+    errorKind: (statusInfo && statusInfo.errorKind) ?? null,
+    ...(statusInfo && statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
+    ...(genFailed ? { mediaId: null } : statusInfo && statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
+    generationId: genFailed ? null : generationId,
+  }
+}
+

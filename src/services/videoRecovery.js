@@ -12,7 +12,7 @@
 import { authErrorIsMachineToken } from '../utils/authMessages'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { downloadVideoBase64, downloadNoticeOf } from './videoDownload'
-import { isFlowMediaId } from '../utils/flowMediaId'   // M2-R5 J2: 훅·App·파서와 공유하는 Flow 미디어 id 술어(UUID)
+import { isFlowMediaId, failedStatusPatch } from '../utils/flowMediaId'   // M2-R5 J2: 훅·App·파서와 공유하는 Flow 미디어 id 술어(UUID)
 
 /**
  * 다운로드 + 저장 (useVideoAutomation의 Phase 3 로직과 동일)
@@ -243,13 +243,10 @@ export async function recoverInFlightVideos({
         // M2-R3 H2(A2/B1): G3 의 retryVideoDownload failed 분기와 같은 모양 — kind·params 를 올리고(없으면 null), mediaId 는 답에 있을 때만, generationId 유지.
         //   프로젝트를 여러 번 다시 열면 main 의 as29s/no-record 4회 유계에 닿아 {failed, flow-video-fetch-failed|not-found, mediaId} 가 온다 — mediaId·kind 를
         //   버리면 과금된 미디어가 error+generationId+mediaId:null 로 남아 다음 Start 가 재제출(10크레딧)한다. 머지 뒤 download-only 로 분류돼야 한다.
+        //   2026-10-31: Flow 생성 실패(상태 4)는 fresh 로(failedStatusPatch).
         onFramePairUpdate(fp.id, {
           status: 'error',
-          error: statusInfo.error || 'Video generation failed',
-          errorKind: statusInfo.errorKind ?? null,
-          ...(statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
-          ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
-          generationId: fp.generationId,
+          ...failedStatusPatch(statusInfo, fp.generationId),
           generatingEndedAt: Date.now(),
         })
         expired++
@@ -364,12 +361,10 @@ export async function retryVideoDownload({
     const msg = statusInfo.error || 'Video generation failed'
     // M2-R2 G3(B6): 상태 핸들러가 kind 를 실은 failed(flow-video-not-found: Flow 에 그 미디어가 없음)를 답하면 그 kind·params 를 그대로 올린다 — 안 그러면 표에
     //   raw kind 토큰이 뜬다. kind 없으면 null 로 stale kind 를 지운다(훅의 F1 failed 분기와 같은 모양). mediaId 는 답에 있을 때만 다시 쓴다(과금 안전 — download-only 유지).
+    // 2026-10-31: Flow 생성 실패(상태 4)는 fresh 로(failedStatusPatch — 훅의 failed 분기와 같다).
     onUpdate?.(item.id, 'error', {
+      ...failedStatusPatch(statusInfo, item.generationId),
       error: msg,
-      errorKind: statusInfo.errorKind ?? null,
-      ...(statusInfo.errorParams ? { errorParams: statusInfo.errorParams } : {}),
-      ...(statusInfo.mediaId ? { mediaId: statusInfo.mediaId } : {}),
-      generationId: item.generationId,
       generatingEndedAt: Date.now(),
     })
     return { success: false, error: msg }
