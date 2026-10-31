@@ -44,6 +44,26 @@ describe('createMediaTokenRegistry', () => {
     expect(r.map).toEqual({ T2: A })
   })
 
+  it('Codex 6차#2: 늦게 온 옛 답(superseded)도 주인 증거는 남긴다 — 지금 토큰은 안 바꾸지만, 그 토큰을 다른 id 가 받으면 충돌', () => {
+    const r = createMediaTokenRegistry()
+    const n1 = r.begin(A)
+    const n2 = r.begin(A, { force: true })
+    expect(r.settle(A, n2, 'T2')).toBe('ok')
+    expect(r.settle(A, n1, 'T1')).toBe('superseded')
+    expect(r.map).toEqual({ T2: A })
+    expect(learn(r, B, 'T1')).toBe('conflict')
+  })
+
+  it('Codex 6차#2: 늦게 온 옛 답의 토큰이 이미 다른 id 것이면 그 토큰을 격리한다', () => {
+    const r = createMediaTokenRegistry()
+    learn(r, B, 'T5')
+    const n1 = r.begin(A)
+    r.begin(A, { force: true })
+    expect(r.settle(A, n1, 'T5')).toBe('conflict')
+    expect(r.map).toEqual({})
+    expect(r.knows(B)).toBe(false)
+  })
+
   it('Codex 2차#1·5차: 내려간 옛 토큰도 주인 기록은 남는다 — 그 토큰을 다른 id 가 받으면 격리, 이후 그 토큰은 누구에게도 안 들어간다', () => {
     const r = createMediaTokenRegistry()
     learn(r, A, 'T1'); learn(r, A, 'T2', { force: true })

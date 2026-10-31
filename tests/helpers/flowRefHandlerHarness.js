@@ -65,6 +65,7 @@ export function sampleSendFields(n) {
  *   · sample(제출 샘플 번호 S3#n — 기본 onSubmit 이 send/loadend) · send(send 이벤트 덮어쓰기) · loadend(loadend 덮어쓰기) · onSubmit(api)
  *   · settings(드라이버 결과 | Promise) · summary · credits(nzlxg 순서) · hidden · bounds · beforeDispatchHook(page) · deadSteps(신뢰 클릭이 헛도는 step 들)
  *   · quarantineDuringGuard(registry)(2026-10-31) → 제출 클릭 dispatch 가드의 컴포저 판독 중에 호출(토큰 격리 모사)
+ *   · as29sDelay(id, n)(2026-10-31) → 그 as29s 답을 ms 만큼 늦춘다
  *   · as29sTokens(2026-10-31) true → as29s 를 그 id 의 이미지 기록(asb 토큰)으로 답한다(page.asb 와 함께)
  *   · realCapture(M3-14) true → 가짜 페이지 문서에 **실제** 캡처 주입(FLOW_RPC_CAPTURE_INJECTION)을 FakeXHR 위에 설치한다(main 이 문서 로드 때 하듯).
  *     그 문서의 flowReportResponse 가 라우터로 간다(main.js 의 flow:report-response 와 같은 모양). 문서 nonce 는 주입이 만든다(가짜 페이지의 FAKE_DOC 은 지운다 —
@@ -192,6 +193,8 @@ export function refHandlerHarness(o = {}) {
       trace.push('as29s')
       if (!m) return null
       as29sCalls[m[1]] = (as29sCalls[m[1]] || 0) + 1
+      const delay = typeof o.as29sDelay === 'function' ? o.as29sDelay(m[1], as29sCalls[m[1]]) : 0   // 이 물음이 늦게(멈춘 듯) 온다
+      if (delay > 0) await new Promise((r) => setTimeout(r, delay))
       // 함수면 (id, n번째) → 토큰을 만들 id(다른 id 면 그 미디어의 토큰을 준다 — 충돌·낡은 토큰 시험)
       const tokenOf = typeof o.as29sTokens === 'function' ? o.as29sTokens(m[1], as29sCalls[m[1]]) : m[1]
       if (tokenOf === null) return { status: 200, text: respBodyWithPayload('as29s', [m[1], FAKE_PROJECT]) }   // 토큰 없는 기록

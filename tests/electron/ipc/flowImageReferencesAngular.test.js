@@ -326,7 +326,7 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     const r = await settle(h.generate({ refs: [refInput('queen')], plan: { segments: [text('a queen')], attach: [0] } }), 120000)
     expect(r).toMatchObject({ success: false, errorKind: 'flow-reference-attach-failed' })
     expect(h.trace).not.toContain('click:compose-submit')
-    expect(logged()).toMatch(/\[Flow Refs\] media token media=00000003 none/)
+    expect(logged()).toMatch(/\[Flow Refs\] media token media=00000003 none\(rpc-\w+\)/)   // 사유 종류만(토큰·본문 없음)
   })
 
   it('Codex#1: as29s 가 다른 id 에 이미 쓰인 토큰을 주면(충돌) 그 토큰을 버린다 — 엉뚱한 미디어를 그 id 로 고르지 않고 둘 다 새로 올린다', async () => {
@@ -407,6 +407,22 @@ describe('2026-10-31 asb 주소 — as29s 토큰으로 칩·애셋을 읽는다'
     await settle(h.generate({ refs: [refInput('king')], plan: { segments: [text('a king')], attach: [0] } }), 120000)
     expect(box.snapshot.expectedRefs).toEqual([U(3)])
     expect(h.page.counts.paste).toBe(1)
+    expect(logged()).toMatch(/\[Flow Refs\] media token media=00000002 none\(no-asb\)/)
+  })
+
+  it('Codex 6차#1: 앞 레퍼런스의 as29s 가 멈춰도 뒤 레퍼런스의 옛 토큰이 남아 있지 않다 — 모든 id 를 먼저 내리고 묻는다', async () => {
+    seed('king', U(2)); seed('queen', U(3))
+    const box = capture(9)
+    // 지난 세션: U2 = 자기 토큰, U3 = 옛 토큰(지금은 U9 = 다른 미디어 C 의 토큰). 페이지엔 U2·U9. U2 의 as29s 는 20초 멈춤, U3 는 새 토큰(페이지에 없음)
+    const h = refHandlerHarness({
+      page: { asb: true, assets: session(U(2), U(9)), upload: { ids: [U(5), U(6)] } }, as29sTokens: (id) => (id === U(3) ? U(13) : id),
+      as29sDelay: (id) => (id === U(2) ? 20000 : 0), onSubmit: box.onSubmit,
+    })
+    const reg = h.mediaTokenRegistry
+    reg.settle(U(2), reg.begin(U(2)), asbToken(U(2)))
+    reg.settle(U(3), reg.begin(U(3)), asbToken(U(9)))
+    await settle(h.generate({ refs: REFS9(), plan: PLAN9 }), 120000)
+    expect(box.snapshot.expectedRefs).not.toContain(U(3))   // C(U9 썸네일)를 queen(U3)으로 고르지 않는다
   })
 })
 

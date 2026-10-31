@@ -8,7 +8,7 @@
  *   - 판독 지도(map)는 id 마다 가장 최근 답의 토큰 하나뿐. 옛 토큰이 남아 있으면 그 토큰을 쓰게 된 다른 미디어(한 번도 묻지 않은)를 이 id 로 읽는다.
  *   - 강제로 다시 물을 때(begin force)는 그 id 의 지금 토큰부터 내린다 — 답 전·실패·시간 초과면 그 id 는 토큰으로 안 읽혀 클릭 전에 실패로 닫히거나
  *     새로 올린다(검증된 묶음만 쓴다).
- *   - 물음마다 번호 — 그 id 의 더 나중 물음이 있으면 늦게 온 옛 답은 버린다(superseded). 늦은 답이 새 토큰을 되돌리지 못한다.
+ *   - 물음마다 번호 — 그 id 의 더 나중 물음이 있으면 늦게 온 옛 답은 지금 토큰을 바꾸지 못한다(superseded). 그래도 주인 증거(충돌·격리)는 남긴다.
  *   - 판독 지도에서 빠질 때마다 epoch +1 — guarded(read) 는 그 사이 빠진 게 있으면 판독을 버린다(null). 더하기는 이미 읽힌 id 를 틀리게 만들지 못해 안 올린다.
  * 토큰은 미디어 접근 주소 — 로그·보고에 싣지 않는다.
  * tests/electron/flow-media-tokens.test.js
@@ -41,17 +41,24 @@ export function createMediaTokenRegistry() {
     },
     /** 답(token 없으면 null) → 'ok' | 'none' | 'conflict'(이번에 격리) | 'ambiguous'(이미 격리) | 'superseded'(더 나중 물음이 있다) */
     settle(id, n, token) {
-      if (asked.get(id) !== n) return 'superseded'
-      if (!token) { retire(id); return 'none' }
-      if (ambiguous.has(token)) { retire(id); return 'ambiguous' }
-      const prev = owner.get(token)
-      if (prev !== undefined && prev !== id) {
-        ambiguous.add(token)
-        if (current.get(prev) === token) retire(prev)
-        retire(id)
-        return 'conflict'
+      const latest = asked.get(id) === n
+      // 주인 증거는 모든 유효한 답에서 남긴다(늦게 온 옛 답 포함) — 순서 번호는 "지금 읽을 토큰을 바꿀지"에만 쓴다(Codex 6차#2)
+      if (token) {
+        const prev = owner.get(token)
+        if (ambiguous.has(token) || (prev !== undefined && prev !== id)) {
+          if (!ambiguous.has(token)) {
+            ambiguous.add(token)
+            if (current.get(prev) === token) retire(prev)
+            if (latest) retire(id)
+            return 'conflict'
+          }
+          if (latest) retire(id)
+          return 'ambiguous'
+        }
+        if (prev === undefined) owner.set(token, id)
       }
-      if (prev === undefined) owner.set(token, id)
+      if (!latest) return 'superseded'
+      if (!token) { retire(id); return 'none' }
       if (current.get(id) !== token) {
         retire(id)
         current.set(id, token)

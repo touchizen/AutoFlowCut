@@ -260,17 +260,30 @@ export function createFlowAngular(deps) {
    *   토큰부터 내리고 묻는다(답 전·실패면 그 id 는 토큰으로 안 읽힌다). 실패·토큰 없음은 그대로 진행(판독이 옛 주소로만 돈다). 토큰 값은 로그에 싣지 않는다.
    */
   async function learnMediaTokens(flowView, ids, { force = false } = {}) {
+    // 모든 id 를 먼저 내리고 번호를 매긴 뒤 묻는다(Codex 6차#1) — 앞 물음이 멈춰도 뒤 id 의 옛 토큰이 읽히는 틈이 없다. 물음은 병렬.
+    const asks = []
     for (const id of new Set(ids)) {
       if (typeof id !== 'string' || !UUID_RE.test(id)) continue
       if (!force && tokens.knows(id)) continue
-      const n = tokens.begin(id, { force })
-      let token = null
-      try { token = parseMediaImageToken(await callFlowRpc(flowView, 'as29s', [id]), id) } catch (_e) { token = null }
-      const res = tokens.settle(id, n, token)
-      if (res === 'ok') console.log(`[Flow Refs] media token media=${short(id)} ok${force ? ' (refreshed)' : ''}`)
-      else if (res === 'none' || res === 'superseded') console.log(`[Flow Refs] media token media=${short(id)} ${res}`)
-      else console.warn(`[Flow Refs] media token ${res} media=${short(id)} → not used`)
+      asks.push([id, tokens.begin(id, { force })])
     }
+    await Promise.all(asks.map(([id, n]) => askMediaToken(flowView, id, n, force)))
+  }
+  /** 물음 하나(begin 의 번호 n) — as29s → 토큰 → settle. 토큰이 없을 때의 사유 종류만 로그(rpc-<kind> · not-record · other-media · no-asb). */
+  async function askMediaToken(flowView, id, n, force) {
+    let token = null
+    let why = 'no-asb'
+    try {
+      const rec = await callFlowRpc(flowView, 'as29s', [id])
+      token = parseMediaImageToken(rec, id)
+      if (!token && !Array.isArray(rec)) why = 'not-record'
+      else if (!token && rec[0] !== id) why = 'other-media'
+    } catch (e) { why = 'rpc-' + ((e && e.kind) || 'error') }
+    const res = tokens.settle(id, n, token)
+    if (res === 'ok') console.log(`[Flow Refs] media token media=${short(id)} ok${force ? ' (refreshed)' : ''}`)
+    else if (res === 'none') console.log(`[Flow Refs] media token media=${short(id)} none(${why})`)
+    else if (res === 'superseded') console.log(`[Flow Refs] media token media=${short(id)} superseded`)
+    else console.warn(`[Flow Refs] media token ${res} media=${short(id)} → not used`)
   }
   /** 칩 판독 — exec 실패는 null(호출자가 불일치로 본다 = fail-closed). */
   //   2026-10-31: 판독 중 토큰이 격리되면(epoch 변경) 그 판독은 버린다 — 옛 지도로 계산된 칩 id 를 믿지 않는다.
