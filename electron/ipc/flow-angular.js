@@ -452,7 +452,9 @@ export function createFlowAngular(deps) {
       }
     }
     const startBounds = flowView.getBounds ? flowView.getBounds() : null
-    const viewport = needsAutomationViewport(startBounds)
+    // Passive capture can wait for minutes. Keep the app (especially Stop)
+    // exposed throughout setup, capture and download, even with a narrow pane.
+    const viewport = !opts.shieldFlow && needsAutomationViewport(startBounds)
     let hadFocus = false
     try { hadFocus = !!(flowView.webContents.isFocused && flowView.webContents.isFocused()) } catch (_e) { hadFocus = false }
     let shield = null
@@ -476,8 +478,8 @@ export function createFlowAngular(deps) {
         const why = (!startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)) ? 'hidden' : 'narrow'
         console.log(`${tag} view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} in-place${shield ? ' shielded' : ''}`)
       }
-      if (opts.shieldAll && !shield) {
-        shield = deps.createInputShield?.()
+      if (opts.shieldFlow && !shield) {
+        shield = deps.createInputShield?.({ flowView })
         if (!shield) return kindResult('flow-image-ownership-unproven', { reason: 'input-shield-unavailable', retryBlocked: true })
       }
       const run = fn(ctl)

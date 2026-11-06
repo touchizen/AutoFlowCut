@@ -55,6 +55,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   }, [t, status, isRunning])
   
   const stopRequestedRef = useRef(false)
+  const collectionStopRequestedRef = useRef(false)
+  const flowSafetyStoppedRef = useRef(null)
   const pausedRef = useRef(false)
   const completedCountRef = useRef(0)
   const errorCountRef = useRef(0)
@@ -88,6 +90,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     void Promise.resolve(cancelGenerationRef.current?.(run.scope)).catch(() => {})
   }, [])
   const cancelActiveRuns = useCallback(() => {
+    collectionStopRequestedRef.current = true
     for (const run of [...activeRunsRef.current]) cancelActiveScopeOnce(run)
   }, [cancelActiveScopeOnce])
 
@@ -96,7 +99,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   useEffect(() => subscribeFlowSafetyStop(result => {
     if (mode !== 'flow') return
     stopRequestedRef.current = true
-    cancelActiveRuns()
+    flowSafetyStoppedRef.current = result
     pausedRef.current = false
     setIsPaused(false)
     setStatus('error')
@@ -109,13 +112,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   // 씬이 모두 삭제되거나, 생성된 이미지가 없는 상태로 돌아가면 progress/status 리셋
   useEffect(() => {
     if (isRunning) return
+    if (mode === 'flow' && scenes.some(scene => scene.generationId && scene.retryBlocked)) return
     const hasAnyImage = scenes.some(s => s.image || s.imagePath)
     if (!hasAnyImage && (status === 'done' || status === 'stopped' || status === 'error')) {
       setProgress({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
       setStatus('ready')
       setStatusMessage(t('status.ready'))
     }
-  }, [scenes, isRunning])
+  }, [scenes, isRunning, mode])
 
   // (NOTE) 단일 씬 동기 처리 헬퍼 (`processScene`) 는 dead code 였어서 제거.
   // 활성 경로는 비동기 batch 인 runAutomation + collectCompleted 만 사용.
@@ -222,7 +226,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     const collectCompleted = async () => {
       const stillPending = []
       for (const item of pendingQueue) {
-        if (stopRequestedRef.current) { stillPending.push(item); continue }
+        if (collectionStopRequestedRef.current) { stillPending.push(item); continue }
         const elapsed = Date.now() - item.submittedAt
         // M1-13 (D4): main 의 마감(send 15s / loadend 100s = 115s < 아이템 타임아웃 — imageGenerationItemTimeoutMs, google 120s)이 먼저 kind 를 정한다 —
         //   타임아웃을 checkGeneration **앞**에 두면 페이싱 뒤 첫 재확인이 타임아웃을 넘긴 씬에서 'Generation timeout'
@@ -247,6 +251,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           }
           if (st.completed) {
             const result = await collectGeneration(item.generationId)
+            if (flowSafetyStoppedRef.current && !result.success) { stillPending.push(item); continue }
             if (isAbortedResult(result)) {
               updateScene(item.scene.id, { status: 'pending', error: null, errorKind: null })
               continue
@@ -291,7 +296,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             }
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
-          } else if (elapsed > imageGenerationItemTimeoutMs(item.provider)) {
+          } else if (!flowSafetyStoppedRef.current && elapsed > imageGenerationItemTimeoutMs(item.provider)) {
             console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
             updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
             errorCountRef.current++
@@ -406,6 +411,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
         pendingQueue.push({ generationId: submitResult.generationId, scene, model: resolvedGeneration.model, provider: resolvedGeneration.provider, submittedAt: _now, originalSubmittedAt: _now })
+        if (mode === 'flow') updateScene(scene.id, { generationId: submitResult.generationId })
         consecutiveErrors = 0
         console.log('[Automation] Submitted scene', scene.id, '→', submitResult.generationId)
       } else if (submitResult.success && Array.isArray(submitResult.images) && submitResult.images.length > 0) {
@@ -511,14 +517,17 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     )
     while (
       pendingQueue.length > 0 &&
-      !stopRequestedRef.current &&
+      !collectionStopRequestedRef.current &&
       (Date.now() - pollStart - pauseBudgetMs < phase2TimeoutMs)
     ) {
       // paused (사용자 일시정지) 인식 — Phase 2 도 pause 동안 멈추고 시간 보정.
       await awaitUnpause()
-      if (stopRequestedRef.current) break
+      if (collectionStopRequestedRef.current) break
       setStatusMessage(t('status.collectingResults', { remaining: pendingQueue.length }))
       await collectCompleted()
+      // Detection stops new work, but completed main-process results still
+      // belong to their scenes. Drain once; retain unresolved IDs for recovery.
+      if (flowSafetyStoppedRef.current) break
       if (pendingQueue.length > 0) {
         await new Promise(r => setTimeout(r, 3000))
       }
@@ -530,7 +539,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     //   - 타임아웃: error로 마킹 + 카운트 증가
     const userStopped = stopRequestedRef.current
     for (const item of pendingQueue) {
-      if (userStopped) {
+      if (flowSafetyStoppedRef.current) {
+        const stopped = flowSafetyStoppedRef.current
+        updateScene(item.scene.id, { status: 'error', generationId: item.generationId,
+          error: stopped.error || stopped.errorKind, errorKind: stopped.errorKind,
+          errorParams: { ...stopped.errorParams, ...(stopped.reason ? { reason: stopped.reason } : {}) }, retryBlocked: true })
+        errorCountRef.current++
+        completedCountRef.current++
+      } else if (userStopped) {
         // 사용자 중단으로 재시도 가능 상태 — 모든 에러 흔적 클리어 (image-missing 마커 포함).
         updateScene(item.scene.id, { status: 'pending', error: null, errorKind: null })
       } else {
@@ -542,7 +558,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     updateProgressMsg(completedCountRef.current)
 
     // 정리
-    try { await clearGenerations() } catch (e) { /* ignore */ }
+    if (!flowSafetyStoppedRef.current || pendingQueue.length === 0) {
+      try { await clearGenerations() } catch (e) { /* ignore */ }
+    }
   }
   
   /**
@@ -615,6 +633,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     try {
 
     stopRequestedRef.current = mode === 'flow' && !!getFlowSafetyStop()
+    collectionStopRequestedRef.current = false
+    flowSafetyStoppedRef.current = mode === 'flow' ? getFlowSafetyStop() : null
     pausedRef.current = false
     authStoppedRef.current = false
     completedCountRef.current = 0
@@ -634,6 +654,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         : force
           ? scenes.filter(s => s.prompt)
           : filterPendingScenes(scenes)
+    const unresolved = mode === 'flow' && targetScenes.find(scene => scene.generationId && scene.retryBlocked)
+    if (unresolved) {
+      setIsRunning(false)
+      setStatus('error')
+      setStatusMessage(t(`errorSection.kind.${unresolved.errorKind || 'flow-image-ownership-unproven'}`))
+      return { success: false, retryBlocked: true, generationId: unresolved.generationId }
+    }
 
     const total = targetScenes.length
     if (total === 0) {
@@ -939,7 +966,10 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       ? `✅ ${doneCount}  ❌ ${errCount}`
       : `✅ ${doneCount}`
 
-    if (authStoppedRef.current) {
+    if (flowSafetyStoppedRef.current) {
+      setStatus('error')
+      setStatusMessage(t(`errorSection.kind.${flowSafetyStoppedRef.current.errorKind}`))
+    } else if (authStoppedRef.current) {
       // Status + message already set at the auth-fail site — do not overwrite.
     } else if (stopRequestedRef.current) {
       setStatus('stopped')

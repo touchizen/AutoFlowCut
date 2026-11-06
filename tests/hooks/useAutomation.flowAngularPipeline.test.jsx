@@ -12,6 +12,7 @@ import { render } from '@testing-library/react'
 import { useAutomation } from '../../src/hooks/useAutomation'
 import { useFlowEngine } from '../../src/engine/engineFlow'
 import { __resetQuotaStopForTests, subscribeQuotaStop } from '../../src/utils/quotaStop'
+import { __resetFlowSafetyForTests, receiveFlowSafetyStop } from '../../src/utils/flowSafetyStop'
 import ResultsTable from '../../src/components/ResultsTable'
 import { I18nProvider } from '../../src/hooks/useI18n'
 
@@ -34,6 +35,7 @@ import { fileSystemAPI } from '../../src/hooks/useFileSystem'
 const IMAGE = { base64: 'data:image/png;base64,AQID', mediaId: '<uuid#5>', width: 1376, height: 768, seed: 1687588041 }
 const api = {}
 beforeEach(() => {
+  __resetFlowSafetyForTests()
   __resetQuotaStopForTests()
   vi.useFakeTimers({ now: 1790240102500 })
   vi.spyOn(Math, 'random').mockReturnValue(0)
@@ -72,6 +74,31 @@ const patchesFor = (updateScene, id) => updateScene.mock.calls.filter((c) => c[0
 const lastPatch = (updateScene, id) => patchesFor(updateScene, id).at(-1)
 
 describe('useAutomation × useFlowEngine — 성공 경로', () => {
+  it('saves a downloaded result when detection arrives just before submit acknowledgment', async () => {
+    const stop = { success: false, errorKind: 'flow-unusual-activity', safetyStop: true, retryBlocked: true }
+    api.flowGenerateImage.mockImplementationOnce(async () => {
+      receiveFlowSafetyStop(stop)
+      return { success: true, submitted: true, generationId: 'downloaded-1' }
+    })
+    const { hook, updateScene } = setup({ scenes: [SCENE('s1', 'a'), SCENE('s2', 'b')] })
+    await runStart(hook)
+    expect(api.flowCheckGeneration).toHaveBeenCalledWith({ generationId: 'downloaded-1' })
+    expect(api.flowCollectGeneration).toHaveBeenCalledOnce()
+    expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'done', imagePath: '/proj/scenes/s1.png' })
+    expect(api.flowGenerateImage).toHaveBeenCalledOnce()
+    expect(hook.result.current.auto.status).toBe('error')
+  })
+  it('preserves recovery markers when the real engine converts a collection IPC rejection into a failed result', async () => {
+    api.flowGenerateImage.mockImplementationOnce(async () => {
+      receiveFlowSafetyStop({ success: false, errorKind: 'flow-unusual-activity', safetyStop: true, retryBlocked: true })
+      return { success: true, generationId: 'downloaded-1' }
+    })
+    api.flowCollectGeneration.mockRejectedValueOnce(new Error('IPC disconnected'))
+    const { hook, updateScene } = setup()
+    await runStart(hook)
+    expect(lastPatch(updateScene, 's1')).toMatchObject({ status: 'error', generationId: 'downloaded-1', errorKind: 'flow-unusual-activity', retryBlocked: true })
+    expect(api.flowClearGenerations).not.toHaveBeenCalled()
+  })
   it('ready → 제출(token:null, referenceImages:[]) → check → collect → saveImage → updateScene(done, imagePath, image_size)', async () => {
     const { hook, updateScene } = setup()
     await runStart(hook)

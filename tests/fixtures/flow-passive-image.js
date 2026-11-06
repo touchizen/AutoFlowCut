@@ -22,3 +22,7 @@ export function card(id, { src, opaque = false } = {}) {
   return `<a href="/project/${PROJECT}/edit/${id}"><img ${opaque ? '' : `data-media-id="${id}"`} src="${src || `https://flow.google.com/api/trpc/media.getMediaUrlRedirect?name=${id}`}"></a>`
 }
 export const gallery = (...cards) => `<main>${cards.join('')}</main>`
+
+export function galleryRequest(overrides = {}) {
+  return request({ id: 20, url: request().url.replace('ogiZ0b', 'Zzl0ze'), ...overrides }, (_i, e) => { e[0][0][0] = 'Zzl0ze' })
+}

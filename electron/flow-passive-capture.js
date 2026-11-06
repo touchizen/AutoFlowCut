@@ -1,7 +1,8 @@
 import { decodeFReqInner, extractSubmitPrompts, extractSubmitRefs, normalizePrompt } from './flow-rpc-protocol.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const READ_RPCS = new Set(['UpteDb', 'ngNC2', 'Zzl0ze', 'nzlxg', 'HTrJv', 'as29s', 'jwpduf', 'o30O0e', 'xI9TVb', 'WuwhI'])
+const READ_RPCS = new Set(['UpteDb', 'ngNC2', 'nzlxg', 'HTrJv', 'as29s', 'jwpduf', 'o30O0e', 'xI9TVb', 'WuwhI'])
+const GALLERY_RPCS = new Set(['Zzl0ze'])
 function envelope(details) {
   try {
     const u = new URL(details.url)
@@ -37,6 +38,8 @@ export function readImageRequest(details) {
 export function createPassiveCapture({ now = Date.now } = {}) {
   let active = null
   let uncertain = false
+  const galleryRequests = new Set()
+  let galleryRenderUnproven = false
   function invalidate(reason = 'ownership-uncertain') {
     uncertain = true
     if (active) { active.error ||= reason; active.controller.abort() }
@@ -50,6 +53,13 @@ export function createPassiveCapture({ now = Date.now } = {}) {
         && /generate|streamChat|upload/i.test(u.pathname) && details.method === 'POST'
       if (!batch && !otherSubmit) return
       const e = batch ? envelope(details) : null
+      if (e && GALLERY_RPCS.has(e.rpcid)) {
+        galleryRequests.add(details.id)
+        // A listing can publish old cards after transport completion. If it
+        // overlaps our baseline/window, its DOM delta cannot prove ownership.
+        if (active) { active.error ||= 'gallery-request-overlap'; active.controller.abort() }
+        return
+      }
       if (e && READ_RPCS.has(e.rpcid)) return
       // Unknown RPCs are only tolerated outside an ownership window. Known
       // generation/upload requests outside it can publish delayed results.
@@ -58,7 +68,7 @@ export function createPassiveCapture({ now = Date.now } = {}) {
         return
       }
       const r = readImageRequest(details)
-      if (!active.dispatched || active.request || details.webContentsId !== active.expected.webContentsId || !r
+      if (!active.prepared || active.request || details.webContentsId !== active.expected.webContentsId || !r
         || r.projectId !== active.expected.projectId || r.count !== active.expected.count
         || r.prompts.some(p => p !== normalizePrompt(active.expected.prompt))) return invalidate('request-mismatch')
       active.id = details.id
@@ -66,28 +76,48 @@ export function createPassiveCapture({ now = Date.now } = {}) {
       active.sentAt = now()
     },
     completed(details) {
+      // HTTP completion is not proof that Angular published all old cards.
+      // Keep that missing evidence separate from the paid-submit quarantine:
+      // no safetyStop/postClick is recorded for a refused baseline.
+      if (galleryRequests.delete(details.id)) galleryRenderUnproven = true
       if (!active?.request || active.id !== details.id) return
       if (details.statusCode !== 200 || details.fromCache) return invalidate('request-failed')
       active.complete = true
       active.completedAt = now()
     },
-    failed(details) { if (active?.request && active.id === details.id) invalidate('request-failed') },
+    failed(details) {
+      galleryRequests.delete(details.id)
+      if (active?.request && active.id === details.id) invalidate('request-failed')
+    },
     invalidate,
     begin(expected) {
       if (uncertain) throw new Error('ownership-uncertain')
       if (active) throw new Error('capture-busy')
-      const rec = { expected, controller: new AbortController(), dispatched: false, request: null, complete: false, error: null }
+      if (galleryRequests.size) throw new Error('gallery-request-pending')
+      if (galleryRenderUnproven) throw new Error('gallery-render-unproven')
+      const rec = { expected, controller: new AbortController(), prepared: false, dispatched: false, request: null, complete: false, error: null }
       active = rec
       return {
         signal: rec.controller.signal,
         state: () => ({ request: rec.request, complete: rec.complete, error: rec.error, sentAt: rec.sentAt, completedAt: rec.completedAt }),
+        abort(reason) {
+          rec.error ||= reason
+          rec.controller.abort()
+        },
+        prepare() {
+          if (active !== rec || rec.error || rec.prepared) throw new Error('ownership-uncertain')
+          rec.prepared = true
+        },
         dispatch() {
-          if (active !== rec || rec.error || rec.dispatched) throw new Error('ownership-uncertain')
+          // The helper reports a click after it happened, possibly after an
+          // abort. Record that fact even when observation has already stopped.
+          if (active !== rec || rec.dispatched) throw new Error('ownership-uncertain')
+          rec.prepared = true
           rec.dispatched = true
         },
         release(success = false) {
           if (active !== rec) return
-          if (!success && rec.dispatched) invalidate()
+          if (!success && (rec.dispatched || rec.request)) invalidate()
           rec.controller.abort()
           active = null
         },

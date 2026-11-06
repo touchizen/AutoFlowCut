@@ -60,8 +60,9 @@ export function createPassiveImageGenerator(deps, withViewport) {
     let lease
     try { lease = capture.begin({ webContentsId: wc.id, projectId: project, prompt, count }) }
     catch (e) { return fail(e.message) }
-    let dispatched = false, success = false, timer, inputWatch = false
-    const invalid = () => capture.invalidate('page-or-input-changed')
+    let dispatched = false, success = false, timer, cancellationTimer, inputWatch = false
+    let baseline, selected
+    const invalid = () => lease.abort('page-or-input-changed')
     const events = ['did-navigate', 'did-navigate-in-page', 'render-process-gone', 'destroyed']
     for (const event of events) wc.on(event, invalid)
     const guard = () => {
@@ -77,7 +78,12 @@ export function createPassiveImageGenerator(deps, withViewport) {
     }
     try {
       // Bounds all work, including downloads and a renderer that stops answering.
-      timer = setTimeout(() => capture.invalidate('capture-timeout'), 180000)
+      timer = setTimeout(() => lease.abort('capture-timeout'), 180000)
+      // Cancellation must also abort an isolated read or network download that
+      // is awaiting I/O, not only the next gallery polling iteration.
+      cancellationTimer = setInterval(() => {
+        if (deps.isFlowSafetyBlocked?.()) lease.abort('capture-aborted')
+      }, 100)
       const result = await withViewport(view, '[Flow Image] [Passive]', async ctl => {
         const aborted = () => ctl.aborted || lease.signal.aborted || !!deps.isFlowSafetyBlocked?.()
         guard()
@@ -100,6 +106,7 @@ export function createPassiveImageGenerator(deps, withViewport) {
         deps.setShieldFocusTarget?.('main')
         deps.getMainWindow()?.webContents?.focus()
         const before = await scan()
+        baseline = before
         if (!before?.ok || signature(initial) !== signature(before)) return fail('gallery-changed-before-submit')
         await pause(500)
         // The final snapshot/read-back happens inside the native click's dispatch gate.
@@ -109,14 +116,16 @@ export function createPassiveImageGenerator(deps, withViewport) {
           const last = await scan()
           if (!last?.ok || signature(last) !== signature(before)) return false
           guard()
-          lease.dispatch(); dispatched = true; ctl.clickStarted = true
+          lease.prepare()
           wc.on('before-input-event', invalid); inputWatch = true
           return true
         } })
+        dispatched = !!(click?.success || click?.dispatched || lease.state().request)
+        if (dispatched) { lease.dispatch(); ctl.clickStarted = true }
         guard()
-        if (!dispatched || (!click?.success && !click?.dispatched)) throw new Error('submit-unconfirmed')
+        if (!dispatched) throw new Error('submit-unconfirmed')
         const deadline = Date.now() + 120000
-        let stable = null, stableAt = 0, selected
+        let stable = null, stableAt = 0
         while (Date.now() < deadline) {
           guard()
           const state = lease.state()
@@ -147,9 +156,11 @@ export function createPassiveImageGenerator(deps, withViewport) {
         if (!final.ok || signature({ items: final.items }) !== signature({ items: selected })) throw new Error('gallery-changed-during-download')
         guard()
         return { success: true, images }
-      }, { shieldAll: true })
+      }, { shieldFlow: true })
       if (!result?.success) return result?.errorKind === 'flow-image-ownership-unproven' ? result : fail('capture-aborted', dispatched)
       guard() // Viewport restoration can yield and ownership must still hold.
+      const restored = galleryDelta(baseline, await scan(), count)
+      if (!restored.ok || signature({ items: restored.items }) !== signature({ items: selected })) throw new Error('gallery-changed-during-restore')
       success = true
       if (payload.asyncMode) {
         const generationId = `passive-${randomUUID()}`
@@ -157,9 +168,10 @@ export function createPassiveImageGenerator(deps, withViewport) {
         return { success: true, submitted: true, generationId }
       }
       return result
-    } catch (e) { return fail(lease.state().error || e.message, dispatched) }
+    } catch (e) { return fail(lease.state().error || e.message, dispatched || !!lease.state().request) }
     finally {
       clearTimeout(timer)
+      clearInterval(cancellationTimer)
       for (const event of events) wc.removeListener(event, invalid)
       if (inputWatch) wc.removeListener('before-input-event', invalid)
       lease.release(success)

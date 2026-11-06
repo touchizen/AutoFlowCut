@@ -427,7 +427,7 @@ let automationKeyLock = false
 //   프롬프트에 붙었다(재판독~mouseDown 사이 ≈200–300ms). flowAPIDeps.setShieldFocusTarget 이 세운다.
 let shieldFocusTarget = 'flow'
 
-function makeInputShield() {
+function makeInputShield({ flowView = null } = {}) {
   const win = mainWindow
   if (!win || !win.contentView) return null
   const shield = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } })
@@ -438,10 +438,18 @@ function makeInputShield() {
   // M2-FINAL Q1: 핸들러가 포커스를 메인 창으로 넘긴 뒤(shieldFocusTarget === 'main')엔 Flow 뷰가 아니라 메인 창으로 — 편집기가 포커스를 되찾지 않게.
   shield.webContents.on('focus', () => { try { if (shieldFocusTarget === 'main') win.webContents.focus(); else modeController.getFlowView()?.webContents.focus() } catch (_e) { /* 뷰·창이 이미 없을 수 있다 */ } })
   win.contentView.addChildView(shield)
-  const { width, height } = win.getContentBounds()
-  shield.setBounds({ x: 0, y: 0, width, height })
+  const syncBounds = () => {
+    if (flowView) shield.setBounds(flowView.getBounds())
+    else {
+      const { width, height } = win.getContentBounds()
+      shield.setBounds({ x: 0, y: 0, width, height })
+    }
+  }
+  syncBounds()
+  flowView?.on('bounds-changed', syncBounds)
   return {
     remove() {
+      flowView?.removeListener('bounds-changed', syncBounds)
       try { win.contentView.removeChildView(shield) } catch (_e) { /* 창이 이미 닫혔을 수 있다 */ }
       try { shield.webContents.close() } catch (_e) { /* 이미 닫힘 */ }
     },
