@@ -20,6 +20,7 @@ import { alignMcpModelProviders } from '../utils/mcpModelProviderAlign'
 import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'   // CSV 재적용 보존 목록 — parseFromCSV 와 공유
 import { VIDEO_AUDIO_VOLUMES } from '../exporters/videoAudioVolume'   // 내보내기 창과 같은 허용 값
 import { planMcpFramePairs } from '../utils/mcpFramePairs'   // 2026-10-30 I2V: set-frame-pairs 계획(순수)
+import { getPreservedFlowSubmissionStop } from '../utils/flowSafetyStop'
 
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
 
@@ -262,6 +263,8 @@ export function useMcpServer({
     //   - plain id (예: 'noir'): normalizeStyleId가 'preset:noir'로 wrap (다른 MCP path와 일관).
     //     안 하면 applyStyle()이 prefix 없는 id를 인식 못 해서 조용히 스타일 미적용 회귀.
     window.__mcpGenerateScene = (sceneId, styleId) => {
+      const blocked = getPreservedFlowSubmissionStop(scenes.find(scene => scene.id === sceneId), modeRef.current)
+      if (blocked) return blocked
       if (styleId === 'auto' || styleId === 'none' || styleId == null || styleId === '') {
         return handleGenerateScene(sceneId, styleId)
       }

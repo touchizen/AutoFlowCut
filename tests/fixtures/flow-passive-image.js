@@ -23,6 +23,17 @@ export function card(id, { src, opaque = false } = {}) {
 }
 export const gallery = (...cards) => `<main>${cards.join('')}</main>`
 
+// Reproduce Flow's handset breakpoint: the Agent chip is absent, not merely
+// hidden by a small native bounds value. Zoom changes the CSS viewport width.
+export function responsiveComposer(doc) {
+  const chip = doc.querySelector('flow-agent-mode-toggle-chip')
+  const parent = chip.parentElement
+  return width => {
+    if (width < 600) chip.remove()
+    else if (!chip.isConnected) parent.append(chip)
+  }
+}
+
 export function galleryRequest(overrides = {}) {
   return request({ id: 20, url: request().url.replace('ogiZ0b', 'Zzl0ze'), ...overrides }, (_i, e) => { e[0][0][0] = 'Zzl0ze' })
 }

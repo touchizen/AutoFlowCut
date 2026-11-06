@@ -12,6 +12,7 @@ import { resolveMentions } from '../utils/mentionParser'
 import { getAuthRequiredMessage, getAuthErrorMessage } from '../utils/authMessages'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 import { resolveDisplayError } from '../utils/errorDisplay'
+import { getPreservedFlowSubmissionStop } from '../utils/flowSafetyStop'
 
 /**
  * @param {object} deps
@@ -26,6 +27,13 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
   const upscaylRunningRef = useRef(upscaylRunning)
   upscaylRunningRef.current = upscaylRunning
+  const scenesRef = useRef(scenes)
+  scenesRef.current = scenes
+  const preservedStop = sceneId => getPreservedFlowSubmissionStop(scenesRef.current.find(s => s.id === sceneId), genAPI?.mode)
+  const rejectPreserved = result => {
+    toast.warning(t(`errorSection.kind.${result.errorKind}`))
+    return result
+  }
 
   // 핵심 생성 로직
   // overrideStyleId: MCP 호출 등에서 명시 styleId 줬을 때 사용. undefined면 기존 동작 (style_tag fallback만).
@@ -38,6 +46,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   const _executeSceneGeneration = useCallback(async (sceneId, overrideStyleId = undefined, sceneOverride = undefined) => {
     // 큐에 들어간 뒤 Upscayl이 시작될 수도 있으므로 실제 실행 직전에도 live ref로 확인한다.
     if (upscaylRunningRef.current) return { success: false, error: 'busy' }
+    const blocked = preservedStop(sceneId)
+    if (blocked) return rejectPreserved(blocked)
 
     const rejectUpscaylBusy = () => {
       // 원인은 생성 중복이 아니라 Upscayl 진행이다 — 원인을 맞게 알린다.
@@ -45,7 +55,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       return { success: false, error: 'busy' }
     }
 
-    const baseScene = scenes.find(s => s.id === sceneId)
+    const baseScene = scenesRef.current.find(s => s.id === sceneId)
     const scene = (baseScene && sceneOverride) ? { ...baseScene, ...sceneOverride } : baseScene
     if (!scene?.prompt) {
       toast.warning(t('toast.noPrompt'))
@@ -89,6 +99,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
 
     // auth/sync await 동안 시작된 Upscayl을 status 변경과 엔진 제출 직전에 다시 막는다.
     if (upscaylRunningRef.current) return rejectUpscaylBusy()
+    const latestBlock = preservedStop(sceneId)
+    if (latestBlock) return rejectPreserved(latestBlock)
 
     // generatingStartedAt 을 새로 찍는다 — 안 그러면 이전 생성의 stale 시작시각이 남아
     //   경과시간이 엉뚱하게(예: 1분인데 1시간 25분) 표시된다. (배치/레퍼런스 경로는 이미 세팅.)
@@ -124,6 +136,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       //   — memory-only 레퍼런스는 ref.data 에만 base64 가 있어, 떨구면 디스크에 없는 ref 가 조용히
       //   빈 inlineData 로 넘어가 캐릭터 일관성이 깨진다.
       const callEngine = (refs) => {
+        const blocked = preservedStop(sceneId)
+        if (blocked) return Promise.resolve(rejectPreserved(blocked))
         const allMatched = scenesHook.getMatchingReferences(scene, refs)
         const matchedRefs = allMatched
           .filter(r => r.mediaId || r.name || r.data || r.filePath)
@@ -238,13 +252,15 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
   // sceneOverride 선택 — 상세 모달 재생성이 방금 편집한 스냅샷(editData)을 명시 전달(Issue #4/#5).
   const handleGenerateScene = useCallback(async (sceneId, overrideStyleId = undefined, sceneOverride = undefined) => {
     if (upscaylRunningRef.current) return { success: false, error: 'busy' }
+    const blocked = preservedStop(sceneId)
+    if (blocked) return rejectPreserved(blocked)
 
     if (!generationQueue) {
       return _executeSceneGeneration(sceneId, overrideStyleId, sceneOverride)
     }
 
     try {
-      await generationQueue.enqueue({
+      return await generationQueue.enqueue({
         mode: genAPI?.mode,
         type: 'scene',
         label: `Scene #${sceneId}`,

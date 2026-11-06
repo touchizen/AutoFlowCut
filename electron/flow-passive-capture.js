@@ -35,11 +35,13 @@ export function readImageRequest(details) {
 /** Main-process memory only. Call before() from the EXISTING session listener.
  * No observer method modifies, cancels or replays a request. Unowned submissions
  * quarantine even after HTTP completion: their gallery updates may arrive later. */
-export function createPassiveCapture({ now = Date.now } = {}) {
+export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } = {}) {
   let active = null
   let uncertain = false
   const galleryRequests = new Set()
   let galleryRenderUnproven = false
+  let galleryKey = null, galleryStableAt = 0
+  const resetGallery = () => { galleryKey = null; galleryStableAt = now() }
   function invalidate(reason = 'ownership-uncertain') {
     uncertain = true
     if (active) { active.error ||= reason; active.controller.abort() }
@@ -55,9 +57,12 @@ export function createPassiveCapture({ now = Date.now } = {}) {
       const e = batch ? envelope(details) : null
       if (e && GALLERY_RPCS.has(e.rpcid)) {
         galleryRequests.add(details.id)
-        // A listing can publish old cards after transport completion. If it
-        // overlaps our baseline/window, its DOM delta cannot prove ownership.
-        if (active) { active.error ||= 'gallery-request-overlap'; active.controller.abort() }
+        resetGallery()
+        // A refresh after our observed submit is normal. Before it, or from a
+        // different view, the baseline cannot distinguish delayed old results.
+        if (active && (!active.request || details.webContentsId !== active.expected.webContentsId)) {
+          active.error ||= 'gallery-request-overlap'; active.controller.abort()
+        }
         return
       }
       if (e && READ_RPCS.has(e.rpcid)) return
@@ -79,7 +84,7 @@ export function createPassiveCapture({ now = Date.now } = {}) {
       // HTTP completion is not proof that Angular published all old cards.
       // Keep that missing evidence separate from the paid-submit quarantine:
       // no safetyStop/postClick is recorded for a refused baseline.
-      if (galleryRequests.delete(details.id)) galleryRenderUnproven = true
+      if (galleryRequests.delete(details.id)) { galleryRenderUnproven = true; resetGallery() }
       if (!active?.request || active.id !== details.id) return
       if (details.statusCode !== 200 || details.fromCache) return invalidate('request-failed')
       active.complete = true
@@ -94,18 +99,25 @@ export function createPassiveCapture({ now = Date.now } = {}) {
       if (uncertain) throw new Error('ownership-uncertain')
       if (active) throw new Error('capture-busy')
       if (galleryRequests.size) throw new Error('gallery-request-pending')
-      if (galleryRenderUnproven) throw new Error('gallery-render-unproven')
       const rec = { expected, controller: new AbortController(), prepared: false, dispatched: false, request: null, complete: false, error: null }
       active = rec
       return {
         signal: rec.controller.signal,
-        state: () => ({ request: rec.request, complete: rec.complete, error: rec.error, sentAt: rec.sentAt, completedAt: rec.completedAt }),
+        state: () => ({ request: rec.request, complete: rec.complete, error: rec.error, sentAt: rec.sentAt, completedAt: rec.completedAt,
+          galleryPending: galleryRequests.size > 0, galleryRenderUnproven }),
+        observeGallery(snapshot) {
+          if (!snapshot?.ok || galleryRequests.size) { resetGallery(); return }
+          const key = JSON.stringify([snapshot.revision, snapshot.items.map(i => [i.mediaId, i.src]).sort()])
+          if (key !== galleryKey) { galleryKey = key; galleryStableAt = now() }
+          else if (now() - galleryStableAt >= gallerySettleMs) galleryRenderUnproven = false
+        },
         abort(reason) {
           rec.error ||= reason
           rec.controller.abort()
         },
         prepare() {
           if (active !== rec || rec.error || rec.prepared) throw new Error('ownership-uncertain')
+          if (galleryRequests.size || galleryRenderUnproven) throw new Error('gallery-render-unproven')
           rec.prepared = true
         },
         dispatch() {

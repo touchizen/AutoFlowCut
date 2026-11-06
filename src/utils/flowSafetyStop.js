@@ -2,6 +2,15 @@
 let stopped = null
 const listeners = new Set()
 export const getFlowSafetyStop = () => stopped
+// A restart clears the process latch, not the persisted fact that this image
+// was paid for but not collected. Only explicit recovery may clear that fact.
+export function getPreservedFlowSubmissionStop(scene, mode) {
+  if (mode !== 'flow' || !scene?.generationId || !scene.retryBlocked) return null
+  const errorKind = scene.errorKind || 'flow-image-ownership-unproven'
+  return { success: false, retryBlocked: true, generationId: scene.generationId,
+    errorKind, error: scene.error || errorKind, errorParams: scene.errorParams,
+    reason: scene.errorParams?.reason || scene.reason || errorKind }
+}
 export function subscribeFlowSafetyStop(listener) {
   listeners.add(listener)
   return () => listeners.delete(listener)

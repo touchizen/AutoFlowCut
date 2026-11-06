@@ -82,12 +82,50 @@ it('ignores a proven read-only RPC without taking ownership', () => {
   expect(lease.state()).toMatchObject({ error: null, request: null, complete: false })
 })
 
+it('requires a stable gallery after a completed initial listing before preparing a click', () => {
+  let time = 0
+  const observer = capture.createPassiveCapture({ now: () => time, gallerySettleMs: 2000 })
+  observer.before(galleryRequest())
+  expect(() => observer.begin({})).toThrow('gallery-request-pending')
+  observer.completed({ id: 20, statusCode: 200 })
+  const lease = observer.begin({})
+  expect(() => lease.prepare()).toThrow('gallery-render-unproven')
+  lease.observeGallery({ ok: true, items: [{ mediaId: 'old', src: 'url' }] })
+  time = 1999
+  lease.observeGallery({ ok: true, items: [{ mediaId: 'old', src: 'url' }] })
+  expect(() => lease.prepare()).toThrow('gallery-render-unproven')
+  time = 2000
+  lease.observeGallery({ ok: true, items: [{ mediaId: 'old', src: 'url' }] })
+  expect(() => lease.prepare()).not.toThrow()
+})
+
+it('resets gallery settlement on DOM changes and a later listing completion', () => {
+  let time = 0
+  const observer = capture.createPassiveCapture({ now: () => time, gallerySettleMs: 2000 })
+  const lease = observer.begin({ webContentsId: 7, projectId: PROJECT, prompt: PROMPT, count: 1 })
+  lease.prepare(); observer.before(request()); lease.dispatch()
+  observer.before(galleryRequest()); observer.completed({ id: 20, statusCode: 200 })
+  lease.observeGallery({ ok: true, items: [] })
+  time = 1900
+  lease.observeGallery({ ok: true, items: [{ mediaId: 'new', src: 'url' }] })
+  time = 3000
+  expect(lease.state().galleryRenderUnproven).toBe(true)
+  observer.before(galleryRequest({ id: 21 })); observer.completed({ id: 21, statusCode: 200 })
+  lease.observeGallery({ ok: true, items: [{ mediaId: 'new', src: 'url' }] })
+  time = 4999
+  lease.observeGallery({ ok: true, items: [{ mediaId: 'new', src: 'url' }] })
+  expect(lease.state().galleryRenderUnproven).toBe(true)
+  time = 5000
+  lease.observeGallery({ ok: true, items: [{ mediaId: 'new', src: 'url' }] })
+  expect(lease.state()).toMatchObject({ error: null, galleryRenderUnproven: false })
+})
+
 it('refuses a baseline while an earlier gallery listing is in flight', () => {
   const observer = capture.createPassiveCapture()
   observer.before(galleryRequest())
   expect(() => observer.begin({})).toThrow('gallery-request-pending')
   observer.completed({ id: 20, statusCode: 200 })
-  expect(() => observer.begin({})).toThrow('gallery-render-unproven')
+  expect(() => observer.begin({})).not.toThrow()
 })
 
 it('rejects a gallery listing that starts during the ownership window', () => {

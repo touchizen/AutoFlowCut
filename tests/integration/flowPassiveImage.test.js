@@ -12,36 +12,68 @@ import { downloadFlowImage } from '../../electron/flow-image-download.js'
 import { typeFlowText } from '../../electron/flow-native-input.js'
 import { applyNativeSettings } from '../../electron/flow-native-settings.js'
 import { IMAGE_COMPOSER_KO } from '../fixtures/flow-live-dom-20260924.js'
-import { request, galleryRequest, PAGE, PROJECT, PROMPT, OLD, NEW, gallery, card } from '../fixtures/flow-passive-image.js'
+import { request, galleryRequest, PAGE, PROJECT, PROMPT, OLD, NEW, gallery, card, responsiveComposer } from '../fixtures/flow-passive-image.js'
 beforeEach(() => { vi.useFakeTimers(); _resetDomStageForTests(); applyNativeSettings.mockClear() })
 afterEach(() => { vi.useRealTimers(); document.body.innerHTML = '' })
 function harness(options = {}) {
   document.body.innerHTML = IMAGE_COMPOSER_KO + gallery(card(OLD))
   const button = document.querySelector('button[type="submit"]'); button.removeAttribute('disabled'); button.classList.remove('mat-mdc-button-disabled')
   const wc = new EventEmitter(); let url = PAGE
+  const isolatedWorld = {}
   Object.assign(wc, { id: 7, session: {}, getURL: () => url, isDestroyed: () => false, isFocused: () => true,
     focus: vi.fn(), selectAll: vi.fn(), insertText: vi.fn(async text => { document.querySelector('.ProseMirror').textContent = text }),
     executeJavaScript: vi.fn(async () => { throw new Error('forbidden main world') }),
     executeJavaScriptInIsolatedWorld: vi.fn(async (_id, scripts) => {
       const code = scripts[0].code
       expect(code).not.toMatch(/window\.__autoflowcut|window\.fetch|XMLHttpRequest|dispatchEvent|execCommand/)
-      return Function('document', 'location', `return (${code})`)(document, { href: url })
+      return Function('document', 'location', 'globalThis', `return (${code})`)(document, { href: url }, isolatedWorld)
     }),
   })
   const observer = createPassiveCapture()
-  let bounds = { x: 0, y: 0, width: options.narrow ? 600 : 1200, height: 900 }
-  const view = Object.assign(new EventEmitter(), { webContents: wc, getBounds: () => bounds, setBounds: b => { bounds = b; view.emit('bounds-changed') } })
+  let bounds = { x: 0, y: 0, width: options.narrow ? 597 : 1200, height: 900 }
+  let zoom = options.zoom || 1
+  const renderViewport = responsiveComposer(document)
+  const relayout = () => renderViewport(bounds.width / zoom)
+  Object.assign(wc, { getZoomFactor: () => zoom, setZoomFactor: vi.fn(value => { zoom = value; relayout() }) })
+  relayout()
+  const view = Object.assign(new EventEmitter(), { webContents: wc, getBounds: () => bounds, setBounds: b => { bounds = b; relayout(); view.emit('bounds-changed') } })
   const submit = vi.fn(async () => {
-    observer.before(request())
+    if (options.beforeRequestPlaceholder) {
+      document.querySelector('main').insertAdjacentHTML('afterbegin', '<flow-image-tile class="old-placeholder"></flow-image-tile>')
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    if (options.beforeRequestCard || options.beforeRequestLoading) {
+      if (options.beforeRequestLoading) document.querySelector('main').insertAdjacentHTML('beforeend', '<div role="progressbar"></div>')
+      document.querySelector('main').insertAdjacentHTML('afterbegin', card(NEW))
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    observer.before(request({}, inner => {
+      while (inner[1].length < (options.count || 1)) inner[1].push(structuredClone(inner[1][0]))
+    }))
+    if (options.refresh) observer.before(galleryRequest())
     if (options.foreign) observer.before(request({ id: 11, webContentsId: 88 }))
     if (options.httpError) observer.completed({ id: 10, statusCode: 403 })
     else observer.completed({ id: 10, statusCode: 200 })
     if (options.navigate) { url = PAGE + '?changed'; wc.emit('did-navigate-in-page') }
     if (options.renderDelay) {
+      // The browser render task follows network submission; fake time must
+      // distinguish the two. Same-millisecond ordering remains unproven.
+      await new Promise(resolve => setTimeout(resolve, 10))
       document.querySelector('main').insertAdjacentHTML('afterbegin', '<flow-image-tile class="pending-result"></flow-image-tile>')
       setTimeout(() => { document.querySelector('.pending-result').remove(); document.querySelector('main').insertAdjacentHTML('afterbegin', card(NEW)) }, 1000)
-    } else if (!options.missing) document.querySelector('main').insertAdjacentHTML('afterbegin', card(NEW))
+    } else if (options.beforeRequestPlaceholder) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      document.querySelector('.old-placeholder').outerHTML = card(NEW)
+    } else if (options.beforeRequestLoading) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      document.querySelector('[role="progressbar"]').remove()
+    } else if (!options.missing && !options.beforeRequestCard) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      const ids = [NEW, '30000000-0000-4000-8000-000000000003', '40000000-0000-4000-8000-000000000004']
+      for (const id of ids.slice(0, options.count || 1)) document.querySelector('main').insertAdjacentHTML('afterbegin', card(id))
+    }
     if (options.excess) document.querySelector('main').insertAdjacentHTML('afterbegin', card('30000000-0000-4000-8000-000000000003'))
+    if (options.refresh) observer.completed({ id: 20, statusCode: 200 })
   })
   const net = { request: vi.fn(() => {
     const req = new EventEmitter(); req.abort = vi.fn()
@@ -73,9 +105,9 @@ function harness(options = {}) {
     deps.getMainWindow = () => nativeShield.win
   }
   const angular = createFlowAngular(deps)
-  if (options.nativeClickFailure) {
-    button.getBoundingClientRect = () => ({ x: 100, y: 100, width: 40, height: 40 })
-    document.elementFromPoint = () => button
+  if (options.nativeClickFailure || options.nativeClick) {
+    button.getBoundingClientRect = () => ({ x: options.narrow ? 620 : 100, y: 100, width: 40, height: 40 })
+    document.elementFromPoint = vi.fn(() => button)
     wc.sendInputEvent = vi.fn(event => { if (event.type === 'mouseUp') void submit() })
     const native = createSharedHelpers({ ...deps, constants: {}, isolatedFlowReads: true }).trustedClickOnFlowView
     const original = deps.trustedClickOnFlowView
@@ -97,7 +129,7 @@ function harness(options = {}) {
     ipc = safety.ipcMain
   }
   registerFlowAPIIPC(ipc, deps)
-  return { wc, view, deps, observer, angular, net, submit, shield, handlers, nativeShield }
+  return { wc, view, deps, observer, angular, net, submit, shield, handlers, nativeShield, isolatedWorld }
 }
 async function drive(h, payload = {}) {
   const p = h.angular.generateImage({ prompt: PROMPT, projectId: PROJECT, ...payload })
@@ -113,7 +145,22 @@ it('runs native input, passive request, isolated delta and main download with ze
   expect(h.deps.createInputShield).toHaveBeenCalledOnce()
   expect(h.shield.remove).toHaveBeenCalledOnce()
   expect(h.wc.eventNames()).toEqual([])
+  expect(Object.keys(h.isolatedWorld)).toEqual([])
   expect(vi.getTimerCount()).toBe(0)
+})
+it.each([1, 1.25])('restores missing narrow composer controls and original zoom %s without covering app Stop', async zoom => {
+  const h = harness({ narrow: true, cancellable: true, nativeClick: true, zoom })
+  expect(document.querySelector('flow-agent-mode-toggle-chip')).toBeNull()
+  const originalBounds = { ...h.view.getBounds() }
+  expect(await drive(h)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
+  expect(h.submit).toHaveBeenCalledOnce()
+  const down = h.wc.sendInputEvent.mock.calls.find(([event]) => event.type === 'mouseDown')[0]
+  expect(down.x).toBe(Math.round(640 * 597 / 700))
+  expect(document.elementFromPoint).toHaveBeenCalledWith(640, 120)
+  expect(h.view.getBounds()).toEqual(originalBounds)
+  expect(h.wc.getZoomFactor()).toBe(zoom)
+  expect(document.querySelector('flow-agent-mode-toggle-chip')).toBeNull()
+  expect(h.nativeShield.surfaces).toHaveLength(0)
 })
 it('keeps the async submit/check/collect contract while serializing the whole operation', async () => {
   const h = harness(); const r = await drive(h, { asyncMode: true })
@@ -121,6 +168,51 @@ it('keeps the async submit/check/collect contract while serializing the whole op
   expect(await h.handlers.get('flow:check-generation')({}, r)).toMatchObject({ completed: true, responseCount: 1 })
   expect(await h.handlers.get('flow:collect-generation')({}, r)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
   expect(h.deps.pendingGenerations.size).toBe(0)
+})
+it('loads an initial project listing then generates and collects its own image', async () => {
+  const h = harness()
+  h.observer.before(galleryRequest())
+  h.observer.completed({ id: 20, statusCode: 200 })
+  const listed = '30000000-0000-4000-8000-000000000003'
+  setTimeout(() => document.querySelector('main').insertAdjacentHTML('beforeend', card(listed)), 1000)
+  const result = await drive(h, { asyncMode: true })
+  expect(result).toMatchObject({ success: true, submitted: true })
+  expect(await h.handlers.get('flow:check-generation')({}, result)).toMatchObject({ completed: true })
+  expect(await h.handlers.get('flow:collect-generation')({}, result)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
+  expect(h.net.request).toHaveBeenCalledOnce()
+  expect(h.wc.executeJavaScript).not.toHaveBeenCalled()
+})
+it('accepts a normal gallery refresh immediately after its own submission', async () => {
+  const h = harness({ refresh: true })
+  expect(await drive(h)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
+  expect(h.submit).toHaveBeenCalledOnce()
+})
+it('collects exactly three new images after an initial listing and normal refresh', async () => {
+  const h = harness({ refresh: true, count: 3 })
+  h.observer.before(galleryRequest())
+  h.observer.completed({ id: 20, statusCode: 200 })
+  const result = await drive(h, { batchCount: 3 })
+  expect(result.success).toBe(true)
+  expect(result.images).toHaveLength(3)
+  expect(result.images.some(item => item.mediaId === OLD)).toBe(false)
+  expect(h.net.request).toHaveBeenCalledTimes(3)
+})
+it('rejects an old card seen during initial settlement that disappears and reappears after submit', async () => {
+  const h = harness({ refresh: true })
+  h.observer.before(galleryRequest())
+  h.observer.completed({ id: 20, statusCode: 200 })
+  setTimeout(() => document.querySelector('main').insertAdjacentHTML('beforeend', card(NEW)), 500)
+  setTimeout(() => document.querySelector(`img[data-media-id="${NEW}"]`).closest('a').remove(), 1000)
+  expect(await drive(h)).toMatchObject({ success: false, reason: 'gallery-before-request' })
+  expect(h.net.request).not.toHaveBeenCalled()
+})
+it.each(['excess', 'beforeRequestCard', 'beforeRequestLoading', 'beforeRequestPlaceholder'])('rejects ambiguous refresh results: %s', async kind => {
+  const h = harness({ refresh: true, [kind]: true })
+  const result = await drive(h)
+  expect(result).toMatchObject({ success: false, postClick: true, retryBlocked: true,
+    reason: kind === 'excess' ? 'gallery-count' : 'gallery-before-request' })
+  expect(h.net.request).not.toHaveBeenCalled()
+  expect(Object.keys(h.isolatedWorld)).toEqual([])
 })
 it.each(['foreign', 'httpError', 'navigate', 'excess', 'missing', 'duringDownload'])('refuses %s and blocks retry', async kind => {
   const h = harness({ [kind]: true }); const r = await drive(h)
@@ -188,16 +280,14 @@ it('refuses a late existing gallery card from a listing started before submissio
   expect(h.net.request).not.toHaveBeenCalled()
 })
 
-it('refuses an already completed listing whose old cards have not rendered yet', async () => {
+it('settles a delayed initial listing without assigning its old card to the new submission', async () => {
   const h = harness({ missing: true })
   h.observer.before(galleryRequest())
   h.observer.completed({ id: 20, statusCode: 200 })
   setTimeout(() => document.querySelector('main').insertAdjacentHTML('beforeend', card(NEW)), 1000)
   const result = await drive(h)
-  expect(result).toMatchObject({ success: false, reason: 'gallery-render-unproven' })
-  expect(result.postClick).toBeUndefined()
-  expect(result.safetyStop).toBeUndefined()
-  expect(h.submit).not.toHaveBeenCalled()
+  expect(result).toMatchObject({ success: false, postClick: true, reason: 'result-timeout' })
+  expect(h.submit).toHaveBeenCalledOnce()
   expect(h.net.request).not.toHaveBeenCalled()
 })
 

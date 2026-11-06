@@ -244,7 +244,12 @@ export function createSharedHelpers(ctx) {
 
     // 유효 좌표는 0..width-1 / 0..height-1 이다. `>` 로 검사하면 x === width 가 "안"으로 통과해
     //   뷰 밖을 클릭하고 성공을 반환한다(옛 clamp 도 width-1 로 잘랐다).
-    const outside = (c, b) => c.x < 0 || c.y < 0 || c.x >= b.width || c.y >= b.height
+    const zoom = flowView.webContents.getZoomFactor?.() || 1
+    const nativePoint = c => ({ x: Math.round(c.x * zoom), y: Math.round(c.y * zoom) })
+    const outside = (c, b) => {
+      const p = nativePoint(c)
+      return p.x < 0 || p.y < 0 || p.x >= b.width || p.y >= b.height
+    }
 
     // 0×0(모달/드래그 중)이면 재보기 전에 키운다 — 그 상태의 좌표는 의미가 없다.
     if (wasHidden) await enlargeOffscreen()
@@ -307,7 +312,7 @@ export function createSharedHelpers(ctx) {
       // sendInputEvent로 trusted click (mouseMove → mouseDown → mouseUp)
       // mouseMove 먼저 보내서 hover 상태 생성
       if (token.aborted) return { success: false, error: 'aborted' }
-      flowView.webContents.sendInputEvent({ type: 'mouseMove', x: coords.x, y: coords.y })
+      flowView.webContents.sendInputEvent({ type: 'mouseMove', ...nativePoint(coords) })
       await new Promise(r => setTimeout(r, 100))
 
       const hit = await hitTest(coords.x, coords.y, coords.url)
@@ -336,7 +341,7 @@ export function createSharedHelpers(ctx) {
       // ⚠️ 좌표는 measure 시점의 bounds 기준이다. 위 100ms 사이에 모달이 열리면 layout 이 뷰를
       //   0×0 으로 접고(네이티브 뷰라 CSS 로 못 가리니 접는다), mouseDown/Up 은 아무 데도 안 닿는다.
       //   그런데도 success 를 반환하면 또 "아무것도 안 누르고 성공" 이다. 누르기 직전에 다시 본다.
-      if (outside(coords, flowView.getBounds())) {
+      if ((flowView.webContents.getZoomFactor?.() || 1) !== zoom || outside(coords, flowView.getBounds())) {
         console.warn('[TrustedClick] View bounds changed mid-click — aborting instead of clicking nowhere')
         if (opts.required) {
           await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'bounds-changed-mid-click', { coords })
@@ -348,12 +353,12 @@ export function createSharedHelpers(ctx) {
       // M2-R1 F4(a): 여기서부터의 실패(뷰 접힘·throw·타임아웃)는 "클릭이 안 됐다"가 아니라 "됐을 수 있다" — 페이지가 제출(과금)했을 수
       //   있으므로 결과에 dispatched:true 를 실어 호출부가 gen 을 지우지 않고 waiter/마감 경로로 가게 한다.
       token.dispatched = true
-      flowView.webContents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
+      flowView.webContents.sendInputEvent({ type: 'mouseDown', ...nativePoint(coords), button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 80))
 
       // ⚠️ down 을 보냈으면 up 은 **무조건** 보낸다. 중간에 그냥 return 하면 렌더러에 press 상태가
       //    남아 drag/selection 이 걸린 채로 다음 동작이 돈다.
-      flowView.webContents.sendInputEvent({ type: 'mouseUp', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
+      flowView.webContents.sendInputEvent({ type: 'mouseUp', ...nativePoint(coords), button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 200))
 
       // down 과 up 사이에 모달이 뷰를 접었다면 클릭은 완성되지 않았다 — 성공이라 말하지 않는다.

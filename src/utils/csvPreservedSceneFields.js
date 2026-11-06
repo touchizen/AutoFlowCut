@@ -13,6 +13,8 @@
 export const CSV_PRESERVED_SCENE_FIELDS = Object.freeze([
   // 이미지 결과
   'image', 'imagePath', 'mediaId', 'generatingStartedAt', 'image_size', 'donePrompt',
+  // 미수집 이미지 제출 — CSV 재적용은 복구가 아니다. 재시작 후에도 ID·차단·사유를 함께 보존한다.
+  'generationId', 'retryBlocked', 'safetyStop', 'reason', 'error', 'errorKind', 'errorParams',
   // 이미지 생성 메타 — 이미지 탭의 모델명·시드·생성 시각
   'model', 'seed', 'generatedAt', 'generatingEndedAt',
   // Upscayl(feature/self-render): 업스케일 시각 — 버리면 이미 업스케일한 이미지를 다시 업스케일 대상으로 센다(imagePatch)

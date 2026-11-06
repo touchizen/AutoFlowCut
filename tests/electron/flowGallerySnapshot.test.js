@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import * as galleryProbe from '../../electron/flow-gallery-snapshot.js'
 import { PROJECT, OLD, NEW, PAGE, card, gallery } from '../fixtures/flow-passive-image.js'
 const scan = html => { document.body.innerHTML = html; return galleryProbe.scanImageGallery(document, PAGE) }
@@ -37,4 +37,43 @@ it('ignores unattached data-media-id previews outside result cards', () => {
 })
 it.each(['<flow-image-tile></flow-image-tile>', `<a href="/project/${PROJECT}/edit/empty"></a>`])('rejects pre-existing incomplete result containers: %s', incomplete => {
   expect(scan(gallery(card(OLD), incomplete))).toMatchObject({ ok: false, reason: 'gallery-incomplete' })
+})
+it('records first appearance between polls in an isolated gallery observer and disconnects', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(1000)
+  document.body.innerHTML = gallery(card(OLD))
+  const watch = galleryProbe.observeImageGallery(document, PAGE, galleryProbe.scanImageGallery)
+  try {
+    expect(watch.read().firstSeen[OLD]).toBe(1000)
+    vi.setSystemTime(1100)
+    document.querySelector('main').insertAdjacentHTML('beforeend', card(NEW))
+    await Promise.resolve()
+    vi.setSystemTime(1200)
+    document.querySelector(`img[data-media-id="${NEW}"]`).closest('a').remove()
+    await Promise.resolve()
+    expect(watch.read().firstSeen[NEW]).toBe(1100)
+    watch.disconnect()
+    const revision = watch.read().revision
+    document.querySelector('main').insertAdjacentHTML('beforeend', card(NEW))
+    await Promise.resolve()
+    expect(watch.read().revision).toBe(revision)
+  } finally { watch.disconnect(); vi.useRealTimers() }
+})
+it('retains first appearance while the gallery is still loading', async () => {
+  document.body.innerHTML = gallery(card(OLD))
+  const watch = galleryProbe.observeImageGallery(document, PAGE, galleryProbe.scanImageGallery)
+  try {
+    document.querySelector('main').insertAdjacentHTML('beforeend', '<div role="progressbar"></div>' + card(NEW))
+    await Promise.resolve()
+    expect(watch.read()).toMatchObject({ ok: false, firstSeen: { [NEW]: expect.any(Number) } })
+  } finally { watch.disconnect() }
+})
+it('rereads currentSrc even when the image resource changes without a DOM mutation', () => {
+  document.body.innerHTML = gallery(card(OLD))
+  const watch = galleryProbe.observeImageGallery(document, PAGE, galleryProbe.scanImageGallery)
+  try {
+    const src = 'https://flow.google.com/asb/resized=s1600'
+    Object.defineProperty(document.querySelector('img'), 'currentSrc', { get: () => src })
+    expect(watch.read().items[0].src).toBe(src)
+  } finally { watch.disconnect() }
 })

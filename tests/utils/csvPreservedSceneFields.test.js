@@ -48,6 +48,11 @@ describe('CSV_PRESERVED_SCENE_FIELDS', () => {
 })
 
 describe('pickPreservedSceneFields', () => {
+  it('preserves paid image ID, retry block and the full stop reason together', () => {
+    const stopped = { generationId: 'paid-1', retryBlocked: true, error: 'flow-unusual-activity',
+      errorKind: 'flow-unusual-activity', errorParams: { reason: 'detected' }, reason: 'detected', safetyStop: true }
+    expect(pickPreservedSceneFields(stopped)).toMatchObject(stopped)
+  })
   it('목록의 키만 정확히 옮긴다', () => {
     const existing = { prompt: 'p', start_time: 1, model: 'Nano Banana 2', videoT2VPath: '/v.mp4', extra: 'x' }
     const picked = pickPreservedSceneFields(existing)

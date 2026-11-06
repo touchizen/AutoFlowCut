@@ -33,7 +33,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { isFlowPageUrl, isLegacyFlowUrl, projectIdFromFlowUrl } from '../flowUrl.js'
 import { updateBounds, getLayoutDragging } from './layout.js'
-import { computeInPlaceBounds, needsAutomationViewport } from '../offscreen-bounds.js'
+import { computeInPlaceBounds, needsAutomationViewport, AUTOMATION_MIN_WIDTH, AUTOMATION_MIN_HEIGHT } from '../offscreen-bounds.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from '../flow-rpc-capture.js'
 import { armDeadline, settleGen } from '../flow-rpc-router.js'
 import {
@@ -458,6 +458,7 @@ export function createFlowAngular(deps) {
     let hadFocus = false
     try { hadFocus = !!(flowView.webContents.isFocused && flowView.webContents.isFocused()) } catch (_e) { hadFocus = false }
     let shield = null
+    let restoreZoom = null
     const ctl = { aborted: false, clickStarted: false }
     let timer = null
     // M2-CLOSE O1: 키 입력 잠금은 DOM 단계 전체 — 뷰포트 확장(방패)보다 먼저 켜고 finally 의 마지막에 끈다(뷰포트 확장도 같은 try 안이라 어떤 출구든 푼다).
@@ -481,6 +482,19 @@ export function createFlowAngular(deps) {
       if (opts.shieldFlow && !shield) {
         shield = deps.createInputShield?.({ flowView })
         if (!shield) return kindResult('flow-image-ownership-unproven', { reason: 'input-shield-unavailable', retryBlocked: true })
+        // Enlarge the CSS viewport inside the existing native pane. This makes
+        // handset-only controls render without covering the app's Stop button
+        // in any split orientation. Native click coordinates account for zoom.
+        const wc = flowView.webContents
+        const zoom = wc.getZoomFactor?.() || 1
+        const fit = Math.min(zoom, (startBounds?.width || 0) / AUTOMATION_MIN_WIDTH,
+          (startBounds?.height || 0) / AUTOMATION_MIN_HEIGHT)
+        if (fit < zoom) {
+          if (fit < 0.25 || !wc.setZoomFactor) return kindResult('flow-image-ownership-unproven', { reason: 'composer-viewport-unavailable', retryBlocked: true })
+          restoreZoom = zoom
+          wc.setZoomFactor(fit)
+          await sleep(300)
+        }
       }
       const run = fn(ctl)
       run.catch(() => {})   // 워치독이 이긴 뒤의 zombie reject 는 unhandled 가 되면 안 된다(race 는 따로 구독한다)
@@ -501,6 +515,9 @@ export function createFlowAngular(deps) {
       return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })
     } finally {
       if (timer) clearTimeout(timer)
+      if (restoreZoom !== null) {
+        try { flowView.webContents.setZoomFactor(restoreZoom); await sleep(200) } catch { /* view destroyed */ }
+      }
       // M2-LIVE N1: 방패는 레이아웃 복원 전에 — 뷰가 사용자 위에 있는 동안은 언제나 방패가 있다.
       if (shield) { try { shield.remove() } catch (_e) { /* 창이 이미 없을 수 있다 */ } }
       setShieldTarget('flow')   // M2-FINAL Q1: 다음 단계의 기본값으로 되돌린다(방패를 내린 뒤)

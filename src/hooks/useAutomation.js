@@ -4,7 +4,7 @@
  * Concurrent Queue 방식 (동시 처리)
  */
 
-import { getFlowSafetyStop, subscribeFlowSafetyStop } from '../utils/flowSafetyStop'
+import { getFlowSafetyStop, subscribeFlowSafetyStop, getPreservedFlowSubmissionStop } from '../utils/flowSafetyStop'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveSceneStyle, presetTagForStyleId } from '../services/styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
@@ -654,12 +654,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         : force
           ? scenes.filter(s => s.prompt)
           : filterPendingScenes(scenes)
-    const unresolved = mode === 'flow' && targetScenes.find(scene => scene.generationId && scene.retryBlocked)
+    const unresolved = targetScenes.map(scene => getPreservedFlowSubmissionStop(scene, mode)).find(Boolean)
     if (unresolved) {
       setIsRunning(false)
       setStatus('error')
       setStatusMessage(t(`errorSection.kind.${unresolved.errorKind || 'flow-image-ownership-unproven'}`))
-      return { success: false, retryBlocked: true, generationId: unresolved.generationId }
+      return unresolved
     }
 
     const total = targetScenes.length

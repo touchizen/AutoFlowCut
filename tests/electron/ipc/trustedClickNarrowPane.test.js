@@ -69,6 +69,30 @@ describe('trustedClickOnFlowView — narrow Flow pane', () => {
     layout.setModalVisible(false)
   })
 
+  it('scales native input while keeping DOM hit tests in CSS coordinates at reduced zoom', async () => {
+    const { ctx, flowView } = makeCtx({
+      bounds: { x: 0, y: 0, width: 597, height: 900 },
+      coordsByCall: [{ x: 640, y: 500, width: 40, height: 40, visible: true }],
+    })
+    flowView.webContents.getZoomFactor = () => 0.8
+    const result = await createSharedHelpers(ctx).trustedClickOnFlowView('document.querySelector("button")')
+    expect(result.success).toBe(true)
+    expect(clicksAt(flowView)).toEqual([{ x: 512, y: 400 }])
+    expect(flowView.setBounds).not.toHaveBeenCalled()
+    expect(flowView.webContents.executeJavaScript.mock.calls.find(([code]) => code.includes('elementFromPoint'))[0]).toContain('640')
+  })
+
+  it('refuses a zoom change during the final async dispatch guard', async () => {
+    const { ctx, flowView } = makeCtx({ coordsByCall: [{ x: 100, y: 100, width: 40, height: 40 }] })
+    let zoom = 0.8
+    flowView.webContents.getZoomFactor = () => zoom
+    const result = await createSharedHelpers(ctx).trustedClickOnFlowView('document.querySelector("button")', {
+      beforeDispatch: async () => { zoom = 1; return true },
+    })
+    expect(result.success).toBe(false)
+    expect(clicksAt(flowView)).toEqual([])
+  })
+
   it('enlarges the view and clicks the real button instead of clamping to the edge', async () => {
     const { ctx, flowView } = makeCtx({
       // Narrow: the submit button is at x=400, past the 256px edge.

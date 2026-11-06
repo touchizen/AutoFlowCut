@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { IMAGE_GALLERY_PROBE, galleryDelta } from './flow-gallery-snapshot.js'
+import { galleryWatchCode, galleryDelta } from './flow-gallery-snapshot.js'
 import { applyNativeSettings } from './flow-native-settings.js'
 import { FIND_GENERATE_BUTTON_JS, findPromptEditor } from './flow-composer-dom.js'
 import { composerStateJs } from './flow-composer-refs.js'
@@ -70,7 +70,25 @@ export function createPassiveImageGenerator(deps, withViewport) {
         || deps.isFlowSafetyBlocked?.() || (deps.getCurrentMode && deps.getCurrentMode() !== 'flow')) throw new Error('capture-aborted')
     }
     const read = async code => { guard(); const result = await readPassiveDom(wc, code, lease.signal); guard(); return result }
-    const scan = () => read(IMAGE_GALLERY_PROBE)
+    const watchToken = `flowGallery_${randomUUID()}`
+    const scan = async () => {
+      const snapshot = await read(galleryWatchCode(watchToken))
+      lease.observeGallery(snapshot)
+      return snapshot
+    }
+    const settled = () => !lease.state().galleryPending && !lease.state().galleryRenderUnproven
+    const resultDelta = (before, after) => {
+      const delta = galleryDelta(before, after, count)
+      if (!after?.ok) return delta
+      const prior = new Set(before.items.map(item => item.mediaId))
+      const seen = Object.entries(after.firstSeen || {}).filter(([id]) => !prior.has(id))
+      if (after.unprovenChanges?.some(change => change.revision > before.revision && change.at <= lease.state().sentAt)) {
+        return { ok: false, reason: 'gallery-before-request' }
+      }
+      if (seen.some(([, time]) => time <= lease.state().sentAt)) return { ok: false, reason: 'gallery-before-request' }
+      if (seen.length > count) return { ok: false, reason: 'gallery-count' }
+      return delta
+    }
     const composerMatches = async () => {
       const st = await read(composerStateJs({}))
       return !!st && !st.pickerOpen && Array.isArray(st.chips) && st.chips.length === 0
@@ -88,7 +106,16 @@ export function createPassiveImageGenerator(deps, withViewport) {
         const aborted = () => ctl.aborted || lease.signal.aborted || !!deps.isFlowSafetyBlocked?.()
         guard()
         if (!await read(READY) || !await read(AGENT_OFF)) return fail('composer-unavailable')
-        const initial = await scan()
+        let initial = await scan()
+        // HTTP completion is only the start of render settlement. Observe the
+        // actual gallery until unchanged for the configured interval; include
+        // delayed old cards in the baseline, never in the generated result.
+        const settleDeadline = Date.now() + 15000
+        while (!settled() && Date.now() < settleDeadline) {
+          await pause(250)
+          initial = await scan()
+        }
+        if (!settled()) return fail('gallery-render-unproven')
         if (!initial?.ok) return fail(initial?.reason || 'gallery-unreadable')
         const st = await read(composerStateJs({}))
         if (!st || st.pickerOpen || !Array.isArray(st.chips) || st.chips.length) return fail('composer-not-clear')
@@ -135,9 +162,9 @@ export function createPassiveImageGenerator(deps, withViewport) {
             // Transport completion precedes Angular rendering. Only transient
             // loading is pending; ambiguous IDs/project/count still fail closed.
             if (after?.reason === 'gallery-incomplete') { stable = null; await pause(250); continue }
-            const delta = galleryDelta(before, after, count)
+            const delta = resultDelta(before, after)
             if (!delta.ok && !delta.pending) throw new Error(delta.reason)
-            if (delta.ok) {
+            if (delta.ok && settled()) {
               const key = signature({ items: delta.items })
               if (key !== stable) { stable = key; stableAt = Date.now() }
               else if (Date.now() - stableAt >= 1500) { selected = delta.items; break }
@@ -152,15 +179,15 @@ export function createPassiveImageGenerator(deps, withViewport) {
           const image = await deps.downloadPassiveImage(wc.session, item, { signal: lease.signal })
           guard(); images.push(image)
         }
-        const final = galleryDelta(before, await scan(), count)
-        if (!final.ok || signature({ items: final.items }) !== signature({ items: selected })) throw new Error('gallery-changed-during-download')
+        const final = resultDelta(before, await scan())
+        if (!settled() || !final.ok || signature({ items: final.items }) !== signature({ items: selected })) throw new Error('gallery-changed-during-download')
         guard()
         return { success: true, images }
       }, { shieldFlow: true })
       if (!result?.success) return result?.errorKind === 'flow-image-ownership-unproven' ? result : fail('capture-aborted', dispatched)
       guard() // Viewport restoration can yield and ownership must still hold.
-      const restored = galleryDelta(baseline, await scan(), count)
-      if (!restored.ok || signature({ items: restored.items }) !== signature({ items: selected })) throw new Error('gallery-changed-during-restore')
+      const restored = resultDelta(baseline, await scan())
+      if (!settled() || !restored.ok || signature({ items: restored.items }) !== signature({ items: selected })) throw new Error('gallery-changed-during-restore')
       success = true
       if (payload.asyncMode) {
         const generationId = `passive-${randomUUID()}`
@@ -174,6 +201,9 @@ export function createPassiveImageGenerator(deps, withViewport) {
       clearInterval(cancellationTimer)
       for (const event of events) wc.removeListener(event, invalid)
       if (inputWatch) wc.removeListener('before-input-event', invalid)
+      // Cleanup must run even after lease abort. A dead renderer is bounded by
+      // readPassiveDom's timeout; navigation already destroys the old world.
+      try { await readPassiveDom(wc, galleryWatchCode(watchToken, 'stop')) } catch { /* renderer gone */ }
       lease.release(success)
     }
   }

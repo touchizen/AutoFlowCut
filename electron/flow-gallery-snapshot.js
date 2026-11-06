@@ -6,13 +6,13 @@ export function scanImageGallery(doc, pageUrl) {
   try { page = new URL(pageUrl) } catch { return fail('not-on-project') }
   const route = /^\/project\/([^/]+)\/?$/.exec(page.pathname)
   if (page.origin !== 'https://flow.google.com' || !route || !UUID.test(route[1])) return fail('not-on-project')
-  if (doc.querySelector('cdk-virtual-scroll-viewport, [role="progressbar"], [aria-busy="true"], flow-video-tile')) return fail('gallery-incomplete')
+  const loading = !!doc.querySelector('cdk-virtual-scroll-viewport, [role="progressbar"], [aria-busy="true"], flow-video-tile')
   const cards = [...doc.querySelectorAll('a[href*="/edit/"], flow-image-tile')]
-  if (cards.some(card => !card.querySelector('img'))) return fail('gallery-incomplete')
+  const incomplete = loading || cards.some(card => !card.querySelector('img'))
   const imgs = [...doc.querySelectorAll('img')].filter(im => !im.closest('button.chip-container, button.asset-item, flow-rich-text-editor')
     && im.closest('a[href*="/edit/"], flow-image-tile'))
   // An unrecognized/empty gallery cannot prove the absence of old results.
-  if (!imgs.length) return fail('gallery-unrecognized')
+  if (!imgs.length) return fail(incomplete ? 'gallery-incomplete' : 'gallery-unrecognized')
   const items = []
   for (const im of imgs) {
     const link = im.closest('a[href]')
@@ -38,9 +38,51 @@ export function scanImageGallery(doc, pageUrl) {
     if (items.some(i => i.mediaId === id)) return fail('gallery-duplicate')
     items.push({ mediaId: id, src: u.href, width: im.naturalWidth || 0, height: im.naturalHeight || 0 })
   }
-  return { ok: true, projectId: route[1], items }
+  // Readable identities still carry timing evidence while other cards load.
+  // They cannot form a baseline/result until the whole gallery is complete.
+  return { ok: !incomplete, ...(incomplete ? { reason: 'gallery-incomplete' } : {}), projectId: route[1], items }
 }
 export const IMAGE_GALLERY_PROBE = `(${scanImageGallery.toString()})(document, location.href)`
+
+/** Runs only in isolated world 995. The shared DOM is read, never modified.
+ * Keep first sightings even after removal so transient foreign cards cannot
+ * disappear between polls and make an ambiguous result look like an exact fit. */
+export function observeImageGallery(doc, pageUrl, scan) {
+  const firstSeen = {}
+  const unprovenChanges = []
+  let snapshot, key, revision = 0, disconnected = false
+  const update = () => {
+    snapshot = scan(doc, pageUrl)
+    const next = JSON.stringify([snapshot.ok, snapshot.reason, snapshot.items?.map(i => [i.mediaId, i.src]).sort()])
+    if (next !== key) {
+      key = next; revision++
+      // A result container may precede its img/media identity. Preserve that
+      // interval too; inferring a media ID from an edit-card URL is unsafe.
+      if (!snapshot.ok) unprovenChanges.push({ revision, at: Date.now() })
+    }
+    for (const item of snapshot.items || []) firstSeen[item.mediaId] ??= Date.now()
+  }
+  update()
+  const observer = new MutationObserver(update)
+  observer.observe(doc.documentElement, { subtree: true, childList: true, attributes: true,
+    attributeFilter: ['src', 'srcset', 'sizes', 'href', 'data-media-id', 'aria-busy', 'role'] })
+  return {
+    read() {
+      // currentSrc can change after zoom/resource selection with no attribute
+      // mutation. Every guard/restore read must inspect the actual DOM again.
+      if (!disconnected) { observer.takeRecords(); update() }
+      return { ...snapshot, revision, firstSeen: { ...firstSeen }, unprovenChanges: [...unprovenChanges] }
+    },
+    disconnect: () => { disconnected = true; observer.disconnect() },
+  }
+}
+
+export function galleryWatchCode(token, action = 'read') {
+  const slot = `globalThis[${JSON.stringify(token)}]`
+  if (action === 'stop') return `(() => { ${slot}?.disconnect(); delete ${slot}; return true })()`
+  return `(() => { ${slot} ||= (${observeImageGallery.toString()})(document, location.href, ${scanImageGallery.toString()}); return ${slot}.read() })()`
+}
+
 export function galleryDelta(before, after, count) {
   const fail = reason => ({ ok: false, pending: false, reason })
   if (!before?.ok || !after?.ok || before.projectId !== after.projectId) return fail('gallery-unreadable')
