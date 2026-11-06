@@ -1,3 +1,4 @@
+import { passiveSessionReady } from '../flow-passive-image.js'
 /**
  * Electron IPC Handler - Flow API Operations
  *
@@ -72,6 +73,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     if (!flowActive()) return { ready: false, reason: 'flow-inactive' }
     const flowView = getFlowView()
     if (!flowView || (flowView.webContents.isDestroyed && flowView.webContents.isDestroyed())) return { ready: false, reason: 'flow-inactive' }
+    if (deps.isRpcCaptureEnabled?.() === false) return passiveSessionReady(flowView.webContents)
     const now = Date.now() / 1000
     if (sessionReadyCache && now - sessionReadyCache.at < SESSION_READY_CACHE_S) {
       return { ready: true, credits: sessionReadyCache.credits, cached: true }
@@ -1218,6 +1220,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     const gen = pendingGenerations.get(generationId)
     if (!gen) return { success: false, error: 'Generation not found', notFound: true }
     // M1-11: 새 경로(rpc) gen 은 DOM 폴백 없이 완료 여부만.
+    if (gen.passive) return { success: true, completed: true, via: 'passive', responseCount: gen.passiveResult.images.length, expectedCount: gen.expectedCount }
     if (gen.rpc) return angular.checkRpcGeneration(gen)
     // 응답 가로채기로 완료가 안 됐으면 DOM 에서 생성 이미지를 수집해 본다 (에이전트 모델).
     if (!gen.completed) {
@@ -1238,6 +1241,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     const gen = pendingGenerations.get(generationId)
     if (!gen) return { success: false, error: 'Generation not found', notFound: true }
     // M1-11: 새 경로(rpc) gen — 완료된 것만 지우고 결과(에러 kind 또는 다운로드)를 돌려준다.
+    if (gen.passive) { pendingGenerations.delete(generationId); return gen.passiveResult }
     if (gen.rpc) return angular.collectRpcGeneration(generationId, gen)
     if (!gen.completed) return { success: false, error: 'Generation not completed yet' }
 

@@ -3,10 +3,12 @@ import { describe, it, expect, vi } from 'vitest'
 import { flowPagePolicy, installLegacyFlowHooks, shouldExposeFlowBridge } from '../../electron/flow-page-policy.js'
 
 describe('Flow page mutation policy', () => {
-  it('keeps required RPC capture but disables unused legacy mutation by default', () => {
-    expect(flowPagePolicy({})).toEqual({ legacyMutation: false, rpcCapture: true })
+  it('disables all capture and legacy mutation by default', () => {
+    expect(flowPagePolicy({})).toEqual({ legacyMutation: false, rpcCapture: false })
     expect(flowPagePolicy({ AUTOFLOWCUT_FLOW_LEGACY_MUTATION: 'true' }).legacyMutation).toBe(false)
-    expect(flowPagePolicy({ AUTOFLOWCUT_FLOW_LEGACY_MUTATION: '1' }).legacyMutation).toBe(true)
+    expect(flowPagePolicy({ AUTOFLOWCUT_FLOW_LEGACY_MUTATION: '1' }).legacyMutation).toBe(false)
+    expect(flowPagePolicy({ AUTOFLOWCUT_FLOW_RPC_CAPTURE: 'true' }).rpcCapture).toBe(false)
+    expect(flowPagePolicy({ AUTOFLOWCUT_FLOW_RPC_CAPTURE: '1' }).rpcCapture).toBe(true)
     expect(flowPagePolicy({ AUTOFLOWCUT_FLOW_RPC_CAPTURE: '0' }).rpcCapture).toBe(false)
     expect(flowPagePolicy({ AUTOFLOWCUT_FLOW_RPC_CAPTURE: '0', AUTOFLOWCUT_FLOW_LEGACY_MUTATION: '1' })).toEqual({ legacyMutation: false, rpcCapture: false })
   })
@@ -17,7 +19,7 @@ describe('Flow page mutation policy', () => {
   })
   it('installs legacy mutation only for explicit compatibility use', async () => {
     const wc = { executeJavaScript: vi.fn().mockResolvedValue(undefined) }
-    await installLegacyFlowHooks(wc, { AUTOFLOWCUT_FLOW_LEGACY_MUTATION: '1' })
+    await installLegacyFlowHooks(wc, { AUTOFLOWCUT_FLOW_RPC_CAPTURE: '1', AUTOFLOWCUT_FLOW_LEGACY_MUTATION: '1' })
     const scripts = wc.executeJavaScript.mock.calls.map(([s]) => s)
     expect(scripts).toHaveLength(2)
     expect(scripts[0]).toContain('window.fetch =')
@@ -42,12 +44,12 @@ describe('legacy DOM IPC policy', () => {
     }
     expect(handler).not.toHaveBeenCalled()
   })
-  it('capture-free mode blocks all submission and reference mutation entrypoints', async () => {
+  it('capture-free mode blocks compatibility-only submission and reference mutation entrypoints', async () => {
     const { createFlowPagePolicyIPC } = await import('../../electron/flow-page-policy.js')
     const handlers = new Map()
     const proxy = createFlowPagePolicyIPC({ handle: (name, fn) => handlers.set(name, fn) }, flowPagePolicy({ AUTOFLOWCUT_FLOW_RPC_CAPTURE: '0' }))
     const handler = vi.fn(async () => ({ success: true }))
-    for (const name of ['flow:generate-image', 'flow:generate-character', 'flow:generate-video-i2v', 'flow:generate-scene', 'flow:upload-reference', 'flow:upload-character-entity', 'flow:rename-character']) {
+    for (const name of ['flow:generate-character', 'flow:generate-video-i2v', 'flow:generate-scene', 'flow:upload-reference', 'flow:upload-character-entity', 'flow:rename-character']) {
       proxy.handle(name, handler)
       expect(await handlers.get(name)({}, {})).toMatchObject({ success: false, errorKind: 'flow-dom-capture-unsupported' })
     }
@@ -56,10 +58,19 @@ describe('legacy DOM IPC policy', () => {
   it('allows ordinary status reads and explicitly requested legacy compatibility', async () => {
     const { createFlowPagePolicyIPC } = await import('../../electron/flow-page-policy.js')
     const handlers = new Map()
-    const proxy = createFlowPagePolicyIPC({ handle: (name, fn) => handlers.set(name, fn) }, flowPagePolicy({ AUTOFLOWCUT_FLOW_LEGACY_MUTATION: '1' }))
+    const proxy = createFlowPagePolicyIPC({ handle: (name, fn) => handlers.set(name, fn) }, flowPagePolicy({ AUTOFLOWCUT_FLOW_RPC_CAPTURE: '1', AUTOFLOWCUT_FLOW_LEGACY_MUTATION: '1' }))
     const handler = vi.fn(async () => ({ success: true }))
     proxy.handle('flow:dom-execute', handler)
     expect(await handlers.get('flow:dom-execute')({}, {})).toEqual({ success: true })
     expect(handler).toHaveBeenCalledOnce()
   })
+})
+
+it('allows the plain image entrypoint through default policy', async () => {
+  const { createFlowPagePolicyIPC } = await import('../../electron/flow-page-policy.js')
+  const handlers = new Map()
+  const handler = vi.fn(() => ({ success: true }))
+  createFlowPagePolicyIPC({ handle: (k, fn) => handlers.set(k, fn) }, flowPagePolicy({})).handle('flow:generate-image', handler)
+  expect(await handlers.get('flow:generate-image')({}, { prompt: 'p' })).toEqual({ success: true })
+  expect(handler).toHaveBeenCalledOnce()
 })

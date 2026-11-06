@@ -34,7 +34,7 @@ it('disabled capture refuses actual image/video handlers without page reads, edi
     getFlowView: () => { touched = true; throw new Error('must not touch page') },
     pendingGenerations: new Map(),
   })
-  for (const action of ['generateImage', 'generateVideoT2V', 'generateVideoI2V']) {
+  for (const action of ['generateVideoT2V', 'generateVideoI2V']) {
     expect(await angular[action]({ prompt: 'p' })).toMatchObject({
       success: false, errorKind: 'flow-dom-capture-unsupported', retryBlocked: true,
     })

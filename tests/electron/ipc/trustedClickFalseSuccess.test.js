@@ -228,3 +228,24 @@ describe('trustedClickOnFlowView — beforeDispatch 는 히트테스트 뒤·mou
     expect(types(flowView)).toEqual(['mouseMove', 'mouseDown', 'mouseUp'])
   })
 })
+
+it('uses only isolated read-only probes in the passive lane, including failure diagnostics', async () => {
+  vi.useFakeTimers()
+  try {
+    const { ctx, flowView } = makeCtx({ coords: { x: 100, y: 50, width: 40, height: 40, visible: true } })
+    ctx.isolatedFlowReads = true
+    const read = flowView.webContents.executeJavaScript
+    flowView.webContents.executeJavaScriptInIsolatedWorld = vi.fn(async (_world, scripts) => {
+      expect(scripts[0].code).not.toContain('scrollIntoView')
+      return read(scripts[0].code)
+    })
+    flowView.webContents.executeJavaScript = vi.fn(async () => { throw new Error('main world forbidden') })
+    const helpers = createSharedHelpers(ctx)
+    const click = helpers.trustedClickOnFlowView('document.body', { required: true })
+    await vi.runAllTimersAsync()
+    expect(await click).toMatchObject({ success: true })
+    await helpers.reportDomFailure('test', 'test')
+    expect(flowView.webContents.executeJavaScript).not.toHaveBeenCalled()
+    expect(flowView.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalled()
+  } finally { vi.useRealTimers() }
+})

@@ -26,6 +26,7 @@
  * tests/electron/ipc/flowGenerateImageAngular.test.js · tests/electron/ipc/flowVideoT2VAngular.test.js · tests/electron/flowRpcPipeline.test.js
  * tests/electron/ipc/flowImageReferencesAngular.test.js · tests/electron/ipc/flowVideoR2VAngular.test.js · tests/electron/ipc/flowReferencePreflight.test.js
  */
+import { createPassiveImageGenerator } from '../flow-passive-image.js'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -238,6 +239,7 @@ function creditsDropped(before, after) {
  *   · M3(레퍼런스 업로드): clipboard, nativeImage, pasteIntoFlowView(() => Flow 뷰의 webContents.paste())
  */
 export function createFlowAngular(deps) {
+  const generatePassiveImage = createPassiveImageGenerator(deps, withAutomationViewport)
   const report = async (step, reason, extra) => {
     try { await deps.reportDomFailure?.(step, reason, extra) } catch (_e) { /* 진단은 실패해도 흐름을 막지 않는다 */ }
   }
@@ -474,6 +476,10 @@ export function createFlowAngular(deps) {
         const why = (!startBounds || !(startBounds.width > 0) || !(startBounds.height > 0)) ? 'hidden' : 'narrow'
         console.log(`${tag} view ${why} ${(startBounds && startBounds.width) || 0}x${(startBounds && startBounds.height) || 0} → automation viewport ${size.width}x${size.height} in-place${shield ? ' shielded' : ''}`)
       }
+      if (opts.shieldAll && !shield) {
+        shield = deps.createInputShield?.()
+        if (!shield) return kindResult('flow-image-ownership-unproven', { reason: 'input-shield-unavailable', retryBlocked: true })
+      }
       const run = fn(ctl)
       run.catch(() => {})   // 워치독이 이긴 뒤의 zombie reject 는 unhandled 가 되면 안 된다(race 는 따로 구독한다)
       // M2-CLOSE O2: 다음 단계가 기다릴 대상(어느 쪽으로 끝나든 settle). M2-LAST P1: 워치독 시각(abortedAt)·settle 여부도 적는다(백스톱·releaseDomStage 의 판정).
@@ -562,7 +568,7 @@ export function createFlowAngular(deps) {
    *   레퍼런스가 없으면 M2 경로(SET_EDITOR_TEXT_JS) + 그 전에 잔여 칩 정리(§1-1). 옛 필드(referenceImages 비어 있지 않음)는 계속 거부.
    */
   async function generateImage(payload = {}) {
-    if (deps.isRpcCaptureEnabled?.() === false) return kindResult('flow-dom-capture-unsupported', { retryBlocked: true })
+    if (deps.isRpcCaptureEnabled?.() === false) return generatePassiveImage(payload)
     const { prompt, aspectRatio, model, projectId, referenceImages, batchCount, asyncMode, refs, plan } = payload
     const nRefs = Array.isArray(refs) ? refs.length : 0
     const nMentions = countMentions(plan)

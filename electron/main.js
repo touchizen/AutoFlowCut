@@ -1,3 +1,5 @@
+import { createPassiveCapture, bindPassiveRequests } from './flow-passive-capture.js'
+import { downloadFlowImage } from './flow-image-download.js'
 import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, dialog, clipboard, nativeImage } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
@@ -147,6 +149,7 @@ const flowBearerStore = createBearerStore()
 //   요청 본문을 (3) flow:report-xhr 로 응답까지 받아 JSONL 한 줄씩 append 한다. 꺼져 있으면 아무것도
 //   안 한다 — 생성 로직 무관. 파일: AUTOFLOWCUT_NET_TRACE_FILE 또는 바탕화면(flow-net-trace.js).
 const FLOW_PAGE_POLICY = flowPagePolicy(process.env)
+let flowPassiveCapture = null
 const NET_TRACE_ON = FLOW_PAGE_POLICY.legacyMutation && isNetTraceOn(process.env)
 const NET_TRACE_INJECTION = 'window.__autoflowcut_net_trace__ = true;\n' + FLOW_XHR_CAPTURE_INJECTION
 let netTraceFile = null
@@ -165,7 +168,7 @@ function injectNetTrace(view) {
   if (!NET_TRACE_ON || !view || view.webContents.isDestroyed()) return
   view.webContents.executeJavaScript(NET_TRACE_INJECTION).catch(() => {})
 }
-// flow.google.com 제출 RPC(ogiZ0b/YhhmEf) 캡처 — 프로덕션, 항상 켜짐. 멱등(문서 플래그). 페이지 스크립트가
+// flow.google.com 제출 RPC(ogiZ0b/YhhmEf) 캡처 — 명시적 호환 플래그에서만. 멱등(문서 플래그). 페이지 스크립트가
 //   첫 XHR 을 쏘기 전에 설치돼야 해서 dom-ready 에서도 주입한다. 핸들러는 클릭 전에 설치 플래그를 프로브한다.
 function injectRpcCapture(view) {
   if (!FLOW_PAGE_POLICY.rpcCapture) return
@@ -568,10 +571,11 @@ function makeFlowView() {
     }
   )
 
-  // Flow 페이지 네트워크에서 projectId 자동 캡처
-  view.webContents.session.webRequest.onBeforeRequest(
-    { urls: ['*://*/*'] },
-    (details, callback) => {
+  // One session listener combines passive ownership with the existing diagnostics.
+  const passive = createPassiveCapture()
+  flowPassiveCapture = passive
+  const disposePassive = bindPassiveRequests(view.webContents.session, passive,
+    (details) => {
       // AUTOFLOWCUT_NET_TRACE: batchexecute 요청 본문(f.req/at)은 여기서 — 페이지 주입보다 먼저 나간
       //   요청도 보인다(응답은 못 보므로 XHR 훅이 따로 보고한다).
       if (NET_TRACE_ON && details.url.includes('batchexecute')) {
@@ -596,9 +600,9 @@ function makeFlowView() {
           } catch {}
         }
       }
-      callback({})
     }
   )
+  view.webContents.once('destroyed', disposePassive)
 
   // ─── did-finish-load bootstrap: injection / landing / consent / token / startup-gate / enter-tool ───
   view.webContents.on('did-finish-load', async () => {
@@ -932,6 +936,7 @@ function flowDiagSink() {
 
 // === Shared Flow helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
 const helpers = createSharedHelpers({
+  isolatedFlowReads: !FLOW_PAGE_POLICY.rpcCapture,
   getFlowView: modeController.getFlowView,
   getMainWindow: () => mainWindow,
   // 세션 API 가 없는 새 도메인용 폴백 — 페이지 요청에서 잡아둔 Bearer (flow-bearer-capture.js)
@@ -1067,6 +1072,8 @@ const flowAPIDeps = {
   typeFlowText,
   nativeFlowSettings: !FLOW_PAGE_POLICY.legacyMutation,
   isRpcCaptureEnabled: () => FLOW_PAGE_POLICY.rpcCapture,
+  getPassiveCapture: () => flowPassiveCapture,
+  downloadPassiveImage: (session, item, opts) => downloadFlowImage(net, session, item, opts),
   getFlowView: modeController.getFlowView,
   getFlowAgentOn: () => flowAgentOn,
   // #R25-4: quota 를 쓰는 submit/upscale 핸들러가 API 모드에서 stale 호출로 Flow quota 를

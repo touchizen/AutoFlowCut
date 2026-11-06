@@ -87,6 +87,11 @@ export function createSharedHelpers(ctx) {
   // 클릭 직렬화 — 두 클릭이 겹치면 서로의 임시(확대) bounds 를 자기 '원래 값'으로 스냅샷해
   //   복원이 어긋나고, 마우스 이벤트도 뒤섞인다. 모든 DOM 클릭이 이 병목을 지난다.
   const clickMutex = createMutex()
+  const readClickDom = (wc, code) => {
+    if (!ctx.isolatedFlowReads) return wc.executeJavaScript(code)
+    return wc.executeJavaScriptInIsolatedWorld(994, [{ code }])
+      .then(result => Array.isArray(result) ? result[0] : result)
+  }
 
   // DOM 스텝 실패 보고 — 셀렉터가 깨졌을 때 그 순간의 페이지 컨텍스트를 함께 남긴다.
   //   'Flow view not ready'(Flow 모드 아님) 같은 정상 상태 체크는 부르지 않는다 — 노이즈가 된다.
@@ -95,7 +100,7 @@ export function createSharedHelpers(ctx) {
     try {
       const flowView = getFlowView()
       const scan = flowView
-        ? await flowView.webContents.executeJavaScript(AGENT_TOGGLE_DIAGNOSTIC).catch(() => null)
+        ? await readClickDom(flowView.webContents, AGENT_TOGGLE_DIAGNOSTIC).catch(() => null)
         : null
       await onDomFailure(step, {
         reason,
@@ -204,12 +209,12 @@ export function createSharedHelpers(ctx) {
       await new Promise(r => setTimeout(r, 300)) // 레이아웃 업데이트 대기
     }
 
-    const measure = () => flowView.webContents.executeJavaScript(`
+    const measure = () => readClickDom(flowView.webContents, `
       (function() {
         const el = ${jsSelector};
         if (!el) return null;
         // 스크롤 후 좌표 확인
-        el.scrollIntoView({ block: 'center' });
+        ${ctx.isolatedFlowReads ? '' : "el.scrollIntoView({ block: 'center' });"}
         const rect = el.getBoundingClientRect();
         return {
           x: Math.round(rect.x + rect.width / 2),
@@ -230,7 +235,7 @@ export function createSharedHelpers(ctx) {
     // ⚠️ measuredUrl 을 넘겨 "측정한 그 페이지" 인지 확인한다. reject 만 막으면 부족하다 — 100ms 사이에
     //    B 로 **정상 navigate** 되면 executeJavaScript 는 성공하고, B 에도 같은 자리에 같은 버튼이 있으면
     //    hit-test 를 통과해 **B 의 버튼을 누른다**(B 에 남은 draft 를 잘못 제출할 수도 있다).
-    const hitTest = (x, y, measuredUrl) => flowView.webContents.executeJavaScript(HIT_TEST_JS(x, y, measuredUrl, jsSelector))
+    const hitTest = (x, y, measuredUrl) => readClickDom(flowView.webContents, HIT_TEST_JS(x, y, measuredUrl, jsSelector))
       .then((r) => (r && typeof r.ok === 'boolean' ? r : { ok: false, why: 'unreadable' }))
       .catch(() => ({ ok: false, why: 'context-gone' }))
     // ⚠️ 여기서 fail-open 하면 안 된다. hit-test 가 reject 된다는 건 그 사이 페이지가 navigate 되어
