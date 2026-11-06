@@ -49,7 +49,11 @@ export function createFlowSafetyIPC(ipcMain, deps) {
   const proxy = Object.create(ipcMain)
   proxy.handle = (channel, handler) => {
     if (channel === 'flow:clear-generations') {
-      return ipcMain.handle(channel, (...args) => { cancelPending(); return handler(...args) })
+      return ipcMain.handle(channel, (...args) => {
+        cancelPending()
+        // A renderer Stop/finally must not erase already-submitted results after a safety stop.
+        return safety.blocked() ? { success: true, cleared: 0, preserved: true } : handler(...args)
+      })
     }
     if (MUTATING.has(channel)) return ipcMain.handle(channel, async (...args) => {
       const warning = await probe()
@@ -59,8 +63,7 @@ export function createFlowSafetyIPC(ipcMain, deps) {
     return ipcMain.handle(channel, async (...args) => {
       if (!GENERATE.has(channel)) {
         // Preserve already-submitted results for recovery; only new submissions are blocked.
-        const warning = await probe()
-        if (warning?.safetyStop) return warning
+        await probe()
         const result = await handler(...args)
         if (channel === 'flow:check-video-status' && result?.success && Array.isArray(result.statuses)) {
           const ids = args[1]?.generationIds || []
@@ -70,7 +73,7 @@ export function createFlowSafetyIPC(ipcMain, deps) {
           }
         }
         const stop = safety.observe(result, { generation: channel === 'flow:collect-generation', generationId: args[1]?.generationId })
-        return stop ? { ...result, ...stop } : result
+        return stop && result?.success !== true ? { ...result, ...stop } : result
       }
       const submittedContext = context()
       const run = async () => {
@@ -105,7 +108,8 @@ export function createFlowSafetyIPC(ipcMain, deps) {
         }
         const detected = await probe()
         const stop = safety.observe(result, { generationId: result?.success === false ? result?.generationId : undefined })
-        return detected?.safetyStop || stop ? { ...result, ...(detected?.safetyStop ? detected : stop) } : result
+        return result?.success !== true && (detected?.safetyStop || stop)
+          ? { ...result, ...(detected?.safetyStop ? detected : stop) } : result
       }
       const result = serial.then(run, run)
       serial = result.then(() => {}, () => {})

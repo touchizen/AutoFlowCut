@@ -4,7 +4,7 @@
 
 기준 커밋 `211a7793`. 지정 브리프와 레포 AGENTS.md·CLAUDE.md를 읽고 구현 전에 작성했다. 실제 Flow 페이지에는 접속하거나 생성 요청을 보내지 않았다. 사용 중인 앱을 종료·재시작하지 않았다.
 
-사용자가 본 ‘비정상적인 활동이 감지되었습니다. 페이지를 수정하는 브라우저 확장 프로그램으로 인해 문제가 발생할 수 있습니다’는 감지 증거다. 어떤 조작이 원인인지 로컬 코드만으로 확정할 수 없다. `2c74b6bb`는 CDP attach 때 UI/응답이 막혔다고 기록한다. CDP 복귀는 제외하며 기존 `AUTOFLOWCUT_ENABLE_CDP=1` 경로는 변경하지 않는다.
+사용자가 본 ‘비정상적인 활동이 감지되었습니다. 페이지를 수정하는 브라우저 확장 프로그램으로 인해 문제가 발생할 수 있습니다’는 감지 증거다. 어떤 조작이 원인인지 로컬 코드만으로 확정할 수 없다. `2c74b6bb`는 CDP attach 때 UI/응답이 막혔다고 기록한다. CDP 복귀는 제외한다. 브리프가 인용한 과거 옵션과 달리, 기준 main의 electron 소스에는 해당 옵션이나 CDP 호출이 남아 있지 않다. 새 경로도 추가하지 않는다.
 
 CLAUDE.md의 ‘Flow 제거됨’ 설명은 현재 코드와 다르다. 현재 Flow 모드는 `flow-angular.js`로 강제 디스패치하며, 구형 생성 함수는 대부분 미등록이다. 새 batchexecute 요청 본문은 수정하지 않는다. 그러나 항상 설치되는 **두 fetch 래퍼**, XHR 프로토타입 래퍼와 진단 전역은 남아 있다.
 
@@ -20,7 +20,7 @@ RPC code 8/RESOURCE_EXHAUSTED는 자원·일일 한도 분류다. 감지 문구�
 
 ## 조작 목록과 대안
 
-모든 `executeJavaScript`는 기본 **메인 월드**다. contextIsolation:true는 preload만 격리하며 executeJavaScript를 격리하지 않는다. 현재 executeJavaScriptInIsolatedWorld 호출은 없다. preload 자체는 격리 월드지만 contextBridge.exposeInMainWorld의 electronAPI는 페이지에서 보인다. sendInputEvent, session.webRequest/will-download, main 메모리·뮤텍스·input shield는 메인 프로세스이고 페이지 JS 전역을 교체하지 않는다. 입력·다운로드·네트워크 자체는 페이지에서 관측된다.
+모든 `executeJavaScript`는 기본 **메인 월드**다. contextIsolation:true는 preload만 격리하며 executeJavaScript를 격리하지 않는다. 기준 main에는 executeJavaScriptInIsolatedWorld 호출이 없다(아래 구현 상태와 구분). preload 자체는 격리 월드지만 contextBridge.exposeInMainWorld의 electronAPI는 페이지에서 보인다. sendInputEvent, session.webRequest/will-download, main 메모리·뮤텍스·input shield는 메인 프로세스이고 페이지 JS 전역을 교체하지 않는다. 입력·다운로드·네트워크 자체는 페이지에서 관측된다.
 
 | 파일 / 함수·스크립트 | 월드 / 흔적 | 대안 및 위험 |
 |---|---|---|
@@ -55,7 +55,7 @@ RPC code 8/RESOURCE_EXHAUSTED는 자원·일일 한도 분류다. 감지 문구�
 ## 구현 설계·대안 선택
 
 A. 기존 캡처를 유지하고 속도만 낮추기: 기능 회귀가 적지만 전역 교체가 그대로다.
-B. **기본 DOM 자동화 + 기능별 명시적 호환 옵션**: 메인 월드 래퍼/본문 변조를 기본 제거하고, 검증 가능한 UI·DOM·다운로드만 사용한다. 현재 DOM의 asb 토큰은 RPC UUID와 동등하지 않으므로 unsupported를 명확히 반환한다. 이 방향으로 구현한다.
+B. **기본 DOM 자동화 + 기능별 명시적 호환 옵션**: 메인 월드 래퍼/본문 변조를 기본 제거하고, 검증 가능한 UI·DOM·다운로드만 사용한다. 현재 DOM의 asb 토큰은 RPC UUID와 동등하지 않으므로 unsupported를 명확히 반환한다. 목표 대안이다. 다만 아래 최종 구현에서는 DOM 소유권 증거 부족 때문에 응답 캡처를 유지했고, 완전한 기본 DOM 생성 경로를 완성하지 않았다.
 C. CDP/새 네트워크 중계: 브리프의 CDP 금지와 맞지 않거나 응답 본문 API가 없어 제외한다. Electron webRequest는 응답 본문을 제공하지 않는다.
 
 작업 순서는 (a) 감지 문구/연속 오류 circuit breaker·간격 설정·사용자 알림, (b) 기본 본문 변조 제거/기존 UI 설정 유지, (c) 격리 DOM 결과 캡처와 정상 다운로드 또는 증명 불가능한 경우 제출 전 거부, (d) native 입력이다. 각 코드 변경은 실패 테스트를 먼저 실행하고 단위+통합 검증한다. 사용자가 이미 이 순서와 구현을 지시했으므로 추가 승인 절차를 만들지 않는다.
@@ -69,7 +69,7 @@ C. CDP/새 네트워크 중계: 브리프의 CDP 금지와 맞지 않거나 응�
 
 ## 검증·운영 기록 (작업 중 갱신)
 
-- 최초 전체 검사: 10,346 통과 / 3 실패 / 56 건너뜀 (총 10,405). worktree에 vendor ffmpeg가 없어 시스템 FFmpeg 9가 선택돼 제거된 filter_complex_script 옵션으로 smoke 3건 실패. 소스 수정 없이 원본의 staged FFmpeg를 읽기 전용으로 연결한 뒤 재검사한다.
+- 이전 실행의 최초 검사 기록은 10,346 통과 / 3 실패 / 56 건너뜀(총 10,405)이었다. 이번 main 재검사는 10,347 통과 / 3 실패 / 55 건너뜀. smoke의 시스템 FFmpeg 9가 제거한 filter_complex_script 옵션 때문에 3건 실패했다. vendor 바이너리의 별도 임시 symlink를 AFC_TEST_FFMPEG로 지정한 동일 main 재검사는 10,350 통과 / 55 건너뜀 / 실패 0(총 10,405)이다. 테스트 소스나 제품 렌더링 코드는 바꾸지 않았다.
 - 실제 Flow 시험은 수행하지 않는다. 이후 사용자와 1장 → 3장, 최소 60초+0~15초 지연, 감지/첫 연속 오류 정지·다운로드 소유권·모델/비율 일치 확인. 감지 시 재시도 없이 중단한다.
 
 ## 부록: 호출 위치 전수 검색 (기준 커밋)
@@ -468,3 +468,45 @@ C. CDP/새 네트워크 중계: 브리프의 CDP 금지와 맞지 않거나 응�
 1861: const probe = await flowView.webContents.executeJavaScript(FLOW_DOM_DUMP_PROBE)
 1868: try { mainWindow.webContents.executeJavaScript(`console.log('[FlowDomDump] saved: ${path.basename(filePath).replace(/'/g, "\\'")}')`) } catch {}
 ```
+
+## 2026-11-07 추가 검토
+
+기존 전용 worktree의 4개 커밋과 미커밋 변경을 보존해 이어서 검증한다. 새로 확인한 문제는 main 등록부의 safety 관문 연결 및 취소 epoch 전달 누락이다. 실패하는 wiring 테스트로 재현했고 클릭 직전 관문과 함께 연결했다. 설정 패널은 기존 순수 scan/plan을 격리 월드에서 사용하고, main에서 매번 재탐색한 버튼에 native click을 보내는 경로를 추가한다. 모델/모드 전환 뒤에는 안정 대기와 최종 재판독, 닫힌 요약 검증을 유지한다. 임의 seed/endpoint/body 필드는 만들지 않는다.
+
+현재 저장된 최신 DOM 증거(`flow-live-dom-m3.js`, `flow-live-dom-download-20261019.js`)의 asb 토큰에는 서버 media UUID·generation ID·프롬프트 소유권이 없다. 기존 `scanGeneratedImages`는 과거 UUID 링크만 인식하므로 현행 갤러리에 그대로 연결할 수 없다. 기존/다른 클라이언트에서 생긴 단일 카드도 새 카드로 보일 수 있어, 개수 차이만으로 성공을 추정하는 대체는 적용하지 않는다. RPC 캡처를 끄면 생성 전에 명시적으로 거부하며 capture 없이 실제 생성부터 시도하지 않는다. 이 제한을 숨겨 'fetch-free 생성 완료'로 보고하지 않는다.
+
+## 실제 반영 상태와 기본값 (2026-11-07)
+
+- (a) main의 공통 IPC 관문이 이미지·영상·캐릭터·씬 생성/업스케일을 직렬화하고, 앞 핸들러 종료부터 최소 60초 + 0~15초 지연을 보장한다. 기존 씬 탭 간격도 유지된다. `AUTOFLOWCUT_FLOW_MIN_INTERVAL_MS`(기본 60000, 1000~300000), `AUTOFLOWCUT_FLOW_JITTER_MS`(기본 15000, 0~120000), `AUTOFLOWCUT_FLOW_RPC_ERROR_LIMIT`(기본 3, 1~20)로 설정한다. 숫자가 잘못되면 기본값을 쓴다. 60초는 보수적인 초기값이며 안전한 서비스 한도로 검증한 숫자는 아니다.
+- 격리 월드 998의 읽기 전용 프로브가 보이는 경고를 확인한다. 생성 준비/응답 대기 중에는 2초마다 추가 확인한다. 경고가 있거나 중립 생성 RPC 오류가 연속 N회면 main/renderer가 정지 상태를 유지한다. Stop, 알림 닫기, 프로젝트 변경, 큐 초기화로 해제되지 않는다. 오류 재시도도 main과 renderer 양쪽에서 거부한다. API 모드는 영향받지 않는다. code 8/RESOURCE_EXHAUSTED는 한도 오류로 구분한다.
+- 정지 후에도 이미 제출한 작업의 자연스러운 완료/기존 마감은 유지한다. 완료 조회·수집을 계속 허용하고, 일괄 정리 IPC는 map을 보존한다. 다른 작업의 성공 이미지를 정지 오류로 덮어쓰지 않는다. UI 취소로 자동 반영하지 못한 결과는 Flow 갤러리에서 확인·복구해야 한다. 정지 알림이 왔다고 이미 전송된 요청이 서버에서 취소되는 것은 아니다.
+- (b) `AUTOFLOWCUT_FLOW_LEGACY_MUTATION=1`인 경우에만 구형 본문 변조 fetch 래퍼·settings dumper·추가 net trace·구형 임의 DOM 실행을 허용한다. **기본값 off**: 현행 Angular 생성에 필요 없는 두 번째 래퍼와 본문 변조를 제거하기 위해서다. 새 이미지/영상의 모델·비율·개수·길이·해상도·프레임 모드는 기존 Flow UI를 이용한다. 임의 seed나 UI에 없는 필드를 생성 요청에 쓰지 않는다.
+- (d) 기본 설정 드라이버는 격리 월드 996에서 순수 DOM scan/plan을 실행한다. 라디오/모델/패널 닫기는 기존 hit-test·dispatch guard를 거친 sendInputEvent 클릭이다. 매 클릭 전에 같은 대상을 재탐색하고, 모델/모드 전환·마지막 설정에 안정 대기/재판독을 한다. 알 수 없는 모델·메뉴·옵션이나 반영 실패는 제출 전에 거부한다. 명시적 legacyMutation 옵션에서만 구형 합성 설정 드라이버를 쓴다.
+- 레퍼런스 없는 이미지/영상 프롬프트는 네이티브 selectAll + ASCII char 입력, 한글·이모지·줄바꿈은 Electron insertText로 입력한다. 읽기/포커스 검증은 격리 월드 997이다. 실패하면 value setter/execCommand로 재시도하지 않는다. 실제 Electron 입력기 동작은 Flow 실기 시험 전까지 미검증이다.
+- (c) **현행 Flow의 fetch/XHR 교체 없는 생성 결과 캡처는 미완료**다. `AUTOFLOWCUT_FLOW_RPC_CAPTURE`는 **기본값 on**, `0`으로 끌 수 있다. 현재 media UUID·업로드·영상 상태 소유권을 잃지 않고 Flow 모드를 유지하기 위해서다. 꺼진 경우 legacyMutation도 강제로 꺼지고 preload bridge/응답 래퍼를 설치하지 않는다. 결과 검증이 필요한 생성·레퍼런스 조작·업스케일은 제출 전에 `flow-dom-capture-unsupported`로 거부한다. 대체 DOM 경로가 구현됐다고 보고하지 않는다.
+- 남은 페이지 조작: RPC fetch/XHR 래퍼 및 bridge, 레퍼런스의 paste observer/execCommand/합성 Escape, 에이전트 패널 보조 조작, 세션 WIZ 읽기 및 읽기 RPC, 영상 다운로드의 history/popstate, 일부 메인 월드 DOM 읽기/scroll/focus. 생성/레퍼런스 조작은 위 capture 플래그를 끄면 차단된다. 정상 다운로드의 session will-download 기존 경로는 유지한다. 격리 월드로 옮겨도 공유 DOM의 스크롤·포커스·실제 입력 자체는 페이지가 관측한다.
+
+## TDD·리뷰·작업 보존
+
+- 이전 실행의 `95073738`(조사), `66a3b5c1`(구형 조작 기본 해제), `234ab9a6`(정지 관문), `9ed0c4ae`(경고 판별/취소)을 보존했다. 이번 작업이 새로 만든 커밋은 아니다.
+- main 연결 누락: wiring 테스트 실패 → 관문/취소 전달 → 관련 12파일 223개 통과.
+- native 설정: 단위 2개 실패 + 통합 4개 실패/1개 통과 → 최소 구현 → 단위/통합 통과. 이후 기존 설정/이미지/영상 IPC 포함 7파일 269개 통과.
+- 리뷰 지적의 결과 유실: 새 회귀 3개 실패 → 일괄 settle 제거/성공 결과 및 map 보존 → 관련 5파일 38개 통과.
+- 영상/I2V 모드·모델·길이·해상도·개수·프레임 전환도 fixture로 검증했다. 최종 집중 검사 4파일 26개 통과, 별도 리뷰어 재검사 3파일 24개 통과. 실제 Flow 연결·생성은 하지 않았다.
+- 커밋 시도는 저장소 메타데이터가 읽기 전용인 환경에서 index.lock 생성이 Operation not permitted로 거부됐다. 권한을 우회하지 않았다. 변경은 `/private/tmp/autoflowcut-flow-detection`의 지정 브랜치 worktree에 미커밋 상태로 남긴다. main 병합·push·실행 앱 재시작은 하지 않았다.
+- 목표 (c)가 미완료라 전체 plan은 진행 중으로 유지한다. 완성된 것처럼 archive 처리하지 않는다.
+
+## 이후 사용자와 할 실기 시험
+
+1. 현재 Flow 경고를 사용자가 해소했는지 먼저 확인한다. 기존 앱은 이번 작업 중 그대로 둔다. 수정본 앱 실행은 별도 시험 시점에 사용자와 진행한다.
+2. 레퍼런스 없는 이미지 1장: 모델·비율·개수=1, 한글/줄바꿈 프롬프트, 결과 내용·저장된 씬 일치 확인. 요청을 반복해서 성공을 탐색하지 않는다.
+3. 이상이 없을 때 3장, 최소 60초 + 0~15초 간격. 제출 시각, UI 설정, 결과 소유권·다운로드, 경고/연속 오류 정지와 오류 재시도 차단을 확인한다.
+4. 경고가 다시 뜨면 추가 생성 없이 중단한다. 원인 후보의 순위를 실제 원인 확정으로 바꾸려면 한 번에 한 변경만 비교한 별도 관찰이 필요하다. 67장 배치나 일일 상한 시험은 하지 않는다.
+
+## 최종 로컬 검증
+
+- 동일 환경 전체 테스트: main **10,350 통과 / 55 건너뜀 / 0 실패**(876파일), 수정본 **10,435 통과 / 55 건너뜀 / 0 실패**(889파일). 총 테스트 10,405 → 10,490(+85). `AFC_TEST_FFMPEG=/private/tmp/afc-test-ffmpeg npm run test:run -- --maxWorkers=4`로 실행했다. 건너뜀은 기존과 같은 55개다.
+- `npm run build` 성공. vite의 큰 chunk 경고는 남아 있다. 앱 프로세스를 실행하지 않았다. `git diff --check` 및 신규 파일 whitespace 검사도 통과했다.
+- 로그: `/private/tmp/afc-main-baseline-fixedenv-20261107.log`, `/private/tmp/afc-detection-verified-20261107.log`, `/private/tmp/afc-detection-build-verified-20261107.log`.
+- main HEAD는 시작과 같은 `211a77933f299fc2f2520f8cb7ceeb161e72a315`. 원래 있던 coverage/dist-adapter/test-results untracked 디렉터리도 보존했다.
+- `/private/tmp/afc-flow-detection-20261107.patch`는 main 대비 기존 커밋 + 이번 미커밋 변경 + 신규 소스/테스트를 포함한다. node_modules/vendor의 읽기 전용 재사용 symlink와 빌드 출력은 제외한다. 금지된 디버거 메서드 문자열 검색은 전체 패치에서 0건이다.

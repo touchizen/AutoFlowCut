@@ -5,6 +5,7 @@
 // 바꿔 제출 클릭이 "페이지의 send/loadend" 를 라우터로 흘리게 한다(실제 주입 문자열은 M1-5 파이프라인이 돈다).
 //   순서: 세션(URL·WIZ) → 에이전트 모드/레퍼런스 거부 → 프로젝트 → ensureAgentOff → 캡처 플래그 → 설정 → 편집기 → 제출 가능 → arm → 클릭
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { typeFlowText } from '../../../electron/flow-native-input.js'
 import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
@@ -97,6 +98,9 @@ function harness(o = {}) {
       executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(() => { trace.push('focus') }), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null,
       // R2-2#1: DOM 단계 전에 뷰가 OS 포커스를 갖고 있었나 — 기본은 "아니다"(실기: 메인 창의 렌더러가 포커스를 갖는다).
       isFocused: () => !!o.focused,
+      selectAll: vi.fn(() => { injectedPrompt = '' }),
+      insertText: vi.fn(async (text) => { injectedPrompt = text }),
+      executeJavaScriptInIsolatedWorld: vi.fn(async () => ({ focused: true, text: o.nativeMismatch ? 'changed' : injectedPrompt })),
     },
   }
   // R2-2#1: 메인 창 — DOM 단계가 끝나면 포커스를 돌려받는 쪽. 호출 시각은 trace 로 본다.
@@ -134,6 +138,7 @@ function harness(o = {}) {
     if (opts?.step === 'compose-submit' && o.clickResult) return o.clickResult
     return { success: o.clickSuccess ?? true }
   })
+  if (o.nativeInput) flowView.webContents.sendInputEvent.mockImplementation((e) => { if (e.type === 'char') injectedPrompt = (injectedPrompt || '') + e.keyCode })
   const sessionFetch = o.fetch || vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, headers: { get: () => 'image/png' } }))
   const legacy = {
     configureFlowMode: vi.fn(async () => ({ success: true })), setFlowPageInject: vi.fn(async () => ({ success: true })), clearFlowPageInject: vi.fn(async () => {}),
@@ -167,6 +172,7 @@ function harness(o = {}) {
     sessionFetch,
     createInputShield,          // M2-CLOSE O3: 제자리 뷰포트 동안의 입력 방패(가짜)
     setAutomationKeyLock,       // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금(가짜)
+    ...(o.nativeInput ? { typeFlowText } : {}),
     setShieldFocusTarget,       // M2-FINAL Q1: 방패 focus 의 행선지(가짜)
   })
   const generate = (p = {}) => ipcMain.invoke('flow:generate-image', { prompt: PROMPT, aspectRatio: '16:9', model: 'Nano Banana 2', projectId: PROJECT, referenceImages: [], batchCount: 1, asyncMode: false, ...p })
@@ -951,5 +957,24 @@ describe('flow:generate-image (angular) — 레퍼런스 없는 제출의 칩 �
     expect(h.trace).not.toContain('click:compose-submit')
     expect(h.pendingGenerations.size).toBe(0)
     expect(logged()).toMatch(/composer chips changed between the read-back and the submit click chips=1 want=0/)
+  })
+})
+
+
+describe('native input integration with image submission', () => {
+  it('uses isolated native typing then existing text/chip/dispatch guards', async () => {
+    const h = harness({ nativeInput: true, focused: true })
+    const result = await settle(h.generate())
+    expect(result.success).toBe(true)
+    expect(h.executeJavaScript.mock.calls.some(([s]) => String(s).includes('__af_set_editor_text__'))).toBe(false)
+    expect(h.flowView.webContents.insertText).toHaveBeenCalledWith(PROMPT)
+    expect(h.flowView.webContents.executeJavaScriptInIsolatedWorld).toHaveBeenCalled()
+    expect(h.trace).toContain('click:compose-submit')
+  })
+  it('never falls back to page text mutation after native readback failure', async () => {
+    const h = harness({ nativeInput: true, focused: true, nativeMismatch: true })
+    expect(await settle(h.generate())).toMatchObject({ success: false, errorKind: 'text-injection-failed' })
+    expect(h.executeJavaScript.mock.calls.some(([s]) => String(s).includes('__af_set_editor_text__'))).toBe(false)
+    expect(h.trace).not.toContain('click:compose-submit')
   })
 })

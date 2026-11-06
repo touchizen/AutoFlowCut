@@ -8,6 +8,7 @@
 //   클릭 **뒤** 실패는 전부 postClick:true, 클릭 전 거부(세션·칩·입력·설정·크레딧 판독 실패) 는 postClick 없음. 거부한 미디어 id 는
 //   rejectedMediaId(s) 로만(mediaId/generationId 키 없음). 완료 폴의 모델키 재검사는 없다(D8-6).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { typeFlowText } from '../../../electron/flow-native-input.js'
 import { registerVideoIPC } from '../../../electron/ipc/video.js'
 import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 import { routeReportResponse, buildReportCtx } from '../../../electron/reportResponseRouter.js'
@@ -108,11 +109,16 @@ function harness(o = {}) {
   const flowView = {
     getBounds: () => ({ ...bounds }),
     setBounds: vi.fn((b) => { bounds = { ...b }; trace.push(`bounds:${b.width}x${b.height}`) }),
-    webContents: { executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(() => { trace.push('focus') }), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null, isFocused: () => !!o.focused },
+    webContents: { executeJavaScript, getURL: () => url, loadURL: vi.fn(async () => {}), focus: vi.fn(() => { trace.push('focus') }), sendInputEvent: vi.fn(), isDestroyed: () => false, session: null, isFocused: () => !!o.focused,
+      selectAll: vi.fn(() => { injectedPrompt = '' }),
+      insertText: vi.fn(async (text) => { injectedPrompt = text }),
+      executeJavaScriptInIsolatedWorld: vi.fn(async () => ({ focused: true, text: injectedPrompt })),
+    },
   }
   const mainWindow = { getContentBounds: () => ({ width: 1280, height: 800 }), getBounds: () => ({ x: 0, y: 0 }), webContents: { focus: vi.fn(() => { trace.push('main-focus') }) } }
   const onDomFailure = vi.fn(async () => {})
   const helpers = createSharedHelpers({
+    ...(o.nativeInput ? { typeFlowText } : {}),
     getFlowView: () => flowView,
     getMainWindow: () => mainWindow,
     constants: { SESSION_URL: '', MEDIA_REDIRECT_URL: '', RECAPTCHA_SITE_KEY: '', RECAPTCHA_ACTION: '' },
@@ -162,6 +168,7 @@ function harness(o = {}) {
   }
   const ipcMain = makeIpcMain()
   registerVideoIPC(ipcMain, {
+    ...(o.nativeInput ? { typeFlowText } : {}),
     getFlowView: () => flowView,
     getMainWindow: () => mainWindow,
     getCurrentMode: () => o.mode ?? 'flow',
@@ -1211,4 +1218,13 @@ describe('flow:generate-video-t2v (angular) — 레퍼런스 없는 T2V 의 칩 
     expect(h.trace).not.toContain('click:compose-submit')
     expect(h.trace.filter((x) => x.startsWith('set-text'))).toEqual([])
   })
+})
+
+
+it('native video prompt input preserves the existing submit/model validation pipeline', async () => {
+  const h = harness({ nativeInput: true, focused: true })
+  expect(await settle(h.generate())).toMatchObject({ success: true })
+  expect(h.flowView.webContents.insertText).toHaveBeenCalledWith(PROMPT)
+  expect(h.executeJavaScript.mock.calls.some(([s]) => String(s).includes('__af_set_editor_text__'))).toBe(false)
+  expect(h.trace).toContain('click:compose-submit')
 })

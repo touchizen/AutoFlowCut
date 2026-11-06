@@ -21,13 +21,13 @@ Files: create electron/flow-safety.js, electron/flow-safety-ipc.js; tests/electr
 Files: electron/main.js, electron/flow-preload.js, electron/flow-automation-policy.js; tests/electron/flowAutomationPolicy.test.js; integration wiring tests.
 1. Write failing tests for default-off wrappers and explicit opt-in, unsupported fields refusing before submit.
 2. Run and verify failure, then introduce shared policy flag AUTOFLOWCUT_FLOW_PAGE_MUTATION=1, protect bootstrap, dumper, inject setters, legacy mutating routes.
-3. Retain AUTOFLOWCUT_ENABLE_CDP path unchanged. New DOM path uses UI model/ratio/count with readback; never builds generation requests.
+3. Do not add or use any CDP path. The current base no longer has the historical environment option. UI model/ratio/count are verified by readback; never build generation requests.
 4. Run focused unit/integration tests. Commit: fix(flow): disable page mutation by default.
 
 ### Task 3: Fetch-free capture and native input
 Files: create electron/flow-dom-automation.js and supporting modules; tests/electron/flowDomAutomation.test.js; tests/integration/flowDomGeneration.test.js; route flow-api.js.
 1. Write failing fixture tests for isolated world probes, before/after gallery snapshots, ambiguity rejection, navigation cancellation, download listener cleanup, native input and readback.
-2. Run and verify failures. Reuse pure UI selectors/planner but do not call scripts containing synthetic clicks. Use sendInputEvent without debugger. Fail before submission when DOM cannot prove capability/ownership.
+2. Run and verify failures. Reuse pure UI selectors/planner but do not call scripts containing synthetic clicks. Use sendInputEvent without CDP. Fail before submission when DOM cannot prove capability/ownership.
 3. Download only page-created result through normal session will-download scoped to view; no response fetch patch, direct generation RPC, speculative selectors/IDs, or real Flow calls.
 4. Run focused tests and compatibility tests. Commit: feat(flow): add isolated DOM capture and native input.
 
@@ -36,3 +36,7 @@ Files: create electron/flow-dom-automation.js and supporting modules; tests/elec
 2. Run entire suite with staged ffmpeg; record exact pre/post counts. Check syntax/build without launching app.
 3. Update investigation report with flags/defaults, supported features and limitations, TDD evidence, commit IDs and manual test plan.
 4. Archive completed plan/spec under docs/plans-archive. Keep unfinished scope clearly marked. No merge, push or running app changes.
+
+## Status at 2026-11-07
+
+Tasks 1 and 2 are implemented with the documented default-on RPC capture exception. Native prompt/settings input is implemented and fixture-tested. Task 3 fetch-free generation remains incomplete: current asb DOM does not prove request/result ownership, so disabling capture refuses submission. Task 4 review and verification are recorded in docs/flow-detection-2026-11.md. Commits are blocked by read-only git metadata. Preserve this unfinished plan and the branch worktree; no merge/push/real Flow test.

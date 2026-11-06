@@ -48,6 +48,7 @@ const LOCALE_ANCHOR = new RegExp(
  * 고쳤으면 여기서 지운다(지우지 않으면 stale 로 실패한다).
  */
 const BASELINE = new Map([
+  ['flow-safety.js', '안전 정지 사유는 버튼 선택용 앵커가 아니라 서비스 경고 본문 자체다. 브리프의 한국어 경고와 영어 동등 문구를 모두 판별하고, 다른 로케일의 일반 RPC 오류는 별도 연속 오류 관문으로 처리한다.'],
   ['flow-mention-dom.js', '캐릭터 탭의 2차 폴백. 1차 앵커는 accessibility_new 리거처이고, 폴백은 리거처가 개명될 때만 쓰인다.'],
   ['flow-agent-toggle.js', '에이전트 토글 선택(findAgentToggle 의 동점 판별 — 에이전트 칩(agent-mode-chip)이 없을 때 편집기(Slate·ProseMirror) 조상 경로)·진단·스캔의 라벨 폴백(agent|에이전트)과 close 버튼 판정의 라벨 폴백(닫기). 에이전트 채팅 창 판별은 edit_square 리거처만 쓴다(2026-09-26 — 라벨은 입력창 글자에도 걸렸다). 창 DOM 은 새 flow.google.com 에서 아직 관측되지 않았다 — 덤프 확보 후 닫기 라벨도 구조 앵커로 옮길 것.'],
   ['flow-settings-dumper.js', '진단 전용 도구(Cmd+Shift+?). 생성 경로가 의존하지 않는다. 그래도 로케일 종속이므로 영어 계정에서는 진단이 무용지물이다.'],

@@ -48,12 +48,15 @@ import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
 import { routeReportResponse, isFlowFrameOrigin, buildReportCtx } from './reportResponseRouter.js'
-import { flowPagePolicy, installLegacyFlowHooks } from './flow-page-policy.js'
+import { typeFlowText } from './flow-native-input.js'
+import { flowPagePolicy, installLegacyFlowHooks, createFlowPagePolicyIPC } from './flow-page-policy.js'
 import { urlForLog } from './flowUrl.js'
 import { createBearerStore, bearerFromHeaders, isFlowApiRequest } from './flow-bearer-capture.js'
 import { FLOW_XHR_CAPTURE_INJECTION } from './flow-xhr-capture.js'
 import { FLOW_RPC_CAPTURE_INJECTION } from './flow-rpc-capture.js'
 import { failBoundUnfinished } from './flow-rpc-router.js'
+import { createFlowSafetyIPC } from './flow-safety-ipc.js'
+import { createGuardedFlowClick } from './flow-guarded-click.js'
 import { releaseDomStage } from './ipc/flow-angular.js'   // M2-LAST P1: 문서가 죽으면 DOM 단계 직렬화를 푼다
 import { parseStartSceneBatchBody } from './mcp-http-parsers.js'   // M2-LIVE N7 (N3 판정은 ipc/mcp.js routeMcpUpdate)
 import { isNetTraceOn, netTraceFilePath, decodeUploadData, buildTraceLine, summarizeTraceEntry } from './flow-net-trace.js'
@@ -634,6 +637,9 @@ function makeFlowView() {
     injectNetTrace(view)
     injectRpcCapture(view)
 
+    // Old landing/consent/Enter Tool scripts are compatibility-only too.
+    if (!FLOW_PAGE_POLICY.legacyMutation) return
+
     // 랜딩 페이지: "Create with Flow" 버튼 자동 클릭
     if (url.includes('labs.google')) {
       try {
@@ -1052,7 +1058,14 @@ let flowAgentOn = false
 ipcMain.handle('flow:set-agent-mode', (_e, { on } = {}) => { flowAgentOn = !!on; return { ok: true, flowAgentOn } })
 
 // ─── Flow API IPC handlers (all four modules) ───────────────────────────────
+const flowSafety = createFlowSafetyIPC(ipcMain, {
+  getFlowView: modeController.getFlowView,
+  getMainWindow: () => mainWindow,
+  getCurrentMode: modeController.getCurrentMode,
+})
 const flowAPIDeps = {
+  typeFlowText,
+  nativeFlowSettings: !FLOW_PAGE_POLICY.legacyMutation,
   isRpcCaptureEnabled: () => FLOW_PAGE_POLICY.rpcCapture,
   getFlowView: modeController.getFlowView,
   getFlowAgentOn: () => flowAgentOn,
@@ -1069,6 +1082,9 @@ const flowAPIDeps = {
   pasteIntoFlowView: () => modeController.getFlowView()?.webContents.paste(),
   // Shared helpers
   ...helpers,
+  // Every dispatched click rechecks the safety latch after its async editor guard.
+  trustedClickOnFlowView: createGuardedFlowClick(trustedClickOnFlowView, () => !!flowSafety.safety.blocked() || flowSafety.isCurrentCancelled()),
+  isFlowSafetyBlocked: () => !!flowSafety.safety.blocked() || flowSafety.isCurrentCancelled(),
   // Inject state helpers
   setFlowPageInject,
   clearFlowPageInject,
@@ -1092,10 +1108,11 @@ const flowAPIDeps = {
   VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
 }
 
-registerFlowAPIIPC(ipcMain, flowAPIDeps)
-registerVideoIPC(ipcMain, flowAPIDeps)
-registerCharacterIPC(ipcMain, flowAPIDeps)
-registerDomIPC(ipcMain, flowAPIDeps)
+const flowPolicyIPC = createFlowPagePolicyIPC(flowSafety.ipcMain, FLOW_PAGE_POLICY)
+registerFlowAPIIPC(flowPolicyIPC, flowAPIDeps)
+registerVideoIPC(flowPolicyIPC, flowAPIDeps)
+registerCharacterIPC(flowPolicyIPC, flowAPIDeps)
+registerDomIPC(flowPolicyIPC, flowAPIDeps)
 
 // Renderer reports the active project (with its work folder) so the native
 // "Recent Projects" menu stays in MRU order and scoped to the current folder.

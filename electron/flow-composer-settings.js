@@ -512,6 +512,10 @@ const DOM_STAGE_ABORTED = Symbol('dom-stage-aborted')
  * @returns {{ok:boolean, steps:object, kind?:string, params?:object, reason?:string}}
  */
 export async function applyComposerSettings(flowView, opts, deps) {
+  if (deps.nativeInput) {
+    const { applyNativeSettings } = await import('./flow-native-settings.js')
+    return applyNativeSettings(flowView, opts, deps)
+  }
   try {
     return await applyComposerSettingsBody(flowView, opts, deps)
   } catch (e) {
@@ -521,6 +525,38 @@ export async function applyComposerSettings(flowView, opts, deps) {
     console.warn(`[Flow Settings] ${mode} aborted by the DOM-stage watchdog — no further clicks or driver runs`)
     return { ok: false, kind: 'flow-settings-not-applied', reason: 'dom-stage-aborted', steps: {} }
   }
+}
+
+/** Read-only next action. DOM elements stay inside the probe world. */
+export function planNativeSettings(doc, targets, phase, deps) {
+  const s = deps.scan(doc)
+  if (!s.ok) return { ok: false, reason: s.reason }
+  const p = deps.plan(s, targets, phase)
+  if (!p.ok) return p
+  const signature = JSON.stringify(Object.fromEntries(Object.entries(s.groups).map(([k, g]) =>
+    [k, g.options.map(o => [o.label, o.ligature, o.checked])])) ) + String(s.model?.label)
+  if (p.model?.select) {
+    if (!s.model.expanded) return { ok: true, signature, action: { type: 'model-open' }, el: s.model.trigger }
+    const menu = doc.getElementById(s.model.controls)
+    if (!menu || doc.querySelectorAll('[role="menu"]').length !== 1) return { ok: false, reason: 'model-menu-unknown' }
+    const matches = Array.from(menu.querySelectorAll('[role="menuitem"]')).filter(el => {
+      const copy = el.cloneNode(true)
+      copy.querySelectorAll('mat-icon, i, span[class*="symbols"], [class*="google-symbols"]').forEach(i => i.remove())
+      const label = (copy.textContent || '').replace(/[^\p{L}\p{N}.\s-]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+      const test = deps.plan({ ...s, model: { ...s.model, label } }, { mode: targets.mode, model: targets.model }, 2)
+      return !test.model?.select && test.steps?.model != null
+    })
+    if (matches.length !== 1) return { ok: false, reason: 'model-not-offered',
+      kind: targets.mode === 'video' ? 'flow-settings-not-applied' : 'flow-image-model-mismatch',
+      params: { requested: String(targets.model), panel: s.model.display } }
+    return { ok: true, signature, action: { type: 'model-select', label: String(targets.model) }, el: matches[0] }
+  }
+  if (p.clicks.length) {
+    const c = p.clicks[0]
+    return { ok: true, signature, steps: p.steps,
+      action: { type: 'radio', group: c.group, name: c.name, key: c.ligature || c.label }, el: c.el }
+  }
+  return { ok: true, signature, steps: p.steps, action: null }
 }
 
 async function applyComposerSettingsBody(flowView, opts, deps) {

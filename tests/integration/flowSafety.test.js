@@ -20,6 +20,29 @@ function harness(options = {}) {
 }
 
 describe('Flow IPC safety integration', () => {
+  it('preserves completed results and pending maps for recovery after the latch closes', async () => {
+    const h = harness()
+    const completed = { success: true, images: [{ base64: 'saved-result' }] }
+    const collect = vi.fn(async () => completed)
+    const clear = vi.fn()
+    h.ipcMain.handle('flow:collect-generation', collect)
+    h.ipcMain.handle('flow:clear-generations', clear)
+    h.safety.stop('flow-unusual-activity')
+    expect(await h.handlers.get('flow:collect-generation')({}, { generationId: 'paid' })).toEqual(completed)
+    expect(collect).toHaveBeenCalledOnce()
+    expect(await h.handlers.get('flow:clear-generations')({}, {})).toMatchObject({ success: true, preserved: true })
+    expect(clear).not.toHaveBeenCalled()
+  })
+  it('does not replace a paid synchronous result with a safety error from another job', async () => {
+    const h = harness()
+    const completed = { success: true, images: [{ base64: 'saved-result' }] }
+    h.ipcMain.handle('flow:generate-image', async () => {
+      h.safety.stop('flow-unusual-activity')
+      return completed
+    })
+    expect(await h.handlers.get('flow:generate-image')({}, {})).toEqual(completed)
+    expect(h.safety.blocked()).toMatchObject({ retryBlocked: true })
+  })
   it('uses isolated read-only probes and never submits through an explicit warning', async () => {
     const h = harness()
     h.wc.executeJavaScriptInIsolatedWorld.mockResolvedValue(true)

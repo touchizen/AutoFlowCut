@@ -596,7 +596,7 @@ export function createFlowAngular(deps) {
     let wantForGuard = { text: '', chips: [] }
     // DOM 단계 — 자동화 뷰포트·포커스 반환 래퍼 안에서(조기 반환은 결과 객체로, 클릭까지 갔으면 null).
     const early = await withAutomationViewport(flowView, '[Flow API] [Angular]', async (ctl) => {
-      const isAborted = () => ctl.aborted   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
+      const isAborted = () => ctl.aborted || !!deps.isFlowSafetyBlocked?.()   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
       // 1. 에이전트 OFF (ON 이면 페이지가 streamChat 로 보내 캡처가 안 잡힌다)
       const agent = await deps.ensureAgentOff({ isAborted })
       if (!agent?.success) return kindResult('flow-agent-off-failed')
@@ -615,7 +615,7 @@ export function createFlowAngular(deps) {
 
       // 3. 설정 패널 — 모드(이미지)·모델(다르면 메뉴에서 선택, 정확 일치)·비율·개수
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 워치독이 이미 닫았다(좀비)
-      const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted })
+      const settings = await applyComposerSettings(flowView, { mode: 'image', ratio: aspectRatio, count: batchCount, model }, { trustedClickOnFlowView: deps.trustedClickOnFlowView, nativeInput: deps.nativeFlowSettings, isAborted })
       if (!settings.ok) {
         await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps, ...(settings.shape ? { shape: settings.shape } : {}) })
         return { success: false, errorKind: settings.kind || 'flow-settings-not-applied', error: settings.kind || 'flow-settings-not-applied', ...(settings.params ? { errorParams: settings.params } : {}) }
@@ -653,7 +653,12 @@ export function createFlowAngular(deps) {
         if (!cleared.ok) return driverFailure(cleared)
         let readBack = null
         try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
-        try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
+        if (deps.typeFlowText) {
+          const typed = await deps.typeFlowText(flowView.webContents, prompt, { isAborted: () => ctl.aborted || !!deps.isFlowSafetyBlocked?.() })
+          if (!typed?.ok) return kindResult('text-injection-failed')
+        } else {
+          try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* compatibility/test callers; read-back decides */ }
+        }
         try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
         normPrompt = normalizePrompt(prompt)
         if (normalizePrompt(readBack || '') !== normPrompt) {
@@ -885,7 +890,7 @@ export function createFlowAngular(deps) {
     let wantForGuard = { text: '', chips: [] }
     let creditsBefore = null
     const early = await withAutomationViewport(flowView, tag, async (ctl) => {
-      const isAborted = () => ctl.aborted   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
+      const isAborted = () => ctl.aborted || !!deps.isFlowSafetyBlocked?.()   // M2-CLOSE O2: 좀비는 신뢰 클릭·드라이버 exec 앞에서 멈춘다
       // 1. 에이전트 OFF
       const agent = await deps.ensureAgentOff({ isAborted })
       if (!agent?.success) return kindResult('flow-agent-off-failed')
@@ -924,7 +929,7 @@ export function createFlowAngular(deps) {
       // 4. 설정 패널 — video · ratio · count 1 · model · duration · resolution({360p,720p} 밖은 클릭 전 거부)
       if (ctl.aborted) return kindResult('flow-settings-not-applied', { reason: 'dom-stage-timeout' })   // M2-LIVE N1: 워치독이 이미 닫았다(좀비)
       const settingsTargets = { mode: 'video', ratio: aspectRatio, count: 1, model, duration: want.duration, resolution: want.resolution }
-      const settingsDeps = { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted }
+      const settingsDeps = { trustedClickOnFlowView: deps.trustedClickOnFlowView, nativeInput: deps.nativeFlowSettings, isAborted }
       const settingsFailure = async (settings) => {
         await report(`settings:${settings.reason || settings.kind}`, settings.reason || settings.kind, { steps: settings.steps, ...(settings.shape ? { shape: settings.shape } : {}) })
         // M2-R2 G4(B2): flow-settings-not-applied 는 params 가 {} 라 훅의 F8 서명(kind+params)이 항상 같다 — 드라이버 reason 을 **params 아닌** 필드로 실어
@@ -959,7 +964,12 @@ export function createFlowAngular(deps) {
       const injectPrompt = async () => {
         let readBack = null
         try { flowView.webContents.focus() } catch (_e) { /* M2-CLOSE O5: 캐럿 클릭 뒤 방패 클릭이 포커스를 가져갔을 수 있다 — 주입 직전에 다시 건다 */ }
-        try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* 재판독이 판정 */ }
+        if (deps.typeFlowText) {
+          const typed = await deps.typeFlowText(flowView.webContents, prompt, { isAborted: () => ctl.aborted || !!deps.isFlowSafetyBlocked?.() })
+          if (!typed?.ok) return kindResult('text-injection-failed')
+        } else {
+          try { await exec(flowView, SET_EDITOR_TEXT_JS(prompt)) } catch (_e) { /* compatibility/test callers; read-back decides */ }
+        }
         try { readBack = await exec(flowView, READ_EDITOR_TEXT_JS) } catch (_e) { readBack = null }
         normPrompt = normalizePrompt(prompt)
         if (normalizePrompt(readBack || '') === normPrompt) return null
@@ -1303,7 +1313,7 @@ export function createFlowAngular(deps) {
               onIgnored: (i) => console.warn(`${tag} ignored download (${i.reason}) [${i.mime}] host=${i.host} tok=${i.tok ?? '-'} want=${i.want ?? '-'} nameLen=${i.nameLen}`),   // 파일 이름(제목)은 남기지 않는다
             })
           },
-          isAborted: () => ctl.aborted,
+          isAborted: () => ctl.aborted || !!deps.isFlowSafetyBlocked?.(),
         }
         const r = await driveEditorDownload(ctx, { path: editPath, resolution: res })
         if (!r.ok && back) await returnIfStillOn(ctx, { editPath, back })   // 실패면 바로 돌아간다
