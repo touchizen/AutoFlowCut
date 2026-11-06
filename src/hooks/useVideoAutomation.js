@@ -1270,7 +1270,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     pausedRef.current = false
     setIsPaused(false)
     setStatusMessage(t('status.stopping'))
-  }, [t])
+  }, [t, appMode, genAPI.cancelGeneration])
 
   // 큐를 통한 시작
   const startQueued = useCallback(async (options = {}) => {

@@ -6,6 +6,7 @@ import { useFlowEvents } from '../../src/hooks/useFlowEvents'
 import { __resetFlowSafetyForTests, receiveFlowSafetyStop } from '../../src/utils/flowSafetyStop'
 import { toast } from '../../src/components/Toast'
 import { I18nProvider } from '../../src/hooks/useI18n'
+import { createFlowSafetyIPC } from '../../electron/flow-safety-ipc'
 
 const stop = { success: false, errorKind: 'flow-unusual-activity', error: 'flow-unusual-activity', safetyStop: true, retryBlocked: true }
 beforeEach(() => { __resetFlowSafetyForTests(); vi.restoreAllMocks() })
@@ -64,4 +65,27 @@ describe('Flow renderer stop integration', () => {
     expect(warn.mock.calls[0][0]).toMatch(/unusual activity|비정상적인 활동/i)
     expect(warn.mock.calls[0][1]).toBe(0)
   })
+  it('runs the serialized isolated detector through the IPC gate for split warnings and nested prompts', async () => {
+    const handlers = new Map()
+    const wc = {
+      getURL: () => 'https://flow.google.com/project/p', isDestroyed: () => false,
+      executeJavaScriptInIsolatedWorld: async (_world, scripts) => window.eval(scripts[0].code),
+    }
+    const h = createFlowSafetyIPC({ handle: (channel, handler) => handlers.set(channel, handler) }, {
+      getFlowView: () => ({ webContents: wc }), config: { minIntervalMs: 1000, jitterMs: 0, rpcErrorLimit: 3 },
+    })
+    // Keep the view identity stable, as Electron does.
+    const view = { webContents: wc }
+    const stable = createFlowSafetyIPC({ handle: (channel, handler) => handlers.set(channel, handler) }, {
+      getFlowView: () => view, config: { minIntervalMs: 1000, jitterMs: 0, rpcErrorLimit: 3 },
+    })
+    const submit = vi.fn(async () => ({ success: true, submitted: true }))
+    stable.ipcMain.handle('flow:generate-image', submit)
+    document.body.innerHTML = '<div><p>비정상적인 활동이 감지되었습니다.</p><p>페이지를 수정하는 브라우저 확장 프로그램으로 인해 문제가 발생할 수 있습니다.</p></div>'
+    expect(await handlers.get('flow:generate-image')({}, {})).toMatchObject({ retryBlocked: true })
+    expect(submit).not.toHaveBeenCalled()
+    document.body.innerHTML = '<div role="dialog"><div contenteditable="true">비정상적인 활동이 감지되었습니다. 브라우저 확장 프로그램</div></div>'
+    expect(await h.probe()).toBe(null)
+  })
+
 })

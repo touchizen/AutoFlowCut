@@ -28,4 +28,17 @@ describe('Flow safety admission for every batch', () => {
     })
     expect(genAPI.getAccessToken).not.toHaveBeenCalled()
   })
+  it('cancels a queued main submission after API to Flow mode switch with a stable translator', () => {
+    const t = key => key
+    const firstCancel = vi.fn()
+    const flowCancel = vi.fn(async () => ({ success: true, aborted: 1 }))
+    const { result, rerender } = renderHook(({ appMode, cancel }) => useVideoAutomation({ mode: appMode, cancelGeneration: cancel }, t, null, null, appMode), {
+      initialProps: { appMode: 'api', cancel: firstCancel },
+    })
+    rerender({ appMode: 'flow', cancel: flowCancel })
+    act(() => { result.current.stop() })
+    expect(flowCancel).toHaveBeenCalledOnce()
+    expect(firstCancel).not.toHaveBeenCalled()
+  })
+
 })

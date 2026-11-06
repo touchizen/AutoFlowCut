@@ -23,6 +23,7 @@ export function createFlowSafetyIPC(ipcMain, deps) {
   let serial = Promise.resolve()
   let nextAt = null
   let epoch = 0
+  let activeContext = null
   const cancelPending = () => { epoch++ }
   ipcMain.handle('flow:safety-cancel-pending', () => { cancelPending(); return { success: true, aborted: 1 } })
   const context = () => {
@@ -91,10 +92,12 @@ export function createFlowSafetyIPC(ipcMain, deps) {
           try { await probe() } finally { monitoring = false }
         }, 2000)
         monitor.unref?.()
+        activeContext = submittedContext
         try { result = await handler(...args) } catch (error) {
           result = { success: false, error: error?.message || String(error),
             ...(error?.errorKind ? { errorKind: error.errorKind } : {}) }
         } finally {
+          activeContext = null
           clearInterval(monitor)
           // End-to-start spacing is conservative: setup/DOM time cannot compress actual submissions.
           const n = Math.max(0, Math.min(1, Number(random()) || 0))
@@ -109,5 +112,10 @@ export function createFlowSafetyIPC(ipcMain, deps) {
       return result
     })
   }
-  return { ipcMain: proxy, safety, probe, stop: safety.stop, cancelPending }
+  return { ipcMain: proxy, safety, probe, stop: safety.stop, cancelPending,
+    // Opening the requested project is an intentional URL change inside a handler.
+    // Cancellation is its epoch/mode/view lifetime, not that handler's original page URL.
+    isCurrentCancelled: () => activeContext != null && (activeContext.epoch !== epoch
+      || activeContext.view !== deps.getFlowView?.() || activeContext.view?.webContents?.isDestroyed?.()
+      || (deps.getCurrentMode && deps.getCurrentMode() !== 'flow')) }
 }

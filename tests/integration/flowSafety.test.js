@@ -134,4 +134,27 @@ describe('Flow IPC safety integration', () => {
     await h.handlers.get('flow:clear-generations')({}, {})
     expect(h.safety.blocked()).toMatchObject({ retryBlocked: true })
   })
+  it('exposes cancellation to a generation already performing DOM setup, then clears its context', async () => {
+    const h = harness()
+    let begin
+    let finish
+    const started = new Promise(resolve => { begin = resolve })
+    h.ipcMain.handle('flow:generate-image', async () => {
+      begin()
+      await new Promise(resolve => { finish = resolve })
+      return { success: true, submitted: true }
+    })
+    const result = h.handlers.get('flow:generate-image')({}, {})
+    await started
+    try {
+      expect(h.isCurrentCancelled).toBeTypeOf('function')
+      expect(h.isCurrentCancelled()).toBe(false)
+      h.move() // The handler may deliberately open its requested project before composing.
+      expect(h.isCurrentCancelled()).toBe(false)
+      h.cancelPending()
+      expect(h.isCurrentCancelled()).toBe(true)
+    } finally { finish(); await result }
+    expect(h.isCurrentCancelled()).toBe(false)
+  })
+
 })

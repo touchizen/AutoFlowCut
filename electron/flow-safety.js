@@ -19,22 +19,50 @@ export function isFlowDetectionText(text) {
 /** Only visible notices; prompts/editable text are never interpreted as service warnings. */
 export function hasFlowDetectionNotice(doc) {
   const re = /비정상적인\s*활동이?\s*감지|unusual\s+activity\s+(?:(?:has\s+been|was)\s+)?detected/i
+  const visibility = new WeakMap()
   const visible = el => {
-    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
-      if (n.matches('[contenteditable="true"], textarea, input, script, style, [hidden], [aria-hidden="true"]')) return false
-      const style = doc.defaultView?.getComputedStyle(n)
-      if (style && (style.display === 'none' || style.visibility === 'hidden')) return false
+    if (!el || el.nodeType !== 1) return true
+    if (visibility.has(el)) return visibility.get(el)
+    let shown = !el.matches('[contenteditable]:not([contenteditable="false"]), textarea, input, select, script, style, noscript, template, [hidden], [aria-hidden="true"]')
+    if (shown) {
+      const style = doc.defaultView?.getComputedStyle(el)
+      shown = !style || (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0')
     }
-    return true
+    if (shown && el.parentElement) shown = visible(el.parentElement)
+    visibility.set(el, shown)
+    return shown
+  }
+  // Read individual text nodes, excluding hidden/interactive descendants. Reading an ancestor's
+  // textContent directly would mistake text typed inside a dialog's editor for a service warning.
+  const noticeText = el => {
+    const parts = []
+    let chars = 0
+    let nodes = 0
+    let over = false
+    const walk = node => {
+      if (over || ++nodes > 64) { over = true; return }
+      if (node.nodeType === 3) {
+        const text = String(node.nodeValue || '').replace(/\s+/g, ' ').trim()
+        chars += text.length
+        if (chars > 600) { over = true; return }
+        if (text) parts.push(text)
+      } else if (node.nodeType === 1 && visible(node)) {
+        for (const child of node.childNodes) walk(child)
+      }
+    }
+    walk(el)
+    return over ? '' : parts.join(' ')
   }
   const notices = doc.querySelectorAll('[role="alert"], [role="dialog"], [aria-live], mat-snack-bar-container, .error-message')
-  for (const el of notices) if (visible(el) && re.test(el.innerText || el.textContent || '')) return true
-  // The full-page warning has also appeared as plain div/span text with no ARIA role.
-  // Restrict that fallback to short leaves carrying BOTH warning clauses; never scan the whole body.
+  for (const el of notices) if (re.test(el.textContent || '') && re.test(noticeText(el))) return true
+  // Full-page notices may have no ARIA role, and the two clauses may occupy sibling paragraphs.
+  // Group only bounded visible subtrees carrying both clauses; never read the body as one string.
+  const extension = /브라우저\s*확장\s*프로그램|browser\s+extensions?/i
   for (const el of doc.querySelectorAll('body *')) {
-    if (el.children.length || !visible(el)) continue
-    const text = String(el.innerText || el.textContent || '')
-    if (text.length <= 600 && re.test(text) && /브라우저\s*확장\s*프로그램|browser\s+extensions?/i.test(text)) return true
+    const raw = el.textContent || ''
+    if (!re.test(raw) || !extension.test(raw)) continue
+    const text = noticeText(el)
+    if (re.test(text) && extension.test(text)) return true
   }
   return false
 }
