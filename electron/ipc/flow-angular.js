@@ -562,6 +562,7 @@ export function createFlowAngular(deps) {
    *   레퍼런스가 없으면 M2 경로(SET_EDITOR_TEXT_JS) + 그 전에 잔여 칩 정리(§1-1). 옛 필드(referenceImages 비어 있지 않음)는 계속 거부.
    */
   async function generateImage(payload = {}) {
+    if (deps.isRpcCaptureEnabled?.() === false) return kindResult('flow-dom-capture-unsupported', { retryBlocked: true })
     const { prompt, aspectRatio, model, projectId, referenceImages, batchCount, asyncMode, refs, plan } = payload
     const nRefs = Array.isArray(refs) ? refs.length : 0
     const nMentions = countMentions(plan)
@@ -812,6 +813,7 @@ export function createFlowAngular(deps) {
    *   본문은 submitVideo 의 I2V 분기: 시작 프레임을 레퍼런스 칩으로 첨부(plan attach [0]) → 설정(프레임) → 시작 칸 확인 → 텍스트 → eb1hJf.
    */
   async function generateVideoI2V(payload = {}) {
+    if (deps.isRpcCaptureEnabled?.() === false) return kindResult('flow-dom-capture-unsupported', { retryBlocked: true })
     const { startImage, endImage, ...rest } = payload
     if (endImage != null && endImage !== '') {
       console.warn(`${I2V_TAG} end frame given — the new Flow path takes a start frame only → flow-i2v-end-frame-unsupported`)
@@ -827,6 +829,7 @@ export function createFlowAngular(deps) {
 
   /** 영상 제출 본문 — T2V·R2V(i2v false) · I2V(i2v true, refs = [시작 프레임], plan attach [0]). */
   async function submitVideo(payload, i2v) {
+    if (deps.isRpcCaptureEnabled?.() === false) return kindResult('flow-dom-capture-unsupported', { retryBlocked: true })
     const tag = i2v ? I2V_TAG : T2V_TAG
     const { prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, segments, refs, plan } = payload
     const nRefs = Array.isArray(refs) ? refs.length : 0

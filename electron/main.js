@@ -48,7 +48,7 @@ import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
 import { routeReportResponse, isFlowFrameOrigin, buildReportCtx } from './reportResponseRouter.js'
-import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
+import { flowPagePolicy, installLegacyFlowHooks } from './flow-page-policy.js'
 import { urlForLog } from './flowUrl.js'
 import { createBearerStore, bearerFromHeaders, isFlowApiRequest } from './flow-bearer-capture.js'
 import { FLOW_XHR_CAPTURE_INJECTION } from './flow-xhr-capture.js'
@@ -57,7 +57,6 @@ import { failBoundUnfinished } from './flow-rpc-router.js'
 import { releaseDomStage } from './ipc/flow-angular.js'   // M2-LAST P1: 문서가 죽으면 DOM 단계 직렬화를 푼다
 import { parseStartSceneBatchBody } from './mcp-http-parsers.js'   // M2-LIVE N7 (N3 판정은 ipc/mcp.js routeMcpUpdate)
 import { isNetTraceOn, netTraceFilePath, decodeUploadData, buildTraceLine, summarizeTraceEntry } from './flow-net-trace.js'
-import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
 import { buildKeyResolvers } from './main/keyResolvers.js'
@@ -144,7 +143,8 @@ const flowBearerStore = createBearerStore()
 //   켜져 있으면 (1) 페이지에 XHR 캡처를 주입하고(flow-xhr-capture.js) (2) webRequest 에서 batchexecute
 //   요청 본문을 (3) flow:report-xhr 로 응답까지 받아 JSONL 한 줄씩 append 한다. 꺼져 있으면 아무것도
 //   안 한다 — 생성 로직 무관. 파일: AUTOFLOWCUT_NET_TRACE_FILE 또는 바탕화면(flow-net-trace.js).
-const NET_TRACE_ON = isNetTraceOn(process.env)
+const FLOW_PAGE_POLICY = flowPagePolicy(process.env)
+const NET_TRACE_ON = FLOW_PAGE_POLICY.legacyMutation && isNetTraceOn(process.env)
 const NET_TRACE_INJECTION = 'window.__autoflowcut_net_trace__ = true;\n' + FLOW_XHR_CAPTURE_INJECTION
 let netTraceFile = null
 function appendNetTrace(entry) {
@@ -165,6 +165,7 @@ function injectNetTrace(view) {
 // flow.google.com 제출 RPC(ogiZ0b/YhhmEf) 캡처 — 프로덕션, 항상 켜짐. 멱등(문서 플래그). 페이지 스크립트가
 //   첫 XHR 을 쏘기 전에 설치돼야 해서 dom-ready 에서도 주입한다. 핸들러는 클릭 전에 설치 플래그를 프로브한다.
 function injectRpcCapture(view) {
+  if (!FLOW_PAGE_POLICY.rpcCapture) return
   if (!view || view.webContents.isDestroyed()) return
   view.webContents.executeJavaScript(FLOW_RPC_CAPTURE_INJECTION).catch((e) => {
     console.warn('[Flow RPC] capture injection failed:', e?.message)
@@ -451,6 +452,10 @@ function makeFlowView() {
       contextIsolation: true,
       webSecurity: false,
       preload: path.join(__dirname, 'flow-preload.cjs'),
+      additionalArguments: [
+        ...(FLOW_PAGE_POLICY.rpcCapture ? ['--autoflowcut-flow-rpc-capture'] : []),
+        ...(FLOW_PAGE_POLICY.legacyMutation ? ['--autoflowcut-flow-legacy-mutation'] : []),
+      ],
     },
   })
 
@@ -506,7 +511,7 @@ function makeFlowView() {
       if (win) win.webContents.send('flow-status', { authenticated: true, url })
     }
     // Re-inject fetch monkey-patch on SPA navigation (guard flag ensures idempotency)
-    view.webContents.executeJavaScript(FLOW_PAGE_INJECTION).catch(() => {})
+    installLegacyFlowHooks(view.webContents, process.env).catch(() => {})
     injectNetTrace(view)
     injectRpcCapture(view)
   })
@@ -622,22 +627,12 @@ function makeFlowView() {
       return
     }
 
-    // Inject fetch monkey-patch (idempotent — guard flag on page prevents double-patch)
-    try {
-      await view.webContents.executeJavaScript(FLOW_PAGE_INJECTION)
-      console.log('[Flow] fetch monkey-patch injected')
-    } catch (e) {
-      console.warn('[Flow] fetch injection failed:', e.message)
+    // No legacy fetch/body/dumper mutation unless explicitly requested.
+    try { await installLegacyFlowHooks(view.webContents, process.env) } catch (e) {
+      console.warn('[Flow] legacy hooks failed:', e.message)
     }
     injectNetTrace(view)
     injectRpcCapture(view)
-
-    try {
-      await view.webContents.executeJavaScript(FLOW_SETTINGS_DUMPER)
-      console.log('[Flow] settings dumper injected')
-    } catch (e) {
-      console.warn('[Flow] settings dumper injection failed:', e.message)
-    }
 
     // 랜딩 페이지: "Create with Flow" 버튼 자동 클릭
     if (url.includes('labs.google')) {
@@ -954,6 +949,7 @@ const {
 // #R15-5: arming 결과를 반환한다(성공/실패) — 호출부(image/T2V/I2V)가 실패 시 생성을 중단해
 //   미주입(잘못된 seed/aspect/ref/i2v) 요청이 나가지 않게 한다.
 async function setFlowPageInject({ seed, aspectRatio, references, i2v, duration, videoModel, genTag }) {
+  if (!FLOW_PAGE_POLICY.legacyMutation) return { success: false, error: 'flow-legacy-mutation-disabled' }
   const flowView = modeController.getFlowView()
   if (!flowView) return { success: false, error: 'Flow view not ready' }
   // duration/videoModel 은 T2V OmniFlash 강제·길이최적화용 — 페이지측이 inject.duration/
@@ -982,6 +978,7 @@ async function setFlowPageInject({ seed, aspectRatio, references, i2v, duration,
 }
 
 async function clearFlowPageInject() {
+  if (!FLOW_PAGE_POLICY.legacyMutation) return
   const flowView = modeController.getFlowView()
   if (!flowView) return
   try {
@@ -1056,6 +1053,7 @@ ipcMain.handle('flow:set-agent-mode', (_e, { on } = {}) => { flowAgentOn = !!on;
 
 // ─── Flow API IPC handlers (all four modules) ───────────────────────────────
 const flowAPIDeps = {
+  isRpcCaptureEnabled: () => FLOW_PAGE_POLICY.rpcCapture,
   getFlowView: modeController.getFlowView,
   getFlowAgentOn: () => flowAgentOn,
   // #R25-4: quota 를 쓰는 submit/upscale 핸들러가 API 모드에서 stale 호출로 Flow quota 를
