@@ -1,4 +1,5 @@
 import { passiveSessionReady } from '../flow-passive-image.js'
+import { requestFlowSubmissionCheck } from '../flow-submission-check.js'
 /**
  * Electron IPC Handler - Flow API Operations
  *
@@ -214,7 +215,11 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   //   옛 핸들러 본문은 후속 정리 대상으로 남긴다(등록하지 않는다).
   ipcMain.handle('flow:generate-image', async (event, payload) => {
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
-    return angular.generateImage(payload || {})
+    return angular.generateImage(payload || {}, flowSubmission => {
+      if (!payload?.submissionRequestId) return
+      try { event.sender.send('flow:image-submission', { submissionRequestId: payload.submissionRequestId, flowSubmission }) }
+      catch { /* The returned result also carries the record if the renderer is gone. */ }
+    }, payload?.checkSubmission ? signal => requestFlowSubmissionCheck(ipcMain, event.sender, payload.submissionRequestId, signal) : null)
   })
   // eslint-disable-next-line no-unused-vars
   const legacyGenerateImage = async (event, {

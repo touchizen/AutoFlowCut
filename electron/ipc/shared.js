@@ -354,6 +354,9 @@ export function createSharedHelpers(ctx) {
       //   있으므로 결과에 dispatched:true 를 실어 호출부가 gen 을 지우지 않고 waiter/마감 경로로 가게 한다.
       token.dispatched = true
       flowView.webContents.sendInputEvent({ type: 'mouseDown', ...nativePoint(coords), button: 'left', clickCount: 1 })
+      // Publish the paid-click boundary before the first post-click await.
+      // A notification failure must not prevent the matching mouseUp.
+      try { opts.onDispatched?.() } catch (e) { console.warn('[TrustedClick] dispatch notification failed:', e.message) }
       await new Promise(r => setTimeout(r, 80))
 
       // ⚠️ down 을 보냈으면 up 은 **무조건** 보낸다. 중간에 그냥 return 하면 렌더러에 press 상태가

@@ -28,6 +28,19 @@ vi.mock('../../src/utils/formatters', () => ({
 
 const TINY_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEX///+nxBvIAAAAC0lEQVR4nGNgAAIAAAUAAeImBZsAAAAASUVORK5CYII='
 
+it('preserves the local paid submission on failed finalization and closes it only on success', async () => {
+  const flowSubmission = { id: 'flow-submit-local', submittedAt: 123, promptHash: 'hash', postClick: true,
+    retryBlocked: true, reason: 'awaiting-result' }
+  const failed = await finalizeGeneratedImage({ result: { success: false, error: 'download-timeout',
+    reason: 'download-timeout', flowSubmission, postClick: true, retryBlocked: true, safetyStop: true } })
+  expect(failed.sceneUpdate).toMatchObject({ postClick: true, retryBlocked: true, safetyStop: true,
+    flowSubmission: { ...flowSubmission, reason: 'download-timeout' } })
+  const saved = await finalizeGeneratedImage({ result: { success: true, flowSubmission, images: [{ base64: TINY_BASE64 }] },
+    saveMode: 'none', genAPI: {}, sceneId: 's1', prompt: 'p' })
+  expect(saved.sceneUpdate).toMatchObject({ retryBlocked: false,
+    flowSubmission: { ...flowSubmission, retryBlocked: false, reason: 'collected' } })
+})
+
 describe('finalizeGeneratedImage — errorKind cleanup', () => {
   beforeEach(() => {
     vi.clearAllMocks()

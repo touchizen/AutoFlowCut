@@ -22,3 +22,13 @@ it('shares the persisted image submission guard without a process-memory latch',
   expect(getPreservedFlowSubmissionStop({ ...scene, retryBlocked: false }, 'flow')).toBeNull()
   expect(getPreservedFlowSubmissionStop({ retryBlocked: true }, 'flow')).toBeNull()
 })
+
+it('blocks a clicked local submission without generationId or a process latch', () => {
+  const flowSubmission = { id: 'flow-submit-local', submittedAt: 123, promptHash: 'hash',
+    postClick: true, retryBlocked: true, reason: 'download-timeout' }
+  expect(getPreservedFlowSubmissionStop({ flowSubmission }, 'flow')).toMatchObject({
+    success: false, retryBlocked: true, postClick: true, reason: 'download-timeout', flowSubmission,
+  })
+  expect(getPreservedFlowSubmissionStop({ flowSubmission }, 'api')).toBeNull()
+  expect(getPreservedFlowSubmissionStop({ flowSubmission: { ...flowSubmission, retryBlocked: false } }, 'flow')).toBeNull()
+})

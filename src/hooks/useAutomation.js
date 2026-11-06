@@ -4,7 +4,7 @@
  * Concurrent Queue 방식 (동시 처리)
  */
 
-import { getFlowSafetyStop, subscribeFlowSafetyStop, getPreservedFlowSubmissionStop } from '../utils/flowSafetyStop'
+import { getFlowSafetyStop, subscribeFlowSafetyStop, getPreservedFlowSubmissionStop, flowSubmissionPatch } from '../utils/flowSafetyStop'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveSceneStyle, presetTagForStyleId } from '../services/styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
@@ -108,11 +108,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
   const { submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = genAPI
   const { scenes, references, updateScene, getMatchingReferences, updateReferences } = scenesHook
+  const scenesRef = useRef(scenes)
+  scenesRef.current = scenes
 
   // 씬이 모두 삭제되거나, 생성된 이미지가 없는 상태로 돌아가면 progress/status 리셋
   useEffect(() => {
     if (isRunning) return
-    if (mode === 'flow' && scenes.some(scene => scene.generationId && scene.retryBlocked)) return
+    if (scenes.some(scene => getPreservedFlowSubmissionStop(scene, mode))) return
     const hasAnyImage = scenes.some(s => s.image || s.imagePath)
     if (!hasAnyImage && (status === 'done' || status === 'stopped' || status === 'error')) {
       setProgress({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
@@ -340,8 +342,16 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         break
       }
 
+      const latestScene = scenesRef.current.find(s => s.id === targetScenes[i].id)
+      if (!latestScene) continue
+      const blocked = getPreservedFlowSubmissionStop(latestScene, mode)
+      if (blocked) {
+        stopRequestedRef.current = true
+        flowSafetyStoppedRef.current = blocked
+        break
+      }
       const scene = applyM1MentionExclusions(
-        targetScenes[i],
+        latestScene,
         m1ExcludedMentionNamesBySceneId
       )
       updateScene(scene.id, { status: 'generating', generatingStartedAt: Date.now() })
@@ -398,6 +408,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         updateScene(scene.id, { status: 'pending', error: null, errorKind: null })
         break
       }
+      const latestBlock = getPreservedFlowSubmissionStop(scenesRef.current.find(s => s.id === scene.id), mode)
+      if (latestBlock) {
+        stopRequestedRef.current = true
+        flowSafetyStoppedRef.current = latestBlock
+        break
+      }
       const submitResult = await submitGeneration(styledPrompt, matchedRefs, {
         batchCount: imageBatchCount,
         seed,
@@ -407,7 +423,16 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         references: effectiveRefs,
         imageUpscale,
         cancelScope: run.scope,
+        ...(mode === 'flow' ? {
+          beforeSubmit: () => {
+            const current = scenesRef.current.find(s => s.id === scene.id)
+            return current ? getPreservedFlowSubmissionStop(current, mode)
+              : { success: false, errorKind: 'flow-image-ownership-unproven', reason: 'scene-unavailable', retryBlocked: true }
+          },
+          onSubmission: flowSubmission => updateScene(scene.id, flowSubmissionPatch({ flowSubmission })),
+        } : {}),
       })
+      if (submitResult.flowSubmission) updateScene(scene.id, flowSubmissionPatch(submitResult))
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
         pendingQueue.push({ generationId: submitResult.generationId, scene, model: resolvedGeneration.model, provider: resolvedGeneration.provider, submittedAt: _now, originalSubmittedAt: _now })
@@ -647,6 +672,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     //   - sceneIndices 명시: 그 인덱스들 (retry/partial 호출)
     //   - force=true (MCP 전용): prompt 있는 모든 씬 (완료된 씬도 포함, 새 스타일로 재생성)
     //   - 그 외: filterPendingScenes — 이미지 없는 씬 + pending/error 상태 (App.jsx 자동 매칭 검증과 일치)
+    const scenes = scenesRef.current
     const targetScenes = sceneIds
       ? sceneIds.map(id => scenes.find(s => s.id === id)).filter(Boolean)  // 실행 시점 현재 scenes 에서 id 로 resolve
       : sceneIndices
@@ -909,7 +935,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     //    안 됐는데 done 씬이 pending+image 로 남아 "이미지는 있는데 미완료"로 저장된다.
     if (force && !stopRequestedRef.current && !isUpscaylRunningRef.current?.()) {
       for (const s of targetScenes) {
-        if (s.status === 'done' || s.status === 'error') {
+        const current = scenesRef.current.find(scene => scene.id === s.id)
+        if (!current || getPreservedFlowSubmissionStop(current, mode)) continue
+        if (current.status === 'done' || current.status === 'error') {
           updateScene(s.id, { status: 'pending', error: null, errorKind: null })
         }
       }
@@ -985,6 +1013,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   // #R8-10: onComplete 도 dep — 누락 시 완료 시점에 stale save 콜백을 호출할 수 있다.
   // subscriptionBatch/onPaywall/isAuthenticated/onLoginRequired: 배치 게이트 — 구독/인증 상태 변경 시 최신값 반영.
   }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, updateReferences, t, onOpenSettings, mode, flowProjectReady, onComplete, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription, beginRun, finishRun, cancelActiveRuns])
+  const startRef = useRef(start)
+  startRef.current = start
   
   /**
    * 일시정지/재개
@@ -1026,7 +1056,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     const guardedStart = async () => {
       leaveQueue()
       try {
-        return await start(options)
+        return await startRef.current(options)
       } catch (e) {
         console.error('[Automation] start threw — resetting run state:', e?.message)
         setStatus('error')

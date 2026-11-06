@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { galleryWatchCode, galleryDelta } from './flow-gallery-snapshot.js'
 import { applyNativeSettings } from './flow-native-settings.js'
 import { FIND_GENERATE_BUTTON_JS, findPromptEditor } from './flow-composer-dom.js'
@@ -37,9 +37,11 @@ export async function passiveSessionReady(wc) {
 /** Plain image lane. Deliberately completes capture+download before acknowledging
  * an async submit, so the existing queue cannot overlap two ownership windows. */
 export function createPassiveImageGenerator(deps, withViewport) {
-  return async function generate(payload = {}) {
+  return async function generate(payload = {}, onSubmission, beforeSubmit) {
+    let flowSubmission = null
     const fail = (reason, postClick = false) => ({ success: false, errorKind: 'flow-image-ownership-unproven',
-      error: 'flow-image-ownership-unproven', reason, retryBlocked: true, ...(postClick ? { postClick: true, safetyStop: true } : {}) })
+      error: 'flow-image-ownership-unproven', reason, retryBlocked: true, ...(postClick ? { postClick: true, safetyStop: true } : {}),
+      ...(flowSubmission ? { flowSubmission: { ...flowSubmission, reason } } : {}) })
     const count = payload.batchCount == null ? 1 : Number(payload.batchCount)
     const prompt = normalizePrompt(payload.prompt)
     const plan = payload.plan
@@ -61,6 +63,15 @@ export function createPassiveImageGenerator(deps, withViewport) {
     try { lease = capture.begin({ webContentsId: wc.id, projectId: project, prompt, count }) }
     catch (e) { return fail(e.message) }
     let dispatched = false, success = false, timer, cancellationTimer, inputWatch = false
+    const recordSubmission = () => {
+      if (flowSubmission) return
+      dispatched = true
+      flowSubmission = { id: `flow-submit-${randomUUID()}`, submittedAt: Date.now(),
+        promptHash: createHash('sha256').update(prompt).digest('hex'),
+        postClick: true, retryBlocked: true, reason: 'awaiting-result' }
+      lease.dispatch()
+      onSubmission?.({ ...flowSubmission })
+    }
     let baseline, selected
     const invalid = () => lease.abort('page-or-input-changed')
     const events = ['did-navigate', 'did-navigate-in-page', 'render-process-gone', 'destroyed']
@@ -137,18 +148,24 @@ export function createPassiveImageGenerator(deps, withViewport) {
         if (!before?.ok || signature(initial) !== signature(before)) return fail('gallery-changed-before-submit')
         await pause(500)
         // The final snapshot/read-back happens inside the native click's dispatch gate.
-        const click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', beforeDispatch: async () => {
+        const click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', onDispatched: recordSubmission, beforeDispatch: async () => {
           guard()
           if (aborted() || !await composerMatches()) return false
           const last = await scan()
           if (!last?.ok || signature(last) !== signature(before)) return false
+          // Last await before native dispatch: a scene can change while any of
+          // the preceding isolated DOM reads are still pending.
+          if (beforeSubmit && !await beforeSubmit(lease.signal)) {
+            lease.abort('scene-submission-blocked')
+            return false
+          }
           guard()
           lease.prepare()
           wc.on('before-input-event', invalid); inputWatch = true
           return true
         } })
-        dispatched = !!(click?.success || click?.dispatched || lease.state().request)
-        if (dispatched) { lease.dispatch(); ctl.clickStarted = true }
+        dispatched ||= !!(click?.success || click?.dispatched || lease.state().request)
+        if (dispatched) { recordSubmission(); ctl.clickStarted = true }
         guard()
         if (!dispatched) throw new Error('submit-unconfirmed')
         const deadline = Date.now() + 120000
@@ -182,9 +199,9 @@ export function createPassiveImageGenerator(deps, withViewport) {
         const final = resultDelta(before, await scan())
         if (!settled() || !final.ok || signature({ items: final.items }) !== signature({ items: selected })) throw new Error('gallery-changed-during-download')
         guard()
-        return { success: true, images }
+        return { success: true, images, flowSubmission }
       }, { shieldFlow: true })
-      if (!result?.success) return result?.errorKind === 'flow-image-ownership-unproven' ? result : fail('capture-aborted', dispatched)
+      if (!result?.success) return fail(result?.reason || 'capture-aborted', dispatched)
       guard() // Viewport restoration can yield and ownership must still hold.
       const restored = resultDelta(baseline, await scan())
       if (!settled() || !restored.ok || signature({ items: restored.items }) !== signature({ items: selected })) throw new Error('gallery-changed-during-restore')
@@ -192,10 +209,13 @@ export function createPassiveImageGenerator(deps, withViewport) {
       if (payload.asyncMode) {
         const generationId = `passive-${randomUUID()}`
         deps.pendingGenerations.set(generationId, { passive: true, completed: true, expectedCount: count, passiveResult: result })
-        return { success: true, submitted: true, generationId }
+        return { success: true, submitted: true, generationId, flowSubmission }
       }
       return result
-    } catch (e) { return fail(lease.state().error || e.message, dispatched || !!lease.state().request) }
+    } catch (e) {
+      if (dispatched || lease.state().request) recordSubmission()
+      return fail(lease.state().error || e.message, dispatched)
+    }
     finally {
       clearTimeout(timer)
       clearInterval(cancellationTimer)

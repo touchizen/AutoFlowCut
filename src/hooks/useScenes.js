@@ -30,6 +30,7 @@ import { mergeSceneGeneration } from '../utils/sceneGenerationMerge'
 import { toast } from '../components/Toast'
 import { hasImageData } from '../utils/formatters'
 import { pickPreservedSceneFields } from '../utils/csvPreservedSceneFields'
+import { preserveFlowSubmission } from '../utils/flowSafetyStop'
 
 // snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
@@ -414,7 +415,7 @@ export function useScenes() {
     }
     setScenes(prev => prev.map(scene => {
       if (scene.id !== sceneId) return scene
-      const next = { ...scene, ...updates }
+      const next = { ...scene, ...preserveFlowSubmission(scene, updates) }
       // Issue #2: 이미 생성 완료(이미지 보유)된 씬의 프롬프트가 실제로 바뀌면 재생성 대상이
       // 되도록 status 를 pending 으로 되돌린다.
       // 가드: 호출자가 status 를 "실제로 바꾸는" 경우(생성 코드 — done→generating 등)만 존중하고

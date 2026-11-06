@@ -308,19 +308,42 @@ export function useFlowEngine(opts = {}) {
     const r = await planFlowRefs({ prompt, attached, pool: callOpts.references || [], mode: 'image' })
     if (r.error) return r.error
     if (getFlowSafetyStop()) return getFlowSafetyStop()
-    return markAuth(await api().flowGenerateImage({
-      token: effectiveToken(),
-      prompt,
-      aspectRatio: callOpts.aspectRatio,
-      seed: callOpts.seed,
-      model: callOpts.model,
-      projectId: effectiveProjectId(),
-      batchCount: callOpts.batchCount,
-      asyncMode,
-      refs: r.refs,
-      plan: r.plan,
-      referenceImages: [],
-    }))
+    const blocked = callOpts.beforeSubmit?.()
+    if (blocked) return blocked
+    const submissionRequestId = typeof callOpts.onSubmission === 'function' ? crypto.randomUUID() : null
+    let flowSubmission
+    const unsubscribe = submissionRequestId ? api().onFlowImageSubmission?.(event => {
+      if (event?.submissionRequestId !== submissionRequestId) return
+      flowSubmission = event.flowSubmission
+      callOpts.onSubmission(flowSubmission)
+    }) : null
+    const checkSubmission = !!submissionRequestId && typeof callOpts.beforeSubmit === 'function'
+    const unsubscribeCheck = checkSubmission ? api().onFlowImageSubmitCheck?.(event => {
+      if (event?.submissionRequestId !== submissionRequestId) return
+      return !callOpts.beforeSubmit()
+    }) : null
+    try {
+      const result = await api().flowGenerateImage({
+        token: effectiveToken(),
+        prompt,
+        aspectRatio: callOpts.aspectRatio,
+        seed: callOpts.seed,
+        model: callOpts.model,
+        projectId: effectiveProjectId(),
+        batchCount: callOpts.batchCount,
+        asyncMode,
+        refs: r.refs,
+        plan: r.plan,
+        referenceImages: [],
+        ...(submissionRequestId ? { submissionRequestId } : {}),
+        ...(checkSubmission ? { checkSubmission: true } : {}),
+      })
+      return markAuth({ ...result, ...(flowSubmission && !result?.flowSubmission ? { flowSubmission } : {}) })
+    } catch (error) {
+      return markAuth({ success: false, error: error?.message || String(error),
+        ...(flowSubmission ? { flowSubmission: { ...flowSubmission, reason: error?.message || 'ipc-failed' },
+          postClick: true, retryBlocked: true, safetyStop: true } : {}) })
+    } finally { unsubscribe?.(); unsubscribeCheck?.() }
   }
 
   const generateImage = useCallback(async (prompt, referenceImages = [], callOpts = {}) => {

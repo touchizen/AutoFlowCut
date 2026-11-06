@@ -586,8 +586,8 @@ export function createFlowAngular(deps) {
    *   필요한 업로드 → 정리 → 세그먼트(텍스트·@멘션) → ＋ 첨부 → 게이트)이 편집기를 채우고, 게이트의 editorExpected·칩 집합이 재판독·beforeDispatch 의 기대가 된다.
    *   레퍼런스가 없으면 M2 경로(SET_EDITOR_TEXT_JS) + 그 전에 잔여 칩 정리(§1-1). 옛 필드(referenceImages 비어 있지 않음)는 계속 거부.
    */
-  async function generateImage(payload = {}) {
-    if (deps.isRpcCaptureEnabled?.() === false) return generatePassiveImage(payload)
+  async function generateImage(payload = {}, onSubmission, beforeSubmit) {
+    if (deps.isRpcCaptureEnabled?.() === false) return generatePassiveImage(payload, onSubmission, beforeSubmit)
     const { prompt, aspectRatio, model, projectId, referenceImages, batchCount, asyncMode, refs, plan } = payload
     const nRefs = Array.isArray(refs) ? refs.length : 0
     const nMentions = countMentions(plan)

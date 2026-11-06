@@ -12,7 +12,7 @@ import { resolveMentions } from '../utils/mentionParser'
 import { getAuthRequiredMessage, getAuthErrorMessage } from '../utils/authMessages'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 import { resolveDisplayError } from '../utils/errorDisplay'
-import { getPreservedFlowSubmissionStop } from '../utils/flowSafetyStop'
+import { getPreservedFlowSubmissionStop, flowSubmissionPatch } from '../utils/flowSafetyStop'
 
 /**
  * @param {object} deps
@@ -162,6 +162,11 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
           provider: resolvedGeneration.provider,
           references: refs,
           imageUpscale: settings.imageUpscale || 'off',
+          ...(genAPI?.mode === 'flow' ? {
+            beforeSubmit: () => scenesRef.current.some(s => s.id === sceneId) ? preservedStop(sceneId)
+              : { success: false, errorKind: 'flow-image-ownership-unproven', reason: 'scene-unavailable', retryBlocked: true },
+            onSubmission: flowSubmission => scenesHook.updateScene(sceneId, flowSubmissionPatch({ flowSubmission })),
+          } : {}),
         })
       }
 
@@ -170,6 +175,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       if (missing.length > 0) console.warn('[Scene]', sceneId, 'unknown @mentions:', missing.join(', '))
 
       let result = await callEngine(effectiveRefs)
+      if (result?.flowSubmission) scenesHook.updateScene(sceneId, flowSubmissionPatch(result))
 
       // 프리플라이트가 "동기화할 것 없음"으로 봤는데도 엔진이 미해결로 거절할 수 있다 — 앱이 들고
       // 있던 동기화 판정이 옛것이면 그렇다(Flow 에서 사용자가 직접 고친 경우 등). 그때 그냥 에러로

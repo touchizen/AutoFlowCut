@@ -12,6 +12,7 @@ import { fileSystemAPI } from '../hooks/useFileSystem'
 import { getImageSizeFromBase64 } from '../utils/formatters'
 import { tryUpscaleImage } from '../utils/imageProcessing'
 import { baseImageReplacementPatch } from '../utils/imagePatch'
+import { flowSubmissionPatch } from '../utils/flowSafetyStop'
 
 /**
  * 생성된 이미지 결과를 후처리 (업스케일 + 크기 + 저장 + 씬 업데이트 데이터 반환)
@@ -39,7 +40,14 @@ import { baseImageReplacementPatch } from '../utils/imagePatch'
  * @returns {Promise<{ success: boolean, sceneUpdate?: object }>}
  *   sceneUpdate: updateScene 에 전달할 객체 (status, donePrompt, image, imagePath, mediaId, image_size, seed, generatedAt, model)
  */
-export async function finalizeGeneratedImage({
+export async function finalizeGeneratedImage(params) {
+  const finalized = await finalizeImage(params)
+  const reason = params.result.reason || finalized.sceneUpdate?.error || 'finalization-failed'
+  return { ...finalized, sceneUpdate: { ...finalized.sceneUpdate,
+    ...flowSubmissionPatch({ ...params.result, reason }, finalized.success) } }
+}
+
+async function finalizeImage({
   result, genAPI, upscaleRes = 'off', saveMode, projectName, sceneId, prompt,
   seed = null, model = 'flow', logPrefix = '[Finalize]',
   // R1#6/R2#5: authFailed 결과의 error 가 기계 토큰(not-on-flow · flow-rpc-error, kind 동반)일 때 대신 저장할 인증 안내 문구.

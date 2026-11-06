@@ -195,6 +195,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flowSessionStatus: () => ipcRenderer.invoke('flow:session-status'),  // M1-9: flow.google.com 세션 판정(토큰 없음)
   flowExtractProjectId: (opts) => ipcRenderer.invoke('flow:extract-project-id', opts),
   flowGenerateImage: (payload) => ipcRenderer.invoke('flow:generate-image', payload),
+  onFlowImageSubmission: (cb) => {
+    const handler = (_, data) => cb(data)
+    ipcRenderer.on('flow:image-submission', handler)
+    return () => ipcRenderer.removeListener('flow:image-submission', handler)
+  },
+  onFlowImageSubmitCheck: (cb) => {
+    const handler = async (_, data) => {
+      // Unrelated calls return undefined; only the owning listener replies.
+      try {
+        const allowed = await cb(data)
+        if (typeof allowed === 'boolean') ipcRenderer.send('flow:image-submit-check-result', { checkId: data.checkId, allowed })
+      } catch { /* Main refuses on timeout. */ }
+    }
+    ipcRenderer.on('flow:image-submit-check', handler)
+    return () => ipcRenderer.removeListener('flow:image-submit-check', handler)
+  },
   flowCheckGeneration: (payload) => ipcRenderer.invoke('flow:check-generation', payload),
   flowCollectGeneration: (payload) => ipcRenderer.invoke('flow:collect-generation', payload),
   flowCancelPending: () => ipcRenderer.invoke('flow:safety-cancel-pending'),

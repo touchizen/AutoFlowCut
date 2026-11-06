@@ -2,6 +2,8 @@
 
 2026-11-07 · 작업 브랜치 `fix/flow-detection-no-page-mutation` · 시작 HEAD `5d1fb7d6`
 
+**3차 리뷰 상태(기준 HEAD `627e96c3`): 소유권 판정은 미해결이다.** 아래 2초/1.5초 안정화는 요청과 결과를 잇는 증거가 아니다. 목록 완료 4초 뒤 나타난 기존 카드가 성공으로 수집되는 회귀를 재현했다. 저장된 실제 DOM에서 대체 근거를 입증하지 못해, 사용자 지시에 따라 소유권 알고리즘은 억지로 바꾸지 않았다. `flowPassiveImage.test.js`의 `R3 unresolved: refuses an old card first rendered 4s after listing completion`은 **expected failure**이며 정상 통과 테스트와 별도로 집계한다. 제출 기록 보존과 최신 씬 재검사는 아래 3차 항목에서 수정했다.
+
 ## 구현과 소유권 판정
 
 기본값은 **일반 텍스트 씬 이미지**의 수동 네트워크 관찰 + 격리 DOM 비교다. `AUTOFLOWCUT_FLOW_RPC_CAPTURE=1`일 때만 기존 RPC 래퍼를 허용한다. 구형 본문 변조는 여기에 `AUTOFLOWCUT_FLOW_LEGACY_MUTATION=1`까지 있어야 한다. 영상·캐릭터·레퍼런스 업로드·업스케일·구형 generate-scene IPC는 기본 정책에서 거부한다. 이미지 payload에 레퍼런스·멘션·고정 seed가 있으면 입력 전에 거부한다.
@@ -47,6 +49,41 @@ Electron은 webRequest 이벤트별 마지막 리스너만 사용하므로 기�
 - RED/GREEN·관련·전체 테스트 로그와 결과 JSON은 `.work/review-r2/`에 남긴다. 이 작업은 커밋 없이 변경만 남긴다.
 
 2차 최종 검증: 관련 **70개 파일·605개 통과**, 전체 **893개 파일 통과·4개 skip / 10,567개 테스트 통과·54개 skip**, 실패 0. `render.smoke.test.js`만 제외했다. `TMPDIR="$PWD/.work/review-r2"`와 `--configLoader runner --no-cache --maxWorkers 4`로 실행했다. `debugger.`는 Electron 전체와 브랜치+worktree Electron 추가 줄 모두 0건이다. HEAD는 `05b21a74`로 유지했다.
+
+## 3차 조사·수정 (2026-11-07, 기준 HEAD `627e96c3`)
+
+### 소유권 근거 조사: 선택할 수 있는 근거 없음
+
+| 후보 | 저장된 증거 | 결론 |
+|---|---|---|
+| 타일·상세 프롬프트 정확 일치 | `tests/fixtures/flow-live-dom-20260714.js:12`, `:18`: 결과 img의 alt는 `Generated image`/`생성된 이미지`, 프롬프트 없음. `docs/handoffs/evidence/2026-09-25-m3-dom-c-after-image-generation.elements.json:546`의 `footer-left` 버튼에는 `King standing in palace hall` 제목이 있지만 타일 계층·media ID가 보존되지 않음. | `2026-09-25-m3-samples.masked.jsonl:3`의 원문은 `A king standing in a palace hall, cinematic lighting`; 짧은 제목은 정확 일치 프롬프트가 아님. `flow-live-dom-download-20261019.js:13`의 제목도 Flow가 붙인 미디어 이름임. |
+| 생성 중 placeholder → 결과 노드 계보 | `flow-live-dom-20260924.js:14`, `:17`의 placeholder는 프롬프트 편집기 안내. `flow-live-dom-m3.js:15`의 busy는 업로드 첨부 칩. | 생성 결과 placeholder의 생성·교체 전후 기록이 없음. `flowPassiveImage` 테스트의 pending-result는 합성 시나리오이며 실제 Flow 계보 증거로 사용할 수 없음. |
+| data/aria/요청 식별자 | `flow-live-dom-20260714.js:12`: data-tile-id의 UUID = edit 경로 UUID, img name의 media UUID와 다름. `2026-09-25-m3-samples.masked.jsonl:3`: 요청 `[4][0]`의 `<uuid#9>`가 응답 메타데이터에 반복되지만 동시 DOM 덤프에 노출되지 않음. | edit/media 식별자는 결과를 구분하지만 요청과 연결되지 않음. aria는 드래그·메뉴/선택 상태이며 제출 순서나 요청 ID가 아님. 응답 본문 접근을 새로 추가하지 않음. |
+
+`flow-media-collect.js:32`은 img src의 name UUID와 edit 링크만 읽으며 DOM 순서 자체를 제출 순서로 취급한다. `flow-dom-dump.js:17`은 인터랙티브 요소만 평탄화하고 텍스트를 80자로 자른다(`:33`). 실제 M3 기록은 bodyHtml을 제외했다(`docs/handoffs/evidence/2026-09-25-m3-references-capture.md:4`). 따라서 이 기록만으로 전체 갤러리 구조·원문 프롬프트 부재를 단정할 수 없고, 쓸 수 있는 증거를 **확인하지 못한 것**이다. `tests/fixtures/flow-passive-image.js:19`도 실측이 아닌 계약 fixture라고 명시돼 있다.
+
+사용자와 실제 화면에서 확인할 항목(이번 작업에서는 실행하지 않음):
+
+1. 완료 이미지의 타일·상세·프롬프트 재사용 UI에서 **원문 전체**가 읽히는지, 길이·줄바꿈·한국어가 보존되는지와 해당 media/edit ID의 DOM 범위를 기록한다. 자동 제목과 원문을 구별한다.
+2. 사용자가 승인한 한 번의 제출에서 기존 카드 전체, 클릭 직전, 생성 중 placeholder, 결과 표시의 DOM을 연속 기록한다. 격리 월드의 WeakMap/MutationObserver로 같은 노드가 유지되는지, 타일이 통째로 교체되는지, 가상 스크롤이 옛 노드를 재사용하는지 확인한다. DOM에 표식 속성을 쓰지 않는다.
+3. 요청 `[4][0]` 또는 항목의 요청 UUID가 placeholder/결과의 data/aria에 그대로 나타나는지 비교한다. 지연된 기존 카드·같은 프롬프트의 옛 결과도 함께 대조한다. 복수 근거가 확인되면 AND 조건을 설계한다.
+4. 근거가 확인되기 전에는 시간 기반 성공 테스트를 소유권 증명으로 취급하지 않는다. 이후 검증은 1장부터 시작하고, 3장 검증의 제출 간격은 기존 60~75초를 유지한다.
+
+### 제출 기록 보존
+
+- 네이티브 `mouseDown` 직후, 첫 post-click await 전에 `{id, submittedAt, promptHash, postClick, retryBlocked, reason}`를 생성한다. `id`는 로컬 `flow-submit-<UUID>`, 해시는 정규화된 프롬프트의 SHA-256이다. 기록을 실제 서버 generation ID로 취급하지 않는다. 클릭 전 거부는 기록을 만들지 않는다.
+- main → **앱 렌더러** IPC를 호출 ID로 묶어 `scene.flowSubmission`에 즉시 반영하고, 반환 결과에도 실어 이벤트/응답 양쪽에서 보존한다. Flow 페이지 메인 월드에는 아무것도 추가하지 않는다.
+- 제출 후 다운로드·HTTP·탐색·타임아웃·IPC 예외는 기록/차단/사유를 보존한다. 수집·저장 중 throw, 사용자 Stop 등 결과 객체 없는 실패도 `useScenes`의 공통 patch에서 기존 기록을 유지한다. 성공 finalize만 기록을 `collected`, `retryBlocked:false`로 닫는다.
+- 공유 guard는 `generationId`가 없어도 `flowSubmission.id && postClick && retryBlocked`를 차단한다. CSV 공통 보존 목록에 `flowSubmission`, `postClick`을 추가했다. 배치/개별 양쪽의 실제 네이티브 클릭 하네스 → 실제 다운로드 모듈 타임아웃 → 씬 → CSV → 디스크 저장/load → 메모리 latch 초기화 → 새 배치/개별 훅의 4가지 조합으로 검증한다.
+- 레코드는 씬 저장 경로를 따른다. main과 앱 렌더러가 저장 전에 동시에 강제 종료되는 상황까지 보장하는 별도 디스크 저널은 추가하지 않았다. 실제 Flow 생성·앱 재시작은 하지 않고 오프라인 훅/IPC 하네스로 재시작을 검증했다.
+
+### 최신 씬 재검사
+
+- 큐 execute는 최신 start 함수를 호출하고 최신 scenes에서 대상을 읽는다. 비동기 준비 뒤 씬별 제출 직전과 엔진의 참조 준비 뒤에도 검사한다. force 초기화도 최신 보존 차단 씬의 상태/오류를 지우지 않는다.
+- main의 마지막 DOM 판독이 끝난 뒤, 네이티브 dispatch 직전 마지막 await에서 앱 렌더러에 현재 씬의 존재/보존 차단을 묻는다. main이 만든 check ID와 originating sender가 모두 맞는 응답만 사용한다. 응답 없음·취소·렌더러 오류는 3초 이내에 클릭 전에 거부하고 리스너/타이머를 정리한다.
+- 큐 대기 중 MCP update, auth 준비 중 변경, main 준비 중 변경/삭제, 마지막 비동기 갤러리 판독 중 변경을 각각 실패 테스트부터 재현했다. 로그·검증 결과는 `.work/review-r3/`에 남긴다. 커밋하지 않는다.
+
+3차 최종 검증: 관련 **133개 파일 / 일반 통과 1,811개 + expected failure 1개**, 전체 **898개 파일 통과·4개 skip / 일반 통과 10,598개 + expected failure 1개 + skip 54개**, exit 0. expected failure는 미해결 소유권 1번이며 고친 것으로 집계하지 않는다. 전체 명령: `TMPDIR="$PWD/.work/review-r3/tmp" node node_modules/vitest/vitest.mjs run --configLoader runner --no-cache --maxWorkers 4 --exclude tests/integration/render.smoke.test.js`. `debugger.`는 Electron 전체 및 merge-base부터 브랜치·worktree Electron 추가 줄(새 파일 포함) 모두 0건. 변경 Electron 구문 검사·`git diff --check` 통과. HEAD `627e96c3` 유지, 커밋·push·병합·앱 실행·실제 Flow 생성 없음. 상세 기록: `.work/review-r3/report.json`, `full-final.log`, `debugger-audit.json`.
 
 ## 증명의 전제와 미확인 부분
 
