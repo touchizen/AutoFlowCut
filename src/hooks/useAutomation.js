@@ -4,6 +4,7 @@
  * Concurrent Queue 방식 (동시 처리)
  */
 
+import { getFlowSafetyStop, subscribeFlowSafetyStop } from '../utils/flowSafetyStop'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveSceneStyle, presetTagForStyleId } from '../services/styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
@@ -92,6 +93,16 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
   // generateImage 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
   // 단일 씬 동기 호출이 필요해지면 genAPI.generateImage 으로 직접 접근.
+  useEffect(() => subscribeFlowSafetyStop(result => {
+    if (mode !== 'flow') return
+    stopRequestedRef.current = true
+    cancelActiveRuns()
+    pausedRef.current = false
+    setIsPaused(false)
+    setStatus('error')
+    setStatusMessage(t(`errorSection.kind.${result.errorKind}`))
+  }), [mode, t, cancelActiveRuns])
+
   const { submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = genAPI
   const { scenes, references, updateScene, getMatchingReferences, updateReferences } = scenesHook
 
@@ -538,6 +549,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
    * 자동화 시작
    */
   const start = useCallback(async (options = {}) => {
+    if (mode === 'flow' && getFlowSafetyStop()) return getFlowSafetyStop()
     // projectName은 호출자(App.jsx의 ensureProjectName)가 항상 넘겨야 한다.
     // 누락 시엔 새 autoflowcut_<ts> 폴더를 만들지 않고 'Untitled'로 폴백해
     // 고아 폴더 생성을 차단한다(호출자 버그는 console.warn으로 드러냄).
@@ -602,7 +614,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     const run = beginRun()
     try {
 
-    stopRequestedRef.current = false
+    stopRequestedRef.current = mode === 'flow' && !!getFlowSafetyStop()
     pausedRef.current = false
     authStoppedRef.current = false
     completedCountRef.current = 0
@@ -1001,6 +1013,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     setQueuedSceneBatchCount(count => count + 1)
     try {
       await generationQueue.enqueue({
+        mode: mode,
         type: 'scene_batch',
         label: 'Batch Scene Generation',
         execute: guardedStart

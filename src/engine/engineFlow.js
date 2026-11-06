@@ -34,6 +34,7 @@ import { FLOW_MODELS } from './flowModels'
 import { isInlineImageData } from '../utils/inlineImage'   // I2V 시작 프레임 바이트 판정(훅·MCP 와 공용)
 import { planFlowReferenceComposition } from '../utils/flowReferencePlan'
 import { resolveReferenceImages } from '../utils/referenceResolver'
+import { getFlowSafetyStop, receiveFlowSafetyStop } from '../utils/flowSafetyStop'
 
 const api = () => window.electronAPI
 
@@ -132,6 +133,9 @@ export function useFlowEngine(opts = {}) {
   const [accessToken, setAccessToken] = useState(null)
   const [projectId, setProjectId] = useState(null)
   const stopRequestedRef = useRef(false)
+  useEffect(() => api()?.onFlowStatus?.(data => {
+    if (data?.safetyStop) receiveFlowSafetyStop(data.safetyStop)
+  }), [])
 
   // #R6-1: local completed-results map for mention-path sync scene results.
   // Keyed by a local generationId (e.g. "scene-<n>"); deleted after collect or clearGenerations.
@@ -186,6 +190,7 @@ export function useFlowEngine(opts = {}) {
   // #R11-2: 결과가 인증 에러면 authFailed 센티넬을 달고, API 모드(useGenAPI)와 동일하게
   //   토큰 캐시를 비우고 onAuthError 를 호출한다(배지 unauth + 자동복구 억제). 그 외엔 원본 그대로.
   const markAuth = (res) => {
+    receiveFlowSafetyStop(res)
     if (!(res && res.authFailed) && !isFlowAuthError(res)) return res
     accessTokenRef.current = null
     setAccessToken(null)
@@ -248,6 +253,7 @@ export function useFlowEngine(opts = {}) {
   // 캐릭터 ref 를 /characters 컴포저에서 생성한다. 스타일은 styledPrompt(텍스트)로 이미 반영돼 있고,
   // 화면비/seed 는 주입해야 한다 — 미주입 시 Flow 기본값(관측상 9:16)으로 나간다.
   const generateCharacterRef = async (prompt, callOpts, pid) => {
+    if (getFlowSafetyStop()) return getFlowSafetyStop()
     const createPayload = {
       prompt,
       displayName: callOpts.ref?.name,
@@ -294,12 +300,14 @@ export function useFlowEngine(opts = {}) {
   // M3(D1): 이미지 두 진입점(동기 generateImage · 배치·MCP 의 비동기 submitGeneration)이 같은 절차 — 업스케일 게이트 → 레퍼런스 생성의 스타일 ref
   //   이미지(범위 밖) → 계획(멘션 = 인라인 멘션, 멘션 안 된 매칭 ref = ＋ 첨부, pool = 프로젝트 ref 전체) → 바이트 → IPC. asyncMode 만 다르다.
   const submitFlowImage = async (prompt, referenceImages, callOpts, asyncMode) => {
+    if (getFlowSafetyStop()) return getFlowSafetyStop()
     const gate = flowInputGate(callOpts)
     if (gate) return gate
     const attached = Array.isArray(referenceImages) ? referenceImages : []
     if (callOpts.purpose === 'reference' && attached.length > 0) return REFERENCES_UNSUPPORTED()
     const r = await planFlowRefs({ prompt, attached, pool: callOpts.references || [], mode: 'image' })
     if (r.error) return r.error
+    if (getFlowSafetyStop()) return getFlowSafetyStop()
     return markAuth(await api().flowGenerateImage({
       token: effectiveToken(),
       prompt,
@@ -415,9 +423,11 @@ export function useFlowEngine(opts = {}) {
   // M3(D1·D3·D15): 프롬프트의 @멘션 = 인라인 멘션(레퍼런스 영상 r2v) — 이미지와 같은 계획·바이트 절차. pool = referenceImages(videoPromptReferences 의
   //   Flow 분기가 넘긴 멘션된 ref), 태그 첨부는 없다(API 모드와 같은 규칙: 영상 ref 는 멘션만). 유일 ref 상한은 계획이 IPC 전에 거부한다.
   const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, referenceImages, callOpts = {}) => {
+    if (getFlowSafetyStop()) return getFlowSafetyStop()
     try {
       const r = await planFlowRefs({ prompt, attached: [], pool: Array.isArray(referenceImages) ? referenceImages : [], mode: 'video' })
       if (r.error) return r.error
+      if (getFlowSafetyStop()) return getFlowSafetyStop()
       return markAuth(await api().flowGenerateVideoT2V({
         token: effectiveToken(),
         prompt,
@@ -440,6 +450,7 @@ export function useFlowEngine(opts = {}) {
   //   옛 경로(flowUploadReference → mediaId)는 새 Flow 에서 미지원이고, 앞 세션 애셋은 애셋 창에서 id 로 고를 수 없어 Flow mediaId·CDN URL 은 쓸 수 없다 —
   //   이미지 바이트가 아니면 IPC 전에 flow-i2v-start-frame-missing. 끝 프레임은 받지 않는다(새 Flow 의 끝 칸 첨부는 미검증 — 렌더러가 Flow 모드에서 뺀다).
   const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution, callOpts = {}) => {
+    if (getFlowSafetyStop()) return getFlowSafetyStop()
     const refuse = (kind) => ({ success: false, errorKind: kind, error: kind })
     if (endImage != null && endImage !== '') return refuse('flow-i2v-end-frame-unsupported')
     if (!isInlineImageData(startImage)) return refuse('flow-i2v-start-frame-missing')
@@ -592,7 +603,8 @@ export function useFlowEngine(opts = {}) {
     stopRequestedRef.current = !!value
   }, [])
 
-  const cancelGeneration = useCallback(async () => ({ success: true, aborted: 0 }), [])
+  const cancelGeneration = useCallback(async () => api()?.flowCancelPending
+    ? api().flowCancelPending() : { success: true, aborted: 0 }, [])
 
   // --- 반환 (22키 계약) -------------------------------------------------------
 

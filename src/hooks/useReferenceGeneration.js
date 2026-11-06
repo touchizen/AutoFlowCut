@@ -2,7 +2,8 @@
  * useReferenceGeneration - 레퍼런스 이미지 생성 (개별 + 일괄)
  */
 
-import { useState, useRef, useCallback } from 'react'
+import { getFlowSafetyStop, subscribeFlowSafetyStop } from '../utils/flowSafetyStop'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { entityPatchForNewImage } from '../utils/refEntityRegistration'
 import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
@@ -90,6 +91,14 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   const cancelActiveRuns = () => {
     for (const run of [...activeRunsRef.current]) cancelActiveScopeOnce(run)
   }
+  useEffect(() => subscribeFlowSafetyStop(() => {
+    if (genAPI?.mode !== 'flow') return
+    stopRequestVersionRef.current += 1
+    stopRequestedRef.current = true
+    cancelActiveRuns()
+    setStoppingRefs(pendingRefBatchCallsRef.current > 0)
+  }), [genAPI?.mode])
+
   // M1-10: 비-스타일 ref 만 업스케일하므로 그때만 엔진 게이트에 설정을 넘긴다(Flow 모드는 제출 전에 거부).
   const upscaleOptFor = (ref) => (isStyleReference(ref) ? undefined : (settings.imageUpscale || 'off'))
 
@@ -898,7 +907,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
     // enqueue 전에 개별 생성/quota가 남긴 stale flag는 기존 동작대로 새 batch 시작 시 버린다.
     const queuedStopRequested =
       stopRequestVersionRef.current !== stopVersionAtEnqueue
-    stopRequestedRef.current = queuedStopRequested
+    stopRequestedRef.current = queuedStopRequested || (genAPI?.mode === 'flow' && !!getFlowSafetyStop())
     if (queuedStopRequested) cancelActiveScopeOnce(run)
     if (!queuedStopRequested) setStoppingRefs(false)
     authStoppedRef.current = false
@@ -1508,7 +1517,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
     } finally {
       // P2 v3: 정상 종료 / early return / throw 어느 경로에서도 flag 정리 (P1 + P2 통합 fix).
       // 안 그러면 refBatchRunning이 stuck 되어 MCP stop-restart가 30s timeout.
-      stopRequestedRef.current = false
+      stopRequestedRef.current = genAPI?.mode === 'flow' && !!getFlowSafetyStop()
       authStoppedRef.current = false
       setRefBatchActive(false)
       setPreparingRefs(false)
@@ -1544,12 +1553,14 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   // overrideRef: ReferenceDetailModal의 재생성처럼 onUpdate 직후 호출되는 경로에서
   // 최신 ref 객체를 직접 전달해 React state commit race를 차단.
   const handleGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null, overrideRef = null) => {
+    if (genAPI?.mode === 'flow' && getFlowSafetyStop()) return getFlowSafetyStop()
     const run = beginReferenceRun()
     try {
       if (skipPermissionCheck || !generationQueue) {
         return await executeSingleRun(run, index, skipPermissionCheck, overrideStyleId, overrideRef)
       }
       return await generationQueue.enqueue({
+        mode: genAPI?.mode,
         type: 'reference',
         label: `Ref #${index + 1}`,
         execute: () => executeSingleRun(run, index, false, overrideStyleId, overrideRef)
@@ -1567,6 +1578,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
   // #M2: 결과를 반드시 return 한다 — fail-closed가 batchResult.ok를 읽으므로 예전처럼
   //   queue 경로에서 await만 하고 버리면 조용히 undefined가 되어 씬 배치 판단이 깨진다.
   const handleGenerateAllRefs = async (overrideStyleId = null, options = {}) => {
+    if (genAPI?.mode === 'flow' && getFlowSafetyStop()) return { ...getFlowSafetyStop(), ok: false, stopped: true }
     const run = beginReferenceRun()
     const stopVersionAtEnqueue = stopRequestVersionRef.current
     pendingRefBatchCallsRef.current += 1
@@ -1581,6 +1593,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
       }
       try {
         return await generationQueue.enqueue({
+        mode: genAPI?.mode,
           type: 'reference_batch',
           label: 'Batch References',
           execute: () => _executeBatchRefs(
@@ -1627,7 +1640,7 @@ export function useReferenceGeneration({ settings, references, scenes = [], scen
         pendingRefBatchCallsRef.current - 1,
       )
       if (pendingRefBatchCallsRef.current === 0) {
-        stopRequestedRef.current = false
+        stopRequestedRef.current = genAPI?.mode === 'flow' && !!getFlowSafetyStop()
         authStoppedRef.current = false
         setStoppingRefs(false)
       }

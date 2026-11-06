@@ -245,6 +245,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
 
     try {
       await generationQueue.enqueue({
+        mode: genAPI?.mode,
         type: 'scene',
         label: `Scene #${sceneId}`,
         execute: () => _executeSceneGeneration(sceneId, overrideStyleId, sceneOverride)

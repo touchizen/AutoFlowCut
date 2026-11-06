@@ -5,6 +5,9 @@
  */
 
 import { useEffect } from 'react'
+import { useOptionalI18n } from './useI18n'
+import { toast } from '../components/Toast'
+import { subscribeFlowSafetyStop } from '../utils/flowSafetyStop'
 
 /**
  * @param {object} params
@@ -12,6 +15,11 @@ import { useEffect } from 'react'
  * @param {string}   [params.mode]         - 현재 앱 모드 ('api' | 'flow'). 레이아웃 보정은 'flow' 모드에서만 실행.
  */
 export function useFlowEvents({ onLoginExpired, mode }) {
+  const i18n = useOptionalI18n()
+  useEffect(() => subscribeFlowSafetyStop(result => {
+    const key = `errorSection.kind.${result.errorKind}`
+    toast.warning(i18n?.t(key) || key, 0)
+  }), [i18n])
   // Flow 로그인 만료 이벤트 수신
   // Codex #6 fix: in flow mode, the Flow WebContentsView handles its own login.
   // Opening the BYOK api-key modal in flow mode is wrong — skip the callback.

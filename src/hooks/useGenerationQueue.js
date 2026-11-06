@@ -1,6 +1,7 @@
 // src/hooks/useGenerationQueue.js
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { isQuotaBlocked, subscribeQuotaStop } from '../utils/quotaStop'
+import { getFlowSafetyStop, subscribeFlowSafetyStop, flowSafetyQueueError } from '../utils/flowSafetyStop'
 
 export function useGenerationQueue() {
   const [queueSize, setQueueSize] = useState(0)
@@ -42,7 +43,7 @@ export function useGenerationQueue() {
     }
   }, [])
 
-  const enqueue = useCallback(({ type, label, execute }) => {
+  const enqueue = useCallback(({ type, label, execute, mode = 'api' }) => {
     return new Promise((resolve, reject) => {
       // quota-blocked 상태에서 들어온 enqueue 는 즉시 reject — 사용자가 모달 dismiss
       // 하지 않은 채 다른 버튼을 눌러 다시 quota 에러를 부르는 cascade 차단.
@@ -50,9 +51,10 @@ export function useGenerationQueue() {
         reject(new Error('Flow quota exhausted — dismiss the alert before retrying'))
         return
       }
+      if (mode === 'flow' && getFlowSafetyStop()) { reject(flowSafetyQueueError()); return }
       const item = {
         id: `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        type, label, execute, resolve, reject,
+        type, label, execute, resolve, reject, mode,
         status: 'queued'
       }
 
@@ -93,6 +95,13 @@ export function useGenerationQueue() {
     })
     return unsubscribe
   }, [])
+
+  useEffect(() => subscribeFlowSafetyStop(() => {
+    const removed = queueRef.current.filter(item => item.mode === 'flow')
+    queueRef.current = queueRef.current.filter(item => item.mode !== 'flow')
+    removed.forEach(item => item.reject(flowSafetyQueueError()))
+    setQueueSize(queueRef.current.length)
+  }), [])
 
   return { enqueue, clearQueue, queueSize, runningItem }
 }

@@ -10,7 +10,8 @@
  *   concurrency ≥ 전체 항목수면 한 번에 전부 제출되는 기존 동작과 동일.
  */
 
-import { useState, useCallback, useRef } from 'react'
+import { getFlowSafetyStop, subscribeFlowSafetyStop } from '../utils/flowSafetyStop'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
@@ -144,6 +145,16 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     emitQuotaStop({ stopRequestedRef, scope: 'VideoAutomation' })
     return true
   }
+
+  useEffect(() => subscribeFlowSafetyStop(result => {
+    if (appMode !== 'flow') return
+    stopRequestedRef.current = true
+    submitHaltRef.current = result.errorKind
+    pausedRef.current = false
+    setIsPaused(false)
+    setStatus('error')
+    setStatusMessage(t(`errorSection.kind.${result.errorKind}`))
+  }), [appMode, t])
 
   const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, downloadVideo } = genAPI
 
@@ -295,6 +306,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
    * 비디오 자동화 시작 — 3-Phase Async Pipeline
    */
   const start = useCallback(async (options = {}) => {
+    if (appMode === 'flow' && getFlowSafetyStop()) return getFlowSafetyStop()
     const {
       mode = 't2v',
       scenes = [],
@@ -437,7 +449,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       return
     }
 
-    stopRequestedRef.current = false
+    stopRequestedRef.current = appMode === 'flow' && !!getFlowSafetyStop()
     quotaStoppedRef.current = false
     submitHaltRef.current = null
     pausedRef.current = false
@@ -1253,6 +1265,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
    * 중지
    */
   const stop = useCallback(() => {
+    if (appMode === 'flow') void Promise.resolve(genAPI.cancelGeneration?.()).catch(() => {})
     stopRequestedRef.current = true
     pausedRef.current = false
     setIsPaused(false)
@@ -1278,6 +1291,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     }
     try {
       await generationQueue.enqueue({
+        mode: appMode,
         type: 'video_batch',
         label: 'Video Automation',
         execute: guardedStart

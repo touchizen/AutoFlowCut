@@ -197,6 +197,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flowGenerateImage: (payload) => ipcRenderer.invoke('flow:generate-image', payload),
   flowCheckGeneration: (payload) => ipcRenderer.invoke('flow:check-generation', payload),
   flowCollectGeneration: (payload) => ipcRenderer.invoke('flow:collect-generation', payload),
+  flowCancelPending: () => ipcRenderer.invoke('flow:safety-cancel-pending'),
   flowClearGenerations: () => ipcRenderer.invoke('flow:clear-generations'),
   flowUploadReference: (payload) => ipcRenderer.invoke('flow:upload-reference', payload),
   flowGenerateCharacter: (payload) => ipcRenderer.invoke('flow:generate-character', payload),
