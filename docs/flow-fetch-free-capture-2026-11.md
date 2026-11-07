@@ -93,6 +93,16 @@ Electron은 webRequest 이벤트별 마지막 리스너만 사용하므로 기�
 
 빈 프로젝트, 영상 혼합 갤러리, 가상 스크롤, 명시 ID가 없는 asb 갤러리는 현재 기본 경로가 거부한다. 새 DOM fixture는 과거 기록의 계약을 조합한 것이며 오늘의 실측 덤프가 아니다. 과거 실제 마스킹 batchexecute 본문 파싱은 별도로 테스트했다. 현재 Flow DOM이 그 계약을 만족하는지, 같은 세션의 기존 원본 redirect가 새 Flow 미디어에도 동작하는지는 **실기 미확인**이다. 실패하면 래퍼/API/CDP로 자동 전환하지 않는다.
 
+## 2026-11-07 후속: 실제 시험 중단 상태와 진단 준비
+
+직전 실행은 main 앱에서 감지 경고를 확인하고 `~/workspace/afc-codex/live/initial-safety-stop.png`를 저장한 뒤 앱을 정상 종료했다. 해당 실행이 중단되어 이 상태가 최초 인계에 반영되지 않았다. 후속 작업은 브리프의 재시도 금지를 유지하며 **생성 0장**으로 진행했다. 실제 소유권 근거를 새로 확보하지 않았고, 2초 안정화 판정과 기존 expected failure는 그대로다.
+
+`flow-live-dom.js`/`flow-live-diagnostics.js`에 기본 꺼짐인 격리 월드 994 기록기를 추가했다. 명시한 시험 프로젝트 UUID와 절대 저장 경로가 모두 있어야 활성화된다. 노드 계보, data/aria 속성, 텍스트 전환, 요청 UUID 후보와 검증된 이미지 요청 사실을 JSONL로 저장한다. 기존 webRequest 리스너에 관찰을 합성하며 요청·응답·페이지 DOM·메인 월드를 변경하지 않는다. 임의 f.req 원문과 내부 reCAPTCHA 토큰, 폼 at 토큰, 헤더, URL 서명은 저장하지 않는다.
+
+단일 읽기, 탐색 epoch, observerId, 문자·노드·변경 수·파일 크기·실행 시간 제한과 정리를 검증했다. 폴링 사이 transient text/element와 늦은 읽기를 다루지만, 관측 시각이나 로컬 노드 ID가 서버 소유권 증명으로 바뀌는 것은 아니다. 상세 설정과 한계는 `docs/plans/2026-11-07-flow-live-diagnostics.md`에 있다. 모든 신규 DOM은 **합성 fixture**이며 실측 fixture로 제시하지 않는다.
+
+검증: 전체 회귀 검사 **899개 파일 통과·4개 skip / 10,614개 통과·expected failure 1개·54개 skip**, exit 0(`render.smoke` 제외). 이 전체 실행 뒤 추가로 수정한 진단 경계 조건은 최신 관련 **5개 파일 / 112개 통과·expected failure 1개**, exit 0으로 별도 확인했다. 최신 진단 자체는 19개 테스트다. 최종 production 빌드, JS 구문, `git diff --check` 통과. Electron 전체와 브랜치+worktree 추가 줄의 `debugger.`는 0건. 신규 진단 변경 리뷰 findings 0개는 기존 소유권 문제의 해결을 의미하지 않는다. 로그와 리뷰는 `~/workspace/afc-codex/live/`에 남긴다.
+
 ## 기본 경로의 메인 월드 조작
 
 | 대상 | 기본 경로 |

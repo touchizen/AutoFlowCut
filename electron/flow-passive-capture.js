@@ -141,7 +141,7 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
 const bindings = new WeakMap()
 /** Electron keeps only the last listener for each event, so compose the old
  * project/diagnostic observer here instead of installing a second listener. */
-export function bindPassiveRequests(session, capture, observeExisting = () => {}) {
+export function bindPassiveRequests(session, capture, observeExisting = () => {}, diagnostics = {}) {
   const token = {}
   bindings.set(session, token)
   const filter = { urls: ['*://*/*'] }
@@ -149,9 +149,17 @@ export function bindPassiveRequests(session, capture, observeExisting = () => {}
     try { capture.before(details); observeExisting(details) }
     catch { capture.invalidate('observer-failed') }
     finally { callback({}) }
+    // Diagnostic failures must never change traffic or ownership state.
+    try { diagnostics.before?.(details) } catch {}
   })
-  session.webRequest.onCompleted(filter, details => capture.completed(details))
-  session.webRequest.onErrorOccurred(filter, details => capture.failed(details))
+  session.webRequest.onCompleted(filter, details => {
+    capture.completed(details)
+    try { diagnostics.completed?.(details) } catch {}
+  })
+  session.webRequest.onErrorOccurred(filter, details => {
+    capture.failed(details)
+    try { diagnostics.failed?.(details) } catch {}
+  })
   return () => {
     capture.invalidate('view-destroyed')
     if (bindings.get(session) !== token) return

@@ -1,4 +1,5 @@
 import { createPassiveCapture, bindPassiveRequests } from './flow-passive-capture.js'
+import { createFlowLiveDiagnostics } from './flow-live-diagnostics.js'
 import { downloadFlowImage } from './flow-image-download.js'
 import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, dialog, clipboard, nativeImage } from 'electron'
 import http from 'node:http'
@@ -581,6 +582,7 @@ function makeFlowView() {
 
   // One session listener combines passive ownership with the existing diagnostics.
   const passive = createPassiveCapture()
+  const liveDiagnostics = createFlowLiveDiagnostics({ webContents: view.webContents })
   flowPassiveCapture = passive
   const disposePassive = bindPassiveRequests(view.webContents.session, passive,
     (details) => {
@@ -608,7 +610,7 @@ function makeFlowView() {
           } catch {}
         }
       }
-    }
+    }, liveDiagnostics
   )
   view.webContents.once('destroyed', disposePassive)
 
