@@ -1,4 +1,4 @@
-/** Only the exact gallery URL is fetched. Generation RPCs never originate here. */
+/** Only an explicitly owned media URL is fetched. Generation RPCs never originate here. */
 export function downloadFlowImage(net, session, item, { signal, timeoutMs = 30000, maxBytes = 32 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
     let u
@@ -7,7 +7,7 @@ export function downloadFlowImage(net, session, item, { signal, timeoutMs = 3000
       || (u.hostname === 'flow-content.google' && u.pathname === `/image/${item.mediaId}`)
       || (['flow.google.com', 'lh3.googleusercontent.com'].includes(u.hostname) && /^\/asb\/[A-Za-z0-9_-]+(?:=|$)/.test(u.pathname))
     if (!allowed || u.protocol !== 'https:' || u.username || u.password || u.port || signal?.aborted) { reject(new Error('download-unavailable')); return }
-    let req, response, timer, ended = false, bytes = 0, mime
+    let req, response, timer, ended = false, responseClosed = false, bytes = 0, mime
     const chunks = []
     const cleanup = () => {
       clearTimeout(timer)
@@ -15,7 +15,6 @@ export function downloadFlowImage(net, session, item, { signal, timeoutMs = 3000
       req?.removeListener('response', onResponse)
       req?.removeListener('error', onError)
       req?.removeListener('abort', onAbort)
-      req?.removeListener('close', onClose)
       response?.removeListener('data', onData)
       response?.removeListener('end', onEnd)
       response?.removeListener('error', onError)
@@ -25,6 +24,15 @@ export function downloadFlowImage(net, session, item, { signal, timeoutMs = 3000
     const finish = error => {
       if (ended) return
       ended = true
+      // Electron can error its request synchronously while response.destroy()
+      // has an error queued for nextTick. Keep that error handled until close,
+      // without retaining our data buffers or the download's operation handlers.
+      if (error && response && !responseClosed) {
+        const stream = response
+        const absorb = () => {}
+        const release = () => { stream.removeListener('error', absorb); stream.removeListener('close', release) }
+        stream.on('error', absorb); stream.once('close', release)
+      }
       // Electron abort can synchronously emit abort/close; ended prevents reentry.
       if (error) { try { req?.abort() } catch { /* already closed */ } }
       cleanup()
@@ -34,7 +42,7 @@ export function downloadFlowImage(net, session, item, { signal, timeoutMs = 3000
     }
     const onError = () => finish(new Error('download-network'))
     const onAbort = () => finish(new Error('download-aborted'))
-    const onClose = () => { if (!ended) finish(new Error('download-incomplete')) }
+    const onClose = () => { responseClosed = true; if (!ended) finish(new Error('download-incomplete')) }
     const onData = chunk => {
       bytes += chunk.length
       if (bytes > maxBytes) return finish(new Error('download-size'))
@@ -46,7 +54,8 @@ export function downloadFlowImage(net, session, item, { signal, timeoutMs = 3000
       const type = res.headers?.['content-type']
       mime = String(Array.isArray(type) ? type[0] : type || '').split(';')[0].trim().toLowerCase()
       if (res.statusCode !== 200 || !['image/png', 'image/jpeg', 'image/webp'].includes(mime)) return finish(new Error('download-response'))
-      res.on('data', onData); res.on('end', onEnd); res.on('error', onError); res.on('aborted', onAbort); res.on('close', onClose)
+      // Install terminal listeners before data makes a buffered stream flow.
+      res.on('end', onEnd); res.on('error', onError); res.on('aborted', onAbort); res.on('close', onClose); res.on('data', onData)
     }
     try {
       // asb is a thumbnail rendition, never the exported image. Resolve its
@@ -54,7 +63,10 @@ export function downloadFlowImage(net, session, item, { signal, timeoutMs = 3000
       const url = u.pathname.startsWith('/asb/')
         ? `https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=${encodeURIComponent(item.mediaId)}` : u.href
       req = net.request({ url, method: 'GET', session, useSessionCookies: true })
-      req.on('response', onResponse); req.on('error', onError); req.on('abort', onAbort); req.on('close', onClose)
+      // Electron 36's request Writable auto-closes after GET end(), before its
+      // native URLLoader delivers the response. Only response close is evidence
+      // of a truncated body; request errors/abort and the deadline still fail.
+      req.on('response', onResponse); req.on('error', onError); req.on('abort', onAbort)
       signal?.addEventListener('abort', onAbort, { once: true })
       timer = setTimeout(() => finish(new Error('download-timeout')), timeoutMs)
       req.end()

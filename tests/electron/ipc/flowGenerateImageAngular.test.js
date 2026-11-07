@@ -44,7 +44,7 @@ function harness(o = {}) {
   let lastShield = null
   const tap = (tag) => { trace.push(tag); if (o.shieldFocusAt === tag && lastShield) lastShield.focus() }
   // R2#1: 뷰 bounds 는 가변 — hidden 변형은 0×0 에서 시작하고 setBounds 가 갱신한다(실제 WebContentsView 처럼).
-  let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
+  let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 1200, height: 1022 }
   const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
   const agentSeq = Array.isArray(o.agent) ? [...o.agent] : null
   const summarySeq = Array.isArray(o.summary) ? [...o.summary] : null   // M2-CLOSE O3: 요약 판독 순서(트리거 전 · 닫힌 뒤) — 마지막 값이 남는다
@@ -214,7 +214,7 @@ describe('flow:generate-image (angular) — 동기', () => {
     expect(idx(t, 'focus')).toBeLessThan(idx(t, 'click:compose-editor'))
     expect(idx(t, 'click:compose-editor')).toBeLessThan(idx(t, 'set-text:visible'))
     expect(idx(t, 'set-text:visible')).toBeLessThan(idx(t, 'read-text'))
-    // R2#1: 보이는 뷰(957×1022)는 손대지 않는다 — 실기 게이트가 이 경로로 통과했다.
+    // 현재 최소 폭보다 넓은 1200×1022 뷰는 확장하지 않는다.
     expect(h.flowView.setBounds).not.toHaveBeenCalled()
     expect(idx(t, 'read-text')).toBeLessThan(idx(t, 'submit-enabled'))
     expect(idx(t, 'submit-enabled')).toBeLessThan(idx(t, 'click:compose-submit'))
@@ -548,7 +548,7 @@ describe('flow:generate-image (angular) — 비동기 + check/collect + 마감',
 
 // ─── R2-2 부록 #1 / #6 / #7 (플랜 §12 #45 · #47 · #48) ───────────────────────────────────────────────────────
 describe('flow:generate-image (angular) — 포커스 반환 (R2-2#1, §12 #45)', () => {
-  it('뷰가 넓고 이미 포커스를 갖고 있었으면(957×1022, isFocused) finally 는 메인 창에 포커스를 돌려주지 않는다 — 클릭 전 P2 반환 한 번뿐(클릭 뒤 없음)', async () => {
+  it('뷰가 넓고 이미 포커스를 갖고 있었으면(1200×1022, isFocused) finally 는 메인 창에 포커스를 돌려주지 않는다 — 클릭 전 P2 반환 한 번뿐(클릭 뒤 없음)', async () => {
     const h = harness({ focused: true })
     const r = await settle(h.generate())
     expect(r.success).toBe(true)

@@ -131,13 +131,13 @@ it.each(['blocked', 'deleted'])('rechecks a %s batch scene at native dispatch af
   expect(h.main.submit).not.toHaveBeenCalled()
 })
 
-it('rechecks persisted state after the final asynchronous gallery read before mouseDown', async () => {
+it('rechecks persisted state after the final asynchronous composer read before mouseDown', async () => {
   const h = mount()
   const original = h.main.wc.executeJavaScriptInIsolatedWorld.getMockImplementation()
   let reads = 0, release
   h.main.wc.executeJavaScriptInIsolatedWorld.mockImplementation(async (...args) => {
     const value = await original(...args)
-    if (args[1][0].code.includes('||=') && ++reads === 3) await new Promise(resolve => { release = resolve })
+    if (args[1][0].code.includes('editorText') && ++reads === 3) await new Promise(resolve => { release = resolve })
     return value
   })
   act(() => h.result.current.scenes.setScenes([{ id: 's1', prompt: PROMPT, status: 'pending' }]))
@@ -149,9 +149,9 @@ it('rechecks persisted state after the final asynchronous gallery read before mo
   expect(h.main.submit).not.toHaveBeenCalled()
 })
 
-it.each(['batch', 'individual'].flatMap(entry => ['missing', 'httpError', 'navigate', 'foreign'].map(failure => [entry, failure])))(
+it.each(['batch', 'individual'].flatMap(entry => ['missing-response', 'httpError', 'navigate', 'foreign'].map(failure => [entry, failure])))(
   'retains the clicked %s submission after %s failure', async (entry, failure) => {
-    const h = mount({ [failure]: true })
+    const h = mount(failure === 'missing-response' ? { responseError: 'response-proof-empty' } : { [failure]: true })
     act(() => h.result.current.scenes.setScenes([{ id: 's1', prompt: PROMPT, status: 'pending' }]))
     await act(async () => {
       const run = entry === 'batch' ? h.result.current.batch.start(settings) : h.result.current.single.handleGenerateScene('s1')

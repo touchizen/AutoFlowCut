@@ -13,7 +13,7 @@ async function drive(h, payload = {}) {
   await vi.runAllTimersAsync()
   return p
 }
-it('runs native input, passive request, isolated delta and main download with zero main-world execution', async () => {
+it('runs native input, observed RPC response and main download with zero main-world execution', async () => {
   const h = harness()
   expect(await drive(h)).toMatchObject({ success: true, images: [{ mediaId: NEW, base64: 'data:image/png;base64,cG5n' }] })
   expect(h.wc.executeJavaScript).not.toHaveBeenCalled()
@@ -32,7 +32,7 @@ it.each([1, 1.25])('restores missing narrow composer controls and original zoom 
   expect(await drive(h)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
   expect(h.submit).toHaveBeenCalledOnce()
   const down = h.wc.sendInputEvent.mock.calls.find(([event]) => event.type === 'mouseDown')[0]
-  expect(down.x).toBe(Math.round(640 * 597 / 700))
+  expect(down.x).toBe(Math.round(640 * 597 / 960))
   expect(document.elementFromPoint).toHaveBeenCalledWith(640, 120)
   expect(h.view.getBounds()).toEqual(originalBounds)
   expect(h.wc.getZoomFactor()).toBe(zoom)
@@ -74,24 +74,23 @@ it('collects exactly three new images after an initial listing and normal refres
   expect(result.images.some(item => item.mediaId === OLD)).toBe(false)
   expect(h.net.request).toHaveBeenCalledTimes(3)
 })
-it('rejects an old card seen during initial settlement that disappears and reappears after submit', async () => {
+it('keeps response ownership when an old gallery card disappears and reappears', async () => {
   const h = harness({ refresh: true })
   h.observer.before(galleryRequest())
   h.observer.completed({ id: 20, statusCode: 200 })
   setTimeout(() => document.querySelector('main').insertAdjacentHTML('beforeend', card(NEW)), 500)
   setTimeout(() => document.querySelector(`img[data-media-id="${NEW}"]`).closest('a').remove(), 1000)
-  expect(await drive(h)).toMatchObject({ success: false, reason: 'gallery-before-request' })
-  expect(h.net.request).not.toHaveBeenCalled()
+  expect(await drive(h)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
+  expect(h.net.request).toHaveBeenCalledOnce()
 })
-it.each(['excess', 'beforeRequestCard', 'beforeRequestLoading', 'beforeRequestPlaceholder'])('rejects ambiguous refresh results: %s', async kind => {
+it.each(['excess', 'beforeRequestCard', 'beforeRequestLoading', 'beforeRequestPlaceholder'])('uses response ownership despite gallery changes: %s', async kind => {
   const h = harness({ refresh: true, [kind]: true })
   const result = await drive(h)
-  expect(result).toMatchObject({ success: false, postClick: true, retryBlocked: true,
-    reason: kind === 'excess' ? 'gallery-count' : 'gallery-before-request' })
-  expect(h.net.request).not.toHaveBeenCalled()
+  expect(result).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
+  expect(h.net.request).toHaveBeenCalledOnce()
   expect(Object.keys(h.isolatedWorld)).toEqual([])
 })
-it.each(['foreign', 'httpError', 'navigate', 'excess', 'missing', 'duringDownload'])('refuses %s and blocks retry', async kind => {
+it.each(['foreign', 'httpError', 'navigate', 'duringDownload'])('refuses %s and blocks retry', async kind => {
   const h = harness({ [kind]: true }); const r = await drive(h)
   expect(r).toMatchObject({ success: false, retryBlocked: true, postClick: true })
   expect(r.images).toBeUndefined()
@@ -124,48 +123,48 @@ it.each([
   ['extra card added', () => document.querySelector('main').insertAdjacentHTML('beforeend', card('30000000-0000-4000-8000-000000000003'))],
   ['selected URL changed', () => document.querySelector(`img[data-media-id="${NEW}"]`).setAttribute('src', 'https://flow.google.com/asb/replaced=s1600')],
   ['selected identity replaced', () => { document.querySelector(`img[data-media-id="${NEW}"]`).closest('a').outerHTML = card('30000000-0000-4000-8000-000000000003') }],
-])('rechecks actual gallery DOM after viewport restoration: %s', async (_name, duringRestore) => {
+])('retains response ownership despite unrelated gallery changes after restoration: %s', async (_name, duringRestore) => {
   const h = harness({ duringRestore })
   const result = await drive(h, { asyncMode: true })
-  expect(result).toMatchObject({ success: false, retryBlocked: true, postClick: true, reason: 'gallery-changed-during-restore' })
+  expect(result).toMatchObject({ success: true, submitted: true })
   expect(h.net.request).toHaveBeenCalledOnce()
-  expect(h.deps.pendingGenerations.size).toBe(0)
+  expect(h.deps.pendingGenerations.size).toBe(1)
 })
-it('refuses before paying when an existing result card has not loaded its image', async () => {
+it('does not depend on existing result cards loading before its exact RPC response', async () => {
   const h = harness()
   document.querySelector('main').insertAdjacentHTML('beforeend', `<a href="/project/${PROJECT}/edit/existing"></a>`)
-  expect(await drive(h)).toMatchObject({ success: false, retryBlocked: true, reason: 'gallery-incomplete' })
-  expect(h.submit).not.toHaveBeenCalled()
-  expect(h.net.request).not.toHaveBeenCalled()
+  expect(await drive(h)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
+  expect(h.submit).toHaveBeenCalledOnce()
+  expect(h.net.request).toHaveBeenCalledOnce()
 })
 
-it('waits for the post-response Angular render before validating the stable gallery delta', async () => {
+it('collects response media IDs independently of delayed Angular rendering', async () => {
   const h = harness({ renderDelay: true })
   expect(await drive(h)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
   expect(h.submit).toHaveBeenCalledOnce()
 })
 
-it('refuses a late existing gallery card from a listing started before submission', async () => {
+it('keeps response ownership while an earlier gallery listing remains in flight', async () => {
   const h = harness({ missing: true })
   h.observer.before(galleryRequest())
   setTimeout(() => {
     h.observer.completed({ id: 20, statusCode: 200 })
     document.querySelector('main').insertAdjacentHTML('beforeend', card(NEW))
   }, 1000)
-  expect(await drive(h)).toMatchObject({ success: false, reason: 'gallery-request-pending' })
-  expect(h.submit).not.toHaveBeenCalled()
-  expect(h.net.request).not.toHaveBeenCalled()
+  expect(await drive(h)).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
+  expect(h.submit).toHaveBeenCalledOnce()
+  expect(h.net.request).toHaveBeenCalledOnce()
 })
 
-it('settles a delayed initial listing without assigning its old card to the new submission', async () => {
+it('ignores delayed initial listings and uses the observed native response', async () => {
   const h = harness({ missing: true })
   h.observer.before(galleryRequest())
   h.observer.completed({ id: 20, statusCode: 200 })
   setTimeout(() => document.querySelector('main').insertAdjacentHTML('beforeend', card(NEW)), 1000)
   const result = await drive(h)
-  expect(result).toMatchObject({ success: false, postClick: true, reason: 'result-timeout' })
+  expect(result).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
   expect(h.submit).toHaveBeenCalledOnce()
-  expect(h.net.request).not.toHaveBeenCalled()
+  expect(h.net.request).toHaveBeenCalledOnce()
 })
 
 it.each(['bounds', 'timeout'])('does not record a paid submission when native click refuses after the final guard: %s', async nativeClickFailure => {
@@ -186,7 +185,7 @@ it.each(['bounds', 'timeout'])('does not record a paid submission when native cl
 it.each([
   ['waiting', false], ['waiting', true], ['downloading', false], ['downloading', true],
 ])('app Stop reaches cancellation while %s with narrow=%s', async (phase, narrow) => {
-  const h = harness({ cancellable: true, narrow, missing: phase === 'waiting', stallDownload: phase === 'downloading' })
+  const h = harness({ cancellable: true, narrow, stallResponse: phase === 'waiting', stallDownload: phase === 'downloading' })
   const stop = document.createElement('button')
   const cancel = vi.fn(() => h.handlers.get('flow:safety-cancel-pending')())
   stop.addEventListener('click', cancel)
@@ -244,15 +243,16 @@ it('does not quarantine a navigation event before any submit click', async () =>
   expect(await drive(h)).toMatchObject({ success: true })
 })
 
-// No saved DOM proves request/result ownership; keep this known regression explicit.
-it.fails('R3 unresolved: refuses an old card first rendered 4s after listing completion', async () => {
+it('R3 regression: never assigns an old card first rendered 4s after listing completion', async () => {
   const h = harness({ missing: true })
   h.observer.before(galleryRequest())
   h.observer.completed({ id: 20, statusCode: 200 })
-  setTimeout(() => document.querySelector('main').insertAdjacentHTML('beforeend', card(NEW)), 4000)
+  const old = '30000000-0000-4000-8000-000000000003'
+  setTimeout(() => document.querySelector('main').insertAdjacentHTML('beforeend', card(old)), 4000)
   const result = await drive(h)
-  expect(result.success).toBe(false)
-  expect(h.net.request).not.toHaveBeenCalled()
+  expect(result).toMatchObject({ success: true, images: [{ mediaId: NEW }] })
+  expect(result.images.some(image => image.mediaId === old)).toBe(false)
+  expect(h.net.request).toHaveBeenCalledOnce()
 })
 
 it('publishes a recovery record at native mouseDown before download finishes', async () => {

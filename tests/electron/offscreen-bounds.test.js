@@ -37,9 +37,10 @@ describe('needsAutomationViewport — 숨었거나 좁으면 자동화 뷰포트
     expect(needsAutomationViewport({ x: 0, y: 0, width: 0, height: 0 })).toBe(true)
     expect(needsAutomationViewport(null)).toBe(true)
   })
-  it('597×872(실기 실패 폭) 은 필요, 957×1022(실기 통과 폭) 은 불필요', () => {
+  it('597px와 700px 실측 누락 폭을 넓히고 960px 뷰는 유지한다', () => {
     expect(needsAutomationViewport({ x: 0, y: 0, width: 597, height: 872 })).toBe(true)
-    expect(needsAutomationViewport({ x: 0, y: 0, width: 957, height: 1022 })).toBe(false)
+    expect(needsAutomationViewport({ x: 0, y: 0, width: 700, height: 1022 })).toBe(true)
+    expect(needsAutomationViewport({ x: 0, y: 0, width: 960, height: 1022 })).toBe(false)
   })
   it('경계값: 최소 폭·높이 미만만 필요', () => {
     expect(needsAutomationViewport({ x: 0, y: 0, width: AUTOMATION_MIN_WIDTH, height: AUTOMATION_MIN_HEIGHT })).toBe(false)

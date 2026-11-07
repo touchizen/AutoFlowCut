@@ -1,6 +1,7 @@
 import { createPassiveCapture, bindPassiveRequests } from './flow-passive-capture.js'
-import { createFlowLiveDiagnostics } from './flow-live-diagnostics.js'
+import { createFlowLiveDiagnostics, flowLiveProjectUrl } from './flow-live-diagnostics.js'
 import { downloadFlowImage } from './flow-image-download.js'
+import { startFlowResponseCapture } from './flow-native-response.js'
 import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, dialog, clipboard, nativeImage } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
@@ -240,7 +241,7 @@ function createWindow() {
 
 
   // Open DevTools in development (detached so it doesn't cover WebContentsView)
-  if (process.env.VITE_DEV_SERVER_URL) {
+  if (process.env.VITE_DEV_SERVER_URL && process.env.AUTOFLOWCUT_FLOW_LIVE_DIAGNOSTICS !== '1') {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   }
 
@@ -914,7 +915,7 @@ function makeFlowView() {
   })
 
   // #R16-8: 초기 Flow 네비게이션 rejection 이 unhandled 로 새지 않게 catch.
-  view.webContents.loadURL(FLOW_URL).catch((e) => console.warn('[Flow] initial loadURL failed:', e?.message))
+  view.webContents.loadURL(flowLiveProjectUrl(process.env) || FLOW_URL).catch((e) => console.warn('[Flow] initial loadURL failed:', e?.message))
   return view
 }
 
@@ -1084,6 +1085,9 @@ const flowAPIDeps = {
   isRpcCaptureEnabled: () => FLOW_PAGE_POLICY.rpcCapture,
   getPassiveCapture: () => flowPassiveCapture,
   downloadPassiveImage: (session, item, opts) => downloadFlowImage(net, session, item, opts),
+  startResponseCapture: (session, opts) => startFlowResponseCapture(session, {
+    directory: process.env.AUTOFLOWCUT_FLOW_LIVE_DIR || path.join(app.getPath('userData'), 'flow-response-capture'), ...opts,
+  }),
   getFlowView: modeController.getFlowView,
   getFlowAgentOn: () => flowAgentOn,
   // #R25-4: quota 를 쓰는 submit/upscale 핸들러가 API 모드에서 stale 호출로 Flow quota 를

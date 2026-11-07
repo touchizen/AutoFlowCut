@@ -60,12 +60,15 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
         resetGallery()
         // A refresh after our observed submit is normal. Before it, or from a
         // different view, the baseline cannot distinguish delayed old results.
-        if (active && (!active.request || details.webContentsId !== active.expected.webContentsId)) {
+        if (active && !active.expected.responseProof && (!active.request || details.webContentsId !== active.expected.webContentsId)) {
           active.error ||= 'gallery-request-overlap'; active.controller.abort()
         }
         return
       }
       if (e && READ_RPCS.has(e.rpcid)) return
+      // Direct native response ownership does not depend on gallery/settings
+      // RPCs. Known generation/upload traffic still remains exclusive.
+      if (active?.expected.responseProof && e && !['ogiZ0b', 'YhhmEf', 'MZZa6b', 'eb1hJf', 'maseQ'].includes(e.rpcid)) return
       // Unknown RPCs are only tolerated outside an ownership window. Known
       // generation/upload requests outside it can publish delayed results.
       if (!active) {
@@ -77,6 +80,7 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
         || r.projectId !== active.expected.projectId || r.count !== active.expected.count
         || r.prompts.some(p => p !== normalizePrompt(active.expected.prompt))) return invalidate('request-mismatch')
       active.id = details.id
+      active.requestUrl = details.url // main memory only; includes the exact transport query
       active.request = r
       active.sentAt = now()
     },
@@ -98,12 +102,12 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
     begin(expected) {
       if (uncertain) throw new Error('ownership-uncertain')
       if (active) throw new Error('capture-busy')
-      if (galleryRequests.size) throw new Error('gallery-request-pending')
+      if (galleryRequests.size && !expected.responseProof) throw new Error('gallery-request-pending')
       const rec = { expected, controller: new AbortController(), prepared: false, dispatched: false, request: null, complete: false, error: null }
       active = rec
       return {
         signal: rec.controller.signal,
-        state: () => ({ request: rec.request, complete: rec.complete, error: rec.error, sentAt: rec.sentAt, completedAt: rec.completedAt,
+        state: () => ({ request: rec.request, requestUrl: rec.requestUrl, complete: rec.complete, error: rec.error, sentAt: rec.sentAt, completedAt: rec.completedAt,
           galleryPending: galleryRequests.size > 0, galleryRenderUnproven }),
         observeGallery(snapshot) {
           if (!snapshot?.ok || galleryRequests.size) { resetGallery(); return }
@@ -117,7 +121,7 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
         },
         prepare() {
           if (active !== rec || rec.error || rec.prepared) throw new Error('ownership-uncertain')
-          if (galleryRequests.size || galleryRenderUnproven) throw new Error('gallery-render-unproven')
+          if (!expected.responseProof && (galleryRequests.size || galleryRenderUnproven)) throw new Error('gallery-render-unproven')
           rec.prepared = true
         },
         dispatch() {

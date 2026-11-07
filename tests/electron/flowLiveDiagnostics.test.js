@@ -8,6 +8,15 @@ import { PAGE, PROJECT, NEW, request } from '../fixtures/flow-passive-image.js'
 afterEach(() => vi.useRealTimers())
 
 describe('read-only live gallery evidence (synthetic DOM, not live proof)', () => {
+  it('reads the actual Flow agent pressed state without copying composer text', () => {
+    document.body.innerHTML = '<flow-agent-mode-toggle-chip><button aria-pressed="false">Agent</button></flow-agent-mode-toggle-chip><flow-rich-text-editor contenteditable="true">PRIVATE DRAFT</flow-rich-text-editor>'
+    const watch = dom.observeLiveGallery(document, PAGE)
+    try {
+      const snapshot = watch.read()
+      expect(snapshot.composer.agentPressed).toBe('false')
+      expect(JSON.stringify(snapshot)).not.toContain('PRIVATE DRAFT')
+    } finally { watch.disconnect() }
+  })
   it('preserves placeholder lineage, request attributes, full prompt text and transient removals without DOM writes', () => {
     document.body.innerHTML = '<main data-request-id="request-1"><flow-image-tile data-tile-id="tile-1"><span>pending</span></flow-image-tile></main>'
     const before = document.documentElement.outerHTML
@@ -144,6 +153,13 @@ function harness(extra = {}) {
 }
 
 describe('opt-in scoped main-process recorder', () => {
+  it('opens only an explicitly configured diagnostic project at startup', () => {
+    const { env } = harness()
+    expect(diagnostics.flowLiveProjectUrl(env)).toBe(PAGE)
+    expect(diagnostics.flowLiveProjectUrl({ ...env, AUTOFLOWCUT_FLOW_LIVE_DIAGNOSTICS: '0' })).toBeNull()
+    expect(diagnostics.flowLiveProjectUrl({ ...env, AUTOFLOWCUT_FLOW_LIVE_PROJECT_ID: 'other/path' })).toBeNull()
+    expect(diagnostics.flowLiveProjectUrl({ ...env, AUTOFLOWCUT_FLOW_LIVE_DIR: 'relative' })).toBeNull()
+  })
   it.each([{}, { AUTOFLOWCUT_FLOW_LIVE_DIAGNOSTICS: '1' },
     { AUTOFLOWCUT_FLOW_LIVE_DIAGNOSTICS: '1', AUTOFLOWCUT_FLOW_LIVE_PROJECT_ID: PROJECT, AUTOFLOWCUT_FLOW_LIVE_DIR: 'relative' }])('has zero effects with disabled/incomplete configuration: %j', async env => {
     vi.useFakeTimers()

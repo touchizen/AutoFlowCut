@@ -19,6 +19,47 @@ it('uses main net with the owning session cookies and removes listeners on succe
   expect(h.net.request).toHaveBeenCalledWith(expect.objectContaining({ session: h.session, useSessionCookies: true, method: 'GET' }))
   expect(h.req.eventNames()).toEqual([]); expect(h.res.eventNames()).toEqual([])
 })
+it('waits for the response when Electron closes the finished request writable first', async () => {
+  const h = harness(); const result = h.start()
+  // Electron 36 ClientRequest is an auto-destroying Writable. Its GET side can
+  // close before the native URLLoader delivers the response body.
+  h.req.emit('finish'); h.req.emit('close')
+  h.req.emit('response', h.res); h.res.emit('data', Buffer.from('original')); h.res.emit('end')
+  expect(await result).toMatchObject({ mediaId: NEW, base64: 'data:image/png;base64,b3JpZ2luYWw=' })
+  expect(h.req.abort).not.toHaveBeenCalled()
+})
+it('registers end before enabling a buffered response to flow', async () => {
+  const h = harness()
+  const on = h.res.on
+  h.res.on = function (name, listener) {
+    on.call(this, name, listener)
+    if (name === 'data') { this.emit('data', Buffer.from('png')); this.emit('end') }
+    return this
+  }
+  const result = h.start({ timeoutMs: 100 })
+  h.req.emit('response', h.res)
+  expect(await result).toMatchObject({ base64: 'data:image/png;base64,cG5n' })
+  expect(h.req.eventNames()).toEqual([]); expect(h.res.eventNames()).toEqual([])
+})
+it('rejects a response stream that closes before end', async () => {
+  const h = harness(); const result = h.start()
+  const rejected = expect(result).rejects.toThrow('download-incomplete')
+  h.req.emit('response', h.res); h.res.emit('data', Buffer.from('partial')); h.res.emit('close')
+  await rejected
+  expect(h.req.abort).toHaveBeenCalledOnce()
+})
+it('absorbs the response error queued after an Electron request error', async () => {
+  const h = harness(); const result = h.start()
+  const rejected = expect(result).rejects.toThrow('download-network')
+  h.req.emit('response', h.res); h.res.emit('data', Buffer.from('partial'))
+  h.req.emit('error', new Error('ERR_INCOMPLETE_CHUNKED_ENCODING'))
+  await rejected
+  // URLLoader error destroys the response on nextTick and synchronously errors
+  // its already-closed request Writable first. The response must stay handled.
+  expect(() => h.res.emit('error', new Error('ERR_INCOMPLETE_CHUNKED_ENCODING'))).not.toThrow()
+  h.res.emit('close')
+  expect(h.req.eventNames()).toEqual([]); expect(h.res.eventNames()).toEqual([])
+})
 it.each(['timeout', 'cancel', 'network', 'stream', 'http', 'mime', 'size', 'close', 'empty'])('aborts and cleans up on %s', async kind => {
   vi.useFakeTimers()
   const h = harness(); const result = h.start({ timeoutMs: 100, maxBytes: 4 })
@@ -35,6 +76,7 @@ it.each(['timeout', 'cancel', 'network', 'stream', 'http', 'mime', 'size', 'clos
     if (kind === 'close') h.res.emit('aborted')
     if (kind === 'empty') h.res.emit('end')
   }
+  h.res.emit('close') // Native abort/error destroys the response stream.
   await rejected
   expect(h.req.abort).toHaveBeenCalledOnce()
   expect(h.req.eventNames()).toEqual([]); expect(h.res.eventNames()).toEqual([])

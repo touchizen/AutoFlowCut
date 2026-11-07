@@ -29,7 +29,10 @@ export function responsiveComposer(doc) {
   const chip = doc.querySelector('flow-agent-mode-toggle-chip')
   const parent = chip.parentElement
   return width => {
-    if (width < 600) chip.remove()
+    // Live 2026-11-07: absent at 597 AND 700px; the 957px native
+    // generation passed the Agent-OFF gate. Model these known observations,
+    // without claiming that 957 is Flow's exact CSS breakpoint.
+    if (width < 957) chip.remove()
     else if (!chip.isConnected) parent.append(chip)
   }
 }

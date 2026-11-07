@@ -23,9 +23,10 @@ export function computeOffscreenBounds(displays, winX, width, height) {
   return { x: Math.round(maxRight - (winX || 0)) + 200, y: 0, width, height }
 }
 
-/** DOM 자동화가 요구하는 최소 뷰 크기. 2026-09-25 실기: flow.google.com 은 597px 폭(Material handset 분기점 600 미만)
- *  에서 에이전트 칩 등 컴포저 컨트롤을 아예 렌더하지 않았고 957px 에선 정상이었다. 700 은 600 위 여유, 957 아래. */
-export const AUTOMATION_MIN_WIDTH = 700
+/** 2026-11-07 실기: 597px뿐 아니라 네이티브 줌으로 확보한 700px에서도
+ * Agent 칩이 렌더되지 않았다. 실제 생성이 통과한 957px 이상을 확보한다.
+ * 정확한 Flow CSS 분기점을 추측하지 않고 확인된 폭에 여유를 둔다. */
+export const AUTOMATION_MIN_WIDTH = 960
 export const AUTOMATION_MIN_HEIGHT = 600
 
 /** 이 bounds 로는 DOM 자동화(에이전트 칩·설정 패널·편집기 주입)를 믿을 수 없나 — 숨음(0×0/없음) 또는 좁음. 순수. */

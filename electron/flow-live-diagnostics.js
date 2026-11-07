@@ -8,6 +8,13 @@ const WORLD = 994
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const noop = () => {}
 
+export function flowLiveProjectUrl(env = {}) {
+  if (env.AUTOFLOWCUT_FLOW_LIVE_DIAGNOSTICS !== '1'
+    || !UUID.test(env.AUTOFLOWCUT_FLOW_LIVE_PROJECT_ID || '')
+    || !env.AUTOFLOWCUT_FLOW_LIVE_DIR || !path.isAbsolute(env.AUTOFLOWCUT_FLOW_LIVE_DIR)) return null
+  return `https://flow.google.com/project/${env.AUTOFLOWCUT_FLOW_LIVE_PROJECT_ID}`
+}
+
 /** Local, opt-in test-project evidence. No response interception, headers,
  * request replay, page hooks, DOM writes or ownership decisions. */
 export function createFlowLiveDiagnostics({ webContents: wc, env = process.env, io = fs,
@@ -15,15 +22,13 @@ export function createFlowLiveDiagnostics({ webContents: wc, env = process.env, 
   const disabled = { sample: async () => {}, before: noop, completed: noop, failed: noop, dispose: noop }
   const project = env.AUTOFLOWCUT_FLOW_LIVE_PROJECT_ID
   const dir = env.AUTOFLOWCUT_FLOW_LIVE_DIR
-  if (env.AUTOFLOWCUT_FLOW_LIVE_DIAGNOSTICS !== '1' || !UUID.test(project || '')
-    || !dir || !path.isAbsolute(dir) || !wc) return disabled
+  const projectUrl = flowLiveProjectUrl(env)
+  if (!projectUrl || !wc) return disabled
   const token = `flowLive_${randomUUID()}`
   const file = path.join(dir, `flow-live-${Date.now()}-${randomUUID()}.jsonl`)
   let stopped = false, busy = false, bytes = 0, timer, lifetime, deadline, navigationEpoch = 0
   const requests = new Set()
-  const inProject = () => !wc.isDestroyed?.() && [
-    `https://flow.google.com/project/${project}`, `https://flow.google.com/project/${project}/`,
-  ].includes(wc.getURL())
+  const inProject = () => !wc.isDestroyed?.() && [projectUrl, projectUrl + '/'].includes(wc.getURL())
   const cleanupObserver = () => {
     if (!wc.isDestroyed?.()) {
       try { Promise.resolve(wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: liveGalleryCode(token, 'stop') }])).catch(noop) } catch {}

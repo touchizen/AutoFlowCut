@@ -52,7 +52,7 @@ function harness(o = {}) {
   let shieldTarget = 'flow'
   let lastShield = null
   const tap = (tag) => { trace.push(tag); if (o.shieldFocusAt === tag && lastShield) lastShield.focus() }
-  let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 957, height: 1022 }
+  let bounds = o.bounds ? { ...o.bounds } : o.hidden ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 1200, height: 1022 }
   const captureFlags = Array.isArray(o.captureFlag) ? [...o.captureFlag] : [true]
   const agentSeq = Array.isArray(o.agent) ? [...o.agent] : null
   const summarySeq = Array.isArray(o.summary) ? [...o.summary] : null   // M2-CLOSE O3: 요약 판독 순서(트리거 전 · 닫힌 뒤) — 마지막 값이 남는다
@@ -705,7 +705,7 @@ describe('flow:generate-video-t2v (angular) — 제자리 뷰포트의 입력 �
     expect(restore).toBeLessThan(t.lastIndexOf('main-focus'))   // M2-LAST P2: 첫 main-focus 는 클릭 전(재판독 뒤) — finally 의 반환은 마지막
   })
 
-  it('넓은 보이는 뷰(957×1022)는 뷰포트도 방패도 없다', async () => {
+  it('넓은 보이는 뷰(1200×1022)는 뷰포트도 방패도 없다', async () => {
     const h = harness()
     expect((await settle(h.generate())).success).toBe(true)
     expect(h.createInputShield).not.toHaveBeenCalled()
@@ -823,7 +823,7 @@ describe('flow:generate-video-t2v (angular) — DOM 단계의 키 입력 잠금 
     expect(h.setAutomationKeyLock.mock.calls).toEqual([[true], [false]])
   })
 
-  it('넓은 보이는 뷰(957×1022)도 잠근다 — 방패는 없어도 편집기가 OS 포커스를 받는다', async () => {
+  it('넓은 보이는 뷰(1200×1022)도 잠근다 — 방패는 없어도 편집기가 OS 포커스를 받는다', async () => {
     const h = harness()
     expect((await settle(h.generate())).success).toBe(true)
     expect(h.trace).not.toContain('shield:on')

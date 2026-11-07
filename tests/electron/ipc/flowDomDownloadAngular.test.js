@@ -83,7 +83,7 @@ function harness({ items, record, editorRenders = true, deliver = true, unrelate
     isFocused: () => true, focus: vi.fn(), isDestroyed: () => false, session,
   })
   const flowView = {
-    getBounds: () => ({ x: 0, y: 0, width: 957, height: 1022 }),
+    getBounds: () => ({ x: 0, y: 0, width: 1200, height: 1022 }),
     setBounds: vi.fn(),
     webContents,
   }

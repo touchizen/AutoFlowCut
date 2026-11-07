@@ -1,0 +1,3237 @@
+{
+  "source": "Actual isolated-world 994 recording; 2026-11-07; native single image, Agent OFF. URL signatures and authentication were omitted at capture. Not synthetic DOM.",
+  "nativeClickAt": 1794020176993,
+  "request": {
+    "at": 1794020177520,
+    "kind": "request",
+    "requestId": 65,
+    "method": "POST",
+    "url": "https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute",
+    "rpcid": "ogiZ0b",
+    "payloadUuids": [
+      "a1ce2007-2e3a-446b-a1d6-1c4315440e89",
+      "EDB23F19-F352-4446-85B9-19C1667502E1",
+      "D931BCAB-73B5-4945-9273-F13CE868AEBC",
+      "68FE2BD1-4FEC-4609-846A-162082239B8B"
+    ],
+    "imageRequest": {
+      "projectId": "a1ce2007-2e3a-446b-a1d6-1c4315440e89",
+      "prompts": [
+        "A single red apple on a plain wooden table, soft daylight, simple illustration."
+      ],
+      "seeds": [
+        1965117306
+      ],
+      "count": 1
+    }
+  },
+  "completed": {
+    "at": 1794020197924,
+    "kind": "completed",
+    "requestId": 65,
+    "statusCode": 200,
+    "fromCache": false
+  },
+  "frames": [
+    {
+      "phase": "before",
+      "at": 1794020176084,
+      "observerId": "46ebc15e-e764-4e3f-a398-514d1b426b07",
+      "page": "https://flow.google.com/project/a1ce2007-2e3a-446b-a1d6-1c4315440e89",
+      "cards": [],
+      "mutations": [],
+      "truncated": false
+    },
+    {
+      "phase": "pending",
+      "at": 1794020178091,
+      "observerId": "46ebc15e-e764-4e3f-a398-514d1b426b07",
+      "page": "https://flow.google.com/project/a1ce2007-2e3a-446b-a1d6-1c4315440e89",
+      "cards": [
+        {
+          "rootId": 7,
+          "ancestors": [
+            {
+              "id": 6,
+              "parentId": 5,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 5,
+              "parentId": 4,
+              "tag": "flow-tile-container",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 4,
+              "parentId": 3,
+              "tag": "flow-grid-tile-container",
+              "connected": true,
+              "attributes": {
+                "role": "group",
+                "class": "mat-context-menu-trigger",
+                "aria-label": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+              },
+              "text": ""
+            },
+            {
+              "id": 3,
+              "parentId": 1,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "tile-row virtual-item-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 1,
+              "parentId": 2,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "virtual-scroll-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 2,
+              "parentId": 31,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "cdk-virtual-scroll-content-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 31,
+              "parentId": 32,
+              "tag": "cdk-virtual-scroll-viewport",
+              "connected": true,
+              "attributes": {
+                "class": "cdk-virtual-scroll-viewport tiles-container cdk-virtual-scroll-orientation-vertical"
+              },
+              "text": ""
+            },
+            {
+              "id": 32,
+              "parentId": 33,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "mat-context-menu-trigger content-container"
+              },
+              "text": ""
+            }
+          ],
+          "nodes": [
+            {
+              "id": 7,
+              "parentId": 6,
+              "tag": "flow-image-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 8,
+              "parentId": 7,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 9,
+              "parentId": 8,
+              "tag": "flow-pending-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 10,
+              "parentId": 9,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 11,
+              "parentId": 10,
+              "tag": "flow-soupy-overlay",
+              "connected": true,
+              "attributes": {
+                "aria-hidden": "true"
+              },
+              "text": ""
+            },
+            {
+              "id": 12,
+              "parentId": 11,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 13,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-1"
+              },
+              "text": ""
+            },
+            {
+              "id": 14,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-2"
+              },
+              "text": ""
+            },
+            {
+              "id": 15,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header"
+              },
+              "text": ""
+            },
+            {
+              "id": 16,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header-leading"
+              },
+              "text": ""
+            },
+            {
+              "id": 17,
+              "parentId": 16,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 18,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "loading-percentage"
+              },
+              "text": "0%"
+            },
+            {
+              "id": 19,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 20,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "text-content"
+              },
+              "text": ""
+            },
+            {
+              "id": 21,
+              "parentId": 20,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "subtitle"
+              },
+              "text": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+            },
+            {
+              "id": 22,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "reuse-button-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 23,
+              "parentId": 22,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 24,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-persistent-ripple mdc-icon-button__ripple"
+              },
+              "text": ""
+            },
+            {
+              "id": 25,
+              "parentId": 23,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "keyboard_return"
+            },
+            {
+              "id": 26,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-focus-indicator"
+              },
+              "text": ""
+            },
+            {
+              "id": 27,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-touch-target"
+              },
+              "text": ""
+            }
+          ]
+        }
+      ],
+      "mutations": [
+        {
+          "at": 1794020177124,
+          "type": "childList",
+          "targetId": 1,
+          "parentId": 2,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 3,
+              "parentId": 1,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "tile-row virtual-item-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 4,
+              "parentId": 3,
+              "tag": "flow-grid-tile-container",
+              "connected": true,
+              "attributes": {
+                "role": "group",
+                "class": "mat-context-menu-trigger",
+                "aria-label": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+              },
+              "text": ""
+            },
+            {
+              "id": 5,
+              "parentId": 4,
+              "tag": "flow-tile-container",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 6,
+              "parentId": 5,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 7,
+              "parentId": 6,
+              "tag": "flow-image-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 8,
+              "parentId": 7,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 9,
+              "parentId": 8,
+              "tag": "flow-pending-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 10,
+              "parentId": 9,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 11,
+              "parentId": 10,
+              "tag": "flow-soupy-overlay",
+              "connected": true,
+              "attributes": {
+                "aria-hidden": "true"
+              },
+              "text": ""
+            },
+            {
+              "id": 12,
+              "parentId": 11,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 13,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-1"
+              },
+              "text": ""
+            },
+            {
+              "id": 14,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-2"
+              },
+              "text": ""
+            },
+            {
+              "id": 15,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header"
+              },
+              "text": ""
+            },
+            {
+              "id": 16,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header-leading"
+              },
+              "text": ""
+            },
+            {
+              "id": 17,
+              "parentId": 16,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 18,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "loading-percentage"
+              },
+              "text": "0%"
+            },
+            {
+              "id": 19,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 20,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "text-content"
+              },
+              "text": ""
+            },
+            {
+              "id": 21,
+              "parentId": 20,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "subtitle"
+              },
+              "text": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+            },
+            {
+              "id": 22,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "reuse-button-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 23,
+              "parentId": 22,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 24,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-persistent-ripple mdc-icon-button__ripple"
+              },
+              "text": ""
+            },
+            {
+              "id": 25,
+              "parentId": 23,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "keyboard_return"
+            },
+            {
+              "id": 26,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-focus-indicator"
+              },
+              "text": ""
+            },
+            {
+              "id": 27,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-touch-target"
+              },
+              "text": ""
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 3,
+          "parentId": 1,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 4,
+              "parentId": 3,
+              "tag": "flow-grid-tile-container",
+              "connected": true,
+              "attributes": {
+                "role": "group",
+                "class": "mat-context-menu-trigger",
+                "aria-label": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+              },
+              "text": ""
+            },
+            {
+              "id": 5,
+              "parentId": 4,
+              "tag": "flow-tile-container",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 6,
+              "parentId": 5,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 7,
+              "parentId": 6,
+              "tag": "flow-image-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 8,
+              "parentId": 7,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 9,
+              "parentId": 8,
+              "tag": "flow-pending-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 10,
+              "parentId": 9,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 11,
+              "parentId": 10,
+              "tag": "flow-soupy-overlay",
+              "connected": true,
+              "attributes": {
+                "aria-hidden": "true"
+              },
+              "text": ""
+            },
+            {
+              "id": 12,
+              "parentId": 11,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 13,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-1"
+              },
+              "text": ""
+            },
+            {
+              "id": 14,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-2"
+              },
+              "text": ""
+            },
+            {
+              "id": 15,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header"
+              },
+              "text": ""
+            },
+            {
+              "id": 16,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header-leading"
+              },
+              "text": ""
+            },
+            {
+              "id": 17,
+              "parentId": 16,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 18,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "loading-percentage"
+              },
+              "text": "0%"
+            },
+            {
+              "id": 19,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 20,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "text-content"
+              },
+              "text": ""
+            },
+            {
+              "id": 21,
+              "parentId": 20,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "subtitle"
+              },
+              "text": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+            },
+            {
+              "id": 22,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "reuse-button-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 23,
+              "parentId": 22,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 24,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-persistent-ripple mdc-icon-button__ripple"
+              },
+              "text": ""
+            },
+            {
+              "id": 25,
+              "parentId": 23,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "keyboard_return"
+            },
+            {
+              "id": 26,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-focus-indicator"
+              },
+              "text": ""
+            },
+            {
+              "id": 27,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-touch-target"
+              },
+              "text": ""
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 6,
+          "parentId": 5,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 7,
+              "parentId": 6,
+              "tag": "flow-image-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 8,
+              "parentId": 7,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 9,
+              "parentId": 8,
+              "tag": "flow-pending-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 10,
+              "parentId": 9,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 11,
+              "parentId": 10,
+              "tag": "flow-soupy-overlay",
+              "connected": true,
+              "attributes": {
+                "aria-hidden": "true"
+              },
+              "text": ""
+            },
+            {
+              "id": 12,
+              "parentId": 11,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 13,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-1"
+              },
+              "text": ""
+            },
+            {
+              "id": 14,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-2"
+              },
+              "text": ""
+            },
+            {
+              "id": 15,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header"
+              },
+              "text": ""
+            },
+            {
+              "id": 16,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header-leading"
+              },
+              "text": ""
+            },
+            {
+              "id": 17,
+              "parentId": 16,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 18,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "loading-percentage"
+              },
+              "text": "0%"
+            },
+            {
+              "id": 19,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 20,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "text-content"
+              },
+              "text": ""
+            },
+            {
+              "id": 21,
+              "parentId": 20,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "subtitle"
+              },
+              "text": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+            },
+            {
+              "id": 22,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "reuse-button-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 23,
+              "parentId": 22,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 24,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-persistent-ripple mdc-icon-button__ripple"
+              },
+              "text": ""
+            },
+            {
+              "id": 25,
+              "parentId": 23,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "keyboard_return"
+            },
+            {
+              "id": 26,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-focus-indicator"
+              },
+              "text": ""
+            },
+            {
+              "id": 27,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-touch-target"
+              },
+              "text": ""
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": "class",
+          "oldValue": "container",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 9,
+              "parentId": 8,
+              "tag": "flow-pending-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 10,
+              "parentId": 9,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 11,
+              "parentId": 10,
+              "tag": "flow-soupy-overlay",
+              "connected": true,
+              "attributes": {
+                "aria-hidden": "true"
+              },
+              "text": ""
+            },
+            {
+              "id": 12,
+              "parentId": 11,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 13,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-1"
+              },
+              "text": ""
+            },
+            {
+              "id": 14,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-2"
+              },
+              "text": ""
+            },
+            {
+              "id": 15,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header"
+              },
+              "text": ""
+            },
+            {
+              "id": 16,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header-leading"
+              },
+              "text": ""
+            },
+            {
+              "id": 17,
+              "parentId": 16,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 18,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "loading-percentage"
+              },
+              "text": "0%"
+            },
+            {
+              "id": 19,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 20,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "text-content"
+              },
+              "text": ""
+            },
+            {
+              "id": 21,
+              "parentId": 20,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "subtitle"
+              },
+              "text": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+            },
+            {
+              "id": 22,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "reuse-button-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 23,
+              "parentId": 22,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 24,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-persistent-ripple mdc-icon-button__ripple"
+              },
+              "text": ""
+            },
+            {
+              "id": 25,
+              "parentId": 23,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "keyboard_return"
+            },
+            {
+              "id": 26,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-focus-indicator"
+              },
+              "text": ""
+            },
+            {
+              "id": 27,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-touch-target"
+              },
+              "text": ""
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 10,
+          "parentId": 9,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 11,
+              "parentId": 10,
+              "tag": "flow-soupy-overlay",
+              "connected": true,
+              "attributes": {
+                "aria-hidden": "true"
+              },
+              "text": ""
+            },
+            {
+              "id": 12,
+              "parentId": 11,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 13,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-1"
+              },
+              "text": ""
+            },
+            {
+              "id": 14,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-2"
+              },
+              "text": ""
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 16,
+          "parentId": 15,
+          "attribute": "class",
+          "oldValue": "header-leading",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 16,
+          "parentId": 15,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 17,
+              "parentId": 16,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 15,
+          "parentId": 10,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 18,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "loading-percentage"
+              },
+              "text": "0%"
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "characterData",
+          "targetId": 28,
+          "parentId": 21,
+          "attribute": null,
+          "oldValue": "",
+          "text": "A single red apple on a plain wooden table, soft daylight, simple illustration.",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "childList",
+          "targetId": 19,
+          "parentId": 10,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 22,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "reuse-button-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 23,
+              "parentId": 22,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 24,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-persistent-ripple mdc-icon-button__ripple"
+              },
+              "text": ""
+            },
+            {
+              "id": 25,
+              "parentId": 23,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "keyboard_return"
+            },
+            {
+              "id": 26,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-focus-indicator"
+              },
+              "text": ""
+            },
+            {
+              "id": 27,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-touch-target"
+              },
+              "text": ""
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 17,
+          "parentId": 16,
+          "attribute": "class",
+          "oldValue": "mat-icon notranslate",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 17,
+          "parentId": 16,
+          "attribute": "class",
+          "oldValue": "mat-icon notranslate",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "characterData",
+          "targetId": 29,
+          "parentId": 17,
+          "attribute": null,
+          "oldValue": "",
+          "text": "image",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 17,
+          "parentId": 16,
+          "attribute": "data-mat-icon-type",
+          "oldValue": "",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 17,
+          "parentId": 16,
+          "attribute": "class",
+          "oldValue": "mat-icon notranslate google-symbols",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 17,
+          "parentId": 16,
+          "attribute": "class",
+          "oldValue": "mat-icon notranslate google-symbols",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "characterData",
+          "targetId": 30,
+          "parentId": 18,
+          "attribute": null,
+          "oldValue": "",
+          "text": "0%",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "aria-label",
+          "oldValue": "",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 25,
+          "parentId": 23,
+          "attribute": "class",
+          "oldValue": "mat-icon notranslate",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 23,
+          "parentId": 22,
+          "attribute": "class",
+          "oldValue": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 25,
+          "parentId": 23,
+          "attribute": "data-mat-icon-type",
+          "oldValue": "",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 25,
+          "parentId": 23,
+          "attribute": "class",
+          "oldValue": "mat-icon notranslate google-symbols",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020177125,
+          "type": "attributes",
+          "targetId": 25,
+          "parentId": 23,
+          "attribute": "class",
+          "oldValue": "mat-icon notranslate google-symbols",
+          "added": [],
+          "removed": []
+        }
+      ],
+      "truncated": false
+    },
+    {
+      "phase": "transition",
+      "at": 1794020198168,
+      "observerId": "46ebc15e-e764-4e3f-a398-514d1b426b07",
+      "page": "https://flow.google.com/project/a1ce2007-2e3a-446b-a1d6-1c4315440e89",
+      "cards": [
+        {
+          "rootId": 7,
+          "ancestors": [
+            {
+              "id": 6,
+              "parentId": 5,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 5,
+              "parentId": 4,
+              "tag": "flow-tile-container",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 4,
+              "parentId": 3,
+              "tag": "flow-grid-tile-container",
+              "connected": true,
+              "attributes": {
+                "role": "group",
+                "class": "mat-context-menu-trigger",
+                "aria-label": "Red apple on wooden table"
+              },
+              "text": ""
+            },
+            {
+              "id": 3,
+              "parentId": 1,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "tile-row virtual-item-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 1,
+              "parentId": 2,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "virtual-scroll-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 2,
+              "parentId": 31,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "cdk-virtual-scroll-content-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 31,
+              "parentId": 32,
+              "tag": "cdk-virtual-scroll-viewport",
+              "connected": true,
+              "attributes": {
+                "class": "cdk-virtual-scroll-viewport tiles-container cdk-virtual-scroll-orientation-vertical"
+              },
+              "text": ""
+            },
+            {
+              "id": 32,
+              "parentId": 33,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "mat-context-menu-trigger content-container"
+              },
+              "text": ""
+            }
+          ],
+          "nodes": [
+            {
+              "id": 7,
+              "parentId": 6,
+              "tag": "flow-image-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 8,
+              "parentId": 7,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 34,
+              "parentId": 8,
+              "tag": "img",
+              "connected": true,
+              "attributes": {
+                "alt": "사용자 이미지를 표시하는 타일",
+                "class": "image",
+                "src": "https://flow-content.google/image/92e85bf9-b276-44eb-abb0-47159ccffcdc",
+                "data-media-id": "92e85bf9-b276-44eb-abb0-47159ccffcdc"
+              },
+              "text": "",
+              "currentSrc": "https://flow-content.google/image/92e85bf9-b276-44eb-abb0-47159ccffcdc",
+              "width": 0,
+              "height": 0
+            },
+            {
+              "id": 35,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "pre-hover-overlay"
+              },
+              "text": ""
+            },
+            {
+              "id": 36,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hover-overlay"
+              },
+              "text": ""
+            },
+            {
+              "id": 37,
+              "parentId": 36,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hotbar-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 38,
+              "parentId": 37,
+              "tag": "flow-image-hotbar",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 39,
+              "parentId": 38,
+              "tag": "flow-hotbar-container",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 40,
+              "parentId": 39,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hotbar-inner"
+              },
+              "text": ""
+            },
+            {
+              "id": 41,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-tooltip-trigger",
+                "aria-label": "즐겨찾기"
+              },
+              "text": ""
+            },
+            {
+              "id": 42,
+              "parentId": 41,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "favorite"
+            },
+            {
+              "id": 43,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-tooltip-trigger",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 44,
+              "parentId": 43,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m rotated google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "redo"
+            },
+            {
+              "id": 45,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+                "aria-label": "옵션 더보기",
+                "aria-haspopup": "menu",
+                "aria-expanded": "false",
+                "aria-describedby": "cdk-describedby-message-ng-1-8"
+              },
+              "text": ""
+            },
+            {
+              "id": 46,
+              "parentId": 45,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "more_vert"
+            },
+            {
+              "id": 47,
+              "parentId": 38,
+              "tag": "mat-menu",
+              "connected": true,
+              "attributes": {
+                "class": ""
+              },
+              "text": ""
+            },
+            {
+              "id": 48,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer-overlay"
+              },
+              "text": ""
+            },
+            {
+              "id": 49,
+              "parentId": 48,
+              "tag": "flow-tile-hover-footer",
+              "connected": true,
+              "attributes": {
+                "class": "project-tile-hover-footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 50,
+              "parentId": 49,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "aria-haspopup": "true",
+                "class": "footer-left",
+                "aria-label": "Red apple on wooden table",
+                "aria-expanded": "false"
+              },
+              "text": ""
+            },
+            {
+              "id": 51,
+              "parentId": 50,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate footer-icon google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 52,
+              "parentId": 50,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "footer-title"
+              },
+              "text": "Red apple on wooden table"
+            },
+            {
+              "id": 9,
+              "parentId": 8,
+              "tag": "flow-pending-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 10,
+              "parentId": 9,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 11,
+              "parentId": 10,
+              "tag": "flow-soupy-overlay",
+              "connected": true,
+              "attributes": {
+                "aria-hidden": "true"
+              },
+              "text": ""
+            },
+            {
+              "id": 12,
+              "parentId": 11,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 13,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-1"
+              },
+              "text": ""
+            },
+            {
+              "id": 14,
+              "parentId": 12,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-2"
+              },
+              "text": ""
+            },
+            {
+              "id": 15,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header"
+              },
+              "text": ""
+            },
+            {
+              "id": 16,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "header-leading"
+              },
+              "text": ""
+            },
+            {
+              "id": 17,
+              "parentId": 16,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 18,
+              "parentId": 15,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "loading-percentage"
+              },
+              "text": "100%"
+            },
+            {
+              "id": 19,
+              "parentId": 10,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 20,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "text-content"
+              },
+              "text": ""
+            },
+            {
+              "id": 21,
+              "parentId": 20,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "subtitle"
+              },
+              "text": "A single red apple on a plain wooden table, soft daylight, simple illustration."
+            },
+            {
+              "id": 22,
+              "parentId": 19,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "reuse-button-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 23,
+              "parentId": 22,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 24,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-persistent-ripple mdc-icon-button__ripple"
+              },
+              "text": ""
+            },
+            {
+              "id": 25,
+              "parentId": 23,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "keyboard_return"
+            },
+            {
+              "id": 26,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-focus-indicator"
+              },
+              "text": ""
+            },
+            {
+              "id": 27,
+              "parentId": 23,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-button-touch-target"
+              },
+              "text": ""
+            }
+          ]
+        }
+      ],
+      "mutations": [
+        {
+          "at": 1794020197939,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 34,
+              "parentId": 8,
+              "tag": "img",
+              "connected": true,
+              "attributes": {
+                "alt": "사용자 이미지를 표시하는 타일",
+                "class": "image",
+                "src": "https://flow-content.google/image/92e85bf9-b276-44eb-abb0-47159ccffcdc",
+                "data-media-id": "92e85bf9-b276-44eb-abb0-47159ccffcdc"
+              },
+              "text": "",
+              "currentSrc": "https://flow-content.google/image/92e85bf9-b276-44eb-abb0-47159ccffcdc",
+              "width": 0,
+              "height": 0
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 35,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "pre-hover-overlay"
+              },
+              "text": ""
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 36,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hover-overlay"
+              },
+              "text": ""
+            },
+            {
+              "id": 37,
+              "parentId": 36,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hotbar-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 38,
+              "parentId": 37,
+              "tag": "flow-image-hotbar",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 39,
+              "parentId": 38,
+              "tag": "flow-hotbar-container",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 40,
+              "parentId": 39,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hotbar-inner"
+              },
+              "text": ""
+            },
+            {
+              "id": 41,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-tooltip-trigger",
+                "aria-label": "즐겨찾기"
+              },
+              "text": ""
+            },
+            {
+              "id": 42,
+              "parentId": 41,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "favorite"
+            },
+            {
+              "id": 43,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-tooltip-trigger",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 44,
+              "parentId": 43,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m rotated google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "redo"
+            },
+            {
+              "id": 45,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+                "aria-label": "옵션 더보기",
+                "aria-haspopup": "menu",
+                "aria-expanded": "false",
+                "aria-describedby": "cdk-describedby-message-ng-1-8"
+              },
+              "text": ""
+            },
+            {
+              "id": 46,
+              "parentId": 45,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "more_vert"
+            },
+            {
+              "id": 47,
+              "parentId": 38,
+              "tag": "mat-menu",
+              "connected": true,
+              "attributes": {
+                "class": ""
+              },
+              "text": ""
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [
+            {
+              "id": 48,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer-overlay"
+              },
+              "text": ""
+            },
+            {
+              "id": 49,
+              "parentId": 48,
+              "tag": "flow-tile-hover-footer",
+              "connected": true,
+              "attributes": {
+                "class": "project-tile-hover-footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 50,
+              "parentId": 49,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "aria-haspopup": "true",
+                "class": "footer-left",
+                "aria-label": "Red apple on wooden table",
+                "aria-expanded": "false"
+              },
+              "text": ""
+            },
+            {
+              "id": 51,
+              "parentId": 50,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate footer-icon google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 52,
+              "parentId": 50,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "footer-title"
+              },
+              "text": "Red apple on wooden table"
+            }
+          ],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "attributes",
+          "targetId": 34,
+          "parentId": 8,
+          "attribute": "class",
+          "oldValue": "image",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "attributes",
+          "targetId": 34,
+          "parentId": 8,
+          "attribute": "class",
+          "oldValue": "image",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "attributes",
+          "targetId": 34,
+          "parentId": 8,
+          "attribute": "src",
+          "oldValue": "https://flow.google.com/project/null",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "attributes",
+          "targetId": 34,
+          "parentId": 8,
+          "attribute": "data-media-id",
+          "oldValue": "",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "characterData",
+          "targetId": 30,
+          "parentId": 18,
+          "attribute": null,
+          "oldValue": "66%",
+          "text": "100%",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "attributes",
+          "targetId": 50,
+          "parentId": 49,
+          "attribute": "aria-label",
+          "oldValue": "A single red apple on a plain wooden table, soft daylight, simple illustration.",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020197939,
+          "type": "characterData",
+          "targetId": 53,
+          "parentId": 52,
+          "attribute": null,
+          "oldValue": "A single red apple on a plain wooden table, soft daylight, simple illustration.",
+          "text": "Red apple on wooden table",
+          "added": [],
+          "removed": []
+        }
+      ],
+      "truncated": false
+    },
+    {
+      "phase": "complete",
+      "at": 1794020201185,
+      "observerId": "46ebc15e-e764-4e3f-a398-514d1b426b07",
+      "page": "https://flow.google.com/project/a1ce2007-2e3a-446b-a1d6-1c4315440e89",
+      "cards": [
+        {
+          "rootId": 7,
+          "ancestors": [
+            {
+              "id": 6,
+              "parentId": 5,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 5,
+              "parentId": 4,
+              "tag": "flow-tile-container",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 4,
+              "parentId": 3,
+              "tag": "flow-grid-tile-container",
+              "connected": true,
+              "attributes": {
+                "role": "group",
+                "class": "mat-context-menu-trigger",
+                "aria-label": "Red apple on wooden table"
+              },
+              "text": ""
+            },
+            {
+              "id": 3,
+              "parentId": 1,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "tile-row virtual-item-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 1,
+              "parentId": 2,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "virtual-scroll-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 2,
+              "parentId": 31,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "cdk-virtual-scroll-content-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 31,
+              "parentId": 32,
+              "tag": "cdk-virtual-scroll-viewport",
+              "connected": true,
+              "attributes": {
+                "class": "cdk-virtual-scroll-viewport tiles-container cdk-virtual-scroll-orientation-vertical"
+              },
+              "text": ""
+            },
+            {
+              "id": 32,
+              "parentId": 33,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "mat-context-menu-trigger content-container"
+              },
+              "text": ""
+            }
+          ],
+          "nodes": [
+            {
+              "id": 7,
+              "parentId": 6,
+              "tag": "flow-image-tile",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 8,
+              "parentId": 7,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 34,
+              "parentId": 8,
+              "tag": "img",
+              "connected": true,
+              "attributes": {
+                "alt": "사용자 이미지를 표시하는 타일",
+                "class": "image",
+                "src": "https://flow-content.google/image/92e85bf9-b276-44eb-abb0-47159ccffcdc",
+                "data-media-id": "92e85bf9-b276-44eb-abb0-47159ccffcdc"
+              },
+              "text": "",
+              "currentSrc": "https://flow-content.google/image/92e85bf9-b276-44eb-abb0-47159ccffcdc",
+              "width": 1376,
+              "height": 768
+            },
+            {
+              "id": 35,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "pre-hover-overlay"
+              },
+              "text": ""
+            },
+            {
+              "id": 36,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hover-overlay"
+              },
+              "text": ""
+            },
+            {
+              "id": 37,
+              "parentId": 36,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hotbar-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 38,
+              "parentId": 37,
+              "tag": "flow-image-hotbar",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 39,
+              "parentId": 38,
+              "tag": "flow-hotbar-container",
+              "connected": true,
+              "attributes": {},
+              "text": ""
+            },
+            {
+              "id": 40,
+              "parentId": 39,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "hotbar-inner"
+              },
+              "text": ""
+            },
+            {
+              "id": 41,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-tooltip-trigger",
+                "aria-label": "즐겨찾기"
+              },
+              "text": ""
+            },
+            {
+              "id": 42,
+              "parentId": 41,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "favorite"
+            },
+            {
+              "id": 43,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-tooltip-trigger",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 44,
+              "parentId": 43,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m rotated google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "redo"
+            },
+            {
+              "id": 45,
+              "parentId": 40,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "class": "mat-mdc-menu-trigger mat-mdc-tooltip-trigger",
+                "aria-label": "옵션 더보기",
+                "aria-haspopup": "menu",
+                "aria-expanded": "false",
+                "aria-describedby": "cdk-describedby-message-ng-1-8"
+              },
+              "text": ""
+            },
+            {
+              "id": 46,
+              "parentId": 45,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate flow-icon-m google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "more_vert"
+            },
+            {
+              "id": 47,
+              "parentId": 38,
+              "tag": "mat-menu",
+              "connected": true,
+              "attributes": {
+                "class": ""
+              },
+              "text": ""
+            },
+            {
+              "id": 48,
+              "parentId": 8,
+              "tag": "div",
+              "connected": true,
+              "attributes": {
+                "class": "footer-overlay"
+              },
+              "text": ""
+            },
+            {
+              "id": 49,
+              "parentId": 48,
+              "tag": "flow-tile-hover-footer",
+              "connected": true,
+              "attributes": {
+                "class": "project-tile-hover-footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 50,
+              "parentId": 49,
+              "tag": "button",
+              "connected": true,
+              "attributes": {
+                "aria-haspopup": "true",
+                "class": "footer-left",
+                "aria-label": "Red apple on wooden table",
+                "aria-expanded": "false"
+              },
+              "text": ""
+            },
+            {
+              "id": 51,
+              "parentId": 50,
+              "tag": "mat-icon",
+              "connected": true,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate footer-icon google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": "image"
+            },
+            {
+              "id": 52,
+              "parentId": 50,
+              "tag": "span",
+              "connected": true,
+              "attributes": {
+                "class": "footer-title"
+              },
+              "text": "Red apple on wooden table"
+            }
+          ]
+        }
+      ],
+      "mutations": [
+        {
+          "at": 1794020200984,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020200984,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": [
+            {
+              "id": 9,
+              "parentId": null,
+              "tag": "flow-pending-tile",
+              "connected": false,
+              "attributes": {
+                "class": "fading-out"
+              },
+              "text": ""
+            },
+            {
+              "id": 10,
+              "parentId": 9,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "container"
+              },
+              "text": ""
+            },
+            {
+              "id": 11,
+              "parentId": 10,
+              "tag": "flow-soupy-overlay",
+              "connected": false,
+              "attributes": {
+                "aria-hidden": "true"
+              },
+              "text": ""
+            },
+            {
+              "id": 12,
+              "parentId": 11,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "perlin-container"
+              },
+              "text": ""
+            },
+            {
+              "id": 13,
+              "parentId": 12,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-1"
+              },
+              "text": ""
+            },
+            {
+              "id": 14,
+              "parentId": 12,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "perlin-layer perlin-layer-2"
+              },
+              "text": ""
+            },
+            {
+              "id": 15,
+              "parentId": 10,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "header"
+              },
+              "text": ""
+            },
+            {
+              "id": 16,
+              "parentId": 15,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "header-leading"
+              },
+              "text": ""
+            },
+            {
+              "id": 19,
+              "parentId": 10,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "footer"
+              },
+              "text": ""
+            },
+            {
+              "id": 20,
+              "parentId": 19,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "text-content"
+              },
+              "text": ""
+            },
+            {
+              "id": 21,
+              "parentId": 20,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "subtitle"
+              },
+              "text": ""
+            },
+            {
+              "id": 22,
+              "parentId": 19,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "reuse-button-wrapper"
+              },
+              "text": ""
+            },
+            {
+              "id": 23,
+              "parentId": 22,
+              "tag": "button",
+              "connected": false,
+              "attributes": {
+                "class": "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger reuse-button mat-unthemed flow-icon-button-transparent flow-button-small flow-icon-button-no-touch-target",
+                "aria-label": "프롬프트 재사용"
+              },
+              "text": ""
+            },
+            {
+              "id": 24,
+              "parentId": 23,
+              "tag": "span",
+              "connected": false,
+              "attributes": {
+                "class": "mat-mdc-button-persistent-ripple mdc-icon-button__ripple"
+              },
+              "text": ""
+            },
+            {
+              "id": 25,
+              "parentId": 23,
+              "tag": "mat-icon",
+              "connected": false,
+              "attributes": {
+                "role": "img",
+                "class": "mat-icon notranslate google-symbols mat-icon-no-color",
+                "aria-hidden": "true",
+                "data-mat-icon-type": "font"
+              },
+              "text": ""
+            },
+            {
+              "id": 26,
+              "parentId": 23,
+              "tag": "span",
+              "connected": false,
+              "attributes": {
+                "class": "mat-focus-indicator"
+              },
+              "text": ""
+            },
+            {
+              "id": 27,
+              "parentId": 23,
+              "tag": "span",
+              "connected": false,
+              "attributes": {
+                "class": "mat-mdc-button-touch-target"
+              },
+              "text": ""
+            }
+          ]
+        },
+        {
+          "at": 1794020200984,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020200984,
+          "type": "attributes",
+          "targetId": 34,
+          "parentId": 8,
+          "attribute": "class",
+          "oldValue": "image unblurring",
+          "added": [],
+          "removed": []
+        },
+        {
+          "at": 1794020200985,
+          "type": "childList",
+          "targetId": 8,
+          "parentId": 7,
+          "attribute": null,
+          "oldValue": null,
+          "added": [],
+          "removed": [
+            {
+              "id": 54,
+              "parentId": null,
+              "tag": "div",
+              "connected": false,
+              "attributes": {
+                "class": "backdrop-unblur-overlay"
+              },
+              "text": ""
+            }
+          ]
+        }
+      ],
+      "truncated": false
+    }
+  ]
+}

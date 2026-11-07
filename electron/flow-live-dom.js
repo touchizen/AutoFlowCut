@@ -97,7 +97,18 @@ export function observeLiveGallery(doc, pageUrl) {
         return { rootId: nodeId(root), ancestors, nodes: collect(root) }
       })
       const result = { at: Date.now(), observerId, timeOrigin: doc.defaultView.performance.timeOrigin,
-        page: safeUrl(pageUrl), cards, mutations: changes, truncated, dropped }
+        page: safeUrl(pageUrl), cards, mutations: changes,
+        composer: {
+          agentPressed: doc.querySelector('flow-agent-mode-toggle-chip button[aria-pressed]')?.getAttribute('aria-pressed') ?? null,
+          editorPresent: !!doc.querySelector('flow-rich-text-editor, [contenteditable="true"], textarea'),
+          viewport: { width: doc.defaultView.innerWidth, height: doc.defaultView.innerHeight },
+          customTags: [...new Set([...doc.querySelectorAll('*')].map(n => n.localName).filter(tag => tag.includes('-')))],
+          controls: [...doc.querySelectorAll('button')].slice(0, 100).map(button => ({
+            tag: button.localName, parent: button.parentElement?.localName,
+            text: clip(button.textContent, 200), label: clip(button.getAttribute('aria-label'), 200),
+            pressed: button.getAttribute('aria-pressed'), disabled: button.disabled,
+          })),
+        }, truncated, dropped }
       changes = []; truncated = false; dropped = 0
       remainingChars = 256 * 1024; remainingNodes = 1000
       return result

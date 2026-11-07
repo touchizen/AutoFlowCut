@@ -1,32 +1,37 @@
 # Flow 씬 이미지: 페이지 네트워크 래퍼 없는 수집
 
-2026-11-07 · 작업 브랜치 `fix/flow-detection-no-page-mutation` · 시작 HEAD `5d1fb7d6`
+2026-11-07 · 작업 브랜치 `fix/flow-detection-no-page-mutation`
 
-**3차 리뷰 상태(기준 HEAD `627e96c3`): 소유권 판정은 미해결이다.** 아래 2초/1.5초 안정화는 요청과 결과를 잇는 증거가 아니다. 목록 완료 4초 뒤 나타난 기존 카드가 성공으로 수집되는 회귀를 재현했다. 저장된 실제 DOM에서 대체 근거를 입증하지 못해, 사용자 지시에 따라 소유권 알고리즘은 억지로 바꾸지 않았다. `flowPassiveImage.test.js`의 `R3 unresolved: refuses an old card first rendered 4s after listing completion`은 **expected failure**이며 정상 통과 테스트와 별도로 집계한다. 제출 기록 보존과 최신 씬 재검사는 아래 3차 항목에서 수정했다.
+## 현재 구현 — 네이티브 응답으로 소유권 확인
 
-## 구현과 소유권 판정
+기본 **일반 텍스트 씬 이미지**는 실제 네이티브 요청의 응답에서 결과를 선택한다. 갤러리 차집합·2초 안정화·카드 순서·pending 노드 계보를 소유권 근거로 사용하지 않는다. 기존 R3 expected failure는 지연된 옛 카드 대신 해당 응답의 media ID만 선택하는 일반 회귀 테스트로 바뀌었다. 아래 리뷰 이력의 시간 판정은 과거 구현이다.
 
-기본값은 **일반 텍스트 씬 이미지**의 수동 네트워크 관찰 + 격리 DOM 비교다. `AUTOFLOWCUT_FLOW_RPC_CAPTURE=1`일 때만 기존 RPC 래퍼를 허용한다. 구형 본문 변조는 여기에 `AUTOFLOWCUT_FLOW_LEGACY_MUTATION=1`까지 있어야 한다. 영상·캐릭터·레퍼런스 업로드·업스케일·구형 generate-scene IPC는 기본 정책에서 거부한다. 이미지 payload에 레퍼런스·멘션·고정 seed가 있으면 입력 전에 거부한다.
+1. 설정과 프롬프트는 Electron 네이티브 입력을 사용하고, DOM은 격리 월드에서 읽는다. main의 기존 `webRequest` 리스너 하나에서 원래 요청을 관찰한다. callback은 `{}`이며 요청 본문·URL·헤더를 변경하지 않는다. 프로젝트·프롬프트·개수·seed·소유 WebContents를 확인한다.
+2. 클릭 전에 `session.netLog`를 private POSIX FIFO에 연결한다. 요청을 재전송하거나 protocol proxy를 설치하지 않는다. CDP·Flow 디버거·페이지 fetch/XHR 래퍼도 사용하지 않는다. 마지막 비동기 씬 검사 뒤 수집기 준비를 다시 확인하고 네이티브 클릭한다.
+3. 관찰한 요청의 HTTP 200 완료 뒤, **full transport URL + POST + 단일 native request source**의 응답 바이트만 복원한다. 중복 START/재요청·redirect·network error·비정상 HTTP·잘못된 byte count/base64·불명확한 encoding을 거부한다. 단일 `ogiZ0b` 성공 프레임과 media UUID·고유성·개수·seed·원문 echo·원본 URL의 ID 경로를 검증한다. HTTP 200만으로 성공을 판단하지 않는다.
+4. 검증된 응답의 서명 원본 URL을 해당 Flow 세션의 `net.request`로 내려받는다. 썸네일이나 갤러리 카드에서 결과를 추측하지 않는다. 비이미지 MIME·빈 응답·32MiB 초과·30초 초과·취소·잘린 응답을 거부한다. 씬 배정과 디스크 저장은 기존 finalize 경로를 사용한다.
+5. 설정부터 응답 수집·다운로드·뷰 복원까지 배타 소유권을 유지한다. 비동기 submit도 수집이 끝난 뒤 generationId를 반환한다. 네이티브 mouseDown 시점의 로컬 제출 기록과 제출 후 실패 차단을 보존한다. 재시작/CSV 복원 뒤에도 같은 씬을 자동 재제출하지 않는다.
 
-1. main의 기존 `onBeforeRequest` 관찰과 새 관찰을 **한 리스너**로 합쳤다. callback은 항상 `{}`로 호출하며 요청 바이트·헤더·URL을 바꾸거나 차단하지 않는다. `uploadData.bytes`만 읽고 파일/불명확한 본문을 거부한다. `at`·본문은 저장하지 않는다.
-2. 단일 요청의 RPC(`ogiZ0b`), 소유 WebContents, 프로젝트, 정규화 프롬프트, 예상 개수, seed 형태를 확인한다. 요청 시각과 같은 요청 ID의 HTTP 200 완료 시각을 main 메모리에 기록한다. HTTP 200만으로 생성 성공이라고 판단하지 않는다.
-3. 목록 HTTP 완료 뒤 격리 월드에서 ID/URL 집합이 2초간 변하지 않으면 DOM 반영이 안정화된 것으로 판단한다(`createPassiveCapture({ gallerySettleMs })`, 기본 2000ms). 변화·미완성 DOM·다음 목록 요청은 안정화 시간을 다시 시작한다. 설정·프롬프트는 기존 네이티브 입력 경로를 쓴다. 시작 스냅샷, 입력 후 스냅샷, mouseDown 직전 스냅샷의 기존 ID/URL이 같아야 한다. 편집기 텍스트·빈 레퍼런스·Agent OFF도 직전에 재확인한다.
-4. 응답 완료 후 기존 ID/URL이 모두 보존되고 새 미디어가 **정확히 기대 개수**인 경우만 받는다. 1.5초 동안 같은 결과 집합이 유지되어야 한다. 응답 직후의 일시적 로딩 DOM은 제한 시간 동안 기다린다. 다운로드 뒤와 뷰포트 복원 뒤에도 소유권을 재확인한다.
-5. 결과 ID는 해당 프로젝트 edit-card 또는 이미지 타일 안의 명시적인 ID/이미지 URL에서만 얻는다. edit ID·불투명 asb 토큰은 mediaId로 추측하지 않는다. 갤러리 밖 미리보기와 칩은 제외한다. 기존 빈 카드/타일은 제출 전에 거부하여 늦게 로드된 옛 결과를 배정하지 않는다.
-6. 이미지 다운로드는 main의 `net.request`와 해당 Flow 세션 쿠키로 한다. asb 썸네일은 그대로 저장하지 않고 기존 레포의 `https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=<ID>`로 원본을 요청한다. HTML/비이미지 MIME, 비정상 HTTP 상태, 빈 응답, 32MiB 초과, 30초 초과는 거부한다. 완료·실패·취소 모두 타이머·리스너·버퍼를 정리한다.
-7. 배타적 소유권은 설정부터 수집·다운로드·복원까지 유지한다. 비동기 제출도 이 작업이 끝난 뒤 generationId를 반환하고 기존 check/collect 계약으로 완성 이미지를 건넨다. 기존 main 안전 게이트의 생성 간격(기본 60초 + 최대 15초 지터)이 이어서 적용된다.
+NetLog는 Flow partition만이 아니라 **앱 전체 network service**를 관찰하며 raw 내용에 인증 정보가 포함될 수 있다. raw는 0700 디렉터리의 0600 FIFO와 메모리에서만 취급하고 일반 파일/로그에 저장하지 않는다. Chromium의 raw scratch file을 만드는 `maxFileSize`는 설정하지 않는다. 입력은 32MiB·수명 130초로 제한하며 실패 시 버퍼를 폐기한다. 이 수치는 JSON/string 복사까지 포함한 최대 heap 크기는 아니다. 늦거나 실패한 exporter 종료는 EOF까지 drain하며, writer 종료를 확인할 수 없으면 앱 전역 lease를 유지해 후속 제출을 막는다.
 
-Electron은 webRequest 이벤트별 마지막 리스너만 사용하므로 기존 리스너를 별도 등록으로 덮지 않았다. 세션 쿠키 옵션과 요청 취소도 공식 문서를 확인했다. [WebRequest](https://www.electronjs.org/docs/latest/api/web-request), [ClientRequest](https://www.electronjs.org/docs/latest/api/client-request).
+현재 FIFO 수집기는 **POSIX 전용**이다. Windows나 NetLog 사용 불가/다른 수집기 실행 중에는 클릭 전에 거부한다. 갤러리 시간 판정이나 구형 래퍼로 자동 전환하지 않는다. `AUTOFLOWCUT_FLOW_RPC_CAPTURE=1`은 기존 호환 경로를 명시적으로 켜는 별도 옵션이다. 영상·캐릭터·레퍼런스 업로드·업스케일은 이번 일반 이미지 경로의 검증 범위에 포함하지 않는다.
 
-## 거부·중단 조건
+## 실제 근거와 검증 상태
 
-- `Zzl0ze` 목록 조회가 이미 진행 중이면 제출 전에 거부한다. 완료된 초기 목록은 최대 15초 동안 실제 DOM 안정화를 확인한 뒤 기준으로 삼는다. 관찰한 본인 제출 이후 같은 뷰의 목록 재조회는 정상 갱신으로 허용하되, 모든 목록 완료와 안정화까지 결과 확정을 기다린다. 제출 전 새 목록이나 다른 뷰의 목록은 거부한다.
-- 격리 월드 995의 `MutationObserver`로 최초 등장 시각과 미완성 카드 구간을 기록한다. 기준에 없던 항목이 기대보다 많거나 최초 시각이 요청 이전이면 거부한다. 처음 보였다 사라진 기존 카드의 재등장, 제출 전에 빈 카드가 생기고 제출 뒤 이미지가 붙는 경우도 거부한다. 같은 밀리초는 순서가 불명확하므로 거부한다. 폴링과 복원 검사는 매번 실제 DOM을 다시 읽어 속성 mutation 없는 `currentSrc` 변경도 확인한다.
-- 중복/다른 탭 생성, 제출 전 생성, 다른 프로젝트·프롬프트·개수·참조, 알 수 없는 RPC/본문, HTTP/네트워크 오류.
-- 요청을 관찰하지 못함(15초), 결과가 완성되지 않음(120초), 전체 작업 180초 초과.
-- 화면/뷰 변경·렌더러 종료·입력 개입, 사용자 취소, 안전 게이트 중단, 입력 방패를 만들 수 없음.
-- 기존 미디어 삭제/변경, 새 결과 과다, ID 중복/충돌/불명확, 갤러리 판독 불가.
-- 제출 후 실패는 `postClick`, `retryBlocked`, `safetyStop`으로 반환한다. 관찰기는 불확실 상태를 유지해 다음 생성과 재시도를 차단한다. HTTP 완료나 clear-generations만으로 이를 초기화하지 않는다.
+- 11:56:16 KST 네이티브 Flow 직접 생성 1장 성공. 실측 fixture `tests/fixtures/flow-live-lineage-20261107.json`은 pending → 완료의 같은 타일 노드와 media ID를 기록한다. 다만 공개 Flow 클라이언트는 옛 pending 카드도 다시 만들 수 있어 **노드 계보만으로 소유권을 증명하지 않았다.**
+- production collector의 네이티브 localhost gzip/br/identity 응답 복원과 동일 URL 중복 요청 거부를 확인했다. 파란 컵은 응답 증명 뒤 기존 downloader의 조기 request-close 처리로 실패했다. 이를 고친 뒤 **13:07:36.208 KST 노란 배 1장**을 앱 엔진으로 제출해 정확한 씬 배정·원본 다운로드·디스크 저장까지 통과했다. media ID `ba9cd385-c98a-49ef-ab5c-fb85e0edc00e`, JPEG 97,368 bytes, 1376×768, SHA-256 `5fc7069fefd54ed4e6cb116be132e5752dfb5a9ccc37e2c1383c2a8604ea0bb`. Flow 타일·앱 썸네일·저장 원본이 같은 노란 배임을 확인했다.
+- 최신 전체 회귀 **901개 파일 통과·4개 skip / 10,656개 통과·54 skip·expected failure 0**, exit 0 (`full-final-complete.log`). `render.smoke.test.js`는 기존 main 실패로 제외했다. native request close 선행·end 등록 순서·후속 response error를 RED/GREEN과 실제 Electron localhost로 검증했다. 잘린 응답은 실패하고 close 뒤 오류 guard도 정리된다. viewport 관련 192개, reason 보존 관련 164개, legacy 넓은 화면 156개 및 DOM download 17개도 확인했다.
+- 새 감지 경고·로그인·CAPTCHA·Flow RPC 오류가 나타나면 즉시 중단한다. 이번 시험은 새 프로젝트에서 **실제 3장 한도에 도달**했다(사과 1·파란 컵 1·노란 배 1). 1장씩, 실제 제출 간격은 모두 75초 이상이며 새 Flow 감지 경고는 없었다. 사용자 프로젝트를 생성 대상으로 사용하지 않았고 병합/push도 하지 않았다. 추가 생성·오류 재시도를 하지 않는다.
+
+좁은 패널에서 597px 및 줌 후 700px에서도 Agent 칩이 없음을 실측해 최소 자동화 폭을 960px로 올렸다. 합성 fixture의 잘못된 600px 렌더 가정도 고쳤다. **최종 실제 성공은 창 최대화 뒤 물리 Flow 폭 957px/Agent OFF를 확인한 조건**이다. 597px에서 자동 줌만으로 시작한 경로가 실제로 통과했다고 보고하지 않는다. 생성 전 거부는 native 제출 기록과 이미지 RPC가 없었으며 이미지 예산을 소모하지 않았다. 거부 사유는 `errorParams.reason`으로 씬 저장까지 보존한다. 파란 컵의 기존 실패·재제출 차단은 시험 프로젝트에 그대로 남겼다.
+
+증거·실행 로그·리뷰: `/Users/tuxxon/workspace/afc-codex/live/attempt-2/`. 구현 계획: `docs/plans/2026-11-07-flow-native-response-ownership.md`.
+
+공식 API: [NetLog](https://www.electronjs.org/docs/latest/api/net-log), [WebRequest](https://www.electronjs.org/docs/latest/api/web-request), [ClientRequest](https://www.electronjs.org/docs/latest/api/client-request), [IncomingMessage](https://www.electronjs.org/docs/latest/api/incoming-message).
+
+## 이전 리뷰와 진단 이력
+
+아래 기록은 각 시점의 결과를 보존한다. 현재 구현·현재 실제 시험 결과는 위 단락과 최신 실행 보고서를 따른다.
 
 ## 1차 리뷰 수정 이력 (2026-11-07, 아래 2차 수정 전 상태)
 
