@@ -29,3 +29,33 @@ it('correlates the click to its call and retains it when the IPC rejects', async
   expect(off).toHaveBeenCalledOnce()
   expect(offCheck).toHaveBeenCalledOnce()
 })
+
+it.each(['t2v', 'i2v'])('correlates a %s Flow click journal and returns it if IPC transport is lost', async mode => {
+  let listener, payload, reject
+  const off = vi.fn()
+  const record = { id: `video-${mode}-submit`, submittedAt: 456, postClick: true, retryBlocked: true, reason: 'awaiting-result' }
+  const invoke = vi.fn(input => { payload = input; return new Promise((_resolve, fail) => { reject = fail }) })
+  const onSubmission = vi.fn()
+  window.electronAPI = {
+    onFlowVideoSubmission: cb => { listener = cb; return off },
+    flowGenerateVideoT2V: invoke,
+    flowGenerateVideoI2V: invoke,
+  }
+  const h = renderHook(() => useFlowEngine())
+  let pending
+  await act(async () => {
+    pending = mode === 't2v'
+      ? h.result.current.generateVideoT2V('p', 'Omni Flash', '16:9', 6, null, '720p', [], { onSubmission })
+      : h.result.current.generateVideoI2V('p', 'data:image/png;base64,QUJD', null, 'Omni Flash', '9:16', 4, null, '720p', { onSubmission })
+  })
+  expect(payload.submissionRequestId).toMatch(/^[0-9a-f-]{36}$/i)
+  listener({ submissionRequestId: 'foreign-call', flowSubmission: record })
+  expect(onSubmission).not.toHaveBeenCalled()
+  listener({ submissionRequestId: payload.submissionRequestId, flowSubmission: record })
+  expect(onSubmission).toHaveBeenCalledExactlyOnceWith(record)
+  let result
+  await act(async () => { reject(new Error('transport-lost')); result = await pending })
+  expect(result).toMatchObject({ success: false, errorKind: 'flow-submit-lost', postClick: true, retryBlocked: true,
+    flowSubmission: record })
+  expect(off).toHaveBeenCalledOnce()
+})

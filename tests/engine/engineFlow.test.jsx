@@ -559,7 +559,7 @@ describe('useFlowEngine — listFlowProjects', () => {
 //   (프롬프트의 @멘션 → 인라인 멘션 세그먼트, 멘션 안 된 매칭 ref → ＋ 첨부) → ref **하나씩** resolveReferenceImages([ref], {projectName, strictMime:true})
 //   (못 읽으면 flow-reference-source-missing, IPC 없음 — 한 번에 부르면 못 읽은 것이 조용히 빠진다) → IPC {refs:[{base64,mime}], plan:{segments, attach},
 //   referenceImages:[]}. 동기 generateImage(asyncMode:false)와 배치·MCP 의 비동기 submitGeneration(asyncMode:true, R0 B1)이 같은 절차다.
-//   레퍼런스 생성(purpose:'reference')의 스타일 ref 이미지는 범위 밖(flow-references-unsupported), 캐릭터 ref 생성 분기는 그대로.
+//   레퍼런스 생성(purpose:'reference')의 스타일 이미지는 일반 image reference 계획으로 전달하고, 캐릭터 ref 생성 분기는 그대로 둔다.
 describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이트 → IPC (M3-11, D1·D2·D3)', () => {
   const PNG = 'data:image/png;base64,QUFB'
   const JPG = 'data:image/jpeg;base64,/9j/BB'
@@ -567,7 +567,6 @@ describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이�
   const queenRef = { id: 'q', name: 'queen', type: 'character', data: PNG }
   const queen = { category: 'character', mediaId: null, caption: '', name: 'queen', data: PNG, filePath: null }  // 훅이 넘기는 매칭 ref 사본(id 없음)
   const unreadable = { category: 'scene', mediaId: null, caption: '', name: 'castle', data: null, filePath: '/nowhere/castle.png' }   // 원천은 있으나 못 읽는다
-  const REFS_UNSUPPORTED = { success: false, errorKind: 'flow-references-unsupported', error: 'flow-references-unsupported' }
   const SOURCE_MISSING = { success: false, errorKind: 'flow-reference-source-missing', error: 'flow-reference-source-missing' }
   const ENTRIES = [['generateImage', false], ['submitGeneration', true]]
   beforeEach(() => {
@@ -617,10 +616,15 @@ describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이�
     expect(mockFlowGenerateImage).not.toHaveBeenCalled()
   })
 
-  it.each(ENTRIES)("%s: purpose:'reference' + 스타일 ref 이미지 → flow-references-unsupported(범위 밖), IPC 미호출; 스타일 ref 없으면 평문 제출", async (fn) => {
+  it.each(ENTRIES)("%s: purpose:'reference' + 스타일 ref 이미지 → 바이트와 첨부 계획을 이미지 IPC로 전달; 이미지가 없으면 평문 제출", async (fn, asyncMode) => {
     const refOpts = { purpose: 'reference', ref: { id: 3, name: 'castle', type: 'scene' } }
-    expect(await call(fn, 'a castle', [queen], refOpts)).toEqual(REFS_UNSUPPORTED)
-    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+    await call(fn, 'a castle', [queen], refOpts)
+    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
+    expect(mockFlowGenerateImage.mock.calls[0][0]).toEqual(expect.objectContaining({
+      prompt: 'a castle', asyncMode, refs: [{ base64: 'QUFB', mime: 'image/png' }],
+      plan: { segments: [{ t: 'text', text: 'a castle' }], attach: [0] }, referenceImages: [],
+    }))
+    mockFlowGenerateImage.mockClear()
     await call(fn, 'a castle', [], refOpts)
     expect(mockFlowGenerateImage).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'a castle', refs: [], plan: null, referenceImages: [] }))
   })

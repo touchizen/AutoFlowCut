@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { applyNativeSettings } from './flow-native-settings.js'
 import { FIND_GENERATE_BUTTON_JS, findPromptEditor } from './flow-composer-dom.js'
-import { composerStateJs } from './flow-composer-refs.js'
+import { prepareNativeReferences } from './flow-passive-references.js'
+import { frameSlotsJs, composerStateJs } from './flow-composer-refs.js'
 import { normalizePrompt } from './flow-rpc-protocol.js'
 
 const EDITOR = `(${findPromptEditor.toString()})(document)`
@@ -32,23 +33,29 @@ export async function passiveSessionReady(wc) {
   } catch { return { ready: false, reason: 'page-unreadable' } }
 }
 
-/** Plain image lane. Deliberately completes capture+download before acknowledging
- * an async submit, so the existing queue cannot overlap two ownership windows. */
-export function createPassiveImageGenerator(deps, withViewport) {
-  return async function generate(payload = {}, onSubmission, beforeSubmit) {
+/** Shared native submission lane. Images finish the download before returning;
+ * videos return only the proven ID to the normal status and download pipeline. */
+export function createPassiveImageGenerator(deps, withViewport, referencePreflight) {
+  return async function generate(payload = {}, onSubmission, beforeSubmit, videoKind = null) {
     let flowSubmission = null
-    const fail = (reason, postClick = false) => ({ success: false, errorKind: 'flow-image-ownership-unproven',
-      error: 'flow-image-ownership-unproven', reason, errorParams: { reason }, retryBlocked: true, ...(postClick ? { postClick: true, safetyStop: true } : {}),
+    const fail = (reason, postClick = false) => {
+      const kind = !videoKind ? 'flow-image-ownership-unproven' : postClick ? 'flow-submit-lost'
+        : /reference|clipboard/.test(reason) ? 'flow-reference-attach-failed' : 'flow-settings-not-applied'
+      return ({ success: false, errorKind: kind,
+      error: kind, reason, errorParams: { reason }, retryBlocked: true, ...(postClick ? { postClick: true, ...(!videoKind ? { safetyStop: true } : {}) } : {}),
       ...(flowSubmission ? { flowSubmission: { ...flowSubmission, reason } } : {}) })
-    const count = payload.batchCount == null ? 1 : Number(payload.batchCount)
+    }
+    const count = Number((videoKind ? payload.videoBatchCount : payload.batchCount) ?? 1)
     const prompt = normalizePrompt(payload.prompt)
     const plan = payload.plan
-    if (!prompt || !Number.isInteger(count) || count < 1 || count > 4 || payload.seed != null
-      || (payload.refs != null && (!Array.isArray(payload.refs) || payload.refs.length))
+    const hasRefs = Array.isArray(payload.refs) && payload.refs.length > 0
+    if (!prompt || !Number.isInteger(count) || count < 1 || count > (videoKind ? 1 : 4) || payload.seed != null
+      || (payload.refs != null && !Array.isArray(payload.refs))
       || (payload.referenceImages != null && (!Array.isArray(payload.referenceImages) || payload.referenceImages.length))
-      || (plan && (!Array.isArray(plan.segments) || !Array.isArray(plan.attach) || plan.attach.length
+      || (payload.segments != null && (!Array.isArray(payload.segments) || payload.segments.length))
+      || (!hasRefs && plan && (!Array.isArray(plan.segments) || !Array.isArray(plan.attach) || plan.attach.length
         || plan.segments.some(s => s?.t !== 'text' || typeof s.text !== 'string')
-        || normalizePrompt(plan.segments.map(s => s.text).join(' ')) !== prompt))) return fail('unsupported-input')
+        || normalizePrompt(plan.segments.map(s => s.text)) !== prompt))) return fail('unsupported-input')
     if (deps.getFlowAgentOn?.()) return fail('agent-mode')
     const capture = deps.getPassiveCapture?.() || deps.passiveCapture
     if (!capture || !deps.typeFlowText || !deps.downloadPassiveImage || !deps.startResponseCapture) return fail('capture-unavailable')
@@ -57,16 +64,39 @@ export function createPassiveImageGenerator(deps, withViewport) {
     const url = wc?.getURL?.()
     const project = /^https:\/\/flow\.google\.com\/project\/([0-9a-f-]{36})\/?$/.exec(url || '')?.[1]
     if (!project || (payload.projectId && payload.projectId !== project)) return fail('project-not-open')
+    const pre = hasRefs ? referencePreflight?.(view, payload) : null
+    if (hasRefs && (!pre?.ok || !plan || (!plan.segments.some(s => s.t === 'mention') && videoKind !== 'i2v' && normalizePrompt(plan.segments.map(s => s.text)) !== prompt) || new Set([...plan.attach, ...plan.segments.filter(s => s.t === 'mention').map(s => s.ref)]).size !== pre.refs.length)) return fail('unsupported-input')
+    const want = videoKind ? { model: payload.model, duration: Number(payload.duration), resolution: payload.resolution,
+      ratio: payload.aspectRatio, kind: videoKind } : null
+    const expected = { webContentsId: wc.id, projectId: project, prompt, count, responseProof: true,
+      rpcid: ({ t2v: 'YhhmEf', r2v: 'MZZa6b', i2v: 'eb1hJf' })[videoKind] || 'ogiZ0b', refs: [], mentions: [], want }
+    const journal = videoKind && deps.videoJournal
+    let scope, intent, reserved, epoch
+    const row = payload.row
+    if (journal) {
+      const folder = deps.getActiveWorkFolder?.()
+      epoch = Number(row?.epoch || 0)
+      if (typeof folder !== 'string' || !folder || !row || typeof row.projectName !== 'string' || !row.projectName
+        || typeof row.id !== 'string' || !row.id || !Number.isSafeInteger(epoch) || epoch < 0) return fail('video-row-unavailable')
+      scope = JSON.stringify([folder, row.projectName, project, videoKind === 'i2v' ? 'frames' : 'video', row.id])
+      intent = JSON.stringify([prompt, want, plan ?? null, pre?.refs.map(ref => ref.sha) || []])
+      try {
+        const prior = journal.inspect(scope, intent, row.previousId, epoch)
+        if (prior?.generationId) return { success: true, generationId: prior.generationId }
+        if (prior?.blocked) { flowSubmission = prior.flowSubmission; return fail('previous-submit-unresolved', true) }
+      } catch { return fail('video-journal-unavailable') }
+    }
     let lease
-    try { lease = capture.begin({ webContentsId: wc.id, projectId: project, prompt, count, responseProof: true }) }
+    try { lease = capture.begin(expected) }
     catch (e) { return fail(e.message) }
     let dispatched = false, success = false, timer, cancellationTimer, inputWatch = false
+    const makeRecord = () => ({ id: `flow-submit-${randomUUID()}`, submittedAt: Date.now(),
+      promptHash: createHash('sha256').update(prompt).digest('hex'),
+      postClick: true, retryBlocked: true, reason: 'awaiting-result' })
     const recordSubmission = () => {
       if (flowSubmission) return
       dispatched = true
-      flowSubmission = { id: `flow-submit-${randomUUID()}`, submittedAt: Date.now(),
-        promptHash: createHash('sha256').update(prompt).digest('hex'),
-        postClick: true, retryBlocked: true, reason: 'awaiting-result' }
+      flowSubmission = reserved || makeRecord()
       lease.dispatch()
       onSubmission?.({ ...flowSubmission })
     }
@@ -79,14 +109,29 @@ export function createPassiveImageGenerator(deps, withViewport) {
         || deps.isFlowSafetyBlocked?.() || (deps.getCurrentMode && deps.getCurrentMode() !== 'flow')) throw new Error('capture-aborted')
     }
     const read = async code => { guard(); const result = await readPassiveDom(wc, code, lease.signal); guard(); return result }
+    let composed
     const composerMatches = async () => {
-      const st = await read(composerStateJs({}))
+      const st = await read(composerStateJs(composed?.tokens || {}))
+      if (composed) {
+        const ids = st?.chips?.map(c => !c.busy && c.mediaId)
+        const segments = st?.segments
+        if (st?.pickerOpen || !Array.isArray(ids) || !Array.isArray(segments) || ids.length !== expected.refs.length
+          || !expected.refs.every(id => ids.includes(id))
+          || JSON.stringify(segments.filter(s => s.t === 'mention').map(s => s.mediaId)) !== JSON.stringify(expected.mentions)
+          || normalizePrompt(segments.filter(s => s.t === 'text').map(s => s.text)) !== expected.prompt) return false
+        if (videoKind === 'i2v') {
+          const frames = await read(frameSlotsJs(composed.tokens))
+          if (!frames?.framesMode || frames.slots?.length !== 2 || frames.slots[0].busy
+            || frames.slots[0].mediaId !== ids[0] || !frames.slots[1].empty) return false
+        }
+        return await read(AGENT_OFF)
+      }
       return !!st && !st.pickerOpen && Array.isArray(st.chips) && st.chips.length === 0
         && normalizePrompt(st.editorText) === prompt && await read(AGENT_OFF)
     }
     try {
       // Bounds all work, including downloads and a renderer that stops answering.
-      timer = setTimeout(() => lease.abort('capture-timeout'), 180000)
+      timer = setTimeout(() => lease.abort('capture-timeout'), (pre?.timeoutMs || 120000) + 60000)
       // Cancellation must also abort an isolated read or network download that
       // is awaiting I/O, not only the next gallery polling iteration.
       cancellationTimer = setInterval(() => {
@@ -97,18 +142,32 @@ export function createPassiveImageGenerator(deps, withViewport) {
         guard()
         if (!await read(READY) || !await read(AGENT_OFF)) return fail('composer-unavailable')
         const st = await read(composerStateJs({}))
-        if (!st || st.pickerOpen || !Array.isArray(st.chips) || st.chips.length) return fail('composer-not-clear')
-        const settings = await applyNativeSettings(view, { mode: 'image', model: payload.model,
-          ratio: payload.aspectRatio, count }, { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted: aborted })
+        if (!st || st.pickerOpen || !Array.isArray(st.chips) || (!hasRefs && st.chips.length)) return fail('composer-not-clear')
+        const targets = { mode: videoKind ? 'video' : 'image', model: payload.model, ratio: payload.aspectRatio, count,
+          ...(want ? { duration: want.duration, resolution: want.resolution } : {}) }
+        const controls = { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted: aborted }
+        const settings = await applyNativeSettings(view, targets, controls)
         guard()
-        if (!settings.ok || ctl.aborted) return fail('settings-not-applied')
-        wc.focus()
-        const focused = await deps.trustedClickOnFlowView(EDITOR, { required: true, step: 'compose-editor', beforeDispatch: async () => !aborted() })
-        guard()
-        if (!focused?.success) return fail('editor-not-focused')
-        const typed = await deps.typeFlowText(wc, payload.prompt, { isAborted: aborted })
-        guard()
-        if (!typed?.ok || ctl.aborted || !await composerMatches()) return fail('text-mismatch')
+        if (!settings.ok || ctl.aborted) return fail(settings.reason || 'settings-not-applied')
+        if (hasRefs) {
+          const refGuard = () => { guard(); if (ctl.aborted) throw new Error('capture-aborted') }
+          composed = await prepareNativeReferences({ wc, deps, read, guard: refGuard, aborted, lease, project }, pre, plan)
+          Object.assign(expected, { refs: composed.refs, mentions: composed.mentions, prompt: videoKind === 'i2v' ? prompt : composed.text })
+          if (videoKind === 'i2v') {
+            const frames = await applyNativeSettings(view, { ...targets, input: 'frames' }, controls)
+            if (!frames.ok) return fail(frames.reason || 'frame-settings')
+          }
+        }
+        if (!composed?.mentions.length || videoKind === 'i2v') {
+          wc.focus()
+          const focused = await deps.trustedClickOnFlowView(EDITOR, { required: true, step: 'compose-editor', beforeDispatch: async () => !aborted() })
+          guard()
+          if (!focused?.success) return fail('editor-not-focused')
+          const typed = await deps.typeFlowText(wc, payload.prompt, { isAborted: aborted })
+          guard()
+          if (!typed?.ok) return fail(hasRefs ? 'reference-input-' + (typed?.reason || 'failed') : 'text-mismatch')
+        }
+        if (ctl.aborted || !await composerMatches()) return fail(hasRefs ? 'reference-composer-changed' : 'text-mismatch')
         responseCapture = await deps.startResponseCapture(wc.session, { signal: lease.signal })
         guard()
         responseCapture.assertReady()
@@ -129,6 +188,11 @@ export function createPassiveImageGenerator(deps, withViewport) {
           guard()
           responseCapture.assertReady()
           lease.prepare()
+          if (journal) {
+            const record = makeRecord()
+            journal.reserve(scope, intent, record, row.previousId, epoch)
+            reserved = record
+          }
           wc.on('before-input-event', invalid); inputWatch = true
           return true
         } })
@@ -150,6 +214,10 @@ export function createPassiveImageGenerator(deps, withViewport) {
           } else if (!state.request && Date.now() > deadline - 105000) throw new Error('request-not-observed')
           await pause(250)
         }
+        if (videoKind && selected?.mediaId) {
+          if (journal) journal.confirm(scope, reserved.id, selected.mediaId)
+          return { success: true, generationId: selected.mediaId, creditsLeft: selected.creditsLeft }
+        }
         if (!selected || selected.length !== count) throw new Error('response-proof-count')
         const images = []
         for (const item of selected) {
@@ -159,7 +227,7 @@ export function createPassiveImageGenerator(deps, withViewport) {
         }
         guard()
         return { success: true, images, flowSubmission }
-      }, { shieldFlow: true })
+      }, { shieldFlow: true, timeoutMs: pre?.timeoutMs })
       if (!result?.success) return fail(result?.reason || 'capture-aborted', dispatched)
       guard() // Viewport restoration can yield; page/mode ownership must still hold.
       success = true
@@ -174,6 +242,9 @@ export function createPassiveImageGenerator(deps, withViewport) {
       return fail(lease.state().error || e.message, dispatched)
     }
     finally {
+      if (reserved && !dispatched && !lease.state().request) {
+        try { journal.cancel(scope, reserved.id) } catch { /* keep uncertain until explicit reset */ }
+      }
       clearTimeout(timer)
       clearInterval(cancellationTimer)
       for (const event of events) wc.removeListener(event, invalid)

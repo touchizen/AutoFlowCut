@@ -400,7 +400,8 @@ async function closePickerInner(ctx) {
   if (st && !st.pickerOpen) return true
   await tclick(ctx, FIND_ADD_MENU_TRIGGER_JS, 'refs-picker-close', false)
   if (await pollState(ctx, (s) => !s.pickerOpen, PICKER_CLOSE_STEP_MS)) return true
-  await ex(ctx, DISPATCH_ESCAPE_JS)
+  if (ctx.escape) await ctx.escape()
+  else await ex(ctx, DISPATCH_ESCAPE_JS)
   if (await pollState(ctx, (s) => !s.pickerOpen, PICKER_CLOSE_STEP_MS)) return true
   console.warn('[Flow Refs] asset picker still open after the trigger and Escape')
   return false
@@ -551,7 +552,7 @@ export async function insertMention(ctx, mediaId, refIndex) {
     const before = await readState(ctx)
     if (!before || !Array.isArray(before.segments)) return fail(ctx, 'refs', 'mention-trigger-not-working', tag)
     const n0 = mentionCount(before, mediaId)
-    const put = await ex(ctx, APPEND_EDITOR_TEXT_JS('@'))
+    const put = ctx.append ? await ctx.append('@') : await ex(ctx, APPEND_EDITOR_TEXT_JS('@'))
     const opened = put && put.ok ? await pollState(ctx, (s) => s.pickerOpen && endsWithAt(s), MENTION_OPEN_MS) : null
     if (!opened) { await closePickerInner(ctx); return fail(ctx, 'refs', 'mention-trigger-not-working', tag) }
     const why = await pickFromOpenPicker(ctx, mediaId)

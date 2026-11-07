@@ -68,10 +68,11 @@ export function buildRpcRequest(o) {
 /**
  * 페이지에서 실행할 스크립트(Promise → {status, text} | {status:0, error:'timeout'|'wiz-missing'|'xhr-error'}).
  * 헬퍼는 const 로 직렬화해 호출 지점에서 조합한다(서로 이름으로 부르지 않는다 — minified 빌드 안전).
- * _reqid 는 문서 전역의 단순 카운터.
+ * _reqid 는 main 이 부여한다. Flow 문서에는 전역 상태를 쓰지 않는다.
  */
-export function FLOW_RPC_CALL_JS(rpcid, payloadJson) {
+export function FLOW_RPC_CALL_JS(rpcid, payloadJson, requestId = 1) {
   assertAllowed(rpcid)
+  if (!Number.isSafeInteger(requestId) || requestId < 1) throw new Error('invalid request ID')
   if (typeof payloadJson !== 'string') throw new Error('payloadJson must be a JSON string')
   JSON.parse(payloadJson) // 깨진 JSON 을 페이지에 심지 않는다
   return /* js */ `
@@ -82,7 +83,7 @@ export function FLOW_RPC_CALL_JS(rpcid, payloadJson) {
   return new Promise(function (resolve) {
     let wiz
     try { wiz = readWizGlobals(window.WIZ_global_data) } catch (_e) { resolve({ status: 0, error: 'wiz-missing' }); return }
-    const reqid = (window.__autoflowcut_rpc_reqid__ = (window.__autoflowcut_rpc_reqid__ || 0) + 1)
+    const reqid = ${requestId}
     let hl = 'en'
     try { hl = (typeof document !== 'undefined' && document.documentElement && document.documentElement.lang) || 'en' } catch (_e) {}
     let req
@@ -112,9 +113,13 @@ export function FLOW_RPC_CALL_JS(rpcid, payloadJson) {
  * 읽기 RPC 한 건: 페이지 XHR → 파싱된 payload. 실패는 전부 FlowRpcError(kind: rpc|er|http|network|shape).
  * 메시지에 응답 본문은 싣지 않는다.
  */
+const requestIds = new WeakMap()
 export async function callFlowRpc(flowView, rpcid, payload) {
   assertAllowed(rpcid)
-  const script = FLOW_RPC_CALL_JS(rpcid, JSON.stringify(payload === undefined ? null : payload))
+  const wc = flowView.webContents
+  const next = (requestIds.get(wc) || 0) + 1
+  requestIds.set(wc, next)
+  const script = FLOW_RPC_CALL_JS(rpcid, JSON.stringify(payload === undefined ? null : payload), next)
   let r
   try {
     r = await flowView.webContents.executeJavaScript(script, true)

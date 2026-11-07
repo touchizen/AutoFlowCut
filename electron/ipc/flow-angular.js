@@ -239,7 +239,7 @@ function creditsDropped(before, after) {
  *   · M3(레퍼런스 업로드): clipboard, nativeImage, pasteIntoFlowView(() => Flow 뷰의 webContents.paste())
  */
 export function createFlowAngular(deps) {
-  const generatePassiveImage = createPassiveImageGenerator(deps, withAutomationViewport)
+  const generatePassiveImage = createPassiveImageGenerator(deps, withAutomationViewport, referencePreflight)
   const report = async (step, reason, extra) => {
     try { await deps.reportDomFailure?.(step, reason, extra) } catch (_e) { /* 진단은 실패해도 흐름을 막지 않는다 */ }
   }
@@ -832,8 +832,8 @@ export function createFlowAngular(deps) {
    *   M3(D1·D10·D11): refs + plan 이 있으면 레퍼런스 영상(r2v) — 인라인 멘션 컴포즈(이미지와 같은 드라이버) 뒤 arm rpc:'MZZa6b'·altRpcs:['YhhmEf']·want.kind 'r2v'.
    *   없으면 rpc:'YhhmEf'·altRpcs:['MZZa6b'](§1-1 백스톱 — 잔여 칩이 MZZa6b 로 나가면 id 를 남기고 거부) + 잔여 칩 정리. 옛 필드(segments)는 계속 거부.
    */
-  async function generateVideoT2V(payload = {}) {
-    return submitVideo(payload, false)
+  async function generateVideoT2V(payload = {}, onSubmission) {
+    return submitVideo(payload, false, onSubmission)
   }
 
   /**
@@ -842,8 +842,7 @@ export function createFlowAngular(deps) {
    *   끝 프레임은 받지 않는다(flow-i2v-end-frame-unsupported — 새 Flow 의 끝 칸 첨부는 미검증; 렌더러는 Flow 모드에서 끝 프레임을 뺀다).
    *   본문은 submitVideo 의 I2V 분기: 시작 프레임을 레퍼런스 칩으로 첨부(plan attach [0]) → 설정(프레임) → 시작 칸 확인 → 텍스트 → eb1hJf.
    */
-  async function generateVideoI2V(payload = {}) {
-    if (deps.isRpcCaptureEnabled?.() === false) return kindResult('flow-dom-capture-unsupported', { retryBlocked: true })
+  async function generateVideoI2V(payload = {}, onSubmission) {
     const { startImage, endImage, ...rest } = payload
     if (endImage != null && endImage !== '') {
       console.warn(`${I2V_TAG} end frame given — the new Flow path takes a start frame only → flow-i2v-end-frame-unsupported`)
@@ -854,12 +853,18 @@ export function createFlowAngular(deps) {
       console.warn(`${I2V_TAG} no start frame bytes → flow-i2v-start-frame-missing`)
       return kindResult('flow-i2v-start-frame-missing')
     }
-    return submitVideo({ ...rest, segments: null, refs: [{ base64 }], plan: { segments: [], attach: [0] } }, true)
+    return submitVideo({ ...rest, segments: null, refs: [{ base64 }], plan: { segments: [], attach: [0] } }, true, onSubmission)
   }
 
   /** 영상 제출 본문 — T2V·R2V(i2v false) · I2V(i2v true, refs = [시작 프레임], plan attach [0]). */
-  async function submitVideo(payload, i2v) {
-    if (deps.isRpcCaptureEnabled?.() === false) return kindResult('flow-dom-capture-unsupported', { retryBlocked: true })
+  async function submitVideo(payload, i2v, onSubmission) {
+    if (deps.isRpcCaptureEnabled?.() === false) {
+      const withRefs = Array.isArray(payload.refs) && payload.refs.length > 0
+      if (!payload.resolution) return kindResult('flow-settings-not-applied', { reason: 'resolution-missing' })
+      if (withRefs && !i2v && !R2V_MODELS.has(payload.model)) return kindResult('flow-references-model-unsupported')
+      if (withRefs && !i2v && new Set(payload.refs.map(r => r?.base64)).size > FLOW_R2V_REFERENCE_LIMIT) return kindResult('flow-references-too-many')
+      return generatePassiveImage(payload, onSubmission, null, i2v ? 'i2v' : withRefs ? 'r2v' : 't2v')
+    }
     const tag = i2v ? I2V_TAG : T2V_TAG
     const { prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, segments, refs, plan } = payload
     const nRefs = Array.isArray(refs) ? refs.length : 0

@@ -35,7 +35,7 @@ function makePage({ wiz = WIZ, lang = 'ko' } = {}) {
     console: { log() {}, warn() {}, error() {} },
     Date, URL, URLSearchParams, JSON, String, Object, Number,
   })
-  return { windowObject, context, run: (rpcid, payloadJson) => vm.runInContext(FLOW_RPC_CALL_JS(rpcid, payloadJson), context) }
+  return { windowObject, context, run: (rpcid, payloadJson, requestId = 1) => vm.runInContext(FLOW_RPC_CALL_JS(rpcid, payloadJson, requestId), context) }
 }
 
 describe('허용 목록 — 읽기 RPC 셋만', () => {
@@ -118,13 +118,13 @@ describe('FLOW_RPC_CALL_JS — 페이지 컨텍스트 XHR(vm + FakeXHR)', () => 
     await expect(p).resolves.toEqual({ status: 200, text: sample('nzlxg').respBody })
   })
 
-  it('_reqid 는 호출마다 +1', async () => {
+  it('script builder 는 전달받은 _reqid 만 쓰고 window 전역 카운터를 만들지 않는다', async () => {
     const page = makePage()
-    page.run('nzlxg', '[]')
-    page.run('jwpduf', '[null,null,[["m1"]]]')
+    page.run('nzlxg', '[]', 17)
+    page.run('jwpduf', '[null,null,[["m1"]]]', 18)
     const urls = FakeXHR.instances.map((x) => new URL(x.calls[0][2], 'https://flow.google.com').searchParams.get('_reqid'))
-    expect(urls).toEqual(['1', '2'])
-    expect(page.windowObject.__autoflowcut_rpc_reqid__).toBe(2)
+    expect(urls).toEqual(['17', '18'])
+    expect(page.windowObject).not.toHaveProperty('__autoflowcut_rpc_reqid__')
   })
 
   it('timeout → {status:0, error:"timeout"} (loadend 가 뒤따라도 한 번만 resolve)', async () => {
@@ -156,6 +156,23 @@ describe('callFlowRpc — executeJavaScript 결과 → payload | FlowRpcError', 
     await expect(callFlowRpc(v, 'nzlxg', [])).resolves.toEqual([1050, 1, 2, 2, null, 1050])
     const script = v.webContents.executeJavaScript.mock.calls[0][0]
     expect(script).toContain('"nzlxg"')
+  })
+
+  it('실제 callFlowRpc 두 번은 webContents별 _reqid 를 증가시키고 page 전역은 바꾸지 않는다', async () => {
+    const page = makePage()
+    const executeJavaScript = vi.fn(async script => {
+      const pending = vm.runInContext(script, page.context)
+      const xhr = FakeXHR.instances.at(-1)
+      xhr._finish(200, sample('nzlxg').respBody)
+      return pending
+    })
+    const flowView = { webContents: { executeJavaScript } }
+    await callFlowRpc(flowView, 'nzlxg', [])
+    await callFlowRpc(flowView, 'nzlxg', [])
+    const urls = FakeXHR.instances.map(x => new URL(x.calls[0][2], 'https://flow.google.com').searchParams.get('_reqid'))
+    expect(urls).toEqual(['1', '2'])
+    expect(page.windowObject).not.toHaveProperty('__autoflowcut_rpc_reqid__')
+    expect(executeJavaScript).toHaveBeenCalledTimes(2)
   })
 
   const failures = [

@@ -59,6 +59,8 @@ const FIELD_MAP = {
   // M2-R1 F2(A2): kind 별 params 와 거부 미디어 id 도 videoT2V* 네임스페이스 — 없으면 이미지 씬의 동명 필드(errorParams)를 덮고,
   //   derived 가 읽지 않아 영상 표/모달이 {requested} 같은 플레이스홀더 대신 raw kind 토큰을 보인다.
   errorParams: 'videoT2VErrorParams',
+  videoFlowSubmission: 'videoT2VFlowSubmission',
+  videoFlowEpoch: 'videoT2VFlowEpoch',
   rejectedMediaId: 'videoT2VRejectedMediaId',
   rejectedMediaIds: 'videoT2VRejectedMediaIds',
   // M2-R3 H6(B2): 배치 다운로드 권한 마커 — Phase 0 재다운로드 게이트 판정에 쓴다(project.json 에 남는다)
@@ -110,6 +112,8 @@ function deriveVideoScene(s) {
     errorKind: s.videoT2VErrorKind ?? null,
     // M2-R1 F2: ResultsTable/VideoDetailModal 의 resolveDisplayError(t, kind, error, params) 가 읽는다.
     errorParams: s.videoT2VErrorParams ?? null,
+    ...(s.videoT2VFlowEpoch ? { videoFlowEpoch: s.videoT2VFlowEpoch } : {}),
+    ...(s.videoT2VFlowSubmission ? { videoFlowSubmission: s.videoT2VFlowSubmission } : {}),
     rejectedMediaId: s.videoT2VRejectedMediaId ?? null,
     rejectedMediaIds: s.videoT2VRejectedMediaIds ?? null,
     downloadGated: s.videoT2VDownloadGated ?? null,   // M2-R3 H6

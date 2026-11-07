@@ -4,7 +4,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { once, EventEmitter } from 'node:events'
 import { netLogResponseBody, imageResultsFromNetLog, startFlowResponseCapture } from '../../electron/flow-native-response.js'
-import { sample, samplePayload, respBodyWithPayload, maskedUuid } from '../fixtures/flow-batchexecute-samples.js'
+import { sample, samplePayload, respBodyWithPayload, maskedUuid, reencodeRequestBody } from '../fixtures/flow-batchexecute-samples.js'
+import { s3, s3Payload, s3RequestBody } from '../fixtures/flow-m3-samples.js'
+import { decodeFReqInner, extractSubmitPrompts, extractSubmitRefs, parseBatchexecuteResponse, parseVideoSubmitResponse } from '../../electron/flow-rpc-protocol.js'
 import { PROJECT, PROMPT } from '../fixtures/flow-passive-image.js'
 
 const URL = 'https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=ogiZ0b&_reqid=123'
@@ -12,11 +14,11 @@ const types = { URL_REQUEST_START_JOB: 1, URL_REQUEST_JOB_FILTERED_BYTES_READ: 2
   URL_REQUEST_JOB_BYTES_READ: 3, URL_REQUEST_FILTERS_SET: 4, HTTP_TRANSACTION_READ_RESPONSE_HEADERS: 5,
   URL_REQUEST_REDIRECTED: 6 }
 const event = (type, params, extra = {}) => ({ source: { id: 22, type: 1 }, type: types[type], phase: 0, params, ...extra })
-function log(body = sample('ogiZ0b').respBody, { identity = false } = {}) {
+function log(body = sample('ogiZ0b').respBody, { identity = false, url = URL } = {}) {
   const bytes = Buffer.from(body)
   const chunks = [bytes.subarray(0, 73), bytes.subarray(73)]
   return { constants: { logEventTypes: types, logSourceType: { URL_REQUEST: 1 } }, events: [
-    event('URL_REQUEST_START_JOB', { url: URL, method: 'POST' }, { phase: 1 }),
+    event('URL_REQUEST_START_JOB', { url, method: 'POST' }, { phase: 1 }),
     event('HTTP_TRANSACTION_READ_RESPONSE_HEADERS', { headers: ['HTTP/1.1 200 OK', ...(identity ? [] : ['Content-Encoding: gzip'])] }),
     ...(!identity ? [event('URL_REQUEST_FILTERS_SET', { filters: 'gzip' })] : []),
     ...chunks.map(b => event(identity ? 'URL_REQUEST_JOB_BYTES_READ' : 'URL_REQUEST_JOB_FILTERED_BYTES_READ', { bytes: b.toString('base64'), byte_count: b.length })),
@@ -68,6 +70,19 @@ describe('native NetLog response ownership', () => {
       expect.objectContaining({ mediaId: maskedUuid(5), width: 1376, height: 768 }),
     ])
   })
+  it('accepts the masked reference image response only when returned IDs echo the request refs', () => {
+    const body = respBodyWithPayload('ogiZ0b', s3Payload(9))
+    const input = s3RequestBody(9)
+    const decoded = decodeFReqInner(input)
+    const refs = extractSubmitRefs('ogiZ0b', decoded.inner)
+    const prompts = extractSubmitPrompts('ogiZ0b', decoded.inner)
+    const payload = s3Payload(9)
+    const request = { projectId: decoded.inner[3][5], prompts, seeds: [payload[0][0][6][0][1]], count: 1,
+      refs: refs.refs, mentions: refs.mentions }
+    const results = imageResultsFromNetLog(encode(log(body)), URL, request)
+    expect(results).toHaveLength(1)
+    expect(() => imageResultsFromNetLog(encode(log(body)), URL, { ...request, refs: [maskedUuid(999)] })).toThrow()
+  })
   it.each(['duplicate-frame', 'late-error-frame', 'seed', 'prompt', 'id', 'http-url', 'wrong-path', 'count'])('refuses a mismatching %s response', kind => {
     const payload = structuredClone(samplePayload('ogiZ0b'))
     const record = payload[0][0][6][0]
@@ -81,6 +96,42 @@ describe('native NetLog response ownership', () => {
     if (kind === 'duplicate-frame') body += '\n' + body.split('\n').find(line => line.startsWith('['))
     if (kind === 'late-error-frame') body += '\n' + JSON.stringify([['er', null, null, null, null, 403, null, null, null, 16]])
     expect(() => imageResultsFromNetLog(encode(log(body)), URL, kind === 'count' ? { ...expected, count: 2 } : expected)).toThrow()
+  })
+})
+
+describe('native video response ownership', () => {
+  it.each([
+    ['T2V', 'YhhmEf', sample('YhhmEf').respBody, 'abra_t2v_6s', { model: 'Omni Flash', duration: 6, ratio: '16:9', resolution: '720p', kind: 't2v' }],
+    ['R2V', 'MZZa6b', s3(10).respBody, 'abra_r2v_4s', { model: 'Omni Flash', duration: 4, ratio: '9:16', resolution: '720p', kind: 'r2v' }],
+  ])('returns the response media ID for a masked %s request and checks its refs/model', async (_label, rpcid, body, modelKey, want) => {
+    const fixture = rpcid === 'MZZa6b' ? s3(10) : sample(rpcid)
+    const encoded = rpcid === 'MZZa6b' ? s3RequestBody(10) : reencodeRequestBody(fixture.reqBody)
+    const decoded = decodeFReqInner(encoded)
+    const refs = extractSubmitRefs(rpcid, decoded.inner)
+    const request = { rpcid, projectId: PROJECT,
+      prompts: extractSubmitPrompts(rpcid, decoded.inner), refs: refs.refs, mentions: refs.mentions, want,
+      modelKey: rpcid === 'MZZa6b' ? 'abra_r2v_4s' : 'abra_t2v_6s' }
+    const url = `https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=${rpcid}&_reqid=123`
+    const { videoResultFromNetLog } = await import('../../electron/flow-native-response.js')
+    const result = videoResultFromNetLog(encode(log(body, { url })), url, request)
+    expect(result).toMatchObject({ mediaId: expect.any(String) })
+    expect(() => videoResultFromNetLog(encode(log(body, { url })), url, { ...request, modelKey: 'abra_t2v_wrong' })).toThrow()
+    if (request.refs.length) expect(() => videoResultFromNetLog(encode(log(body, { url })), url, { ...request, refs: [] })).toThrow()
+  })
+  it('validates the masked I2V eb1hJf response against the requested start-frame identity and model', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    const { videoResultFromNetLog } = await import('../../electron/flow-native-response.js')
+    const path = fileURLToPath(new globalThis.URL('../../docs/handoffs/evidence/2026-10-30-flow-i2v-eb1hJf.masked.jsonl', import.meta.url))
+    const fixture = JSON.parse(readFileSync(path, 'utf8'))
+    const body = fixture.respBody.replace(/<uuid#(\d+)>/g, (_m, n) => maskedUuid(Number(n)))
+    const rpcid = 'eb1hJf'
+    const url = `${fixture.url}&_reqid=123`
+    const parsed = parseVideoSubmitResponse(parseBatchexecuteResponse(body, rpcid), rpcid)
+    const request = { rpcid, projectId: maskedUuid(4), prompts: parsed.echo, refs: [maskedUuid(5)], mentions: [],
+      want: { model: 'Omni Flash', duration: 4, ratio: '9:16', resolution: '720p', kind: 'i2v' }, modelKey: parsed.modelKey }
+    expect(videoResultFromNetLog(encode(log(body, { url })), url, request)).toMatchObject({ mediaId: parsed.mediaId })
+    expect(() => videoResultFromNetLog(encode(log(body, { url })), url, { ...request, refs: [] })).toThrow()
   })
 })
 

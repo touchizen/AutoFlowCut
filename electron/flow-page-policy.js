@@ -23,8 +23,7 @@ export async function installLegacyFlowHooks(webContents, env) {
 
 const LEGACY_DOM = new Set(['flow:dom-execute', 'flow:dom-send-prompt', 'flow:dom-click-enter-tool',
   'flow:dump-settings', 'flow:apply-agent-defaults', 'flow:list-agent-models', 'flow:get-recaptcha-token'])
-const CAPTURE_REQUIRED = new Set(['flow:generate-video-t2v', 'flow:generate-video-i2v',
-  'flow:generate-character', 'flow:reroll-character', 'flow:generate-scene', 'flow:upload-reference',
+const CAPTURE_REQUIRED = new Set(['flow:generate-character', 'flow:reroll-character', 'flow:generate-scene', 'flow:upload-reference',
   'flow:upload-character-entity', 'flow:register-character-entity', 'flow:rename-character',
   'flow:upscale-image', 'flow:upscale-video', 'flow:dom-download-video'])
 

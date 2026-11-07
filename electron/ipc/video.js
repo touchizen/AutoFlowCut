@@ -119,12 +119,16 @@ export function registerVideoIPC(ipcMain, deps) {
   }
 
   // Text-to-Video generation (DOM 자동화 — 페이지가 reCAPTCHA 자체 처리)
+  const notifySubmit = (event, submissionRequestId) => flowSubmission => {
+    if (!submissionRequestId) return
+    try { event.sender.send('flow:video-submission', { submissionRequestId, flowSubmission }) } catch { /* caller also receives the result */ }
+  }
   ipcMain.handle('flow:generate-video-t2v', async (event, {
     token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed, segments, resolution,  // M2-3: resolution 도 받는다
-    refs, plan,  // M3(D1): 레퍼런스 영상(r2v) — 로컬 이미지 base64 목록 + 멘션·첨부 계획
+    refs, plan, submissionRequestId, row,  // M3(D1): 레퍼런스 영상(r2v) — 로컬 이미지 base64 목록 + 멘션·첨부 계획
   }) => {
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
-    if (flowActive()) return angular.generateVideoT2V({ prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, seed, segments, refs, plan })  // M1-12 · M2-3 · M3
+    if (flowActive()) return angular.generateVideoT2V({ prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, seed, segments, refs, plan, row }, notifySubmit(event, submissionRequestId))  // M1-12 · M2-3 · M3
     // #R36: @멘션 T2V — segments 가 있으면 컴포저 @칩(injectComposeSegments)으로 캐릭터 entity 를 넣는다.
     const _segments = Array.isArray(segments) && segments.length > 0 ? segments : null
     const flowView = getFlowView()
@@ -507,10 +511,10 @@ export function registerVideoIPC(ipcMain, deps) {
   // T2V와 동일한 DOM 흐름: 프롬프트 주입 → Generate 클릭 → CDP 응답 캡처
   // 차이점: CDP Fetch로 나가는 T2V 요청을 가로채서 startImage 주입 + URL을 I2V 엔드포인트로 변경
   ipcMain.handle('flow:generate-video-i2v', async (event, {
-    token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, videoBatchCount, seed, resolution, startImage, endImage,
+    token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, videoBatchCount, seed, resolution, startImage, endImage, submissionRequestId, row,
   }) => {
     // 2026-10-30: 새 Flow 의 프레임 → 영상(시작 프레임 바이트 — 붙여넣기 업로드·eb1hJf). 아래 옛 본문(mediaId·monkey-patch)은 도달 불가.
-    if (flowActive()) return angular.generateVideoI2V({ prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, seed, startImage, endImage: endImage ?? endImageMediaId ?? null })
+    if (flowActive()) return angular.generateVideoI2V({ prompt, projectId, model, aspectRatio, duration, resolution, videoBatchCount, seed, startImage, row, endImage: endImage ?? endImageMediaId ?? null }, notifySubmit(event, submissionRequestId))
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     const mainWindow = getMainWindow()

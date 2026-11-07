@@ -1,6 +1,8 @@
 export function buildVideoRetryFramePairPatch(newStatus, result = {}, now = Date.now) {
   return {
     status: newStatus,
+    ...(result && 'videoFlowEpoch' in result ? { videoFlowEpoch: result.videoFlowEpoch } : {}),
+    ...(result && 'videoFlowSubmission' in result ? { videoFlowSubmission: result.videoFlowSubmission } : {}),
     ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
     ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || now() } : {}),
     ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
@@ -24,6 +26,8 @@ export function buildVideoRetryFramePairPatch(newStatus, result = {}, now = Date
 export function buildVideoRetryScenePatch(newStatus, result = {}, now = Date.now) {
   return {
     status: newStatus,
+    ...(result && 'videoFlowEpoch' in result ? { videoFlowEpoch: result.videoFlowEpoch } : {}),
+    ...(result && 'videoFlowSubmission' in result ? { videoFlowSubmission: result.videoFlowSubmission } : {}),
     ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
     ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || now() } : {}),
     ...(result?.base64 ? { video: result.base64 } : {}),
@@ -47,6 +51,8 @@ export function buildVideoRetryScenePatch(newStatus, result = {}, now = Date.now
 export function buildVideoTextResultPatch(newStatus, result, now = Date.now) {
   return {
     status: newStatus,
+    ...(result && 'videoFlowEpoch' in result ? { videoFlowEpoch: result.videoFlowEpoch } : {}),
+    ...(result && 'videoFlowSubmission' in result ? { videoFlowSubmission: result.videoFlowSubmission } : {}),
     ...(newStatus === 'generating' ? { generatingStartedAt: now(), generatingEndedAt: null } : {}),
     ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: now() } : {}),
     ...(result && 'base64' in result ? { video: result.base64 } : {}),
@@ -77,6 +83,8 @@ export function buildVideoTextResultPatch(newStatus, result, now = Date.now) {
 export function buildVideoI2VResultPatch(newStatus, result, now = Date.now) {
   return {
     status: newStatus,
+    ...(result && 'videoFlowEpoch' in result ? { videoFlowEpoch: result.videoFlowEpoch } : {}),
+    ...(result && 'videoFlowSubmission' in result ? { videoFlowSubmission: result.videoFlowSubmission } : {}),
     ...(newStatus === 'generating' ? { generatingStartedAt: now(), generatingEndedAt: null } : {}),
     ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: now() } : {}),
     // 'X' in result — useVideoAutomation 의 새 generation 제출 시 옛 complete 메타를

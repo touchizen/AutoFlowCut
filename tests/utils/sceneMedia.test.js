@@ -306,6 +306,7 @@ describe('buildVideoRestorePatch (history 복원 → source-specific scene patch
     expect(out.videoT2V).toBe('B64')
     expect(out.videoT2VPath).toBe('/v.mp4')
     expect(out.videoT2VDisabled).toBe(null)
+    expect(out.videoT2VFlowSubmission).toBe(null)
     expect(out.videoT2VSeed).toBe(7)
     expect(out.videoT2VGeneratedAt).toBe(123)
     expect(out.videoT2VModel).toBe('veo')
@@ -391,7 +392,7 @@ describe('source 헬퍼 — assert/getVideoDisabledField/buildFramePairVideoPatc
   })
   it('buildFramePairVideoPatch: video/base64/videoPath + present-key 메타', () => {
     expect(buildFramePairVideoPatch({ video: 'B', videoPath: '/p', seed: 1, generatedAt: 2 }))
-      .toEqual({ video: 'B', base64: 'B', videoPath: '/p', seed: 1, generatedAt: 2 })
+      .toEqual({ video: 'B', base64: 'B', videoPath: '/p', videoFlowSubmission: null, seed: 1, generatedAt: 2 })
     const out = buildFramePairVideoPatch({ videoPath: '/p' })
     expect(out).not.toHaveProperty('seed')
     expect(out.videoPath).toBe('/p')

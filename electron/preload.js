@@ -220,6 +220,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flowRerollCharacter: (payload) => ipcRenderer.invoke('flow:reroll-character', payload),
   flowUploadCharacterEntity: (payload) => ipcRenderer.invoke('flow:upload-character-entity', payload),
   flowFetchMedia: (payload) => ipcRenderer.invoke('flow:fetch-media', payload),
+  onFlowVideoSubmission: (cb) => {
+    const handler = (_, data) => cb(data)
+    ipcRenderer.on('flow:video-submission', handler)
+    return () => ipcRenderer.removeListener('flow:video-submission', handler)
+  },
   flowGenerateVideoT2V: (payload) => ipcRenderer.invoke('flow:generate-video-t2v', payload),
   flowGenerateVideoI2V: (payload) => ipcRenderer.invoke('flow:generate-video-i2v', payload),
   flowCheckVideoStatus: (payload) => ipcRenderer.invoke('flow:check-video-status', payload),

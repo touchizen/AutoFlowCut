@@ -3,14 +3,14 @@ import { decodeFReqInner, extractSubmitPrompts, extractSubmitRefs, normalizeProm
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const READ_RPCS = new Set(['UpteDb', 'ngNC2', 'nzlxg', 'HTrJv', 'as29s', 'jwpduf', 'o30O0e', 'xI9TVb', 'WuwhI'])
 const GALLERY_RPCS = new Set(['Zzl0ze'])
-function envelope(details) {
+function envelope(details, maxBytes = 2 * 1024 * 1024) {
   try {
     const u = new URL(details.url)
     if (u.origin !== 'https://flow.google.com' || u.pathname !== '/_/AiSandboxAngularFrontend/data/batchexecute' || details.method !== 'POST') return null
     const chunks = details.uploadData
     if (!Array.isArray(chunks) || !chunks.length || chunks.some(c => !c?.bytes || c.file || c.blobUUID)) return null
+    if (chunks.reduce((n, c) => n + c.bytes.byteLength, 0) > maxBytes) return null
     const bytes = Buffer.concat(chunks.map(c => Buffer.from(c.bytes)))
-    if (bytes.length > 2 * 1024 * 1024) return null
     const body = bytes.toString('utf8')
     const raw = JSON.parse(new URLSearchParams(body).get('f.req'))
     if (raw.length !== 1 || raw[0].length !== 1) return null
@@ -19,17 +19,36 @@ function envelope(details) {
     return decoded
   } catch { return null }
 }
-export function readImageRequest(details) {
-  const e = envelope(details)
+export function readImageRequest(details, expected = {}, e = envelope(details)) {
   if (e?.rpcid !== 'ogiZ0b') return null
   const items = e.inner?.[1]
   const projectId = e.inner?.[3]?.[5]
   if (!UUID.test(projectId || '') || !Array.isArray(items) || items.length < 1 || items.length > 4) return null
   const prompts = extractSubmitPrompts(e.rpcid, e.inner).map(normalizePrompt)
   const refs = extractSubmitRefs(e.rpcid, e.inner)
-  if (!refs || refs.refs.length || refs.mentions.length || prompts.length !== items.length || prompts.some(p => !p)) return null
+  if (!refs || !inputsMatch(refs, expected) || prompts.length !== items.length || prompts.some(p => !p)) return null
   if (items.some(i => i?.[7]?.[5] !== projectId || !Number.isInteger(i[3]) || i[3] < 0)) return null
-  return { projectId, prompts, seeds: items.map(i => i[3]), count: items.length }
+  return { projectId, prompts, seeds: items.map(i => i[3]), count: items.length, ...(refs.refs.length ? refs : {}) }
+}
+
+const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
+function inputsMatch(got, { refs = [], mentions = [] }) {
+  return same([...got.refs].sort(), [...refs].sort()) && same(got.mentions, mentions)
+}
+
+function videoRequest(e, expected) {
+  const { rpcid, inner } = e || {}
+  if (!['YhhmEf', 'eb1hJf', 'MZZa6b'].includes(rpcid) || rpcid !== expected.rpcid) return null
+  const projectId = inner?.[1]?.[5]
+  const items = inner?.[0]
+  const prompts = extractSubmitPrompts(rpcid, inner).map(normalizePrompt)
+  if (!UUID.test(projectId || '') || !Array.isArray(items) || items.length !== 1 || prompts.length !== 1) return null
+  const frame = rpcid === 'eb1hJf'
+  // eb1hJf has a distinct start-frame layout; its response explicitly identifies the frame.
+  const inputs = frame ? { refs: expected.refs, mentions: [] } : extractSubmitRefs(rpcid, inner)
+  if (!inputs || !inputsMatch(inputs, expected) || (frame && expected.refs?.length !== 1)) return null
+  const modelKey = frame ? undefined : items[0][rpcid === 'MZZa6b' ? 2 : 1]
+  return { rpcid, projectId, prompts, ...inputs, modelKey, want: expected.want, count: 1 }
 }
 
 /** Main-process memory only. Call before() from the EXISTING session listener.
@@ -54,7 +73,7 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
       const otherSubmit = /(?:flow\.google\.com|aisandbox[^.]*\.googleapis\.com)$/.test(u.hostname)
         && /generate|streamChat|upload/i.test(u.pathname) && details.method === 'POST'
       if (!batch && !otherSubmit) return
-      const e = batch ? envelope(details) : null
+      const e = batch ? envelope(details, active?.upload ? 20 * 1024 * 1024 : undefined) : null
       if (e && GALLERY_RPCS.has(e.rpcid)) {
         galleryRequests.add(details.id)
         resetGallery()
@@ -75,7 +94,16 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
         if (otherSubmit || !e || ['ogiZ0b', 'YhhmEf', 'MZZa6b', 'eb1hJf', 'maseQ'].includes(e.rpcid)) invalidate()
         return
       }
-      const r = readImageRequest(details)
+      if (active.upload && e?.rpcid === 'maseQ') {
+        const up = active.upload
+        if (up.id != null || !up.armed || details.webContentsId !== active.expected.webContentsId
+          || e.inner?.[0]?.[5] !== active.expected.projectId || e.inner?.[2] !== 'image/png'
+          || typeof e.inner?.[1] !== 'string' || !up.verify(Buffer.from(e.inner[1], 'base64'))) return invalidate('upload-mismatch')
+        up.id = details.id
+        up.url = details.url
+        return
+      }
+      const r = !active.expected.rpcid || active.expected.rpcid === 'ogiZ0b' ? readImageRequest(details, active.expected, e) : videoRequest(e, active.expected)
       if (!active.prepared || active.request || details.webContentsId !== active.expected.webContentsId || !r
         || r.projectId !== active.expected.projectId || r.count !== active.expected.count
         || r.prompts.some(p => p !== normalizePrompt(active.expected.prompt))) return invalidate('request-mismatch')
@@ -89,6 +117,11 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
       // Keep that missing evidence separate from the paid-submit quarantine:
       // no safetyStop/postClick is recorded for a refused baseline.
       if (galleryRequests.delete(details.id)) { galleryRenderUnproven = true; resetGallery() }
+      if (active?.upload && active.upload.id === details.id) {
+        if (details.statusCode !== 200 || details.fromCache) return invalidate('upload-failed')
+        active.upload.complete = true
+        return
+      }
       if (!active?.request || active.id !== details.id) return
       if (details.statusCode !== 200 || details.fromCache) return invalidate('request-failed')
       active.complete = true
@@ -96,6 +129,7 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
     },
     failed(details) {
       galleryRequests.delete(details.id)
+      if (active?.upload && active.upload.id === details.id) invalidate('upload-failed')
       if (active?.request && active.id === details.id) invalidate('request-failed')
     },
     invalidate,
@@ -109,6 +143,12 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
         signal: rec.controller.signal,
         state: () => ({ request: rec.request, requestUrl: rec.requestUrl, complete: rec.complete, error: rec.error, sentAt: rec.sentAt, completedAt: rec.completedAt,
           galleryPending: galleryRequests.size > 0, galleryRenderUnproven }),
+        armUpload(verify) {
+          if (active !== rec || rec.error || rec.prepared || rec.upload) throw new Error('upload-busy')
+          const up = { armed: true, verify }
+          rec.upload = up
+          return { state: () => up, release() { if (rec.upload === up) rec.upload = null } }
+        },
         observeGallery(snapshot) {
           if (!snapshot?.ok || galleryRequests.size) { resetGallery(); return }
           const key = JSON.stringify([snapshot.revision, snapshot.items.map(i => [i.mediaId, i.src]).sort()])

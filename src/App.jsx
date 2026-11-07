@@ -1410,6 +1410,9 @@ function App() {
       return
     }
     // #R17-7: 시작 모드 스냅샷 — 다운로드 await 동안 모드가 바뀌면(stale 엔진) 중단.
+    if (!opts.forceRegenerate && item.videoFlowSubmission?.postClick && item.videoFlowSubmission.retryBlocked) {
+      toast.warning(t('errorSection.kind.flow-submit-lost')); return
+    }
     const startMode = modeRef.current
     const startLoadEpoch = loadEpochRef.current
 
@@ -1522,7 +1525,7 @@ function App() {
     // M2-R4 I1: Flow 의 과금된 항목(generationId 있음·videoPath 없음)은 위 fast path 가 받으므로 여기엔 forceRegenerate 로만 온다 — id 를 지우는 유일한 자리.
     // M2-R3 H3(A3): Regenerate 는 generationId·mediaId 도 null — Flow 모드 Phase 0 은 출처(generationId 있음 + videoPath 없음)로 분류하므로 id 를 남기면
     //   재생성이 in-flight/download-only 로 잡혀 새 생성이 안 된다. Regenerate/Clear 만이 항목을 fresh 로 만든다(옛 videoPath 폴백은 그대로).
-    onUpdate(item.id, 'pending', { error: null, errorKind: null, generationId: null, mediaId: null, downloadGated: null })   // downloadGated: M2-R3 H6
+    onUpdate(item.id, 'pending', { ...(opts.forceRegenerate && startMode === 'flow' ? { videoFlowEpoch: Date.now() } : {}), ...(item.videoFlowSubmission ? { videoFlowSubmission: null } : {}), error: null, errorKind: null, generationId: null, mediaId: null, downloadGated: null })   // downloadGated: M2-R3 H6
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
   }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, loadEpochRef, scenesHook, videoScenesHook, t])
 
@@ -1835,7 +1838,7 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(result?.base64 ? { videoT2V: result.base64 } : {}),
                 videoT2VPath: result.videoPath || null,
-                videoT2VDisabled: null,
+                videoT2VDisabled: null, videoT2VFlowSubmission: null,
                 ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
               })
             }
@@ -2878,7 +2881,7 @@ function App() {
               downloadGated: null,
               // per-clip toggle 도 reset — stale disabled 가 project.json 에 남아 history 복원 등
               // path 재부착 경로와 만나면 새 영상이 숨겨짐. (FIELD_MAP 미매핑 → scene.videoT2VDisabled 로 직행)
-              videoT2VDisabled: null,
+              videoT2VDisabled: null, videoFlowSubmission: null, videoFlowEpoch: Date.now(),
             })}
             disabled={anyRunning}
           />
@@ -2902,7 +2905,7 @@ function App() {
               // 미디어 자체
               base64: null, video: null, videoPath: null, videoSaveId: null,
               // recovery 식별자 — reload 시 in-flight 로 안 잡히도록 둘 다 null
-              generationId: null, mediaId: null,
+              generationId: null, mediaId: null, videoFlowSubmission: null, videoFlowEpoch: Date.now(),
               downloadGated: null,   // M2-R3 H6: 배치 다운로드 권한 마커도 정리
               // 상태/에러 — pending 으로 되돌리고 stale error 제거
               status: 'pending', error: null, errorKind: null,
@@ -3042,7 +3045,7 @@ function App() {
             // VideoDetailModal 의 history 복원 patch 에는 video/videoPath 외에
             // seed/generatedAt/model/mediaId 도 포함될 수 있음 (메타 변경 보존).
             // 'seed' in patch 로 명시적 null 도 보존 (history 메타가 빈 경우 stale 값 제거).
-            const metaPatch = {}
+            const metaPatch = { videoFlowSubmission: null, videoFlowEpoch: Date.now() }
             if ('seed' in patch) metaPatch.seed = patch.seed
             if ('generatedAt' in patch) metaPatch.generatedAt = patch.generatedAt
             if ('model' in patch) metaPatch.model = patch.model
@@ -3067,11 +3070,11 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoT2V: patch.video } : {}),
                 videoT2VPath: patch.videoPath || null,
-                videoT2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
+                videoT2VDisabled: null, videoT2VFlowSubmission: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
               })
             } else if (videoId.startsWith('fp_')) {
               setFramePairs(prev => prev.map(p =>
-                p.id === videoId ? { ...p, ...buildFramePairVideoPatch(patch) } : p
+                p.id === videoId ? { ...p, ...buildFramePairVideoPatch(patch), videoFlowEpoch: metaPatch.videoFlowEpoch } : p
               ))
               // 매칭 image scene의 videoI2V 동기화 — ownerSceneId 기준
               const fp = framePairs.find(p => p.id === videoId)
@@ -3090,7 +3093,7 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoT2V: patch.video } : {}),
                 videoT2VPath: patch.videoPath || null,
-                videoT2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
+                videoT2VDisabled: null, videoT2VFlowSubmission: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
               })
               const vsceneId = `vscene_${videoId.replace('t2v_', '')}`
               videoScenesHook.updateVideoScene(vsceneId, metaPatch)
@@ -3107,7 +3110,7 @@ function App() {
               }
               // P3 fix: fp_ 와 동일하게 video/base64/videoPath 까지 갱신(이전엔 metaPatch 만 → stale 결과표).
               setFramePairs(prev => prev.map(p =>
-                p.id === fpId ? { ...p, ...buildFramePairVideoPatch(patch) } : p
+                p.id === fpId ? { ...p, ...buildFramePairVideoPatch(patch), videoFlowEpoch: metaPatch.videoFlowEpoch } : p
               ))
             }
           }}

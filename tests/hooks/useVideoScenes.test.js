@@ -124,6 +124,17 @@ describe('useVideoScenes — derived view', () => {
     expect(result.current.videoScenesHook.videoScenes[0].generationProvider).toBe('grok')
   })
 
+  it('persists and restores the T2V click journal; explicit successful collection clears it', () => {
+    const record = { id: 'flow-video-submit-1', submittedAt: 456, postClick: true, retryBlocked: true, reason: 'awaiting-result' }
+    const { result } = setupHook([{ id: 'scene_1', videoT2VPrompt: 'v1', videoT2VFlowSubmission: record }])
+    expect(result.current.videoScenesHook.videoScenes[0].videoFlowSubmission).toEqual(record)
+    act(() => result.current.videoScenesHook.updateVideoScene('vscene_1', { videoFlowSubmission: null }))
+    expect(result.current.scenesHook.scenes[0].videoT2VFlowSubmission).toBeNull()
+    const persisted = JSON.parse(JSON.stringify(result.current.scenesHook.scenes))
+    const restarted = setupHook(persisted)
+    expect(restarted.result.current.videoScenesHook.videoScenes[0].videoFlowSubmission).toBeFalsy()
+  })
+
   it('D4: T2V appliedInputs를 namespaced round-trip하고 bare image metadata를 보존', () => {
     const imageAppliedInputs = { model: 'imagen', aspectRatio: '16:9' }
     const videoAppliedInputs = { model: 'grok-video', durationSeconds: 5 }

@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { parseBatchexecuteResponse, parseImageGenerateResponse, normalizePrompt } from './flow-rpc-protocol.js'
+import { parseBatchexecuteResponse, parseImageGenerateResponse, parseVideoSubmitResponse, parseUploadResponse, modelKeyMatches, normalizePrompt } from './flow-rpc-protocol.js'
 
 const MAX_BYTES = 32 * 1024 * 1024
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -78,7 +78,7 @@ export function netLogResponseBody(text, requestUrl) {
   return Buffer.concat(buffers).toString('utf8')
 }
 
-export function imageResultsFromNetLog(text, requestUrl, request) {
+function rpcPayload(text, requestUrl, rpcid) {
   const body = netLogResponseBody(text, requestUrl)
   let matches = 0, failed = false
   for (const line of body.split('\n')) {
@@ -89,12 +89,35 @@ export function imageResultsFromNetLog(text, requestUrl, request) {
     for (const frame of frames) {
       if (!Array.isArray(frame)) continue
       if (frame[0] === 'er') failed = true
-      if (frame[0] === 'wrb.fr' && frame[1] === 'ogiZ0b') matches++
+      if (frame[0] === 'wrb.fr' && frame[1] === rpcid) matches++
     }
   }
   if (failed || matches !== 1) throw error('frames')
+  try { return parseBatchexecuteResponse(body, rpcid) } catch { throw error('rpc') }
+}
+
+const equalIds = (got, want) => Array.isArray(got) && got.length === want.length
+  && new Set(got).size === got.length && got.every(id => want.includes(id))
+
+export function videoResultFromNetLog(text, requestUrl, request) {
+  const { rpcid, projectId, prompts, want, refs = [], modelKey } = request
+  const payload = rpcPayload(text, requestUrl, rpcid)
+  let result
+  try { result = parseVideoSubmitResponse(payload, rpcid) } catch { throw error('rpc') }
+  const rec = payload[3][0]
+  const echoed = rec[5]?.[6]?.[1]?.[1]
+  const inputs = Array.isArray(echoed) ? echoed.map(v => v?.[2]) : []
+  if (!UUID.test(projectId) || rec[1] !== projectId || !modelKeyMatches(result.modelKey, want)
+    || (modelKey != null && result.modelKey !== modelKey) || prompts.length !== 1
+    || normalizePrompt(result.echo) !== normalizePrompt(prompts[0]) || !equalIds(inputs, refs)
+    || (rpcid === 'eb1hJf' && (refs.length !== 1 || echoed?.[0]?.[1] !== 1))) throw error('result-mismatch')
+  return { mediaId: result.mediaId, creditsLeft: result.creditsLeft }
+}
+
+export function imageResultsFromNetLog(text, requestUrl, request) {
+  const payload = rpcPayload(text, requestUrl, 'ogiZ0b')
   let results
-  try { results = parseImageGenerateResponse(parseBatchexecuteResponse(body, 'ogiZ0b')).results }
+  try { results = parseImageGenerateResponse(payload).results }
   catch { throw error('rpc') }
   if (!request || results.length !== request.count || new Set(results.map(r => r.mediaId)).size !== results.length
     || JSON.stringify(results.map(r => r.seed).sort()) !== JSON.stringify([...request.seeds].sort())) throw error('result-mismatch')
@@ -104,7 +127,7 @@ export function imageResultsFromNetLog(text, requestUrl, request) {
     if (!UUID.test(r.mediaId) || url.protocol !== 'https:' || url.hostname !== 'flow-content.google'
       || url.port || url.username || url.password || url.pathname !== `/image/${r.mediaId}`
       || normalizePrompt(r.echo.join(' ')) !== normalizePrompt(request.prompts[i])
-      || r.refEcho?.length) throw error('result-mismatch')
+      || !equalIds(r.refEcho || [], request.refs || [])) throw error('result-mismatch')
     return { mediaId: r.mediaId, src: r.url, width: r.width, height: r.height }
   })
 }
@@ -209,7 +232,14 @@ export async function startFlowResponseCapture(session, { directory, signal, max
       try {
         await stop()
         if (failure) throw failure
-        return imageResultsFromNetLog(Buffer.concat(chunks).toString('utf8'), requestUrl, request)
+        const text = Buffer.concat(chunks).toString('utf8')
+        if (request?.rpcid === 'maseQ') {
+          const p = rpcPayload(text, requestUrl, 'maseQ')
+          if (p?.[0]?.[1] !== request.projectId) throw error('upload-project')
+          try { return parseUploadResponse(p) } catch { throw error('upload-shape') }
+        }
+        if (['YhhmEf', 'MZZa6b', 'eb1hJf'].includes(request?.rpcid)) return videoResultFromNetLog(text, requestUrl, request)
+        return imageResultsFromNetLog(text, requestUrl, request)
       } finally { discard() }
     },
     async cancel() { try { await stop() } finally { discard() } },

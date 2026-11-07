@@ -44,12 +44,12 @@ describe('legacy DOM IPC policy', () => {
     }
     expect(handler).not.toHaveBeenCalled()
   })
-  it('capture-free mode blocks compatibility-only submission and reference mutation entrypoints', async () => {
+  it('capture-free mode blocks compatibility-only submissions and reference mutation entrypoints', async () => {
     const { createFlowPagePolicyIPC } = await import('../../electron/flow-page-policy.js')
     const handlers = new Map()
     const proxy = createFlowPagePolicyIPC({ handle: (name, fn) => handlers.set(name, fn) }, flowPagePolicy({ AUTOFLOWCUT_FLOW_RPC_CAPTURE: '0' }))
     const handler = vi.fn(async () => ({ success: true }))
-    for (const name of ['flow:generate-character', 'flow:generate-video-i2v', 'flow:generate-scene', 'flow:upload-reference', 'flow:upload-character-entity', 'flow:rename-character']) {
+    for (const name of ['flow:generate-character', 'flow:generate-scene', 'flow:upload-reference', 'flow:upload-character-entity', 'flow:rename-character']) {
       proxy.handle(name, handler)
       expect(await handlers.get(name)({}, {})).toMatchObject({ success: false, errorKind: 'flow-dom-capture-unsupported' })
     }
@@ -73,4 +73,24 @@ it('allows the plain image entrypoint through default policy', async () => {
   createFlowPagePolicyIPC({ handle: (k, fn) => handlers.set(k, fn) }, flowPagePolicy({})).handle('flow:generate-image', handler)
   expect(await handlers.get('flow:generate-image')({}, { prompt: 'p' })).toEqual({ success: true })
   expect(handler).toHaveBeenCalledOnce()
+})
+
+it('routes proof-bound video T2V and I2V submits through default policy but keeps reference upload blocked', async () => {
+  const { createFlowPagePolicyIPC } = await import('../../electron/flow-page-policy.js')
+  const handlers = new Map()
+  const policy = createFlowPagePolicyIPC({ handle: (k, fn) => handlers.set(k, fn) }, flowPagePolicy({}))
+  const handler = vi.fn(async (_event, input) => ({ success: true, rpcid: input.rpcid }))
+  const proofBound = [
+    ['flow:generate-video-t2v', { responseProof: true, rpcid: 'MZZa6b', refs: ['00000002-0000-4000-8000-000000000000'], want: { kind: 'r2v' } }],
+    ['flow:generate-video-i2v', { responseProof: true, rpcid: 'eb1hJf', refs: ['00000005-0000-4000-8000-000000000000'], want: { kind: 'i2v' } }],
+  ]
+  for (const [channel, input] of proofBound) {
+    policy.handle(channel, handler)
+    expect(await handlers.get(channel)({}, input)).toEqual({ success: true, rpcid: input.rpcid })
+  }
+  policy.handle('flow:upload-reference', handler)
+  expect(await handlers.get('flow:upload-reference')({}, { responseProof: true })).toMatchObject({
+    success: false, errorKind: 'flow-dom-capture-unsupported', retryBlocked: true,
+  })
+  expect(handler).toHaveBeenCalledTimes(2)
 })

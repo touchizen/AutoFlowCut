@@ -121,6 +121,7 @@ export function buildFramePairVideoPatch(patch = {}) {
     out.video = patch.video
     out.base64 = patch.video
     out.videoPath = patch.videoPath
+    out.videoFlowSubmission = null
   }
   // #R33-2: generationId 도 전달 — 복원 시 stale routing 메타(generationId)를 지워야 retry 가 옛
   //   generation 자산을 재다운로드하지 않는다.
@@ -143,7 +144,7 @@ export function buildFramePairVideoPatch(patch = {}) {
 export function buildVideoRestorePatch(source, patch = {}) {
   assertVideoSource(source)
   if (source === 't2v') {
-    const out = { videoT2VPath: patch.videoPath || null, videoT2VDisabled: null }
+    const out = { videoT2VPath: patch.videoPath || null, videoT2VDisabled: null, videoT2VFlowSubmission: null }
     if (patch.video) out.videoT2V = patch.video
     if ('seed' in patch) out.videoT2VSeed = patch.seed
     if ('generatedAt' in patch) out.videoT2VGeneratedAt = patch.generatedAt

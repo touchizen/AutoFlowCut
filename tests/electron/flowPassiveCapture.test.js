@@ -2,6 +2,9 @@
 import { describe, expect, it } from 'vitest'
 import * as capture from '../../electron/flow-passive-capture.js'
 import { request, galleryRequest, PROJECT, PROMPT } from '../fixtures/flow-passive-image.js'
+import { s3, s3RequestBody } from '../fixtures/flow-m3-samples.js'
+import { sample as batchSample, reencodeRequestBody } from '../fixtures/flow-batchexecute-samples.js'
+import { decodeFReqInner, extractSubmitPrompts, extractSubmitRefs } from '../../electron/flow-rpc-protocol.js'
 const setup = () => {
   const observer = capture.createPassiveCapture()
   const lease = observer.begin({ webContentsId: 7, projectId: PROJECT, prompt: PROMPT, count: 1 })
@@ -80,6 +83,56 @@ it('ignores a proven read-only RPC without taking ownership', () => {
   const read = request({ url: request().url.replace('ogiZ0b', 'nzlxg') }, (_i, e) => { e[0][0][0] = 'nzlxg' })
   observer.before(read)
   expect(lease.state()).toMatchObject({ error: null, request: null, complete: false })
+})
+
+it('binds a real masked ogiZ0b request to the expected reference IDs and inline mentions', () => {
+  const fixture = s3(9)
+  const url = fixture.url
+  const body = s3RequestBody(9)
+  const decoded = decodeFReqInner(body)
+  const refs = extractSubmitRefs('ogiZ0b', decoded.inner)
+  const prompts = extractSubmitPrompts('ogiZ0b', decoded.inner)
+  const projectId = decoded.inner[3][5]
+  const observer = capture.createPassiveCapture()
+  const lease = observer.begin({ webContentsId: 7, projectId, prompt: prompts[0].trim(), count: 1,
+    responseProof: true, rpcid: 'ogiZ0b', refs: refs.refs, mentions: refs.mentions, want: { kind: 'image' } })
+  lease.prepare()
+  lease.dispatch()
+  observer.before({ id: 10, webContentsId: 7, method: 'POST', url,
+    uploadData: [{ bytes: Buffer.from(body) }] })
+  expect(lease.state()).toMatchObject({ error: null, request: { projectId, prompts: prompts.map(p => p.trim()), refs: refs.refs, mentions: refs.mentions, count: 1 } })
+  lease.release(false)
+})
+
+it.each([
+  ['T2V', 'YhhmEf', () => batchSample('YhhmEf'), row => reencodeRequestBody(row.reqBody), { kind: 't2v' }],
+  ['R2V', 'MZZa6b', () => s3(17), () => s3RequestBody(17), { kind: 'r2v' }],
+])('binds a masked real %s request to the expected ref/mention set and video kind', (_label, rpcid, getFixture, getBody, want) => {
+  const fixture = getFixture()
+  const body = getBody(fixture)
+  const decoded = decodeFReqInner(body)
+  const refs = extractSubmitRefs(rpcid, decoded.inner)
+  const prompts = extractSubmitPrompts(rpcid, decoded.inner)
+  const projectId = decoded.inner[1][5]
+  const observer = capture.createPassiveCapture()
+  const expected = { webContentsId: 7, projectId, prompt: prompts[0].trim(), count: 1, responseProof: true,
+    rpcid, refs: refs.refs, mentions: refs.mentions, want }
+  const lease = observer.begin(expected)
+  lease.prepare()
+  lease.dispatch()
+  observer.before({ id: 11, webContentsId: 7, method: 'POST', url: fixture.url,
+    uploadData: [{ bytes: Buffer.from(body) }] })
+  expect(lease.state()).toMatchObject({ error: null,
+    request: { rpcid, projectId, refs: refs.refs, mentions: refs.mentions, want, count: 1 } })
+  lease.release(false)
+  const rejectedObserver = capture.createPassiveCapture()
+  const rejected = rejectedObserver.begin({ ...expected, refs: [PROJECT], mentions: [PROJECT] })
+  rejected.prepare()
+  rejected.dispatch()
+  rejectedObserver.before({ id: 12, webContentsId: 7, method: 'POST', url: fixture.url,
+    uploadData: [{ bytes: Buffer.from(body) }] })
+  expect(rejected.state().error).toBe('request-mismatch')
+  rejected.release(false)
 })
 
 it('requires a stable gallery after a completed initial listing before preparing a click', () => {

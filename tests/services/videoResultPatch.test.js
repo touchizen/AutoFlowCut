@@ -145,6 +145,14 @@ describe('buildVideoRetryScenePatch', () => {
 })
 
 describe('buildVideoTextResultPatch', () => {
+  it('persists the click journal and accepts explicit null after the native media ID is accepted', () => {
+    const record = { id: 'flow-video-submit-1', postClick: true, retryBlocked: true, reason: 'awaiting-result' }
+    expect(buildVideoTextResultPatch('generating', { videoFlowSubmission: record }, () => 1))
+      .toMatchObject({ status: 'generating', videoFlowSubmission: record })
+    expect(buildVideoTextResultPatch('generating', { videoFlowSubmission: null }, () => 1))
+      .toMatchObject({ status: 'generating', videoFlowSubmission: null })
+  })
+
   it('includes every persisted T2V batch field and does not add a base64 alias', () => {
     const now = vi.fn(() => 9000)
 

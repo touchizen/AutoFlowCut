@@ -219,6 +219,63 @@ describe('useVideoAutomation — Flow 거부 결과는 새 제출만 멈춘다 (
   })
 })
 
+describe('useVideoAutomation — Flow video click-time journal', () => {
+  const clickRecord = mode => ({ id: `flow-video-${mode}-1`, submittedAt: 456, promptHash: 'hash',
+    postClick: true, retryBlocked: true, reason: 'awaiting-result' })
+
+  it.each(['t2v', 'i2v'])('%s: click callback is journaled immediately and successful media ID clears the unresolved marker', async mode => {
+    const h = setup()
+    const record = clickRecord(mode)
+    const submit = vi.fn(async (...args) => {
+      const callOpts = mode === 't2v' ? args[7] : args[8]
+      callOpts.onSubmission(record)
+      return { success: true, generationId: '00000011-0000-4000-8000-000000000011', creditsLeft: 999 }
+    })
+    if (mode === 't2v') h.generateVideoT2V.mockImplementation(submit)
+    else h.genAPI.generateVideoI2V.mockImplementation(submit)
+    const scene = { id: 'vscene_1', prompt: 'p1' }
+    const framePairs = [{ id: 'fp_1', prompt: 'p1', startSceneId: 'scene_1', _startImage: 'data:image/png;base64,AAAA' }]
+    const started = {}
+    await act(async () => { started.promise = h.hook.result.current.start({ ...OPTS, mode,
+      scenes: mode === 't2v' ? [scene] : [], framePairs, onItemUpdate: h.onItemUpdate }) })
+    for (let t = 0; t < 40000; t += 500) await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    await act(async () => { await started.promise })
+    expect(submit).toHaveBeenCalledOnce()
+    const journal = patches(h, mode === 't2v' ? 'vscene_1' : 'fp_1')
+    expect(journal).toContainEqual(['generating', { videoFlowSubmission: record }])
+    expect(journal.some(([, patch]) => patch.videoFlowSubmission === null && patch.generationId === '00000011-0000-4000-8000-000000000011')).toBe(true)
+  })
+
+  it.each(['t2v', 'i2v'])('restored unresolved %s click record blocks a second charge after restart', async mode => {
+    const h = setup()
+    const record = clickRecord(mode)
+    const restored = JSON.parse(JSON.stringify({ id: mode === 't2v' ? 'vscene_1' : 'fp_1', prompt: 'p1', status: 'error',
+      videoFlowSubmission: record, ...(mode === 'i2v' ? { startSceneId: 'scene_1', _startImage: 'data:image/png;base64,AAAA' } : {}) }))
+    const started = {}
+    await act(async () => { started.promise = h.hook.result.current.start({ ...OPTS, mode,
+      scenes: mode === 't2v' ? [restored] : [], framePairs: mode === 'i2v' ? [restored] : [], onItemUpdate: h.onItemUpdate }) })
+    await act(async () => { await started.promise })
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(h.genAPI.generateVideoI2V).not.toHaveBeenCalled()
+    expect(last(h, restored.id)).toEqual(['error', expect.objectContaining({ errorKind: 'flow-submit-lost' })])
+  })
+
+  it('ambiguous click halts new submits but still polls and collects another already-paid video', async () => {
+    const h = setup()
+    const paidId = '00000022-0000-4000-8000-000000000022'
+    const scenes = [
+      { id: 'vscene_1', prompt: 'ambiguous', status: 'error', videoFlowSubmission: clickRecord('t2v') },
+      { id: 'vscene_2', prompt: 'already paid', status: 'error', generationId: paidId, mediaId: null, videoPath: null },
+    ]
+    await run(h, scenes)
+    expect(h.generateVideoT2V).not.toHaveBeenCalled()
+    expect(h.checkVideoStatus).toHaveBeenCalledWith([paidId])
+    expect(h.downloadVideo).toHaveBeenCalled()
+    expect(last(h, 'vscene_2')[0]).toBe('complete')
+    expect(last(h, 'vscene_1')[1]).toMatchObject({ errorKind: 'flow-submit-lost' })
+  })
+})
+
 // M2-R1 F3(A3): authFailed 결과의 error 가 기계 토큰(errorKind 동반 — 'wiz-missing'·'not-on-flow'·'flow-rpc-error')이면 항목·상태 문구는
 //   인증 안내(authErrorMessage) — useAutomation/useReferenceGeneration 의 authFailureText 와 같은 규칙. kind 없는 옛 결과는 error 그대로.
 describe('useVideoAutomation — authFailed 결과의 문구(authFailureText)', () => {

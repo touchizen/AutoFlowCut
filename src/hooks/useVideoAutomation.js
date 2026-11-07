@@ -166,6 +166,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     //   M3: Flow @멘션 T2V 는 엔진이 프롬프트의 @ 토큰과 item.referenceImages 로 인라인 멘션을 계획한다(옛 칩 segments 경로는 퇴역).
     const callOpts = {
       videoBatchCount,
+      ...(options.row ? { row: options.row } : {}),
+      ...(options.onSubmission ? { onSubmission: options.onSubmission } : {}),
       ...(appMode !== 'flow' ? { provider: videoProvider } : {}),
     }
 
@@ -485,6 +487,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               mediaId: s.mediaId,
               videoPath: s.videoPath,
               downloadGated: !!s.downloadGated,   // M2-R3 H6: 배치 다운로드 권한 마커(Phase 0 게이트 판정)
+              videoFlowSubmission: s.videoFlowSubmission, videoFlowEpoch: s.videoFlowEpoch,
               legacyFailure: isLegacyFlowGenerationFailure(s),   // M2-R5 J3: 옛 서버측 생성 실패(error PUBLIC_ERROR_* · kind 없음 · 미디어 없음) — 출처 분류에서 제외(items 는 error/errorKind 를 안 실으므로 여기서 판정)
               seed: s.seed ?? seed ?? null,
               model: s.model ? canonicalVideoModel(s.model, itemProvider) : resolved.model,
@@ -524,6 +527,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               mediaId: p.mediaId,
               videoPath: p.videoPath,
               downloadGated: !!p.downloadGated,   // M2-R3 H6
+              videoFlowSubmission: p.videoFlowSubmission, videoFlowEpoch: p.videoFlowEpoch,
               legacyFailure: isLegacyFlowGenerationFailure(p),   // M2-R5 J3
               seed: p.seed ?? seed ?? null,
               // t2v(279)와 동일: 저장된 p.model 을 보존하고 없을 때만 현재 선택으로 폴백한다.
@@ -592,7 +596,14 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     const downloadOnlyIds = new Set(downloadOnly.map(it => it.id))
     const inFlight = items.filter(it => !downloadOnlyIds.has(it.id) && (submittedFlow(it) ? !it.mediaId : isInFlightItem(it)))
     const inFlightIds = new Set(inFlight.map(it => it.id))
-    const freshGen = items.filter(it => !downloadOnlyIds.has(it.id) && !inFlightIds.has(it.id))
+    const uncertain = it => appMode === 'flow' && it.videoFlowSubmission?.postClick && it.videoFlowSubmission.retryBlocked
+    const unresolved = items.filter(uncertain)
+    for (const it of unresolved) onItemUpdate?.(it.id, 'error', { error: 'flow-submit-lost', errorKind: 'flow-submit-lost' })
+    if (unresolved.length === items.length && unresolved.length) {
+      setIsRunning(false); setStatus('error'); setStatusMessage(t('errorSection.kind.flow-submit-lost'))
+      return
+    }
+    const freshGen = items.filter(it => !uncertain(it) && !downloadOnlyIds.has(it.id) && !inFlightIds.has(it.id))
     // M2-R6 K1(A1 = B1): fresh 로 분류된 항목이 든 **옛 Flow 모양 generationId**(J3 의 legacy 행 · 메모리 모드의 complete+G+mediaId 행 등, videoPath 없음)는 제출 전
     //   'generating' 패치와 미제출 항목의 종결 패치(markHalted · 제출 unsupported · 제출 auth · 같은 거부 2연속)가 {generationId:null, mediaId:null} 로 지운다.
     //   안 지우면 어떤 비성공 패치도 {error, errorKind} 만 써서 행이 {error, errorKind:X, G, mediaId:null} 이 되고 J3 술어(errorKind null)에서 벗어나 다음 Start/Retry 가
@@ -605,7 +616,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     const batchStartedAt = Date.now()
     lowerResNoticesRef.current = []
     setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: batchStartedAt })
-    let videoErrorCount = 0
+    let videoErrorCount = unresolved.length
     let redownloadedCount = 0
 
     // ═══════════════════════════════════════════
@@ -752,6 +763,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         const itemModel = item.generationModel || effectiveVideoModel
         const itemResolution = item.generationResolution ?? videoResolution
         const genResult = await submitVideoItem(item, mode, {
+          ...(appMode === 'flow' ? { row: { projectName, id: item.id, epoch: item.videoFlowEpoch || '', previousId: item.generationId || null },
+            onSubmission: videoFlowSubmission =>
+            onItemUpdate?.(item.id, 'generating', { videoFlowSubmission }) } : {}),
           videoModel: itemModel, videoProvider: itemProvider, aspectRatio, duration, videoBatchCount, seed, projectName, videoResolution: itemResolution
         })
 
@@ -780,6 +794,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           // app-kill → reload → recovery 시 videoRecovery 가 item.model/seed 를 읽어
           // 동일한 모델/seed 로 저장하도록. 누락하면 recovery 가 'flow-video' 로 폴백.
           onItemUpdate?.(item.id, 'generating', {
+            ...(appMode === 'flow' ? { videoFlowSubmission: null } : {}),
             generationId: genResult.generationId,
             ...(seed != null ? { seed } : {}),
             model: appliedModel,
@@ -852,6 +867,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           const rejected = genResult?.postClick === true || genResult?.rejectedMediaId != null || Array.isArray(genResult?.rejectedMediaIds)
           onItemUpdate?.(item.id, 'error', {
             error: genResult.error,
+            ...(genResult.flowSubmission ? { videoFlowSubmission: genResult.flowSubmission } : {}),
             errorKind: genResult.errorKind ?? null,
             ...(genResult.errorParams ? { errorParams: genResult.errorParams } : {}),
             ...(genResult.rejectedMediaId != null ? { rejectedMediaId: genResult.rejectedMediaId } : {}),

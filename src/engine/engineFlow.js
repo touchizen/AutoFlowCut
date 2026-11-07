@@ -38,6 +38,24 @@ import { getFlowSafetyStop, receiveFlowSafetyStop } from '../utils/flowSafetySto
 
 const api = () => window.electronAPI
 
+async function invokeFlowVideo(method, payload, onSubmission) {
+  if (!onSubmission) return api()[method](payload)
+  const submissionRequestId = crypto.randomUUID()
+  let observed
+  const off = api().onFlowVideoSubmission?.(e => {
+    if (e?.submissionRequestId === submissionRequestId && e.flowSubmission?.postClick) {
+      observed = e.flowSubmission
+      onSubmission(observed)
+    }
+  })
+  try {
+    return await api()[method]({ ...payload, submissionRequestId })
+  } catch (error) {
+    if (!observed) throw error
+    return { success: false, error: 'flow-submit-lost', errorKind: 'flow-submit-lost', flowSubmission: observed, postClick: true, retryBlocked: true }
+  } finally { off?.() }
+}
+
 /**
  * #R3-1: 바운드 flowProjectId(useProjectData 설정)와 추출된 projectId(live URL) 중
  * 더 신뢰할 수 있는 것을 선택한다. bound 우선, 없으면 extracted 폴백.
@@ -297,14 +315,12 @@ export function useFlowEngine(opts = {}) {
     return { refs, plan: refs.length > 0 ? planned.plan : null }
   }
 
-  // M3(D1): 이미지 두 진입점(동기 generateImage · 배치·MCP 의 비동기 submitGeneration)이 같은 절차 — 업스케일 게이트 → 레퍼런스 생성의 스타일 ref
-  //   이미지(범위 밖) → 계획(멘션 = 인라인 멘션, 멘션 안 된 매칭 ref = ＋ 첨부, pool = 프로젝트 ref 전체) → 바이트 → IPC. asyncMode 만 다르다.
+  // M3(D1): 이미지 두 진입점(동기 generateImage · 배치·MCP 의 비동기 submitGeneration)이 같은 절차 — 업스케일 게이트 → 계획(멘션 = 인라인 멘션, 멘션 안 된 매칭 ref = ＋ 첨부, pool = 프로젝트 ref 전체) → 바이트 → IPC. asyncMode 만 다르다.
   const submitFlowImage = async (prompt, referenceImages, callOpts, asyncMode) => {
     if (getFlowSafetyStop()) return getFlowSafetyStop()
     const gate = flowInputGate(callOpts)
     if (gate) return gate
     const attached = Array.isArray(referenceImages) ? referenceImages : []
-    if (callOpts.purpose === 'reference' && attached.length > 0) return REFERENCES_UNSUPPORTED()
     const r = await planFlowRefs({ prompt, attached, pool: callOpts.references || [], mode: 'image' })
     if (r.error) return r.error
     if (getFlowSafetyStop()) return getFlowSafetyStop()
@@ -451,7 +467,8 @@ export function useFlowEngine(opts = {}) {
       const r = await planFlowRefs({ prompt, attached: [], pool: Array.isArray(referenceImages) ? referenceImages : [], mode: 'video' })
       if (r.error) return r.error
       if (getFlowSafetyStop()) return getFlowSafetyStop()
-      return markAuth(await api().flowGenerateVideoT2V({
+      return markAuth(await invokeFlowVideo('flowGenerateVideoT2V', {
+        ...(callOpts.row ? { row: callOpts.row } : {}),
         token: effectiveToken(),
         prompt,
         projectId: effectiveProjectId(),
@@ -463,7 +480,7 @@ export function useFlowEngine(opts = {}) {
         seed,
         refs: r.refs,
         plan: r.plan,
-      }))
+      }, callOpts.onSubmission))
     } catch (error) {
       return markAuth({ success: false, error: error?.message || String(error) })
     }
@@ -480,7 +497,8 @@ export function useFlowEngine(opts = {}) {
     // 새 Flow I2V 는 레퍼런스를 붙이지 않는다 — 멘션 표지(@이름 · @{두 단어})는 떼고 이름 글자만 남긴다(편집기의 @ 는 애셋 창을 연다). 메일 주소 같은 단어 안 @ 는 그대로.
     const plainPrompt = String(prompt || '').replace(/@\{([^}]+)\}/g, '$1').replace(/(^|[\s(\[“"'])@(?=[\p{L}\p{N}_])/gu, '$1')
     try {
-      return markAuth(await api().flowGenerateVideoI2V({
+      return markAuth(await invokeFlowVideo('flowGenerateVideoI2V', {
+        ...(callOpts.row ? { row: callOpts.row } : {}),
         token: effectiveToken(),
         prompt: plainPrompt,
         startImage: String(startImage).replace(/^data:[^;]+;base64,/, ''),
@@ -491,7 +509,7 @@ export function useFlowEngine(opts = {}) {
         resolution,
         videoBatchCount: callOpts.videoBatchCount ?? 1,
         seed,
-      }))
+      }, callOpts.onSubmission))
     } catch (error) {
       return markAuth({ success: false, error: error?.message || String(error) })
     }

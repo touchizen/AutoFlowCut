@@ -5,6 +5,7 @@ import { createFlowSafetyIPC } from '../../electron/flow-safety-ipc.js'
 import { inputShieldHarness } from './flow-input-shield.js'
 import { createFlowAngular } from '../../electron/ipc/flow-angular.js'
 import { registerFlowAPIIPC } from '../../electron/ipc/flow-api.js'
+import { registerVideoIPC } from '../../electron/ipc/video.js'
 import { createPassiveCapture } from '../../electron/flow-passive-capture.js'
 import { downloadFlowImage } from '../../electron/flow-image-download.js'
 import { typeFlowText } from '../../electron/flow-native-input.js'
@@ -92,6 +93,8 @@ export function harness(options = {}) {
   const shield = { remove: vi.fn(() => options.duringRestore?.()) }
   const deps = { isRpcCaptureEnabled: () => false, passiveCapture: observer, getFlowView: () => view,
     getCurrentMode: () => 'flow', getFlowAgentOn: () => false, pendingGenerations: new Map(), typeFlowText,
+    ...(options.videoJournal ? { videoJournal: options.videoJournal } : {}),
+    getActiveWorkFolder: () => options.activeWorkFolder || '/work/projects',
     nativeFlowSettings: true, createInputShield: vi.fn(() => shield), setAutomationKeyLock: vi.fn(),
     getMainWindow: () => ({ webContents: { focus: vi.fn() } }),
     downloadPassiveImage: (session, item, opts) => downloadFlowImage(net, session, item, opts),
@@ -162,5 +165,6 @@ export function harness(options = {}) {
     ipc = safety.ipcMain
   }
   registerFlowAPIIPC(ipc, deps)
+  registerVideoIPC(ipc, deps)
   return { wc, view, deps, observer, angular, net, submit, shield, handlers, nativeShield, isolatedWorld, ipcEvents }
 }

@@ -52,6 +52,7 @@ import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
 import { routeReportResponse, isFlowFrameOrigin, buildReportCtx } from './reportResponseRouter.js'
+import { createVideoJournal } from './flow-video-journal.js'
 import { typeFlowText } from './flow-native-input.js'
 import { flowPagePolicy, installLegacyFlowHooks, createFlowPagePolicyIPC } from './flow-page-policy.js'
 import { urlForLog } from './flowUrl.js'
@@ -1080,6 +1081,8 @@ const flowSafety = createFlowSafetyIPC(ipcMain, {
   getCurrentMode: modeController.getCurrentMode,
 })
 const flowAPIDeps = {
+  videoJournal: createVideoJournal(path.join(app.getPath('userData'), 'native-flow-video-journal')),
+  getActiveWorkFolder: () => activeWorkFolder,
   typeFlowText,
   nativeFlowSettings: !FLOW_PAGE_POLICY.legacyMutation,
   isRpcCaptureEnabled: () => FLOW_PAGE_POLICY.rpcCapture,
