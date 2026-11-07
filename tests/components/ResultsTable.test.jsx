@@ -365,3 +365,47 @@ describe('ResultsTable — errorKind + errorParams (M1-9)', () => {
     expect(text).not.toMatch(/\{\w+\}/)
   })
 })
+
+describe('ResultsTable — 보존된 Flow 제출 오류', () => {
+  const preservedFlowFailure = (overrides = {}) => baseItem({
+    status: 'error',
+    error: 'flow-unusual-activity',
+    errorKind: 'flow-unusual-activity',
+    flowSubmission: {
+      id: 'flow-submit-1',
+      postClick: true,
+      retryBlocked: true,
+    },
+    ...overrides,
+  })
+
+  it('Flow 보존 행은 재시도 버튼 대신 이전 제출 경고를 보여주고 일반 오류 행은 재시도 가능', () => {
+    const items = [
+      preservedFlowFailure({ id: 'flow-preserved', prompt: 'Preserved Flow scene' }),
+      baseItem({ id: 'ordinary-error', status: 'error', error: 'Network timeout', prompt: 'Ordinary scene' }),
+    ]
+    const { getByText } = wrap(
+      <ResultsTable items={items} appMode="flow" mediaType="image" onRetry={vi.fn()} />
+    )
+
+    const preservedRow = getByText('Preserved Flow scene').closest('tr')
+    const ordinaryRow = getByText('Ordinary scene').closest('tr')
+
+    expect(preservedRow.querySelector('.retry-btn')).not.toBeInTheDocument()
+    expect(getByText(/Flow flagged the previous submission for this scene/i)).toBeInTheDocument()
+    expect(ordinaryRow.querySelector('.retry-btn')).toBeInTheDocument()
+  })
+
+  it('API 모드에서는 보존 메타데이터가 있어도 일반 재시도 버튼을 유지', () => {
+    const { container } = wrap(
+      <ResultsTable
+        items={[preservedFlowFailure()]}
+        appMode="api"
+        mediaType="image"
+        onRetry={vi.fn()}
+      />
+    )
+
+    expect(container.querySelector('.status.error.retry-btn')).toBeInTheDocument()
+  })
+})

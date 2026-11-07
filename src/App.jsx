@@ -2813,6 +2813,7 @@ function App() {
             <ResultsTable
               items={scenes}
               mediaType="image"
+              appMode={mode}
               layout={resultsLayout}
               aspectRatio={settings.aspectRatio}
               onRetry={(id) => {
@@ -2923,6 +2924,7 @@ function App() {
           <ResultsTable
             items={scenes}
             mediaType="image"
+            appMode={mode}
             layout={resultsLayout}
             aspectRatio={settings.aspectRatio}
             onRetry={(id) => {

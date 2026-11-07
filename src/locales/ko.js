@@ -698,6 +698,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   
   // 결과 테이블
   results: {
+    previousFlowWarning: '이 씬을 마지막으로 제출했을 때 Flow가 비정상적인 활동을 감지했어. 결과는 Flow 갤러리에서 확인해.',
+    retryBlocked: '재시도 차단',
     empty: '프롬프트를 입력하고 생성을 시작하세요',
     prompt: '프롬프트',
     image: '이미지',

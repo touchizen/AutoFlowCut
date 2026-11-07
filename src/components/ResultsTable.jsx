@@ -9,6 +9,7 @@ import { useI18n } from '../hooks/useI18n'
 import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { resolveDisplayError } from '../utils/errorDisplay'
+import { getPreservedFlowSubmissionStop } from '../utils/flowSafetyStop'
 import { getVideoPoster } from '../utils/videoPoster'
 import { modelLabel } from '../config/genModels'
 import InfinityLoader from './InfinityLoader'
@@ -107,6 +108,7 @@ export default function ResultsTable({
   items,
   scenes,
   mediaType = 'image',
+  appMode,
   onRetry,
   onVideoRetry,             // (item) => void — 비디오 전용 재시도 (다운로드 우선)
   aspectRatio = '16:9',
@@ -380,7 +382,10 @@ export default function ResultsTable({
    * Resolve the displayable error message for an item via the shared util —
    * keeps i18n / unknown-kind fallback policy aligned with ErrorSection.
    */
-  const getDisplayError = (item) => resolveDisplayError(t, item.errorKind, item.error, item.errorParams)
+  const blockedImageSubmission = item => mediaType === 'image' && getPreservedFlowSubmissionStop(item, appMode)
+  const getDisplayError = item => item.errorKind === 'flow-unusual-activity' && blockedImageSubmission(item)
+    ? t('results.previousFlowWarning')
+    : resolveDisplayError(t, item.errorKind, item.error, item.errorParams)
 
   /**
    * Render the status cell for a given item
@@ -408,6 +413,9 @@ export default function ResultsTable({
     if (status === 'error') {
       // Retry button only for image mediaType; video retry is handled differently
       if (mediaType === 'image') {
+        if (blockedImageSubmission(item)) {
+          return <span className="status error" title={errorMessage}>{t('results.retryBlocked')}</span>
+        }
         return (
           <button
             className="status error retry-btn"
