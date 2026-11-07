@@ -4,8 +4,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { once, EventEmitter } from 'node:events'
 import { netLogResponseBody, imageResultsFromNetLog, startFlowResponseCapture } from '../../electron/flow-native-response.js'
-import { sample, samplePayload, respBodyWithPayload, maskedUuid, reencodeRequestBody } from '../fixtures/flow-batchexecute-samples.js'
+import { sample, samplePayload, respBodyFailure, respBodyWithPayload, maskedUuid, reencodeRequestBody } from '../fixtures/flow-batchexecute-samples.js'
 import { s3, s3Payload, s3RequestBody } from '../fixtures/flow-m3-samples.js'
+import { readImageRequest } from '../../electron/flow-passive-capture.js'
 import { decodeFReqInner, extractSubmitPrompts, extractSubmitRefs, parseBatchexecuteResponse, parseVideoSubmitResponse } from '../../electron/flow-rpc-protocol.js'
 import { PROJECT, PROMPT } from '../fixtures/flow-passive-image.js'
 
@@ -82,6 +83,40 @@ describe('native NetLog response ownership', () => {
     const results = imageResultsFromNetLog(encode(log(body)), URL, request)
     expect(results).toHaveLength(1)
     expect(() => imageResultsFromNetLog(encode(log(body)), URL, { ...request, refs: [maskedUuid(999)] })).toThrow()
+  })
+  // S3#19 is the saved real one-ref/two-mention wire sample. CupPalette and the
+  // trailing single mention are a synthetic adaptation, not part of that recording.
+  it('parses a synthetic trailing @CupPalette single-ref request/response adapted from saved S3#19', () => {
+    const fixture = s3(19)
+    const decoded = decodeFReqInner(s3RequestBody(19))
+    const inner = structuredClone(decoded.inner)
+    const refId = extractSubmitRefs('ogiZ0b', inner).refs[0]
+    const promptText = 'A cobalt cup on a bright table'
+    inner[1][0][8] = [[ [promptText], [null, [[refId, 'CupPalette']]] ]]
+    const requestBody = `f.req=${encodeURIComponent(JSON.stringify([[['ogiZ0b', JSON.stringify(inner), null, 'generic']]]))}&at=SECRET&`
+    const refs = extractSubmitRefs('ogiZ0b', inner)
+    const request = readImageRequest({ id: 90, webContentsId: 7, method: 'POST', url: fixture.url,
+      uploadData: [{ bytes: Buffer.from(requestBody) }] }, refs)
+    expect(request).toMatchObject({ prompts: [promptText], refs: [refId], mentions: [refId], count: 1 })
+
+    const response = s3Payload(19)
+    response[0][0][6][0][15][2][0][2] = [[[promptText]]]
+    const body = respBodyWithPayload('ogiZ0b', response)
+    const result = imageResultsFromNetLog(encode(log(body, { url: fixture.url })), fixture.url, request)
+    expect(result).toMatchObject([{ mediaId: maskedUuid(50), width: 768, height: 1376 }])
+  })
+  it('reports the server RPC rejection code without flattening it to a generic frame error', () => {
+    expect(() => imageResultsFromNetLog(encode(log(respBodyFailure('ogiZ0b', 7))), URL, expected))
+      .toThrowError(new Error('response-proof-rpc-code-7'))
+  })
+  it('reports a stable image payload path for malformed dimensions without exposing raw payload', () => {
+    const payload = structuredClone(samplePayload('ogiZ0b'))
+    payload[0][0][6][2] = [1376]
+    const body = respBodyWithPayload('ogiZ0b', payload)
+    let thrown
+    try { imageResultsFromNetLog(encode(log(body)), URL, expected) } catch (e) { thrown = e }
+    expect(thrown?.message).toBe('response-proof-shape:ogiZ0b@[0][0][6][2]')
+    expect(thrown?.message).not.toContain(JSON.stringify(payload))
   })
   it.each(['duplicate-frame', 'late-error-frame', 'seed', 'prompt', 'id', 'http-url', 'wrong-path', 'count'])('refuses a mismatching %s response', kind => {
     const payload = structuredClone(samplePayload('ogiZ0b'))

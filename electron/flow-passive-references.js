@@ -1,13 +1,32 @@
+import { randomBytes } from 'node:crypto'
 import { snapshotClipboard, writeUploadImage, restoreClipboard } from './flow-clipboard.js'
 import { composerStateJs, READ_CHIP_SNAPSHOT_JS } from './flow-composer-refs.js'
-import { clearComposer, insertMention, attachAsset } from './flow-reference-driver.js'
+import { clearComposer, insertMention, attachAsset, scanUploadedAssets } from './flow-reference-driver.js'
 import { normalizePrompt } from './flow-rpc-protocol.js'
 import { findPromptEditor } from './flow-composer-dom.js'
 import { createMediaTokenRegistry } from './flow-media-tokens.js'
+import { refMediaCache } from './flow-ref-media-cache.js'
 
 const EDITOR = `(${findPromptEditor.toString()})(document)`
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 const fail = reason => { throw new Error(reason) }
+
+// The passive path has no page nonce. Scope verified uploads to this native
+// document, including same-document moves between the gallery and its editor.
+const documents = new WeakMap()
+function referenceDocument(wc, project) {
+  if (!documents.has(wc)) {
+    const invalidate = () => documents.set(wc, null)
+    wc.on('did-navigate', invalidate)
+    wc.on('render-process-gone', invalidate)
+  }
+  let doc = documents.get(wc)
+  if (!doc || doc.project !== project) {
+    doc = { project, nonce: randomBytes(16).toString('hex'), tokens: createMediaTokenRegistry() }
+    documents.set(wc, doc)
+  }
+  return doc
+}
 
 async function pasteReference(ctx, ref) {
   const { deps, wc, read, guard, lease, project, tokens } = ctx
@@ -75,10 +94,11 @@ async function pasteReference(ctx, ref) {
 }
 
 // All page reads in ctx are isolated; input/clipboard actions are native.
-// Map only images pasted and proven during this composition.
+// A cached upload is only a hint. The current project's picker must still
+// contain exactly one matching asset before we compose a mention from it.
 export async function prepareNativeReferences(ctx, pre, plan) {
-  const { wc, read, guard, aborted, deps } = ctx
-  const tokens = createMediaTokenRegistry()
+  const { wc, read, guard, aborted, deps, project } = ctx
+  const { nonce, tokens } = referenceDocument(wc, project)
   const click = (js, opts) => deps.trustedClickOnFlowView(js, { ...opts, beforeDispatch: async () => { guard(); return !aborted() } })
   const focus = async () => {
     guard(); wc.focus()
@@ -114,17 +134,35 @@ export async function prepareNativeReferences(ctx, pre, plan) {
       guard(); for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: 'Escape' })
     } }
   const ensure = r => { if (!r?.ok) fail(r?.reason || 'reference-compose') }
-  const byHash = new Map()
   ensure(await clearComposer(driver))
+  const mentionHashes = new Set(plan.segments.filter(s => s.t === 'mention').map(s => pre.refs[s.ref].sha))
+  const byHash = new Map()
+  for (const sha of mentionHashes) {
+    const hint = refMediaCache.get(nonce, project, sha)
+    if (hint) byHash.set(sha, hint)
+  }
+  if (byHash.size) {
+    const scan = await scanUploadedAssets(driver, { wantIds: [...byHash.values()] })
+    ensure(scan)
+    for (const [sha, hint] of byHash) {
+      if (scan.ids.filter(id => id === hint).length === 1) continue
+      refMediaCache.delete(nonce, project, sha)
+      byHash.delete(sha)
+    }
+  }
+  let pasted = false
   for (const ref of pre.refs) {
     if (byHash.has(ref.sha)) continue
     await focus()
-    byHash.set(ref.sha, await pasteReference({ ...ctx, tokens }, ref))
+    const mediaId = await pasteReference({ ...ctx, tokens }, ref)
+    byHash.set(ref.sha, mediaId)
+    refMediaCache.set(nonce, project, ref.sha, mediaId)
+    pasted = true
   }
   const id = index => byHash.get(pre.refs[index].sha)
   const refs = [...byHash.values()]
-  const inline = plan.segments.some(s => s.t === 'mention')
-  if (inline) ensure(await clearComposer(driver))
+  const inline = mentionHashes.size > 0
+  if (inline && pasted) ensure(await clearComposer(driver))
   const mentions = []
   // Attached-only references stay in the material strip. The caller uses the
   // same full-prompt replace/readback as a plain image after the paste settles.

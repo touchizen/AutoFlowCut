@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { parseBatchexecuteResponse, parseImageGenerateResponse, parseVideoSubmitResponse, parseUploadResponse, modelKeyMatches, normalizePrompt } from './flow-rpc-protocol.js'
+import { FlowRpcError, FlowRpcShapeError, parseBatchexecuteResponse, parseImageGenerateResponse, parseVideoSubmitResponse, parseUploadResponse, modelKeyMatches, normalizePrompt } from './flow-rpc-protocol.js'
 
 const MAX_BYTES = 32 * 1024 * 1024
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -78,6 +78,16 @@ export function netLogResponseBody(text, requestUrl) {
   return Buffer.concat(buffers).toString('utf8')
 }
 
+// The scene persists this reason even when a visible Flow warning stops the batch.
+// Keep the parser's field path or numeric service code, never the response body or message.
+function responseParseError(cause, rpcid) {
+  if (cause instanceof FlowRpcShapeError) return error(`shape:${rpcid}@${cause.path || 'envelope'}`)
+  if (cause instanceof FlowRpcError && cause.kind === 'rpc' && Number.isSafeInteger(cause.code)) {
+    return error(`rpc-code-${cause.code}`)
+  }
+  return error('rpc')
+}
+
 function rpcPayload(text, requestUrl, rpcid) {
   const body = netLogResponseBody(text, requestUrl)
   let matches = 0, failed = false
@@ -93,7 +103,7 @@ function rpcPayload(text, requestUrl, rpcid) {
     }
   }
   if (failed || matches !== 1) throw error('frames')
-  try { return parseBatchexecuteResponse(body, rpcid) } catch { throw error('rpc') }
+  try { return parseBatchexecuteResponse(body, rpcid) } catch (cause) { throw responseParseError(cause, rpcid) }
 }
 
 const equalIds = (got, want) => Array.isArray(got) && got.length === want.length
@@ -118,7 +128,7 @@ export function imageResultsFromNetLog(text, requestUrl, request) {
   const payload = rpcPayload(text, requestUrl, 'ogiZ0b')
   let results
   try { results = parseImageGenerateResponse(payload).results }
-  catch { throw error('rpc') }
+  catch (cause) { throw responseParseError(cause, 'ogiZ0b') }
   if (!request || results.length !== request.count || new Set(results.map(r => r.mediaId)).size !== results.length
     || JSON.stringify(results.map(r => r.seed).sort()) !== JSON.stringify([...request.seeds].sort())) throw error('result-mismatch')
   return results.map((r, i) => {
