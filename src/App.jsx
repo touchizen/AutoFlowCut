@@ -2657,6 +2657,8 @@ function App() {
                     {/* 전체 재생성 ▾ — split-button 으로 생성 버튼에 붙는다 */}
                     {showGenerateMenu && (
                       <GenerateMenu
+                        appMode={mode}
+                        scenes={scenes}
                         onForceRegenerate={() => {
                           if (uiSceneBatchBlocked) return
                           handleStart(undefined, { force: true })
@@ -2997,6 +2999,7 @@ function App() {
       {/* 씬 상세 모달 (ResultsTable에서 열림) */}
       {selectedScene && (
         <SceneDetailModal
+          appMode={mode}
           scene={scenes.find(s => s.id === selectedScene.id) || selectedScene}
           aspectRatio={settings.aspectRatio}
           onUpdate={scenesHook.updateScene}

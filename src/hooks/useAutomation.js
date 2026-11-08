@@ -1072,7 +1072,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     waitingForExecute = true
     setQueuedSceneBatchCount(count => count + 1)
     try {
-      await generationQueue.enqueue({
+      return await generationQueue.enqueue({
         mode: mode,
         type: 'scene_batch',
         label: 'Batch Scene Generation',
@@ -1080,6 +1080,10 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       })
     } catch (err) {
       console.warn('[Automation] Queue rejected:', err.message)
+      if (err.retryBlocked) {
+        if (!err.alreadySurfaced) toast.warning(t(`errorSection.kind.${err.errorKind}`))
+        return { ...err, success: false }
+      }
     } finally {
       leaveQueue()
     }

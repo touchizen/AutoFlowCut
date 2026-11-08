@@ -10,12 +10,15 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
+import { flushSync } from 'react-dom'
+import { useImageRegenerationNotice } from '../hooks/useImageRegenerationNotice'
 import Modal from './Modal'
 import { useI18n } from '../hooks/useI18n'
 import './GenerateMenu.css'
 
-export default function GenerateMenu({ onForceRegenerate, disabled = false }) {
+export default function GenerateMenu({ onForceRegenerate, disabled = false, appMode, scenes = [] }) {
   const { t } = useI18n()
+  const regenerationNotice = useImageRegenerationNotice(appMode, scenes.filter(scene => scene.prompt), t)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const menuRef = useRef(null)
@@ -35,7 +38,9 @@ export default function GenerateMenu({ onForceRegenerate, disabled = false }) {
   }
 
   const confirm = () => {
-    setConfirmOpen(false)
+    if (regenerationNotice) return
+    // Restore the Flow view before the batch authentication check starts.
+    flushSync(() => setConfirmOpen(false))
     onForceRegenerate()
   }
 
@@ -67,13 +72,16 @@ export default function GenerateMenu({ onForceRegenerate, disabled = false }) {
             <button className="btn-secondary" onClick={() => setConfirmOpen(false)}>
               {t('actions.cancel')}
             </button>
-            <button className="btn-danger" onClick={confirm}>
+            <button className="btn-danger" onClick={confirm} disabled={!!regenerationNotice}
+              aria-describedby={regenerationNotice ? 'batch-regeneration-notice' : undefined}>
               {t('actions.forceRegenerate')}
             </button>
           </>
         }
       >
-        <p>{t('actions.forceRegenerateWarn')}</p>
+        {regenerationNotice
+          ? <p id="batch-regeneration-notice" role="alert">{regenerationNotice}</p>
+          : <p>{t('actions.forceRegenerateWarn')}</p>}
       </Modal>
     </div>
   )

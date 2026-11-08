@@ -55,7 +55,7 @@ describe('Flow renderer stop integration', () => {
     expect(flowExecute).not.toHaveBeenCalled()
     expect(apiExecute).toHaveBeenCalledOnce()
     const retry = await result.current.enqueue({ mode: 'flow', type: 'retry', execute: vi.fn() }).catch(e => e)
-    expect(retry).toMatchObject({ retryBlocked: true })
+    expect(retry).toMatchObject({ retryBlocked: true, alreadySurfaced: false })
   })
   it('notifies the user once with a translated persistent warning', () => {
     const warn = vi.spyOn(toast, 'warning')

@@ -99,7 +99,7 @@ export function useGenerationQueue() {
   useEffect(() => subscribeFlowSafetyStop(() => {
     const removed = queueRef.current.filter(item => item.mode === 'flow')
     queueRef.current = queueRef.current.filter(item => item.mode !== 'flow')
-    removed.forEach(item => item.reject(flowSafetyQueueError()))
+    removed.forEach(item => item.reject(flowSafetyQueueError(true)))
     setQueueSize(queueRef.current.length)
   }), [])
 
