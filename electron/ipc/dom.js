@@ -1,3 +1,4 @@
+import { accessiblePage, newProjectNode } from '../flow-accessible-compose.js'
 /**
  * Electron IPC Handler - DOM Mode Operations
  *
@@ -54,7 +55,7 @@ export function registerDomIPC(ipcMain, deps) {
       let ready = false
       for (let i = 0; i < 30; i++) {
         await new Promise((r) => setTimeout(r, 500))
-        ready = await flowView.webContents.executeJavaScript(READY).catch(() => false)
+        ready = deps.flowAccessibility ? (await accessiblePage(deps.flowAccessibility,flowView.webContents).catch(()=>null))?.hasComposer : await flowView.webContents.executeJavaScript(READY).catch(() => false)
         if (ready) break
       }
       // 핸들러 와이어링 settle — readiness 직후 클릭이 안 먹는 케이스 방지.
@@ -71,6 +72,7 @@ export function registerDomIPC(ipcMain, deps) {
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R28-2
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
+    if(deps.flowAccessibility && deps.isFlowSafetyBlocked?.())return {success:false,error:'flow-cancelled',retryBlocked:true}
     if (!flowProjectId) return { success: false, error: 'No flowProjectId' }
     // ⚠️ projectId 는 한 경로 세그먼트여야 한다. "abc/characters" 같은 저장값이면 /project/abc/characters
     //    를 열고 그 캐릭터 페이지를 "정상 로드"로 승인한다(ensureOnProjectComposer 와 같은 함정).
@@ -88,7 +90,7 @@ export function registerDomIPC(ipcMain, deps) {
       const probe = async () => {
         let page = { hasComposer: false, interactiveCount: 0 }
         let probeOk = true
-        try { page = await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } catch { probeOk = false }
+        try { page = deps.flowAccessibility ? await accessiblePage(deps.flowAccessibility,flowView.webContents) : await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } catch (e) { if (deps.flowAccessibility) throw e; probeOk = false }
         // ⚠️ URL 을 probe 전에 따로 읽으면 A→B 로 넘어간 사이 B 의 DOM 을 A 의 URL 과 짝지어 성공이라
         //    보고한다. probe 가 **같은 페이지 컨텍스트에서** 돌려준 url 을 쓴다(원자적).
         const urlNow = (probeOk && page && page.url) || flowView.webContents.getURL() || ''
@@ -146,6 +148,7 @@ export function registerDomIPC(ipcMain, deps) {
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     // #R20-4: 실패/타임아웃 경로에서 enterToolClicked 가 true 로 고착되면 이후 부트스트랩 자동
     //   생성이 영구 skip 된다 — 생성 성공(새 id 포착) 전까지는 finally 에서 이전 값으로 복원한다.
+    if(deps.flowAccessibility && deps.isFlowSafetyBlocked?.())return {success:false,error:'flow-cancelled',retryBlocked:true}
     const prevEnterToolClicked = deps.getEnterToolClicked?.()
     let createdNew = false
     try {
@@ -164,7 +167,8 @@ export function registerDomIPC(ipcMain, deps) {
       const preUrl = flowView.webContents.getURL() || ''
       const preMatch = preUrl.match(/\/project\/([0-9a-f-]{36})/)
       const preId = preMatch ? preMatch[1] : null
-      const clickRes = await trustedClickOnFlowView(addBtnSelector, { required: true, step: 'new-project' })
+      const clickRes = deps.flowAccessibility ? await deps.flowAccessibility.click(flowView,newProjectNode,{home:true,dispatchGuard:()=>{if(!flowActive()||deps.isFlowSafetyBlocked?.())throw new Error('flow-cancelled')}})
+        : await trustedClickOnFlowView(addBtnSelector, { required: true, step: 'new-project' })
       if (!clickRes?.success) {
         return { success: false, error: 'failed to click new-project button' }
       }

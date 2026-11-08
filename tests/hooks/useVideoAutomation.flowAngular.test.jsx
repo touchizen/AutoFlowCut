@@ -259,7 +259,7 @@ describe('useVideoAutomation × useFlowEngine — 레퍼런스 영상 (M3-14)', 
     for (const [call, n] of [[0, 1], [1, 2]]) {
       const payload = api.flowGenerateVideoT2V.mock.calls[call][0]
       expect(payload).toMatchObject({ token: null, prompt: `@king p${n}`, model: 'Omni Flash', aspectRatio: '9:16', duration: 4, projectId: 'proj-1' })
-      expect(payload.refs).toEqual([{ base64: 'iVBORw0KGgoKING', mime: 'image/png' }])
+      expect(payload.refs).toEqual([{ name: 'king', base64: 'iVBORw0KGgoKING', mime: 'image/png' }])
       expect(payload.plan).toEqual({ segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ` p${n}` }], attach: [] })
       expect(payload).not.toHaveProperty('segments')
     }

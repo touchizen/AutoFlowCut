@@ -26,7 +26,7 @@
  * tests/electron/ipc/flowGenerateImageAngular.test.js · tests/electron/ipc/flowVideoT2VAngular.test.js · tests/electron/flowRpcPipeline.test.js
  * tests/electron/ipc/flowImageReferencesAngular.test.js · tests/electron/ipc/flowVideoR2VAngular.test.js · tests/electron/ipc/flowReferencePreflight.test.js
  */
-import { createPassiveImageGenerator } from '../flow-passive-image.js'
+import { createPassiveImageGenerator, passiveSessionReady } from '../flow-passive-image.js'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -170,7 +170,7 @@ export function referencePreflight(flowView, { refs, plan } = {}) {
   for (const r of list) {
     const bytes = r && typeof r.base64 === 'string' ? Buffer.from(r.base64, 'base64') : null
     if (!bytes || bytes.length === 0) return bad('bad-plan')
-    decoded.push({ bytes, sha: createHash('sha256').update(bytes).digest('hex') })
+    decoded.push({ bytes, ...(typeof r.name === 'string' ? { name:r.name } : {}), sha: createHash('sha256').update(bytes).digest('hex') })
   }
   let projectId = null
   if (decoded.length > 0) {
@@ -392,6 +392,7 @@ export function createFlowAngular(deps) {
     if (!isFlowPageUrl(url)) return { success: false, errorKind: 'flow-session-missing', error: 'not-on-flow', authFailed: true }
     // 옛 도메인은 301 로 flow.google.com 에 착지한다 — 여기 있다는 건 리다이렉트 전/실패다(WIZ 프로브가 판정).
     if (isLegacyFlowUrl(url)) console.warn('[Flow API] [Angular] legacy labs.google URL — expecting redirect to flow.google.com')
+    if (deps.flowAccessibility) return (await passiveSessionReady(flowView.webContents,deps.flowAccessibility)).ready ? null : {success:false,error:'flow-session-missing'}
     let wiz = false
     try { wiz = !!(await exec(flowView, WIZ_PROBE)) } catch (_e) { wiz = false }
     if (!wiz) return { success: false, errorKind: 'flow-session-missing', error: 'wiz-missing', authFailed: true }
@@ -1206,7 +1207,7 @@ export function createFlowAngular(deps) {
       // 1. jwpduf — id 당 1회. 레코드의 mediaId 가 폴한 id 와 다르면 오배정하지 않고 폴 실패로 본다.
       let record = null
       try {
-        const { records } = parseVideoStatusResponse(await callFlowRpc(flowView, 'jwpduf', [null, null, [[id]]]))
+        const { records } = parseVideoStatusResponse(await (deps.nativeReadRpc || callFlowRpc)(flowView, 'jwpduf', [null, null, [[id]]]))
         record = records.find((r) => r.mediaId === id) || null
       } catch (e) {
         const mapped = rpcErrorToRendererResult(e)
@@ -1255,7 +1256,7 @@ export function createFlowAngular(deps) {
       }
       // 2. 완료(3) → as29s 로 mp4 서명 URL(호스트 flow-content.google 필수). 실패는 유계 pending 뒤 fetch-failed(mediaId 유지).
       try {
-        const rec = parseMediaRecord(await callFlowRpc(flowView, 'as29s', [id]))
+        const rec = parseMediaRecord(await (deps.nativeReadRpc || callFlowRpc)(flowView, 'as29s', [id]))
         if (rec.mediaId !== id) throw new FlowRpcShapeError('as29s response is for another media', { rpcid: 'as29s', path: '[0]' })
         if (!rec.videoUrl) throw new FlowRpcShapeError('as29s response has no video url', { rpcid: 'as29s', path: '[7][0][8]' })
         as29sFailures.delete(id)
@@ -1298,7 +1299,7 @@ export function createFlowAngular(deps) {
     const tag = '[Flow DOMDownload] [Angular]'
     let where
     try {
-      where = mediaEditLocation(await callFlowRpc(flowView, 'as29s', [mediaId]), mediaId)
+      where = mediaEditLocation(await (deps.nativeReadRpc || callFlowRpc)(flowView, 'as29s', [mediaId]), mediaId)
     } catch (e) {
       const mapped = rpcErrorToRendererResult(e)
       if (mapped.authFailed) return mapped

@@ -110,8 +110,10 @@ const equalIds = (got, want) => Array.isArray(got) && got.length === want.length
   && new Set(got).size === got.length && got.every(id => want.includes(id))
 
 export function videoResultFromNetLog(text, requestUrl, request) {
+  return verifyVideoRecords(rpcPayload(text, requestUrl, request.rpcid), request)
+}
+export function verifyVideoRecords(payload,request) {
   const { rpcid, projectId, prompts, want, refs = [], modelKey } = request
-  const payload = rpcPayload(text, requestUrl, rpcid)
   let result
   try { result = parseVideoSubmitResponse(payload, rpcid) } catch { throw error('rpc') }
   const rec = payload[3][0]
@@ -125,7 +127,9 @@ export function videoResultFromNetLog(text, requestUrl, request) {
 }
 
 export function imageResultsFromNetLog(text, requestUrl, request) {
-  const payload = rpcPayload(text, requestUrl, 'ogiZ0b')
+  return verifyImageRecords(rpcPayload(text,requestUrl,'ogiZ0b'),request)
+}
+export function verifyImageRecords(payload,request) {
   let results
   try { results = parseImageGenerateResponse(payload).results }
   catch (cause) { throw responseParseError(cause, 'ogiZ0b') }

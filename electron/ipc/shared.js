@@ -1,3 +1,4 @@
+import { accessiblePage } from '../flow-accessible-compose.js'
 /**
  * Shared helper functions for Flow API IPC modules.
  *
@@ -1177,6 +1178,10 @@ export function createSharedHelpers(ctx) {
     // ⚠️ throw 와 "판정 불가" 를 구분한다. 예전엔 둘 다 null 로 뭉개고 null 을 "정상"으로 취급해,
     //    렌더러가 죽어 페이지를 읽지도 못하는 상태에서 {ok:true} 를 내주고 DOM 조작을 허가했다.
     //    네비 중엔 일시적으로 throw 할 수 있으니 한 번은 재시도하고, 그래도 못 읽으면 멈춘다.
+    if(ctx.flowAccessibility) {
+      try {const p=await accessiblePage(ctx.flowAccessibility,flowView.webContents);return {ok:p.hasComposer && onProjectComposerUrl(p.url,projectId)} }
+      catch(e){return {ok:false,error:e.message}}
+    }
     const probeOnce = async () => {
       try { return { read: true, page: await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } }
       catch (e) { return { read: false, error: e.message } }

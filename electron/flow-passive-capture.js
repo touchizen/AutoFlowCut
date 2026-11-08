@@ -97,8 +97,9 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
       if (active.upload && e?.rpcid === 'maseQ') {
         const up = active.upload
         if (up.id != null || !up.armed || details.webContentsId !== active.expected.webContentsId
-          || e.inner?.[0]?.[5] !== active.expected.projectId || e.inner?.[2] !== 'image/png'
+          || e.inner?.[0]?.[5] !== active.expected.projectId || !['image/png','image/jpeg'].includes(e.inner?.[2])
           || typeof e.inner?.[1] !== 'string' || !up.verify(Buffer.from(e.inner[1], 'base64'))) return invalidate('upload-mismatch')
+        up.filename=typeof e.inner[8]==='string'?e.inner[8]:null
         up.id = details.id
         up.url = details.url
         return
@@ -107,6 +108,10 @@ export function createPassiveCapture({ now = Date.now, gallerySettleMs = 2000 } 
       if (!active.prepared || active.request || details.webContentsId !== active.expected.webContentsId || !r
         || r.projectId !== active.expected.projectId || r.count !== active.expected.count
         || r.prompts.some(p => p !== normalizePrompt(active.expected.prompt))) return invalidate('request-mismatch')
+      // Flow writes this client batch ID into the returned project workflow.
+      // Preserve only that UUID, never a recaptcha token or the whole request.
+      const batchId=e?.inner?.[e.rpcid==='ogiZ0b'?4:2]?.[0]
+      if (UUID.test(batchId||'')) r.batchId=batchId
       active.id = details.id
       active.requestUrl = details.url // main memory only; includes the exact transport query
       active.request = r

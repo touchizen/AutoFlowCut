@@ -167,7 +167,10 @@ describe('useAutomation × useFlowEngine — 레퍼런스 씬 (M3-14)', () => {
       expect(api.flowGenerateImage).toHaveBeenCalledTimes(1)
       const payload = api.flowGenerateImage.mock.calls[0][0]
       expect(payload).toMatchObject({ token: null, prompt: '@king walks', asyncMode: true, projectId: 'proj-1', referenceImages: [] })
-      expect(payload.refs).toEqual([{ base64: 'iVBORw0KGgoKING', mime: 'image/png' }, { base64: 'iVBORw0KGgoQUEEN', mime: 'image/png' }])
+      expect(payload.refs).toEqual([
+        { name: 'king', base64: 'iVBORw0KGgoKING', mime: 'image/png' },
+        { name: 'queen', base64: 'iVBORw0KGgoQUEEN', mime: 'image/png' },
+      ])
       expect(payload.plan).toEqual({ segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ' walks' }], attach: [1] })
       expect(JSON.stringify(payload)).not.toContain('/refs/')   // 경로는 IPC 로 가지 않는다(D2)
       expect(fileSystemAPI.readFileByPath.mock.calls.map((c) => c[0])).toEqual(['/refs/king.png', '/refs/queen.png'])   // ref 하나씩

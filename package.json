@@ -13,7 +13,7 @@
     "dev:prod": "npm run build:preloads && vite --mode production",
     "build": "vite build && npm run build:preloads",
     "build:prod": "vite build --mode production && npm run build:preloads",
-    "build:preloads": "npm run build:preload && npm run build:flow-preload",
+    "build:preloads": "npm run build:preload && npm run build:flow-preload && node scripts/build-flow-accessibility.cjs",
     "build:preload": "esbuild ./electron/preload.js --bundle --format=cjs --platform=node --external:electron --outfile=./dist-electron/preload.cjs",
     "build:flow-preload": "esbuild ./electron/flow-preload.js --bundle --format=cjs --platform=node --external:electron --outfile=./dist-electron/flow-preload.cjs",
     "preview": "vite preview",
@@ -83,7 +83,8 @@
     "forceCodeSigning": true,
     "asarUnpack": [
       "node_modules/@anthropic-ai/claude-agent-sdk*/**",
-      "node_modules/@openai/codex*/**"
+      "node_modules/@openai/codex*/**",
+      "dist-electron/flow-native/**"
     ],
     "directories": {
       "output": "release",
