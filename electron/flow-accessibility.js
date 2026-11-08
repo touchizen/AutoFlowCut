@@ -105,6 +105,45 @@ export function createFlowAccessibility(directory, onWarning, physicalBounds) {
     }
     return entry.promise
   }
+  function viewPoint(view, root, node) {
+    if (!node?.rect || !root?.rect) throw new Error('flow-control-unavailable')
+    const [l, t, w, h] = node.rect,
+      [x, y, rw, rh] = root.rect,
+      { width, height } = view.getBounds()
+    const cx = ((l + w / 2 - x) * width) / rw,
+      cy = ((t + h / 2 - y) * height) / rh
+    if (!(w > 0 && h > 0 && cx >= 0 && cy >= 0 && cx < width && cy < height))
+      throw new Error('flow-control-offscreen')
+    return { x: Math.floor(cx), y: Math.floor(cy) }
+  }
+  async function imageSource(view, choose, guard) {
+    const wc = view.webContents, url = wc.getURL()
+    const root = await snapshot(wc)
+    const node = choose(root)
+    if (node?.role !== 'Image') throw new Error('reference-registered-thumbnail-unavailable')
+    const point = viewPoint(view, root, node)
+    guard()
+    if (wc.isDestroyed() || wc.getURL() !== url) throw new Error('flow-document-changed')
+    return new Promise((resolve, reject) => {
+      const finish = (value) => {
+        clearTimeout(timer)
+        wc.removeListener('context-menu', menu)
+        if (value) resolve(value)
+        else reject(new Error('reference-registered-thumbnail-unavailable'))
+      }
+      const menu = (evt, params) => {
+        evt.preventDefault()
+        finish(wc.getURL() === url && params.mediaType === 'image' &&
+          Math.abs(params.x - point.x) <= 1 && Math.abs(params.y - point.y) <= 1 && params.srcURL)
+      }
+      const timer = setTimeout(() => finish(null), 1500)
+      wc.on('context-menu', menu)
+      try {
+        for (const type of ['mouseDown', 'mouseUp'])
+          wc.sendInputEvent({ type, button: 'right', clickCount: 1, ...point })
+      } catch { finish(null) }
+    })
+  }
   async function click(
     view,
     choose,
@@ -117,18 +156,11 @@ export function createFlowAccessibility(directory, onWarning, physicalBounds) {
       node = choose(root)
     if (!node?.enabled || !node.rect || !root.rect || (validateSnapshot && !validateSnapshot(root)))
       throw new Error('flow-control-unavailable')
-    const [l, t, w, h] = node.rect,
-      [x, y, rw, rh] = root.rect,
-      { width, height } = view.getBounds()
-    const cx = ((l + w / 2 - x) * width) / rw,
-      cy = ((t + h / 2 - y) * height) / rh
-    if (!(w > 0 && h > 0 && cx >= 0 && cy >= 0 && cx < width && cy < height))
-      throw new Error('flow-control-offscreen')
+    const point = viewPoint(view, root, node)
     // No await between this document/ownership check and the view-targeted input.
     // The native input shield prevents another window's mouse from reaching this view.
     dispatchGuard?.()
     if (wc.isDestroyed() || wc.getURL() !== url) throw new Error('flow-document-changed')
-    const point = { x: Math.floor(cx), y: Math.floor(cy) }
     wc.sendInputEvent({ type: 'mouseMove', ...point })
     wc.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point })
     try {
@@ -138,5 +170,5 @@ export function createFlowAccessibility(directory, onWarning, physicalBounds) {
     }
     return { success: true }
   }
-  return { snapshot, click, openFile: (filename) => helper('open', filename) }
+  return { snapshot, click, imageSource, openFile: (filename) => helper('open', filename) }
 }

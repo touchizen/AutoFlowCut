@@ -1,9 +1,14 @@
+import { isFlowProjectMediaId } from './flowProjectMediaId.js'
 import { isRefSynced } from './flowCharacterSync'
 import { resolveMentions, stripMentionsForNames } from './mentionParser'
 import { normalizeTagKey } from './tagMatch'
 
 export function sourceAvailable(ref) {
   return !!(ref?.data || ref?.filePath || ref?.imagePath)
+}
+
+export function flowReferenceAvailable(ref) {
+  return isFlowProjectMediaId(ref?.mediaId) || sourceAvailable(ref)
 }
 
 export function flowImageInjectable(ref) {
@@ -106,8 +111,7 @@ export function collectM1FlowReferenceExclusions(
       seen.add(refKey)
 
       const mentioned = mentionedSet.has(ref)
-      // M3(D15): Flow 에서 쓸 수 있음 = 로컬 이미지(멘션·첨부 공통 — 애셋 창에 붙여 올린다). 옛 mediaId·entity 는 애셋 창에서 검증할 수 없어 보지 않는다.
-      if (sourceAvailable(ref)) continue
+      if (flowReferenceAvailable(ref)) continue
 
       exclusions.push({
         sceneId: scene.id,

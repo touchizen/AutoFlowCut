@@ -609,6 +609,42 @@ describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이�
     expect(mockFlowGenerateImage).not.toHaveBeenCalled()
   })
 
+  it.each(ENTRIES)('%s: 유효한 등록 mediaId + 사라진 로컬 파일 → {name,mediaId}로 전달하고 파일을 읽지 않는다', async fn => {
+    const mediaId = '42e0c686-a53e-45ca-a44e-4f7ee0a2c0b7'
+    const registered = { category: 'scene', name: 'saved-castle', mediaId, data: null, filePath: '/missing/old-castle.png' }
+    const readFile = vi.spyOn(window.electronAPI, 'readFileByPath')
+    const result = await call(fn, 'a castle', [registered], {})
+    expect(result.success).toBe(true)
+    const sent = mockFlowGenerateImage.mock.calls[0][0].refs
+    expect(sent).toEqual([{ name: 'saved-castle', mediaId }])
+    expect(readFile).not.toHaveBeenCalled()
+  })
+
+  it('legacy backend requiring reference bytes: registered media with local data keeps the bytes', async () => {
+    window.electronAPI.flowRequiresReferenceBytes = true
+    const mediaId = '42e0c686-a53e-45ca-a44e-4f7ee0a2c0b7'
+    const registered = { category: 'scene', name: 'saved-castle', mediaId, data: PNG, filePath: null }
+    const result = await call('generateImage', 'a castle', [registered], {})
+    expect(result.success).toBe(true)
+    expect(mockFlowGenerateImage.mock.calls[0][0].refs).toEqual([
+      { base64: 'QUFB', mime: 'image/png', name: 'saved-castle' },
+    ])
+    expect(window.electronAPI.flowRequiresReferenceBytes).toBe(true)
+    delete window.electronAPI.flowRequiresReferenceBytes
+  })
+
+  it('saved and local refs in one plan: keep the saved ID and resolve only local bytes', async () => {
+    const mediaId = '42e0c686-a53e-45ca-a44e-4f7ee0a2c0b7'
+    const saved = { category: 'scene', name: 'saved-castle', mediaId, data: null, filePath: '/missing/old-castle.png' }
+    const readFile = vi.spyOn(window.electronAPI, 'readFileByPath')
+    const result = await call('generateImage', 'two assets', [saved, queen], {})
+    expect(result.success).toBe(true)
+    expect(mockFlowGenerateImage.mock.calls[0][0].refs).toEqual([
+      { name: 'saved-castle', mediaId }, { base64: 'QUFB', mime: 'image/png', name: 'queen' },
+    ])
+    expect(readFile).not.toHaveBeenCalledWith(expect.objectContaining({ filePath: '/missing/old-castle.png' }))
+  })
+
   it.each(ENTRIES)('%s: 미해결 @멘션(pool 에 이름 있는 ref 가 있다) → unresolved-mentions + unresolvedNames, IPC 미호출', async (fn) => {
     const res = await call(fn, '@king and @ghost', [], { references: [king] })
     expect(res).toMatchObject({ success: false, errorKind: 'unresolved-mentions', unresolvedNames: ['ghost'] })
@@ -1003,6 +1039,16 @@ describe('useFlowEngine — 영상 T2V 레퍼런스: 인라인 멘션 → refs·
     expect(await t2v('@king walks', [{ ...king, data: null, mediaId: 'm-old' }])).toEqual(SOURCE_MISSING)
     expect(await t2v('@king walks', [{ ...king, data: null, filePath: '/nowhere/king.png' }])).toEqual(SOURCE_MISSING)
     expect(mockFlowGenerateVideoT2V).not.toHaveBeenCalled()
+  })
+
+  it('유효한 등록 mediaId + 사라진 로컬 파일 → R2V IPC 에 {name,mediaId}를 보내고 파일을 읽지 않는다', async () => {
+    const mediaId = '42e0c686-a53e-45ca-a44e-4f7ee0a2c0b7'
+    const registered = { ...king, name: 'king', mediaId, data: null, filePath: '/missing/old-king.png' }
+    const readFile = vi.spyOn(window.electronAPI, 'readFileByPath')
+    const result = await t2v('@king walks toward the camera', [registered])
+    expect(result.success).toBe(true)
+    expect(mockFlowGenerateVideoT2V.mock.calls[0][0].refs).toEqual([{ name: 'king', mediaId }])
+    expect(readFile).not.toHaveBeenCalled()
   })
 
   it('옛 callOpts.segments(칩 경로)는 생산자가 퇴역했다 — 싣지도 거부하지도 않고 프롬프트에서 계획한다', async () => {
