@@ -167,6 +167,18 @@ describe('M1 basic Flow exclusions', () => {
     expect(result.mentionNamesBySceneId).toEqual({})
   })
 
+  it('keeps a remote-only registered UUID in Flow batch exclusions, while a dummy mediaId remains excluded', () => {
+    const remoteOnly = { id: 'saved', name: 'Saved', type: 'scene', mediaId: '42e0c686-a53e-45ca-a44e-4f7ee0a2c0b7' }
+    const dummy = { id: 'dummy', name: 'Dummy', type: 'scene', mediaId: 'media-9' }
+    const result = collectM1FlowReferenceExclusions(
+      [{ id: 's1', prompt: '@Saved toward @Dummy' }],
+      () => [remoteOnly, dummy]
+    )
+
+    expect(result.exclusions).toEqual([{ sceneId: 's1', sceneIndex: 0, refId: 'dummy', refName: 'Dummy' }])
+    expect(result.mentionNamesBySceneId).toEqual({ s1: ['Dummy'] })
+  })
+
   // M3 멘션은 타입 무관(엔진 계획과 같다) — 제외된 non-character 멘션도 @ 를 떼야 엔진이 그 씬을 source-missing 으로 떨구지 않고 평문으로 진행한다.
   it('M3: an excluded mentioned non-character ref also has its mention stripped', () => {
     const noImageScene = { id: 'nowhere', name: 'Nowhere', type: 'scene', mediaId: 'm-1' }

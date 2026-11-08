@@ -7,7 +7,7 @@
  * tests/utils/flowReferencePlan.test.js
  */
 import { iterateMentions, resolveMentionPrefix } from './mentionParser'
-import { sourceAvailable } from './refImageGuard'
+import { flowReferenceAvailable } from './refImageGuard'
 import { FLOW_R2V_REFERENCE_LIMIT } from './flowR2vLimit.js'
 
 /**
@@ -31,7 +31,7 @@ function sameRef(a, b) {
  *   1. 토큰은 iterateMentions, 해석은 braced 정확 일치 / plain resolveMentionPrefix(한글 조사 떼기) — pool 의 이름 있는 ref 전체(타입 무관).
  *      맞은 접두만 멘션이고 남은 글자(조사)는 텍스트.
  *   2. 해석 안 된 토큰: pool 에 이름 있는 ref 가 하나라도 있으면 unresolved-mentions(+unresolvedNames), 없으면 텍스트.
- *   3. 해석된 ref 에 이미지 원천(sourceAvailable)이 없으면 flow-reference-source-missing.
+ *   3. 해석된 ref 에 이미지 원천(flowReferenceAvailable)이 없으면 flow-reference-source-missing.
  *   4. 같은 ref 를 여러 번 멘션해도 등장마다 멘션(편집기·요청 모두 관측 — 칩·레퍼런스는 하나).
  *   5. attach = attached 중 멘션되지 않은 것(정체성 id, 없으면 소문자 이름), 중복 제거. 원천 없는 첨부 → flow-reference-source-missing.
  *   6. refs = 유일 ref(멘션 첫 등장 순 → 첨부 순), 세그먼트는 인덱스로.
@@ -70,7 +70,7 @@ export function planFlowReferenceComposition({ prompt, attached = [], pool = [],
       if (byName.size > 0 && !unresolved.some((n) => n.toLowerCase() === m.name.toLowerCase())) unresolved.push(m.name)
       continue   // 텍스트로 남는다(다음 멘션·끝에서 한꺼번에 밀어 넣는다)
     }
-    if (!sourceAvailable(hit.ref)) sourceMissing = true
+    if (!flowReferenceAvailable(hit.ref)) sourceMissing = true
     pushText(text.slice(last, m.index))
     segments.push({ t: 'mention', ref: indexOf(hit.ref) })
     last = m.index + m.tokenLength
@@ -86,7 +86,7 @@ export function planFlowReferenceComposition({ prompt, attached = [], pool = [],
   const attach = []
   for (const r of attached || []) {
     if (!r || refs.slice(0, mentionCount).some((x) => sameRef(x, r)) || attach.some((i) => sameRef(refs[i], r))) continue
-    if (!sourceAvailable(r)) return fail('flow-reference-source-missing')
+    if (!flowReferenceAvailable(r)) return fail('flow-reference-source-missing')
     attach.push(indexOf(r))
   }
   if (mode === 'video' && refs.length > FLOW_R2V_REFERENCE_LIMIT) {

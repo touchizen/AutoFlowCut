@@ -30,6 +30,7 @@
  *   flowFetchGallery, flowListProjects
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { isFlowProjectMediaId } from '../utils/flowProjectMediaId.js'
 import { FLOW_MODELS } from './flowModels'
 import { isInlineImageData } from '../utils/inlineImage'   // I2V 시작 프레임 바이트 판정(훅·MCP 와 공용)
 import { planFlowReferenceComposition } from '../utils/flowReferencePlan'
@@ -293,11 +294,14 @@ export function useFlowEngine(opts = {}) {
     return api().flowGenerateCharacter(createPayload)
   }
 
-  // M3(D2): ref **하나씩** 바이트로 — 한 번에 부르면 못 읽은 ref 가 경고만 남기고 조용히 빠진다(referenceResolver). 하나라도 못 읽으면 null.
-  //   IPC 로는 경로가 아니라 base64 를 보낸다(main 이 렌더러가 준 경로를 읽는 표면을 만들지 않는다). imagePath 도 원천이다(sourceAvailable).
-  const resolveRefBytes = async (refs) => {
+  // Native Flow reuses a saved media ID. Only new uploads and the legacy backend need local bytes.
+  const resolveFlowRefs = async (refs) => {
     const out = []
     for (const ref of refs) {
+      if (!api().flowRequiresReferenceBytes && isFlowProjectMediaId(ref.mediaId)) {
+        out.push({ mediaId: ref.mediaId.toLowerCase(), ...(ref.name ? { name: ref.name } : {}) })
+        continue
+      }
       const projectName = typeof getProjectNameRef.current === 'function' ? getProjectNameRef.current() : null
       const [img] = await resolveReferenceImages([{ ...ref, filePath: ref.filePath || ref.imagePath || null }], { projectName, strictMime: true })
       if (!img?.data) return null
@@ -306,11 +310,11 @@ export function useFlowEngine(opts = {}) {
     return out
   }
 
-  // M3(D1·D3): 계획 → 바이트. 실패는 렌더러 결과 그대로({error}), 성공은 IPC 필드 {refs, plan} — 레퍼런스가 없으면 plan:null(main 은 M2 경로).
+  // Keep references in plan order; an unresolved item rejects the entire submission.
   const planFlowRefs = async (input) => {
     const planned = planFlowReferenceComposition(input)
     if (!planned.success) return { error: planned }
-    const refs = await resolveRefBytes(planned.refs)
+    const refs = await resolveFlowRefs(planned.refs)
     if (!refs) return { error: SOURCE_MISSING() }
     return { refs, plan: refs.length > 0 ? planned.plan : null }
   }

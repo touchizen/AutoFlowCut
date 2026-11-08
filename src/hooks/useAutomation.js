@@ -25,7 +25,7 @@ import { getAuthErrorMessage, getAuthRequiredMessage, authErrorIsMachineToken } 
 import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 import {
   applyM1MentionExclusions,
-  sourceAvailable,
+  flowReferenceAvailable,
 } from '../utils/refImageGuard'
 import { resolveSceneImageProvider } from '../utils/sceneProviderResolution'
 import { imageGenerationItemTimeoutMs } from '../config/imageGenerationTimeouts'
@@ -362,11 +362,11 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // 단일 씬 경로와 동일 계약) mediaId 또는 name 중 하나만 있어도 선택하고 name 을 보존한다.
       // R37 review fix: data/filePath 도 보존 — memory-only ref 가 referenceResolver 의
       // 디스크 fallback 도 못 타고 조용히 빠지는 회귀 차단. (useSceneGeneration 과 정책 동일.)
-      // M3(D15): Flow 는 로컬 이미지(data·filePath·imagePath)가 있는 ref 만 — 엔진이 그 바이트를 애셋 창에 붙여 ＋ 첨부한다(imagePath → filePath).
+      // Native Flow prefers registered project media; local bytes are for new uploads.
       const allMatched = getMatchingReferences(scene)
       const matchedRefs = allMatched
         .filter(r => mode === 'flow'
-          ? sourceAvailable(r)
+          ? flowReferenceAvailable(r)
           : !!(r?.mediaId || r?.name || r?.data || r?.filePath)
         )
         .map(r => ({

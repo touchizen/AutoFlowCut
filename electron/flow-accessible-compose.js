@@ -2,6 +2,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomBytes } from 'node:crypto'
+import { registeredAsset, thumbnailKey, recordThumbnailKey } from './flow-registered-reference.js'
 import { walkAX } from './flow-accessibility.js'
 import { normalizePrompt } from './flow-rpc-protocol.js'
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -309,9 +310,24 @@ export async function composeAccessible({
     unique = uploadsFor(wc, wc.getURL()),
     chosen = new Map()
   const { segments, attach } = plan || { segments: [{ t: 'text', text: payload.prompt }], attach: [] }
-  const dir = pre ? await mkdtemp(path.join(os.tmpdir(), 'autoflowcut-reference-')) : null
+  const registered = new Map()
+  if (pre?.refs.some(ref => ref.mediaId)) {
+    let listing
+    guard()
+    try { listing = await deps.nativeReadRpc(view, 'Zzl0ze', ['projects/' + project, null, null, null, [1]]) }
+    catch { fail('reference-registered-list-unavailable') }
+    guard()
+    for (const ref of pre.refs) if (ref.mediaId)
+      registered.set(ref.mediaId, registeredAsset(listing, project, ref.mediaId))
+  }
+  let dir
   try {
     for (const ref of pre?.refs || []) {
+      if (ref.mediaId) {
+        labels.push(registered.get(ref.mediaId).label)
+        ids.push(ref.mediaId)
+        continue
+      }
       if (unique.has(ref.sha)) {
         const saved = unique.get(ref.sha)
         labels.push(saved.label)
@@ -333,6 +349,7 @@ export async function composeAccessible({
           .normalize('NFKC')
           .replace(/[^\p{L}\p{N}_-]/gu, '')
           .slice(0, 48) || 'Reference'
+      dir ??= await mkdtemp(path.join(os.tmpdir(), 'autoflowcut-reference-'))
       const label = stem + '-' + randomBytes(6).toString('hex') + '.' + ext,
         file = path.join(dir, label)
       await writeFile(file, fileBytes, { mode: 0o600, flag: 'wx' })
@@ -420,6 +437,31 @@ export async function composeAccessible({
         if (lists.length !== 1) fail('reference-picker-ambiguous')
         return assetRow(lists[0], labels[index])
       }
+      const existing = registered.get(ids[index])
+      if (existing) {
+        // The picker virtualizes older assets. Search only its own named input,
+        // never the global header search or the prompt.
+        const fields = r => find(r, ['TextField', 'TextArea', 'SearchField', 'Edit'],
+          name => /^(?:애셋|에셋|자산|소재) 검색$|^search (?:assets|media)$/i.test(name))
+        if (fields(await read()).length) {
+          const field = r => {
+            const hits = fields(r)
+            if (picker(r).length !== 1 || hits.length !== 1) fail('reference-registered-search-unavailable')
+            return hits[0]
+          }
+          await click(field)
+          const focused = field(await read())
+          if (!focused.focused) fail('reference-registered-search-unavailable')
+          guard()
+          if (focused.value) wc.selectAll()
+          await wc.insertText(existing.label)
+          await wait(r => {
+            const f = field(r)
+            return f.focused && clean(f.value) === clean(existing.label) &&
+              (() => { try { return target(r) } catch { return false } })()
+          }, 'reference-registered-row-unavailable')
+        }
+      }
       await click(target)
       if (picker(await read()).length)
         await click((r) =>
@@ -455,6 +497,44 @@ export async function composeAccessible({
       }
     }
     for (const i of new Set(attach)) if (!mentions.includes(ids[i])) await chooseAsset(i, false)
+    // right-click metadata can move focus; verify after the whole prompt is written,
+    // and again at the last pre-submit gate. Never infer an opaque chip's ID by position.
+    const recordKeys = new Map()
+    const verifyRegisteredChips = async r => {
+      const items = chips(r)
+      const missing = [...registered.values()].filter(a => !items.some(c => c.key === 'media:' + a.id))
+      if (!missing.length) return
+      const keys = []
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].key.startsWith('media:')) continue
+        if (items[i].key.startsWith('asb:')) { keys.push(items[i].key); continue }
+        const image = root => {
+          const current = chips(root)
+          if (current.length !== items.length || !current[i]?.ready || current[i].key !== items[i].key)
+            fail('reference-registered-thumbnail-unavailable')
+          return find(current[i].node, ['Image'], () => true)[0]
+        }
+        guard()
+        const url = await ax.imageSource(view, image, guard)
+        guard()
+        keys.push(thumbnailKey(url))
+      }
+      for (const asset of missing) {
+        let key = 'media:' + asset.id
+        if (!keys.includes(key)) {
+          if (!keys.some(k => k?.startsWith('asb:'))) fail('reference-registered-thumbnail-unverified')
+          if (!recordKeys.has(asset.id)) {
+            const rec = await deps.nativeReadRpc(view, 'as29s', [asset.id])
+            guard()
+            recordKeys.set(asset.id, recordThumbnailKey(rec, asset, project))
+          }
+          key = recordKeys.get(asset.id)
+          if (!key?.startsWith('asb:')) fail('reference-registered-thumbnail-unverified')
+        }
+        if (keys.filter(k => k === key).length !== 1) fail('reference-registered-thumbnail-unverified')
+        keys.splice(keys.indexOf(key), 1)
+      }
+    }
     const matchesRoot = (r) => {
       const attached = chips(r),
         keys = new Set(attached.map((c) => c.key).filter(Boolean))
@@ -485,7 +565,17 @@ export async function composeAccessible({
       )
     }
     return {
-      matches: async () => matchesRoot(await read()),
+      matches: async () => {
+        const root = await read()
+        if (!matchesRoot(root)) return false
+        try { await verifyRegisteredChips(root) }
+        catch (e) {
+          guard()
+          if (e.message === 'flow-unusual-activity') throw e
+          fail('reference-registered-thumbnail-unverified')
+        }
+        return true
+      },
       matchesRoot,
       refs: [...new Set(ids)],
       mentions,

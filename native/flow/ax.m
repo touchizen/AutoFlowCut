@@ -21,6 +21,11 @@ static NSString *mediaKey(id el,NSString *role){
   NSString *raw=[attr(el,@"AXURL") description]; if(!raw.length)return @"";
   NSURL *u=[NSURL URLWithString:raw];
   if([u.host isEqualToString:@"flow-content.google"] && [u.path hasPrefix:@"/image/"])return [@"media:" stringByAppendingString:u.lastPathComponent];
+  if([u.scheme isEqual:@"https"] && ([@[@"flow.google.com",@"lh3.googleusercontent.com"] containsObject:u.host]) && [u.path hasPrefix:@"/asb/"]){
+    NSString *token=[[u.path substringFromIndex:5] componentsSeparatedByString:@"="].firstObject;
+    if(token.length && [token rangeOfString:@"^[A-Za-z0-9_-]+$" options:NSRegularExpressionSearch].location!=NSNotFound)
+      return [@"asb:" stringByAppendingString:token];
+  }
   if([raw hasPrefix:@"blob:https://flow.google.com/"])return [raw lastPathComponent];
   return @"";
 }

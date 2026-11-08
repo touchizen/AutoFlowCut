@@ -40,8 +40,11 @@ export function createPassiveImageGenerator(deps, withViewport, referencePreflig
   return async function generate(payload = {}, onSubmission, beforeSubmit, videoKind = null) {
     let flowSubmission = null
     const fail = (reason, postClick = false) => {
-      const kind = !videoKind ? 'flow-image-ownership-unproven' : postClick ? 'flow-submit-lost'
-        : /reference|clipboard/.test(reason) ? 'flow-reference-attach-failed' : 'flow-settings-not-applied'
+      let kind
+      if (!postClick && /^reference-registered-/.test(reason)) kind = 'flow-registered-reference-unavailable'
+      else if (!postClick && /reference|clipboard|^flow-accessibility-open-unavailable/.test(reason)) kind = 'flow-reference-attach-failed'
+      else if (!videoKind) kind = 'flow-image-ownership-unproven'
+      else kind = postClick ? 'flow-submit-lost' : 'flow-settings-not-applied'
       return ({ success: false, errorKind: kind,
       error: kind, reason, errorParams: { reason }, retryBlocked: true, ...(postClick ? { postClick: true, ...(!videoKind ? { safetyStop: true } : {}) } : {}),
       ...(flowSubmission ? { flowSubmission: { ...flowSubmission, reason } } : {}) })
@@ -65,7 +68,7 @@ export function createPassiveImageGenerator(deps, withViewport, referencePreflig
     const url = wc?.getURL?.()
     const project = /^https:\/\/flow\.google\.com\/project\/([0-9a-f-]{36})\/?$/.exec(url || '')?.[1]
     if (!project || (payload.projectId && payload.projectId !== project)) return fail('project-not-open')
-    const pre = hasRefs ? referencePreflight?.(view, payload) : null
+    const pre = hasRefs ? referencePreflight?.(view, payload, { registered: !!deps.flowAccessibility }) : null
     if (hasRefs && (!pre?.ok || !plan || (!plan.segments.some(s => s.t === 'mention') && videoKind !== 'i2v' && normalizePrompt(plan.segments.map(s => s.text)) !== prompt) || new Set([...plan.attach, ...plan.segments.filter(s => s.t === 'mention').map(s => s.ref)]).size !== pre.refs.length)) return fail('unsupported-input')
     const want = videoKind ? { model: payload.model, duration: Number(payload.duration), resolution: payload.resolution,
       ratio: payload.aspectRatio, kind: videoKind } : null

@@ -242,6 +242,7 @@ function createWindow() {
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
+      additionalArguments: FLOW_PAGE_POLICY.rpcCapture ? ['--afc-legacy-reference-bytes'] : [],
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: false  // 로컬 file:// 이미지 로드 허용

@@ -29,7 +29,7 @@ function responseLog(url, body) {
   })
 }
 
-function setup(video, fault) {
+function setup(video, fault, saved = null) {
   const step = video ? 10 : 3
   const recorded = s3(step)
   const generation = decodeFReqInner(s3RequestBody(step))
@@ -37,14 +37,21 @@ function setup(video, fault) {
   const capture = createPassiveCapture()
   const submissions = vi.fn()
   const pageJS = vi.fn(() => { throw new Error('Page JavaScript is forbidden') })
-  const state = { settings: false, picker: false, panel: false, focused: false, text: '', mention: '', filename: '' }
+  const savedId = saved?.mediaId || null
+  const expectedId = savedId || refId
+  const createFromBuffer = vi.fn(() => ({ isEmpty: () => false, toPNG: () => png, toBitmap: () => png,
+    getSize: () => ({ width: 1, height: 1 }) }))
+  const state = { settings: false, picker: false, panel: false, focused: false, searchFocused: false,
+    search: '', text: '', mention: '', filename: '' }
   const wc = Object.assign(new EventEmitter(), {
     id: 7, session: {}, getURL: () => PAGE, isDestroyed: () => false, focus: vi.fn(),
     executeJavaScript: pageJS, executeJavaScriptInIsolatedWorld: pageJS,
     async insertText(value) {
       if (value === '@') state.picker = true
+      else if (state.searchFocused) state.search += value
       else state.text += value
     },
+    selectAll() { if (state.searchFocused) state.search = ''; else state.text = '' },
     sendInputEvent(event) { if (event.keyCode === 'Escape') state.picker = false },
   })
   const view = { webContents: wc }
@@ -63,7 +70,7 @@ function setup(video, fault) {
       children: leaves(), action: () => { state.focused = true } })
     const generate = button('생성 시작', () => {
       submissions(text)
-      const mentionSegment = [null, [[refId, state.mention]]]
+      const mentionSegment = [null, [[expectedId, state.mention]]]
       const prompt = video ? generation.inner[0][0][0][2] : generation.inner[1][0][8]
       prompt[0] = [[text], mentionSegment]
       observeRequest(generation.inner, recorded.rpcid, 10)
@@ -76,22 +83,33 @@ function setup(video, fault) {
       ...(video ? [radio('4초'), radio('720p'), radio('소재')] : []))
     if (state.picker) {
       const filename = fault === 'wrong picker name' ? 'another.png' : state.filename
-      const item = node('StaticText', filename, { action: () => {
-        state.mention = state.filename; state.picker = false
+      const item = node('StaticText', saved?.title || filename, { action: () => {
+        state.mention = saved?.title || state.filename; state.picker = false; state.searchFocused = false
       } })
-      children.push(node('List', '자산 목록', { children: state.filename ? [item] : [] }),
+      if (saved?.searchable) children.push(node('TextField', 'Search assets', { value: state.search, focused: state.searchFocused,
+        action: () => { state.searchFocused = true } }))
+      const visibleSaved = !saved?.searchable || state.search.toLowerCase().includes(saved.title.toLowerCase())
+      children.push(node('List', '자산 목록', { children: (state.filename || (saved?.title && visibleSaved)) ? [item] : [] }),
         button('미디어 업로드', () => { state.panel = true }))
     }
     if (state.mention && fault !== 'missing chip') {
-      const id = fault === 'wrong chip ID' || state.chipReplaced ? 'eeeeeeee-0000-4000-8000-000000000000' : refId
+      const id = fault === 'wrong chip ID' || state.chipReplaced ? 'eeeeeeee-0000-4000-8000-000000000000' : expectedId
+      const mediaKey = saved?.asbKey || (saved?.opaque ? null : 'media:' + id)
       children.push(button('소재', undefined, {
-        children: [node('Image', state.mention, { mediaKey: 'media:' + id })],
+        children: [node('Image', state.mention, mediaKey ? { mediaKey } : {})],
       }))
     }
     return node('WebArea', 'Google Flow', { children })
   }
   const ax = {
     snapshot,
+    ...(saved?.opaque ? { imageSource: vi.fn(async (_view, selectNode, guard) => {
+      guard?.()
+      selectNode(snapshot())
+      const urls = saved.imageUrls || [saved.imageUrl || 'https://lh3.googleusercontent.com/asb/TOKEN']
+      const index = ax.imageSource.mock.calls.length - 1
+      return urls[Math.min(index, urls.length - 1)]
+    }) } : {}),
     async click(_view, select, options = {}) {
       if (options.beforeDispatch && !await options.beforeDispatch()) return { success: false }
       if (options.step === 'compose-submit' && fault === 'last-moment wrong chip') state.chipReplaced = true
@@ -123,27 +141,147 @@ function setup(video, fault) {
       expect(receipt[0][1]).toBe(request.projectId)
       return parseUploadResponse(receipt)
     }
-    expect(request).toMatchObject({ refs: [refId], mentions: [refId], prompts: [text], count: 1 })
+    expect(request).toMatchObject({ refs: [expectedId], mentions: [expectedId], prompts: [text], count: 1 })
     const log = responseLog(url, recorded.respBody)
     return video ? videoResultFromNetLog(log, url, request) : imageResultsFromNetLog(log, url, request)
   })
   const deps = {
     getFlowView: () => view, getMainWindow: () => null, passiveCapture: capture, flowAccessibility: ax,
-    nativeImage: { createFromBuffer: () => ({ isEmpty: () => false, toPNG: () => png, toBitmap: () => png,
-      getSize: () => ({ width: 1, height: 1 }) }) },
+    nativeImage: { createFromBuffer },
     typeFlowText: pageJS, trustedClickOnFlowView: pageJS,
     startResponseCapture: async () => ({ assertReady() {}, finish: owned, async cancel() {} }),
     downloadPassiveImage: vi.fn(async itemSession => { expect(itemSession).toBe(wc.session); return { collected: true } }),
+    ...(saved ? { nativeReadRpc: vi.fn(async (_view, rpcid, payload) => {
+      if (rpcid === 'Zzl0ze') {
+        expect(payload).toEqual(['projects/' + PROJECT, null, null, null, [1]])
+        return saved.rows
+      }
+      expect(rpcid).toBe('as29s')
+      expect(payload).toEqual([saved.mediaId])
+      const meta = []
+      meta[10] = saved.recordUrl || 'https://lh3.googleusercontent.com/asb/TOKEN'
+      return [saved.mediaId, saved.recordProject || PROJECT, saved.recordWorkflowId || 'f8b2b7be-36d8-42f8-96db-7ee991f5df1c', null, null, meta]
+    }) } : {}),
   }
   const generate = createPassiveImageGenerator(deps, (_view, _name, action) => action({ aborted: false }), referencePreflight)
   const payload = {
     prompt: text + ' @CupPalette', model: video ? 'Omni Flash' : 'Nano Banana 2.1',
     projectId: PROJECT, aspectRatio: '9:16', duration: 4, resolution: '720p',
-    refs: [{ name: 'CupPalette', base64: png.toString('base64'), mime: 'image/png' }],
+    refs: [saved ? { name: 'CupPalette', mediaId: saved.mediaId } : { name: 'CupPalette', base64: png.toString('base64'), mime: 'image/png' }],
     plan: { segments: [{ t: 'text', text: text + ' ' }, { t: 'mention', ref: 0 }], attach: [] },
   }
-  return { run: () => generate(payload, undefined, undefined, video ? 'r2v' : null), pageJS, owned, submissions }
+  return { run: () => generate(payload, undefined, undefined, video ? 'r2v' : null), pageJS, owned, submissions,
+    deps, ax, state, expectedId, openFile: ax.openFile }
 }
+
+const SAVED_ID = refId
+const WORKFLOW_ID = 'f8b2b7be-36d8-42f8-96db-7ee991f5df1c'
+const savedWorkflow = (workflowId = 'f8b2b7be-36d8-42f8-96db-7ee991f5df1c', mediaId = SAVED_ID,
+  project = PROJECT, title = 'CupPalette-from-Flow') => {
+  const row = []
+  row[0] = workflowId
+  row[3] = [title]
+  row[3][4] = mediaId
+  row[4] = project
+  return row
+}
+
+const opaqueSaved = (overrides = {}) => ({ mediaId: SAVED_ID, title: 'CupPalette-from-Flow', opaque: true,
+  rows: [null, [savedWorkflow(WORKFLOW_ID)]], ...overrides })
+
+it.each(['image', 'R2V'])('reuses a saved project mediaId for %s without local bytes or upload', async kind => {
+  const h = setup(kind === 'R2V', null, { mediaId: SAVED_ID, title: 'CupPalette-from-Flow', rows: [null, [savedWorkflow()]] })
+  const imageFromBytes = h.deps.nativeImage.createFromBuffer
+  const openFile = vi.spyOn(h.ax, 'openFile')
+  const result = await h.run()
+  expect(result.success).toBe(true)
+  expect(h.owned).toHaveBeenCalledTimes(1)
+  expect(h.submissions).toHaveBeenCalledTimes(1)
+  expect(h.deps.nativeReadRpc).toHaveBeenCalledTimes(1)
+  expect(openFile).not.toHaveBeenCalled()
+  expect(imageFromBytes).not.toHaveBeenCalled()
+  expect(h.pageJS).not.toHaveBeenCalled()
+})
+
+it('accepts an opaque saved chip only when its ASB token matches the native media record', async () => {
+  const h = setup(false, null, opaqueSaved())
+  const result = await h.run()
+  expect(h.deps.flowAccessibility.imageSource).toHaveBeenCalledTimes(2)
+  expect(h.deps.nativeReadRpc.mock.calls.map(([, rpcid, payload]) => [rpcid, payload])).toEqual([
+    ['Zzl0ze', ['projects/' + PROJECT, null, null, null, [1]]], ['as29s', [SAVED_ID]],
+  ])
+  expect(result.success).toBe(true)
+  expect(h.submissions).toHaveBeenCalledTimes(1)
+})
+
+it('accepts AX mediaKey asb:TOKEN with a matching native record without imageSource', async () => {
+  const h = setup(false, null, opaqueSaved({ asbKey: 'asb:TOKEN' }))
+  const result = await h.run()
+  expect(result.success).toBe(true)
+  expect(h.deps.flowAccessibility.imageSource).not.toHaveBeenCalled()
+  expect(h.deps.nativeReadRpc).toHaveBeenCalledWith(h.deps.getFlowView(), 'as29s', [SAVED_ID])
+})
+
+it('rejects AX mediaKey asb:OTHER when native media record identifies asb:TOKEN', async () => {
+  const h = setup(false, null, opaqueSaved({ asbKey: 'asb:OTHER' }))
+  const result = await h.run()
+  expect(result.success).toBe(false)
+  expect(h.submissions).not.toHaveBeenCalled()
+  expect(h.deps.flowAccessibility.imageSource).not.toHaveBeenCalled()
+  expect(h.deps.nativeReadRpc).toHaveBeenCalledWith(h.deps.getFlowView(), 'as29s', [SAVED_ID])
+})
+
+it('searches an initially empty project asset picker by the verified title', async () => {
+  const h = setup(false, null, { mediaId: SAVED_ID, title: 'CupPalette-from-Flow', searchable: true,
+    rows: [null, [savedWorkflow(WORKFLOW_ID)]] })
+  const openFile = vi.spyOn(h.ax, 'openFile')
+  const result = await h.run()
+  expect(h.state.search).toBe('CupPalette-from-Flow')
+  expect(result.success).toBe(true)
+  expect(h.submissions).toHaveBeenCalledTimes(1)
+  expect(openFile).not.toHaveBeenCalled()
+})
+
+it.each([
+  ['wrong ASB token', opaqueSaved({ imageUrl: 'https://lh3.googleusercontent.com/asb/OTHER' })],
+  ['wrong workflow', opaqueSaved({ recordWorkflowId: '867f308d-69bd-4d16-8dab-1aa4a3a8a026' })],
+])('rejects an opaque chip with %s before submit', async (_case, saved) => {
+  const h = setup(false, null, saved)
+  const openFile = vi.spyOn(h.ax, 'openFile')
+  const result = await h.run()
+  expect(result.success).toBe(false)
+  expect(h.submissions).not.toHaveBeenCalled()
+  expect(h.deps.flowAccessibility.imageSource).toHaveBeenCalledTimes(1)
+  expect(h.deps.nativeReadRpc).toHaveBeenCalledWith(h.deps.getFlowView(), 'as29s', [SAVED_ID])
+  expect(openFile).not.toHaveBeenCalled()
+})
+
+it('rechecks an opaque thumbnail before submit and rejects a token that changes after initial proof', async () => {
+  const h = setup(false, null, opaqueSaved({ imageUrls: [
+    'https://lh3.googleusercontent.com/asb/TOKEN', 'https://lh3.googleusercontent.com/asb/OTHER',
+  ] }))
+  const result = await h.run()
+  expect(result.success).toBe(false)
+  expect(h.deps.flowAccessibility.imageSource).toHaveBeenCalledTimes(2)
+  expect(h.deps.nativeReadRpc.mock.calls.filter(([, rpcid]) => rpcid === 'as29s')).toHaveLength(1)
+  expect(h.submissions).not.toHaveBeenCalled()
+})
+
+it.each([
+  ['ambiguous title', [null, [savedWorkflow(), savedWorkflow('867f308d-69bd-4d16-8dab-1aa4a3a8a026', '7f27ef43-e0f3-47cb-9ef2-1e19d9c191da')]]],
+  ['foreign project', [null, [savedWorkflow('f8b2b7be-36d8-42f8-96db-7ee991f5df1c', SAVED_ID, '00000000-0000-4000-8000-000000000000')]]],
+  ['missing media row', [null, []]],
+  ['matching workflow ID with a different media UUID', [null, [savedWorkflow(SAVED_ID, '7f27ef43-e0f3-47cb-9ef2-1e19d9c191da')]]],
+])('rejects saved references with %s before submit and without opening the file panel', async (_case, rows) => {
+  const h = setup(false, null, { mediaId: SAVED_ID, title: 'CupPalette-from-Flow', rows })
+  const openFile = vi.spyOn(h.ax, 'openFile')
+  const result = await h.run()
+  expect(result.success).toBe(false)
+  expect(h.submissions).not.toHaveBeenCalled()
+  expect(h.deps.nativeReadRpc).toHaveBeenCalledTimes(1)
+  expect(openFile).not.toHaveBeenCalled()
+  expect(h.pageJS).not.toHaveBeenCalled()
+})
 
 it.each(['image', 'R2V'])('completes one %s submission with a verified trailing inline reference and no page JS', async kind => {
   const video = kind === 'R2V'

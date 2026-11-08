@@ -1,3 +1,4 @@
+import { isFlowProjectMediaId } from '../../src/utils/flowProjectMediaId.js'
 /**
  * electron/ipc/flow-angular.js
  *
@@ -148,14 +149,14 @@ const PLAN_MAX_ITEMS = 64
 
 /**
  * M3(D1): 두 핸들러가 ensureOnProjectComposer 뒤·DOM 단계 전에 부르는 사전 검사 — 전부 클릭 전(0크레딧).
- *   ① plan 모양(세그먼트 타입·인덱스 범위·문자열·개수 ≤ 64, refs 는 비지 않은 base64) → 아니면 reason bad-plan
+ *   ① plan 모양(세그먼트 타입·인덱스 범위·문자열·개수 ≤ 64, refs 는 비지 않은 base64 또는 네이티브 경로의 미디어 UUID) → 아니면 reason bad-plan
  *   ② 레퍼런스가 있으면 projectIdFromFlowUrl(지금 URL) → null 이면 no-project-id(세션 캐시 키의 일부, D6)
  *   ③ timeoutMs = DOM_STAGE_TIMEOUT_MS + 120s × 유일 ref 수(sha256 — 같은 바이트는 한 번 올린다, D4).
  *   레퍼런스가 없으면 ③ 만(= 기존 120s) — plan 이 오면 모양만 본다(멘션이 있는데 refs 가 비면 bad-plan).
  *   IPC 는 경로가 아니라 base64 를 받는다(D2) — main 이 바이트·sha 를 만든다. 로그는 reason 만.
  * @returns {{ok:true, refs:Array<{bytes:Buffer, sha:string}>, projectId:string|null, timeoutMs:number} | {ok:false, reason:string}}
  */
-export function referencePreflight(flowView, { refs, plan } = {}) {
+export function referencePreflight(flowView, { refs, plan } = {}, { registered = false } = {}) {
   const bad = (reason) => { console.warn(`[Flow Refs] preflight failed reason=${reason}`); return { ok: false, reason } }
   if (refs != null && !Array.isArray(refs)) return bad('bad-plan')
   const list = Array.isArray(refs) ? refs : []
@@ -168,6 +169,12 @@ export function referencePreflight(flowView, { refs, plan } = {}) {
   if (!segs.every(segOk) || !attach.every(inRange)) return bad('bad-plan')
   const decoded = []
   for (const r of list) {
+    if (r?.mediaId != null) {
+      if (!registered || !isFlowProjectMediaId(r.mediaId) || r.base64 != null) return bad('bad-plan')
+      const mediaId = r.mediaId.toLowerCase()
+      decoded.push({ mediaId, sha: 'media:' + mediaId })
+      continue
+    }
     const bytes = r && typeof r.base64 === 'string' ? Buffer.from(r.base64, 'base64') : null
     if (!bytes || bytes.length === 0) return bad('bad-plan')
     decoded.push({ bytes, ...(typeof r.name === 'string' ? { name:r.name } : {}), sha: createHash('sha256').update(bytes).digest('hex') })
