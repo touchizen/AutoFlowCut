@@ -585,7 +585,7 @@ describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이�
     expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
     expect(mockFlowGenerateImage.mock.calls[0][0]).toEqual({
       token: null, prompt: 'the queen walks', aspectRatio: '9:16', seed: 5, model: 'Nano Banana 2', projectId: null, batchCount: 2, asyncMode,
-      refs: [{ base64: 'QUFB', mime: 'image/png' }], plan: { segments: [{ t: 'text', text: 'the queen walks' }], attach: [0] }, referenceImages: [],
+      refs: [{ base64: 'QUFB', mime: 'image/png', name: 'queen' }], plan: { segments: [{ t: 'text', text: 'the queen walks' }], attach: [0] }, referenceImages: [],
     })
     expect(res).toEqual(asyncMode ? { success: true, generationId: 'gen-7' } : { success: true, images: [{ base64: 'img', mediaId: 'm' }] })
   })
@@ -593,7 +593,7 @@ describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이�
   it.each(ENTRIES)('%s: @멘션 + 태그 → 멘션 세그먼트(ref 0) + 첨부(ref 1), 바이트는 refs 순서 · 멘션된 태그 사본은 첨부하지 않는다', async (fn) => {
     await call(fn, '@king이 queen 과 걷는다', [{ ...queen, name: 'King', data: JPG }, queen], { references: [king, queenRef] })
     const p = mockFlowGenerateImage.mock.calls[0][0]
-    expect(p.refs).toEqual([{ base64: '/9j/BB', mime: 'image/jpeg' }, { base64: 'QUFB', mime: 'image/png' }])
+    expect(p.refs).toEqual([{ base64: '/9j/BB', mime: 'image/jpeg', name: 'king' }, { base64: 'QUFB', mime: 'image/png', name: 'queen' }])
     expect(p.plan).toEqual({ segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: '이 queen 과 걷는다' }], attach: [1] })
     expect(p.prompt).toBe('@king이 queen 과 걷는다')
   })
@@ -621,7 +621,7 @@ describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이�
     await call(fn, 'a castle', [queen], refOpts)
     expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
     expect(mockFlowGenerateImage.mock.calls[0][0]).toEqual(expect.objectContaining({
-      prompt: 'a castle', asyncMode, refs: [{ base64: 'QUFB', mime: 'image/png' }],
+      prompt: 'a castle', asyncMode, refs: [{ base64: 'QUFB', mime: 'image/png', name: 'queen' }],
       plan: { segments: [{ t: 'text', text: 'a castle' }], attach: [0] }, referenceImages: [],
     }))
     mockFlowGenerateImage.mockClear()
@@ -659,7 +659,7 @@ describe('useFlowEngine — Flow 레퍼런스: 계획 → ref 하나씩 바이�
       await act(async () => { await result.current[fn]('hero rides', [{ name: 'hero', imagePath: 'references/hero.png' }], {}) })
       expect(window.electronAPI.readFileByPath).toHaveBeenCalledWith({ workFolder: '/work', filePath: 'references/hero.png' })
       expect(window.electronAPI.readResource).toHaveBeenCalledWith(expect.objectContaining({ workFolder: '/work', project: 'proj', name: 'hero' }))
-      expect(mockFlowGenerateImage.mock.calls[0][0].refs).toEqual([{ base64: '/9j/BB', mime: 'image/jpeg' }])
+      expect(mockFlowGenerateImage.mock.calls[0][0].refs).toEqual([{ base64: '/9j/BB', mime: 'image/jpeg', name: 'hero' }])
     } finally {
       window.electronAPI.readFileByPath.mockReset()
       window.electronAPI.readResource.mockReset()
@@ -974,7 +974,7 @@ describe('useFlowEngine — 영상 T2V 레퍼런스: 인라인 멘션 → refs·
     const p = mockFlowGenerateVideoT2V.mock.calls[0][0]
     expect(p).toEqual({
       token: null, prompt: '@king walks toward the camera', projectId: null, model: 'Omni Flash', aspectRatio: '9:16', duration: 4, resolution: '720p', videoBatchCount: 1, seed: null,
-      refs: [{ base64: '/9j/BB', mime: 'image/jpeg' }], plan: { segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ' walks toward the camera' }], attach: [] },
+      refs: [{ base64: '/9j/BB', mime: 'image/jpeg', name: 'king' }], plan: { segments: [{ t: 'mention', ref: 0 }, { t: 'text', text: ' walks toward the camera' }], attach: [] },
     })
     expect(p).not.toHaveProperty('segments')
   })

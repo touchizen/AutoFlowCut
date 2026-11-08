@@ -1,3 +1,4 @@
+import { composeAccessible, editorNode, generationNode } from './flow-accessible-compose.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { applyNativeSettings } from './flow-native-settings.js'
 import { FIND_GENERATE_BUTTON_JS, findPromptEditor } from './flow-composer-dom.js'
@@ -26,11 +27,11 @@ export async function readPassiveDom(wc, code, signal) {
     return Array.isArray(result) ? result[0] : result
   } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort) }
 }
-export async function passiveSessionReady(wc) {
+export async function passiveSessionReady(wc, ax) {
   try {
     if (!/^https:\/\/flow\.google\.com\/project\/[0-9a-f-]{36}\/?$/.test(wc.getURL())) return { ready: false, reason: 'not-on-flow' }
-    return await readPassiveDom(wc, READY) ? { ready: true, credits: null } : { ready: false, reason: 'composer-missing' }
-  } catch { return { ready: false, reason: 'page-unreadable' } }
+    return (ax ? editorNode(await ax.snapshot(wc)) : await readPassiveDom(wc, READY)) ? { ready: true, credits: null } : { ready: false, reason: 'composer-missing' }
+  } catch(e) { return { ready:false, reason:ax && ['flow-accessibility-permission-required','flow-unusual-activity','flow-accessibility-platform'].includes(e.message)?e.message:'page-unreadable' } }
 }
 
 /** Shared native submission lane. Images finish the download before returning;
@@ -109,8 +110,10 @@ export function createPassiveImageGenerator(deps, withViewport, referencePreflig
         || deps.isFlowSafetyBlocked?.() || (deps.getCurrentMode && deps.getCurrentMode() !== 'flow')) throw new Error('capture-aborted')
     }
     const read = async code => { guard(); const result = await readPassiveDom(wc, code, lease.signal); guard(); return result }
+    const ax = deps.flowAccessibility
     let composed
     const composerMatches = async () => {
+      if (ax) return composed.matches()
       const st = await read(composerStateJs(composed?.tokens || {}))
       if (composed) {
         const ids = st?.chips?.map(c => !c.busy && c.mediaId)
@@ -140,35 +143,41 @@ export function createPassiveImageGenerator(deps, withViewport, referencePreflig
       const result = await withViewport(view, '[Flow Image] [Passive]', async ctl => {
         const aborted = () => ctl.aborted || lease.signal.aborted || !!deps.isFlowSafetyBlocked?.()
         guard()
-        if (!await read(READY) || !await read(AGENT_OFF)) return fail('composer-unavailable')
-        const st = await read(composerStateJs({}))
-        if (!st || st.pickerOpen || !Array.isArray(st.chips) || (!hasRefs && st.chips.length)) return fail('composer-not-clear')
         const targets = { mode: videoKind ? 'video' : 'image', model: payload.model, ratio: payload.aspectRatio, count,
           ...(want ? { duration: want.duration, resolution: want.resolution } : {}) }
-        const controls = { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted: aborted }
-        const settings = await applyNativeSettings(view, targets, controls)
-        guard()
-        if (!settings.ok || ctl.aborted) return fail(settings.reason || 'settings-not-applied')
-        if (hasRefs) {
+        if (ax) {
           const refGuard = () => { guard(); if (ctl.aborted) throw new Error('capture-aborted') }
-          composed = await prepareNativeReferences({ wc, deps, read, guard: refGuard, aborted, lease, project }, pre, plan)
-          Object.assign(expected, { refs: composed.refs, mentions: composed.mentions, prompt: videoKind === 'i2v' ? prompt : composed.text })
-          if (videoKind === 'i2v') {
-            const frames = await applyNativeSettings(view, { ...targets, input: 'frames' }, controls)
-            if (!frames.ok) return fail(frames.reason || 'frame-settings')
+          composed = await composeAccessible({ view, ax, guard:refGuard, pre, plan, targets, lease, deps, payload, project, videoKind })
+          Object.assign(expected, { refs:composed.refs, mentions:composed.mentions, prompt:videoKind === 'i2v' ? prompt : composed.text })
+        } else {
+          if (!await read(READY) || !await read(AGENT_OFF)) return fail('composer-unavailable')
+          const st = await read(composerStateJs({}))
+          if (!st || st.pickerOpen || !Array.isArray(st.chips) || (!hasRefs && st.chips.length)) return fail('composer-not-clear')
+          const controls = { trustedClickOnFlowView: deps.trustedClickOnFlowView, isAborted: aborted }
+          const settings = await applyNativeSettings(view, targets, controls)
+          guard()
+          if (!settings.ok || ctl.aborted) return fail(settings.reason || 'settings-not-applied')
+          if (hasRefs) {
+            const refGuard = () => { guard(); if (ctl.aborted) throw new Error('capture-aborted') }
+            composed = await prepareNativeReferences({ wc, deps, read, guard: refGuard, aborted, lease, project }, pre, plan)
+            Object.assign(expected, { refs: composed.refs, mentions: composed.mentions, prompt: videoKind === 'i2v' ? prompt : composed.text })
+            if (videoKind === 'i2v') {
+              const frames = await applyNativeSettings(view, { ...targets, input: 'frames' }, controls)
+              if (!frames.ok) return fail(frames.reason || 'frame-settings')
+            }
+          }
+          if (!composed?.mentions.length || videoKind === 'i2v') {
+            wc.focus()
+            const focused = await deps.trustedClickOnFlowView(EDITOR, { required: true, step: 'compose-editor', beforeDispatch: async () => !aborted() })
+            guard()
+            if (!focused?.success) return fail('editor-not-focused')
+            const typed = await deps.typeFlowText(wc, payload.prompt, { isAborted: aborted })
+            guard()
+            if (!typed?.ok) return fail(hasRefs ? 'reference-input-' + (typed?.reason || 'failed') : 'text-mismatch')
           }
         }
-        if (!composed?.mentions.length || videoKind === 'i2v') {
-          wc.focus()
-          const focused = await deps.trustedClickOnFlowView(EDITOR, { required: true, step: 'compose-editor', beforeDispatch: async () => !aborted() })
-          guard()
-          if (!focused?.success) return fail('editor-not-focused')
-          const typed = await deps.typeFlowText(wc, payload.prompt, { isAborted: aborted })
-          guard()
-          if (!typed?.ok) return fail(hasRefs ? 'reference-input-' + (typed?.reason || 'failed') : 'text-mismatch')
-        }
         if (ctl.aborted || !await composerMatches()) return fail(hasRefs ? 'reference-composer-changed' : 'text-mismatch')
-        responseCapture = await deps.startResponseCapture(wc.session, { signal: lease.signal })
+        responseCapture = await deps.startResponseCapture(wc.session, { signal: lease.signal, projectId:project })
         guard()
         responseCapture.assertReady()
         deps.setShieldFocusTarget?.('main')
@@ -176,7 +185,8 @@ export function createPassiveImageGenerator(deps, withViewport, referencePreflig
         await pause(500)
         // The native collector must be ready at the last dispatch gate, after
         // all asynchronous composer and current-scene checks.
-        const click = await deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, { required: true, step: 'compose-submit', onDispatched: recordSubmission, beforeDispatch: async () => {
+        const submit = opts => ax ? ax.click(view, generationNode, { ...opts, validateSnapshot:composed.matchesRoot, dispatchGuard:() => { guard(); responseCapture.assertReady() } }) : deps.trustedClickOnFlowView(FIND_GENERATE_BUTTON_JS, opts)
+        const click = await submit({ required: true, step: 'compose-submit', onDispatched: recordSubmission, beforeDispatch: async () => {
           guard()
           if (aborted() || !await composerMatches()) return false
           // Last await before native dispatch: a scene can change while any of

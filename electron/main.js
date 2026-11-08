@@ -1,8 +1,11 @@
+import { startProjectProof } from './flow-project-proof.js'
+import { createFlowAccessibility, blockFlowPageScripts } from './flow-accessibility.js'
+import { nativeFlowReads } from './flow-native-rpc.js'
 import { createPassiveCapture, bindPassiveRequests } from './flow-passive-capture.js'
 import { createFlowLiveDiagnostics, flowLiveProjectUrl } from './flow-live-diagnostics.js'
 import { downloadFlowImage } from './flow-image-download.js'
 import { startFlowResponseCapture } from './flow-native-response.js'
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, dialog, clipboard, nativeImage } from 'electron'
+import { app, screen, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut, dialog, clipboard, nativeImage } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -153,6 +156,16 @@ const flowBearerStore = createBearerStore()
 //   안 한다 — 생성 로직 무관. 파일: AUTOFLOWCUT_NET_TRACE_FILE 또는 바탕화면(flow-net-trace.js).
 const FLOW_PAGE_POLICY = flowPagePolicy(process.env)
 let flowPassiveCapture = null
+const flowAccessibility = FLOW_PAGE_POLICY.rpcCapture ? null : createFlowAccessibility(
+  path.join(__dirname.replace(/app\.asar(?=[/\\])/, 'app.asar.unpacked'), 'flow-native'),
+  () => flowSafety.stop('flow-unusual-activity'), wc => {
+    const view=modeController.getFlowView()
+    if (!mainWindow || view?.webContents!==wc) throw new Error('flow-view-changed')
+    const win=mainWindow.getContentBounds(), r=view.getBounds()
+    const box=screen.dipToScreenRect(mainWindow,{...r,x:r.x+win.x,y:r.y+win.y})
+    return [box.x,box.y,box.width,box.height].join(',')
+  })
+const nativeReadSessions = new WeakMap()
 const NET_TRACE_ON = FLOW_PAGE_POLICY.legacyMutation && isNetTraceOn(process.env)
 const NET_TRACE_INJECTION = 'window.__autoflowcut_net_trace__ = true;\n' + FLOW_XHR_CAPTURE_INJECTION
 let netTraceFile = null
@@ -425,6 +438,7 @@ app.on('before-quit', (event) => {
 //   makeFlowView 의 before-input-event 가 이 플래그를 보고 preventDefault 한다. 앱의 Angular 자동화는 executeJavaScript 와 **마우스** sendInputEvent(신뢰 클릭)뿐이고
 //   Escape 는 페이지 안 DOM 이벤트라 잠금이 자동화를 막지 않는다(키 sendInputEvent 는 옛 labs.google 멘션 경로에만 있고 Angular 에선 미지원으로 거부된다 — mainInputShieldWiring 핀).
 let automationKeyLock = false
+const escapeUntil=new WeakMap()
 // M2-FINAL Q1(A1 = B1): 방패 focus 의 단계 플래그 — 'flow'(기본·방패 생성 시·DOM 단계 finally 리셋)면 O5 대로 Flow 뷰로, 'main'(핸들러의 focusMainWindow: 재판독 뒤 OS 포커스를
 //   메인 창으로 옮긴 뒤)이면 메인 창으로. P2 뒤에도 O5 가 방패 클릭마다 포커스를 Flow 뷰로 돌려보내 Blink 가 ProseMirror 편집기에 문서 포커스를 되살리고 IME 조합이 다시
 //   프롬프트에 붙었다(재판독~mouseDown 사이 ≈200–300ms). flowAPIDeps.setShieldFocusTarget 이 세운다.
@@ -467,8 +481,10 @@ function makeFlowView() {
     webPreferences: {
       partition: 'persist:flow',
       contextIsolation: true,
-      webSecurity: false,
-      preload: path.join(__dirname, 'flow-preload.cjs'),
+      webSecurity: !FLOW_PAGE_POLICY.rpcCapture,
+      sandbox: true,
+      devTools: FLOW_PAGE_POLICY.rpcCapture,
+      ...(FLOW_PAGE_POLICY.rpcCapture ? { preload: path.join(__dirname, 'flow-preload.cjs') } : {}),
       additionalArguments: [
         ...(FLOW_PAGE_POLICY.rpcCapture ? ['--autoflowcut-flow-rpc-capture'] : []),
         ...(FLOW_PAGE_POLICY.legacyMutation ? ['--autoflowcut-flow-legacy-mutation'] : []),
@@ -476,8 +492,15 @@ function makeFlowView() {
     },
   })
 
+  if (flowAccessibility) {
+    app.setAccessibilitySupportEnabled(true)
+    blockFlowPageScripts(view.webContents)
+    nativeReadSessions.set(view.webContents,nativeFlowReads(view.webContents))
+  }
   // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금(위 automationKeyLock — flowAPIDeps.setAutomationKeyLock 이 켜고 끈다)
-  view.webContents.on('before-input-event', (e) => { if (automationKeyLock) e.preventDefault() })
+  view.webContents.on('before-input-event', (e,input) => {
+    if (automationKeyLock && !(input.key==='Escape' && Date.now()<(escapeUntil.get(view.webContents)||0))) e.preventDefault()
+  })
   // 업스케일 다운로드 중엔 어떤 경로의 loadURL·reload 도 끝날 때까지 기다린다 — 편집 화면을 떠나면 파일이 오지 않는다(Codex R4 #1 · Fable R3 #5).
   guardFlowNavigation(view.webContents)
 
@@ -584,10 +607,11 @@ function makeFlowView() {
 
   // One session listener combines passive ownership with the existing diagnostics.
   const passive = createPassiveCapture()
-  const liveDiagnostics = createFlowLiveDiagnostics({ webContents: view.webContents })
+  const liveDiagnostics = flowAccessibility ? {} : createFlowLiveDiagnostics({ webContents: view.webContents })
   flowPassiveCapture = passive
   const disposePassive = bindPassiveRequests(view.webContents.session, passive,
     (details) => {
+      nativeReadSessions.get(view.webContents)?.observe(details)
       // AUTOFLOWCUT_NET_TRACE: batchexecute 요청 본문(f.req/at)은 여기서 — 페이지 주입보다 먼저 나간
       //   요청도 보인다(응답은 못 보므로 XHR 훅이 따로 보고한다).
       if (NET_TRACE_ON && details.url.includes('batchexecute')) {
@@ -948,6 +972,7 @@ function flowDiagSink() {
 
 // === Shared Flow helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
 const helpers = createSharedHelpers({
+  flowAccessibility,
   isolatedFlowReads: !FLOW_PAGE_POLICY.rpcCapture,
   getFlowView: modeController.getFlowView,
   getMainWindow: () => mainWindow,
@@ -1076,11 +1101,19 @@ ipcMain.handle('flow:set-agent-mode', (_e, { on } = {}) => { flowAgentOn = !!on;
 
 // ─── Flow API IPC handlers (all four modules) ───────────────────────────────
 const flowSafety = createFlowSafetyIPC(ipcMain, {
+  flowAccessibility,
   getFlowView: modeController.getFlowView,
   getMainWindow: () => mainWindow,
   getCurrentMode: modeController.getCurrentMode,
 })
 const flowAPIDeps = {
+  flowAccessibility,
+  dismissNativePicker(wc) {
+    if(wc!==modeController.getFlowView()?.webContents || flowSafety.safety.blocked()) throw new Error('flow-cancelled')
+    escapeUntil.set(wc,Date.now()+300)
+    for(const type of ['keyDown','keyUp'])wc.sendInputEvent({type,keyCode:'Escape'})
+  },
+  nativeReadRpc: flowAccessibility ? (view,id,payload) => nativeReadSessions.get(view.webContents).read(id,payload) : null,
   videoJournal: createVideoJournal(path.join(app.getPath('userData'), 'native-flow-video-journal')),
   getActiveWorkFolder: () => activeWorkFolder,
   typeFlowText,
@@ -1088,7 +1121,13 @@ const flowAPIDeps = {
   isRpcCaptureEnabled: () => FLOW_PAGE_POLICY.rpcCapture,
   getPassiveCapture: () => flowPassiveCapture,
   downloadPassiveImage: (session, item, opts) => downloadFlowImage(net, session, item, opts),
-  startResponseCapture: (session, opts) => startFlowResponseCapture(session, {
+  startResponseCapture: (session, opts) => process.platform === 'win32' && flowAccessibility
+    ? startProjectProof((id,payload)=>{
+      const wc=modeController.getFlowView()?.webContents
+      if(!wc || wc.session!==session || wc.getURL().replace(/\/$/,'')!=='https://flow.google.com/project/'+opts.projectId)
+        throw new Error('flow-document-changed')
+      return nativeReadSessions.get(wc).read(id,payload)
+    },opts) : startFlowResponseCapture(session, {
     directory: process.env.AUTOFLOWCUT_FLOW_LIVE_DIR || path.join(app.getPath('userData'), 'flow-response-capture'), ...opts,
   }),
   getFlowView: modeController.getFlowView,
@@ -1098,7 +1137,7 @@ const flowAPIDeps = {
   getCurrentMode: modeController.getCurrentMode,
   getMainWindow: () => mainWindow,
   createInputShield: makeInputShield,   // M2-LIVE N1: 제자리 자동화 뷰포트 동안의 입력 방패
-  setAutomationKeyLock: (on) => { automationKeyLock = !!on },   // M2-CLOSE O1: DOM 단계 동안의 키 입력 잠금
+  setAutomationKeyLock: (on) => { automationKeyLock = !!on },
   setShieldFocusTarget: (t) => { shieldFocusTarget = t === 'main' ? 'main' : 'flow' },   // M2-FINAL Q1: 방패 focus 의 행선지(포커스 단계 플래그)
   // M3(D4): 레퍼런스 업로드 = 클립보드 이미지 + Flow 뷰 붙여넣기(키 이벤트·CDP 없음). 세션 캐시는 flow-angular 가 모듈을 직접 쓴다.
   clipboard,

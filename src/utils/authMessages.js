@@ -24,6 +24,9 @@ export function getAuthErrorMessage(mode, t) {
 
 export function getAuthRequiredMessage(mode, t, reason) {
   if (mode === 'flow') {
+    if (reason === 'flow-accessibility-permission-required') return translateOrFallback(t,'toast.flowAccessibilityPermission',
+      'Allow AutoFlowCut in System Settings → Privacy & Security → Accessibility, then reopen the Flow window.')
+    if (reason === 'flow-unusual-activity') return translateOrFallback(t,'toast.flowDetectionStopped','Flow detected unusual activity. Generation stopped.')
     if (reason && !FLOW_LOGIN_REASONS.has(reason)) {
       return translateOrFallback(
         t,

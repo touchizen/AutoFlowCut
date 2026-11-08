@@ -74,7 +74,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     if (!flowActive()) return { ready: false, reason: 'flow-inactive' }
     const flowView = getFlowView()
     if (!flowView || (flowView.webContents.isDestroyed && flowView.webContents.isDestroyed())) return { ready: false, reason: 'flow-inactive' }
-    if (deps.isRpcCaptureEnabled?.() === false) return passiveSessionReady(flowView.webContents)
+    if (deps.isRpcCaptureEnabled?.() === false) return passiveSessionReady(flowView.webContents, deps.flowAccessibility)
     const now = Date.now() / 1000
     if (sessionReadyCache && now - sessionReadyCache.at < SESSION_READY_CACHE_S) {
       return { ready: true, credits: sessionReadyCache.credits, cached: true }
@@ -156,7 +156,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         return { success: true, projectId: match[1] }
       }
 
-      if (liveOnly) return { success: true, projectId: null }
+      if (liveOnly || deps.flowAccessibility) return { success: true, projectId: null }
 
       // URL 이 프로젝트가 아니면(home/landing 등) 직전 캡처값으로 폴백.
       if (getCapturedProjectId()) {

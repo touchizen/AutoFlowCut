@@ -301,7 +301,7 @@ export function useFlowEngine(opts = {}) {
       const projectName = typeof getProjectNameRef.current === 'function' ? getProjectNameRef.current() : null
       const [img] = await resolveReferenceImages([{ ...ref, filePath: ref.filePath || ref.imagePath || null }], { projectName, strictMime: true })
       if (!img?.data) return null
-      out.push({ base64: img.data, mime: img.mimeType })
+      out.push({ base64: img.data, mime: img.mimeType, ...(ref.name ? { name:ref.name } : {}) })
     }
     return out
   }

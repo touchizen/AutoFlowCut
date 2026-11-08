@@ -20,10 +20,13 @@
 // 이지 면허가 아니다 — 새 항목이 늘면 이 테스트가 막고, 고쳐서 사라지면 등록을 지워야 통과한다.
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('../../electron', import.meta.url))
+// This main-process module searches the OS accessibility tree by spoken label.
+// Keep mixed modules such as ipc/dom.js in the injected-DOM scan.
+const AX_COMPOSER = join(ROOT, 'flow-accessible-compose.js')
 
 /**
  * 우리 앱 자신의 한국어는 이 규칙과 무관하다 — 문제는 **Flow(남의 UI)의 번역되는 문구**를 앵커로
@@ -61,6 +64,7 @@ function jsFiles(dir) {
   return readdirSync(dir).flatMap((f) => {
     const p = join(dir, f)
     if (statSync(p).isDirectory()) return SKIP_DIRS.some((d) => `${p}/`.includes(d)) ? [] : jsFiles(p)
+    if (p === AX_COMPOSER) return []
     if (SKIP_FILES.includes(f)) return []
     return /\.jsx?$/.test(f) ? [p] : []
   })
@@ -73,11 +77,16 @@ function isComment(line) {
 }
 
 describe('주입되는 DOM 앵커는 로케일에 묶이면 안 된다', () => {
+  it('접근성 레이블을 쓰는 모듈은 원격 DOM이나 페이지 JS를 사용하지 않는다', () => {
+    const src = readFileSync(AX_COMPOSER, 'utf8').split('\n').filter(line => !isComment(line)).join('\n')
+    expect(src).not.toMatch(/\b(?:document|window|globalThis)\s*(?:\.|\[)/)
+    expect(src).not.toMatch(/\b(?:querySelector(?:All)?|executeJavaScript(?:InIsolatedWorld)?|eval|Function)\s*\(/)
+  })
   it('번역되는 UI 문구를 DOM 매칭에 쓰지 않는다 (BASELINE 외)', () => {
     const offenders = []
 
     for (const file of jsFiles(ROOT)) {
-      const name = file.split('/').pop()
+      const name = basename(file)
       const lines = readFileSync(file, 'utf8').split('\n')
       lines.forEach((line, i) => {
         if (isComment(line) || !LOCALE_ANCHOR.test(line)) return
@@ -97,7 +106,7 @@ describe('주입되는 DOM 앵커는 로케일에 묶이면 안 된다', () => {
     const stillBound = new Set()
 
     for (const file of jsFiles(ROOT)) {
-      const name = file.split('/').pop()
+      const name = basename(file)
       const lines = readFileSync(file, 'utf8').split('\n')
       if (lines.some((l) => !isComment(l) && LOCALE_ANCHOR.test(l))) stillBound.add(name)
     }

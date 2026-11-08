@@ -36,7 +36,15 @@ export function createFlowSafetyIPC(ipcMain, deps) {
   async function probe() {
     if (safety.blocked()) return safety.blocked()
     const wc = deps.getFlowView?.()?.webContents
-    if (!wc || wc.isDestroyed?.() || typeof wc.executeJavaScriptInIsolatedWorld !== 'function') return unavailable()
+    if (!wc || wc.isDestroyed?.()) return unavailable()
+    if (deps.flowAccessibility) {
+      try { await deps.flowAccessibility.snapshot(wc); return safety.blocked() }
+      catch (error) {
+        if (error.message === 'flow-unusual-activity') return safety.stop('flow-unusual-activity')
+        return { ...unavailable(), reason:error.message, retryBlocked:true }
+      }
+    }
+    if (typeof wc.executeJavaScriptInIsolatedWorld !== 'function') return unavailable()
     let timer
     try {
       const detected = await Promise.race([
@@ -63,7 +71,8 @@ export function createFlowSafetyIPC(ipcMain, deps) {
     return ipcMain.handle(channel, async (...args) => {
       if (!GENERATE.has(channel)) {
         // Preserve already-submitted results for recovery; only new submissions are blocked.
-        await probe()
+        const warning=await probe()
+        if(deps.flowAccessibility && warning) return warning
         const result = await handler(...args)
         if (channel === 'flow:check-video-status' && result?.success && Array.isArray(result.statuses)) {
           const ids = args[1]?.generationIds || []
@@ -108,6 +117,7 @@ export function createFlowSafetyIPC(ipcMain, deps) {
         }
         const detected = await probe()
         const stop = safety.observe(result, { generationId: result?.success === false ? result?.generationId : undefined })
+        if(deps.flowAccessibility && detected?.safetyStop) return {...result,...detected,success:false,retryBlocked:true}
         return result?.success !== true && (detected?.safetyStop || stop)
           ? { ...result, ...(detected?.safetyStop ? detected : stop) } : result
       }

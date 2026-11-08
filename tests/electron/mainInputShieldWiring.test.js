@@ -3,7 +3,9 @@
 // M2-LIVE N1 — main.js 배선(소스 정책, 다른 main.js 핀과 같은 방식: main.js 는 Electron 을 부팅해야 해서 실행 테스트가 없다).
 //   제자리 자동화 뷰포트 동안 사용자 포인터 입력을 삼키는 **최상위 투명 방패 뷰**: flowAPIDeps.createInputShield 가 WebContentsView 를
 //   투명 배경·about:blank 로 만들어 mainWindow.contentView 에 Flow 뷰 **뒤에**(위에) 붙이고 창 콘텐츠 크기로 두며, remove() 가 떼고 닫는다.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { runInNewContext } from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -48,8 +50,29 @@ describe('main.js — DOM 단계 키 입력 잠금 배선 (M2-CLOSE O1)', () => 
   it('makeFlowView 가 before-input-event 를 automationKeyLock 으로 preventDefault 하고, flowAPIDeps 가 setAutomationKeyLock 을 싣는다', () => {
     const b = fnBlock('makeFlowView')
     expect(b, 'makeFlowView block').toBeTruthy()
-    // 줄머리 앵커(^\s*) — 주석 처리된 줄(// view.webContents.on(…))은 매치되지 않는다(뮤테이션 O1-f 가 그 구멍을 보였다)
-    expect(b).toMatch(/^\s*view\.webContents\.on\('before-input-event',\s*\((\w+)\)\s*=>\s*\{\s*if \(automationKeyLock\)\s*\1\.preventDefault\(\)/m)
+    // Register the actual listener on an in-memory view. Only a short, view-bound
+    // Escape may close the OS-driven picker while normal typing stays locked.
+    const registration = b.match(/^ *view\.webContents\.on\('before-input-event',[\s\S]*?^  \}\)/m)
+    expect(registration, 'before-input-event listener in makeFlowView').toBeTruthy()
+    const wc = new EventEmitter()
+    const context = { view: { webContents: wc }, automationKeyLock: true,
+      escapeUntil: new WeakMap(), Date: { now: () => 1000 } }
+    runInNewContext(registration[0], context)
+    const blocked = key => {
+      const event = { preventDefault: vi.fn() }
+      wc.emit('before-input-event', event, { key })
+      return event.preventDefault.mock.calls.length !== 0
+    }
+    context.escapeUntil.set({}, 1300)
+    expect(blocked('Escape')).toBe(true)
+    context.escapeUntil.set(wc, 1300)
+    expect(blocked('Escape')).toBe(false)
+    expect(blocked('Enter')).toBe(true)
+    expect(blocked('a')).toBe(true)
+    context.escapeUntil.set(wc, 1000)
+    expect(blocked('Escape')).toBe(true)
+    context.automationKeyLock = false
+    expect(blocked('a')).toBe(false)
     const deps = MAIN.slice(MAIN.indexOf('const flowAPIDeps = {'), MAIN.indexOf('registerFlowAPIIPC(ipcMain, flowAPIDeps)'))
     expect(deps).toMatch(/^\s*setAutomationKeyLock:\s*\(on\)\s*=>\s*\{\s*automationKeyLock = !!on\s*\}/m)
     expect(MAIN).toMatch(/^let automationKeyLock = false/m)
