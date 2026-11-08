@@ -15,6 +15,8 @@ import { fetchLatestHistoryMeta } from '../utils/mediaMeta'
 import TagInputAutocomplete from './TagInputAutocomplete'
 import PromptInput from './PromptInput'
 import { baseImageReplacementPatch } from '../utils/imagePatch'
+import { flushSync } from 'react-dom'
+import { useImageRegenerationNotice } from '../hooks/useImageRegenerationNotice'
 import './SceneDetailModal.css'
 
 export default function SceneDetailModal({
@@ -23,6 +25,7 @@ export default function SceneDetailModal({
   onClose,
   onGenerate,
   isGenerating,
+  appMode,
   t,
   projectName,
   aspectRatio = '9:16',
@@ -34,6 +37,7 @@ export default function SceneDetailModal({
   upscaylRunning = false,
   restoreInFlightRef = null,
 }) {
+  const regenerationNotice = useImageRegenerationNotice(appMode, [scene], t)
   const [editData, setEditData] = useState({ ...scene })
   const [histories, setHistories] = useState([])
   const [shouldReloadHistory, setShouldReloadHistory] = useState(0)
@@ -209,15 +213,19 @@ export default function SceneDetailModal({
   // 재생성 — 생성은 백그라운드로 계속되고 모달은 즉시 닫힘 (§3.8)
   const handleRegenerate = () => {
     console.log('[SceneDetail] Regenerate clicked')
-    if (!onGenerate) return
+    if (!onGenerate || regenerationNotice) return
     if (rejectUpscaylWrite()) return
     // Issue #4: 모달에서 편집한 내용(prompt/characters/style_tag 등)을 먼저 영속 — 재생성이 저장을
     //   안 하면 편집이 사라지고 모달을 다시 열면 옛 값이 보인다.
-    if (onUpdate) onUpdate(scene.id, editData)
+    // Closing restores the native Flow view. Commit that change before the
+    // session check reads the composer through the OS accessibility tree.
+    flushSync(() => {
+      if (onUpdate) onUpdate(scene.id, editData)
+      onClose()
+    })
     // Issue #4/#5: 편집 스냅샷을 명시 전달 — onUpdate 직후라 scenes 클로저가 stale 이면 생성이
     //   옛 prompt/style_tag 를 읽어(스타일은 항상 실사, 프롬프트는 편집 전 값) 나오는 race 를 피한다.
     onGenerate(scene.id, undefined, editData)
-    onClose()
   }
 
   const handleUpscale = () => {
@@ -248,9 +256,10 @@ export default function SceneDetailModal({
         <button
           className="btn-warning"
           onClick={handleRegenerate}
-          disabled={isGenerating || !editData.prompt}
+          disabled={isGenerating || !editData.prompt || !!regenerationNotice}
+          aria-describedby={regenerationNotice ? 'scene-regeneration-notice' : undefined}
           // 프롬프트가 없어 disabled 면 이유를 tooltip 으로 — 침묵 disabled 는 "생성이 안 된다"로 보인다.
-          title={!editData.prompt ? t('toast.noPrompt') : undefined}
+          title={regenerationNotice || (!editData.prompt ? t('toast.noPrompt') : undefined)}
         >
           {isGenerating
             ? t('sceneDetail.generating')
@@ -278,6 +287,7 @@ export default function SceneDetailModal({
       footer={footer}
       className={`ref-detail-modal scene-detail-modal ${histories.length > 0 ? 'has-history' : ''}`}
     >
+      {regenerationNotice && <p id="scene-regeneration-notice" role="alert">{regenerationNotice}</p>}
       <div className="ref-detail-layout">
         {/* 왼쪽: 이미지 + 폼 */}
         <div className="ref-detail-main">

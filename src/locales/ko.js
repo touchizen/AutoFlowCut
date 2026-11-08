@@ -698,6 +698,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   
   // 결과 테이블
   results: {
+    imageRegenerationBlocked: '{sceneId}의 이전 이미지 생성 요청은 이미 전송됐고 결과 수집은 확인되지 않았어. 중복 생성을 막기 위해 재생성을 중단했어. Flow 갤러리에서 해당 씬의 결과를 확인해.',
     previousFlowWarning: '이 씬을 마지막으로 제출했을 때 Flow가 비정상적인 활동을 감지했어. 결과는 Flow 갤러리에서 확인해.',
     retryBlocked: '재시도 차단',
     empty: '프롬프트를 입력하고 생성을 시작하세요',

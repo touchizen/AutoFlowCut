@@ -46,7 +46,7 @@ export function receiveFlowSafetyStop(result) {
   }
   return true
 }
-export function flowSafetyQueueError() {
-  return Object.assign(new Error('Flow generation paused; check the Flow window before restarting the application'), stopped || {}, { alreadySurfaced: true })
+export function flowSafetyQueueError(alreadySurfaced = false) {
+  return Object.assign(new Error('Flow generation paused; check the Flow window before restarting the application'), stopped || {}, { alreadySurfaced })
 }
 export function __resetFlowSafetyForTests() { stopped = null; listeners.clear() }

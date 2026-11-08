@@ -699,6 +699,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   
   // Results table
   results: {
+    imageRegenerationBlocked: 'The previous image request for {sceneId} was sent, but its result has not been confirmed. Regeneration is paused to avoid a duplicate. Check the result in the Flow gallery.',
     previousFlowWarning: 'Flow flagged the previous submission for this scene as unusual activity. Check the Flow gallery for its result.',
     retryBlocked: 'Retry blocked',
     empty: 'Enter prompts and start generation',

@@ -237,7 +237,7 @@ export async function runEmptyRefGateFlow(context, deps) {
     // 큐 대기 구간을 잠근다 — App 이 원래 setHasPendingBatch(true) 로 start 를 감싸던 계약이다.
     // M2 경로는 모달을 열 때 이미 잡았으므로 여기선 idempotent, 빈카드 없는 경로는 여기서 잡는다.
     deps.setPendingLatch(true)
-    await deps.startScenes({
+    const result = await deps.startScenes({
       ...context.startOptionsWithoutSceneIds,
       sceneIds: liveTargetScenes.map(scene => scene.id),
       force: context.force,
@@ -245,6 +245,7 @@ export async function runEmptyRefGateFlow(context, deps) {
       currentRefs: authoritativeRefs,
       m1ExcludedMentionNamesBySceneId: m1Result.mentionNamesBySceneId,
     })
+    if (result?.retryBlocked) return { started: false, reason: result.errorKind, result }
     return { started: true, reason: successReason }
   }
 

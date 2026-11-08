@@ -79,6 +79,14 @@ describe('runEmptyRefGateFlow — 빈카드 없음', () => {
     expect(result.started).toBe(true)
   })
 
+  it('does not report a started batch if Flow stopped it at queue admission', async () => {
+    const stop = { success: false, retryBlocked: true, errorKind: 'flow-unusual-activity' }
+    const deps = makeDeps({ getLiveRefs: () => [filledGhost], startScenes: vi.fn().mockResolvedValue(stop) })
+    const result = await runEmptyRefGateFlow(baseContext(), deps)
+    expect(deps.startScenes).toHaveBeenCalledOnce()
+    expect(result).toEqual({ started: false, reason: stop.errorKind, result: stop })
+  })
+
   it('launch 직전 live UI guard가 닫히면 씬 배치를 시작하지 않는다', async () => {
     const deps = makeDeps({
       getLiveRefs: () => [filledGhost],
